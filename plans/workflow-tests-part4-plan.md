@@ -90,14 +90,14 @@ The canvas could be read (see below). The UI that no approved board draws is lis
 
 ## Corrections to the outline (verified at `3b045d0a8`)
 
-1. **`callModel` moved and is not the function to call.** It is at `src/core/requirements/interview.mjs:268` (outline: `:227`). Since Requirements 9c it is a thin wrapper over **`helperCall`** (`src/core/helper-call/index.mjs:39`), which runs Claude or another harness, books nothing itself, and returns `{ text, costUsd, costKind, inputTokens, outputTokens, engine, events }` or throws a `HelperCallError` that carries what it spent. The judge calls `helperCall` with `interviewCallOptions('round', { …, systemPrompt, noSessionPersistence: true })` (`interview.mjs:232`), so it gets the interview's rules for free: Worca's system prompt replaces Claude Code's (`systemPromptMode: 'replace'`), no tools, `strictMcpConfig`, slash commands off, `settingSources: ['project']` unless the person's user settings carry the sign-in, the model's routing env (`resolveModelEnv(model)`), and `spawnKind: 'aux'` for the credential broker.
+1. **`callModel` moved and is not the function to call.** It is at `src/core/requirements/interview.mjs:268` (outline: `:227`). Since Requirements 9c it is a thin wrapper over **`helperCall`** (`src/core/helper-call/index.mjs:36`), which runs Claude or another harness, books nothing itself, and returns `{ text, costUsd, costKind, inputTokens, outputTokens, engine, events }` or throws a `HelperCallError` that carries what it spent. The judge calls `helperCall` with `interviewCallOptions('round', { …, systemPrompt, noSessionPersistence: true })` (`interview.mjs:232`), so it gets the interview's rules for free: Worca's system prompt replaces Claude Code's (`systemPromptMode: 'replace'`), no tools, `strictMcpConfig`, slash commands off, `settingSources: ['project']` unless the person's user settings carry the sign-in, the model's routing env (`resolveModelEnv(model)`), and `spawnKind: 'aux'` for the credential broker.
 2. **`totalWindowSpendUsd` is at `src/core/cost-budget.mjs:142`** (outline: `:114`). It now sums four ledgers: runs, Chat, Requirements and **Design** (`designWindowedSpendUsd`, `cost-budget.mjs:132`, with `recordDesignCostDelta` at `:125`). The Design ledger is the pattern to follow: its own table, a record function and a windowed sum in `cost-budget.mjs` (not in `stats.mjs`, which only imports them: `stats.mjs:24`).
-3. **A test try's spend already counts in the limit** through `cost_ledger` (the try is a hidden pipeline, `pipelines.is_test = 1`), and Statistics leaves it out with `NOT_TEST` (`stats.mjs:66`). `budgetWindowSavings` (`stats.mjs:493-507`) subtracts the tries' spend so a test cannot make "Saved" negative; judge spend needs the same subtraction (Task 5).
-4. **A test's own spend is `store.spentOfRun`** (`store.mjs:410`): the runner's cap (`runner.mjs:128`, `:287`, `:294`), "Finish the rest" (`:693`), Compare's cost (`service.mjs:848`) and the Tests list's latest test (`service.mjs:572`) all read it. Adding the judge ledger there (Task 7) makes the cap and every shown cost include judging, with no other change.
-5. **Automatic checks are one array** on the example (`checks`), part of the example fingerprint (`store.mjs:95-104`). The check dialog lists **every** kind in `CHECK_KINDS` (`example-editor.mjs:106-118`), so a new kind shows in the UI as soon as it is added: Task 3 hides the four new kinds from the dialog until Task 19 (after P4-M1).
+3. **A test try's spend already counts in the limit** through `cost_ledger` (the try is a hidden pipeline, `pipelines.is_test = 1`), and Statistics leaves it out with `NOT_TEST` (`stats.mjs:66`). `budgetWindowSavings` (`stats.mjs:489-506`) subtracts the tries' spend so a test cannot make "Saved" negative; judge spend needs the same subtraction (Task 5).
+4. **A test's own spend is `store.spentOfRun`** (`store.mjs:410`): the runner's cap (`runner.mjs:128`, `:287`, `:294`), "Finish the rest" (`:692`), Compare's cost (`service.mjs:846`) and the Tests list's latest test (`service.mjs:540`) all read it. Adding the judge ledger there (Task 7) makes the cap and every shown cost include judging, with no other change.
+5. **Automatic checks are one array** on the example (`checks`), part of the example fingerprint (`store.mjs:95-104`). The check dialog lists **every** kind in `CHECK_KINDS` (`example-editor.mjs:107-117`, the `resultKinds` filter at `:107`), so a new kind shows in the UI as soon as it is added: Task 3 hides the four new kinds from the dialog until Task 19 (after P4-M1).
 6. **The judge's mock is ours.** `runClaude` in mock mode runs the mock engine (`claude-runner.mjs:242-243`), which answers with pipeline fixtures, not a judge's JSON. Like `brief-job.mjs:225-227` (`d.mockEnabled()` → `mockBrief`), the judge checks `mockEnabled({})` (and the try's own `mock`) and answers from a pure `mockJudgement` without calling `helperCall`.
 7. **What a workflow writes with** is in each try's pipeline row: `pipelines.stepper` holds the run's manifest, and `manifestModels` (`src/core/broker-routing.mjs:74`) lists every model it names. The "Checked with" suggestion (board 2: "an AI model that this workflow does not use to write") reads it from the workflow's latest tries (Task 10).
-8. **Model ids** are the catalog's (`PREDEFINED_MODELS`, `src/core/config.mjs:96-113`; `listModels()` at `:628`), for example `claude-opus-5-5` labelled "Opus 5.5". `runsOn(m, 'claude')` (`src/shared/connections.mjs:53`) tells which run on Claude Code.
+8. **Model ids** are the catalog's (`PREDEFINED_MODELS`, `src/core/config.mjs:96-112`; `listModels()` at `:628`), for example `claude-opus-5-5` labelled "Opus 5.5". `runsOn(m, 'claude')` (`src/shared/connections.mjs:53`) tells which run on Claude Code.
 9. **Size caps.** Only `ui/server.mjs`'s cap is enforced by a test (`test/split-by-feature-plan.test.mjs:134`); the others are the split tool's record. The rule here holds anyway: no task raises a cap, Part 4 does not touch `ui/server.mjs` or `ui/public/app.js`, and the files near 1,000 lines (where the tool adds a cap: `nextCaps`, `tools/split-by-feature.mjs:334`) get only wiring lines: `service.mjs` (949), `example-editor.mjs` (811), `test-compare.mjs` (757), `runner.mjs` (739).
 10. **CSS lives in `ui/public/workflows/workflow-tests.css`** since the split by feature (456 lines), not in `style.css`. Part 4's rules go at its end.
 11. **Board numbers.** The brief's "boards 33/34/36" are read by the canvas's own titles: board 32 (`P3Editor`, "Part 3: Edit an example, where it starts") draws "Your criteria" and "A result you liked" for a project example, and board 36 (`P3SideBySide`) draws the "Your criteria · checked by Worca" rows. Boards 33 and 34 have no Part 4 element.
@@ -158,12 +158,12 @@ D1–D85 hold. These continue them. The `(technical)` rows are for the reviewer.
 |---|---|
 | D86 | **Where criteria live.** `wf_test_examples.criteria`: a JSON list of `{ id, text }`, at most 12, each 3–300 characters, no two the same after normalising (`criterionKey`: NFKC, straight quotes, lower case, single spaces, no closing full stop). Ids are `k_` + 10 hex characters. Criteria are **not** part of the example fingerprint (P4-Q4): a changed criterion re-checks stored tries and never re-runs the workflow; reuse (D26) is unchanged. |
 | D87 | **The checking model, per example (D12).** `wf_test_examples.judge` = `{ model }`, a catalog model that runs on Claude Code, shown with who pays (P4-Q2, P4-Q17). Saving an example that has criteria and no checking model stores the suggestion (D105). Trust is kept per criterion text **and** model, so changing the model starts the trust tests again (board 2's hint). |
-| D88 | **The judge call.** `helperCall({ engine: 'claude', model, claudeOptions: interviewCallOptions('round', { cwd, prompt, model, systemPrompt: JUDGE_SYSTEM_PROMPT, noSessionPersistence: true }, { keepUserSettings }) })`. `cwd` is an empty scratch folder (`<worcaHome>/tmp/workflow-tests/judge`), so no project's settings or CLAUDE.md load. No tools, no MCP. Timeout 120 s. It uses Worca's normal model routing (the model profile's env, the credential broker) like any run: the account that pays is the one that pays for that model in a run. Pretend or Real does not matter: the judge has no connectors. |
+| D88 | **The judge call.** `helperCall({ engine: 'claude', model, claudeOptions: interviewCallOptions('round', { cwd, prompt, model, systemPrompt: JUDGE_SYSTEM_PROMPT, noSessionPersistence: true }, { keepUserSettings }) })`. `cwd` is an empty scratch folder (`<worcaHome>/tmp/workflow-tests/judge`), so no project's settings or CLAUDE.md load. When the person's user settings carry the sign-in (`keepUserSettings`), the user's own `~/.claude/CLAUDE.md` loads too, as in the interview (M23); the judge's system prompt still replaces Claude Code's, and its JSON reply is checked as D89 says. No tools, no MCP. Timeout 120 s. It uses Worca's normal model routing (the model profile's env, the credential broker) like any run: the account that pays is the one that pays for that model in a run. Pretend or Real does not matter: the judge has no connectors. |
 | D89 | **The answer and its proof.** The reply is one JSON object `{ "verdict": "met" \| "not met", "reason": "…", "proof": "…" }`. The proof is a passage copied from the result; Worca searches the result for it (NFKC, quotes and dashes straightened, markdown marks and spaces ignored, case ignored, "…" splitting it into parts that must all be found, at least 8 characters). An unreadable reply is asked once more; a proof that is not found is asked once more and then **not counted** (P4-Q7). |
 | D90 | **What the judge reads.** The try's main result (`mainResult`), and for a project try also its diff (the try's `diff-patch.patch`) under a "Changes" heading; together at most 200,000 characters (cut at a line, and the prompt says it was cut). Context: the example's request, the answers it gives Worca, and its text files (UTF-8 files only), at most 100,000 characters. The proof must come from the result (and diff), never from the context. Everything read is data: the prompt puts it in tags and says never to follow instructions inside. |
 | D91 | **When.** A test's own tries: in the try's checking phase, right after its automatic checks, for every try whose run finished (P4-Q5); criteria already judged for that try, text and model are not asked again. After the last try, a criteria phase checks the tries the test reused (and any still missing). Try it once now too. A mock try, and every call while `WORCA_MOCK=1`, uses `mockJudgement`: free, no ledger row. A judge failure never fails a try: the criterion shows "Not checked …" (P4-C2). |
 | D92 | **Spend.** Every model call of Part 4 that cost money writes a `wf_test_judge_ledger` row (purpose `try`, `pair`, `checker`, `suggest` or `reword`); a reply whose cost is not known writes a $0 row with `cost_kind 'unknown'` (P4-Q17), so it is never silently left out. `testJudgeWindowedSpendUsd` joins `totalWindowSpendUsd` and the budget's all-time figure; `budgetWindowSavings` subtracts it like test tries. A test's own judge rows (`test_run_id`) count in `store.spentOfRun`, so in its cap and every cost shown for it. Statistics shows none of it (Part 6's Tests tile will). With the spending limit reached, no call is made ("Not checked: the spending limit is reached"). |
-| D93 | **The exact checks** (pure, no AI; kinds `quotes`, `numbers`, `no-personal`, `links`). Sources = the example's request, its answers and its UTF-8 files.<br>• **quotes:** text in “…”, "…" or «…» of at least 4 words; each part between "…" must be found in the sources (normalised as D89). No quotes: met.<br>• **numbers:** every number in the result (thousands separators and a trailing % dropped; list markers like "1." at a line start and single digits without % ignored) must be among the sources' numbers.<br>• **no-personal:** no e-mail address, no phone number (a "+" or a leading 0 and 9–15 digits), no IBAN (mod-97 checked), no card number (13–19 digits, Luhn checked).<br>• **links** (P4-Q9): every `http(s)` link (markdown or bare, at most 20 checked, none started after 2 minutes) answers 2xx (or 401, 403, 429) after at most 3 redirects, over https on port 443, with a host name (never an IP address) that resolves to public addresses; the URL rule runs before every hop. When no link of the result got any answer, the check is "Not checked" and does not decide (`notChecked`).<br>The first three may read a file of a project example ("Read from", Part 3a Q11). |
+| D93 | **The exact checks** (pure, no AI; kinds `quotes`, `numbers`, `no-personal`, `links`). Sources = the example's request, its answers and its UTF-8 files.<br>• **quotes:** text in “…”, "…" or «…» of at least 4 words; each part between "…" must be found in the sources (normalised as D89). No quotes: met.<br>• **numbers:** every number in the result (thousands separators and a trailing % dropped; list markers like "1." at a line start, single digits without % and dates ignored) must be among the sources' numbers.<br>• **no-personal:** no e-mail address, no phone number (a "+" or a leading 0 and 9–15 digits; a date with a time is not one), no IBAN (mod-97 checked), no card number (13–19 digits, Luhn checked).<br>• **links** (P4-Q9): every `http(s)` link (markdown or bare, at most 20 checked, none started after 2 minutes) answers 2xx (or 401, 403, 429) after at most 3 redirects, over https on port 443, with a host name (never an IP address) that resolves to public addresses; the URL rule runs before every hop. When no link of the result got any answer, the check is "Not checked" and does not decide (`notChecked`).<br>The first three may read a file of a project example ("Read from", Part 3a Q11). |
 | D94 | **"Can be checked exactly" (board 2).** A pure rule suggests an exact check for a criterion's words: "quot…" → quotes; "numbers … from/in the files/data/notes/interviews" or "makes up no numbers" → numbers; "personal data", "e-mail", "phone number" → no-personal; "link" → links; a number of 2+ digits with "mention/say/state/name" → "Must mention" that number. **Switch** opens the check dialog with the suggestion (P4-M1); the new check keeps the criterion's words as `said` (D99), and the criterion is removed. |
 | D95 | **Trust marks (D14, P4-Q6).** Per workflow, criterion text (`criterionKey`) and model:<br>• **confirm** ("Confirm 4 results", amber): no Check the checker round of it is done. It decides (board 12: "It counts, but you have not confirmed").<br>• **collecting** ("Needs your answers", grey, board 32): a round is done, fewer than 10 answers. It decides.<br>• **reliable** (green): ≥ 10 answers and the P4-Q6 rule holds. It decides.<br>• **unreliable** (red): ≥ 10 answers and the rule fails. Shown, never decides. It becomes reliable again only through new words (a new key: "confirm" again) or new answers.<br>Exact checks are always "Can be checked exactly" and decide like any automatic check. |
 | D96 | **Answers.** Agree / Disagree on a criterion's verdict side by side (board 6), Right / Wrong on a card in Check the checker (board 11), Agree / Disagree on a pair answer. One answer per person per verdict; a later press replaces it; Undo removes it (P4-M6). An answer counts for the verdict's criterion key and model only. Pair answers count for board 13's tests, never for a criterion. |
@@ -173,7 +173,7 @@ D1–D85 hold. These continue them. The `(technical)` rows are for the reviewer.
 | D100 | **The pair question (P4-Q8).** Blind: "Result 1" and "Result 2", asked in both orders. The same winner both times = that winner; different = "unsure"; "same" both times = a tie. Stored as one judgement row (`purpose 'pair'`, both try ids, `winner` a / b / tie / unsure). With a result you liked, the question is which is closer to it. Never decides. Only for examples with criteria or a result you liked. |
 | D101 | **A result you liked.** `wf_test_liked`, one per example: a text (`kind 'text'`: an uploaded UTF-8 file of at most 2 MB, or a try's or past run's main result) or, for a project example, changes (`kind 'changes'`: the result and its diff, at most 2 MB, named "Changes from the run on <date> · N files"). It is the first choice of Check the checker's good result and the reference of the pair question. It is not part of the fingerprint. |
 | D102 | **Suggested criteria (board 3, P4-Q10).** One call reads the note, the request and the run's result and returns at most 3 sentences, each a criterion (D86's rules). Shown as chips; a press adds one. Cost: ledger purpose `suggest`. Mock: the note's first three sentences of at least 15 characters. |
-| D103 | **Copy is plain words** (the evals copy standard): criterion, met, not met, reliable, unreliable, check, answer, proof is "Proof from the result". Never "judge", "LLM", "score", "confidence", "fingerprint", "calibration" or "position bias" in the UI. |
+| D103 | **Copy is plain words** (the evals copy standard): criterion, met, not met, reliable, unreliable, check, answer, proof is "Proof from the result". Never the noun "judge" (the verb "judges" is plain, as boards 11 and 12 use it), "LLM", "score", "confidence", "fingerprint", "calibration" or "position bias" in the UI. |
 | D104 | *(technical)* **Prompts are Worca's own words**, written for this plan, so no licence text comes along (the research allowed copying MIT/Apache prompts with attribution; not needed). Clearer words: one call with the criterion and the cards the person marked Wrong returns one rewording of at most 300 characters. |
 | D105 | *(technical)* **The suggested checking model.** Among the catalog's Claude models (no "(1M)" twins unless nothing else), Opus first, then Fable, Sonnet, Haiku, each family newest first (the catalog's order); the first the workflow's latest 10 finished tries did not write with (`manifestModels` of their `pipelines.stepper`). If they wrote with all, the first, without "· suggested" (P4-C7). |
 | D106 | *(technical)* **Schema rung v99** (P4-Q13): `wf_test_judgements`, `wf_test_judge_answers`, `wf_test_checker_rounds`, `wf_test_liked`, `wf_test_judge_ledger`, and `wf_test_examples.criteria` / `judge` through `INCREMENTAL_COLUMNS`. FK-free like v97. Deleting an example deletes its judgements, answers, rounds and liked result; the ledger stays (spend never goes back). |
@@ -254,7 +254,7 @@ D1–D85 hold. These continue them. The `(technical)` rows are for the reviewer.
 | File | Change |
 |---|---|
 | `src/core/db.mjs` | `SCHEMA_VERSION = 99`; imports the DDL from `schema.mjs` (the three v96–v98 constants move out); the v99 rung; `INCREMENTAL_TABLES` / `INCREMENTAL_COLUMNS` entries. |
-| `src/core/cost-budget.mjs` | `recordTestJudgeCost`, `testJudgeWindowedSpendUsd`, in `totalWindowSpendUsd` and `allTimeSpendUsd`. |
+| `src/core/cost-budget.mjs` | `recordTestJudgeCost`, `testJudgeWindowedSpendUsd`, in `totalWindowSpendUsd` and in `budgetStatus()`'s `allTimeSpendUsd` field (`cost-budget.mjs:190`). |
 | `src/core/stats.mjs` | `budgetWindowSavings` subtracts judge spend. |
 | `src/shared/workflow-tests/checks.mjs` | The four kinds, `said`, `runCheck({ sources })`, `PART4_KINDS`. |
 | `src/shared/workflow-tests/compare.mjs` | `missCounts` counts deciding criteria; `estimateOf` adds criteria cost. |
@@ -836,6 +836,7 @@ test('numbers: separators and per cent dropped, list markers and single digits s
   assert.deepEqual(numbersCheck('Tickets: 140 a month (60%). Limit: 200.', FILES), { met: true, value: 'Met' });
   assert.deepEqual(numbersCheck('Cut tickets by 75% from 140 to 35, saving 1,000 hours.', FILES), { met: false, value: 'Not in the files: 75%, 35, 1,000' });
   assert.deepEqual(numbersCheck('No figures here, only 3 points.', FILES), { met: true, value: 'No numbers' });
+  assert.deepEqual(numbersCheck('Shipped on 2026-11-19 and checked on 19.11.2026.', FILES), { met: true, value: 'No numbers' }, 'M8: dates are not counted');
 });
 
 test('personal data: e-mail, phone, IBAN and card numbers; dates and plain numbers are not phones', () => {
@@ -845,6 +846,7 @@ test('personal data: e-mail, phone, IBAN and card numbers; dates and plain numbe
   assert.deepEqual(personalData('Write to ana@example.com or call +49 30 1234 5678. IBAN DE89 3704 0044 0532 0130 00, card 4111 1111 1111 1111.'),
     { emails: 1, phones: 1, ibans: 1, cards: 1 });
   assert.deepEqual(personalData('On 2026-11-19 we had 1,200 users and 140 tickets; ticket 4711-0042.'), { emails: 0, phones: 0, ibans: 0, cards: 0 });
+  assert.equal(personalData('Due 01/02/2026 12:30, moved to 05.11.2026 09:15.').phones, 0, 'M7: a day-first date with a time is not a phone number');
   assert.deepEqual(personalCheck('ana@example.com, bo@example.org and 0049 30 1234567'), { met: false, value: 'Found 2 e-mail addresses, 1 phone number' });
 });
 
@@ -937,13 +939,16 @@ export function quotesCheck(text, sources) {
 }
 
 const NUM_RE = /(?<![\p{L}\p{N}_.,])(\d{1,3}(?:[,  ]\d{3})+|\d+)(?:[.,](\d+))?(\s?%)?/gu;
+/** M7, M8: a date (2026-11-19, 19.11.2026, 01/02/2026), with a time after it (12:30), is neither a number of the result nor a phone number. */
+const DATE_RE = /(?<![\d.\/-])(?:\d{4}-\d{1,2}-\d{1,2}|\d{1,2}[./]\d{1,2}[./]\d{2,4})(?:,?\s+\d{1,2}:\d{2})?(?![\d.\/-]?\d)/g;
+const blankDates = (s) => s.replace(DATE_RE, (m) => ' '.repeat(m.length));
 const LIST_MARK_RE = /^(\s*(?:#{1,6}\s+)?(?:[-*+]\s+)?)\d{1,3}[.)](?=\s)/;
 /** The numbers of a text: "1,200" → 1200, "3.50" → 3.5, "60 %" → 60. A list marker or numbered heading ("1.", "## 2)") and a
  *  single digit without a per cent sign are skipped. `shown` is the number as written. */
 export function numbersIn(text) {
   const out = [];
   for (const raw of String(text ?? '').normalize('NFKC').slice(0, MAX_SCAN).split(/\r?\n/)) {
-    const line = raw.replace(LIST_MARK_RE, (m, lead) => `${lead}${' '.repeat(m.length - lead.length)}`);
+    const line = blankDates(raw.replace(LIST_MARK_RE, (m, lead) => `${lead}${' '.repeat(m.length - lead.length)}`));
     for (const m of line.matchAll(NUM_RE)) {
       const whole = m[1].replace(/[,  ]/g, '');
       if (!m[2] && !m[3] && whole.length === 1) continue;
@@ -997,6 +1002,7 @@ export function personalData(text) {
   const ibans = blank((t.match(IBAN_RE) || []).filter(ibanValid));
   const cards = blank((t.match(CARD_RE) || []).filter((c) => luhnValid(c.replace(/\D/g, ''))));
   const emails = blank(t.match(EMAIL_RE) || []);
+  t = blankDates(t);   // M7
   const phones = (t.match(PHONE_RE) || []).filter((p) => { const n = p.replace(/\D/g, '').length; return n >= 9 && n <= 15; }).length;
   return { emails, phones, ibans, cards };
 }
@@ -1099,7 +1105,7 @@ and in `CHECK_KIND_LABELS`: `quotes: 'Every quote is in the files', numbers: 'Nu
 then `runCheck(check, { text, files: outcome.files, changes, sources: sources || '' })`.
 4. In the first loop's opening line, send `links` to the later loop with the scripts and commands: `if (check.kind === 'script' || check.kind === 'command' || NETWORK_KINDS.includes(check.kind)) { later.push(i); continue; }`. In the later loop, right after the not-finished check and before the copy-is-gone guard (`result.mjs:276`), until Task 4, a `links` check gives `not('Not run: link checks come later')` (Task 4 replaces it there).
 
-- [ ] **Step 7: Keep the dialog as it is** (`ui/public/workflows/example-editor.mjs:106`)
+- [ ] **Step 7: Keep the dialog as it is** (`ui/public/workflows/example-editor.mjs:107`)
 
 Change the `resultKinds` filter's first condition from `!PROJECT_KINDS.includes(k)` to `!PROJECT_KINDS.includes(k) && !PART4_KINDS.includes(k)` and import `PART4_KINDS`. Task 19 removes it after P4-M1.
 
@@ -1944,6 +1950,24 @@ test('a new criterion re-checks the reused try in the criteria phase and never r
   assert.equal(h.started(), 1, 'the second test reused the try');
   assert.deepEqual(h.calls, ['Names a success metric', 'Explains the legal reasons'], 'only the new criterion was asked');
   assert.equal(store.spentOfRun(second.id), 0.1, 'the second test paid only for its check');
+});
+
+test('M13: an unfinished try is never checked, and the criteria phase stops when asked or over the cap', async () => {
+  const calls = [];
+  const judge = createCriteriaJudge({ subjectOf: async () => TEXT, contextOf: () => '', book: () => {},
+    judgeCriterion: async ({ criterion }) => { calls.push(criterion); return { met: true, reason: 'r', proof: 'Cut tickets by 60%', proofFound: true, error: null, costUsd: 0, ms: 1 }; } });
+  const ex = example([{ text: 'Names a success metric' }]);
+  const run = store.createTestRun({ workflowId: WF, kind: 'once', b: 'draft', bFp: 'f', exampleIds: [ex.id], tries: 1 });
+  const t = store.insertTry({ runId: run.id, workflowId: WF, exampleId: ex.id, use: 'draft', fp: 'f', exampleFp: ex.fingerprint, tryNo: 1 });
+  store.linkTry(run.id, t.id, 'b');
+  store.updateTry(t.id, { status: 'stopped', pipelineId: 'p0000001' });
+  assert.deepEqual(await judge.judgeTry(ex, store.readTry(t.id)), [], 'a stopped try is never checked');
+  store.updateTry(t.id, { status: 'passed', verdict: { passed: true, facts: { status: 'done' }, basics: [], checks: [] } });
+  await judge.judgeMissing(store.readTestRun(run.id), { stopped: () => true });
+  await judge.judgeMissing(store.readTestRun(run.id), { overCap: () => true });
+  assert.deepEqual(calls, [], 'stopped, or over the cap: nothing asked');
+  await judge.judgeMissing(store.readTestRun(run.id));
+  assert.deepEqual(calls, ['Names a success metric']);
 });
 
 test('subjectOfTry: the result, and a project try\'s diff under its heading', async () => {
@@ -3149,7 +3173,7 @@ test('estimateOf adds checking the criteria (board 4) and says when its price is
   const e = estimateOf(plan);
   assert.equal(Math.round(e.criteriaUsd * 100) / 100, 0.5, '3 new tries × $0.10 + the pairs $0.20');
   assert.equal(Math.round(e.usd * 100) / 100, 2);
-  assert.equal(estimateOf({ ...plan, criteria: { perTryUsd: null, pairsUsd: null } }).criteriaUsd, null);
+  assert.deepEqual(['criteriaUsd', 'usd'].map((k) => estimateOf({ ...plan, criteria: { perTryUsd: null, pairsUsd: null } })[k]), [null, null], 'M6: the total is not known either');
   assert.equal(estimateOf({ ...plan, criteria: null }).criteriaUsd, 0);
 });
 ```
@@ -3247,7 +3271,8 @@ After `const usd = …`, replace the `usd` line and the return:
   const crit = plan.criteria || null;
   const criteriaUsd = !crit ? 0 : crit.perTryUsd === null || crit.perTryUsd === undefined ? null
     : total * crit.perTryUsd + (plan.a && toRun.b ? Number(crit.pairsUsd || 0) : 0);
-  const usd = ca === null || cb === null ? null : ca + cb + (criteriaUsd || 0);
+  // M6: a checking cost that is not known makes the total not known, as the row says (P4-C6); 0 when nothing is checked.
+  const usd = ca === null || cb === null || criteriaUsd === null ? null : ca + cb + criteriaUsd;
 ```
 and return `criteriaUsd` with the rest (`{ toRun, total, usd, criteriaUsd, low, high, minutes, capUsd }`).
 
@@ -3282,6 +3307,8 @@ export function byCriterionOf(workflowId, run) {
 }
 
 const median = (xs) => { const s = [...xs].sort((a, b) => a - b); if (!s.length) return null; const m = s.length >> 1; return s.length % 2 ? s[m] : (s[m - 1] + s[m]) / 2; };
+/** Whether the criteria phase asks the pair question (Task 14 sets it to true when it adds judgePairs). */
+const PAIRS_ASKED = false;
 /** Board 4: what one check of a criterion costs on `model`: its own last 20, else a typical call (6000 tokens in, 250 out) at its price. */
 export function judgeCallUsd(model, { rates = (m) => ratesFor('claude', m), estimate = estimateCost } = {}) {
   const own = prepare(`SELECT amount_usd AS u FROM wf_test_judge_ledger WHERE purpose = 'try' AND model = ? ORDER BY id DESC LIMIT 20`).all(model).map((r) => Number(r.u));
@@ -3297,8 +3324,9 @@ export function criteriaPlanOf(workflowId, exampleIds = [], { hasA = false } = {
   const per = exs.map((e) => { const u = judgeCallUsd(e.judge.model); return u === null ? null : u * e.criteria.length; });
   if (per.some((u) => u === null)) return { perTryUsd: null, pairsUsd: null };
   const all = store.listExamples(workflowId).filter((e) => !exampleIds.length || exampleIds.includes(e.id));
+  // M6: pairs are asked only from Task 14 (4b); until then this is 0, and Task 14 changes `PAIRS_ASKED` to true.
   return { perTryUsd: per.reduce((s, u) => s + u, 0) / all.length,
-    pairsUsd: hasA ? exs.reduce((s, e) => s + 2 * judgeCallUsd(e.judge.model), 0) : 0 };
+    pairsUsd: PAIRS_ASKED && hasA ? exs.reduce((s, e) => s + 2 * judgeCallUsd(e.judge.model), 0) : 0 };
 }
 ```
 (`estimateCost` is `config.estimateCost`, the one `src/core/helper-call/cost.mjs` uses; `getDb()` has run by the time a route reads.)
@@ -3381,7 +3409,8 @@ test('by criterion, the overview trust counts and the plan estimate', async () =
   assert.equal(r.body.counts.total, 1);
   assert.equal((await call('GET', WF)).body.trust.total, 1);
   const plan = await call('GET', `${WF}/plan?b=draft&tries=1`);
-  assert.ok('criteria' in plan.body);
+  assert.equal(typeof plan.body.criteria.perTryUsd, 'number', 'M13: Haiku 4.5 has a list price, so the check has one');
+  assert.equal(plan.body.criteria.pairsUsd, 0, 'no version to compare with: no pairs');
   assert.equal((await call('POST', `${WF}/runs/${run.id}/criteria/check`)).status, 202);
 });
 ```
@@ -3458,6 +3487,10 @@ test('likedFromPipeline: a run\'s result; a project example also keeps its chang
   assert.equal(l.kind, 'changes');
   assert.match(l.name, /^Changes from the run on .+ · 2 files$/);
   assert.match(l.text, /^Fixed\.\n\n--- The changes this try made/);
+  // M9: a result over 2 MB is clipped on a character boundary, never refused.
+  await likedFromPipeline(ex, 'p0000003', { readMain: async () => ({ name: 'big.md', text: 'é'.repeat(cs.LIKED_MAX) }), readPatch: async () => null });
+  const big = cs.readLiked(ex.id);
+  assert.ok(Buffer.byteLength(big.text) <= cs.LIKED_MAX && big.text.endsWith('é'));
 });
 ```
 In `test/api-workflow-test-criteria.test.mjs` add:
@@ -3522,17 +3555,25 @@ and in `exampleOf`: `liked: likedOf(Number(r.id)),` after `judge`.
 ```js
 import { mainResult, readTryPatch } from './result.mjs';
 import { CHANGES_HEADING } from './judge-prompt.mjs';
+/** M9: at most `max` bytes of `text` as UTF-8, cut before a character, never inside one (putLiked refuses broken UTF-8). */
+const utf8Clip = (text, max) => {
+  const b = Buffer.from(text);
+  if (b.length <= max) return b;
+  let end = max;
+  while (end > 0 && (b[end] & 0xc0) === 0x80) end -= 1;
+  return b.subarray(0, end);
+};
 /** D101: a past run's or a try's result as the example's result you liked; a project example keeps the diff too (board 32's name). */
 export async function likedFromPipeline(example, pipelineId, { readMain = mainResult, readPatch = readTryPatch, at = null } = {}) {
   const m = await readMain(pipelineId);
   if (typeof m.text !== 'string' || !m.text.trim()) throw store.testError('this run left no result to keep', 'BAD_REQUEST');
-  if (!example.project) { cs.putLiked(example.id, { kind: 'text', name: m.name || 'result.md', data: Buffer.from(m.text), fromPipeline: pipelineId }); return; }
+  if (!example.project) { cs.putLiked(example.id, { kind: 'text', name: m.name || 'result.md', data: utf8Clip(m.text, cs.LIKED_MAX), fromPipeline: pipelineId }); return; }
   const p = await readPatch(pipelineId, cs.LIKED_MAX);
   const files = p && p.patch ? (p.patch.match(/^diff --git /gm) || []).length : 0;
   const when = new Date(at || Date.now()).toLocaleDateString('en-GB', { day: 'numeric', month: 'short' });
   const text = p && p.patch ? `${m.text}\n\n${CHANGES_HEADING}\n${p.patch}` : m.text;
   cs.putLiked(example.id, { kind: 'changes', name: `Changes from the run on ${when} · ${files} ${files === 1 ? 'file' : 'files'}`,
-    data: Buffer.from(text).subarray(0, cs.LIKED_MAX), fromPipeline: pipelineId });
+    data: utf8Clip(text, cs.LIKED_MAX), fromPipeline: pipelineId });
 }
 ```
 (`at` = the run's start: the route passes `findPipelineRowById(pipelineId).started_at`.)
@@ -3583,7 +3624,7 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
 
 **Files:**
 - Create: `src/core/workflow-tests/planted.mjs`, `src/core/workflow-tests/checker.mjs`
-- Modify: `src/core/workflow-tests/criteria-store.mjs` (rounds), `src/core/workflow-tests/criteria-routes.mjs` (three routes)
+- Modify: `src/core/workflow-tests/criteria-store.mjs` (rounds, `recoverRounds`), `src/core/workflow-tests/store.mjs` (`triesForExample`, `mockPipeline`), `src/core/workflow-tests/start.mjs` (boot recovery of rounds, M18), `src/core/workflow-tests/criteria-routes.mjs` (three routes)
 - Test: `test/workflow-test-checker.test.mjs`, `test/api-workflow-test-criteria.test.mjs` (one case)
 
 **Interfaces:**
@@ -3954,6 +3995,25 @@ export function mockPipeline(pipelineId) {
 ```
 and in `goodResultOf` call `store.triesForExample(example.id)` directly (drop the `store.triesForExample ?` guard). Clearer words (`reword`) come in Task 15.
 
+M18: a round that a restart cut short would stay `making` and the page would poll it forever. `criteria-store.mjs` (append):
+```js
+/** M18: at boot, a round left 'making' by a restart is failed (its calls stopped with the old process). Returns how many. */
+export function recoverRounds() {
+  getDb();
+  return Number(prepare(`UPDATE wf_test_checker_rounds SET status = 'failed', detail = 'Worca restarted before this round was ready. Try again.',
+      finished_at = ? WHERE status = 'making'`).run(nowIso()).changes || 0);
+}
+```
+and in `src/core/workflow-tests/start.mjs` `recoverTestsAtBoot`, inside the first `try`, after `out.runs = …`: `out.rounds = recoverRounds();` (import it from `./criteria-store.mjs`; `out` starts with `rounds: 0`). Add to `test/workflow-test-checker.test.mjs`:
+```js
+test('M18: a round left making by a restart is failed at boot, so the page stops polling', () => {
+  const ex = store.createExample('wf', { name: 'E', request: 'R', criteria: [{ text: 'Names a metric' }], judge: { model: 'm' } });
+  const r = cs.createRound({ workflowId: 'wf', exampleId: ex.id, criterionId: 'k_1', fp: 'f', model: 'm', source: {} });
+  assert.equal(cs.recoverRounds(), 1);
+  assert.deepEqual([cs.readRound(r.id).status, cs.recoverRounds()], ['failed', 0]);
+});
+```
+
 - [ ] **Step 6: The routes** (`criteria-routes.mjs`)
 
 Append `['POST', `${W}/examples/:ex/checker`]`, `['GET', `${W}/examples/:ex/checker/:round`]`, `['POST', `${W}/examples/:ex/checker/:round/answers`]` to `CRITERIA_ROUTES`; import `createChecker`; then:
@@ -4191,7 +4251,7 @@ export function likedSha(exampleId) {
     }
   }
 ```
-At the end of `judgeMissing`: `await judgePairs(run, { stopped, overCap });` and return `{ judgeTry, judgeMissing, judgePairs }`.
+At the end of `judgeMissing`: `await judgePairs(run, { stopped, overCap });` and return `{ judgeTry, judgeMissing, judgePairs }`. In `criteria-read.mjs`, set `const PAIRS_ASKED = true;` (Task 11's estimate then adds the pairs, M6).
 
 - [ ] **Step 6: Side by side** (`service.sideBySide`, one field)
 
@@ -4579,7 +4639,6 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { JSDOM } from 'jsdom';
 import { renderTestsPage } from '../ui/public/workflows/tests-view.mjs';
-import { estimateOf } from '../src/shared/workflow-tests/compare.mjs';
 
 const dom = () => new JSDOM('<!doctype html><div id="r"></div>').window;
 const overview = (ex) => ({ workflowId: 'wf', name: 'W', needsProject: false, ctx: {}, draftSameAs: null, columns: [{ use: 'draft', label: 'Your draft · yours' }],
@@ -4594,12 +4653,8 @@ test('the chips: Basics, Automatic, Your criteria (only when there are some)', (
   renderTestsPage(root, overview({ criteria: 0 }), {}, { doc: win.document });
   assert.deepEqual([...root.querySelectorAll('.wft-kind')].map((k) => k.textContent), ['Basics 3', 'Automatic 2']);
 });
-
-test('the estimate carries the checking cost the dialog shows', () => {
-  const e = estimateOf({ a: null, b: { want: 18, reusable: 0, perTryUsd: 0.5 }, perTryMs: 60000, criteria: { perTryUsd: 0.05, pairsUsd: 0 } });
-  assert.equal(Math.round(e.criteriaUsd * 100) / 100, 0.9);
-});
 ```
+(The estimate's sum is Task 11's and tested there; this task tests the row the dialog shows, below. M13: a test here that only called `estimateOf` would pass before this task.)
 If `renderTestsPage` needs more actions or options than given here, pass the same ones `test/ui-workflow-tests-view.test.mjs` passes. Add a dialog case to `test/ui-workflow-test-dialogs.test.mjs` the way its estimate cases open `openTestVersionDialog` with a `loadPlan` stub: give the plan `criteria: { perTryUsd: 0.05, pairsUsd: 0 }` and assert a row `.wft-est-row` whose text is "Checking your criteria" + "about $0.90"; with `perTryUsd: null`, "cost not known yet".
 
 - [ ] **Step 2: Run it to see it fail**
@@ -4679,6 +4734,7 @@ test('board 2: each row, its trust line, the exact switch and the checking model
   assert.equal(rows[0].querySelector('.badge').textContent, 'Reliable');
   assert.match(rows[0].textContent, /Worca agrees with people 19 of 20 times/);
   assert.match(rows[1].textContent, /Can be checked exactly: the result must contain "200"\./);
+  assert.equal(rows[1].querySelector('.badge'), null, 'M10: no green "Reliable" for a criterion an exact check could replace');
   rows[1].querySelector('button.wft-switch').click();
   assert.deepEqual(switched, [['k_2', { kind: 'mentions', text: '200' }]]);
   const sel = doc.getElementById('wft-judge');
@@ -4695,11 +4751,20 @@ test('board 2: each row, its trust line, the exact switch and the checking model
   assert.deepEqual(s.read().criteria.map((c) => c.id || ''), ['k_1', ''], 'remove() takes a criterion out by its id (Switch, I8)');
 });
 
-test('without onConfirm (Check the checker not built yet) a new criterion shows no confirm link', () => {
+test('a new criterion: "Confirm 4 results" opens Check the checker; without it (not built yet), its line and no link', () => {
   const { document: doc } = new JSDOM('<!doctype html><body></body>').window;
-  const s = renderCriteriaSection(doc, draft(), { models: MODELS, trust: { k_1: { state: 'confirm', n: 0, agree: 0, decides: true } } });
+  const trust = { k_1: { state: 'confirm', n: 0, agree: 0, decides: true } };
+  const s = renderCriteriaSection(doc, draft(), { models: MODELS, trust });
   doc.body.append(s.el);
   assert.equal([...doc.querySelectorAll('.wft-crit')[0].querySelectorAll('button')].length, 0);
+  assert.match(doc.querySelectorAll('.wft-crit')[0].textContent, /New criterion\. It counts/);
+  const asked = [];
+  const t = renderCriteriaSection(doc, draft(), { models: MODELS, trust, onConfirm: (c) => asked.push(c.id) });
+  doc.body.replaceChildren(t.el);
+  const link = doc.querySelector('.wft-crit button.wft-confirm');
+  assert.equal(link.textContent, 'Confirm 4 results');
+  link.click();
+  assert.deepEqual(asked, ['k_1']);
 });
 ```
 
@@ -4737,18 +4802,23 @@ export function renderCriteriaSection(doc, draft, { models = { models: [], sugge
       const meta = el(doc, 'span', 'wft-crit-meta');
       const alt = exactAlternative(c.text);
       const t = c.id ? trust[c.id] : null;
-      if (alt) {
-        meta.classList.add('is-exact');
-        meta.append(el(doc, 'span', 'badge green', 'Reliable'), doc.createTextNode(`${exactLine(alt)} `));
-        const sw = btn(doc, 'Switch', () => onSwitch(c, alt), 'btn-link wft-switch');
-        sw.setAttribute('aria-label', `Switch "${c.text}" to an exact check`);
-        meta.append(sw);
+      // M10 (P4-C1): the criterion's own trust (AI still checks it); "Confirm 4 results" is the amber link itself.
+      if (t && t.state === 'confirm') {
+        meta.append(onConfirm ? btn(doc, 'Confirm 4 results', () => onConfirm(c), 'btn-link wft-confirm') : doc.createTextNode(trustLine(t)));
       } else if (t) {
         const [cls, words] = TRUST_BADGE[t.state] || TRUST_BADGE.collecting;
         meta.append(el(doc, 'span', cls, words), doc.createTextNode(trustLine(t)));
-        if (onConfirm && (t.state === 'confirm' || t.state === 'unreliable')) meta.append(btn(doc, t.state === 'confirm' ? 'Check the checker' : 'Fix it', () => onConfirm(c), 'btn-link'));
+        if (onConfirm && t.state === 'unreliable') meta.append(btn(doc, 'Fix it', () => onConfirm(c), 'btn-link'));
       }
       row.append(input, meta);
+      if (alt) {   // board 2's violet line: an exact check could stand in (D94); never a "Reliable" badge of its own
+        const exact = el(doc, 'span', 'wft-crit-meta is-exact');
+        exact.append(doc.createTextNode(`${exactLine(alt)} `));
+        const sw = btn(doc, 'Switch', () => onSwitch(c, alt), 'btn-link wft-switch');
+        sw.setAttribute('aria-label', `Switch "${c.text}" to an exact check`);
+        exact.append(sw);
+        row.append(exact);
+      }
       lines.append(row);
     });
     const add = btn(doc, 'Add a criterion', () => { list.push({ text: '' }); paint(); lines.querySelectorAll('input')[list.length - 1].focus(); }, 'btn btn-sm wft-add-crit');
@@ -5440,7 +5510,7 @@ Then pin P4-M3's approved words (preparing, no good result, failed, limit, after
 Run: `node tools/test.mjs test/ui-workflow-test-checker.test.mjs`
 Expected: FAIL (`renderChecker` is not exported).
 
-- [ ] **Step 3: `renderChecker`** (`criteria-pages.mjs`, append; import `btn`, `fmtUsd` from `../../../src/shared/workflow-tests/checks.mjs`)
+- [ ] **Step 3: `renderChecker`** (`criteria-pages.mjs`, append; import `btn` from `./test-ui.mjs` and `fmtUsd` from `../../../src/shared/workflow-tests/checks.mjs`)
 
 ```js
 const CC_SUB = 'Before Worca uses your new criterion, make sure it judges results the way you would. Worca took a good result and broke it on purpose in a few ways.';
