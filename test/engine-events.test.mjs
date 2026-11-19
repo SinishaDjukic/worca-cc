@@ -3,7 +3,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { isNormalized, EVENT_TYPES } from '../src/core/engines/events.mjs';
-import { createClaudeNormalizer, normalizingOnEvent } from '../src/core/engines/claude-events.mjs';
+import { createClaudeNormalizer, normalizingOnEvent, claudeStopReason, REFUSAL_STOP, REFUSAL_TEXT } from '../src/core/engines/claude-events.mjs';
 
 const env = (raw, extra = {}) => ({ type: raw.type, raw, ...extra });
 const norm = () => createClaudeNormalizer();
@@ -175,6 +175,38 @@ test('every captured fixture normalizes without throwing and yields only vocabul
     const frames = readFileSync(new URL(`./fixtures/ask/${f}.jsonl`, import.meta.url), 'utf8').split('\n').filter(Boolean).map((l) => JSON.parse(l));
     for (const raw of frames) for (const e of n(env(raw))) assert.ok(EVENT_TYPES.has(e.type), `${f}: ${e.type}`);
   }
+  const n = norm();
+  const frames = readFileSync(new URL('./fixtures/claude-stream/refusal.jsonl', import.meta.url), 'utf8').split('\n').filter(Boolean).map((l) => JSON.parse(l));
+  for (const raw of frames) for (const e of n(env(raw))) assert.ok(EVENT_TYPES.has(e.type), `refusal: ${e.type}`);
+});
+
+test('claudeStopReason: main-stream result, assistant and message_delta frames only', () => {
+  assert.equal(REFUSAL_STOP, 'refusal');
+  assert.equal(REFUSAL_TEXT, 'The model declined this request. Change the prompt or pick another model.');
+  assert.equal(claudeStopReason({ type: 'result', stop_reason: 'refusal' }), 'refusal');
+  assert.equal(claudeStopReason({ type: 'assistant', parent_tool_use_id: null, message: { stop_reason: 'refusal' } }), 'refusal');
+  assert.equal(claudeStopReason({ type: 'stream_event', parent_tool_use_id: null, event: { type: 'message_delta', delta: { stop_reason: 'refusal' } } }), 'refusal');
+  assert.equal(claudeStopReason({ type: 'assistant', parent_tool_use_id: 'toolu_A', message: { stop_reason: 'refusal' } }), null);
+  assert.equal(claudeStopReason({ type: 'assistant', message: { parent_tool_use_id: 'toolu_A', stop_reason: 'refusal' } }), null);
+  assert.equal(claudeStopReason({ type: 'stream_event', parent_tool_use_id: 'toolu_A', event: { type: 'message_delta', delta: { stop_reason: 'refusal' } } }), null);
+  assert.equal(claudeStopReason({ type: 'assistant', message: { model: '<synthetic>', stop_reason: 'refusal' } }), null);
+  assert.equal(claudeStopReason({ type: 'result', stop_reason: 7 }), null);
+  assert.equal(claudeStopReason({ type: 'assistant', message: { stop_reason: null } }), null);
+  assert.equal(claudeStopReason({ type: 'stream_event', event: { type: 'message_start', message: { stop_reason: 'refusal' } } }), null);
+  for (const bad of [null, undefined, 'x', 3, [], { type: 'assistant' }, { type: 'stream_event', event: null }]) assert.equal(claudeStopReason(bad), null);
+});
+
+test('claudeStopReason replay: the refusal fixture ends on refusal, plain-text on end_turn', () => {
+  const last = (path) => {
+    let sr = null;
+    for (const l of readFileSync(new URL(path, import.meta.url), 'utf8').split('\n').filter(Boolean)) {
+      const v = claudeStopReason(JSON.parse(l));
+      if (v !== null) sr = v;
+    }
+    return sr;
+  };
+  assert.equal(last('./fixtures/claude-stream/refusal.jsonl'), 'refusal');
+  assert.equal(last('./fixtures/ask/plain-text.jsonl'), 'end_turn');
 });
 
 import { createOrchestrator } from '../src/core/orchestrator.mjs';
