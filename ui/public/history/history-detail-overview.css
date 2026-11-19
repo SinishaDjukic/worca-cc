@@ -42,13 +42,22 @@ button.hd-mem-chip:focus-visible{outline:2px solid var(--ink);outline-offset:2px
 .hd-ov-sub,.pd-ov-sub{margin-top:6px;font-size:var(--fs-meta);color:var(--ink-3);overflow-wrap:anywhere;}
 /* The stat cards' sub line is sans (no .mono); --ink-3 there is 2.8:1 on the card (AA needs 4.5). */
 .hd-ov-card .hd-ov-sub{color:var(--ink-2);}
-.hd-ov-task{padding:var(--pad-card);background:var(--panel);border:1px solid var(--line);border-radius:var(--r-card);}
-.hd-ov-task-h{font:600 13px var(--sans);}
-/* overflow-wrap:anywhere like its sibling .hd-ov-sub — prompts routinely carry
-   absolute paths and URLs, and `.hist-screen-detail{overflow-x:hidden}` would silently
-   CLIP an unbroken token rather than let it scroll. */
-.hd-ov-task p{margin:10px 0 0;max-width:74ch;font:400 var(--fs-body)/var(--lh-body) var(--sans);color:var(--ink-2);
-  white-space:pre-wrap;overflow-wrap:anywhere;}
-.hd-ov-more{margin-top:8px;border:none;background:none;color:var(--blue-ink);font:500 var(--fs-meta) var(--sans);cursor:pointer;padding:0;}
+/* The Task tab: the run's prompt in full, a card like the other tabs' bodies. A prompt carries absolute paths and URLs:
+   overflow-wrap:anywhere wraps an unbroken token rather than the pane clipping it. Plain text (the markdown bundle not
+   loaded) keeps its line breaks. */
+/* The Task tab: the prompt, and the run's setup beside it on a wide pane (under it otherwise). */
+.run-task-tab{display:grid;grid-template-columns:minmax(0,1fr);gap:20px;align-items:start;margin-top:20px;}
+@container rd (min-width:960px){.run-task-tab:has(> .run-task-side:not([hidden])){grid-template-columns:minmax(0,1fr) minmax(280px,340px);}}
+.run-task-side[hidden]{display:none;}
+.run-setup{padding:var(--pad-card);background:var(--panel);border:1px solid var(--line);border-radius:var(--r-card);display:flex;flex-direction:column;gap:12px;}
+.run-setup-h{margin:0;font:600 var(--fs-body) var(--sans);color:var(--ink);}
+.run-setup-sub{margin:4px 0 0;font:600 var(--fs-meta) var(--sans);color:var(--ink-2);}
+.run-setup-list{display:grid;grid-template-columns:minmax(0,2fr) minmax(0,3fr);gap:8px 16px;margin:0;font-size:var(--fs-meta);}
+.run-setup-list dt{color:var(--ink-2);overflow-wrap:anywhere;}
+.run-setup-list dd{margin:0;color:var(--ink);overflow-wrap:anywhere;}
+.run-task{display:flex;flex-direction:column;gap:16px;padding:var(--pad-card);background:var(--panel);border:1px solid var(--line);border-radius:var(--r-card);}
+.run-task > .hd-ov-chips{margin:0;}
+.run-task-body{max-width:80ch;font:400 var(--fs-body)/var(--lh-body) var(--sans);color:var(--ink);overflow-wrap:anywhere;}
+.run-task-body:not(.artifact-markdown){white-space:pre-wrap;color:var(--ink-2);}
 .hd-ov-chips{display:flex;flex-wrap:wrap;gap:8px;margin-top:16px;}
 .hd-ov-tag{padding:6px 12px;border:1px solid var(--line);border-radius:var(--r-xs);font-size:var(--fs-caption);color:var(--ink-2);}

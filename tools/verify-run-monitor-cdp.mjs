@@ -39,7 +39,7 @@ import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import { maxListWidth, LIST_W_KEY } from '../ui/public/runs-resize.mjs';
+import { LIST_W_KEY } from '../ui/public/runs-resize.mjs';
 
 // Chrome is overridable so this proof also runs on a Linux CI runner: CHROME_BIN
 // picks the binary, and headless Chrome refuses to start as root (containers)
@@ -306,7 +306,8 @@ async function until(expr, tag, tries = 100) {
     if (await ev(`(()=>{try{return !!(${expr});}catch(e){return false;}})()`)) return true;
     await kick(); await sleep(120);
   }
-  throw new Error(`timeout waiting for ${tag}`);
+  const seen = await ev(`(()=>({hash:location.hash,q:!!document.querySelector('#run-detail .rd-questions:not([hidden])'),qs:[...document.querySelectorAll('.rd-questions')].map((n)=>n.hidden+':'+(n.parentElement&&n.parentElement.className))}))()`).catch(() => null);
+  throw new Error(`timeout waiting for ${tag} (seen ${JSON.stringify(seen)})`);
 }
 
 try {
@@ -357,50 +358,26 @@ try {
     && Math.abs(g2.stage.l - g2.pad.l) < 0.6 && Math.abs(g2.stage.w - g2.pad.w) < 0.6
     && g2.hostPos === 'absolute' && g2.hostPad === '0px' && g2.hostDisplay === 'block', g2);
 
-  // (1d) the Live view graph sits beside the card when the run pane is wide (the `rd` container at 960px or more: the
-  // card keeps its 544px column, the graph's top is level with the card's and it is 320px tall at least), and under the
-  // run details otherwise, as wide as the pane's content (the glance's content box) (run 3, D16). Windows 1440 and 1920,
-  // the list at its 280px floor and at its max (maxListWidth: 640 at both); the matrix must see both layouts. The key is
-  // worca-cc.runs.listWidth (runs-resize LIST_W_KEY).
-  const liveLayouts = new Set();
-  for (const w of [1440, 1920]) {
-    for (const lw of ['280', String(maxListWidth(w))]) {
-      await ev(`localStorage.setItem(${JSON.stringify(LIST_W_KEY)},${JSON.stringify(lw)});0`);
-      await cdp('Emulation.setDeviceMetricsOverride', { width: w, height: 900, deviceScaleFactor: 1, mobile: false });
-      await go(`running/${runId}`);
-      await until(`document.querySelector('#run-detail .rd-glance .rd-sheet')`, `the run page at ${w}px`);
-      // Live view on: the switch is the person's remembered choice.
-      await ev(`(()=>{const row=document.querySelector('#run-detail .rd-live-row');const sw=row&&row.querySelector('.rd-live-switch');
-        if(row&&!row.hidden&&sw&&sw.getAttribute('aria-checked')!=='true')sw.click();return 0;})()`);
-      const shown = await until(`document.querySelector('#run-detail .rd-live.is-in')`, `the Live view at ${w}px, list ${lw}px`).then(() => true, () => false);
-      await settle(`live ${w}/${lw}`);
-      // Measure at rest: the card's slide (flipGlance) and the panel's entrance run on their own elements only (the
-      // graph inside keeps its infinite wire animations, so no subtree).
-      for (let i = 0; i < 40; i += 1) {
-        if (await ev(`['.rd-now','.rd-sheet','.rd-live'].every((s)=>{const n=document.querySelector('#run-detail .rd-glance > '+s);
-          return !n||n.getAnimations().every((a)=>a.playState!=='running');})`)) break;
-        await kick(); await sleep(50);
-      }
-      const geo = await ev(`(()=>{const q=(s)=>document.querySelector('#run-detail '+s);const glance=q('.rd-glance');const live=q('.rd-glance > .rd-live');
-        const sheet=q('.rd-glance > .rd-sheet');const now=q('.rd-glance > .rd-now');if(!glance||!live||!sheet||!now)return {missing:true};
-        const rd=glance.closest('.rd');const rcs=getComputedStyle(rd);
-        const cs=getComputedStyle(glance);const g=glance.getBoundingClientRect();const pl=parseFloat(cs.paddingLeft),pr=parseFloat(cs.paddingRight);
-        const s=sheet.getBoundingClientRect();const l=live.getBoundingClientRect();
-        return {rd:rd.clientWidth-parseFloat(rcs.paddingLeft)-parseFloat(rcs.paddingRight),pane:{left:g.left+pl,width:g.width-pl-pr},
-          sheet:{top:s.top,right:s.right,bottom:s.bottom,width:s.width},live:{top:l.top,left:l.left,width:l.width,height:l.height},
-          now:now.getBoundingClientRect().width,list:document.querySelector('#runs-list-pane').getBoundingClientRect().width};})()`);
-      const wide = !geo.missing && geo.rd >= 960;
-      liveLayouts.add(wide ? 'beside' : 'under');
-      check('1d', wide
-        ? `1d graph beside the card at ${w}px, list ${lw}px (pane ${Math.round(geo.rd)}px): .rd-live right of .rd-sheet, tops level, 320px tall at least; the card and .rd-now stay at or under 545px`
-        : `1d graph under the details at ${w}px, list ${lw}px (pane ${Math.round(geo.rd)}px): .rd-live under .rd-sheet at the pane's content width; the card and .rd-now stay at or under 545px`,
-        shown && !geo.missing && geo.sheet.width <= 545 && geo.now <= 545 && (wide
-          ? geo.live.left >= geo.sheet.right + 27 && Math.abs(geo.live.top - geo.sheet.top) <= 1 && geo.live.height >= 319
-          : geo.live.top >= geo.sheet.bottom - 1 && Math.abs(geo.live.left - geo.pane.left) <= 1 && Math.abs(geo.live.width - geo.pane.width) <= 1),
-        { shown, ...geo });
-    }
+  // (1d) one level: #running/<id> opens Details on its Overview tab, and the run card is that tab's body.
+  await go(`running/${runId}`);
+  await until(`document.querySelector('#run-detail .rd-details .rd-glance .rd-sheet')`, 'the run card in Overview');
+  const one = await ev(`(()=>{const rd=document.querySelector('#run-detail .rd');const tab=rd.querySelector('.rd-tabs [aria-selected="true"]');
+    return {mode:rd.dataset.mode,details:!rd.querySelector('.rd-details').hidden,tab:tab&&tab.textContent.trim(),
+      strayGlance:!!rd.querySelector(':scope > .rd-glance:not([hidden])')};})()`);
+  check('1d', '1d one level: the run page is Details on its Overview tab, the run card inside it',
+    one.mode === 'details' && one.details && /overview/i.test(one.tab || '') && !one.strayGlance, one);
+  // (1e) while the run goes, its workflow (framed on the running step) leads the card's right column on a wide pane.
+  await cdp('Emulation.setDeviceMetricsOverride', { width: 1700, height: 1000, deviceScaleFactor: 1, mobile: false });
+  await until(`document.querySelector('#run-detail .rd-sheet-nav > .rd-live:not([hidden]) .gv-world .node')`, 'the live graph in the card');
+  await settle('live graph');
+  const lg = await ev(`(()=>{const q=(s)=>document.querySelector('#run-detail '+s);const live=q('.rd-sheet-nav > .rd-live');const main=q('.rd-sheet-main');
+    const l=live.getBoundingClientRect(),m=main.getBoundingClientRect();return {left:l.left,mainRight:m.right,h:l.height,wrap:getComputedStyle(live.querySelector('.run-flow-wrap')).height};})()`);
+  check('1e', '1e live graph: in the card\'s right column beside the details, 280px tall',
+    lg.left >= lg.mainRight && Math.abs(parseFloat(lg.wrap) - 280) < 1, lg);
+  if (process.env.WORCA_SHOT_DIR) {
+    const shot = await cdp('Page.captureScreenshot', { format: 'png' }, 15000);
+    await writeFile(path.join(process.env.WORCA_SHOT_DIR, 'run-live-graph.png'), Buffer.from(shot.data, 'base64'));
   }
-  check('1d', '1d the matrix saw the graph both beside the card and under it', liveLayouts.size === 2, [...liveLayouts]);
   // Back to the width and window the run started with: the checks below were measured there.
   await ev(`localStorage.setItem(${JSON.stringify(LIST_W_KEY)},'280');0`);
   await cdp('Emulation.setDeviceMetricsOverride', { width: 1280, height: 900, deviceScaleFactor: 1, mobile: false });

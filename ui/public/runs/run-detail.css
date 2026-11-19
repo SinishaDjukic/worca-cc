@@ -36,8 +36,8 @@
 .rd-now-top.is-link{cursor:pointer;margin:-8px -12px;padding:8px 12px;border-radius:var(--r-ctrl);transition:background .15s;}
 .rd-now-top.is-link:hover{background:var(--hover);}
 .rd-now-top.is-link:focus-visible{outline:2px solid var(--ink);outline-offset:2px;}.rd-ask-head:empty{display:none;}
-.rd-glance > .rd-questions .qpanel-head{display:none;}
-.rd-glance > .rd-questions .qpanel .qbody > :first-child{margin-top:0;}   /* not padding: the form card keeps its own */
+.rd-details > .rd-questions .qpanel-head{display:none;}
+.rd-details > .rd-questions .qpanel .qbody > :first-child{margin-top:0;}   /* not padding: the form card keeps its own */
 .rd-questions .qpanel-head{gap:12px;padding-bottom:16px;border-bottom:1px solid var(--amber-line);}
 .rd-questions .qpanel-head b{font-size:15px;color:var(--ink);}
 .rd-questions .qpanel-head .qcount{font-weight:600;font-size:var(--fs-caption);padding:5px 12px;}

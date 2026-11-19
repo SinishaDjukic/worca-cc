@@ -43,7 +43,10 @@ test('a member run in the Chat run panel keeps no breadcrumb, no Group row and n
   await ctx.settle();
   const screen = await openPanel(ctx, 'r1');
   assert.equal(screen.dataset.presentation, 'panel');
-  assert.equal(screen.querySelector('.rd-glance').hidden, true, 'the panel never shows the glance (Details only)');
+  // One level: no glance; the run card is the Overview tab's body, inside Details, as on the page.
+  assert.equal(screen.dataset.mode, 'details');
+  assert.equal(screen.querySelector(':scope > .rd-glance'), null, 'no glance level beside Details');
+  assert.ok(screen.querySelector('.rd-details .rd-glance .rd-sheet'), 'the card sits in the Overview tab');
   assert.equal(screen.querySelector('.rd-page-head .kind-chip'), null, 'no kind chip');
   const g = screen.querySelector('.rd-kv [data-fact="group"]');
   assert.equal(g.hidden, true, 'no Group row in the panel either');

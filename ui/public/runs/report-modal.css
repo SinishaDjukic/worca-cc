@@ -42,14 +42,4 @@
    dead-looking button sit there (D24). */
 .report-modal .confirm-actions a.btn:not([href]){opacity:.5;pointer-events:none;}
 
-/* History › Overview › Files changed: the plain-words stand-in for the (advanced) Diff tab. */
-.hd-ov-files{padding:16px 20px;background:var(--panel);border:1px solid var(--line);border-radius:var(--r-card);display:flex;flex-direction:column;gap:10px;}
-.hd-ov-files-head{display:flex;align-items:baseline;justify-content:space-between;gap:12px;}
-.hd-ov-files-head .link-btn{font-size:var(--fs-meta);}
-.hd-ov-files-list{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:5px;}
-.hd-ov-files-list li{display:flex;align-items:baseline;gap:10px;min-width:0;font-size:var(--fs-body);}
-.hd-ov-file-kind{flex:0 0 58px;color:var(--ink-3);}
-.hd-ov-file-kind.k-new{color:var(--green-ink);}
-.hd-ov-file-kind.k-deleted{color:var(--red-ink);}
-.hd-ov-file-path{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-family:var(--mono);color:var(--ink-2);}
 
