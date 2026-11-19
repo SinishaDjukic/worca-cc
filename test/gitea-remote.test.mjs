@@ -2,9 +2,9 @@
 // helpers that resolve a remote or PR URL by the configured lists.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { parseGiteaHosts, isGiteaHost, giteaApiOrigin, giteaPrUrl, parseGiteaPrUrl } from '../src/shared/gitea-remote.mjs';
-import { CODEBERG_HOST, isCodebergHost, codebergPrUrl, parseCodebergPrUrl } from '../src/shared/codeberg-remote.mjs';
-import { parseRemoteUrl, forgeOf, forgeOfPrUrl, prNumberFromUrl, prIdentity, parsePrRef, watchablePrUrl, remoteRepoSlug, sameRepo, familyForgeOfHost, isFamilyForge, FAMILY_FORGES, FORGE_LABEL } from '../src/core/forge.mjs';
+import { parseGiteaHosts, isGiteaHost, giteaApiOrigin, giteaPrUrl, parseGiteaPrUrl, parseGiteaIssueUrl } from '../src/shared/gitea-remote.mjs';
+import { CODEBERG_HOST, isCodebergHost, codebergPrUrl, parseCodebergPrUrl, parseCodebergIssueUrl } from '../src/shared/codeberg-remote.mjs';
+import { parseRemoteUrl, forgeOf, forgeOfPrUrl, prNumberFromUrl, prIdentity, parsePrRef, watchablePrUrl, linkTargetOf, remoteRepoSlug, sameRepo, familyForgeOfHost, isFamilyForge, FAMILY_FORGES, FORGE_LABEL } from '../src/core/forge.mjs';
 import { checkRows } from './helpers/rows.mjs';
 import { withEnv } from './helpers/with-env.mjs';
 
@@ -33,6 +33,16 @@ test('gitea-remote: host lists and PR URLs', async () => {
       assert.equal(parseGiteaPrUrl('https://PGIT.example.org/tests/worca-tests/pulls/7', HOSTS).host, 'pgit.example.org');
       for (const bad of [`${url}`.replace('pgit', 'other'), 'http://pgit.example.org/tests/worca-tests/pulls/7', 'https://pgit.example.org/tests/pulls/7',
         'https://pgit.example.org/tests/worca-tests/pulls/0', 'https://pgit.example.org/tests/worca-tests/issues/7']) assert.equal(parseGiteaPrUrl(bad, HOSTS), null, bad);
+    } },
+    { name: 'issue URLs: /issues/N with /, ?… or #… tails, only listed hosts; a PR URL and wrong shapes null', run: () => {
+      const url = 'https://pgit.example.org/tests/worca-tests/issues/7';
+      const I = { ...ID, number: 7 };
+      for (const ok of [url, `${url}/`, `${url}?x=1`, `${url}#issuecomment-99`, url.replace('pgit', 'PGIT')]) assert.deepEqual(parseGiteaIssueUrl(ok, HOSTS), I, ok);
+      for (const bad of [url.replace('pgit', 'other'), url.replace('https', 'http'), 'https://pgit.example.org/tests/issues/7', `${url}/extra`,
+        'https://pgit.example.org/tests/worca-tests/issues/0', 'https://pgit.example.org/tests/worca-tests/issues', 'https://pgit.example.org/tests/worca-tests/pulls/7',
+        undefined]) assert.equal(parseGiteaIssueUrl(bad, HOSTS), null, String(bad));
+      assert.deepEqual(parseCodebergIssueUrl('https://codeberg.org/acme/api/issues/3#issuecomment-1'), { host: 'codeberg.org', owner: 'acme', repo: 'api', number: 3 });
+      assert.equal(parseCodebergIssueUrl('https://pgit.example.org/acme/api/issues/3'), null);
     } },
     { name: 'codeberg: a fixed host on the same helpers', run: () => {
       assert.equal(CODEBERG_HOST, 'codeberg.org');
@@ -74,6 +84,18 @@ test('forge: remotes and PR URLs resolve by the configured lists', () => withEnv
       assert.equal(watchablePrUrl(url), true);
       assert.equal(watchablePrUrl('https://other.example.org/a/b/pulls/4'), false, 'an unlisted host is not watchable');
       assert.equal(forgeOfPrUrl('https://other.example.org/a/b/pulls/4'), null);
+    } },
+    { name: 'linkTargetOf: a PR or an issue on Codeberg and on a listed host names its repository; an unlisted host is null', run: () => {
+      const repo = (host, owner, r) => ({ kind: 'repo', host, owner, repo: r });
+      assert.deepEqual(linkTargetOf('https://pgit.example.org/tests/worca-tests/pulls/7/files'), repo('pgit.example.org', 'tests', 'worca-tests'));
+      assert.deepEqual(linkTargetOf('https://PGIT.example.org/tests/worca-tests/issues/2#issuecomment-5'), repo('pgit.example.org', 'tests', 'worca-tests'));
+      assert.deepEqual(linkTargetOf('https://forge.example.org/a/b/pulls/4'), repo('forge.example.org', 'a', 'b'));
+      assert.deepEqual(linkTargetOf('https://forge.example.org/a/b/issues/4'), repo('forge.example.org', 'a', 'b'));
+      assert.deepEqual(linkTargetOf('https://codeberg.org/A/B/pulls/5'), repo('codeberg.org', 'A', 'B'));
+      assert.deepEqual(linkTargetOf('https://codeberg.org/A/B/issues/5'), repo('codeberg.org', 'A', 'B'));
+      assert.ok(sameRepo(parseRemoteUrl('git@pgit.example.org:tests/worca-tests.git'), linkTargetOf('https://pgit.example.org/Tests/Worca-Tests/issues/2')));
+      for (const bad of ['https://other.example.org/a/b/pulls/4', 'https://other.example.org/a/b/issues/4', 'https://pgit.example.org/tests/worca-tests',
+        'http://codeberg.org/A/B/issues/5']) assert.equal(linkTargetOf(bad), null, bad);
     } },
     { name: 'a host listed under both forges is Forgejo (its list wins)', run: () => withEnv({ WORCA_GITEA_HOSTS: 'forge.example.org' }, () => {
       assert.equal(forgeOf(parseRemoteUrl('https://forge.example.org/a/b.git')), 'forgejo');

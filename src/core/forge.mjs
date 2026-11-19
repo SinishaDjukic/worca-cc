@@ -3,8 +3,8 @@
 // (Ship-it, sync, clone, metrics; the workspace map shares the Azure fold via src/shared/azure-remote.mjs).
 import { isAzureHost, parseAzurePath, parseAzurePrUrl, parseAzureWorkItemUrl } from '../shared/azure-remote.mjs';
 import { parseBitbucketIssueUrl, parseBitbucketPrUrl } from '../shared/bitbucket-remote.mjs';
-import { isGiteaHost, parseGiteaHosts, parseGiteaPrUrl } from '../shared/gitea-remote.mjs';
-import { isCodebergHost, parseCodebergPrUrl } from '../shared/codeberg-remote.mjs';
+import { isGiteaHost, parseGiteaHosts, parseGiteaIssueUrl, parseGiteaPrUrl } from '../shared/gitea-remote.mjs';
+import { isCodebergHost, parseCodebergIssueUrl, parseCodebergPrUrl } from '../shared/codeberg-remote.mjs';
 
 export const FORGE_LABEL = Object.freeze({ github: 'GitHub', azure: 'Azure DevOps', bitbucket: 'Bitbucket', gitea: 'Gitea', forgejo: 'Forgejo', codeberg: 'Codeberg' });
 export const FAMILY_FORGES = Object.freeze(['gitea', 'forgejo', 'codeberg']);
@@ -23,6 +23,15 @@ function familyPr(url) {
   const fj = parseGiteaPrUrl(url, forgejoHosts());
   if (fj) return { forge: 'forgejo', ...fj };
   const gt = parseGiteaPrUrl(url, giteaHosts());
+  return gt ? { forge: 'gitea', ...gt } : null;
+}
+/** The family forge of an issue URL, in familyPr's order. */
+function familyIssue(url) {
+  const cb = parseCodebergIssueUrl(url);
+  if (cb) return { forge: 'codeberg', ...cb };
+  const fj = parseGiteaIssueUrl(url, forgejoHosts());
+  if (fj) return { forge: 'forgejo', ...fj };
+  const gt = parseGiteaIssueUrl(url, giteaHosts());
   return gt ? { forge: 'gitea', ...gt } : null;
 }
 /** 'codeberg' | 'forgejo' | 'gitea' | null for a bare host name, in forgeOf's order. */
@@ -58,10 +67,11 @@ export function parseGithubIssueUrl(value) {
 
 /**
  * What an issue / pull request / work item web link points at, for a chat's scope (src/core/ask/scope-links.mjs):
- *   { kind:'repo', host, owner, repo }                            GitHub issue or PR, Azure PR, Bitbucket PR or issue
+ *   { kind:'repo', host, owner, repo }                            GitHub issue or PR, Azure PR, Bitbucket PR or issue,
+ *                                                                 Codeberg / Forgejo / Gitea PR or issue (listed hosts)
  *   { kind:'azure-project', host:'dev.azure.com', org, project }  Azure work item (it names no repository)
  *   null                                                          anything else
- * A repo target compares with sameRepo(parseRemoteUrl(origin), target). Pure; never throws.
+ * A repo target compares with sameRepo(parseRemoteUrl(origin), target). Reads only the host lists; never throws.
  */
 export function linkTargetOf(url) {
   try {
@@ -79,6 +89,8 @@ export function linkTargetOf(url) {
     if (wi) return { kind: 'azure-project', host: wi.host, org: wi.org, project: wi.project };
     const bb = parseBitbucketPrUrl(text) || parseBitbucketIssueUrl(text);
     if (bb) return { kind: 'repo', host: bb.host, owner: bb.owner, repo: bb.repo };
+    const fam = familyPr(text) || familyIssue(text);
+    if (fam) return { kind: 'repo', host: fam.host, owner: fam.owner, repo: fam.repo };
     return null;
   } catch { return null; }
 }

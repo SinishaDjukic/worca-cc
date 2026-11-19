@@ -18,6 +18,8 @@ credential for its own host, one call at a time; agents never get it, in any gua
   listed host, when git is installed where Worca runs.
 - **Team metrics merge dates.** Runs whose branch became a pull request get its creation and merge
   dates, so Shipped, In review and lead time work. The metrics page reports each host on its own.
+- **Chat scope from a pasted link.** A No-project chat switches to the project whose `origin` a
+  pasted pull request or issue link names ([chat home](chat-home.md#scope-from-a-pasted-link)).
 - **Watch PR**, Resolve and the pull request row on the run page and the Overview tab, as on GitHub
   ([below](#watch-pr)).
 
