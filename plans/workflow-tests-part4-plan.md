@@ -4035,7 +4035,7 @@ test('parsePairReply and the prompt: blind labels, the liked result when there i
   assert.equal(parsePairReply('{"winner":"A","reason":"x"}'), null);
   const p = pairPrompt({ first: 'one', second: 'two', liked: 'good one', context: 'req' });
   assert.match(p, /closer to the result the person liked[\s\S]*<liked>\ngood one\n<\/liked>[\s\S]*<result1>\none\n<\/result1>[\s\S]*<result2>\ntwo\n<\/result2>/);
-  assert.doesNotMatch(p, /v4|v5|draft/);
+  // Blindness is checked where it can fail: the runner test below asserts that no version label reaches judgePair (M13).
 });
 
 test('the same winner in both orders wins; a change of mind is unsure; same twice is a tie', async () => {
@@ -4050,7 +4050,34 @@ test('the same winner in both orders wins; a change of mind is unsure; same twic
   assert.equal((await judgePair({ a: '', b: 'B', model: 'm' }, fake([]).d)).error, 'no-result');
 });
 ```
-Add to `test/workflow-test-criteria-runner.test.mjs` a case where `createCriteriaJudge({ …, judgePair: async () => ({ winner: 'b', reason: 'r', swapped: 'b', costUsd: 0.04, error: null, ms: 1 }) })` runs a compare test of v1 against the draft with one try each and asserts one `pair` judgement with `try_id` = the a try, `other_try_id` = the b try, `winner` = 'b', and a second `judgeMissing` adding none.
+Add to `test/workflow-test-criteria-runner.test.mjs`:
+```js
+test('D100: one pair per compared example, blind (texts only), stored once; a second pass asks nothing', async () => {
+  const h = harness();
+  const seen = [];
+  const judge = createCriteriaJudge({
+    subjectOf: async (t) => `${TEXT} (${t.side})`, contextOf: () => '',
+    judgeCriterion: async ({ book }) => { book(0.1, 'billed'); return { met: true, reason: 'r', proof: 'Cut tickets by 60%', proofFound: true, error: null, costUsd: 0.1, ms: 1 }; },
+    judgePair: async (args) => { seen.push(args); return { winner: 'b', reason: 'r', swapped: 'b', costUsd: 0.04, error: null, ms: 1 }; },
+    book: (row) => recordTestJudgeCost(row),
+  });
+  h.deps.judgeCriteria = (ex, t, o) => judge.judgeTry(ex, t, o);
+  h.deps.judgeMissing = (run, o) => judge.judgeMissing(run, o);
+  const ex = example([{ text: 'Names a success metric' }]);
+  const runner = createTestRunner(h.deps);
+  const run = await runner.start({ workflowId: WF, kind: 'compare', a: 1, b: 'draft', exampleIds: [ex.id], tries: 1, reuseA: false });
+  await waitDone(runner, run.id);
+  const tries = store.triesOfRun(run.id);
+  const A = tries.find((t) => t.side === 'a'); const B = tries.find((t) => t.side === 'b');
+  const pairs = () => prepare("SELECT try_id, other_try_id, winner FROM wf_test_judgements WHERE purpose = 'pair'").all().map((r) => ({ ...r }));
+  assert.deepEqual(pairs(), [{ try_id: A.id, other_try_id: B.id, winner: 'b' }]);
+  assert.deepEqual(Object.keys(seen[0]).sort(), ['a', 'b', 'book', 'context', 'liked', 'mock', 'model'], 'blind: no version label reaches the question');
+  assert.deepEqual([seen[0].a, seen[0].b], [`${TEXT} (a)`, `${TEXT} (b)`]);
+  await judge.judgeMissing(store.readTestRun(run.id));
+  assert.equal(seen.length, 1, 'asked once');
+  assert.equal(pairs().length, 1);
+});
+```
 
 - [ ] **Step 2: Run it to see it fail**
 
@@ -5197,9 +5224,108 @@ export function renderByCriterion(root, data, { doc, labels, onTrust = null }) {
 
 - [ ] **Step 4: Wire it into Compare**
 
-`test-compare.mjs` `renderCompare`: when `c.criteria` (the controller passes `{ counts }` from `GET …/runs/:run/criteria` beside the compare read) has `counts.total > 0`, render board 5's tablist (`role="tablist"`, two `role="tab"` buttons `BY_EXAMPLE`, `BY_CRITERION`, as the try tabs are built) above the examples table, and board 5's card "Worca's checking" with `checkingSentence(counts)` and a `SEE_BY_CRITERION` link. Picking "By criterion" calls `actions.byCriterion(box)`, which `tests-app.mjs` answers with `renderByCriterion(box, data, { doc, labels, onTrust: () => wftShow('trust') })` after `GET …/runs/:run/criteria`. CSS for `.wft-bc-row` (grid `minmax(0,1fr) 80px 80px 230px`, `.is-worse` `var(--red-bg)`, `.is-better` `var(--green-bg)`), `.wft-exact` (violet pill), tokens only.
+1. `criteria-pages.mjs` (append; import `btn` from `./test-ui.mjs`, and `checkingSentence`, `BY_EXAMPLE`, `BY_CRITERION`, `SEE_BY_CRITERION` from `criteria-text.mjs`). The tabs live here so `test-compare.mjs` only gains wiring lines:
+```js
+/** Board 5 (Task 21): the "By example · By criterion" tabs over Compare's table, the box board 12 paints into, and the card
+ *  "Worca's checking". `onCriteria(box)` paints By criterion into the box (the controller reads GET …/runs/:run/criteria). */
+export function compareCriteriaParts(doc, { counts, table, onCriteria }) {
+  const tabs = el(doc, 'div', 'seg wft-by-tabs');
+  tabs.setAttribute('role', 'tablist');
+  tabs.setAttribute('aria-label', 'Show the results');
+  const box = el(doc, 'div', 'wft-by-crit');
+  box.hidden = true;
+  let crit = false;
+  const show = (on) => {
+    crit = on;
+    for (const [t, sel] of [[ex, !on], [cr, on]]) { t.classList.toggle('on', sel); t.setAttribute('aria-selected', sel ? 'true' : 'false'); t.tabIndex = sel ? 0 : -1; }
+    table.hidden = on;
+    box.hidden = !on;
+    if (on) onCriteria(box);
+  };
+  const tab = (label, on) => {
+    const t = btn(doc, label, () => show(on), '');
+    t.setAttribute('role', 'tab');
+    t.addEventListener('keydown', (e) => {   // two tabs: either arrow moves to the other one
+      if (e.key !== 'ArrowRight' && e.key !== 'ArrowLeft') return;
+      e.preventDefault();
+      show(!crit);
+      (crit ? cr : ex).focus();
+    });
+    return t;
+  };
+  const ex = tab(BY_EXAMPLE, false);
+  const cr = tab(BY_CRITERION, true);
+  tabs.append(ex, cr);
+  const card = el(doc, 'section', 'card wft-check-card');
+  card.append(el(doc, 'h2', '', "Worca's checking"), el(doc, 'p', '', checkingSentence(counts)),
+    btn(doc, SEE_BY_CRITERION, () => { show(true); cr.focus(); }, 'wft-linkbtn'));
+  show(false);
+  return { tabs, box, card };
+}
+```
+2. `test-compare.mjs` `renderCompare` (about 8 lines; import `compareCriteriaParts` from `./criteria-pages.mjs`). Replace `by.append(hb, table);` with:
+```js
+  // Part 4 (board 5): with criteria, "By example · By criterion" tabs instead of the heading, and the card "Worca's checking".
+  const crit = c.criteria && c.criteria.counts && c.criteria.counts.total > 0
+    ? compareCriteriaParts(doc, { counts: c.criteria.counts, table, onCriteria: (box) => actions.byCriterion(box) }) : null;
+  if (crit) { by.removeAttribute('aria-labelledby'); by.setAttribute('aria-label', 'Results'); by.append(crit.tabs, table, crit.box); }
+  else by.append(hb, table);
+```
+and replace `cols.append(ch);` with:
+```js
+  if (crit) { const right = el(doc, 'div', 'wft-col'); right.append(crit.card, ch); cols.append(right); } else cols.append(ch);
+```
+3. `tests-app.mjs` (about 14 lines; import `renderByCriterion` from `./criteria-pages.mjs`). In `wftReadView`, the compare read also reads the counts:
+```js
+    if (wft.view === 'compare') return wftCompareRead(base);
+```
+with, beside `wftReadView`:
+```js
+  /** Board 5 and Part 4: the compare read, with its criteria (counts, rows) beside it. A failed criteria read leaves Compare as it was. */
+  async function wftCompareRead(base) {
+    const [r, crit] = await Promise.all([wftCall('GET', `${base}/compare`), wftCall('GET', `${base}/criteria`)]);
+    return r.ok && crit.ok ? { ...r, data: { ...r.data, criteria: crit.data } } : r;
+  }
+```
+and in `wftCompareActions`' returned object:
+```js
+      byCriterion: async (box) => {   // Part 4 (board 12)
+        const r = await wftCall('GET', `${wftBase(id)}/runs/${run.id}/criteria`);
+        if (!still()) return;
+        if (!r.ok) { notify({ tone: 'err', title: 'Could not read your criteria', detail: r.error }); return; }
+        renderByCriterion(box, r.data, { doc, labels: wft.data.labels, onTrust: null });   // Task 23 gives onTrust
+      },
+```
+4. CSS for `.wft-bc-row` (grid `minmax(0,1fr) 80px 80px 230px`, `.is-worse` `var(--red-bg)`, `.is-better` `var(--green-bg)`), `.wft-exact` (violet pill), `.wft-by-tabs`, `.wft-check-card`, tokens only.
 
-Add to the test: a `renderCompare` case with `criteria: { counts: { total: 12, reliable: 10, unreliable: 1, waiting: 1 } }` asserting the tablist and "Worca's checking is reliable for 10 of 12 criteria. 1 unreliable criterion is shown, but does not decide better or worse." (copy the compare fixture from `test/ui-workflow-test-compare.test.mjs`).
+Add to the test (import `renderCompare` from `../ui/public/workflows/test-compare.mjs` and `compareModel` from `../src/shared/workflow-tests/compare.mjs`):
+```js
+test('board 5: with criteria, the tabs and the card; By criterion paints into its box; without, the heading as before', () => {
+  const { window } = new JSDOM('<!doctype html><div id="r"></div>');
+  const doc = window.document;
+  const root = doc.getElementById('r');
+  const v = { passed: true, basics: [], checks: [], facts: { durationMs: 60000, sentBack: 0 } };
+  const tries = [{ id: 1, side: 'a', exampleId: 1, status: 'passed', costUsd: 1, verdict: v }, { id: 2, side: 'b', exampleId: 1, status: 'passed', costUsd: 1, verdict: v }];
+  const c = { run: { id: 7, kind: 'compare', a: 4, b: 'draft', tries: 1, status: 'done', finishedAt: '2026-10-26T10:00:00Z', capUsd: 15, exampleIds: [1] },
+    title: 'Your v5 draft compared with v4', labels: { a: 'v4', b: 'v5 draft' }, examples: 1, costUsd: 2,
+    model: compareModel({ examples: [{ id: 1, name: 'Bulk invoice export' }], a: { label: 'v4' }, b: { label: 'v5 draft' }, tries }),
+    changes: [], fair: [], criteria: { counts: { total: 12, reliable: 10, unreliable: 1, waiting: 1 } } };
+  const painted = [];
+  const actions = { back() {}, testAgain() {}, open() {}, tryMore() {}, byCriterion: (box) => { painted.push(box); box.textContent = 'board 12'; } };
+  renderCompare(root, c, actions, { doc, now: Date.parse('2026-10-26T12:00:00Z') });
+  const tabs = [...root.querySelectorAll('.wft-by-tabs [role="tab"]')];
+  assert.deepEqual(tabs.map((t) => [t.textContent, t.getAttribute('aria-selected')]), [['By example', 'true'], ['By criterion', 'false']]);
+  assert.equal(root.querySelector('.wft-check-card p').textContent,
+    "Worca's checking is reliable for 10 of 12 criteria. 1 unreliable criterion is shown, but does not decide better or worse.");
+  tabs[1].click();
+  assert.equal(painted.length, 1);
+  assert.deepEqual([root.querySelector('.wft-by-crit').hidden, root.querySelector('.wft-by .wft-table').hidden], [false, true]);
+  const plain = doc.createElement('div');
+  renderCompare(plain, { ...c, criteria: null }, actions, { doc, now: Date.parse('2026-10-26T12:00:00Z') });
+  assert.equal(plain.querySelector('.wft-by-tabs'), null);
+  assert.equal(plain.querySelector('.wft-by-title').textContent, 'By example', 'G9: one view keeps its heading');
+});
+```
 
 - [ ] **Step 5: Run the tests and the guards**
 
@@ -5208,7 +5334,30 @@ Expected: PASS.
 
 - [ ] **Step 6: After P4-M5 is approved**
 
-Build Compare's sentence from `notes.unreliableOnly` (Task 9), the line and button "Check them on these tries (about $X)" (`POST …/runs/:run/criteria/check`, then poll `GET …/runs/:run/criteria` every 2 s while `checking`), and the progress line while a test checks criteria after its last try (`runner.criteriaPhaseOf`, added to `progressOf`'s read in `routes.mjs`). Pin the words first.
+Pin the approved words in the test first. Then build, in `renderCompare`, the sentence from `c.notes.unreliableOnly` (Task 9), the line for `c.notes.notChecked` (I6), the line and button "Check them on these tries (about $X)" (`actions.checkCriteria()`), and "· the cost of some checks is not known" after the cost when `c.costUnknown` (P4-Q17; `compareOf` returns `costUnknown: store.costUnknownOfRun(run.id)`, one line in `service.mjs`); in the progress page, the line while a test checks criteria after its last try (`routes.mjs`'s progress read adds `criteriaPhase: runner.criteriaPhaseOf(run.id)`). The wiring no mock decides, in `tests-app.mjs`:
+```js
+      // wftCompareActions: P4-Q15, "Check them on these tries"
+      checkCriteria: async () => {
+        const r = await wftCall('POST', `${wftBase(id)}/runs/${run.id}/criteria/check`, {});
+        if (!r.ok) { notify({ tone: 'err', title: 'Worca did not start checking', detail: r.error }); return; }
+        if (still()) wftPollCriteria(id, run.id);
+      },
+```
+```js
+  /** P4-Q15: while Worca checks an older test's criteria, read again every 2 s; stops when the view moves on. The runner's
+   *  workflow-tests-changed frame (wftChanged) also repaints Compare when the check ends. */
+  function wftPollCriteria(id, runId) {
+    const still = () => currentView() === 'workflows' && wftWorkflowId() === id && wft.view === 'compare' && wft.runId === runId;
+    const tick = async () => {
+      if (!still()) return;
+      const r = await wftCall('GET', `${wftBase(id)}/runs/${runId}/criteria`);
+      if (!still()) return;
+      if (r.ok && r.data.checking) { win.setTimeout(tick, 2000); return; }
+      void wftRefresh();
+    };
+    win.setTimeout(tick, 2000);
+  }
+```
 
 - [ ] **Step 7: Commit** (Steps 1–5, then Step 6)
 
