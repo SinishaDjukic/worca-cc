@@ -224,7 +224,7 @@ import {
   collectProviderRow, collectSpeechRow, formatSpeechBytes, renderImportSheet, renderEndpointSheet, collectImportSheet,
   collectOpenRouterRow, endpointRowMatches, ENDPOINT_PRESETS,
   setModelUpstream, applyImagesPreset, collectImagesRow, imagesRowProblem, showImagesTest, showImagesSaveError, collectSoundRow,
-  connectionWhere,
+  connectionWhere, syncCopilotHostField,
 } from './bridge-view.mjs';
 import {
   renderSourcePane, collectSourcePane, renderProfileGate, renderProfileBar,
@@ -20544,6 +20544,7 @@ function renderProvidersViewBody() {
   el.providersList.replaceChildren(renderProvidersTab(mvState.providers, { signIn: mvState.signIn, open: mvState.pvOpen, counts }));
   stampProviderFields(el.providersList);
   restoreProviderEdits(el.providersList, edits);
+  syncCopilotHostField(el.providersList);   // a restored Account choice shows or hides the GHE.com host
   providersDrawnKey = providersKey(counts);
   // OpenRouter's free-model allowance, read afresh each time the card is drawn.
   refreshFreeDaily({ force: true });
@@ -20615,7 +20616,7 @@ async function copilotSignInFlow() {
     const res = await fetch('/api/providers/copilot/login', { method: 'POST' });
     const flow = await safeJson(res);
     if (!res.ok) return setProviderMsg('copilot', flow.error || `HTTP ${res.status}`, true, 'Sign-in did not start');
-    mvState.signIn = { ...flow, status: 'Waiting for approval on github.com…' };
+    mvState.signIn = { ...flow, status: `Waiting for approval on ${flow.host || 'github.com'}…` };
     repaintProviders();
     const poll = async () => {
       if (!mvState.signIn || mvState.signIn.deviceCode !== flow.deviceCode) return;
@@ -20637,7 +20638,7 @@ async function copilotSignInFlow() {
           return;
         }
         const status = providerRoot()?.querySelector('.mv-cp-status');
-        if (status) status.textContent = 'Waiting for approval on github.com…';
+        if (status) status.textContent = `Waiting for approval on ${flow.host || 'github.com'}…`;
         copilotPollTimer = setTimeout(poll, Math.max(3, Number(j.interval) || flow.interval || 5) * 1000);
       } catch (e) {
         copilotPollTimer = setTimeout(poll, 8000);
@@ -20669,6 +20670,7 @@ async function copilotSignOutFlow() {
 // `onError(message)`, when given, shows a refused Save in the row's own place instead of the card's alert.
 async function patchProviderFlow(name, body, { btn = null, onError = null } = {}) {
   setProviderMsg(name, '');
+  const wasConnected = name === 'copilot' && !!(mvState.providers && mvState.providers.copilot && mvState.providers.copilot.connected);
   const r = await withButton(btn, async () => {
     const res = await fetch(`/api/providers/${encodeURIComponent(name)}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
     const data = await safeJson(res);
@@ -20683,11 +20685,15 @@ async function patchProviderFlow(name, body, { btn = null, onError = null } = {}
     await refreshModelsEverywhere();
     return { ok: true };
   }, { done: 'Saved' });
-  if (r.skipped) return;
+  if (r.skipped) return false;
   if (!r.ok) {
     if (onError) onError(r.error);
     else setProviderMsg(name, r.error, true, 'Not saved');
-    return;
+    return false;
+  }
+  // A change of the GitHub host signs the Copilot account out (a token belongs to one host): say so.
+  if (wasConnected && !(mvState.providers.copilot && mvState.providers.copilot.connected)) {
+    setProviderMsg('copilot', `Signed out: sign in again on ${copilotHostLabel(mvState.providers.copilot)}.`);
   }
   // The repaint replaced the clicked button: give its successor the "Saved" state.
   if (btn && !btn.isConnected) {
@@ -20695,6 +20701,43 @@ async function patchProviderFlow(name, body, { btn = null, onError = null } = {}
     const next = providerRoot()?.querySelector(`.mv-pv-row[data-provider="${name}"] .${cls}`);
     if (next) await withButton(next, () => undefined, { done: 'Saved' });
   }
+  return true;
+}
+
+const COPILOT_ACCOUNT_LABELS = { individual: 'Individual', business: 'Business', enterprise: 'Enterprise', 'ghe-com': 'GHE.com tenant' };
+
+/** Where the Copilot sign-in lives, for messages: githubHost is null for a GHE.com tenant setting without a usable host. */
+function copilotHostLabel(c) {
+  return (c && c.githubHost) || (c && c.accountType === 'ghe-com' ? 'your GHE.com tenant' : 'github.com');
+}
+
+/** Ask before a Copilot change that moves the GitHub host while signed in (the sign-in belongs to the old host). */
+function confirmCopilotHostSwitch(c, toLabel) {
+  return confirmModal({
+    title: `Switch to ${toLabel}?`,
+    message: `Switch to ${toLabel}? This signs you out of GitHub Copilot${c.login ? ` (@${c.login})` : ''}, because the sign-in belongs to ${copilotHostLabel(c)}.`,
+    confirmLabel: 'Switch and sign out', danger: true,
+  });
+}
+
+/** The Copilot row's Save: the account, the GHE.com host (with a GHE.com account) and the cap go together. A change that
+ *  moves the GitHub host while signed in asks first: the server signs the account out (a sign-in belongs to one host). */
+async function copilotSaveFlow(btn) {
+  const body = collectProviderRow(providerRoot(), 'copilot');
+  if (!body) return;
+  const c = (mvState.providers && mvState.providers.copilot) || {};
+  // The server's normalization (normalizeGheHost), so an unchanged host typed with https:// or a trailing / asks nothing.
+  const toHost = body.accountType === 'ghe-com'
+    ? String(body.enterpriseHost || '').toLowerCase().replace(/^https:\/\//, '').replace(/\/$/, '')
+    : 'github.com';
+  // Where the sign-in lives now: githubHost, else github.com for the non-GHE.com types. Null (a GHE.com setting
+  // without a usable host) never equals the new host: the save moves the sign-in.
+  const fromHost = c.githubHost || (c.accountType === 'ghe-com' ? null : 'github.com');
+  if (c.connected && toHost !== fromHost) {
+    const label = body.accountType === 'ghe-com' ? (toHost || 'the new host') : (COPILOT_ACCOUNT_LABELS[body.accountType] || body.accountType);
+    if (!(await confirmCopilotHostSwitch(c, label))) return;
+  }
+  await patchProviderFlow('copilot', body, { btn });
 }
 
 /** "Remove speech models": frees the built-in engines' downloads; the next mic use fetches them again. */
@@ -21527,7 +21570,8 @@ if (el.providersList) {
     else if (t.classList.contains('mv-pv-save') && t.dataset.provider === 'openrouter') {
       const body = collectOpenRouterRow(t.closest('.mv-or-row'));
       if (body) patchProviderFlow('openrouter', body, { btn: t });
-    } else if (t.classList.contains('mv-pv-save')) {
+    } else if (t.classList.contains('mv-pv-save') && t.dataset.provider === 'copilot') copilotSaveFlow(t);
+    else if (t.classList.contains('mv-pv-save')) {
       const body = collectProviderRow(providerRoot(), t.dataset.provider);
       if (body) patchProviderFlow(t.dataset.provider, body, { btn: t });
     } else if (t.classList.contains('mv-pv-test')) testProviderFlow(t);
@@ -21557,7 +21601,8 @@ if (el.providersList) {
   el.providersList.addEventListener('change', (ev) => {
     const t = ev.target;
     if (!t || !t.classList) return;
-    if (t.classList.contains('mv-im-service')) applyImagesPreset(providerRoot(), t.value);
+    if (t.classList.contains('mv-cp-account')) syncCopilotHostField(providerRoot());
+    else if (t.classList.contains('mv-im-service')) applyImagesPreset(providerRoot(), t.value);
   });
 }
 

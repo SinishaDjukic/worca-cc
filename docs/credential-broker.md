@@ -151,6 +151,22 @@ Operators add slots (another OpenAI-compatible gateway, say) in `WORCA_BROKER_SL
 slot is `per-person` (each person saves their own) or `operator` (one credential for everyone,
 meant for keyless local models; a real team key is off unless `WORCA_BROKER_ALLOW_TEAM_KEYS=1`).
 
+**Copilot on a GHE.com tenant.** Override the `copilot` slot so its exchange, sign-in and
+gateway all name the tenant (the broker has no separate setting; worca's own `enterpriseHost`
+is unused while the broker is on):
+
+```json
+[{ "id": "copilot",
+   "upstream": "https://copilot-api.acme.ghe.com",
+   "exchangeUrl": "https://api.acme.ghe.com/copilot_internal/v2/token",
+   "deviceBaseUrl": "https://acme.ghe.com" }]
+```
+
+The broker derives the tenant from `exchangeUrl` (else `deviceBaseUrl`) and then trusts, as the
+gateway the exchange names, only `*.githubcopilot.com` and `https://*.acme.ghe.com` (no port, no
+credentials); anything else falls back to the slot's `upstream`. A slots file whose `exchangeUrl`
+and `deviceBaseUrl` name different tenants is refused at start.
+
 **Every provider goes through it.** Claude models go straight to their slot. Models from
 a Models › Providers row (OpenAI, OpenRouter, Copilot, a gateway) still go through worca's
 translation bridge, which forwards to `<broker>/p/<slot>` with the spawn's token; the slot is

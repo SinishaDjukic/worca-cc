@@ -85,8 +85,8 @@ Values in angle brackets are per instance. Everything not listed keeps Worca's d
 | `WORCA_TERMINAL_REMOTE` | `1` or `0` | Whether signed-in people get the terminal. Off by default on a hosted instance; `0` is off. |
 | `WORCA_ACTIONS_REMOTE` | `1` or `0` | Whether signed-in people can run actions. Same rule. |
 | `WORCA_EGRESS_MODE` | `open`, `block` or `allow` | Outbound network policy ([details](remote-access.md#outbound-network-policy-hosting-platform)). Any other value fails closed to `allow`. |
-| `WORCA_EGRESS_ALLOW` | comma-separated hosts | Read in `allow` mode. Put your own hosts first (heartbeat endpoint, issuer, the broker's private host). |
-| `WORCA_EGRESS_DENY` | comma-separated hosts | Always wins. `.invalid` stands for an empty list. |
+| `WORCA_EGRESS_ALLOW` | comma-separated hosts | Read in `allow` mode. Put your own hosts first (heartbeat endpoint, issuer, the broker's private host). In `allow` mode worca also adds the GHE.com tenant set for GitHub Copilot (`<t>.ghe.com`, `.<t>.ghe.com`). |
+| `WORCA_EGRESS_DENY` | comma-separated hosts | Always wins, including over that tenant (`.ghe.com` refuses it). `.invalid` stands for an empty list. |
 | `WORCA_MAX_PARALLEL` | integer ≥ 1 | Agent steps that run at once (default 4). Match it to the container's size. |
 | `WORCA_MAX_PARALLEL_SCRIPTS` | integer ≥ 1 | Script steps that run at once (default 2). |
 | `WORCA_AUTO_RESUME` | `1` | Runs a stop's drain paused are resumed at the next start (the default); `1` also resumes runs a crash left interrupted, `0` turns it off. |

@@ -350,6 +350,13 @@ loopback only, so no other host goes around the proxy. worca's own outbound call
 through it too. The overlay's default allowlist never applies under a mode. If the proxy can't
 start, worca does not start (exit 78). `open` or no mode: no proxy, nothing changes.
 
+In `allow` mode worca also adds the GitHub Copilot **GHE.com tenant** configured on its Providers
+page (`<t>.ghe.com` and `.<t>.ghe.com`: GitHub's documented Copilot allowlist), live when the
+setting changes, and logs each addition (`Egress: allowing … for the GitHub Copilot GHE.com
+tenant`). `WORCA_EGRESS_DENY` still wins: set `WORCA_EGRESS_DENY=.ghe.com` to refuse it. `block`
+mode and no mode need nothing. Anyone who can write worca's `settings.json` can name a tenant, so
+a platform that does not want that sets the DENY entry.
+
 A refused host gets a `403` whose body names the host and says the organization's outbound
 network policy blocked it, so an agent's tool error says why (`curl`, `git` and `npm` show it as
 a failed `CONNECT`). worca's log has one `egress: … DENY CONNECT host:443` line per refusal, and

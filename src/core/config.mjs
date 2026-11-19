@@ -24,7 +24,8 @@ import { cleanPick } from '../shared/graph/role-slots.mjs';
 import { ROLE_KEY_RE } from '../shared/graph/role-review-step.mjs';
 import { connectionOf, harnessesOf, runsOn, harnessesLabel, effortsOn } from '../shared/connections.mjs';
 import { bridgeBaseUrl, bridgeSecret } from './bridge/server.mjs';
-import { listGlobalModels, addGlobalModel, removeGlobalModel, hideBuiltinModels, hideBuiltinEngines, readSettings, memoryDefragModel, setMemoryDefragModel, modelRolesSetting, assertDesignModelsInput } from './settings.mjs';
+import { copilotBlockHost } from './ghe-host.mjs';
+import { providerConfig, listGlobalModels, addGlobalModel, removeGlobalModel, hideBuiltinModels, hideBuiltinEngines, readSettings, memoryDefragModel, setMemoryDefragModel, modelRolesSetting, assertDesignModelsInput } from './settings.mjs';
 /** Whether the developer stored the hide-built-ins flag (a team default applies only when not). */
 const readSettingsHideStored = () => { const s = readSettings(); return typeof s.hideBuiltinModels === 'boolean' || s.hideBuiltinModelsChosen === true; };
 import { listPluginModels, allPluginModels, flattenPluginModelEnv } from './plugin-models.mjs';
@@ -276,15 +277,26 @@ function composeCatalog(projectCustom = [], { projectDir = null } = {}) {
   // true too: the CLI IS pointed at a custom endpoint (worca's own bridge).
   // provider + the entry's own key/base URL -> readiness (both can decide it)
   const readiness = new Map();
+  // The GHE.com tenant the Copilot provider signs in to, so pickers can tell it from github.com (null for github.com,
+  // and with the credential broker on, where worca's own host setting is unused).
+  let tenant;
+  const copilotTenant = () => {
+    if (tenant === undefined) {
+      const h = brokerEnabled() ? null : copilotBlockHost(providerConfig('copilot'));
+      tenant = h && h !== 'github.com' ? h : null;
+    }
+    return tenant;
+  };
   const bridgeShape = (m) => {
     if (!m.upstream) return {};
     const p = m.upstream.provider;
     const key = `${p}\n${m.upstream.apiKey || ''}\n${m.upstream.baseUrl || ''}`;
     if (!readiness.has(key)) readiness.set(key, providerReadiness(m.upstream));
     const r = readiness.get(key);
+    const host = p === 'copilot' ? copilotTenant() : null;
     return {
-      connection: connectionOf(m),
-      bridged: p, upstreamApi: m.upstream.api, upstreamModel: m.upstream.model,
+      connection: connectionOf(host ? { ...m, bridgedHost: host } : m),
+      bridged: p, upstreamApi: m.upstream.api, upstreamModel: m.upstream.model, ...(host ? { bridgedHost: host } : {}),
       needsSignIn: !r.ok, ...(r.ok ? {} : { signInReason: r.reason }),
       ...(m.upstream.capabilities ? { capabilities: { ...m.upstream.capabilities } } : {}),
     };

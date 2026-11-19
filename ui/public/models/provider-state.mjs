@@ -106,7 +106,9 @@ export function providerSummary(providers, name, counts = {}) {
   switch (name) {
     case 'copilot': {
       const c = blockOf(p, name);
-      return `${capital(String(c.accountType || DEFAULTS.copilot.accountType))} · ${atATime(c)}`;
+      // A GHE.com tenant reads as its host (acme.ghe.com), not as the account type's id.
+      const account = c.accountType === 'ghe-com' ? (c.githubHost || c.enterpriseHost || 'GHE.com tenant') : capital(String(c.accountType || DEFAULTS.copilot.accountType));
+      return `${account} · ${atATime(c)}`;
     }
     case 'openrouter': return `openrouter.ai · ${atATime(blockOf(p, name))}`;
     case 'openai': case 'anthropic': {

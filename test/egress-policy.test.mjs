@@ -1187,3 +1187,82 @@ test('opted out at boot: clearing networkProxy.enabled auto-starts without a res
     for (const [k, v] of Object.entries(env)) assert.doesNotMatch(String(v), /Password/, `${k} carries no password`);
   } finally { await live.close(); await fake.close(); o.server.close(); }
 });
+
+// ── GHE.com tenant (Copilot data residency): worca adds the configured tenant to ITS OWN allow policy ──
+import { copilotTenantAllow } from '../src/core/egress-policy.mjs';
+
+const tenantSettings = (host, accountType = 'ghe-com') => ({ providers: { copilot: { accountType, ...(host ? { enterpriseHost: host } : {}) } } });
+const allowEnv = (extra = {}) => ({ PATH: '/bin', WORCA_EGRESS_MODE: 'allow', WORCA_EGRESS_ALLOW: 'app.worca.dev', ...extra });
+
+test('copilotTenantAllow: ghe-com with a valid host only; never throws', () => {
+  assert.deepEqual(copilotTenantAllow(tenantSettings('acme.ghe.com')), ['acme.ghe.com', '.acme.ghe.com']);
+  for (const s of [tenantSettings('acme.ghe.com', 'enterprise'), tenantSettings(null), tenantSettings('github.com'), tenantSettings('acme.ghe.com/x'), {}, null, undefined, { providers: 5 }, { providers: { copilot: 'x' } }]) {
+    assert.deepEqual(copilotTenantAllow(s), []);
+  }
+});
+
+test('allow mode: a configured GHE.com tenant is added (apex + subdomains); api.acme.ghe.com and copilot-api.acme.ghe.com pass, other.ghe.com does not', async () => {
+  const env = allowEnv(); const logs = [];
+  const r = await startEgressPolicy({ env, settings: () => tenantSettings('acme.ghe.com'), log: (l) => logs.push(l), unref: true });
+  try {
+    assert.equal(r.status, 'on');
+    for (const h of ['acme.ghe.com', 'api.acme.ghe.com', 'copilot-api.acme.ghe.com', 'app.worca.dev']) assert.equal(decide(h, r.policy).ok, true, h);
+    for (const h of ['other.ghe.com', 'ghe.com', 'evilacme.ghe.com', 'acme.ghe.com.evil.example', 'github.com']) assert.equal(decide(h, r.policy).ok, false, h);
+    assert.ok(logs.some((l) => /Egress: allowing acme\.ghe\.com, \.acme\.ghe\.com for the GitHub Copilot GHE\.com tenant \(WORCA_EGRESS_DENY still applies\)/.test(l)), logs.join('\n'));
+  } finally { await r.close(); }
+});
+
+test('DENY still wins over an injected tenant (WORCA_EGRESS_DENY=.ghe.com)', async () => {
+  const r = await startEgressPolicy({ env: allowEnv({ WORCA_EGRESS_DENY: '.ghe.com' }), settings: () => tenantSettings('acme.ghe.com'), unref: true });
+  try {
+    assert.equal(decide('api.acme.ghe.com', r.policy).ok, false);
+    assert.equal(decide('api.acme.ghe.com', r.policy).rule, 'deny');
+  } finally { await r.close(); }
+});
+
+test('open mode reads no tenant settings and starts nothing; block mode is unchanged', async () => {
+  const boom = () => { throw new Error('settings must not be read'); };
+  const open = await startEgressPolicy({ env: { PATH: '/bin' }, settings: boom, proxyOn: () => false });
+  assert.equal(open.status, 'off');
+  const inherited = { PATH: '/bin' }; const url = 'http://127.0.0.1:9';
+  Object.assign(inherited, egressChildEnv(url), { WORCA_EGRESS_MODE: 'allow' });
+  assert.equal((await startEgressPolicy({ env: inherited, settings: boom, proxyOn: () => false })).status, 'inherited');
+  const block = await startEgressPolicy({ env: { PATH: '/bin', WORCA_EGRESS_MODE: 'block', WORCA_EGRESS_DENY: 'bad.example' }, settings: () => tenantSettings('acme.ghe.com'), unref: true });
+  try {
+    assert.equal(block.status, 'on');
+    assert.deepEqual(block.policy.allow, []);
+    assert.equal(block.setExtraAllow, undefined);
+    assert.equal(decide('api.acme.ghe.com', block.policy).ok, true);
+  } finally { await block.close(); }
+});
+
+test('a bad stored host injects nothing; a throwing extraAllow keeps the base list', async () => {
+  const r = await startEgressPolicy({ env: allowEnv(), settings: () => tenantSettings('acme.ghe.com/x'), unref: true });
+  try { assert.deepEqual(r.policy.allow, ['app.worca.dev']); } finally { await r.close(); }
+  const t = await startEgressPolicy({ env: allowEnv(), settings: () => tenantSettings('acme.ghe.com'), unref: true, extraAllow: () => { throw new Error('nope'); } });
+  try { assert.deepEqual(t.policy.allow, ['app.worca.dev']); } finally { await t.close(); }
+});
+
+test('live: a settings change adds, swaps and removes the tenant entries without a restart', async () => {
+  let tick = null; let stored = tenantSettings('acme.ghe.com');
+  const logs = [];
+  const live = await startLiveEgress({
+    env: allowEnv(), settings: () => stored, readStrict: () => stored, log: (l) => logs.push(l), unref: true,
+    watch: (fn) => { tick = fn; return () => {}; },
+  });
+  try {
+    const allowed = (h) => decide(h, live.current().policy).ok;
+    assert.equal(allowed('api.acme.ghe.com'), true);
+    stored = tenantSettings('other.ghe.com'); tick();
+    assert.equal(allowed('api.acme.ghe.com'), false);
+    assert.equal(allowed('copilot-api.other.ghe.com'), true);
+    const n = logs.filter((l) => /Egress: allowing/.test(l)).length;
+    tick();                                                           // unchanged: no repeat line
+    assert.equal(logs.filter((l) => /Egress: allowing/.test(l)).length, n);
+    stored = tenantSettings(null, 'individual'); tick();
+    assert.equal(allowed('copilot-api.other.ghe.com'), false);
+    assert.deepEqual(live.current().policy.allow, ['app.worca.dev']);
+    stored = tenantSettings('acme.ghe.com'); tick();
+    assert.equal(allowed('acme.ghe.com'), true);
+  } finally { await live.close(); }
+});

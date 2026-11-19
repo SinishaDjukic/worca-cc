@@ -67,6 +67,7 @@ import {
   isUpstreamBaseUrl, REASONING_EFFORT_LEVELS, OPENROUTER_SORTS,
 } from './model-env.mjs';
 import { MODEL_ROLES } from '../shared/model-roles.mjs';
+import { GHE_COM_ACCOUNT_TYPE, normalizeGheHost, copilotBlockHost } from './ghe-host.mjs';
 import { CODEX_PRICES, listPriceFor } from './list-prices.mjs';
 import { engineLabel } from '../shared/engine-switch.mjs';
 import { validateNightPatch, NIGHT_TOGGLES } from './night/config.mjs';
@@ -2587,7 +2588,7 @@ export async function removeGlobalModel(id) {
 // it in memory. Readers are loud-and-lenient; setters throw.
 //
 //   providers: {
-//     copilot:   { githubToken?, accountType?, maxConcurrent?, login? },
+//     copilot:   { githubToken?, accountType?, enterpriseHost?, maxConcurrent?, login? },   // enterpriseHost: only with accountType 'ghe-com' (a GHE.com tenant, like acme.ghe.com)
 //     openai:    { baseUrl?, apiKey?, maxConcurrent? },
 //     anthropic: { baseUrl?, apiKey?, maxConcurrent? },
 //     speech:    { stt: {...}, tts: {...} },   // voice mode, NOT an upstream — see the Speech block below
@@ -2615,6 +2616,12 @@ function sanitizeProvider(name, raw) {
     if (r.accountType !== undefined) {
       if (COPILOT_ACCOUNT_TYPES.includes(r.accountType)) out.accountType = r.accountType;
       else warn('accountType', `must be one of ${COPILOT_ACCOUNT_TYPES.join(' | ')}`);
+    }
+    if (r.enterpriseHost !== undefined) {
+      const h = normalizeGheHost(r.enterpriseHost);
+      if (out.accountType !== GHE_COM_ACCOUNT_TYPE) warn('enterpriseHost', `ignored unless accountType is ${GHE_COM_ACCOUNT_TYPE}`);
+      else if (h) out.enterpriseHost = h;
+      else warn('enterpriseHost', 'must be a GHE.com host like acme.ghe.com');   // the ghe-com block stays; every network path then refuses (NO_HOST)
     }
     if (r.login !== undefined) {
       if (typeof r.login === 'string' && r.login.trim()) out.login = r.login.trim();
@@ -2682,7 +2689,7 @@ export function assertProviderPatch(name, patch) {
   if (!UPSTREAM_PROVIDERS.includes(name)) throw new Error(`unknown provider ${JSON.stringify(name)}`);
   if (!patch || typeof patch !== 'object' || Array.isArray(patch)) throw new Error('provider patch must be an object');
   const allowed = new Set([...PROVIDER_SECRET_KEYS[name], 'maxConcurrent',
-    ...(name === 'copilot' ? ['accountType', 'login'] : ['baseUrl'])]);
+    ...(name === 'copilot' ? ['accountType', 'enterpriseHost', 'login'] : ['baseUrl'])]);
   for (const [k, v] of Object.entries(patch)) {
     if (!allowed.has(k)) throw new Error(`unknown provider field ${JSON.stringify(k)} for ${name}`);
     if (isClearInput(v)) continue;
@@ -2690,6 +2697,8 @@ export function assertProviderPatch(name, patch) {
       if (typeof v !== 'string' || !v.trim()) throw new Error(`${k} must be a non-empty string`);
     } else if (k === 'accountType') {
       if (!COPILOT_ACCOUNT_TYPES.includes(v)) throw new Error(`accountType must be one of ${COPILOT_ACCOUNT_TYPES.join(' | ')}`);
+    } else if (k === 'enterpriseHost') {
+      if (!normalizeGheHost(v)) throw new Error('enterpriseHost must be a GHE.com host like acme.ghe.com, with no path, port or credentials');
     } else if (k === 'baseUrl') {
       if (!isUpstreamBaseUrl(v)) throw new Error('baseUrl must be an http(s) URL with no query or fragment');
     } else if (k === 'maxConcurrent') {
@@ -2702,13 +2711,37 @@ export function assertProviderPatch(name, patch) {
 /** One provider's stored block after `patch` (validated by the caller). */
 function mergeProviderBlock(currentProviders, name, patch) {
   const cur = isObj(currentProviders) && isObj(currentProviders[name]) ? { ...currentProviders[name] } : {};
+  const before = { ...cur };
   for (const [k, v] of Object.entries(patch)) {
     if (isClearInput(v)) delete cur[k];
     else if (k === 'maxConcurrent') cur[k] = Number(v);
     else if (k === 'baseUrl') cur[k] = v.trim().replace(/\/+$/, '');
+    else if (k === 'enterpriseHost') cur[k] = normalizeGheHost(v);
     else cur[k] = typeof v === 'string' ? v.trim() : v;
   }
+  if (name === 'copilot') reconcileCopilotBlock(before, cur, patch);
   return cur;
+}
+
+/**
+ * The cross-field rules of the copilot block, applied to the merged `after` in place (it throws
+ * before anything is written): a host belongs to accountType ghe-com and ghe-com needs one; a
+ * block that changes GitHub host loses its sign-in in the same write (a token belongs to one
+ * host). A patch touching neither accountType nor enterpriseHost never trips the "needs a host"
+ * rule, so a hand-edited block without one can still be signed out.
+ */
+function reconcileCopilotBlock(before, after, patch) {
+  const type = after.accountType ?? 'individual';
+  const setsHost = Object.hasOwn(patch, 'enterpriseHost') && !isClearInput(patch.enterpriseHost);
+  if (setsHost && type !== GHE_COM_ACCOUNT_TYPE) throw new Error(`enterpriseHost applies only to accountType ${GHE_COM_ACCOUNT_TYPE}`);
+  if (type !== GHE_COM_ACCOUNT_TYPE) delete after.enterpriseHost;
+  else if (!normalizeGheHost(after.enterpriseHost) && (Object.hasOwn(patch, 'accountType') || Object.hasOwn(patch, 'enterpriseHost'))) {
+    throw new Error(`accountType ${GHE_COM_ACCOUNT_TYPE} needs enterpriseHost (your GHE.com tenant, like acme.ghe.com)`);
+  }
+  if (copilotBlockHost(before) !== copilotBlockHost(after) && !Object.hasOwn(patch, 'githubToken')) {
+    delete after.githubToken;
+    delete after.login;
+  }
 }
 
 /** updateProvider's merge, pure: the whole next `providers` block (undefined = delete it). */
@@ -2723,15 +2756,22 @@ export function nextProviders(currentProviders, name, patch) {
 /**
  * Patch a provider's stored block. Omitted keys are kept; null/'' deletes a
  * key. Validates the whole patch before writing. `dryRun` returns the
- * would-be effective config without persisting.
+ * would-be effective config without persisting. `expectCopilotHost` (null =
+ * github.com, else the tenant) refuses the write with code HOST_CHANGED when the
+ * stored GitHub host differs.
  * @returns {Promise<object>} the effective config
  * @throws {Error}
  */
-export async function updateProvider(name, patch = {}, { dryRun = false } = {}) {
+export async function updateProvider(name, patch = {}, { dryRun = false, expectCopilotHost } = {}) {
   if (!UPSTREAM_PROVIDERS.includes(name)) throw new Error(`unknown provider ${JSON.stringify(name)}`);
   assertTestSettingsAccess();
   assertProviderPatch(name, patch);
   const settings = readSettings();
+  if (expectCopilotHost !== undefined) {
+    // A device-flow sign-in commits its token here: refuse when the GitHub host moved since it began.
+    const stored = isObj(settings.providers) && isObj(settings.providers.copilot) ? settings.providers.copilot : {};
+    if (copilotBlockHost(stored) !== (expectCopilotHost || 'github.com')) throw Object.assign(new Error('the Copilot GitHub host changed during the sign-in — start it again'), { code: 'HOST_CHANGED' });
+  }
   if (dryRun) return { ...providerDefaults(name), ...sanitizeProvider(name, mergeProviderBlock(settings.providers, name, patch)) };
   const v = nextProviders(settings.providers, name, patch);
   if (v === undefined) delete settings.providers; else settings.providers = v;

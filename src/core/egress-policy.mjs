@@ -32,6 +32,7 @@ import { createUpstreamConnector, resolveUpstream, ProxyCredentials, AUTH_LABELS
 import { readProxyLogin, watchProxyLogin, markLoginRejected, redactProxyLine, upstreamEnv, CORPORATE_PROXY_VAR } from './proxy-credentials.mjs';
 import { readSettings, readSettingsStrict, networkProxyEnabled, watchSettingsFile } from './settings.mjs';
 import { proxyUrlHasLogin } from './env-proxy.mjs';
+import { copilotBlockHost, gheEgressAllow } from './ghe-host.mjs';
 
 /** Set by the worca that runs the proxy, so a worca CLI started under it reuses it. */
 export const EGRESS_PROXY_VAR = 'WORCA_EGRESS_PROXY_URL';
@@ -39,6 +40,18 @@ export const EGRESS_PROXY_VAR = 'WORCA_EGRESS_PROXY_URL';
 const PROXY_NAMES = ['HTTPS_PROXY', 'HTTP_PROXY', 'https_proxy', 'http_proxy'];
 const LOOPBACK = '127.0.0.1,localhost,::1';
 const OPEN_POLICY = Object.freeze({ mode: 'open', enforced: false, allow: [], deny: [] });
+
+/**
+ * The hosts a platform `allow` policy must also let through for a GitHub Copilot sign-in on a GHE.com
+ * tenant: the tenant and its subdomains (GitHub's documented Copilot allowlist; the leading dot means
+ * subdomains only under a policy mode, so both entries are needed). [] unless settings name a valid tenant.
+ * Pure; never throws.
+ */
+export function copilotTenantAllow(settingsObj) {
+  const c = settingsObj && typeof settingsObj === 'object' && settingsObj.providers && typeof settingsObj.providers === 'object'
+    ? settingsObj.providers.copilot : null;
+  return gheEgressAllow(copilotBlockHost(c));   // github.com and a host-less block → []
+}
 
 /** True when `value` is an http URL with a user name whose host:port is the upstream's (D21). */
 function loginFor(value, upstream) {
@@ -129,7 +142,7 @@ export function egressSummary(env = process.env) {
 export async function startEgressPolicy({ env = process.env, log = () => {}, unref = false,
   settings = readSettings, proxyOn = () => networkProxyEnabled(settings()),
   login = () => readProxyLogin(), loginPollMs = 1000, watchLogin = (fn) => watchProxyLogin(fn, { intervalMs: loginPollMs }),
-  markRejected = (id, o) => markLoginRejected(id, o) } = {}) {
+  markRejected = (id, o) => markLoginRejected(id, o), extraAllow = () => copilotTenantAllow(settings()) } = {}) {
   const policy = readEgressPolicy(env);
   const none = async () => {};
   // A login in HTTP(S)_PROXY would reach every child, so it starts the proxy unless it was turned off by hand.
@@ -159,6 +172,20 @@ export async function startEgressPolicy({ env = process.env, log = () => {}, unr
   // No login swap where a login can never be swapped in (Basic, Digest, or an explicit auth none: D23).
   const isSwappable = (up) => !!up && !PASSWORD_MODES.includes(up.auth) && !['none', ...PASSWORD_MODES].includes(up.requestedAuth);
   let connector = usable ? makeConnector(usable) : null;
+  // Allow mode only: the configured GHE.com tenant joins the allow list (DENY still wins). createProxy decides each
+  // request against this same policy object, so setExtraAllow() takes effect live. Other modes never read the settings.
+  const baseAllow = policy.allow;
+  let extraKey = '';
+  const setExtraAllow = (list) => {
+    const extra = Array.isArray(list) ? list.filter((h) => typeof h === 'string' && h) : [];
+    const key = extra.join(',');
+    if (key === extraKey) return;
+    extraKey = key;
+    policy.allow = [...new Set([...baseAllow, ...extra])];
+    if (extra.length) log(`Egress: allowing ${extra.join(', ')} for the GitHub Copilot GHE.com tenant (WORCA_EGRESS_DENY still applies)`);
+  };
+  const allowMode = policy.enforced && policy.mode === 'allow';
+  if (allowMode) { try { setExtraAllow(extraAllow()); } catch { /* the base list stands */ } }
   const server = createProxy({
     policy: policy.enforced ? policy : OPEN_POLICY,
     connector,
@@ -272,6 +299,7 @@ export async function startEgressPolicy({ env = process.env, log = () => {}, unr
 
   return {
     status: 'on', policy, replacedProxy, sourceEnv, scrubbedKeys, boundAddress: server.address().address, autoStarted: autoStart && !!connector,
+    ...(allowMode ? { setExtraAllow } : {}),
     get url() { return url; },
     get fixedPort() { return boundFixed || undefined; },
     get fixedPortShared() { return boundFixed ? fixedPortShared : undefined; },
@@ -362,7 +390,12 @@ export async function startLiveEgress({ settings = readSettings, readStrict = re
   }
   const logApplyError = (err) => startOpts.log?.(`network proxy: the new settings could not be applied (${err && err.message ? err.message : err})`);
   // R-sec-5: a tick where settings.json is missing or not a JSON object is skipped; the running connector stays.
-  const stopWatch = watch(() => { const s = readStrict(); if (s) apply(wantedOf(s)).catch(logApplyError); }, { intervalMs: pollMs });
+  const stopWatch = watch(() => {
+    const s = readStrict();
+    if (!s) return;
+    result.setExtraAllow?.(copilotTenantAllow(s));   // the GHE.com tenant follows the setting (allow mode only)
+    apply(wantedOf(s)).catch(logApplyError);
+  }, { intervalMs: pollMs });
   return {
     current: () => result,
     apply,

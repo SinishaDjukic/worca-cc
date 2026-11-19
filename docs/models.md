@@ -451,15 +451,44 @@ that folds open, with a one-line summary and its state; its buttons end with
 **Save**. A provider is account-level state that every model bridged through it
 shares.
 
-**GitHub Copilot.** *Account* (Individual, Business or Enterprise: it picks the
-API host when the sign-in does not name one) and *Max concurrent requests*.
-**Sign in** shows an 8-character device code: enter it at
-github.com/login/device and the row flips to *Connected*. Worca stores the GitHub
+**GitHub Copilot.** *Account* (Individual, Business, Enterprise or GHE.com
+tenant: it picks the API host when the sign-in does not name one) and *Max
+concurrent requests*. **Sign in** shows an 8-character device code: enter it at
+the address shown (github.com/login/device, or your tenant's, see below) and the
+row flips to *Connected*. Worca stores the GitHub
 token in `~/.worca-cc/settings.json` (or reads it from your shell as `${VAR}`) and
 exchanges it for Copilot's short-lived token in memory, refreshed before it
 expires. **Refresh usage** shows the premium-request quota, **Import models**
 opens Add model's Copilot list ([Import from Copilot](#import-from-copilot)), and
 **Sign out** asks first.
+
+*GHE.com tenant (data residency).* The fourth account type is for a GitHub
+Enterprise Cloud tenant at `<tenant>.ghe.com`. Choosing it reveals a **GHE.com host**
+field (`acme.ghe.com`; an `https://` prefix and a trailing `/` are accepted, any
+path, port or credentials are refused) and *Save host* stores the type and the host
+together. Then everything goes to the tenant, and nothing to github.com: sign-in on
+`<tenant>.ghe.com` (the device code and the address to enter it at come from there),
+`/user`, the token exchange, the quota and the model list on `api.<tenant>.ghe.com`,
+and requests on the gateway the exchange names (`endpoints.api`) when it is GitHub's
+(`*.<tenant>.ghe.com` or `*.githubcopilot.com`), else `copilot-api.<tenant>.ghe.com`.
+A sign-in belongs to one GitHub host, so changing the host or the account type to or
+from GHE.com signs you out in the same save (the row asks first and says so);
+Individual, Business and Enterprise keep the sign-in. The same fields exist on the
+CLI, `worca models set copilot accountType=ghe-com enterpriseHost=acme.ghe.com`, and
+Ask Worca can propose them. A `ghe-com` block with no valid host refuses to sign in,
+list models or run: it never falls back to github.com. Self-hosted GitHub Enterprise
+Server (`/api/v3`) is not supported, and the Copilot CLI engine keeps its own
+`copilot login --host`. Verify the Copilot app is allowed on your tenant: if
+GitHub refuses the sign-in, the message names the host and asks you to check that.
+
+A *"the sign-in on `<host>` worked, but GitHub refused Copilot access"* message means
+the sign-in succeeded and GitHub's Copilot token exchange answered 401/403. It quotes
+GitHub's own reason (and the single-sign-on link when there is one) and is also
+written to the server log. A missing Copilot seat or a policy that blocks this editor
+is your enterprise admin's to fix; GitHub's *"enable your managed account for Copilot
+Business"* means the account has no seat. Nothing is stored after such a refusal, so
+the next attempt is a fresh sign-in. *"Rejected the stored token — sign in again"* is
+only for a sign-in that was saved and later stopped working.
 
 **OpenRouter.** *API key*, *Max concurrent requests*, *Provider order*, *Sort
 providers by* and *Allow other providers when these are unavailable*, with

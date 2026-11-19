@@ -214,6 +214,7 @@ export function upstreamSettings(upstream) {
     apiKey: p === 'copilot' ? null : (resolveProviderSecret(upstream.apiKey) || providerKeyFor(upstream, cfg) || ''),
     githubToken: p === 'copilot' ? resolveProviderSecret(cfg.githubToken) : null,
     accountType: p === 'copilot' ? cfg.accountType : null,
+    enterpriseHost: p === 'copilot' ? (cfg.enterpriseHost || null) : null,
     ...(upstream.openrouter ? { openrouter: upstream.openrouter } : {}),
     maxConcurrent: cfg.maxConcurrent,
     queue: p,

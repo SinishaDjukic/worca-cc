@@ -10,7 +10,7 @@ import { mkdtempSync, rmSync, writeFileSync, readFileSync, mkdirSync } from 'nod
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-import { createModelChangeValidator, mergeEditPatch, maskEntry, LOCAL_MIN_WINDOW, MODEL_CHANGE_KINDS } from '../src/core/ask/model-proposal.mjs';
+import { createModelChangeValidator, mergeEditPatch, maskEntry, LOCAL_MIN_WINDOW, MODEL_CHANGE_KINDS, MODEL_ERRORS } from '../src/core/ask/model-proposal.mjs';
 import { applyModelChange, defaultModelDeps, validateModelChange } from '../src/core/ask/model-deps.mjs';
 import { createAskTools } from '../src/core/ask/tools.mjs';
 import { ASK_SYSTEM_RULES } from '../src/core/ask/prompt.mjs';
@@ -559,4 +559,43 @@ test('import_endpoint with the endpoint\'s own key (Gemini, Qwen): a ${VAR} ride
   assert.equal(bad.ok, false);
   assert.match(bad.errors[0], /apiKey must be a \$\{VAR\} reference/);
   assert.equal(seen.length, 1, 'a literal key never reaches the endpoint');
+});
+
+test('propose provider copilot on a GHE.com tenant: card rows show both fields; a signed-in config gets the sign-out warning; a host alone is refused with the settings message', async () => {
+  process.env.HOME = home; process.env.USERPROFILE = home; process.env.WORCA_TEST_ALLOW_HOME_FALLBACK = '1';
+  mkdirSync(join(home, '.worca-cc'), { recursive: true });
+  const file = join(home, '.worca-cc', 'settings.json');
+  const { updateProvider, providerConfig } = await import('../src/core/settings.mjs');
+  const validate = createModelChangeValidator({
+    listGlobalModels: () => [], listPluginModels: () => [], policyModels: () => [], predefined: [],
+    addModel: async (m) => m, updateModel: async () => ({}), updateProvider, providerConfig,
+    providerReadiness: () => ({ ok: true }), modelRefs: () => ({ steps: [], nodes: [] }), envHas: () => true,
+  });
+  const propose = (set) => validate({ kind: 'provider', provider: 'copilot', set });
+  writeFileSync(file, JSON.stringify({}));
+  let r = await propose({ accountType: 'ghe-com', enterpriseHost: 'acme.ghe.com' });
+  assert.equal(r.ok, true, JSON.stringify(r.errors));
+  assert.deepEqual(r.card.rows, [
+    { field: 'Account type', before: 'individual', after: 'ghe-com' },
+    { field: 'GHE.com host', before: null, after: 'acme.ghe.com' },
+  ]);
+  assert.deepEqual(r.card.warnings, []);
+  assert.deepEqual(r.card.change, { provider: 'copilot', set: { accountType: 'ghe-com', enterpriseHost: 'acme.ghe.com' } });
+  // Signed in: the host change drops the sign-in, and the card says so.
+  writeFileSync(file, JSON.stringify({ providers: { copilot: { githubToken: 'gho_x', login: 'octo' } } }));
+  r = await propose({ accountType: 'ghe-com', enterpriseHost: 'acme.ghe.com' });
+  assert.equal(r.ok, true);
+  assert.ok(r.card.warnings.includes('changing the GitHub host signs out of GitHub Copilot — the user signs in again under Models › Providers'), JSON.stringify(r.card.warnings));
+  // The token is not settable here, and the file is untouched by the dry runs.
+  assert.deepEqual(JSON.parse(readFileSync(file, 'utf8')), { providers: { copilot: { githubToken: 'gho_x', login: 'octo' } } });
+  // A same-type change keeps the sign-in: no warning.
+  r = await propose({ accountType: 'business' });
+  assert.deepEqual(r.card.warnings, []);
+  // A host alone while the type is individual: the settings message, no card.
+  r = await propose({ enterpriseHost: 'acme.ghe.com' });
+  assert.equal(r.ok, false);
+  assert.match(r.errors[0], /enterpriseHost applies only to accountType ghe-com/);
+  r = await propose({ accountType: 'ghe-com' });
+  assert.match(r.errors[0], /needs enterpriseHost/);
+  assert.match(MODEL_ERRORS.providerSet, /enterpriseHost\?/);
 });

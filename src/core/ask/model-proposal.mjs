@@ -32,7 +32,7 @@ export const MODEL_ERRORS = Object.freeze({
   secretKey: (where) => `${where} must be a \${VAR} reference to a variable set in worca's environment (or empty to clear) — never the key itself; the user can paste a literal key under Models › Providers`,
   secretHeader: (k) => `upstream.headers.${k} looks like a credential — the user sets it in the model editor; use apiKey with a \${VAR} reference instead`,
   provider: 'provider must be one of copilot, openai, anthropic, openrouter',
-  providerSet: 'provider needs set: {baseUrl?, apiKey?, maxConcurrent?, accountType?}',
+  providerSet: 'provider needs set: {baseUrl?, apiKey?, maxConcurrent?, accountType?, enterpriseHost?}',
   providerSetOpenRouter: 'openrouter needs set: {apiKey?, maxConcurrent?, order?, sort?, allowFallbacks?}',
   signIn: (k) => `${k} is not settable here — the Copilot sign-in happens under Models › Providers, by the user`,
   noChange: 'nothing changes — the settings already say exactly this',
@@ -318,13 +318,14 @@ export function createModelChangeValidator(r) {
     const before = r.providerConfig(name);
     let after;
     try { after = await r.updateProvider(name, set, { dryRun: true }); } catch (err) { return { ok: false, errors: [err.message] }; }
-    const fields = ['baseUrl', 'apiKey', 'maxConcurrent', 'accountType'];
-    const label = { baseUrl: 'Base URL', apiKey: 'API key', maxConcurrent: 'Max concurrent requests', accountType: 'Account type' };
+    const fields = ['baseUrl', 'apiKey', 'maxConcurrent', 'accountType', 'enterpriseHost'];
+    const label = { baseUrl: 'Base URL', apiKey: 'API key', maxConcurrent: 'Max concurrent requests', accountType: 'Account type', enterpriseHost: 'GHE.com host' };
     const shown = (f, v) => (v == null ? null : String(f === 'apiKey' ? maskValue(v) : v));
     const changed = fields.filter((f) => shown(f, before[f]) !== shown(f, after[f]));
     const rows = changed.map((f) => ({ field: label[f], before: shown(f, before[f]), after: shown(f, after[f]) }));
     if (!rows.length) return { ok: false, errors: [MODEL_ERRORS.noChange] };
     const warnings = [];
+    if (before.githubToken && !after.githubToken) warnings.push('changing the GitHub host signs out of GitHub Copilot — the user signs in again under Models › Providers');
     const keyRef = typeof after.apiKey === 'string' ? modelEnvRef(after.apiKey) : null;
     if (keyRef && !r.envHas(keyRef)) warnings.push(`\${${keyRef}} is not set in worca's environment — set it and restart Worca`);
     if (name !== 'copilot' && !after.apiKey && !(name === 'openai' && isLocalBaseUrl(after.baseUrl))) {

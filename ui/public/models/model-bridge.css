@@ -122,6 +122,8 @@
 .mv-cp-wait{display:flex;align-items:center;gap:8px;min-width:0;}
 .mv-cp-wait .mv-cp-status{min-width:0;overflow-wrap:anywhere;}
 .mv-cp-status.err{color:var(--red);}
+/* The GHE.com host shows only while Account is GHE.com tenant (.mv-field sets display, which would beat [hidden]). */
+.mv-cp-host-field[hidden]{display:none;}
 .mv-cp-signin-box .mv-cp-cancel{flex:none;}
 .mv-conn{display:grid;gap:12px;}
 .mv-conn-body{display:grid;gap:12px;padding:12px 14px;border:1px solid var(--line-2);border-radius:var(--r-sm);}

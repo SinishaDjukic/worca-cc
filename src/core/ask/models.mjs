@@ -174,6 +174,7 @@ export function createAskModels({
       if (m.bridged) {
         entry.bridged = m.bridged;
         if (m.upstreamApi) entry.upstreamApi = m.upstreamApi;
+        if (m.bridgedHost) entry.bridgedHost = m.bridgedHost;
         if (m.needsSignIn) {
           entry.needsSignIn = true;
           const row = isOpenRouterModel(m.id) ? 'OpenRouter' : PROVIDER_ROW[m.bridged] || m.bridged;
