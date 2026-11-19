@@ -70,7 +70,7 @@ Each item has a recommendation (**R**) and the alternative(s). Where a task depe
   - **R: move all workflow-tests DDL (v96–v99) into a new `src/core/workflow-tests/schema.mjs`** (pure strings) in Task 1. db.mjs then shrinks by about 90 lines although it gains the v99 rung.
   - Alternative: put only the v99 DDL there (db.mjs grows by about 6 lines).
 - **P4-Q14. The paid end-to-end check (Task 26).**
-  - **R: run it once, controller only, after the user's explicit OK:** Claude Haiku 4.5 as the workflow's model and as the checking model, one "Try it once now" with two criteria, one Check the checker round, one Agree. **Cap: $3.** It runs on the **Claude sign-in only**, never the Vertex (or other) routing in `~/.worca-cc`: the run uses a fresh `WORCA_HOME` in scratch (with `HOME` unchanged, so the Claude CLI's sign-in still works), and before it starts the controller proves, printing names only, that no routing applies from the Worca home's model `env`, the process environment or the user's Claude Code settings (Task 26 Step 1). If routing cannot be ruled out, it stops and asks. It tells the user that the Claude sign-in pays.
+  - **R: run it once, controller only, after the user's explicit OK:** Claude Haiku 4.5 as the workflow's model and as the checking model, one "Try it once now" with two criteria, one Check the checker round, one Agree. **Cap: $3.** It runs on the **Claude sign-in only**, never the Vertex (or other) routing in `~/.worca-cc`: `HOME`, `USERPROFILE` and `WORCA_HOME` point at a scratch folder (Worca's settings file follows `HOME`, so the real `~/.worca-cc/settings.json` is never loaded by any process), the CLI's sign-in stays reachable through `CLAUDE_CONFIG_DIR`, and no broker, cloud or gateway variable reaches the check or the server. Before it starts, a free check proves, printing names only, that no model of the catalog carries routing, that neither the environment nor the Claude Code settings route, and that `claude auth status` reports the claude.ai sign-in, first party (Task 26 Step 1). If that cannot be proven, it stops and asks. The scratch home's spending limit enforces the cap. It tells the user that the Claude sign-in pays.
   - Alternative: no paid check before the PR.
 - **P4-Q15. An older test after its criteria changed.**
   - **R: Compare shows the new criteria as "Not checked yet" and offers "Check them on these tries (about $X)"** (one press, needs P4-M5). Nothing is spent without a press. While it checks, no test of the workflow can start and no second press runs (the runner answers BUSY), so two drives never pay for the same try (review I15). **Its spend counts in that test's own cost limit** and stops there, like the criteria phase (D92); a test that already reached its limit refuses the press: "This test reached its cost limit, so Worca checks nothing more on it. Test again to check your criteria."
@@ -190,7 +190,7 @@ D1–D85 hold. These continue them. The `(technical)` rows are for the reviewer.
 - **Run one test file:** `node tools/test.mjs test/<file>.test.mjs` (hermetic home and the no-real-claude guard). About 170 tests already fail on clean `dev` on Windows: compare with Task 0's baseline before blaming a task, and re-check a masked file on WSL Ubuntu before pushing.
 - **Search:** `git grep` with `timeout 60`; plain recursive grep or ripgrep time out on this repo.
 - **TDD:** every task writes its failing test first, runs it to see it fail, then writes the code.
-- **Paid model calls: none in tests.** Tests inject a fake `helperCall` or run under `WORCA_MOCK=1`. The one paid check is Task 26, controller only, after the user's explicit OK, capped at **$3**, on the Claude sign-in only (a fresh `WORCA_HOME`, no routing from any source, proven first), with the paying account named first (P4-Q14).
+- **Paid model calls: none in tests.** Tests inject a fake `helperCall` or run under `WORCA_MOCK=1`. The one paid check is Task 26, controller only, after the user's explicit OK, capped at **$3**, on the Claude sign-in only (`HOME`, `USERPROFILE` and `WORCA_HOME` in scratch so the real `~/.worca-cc/settings.json` is never loaded, the sign-in through `CLAUDE_CONFIG_DIR`, no broker or routing variable, proven first by a free check), with the paying account named first (P4-Q14).
 - **Schema:** `SCHEMA_VERSION` becomes **99**. If `dev` takes 99 first, renumber on the merge (the rung, the test file name, `docs/storage.md`).
 - **Size caps:** never raise a cap in `tools/split-by-feature/size-caps.json`. No change to `ui/server.mjs` or `ui/public/app.js`. `src/core/db.mjs` must end the part shorter than it starts (P4-Q13). `service.mjs`, `runner.mjs`, `example-editor.mjs`, `test-compare.mjs` and `tests-app.mjs` stay under 1,000 lines (each task that touches one says how many lines it adds; check with `(Get-Content <file>).Count`).
 - **PR wording (`test/ui-ship-words.test.mjs`):** never "open" as a pull-request verb in any string literal.
@@ -6045,53 +6045,88 @@ No commit. Never run by a subagent, never without the user's go in this session.
 
 - [ ] **Step 1: Prove that only the Claude sign-in pays, then ask** (the controller itself; no subagent runs, prepares or reads any part of this step)
 
-The user's rule: real model calls run **only on the Claude sign-in**, never on the Vertex (or other) routing configured in `~/.worca-cc`. Nobody reads, prints or copies a token from `~/.worca-cc/settings.json`. Routing can come from four places, and the controller rules out each one before anything runs:
+The user's rule: real model calls run **only on the Claude sign-in**, never on the Vertex (or other) routing configured in `~/.worca-cc`. Nobody reads, prints or copies a token from `~/.worca-cc/settings.json`, and **no process of this check ever loads that file**, the check script included.
 
-1. **A fresh Worca home, and only that.** Make an empty folder `<scratch>\worca-home` (never a copy of `~/.worca-cc`, nothing copied into it). Every command of Steps 1 and 2 sets `WORCA_HOME` to it; the Worca server for the check is started from that shell on its own port (the user's own Worca UI is left alone). In a fresh home the catalog is `PREDEFINED_MODELS` with no `env`, no plugin or bridged model, no team policy (its cache lives in the home's DB) and the credential broker off.
-2. **Keep `HOME` and `USERPROFILE` as they are.** The Claude CLI keeps its sign-in under the user's own home (`~/.claude/.credentials.json` on Windows and Linux, the Keychain on macOS). Moving `HOME` to scratch would hide it, and the call would fail or find another credential. Only `WORCA_HOME` moves.
-3. **Check, printing names only, never a value.** From the worktree, in the shell that will start the server (so it sees the same environment), run:
-```bash
-WORCA_HOME="<scratch>/worca-home" node --input-type=module -e "
+Why `WORCA_HOME` alone is not enough (review N1): Worca's settings file, and with it the model catalog and every model's `env`, is always `join(HOME || USERPROFILE || homedir(), '.worca-cc', 'settings.json')` (`settingsFile()`, `src/core/settings.mjs:84-92`), whatever `WORCA_HOME` says. `listGlobalModels()` reads it (`settings.mjs:2273`), and so do `listModels()` and `resolveModelEnv()`. So `HOME` and `USERPROFILE` must move to scratch too, and the CLI's sign-in is kept reachable through `CLAUDE_CONFIG_DIR`.
+
+`CLAUDE_CONFIG_DIR` was checked, not assumed (2026-11-19, `claude auth status`, which makes no model call): with `HOME` and `USERPROFILE` in an empty scratch folder it reported `loggedIn: false`; with `CLAUDE_CONFIG_DIR` set to the real `~/.claude` as well it reported `loggedIn: true`, `authMethod: "claude.ai"`, `apiProvider: "firstParty"`; with `CLAUDE_CODE_USE_VERTEX=1` added it reported `authMethod: "third_party"`, `apiProvider: "vertex"`. Worca itself treats `CLAUDE_CONFIG_DIR` as the folder the CLI reads (`claude-sign-in.mjs userSettingsFile`, `preflight.mjs parseClaudeAuthConfigDir`). With it set, the CLI keeps its state file `.claude.json` in that folder (`~/.claude/.claude.json`) instead of the home folder; the check may update that file, and nothing else in `~/.claude`.
+
+1. **The scratch home.** Make an empty folder `<scratch>/paid-home` (never a copy of anything under the real home). Write one file into it, `<scratch>/paid-home/.worca-cc/settings.json` = `{ "totalCostLimitUsd": 3 }`: Worca's own spending limit, so the $3 cap is enforced, not watched (review N12; the setting is `settings.mjs:26`, `:666`, and it lives in this scratch file, never the user's). The paid run's data goes to `WORCA_HOME=<scratch>/paid-home/.worca-cc`.
+2. **One launcher for both processes**, so the check and the server get exactly the same environment. Write `<scratch>/paid-check/clean-run.mjs`:
+```js
+// The paid check's environment (Task 26): HOME and USERPROFILE in scratch, the CLI's sign-in through CLAUDE_CONFIG_DIR, and no
+// routing, broker or sign-in-by-other-means name at all. Prints names only, never a value.
+import { spawn } from 'node:child_process';
+const [home, claudeDir, ...cmd] = process.argv.slice(2);
+// claude-sign-in.mjs isSignInEnvKey's routing names (not the proxy and CA names, which do not change who pays), the broker (review N4:
+// brokerEnabled() is WORCA_BROKER_URL, broker-client.mjs:19-21), gateway and cloud names, and the variables this launcher sets itself.
+const DROP = /^(CLAUDE_CODE_USE_|ANTHROPIC_|AWS_|WORCA_BROKER|CLOUD_ML_|VERTEX_|GOOGLE_)|^(CLAUDE_CODE_OAUTH_TOKEN|CLAUDE_CODE_CLIENT_CERT|CLAUDE_CODE_CLIENT_KEY|CLAUDE_CONFIG_DIR|WORCA_HOME|WORCA_MOCK|HOMEDRIVE|HOMEPATH)$/;
+const removed = Object.keys(process.env).filter((k) => DROP.test(k));
+const env = Object.fromEntries(Object.entries(process.env).filter(([k]) => !DROP.test(k)));
+Object.assign(env, { HOME: home, USERPROFILE: home, CLAUDE_CONFIG_DIR: claudeDir, WORCA_HOME: `${home}/.worca-cc` });
+console.error(`[paid-check] left out of the environment: ${removed.join(', ') || 'nothing'}`);
+const child = spawn(cmd[0], cmd.slice(1), { env, stdio: 'inherit', shell: process.platform === 'win32' });
+child.on('exit', (code) => process.exit(code ?? 1));
+```
+3. **The free proof.** Write `<scratch>/paid-check/check.mjs` and run it through the launcher from the worktree: `node <scratch>/paid-check/clean-run.mjs <scratch>/paid-home <real ~/.claude> node <scratch>/paid-check/check.mjs`. It makes no model call. The worktree needs its dependencies (`npm ci` when `node_modules` is missing); without them the import fails and the check stops. Paths without spaces keep the Windows `shell: true` spawn simple. The two scripts were run once against stub modules on 2026-11-19: the launcher left out a set `CLAUDE_CODE_USE_VERTEX` and `WORCA_BROKER_URL`, and the CLI then reported the claude.ai sign-in, first party.
+```js
+// Task 26's proof, inside the launcher's environment. Prints names and three auth fields only, never a value or an e-mail.
 import { readFileSync, existsSync } from 'node:fs';
 import { homedir } from 'node:os';
-import { join, resolve } from 'node:path';
-const home = process.env.WORCA_HOME || '';
-if (!home || resolve(home) === resolve(homedir(), '.worca-cc')) { console.log('STOP: WORCA_HOME must be the fresh scratch home'); process.exit(1); }
-// Names that route Claude Code or sign it in another way (claude-sign-in.mjs isSignInEnvKey, without the proxy and CA names,
-// which do not change who pays), plus CLAUDE_CONFIG_DIR, which moves the settings file this check reads.
-const ROUTING = (k) => /^(CLAUDE_CODE_USE_|ANTHROPIC_|AWS_)/.test(k) || ['CLOUD_ML_REGION', 'GOOGLE_APPLICATION_CREDENTIALS',
-  'CLAUDE_CODE_OAUTH_TOKEN', 'CLAUDE_CODE_CLIENT_CERT', 'CLAUDE_CODE_CLIENT_KEY', 'CLAUDE_CONFIG_DIR'].includes(k);
-const found = Object.keys(process.env).filter(ROUTING).map((k) => 'process env: ' + k);
-const files = [join(homedir(), '.claude', 'settings.json'), 'C:/Program Files/ClaudeCode/managed-settings.json',
+import { basename, join, resolve } from 'node:path';
+import { spawnSync } from 'node:child_process';
+import { pathToFileURL } from 'node:url';
+// First, before anything reads a settings file: this process's home must be the scratch folder, or nothing else runs.
+const home = process.env.HOME || '';
+if (basename(home) !== 'paid-home' || resolve(process.env.USERPROFILE || '') !== resolve(home) || resolve(homedir()) !== resolve(home)) {
+  console.log('STOP: HOME and USERPROFILE must be the scratch paid-home folder'); process.exit(1);
+}
+const found = [];
+let ws = null; try { ws = JSON.parse(readFileSync(join(home, '.worca-cc', 'settings.json'), 'utf8')); } catch { ws = null; }
+if (!ws || Object.keys(ws).join() !== 'totalCostLimitUsd' || ws.totalCostLimitUsd !== 3) found.push('the scratch settings file is not the one-line spending limit');
+const ROUTING = /^(CLAUDE_CODE_USE_|ANTHROPIC_|AWS_|WORCA_BROKER|CLOUD_ML_|VERTEX_|GOOGLE_)|^(CLAUDE_CODE_OAUTH_TOKEN|CLAUDE_CODE_CLIENT_CERT|CLAUDE_CODE_CLIENT_KEY)$/;
+for (const k of Object.keys(process.env)) if (ROUTING.test(k)) found.push(`process env: ${k}`);
+// The Claude Code settings the CLI reads here: CLAUDE_CONFIG_DIR's, and the managed ones. Key names only.
+const files = [join(process.env.CLAUDE_CONFIG_DIR || '', 'settings.json'), 'C:/Program Files/ClaudeCode/managed-settings.json',
   'C:/ProgramData/ClaudeCode/managed-settings.json', '/Library/Application Support/ClaudeCode/managed-settings.json', '/etc/claude-code/managed-settings.json'];
 for (const f of files) {
   if (!existsSync(f)) continue;
-  let s; try { s = JSON.parse(readFileSync(f, 'utf8').replace(/^\uFEFF/, '')); } catch { found.push(f + ': not readable as JSON'); continue; }
-  for (const k of ['apiKeyHelper', 'awsAuthRefresh', 'awsCredentialExport']) if (s && s[k]) found.push(f + ': ' + k);
-  for (const k of Object.keys((s && s.env) || {})) if (ROUTING(k)) found.push(f + ': env.' + k);
+  let s; try { s = JSON.parse(readFileSync(f, 'utf8').replace(/^\uFEFF/, '')); } catch { found.push(`${f}: not readable as JSON`); continue; }
+  for (const k of ['apiKeyHelper', 'awsAuthRefresh', 'awsCredentialExport']) if (s && s[k]) found.push(`${f}: ${k}`);
+  for (const k of Object.keys((s && s.env) || {})) if (ROUTING.test(k)) found.push(`${f}: env.${k}`);
 }
-const { resolveModelEnv } = await import('./src/core/config.mjs');
-const env = resolveModelEnv('claude-haiku-4-5');
-if (env) found.push('Worca home: claude-haiku-4-5 has routing env ' + Object.keys(env).join(', '));
-console.log(found.length ? 'STOP, routing may apply:\n' + found.join('\n') : 'No routing found: the Claude sign-in pays.');
-"
+// Worca's catalog as the server will see it (the scratch settings file only): no model may carry routing. Every model, not one.
+const root = pathToFileURL(`${process.cwd()}/`);
+const { listModels, resolveModelEnv } = await import(new URL('src/core/config.mjs', root));
+const { brokerEnabled } = await import(new URL('src/core/broker-client.mjs', root));
+if (brokerEnabled()) found.push('the credential broker is on');
+for (const m of await listModels()) {
+  let e; try { e = resolveModelEnv(m.id); } catch { found.push(`${m.id}: its routing cannot be read`); continue; }
+  if (e) found.push(`${m.id}: routing env ${Object.keys(e).join(', ')}`);
+}
+// The CLI, in this very environment: signed in through claude.ai, first party (claude auth status makes no model call).
+const r = spawnSync('claude', ['auth', 'status'], { encoding: 'utf8', shell: process.platform === 'win32', timeout: 30000 });
+let a = null; try { a = JSON.parse(/\{[\s\S]*\}/.exec(`${r.stdout}${r.stderr}`)[0]); } catch { a = null; }
+console.log(`claude auth status: loggedIn=${a && a.loggedIn} authMethod=${a && a.authMethod} apiProvider=${a && a.apiProvider}`);
+if (!a || a.loggedIn !== true || a.authMethod !== 'claude.ai' || a.apiProvider !== 'firstParty') found.push('the CLI is not on the Claude sign-in here');
+console.log(found.length ? `STOP, ask the user:\n${found.join('\n')}` : 'Proven: only the Claude sign-in can pay.');
 ```
-   It reads the user's Claude Code settings files only to list key names; it never opens `~/.worca-cc`. The three places it covers: the model alias's `env` in the Worca home used (through `resolveModelEnv`, which also covers plugin, bridged and team-policy models), `CLAUDE_CODE_USE_VERTEX` / `ANTHROPIC_*`-style names in the process environment (the server's spawns inherit them), and an `env` block (or a sign-in command) in the user's or the managed Claude Code settings (loaded whenever the user settings carry a sign-in, `keepUserSettings`, `interview.mjs:247`).
-4. **Anything found, or the check cannot run: stop and ask the user.** Never unset a name, edit a settings file or work around it on your own; the user decides (for example, start the server from a clean shell). The same holds if the first paid call fails with a sign-in error: stop, never retry on another credential.
+   What it proves, and from where: the catalog the server will load (only the scratch settings file exists under this `HOME`; `resolveModelEnv` also covers plugin, bridged and team-policy models), the process environment both processes get (Vertex, Bedrock, Foundry, `ANTHROPIC_*` gateways, the broker), the user's Claude Code settings in `CLAUDE_CONFIG_DIR` and the managed settings (key names only; Worca's spawns load them when they carry a sign-in, `keepUserSettings`, `interview.mjs:251`), and, last, what the CLI itself reports in that environment.
+4. **Anything found, or the check cannot run: stop and ask the user.** The launcher leaving names out is expected and is reported to the user; anything the check finds afterwards is not. Never edit a settings file or work around a finding; the user decides. The same holds if a paid call fails with a sign-in error: stop, never retry on another credential.
 
-Then tell the user, in one message: the Claude sign-in on this computer pays (the account the `claude` command is logged in with; never print any token or account file), the cap (**$3**), and what runs (Step 2). Wait for an explicit yes in this session; anything else is a no.
+Then tell the user, in one message: the Claude sign-in pays (the account the `claude` command is logged in with; never print any token, e-mail or account file), what the launcher left out of the environment (names only), the cap (**$3**, enforced by the scratch home's spending limit), and what runs (Step 2). Wait for an explicit yes in this session; anything else is a no.
 
-- [ ] **Step 2: Run it** (the same shell and fresh Worca home as Step 1, `WORCA_FLAGS=workflowTests`, no `WORCA_MOCK`, `HOME` unchanged)
+- [ ] **Step 2: Run it** (the server through the same launcher: `node <scratch>/paid-check/clean-run.mjs <scratch>/paid-home <real ~/.claude> node --disable-warning=ExperimentalWarning ui/server.mjs`, from the worktree, with `PORT` set to a free port and `WORCA_FLAGS=workflowTests` in the launching shell; no `WORCA_MOCK`. The user's own Worca UI is left alone.)
 
 1. A no-project workflow whose agent steps use Claude Haiku 4.5; one example with a request, two criteria ("Names a success metric with a number", "Explains the legal reason for each data field") and Checked with = Haiku 4.5.
 2. Try it once now. Expect: two judgements with `proof_found = 1` or an honest "Not checked", ledger rows with `purpose 'try'`, `budgetStatus().windowSpendUsd` up by the same amount.
 3. Check the checker on the first criterion. Expect: 17 ledger rows `purpose 'checker'` either way (the planting call and 16 checks; when Worca falls back to its own plants, the planting call was still made and paid), the four cards, the three self-test rows.
 4. Agree once on the side by side.
-5. Stop at any point if `windowSpendUsd` rises by more than **$3**.
+5. The spending limit refuses new calls at **$3** (a call already running can finish, a few cents with Haiku). If it refuses before Step 4, stop there and record it.
 
 - [ ] **Step 3: Record**
 
-Write `.superpowers\sdd\paid-check-4.md`: the account, each call's cost, the replies' shape (any unreadable reply or unfound proof, with the quote), the time per call, the total. Add one line to the PR body.
+Write `.superpowers\sdd\paid-check-4.md`: who paid ("the Claude sign-in", never an e-mail or token), what the launcher left out (names), each call's cost, the replies' shape (any unreadable reply or unfound proof, with the quote), the time per call, the total. Add one line to the PR body.
 
 ---
 
