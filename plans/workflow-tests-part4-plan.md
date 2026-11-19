@@ -68,7 +68,7 @@ Each item has a recommendation (**R**) and the alternative(s). Where a task depe
   - **R: move all workflow-tests DDL (v96–v99) into a new `src/core/workflow-tests/schema.mjs`** (pure strings) in Task 1. db.mjs then shrinks by about 90 lines although it gains the v99 rung.
   - Alternative: put only the v99 DDL there (db.mjs grows by about 6 lines).
 - **P4-Q14. The paid end-to-end check (Task 26).**
-  - **R: run it once, controller only, after the user's explicit OK:** Claude Haiku 4.5 as the workflow's model and as the checking model, one "Try it once now" with two criteria, one Check the checker round, one Agree. **Cap: $3.** It goes through Worca's normal model routing; before it runs, the controller names the account that pays (memory: check `~/.worca-cc` model routing, e.g. a Vertex env on the alias, not only the Claude sign-in).
+  - **R: run it once, controller only, after the user's explicit OK:** Claude Haiku 4.5 as the workflow's model and as the checking model, one "Try it once now" with two criteria, one Check the checker round, one Agree. **Cap: $3.** It runs on the **Claude sign-in only**, never the Vertex (or other) routing in `~/.worca-cc`: the run uses a fresh Worca home whose models carry no routing `env`, and the controller confirms that before it starts and tells the user that the Claude sign-in pays.
   - Alternative: no paid check before the PR.
 - **P4-Q15. An older test after its criteria changed.**
   - **R: Compare shows the new criteria as "Not checked yet" and offers "Check them on these tries (about $X)"** (one press, needs P4-M5). Nothing is spent without a press.
@@ -5270,7 +5270,7 @@ No commit. Never run by a subagent, never without the user's go in this session.
 
 - [ ] **Step 1: Ask, and name who pays**
 
-Read `~/.worca-cc` model routing for `claude-haiku-4-5` (Settings › Models, or the global model file: a Vertex or other `env` on that alias means that account pays, not the Claude sign-in). Tell the user which account will pay, the cap (**$3**), and what runs. Wait for an explicit yes.
+The user's rule: real model calls go through the **Claude sign-in only**, never the Vertex (or other) routing in `~/.worca-cc`. Use a fresh Worca home (`WORCA_HOME`, `HOME`, `USERPROFILE` in scratch) and confirm that the `claude-haiku-4-5` alias there has no routing `env` (Settings › Models). Never read, print or copy a token from `~/.worca-cc/settings.json`. Tell the user that the Claude sign-in pays, the cap (**$3**), and what runs. Wait for an explicit yes.
 
 - [ ] **Step 2: Run it** (a fresh Worca home, flag on, no `WORCA_MOCK`)
 
