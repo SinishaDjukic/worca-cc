@@ -16,7 +16,7 @@
 # The base image is pinned by its multi-arch index digest, so a re-pushed tag cannot change what
 # the build starts from. A literal FROM (no build arg) so Dependabot can propose the bumps.
 # Its Node major is .nvmrc's, like every single-version CI job (test/supply-chain.test.mjs).
-FROM node:24-bookworm-slim@sha256:c86ecead9e55a5210ac1727de38a4ca840bf03dcaf34dc9749addbf383b1920c
+FROM node:26-bookworm-slim@sha256:5df79989ed685e09f0a98019db4cebfb22fb9df1a53c0161664a011f7ff6b0f1
 
 ARG WORCA_TARBALL
 ARG CLAUDE_CODE_VERSION
