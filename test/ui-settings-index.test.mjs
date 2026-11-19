@@ -6,7 +6,7 @@ import { JSDOM } from 'jsdom';
 import { TABS, CARDS, UNLISTED_CARDS, SETTING_ENTRIES, ADDON_ENTRIES, ADDON_PAGES, addonEntriesFrom, locksFor, lockNote } from '../ui/public/settings-index.mjs';
 import { tabFromParam } from '../ui/public/marketplace/page.mjs';
 import { parseMcpParam } from '../ui/public/mcp-view.mjs';
-import { PROVIDER_LABELS } from '../ui/public/bridge-view.mjs';
+import { parseModelsParam, PROVIDER_ROWS } from '../ui/public/models/page-tabs.mjs';
 import { readIndexHtml } from '../src/core/read-index-html.mjs';
 
 const doc = new JSDOM(readIndexHtml()).window.document;
@@ -61,15 +61,22 @@ test('locks: a mode lock below the effective mode, a flag lock per Labs feature 
   assert.equal(lockNote(locksFor(debug, { level: 'advanced', flags: {} })), 'Switch to Expert mode');
 });
 
-test('Add-ons rows: an entry on a static card has that card on its page with the same mode; every other entry is page-level and never locks', () => {
+test('Add-ons rows: an entry on a static card has that card on its page with the same mode; a Jobs block row locks by that block\'s level; every other entry is page-level and never locks', () => {
+  // The Jobs tab's blocks are built at runtime (jobs-view.mjs, pinned by test/models-jobs-view.test.mjs): the role
+  // tiles are Simple, the job cards Advanced.
+  const JOBS_BLOCK_LEVELS = { roles: 'simple', steps: 'advanced', helpers: 'advanced' };
   for (const e of ADDON_ENTRIES) {
     assert.ok(Object.hasOwn(ADDON_PAGES, e.page), `${e.id} page`);
     assert.equal(e.tabTitle, ADDON_PAGES[e.page], `${e.id} names its page`);
+    const block = /^#models\/jobs\/([^/]+)$/.exec(e.href)?.[1];
     if (e.card) {
       const card = doc.getElementById(e.card);
       assert.ok(card, `${e.id}: card ${e.card}`);
       assert.equal(card.closest('section.view').dataset.view, e.page, `${e.id}: the card sits on its page`);
       assert.equal(card.dataset.minLevel, e.min, `${e.id}: the row locks by its card's own mode`);
+    } else if (block) {
+      assert.ok(Object.hasOwn(JOBS_BLOCK_LEVELS, block), `${e.id}: a Jobs block`);
+      assert.equal(e.min, JOBS_BLOCK_LEVELS[block], `${e.id}: the row locks by its Jobs block's level`);
     } else {
       assert.equal(e.min, 'simple', `${e.id}: a page-level row never locks (A-9)`);
     }
@@ -78,25 +85,48 @@ test('Add-ons rows: an entry on a static card has that card on its page with the
   assert.equal(new Set(ADDON_ENTRIES.map((e) => e.id)).size, ADDON_ENTRIES.length, 'ids are unique');
 });
 
-test('Add-ons hrefs reach their place: a Marketplace tab, a Connectors view, a Models card, a Providers row', () => {
+test('the provider rows sit on the Models page\'s Providers tab: ids keep addon:providers/<key>, the meta names the tab', () => {
+  assert.equal(Object.hasOwn(ADDON_PAGES, 'providers'), false, 'Providers is a tab of the Models page, not an Add-ons page');
+  const rows = ADDON_ENTRIES.filter((e) => e.id.startsWith('addon:providers/'));
+  assert.deepEqual(rows.map((e) => e.id), ['copilot', 'openai', 'openrouter', 'anthropic', 'speech', 'images', 'sound'].map((k) => `addon:providers/${k}`));
+  for (const e of rows) {
+    assert.equal(e.page, 'models', `${e.id} is on the Models page`);
+    assert.match(e.href, /^#models\/providers\/(copilot|openrouter|openai|anthropic|speech|images|sound)$/, `${e.id}: one Providers row`);
+    assert.equal(e.meta, 'Models · Providers', `${e.id}: the row names the tab, not only the page`);
+    assert.equal(e.alts.at(-1), 'providers', `${e.id}: the query "providers" finds it`);
+  }
+  assert.ok(!ADDON_ENTRIES.some((e) => e.href.startsWith('#providers')), 'no row routes through the old page');
+});
+
+test('Add-ons hrefs reach their place: a Marketplace tab, a Connectors view, a Models tab (a Jobs block, a Providers row)', () => {
+  assert.ok(doc.getElementById('jobs-root')?.closest('#models-tab-jobs'), 'the Jobs tab draws its blocks into #jobs-root');
   for (const e of ADDON_ENTRIES) {
     const [view, ...rest] = e.href.replace(/^#/, '').split('/');
     const param = rest.join('/');
     assert.equal(view, e.page, `${e.id} routes to its page`);
     if (view === 'marketplace') assert.equal(tabFromParam(param), e.id.split('/')[1], `${e.id}: the tab it names`);
     if (view === 'connectors') assert.equal(parseMcpParam(param).view, { sets: 'sets', servers: 'servers', skills: 'skills' }[e.id.split('/')[1]], e.id);
-    if (view === 'models' && param) assert.ok(doc.getElementById(param), `${e.id}: #models/<card id>`);
-    if (view === 'providers') assert.ok([...Object.keys(PROVIDER_LABELS), 'speech', 'images', 'sound'].includes(param), `${e.id}: a provider row`);
+    if (view === 'models') {
+      const { tab, rest: where } = parseModelsParam(param);
+      if (tab === 'providers') assert.ok(PROVIDER_ROWS.includes(where), `${e.id}: #models/providers/<a provider row>`);
+      if (tab === 'jobs') assert.ok(where === '' || ['roles', 'steps', 'helpers', 'design'].includes(where), `${e.id}: #models/jobs/<a Jobs block>`);
+      if (tab === 'catalogue') assert.ok(where === '' || /^model\/[^/]+$/.test(where), `${e.id}: #models or #models/model/<id>`);
+    }
   }
   const href = (id) => ADDON_ENTRIES.find((e) => e.id === id).href;
-  assert.equal(href('addon:providers/openrouter'), '#providers/openai', 'OpenRouter is a preset on the OpenAI-compatible row');
-  assert.equal(href('addon:models/helper-jobs'), '#models/engine-settings-card', 'helper-job models live in the Engines card');
+  assert.equal(href('addon:providers/openrouter'), '#models/providers/openrouter', 'OpenRouter has a row of its own');
+  assert.equal(href('addon:models/helper-jobs'), '#models/jobs/helpers', 'helper-job models live in the Jobs tab\'s Helper jobs card');
+  assert.equal(href('addon:models/engines'), '#models/jobs/steps', 'step models live in the Steps card');
+  assert.equal(href('addon:models/roles'), '#models/jobs/roles');
 });
 
-test('locks: Engines and its helper jobs need Expert; Roles, the providers and the tabs never lock', () => {
+test('locks: Step models and Helper job models need Advanced (the job cards\' level); Roles, the providers and the tabs never lock', () => {
   const e = (id) => ADDON_ENTRIES.find((x) => x.id === id);
-  assert.equal(lockNote(locksFor(e('addon:models/helper-jobs'), { level: 'advanced', flags: {} })), 'Switch to Expert mode');
-  assert.deepEqual(locksFor(e('addon:models/engines'), { level: 'expert', flags: {} }), []);
+  assert.equal(e('addon:models/engines').title, 'Step models', 'the old Engines row is named for what it finds');
+  for (const id of ['addon:models/engines', 'addon:models/helper-jobs']) {
+    assert.equal(lockNote(locksFor(e(id), { level: 'simple', flags: {} })), 'Switch to Advanced mode', id);
+    assert.deepEqual(locksFor(e(id), { level: 'advanced', flags: {} }), [], id);
+  }
   for (const id of ['addon:models/roles', 'addon:providers/openai', 'addon:marketplace/installed', 'addon:connectors/servers']) {
     assert.deepEqual(locksFor(e(id), { level: 'simple', flags: {} }), [], id);
   }

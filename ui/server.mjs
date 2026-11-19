@@ -90,7 +90,7 @@ import {
   autoGeneratePrDescription, assertAutoGeneratePrDescriptionInput, setAutoGeneratePrDescription,
   updateCheckEnabled, assertUpdateCheckInput, setUpdateCheck,
   titleModel as storedTitleModel, setTitleModel, assertTitleModelInput,
-  hideBuiltinModels, setHideBuiltinModels, assertHideBuiltinModelsInput,
+  hideBuiltinModels, setHideBuiltinModels, assertHideBuiltinModelsInput, setHideBuiltinEngines, assertHideBuiltinEnginesInput,
   theme as storedTheme, setTheme, assertThemeInput, setScreensaver, assertScreensaverInput,
   uiLevel as storedUiLevel, setUiLevel, assertUiLevelInput, defaultUiLevel,
   autoWorkflowModel as storedAutoWorkflowModel, setAutoWorkflowModel, assertAutoWorkflowModelInput,
@@ -686,6 +686,19 @@ function resolveHljsAssets(resolve = require.resolve, warn = (msg) => console.wa
 }
 
 const HLJS_ASSETS = resolveHljsAssets();
+
+// The Models page's brand marks (@lobehub/icons-static-svg): the package has no main and no exports, so its
+// package.json is resolved and the svgs are its icons/ folder. Unresolved, the route stays unregistered (/vendor 404).
+const BRAND_ICON_FILE_RE = /^[a-z0-9][a-z0-9-]*\.svg$/;
+function resolveBrandIconsDir(resolve = require.resolve, warn = (msg) => console.warn(msg)) {
+  try {
+    return path.join(path.dirname(resolve('@lobehub/icons-static-svg/package.json')), 'icons');
+  } catch (err) {
+    warn(`[worca-ui] brand icons unavailable: ${err?.message || err}`);
+    return null;
+  }
+}
+const BRAND_ICONS_DIR = resolveBrandIconsDir();
 
 // Ask Worca §10.7: the chat's markdown pipeline is served from node_modules the
 // same way the hljs assets are, but resolved with import.meta.resolve — the CJS
@@ -2174,6 +2187,22 @@ app.get(/^\/vendor\/speech\/hf\/([^/]+\/[^/]+)\/resolve\/[^/]+\/(.+)$/, (req, re
   speechAssetStore().model(req.params[0], req.params[1])
     .then((r) => (r.body ? streamSpeechAsset(res)(r) : sendSpeechAsset(res, next)(r)), speechAssetFail(res, next));
 });
+// The brand marks, one svg at a time: a lowercase slug that is a file of icons/, else the /vendor 404 below.
+if (BRAND_ICONS_DIR) {
+  app.get('/vendor/brand-icons/:file', (req, res, next) => {
+    const file = String(req.params.file || '');
+    if (!BRAND_ICON_FILE_RE.test(file)) return next();
+    try {
+      if (!fs.statSync(path.join(BRAND_ICONS_DIR, file)).isFile()) return next();
+    } catch {
+      return next();
+    }
+    res.type('image/svg+xml');
+    res.set('X-Content-Type-Options', 'nosniff'); res.set('Content-Security-Policy', 'sandbox');
+    res.set('Cache-Control', 'public, max-age=86400');
+    res.sendFile(file, { root: BRAND_ICONS_DIR }, (err) => { if (!err) return; if (res.headersSent) return next(err); next(); });
+  });
+}
 
 app.use('/vendor', (err, _req, res, next) => {
   if (res.headersSent) return next(err);
@@ -7615,7 +7644,7 @@ function workspacePickUsable(pick, models) {
  *  else the defaults (only when a known catalog offers the default) — checked against the primary
  *  member's catalog. Throws on a bad explicit pick (400) or when no model is available (D19).
  *  A RE-SCAN with no usable stored pick (legacy, created pick-less, or its model left the catalog) runs
- *  silently only when the Everyday coding role covers it; else the marker { needsModel: true, models }
+ *  silently only when the Everyday tasks role covers it; else the marker { needsModel: true, models }
  *  asks the user (D20). An explicit body.models always wins (the prompted client sends one; API/CLI callers can
  *  still force a pick). */
 async function scanModelsFor(body, projectPaths, workspace = null) {
@@ -7625,7 +7654,7 @@ async function scanModelsFor(body, projectPaths, workspace = null) {
   }
   return resolveScanModels({
     explicit: body && body.models,
-    // Model roles (D3): with no stored pick, the Everyday coding role is the scan model.
+    // Model roles (D3): with no stored pick, the Everyday tasks role is the scan model.
     stored: withScanRole(workspaceScanModels(), WORKSPACE_SCAN_DEFAULT_MODELS), storedSource: workspaceScanModels() ? 'settings' : 'role',
     workspacePick: workspace && workspace.scanModels ? workspace.scanModels : null,
     models,
@@ -8040,7 +8069,7 @@ async function applySettingsPatch(body, { person = null } = {}) {
   const hasAutoPrDescKey = has('autoGeneratePrDescription');
   const hasUpdateCheckKey = has('updateCheck');
   const hasTitleModelKey = has('titleModel');
-  const hasHideBuiltinKey = has('hideBuiltinModels');
+  const hasHideBuiltinKey = has('hideBuiltinModels'); const hasHideEnginesKey = has('hideBuiltinEngines');
   const hasThemeKey = has('theme'), hasScreensaverKey = has('screensaver');   // Settings › Appearance
   const hasUiLevelKey = has('uiLevel');
   const hasFlagsKey = has('flags');
@@ -8062,7 +8091,7 @@ async function applySettingsPatch(body, { person = null } = {}) {
   const csModels = hasCommandSummaryModelKey ? (autoModels || defragModels || agentGenModels || namingModels || await listModels('')) : null; const secondOpinionModels = has('secondOpinionModel') ? (autoModels || defragModels || agentGenModels || namingModels || csModels || await listModels('')) : null;
   const hasWorkspaceScanKey = has('workspaceScan');
   const hasRunEngineKey = has('runEngine');
-  const hasStepModelsKey = has('stepModels'); const hasDesignModelsKey = has('designModels');   // designModels: Models › Engines › Design
+  const hasStepModelsKey = has('stepModels'); const hasDesignModelsKey = has('designModels');   // designModels: Models › Jobs › Design
   const hasModelRolesKey = has('modelRoles');
   const hasUtilityModelsKey = has('utilityModels');
   const hasAskEngineKey = has('askEngine');
@@ -8126,7 +8155,7 @@ async function applySettingsPatch(body, { person = null } = {}) {
         throw new Error(`unknown model ${JSON.stringify(String(titleModelInput))} — pick one from the catalog`);
       }
     });
-    if (hasHideBuiltinKey) asSettingsField('hideBuiltinModels', () => assertHideBuiltinModelsInput(body.hideBuiltinModels));
+    if (hasHideBuiltinKey) asSettingsField('hideBuiltinModels', () => assertHideBuiltinModelsInput(body.hideBuiltinModels)); if (hasHideEnginesKey) asSettingsField('hideBuiltinEngines', () => assertHideBuiltinEnginesInput(body.hideBuiltinEngines));
     if (hasThemeKey) asSettingsField('theme', () => assertThemeInput(body.theme)); if (hasScreensaverKey) asSettingsField('screensaver', () => assertScreensaverInput(body.screensaver));
     if (hasUiLevelKey) asSettingsField('uiLevel', () => assertUiLevelInput(body.uiLevel));
     if (hasAutoKey) asSettingsField('autoWorkflowModel', () => assertAutoWorkflowModelInput(body.autoWorkflowModel ?? '', autoModels));
@@ -8210,7 +8239,7 @@ async function applySettingsPatch(body, { person = null } = {}) {
       if (body.updateCheck === false) updateChecker.clear();   // back on = a fresh check, never the old answer
     }
     if (hasTitleModelKey) await setTitleModel(titleModelInput);
-    if (hasHideBuiltinKey) await setHideBuiltinModels(body.hideBuiltinModels);
+    if (hasHideBuiltinKey) await setHideBuiltinModels(body.hideBuiltinModels); if (hasHideEnginesKey) await setHideBuiltinEngines(body.hideBuiltinEngines);
     if (hasThemeKey) await setTheme(body.theme); if (hasScreensaverKey) await setScreensaver(body.screensaver);
     if (hasUiLevelKey) await setUiLevel(body.uiLevel);
     if (hasFlagsKey) await asSettingsField('flags', () => setFlags(body.flags));   // same path as PATCH /api/flags (it broadcasts `flags`)
@@ -8244,7 +8273,7 @@ async function applySettingsPatch(body, { person = null } = {}) {
     // Other open tabs repaint their Settings cards (a stale tab could otherwise
     // "save" its old checkbox state over this one with no feedback to either).
     if (hasSmartNaming || hasNamingModelKey) cachedPick = undefined;
-    if (hasAskKey || hasAskWeb || hasSmartNaming || hasDebugSpawnKey || hasTitleModelKey || hasHideBuiltinKey || hasThemeKey || hasScreensaverKey || hasUiLevelKey || hasAutoKey || hasPrDescKey || hasAutoPrDescKey || hasHumanRateKey || hasMemoryDefragKey || hasAgentGenKey || hasNamingModelKey || hasCommandSummaryModelKey || secondOpinionModels || hasWorkspaceScanKey || has('schedule') || has('sync') || has('tagDimensions') || has('enforceTags') || has('chat') || hasAskEngineKey || hasAskModelsKey || hasRequirementsInterviewKey || hasNetworkWaitKey || hasRunLimitsKey || hasActionsKey || hasNightKey || hasRunEngineKey || hasStepModelsKey || hasDesignModelsKey || hasModelRolesKey || hasUtilityModelsKey || hasUpdateCheckKey || hasKeepAwakeKey) emitChanged('settings-changed');
+    if (hasAskKey || hasAskWeb || hasSmartNaming || hasDebugSpawnKey || hasTitleModelKey || hasHideBuiltinKey || hasHideEnginesKey || hasThemeKey || hasScreensaverKey || hasUiLevelKey || hasAutoKey || hasPrDescKey || hasAutoPrDescKey || hasHumanRateKey || hasMemoryDefragKey || hasAgentGenKey || hasNamingModelKey || hasCommandSummaryModelKey || secondOpinionModels || hasWorkspaceScanKey || has('schedule') || has('sync') || has('tagDimensions') || has('enforceTags') || has('chat') || hasAskEngineKey || hasAskModelsKey || hasRequirementsInterviewKey || hasNetworkWaitKey || hasRunLimitsKey || hasActionsKey || hasNightKey || hasRunEngineKey || hasStepModelsKey || hasDesignModelsKey || hasModelRolesKey || hasUtilityModelsKey || hasUpdateCheckKey || hasKeepAwakeKey) emitChanged('settings-changed');
     // Editor / Terminal: saved as typed; a program Worca cannot find comes back as a warning on its field.
     const actionsWarnings = hasActionsKey ? Object.fromEntries(['editor', 'terminal']
       .map((k) => [k, launcherWarning(actionsSettings()[k], { findOnPath: (n) => findOnPath(n) })]).filter(([, w]) => w)) : null;
@@ -9648,7 +9677,7 @@ function agentErrorStatus(code) {
  * @returns {string} genId
  */
 async function startAgentGen(input) {
-  // The Models page's Claude tab › Agent generation, read per Generate. Unset, or a model the
+  // Claude Code's Agent generation helper job (Models › Jobs › Helper jobs), read per Generate. Unset, or a model the
   // catalog no longer carries: no --model, the CLI's default (as before the setting existed).
   const pick = resolveAgentGenModel(withRole(storedAgentGenModel(), 'claude', 'agentGenModel'), await listModels(''));
   if (pick.stale) console.warn(`[worca] agentGenModel ${JSON.stringify(pick.stale)} is no longer in the catalog — agent generation uses the CLI default`);
@@ -10525,7 +10554,7 @@ export const _testing = {
   pkgVersion: RUNNING_VERSION,
   wireRun, summarizeRuns, scanRequest, fireTicket, afterMembersChanged, markResumedRescan, wireAgentGen, startAgentGen, wireScriptBench, startScriptBench,
   chatActions, chatRouter, channelHost, handleChatInbound, enqueueChatWork, answerRun,
-  chatNotifier, resumeRun, resolveHljsAssets, resolveEsmAsset, askJobs, startAskTurn, askAgentRelay, askFollowers, askDeleting, resolveAskContext, flipCard, askWebAccessFor, switchThreadScope,
+  chatNotifier, resumeRun, resolveHljsAssets, resolveBrandIconsDir, resolveEsmAsset, askJobs, startAskTurn, askAgentRelay, askFollowers, askDeleting, resolveAskContext, flipCard, askWebAccessFor, switchThreadScope,
   startCloneJob, followCloneCard, CLONE_JOBS, GIT_ONLY_ROUTES, MARKET_JOBS, pruneMarketJobs, marketJobFailure,
   emitDiffCommentsChanged, emitAskWorktrees, askWorktreesEnvelope, deleteAskThreadFully,
   askTrackRun, liveRunEntry, liveDefragRun, askRefResolver, requirementsRunSummary, invokeStartRun, memoryScopeKey, startRunHandler, emitMemoryChanged, askSystemPromptFor, askMemoryMutation,

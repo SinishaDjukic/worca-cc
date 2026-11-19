@@ -3,28 +3,24 @@
 // Mirrors guardrails-view.mjs: every function takes `doc` via opts (defaults to
 // the browser global) and returns DETACHED elements — no fetch, no listeners
 // outside the returned tree. app.js owns endpoint calls and mounting.
-// Interactive elements carry data-id + a routing class (mv-edit, mv-delete,
-// mv-promote, mv-save, mv-cancel, mv-env-add, mv-env-rm) so app.js wires ONE
-// delegated listener on the list container.
+// Buttons carry a routing class (mv-save, mv-cancel, mv-back, mv-rewhere,
+// mv-env-*, mvx-*) so app.js wires ONE delegated click listener on the model
+// dialog (onModelDialogClick); an edit form's root carries data-id.
 
-import { bridgedBadge, needsSignInPill, degradationLine, renderConnectionSection, collectConnection, applyConnectionMode } from './bridge-view.mjs';
-import { credentialBadge } from './credential-badges.mjs';
+import { renderConnectionSection, collectConnection, applyConnectionMode, connectionWhere, setConnectionWhere, wheresFor, infoTip, tippedField } from './bridge-view.mjs';
+import { modelMark, markedSelect, paintMarkedSelect } from './models/brand-marks.mjs';
+import { displayName } from './models/catalogue-model.mjs';
+import { providerState } from './models/provider-state.mjs';
 import { icon } from './icons.mjs';
 import { copyButton } from './copy-button.mjs';
-import { makeSwitch } from './switch.mjs';
-import { engineLabel, engineChoiceLabel, isBetaEngine, MODEL_ENGINE_NAMES, SIGN_IN_ENGINE_NAMES, CHAT_ENGINE_NAMES, engineReportsCost } from '../../src/shared/engine-switch.mjs';
-import { harnessesOf, runsOn, suggestModelHandle, HARNESS_EFFORTS } from '../../src/shared/connections.mjs';
+import { engineChoiceLabel, MODEL_ENGINE_NAMES, SIGN_IN_ENGINE_NAMES, CHAT_ENGINE_NAMES, engineReportsCost } from '../../src/shared/engine-switch.mjs';
+import { suggestModelHandle, HARNESS_EFFORTS, connectionOf } from '../../src/shared/connections.mjs';
+import { SECRETISH_RE } from '../../src/shared/secret-names.mjs';
 
 /** Each model engine's effort list: Claude's, Codex's, Copilot's, Goose's and OpenCode's as given, Gemini CLI's and Qwen
  *  Code's their harness's (src/shared/connections.mjs); Cursor has no effort flag. */
 const effortLists = (efforts, codexEfforts, copilotEfforts = [], gooseEfforts = [], opencodeEfforts = []) => ({ claude: efforts, codex: codexEfforts, copilot: copilotEfforts,
   ...Object.fromEntries(SIGN_IN_ENGINE_NAMES.map((e) => [e, [...(HARNESS_EFFORTS[e] || [])]])), goose: gooseEfforts, opencode: opencodeEfforts });
-
-/** The sign-in choices of the model editor: which subscription, in the harness that holds it. */
-const SIGNIN_CHOICES = { claude: 'Claude Code: your Claude login', codex: 'Codex: your ChatGPT sign-in', cursor: 'Cursor: your Cursor sign-in',
-  copilot: 'Copilot: your GitHub Copilot sign-in', gemini: 'Gemini CLI: your Gemini CLI sign-in',
-  goose: 'Goose: your Goose providers',
-  opencode: 'OpenCode: your OpenCode providers', qwen: 'Qwen Code: your Qwen Code sign-in' };
 
 
 function h(doc, tag, cls, text) {
@@ -32,30 +28,6 @@ function h(doc, tag, cls, text) {
   if (cls) n.className = cls;
   if (text != null) n.textContent = text;
   return n;
-}
-
-/** "medium · high" or "all efforts" (the full set carries no signal). */
-/** Credential broker: "your key / no key" for the signed-in person, after a model's name. */
-function keyBadge(parent, m, doc) {
-  const b = credentialBadge(m.id);
-  if (!b) return;
-  const el = h(doc, 'span', `badge ${b.tone} mv-key-badge`, b.text);
-  el.title = b.title;
-  parent.appendChild(el);
-}
-
-export function effortsSummary(efforts, allEfforts) {
-  const list = Array.isArray(efforts) ? efforts : [];
-  if (!list.length || (allEfforts && list.length === allEfforts.length)) return 'all efforts';
-  return list.join(' · ');
-}
-
-/** "2 env vars · routes via base URL" | "1 env var" | '' (none). */
-export function envSummary(env) {
-  const keys = Object.keys(env || {});
-  if (!keys.length) return '';
-  const n = `${keys.length} env var${keys.length === 1 ? '' : 's'}`;
-  return keys.includes('ANTHROPIC_BASE_URL') ? `${n} · routes via base URL` : n;
 }
 
 /** The per-Mtok rate keys, in editor order, with their display labels. Mirrors
@@ -101,333 +73,14 @@ export function suggestDuplicateId(id, takenIds = []) {
 }
 
 /**
- * The Models view body: global entries (editable), the selected project's
- * legacy custom models (promotable), and the built-in catalog (read-only).
- * `globals` come MASKED from GET /api/models. `predefinedShadowedIds` marks
- * built-ins currently overridden by a global entry.
+ * The label a duplicate of `src` starts with: `<label> copy` for a label the user chose; '' for one that is only the
+ * id (or none), so the copy's label defaults to its own new id. models/brand-marks.mjs vendorOf reads past both.
+ * @param {{ id: string, label?: string }} src
+ * @returns {string}
  */
-/**
- * The catalog. `query` / `filter` narrow it and `collapsed` folds a group away: with the built-ins,
- * a plugin's models and a team policy's all listed at once the page ran to several screens, and the
- * entry you came for was never the one on top.
- * @param {{query?:string, filter?:string, collapsed?:object, highlight?:string[]}} [o]
- */
-export function renderModelsList({ globals = [], legacy = [], plugins = [], policy = [], predefined = [], codex = [], codexEfforts = [], copilot = [], copilotEfforts = [], gooseEfforts = [], opencodeEfforts = [], efforts = [], hideBuiltin = false, projectName = '', query = '', filter = 'all', collapsed = {}, highlight = [] } = {}, { doc = globalThis.document } = {}) {
-  const root = h(doc, 'div', 'mv-list');
-  const predefLc = new Set(predefined.map((m) => m.id.toLowerCase()));
-  const pluginLc = new Set(plugins.map((m) => m.id.toLowerCase()));
-  const codexLc = new Set(codex.map((m) => m.id.toLowerCase()));
-
-  // A model names the harnesses that run it (src/shared/connections.mjs) when that is not Claude Code alone; its
-  // efforts are its own engine's.
-  const engineBadge = (m) => {
-    const hs = harnessesOf(m);
-    if (hs.length === 1 && hs[0] === 'claude') return null;
-    const b = h(doc, 'span', 'badge blue mv-engine', hs.map(engineLabel).join(' · '));
-    b.title = `Runs on ${hs.map(engineLabel).join(' and ')}`;
-    return b;
-  };
-  const lists = effortLists(efforts, codexEfforts, copilotEfforts, gooseEfforts, opencodeEfforts);
-  const effortsOf = (m) => effortsSummary(m.efforts, lists[m.engine || 'claude'] || efforts);
-  const q = String(query || '').trim().toLowerCase();
-  const hi = new Set((highlight || []).map((x) => String(x).toLowerCase()));
-  const searching = !!q || filter !== 'all';
-
-  /** Does this entry survive the search box and the chip? */
-  const keep = (m, source) => {
-    if (filter === 'imported' && !hi.has(String(m.id).toLowerCase())) return false;
-    if (filter === 'needs-setup' && !m.needsSignIn) return false;
-    // "Codex": every model Codex can run, whichever group it sits in (its built-ins, an endpoint model of yours).
-    if (filter === 'codex') { if (!runsOn(m, 'codex')) return false; } else if (!['all', 'imported', 'needs-setup'].includes(filter) && filter !== source) return false;
-    if (!q) return true;
-    return [m.id, m.label, m.plugin, m.home, m.upstream && m.upstream.model].filter(Boolean).some((v) => String(v).toLowerCase().includes(q));
-  };
-
-  // Each group can fold: the header is the control, and its count is the answer to "is my model
-  // in there?" without opening it.
-  const sections = [];
-  const section = (title, hint, key = '') => {
-    const s = h(doc, 'div', 'mv-section');
-    s.dataset.section = key;
-    const head = h(doc, 'div', 'mv-section-head');
-    const btn = h(doc, 'button', 'btn btn-quiet btn-sm mv-sec-toggle');
-    btn.type = 'button';
-    btn.dataset.section = key;
-    // The shared disclosure chevron (style.css .adv-chev), turned down while the group is open.
-    const caret = h(doc, 'span', 'mv-sec-caret adv-chev');
-    caret.setAttribute('aria-hidden', 'true');
-    btn.appendChild(caret);
-    btn.appendChild(h(doc, 'h3', 'section-title mv-section-title', title));
-    btn.appendChild(h(doc, 'span', 'mv-sec-count', ''));
-    head.appendChild(btn);
-    s.appendChild(head);
-    if (hint) s.appendChild(h(doc, 'small', 'hint mv-sec-hint', hint));
-    const body = h(doc, 'div', 'mv-sec-body');
-    s.appendChild(body);
-    // Searching opens every group that still has a hit — a match hidden inside a fold is a bug.
-    const folded = !searching && !!collapsed[key];
-    s.classList.toggle('is-folded', folded);
-    btn.setAttribute('aria-expanded', folded ? 'false' : 'true');
-    sections.push({ el: s, body, btn, key });
-    // The rows go into the body; every caller appends to the section, so proxy it.
-    s.appendChild = (node) => body.appendChild(node);
-    return s;
-  };
-
-  // The endpoint-routed badge (#422): honest disclosure that worca points the
-  // CLI's internal haiku/sonnet/opus/fable lookups at this model's own id
-  // (config.mjs#resolveModelEnv), so nothing falls back to the Anthropic API.
-  // The masked env still carries its KEYS, so presence is decidable here.
-  const routedBadge = (m) => {
-    if (!m.env || !Object.prototype.hasOwnProperty.call(m.env, 'ANTHROPIC_BASE_URL')) return null;
-    const b = h(doc, 'span', 'badge waiting mv-routed', 'endpoint-routed');
-    b.title = "worca points Claude Code's internal haiku/sonnet/opus/fable lookups at this model, so it never falls back to the Anthropic API.";
-    return b;
-  };
-
-  // ── Toolbar: search + the chip that says which layer you are looking at ──
-  const bar = h(doc, 'div', 'mv-toolbar');
-  const search = h(doc, 'input', 'input mv-search');
-  search.type = 'search';
-  search.placeholder = 'Search models by id, label or upstream…';
-  search.value = query || '';
-  search.setAttribute('aria-label', 'Search models');
-  bar.appendChild(search);
-  const chips = h(doc, 'div', 'mv-filters');
-  const CHIPS = [['all', 'All'], ['global', 'Yours'], ['builtin', 'Built-in'], ['codex', 'Codex'], ['plugin', 'Plugin'], ['policy', 'Team'], ['needs-setup', 'Needs setup']];
-  if (highlight.length) CHIPS.push(['imported', 'Just imported']);
-  for (const [id, label] of CHIPS) {
-    const c = h(doc, 'button', 'filter-chip', label);
-    c.type = 'button'; c.dataset.filter = id;
-    c.setAttribute('aria-pressed', filter === id ? 'true' : 'false');
-    chips.appendChild(c);
-  }
-  bar.appendChild(chips);
-  root.appendChild(bar);
-
-  // ── Hide built-in models (#422) — one checkbox, top of the pane ──
-  const hideRow = h(doc, 'div', 'mv-hide-builtin-row');
-  const hideSw = makeSwitch(doc, { label: "Hide built-in models (you don't use a first-party Anthropic account)", checked: !!hideBuiltin, inputClass: 'mv-hide-builtin' });
-  hideRow.appendChild(hideSw.row);
-  hideRow.appendChild(h(doc, 'small', 'hint',
-    'Drops the built-ins from every model picker: New run, the Workflows view, Chat, title generation. Cosmetic only: a run or reference that already names one keeps working.'));
-  root.appendChild(hideRow);
-
-  // ── Your models (global) ──
-  const yours = section('Your models', 'Defined once, available in every project. An entry with a built-in id overrides that built-in.', 'global');
-  if (!globals.length) {
-    yours.appendChild(h(doc, 'div', 'hist-empty', 'No global models yet. Add model to define one.'));
-  }
-  for (const m of globals.filter((x) => keep(x, 'global'))) {
-    const card = h(doc, 'section', 'card mv-card');
-    card.dataset.id = m.id;
-    const body = h(doc, 'div', 'mv-body');
-    const head = h(doc, 'div', 'mv-head');
-    head.appendChild(h(doc, 'b', 'mv-name', m.label || m.id));
-    keyBadge(head, m, doc);
-    const eb = engineBadge(m); if (eb) head.appendChild(eb);
-    if (predefLc.has(m.id.toLowerCase()) || (m.engine === 'codex' && codexLc.has(m.id.toLowerCase()))) head.appendChild(h(doc, 'span', 'badge slate mv-shadow', 'overrides built-in'));
-    else if (pluginLc.has(m.id.toLowerCase())) head.appendChild(h(doc, 'span', 'badge slate mv-shadow', 'overrides plugin'));
-    const rb = routedBadge(m);
-    if (rb) head.appendChild(rb);
-    // Model bridge (model-bridge-design.md §8.5): the provider badge, and the
-    // blocking "needs sign-in" pill when that provider is not usable yet.
-    const bb = bridgedBadge(m, { doc });
-    if (bb) head.appendChild(bb);
-    const ns = needsSignInPill(m, { doc });
-    if (ns) head.appendChild(ns);
-    // The §4.6 "unreliable" badge is meaningless once an override GOVERNS this
-    // model's spend — and the backend only lifts the stored flag on the model's
-    // next result event, so suppress it here the moment pricing is pinned.
-    if (m.costUnreliable && !m.cost) head.appendChild(h(doc, 'span', 'badge waiting mv-cost', 'cost not verified'));
-    if (m.cost) head.appendChild(h(doc, 'span', 'badge slate mv-cost-pinned', m.cost.free ? 'free' : 'priced'));
-    body.appendChild(head);
-    const bits = [m.id, effortsOf(m), m.upstream ? `→ ${m.upstream.model}` : '', envSummary(m.env), costSummary(m.cost)].filter(Boolean);
-    body.appendChild(h(doc, 'small', 'mv-summary hint', bits.join('; ')));
-    const deg = degradationLine(m);
-    if (deg) body.appendChild(h(doc, 'small', 'mv-degradation hint', deg));
-    body.appendChild(h(doc, 'small', 'mv-test-result hint')); // app.js paints the Test outcome here
-    card.appendChild(body);
-    const del = h(doc, 'button', 'btn mv-delete', 'Delete');
-    del.type = 'button'; del.dataset.id = m.id;
-    card.appendChild(del);
-    const edit = h(doc, 'button', 'btn mv-edit', 'Edit');
-    edit.type = 'button'; edit.dataset.id = m.id;
-    card.appendChild(edit);
-    // Duplicate opens a CREATE editor seeded from this entry (app.js fetches the
-    // raw env values first — the card only ever holds masked ones). The point is
-    // deriving a sibling: same routing, one parameter changed.
-    const dup = h(doc, 'button', 'btn mv-duplicate', 'Duplicate');
-    dup.type = 'button'; dup.dataset.id = m.id;
-    card.appendChild(dup);
-    const tst = h(doc, 'button', 'btn mv-test', 'Test');
-    tst.type = 'button'; tst.dataset.id = m.id;
-    card.appendChild(tst);
-    yours.appendChild(card);
-  }
-  root.appendChild(yours);
-
-  // ── Legacy per-project models (promotable) ──
-  if (legacy.length) {
-    const leg = section(
-      `Project models${projectName ? `: ${projectName}` : ''} (legacy)`,
-      'Defined only for this project. Promote to make them global; the id keeps working everywhere it is referenced.'
-    );
-    for (const m of legacy) {
-      const card = h(doc, 'section', 'card mv-card mv-legacy');
-      card.dataset.id = m.id;
-      const body = h(doc, 'div', 'mv-body');
-      const head = h(doc, 'div', 'mv-head');
-      head.appendChild(h(doc, 'b', 'mv-name', m.label || m.id));
-    keyBadge(head, m, doc);
-      head.appendChild(h(doc, 'span', 'badge waiting mv-origin', 'project (legacy)'));
-      body.appendChild(head);
-      body.appendChild(h(doc, 'small', 'mv-summary hint', m.id));
-      card.appendChild(body);
-      const promote = h(doc, 'button', 'btn mv-promote', 'Promote to global');
-      promote.type = 'button'; promote.dataset.id = m.id;
-      card.appendChild(promote);
-      leg.appendChild(card);
-    }
-    root.appendChild(leg);
-  }
-
-  // ── From plugins (read-only; design §9.6) ──
-  const globalLc = new Set(globals.map((m) => m.id.toLowerCase()));
-  if (plugins.length) {
-    const plug = section('From plugins',
-      'Installed by plugins. Read-only and updated with the plugin. "Edit a copy" clones one into Your models, which then overrides it.', 'plugin');
-    for (const m of plugins.filter((x) => keep(x, 'plugin'))) {
-      const card = h(doc, 'section', 'card mv-card mv-plugin');
-      card.dataset.id = m.id;
-      card.dataset.plugin = m.plugin;
-      const body = h(doc, 'div', 'mv-body');
-      const head = h(doc, 'div', 'mv-head');
-      head.appendChild(h(doc, 'b', 'mv-name', m.label || m.id));
-    keyBadge(head, m, doc);
-      const peb = engineBadge(m); if (peb) head.appendChild(peb);
-      head.appendChild(h(doc, 'span', 'badge waiting mv-origin', `plugin: ${m.plugin}`));
-      if (globalLc.has(m.id.toLowerCase())) head.appendChild(h(doc, 'span', 'badge slate mv-shadowed', 'overridden by your copy'));
-      const prb = routedBadge(m);
-      if (prb) head.appendChild(prb);
-      const pbb = bridgedBadge(m, { doc });
-      if (pbb) head.appendChild(pbb);
-      const pns = needsSignInPill(m, { doc });
-      if (pns) head.appendChild(pns);
-      // Same rule as a global card: a manifest-pinned price governs the spend,
-      // so the §4.6 "unreliable" flag says nothing about it.
-      if (m.costUnreliable && !m.cost) head.appendChild(h(doc, 'span', 'badge waiting mv-cost', 'cost not verified'));
-      if (m.cost) head.appendChild(h(doc, 'span', 'badge slate mv-cost-pinned', m.cost.free ? 'free' : 'priced'));
-      body.appendChild(head);
-      const bits = [m.id, effortsOf(m), m.upstream ? `→ ${m.upstream.model}` : '', envSummary(m.env), costSummary(m.cost)].filter(Boolean);
-      body.appendChild(h(doc, 'small', 'mv-summary hint', bits.join('; ')));
-      const pdeg = degradationLine(m);
-      if (pdeg) body.appendChild(h(doc, 'small', 'mv-degradation hint', pdeg));
-      for (const s of m.secrets || []) {
-        body.appendChild(h(doc, 'small', `mv-secret hint${s.set ? '' : ' err'}`,
-          s.set ? `secret ${s.key}: set` : `secret ${s.key}: NOT SET. Configure it in the plugin's settings`));
-      }
-      body.appendChild(h(doc, 'small', 'mv-test-result hint')); // app.js paints the Test outcome here
-      card.appendChild(body);
-      const copy = h(doc, 'button', 'btn mv-copy', 'Edit a copy');
-      copy.type = 'button'; copy.dataset.id = m.id; copy.dataset.plugin = m.plugin;
-      card.appendChild(copy);
-      const tst = h(doc, 'button', 'btn mv-test', 'Test');
-      tst.type = 'button'; tst.dataset.id = m.id; tst.dataset.plugin = m.plugin;
-      if ((m.secrets || []).some((s) => !s.set)) {
-        // A test would only prove what the NOT SET line already says.
-        tst.disabled = true;
-        tst.title = 'set the plugin secret first';
-      }
-      card.appendChild(tst);
-      plug.appendChild(card);
-    }
-    root.appendChild(plug);
-  }
-
-  // ── From team policy (read-only; team-policy design §8) ──
-  if (policy.length) {
-    const pol = section('From team policy',
-      'Shipped by a team policy. Read-only and updated when the policy changes. Add a model with the same id to Your models to override one on this machine.', 'policy');
-    for (const m of policy.filter((x) => keep(x, 'policy'))) {
-      const card = h(doc, 'section', 'card mv-card mv-policy');
-      card.dataset.id = m.id;
-      const body = h(doc, 'div', 'mv-body');
-      const head = h(doc, 'div', 'mv-head');
-      head.appendChild(h(doc, 'b', 'mv-name', m.label || m.id));
-    keyBadge(head, m, doc);
-    const teb = engineBadge(m); if (teb) head.appendChild(teb);
-      const badge = h(doc, 'span', 'badge slate mv-origin', 'policy');
-      badge.title = `Team policy on ${m.home}`;
-      head.appendChild(badge);
-      if (globalLc.has(m.id.toLowerCase())) head.appendChild(h(doc, 'span', 'badge slate mv-shadowed', 'overridden by your copy'));
-      const rb = routedBadge(m);
-      if (rb) head.appendChild(rb);
-      body.appendChild(head);
-      const bits = [m.id, effortsOf(m), envSummary(m.env), m.home ? `policy ${m.home}` : ''].filter(Boolean);
-      body.appendChild(h(doc, 'small', 'mv-summary hint', bits.join('; ')));
-      body.appendChild(h(doc, 'small', 'mv-test-result hint'));
-      card.appendChild(body);
-      const tst = h(doc, 'button', 'btn mv-test', 'Test');
-      tst.type = 'button'; tst.dataset.id = m.id;
-      card.appendChild(tst);
-      pol.appendChild(card);
-    }
-    root.appendChild(pol);
-  }
-
-  // ── Built-ins (read-only) ──
-  const builtins = section('Built-in models', hideBuiltin
-    ? `Hidden from every picker (${predefined.length} built-in${predefined.length === 1 ? '' : 's'}). Untick the box above to show them.`
-    : 'Shipped with worca. Add a model with the same id to override its label, efforts, or routing.', 'builtin');
-  builtins.classList.add(hideBuiltin ? 'mv-builtins-hidden' : 'mv-builtins-shown');
-  for (const m of (hideBuiltin ? [] : predefined).filter((x) => keep(x, 'builtin'))) {
-    const row = h(doc, 'div', 'mv-builtin');
-    row.dataset.id = m.id;
-    row.appendChild(h(doc, 'b', 'mv-name', m.label));
-    keyBadge(row, m, doc);
-    if (globalLc.has(m.id.toLowerCase()) || pluginLc.has(m.id.toLowerCase())) {
-      row.appendChild(h(doc, 'span', 'badge slate mv-shadowed', 'overridden'));
-    }
-    row.appendChild(h(doc, 'small', 'mv-summary hint', `${m.id}: ${effortsSummary(m.efforts, efforts)}`));
-    builtins.appendChild(row);
-  }
-  root.appendChild(builtins);
-
-  // ── Codex and Copilot built-ins (read-only; §3.1a) ──
-  // One catalog row per id (config.mjs composeCatalog): a global, plugin or team-policy model of
-  // any engine with a built-in's id owns that id, so the built-in row says it is overridden.
-  const ownedLc = new Set([...globals, ...plugins, ...policy].map((m) => m.id.toLowerCase()));
-  const engineBuiltins = (list, engine, title, hint, engineEfforts) => {
-    if (!list.length) return;
-    const sec = section(title, hint, engine);
-    for (const m of list.filter((x) => keep(x, engine))) {
-      const row = h(doc, 'div', `mv-builtin mv-${engine}`);
-      row.dataset.id = m.id;
-      row.appendChild(h(doc, 'b', 'mv-name', m.label));
-      if (ownedLc.has(m.id.toLowerCase())) row.appendChild(h(doc, 'span', 'badge slate mv-shadowed', 'overridden'));
-      row.appendChild(h(doc, 'small', 'mv-summary hint', `${m.id}: ${effortsSummary(m.efforts, engineEfforts)}`));
-      sec.appendChild(row);
-    }
-    root.appendChild(sec);
-  };
-  engineBuiltins(codex, 'codex', 'Codex built-in models',
-    'Shipped with worca for Codex runs. Add a Codex model with the same id to override its label or efforts.', codexEfforts);
-  engineBuiltins(copilot, 'copilot', 'Copilot built-in models',
-    'The models the Copilot CLI offers, on your GitHub Copilot sign-in. Add a Copilot model with the same id to override its label or efforts.', copilotEfforts);
-
-  // Counts on every header, and a group with nothing left drops out while a search is on.
-  let shown = 0;
-  for (const sec of sections) {
-    const n = sec.body.querySelectorAll('.mv-card, .mv-builtin').length;
-    shown += n;
-    sec.btn.querySelector('.mv-sec-count').textContent = String(n);
-    if (searching && !n) sec.el.classList.add('hidden');
-  }
-  if (searching && !shown) {
-    root.appendChild(h(doc, 'div', 'hist-empty mv-no-hits', q ? `No model matches “${query}”.` : 'No model in this group.'));
-  }
-  return root;
+export function suggestDuplicateLabel(src) {
+  const label = String(src?.label ?? '');
+  return label && label !== src.id ? `${label} copy` : '';
 }
 
 /** One env key/value editor row. Existing values arrive MASKED; leaving a
@@ -438,7 +91,7 @@ export function renderModelsList({ globals = [], legacy = [], plugins = [], poli
 function envRow(doc, key = '', value = '') {
   const row = h(doc, 'div', 'mv-env-row');
   const k = h(doc, 'input', 'input mv-env-key');
-  k.type = 'text'; k.placeholder = 'ANTHROPIC_BASE_URL'; k.value = key;
+  k.type = 'text'; k.placeholder = 'NAME'; k.value = key;
   const v = h(doc, 'input', 'input mv-env-val');
   v.type = 'text'; v.placeholder = 'value, or ${VAR} to read your shell env'; v.value = value;
   if (value) v.dataset.original = value; // masked echo detection on collect
@@ -459,18 +112,92 @@ function envRow(doc, key = '', value = '') {
   return row;
 }
 
+/** Where a model runs, as connectionOf (src/shared/connections.mjs) names the kinds. */
+const WHERE_KINDS = Object.freeze(['signin', 'env', 'provider']);
+/** The three pricing modes, in the segment's order. */
+const COST_MODES = Object.freeze([['cli', 'Trust the CLI'], ['free', 'Free ($0)'], ['perMtok', 'Per million tokens']]);
+/** The ID's placeholder follows the harness: a Goose or OpenCode model's id is provider/model. */
+const idPlaceholder = (engine) => (engine === 'goose' || engine === 'opencode' ? 'provider/model' : 'claude-opus-4-8, glm-4.7, a fine-tune id…');
+/** The four names a provider model's bridge sets itself (model-env.mjs BRIDGE_ROUTING_KEYS). */
+const PROVIDER_ENV_KEYS = Object.freeze(['ANTHROPIC_BASE_URL', 'ANTHROPIC_AUTH_TOKEN', 'ANTHROPIC_API_KEY', 'ANTHROPIC_MODEL']);
+/** The two rows a custom endpoint is made of (FRM-2): its address and its key. */
+const ENDPOINT_ENV_KEYS = Object.freeze(['ANTHROPIC_BASE_URL', 'ANTHROPIC_AUTH_TOKEN']);
+/** A value GET /api/models masked, echoed back: the server's isMaskedEcho (ui/routes/models/models.mjs), which a copy's
+ *  `copyFrom` fills from its source. */
+const isMaskedEcho = (v) => typeof v === 'string' && v.startsWith('••');
+
+/** Today's hints, which carry rules rather than formats: each is its field's ⓘ tip (L18). */
+const TIPS = Object.freeze({
+  id: 'What runs and settings name this entry by. A sign-in model uses the model’s own id (a built-in id overrides that built-in); through a provider the id is yours, and the endpoint is sent the upstream model id below.',
+  harness: 'The harness whose sign-in runs this model. A Cursor, Gemini CLI or Qwen Code model takes no effort, and Worca cannot price it. '
+    + "A Goose model's id is provider/model (for example google/gemini-2.5-flash); Goose's own providers connect it. "
+    + "An OpenCode model's id is provider/model (as `opencode models` lists it); OpenCode's own providers connect it, and its effort is OpenCode's --variant.",
+  harnessFixed: 'Fixed once created. Delete the model and add it again to change it.',
+  env: 'e.g. ANTHROPIC_BASE_URL / ANTHROPIC_AUTH_TOKEN. ANTHROPIC_MODEL sets the wire id sent to --model (the id above stays worca’s handle). Stored values show masked; leave masked to keep. WORCA_* and process keys are reserved. Through a provider, the bridge owns ANTHROPIC_BASE_URL / ANTHROPIC_AUTH_TOKEN / ANTHROPIC_API_KEY / ANTHROPIC_MODEL. Setting them here is refused.',
+  pricing: 'Only for an endpoint the CLI prices by NAME rather than from what the endpoint reports (an on-prem or proxied model). '
+    + 'Trust the CLI is the default and leaves spend exactly as today. Blank rates count as $0, except Cache write (1h), '
+    + 'which falls back to the 5m rate when blank.',
+});
+
+let fieldSeq = 0;
+
 /**
- * The add/edit form. `model` is a MASKED global entry, or null for create.
- * Returns detached DOM; app.js wires mv-save / mv-cancel / mv-env-add /
- * mv-env-rm and calls collectModelEditor on save.
+ * div.mv-field named by its first .mv-field-label (FRM-1): a label[for] its control (with a tip, tippedField's), or for a
+ * group of buttons or rows a span that labels the group — never a label wrapping buttons, whose text click presses the
+ * first. `box` is what the field shows; `names` the element its name names (the box unless given).
  */
-export function renderModelEditor(model, efforts, { doc = globalThis.document, providers = null, copilotModels = [], codexEfforts = ['minimal', 'low', 'medium', 'high'], copilotEfforts = [], gooseEfforts = ['low', 'medium', 'high', 'max'], opencodeEfforts = ['minimal', 'low', 'medium', 'high', 'max'] } = {}) {
-  const editing = !!model;
+function fieldOf(doc, text, box, { tip = '', names = box } = {}) {
+  const control = /^(?:INPUT|SELECT|TEXTAREA)$/.test(names.tagName);
+  if (control && tip && names === box) return tippedField(doc, text, box, tip);
+  const wrap = h(doc, 'div', 'mv-field');
+  const name = h(doc, control ? 'label' : 'span', 'mv-field-label', text);
+  if (control) {
+    names.id = `mv-field-${++fieldSeq}`;
+    name.htmlFor = names.id;
+  } else {
+    name.id = `mv-field-${++fieldSeq}`;
+    names.setAttribute('role', 'group');
+    names.setAttribute('aria-labelledby', name.id);
+  }
+  if (tip) {
+    const row = h(doc, 'div', 'label-row');
+    row.append(name, infoTip(doc, text, tip));
+    wrap.appendChild(row);
+  } else wrap.appendChild(name);
+  wrap.appendChild(box);
+  return wrap;
+}
+
+/** ol.mdl-steps: "1 Where it runs", then "2 The model", the current one (ADD-1). */
+function stepNames(doc) {
+  const ol = h(doc, 'ol', 'mdl-steps');
+  ol.setAttribute('aria-label', 'Steps');
+  ol.appendChild(h(doc, 'li', null, '1 Where it runs'));
+  const now = h(doc, 'li', null, '2 The model');
+  now.setAttribute('aria-current', 'step');
+  ol.appendChild(now);
+  return ol;
+}
+
+/**
+ * The model form (DESIGN FRM-1…FRM-7): add, edit or copy. `model` is a MASKED global entry, or null for a new one.
+ * Returns detached DOM: section.card.mv-editor[data-mode][data-where][data-engine][data-effort-lists] (data-id and
+ * data-env-keys on edit, data-copy-from on a copy) > div.mv-editor-head (the model's mark on edit and copy, the title,
+ * the step names with `steps`, Close), div.mv-editor-grid (the fields by where; the connection's folds after Pricing),
+ * p.mv-editor-msg, div.mv-editor-btns (Back with `steps`, "Change where it runs" on edit, Cancel, Save last). app.js
+ * lays it out (layoutDialog), wires the buttons and calls collectModelEditor on save.
+ * `where`: 'provider' | 'signin' | 'env' (an existing model's connectionOf kind, else a sign-in); `steps`: reached through
+ * step 1; `provider`: a new provider form's choice; `takenIds`: every listed id, refused on add and copy; `copyFrom`: a
+ * source id — the model drawn as on edit, collected as a new one with `id` and `label`.
+ */
+export function renderModelEditor(model, efforts, { doc = globalThis.document, providers = null, copilotModels = [], codexEfforts = ['minimal', 'low', 'medium', 'high'], copilotEfforts = [], gooseEfforts = ['low', 'medium', 'high', 'max'], opencodeEfforts = ['minimal', 'low', 'medium', 'high', 'max'], where = '', steps = false, provider = '', takenIds = [], copyFrom = '', id = '', label = '' } = {}) {
+  const copying = !!(model && copyFrom);
+  const editing = !!model && !copying;
   const root = h(doc, 'section', 'card mv-editor');
   // Every engine's effort list rides the root so setModelEngine can swap them (§3.1a).
   const lists = effortLists(efforts, codexEfforts, copilotEfforts, gooseEfforts, opencodeEfforts);
   root.dataset.effortLists = JSON.stringify(lists);
-  const engineNow = editing && MODEL_ENGINE_NAMES.includes(model.engine) ? model.engine : 'claude';
+  const engineNow = model && MODEL_ENGINE_NAMES.includes(model.engine) ? model.engine : 'claude';
   root.dataset.mode = editing ? 'edit' : 'create';
   if (editing) {
     root.dataset.id = model.id;
@@ -478,73 +205,74 @@ export function renderModelEditor(model, efforts, { doc = globalThis.document, p
     // user removed — the write-only PATCH can't infer deletions otherwise.
     root.dataset.envKeys = Object.keys(model.env || {}).join('\n');
   }
-  root.appendChild(h(doc, 'h3', 'mv-editor-title', editing ? `Edit ${model.label || model.id}` : 'Add model'));
+  if (copying) root.dataset.copyFrom = copyFrom;
+  // Add and copy refuse an id the catalogue already lists, whatever its case (FRM-5).
+  if (!editing) root.dataset.takenIds = [...(takenIds || [])].map((t) => String(t).toLowerCase()).join('\n');
+  const whereNow = WHERE_KINDS.includes(where) ? where : model ? connectionOf(model).kind : 'signin';
+  root.dataset.where = whereNow;
+
+  const head = h(doc, 'div', 'mv-editor-head');
+  // A copy is yours: it wears your mark even when its source is a plugin's.
+  if (model) head.appendChild(modelMark(doc, copying ? { ...model, plugin: undefined } : model, 'lg'));
+  head.appendChild(h(doc, 'h3', 'mv-editor-title', editing ? `Edit ${displayName(model)}` : copying ? 'Add a copy' : 'Add model'));
+  if (steps) head.appendChild(stepNames(doc));
+  const close = h(doc, 'button', 'btn btn-quiet btn-sm btn-icon mdl-close');
+  close.type = 'button';
+  close.setAttribute('aria-label', 'Close');
+  close.appendChild(icon(doc, 'x', 16));
+  head.appendChild(close);
+  root.appendChild(head);
 
   const grid = h(doc, 'div', 'mv-editor-grid');
-  const field = (labelText, input, hint) => {
-    const wrap = h(doc, 'label', 'mv-field');
-    wrap.appendChild(h(doc, 'span', 'mv-field-label', labelText));
-    wrap.appendChild(input);
-    if (hint) wrap.appendChild(h(doc, 'small', 'hint', hint));
-    return wrap;
-  };
-
-  const idInput = h(doc, 'input', 'input mv-id');
-  idInput.type = 'text';
-  idInput.placeholder = 'claude-opus-4-8, glm-4.7, a fine-tune id…';
-  idInput.value = editing ? model.id : '';
-  idInput.disabled = editing; // the id IS the reference — delete + re-add to rename
-  // Typing an id stops the editor from deriving one from the provider and upstream model (applyConnectionModeIn).
-  if (!editing && typeof idInput.addEventListener === 'function') idInput.addEventListener('input', () => { idInput.dataset.auto = 'off'; });
-  grid.appendChild(field('Model id (worca’s handle)', idInput,
-    editing ? '' : 'What runs and settings name this entry by. A sign-in model uses the model’s own id (a built-in id overrides that built-in); through a provider the id is yours, and the endpoint is sent the upstream model id below.'));
-
   const labelInput = h(doc, 'input', 'input mv-label');
   labelInput.type = 'text';
   labelInput.placeholder = 'Display name (defaults to the id)';
-  labelInput.value = editing ? (model.label === model.id ? '' : model.label) : '';
-  grid.appendChild(field('Label', labelInput));
-  // ── Connection (model-bridge-design.md §8.3): a harness's sign-in / env / provider ──
-  // It decides which harnesses can run the model (src/shared/connections.mjs): a sign-in only its own, routing env
-  // Claude Code, a provider Claude Code through the bridge and Codex an OpenAI Responses endpoint directly.
-  const connEl = renderConnectionSection(model, { doc, providers, copilotModels });
-  if (editing) connEl.dataset.editing = '1';
-  grid.appendChild(field('Connection', connEl));
-  // Whose subscription a sign-in model runs on — the harness it is bound to. Only the sign-in connection asks;
-  // an env or provider entry is stored as Claude Code's (its harnesses follow from the connection).
+  labelInput.value = editing ? (model.label === model.id ? '' : model.label) : copying ? label : '';
+  grid.appendChild(fieldOf(doc, 'Name', labelInput));
+
+  const idInput = h(doc, 'input', 'input mv-id');
+  idInput.type = 'text';
+  idInput.placeholder = idPlaceholder(engineNow);
+  idInput.value = editing ? model.id : copying ? id : '';
+  idInput.disabled = editing; // the id IS the reference — delete + re-add to rename
+  // Typing an id stops the editor from deriving one from the provider and upstream model (applyConnectionModeIn); a
+  // copy's id is given.
+  if (copying) idInput.dataset.auto = 'off';
+  if (!editing && typeof idInput.addEventListener === 'function') idInput.addEventListener('input', () => { idInput.dataset.auto = 'off'; });
+  grid.appendChild(fieldOf(doc, 'ID', idInput, { tip: editing ? '' : TIPS.id }));
+
+  // The harness of a sign-in (all eight, beta ones marked) or of a custom endpoint (Claude Code only). A sibling of the
+  // connection, never inside it, so an engine change is not also a connection change (app.js). Fixed once created.
   const engineSel = h(doc, 'select', 'select mv-engine');
   for (const v of MODEL_ENGINE_NAMES) {
     const o = doc.createElement('option');
-    o.value = v; o.textContent = SIGNIN_CHOICES[v] ? `${SIGNIN_CHOICES[v]}${isBetaEngine(v) ? ' (beta)' : ''}` : engineChoiceLabel(v);
+    o.value = v; o.textContent = engineChoiceLabel(v);
     engineSel.appendChild(o);
   }
   engineSel.value = engineNow;
   engineSel.disabled = editing;
-  const signinField = field('Sign-in', engineSel, editing
-    ? 'Fixed once created. Delete the model and add it again to change it.'
-    : 'The harness whose sign-in runs this model. A Cursor, Gemini CLI or Qwen Code model takes no effort, and Worca cannot price it. '
-      + "A Goose model's id is provider/model (for example google/gemini-2.5-flash); Goose's own providers connect it. "
-      + "An OpenCode model's id is provider/model (as `opencode models` lists it); OpenCode's own providers connect it, and its effort is OpenCode's --variant.");
-  signinField.classList.add('mv-signin-field');
-  grid.appendChild(signinField);
+  // FRM-1: the picked harness's mark inside the select; the label still names the select.
+  grid.appendChild(fieldOf(doc, 'Harness', markedSelect(doc, engineSel, 'harness'), { tip: editing ? TIPS.harnessFixed : TIPS.harness, names: engineSel }));
 
-  const effWrap = h(doc, 'div', 'mv-efforts');
-  const effortList = lists[engineNow] || efforts;
-  const selected = new Set(editing && Array.isArray(model.efforts) ? model.efforts : effortList);
-  for (const lab of effortBoxes(doc, effortList, selected)) effWrap.appendChild(lab);
-  const effField = field('Supported efforts', effWrap, 'All checked = every effort (the default).');
-  effField.querySelector('.hint').classList.add('mv-efforts-hint');   // applyConnectionMode rewrites it
-  grid.appendChild(effField);
+  // ── Connection (model-bridge-design.md §8.3): Provider and Upstream model id here, its folds after Pricing ──
+  const connEl = renderConnectionSection(model, { doc, providers, copilotModels, where: whereNow, provider });
+  if (editing) connEl.dataset.editing = '1';
+  // setConnectionWhere runs the form's own rules after the connection's: the harness, a new form's engine, Save.
+  connEl._applyEditor = () => applyConnectionModeIn(root);
+  grid.appendChild(connEl);
 
+  // Env vars (FRM-2): Claude Code's only (setModelEngine hides them on every other harness).
   const envWrap = h(doc, 'div', 'mv-env');
-  const rows = editing && model.env ? Object.entries(model.env) : [];
+  const rows = model && model.env ? Object.entries(model.env) : [];
   for (const [k, v] of rows) envWrap.appendChild(envRow(doc, k, v));
+  // A new custom endpoint starts with the two it needs.
+  if (!model && whereNow === 'env') for (const k of ENDPOINT_ENV_KEYS) envWrap.appendChild(starterRow(doc, k));
+  const envField = fieldOf(doc, 'Env vars', envWrap, { tip: TIPS.env });
+  envField.classList.add('mv-wide');   // Env vars, Efforts and Pricing take the whole width
+  const envBtns = h(doc, 'div', 'mv-env-btns');
   const add = h(doc, 'button', 'btn mv-env-add', 'Env var');
   add.prepend(icon(doc, 'plus', 14));
   add.type = 'button';
-  grid.appendChild(field('Routing env (merged into the claude spawn for this model)', envWrap,
-    'e.g. ANTHROPIC_BASE_URL / ANTHROPIC_AUTH_TOKEN. ANTHROPIC_MODEL sets the wire id sent to --model (the id above stays worca’s handle). Stored values show masked; leave masked to keep. WORCA_* and process keys are reserved. Through a provider, the bridge owns ANTHROPIC_BASE_URL / ANTHROPIC_AUTH_TOKEN / ANTHROPIC_API_KEY / ANTHROPIC_MODEL. Setting them here is refused.'));
-  const envBtns = h(doc, 'div', 'mv-env-btns');
   envBtns.appendChild(add);
   if (rows.length) {
     // Reveal toggle: swaps the masked inputs to the REAL stored values (the
@@ -554,22 +282,37 @@ export function renderModelEditor(model, efforts, { doc = globalThis.document, p
     reveal.title = 'Reveal the real stored values';
     envBtns.appendChild(reveal);
   }
-  grid.appendChild(envBtns);
+  // Beside the button: the first refused name (paintEditorSave), else what the rows are for.
+  const problem = h(doc, 'span', 'mdl-st fail mv-env-problem');
+  problem.hidden = true;
+  envBtns.append(problem, h(doc, 'span', 'mv-env-note'));
+  envField.appendChild(envBtns);
+  grid.appendChild(envField);
+
+  const effWrap = h(doc, 'div', 'mv-efforts');
+  const effortList = lists[engineNow] || efforts;
+  const selected = new Set(model && Array.isArray(model.efforts) ? model.efforts : effortList);
+  for (const lab of effortBoxes(doc, effortList, selected)) effWrap.appendChild(lab);
+  const effField = fieldOf(doc, 'Efforts', effWrap);
+  effField.classList.add('mv-wide');
+  effField.appendChild(h(doc, 'small', 'hint mv-efforts-hint', 'All checked = every effort (the default).'));   // applyConnectionMode rewrites it
+  grid.appendChild(effField);
 
   // ── Pricing (opt-in per-model cost override, config.mjs resolveModelCost) ──
   // The CLI computes total_cost_usd from its OWN table keyed on the model NAME,
   // so an on-prem/proxied endpoint gets a fabricated figure worca cannot tell
   // from a real one. Three mutually exclusive modes; the default is unchanged
-  // behavior. Rendered detached like everything else here — app.js wires the
-  // mode change to applyCostMode.
+  // behavior. The segment is the face; the radios under it stay the mode's one
+  // state (collectModelEditor, setModelCost and app.js read them), hidden.
   const costWrap = h(doc, 'div', 'mv-cost-edit');
+  const seg = h(doc, 'div', 'seg mv-cost-seg');
   const modes = h(doc, 'div', 'mv-cost-modes');
+  modes.hidden = true;
   const groupName = `mv-cost-mode-${editing ? model.id : 'new'}`;
-  for (const [value, text] of [
-    ['cli', 'Trust the CLI'],
-    ['free', 'Free ($0)'],
-    ['perMtok', 'Per million tokens'],
-  ]) {
+  for (const [value, text] of COST_MODES) {
+    const b = h(doc, 'button', null, text);
+    b.type = 'button'; b.dataset.mode = value; b.setAttribute('aria-pressed', 'false');
+    seg.appendChild(b);
     const lab = h(doc, 'label', 'mv-cost-mode');
     const rb = h(doc, 'input', 'mv-cost-mode-rb');
     rb.type = 'radio'; rb.name = groupName; rb.value = value;
@@ -577,7 +320,13 @@ export function renderModelEditor(model, efforts, { doc = globalThis.document, p
     lab.appendChild(h(doc, 'span', null, text));
     modes.appendChild(lab);
   }
-  costWrap.appendChild(modes);
+  seg.addEventListener('click', (e) => {
+    const b = e.target && e.target.closest ? e.target.closest('button[data-mode]') : null;
+    if (!b) return;
+    for (const rb of modes.querySelectorAll('.mv-cost-mode-rb')) rb.checked = rb.value === b.dataset.mode;
+    applyCostMode(root);
+  });
+  costWrap.append(seg, modes);
 
   const rates = h(doc, 'div', 'mv-cost-rates');
   for (const [key, labelText] of COST_RATES) {
@@ -591,27 +340,36 @@ export function renderModelEditor(model, efforts, { doc = globalThis.document, p
     rates.appendChild(lab);
   }
   costWrap.appendChild(rates);
-  grid.appendChild(field('Pricing', costWrap,
-    'Only for an endpoint the CLI prices by NAME rather than from what the endpoint reports (an on-prem or proxied model). '
-    + 'Trust the CLI is the default and leaves spend exactly as today. Blank rates count as $0, except Cache write (1h), '
-    + 'which falls back to the 5m rate when blank.'));
+  const pricingField = fieldOf(doc, 'Pricing', costWrap, { tip: TIPS.pricing, names: seg });
+  pricingField.classList.add('mv-wide');
+  grid.appendChild(pricingField);
 
+  // The connection's folds (FRM-4) after Pricing, which stays outside the connection (app.js onModelsConnChange).
+  const more = connEl.querySelector('.mv-conn-more');
+  if (more) grid.appendChild(more);
   root.appendChild(grid);
-  setModelCost(root, editing ? model.cost : null); // grid is attached now — the block is reachable from root
-  applyConnectionModeIn(root);                       // efforts hint + collapse follow the Connection (now reachable)
+
+  setModelCost(root, model ? model.cost : null); // grid is attached now — the block is reachable from root
   root.dataset.engine = engineNow;
-  setModelEngine(root, engineNow);                   // hides the env rows and narrows the Connection for a Codex entry
+  setModelEngine(root, engineNow);   // the fields by harness, and the Connection narrowed to it
+  applyConnectionModeIn(root);       // where it runs: the harness field, the suggested id, the provider's state word
   const msg = h(doc, 'p', 'form-msg mv-editor-msg');
   msg.setAttribute('aria-live', 'polite');
   root.appendChild(msg);
 
   const btns = h(doc, 'div', 'mv-editor-btns');
-  const save = h(doc, 'button', 'btn btn-primary mv-save', editing ? 'Save' : 'Add model');
-  save.type = 'button';
-  const cancel = h(doc, 'button', 'btn mv-cancel', 'Cancel');
-  cancel.type = 'button';
-  btns.appendChild(save); btns.appendChild(cancel);
+  const button = (cls, text) => { const b = h(doc, 'button', cls, text); b.type = 'button'; return b; };
+  if (steps) btns.appendChild(button('btn mv-back', 'Back'));
+  if (editing) btns.appendChild(button('btn btn-quiet mv-rewhere', 'Change where it runs'));
+  btns.append(button('btn mv-cancel', 'Cancel'), button('btn btn-primary mv-save', editing ? 'Save' : 'Add model'));
   root.appendChild(btns);
+  // Save follows the id and the env rows as they are typed (delegated: app.js adds rows later).
+  if (typeof root.addEventListener === 'function') {
+    root.addEventListener('input', (e) => {
+      if (e.target && e.target.closest && e.target.closest('.mv-id, .mv-env-row')) paintEditorSave(root);
+    });
+  }
+  paintEditorSave(root);
   return root;
 }
 
@@ -629,10 +387,10 @@ function effortBoxes(doc, list, selected) {
 
 /**
  * Put an editor on an engine (§3.1a): the effort checkboxes become that engine's list (all
- * checked) when the engine changes, the routing env hides for Codex, and the Connection offers a
- * Codex model only its own default or an OpenAI-compatible endpoint (bridge-view applyConnectionMode).
- * The ONE place that knows the rule — the initial render, the select's change handler (app.js)
- * and "+ Add model…" from a Codex New pipeline all go through it. Safe on any editor.
+ * checked) when the engine changes, the routing env hides for every harness but Claude Code, the ID's
+ * placeholder follows the harness, and the Connection offers the engine only what it can reach (bridge-view
+ * applyConnectionMode, wheresFor). The ONE place that knows the rule — the initial render, the select's change
+ * handler (app.js) and "+ Add model…" from a Codex New pipeline all go through it. Safe on any editor.
  * @param {Element} rootEl the .mv-editor root
  * @param {'claude'|'codex'|'copilot'|'cursor'|'gemini'|'goose'|'opencode'|'qwen'} engine
  */
@@ -641,6 +399,7 @@ export function setModelEngine(rootEl, engine) {
   if (!sel) return;
   const next = MODEL_ENGINE_NAMES.includes(engine) ? engine : 'claude';
   sel.value = next;
+  paintMarkedSelect(sel.closest('.mdl-picksel'));
   if (rootEl.dataset.engine !== next) {
     let lists = {};
     try { lists = JSON.parse(rootEl.dataset.effortLists || '{}') || {}; } catch { lists = {}; }
@@ -651,8 +410,6 @@ export function setModelEngine(rootEl, engine) {
   const noEnv = next !== 'claude';
   const envField = rootEl.querySelector('.mv-env')?.closest('.mv-field');
   if (envField) envField.hidden = noEnv;
-  const btns = rootEl.querySelector('.mv-env-btns');
-  if (btns) btns.hidden = noEnv;
   // A sign-in engine's model that reports no cost: its price matters only to a chat on it (the per-turn cost cap and the
   // chat's spend, src/core/ask/chat-price.mjs), so the field shows for a Chat engine (Gemini CLI, Qwen Code) and hides
   // for Cursor; Goose and OpenCode price their own runs. A field with no effort hides (Cursor).
@@ -663,10 +420,12 @@ export function setModelEngine(rootEl, engine) {
   let nextEfforts = [];
   try { nextEfforts = (JSON.parse(rootEl.dataset.effortLists || '{}') || {})[next] || []; } catch { nextEfforts = []; }
   if (effField) effField.hidden = signIn && !nextEfforts.length;
+  const idIn = rootEl.querySelector('.mv-id');
+  if (idIn) idIn.placeholder = idPlaceholder(next);
   const conn = rootEl.querySelector('.mv-conn');
   if (conn) { conn.dataset.engine = next; applyConnectionMode(conn); }
-  const signin = rootEl.querySelector('.mv-signin-field');
-  if (signin && conn) signin.hidden = (conn.querySelector('.mv-conn-mode-rb:checked')?.value || 'direct') !== 'direct';
+  paintHarness(rootEl);
+  paintEditorSave(rootEl);
 }
 
 /**
@@ -692,16 +451,18 @@ export function setModelCost(rootEl, cost) {
 }
 
 /**
- * Show the per-Mtok rate inputs only in that mode. The single place that knows
- * the rule, so the initial render and the delegated `change` handler in app.js
- * can never drift apart. Safe on an editor with no pricing block.
+ * Show the per-Mtok rate inputs only in that mode, and press the segment's button for the mode. The single place
+ * that knows the rule, so the initial render, the segment's click and the delegated `change` handler in app.js can
+ * never drift apart. Safe on an editor with no pricing block.
  * @param {Element} rootEl  the .mv-editor root
  */
 export function applyCostMode(rootEl) {
   const rates = rootEl && rootEl.querySelector('.mv-cost-rates');
   if (!rates) return;
   const picked = rootEl.querySelector('.mv-cost-mode-rb:checked');
-  rates.hidden = (picked ? picked.value : 'cli') !== 'perMtok';
+  const mode = picked ? picked.value : 'cli';
+  rates.hidden = mode !== 'perMtok';
+  for (const b of rootEl.querySelectorAll('.mv-cost-seg button[data-mode]')) b.setAttribute('aria-pressed', String(b.dataset.mode === mode));
 }
 
 /** app.js exposes envRow creation to the delegated mv-env-add handler. */
@@ -709,11 +470,111 @@ export function makeEnvRow({ doc = globalThis.document } = {}) {
   return envRow(doc);
 }
 
+/** A new row named `key` (makeEnvRow with the key set): never envRow(doc, key), which would mark it stored (data-key and
+ *  a copy button). */
+function starterRow(doc, key) {
+  const row = makeEnvRow({ doc });
+  row.querySelector('.mv-env-key').value = key;
+  return row;
+}
+
+/** rows: [{ key, value }]; → '' or the first problem, in this order:
+ *  'WORCA_ names are reserved'; '<NAME> is set by the provider' (provider models: ANTHROPIC_BASE_URL,
+ *  ANTHROPIC_AUTH_TOKEN, ANTHROPIC_API_KEY, ANTHROPIC_MODEL); 'Two variables share a name'; 'Name the variable'
+ *  (a value with no name); 'ANTHROPIC_BASE_URL needs a value' (`endpoint`, a custom endpoint: no row names
+ *  ANTHROPIC_BASE_URL with a value, so it would save as a sign-in). */
+export function envRowsProblem(rows, { provider = false, endpoint = false } = {}) {
+  const list = Array.isArray(rows) ? rows : [];
+  const names = list.map((r) => String((r && r.key) ?? '').trim()).filter(Boolean);
+  if (names.some((k) => k.startsWith('WORCA_'))) return 'WORCA_ names are reserved';
+  const owned = provider ? names.find((k) => PROVIDER_ENV_KEYS.includes(k)) : '';
+  if (owned) return `${owned} is set by the provider`;
+  if (names.some((k, i) => names.indexOf(k) !== i)) return 'Two variables share a name';
+  if (list.some((r) => !String((r && r.key) ?? '').trim() && String((r && r.value) ?? '').trim())) return 'Name the variable';
+  if (endpoint && !list.some((r) => String((r && r.key) ?? '').trim() === 'ANTHROPIC_BASE_URL' && String((r && r.value) ?? '').trim())) return 'ANTHROPIC_BASE_URL needs a value';
+  return '';
+}
+
+/** ed: a .mv-editor → disables .mv-save (empty id, a taken id on add/copy, an env problem) and writes the problem. */
+export function paintEditorSave(ed) {
+  if (!ed || !ed.querySelector) return;
+  const provider = connectionWhere(ed) === 'provider';
+  const endpoint = connectionWhere(ed) === 'env';
+  // Env vars count only while the field shows (Claude Code's): collect sends none for any other harness.
+  const envField = ed.querySelector('.mv-env')?.closest('.mv-field');
+  const rows = [...ed.querySelectorAll('.mv-env .mv-env-row')].map((r) => ({ key: r.querySelector('.mv-env-key')?.value || '', value: r.querySelector('.mv-env-val')?.value || '' }));
+  const problem = envField && !envField.hidden ? envRowsProblem(rows, { provider, endpoint }) : '';
+  const out = ed.querySelector('.mv-env-problem');
+  if (out) { out.textContent = problem; out.hidden = !problem; }
+  const note = ed.querySelector('.mv-env-note');
+  if (note) {
+    note.hidden = !!problem;
+    note.textContent = provider ? 'Passed to Claude Code. The provider sets the address, key and model itself.' : 'Passed to Claude Code when this model runs.';
+  }
+  const save = ed.querySelector('.mv-save');
+  if (!save || save.dataset.fbState === 'busy') return;   // a request in flight owns the button (feedback.mjs withButton)
+  const id = (ed.querySelector('.mv-id')?.value || '').trim();
+  const taken = ed.dataset.mode !== 'edit' && !!id && (ed.dataset.takenIds || '').split('\n').includes(id.toLowerCase());
+  save.disabled = !id || taken || !!problem;
+}
+
+/**
+ * Move a form to another place to run ("Change where it runs" › Continue): the ONE mover app.js calls, so the kind Save
+ * sends is the one picked. Into a custom endpoint (`env`) from elsewhere it adds an ANTHROPIC_BASE_URL and an
+ * ANTHROPIC_AUTH_TOKEN row where no row names them (new rows, as a new custom endpoint starts: FRM-2); out of `env` it
+ * removes the rows naming them (an edit then sends them as null through data-env-keys). Then setConnectionWhere's rules
+ * and paintEditorSave. The rows follow where the form lands: an edit whose harness cannot run at `where` falls back to
+ * its sign-in (applyConnectionMode), and the same where touches no row.
+ * @param {Element} ed  the .mv-editor root
+ * @param {'signin'|'env'|'provider'} where
+ */
+export function setFormWhere(ed, where) {
+  if (!ed || !ed.querySelector) return;
+  const prev = connectionWhere(ed);
+  setConnectionWhere(ed, where);
+  const now = connectionWhere(ed);
+  const wrap = ed.querySelector('.mv-env');
+  const keyOf = (row) => (row.querySelector('.mv-env-key')?.value || '').trim();
+  if (wrap && now !== prev && now === 'env') {
+    const named = new Set([...wrap.querySelectorAll('.mv-env-row')].map(keyOf));
+    for (const k of ENDPOINT_ENV_KEYS) if (!named.has(k)) wrap.appendChild(starterRow(ed.ownerDocument, k));
+  } else if (wrap && now !== prev && prev === 'env') {
+    for (const row of [...wrap.querySelectorAll('.mv-env-row')]) if (ENDPOINT_ENV_KEYS.includes(keyOf(row))) row.remove();
+  }
+  paintEditorSave(ed);
+}
+
+/** The harness field shows unless the model runs through a provider; a custom endpoint offers Claude Code only. */
+function paintHarness(rootEl) {
+  const sel = rootEl.querySelector('.mv-engine');
+  const field = sel && sel.closest('.mv-field');
+  if (!field) return;
+  const where = connectionWhere(rootEl);
+  field.hidden = where === 'provider';
+  for (const o of sel.options) o.hidden = o.disabled = where === 'env' && o.value !== 'claude';
+}
+
+/** The state word beside the Provider select: the Catalogue's (provider-state.mjs) for the row selected — OpenRouter's
+ *  own row for OpenRouter — and nothing without a Providers payload. */
+function paintProviderState(rootEl, conn) {
+  const word = rootEl.querySelector('.mv-conn-provider-hint');
+  if (!word) return;
+  const choice = rootEl.querySelector('.mv-conn-provider')?.value || '';
+  paintMarkedSelect(rootEl.querySelector('.mv-conn-provider')?.closest('.mdl-picksel'));   // a pick made by code too
+  const st = conn._providers && choice ? providerState(conn._providers, choice, { hasModels: true }) : null;
+  word.hidden = !st || !st.text;
+  word.textContent = st ? st.text : '';
+  word.className = `mdl-st mv-conn-provider-hint${st ? ` ${st.tone}` : ''}`;
+}
+
 /**
  * Collect the editor into a request body. For EDIT mode the env is a write-only
  * PATCH: unchanged masked values are echoed (the server treats them as "keep"),
  * removed keys are sent as null. Returns { id, body } — id is null in create
- * mode (POST carries it in the body instead).
+ * mode (POST carries it in the body instead). A copy adds `copyFrom` while a
+ * masked echo is left in `env` or `upstream.apiKey`: the server takes each one's
+ * real value from that model. Typed over, none is left, and the add no longer
+ * needs the source (which may have been deleted since).
  */
 export function collectModelEditor(rootEl) {
   const editing = rootEl.dataset.mode === 'edit';
@@ -723,6 +584,7 @@ export function collectModelEditor(rootEl) {
   const allCount = rootEl.querySelectorAll('.mv-effort-cb').length;
   const engineValue = rootEl.querySelector('.mv-engine')?.value;
   const engine = MODEL_ENGINE_NAMES.includes(engineValue) ? engineValue : 'claude';
+  const copyFrom = editing ? '' : rootEl.dataset.copyFrom || '';
 
   const env = {};
   const seen = new Set();
@@ -760,6 +622,8 @@ export function collectModelEditor(rootEl) {
   // Connection (model-bridge-design.md §8.3): the object to store, or null to
   // clear — like 'cli' for pricing, the form shows the truth.
   const { upstream } = collectConnection(rootEl);
+  const sentEnv = engine !== 'claude' ? {} : env;
+  const masked = Object.values(sentEnv).some(isMaskedEcho) || isMaskedEcho(upstream && upstream.apiKey);
 
   const body = {
     ...(editing ? {} : { id }),
@@ -767,124 +631,173 @@ export function collectModelEditor(rootEl) {
     label,
     // All boxes checked = the full set = store the default (empty).
     efforts: efforts.length === allCount ? [] : efforts,
-    env: engine !== 'claude' ? {} : env,
+    env: sentEnv,
     cost,
     // Create mode has nothing to clear, so a null upstream is simply omitted
     // and the POST body stays byte-identical for a non-bridged entry.
     ...(upstream === undefined || (!editing && upstream === null) ? {} : { upstream }),
+    ...(copyFrom && masked ? { copyFrom } : {}),
   };
   return { id: editing ? id : null, body };
 }
 
-/** applyConnectionMode over an editor root (re-exported here so app.js's one
- *  delegated `change` handler for the editor needs a single import). */
+/** applyConnectionMode over an editor root (re-exported here so app.js's one delegated `change` handler for the editor
+ *  needs a single import), then the form's own rules for where the model runs: a new form's harness, the harness
+ *  field, the suggested id, the provider's state word and Save. */
 export function applyConnectionModeIn(rootEl) {
   const conn = rootEl && rootEl.querySelector && rootEl.querySelector('.mv-conn');
   if (!conn) return;
   applyConnectionMode(conn);
-  const mode = conn.querySelector('.mv-conn-mode-rb:checked')?.value || 'direct';
+  const where = connectionWhere(conn);
   const creating = rootEl.dataset.mode !== 'edit';
-  // An env or provider entry is Claude Code's (its other harnesses follow from the connection): a new one leaves the
-  // sign-in choice, and the efforts follow Claude Code's list.
-  if (creating && mode !== 'direct' && rootEl.dataset.engine && rootEl.dataset.engine !== 'claude') setModelEngine(rootEl, 'claude');
-  const signin = rootEl.querySelector('.mv-signin-field');
-  if (signin) signin.hidden = mode !== 'direct';
+  // A new form (or a copy) whose harness cannot run where it was put becomes Claude Code's: routing env is Claude
+  // Code's, a provider Claude Code's or Codex's (wheresFor). An edit keeps its harness (applyConnectionMode fell back).
+  if (creating && rootEl.dataset.engine && !wheresFor(rootEl.dataset.engine).includes(where)) setModelEngine(rootEl, 'claude');
+  paintHarness(rootEl);
   // Through a provider, a new entry's id defaults to <provider>-<upstream id> until the user types one: a built-in
-  // id names a harness's own sign-in, so the gateway's twin of gpt-5.5 is openai-gpt-5.5.
+  // id names a harness's own sign-in, so the gateway's twin of gpt-5.5 is openai-gpt-5.5 (OpenRouter's too).
   const idIn = rootEl.querySelector('.mv-id');
   const upstreamId = (conn.querySelector('.mv-conn-model')?.value || '').trim();
-  if (creating && idIn && idIn.dataset.auto !== 'off' && mode === 'provider' && upstreamId) {
-    idIn.value = suggestModelHandle(upstreamId, conn.querySelector('.mv-conn-provider')?.value || 'openai');
+  if (creating && idIn && idIn.dataset.auto !== 'off' && where === 'provider' && upstreamId) {
+    idIn.value = suggestModelHandle(upstreamId, conn.dataset.provider || 'openai');
     idIn.dataset.auto = 'on';
   }
+  paintProviderState(rootEl, conn);
+  paintEditorSave(rootEl);
 }
 
 // ── Share-as-plugin export wizard (design §9.5) ─────────────────────────────
 
-// Credential-looking env keys default to "Require at install". Word-ish
-// boundaries keep limits like MAX_OUTPUT_TOKENS or MAX_THINKING_TOKENS (a
-// count, not a credential) out of the net.
-const SECRETISH_RE = /auth|secret|password|credential|api_?key|(?:^|_)key(?:_|$)|(?:^|_)token(?:_|$)/i;
-
 /**
- * The export wizard: pick global models, set the per-env-key policy, name the
- * plugin, choose a destination folder. `globals` are MASKED entries from
- * GET /api/models (only KEYS matter here — values are read server-side at
- * export). Detached DOM; app.js wires mvx-export / mvx-cancel.
+ * Share as plugin (DESIGN SHR-1, SHR-2): pick global models, set each env var's policy, name the plugin, choose a
+ * destination folder. `globals` are MASKED entries from GET /api/models (only KEYS matter here — values are read
+ * server-side at export). Returns detached DOM: section.card.mv-editor.mvx (no .dlg; the opener lays it out) >
+ * div.mvx-head (the title, Close), three div.mvx-step parts ("1 Models", "2 Env vars", "3 Plugin"), p.mvx-msg,
+ * div.mv-editor-btns (Cancel, Export scaffold last — disabled until a model is ticked and a name and a folder are given).
+ * Each env var's segment drives its hidden select.mvx-mode, the choice's one state (collectExportWizard reads it).
+ * app.js wires mdl-close, mvx-cancel and mvx-export.
  */
 export function renderExportWizard(globals, { doc = globalThis.document } = {}) {
   const root = h(doc, 'section', 'card mv-editor mvx');
-  root.appendChild(h(doc, 'h3', 'mv-editor-title', 'Share models as a plugin'));
+  const head = h(doc, 'div', 'mvx-head');
+  head.appendChild(h(doc, 'h3', 'mv-editor-title', 'Share as plugin'));
+  const close = h(doc, 'button', 'btn btn-quiet btn-sm btn-icon mdl-close');
+  close.type = 'button';
+  close.setAttribute('aria-label', 'Close');
+  close.appendChild(icon(doc, 'x', 16));
+  head.appendChild(close);
+  root.appendChild(head);
 
-  const step = (title, hint) => {
+  // A numbered part; the rule its hint carried is the ⓘ tip beside its name (L18).
+  const step = (title, name, tip) => {
     const s = h(doc, 'div', 'mvx-step');
     s.appendChild(h(doc, 'h4', 'mvx-step-title', title));
-    if (hint) s.appendChild(h(doc, 'small', 'hint', hint));
+    if (tip) s.appendChild(infoTip(doc, name, tip));
     root.appendChild(s);
     return s;
   };
 
-  const pick = step('1. Models to include', 'Only your global models can be shared.');
-  for (const m of globals) {
-    const lab = h(doc, 'label', 'mvx-model opt-row');
-    const cb = h(doc, 'input', 'mvx-model-cb');
-    cb.type = 'checkbox'; cb.value = m.id;
-    cb.dataset.envKeys = Object.keys(m.env || {}).join('\n');
-    lab.appendChild(cb);
-    lab.appendChild(h(doc, 'span', 'opt-name', `${m.label || m.id} `));
-    lab.appendChild(h(doc, 'small', 'hint opt-sub', m.id));
-    pick.appendChild(lab);
-  }
-  if (!globals.length) pick.appendChild(h(doc, 'div', 'hist-empty', 'No global models to share yet.'));
+  const pick = step('1 Models', 'Models', 'Only your global models can be shared.');
+  if (globals.length) {
+    const list = h(doc, 'div', 'mvx-models');
+    for (const m of globals) {
+      const lab = h(doc, 'label', 'mvx-model opt-row');
+      const cb = h(doc, 'input', 'mvx-model-cb');
+      cb.type = 'checkbox'; cb.value = m.id;
+      cb.dataset.envKeys = Object.keys(m.env || {}).join('\n');
+      lab.append(cb, modelMark(doc, m, 'sm'), h(doc, 'span', 'opt-name', displayName(m)));
+      list.appendChild(lab);
+    }
+    pick.appendChild(list);
+  } else pick.appendChild(h(doc, 'div', 'hist-empty', 'No global models to share yet.'));
 
-  const envKeys = [...new Set(globals.flatMap((m) => Object.keys(m.env || {})))];
-  const pol = step('2. Env var policy',
-    'Include value commits the stored value to the plugin (it will live in a git repo). ' +
-    'Require at install strips it: teammates are prompted once and the value stays on their machine.');
-  for (const k of envKeys) {
+  // One env var: its name, the credential badge where SECRETISH_RE matches, and the segment over the hidden
+  // select.mvx-mode (include | secret | omit; a credential starts at "Require at install"). A pick sets the select and
+  // fires a bubbling `change`, as a select's own pick would.
+  const shareEnvRow = (key) => {
     const row = h(doc, 'div', 'mvx-env-row');
-    row.dataset.key = k;
-    row.appendChild(h(doc, 'span', 'mono mvx-env-key', k));
+    row.dataset.key = key;
+    row.appendChild(h(doc, 'span', 'mono mvx-env-key', key));
+    const credential = SECRETISH_RE.test(key);
+    if (credential) row.appendChild(h(doc, 'span', 'badge mvx-warn', 'Looks like a credential'));
+    const seg = h(doc, 'div', 'seg mvx-seg');
+    seg.setAttribute('role', 'group');
+    seg.setAttribute('aria-label', key);
     const sel = h(doc, 'select', 'select mvx-mode');
+    sel.hidden = true;
     for (const [v, label] of [['include', 'Include value'], ['secret', 'Require at install'], ['omit', 'Omit']]) {
       const opt = h(doc, 'option', null, label);
       opt.value = v;
       sel.appendChild(opt);
+      const b = h(doc, 'button', null, label);
+      b.type = 'button';
+      b.dataset.mode = v;
+      seg.appendChild(b);
     }
-    sel.value = SECRETISH_RE.test(k) ? 'secret' : 'include';
-    row.appendChild(sel);
-    if (SECRETISH_RE.test(k)) row.appendChild(h(doc, 'small', 'hint mvx-warn', 'looks like a credential'));
-    pol.appendChild(row);
-  }
-  if (!envKeys.length) pol.appendChild(h(doc, 'small', 'hint', 'No env vars on your models. Nothing to decide.'));
+    sel.value = credential ? 'secret' : 'include';
+    const paint = () => {
+      for (const b of seg.querySelectorAll('button')) b.setAttribute('aria-pressed', String(b.dataset.mode === sel.value));
+    };
+    seg.addEventListener('click', (e) => {
+      const b = e.target && e.target.closest ? e.target.closest('button[data-mode]') : null;
+      if (!b || b.dataset.mode === sel.value) return;
+      sel.value = b.dataset.mode;
+      const ev = doc.createEvent('Event');
+      ev.initEvent('change', true, false);
+      sel.dispatchEvent(ev);
+    });
+    sel.addEventListener('change', paint);
+    paint();
+    row.append(seg, sel);
+    return row;
+  };
 
-  const meta = step('3. Plugin metadata + destination');
-  const field = (labelText, cls, placeholder, hint) => {
-    const wrap = h(doc, 'label', 'mv-field');
-    wrap.appendChild(h(doc, 'span', 'mv-field-label', labelText));
+  const envKeys = [...new Set(globals.flatMap((m) => Object.keys(m.env || {})))];
+  const pol = step('2 Env vars', 'Env vars',
+    'Include value commits the stored value to the plugin (it will live in a git repo). ' +
+    'Require at install strips it: teammates are prompted once and the value stays on their machine.');
+  if (envKeys.length) {
+    const list = h(doc, 'div', 'mvx-envs');
+    for (const k of envKeys) list.appendChild(shareEnvRow(k));
+    pol.appendChild(list);
+  } else pol.appendChild(h(doc, 'small', 'hint', 'No env vars on your models. Nothing to decide.'));
+
+  const meta = step('3 Plugin');
+  const fields = h(doc, 'div', 'mvx-fields');
+  const field = (labelText, cls, placeholder, { tip = '', wide = false } = {}) => {
     const input = h(doc, 'input', `input ${cls}`);
     input.type = 'text'; input.placeholder = placeholder;
-    wrap.appendChild(input);
-    if (hint) wrap.appendChild(h(doc, 'small', 'hint', hint));
-    meta.appendChild(wrap);
+    const wrap = fieldOf(doc, labelText, input, { tip });
+    if (wide) wrap.classList.add('mvx-wide');
+    fields.appendChild(wrap);
     return input;
   };
-  field('Plugin name', 'mvx-name', 'team-models', 'kebab-case; becomes the folder + install name');
-  field('Description', 'mvx-desc', 'Team routing for …');
+  const name = field('Plugin name', 'mvx-name', 'team-models', { tip: 'Kebab-case: it becomes the folder name and the install name.' });
   field('Version', 'mvx-version', '0.1.0');
-  field('Destination folder', 'mvx-dest', '~/dev/team-models',
-    'Must be new or empty. The scaffold goes here. Run git init + push it to share.');
+  field('Description', 'mvx-desc', 'What these models are for', { wide: true });
+  const dest = field('Destination folder', 'mvx-dest', '~/dev/team-models',
+    { wide: true, tip: 'Must be new or empty. The scaffold goes here. Run git init + push it to share.' });
+  meta.appendChild(fields);
 
   const msg = h(doc, 'p', 'form-msg mvx-msg');
   msg.setAttribute('aria-live', 'polite');
   root.appendChild(msg);
   const btns = h(doc, 'div', 'mv-editor-btns');
-  const go = h(doc, 'button', 'btn btn-primary mvx-export', 'Export scaffold');
-  go.type = 'button';
   const cancel = h(doc, 'button', 'btn mvx-cancel', 'Cancel');
   cancel.type = 'button';
-  btns.appendChild(go); btns.appendChild(cancel);
+  const go = h(doc, 'button', 'btn btn-primary mvx-export', 'Export scaffold');
+  go.type = 'button';
+  btns.append(cancel, go);
   root.appendChild(btns);
+
+  // Export scaffold waits for a ticked model, a name and a folder (SHR-2): the boxes change, the fields take input.
+  const paintExport = () => {
+    const ticked = [...root.querySelectorAll('.mvx-model-cb')].some((cb) => cb.checked);
+    go.disabled = !ticked || !name.value.trim() || !dest.value.trim();
+  };
+  root.addEventListener('change', paintExport);
+  root.addEventListener('input', paintExport);
+  paintExport();
   return root;
 }
 
@@ -911,25 +824,20 @@ export function collectExportWizard(rootEl) {
   };
 }
 
-/** Human summary of what deleting `id` clears, for the confirmation prompt. */
+/** Human summary of what deleting `id` clears, for the confirmation prompt (PAN-7). `refs` is the refs
+ *  read: `{}` or `null` (a failed read) counts nothing. One count of every job the delete clears: the user-level
+ *  jobs, the project steps and nodes, and Settings › Memory's defragment pick when no job already counts it. */
 export function deleteRefsSummary(id, refs) {
   if (refs && refs.predefinedShadow) {
     return `Remove the override of built-in "${id}"? The built-in entry comes back; nothing else changes.`;
   }
-  const nodes = refs && Array.isArray(refs.nodes) ? refs.nodes.length : 0;
-  const steps = refs && Array.isArray(refs.steps) ? refs.steps.length : 0;
-  const projects = new Set([
-    ...((refs && refs.nodes) || []).map((n) => n.projectKey),
-    ...((refs && refs.steps) || []).map((s) => s.projectKey),
-  ]).size;
-  // Settings › Memory's defragment model is the one GLOBAL ref (globalModelRefs `memoryDefrag`).
-  const defrag = !!(refs && refs.memoryDefrag);
-  if (!nodes && !steps) {
-    return defrag
-      ? `Delete model "${id}"? Memory defragment runs use it (Settings › Memory). That setting is cleared and they fall back to the default.`
-      : `Delete model "${id}"? No pipeline configuration references it.`;
-  }
-  return `Delete model "${id}"? This also clears ${nodes} node selection${nodes === 1 ? '' : 's'} and ` +
-    `${steps} role selection${steps === 1 ? '' : 's'} across ${projects} project${projects === 1 ? '' : 's'}` +
-    (defrag ? ', and the Memory defragment model (Settings › Memory).' : '.');
+  const list = (key) => (refs && Array.isArray(refs[key]) ? refs[key] : []);
+  const jobs = list('jobs');
+  // Claude's defragment pick is also a job; Codex's memoryDefrag job is another pick.
+  const defrag = !!(refs && refs.memoryDefrag) && !jobs.some((j) => j && j.engine === 'claude' && j.key === 'memoryDefrag');
+  const n = jobs.length + list('steps').length + list('nodes').length + (defrag ? 1 : 0);
+  if (!n) return `Delete model "${id}"? No job uses it.`;
+  return n === 1
+    ? `Delete model "${id}"? This also clears 1 job that uses it.`
+    : `Delete model "${id}"? This also clears ${n} jobs that use it.`;
 }

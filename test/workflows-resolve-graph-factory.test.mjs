@@ -241,7 +241,7 @@ test('every engine has roles: a Copilot run takes its steps from the Copilot rol
   const r = await resolve('wf_default', { engine: 'copilot' });
   const byKey = (k) => Object.values(r.nodes).find((n) => n.authoredKey === k);
   assert.deepEqual(pairOf(byKey('planner')), ['copilot/claude-fable-5.1', 'high'], 'Plan: the Copilot Deep thinking role');
-  assert.deepEqual(pairOf(byKey('implementer')), ['copilot/claude-sonnet-5.5', 'medium'], 'Implement: the Copilot Everyday coding role');
+  assert.deepEqual(pairOf(byKey('implementer')), ['copilot/claude-sonnet-5.5', 'medium'], 'Implement: the Copilot Everyday tasks role');
   const claude = await resolve('wf_default');
   assert.equal(byKeyOf(claude, 'planner').model, 'claude-opus-5-5', 'a Claude run keeps the Claude roles');
 });

@@ -1,5 +1,5 @@
 // ui/public/settings-index.mjs — what the top bar search can find in Settings and among the settings inside the
-// Add-ons pages (Marketplace, Connectors, Models, Providers).
+// Add-ons pages (Marketplace, Connectors, Models, whose Providers tab holds the provider rows).
 // Hand-written (the product team owns the alternative words); test/ui-settings-index.test.mjs pins every
 // tab / card id, its mode and its Labs gate to ui/public/index.html, so a moved or re-gated card fails there.
 import { flagByKey } from '../../src/shared/flags/registry.mjs';
@@ -70,16 +70,21 @@ export const SETTING_ENTRIES = Object.freeze([
   }),
 ]);
 
-/** The four Add-ons pages (the former Settings tabs), by their view name. */
-export const ADDON_PAGES = Object.freeze({ marketplace: 'Marketplace', connectors: 'Connectors', models: 'Models', providers: 'Providers' });
+/** The three Add-ons pages (the former Settings tabs), by their view name. */
+export const ADDON_PAGES = Object.freeze({ marketplace: 'Marketplace', connectors: 'Connectors', models: 'Models' });
 
 const addon = (page, key, title, href, o = {}) => ({
   id: `addon:${page}/${key}`, type: 'addon', page, title, tabTitle: ADDON_PAGES[page], meta: '', alts: [], min: 'simple', flags: [],
   href, card: '', ...o,
 });
+/** A provider row on the Models page's Providers tab. Its id keeps `addon:providers/<key>`; the meta names the tab
+ *  (the page title alone would read "Models"); the alt "providers" lets the old page name still find it. */
+const provider = (key, title, row, alts) => addon('models', key, title, `#models/providers/${row}`,
+  { id: `addon:providers/${key}`, meta: 'Models · Providers', alts });
 /** The settings INSIDE the Add-ons pages (the pages themselves are in the left menu). A row on a static card locks by
- *  that card's own mode (`card` names it; test/ui-settings-index.test.mjs pins both); every other row is page-level and
- *  never locks (A-9: the page's own banner says when it is above the mode). */
+ *  that card's own mode (`card` names it); a row naming a Models › Jobs block ('#models/jobs/<part>', built at runtime
+ *  by models/jobs-view.mjs) locks by that block's level; every other row is page-level and never locks (A-9: the
+ *  page's own banner says when it is above the mode). test/ui-settings-index.test.mjs pins all three. */
 export const ADDON_ENTRIES = Object.freeze([
   addon('marketplace', 'browse', 'Browse plugins', '#marketplace', { alts: ['plugins', 'extensions', 'store', 'install', 'catalog', 'add-ons'] }),
   addon('marketplace', 'installed', 'Installed plugins', '#marketplace/installed', { alts: ['plugins', 'update', 'uninstall', 'remove', 'enable', 'disable'] }),
@@ -88,17 +93,17 @@ export const ADDON_ENTRIES = Object.freeze([
   addon('connectors', 'servers', 'MCP servers', '#connectors/servers', { alts: ['mcp', 'integrations', 'tools', 'add server', 'servers'] }),
   addon('connectors', 'skills', 'Skills', '#connectors/skills', { alts: ['skill', 'skill.md', 'import skill', 'integrations'] }),
   addon('models', 'catalogue', 'Model catalogue', '#models', { alts: ['models', 'model', 'add model', 'import models', 'llm', 'pricing', 'cost', 'built-in models', 'your models'] }),
-  addon('models', 'roles', 'Roles', '#models/model-roles-card', { card: 'model-roles-card', alts: ['model roles', 'default model', 'fallback model', 'llm'] }),
-  addon('models', 'engines', 'Engines', '#models/engine-settings-card', { card: 'engine-settings-card', min: 'expert', alts: ['engine', 'default engine', 'step models', 'models per engine', 'claude', 'codex'] }),
-  addon('models', 'helper-jobs', 'Helper job models', '#models/engine-settings-card', { card: 'engine-settings-card', min: 'expert',
+  addon('models', 'roles', 'Roles', '#models/jobs/roles', { alts: ['model roles', 'default model', 'fallback model', 'llm'] }),
+  addon('models', 'engines', 'Step models', '#models/jobs/steps', { min: 'advanced', alts: ['engine', 'default engine', 'step models', 'models per engine', 'claude', 'codex'] }),
+  addon('models', 'helper-jobs', 'Helper job models', '#models/jobs/helpers', { min: 'advanced',
     alts: ['helper model', 'helper jobs', 'utility model', 'titles', 'title model', 'classifier', 'auto workflow model', 'pr description', 'memory defragment', 'workspace scan'] }),
-  addon('providers', 'copilot', 'GitHub Copilot', '#providers/copilot', { alts: ['copilot', 'sign in', 'github', 'account', 'quota', 'premium requests'] }),
-  addon('providers', 'openai', 'OpenAI-compatible', '#providers/openai', { alts: ['openai', 'api key', 'key', 'base url', 'endpoint', 'gpt', 'local models', 'ollama', 'lm studio'] }),
-  addon('providers', 'openrouter', 'OpenRouter', '#providers/openai', { alts: ['openrouter', 'api key', 'key', 'free models', 'openai-compatible'] }),
-  addon('providers', 'anthropic', 'Anthropic-compatible', '#providers/anthropic', { alts: ['anthropic', 'claude api', 'api key', 'key', 'base url', 'endpoint', 'gateway'] }),
-  addon('providers', 'speech', 'Speech (Chat voice)', '#providers/speech', { alts: ['speech', 'voice', 'speech to text', 'text to speech', 'stt', 'tts', 'whisper', 'microphone'] }),
-  addon('providers', 'images', 'Image generation (Design)', '#providers/images', { alts: ['image', 'images', 'picture', 'pictures', 'image generation', 'gpt-image', 'grok'] }),
-  addon('providers', 'sound', 'Sound (Design)', '#providers/sound', { alts: ['sound', 'voice', 'music', 'narration', 'audio', 'elevenlabs'] }),
+  provider('copilot', 'GitHub Copilot', 'copilot', ['copilot', 'sign in', 'github', 'account', 'quota', 'premium requests', 'providers']),
+  provider('openai', 'OpenAI-compatible', 'openai', ['openai', 'api key', 'key', 'base url', 'endpoint', 'gpt', 'local models', 'ollama', 'lm studio', 'providers']),
+  provider('openrouter', 'OpenRouter', 'openrouter', ['openrouter', 'api key', 'key', 'free models', 'openai-compatible', 'providers']),
+  provider('anthropic', 'Anthropic-compatible', 'anthropic', ['anthropic', 'claude api', 'api key', 'key', 'base url', 'endpoint', 'gateway', 'providers']),
+  provider('speech', 'Speech (Chat voice)', 'speech', ['speech', 'voice', 'speech to text', 'text to speech', 'stt', 'tts', 'whisper', 'microphone', 'providers']),
+  provider('images', 'Image generation (Design)', 'images', ['image', 'images', 'picture', 'pictures', 'image generation', 'gpt-image', 'grok', 'providers']),
+  provider('sound', 'Sound (Design)', 'sound', ['sound', 'voice', 'music', 'narration', 'audio', 'elevenlabs', 'providers']),
 ]);
 
 const MODEL_SOURCE = Object.freeze({ global: 'Your model', plugin: 'From a plugin', policy: 'Team policy' });

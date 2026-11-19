@@ -144,7 +144,7 @@ be skipped by forgetting it.
 | The spend ring on the avatar and the menu's spend card (with the free-request row) | S — never hidden: a blocked limit turns the ring red and full, and the card and the New pipeline note say until when |
 | Statistics, Workspaces | A |
 | Add-ons: the group label, Marketplace, Connectors | A |
-| Add-ons: Models, Providers | E — like every page, the open one keeps its row at a lower mode while the banner names its level |
+| Add-ons: Models (Providers is its third tab) | E — like every page, the open one keeps its row at a lower mode while the banner names its level |
 | Schedules | A — kept visible at every level while anything is scheduled, missed, repeating or unread; its grey count and amber unread pill each hide at zero |
 | Team metrics, Team policy | E |
 | The level avatar art in the corner (the round art on the account corner and the spend ring's avatar) | all — a level is shown to everyone, whatever the mode |
@@ -346,21 +346,23 @@ inside the view.
 | General: spawn diagnostics; Memory tab: the line linking to Helper jobs | E |
 | Guardrails create / delete | E |
 
-### Marketplace, Connectors, Models, Providers (the Add-ons pages)
+### Marketplace, Connectors, Models (the Add-ons pages)
 
-Settings tabs once, pages of their own now. The old addresses (`#settings/plugins`, `#settings/mcp/…`,
-`#settings/models/…`, `#settings/providers`, `#plugins`) land on the page they mean, sub-path kept.
+Settings tabs once, pages of their own now. The Models page has three tabs: Catalogue, Jobs and Providers. The old
+addresses (`#settings/plugins`, `#settings/mcp/…`, `#settings/models/…`, `#plugins`) land on the page they mean,
+sub-path kept; `#providers/…` and `#settings/providers` land on Models › Providers.
 
 | Element | Level |
 |---|---|
 | Marketplace page: the Browse, Installed and Marketplaces tabs, install, update, Add marketplace, Health (Check health), leftover data and Purge | A |
 | Marketplace page, behind the `ticketUpdates` flag: the installed plugin sheet's **Ticket updates** section (Projects you work on and its popover, the rules and their move select, Add a project rule, the states), and "Moved to Ticket updates." on the old setting | A — with the Marketplace page |
 | Connectors page: the Sets, Servers and Skills views | A |
-| Models page: the catalog, and the Engines card (Default engine, Models per engine: Step models and Helper jobs tables, including titles, Auto classifier, PR description, Memory defragment, Agent generation and, behind the `requirements` flag, Requirements interview) | E |
-| Models page: the Roles card (Deep thinking, Everyday coding, Quick jobs per harness; its Claude / Codex switch is E). The Models nav entry is E, so below Expert the card opens from the `#models` address until the setup assistant adds a Simple-level way in | S |
-| Models page: the catalog toolbar (search, filter chips, folding groups), the editor dialog's Connection section, the Import-models dialog (Copilot and OpenAI-compatible sources) | E |
-| Providers page: Providers card (Copilot sign-in, account type, concurrency cap, key rows) and its Import-models shortcuts | E |
-| A card's "needs sign-in" pill and button; the New pipeline caption's "needs sign-in" note | all (rule 1 — they block a run) |
+| Models › Catalogue: search, the All / In use / Needs setup / Just imported chips, the Source filter, the harness groups (Hide built-in models, the ⋯ menu's Default for new runs), the model panel, Add model (Where it runs, the provider lists), the model form (its Connection and Capabilities and limits folds) and More › Share as plugin | E |
+| Models › Jobs: the Roles tiles (Deep thinking, Everyday tasks, Quick jobs). The Models nav entry is E, so below Expert they open from the `#models/jobs/roles` address or the top search's Roles row | S |
+| Models › Jobs: the Steps and Helper jobs cards and their Override buttons (Claude Code's helper jobs: Titles, Auto workflow classifier, PR description, Memory defragment, Agent generation, Second-opinion reviewer and, behind their flags, Run naming, Command summaries and Requirements interview), and the Design card behind the `design` flag | A |
+| Models › Jobs: the harness tiles, the harness line's Default for new runs, and each card's Show all. Below Expert the tab shows the default harness | E |
+| Models › Providers: GitHub Copilot (sign-in, Account, Max concurrent requests), OpenRouter, OpenAI-compatible, Anthropic-compatible, Speech, Image generation, Sound, and the rows' Import models | E |
+| Models › Catalogue: a model's "Needs setup" state, and a harness group's "Needs sign-in" or "Needs key" line with its Sign in or Set key button; the New pipeline caption's "needs sign-in" note | all (rule 1 — they block a run) |
 
 ### Requirements (behind the `requirements` flag)
 

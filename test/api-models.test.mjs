@@ -8,12 +8,17 @@ import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import http from 'node:http';
 import { mkdtemp, rm } from 'node:fs/promises';
+import { readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { createRequire, syncBuiltinESMExports } from 'node:module';
 import { _resetForTests } from '../src/core/db.mjs';
-import { listGlobalModels } from '../src/core/settings.mjs';
-import { setNodeModel } from '../src/core/config.mjs';
+import { listGlobalModels, settingsFile } from '../src/core/settings.mjs';
+import { setNodeModel, writeTeamPolicyPrefs } from '../src/core/config.mjs';
+import { projectKey } from '../src/core/store.mjs';
 import { EFFORTS } from '../src/core/model-env.mjs';
+import { ROLE_LABELS } from '../src/shared/model-roles.mjs';
+import { isSecretHeaderName } from '../src/shared/secret-names.mjs';
 import { WebSocket } from 'ws';
 import { checkRows } from './helpers/rows.mjs';
 
@@ -377,6 +382,222 @@ test('GET /api/plugins/:name/model-env: raw literals/refs for Edit-a-copy; secre
   assert.equal((await jfetch(`/api/plugins/ghost/model-env?${q({ id: 'x' })}`)).status, 404);
 });
 
+// ── copies keep their connection; Share keeps harness and connection (P5) ────
+
+test('POST /api/models { copyFrom }: a copy carries its source\'s masked env values', async () => {
+  const env = { ANTHROPIC_BASE_URL: 'https://gw.example', ANTHROPIC_AUTH_TOKEN: 'tok-secret-9999' };
+  assert.equal((await post('/api/models', { id: 'src', label: 'Source', env })).status, 200);
+  const row = (await jfetch('/api/models')).body.models.find((m) => m.id === 'src');
+  for (const key of Object.keys(env)) assert.match(row.env[key], /^••/, `${key} is masked in the row`);
+
+  // The page sends the row's masks back; the server fills them from the source.
+  const r = await post('/api/models', { id: 'src-copy', label: 'Source copy', env: row.env, copyFrom: 'src' });
+  assert.equal(r.status, 200, JSON.stringify(r.body));
+  assert.doesNotMatch(JSON.stringify(r.body), /tok-secret-9999/, 'the answer still masks');
+  for (const [key, value] of Object.entries(env)) {
+    const got = await jfetch(`/api/models/src-copy/env-value?${q({ key })}`);
+    assert.equal(got.status, 200);
+    assert.equal(got.body.value, value, `${key}: the source's stored value, not the mask`);
+  }
+
+  // Only the masks are filled: a value the copy typed is its own, even beside a filled mask.
+  const own = await post('/api/models', {
+    id: 'src-copy2', env: { ...row.env, ANTHROPIC_BASE_URL: 'https://other.example' }, copyFrom: 'src',
+  });
+  assert.equal(own.status, 200, JSON.stringify(own.body));
+  assert.deepEqual(listGlobalModels().find((m) => m.id === 'src-copy2').env, {
+    ANTHROPIC_BASE_URL: 'https://other.example', ANTHROPIC_AUTH_TOKEN: 'tok-secret-9999',
+  });
+});
+
+test('POST /api/models { copyFrom }: a copy keeps a provider connection and its own key', async () => {
+  const upstream = {
+    provider: 'openai', api: 'openai-chat', model: 'm', baseUrl: 'https://gw.example/v1', apiKey: 'sk-own-1234',
+    headers: { 'X-Team': 'a' },
+  };
+  assert.equal((await post('/api/models', { id: 'gw', upstream })).status, 200);
+  const row = (await jfetch('/api/models')).body.models.find((m) => m.id === 'gw');
+  assert.match(row.upstream.apiKey, /^••/, 'the row masks the provider key');
+
+  const r = await post('/api/models', { id: 'gw-copy', upstream: row.upstream, copyFrom: 'gw' });
+  assert.equal(r.status, 200, JSON.stringify(r.body));
+  const stored = (id) => listGlobalModels().find((m) => m.id === id).upstream;
+  assert.deepEqual(stored('gw-copy'), stored('gw'));
+
+  // The copy's own model and base URL are kept; only the masked key is filled, even at another address.
+  const moved = await post('/api/models', {
+    id: 'gw-copy2', upstream: { ...row.upstream, model: 'm2', baseUrl: 'https://other.example/v1' }, copyFrom: 'gw',
+  });
+  assert.equal(moved.status, 200, JSON.stringify(moved.body));
+  assert.deepEqual(stored('gw-copy2'), { ...stored('gw'), model: 'm2', baseUrl: 'https://other.example/v1' });
+  assert.equal(stored('gw-copy2').apiKey, 'sk-own-1234');
+});
+
+test('POST /api/models { copyFrom }: refusals', async () => {
+  const cases = [
+    [{ id: 'x-copy1', copyFrom: 'nope' }, /unknown model to copy from "nope"/],
+    [{ id: 'x-copy2', env: { NEW_KEY: '••••••abcd' }, copyFrom: 'src' }, /"NEW_KEY" has no value to copy/],
+    [{ id: 'x-copy3', upstream: { provider: 'openai', api: 'openai-chat', model: 'm', apiKey: '••••••abcd' }, copyFrom: 'src' },
+      /"apiKey" has no value to copy/],
+    [{ id: 'x-copy4', copyFrom: 42 }, /copyFrom must be a model id/],
+    // Only a plain-object env is filled: a string is not spread into numbered keys.
+    [{ id: 'x-copy5', env: 'str', copyFrom: 'src' }, /env must be an object/],
+  ];
+  for (const [body, re] of cases) {
+    const r = await post('/api/models', body);
+    assert.equal(r.status, 400, JSON.stringify(body));
+    assert.match(r.body.error, re);
+  }
+  assert.equal(listGlobalModels().some((m) => m.id.startsWith('x-copy')), false, 'a refused copy stores nothing');
+});
+
+test('POST /api/models { copyFrom }: null and "" copy nothing; the source is found in any case', async () => {
+  const rows = (await jfetch('/api/models')).body.models;
+  const gw = rows.find((m) => m.id === 'gw');
+  const src = rows.find((m) => m.id === 'src');
+  assert.match(gw.upstream.apiKey, /^••/);
+  assert.match(src.env.ANTHROPIC_AUTH_TOKEN, /^••/);
+  const stored = (id) => listGlobalModels().find((m) => m.id === id);
+
+  // No copy: a masked key means "keep" with nothing to keep, so it is dropped, never stored as the mask.
+  let r = await post('/api/models', { id: 'gw-null', upstream: gw.upstream, copyFrom: null });
+  assert.equal(r.status, 200, JSON.stringify(r.body));
+  assert.equal('apiKey' in stored('gw-null').upstream, false);
+  assert.equal(stored('gw-null').upstream.baseUrl, 'https://gw.example/v1', 'the rest of the connection is kept');
+
+  // No copy: a masked env value is stored as written.
+  r = await post('/api/models', { id: 'src-empty', env: { ANTHROPIC_AUTH_TOKEN: src.env.ANTHROPIC_AUTH_TOKEN }, copyFrom: '' });
+  assert.equal(r.status, 200, JSON.stringify(r.body));
+  assert.equal(stored('src-empty').env.ANTHROPIC_AUTH_TOKEN, src.env.ANTHROPIC_AUTH_TOKEN);
+
+  // The source is found as PATCH finds its model: in any case.
+  r = await post('/api/models', { id: 'gw-upper', upstream: gw.upstream, copyFrom: 'GW' });
+  assert.equal(r.status, 200, JSON.stringify(r.body));
+  assert.equal(stored('gw-upper').upstream.apiKey, 'sk-own-1234');
+});
+
+test('GET /api/plugins/:name/model-env: a plugin copy learns its harness and connection, never a secret', async () => {
+  const { pluginCurrentDir, writePluginsLock, readPluginsLock } = await import('../src/core/plugins-lock.mjs');
+  const { mkdirSync } = await import('node:fs');
+  const cur = pluginCurrentDir('copy-plug');
+  mkdirSync(cur, { recursive: true });
+  // Split in two: the manifest refuses env on a Codex model, and that drops the whole plugin.
+  writeFileSync(join(cur, 'worca-cc-plugin.json'), JSON.stringify({
+    name: 'copy-plug',
+    modelSecrets: [{ key: 'acme' }],
+    models: [
+      { id: 'p-codex', engine: 'codex', upstream: { provider: 'openai', api: 'openai-responses', model: 'gpt-x' } },
+      { id: 'p-claude', env: { K: { secret: 'acme' }, L: 'lit' } },
+    ],
+  }));
+  writePluginsLock({
+    ...readPluginsLock(),
+    'copy-plug': { repo: 'https://example.com/r', subdir: '', pinnedSha: 'x'.repeat(40), version: '1', enabled: true },
+  });
+  try {
+    const codex = await jfetch(`/api/plugins/copy-plug/model-env?${q({ id: 'p-codex' })}`);
+    assert.equal(codex.status, 200, JSON.stringify(codex.body));
+    assert.equal(codex.body.engine, 'codex');
+    assert.equal(codex.body.upstream.model, 'gpt-x');
+
+    const claude = await jfetch(`/api/plugins/copy-plug/model-env?${q({ id: 'p-claude' })}`);
+    assert.equal(claude.status, 200, JSON.stringify(claude.body));
+    assert.deepEqual(claude.body.secretKeys, ['K']);
+    assert.deepEqual(claude.body.env, { L: 'lit' }, 'the secret is asked for, never sent');
+    assert.equal('engine' in claude.body, false, 'a Claude plugin model names no harness');
+  } finally {
+    const { 'copy-plug': _gone, ...rest } = readPluginsLock();
+    writePluginsLock(rest);
+  }
+});
+
+test('isSecretHeaderName: credential-named headers, not names that merely hold "key"', () => {
+  for (const h of [
+    'X-Api-Key', 'X-Auth-Key', 'X-Access-Key', 'X-Credential', 'Ocp-Apim-Subscription-Key', 'Cookie', 'X-Auth-Token',
+    'Proxy-Authorization',
+  ]) assert.equal(isSecretHeaderName(h), true, h);
+  for (const h of [
+    'X-Team', 'X-Ref', 'Accept', 'X-Keyboard-Layout', 'HTTP-Referer', 'X-Title', 'anthropic-version', 'Editor-Version',
+    'Copilot-Integration-Id', 'OpenAI-Organization',
+  ]) assert.equal(isSecretHeaderName(h), false, h);
+});
+
+test('POST /api/models/export-plugin keeps harness and connection and leaves secrets out', async () => {
+  const { normalizeManifest } = await import('../src/core/plugin-manifest.mjs');
+  for (const body of [
+    { id: 'cx', engine: 'codex', upstream: { provider: 'openai', api: 'openai-responses', model: 'gpt-x' } },
+    { id: 'cp1', engine: 'copilot' },
+    { id: 'gw2', upstream: {
+      provider: 'openai', api: 'openai-chat', model: 'm', apiKey: 'sk-lit-1234',
+      baseUrl: 'https://user:pw-secret-31@gw.example/v1',
+      headers: {
+        'X-Api-Key': 'hdr-secret-77', 'X-Auth-Key': 'auth-secret-66', 'X-Team': 'a',
+        'Ocp-Apim-Subscription-Key': 'sub-secret-55', 'X-Ref': '${TEAM_REF}',
+      },
+    } },
+    // Its only header is a secret, and a token rides as the URL's user.
+    { id: 'gw4', upstream: {
+      provider: 'openai', api: 'openai-chat', model: 'm', baseUrl: 'https://tok-secret-21@gw4.example/v1',
+      headers: { 'X-Api-Key': 'hdr-secret-78' },
+    } },
+    { id: 'gw5', upstream: {
+      provider: 'openai', api: 'openai-chat', model: 'm', baseUrl: 'https://:pw-only-13@gw5.example/v1',
+      headers: { 'X-Access-Key': 'acc-secret-44', 'X-Keyboard-Layout': 'us', 'X-Credential': 'cred-secret-33', Cookie: 'sid=ck-secret-22' },
+    } },
+    // A whole-value ${VAR} is config: it travels, as a key and under a secret-looking header name.
+    { id: 'gw3', upstream: {
+      provider: 'openai', api: 'openai-chat', model: 'm', apiKey: '${GW_KEY}', headers: { 'X-Auth-Token': '${GW_TOKEN}' },
+    } },
+  ]) {
+    const r = await post('/api/models', body);
+    assert.equal(r.status, 200, JSON.stringify(r.body));
+  }
+
+  const dest = join(proj, 'export', 'harness-models');
+  const r = await post('/api/models/export-plugin', {
+    name: 'harness-models', dest, models: [{ id: 'cx' }, { id: 'cp1' }, { id: 'gw2' }, { id: 'gw3' }, { id: 'gw4' }, { id: 'gw5' }],
+  });
+  assert.equal(r.status, 200, JSON.stringify(r.body));
+  const manifestText = readFileSync(join(dest, 'worca-cc-plugin.json'), 'utf8');
+  const readme = readFileSync(join(dest, 'README.md'), 'utf8');
+  const manifest = JSON.parse(manifestText);
+  const byId = Object.fromEntries(manifest.models.map((m) => [m.id, m]));
+
+  assert.equal(byId.cx.engine, 'codex');
+  assert.deepEqual(byId.cx.upstream, { provider: 'openai', api: 'openai-responses', model: 'gpt-x' });
+  assert.equal(byId.cp1.engine, 'copilot');
+  assert.equal('efforts' in byId.cp1, false, 'its own harness\'s full list is left out');
+  assert.equal('engine' in byId.gw2, false, 'Claude Code is the default harness');
+  assert.equal('apiKey' in byId.gw2.upstream, false, 'a literal provider key never travels');
+  assert.equal(byId.gw2.upstream.baseUrl, 'https://gw.example/v1', 'the URL travels without its user and password');
+  assert.deepEqual(byId.gw2.upstream.headers, { 'X-Team': 'a', 'X-Ref': '${TEAM_REF}' });
+  assert.equal(byId.gw3.upstream.apiKey, '${GW_KEY}');
+  assert.deepEqual(byId.gw3.upstream.headers, { 'X-Auth-Token': '${GW_TOKEN}' });
+  assert.equal(byId.gw4.upstream.baseUrl, 'https://gw4.example/v1');
+  assert.equal('headers' in byId.gw4.upstream, false, 'no empty headers object when every header was a secret');
+  assert.equal(byId.gw5.upstream.baseUrl, 'https://gw5.example/v1');
+  assert.deepEqual(byId.gw5.upstream.headers, { 'X-Keyboard-Layout': 'us' });
+  // Model order; per model the key, the URL's user and password, then the headers in stored order.
+  assert.deepEqual(r.body.omitted, [
+    { id: 'gw2', what: 'provider key' }, { id: 'gw2', what: 'base URL credentials' },
+    { id: 'gw2', what: 'header X-Api-Key' }, { id: 'gw2', what: 'header X-Auth-Key' },
+    { id: 'gw2', what: 'header Ocp-Apim-Subscription-Key' },
+    { id: 'gw4', what: 'base URL credentials' }, { id: 'gw4', what: 'header X-Api-Key' },
+    { id: 'gw5', what: 'base URL credentials' }, { id: 'gw5', what: 'header X-Access-Key' },
+    { id: 'gw5', what: 'header X-Credential' }, { id: 'gw5', what: 'header Cookie' },
+  ]);
+  assert.match(readme, /^## Not included$/m);
+  for (const o of r.body.omitted) assert.ok(readme.includes(`- \`${o.id}\`: ${o.what}\n`), `the README names ${o.id}: ${o.what}`);
+  for (const secret of [
+    /sk-lit-1234/, /hdr-secret-7[78]/, /auth-secret-66/, /sub-secret-55/, /pw-secret-31/, /tok-secret-21/, /pw-only-13/,
+    /acc-secret-44/, /cred-secret-33/, /ck-secret-22/,
+  ]) {
+    assert.doesNotMatch(manifestText, secret);
+    assert.doesNotMatch(readme, secret);
+  }
+  assert.equal(normalizeManifest(manifest).ok, true);
+});
+
 // ── model connectivity test (Models-view Test button) ────────────────────────
 
 test('POST /api/models/:id/test: 404 unknown id, 400 for a plugin model with an unset secret, 200 for a built-in id (mock)', async () => {
@@ -420,6 +641,92 @@ test('POST /api/models/:id/test: 404 unknown id, 400 for a plugin model with an 
       }
     } },
   ]);
+});
+
+test('every row says whether the test route takes it; team-policy models can be tested', async () => {
+  // A cache key no other test reads (assertProjectKey shape); its slug differs from the hide-default seed's.
+  const key = 'team-models-0000beef';
+  const prev = process.env.WORCA_MOCK;
+  process.env.WORCA_MOCK = '1';           // never a real spawn under the test PATH guard
+  try {
+    assert.equal((await post('/api/models', { id: 'tt-global', label: 'TT global', efforts: ['high'] })).status, 200);
+    writeTeamPolicyPrefs(key, { present: true, docKnown: true, slug: 'acme/team-models', headSha: 'abc1234', delegateTo: null, doc: { schema: 1, fields: {}, workspaceRuns: {}, catalogs: { models: [{ id: 'team-glm', label: 'Team GLM', env: { ANTHROPIC_BASE_URL: 'https://glm.example' } }] } } });
+    await checkRows([
+      { name: 'testable follows the test route', run: async () => {
+        const { status, body } = await jfetch('/api/models');
+        assert.equal(status, 200);
+        assert.ok(body.predefined.length > 0 && body.predefined.every((m) => m.testable === true), 'Claude built-ins are testable');
+        assert.ok(body.codex.length > 0 && body.codex.every((m) => m.testable === false), 'Codex built-ins are not');
+        assert.ok(body.copilot.length > 0 && body.copilot.every((m) => m.testable === false), 'Copilot built-ins are not');
+        assert.ok(body.models.some((m) => m.id === 'tt-global') && body.models.every((m) => m.testable === true), 'globals are testable');
+        assert.ok(body.policy.some((m) => m.id === 'team-glm') && body.policy.every((m) => m.testable === true), 'team-policy models are testable');
+        assert.ok(body.plugin.every((m) => m.testable === true), 'plugin models are testable');
+      } },
+      { name: 'a team-policy model can be tested', run: async () => {
+        const r = await post('/api/models/team-glm/test', {});
+        assert.equal(r.status, 200, JSON.stringify(r.body));
+        assert.equal(typeof r.body.ok, 'boolean');
+        assert.equal((await post('/api/models/Team-GLM/test', {})).status, 200, 'ids compare case-insensitively');
+      } },
+    ]);
+  } finally {
+    writeTeamPolicyPrefs(key, { present: false });
+    await jfetch('/api/models/tt-global', { method: 'DELETE' });
+    if (prev === undefined) delete process.env.WORCA_MOCK; else process.env.WORCA_MOCK = prev;
+  }
+  assert.equal((await jfetch('/api/models')).body.policy.some((m) => m.id === 'team-glm'), false, 'the seed is reset');
+});
+
+test('a Codex built-in still answers 404', async () => {
+  const prev = process.env.WORCA_MOCK;
+  process.env.WORCA_MOCK = '1';
+  try {
+    const r = await post('/api/models/gpt-6.1-sol/test', {});
+    assert.equal(r.status, 404);
+    assert.match(r.body.error, /unknown model id/);
+  } finally {
+    if (prev === undefined) delete process.env.WORCA_MOCK; else process.env.WORCA_MOCK = prev;
+  }
+});
+
+test('plugin rows carry their harness', async () => {
+  const { writePluginsLock, readPluginsLock, pluginCurrentDir } = await import('../src/core/plugins-lock.mjs');
+  const { mkdirSync } = await import('node:fs');
+  const cur = pluginCurrentDir('codex-plug');
+  mkdirSync(cur, { recursive: true });
+  writeFileSync(join(cur, 'worca-cc-plugin.json'), JSON.stringify({
+    name: 'codex-plug',
+    models: [
+      { id: 'cp-codex', label: 'CP Codex', engine: 'codex', efforts: ['low', 'high'] },
+      { id: 'cp-claude', label: 'CP Claude', env: { ANTHROPIC_BASE_URL: 'https://cp.example' } },
+    ],
+  }));
+  writePluginsLock({
+    ...readPluginsLock(),
+    'codex-plug': { repo: 'https://example.com/r', subdir: '', pinnedSha: 'x'.repeat(40), version: '1', enabled: true },
+  });
+  try {
+    const { body } = await jfetch('/api/models');
+    const codexRow = body.plugin.find((m) => m.id === 'cp-codex');
+    assert.ok(codexRow, 'the Codex plugin model is listed');
+    assert.equal(codexRow.engine, 'codex');
+    assert.equal(codexRow.testable, true);
+    const claudeRow = body.plugin.find((m) => m.id === 'cp-claude');
+    assert.ok(claudeRow, 'the Claude plugin model is listed');
+    assert.equal('engine' in claudeRow, false, 'a Claude plugin model carries no engine (the manifest stores none)');
+  } finally {
+    const { 'codex-plug': _gone, ...rest } = readPluginsLock();
+    writePluginsLock(rest);
+  }
+});
+
+test('no exported list is mutated', async () => {
+  const { PREDEFINED_MODELS, CODEX_BUILTIN_MODELS, COPILOT_BUILTIN_MODELS } = await import('../src/core/config.mjs');
+  const { body } = await jfetch('/api/models');
+  assert.equal(body.predefined[0].testable, true);
+  assert.equal(PREDEFINED_MODELS[0].testable, undefined);
+  assert.ok(PREDEFINED_MODELS.every((m) => !('testable' in m)), 'no Claude built-in gains testable');
+  assert.ok([...CODEX_BUILTIN_MODELS, ...COPILOT_BUILTIN_MODELS].every((m) => !('testable' in m)));
 });
 
 // ── the pricing override over HTTP (what the editor form actually sends) ──────
@@ -532,7 +839,110 @@ test('#422: hideBuiltinModels flags built-ins in /api/config, is echoed by /api/
   assert.match(bad.body.error, /true or false/);
 });
 
-test('#422: POST /api/settings titleModel — catalog member stored, unknown id refused, "" clears; stale id reported', async () => {
+// ── P4 (CAT-8, L7): Codex and Copilot hide their built-ins with hideBuiltinEngines ──
+
+const HIDE_ENGINES_OFF = { hideBuiltinEngines: { codex: false, copilot: false } };
+
+test('hideBuiltinEngines round-trips and is validated', async () => {
+  // Other open tabs repaint on settings-changed (the WebSocket lives on the module's own server, as above).
+  const { server } = await import('../ui/server.mjs');
+  await new Promise((r) => server.listen(0, '127.0.0.1', r));
+  const ws = new WebSocket(`ws://127.0.0.1:${server.address().port}/ws`, { headers: { host: '127.0.0.1', origin: 'http://127.0.0.1' } });
+  const frames = [];
+  ws.on('message', (d) => { try { frames.push(JSON.parse(String(d)).type); } catch { /* not JSON */ } });
+  try {
+    await new Promise((res, rej) => { ws.on('open', res); ws.on('error', rej); });
+    const codex = await post('/api/settings', { hideBuiltinEngines: { codex: true } });
+    assert.equal(codex.status, 200, JSON.stringify(codex.body));
+    assert.deepEqual(codex.body.hideBuiltinEngines, { codex: true });
+    const t0 = Date.now();
+    while (!frames.includes('settings-changed') && Date.now() - t0 < 5000) await new Promise((r) => setTimeout(r, 20));
+    assert.ok(frames.includes('settings-changed'), `frames: ${frames.join(', ')}`);
+    const swap = await post('/api/settings', { hideBuiltinEngines: { copilot: true, codex: false } });
+    assert.equal(swap.status, 200, JSON.stringify(swap.body));
+    assert.deepEqual(swap.body.hideBuiltinEngines, { copilot: true }, 'true stores, false deletes, other keys merge');
+    const claude = await post('/api/settings', { hideBuiltinEngines: { claude: true } });
+    assert.equal(claude.status, 400);
+    assert.equal(claude.body.field, 'hideBuiltinEngines');
+    const yes = await post('/api/settings', { hideBuiltinEngines: { codex: 'yes' } });
+    assert.equal(yes.status, 400);
+    assert.equal(yes.body.field, 'hideBuiltinEngines');
+    assert.match(yes.body.error, /^“Hide built-in models” must set codex to true or false/);
+    const list = await post('/api/settings', { hideBuiltinEngines: ['codex'] });
+    assert.equal(list.status, 400);
+    assert.equal(list.body.field, 'hideBuiltinEngines');
+    assert.match(list.body.error, /can’t read/);
+    const got = await jfetch('/api/settings');
+    assert.deepEqual(got.body.hideBuiltinEngines, { copilot: true }, 'a refused POST changes nothing; GET carries the key');
+    // A hand-edited value that is not { <engine>: true } reads as {} and the next save replaces it.
+    const settings = JSON.parse(readFileSync(settingsFile(), 'utf8'));
+    writeFileSync(settingsFile(), JSON.stringify({ ...settings, hideBuiltinEngines: { copilot: true, codex: 'yes' } }, null, 2) + '\n');
+    assert.deepEqual((await jfetch('/api/settings')).body.hideBuiltinEngines, {}, 'an invalid stored value hides nothing');
+    assert.deepEqual((await jfetch('/api/models')).body.hiddenBuiltins, { claude: false, codex: false, copilot: false });
+    const fixed = await post('/api/settings', { hideBuiltinEngines: { codex: true } });
+    assert.deepEqual(fixed.body.hideBuiltinEngines, { codex: true }, 'the save starts from {}, not the invalid value');
+  } finally {
+    ws.close();
+    await new Promise((r) => server.close(r));
+    const off = await post('/api/settings', HIDE_ENGINES_OFF);
+    assert.equal(off.status, 200);
+    assert.deepEqual(off.body.hideBuiltinEngines, {});
+  }
+  assert.equal('hideBuiltinEngines' in JSON.parse(readFileSync(settingsFile(), 'utf8')), false, 'an empty object is removed');
+});
+
+test('GET /api/models says what each harness hides', async () => {
+  assert.deepEqual((await jfetch('/api/models')).body.hiddenBuiltins, { claude: false, codex: false, copilot: false });
+  try {
+    assert.equal((await post('/api/settings', { hideBuiltinEngines: { copilot: true } })).status, 200);
+    assert.deepEqual((await jfetch('/api/models')).body.hiddenBuiltins, { claude: false, codex: false, copilot: true });
+  } finally {
+    await post('/api/settings', HIDE_ENGINES_OFF);
+  }
+});
+
+test('pickers skip hidden Copilot built-ins', async () => {
+  try {
+    assert.equal((await post('/api/settings', { hideBuiltinEngines: { copilot: true } })).status, 200);
+    const cfg = await jfetch('/api/config');
+    const copilot = cfg.body.models.filter((m) => m.id.startsWith('copilot/'));
+    assert.ok(copilot.length > 0 && copilot.every((m) => m.hidden === true), 'unshadowed Copilot built-ins carry hidden:true');
+    assert.ok(cfg.body.models.filter((m) => m.engine === 'codex').every((m) => m.hidden === undefined), 'Codex keeps its own flag');
+    assert.ok(cfg.body.models.filter((m) => m.engine === 'claude').every((m) => m.hidden === undefined), 'Claude keeps hideBuiltinModels');
+    assert.equal((await post('/api/settings', { hideBuiltinEngines: { codex: true } })).status, 200);
+    const both = (await jfetch('/api/config')).body.models;
+    const codexBuiltins = both.filter((m) => m.engine === 'codex' && m.builtin === true);
+    assert.ok(codexBuiltins.length > 0 && codexBuiltins.every((m) => m.hidden === true), 'unshadowed Codex built-ins carry hidden:true');
+    assert.ok(both.filter((m) => m.custom).every((m) => m.hidden === undefined), 'owned entries never hidden');
+  } finally {
+    await post('/api/settings', HIDE_ENGINES_OFF);
+  }
+  assert.ok((await jfetch('/api/config')).body.models.every((m) => m.hidden === undefined), 'none hidden once reset');
+});
+
+test('a team default hides Claude built-ins until the user chooses', async () => {
+  // The #422 test above stored the user's choice (hideBuiltinModelsChosen): start from a user who never chose.
+  const settings = JSON.parse(readFileSync(settingsFile(), 'utf8'));
+  delete settings.hideBuiltinModels; delete settings.hideBuiltinModelsChosen;
+  writeFileSync(settingsFile(), JSON.stringify(settings, null, 2) + '\n');
+  const dir = await mkdtemp(join(tmpdir(), 'worca-cc-apimodels-team-'));
+  const key = projectKey(dir);
+  try {
+    writeTeamPolicyPrefs(key, { present: true, docKnown: true, slug: 'acme/hide-default', headSha: 'abc1234', delegateTo: null, doc: { schema: 1, fields: { 'models.hideBuiltins': { kind: 'default', value: true } }, workspaceRuns: {}, catalogs: {} } });
+    const withProject = `/api/models?${q({ projectDir: dir })}`;
+    assert.equal((await jfetch(withProject)).body.hiddenBuiltins.claude, true, 'the team default applies to its project');
+    assert.equal((await jfetch('/api/models')).body.hiddenBuiltins.claude, false, 'no project: the user\'s choice only');
+    const off = await post('/api/settings', { hideBuiltinModels: false });
+    assert.equal(off.status, 200);
+    assert.deepEqual((await jfetch(withProject)).body.hiddenBuiltins, { claude: false, codex: false, copilot: false }, 'turning it off records the user\'s own choice');
+  } finally {
+    writeTeamPolicyPrefs(key, { present: false });
+    await post('/api/settings', { hideBuiltinModels: false });
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test('#422: POST /api/settings titleModel — catalog member stored, unknown id refused, "" clears; deleting the model clears the pick; a stale id is reported', async () => {
   const { PREDEFINED_MODELS } = await import('../src/core/config.mjs');
   const unknown = await post('/api/settings', { titleModel: 'no-such-model' });
   assert.equal(unknown.status, 400);
@@ -541,18 +951,183 @@ test('#422: POST /api/settings titleModel — catalog member stored, unknown id 
   assert.equal(builtin.status, 200, JSON.stringify(builtin.body));
   assert.equal(builtin.body.titleModel, PREDEFINED_MODELS[0].id);
   assert.deepEqual(builtin.body.titleModelEffective, { model: PREDEFINED_MODELS[0].id, source: 'settings', stale: null });
-  // A global entry picked, then deleted → the setting is stale and says so.
+  // A global entry picked, then deleted → the delete clears the pick (PAN-7: it clears every job that names it).
   const add = await post('/api/models', { id: 'title-only-model', label: 'T', efforts: [], env: {} });
   assert.equal(add.status, 200, JSON.stringify(add.body));
   const pick = await post('/api/settings', { titleModel: 'title-only-model' });
   assert.equal(pick.status, 200);
   const del = await jfetch('/api/models/title-only-model', { method: 'DELETE' });
   assert.equal(del.status, 200, JSON.stringify(del.body));
+  assert.equal(del.body.clearedJobs, 1);
+  const cleared = await jfetch('/api/settings');
+  assert.equal(cleared.body.titleModel, null, 'the delete cleared the pick');
+  assert.deepEqual(cleared.body.titleModelEffective, { model: null, source: 'run', stale: null });
+  // An id that left the catalog some other way (a hand edit) is still reported stale.
+  const raw = JSON.parse(readFileSync(settingsFile(), 'utf8'));
+  writeFileSync(settingsFile(), JSON.stringify({ ...raw, titleModel: 'gone-model' }));
   const stale = await jfetch('/api/settings');
-  assert.equal(stale.body.titleModel, 'title-only-model', 'stored id kept verbatim');
-  assert.deepEqual(stale.body.titleModelEffective, { model: null, source: 'run', stale: 'title-only-model' });
+  assert.equal(stale.body.titleModel, 'gone-model', 'stored id kept verbatim');
+  assert.deepEqual(stale.body.titleModelEffective, { model: null, source: 'run', stale: 'gone-model' });
   const clear = await post('/api/settings', { titleModel: '' });
   assert.equal(clear.status, 200);
   assert.equal(clear.body.titleModel, null);
   assert.deepEqual(clear.body.titleModelEffective, { model: null, source: 'run', stale: null });
+});
+
+// PAN-7 / U2b: who uses a model, and a delete that clears every job naming it. The file shares ONE home and the
+// :154 row expects an empty catalogue, so these rows come last and remove every model and pick they add.
+test('GET /api/models carries uses', async () => {
+  const add = await post('/api/models', { id: 'my-gpt' });
+  assert.equal(add.status, 200, JSON.stringify(add.body));
+  const role = await post('/api/settings', { modelRoles: { claude: { everyday: { model: 'my-gpt' } } } });
+  assert.equal(role.status, 200, JSON.stringify(role.body));
+  const { status, body } = await jfetch('/api/models');
+  assert.equal(status, 200);
+  assert.deepEqual(body.uses['my-gpt'], [{ kind: 'role', engine: 'claude', key: 'everyday', label: ROLE_LABELS.everyday }]);
+});
+
+test('refs carry the user-level jobs', async () => {
+  // A project node pick is a ref of its own (`nodes`): `jobs` holds the user-level jobs only, so none counts twice.
+  await setNodeModel(proj, 'wf_x', 's9_0', { model: 'my-gpt' });
+  const { status, body } = await jfetch('/api/models/my-gpt/refs');
+  assert.equal(status, 200);
+  assert.equal(body.nodes.length, 1);
+  assert.equal(body.jobs.length, 1);
+  assert.equal(body.jobs[0].key, 'everyday');
+});
+
+test('DELETE clears the jobs and says how many', async () => {
+  // A cleared role is a settings change: open tabs repaint their pickers (as for the defragment model above).
+  const { server } = await import('../ui/server.mjs');
+  await new Promise((r) => server.listen(0, '127.0.0.1', r));
+  const ws = new WebSocket(`ws://127.0.0.1:${server.address().port}/ws`, { headers: { host: '127.0.0.1', origin: 'http://127.0.0.1' } });
+  const frames = [];
+  ws.on('message', (d) => { try { frames.push(JSON.parse(String(d)).type); } catch { /* not JSON */ } });
+  try {
+    await new Promise((res, rej) => { ws.on('open', res); ws.on('error', rej); });
+    const del = await jfetch('/api/models/my-gpt', { method: 'DELETE' });
+    assert.equal(del.status, 200, JSON.stringify(del.body));
+    assert.equal(del.body.clearedJobs, 1);
+    assert.equal(del.body.clearedNodes, 1);
+    const t0 = Date.now();
+    while (!frames.includes('settings-changed') && Date.now() - t0 < 5000) await new Promise((r) => setTimeout(r, 20));
+    assert.ok(frames.includes('settings-changed'), `frames: ${frames.join(', ')}`);
+  } finally {
+    ws.close();
+    await new Promise((r) => server.close(r));
+  }
+  const settings = await jfetch('/api/settings');
+  assert.equal(settings.body.modelRoles.claude?.everyday, undefined);
+  assert.equal((await jfetch('/api/models')).body.uses['my-gpt'], undefined);
+});
+
+test('DELETE of an unknown id clears nothing (the catalogue check runs before any clear)', async () => {
+  const raw = JSON.parse(readFileSync(settingsFile(), 'utf8'));
+  writeFileSync(settingsFile(), JSON.stringify({ ...raw, agentGenModel: { model: 'ghost-model' } }));
+  try {
+    const del = await jfetch('/api/models/ghost-model', { method: 'DELETE' });
+    assert.equal(del.status, 400);
+    assert.deepEqual(JSON.parse(readFileSync(settingsFile(), 'utf8')).agentGenModel, { model: 'ghost-model' });
+  } finally {
+    const { agentGenModel: _gone, ...rest } = JSON.parse(readFileSync(settingsFile(), 'utf8'));
+    writeFileSync(settingsFile(), JSON.stringify(rest));
+  }
+});
+
+test('removing an override of a Codex built-in clears nothing', async () => {
+  const add = await post('/api/models', { id: 'gpt-6.1-sol', engine: 'codex', label: 'Sol (mine)' });
+  assert.equal(add.status, 200, JSON.stringify(add.body));
+  const role = await post('/api/settings', { modelRoles: { codex: { deep: { model: 'gpt-6.1-sol' } } } });
+  assert.equal(role.status, 200, JSON.stringify(role.body));
+  assert.deepEqual((await jfetch('/api/models/gpt-6.1-sol/refs')).body.jobs, [], 'an override: the confirm counts no job');
+  const del = await jfetch('/api/models/gpt-6.1-sol', { method: 'DELETE' });
+  assert.equal(del.status, 200, JSON.stringify(del.body));
+  assert.equal(del.body.predefinedShadow, true);
+  assert.equal(del.body.clearedJobs, 0);
+  const settings = await jfetch('/api/settings');
+  assert.deepEqual(settings.body.modelRoles.codex?.deep, { model: 'gpt-6.1-sol' }, 'the built-in still runs the role');
+  const reset = await post('/api/settings', { modelRoles: { codex: { deep: null } } });
+  assert.equal(reset.status, 200, JSON.stringify(reset.body));
+});
+
+test('removing an override of a Copilot built-in clears nothing', async () => {
+  const id = 'copilot/claude-opus-5.5';
+  const add = await post('/api/models', { id, engine: 'copilot', label: 'Opus (mine)' });
+  assert.equal(add.status, 200, JSON.stringify(add.body));
+  const role = await post('/api/settings', { modelRoles: { copilot: { deep: { model: id } } } });
+  assert.equal(role.status, 200, JSON.stringify(role.body));
+  assert.deepEqual((await jfetch(`/api/models/${encodeURIComponent(id)}/refs`)).body.jobs, [], 'an override: the confirm counts no job');
+  const del = await jfetch(`/api/models/${encodeURIComponent(id)}`, { method: 'DELETE' });
+  assert.equal(del.status, 200, JSON.stringify(del.body));
+  assert.equal(del.body.predefinedShadow, true);
+  assert.equal(del.body.clearedJobs, 0);
+  const settings = await jfetch('/api/settings');
+  assert.deepEqual(settings.body.modelRoles.copilot?.deep, { model: id }, 'the built-in still runs the role');
+  const reset = await post('/api/settings', { modelRoles: { copilot: { deep: null } } });
+  assert.equal(reset.status, 200, JSON.stringify(reset.body));
+});
+
+test('a pick stored under a key named after an Object.prototype member: the catalogue, the refs and a delete still answer', async () => {
+  const raw = JSON.parse(readFileSync(settingsFile(), 'utf8'));
+  // A hand edit: the settings validators refuse such a key.
+  writeFileSync(settingsFile(), JSON.stringify({ ...raw, utilityModels: { constructor: { title: { model: 'proto-m' } } } }));
+  try {
+    const list = await jfetch('/api/models');
+    assert.equal(list.status, 200, JSON.stringify(list.body));
+    assert.deepEqual(list.body.uses['proto-m'], [{ kind: 'helper', engine: 'constructor', key: 'title', label: 'title' }]);
+    const refs = await jfetch('/api/models/constructor/refs');
+    assert.equal(refs.status, 200, JSON.stringify(refs.body));
+    assert.deepEqual(refs.body.jobs, [], 'no job names `constructor`');
+    assert.equal((await post('/api/models', { id: 'proto-m' })).status, 200);
+    const del = await jfetch('/api/models/proto-m', { method: 'DELETE' });
+    assert.equal(del.status, 200, JSON.stringify(del.body));
+    assert.equal(del.body.clearedJobs, 1);
+    assert.equal(JSON.parse(readFileSync(settingsFile(), 'utf8')).utilityModels, undefined);
+  } finally {
+    const { utilityModels: _gone, ...rest } = JSON.parse(readFileSync(settingsFile(), 'utf8'));
+    writeFileSync(settingsFile(), JSON.stringify(rest));
+  }
+});
+
+// The fault is planted in node:fs (a builtin's ESM bindings follow its CommonJS object after syncBuiltinESMExports):
+// the one settings write that no longer names the model fails, i.e. the job clear that runs after the entry is gone.
+test('DELETE: a job clear that fails after the entry is gone still answers 200, says so, and broadcasts', async () => {
+  assert.equal((await post('/api/models', { id: 'half-gone' })).status, 200);
+  const seed = await post('/api/settings', { memoryDefrag: { model: 'half-gone', effort: 'high' }, modelRoles: { claude: { everyday: { model: 'half-gone' } } } });
+  assert.equal(seed.status, 200, JSON.stringify(seed.body));
+  const fsCjs = createRequire(import.meta.url)('node:fs');
+  const real = fsCjs.writeFileSync;
+  const { server } = await import('../ui/server.mjs');
+  await new Promise((r) => server.listen(0, '127.0.0.1', r));
+  const ws = new WebSocket(`ws://127.0.0.1:${server.address().port}/ws`, { headers: { host: '127.0.0.1', origin: 'http://127.0.0.1' } });
+  const frames = [];
+  ws.on('message', (d) => { try { frames.push(JSON.parse(String(d)).type); } catch { /* not JSON */ } });
+  try {
+    await new Promise((res, rej) => { ws.on('open', res); ws.on('error', rej); });
+    // Planted inside the try, right before the DELETE: the finally always puts the real write back.
+    fsCjs.writeFileSync = function (p, data, ...rest) {
+      if (/settings\.json\.[0-9a-f]{8}\.tmp$/.test(String(p)) && !String(data).includes('"half-gone"')) {
+        throw Object.assign(new Error('EACCES: injected'), { code: 'EACCES' });
+      }
+      return real.call(this, p, data, ...rest);
+    };
+    syncBuiltinESMExports();
+    const del = await jfetch('/api/models/half-gone', { method: 'DELETE' });
+    assert.equal(del.status, 200, JSON.stringify(del.body));
+    assert.equal(del.body.clearedMemoryDefrag, true);
+    assert.equal(del.body.clearedJobs, 1, 'only the defragment pick was cleared');
+    assert.match(del.body.warning, /EACCES: injected/);
+    const t0 = Date.now();
+    while (!frames.includes('settings-changed') && Date.now() - t0 < 5000) await new Promise((r) => setTimeout(r, 20));
+    assert.ok(frames.includes('settings-changed'), `frames: ${frames.join(', ')}`);
+  } finally {
+    fsCjs.writeFileSync = real;
+    syncBuiltinESMExports();
+    ws.close();
+    await new Promise((r) => server.close(r));
+  }
+  assert.equal(listGlobalModels().some((m) => m.id === 'half-gone'), false, 'the entry is gone');
+  assert.deepEqual((await jfetch('/api/settings')).body.modelRoles.claude?.everyday, { model: 'half-gone' }, 'the role the failed clear left');
+  const reset = await post('/api/settings', { modelRoles: { claude: { everyday: null } } });
+  assert.equal(reset.status, 200, JSON.stringify(reset.body));
 });

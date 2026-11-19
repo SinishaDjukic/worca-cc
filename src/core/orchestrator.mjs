@@ -287,7 +287,7 @@ export class GraphOrchestrator extends RunHarness {
       ? (await listModels(this.projectDir)).filter((m) => runsOn(m, engine)) : [];
     const r = resolveDefragModel({ explicit, stored, models });
     if (!r.model) return { pair: null, warning: r.warning };
-    this._log('orchestrator', 'info', `Memory defragment model: ${r.model}${r.effort ? ` · ${r.effort}` : ''} (${r.source === 'explicit' ? 'named at start' : (engine === 'claude' ? 'Settings › Memory' : 'Models › Codex')})`);
+    this._log('orchestrator', 'info', `Memory defragment model: ${r.model}${r.effort ? ` · ${r.effort}` : ''} (${r.source === 'explicit' ? 'named at start' : (engine === 'claude' ? 'Settings › Memory' : 'Models › Jobs › Helper jobs')})`);
     return { pair: { model: r.model, effort: r.effort }, warning: r.warning };
   }
 
