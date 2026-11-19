@@ -15,7 +15,7 @@
 .apv-actions{display:flex;align-items:center;gap:2px;flex:0 0 auto;}
 .apv-ib{display:grid;place-items:center;}
 .apv-ib[aria-pressed="true"]{background:var(--hover);color:var(--ink);}
-.apv-actions .btn svg,.apv-info .btn svg{width:16px;height:16px;flex:0 0 auto;}
+.apv-actions .btn > svg,.apv-info .btn > svg{width:16px;height:16px;flex:0 0 auto;}   /* not Copy's: its glyphs size their own spans */
 .apv-pos{min-width:44px;text-align:center;font-size:11px;color:var(--ink-2);}
 .apv .mono{font-family:var(--mono);}
 .apv-ib:focus-visible{outline:2px solid var(--ink);outline-offset:2px;}
@@ -77,7 +77,7 @@
 .apv-facts{display:grid;grid-template-columns:auto 1fr;gap:6px 14px;margin:8px 0 6px;text-align:left;font-size:12px;}
 .apv-facts dt{color:var(--ink-2);}
 .apv-facts dd{margin:0;color:var(--ink);word-break:break-all;}
-@media (max-width:760px){.apv{padding:0;}.apv-card{width:100vw;height:100vh;max-height:none;border:0;border-radius:0;}.apv-dl span,.apv-info-dl span{display:none;}}
+@media (max-width:760px){.apv{padding:0;}.apv-card{width:100vw;height:100vh;max-height:none;border:0;border-radius:0;}.apv-dl span,.apv-info-dl span,.apv-copy .copy-btn-words{display:none;}}
 @media (max-width:480px){.apv-head{flex-wrap:wrap;row-gap:2px;padding:8px 10px 6px 14px;}.apv-titles{flex:1 1 100%;}.apv-title,.apv-meta{white-space:normal;overflow-wrap:anywhere;}.apv-actions{margin-left:auto;}}
 @media (prefers-reduced-motion:reduce){.apv-card{animation:none;}}
 
