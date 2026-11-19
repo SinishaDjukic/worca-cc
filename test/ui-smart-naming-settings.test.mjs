@@ -47,10 +47,10 @@ async function boot({ postStatus = 200, postBody = null } = {}) {
 const $ = (ctx, id) => ctx.doc.getElementById(id);
 const input = (ctx, el, v) => { el.value = v; el.dispatchEvent(new ctx.window.Event('input', { bubbles: true })); };
 
-test('the card follows Away mode and shows the stored values', async () => {
+test('the card follows Budget and shows the stored values', async () => {
   const ctx = await boot();
   const card = $(ctx, 'smart-naming-settings-card');
-  assert.equal($(ctx, 'night-settings-card').nextElementSibling, card);
+  assert.equal($(ctx, 'budget-settings-card').nextElementSibling, card);
   assert.equal($(ctx, 'smartNamingPattern').value, '{type}/{slug}');
   assert.equal($(ctx, 'smartNamingTitle').checked, true);
   assert.equal($(ctx, 'smartNamingRunId').checked, false);

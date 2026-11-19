@@ -302,6 +302,7 @@ import { createDesignChat } from './design/chat.mjs';
 import { createDesignActivity } from './design/activity.mjs';
 import { createLevelController, levelAtLeast, currentLevel, tagLevel, keepVisible, minLevelFor, LEVEL_INFO, UI_LEVELS } from './ui-level.mjs';
 import { applyFlags, currentFlags, decorateFlagChips, flagOn, onFlagChange } from './flags.mjs';
+import { SETTING_ENTRIES } from './settings-index.mjs';
 import { gitOn, applyGit, onGitChange as onGitFlip, refreshGit, GIT_MISSING_TEXT } from './git-gate.mjs';
 import { PROBE_DEBOUNCE_MS, defaultAddMode, detectModel } from './project-add.mjs';
 import { presetMenuGroups, presetHiddenItems, presetNodePick, renderBrokenCard, resetItem, saveDialogError, configWithPreset } from './run-presets-picker.mjs';
@@ -17810,7 +17811,7 @@ async function paintWorkspaceScanModelsSettings(data) {
   paintScanModelPickers(WS_SCAN_SETTINGS_IDS, pick, wsScanCatalog);
   // An EMPTY catalog is a failed GET, not an empty catalog: it condemns nothing (the Auto card's rule).
   const stale = !!pick.scanModel && wsScanCatalog.length > 0 && !wsScanCatalog.some((m) => m && m.id === pick.scanModel);
-  keepVisible(document.getElementById('ws-scan-models-card'), !!(data && data.workspaceScan));
+  syncSettingsSubKeep(keepVisible(document.getElementById('ws-scan-models-card'), !!(data && data.workspaceScan)));
   setHintMsg('wsScanModelsNote', stale ? `Model "${pick.scanModel}" is no longer in the catalog. Scans fall back to the default.` : '', stale ? 'warn' : '');
   settingsCardPainted('wsScanModelsSave');
 }
@@ -40236,6 +40237,11 @@ function showSettingsTab(param = '') {
       b.setAttribute('aria-pressed', on ? 'true' : 'false');
     }
   }
+  paintSettingsSub(tab);
+  // A narrow screen scrolls the strip sideways: keep the open tab in sight (centred, the page itself does not move).
+  const strip = el.settingsTabs, onTab = strip?.querySelector('button.on');
+  if (onTab && strip.scrollWidth > strip.clientWidth) strip.scrollLeft = onTab.offsetLeft - (strip.clientWidth - onTab.offsetWidth) / 2;
+  markSettingsStrip();
   // Same contract the per-view loaders had: a tab that is never opened costs no
   // request, and re-entry refetches (which is what lets grvExitWizard's
   // '#settings/guardrails/<id>' -> '#settings/guardrails' hop reset the wizard).
@@ -40251,6 +40257,70 @@ function showSettingsTab(param = '') {
   if (tab === 'guardrails') loadGuardrailsView(sub);
   if (tab === 'memory') loadMemoryTab(sub);
   if (tab === 'experimental') loadFlagsTab(sub);
+}
+
+// The open tab's cards as links under it, for the two long tabs only (the left column, wide screens). A link is
+// the card's own address and name from settings-index.mjs (what the top bar search shows) and carries the card's
+// mode, Labs and git gates, so the same CSS rules hide it with its card.
+const SETTINGS_LISTS_CARDS = ['general', 'runs'];
+const SETTINGS_CARD_ENTRY = new Map(SETTING_ENTRIES.filter((e) => e.type === 'card').map((e) => [e.id.slice('card:'.length), e]));
+function paintSettingsSub(tab) {
+  if (!el.settingsTabs) return;
+  el.settingsTabs.querySelector('.settings-sub')?.remove();
+  const pane = SETTINGS_LISTS_CARDS.includes(tab) && settingsPanes.find((p) => p.dataset.tab === tab);
+  if (!pane) return;
+  const sub = document.createElement('div');
+  sub.className = 'settings-sub';
+  for (const card of pane.querySelectorAll(':scope > .settings-card')) {
+    const entry = SETTINGS_CARD_ENTRY.get(card.id);
+    if (!entry) continue;
+    const a = document.createElement('a');
+    a.href = entry.href;
+    a.textContent = a.title = entry.title;
+    a.dataset.card = card.id;
+    for (const k of ['minLevel', 'levelKeep', 'flag', 'needsGit']) if (k in card.dataset) a.dataset[k] = card.dataset[k];
+    sub.append(a);
+  }
+  el.settingsTabs.querySelector(`button[data-tab="${tab}"]`).after(sub);
+  markSettingsSub();
+}
+// Which card is on screen. Colour only; nothing scrolls. By position: the last card whose top passed the upper part
+// of the page; at the end of the page the last card, which is too short to get that high. The card in the address
+// wins while all of it is on screen, so a short card near the end is the one marked after its link is picked.
+function markSettingsSub() {
+  const links = [...(el.settingsTabs?.querySelectorAll('.settings-sub a') || [])].filter((a) => a.getClientRects().length);
+  if (!links.length) return;
+  const box = el.settingsTabs.closest('.main');
+  const atEnd = !!box && box.scrollTop > 0 && box.scrollTop >= box.scrollHeight - box.clientHeight - 1;
+  let cur = null;
+  for (const a of links) {
+    const card = document.getElementById(a.dataset.card);
+    if (!card || !card.getClientRects().length) continue;
+    const r = card.getBoundingClientRect();
+    if (a.getAttribute('href') === location.hash && r.top >= 0 && r.bottom <= window.innerHeight) { cur = a; break; }
+    if (!cur || atEnd || r.top < 220) cur = a;
+  }
+  for (const a of el.settingsTabs.querySelectorAll('.settings-sub a')) { if (a === cur) a.setAttribute('aria-current', 'true'); else a.removeAttribute('aria-current'); }
+}
+// Which sides of the narrow strip hide more tabs ('' | 'left' | 'right' | 'left right'): the CSS fades that edge.
+function markSettingsStrip() {
+  const strip = el.settingsTabs;
+  if (!strip) return;
+  const max = strip.scrollWidth - strip.clientWidth;
+  strip.dataset.more = [strip.scrollLeft > 1 ? 'left' : '', strip.scrollLeft < max - 1 ? 'right' : ''].filter(Boolean).join(' ');
+}
+el.settingsTabs?.addEventListener('scroll', markSettingsStrip, { passive: true });
+window.addEventListener('resize', markSettingsStrip);
+// The page's own scroll only (a list scrolling inside a pane measures nothing).
+el.settingsTabs?.closest('.main')?.addEventListener('scroll', () => { if (currentShownView === 'settings') markSettingsSub(); }, { passive: true });
+// A mode, Labs or git change shows or hides tabs and cards by CSS: redo the strip's hints and the card mark.
+for (const ev of ['worca:level', 'worca:flags', 'worca:git']) document.addEventListener(ev, () => { markSettingsStrip(); markSettingsSub(); });
+// A card kept on screen below its mode (keepVisible) keeps its link too: call this after the card's marker changes.
+function syncSettingsSubKeep(card) {
+  const a = card && el.settingsTabs?.querySelector(`.settings-sub a[data-card="${card.id}"]`);
+  if (!a) return;
+  if (card.dataset.levelKeep) a.dataset.levelKeep = card.dataset.levelKeep; else delete a.dataset.levelKeep;
+  markSettingsSub();
 }
 
 // A link to one card ('#settings/runs/actions', '#models/engine', a top bar search pick '#settings/general/appearance-card'):
@@ -40443,6 +40513,11 @@ awayScreensaver = createAwayScreensaver({
 // Settings tabs are hash-first, exactly like the nav buttons: the single
 // hashchange listener drives showView, so a click renders once.
 el.settingsTabs?.addEventListener('click', (e) => {
+  // A card link is a plain hash link; picking the same one again fires no hashchange, so land on it by hand.
+  const link = e.target.closest && e.target.closest('.settings-sub a');
+  // A modifier click opens the link elsewhere and leaves this page alone.
+  const plain = !e.button && !e.metaKey && !e.ctrlKey && !e.shiftKey && !e.altKey;
+  if (link && plain && location.hash === link.getAttribute('href')) showView('settings', location.hash.slice('#settings/'.length));
   const btn = e.target.closest && e.target.closest('button[data-tab]');
   if (!btn) return;
   const param = settingsParamFor(btn.dataset.tab);
