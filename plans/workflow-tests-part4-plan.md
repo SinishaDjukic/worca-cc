@@ -2463,3 +2463,660 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
 
 ---
 
+## Task 9: Better or worse with criteria (D98)
+
+**Files:**
+- Modify: `src/shared/workflow-tests/criteria-verdicts.mjs` (results and statuses), `src/shared/workflow-tests/compare.mjs` (`missCounts`), `src/core/workflow-tests/criteria-read.mjs` (`withCriteriaFor`, `compareNotes`), `src/core/workflow-tests/service.mjs` (three call sites and one field; net about +1 line)
+- Test: `test/workflow-test-criteria-verdicts.test.mjs`
+
+**Interfaces:**
+- Consumes: `NOT_CHECKED` (Task 6), `trustFor`, `tryJudgements`, `criterionFp` (Tasks 7, 8), `compareModel` (`compare.mjs:140`).
+- Produces (criteria-verdicts.mjs): `criterionResult(c, j, trust, { finished }) → { id, label, met: boolean|null, value, decides, shadowDecides?, reason?, proof?, proofFound?, judgementId?, pending?, trust }`, `combinedStatus(status, criteria, { all }) → status`, `withCriteria(tries, resultsOf) → tries` (adds `verdict.criteria`, `checksStatus`, `shadowStatus`; leaves a try without criteria as it was), `unreliableOnly(realModel, shadowModel) → [{ id, name }]`.
+- Produces (criteria-read.mjs): `withCriteriaFor(workflowId, tries) → tries`, `compareNotes(input) → { unreliableOnly }`.
+- Service: `compareOf(...)` returns `notes` (Compare's P4-M5 line reads it); `modelInput`, `sideBySide` and `cellOf` read tries through `withCriteriaFor`.
+
+- [ ] **Step 1: Write the failing test**
+
+Create `test/workflow-test-criteria-verdicts.test.mjs`:
+```js
+// test/workflow-test-criteria-verdicts.test.mjs — D98: a try passes when its checks pass and every deciding criterion is met; a not
+// checked or unreliable criterion never decides; an example that differs only in an unreliable criterion is named, not called worse.
+import { test } from 'node:test';
+import assert from 'node:assert/strict';
+import { criterionResult, combinedStatus, withCriteria, unreliableOnly, finishedTry } from '../src/shared/workflow-tests/criteria-verdicts.mjs';
+import { compareModel } from '../src/shared/workflow-tests/compare.mjs';
+
+const C = { id: 'k_1', text: 'Names a success metric' };
+const reliable = { state: 'reliable', n: 20, agree: 19, decides: true };
+const unreliable = { state: 'unreliable', n: 10, agree: 6, decides: false };
+const J = (met, extra = {}) => ({ id: 9, met, reason: 'r', proof: 'p', proofFound: true, error: null, ...extra });
+
+test('criterionResult: met, not met, not checked for each reason, and an unfinished try', () => {
+  assert.deepEqual(criterionResult(C, J(false), reliable), { id: 'k_1', label: 'Names a success metric', trust: reliable, met: false, value: 'Not met',
+    reason: 'r', proof: 'p', proofFound: true, judgementId: 9, decides: true, shadowDecides: true });
+  assert.equal(criterionResult(C, J(true), unreliable).decides, false);
+  assert.deepEqual([criterionResult(C, null, reliable).value, criterionResult(C, null, reliable).decides], ['Not checked yet', false]);
+  assert.equal(criterionResult(C, J(null, { error: 'no-proof' }), reliable).value, "Not checked: Worca's proof was not in the result");
+  assert.equal(criterionResult(C, J(null, { error: 'limit' }), reliable).pending, true);
+  assert.equal(criterionResult(C, J(true), reliable, { finished: false }).value, 'Not checked: the try did not finish');
+});
+
+test('combinedStatus: a failed try stays failed; a passed one fails on a deciding miss; all = unreliable ones decide too', () => {
+  const miss = criterionResult(C, J(false), unreliable);
+  assert.equal(combinedStatus('passed', [criterionResult(C, J(false), reliable)]), 'failed');
+  assert.equal(combinedStatus('passed', [miss]), 'passed');
+  assert.equal(combinedStatus('passed', [miss], { all: true }), 'failed');
+  assert.equal(combinedStatus('passed', [criterionResult(C, null, reliable)]), 'passed', 'not checked never fails a try');
+  assert.equal(combinedStatus('failed', [criterionResult(C, J(true), reliable)]), 'failed');
+  assert.equal(combinedStatus('stopped', []), 'stopped');
+});
+
+test('withCriteria and Compare: missed criteria are named, unreliable-only differences are not better or worse', () => {
+  const v = (status) => ({ facts: { status: 'done' }, basics: [], checks: [] });
+  const tries = [
+    { id: 1, side: 'a', exampleId: 1, status: 'passed', costUsd: 1, verdict: v() },
+    { id: 2, side: 'b', exampleId: 1, status: 'passed', costUsd: 1, verdict: v() },
+    { id: 3, side: 'a', exampleId: 2, status: 'passed', costUsd: 1, verdict: v() },
+    { id: 4, side: 'b', exampleId: 2, status: 'passed', costUsd: 1, verdict: v() },
+  ];
+  const results = { 1: [criterionResult(C, J(true), reliable)], 2: [criterionResult(C, J(false), reliable)],
+    3: [criterionResult({ id: 'k_2', text: 'Proposes a test' }, J(true), unreliable)], 4: [criterionResult({ id: 'k_2', text: 'Proposes a test' }, J(false), unreliable)] };
+  const decorated = withCriteria(tries, (t) => results[t.id]);
+  assert.deepEqual(decorated.map((t) => [t.status, t.checksStatus, t.shadowStatus]),
+    [['passed', 'passed', 'passed'], ['failed', 'passed', 'failed'], ['passed', 'passed', 'passed'], ['passed', 'passed', 'failed']]);
+  assert.ok(finishedTry(decorated[0]));
+  const input = { examples: [{ id: 1, name: 'Bulk invoice export' }, { id: 2, name: 'Pricing page A/B test' }], a: { label: 'v4' }, b: { label: 'v5 draft' }, tries: decorated };
+  const real = compareModel(input);
+  assert.deepEqual(real.examples.map((r) => r.result), ['worse', 'same']);
+  assert.match(JSON.stringify(real.examples[0].missedList), /Names a success metric/, 'the missed criterion is named (board 5)');
+  const shadow = compareModel({ ...input, tries: decorated.map((t) => ({ ...t, status: t.shadowStatus ?? t.status })) });
+  assert.deepEqual(unreliableOnly(real, shadow), [{ id: 2, name: 'Pricing page A/B test' }]);
+  assert.deepEqual(withCriteria([tries[0]], () => null), [tries[0]], 'an example without criteria is untouched');
+});
+```
+
+- [ ] **Step 2: Run it to see it fail**
+
+Run: `node tools/test.mjs test/workflow-test-criteria-verdicts.test.mjs`
+Expected: FAIL (`criterionResult` is not exported).
+
+- [ ] **Step 3: `src/shared/workflow-tests/criteria-verdicts.mjs`**
+
+Add the import `import { NOT_CHECKED } from './criteria-text.mjs';` and append:
+```js
+/**
+ * D98: one criterion on one try. `j` = the try's newest judgement of it (criteria-store's shape) or null; `trust` = trustOf's.
+ * Only a counted verdict (met or not met, its proof found) decides, and only when its trust decides (D95).
+ */
+export function criterionResult(c, j, trust, { finished = true } = {}) {
+  const base = { id: c.id, label: c.text, trust };
+  if (!finished) return { ...base, met: null, value: NOT_CHECKED['not-finished'], decides: false };
+  if (!j) return { ...base, met: null, value: NOT_CHECKED.pending, decides: false, pending: true };
+  if (j.error || j.met === null) {
+    return { ...base, met: null, value: NOT_CHECKED[j.error] || NOT_CHECKED.failed, decides: false, judgementId: j.id,
+      ...(j.error === 'limit' || j.error === 'failed' ? { pending: true } : {}) };
+  }
+  return { ...base, met: j.met, value: j.met ? 'Met' : 'Not met', reason: j.reason, proof: j.proof, proofFound: j.proofFound,
+    judgementId: j.id, decides: !!(trust && trust.decides), shadowDecides: true };
+}
+
+/** D98: a passed try fails when a deciding criterion is not met. `all`: unreliable criteria decide too (the second reading). */
+export function combinedStatus(status, criteria, { all = false } = {}) {
+  if (status !== 'passed') return status;
+  return (criteria || []).some((c) => c.met === false && (all ? c.shadowDecides : c.decides)) ? 'failed' : 'passed';
+}
+
+/** D98: tries with `verdict.criteria`, `status` (with criteria), `checksStatus` (Part 2's) and `shadowStatus`. `resultsOf(t)` → results | null. */
+export function withCriteria(tries, resultsOf) {
+  return tries.map((t) => {
+    const criteria = t.verdict ? resultsOf(t) : null;
+    if (!criteria || !criteria.length) return t;
+    return { ...t, checksStatus: t.status, status: combinedStatus(t.status, criteria), shadowStatus: combinedStatus(t.status, criteria, { all: true }),
+      verdict: { ...t.verdict, criteria } };
+  });
+}
+
+/** D98, P4-M5: the examples that are "same" now but would differ if unreliable criteria decided. */
+export function unreliableOnly(real, shadow) {
+  const byId = new Map(shadow.examples.map((r) => [r.id, r]));
+  return real.examples.filter((r) => { const s = byId.get(r.id); return r.result === 'same' && s && s.result && s.result !== 'same'; })
+    .map((r) => ({ id: r.id, name: r.name }));
+}
+```
+
+- [ ] **Step 4: `missCounts` counts deciding criteria** (`src/shared/workflow-tests/compare.mjs`)
+
+```js
+/** How many of the given tries missed each Basic, check or deciding criterion (label → count). Part 4 (D98): a criterion that does
+ *  not decide (not checked, unreliable) is never "missed". */
+function missCounts(list) {
+  const counts = new Map();
+  for (const t of list) {
+    const v = t.verdict || {};
+    const items = [...(v.basics || []), ...(v.checks || []), ...(v.criteria || []).filter((c) => c.decides)];
+    for (const item of items) if (item && item.met === false) counts.set(item.label, (counts.get(item.label) || 0) + 1);
+  }
+  return counts;
+}
+```
+Also say in the module's opening comment: "Better or worse is decided by tries passed (Basics, automatic checks and deciding criteria, D18, Part 4 D98)".
+
+- [ ] **Step 5: `src/core/workflow-tests/criteria-read.mjs`**
+
+Add imports and append:
+```js
+import * as store from './store.mjs';
+import { compareModel } from '../../shared/workflow-tests/compare.mjs';
+import { criterionResult, withCriteria, unreliableOnly, finishedTry } from '../../shared/workflow-tests/criteria-verdicts.mjs';
+
+/** D98: tries as the pages read them: with their criteria (the example's current ones, checked by its current model). */
+export function withCriteriaFor(workflowId, tries) {
+  if (!tries.length) return tries;
+  const examples = new Map();
+  const exOf = (id) => { if (!examples.has(id)) examples.set(id, store.readExample(workflowId, id)); return examples.get(id); };
+  const js = new Map(cs.tryJudgements(tries.map((t) => t.id)).map((j) => [`${j.tryId}|${j.fp}|${j.model}`, j]));
+  const memo = new Map();
+  return withCriteria(tries, (t) => {
+    const ex = exOf(t.exampleId);
+    const model = ex && ex.judge ? ex.judge.model : null;
+    if (!ex || !model || !ex.criteria.length) return null;
+    return ex.criteria.map((c) => {
+      const fp = cs.criterionFp(c.text);
+      return criterionResult(c, js.get(`${t.id}|${fp}|${model}`) || null, trustFor(workflowId, fp, model, memo), { finished: finishedTry(t) });
+    });
+  });
+}
+
+/** D98, P4-M5: Compare's notes. `input` = compareModel's input whose tries came through withCriteriaFor. */
+export function compareNotes(input) {
+  if (!input.a) return { unreliableOnly: [] };
+  const shadow = compareModel({ ...input, tries: input.tries.map((t) => (t.shadowStatus ? { ...t, status: t.shadowStatus } : t)) });
+  return { unreliableOnly: unreliableOnly(compareModel(input), shadow) };
+}
+```
+
+- [ ] **Step 6: The service reads tries with their criteria** (`src/core/workflow-tests/service.mjs`)
+
+Import `{ withCriteriaFor, compareNotes }` from `./criteria-read.mjs`. Then:
+- `cellOf` (`:469`): `const tries = withCriteriaFor(ex.workflowId, store.latestTriesFor({ workflowId: ex.workflowId, exampleId: ex.id, use }));`
+- `modelInput` (`:484`): `tries: withCriteriaFor(run.workflowId, store.triesOfRun(run.id))`.
+- `sideBySide`: `const tries = withCriteriaFor(workflowId, store.triesOfRun(run.id)).filter((t) => t.exampleId === ex.id && FIN.has(t.status));`
+- `compareOf`'s return: add `notes: compareNotes(input),` beside `model: compareModel(input),`.
+
+The side by side's `view(t)` already returns `verdict: t.verdict`, so `verdict.criteria` reaches the page.
+
+- [ ] **Step 7: Run the tests**
+
+Run: `node tools/test.mjs test/workflow-test-criteria-verdicts.test.mjs test/workflow-test-compare.test.mjs test/workflow-test-runner.test.mjs test/api-workflow-tests.test.mjs test/api-workflow-test-criteria.test.mjs test/ui-workflow-test-compare.test.mjs`
+Expected: PASS. `service.mjs` stays below 1000 lines.
+
+- [ ] **Step 8: Commit**
+
+```bash
+git add src/shared/workflow-tests/criteria-verdicts.mjs src/shared/workflow-tests/compare.mjs src/core/workflow-tests/criteria-read.mjs src/core/workflow-tests/service.mjs test/workflow-test-criteria-verdicts.test.mjs
+git commit -m "feat(workflow-tests): deciding criteria count in better or worse; unreliable ones never do
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
+```
+
+---
+
+## Task 10: The "Checked with" list and its suggestion (D87, D105, depends on P4-Q2)
+
+**Files:**
+- Create: `src/core/workflow-tests/judge-models.mjs`
+- Modify: `src/core/workflow-tests/service.mjs` (`saveExample`: one line), `src/core/workflow-tests/criteria-routes.mjs` (`GET …/judge-models`)
+- Test: `test/workflow-test-judge-models.test.mjs`, `test/api-workflow-test-criteria.test.mjs` (one case)
+
+**Interfaces:**
+- Consumes: `listModels()` (`src/core/config.mjs:628`, an array of `{ id, label, … }`), `runsOn` (`src/shared/connections.mjs:53`), `manifestModels` (`src/core/broker-routing.mjs:74`), `findPipelineRowById` (`src/core/artifacts.mjs`).
+- Produces: `claudeModels(catalog) → [{ id, label }]`, `suggestJudgeModel(models, writers) → { id, label, suggested } | null`, `writerModelsOf(workflowId) → Set<string>`, `judgeModelsView(workflowId, { catalog }) → { models, suggested }`, `checkJudgeModel(model, { catalog })` (throws 400), `withJudgeModel(workflowId, fields, was, { catalog }) → fields`. Route `GET /api/workflows/:id/tests/judge-models`.
+
+- [ ] **Step 1: Write the failing test**
+
+Create `test/workflow-test-judge-models.test.mjs`:
+```js
+// test/workflow-test-judge-models.test.mjs — D87, D105: Claude models only, and the suggestion is one the workflow does not write with.
+import { test, after, beforeEach } from 'node:test';
+import assert from 'node:assert/strict';
+import { mkdtemp, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { _resetForTests } from '../src/core/db.mjs';
+import { claudeModels, suggestJudgeModel, withJudgeModel, checkJudgeModel } from '../src/core/workflow-tests/judge-models.mjs';
+
+const homes = [];
+beforeEach(async () => { const d = await mkdtemp(join(tmpdir(), 'worca-cc-wftjm-')); homes.push(d); _resetForTests(); process.env.WORCA_HOME = d; });
+after(async () => { _resetForTests(); delete process.env.WORCA_HOME; await Promise.all(homes.map((d) => rm(d, { recursive: true, force: true }))); });
+
+const CATALOG = [
+  { id: 'claude-sonnet-5-5', label: 'Sonnet 5.5', engines: ['claude'] },
+  { id: 'claude-opus-5-5', label: 'Opus 5.5', engines: ['claude'] },
+  { id: 'claude-opus-4-8[1m]', label: 'Opus 4.8 (1M)', engines: ['claude'] },
+  { id: 'claude-haiku-4-5', label: 'Haiku 4.5', engines: ['claude'] },
+];
+const models = CATALOG.map(({ id, label }) => ({ id, label }));
+
+test('suggestJudgeModel: Opus first, not a model the workflow writes with, no (1M) twin; all used: the first, not suggested', () => {
+  assert.deepEqual(suggestJudgeModel(models, new Set(['claude-sonnet-5-5'])), { id: 'claude-opus-5-5', label: 'Opus 5.5', suggested: true });
+  assert.deepEqual(suggestJudgeModel(models, new Set(['claude-opus-5-5', 'claude-sonnet-5-5'])), { id: 'claude-haiku-4-5', label: 'Haiku 4.5', suggested: true });
+  assert.deepEqual(suggestJudgeModel(models, new Set(['claude-opus-5-5', 'claude-sonnet-5-5', 'claude-haiku-4-5'])),
+    { id: 'claude-opus-5-5', label: 'Opus 5.5', suggested: false });
+  assert.equal(suggestJudgeModel([], new Set()), null);
+});
+
+test('withJudgeModel: an example with criteria and no model gets the suggestion; a picked model must be in the list', async () => {
+  const catalog = async () => CATALOG;
+  assert.deepEqual(await withJudgeModel('wf_x', { criteria: [{ text: 'Names a metric' }] }, null, { catalog }),
+    { criteria: [{ text: 'Names a metric' }], judge: { model: 'claude-opus-5-5' } });
+  assert.deepEqual(await withJudgeModel('wf_x', { name: 'E' }, null, { catalog }), { name: 'E' }, 'no criteria, no model');
+  assert.deepEqual(await withJudgeModel('wf_x', { name: 'E' }, { criteria: [{ id: 'k_1', text: 'Names a metric' }], judge: { model: 'claude-haiku-4-5' } }, { catalog }),
+    { name: 'E' }, 'a kept model stays');
+  await assert.rejects(checkJudgeModel('gpt-9', { catalog }), { code: 'BAD_REQUEST', message: 'pick one of the AI models in the list to check your criteria' });
+  assert.equal(claudeModels([{ id: 'gpt-5', label: 'GPT-5', engines: ['codex'] }, ...CATALOG]).length, 4);
+});
+```
+(The catalog rows' harness field is whatever `runsOn` reads: check `harnessesOf` in `src/shared/connections.mjs` and give the fake rows that field; a predefined Claude row from `PREDEFINED_MODELS` runs on Claude by default.)
+
+In `test/api-workflow-test-criteria.test.mjs` add:
+```js
+test('GET judge-models lists Claude models with a suggestion', async () => {
+  const r = await call('GET', `${WF}/judge-models`);
+  assert.equal(r.status, 200);
+  assert.ok(r.body.models.some((m) => m.id === 'claude-opus-5-5'));
+  assert.equal(typeof r.body.suggested.id, 'string');
+});
+```
+
+- [ ] **Step 2: Run it to see it fail**
+
+Run: `node tools/test.mjs test/workflow-test-judge-models.test.mjs`
+Expected: FAIL (module not found).
+
+- [ ] **Step 3: Write `src/core/workflow-tests/judge-models.mjs`**
+
+```js
+// src/core/workflow-tests/judge-models.mjs — Part 4 (plans/workflow-tests-part4-plan.md D87, D105, P4-Q2): the models that can check
+// criteria (the Claude models of Worca's catalog) and the one Worca suggests: one the workflow's latest tries did not write with, so it
+// does not mark its own work (board 2's hint).
+import { listModels } from '../config.mjs';
+import { runsOn } from '../../shared/connections.mjs';
+import { manifestModels } from '../broker-routing.mjs';
+import { findPipelineRowById } from '../artifacts.mjs';
+import { getDb, prepare } from '../db.mjs';
+import { testError } from './store.mjs';
+
+const FAMILY = ['opus', 'fable', 'sonnet', 'haiku'];
+const familyOf = (id) => { const i = FAMILY.findIndex((f) => String(id).toLowerCase().includes(`-${f}-`)); return i < 0 ? FAMILY.length : i; };
+const plainId = (id) => String(id || '').toLowerCase().replace(/\[1m\]$/, '');
+
+/** P4-Q2: the catalog's models that run on Claude Code, as `{ id, label }`, in the catalog's order. */
+export function claudeModels(catalog) {
+  return (Array.isArray(catalog) ? catalog : []).filter((m) => m && typeof m.id === 'string' && runsOn(m, 'claude'))
+    .map((m) => ({ id: m.id, label: m.label || m.id }));
+}
+
+/** D105 (pure): Opus, Fable, Sonnet, Haiku, each newest first; no "(1M)" twin unless there is nothing else; the first not in `writers`. */
+export function suggestJudgeModel(models, writers = new Set()) {
+  const plain = models.filter((m) => !/\[1m\]$/i.test(m.id));
+  const pool = (plain.length ? plain : models).map((m, i) => ({ m, i }))
+    .sort((x, y) => familyOf(x.m.id) - familyOf(y.m.id) || x.i - y.i).map((x) => x.m);
+  if (!pool.length) return null;
+  const used = new Set([...writers].map(plainId));
+  const free = pool.find((m) => !used.has(plainId(m.id)));
+  return free ? { ...free, suggested: true } : { ...pool[0], suggested: false };
+}
+
+/** The models the workflow's latest 10 finished real tries wrote with (their run manifests, `pipelines.stepper`). */
+export function writerModelsOf(workflowId, { limit = 10 } = {}) {
+  getDb();
+  const rows = prepare(`SELECT pipeline_id FROM wf_test_tries WHERE workflow_id = ? AND status IN ('passed', 'failed') AND mock = 0
+      AND pipeline_id IS NOT NULL ORDER BY id DESC LIMIT ?`).all(workflowId, limit);
+  const out = new Set();
+  for (const r of rows) {
+    const row = findPipelineRowById(r.pipeline_id);
+    let stepper = null;
+    try { stepper = row && row.stepper ? JSON.parse(row.stepper) : null; } catch { stepper = null; }
+    if (stepper) manifestModels(stepper, out);
+  }
+  return out;
+}
+
+export async function judgeModelsView(workflowId, { catalog = () => listModels() } = {}) {
+  const models = claudeModels(await catalog());
+  return { models, suggested: suggestJudgeModel(models, writerModelsOf(workflowId)) };
+}
+
+export async function checkJudgeModel(model, { catalog = () => listModels() } = {}) {
+  if (!claudeModels(await catalog()).some((m) => m.id === model)) {
+    throw testError('pick one of the AI models in the list to check your criteria', 'BAD_REQUEST');
+  }
+}
+
+/** D87: a picked model is checked; an example that has criteria and no model gets the suggestion when it is saved. */
+export async function withJudgeModel(workflowId, fields, was = null, { catalog = () => listModels() } = {}) {
+  if (fields.judge && fields.judge.model) { await checkJudgeModel(fields.judge.model, { catalog }); return fields; }
+  const judge = fields.judge !== undefined ? fields.judge : was ? was.judge : null;
+  const criteria = fields.criteria !== undefined ? fields.criteria : was ? was.criteria : [];
+  if (judge || !Array.isArray(criteria) || !criteria.some((c) => String(c && typeof c === 'object' ? c.text : c || '').trim())) return fields;
+  const view = await judgeModelsView(workflowId, { catalog });
+  return view.suggested ? { ...fields, judge: { model: view.suggested.id } } : fields;
+}
+```
+
+- [ ] **Step 4: Save stores the suggestion** (`service.saveExample`)
+
+Import `withJudgeModel` from `./judge-models.mjs`, and change the line that splits the body:
+```js
+  const { project: input, ...raw } = body && typeof body === 'object' ? body : {};
+  const fields = await withJudgeModel(workflowId, raw, was);   // Part 4 (D87, D105)
+```
+
+- [ ] **Step 5: The route** (`criteria-routes.mjs`)
+
+Append `['GET', `${W}/judge-models`]` to `CRITERIA_ROUTES`, import `judgeModelsView`, and register:
+```js
+  route('GET', `${W}/judge-models`, async (req, res) => res.json(await judgeModelsView(wid(req))));
+```
+
+- [ ] **Step 6: Run the tests**
+
+Run: `node tools/test.mjs test/workflow-test-judge-models.test.mjs test/api-workflow-test-criteria.test.mjs test/api-workflow-test-criteria-flag-off.test.mjs test/api-workflow-tests.test.mjs`
+Expected: PASS.
+
+- [ ] **Step 7: Commit**
+
+```bash
+git add src/core/workflow-tests/judge-models.mjs src/core/workflow-tests/service.mjs src/core/workflow-tests/criteria-routes.mjs test/workflow-test-judge-models.test.mjs test/api-workflow-test-criteria.test.mjs
+git commit -m "feat(workflow-tests): Checked with: Claude models, suggesting one the workflow does not write with
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
+```
+
+---
+
+## Task 11: Compare by criterion, the checking summaries, the estimate, "Check them on these tries" (D99, P4-Q15)
+
+**Files:**
+- Create: `src/shared/workflow-tests/criteria-report.mjs` (Task 16 adds the trust report)
+- Modify: `src/shared/workflow-tests/compare.mjs` (`estimateOf`), `src/shared/workflow-tests/criteria-text.mjs` (summaries), `src/core/workflow-tests/criteria-read.mjs` (`byCriterionOf`, `checkingOf`, `criteriaPlanOf`), `src/core/workflow-tests/criteria-routes.mjs` (two routes), `src/core/workflow-tests/routes.mjs` (the overview and the plan gain Part 4 fields)
+- Test: `test/workflow-test-criteria-report.test.mjs`, `test/api-workflow-test-criteria.test.mjs` (two cases)
+
+**Interfaces:**
+- Produces (criteria-report.mjs): `byCriterionModel({ examples, hasA, tries }) → { rows, more }`, where an example is `{ id, name, criteria: [{ id, text }], trust: { [criterionId]: trust }, checks }` and a row is `{ key, label, exampleName, exact, trust, a: { met, of } | null, b: { met, of }, changed: 'better'|'worse'|null, unreliableChange }`; `checkingCounts(trusts) → { total, reliable, unreliable, waiting }`.
+- Produces (criteria-text.mjs): `checkingSentence(counts)` (board 5), `listTrustSentence(counts)` (board 1), `exactLine(alt)` (board 2).
+- Produces (criteria-read.mjs): `byCriterionOf(workflowId, run) → { rows, more, counts }`, `checkingOf(workflowId, exampleIds?) → counts`, `judgeCallUsd(model) → number | null`, `criteriaPlanOf(workflowId, exampleIds, { hasA }) → { perTryUsd, pairsUsd } | null`.
+- Produces (compare.mjs): `estimateOf` returns `criteriaUsd` (number, or null when no price is known) and includes it in `usd`.
+- Routes: `GET …/runs/:run/criteria` → `{ rows, more, counts, checking }`; `POST …/runs/:run/criteria/check` → 202 `{ checking: true }` (409 while a test of the workflow runs). `GET …/tests` gains `trust` (counts); `GET …/tests/plan` gains `criteria`.
+
+- [ ] **Step 1: Write the failing test**
+
+Create `test/workflow-test-criteria-report.test.mjs`:
+```js
+// test/workflow-test-criteria-report.test.mjs — board 12 (D99), boards 1 and 5's sentences, and board 4's estimate row.
+import { test } from 'node:test';
+import assert from 'node:assert/strict';
+import { byCriterionModel, checkingCounts } from '../src/shared/workflow-tests/criteria-report.mjs';
+import { checkingSentence, listTrustSentence, exactLine } from '../src/shared/workflow-tests/criteria-text.mjs';
+import { estimateOf } from '../src/shared/workflow-tests/compare.mjs';
+
+const R = { state: 'reliable', n: 20, agree: 19, decides: true };
+const U = { state: 'unreliable', n: 10, agree: 6, decides: false };
+const t = (id, side, exampleId, criteria, checks = []) => ({ id, side, exampleId, status: 'passed', verdict: { criteria, checks } });
+const c = (id, met) => ({ id, met });
+
+test('byCriterionModel: changed rows first and coloured only when they decide; all-met rows collapse; said checks are exact rows', () => {
+  const examples = [
+    { id: 1, name: 'Bulk invoice export', criteria: [{ id: 'k_1', text: 'Names a success metric' }], trust: { k_1: R },
+      checks: [{ id: 'c_1', kind: 'mentions', text: '200', said: "Mentions that today's export stops at 200 invoices" }] },
+    { id: 2, name: 'Pricing page A/B test', criteria: [{ id: 'k_2', text: 'Proposes a test within 4 weeks' }, { id: 'k_3', text: 'Names what is measured' }], trust: { k_2: U, k_3: R }, checks: [] },
+  ];
+  const tries = [
+    t(1, 'a', 1, [c('k_1', true)], [c('c_1', true)]), t(2, 'a', 1, [c('k_1', true)], [c('c_1', true)]),
+    t(3, 'b', 1, [c('k_1', false)], [c('c_1', true)]), t(4, 'b', 1, [c('k_1', false)], [c('c_1', true)]),
+    t(5, 'a', 2, [c('k_2', true), c('k_3', true)]), t(6, 'b', 2, [c('k_2', false), c('k_3', false)]),
+  ];
+  const m = byCriterionModel({ examples, hasA: true, tries });
+  assert.deepEqual(m.rows.map((r) => [r.label, r.changed, r.unreliableChange, r.a && `${r.a.met}/${r.a.of}`, `${r.b.met}/${r.b.of}`]), [
+    ['Names a success metric', 'worse', false, '2/2', '0/2'],
+    ['Names what is measured', 'worse', false, '1/1', '0/1'],
+    ['Proposes a test within 4 weeks', null, true, '1/1', '0/1'],
+  ]);
+  assert.equal(m.more, 1, "the exact check met everywhere collapses into the 'more' line");
+  assert.deepEqual(checkingCounts([R, R, U, { state: 'confirm', decides: true }, { state: 'exact', decides: true }]),
+    { total: 5, reliable: 3, unreliable: 1, waiting: 1 });
+});
+
+test('the sentences of boards 1, 2 and 5', () => {
+  assert.equal(checkingSentence({ total: 12, reliable: 10, unreliable: 1, waiting: 1 }),
+    "Worca's checking is reliable for 10 of 12 criteria. 1 unreliable criterion is shown, but does not decide better or worse.");
+  assert.equal(listTrustSentence({ total: 12, reliable: 10, unreliable: 1, waiting: 1 }), 'Reliable for 10 of 12 criteria. 1 is unreliable, 1 needs your answers.');
+  assert.equal(listTrustSentence({ total: 3, reliable: 3, unreliable: 0, waiting: 0 }), 'Reliable for 3 of 3 criteria.');
+  assert.equal(exactLine({ kind: 'mentions', text: '200' }), 'Can be checked exactly: the result must contain "200".');
+  assert.equal(exactLine({ kind: 'quotes' }), 'Can be checked exactly, without AI.');
+});
+
+test('estimateOf adds checking the criteria (board 4) and says when its price is not known', () => {
+  const plan = { a: { want: 3, reusable: 3, perTryUsd: 1 }, b: { want: 3, reusable: 0, perTryUsd: 0.5 }, perTryMs: 60000, criteria: { perTryUsd: 0.1, pairsUsd: 0.2 } };
+  const e = estimateOf(plan);
+  assert.equal(Math.round(e.criteriaUsd * 100) / 100, 0.5, '3 new tries × $0.10 + the pairs $0.20');
+  assert.equal(Math.round(e.usd * 100) / 100, 2);
+  assert.equal(estimateOf({ ...plan, criteria: { perTryUsd: null, pairsUsd: null } }).criteriaUsd, null);
+  assert.equal(estimateOf({ ...plan, criteria: null }).criteriaUsd, 0);
+});
+```
+
+- [ ] **Step 2: Run it to see it fail**
+
+Run: `node tools/test.mjs test/workflow-test-criteria-report.test.mjs`
+Expected: FAIL (module not found).
+
+- [ ] **Step 3: Write `src/shared/workflow-tests/criteria-report.mjs`**
+
+```js
+// src/shared/workflow-tests/criteria-report.mjs — Part 4's report models (plans/workflow-tests-part4-plan.md D99; boards 1, 5, 12; Task 16
+// adds board 13). Pure and browser-safe: the server computes, the pages format.
+
+/** D99: one row per criterion of each example, and per automatic check made from a criterion (`said`), with met counts per side. */
+export function byCriterionModel({ examples = [], hasA = true, tries = [] }) {
+  const done = tries.filter((t) => t.status === 'passed' || t.status === 'failed');
+  const rows = [];
+  for (const ex of examples) {
+    const mine = done.filter((t) => t.exampleId === ex.id);
+    const items = [
+      ...(ex.criteria || []).map((c) => ({ key: `k:${c.id}`, label: c.text, exact: false, trust: (ex.trust || {})[c.id] || null,
+        pick: (v) => (v.criteria || []).find((x) => x.id === c.id) })),
+      ...(ex.checks || []).filter((k) => k.said).map((k) => ({ key: `c:${k.id}`, label: k.said, exact: true, trust: { state: 'exact', decides: true },
+        pick: (v) => (v.checks || []).find((x) => x.id === k.id) })),
+    ];
+    for (const it of items) {
+      const count = (side) => {
+        let met = 0; let of = 0;
+        for (const t of mine.filter((x) => x.side === side)) {
+          const r = t.verdict ? it.pick(t.verdict) : null;
+          if (r && (r.met === true || r.met === false)) { of += 1; if (r.met) met += 1; }
+        }
+        return { met, of };
+      };
+      const a = hasA ? count('a') : null;
+      const b = count('b');
+      let diff = null;
+      if (a && a.of && b.of) {
+        const d = b.met / b.of - a.met / a.of;
+        if (Math.abs(d) * Math.min(a.of, b.of) >= 1 - 1e-9) diff = d > 0 ? 'better' : 'worse';   // at least one try's worth
+      }
+      const decides = !!(it.trust && it.trust.decides);
+      rows.push({ key: `${ex.id}|${it.key}`, label: it.label, exampleName: ex.name, exact: it.exact, trust: it.trust, a, b,
+        changed: decides ? diff : null, unreliableChange: !decides && !!diff });
+    }
+  }
+  const allMet = (r) => r.b.of > 0 && r.b.met === r.b.of && (!r.a || (r.a.of > 0 && r.a.met === r.a.of));
+  const plainTrust = (r) => r.trust && (r.trust.state === 'reliable' || r.trust.state === 'exact');
+  const collapsed = (r) => !r.changed && !r.unreliableChange && allMet(r) && plainTrust(r);
+  const rank = (r) => (r.changed === 'worse' ? 0 : r.changed === 'better' ? 1 : 2);
+  const shown = rows.filter((r) => !collapsed(r)).map((r, i) => ({ r, i })).sort((x, y) => rank(x.r) - rank(y.r) || x.i - y.i).map((x) => x.r);
+  return { rows: shown, more: rows.length - shown.length };
+}
+
+/** Boards 1 and 5: how many criteria are reliable (exact checks count as reliable), unreliable, or wait for answers. */
+export function checkingCounts(trusts) {
+  const list = (trusts || []).filter(Boolean);
+  const is = (...s) => list.filter((t) => s.includes(t.state)).length;
+  return { total: list.length, reliable: is('reliable', 'exact'), unreliable: is('unreliable'), waiting: is('confirm', 'collecting') };
+}
+```
+
+- [ ] **Step 4: The sentences** (`criteria-text.mjs`, append)
+
+```js
+/** Board 5's card. */
+export function checkingSentence(c) {
+  const head = `Worca's checking is reliable for ${c.reliable} of ${c.total} criteria.`;
+  if (!c.unreliable) return head;
+  return c.unreliable === 1 ? `${head} 1 unreliable criterion is shown, but does not decide better or worse.`
+    : `${head} ${c.unreliable} unreliable criteria are shown, but do not decide better or worse.`;
+}
+/** Board 1's card "Can you trust Worca's checking?". */
+export function listTrustSentence(c) {
+  const head = `Reliable for ${c.reliable} of ${c.total} criteria.`;
+  const tail = [c.unreliable ? `${c.unreliable} ${c.unreliable === 1 ? 'is' : 'are'} unreliable` : null,
+    c.waiting ? `${c.waiting} ${c.waiting === 1 ? 'needs' : 'need'} your answers` : null].filter(Boolean);
+  return tail.length ? `${head} ${tail.join(', ')}.` : head;
+}
+/** Board 2: the line under a criterion that an exact check can stand in for (D94). */
+export const exactLine = (alt) => (alt && alt.kind === 'mentions' ? `Can be checked exactly: the result must contain "${alt.text}".` : 'Can be checked exactly, without AI.');
+/** Board 5's title, the tab, the card title. */
+export const BY_CRITERION = 'By criterion';
+export const BY_EXAMPLE = 'By example';
+export const SEE_BY_CRITERION = 'See by criterion';
+```
+
+- [ ] **Step 5: The estimate** (`compare.mjs` `estimateOf`)
+
+After `const usd = …`, replace the `usd` line and the return:
+```js
+  // Part 4 (board 4): checking the criteria of the tries to run, and the pair question per example (P4-Q8); null = no price known yet.
+  const crit = plan.criteria || null;
+  const criteriaUsd = !crit ? 0 : crit.perTryUsd === null || crit.perTryUsd === undefined ? null
+    : total * crit.perTryUsd + (plan.a && toRun.b ? Number(crit.pairsUsd || 0) : 0);
+  const usd = ca === null || cb === null ? null : ca + cb + (criteriaUsd || 0);
+```
+and return `criteriaUsd` with the rest (`{ toRun, total, usd, criteriaUsd, low, high, minutes, capUsd }`).
+
+- [ ] **Step 6: The reads** (`criteria-read.mjs`, append)
+
+```js
+import { byCriterionModel, checkingCounts } from '../../shared/workflow-tests/criteria-report.mjs';
+import { prepare } from '../db.mjs';
+import { ratesFor } from '../helper-call/cost.mjs';
+import { estimateCost } from '../config.mjs';
+
+/** The trust of each criterion of an example (its current model); exact checks made from a criterion count as 'exact'. */
+export function trustOfExample(ex, memo = new Map()) {
+  const model = ex.judge ? ex.judge.model : null;
+  const out = {};
+  for (const c of ex.criteria || []) out[c.id] = model ? trustFor(ex.workflowId, cs.criterionFp(c.text), model, memo) : null;
+  return out;
+}
+/** Boards 1 and 5: the counts over these examples (all of the workflow when `exampleIds` is null). */
+export function checkingOf(workflowId, exampleIds = null) {
+  const memo = new Map();
+  const exs = store.listExamples(workflowId).filter((e) => !exampleIds || exampleIds.includes(e.id));
+  return checkingCounts(exs.flatMap((e) => [...Object.values(trustOfExample(e, memo)), ...(e.checks || []).filter((k) => k.said).map(() => ({ state: 'exact' }))]));
+}
+/** Board 12. `run` = the test (store.readTestRun shape). */
+export function byCriterionOf(workflowId, run) {
+  const memo = new Map();
+  const examples = run.exampleIds.map((id) => store.readExample(workflowId, id)).filter(Boolean)
+    .map((e) => ({ id: e.id, name: e.name, criteria: e.criteria, checks: e.checks, trust: trustOfExample(e, memo) }));
+  const m = byCriterionModel({ examples, hasA: run.a != null, tries: withCriteriaFor(workflowId, store.triesOfRun(run.id)) });
+  return { ...m, counts: checkingOf(workflowId, run.exampleIds) };
+}
+
+const median = (xs) => { const s = [...xs].sort((a, b) => a - b); if (!s.length) return null; const m = s.length >> 1; return s.length % 2 ? s[m] : (s[m - 1] + s[m]) / 2; };
+/** Board 4: what one check of a criterion costs on `model`: its own last 20, else a typical call (6000 tokens in, 250 out) at its price. */
+export function judgeCallUsd(model, { rates = (m) => ratesFor('claude', m), estimate = estimateCost } = {}) {
+  const own = prepare(`SELECT amount_usd AS u FROM wf_test_judge_ledger WHERE purpose = 'try' AND model = ? ORDER BY id DESC LIMIT 20`).all(model).map((r) => Number(r.u));
+  if (own.length) return median(own);
+  const priced = model ? rates(model) : null;
+  return priced ? estimate({ input_tokens: 6000, output_tokens: 250 }, priced) : null;
+}
+/** Board 4 (Task 11): per try, the average cost of checking the chosen examples' criteria; the pairs (2 calls per example that has
+ *  criteria, P4-Q8). null when no chosen example has criteria. */
+export function criteriaPlanOf(workflowId, exampleIds = [], { hasA = false } = {}) {
+  const exs = store.listExamples(workflowId).filter((e) => (!exampleIds.length || exampleIds.includes(e.id)) && e.criteria.length && e.judge);
+  if (!exs.length) return null;
+  const per = exs.map((e) => { const u = judgeCallUsd(e.judge.model); return u === null ? null : u * e.criteria.length; });
+  if (per.some((u) => u === null)) return { perTryUsd: null, pairsUsd: null };
+  const all = store.listExamples(workflowId).filter((e) => !exampleIds.length || exampleIds.includes(e.id));
+  return { perTryUsd: per.reduce((s, u) => s + u, 0) / all.length,
+    pairsUsd: hasA ? exs.reduce((s, e) => s + 2 * judgeCallUsd(e.judge.model), 0) : 0 };
+}
+```
+(`estimateCost` is `config.estimateCost`, the one `src/core/helper-call/cost.mjs` uses; `getDb()` has run by the time a route reads.)
+
+- [ ] **Step 7: The routes**
+
+In `criteria-routes.mjs`, append to `CRITERIA_ROUTES`: `['GET', `${W}/runs/:run/criteria`]`, `['POST', `${W}/runs/:run/criteria/check`]`; then:
+```js
+  const checking = new Set();   // test run ids whose criteria are being checked now (P4-Q15)
+  const runOf = (req) => {
+    const run = store.readTestRun(num(req.params.run, 'test'));
+    if (!run || run.workflowId !== wid(req)) throw store.testError(`no test ${req.params.run}`, 'NOT_FOUND');
+    return run;
+  };
+  route('GET', `${W}/runs/:run/criteria`, async (req, res) => {
+    const run = runOf(req);
+    res.json({ ...byCriterionOf(wid(req), run), checking: checking.has(run.id) || !!(runner && runner.criteriaPhaseOf && runner.criteriaPhaseOf(run.id)) });
+  });
+  // P4-Q15: "Check them on these tries": the criteria an older test's tries miss, in the background; the page polls the read above.
+  route('POST', `${W}/runs/:run/criteria/check`, async (req, res) => {
+    const run = runOf(req);
+    if (store.runningTestRun(wid(req)) || checking.has(run.id)) throw store.testError('A test of this workflow is running. Wait for it, or stop it first.', 'BUSY');
+    checking.add(run.id);
+    Promise.resolve().then(() => criteriaJudge.judgeMissing(run))
+      .catch((e) => console.error(`[workflow-tests] could not check the criteria of test ${run.id}: ${e && e.message}`))
+      .finally(() => {
+        checking.delete(run.id);
+        if (deps.broadcast) deps.broadcast({ type: 'workflow-tests-changed', workflowId: run.workflowId, testRunId: run.id });
+      });
+    res.status(202).json({ checking: true });
+  });
+```
+Spend made this way books with `testRunId` = that test (its cost grows: board 5's cost line shows it).
+
+In `src/core/workflow-tests/routes.mjs` (import `checkingOf`, `criteriaPlanOf` from `./criteria-read.mjs`):
+- `GET W`: `res.json({ ...(await service.testsOverview(wid(req))), trust: checkingOf(wid(req)) })`.
+- `GET …/plan`: keep the service call in a `plan` constant and answer `res.json({ ...plan, criteria: criteriaPlanOf(wid(req), ids, { hasA: !!q.a }) })`.
+
+In `test/api-workflow-test-criteria.test.mjs` add:
+```js
+test('by criterion, the overview trust counts and the plan estimate', async () => {
+  const run = store.listTestRuns('wf_api_c')[0];
+  const r = await call('GET', `${WF}/runs/${run.id}/criteria`);
+  assert.equal(r.status, 200);
+  assert.ok(Array.isArray(r.body.rows));
+  assert.equal(r.body.counts.total, 1);
+  assert.equal((await call('GET', WF)).body.trust.total, 1);
+  const plan = await call('GET', `${WF}/plan?b=draft&tries=1`);
+  assert.ok('criteria' in plan.body);
+  assert.equal((await call('POST', `${WF}/runs/${run.id}/criteria/check`)).status, 202);
+});
+```
+
+- [ ] **Step 8: Run the tests**
+
+Run: `node tools/test.mjs test/workflow-test-criteria-report.test.mjs test/workflow-test-compare.test.mjs test/api-workflow-test-criteria.test.mjs test/api-workflow-test-criteria-flag-off.test.mjs test/api-workflow-tests.test.mjs test/ui-workflow-test-dialogs.test.mjs`
+Expected: PASS.
+
+- [ ] **Step 9: Commit**
+
+```bash
+git add src/shared/workflow-tests/criteria-report.mjs src/shared/workflow-tests/criteria-text.mjs src/shared/workflow-tests/compare.mjs src/core/workflow-tests/criteria-read.mjs src/core/workflow-tests/criteria-routes.mjs src/core/workflow-tests/routes.mjs test/workflow-test-criteria-report.test.mjs test/api-workflow-test-criteria.test.mjs
+git commit -m "feat(workflow-tests): compare by criterion, checking counts, the criteria estimate, check them on older tries
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
+```
+
+---
+
