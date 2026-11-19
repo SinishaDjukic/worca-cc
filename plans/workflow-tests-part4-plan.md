@@ -56,6 +56,8 @@ Each item has a recommendation (**R**) and the alternative(s). Where a task depe
   - **R: build it** with Ask's guarded web transport (`httpsTransport` + `guardedLookup`, `src/core/ask/web-fetch.mjs:183`, `:105`) and Ask's URL rule on every hop (`web-fetch.mjs:44-48`): https only (`http://` is tried as `https://`), no IP-address host (`https://127.0.0.1/`, `https://[::1]/`, `https://10.0.0.1/` are "Not working" and never dialled), no port but 443, no user name or password, and a host name that resolves to private addresses is refused. At most 20 links a result, 15 s a hop, at most 3 redirects, at most 2 minutes a check (links not reached by then are not checked: "Met · 12 of 31 checked"), no cookies, no body read.
   - **R, what counts as working:** 2xx, and also 401, 403 and 429 (the site answered but refuses automated visitors; Worca cannot tell more). Alternative: 401, 403 and 429 count as "Not working" (bot blocks then fail good results; some file stores also answer 403 for a missing file).
   - **R, when Worca gets no answer at all** (no such host, connection refused, timed out): the link is "Not working" when another link of the same result answered; when none answered, Worca may have no internet, so the check shows "Not checked: Worca could not reach these links" (grey) and does not decide. The cost: a result whose only links are all made up shows "Not checked" instead of "Not working". Alternative: every link without an answer is "Not working" (an offline or locked-down Worca then fails every try that has links).
+  - **R, links that may carry data** (review N9): Ask's data rule applies too (`checkWebUrl`: a URL longer than 2,048 characters, a query over 256 or a path over 512, or a run of encoded-looking characters, `web-fetch.mjs:42`, `:53-55`). Such a link is never opened, since Worca would send whatever the result wrote into it to that host; it does not count as broken, and a result whose only links are such links shows "Not checked: Worca does not open links that may carry data". Alternative: open them (a result can then send example data to any public host through Worca, also for a Pretend try that otherwise has no web access).
+  - **What stays best effort:** behind an HTTPS proxy, the proxy resolves host names; Worca's own lookup refuses a name that resolves to a private address locally, but a name only the proxy can resolve is not checked by Worca (`refusedByLookup`, `web-fetch.mjs:130-140`), as in Ask.
   - Alternative to the whole item: leave it to a later part (the check makes outbound web calls from Worca itself).
 - **P4-Q10. When does Worca suggest criteria from the note in "Use this run as a test example" (board 3)?**
   - **R: as drawn: when the note box loses focus** with at least 20 characters, once per distinct note, about $0.01 with Haiku and a few cents with Opus. The cost counts in the spending limit.
@@ -1138,7 +1140,7 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
 **Interfaces:**
 - Consumes: `httpsTransport({ url, signal, headers }) → { status, headers, destroy }` (`src/core/ask/web-fetch.mjs:183`; its default `lookup` is `guardedLookup`, which refuses host names that resolve to private and reserved addresses); `linksIn` (Task 3).
 - Why a URL rule as well: on the direct path (no proxy) Node never calls `lookup` for an IP-address host, so `guardedLookup` alone would dial `https://127.0.0.1/`. Ask never relies on it either: `checkWebUrl` refuses an IP-address host and any explicit port before the first request and on every redirect (`web-fetch.mjs:44-48`, `:244`, `:257`). `linkUrlOk` is that rule without the allowlist and the data rules.
-- Produces: `LINKS_MAX = 20`, `LINK_TIMEOUT_MS = 15000`, `LINKS_DEADLINE_MS = 120000`, `linkUrlOk(url) → boolean`, `linkState(raw, { transport, timeoutMs }) → Promise<'works' | 'broken' | 'unreached'>`, `checkLinks(text, { transport, timeoutMs, max, deadlineMs, now }) → Promise<{ met, value, notChecked? }>`.
+- Produces: `LINKS_MAX = 20`, `LINK_TIMEOUT_MS = 15000`, `LINKS_DEADLINE_MS = 120000`, `linkUrlOk(url) → boolean`, `linkCarriesData(url) → boolean` (N9), `linkState(raw, { transport, timeoutMs }) → Promise<'works' | 'broken' | 'unreached' | 'skipped'>`, `checkLinks(text, { transport, timeoutMs, max, deadlineMs, now }) → Promise<{ met, value, notChecked? }>`.
 - A check result may carry `notChecked: true` (with `met: false`): Worca could not run it, and it does not decide (`judgeTry`, `missCounts`). Only `links` sets it today.
 
 - [ ] **Step 1: Write the failing test**
@@ -1206,6 +1208,16 @@ test('I12: no answer at all is broken when another link answered, and not checke
     { met: false, value: 'Not working: https://127.0.0.1/admin' }, 'a refused link is broken, whatever the network');
   const hang = ({ signal }) => new Promise((_, reject) => signal.addEventListener('abort', () => reject(Object.assign(new Error('aborted'), { name: 'AbortError' }))));
   assert.equal(await linkState('https://slow.example/', { transport: hang, timeoutMs: 10 }), 'unreached', 'a hop that timed out before any answer');
+});
+
+test('N9: a link that may carry data is never opened; alone it leaves the check not checked', async () => {
+  const s = site({ 'https://a.example/x': { status: 200 } });
+  const data = `https://b.example/c?d=${'QUJD'.repeat(30)}`;
+  assert.equal(await linkState(data, { transport: s.transport }), 'skipped');
+  assert.deepEqual(s.seen, [], 'never dialled');
+  assert.deepEqual(await checkLinks(`See ${data}`, { transport: s.transport }),
+    { met: false, notChecked: true, value: 'Not checked: Worca does not open links that may carry data' });
+  assert.deepEqual(await checkLinks(`https://a.example/x and ${data}`, { transport: s.transport }), { met: true, value: 'Met · 1 of 2 checked' });
 });
 
 test('M19: checkLinks starts no new link after its overall deadline', async () => {
@@ -1281,7 +1293,7 @@ Expected: FAIL (module not found).
 // public addresses only (guardedLookup). The URL rule is what keeps private addresses out: on the direct path Node never calls
 // `lookup` for an IP-address host. The proxy env is honoured, no cookies, no body read. Worca itself makes these calls, at check time.
 import { isIP } from 'node:net';
-import { httpsTransport } from '../ask/web-fetch.mjs';
+import { httpsTransport, looksLikeData, WEB_LIMITS } from '../ask/web-fetch.mjs';
 import { linksIn } from '../../shared/workflow-tests/exact-checks.mjs';
 
 export const LINKS_MAX = 20;
@@ -1297,6 +1309,15 @@ const UNREACHED = new Set(['ENOTFOUND', 'EAI_AGAIN', 'EAI_FAIL', 'ECONNREFUSED',
 const HEADERS = Object.freeze({ 'user-agent': 'worca-link-check/1', accept: '*/*' });
 const clip = (s, n = 60) => (s.length > n ? `${s.slice(0, n - 1)}…` : s);
 
+/** N9: Ask's data rule (checkWebUrl, web-fetch.mjs:42, :53-55): a link whose URL is too long or looks like it carries encoded data is
+ *  never opened. Worca would otherwise send whatever a result wrote into a link (an example's data, say) to any public host. */
+export function linkCarriesData(url) {
+  const dec = (x) => { try { return decodeURIComponent(x); } catch { return x; } };
+  const q = url.search.replace(/^\?/, '');
+  return url.href.length > WEB_LIMITS.urlMaxChars || q.length > WEB_LIMITS.queryMaxChars || url.pathname.length > WEB_LIMITS.pathMaxChars
+    || looksLikeData(dec(url.pathname)) || looksLikeData(dec(q));
+}
+
 /** C1: Ask's URL rule for one hop. A URL with credentials, an IP-address host or a port other than 443 is never dialled. */
 export function linkUrlOk(url) {
   if (url.protocol !== 'https:' || url.username || url.password) return false;
@@ -1304,14 +1325,15 @@ export function linkUrlOk(url) {
   return !isIP(url.hostname.replace(/^\[|\]$/g, ''));             // also catches 2130706433 and 0x7f.1 (the parser makes them 127.0.0.1)
 }
 
-/** One link: 'works' (2xx, or 401/403/429), 'broken' (any other answer, a refused URL or address, a 4th redirect) or
- *  'unreached' (the first hop got no answer at all: the host could not be reached, or it timed out). */
+/** One link: 'works' (2xx, or 401/403/429), 'broken' (any other answer, a refused URL or address, a 4th redirect),
+ *  'unreached' (the first hop got no answer at all: the host could not be reached, or it timed out) or 'skipped' (N9: it may carry data). */
 export async function linkState(raw, { transport = httpsTransport, timeoutMs = LINK_TIMEOUT_MS } = {}) {
   let url;
   try { url = new URL(raw); } catch { return 'broken'; }
   for (let hop = 0; hop <= LINK_REDIRECTS; hop += 1) {
     if (url.protocol === 'http:') { try { url = new URL(`https:${url.href.slice('http:'.length)}`); } catch { return 'broken'; } }
     if (!linkUrlOk(url)) return 'broken';                          // before the transport, on every hop
+    if (linkCarriesData(url)) return 'skipped';                    // N9: never opened, and not the link's fault either
     const ctrl = new AbortController();
     const timer = setTimeout(() => ctrl.abort(), timeoutMs);
     let res;
@@ -1349,7 +1371,9 @@ export async function checkLinks(text, { transport = httpsTransport, timeoutMs =
     return { met: false, notChecked: true, value: 'Not checked: Worca could not reach these links' };
   }
   if (broken.length) return { met: false, value: `Not working: ${clip(broken[0])}${broken.length > 1 ? ` and ${broken.length - 1} more` : ''}` };
-  return { met: true, value: states.length < links.length ? `Met · ${states.length} of ${links.length} checked` : 'Met' };
+  const checked = states.filter(([, s]) => s !== 'skipped').length;
+  if (!checked) return { met: false, notChecked: true, value: 'Not checked: Worca does not open links that may carry data' };   // N9
+  return { met: true, value: checked < links.length ? `Met · ${checked} of ${links.length} checked` : 'Met' };
 }
 ```
 
@@ -1511,7 +1535,7 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
 - Test: `test/workflow-test-judge.test.mjs`
 
 **Interfaces:**
-- Consumes: `helperCall(args, deps)` (`src/core/helper-call/index.mjs:39`), `interviewCallOptions('round', args, { keepUserSettings })` (`src/core/requirements/interview.mjs:232`), `userClaudeSignIn()` (`src/core/claude-user-settings.mjs`), `mockEnabled({})` (`src/core/claude-runner.mjs:57`), `budgetStatus()` (`src/core/cost-budget.mjs`), `normLoose` (Task 3).
+- Consumes: `helperCall(args, deps)` (`src/core/helper-call/index.mjs:36`), `interviewCallOptions('round', args, { keepUserSettings })` (`src/core/requirements/interview.mjs:232`), `userClaudeSignIn()` (`src/core/claude-user-settings.mjs`), `mockEnabled({})` (`src/core/claude-runner.mjs:57`), `budgetStatus()` (`src/core/cost-budget.mjs`), `normLoose` (Task 3).
 - Produces (judge-prompt.mjs, pure): `SUBJECT_MAX = 200000`, `CONTEXT_MAX = 100000`, `CHANGES_HEADING`, `JUDGE_SYSTEM_PROMPT`, `clipText(s, max) → { text, cut }`, `judgePrompt({ criterion, result, context, cut }) → string`, `parseJudgeReply(text) → { verdict: 'met'|'not met', reason, proof } | null`, `proofFound(proof, text) → boolean`, `mockJudgement(criterion, text) → { verdict, reason, proof }`.
 - Produces (judge.mjs): `JUDGE_TIMEOUT_MS = 120000`, `judgeScratch() → string`, `JUDGE_DEFAULTS`, `modelCall({ model, system, prompt, signal }, d) → Promise<{ text, costUsd, costKind }>`, `judgeCriterion({ criterion, subject, context, model, mock, signal, book }, d) → Promise<{ met: boolean|null, reason, proof, proofFound, costUsd, ms, error: null|'no-result'|'limit'|'unreadable'|'no-proof'|'failed', detail? }>`. `book(usd, costKind)` is called once for each call that cost money, and for each reply whose cost is `unknown` (P4-Q17; a failed call books only what it is known to have spent).
 - Produces (criteria-text.mjs): `NOT_CHECKED` (P4-C2's sentences keyed `pending`, `not-finished`, `limit`, `no-result`, `unreadable`, `no-proof`, `failed`).
@@ -2907,7 +2931,7 @@ Import `{ withCriteriaFor, compareNotes }` from `./criteria-read.mjs`. Then:
 - `cellOf` (`:468`): `const tries = withCriteriaFor(ex.workflowId, store.latestTriesFor({ workflowId: ex.workflowId, exampleId: ex.id, use }));`
 - `modelInput` (`:482`): `tries: withCriteriaFor(run.workflowId, store.triesOfRun(run.id))`.
 - `sideBySide`: its options become `{ forgeFor = null, by = null } = {}`, and `const tries = withCriteriaFor(workflowId, store.triesOfRun(run.id), { withAnswers: true, by }).filter((t) => t.exampleId === ex.id && FIN.has(t.status));`
-- `routes.mjs` (`:187`): `res.json(await service.sideBySide(wid(req), num(req.params.run, 'test'), ex.id, { forgeFor, by: by(req) }));` (`by` is the routes' own `actorOf(req) || null`, `routes.mjs:80`).
+- `routes.mjs` (`:186`): `res.json(await service.sideBySide(wid(req), num(req.params.run, 'test'), ex.id, { forgeFor, by: by(req) }));` (`by` is the routes' own `actorOf(req) || null`, `routes.mjs:80`).
 - `compareOf`'s return: add `notes: compareNotes(input),` beside `model: compareModel(input),`.
 
 The side by side's `view(t)` already returns `verdict: t.verdict`, so `verdict.criteria` (with `answer`) reaches the page.
@@ -4060,7 +4084,7 @@ export function mockPipeline(pipelineId) {
   return !!prepare('SELECT 1 FROM wf_test_tries WHERE pipeline_id = ? AND mock = 1 LIMIT 1').get(String(pipelineId || ''));
 }
 ```
-and in `goodResultOf` call `store.triesForExample(example.id)` directly (drop the `store.triesForExample ?` guard). Clearer words (`reword`) come in Task 15.
+and in `goodResultOf` call `store.triesForExample(example.id)` directly (drop the `store.triesForExample ?` guard). Known limit (review N11): `mockPipeline` knows only test tries; a past run made on the mock engine outside a test leaves no mark Worca can read (`pipelines` has no mock column), so a good result taken from such a run (`example.from`, or a result you liked kept from it) counts as real, and with the mock off later one round pays to break fixture text. It needs the mock engine on for an ordinary run and then off again; recording it would need a column on `pipelines`, outside Part 4. Clearer words (`reword`) come in Task 15.
 
 M18: a round that a restart cut short would stay `making` and the page would poll it forever. `criteria-store.mjs` (append):
 ```js
@@ -5088,7 +5112,7 @@ Expected: PASS.
 - [ ] **Step 5: Commit**
 
 ```bash
-git add ui/public/workflows/example-editor.mjs ui/public/workflows/tests-app.mjs ui/public/workflows/workflow-tests.css test/ui-workflow-test-exact-dialog.test.mjs
+git add ui/public/workflows/example-editor.mjs src/shared/workflow-tests/criteria-text.mjs ui/public/workflows/workflow-tests.css test/ui-workflow-test-exact-dialog.test.mjs
 git commit -m "feat(workflow-tests): exact checks in the check dialog, and Switch from a criterion (P4-M1)
 
 Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
@@ -5584,8 +5608,10 @@ const CC_SUB = 'Before Worca uses your new criterion, make sure it judges result
 const AUTO = [['same', 'Gives the same verdict when asked 3 times'], ['padding', 'Adding filler text does not change the verdict'],
   ['proof', 'Quotes the part of the result each verdict is based on, and the quote is really there']];
 /** Board 11 (ready and done); P4-M3's other states are added from the approved mock. `v` = GET …/checker/:round. */
-export function renderChecker(root, v, actions, { doc, exampleName }) {
+export function renderChecker(root, v, actions, { doc, exampleName, empty = null, reworded = null }) {
   root.replaceChildren();
+  // N10, P4-M3: no round (no good result yet): the server's sentence until the approved empty state replaces this line.
+  if (!v) { root.append(el(doc, 'p', 'hint wft-cc-empty', empty || '')); return; }
   const head = el(doc, 'div', 'wft-titles');
   const crumb = el(doc, 'a', '', exampleName); crumb.href = '#';
   crumb.addEventListener('click', (e) => { e.preventDefault(); actions.back(); });
@@ -5651,8 +5677,9 @@ and in `testsAddress({ workflowId, shown, view, runId, exampleId, roundId = null
       return wft.roundId ? wftCall('GET', `${wftBase(id)}/examples/${wft.exampleId}/checker/${wft.roundId}`) : Promise.resolve({ ok: true, data: null });
     }
 ```
-In `wftRenderView`, first line:
+In `wftRenderView`, first line (N10: a failed read shows the list's error, as the other views do):
 ```js
+    if (wft.view === 'checker' && !wft.data && !wft.checkerEmpty) { renderTestsPage(root, null, wftListActions(), { doc, error: wft.error }); return; }
     if (wft.view === 'checker') {
       renderChecker(root, wft.data, wftCheckerActions(), { doc, exampleName: (wft.data && wft.data.exampleName) || '', empty: wft.checkerEmpty || null,
         reworded: wft.reworded || null });   // `reworded`: P4-M3's "after a Wrong" state
