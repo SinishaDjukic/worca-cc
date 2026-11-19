@@ -70,7 +70,7 @@ Each item has a recommendation (**R**) and the alternative(s). Where a task depe
   - **R: move all workflow-tests DDL (v96–v99) into a new `src/core/workflow-tests/schema.mjs`** (pure strings) in Task 1. db.mjs then shrinks by about 90 lines although it gains the v99 rung.
   - Alternative: put only the v99 DDL there (db.mjs grows by about 6 lines).
 - **P4-Q14. The paid end-to-end check (Task 26).**
-  - **R: run it once, controller only, after the user's explicit OK:** Claude Haiku 4.5 as the workflow's model and as the checking model, one "Try it once now" with two criteria, one Check the checker round, one Agree. **Cap: $3.** It runs on the **Claude sign-in only**, never the Vertex (or other) routing in `~/.worca-cc`: the run uses a fresh Worca home whose models carry no routing `env`, and the controller confirms that before it starts and tells the user that the Claude sign-in pays.
+  - **R: run it once, controller only, after the user's explicit OK:** Claude Haiku 4.5 as the workflow's model and as the checking model, one "Try it once now" with two criteria, one Check the checker round, one Agree. **Cap: $3.** It runs on the **Claude sign-in only**, never the Vertex (or other) routing in `~/.worca-cc`: the run uses a fresh `WORCA_HOME` in scratch (with `HOME` unchanged, so the Claude CLI's sign-in still works), and before it starts the controller proves, printing names only, that no routing applies from the Worca home's model `env`, the process environment or the user's Claude Code settings (Task 26 Step 1). If routing cannot be ruled out, it stops and asks. It tells the user that the Claude sign-in pays.
   - Alternative: no paid check before the PR.
 - **P4-Q15. An older test after its criteria changed.**
   - **R: Compare shows the new criteria as "Not checked yet" and offers "Check them on these tries (about $X)"** (one press, needs P4-M5). Nothing is spent without a press.
@@ -185,7 +185,7 @@ D1–D85 hold. These continue them. The `(technical)` rows are for the reviewer.
 - **Run one test file:** `node tools/test.mjs test/<file>.test.mjs` (hermetic home and the no-real-claude guard). About 170 tests already fail on clean `dev` on this laptop: compare with Task 0's baseline before blaming a task, and re-check a masked file on WSL Ubuntu before pushing.
 - **Search:** `git grep` with `timeout 60`; plain recursive grep or ripgrep time out on this repo.
 - **TDD:** every task writes its failing test first, runs it to see it fail, then writes the code.
-- **Paid model calls: none in tests.** Tests inject a fake `helperCall` or run under `WORCA_MOCK=1`. The one paid check is Task 26, controller only, after the user's explicit OK, capped at **$3**, through Worca's normal model routing, with the paying account named first (P4-Q14).
+- **Paid model calls: none in tests.** Tests inject a fake `helperCall` or run under `WORCA_MOCK=1`. The one paid check is Task 26, controller only, after the user's explicit OK, capped at **$3**, on the Claude sign-in only (a fresh `WORCA_HOME`, no routing from any source, proven first), with the paying account named first (P4-Q14).
 - **Schema:** `SCHEMA_VERSION` becomes **99**. If `dev` takes 99 first, renumber on the merge (the rung, the test file name, `docs/storage.md`).
 - **Size caps:** never raise a cap in `tools/split-by-feature/size-caps.json`. No change to `ui/server.mjs` or `ui/public/app.js`. `src/core/db.mjs` must end the part shorter than it starts (P4-Q13). `service.mjs`, `runner.mjs`, `example-editor.mjs`, `test-compare.mjs` and `tests-app.mjs` stay under 1,000 lines (each task that touches one says how many lines it adds; check with `(Get-Content <file>).Count`).
 - **PR wording (`test/ui-ship-words.test.mjs`):** never "open" as a pull-request verb in any string literal.
@@ -317,7 +317,7 @@ Expected: all pass except the known `ui-design-language` failures. Note any othe
 **Files:**
 - Create: `src/core/workflow-tests/schema.mjs`
 - Modify: `src/core/db.mjs` (`SCHEMA_VERSION`, the three DDL constants move out, `INCREMENTAL_TABLES`, `INCREMENTAL_COLUMNS`, the v99 rung)
-- Test: `test/db-migrate-v99.test.mjs`
+- Test: `test/db-migrate-v99.test.mjs`; `test/db-migrate-v97.test.mjs` (its pinned `wf_test_examples` columns gain the two v99 ones)
 - Docs: `docs/storage.md` ("Your criteria (v99)")
 
 **Interfaces:**
@@ -397,6 +397,15 @@ test('a DB at 98 missing one v99 table and one column after a partial cut is rep
   migrate(db);
   db.exec('DROP TABLE wf_test_liked; ALTER TABLE wf_test_examples DROP COLUMN judge; PRAGMA user_version = 98');
   migrate(db);
+  assert.deepEqual(shape(db), FRESH);
+});
+
+test('a DB already stamped 99 but missing a v99 table and a column (a divergent ladder) is repaired on the fast path', () => {
+  const db = new DatabaseSync(':memory:');
+  migrate(db);
+  db.exec('DROP TABLE wf_test_judge_ledger; ALTER TABLE wf_test_examples DROP COLUMN criteria');
+  assert.equal(stamp(db), SCHEMA_VERSION);
+  migrate(db);   // db.mjs migrate(): user_version >= SCHEMA_VERSION → reconcileSchema only
   assert.deepEqual(shape(db), FRESH);
 });
 ```
@@ -545,6 +554,14 @@ import { WORKFLOW_REVISIONS_DDL, WORKFLOW_TESTS_DDL, WORKFLOW_TEST_PROJECTS_DDL,
 ```
 If `schemaGaps` reads `INCREMENTAL_COLUMNS[table]` with `Object.entries`, the frozen inner object works as is; check the repair's loop at `db.mjs` "function schemaGaps" and keep it unchanged.
 
+6. `test/db-migrate-v97.test.mjs` pins `wf_test_examples` to exactly its 16 columns (`TABLES`, `:23-24`, asserted at `:51` and `:268`). Append the two v99 columns, the way v98 did for `wf_test_tries` (`:28-29`):
+```js
+  wf_test_examples: ['id', 'workflow_id', 'name', 'request', 'answers', 'otherwise', 'basics', 'checks', 'tries', 'note',
+    'from_pipeline', 'from_use', 'from_verdict', 'created_by', 'created_at', 'updated_at',
+    'criteria', 'judge'],   // the last two are v99 (workflow tests Part 4)
+```
+(A pinned list is the test's, not product code. Without this, that file fails after Step 4.)
+
 - [ ] **Step 5: Run the tests**
 
 Run: `node tools/test.mjs test/db-migrate-v99.test.mjs test/db-migrate-v98.test.mjs test/db-migrate-v97.test.mjs test/db-migrate-v96.test.mjs`
@@ -578,7 +595,7 @@ Behind the flag `workflowTests`, like v97. FK-free. The DDL of every workflow-te
 - [ ] **Step 7: Commit**
 
 ```bash
-git add src/core/workflow-tests/schema.mjs src/core/db.mjs test/db-migrate-v99.test.mjs docs/storage.md
+git add src/core/workflow-tests/schema.mjs src/core/db.mjs test/db-migrate-v99.test.mjs test/db-migrate-v97.test.mjs docs/storage.md
 git commit -m "feat(workflow-tests): schema v99 for your criteria; workflow-tests DDL in its own module
 
 Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
@@ -1409,8 +1426,9 @@ test('budgetStatus counts it; "Saved" leaves it out like test tries', () => {
   const b = budgetStatus();
   assert.equal(b.windowSpendUsd, 1.5);
   assert.equal(b.allTimeSpendUsd, 1.5);
+  // No runs, so no hours: Saved is 0 when the judge spend is left out (it was -1.5 before Step 4).
   const { windowSavedUsd } = budgetWindowSavings(b);
-  assert.equal(windowSavedUsd, budgetWindowSavings({ ...b, windowSpendUsd: 0 }).windowSavedUsd, 'judge spend does not lower Saved');
+  assert.equal(windowSavedUsd, 0, 'judge spend does not lower Saved');
 });
 ```
 
@@ -1513,7 +1531,7 @@ function fake(texts, { cost = 0.01, fail = null } = {}) {
 
 test('proofFound: curly quotes, spaces, markdown stars, case and an ellipsis; a made-up quote is not found', () => {
   assert.equal(proofFound('cut export-related support tickets by 60%  within one quarter', RESULT), true);
-  assert.equal(proofFound('"Cut export-related support tickets … counted by the \\"Export\\" tag"', RESULT), true);
+  assert.equal(proofFound('"Cut export-related support tickets … counted by the "Export" tag"', RESULT), true);
   assert.equal(proofFound('**Cut export-related** support tickets by 60%', RESULT), true);
   assert.equal(proofFound('Customers are much happier with exporting', RESULT), false);
   assert.equal(proofFound('by 60%', RESULT), false, 'shorter than 8 characters');
@@ -1969,8 +1987,8 @@ before(async () => {
   srv = http.createServer(mod.app);
   await new Promise((r) => srv.listen(0, '127.0.0.1', r));
   base = `http://127.0.0.1:${srv.address().port}`;
-  const { saveGraphWorkflow } = await import('../src/core/workflows.mjs');
-  await saveGraphWorkflow(graph);
+  // Seeded as Part 2's API test does (test/api-workflow-tests.test.mjs:69): through the route, not a module helper.
+  assert.equal((await call('POST', '/api/workflows', graph)).status, 201);
 });
 after(async () => {
   if (srv) await new Promise((r) => srv.close(r));
@@ -1994,7 +2012,6 @@ test('criteria saved with an example are checked on Try it once now, for free', 
   assert.equal(prepare('SELECT COUNT(*) AS n FROM wf_test_judge_ledger').get().n, 0, 'the mock books nothing');
 });
 ```
-(The `graph` save uses the helper the Part 2 API test uses: copy its exact call from `test/api-workflow-tests.test.mjs` if `saveGraphWorkflow`'s signature differs there.)
 
 - [ ] **Step 2: Run them to see them fail**
 
@@ -5384,15 +5401,49 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
 
 No commit. Never run by a subagent, never without the user's go in this session.
 
-- [ ] **Step 1: Ask, and name who pays**
+- [ ] **Step 1: Prove that only the Claude sign-in pays, then ask** (the controller itself; no subagent runs, prepares or reads any part of this step)
 
-The user's rule: real model calls go through the **Claude sign-in only**, never the Vertex (or other) routing in `~/.worca-cc`. Use a fresh Worca home (`WORCA_HOME`, `HOME`, `USERPROFILE` in scratch) and confirm that the `claude-haiku-4-5` alias there has no routing `env` (Settings › Models). Never read, print or copy a token from `~/.worca-cc/settings.json`. Tell the user that the Claude sign-in pays, the cap (**$3**), and what runs. Wait for an explicit yes.
+The user's rule: real model calls run **only on the Claude sign-in**, never on the Vertex (or other) routing configured in `~/.worca-cc`. Nobody reads, prints or copies a token from `~/.worca-cc/settings.json`. Routing can come from four places, and the controller rules out each one before anything runs:
 
-- [ ] **Step 2: Run it** (a fresh Worca home, flag on, no `WORCA_MOCK`)
+1. **A fresh Worca home, and only that.** Make an empty folder `<scratch>\worca-home` (never a copy of `~/.worca-cc`, nothing copied into it). Every command of Steps 1 and 2 sets `WORCA_HOME` to it; the Worca server for the check is started from that shell on its own port (the user's own Worca UI is left alone). In a fresh home the catalog is `PREDEFINED_MODELS` with no `env`, no plugin or bridged model, no team policy (its cache lives in the home's DB) and the credential broker off.
+2. **Keep `HOME` and `USERPROFILE` as they are.** The Claude CLI keeps its sign-in under the user's own home (`~/.claude/.credentials.json` on Windows and Linux, the Keychain on macOS). Moving `HOME` to scratch would hide it, and the call would fail or find another credential. Only `WORCA_HOME` moves.
+3. **Check, printing names only, never a value.** From the worktree, in the shell that will start the server (so it sees the same environment), run:
+```bash
+WORCA_HOME="<scratch>/worca-home" node --input-type=module -e "
+import { readFileSync, existsSync } from 'node:fs';
+import { homedir } from 'node:os';
+import { join, resolve } from 'node:path';
+const home = process.env.WORCA_HOME || '';
+if (!home || resolve(home) === resolve(homedir(), '.worca-cc')) { console.log('STOP: WORCA_HOME must be the fresh scratch home'); process.exit(1); }
+// Names that route Claude Code or sign it in another way (claude-sign-in.mjs isSignInEnvKey, without the proxy and CA names,
+// which do not change who pays), plus CLAUDE_CONFIG_DIR, which moves the settings file this check reads.
+const ROUTING = (k) => /^(CLAUDE_CODE_USE_|ANTHROPIC_|AWS_)/.test(k) || ['CLOUD_ML_REGION', 'GOOGLE_APPLICATION_CREDENTIALS',
+  'CLAUDE_CODE_OAUTH_TOKEN', 'CLAUDE_CODE_CLIENT_CERT', 'CLAUDE_CODE_CLIENT_KEY', 'CLAUDE_CONFIG_DIR'].includes(k);
+const found = Object.keys(process.env).filter(ROUTING).map((k) => 'process env: ' + k);
+const files = [join(homedir(), '.claude', 'settings.json'), 'C:/Program Files/ClaudeCode/managed-settings.json',
+  'C:/ProgramData/ClaudeCode/managed-settings.json', '/Library/Application Support/ClaudeCode/managed-settings.json', '/etc/claude-code/managed-settings.json'];
+for (const f of files) {
+  if (!existsSync(f)) continue;
+  let s; try { s = JSON.parse(readFileSync(f, 'utf8').replace(/^\uFEFF/, '')); } catch { found.push(f + ': not readable as JSON'); continue; }
+  for (const k of ['apiKeyHelper', 'awsAuthRefresh', 'awsCredentialExport']) if (s && s[k]) found.push(f + ': ' + k);
+  for (const k of Object.keys((s && s.env) || {})) if (ROUTING(k)) found.push(f + ': env.' + k);
+}
+const { resolveModelEnv } = await import('./src/core/config.mjs');
+const env = resolveModelEnv('claude-haiku-4-5');
+if (env) found.push('Worca home: claude-haiku-4-5 has routing env ' + Object.keys(env).join(', '));
+console.log(found.length ? 'STOP, routing may apply:\n' + found.join('\n') : 'No routing found: the Claude sign-in pays.');
+"
+```
+   It reads the user's Claude Code settings files only to list key names; it never opens `~/.worca-cc`. The three places it covers: the model alias's `env` in the Worca home used (through `resolveModelEnv`, which also covers plugin, bridged and team-policy models), `CLAUDE_CODE_USE_VERTEX` / `ANTHROPIC_*`-style names in the process environment (the server's spawns inherit them), and an `env` block (or a sign-in command) in the user's or the managed Claude Code settings (loaded whenever the user settings carry a sign-in, `keepUserSettings`, `interview.mjs:247`).
+4. **Anything found, or the check cannot run: stop and ask the user.** Never unset a name, edit a settings file or work around it on your own; the user decides (for example, start the server from a clean shell). The same holds if the first paid call fails with a sign-in error: stop, never retry on another credential.
+
+Then tell the user, in one message: the Claude sign-in on this computer pays (the account the `claude` command is logged in with; never print any token or account file), the cap (**$3**), and what runs (Step 2). Wait for an explicit yes in this session; anything else is a no.
+
+- [ ] **Step 2: Run it** (the same shell and fresh Worca home as Step 1, `WORCA_FLAGS=workflowTests`, no `WORCA_MOCK`, `HOME` unchanged)
 
 1. A no-project workflow whose agent steps use Claude Haiku 4.5; one example with a request, two criteria ("Names a success metric with a number", "Explains the legal reason for each data field") and Checked with = Haiku 4.5.
 2. Try it once now. Expect: two judgements with `proof_found = 1` or an honest "Not checked", ledger rows with `purpose 'try'`, `budgetStatus().windowSpendUsd` up by the same amount.
-3. Check the checker on the first criterion. Expect: 17 ledger rows `purpose 'checker'` (or fewer when the plant reply was used: 1 + 16), the four cards, the three self-test rows.
+3. Check the checker on the first criterion. Expect: 17 ledger rows `purpose 'checker'` either way (the planting call and 16 checks; when Worca falls back to its own plants, the planting call was still made and paid), the four cards, the three self-test rows.
 4. Agree once on the side by side.
 5. Stop at any point if `windowSpendUsd` rises by more than **$3**.
 
