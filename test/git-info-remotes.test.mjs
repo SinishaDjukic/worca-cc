@@ -114,6 +114,73 @@ test('listRemotes: parses git remote -v (push URL wins); empty output and git fa
   ]);
 });
 
+test('listRemotes: an ~/.ssh/config Host alias names the real host (ssh -G); never spawned for a known host', async () => {
+  /** A runner answering `git remote -v` with `lines` and `ssh -G` from `hostnames` (alias → HostName); records ssh calls. */
+  const scripted = (lines, hostnames = {}, sshCalls = []) => (cmd, args) => {
+    if (cmd === 'ssh') {
+      sshCalls.push(args);
+      const host = args[args.length - 1];
+      return okOut(`user git\nhostname ${hostnames[host] ?? host.toLowerCase()}\nport 22\n`);
+    }
+    return okOut([...lines, ''].join('\n'));
+  };
+  await checkRows([
+    { name: 'scp-style and ssh:// aliases resolve to GitHub; the URLs stay as written', run: async () => {
+      const sshCalls = [];
+      gitInfo.setRunner(scripted([
+        'origin\tgit@github-me:me/repo.git (fetch)',
+        'origin\tgit@github-me:me/repo.git (push)',
+        'work\tssh://git@gh-work:22/acme/api.git (fetch)',
+        'work\tssh://git@gh-work:22/acme/api.git (push)',
+      ], { 'github-me': 'github.com', 'gh-work': 'github.com' }, sshCalls));
+      const { remotes } = await listRemotes('/repo');
+      assert.deepEqual(remotes.map((r) => [r.name, r.host, r.slug, r.forge]),
+        [['origin', 'github.com', 'me/repo', 'github'], ['work', 'github.com', 'acme/api', 'github']]);
+      assert.equal(remotes[0].pushUrl, 'git@github-me:me/repo.git', 'git keeps pushing through the alias');
+      assert.deepEqual(sshCalls, [['-G', '--', 'github-me'], ['-G', '--', 'gh-work']]);
+    } },
+    { name: 'an Azure DevOps alias re-parses with the real host (org/project/repo)', run: async () => {
+      gitInfo.setRunner(scripted([
+        'origin\tgit@ado-me:v3/acme/Shop/api (fetch)',
+        'origin\tgit@ado-me:v3/acme/Shop/api (push)',
+      ], { 'ado-me': 'ssh.dev.azure.com' }));
+      const [r] = (await listRemotes('/repo')).remotes;
+      assert.deepEqual([r.forge, r.org, r.project, r.repo], ['azure', 'acme', 'Shop', 'api']);
+    } },
+    { name: 'https URLs, known forge hosts and non-hosted remotes never spawn ssh', run: async () => {
+      const sshCalls = [];
+      gitInfo.setRunner(scripted([
+        'a\thttps://ghe.corp/o/r.git (fetch)', 'a\thttps://ghe.corp/o/r.git (push)',
+        'b\tgit@github.com:o/r.git (fetch)', 'b\tgit@github.com:o/r.git (push)',
+        'c\t/srv/git/repo.git (fetch)', 'c\t/srv/git/repo.git (push)',
+      ], {}, sshCalls));
+      await listRemotes('/repo');
+      assert.deepEqual(sshCalls, []);
+    } },
+    { name: 'a host that is not an alias, an ssh failure or a junk answer keeps the host as written', run: async () => {
+      gitInfo.setRunner(scripted(['g\tgit@ghe.corp:o/r.git (fetch)', 'g\tgit@ghe.corp:o/r.git (push)']));
+      assert.equal((await listRemotes('/repo')).remotes[0].slug, 'ghe.corp/o/r');
+      gitInfo.setRunner((cmd) => (cmd === 'ssh' ? fail('ssh: not found', 127) : okOut('o\tgit@gh-x:o/r.git (fetch)\no\tgit@gh-x:o/r.git (push)\n')));
+      assert.equal((await listRemotes('/repo')).remotes[0].host, 'gh-x');
+      gitInfo.setRunner((cmd) => (cmd === 'ssh' ? okOut('hostname -oProxyCommand=x\n') : okOut('o\tgit@gh-y:o/r.git (fetch)\no\tgit@gh-y:o/r.git (push)\n')));
+      assert.equal((await listRemotes('/repo')).remotes[0].host, 'gh-y', 'a HostName that is not a host name is ignored');
+    } },
+    { name: 'a host shaped like an option is never passed to ssh', run: async () => {
+      const sshCalls = [];
+      gitInfo.setRunner(scripted(['x\tgit@-oProxyCommand=evil:o/r.git (fetch)', 'x\tgit@-oProxyCommand=evil:o/r.git (push)'], {}, sshCalls));
+      await listRemotes('/repo');
+      assert.deepEqual(sshCalls, []);
+    } },
+    { name: 'each alias is asked once per process (until reset)', run: async () => {
+      const sshCalls = [];
+      gitInfo.setRunner(scripted(['o\tgit@github-me:me/repo.git (fetch)', 'o\tgit@github-me:me/repo.git (push)'], { 'github-me': 'github.com' }, sshCalls));
+      await listRemotes('/repo');
+      await listRemotes('/other');
+      assert.equal(sshCalls.length, 1);
+    } },
+  ]);
+});
+
 test('Azure DevOps remotes: one identity for every spelling; sameRepo across ssh/https; forge', async () => {
   const want = { host: 'dev.azure.com', org: 'acme', project: 'Shop', owner: 'acme/Shop', repo: 'api' };
   await checkRows([

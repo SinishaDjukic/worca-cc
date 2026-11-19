@@ -106,6 +106,24 @@ export function parseRemoteUrl(url) {
   return { host: HOST_ALIASES[h] || h, owner, repo };
 }
 
+/**
+ * The host an ssh remote URL connects to — `ssh://[user@]host[:port]/path` (also git+ssh / ssh+git) or scp-style
+ * `[user@]host:path` — with `withHost(h)` rebuilding the URL around another host; null for any other form. That
+ * host may be an ~/.ssh/config `Host` alias. Pure; never throws.
+ */
+export function sshUrlHost(url) {
+  const s = String(url || '').trim();
+  let m = /^((?:git\+)?ssh(?:\+git)?:\/\/(?:[^@/]+@)?)([^/:]+)((?::\d+)?\/.+)$/i.exec(s);
+  if (!m) {
+    if (/^[a-z][a-z0-9+.-]*:\/\//i.test(s)) return null;
+    m = /^((?:[^@/\s]+@)?)([^:/\s]+)(:.+)$/.exec(s);
+    // Without a user@ prefix a leading `/` is a Windows drive path (C:/repos/x), as in parseRemoteUrl.
+    if (!m || (!m[1] && m[3].startsWith(':/'))) return null;
+  }
+  const [, head, host, tail] = m;
+  return { host, withHost: (h) => `${head}${h}${tail}` };
+}
+
 /** gh's `[HOST/]OWNER/REPO` form for --repo; the host is omitted for github.com. */
 export function remoteRepoSlug(parsed) {
   if (!parsed || !parsed.owner || !parsed.repo) return null;
