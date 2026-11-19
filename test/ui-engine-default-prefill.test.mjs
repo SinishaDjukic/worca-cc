@@ -66,7 +66,7 @@ test('a project default of Codex prefills Codex and says it comes from the proje
   assert.equal(on(ctx.doc), 'codex');
   assert.equal(ctx.doc.getElementById('engine-default-hint').hidden, false);
   assert.equal(ctx.doc.getElementById('engine-default-hint').textContent, 'Default from project');
-  assert.equal(ctx.doc.getElementById('engine-hint').textContent, 'Codex runs this pipeline, including titles and summaries. Its models: Models › Codex');
+  assert.equal(ctx.doc.getElementById('engine-hint').textContent, 'Codex runs this pipeline, including titles and summaries. Its models: Models › Jobs');
   await submit(ctx);
   assert.equal(ctx.posted.at(-1).engine, 'codex');
 });

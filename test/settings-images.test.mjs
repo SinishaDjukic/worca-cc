@@ -30,10 +30,10 @@ const DEFAULTS = { service: 'openai', baseUrl: 'https://api.openai.com/v1', mode
 test('images: the presets of SPEC §9, the defaults, never an upstream', async () => {
   await withSandbox(async () => {
     assert.deepEqual(Object.keys(IMAGE_SERVICES), ['openai', 'xai', 'openrouter', 'other']);
-    assert.deepEqual(IMAGE_SERVICES.openai, { id: 'openai', label: 'OpenAI', baseUrl: 'https://api.openai.com/v1', path: '/images/generations', model: 'gpt-image-2.6-flare', price: 0.04, sizeMode: 'size', extra: { quality: 'medium' }, responseFormat: null });
-    assert.deepEqual(IMAGE_SERVICES.xai, { id: 'xai', label: 'xAI', baseUrl: 'https://api.x.ai/v1', path: '/images/generations', model: 'grok-imagine-image-2.0', price: 0.04, sizeMode: 'aspect', extra: {}, responseFormat: 'b64_json' });
-    assert.deepEqual(IMAGE_SERVICES.openrouter, { id: 'openrouter', label: 'OpenRouter', baseUrl: 'https://openrouter.ai/api/v1', path: '/images', model: '', price: 0.05, sizeMode: 'size', extra: {}, responseFormat: null });
-    assert.deepEqual(IMAGE_SERVICES.other, { id: 'other', label: 'Other (OpenAI-compatible)', baseUrl: '', path: '/images/generations', model: '', price: null, sizeMode: 'size', extra: {}, responseFormat: null });
+    assert.deepEqual(IMAGE_SERVICES.openai, { id: 'openai', label: 'OpenAI', baseUrl: 'https://api.openai.com/v1', path: '/images/generations', model: 'gpt-image-2.6-flare', models: ['gpt-image-2.6-flare', 'gpt-image-2.6-sunburst', 'gpt-image-2.5-sunburst', 'gpt-image-2.5-flare'], price: 0.04, sizeMode: 'size', extra: { quality: 'medium' }, responseFormat: null });
+    assert.deepEqual(IMAGE_SERVICES.xai, { id: 'xai', label: 'xAI', baseUrl: 'https://api.x.ai/v1', path: '/images/generations', model: 'grok-imagine-image-2.0', models: ['grok-imagine-image-2.0', 'grok-imagine-image'], price: 0.04, sizeMode: 'aspect', extra: {}, responseFormat: 'b64_json' });
+    assert.deepEqual(IMAGE_SERVICES.openrouter, { id: 'openrouter', label: 'OpenRouter', baseUrl: 'https://openrouter.ai/api/v1', path: '/images', model: '', models: ['google/gemini-nano-banana-2.1', 'google/gemini-3.1-flash-lite-image', 'google/gemini-3.1-flash-image', 'google/gemini-3-pro-image', 'openai/gpt-5.4-image-2', 'google/gemini-2.5-flash-image'], price: 0.05, sizeMode: 'size', extra: {}, responseFormat: null });
+    assert.deepEqual(IMAGE_SERVICES.other, { id: 'other', label: 'Other (OpenAI-compatible)', baseUrl: '', path: '/images/generations', model: '', models: [], price: null, sizeMode: 'size', extra: {}, responseFormat: null });
     assert.deepEqual([0, 499, 1500, 11_200].map(pictureSeconds), [1, 1, 2, 11]);
     assert.equal(IMAGES_MAX_PROMPT, 4000);
     assert.deepEqual(IMAGE_SHAPES, ['wide', 'tall', 'square']);
@@ -44,6 +44,17 @@ test('images: the presets of SPEC §9, the defaults, never an upstream', async (
     assert.deepEqual(Object.keys(allProviders()), ['copilot', 'openai', 'anthropic']);
     await assert.rejects(updateProvider('images', {}), /unknown provider/);
   });
+});
+test('images: every preset lists its image models, frozen, no duplicates, the default first', () => {
+  for (const [id, p] of Object.entries(IMAGE_SERVICES)) {
+    const m = p.models;
+    assert.ok(Array.isArray(m), `${id}: models is an array`);
+    assert.ok(Object.isFrozen(m), `${id}: models is frozen`);
+    assert.equal(new Set(m).size, m.length, `${id}: no duplicate ids`);
+    if (p.model) assert.equal(m[0], p.model, `${id}: the default model comes first`);
+  }
+  for (const id of ['openai', 'xai', 'openrouter']) assert.ok(IMAGE_SERVICES[id].models.length >= 1, `${id}: lists at least one id`);
+  assert.deepEqual(IMAGE_SERVICES.other.models, []);
 });
 test('images: Save is refused without a price; 0 is a price; a clear removes a field; all cleared removes the block', async () => {
   await withSandbox(async () => {

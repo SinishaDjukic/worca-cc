@@ -29,7 +29,7 @@ const PLUGIN_VERSION = 'copilot-chat/0.31.0';
 const USER_AGENT = 'GitHubCopilotChat/0.31.0';
 
 function noHostError() {
-  return Object.assign(new Error('GitHub Copilot is set to a GHE.com tenant but has no valid host — set it on the Providers page (worca models set copilot enterpriseHost=<tenant>.ghe.com)'), { code: 'NO_HOST' });
+  return Object.assign(new Error('GitHub Copilot is set to a GHE.com tenant but has no valid host — set it under Models › Providers › GitHub Copilot (worca models set copilot enterpriseHost=<tenant>.ghe.com)'), { code: 'NO_HOST' });
 }
 
 /**

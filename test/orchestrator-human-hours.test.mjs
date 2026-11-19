@@ -126,7 +126,9 @@ test('a run paused mid-implementation credits the pre-pause code at the real ter
   const id = orch.pipeline.id;
   assert.equal(stepRows(id).find((r) => r.agent_key === 'implementer').human_hours, null, 'a paused execution is not estimated');
   const saved = readPipelineForResume(id);
-  assert.deepEqual(saved.resumePoint.humanCursor, { files: 0, insertions: 0, deletions: 0 }, 'the cursor at the last terminal rides the resume point');
+  const { byKey, ...totalsAtPause } = saved.resumePoint.humanCursor;
+  assert.deepEqual(totalsAtPause, { files: 0, insertions: 0, deletions: 0 }, 'the cursor at the last terminal rides the resume point');
+  assert.deepEqual(Object.values(byKey), [{ files: 0, insertions: 0, deletions: 0 }], 'with each member\'s own count');
   let orch2;
   orch2 = createOrchestrator({ projectDir: dir, workflowId: G.id, auto: true, claude: { mock: true }, resume: saved, runners: { producer: producer(() => orch2) } });
   const second = await orch2.resume();

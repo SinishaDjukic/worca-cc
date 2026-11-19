@@ -195,7 +195,7 @@ and pinned routes). See [split-by-feature.md](split-by-feature.md).
 
 | File | Lines |
 |---|---|
-| `ui/public/scripts/code-editor.css` | 27 |
+| `ui/public/scripts/code-editor.css` | 63 |
 | `ui/public/scripts/script-wizard.css` | 136 |
 | `ui/public/scripts/scripts-view.css` | 112 |
 | `ui/routes/scripts/scripts.mjs` | 207 |

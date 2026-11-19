@@ -22,7 +22,7 @@ import { harvestWork, WORK_ARTIFACT_KIND } from './no-project-work.mjs';
 import { updateRunManifest } from './run-manifest.mjs';
 import { listProjects, worcaHome, runOnboarded } from './projects.mjs';
 import { claimRunDir, claimRunExtras, shareFailureReason } from './agent-pool.mjs';
-import { branchExists, diffShortstat, anyPrHost, findPrForBranch, commitsAhead, withRefSnapshot } from './git-info.mjs';
+import { branchExists, diffShortstat, anyPrHost, lookupPrForBranch, commitsAhead, withRefSnapshot } from './git-info.mjs';
 import { getDb, tx } from './db.mjs';
 import { cleanOutcome } from './shape/rounds.mjs';
 import { rollupMemberPrs, workspaceMembers, changedFileCount } from './workspace-prs.mjs';
@@ -1985,6 +1985,21 @@ export function listNetworkWaitRuns() {
   return out;
 }
 
+/** Runs paused on a provider's usage limit (the usage rings' pause override): `[{ engine, resetsAt, pausedAt }]` in ms.
+ *  Only live, paused rows whose resume point says `usage_limit` with a known `limitEngine`; `resetsAt` is null when the
+ *  point carries no reset time. */
+export function listUsageLimitPauses() {
+  const rows = getDb().prepare(`SELECT updated_at,
+      json_extract(resume_point, '$.limitEngine') AS limit_engine,
+      json_extract(resume_point, '$.limitResetAt') AS limit_reset_at
+    FROM pipelines
+    WHERE status = 'paused' AND archived_at IS NULL AND deleted_at IS NULL AND json_valid(resume_point)
+      AND json_extract(resume_point, '$.pauseReason') = 'usage_limit'
+      AND json_extract(resume_point, '$.limitEngine') IN ('claude', 'codex', 'gemini')`).all();
+  const ms = (v) => { const t = typeof v === 'string' ? Date.parse(v) : NaN; return Number.isFinite(t) ? t : null; };
+  return rows.map((r) => ({ engine: r.limit_engine, resetsAt: ms(r.limit_reset_at), pausedAt: ms(r.updated_at) }));
+}
+
 /**
  * Map a live state object to the named params of the pipelines UPSERT. JSON columns
  * are stringified here; the workspace superset collapses into workspace_meta.
@@ -2056,6 +2071,8 @@ function toPipelineRow(o) {
           warnings: Array.isArray(o.warnings) ? o.warnings : [],
           // E2: loops forced past their budget with blocking issues still open.
           ...(Array.isArray(o.openIssues) && o.openIssues.length ? { openIssues: o.openIssues } : {}),
+          // E9: the notable paths each execution touched outside its checkout (the run page's quiet scope line).
+          ...(Array.isArray(o.scopeNotices) && o.scopeNotices.length ? { scopeNotices: o.scopeNotices } : {}),
           wireDeliveries: o.wireDeliveries ?? {},
           tokens: o.tokens ?? {},
           ...(typeof o.runEngine === 'string' && o.runEngine && o.runEngine !== 'claude' ? { runEngine: o.runEngine } : {}),
@@ -2379,9 +2396,12 @@ async function workspaceMemberFacts(row, results, opts = {}) {
     out.added = ev.added | 0;
     out.removed = ev.removed | 0;
     if (opts.withPr) {
-      out.pr = gh && m.projectDir && m.feature
-        ? withFixing(await findPrForBranch({ projectDir: m.projectDir, head: m.feature, prUrl: known[m.memberKey]?.url || null }))
-        : null;
+      const res = gh && m.projectDir && m.feature
+        ? await lookupPrForBranch({ projectDir: m.projectDir, head: m.feature, prUrl: known[m.memberKey]?.url || null })
+        : { ok: true, pr: null };
+      // A failed lookup is no evidence of "no PR": the member keeps its stored PR, marked stale (null when none).
+      const stored = res.ok ? null : known[m.memberKey];
+      out.pr = res.ok ? withFixing(res.pr) : (stored ? withFixing({ ...stored, stale: true }) : null);
     }
     return out;
   }));
@@ -2551,16 +2571,22 @@ async function rowToHistoryEntry(row, repoDir = null, opts = {}) {
   // available we still set pr:null (the field is present whenever requested), so
   // callers can distinguish "looked, none" from "did not look".
   if (hasMembers && opts.withPr) {
-    entry.pr = rollupMemberPrs(Object.fromEntries(entry.members.filter((m) => m.pr).map((m) => [m.memberKey, m.pr])));
+    const rollup = rollupMemberPrs(Object.fromEntries(entry.members.filter((m) => m.pr).map((m) => [m.memberKey, m.pr])));
+    entry.pr = rollup && entry.members.some((m) => m.pr?.stale) ? { ...rollup, stale: true } : rollup;
   } else if (opts.withPr && repoDir && feature) {
     // Single-project runs AND legacy workspace rows (empty workspace_meta.projects):
     // the unchanged primary-only lookup, pr_url first — never overwritten with null.
     // The fresh lookup wins over the stored row (a PR merged since the last refresh, or a newer PR for the branch);
     // stored fields (the CI verdict) are used only for the same URL. Persisting is the enrich path's job.
-    const found = (await anyPrHost())
-      ? await findPrForBranch({ projectDir: repoDir, head: feature, prUrl: row.pr_url || null, withVerdict: true })
-      : null;
-    if (found) {
+    const res = (await anyPrHost())
+      ? await lookupPrForBranch({ projectDir: repoDir, head: feature, prUrl: row.pr_url || null, withVerdict: true })
+      : { ok: true, pr: null };
+    const found = res.ok ? res.pr : null;
+    if (!res.ok) {
+      // A failed lookup is no evidence of "no PR": keep the stored PR, marked stale (null when nothing is stored).
+      const known = readPrState(row.id);
+      entry.pr = known ? { ...known, stale: true } : null;
+    } else if (found) {
       const { verdict, ...fresh } = found;
       const stored = readPrState(row.id);
       entry.pr = { ...(stored && stored.url === fresh.url ? stored : {}), ...fresh, ...(verdict || {}),
@@ -2764,6 +2790,9 @@ export function countPipelines({ archived = false } = {}) {
   return row ? Number(row.n) : 0;
 }
 
+// enrichPipelinesPr's marker for a row left out of its batch (a failed lookup with nothing stored).
+const OMIT = Symbol('omit');
+
 /**
  * Re-walk the skeleton and resolve live PR state per branch, pushed to `onBatch`
  * in parallel batches. Each item sends ONLY `pr`: findPrForBranch's
@@ -2776,6 +2805,11 @@ export function countPipelines({ archived = false } = {}) {
  * spinner provably clears. A workspace item (a row WITH member facts) also carries
  * `members: [{ memberKey, pr }]`, each `pr` in the same shape; its `pr` is the rollup
  * of the open and merged ones.
+ * `null` means a lookup that succeeded and found no PR, never a failure. On a failed lookup
+ * (lookupPrForBranch ok:false: quota, network, gh error) nothing is persisted: the row resends its stored PR with
+ * `stale: true`, or is left out of the batch when nothing is stored. A failed member resends its stored PR stale
+ * (null when none); the rollup is then `stale` too, and a row whose every member failed with nothing stored is left
+ * out. `stale` is only ever present as `true`. A batch may hence be shorter than its slice, even empty.
  */
 export async function enrichPipelinesPr(onBatch, { batchSize = 16 } = {}) {
   if (!(await anyPrHost())) { await onBatch([], true); return; } // no PR host: one empty final batch
@@ -2791,18 +2825,34 @@ export async function enrichPipelinesPr(onBatch, { batchSize = 16 } = {}) {
       if (isWs(r)) {
         // Per member: pr_url-first lookup, positive observations persisted (+ rollup).
         const known = readMemberPrStates(r.id);
+        let failed = 0;
         const members = await Promise.all(r.members.map(async (m) => {
-          const pr = m.projectDir && m.branch
-            ? (await findPrForBranch({ projectDir: m.projectDir, head: m.branch, prUrl: known[m.memberKey]?.url || null, includeClosed: true })) || null
-            : null;
+          const res = m.projectDir && m.branch
+            ? await lookupPrForBranch({ projectDir: m.projectDir, head: m.branch, prUrl: known[m.memberKey]?.url || null, includeClosed: true })
+            : { ok: true, pr: null };
+          if (!res.ok) {
+            // A failed member lookup resends its stored PR stale (null when nothing is stored) and writes nothing.
+            failed++;
+            const stored = known[m.memberKey];
+            return { memberKey: m.memberKey, pr: stored ? withFixing({ ...stored, stale: true }) : null };
+          }
+          const pr = res.pr || null;
           if (pr && pr.state !== 'CLOSED') persistMemberPrState(r.id, m.memberKey, pr);   // a closed PR is shown, never recorded
           return { memberKey: m.memberKey, pr: withFixing(pr) };
         }));
-        const pr = rollupMemberPrs(Object.fromEntries(members.filter((m) => m.pr).map((m) => [m.memberKey, m.pr])));
+        if (failed === members.length && !members.some((m) => m.pr)) return OMIT;
+        const rollup = rollupMemberPrs(Object.fromEntries(members.filter((m) => m.pr).map((m) => [m.memberKey, m.pr])));
+        const pr = rollup && failed ? { ...rollup, stale: true } : rollup;
         return { projectKey: r.projectKey, id: r.id, pr, members };
       }
       const prUrl = readPrState(r.id)?.url || null;
-      const found = (await findPrForBranch({ projectDir: r.projectDir, head: r.branch, prUrl, withVerdict: true, includeClosed: true })) || null;
+      const res = await lookupPrForBranch({ projectDir: r.projectDir, head: r.branch, prUrl, withVerdict: true, includeClosed: true });
+      if (!res.ok) {
+        // A failed lookup is no evidence of "no PR": resend the last known PR stale, or omit the row. Writes nothing.
+        const known = readPrState(r.id);
+        return known ? { projectKey: r.projectKey, id: r.id, pr: { ...known, stale: true } } : OMIT;
+      }
+      const found = res.pr || null;
       // Positive observations only (null never clears). A closed PR is shown, never
       // recorded: pr_url keeps naming the open or merged PR the other readers act on.
       // The recorded PR itself closing is recorded, so it stops counting as open (a chain's ship ends, Create PR again).
@@ -2815,7 +2865,7 @@ export async function enrichPipelinesPr(onBatch, { batchSize = 16 } = {}) {
         ...(watchActive(getWatch(fresh.url)) ? { fixing: true } : {}) };
       return { projectKey: r.projectKey, id: r.id, pr };
     }));
-    await onBatch(items, i + batchSize >= targets.length); // (items, isFinal)
+    await onBatch(items.filter((it) => it !== OMIT), i + batchSize >= targets.length); // (items, isFinal)
   }
 }
 
@@ -2942,6 +2992,7 @@ function rowToState(row) {
     state.result = outcome.result ?? null;
     state.warnings = Array.isArray(outcome.warnings) ? outcome.warnings : [];
     state.openIssues = Array.isArray(outcome.openIssues) ? outcome.openIssues : [];
+    state.scopeNotices = Array.isArray(outcome.scopeNotices) ? outcome.scopeNotices : [];
     state.wireDeliveries = outcome.wireDeliveries ?? {};
     state.tokens = outcome.tokens ?? {};
     if (outcome.sessionHosts && typeof outcome.sessionHosts === 'object') state.sessionHosts = outcome.sessionHosts;

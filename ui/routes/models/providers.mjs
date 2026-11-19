@@ -12,7 +12,7 @@ export function register(app) {
 // { enabled:false } with the broker off.
 // OpenRouter's daily allowance of `:free` requests (src/core/openrouter-free.mjs), for the
 // signed-in person with the credential broker, else for the install's key. The account menu's
-// free-request row, the new-run warning and the Providers page read it; ?refresh=1 asks OpenRouter now.
+// free-request row, the new-run warning and Models › Providers read it; ?refresh=1 asks OpenRouter now.
 app.get('/api/openrouter/free-daily', async (req, res) => {
   try {
     res.json(await freeDailyStatus({ person: currentBillTo(), force: req.query.refresh === '1' }));
@@ -32,6 +32,13 @@ app.get('/api/providers', async (req, res) => {
   } catch (err) {
     res.status(500).json({ error: err && err.message ? err.message : String(err) });
   }
+});
+
+// The OpenRouter row's Test: a typed key (sent only when changed) goes to OpenRouter's own address.
+// Declared before `:name/test`, which would pass a `baseUrl` this row does not have.
+app.post('/api/providers/openrouter/test', async (req, res) => {
+  const b = req.body || {};
+  res.json(await testProviderConnection('openrouter', typeof b.apiKey === 'string' ? { apiKey: b.apiKey } : {}));
 });
 
 app.post('/api/providers/:name/test', async (req, res) => {

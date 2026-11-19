@@ -5,7 +5,7 @@
 import { test, before, after, beforeEach, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
 import http from 'node:http';
-import { providersState } from '../src/core/bridge/provider-ops.mjs';
+import { patchOpenRouter, providersState, testProviderConnection } from '../src/core/bridge/provider-ops.mjs';
 import { resetBrokerClient } from '../src/core/broker-client.mjs';
 
 const SECRET = 'p'.repeat(40);
@@ -90,4 +90,16 @@ test('broker off: no broker block beyond enabled:false', async () => {
   resetBrokerClient();
   const s = await providersState({ person: 'ada@acme.dev' });
   assert.deepEqual(s.broker, { enabled: false });
+});
+
+// Nothing here writes settings: this file does not sandbox HOME.
+test('OpenRouter spends from its own slot; its key and its Test belong to the key page', async () => {
+  const s = await providersState({ person: 'ada@acme.dev' });
+  assert.deepEqual(Object.keys(s.broker.providers), ['copilot', 'openrouter', 'openai', 'anthropic']);
+  assert.equal(s.broker.providers.openrouter.slot, 'openrouter');
+  assert.deepEqual(s.broker.providers.openrouter, { slot: 'openrouter', state: 'missing' });   // ada's slots lack it
+  await assert.rejects(patchOpenRouter({ apiKey: 'sk-x' }), /worca can't store a provider key: with the credential broker/);
+  const t = await testProviderConnection('openrouter');
+  assert.equal(t.ok, false);
+  assert.match(t.message, /^keys are held by the credential broker: test yours on the key page/);
 });

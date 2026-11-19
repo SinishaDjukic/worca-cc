@@ -25,7 +25,7 @@ import { ROLE_KEY_RE } from '../shared/graph/role-review-step.mjs';
 import { connectionOf, harnessesOf, runsOn, harnessesLabel, effortsOn } from '../shared/connections.mjs';
 import { bridgeBaseUrl, bridgeSecret } from './bridge/server.mjs';
 import { copilotBlockHost } from './ghe-host.mjs';
-import { providerConfig, listGlobalModels, addGlobalModel, removeGlobalModel, hideBuiltinModels, readSettings, memoryDefragModel, setMemoryDefragModel, modelRolesSetting, assertDesignModelsInput } from './settings.mjs';
+import { providerConfig, listGlobalModels, addGlobalModel, removeGlobalModel, hideBuiltinModels, hideBuiltinEngines, readSettings, memoryDefragModel, setMemoryDefragModel, modelRolesSetting, assertDesignModelsInput } from './settings.mjs';
 /** Whether the developer stored the hide-built-ins flag (a team default applies only when not). */
 const readSettingsHideStored = () => { const s = readSettings(); return typeof s.hideBuiltinModels === 'boolean' || s.hideBuiltinModelsChosen === true; };
 import { listPluginModels, allPluginModels, flattenPluginModelEnv } from './plugin-models.mjs';
@@ -222,6 +222,20 @@ export async function readConfig(projectDir) {
 }
 
 /**
+ * Which harnesses hide their UNSHADOWED built-ins from the pickers (Models › Catalogue, CAT-8):
+ * `{ claude, codex, copilot }` effective booleans. Claude Code keeps #422's rule: the developer's
+ * stored choice once they made one, else a team-policy `models.hideBuiltins` default for
+ * `projectDir` or the flag itself. Codex and Copilot follow `hideBuiltinEngines` only (no team
+ * default, L7). Cosmetic: no run path reads it, so a job naming a hidden built-in keeps working.
+ */
+export function builtinsHidden({ projectDir = null } = {}) {
+  const teamHide = projectDir ? teamDefault(projectDir, 'models.hideBuiltins') : undefined;
+  const claude = readSettingsHideStored() ? hideBuiltinModels() : (teamHide === true || hideBuiltinModels());
+  const engines = hideBuiltinEngines();
+  return { claude, codex: engines.codex === true, copilot: engines.copilot === true };
+}
+
+/**
  * Compose the EFFECTIVE catalog (configurable-models-design.md §4.2, §9.2):
  * predefined ⊕ plugin models ⊕ global settings entries ⊕ legacy per-project
  * custom models. Precedence on an id collision: global (user) beats plugin
@@ -251,10 +265,11 @@ function composeCatalog(projectCustom = [], { projectDir = null } = {}) {
   // read by every picker. The entry stays in the catalog — hiding an id must
   // never stop it resolving, or a stored run / plugin reference that names it
   // would break — so pickers skip `hidden`, validators ignore it.
-  // A team-policy default applies only while the developer has not stored the flag themselves.
-  const teamHide = projectDir ? teamDefault(projectDir, 'models.hideBuiltins') : undefined;
-  const hideStored = readSettingsHideStored();
-  const hidden = (hideStored ? hideBuiltinModels() : (teamHide === true || hideBuiltinModels())) ? { hidden: true } : {};
+  // Each harness decides for its own built-ins (builtinsHidden); an un-hidden row gets NO `hidden` key.
+  const hides = builtinsHidden({ projectDir });
+  const hidden = hides.claude ? { hidden: true } : {};
+  const codexHidden = hides.codex ? { hidden: true } : {};
+  const copilotHidden = hides.copilot ? { hidden: true } : {};
   // Bridged entries (model-bridge-design.md §8.5): `bridged` names the provider
   // (false otherwise), `upstreamApi` the wire protocol, `needsSignIn` whether
   // the provider is usable right now (pickers skip such entries unless they are
@@ -313,7 +328,7 @@ function composeCatalog(projectCustom = [], { projectDir = null } = {}) {
     out.push(shadow
       ? { id: m.id, label: shadow.label, efforts: [...shadow.efforts], engine: engineTag(shadow), custom: 'global', hasEnv: !!shadow.env, routed: routedOrBridged(shadow), ...unreliable(lc), ...bridgeShape(shadow) }
       : pshadow ? pluginShape(m.id, pshadow, lc)
-        : { id: m.id, label: m.label, efforts: [...m.efforts], engine: 'codex', builtin: true, custom: false, hasEnv: false, routed: false });
+        : { id: m.id, label: m.label, efforts: [...m.efforts], engine: 'codex', builtin: true, custom: false, hasEnv: false, routed: false, ...codexHidden });
     seen.add(lc);
   }
   for (const m of COPILOT_BUILTIN_MODELS) {
@@ -324,7 +339,7 @@ function composeCatalog(projectCustom = [], { projectDir = null } = {}) {
     out.push(shadow
       ? { id: m.id, label: shadow.label, efforts: [...shadow.efforts], engine: engineTag(shadow), custom: 'global', hasEnv: !!shadow.env, routed: routedOrBridged(shadow), ...unreliable(lc), ...bridgeShape(shadow) }
       : pshadow ? pluginShape(m.id, pshadow, lc)
-        : { id: m.id, label: m.label, efforts: [...m.efforts], engine: 'copilot', builtin: true, custom: false, hasEnv: false, routed: false });
+        : { id: m.id, label: m.label, efforts: [...m.efforts], engine: 'copilot', builtin: true, custom: false, hasEnv: false, routed: false, ...copilotHidden });
     seen.add(lc);
   }
   for (const m of globals) {
@@ -860,7 +875,7 @@ export async function assertSlotModels(items, { projectDir = '', pending = [] } 
   }
 }
 
-/** POST /api/settings `designModels` (Models › Engines › Design): the patch's shape, then every pick against the catalog
+/** POST /api/settings `designModels` (Models › Jobs › Design): the patch's shape, then every pick against the catalog
  *  (a model its engine runs, with an effort it takes), before anything is written. */
 export async function assertDesignModelsSlots(input) {
   const patch = assertDesignModelsInput(input);
@@ -1824,7 +1839,8 @@ function allProjectConfigRows() {
 /**
  * Preview what removing a global catalog entry would clear, for the UI's
  * confirmation dialog. `predefinedShadow: true` means the removal only reverts
- * an override and clears nothing. `memoryDefrag: true` (present only then) —
+ * an override of a built-in (Claude's, Codex's or Copilot's list: an override of
+ * the last two is an engine-tagged global) and clears nothing. `memoryDefrag: true` (present only then) —
  * Settings › Memory's defragment model is this id. Synchronous; never throws.
  * @param {string} id
  * @returns {{predefinedShadow: boolean,
@@ -1834,7 +1850,7 @@ function allProjectConfigRows() {
  */
 export function globalModelRefs(id) {
   const lc = (typeof id === 'string' ? id : '').trim().toLowerCase();
-  if (PREDEFINED_MODELS.some((m) => m.id.toLowerCase() === lc)) {
+  if ([PREDEFINED_MODELS, CODEX_BUILTIN_MODELS, COPILOT_BUILTIN_MODELS].some((list) => list.some((m) => m.id.toLowerCase() === lc))) {
     return { predefinedShadow: true, steps: [], nodes: [] };
   }
   const defrag = memoryDefragModel().model;
@@ -1843,6 +1859,34 @@ export function globalModelRefs(id) {
     ...refsForModelId(lc, allProjectConfigRows()),
     ...(defrag && defrag.toLowerCase() === lc ? { memoryDefrag: true } : {}),
   };
+}
+
+/**
+ * Every project-level model pick: step picks (project_config.steps) and workflow node picks
+ * (config_workflow_nodes), one read each — never one query per catalogue id. A pick whose
+ * project's legacy customModels carry the same id is left out: it keeps resolving there
+ * (refsForModelId's carve-out). Synchronous; feeds model-uses.mjs.
+ * @returns {Array<{kind:'project-step', projectKey:string, step:string, model:string}
+ *               | {kind:'project-node', projectKey:string, workflowId:string, nodeId:string, model:string}>}
+ */
+export function projectModelPicks() {
+  const rows = allProjectConfigRows();
+  const legacy = new Map(rows.map((r) => [r.projectKey, new Set(r.customModels.map((m) => m.id.toLowerCase()))]));
+  const legacyKeeps = (key, model) => !!legacy.get(key)?.has(model.toLowerCase());
+  const picks = [];
+  for (const r of rows) {
+    for (const [step, v] of Object.entries(r.steps)) {
+      if (typeof v?.model === 'string' && v.model && !legacyKeeps(r.projectKey, v.model)) {
+        picks.push({ kind: 'project-step', projectKey: r.projectKey, step, model: v.model });
+      }
+    }
+  }
+  for (const n of prepare('SELECT project_key, workflow_id, node_id, model FROM config_workflow_nodes WHERE model IS NOT NULL').all()) {
+    if (typeof n.model === 'string' && n.model && !legacyKeeps(n.project_key, n.model)) {
+      picks.push({ kind: 'project-node', projectKey: n.project_key, workflowId: n.workflow_id, nodeId: n.node_id, model: n.model });
+    }
+  }
+  return picks;
 }
 
 /** Cross-project step/node refs to one lowercased model id, minus projects

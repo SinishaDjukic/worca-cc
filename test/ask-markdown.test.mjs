@@ -189,3 +189,25 @@ test('ask-markdown: hljs output that changes the text is rejected', async () => 
   assert.equal(host.querySelector('.hljs-keyword'), null, 'text must round-trip byte-for-byte');
   assert.equal(host.querySelector('code').textContent, 'const a = 1;\n');
 });
+
+test('ask-markdown: every code block carries the one copy button, which copies the code\'s text', async () => {
+  const r = await makeReady();
+  const out = htmlOf(r.render('Run:\n\n```bash\nnpm test\n```\n\nand `inline` stays bare\n\n```\na < b\n```'));
+  const boxes = out.querySelectorAll('.md-code');
+  assert.equal(boxes.length, 2);
+  for (const box of boxes) {
+    assert.ok(box.querySelector(':scope > pre > code'), 'the block itself is unchanged inside its wrapper');
+    const btn = box.querySelector(':scope > button.copy-btn.md-code-copy');
+    assert.ok(btn);
+    assert.equal(btn.getAttribute('aria-label'), 'Copy code');
+  }
+  assert.equal(out.querySelectorAll('.copy-btn').length, 2, 'inline code gets no button');
+  const copied = [];
+  const win = dom.window;
+  Object.defineProperty(win.navigator, 'clipboard', { value: { writeText: async (t) => { copied.push(t); } }, configurable: true });
+  win.document.body.append(out);
+  boxes[1].querySelector('button').click();
+  await new Promise((res) => win.setTimeout(res, 0));
+  assert.deepEqual(copied, ['a < b\n']);
+  out.remove();
+});

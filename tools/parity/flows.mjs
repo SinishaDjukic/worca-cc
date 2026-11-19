@@ -19,9 +19,10 @@ export function chromePath(env = process.env, exists = existsSync) {
 
 /** Chrome with a deterministic raster: one raster thread, no GPU or partial raster, a fixed colour profile, no LCD text.
  *  A dev-vs-dev smoke showed anti-aliased rounded corners differing by a few pixels between two runs of the same tree
- *  (the crawler's shots, then the 18 shots: the new-run composer card and a chat-home toolbar button corner by 1 px). */
+ *  (the crawler's shots, then the 18 shots: the new-run composer card and a chat-home toolbar button corner by 1 px).
+ *  The last two keep Chrome off the login keychain (no macOS prompt, whatever HOME is). */
 export const CRAWL_CHROME_ARGS = ['--disable-gpu', '--disable-gpu-rasterization', '--num-raster-threads=1', '--disable-partial-raster',
-  '--force-color-profile=srgb', '--disable-lcd-text', '--font-render-hinting=none'];
+  '--force-color-profile=srgb', '--disable-lcd-text', '--font-render-hinting=none', '--use-mock-keychain', '--password-store=basic'];
 /** The launch args of every parity Chrome: the raster flags, plus no sandbox when asked for or as root. */
 export function chromeArgs(env = process.env, uid = process.getuid?.()) {
   const noSandbox = env.CHROME_NO_SANDBOX === '1' || uid === 0;

@@ -1,22 +1,14 @@
 // ui/public/away-screensaver.mjs — an easter egg: the Worca wordmark drifts across the window like an old
 // screensaver, over a faint network, with one line that says how your runs and chats are doing.
 //
-// It shows only while ALL of these hold, and nothing else turns it on:
-//   - Away mode is on now (the account corner's away badge),
-//   - the Keep awake setting is on,
-//   - the Worca window is the active one (visible and focused),
-//   - no mouse or key input in that window for IDLE_MS.
-// Any input hides it again, and that input does not reach the page. There is no Labs flag: AWAY_SCREENSAVER is the
-// one switch, in code. app.js owns the state and hands it over through getState (like activity-menu.mjs).
+// It shows when the Settings › Appearance Screensaver switch is on and there has been no mouse or key input in the
+// window for the chosen Start after time. Nothing else turns it on.
+// Any input hides it again, and that input does not reach the page. app.js owns the state and hands it over through
+// getState (like activity-menu.mjs).
 import { RUN_STATES } from '../../src/shared/run-model.mjs';
 import { CHAT_STATES } from './chats-list.mjs';
 import { renderStatusDot } from './status-dot.mjs';
 import { askCardsIn } from './alerts.mjs';
-
-/** The easter egg's on/off switch. On by design; set to false to turn it off. */
-export const AWAY_SCREENSAVER = true;
-// 5 minutes, not 10: a 10-minute display sleep (the macOS and Windows default) would turn the screen off first.
-export const IDLE_MS = 5 * 60 * 1000;
 
 const INPUTS = ['pointermove', 'pointerdown', 'mousedown', 'click', 'keydown', 'wheel', 'touchstart'];
 const SPEED = 60;          // px per second, each axis
@@ -25,8 +17,8 @@ const NODES = 28;
 const LINK_PX = 130;
 
 /** True when the screensaver should be on screen. */
-export function shouldShow({ enabled = AWAY_SCREENSAVER, away, keepAwake, focused, idleMs }) {
-  return !!(enabled && away && keepAwake && focused && idleMs >= IDLE_MS);
+export function shouldShow({ enabled, idleMinutes, idleMs }) {
+  return !!enabled && idleMs >= idleMinutes * 60000;
 }
 
 const plural = (n, one, many) => (n === 1 ? one : many);
@@ -82,7 +74,7 @@ export function createChatTracker() {
   };
 }
 
-/** getState() → { away, keepAwake, runs: { running, questions, askTitle, paused, failed, done }, chatUnread }.
+/** getState() → { enabled, idleMinutes, runs: { running, questions, askTitle, paused, failed, done }, chatUnread }.
  *  app.js calls tick() from its 1 s timer and onAskFrame() for every Ask frame. */
 export function createAwayScreensaver({ doc, win, getState, now = () => Date.now() }) {
   const chats = createChatTracker();
@@ -242,8 +234,7 @@ export function createAwayScreensaver({ doc, win, getState, now = () => Date.now
   return {
     tick() {
       const st = getState() || {};
-      const focused = doc.visibilityState === 'visible' && doc.hasFocus();
-      const on = shouldShow({ away: st.away, keepAwake: st.keepAwake, focused, idleMs: now() - lastInput });
+      const on = shouldShow({ enabled: st.enabled, idleMinutes: st.idleMinutes, idleMs: now() - lastInput });
       if (!on) { hide(); return; }
       if (!root) show();
       paint(pickScene({ ...(st.runs || {}), ...chats.counts(), chatUnread: !!st.chatUnread }));

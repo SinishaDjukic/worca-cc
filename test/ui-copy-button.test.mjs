@@ -203,3 +203,30 @@ test('the Copilot device code is its own copy button; a miss stays in the status
   assert.equal(status.textContent, 'Could not copy the code. Type ABCD-1234 on GitHub instead.');
   assert.ok(status.classList.contains('err'));
 });
+
+test('writeClipboard with html: one entry with both types; no ClipboardItem or a refused write falls back to the text', async () => {
+  const { writeClipboard } = await import('../ui/public/copy-button.mjs');
+  const mk = ({ item = true, refuse = false } = {}) => {
+    const log = [];
+    const win = {
+      Blob: class { constructor(parts, o) { this.s = parts.join(''); this.type = o.type; } },
+      navigator: { clipboard: {
+        write: async ([it]) => { if (refuse) throw new Error('denied'); log.push(Object.fromEntries(Object.entries(it.items).map(([k, b]) => [k, b.s]))); },
+        writeText: async (t) => { log.push({ 'text/plain': t }); },
+      } },
+    };
+    if (item) win.ClipboardItem = class { constructor(items) { this.items = items; } };
+    return { win, log };
+  };
+  const both = mk();
+  assert.equal(await writeClipboard(both.win, '# A', { html: '<h1>A</h1>' }), true);
+  assert.deepEqual(both.log, [{ 'text/html': '<h1>A</h1>', 'text/plain': '# A' }]);
+  for (const o of [{ item: false }, { refuse: true }]) {
+    const w = mk(o);
+    assert.equal(await writeClipboard(w.win, '# A', { html: '<h1>A</h1>' }), true);
+    assert.deepEqual(w.log, [{ 'text/plain': '# A' }], JSON.stringify(o));
+  }
+  const plain = mk();
+  await writeClipboard(plain.win, 'x');
+  assert.deepEqual(plain.log, [{ 'text/plain': 'x' }], 'no html: writeText as before');
+});

@@ -430,6 +430,23 @@ test('10 quiescence without an End token resolves done with the warning', async 
   ]);
 });
 
+test('10a an execution\'s scope notice rides getState().scopeNotices and one short log line, never a warning', async () => {
+  const tpl = TPL(
+    [N('n_task', 'task'), N('n_make', 'agent', 'maker'), N('n_check', 'agent', 'checker'), N('n_end', 'end')],
+    [W('w1', 'n_task.task', 'n_make.task'), W('w2', 'n_make.out', 'n_check.plan'), W('w3', 'n_check.review', 'n_end.result')],
+  );
+  const notice = { nodeId: 'n_make', executionId: 'x', count: 1, expectedCount: 4, cross: false, notable: [{ path: '/etc/hosts', tool: 'Read' }] };
+  const LINE = 'n_make read or wrote 1 path outside its checkout (see executions.ndjson)';
+  const h = harness({ template: tpl, script: { n_make: () => ({ ...md('/p/p.md'), scope: notice, scopeLine: LINE }), n_check: () => ({ verdict: CLEAN }) } });
+  await h.scheduler.run();
+  const st = h.scheduler.getState();
+  assert.deepEqual(st.scopeNotices, [notice]);
+  assert.ok(!st.warnings.some((w) => w.includes('outside its checkout')), 'not a banner');
+  assert.deepEqual(h.logs.filter((l) => l.includes('outside its checkout')), [LINE]);
+  st.scopeNotices[0].notable[0].path = 'changed';
+  assert.equal(h.scheduler.getState().scopeNotices[0].notable[0].path, '/etc/hosts', 'getState hands out copies');
+});
+
 test('10b the dead-end set rides the snapshot: a resumed run still names it', async () => {
   // MIN-58 resume twin. `deadEnds` is scheduler-local state exactly like `wires`: a
   // run that paused AFTER an output fired into nothing and only quiesces after the

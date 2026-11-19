@@ -33,9 +33,10 @@ const where = (r, v) => `style.css:${r.line} ${r.sel.slice(0, 80)} → ${v}`;
 
 const TOKEN = /^(?:var\(--r-(?:xs|sm|md|lg|pill|card|ctrl)\)|0|inherit)$/;
 // D2: the five round kinds. Extend only with a selector of one of these kinds.
-// Dots: nav-rollup, tl-mark.is-open, tl-pr-start, hd-base-pill::before, rg-td, ask-rp-kicker::before, npip/nwarn.
+// Dots: nav-rollup, tl-mark.is-open, tl-pr-start, hd-base-pill::before, rg-td, ask-rp-kicker::before, npip/nwarn,
+// mdl-st::before (the Models page's state word).
 // Knobs: .wz .tog::after. Spinners: the busy::after rings.
-const ROUND = /dot|\bava\b|-ava\b|avatar|person-ini|knob|switch::after|tog::after|spin|busy::after|\bled\b|radio|status-word::before|nav-rollup|tl-mark\.is-open|tl-pr-start|hd-base-pill::before|rg-td|kicker::before|npip|nwarn/;
+const ROUND = /dot|\bava\b|-ava\b|avatar|person-ini|knob|switch::after|tog::after|spin|busy::after|\bled\b|radio|status-word::before|nav-rollup|tl-mark\.is-open|tl-pr-start|hd-base-pill::before|rg-td|kicker::before|npip|nwarn|mdl-st::before/;
 
 test('radius tokens (decided 2026-10-19): xs 4, sm 6, md 8, lg 12, pill; card = md, ctrl = sm', () => {
   const root = ALL.find((r) => r.sel === ':root').body;   // the first :root (line 14) is the token block
@@ -167,7 +168,10 @@ const GRADIENT_OK = new Set(['.wf-pop-canvas', '.run-flow-wrap', '.ask-wfcard-gr
   '.chat-home-wf-tb', '.skel', '.ws-sum-pending', '.shipit-desc-field.is-generating .shipit-desc-busy::before',
   '.shipit-desc-busy-label', '.ask-thinking-label', '.ask-wfcard-step.is-live .st-label', '.wfc-act-l', '.pp-shimmer',
   '.ask-ctx-bar-buffer', '.ask-ctx-stat[data-stat="buffer"] .ask-ctx-swatch', '.chat-dock::before',
-  '.plan-md.collapsed::after', '.sn-adorn.sn-loading .input', '.rs-hand', '.dz-trail']);
+  '.plan-md.collapsed::after', '.sn-adorn.sn-loading .input', '.rs-hand', '.dz-trail',
+  '[data-view="settings"] > .settings-tabs::before', '[data-view="settings"] > .settings-tabs::after',
+  // Brand gradients, not textures: the Models page's own/plugin mark tile and its Best chip.
+  '.mdl-mark.own', '.mdl-best']);
 test('gradients only as functional textures (D15)', () => {
   const bad = ALL.flatMap((r) => decls(r.body, 'background(?:-image)?')
     .filter(([, v]) => /gradient\(/.test(v) && !GRADIENT_OK.has(r.sel)).map(([, v]) => where(r, v.slice(0, 40))));
@@ -274,7 +278,7 @@ test('the floating shadow tokens only on floating surfaces (A2)', () => {
 });
 
 // One tab style (review A3, B4): .tab is underline; per-view tab classes keep spacing only.
-const TAB_HOOKS = ['rd-tab', 'hd-tab', 'pd-tab', 'tp-tab', 'chat-home-tab', 'wfl-tab', 'af-tab', 'md-tab', 'hd-cmt-tab', 'activity-tab'];
+const TAB_HOOKS = ['rd-tab', 'hd-tab', 'pd-tab', 'tp-tab', 'chat-home-tab', 'wfl-tab', 'af-tab', 'md-tab', 'hd-cmt-tab', 'activity-tab', 'mdl-tab'];
 const TAB_SKIN = /^(?:height|min-height|border(?:-[a-z]+)*|background(?:-[a-z]+)?|color|font(?:-[a-z]+)?|box-shadow|letter-spacing|text-transform|line-height)$/;
 test('tabs: one underline .tab at 32px; no boxed or per-view tab skin (A3)', () => {
   const tab = (ALL.find((r) => r.sel === '.tab') || {}).body || '';

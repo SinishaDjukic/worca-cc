@@ -41,7 +41,7 @@ test('the page describes made pictures', () => {
 // never a bare "model"), and neither page says "with no sound". docs/design.md already names models: pin its click sentence.
 test('docs/sound.md says where the key, the money and the files go, and the Design page links it', () => {
   const page = readFileSync(new URL('../docs/sound.md', import.meta.url), 'utf8');
-  assert.match(page, /Providers › \**Sound \(Design\)/);
+  assert.match(page, /Models › Providers › \*\*Sound\*\* shows/);
   for (const yes of ['assets/sound/', '$0.08', '$0.15']) assert.ok(page.includes(yes), yes);
   assert.ok(page.trimEnd().split('\n').length <= 60, 'at most 60 lines');
   assert.doesNotMatch(page, /claude|opus|sonnet|haiku|fable|session/i);

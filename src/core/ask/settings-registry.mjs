@@ -25,11 +25,12 @@ export const SETTING_EXCLUSIONS = Object.freeze([
   { match: ['askWeb', 'chat.scriptTools'], what: "Chat web access and the chat's script tools", why: "the chat's own powers are only the user's to grant" },
   { match: ['chat.channels'], what: 'Chat channels', why: 'they send messages to another service' },
   { match: ['nightMode', 'nightModeToggle'], what: 'Away mode settings', why: 'Away mode keeps its own card (propose_away_mode_change) and switch (set_away_now)' },
-  { match: ['providers', 'models', 'speech', 'credentials', 'mcp', 'plugins', 'marketplaces'], what: 'Providers, model catalog entries, speech, credentials, MCP servers and plugins', why: 'they hold keys and tokens, or run outside code' },
+  { match: ['providers', 'models', 'speech', 'credentials', 'mcp', 'plugins', 'marketplaces'], what: 'Providers, model catalog entries, speech, credentials, MCP servers (list_mcp_servers and propose_mcp_change cover them) and plugins', why: 'they hold keys and tokens, or run outside code' },
   { match: ['policy', 'metrics'], what: 'Team policy and team metrics', why: 'they publish to the team' },
   { match: ['memory.team'], what: 'Team memory sharing', why: 'it publishes to the team' },
   { match: ['guardrails'], what: 'Guardrail sets', why: 'editing a set can loosen it' },
-  { match: ['hideBuiltinModels'], what: 'Hide built-in models', why: 'once set it overrides the team default, and a Revert could not bring that back — the Models page sets it' },
+  { match: ['hideBuiltinModels'], what: 'Hide built-in models', why: 'once set it overrides the team default, and a Revert could not bring that back — Models › Catalogue sets it' },
+  { match: ['hideBuiltinEngines'], what: 'Hide built-in models (Codex, Copilot)', why: 'Models › Catalogue sets it, one switch per harness' },
 ]);
 const exclusionOf = (id) => SETTING_EXCLUSIONS.find((e) => e.match.some((m) => id === m || id.startsWith(`${m}.`))) || null;
 const WRITE_NEVER = new Set(['root', 'projectsRoot', 'actions']);

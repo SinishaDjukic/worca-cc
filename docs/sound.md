@@ -18,7 +18,7 @@ Later, the **Sound** row in the composer's settings shows the pick, and its **Ch
 
 ## The key
 
-Providers › **Sound (Design)** shows the key, *Test* checks it (*Key works · n voices*), and *Save* stores it; empty
+Models › Providers › **Sound** shows the key, *Test* checks it (*Key works · n voices*), and *Save* stores it; empty
 the field and *Save* to remove it. A key that works when typed in the card is saved the same way. It sits in worca's
 settings on this machine (`settings.json` in your home folder, under `providers.sound`; see [Storage](storage.md)):
 a literal, shown masked, or a `${VAR}` that worca reads from its own environment, shown as written. It goes only to
