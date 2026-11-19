@@ -113,6 +113,43 @@ test('happy path: frames ordered, session stored immediately, row + totals persi
   assert.deepEqual(done.threadTotals, totals);
 });
 
+// #1479: Claude Code's total_cost_usd is the session's running total and --resume restores it into the next turn's
+// result, so each turn books only what it added; the thread keeps the last total per session (totals.sessionCost).
+test('a resumed turn books what it added to the session\'s running total, not the total (#1479)', async () => {
+  const thread = createThread();
+  const booked = [];
+  const turnOn = async (resumeSessionId, results) => {
+    const user = appendMessage(thread.id, { role: 'user', text: 'q' });
+    const asst = appendMessage(thread.id, { role: 'assistant', text: '', status: 'streaming' });
+    const { turn, frames } = makeTurn({ thread, user, asst }, { resumeSessionId }, {
+      recordAskCost: (row) => booked.push(row.amountUsd),
+      runClaudeImpl: async (opts) => {
+        opts.onEvent({ type: 'session', sessionId: results[0].session_id });
+        say(opts.onEvent, 'msg_1', 'answer');
+        for (const r of results) push(opts.onEvent, RESULT(r));
+        return { text: 'answer', exitCode: 0 };
+      },
+    });
+    await turn.run();
+    return { row: getMessage(asst.id), done: frames.find((f) => f.type === 'ask-done') };
+  };
+  const t1 = await turnOn(null, [{ total_cost_usd: 0.05 }]);
+  assert.equal(t1.row.costUsd, 0.05, 'a fresh session: the whole total is the first turn');
+  assert.deepEqual(getThread(thread.id).totals.sessionCost, { sessionId: 'sess-1', usd: 0.05 });
+  const t2 = await turnOn('sess-1', [{ total_cost_usd: 0.08 }]);
+  assert.equal(t2.row.costUsd, 0.03, 'the resumed turn: 0.08 − 0.05');
+  assert.equal(t2.done.costUsd, 0.03);
+  assert.equal(t2.done.threadTotals.costUsd, 0.08, 'the chat total equals the session total, never 0.13');
+  const t3 = await turnOn('sess-1', [{ total_cost_usd: 0.1 }, { total_cost_usd: 0.12 }]);
+  assert.equal(t3.row.costUsd, 0.04, 'a re-woken process adds its share, never the running total twice');
+  const t4 = await turnOn(null, [{ session_id: 'sess-2', total_cost_usd: 0.02 }]);
+  assert.equal(t4.row.costUsd, 0.02, 'a replaced session (resume fallback) starts from nothing');
+  assert.deepEqual(booked, [0.05, 0.03, 0.04, 0.02], 'the budget ledger books the same figures');
+  const totals = getThread(thread.id).totals;
+  assert.equal(totals.costUsd, 0.14);
+  assert.deepEqual(totals.sessionCost, { sessionId: 'sess-2', usd: 0.02 });
+});
+
 test('session: the init frame\'s session event does not store the id a second time', async () => {
   const s = seed();
   const writes = [];

@@ -29,6 +29,10 @@
   },
   "costUsd": 0,
   "sessionId": "00000000-0000-0000-0000-000000000000",
+  "sessionCost": {
+   "sessionId": "00000000-0000-0000-0000-000000000000",
+   "usd": 0
+  },
   "status": "done",
   "reason": null,
   "resultSubtype": "error_during_execution",

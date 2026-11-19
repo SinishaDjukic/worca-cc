@@ -114,6 +114,10 @@
   },
   "costUsd": 0.0049465,
   "sessionId": "00000000-0000-4000-8000-000000000001",
+  "sessionCost": {
+   "sessionId": "00000000-0000-4000-8000-000000000001",
+   "usd": 0.0049465
+  },
   "status": "stopped",
   "reason": "max_turns",
   "resultSubtype": "error_max_turns",
