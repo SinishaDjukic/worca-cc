@@ -103,9 +103,11 @@
   [data-view="settings"] > .settings-tabs .tab:is(.on,.active,[aria-selected="true"])::after{right:auto;top:0;width:2px;height:auto;}
   [data-view="settings"] .settings-card{margin-left:0;margin-right:0;}
   .settings-sub{display:flex;flex-direction:column;flex:none;margin:2px 0 6px;}
-  .settings-sub a{flex:none;height:28px;padding:0 12px 0 38px;color:var(--ink-2);font:400 12px/28px var(--sans);text-decoration:none;
+  /* One size in the column (13px, the cards' own label size): tabs are medium, card links regular, the card on screen medium. */
+  .settings-sub a{flex:none;height:28px;padding:0 8px 0 38px;color:var(--ink-2);font:400 13px/28px var(--sans);text-decoration:none;
     white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
   .settings-sub a:is(:hover,[aria-current="true"]){color:var(--ink);}
+  .settings-sub a[aria-current="true"]{font-weight:500;}
   .settings-sub a:focus-visible{outline:2px solid var(--ink);outline-offset:-2px;border-radius:var(--r-sm);}
 }
 /* A pane is a plain block — it is deliberately NOT .view (see index.html). */
