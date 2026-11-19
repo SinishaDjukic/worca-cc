@@ -211,7 +211,7 @@ D1–D85 hold. These continue them. The `(technical)` rows are for the reviewer.
 2. **The judge call's options** (Task 6). Expect `tools: []`, `systemPromptMode: 'replace'`, `noSessionPersistence: true`, `settingSources: ['project']` without a sign-in in user settings, the model's `modelEnv`, `spawnKind: 'aux'`, and an empty scratch `cwd`.
 3. **Proof** (Task 6). Expect a quote with curly quotes, extra spaces, markdown stars or an ellipsis to be found; a made-up quote not found; one retry; then "not counted".
 4. **Spend** (Tasks 5, 7). Expect judge spend in `budgetStatus().windowSpendUsd`, in `spentOfRun`, in the test's cap, and not in Statistics or "Saved".
-5. **Mock is free** (Tasks 6, 7, 13, 14, 15). Expect no `helperCall` and no ledger row under `WORCA_MOCK=1` or for a mock try.
+5. **Mock is free** (Tasks 6, 7, 13, 14, 15). Expect no `helperCall` and no ledger row under `WORCA_MOCK=1` or for a mock try, and none for Check the checker on a good result that came from a mock try (I14).
 6. **D14** (Task 8). Expect never "unreliable" below 10 answers; the side rule; a new text or model resets to "confirm".
 7. **Better or worse** (Task 9). Expect an unreliable criterion that differs to leave the example "same" and to be named; a not-checked criterion never to fail a try; a criterion checked on one version's tries but not on the other's to decide on neither side (I6) and to be named; Part 2's verdicts untouched in the DB.
 8. **Exact checks** (Task 3). Expect quotes found across spacing and quote marks, list markers and single digits ignored, IBAN and Luhn checked, no false phone numbers on dates.
@@ -256,13 +256,14 @@ D1–D85 hold. These continue them. The `(technical)` rows are for the reviewer.
 | `src/core/db.mjs` | `SCHEMA_VERSION = 99`; imports the DDL from `schema.mjs` (the three v96–v98 constants move out); the v99 rung; `INCREMENTAL_TABLES` / `INCREMENTAL_COLUMNS` entries. |
 | `src/core/cost-budget.mjs` | `recordTestJudgeCost`, `testJudgeWindowedSpendUsd`, in `totalWindowSpendUsd` and in `budgetStatus()`'s `allTimeSpendUsd` field (`cost-budget.mjs:190`). |
 | `src/core/stats.mjs` | `budgetWindowSavings` subtracts judge spend. |
-| `src/shared/workflow-tests/checks.mjs` | The four kinds, `said`, `runCheck({ sources })`, `PART4_KINDS`. |
-| `src/shared/workflow-tests/compare.mjs` | `missCounts` counts deciding criteria; `estimateOf` adds criteria cost. |
-| `src/core/workflow-tests/store.mjs` | `criteria`, `judge`, `liked` on an example; `deleteExample` clears Part 4 rows; `spentOfRun` adds the judge ledger. |
+| `src/shared/workflow-tests/checks.mjs` | The four kinds, `said`, `runCheck({ sources })`, `PART4_KINDS`; `judgeTry`: a `notChecked` check does not decide (Task 4, I12). |
+| `src/shared/workflow-tests/compare.mjs` | `missCounts` counts deciding criteria and skips `notChecked` checks; `estimateOf` adds criteria cost. |
+| `src/core/workflow-tests/store.mjs` | `criteria`, `judge`, `liked` on an example; `deleteExample` clears Part 4 rows; `spentOfRun` adds the judge ledger; `costUnknownOfRun`, `triesForExample`, `mockPipeline`. |
 | `src/core/workflow-tests/result.mjs` | `checkTry` passes sources, runs links; `readTryPatch`. |
-| `src/core/workflow-tests/runner.mjs` | The criteria call after a try's checks; the criteria phase. |
-| `src/core/workflow-tests/routes.mjs` | The runner's criteria deps; the overview's trust summary; the plan's criteria estimate. |
-| `src/core/workflow-tests/service.mjs` | `saveExample` stores the suggested model; tries read with their criteria (three call sites); `tryChanges` reads through `readTryPatch`. |
+| `src/core/workflow-tests/runner.mjs` | The criteria call after a try's checks; the criteria phase; "Check them on these tries" held by the runner (BUSY, the test's cap: Task 11, I15). |
+| `src/core/workflow-tests/routes.mjs` | The runner's criteria deps; the overview's trust summary; the plan's criteria estimate; the side by side passes the viewer (I9). |
+| `src/core/workflow-tests/start.mjs` | Boot: a Check the checker round left `making` is failed (M18). |
+| `src/core/workflow-tests/service.mjs` | `saveExample` stores the suggested model; tries read with their criteria (three call sites); `sideBySide` takes `by`; `tryChanges` reads through `readTryPatch`; `usablePastRun` exported; `pastRunSummary.hasResult`. |
 | `ui/routes/workflows/workflow-tests.mjs` | Registers `criteria-routes.mjs`. |
 | `ui/public/workflows/{tests-view,tests-app,example-editor,test-dialogs,test-compare}.mjs`, `workflow-tests.css` | Wiring of the new views. |
 | `docs/storage.md`, `docs/costs.md`, `docs/feature-flags.md`, `docs/ui-levels.md`, `docs/workflows.md`, `docs/changelog/unreleased.md`, `plans/workflow-tests-plan.md` | Task 25. |
