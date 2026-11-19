@@ -3120,3 +3120,185 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
 
 ---
 
+## Task 12: A result you liked (D101) — 4b starts here
+
+**Files:**
+- Modify: `src/core/workflow-tests/criteria-store.mjs` (liked), `src/core/workflow-tests/store.mjs` (`exampleOf` gains `liked` meta), `src/core/workflow-tests/criteria-routes.mjs` (two routes), `src/core/workflow-tests/routes.mjs` (`from-run` keeps the run's result when `liked: true`)
+- Test: `test/workflow-test-liked.test.mjs`, `test/api-workflow-test-criteria.test.mjs` (one case)
+
+**Interfaces:**
+- Produces (criteria-store.mjs): `LIKED_MAX = 2 * 1024 * 1024`, `putLiked(exampleId, { kind, name, data, fromPipeline })`, `readLiked(exampleId) → { kind, name, text, fromPipeline } | null`, `deleteLiked(exampleId)`.
+- Produces (store.mjs): an example has `liked: { kind, name, size } | null`.
+- Produces (criteria-read.mjs): `likedFromPipeline(example, pipelineId) → Promise<void>` (a project example keeps the result and its diff as `changes`).
+- Routes: `PUT /api/workflows/:id/tests/examples/:ex/liked` with `{ name, dataBase64 }` or `{ tryId }` or `{ pipelineId }` → `{ example }`; `DELETE` the same path → `{ example }`. `POST …/examples/from-run` accepts `liked: true`.
+
+- [ ] **Step 1: Write the failing test**
+
+Create `test/workflow-test-liked.test.mjs`:
+```js
+// test/workflow-test-liked.test.mjs — D101: one result you liked per example, text or a project's changes, at most 2 MB, UTF-8.
+import { test, after, beforeEach } from 'node:test';
+import assert from 'node:assert/strict';
+import { mkdtemp, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { _resetForTests } from '../src/core/db.mjs';
+import * as store from '../src/core/workflow-tests/store.mjs';
+import * as cs from '../src/core/workflow-tests/criteria-store.mjs';
+import { likedFromPipeline } from '../src/core/workflow-tests/criteria-read.mjs';
+
+const homes = [];
+beforeEach(async () => { const d = await mkdtemp(join(tmpdir(), 'worca-cc-wftliked-')); homes.push(d); _resetForTests(); process.env.WORCA_HOME = d; });
+after(async () => { _resetForTests(); delete process.env.WORCA_HOME; await Promise.all(homes.map((d) => rm(d, { recursive: true, force: true }))); });
+
+test('put, read, replace and delete; refused when empty, too large or not text', async () => {
+  const ex = store.createExample('wf', { name: 'E', request: 'R' });
+  cs.putLiked(ex.id, { kind: 'text', name: 'brief-good.md', data: Buffer.from('# Brief\nGood.') });
+  assert.deepEqual(store.readExample('wf', ex.id).liked, { kind: 'text', name: 'brief-good.md', size: 13 });
+  assert.equal(cs.readLiked(ex.id).text, '# Brief\nGood.');
+  cs.putLiked(ex.id, { kind: 'text', name: 'other.md', data: Buffer.from('Other') });
+  assert.equal(cs.readLiked(ex.id).name, 'other.md');
+  assert.throws(() => cs.putLiked(ex.id, { kind: 'text', name: 'a.md', data: Buffer.alloc(0) }), { code: 'BAD_REQUEST', message: 'the result you liked is empty' });
+  assert.throws(() => cs.putLiked(ex.id, { kind: 'text', name: 'a.md', data: Buffer.alloc(cs.LIKED_MAX + 1, 97) }), { message: 'the result you liked is larger than 2 MB' });
+  assert.throws(() => cs.putLiked(ex.id, { kind: 'text', name: 'a.png', data: Buffer.from([0xff, 0xfe, 0x81]) }), { message: 'the result you liked must be a text file' });
+  cs.deleteLiked(ex.id);
+  assert.equal(store.readExample('wf', ex.id).liked, null);
+});
+
+test('likedFromPipeline: a run\'s result; a project example also keeps its changes', async () => {
+  const ex = store.createExample('wf', { name: 'E', request: 'R' });
+  await likedFromPipeline(ex, 'p0000001', { readMain: async () => ({ name: 'brief.md', text: 'Good brief.' }), readPatch: async () => null, at: '2026-10-28T00:00:00Z' });
+  assert.deepEqual(cs.readLiked(ex.id), { kind: 'text', name: 'brief.md', text: 'Good brief.', fromPipeline: 'p0000001' });
+  const px = { ...ex, project: { key: 'p-1a2b3c4d' } };
+  await likedFromPipeline(px, 'p0000002', { readMain: async () => ({ name: 'r.md', text: 'Fixed.' }),
+    readPatch: async () => ({ patch: 'diff --git a/x b/x\n+1\ndiff --git a/y b/y\n+2\n' }), at: '2026-10-28T00:00:00Z' });
+  const l = cs.readLiked(ex.id);
+  assert.equal(l.kind, 'changes');
+  assert.match(l.name, /^Changes from the run on .+ · 2 files$/);
+  assert.match(l.text, /^Fixed\.\n\n--- The changes this try made/);
+});
+```
+In `test/api-workflow-test-criteria.test.mjs` add:
+```js
+test('PUT and DELETE the result you liked', async () => {
+  const ex = store.listExamples('wf_api_c')[0];
+  const put = await call('PUT', `${WF}/examples/${ex.id}/liked`, { name: 'good.md', dataBase64: Buffer.from('Good brief.').toString('base64') });
+  assert.equal(put.status, 200);
+  assert.deepEqual(put.body.example.liked, { kind: 'text', name: 'good.md', size: 11 });
+  assert.equal((await call('PUT', `${WF}/examples/${ex.id}/liked`, {})).status, 400);
+  assert.equal((await call('DELETE', `${WF}/examples/${ex.id}/liked`)).body.example.liked, null);
+});
+```
+
+- [ ] **Step 2: Run it to see it fail**
+
+Run: `node tools/test.mjs test/workflow-test-liked.test.mjs`
+Expected: FAIL (`putLiked` is not exported).
+
+- [ ] **Step 3: Liked in `criteria-store.mjs`** (append; import `createHash` is already there)
+
+```js
+import { testError } from './store.mjs';
+export const LIKED_MAX = 2 * 1024 * 1024;
+const UTF8 = new TextDecoder('utf-8', { fatal: true });
+/** D101: the example's one result you liked; a new one replaces it. `kind` 'text' | 'changes'. */
+export function putLiked(exampleId, { kind = 'text', name, data, fromPipeline = null }) {
+  const buf = Buffer.isBuffer(data) ? data : Buffer.from(data || []);
+  if (!buf.length) throw testError('the result you liked is empty', 'BAD_REQUEST');
+  if (buf.length > LIKED_MAX) throw testError('the result you liked is larger than 2 MB', 'BAD_REQUEST');
+  try { UTF8.decode(buf); } catch { throw testError('the result you liked must be a text file', 'BAD_REQUEST'); }
+  const clean = typeof name === 'string' ? name.replace(/\s+/g, ' ').trim().slice(0, 200) : '';
+  if (!clean || !['text', 'changes'].includes(kind)) throw testError('give the result you liked a name', 'BAD_REQUEST');
+  getDb();
+  prepare(`INSERT INTO wf_test_liked (example_id, kind, name, data, sha256, size, from_pipeline, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(example_id) DO UPDATE SET kind = excluded.kind, name = excluded.name, data = excluded.data, sha256 = excluded.sha256,
+      size = excluded.size, from_pipeline = excluded.from_pipeline, created_at = excluded.created_at`)
+    .run(Number(exampleId), kind, clean, buf, createHash('sha256').update(buf).digest('hex'), buf.length, fromPipeline, nowIso());
+}
+export function readLiked(exampleId) {
+  getDb();
+  const r = prepare('SELECT kind, name, data, from_pipeline FROM wf_test_liked WHERE example_id = ?').get(Number(exampleId));
+  return r ? { kind: r.kind, name: r.name, text: Buffer.from(r.data).toString('utf8'), fromPipeline: r.from_pipeline ?? null } : null;
+}
+export function deleteLiked(exampleId) { getDb(); prepare('DELETE FROM wf_test_liked WHERE example_id = ?').run(Number(exampleId)); }
+```
+(store.mjs does not import criteria-store, so there is no cycle.)
+
+- [ ] **Step 4: The example shows it** (`store.mjs`)
+
+```js
+/** Part 4 (D101): the result you liked, without its bytes. */
+function likedOf(exampleId) {
+  const r = prepare('SELECT kind, name, size FROM wf_test_liked WHERE example_id = ?').get(Number(exampleId));
+  return r ? { kind: r.kind, name: r.name, size: Number(r.size) } : null;
+}
+```
+and in `exampleOf`: `liked: likedOf(Number(r.id)),` after `judge`.
+
+- [ ] **Step 5: `likedFromPipeline`** (`criteria-read.mjs`, append)
+
+```js
+import { mainResult, readTryPatch } from './result.mjs';
+import { CHANGES_HEADING } from './judge-prompt.mjs';
+/** D101: a past run's or a try's result as the example's result you liked; a project example keeps the diff too (board 32's name). */
+export async function likedFromPipeline(example, pipelineId, { readMain = mainResult, readPatch = readTryPatch, at = null } = {}) {
+  const m = await readMain(pipelineId);
+  if (typeof m.text !== 'string' || !m.text.trim()) throw store.testError('this run left no result to keep', 'BAD_REQUEST');
+  if (!example.project) { cs.putLiked(example.id, { kind: 'text', name: m.name || 'result.md', data: Buffer.from(m.text), fromPipeline: pipelineId }); return; }
+  const p = await readPatch(pipelineId, cs.LIKED_MAX);
+  const files = p && p.patch ? (p.patch.match(/^diff --git /gm) || []).length : 0;
+  const when = new Date(at || Date.now()).toLocaleDateString('en-GB', { day: 'numeric', month: 'short' });
+  const text = p && p.patch ? `${m.text}\n\n${CHANGES_HEADING}\n${p.patch}` : m.text;
+  cs.putLiked(example.id, { kind: 'changes', name: `Changes from the run on ${when} · ${files} ${files === 1 ? 'file' : 'files'}`,
+    data: Buffer.from(text).subarray(0, cs.LIKED_MAX), fromPipeline: pipelineId });
+}
+```
+(`at` = the run's start: the route passes `findPipelineRowById(pipelineId).started_at`.)
+
+- [ ] **Step 6: The routes**
+
+`criteria-routes.mjs`: append `['PUT', `${W}/examples/:ex/liked`]`, `['DELETE', `${W}/examples/:ex/liked`]` to `CRITERIA_ROUTES`; import `findPipelineRowById` from `../artifacts.mjs` and `likedFromPipeline` from `./criteria-read.mjs`:
+```js
+  const exampleOf = (req) => {
+    const ex = store.readExample(wid(req), num(req.params.ex, 'example'));
+    if (!ex) throw store.testError(`no example ${req.params.ex}`, 'NOT_FOUND');
+    return ex;
+  };
+  route('PUT', `${W}/examples/:ex/liked`, async (req, res) => {
+    const ex = exampleOf(req);
+    const b = req.body || {};
+    if (typeof b.dataBase64 === 'string' && b.dataBase64) {
+      cs.putLiked(ex.id, { kind: 'text', name: b.name, data: Buffer.from(b.dataBase64, 'base64') });
+    } else {
+      let pipelineId = typeof b.pipelineId === 'string' ? b.pipelineId : null;
+      if (b.tryId != null) { const t = store.readTry(num(b.tryId, 'try')); pipelineId = t && t.workflowId === wid(req) && t.exampleId === ex.id ? t.pipelineId : null; }
+      const row = pipelineId ? findPipelineRowById(pipelineId) : null;
+      if (!row) throw store.testError('pick a file, a try or a run to keep as the result you liked', 'BAD_REQUEST');
+      await likedFromPipeline(ex, row.id, { at: row.started_at });
+    }
+    res.json({ example: store.readExample(wid(req), ex.id) });
+  });
+  route('DELETE', `${W}/examples/:ex/liked`, async (req, res) => {
+    const ex = exampleOf(req);
+    cs.deleteLiked(ex.id);
+    res.json({ example: store.readExample(wid(req), ex.id) });
+  });
+```
+`routes.mjs` `from-run`: after `const out = await service.exampleFromRun(…)`, `if (b.liked === true && out.example) await likedFromPipeline(out.example, String(b.pipelineId), { at: (findPipelineRowById(String(b.pipelineId)) || {}).started_at });` then answer `out` with `example` read again.
+
+- [ ] **Step 7: Run the tests**
+
+Run: `node tools/test.mjs test/workflow-test-liked.test.mjs test/api-workflow-test-criteria.test.mjs test/api-workflow-test-criteria-flag-off.test.mjs test/workflow-test-store.test.mjs test/api-workflow-tests.test.mjs`
+Expected: PASS.
+
+- [ ] **Step 8: Commit**
+
+```bash
+git add src/core/workflow-tests/criteria-store.mjs src/core/workflow-tests/store.mjs src/core/workflow-tests/criteria-read.mjs src/core/workflow-tests/criteria-routes.mjs src/core/workflow-tests/routes.mjs test/workflow-test-liked.test.mjs test/api-workflow-test-criteria.test.mjs
+git commit -m "feat(workflow-tests): a result you liked, per example
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
+```
+
+---
+
