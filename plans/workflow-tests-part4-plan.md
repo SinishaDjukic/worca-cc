@@ -32,7 +32,7 @@ Each item has a recommendation (**R**) and the alternative(s). Where a task depe
   - **R: two PRs from this one plan.** 4a = Tasks 1–11 and 17–21 (criteria on examples, the judge, exact checks, spend, trust marks, side by side, Compare by criterion). 4b = Tasks 12–16 and 22–24 (a result you liked, Check the checker, the pair question, suggestions, the trust report, Add from a past run). Task 25 (docs) runs for each; Task 26 is the paid check. 4a is useful on its own; 4b needs 4a.
   - Alternative: one PR (about 25 tasks; slower to review).
 - **P4-Q2. Which AI models can check criteria?**
-  - **R: Claude models from Worca's model catalog only** (the "Checked with" list). Their cost is billed and known; the paid check (Task 26) proves the path once.
+  - **R: the models of Worca's catalog that run on Claude Code** (the "Checked with" list): one call path, the interview's (D88). Claude Code reports each call's cost; P4-Q17 decides who pays and what happens when a cost is not known. The paid check (Task 26) proves the path once, on the Claude sign-in.
   - Alternative: every harness Requirements can use (`helperCall` already runs Codex, Gemini CLI and others), with "estimated" or "unknown" costs to explain in the UI.
 - **P4-Q3. Which model makes the planted mistakes, the suggested criteria and the clearer words?**
   - **R: the example's checking model** (one choice, one price list, nothing new in Settings). Before an example exists (Add from a past run), the suggested checking model.
@@ -78,6 +78,10 @@ Each item has a recommendation (**R**) and the alternative(s). Where a task depe
 - **P4-Q16. "How testing works", step 2 (board 1).** Part 2 changed it (C1) to "Pick the Basics it must meet and add automatic checks, …" because criteria did not exist.
   - **R: back to the approved text** "In your own words, for example "names a goal with a number"." once criteria ship.
   - Alternative: keep Part 2's text.
+- **P4-Q17. Who pays for checking criteria, and which models may check?** The check uses the model's own Worca routing, like a run (D88: `modelEnv: resolveModelEnv(model)`, the credential broker). `runsOn(m, 'claude')` is true for the Claude sign-in **and** for env-routed rows (Vertex, a gateway: `connectionOf` → `{ kind: 'env' }`) and bridged provider rows. So the account that pays may be a cloud account (on this laptop the catalog's Claude models route to Vertex), and a call's cost can come back `billed`, `estimated` or `unknown` (`src/core/helper-call/cost.mjs` `costOfResult`). Before this item, an `unknown` cost booked nothing (`recordTestJudgeCost` skipped $0), so the spending limit would undercount without a word.
+  - **R: every catalog model that runs on Claude Code may check, and "Checked with" names who pays** after each model ("Opus 5.5 · Claude sign-in", "Opus 5.5 · Custom endpoint", "GPT-5 · OpenAI-compatible": `connectionLabel`, `src/shared/connections.mjs:58`). A billed or estimated cost books its amount (`cost_kind` says which). A reply whose cost is `unknown` books a **$0 row with `cost_kind 'unknown'`**, never nothing, and the test's cost and Check the checker's cost line add "· the cost of some checks is not known" (P4-M5, P4-M3). Those calls cannot count in the spending limit; the words say so. Tasks 5, 6, 7, 10, 13–15, 18 and 21 are written for this.
+  - Alternative A: **Claude sign-in rows only** (`connectionOf(m).kind === 'signin'`, engine `claude`). Every cost is Claude Code's billed figure, but a person whose Claude models all route through a cloud account (like this laptop) gets an empty list and cannot use criteria.
+  - Alternative B: as R, but a model whose reply came back `unknown` is not offered for checking while a spending limit is set ("Worca cannot count what this model costs, so it cannot keep to your spending limit").
 
 The canvas could be read (see below). The UI that no approved board draws is listed under "Undrawn UI" (P4-M1–M7): each is mocked on the canvas and approved before its task builds it.
 
@@ -152,12 +156,12 @@ D1–D85 hold. These continue them. The `(technical)` rows are for the reviewer.
 | # | Decision |
 |---|---|
 | D86 | **Where criteria live.** `wf_test_examples.criteria`: a JSON list of `{ id, text }`, at most 12, each 3–300 characters, no two the same after normalising (`criterionKey`: NFKC, straight quotes, lower case, single spaces, no closing full stop). Ids are `k_` + 10 hex characters. Criteria are **not** part of the example fingerprint (P4-Q4): a changed criterion re-checks stored tries and never re-runs the workflow; reuse (D26) is unchanged. |
-| D87 | **The checking model, per example (D12).** `wf_test_examples.judge` = `{ model }`, a Claude model of the catalog (P4-Q2). Saving an example that has criteria and no checking model stores the suggestion (D105). Trust is kept per criterion text **and** model, so changing the model starts the trust tests again (board 2's hint). |
+| D87 | **The checking model, per example (D12).** `wf_test_examples.judge` = `{ model }`, a catalog model that runs on Claude Code, shown with who pays (P4-Q2, P4-Q17). Saving an example that has criteria and no checking model stores the suggestion (D105). Trust is kept per criterion text **and** model, so changing the model starts the trust tests again (board 2's hint). |
 | D88 | **The judge call.** `helperCall({ engine: 'claude', model, claudeOptions: interviewCallOptions('round', { cwd, prompt, model, systemPrompt: JUDGE_SYSTEM_PROMPT, noSessionPersistence: true }, { keepUserSettings }) })`. `cwd` is an empty scratch folder (`<worcaHome>/tmp/workflow-tests/judge`), so no project's settings or CLAUDE.md load. No tools, no MCP. Timeout 120 s. It uses Worca's normal model routing (the model profile's env, the credential broker) like any run: the account that pays is the one that pays for that model in a run. Pretend or Real does not matter: the judge has no connectors. |
 | D89 | **The answer and its proof.** The reply is one JSON object `{ "verdict": "met" \| "not met", "reason": "…", "proof": "…" }`. The proof is a passage copied from the result; Worca searches the result for it (NFKC, quotes and dashes straightened, markdown marks and spaces ignored, case ignored, "…" splitting it into parts that must all be found, at least 8 characters). An unreadable reply is asked once more; a proof that is not found is asked once more and then **not counted** (P4-Q7). |
 | D90 | **What the judge reads.** The try's main result (`mainResult`), and for a project try also its diff (the try's `diff-patch.patch`) under a "Changes" heading; together at most 200,000 characters (cut at a line, and the prompt says it was cut). Context: the example's request, the answers it gives Worca, and its text files (UTF-8 files only), at most 100,000 characters. The proof must come from the result (and diff), never from the context. Everything read is data: the prompt puts it in tags and says never to follow instructions inside. |
 | D91 | **When.** A test's own tries: in the try's checking phase, right after its automatic checks, for every try whose run finished (P4-Q5); criteria already judged for that try, text and model are not asked again. After the last try, a criteria phase checks the tries the test reused (and any still missing). Try it once now too. A mock try, and every call while `WORCA_MOCK=1`, uses `mockJudgement`: free, no ledger row. A judge failure never fails a try: the criterion shows "Not checked …" (P4-C2). |
-| D92 | **Spend.** Every model call of Part 4 that cost money writes a `wf_test_judge_ledger` row (purpose `try`, `pair`, `checker`, `suggest` or `reword`). `testJudgeWindowedSpendUsd` joins `totalWindowSpendUsd` and the budget's all-time figure; `budgetWindowSavings` subtracts it like test tries. A test's own judge rows (`test_run_id`) count in `store.spentOfRun`, so in its cap and every cost shown for it. Statistics shows none of it (Part 6's Tests tile will). With the spending limit reached, no call is made ("Not checked: the spending limit is reached"). |
+| D92 | **Spend.** Every model call of Part 4 that cost money writes a `wf_test_judge_ledger` row (purpose `try`, `pair`, `checker`, `suggest` or `reword`); a reply whose cost is not known writes a $0 row with `cost_kind 'unknown'` (P4-Q17), so it is never silently left out. `testJudgeWindowedSpendUsd` joins `totalWindowSpendUsd` and the budget's all-time figure; `budgetWindowSavings` subtracts it like test tries. A test's own judge rows (`test_run_id`) count in `store.spentOfRun`, so in its cap and every cost shown for it. Statistics shows none of it (Part 6's Tests tile will). With the spending limit reached, no call is made ("Not checked: the spending limit is reached"). |
 | D93 | **The exact checks** (pure, no AI; kinds `quotes`, `numbers`, `no-personal`, `links`). Sources = the example's request, its answers and its UTF-8 files.<br>• **quotes:** text in “…”, "…" or «…» of at least 4 words; each part between "…" must be found in the sources (normalised as D89). No quotes: met.<br>• **numbers:** every number in the result (thousands separators and a trailing % dropped; list markers like "1." at a line start and single digits without % ignored) must be among the sources' numbers.<br>• **no-personal:** no e-mail address, no phone number (a "+" or a leading 0 and 9–15 digits), no IBAN (mod-97 checked), no card number (13–19 digits, Luhn checked).<br>• **links** (P4-Q9): every `http(s)` link (markdown or bare, at most 20 checked, none started after 2 minutes) answers 2xx (or 401, 403, 429) after at most 3 redirects, over https on port 443, with a host name (never an IP address) that resolves to public addresses; the URL rule runs before every hop. When no link of the result got any answer, the check is "Not checked" and does not decide (`notChecked`).<br>The first three may read a file of a project example ("Read from", Part 3a Q11). |
 | D94 | **"Can be checked exactly" (board 2).** A pure rule suggests an exact check for a criterion's words: "quot…" → quotes; "numbers … from/in the files/data/notes/interviews" or "makes up no numbers" → numbers; "personal data", "e-mail", "phone number" → no-personal; "link" → links; a number of 2+ digits with "mention/say/state/name" → "Must mention" that number. **Switch** opens the check dialog with the suggestion (P4-M1); the new check keeps the criterion's words as `said` (D99), and the criterion is removed. |
 | D95 | **Trust marks (D14, P4-Q6).** Per workflow, criterion text (`criterionKey`) and model:<br>• **confirm** ("Confirm 4 results", amber): no Check the checker round of it is done. It decides (board 12: "It counts, but you have not confirmed").<br>• **collecting** ("Needs your answers", grey, board 32): a round is done, fewer than 10 answers. It decides.<br>• **reliable** (green): ≥ 10 answers and the P4-Q6 rule holds. It decides.<br>• **unreliable** (red): ≥ 10 answers and the rule fails. Shown, never decides. It becomes reliable again only through new words (a new key: "confirm" again) or new answers.<br>Exact checks are always "Can be checked exactly" and decide like any automatic check. |
@@ -1378,14 +1382,14 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
 
 ---
 
-## Task 5: Judge spend counts in the spending limit (D92)
+## Task 5: Judge spend counts in the spending limit (D92, depends on P4-Q17)
 
 **Files:**
 - Modify: `src/core/cost-budget.mjs` (`recordTestJudgeCost`, `testJudgeWindowedSpendUsd`, `totalWindowSpendUsd`, `budgetStatus`), `src/core/stats.mjs` (`budgetWindowSavings`)
 - Test: `test/workflow-test-judge-spend.test.mjs`
 
 **Interfaces:**
-- Produces: `recordTestJudgeCost({ workflowId, exampleId = null, testRunId = null, roundId = null, purpose, model = null, engine = 'claude', amountUsd, costKind = 'billed', tsMs }) → void` (no row for $0 or a missing workflow or purpose); `testJudgeWindowedSpendUsd(fromMs, toMs = null) → number`.
+- Produces: `recordTestJudgeCost({ workflowId, exampleId = null, testRunId = null, roundId = null, purpose, model = null, engine = 'claude', amountUsd, costKind = 'billed', tsMs }) → void` (no row for a missing workflow or purpose, or for $0 that is known to be $0; P4-Q17: $0 with `costKind 'unknown'` books a $0 `unknown` row); `testJudgeWindowedSpendUsd(fromMs, toMs = null) → number`.
 
 - [ ] **Step 1: Write the failing test**
 
@@ -1408,11 +1412,15 @@ beforeEach(async () => {
 });
 after(async () => { _resetForTests(); delete process.env.WORCA_HOME; await Promise.all(homes.map((d) => rm(d, { recursive: true, force: true }))); });
 
-test('a judge call is booked once, counted in the window and the limit, and $0 books nothing', () => {
+test('a judge call is booked once, counted in the window and the limit; a known $0 books nothing, an unknown cost a $0 row', () => {
   recordTestJudgeCost({ workflowId: 'wf_a', exampleId: 1, testRunId: 7, purpose: 'try', model: 'claude-haiku-4-5', amountUsd: 0.02, tsMs: 1000 });
   recordTestJudgeCost({ workflowId: 'wf_a', purpose: 'checker', amountUsd: 0, tsMs: 1000 });
   recordTestJudgeCost({ workflowId: '', purpose: 'try', amountUsd: 1, tsMs: 1000 });
   assert.equal(prepare('SELECT COUNT(*) AS n FROM wf_test_judge_ledger').get().n, 1);
+  // P4-Q17: a reply whose cost Worca could not learn is never silently left out.
+  recordTestJudgeCost({ workflowId: 'wf_a', testRunId: 7, purpose: 'try', amountUsd: 0, costKind: 'unknown', tsMs: 1000 });
+  assert.deepEqual({ ...prepare("SELECT amount_usd, cost_kind FROM wf_test_judge_ledger WHERE cost_kind = 'unknown'").get() }, { amount_usd: 0, cost_kind: 'unknown' });
+  prepare("DELETE FROM wf_test_judge_ledger WHERE cost_kind = 'unknown'").run();
   assert.deepEqual({ ...prepare('SELECT workflow_id, example_id, test_run_id, purpose, model, engine, amount_usd, cost_kind FROM wf_test_judge_ledger').get() },
     { workflow_id: 'wf_a', example_id: 1, test_run_id: 7, purpose: 'try', model: 'claude-haiku-4-5', engine: 'claude', amount_usd: 0.02, cost_kind: 'billed' });
   assert.equal(testJudgeWindowedSpendUsd(0), 0.02);
@@ -1443,10 +1451,12 @@ After `designWindowedSpendUsd`:
 ```js
 /** Append one workflow-tests model call (plans/workflow-tests-part4-plan.md D92): a criterion checked on a try, a pair, a Check the
  *  checker round's calls, suggested criteria or clearer words. No limit of its own: it counts toward worca's limits and, through
- *  `test_run_id`, the test's own cost limit. Same no-op gate as the other ledgers ($0 mock calls leave no row). */
+ *  `test_run_id`, the test's own cost limit. A known $0 (a free model; mock calls never get here) leaves no row; P4-Q17: a $0 whose
+ *  cost is `unknown` books a $0 row with that kind, so the test can say that some checks' cost is not known. */
 export function recordTestJudgeCost({ workflowId, exampleId = null, testRunId = null, roundId = null, purpose, model = null, engine = 'claude',
   amountUsd, costKind = 'billed', tsMs = Date.now() }) {
-  if (!workflowId || !purpose || !Number.isFinite(amountUsd) || amountUsd <= 0) return;
+  if (!workflowId || !purpose || !Number.isFinite(amountUsd) || amountUsd < 0) return;
+  if (amountUsd === 0 && costKind !== 'unknown') return;
   prepare(`INSERT INTO wf_test_judge_ledger (workflow_id, example_id, test_run_id, round_id, purpose, model, engine, amount_usd, cost_kind, ts)
     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`).run(workflowId, exampleId == null ? null : Number(exampleId), testRunId == null ? null : Number(testRunId),
     roundId == null ? null : Number(roundId), purpose, model, engine || 'claude', amountUsd, costKind || 'billed', tsMs);
@@ -1486,7 +1496,7 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
 
 ---
 
-## Task 6: The judge call (D88, D89, D90, D91)
+## Task 6: The judge call (D88, D89, D90, D91; booking depends on P4-Q17)
 
 **Files:**
 - Create: `src/core/workflow-tests/judge-prompt.mjs`, `src/core/workflow-tests/judge.mjs`, `src/shared/workflow-tests/criteria-text.mjs`
@@ -1495,7 +1505,7 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
 **Interfaces:**
 - Consumes: `helperCall(args, deps)` (`src/core/helper-call/index.mjs:39`), `interviewCallOptions('round', args, { keepUserSettings })` (`src/core/requirements/interview.mjs:232`), `userClaudeSignIn()` (`src/core/claude-user-settings.mjs`), `mockEnabled({})` (`src/core/claude-runner.mjs:57`), `budgetStatus()` (`src/core/cost-budget.mjs`), `normLoose` (Task 3).
 - Produces (judge-prompt.mjs, pure): `SUBJECT_MAX = 200000`, `CONTEXT_MAX = 100000`, `CHANGES_HEADING`, `JUDGE_SYSTEM_PROMPT`, `clipText(s, max) → { text, cut }`, `judgePrompt({ criterion, result, context, cut }) → string`, `parseJudgeReply(text) → { verdict: 'met'|'not met', reason, proof } | null`, `proofFound(proof, text) → boolean`, `mockJudgement(criterion, text) → { verdict, reason, proof }`.
-- Produces (judge.mjs): `JUDGE_TIMEOUT_MS = 120000`, `judgeScratch() → string`, `JUDGE_DEFAULTS`, `modelCall({ model, system, prompt, signal }, d) → Promise<{ text, costUsd, costKind }>`, `judgeCriterion({ criterion, subject, context, model, mock, signal, book }, d) → Promise<{ met: boolean|null, reason, proof, proofFound, costUsd, ms, error: null|'no-result'|'limit'|'unreadable'|'no-proof'|'failed', detail? }>`. `book(usd, costKind)` is called once for each call that cost money.
+- Produces (judge.mjs): `JUDGE_TIMEOUT_MS = 120000`, `judgeScratch() → string`, `JUDGE_DEFAULTS`, `modelCall({ model, system, prompt, signal }, d) → Promise<{ text, costUsd, costKind }>`, `judgeCriterion({ criterion, subject, context, model, mock, signal, book }, d) → Promise<{ met: boolean|null, reason, proof, proofFound, costUsd, ms, error: null|'no-result'|'limit'|'unreadable'|'no-proof'|'failed', detail? }>`. `book(usd, costKind)` is called once for each call that cost money, and for each reply whose cost is `unknown` (P4-Q17; a failed call books only what it is known to have spent).
 - Produces (criteria-text.mjs): `NOT_CHECKED` (P4-C2's sentences keyed `pending`, `not-finished`, `limit`, `no-result`, `unreadable`, `no-proof`, `failed`).
 
 - [ ] **Step 1: Write the failing test**
@@ -1581,6 +1591,11 @@ test('judgeCriterion: met with proof, booked once', async () => {
   assert.deepEqual([j.met, j.proofFound, j.error, j.costUsd], [true, true, null, 0.01]);
   assert.deepEqual(booked, [[0.01, 'billed']]);
   assert.equal(f.calls.length, 1);
+  // P4-Q17: a reply whose cost Worca could not learn is booked as $0 'unknown', never skipped.
+  const unknown = { ...f.d, helperCall: async () => ({ text: reply({ verdict: 'met', reason: 'It names 60%.', proof: 'Cut export-related support tickets by 60%' }), costUsd: 0, costKind: 'unknown' }) };
+  const seen = [];
+  await judgeCriterion({ criterion: 'Names a success metric with a number', subject: RESULT, model: 'm', book: (u, k) => seen.push([u, k]) }, unknown);
+  assert.deepEqual(seen, [[0, 'unknown']]);
 });
 
 test('judgeCriterion: an unreadable reply and a missing proof are asked once more; then not counted', async () => {
@@ -1792,7 +1807,7 @@ export async function judgeCriterion({ criterion, subject, context = '', model, 
       return done({ error: 'failed', detail: firstLine(e) });
     }
     cost += r.costUsd;
-    if (r.costUsd > 0) book(r.costUsd, r.costKind);
+    if (r.costUsd > 0 || r.costKind === 'unknown') book(r.costUsd, r.costKind);   // P4-Q17: an unknown cost books a $0 row
     const p = parseJudgeReply(r.text);
     if (!p) { last = { error: 'unreadable' }; continue; }
     if (proofFound(p.proof, subject)) return done({ met: p.verdict === 'met', reason: p.reason, proof: p.proof, proofFound: true });
@@ -1818,7 +1833,7 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
 
 ---
 
-## Task 7: Checking a test's tries (D90, D91, D92)
+## Task 7: Checking a test's tries (D90, D91, D92; the unknown-cost reader depends on P4-Q17)
 
 **Files:**
 - Create: `src/core/workflow-tests/criteria-store.mjs` (judgements; Tasks 8, 12 and 13 add answers, the liked result and rounds), `src/core/workflow-tests/criteria-runner.mjs`
@@ -1830,6 +1845,7 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
 - Produces (criteria-store.mjs): `criterionFp(text) → string` (16 hex), `RETRY_ERRORS = ['limit', 'failed']`, `insertJudgement({ workflowId, exampleId, criterionId, fp, model, purpose, tryId, otherTryId, roundId, card, variant, subject, j }) → judgement`, `readJudgement(id)`, `tryJudgements(tryIds) → judgement[]` (the newest per try, key and model), `needsJudging(tryId, fp, model) → boolean`. A judgement is `{ id, workflowId, exampleId, criterionId, fp, model, purpose, tryId, otherTryId, roundId, card, variant, subject, met, winner, reason, proof, proofFound, error, costUsd, ms, createdAt }`.
 - Produces (criteria-runner.mjs): `subjectOfTry(t, { readMain, readPatch }) → Promise<string>`, `createCriteriaJudge(deps) → { judgeTry(example, t, { testRunId, mock, stopped, overCap }), judgeMissing(run, { stopped, overCap }) }`.
 - Produces (result.mjs): `readTryPatch(pipelineId, maxBytes) → Promise<{ patch, cut } | null>`.
+- Produces (store.mjs): `spentOfRun(runId)` adds the judge ledger; `costUnknownOfRun(runId) → boolean` (P4-Q17).
 - Produces (runner deps): `judgeCriteria(example, t, opts)`, `judgeMissing(run, opts)`; the runner's `criteriaPhaseOf(runId) → boolean`.
 - Produces (shared/criteria-verdicts.mjs, created here, Task 9 extends): `finishedTry(t) → boolean`.
 
@@ -2207,7 +2223,20 @@ export function spentOfRun(runId) {
   const j = prepare('SELECT COALESCE(SUM(amount_usd), 0) AS s FROM wf_test_judge_ledger WHERE test_run_id = ?').get(Number(runId));
   return Math.round((Number(r.s || 0) + Number(j.s || 0)) * 1e6) / 1e6;
 }
+
+/** P4-Q17: whether some of a run's Part 4 calls came back with a cost Worca could not learn ($0 'unknown' rows). */
+export function costUnknownOfRun(runId) {
+  getDb();
+  return !!prepare("SELECT 1 FROM wf_test_judge_ledger WHERE test_run_id = ? AND cost_kind = 'unknown' LIMIT 1").get(Number(runId));
+}
 ```
+In `test/workflow-test-criteria-runner.test.mjs`'s first test ("a try is checked once per criterion …"), after its ledger assert, add:
+```js
+  assert.equal(store.costUnknownOfRun(run.id), false);
+  recordTestJudgeCost({ workflowId: WF, testRunId: run.id, purpose: 'try', amountUsd: 0, costKind: 'unknown' });
+  assert.equal(store.costUnknownOfRun(run.id), true, 'P4-Q17');
+```
+(the file already imports `recordTestJudgeCost`). `costUnknownOfRun` is listed in this task's Interfaces with `spentOfRun`.
 
 - [ ] **Step 8: The runner** (`src/core/workflow-tests/runner.mjs`; about 20 lines)
 
@@ -2241,7 +2270,7 @@ export function spentOfRun(runId) {
 ```
 4. Export it with the others: `function criteriaPhaseOf(runId) { const st = live.get(Number(runId)); return !!(st && st.criteriaPhase); }` and add `criteriaPhaseOf` to the returned object.
 
-A test whose criteria checks pass its cap is not stopped: its tries are done; the checks left show "Not checked yet" (P4-C2) and are made by "Check them on these tries" (Task 11) or the next test.
+Judge spend counts in the cap like a try's spend (D92): when a try's checks push the test's cost over its cap, the loop's own cap check stops the test as `'cap'` (`runner.mjs:287`, `:294`) and the tries still waiting are left, exactly as after a costly try. Do not change either behaviour. A stopped test skips the criteria phase; the checks left show "Not checked yet" (P4-C2) and do not decide (D98, I6), and "Check them on these tries" (Task 11) or the next test makes them.
 
 - [ ] **Step 9: The runner's deps** (`src/core/workflow-tests/routes.mjs`)
 
@@ -2794,7 +2823,7 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
 
 ---
 
-## Task 10: The "Checked with" list and its suggestion (D87, D105, depends on P4-Q2)
+## Task 10: The "Checked with" list and its suggestion (D87, D105, depends on P4-Q2 and P4-Q17)
 
 **Files:**
 - Create: `src/core/workflow-tests/judge-models.mjs`
@@ -2802,8 +2831,8 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
 - Test: `test/workflow-test-judge-models.test.mjs`, `test/api-workflow-test-criteria.test.mjs` (one case)
 
 **Interfaces:**
-- Consumes: `listModels()` (`src/core/config.mjs:628`, an array of `{ id, label, … }`), `runsOn` (`src/shared/connections.mjs:53`), `manifestModels` (`src/core/broker-routing.mjs:74`), `findPipelineRowById` (`src/core/artifacts.mjs`).
-- Produces: `claudeModels(catalog) → [{ id, label }]`, `suggestJudgeModel(models, writers) → { id, label, suggested } | null`, `writerModelsOf(workflowId) → Set<string>`, `judgeModelsView(workflowId, { catalog }) → { models, suggested }`, `checkJudgeModel(model, { catalog })` (throws 400), `withJudgeModel(workflowId, fields, was, { catalog }) → fields`. Route `GET /api/workflows/:id/tests/judge-models`.
+- Consumes: `listModels()` (`src/core/config.mjs:628`, an array of `{ id, label, … }`), `runsOn` (`src/shared/connections.mjs:53`; it reads a row's `harnesses`, else derives them from its connection, `harnessesOf` `:43-50`), `connectionLabel` (`:58`), `manifestModels` (`src/core/broker-routing.mjs:74`), `findPipelineRowById` (`src/core/artifacts.mjs`).
+- Produces: `claudeModels(catalog) → [{ id, label, pays }]` (`pays` = `connectionLabel(m)`, P4-Q17: who pays for a check with that model), `suggestJudgeModel(models, writers) → { id, label, suggested } | null`, `writerModelsOf(workflowId) → Set<string>`, `judgeModelsView(workflowId, { catalog }) → { models, suggested }`, `checkJudgeModel(model, { catalog })` (throws 400), `withJudgeModel(workflowId, fields, was, { catalog }) → fields`. Route `GET /api/workflows/:id/tests/judge-models`.
 
 - [ ] **Step 1: Write the failing test**
 
@@ -2822,11 +2851,12 @@ const homes = [];
 beforeEach(async () => { const d = await mkdtemp(join(tmpdir(), 'worca-cc-wftjm-')); homes.push(d); _resetForTests(); process.env.WORCA_HOME = d; });
 after(async () => { _resetForTests(); delete process.env.WORCA_HOME; await Promise.all(homes.map((d) => rm(d, { recursive: true, force: true }))); });
 
+// Rows as listModels() composes them: `harnesses` is what runsOn reads first (connections.mjs harnessesOf).
 const CATALOG = [
-  { id: 'claude-sonnet-5-5', label: 'Sonnet 5.5', engines: ['claude'] },
-  { id: 'claude-opus-5-5', label: 'Opus 5.5', engines: ['claude'] },
-  { id: 'claude-opus-4-8[1m]', label: 'Opus 4.8 (1M)', engines: ['claude'] },
-  { id: 'claude-haiku-4-5', label: 'Haiku 4.5', engines: ['claude'] },
+  { id: 'claude-sonnet-5-5', label: 'Sonnet 5.5', harnesses: ['claude'] },
+  { id: 'claude-opus-5-5', label: 'Opus 5.5', harnesses: ['claude'] },
+  { id: 'claude-opus-4-8[1m]', label: 'Opus 4.8 (1M)', harnesses: ['claude'] },
+  { id: 'claude-haiku-4-5', label: 'Haiku 4.5', harnesses: ['claude'] },
 ];
 const models = CATALOG.map(({ id, label }) => ({ id, label }));
 
@@ -2846,10 +2876,15 @@ test('withJudgeModel: an example with criteria and no model gets the suggestion;
   assert.deepEqual(await withJudgeModel('wf_x', { name: 'E' }, { criteria: [{ id: 'k_1', text: 'Names a metric' }], judge: { model: 'claude-haiku-4-5' } }, { catalog }),
     { name: 'E' }, 'a kept model stays');
   await assert.rejects(checkJudgeModel('gpt-9', { catalog }), { code: 'BAD_REQUEST', message: 'pick one of the AI models in the list to check your criteria' });
-  assert.equal(claudeModels([{ id: 'gpt-5', label: 'GPT-5', engines: ['codex'] }, ...CATALOG]).length, 4);
+  assert.equal(claudeModels([{ id: 'gpt-5', label: 'GPT-5', harnesses: ['codex'] }, ...CATALOG]).length, 4);
+});
+
+test('P4-Q17: each model says who pays for a check with it', () => {
+  assert.deepEqual(claudeModels([{ id: 'claude-opus-5-5', label: 'Opus 5.5' },
+    { id: 'claude-opus-5-5-vx', label: 'Opus 5.5 (Vertex)', env: { ANTHROPIC_BASE_URL: 'https://gw.example' } }]),
+  [{ id: 'claude-opus-5-5', label: 'Opus 5.5', pays: 'Claude sign-in' }, { id: 'claude-opus-5-5-vx', label: 'Opus 5.5 (Vertex)', pays: 'Custom endpoint' }]);
 });
 ```
-(The catalog rows' harness field is whatever `runsOn` reads: check `harnessesOf` in `src/shared/connections.mjs` and give the fake rows that field; a predefined Claude row from `PREDEFINED_MODELS` runs on Claude by default.)
 
 In `test/api-workflow-test-criteria.test.mjs` add:
 ```js
@@ -2873,7 +2908,7 @@ Expected: FAIL (module not found).
 // criteria (the Claude models of Worca's catalog) and the one Worca suggests: one the workflow's latest tries did not write with, so it
 // does not mark its own work (board 2's hint).
 import { listModels } from '../config.mjs';
-import { runsOn } from '../../shared/connections.mjs';
+import { runsOn, connectionLabel } from '../../shared/connections.mjs';
 import { manifestModels } from '../broker-routing.mjs';
 import { findPipelineRowById } from '../artifacts.mjs';
 import { getDb, prepare } from '../db.mjs';
@@ -2883,10 +2918,11 @@ const FAMILY = ['opus', 'fable', 'sonnet', 'haiku'];
 const familyOf = (id) => { const i = FAMILY.findIndex((f) => String(id).toLowerCase().includes(`-${f}-`)); return i < 0 ? FAMILY.length : i; };
 const plainId = (id) => String(id || '').toLowerCase().replace(/\[1m\]$/, '');
 
-/** P4-Q2: the catalog's models that run on Claude Code, as `{ id, label }`, in the catalog's order. */
+/** P4-Q2, P4-Q17: the catalog's models that run on Claude Code, whatever their connection, as `{ id, label, pays }` in the
+ *  catalog's order. `pays` names who pays for a check with it ("Claude sign-in", "Custom endpoint", …). */
 export function claudeModels(catalog) {
   return (Array.isArray(catalog) ? catalog : []).filter((m) => m && typeof m.id === 'string' && runsOn(m, 'claude'))
-    .map((m) => ({ id: m.id, label: m.label || m.id }));
+    .map((m) => ({ id: m.id, label: m.label || m.id, pays: connectionLabel(m) }));
 }
 
 /** D105 (pure): Opus, Fable, Sonnet, Haiku, each newest first; no "(1M)" twin unless there is nothing else; the first not in `writers`. */
@@ -3707,7 +3743,7 @@ export function createChecker(deps = {}) {
     if (!mock) {
       try {
         const r = await d.modelCall({ model: round.model, system: PLANT_SYSTEM_PROMPT, prompt: plantPrompt({ criterion: criterion.text, result: clipText(good.text, SUBJECT_MAX).text }) });
-        if (r.costUsd > 0) book(r.costUsd, r.costKind);
+        if (r.costUsd > 0 || r.costKind === 'unknown') book(r.costUsd, r.costKind);   // P4-Q17: an unknown cost books a $0 row
         plants = applyPlants(good.text, parsePlantReply(r.text));
       } catch (e) { if (Number(e && e.costUsd) > 0) book(Number(e.costUsd), e.costKind || 'billed'); }
     }
@@ -3930,7 +3966,7 @@ export async function judgePair({ a, b, liked = null, context = '', model, mock 
     try {
       const r = await modelCall({ model, system: PAIR_SYSTEM_PROMPT, prompt: pairPrompt({ first, second, liked: L, context: C }), signal }, x);
       cost += r.costUsd;
-      if (r.costUsd > 0) book(r.costUsd, r.costKind);
+      if (r.costUsd > 0 || r.costKind === 'unknown') book(r.costUsd, r.costKind);   // P4-Q17: an unknown cost books a $0 row
       return parsePairReply(r.text) || { error: 'unreadable' };
     } catch (e) {
       const s = Number(e && e.costUsd) || 0;
@@ -4126,7 +4162,7 @@ export async function suggestCriteria({ note, request = '', result = '', model, 
   const prompt = [`<note>\n${note}\n</note>`, request ? `<request>\n${clipText(request, 20_000).text}\n</request>` : '',
     result ? `<result>\n${clipText(result, 60_000).text}\n</result>` : ''].filter(Boolean).join('\n\n');
   const r = await x.modelCall({ model, system: SUGGEST_SYSTEM_PROMPT, prompt }, x);
-  if (r.costUsd > 0) book(r.costUsd, r.costKind);
+  if (r.costUsd > 0 || r.costKind === 'unknown') book(r.costUsd, r.costKind);   // P4-Q17: an unknown cost books a $0 row
   return { suggestions: parseSuggestions(r.text), costUsd: r.costUsd };
 }
 
@@ -4135,7 +4171,7 @@ export async function rewordCriterion({ criterion, wrong = [], model, mock = fal
   if (mock || x.mock()) return { text: criterion };
   const lines = wrong.map((w) => `- Worca said ${w.met ? 'met' : 'not met'} for: "${String(w.excerpt || '').slice(0, 400)}"; the person said that was wrong.`);
   const r = await x.modelCall({ model, system: REWORD_SYSTEM_PROMPT, prompt: `<criterion>\n${criterion}\n</criterion>\n\n<wrong>\n${lines.join('\n')}\n</wrong>` }, x);
-  if (r.costUsd > 0) book(r.costUsd, r.costKind);
+  if (r.costUsd > 0 || r.costKind === 'unknown') book(r.costUsd, r.costKind);   // P4-Q17: an unknown cost books a $0 row
   const o = firstObject(r.text);
   return { text: valid(replyText(o && o.text, CRITERION_MAX)) || criterion };
 }
@@ -5475,7 +5511,7 @@ Write `.superpowers\sdd\paid-check-4.md`: the account, each call's cost, the rep
 - Schema rung and migration tests: Task 1. Docs and UI levels: Task 25 (storage in Task 1). Size caps: Global Constraints and every task touching a near-cap file. The PR verb rule: Global Constraints and the design guards. Free tests per task and one gated paid task: Task 26.
 - Task order: Tasks 1–16 have no UI; Tasks 17, 18 (Steps 1–5), 20 (Steps 1–5) and 21 (Steps 1–5) build approved boards; Tasks 19, 22, 23, 24 and the gated steps wait for P4-M1–M7.
 
-**Placeholder scan.** No "TBD" or "implement later". The UI steps that wait for a mock say what they build and pin the mock's words in a test first; their strings are proposals (as 3b did for U1–U4). Two places name a check to make against the code instead of guessing: the catalog row's harness field (Task 10 Step 1) and the `--violet-ink` token (Task 18 Step 4).
+**Placeholder scan.** No "TBD" or "implement later". The UI steps that wait for a mock say what they build and pin the mock's words in a test first; their strings are proposals (as 3b did for U1–U4). One place names a check to make against the code instead of guessing: the `--violet-ink` token (Task 18 Step 4). (The catalog row's harness field is now settled: `harnesses`, Task 10.)
 
 **Type consistency.** Judgement fields (`met`, `proofFound`, `error`, `judgementId` in results) match between criteria-store (Task 7), criteria-verdicts (Task 9), criteria-rows (Task 20) and the checker view (Tasks 13, 22). `createCriteriaJudge` returns `judgeTry`, `judgeMissing` (Task 7) and `judgePairs` (Task 14); the runner deps are `judgeCriteria` and `judgeMissing`. `registerWorkflowTestRoutes` returns `{ runner, criteriaJudge }` (Task 7) and `registerCriteriaRoutes` takes them (Task 8). `trustOf` → `{ state, n, agree, decides }` everywhere. `estimateOf(...).criteriaUsd` is defined in Task 11 and read in Task 17.
 
