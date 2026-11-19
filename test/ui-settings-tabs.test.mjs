@@ -450,5 +450,21 @@ test('Settings sidebar: tabs keep their order, labels and gates, each with one i
       assert.ok(window.document.getElementById('pr-settings-card').classList.contains('is-found'));
       assert.equal(subLinks(window).length > 0, true, 'the list is still there after the landing');
     } },
+    { name: 'picking the link that is already open lands on its card again; a modifier click leaves the page alone', run: async () => {
+      const { window } = await boot();
+      await go(window, 'settings/runs/pr-settings-card');
+      await ticks();
+      const card = window.document.getElementById('pr-settings-card');
+      const a = subLinks(window).find((x) => x.dataset.card === 'pr-settings-card');
+      const click = (o = {}) => { a.dispatchEvent(new window.MouseEvent('click', { bubbles: true, cancelable: true, ...o })); return ticks(); };
+      for (const o of [{ metaKey: true }, { ctrlKey: true }, { shiftKey: true }, { altKey: true }, { button: 1 }]) {
+        card.classList.remove('is-found');
+        await click(o);
+        assert.equal(card.classList.contains('is-found'), false, `${JSON.stringify(o)} does not land here`);
+      }
+      await click();
+      assert.equal(card.classList.contains('is-found'), true, 'a plain click lands on the card again');
+      assert.equal(window.location.hash, '#settings/runs/pr-settings-card');
+    } },
   ]);
 });

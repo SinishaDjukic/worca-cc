@@ -110,3 +110,18 @@ test('a stored scan model that left the catalog is shown as not installed and Sa
   assert.equal(posts.length, before, 'nothing posted');
   assert.equal(doc.getElementById('wsScanModelsMsg'), null, 'no save line');
 });
+
+// The sidebar lists the Runs cards as links; a card kept on screen below its mode keeps its link.
+test('the Workspaces card link in the Settings sidebar follows the card: kept in Simple while a scan setup is stored', async () => {
+  const { window, setSettings, tick } = await boot();
+  const link = () => window.document.querySelector('#settings-tabs .settings-sub a[data-card="ws-scan-models-card"]');
+  const openSettings = async () => {   // the Runs tab, re-entered so Settings loads again
+    for (const h of ['settings', 'settings/runs']) { window.location.hash = h; window.dispatchEvent(new window.Event('hashchange')); await tick(); await tick(); await tick(); }
+  };
+  setSettings({ workspaceScan: { ...DEFAULTS } }); await openSettings();
+  assert.equal(window.document.getElementById('ws-scan-models-card').dataset.levelKeep, '1');
+  assert.equal(link().dataset.levelKeep, '1', 'the link stays with its card');
+  assert.equal(link().dataset.minLevel, 'advanced');
+  setSettings({ workspaceScan: null }); await openSettings();
+  assert.equal('levelKeep' in link().dataset, false, 'default setup: hidden with the card again');
+});

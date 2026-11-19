@@ -71,27 +71,29 @@
 .settings-sub{display:none;}
 /* Narrow screens keep the strip: it stays at the top while the page scrolls, and showSettingsTab brings the open
    tab into view inside it. */
-@media (max-width:1080px){
-  [data-view="settings"] > .settings-tabs{position:sticky;top:-26px;z-index:2;max-width:none;margin:-26px -32px 18px;padding:14px 32px 0;background:var(--bg);}
+@media (max-width:1271px){
+  /* The strip spans the page's padding (--main-pad-y / --main-pad-x, set on .main). */
+  [data-view="settings"] > .settings-tabs{position:sticky;top:calc(-1 * var(--main-pad-y));z-index:2;max-width:none;margin:calc(-1 * var(--main-pad-y)) calc(-1 * var(--main-pad-x)) 18px;padding:14px var(--main-pad-x) 0;background:var(--bg);}
   /* More tabs to the side (data-more, set by markSettingsStrip): that edge fades out under a small arrow.
      Each hint is a zero-footprint flex item (40px + the 16px gap, taken back by its margins) stuck to its edge
      (a sticky inset counts from the strip's content box, so it is minus the strip's side padding). */
   [data-view="settings"] > .settings-tabs::before,[data-view="settings"] > .settings-tabs::after{position:sticky;z-index:1;box-sizing:border-box;flex:0 0 40px;align-self:stretch;
     display:flex;align-items:center;color:var(--ink-2);font:500 18px/1 var(--sans);pointer-events:none;opacity:0;transition:opacity .15s;}
-  [data-view="settings"] > .settings-tabs::before{content:"\2039";left:-32px;margin:0 -24px 0 -32px;padding-left:10px;background:linear-gradient(to right,var(--bg) 55%,transparent);}
-  [data-view="settings"] > .settings-tabs::after{content:"\203A";right:-32px;margin:0 -32px 0 -24px;padding-right:10px;justify-content:flex-end;background:linear-gradient(to left,var(--bg) 55%,transparent);}
+  [data-view="settings"] > .settings-tabs::before{content:"\2039";left:calc(-1 * var(--main-pad-x));margin:0 -24px 0 calc(-1 * var(--main-pad-x));padding-left:10px;background:linear-gradient(to right,var(--bg) 55%,transparent);}
+  [data-view="settings"] > .settings-tabs::after{content:"\203A";right:calc(-1 * var(--main-pad-x));margin:0 calc(-1 * var(--main-pad-x)) 0 -24px;padding-right:10px;justify-content:flex-end;background:linear-gradient(to left,var(--bg) 55%,transparent);}
   [data-view="settings"] > .settings-tabs[data-more~="left"]::before,[data-view="settings"] > .settings-tabs[data-more~="right"]::after{opacity:1;}
   /* A card link lands below the strip, not under it. */
   [data-view="settings"] .settings-card{scroll-margin-top:60px;}
 }
 @media (max-width:640px){
-  [data-view="settings"] > .settings-tabs{top:-16px;margin:-16px -16px 18px;padding:8px 16px 0;}
-  [data-view="settings"] > .settings-tabs::before{left:-16px;margin:0 -40px 0 -16px;}
-  [data-view="settings"] > .settings-tabs::after{right:-16px;margin:0 -16px 0 -40px;}
+  [data-view="settings"] > .settings-tabs{padding-top:8px;}
+  [data-view="settings"] > .settings-tabs::before{margin-right:-40px;}
+  [data-view="settings"] > .settings-tabs::after{margin-left:-40px;}
 }
 /* Wide screens: the strip stands left of the pane as a column (same buttons, the 2px ink line moves to the left
-   edge) and the open tab lists its cards. Below 1081px Settings keeps the horizontal strip. */
-@media (min-width:1081px){
+   edge) and the open tab lists its cards. It starts at 1272px, where the app menu, the column and a full 760px card
+   fit side by side; below that Settings keeps the horizontal strip. */
+@media (min-width:1272px){
   /* The column keeps one place on every tab: cards stay 760px beside it, the wide panes (Guardrails, Memory) take the rest. */
   [data-view="settings"]:not(.hidden){display:grid;grid-template-columns:184px minmax(0,1fr);column-gap:40px;align-items:start;max-width:1224px;margin-inline:auto;}
   [data-view="settings"] > *{grid-column:2;}
