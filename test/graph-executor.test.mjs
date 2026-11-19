@@ -726,9 +726,15 @@ test('E4: an agent node that runs past its wall-clock or goes silent past its id
   assert.deepEqual(nodeTimeLimits({ node: { config: { timeLimitMinutes: 5 } }, template: { limits: { idleLimitMinutes: 2, timeLimitMinutes: 9 } } }),
     { wallMs: 5 * 60000, idleMs: 2 * 60000 });
   // A hung agent is a live child: its pipes keep the process up (the unref'd watchdog does not), modelled by an interval.
+  // Like the real runners (claude-runner, codex, cursor...), a signal that is already aborted rejects at once: the Stop
+  // below fires 5 ms after the start, and on a loaded runner prepare() can take longer, so the spawn starts aborted. An
+  // 'abort' listener added then never fires: the fake hung, its interval held the file's process up after the 300 s test
+  // timeout, and the whole CI shard ran into the job's 30 minute limit.
   const hang = (emitEvery) => async (opts) => new Promise((resolve, reject) => {
+    const aborted = () => Object.assign(new Error('aborted'), { name: 'AbortError' });
+    if (opts.signal.aborted) { reject(aborted()); return; }
     const t = setInterval(() => { if (emitEvery) opts.onEvent({ type: 'text', text: 'still here' }); }, emitEvery || 1000);
-    opts.signal.addEventListener('abort', () => { clearInterval(t); reject(Object.assign(new Error('aborted'), { name: 'AbortError' })); }, { once: true });
+    opts.signal.addEventListener('abort', () => { clearInterval(t); reject(aborted()); }, { once: true });
   });
   const run = async (config, emitEvery) => {
     const c = ctx8({ node: { id: 'n_c', kind: 'agent', key: 'custom', config, agentPrompt: 'x', tools: [] }, signal: new AbortController().signal });

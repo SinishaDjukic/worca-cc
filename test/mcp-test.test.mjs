@@ -55,10 +55,10 @@ test('stdio: tools listed through the launcher, result stored, the child sees on
   await putMember(setId, 'manual:fx-ok', { enabled: true, values: {}, secrets: { token: SECRET } });
   const r = await testMembership(setId, 'manual:fx-ok');
   assert.equal(r.ok, true, r.error);
-  assert.deepEqual(r.tools, ['search_issues', 'get_issue']);
+  assert.deepEqual(r.tools, [{ name: 'search_issues', inputSchema: { type: 'object' } }, { name: 'get_issue', inputSchema: { type: 'object' } }]);
   assert.match(r.fingerprint, /^[0-9a-f]{16}$/);
   const stored = (await readMcpStore()).tests[`${setId}|manual:fx-ok`];
-  assert.deepEqual({ ...stored }, r);
+  assert.deepEqual(JSON.parse(JSON.stringify(stored)), r);
   const env = JSON.parse(readFileSync(envFile, 'utf8'));
   assert.equal(env.FIXTURE_TOKEN, SECRET, 'the declared env reaches the server, expanded');
   for (const k of Object.keys(env)) assert.doesNotMatch(k, /^(ANTHROPIC_|CLAUDE_|GITHUB_|MCPSECRET_|MCPCHILD_)/i, k);
@@ -138,7 +138,7 @@ test('http: headers carry the expanded secret; a 401 or a 403 reads "token rejec
       fields: [{ key: 'token', label: 'Token', secret: true, oauth: true, required: true }], description: 'http fixture' });
     await putMember(setId, 'manual:fx-http', { enabled: true, secrets: { token: SECRET } });
     let r = await testMembership(setId, 'manual:fx-http');
-    assert.deepEqual([r.ok, r.tools], [true, ['search']], r.error);
+    assert.deepEqual([r.ok, r.tools.map((t) => t.name)], [true, ['search']], r.error);
     await putMember(setId, 'manual:fx-http', { secrets: { token: 'wrong-token-123' } });
     r = await testMembership(setId, 'manual:fx-http');
     assert.deepEqual([r.ok, r.error], [false, 'token rejected']);
@@ -375,7 +375,7 @@ test('sse: tools listed over the SSE transport; a 401 on its stream reads "token
   await new Promise((r) => srv.listen(0, '127.0.0.1', r));
   const url = `http://127.0.0.1:${srv.address().port}/sse`;
   try {
-    assert.deepEqual(await probe({ type: 'sse', url, headers: { Authorization: `Bearer ${SECRET}` } }, { timeoutMs: 2000 }), ['sse_tool']);
+    assert.deepEqual((await probe({ type: 'sse', url, headers: { Authorization: `Bearer ${SECRET}` } }, { timeoutMs: 2000 })).map((t) => t.name), ['sse_tool']);
     await assert.rejects(probe({ type: 'sse', url, headers: { Authorization: 'Bearer wrong-token-123' } }, { timeoutMs: 2000 }),
       (err) => err.rejected === true && err.message === 'token rejected');
   } finally { srv.closeAllConnections(); await new Promise((r) => srv.close(r)); }
@@ -388,7 +388,7 @@ test('the probe hands the SDK its whole bound: initialize and tools/list get tim
   Client.prototype.connect = function (transport, options) { seen.push(['initialize', options?.timeout]); return connect.call(this, transport, options); };
   Client.prototype.listTools = function (params, options) { seen.push(['tools/list', options?.timeout]); return listTools.call(this, params, options); };
   try {
-    assert.deepEqual(await probe({ command: process.execPath, args: [FIXTURE, 'ok'], env: {} }, { timeoutMs: 90000 }), ['search_issues', 'get_issue']);
+    assert.deepEqual((await probe({ command: process.execPath, args: [FIXTURE, 'ok'], env: {} }, { timeoutMs: 90000 })).map((t) => t.name), ['search_issues', 'get_issue']);
   } finally {
     Object.assign(Client.prototype, { connect, listTools });
   }

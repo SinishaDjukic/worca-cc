@@ -2,9 +2,11 @@
 // ui/server.mjs, in source order. ui/routes/index.mjs registers each list at its segment's barrier.
 import * as m_workflows_workflows from './workflows.mjs';
 import * as m_workflows_agents from './agents.mjs';
+import * as m_workflows_versions from './versions.mjs';
+import * as m_workflows_workflow_tests from './workflow-tests.mjs';
 export const SEGMENTS = Object.freeze([
   Object.freeze([]),   // before app.use('/api/automations', requireFlag('gitAutomations'));
-  Object.freeze([m_workflows_workflows, m_workflows_agents]),   // before app.use('/api/mcp', (req, res, next) => {
+  Object.freeze([m_workflows_workflows, m_workflows_agents, m_workflows_versions, m_workflows_workflow_tests]),   // before app.use('/api/mcp', (req, res, next) => {
   Object.freeze([]),   // before app.use((req, res, next) => {
   Object.freeze([]),   // before app.use('/api/skills', (req, res, next) => {
   Object.freeze([]),   // before the SPA fallback

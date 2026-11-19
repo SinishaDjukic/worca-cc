@@ -1,0 +1,284 @@
+// test/workflow-test-before-runner.test.mjs — workflow tests 3b, Task 10 (D75, D78): in a test, each project example's command
+// runs once on its start point before any try; its result reaches the judge; a stop aborts it; the plan estimates it; the
+// progress page sees it; Test a version knows when personal plugins are off.
+import { test, after, beforeEach } from 'node:test';
+import assert from 'node:assert/strict';
+import { EventEmitter } from 'node:events';
+import { mkdtemp, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { _resetForTests } from '../src/core/db.mjs';
+import * as store from '../src/core/workflow-tests/store.mjs';
+import { createTestRunner } from '../src/core/workflow-tests/runner.mjs';
+import { checkTry } from '../src/core/workflow-tests/result.mjs';
+import { beforePlanOf } from '../src/core/workflow-tests/service.mjs';
+import { connectorNotes } from '../src/core/workflow-tests/connectors.mjs';
+
+const WF = 'wf_bprun';
+const homes = [];
+beforeEach(async () => { const dir = await mkdtemp(join(tmpdir(), 'worca-cc-wftbrun-')); homes.push(dir); _resetForTests(); process.env.WORCA_HOME = dir; });
+after(async () => { _resetForTests(); delete process.env.WORCA_HOME; await Promise.all(homes.map((d) => rm(d, { recursive: true, force: true }))); });
+
+const SHA = 'a'.repeat(40);
+const pin = { key: 'tickets-1a2b3c4d', startSha: SHA, startRef: 'main', startAt: '2026-10-28T09:00:00.000Z', startCommit: SHA, changes: null, setupCmd: 'npm ci' };
+const TESTS = { format: 'tap', pass: ['adds', 'rounds'], fail: [], skip: [], passListed: true, counts: null, truncated: false };
+const example = (checks = [{ kind: 'command', cmd: 'npm test' }], project = pin) => store.createExample(WF, { name: 'Ticket 482', request: 'Fix the rounding.', checks }, { project });
+
+function harness({ beforeRun = null } = {}) {
+  const entries = new Map();
+  const started = []; const prepared = []; const befores = [];
+  let n = 0;
+  const deps = {
+    startRun: async (body, { workflowTest }) => {
+      n += 1;
+      const runKey = `run-${n}`; const pipelineId = `p${String(n).padStart(7, '0')}`;
+      const orch = new EventEmitter(); orch.state = { totalCostUsd: 0, setupStage: null };
+      let finish;
+      const launch = new Promise((r) => { finish = r; });
+      const e = { orch, launch, status: 'running', pipelineId, end(status) { if (e.status !== 'running') return; e.status = status; finish(); } };
+      entries.set(runKey, e);
+      workflowTest.onOrch(orch, { runKey });
+      started.push(body.title);
+      setImmediate(() => { orch.state.totalCostUsd = 0.5; e.end('done'); });
+      return { status: 200, body: { runId: runKey, pipelineId } };
+    },
+    liveRun: (k) => entries.get(k) || null,
+    stopRun: async (k) => { entries.get(k)?.end('stopped'); },
+    answer: () => true,
+    outcomeOf: async (pipelineId, { help = [], failReason = null, durationMs = null } = {}) => {
+      const e = [...entries.values()].find((x) => x.pipelineId === pipelineId);
+      return { pipelineId, facts: { status: e.status, costUsd: 0.5, durationMs, sentBack: 0, help, failReason }, text: 'Fixed.', name: null, source: 'end-value',
+        files: [], setup: { cmd: 'npm ci', ok: true, exitCode: 0, timedOut: false, ms: 1000, tail: '' }, logFile: null,
+        project: { key: pin.key, checkoutDir: `/copy/${pipelineId}`, branch: 'b', runRoot: '/r', files: [], paths: [], touched: [], total: 0,
+          counts: { added: 0, changed: 0, removed: 0 }, added: 0, removed: 0 } };
+    },
+    judge: (ex, outcome, o = {}) => checkTry(ex, outcome, { onCommand: o.onCommand, beforeOf: o.beforeOf,
+      runCommand: async () => ({ met: false, value: '1 passed, 1 failed', output: 'x', exitCode: 1, ms: 4321,
+        tests: { ...TESTS, pass: ['adds'], fail: ['rounds'] } }) }),
+    fingerprintOf: async (_wf, use) => `fp-${store.useRef(use)}`,
+    prepareProject: async (ex) => { prepared.push(ex.id); return { copyDir: '/copy', startCommit: ex.project.startCommit }; },
+    cleanupTry: async () => ({ removed: true, error: null }),
+    measureDisk: async () => 1,
+    freeDisk: async () => 50 * 2 ** 30,
+    mockMode: () => false,
+    pollMs: 5,
+    beforeRun: beforeRun || (async (spec, { onPhase } = {}) => {
+      befores.push(spec);
+      if (onPhase) onPhase('command');
+      return { ran: true, ok: true, exitCode: 0, timedOut: false, tests: TESTS, at: '2026-10-28T09:00:00.000Z', cached: false, ms: 2000 };
+    }),
+  };
+  return { deps, started, prepared, befores };
+}
+
+test('before any try, each project example\'s command runs once on its start point; the judge classifies against it', async () => {
+  const ex = example();
+  const h = harness();
+  const runner = createTestRunner(h.deps);
+  const run = await runner.start({ workflowId: WF, a: 1, b: 'draft', exampleIds: [ex.id], tries: 3 });
+  await runner.idle(run.id);
+  assert.equal(h.befores.length, 1, 'once for the example, whatever the tries and versions');
+  assert.deepEqual(h.befores[0], { key: pin.key, startCommit: SHA, setupCmd: 'npm ci', cmd: 'npm test', timeoutMin: 10 });
+  const tries = store.triesOfRun(run.id);
+  assert.equal(tries.length, 6);
+  for (const t of tries) {
+    const c = t.verdict.checks[0];
+    assert.deepEqual([c.before.level, c.before.broke, c.ms, c.failed], ['tests', { n: 1, names: ['rounds'] }, 4321, ['rounds']]);
+  }
+  assert.equal(store.lastCommandMs(ex.id, ex.checks[0].id), 4321);
+  assert.equal(store.lastCommandMs(ex.id, 'c_none'), null);
+});
+
+test('no command check, no before run; an example without a project neither', async () => {
+  const a = example([]);
+  const b = store.createExample(WF, { name: 'Brief', request: 'Write it.' });
+  const h = harness();
+  const runner = createTestRunner(h.deps);
+  const run = await runner.start({ workflowId: WF, kind: 'once', b: 'draft', exampleIds: [a.id, b.id], tries: 1 });
+  await runner.idle(run.id);
+  assert.deepEqual(h.befores, []);
+});
+
+test('a stop during the before run aborts it; no try starts; the progress page saw it', async () => {
+  const ex = example();
+  let seenSignal = null;
+  let release;
+  const held = new Promise((r) => { release = r; });
+  const h = harness({ beforeRun: async (_spec, { signal, onPhase }) => {
+    seenSignal = signal;
+    onPhase('setup');
+    await new Promise((r) => { signal.addEventListener('abort', r, { once: true }); held.then(r); });
+    return { ran: false, reason: 'stopped' };
+  } });
+  const runner = createTestRunner(h.deps);
+  const run = await runner.start({ workflowId: WF, kind: 'once', b: 'draft', exampleIds: [ex.id], tries: 1 });
+  for (let i = 0; i < 200 && runner.beforeNowOf(run.id)?.phase !== 'setup'; i += 1) await new Promise((r) => setTimeout(r, 5));
+  const now = runner.beforeNowOf(run.id);
+  assert.deepEqual([now.exampleName, now.cmd, now.phase, now.n, now.of], ['Ticket 482', 'npm test', 'setup', 1, 1]);
+  const stopped = await runner.stop(run.id);
+  release();
+  assert.equal(seenSignal.aborted, true);
+  assert.equal(stopped.status, 'stopped');
+  assert.deepEqual(h.started, [], 'no try started');
+  assert.equal(runner.beforeNowOf(run.id), null);
+});
+
+test('each change of the before phase sends a change frame (the progress page repaints only on frames); an unchanged one does not', async () => {
+  const ex = example();
+  let runner = null;
+  const seen = [];
+  const h = harness({ beforeRun: async (_spec, { onPhase }) => {
+    onPhase('setup'); onPhase('setup'); onPhase('command');
+    return { ran: true, ok: true, exitCode: 0, timedOut: false, tests: TESTS, at: '2026-10-28T09:00:00.000Z', cached: false, ms: 2000 };
+  } });
+  h.deps.notify = (frame) => {
+    assert.equal(frame.type, 'workflow-tests-changed');
+    const now = runner && frame.testRunId != null ? runner.beforeNowOf(frame.testRunId) : null;
+    if (now) seen.push(now.phase);
+  };
+  runner = createTestRunner(h.deps);
+  const run = await runner.start({ workflowId: WF, kind: 'once', b: 'draft', exampleIds: [ex.id], tries: 1 });
+  await runner.idle(run.id);
+  assert.deepEqual(seen, ['copy', 'setup', 'command']);
+});
+
+test('a project that cannot be used stops the test in the before phase, as a try would', async () => {
+  const ex = example();
+  const h = harness();
+  h.deps.prepareProject = async () => { throw Object.assign(new Error('The project folder is missing.'), { code: 'NOT_READY' }); };
+  const runner = createTestRunner(h.deps);
+  const run = await runner.start({ workflowId: WF, kind: 'once', b: 'draft', exampleIds: [ex.id], tries: 1 });
+  await runner.idle(run.id);
+  const r = store.readTestRun(run.id);
+  assert.deepEqual([r.status, r.stopReason, r.stopDetail], ['stopped', 'refused', 'The project folder is missing.']);
+});
+
+test('the plan: how many start points still need the command, and how long that takes', async () => {
+  const ex1 = { id: 1, project: pin, checks: [{ id: 'c_1', kind: 'command', cmd: 'npm test', timeoutMin: 10 }] };
+  const ex2 = { id: 2, project: { ...pin, startCommit: 'b'.repeat(40) }, checks: [{ id: 'c_2', kind: 'command', cmd: 'npm test', timeoutMin: 10 }] };
+  const ex3 = { id: 3, project: null, checks: [] };
+  const plan = (o) => beforePlanOf([ex1, ex2, ex3], { setupMsOf: () => 60_000, commandMsOf: () => 30_000, ...o });
+  assert.deepEqual(await plan({ readKept: async () => null }), { runs: 2, ms: 180_000, cmd: 'npm test' });
+  assert.deepEqual(await plan({ readKept: async (s) => (s.startCommit === SHA ? { ran: true } : null) }), { runs: 1, ms: 90_000, cmd: 'npm test' });
+  assert.equal(await plan({ readKept: async () => ({ ran: true }) }), null, 'every one kept: nothing to say');
+  assert.deepEqual(await plan({ readKept: async () => null, commandMsOf: () => null }), { runs: 2, ms: null, cmd: 'npm test' }, 'not measured yet');
+  const mixed = await beforePlanOf([ex1, { ...ex2, checks: [{ id: 'c_3', kind: 'command', cmd: 'pytest', timeoutMin: 10 }] }],
+    { readKept: async () => null, setupMsOf: () => 0, commandMsOf: () => 1 });
+  assert.equal(mixed.cmd, null, 'several commands');
+});
+
+test('Test a version knows when the person\'s plugins are off (D70, D78)', () => {
+  assert.equal(connectorNotes({ engines: ['claude'], mode: 'pretend' }).personalOff, true);
+  assert.equal(connectorNotes({ engines: ['claude'], mode: 'real' }).personalOff, false);
+  assert.equal(connectorNotes({ engines: ['codex'], mode: 'pretend' }).personalOff, false);
+  assert.deepEqual(connectorNotes({ engines: ['claude', 'codex'], mode: 'pretend' }).engines, ['OpenAI Codex']);   // the catalog's name
+});
+
+test('the before phase gives back the copy it held (U-T1): nothing stays busy after the test', async () => {
+  const { holdCopy, _testing } = await import('../src/core/workflow-tests/project-copy.mjs');
+  const ex = example();
+  const h = harness();
+  h.deps.prepareProject = async (e) => { holdCopy(e.project.key); return { copyDir: '/copy', startCommit: e.project.startCommit }; };
+  const runner = createTestRunner(h.deps);
+  const run = await runner.start({ workflowId: WF, kind: 'once', b: 'draft', exampleIds: [ex.id], tries: 1 });
+  await runner.idle(run.id);
+  assert.equal(h.befores.length, 1);
+  assert.equal(_testing.copyBusy(pin.key), false, 'the before phase and the try each released their hold');
+});
+
+// Final review M1 (user, 2026-11-12): a before run Worca itself could not make (its clone failed, its own step threw) is a
+// Worca problem: the test stops before any try, nothing is judged and nothing is spent. The person's setup failing is not.
+test('a before run Worca could not make stops the test as a Worca problem before any try (M1)', async () => {
+  for (const [what, beforeRun, detail] of [
+    ['the clone failed', async () => ({ ran: false, reason: 'error', text: "fatal: Unable to create '/w/.git/index.lock': File exists." }),
+      "fatal: Unable to create '/w/.git/index.lock': File exists."],
+    ['its step threw', async () => { throw new Error('EBUSY: resource busy\n    at rm (node:fs)'); }, 'EBUSY: resource busy'],
+  ]) {
+    const ex = example([{ kind: 'command', cmd: 'npm test', metWhen: 'breaks-nothing' }]);
+    const h = harness({ beforeRun });
+    const runner = createTestRunner(h.deps);
+    const run = await runner.start({ workflowId: WF, a: 1, b: 'draft', exampleIds: [ex.id], tries: 3 });
+    await runner.idle(run.id);
+    const r = store.readTestRun(run.id);
+    assert.deepEqual([r.status, r.stopReason, r.stopDetail], ['stopped', 'worca-before', detail], what);
+    assert.deepEqual(h.started, [], `${what}: no try started`);
+    const tries = store.triesOfRun(run.id);
+    assert.equal(tries.filter((t) => t.verdict || t.status !== 'waiting').length, 0, `${what}: nothing judged, every try still waiting`);
+  }
+});
+
+test('the person\'s own setup failing in the before run stays theirs: the tries go on and the check says no-before (M1)', async () => {
+  const ex = example([{ kind: 'command', cmd: 'npm test', metWhen: 'breaks-nothing' }]);
+  const h = harness({ beforeRun: async () => ({ ran: false, reason: 'setup' }) });
+  const runner = createTestRunner(h.deps);
+  const run = await runner.start({ workflowId: WF, kind: 'once', b: 'draft', exampleIds: [ex.id], tries: 1 });
+  await runner.idle(run.id);
+  assert.equal(store.readTestRun(run.id).status, 'done');
+  const [t] = store.triesOfRun(run.id);
+  assert.deepEqual([t.verdict.checks[0].met, t.verdict.checks[0].metWhy], [false, { why: 'no-before' }]);
+});
+
+// Follow-up (coordinator, 2026-11-12): only a "breaks nothing" check needs the before run to be judged. When every check
+// whose before run Worca could not make is a plain "passes" check, the tries go on, judged as today, and the side by side
+// shows the not-run block (board 40) for it.
+test('a before run Worca could not make for a "passes" check only: the tries go on, its block says why (M1 follow-up)', async () => {
+  const { beforeNotRunText } = await import('../src/shared/workflow-tests/project-text.mjs');
+  const ex = example([{ kind: 'command', cmd: 'npm test' }]);
+  const h = harness({ beforeRun: async () => ({ ran: false, reason: 'error', text: "fatal: Unable to create '/w/.git/index.lock': File exists." }) });
+  const runner = createTestRunner(h.deps);
+  const run = await runner.start({ workflowId: WF, a: 1, b: 'draft', exampleIds: [ex.id], tries: 1 });
+  await runner.idle(run.id);
+  const r = store.readTestRun(run.id);
+  assert.deepEqual([r.status, r.stopReason], ['done', null]);
+  assert.equal(h.started.length, 2, 'both versions tried');
+  for (const t of store.triesOfRun(run.id)) {
+    const c = t.verdict.checks[0];
+    assert.deepEqual([c.met, 'metWhy' in c], [false, false], 'judged as today: the exit code');
+    assert.deepEqual(c.before, { ran: false, reason: 'error', text: "fatal: Unable to create '/w/.git/index.lock': File exists." });
+    assert.equal(beforeNotRunText(c.before), "Worca could not run it before the change: fatal: Unable to create '/w/.git/index.lock': File exists.");
+  }
+});
+
+test('an example with a "passes" and a "breaks nothing" check: a failed before run of the "breaks nothing" one still stops the test', async () => {
+  const ex = example([{ kind: 'command', cmd: 'npm run lint' }, { kind: 'command', cmd: 'npm test', metWhen: 'breaks-nothing' }]);
+  const h = harness({ beforeRun: async () => ({ ran: false, reason: 'error', text: 'EBUSY: resource busy' }) });
+  const runner = createTestRunner(h.deps);
+  const run = await runner.start({ workflowId: WF, kind: 'once', b: 'draft', exampleIds: [ex.id], tries: 1 });
+  await runner.idle(run.id);
+  const r = store.readTestRun(run.id);
+  assert.deepEqual([r.status, r.stopReason, r.stopDetail], ['stopped', 'worca-before', 'EBUSY: resource busy']);
+  assert.deepEqual(h.started, [], 'no try started');
+});
+
+// Mock browser check, finding 3 (board 42): a start point whose before result is kept is skipped, before Worca prepares the
+// copy, and is not counted in "1 of N"; the progress page never says it is running. All kept: nothing shows as running.
+test('a kept before result is used at once: never shown as running, not counted in "n of N", its copy not prepared', async () => {
+  const kept = { ran: true, ok: true, exitCode: 0, timedOut: false, tests: TESTS, at: '2026-10-28T09:00:00.000Z', cached: true, ms: 2000 };
+  const ex1 = example();
+  const ex2 = example(undefined, { ...pin, startCommit: 'b'.repeat(40) });
+  for (const [what, keptFor, want] of [
+    ['one kept', (s) => s.startCommit === SHA, [[ex2.id, 1, 1]]],
+    ['all kept', () => true, []],
+  ]) {
+    let runner = null;
+    const seen = [];
+    const h = harness();
+    h.deps.beforeKept = async (spec) => (keptFor(spec) ? kept : null);
+    h.deps.notify = () => {
+      const st = runner ? runner.beforeNowOf(runId) : null;
+      if (st) seen.push([st.exampleId, st.n, st.of]);
+    };
+    let runId = null;
+    runner = createTestRunner(h.deps);
+    const run = await runner.start({ workflowId: WF, kind: 'once', b: 'draft', exampleIds: [ex1.id, ex2.id], tries: 1 });
+    runId = run.id;
+    await runner.idle(run.id);
+    assert.deepEqual([...new Map(seen.map((s) => [s.join(), s])).values()], want, `${what}: what the progress page saw`);
+    assert.deepEqual(h.befores.map((s) => s.startCommit), want.length ? ['b'.repeat(40)] : [], `${what}: only the start point not kept runs`);
+    assert.equal(h.prepared.filter((id) => id === ex1.id).length, 1, `${what}: the kept start point's copy is prepared for its try only`);
+    for (const t of store.triesOfRun(run.id).filter((x) => x.exampleId === ex1.id)) {
+      const b = t.verdict.checks[0].before;
+      assert.deepEqual([b.ran, b.cached, b.at, b.level], [true, true, kept.at, 'tests'], `${what}: the judge gets the kept result`);
+    }
+  }
+});

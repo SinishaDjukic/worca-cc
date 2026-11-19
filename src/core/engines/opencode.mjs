@@ -481,7 +481,7 @@ export async function runOpencodeProcess({
   cwd = process.cwd(), systemPrompt = '', prompt = '', model, effort, onEvent = () => {}, signal,
   bin = opencodeDefaultBin(), resumeSessionId, sandbox, askLockdown, envScrub, envAllowlist, asAgent,
   mcpConfigPath, spawnEnv: runSpawnEnv, redactValues, maxTurns, permissionRules, allowedTools, appendSubagentSystemPrompt,
-  scratchBase = null, probe = null,
+  scratchBase = null, probe = null, tryGuard = null,
 } = {}) {
   if (signal?.aborted) { const e = new Error('aborted'); e.name = 'AbortError'; throw e; }
   // A chat (askLockdown): OPENCODE_ASK_LOCKDOWN, on a model it names (never OpenCode's default, never OpenCode Zen).
@@ -580,7 +580,8 @@ export async function runOpencodeProcess({
     const from = { ...composeSpawnEnv({ ...envOpts, runEnv: cleanRunEnv(runSpawnEnv) }).env, ...(ask ? Object.fromEntries((envAllowlist || []).filter((k) => typeof process.env[k] === 'string').map((k) => [k, process.env[k]])) : {}) };
     for (const n of envRefNames(mcp)) if (typeof from[n] === 'string') refEnv[n] = from[n];
   }
-  const { env } = composeSpawnEnv({ ...envOpts, ...(Object.keys(refEnv).length ? { runEnv: refEnv } : {}) });
+  // Workflow tests 3a (D56): a try's outward guard (stand-ins first on PATH, git with no sign-in); absent ⇒ unchanged.
+  const { env } = composeSpawnEnv({ ...envOpts, ...(Object.keys(refEnv).length ? { runEnv: refEnv } : {}), ...(tryGuard ? { tryGuard } : {}) });
   if (typeof runSpawnEnv?.TMPDIR === 'string') env.TMPDIR = runSpawnEnv.TMPDIR;   // the run's scratch folder, no secret
   // OpenCode takes its project folder from PWD, not from its process cwd: an inherited PWD (worca's own) would put the
   // agent in the wrong folder.
