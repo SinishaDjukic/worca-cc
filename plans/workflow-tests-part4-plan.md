@@ -73,8 +73,9 @@ Each item has a recommendation (**R**) and the alternative(s). Where a task depe
   - **R: run it once, controller only, after the user's explicit OK:** Claude Haiku 4.5 as the workflow's model and as the checking model, one "Try it once now" with two criteria, one Check the checker round, one Agree. **Cap: $3.** It runs on the **Claude sign-in only**, never the Vertex (or other) routing in `~/.worca-cc`: the run uses a fresh `WORCA_HOME` in scratch (with `HOME` unchanged, so the Claude CLI's sign-in still works), and before it starts the controller proves, printing names only, that no routing applies from the Worca home's model `env`, the process environment or the user's Claude Code settings (Task 26 Step 1). If routing cannot be ruled out, it stops and asks. It tells the user that the Claude sign-in pays.
   - Alternative: no paid check before the PR.
 - **P4-Q15. An older test after its criteria changed.**
-  - **R: Compare shows the new criteria as "Not checked yet" and offers "Check them on these tries (about $X)"** (one press, needs P4-M5). Nothing is spent without a press.
+  - **R: Compare shows the new criteria as "Not checked yet" and offers "Check them on these tries (about $X)"** (one press, needs P4-M5). Nothing is spent without a press. While it checks, no test of the workflow can start and no second press runs (the runner answers BUSY), so two drives never pay for the same try (review I15). **Its spend counts in that test's own cost limit** and stops there, like the criteria phase (D92); a test that already reached its limit refuses the press: "This test reached its cost limit, so Worca checks nothing more on it. Test again to check your criteria."
   - Alternative: check them automatically when Compare opens.
+  - Alternative for the limit: the press is not held to the test's own limit (only to the spending limit); its estimate is shown on the button.
 - **P4-Q16. "How testing works", step 2 (board 1).** Part 2 changed it (C1) to "Pick the Basics it must meet and add automatic checks, …" because criteria did not exist.
   - **R: back to the approved text** "In your own words, for example "names a goal with a number"." once criteria ship.
   - Alternative: keep Part 2's text.
@@ -166,7 +167,7 @@ D1–D85 hold. These continue them. The `(technical)` rows are for the reviewer.
 | D94 | **"Can be checked exactly" (board 2).** A pure rule suggests an exact check for a criterion's words: "quot…" → quotes; "numbers … from/in the files/data/notes/interviews" or "makes up no numbers" → numbers; "personal data", "e-mail", "phone number" → no-personal; "link" → links; a number of 2+ digits with "mention/say/state/name" → "Must mention" that number. **Switch** opens the check dialog with the suggestion (P4-M1); the new check keeps the criterion's words as `said` (D99), and the criterion is removed. |
 | D95 | **Trust marks (D14, P4-Q6).** Per workflow, criterion text (`criterionKey`) and model:<br>• **confirm** ("Confirm 4 results", amber): no Check the checker round of it is done. It decides (board 12: "It counts, but you have not confirmed").<br>• **collecting** ("Needs your answers", grey, board 32): a round is done, fewer than 10 answers. It decides.<br>• **reliable** (green): ≥ 10 answers and the P4-Q6 rule holds. It decides.<br>• **unreliable** (red): ≥ 10 answers and the rule fails. Shown, never decides. It becomes reliable again only through new words (a new key: "confirm" again) or new answers.<br>Exact checks are always "Can be checked exactly" and decide like any automatic check. |
 | D96 | **Answers.** Agree / Disagree on a criterion's verdict side by side (board 6), Right / Wrong on a card in Check the checker (board 11), Agree / Disagree on a pair answer. One answer per person per verdict; a later press replaces it; Undo removes it (P4-M6). An answer counts for the verdict's criterion key and model only. Pair answers count for board 13's tests, never for a criterion. |
-| D97 | **Check the checker (board 11).** One round per criterion, key and model, started by the person (the "Confirm 4 results" link, "Fix it", or "Add a criterion" then Save).<br>• **The good result:** the example's result you liked (text), else the newest passed try of the example, else the past run it came from when the person called it good; none: refused with P4-M3's sentence.<br>• **Planted results:** one model call returns a passage of the result and three broken versions of it, each with a short "how" ("number removed"); each must be found and replaced in the result (D89's search). If it fails or the passage is not found: three deterministic plants (numbers removed from the first paragraph with numbers, a made-up quote added, the first paragraph removed).<br>• **Calls:** the real and the three planted results are judged (4), each asked twice more (8), and each with filler text added (4): 16 judge calls plus the planting call.<br>• **Answers:** the four verdicts get Right / Wrong; when all four are answered the round is done. A "Wrong" offers clearer words (one call, D104; P4-M3).<br>• Rounds run in the background, one at a time per example and criterion; the page polls every 2 s while one is being made. |
+| D97 | **Check the checker (board 11).** One round per criterion, key and model, started by the person (the "Confirm 4 results" link, "Fix it", or "Add a criterion" then Save).<br>• **The good result:** the example's result you liked (text), else the newest passed try of the example (a real try before a mock one), else the past run it came from when the person called it good; none: refused with P4-M3's sentence. **A good result that came from a mock try** (a mock try's result, or a result you liked kept from one) **is always checked by the mock**, whatever `WORCA_MOCK` says (D91, review I14): Worca never pays to break fixture text.<br>• **Planted results:** one model call returns a passage of the result and three broken versions of it, each with a short "how" ("number removed"); each must be found and replaced in the result (D89's search). If it fails or the passage is not found: three deterministic plants (numbers removed from the first paragraph with numbers, a made-up quote added, the first paragraph removed).<br>• **Calls:** the real and the three planted results are judged (4), each asked twice more (8), and each with filler text added (4): 16 judge calls plus the planting call.<br>• **Answers:** the four verdicts get Right / Wrong; when all four are answered the round is done. A "Wrong" offers clearer words (one call, D104; P4-M3).<br>• Rounds run in the background, one at a time per example and criterion; the page polls every 2 s while one is being made. |
 | D98 | **Better or worse with criteria.** Read time only. A try passes when its stored verdict passes (Basics and automatic checks, Part 2) **and** every deciding criterion is met; a criterion that is not checked, or unreliable, does not decide. **Even checking (review I6):** a criterion decides for an example only when every finished try of that example in the reading (both versions in Compare) has a counted verdict of it; otherwise it decides on neither side for that example, and Compare names it ("not checked on every try", P4-M5) with "Check them on these tries". So a version is never called worse for a criterion the other version's tries were never checked on (reused tries left unchecked after a cap or a stop, a failed call, an unreadable answer or a proof not found on one side only). The cost: one uncounted answer takes that criterion out of that example's decision until it is checked again. The pages, Compare's counts, "In short", the luck rule and the Tests list's cells use this status. A second reading with unreliable criteria deciding too finds the examples whose result would change: Compare names them (P4-M5) instead of calling them better or worse. Missed criteria join "missed …" in "In short" (board 5). |
 | D99 | **Compare by criterion (board 12).** One row per criterion of each compared example, plus each automatic check with `said` (a criterion switched to an exact check, labelled with the person's words and "Can be checked exactly"). Columns: met on A and on B ("X of N" over checked tries), Worca's checking (the trust mark and its line). A row whose two rates differ by at least one try's worth is coloured (green better, red worse) when it decides; rows met in every try by both versions collapse into "N more criteria, all met in every try by both versions". |
 | D100 | **The pair question (P4-Q8).** Blind: "Result 1" and "Result 2", asked in both orders. The same winner both times = that winner; different = "unsure"; "same" both times = a tie. Stored as one judgement row (`purpose 'pair'`, both try ids, `winner` a / b / tie / unsure). With a result you liked, the question is which is closer to it. Never decides. Only for examples with criteria or a result you liked. |
@@ -3085,15 +3086,16 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
 
 **Files:**
 - Create: `src/shared/workflow-tests/criteria-report.mjs` (Task 16 adds the trust report)
-- Modify: `src/shared/workflow-tests/compare.mjs` (`estimateOf`), `src/shared/workflow-tests/criteria-text.mjs` (summaries), `src/core/workflow-tests/criteria-read.mjs` (`byCriterionOf`, `checkingOf`, `criteriaPlanOf`), `src/core/workflow-tests/criteria-routes.mjs` (two routes), `src/core/workflow-tests/routes.mjs` (the overview and the plan gain Part 4 fields)
-- Test: `test/workflow-test-criteria-report.test.mjs`, `test/api-workflow-test-criteria.test.mjs` (two cases)
+- Modify: `src/shared/workflow-tests/compare.mjs` (`estimateOf`), `src/shared/workflow-tests/criteria-text.mjs` (summaries), `src/core/workflow-tests/criteria-read.mjs` (`byCriterionOf`, `checkingOf`, `criteriaPlanOf`), `src/core/workflow-tests/criteria-routes.mjs` (two routes), `src/core/workflow-tests/routes.mjs` (the overview and the plan gain Part 4 fields), `src/core/workflow-tests/runner.mjs` (`checkCriteriaLater`, `criteriaCheckOf`, and the BUSY rule: about 18 lines)
+- Test: `test/workflow-test-criteria-report.test.mjs`, `test/workflow-test-criteria-runner.test.mjs` (one case, I15), `test/api-workflow-test-criteria.test.mjs` (two cases)
 
 **Interfaces:**
 - Produces (criteria-report.mjs): `byCriterionModel({ examples, hasA, tries }) → { rows, more }`, where an example is `{ id, name, criteria: [{ id, text }], trust: { [criterionId]: trust }, checks }` and a row is `{ key, label, exampleName, exact, trust, a: { met, of } | null, b: { met, of }, changed: 'better'|'worse'|null, unreliableChange }`; `checkingCounts(trusts) → { total, reliable, unreliable, waiting }`.
 - Produces (criteria-text.mjs): `checkingSentence(counts)` (board 5), `listTrustSentence(counts)` (board 1), `exactLine(alt)` (board 2).
 - Produces (criteria-read.mjs): `byCriterionOf(workflowId, run) → { rows, more, counts }`, `checkingOf(workflowId, exampleIds?) → counts`, `judgeCallUsd(model) → number | null`, `criteriaPlanOf(workflowId, exampleIds, { hasA }) → { perTryUsd, pairsUsd } | null`.
 - Produces (compare.mjs): `estimateOf` returns `criteriaUsd` (number, or null when no price is known) and includes it in `usd`.
-- Routes: `GET …/runs/:run/criteria` → `{ rows, more, counts, checking }`; `POST …/runs/:run/criteria/check` → 202 `{ checking: true }` (409 while a test of the workflow runs). `GET …/tests` gains `trust` (counts); `GET …/tests/plan` gains `criteria`.
+- Produces (runner.mjs, review I15): `checkCriteriaLater(run) → Promise` (throws BUSY while a test of the workflow starts or runs, or another check of it runs; `start` and `continueRun` throw BUSY while it runs; its checks stop at the test's own cap), `criteriaCheckOf(runId) → boolean`.
+- Routes: `GET …/runs/:run/criteria` → `{ rows, more, counts, checking }`; `POST …/runs/:run/criteria/check` → 202 `{ checking: true }` (409 while a test of the workflow runs or a check of it runs; 400 when the test already reached its cost limit). `GET …/tests` gains `trust` (counts); `GET …/tests/plan` gains `criteria`.
 
 - [ ] **Step 1: Write the failing test**
 
@@ -3305,7 +3307,6 @@ export function criteriaPlanOf(workflowId, exampleIds = [], { hasA = false } = {
 
 In `criteria-routes.mjs`, append to `CRITERIA_ROUTES`: `['GET', `${W}/runs/:run/criteria`]`, `['POST', `${W}/runs/:run/criteria/check`]`; then:
 ```js
-  const checking = new Set();   // test run ids whose criteria are being checked now (P4-Q15)
   const runOf = (req) => {
     const run = store.readTestRun(num(req.params.run, 'test'));
     if (!run || run.workflowId !== wid(req)) throw store.testError(`no test ${req.params.run}`, 'NOT_FOUND');
@@ -3313,23 +3314,58 @@ In `criteria-routes.mjs`, append to `CRITERIA_ROUTES`: `['GET', `${W}/runs/:run/
   };
   route('GET', `${W}/runs/:run/criteria`, async (req, res) => {
     const run = runOf(req);
-    res.json({ ...byCriterionOf(wid(req), run), checking: checking.has(run.id) || !!(runner && runner.criteriaPhaseOf && runner.criteriaPhaseOf(run.id)) });
+    res.json({ ...byCriterionOf(wid(req), run), checking: !!(runner && (runner.criteriaCheckOf(run.id) || runner.criteriaPhaseOf(run.id))) });
   });
   // P4-Q15: "Check them on these tries": the criteria an older test's tries miss, in the background; the page polls the read above.
+  // The runner holds it (I15): BUSY beside a test of the workflow or another check, and its checks stop at the test's own cap.
   route('POST', `${W}/runs/:run/criteria/check`, async (req, res) => {
     const run = runOf(req);
-    if (store.runningTestRun(wid(req)) || checking.has(run.id)) throw store.testError('A test of this workflow is running. Wait for it, or stop it first.', 'BUSY');
-    checking.add(run.id);
-    Promise.resolve().then(() => criteriaJudge.judgeMissing(run))
-      .catch((e) => console.error(`[workflow-tests] could not check the criteria of test ${run.id}: ${e && e.message}`))
-      .finally(() => {
-        checking.delete(run.id);
-        if (deps.broadcast) deps.broadcast({ type: 'workflow-tests-changed', workflowId: run.workflowId, testRunId: run.id });
-      });
+    if (run.capUsd !== null && store.spentOfRun(run.id) >= run.capUsd) {
+      throw store.testError('This test reached its cost limit, so Worca checks nothing more on it. Test again to check your criteria.', 'BAD_REQUEST');
+    }
+    void runner.checkCriteriaLater(run);   // throws BUSY synchronously; never rejects afterwards (it logs)
     res.status(202).json({ checking: true });
   });
 ```
-Spend made this way books with `testRunId` = that test (its cost grows: board 5's cost line shows it).
+Spend made this way books with `testRunId` = that test (its cost grows: board 5's cost line shows it). The runner's `notify` tells the page when it ends (`workflow-tests-changed`, as a test's end does).
+
+In `src/core/workflow-tests/runner.mjs` (review I15; about 18 lines), inside `createTestRunner`, after `overCap` (Task 7):
+```js
+  /** P4-Q15 (I15): "Check them on these tries" on an older test, in the background. One per workflow and never beside a test of it,
+   *  so no two drives judge (and pay for) the same reused try; its checks stop at the test's own cap (D92). */
+  const checkingCriteria = new Map();   // workflowId → test run id
+  function checkCriteriaLater(run) {
+    if (starting.has(run.workflowId) || store.runningTestRun(run.workflowId) || checkingCriteria.has(run.workflowId)) throw err(BUSY_TEXT, 'BUSY');
+    if (!deps.judgeMissing) throw err('this Worca cannot check criteria', 'BAD_REQUEST');
+    checkingCriteria.set(run.workflowId, run.id);
+    return Promise.resolve()
+      .then(() => deps.judgeMissing(run, { stopped: () => false, overCap: () => overCap(run) }))
+      .catch((e) => console.error(`[workflow-tests] could not check the criteria of test ${run.id}: ${msgOf(e)}`))
+      .finally(() => { checkingCriteria.delete(run.workflowId); notify(run); });
+  }
+  const criteriaCheckOf = (runId) => [...checkingCriteria.values()].includes(Number(runId));
+```
+In `start` and `continueRun`, add `|| checkingCriteria.has(workflowId)` (`run.workflowId` in `continueRun`) to the BUSY condition (`runner.mjs:161`, `:672`), and add `checkCriteriaLater, criteriaCheckOf` to the returned object.
+
+Add to `test/workflow-test-criteria-runner.test.mjs`:
+```js
+test('I15: Check them on these tries holds the workflow busy, and stops at the test\'s own cost limit', async () => {
+  const h = harness();
+  const ex = example([{ text: 'Names a success metric' }]);
+  const runner = createTestRunner(h.deps);
+  const first = await runner.start({ workflowId: WF, kind: 'once', b: 'draft', exampleIds: [ex.id], tries: 1, capUsd: 0.65 });
+  await waitDone(runner, first.id);   // the try ($0.50) and its check ($0.10)
+  store.updateExample(WF, ex.id, { criteria: [...ex.criteria, { text: 'Explains the legal reasons' }, { text: 'Names the users' }] });
+  const job = runner.checkCriteriaLater(store.readTestRun(first.id));
+  assert.equal(runner.criteriaCheckOf(first.id), true);
+  await assert.rejects(runner.start({ workflowId: WF, kind: 'once', b: 'draft', exampleIds: [ex.id], tries: 1 }), { code: 'BUSY' });
+  assert.throws(() => runner.checkCriteriaLater(store.readTestRun(first.id)), { code: 'BUSY' });
+  await job;
+  assert.equal(runner.criteriaCheckOf(first.id), false);
+  assert.deepEqual(h.calls, ['Names a success metric', 'Explains the legal reasons'], 'at $0.70 the limit of $0.65 is reached: the third is not asked');
+  assert.equal(store.spentOfRun(first.id), 0.7);
+});
+```
 
 In `src/core/workflow-tests/routes.mjs` (import `checkingOf`, `criteriaPlanOf` from `./criteria-read.mjs`):
 - `GET W`: `res.json({ ...(await service.testsOverview(wid(req))), trust: checkingOf(wid(req)) })`.
@@ -3554,7 +3590,7 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
 - Consumes: `modelCall`, `judgeCriterion` (Task 6), `firstObject`, `replyText` (judge-prompt.mjs), `insertJudgement`, `setAnswer`, `answerOf`, `readLiked` (Tasks 7, 8, 12), `subjectOfTry` (Task 7), `recordTestJudgeCost` (Task 5), `mainResult` (result.mjs).
 - Produces (planted.mjs, pure): `FILLER`, `padded(text) → string`, `deterministicPlants(text) → [{ how, excerpt, text }]`, `PLANT_SYSTEM_PROMPT`, `plantPrompt({ criterion, result }) → string`, `parsePlantReply(text) → { excerpt, broken: [{ how, text }] } | null`, `applyPlants(result, reply) → [{ how, excerpt, text }] | null`.
 - Produces (criteria-store.mjs): `createRound({ workflowId, exampleId, criterionId, fp, model, source, by }) → round`, `readRound(id)`, `updateRound(id, { status, detail })`, `roundJudgements(roundId) → judgement[]`, `roundSpentUsd(roundId) → number`. A round is `{ id, workflowId, exampleId, criterionId, fp, model, source, status, detail, createdAt, finishedAt }`.
-- Produces (checker.mjs): `NO_SOURCE_TEXT`, `createChecker(deps) → { start({ workflowId, exampleId, criterionId, by }) → round, view(round, { by, anyone }) → view, answer(round, judgementId, right, { by }) → view, reword(round, { by }) → { text } }`, `goodResultOf(example, deps) → { kind, text, label, tryId?, pipelineId? } | null`. A view is `{ round, criterion, source, cards: [{ judgementId, card, planted: how|null, excerpt, met, reason, answer }], left, auto: { same: { n, of }, padding: { n, of }, proof: { n, of } }, costUsd, canUse }`.
+- Produces (checker.mjs): `NO_SOURCE_TEXT`, `createChecker(deps) → { start({ workflowId, exampleId, criterionId, by }) → round, view(round, { by, anyone }) → view, answer(round, judgementId, right, { by }) → view, reword(round, { by }) → { text } }`, `goodResultOf(example, deps) → { kind, text, label, mock, tryId?, pipelineId? } | null` (`mock`: the text came from a mock try; the round then runs on the mock, I14); store: `triesForExample(exampleId)`, `mockPipeline(pipelineId) → boolean`. A view is `{ round, criterion, source, cards: [{ judgementId, card, planted: how|null, excerpt, met, reason, answer }], left, auto: { same: { n, of }, padding: { n, of }, proof: { n, of } }, costUsd, canUse }`.
 - Routes: `POST …/examples/:ex/checker` `{ criterionId }` → 201 `{ round }` (422 `NO_SOURCE`, 409 while one is being made); `GET …/examples/:ex/checker/:round` → view; `POST …/examples/:ex/checker/:round/answers` `{ judgementId, right }` → view; `POST …/examples/:ex/checker/:round/reword` → `{ text }`.
 
 - [ ] **Step 1: Write the failing test**
@@ -3633,6 +3669,24 @@ test('a round: 4 cards (1 real, 3 planted), each asked 3 times and once with fil
   assert.deepEqual([done.round.status, done.left, done.canUse], ['done', 0, true]);
   assert.equal(cs.roundDone('wf', done.round.fp, 'claude-haiku-4-5'), true);
   assert.equal(prepare("SELECT COUNT(*) AS n FROM wf_test_judge_ledger WHERE purpose = 'checker' AND round_id = ?").get(round.id).n, 17);
+});
+
+test('I14: a good result from a mock try is checked by the mock, never paid, also outside WORCA_MOCK=1', async () => {
+  const ex = store.createExample('wf', { name: 'Mock only', request: 'R', criteria: [{ text: 'Names a success metric with a number' }], judge: { model: 'claude-haiku-4-5' } });
+  const run = store.createTestRun({ workflowId: 'wf', kind: 'once', b: 'draft', bFp: 'f', exampleIds: [ex.id], tries: 1 });
+  const t = store.insertTry({ runId: run.id, workflowId: 'wf', exampleId: ex.id, use: 'draft', fp: 'f', exampleFp: ex.fingerprint, tryNo: 1, mock: true });
+  store.updateTry(t.id, { status: 'passed', pipelineId: 'p0000009', verdict: { passed: true, facts: { status: 'done' }, basics: [], checks: [] } });
+  let paid = 0;
+  const seenMock = [];
+  const checker = createChecker({ subjectOf: async () => GOOD, mock: () => false, inline: true,
+    modelCall: async () => { paid += 1; return { text: '{}', costUsd: 0.01, costKind: 'billed' }; },
+    judgeCriterion: async ({ mock }) => { seenMock.push(mock); return { met: true, reason: 'r', proof: 'Cut export tickets by 60%', proofFound: true, error: null, costUsd: 0, ms: 1 }; } });
+  const round = await checker.start({ workflowId: 'wf', exampleId: ex.id, criterionId: store.readExample('wf', ex.id).criteria[0].id });
+  assert.equal(paid, 0, 'no planting call');
+  assert.ok(seenMock.length === 16 && seenMock.every((m) => m === true), 'every check on the mock');
+  assert.equal(prepare('SELECT COUNT(*) AS n FROM wf_test_judge_ledger WHERE round_id = ?').get(round.id).n, 0);
+  assert.equal(store.mockPipeline('p0000009'), true);
+  assert.equal(store.mockPipeline('p0000001'), false);
 });
 
 test('no good result: refused with the board sentence; one round at a time per criterion', async () => {
@@ -3789,16 +3843,19 @@ export const NO_SOURCE_TEXT = 'Try this example once first, so Worca has a good 
 const EXCERPT_MAX = 400;
 const clip = (s) => { const t = String(s ?? '').trim(); return t.length > EXCERPT_MAX ? `${t.slice(0, EXCERPT_MAX - 1)}…` : t; };
 
-/** D97: the result you liked, else the newest passed try of the example, else the run it came from when the person called it good. */
+/** D97: the result you liked, else the newest passed try of the example (a real one before a mock one), else the run it came from when
+ *  the person called it good. `mock`: the text came from a mock try (I14: the round then runs on the mock, never paid). */
 export async function goodResultOf(example, { subjectOf = (t) => subjectOfTry(t), readMain = mainResult } = {}) {
   const liked = cs.readLiked(example.id);
-  if (liked && liked.text.trim()) return { kind: 'liked', text: liked.text, label: 'From the result you liked' };
-  const tries = store.triesForExample(example.id);
-  const best = tries.find((t) => t.status === 'passed' && t.pipelineId);
-  if (best) { const text = await subjectOf(best); if (text.trim()) return { kind: 'try', tryId: best.id, text, label: 'From a real result' }; }
+  if (liked && liked.text.trim()) {
+    return { kind: 'liked', text: liked.text, label: 'From the result you liked', mock: !!liked.fromPipeline && store.mockPipeline(liked.fromPipeline) };
+  }
+  const passed = store.triesForExample(example.id).filter((t) => t.status === 'passed' && t.pipelineId);
+  const best = passed.find((t) => !t.mock) || passed[0];
+  if (best) { const text = await subjectOf(best); if (text.trim()) return { kind: 'try', tryId: best.id, text, label: 'From a real result', mock: !!best.mock }; }
   if (example.from && example.from.verdict === 'good') {
     const m = await readMain(example.from.pipelineId);
-    if (m.text && m.text.trim()) return { kind: 'run', pipelineId: example.from.pipelineId, text: m.text, label: 'From a real result' };
+    if (m.text && m.text.trim()) return { kind: 'run', pipelineId: example.from.pipelineId, text: m.text, label: 'From a real result', mock: store.mockPipeline(example.from.pipelineId) };
   }
   return null;
 }
@@ -3810,7 +3867,7 @@ export function createChecker(deps = {}) {
 
   async function make(round, ex, criterion, good) {
     const book = (usd, costKind) => d.book({ workflowId: round.workflowId, exampleId: ex.id, roundId: round.id, purpose: 'checker', model: round.model, amountUsd: usd, costKind });
-    const mock = d.mock();
+    const mock = d.mock() || good.mock === true;   // D91, I14: a mock try's text is only ever checked by the mock
     let plants = null;
     if (!mock) {
       try {
@@ -3844,7 +3901,7 @@ export function createChecker(deps = {}) {
     const good = await goodResultOf(ex, d);
     if (!good) throw store.testError(NO_SOURCE_TEXT, 'NOT_READY');
     const round = cs.createRound({ workflowId, exampleId: ex.id, criterionId: criterion.id, fp: cs.criterionFp(criterion.text), model: ex.judge.model,
-      source: { kind: good.kind, tryId: good.tryId ?? null, pipelineId: good.pipelineId ?? null, label: good.label }, by });
+      source: { kind: good.kind, tryId: good.tryId ?? null, pipelineId: good.pipelineId ?? null, label: good.label, mock: !!good.mock }, by });
     making.add(key);
     const job = make(round, ex, criterion, good)
       .catch((e) => cs.updateRound(round.id, { status: 'failed', detail: firstLine(e) }))
@@ -3888,6 +3945,11 @@ export function createChecker(deps = {}) {
 export function triesForExample(exampleId) {
   getDb();
   return prepare(`SELECT ${TRY_COLS} FROM wf_test_tries t WHERE t.example_id = ? ORDER BY t.id DESC LIMIT 50`).all(Number(exampleId)).map(tryOf);
+}
+/** Part 4 (I14): whether a pipeline is a mock try's (its text is fixture text, checked only by the mock). */
+export function mockPipeline(pipelineId) {
+  getDb();
+  return !!prepare('SELECT 1 FROM wf_test_tries WHERE pipeline_id = ? AND mock = 1 LIMIT 1').get(String(pipelineId || ''));
 }
 ```
 and in `goodResultOf` call `store.triesForExample(example.id)` directly (drop the `store.triesForExample ?` guard). Clearer words (`reword`) come in Task 15.
@@ -4260,7 +4322,7 @@ export async function rewordCriterion({ criterion, wrong = [], model, mock = fal
     const v = view(round, { by });
     const wrong = v.cards.filter((c) => c.answer === false).map((c) => ({ excerpt: c.excerpt, met: c.met }));
     const book = (usd, costKind) => d.book({ workflowId: round.workflowId, exampleId: round.exampleId, roundId: round.id, purpose: 'reword', model: round.model, amountUsd: usd, costKind });
-    return rewordCriterion({ criterion: v.criterion, wrong, model: round.model, mock: d.mock(), book });
+    return rewordCriterion({ criterion: v.criterion, wrong, model: round.model, mock: d.mock() || !!(round.source && round.source.mock), book });   // I14
   }
 ```
 `criteria-routes.mjs`: append `['POST', `${W}/examples/:ex/checker/:round/reword`]` and `['POST', '/api/workflow-tests/suggest-criteria']` to `CRITERIA_ROUTES`; import `suggestCriteria`, `judgeModelsView`, `mainResult` (from `./result.mjs`), `recordTestJudgeCost`; then:
