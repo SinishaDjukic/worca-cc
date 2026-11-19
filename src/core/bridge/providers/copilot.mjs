@@ -280,9 +280,16 @@ const cache = new Map();   // `${host}\n${githubToken}` -> { token, expiresAt (m
 const refusalLogged = new Map();   // `${host}|${status}|${message}` -> last logged at (ms)
 const REFUSAL_LOG_EVERY_MS = 10 * 60 * 1000;
 const defaultLog = (line) => console.warn(line);
+/** A link for the server log: origin and path only; the query, fragment and any credentials are dropped. */
+const logSafeUrl = (v) => {
+  try { const u = new URL(v); return `${u.origin}${u.pathname}`; } catch { return String(v).split(/[?#]/)[0]; }
+};
 const cacheKey = (githubToken, enterpriseHost) => `${enterpriseHost || 'github.com'}\n${githubToken}`;
 
-/** One server-log line per distinct refusal per 10 minutes; the GitHub token never appears in it. */
+/**
+ * One server-log line per distinct refusal per 10 minutes; the GitHub token never appears in it,
+ * and GitHub's link is logged without its query or fragment (the user-facing message keeps it whole).
+ */
 function logRefusal({ log, now, githubToken, url, host, status, github }) {
   const dedupeKey = `${host}|${status}|${github.message || ''}`;
   const at = now();
@@ -293,7 +300,7 @@ function logRefusal({ log, now, githubToken, url, host, status, github }) {
   }
   refusalLogged.set(dedupeKey, at);
   const line = `[worca] copilot: token exchange ${url} answered ${status}${github.message ? `: ${github.message}` : ' with no reason'}`
-    + `${github.url ? ` (${github.url})` : ''}${github.notificationId ? ` [notification ${github.notificationId}]` : ''}`
+    + `${github.url ? ` (${logSafeUrl(github.url)})` : ''}${github.notificationId ? ` [notification ${github.notificationId}]` : ''}`
     + `${github.sso ? ` [sso${github.sso.required ? ' required' : ''}]` : ''}`;
   try { log(line.split(githubToken).join('[redacted]')); } catch { /* logging must not mask the refusal */ }
 }

@@ -494,6 +494,19 @@ test('copilotToken refusal log: one line, no token, deduped for 10 minutes, rese
   assert.match(lines.at(-1), /answered 401 with no reason/);
 });
 
+test('copilotToken refusal log: GitHub\'s link is logged without query, fragment or credentials; the error keeps it whole', async () => {
+  _resetCopilotCache();
+  const lines = [];
+  const link = 'https://user:pw@acme.ghe.com/settings/copilot?authorization_request=SECRET123&x=1#frag';
+  const f = stub([[/v2\/token$/, () => refusalRes(403, { error_details: { message: 'No seat', url: link } })]]);
+  const err = await copilotToken('gho_q', { fetch: f, enterpriseHost: 'acme.ghe.com', log: (l) => lines.push(l), now: () => 7_000_000 }).catch((e) => e);
+  assert.equal(lines.length, 1);
+  assert.match(lines[0], /\(https:\/\/acme\.ghe\.com\/settings\/copilot\)/);
+  assert.doesNotMatch(lines[0], /SECRET123|authorization_request|#frag|user:pw/);
+  assert.equal(err.github.url, link);
+  assert.ok(err.message.includes(link));
+});
+
 test('device flow on a tenant: the Copilot app client id on start and poll; a refused start names the Copilot app', async () => {
   const bodies = [];
   const f = stub([
