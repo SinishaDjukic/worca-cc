@@ -448,16 +448,33 @@ test('setup commands without git find worca\'s git stub first on PATH (macOS), s
   mkdirSync(dir, { recursive: true });
   writeFileSync(join(dir, 'package-lock.json'), '{}');
   const calls = [];
-  const exec = async (cmd, args, opts) => { calls.push([cmd, opts]); return { stdout: '', stderr: '' }; };
+  const exec = async (cmd, args, opts) => { assert.ok(!(Array.isArray(args) && opts.shell), 'DEP0190: an args array with shell true'); calls.push([cmd, opts]); return { stdout: '', stderr: '' }; };
   const manifest = { setup: { node: true, python: 'pyproject' } };
   await runSetup(dir, manifest, { exec });
-  assert.deepEqual(calls, [['npm', { cwd: dir, shell: !POSIX }], ['uv', { cwd: dir }]]);
+  if (POSIX) assert.deepEqual(calls, [['npm', { cwd: dir, shell: false }], ['uv', { cwd: dir }]]);
+  else assert.deepEqual(calls.map(([, o]) => o.cwd), [dir, dir]);   // Windows starts npm-cli.js with node, or one command line
   calls.length = 0;
   stubTesting.setPlatform('darwin');
   t.after(() => stubTesting.setPlatform(null));
   withNoGit(t);
   await runSetup(dir, manifest, { exec });
   assert.deepEqual(calls.map(([cmd, o]) => [cmd, o.cwd, o.env.PATH.split(':')[0]]), [['npm', dir, noGitBinDir()], ['uv', dir, noGitBinDir()]]);
+});
+
+test('runSetup on Windows starts npm ci without an args array and a shell together (Node DEP0190): npm-cli.js with node, or one command line', async () => {
+  const dir = join(process.env.WORCA_HOME, 'setup-win');
+  mkdirSync(dir, { recursive: true });
+  writeFileSync(join(dir, 'package-lock.json'), '{}');
+  const NODE = 'C:\\nodejs\\node.exe'; const CLI = 'C:\\nodejs\\node_modules\\npm\\bin\\npm-cli.js';
+  const calls = [];
+  const exec = async (cmd, args, opts) => { calls.push([cmd, args, opts.shell, opts.cwd]); return { stdout: '', stderr: '' }; };
+  const win = (exists) => ({ platform: 'win32', env: {}, execPath: NODE, exists });
+  await runSetup(dir, { setup: { node: true } }, { exec, npm: win(() => true) });
+  await runSetup(dir, { setup: { node: true } }, { exec, npm: win(() => false) });
+  assert.deepEqual(calls, [
+    [NODE, [CLI, 'ci', '--ignore-scripts', '--omit=dev'], false, dir],
+    ['npm ci --ignore-scripts --omit=dev', undefined, true, dir],
+  ]);
 });
 
 test('uninstall renames the snapshot root aside before removing it: a removal that stops half-way leaves no snapshot behind', STUCK, async (t) => {

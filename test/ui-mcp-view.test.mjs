@@ -65,7 +65,7 @@ const SERVERS = [
     description: 'Datadog', fields: [], inSets: [], tools: null, pluginDisabled: false, inClaudeConfig: false, retired: 'acme/platform' },
 ];
 
-function mount({ assignments = {}, over = {}, answer = async () => true } = {}) {
+function mount({ assignments = {}, over = {}, answer = async () => true, notify = null } = {}) {
   const calls = [];
   const nav = [];
   const confirms = [];
@@ -73,7 +73,7 @@ function mount({ assignments = {}, over = {}, answer = async () => true } = {}) 
   const api = async (method, path, body) => {
     calls.push([method, path, body]);
     const key = `${method} ${path}`;
-    if (Object.hasOwn(over, key)) return over[key];
+    if (Object.hasOwn(over, key)) return typeof over[key] === 'function' ? over[key](body) : over[key];
     if (key === 'GET /api/mcp/sets') return { ok: true, status: 200, data: { newer: false, sets: SETS } };
     if (method === 'GET' && path.startsWith('/api/mcp/sets/')) {
       const v = SET_VIEWS[decodeURIComponent(path.slice(14))];
@@ -86,7 +86,7 @@ function mount({ assignments = {}, over = {}, answer = async () => true } = {}) 
   };
   const host = doc.createElement('section');
   doc.body.replaceChildren(host);
-  const ctl = createMcpView({ host, api, navigate: (h) => nav.push(h), confirm: async (o) => { confirms.push(o); return answer(o); }, modal, doc, now: () => NOW });
+  const ctl = createMcpView({ host, api, navigate: (h) => nav.push(h), confirm: async (o) => { confirms.push(o); return answer(o); }, modal, doc, now: () => NOW, notify });
   return { host, ctl, calls, nav, confirms, modal, writes: () => calls.filter(([m]) => m !== 'GET') };
 }
 const click = (el) => el.dispatchEvent(new doc.defaultView.Event('click', { bubbles: true }));
@@ -537,4 +537,69 @@ test('the Connectors page: its hashes (#connectors General, /sets/<id>, /servers
       assert.equal(modal.classList.contains('hidden'), true);
     } },
   ]);
+});
+
+// Import from other tools (ui/public/mcp-server-import.mjs, the real module): the Servers view's button and its wiring.
+const IMPORT_ROW = { id: 'cursor:user:files', tool: 'Cursor', scope: 'user', source: '~/.cursor/mcp.json', name: 'files', suggestedName: 'files',
+  transport: 'stdio', command: 'npx', args: ['-y', 'files-mcp'], hasSecrets: false, inWorca: false, importable: true };
+const IMPORT_OVER = {
+  'GET /api/mcp/discover': { ok: true, status: 200, data: { servers: [IMPORT_ROW], files: [], homeConfigs: true, project: null } },
+  'POST /api/mcp/import': (b) => (b.apply
+    ? { ok: true, status: 200, data: { ok: true, names: ['files'], alreadyPresent: [], detail: 'Added files. It is in no set yet: turn it on in a set on Connectors › MCP servers' } }
+    : { ok: true, status: 200, data: { ok: true, digest: 'a'.repeat(64), review: { summary: 'Import MCP server: files', names: ['files'], changes: [], warnings: [], effects: [], alreadyPresent: [], skipped: [] } } }),
+};
+
+test('Servers topbar has Import from other tools beside Add MCP server; Sets and Skills do not', async () => {
+  const { host, ctl } = mount({ over: { 'GET /api/skills': { ok: true, status: 200, data: { skills: [] } } } });
+  await ctl.show('servers');
+  const imp = host.querySelector('.topbar [data-act="import-servers"]');
+  assert.equal(imp.textContent, 'Import from other tools');
+  assert.equal(imp.nextElementSibling, host.querySelector('.topbar [data-act="add-server"]'), 'just before the primary Add MCP server');
+  await ctl.show('');
+  assert.equal(host.querySelector('[data-act="import-servers"]'), null);
+  await ctl.show('skills');
+  assert.equal(host.querySelector('[data-act="import-servers"]'), null);
+});
+
+test('Import from other tools opens the modal after GET /api/mcp/discover; a finished import toasts its detail and reads the servers again', async () => {
+  const toasts = [];
+  const m = mount({ over: IMPORT_OVER, notify: (t) => toasts.push(t) });
+  await m.ctl.show('servers');
+  click(m.host.querySelector('[data-act="import-servers"]'));
+  await settle();
+  assert.equal(m.modal.opened.title, 'Import from other tools');
+  assert.ok(m.calls.some(([meth, p]) => meth === 'GET' && p === '/api/mcp/discover'));
+  const cb = m.modal.opened.body.querySelector('.mcp-imp-row[data-id="cursor:user:files"] .mcp-imp-pick');
+  cb.checked = true; change(cb);
+  await m.modal.opened.actions.find(([l]) => l === 'Review')[2]();
+  await settle();
+  const reads = m.calls.filter(([meth, p]) => meth === 'GET' && p === '/api/mcp/servers').length;
+  await m.modal.opened.actions.find(([l]) => l === 'Import')[2]();
+  await settle();
+  assert.equal(m.modal.opened, null);
+  assert.equal(toasts.length, 1);
+  assert.equal(toasts[0].tone, 'ok');
+  assert.match(`${toasts[0].title} ${toasts[0].detail || ''}`, /Added files/);
+  assert.equal(m.calls.filter(([meth, p]) => meth === 'GET' && p === '/api/mcp/servers').length, reads + 1, 'the Servers list is read again');
+});
+
+test('An Import that fails after it may have written (a 500) keeps the dialog open and reads the servers again', async () => {
+  const toasts = [];
+  const m = mount({ over: { ...IMPORT_OVER, 'POST /api/mcp/import': (b) => (b.apply
+    ? { ok: false, status: 500, data: { error: 'Added files, then could not add docs-2: disk full', code: 'ERROR' } }
+    : IMPORT_OVER['POST /api/mcp/import'](b)) }, notify: (t) => toasts.push(t) });
+  await m.ctl.show('servers');
+  click(m.host.querySelector('[data-act="import-servers"]'));
+  await settle();
+  const cb = m.modal.opened.body.querySelector('.mcp-imp-row[data-id="cursor:user:files"] .mcp-imp-pick');
+  cb.checked = true; change(cb);
+  await m.modal.opened.actions.find(([l]) => l === 'Review')[2]();
+  await settle();
+  const reads = m.calls.filter(([meth, p]) => meth === 'GET' && p === '/api/mcp/servers').length;
+  await m.modal.opened.actions.find(([l]) => l === 'Import')[2]();
+  await settle();
+  assert.equal(m.modal.opened.title, 'Import · review');
+  assert.equal(m.modal.opened.body.querySelector('.form-msg').textContent, 'Added files, then could not add docs-2: disk full');
+  assert.deepEqual(toasts, []);
+  assert.equal(m.calls.filter(([meth, p]) => meth === 'GET' && p === '/api/mcp/servers').length, reads + 1, 'the Servers list is read again');
 });

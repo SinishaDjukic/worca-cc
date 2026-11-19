@@ -128,4 +128,27 @@ test('_reconcileDiffBases: a re-attached member moves to its recorded start; a n
   assert.deepEqual(baseless.checkpointRefs, {});
   assert.equal(baseless.checkpointRef, 'ref-from-hook', 'an untouched run keeps its scalar');
   assert.equal(baseless.state.checkpointRefs, undefined, 'nothing changed → no re-mirror');
+  // A conflict run's member (its record carries mergeIn): its base is a synthetic auto-merge commit, never an
+  // ancestor of HEAD; _refreshMergeBases owns it, so reconcile keeps it and writes nothing.
+  const synthetic = git(['commit-tree', 'HEAD^{tree}', '-p', 'HEAD', '-p', base, '-m', 'worca: auto-merge diff base']).stdout.trim();
+  const merging = fakeHarness({ dirs: { a: repo } });
+  merging.members = [{ projectKey: 'a' }]; merging._log = () => {};
+  merging.pipeline = null;
+  merging.state = { branches: { a: { worktreeDir: repo, diffBase: base, mergeIn: { ref: 'origin/dev', at: base } } } };
+  merging.checkpointRefs = { a: synthetic };
+  merging.checkpointRef = synthetic;
+  await merging._reconcileDiffBases();
+  assert.equal(merging.checkpointRefs.a, synthetic, 'a mergeIn member keeps its moved base');
+  assert.equal(merging.checkpointRef, synthetic);
+  assert.equal(merging.state.checkpointRefs, undefined, 'nothing corrected → no re-mirror');
+  // Any member set up since base merges are measured (its record carries startHead) is _refreshMergeBases' too.
+  const started = fakeHarness({ dirs: { a: repo } });
+  started.members = [{ projectKey: 'a' }]; started._log = () => {};
+  started.pipeline = null;
+  started.state = { branches: { a: { worktreeDir: repo, baseSha: base, startHead: base } } };
+  started.checkpointRefs = { a: synthetic };
+  started.checkpointRef = synthetic;
+  await started._reconcileDiffBases();
+  assert.equal(started.checkpointRefs.a, synthetic, 'a startHead member keeps its moved base');
+  assert.equal(started.state.checkpointRefs, undefined);
 });

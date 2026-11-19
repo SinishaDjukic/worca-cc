@@ -91,7 +91,7 @@ import {
   updateCheckEnabled, assertUpdateCheckInput, setUpdateCheck,
   titleModel as storedTitleModel, setTitleModel, assertTitleModelInput,
   hideBuiltinModels, setHideBuiltinModels, assertHideBuiltinModelsInput, setHideBuiltinEngines, assertHideBuiltinEnginesInput,
-  theme as storedTheme, setTheme, assertThemeInput,
+  theme as storedTheme, setTheme, assertThemeInput, setScreensaver, assertScreensaverInput,
   uiLevel as storedUiLevel, setUiLevel, assertUiLevelInput, defaultUiLevel,
   autoWorkflowModel as storedAutoWorkflowModel, setAutoWorkflowModel, assertAutoWorkflowModelInput,
   prDescriptionModel as storedPrDescriptionModel, setPrDescriptionModel, assertPrDescriptionModelInput,
@@ -339,7 +339,7 @@ import { applyProjectChange } from '../src/core/ask/project-deps.mjs';
 import { workspaceEventPrompt, workspaceNoticeText } from '../src/core/ask/workspace-proposal.mjs';
 import { applyWorkspaceChange } from '../src/core/ask/workspace-deps.mjs';
 import { actionsEventPrompt, actionsNoticeText } from '../src/core/ask/actions-proposal.mjs';
-import { applyActionsChange } from '../src/core/ask/actions-deps.mjs';
+import { mcpEventPrompt, mcpNoticeText } from '../src/core/ask/mcp-proposal.mjs';
 import { webEventPrompt, webNoticeText, chatWebHosts } from '../src/core/ask/web-proposal.mjs';
 import { createConversationBridge } from '../src/core/chat/conversation-bridge.mjs';
 import { fetchChatFiles, fitChatContext, chatContextBlock } from '../src/core/chat/inbound-context.mjs';
@@ -422,7 +422,7 @@ const REST_PR_FORGES = new Set(['azure', 'bitbucket']);
 import { checkRunPrBody, resolveRunPr } from '../src/core/pr-auto.mjs';
 import { createPrAutoFinisher, setPrAutoFinisher, prAutoFinisher } from '../src/core/pr-auto-finish.mjs';
 import { workspaceMembers as prStateMembers, memberPrTarget, relatedPrsBlock, withRelatedPrsBlock, openWorkspaceRunPrs, createPrWithDraftRetry } from '../src/core/workspace-prs.mjs';
-import { isSyntacticRef } from '../src/core/ask/proposal.mjs';
+import { isSyntacticRef, cardGuardrails, cardEngineRefusal } from '../src/core/ask/proposal.mjs';
 import { createRefResolver } from '../src/core/ask/refs.mjs';
 import { REFS_MAX } from '../src/shared/chip-refs.mjs';
 import { archivePipeline, restorePipeline, purgePipeline, discardRetainedWorktrees, applyRetainedWork, archiveKeepsWork } from '../src/core/pipeline-delete.mjs';
@@ -1108,7 +1108,7 @@ wss.on('connection', (ws, req) => {
   // A paused run this server holds may have been stopped from a terminal since: settle its entry
   // before this tab's hello (and, through the frames, in every open tab), so a reload reads it stopped.
   settleStaleParkedEntries();
-  sockets.add(ws);
+  sockets.add(ws); app.emit('page-sockets-changed');
   trackHeartbeat(ws);
   closeAtTokenExpiry(ws, req.worcaUser);
   // Whose Ask threads this socket may see (a shared sign-in's name, else null = all).
@@ -1155,8 +1155,8 @@ wss.on('connection', (ws, req) => {
     replayAskJob(ws, askJobs.get(requestedThreadId));
   }
 
-  ws.on('close', () => sockets.delete(ws));
-  ws.on('error', () => sockets.delete(ws));
+  ws.on('close', () => { sockets.delete(ws); app.emit('page-sockets-changed'); });
+  ws.on('error', () => { sockets.delete(ws); app.emit('page-sockets-changed'); });
   ws.on('message', (data) => {
     // Clients may ask to (re)subscribe / replay an entry's history. An agent
     // generation's {type:'subscribe', genId} (or a bench's benchId) is accepted
@@ -3020,15 +3020,14 @@ const startRunHandler = async (req, res) => {
     // Optional guardrailsId selects the named guardrail set that IS this run's
     // policy (applied uniformly to every member — guardrails are per-run only).
     // Absent/blank/null normalizes to the install's default set (Normal on a
-    // fresh install, Permissive on one from before v81 — defaultGuardrailSetId).
+    // fresh install, Permissive on one from before v81 — defaultGuardrailSetId), except a Chat-card start: Permissive only when picked on the card (D9 / R-sec-2, cardGuardrails).
     // A NON-STRING value is a caller bug and 400s (normalizing it
     // away would silently drop the requested policy). Unknown ids 400 up
     // front, like workflowId.
     if (body.guardrailsId != null && typeof body.guardrailsId !== 'string') {
       return badRequest(res, 'guardrailsId must be a string');
     }
-    const guardrailsId =
-      typeof body.guardrailsId === 'string' && body.guardrailsId.trim() ? body.guardrailsId.trim() : defaultGuardrailSetId();
+    const { guardrailsId, guardrailsNote } = cardGuardrails({ askLink, cardStart: req._cardStart === true, guardrailsId: body.guardrailsId, fallback: defaultGuardrailSetId });
     if (!(await readGuardrailSet(guardrailsId))) {
       return badRequest(res, `unknown guardrailsId "${guardrailsId}"`);
     }
@@ -3043,6 +3042,7 @@ const startRunHandler = async (req, res) => {
     const engineShape = runEngineOpts(body, hasWorkspace ? { workspace: true } : { projectDir: resolveProjectDir(body.projectDir) });
     if (engineShape.error) return badRequest(res, engineShape.error);
     const runEngine = engineShape.opts;
+    const cardRefusal = cardEngineRefusal(guardrailsNote, runEngine); if (cardRefusal) return res.status(409).json(cardRefusal);   // a moved card start on an engine Normal cannot hold
     // Signed out with no routed model, a Claude run can only fail on its first call: say so now, not as a paused run.
     if (!internal && !scanTarget && body.mock !== true && !mockEnabled({}) && (runEngine.engine || 'claude') === 'claude'
       && workflowNeedsModel(workflowRow)
@@ -3120,7 +3120,7 @@ const startRunHandler = async (req, res) => {
       feature: !sameAsSource && typeof body.featureBranch === 'string' && body.featureBranch.trim()
         ? body.featureBranch.trim() : null,
       ...(resolveOf ? { resolves: { runId: resolveOf.runId, member: resolveOf.member || null } } : {}),
-      ...(roundOf ? { roundOf } : {}),
+      ...(roundOf ? { roundOf } : {}), ...(typeof req._mergeIn?.ref === 'string' ? { mergeIn: { ref: req._mergeIn.ref } } : {}),   // in-process only (Watch PR, resolve), never body.mergeIn
       ...(sameAsSource ? { sameAsSource: true } : {}),
       ...(smartNamingOn && !sameAsSource && body.featureBranchSuggested === true ? { suggested: true } : {}),
       ...(smartNamingOn && !sameAsSource && body.featureBranchFallback === true ? { legacy: true } : {}),
@@ -3306,7 +3306,7 @@ const startRunHandler = async (req, res) => {
         template: workflowRow,
         ...(scanTarget && scanTarget.models ? { scanModels: scanTarget.models } : {}),
         ...(runOverlay ? { overlay: runOverlay } : {}),
-        guardrailsId,
+        guardrailsId, ...(guardrailsNote ? { guardrailsNote } : {}),
         ...(mcpOptOut.length ? { mcpOptOut } : {}),
         startedBy,
         ...(req._prWatchRunId ? { prWatchRunId: req._prWatchRunId } : {}),
@@ -3476,7 +3476,7 @@ const startRunHandler = async (req, res) => {
         agentsDir: AGENTS_DIR,
         workflowId,
         template: workflowRow,
-        guardrailsId,
+        guardrailsId, ...(guardrailsNote ? { guardrailsNote } : {}),
         ...(mcpOptOut.length ? { mcpOptOut } : {}),
         startedBy,
         ...(req._prWatchRunId ? { prWatchRunId: req._prWatchRunId } : {}),
@@ -3955,7 +3955,7 @@ async function invokeAskCard({ threadId, cardId, body, actor }) {
   return out;
 }
 
-async function invokeStartRun(body, internal, { startedBy = null, runId = null, prWatchRunId = null, roundOf = null, extrasFiles = null, reportTo = null, automation = false } = {}) {
+async function invokeStartRun(body, internal, { startedBy = null, runId = null, prWatchRunId = null, roundOf = null, extrasFiles = null, reportTo = null, automation = false, mergeIn = null } = {}) {
   const files = Array.isArray(extrasFiles) && extrasFiles.length ? extrasFiles : null;
   const id = files ? (runId || randomUUID()) : runId;   // the extras folder is named by the run id
   const run = async (extrasPaths, staged = null) => {
@@ -3967,7 +3967,7 @@ async function invokeStartRun(body, internal, { startedBy = null, runId = null, 
     };
     await startRunHandler({ body, headers: {}, _internal: internal, _startedBy: startedBy, _runId: id,
       _prWatchRunId: prWatchRunId, ...(roundOf ? { _roundOf: roundOf } : {}), ...(extrasPaths ? { _extrasPaths: extrasPaths } : {}),
-      ...(reportTo ? { _reportTo: reportTo } : {}), ...(automation ? { _automation: true } : {}) }, res);
+      ...(reportTo ? { _reportTo: reportTo } : {}), ...(automation ? { _automation: true } : {}), ...(mergeIn ? { _mergeIn: mergeIn } : {}) }, res);
     if (staged && out.status >= 200 && out.status <= 299) dropStagedOnceCopied(id, staged.drop);
     return out;
   };
@@ -7923,7 +7923,7 @@ function drainActiveEntries() {
  */
 function drainServer({ timeoutMs = drainTimeoutMs(), reason = 'stop' } = {}) {
   if (DRAIN.promise) return DRAIN.promise;
-  DRAIN.on = true;
+  DRAIN.on = true; app.emit('draining');
   DRAIN.startedAt = Date.now();
   DRAIN.promise = (async () => {
     const pausedIds = new Set();
@@ -8070,7 +8070,7 @@ async function applySettingsPatch(body, { person = null } = {}) {
   const hasUpdateCheckKey = has('updateCheck');
   const hasTitleModelKey = has('titleModel');
   const hasHideBuiltinKey = has('hideBuiltinModels'); const hasHideEnginesKey = has('hideBuiltinEngines');
-  const hasThemeKey = has('theme');
+  const hasThemeKey = has('theme'), hasScreensaverKey = has('screensaver');   // Settings › Appearance
   const hasUiLevelKey = has('uiLevel');
   const hasFlagsKey = has('flags');
   const hasAutoKey = has('autoWorkflowModel');
@@ -8156,7 +8156,7 @@ async function applySettingsPatch(body, { person = null } = {}) {
       }
     });
     if (hasHideBuiltinKey) asSettingsField('hideBuiltinModels', () => assertHideBuiltinModelsInput(body.hideBuiltinModels)); if (hasHideEnginesKey) asSettingsField('hideBuiltinEngines', () => assertHideBuiltinEnginesInput(body.hideBuiltinEngines));
-    if (hasThemeKey) asSettingsField('theme', () => assertThemeInput(body.theme));
+    if (hasThemeKey) asSettingsField('theme', () => assertThemeInput(body.theme)); if (hasScreensaverKey) asSettingsField('screensaver', () => assertScreensaverInput(body.screensaver));
     if (hasUiLevelKey) asSettingsField('uiLevel', () => assertUiLevelInput(body.uiLevel));
     if (hasAutoKey) asSettingsField('autoWorkflowModel', () => assertAutoWorkflowModelInput(body.autoWorkflowModel ?? '', autoModels));
     if (hasPrDescKey) asSettingsField('prDescriptionModel', () => assertPrDescriptionModelInput(body.prDescriptionModel ?? '', prDescModels));
@@ -8240,7 +8240,7 @@ async function applySettingsPatch(body, { person = null } = {}) {
     }
     if (hasTitleModelKey) await setTitleModel(titleModelInput);
     if (hasHideBuiltinKey) await setHideBuiltinModels(body.hideBuiltinModels); if (hasHideEnginesKey) await setHideBuiltinEngines(body.hideBuiltinEngines);
-    if (hasThemeKey) await setTheme(body.theme);
+    if (hasThemeKey) await setTheme(body.theme); if (hasScreensaverKey) await setScreensaver(body.screensaver);
     if (hasUiLevelKey) await setUiLevel(body.uiLevel);
     if (hasFlagsKey) await asSettingsField('flags', () => setFlags(body.flags));   // same path as PATCH /api/flags (it broadcasts `flags`)
     if (hasAutoKey) await setAutoWorkflowModel(body.autoWorkflowModel ?? '', { models: autoModels });
@@ -8273,7 +8273,7 @@ async function applySettingsPatch(body, { person = null } = {}) {
     // Other open tabs repaint their Settings cards (a stale tab could otherwise
     // "save" its old checkbox state over this one with no feedback to either).
     if (hasSmartNaming || hasNamingModelKey) cachedPick = undefined;
-    if (hasAskKey || hasAskWeb || hasSmartNaming || hasDebugSpawnKey || hasTitleModelKey || hasHideBuiltinKey || hasHideEnginesKey || hasThemeKey || hasUiLevelKey || hasAutoKey || hasPrDescKey || hasAutoPrDescKey || hasHumanRateKey || hasMemoryDefragKey || hasAgentGenKey || hasNamingModelKey || hasCommandSummaryModelKey || secondOpinionModels || hasWorkspaceScanKey || has('schedule') || has('sync') || has('tagDimensions') || has('enforceTags') || has('chat') || hasAskEngineKey || hasAskModelsKey || hasRequirementsInterviewKey || hasNetworkWaitKey || hasRunLimitsKey || hasActionsKey || hasNightKey || hasRunEngineKey || hasStepModelsKey || hasDesignModelsKey || hasModelRolesKey || hasUtilityModelsKey || hasUpdateCheckKey || hasKeepAwakeKey) emitChanged('settings-changed');
+    if (hasAskKey || hasAskWeb || hasSmartNaming || hasDebugSpawnKey || hasTitleModelKey || hasHideBuiltinKey || hasHideEnginesKey || hasThemeKey || hasScreensaverKey || hasUiLevelKey || hasAutoKey || hasPrDescKey || hasAutoPrDescKey || hasHumanRateKey || hasMemoryDefragKey || hasAgentGenKey || hasNamingModelKey || hasCommandSummaryModelKey || secondOpinionModels || hasWorkspaceScanKey || has('schedule') || has('sync') || has('tagDimensions') || has('enforceTags') || has('chat') || hasAskEngineKey || hasAskModelsKey || hasRequirementsInterviewKey || hasNetworkWaitKey || hasRunLimitsKey || hasActionsKey || hasNightKey || hasRunEngineKey || hasStepModelsKey || hasDesignModelsKey || hasModelRolesKey || hasUtilityModelsKey || hasUpdateCheckKey || hasKeepAwakeKey) emitChanged('settings-changed');
     // Editor / Terminal: saved as typed; a program Worca cannot find comes back as a warning on its field.
     const actionsWarnings = hasActionsKey ? Object.fromEntries(['editor', 'terminal']
       .map((k) => [k, launcherWarning(actionsSettings()[k], { findOnPath: (n) => findOnPath(n) })]).filter(([, w]) => w)) : null;
@@ -8997,7 +8997,7 @@ async function resolveAskContext(threadId, ctx = {}, listedAttachments = [], cur
         // Workflows chat (D13): a composer card names its type, state and name — never the run-card shape.
         const cc = composerHeaderCard(b);
         if (cc) { cards.push(cc); continue; }
-        if (b.card && (b.card.type === 'metrics' || b.card.type === 'policy' || b.card.type === 'clone' || b.card.type === 'web' || b.card.type === 'workspace' || b.card.type === 'actions' || b.card.type === 'away' || b.card.type === 'scope-switch' || b.card.type === 'project' || b.card.type === 'proxy' || b.card.type === 'design-round' || b.card.type === 'design-questions' || b.card.type === 'design-sound')) {
+        if (b.card && (b.card.type === 'metrics' || b.card.type === 'policy' || b.card.type === 'clone' || b.card.type === 'web' || b.card.type === 'workspace' || b.card.type === 'actions' || b.card.type === 'mcp' || b.card.type === 'away' || b.card.type === 'scope-switch' || b.card.type === 'project' || b.card.type === 'proxy' || b.card.type === 'design-round' || b.card.type === 'design-questions' || b.card.type === 'design-sound')) {
           cards.push({ id: b.id, type: b.card.type, state: b.state, summary: b.card.summary || '' });
           continue;
         }
@@ -9131,7 +9131,7 @@ function askSignedIn(req) {
   return who.source === 'local' ? null : who.name;
 }
 
-async function startAskTurn({ threadId: id, thread, ctx, model, effort, text, files = [], synthetic = null, signedIn = null, reader = null, mcpOff = undefined, agentMode = undefined, client = null, onUserRow = null, chatContext = null }) {
+async function startAskTurn({ threadId: id, thread, ctx, model, effort, text, files = [], synthetic = null, signedIn = null, reader = null, mcpOff = undefined, agentMode = undefined, client = null, onUserRow = null, chatContext = null, scopeNote = null }) {
   // §6.2.2 ATOMIC re-check + slot reservation. Today every await between the
   // top 409/429 pair and here resolves in microtasks (validateModelEffort ->
   // composeCatalog; askBuildCatalog -> three synchronous better-sqlite3
@@ -9247,9 +9247,9 @@ async function startAskTurn({ threadId: id, thread, ctx, model, effort, text, fi
     const inline = ownSel.inline;
     const listed = [...ownSel.listed, ...withText.filter((a) => quotedIds.has(a.id))];
     const headerCtx = await resolveAskContext(id, ctx, listed, userMsg.id, { signedIn });
-    // Browser extension (docs/browser-extension.md): server-stamped from the request's token, never client-supplied —
-    // the header tells the model the page attachments (context, text, quote) are untrusted web content.
-    if (client) headerCtx.client = client;
+    // Server-stamped, never client-supplied: the browser extension's client (docs/browser-extension.md: its page attachments
+    // are untrusted web content) and a pasted link's scopeNote (thread-turns.mjs; this turn only, never stored on the thread).
+    Object.assign(headerCtx, client ? { client } : null, scopeNote ? { scopeNote } : null);
     // Context chips: accumulate the project/run/workspace/named page this turn ran in
     // (origin first, deduped; contexts.mjs). Cosmetic — a failure must never fail the turn.
     try { askAddThreadContexts(id, askContextEntries(ctx, headerCtx)); } catch (e) {
@@ -9580,9 +9580,9 @@ async function startMetricsEventTurn(threadId, block) {
   const state = block.state === 'declined' ? 'declined' : block.state === 'failed' ? 'failed' : 'applied';
   const result = card.result || null;
   // One event turn for every non-workflow card; the type picks the wording. Metrics is the fallback.
-  const kind = card.type === 'policy' || card.type === 'schedule' || card.type === 'model' || card.type === 'clone' || card.type === 'web' || card.type === 'workspace' || card.type === 'actions' || card.type === 'away' || card.type === 'project' || card.type === 'proxy' || card.type === 'script-approval' ? card.type : 'metrics';
-  const eventPrompt = { policy: policyEventPrompt, schedule: scheduleEventPrompt, model: modelEventPrompt, clone: cloneEventPrompt, web: webEventPrompt, workspace: workspaceEventPrompt, actions: actionsEventPrompt, away: awayEventPrompt, project: projectEventPrompt, proxy: proxyEventPrompt, 'script-approval': scriptEventPrompt, metrics: metricsEventPrompt }[kind];
-  const noticeText = { policy: policyNoticeText, schedule: scheduleNoticeText, model: modelNoticeText, clone: cloneNoticeText, web: webNoticeText, workspace: workspaceNoticeText, actions: actionsNoticeText, away: awayNoticeText, project: projectNoticeText, proxy: proxyNoticeText, 'script-approval': scriptNoticeText, metrics: metricsNoticeText }[kind];
+  const kind = card.type === 'policy' || card.type === 'schedule' || card.type === 'model' || card.type === 'clone' || card.type === 'web' || card.type === 'workspace' || card.type === 'actions' || card.type === 'mcp' || card.type === 'away' || card.type === 'project' || card.type === 'proxy' || card.type === 'script-approval' ? card.type : 'metrics';
+  const eventPrompt = { policy: policyEventPrompt, schedule: scheduleEventPrompt, model: modelEventPrompt, clone: cloneEventPrompt, web: webEventPrompt, workspace: workspaceEventPrompt, actions: actionsEventPrompt, mcp: mcpEventPrompt, away: awayEventPrompt, project: projectEventPrompt, proxy: proxyEventPrompt, 'script-approval': scriptEventPrompt, metrics: metricsEventPrompt }[kind];
+  const noticeText = { policy: policyNoticeText, schedule: scheduleNoticeText, model: modelNoticeText, clone: cloneNoticeText, web: webNoticeText, workspace: workspaceNoticeText, actions: actionsNoticeText, mcp: mcpNoticeText, away: awayNoticeText, project: projectNoticeText, proxy: proxyNoticeText, 'script-approval': scriptNoticeText, metrics: metricsNoticeText }[kind];
   const text = eventPrompt({ cardId: block.id, state, card, result });
   const notice = noticeText({ state, card, result });
   const mv = await askEventPick(threadId, thread);

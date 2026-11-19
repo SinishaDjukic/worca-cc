@@ -8,8 +8,6 @@ import { buildCheckFold, buildCheckRows, swapOpen } from './check-row.mjs';
 import { stepHead, stepSender } from './step-card.mjs';
 import { buildFeedbackRow } from './feedback-row.mjs';
 import { loadAnswerer, leadLabel } from '../answerer.mjs';
-import { emptyState } from '../design-system/components/empty-state.mjs';
-import { toElement } from '../design-system/components/html.mjs';
 import { plainWords, wordsFor } from '../../../src/shared/answerer.mjs';
 import { criterionPerspective } from '../../../src/shared/shape/requirements.mjs';
 
@@ -119,9 +117,15 @@ export function renderRequirementsBody(panel, pq, deps) {
   let lead = plan.lead || null;
   let agreedFold = null;
   if (error) {
-    body.appendChild(toElement(doc, emptyState({ title: 'Could not load the requirements.', text: error.message || '', error: true })));
+    const line = h('div', 'empty-line is-err');
+    line.setAttribute('role', 'alert');
+    line.appendChild(h('span', 'el-t', 'Could not load the requirements.'));
+    if (error.message) line.appendChild(h('span', '', error.message));
+    body.appendChild(line);
   } else if (!agreed && !failing) {
-    body.appendChild(toElement(doc, emptyState({ title: 'No requirements were written.' })));
+    const line = h('div', 'empty-line');
+    line.appendChild(h('span', 'el-t', 'No requirements were written.'));
+    body.appendChild(line);
   } else {
     const foldText = () => [
       `${agreed} agreed`, ...(failing ? [`${failing} to fix`] : []),

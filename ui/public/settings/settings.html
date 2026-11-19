@@ -61,6 +61,24 @@
                     </div>
                   </div>
                 </div>
+                <label class="drow switch-drow">
+                  <span class="drow-label">Screensaver</span>
+                  <small class="hint drow-help" id="screensaverHint">When the Worca window is untouched, the wordmark drifts across it with how your runs and chats are doing. Any key or mouse move brings the page back.</small>
+                  <span class="drow-control"><input id="screensaverOn" class="sw-input" type="checkbox" role="switch" aria-describedby="screensaverHint"><span class="switch"></span></span>
+                </label>
+                <div class="field drow" id="screensaverAfterRow" hidden>
+                  <div class="label-row drow-label"><label for="screensaverAfter">Start after</label></div>
+                  <div class="drow-control">
+                    <select id="screensaverAfter" class="select select-sm select-fit">
+                      <option value="5" selected>5 min</option>
+                      <option value="10">10 min</option>
+                      <option value="15">15 min</option>
+                      <option value="20">20 min</option>
+                      <option value="25">25 min</option>
+                      <option value="30">30 min</option>
+                    </select>
+                  </div>
+                </div>
               </div>
             </section>
 

@@ -17,14 +17,14 @@ const trackDom = useDomRelease(afterEach);
 
 const appPath = fileURLToPath(new URL('../ui/public/app.js', import.meta.url));
 
-const GET_BODY = (theme = 'system') => ({
+const GET_BODY = (theme = 'system', screensaver = { enabled: false, idleMinutes: 5 }) => ({
   root: '/w', projectsRoot: '/p', projectsRootDefault: '/p', default: {}, chat: {},
   pipelineCostLimitUsd: null, totalCostLimitUsd: null, costLimitResetPeriod: 'monthly',
   askMaxTurns: 40, askMaxBudgetUsd: 2, debugSpawnEnabled: false, debugSpawnEffective: { enabled: false, source: 'settings' },
-  titleModel: null, titleModelEffective: {}, hideBuiltinModels: false, theme,
+  titleModel: null, titleModelEffective: {}, hideBuiltinModels: false, theme, screensaver,
 });
 
-async function boot({ postResponse, initialTheme = 'system' } = {}) {
+async function boot({ postResponse, initialTheme = 'system', initialScreensaver = { enabled: false, idleMinutes: 5 } } = {}) {
   const dom = trackDom(new JSDOM(readIndexHtml(), { url: 'http://localhost:4317/' }));
   const { window } = dom;
   window.Element.prototype.scrollIntoView = function () {};
@@ -35,7 +35,7 @@ async function boot({ postResponse, initialTheme = 'system' } = {}) {
     addEventListener(type, fn) { (this._listeners[type] ||= []).push(fn); }
     dispatch(type, evt) { (this._listeners[type] || []).forEach((fn) => fn(evt)); }
   };
-  const box = { theme: initialTheme };
+  const box = { theme: initialTheme, screensaver: { ...initialScreensaver } };
   const posts = [];
   window.fetch = (url, opts = {}) => {
     const u = String(url);
@@ -44,10 +44,11 @@ async function boot({ postResponse, initialTheme = 'system' } = {}) {
         const body = JSON.parse(opts.body);
         posts.push(body);
         if (postResponse) return Promise.resolve(postResponse);
-        box.theme = body.theme;
-        return Promise.resolve({ ok: true, status: 200, json: async () => GET_BODY(box.theme) });
+        if ('theme' in body) box.theme = body.theme;
+        if ('screensaver' in body) box.screensaver = { ...box.screensaver, ...body.screensaver };
+        return Promise.resolve({ ok: true, status: 200, json: async () => GET_BODY(box.theme, box.screensaver) });
       }
-      return Promise.resolve({ ok: true, status: 200, json: async () => GET_BODY(box.theme) });
+      return Promise.resolve({ ok: true, status: 200, json: async () => GET_BODY(box.theme, box.screensaver) });
     }
     if (u.includes('/api/budget'))
       return Promise.resolve({ ok: true, status: 200, json: async () => ({ pipelineLimitUsd: null, totalLimitUsd: null, resetPeriod: 'monthly', windowStartMs: 0, windowEndMs: 0, msUntilReset: 0, windowSpendUsd: 0, allTimeSpendUsd: 0, remainingUsd: null, blocked: false }) });   // the house shape (test/ui-settings-debug-spawn.test.mjs)
@@ -134,4 +135,88 @@ test('settings-changed from another tab re-fetches and re-applies, on any view',
   await tick(); await tick();
   assert.equal(root(), 'dark');
   assert.deepEqual(on(), ['dark']);
+});
+
+const SS_HELP = 'When the Worca window is untouched, the wordmark drifts across it with how your runs and chats are doing. Any key or mouse move brings the page back.';
+
+test('Screensaver: off by default, Start after hidden', async () => {
+  const { $, openSettings } = await boot();
+  await openSettings();
+  const row = $('#screensaverOn').closest('.drow');
+  assert.equal(row.closest('#appearance-card').querySelector('.drows'), row.parentElement, 'inside the Appearance rows');
+  assert.equal(row.previousElementSibling.querySelector('#theme-seg') !== null, true, 'right after Theme');
+  assert.equal(row.querySelector('.drow-label').textContent, 'Screensaver');
+  assert.equal($('#screensaverHint').textContent, SS_HELP);
+  assert.equal($('#screensaverOn').getAttribute('role'), 'switch');
+  assert.equal($('#screensaverOn').checked, false);
+  assert.equal($('#screensaverAfterRow').hidden, true);
+  const sel = $('#screensaverAfter');
+  assert.deepEqual([...sel.options].map((o) => [o.value, o.textContent]),
+    [['5', '5 min'], ['10', '10 min'], ['15', '15 min'], ['20', '20 min'], ['25', '25 min'], ['30', '30 min']]);
+  assert.equal(sel.value, '5');
+  assert.equal(sel.className, 'select select-sm select-fit');
+  assert.equal($('label[for="screensaverAfter"]').textContent, 'Start after');
+});
+
+test('turning it on POSTs {screensaver:{enabled:true}} and shows Start after', async () => {
+  const { window, $, posts, tick, openSettings } = await boot();
+  await openSettings();
+  $('#screensaverOn').click();
+  assert.equal($('#screensaverAfterRow').hidden, false, 'optimistic, before the POST resolves');
+  await tick(); await tick();
+  assert.deepEqual(posts, [{ screensaver: { enabled: true } }]);
+  assert.equal($('#screensaverOn').checked, true);
+  assert.equal($('#screensaverAfterRow').hidden, false);
+  assert.equal(lastToast(window.document), null);
+});
+
+test('choosing 15 min POSTs { screensaver: { idleMinutes: 15 } }', async () => {
+  const { window, $, posts, tick, openSettings } = await boot({ initialScreensaver: { enabled: true, idleMinutes: 5 } });
+  await openSettings();
+  assert.equal($('#screensaverAfterRow').hidden, false);
+  const sel = $('#screensaverAfter');
+  sel.value = '15';
+  sel.dispatchEvent(new window.Event('change', { bubbles: true }));
+  await tick(); await tick();
+  assert.deepEqual(posts, [{ screensaver: { idleMinutes: 15 } }]);
+  assert.equal(typeof posts[0].screensaver.idleMinutes, 'number');
+  assert.equal(sel.value, '15');
+});
+
+test('a 400 on the switch reverts it and toasts', async () => {
+  const { window, $, tick, openSettings } = await boot({
+    postResponse: { ok: false, status: 400, json: async () => ({ error: '“Screensaver” must be true or false.', field: 'screensaver.enabled' }) },
+  });
+  await openSettings();
+  $('#screensaverOn').click();
+  await tick(); await tick(); await tick();
+  assert.equal($('#screensaverOn').checked, false, 'reverted');
+  assert.equal($('#screensaverAfterRow').hidden, true);
+  assert.deepEqual(lastToast(window.document), { tone: 'err', title: 'Screensaver not saved', detail: '“Screensaver” must be true or false.', action: '' });
+});
+
+test('settings-changed repaints the Screensaver row', async () => {
+  const { $, tick, recv, box, openSettings } = await boot();
+  await openSettings();
+  box.screensaver = { enabled: true, idleMinutes: 20 };   // another browser saved
+  recv({ type: 'settings-changed' });
+  await tick(); await tick();
+  assert.equal($('#screensaverOn').checked, true);
+  assert.equal($('#screensaverAfterRow').hidden, false);
+  assert.equal($('#screensaverAfter').value, '20');
+});
+
+test('boot applies the saved screensaver setting to the screensaver', async () => {
+  const realNow = Date.now;
+  let skew = 0;
+  Date.now = () => realNow() + skew;
+  try {
+    for (const enabled of [true, false]) {
+      const { $, tick } = await boot({ initialScreensaver: { enabled, idleMinutes: 5 } });
+      await tick(); await tick();
+      skew += 5 * 60_000;
+      await new Promise((r) => setTimeout(r, 1100));   // the app's 1 s timer ticks the screensaver
+      assert.equal($('.ss') !== null, enabled, `enabled ${enabled}`);
+    }
+  } finally { Date.now = realNow; }
 });

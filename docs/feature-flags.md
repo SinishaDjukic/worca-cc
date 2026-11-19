@@ -125,7 +125,8 @@ looks exactly like an absent one. Always write the key as a literal, so the usag
 Three ways:
 
 - **Settings › Labs**, at every interface mode. A switch applies at once, in every open
-  tab. **Reset all** puts every unlocked flag back to its default.
+  tab. **All Labs features**, the switch on top, turns every unlocked flag on, or all of them off
+  when they are all on. **Reset all** puts every unlocked flag back to its default.
 - **`worca flags`** on the command line:
 
   ```sh

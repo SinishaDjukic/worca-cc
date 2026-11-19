@@ -101,6 +101,7 @@ import { createLogDrawer } from './log-drawer.mjs';
 import { mountRunsResize } from './runs-resize.mjs';
 import { decorFromState, applyDecor, isGraphManifest, ledgerRows } from './graph/run-decor.mjs';
 import { mountRunGraph } from './graph/run-hosts.mjs';
+import { paintRunScope } from './run-scope-line.mjs';
 import { trailColumns, nowRows, glanceCopy, nodeLabel, preflightOpen, dotState } from './run-glance.mjs';
 import { workModeOf, isGitRun, isFolderRun, isNoProjectRun, NO_PROJECT_KEY, projectKind, kindChip, RUN_KIND_CHIP, folderMembersOf } from './run-kind.mjs';
 import { changesCounts, filesWord, renderCountsNode, applyBarModel, paintApplyBar, runChangesUrl, openApplyDialog, discardChanges, CHANGE_SIGN, CHANGE_WORD } from './folder-changes.mjs';
@@ -108,10 +109,10 @@ import { runProgress, progressWidth } from '../../src/shared/run-progress.mjs';
 import { claudeCheckedWhere } from '../../src/shared/claude-sign-in.mjs';
 import { DEFAULT_HOME_PINS, isPinned, pinWorkflow, unpinWorkflow } from '../../src/shared/home-pins.mjs';
 import { outcomeNote } from './run-outcome.mjs';
-import { CREATE_PR_LABEL, CREATE_PR_FAILED, CREATING_PR, PR_CREATED, VIEW_PR_LABEL, VIEW_PRS_LABEL, createPrLabel, doneStatusWord } from './ship-words.mjs';
+import { CREATE_PR_LABEL, CREATE_PR_FAILED, CREATING_PR, PR_CREATED, VIEW_PR_LABEL, VIEW_PRS_LABEL, viewPrLabel, createPrLabel, doneStatusWord } from './ship-words.mjs';
 import { worktreeNoticeModel, worktreeRowState, retainedCommands, recoveryPatchKind, uncommittedPatchName, applyConfirmMessage, applyOutcome, checkoutRowValue, memberLabel } from './worktree-notice.mjs';
 import { limitNotice, resumeTicketOf, countdownText } from './limit-notice.mjs';
-import { buildRunsModel, countNeedsYou, isRowSelected, isMemberOpen, renderRunsList, paintStageBlocks, RECENT_PAGE, groupRow, memberPrsOf, prChip, memberCostUsd, whenLabel, isFolded, setFolded } from './runs-list.mjs';
+import { buildRunsModel, countNeedsYou, isRowSelected, isMemberOpen, renderRunsList, paintStageBlocks, RECENT_PAGE, groupRow, memberPrsOf, rowMenuPrs, prChip, memberCostUsd, whenLabel, isFolded, setFolded } from './runs-list.mjs';
 import { paintRunStatus, syncActions, pauseResumeOwn } from './run-status-card.mjs';
 import { buildGroupPage, paintGroupPage, runReceipts, groupPrList } from './group-page.mjs';
 import { paintGroupShip, resetGroupShip } from './ship-group-dialog.mjs';
@@ -230,7 +231,8 @@ import {
 } from './source-pane.mjs';
 import { renderStatsBody, renderStatsView, renderBudgetReadout, renderCostPauseBanner, statsQuery, groupsToCsv, statsRangeLabel, DEFAULT_FMT } from './stats-view.mjs';
 import { createCostReport } from './cost-report.mjs';
-import { personInitials, describeAccount, paintAccountCorner, paintIdentityCard, renderSpendCard, paintAwayRow } from './account-menu.mjs';
+import { personInitials, describeAccount, paintAccountCorner, paintIdentityCard, renderSpendCard, paintAwayRow, paintAppearanceIcon } from './account-menu.mjs';
+import { usageModel, ringParts, paintUsageRings, paintUsageRow, renderUsageMenu } from './usage-view.mjs';
 import { createComposer, isReservedWorkflowId, isBuiltinWorkflow } from './graph/composer.mjs';
 import { createWorkflowsShell, toSpawnEntry } from './workflows/shell.mjs';
 import { createLibrary, folderLabel, folderKeys } from './workflows/library.mjs';
@@ -674,6 +676,7 @@ const designActivity = createDesignActivity({
   onChange: () => updateNavCounts(),
 });
 let awayScreensaver = null;    // the away screensaver easter egg (away-screensaver.mjs) — assigned beside Activity; timerTick uses awayScreensaver?.
+let screensaverPref = { enabled: false, idleMinutes: 5 };   // Settings › Appearance › Screensaver, as the server last said (getState reads it)
 let terminalPane = null;       // terminal pane (#573) — assigned by the boot mount; every seam uses terminalPane?.
 let newPipelinePrefill = null; // one-shot card → New Pipeline handoff (§10.2 seam 7, consumed by Task 11)
 // Engine readiness (GET /api/engines): which engines a usage-limit pause offers. Fetched on demand, refreshed after
@@ -864,6 +867,9 @@ const el = {
   viewerClose: $('#viewer-close'),
 
   settingsRoot: $('#settingsRoot'),
+  screensaverOn: $('#screensaverOn'),
+  screensaverAfter: $('#screensaverAfter'),
+  screensaverAfterRow: $('#screensaverAfterRow'),
   settingsProjectsRoot: $('#settingsProjectsRoot'),
   settingsProjectsRootBrowse: $('#settingsProjectsRootBrowse'),
   settingsSave: $('#settingsSave'),
@@ -1587,7 +1593,7 @@ async function refreshBudget() {
 function paintBudget() {
   const b = budgetState.budget;
   if (!b) return;
-  // A block is never hidden at any interface mode: the ring turns red and full, the card says until when.
+  // A block is never hidden at any interface mode: the corner's name says so, the card says until when.
   paintAccount();
   paintSpendCard();
   applyBudgetToNewView();
@@ -1631,6 +1637,8 @@ function startBudgetTick() {
   const idleRefetchMs = typeof window.__budgetIdleRefetchMs === 'number'
     ? window.__budgetIdleRefetchMs : BUDGET_IDLE_REFETCH_MS;
   budgetState.timer = setInterval(() => {
+    // The usage rings: a window whose reset has passed is refetched (the server drops it), never polled otherwise.
+    if (usageResetPassed()) void refreshUsage();
     const b = budgetState.budget;
     if (!b) return;
     // Refetch when spend can actually move (live runs) or the window has rolled
@@ -1726,26 +1734,78 @@ function repaintPeople() {
 }
 
 // ── The account corner and its menu (account-menu.mjs) ─────────────────────────
-// The corner sits at the foot of the sidebar: the avatar (who is looking), a ring that fills
-// toward the total spend limit, a violet dot while away. Its menu opens upward: the spend card,
-// "Signed in as" (a shared identity only), Interface mode (a side menu), Settings, the Away and Keep awake switches,
-// and the appearance icons last. A level, a switch or a theme change leaves it open; a route closes it.
+// The corner sits at the foot of the sidebar: the avatar (who is looking), the usage rings (usage-view.mjs),
+// a violet dot while away. Its menu opens upward: the level card, "Signed in as" (a shared identity only), the spend
+// card with Usage under it (a side menu), the Away and Keep awake switches, then the preferences: the team setup notice,
+// the appearance icons, Interface mode (a side menu) and Settings last. A level, a switch or a theme change leaves it
+// open; a route closes it.
 const acctState = { account: describeAccount(null), away: null };   // away: describeAwayRow's last answer
 const acctBtn = document.getElementById('side-acct');
 const acctMenu = document.getElementById('acct-menu');
-// focusChecked: false — a keyboard open lands on the spend card, not on the checked theme icon.
+// focusChecked: false — a keyboard open lands on the first item (the level card, else the spend card), not on the
+// checked theme icon.
 // The team setup notice repaints each time the menu opens (paintTeamNotice is a hoisted function declaration below).
 const acctFly = createFlyout({ trigger: acctBtn, menu: acctMenu, mode: 'up', focusChecked: false, onOpen: () => { void paintTeamNotice(); } });
+paintAppearanceIcon(document.querySelector('#acct-menu .theme-sect > .mi-ic'));
 // Interface mode's side menu hangs off the menu (side-flyout closes it with the menu, and Escape
 // closes it first); ui-level.mjs fills it, and a pick there is a choose like a dialog card.
 createFlyout({ trigger: document.getElementById('acct-lvl'), menu: document.getElementById('lvl-menu'), mode: 'beside', parent: acctMenu });
+// Usage (usage-view.mjs): the providers' plan-limit readings (GET /api/usage-limits) as the avatar's rings, the
+// menu's row under the spend card and its submenu, which hangs off the menu exactly as Interface mode's does. Refetched on its push
+// (usage-limits-changed), on hello and on pipelines-changed (a usage-limit pause, resume or stop), and on the budget
+// tick only when a window's reset has passed. One fetch in flight plus one trailing; a failure keeps the last answer.
+const usageState = { answer: null, fetching: false, pending: false };
+const usageRow = document.getElementById('acct-usage');
+const usageMenu = document.getElementById('usage-menu');
+const usageFly = createFlyout({ trigger: usageRow, menu: usageMenu, mode: 'beside', parent: acctMenu,
+  onOpen: () => { renderUsageMenu(usageMenu, currentUsageModel()); usageFly.reposition(); } });
+const currentUsageModel = () => usageModel(usageState.answer, { now: Date.now() });
+function usageResetPassed() {
+  const hs = usageState.answer && Array.isArray(usageState.answer.harnesses) ? usageState.answer.harnesses : [];
+  const now = Date.now();
+  return hs.some((h) => h && Array.isArray(h.windows) && h.windows.some((w) => w && typeof w.resetsAt === 'number' && w.resetsAt <= now));
+}
+async function refreshUsage() {
+  if (usageState.fetching) { usageState.pending = true; return; }
+  usageState.fetching = true;
+  try {
+    do {
+      usageState.pending = false;
+      try {
+        const res = await fetch('/api/usage-limits', { signal: AbortSignal.timeout(15000) });
+        const data = await safeJson(res);
+        if (res.ok && data && Array.isArray(data.harnesses)) usageState.answer = data;
+      } catch { /* transient: keep the last answer */ }
+      paintUsage();
+    } while (usageState.pending);
+  } finally { usageState.fetching = false; usageState.pending = false; }
+}
+/** The avatar's rings and name, the Usage row and an open submenu. A row that hides takes its open submenu with
+ *  it, and focus goes to the menu's first item. */
+function paintUsage() {
+  const model = currentUsageModel();
+  const active = document.activeElement;
+  const hadFocus = !!active && (usageMenu.contains(active) || usageRow.contains(active));
+  if (!model.row && usageFly.isOpen()) usageFly.close();
+  paintUsageRings(acctBtn, model);
+  paintAccount();
+  paintUsageRow(usageRow, model);
+  renderUsageMenu(usageMenu, model);
+  if (!model.row && hadFocus && acctFly.isOpen()) {
+    const first = [...acctMenu.querySelectorAll('[role^="menuitem"]')].find((el) => !el.closest('[hidden]') && !el.hidden);
+    first?.focus();
+  }
+  if (acctFly.isOpen()) acctFly.reposition();
+  usageFly.reposition();
+}
 // The worca level (worca-level/app-wiring.mjs): the last served view feeds the corner avatar, the shelf and the menu row.
 const worca = createWorcaLevelWiring({ trigger: acctBtn, menu: acctMenu, repaint: () => { paintAccount(); paintShelf(); }, isSettled: () => gs.settled, setupOpen: () => !!setupDialog });
 function paintAccount() {
   const level = worca.state.view && worca.state.view.level;
   paintAccountCorner(acctBtn, acctState.account, {
-    budget: budgetState.budget, away: acctState.away?.state === 'away', fmt: { usd: fmtUsd, usd4: fmtUsd4 },
+    budget: budgetState.budget, away: acctState.away?.state === 'away',
     avatar: level ? { src: level.avatar, alt: level.name } : null,
+    usageParts: ringParts(currentUsageModel()),
   });
 }
 paintAccount();                // the first paint: "Profile" until /api/whoami answers
@@ -1790,6 +1850,7 @@ function handleServerMessage(msg) {
     conn.back();
     onHello(msg);
     refreshRunningActions();
+    void refreshUsage();
     if (terminalPane) terminalPane.onHello(msg);
     if (Array.isArray(msg.extensionPairs)) msg.extensionPairs.forEach((r) => void promptExtensionPair(r));
     return;
@@ -1885,6 +1946,7 @@ function handleServerMessage(msg) {
     scheduleOnboardingRefresh();
     refreshAllCounts();
     refreshBudget();
+    void refreshUsage();
     // An archive / delete names the parked live runs the server evicted; every tab drops its copies of them.
     if (Array.isArray(msg.removedRunIds) && msg.removedRunIds.length) {
       const gone = new Set(msg.removedRunIds);
@@ -1903,6 +1965,11 @@ function handleServerMessage(msg) {
   // is global, so repaint it regardless of the open view.
   if (msg.type === 'budget-changed') {
     refreshBudget();
+    return;
+  }
+  // A provider's plan-limit reading changed (usage-view.mjs): the avatar's rings, the Usage row and its submenu.
+  if (msg.type === 'usage-limits-changed') {
+    void refreshUsage();
     return;
   }
   // Requirements: a feature changed (a round finished, an edit, another tab), or a Product brief (`brief`:
@@ -2520,7 +2587,7 @@ function makeRun({
     stepSkills: {},   // {`${nodeId}|${cycle}`: string[]} — MAIN-agent skills per dropdown group
     stepGraphify: {}, // {`${nodeId}|${cycle}`: number} — MAIN-agent graphify-use count per group
     // v2 (graph-engine) run-level outcome fields; a v1 run never sends them.
-    active: [], endReached: undefined, result: null, warnings: [], wireDeliveries: {}, tokens: {}, gate: null,
+    active: [], endReached: undefined, result: null, warnings: [], scopeNotices: [], wireDeliveries: {}, tokens: {}, gate: null,
     el: null,
     _finished: false,
     staleBoot: false,  // a restarted server never re-listed it (onHello): the run died with the old process
@@ -3108,7 +3175,8 @@ function onState(r, msg) {
   // v2 run-level outcome fields (ignored by v1 runs, which never send them).
   // roleReviews: the role-review rounds runModel's live role rows read (review A12).
   // sessionHosts: each session's summary (session groups), read by the tray decor and the Sessions tab.
-  for (const k of ['active', 'endReached', 'result', 'warnings', 'wireDeliveries', 'tokens', 'gate', 'progressFacts', 'roleReviews', 'sessionHosts']) {
+  // scopeNotices (E9): the paths each execution touched outside its checkout, the run page's one quiet scope line.
+  for (const k of ['active', 'endReached', 'result', 'warnings', 'scopeNotices', 'wireDeliveries', 'tokens', 'gate', 'progressFacts', 'roleReviews', 'sessionHosts']) {
     if (msg[k] !== undefined) r[k] = msg[k];
   }
   // Skills registry §6 board 9: the run's set skills (run-harness state.skillMount) for its Overview.
@@ -16411,6 +16479,7 @@ async function loadSettings() {
     if (!res.ok) { setSettingsLoadMsg(data.error || `HTTP ${res.status}`); return; }
     paintSettings(data);
     paintTheme(data.theme);
+    paintScreensaver(data.screensaver);
     levelCtl.confirm(data.uiLevel);
     paintAbout(data.app);
     if (el.aboutUpdateCheck) el.aboutUpdateCheck.checked = data.updateCheck !== false;
@@ -16999,6 +17068,40 @@ async function chooseTheme(mode) {
   }
   paintTheme(data.theme);
 }
+// Settings › Appearance › Screensaver: the switch and its Start after minutes. Each control saves only its own field
+// (the server merges a partial { screensaver }), with the same optimistic paint and revert as chooseTheme.
+const SCREENSAVER_MINUTES = [5, 10, 15, 20, 25, 30];
+let screensaverSeq = 0;              // out-of-order POST resolutions never repaint a stale answer
+const screensaverNotSaved = (detail) => notify({ tone: 'err', title: 'Screensaver not saved', detail, key: 'screensaver' });
+function paintScreensaver(s) {
+  const enabled = s?.enabled === true;
+  const idleMinutes = SCREENSAVER_MINUTES.includes(s?.idleMinutes) ? s.idleMinutes : 5;
+  screensaverPref = { enabled, idleMinutes };
+  if (el.screensaverOn) el.screensaverOn.checked = enabled;
+  if (el.screensaverAfterRow) el.screensaverAfterRow.hidden = !enabled;
+  if (el.screensaverAfter) el.screensaverAfter.value = String(idleMinutes);
+}
+async function chooseScreensaver(patch) {
+  const mine = ++screensaverSeq;
+  const previous = { ...screensaverPref };
+  paintScreensaver({ ...previous, ...patch });                             // optimistic
+  let res; let data;
+  try {
+    res = await fetch('/api/settings', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ screensaver: patch }) });
+    data = await safeJson(res);
+  } catch (e) { if (mine === screensaverSeq) { paintScreensaver(previous); screensaverNotSaved(e.message || 'network error'); } return; }
+  if (mine !== screensaverSeq) return;                                     // a later change owns the paint now
+  if (!res.ok) {
+    screensaverNotSaved(data.error || `The server answered ${res.status}.`);
+    // Paint what the SERVER holds; a failed re-fetch falls back to the last confirmed value.
+    try { const d2 = await safeJson(await fetch('/api/settings')); if (mine === screensaverSeq) paintScreensaver(d2.screensaver || previous); }
+    catch { if (mine === screensaverSeq) paintScreensaver(previous); }
+    return;
+  }
+  paintScreensaver(data.screensaver);
+}
+el.screensaverOn?.addEventListener('change', () => chooseScreensaver({ enabled: el.screensaverOn.checked }));
+el.screensaverAfter?.addEventListener('change', () => chooseScreensaver({ idleMinutes: Number(el.screensaverAfter.value) }));
 for (const id of ['theme-seg', 'acct-theme']) {
   document.getElementById(id)?.addEventListener('click', (e) => {
     const btn = e.target.closest && e.target.closest('button[data-theme-mode]');
@@ -33050,7 +33153,7 @@ function runDecorFor(r, mode = 'monitor') {
 
 /** The run's warnings (decor.warnings: a dropped model pick, the scheduler's lines, the quiescence line of spec §8) as
  *  amber banners in .rd-banners / .hd-banners: one `.run-warn` per distinct text, in order. Idempotent; an empty list
- *  leaves none. */
+ *  leaves none. Under them, E9's ONE quiet scope line (decor.scope: run-scope-line.mjs), never a banner per spawn. */
 function paintRunWarnings(host, decor) {
   if (!host) return;
   const texts = [...new Set((decor && Array.isArray(decor.warnings) ? decor.warnings : []).filter(Boolean))];
@@ -33061,12 +33164,13 @@ function paintRunWarnings(host, decor) {
       el = document.createElement('div');
       el.className = 'run-warn';
       el.setAttribute('role', 'status');
-      host.appendChild(el);
+      host.insertBefore(el, host.querySelector(':scope > .run-scope'));
     }
     el.textContent = text;
     el.hidden = false;
   });
   for (const el of els.slice(texts.length)) el.remove();
+  paintRunScope(host, decor ? decor.scope : null, { doc: document });
 }
 
 /** The P5 line ("Build · task 2 of 4"); supersedes the D15 "3/6 done" counter (spec 2026-10-14 P12). '' on a v1 run. */
@@ -35069,7 +35173,7 @@ function memberRun(m) {
   // Runs redesign slice 4 (D24): a member's round / Watch PR facts pass through untouched; the run model words them.
   const facts = { round: m.round || (h && h.round) || null, watch: m.watch || (h && h.watch) || null };
   // A chain member carries its PR as `prUrl` (a shared One PR before History has it), a run-groups member as `pr`.
-  if (h) return { status: h.status, pauseReason: h.pauseReason, pr: runPrFor(h, m.pr || (m.prUrl ? { url: m.prUrl } : null)), ...(h.inBase ? { inBase: h.inBase } : {}), ...facts };
+  if (h) return { status: h.status, pauseReason: h.pauseReason, pr: runPrFor(h, m.pr || (m.prUrl ? { url: m.prUrl } : null)), ...(h.inBase ? { inBase: h.inBase } : {}), ...(memberPrsOf(h).length ? { memberPrs: memberPrsOf(h) } : {}), ...facts };
   if (m.status) return { status: m.status, pr: runPrFor(null, m.pr), ...facts };
   return { status: CHAIN_MEMBER_STATUS[m.state] || 'stopped', pr: runPrFor(null, m.prUrl ? { url: m.prUrl } : null), ...facts };
 }
@@ -36021,6 +36125,7 @@ function runsRowMenuItems(r, more) {
   const prUrl = (r.model.pr && r.model.pr.url) || (r.kind === 'chain' && r.model.current && r.model.current.pr && r.model.current.pr.url) || '';
   // An archived row's E brings it back (D7): the run page's word, the bulk restore action.
   const back = r.archived ? planBulk('restore', [t]) : null;
+  const prs = rowMenuPrs(r);
   return [
     { label: 'Select', key: 'toggle', hint: k('Space'), onSelect: () => { runsUi.selecting = true; runsUi.anchorKey = r.key; toggleRunsKey(r.key); } },
     { label: 'Stop', key: 'stop', hint: k('S'), disabled: !m.stop.count, title: m.stop.title, onSelect: () => runBulkAction('stop', [t]) },
@@ -36033,7 +36138,10 @@ function runsRowMenuItems(r, more) {
     ...(adv && r.kind !== 'chain' && r.pipelineId && !(g && !adhoc) ? [{ sep: true }, { label: 'Add to group…', key: 'add-to-group', hint: k('G'),
       onSelect: () => openAddToGroup(more, runsUi.sel.has(r.key) ? pipelineTargets(selectedTargets()) : [{ pipelineId: r.pipelineId, title: r.title }], r.key) }] : []),
     ...(adv && adhoc ? [{ sep: true }, { label: 'Remove from group', key: 'leave-group', hint: k('shift', 'G'), onSelect: () => removeRunFromGroup(r) }] : []),
-    ...(prUrl ? [{ label: VIEW_PR_LABEL, onSelect: () => window.open(prUrl, '_blank', 'noopener') }] : []),
+    // A workspace run with PRs in several repositories opens each one, as the run page's View PRs ▾ does.
+    ...(prs.length ? [{ sep: true },
+      ...prs.map((p) => ({ label: p.repo ? `${viewPrLabel(p.number)} · ${p.repo}` : viewPrLabel(p.number), onSelect: () => window.open(p.url, '_blank', 'noopener') })),
+    ] : prUrl ? [{ label: VIEW_PR_LABEL, onSelect: () => window.open(prUrl, '_blank', 'noopener') }] : []),
     ...(r.groupKind === 'feature' ? [{ label: 'Open feature', onSelect: () => { location.hash = r.href; } }] : []),
   ];
 }
@@ -41283,7 +41391,7 @@ activityMenu = $('#topnav-activity') ? createActivityMenu({
   navigate: (hash) => { location.hash = hash; },
 }) : null;
 
-// The away screensaver easter egg: Away mode now (the account corner's state), the Keep awake row, and the runs
+// The screensaver: the Settings › Appearance switch and its Start after time (screensaverPref), and the runs
 // counted as the Runs list counts them. Chats arrive through onAskFrame; the open chat's unread dot through askPanel.
 awayScreensaver = createAwayScreensaver({
   doc: document, win: window,
@@ -41292,8 +41400,8 @@ awayScreensaver = createAwayScreensaver({
     const asking = live.filter((r) => r.pendingQuestion != null);
     const lingered = [...runs.values()].filter(isLingering);
     return {
-      away: acctState.away?.state === 'away',
-      keepAwake: el.acctKeepAwake?.getAttribute('aria-checked') === 'true',
+      enabled: screensaverPref.enabled,
+      idleMinutes: screensaverPref.idleMinutes,
       runs: {
         running: live.length - asking.length,
         questions: asking.length,
@@ -42911,12 +43019,13 @@ if ($('#ask-side') && $('#topnav-ask')) {
     if (e.target?.closest?.('a[href^="#"]')) askSide.uncover();
   });
 }
-// Command summaries (#911), the account menu's Keep awake row and Settings › Memory's model link (a later settings read
-// repaints it, loadSettings): read the person's switches once.
+// Command summaries (#911), the account menu's Keep awake row, the screensaver and Settings › Memory's model link (a
+// later settings read repaints it, loadSettings): read the person's switches once.
 Promise.resolve().then(() => fetch('/api/settings')).then((r) => safeJson(r)).then((d) => {
   setChatSummariesPref(d && d.chat);
   paintKeepAwakeRow(!(d && d.keepAwake === false));
   paintMemoryModelLink(d);
+  paintScreensaver(d && d.screensaver);
 }).catch(() => { /* keep: on */ });
 onFlagChange('commandSummaries', () => { askPanel?.refreshCommandCards(); repaintJobs(); });
 // One delegated handler for every Summaries / Raw switch (Logs tab, History Logs, both drawers, Chat's run

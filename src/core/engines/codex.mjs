@@ -16,13 +16,14 @@
 // - A failed turn ends with `error` + `turn.failed`, and codex may still exit 0. A
 //   top-level `error` alone is not a failure: codex also reports its stream retries
 //   that way ("Reconnecting... 1/5 (…)") and may go on to complete the turn.
-import { mkdirSync, readFileSync, writeFileSync, existsSync, symlinkSync, rmSync, renameSync, readdirSync, linkSync, copyFileSync, lstatSync, readlinkSync } from 'node:fs';
+import { mkdirSync, readFileSync, writeFileSync, existsSync, symlinkSync, rmSync, renameSync, readdirSync, linkSync, copyFileSync, lstatSync, readlinkSync, statSync } from 'node:fs';
 import { createHash, randomBytes } from 'node:crypto';
 import { homedir } from 'node:os';
 import { execCli, cliRefusal } from './exec-cli.mjs';
 import { CODEX_CLI } from './cli-specs.mjs';
 import { join, resolve, dirname, relative } from 'node:path';
 import { worcaHome } from '../projects.mjs';
+import { toUsagePct, toResetMs, recordUsageReading } from '../usage-limits.mjs';
 import { hostGuardEnabled, hostGuardSystemPrompt } from '../host-guard.mjs';
 import { CAPABILITY_KEYS, describeUnattachableMcp } from './capabilities.mjs';
 import { superviseSpawn, composeSpawnEnv, cleanRunEnv, safeEmit, writableRootsInWorcaHome } from './spawn.mjs';
@@ -287,6 +288,21 @@ export function bringCodexThreadHome(home, thread, { homes = knownCodexHomes() }
   return false;
 }
 
+/** The parsed last line of a session file whose payload is a `token_count` event (and passes `accept`), skipping torn
+ *  or unparsable lines, or null. */
+function lastTokenCountLine(file, accept = () => true) {
+  let lines;
+  try { lines = readFileSync(file, 'utf8').split('\n'); } catch { return null; }
+  for (let i = lines.length - 1; i >= 0; i -= 1) {
+    if (!lines[i].includes('"token_count"')) continue;
+    try {
+      const evt = JSON.parse(lines[i]);
+      if (evt?.payload?.type === 'token_count' && accept(evt)) return evt;
+    } catch { /* a torn last line: try the one before */ }
+  }
+  return null;
+}
+
 /**
  * The thread's cumulative usage as codex last recorded it in its session file (the last `token_count` event), or null.
  * `exec --json` reports usage only on `turn.completed`, so this is the only record of a turn stopped before it.
@@ -294,17 +310,39 @@ export function bringCodexThreadHome(home, thread, { homes = knownCodexHomes() }
 export function codexRolloutUsage(home, thread) {
   const file = findCodexRollout(home, thread);
   if (!file) return null;
-  let lines;
-  try { lines = readFileSync(file, 'utf8').split('\n'); } catch { return null; }
-  for (let i = lines.length - 1; i >= 0; i -= 1) {
-    if (!lines[i].includes('"token_count"')) continue;
-    try {
-      const evt = JSON.parse(lines[i]);
-      const total = evt?.payload?.type === 'token_count' ? evt.payload.info?.total_token_usage : null;
-      if (total && typeof total === 'object') return readUsage(total);
-    } catch { /* a torn last line: try the one before */ }
+  const totalOf = (evt) => evt.payload.info?.total_token_usage;
+  const evt = lastTokenCountLine(file, (e) => { const t = totalOf(e); return !!t && typeof t === 'object'; });
+  return evt ? readUsage(totalOf(evt)) : null;
+}
+
+/** codex's rate-limit windows by length: the 5-hour session, the week and the day. */
+const CODEX_WINDOW_KIND = Object.freeze({ 300: 'session', 10080: 'week', 1440: 'day' });
+
+/**
+ * The plan-limit reading codex last recorded for the thread (`payload.rate_limits` on the last `token_count` line):
+ * `{ observedAt, windows: [{ kind, pct, resetsAt }] }`, or null with no file, no line, no `rate_limits` (an API-key
+ * sign-in) or no window of a known length. Windows map by `window_minutes` only (primary/secondary are not fixed);
+ * two on one kind keep the higher pct. `resets_in_seconds` (older CLIs) counts from `observedAt`.
+ */
+export function codexRolloutLimits(home, thread) {
+  const file = findCodexRollout(home, thread);
+  if (!file) return null;
+  const evt = lastTokenCountLine(file);
+  const rl = evt?.payload?.rate_limits;
+  if (!rl || typeof rl !== 'object') return null;
+  let observedAt = typeof evt.timestamp === 'string' ? Date.parse(evt.timestamp) : NaN;
+  if (!Number.isFinite(observedAt)) { try { observedAt = statSync(file).mtimeMs; } catch { observedAt = Date.now(); } }
+  const byKind = new Map();
+  for (const w of [rl.primary, rl.secondary]) {
+    const kind = w && typeof w === 'object' ? CODEX_WINDOW_KIND[w.window_minutes] : undefined;
+    if (!kind) continue;
+    const pct = toUsagePct(w.used_percent, 'percent');
+    const resetsAt = toResetMs(w.resets_at) ?? (Number.isFinite(w.resets_in_seconds) ? observedAt + w.resets_in_seconds * 1000 : null);
+    if (pct === null || resetsAt === null) continue;
+    if (!byKind.has(kind) || byKind.get(kind).pct < pct) byKind.set(kind, { kind, pct, resetsAt });
   }
-  return null;
+  const windows = ['session', 'week', 'day'].filter((k) => byKind.has(k)).map((k) => byKind.get(k));
+  return windows.length ? { observedAt, windows } : null;
 }
 
 // ── sub-agents ───────────────────────────────────────────────────────────────
@@ -902,6 +940,8 @@ export async function runCodexProcess({
     }
     const usage = now || f.cumulativeUsage;
     if (usage) storeUsage(usageDir, sawThread, usage);
+    // The plan-limit reading (the usage rings), completed turn or not; a display figure never fails the spawn.
+    try { const lim = codexRolloutLimits(home, sawThread); if (lim) recordUsageReading('codex', lim); } catch { /* no reading */ }
     return f;
   };
   // maxTurns: the main agent's tool calls (sub-agent calls do not count). An Ask chat's cap is its watchdog's alone

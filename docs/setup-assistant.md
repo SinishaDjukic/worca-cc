@@ -140,14 +140,16 @@ this machine knows is left out with a warning, such as
 (`/api/settings`, `/api/proxy/status`, `/api/providers`, `/api/config`) plus `GET /api/setup/detect`.
 Detection fills a field only when the saved value is empty, and only on a first start. The head shows
 a segmented progress bar (one segment per step), "Step N of 7", the step's title and a subtitle. The foot holds
-the status line and the buttons: the way back or out (Back, Cancel / Set up later, Close) on the left, the primary
-action on the right.
+the status line and the buttons: the way out (Cancel, or Set up later on a first start; Close on the Apply step) on
+the left; the second button below, Back and the primary action on the right, Back and the primary side by side.
+Cancel shows on every step up to Review. Once an answer changed it asks "Discard changes?" (Keep editing /
+Discard), like Escape; untouched it closes at once.
 
-On steps 2–5 a second button appears next to the primary one only when it does something **Next** does not. Both
+On steps 2–5 a second button appears before Back and the primary one only when it does something **Next** does not. Both
 labels put the step back to its saved values and move on:
 
 - **Skip for now** while **Next** is blocked (an untested proxy, a missing sign-in, no source picked).
-- **Discard changes** when the step differs from what is saved (the rows Review marks **Changed**).
+- **Use saved values** when the step differs from what is saved (the rows Review marks **Changed**).
 - No second button when the step is as saved and **Next** is open.
 
 | Step | What it asks |

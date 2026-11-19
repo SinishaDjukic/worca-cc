@@ -31,6 +31,12 @@ A resumed run keeps the set it started with, so `worca resume` has no such flag.
 Only Claude holds all of Normal's rules: on a new install a run on any other
 engine is refused unless you start it with `--guardrails permissive` or accept
 the gap with `--allow-unguarded-engine`.
+A run started from a Chat card never gets Permissive from that default: a run proposal card sends the set its
+picker shows (Permissive only if you pick it there); a Changes round, a follow-up and a Route card's Own run now take
+the set of the run or feature they change. When that would still be Permissive, the run starts on Normal and its log
+says so (`Guardrails: Normal, not Permissive — …`).
+Such a start on an engine other than Claude is refused before the run starts (409 `GUARDRAILS_CARD_ENGINE`): the
+card has no set picker, so start it from New run and pick a set there.
 A team policy's default set preselects the picker over it. Protection stays a
 per-run choice, not a persistent project property: there is no per-project
 default, and one set applies to all workspace members.

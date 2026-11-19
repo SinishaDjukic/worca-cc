@@ -1,5 +1,6 @@
 // ui/public/flags-view.mjs — Settings › Labs (docs/feature-flags.md, D8): one row per
-// registry flag that is not retiring, with its stage, switch, lock note and docs link; Reset all.
+// registry flag that is not retiring, with its stage, switch, lock note and docs link; an All
+// switch on top that turns every unlocked flag on or off; Reset all.
 // Split out of app.js so a test can drive it against the real pane without booting the app.
 // The host owns the endpoints: `api(method, body)` answers { ok, status, data } and never rejects
 // (app.js#mcpApi bound to /api/flags); `confirm(opts)` resolves a boolean (app.js#confirmModal).
@@ -24,11 +25,22 @@ export function flagRowsHtml(flags) {
   }).join('');
 }
 
+/** The master row on top: on when every unlocked flag is on; a click turns them all on or off. */
+export function allRowHtml(flags) {
+  const free = flags.filter((f) => !f.locked);
+  if (!free.length) return '';
+  const on = free.every((f) => f.on);
+  return '<div class="flag-row flag-row-all" id="flag-row-all">'
+    + '<div class="flag-row-text"><div class="flag-row-title">All Labs features</div></div>'
+    + `<div class="switch${on ? ' on' : ''}" role="switch" data-flag-all tabindex="0" aria-checked="${on}" aria-label="All Labs features"></div>`
+    + '</div>';
+}
+
 /**
  * @param {{host:HTMLElement, msgEl?:HTMLElement, resetBtn?:HTMLButtonElement,
  *          api:(method:string, body?:object)=>Promise<{ok:boolean,status:number,data:any}>,
  *          confirm:(o:object)=>Promise<boolean>}} o
- * @returns {{load:(sub?:string)=>Promise<void>, toggle:(key:string)=>Promise<void>, resetAll:()=>Promise<void>}}
+ * @returns {{load:(sub?:string)=>Promise<void>, toggle:(key:string)=>Promise<void>, toggleAll:()=>Promise<void>, resetAll:()=>Promise<void>}}
  */
 export function createFlagsView({ host, msgEl = null, resetBtn = null, api, confirm }) {
   const doc = host.ownerDocument;
@@ -39,9 +51,11 @@ export function createFlagsView({ host, msgEl = null, resetBtn = null, api, conf
     // A `flags` frame repaints this tab too (app.js); keep the keyboard user's place across it.
     const active = doc.activeElement;
     if (!focusKey && active && host.contains(active) && active.dataset.flagSwitch) focusKey = active.dataset.flagSwitch;
-    host.innerHTML = flagRowsHtml(flags);
+    const allFocused = active && host.contains(active) && active.hasAttribute('data-flag-all');
+    host.innerHTML = allRowHtml(flags) + flagRowsHtml(flags);
     applyFlags(Object.fromEntries(flags.map((f) => [f.key, f.on])), doc);
     if (resetBtn) resetBtn.disabled = !flags.some((f) => !f.locked && f.source === 'settings');
+    if (allFocused) { host.querySelector('[data-flag-all]')?.focus(); return; }
     const target = focusKey || (flagByKey(sub) ? sub : null);
     if (!target) return;
     const row = host.querySelector(`#flag-row-${target}`);
@@ -90,6 +104,14 @@ export function createFlagsView({ host, msgEl = null, resetBtn = null, api, conf
     await save({ [key]: turnOn }, key);
   }
 
+  /** Every unlocked flag on, or — when they all are — every unlocked flag off. One PATCH. */
+  async function toggleAll() {
+    const free = flags.filter((f) => !f.locked);
+    if (!free.length) return;
+    const turnOn = !free.every((f) => f.on);
+    await save(Object.fromEntries(free.map((f) => [f.key, turnOn])));
+  }
+
   async function resetAll() {
     const keys = flags.filter((f) => !f.locked).map((f) => f.key);
     if (!keys.length) return;
@@ -102,18 +124,20 @@ export function createFlagsView({ host, msgEl = null, resetBtn = null, api, conf
   }
 
   host.addEventListener('click', (e) => {
+    if (e.target.closest('[data-flag-all]')) { void toggleAll(); return; }
     const s = e.target.closest('[data-flag-switch]');
     if (s) void toggle(s.dataset.flagSwitch);
   });
   host.addEventListener('keydown', (e) => {
     if (e.key !== ' ' && e.key !== 'Enter') return;
+    const all = e.target.closest('[data-flag-all]');
     const s = e.target.closest('[data-flag-switch]');
-    if (!s) return;
+    if (!all && !s) return;
     e.preventDefault();
-    void toggle(s.dataset.flagSwitch);
+    void (all ? toggleAll() : toggle(s.dataset.flagSwitch));
   });
   if (resetBtn) resetBtn.addEventListener('click', () => { void resetAll(); });
-  return { load, toggle, resetAll };
+  return { load, toggle, toggleAll, resetAll };
 }
 
 /**

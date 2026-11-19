@@ -157,7 +157,7 @@ test('real child: handshake, seeded rows readable, thread-scoped attachment, pro
     'list_models', 'get_providers', 'test_provider', 'list_copilot_models', 'list_endpoint_models', 'propose_model_change',
     'get_network_proxy', 'test_network_proxy', 'propose_network_proxy_change', 'propose_corporate_proxy_on', 'propose_clone_project', 'propose_project_change',
     'propose_workspace_change',
-    'get_project_actions', 'get_workspace_stacks', 'get_run_checkout', 'list_running_actions', 'propose_actions_change',
+    'get_project_actions', 'get_workspace_stacks', 'get_run_checkout', 'list_running_actions', 'propose_actions_change', 'list_mcp_servers', 'discover_mcp_servers', 'propose_mcp_change',
     'show_files', 'list_settings', 'change_setting', 'pause_run', 'resume_run', 'propose_stop_run', 'send_direction', 'propose_pull_request']);
   const projects = JSON.parse(msgs[2].result.content[0].text);
   assert.equal(projects.projects[0].key, project.key);

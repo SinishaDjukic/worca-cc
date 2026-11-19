@@ -8,9 +8,7 @@ import { ANSWERER_LEAD_KEYS } from '../../../src/shared/answerer.mjs';
 import { loadAnswerer, saveAnswerer, leadLabel } from '../answerer.mjs';
 import { notify } from '../feedback.mjs';
 import { toggleMenu } from '../workflows/menu.mjs';
-import { iconSvg } from '../icons.mjs';
-import { sentencePicker } from '../design-system/components/settings-row.mjs';
-import { toElement } from '../design-system/components/html.mjs';
+import { icon } from '../icons.mjs';
 
 /** The facts line: `Large task · ≈ $31 · ~84 min` (the shaped choice's estimate), or `no estimate yet`. */
 function factsLine(n) {
@@ -28,8 +26,8 @@ let leadSeq = 0;
 const noop = () => {};
 
 /** A shaped or nudged card: the facts line, then (a run the server gives the requirements stage)
- *  "You lead as [lead ▾], supported by [supporters ▾]." — SentencePicker triggers, each opening the live CompactMenu
- *  (toggleMenu). Otherwise the facts line and today's chips, `chipsEl` for a host that places them apart. `blocked()` is
+ *  "You lead as [lead ▾], supported by [supporters ▾]." — quiet ▾ buttons, each opening the menu (toggleMenu).
+ *  Otherwise the facts line and today's chips, `chipsEl` for a host that places them apart. `blocked()` is
  *  true until a lead is picked; `commit()` saves a lead the profile does not hold. */
 function requirementsCard(doc, card, h, fetchFn) {
   const n = card.shape || card.nudge;
@@ -59,8 +57,17 @@ function requirementsCard(doc, card, h, fetchFn) {
     return names.length === 1 ? names[0] : `${names.slice(0, -1).join(', ')} and ${names[names.length - 1]}`;
   };
   const paint = () => { setText(leadBtn, lead ? leadLabel(lead) : 'pick a role'); setText(suppBtn, supportersText()); };
-  const picker = (id, text, tip) => toElement(doc, sentencePicker({ id, text, items: [], tip, chevron: iconSvg('chevron-down', 12) })).querySelector('.spick-b');
-  const wrap = (btn) => btn.closest('.spick');
+  const picker = (id, text, tip) => {
+    const b = h('button', 'btn btn-sm btn-quiet shape-lead-pick', text);
+    b.type = 'button';
+    b.title = tip;
+    b.dataset.menu = id;
+    b.dataset.key = `pick:${id}`;
+    b.setAttribute('aria-haspopup', 'menu');
+    b.setAttribute('aria-expanded', 'false');
+    b.appendChild(icon(doc, 'chevron-down', 12));
+    return b;
+  };
 
   function paintSentence() {
     leadBtn = picker('shape-lead', 'pick a role', 'The role that leads the requirements');
@@ -81,7 +88,7 @@ function requirementsCard(doc, card, h, fetchFn) {
     const line = h('div', 'shape-lead-line');
     const who = h('span', 'shape-lead-label', 'You lead as');
     who.id = labelId;
-    line.append(who, ' ', wrap(leadBtn), ', supported by ', wrap(suppBtn), '.');
+    line.append(who, ' ', leadBtn, ', supported by ', suppBtn, '.');
     paint();
     el.appendChild(line);
     emit();

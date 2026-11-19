@@ -77,6 +77,8 @@ export const ICONS = Object.freeze({
   // A video's sound in the film's transport: Mute, and Unmute once muted.
   volume: '<path d="M4 9.5h3.5L12 5.5v13l-4.5-4H4z"></path><path d="M15.5 9a4 4 0 0 1 0 6"></path><path d="M18.5 6.5a7.5 7.5 0 0 1 0 11"></path>',
   'volume-off': '<path d="M4 9.5h3.5L12 5.5v13l-4.5-4H4z"></path><path d="M16 9.5l5 5M21 9.5l-5 5"></path>',
+  // The account menu's Appearance row: a contrast circle, half filled.
+  appearance: '<circle cx="12" cy="12" r="8.5"></circle><path d="M12 3.5a8.5 8.5 0 0 1 0 17z" fill="currentColor" stroke="none"></path>',
   // The Providers tab's service marks (models/providers-tab.mjs): Speech, Image generation and Sound.
   mic: '<rect x="9" y="3" width="6" height="11" rx="3"></rect><path d="M5.5 11a6.5 6.5 0 0 0 13 0M12 17.5V21"></path>',
   image: '<rect x="4" y="5" width="16" height="14" rx="2"></rect><circle cx="9" cy="10" r="1.5"></circle><path d="M5 17l5-4.5 3.5 3 2.5-2 3 3.5"></path>',

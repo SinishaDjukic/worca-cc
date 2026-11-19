@@ -213,6 +213,13 @@ test('fake bin: the recipe (with a memoryDir) reaches the spawned argv and env â
   ]);
 });
 
+test('buildMcpConfig: a container parent tells the child not to read user-level tool configs', () => {
+  const at = (env) => buildMcpConfig({ homeBase: '.worca-cc-test', threadId: 'ask_00000001', serverPath: '/repo/src/core/ask/mcp-stdio.mjs', env }).mcpServers.worca.env;
+  assert.equal(at({ WORCA_CONTAINER: '1' }).WORCA_ASK_NO_HOME_CONFIGS, '1');
+  assert.equal(at({ WORCA_ALLOWED_HOSTS: 'worca.example.com' }).WORCA_ASK_NO_HOME_CONFIGS, '1');
+  assert.equal('WORCA_ASK_NO_HOME_CONFIGS' in at({}), false);
+});
+
 test('buildMcpConfig: resolved base, argv twins of the env, execPath default', () => {
   const cfg = buildMcpConfig({ homeBase: '.worca-cc-test', threadId: 'ask_00000001', serverPath: '/repo/src/core/ask/mcp-stdio.mjs', env: {} });
   const b = resolve('.worca-cc-test');

@@ -213,17 +213,23 @@ export function conflictBrief({ subject, base, ref }) {
 }
 
 export const PR_WATCH_BATCH_LOG_BYTES = 40 * 1024;
+
+/** The ref a conflict fix run is told to merge (`<remote>/<base>`): the brief names it, and the run's start option
+ *  `mergeIn` carries it to the harness, which measures the diff from git's own merge of it. One helper, so they never drift. */
+export function conflictRef(conflict) {
+  return `${conflict.remote}/${conflict.base}`;
+}
+
 export function buildFixTask({ pr, triggers, logs = [] }) {
   if (triggers.conflict?.why === 'behind') {
-    const { base, remote, checks = [] } = triggers.conflict;
+    const { base, checks = [] } = triggers.conflict;
     return [`Pull request ${pr.url} is behind its base branch \`${base}\`, whose latest commit passes checks that fail here: ${checks.join(', ')}.`,
-      `Merge the base in first; that may be the whole fix. Worca already fetched it: run \`git merge --no-ff ${remote}/${base}\`,`,
+      `Merge the base in first; that may be the whole fix. Worca already fetched it: run \`git merge --no-ff ${conflictRef(triggers.conflict)}\`,`,
       'resolve any conflicts so both sides\' changes keep working, run the tests, and commit the merge. Change nothing else in this run.',
       NEVER].join('\n');
   }
   if (triggers.conflict) {
-    const { base, remote } = triggers.conflict;
-    return conflictBrief({ subject: `Pull request ${pr.url}`, base, ref: `${remote}/${base}` });
+    return conflictBrief({ subject: `Pull request ${pr.url}`, base: triggers.conflict.base, ref: conflictRef(triggers.conflict) });
   }
   const quote = (s) => String(s || '').split(/\r?\n/).map((l) => `> ${l}`).join('\n');
   const out = [`Fix the newly reported problems on pull request ${pr.url}.`,
@@ -505,8 +511,10 @@ export function createPrWatcher(deps = {}) {
     };
     let r;
     // Shaper s5 (D20): the fix run is a round of the PR's run; the server numbers it (roundsOf).
+    // A conflict / behind run merges conflictRef: the harness then measures from git's own merge of it (mergeIn).
     try { r = await deps.startRun(body, { startedBy: 'pr-watch', runId, prWatchRunId: runId,
-      roundOf: { pipelineId: w.pipelineId, ...fixRoundWords(pending, w.memberKey) } }); }
+      roundOf: { pipelineId: w.pipelineId, ...fixRoundWords(pending, w.memberKey) },
+      ...(triggers.conflict ? { mergeIn: { ref: conflictRef(triggers.conflict) } } : {}) }); }
     catch { r = { status: 500 }; }
     const cur = getWatch(w.prUrl);
     if (r?.status !== 200) {
