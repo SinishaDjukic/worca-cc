@@ -17,7 +17,7 @@
 // it through ghe-host.mjs's gheUrls().
 
 import { EFFORTS, REASONING_EFFORT_LEVELS } from '../../model-env.mjs';
-import { GHE_COM_ACCOUNT_TYPE, normalizeGheHost, gheUrls, gheGatewayFallback, isTenantOrigin } from '../../ghe-host.mjs';
+import { GHE_COM_ACCOUNT_TYPE, copilotBlockHost, gheUrls, gheGatewayFallback, isTenantOrigin } from '../../ghe-host.mjs';
 
 export const GITHUB_CLIENT_ID = 'Iv1.b507a08c87ecfe98';
 export const GITHUB_SCOPES = 'read:user';
@@ -37,28 +37,25 @@ function noHostError() {
  * accountType ghe-com. A ghe-com config without a valid host throws NO_HOST — a
  * tenant token must never be sent to github.com by accident.
  */
-export function copilotAccountHost({ accountType, enterpriseHost } = {}) {
-  if (accountType !== GHE_COM_ACCOUNT_TYPE) return null;
-  const h = normalizeGheHost(enterpriseHost);
+export function copilotAccountHost(block = {}) {
+  const h = copilotBlockHost(block);
+  if (h === 'github.com') return null;
   if (!h) throw noHostError();
   return h;
 }
 
-/** A Copilot gateway origin GitHub operates (*.githubcopilot.com), over https. */
+/** A Copilot gateway origin GitHub operates (*.githubcopilot.com), over plain https: no port, no credentials. */
 export function isGithubCopilotOrigin(origin) {
   try {
     const u = new URL(origin);
-    return u.protocol === 'https:' && (u.hostname === 'githubcopilot.com' || u.hostname.endsWith('.githubcopilot.com'));
+    return u.protocol === 'https:' && !u.port && !u.username && !u.password
+      && (u.hostname === 'githubcopilot.com' || u.hostname.endsWith('.githubcopilot.com'));
   } catch { return false; }
 }
 
 /** The API host for an account type when the token exchange names none. */
 export function copilotApiHost(accountType, enterpriseHost = null) {
-  if (accountType === GHE_COM_ACCOUNT_TYPE) {
-    const h = normalizeGheHost(enterpriseHost);
-    if (!h) throw noHostError();
-    return gheGatewayFallback(h);
-  }
+  if (accountType === GHE_COM_ACCOUNT_TYPE) return gheGatewayFallback(copilotAccountHost({ accountType, enterpriseHost }));
   if (accountType === 'business') return 'https://api.business.githubcopilot.com';
   if (accountType === 'enterprise') return 'https://api.enterprise.githubcopilot.com';
   return 'https://api.githubcopilot.com';
@@ -72,8 +69,7 @@ export function copilotApiHost(accountType, enterpriseHost = null) {
  */
 export function copilotGateway({ apiHost, accountType, enterpriseHost } = {}) {
   if (!enterpriseHost) return apiHost || copilotApiHost(accountType);
-  const h = normalizeGheHost(enterpriseHost);
-  if (!h) throw noHostError();
+  const h = copilotAccountHost({ accountType: GHE_COM_ACCOUNT_TYPE, enterpriseHost });
   return apiHost && (isTenantOrigin(apiHost, h) || isGithubCopilotOrigin(apiHost)) ? apiHost : gheGatewayFallback(h);
 }
 

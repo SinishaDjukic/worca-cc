@@ -82,3 +82,11 @@ test('bridged copilot on a GHE.com tenant probes copilot-api.<t>.ghe.com; ghe-co
   assert.deepEqual(probeTargetForModel('m', { env: {}, deps: bridged({ accountType: 'business' }) }),
     { origin: 'https://api.business.githubcopilot.com', via: 'bridge' });
 });
+
+test('bridged copilot with the broker on probes the broker\'s Copilot slot, never worca\'s own host setting', () => {
+  const info = { slots: [{ id: 'anthropic', auth: 'x-api-key', upstream: 'https://api.anthropic.com' }, { id: 'copilot', auth: 'copilot', upstream: 'https://copilot-api.acme.ghe.com' }] };
+  const viaBroker = (over) => deps({ findBridgedEntry: () => ({ id: 'm', upstream: { provider: 'copilot' } }), brokerEnabled: () => true,
+    providerConfig: () => ({ accountType: 'individual' }), cachedBrokerInfo: () => info, ...over });
+  assert.deepEqual(probeTargetForModel('m', { env: {}, deps: viaBroker() }), { origin: 'https://copilot-api.acme.ghe.com', via: 'broker' });
+  assert.equal(probeTargetForModel('m', { env: {}, deps: viaBroker({ cachedBrokerInfo: () => null }) }), null);
+});

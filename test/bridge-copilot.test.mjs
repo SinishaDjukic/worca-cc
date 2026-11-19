@@ -289,7 +289,7 @@ test('copilotGateway on a tenant: trusted endpoints.api wins; an untrusted one f
   for (const ok of ['https://copilot-api.acme.ghe.com', 'https://api.individual.githubcopilot.com', 'https://proxy.acme.ghe.com']) {
     assert.equal(copilotGateway({ apiHost: ok, enterpriseHost: TENANT }), ok);
   }
-  for (const bad of ['https://evil.example', 'https://copilot-api.other.ghe.com', 'http://copilot-api.acme.ghe.com', 'https://copilot-api.acme.ghe.com:8443', 'https://acme.ghe.com.evil.example', 'https://u@copilot-api.acme.ghe.com', null, undefined]) {
+  for (const bad of ['https://evil.example', 'https://copilot-api.other.ghe.com', 'http://copilot-api.acme.ghe.com', 'https://copilot-api.acme.ghe.com:8443', 'https://acme.ghe.com.evil.example', 'https://u@copilot-api.acme.ghe.com', 'https://api.githubcopilot.com:8443', 'https://u:p@api.githubcopilot.com', null, undefined]) {
     assert.equal(copilotGateway({ apiHost: bad, enterpriseHost: TENANT }), fb, String(bad));
   }
   assert.equal(copilotGateway({ apiHost: 'https://anything.example', accountType: 'business' }), 'https://anything.example');

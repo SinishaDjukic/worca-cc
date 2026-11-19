@@ -23,6 +23,7 @@ import {
   copilotRefusalText,
 } from './providers/copilot.mjs';
 import { keyOptional, providerKeyFor } from './registry.mjs';
+import { copilotBlockHost } from '../ghe-host.mjs';
 import { listEndpointModels, catalogEntryForEndpointModel, importableModel } from './providers/endpoint.mjs';
 import { brokerEnabled, brokerInfo, cachedBrokerInfo, mintSpawnToken, revokeSpawnToken, slotBaseUrl, personSlots } from '../broker-client.mjs';
 import { routeUpstream } from '../broker-routing.mjs';
@@ -134,19 +135,15 @@ export async function copilotLogout() {
   await clearCopilotSignIn();
 }
 
-/** The config's GitHub host, or null both for github.com and for a ghe-com block without a usable host (never throws). */
+/** The config's token-cache host: null for github.com and for a ghe-com block without a usable host (never throws). */
 function safeAccountHost(cfg) {
-  try { return copilotAccountHost(cfg); } catch { return null; }
+  const h = copilotBlockHost(cfg);
+  return h === 'github.com' ? null : h;
 }
 
 // ── state payloads (never a secret) ──────────────────────────────────────────
 
 const secretSource = (v) => (!v ? null : modelEnvRef(v) ? 'env' : 'stored');
-
-/** The host a copilot config signs in to, for display: 'github.com', the tenant, or null (ghe-com without a usable host). */
-function copilotGithubHost(c) {
-  try { return copilotAccountHost(c) || 'github.com'; } catch { return null; }
-}
 
 /**
  * The Providers card payload (§9). `quota` is fetched only when asked — it is
@@ -162,7 +159,7 @@ export async function providersState({ quota = false, fetch: f, person = resolve
     login: c.login || null,
     accountType: c.accountType,
     enterpriseHost: c.enterpriseHost || null,
-    githubHost: copilotGithubHost(c),
+    githubHost: copilotBlockHost(c),
     maxConcurrent: c.maxConcurrent,
     tokenSource: secretSource(c.githubToken),
     tokenRef: modelEnvRef(c.githubToken) ? c.githubToken : null,

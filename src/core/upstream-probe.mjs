@@ -43,6 +43,11 @@ export function probeTargetForModel(modelId, { env = process.env, deps = DEFAULT
       const up = bridged.upstream || {};
       // With the broker on, a bridged slot's pinned upstream IS this base URL's origin (slotForBaseUrl).
       if (up.provider === 'copilot') {
+        // With the broker on, the Copilot slot's upstream is the gateway (worca's own host setting is unused then).
+        if (deps.brokerEnabled(env)) {
+          const s = (deps.cachedBrokerInfo()?.slots || []).find((x) => x.auth === 'copilot');
+          return s && typeof s.upstream === 'string' ? target(s.upstream, 'broker') : null;
+        }
         const c = deps.providerConfig('copilot');
         // A ghe-com config without a host throws NO_HOST → caught below → null (no probe).
         return target(deps.copilotApiHost(c.accountType, c.enterpriseHost || null), 'bridge');

@@ -92,6 +92,8 @@ test('only GitHub\'s own hosts are trusted as the Copilot API', () => {
   assert.equal(isCopilotHost('https://api.business.githubcopilot.com'), true);
   assert.equal(isCopilotHost('https://githubcopilot.com.evil.example'), false);
   assert.equal(isCopilotHost('http://api.githubcopilot.com'), false);
+  assert.equal(isCopilotHost('https://api.githubcopilot.com:8443'), false);
+  assert.equal(isCopilotHost('https://u:p@api.githubcopilot.com'), false);
 });
 
 test('a GHE.com slot trusts only its own tenant\'s gateway; without a tenant the check is today\'s isCopilotHost', () => {

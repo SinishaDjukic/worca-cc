@@ -32,7 +32,7 @@ import { createUpstreamConnector, resolveUpstream, ProxyCredentials, AUTH_LABELS
 import { readProxyLogin, watchProxyLogin, markLoginRejected, redactProxyLine, upstreamEnv, CORPORATE_PROXY_VAR } from './proxy-credentials.mjs';
 import { readSettings, readSettingsStrict, networkProxyEnabled, watchSettingsFile } from './settings.mjs';
 import { proxyUrlHasLogin } from './env-proxy.mjs';
-import { GHE_COM_ACCOUNT_TYPE, normalizeGheHost, gheEgressAllow } from './ghe-host.mjs';
+import { copilotBlockHost, gheEgressAllow } from './ghe-host.mjs';
 
 /** Set by the worca that runs the proxy, so a worca CLI started under it reuses it. */
 export const EGRESS_PROXY_VAR = 'WORCA_EGRESS_PROXY_URL';
@@ -50,8 +50,7 @@ const OPEN_POLICY = Object.freeze({ mode: 'open', enforced: false, allow: [], de
 export function copilotTenantAllow(settingsObj) {
   const c = settingsObj && typeof settingsObj === 'object' && settingsObj.providers && typeof settingsObj.providers === 'object'
     ? settingsObj.providers.copilot : null;
-  if (!c || typeof c !== 'object' || c.accountType !== GHE_COM_ACCOUNT_TYPE) return [];
-  return gheEgressAllow(normalizeGheHost(c.enterpriseHost));
+  return gheEgressAllow(copilotBlockHost(c));   // github.com and a host-less block → []
 }
 
 /** True when `value` is an http URL with a user name whose host:port is the upstream's (D21). */
