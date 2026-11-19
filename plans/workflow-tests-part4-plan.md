@@ -5111,3 +5111,208 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
 
 ---
 
+## Task 24: UI: a result you liked, suggested criteria, and the pair block (boards 2, 3, 6, 32; after P4-M2, P4-M6, P4-M7)
+
+**Files:**
+- Modify: `ui/public/workflows/criteria-editor.mjs` (the liked row), `ui/public/workflows/test-dialogs.mjs` (`openFromRunDialog`: the liked box and the chips), `ui/public/workflows/criteria-rows.mjs` (`pairBlock`), `ui/public/workflows/test-compare.mjs` (one line: the pair block above the try tabs), `ui/public/workflows/tests-app.mjs` (the calls), `ui/public/workflows/workflow-tests.css`
+- Test: `test/ui-workflow-test-liked-suggest.test.mjs`
+
+**Interfaces:**
+- Consumes: `example.liked` (Task 12), `PUT/DELETE …/examples/:ex/liked`, `POST /api/workflow-tests/suggest-criteria` (Task 15), the side by side's `pair` (Task 14).
+- Produces: `likedRow(doc, liked, { project, onReplace, onRemove }) → Element` (board 2: "A result you liked · optional", hint "When two versions are compared, Worca also says which result is closer to this one." / board 32: "… which changes are closer to these.", the file pill, "Replace"); in `openFromRunDialog`: the row "This result, as a result you liked" in "Keep from this run" (board 3) whose value goes to `POST …/from-run` as `liked`, and under the note "Worca turned your note into criteria · Click one to add it. You can change the words later." with up to three "+ <criterion>" chips whose picks go to the new example as `criteria`; `pairBlock(doc, pair, labels, { onAnswer }) → Element` (board 6: "Which brief is better overall?" / "Which result is closer to the one you liked?", "Worca read both without knowing which version wrote which.", "<version>'s result." or "They are about the same." or "Worca could not decide: it answered differently when the order changed.", the reason, Agree / Disagree).
+
+- [ ] **Step 1: Write the failing test**
+
+Create `test/ui-workflow-test-liked-suggest.test.mjs`:
+```js
+// test/ui-workflow-test-liked-suggest.test.mjs — board 2's liked row, board 3's liked box and chips, board 6's pair block.
+import { test } from 'node:test';
+import assert from 'node:assert/strict';
+import { JSDOM } from 'jsdom';
+import { likedRow } from '../ui/public/workflows/criteria-editor.mjs';
+import { pairBlock } from '../ui/public/workflows/criteria-rows.mjs';
+
+test('board 2 and 32: the liked row', () => {
+  const { document: doc } = new JSDOM('<!doctype html><body></body>').window;
+  const row = likedRow(doc, { kind: 'text', name: 'brief-bulk-export-good.md', size: 900 }, { project: false, onReplace: () => {}, onRemove: () => {} });
+  assert.match(row.textContent, /A result you liked · optional[\s\S]*Worca also says which result is closer to this one\.[\s\S]*brief-bulk-export-good\.md[\s\S]*Replace/);
+  const p = likedRow(doc, { kind: 'changes', name: 'Changes from the run on 28 Oct · 3 files', size: 900 }, { project: true, onReplace: () => {}, onRemove: () => {} });
+  assert.match(p.textContent, /which changes are closer to these\.[\s\S]*Changes from the run on 28 Oct · 3 files/);
+});
+
+test('board 6: the pair block names the winner by its version, never by "Result 1"', () => {
+  const { document: doc } = new JSDOM('<!doctype html><body></body>').window;
+  const sent = [];
+  const b = pairBlock(doc, { judgementId: 5, winner: 'a', reason: 'It sets a goal you can measure.', question: 'better', answer: null }, { a: 'v4', b: 'v5 draft' },
+    { onAnswer: (id, agree) => sent.push([id, agree]) });
+  assert.match(b.textContent, /Which result is better overall\?[\s\S]*Worca read both without knowing which version wrote which\.[\s\S]*v4's result\.[\s\S]*It sets a goal you can measure\./);
+  b.querySelector('button.wft-agree').click();
+  assert.deepEqual(sent, [[5, true]]);
+  assert.match(pairBlock(doc, { judgementId: 6, winner: 'unsure', reason: 'x', question: 'liked', answer: null }, { a: 'v4', b: 'v5' }, { onAnswer: () => {} }).textContent,
+    /closer to the one you liked[\s\S]*Worca could not decide: it answered differently when the order changed\./);
+});
+```
+Then pin P4-M7's board 3 states (loading, none found, a chip added) and P4-M2's empty liked row as one more case, as the approved mocks word them.
+
+- [ ] **Step 2: Run it to see it fail**
+
+Run: `node tools/test.mjs test/ui-workflow-test-liked-suggest.test.mjs`
+Expected: FAIL.
+
+- [ ] **Step 3: `likedRow` and `pairBlock`**
+
+`criteria-editor.mjs` (append):
+```js
+/** Boards 2, 32: "A result you liked · optional". `liked` = the example's meta (Task 12); null: P4-M2's empty state. */
+export function likedRow(doc, liked, { project = false, onReplace, onRemove }) {
+  const sect = el(doc, 'div', 'wft-sect wft-liked');
+  const g = el(doc, 'p', 'wft-grp', 'A result you liked ');
+  g.append(el(doc, 'span', 'wft-opt', '· optional'));
+  sect.append(g, el(doc, 'p', 'wft-grp-hint', project ? 'When two versions are compared, Worca also says which changes are closer to these.'
+    : 'When two versions are compared, Worca also says which result is closer to this one.'));
+  const line = el(doc, 'div', 'wft-acts');
+  if (liked) line.append(el(doc, 'span', liked.kind === 'changes' ? 'wft-file is-plain' : 'wft-file', liked.name), btn(doc, 'Replace', onReplace, 'btn btn-sm'));
+  else line.append(btn(doc, 'Add a result you liked', onReplace, 'btn btn-sm'));
+  sect.append(line);
+  return sect;
+}
+```
+Remove is added from P4-M2 (an icon button beside Replace). `renderExampleEditor` appends `likedRow(…)` after the criteria section for a saved example; `onReplace` opens a small `testDialog` with "Upload a file" (a file input, read as base64, `PUT …/liked { name, dataBase64 }`) and "Use a try's result" (the latest finished tries of this example, `PUT …/liked { tryId }`), as P4-M2 draws it.
+
+`criteria-rows.mjs` (append):
+```js
+/** Board 6's "Which brief is better overall?" (D100); with a result you liked, "closer to" it. Never decides. */
+export function pairBlock(doc, pair, labels, { onAnswer }) {
+  const box = el(doc, 'section', 'card wft-pair');
+  const q = pair.question === 'liked' ? 'Which result is closer to the one you liked?' : 'Which result is better overall?';
+  const who = pair.winner === 'a' ? `${labels.a}'s result.` : pair.winner === 'b' ? `${labels.b}'s result.`
+    : pair.winner === 'tie' ? 'They are about the same.' : 'Worca could not decide: it answered differently when the order changed.';
+  const said = el(doc, 'p', '');
+  said.append(el(doc, 'b', '', who), doc.createTextNode(` ${pair.reason || ''}`));
+  box.append(el(doc, 'h2', '', q), el(doc, 'p', 'hint', 'Worca read both without knowing which version wrote which.'), said);
+  if (pair.winner !== 'unsure') {
+    const acts = el(doc, 'div', 'wft-acts');
+    acts.append(btn(doc, 'Agree', () => onAnswer(pair.judgementId, true), 'btn btn-sm wft-agree'), btn(doc, 'Disagree', () => onAnswer(pair.judgementId, false), 'btn btn-sm wft-disagree'));
+    box.append(acts);
+  }
+  return box;
+}
+```
+`test-compare.mjs` `renderSideBySide`: before the try tabs, `if (s.pair && !once) page.append(pairBlock(doc, s.pair, s.labels, { onAnswer: (id, agree) => actions.answer(id, agree) }));` (placement per P4-M6).
+
+- [ ] **Step 4: Board 3's liked box and chips** (`test-dialogs.mjs` `openFromRunDialog`; after P4-M7)
+
+1. In "Keep from this run", after the answers row: `const liked = keepRow(doc, 'wft-fr-liked', 'This result, as a result you liked');` (shown only when the past run has a result: `past.hasResult`, which `pastRunSummary` already knows from its main result read; add the boolean there if it is missing). Its checkbox's value goes into the submit body as `liked`.
+2. Under the note: a `div.wft-sugg-chips` filled when the note box loses focus with at least 20 characters and a note different from the last one asked: `POST /api/workflow-tests/suggest-criteria { workflowId, pipelineId: past.pipelineId, note }` (through a new `onSuggest(note)` option the controller provides). Title "Worca turned your note into criteria", hint "Click one to add it. You can change the words later.", one `button.btn.btn-sm` "+ <text>" per suggestion; a press adds it to `picked` and shows P4-M7's added state. The submit body gains `criteria: picked.map((text) => ({ text }))`.
+3. `routes.mjs` `from-run`: pass `criteria` through to the new example: `if (Array.isArray(b.criteria) && b.criteria.length && out.example) out.example = await service.saveExample(wid(req), out.example.id, { criteria: b.criteria });` (the save stores the suggested model, D87).
+
+- [ ] **Step 5: Run the tests and the guards**
+
+Run: `node tools/test.mjs test/ui-workflow-test-liked-suggest.test.mjs test/ui-workflow-test-dialogs.test.mjs test/ui-workflow-test-compare.test.mjs test/api-workflow-tests.test.mjs`, then the design guards.
+Expected: PASS.
+
+- [ ] **Step 6: Commit**
+
+```bash
+git add ui/public/workflows/criteria-editor.mjs ui/public/workflows/criteria-rows.mjs ui/public/workflows/test-dialogs.mjs ui/public/workflows/test-compare.mjs ui/public/workflows/tests-app.mjs ui/public/workflows/workflow-tests.css src/core/workflow-tests/routes.mjs test/ui-workflow-test-liked-suggest.test.mjs
+git commit -m "feat(workflow-tests): a result you liked, suggested criteria, and the pair question in the UI
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
+```
+
+---
+
+## Task 25: Docs, UI levels, the flag, the changelog, the plan, and the final verification
+
+Run once for 4a (its parts) and again for 4b (P4-Q1).
+
+**Files:**
+- Modify: `docs/costs.md`, `docs/feature-flags.md`, `docs/ui-levels.md`, `docs/workflows.md`, `docs/changelog/unreleased.md`, `plans/workflow-tests-plan.md`, `src/shared/workflow-tests/*` / `ui/public/workflows/tests-view.mjs` only for P4-Q16
+
+- [ ] **Step 1: Docs**
+
+- `docs/costs.md`, after the sentence "A total cost limit counts pipeline and Chat spend over a window …": add "Workflow tests count too: their tries, and the AI checks of your criteria (Check the checker, suggested criteria and clearer words included). Statistics leaves them out."
+- `docs/feature-flags.md`, the `workflowTests` row: append "Your criteria (Part 4): sentences a good result makes true, checked on every try by an AI model you pick per example (Claude models; the call has no tools and its quote from the result must be found there), exact checks without AI (quotes and numbers from the example's files, no personal data, links work), Check the checker, Compare by criterion and How reliable is Worca's checking. A criterion Worca judges unreliably (after at least 10 of your answers) is shown but never decides better or worse. These checks cost money and count in the spending limit and the test's own cost limit."
+- `docs/ui-levels.md`: a row under the 3b row: "| Behind the flag `workflowTests`, Simple (Part 4): in the example editor, Your criteria with their trust lines and Switch, Checked with, A result you liked; in the check dialog, Every quote is in the files, Numbers come from the files, No personal data, Links work, and Worca's suggestion; in Test a version, Checking your criteria; side by side, Your criteria · checked by Worca with Why, Proof, Agree and Disagree, and the pair question; Compare's By criterion and its checking card; Check the checker; How reliable is Worca's checking and its card on the Tests list; in Use this run as a test example, the result you liked and the suggested criteria | all |"
+- `docs/workflows.md`, the Tests section: a short "Your criteria" paragraph in the same words.
+- `docs/changelog/unreleased.md`: "## Your criteria, checked by Worca (Labs, Part 4)" with three plain sentences and "- Workflow tests: your criteria (#<PR>)".
+- `plans/workflow-tests-plan.md`: under "### Part 4 — Your criteria, checked by Worca", one line: "The detailed plan is [workflow-tests-part4-plan.md](workflow-tests-part4-plan.md) (it supersedes this outline)."
+
+- [ ] **Step 2: P4-Q16**
+
+If the user picked the recommendation: change "How testing works" step 2 back to the approved "In your own words, for example "names a goal with a number"." (find it with `timeout 60 git grep -n "Pick the Basics it must meet" -- ui src`), and update the test that pins it.
+
+- [ ] **Step 3: Final verification**
+
+```powershell
+cd C:\Users\BRT1BG\worca-cc\worca-cc-tests4
+node tools/test.mjs test/db-migrate-v99.test.mjs test/workflow-test-criteria.test.mjs test/workflow-test-exact-checks.test.mjs test/workflow-test-link-check.test.mjs test/workflow-test-judge-spend.test.mjs test/workflow-test-judge.test.mjs test/workflow-test-criteria-runner.test.mjs test/workflow-test-trust.test.mjs test/workflow-test-criteria-verdicts.test.mjs test/workflow-test-judge-models.test.mjs test/workflow-test-criteria-report.test.mjs test/workflow-test-liked.test.mjs test/workflow-test-checker.test.mjs test/workflow-test-pair.test.mjs test/workflow-test-suggest.test.mjs test/api-workflow-test-criteria.test.mjs test/api-workflow-test-criteria-flag-off.test.mjs
+node C:\Users\BRT1BG\worca-cc\worca-cc-dev\.superpowers\keep\run-files.mjs C:\Users\BRT1BG\worca-cc\worca-cc-tests4 C:\Users\BRT1BG\worca-cc\worca-cc-tests4\.superpowers\sdd\final-4 4 300
+(Get-Content src\core\db.mjs).Count; (Get-Content src\core\workflow-tests\service.mjs).Count; (Get-Content src\core\workflow-tests\runner.mjs).Count; (Get-Content ui\public\workflows\example-editor.mjs).Count; (Get-Content ui\public\workflows\test-compare.mjs).Count; (Get-Content ui\public\workflows\tests-app.mjs).Count
+git diff --stat 3b045d0a8 -- tools/split-by-feature/size-caps.json ui/server.mjs ui/public/app.js
+```
+Expected: the focused files pass; the full run fails only files on `baseline-4-failing.txt`; db.mjs below 3135, the five others below 1000; no change to the caps file, `ui/server.mjs` or `app.js`. A smoke run on the mock (`WORCA_MOCK=1`, flag on): add two criteria, Try it once now, read the side by side, Agree once, run Check the checker, open By criterion and the trust report; note it in `.superpowers\sdd\final-4.txt` for the PR.
+
+- [ ] **Step 4: Commit**
+
+```bash
+git add docs/costs.md docs/feature-flags.md docs/ui-levels.md docs/workflows.md docs/changelog/unreleased.md plans/workflow-tests-plan.md
+git commit -m "docs(workflow-tests): your criteria, checked by Worca (Part 4)
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
+```
+
+---
+
+## Task 26: The paid end-to-end check (controller only; needs the user's explicit OK; depends on P4-Q14)
+
+No commit. Never run by a subagent, never without the user's go in this session.
+
+- [ ] **Step 1: Ask, and name who pays**
+
+Read `~/.worca-cc` model routing for `claude-haiku-4-5` (Settings › Models, or the global model file: a Vertex or other `env` on that alias means that account pays, not the Claude sign-in). Tell the user which account will pay, the cap (**$3**), and what runs. Wait for an explicit yes.
+
+- [ ] **Step 2: Run it** (a fresh Worca home, flag on, no `WORCA_MOCK`)
+
+1. A no-project workflow whose agent steps use Claude Haiku 4.5; one example with a request, two criteria ("Names a success metric with a number", "Explains the legal reason for each data field") and Checked with = Haiku 4.5.
+2. Try it once now. Expect: two judgements with `proof_found = 1` or an honest "Not checked", ledger rows with `purpose 'try'`, `budgetStatus().windowSpendUsd` up by the same amount.
+3. Check the checker on the first criterion. Expect: 17 ledger rows `purpose 'checker'` (or fewer when the plant reply was used: 1 + 16), the four cards, the three self-test rows.
+4. Agree once on the side by side.
+5. Stop at any point if `windowSpendUsd` rises by more than **$3**.
+
+- [ ] **Step 3: Record**
+
+Write `.superpowers\sdd\paid-check-4.md`: the account, each call's cost, the replies' shape (any unreadable reply or unfound proof, with the quote), the time per call, the total. Add one line to the PR body.
+
+---
+
+## Later (after Part 4)
+
+- P4-Q11's frozen evaluation steps; few-shot examples from the person's corrections (LangSmith's align loop), checked on answers not used as examples.
+- Board 13's "A newer AI model for checking is available" (P4-Q12).
+- Every harness Requirements runs as a checking model (P4-Q2 alternative).
+- Colleagues' blind reviews counting as answers, and "people agree with each other N%" (Part 5).
+- "Uses only the given files" by claim checking (eval research §3.1 item 13), beyond the exact quote and number checks.
+- A per-criterion precondition ("only check tone when there is a Summary section").
+- A test share of the spending limit for criteria checks (Part 6).
+
+## Self-review (done while writing; kept for the reviewer)
+
+**Spec coverage.**
+- Judge (outline: no tools, replaced system prompt, model per example, met / not met + reason + proof checked by text search): Task 6 (D88–D90), the model per example Tasks 2 and 10, under Pretend or Real the same (D88), mock Tasks 6 and 7 (D91), who pays: D88 and Task 26.
+- Spend in the limit, hidden from Statistics, in the test's cap: Tasks 5 and 7 (D92). The Design ledger pattern was followed (correction 2).
+- Exact checks without AI (quotes, numbers, must / must not mention, personal data, links): Tasks 3 and 4; must and must not mention already exist (Part 2) and serve Switch (D94).
+- Check the checker (planted results, deterministic and model-made; asked again 3×; order swapped; padding; agreement from answers): Tasks 13, 14 (order swapped through the pair question), 8 (answers), 16 (report).
+- Trust marks per D14: Task 8, with P4-Q6's rule.
+- UI: Add a check and Switch (Task 19), criteria and Checked with (Task 18), Check the checker (Task 22), Compare by criterion (Task 21), the trust report (Task 23), AI-suggested criteria in Add from a past run (Tasks 15, 24), boards 32 and 36 (Tasks 18, 20), board 4's row (Task 17), board 1's card (Task 23), board 6's pair (Task 24).
+- Schema rung and migration tests: Task 1. Docs and UI levels: Task 25 (storage in Task 1). Size caps: Global Constraints and every task touching a near-cap file. The PR verb rule: Global Constraints and the design guards. Free tests per task and one gated paid task: Task 26.
+- Task order: Tasks 1–16 have no UI; Tasks 17, 18 (Steps 1–5), 20 (Steps 1–5) and 21 (Steps 1–5) build approved boards; Tasks 19, 22, 23, 24 and the gated steps wait for P4-M1–M7.
+
+**Placeholder scan.** No "TBD" or "implement later". The UI steps that wait for a mock say what they build and pin the mock's words in a test first; their strings are proposals (as 3b did for U1–U4). Two places name a check to make against the code instead of guessing: the catalog row's harness field (Task 10 Step 1) and the `--violet-ink` token (Task 18 Step 4).
+
+**Type consistency.** Judgement fields (`met`, `proofFound`, `error`, `judgementId` in results) match between criteria-store (Task 7), criteria-verdicts (Task 9), criteria-rows (Task 20) and the checker view (Tasks 13, 22). `createCriteriaJudge` returns `judgeTry`, `judgeMissing` (Task 7) and `judgePairs` (Task 14); the runner deps are `judgeCriteria` and `judgeMissing`. `registerWorkflowTestRoutes` returns `{ runner, criteriaJudge }` (Task 7) and `registerCriteriaRoutes` takes them (Task 8). `trustOf` → `{ state, n, agree, decides }` everywhere. `estimateOf(...).criteriaUsd` is defined in Task 11 and read in Task 17.
+
+**Known risks for the implementer.**
+- `interviewCallOptions` lives in the Requirements interview module; importing it pulls the Requirements stack into the workflow-tests server code. Acceptable (both run in the server); if a cycle appears, move `interviewCallOptions` and `CALL_KINDS` to `src/core/helper-call/claude-options.mjs` unchanged and import it from both.
+- The proof search is strict by design; Task 26 records any unfound quote so the rule can be loosened with evidence, not guessed.
+- `listModels()` reads settings files: tests pass a `catalog` function (Task 10).
