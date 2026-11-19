@@ -47,6 +47,10 @@
 .copy-btn.copy-miss .copy-btn-msg{display:inline;color:var(--red-ink-strong);}
 .copy-btn.btn-icon:is(.copied,.copy-miss){width:auto;padding:0 8px;}
 .copy-btn-action:is(.copied,.copy-miss) .copy-btn-words{display:none;}   /* a labelled action: "Copied" takes its words' place */
+/* A rendered markdown code block's copy button (ask-markdown.mjs): pinned to the block's top-right corner over the <pre>,
+   on the block's own fill, ringed to the border, so a long first line never shows through or beside it. */
+.md-code{position:relative;}
+.md-code > .md-code-copy{position:absolute;top:5px;right:5px;background:var(--field);box-shadow:0 0 0 4px var(--field);}
 /* An icon from ui/public/icons.mjs (icon()): the span is sized inline, its svg fills it. */
 .ic{display:inline-flex;flex:none;align-items:center;justify-content:center;}
 .ic svg{display:block;}
