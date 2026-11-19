@@ -2311,7 +2311,7 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
 **Interfaces:**
 - Produces (criteria.mjs): `TRUST = { CONFIRM: 'confirm', COLLECTING: 'collecting', RELIABLE: 'reliable', UNRELIABLE: 'unreliable', EXACT: 'exact' }`, `ANSWERS_NEEDED = 10`, `AGREE_MIN = 0.8`, `SIDE_MIN = 0.7`, `SIDE_COUNT_MIN = 3`, `agreementOf(answers) → { n, agree, saidMet: { n, agree }, saidNot: { n, agree } }`, `trustOf({ roundDone, answers }) → { state, n, agree, decides }`. An answer is `{ judgeMet: boolean, agree: boolean }`.
 - Produces (criteria-text.mjs): `TRUST_BADGE` (state → `[class, words]`), `trustLine(trust) → string`.
-- Produces (criteria-store.mjs): `setAnswer(judgementId, { agree: boolean|null, by })`, `answerOf(judgementId, by) → boolean|null`, `answersFor(workflowId, fp, model) → answer[]`, `roundDone(workflowId, fp, model) → boolean`.
+- Produces (criteria-store.mjs): `setAnswer(judgementId, { agree: boolean|null, by })`, `answerOf(judgementId, by) → boolean|null`, `latestAnswerOf(judgementId) → boolean|null` (anyone's newest answer: the trust report reads it, I9), `answersFor(workflowId, fp, model) → answer[]`, `roundDone(workflowId, fp, model) → boolean`.
 - Produces (criteria-read.mjs): `trustFor(workflowId, fp, model, memo?) → trust`.
 - Produces (criteria-routes.mjs): `CRITERIA_ROUTES` (frozen `{ method, path }` list, every Part 4 route in registration order), `registerCriteriaRoutes(app, { runner, criteriaJudge, deps })`; inside it, the helpers `wid(req)`, `by(req)`, `judgement(req)` and `exampleOf(req)` (the route's example or 404; Tasks 12–15 and 18 use it). First route: `POST /api/workflows/:id/tests/judgements/:j/answer` with `{ agree: true | false | null }` → `{ answer, trust }`.
 
@@ -2371,6 +2371,8 @@ test('answers: one per person and verdict, replaced and removed; counted per key
   cs.setAnswer(p, { agree: true, by: 'ana' });
   cs.setAnswer(other, { agree: true, by: 'ana' });
   assert.equal(cs.answerOf(a, 'ana'), false);
+  assert.equal(cs.answerOf(a, null), null, 'without identities the key is "", nobody else\'s');
+  assert.equal(cs.latestAnswerOf(a), true, 'I9: anyone\'s newest answer (bo answered last)');
   assert.deepEqual(cs.answersFor('wf', 'f1', 'm').map((x) => [x.judgeMet, x.agree]).sort(), [[false, true], [true, false], [true, true]]);
   cs.setAnswer(a, { agree: null, by: 'ana' });
   assert.equal(cs.answerOf(a, 'ana'), null);
@@ -2512,6 +2514,12 @@ export function answerOf(judgementId, by = null) {
   const r = prepare('SELECT agree FROM wf_test_judge_answers WHERE judgement_id = ? AND by_key = ?').get(Number(judgementId), byKey(by));
   return r ? r.agree === 1 : null;
 }
+/** I9: anyone's newest answer on one verdict (the trust report's "unless the person said that is right" reads it, whoever views). */
+export function latestAnswerOf(judgementId) {
+  getDb();
+  const r = prepare('SELECT agree FROM wf_test_judge_answers WHERE judgement_id = ? ORDER BY created_at DESC, id DESC LIMIT 1').get(Number(judgementId));
+  return r ? r.agree === 1 : null;
+}
 /** D95: every answer on a criterion key and model in a workflow, as `{ judgeMet, agree }`. Pairs and repeats never count. */
 export function answersFor(workflowId, fp, model) {
   getDb();
@@ -2634,14 +2642,14 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
 ## Task 9: Better or worse with criteria (D98)
 
 **Files:**
-- Modify: `src/shared/workflow-tests/criteria-verdicts.mjs` (results and statuses), `src/shared/workflow-tests/compare.mjs` (`missCounts`), `src/core/workflow-tests/criteria-read.mjs` (`withCriteriaFor`, `compareNotes`), `src/core/workflow-tests/service.mjs` (three call sites and one field; net about +1 line)
+- Modify: `src/shared/workflow-tests/criteria-verdicts.mjs` (results and statuses), `src/shared/workflow-tests/compare.mjs` (`missCounts`), `src/core/workflow-tests/criteria-read.mjs` (`withCriteriaFor`, `compareNotes`), `src/core/workflow-tests/service.mjs` (three call sites, one field and `sideBySide`'s `by`; net about +1 line), `src/core/workflow-tests/routes.mjs` (the side-by-side route passes `by`)
 - Test: `test/workflow-test-criteria-verdicts.test.mjs`
 
 **Interfaces:**
 - Consumes: `NOT_CHECKED` (Task 6), `trustFor`, `tryJudgements`, `criterionFp` (Tasks 7, 8), `compareModel` (`compare.mjs:140`).
-- Produces (criteria-verdicts.mjs): `criterionResult(c, j, trust, { finished }) → { id, label, met: boolean|null, value, decides, shadowDecides?, reason?, proof?, proofFound?, judgementId?, pending?, uneven?, trust }`, `combinedStatus(status, criteria, { all }) → status`, `withCriteria(tries, resultsOf) → tries` (adds `verdict.criteria`, `checksStatus`, `shadowStatus`; a counted criterion that some other finished try of the same example lacks gets `decides: false, shadowDecides: false, uneven: true`, I6; leaves a try without criteria as it was), `unreliableOnly(realModel, shadowModel) → [{ id, name }]`, `notCheckedEverywhere(tries, examples) → [{ id, name, criteria: string[] }]`.
-- Produces (criteria-read.mjs): `withCriteriaFor(workflowId, tries) → tries`, `compareNotes(input) → { unreliableOnly, notChecked }` (`notChecked` = `notCheckedEverywhere`).
-- Service: `compareOf(...)` returns `notes` (Compare's P4-M5 line reads it); `modelInput`, `sideBySide` and `cellOf` read tries through `withCriteriaFor`.
+- Produces (criteria-verdicts.mjs): `criterionResult(c, j, trust, { finished, answer }) → { id, label, met: boolean|null, value, decides, shadowDecides?, reason?, proof?, proofFound?, judgementId?, pending?, uneven?, answer?, trust }` (`answer`: the viewer's earlier Agree / Disagree, only when the caller passes it, I9), `combinedStatus(status, criteria, { all }) → status`, `withCriteria(tries, resultsOf) → tries` (adds `verdict.criteria`, `checksStatus`, `shadowStatus`; a counted criterion that some other finished try of the same example lacks gets `decides: false, shadowDecides: false, uneven: true`, I6; leaves a try without criteria as it was), `unreliableOnly(realModel, shadowModel) → [{ id, name }]`, `notCheckedEverywhere(tries, examples) → [{ id, name, criteria: string[] }]`.
+- Produces (criteria-read.mjs): `withCriteriaFor(workflowId, tries, { withAnswers = false, by = null }) → tries` (with `withAnswers`, each counted result carries `answer: cs.answerOf(j.id, by)`, I9), `compareNotes(input) → { unreliableOnly, notChecked }` (`notChecked` = `notCheckedEverywhere`).
+- Service: `compareOf(...)` returns `notes` (Compare's P4-M5 line reads it); `modelInput`, `sideBySide` and `cellOf` read tries through `withCriteriaFor`. `sideBySide(workflowId, runId, exampleId, { forgeFor, by })`: the route passes `by: by(req)` (`actorOf`), so the page shows the viewer's earlier answer after a reload (P4-M6).
 
 - [ ] **Step 1: Write the failing test**
 
@@ -2667,6 +2675,8 @@ test('criterionResult: met, not met, not checked for each reason, and an unfinis
   assert.equal(criterionResult(C, J(null, { error: 'no-proof' }), reliable).value, "Not checked: Worca's proof was not in the result");
   assert.equal(criterionResult(C, J(null, { error: 'limit' }), reliable).pending, true);
   assert.equal(criterionResult(C, J(true), reliable, { finished: false }).value, 'Not checked: the try did not finish');
+  assert.equal(criterionResult(C, J(false), reliable, { answer: false }).answer, false, 'I9: the viewer\'s earlier answer, when given');
+  assert.equal('answer' in criterionResult(C, J(false), reliable), false);
 });
 
 test('combinedStatus: a failed try stays failed; a passed one fails on a deciding miss; all = unreliable ones decide too', () => {
@@ -2734,7 +2744,7 @@ Add the import `import { NOT_CHECKED } from './criteria-text.mjs';` and append:
  * D98: one criterion on one try. `j` = the try's newest judgement of it (criteria-store's shape) or null; `trust` = trustOf's.
  * Only a counted verdict (met or not met, its proof found) decides, and only when its trust decides (D95).
  */
-export function criterionResult(c, j, trust, { finished = true } = {}) {
+export function criterionResult(c, j, trust, { finished = true, answer } = {}) {
   const base = { id: c.id, label: c.text, trust };
   if (!finished) return { ...base, met: null, value: NOT_CHECKED['not-finished'], decides: false };
   if (!j) return { ...base, met: null, value: NOT_CHECKED.pending, decides: false, pending: true };
@@ -2743,7 +2753,7 @@ export function criterionResult(c, j, trust, { finished = true } = {}) {
       ...(j.error === 'limit' || j.error === 'failed' ? { pending: true } : {}) };
   }
   return { ...base, met: j.met, value: j.met ? 'Met' : 'Not met', reason: j.reason, proof: j.proof, proofFound: j.proofFound,
-    judgementId: j.id, decides: !!(trust && trust.decides), shadowDecides: true };
+    judgementId: j.id, decides: !!(trust && trust.decides), shadowDecides: true, ...(answer !== undefined ? { answer } : {}) };
 }
 
 /** D98: a passed try fails when a deciding criterion is not met. `all`: unreliable criteria decide too (the second reading). */
@@ -2820,7 +2830,7 @@ import { compareModel } from '../../shared/workflow-tests/compare.mjs';
 import { criterionResult, withCriteria, unreliableOnly, notCheckedEverywhere, finishedTry } from '../../shared/workflow-tests/criteria-verdicts.mjs';
 
 /** D98: tries as the pages read them: with their criteria (the example's current ones, checked by its current model). */
-export function withCriteriaFor(workflowId, tries) {
+export function withCriteriaFor(workflowId, tries, { withAnswers = false, by = null } = {}) {
   if (!tries.length) return tries;
   const examples = new Map();
   const exOf = (id) => { if (!examples.has(id)) examples.set(id, store.readExample(workflowId, id)); return examples.get(id); };
@@ -2832,7 +2842,10 @@ export function withCriteriaFor(workflowId, tries) {
     if (!ex || !model || !ex.criteria.length) return null;
     return ex.criteria.map((c) => {
       const fp = cs.criterionFp(c.text);
-      return criterionResult(c, js.get(`${t.id}|${fp}|${model}`) || null, trustFor(workflowId, fp, model, memo), { finished: finishedTry(t) });
+      const j = js.get(`${t.id}|${fp}|${model}`) || null;
+      // I9: the side by side shows the viewer's earlier Agree / Disagree (by = actorOf(req); '' without identities).
+      return criterionResult(c, j, trustFor(workflowId, fp, model, memo), { finished: finishedTry(t),
+        ...(withAnswers && j ? { answer: cs.answerOf(j.id, by) } : {}) });
     });
   });
 }
@@ -2851,10 +2864,25 @@ export function compareNotes(input) {
 Import `{ withCriteriaFor, compareNotes }` from `./criteria-read.mjs`. Then:
 - `cellOf` (`:468`): `const tries = withCriteriaFor(ex.workflowId, store.latestTriesFor({ workflowId: ex.workflowId, exampleId: ex.id, use }));`
 - `modelInput` (`:482`): `tries: withCriteriaFor(run.workflowId, store.triesOfRun(run.id))`.
-- `sideBySide`: `const tries = withCriteriaFor(workflowId, store.triesOfRun(run.id)).filter((t) => t.exampleId === ex.id && FIN.has(t.status));`
+- `sideBySide`: its options become `{ forgeFor = null, by = null } = {}`, and `const tries = withCriteriaFor(workflowId, store.triesOfRun(run.id), { withAnswers: true, by }).filter((t) => t.exampleId === ex.id && FIN.has(t.status));`
+- `routes.mjs` (`:187`): `res.json(await service.sideBySide(wid(req), num(req.params.run, 'test'), ex.id, { forgeFor, by: by(req) }));` (`by` is the routes' own `actorOf(req) || null`, `routes.mjs:80`).
 - `compareOf`'s return: add `notes: compareNotes(input),` beside `model: compareModel(input),`.
 
-The side by side's `view(t)` already returns `verdict: t.verdict`, so `verdict.criteria` reaches the page.
+The side by side's `view(t)` already returns `verdict: t.verdict`, so `verdict.criteria` (with `answer`) reaches the page.
+
+API case (append to `test/api-workflow-test-criteria.test.mjs`):
+```js
+test('I9: the side by side carries the viewer\'s earlier answer', async () => {
+  const run = store.listTestRuns('wf_api_c')[0];
+  const [t] = store.triesOfRun(run.id);
+  const [j] = cs.tryJudgements([t.id]);
+  assert.equal((await call('POST', `${WF}/judgements/${j.id}/answer`, { agree: true })).status, 200);
+  const r = await call('GET', `${WF}/runs/${run.id}/examples/${t.exampleId}`);
+  assert.equal(r.status, 200);
+  const crit = r.body.tries.flatMap((x) => [x.a, x.b]).filter(Boolean).flatMap((v) => (v.verdict && v.verdict.criteria) || []);
+  assert.equal(crit.find((c) => c.judgementId === j.id).answer, true);
+});
+```
 
 - [ ] **Step 7: Run the tests**
 
@@ -3526,7 +3554,7 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
 - Consumes: `modelCall`, `judgeCriterion` (Task 6), `firstObject`, `replyText` (judge-prompt.mjs), `insertJudgement`, `setAnswer`, `answerOf`, `readLiked` (Tasks 7, 8, 12), `subjectOfTry` (Task 7), `recordTestJudgeCost` (Task 5), `mainResult` (result.mjs).
 - Produces (planted.mjs, pure): `FILLER`, `padded(text) → string`, `deterministicPlants(text) → [{ how, excerpt, text }]`, `PLANT_SYSTEM_PROMPT`, `plantPrompt({ criterion, result }) → string`, `parsePlantReply(text) → { excerpt, broken: [{ how, text }] } | null`, `applyPlants(result, reply) → [{ how, excerpt, text }] | null`.
 - Produces (criteria-store.mjs): `createRound({ workflowId, exampleId, criterionId, fp, model, source, by }) → round`, `readRound(id)`, `updateRound(id, { status, detail })`, `roundJudgements(roundId) → judgement[]`, `roundSpentUsd(roundId) → number`. A round is `{ id, workflowId, exampleId, criterionId, fp, model, source, status, detail, createdAt, finishedAt }`.
-- Produces (checker.mjs): `NO_SOURCE_TEXT`, `createChecker(deps) → { start({ workflowId, exampleId, criterionId, by }) → round, view(round, { by }) → view, answer(round, judgementId, right, { by }) → view, reword(round, { by }) → { text } }`, `goodResultOf(example, deps) → { kind, text, label, tryId?, pipelineId? } | null`. A view is `{ round, criterion, source, cards: [{ judgementId, card, planted: how|null, excerpt, met, reason, answer }], left, auto: { same: { n, of }, padding: { n, of }, proof: { n, of } }, costUsd, canUse }`.
+- Produces (checker.mjs): `NO_SOURCE_TEXT`, `createChecker(deps) → { start({ workflowId, exampleId, criterionId, by }) → round, view(round, { by, anyone }) → view, answer(round, judgementId, right, { by }) → view, reword(round, { by }) → { text } }`, `goodResultOf(example, deps) → { kind, text, label, tryId?, pipelineId? } | null`. A view is `{ round, criterion, source, cards: [{ judgementId, card, planted: how|null, excerpt, met, reason, answer }], left, auto: { same: { n, of }, padding: { n, of }, proof: { n, of } }, costUsd, canUse }`.
 - Routes: `POST …/examples/:ex/checker` `{ criterionId }` → 201 `{ round }` (422 `NO_SOURCE`, 409 while one is being made); `GET …/examples/:ex/checker/:round` → view; `POST …/examples/:ex/checker/:round/answers` `{ judgementId, right }` → view; `POST …/examples/:ex/checker/:round/reword` → `{ text }`.
 
 - [ ] **Step 1: Write the failing test**
@@ -3825,11 +3853,12 @@ export function createChecker(deps = {}) {
     return cs.readRound(round.id);
   }
 
-  function view(round, { by = null } = {}) {
+  /** `by`: the viewer's own answers (Check the checker). `anyone`: anyone's newest answer per card (the trust report, I9). */
+  function view(round, { by = null, anyone = false } = {}) {
     const js = cs.roundJudgements(round.id);
     const main = js.filter((j) => j.purpose === 'real' || j.purpose === 'planted');
     const cards = main.map((j) => ({ judgementId: j.id, card: j.card, planted: j.variant && j.variant.how ? j.variant.how : null,
-      excerpt: j.variant ? j.variant.excerpt : null, met: j.met, reason: j.reason, answer: cs.answerOf(j.id, by) }));
+      excerpt: j.variant ? j.variant.excerpt : null, met: j.met, reason: j.reason, answer: anyone ? cs.latestAnswerOf(j.id) : cs.answerOf(j.id, by) }));
     const same = main.filter((m) => js.filter((j) => j.purpose === 'again' && j.card === m.card).every((j) => j.met === m.met)).length;
     const pad = main.filter((m) => { const p = js.find((j) => j.purpose === 'padded' && j.card === m.card); return p && p.met === m.met; }).length;
     const left = cards.filter((c) => c.answer === null).length;
@@ -4077,7 +4106,7 @@ At the end of `judgeMissing`: `await judgePairs(run, { stopped, overCap });` and
 
 - [ ] **Step 6: Side by side** (`service.sideBySide`, one field)
 
-Import `pairOf` from `./criteria-read.mjs`, and add `pair: pairOf(A[0], B[0]),` to the returned object, with in `criteria-read.mjs`:
+Import `pairOf` from `./criteria-read.mjs`, and add `pair: pairOf(A[0], B[0], { by }),` to the returned object (`by` is `sideBySide`'s option, Task 9: the viewer's own answer, I9), with in `criteria-read.mjs`:
 ```js
 /** D100: the pair answer of an example's first tries, for the side by side (P4-M6); null without one. */
 export function pairOf(tA, tB, { by = null } = {}) {
@@ -4402,7 +4431,7 @@ export function trustReportOf(workflowId, { checker }) {
   });
   const live = new Set(criteria.map((c) => cs.criterionFp(c.text)));
   const rounds = cs.latestRounds(workflowId).filter((r) => live.has(r.fp)).map((r) => {
-    const v = checker.view(r);
+    const v = checker.view(r, { anyone: true });   // I9: whoever answered a card, not only the viewer
     return { criterionText: v.criterion, cards: v.cards, same: v.auto.same, padding: v.auto.padding, at: r.finishedAt, cost: v.costUsd };
   });
   const pairs = cs.pairJudgements(workflowId).map((j) => ({ winner: j.winner, swapped: j.variant ? j.variant.swapped : null }));
@@ -4984,7 +5013,7 @@ Expected: PASS.
 
 - [ ] **Step 6: After P4-M6 is approved**
 
-Build what the mock shows after an answer ("You agreed." / "You disagreed: Worca notes it." with Undo = `agree: null`), the "Not checked" rows, and board 36's Why / Proof with the proof in code font when it comes from the changes. Pin the words in the test first.
+Build what the mock shows after an answer ("You agreed." / "You disagreed: Worca notes it." with Undo = `agree: null`; after a reload it reads the result's `answer`, which Task 9 fills for the viewer, I9), the "Not checked" rows, and board 36's Why / Proof with the proof in code font when it comes from the changes. Pin the words in the test first.
 
 - [ ] **Step 7: Commit** (Steps 1–5, then Step 6)
 
