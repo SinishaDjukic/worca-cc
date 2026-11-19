@@ -4304,3 +4304,255 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
 
 ---
 
+## Task 18: UI: the editor's "Your criteria" and "Checked with" (boards 2, 32; the undrawn states after P4-M2)
+
+Steps 1–5 build what boards 2 and 32 draw (rows with a trust line, "Can be checked exactly … Switch", "Add a criterion", "Checked with" with its hint) and can start at once. Step 6 (the new row, Remove, the amber and red rows, the select's list) starts only after the user approved P4-M2. "A result you liked" is Task 24.
+
+**Files:**
+- Create: `ui/public/workflows/criteria-editor.mjs`
+- Modify: `ui/public/workflows/example-editor.mjs` (appends the section, adds `criteria` and `judge` to `value()`: about 8 lines), `ui/public/workflows/tests-app.mjs` (loads the models and the trust when the editor opens), `src/core/workflow-tests/criteria-routes.mjs` (`GET …/examples/:ex/criteria`), `ui/public/workflows/workflow-tests.css`
+- Test: `test/ui-workflow-test-criteria-editor.test.mjs`
+
+**Interfaces:**
+- Consumes: `exactAlternative` (Task 3), `TRUST_BADGE`, `trustLine`, `exactLine` (Tasks 8, 11); `GET …/judge-models` (Task 10).
+- Produces: `renderCriteriaSection(doc, draft, { models, trust, onConfirm, onSwitch, project }) → { el, read() → { criteria, judge } }`. `trust` = `{ [criterionId]: trust }` from `GET …/examples/:ex/criteria` → `{ trust }`. `onConfirm(criterion)` opens Check the checker (Task 22); `onSwitch(criterion, alt)` opens the check dialog with the suggestion (Task 19).
+- Copy (boards 2, 32): group "Your criteria"; hint "Write each one as a short sentence that is true of a good result. Worca reads the result, answers yes or no for each sentence, and says why." (project: "Worca reads what changed, …"); buttons "Add a criterion"; field "Checked with"; options "<label> · suggested"; hint "Worca suggests an AI model that this workflow does not use to write, so it does not mark its own work. Changing it starts the trust tests for these criteria again." (board 32 shows it without its last sentence; one hint for both, as board 2 has it).
+
+- [ ] **Step 1: Write the failing test**
+
+Create `test/ui-workflow-test-criteria-editor.test.mjs`:
+```js
+// test/ui-workflow-test-criteria-editor.test.mjs — boards 2 and 32: the criteria rows, their trust lines, Switch, Checked with.
+import { test } from 'node:test';
+import assert from 'node:assert/strict';
+import { JSDOM } from 'jsdom';
+import { renderCriteriaSection } from '../ui/public/workflows/criteria-editor.mjs';
+
+const MODELS = { models: [{ id: 'claude-opus-5-5', label: 'Opus 5.5' }, { id: 'claude-haiku-4-5', label: 'Haiku 4.5' }],
+  suggested: { id: 'claude-opus-5-5', label: 'Opus 5.5', suggested: true } };
+const draft = () => ({ criteria: [{ id: 'k_1', text: 'Names a success metric with a number, and how to measure it' },
+  { id: 'k_2', text: "Mentions that today's export stops at 200 invoices" }], judge: null });
+
+test('board 2: each row, its trust line, the exact switch and the checking model', () => {
+  const { document: doc } = new JSDOM('<!doctype html><body></body>').window;
+  const switched = [];
+  const s = renderCriteriaSection(doc, draft(), { models: MODELS, trust: { k_1: { state: 'reliable', n: 20, agree: 19, decides: true } },
+    onConfirm: () => {}, onSwitch: (c, alt) => switched.push([c.id, alt]) });
+  doc.body.append(s.el);
+  assert.equal(doc.querySelector('.wft-grp').textContent, 'Your criteria');
+  const rows = [...doc.querySelectorAll('.wft-crit')];
+  assert.equal(rows[0].querySelector('input').value, 'Names a success metric with a number, and how to measure it');
+  assert.equal(rows[0].querySelector('.badge').textContent, 'Reliable');
+  assert.match(rows[0].textContent, /Worca agrees with people 19 of 20 times/);
+  assert.match(rows[1].textContent, /Can be checked exactly: the result must contain "200"\./);
+  rows[1].querySelector('button.wft-switch').click();
+  assert.deepEqual(switched, [['k_2', { kind: 'mentions', text: '200' }]]);
+  const sel = doc.getElementById('wft-judge');
+  assert.deepEqual([...sel.options].map((o) => o.textContent), ['Opus 5.5 · suggested', 'Haiku 4.5']);
+  sel.value = 'claude-haiku-4-5'; sel.dispatchEvent(new doc.defaultView.Event('change'));
+  rows[0].querySelector('input').value = 'Names a metric';
+  rows[0].querySelector('input').dispatchEvent(new doc.defaultView.Event('input'));
+  assert.deepEqual(s.read(), { criteria: [{ id: 'k_1', text: 'Names a metric' }, { id: 'k_2', text: "Mentions that today's export stops at 200 invoices" }],
+    judge: { model: 'claude-haiku-4-5' } });
+  doc.querySelector('button.wft-add-crit').click();
+  assert.equal(doc.querySelectorAll('.wft-crit').length, 3, 'Add a criterion adds an empty row');
+  assert.equal(s.read().criteria.length, 3, 'the empty row is sent; the server drops it (D86)');
+});
+```
+
+- [ ] **Step 2: Run it to see it fail**
+
+Run: `node tools/test.mjs test/ui-workflow-test-criteria-editor.test.mjs`
+Expected: FAIL (module not found).
+
+- [ ] **Step 3: Write `ui/public/workflows/criteria-editor.mjs`**
+
+```js
+// ui/public/workflows/criteria-editor.mjs — the example editor's "Your criteria" and "Checked with" (plans/workflow-tests-part4-plan.md
+// Task 18; canvas boards 2 and 32). The rows are sentence boxes with their trust line under them; Switch offers an exact check (D94).
+import { el, btn, field } from './test-ui.mjs';
+import { exactAlternative } from '../../../src/shared/workflow-tests/exact-checks.mjs';
+import { TRUST_BADGE, trustLine, exactLine } from '../../../src/shared/workflow-tests/criteria-text.mjs';
+
+const HINT = 'Write each one as a short sentence that is true of a good result. Worca reads the result, answers yes or no for each sentence, and says why.';
+const HINT_PROJECT = 'Write each one as a short sentence that is true of a good result. Worca reads what changed, answers yes or no for each sentence, and says why.';
+const JUDGE_HINT = 'Worca suggests an AI model that this workflow does not use to write, so it does not mark its own work. Changing it starts the trust tests for these criteria again.';
+
+export function renderCriteriaSection(doc, draft, { models = { models: [], suggested: null }, trust = {}, onConfirm = () => {}, onSwitch = () => {}, project = false } = {}) {
+  const list = (draft.criteria || []).map((c) => ({ ...c }));
+  let judge = draft.judge || (models.suggested ? { model: models.suggested.id } : null);
+  const sect = el(doc, 'div', 'wft-sect wft-crit-sect');
+  const lines = el(doc, 'div', 'wft-lines');
+  const paint = () => {
+    lines.replaceChildren();
+    list.forEach((c, i) => {
+      const row = el(doc, 'div', 'wft-crit');
+      const input = el(doc, 'input');
+      input.type = 'text'; input.value = c.text || ''; input.maxLength = 300;
+      input.setAttribute('aria-label', `Criterion ${i + 1}`);
+      input.addEventListener('input', () => { c.text = input.value; });
+      const meta = el(doc, 'span', 'wft-crit-meta');
+      const alt = exactAlternative(c.text);
+      const t = c.id ? trust[c.id] : null;
+      if (alt) {
+        meta.classList.add('is-exact');
+        meta.append(el(doc, 'span', 'badge green', 'Reliable'), doc.createTextNode(`${exactLine(alt)} `));
+        const sw = btn(doc, 'Switch', () => onSwitch(c, alt), 'btn-link wft-switch');
+        sw.setAttribute('aria-label', `Switch "${c.text}" to an exact check`);
+        meta.append(sw);
+      } else if (t) {
+        const [cls, words] = TRUST_BADGE[t.state] || TRUST_BADGE.collecting;
+        meta.append(el(doc, 'span', cls, words), doc.createTextNode(trustLine(t)));
+        if (t.state === 'confirm' || t.state === 'unreliable') meta.append(btn(doc, t.state === 'confirm' ? 'Check the checker' : 'Fix it', () => onConfirm(c), 'btn-link'));
+      }
+      row.append(input, meta);
+      lines.append(row);
+    });
+    const add = btn(doc, 'Add a criterion', () => { list.push({ text: '' }); paint(); lines.querySelectorAll('input')[list.length - 1].focus(); }, 'btn btn-sm wft-add-crit');
+    lines.append(add);
+  };
+  paint();
+  const sel = el(doc, 'select');
+  sel.id = 'wft-judge';
+  for (const m of models.models || []) {
+    const o = el(doc, 'option', '', models.suggested && models.suggested.suggested && m.id === models.suggested.id ? `${m.label} · suggested` : m.label);
+    o.value = m.id;
+    sel.append(o);
+  }
+  if (judge) sel.value = judge.model;
+  sel.addEventListener('change', () => { judge = { model: sel.value }; });
+  const wrap = el(doc, 'div', 'select-wrap');
+  wrap.append(sel);
+  sect.append(el(doc, 'p', 'wft-grp', 'Your criteria'), el(doc, 'p', 'wft-grp-hint', project ? HINT_PROJECT : HINT), lines,
+    field(doc, 'Checked with', wrap, { id: 'wft-judge', hint: JUDGE_HINT }));
+  return { el: sect, read: () => ({ criteria: list.map(({ id, text }) => ({ ...(id ? { id } : {}), text: text || '' })), judge }) };
+}
+```
+`field(doc, label, control, { id, hint })` is `test-ui.mjs:122`; if its label is not tied to the control by `id`, give the select an `aria-label` "Checked with" instead.
+
+- [ ] **Step 4: Wire it into the editor**
+
+`example-editor.mjs`: import `renderCriteriaSection`; `renderExampleEditor` takes two more options, `judgeModels = { models: [], suggested: null }`, `criteriaTrust = {}` and `onCriterion = { confirm: () => {}, switch: () => {} }`. After `c3.append(sect);`:
+```js
+  // Part 4 (boards 2, 32): Your criteria and Checked with, after the automatic checks.
+  const crit = renderCriteriaSection(doc, draft, { models: judgeModels, trust: criteriaTrust, project: !!pick.key,
+    onConfirm: (c) => onCriterion.confirm(c), onSwitch: (c, alt) => onCriterion.switch(c, alt) });
+  c3.append(crit.el);
+```
+and in `value()` add `...crit.read(),` to the returned object. In `tests-app.mjs`, where the editor opens (`wftOpenExample`), fetch `GET …/judge-models` and, for a saved example, `GET …/examples/:ex/criteria`, and pass them; `onCriterion.confirm` opens the checker view (Task 22; until then a `notify` "Save the example first" when it is unsaved).
+
+`criteria-routes.mjs` (append `['GET', `${W}/examples/:ex/criteria`]`): `route('GET', `${W}/examples/:ex/criteria`, async (req, res) => { const ex = exampleOf(req); res.json({ trust: trustOfExample(ex) }); });` (import `trustOfExample` from `./criteria-read.mjs`).
+
+CSS (end of `workflow-tests.css`):
+```css
+/* Part 4: Your criteria (boards 2, 32) */
+.wft-crit{display:flex;flex-direction:column;gap:5px;}
+.wft-crit-meta{display:flex;flex-wrap:wrap;gap:8px;align-items:center;font-size:var(--fs-meta);color:var(--ink-2);}
+.wft-crit-meta.is-exact{color:var(--violet-ink);}
+```
+(Check `--violet-ink` exists in the tokens: `timeout 60 git grep -n -- "--violet-ink" -- ui/public`; if not, use the token the board's violet badge uses in `ds/worca/tokens.css`, mapped to the nearest `:root` token, and note it.)
+
+- [ ] **Step 5: Run the tests and the guards**
+
+Run: `node tools/test.mjs test/ui-workflow-test-criteria-editor.test.mjs test/ui-workflow-example-editor.test.mjs test/ui-workflow-tests-view.test.mjs`, then the design guards. `example-editor.mjs` stays below 1000 lines.
+Expected: PASS.
+
+- [ ] **Step 6: After P4-M2 is approved: the undrawn states**
+
+Add, as the approved mock shows them: the placeholder of an empty row ("A sentence that is true of a good result"), Remove (an `iconBtn(doc, 'trash', 'Remove "<text>"', …)` at the row's end), "Not checked yet" for a criterion of an unsaved example (no trust read), and the amber/red rows' link words. Pin each string in the test first (Step 1's pattern), then build.
+
+- [ ] **Step 7: Commit** (once for Steps 1–5, once for Step 6)
+
+```bash
+git add ui/public/workflows/criteria-editor.mjs ui/public/workflows/example-editor.mjs ui/public/workflows/tests-app.mjs ui/public/workflows/workflow-tests.css src/core/workflow-tests/criteria-routes.mjs test/ui-workflow-test-criteria-editor.test.mjs
+git commit -m "feat(workflow-tests): Your criteria and Checked with in the example editor (boards 2, 32)
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
+```
+
+---
+
+## Task 19: UI: the Part 4 exact checks in the check dialog, and Switch (after P4-M1)
+
+Starts only after the user approved P4-M1.
+
+**Files:**
+- Modify: `ui/public/workflows/example-editor.mjs` (`openCheckDialog`: the four kinds, the suggestion box, `said` kept; Task 3's filter removed), `ui/public/workflows/tests-app.mjs` (`onCriterion.switch`), `ui/public/workflows/workflow-tests.css`
+- Test: `test/ui-workflow-test-exact-dialog.test.mjs`
+
+**Interfaces:**
+- Consumes: `PART4_KINDS`, `CHECK_KIND_LABELS`, `checkLabel` (Task 3); P4-C4's hints.
+- Produces: `openCheckDialog({ …, suggest: { criterion, alt } | null })`: with `suggest`, the dialog opens on `alt.kind` (and `alt.text` for "Must mention"), shows the box "Worca suggests" with "Your criterion "<text>" can be checked exactly: …" and the two buttons, and its saved check carries `said: criterion.text`. Editing a check keeps its `said`.
+
+- [ ] **Step 1: Write the failing test**
+
+Create `test/ui-workflow-test-exact-dialog.test.mjs` (open the dialog as `test/ui-workflow-example-editor.test.mjs` opens `openCheckDialog`):
+```js
+// test/ui-workflow-test-exact-dialog.test.mjs — P4-M1: the four exact kinds in the dialog, and Switch from a criterion.
+import { test } from 'node:test';
+import assert from 'node:assert/strict';
+import { JSDOM } from 'jsdom';
+import { openCheckDialog } from '../ui/public/workflows/example-editor.mjs';
+
+const setup = () => { const win = new JSDOM('<!doctype html><body></body>', { pretendToBeVisual: true }).window; return { win, doc: win.document }; };
+
+test('the four kinds are listed with their labels', () => {
+  const { win, doc } = setup();
+  openCheckDialog({ doc, win, onSave: () => {} });
+  const labels = [...doc.getElementById('wft-ck-kind').options].map((o) => o.textContent);
+  for (const l of ['Every quote is in the files', 'Numbers come from the files', 'No personal data', 'Links work']) assert.ok(labels.includes(l), l);
+});
+
+test('Switch: the dialog opens on the suggestion, says so, and the check keeps the criterion\'s words', () => {
+  const { win, doc } = setup();
+  let saved = null;
+  openCheckDialog({ doc, win, onSave: (c) => { saved = c; },
+    suggest: { criterion: { id: 'k_2', text: "Mentions that today's export stops at 200 invoices" }, alt: { kind: 'mentions', text: '200' } } });
+  assert.equal(doc.getElementById('wft-ck-kind').value, 'mentions');
+  assert.match(doc.querySelector('.wft-sugg').textContent, /Worca suggests[\s\S]*can be checked exactly/);
+  doc.querySelector('.wft-sugg .btn-primary').click();   // "Switch to an exact check"
+  assert.deepEqual({ kind: saved.kind, text: saved.text, said: saved.said }, { kind: 'mentions', text: '200', said: "Mentions that today's export stops at 200 invoices" });
+});
+```
+(The exact button and box classes follow the approved mock; pin them here first.)
+
+- [ ] **Step 2: Run it to see it fail**
+
+Run: `node tools/test.mjs test/ui-workflow-test-exact-dialog.test.mjs`
+Expected: FAIL.
+
+- [ ] **Step 3: Build it**
+
+In `openCheckDialog`:
+1. Remove Task 3's `&& !PART4_KINDS.includes(k)` from the `resultKinds` filter.
+2. In `paintFields`, the four kinds have no fields; for the three text kinds on a project example, the existing "Read from" choice (3a Q11) applies as for `mentions` (reuse its branch: `if (TEXT_KIND_SET.has(kind.value) || ['quotes', 'numbers', 'no-personal'].includes(kind.value))`); show P4-C4's hint under the select.
+3. A `suggest` option: set `kind.value = suggest.alt.kind` (and the "Must mention" text box to `suggest.alt.text`), and put above the fields:
+```js
+    const box = el(doc, 'div', 'wft-sugg');
+    box.append(el(doc, 'span', 'wft-sugg-tag', 'Worca suggests'),
+      el(doc, 'span', '', `Your criterion "${suggest.criterion.text}" can be checked exactly. An exact check is free, fast, and gives the same answer every time.`));
+    const acts = el(doc, 'div', 'wft-acts');
+    acts.append(btn(doc, 'Switch to an exact check', () => save(), 'btn btn-sm btn-primary'), btn(doc, 'Keep it as a criterion', () => dlg.close(), 'btn btn-sm'));
+    box.append(acts);
+```
+(`save()` is the dialog's own save path; `dlg` its `testDialog` handle.)
+4. The saved check: `{ ...nc, ...(suggest ? { said: suggest.criterion.text } : check && check.said ? { said: check.said } : {}) }`.
+5. `tests-app.mjs`: `onCriterion.switch = (c, alt) => openCheckDialog({ …, suggest: { criterion: c, alt }, onSave: (nc) => { draft.checks.push(nc); draft.criteria = draft.criteria.filter((x) => x !== c); repaint(); } })` (through the editor's own repaint hooks; the criterion leaves when the check is added, D94).
+6. CSS for `.wft-sugg` as board 10 draws it (violet wash, its tag), tokens only.
+
+- [ ] **Step 4: Run the tests and the guards**
+
+Run: `node tools/test.mjs test/ui-workflow-test-exact-dialog.test.mjs test/ui-workflow-example-editor.test.mjs test/ui-workflow-test-scope-checks.test.mjs`, then the design guards.
+Expected: PASS.
+
+- [ ] **Step 5: Commit**
+
+```bash
+git add ui/public/workflows/example-editor.mjs ui/public/workflows/tests-app.mjs ui/public/workflows/workflow-tests.css test/ui-workflow-test-exact-dialog.test.mjs
+git commit -m "feat(workflow-tests): exact checks in the check dialog, and Switch from a criterion (P4-M1)
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
+```
+
+---
+
