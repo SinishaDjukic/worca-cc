@@ -9,6 +9,7 @@ import { relTime } from './plugins-view.mjs';
 import { compileDefinition, formFromDefinition, blankDefinitionForm, createDefinitionForm } from './mcp-definition-form.mjs';
 import { splitMessage } from './feedback.mjs';
 import { openSkillImport, inspectionSummary, consentNode } from './skill-import.mjs';
+import { openMcpImport } from './mcp-server-import.mjs';
 
 const enc = encodeURIComponent;
 function h(doc, tag, cls, text) {
@@ -201,7 +202,8 @@ export function createMcpView({ host, api, navigate, confirm, modal, doc = globa
     const primary = st.view === 'sets' ? button(doc, 'btn btn-primary', 'New set', { act: 'new-set' })
       : st.view === 'servers' ? button(doc, 'btn btn-primary', 'Add MCP server', { act: 'add-server' })
         : button(doc, 'btn btn-primary', 'Import skill', { act: 'import-skill' });
-    bar.append(title, seg, primary);
+    const importBtn = button(doc, 'btn', 'Import from other tools', { act: 'import-servers' });
+    bar.append(title, seg, ...(st.view === 'servers' ? [importBtn] : []), primary);
     return bar;
   }
 
@@ -674,6 +676,7 @@ export function createMcpView({ host, api, navigate, confirm, modal, doc = globa
     }
     if (d.act === 'add-server') return openDefinition(null);
     if (d.act === 'import-skill') return importSkill();
+    if (d.act === 'import-servers') return importServers();
     if (d.act === 'rename') {
       const v = await promptName('Rename set', cur.name);
       if (v && await write('PUT', setPath(cur.id), { name: v }, 'Set renamed')) await load();
@@ -843,6 +846,13 @@ export function createMcpView({ host, api, navigate, confirm, modal, doc = globa
       if (st.view !== 'skills') navigate(MCP_SKILLS_ROUTE);   // the hashchange shows the Skills view
       else await load();
     } });
+  }
+
+  /** Servers view › Import from other tools (mcp-server-import.mjs): the new Manual servers join no set; the list is read again. */
+  function importServers() {
+    openMcpImport({ api, modal, doc,
+      onDone: async ({ detail }) => { say(detail, 'ok'); st.servers = null; await load(); },
+      onChanged: async () => { st.servers = null; await load(); } });
   }
 
   /** Skills view › Add to set: General and user sets; a set the skill is in already is disabled (spec §6.3). */

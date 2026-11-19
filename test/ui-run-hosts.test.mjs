@@ -957,6 +957,29 @@ test('a v2 run page: progress reads numerically, .rd-step names what runs (no st
       np.paintRunWarnings(banners, np.runDecorFor(q, 'monitor'));
       assert.deepEqual(shown(), [QUIET, DEAD], 'quiescence, then the dead end');
     } },
+    { name: 'E9 in the real app: the run scope notices and a legacy outside-checkout line are ONE muted line under the amber banners', run: async () => {
+      const window = await bootApp();
+      const np = window.__np;
+      const DROP = "Plan: claude-opus-5-5 is not on Codex, runs Codex's default model";
+      const LEGACY = 'n_a read or wrote 2 paths outside its checkout: /tmp/x.py, /etc/y (see executions.ndjson)';
+      const notice = (executionId, path) => ({ nodeId: 'n_a', executionId, count: 1, expectedCount: 3, cross: false, notable: [{ path, tool: 'Bash' }] });
+      const r = np.makeRun({ runId: 'r1', title: 't', projectDir: '/p', status: 'running' });
+      np.onState(r, { status: 'running', stepper: MANIFEST, active: [], warnings: [DROP, LEGACY], steps: [],
+        scopeNotices: [notice('x:n_a:1', '/etc/hosts'), notice('x:n_a:2', '/opt/z'), notice('x:n_a:3', '/etc/hosts')] });
+      const banners = window.document.createElement('div');
+      np.paintRunWarnings(banners, np.runDecorFor(r, 'monitor'));
+      np.paintRunWarnings(banners, np.runDecorFor(r, 'monitor'));
+      assert.deepEqual([...banners.querySelectorAll('.run-warn')].map((el) => el.textContent), [DROP], 'only the real warning is amber');
+      const lines = banners.querySelectorAll('.run-scope');
+      assert.equal(lines.length, 1);
+      assert.equal(lines[0].querySelector('.run-scope-sum').textContent, '1 step touched 4 files outside the checkout');
+      assert.equal(banners.lastElementChild, lines[0], 'under the banners');
+      // A later real warning still lands above the quiet line.
+      np.onState(r, { status: 'running', stepper: MANIFEST, active: [], warnings: ['finished at quiescence — End not reached', DROP], steps: [] });
+      np.paintRunWarnings(banners, np.runDecorFor(r, 'monitor'));
+      assert.equal(banners.querySelectorAll('.run-warn').length, 2);
+      assert.equal(banners.lastElementChild.className, 'run-scope', 'a new banner goes above the line');
+    } },
     { name: 'the detail header .rd-step names what runs on a v2 run, with no step count', run: async () => {
       const window = await bootApp();
       const np = window.__np;

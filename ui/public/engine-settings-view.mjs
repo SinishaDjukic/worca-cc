@@ -12,8 +12,8 @@ export const ENGINE_EFFORTS = Object.freeze({ claude: Object.freeze(['medium', '
   gemini: Object.freeze(['low', 'medium', 'high']), qwen: Object.freeze(['low', 'medium', 'high', 'xhigh', 'max']) });
 // An inherited value's label; an unset one stays null, so the field shows its bare heading.
 const engineName = (v) => (v == null ? null : engineLabel(v));
-const helpersNote = (engine) => (engine === 'copilot' ? "Copilot runs its helper jobs (titles, overview, PR description, Auto classifier, Away mode's decider) on its own default model."
-  : `${engineLabel(engine)} runs its helper jobs (titles, overview, PR description, Auto classifier, Away mode's decider) on Claude. See the Claude tab.`);
+export const helpersNote = (engine) => (engine === 'copilot' ? "Copilot runs its helper jobs (titles, overview, PR description, Auto classifier, Away mode's decider) on its own default model."
+  : `${engineLabel(engine)} runs its helper jobs (titles, overview, PR description, Auto classifier, Away mode's decider) on Claude. Pick them under Claude Code.`);
 export const JOB_LABELS = Object.freeze({ title: 'Titles', classifier: 'Auto workflow classifier', overview: 'Run overview', prDescription: 'PR description', memoryDefrag: 'Memory defragment', agentGen: 'Agent generation', naming: 'Run naming', commandSummary: 'Command summaries', workspaceScan: 'Workspace scan', requirementsInterview: 'Requirements interview', secondOpinion: 'Second-opinion reviewer' });
 // The setting id of an engine's helper slot, as settings-cascade.mjs names it: memory defragment
 // and workspace scan are runs of their own (spec §3.1 "own-run models"), the rest are utility jobs.
@@ -23,7 +23,7 @@ export const JOB_LABELS = Object.freeze({ title: 'Titles', classifier: 'Auto wor
 const OWN_RUN_JOBS = new Set(['memoryDefrag', 'workspaceScan', 'requirementsInterview', 'secondOpinion']);
 export const utilityId = (engine, job) => (OWN_RUN_JOBS.has(job) ? `models.${engine}.${job}` : `models.${engine}.utility.${job}`);
 const EMPTY = Object.freeze({ own: undefined, inherited: { value: undefined, source: 'default' } });
-// Design's agents (Engines card › Design): one row each per engine Design builds on.
+// Design's agents (an engine card's Design rows, drawn for options.designEngines): one row each per engine Design builds on.
 export const DESIGN_ROW_LABELS = Object.freeze({ lead: 'Design lead', builder: 'Design builders' });
 export const DESIGN_ROW_HINTS = Object.freeze({
   lead: 'The main agent of a Design build: plans the sections, then puts them together. A design can pick its own.',
@@ -122,7 +122,7 @@ function slotTable(doc, cls, title, rows, { what, from, onTest = null, always = 
   return box;
 }
 
-/** The Engine & models card body — the Models page › Engines (level "user") and a project's settings ("project"):
+/** The Engine & models card body — a project's settings (level "project"; "user" renders the user layer instead):
  *  the default engine, then one engine at a time (the switch is Expert's; Advanced sees the default engine's tab),
  *  each tab the same skeleton: a readiness line, Step models, Helper jobs. `options.status`: an element that says how
  *  many changes are unsaved. `options.onTest(modelId, button)`: a row's Test. `options.noEffort`: setting ids whose
@@ -150,11 +150,11 @@ export function renderEngineSection(host, options) {
     const card = doc.createElement('section'); card.className = 'engine-card'; card.dataset.engine = engine; card.dataset.minLevel = 'advanced';
     // Advanced has no switch: the tab names its engine. Expert's switch already does (style.css hides this there).
     const heading = doc.createElement('h3'); heading.className = 'engine-card-name'; heading.textContent = engineLabel(engine); if (isBetaEngine(engine)) { const beta = doc.createElement('span'); beta.className = 'flag-chip flag-chip-beta beta-badge'; beta.textContent = 'Beta'; heading.append(beta); } card.append(heading);
-    // A non-Claude tab's readiness line (GET /api/engines), filled by app.js on the Models page.
+    // A non-Claude tab's readiness line (GET /api/engines): empty, so hidden (models/engine-status.css), until a caller fills it.
     if (engine !== 'claude') { const status = doc.createElement('small'); status.className = 'engine-card-status'; card.append(status); }
     if (options.notes?.[engine]) { const note = doc.createElement('small'); note.className = 'hint engine-card-note'; note.textContent = options.notes[engine]; card.append(note); }
     // options.modelRoles: the saved roles ({ claude: { everyday: {model, effort} } }). A row with no value of its own and
-    // nothing inherited from a team or project layer falls back to its role ("From Everyday coding · Sonnet 5.5").
+    // nothing inherited from a team or project layer falls back to its role ("From Everyday tasks · Sonnet 5.5").
     const row = (id, label, defaultLabel, hint = null) => {
       const value = field(id); const role = roleOfSettingId(id, { name: label });
       const rolePick = role && options.modelRoles?.[engine]?.[role];
@@ -178,7 +178,7 @@ export function renderEngineSection(host, options) {
       card.append(sec);
     }
     // options.designEngines: the engines Design builds on, while the design flag is on. Lead and builders, each
-    // falling back to its role (Deep thinking, Everyday coding) and then the engine's default model.
+    // falling back to its role (Deep thinking, Everyday tasks) and then the engine's default model.
     if ((options.designEngines || []).includes(engine)) {
       const dflt = SIGN_IN_ENGINE_NAMES.includes(engine) || engine === 'copilot' ? `${engineLabel(engine)}'s default model` : (options.defaultLabels?.[engine] || (engine === 'codex' ? "Codex's default model (GPT-5.6 Sol)" : 'the default model'));
       const rows = ['lead', 'builder'].map((role) => row(designRowId(engine, role), DESIGN_ROW_LABELS[role], dflt, DESIGN_ROW_HINTS[role]));
@@ -206,7 +206,7 @@ function bindStatusOnce(host, paint, events) {
 export const readEngineSection = (host) => readDirtyFields(host);
 
 /** The Claude / Codex / … engine switch (Expert unless `minLevel` says otherwise; null = every level). Used by the
- *  Engines card and the Roles card. `onPick(engine)` is called on a click; returns { el, pick } where pick(engine)
+ *  Engine & models card and the role picks. `onPick(engine)` is called on a click; returns { el, pick } where pick(engine)
  *  sets the pressed button. */
 export function engineSwitch(doc, engines, onPick, { minLevel = 'expert' } = {}) {
   const sw = doc.createElement('div'); sw.className = 'seg engine-switch'; sw.setAttribute('role', 'group'); sw.setAttribute('aria-label', 'Engine'); if (minLevel) sw.dataset.minLevel = minLevel;
@@ -220,9 +220,9 @@ export function engineSwitch(doc, engines, onPick, { minLevel = 'expert' } = {})
 }
 
 const ROLES_HOST = new WeakMap();
-/** The Roles card body (Models page, setup assistant): per harness, one model + effort row per role. Binds its
+/** The role picks (the setup assistant): per harness, one model + effort row per role. Binds its
  *  listeners once per host. `engines`: the harnesses to show (every engine with roles by default; the setup assistant
- *  passes the ready ones); `switchLevel`: the engine switch's level (Expert on the Models page, every level in setup). */
+ *  passes the ready ones); `switchLevel`: the engine switch's level (Expert by default; the setup assistant passes null, every level). */
 export function renderRolesSection(host, { roles = {}, catalog = [], engine = 'claude', engines = ROLE_HARNESSES, switchLevel = 'expert', status = null, onChange = null } = {}) {
   const doc = host.ownerDocument; host.replaceChildren();
   const shown = ROLE_HARNESSES.filter((h) => engines.includes(h));
@@ -233,7 +233,7 @@ export function renderRolesSection(host, { roles = {}, catalog = [], engine = 'c
   const sw = engineSwitch(doc, shown, show, { minLevel: switchLevel });
   if (shown.length > 1) host.append(sw.el);
   for (const h of shown) {
-    const panel = doc.createElement('section'); // Not .engine-card: that class names the Engines card's own panels.
+    const panel = doc.createElement('section'); // Not .engine-card: that class names the Engine & models card's own panels.
     panel.className = 'roles-engine'; panel.dataset.engine = h;
     panel.append(Object.assign(doc.createElement('h3'), { className: 'engine-card-name', textContent: engineLabel(h) }));
     for (const r of MODEL_ROLES) {
@@ -276,7 +276,7 @@ export function rolesPatchToSettingsBody(dirty) {
   for (const [id, value] of Object.entries(dirty || {})) { const [, h, , r] = id.split('.'); ((body.modelRoles ||= {})[h] ||= {})[r] = value; }
   return body;
 }
-/** AC-1.5: repaint every role-tagged Engines row's empty options from the Roles card's current values, then tell
+/** AC-1.5: repaint every role-tagged row's empty options from the role picks' current values, then tell
  *  each table to repaint its folded summary. */
 export function paintRoleFallbacks(engineHost, roles, catalog = []) {
   for (const el of engineHost.querySelectorAll('.inherit-field[data-role]')) {
@@ -346,7 +346,7 @@ export function renderAskEngineSection(host, { catalog = [], askEngine, askModel
     options: [{ value: 'claude', label: engineLabel('claude') }, ...others.map((e) => ({ value: e, label: offered[e] ? engineChoiceLabel(e) : `${engineLabel(e)} (unavailable)` }))],
     own: askEngine ?? undefined, inherited: { value: 'claude', source: 'default' }, format: engineName }));
   applyEngineLocks(host);
-  // The chat models: the Engines card's table, one row per engine and always listed (no switch, nothing folded).
+  // The chat models: an engine table like the Engine & models card's, one row per engine and always listed (no switch, nothing folded).
   const rows = [];
   for (const engine of ['claude', ...others]) {
     if (engine !== 'claude' && !offered[engine]) continue;

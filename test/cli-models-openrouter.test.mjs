@@ -1,10 +1,11 @@
 // test/cli-models-openrouter.test.mjs
-// `worca models … openrouter` (docs/models.md "OpenRouter"): `set openrouter` is the openai
-// provider pointed at OpenRouter, `import openrouter` lists its catalog with the price and can
-// narrow it (--search, --free, --tools, --min-context), `test openrouter` reports the key's limits
-// and never prints the key, and a model imported under the old `local-` id is refreshed in place
-// rather than duplicated. OpenRouter is recognised by host, so its answers come from a fetch stub
-// installed on globalThis. Sandboxes HOME (settings.json) + WORCA_HOME (DB).
+// `worca models … openrouter` (docs/models.md "OpenRouter"): `set openrouter` writes OpenRouter's
+// own block (key, cap, routing defaults) and never the openai provider, `import openrouter` lists
+// its catalog with the price and can narrow it (--search, --free, --tools, --min-context),
+// `test openrouter` tests the block's key, reports its limits and never prints it, and a model
+// imported under the old `local-` id is refreshed in place rather than duplicated. OpenRouter is
+// recognised by host, so its answers come from a fetch stub installed on globalThis. Sandboxes
+// HOME (settings.json) + WORCA_HOME (DB).
 import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdtemp, rm } from 'node:fs/promises';
@@ -12,7 +13,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { _resetForTests } from '../src/core/db.mjs';
 import { cmdModels } from '../src/cli/models.mjs';
-import { addGlobalModel, listGlobalModels, providerConfig } from '../src/core/settings.mjs';
+import { addGlobalModel, listGlobalModels, readSettings, updateProvider } from '../src/core/settings.mjs';
 import { testProviderConnection } from '../src/core/bridge/provider-ops.mjs';
 import { readFileSync } from 'node:fs';
 
@@ -59,16 +60,37 @@ const run = async (argv) => {
   const code = await cmdModels(argv, { out: (l) => out.push(l), c: (_, s) => s, fail: (m) => { throw new Error(m); } });
   return { code, text: out.join('\n') };
 };
+// In-process like the real CLI: `fail` prints `worca: <msg>` to stderr and exits 2.
+const cli = async (argv) => {
+  const out = []; const err = [];
+  const code = await cmdModels(argv, { out: (l) => out.push(l), c: (_, s) => s, fail: (m) => { err.push(`worca: ${m}`); return 2; } });
+  return { code, stdout: out.join('\n'), stderr: err.join('\n') };
+};
 
-test('set openrouter: the openai provider, pointed at OpenRouter, key kept as a ${VAR} reference', async () => {
-  const { code, text } = await run(['set', 'openrouter', 'apiKey=${OPENROUTER_KEY}']);
-  assert.equal(code, 0);
-  assert.equal(providerConfig('openai').baseUrl, OR);
-  assert.match(text, /openai\s+key set \(\$\{OPENROUTER_KEY\}\)\s+baseUrl=https:\/\/openrouter\.ai\/api\/v1/);
-  assert.ok(!text.includes(SECRET));
-  // An explicit baseUrl still wins (a regional or proxied OpenRouter).
-  await run(['set', 'openrouter', `baseUrl=${OR}`]);
-  assert.equal(providerConfig('openai').baseUrl, OR);
+test('set openrouter: OpenRouter\'s own block — key kept as a ${VAR} reference, cap and routing defaults typed — never the openai provider', async () => {
+  const r = await cli(['set', 'openrouter', 'apiKey=${OPENROUTER_KEY}', 'maxConcurrent=4', 'order=anthropic,google', 'sort=price', 'allowFallbacks=false']);
+  assert.equal(r.code, 0, r.stderr);
+  assert.deepEqual(readSettings().providers.openrouter,
+    { apiKey: '${OPENROUTER_KEY}', maxConcurrent: 4, order: ['anthropic', 'google'], sort: 'price', allowFallbacks: false });
+  assert.equal(readSettings().providers.openai, undefined, 'the openai provider is not touched');
+  assert.match(r.stdout, /^openrouter\s+key set\s+maxConcurrent=4/m);
+  assert.ok(!r.stdout.includes(SECRET));
+});
+
+test('set openrouter: a field the block does not have and a non-boolean allowFallbacks are refused', async () => {
+  const base = await cli(['set', 'openrouter', `baseUrl=${OR}`]);
+  assert.equal(base.code, 2);
+  assert.match(base.stderr, /unknown provider field "baseUrl" for openrouter/);
+  const fb = await cli(['set', 'openrouter', 'allowFallbacks=maybe']);
+  assert.equal(fb.code, 2);
+  assert.match(fb.stderr, /true or false/);
+  assert.equal(readSettings().providers.openrouter.allowFallbacks, false, 'a refused set writes nothing');
+  assert.equal(readSettings().providers.openai, undefined);
+  // An empty maxConcurrent is the default again (not Number('') = 0, which the block refuses).
+  const cap = await cli(['set', 'openrouter', 'maxConcurrent=']);
+  assert.equal(cap.code, 0, cap.stderr);
+  assert.equal(readSettings().providers.openrouter.maxConcurrent, undefined);
+  assert.match(cap.stdout, /^openrouter\s+key set\s+maxConcurrent=8\s+order=anthropic,google\s+sort=price\s+fallbacks=off$/m);
 });
 
 test('test openrouter: reachable, the key\'s limits on one line, the key never printed', async () => {
@@ -105,7 +127,9 @@ test('import openrouter: lists with prices, and --search / --free / --tools / --
 });
 
 test('import openrouter --pick: the entry carries window, price and capabilities; a legacy local- entry is refreshed in place', async () => {
-  // What the old importer wrote for the same model: a `local-` id, priced free, no window.
+  // What the old importer wrote for the same model: a `local-` id, priced free, no window, and
+  // no base URL of its own, so it reaches OpenRouter only while the openai provider points there.
+  await updateProvider('openai', { baseUrl: OR });
   await addGlobalModel({ id: 'local-claude-sonnet-4-5', label: 'My Sonnet via OR', efforts: ['medium'], upstream: { provider: 'openai', api: 'openai-chat', model: 'anthropic/claude-sonnet-4.5' }, cost: { free: true } });
   const r = await run(['import', 'openrouter', '--pick', 'qwen/qwen3.8-27b:free,anthropic/claude-sonnet-4.5', '--yes']);
   assert.equal(r.code, 0);

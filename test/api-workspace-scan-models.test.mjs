@@ -120,7 +120,7 @@ test('a pick-less workspace\'s re-scan answers 428 SCAN_MODEL_REQUIRED (never a 
   await post('/api/settings', { workspaceScan: null });
 });
 
-test('with an Everyday coding role, a pick-less workspace re-scans on the role without asking (and stores no pick)', async () => {
+test('with an Everyday tasks role, a pick-less workspace re-scans on the role without asking (and stores no pick)', async () => {
   const role = await post('/api/settings', { modelRoles: { claude: { everyday: { model: 'claude-opus-5-5', effort: 'high' } } } });
   assert.equal(role.status, 200, await role.clone().text());
   try {

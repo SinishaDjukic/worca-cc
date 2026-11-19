@@ -216,7 +216,7 @@ test('AC-3.3 full order: every side-effect kind, roles labelled with their engin
   assert.deepEqual(calls, ['proxy-swap', 'proxy-login', 'copilot-signin', 'copilot-import', 'openai-import', 'test:claude-sonnet-5-5', 'test:gpt-5.5-mini']);
   assert.equal(out.results[0].line, SAVED_TEXT);
   assert.equal(out.results[4].line, 'Imported 1 model from http://127.0.0.1:8080/v1.');
-  assert.deepEqual(out.results.slice(-2).map((r) => r.label), ['Everyday coding · Claude Code', 'Quick jobs · OpenAI Codex']);
+  assert.deepEqual(out.results.slice(-2).map((r) => r.label), ['Everyday tasks · Claude Code', 'Quick jobs · OpenAI Codex']);
 });
 
 test('proxy-swap lines are the card\'s sentences', async () => {

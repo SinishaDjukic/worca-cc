@@ -8,8 +8,10 @@ import { join } from 'node:path';
 import {
   buildCodexArgs, createCodexNormalizer, codexMcpOverrides, mcpResultText, codexModelPriced, codexResumeNotFound,
   CODEX_ASK_LOCKDOWN, CODEX_ASK_FEATURES, CODEX_DEFAULT_MODEL, runCodexProcess, codexCapabilities, codexAskSupport, parseCodexFeatures,
-  codexRolloutUsage, estimateCodexCostUsd, expandMcpRefs,
+  codexRolloutUsage, codexRolloutLimits, estimateCodexCostUsd, expandMcpRefs,
 } from '../src/core/engines/codex.mjs';
+import { usageLimits, _resetUsageLimitsForTests } from '../src/core/usage-limits.mjs';
+import { useTempHome } from './helpers/temp-home.mjs';
 import { runClaude } from '../src/core/claude-runner.mjs';
 import { fakeCodex } from './helpers/fake-codex.mjs';
 
@@ -255,8 +257,9 @@ test('runCodexProcess: maxTurns caps the main agent\'s tool calls with a turnCap
 // A turn stopped before `turn.completed` (the only usage `exec --json` reports) still ran: codex recorded its usage in
 // the thread's session file under CODEX_HOME, as `token_count` events (total_token_usage, cumulative for the thread).
 const CAPPED = '00000000-0000-4000-8000-0000000000ae';
-const tokenCount = (input, output, cached = 0) => JSON.stringify({ type: 'event_msg', payload: { type: 'token_count',
-  info: { total_token_usage: { input_tokens: input, cached_input_tokens: cached, cache_write_input_tokens: 0, output_tokens: output, reasoning_output_tokens: 0 } } } });
+const tokenCount = (input, output, cached = 0, { rate_limits, timestamp } = {}) => JSON.stringify({ ...(timestamp ? { timestamp } : {}), type: 'event_msg', payload: { type: 'token_count',
+  info: { total_token_usage: { input_tokens: input, cached_input_tokens: cached, cache_write_input_tokens: 0, output_tokens: output, reasoning_output_tokens: 0 } },
+  ...(rate_limits !== undefined ? { rate_limits } : {}) } });
 function codexHomeWithRollout(lines) {
   const home = tmp();
   const d = join(home, 'sessions', '2026', '10', '08');
@@ -278,6 +281,64 @@ test('codexRolloutUsage: the last token_count of the thread\'s session file; nul
   assert.deepEqual(codexRolloutUsage(home, CAPPED), { input: 900, cached: 300, cacheWrite: 0, output: 40, reasoning: 0 });
   assert.equal(codexRolloutUsage(codexHomeWithRollout([]), CAPPED), null);
   assert.equal(codexRolloutUsage(tmp(), CAPPED), null);
+});
+
+// The plan-limit reading (the usage rings): `payload.rate_limits` on the same last token_count line.
+useTempHome(after, 'worca-codex-limits-');
+const TS = '2026-11-18T12:00:00.000Z';
+const T = Date.parse(TS);
+const win = (used_percent, window_minutes, reset = { resets_at: 1790439000 }) => ({ used_percent, window_minutes, ...reset });
+
+test('codexRolloutLimits: primary 300 and secondary 10080 map to session and week; 1440 maps to day', () => {
+  const home = codexHomeWithRollout([tokenCount(1, 1, 0, { timestamp: TS, rate_limits: { primary: win(41.5, 300), secondary: win(12, 10080) } })]);
+  assert.deepEqual(codexRolloutLimits(home, CAPPED), { observedAt: T, windows: [
+    { kind: 'session', pct: 42, resetsAt: 1790439000000 }, { kind: 'week', pct: 12, resetsAt: 1790439000000 }] });
+  const day = codexHomeWithRollout([tokenCount(1, 1, 0, { timestamp: TS, rate_limits: { primary: win(7, 1440) } })]);
+  assert.deepEqual(codexRolloutLimits(day, CAPPED).windows, [{ kind: 'day', pct: 7, resetsAt: 1790439000000 }]);
+});
+
+test('codexRolloutLimits: an unknown window_minutes is ignored', () => {
+  const home = codexHomeWithRollout([tokenCount(1, 1, 0, { timestamp: TS, rate_limits: { primary: win(50, 60), secondary: win(12, 10080) } })]);
+  assert.deepEqual(codexRolloutLimits(home, CAPPED).windows.map((w) => w.kind), ['week']);
+  const none = codexHomeWithRollout([tokenCount(1, 1, 0, { timestamp: TS, rate_limits: { primary: win(50, 60) } })]);
+  assert.equal(codexRolloutLimits(none, CAPPED), null);
+});
+
+test('codexRolloutLimits: two windows of one kind keep the higher pct', () => {
+  const home = codexHomeWithRollout([tokenCount(1, 1, 0, { timestamp: TS, rate_limits: { primary: win(40, 300), secondary: win(70, 300) } })]);
+  assert.deepEqual(codexRolloutLimits(home, CAPPED).windows, [{ kind: 'session', pct: 70, resetsAt: 1790439000000 }]);
+});
+
+test('codexRolloutLimits: resets_at and resets_in_seconds give the same reset time', () => {
+  const a = codexHomeWithRollout([tokenCount(1, 1, 0, { timestamp: TS, rate_limits: { primary: win(5, 300, { resets_at: T / 1000 + 3600 }) } })]);
+  const b = codexHomeWithRollout([tokenCount(1, 1, 0, { timestamp: TS, rate_limits: { primary: win(5, 300, { resets_in_seconds: 3600 }) } })]);
+  assert.equal(codexRolloutLimits(a, CAPPED).windows[0].resetsAt, T + 3_600_000);
+  assert.equal(codexRolloutLimits(b, CAPPED).windows[0].resetsAt, T + 3_600_000);
+});
+
+test('codexRolloutLimits: rate_limits null or absent gives no reading', () => {
+  assert.equal(codexRolloutLimits(codexHomeWithRollout([tokenCount(1, 1, 0, { timestamp: TS, rate_limits: null })]), CAPPED), null);
+  assert.equal(codexRolloutLimits(codexHomeWithRollout([tokenCount(1, 1)]), CAPPED), null);
+  assert.equal(codexRolloutLimits(codexHomeWithRollout([]), CAPPED), null);
+  assert.equal(codexRolloutLimits(tmp(), CAPPED), null);
+});
+
+test('codexRolloutLimits: a torn last line falls back to the previous token_count line', () => {
+  const home = codexHomeWithRollout([tokenCount(1, 1, 0, { timestamp: TS, rate_limits: { primary: win(33, 300) } }), '{"type":"event_msg","payload":{"type":"token_count","rate_li']);
+  assert.deepEqual(codexRolloutLimits(home, CAPPED).windows, [{ kind: 'session', pct: 33, resetsAt: 1790439000000 }]);
+});
+
+test('runCodexProcess: settleUsage records the reading after a completed turn', POSIX, async () => {
+  _resetUsageLimitsForTests();
+  const reset = Math.floor(Date.now() / 1000) + 3600;
+  const home = codexHomeWithRollout([tokenCount(10, 1, 0, { timestamp: new Date().toISOString(), rate_limits: { primary: win(86, 300, { resets_at: reset }) } })]);
+  const dir = tmp();
+  const fake = fakeCodex(dir, null, { lines: [{ type: 'thread.started', thread_id: CAPPED },
+    { type: 'item.completed', item: { id: 'i1', type: 'agent_message', text: 'done' } }, { type: 'turn.completed', usage: { input_tokens: 10, output_tokens: 1 } }] });
+  await withCodexHome(home, () => runCodexProcess({ cwd: dir, bin: fake.bin, prompt: 'P', usageDir: dir }));
+  const codex = usageLimits().harnesses.find((h) => h.engine === 'codex');
+  assert.ok(codex, 'the store shows a codex harness');
+  assert.deepEqual(codex.windows, [{ kind: 'session', pct: 86, resetsAt: reset * 1000 }]);
 });
 
 test('runCodexProcess: a capped turn books what it spent (from the session file) and stores it for the next resume', POSIX, async () => {

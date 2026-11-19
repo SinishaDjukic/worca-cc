@@ -47,8 +47,19 @@ export function copyButton(doc, { name, label = null, title = name, cls = '', ac
   return b;
 }
 
-/** Writes `text`; the hidden-textarea fallback covers an insecure context or a refused permission. */
-export async function writeClipboard(win, text) {
+/**
+ * Writes `text`; the hidden-textarea fallback covers an insecure context or a refused permission. With `html`, the one
+ * clipboard entry carries both: a rich target (a doc, a mail) pastes the HTML, a plain one (a terminal, an editor)
+ * pastes `text`. A browser without ClipboardItem, or one that refuses it, gets `text` alone.
+ */
+export async function writeClipboard(win, text, { html = null } = {}) {
+  if (html && typeof win.ClipboardItem === 'function' && win.navigator.clipboard?.write) {
+    try {
+      const blob = (s, type) => new win.Blob([s], { type });
+      await win.navigator.clipboard.write([new win.ClipboardItem({ 'text/html': blob(html, 'text/html'), 'text/plain': blob(text, 'text/plain') })]);
+      return true;
+    } catch { /* fall back to the text alone */ }
+  }
   try {
     if (win.navigator.clipboard?.writeText) { await win.navigator.clipboard.writeText(text); return true; }
   } catch { /* fall through to the textarea */ }
@@ -122,11 +133,11 @@ export function flashCopy(btn, ok, miss = 'Copy failed') {
   }, COPIED_MS);
 }
 
-/** Copies `text` and flashes `btn`; empty text copies nothing and says so. `failed` may name the way out ("Copy
- *  failed: select the code"). Resolves to whether it landed. */
-export async function copyFromButton(btn, text, { empty = 'Nothing to copy', failed = 'Copy failed' } = {}) {
+/** Copies `text` (and `html` beside it, see writeClipboard) and flashes `btn`; empty text copies nothing and says so.
+ *  `failed` may name the way out ("Copy failed: select the code"). Resolves to whether it landed. */
+export async function copyFromButton(btn, text, { empty = 'Nothing to copy', failed = 'Copy failed', html = null } = {}) {
   if (!text) { flashCopy(btn, false, empty); return false; }
-  const ok = await writeClipboard(btn.ownerDocument.defaultView, text);
+  const ok = await writeClipboard(btn.ownerDocument.defaultView, text, { html });
   flashCopy(btn, ok, failed);
   return ok;
 }

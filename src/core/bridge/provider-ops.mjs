@@ -1,5 +1,5 @@
 // src/core/bridge/provider-ops.mjs
-// The operations the Providers card and `worca models …` share
+// The operations the Providers tab and `worca models …` share
 // (model-bridge-design.md §8.1, §8.4, §9): sign-in sessions for the Copilot
 // device flow, sign-out, the provider state payload (never a token), the
 // Copilot models list for import, the import itself, and a connection test
@@ -10,18 +10,19 @@ import {
   providerConfig, allProviders, updateProvider, resolveProviderSecret, providerSecretSet,
   clearCopilotSignIn,
   listGlobalModels, addGlobalModel, updateGlobalModel, updateSpeech, updateImages, updateSound,
+  openRouterConfig, updateOpenRouter,
 } from '../settings.mjs';
 import { speechState } from '../speech.mjs';
 import { imagesState } from '../images.mjs';
 import { soundState } from '../sound.mjs';
 import { speechAssetStore } from '../speech-assets.mjs';
-import { modelEnvRef, maskModelEnvValue, UPSTREAM_PROVIDERS, isUpstreamBaseUrl, EFFORTS } from '../model-env.mjs';
+import { modelEnvRef, maskModelEnvValue, UPSTREAM_PROVIDERS, isUpstreamBaseUrl, isOpenRouterBaseUrl, EFFORTS } from '../model-env.mjs';
 import {
   startDeviceFlow, pollDeviceFlow, githubLogin, copilotToken, invalidateCopilotToken,
   listCopilotModels, copilotUsage, catalogEntryForCopilotModel, copilotApiFor,
   copilotHeaders, normalizeCopilotModel, copilotCatalogId,
 } from './providers/copilot.mjs';
-import { keyOptional, providerKeyFor } from './registry.mjs';
+import { keyOptional, openRouterKeyFor, providerKeyFor } from './registry.mjs';
 import { listEndpointModels, catalogEntryForEndpointModel, importableModel } from './providers/endpoint.mjs';
 import { brokerEnabled, brokerInfo, cachedBrokerInfo, mintSpawnToken, revokeSpawnToken, slotBaseUrl, personSlots } from '../broker-client.mjs';
 import { routeUpstream } from '../broker-routing.mjs';
@@ -65,7 +66,7 @@ async function brokerFailure(res, what) {
 }
 import { isOpenRouter } from './openrouter.mjs';
 
-/** The OpenRouter API base a preset / `worca models set openrouter` points the openai provider at. */
+/** OpenRouter's API base: the OpenRouter row's own address (providers.openrouter), where a key of that row goes. */
 export const OPENROUTER_BASE_URL = 'https://openrouter.ai/api/v1';
 
 // ── Copilot sign-in sessions (in memory; a device code lives ~15 min) ────────
@@ -127,7 +128,7 @@ export async function copilotLogout() {
 const secretSource = (v) => (!v ? null : modelEnvRef(v) ? 'env' : 'stored');
 
 /**
- * The Providers card payload (§9). `quota` is fetched only when asked — it is
+ * The Providers tab payload (§9). `quota` is fetched only when asked — it is
  * a network call to GitHub — and is null when the account exposes none.
  * @param {{quota?:boolean, fetch?:typeof fetch}} [opts]
  */
@@ -163,11 +164,28 @@ export async function providersState({ quota = false, fetch: f, person = resolve
   // With the credential broker on, keys and the Copilot sign-in are per person on its key page:
   // each provider's state is the viewer's own slot there, not worca's (empty) settings.
   const broker = brokerEnabled() ? await brokerProviders(all, person) : { enabled: false };
-  return { copilot, openai: keyed('openai'), anthropic: keyed('anthropic'), speech: { ...speechState(), cacheBytes: speechCacheBytes() }, images: imagesState(), sound: soundState(), broker };
+  return { copilot, openrouter: openRouterState(), openai: keyed('openai'), anthropic: keyed('anthropic'), speech: { ...speechState(), cacheBytes: speechCacheBytes() }, images: imagesState(), sound: soundState(), broker };
 }
 
 /**
- * The Providers card's view of the broker: which slot each provider spends from and the viewer's
+ * The OpenRouter row's state. `keySet` means the key resolves (this row has no `configured`); the key's text is the
+ * row's own, else the OpenAI-compatible row's while it lends its key (`legacyKey`). Never a raw key.
+ */
+function openRouterState() {
+  const { key: k, text } = openRouterAccount();
+  const { maxConcurrent, order, sort, allowFallbacks } = openRouterConfig();
+  return {
+    keySet: !!k.value,
+    keySource: secretSource(text),
+    keyRef: modelEnvRef(text) ? text : null,
+    keyMasked: text && !modelEnvRef(text) ? maskModelEnvValue(text) : null,
+    legacyKey: k.source === 'openai-legacy',
+    maxConcurrent, order, sort, allowFallbacks,
+  };
+}
+
+/**
+ * The Providers tab's view of the broker: which slot each provider spends from and the viewer's
  * state in it — {slot, state:'set'|'missing'|'invalid'|'operator'|'keyless'|'none', suffix?, error?}.
  * Never throws: an unreachable broker leaves the states out and says why.
  */
@@ -180,10 +198,13 @@ async function brokerProviders(all, person) {
       const s = slots.find((x) => x.auth === 'copilot');
       return s ? { slot: s.id } : { state: 'none', error: 'the credential broker has no GitHub Copilot slot' };
     }
-    const r = routeUpstream({ provider: name, baseUrl: all[name].baseUrl || null }, { slots });
+    // OpenRouter is not in `all`: its row always spends from the slot for its own address.
+    const r = name === 'openrouter'
+      ? routeUpstream({ provider: 'openai', baseUrl: OPENROUTER_BASE_URL }, { slots })
+      : routeUpstream({ provider: name, baseUrl: all[name].baseUrl || null }, { slots });
     return r.slot ? { slot: r.slot } : r.keyless ? { state: 'keyless' } : { state: 'none', error: r.error };
   };
-  for (const name of ['copilot', 'openai', 'anthropic']) out.providers[name] = route(name);
+  for (const name of ['copilot', 'openrouter', 'openai', 'anthropic']) out.providers[name] = route(name);
   const who = out.mode === 'multi' ? person : 'local';
   if (!who || (out.mode === 'multi' && who === 'local')) { out.signInNeeded = true; return out; }
   try {
@@ -247,6 +268,33 @@ export async function patchSound(patch = {}) {
   // Credential broker: worca stores no keys at all (same rule as patchImages).
   if (brokerEnabled() && typeof p.apiKey === 'string' && p.apiKey.trim()) refuseWithBroker('store a sound key');
   return updateSound(p);
+}
+
+/**
+ * Where the OpenRouter row's own calls go and with which key: its state, its Test and the free-request counter.
+ * While the row holds no key text and the OpenAI-compatible row points at openrouter.ai, that row's own base (a
+ * regional `https://eu.openrouter.ai/api/v1` included) and its key, under openRouterKeyFor's origin rule; else
+ * OPENROUTER_BASE_URL. `text` is the key as written (literal or ${VAR}), '' when there is none.
+ * @returns {{ base: string, key: { value: string, source: string }, text: string }}
+ */
+export function openRouterAccount() {
+  const cfg = { openrouter: openRouterConfig(), openai: providerConfig('openai') };
+  const own = typeof cfg.openrouter.apiKey === 'string' && cfg.openrouter.apiKey.trim() !== '';
+  const legacyBase = String(cfg.openai.baseUrl || '').trim().replace(/\/+$/, '');
+  const base = !own && isOpenRouter(legacyBase) ? legacyBase : OPENROUTER_BASE_URL;
+  const key = openRouterKeyFor({ provider: 'openai', baseUrl: base }, cfg);
+  const text = own ? cfg.openrouter.apiKey : key.source === 'openai-legacy' ? cfg.openai.apiKey : '';
+  return { base, key, text };
+}
+
+/** Patch the OpenRouter row (providers.openrouter) from the UI/CLI: masked key echoes are dropped ("keep"). */
+export async function patchOpenRouter(patch = {}) {
+  if (!patch || typeof patch !== 'object' || Array.isArray(patch)) return updateOpenRouter(patch);
+  const p = { ...patch };
+  if (typeof p.apiKey === 'string' && p.apiKey.startsWith('••')) delete p.apiKey;
+  // Credential broker: worca stores no keys at all (same rule as patchProvider).
+  if (brokerEnabled() && typeof p.apiKey === 'string' && p.apiKey.trim()) refuseWithBroker('store a provider key');
+  return updateOpenRouter(p);
 }
 
 // ── Copilot models: list for import, import ─────────────────────────────────
@@ -334,7 +382,8 @@ function endpointBase(baseUrl) {
  * Copilot import, for a server you run: llama.cpp, Ollama, LM Studio, vLLM, a gateway).
  * `apiKey` is the endpoint's own key (a `${VAR}` reference or a literal), for an endpoint that is not the provider's
  * (Gemini, Qwen next to OpenRouter): it is used for the listing and stored on every imported entry. Without one, the
- * provider's key goes along only when the endpoint is on the provider's own host (registry.mjs providerKeyFor).
+ * provider's key goes along only when the endpoint is on the provider's own host (registry.mjs providerKeyFor), and an
+ * OpenRouter endpoint is listed with the OpenRouter row's key chain (openRouterKeyFor), which no entry stores.
  * `providerApiKey` / `providerBaseUrl`: the provider values a setup apply is about to store (default: the stored ones).
  * @param {{baseUrl?:string, apiKey?:string, providerApiKey?:string, providerBaseUrl?:string, fetch?:typeof fetch}} [opts]
  */
@@ -354,8 +403,11 @@ export async function endpointModelsForImport({ baseUrl, apiKey: entryKey = '', 
     out = await withAuxBrokerToken(route.slot, (token) => listEndpointModels(`${slotBaseUrl(route.slot)}${route.prefix}`, { apiKey: token, fetch: f, realBaseUrl: base }));
     out = { ...out, baseUrl: base };
   } else {
-    // Keyless local endpoints are reached directly, as without the broker.
-    const key = brokerEnabled() ? '' : (ownKey ? resolveProviderSecret(ownKey) : providerKeyFor({ baseUrl: base }, p));
+    // Keyless local endpoints are reached directly, as without the broker. OpenRouter is listed with the key its
+    // calls carry (registry.mjs openRouterKeyFor; `p` keeps the setup overlay); that key is never stored on an entry.
+    const key = brokerEnabled() ? '' : ownKey ? resolveProviderSecret(ownKey)
+      : isOpenRouterBaseUrl(base) ? openRouterKeyFor({ provider: 'openai', baseUrl: base }, { openrouter: openRouterConfig(), openai: p }).value
+        : providerKeyFor({ baseUrl: base }, p);
     out = await listEndpointModels(base, { apiKey: key, fetch: f });
   }
   const models = listGlobalModels();
@@ -501,7 +553,7 @@ export async function openRouterKeyInfo(baseUrl, apiKey, { fetch: f = globalThis
   } catch { return null; }
 }
 
-/** One line for the Providers card and `worca models test`. Pure. */
+/** One line for the OpenRouter row (Models › Providers) and `worca models test`. Pure. */
 export function formatOpenRouterKeyInfo(info) {
   if (!info) return '';
   const usd = (n) => `$${n.toFixed(2)}`;
@@ -522,13 +574,37 @@ export function formatOpenRouterKeyInfo(info) {
 // ── key-based providers: connection test ────────────────────────────────────
 
 /**
- * A cheap reachability + auth check for openai / anthropic (§8.1): GET the models list with the
+ * OpenRouter's connection test, for its own row and for the OpenAI-compatible row pointed at it: GET {base}/models
+ * with the key, then {base}/key. OpenRouter lists its models without a key, so a reachable list proves nothing about
+ * the key: its /key does, and says what the key may still spend. A key it rejects fails the test. Never throws.
+ * @returns {Promise<{ok:true, models?:number, openrouter:object, detail:string}|{ok:false, message:string}>}
+ */
+async function testOpenRouterKey(base, key, f) {
+  if (!key) return { ok: false, message: 'no API key configured — OpenRouter lists models without one, but every call needs it' };
+  try {
+    const r = await f(`${base}/models`, { headers: { authorization: `Bearer ${key}` }, signal: AbortSignal.timeout(15_000) });
+    if (r.status === 401 || r.status === 403) return { ok: false, message: `authentication failed (${r.status})` };
+    if (!r.ok) return { ok: false, message: `endpoint answered ${r.status}` };
+    const j = await r.json().catch(() => null);
+    const n = j && Array.isArray(j.data) ? j.data.length : undefined;
+    const info = await openRouterKeyInfo(base, key, { fetch: f });
+    if (!info) return { ok: false, message: 'authentication failed — OpenRouter did not accept the key (its /key check failed)' };
+    return { ok: true, ...(n !== undefined ? { models: n } : {}), openrouter: info, detail: formatOpenRouterKeyInfo(info) };
+  } catch (err) {
+    return { ok: false, message: `endpoint unreachable — ${err && err.message ? err.message : String(err)}` };
+  }
+}
+
+/**
+ * A cheap reachability + auth check for openai / anthropic / openrouter (§8.1): GET the models list with the
  * configured key. Never throws.
  *
  * `baseUrl` / `apiKey` test values that are NOT stored yet — what the user has typed into the
- * Providers card. Testing the stored ones instead made the button lie: type a local llama.cpp URL,
+ * Providers tab. Testing the stored ones instead made the button lie: type a local llama.cpp URL,
  * press Test, and the answer was "no API key configured", because it had tested api.openai.com.
- * A masked echo (••…) means "keep what is stored" exactly as a save does.
+ * A masked echo (••…) means "keep what is stored" exactly as a save does. `openrouter` takes no
+ * `baseUrl`: a typed key is its row's own and goes to OPENROUTER_BASE_URL; otherwise openRouterAccount
+ * decides address and key.
  * @returns {Promise<{ok:true, models?:number}|{ok:false, message:string}>}
  */
 export async function testProviderConnection(name, { fetch: f = globalThis.fetch, baseUrl = '', apiKey } = {}) {
@@ -543,6 +619,14 @@ export async function testProviderConnection(name, { fetch: f = globalThis.fetch
     if (!token) return { ok: false, message: 'not signed in' };
     try { await copilotToken(token, { fetch: f, force: true }); return { ok: true }; } catch (err) { return { ok: false, message: err.message || String(err) }; }
   }
+  if (name === 'openrouter') {
+    const typed = typeof apiKey === 'string' && !apiKey.startsWith('••') ? apiKey.trim() : null;
+    const { base, key, text } = typed === null
+      ? openRouterAccount()
+      : { base: OPENROUTER_BASE_URL, key: { value: resolveProviderSecret(typed) }, text: typed };
+    if (!key.value && modelEnvRef(text)) return { ok: false, message: `the key's ${text} is not set in worca's environment` };
+    return testOpenRouterKey(base, key.value, f);
+  }
   if (!UPSTREAM_PROVIDERS.includes(name)) return { ok: false, message: `unknown provider ${name}` };
   const stored = providerConfig(name);
   const typedKey = typeof apiKey === 'string' && !apiKey.startsWith('••') ? apiKey.trim() : null;
@@ -555,6 +639,7 @@ export async function testProviderConnection(name, { fetch: f = globalThis.fetch
   const keyIsSet = typedKey === null ? providerSecretSet(name) : !!typedKey;
   if (!key && (keyIsSet || !keyOptional(name, p.baseUrl))) return { ok: false, message: keyIsSet ? 'the key\'s ${VAR} is not set in worca\'s environment' : `no API key configured for ${p.baseUrl}` };
   const base = (p.baseUrl || '').replace(/\/+$/, '');
+  if (name === 'openai' && isOpenRouter(base)) return testOpenRouterKey(base, key, f);
   const url = name === 'anthropic' ? (/\/v1$/.test(base) ? `${base}/models` : `${base}/v1/models`) : `${base}/models`;
   const headers = name === 'anthropic' ? { 'x-api-key': key, 'anthropic-version': '2023-06-01' } : (key ? { authorization: `Bearer ${key}` } : {});
   try {
@@ -563,14 +648,6 @@ export async function testProviderConnection(name, { fetch: f = globalThis.fetch
     if (!r.ok) return { ok: false, message: `endpoint answered ${r.status}` };
     const j = await r.json().catch(() => null);
     const n = j && Array.isArray(j.data) ? j.data.length : undefined;
-    // OpenRouter lists its models without a key, so a reachable list proves nothing about the key:
-    // its /key does, and says what the key may still spend. A key it rejects fails the test.
-    if (name === 'openai' && isOpenRouter(base)) {
-      if (!key) return { ok: false, message: 'no API key configured — OpenRouter lists models without one, but every call needs it' };
-      const info = await openRouterKeyInfo(base, key, { fetch: f });
-      if (!info) return { ok: false, message: 'authentication failed — OpenRouter did not accept the key (its /key check failed)' };
-      return { ok: true, ...(n !== undefined ? { models: n } : {}), openrouter: info, detail: formatOpenRouterKeyInfo(info) };
-    }
     return { ok: true, ...(n !== undefined ? { models: n } : {}) };
   } catch (err) {
     return { ok: false, message: `endpoint unreachable — ${err && err.message ? err.message : String(err)}` };

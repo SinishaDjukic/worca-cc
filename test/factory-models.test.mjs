@@ -79,18 +79,18 @@ test('signInRefusalText: one item per source', () => {
   const frame = (where) => `Claude Code isn't signed in, and ${where} names Opus 5.5, which needs it — pick a model routed through a provider on the Models page, or sign in (run \`claude\`, then /login)`;
   assert.equal(text(item('run')), frame("this run's pick for Plan Review"));
   assert.equal(text(item('project')), frame("the project's pick for Plan Review"));
-  assert.equal(text(item('legacy')), frame('Models › Step models › Plan Review'));
-  assert.equal(text(item('slot')), frame('Models › Step models › Plan Review'));
-  assert.equal(text(item('role', { modelRole: 'deep' })), frame('Models › Model roles › Deep thinking'));
+  assert.equal(text(item('legacy')), frame('Models › Jobs › Steps › Plan Review'));
+  assert.equal(text(item('slot')), frame('Models › Jobs › Steps › Plan Review'));
+  assert.equal(text(item('role', { modelRole: 'deep' })), frame('Models › Jobs › Roles › Deep thinking'));
   assert.equal(text(item('template')), frame("the workflow's Plan Review step"));
-  assert.equal(text(item('pair', { pair: 'defrag' })), frame('Models › Helper jobs › Memory defragment'));
+  assert.equal(text(item('pair', { pair: 'defrag' })), frame('Models › Jobs › Helper jobs › Memory defragment'));
   assert.equal(text(item('pair', { pair: 'scan' })), frame('the workspace scan model'));
-  assert.equal(text(item('slot', { role: 'Product' })), frame('Models › Helper jobs › Second-opinion reviewer'));
+  assert.equal(text(item('slot', { role: 'Product' })), frame('Models › Jobs › Helper jobs › Second-opinion reviewer'));
   assert.equal(text(item('run', { role: 'Product' })), frame("this run's pick for Plan Review · Product"));
   assert.equal(text(item('project', { role: 'Product' })), frame("the project's pick for Plan Review · Product"));
   assert.equal(text({ model: 'claude-opus-5-5', source: 'runModel' }), frame("the run's model"));
   assert.equal(signInRefusalText([item('slot'), item('slot', { role: 'Product' })], labels),
-    "Claude Code isn't signed in, and Models › Step models › Plan Review names Opus 5.5; Models › Helper jobs › Second-opinion reviewer names Opus 5.5, which need it — pick a model routed through a provider on the Models page, or sign in (run `claude`, then /login)");
+    "Claude Code isn't signed in, and Models › Jobs › Steps › Plan Review names Opus 5.5; Models › Jobs › Helper jobs › Second-opinion reviewer names Opus 5.5, which need it — pick a model routed through a provider on the Models page, or sign in (run `claude`, then /login)");
 });
 
 test('factoryModelsPayload: the Claude steps and the two Models-page helpers', () => {

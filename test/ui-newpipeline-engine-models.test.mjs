@@ -153,3 +153,20 @@ test('"+ Add model…" in an agent row opens the Models page with the model edit
   assert.equal(window.location.hash, '#models');
   assert.equal(doc.querySelector('.view[data-view="models"]').classList.contains('hidden'), false);
 });
+
+test('"Add model…" in a picker on a Codex run lands on step 1 with a sign-in and the Codex harness picked', async () => {
+  const { window } = await boot(apiFetch());
+  await openWf(window);
+  const doc = window.document;
+  pick(doc, 'codex');
+  await waitFor(() => ids(doc, 'n1').includes('gpt-5.5'));
+  const sel = doc.querySelector('.step-model[data-node-id="n1"]');
+  sel.value = '__add__';
+  sel.dispatchEvent(new window.Event('change', { bubbles: true }));
+  await waitFor(() => !doc.getElementById('model-editor-modal').classList.contains('hidden'));
+  assert.equal(window.location.hash, '#models');
+  const step = doc.querySelector('#mv-editor-host .mdl-add[data-step="1"]');
+  assert.ok(step, 'step 1 of Add model');
+  assert.equal(step.querySelector('.mdl-opt[data-where="signin"]').getAttribute('aria-checked'), 'true', '"A sign-in" checked');
+  assert.ok(step.querySelector('.mdl-hx-t[data-engine="codex"][aria-pressed="true"]'), 'the Codex tile pressed');
+});

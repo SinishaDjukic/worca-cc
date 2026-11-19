@@ -115,7 +115,7 @@ const pickOf = (v) => (isObj(v) && typeof v.model === 'string' && v.model.trim()
 /**
  * Who picks the model of a lead (the main agent) or a builder (a section's agent), first match wins: the design's own
  * pick (`design.models.lead|builder`, its composer's pills), the Models page's Design pick for the engine
- * (`designModels`), the model role (`designLead` → Deep thinking, `designBuilder` → Everyday coding), else the engine's
+ * (`designModels`), the model role (`designLead` → Deep thinking, `designBuilder` → Everyday tasks), else the engine's
  * default model. An unset effort is `high` for a lead and `medium` for a builder.
  * @param {'lead'|'builder'} role
  * @param {{ engine?: string, design?: { models?: object|null }|null, settings?: () => object }} [opts]

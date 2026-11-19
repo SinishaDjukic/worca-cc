@@ -16,7 +16,7 @@ export class SpeechError extends Error {
   constructor(message, status = 502) { super(message); this.name = 'SpeechError'; this.status = status; }
 }
 
-/** GET /api/speech and the Providers card: never a key, only where it comes from. */
+/** GET /api/speech and the Speech row (Models › Providers): never a key, only where it comes from. */
 export function speechState() {
   const c = speechConfig();
   const side = (kind) => {
@@ -57,7 +57,7 @@ function endpoint(kind, typed) {
 
 function assertUsable(kind, c) {
   const what = kind === 'stt' ? 'speech-to-text' : 'text-to-speech';
-  if (!c.baseUrl) throw new SpeechError(`${what} is not configured (Providers › Speech)`, 409);
+  if (!c.baseUrl) throw new SpeechError(`${what} is not configured (Models › Providers › Speech)`, 409);
   if (c.unresolved) throw new SpeechError(`the ${what} key's \${VAR} is not set in worca's environment`, 409);
 }
 

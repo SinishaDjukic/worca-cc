@@ -501,3 +501,31 @@ test('Bash description (#911 slice 3): carried as desc, text keeps the raw comma
     } },
   ]);
 });
+
+// ── Usage rings: the Claude plan-limit frame ─────────────────────────────────
+test('a limit event records a Claude reading and renders nothing', async () => {
+  const { useTempHome } = await import('./helpers/temp-home.mjs');
+  const { after } = await import('node:test');
+  const { usageLimits, _resetUsageLimitsForTests } = await import('../src/core/usage-limits.mjs');
+  useTempHome(after, 'worca-agent-log-limit-');
+  _resetUsageLimitsForTests();
+  const logs = capture('implementer', { type: 'rate_limit_event', raw: { type: 'rate_limit_event',
+    rate_limit_info: { status: 'allowed', rateLimitType: 'five_hour', utilization: 0.28, resetsAt: 4102444800 } } });
+  assert.equal(logs.length, 0);
+  const { harnesses } = usageLimits({ now: Date.now() });
+  assert.equal(harnesses.length, 1);
+  assert.equal(harnesses[0].engine, 'claude');
+  assert.deepEqual(harnesses[0].windows, [{ kind: 'session', pct: 28, resetsAt: 4102444800000 }]);
+
+  // A frame split mid-line or a malformed line is a non-JSON runner line: ignored, no reading, no crash.
+  _resetUsageLimitsForTests();
+  const { rmSync } = await import('node:fs');
+  const { join } = await import('node:path');
+  const { worcaHome } = await import('../src/core/projects.mjs');
+  rmSync(join(worcaHome(), 'usage-limits.json'), { force: true });
+  _resetUsageLimitsForTests();
+  for (const half of ['{"type":"rate_limit_event","rate_limit_info":{"rateLimitType":"five_h', 'nope{']) {
+    assert.doesNotThrow(() => capture('implementer', { type: 'log', raw: half, text: half }));
+  }
+  assert.deepEqual(usageLimits({ now: Date.now() }), { harnesses: [] });
+});

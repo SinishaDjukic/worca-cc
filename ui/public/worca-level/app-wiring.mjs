@@ -27,15 +27,13 @@ export const WORCA_REFRESH_MS = 250;
 export function createWorcaLevelWiring({ trigger, menu, repaint, isSettled, setupOpen, doc = globalThis.document }) {
   const state = { view: null, dialog: null, welcomeDone: false, celebrated: 0, refreshTimer: 0, hover: null, seq: 0 };
 
-  /** The level card sits immediately before the Interface-mode row (#acct-lvl); a repaint swaps it in place. */
+  /** The level card is the first child of the menu, its own top group; a repaint swaps it in place. */
   function mountLevelCard() {
     const card = renderLevelCard(state.view, { doc });
     const old = menu.querySelector('#acct-level-card');
     if (!card) { old?.remove(); return; }
     if (old) { old.replaceWith(card); return; }
-    const anchor = menu.querySelector('#acct-lvl');
-    if (anchor) anchor.before(card);
-    else (menu.querySelector('.msect') || menu).prepend(card);
+    menu.prepend(card);
   }
 
   /** The served view without what this page load already closed. */

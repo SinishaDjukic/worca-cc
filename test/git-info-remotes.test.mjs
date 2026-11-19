@@ -95,6 +95,15 @@ test('listRemotes: parses git remote -v (push URL wins); empty output and git fa
       assert.equal(r.remotes[2].owner, 'y', 'push URL wins for the owner');
       assert.deepEqual([r.remotes[3].owner, r.remotes[3].slug], [null, null], 'unparseable stays listed, unparsed');
     } },
+    { name: 'listRemotes: a disabled push URL (`git remote set-url --push upstream DISABLED`) falls back to the fetch URL', run: async () => {
+      gitInfo.setRunner(() => okOut([
+        'upstream\thttps://github.com/up/repo.git (fetch)',
+        'upstream\tDISABLED (push)',
+        '',
+      ].join('\n')));
+      const { remotes } = await listRemotes('/repo');
+      assert.deepEqual([remotes[0].owner, remotes[0].slug, remotes[0].forge], ['up', 'up/repo', 'github']);
+    } },
     { name: 'listRemotes: empty output is an empty list; git failures are reported without throwing', run: async () => {
       gitInfo.setRunner(() => okOut(''));
       assert.deepEqual(await listRemotes('/repo'), { ok: true, remotes: [] });

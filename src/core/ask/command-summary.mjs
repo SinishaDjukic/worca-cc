@@ -1,4 +1,4 @@
-// src/core/ask/command-summary.mjs — Command summaries (#911 slice 2, flag commandSummaries): the Models › Helper jobs
+// src/core/ask/command-summary.mjs — Command summaries (#911 slice 2, flag commandSummaries): the Models › Jobs › Helper jobs
 // job that writes a chat command's one-line summary when the chat gave none. It sees the command alone, secrets
 // redacted (redactAskText, the card's own redaction), never the output. Repeats are cached by the redacted command.
 import { auxTextCall, isRefusalTitle } from '../title.mjs';

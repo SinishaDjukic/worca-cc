@@ -868,7 +868,7 @@ export async function ghForkRepo({ repo, waitMs = 60_000, stepMs = 2_000, sleep 
  * Each entry is { name, fetchUrl, pushUrl, host, owner, repo, slug, forge, org, project } with
  * host/owner/repo/slug null when the URL is not a hosted owner/repo URL. The
  * push URL is what the branch lands on, so it is parsed first; the fetch URL is
- * the fallback. Never throws: { ok:true, remotes } | { ok:false, remotes:[], error }.
+ * the fallback (also when the push URL does not parse). Never throws: { ok:true, remotes } | { ok:false, remotes:[], error }.
  * Lives here (not in worktree.mjs) so it shares the `_run` seam the tests stub.
  */
 export async function listRemotes(projectDir) {
@@ -885,7 +885,8 @@ export async function listRemotes(projectDir) {
     byName.set(name, e);
   }
   const remotes = [...byName.values()].map((e) => {
-    const parsed = parseRemoteUrl(e.pushUrl || e.fetchUrl);
+    // A push URL that is not a URL (`git remote set-url --push upstream DISABLED`) still names the fetch URL's repo.
+    const parsed = parseRemoteUrl(e.pushUrl) || parseRemoteUrl(e.fetchUrl);
     return {
       ...e,
       host: parsed?.host ?? null, owner: parsed?.owner ?? null, repo: parsed?.repo ?? null,

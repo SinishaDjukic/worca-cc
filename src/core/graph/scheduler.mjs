@@ -169,6 +169,9 @@ export function createScheduler(opts) {
   const running = new Map();      // nodeId -> executionId
   const completions = [];
   const warnings = [];
+  // E9: per execution, the notable paths it touched outside its checkout (exec-manifest.mjs scopeRecord). Kept apart
+  // from `warnings`: the run page folds them into one quiet line instead of a banner per spawn.
+  const scopeNotices = [];
   const controller = new AbortController();
   let ended = null;
   let gate = null;                // the CURRENT gate for state.gate (P4 stamps it)
@@ -624,6 +627,10 @@ export function createScheduler(opts) {
       if (!text) continue;
       warnings.push(text);
       log(text);
+    }
+    if (res?.scope && typeof res.scope === 'object') {
+      scopeNotices.push(res.scope);
+      if (res.scopeLine) log(String(res.scopeLine));
     }
     if (res?.sessionId) entry.sessionId = res.sessionId;
     emitExec(node, entry, 'done', {
@@ -1352,6 +1359,7 @@ export function createScheduler(opts) {
         endReached: Boolean(ended),
         result: ended ? { ...ended.result } : null,
         warnings: [...warnings],
+        scopeNotices: scopeNotices.map((n) => ({ ...n, notable: Array.isArray(n.notable) ? n.notable.map((p) => ({ ...p })) : [] })),
         openIssues: [...openIssues.values()].map((o) => ({ ...o, titles: [...(o.titles || [])] })),
         gate: gate ? { ...gate } : null,
         settled,

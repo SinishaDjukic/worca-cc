@@ -4,445 +4,6 @@ The one reference for how Worca looks. Every screen follows it; `test/ui-design-
 `tools/button-audit.mjs` enforce the rules marked (checked). When the guide and the code disagree, fix one of them in
 the same commit.
 
-## Worca Rail
-
-Worca Rail is the redesign of every Worca page, one page at a time, on the rules below. A Rail page is specified in
-`plans/rail/` (one spec per page) and built first in the prototype (`plans/rail/prototype/`); until it ships, the app's
-current pages keep the rules further down. Where a Rail page and a current rule differ, the Rail page's spec says so.
-
-**When the app and Rail differ** (the app ships something Rail does not have, or does it another way), one rule
-decides, never case by case: 1. Rail is preferred. 2. If the app's way meets a real need, find how Rail takes it in.
-3. The result is Rail, upgraded where needed, written here. `plans/rail/dev-alignment.md` records each case.
-
-### One Rail: the philosophy
-Every screen reads down one rail, and everything has one place on it.
-1. **One rail.** Everything aligns to a single 20px rail and one text edge (rail + 12px gap); a dot, a step, a member
-   run or a PR is a row on it. Nothing floats.
-2. **State is the headline.** The first thing read is what is happening (a word and a colour that only ever mean a
-   state), the second is what you can do about it.
-3. **One place per fact.** A count, time, cost, PR number or question appears once; everything else links to it.
-4. **One action, the rest behind ⋯.** Each state offers the one critical control; alternatives sit in its ▾, supporting
-   actions in ⋯ next to it, danger last after a rule.
-5. **Quiet until needed.** Labels, tags, banners and help appear when there is something to say; help lives in
-   tooltips, not lines.
-6. **Nothing moves by itself.** No jumps, no reflow on hover, no animation that is not a state change (Motion); a click, a
-   repaint or a menu never scrolls the page.
-
-### Type roles
-The type scale below, named by what it does on a Rail page.
-| Role | Token | Weight | For |
-|---|---|---|---|
-| Headline | `--fs-page` 22 | 600, tracking −0.02em | the state word: what is read first |
-| Title | `--fs-subpage` 18 | 600, tracking −0.02em | the page title, one line with an ellipsis (a tap shows it whole); a page with no state word (a list, Settings) keeps it at `--fs-page` 22 |
-| Heading | `--fs-section` 15 | 600, tracking −0.01em | a section's head on a page (a settings section, a tab's section); a step above the rows it heads, never the same size |
-| Value | `--fs-section` 15 | 600 | figures: time, cost, changes |
-| Body | `--fs-body` 13 | 400 (the live or asking row 600) | rows, questions, text |
-| Meta | `--fs-meta` 12 | 400, `--ink-2` | the metadata line, times, figure labels, details |
-| Caption | `--fs-caption` 11 | 400 | chips, hints; `--ink-3` only for marks and separators |
-
-A head is never smaller or weaker than what it heads: a step larger (a page's sections: Heading over Body rows), or the
-same size, heavier and in `--ink` (a list's or a menu's groups: Body 600 over Body 400 or 500 rows). Never a caption
-over the items it names. `ds-check` compares every head with its items.
-
-### The Rail look
-Calm and state-first: the look refines the current one and never adds a character of its own (no display faces, no
-drawn rails, no new hues). Mocks: `plans/rail/mocks/visual-language-refined-*.png`. The prototype and the app keep
-today's look until the Rail ships; these values replace it then. The Pulse prototype (`pulse.html`) already shows
-the Rail look, so it can be judged in use.
-- **Type:** Inter, bundled (400, 500, 600), in place of Poppins; JetBrains Mono stays for code, branches and ids. No
-  700: titles and the state word are 600 with −0.02em tracking, buttons 500.
-- **One surface:** the page and the card share one background (`--bg` = `--panel`); the card keeps its 1px `--line`.
-  The card has one divider, above the Figures; its other zones are split by space.
-- **One family of neutrals,** slightly cool, for every grey, line and fill:
-
-| Token | Light | Dark |
-|---|---|---|
-| `--bg`, `--panel` | #FFFFFF | #141416 |
-| `--canvas-2`, `--side-bg` | #FAFAFA | #18181B |
-| `--field`, `--surface` | #F4F4F5 | #1F1F23 |
-| `--hover`, `--side-sel-bg` | #F0F0F2 | #222227 / #26262B |
-| `--ink` | #18181B | #EDEDEF |
-| `--ink-2` | #63636B | #A1A1A9 |
-| `--ink-3` | #A1A1A9 | #6E6E76 |
-| `--line` | #EEEEF0 | #26262B |
-| `--line-2` | #E2E2E6 | #35353B |
-| `--float`, `--float-line` (menus, panels, popovers) | #FFFFFF, `--line` | #1D1D21, #323238 |
-
-- **Running and needs-you stay apart:** `--peach` #B39A0E / #ECD86A (lighter, lemon) and `--amber` #E07A1F / #EE8A2C
-  (deeper orange). The two dots must read as two colours at 8px, side by side in Pulse, in both themes.
-- **The step bar is quiet:** 4px; a step to come is `--line`, a finished one #C9C9CF / #4A4A52; only the live, asking
-  or failed cell has colour.
-- **The metadata line:** the branch is `--ink-2`, so the PR number and the phrase read first.
-- **Depth in dark:** a floating surface is a step lighter than the page (`--float`) with a hairline (`--float-line`);
-  the shadow alone does not show on dark.
-
-### Motion
-Motion shows what changed, never decorates. Every change of state on the screen eases in, quickly and with one
-curve; everything else is still. Filmed from the run page: `plans/rail/mocks/motion-*.gif`.
-- **Three timings, one curve:** `--motion-quick` 150ms (something appears, opens or goes), `--motion-change` 200ms
-  (something that was there becomes something else), `--motion-flash` 1.2s (the one flash after a jump); all on
-  `--ease` `cubic-bezier(.2, 0, 0, 1)`. Nothing is slower; nothing bounces.
-- **Fade, never slide.** What appears fades in and what goes fades out; what is around it moves to its new place at the
-  same pace, so nothing jumps. Nothing travels across the screen.
-
-| Moment | Motion |
-|---|---|
-| A row opens or closes its detail | the detail fades over `quick`; the › turns; what is below moves with it |
-| A row arrives or leaves (Pulse, Runs, a cleared update) | fades in or out over `quick`; the rows around it move to their place |
-| A state changes (the word, the dot, a step's mark, a progress cell) | the old fades out, the new fades in, over `change`; a colour changes over `change` |
-| A text replaces another in place (`Merging…` for `Merge PR`) | crossfade over `quick` |
-| A menu, popover, tooltip or panel opens | fades in over `quick` (a tooltip after its usual delay); closes at once |
-| A Dialog or the ConfirmStrip opens | fades in over `quick`; the strip's space opens with it |
-| A Switch changes | the thumb moves over `quick`; the track's colour over `change` |
-| A tick box is ticked | the tick fades in over `quick` |
-| Hover and press | the tint over 100ms, never a lift or a size change |
-| A Toast | fades in over `quick`, out over `change` |
-| A link or a search lands on a fact's home | the target comes into view, lights once and fades over `flash`; focus moves to it (`land()` in motion.mjs) |
-| The sidebar becomes another menu (Settings) | its content fades over `change`; the page changes at once |
-| Working | the live dot and the live cell breathe: the one thing that moves on its own, because it means work is happening |
-| Worca writes in a field | the violet shimmer, while it writes |
-
-- **Never:** a transition between pages or tabs (they change at once), a slide, a spring, a bounce, a count-up, a
-  spinner, a skeleton shimmer, a parallax, motion on scroll, or anything that runs without a state change.
-  The named exceptions are the away screensaver (it starts after 5 idle minutes and is off under reduced motion) and the Design stage (› Design stage exceptions).
-- **Reduced motion** (`prefers-reduced-motion`): every timing is 0; the breathing is a still colour, the shimmer a still
-  wash, the flash a still outline that fades with the next click.
-- **In code:** a page that draws itself again after a change draws with `morph(target, html)` from
-  `ui/public/design-system/components/motion.mjs`, never innerHTML: what is still there stays the same element, so its
-  colour eases by its CSS transition, and only what is new or changed moves. A component says how it moves with
-  `data-motion`: `in` (a menu, a popover, a dialog), `open` (the ConfirmStrip, a row's detail: its space opens too),
-  `change` (the state word and dot), `swap` (a label replaced in place). Going to another page or run passes
-  `{ motion: false }`. A page never animates by hand; reduced motion is handled there.
-- A live update never moves what you are reading: what arrives above it holds its place until you scroll there (Pulse
-  and the group page already keep this).
-
-### Which component: one per need
-A Rail page is built by naming needs, not looks. Find the need, use its component as its page in the Design System
-shows it; sizes, colours and spacing come with the component. Names are the Design System's pages.
-| Need | Component | For example |
-|---|---|---|
-| **Acting** | | |
-| The one next step of a state | the split button in the StatusLine: Button primary, its ▾ the alternatives | Merge PR ▾, Resume now ▾ |
-| Supporting actions | ⋯ next to it, a CompactMenu, danger last after a rule | Terminal, Copy link, Archive |
-| A yes or no, or a one-line answer | ConfirmStrip, in place under the top bar | Merge #959 into dev?, Run after |
-| A step that needs fields first | Dialog, the only one for a form | Create PR |
-| Going to another page or place | Text link, or a ListRow you open | Changes +358 −144, a file, a step |
-| Copying text | CopyButton: a quiet 28px icon button; a tick for 1.2s and `Copied` in its tooltip and the live region; its width never changes | a branch, a command, an id |
-| **Choosing** | | |
-| A choice that changes a step | SentencePicker: a picker in the sentence it changes, opening a CompactMenu (in the app, wired to `toggleMenu`, so the menu has keys) | `dev ▾`, `3 stacked PRs ▾` |
-| Answering Worca's question | OptionList: one line per answer, a radio dot, Worca's pick marked, your own answer under it (in the app, `buildChatQuestion` takes `preset` for Worca's pick and `recommended` on an option) | the asking step's answers |
-| A setting that is on or off | Switch: takes effect at once, no confirm; a failed change flips back and a toast says why | Watch on a PR |
-| Picking items from a list, an opt-out, a consent | Checkbox | the checklist, No cap, Draft |
-| Two or three views of the same thing | Segmented | Light and Dark, Summaries and Raw |
-| Sections of a page | Tabs | Overview, Changes, Decisions |
-| Narrowing a list | the list's sentence: SentencePicker words above the list, each choice with its count; never a filter button or a View menu | `Showing [ready to ship ▾] from [all projects ▾] by [day ▾]` |
-| Picking and adding names | ListEditor | labels and cost tags, groups |
-| A choice inside a confirm | OptionList inside the ConfirmStrip or the Dialog; never radio cards | Rescan now, Rescan after the next run |
-| One pick from a long list, or a new one | ListEditor, single pick: find or create, recent first | Add to group |
-| **Entering** | | |
-| Text, a number, a pick from a long list in a form | Field | Branch, Budget, Base branch |
-| Text Worca writes for you | SuggestionField | PR title and description, a drafted answer |
-| Finding anything | the top bar's search: runs, chats, settings, plugins; a result lands with the flash | Search or ask |
-| Context sent with a message | ListEditor's removable item, in the composer | This page × |
-| **Showing** | | |
-| What is happening | StatusLine: the status dot and the state word | Ready to merge, Paused |
-| How far along, and its steps | Stepper, then StepRow on the rail | Plan · Build · Review |
-| Time, cost, changes | Figures | Cost $84.10 of $120 |
-| Labels and cost tags | TagGroup | ui, team: web, +2 |
-| A list of things | ListRow on the rail, the whole row opens, never a box per item. Rows are split by space; a list grouped by something (status, day, section) draws one `--line` where each group after the first starts, from the text edge, and none between rows. Mock `plans/rail/mocks/now-dividers-compare-*.png` (option 4) | runs, files, decisions, Pulse's Now, a settings tab |
-| A short fact: a stage, a source, a slot to set up | Chip | Beta, Official, No API key |
-| Why a control is off, a cut-off text, an id | Tooltip | Checks are still running on #959 |
-| The same figures across many rows | Table: divided rows, tabular figures, no box per row, the name first; on a narrow screen the least needed columns go to the row's detail | sessions, cost by step |
-| **Telling** | | |
-| Something done, nothing to answer | Toast | PR merged |
-| Something failed | where you acted: the strip, the dialog's alert, the field's error line, the suggestion's grey line; a Toast only when there is no such place | Could not merge #959 |
-| Nothing here, loading, could not load | EmptyState: one line on the text edge; loading shows nothing for 300ms, then one line, never a spinner or skeleton | No runs yet |
-| A part of the page cannot be drawn | EmptyState's error, in that part only, with Reload this part | Could not show the changes |
-| Something broke that nothing handles | Toast, error: stays until closed, a repeat counts on it | Something went wrong |
-| The connection dropped | a quiet line at the end of the top bar, grey dot, until it reconnects | Offline · retrying |
-
-Building from it:
-- A page sets no look of its own: no colour, type size, corner or shadow that is not a token, no inline style but
-  layout and data, no control that is not in the table. `plans/rail/prototype/gates/ds-check.mjs` checks it.
-- A spec names the need and the component (`the step's primary in the strip, destructive`), never a size or a colour.
-- When no row fits, stop and propose the addition here (a row, then its Design System page) before building it.
-- A choice is never a full-width toggle or radio cards, and a yes or no never covers the page.
-- The prototype's one-line ink toast (`.rc-toast`) is a stand-in for the shared Toast.
-
-### Where things go: the patterns
-The lookup says which component meets a need; a pattern says where it sits. A page is one of these patterns, or a
-pattern of each part; a spec names the pattern and the needs, and the place follows. When a part fits no pattern,
-propose one here before building it.
-
-**Building a page from a spec.** 1. Pick the page's pattern below. 2. For each thing the person must see or do, find
-its need in the lookup and its slot in the pattern. 3. Write its words by the rules (Small rules, Steps that change
-state, and Patterns further down: labels of 1–3 words, plain words, the status line); a state's dot and colour are
-Status dot and symbols. 4. Draw every state: empty, loading, could not load, a failed step, an unexpected break, a
-lost connection, and 375px (Narrow screens). 5. Pass the gate. The catalog of needs, components and patterns, as data
-for a tool or an agent, is `docs/design-system-catalog.json`; this section and the lookup win when the two differ.
-
-**What a page teaches becomes the design system's.** A pattern, a level, a rule, a motion or a control that a page
-needed and the design system did not have is added to it before the page ships: the rule here, its catalog entry, and
-its component in `ui/public/design-system/components/` with its test and its gallery example. A page never keeps a
-hand-built version of something the design system should own; `ds-check` lists the pages built from the components
-(BUILT) and fails on component markup written by hand there.
-
-**The components in code.** A component with a `code` entry in the catalog is built in code, in
-`ui/public/design-system/components/` (`index.mjs` exports them all): call it, never write its markup. Each returns
-an HTML string from plain options (`button({ label, kind })`, `confirmStrip({ text, yes })`), so a page that renders
-with innerHTML uses it as is and a page that builds elements takes it through `toElement`. A component brings its look
-and its states (working, failed, disabled, the count by exception), so a fix or an upgrade reaches every page at once.
-A need with no component in code yet: add the component there first, with its test (`test/design-system-components.test.mjs`)
-and its `code` entry, then use it. The gallery (`plans/rail/prototype/components.html`) draws each one from the code;
-`ds-check` fails a page in its BUILT list that writes a component's markup by hand.
-
-**A thing's page** (a run, a group; the pattern for any page about one thing with a state), top to bottom:
-| Slot | Holds | Never holds |
-|---|---|---|
-| Top bar | The trail to the parent (the page itself is never a crumb; `‹ Parent` at 760px and below); at its right only quiet lines that are about the window, not the thing: the pager, `Offline · retrying` | Buttons for the thing |
-| Title | The name, one line with an ellipsis | Chips, buttons |
-| Metadata line | Facts as short phrases (where it lives, its kind, when it runs), then its TagGroup; one line, the rest folds into `+N`. A fact that is also a setting is a SentencePicker in its phrase (`Runs [every weekday ▾] at [09:00 ▾]`) | Facts another slot shows, colour, a setting the page does not show |
-| StatusLine | The state word and one detail line; at its right the action slot: the one next step (main ▾), then ⋯. A state that calls for no step leaves the slot empty; ⋯ stays | A second primary |
-| The thing's progress | Stepper and the open stage's StepRows; a question is answered under its step, as an OptionList | — |
-| Figures | Its numbers; each opens its own detail: its tab when it has one (Changes), else a breakdown under it (Cost) | Chips, lists |
-| Tabs | Sections of the thing; each tab's content starts on the tab text edge | A second list of what the page already lists |
-
-**Where a run's work goes** is one phrase in the metadata line that follows the run, never a badge: `branch into dev`, `#959 merges branch into dev`, `branch merged into dev`, `main to origin/main`, `into ~/folder`. A run started with Run on the source branch lands on the source itself, so it says so from the start: `on source then to origin` while it works (the agents' copy it commits on stays hidden), `source to origin` once merged back, with Push as its one step and never a pull request. When the merge back fails the copy shows, `copy not merged into source`, the state is Needs you and the step is How to merge. A branch is named once in the phrase, and its middle folds, never its end. Prototype cases `source`, `source-ready`, `source-unmerged`.
-
-**Where a list goes on a thing's page** (checks, a plan's steps, files, decisions): each list has one home, chosen by
-what it belongs to.
-- **Part of a step** (the checks of the PR stage, the plan of the Plan stage): its StepRow says it in one line, a count
-  and the names that matter (`2 failed · unit, e2e`); the whole list is Overview's first section, the state's focus,
-  named by what it is (`What broke`, `The plan`, `To check`), and the card's action lands there.
-- **About the thing as a whole** (files, decisions, activity): its own tab, its count a caption on the tab; a Figure
-  may open it (Changes).
-- Never both: a list in the focus section has no tab, and a tab's list is not repeated in the card.
-- **A tab reports by exception:** what needs the person is drawn in full; what went fine is one line with › to its
-  detail, and opens by itself only when something in it did not pass.
-- **A list of what a run produced groups by what each item is** (Code, Tests, Not in the code), not by folder;
-  largest first, the folder after the name, each group's head with its count.
-
-**What opens, and what does not** (mocks: `plans/rail/mocks/run-expand-rules-*.png`):
-- **A row opens its own detail, in place:** the ask's parts, a file's diff, a step's rounds. Its › points right while
-  closed and down while open; focus stays on the row.
-- **What has a problem opens by itself** (a failing test, a part of the ask not done, a failed command in Chat: its
-  group and its row, with the output); what went fine stays one line. It opens once: folded by the person, it stays
-  folded.
-- **A fact that has a home elsewhere links there instead of opening a copy:** the evidence line goes to Activity.
-- **Sections never collapse:** a section or group is always drawn; one that is too long shows less, it does not fold.
-- **Opening never moves what is above it.** Several rows may be open at once, except one detail of a kind at a time
-  (one diff).
-
-**Where an action goes** (on every page):
-| Kind of action | Slot |
-|---|---|
-| The one step the state calls for | The action slot's main; alternatives in its ▾; the one that ends the thing (Stop, Cancel) last, after a rule |
-| Supporting actions on the whole thing | ⋯ next to the action slot; tools first, then Report, then Archive or Delete after a rule |
-| Actions on one section | That section's head, at its right (Check out in the Changes head, Reset to defaults in its section) |
-| A fact's detail, or going to the place a fact names | The fact itself, as a Figure or Text link (`#959` opens the PR); ⋯ only when no fact on the page names it |
-| A yes or no, or a one-line answer | ConfirmStrip under the top bar, opening on the safe choice |
-| A step that needs fields | Dialog |
-| A choice that changes a step | SentencePicker, inside the sentence it changes |
-| A thing's own setting (a schedule's times, a run's budget) | The fact itself, where the page shows it, as a SentencePicker; a setting the page does not show is not added to be editable. Settings that must change together: a Dialog from ⋯ (`Edit schedule…`). Where it belongs (its group): ⋯ |
-| Anything about how Worca behaves everywhere | Settings, never on a thing's page |
-
-**A list page** (Runs, Schedules): the top bar's trail, then the title row with the page's one action at its right
-(`New schedule`), then a list. **A list** (runs, updates, files, PRs): divided ListRows on the rail. A row is its state mark on the rail (a status
-dot, or a tick box while selecting), a title line, a meta line, its time or figure at the right; the whole row opens
-its one target, so a fact in the row is text, never a second link. The row's own actions are a ⋯ at its right end
-(the Runs list's row ⋯), the same CompactMenu as on its page. Rows sit in sections in a fixed order (by urgency, or by day), newest first in each; a section with
-no rows is not drawn; the page's spec names the sections. A long section is never folded: it shows its newest rows,
-then one quiet row, `Show 21 more`, opens the rest in place (Older shows 3). What the list shows is a sentence above it (`Showing [unread ▾] from [all groups ▾]`), not a
-filter button; grouping is one more word in it (`by [day ▾]`), each choice in its menu with its count. Every
-list (Runs, Chats, Pulse's Now and Updates, Schedules) uses this one sentence, so a list is narrowed the same way everywhere. Selecting is only for a list whose rows a person can act on together (Runs, Chats, Pulse's Updates); a list of states that leave by themselves (Pulse's Now) has the sentence and no selection. Selecting works the same in every list that has it. You start it from the list's menu
-(`Select`), with ⌘ or Ctrl-click, with Shift-click for a range, with Space or ⌘A, or with a long-press on touch.
-`Select all` joins the head and the sentence stays. The selection bar (`.runs-bulk`) sits at the list's foot:
-`2 selected · Archive 2 · Cancel`. Each action shows how many rows it applies to and is disabled at 0. Cancel or Esc
-ends selecting. An action that can be taken back does not confirm and offers Undo in its Toast; one that cannot confirms in the strip.
-Empty is EmptyState's one sentence and, when there is one, the way forward as its one quiet action (`No schedules
-yet.` · New schedule).
-
-**A panel** (Pulse, the account menu): opens under its top-bar button over any page, never as a page of its own.
-Its head holds Tabs with each count as a caption and ⋯ at the right; the body scrolls and the head stays. On a narrow
-screen it is the window's width.
-
-**A side column** (Ask worca, a Feature chat): a column beside the page, opened from its top-bar button. Above 1080px
-it pushes the page; from 761 to 1080px it covers the page's right side; at 760px and below it takes the window. Its
-width is dragged between 360 and 680px and kept. It opens with Motion's fade, the page narrowing with it, and closes
-at once. One side column at a time.
-
-**A conversation** (Chat, a side column): the person's messages on the right on `--field`, Worca's text on the page,
-its work as cards on a 760px text column under the shared card head: a run card, a command group (folded to its head;
-a failure opens itself), a graph in its well.
-
-**Settings**: one place, opened from the profile menu (the sidebar holds places in Worca, never Settings; Interface
-mode, Appearance and going away live in the profile menu only). Opening it turns the sidebar into its menu, its content
-fading over `change` while the page changes at once: `‹ Back to Worca`, then the sections under four group heads
-(Worca: General, Notifications, Team policy, Labs · Work: Runs, Presets, Labels, Automations · AI: Models, Providers,
-Chat, Guardrails, Memory · Add-ons: Plugins, Connectors). **A setting or a place:** a setting is a choice about how
-Worca behaves, set rarely, taking effect at once; a place is where you do work and come back to. So the Marketplace
-*store* is a place in the sidebar, while what you installed (Plugins), Connectors, Models, Providers and Team policy are
-settings. On a narrow screen Worca's sidebar stays, Settings opens
-on its menu as a list, and a section has `‹ Settings` above its title. The top bar's search finds every row, folded
-row and record by its name or its words, and lands on it with the flash, opening its Customise. Mocks:
-`plans/rail/mocks/settings-*.png`, `settings-open-light.gif`.
-
-**A settings tab** (a section of Settings): its title, then one meta line saying what it decides, then its sections
-(SettingsSection). A row (SettingsRow) is its name on the left and one sentence beside it, the choice a SentencePicker in
-it (`Tell me about [needs you ▾] on [desktop ▾]`), and at its right end a Switch when it is only on or off, then its
-buttons; it takes effect at once. More detail
-folds under the row behind Customise, and a row that differs from its group says Changed. A reset of many rows sits in
-its section's head and confirms in the strip; nothing else confirms. **One row per decision a person makes**, saying the
-current state in words (`Runs pause at $1,000 a month; one run has no limit`); its fine-tuning folds under Customise,
-never a row of its own on the page. A folded row belongs to its row: it sits in the sentence's column, its name a small
-label (Meta size, `--ink`) over its sentence, never the page's name column again. A row's actions are quiet buttons,
-one besides Customise; a bordered or red button lives only in a Dialog or the ConfirmStrip (a step that cannot be
-taken back, such as deleting every chat, is the section head's action and asks first). A value that is a path, a list or a text shows as words with `Change…`, which opens
-a Dialog with its Fields. **A record is not a setting**: a tab that keeps records (presets, labels, models, plugins,
-rules, an event log) puts them as a List of ListRows after its rows, under its own head; the row opens the thing, its
-own actions are in its ⋯, never a SettingsRow per record.
-
-**A form** (New run, Create PR): a Dialog. It opens with the one sentence that frames the step, its choices as
-SentencePickers (`A [large ▾] task`, `branch into dev ▾`), then its Fields. Text Worca can write is a SuggestionField.
-A problem with the choice shows before it is made, on the rail with an amber dot: one note, what it means, and
-the ways out as buttons. The start button names what will happen (`Start at 16:40`); Cancel is quiet, before it.
-A setup of several steps is one Dialog with the Stepper at its head, one step per screen, Back and Next in its foot.
-A view that only shows (a workflow graph at full size) is a Dialog without a form: its head, the view, Close.
-
-### Navigation: one model
-How you move through Worca, the same everywhere. Mocks: `plans/rail/mocks/nav-*.png`.
-
-**Four depths, always in this order.** A **place** (Chat, Runs, Schedules, Statistics…: the sidebar) holds **things** (a
-run, a group, a schedule, a chat: its list's rows); a thing has **parts** (its tabs: Overview, Changes, Activity); a
-part holds **facts** (a file, a decision, a question, a setting). Everything else lays over a page without changing
-where you are: a panel (Pulse, the profile menu), a side column (Ask worca), a Dialog, the ConfirmStrip.
-
-**Five ways to move, each with one job.**
-| Way | Goes | Component |
-|---|---|---|
-| The sidebar | to a place | the sidebar; a place with its own sections (Settings) turns it into its SideMenu |
-| A row | to a thing, as a full page: a thing takes the page, never a pane beside its list (the run page needs its width) | ListRow |
-| The trail | one depth up: a thing to its place, a run to its group | Trail, in the top bar |
-| The pager | sideways, to a sibling: the next run in a group | Pager, at the top bar's right |
-| A link, a search result, a Pulse row, a notification | straight to a fact, in any place | Text link, Search, ListRow; `land()` |
-
-**One way back on screen.** The trail is it: never a second `‹ Back to …` beside it. Where you came from is the
-browser's back, which always works, after a jump too (a Pulse row from Settings: the trail goes up to Runs, the
-browser's back returns to Settings). On a narrow screen the trail is its parent alone, `‹ Parent`.
-
-**Where you land.** A thing opens on its state (the status line), never scrolled; a part opens at its top; a fact
-comes into view, lights once over `flash` and takes the focus (`land()`). Coming back to a place restores what you
-left there: its scroll, the list's sentence, the selection.
-
-**The address is the page.** The place, the thing, its part and the fact are in the URL (`#runs/r-412/changes/file:3`),
-so a link, a notification or a bookmark lands exactly there, and the browser's back walks the same steps.
-
-**The words.** A link names where it goes (`Open Models`, `Runs`, `‹ worca-cc`), never `Click here` or a bare `More`;
-a link that leaves Worca says so (`View PR ↗`). A page changes at once (Motion: no page transition).
-
-### Violet, kept apart
-Violet has two meanings that never meet: the merged status dot (a state), and Worca writing for you inside a field
-(the sparkle, the Suggested chip, the shimmer). A dot never means AI, and a suggestion is never a dot or a badge.
-
-### Suggestions
-- The violet shimmer means Worca is writing text you will review. It never means loading or a run state.
-- Every suggestion runs on a helper job's model (Models › Helper jobs) and its sparkle's tooltip names it: PR titles
-  and descriptions (stacked ones too) on PR description; run title and branch on Run naming; drafted answers and
-  change requests on Drafts.
-- If Worca cannot write it (an error, or no answer in 20s), nothing changes: the field keeps the text it had, says so
-  in grey (`Couldn't write it … The text is as it was.`) with Try again, and the form still submits.
-
-### Steps that change state
-A SentencePicker or Switch on a page takes effect at once, like a setting, and a failed change flips back with a Toast
-saying why; inside a Dialog it applies when the dialog is submitted. A step that changes what other people see (a PR,
-a branch, a merge, a comment) or cannot be taken back (Create PR, Merge, Fix checks, Stop, Cancel the rest, Re-plan,
-Archive, Discard) confirms first, in the dialog or the strip. Spending alone never confirms: starting agent work is
-not a reason to ask, and Stop stays at hand while it works. Near a limit, the confirm of a step that starts agent work
-carries the limit note in one line (`Needs about 12% of Claude Code’s session; 9% is left.`). Its button then says
-what is happening (`Creating…`, `Merging…`) and is disabled until Worca has taken the step on; a step that keeps
-working (a fix, a re-plan) then becomes the state, and the state word says it (`Fixing checks`). On success the page
-moves on and a toast says what happened. On failure nothing changes: the place you acted says what failed and why
-(`Could not merge #959`, the reason, `Nothing changed.`) with Try again, and what already succeeded stays (a stack
-that fails part-way keeps the PRs it opened; a retry opens the rest). Pause, Resume, Re-run checks, Copy link and
-Terminal do not confirm.
-
-### When something breaks unexpectedly
-An error nobody planned for still has one place and one calm sentence. A crash in the interface never stops a run:
-runs execute on their own, and the words say so.
-- **A step you took:** the place you acted, like any failure (`Could not merge #959`), with the reason `Something went
-  wrong on Worca's side. Nothing changed.`, Try again and a Details link.
-- **A part that cannot be drawn:** that part only, as EmptyState's error (`Could not show the changes`, `Something went
-  wrong here. The rest of the page still works.`, Reload this part, Details). Nothing typed elsewhere is lost.
-- **In the background** (an uncaught error or a rejected promise, with no part to point at): one error Toast that stays
-  until closed: `Something went wrong`, `Worca hit an error it did not expect. Your runs keep going.`, Reload and Copy
-  details. A repeat adds a count to it, never a second toast; it never moves focus.
-- **Never the raw error in visible text:** the message, the stack and an error id go behind Details or Copy details,
-  ready to paste into an issue or Chat.
-- **A lost connection is a state, not an error:** `Offline · retrying` with a grey dot at the end of the top bar, gone
-  when it reconnects (a toast says `Back online`). Nothing you typed is lost and nothing is retried twice.
-
-The prototype's Break picker plays each case.
-
-### Small rules that hold everywhere
-- **Names** (a page, a menu item, a section head, a settings row): the thing itself, as the people who use it call it,
-  in 1–3 words, a plain noun first (`Budget`, `Labels`, `Away mode`, `Team policy`). One thing, one name: never two
-  things joined by `&` or `and` (two things get two names); never `Your …`, `My …` or `This …`; never a phrase or a
-  question (`What it may do`, `Up to date`); never a word made up for the screen. The same thing keeps its name
-  everywhere: a menu item's name is its page's title. `ds-check` reads every name on a Rail page by this rule.
-- Hover is a tint, never a lift.
-- A row with no state to show (an idle chat) may show its kind's line icon in the dot's place, in `--ink-2`; a row with
-  a state shows its dot.
-- A row that asks the person something shows its one answer as a quiet button at its right (`Approve`); the rest is in
-  its ⋯.
-- A disabled control says why in its tooltip.
-- Progress cells stay neutral; colour sits only on the dot and the state word.
-- No emoji and no exclamation marks in the interface.
-- In a list you can select, the tick box takes the mark's place on the rail only while selecting, so the list keeps
-  one text edge.
-- Usage is rings around the avatar, outside in: session, the long window (week, day or month), spend (when a budget
-  has a limit). Each ring shows its tightest harness and shades along its arc: `--ink-2` at the start, `--amber` at
-  the warning line, `--red` at the limit; used up, full and solid red. Never green, never violet. Its figures live in
-  one place, the account menu's Usage and costs side menu; a limit warns before it is spent only in New run, Resume
-  and the confirm of a step that starts agent work, and only when the run's estimate does not fit in what is left
-  (with no estimate, at the warning line).
-- Pulse is the panel under its top-bar button, with no page of its own. Every notification setting lives in one
-  Settings tab, Notifications.
-
-### Narrow screens
-A narrow page holds everything the wide one does: things move, they are never dropped. Two widths decide it, and the
-prototype does both at 375px.
-- **760px of window and below:** the trail becomes one link, `‹ Parent`; the sidebar becomes its rail of icons and the
-  avatar; a panel or Dialog takes the window's width; a menu stays 16px inside it.
-- **520px of content and below** (the card or panel's own width): side by side becomes one above the other, on the
-  same text edge:
-  - the StatusLine's action slot moves under the state word and its detail; the main step and its ▾ stay whole, and
-    the action slot's other buttons (Pause, Run after) fold into ⋯ as items of their own;
-  - a settings row's name goes above its sentence, and the row's button under the sentence;
-  - a ListRow keeps its mark on the rail, its title and its time or figure at the right; its other columns wrap to a
-    second line under the title;
-  - Figures and a section head's actions wrap to the next line; Tabs keep one line and scroll sideways inside their
-    strip, the page never does.
-- **480px of window and below,** or whenever the bar runs out of room (a side column takes the space): a top-bar
-  button with a label keeps only its icon, and its tooltip names it.
-- **One line or wrap:** a name (the title, a stage label, a row's meta) keeps one line and ends in an ellipsis, with
-  the whole text in its tooltip; a sentence wraps.
-- **A branch or a path loses its middle,** never its end: its start and its last part stay (`feat/unifi…-breadcrumb`,
-  `ui/…/run-head.mjs`), since the end is what tells two apart. The full name is in its tooltip and a click copies it.
-  The short name beside it (`dev`, the PR number) never shortens.
-- **Touch:** what shows on hover is there from the start (a list's tick boxes); what needs a pointer moves to its
-  editor (a tag's ×).
-
-### The gate
-Every Rail page passes its gate (`plans/rail/prototype/gates/run-page-sweep.mjs` for the run page, `gates/pulse-sweep.mjs` for Pulse) in every case, at 900 and 375px, in both themes: no sideways
-scroll, no clipped text without a tooltip, no overlaps, every section on the text edge, contrast 4.5:1, every menu and
-dialog inside the window, no page jump on any click, the top bar one row, one way back at a time (`‹ Settings` only
-while the side menu is hidden); and every control does something. Every Rail page also passes
-`plans/rail/prototype/gates/ds-check.mjs`: everything on it comes from the design system. A settings tab also passes its
-alignment (`align-check.mjs`, in ds-check, at 900 and 400px): one left edge for every head, name and divider, one right
-edge where every row's end stops (a quiet button by its text), and each row's name, sentence and end on one baseline.
-The alignment is SettingsRow's and SettingsSection's, never a page's; `align-proof.mjs` shows the check catches each
-fault.
-
 ## Foundations
 
 ### Colour (checked)
@@ -458,8 +19,7 @@ a `color-mix()` recipe used twice is a named token (`--btn-hover`, `--red-tint`,
 | violet | `--violet*` | Labs only (the merged status dot, the merged run orb and the run page route's merged circle `.rd-route-dot.is-merged` and merged words `.rd-fact-tx.is-merged` are the named exceptions; the Marketplace chat kind tile and dot follow its kind colours, › Marketplace exceptions) | sources, "Official", policy, a badge, a chart series |
 | slate | `--slate*` | neutral metadata: a source, "Official", policy (`.badge.slate`) | a state |
 Status-dot exceptions: peach = working (it pulses), violet = merged. They are the dots only, never a badge.
-Working and needs you must read as two states at dot size. The Rail look makes `--peach` a warm yellow apart from
-`--amber` (› The Rail look); it arrives with Wave 1 behind the `rail` flag, and today's `--peach` stays one orange.
+Working and needs you must read as two states at dot size; `--peach` stays one orange.
 Surfaces: `--panel` page, `--surface` raised, `--field` field and tint fill; `--line` dividers, `--line-2` control borders.
 `--row-selected` is `--ink` at 8% over transparent (no new hue): the selected Runs row, one ink step over whatever it
 sits on, so it reads on the panel and on the Needs-you amber tint alike. Its PR chips take the `-ink-strong` shades to
@@ -467,7 +27,7 @@ stay at 4.5:1. `--row-open` is 50% of `--row-selected`: the
 lighter row highlight of a collapsed Runs group whose run is open.
 
 Known drift (left for a later run): amber `badge waiting` on Guardrails' "built-in"
-and Models' "endpoint-routed", "project (legacy)" and "plugin:" labels; blue engine and credential badges. The interface
+label; blue engine and credential badges. The interface
 mode cards (`.lv-card-icon`) tint their icon per level (an illustration, not a state).
 
 ### Type (checked)
@@ -525,6 +85,10 @@ on focus. Rings sit on `:focus-visible`, never on `:focus`.
 A divided list with list keys (`ui/public/list-keys.mjs`, the Runs list and the Chats column) is one Tab stop with a
 moving focus (`ui/public/list-dom.mjs`, the one module both lists use): rows and foldable section heads take ↑ ↓ / J K,
 their ⌄, ⋯ and checkbox are `tabindex="-1"`.
+
+### Motion
+Motion shows a change of state and never decorates: short fades, no slide, bounce, count-up, spinner or skeleton, and
+nothing that runs without a state change; under reduced motion it stops. The named exceptions are the away screensaver (it starts after the idle time chosen in Settings › Appearance (off by default) and is off under reduced motion) and the Design stage (› Design stage exceptions).
 
 ## Components
 ### Button (checked)
@@ -596,7 +160,9 @@ Nothing PR-related sits in the bar or in a PR bar; the PR's checks and Watch wor
 chips (`.runs-pr`) are chips, not PR controls.
 ### Field
 `.input` / `.select` / text, number and select elements: 32px, 13px, `--field` fill, 6px corner, ink border on focus.
-`.input-sm` / `.select-sm`: 28px, 12px. A textarea grows; it keeps the same fill, corner and padding sides. Search, url, email,
+`.input-sm` / `.select-sm`: 28px, 12px. `.select-fit` on a `.select` inside a `.drow-control` sizes it to its content
+instead of 240px, for short fixed choices such as "Start after"; it stays right-aligned with the switches and segmented
+controls above it. A textarea grows; it keeps the same fill, corner and padding sides. Search, url, email,
 password and date inputs follow the same field; each joins the base rule when its screen moves.
 A chat card's form (the run proposal) uses the same `.input` / `.select`; its fields sit on one auto-fit grid
 (`.ask-rp-grid`), a switch field takes a whole row, labels stay on one line, and a long value ellipsizes with its whole
@@ -643,6 +209,10 @@ or a policy origin is `.badge.slate`; "not installed" and "built-in" are grey.
 A dot is the state: peach working (pulses), grey paused or waiting, green ready, violet merged. Needs you is an amber
 "?" only when Worca asks; a PR problem is a plain amber dot with the reason in the PR chip; failed is a red "!".
 An idle chat shows the chat bubble line icon in the dot's place.
+### Usage rings
+The avatar draws only the session and long-window rings (`ui/public/usage-view.mjs`), each in one tone (`--ink-2`,
+`--amber` at the warning line, `--red` full at the limit); spend is never a ring there, it lives in the account menu's
+spend card.
 ### Card head
 The first line of a card is its headline. When the page title sits above the card (the run page, the group page),
 the state is the headline: `.run-status-word`, 1–3 words at `--fs-section` / 600 / `--lh-title`, never truncated, the
@@ -713,7 +283,8 @@ it, ↑/↓ move on, and a pick keeps the menu open. The View menus (Runs, Chats
 and Group by. The run page's View PR ▾ is built with it. The sidebar flyouts (`.nav-fly`), the
 composer pickers (`.ask-pop`) and the split-button menus (`.btn-split-menu`) keep their
 own builders and positions and add `.menu` / `.menu-item`; they carry no box or row skin of their own. No hand-built
-dropdowns. An item that has a key shows it as its `hint` (the 11px `--ink-2` count slot): the Runs row ⋯ reads `S`, `E`, `⌫`.
+dropdowns. A choice inside a sentence (the Shaper card's `You lead as [Engineering ▾], supported by [QA ▾].`) is a
+`btn btn-sm btn-quiet` holding its words and a 12px ▾, with `aria-haspopup="menu"`, that opens its menu with `toggleMenu`. An item that has a key shows it as its `hint` (the 11px `--ink-2` count slot): the Runs row ⋯ reads `S`, `E`, `⌫`.
 The Requirements pages build their header and file menus as `.menu.hd-menu` and place them through their own
 `.req-menu` wrapper (the open list floats under its trigger, right-aligned); their danger row (Remove) takes
 `--red-ink-strong`, which keeps AA on `--panel` and on the `--red-bg` hover.
@@ -757,6 +328,8 @@ never a bar. Every chart card has a legend; a one-series chart's legend names th
 Empty: one `.empty-line` (13px `--ink-2`) plus one quiet action. Loading: `aria-busy="true"` on the list, nothing for
 300ms, then one `--ink-2` line (`Loading runs…`); no spinner and no skeleton. Error: `Could not load …` in
 `--red-ink-strong`, the reason and `Nothing changed.`, then Try again and a quiet Details; never the raw error.
+The line's first words are its `.el-t` span; an error line is `.empty-line.is-err` with `role="alert"`, its `.el-t` in
+`--red-ink-strong` and the reason in a plain span under it (the Design library, the Shaper's Requirements card).
 ### Toasts
 `notify({ tone, title, detail, action, key })` (`ui/public/feedback.mjs`): ok and info close after 5s, warn and err
 stay, never move focus.
@@ -783,6 +356,104 @@ or View › Keyboard shortcuts. A 760px `.card` dialog in the shared anatomy: tw
 chips right, "or" between alternatives), stacked under 640px, and a foot with a 12px note and Close. Its `kbd.kbd`
 chips share the top search's `.tsearch-kbd` rule; there is no second key-chip style. Esc, Close or the backdrop close it
 and hand the focus back to the opener.
+### Mark tile
+`span.mdl-mark` (`markTile` and `modelMark` in `ui/public/models/brand-marks.mjs`, CSS in
+`ui/public/models/models-page.css`): a model's, harness's or provider's brand mark on a tile that is white in both
+themes (`--mark-tile`), 1px `--line` border. The default tile is 28px with a 6px corner and an 18px image (a Catalogue
+row, a role tile); `.sm` is 18px with no tile, border or corner and a 16px image (facts, pickers, menu rows); `.lg` is
+36px with an 8px corner and a 22px image (a group or fold row head, a harness tile, the side panel, the model form);
+`.xl` is 48px with an 8px corner and a 30px image (Claude Code's harness tile, which grows it to 72px). `.blank` is a
+service with no one vendor (Speech, Image generation, Sound) or an unknown key: a `--field` tile with an `--ink-2` line
+glyph (`.sm.blank` keeps the fill). `.own` has no border and a white mark on a 135° gradient (the bag in `--on-mark`,
+the worca mark's mask inverted to white): your own model wears the worca mark on `g-blue`, a plugin's model the
+Marketplace bag on `g-indigo`, `g-teal`, `g-pink`, `g-blue`, `g-lime` or `g-slate`, picked from the plugin's name. The
+worca mark is 20px (26px on `.lg`), the bag a 16px glyph (20px on `.lg`); `.sm.own` keeps an 18px tile with a 4px
+corner and a 13px mark (a 12px bag). Use it wherever a model, harness or provider is named by sight. The tile is the
+only place brand colour appears. Never tint a word, a chip or the page with a brand's colour, and never put a brand's
+own mark on a coloured tile.
+### Fold row
+`section.drow.drow-stack.mv-pv-card[data-row]` holding `button.mdl-fold.row-btn` (`aria-expanded`, `aria-controls`) and
+its `div.mdl-fold-body` (`ui/public/models/providers-tab.mjs`): one provider or service on the Models page's Providers
+tab. The head is a Row button (no border, the `--hover` fill and 6px corner on hover, an inset ring on keyboard focus),
+at least 48px with 8px above and below: a 28px caret (a 16px chevron in `--ink-2` that turns down while the row is
+open), a 36px mark, the name (13px / 500, `--ink`) over one summary line (`.mdl-fold-sum`, 12px `--ink-2`, one line
+with an ellipsis: `openrouter.ai · 8 requests at a time`), then the State word at the right. Closed, the body is
+`hidden`; open, its fields sit under the name (88px in, 20px below). Several rows can be open at once; an address
+(`#models/providers/openrouter`), an error on the row or a GitHub Copilot sign-in in progress opens its row. At 560px
+of container width and below (`@container drows`) the State word takes its own line under the text and the body loses
+its indent. Use it for one
+thing whose settings fold under a one-line summary. Never a box per row (the `.drow` divider splits them), and never a
+state colour in the summary.
+### Side panel
+`aside#model-panel.mdl-side` (`renderModelPanel` in `ui/public/models/catalogue-view.mjs`, in `#model-panel-host`):
+the Catalogue's open model, over the page's right edge under the top bar at full height (`position:absolute`, z 30:
+under Ask's column where it covers the page, at 1080px and below, and under the panel's own menus), `min(420px,100%)`
+wide and the full width at 860px and below. `--panel`
+fill, a 1px `--line` left edge, `--shadow-sheet`, 20px 24px 24px padding; it scrolls on its own, and with Ask's column
+open above 1080px it stands left of the column. Its head: a 36px mark, the name (15px / 600) over its State word, and a
+28px quiet Close (`.mdl-side-close`, `aria-label="Close"`). Then one row of actions, as the model's source allows (Test,
+Edit, Duplicate, Edit a copy or Promote to global; ⋯ at the right end for your own models), and its sections (the facts
+`dl.mdl-facts` with a 112px column of 12px `--ink-2` labels, Limits for a translated model only, Used by), each opened
+by one `--line` with 20px of space above and below it. It is not modal: no `role="dialog"`, no backdrop, and the
+list stays usable. The open row takes the `--row-selected` fill (`.mdl-sel`); a click on another row shows that one; a
+click on the open row, Close or Escape closes it and gives the focus back to the row. Use it for a long list whose rows
+are compared: the list keeps its place while one row's detail is open. Never a page of its own for one row, and never
+a modal.
+### Save bar
+`div.mdl-savebar` (`ui/public/models/jobs-view.mjs`): one bar for the whole Jobs tab, drawn only while its picks differ
+from what is saved (`hidden` otherwise). Sticky at the tab's bottom (z 2), `--panel` fill, a 1px `--line` border, 8px
+corner, 10px 12px 10px 20px padding, no shadow. On the left a 12px `--ink-2` note, `1 unsaved change` or `N unsaved
+changes`; on the right a 32px `Discard` (`.btn.mdl-discard`) and the primary `Save` (`.btn.btn-primary.mdl-save`),
+which reads `Saving…` and is disabled while it saves. A save sends only what changed and says `Saved.` in a Toast; a
+refusal goes on the tab's message line and keeps the picks. Use it for a tab whose picks are saved together. Never a
+Save per row or per card, never a shadow, and never shown with nothing to save.
+### Dialog step head
+`ol.mdl-steps` (`aria-label="Steps"`; `ui/public/models/add-model-dialog.mjs`, and the model form's head in
+`ui/public/models-view.mjs` when Add model leads to it): the step names in a Dialog's head, on the title's line before
+Close: `1 Where it runs`, a 12px `--ink-3` rule, `2 The model`. 12px / 500 `--ink-2` on one line, no box, no border and
+no number disc; the current step is `li[aria-current="step"]`, `--ink` at 600. Hidden at 860px and below, and left out
+when there is one step to take (Change where it runs); the title and the foot (Next on the first step, Back on the
+second) still say where you are. Use it
+for a setup of two or three steps in one Dialog. Never a coloured step bar, never a step you click, and never the only
+way back: Back sits in the foot.
+### Harness tiles
+`div.mdl-hx` (`role="group"`) of `button.mdl-hx-t` (`aria-pressed`; `ui/public/models/harness-tiles.mjs`): one tile per
+harness, picked by sight, on the Jobs tab (Expert) and in Add model's sign-in step. A 6-column grid with 8px gaps, two
+per row at 860px and below. A tile has 10px padding, a 1px `--line` border, an 8px corner and the `--panel` fill: its
+36px mark, the name (12px / 600, one line) and its State word at 11px with a 6px dot (`Ready`, `Not ready`; on the Jobs
+tab `Ready · Default for new runs`); a Beta chip sits in its top corner. `.best` (Claude Code) spans two columns and two
+rows, with 16px padding, a 72px mark, a 15px name over a 12px State word, a 24px tick disc and the `Best performance`
+chip (`.badge.mdl-best`, white on worca's blue gradient); at 860px and below it keeps the full row at one row's height.
+`.on` (the pick, `aria-pressed="true"`) is a 1px ink edge and a 20px ink tick disc in the bottom corner
+(`svg.mdl-hx-check`). `.off` (not ready) puts the name in `--ink-2` at 500 and the mark's image at half opacity (its
+tile stays), still pickable, the reason in its tooltip; a locked tile is disabled, dimmed the same way, with the lock's
+reason as its tooltip. Hover is the `--hover-outline` edge. Never an ink fill for the pick, and never a recoloured mark.
+### Role tiles
+`div.mdl-tiles` of `button.mdl-tile` (`aria-haspopup="menu"`, `aria-expanded`; `ui/public/models/jobs-view.mjs`): the
+Jobs tab's three roles (Deep thinking, Everyday tasks, Quick jobs), each the button of its own model picker. Three equal
+columns with 12px gaps, stacked at 860px and below. A tile has 16px padding (`--pad-tile`), a 1px `--line` border, an
+8px corner and the `--panel` fill: the role (13px / 600) over what it does (12px `--ink-2`), then the model at 15px / 600
+with its 28px mark and a chevron at the right, then its effort (`xhigh effort`, `Model default effort`). An unset role
+reads `Each job's own default`. Hover is the `--hover-outline` edge; open (`aria-expanded="true"`), a 1px ink edge. A
+pick goes into the tab's unsaved picks and shows the Save bar. Never an ink fill, and never a select inside the tile.
+### State word
+`span.mdl-st` + `.ok`, `.need`, `.fail` or `.off`: the Models page's one dot and one word, in Catalogue rows and group
+heads, the Side panel, Fold rows, Harness tiles, Add model and the model form. 12px / 500 on one line, an 8px round dot
+(`::before`) 7px before the word. `.ok`: a `--green` dot and an `--ink-2` word (`Ready`, `Connected`, `Key set`).
+`.need`: an `--amber` dot and an `--ink` word (`Needs key`, `Needs sign-in`, `Needs setup`). `.fail`: a `--red` dot and
+a `--red-ink-strong` word (`Key ${VAR} not set`). `.off`: a hollow 2px `--slate` ring and an `--ink-2` word (`Not
+connected`, `No key`, `Not ready`). A Harness tile draws it at 11px (12px on Claude Code's) with a 6px dot 5px before
+the word and a 1.5px ring. Use it for a thing's readiness on the Models page; the fix is a button of its own beside it.
+Never a chip or a badge for a state, and never a state colour elsewhere in the row.
+### Models tabs
+`nav#models-tabs.tabs.mdl-tabs` (`aria-label="Models"`) of `a.tab.mdl-tab` (`ui/public/models/page-tabs.mjs`): the Models
+page's header, Catalogue, Jobs and Providers (`#models`, `#models/jobs`, `#models/providers`), each a link with a 16px
+line icon (`layers`, `briefcase`, `cloud`) before its name. The shared Tabs skin: 32px, 13px / 500 `--ink-2`, no box;
+the open tab (`.on`, `aria-current="page"`) is `--ink` over a 2px ink underline. Catalogue carries its count,
+`span.badge.mdl-tab-count`: the listed models (hidden built-ins are not counted), hidden until the list has loaded. The
+`mdl-` hooks set layout only: the strip sits 4px down and the head's actions (⋯ and Add model, on the Catalogue) 4px
+up, so the head keeps one height on every tab; at 760px and below the actions wrap under the strip. Never a page intro
+above them, never a boxed tab, and never a colour of a tab's own.
 
 ## Patterns
 - Status line: "State · detail", for example "Failed · Review · Review Implementation". No colon forms. In a card head
@@ -794,7 +465,8 @@ and hand the focus back to the opener.
   belong in a tooltip.
 - The feature is "Chat", not "Ask Worca".
 - Page header: title, then one short intro sentence (`.page-intro`), then content. A full-bleed editor (Workflows) has
-  no page header; the Marketplace's tabs are its header (Marketplace exceptions).
+  no page header; the Marketplace's tabs are its header (Marketplace exceptions). The Models page's tabs are its header
+  too: no intro, a line icon before each tab's name (Models tabs).
 - Stat tiles hold numbers only (time, cost, files changed). A list of chips goes in its own labelled row, for example
   the Cost tags row in the run page's facts block, never stacked inside a tile. The value is sans with tabular figures.
 - Run and group pages share one head: the bar (Back, a 28px chevron `Back to Runs`, in every layout; the breadcrumb
@@ -831,8 +503,9 @@ and hand the focus back to the opener.
   row's 3px line, then the 11px Plan / Build / Review / Ready with its stage bold); its status names no step, only a
   state its dot does not say (needs you, paused). A member dispatched but not started yet (Starting) draws no progress. Its ⋯ stays 28px, centred.
 - Search is the top bar's "Search or ask" only. A list filter is chosen there ("Runs labelled hotfix", `label:hotfix`),
-  not from a filter button in the list's header. The Marketplace's Browse search is the one exception
-  (Marketplace exceptions).
+  not from a filter button in the list's header. The Marketplace's Browse search is one exception
+  (Marketplace exceptions); the Models Catalogue's own "Search models" field, with its All, In use and Needs setup
+  filter chips (Just imported after an import) and its Source select, is the other.
 - Phones: one 16px gutter; nothing scrolls sideways at 290px.
 - Runs list order: Needs you (most urgent first), Running, Waiting, Recent. Each section is newest dispatch first (a
   run's start, a waiting ticket's creation); a section with no rows is not drawn.

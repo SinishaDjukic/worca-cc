@@ -57,9 +57,7 @@ away — 2 to check".
 A short notice tells you when away hours start and end, and a violet dot sits on your avatar while you're away.
 Turning **Away** off in the account menu ends it.
 
-## A small easter egg
+## The screensaver
 
-While you're away with **Keep awake** on, leave the Worca window in front and untouched for 5 minutes. A screensaver
-takes over: the wordmark drifts across the window with one line on how your runs and chats are doing. Move the
-mouse or press a key to bring the page back. To turn it off, set `AWAY_SCREENSAVER` to `false`
-in `ui/public/away-screensaver.mjs`.
+The screensaver is no longer part of Away mode. It is a setting in **Settings › General › Appearance**, off by
+default. Turn on **Screensaver** and pick **Start after** (5 to 30 idle minutes, 5 by default).
