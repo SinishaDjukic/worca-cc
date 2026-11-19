@@ -17,7 +17,7 @@
 .mem-reasons li{margin:4px 0;}
 .mem-actions{margin-top:12px;align-items:center;gap:10px;}
 .mem-health-head .mem-defrag{margin-left:auto;}
-/* Settings → Memory: the line pointing at the Defragment model's helper job (the Models page › Engines). */
+/* Settings → Memory: the line pointing at the Defragment model: its helper job on Claude and Codex (#models/jobs/helpers/<harness>), else the harness's Quick jobs role (#models/jobs/roles/<harness>). */
 .mem-model-link{margin:0 0 16px;}
 .mem-defrag svg{display:block;flex:none;}
 .mem-host-hint{display:block;margin-top:8px;}

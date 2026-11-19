@@ -279,6 +279,8 @@ test('displayName', () => {
   assert.equal(displayName({ id: 'x', label: 'ERNIE 5.5 (free) (OpenRouter)' }), 'ERNIE 5.5 (free)');
   assert.equal(displayName({ id: 'x', label: 'Baidu: ERNIE 5.5 (free) (OpenRouter)', upstream: { model: 'baidu/ernie-5.5:free' } }), 'ERNIE 5.5 (free)');
   assert.equal(displayName({ id: 'x', label: 'Qwen3 Coder (Ollama)' }), 'Qwen3 Coder (Ollama)');
+  // CAT-10: an OpenAI-compatible import's label ends in the connection's name, which the sub-header already says.
+  assert.equal(displayName({ id: 'local-stub-a', label: 'stub-a (OpenAI-compatible)' }), 'stub-a');
   assert.equal(displayName({ id: 'x', label: 'Team: X' }), 'Team: X');
   assert.equal(displayName({ id: 'x', label: 'Team: X', upstream: { model: 'team-x' } }), 'Team: X');
   assert.equal(displayName({ id: 'only-id' }), 'only-id');

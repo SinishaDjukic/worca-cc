@@ -8,7 +8,7 @@ import { providerRowOf, TRANSLATED_APIS } from '../bridge-view.mjs';
 import { costSummary } from '../models-view.mjs';
 import { credentialBadge } from '../credential-badges.mjs';
 import { providerState } from './provider-state.mjs';
-import { vendorOf } from './brand-marks.mjs';
+import { vendorOf, CONNECTION_SUFFIX_RE } from './brand-marks.mjs';
 
 export const CATALOGUE_VIEW_DEFAULT = Object.freeze({ query: '', filter: 'all', source: 'any', fold: Object.freeze({ claude: false }), open: null });
 
@@ -31,14 +31,13 @@ const SUB_ORDER = Object.freeze(['signin', 'env', 'copilot', 'openrouter', 'open
 const PROVIDER_SUBS = Object.freeze(['copilot', 'openrouter', 'openai', 'anthropic']);
 const PROVIDER_NAMES = Object.freeze({ ...PROVIDER_LABELS, openrouter: 'OpenRouter' });
 
-const ADDED_SUFFIX_RE = / \((?:Copilot|OpenRouter)\)$/;
 const VENDOR_PREFIX_RE = /^[^:/]+:\s+(?=\S)/;
 
-/** A label without the suffix an import added (" (Copilot)", " (OpenRouter)"; other suffixes such as " (Ollama)"
- *  stay) and, when `upstream.model` holds a `/`, without OpenRouter's leading "<Vendor>: " (CAT-10). */
+/** A label without the suffix an import added (" (Copilot)", " (OpenRouter)", " (OpenAI-compatible)": the connection,
+ *  which the sub-header names; a server's own name such as " (Ollama)" stays) and, when `upstream.model` holds a `/`, without OpenRouter's leading "<Vendor>: " (CAT-10). */
 export function displayName(model) {
   const m = model || {};
-  const name = String(m.label || m.id || '').replace(ADDED_SUFFIX_RE, '');
+  const name = String(m.label || m.id || '').replace(CONNECTION_SUFFIX_RE, '');
   return String(m.upstream?.model ?? '').includes('/') ? name.replace(VENDOR_PREFIX_RE, '') : name;
 }
 
@@ -260,7 +259,7 @@ function panelFacts(r, d, first) {
   return facts;
 }
 
-/** PAN-5 for a translated model (degradationLine's condition, bridge-view.mjs); [] for every other model. No
+/** PAN-5 for a translated model (an upstream API in bridge-view.mjs's TRANSLATED_APIS, not Codex); [] for every other model. No
  *  context window is stored, so there is no "Context" row. */
 function panelLimits(m) {
   const up = m.upstream;

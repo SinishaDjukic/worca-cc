@@ -6,6 +6,7 @@ import assert from 'node:assert/strict';
 import { JSDOM } from 'jsdom';
 import {
   ADD_PROVIDERS, ADD_PROVIDER_LABELS, renderAddStep1, collectAddStep1, renderAddStep2, addStep2Plan, paintAddSelection,
+  paintAddList,
 } from '../ui/public/models/add-model-dialog.mjs';
 import { providerState } from '../ui/public/models/provider-state.mjs';
 import { renderImportSheet, renderEndpointSheet } from '../ui/public/bridge-view.mjs';
@@ -86,6 +87,15 @@ test('step 1 for a provider', () => {
   assert.deepEqual([...sel.options].map((o) => o.textContent), ['GitHub Copilot', 'OpenRouter', 'OpenAI-compatible', 'Anthropic-compatible']);
   assert.equal(sel.value, 'openrouter');
   assert.equal(root.querySelector('.mdl-st.need').textContent, 'Needs key');
+  // ADD-2: the select carries the picked provider's mark (markedSelect); a pick moves it.
+  const mark = () => root.querySelector('.mdl-add-prow > .mdl-picksel > .mdl-mark img')?.getAttribute('src');
+  assert.equal(root.querySelector('.mdl-add-prow > .mdl-picksel > select'), sel);
+  assert.match(mark() || '', /\/vendor\/brand-icons\/openrouter\.svg$/);
+  sel.value = 'copilot';
+  sel.dispatchEvent(new doc.defaultView.Event('change', { bubbles: true }));
+  assert.match(mark() || '', /\/vendor\/brand-icons\/githubcopilot\.svg$/);
+  sel.value = 'openrouter';
+  sel.dispatchEvent(new doc.defaultView.Event('change', { bubbles: true }));
   assert.equal(root.querySelector('.mdl-hx'), null);
   assert.equal(optOf(root, 'provider').getAttribute('aria-checked'), 'true');
   const label = root.querySelector(`label[for="${sel.id}"]`);
@@ -107,6 +117,9 @@ test('step 1 for a provider', () => {
   assert.equal(optOf(fixed, 'provider').disabled, false);
   assert.equal(fixed.querySelector('.mdl-next').textContent, 'Continue');
   assert.equal(fixed.querySelector('.mdl-steps'), null, 'no step names');
+  assert.equal(fixed.querySelector('.mv-editor-title').textContent, 'Add model', 'no title given: the dialog\'s own');
+  assert.equal(renderAddStep1({ where: 'signin' }, { doc, fixedEngine: 'claude', title: 'Edit GLM 4.7' }).querySelector('.mv-editor-title').textContent,
+    'Edit GLM 4.7', 'on an edit, step 1 keeps the form\'s title (the walk: it read "Add model")');
   assert.deepEqual(opts(fixed).map((o) => o.tabIndex), [0, -1, -1], 'one tab stop: the checked card');
   const arrow = (key) => fixed.querySelector('.mdl-opt[aria-checked="true"]').dispatchEvent(new doc.defaultView.KeyboardEvent('keydown', { key, bubbles: true }));
   arrow('ArrowDown');
@@ -240,6 +253,7 @@ test("step 2's toolbar and foot", () => {
   assert.equal(renderAddStep2({ provider: 'openai' }, { doc }).querySelector('#mimp-base').value, '');
 
   const cp = renderAddStep2({ provider: 'copilot' }, { doc, providers: P });
+  assert.match(cp.querySelector('.mdl-add-bar > .mdl-picksel > .mdl-mark img')?.getAttribute('src') || '', /githubcopilot\.svg$/, 'ADD-3: the toolbar\'s select carries the mark too');
   assert.equal(cp.querySelector('#mimp-base'), null);
   assert.equal(cp.querySelector('.mimp-preset'), null);
   assert.equal(cp.querySelector('#mimp-key'), null);
@@ -257,6 +271,10 @@ test("step 2's toolbar and foot", () => {
   assert.equal(manual.textContent, 'Enter an id instead');
   assert.equal(cp.querySelector('p#mimp-msg').getAttribute('aria-live'), 'polite');
   assert.equal(cp.querySelector('div#mimp-body').childElementCount, 0);
+  const count = cp.querySelector('div#mimp-body + p.hint.mdl-add-shown');
+  assert.ok(count, 'ADD-3: the "N of M shown" line sits under the list');
+  assert.equal(count.hidden, true, 'and is hidden until a list is drawn');
+  assert.equal(count.id, '', 'a class only (ui-id-consistency)');
   const blocked = cp.querySelector('div.mdl-add-blocked');
   assert.equal(blocked.hidden, true);
   assert.ok(blocked.querySelector('span.mdl-st'));
@@ -285,4 +303,34 @@ test('the sheets say "In catalogue"', () => {
   assert.equal(sheet.querySelector('.mvi-status').textContent, 'In catalogue');
   const ep = renderEndpointSheet({ baseUrl: 'http://127.0.0.1:11434/v1', models: [{ id: 'qwen3', inCatalog: true }] }, { doc });
   assert.equal(ep.querySelector('.mvi-status').textContent, 'In catalogue');
+});
+
+// ADD-3 (the whole-menu walk): "N of M shown" under the table, and the head box over the rows shown: ticked when all
+// of them are, mixed when some are, clear when none (a row the filter hides or a disabled one does not count).
+test('paintAddList: "N of M shown" under the list and the head box ticked, mixed or clear over what shows', () => {
+  const doc = docOf();
+  const root = renderAddStep2({ provider: 'copilot' }, { doc, providers: P });
+  const line = root.querySelector('.mdl-add-shown');
+  paintAddList(root);
+  assert.equal(line.hidden, true, 'no list: no line');
+  const sheet = renderImportSheet([{ id: 'a', name: 'A' }, { id: 'b', name: 'B' }, { id: 'c', name: 'C' },
+    { id: 'off', name: 'Off', policyState: 'disabled' }], { doc });
+  root.querySelector('#mimp-body').append(sheet);
+  const all = sheet.querySelector('.mvi-all');
+  const cb = (id) => sheet.querySelector(`.mvi-cb[value="${id}"]`);
+  paintAddList(root);
+  assert.deepEqual([line.hidden, line.textContent], [false, '4 of 4 shown']);
+  assert.deepEqual([all.checked, all.indeterminate], [false, false], 'nothing ticked: clear');
+  cb('a').checked = true;
+  paintAddList(root);
+  assert.deepEqual([all.checked, all.indeterminate], [false, true], 'one of three: mixed');
+  sheet.querySelector('tr[data-id="c"]').classList.add('is-filtered');
+  paintAddList(root);
+  assert.equal(line.textContent, '3 of 4 shown');
+  cb('b').checked = true;
+  paintAddList(root);
+  assert.deepEqual([all.checked, all.indeterminate], [true, false], 'every row shown is ticked (a hidden one and a disabled one do not count)');
+  for (const tr of sheet.querySelectorAll('tbody tr')) tr.classList.add('is-filtered');
+  paintAddList(root);
+  assert.deepEqual([line.textContent, all.checked, all.indeterminate], ['0 of 4 shown', false, false]);
 });

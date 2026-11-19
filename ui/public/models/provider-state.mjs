@@ -1,7 +1,7 @@
 // ui/public/models/provider-state.mjs — the Providers tab's state words and folded summary lines (models-menu P3,
 // DESIGN PRV-7). Pure: no DOM. Each row of PROVIDER_ROWS gets a state { tone, text, fix } and a one-line summary
 // worked out from GET /api/providers; a missing payload, a missing block or an unparsable address falls back to the
-// defaults today's Providers card renders with (bridge-view.mjs).
+// defaults the Providers tab's rows render with (bridge-view.mjs).
 import { IMAGE_SERVICES } from '../../../src/shared/image-services.mjs';
 import { brokerState, providerRowOf } from '../bridge-view.mjs';
 

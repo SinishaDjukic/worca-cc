@@ -83,7 +83,9 @@ const state = {
 const GROUP_PAGE = { host: null, route: '', id: '', tab: 'runs', featureId: '', gone: false, failed: false, resolving: false, reentered: false, paintQueued: false, unmarked: 0 };
 
 import { icon } from './icons.mjs';
-import { subagentAliasLabel, subagentAliasTitle } from '../../src/shared/model-roles.mjs';
+import { subagentAliasLabel, subagentAliasTitle, roleOf, ROLE_LABELS } from '../../src/shared/model-roles.mjs';
+import { HELPER_JOBS } from '../../src/shared/model-jobs.mjs';
+import { paintMarkedSelect } from './models/brand-marks.mjs';
 import { telemetrySlotHtml, paintTelemetry } from './run-telemetry-view.mjs';
 import { copyButton, copyFromButton, flashCopy, writeClipboard } from './copy-button.mjs';
 import { paintSessionsTab, sessionsTabVisible, sessionsBadge, sessionRowLine, sessionRowEl } from './run-sessions-view.mjs';
@@ -154,7 +156,7 @@ import { registerScopeSwitchCard } from './chat/scope-switch-card.mjs';
 import { registerQuestionCard } from './chat/question-card.mjs';
 import { registerFilesCard, filesForViewer, fileViewerUrls } from './chat/files-card.mjs';
 import { createTerminalPane } from './terminal-pane.mjs';
-import { notify, announce, withButton, fieldError, clearFieldErrors, cardAlert, trackDirty, splitMessage, BUTTON_DONE_MS } from './feedback.mjs';
+import { notify, announce, withButton, fieldError, clearFieldErrors, cardAlert, trackDirty, splitMessage, BUTTON_DONE_MS, feedbackIcon } from './feedback.mjs';
 import { layoutDialog, watchDialogEdges } from './dialog-layout.mjs';
 import { setEngineLocks, engineLock, applyEngineLocks } from './engine-locks.mjs';
 import { guardModal, dialogOpen, DISCARD_MESSAGE } from './modal-guard.mjs';
@@ -189,7 +191,7 @@ import { mountMarketplace, tabFromParam, targetFromParam } from './marketplace/i
 import { parseModelsParam, modelsHash, renderModelsTabs, paintModelsTabs } from './models/page-tabs.mjs';
 import { renderProvidersTab, toggleProviderRow } from './models/providers-tab.mjs';
 import { providerModelCounts, providerState } from './models/provider-state.mjs';
-import { renderAddStep1, collectAddStep1, renderAddStep2, addStep2Plan, paintAddSelection } from './models/add-model-dialog.mjs';
+import { renderAddStep1, collectAddStep1, renderAddStep2, addStep2Plan, paintAddSelection, paintAddList } from './models/add-model-dialog.mjs';
 import { buildCatalogue, buildModelPanel, CATALOGUE_VIEW_DEFAULT } from './models/catalogue-model.mjs';
 import { renderCatalogue, renderModelPanel } from './models/catalogue-view.mjs';
 import { buildJobs, jobsSaved, jobsSaveBody, jobsDirty } from './models/jobs-model.mjs';
@@ -214,11 +216,11 @@ import {
 } from './guardrails-view.mjs';
 import {
   renderModelEditor, collectModelEditor, makeEnvRow, applyCostMode, setModelCost,
-  suggestDuplicateId, deleteRefsSummary,
+  suggestDuplicateId, suggestDuplicateLabel, deleteRefsSummary,
   renderExportWizard, collectExportWizard, applyConnectionModeIn, setModelEngine, paintEditorSave, setFormWhere,
 } from './models-view.mjs';
 import {
-  collectProviderRow, collectSpeechRow, formatSpeechBytes, renderImportSheet, renderEndpointSheet, collectImportSheet, applyImportSelectAll,
+  collectProviderRow, collectSpeechRow, formatSpeechBytes, renderImportSheet, renderEndpointSheet, collectImportSheet,
   collectOpenRouterRow, endpointRowMatches, ENDPOINT_PRESETS,
   setModelUpstream, applyImagesPreset, collectImagesRow, imagesRowProblem, showImagesTest, showImagesSaveError, collectSoundRow,
   connectionWhere,
@@ -1049,7 +1051,7 @@ document.getElementById('models-tabs-host')?.replaceChildren(modelsTabsNav);
 // The tab the Models page showed last: when showView runs the hash already names the new one, so only this tells a
 // tab change from a repaint. Declared up here because the boot route (bottom of the file) runs during evaluation.
 let modelsTabShown = '';
-// The content the Providers card was last drawn from (paintProvidersTab compares it): '' = draw on the next show.
+// The content the Providers tab was last drawn from (paintProvidersTab compares it): '' = draw on the next show.
 let providersDrawnKey = '';
 // The number of the newest loadModelsView call and its promise: an older call writes nothing and resolves after it.
 let modelsLoadSeq = 0;
@@ -1553,7 +1555,7 @@ function recentRunsForFree() {
   return [...runs.values()].sort((a, b) => String(b.startedAt || '').localeCompare(String(a.startedAt || '')));
 }
 
-/** The Providers card: the allowance under the OpenRouter row, without pressing Test. */
+/** Models › Providers: the allowance under the OpenRouter row, without pressing Test. */
 function paintProviderFreeDaily() {
   const line = providerFreeLine(freeDailyState.status);
   const root = providerRoot();
@@ -16422,6 +16424,7 @@ async function loadSettings() {
     paintNetworkWaitSettings(data);
     paintRunLimitsSettings(data);
     paintSmartNamingSettings(data);
+    paintMemoryModelLink(data);
     paintActionsSettings(data);
     paintDebugSpawnSettings(data);
     paintKeepAwakeRow(data.keepAwake !== false);
@@ -17424,6 +17427,23 @@ async function snPaintCost(naming) {
     else if (model) out.textContent = `${model}${base}`;
   }
   settingsCardPainted('smartNamingSave');
+}
+/** Settings › Memory's link to the Defragment model. A defragment run takes its run engine's own "Memory defragment"
+ *  job (orchestrator.mjs defragSlotPair): the line names that harness's Helper jobs when it has the job. A harness
+ *  without it (Cursor, Copilot…) has an empty slot (settings-cascade.mjs utilityModelFor), so its run falls to that
+ *  harness's own role for the job (model-roles.mjs withRole): the line names that harness's Roles, never Claude's job. */
+function paintMemoryModelLink(data) {
+  const line = document.querySelector('.mem-model-link');
+  const a = line?.querySelector('a');
+  if (!a) return;
+  // A name that is no harness (a hand-edited "constructor") reads as the default, Claude Code.
+  const named = data && typeof data.runEngine === 'string' ? data.runEngine : '';
+  const engine = MODEL_ENGINE_NAMES.includes(named) ? named : 'claude';
+  const hasJob = (HELPER_JOBS[engine] || []).some((j) => j.key === 'memoryDefrag');
+  const lead = hasJob ? 'a helper job' : `the ${ROLE_LABELS[roleOf('memoryDefrag')]} role`;
+  a.setAttribute('href', hasJob ? `#models/jobs/helpers/${engine}` : `#models/jobs/roles/${engine}`);
+  a.textContent = hasJob ? 'Models › Jobs › Helper jobs' : 'Models › Jobs › Roles';
+  line.replaceChildren(`The model every Memory defragment run uses is ${lead}: `, a, '.');
 }
 function paintSmartNamingSettings(data) {
   const d = data && data.smartNaming;
@@ -19546,7 +19566,7 @@ async function loadGuardrailsView(param = '') {
 // ---------------------------------------------------------------------------
 const mvState = {
   data: null, editing: null, prefill: null,
-  // Model bridge (model-bridge-design.md §8): the Providers card payload, an
+  // Model bridge (model-bridge-design.md §8): the Providers tab payload, an
   // in-flight Copilot sign-in, the import sheet and its list, and Copilot's
   // models list for the editor's datalist (fetched once per view load when
   // connected; empty otherwise).
@@ -19648,7 +19668,7 @@ function renderModelsViewBody() {
   const vm = buildCatalogue(data, mvState.cat);
   // The tab's pill counts the listed models once the catalogue loaded (SH-3); nothing before.
   mvState.count = mvState.data ? vm.count : null;
-  // The Providers card is its own tab now (§8.1): at 1000+px it buried the catalog it unlocks. Importing, the model
+  // Providers is a tab of its own (§8.1): as a card at 1000+px it buried the catalog it unlocks. Importing, the model
   // form and Share as plugin are screens of the model dialog (models-menu P5): the list holds the Catalogue alone.
   const { query, filter, source } = mvState.cat;
   el.modelsList.replaceChildren(renderCatalogue(vm, { doc: document, query, filter, source }));
@@ -19682,9 +19702,33 @@ function paintModelTest(lc) {
   const out = el.modelPanelHost?.querySelector('.mdl-test-result');
   if (btn && t?.busy && !btn.disabled) { btn.disabled = true; heldTestButtons.add(btn); }
   if (btn && !t?.busy && heldTestButtons.has(btn)) { btn.disabled = false; heldTestButtons.delete(btn); }
+  if (btn && t) paintTestLabel(btn, t);
   if (out && t) {
     out.textContent = t.text;
     out.className = `mdl-test-result hint${t.err ? ' err' : ''}`;
+  }
+}
+
+/** PAN-3: Test reads "Testing…" with the spinner while it runs, then "Works" for BUTTON_DONE_MS, the look withButton
+ *  paints (action-feedback.css keys on data-fb-state). Painted from `mvState.tests`, so a panel drawn anew mid-test
+ *  shows it too; the answer itself stays on the result line. */
+function paintTestLabel(btn, t) {
+  const state = t.busy ? 'busy' : t.done ? 'done' : '';
+  if ((btn.dataset.fbState || '') === state) return;
+  if (state) btn.dataset.fbState = state; else delete btn.dataset.fbState;
+  btn.classList.toggle('is-busy', state === 'busy');
+  btn.classList.toggle('is-done', state === 'done');
+  if (state === 'busy') btn.setAttribute('aria-busy', 'true'); else btn.removeAttribute('aria-busy');
+  const doc = btn.ownerDocument;
+  if (state === 'busy') {
+    const spin = doc.createElement('span');
+    spin.className = 'btn-spin';
+    spin.setAttribute('aria-hidden', 'true');
+    btn.replaceChildren(spin, 'Testing…');
+  } else if (state === 'done') {
+    btn.replaceChildren(feedbackIcon(doc, 'ok', 'btn-ic'), 'Works');
+  } else {
+    btn.replaceChildren('Test');
   }
 }
 
@@ -19870,6 +19914,9 @@ function prefillModelEditor(editor, pre) {
   if (pre.engine) setModelEngine(editor, pre.engine);
   const idInput = editor.querySelector('.mv-id');
   if (idInput) idInput.value = pre.id || '';
+  // The plugin model's id is the copy's on purpose (it shadows the plugin's): the upstream set below must not swap
+  // it for a <provider>-<upstream id> handle (applyConnectionModeIn suggests one only while data-auto is not "off").
+  if (idInput && pre.id) idInput.dataset.auto = 'off';
   const labelInput = editor.querySelector('.mv-label');
   if (labelInput) labelInput.value = pre.label && pre.label !== pre.id ? pre.label : '';
   const efforts = new Set(pre.efforts || []);
@@ -19930,9 +19977,7 @@ function duplicateModelFlow(id) {
     ...modelFormOptions(d),
     copyFrom: src.id,
     id: suggestDuplicateId(src.id, taken),
-    // Only suffix a label the user actually chose; an entry that never had one
-    // keeps none, so the copy's label defaults to its own new id.
-    label: src.label && src.label !== src.id ? `${src.label} copy` : '',
+    label: suggestDuplicateLabel(src),
     where: connectionOf(src).kind,
     takenIds: takenModelIds(),
   });
@@ -20152,9 +20197,9 @@ onFlagChange('design', () => repaintJobs());
 /** The Jobs block each address word opens: the blocks' own words, and the old card addresses (also under jobs/). */
 const JOBS_PART_OF = Object.freeze({ roles: 'roles', steps: 'steps', helpers: 'helpers', design: 'design',
   'model-roles-card': 'roles', engine: 'steps', 'engine-settings-card': 'steps', 'title-model': 'helpers' });
-/** Scrolls to and flashes (markFound) the block `rest` names, its first enabled button focused. An unknown word or a
- *  block that is not drawn (Design with its flag off) reveals nothing; the address stays as typed. The flash ends
- *  after 3 s on whichever block holds its id then, as a repaint draws a new one. */
+/** Scrolls to and flashes (markFound) the block `rest` names (the part of a '<part>/<harness>' address), its first
+ *  enabled button focused. An unknown word or a block that is not drawn (Design with its flag off) reveals nothing;
+ *  the address stays as typed. The flash ends after 3 s on whichever block holds its id then, as a repaint draws a new one. */
 function revealJobsPart(rest) {
   const part = Object.hasOwn(JOBS_PART_OF, rest) ? JOBS_PART_OF[rest] : '';
   const block = part ? document.getElementById(`jobs-${part}`) : null;
@@ -20414,14 +20459,14 @@ function setTabMsg(text, kind) {
   else setModelsMsg(text, kind);
 }
 
-/** The providers card lives on its own tab, but its flows still repaint by name. */
+/** The provider rows live on the Providers tab, but their flows still repaint by name. */
 function repaintProviders() {
   if (currentModelsTab() === 'providers') renderProvidersViewBody();
   else if (currentView() === 'models') renderModelsViewBody();
 }
 
 // ── Providers (model-bridge-design.md §8.1/§8.2/§8.4) ──────────────────────
-/** The providers card's home: its own tab's list. */
+/** Where the provider rows render: the Providers tab's list. */
 function providerRoot() { return el.providersList; }
 
 /** A provider card's failure, the house way (#555): a card alert above the card's buttons. null clears it.
@@ -20769,7 +20814,9 @@ function showAddStep1({ redraw = false } = {}) {
   if (old) dlg.add = { ...dlg.add, ...collectAddStep1(old) };
   const sig = old && old.contains(document.activeElement) ? addFocusSig(document.activeElement) : null;
   dlg.screen = 'step1';
-  const card = renderAddStep1(dlg.add, { doc: document, providers: mvState.providers, engines: dlg.engines, locks: addEngineLocks(), fixedEngine: dlg.fixedEngine || '' });
+  // "Change where it runs" is still the edit: its head keeps the waiting form's title ("Edit <name>").
+  const title = dlg.fixedEngine ? dlg.form?.formEl?.querySelector('.mv-editor-title')?.textContent || '' : '';
+  const card = renderAddStep1(dlg.add, { doc: document, providers: mvState.providers, engines: dlg.engines, locks: addEngineLocks(), fixedEngine: dlg.fixedEngine || '', title });
   showModelScreen(card, { ...addScreenParts(card), focus: redraw ? '' : '.mdl-opt[aria-checked="true"]', keep: redraw });
   if (!sig) return;
   const twin = [...card.querySelectorAll(`.${sig.cls}`)].find((n) => (n.dataset.where || '') === sig.where && (n.dataset.engine || '') === sig.engine);
@@ -20856,13 +20903,15 @@ function showAddForm({ where, engine = '', provider = '', from }) {
   showModelForm(editor, { mode: 'add', from });
 }
 
-/** "N selected" and "Add N models" from the ticked rows, which the flow keeps (a list drawn again ticks them again). */
+/** "N selected" and "Add N models" from the ticked rows, which the flow keeps (a list drawn again ticks them again), and
+ *  the head box's ticked / mixed / clear state over what shows (ADD-3). */
 function paintAddTicks(card) {
   const dlg = mvState.dlg;
   const sheet = card.querySelector('.mimp-body .mvi');
   const ids = sheet ? collectImportSheet(sheet) : [];
   if (dlg) dlg.list.ticked = new Set(ids);
   paintAddSelection(card, ids.length);
+  paintAddList(card);
   const go = card.querySelector('.mimp-go');
   if (go && dlg?.busy) go.disabled = true;
 }
@@ -20899,6 +20948,7 @@ function applyAddFilter(card) {
     }
     none.textContent = q ? `Nothing here matches “${raw.trim()}”.` : 'Nothing here matches these filters.';
   } else if (none) none.remove();
+  paintAddList(card);                                    // ADD-3: "N of M shown", the head box over what shows
 }
 
 /** A provider that cannot list (addStep2Plan `blocked`: its state word and the button that fixes it) or that has no list
@@ -21019,7 +21069,8 @@ function keepAddList(card) {
 function changeAddProvider(sel) {
   const dlg = mvState.dlg;
   if (!dlg) return;
-  if (dlg.busy) { sel.value = dlg.add.provider; return; }
+  // markedSelect painted the picked value's mark on the change: a value put back repaints it.
+  if (dlg.busy) { sel.value = dlg.add.provider; paintMarkedSelect(sel.closest('.mdl-picksel')); return; }
   dlg.add = { ...dlg.add, where: 'provider', provider: sel.value };
   dlg.list = freshAddList(sel.value);
   dlg.seq = ++modelDlgSeq;
@@ -21323,19 +21374,30 @@ async function promoteModelFlow(id) {
 async function testModelFlow(id) {
   const lc = String(id).toLowerCase();
   if (mvState.tests.get(lc)?.busy) return;                              // one test per model at a time
-  const paint = (text, { busy = false, err = false } = {}) => {
+  const paint = (text, { busy = false, err = false, done = false } = {}) => {
     // An answer no panel shows is dropped: a panel of this model opened later starts clean.
     const open = mvState.cat.open;
     if (!busy && (typeof open !== 'string' || open.toLowerCase() !== lc)) { mvState.tests.delete(lc); return; }
-    mvState.tests.set(lc, { busy, text, err });
+    mvState.tests.set(lc, { busy, text, err, done });
     paintModelTest(lc);
   };
-  paint('Testing…', { busy: true });
+  // "Works" is a beat on the button (PAN-3); the answer stays on the line under it.
+  const settleDone = () => {
+    const t = mvState.tests.get(lc);
+    if (!t?.done) return;
+    mvState.tests.set(lc, { ...t, done: false });
+    paintModelTest(lc);
+  };
+  paint('', { busy: true });
   try {
     const res = await fetch(`/api/models/${encodeURIComponent(id)}/test`, { method: 'POST' });
     const data = await safeJson(res);
     if (!res.ok) return paint(`${data.error || `HTTP ${res.status}`}`, { err: true });
-    if (data.ok) return paint(`Replied: ${data.text}`);
+    if (data.ok) {
+      paint(`Replied: ${data.text}`, { done: true });
+      setTimeout(settleDone, BUTTON_DONE_MS)?.unref?.();
+      return;
+    }
     paint(`${data.hint || data.message}`, { err: true });
   } catch (e) {
     paint(`${e.message}`, { err: true });
@@ -40889,7 +40951,7 @@ function showView(name, param = '') {
     const { tab, rest } = parseModelsParam(param);
     const entry = prevView !== 'models' || !mvState.data;
     if (prevView !== 'models') {
-      providersDrawnKey = '';   // each entry draws the Providers card once
+      providersDrawnKey = '';   // each entry draws the Providers tab once
       // No hook runs on leaving the page: an entry starts with the side panel closed, unless the address names a model
       // (showModelsTab opens it just below).
       if (!(tab === 'catalogue' && modelParamId(rest))) {
@@ -41039,8 +41101,12 @@ function showModelsTab(tab, rest) {
     // A hop to a row inside the open page draws from the loaded catalogue (the narrowing that could hide it cleared).
     openModelFromAddress(id, rest);
   } else if (tab === 'jobs') {
+    // '<part>/<harness>' names the harness that owns what a link means (Settings' Run naming is Claude's helper job, its
+    // Memory defragment the run engine's): show it first, as "Used by" does, else the default harness's card opens (P6 review s1).
+    const [part, owner = ''] = rest.split('/');
+    if (MODEL_ENGINE_NAMES.includes(owner)) mvState.jobs.engine = owner;
     // The block only while the address still names it: the read can land after the user moved on.
-    void loadJobs().then(() => { if (rest && currentModelsTab() === 'jobs' && parseModelsParam(parseHash()[1]).rest === rest) revealJobsPart(rest); });
+    void loadJobs().then(() => { if (rest && currentModelsTab() === 'jobs' && parseModelsParam(parseHash()[1]).rest === rest) revealJobsPart(part); });
   } else if (tab === 'providers') {
     paintProvidersTab();
     revealProviderRow(rest);
@@ -42845,10 +42911,12 @@ if ($('#ask-side') && $('#topnav-ask')) {
     if (e.target?.closest?.('a[href^="#"]')) askSide.uncover();
   });
 }
-// Command summaries (#911) and the account menu's Keep awake row: read the person's switches once.
+// Command summaries (#911), the account menu's Keep awake row and Settings › Memory's model link (a later settings read
+// repaints it, loadSettings): read the person's switches once.
 Promise.resolve().then(() => fetch('/api/settings')).then((r) => safeJson(r)).then((d) => {
   setChatSummariesPref(d && d.chat);
   paintKeepAwakeRow(!(d && d.keepAwake === false));
+  paintMemoryModelLink(d);
 }).catch(() => { /* keep: on */ });
 onFlagChange('commandSummaries', () => { askPanel?.refreshCommandCards(); repaintJobs(); });
 // One delegated handler for every Summaries / Raw switch (Logs tab, History Logs, both drawers, Chat's run

@@ -1,30 +1,13 @@
 /* ---- Models view (configurable-models-design.md §4.10) ---- */
-.mv-list{display:grid;gap:18px;}
-.mv-section{display:grid;gap:10px;}
-/* Stacked cards keep the house 18px; the built-ins are compact rows, not panels, so they stay tight.
-   (The rows moved into .mv-sec-body when groups became foldable — the section's own gap no longer
-   reaches them.) */
-.mv-sec-body{display:grid;gap:18px;}
-.mv-section[data-section="builtin"] .mv-sec-body{gap:10px;}
-.mv-hide-builtin-row{display:grid;gap:6px;padding:10px 12px;border:1px solid var(--line);border-radius:var(--r-sm);background:var(--panel);}
-.mv-hide-builtin-row .hint{margin:0;}
-.mv-card{padding:var(--pad-card);display:flex;align-items:center;gap:14px;}
-.mv-body{flex:1 1 auto;min-width:0;}
 .mv-head{display:flex;align-items:center;gap:10px;flex-wrap:wrap;}
 .mv-name{font-size:var(--fs-body);font-weight:600;}
-.mv-summary{display:block;margin:6px 0 0;word-break:break-all;}
-.mv-card .btn{flex:0 0 auto;}
 .mv-head-actions{display:flex;gap:8px;flex:0 0 auto;}
 /* The actions show on the Catalogue tab only (app.js hides them elsewhere); the flex above would beat a bare [hidden]. */
 .mv-head-actions[hidden]{display:none;}
-/* Phones: the header buttons and a card's buttons wrap under the text instead of running off the screen. */
+/* Phones: the header buttons (More, Add model) take a line of their own under the tab strip instead of running off the screen. */
 @media (max-width:760px){
   .mv-head-actions{flex:1 1 100%;flex-wrap:wrap;}
-  .mv-card{flex-wrap:wrap;}
-  .mv-body{flex-basis:100%;}
 }
-.mv-builtin{display:flex;align-items:center;gap:10px;flex-wrap:wrap;padding:8px 12px;border:1px solid var(--line);border-radius:var(--r-sm);background:var(--panel);}
-.mv-builtin .mv-summary{margin:0;flex:1 1 auto;text-align:right;}
 .mv-editor-title{margin:0 0 14px;font-size:15px;}
 /* The model form (models-view.mjs renderModelEditor, DESIGN FRM-1…FRM-7). Its head: the model's mark, the title, the
    step names and Close on one line (the import dialog's title keeps the rule above). */

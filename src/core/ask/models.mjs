@@ -8,6 +8,8 @@ import { listPluginModels as realPluginModels, pluginModelSecretStatus as realSe
 import { ASK_LIMITS } from './limits.mjs';
 import { brokerEnabled, brokerEngineRefusal } from '../broker-client.mjs';
 import { effortlessModels as realEffortless } from '../bridge/upstream.mjs';
+import { findBridgedEntry, isOpenRouterEntry } from '../bridge/registry.mjs';
+import { providerConfig } from '../settings.mjs';
 import { effortsForEngine, ASK_ENGINES } from '../model-env.mjs';
 import { resolveSetting } from '../settings-cascade.mjs';
 import { withRole } from '../model-roles.mjs';
@@ -35,6 +37,17 @@ export function defaultAskPrefs() {
   } catch { return { engine: 'claude', slots: {} }; }
 }
 
+/** Whether a catalog id reaches OpenRouter: its entry is an OpenAI-compatible one whose effective base URL is on
+ *  openrouter.ai (the bridge's own rule). The picker row carries no base URL, so the entry is looked up. */
+function realIsOpenRouterModel(id) {
+  try {
+    const e = findBridgedEntry(id);
+    return !!e && isOpenRouterEntry(e.upstream, providerConfig('openai'));
+  } catch { return false; }
+}
+/** The Models › Providers row each bridged provider is set up on. */
+const PROVIDER_ROW = Object.freeze({ copilot: 'GitHub Copilot', openai: 'OpenAI-compatible', anthropic: 'Anthropic-compatible' });
+
 /**
  * @param {{
  *   listModels?: (projectDir:string)=>Promise<Array<object>>,
@@ -47,7 +60,9 @@ export function defaultAskPrefs() {
  *   copilotAvailable?: ()=>boolean,
  *   geminiAvailable?: ()=>boolean,
  *   qwenAvailable?: ()=>boolean,
- * }} [deps]  `<engine>Available`: whether Chat on that engine can be offered (default: its chat descriptor's lockdown)
+ *   isOpenRouterModel?: (id:string)=>boolean,
+ * }} [deps]  `<engine>Available`: whether Chat on that engine can be offered (default: its chat descriptor's lockdown);
+ *   `isOpenRouterModel`: whether a bridged row reaches OpenRouter (its sign-in message names that row)
  */
 export function createAskModels({
   listModels = realListModels,
@@ -56,6 +71,7 @@ export function createAskModels({
   defaults = ASK_LIMITS,
   effortless = realEffortless,
   askPrefs = defaultAskPrefs,
+  isOpenRouterModel = realIsOpenRouterModel,
   ...engineAvailable
 } = {}) {
   const available = (e) => (typeof engineAvailable[`${e}Available`] === 'function' ? engineAvailable[`${e}Available`]() : !!chatDescriptor(e)?.lockdown());
@@ -160,8 +176,9 @@ export function createAskModels({
         if (m.upstreamApi) entry.upstreamApi = m.upstreamApi;
         if (m.needsSignIn) {
           entry.needsSignIn = true;
-          entry.signInMessage = m.signInReason === 'no_key' ? `No API key for ${m.bridged} — Models › Providers.`
-            : `Not signed in to ${m.bridged} — Models › Providers.`;
+          const row = isOpenRouterModel(m.id) ? 'OpenRouter' : PROVIDER_ROW[m.bridged] || m.bridged;
+          entry.signInMessage = m.signInReason === 'no_key' ? `No API key for ${row} — Models › Providers › ${row}.`
+            : `Not signed in to ${row} — Models › Providers › ${row}.`;
         }
       }
       // With the credential broker on, plugin secrets are never read: the broker's key

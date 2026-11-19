@@ -388,6 +388,24 @@ test('8: addresses, old and new, open the block they name', async () => {
   assert.equal(window.location.hash, '#models/jobs/helpers', 'the address stays as typed');
 });
 
+// P6 review s1 (the whole-menu walk): Settings' Run naming and Memory defragment links mean Claude's helper jobs. With
+// another default harness the bare address showed that harness's card; the address names the harness that owns them.
+test('8b: an address naming its harness opens that harness, whatever the default or the harness shown', async () => {
+  for (const runEngine of ['codex', 'cursor']) {
+    const { doc } = await boot({ hash: 'models/jobs/helpers/claude', settings: { ...SETTINGS, runEngine } });
+    assert.equal(pressed(doc), 'claude', `default ${runEngine}: Claude Code's tile`);
+    assert.ok(doc.getElementById('jobs-helpers')?.classList.contains('is-found'), `default ${runEngine}: its Helper jobs card`);
+  }
+  const { window, doc } = await boot({ hash: 'models/jobs', settings: { ...SETTINGS, runEngine: 'codex' } });
+  assert.equal(pressed(doc), 'codex', 'the tab opens on the default');
+  await go(window, 'models/jobs/helpers/claude');
+  assert.equal(pressed(doc), 'claude', 'a hop inside the page moves the harness too');
+  assert.ok(doc.getElementById('jobs-helpers').classList.contains('is-found'));
+  await go(window, 'models/jobs/steps/nope');
+  assert.equal(pressed(doc), 'claude', 'a word that names no harness leaves the one shown');
+  assert.ok(doc.getElementById('jobs-steps').classList.contains('is-found'), 'and still opens its block');
+});
+
 test('9: "Used by" opens the harness and the part', async () => {
   const { window, doc } = await boot({ hash: 'models/model/gpt-6.1-sol' });
   const use = doc.querySelector('#model-panel-host .mdl-use');

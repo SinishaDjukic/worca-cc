@@ -12,7 +12,7 @@ export function register(app) {
 // { enabled:false } with the broker off.
 // OpenRouter's daily allowance of `:free` requests (src/core/openrouter-free.mjs), for the
 // signed-in person with the credential broker, else for the install's key. The account menu's
-// free-request row, the new-run warning and the Providers page read it; ?refresh=1 asks OpenRouter now.
+// free-request row, the new-run warning and Models › Providers read it; ?refresh=1 asks OpenRouter now.
 app.get('/api/openrouter/free-daily', async (req, res) => {
   try {
     res.json(await freeDailyStatus({ person: currentBillTo(), force: req.query.refresh === '1' }));

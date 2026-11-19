@@ -16,7 +16,7 @@ export class SpeechError extends Error {
   constructor(message, status = 502) { super(message); this.name = 'SpeechError'; this.status = status; }
 }
 
-/** GET /api/speech and the Providers card: never a key, only where it comes from. */
+/** GET /api/speech and the Speech row (Models › Providers): never a key, only where it comes from. */
 export function speechState() {
   const c = speechConfig();
   const side = (kind) => {

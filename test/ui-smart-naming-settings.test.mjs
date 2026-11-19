@@ -61,7 +61,7 @@ test('the card follows Away mode and shows the stored values', async () => {
 test('the Model row has no picker: it links to Models › Helper jobs (Expert only) and names the resolved model and cost', async () => {
   const ctx = await boot();
   assert.equal($(ctx, 'smartNamingModel'), null, 'the model is a helper job now');
-  const link = ctx.doc.querySelector('#smartNamingModelRow a[href="#models/jobs/helpers"]');
+  const link = ctx.doc.querySelector('#smartNamingModelRow a[href="#models/jobs/helpers/claude"]');   // Claude's helper job, whatever the default harness
   assert.equal(link.textContent, 'Models › Jobs › Helper jobs › Run naming');
   assert.ok(link.closest('#smartNamingModelRow [data-min-level="expert"]'), 'the Engines card is Expert-only, so is the link');
   assert.equal($(ctx, 'smartNamingCost').textContent, 'Shown in Statistics as Naming, never billed to the run.');

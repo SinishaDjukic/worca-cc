@@ -57,6 +57,22 @@ test('the two gradients: the own mark and the Best chip', () => {
   const body = (sel) => rules.filter((r) => r.sel === sel && r.media === '').map((r) => r.body.replace(/\s+/g, '')).join(';');
   assert.match(body('.mdl-mark.own'), /background:linear-gradient\(135deg,var\(--ga\),var\(--gb\)\)/);
   assert.match(body('.mdl-best'), /background:linear-gradient\(135deg,var\(--best-a\),var\(--best-b\)\)/);
+  // verify:theme skips a gradient and reads background-color: without a solid one it measured the white words on the
+  // tile's --panel (ratio 1). The shorthand resets background-color, so the solid token must come AFTER it.
+  const best = [...body('.mdl-best').matchAll(/(?:^|;)(background(?:-color)?):([^;]+)/g)].map((m) => [m[1], m[2]]);
+  const solid = best.findLastIndex(([p]) => p === 'background-color');
+  assert.ok(solid > best.findLastIndex(([p]) => p === 'background'), 'background-color follows the gradient shorthand');
+  assert.equal(best[solid][1], 'var(--best-a)');
+});
+
+test('the Beta chip on a Catalogue group head and on a harness tile wears the strong blue ink (verify:theme, AA on --blue-bg)', () => {
+  // The shared .badge.blue (scheduled-runs.css) is --blue-ink on --blue-bg, ~3.6:1; --blue-ink-strong is ~5:1.
+  const rules = cssRules(part()).filter((r) => r.media === '');
+  for (const host of ['.mdl-grp-toggle', '.mdl-hx-t']) {
+    const sel = `${host} > .badge.blue`;
+    const color = rules.filter((r) => splitTop(r.sel).includes(sel)).flatMap((r) => decls(r.body, 'color').map(([, v]) => v));
+    assert.deepEqual(color, ['var(--blue-ink-strong)'], sel);
+  }
 });
 
 test('a .mdl-tab rule sets layout only: no height, border, background, colour or font', () => {
@@ -133,4 +149,53 @@ test("the model picker's menu is fixed over the page, at two classes so the Chat
   assert.deepEqual(pop.map((r) => r.sel), ['.ask-pop.mdl-pick-pop']);
   const body = pop[0].body.replace(/\s+/g, '');
   for (const d of ['position:fixed', 'right:auto', 'bottom:auto', 'z-index:58']) assert.match(body, new RegExp(`(?:^|;)${d}(?:;|$)`), d);
+});
+
+// The whole-menu walk (P7): rows that a live page showed wrong.
+const ruleOf = (sel, media = '') => cssRules(part()).filter((r) => r.sel === sel && r.media === media).map((r) => r.body.replace(/\s+/g, '')).join(';');
+
+test('an empty message line under the tabs takes no room: the toolbar sits under the tab row, as on the mock', () => {
+  // Each tab's first child is p.form-msg (models.html): margin 12px + min-height 16px + the panel's 16px gap = 44px of
+  // blank page above every tab while it is empty (reportStatus sends ok/err to a toast and blanks it).
+  const body = ruleOf('.mdl-panel > .form-msg:empty');
+  assert.match(body, /(?:^|;)display:none(?:;|$)/);
+});
+
+test("a picked small harness tile keeps its state line clear of the tick disc (JOB-1: 'Ready · Default for new runs')", () => {
+  const on = ruleOf('.mdl-hx-t.on .mdl-hx-state');
+  const pad = Number(on.match(/(?:^|;)padding-right:(\d+)px(?:;|$)/)?.[1] || 0);
+  // The disc: right 10px + 20px wide, inside the tile's 10px padding = 20px of the content box, plus a 4px gap.
+  assert.ok(pad >= 24, `padding-right ${pad}px`);
+  assert.match(on, /(?:^|;)white-space:normal(?:;|$)/, 'a long state wraps beside the disc instead of running under it');
+  assert.match(on, /(?:^|;)align-items:flex-start(?:;|$)/, 'wrapped, its dot stays on the first line');
+  assert.match(ruleOf('.mdl-hx-t.on .mdl-hx-state.mdl-st::before'), /(?:^|;)margin-top:calc\(\.5lh-3px\)(?:;|$)/, 'centred on that line (the 6px dot)');
+  const best = ruleOf('.mdl-hx-t.best.on .mdl-hx-state');
+  const bestPad = Number(best.match(/(?:^|;)padding-right:(\d+)px(?:;|$)/)?.[1] || 0);
+  assert.ok(bestPad >= 28, `the big tile's 24px disc at 16px: padding-right ${bestPad}px`);
+});
+
+test("a Providers fold row's keyboard ring clears its state word (the head is a .row-btn with an inset ring)", () => {
+  const fold = cssRules(part()).filter((r) => r.sel === '.mdl-fold' && r.media === '').map((r) => r.body).join(';');
+  const pad = fold.match(/(?:^|;)\s*padding\s*:\s*([^;]+)/)?.[1].trim().split(/\s+/) || [];
+  const right = parseFloat(pad.length === 4 ? pad[1] : pad.length >= 2 ? pad[1] : pad[0] || '0');
+  assert.ok(right >= 8, `.mdl-fold padding-right ${right}px: the 2px ring at -2px sat on the word's last letters`);
+});
+
+test('narrow (VIS-4, ≤860px): a Providers row\'s field grids are one column and its body loses the 88px indent', () => {
+  // The walk at 800px: Base URL, API key and the cap stayed three columns (model-bridge.css stacks them only at 720px or
+  // in a 560px card), and Base URL showed "https://api.openai.co". The mock stacks every card grid at 860px.
+  const at = (sel) => cssRules(part()).filter((r) => r.media === '@media (max-width:860px)' && splitTop(r.sel).includes(sel)).map((r) => r.body.replace(/\s+/g, '')).join(';');
+  assert.match(at('.mdl-prov .mv-pv-card .mv-pv-row .mv-pv-ctl'), /(?:^|;)grid-template-columns:minmax\(0,1fr\)(?:;|$)/);
+  assert.match(at('.mdl-prov .mv-im-row .mdl-adv'), /(?:^|;)grid-template-columns:minmax\(0,1fr\)(?:;|$)/, "the image row's Advanced fields too");
+  assert.match(at('.mdl-fold-body'), /(?:^|;)padding-left:0(?:px)?(?:;|$)/);
+  // OpenRouter's key spans two columns: in one column that span made an implicit second track (the walk at 800px).
+  assert.match(at('.mdl-prov .mv-or-row .mv-or-key'), /(?:^|;)grid-column:auto(?:;|$)/);
+});
+
+test("a select with marks (ADD-2, FRM-1): the picked value's mark sits inside the select's left edge and never takes a click", () => {
+  const mark = ruleOf('.mdl-picksel > .mdl-mark');
+  for (const d of ['position:absolute', 'pointer-events:none']) assert.match(mark, new RegExp(`(?:^|;)${d}(?:;|$)`), d);
+  const pad = Number(ruleOf('.mdl-picksel.has-mark > select').match(/(?:^|;)padding-left:(\d+)px(?:;|$)/)?.[1] || 0);
+  assert.ok(pad >= 30, `the text clears the 18px mark at 10px: padding-left ${pad}px`);
+  assert.match(ruleOf('.mdl-picksel'), /(?:^|;)position:relative(?:;|$)/);
 });

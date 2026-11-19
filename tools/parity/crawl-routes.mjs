@@ -18,8 +18,9 @@ export const TAB_ROUTES = {
 };
 // PD/WD share the PROJ/WS hash space (parseProjParam app.js:13110, parseWsParam :9402); RD is runDetailParts (:34551).
 // test/parity-crawl.test.mjs fails the moment a new *_TABS list appears in app.js without a mapping.
-// Routes no list names (schedules tabs, workflows/agents/scripts sub-pages, marketplace, connectors, models, providers,
-// chat/new, chat run panel, requirements sub-pages, team-metrics/timeline). Each is pinned to a string in app.js by a test.
+// Routes no list names (schedules tabs, workflows/agents/scripts sub-pages, marketplace, connectors, the Models tabs with
+// the Jobs blocks and the Providers rows, chat/new, chat run panel, requirements sub-pages, team-metrics/timeline).
+// Each is pinned to a string in ui/public by a test.
 /** PAGE_TITLES views that are only ever a detail page: bare `#feature` falls back to Chat ("Unknown address"). */
 export const VIEW_ROUTES = { feature: '#feature/{featureId}' };
 export const STATIC_ROUTES = ['#chat/new', '#chat/{threadId}', '#chat/{threadId}/run/{runId}', '#new', '#new/schedule', '#getting-started', '#runs',
@@ -29,7 +30,8 @@ export const STATIC_ROUTES = ['#chat/new', '#chat/{threadId}', '#chat/{threadId}
   '#workflows/scripts/{scriptKey}', '#requirements', '#requirements/new', '#requirements/feature/{requirementN}', '#workspaces', '#workspace-create',
   '#projects', '#projects/{projectKey}/memory/{memoryName}', '#marketplace/installed/{pluginName}', '#marketplace/browse/{marketplaceId}/{pluginName}',
   '#connectors', '#connectors/servers', '#connectors/servers/{mcpServerId}', '#connectors/skills', '#connectors/sets/{skillSetId}', '#models',
-  '#models/model/{modelId}', '#models/jobs', '#models/providers', '#models/providers/copilot', '#models/providers/openrouter', '#models/providers/openai', '#models/providers/anthropic',
+  '#models/model/{modelId}', '#models/jobs', '#models/jobs/roles', '#models/jobs/steps', '#models/jobs/helpers', '#models/jobs/design',
+  '#models/providers', '#models/providers/copilot', '#models/providers/openrouter', '#models/providers/openai', '#models/providers/anthropic',
   '#models/providers/speech', '#models/providers/images', '#models/providers/sound'];
 
 /**

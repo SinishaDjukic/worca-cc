@@ -287,7 +287,7 @@ export function networkAnswered(answers, detect) {
 /** The step that owns an apply 400's `field` ('work.pipelineCostLimitUsd' → 'work'); 'review' when unknown (A20). */
 export function stepOfField(field) { return GROUP_STEP[String(field || '').split('.')[0]] || 'review'; }
 
-/** A Models-page sign-in pill → the assistant step it opens, or null to keep the Providers page (A17). */
+/** A sign-in button (its data-provider) → the assistant step that signs it in, or null when no step does (A17). */
 export function setupStepForSignIn(btn) { return btn?.dataset?.provider === 'copilot' ? 'access' : null; }
 
 const SUBTITLES = Object.freeze({
@@ -698,7 +698,7 @@ export function openSetupAssistant({ doc = globalThis.document, fetchJson = defa
       else {
         box.append(field('Plan', seg(COPILOT_PLANS, a.copilotAccount, (v) => { a.copilotAccount = v; paint(); }, { label: 'Plan' }), null));
         if (a.copilotConnected) {
-          // Use another account: sign out (the Providers page's endpoint), then the device sign-in starts here.
+          // Use another account: sign out (the endpoint Models › Providers uses), then the device sign-in starts here.
           const li = row(badge('green', 'OK'), `Connected as @${a.copilotLogin || 'github'}`);
           if (!S.cpSwitch) li.append(btn('Use another account', 'btn btn-sm btn-quiet sa-cp-switch', () => { S.cpSwitch = true; paint(); }));
           const list = rows('sa-cp', li);

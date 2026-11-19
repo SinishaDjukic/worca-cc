@@ -134,7 +134,7 @@ const settingsState = () => ({
   memoryDefrag: memoryDefragModel(),                      // Settings › Memory: the STORED { model, effort } (null = the workflow default)
   memoryDefragDefault: defragDefaultModel(),              // what "(default)" means there: Worca's factory default
   secondOpinionModel: secondOpinionModelSetting(),        // Models › Jobs › Helper jobs › Second-opinion reviewer: the STORED pair (null = the factory default)
-  factoryModels: factoryModelsPayload(),                  // what "(default)" means on the Claude tab's helper and step rows
+  factoryModels: factoryModelsPayload(),                  // what "(default)" means on Claude Code's helper rows (Models › Jobs › Helper jobs)
   workspaceScan: workspaceScanModels(),                   // Settings › Runs › Workspaces: the STORED pick (null = the defaults)
   // What null means: the Everyday tasks role as the scan model when set, else Sonnet 5 · medium; project agents sonnet · medium.
   workspaceScanDefault: withScanRole(null, WORKSPACE_SCAN_DEFAULT_MODELS) || WORKSPACE_SCAN_DEFAULT_MODELS,
@@ -142,7 +142,7 @@ const settingsState = () => ({
   runEngine: runEngineSetting() ?? null,
   stepModels: stepModelsSetting(),
   designModels: designModelsSetting(),                    // Models › Jobs › Design: { <engine>: { lead|builder: { model, effort } } }
-  modelRoles: modelRolesSetting(),                         // Models › Roles (D1): { <engine>: { deep|everyday|quick: { model, effort } } }
+  modelRoles: modelRolesSetting(),                         // Models › Jobs › Roles (D1): { <engine>: { deep|everyday|quick: { model, effort } } }
   utilityModels: utilityModelsSetting(),
   askEngine: askEngineSetting() ?? null,                  // Chat: the engine new chats start on (D17)
   // Models › Jobs › Helper jobs: the STORED { model?, effort? } (null = the default); only while the requirements flag is on

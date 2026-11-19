@@ -6,9 +6,10 @@ never see the key. Pictures are off until the service is set up.
 
 ## Set it up
 
-Providers › **Image generation (Design)**. Pick a **Service**: it fills
-**Base URL**, **Model** and **Price per picture ($)**. Add the **API key**, then
-*Save*.
+Models › Providers › **Image generation**. Pick a **Service**: it fills
+**Model** (the service's list, with *Other model…* to type an id), **Base URL**
+and **Price per picture ($)**; for any service but *Other* the last two sit
+under **Advanced**. Add the **API key**, then *Save*.
 
 | Service | Base URL | Path | Model | Shape sent as | Also sent | Price filled in ($) |
 |---|---|---|---|---|---|---|

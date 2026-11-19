@@ -7,6 +7,7 @@ import { icon } from '../icons.mjs';
 import { ENDPOINT_PRESETS, OPENROUTER_PRESET, infoTip, wheresFor } from '../bridge-view.mjs';
 import { providerState } from './provider-state.mjs';
 import { renderHarnessTiles } from './harness-tiles.mjs';
+import { markedSelect } from './brand-marks.mjs';
 
 export const ADD_PROVIDERS = Object.freeze(['copilot', 'openrouter', 'openai', 'anthropic']);
 export const ADD_PROVIDER_LABELS = Object.freeze({ copilot: 'GitHub Copilot', openrouter: 'OpenRouter', openai: 'OpenAI-compatible', anthropic: 'Anthropic-compatible' });
@@ -53,10 +54,10 @@ function stepNames(doc, current) {
   return ol;
 }
 
-/** div.mdl-add-head: the title, the step names (unless `steps` is false) and Close. */
-function headOf(doc, step, { steps = true } = {}) {
+/** div.mdl-add-head: the title ("Add model" unless given), the step names (unless `steps` is false) and Close. */
+function headOf(doc, step, { steps = true, title = '' } = {}) {
   const head = el(doc, 'div', 'mdl-add-head');
-  head.appendChild(el(doc, 'h3', 'mv-editor-title', 'Add model'));
+  head.appendChild(el(doc, 'h3', 'mv-editor-title', title || 'Add model'));
   if (steps) head.appendChild(stepNames(doc, step));
   const close = button(doc, 'btn btn-quiet btn-sm btn-icon mdl-close');
   close.setAttribute('aria-label', 'Close');
@@ -84,7 +85,8 @@ function providerSelect(doc, provider, offered = ADD_PROVIDERS) {
   return sel;
 }
 
-/** Step 1's provider part: the "Provider" select and, with the providers known, its state word beside it. */
+/** Step 1's provider part: the "Provider" select (with the picked provider's mark, ADD-2) and, with the providers
+ *  known, its state word beside it. */
 function providerPart(doc, root, provider, providers, offered) {
   const field = el(doc, 'div', 'mv-field mdl-add-pfield');
   const sel = providerSelect(doc, provider, offered);
@@ -92,7 +94,7 @@ function providerPart(doc, root, provider, providers, offered) {
   const label = el(doc, 'label', 'mv-field-label', 'Provider');
   label.htmlFor = sel.id;
   const row = el(doc, 'div', 'mdl-add-prow');
-  row.appendChild(sel);
+  row.appendChild(markedSelect(doc, sel, 'provider'));
   const paint = () => {
     row.querySelector('.mdl-st')?.remove();
     if (!providers) return;
@@ -152,12 +154,13 @@ function whereCard(doc, card, { checked, disabled, text = card.text }) {
  *    signin: renderHarnessTiles(doc, { engines, picked: state.engine, locks, label: 'Harness' });
  *    foot: "Cancel" .mv-cancel, "Next" .mdl-next.btn-primary.
  *  fixedEngine (L26 "Change where it runs" on a saved model, whose harness stays): no tiles; a card whose where is
- *    not in wheresFor(fixedEngine) (Task 3) is disabled; "Next" reads "Continue"; no step names. On Codex the provider
+ *    not in wheresFor(fixedEngine) (Task 3) is disabled; "Next" reads "Continue"; no step names; `title` is the waiting
+ *    form's own ("Edit <name>"), as the head still belongs to that edit (FRM-1). On Codex the provider
  *    card and its select offer only OpenRouter and OpenAI-compatible (a state.provider outside them falls back to
  *    OpenRouter, the first).
  *  The module wires its own clicks: a card moves aria-checked and shows its part; the select repaints the state.
  *  The cards are one tab stop (the checked one); the arrow keys move the pick across the enabled ones. */
-export function renderAddStep1(state, { doc = globalThis.document, providers = null, engines = null, locks = [], fixedEngine = '' } = {}) {
+export function renderAddStep1(state, { doc = globalThis.document, providers = null, engines = null, locks = [], fixedEngine = '', title = '' } = {}) {
   const s = state || {};
   const allowed = fixedEngine ? wheresFor(fixedEngine) : WHERES;
   const where = WHERES.includes(s.where) && allowed.includes(s.where) ? s.where : 'signin';
@@ -170,7 +173,7 @@ export function renderAddStep1(state, { doc = globalThis.document, providers = n
   root.dataset.provider = provider;
   root.dataset.engine = engine;
   if (fixedEngine) root.dataset.fixedEngine = fixedEngine;
-  root.appendChild(headOf(doc, 1, { steps: !fixedEngine }));
+  root.appendChild(headOf(doc, 1, { steps: !fixedEngine, title }));
 
   const main = el(doc, 'div', 'mdl-add-main');
   const group = el(doc, 'div', 'mdl-opts');
@@ -301,8 +304,8 @@ function endpointRow(doc, baseUrl) {
  *    openai only: input#mimp-base (placeholder "http://127.0.0.1:11434/v1", value state.baseUrl or
  *      providers.openai.baseUrl), button#mimp-list "List models", button.mimp-preset[data-preset=gemini|qwen]
  *      "Gemini", "Qwen", input#mimp-key (label "API key (optional)", placeholder "${GEMINI_API_KEY}");
- *    p#mimp-msg[aria-live=polite]; div#mimp-body (app.js mounts the sheet here); div.mdl-add-blocked[hidden]
- *      (span.mdl-st + button.mdl-add-fix);
+ *    p#mimp-msg[aria-live=polite]; div#mimp-body (app.js mounts the sheet here); p.hint.mdl-add-shown[hidden]
+ *      ("N of M shown", paintAddList); div.mdl-add-blocked[hidden] (span.mdl-st + button.mdl-add-fix);
  *    foot: span.mdl-add-note, "Back" .mv-back, button#mimp-go.btn-primary "Add models" (disabled). */
 export function renderAddStep2(state, { doc = globalThis.document, providers = null } = {}) {
   const s = state || {};
@@ -320,13 +323,16 @@ export function renderAddStep2(state, { doc = globalThis.document, providers = n
   filter.dataset.dirtyIgnore = '';
   filter.setAttribute('aria-label', 'Filter the listed models');
   filter.placeholder = 'Filter by model, id or vendor';
-  bar.append(sel, filter, button(doc, 'btn btn-quiet mdl-manual', 'Enter an id instead'));
+  bar.append(markedSelect(doc, sel, 'provider'), filter, button(doc, 'btn btn-quiet mdl-manual', 'Enter an id instead'));
   main.appendChild(bar);
   if (provider === 'openai') main.appendChild(endpointRow(doc, s.baseUrl || providers?.openai?.baseUrl || ''));
   const msg = withId(el(doc, 'p', 'form-msg'), 'mimp-msg');
   msg.setAttribute('aria-live', 'polite');
   main.appendChild(msg);
   main.appendChild(withId(el(doc, 'div'), 'mimp-body'));
+  const shown = el(doc, 'p', 'hint mdl-add-shown');
+  shown.hidden = true;
+  main.appendChild(shown);
   const blocked = el(doc, 'div', 'mdl-add-blocked');
   blocked.hidden = true;
   blocked.append(el(doc, 'span', 'mdl-st'), button(doc, 'btn btn-sm mdl-add-fix'));
@@ -363,6 +369,26 @@ export function addStep2Plan(provider, providers, { baseUrl = '' } = {}) {
     return { kind: 'list', source: 'endpoint', baseUrl: url, auto: !!url };
   }
   return { kind: 'nolist', text: 'No list to pick from' };
+}
+
+/** ADD-3, from the list in #mimp-body: p.mdl-add-shown "N of M shown" (rows the filter leaves, of every row; hidden with
+ *  no list), and the head box .mvi-all over the rows shown that can be ticked: checked when all are, indeterminate
+ *  (mixed) when some are, clear when none or none can be. */
+export function paintAddList(root) {
+  const line = root && root.querySelector('.mdl-add-shown');
+  const sheet = root && root.querySelector('.mimp-body .mvi');
+  const rows = sheet ? [...sheet.querySelectorAll('tbody tr[data-id]')] : [];
+  const seen = rows.filter((tr) => !tr.classList.contains('is-filtered'));
+  if (line) {
+    line.hidden = !rows.length;
+    line.textContent = rows.length ? `${seen.length} of ${rows.length} shown` : '';
+  }
+  const all = sheet && sheet.querySelector('.mvi-all');
+  if (!all) return;
+  const boxes = seen.map((tr) => tr.querySelector('.mvi-cb')).filter((c) => c && !c.disabled);
+  const ticked = boxes.filter((c) => c.checked).length;
+  all.checked = boxes.length > 0 && ticked === boxes.length;
+  all.indeterminate = ticked > 0 && ticked < boxes.length;
 }
 
 /** Foot: note "N selected" ('' for 0); #mimp-go "Add N models" / "Add 1 model" / "Add models" (disabled at 0). */

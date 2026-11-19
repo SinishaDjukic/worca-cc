@@ -9677,7 +9677,7 @@ function agentErrorStatus(code) {
  * @returns {string} genId
  */
 async function startAgentGen(input) {
-  // The Models page's Claude tab › Agent generation, read per Generate. Unset, or a model the
+  // Claude Code's Agent generation helper job (Models › Jobs › Helper jobs), read per Generate. Unset, or a model the
   // catalog no longer carries: no --model, the CLI's default (as before the setting existed).
   const pick = resolveAgentGenModel(withRole(storedAgentGenModel(), 'claude', 'agentGenModel'), await listModels(''));
   if (pick.stale) console.warn(`[worca] agentGenModel ${JSON.stringify(pick.stale)} is no longer in the catalog — agent generation uses the CLI default`);

@@ -8,7 +8,7 @@
 // `:free` call the bridge forwards lowers the count, and a 429 for the daily limit sets it to
 // 0; the next reading corrects any drift. A reading is kept for READ_TTL_MS.
 //
-// Whose allowance: without the credential broker, the OpenRouter row's key on the Providers page
+// Whose allowance: without the credential broker, the OpenRouter row's key on Models › Providers
 // (one per install; openRouterAccount, so an older setup's OpenAI-compatible row on openrouter.ai
 // still counts, regional base included). With the broker, each person's own key, read through
 // the broker with a short-lived token billed to them; the bridge can't tell whose key a call

@@ -9,7 +9,7 @@
 // Why a card: the catalog and the providers are machine-wide settings every run spawns with,
 // and a wrong base URL or key breaks every pipeline that names the model. Credentials never
 // pass through here: a key is a ${VAR} reference or nothing, and the Copilot sign-in stays
-// on the Providers card.
+// under Models › Providers › GitHub Copilot.
 import { modelEnvRef, maskModelEnvValue, isLocalBaseUrl, isTranslatedApi, UPSTREAM_PROVIDERS, effortsForEngine } from '../model-env.mjs';
 
 export const MODEL_CHANGE_KINDS = Object.freeze(['add_model', 'edit_model', 'remove_model', 'provider', 'import_copilot', 'import_endpoint']);
@@ -28,11 +28,12 @@ export const MODEL_ERRORS = Object.freeze({
   unknownModel: (id) => `unknown model "${id}" — list_models shows the catalog`,
   builtin: (id) => `"${id}" is a built-in model with no catalog entry — propose add_model with the same id to override it`,
   readOnly: (id, where) => `"${id}" comes from ${where} and is read-only here`,
-  secretEnv: (k) => `env ${k} looks like a credential — pass it as a \${VAR} reference to a variable set in worca's environment, or leave it out and let the user paste it on the Models page`,
+  secretEnv: (k) => `env ${k} looks like a credential — pass it as a \${VAR} reference to a variable set in worca's environment, or leave it out and let the user paste it under Models › Catalogue`,
   secretKey: (where) => `${where} must be a \${VAR} reference to a variable set in worca's environment (or empty to clear) — never the key itself; the user can paste a literal key under Models › Providers`,
   secretHeader: (k) => `upstream.headers.${k} looks like a credential — the user sets it in the model editor; use apiKey with a \${VAR} reference instead`,
-  provider: `provider must be one of ${UPSTREAM_PROVIDERS.join(', ')}`,
+  provider: 'provider must be one of copilot, openai, anthropic, openrouter',
   providerSet: 'provider needs set: {baseUrl?, apiKey?, maxConcurrent?, accountType?}',
+  providerSetOpenRouter: 'openrouter needs set: {apiKey?, maxConcurrent?, order?, sort?, allowFallbacks?}',
   signIn: (k) => `${k} is not settable here — the Copilot sign-in happens under Models › Providers, by the user`,
   noChange: 'nothing changes — the settings already say exactly this',
   importIds: `import_copilot needs ids: 1 to ${MAX_IMPORT} Copilot model ids from list_copilot_models`,
@@ -172,7 +173,10 @@ function diffRows(before, after) {
  *   providerConfig:(n:string)=>object, providerReadiness:(u:object)=>{ok:boolean, message?:string},
  *   modelRefs:(id:string)=>{steps:Array, nodes:Array, predefinedShadow:boolean}, envHas:(name:string)=>boolean,
  *   copilotModels?:()=>Promise<Array<{id:string,name:string,inCatalog:boolean}>>,
- * }} r
+ *   openRouterConfig:()=>{apiKey:string, maxConcurrent:number, order:string[], sort:string, allowFallbacks:boolean},
+ *   updateOpenRouter:(p:object, o:{dryRun:true})=>Promise<object>, openRouterLegacyKey:()=>boolean,
+ * }} r  openRouterLegacyKey: the OpenAI-compatible row is on openrouter.ai with a key, which OpenRouter models borrow
+ *   while the OpenRouter row has none of its own (registry.mjs openRouterKeyFor)
  */
 export function createModelChangeValidator(r) {
   const findGlobal = (id) => r.listGlobalModels().find((m) => m.id.toLowerCase() === id.toLowerCase()) || null;
@@ -265,9 +269,45 @@ export function createModelChangeValidator(r) {
     } };
   }
 
+  /** What a provider card applies: only the proposed fields its rows show. The Apply writes the stored set as it is
+   *  (model-deps.mjs applyModelChange), so an unchanged field left in would overwrite a save made under the card. */
+  const shownSet = (set, keys) => Object.fromEntries(Object.entries(set).filter(([k]) => keys.includes(k)));
+
+  /** The OpenRouter row (Models › Providers › OpenRouter): its own five fields and setter, never providerConfig. */
+  async function validateOpenRouter(input, note) {
+    if (!isObj(input.set) || !Object.keys(input.set).length) return { ok: false, errors: [MODEL_ERRORS.providerSetOpenRouter] };
+    const set = { ...input.set };
+    if ('apiKey' in set && !isClear(set.apiKey) && !(typeof set.apiKey === 'string' && modelEnvRef(set.apiKey.trim()))) {
+      return { ok: false, errors: [MODEL_ERRORS.secretKey('openrouter apiKey')] };
+    }
+    const before = r.openRouterConfig();
+    let after;
+    try { after = await r.updateOpenRouter(set, { dryRun: true }); } catch (err) { return { ok: false, errors: [err.message] }; }
+    const fields = [
+      ['apiKey', 'API key', (v) => (v ? maskValue(v) : null)],
+      ['maxConcurrent', 'Max concurrent requests', (v) => (v == null ? null : String(v))],
+      ['order', 'Provider order', (v) => (Array.isArray(v) && v.length ? v.join(', ') : null)],
+      ['sort', 'Sort providers by', (v) => (v ? String(v) : 'OpenRouter default')],
+      ['allowFallbacks', 'Allow fallbacks', (v) => (v === false ? 'off' : v === true ? 'on' : null)],
+    ];
+    const changed = fields.filter(([f, , shown]) => shown(before[f]) !== shown(after[f]));
+    const rows = changed.map(([f, field, shown]) => ({ field, before: shown(before[f]), after: shown(after[f]) }));
+    if (!rows.length) return { ok: false, errors: [MODEL_ERRORS.noChange] };
+    const warnings = [];
+    const keyRef = typeof after.apiKey === 'string' ? modelEnvRef(after.apiKey) : null;
+    if (keyRef && !r.envHas(keyRef)) warnings.push(`\${${keyRef}} is not set in worca's environment — set it and restart Worca`);
+    if (!after.apiKey && !r.openRouterLegacyKey()) warnings.push('no API key — models through OpenRouter show "needs sign-in" until the user sets one');
+    return { ok: true, card: {
+      type: 'model', kind: 'provider', target: 'openrouter', summary: 'Change the OpenRouter provider', note,
+      rows, warnings, change: { provider: 'openrouter', set: shownSet(set, changed.map(([f]) => f)) },
+    } };
+  }
+
   async function validateProvider(input) {
     const note = clip(str(input.note), 200) || null;
     const name = str(input.provider);
+    // OpenRouter never joins UPSTREAM_PROVIDERS: its models are openai entries on an openrouter.ai base URL.
+    if (name === 'openrouter') return validateOpenRouter(input, note);
     if (!UPSTREAM_PROVIDERS.includes(name)) return { ok: false, errors: [MODEL_ERRORS.provider] };
     if (!isObj(input.set) || !Object.keys(input.set).length) return { ok: false, errors: [MODEL_ERRORS.providerSet] };
     const set = { ...input.set };
@@ -281,9 +321,8 @@ export function createModelChangeValidator(r) {
     const fields = ['baseUrl', 'apiKey', 'maxConcurrent', 'accountType'];
     const label = { baseUrl: 'Base URL', apiKey: 'API key', maxConcurrent: 'Max concurrent requests', accountType: 'Account type' };
     const shown = (f, v) => (v == null ? null : String(f === 'apiKey' ? maskValue(v) : v));
-    const rows = fields
-      .map((f) => ({ field: label[f], before: shown(f, before[f]), after: shown(f, after[f]) }))
-      .filter((x) => x.before !== x.after);
+    const changed = fields.filter((f) => shown(f, before[f]) !== shown(f, after[f]));
+    const rows = changed.map((f) => ({ field: label[f], before: shown(f, before[f]), after: shown(f, after[f]) }));
     if (!rows.length) return { ok: false, errors: [MODEL_ERRORS.noChange] };
     const warnings = [];
     const keyRef = typeof after.apiKey === 'string' ? modelEnvRef(after.apiKey) : null;
@@ -294,7 +333,7 @@ export function createModelChangeValidator(r) {
     const title = { copilot: 'GitHub Copilot', openai: 'OpenAI-compatible', anthropic: 'Anthropic-compatible' }[name];
     return { ok: true, card: {
       type: 'model', kind: 'provider', target: name, summary: `Change the ${title} provider`, note,
-      rows, warnings, change: { provider: name, set },
+      rows, warnings, change: { provider: name, set: shownSet(set, changed) },
     } };
   }
 
@@ -308,7 +347,7 @@ export function createModelChangeValidator(r) {
     const byId = new Map(list.map((m) => [m.id, m]));
     const unknown = ids.filter((id) => !byId.has(id));
     if (unknown.length) return { ok: false, errors: [`not offered to this Copilot account: ${unknown.join(', ')} — list_copilot_models shows what is`] };
-    const rows = ids.map((id) => { const m = byId.get(id); return { field: m.name || id, before: m.inCatalog ? 'in catalog' : null, after: m.inCatalog ? 'API and capabilities refreshed' : `added as copilot-${id}` }; });
+    const rows = ids.map((id) => { const m = byId.get(id); return { field: m.name || id, before: m.inCatalog ? 'in catalogue' : null, after: m.inCatalog ? 'API and capabilities refreshed' : `added as copilot-${id}` }; });
     return { ok: true, card: {
       type: 'model', kind: 'import_copilot', target: 'copilot',
       summary: `Import ${ids.length} Copilot model${ids.length === 1 ? '' : 's'}`, note, rows, warnings: [], change: { ids },
@@ -340,7 +379,7 @@ export function createModelChangeValidator(r) {
     const rows = ids.map((id) => {
       const m = byId.get(id);
       const window = m.servedContext ? `${m.servedContext} tokens` : m.trainedContext ? `window not reported (supports ${m.trainedContext})` : 'window not reported';
-      return { field: m.name || id, before: m.inCatalog ? 'in catalog' : null, after: `${m.inCatalog ? 'refreshed' : `added as ${m.catalogId}`} · ${window}` };
+      return { field: m.name || id, before: m.inCatalog ? 'in catalogue' : null, after: `${m.inCatalog ? 'refreshed' : `added as ${m.catalogId}`} · ${window}` };
     });
     const warnings = [...(Array.isArray(out.warnings) ? out.warnings : [])];
     for (const id of ids) {

@@ -203,7 +203,7 @@ changing your Default engine later does not move features you already made, and 
 running on Claude as it always did.
 
 **The default.** The form starts on your Default engine, with that harness's Everyday tasks model and its default effort. On
-Claude it is the newest Opus at medium effort, unless **Requirements interview** on Models › Engines › Claude › Helper jobs says
+Claude it is the newest Opus at medium effort, unless **Requirements interview** on Models › Jobs › Helper jobs (Claude Code) says
 otherwise. A model picked with no effort runs at that model's own default effort; Effort is hidden for a model that has none.
 Changing the harness refills Model with that harness's default. A grey line, "Your default: <model> on <Harness>. Use the
 default", shows only when your pick differs from it. A note under the selects says what a strong model costs ("about $0.50 for a

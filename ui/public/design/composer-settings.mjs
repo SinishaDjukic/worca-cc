@@ -16,7 +16,7 @@ export const SETTINGS_LABEL = 'Models and Build fast';
 
 /** The image service's state (Part A's `imagesState`): `configured` is false unless it can make a picture. */
 const IMAGES_URL = '/api/images';
-/** The Providers page's Image generation row. */
+/** The Image generation row of Models › Providers. */
 const SETUP_HREF = '#models/providers/images';
 
 let seq = 0;

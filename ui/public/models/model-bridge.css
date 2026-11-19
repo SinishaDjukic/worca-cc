@@ -1,4 +1,4 @@
-/* ---- Model bridge (model-bridge-design.md §8): Providers card, Connection,
+/* ---- Model bridge (model-bridge-design.md §8): the Providers tab, Connection,
    import sheet, sign-in block. Same 18px rhythm and card chrome as the rest
    of the Models view; every revealed block gets an explicit [hidden] rule
    because the grid/flex rules here otherwise beat the UA hidden rule. ---- */
@@ -69,7 +69,7 @@
    2.8:1 on a white card and is only tolerated where the light baseline predates the
    dark theme (test/fixtures/contrast-baseline-light.json — shrink, never grow). The
    bridge's copy uses --ink-2 (6.5:1) so the theme proof passes without a new entry. */
-.mv-providers .hint,.mv-conn .hint,.mv-degradation,.mvi .hint,.mv-cp-signin-box .hint{color:var(--ink-2);}
+.mv-providers .hint,.mv-conn .hint,.mvi .hint,.mv-cp-signin-box .hint{color:var(--ink-2);}
 .mv-providers .hint.err,.mv-conn .hint.err,.mvi .hint.err,.mv-cp-signin-box .hint.err{color:var(--red-ink);}
 .mv-providers .hint.warn,.mv-conn .hint.warn,.mvi .hint.warn,.mv-cp-signin-box .hint.warn{color:var(--amber-ink);}
 .mv-providers .hint.ok,.mv-conn .hint.ok,.mvi .hint.ok,.mv-cp-signin-box .hint.ok{color:var(--green-ink);}
@@ -107,18 +107,10 @@
 .mv-editor-host{width:min(880px,100%);}
 .mv-editor-host .mv-editor{margin:0;}
 
-/* Catalog toolbar and folding groups (models-view.mjs renderModelsList). */
-.mv-toolbar{display:flex;flex-wrap:wrap;align-items:center;gap:10px;margin-bottom:14px;}
-.mv-toolbar .mv-search{flex:1 1 280px;min-width:0;}
+/* The Catalogue tab's filter chips (models/catalogue-view.mjs renderCatalogue; the toolbar and its search are in models-page.css). */
 .mv-filters{display:flex;flex-wrap:wrap;gap:6px;}
-.mv-section-head{display:flex;align-items:center;gap:8px;}
-.mv-sec-toggle{gap:8px;padding:0 8px 0 4px;}
-.mv-sec-caret{flex:0 0 auto;transform:rotate(90deg);}   /* .adv-chev: points right; a group is open unless folded */
-.mv-sec-count{padding:1px 8px;border-radius:var(--r-xs);background:var(--field);color:var(--ink-2);font:500 var(--fs-caption)/1 var(--sans);}
-.mv-section.is-folded .mv-sec-caret{transform:none;}
-.mv-section.is-folded .mv-sec-body,.mv-section.is-folded .mv-sec-hint{display:none;}
-.mv-no-hits{margin-top:6px;}
-@media (prefers-reduced-motion: reduce){.mv-sec-caret,.advanced .adv-chev{transition:none;}}
+/* The Advanced disclosure's chevron (new-run/advanced-disclosure.css) holds still under reduced motion. */
+@media (prefers-reduced-motion: reduce){.advanced .adv-chev{transition:none;}}
 .mv-pv-row .input,.mv-pv-row .select{font-family:var(--mono);font-size:12px;padding:0 12px;}
 .mv-pv-row .mv-pv-conc{max-width:120px;}
 .mv-cp-signin-box{display:grid;gap:12px;padding:14px 16px;border:1px solid var(--line-2);border-radius:var(--r-sm);background:var(--field);min-width:0;}
@@ -131,8 +123,6 @@
 .mv-cp-wait .mv-cp-status{min-width:0;overflow-wrap:anywhere;}
 .mv-cp-status.err{color:var(--red);}
 .mv-cp-signin-box .mv-cp-cancel{flex:none;}
-.mv-needs-signin{display:inline-flex;align-items:center;gap:6px;}
-.mv-degradation{display:block;margin:4px 0 0;}
 .mv-conn{display:grid;gap:12px;}
 .mv-conn-body{display:grid;gap:12px;padding:12px 14px;border:1px solid var(--line-2);border-radius:var(--r-sm);}
 .mv-conn-body[hidden]{display:none;}
@@ -144,7 +134,7 @@
 .mv-conn-grid .input{font-family:var(--mono);font-size:12px;}
 /* The Provider select and the provider's state word (provider-state.mjs) on one line. */
 .mv-conn-prov-row{display:flex;align-items:center;gap:10px;min-width:0;}
-.mv-conn-prov-row > .select{flex:1 1 auto;min-width:0;}
+.mv-conn-prov-row > .select,.mv-conn-prov-row > .mdl-picksel{flex:1 1 auto;min-width:0;}
 .mv-conn-prov-row > .mdl-st{flex:none;}
 .mv-conn-prov-row > .mdl-st[hidden]{display:none;}
 /* The connection's two folds, "Connection" and "Capabilities and limits" (the model form puts them after Pricing):
@@ -178,9 +168,7 @@
 .mvi-status{color:var(--ink-3);font-size:12px;}
 @media (max-width:720px){.mv-pv-row{grid-template-columns:1fr;}.mv-pv-card .mv-pv-row .mv-pv-ctl{grid-template-columns:1fr;}}
 
-/* ---- Model plugins (design §9.6): plugin cards + export wizard ---- */
-.mv-secret{display:block;margin:4px 0 0;}
-.mv-secret.err{color:var(--red);}
+/* ---- Model plugins (design §9.6): Share as plugin, and the base URL in a plugin's install consent ---- */
 /* Share as plugin (DESIGN SHR-1, models-view.mjs renderExportWizard): the head (title, Close), three numbered parts,
    each after the first opening on a hairline, then the message and Cancel / Export scaffold. Margins, never a gap on
    the card: once the dialog lays it out (layoutDialog) the head and foot leave the card's flow for its pinned regions

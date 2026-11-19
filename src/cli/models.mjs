@@ -1,6 +1,6 @@
 // src/cli/models.mjs
 // `worca models …` (model-bridge-design.md §6.5): the provider operations the
-// Providers card offers, for a terminal — sign in to GitHub Copilot with the
+// Providers tab offers, for a terminal — sign in to GitHub Copilot with the
 // device flow, sign out, import Copilot models into the catalog, list the
 // catalog with its bridge facts, and show provider state. Pure helpers are
 // exported for tests; cmdModels takes its I/O injected (the schedule.mjs

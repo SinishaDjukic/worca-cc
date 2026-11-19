@@ -6,11 +6,11 @@ import assert from 'node:assert/strict';
 import { JSDOM } from 'jsdom';
 import { checkRows } from './helpers/rows.mjs';
 import {
-  suggestDuplicateId, deleteRefsSummary, renderModelEditor,
+  suggestDuplicateId, suggestDuplicateLabel, deleteRefsSummary, renderModelEditor,
   collectModelEditor, makeEnvRow, setModelCost, setModelEngine,
   renderExportWizard, collectExportWizard, applyConnectionModeIn, envRowsProblem, setFormWhere,
 } from '../ui/public/models-view.mjs';
-import { bridgedBadge, degradationLine, connectionWhere, setConnectionWhere, wheresFor } from '../ui/public/bridge-view.mjs';
+import { connectionWhere, setConnectionWhere, wheresFor } from '../ui/public/bridge-view.mjs';
 import { readIndexHtml } from '../src/core/read-index-html.mjs';
 import { readStyleCss } from '../src/core/read-style-css.mjs';
 
@@ -277,6 +277,14 @@ test('suggestDuplicateId: first free -copy, then numbered, case-insensitively', 
   assert.equal(suggestDuplicateId('glm-4.7-copy', ['glm-4.7-copy']), 'glm-4.7-copy-copy');
 });
 
+test('suggestDuplicateLabel: " copy" after a label the user chose, none for a label that is the id', () => {
+  assert.equal(suggestDuplicateLabel({ id: 'gw-claude', label: 'Gateway' }), 'Gateway copy');
+  assert.equal(suggestDuplicateLabel({ id: 'gw-claude', label: 'Gateway copy' }), 'Gateway copy copy');
+  assert.equal(suggestDuplicateLabel({ id: 'gw-claude', label: 'gw-claude' }), '');
+  assert.equal(suggestDuplicateLabel({ id: 'gw-claude', label: '' }), '');
+  assert.equal(suggestDuplicateLabel({ id: 'gw-claude' }), '');
+});
+
 const CODEX_EFFORTS = ['minimal', 'low', 'medium', 'high'];
 
 test('editor: the engine swaps the efforts and hides env for Codex; collect sends it', () => {
@@ -364,14 +372,6 @@ test('editor (edit): a stored Codex endpoint model keeps codex\'s rules — its 
   assert.deepEqual(collectModelEditor(two).body.efforts, ['low', 'medium'], 'a stored subset is kept');
   setConnectionWhere(edit, 'signin');
   assert.equal(collectModelEditor(edit).body.upstream, null, 'switching back to codex\'s default clears the endpoint');
-});
-
-test('cards: a Codex endpoint model says endpoint, not bridged, and carries no translation line', () => {
-  const m = { id: 'cx-local', engine: 'codex', bridged: 'openai', upstreamModel: 'qwen3-coder', upstream: { provider: 'openai', api: 'openai-responses', model: 'qwen3-coder' } };
-  const b = bridgedBadge(m, { doc });
-  assert.equal(b.textContent, 'endpoint: openai');
-  assert.match(b.title, /Codex connects to this OpenAI-compatible endpoint itself as qwen3-coder/);
-  assert.equal(degradationLine(m), '');
 });
 
 test('editor: Cursor takes no env, no endpoint, no effort and no pricing; the fields come back off Cursor', () => {
@@ -611,9 +611,14 @@ test('form: the Provider select offers OpenRouter, an OpenAI-compatible endpoint
   const add = renderModelEditor(null, EFFORTS, { doc, providers: P, where: 'provider' });
   const sel = add.querySelector('select.mv-conn-provider');
   assert.deepEqual([...sel.options].map((o) => [o.value, o.textContent]), [['copilot', 'GitHub Copilot'], ['openrouter', 'OpenRouter'], ['openai', 'OpenAI-compatible'], ['anthropic', 'Anthropic-compatible']]);
+  // FRM-1: "a select with marks" — the picked provider's mark inside it, also after a pick made by code.
+  const provMark = () => add.querySelector('.mv-conn-prov-row > .mdl-picksel > .mdl-mark img')?.getAttribute('src') || '';
+  assert.equal(sel.parentElement.matches('.mv-conn-prov-row > .mdl-picksel'), true);
+  assert.match(provMark(), /githubcopilot\.svg$/);
   const bu = add.querySelector('.mv-conn-baseurl');
   sel.value = 'openrouter';
   applyConnectionModeIn(add);
+  assert.match(provMark(), /openrouter\.svg$/, 'the mark follows the select');
   assert.equal(bu.value, 'https://openrouter.ai/api/v1');
   const up = collectModelEditor(add).body.upstream;
   assert.deepEqual([up.provider, up.baseUrl], ['openai', 'https://openrouter.ai/api/v1']);
@@ -831,17 +836,26 @@ test('form (L18): no paragraph of explanation — every hint is 80 characters or
   }
 });
 
-test('phones: the Models header and the model cards wrap at 760px instead of running off a 375px screen', async () => {
+test('phones: the Models header actions wrap at 760px instead of running off a 375px screen', async () => {
   const { readFileSync } = await import('node:fs');
   const html = readIndexHtml();
   assert.match(html, /<div class="mv-head-actions"(?: data-tab-only="catalogue")?>\s*<button type="button" id="models-more-btn" class="btn btn-quiet btn-icon" aria-label="More">\s*<svg[^>]*>(?:(?!<\/button>)[\s\S])*<\/svg>\s*<\/button>\s*<button type="button" id="model-create-btn"/, 'the header buttons sit in a styled group, not an inline-styled div: More (an icon), then Add model');
   const css = readStyleCss();
   assert.match(css, /\n\.mv-head-actions\{display:flex;gap:8px;flex:0 0 auto;\}/);
-  // The page head (the tab strip and these actions) wraps in models-page.css; the cards' block stays here.
+  // The page head (the tab strip and these actions) wraps in models-page.css; the actions' own phone rule stays here.
   assert.match(readFileSync(new URL('../ui/public/models/models-page.css', import.meta.url), 'utf8'), /@media \(max-width:760px\)\{\.mdl-head\{flex-wrap:wrap\}\}/);
   const phone = css.match(/@media \(max-width:760px\)\{\s*\.mv-head-actions\{[^}]*\}[^@]*/);
   assert.ok(phone, 'a phone block for the Models page');
   assert.match(phone[0], /\.mv-head-actions\{flex:1 1 100%;flex-wrap:wrap;\}/);
-  assert.match(phone[0], /\.mv-card\{flex-wrap:wrap;\}/);
-  assert.match(phone[0], /\.mv-body\{flex-basis:100%;\}/);
+});
+
+test('form (FRM-1): the Harness select carries the picked harness\'s mark, and follows setModelEngine', () => {
+  const ed = renderModelEditor(null, EFFORTS, { doc, providers: P, where: 'signin' });
+  const sel = ed.querySelector('select.mv-engine');
+  const mark = () => sel.parentElement.querySelector(':scope > .mdl-mark img')?.getAttribute('src') || '';
+  assert.ok(sel.parentElement.matches('.mdl-picksel'));
+  assert.match(mark(), /\/vendor\/brand-icons\/claudecode-color\.svg$/);
+  setModelEngine(ed, 'codex');
+  assert.match(mark(), /\/vendor\/brand-icons\/codex-color\.svg$/, 'a harness set by code');
+  assert.equal(ed.querySelector(`label[for="${sel.id}"]`)?.textContent, 'Harness', 'the label still names the select');
 });

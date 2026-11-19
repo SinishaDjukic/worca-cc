@@ -11,7 +11,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 import { createModelChangeValidator, mergeEditPatch, maskEntry, LOCAL_MIN_WINDOW, MODEL_CHANGE_KINDS } from '../src/core/ask/model-proposal.mjs';
-import { applyModelChange } from '../src/core/ask/model-deps.mjs';
+import { applyModelChange, defaultModelDeps, validateModelChange } from '../src/core/ask/model-deps.mjs';
 import { createAskTools } from '../src/core/ask/tools.mjs';
 import { ASK_SYSTEM_RULES } from '../src/core/ask/prompt.mjs';
 import { checkRows } from './helpers/rows.mjs';
@@ -19,9 +19,11 @@ import { checkRows } from './helpers/rows.mjs';
 const LLAMA = { provider: 'openai', api: 'openai-chat', model: 'qwen', baseUrl: 'http://127.0.0.1:8080/v1', capabilities: { maxPromptTokens: 65536, maxOutputTokens: 8192 } };
 
 /** A validator over an in-memory catalog; the dry-run setters echo what a write would store. */
-function fixture({ globals = [], plugins = [], policy = [], env = {}, providers = {}, ready = () => ({ ok: true }), refs = () => ({ steps: [], nodes: [], predefinedShadow: false }), copilot = [] } = {}) {
+function fixture({ globals = [], plugins = [], policy = [], env = {}, providers = {}, openrouter = {}, legacyKey = false, ready = () => ({ ok: true }), refs = () => ({ steps: [], nodes: [], predefinedShadow: false }), copilot = [] } = {}) {
   const calls = [];
   const cfg = (n) => ({ maxConcurrent: 8, ...(n === 'copilot' ? { accountType: 'individual' } : { baseUrl: n === 'openai' ? 'https://api.openai.com/v1' : 'https://api.anthropic.com' }), ...(providers[n] || {}) });
+  const OR_DEFAULTS = { apiKey: '', maxConcurrent: 8, order: [], sort: '', allowFallbacks: true };
+  const orCfg = () => ({ ...OR_DEFAULTS, ...openrouter });
   const validate = createModelChangeValidator({
     listGlobalModels: () => globals, listPluginModels: () => plugins, policyModels: () => policy,
     predefined: [{ id: 'claude-opus-5-5', label: 'Opus 5.5' }],
@@ -39,6 +41,17 @@ function fixture({ globals = [], plugins = [], policy = [], env = {}, providers 
     updateProvider: async (n, p, o) => { calls.push(['provider', n, p, o]); const next = { ...cfg(n) }; for (const [k, v] of Object.entries(p)) { if (v === null || v === '') delete next[k]; else next[k] = v; } return next; },
     providerConfig: cfg, providerReadiness: ready, modelRefs: refs, envHas: (k) => k in env,
     copilotModels: async () => copilot,
+    openRouterConfig: orCfg,
+    updateOpenRouter: async (p, o) => {
+      calls.push(['openrouter', p, o]);
+      const next = orCfg();
+      for (const [k, v] of Object.entries(p)) {
+        if (!(k in OR_DEFAULTS)) throw new Error(`unknown provider field ${JSON.stringify(k)} for openrouter`);
+        next[k] = v === null || v === '' ? OR_DEFAULTS[k] : v;
+      }
+      return next;
+    },
+    openRouterLegacyKey: () => legacyKey,
   });
   return { validate, calls };
 }
@@ -197,10 +210,66 @@ test('provider: base URL / key reference / concurrency validate; sign-in fields 
   assert.match(r.errors[0], /nothing changes/);
   r = await validate({ kind: 'provider', provider: 'openai', set: { baseUrl: 'https://api.openai.com/v1' } });
   assert.match(r.errors[0], /nothing changes/);
+  // Only what the card shows is applied: an unchanged cap stays out of change.set, so an Apply after a Providers-tab
+  // save of the cap keeps that save (the stored set is written as it is, model-deps.mjs applyModelChange).
+  r = await validate({ kind: 'provider', provider: 'openai', set: { maxConcurrent: 8, baseUrl: 'http://127.0.0.1:8080/v1' } });
+  assert.deepEqual(r.card.rows.map((x) => x.field), ['Base URL']);
+  assert.deepEqual(r.card.change, { provider: 'openai', set: { baseUrl: 'http://127.0.0.1:8080/v1' } });
   r = await validate({ kind: 'provider', provider: 'openai' });
   assert.match(r.errors[0], /provider needs set/);
   r = await validate({ kind: 'provider', provider: 'anthropic', set: { apiKey: '${ANTH_KEY}' } });
   assert.match(r.card.warnings.join(' '), /\$\{ANTH_KEY\} is not set/);
+  r = await validate({ kind: 'provider', provider: 'groq', set: { maxConcurrent: 2 } });
+  assert.deepEqual(r.errors, ['provider must be one of copilot, openai, anthropic, openrouter']);
+});
+
+test('provider openrouter: its own row, card and errors — the key only as ${VAR}, a dry run for the rows', async () => {
+  await checkRows([
+    { name: 'openrouter: the card shows the five fields as the Providers tab words them, through a dry run', run: async () => {
+      const { validate, calls } = fixture({ openrouter: { apiKey: 'sk-or-stored-4321' } });
+      const r = await validate({ kind: 'provider', provider: 'openrouter', set: { maxConcurrent: 4, order: ['anthropic', 'openai'], sort: 'price', allowFallbacks: false }, note: 'cheaper' });
+      assert.equal(r.ok, true, JSON.stringify(r.errors));
+      assert.deepEqual(calls.at(-1), ['openrouter', { maxConcurrent: 4, order: ['anthropic', 'openai'], sort: 'price', allowFallbacks: false }, { dryRun: true }]);
+      assert.deepEqual(r.card, {
+        type: 'model', kind: 'provider', target: 'openrouter', summary: 'Change the OpenRouter provider', note: 'cheaper',
+        rows: [
+          { field: 'Max concurrent requests', before: '8', after: '4' },
+          { field: 'Provider order', before: null, after: 'anthropic, openai' },
+          { field: 'Sort providers by', before: 'OpenRouter default', after: 'price' },
+          { field: 'Allow fallbacks', before: 'on', after: 'off' },
+        ],
+        warnings: [],
+        change: { provider: 'openrouter', set: { maxConcurrent: 4, order: ['anthropic', 'openai'], sort: 'price', allowFallbacks: false } },
+      });
+    } },
+    { name: 'openrouter: the key row is masked; a literal key, an empty set and a no-op are refused', run: async () => {
+      const { validate } = fixture({ openrouter: { apiKey: 'sk-or-stored-4321' }, env: { OR_KEY: 'x' } });
+      let r = await validate({ kind: 'provider', provider: 'openrouter', set: { apiKey: '${OR_KEY}' } });
+      assert.deepEqual(r.card.rows, [{ field: 'API key', before: '••••••4321', after: '${OR_KEY}' }]);
+      assert.deepEqual(r.card.warnings, []);
+      assert.ok(!JSON.stringify(r.card).includes('sk-or-stored'), 'the stored key never rides the card');
+      r = await validate({ kind: 'provider', provider: 'openrouter', set: { apiKey: 'sk-or-live' } });
+      assert.match(r.errors[0], /^openrouter apiKey must be a \$\{VAR\} reference/);
+      r = await validate({ kind: 'provider', provider: 'openrouter', set: {} });
+      assert.deepEqual(r.errors, ['openrouter needs set: {apiKey?, maxConcurrent?, order?, sort?, allowFallbacks?}']);
+      r = await validate({ kind: 'provider', provider: 'openrouter', set: { maxConcurrent: 8 } });
+      assert.match(r.errors[0], /nothing changes/);
+      // Only what the card shows is applied: the unchanged cap stays out of change.set.
+      r = await validate({ kind: 'provider', provider: 'openrouter', set: { maxConcurrent: 8, sort: 'price' } });
+      assert.deepEqual(r.card.rows, [{ field: 'Sort providers by', before: 'OpenRouter default', after: 'price' }]);
+      assert.deepEqual(r.card.change, { provider: 'openrouter', set: { sort: 'price' } });
+      r = await validate({ kind: 'provider', provider: 'openrouter', set: { apiKey: '${OR_MISSING}' } });
+      assert.match(r.card.warnings.join(' '), /\$\{OR_MISSING\} is not set in worca's environment/);
+    } },
+    { name: 'openrouter: clearing the key warns "no API key" unless the OpenAI-compatible row lends its openrouter.ai key', run: async () => {
+      let { validate } = fixture({ openrouter: { apiKey: 'sk-or-stored-4321' } });
+      let r = await validate({ kind: 'provider', provider: 'openrouter', set: { apiKey: null } });
+      assert.match(r.card.warnings.join(' '), /no API key/);
+      ({ validate } = fixture({ openrouter: { apiKey: 'sk-or-stored-4321' }, legacyKey: true }));
+      r = await validate({ kind: 'provider', provider: 'openrouter', set: { apiKey: null } });
+      assert.deepEqual(r.card.warnings, []);
+    } },
+  ]);
 });
 
 test('imports: import_copilot only offered ids; import_endpoint quotes the served window and refuses unimportable rows', async () => {
@@ -248,7 +317,7 @@ test('imports: import_copilot only offered ids; import_endpoint quotes the serve
       assert.equal(r.card.target, 'http://127.0.0.1:11434/v1');
       assert.deepEqual(r.card.rows, [
         { field: 'qwen3-coder:30b', before: null, after: 'added as ollama-qwen3-coder-30b · 65536 tokens' },
-        { field: 'small:1b', before: 'in catalog', after: 'refreshed · 8192 tokens' },
+        { field: 'small:1b', before: 'in catalogue', after: 'refreshed · 8192 tokens' },
         { field: 'unknown:7b', before: null, after: 'added as ollama-unknown-7b · window not reported (supports 131072)' },
       ]);
       const w = r.card.warnings.join('\n');
@@ -301,7 +370,9 @@ test('tools: the family is listed only with a models bundle, last, and dispatche
   assert.deepEqual(await tools.call('get_providers', {}), { openai: { keySet: false } });
   assert.deepEqual(await tools.call('test_provider', { provider: 'openai' }), { ok: true });
   assert.deepEqual(seen, ['openai']);
-  await assert.rejects(() => tools.call('test_provider', { provider: 'x' }), /provider must be copilot, openai or anthropic/);
+  assert.deepEqual(await tools.call('test_provider', { provider: 'openrouter' }), { ok: true });
+  assert.deepEqual(seen, ['openai', 'openrouter']);
+  await assert.rejects(() => tools.call('test_provider', { provider: 'x' }), /provider must be copilot, openrouter, openai or anthropic/);
   await assert.rejects(() => tools.call('list_copilot_models', {}), /list_copilot_models: not signed in to GitHub Copilot/);
   assert.deepEqual(await tools.call('propose_model_change', { kind: 'provider' }), { ok: false, errors: ['got provider'] });
   assert.deepEqual(await tools.call('list_endpoint_models', { baseUrl: 'http://127.0.0.1:8080/v1' }), { server: 'ollama', baseUrl: 'http://127.0.0.1:8080/v1', models: [] });
@@ -321,6 +392,15 @@ test('the api names in the tool descriptions and rule 18 are the ones the valida
   for (const wrong of ['anthropic-messages', 'anthropic_messages', 'openai_chat', 'messages']) {
     assert.ok(!text.includes(wrong), `never names a protocol "${wrong}" the validator would refuse`);
   }
+});
+
+test('rule 18 names the Models tabs and the OpenRouter row; no rule names the old pages', () => {
+  const rule18 = ASK_SYSTEM_RULES.split('\n').find((l) => l.startsWith('18.'));
+  for (const words of ['Models › Providers › OpenRouter', 'Models › Providers › GitHub Copilot', 'Models › Jobs', 'Models › Catalogue', 'Everyday tasks']) {
+    assert.ok(rule18.includes(words), `rule 18 names "${words}"`);
+  }
+  assert.doesNotMatch(ASK_SYSTEM_RULES, /Providers page/);
+  assert.doesNotMatch(ASK_SYSTEM_RULES, /on the Models page/);
 });
 
 // ── the setters' dry run, against a sandboxed HOME ───────────────────────────
@@ -343,6 +423,7 @@ test('apply path: applyModelChange replays through the setters; dryRun validates
         updateModel: async (id, p) => { log.push(['update', id, p]); return {}; },
         removeModel: async (id) => { log.push(['remove', id]); return { clearedSteps: 1, clearedNodes: 1 }; },
         patchProvider: async (n, s) => { log.push(['provider', n, s]); },
+        patchOpenRouter: async (s) => { log.push(['openrouter', s]); },
         importCopilot: async (ids) => { log.push(['import', ids]); return { created: ['copilot-gpt-5'], updated: [], skipped: ['x'] }; },
         importEndpoint: async (ids, o) => { log.push(['import-endpoint', ids, o]); return { created: ['ollama-qwen3-coder-30b'], updated: [], skipped: [{ id: 'nomic', why: 'an embedding model' }], serverLabel: 'Ollama' }; },
       };
@@ -354,6 +435,8 @@ test('apply path: applyModelChange replays through the setters; dryRun validates
       assert.deepEqual(await applyModelChange({ kind: 'remove_model', change: { id: 'oa' } }, { ...io, removeModel: async () => ({ clearedSteps: 0, clearedNodes: 0, clearedMemoryDefrag: true }) }),
         { ok: true, detail: 'oa removed · Settings › Memory defragment model cleared' }, 'the Settings › Memory ref it cleared is named too');
       assert.deepEqual(await applyModelChange({ kind: 'provider', change: { provider: 'openai', set: { baseUrl: 'http://x/v1' } } }, io), { ok: true, detail: 'openai provider saved' });
+      assert.deepEqual(await applyModelChange({ kind: 'provider', change: { provider: 'openrouter', set: { sort: 'price' } } }, io), { ok: true, detail: 'OpenRouter provider saved' });
+      assert.deepEqual(log.at(-1), ['openrouter', { sort: 'price' }], 'the OpenRouter row has its own setter');
       assert.deepEqual(await applyModelChange({ kind: 'import_copilot', change: { ids: ['gpt-5', 'x'] } }, io), { ok: true, detail: 'added copilot-gpt-5 · skipped x' });
       assert.deepEqual(await applyModelChange({ kind: 'import_endpoint', change: { ids: ['qwen3-coder:30b'], baseUrl: 'http://127.0.0.1:11434/v1' } }, io),
         { ok: true, detail: 'added ollama-qwen3-coder-30b · skipped nomic (an embedding model) — from Ollama' });
@@ -380,6 +463,75 @@ test('apply path: applyModelChange replays through the setters; dryRun validates
       assert.equal(prov.baseUrl, 'http://127.0.0.1:8080/v1');
       await assert.rejects(() => updateProvider('openai', { maxConcurrent: 999 }, { dryRun: true }), /maxConcurrent must be an integer/);
       assert.deepEqual(JSON.parse(readFileSync(file, 'utf8')), start, 'nothing was written');
+    } },
+  ]);
+});
+
+test('OpenRouter through the real readers: get_providers never shows the key, the card is a dry run, the apply saves the row', async () => {
+  const sandbox = (settings) => {
+    process.env.HOME = home; process.env.USERPROFILE = home; process.env.WORCA_TEST_ALLOW_HOME_FALLBACK = '1';
+    mkdirSync(join(home, '.worca-cc'), { recursive: true });
+    const file = join(home, '.worca-cc', 'settings.json');
+    writeFileSync(file, JSON.stringify(settings));
+    return file;
+  };
+  await checkRows([
+    { name: 'openrouter, real readers: get_providers masks the key; the proposal writes nothing; baseUrl and a literal key are refused; the apply persists', run: async () => {
+      const file = sandbox({ providers: { openrouter: { apiKey: 'sk-or-new-1234' } } });
+      const bytes = readFileSync(file);
+      const tools = createAskTools({ limits: {}, redact: (s) => s, models: defaultModelDeps().models });
+      const providers = await tools.call('get_providers', {});
+      assert.equal(providers.openrouter.keyMasked, '••••••1234');
+      assert.ok(!JSON.stringify(providers).includes('sk-or-new'), 'get_providers carries no raw key');
+      const r = await validateModelChange({ kind: 'provider', provider: 'openrouter', set: { maxConcurrent: 4, sort: 'price' } });
+      assert.equal(r.ok, true, JSON.stringify(r.errors));
+      assert.equal(r.card.summary, 'Change the OpenRouter provider');
+      assert.deepEqual(r.card.rows, [
+        { field: 'Max concurrent requests', before: '8', after: '4' },
+        { field: 'Sort providers by', before: 'OpenRouter default', after: 'price' },
+      ]);
+      assert.deepEqual(r.card.warnings, []);
+      assert.ok(readFileSync(file).equals(bytes), 'the dry run left settings.json byte for byte');
+      assert.deepEqual(await validateModelChange({ kind: 'provider', provider: 'openrouter', set: { baseUrl: 'https://x' } }),
+        { ok: false, errors: ['unknown provider field "baseUrl" for openrouter'] });
+      assert.match((await validateModelChange({ kind: 'provider', provider: 'openrouter', set: { apiKey: 'sk-or-live' } })).errors[0],
+        /openrouter apiKey must be a \$\{VAR\} reference/);
+      assert.ok(readFileSync(file).equals(bytes), 'refusals write nothing either');
+      assert.deepEqual(await applyModelChange(r.card), { ok: true, detail: 'OpenRouter provider saved' });
+      const { openRouterConfig } = await import('../src/core/settings.mjs');
+      const saved = openRouterConfig();
+      assert.equal(saved.maxConcurrent, 4);
+      assert.equal(saved.sort, 'price');
+      assert.equal(saved.apiKey, 'sk-or-new-1234', 'the key the card did not name stays');
+    } },
+    { name: 'openrouter, real readers: a field the card did not show is never written — a cap saved before Apply is kept', run: async () => {
+      sandbox({ providers: { openrouter: { apiKey: 'sk-or-new-1234' } } });
+      const { openRouterConfig, updateOpenRouter } = await import('../src/core/settings.mjs');
+      const r = await validateModelChange({ kind: 'provider', provider: 'openrouter', set: { maxConcurrent: openRouterConfig().maxConcurrent, sort: 'price' } });
+      assert.equal(r.ok, true, JSON.stringify(r.errors));
+      assert.deepEqual(r.card.rows, [{ field: 'Sort providers by', before: 'OpenRouter default', after: 'price' }]);
+      assert.equal('maxConcurrent' in r.card.change.set, false, 'the unchanged cap is not in the stored set');
+      await updateOpenRouter({ maxConcurrent: 4 });   // Models › Providers › OpenRouter, between the card and its Apply
+      assert.deepEqual(await applyModelChange(r.card), { ok: true, detail: 'OpenRouter provider saved' });
+      const saved = openRouterConfig();
+      assert.equal(saved.maxConcurrent, 4, 'the cap saved after the card was proposed stays');
+      assert.equal(saved.sort, 'price');
+    } },
+    { name: 'openrouter, real readers: clearing the row\'s key warns only when the OpenAI-compatible row lends no openrouter.ai key', run: async () => {
+      const prevKey = process.env.OR_KEY;
+      process.env.OR_KEY = 'sk-or-from-env-5555';
+      try {
+        sandbox({ providers: { openai: { baseUrl: 'https://openrouter.ai/api/v1', apiKey: 'sk-or-old-7777' }, openrouter: { apiKey: '${OR_KEY}' } } });
+        let r = await validateModelChange({ kind: 'provider', provider: 'openrouter', set: { apiKey: '' } });
+        assert.equal(r.ok, true, JSON.stringify(r.errors));
+        assert.deepEqual(r.card.rows, [{ field: 'API key', before: '${OR_KEY}', after: null }]);
+        assert.deepEqual(r.card.warnings, [], 'the OpenAI-compatible row on openrouter.ai lends its key');
+        sandbox({ providers: { openai: { baseUrl: 'https://api.openai.com/v1', apiKey: 'sk-oa-8888' }, openrouter: { apiKey: '${OR_KEY}' } } });
+        r = await validateModelChange({ kind: 'provider', provider: 'openrouter', set: { apiKey: '' } });
+        assert.match(r.card.warnings.join(' '), /no API key/);
+      } finally {
+        if (prevKey === undefined) delete process.env.OR_KEY; else process.env.OR_KEY = prevKey;
+      }
     } },
   ]);
 });

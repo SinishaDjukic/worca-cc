@@ -18,7 +18,7 @@ export const IMAGE_ASPECT = Object.freeze({ wide: '3:2', tall: '2:3', square: '1
 const preset = (p) => Object.freeze({ ...p, models: Object.freeze([...(p.models || [])]), extra: Object.freeze({ ...p.extra }) });
 
 /**
- * The presets, in the order the Providers page lists them. Picking one fills the
+ * The presets, in the order the Image generation row (Models › Providers) lists them. Picking one fills the
  * address, the model and the price; "none" is '' for an address or a model and
  * null for a price. `extra` is sent with every ask; `responseFormat` is sent as
  * `response_format` only when it is not null. `models` is the service's current

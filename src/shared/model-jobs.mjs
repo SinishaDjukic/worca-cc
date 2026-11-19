@@ -1,7 +1,7 @@
 // src/shared/model-jobs.mjs — the jobs that pick a model of their own beside the three roles (U2b, L21): each
 // harness's helper jobs and the Design jobs. Served as-is to the browser (/src/shared/model-jobs.mjs).
 // Copied from engine-settings-view.mjs (JOB_LABELS, utilityId, DESIGN_ROW_LABELS), which still serves Project settings
-// and the setup assistant; app.js's copies went with the Models page's Engines card (P6). Roles are model-roles.mjs's
+// and the setup assistant; app.js's copies were removed in P6 (app.js at checkpoint 98c2f9e3e still has them). Roles are model-roles.mjs's
 // roleOfJob; codex keys are settings.mjs UTILITY_JOBS.
 
 const helper = (engine, key, label, role, extra) => Object.freeze({

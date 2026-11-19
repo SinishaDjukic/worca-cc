@@ -83,7 +83,7 @@ const labelOf = (id, catalog) => {
 const pairText = (p, catalog) => ({ text: `${labelOf(p.model, catalog)} (default)`, effort: str(p.effort) ? `${p.effort} (default)` : '' });
 
 /** Today's words for a row with no value of its own whose role is not set (or that never follows one):
- *  → { text, effort } (effort '' when none). Ported from the old Engines card (app.js at checkpoint 98c2f9e3e; the
+ *  → { text, effort } (effort '' when none). Ported from app.js at checkpoint 98c2f9e3e (the
  *  "(default)" pairs: the Second-opinion reviewer and Memory defragment from factoryModels.claude.helpers, the
  *  interview's requirementsInterviewDefault, Command summaries' automatic model) and engine-settings-view.mjs (steps,
  *  helper jobs, Design). Memory defragment only reaches here while the Quick jobs role is unset: buildJobs follows the role first. */
@@ -231,7 +231,7 @@ export function buildJobs(data, draft, view) {
     sections.push(section({ key: 'design', title: 'Design', jobs, overrideLabel: '', always: true }));
   }
 
-  // The harness line: the old Engines card's two sentences (app.js at checkpoint 98c2f9e3e); a ready harness with no
+  // The harness line: two sentences ported from app.js at checkpoint 98c2f9e3e; a ready harness with no
   // warning says nothing.
   const ready = (Array.isArray(d.engines) ? d.engines : []).find((x) => x && x.name === engine) || null;
   const label = (ready && str(ready.label)) || engineLabel(engine);

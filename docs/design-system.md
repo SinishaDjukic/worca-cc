@@ -278,10 +278,10 @@ a failure opens itself), a graph in its well.
 **Settings**: one place, opened from the profile menu (the sidebar holds places in Worca, never Settings; Interface
 mode, Appearance and going away live in the profile menu only). Opening it turns the sidebar into its menu, its content
 fading over `change` while the page changes at once: `‹ Back to Worca`, then the sections under four group heads
-(Worca: General, Notifications, Team policy, Labs · Work: Runs, Presets, Labels, Automations · AI: Models, Providers,
+(Worca: General, Notifications, Team policy, Labs · Work: Runs, Presets, Labels, Automations · AI: Models,
 Chat, Guardrails, Memory · Add-ons: Plugins, Connectors). **A setting or a place:** a setting is a choice about how
 Worca behaves, set rarely, taking effect at once; a place is where you do work and come back to. So the Marketplace
-*store* is a place in the sidebar, while what you installed (Plugins), Connectors, Models, Providers and Team policy are
+*store* is a place in the sidebar, while what you installed (Plugins), Connectors, Models and Team policy are
 settings. On a narrow screen Worca's sidebar stays, Settings opens
 on its menu as a list, and a section has `‹ Settings` above its title. The top bar's search finds every row, folded
 row and record by its name or its words, and lands on it with the flash, opening its Customise. Mocks:
@@ -321,7 +321,7 @@ where you are: a panel (Pulse, the profile menu), a side column (Ask worca), a D
 | Way | Goes | Component |
 |---|---|---|
 | The sidebar | to a place | the sidebar; a place with its own sections (Settings) turns it into its SideMenu |
-| A row | to a thing, as a full page: a thing takes the page, never a pane beside its list (the run page needs its width) | ListRow |
+| A row | to a thing, as a full page: a thing takes the page, never a pane beside its list (the run page needs its width); a long list whose rows are compared opens its row in a Side panel over the list instead, as the Models Catalogue does | ListRow |
 | The trail | one depth up: a thing to its place, a run to its group | Trail, in the top bar |
 | The pager | sideways, to a sibling: the next run in a group | Pager, at the top bar's right |
 | A link, a search result, a Pulse row, a notification | straight to a fact, in any place | Text link, Search, ListRow; `land()` |
@@ -346,7 +346,7 @@ Violet has two meanings that never meet: the merged status dot (a state), and Wo
 
 ### Suggestions
 - The violet shimmer means Worca is writing text you will review. It never means loading or a run state.
-- Every suggestion runs on a helper job's model (Models › Helper jobs) and its sparkle's tooltip names it: PR titles
+- Every suggestion runs on a helper job's model (Models › Jobs › Helper jobs) and its sparkle's tooltip names it: PR titles
   and descriptions (stacked ones too) on PR description; run title and branch on Run naming; drafted answers and
   change requests on Drafts.
 - If Worca cannot write it (an error, or no answer in 20s), nothing changes: the field keeps the text it had, says so
@@ -467,7 +467,7 @@ stay at 4.5:1. `--row-open` is 50% of `--row-selected`: the
 lighter row highlight of a collapsed Runs group whose run is open.
 
 Known drift (left for a later run): amber `badge waiting` on Guardrails' "built-in"
-and Models' "endpoint-routed", "project (legacy)" and "plugin:" labels; blue engine and credential badges. The interface
+label; blue engine and credential badges. The interface
 mode cards (`.lv-card-icon`) tint their icon per level (an illustration, not a state).
 
 ### Type (checked)
@@ -783,6 +783,104 @@ or View › Keyboard shortcuts. A 760px `.card` dialog in the shared anatomy: tw
 chips right, "or" between alternatives), stacked under 640px, and a foot with a 12px note and Close. Its `kbd.kbd`
 chips share the top search's `.tsearch-kbd` rule; there is no second key-chip style. Esc, Close or the backdrop close it
 and hand the focus back to the opener.
+### Mark tile
+`span.mdl-mark` (`markTile` and `modelMark` in `ui/public/models/brand-marks.mjs`, CSS in
+`ui/public/models/models-page.css`): a model's, harness's or provider's brand mark on a tile that is white in both
+themes (`--mark-tile`), 1px `--line` border. The default tile is 28px with a 6px corner and an 18px image (a Catalogue
+row, a role tile); `.sm` is 18px with no tile, border or corner and a 16px image (facts, pickers, menu rows); `.lg` is
+36px with an 8px corner and a 22px image (a group or fold row head, a harness tile, the side panel, the model form);
+`.xl` is 48px with an 8px corner and a 30px image (Claude Code's harness tile, which grows it to 72px). `.blank` is a
+service with no one vendor (Speech, Image generation, Sound) or an unknown key: a `--field` tile with an `--ink-2` line
+glyph (`.sm.blank` keeps the fill). `.own` has no border and a white mark on a 135° gradient (the bag in `--on-mark`,
+the worca mark's mask inverted to white): your own model wears the worca mark on `g-blue`, a plugin's model the
+Marketplace bag on `g-indigo`, `g-teal`, `g-pink`, `g-blue`, `g-lime` or `g-slate`, picked from the plugin's name. The
+worca mark is 20px (26px on `.lg`), the bag a 16px glyph (20px on `.lg`); `.sm.own` keeps an 18px tile with a 4px
+corner and a 13px mark (a 12px bag). Use it wherever a model, harness or provider is named by sight. The tile is the
+only place brand colour appears. Never tint a word, a chip or the page with a brand's colour, and never put a brand's
+own mark on a coloured tile.
+### Fold row
+`section.drow.drow-stack.mv-pv-card[data-row]` holding `button.mdl-fold.row-btn` (`aria-expanded`, `aria-controls`) and
+its `div.mdl-fold-body` (`ui/public/models/providers-tab.mjs`): one provider or service on the Models page's Providers
+tab. The head is a Row button (no border, the `--hover` fill and 6px corner on hover, an inset ring on keyboard focus),
+at least 48px with 8px above and below: a 28px caret (a 16px chevron in `--ink-2` that turns down while the row is
+open), a 36px mark, the name (13px / 500, `--ink`) over one summary line (`.mdl-fold-sum`, 12px `--ink-2`, one line
+with an ellipsis: `openrouter.ai · 8 requests at a time`), then the State word at the right. Closed, the body is
+`hidden`; open, its fields sit under the name (88px in, 20px below). Several rows can be open at once; an address
+(`#models/providers/openrouter`), an error on the row or a GitHub Copilot sign-in in progress opens its row. At 560px
+of container width and below (`@container drows`) the State word takes its own line under the text and the body loses
+its indent. Use it for one
+thing whose settings fold under a one-line summary. Never a box per row (the `.drow` divider splits them), and never a
+state colour in the summary.
+### Side panel
+`aside#model-panel.mdl-side` (`renderModelPanel` in `ui/public/models/catalogue-view.mjs`, in `#model-panel-host`):
+the Catalogue's open model, over the page's right edge under the top bar at full height (`position:absolute`, z 30:
+under Ask's column where it covers the page, at 1080px and below, and under the panel's own menus), `min(420px,100%)`
+wide and the full width at 860px and below. `--panel`
+fill, a 1px `--line` left edge, `--shadow-sheet`, 20px 24px 24px padding; it scrolls on its own, and with Ask's column
+open above 1080px it stands left of the column. Its head: a 36px mark, the name (15px / 600) over its State word, and a
+28px quiet Close (`.mdl-side-close`, `aria-label="Close"`). Then one row of actions, as the model's source allows (Test,
+Edit, Duplicate, Edit a copy or Promote to global; ⋯ at the right end for your own models), and its sections (the facts
+`dl.mdl-facts` with a 112px column of 12px `--ink-2` labels, Limits for a translated model only, Used by), each opened
+by one `--line` with 20px of space above and below it. It is not modal: no `role="dialog"`, no backdrop, and the
+list stays usable. The open row takes the `--row-selected` fill (`.mdl-sel`); a click on another row shows that one; a
+click on the open row, Close or Escape closes it and gives the focus back to the row. Use it for a long list whose rows
+are compared: the list keeps its place while one row's detail is open. Never a page of its own for one row, and never
+a modal.
+### Save bar
+`div.mdl-savebar` (`ui/public/models/jobs-view.mjs`): one bar for the whole Jobs tab, drawn only while its picks differ
+from what is saved (`hidden` otherwise). Sticky at the tab's bottom (z 2), `--panel` fill, a 1px `--line` border, 8px
+corner, 10px 12px 10px 20px padding, no shadow. On the left a 12px `--ink-2` note, `1 unsaved change` or `N unsaved
+changes`; on the right a 32px `Discard` (`.btn.mdl-discard`) and the primary `Save` (`.btn.btn-primary.mdl-save`),
+which reads `Saving…` and is disabled while it saves. A save sends only what changed and says `Saved.` in a Toast; a
+refusal goes on the tab's message line and keeps the picks. Use it for a tab whose picks are saved together. Never a
+Save per row or per card, never a shadow, and never shown with nothing to save.
+### Dialog step head
+`ol.mdl-steps` (`aria-label="Steps"`; `ui/public/models/add-model-dialog.mjs`, and the model form's head in
+`ui/public/models-view.mjs` when Add model leads to it): the step names in a Dialog's head, on the title's line before
+Close: `1 Where it runs`, a 12px `--ink-3` rule, `2 The model`. 12px / 500 `--ink-2` on one line, no box, no border and
+no number disc; the current step is `li[aria-current="step"]`, `--ink` at 600. Hidden at 860px and below, and left out
+when there is one step to take (Change where it runs); the title and the foot (Next on the first step, Back on the
+second) still say where you are. Use it
+for a setup of two or three steps in one Dialog. Never a coloured step bar, never a step you click, and never the only
+way back: Back sits in the foot.
+### Harness tiles
+`div.mdl-hx` (`role="group"`) of `button.mdl-hx-t` (`aria-pressed`; `ui/public/models/harness-tiles.mjs`): one tile per
+harness, picked by sight, on the Jobs tab (Expert) and in Add model's sign-in step. A 6-column grid with 8px gaps, two
+per row at 860px and below. A tile has 10px padding, a 1px `--line` border, an 8px corner and the `--panel` fill: its
+36px mark, the name (12px / 600, one line) and its State word at 11px with a 6px dot (`Ready`, `Not ready`; on the Jobs
+tab `Ready · Default for new runs`); a Beta chip sits in its top corner. `.best` (Claude Code) spans two columns and two
+rows, with 16px padding, a 72px mark, a 15px name over a 12px State word, a 24px tick disc and the `Best performance`
+chip (`.badge.mdl-best`, white on worca's blue gradient); at 860px and below it keeps the full row at one row's height.
+`.on` (the pick, `aria-pressed="true"`) is a 1px ink edge and a 20px ink tick disc in the bottom corner
+(`svg.mdl-hx-check`). `.off` (not ready) puts the name in `--ink-2` at 500 and the mark's image at half opacity (its
+tile stays), still pickable, the reason in its tooltip; a locked tile is disabled, dimmed the same way, with the lock's
+reason as its tooltip. Hover is the `--hover-outline` edge. Never an ink fill for the pick, and never a recoloured mark.
+### Role tiles
+`div.mdl-tiles` of `button.mdl-tile` (`aria-haspopup="menu"`, `aria-expanded`; `ui/public/models/jobs-view.mjs`): the
+Jobs tab's three roles (Deep thinking, Everyday tasks, Quick jobs), each the button of its own model picker. Three equal
+columns with 12px gaps, stacked at 860px and below. A tile has 16px padding (`--pad-tile`), a 1px `--line` border, an
+8px corner and the `--panel` fill: the role (13px / 600) over what it does (12px `--ink-2`), then the model at 15px / 600
+with its 28px mark and a chevron at the right, then its effort (`xhigh effort`, `Model default effort`). An unset role
+reads `Each job's own default`. Hover is the `--hover-outline` edge; open (`aria-expanded="true"`), a 1px ink edge. A
+pick goes into the tab's unsaved picks and shows the Save bar. Never an ink fill, and never a select inside the tile.
+### State word
+`span.mdl-st` + `.ok`, `.need`, `.fail` or `.off`: the Models page's one dot and one word, in Catalogue rows and group
+heads, the Side panel, Fold rows, Harness tiles, Add model and the model form. 12px / 500 on one line, an 8px round dot
+(`::before`) 7px before the word. `.ok`: a `--green` dot and an `--ink-2` word (`Ready`, `Connected`, `Key set`).
+`.need`: an `--amber` dot and an `--ink` word (`Needs key`, `Needs sign-in`, `Needs setup`). `.fail`: a `--red` dot and
+a `--red-ink-strong` word (`Key ${VAR} not set`). `.off`: a hollow 2px `--slate` ring and an `--ink-2` word (`Not
+connected`, `No key`, `Not ready`). A Harness tile draws it at 11px (12px on Claude Code's) with a 6px dot 5px before
+the word and a 1.5px ring. Use it for a thing's readiness on the Models page; the fix is a button of its own beside it.
+Never a chip or a badge for a state, and never a state colour elsewhere in the row.
+### Models tabs
+`nav#models-tabs.tabs.mdl-tabs` (`aria-label="Models"`) of `a.tab.mdl-tab` (`ui/public/models/page-tabs.mjs`): the Models
+page's header, Catalogue, Jobs and Providers (`#models`, `#models/jobs`, `#models/providers`), each a link with a 16px
+line icon (`layers`, `briefcase`, `cloud`) before its name. The shared Tabs skin: 32px, 13px / 500 `--ink-2`, no box;
+the open tab (`.on`, `aria-current="page"`) is `--ink` over a 2px ink underline. Catalogue carries its count,
+`span.badge.mdl-tab-count`: the listed models (hidden built-ins are not counted), hidden until the list has loaded. The
+`mdl-` hooks set layout only: the strip sits 4px down and the head's actions (⋯ and Add model, on the Catalogue) 4px
+up, so the head keeps one height on every tab; at 760px and below the actions wrap under the strip. Never a page intro
+above them, never a boxed tab, and never a colour of a tab's own.
 
 ## Patterns
 - Status line: "State · detail", for example "Failed · Review · Review Implementation". No colon forms. In a card head
@@ -794,7 +892,8 @@ and hand the focus back to the opener.
   belong in a tooltip.
 - The feature is "Chat", not "Ask Worca".
 - Page header: title, then one short intro sentence (`.page-intro`), then content. A full-bleed editor (Workflows) has
-  no page header; the Marketplace's tabs are its header (Marketplace exceptions).
+  no page header; the Marketplace's tabs are its header (Marketplace exceptions). The Models page's tabs are its header
+  too: no intro, a line icon before each tab's name (Models tabs).
 - Stat tiles hold numbers only (time, cost, files changed). A list of chips goes in its own labelled row, for example
   the Cost tags row in the run page's facts block, never stacked inside a tile. The value is sans with tabular figures.
 - Run and group pages share one head: the bar (Back, a 28px chevron `Back to Runs`, in every layout; the breadcrumb
@@ -831,8 +930,9 @@ and hand the focus back to the opener.
   row's 3px line, then the 11px Plan / Build / Review / Ready with its stage bold); its status names no step, only a
   state its dot does not say (needs you, paused). A member dispatched but not started yet (Starting) draws no progress. Its ⋯ stays 28px, centred.
 - Search is the top bar's "Search or ask" only. A list filter is chosen there ("Runs labelled hotfix", `label:hotfix`),
-  not from a filter button in the list's header. The Marketplace's Browse search is the one exception
-  (Marketplace exceptions).
+  not from a filter button in the list's header. The Marketplace's Browse search is one exception
+  (Marketplace exceptions); the Models Catalogue's own "Search models" field, with its All, In use and Needs setup
+  filter chips (Just imported after an import) and its Source select, is the other.
 - Phones: one 16px gutter; nothing scrolls sideways at 290px.
 - Runs list order: Needs you (most urgent first), Running, Waiting, Recent. Each section is newest dispatch first (a
   run's start, a waiting ticket's creation); a section with no rows is not drawn.

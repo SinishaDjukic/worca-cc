@@ -117,7 +117,7 @@ const SPECIAL = [
   [/^utilityModels\.claude: Claude's helper models are /, 'utilityModels.claude',
     'Claude’s helper models are set in Title generation model, Auto workflow model, PR description model and Defragment model.'],
   [/^utilityModels\.(\w+): unknown job "requirementsInterview"/, 'utilityModels',
-    'The requirements interview runs on Claude: set it on the Claude tab.'],
+    'The requirements interview runs on Claude: set it under Models › Jobs › Claude Code.'],
   [/^path does not exist$/, null, 'That folder does not exist.'],
   [/^path is not a directory$/, null, 'That path is not a folder.'],
   [/^cannot use this folder as the Worca CC root: (.*)$/, null, (m) => `This folder can’t be the Worca root: ${m[1]}`],

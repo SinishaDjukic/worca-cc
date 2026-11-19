@@ -1,5 +1,5 @@
 // src/core/bridge/provider-ops.mjs
-// The operations the Providers card and `worca models …` share
+// The operations the Providers tab and `worca models …` share
 // (model-bridge-design.md §8.1, §8.4, §9): sign-in sessions for the Copilot
 // device flow, sign-out, the provider state payload (never a token), the
 // Copilot models list for import, the import itself, and a connection test
@@ -128,7 +128,7 @@ export async function copilotLogout() {
 const secretSource = (v) => (!v ? null : modelEnvRef(v) ? 'env' : 'stored');
 
 /**
- * The Providers card payload (§9). `quota` is fetched only when asked — it is
+ * The Providers tab payload (§9). `quota` is fetched only when asked — it is
  * a network call to GitHub — and is null when the account exposes none.
  * @param {{quota?:boolean, fetch?:typeof fetch}} [opts]
  */
@@ -185,7 +185,7 @@ function openRouterState() {
 }
 
 /**
- * The Providers card's view of the broker: which slot each provider spends from and the viewer's
+ * The Providers tab's view of the broker: which slot each provider spends from and the viewer's
  * state in it — {slot, state:'set'|'missing'|'invalid'|'operator'|'keyless'|'none', suffix?, error?}.
  * Never throws: an unreachable broker leaves the states out and says why.
  */
@@ -553,7 +553,7 @@ export async function openRouterKeyInfo(baseUrl, apiKey, { fetch: f = globalThis
   } catch { return null; }
 }
 
-/** One line for the Providers card and `worca models test`. Pure. */
+/** One line for the OpenRouter row (Models › Providers) and `worca models test`. Pure. */
 export function formatOpenRouterKeyInfo(info) {
   if (!info) return '';
   const usd = (n) => `$${n.toFixed(2)}`;
@@ -600,7 +600,7 @@ async function testOpenRouterKey(base, key, f) {
  * configured key. Never throws.
  *
  * `baseUrl` / `apiKey` test values that are NOT stored yet — what the user has typed into the
- * Providers card. Testing the stored ones instead made the button lie: type a local llama.cpp URL,
+ * Providers tab. Testing the stored ones instead made the button lie: type a local llama.cpp URL,
  * press Test, and the answer was "no API key configured", because it had tested api.openai.com.
  * A masked echo (••…) means "keep what is stored" exactly as a save does. `openrouter` takes no
  * `baseUrl`: a typed key is its row's own and goes to OPENROUTER_BASE_URL; otherwise openRouterAccount

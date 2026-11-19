@@ -1,8 +1,8 @@
 // ui/public/bridge-view.mjs
 // Pure DOM renderers for the model bridge (model-bridge-design.md §8): the
-// Providers tab's row bodies (models/providers-tab.mjs folds them), the Copilot sign-in block, the Import-from-Copilot sheet,
-// the editor's Connection section, and the card
-// badges. Same contract as models-view.mjs: every function takes `doc` via
+// Providers tab's row bodies (models/providers-tab.mjs folds them), the Copilot sign-in block, the import sheets
+// (GitHub Copilot's and an endpoint's) and the model form's Connection section.
+// Same contract as models-view.mjs: every function takes `doc` via
 // opts and returns DETACHED elements; app.js owns endpoint calls, mounting
 // and the delegated listeners. Interactive elements carry a routing class
 // (mv-cp-*, mv-pv-*, mv-or-*, mvi-*, mv-conn-*) plus data-provider / data-id.
@@ -13,6 +13,7 @@ import { makeSwitch } from './switch.mjs';
 import { codexReaches, runsOnText } from '../../src/shared/connections.mjs';
 import { SIGN_IN_ENGINE_NAMES } from '../../src/shared/engine-switch.mjs';
 import { IMAGE_SERVICES, originOf, pictureSeconds } from '../../src/shared/image-services.mjs';
+import { markedSelect, modelMark } from './models/brand-marks.mjs';
 
 function h(doc, tag, cls, text) {
   const n = doc.createElement(tag);
@@ -63,49 +64,7 @@ function stashReasoningEfforts(conn, upstream) {
 }
 export const CAPABILITY_FLAGS = [['toolCalls', 'Tool calls'], ['vision', 'Vision'], ['reasoning', 'Reasoning']];
 
-/** One-line degradation copy for a translated (openai-chat / openai-responses) model, '' otherwise (§8.5). */
-export function degradationLine(m) {
-  // A Codex model is not translated: codex speaks the endpoint's Responses API itself.
-  if (!m || !m.upstream || m.engine === 'codex' || !TRANSLATED_APIS.includes(m.upstream.api)) return '';
-  const caps = m.upstream.capabilities || {};
-  const limit = caps.maxPromptTokens ? `, prompt limit ~${Math.round(caps.maxPromptTokens / 1000)}k tokens` : '';
-  const lead = m.upstream.api === 'openai-responses'
-    ? 'translated: reasoning summaries only, no WebSearch/WebFetch'
-    : caps.reasoning
-      // A reasoning model's streamed reasoning arrives as thinking; chat completions takes none back.
-      ? 'translated: reasoning shown but not carried across turns, no WebSearch/WebFetch'
-      : 'translated: no thinking blocks, no WebSearch/WebFetch';
-  return `${lead}${limit}`;
-}
-
-/** The `bridged: <provider>` badge for a catalog card, or null. */
-export function bridgedBadge(m, { doc = globalThis.document } = {}) {
-  if (!m || !m.bridged) return null;
-  if (m.engine === 'codex') {
-    const e = h(doc, 'span', 'badge blue mv-bridged', `endpoint: ${m.bridged}`);
-    e.title = `Codex connects to this ${PROVIDER_LABELS[m.bridged] || m.bridged} endpoint itself${m.upstreamModel ? ` as ${m.upstreamModel}` : ''}, no bridge and no codex sign-in.`;
-    return e;
-  }
-  const b = h(doc, 'span', 'badge blue mv-bridged', `bridged: ${m.bridged}`);
-  b.title = `Worca's in-process bridge forwards this model's calls to ${PROVIDER_LABELS[m.bridged] || m.bridged}${m.upstream ? ` as ${m.upstream.model} (${API_LABELS[m.upstream.api] || m.upstream.api})` : ''}.`;
-  return b;
-}
-
-/** The blocking "needs sign-in" pill + button for a card, or null (§8.5). */
-export function needsSignInPill(m, { doc = globalThis.document } = {}) {
-  if (!m || !m.needsSignIn) return null;
-  const wrap = h(doc, 'span', 'mv-needs-signin');
-  const b = h(doc, 'span', 'badge red mv-needs-signin-badge', m.signInReason === 'no_key' ? 'needs API key' : 'needs sign-in');
-  b.title = m.signInMessage || 'The provider behind this model is not usable yet.';
-  wrap.appendChild(b);
-  const btn = h(doc, 'button', 'btn mv-signin', m.signInReason === 'no_key' ? 'Set key' : 'Sign in');
-  btn.type = 'button';
-  btn.dataset.provider = m.bridged || '';
-  wrap.appendChild(btn);
-  return wrap;
-}
-
-// ── Providers card (§8.1) ────────────────────────────────────────────────────
+// ── Providers tab: row bodies (§8.1) ─────────────────────────────────────────
 
 /**
  * With the credential broker: the viewer's own state in the slot `name` (copilot|openrouter|openai|anthropic) spends
@@ -957,6 +916,14 @@ const yesNoCell = (doc, v) => {
 };
 const fmtK = (n) => (n ? `${Math.round(n / 1000)}k` : '—');
 
+/** ADD-3: a listed model's mark in the Model column, as its Catalogue row will wear it (brand-marks.mjs modelMark: the
+ *  vendor's mark from the id or its `vendor/` prefix, else the own mark). It reads the id the import writes (the
+ *  listing's `catalogId`), whose server or host word vendorOf weighs as the Catalogue row's. */
+function sheetMark(doc, m) {
+  const id = String(m.id || '');
+  return modelMark(doc, { id: String(m.catalogId || id), label: String(m.name || ''), upstream: { model: id } }, 'sm');
+}
+
 /** The import sheet over GET /api/providers/copilot/models' list. */
 export function renderImportSheet(models, { doc = globalThis.document } = {}) {
   const root = h(doc, 'section', 'card mv-editor mvi');
@@ -988,8 +955,13 @@ export function renderImportSheet(models, { doc = globalThis.document } = {}) {
       cbTd.appendChild(cb);
       tr.appendChild(cbTd);
       const nameTd = h(doc, 'td');
-      nameTd.appendChild(h(doc, 'b', null, m.name || m.id));
-      nameTd.appendChild(h(doc, 'small', 'hint mvi-id', m.id));
+      const nameRow = h(doc, 'div', 'mdl-sheet-name');
+      nameRow.appendChild(sheetMark(doc, m));
+      const nameTx = h(doc, 'span', 'mdl-sheet-name-tx');
+      nameTx.appendChild(h(doc, 'b', null, m.name || m.id));
+      nameTx.appendChild(h(doc, 'small', 'hint mvi-id', m.id));
+      nameRow.appendChild(nameTx);
+      nameTd.appendChild(nameRow);
       tr.appendChild(nameTd);
       tr.appendChild(h(doc, 'td', null, m.vendor || '—'));
       tr.appendChild(h(doc, 'td', 'num', fmtK(m.contextWindow || m.maxPromptTokens)));
@@ -1092,8 +1064,13 @@ export function renderEndpointSheet(payload, { doc = globalThis.document } = {})
       cbTd.appendChild(cb);
       tr.appendChild(cbTd);
       const nameTd = h(doc, 'td');
-      nameTd.appendChild(h(doc, 'b', null, m.name || m.id));
-      nameTd.appendChild(h(doc, 'small', 'hint mvi-id', m.catalogId || ''));
+      const nameRow = h(doc, 'div', 'mdl-sheet-name');
+      nameRow.appendChild(sheetMark(doc, m));
+      const nameTx = h(doc, 'span', 'mdl-sheet-name-tx');
+      nameTx.appendChild(h(doc, 'b', null, m.name || m.id));
+      nameTx.appendChild(h(doc, 'small', 'hint mvi-id', m.catalogId || ''));
+      nameRow.appendChild(nameTx);
+      nameTd.appendChild(nameRow);
       tr.appendChild(nameTd);
       tr.appendChild(h(doc, 'td', null, m.detail || '—'));
       // The served window is the one a prompt limit may be pinned from; the trained one is context.
@@ -1147,11 +1124,6 @@ export function endpointRowMatches(tr, sheet, query = '') {
   if (bar.querySelector('.mvi-f-tools')?.checked && tr.dataset.tools !== '1') return false;
   const min = Number(bar.querySelector('.mvi-f-ctx')?.value || 0);
   return !(min > 0 && Number(tr.dataset.ctx || 0) < min);
-}
-
-/** The select-all box: tick every importable row. */
-export function applyImportSelectAll(rootEl, on) {
-  for (const c of rootEl.querySelectorAll('.mvi-cb')) if (!c.disabled) c.checked = !!on;
 }
 
 // ── Editor: Connection section (§8.3) ───────────────────────────────────────
@@ -1329,7 +1301,7 @@ export function renderConnectionSection(model, { doc = globalThis.document, prov
   const provRow = h(doc, 'div', 'mv-conn-prov-row');
   const state = h(doc, 'span', 'mdl-st mv-conn-provider-hint');   // the provider's state word (models-view.mjs paints it)
   state.hidden = true;
-  provRow.append(provSel, state);
+  provRow.append(markedSelect(doc, provSel, 'provider'), state);   // FRM-1: the picked provider's mark inside it
   grid.appendChild(connField(doc, 'Provider', provSel, { box: provRow }));
 
   const modelIn = h(doc, 'input', 'input mv-conn-model');

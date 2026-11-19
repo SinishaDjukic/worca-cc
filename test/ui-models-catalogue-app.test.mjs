@@ -271,10 +271,18 @@ test('9b: Test writes into the panel; a use opens its block on the Jobs tab', as
   const btn = doc.querySelector('#model-panel-host .mdl-act[data-act="test"]');
   assert.equal(btn.disabled, false);
   press(window, btn);
-  assert.equal(doc.querySelector('#model-panel-host .mdl-test-result').textContent, 'Testing…');
+  // PAN-3: the button itself reads "Testing…" with the spinner, then "Works"; the line under it holds the answer.
+  assert.equal(btn.textContent, 'Testing…');
+  assert.ok(btn.querySelector('.btn-spin') && btn.classList.contains('is-busy'), 'the spinner shows while it runs');
+  assert.equal(doc.querySelector('#model-panel-host .mdl-test-result').textContent, '');
   await settle();
+  assert.equal(btn.textContent, 'Works');
+  assert.ok(btn.classList.contains('is-done') && !btn.querySelector('.btn-spin'));
   assert.equal(doc.querySelector('#model-panel-host .mdl-test-result').textContent, 'Replied: pong');
   assert.equal(btn.disabled, false);
+  await new Promise((r) => setTimeout(r, 2100));
+  assert.equal(btn.textContent, 'Test', 'back to Test after the done beat');
+  assert.ok(!btn.classList.contains('is-done'));
   press(window, row(doc, 'my-copilot-gpt'));
   press(window, doc.querySelector('#model-panel-host .mdl-use'));
   await settle();
@@ -509,7 +517,8 @@ test('9d: a repaint while a Test runs keeps "Testing…" and Test off; the answe
   const btn = () => doc.querySelector('#model-panel-host .mdl-act[data-act="test"]');
   const out = () => doc.querySelector('#model-panel-host .mdl-test-result');
   assert.equal(btn().disabled, true, 'Test stays off while it runs');
-  assert.equal(out().textContent, 'Testing…');
+  assert.equal(btn().textContent, 'Testing…', 'the button drawn anew reads Testing… too');
+  assert.ok(btn().querySelector('.btn-spin'));
   btn().dispatchEvent(new window.Event('click', { bubbles: true }));   // a plain Event reaches a disabled button too
   assert.equal(posts.filter((p) => p.url === '/api/models/gw-claude/test').length, 1, 'one test at a time');
   release({ ok: true, text: 'pong' });
@@ -604,7 +613,7 @@ test('9f: a panel opened again while its Test runs keeps Test off and "Testing�
   press(window, row(doc, 'gw-claude'));
   assert.equal(side(doc).getAttribute('aria-label'), 'GW Claude');
   assert.equal(testBtn(doc).disabled, true, 'Test stays off while it runs');
-  assert.equal(testOut(doc).textContent, 'Testing…');
+  assert.equal(testBtn(doc).textContent, 'Testing…', 'the button drawn anew reads Testing… too');
   testBtn(doc).dispatchEvent(new window.Event('click', { bubbles: true }));   // a plain Event reaches a disabled button too
   assert.equal(posts.filter((p) => p.url === '/api/models/gw-claude/test').length, 1, 'one test at a time');
   release({ ok: true, text: 'pong' });

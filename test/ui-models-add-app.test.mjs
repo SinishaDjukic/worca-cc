@@ -198,10 +198,21 @@ test('2. a provider: its list, a tick, "Add 1 model"; the import lands on the Ca
   await settle();
   // Select-all ticks what the filter shows, nothing it hides.
   const filter = step2(doc).querySelector('.mimp-filter');
+  const countLine = () => step2(doc).querySelector('.mdl-add-shown');
+  assert.deepEqual([countLine().hidden, countLine().textContent], [false, '2 of 2 shown'], 'ADD-3: the list says how much shows');
+  edit(window, doc.querySelector('#mimp-body .mvi-cb[value="claude-x"]'), true);
+  assert.equal(doc.querySelector('#mimp-body .mvi-all').indeterminate, true, 'a tick alone makes the head box mixed');
+  edit(window, doc.querySelector('#mimp-body .mvi-cb[value="claude-x"]'), false);
+  assert.equal(doc.querySelector('#mimp-body .mvi-all').indeterminate, false);
   filter.value = 'gpt';
   filter.dispatchEvent(new window.Event('input', { bubbles: true }));
+  assert.equal(countLine().textContent, '1 of 2 shown', 'typing in the filter repaints it');
   edit(window, doc.querySelector('#mimp-body .mvi-all'), true);
   assert.deepEqual([...doc.querySelectorAll('#mimp-body .mvi-cb:checked')].map((c) => c.value), ['gpt-5']);
+  filter.value = '';
+  filter.dispatchEvent(new window.Event('input', { bubbles: true }));
+  const allBox = doc.querySelector('#mimp-body .mvi-all');
+  assert.deepEqual([countLine().textContent, allBox.checked, allBox.indeterminate], ['2 of 2 shown', false, true], 'one of two ticked: the head box is mixed');
   const go = doc.getElementById('mimp-go');
   assert.equal(go.textContent, 'Add 1 model');
   assert.equal(go.disabled, false);
@@ -293,6 +304,29 @@ test('3. moving between the screens: Enter an id and Back keep the ticks; a prov
   press(window, step1(doc).querySelector('.mdl-next'));
   await settle(2);
   assert.equal(doc.querySelector('#mimp-body .mvi'), null, 'Next again: the late Copilot list was never kept for this provider');
+});
+
+test('3b. an import in flight: a provider change is put back, and the picker\'s mark follows its value back', async () => {
+  const saving = held();
+  const { window, doc } = await boot({ hash: 'models', arms: [
+    ['GET', '/api/providers/copilot/models', ok(COPILOT_LIST)],
+    ['POST', '/api/providers/copilot/import-models', () => saving.promise.then(() => ok({ created: ['copilot-gpt-5'], updated: [], skipped: [] }))],
+    ['GET', '/api/providers', ok({ copilot: { connected: true } })],
+  ] });
+  await toProviderList(window, doc);
+  const sel = () => step2(doc).querySelector('select.mdl-add-provider');
+  const mark = () => sel().closest('.mdl-picksel')?.querySelector(':scope > .mdl-mark')?.outerHTML;
+  const copilotMark = mark();
+  assert.ok(copilotMark, 'the picker wears its provider\'s mark');
+  edit(window, doc.querySelector('#mimp-body .mvi-cb[value="gpt-5"]'), true);
+  press(window, doc.getElementById('mimp-go'));
+  await settle(2);
+  edit(window, sel(), 'openai');
+  await settle(2);
+  assert.equal(sel().value, 'copilot', 'the change is put back while the import is out');
+  assert.equal(mark(), copilotMark, 'and so is the mark');
+  saving.release();
+  await settle(16);
 });
 
 test('4. a provider that cannot list says why and offers the one next step; nothing is left busy', async () => {
@@ -634,7 +668,7 @@ test('6. Edit a copy asks for the plugin secrets, keeps harness and connection, 
       assert.deepEqual(post.body.env, { L: 'lit', K: 'typed' });
       assert.equal('copyFrom' in post.body, false);
     } },
-    { name: 'a Codex plugin model with an upstream: the provider form on Codex; the POST keeps engine and upstream, no copyFrom', run: async () => {
+    { name: 'a Codex plugin model with an upstream: the provider form on Codex keeps the plugin model\'s id (the copy shadows it); the POST keeps id, engine and upstream, no copyFrom', run: async () => {
       const { window, doc, bodies } = await boot({ hash: 'models', arms: [
         ['GET', '/api/plugins/acme-models/model-env?id=acme-codex', ok({ id: 'acme-codex', label: 'Acme Codex', efforts: ['medium'], env: {}, secretKeys: [], engine: 'codex', upstream: CODEX_UP })],
         ['POST', '/api/models', ok({ ok: true })],
@@ -644,11 +678,13 @@ test('6. Edit a copy asks for the plugin secrets, keeps harness and connection, 
       const f = form(doc);
       assert.equal(f?.dataset.where, 'provider');
       assert.equal(f.dataset.engine, 'codex');
+      assert.equal(f.querySelector('.mv-id').value, 'acme-codex', 'not the provider handle openai-gpt-x');
       assert.equal(f.querySelector('.mv-save').disabled, false);
       press(window, f.querySelector('.mv-save'));
       await settle(16);
       const post = modelPost(bodies);
-      assert.equal(post?.body?.engine, 'codex');
+      assert.equal(post?.body?.id, 'acme-codex');
+      assert.equal(post.body.engine, 'codex');
       assert.equal(post.body.upstream?.model, 'gpt-x');
       assert.equal('copyFrom' in post.body, false);
     } },
@@ -676,10 +712,13 @@ test('12. "Change where it runs": step 1 on the model\'s harness, Continue bring
       const f = form(doc);
       assert.equal(f?.dataset.mode, 'edit');
       edit(window, f.querySelector('.mv-label'), 'Renamed');
+      const title = f.querySelector('.mv-editor-title').textContent;
       press(window, f.querySelector('.mv-rewhere'));
       await settle(2);
       const s1 = step1(doc);
       assert.ok(s1, 'step 1');
+      assert.ok(title.startsWith('Edit '), title);
+      assert.equal(s1.querySelector('.mv-editor-title').textContent, title, 'still the edit\'s title, not "Add model"');
       assert.equal(s1.querySelector('.mdl-hx'), null, 'no harness tiles: the harness is the model\'s');
       assert.equal(s1.querySelector('.mdl-next').textContent, 'Continue');
       assert.equal(s1.querySelector('.mdl-opt[aria-checked="true"]').dataset.where, 'provider', 'preset to where it runs');

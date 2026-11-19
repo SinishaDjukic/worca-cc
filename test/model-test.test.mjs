@@ -93,7 +93,7 @@ test('testModel: empty reply is a failure, not a silent pass', async () => {
 
 test('testModel: a bridge failure for this model replaces the CLI message (a bridged run\'s stderr only carries warnings)', async () => {
   const listeners = bridgeEvents.listenerCount('failure');
-  const fix = 'copilot: model "gpt-6-astra" is not accessible via the /chat/completions endpoint — this model needs a different API: re-import it (Models › Import models…) or change its API in the model editor';
+  const fix = 'copilot: model "gpt-6-astra" is not accessible via the /chat/completions endpoint — this model needs a different API: re-import it (Models › Providers › GitHub Copilot › Import models) or change its API in the model editor';
   const run = async () => {
     bridgeEvents.emit('failure', { tag: '', catalogId: 'other-model', provider: 'copilot', status: 400, message: 'unrelated' });
     bridgeEvents.emit('failure', { tag: '', catalogId: 'CP-Test-Model', provider: 'copilot', status: 400, message: fix });

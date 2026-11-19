@@ -59,7 +59,8 @@ test('renderModelsTabs builds the strip; paintModelsTabs moves the lit tab and w
     [['catalogue', '#models'], ['jobs', '#models/jobs'], ['providers', '#models/providers']]);
   assert.deepEqual(links.map((a) => a.querySelector('.mdl-tab-name')?.textContent), ['Catalogue', 'Jobs', 'Providers']);
   assert.deepEqual(links.map((a) => a.querySelector('.ic svg')?.innerHTML), [ICONS.layers, ICONS.briefcase, ICONS.cloud]);
-  for (const a of links) assert.deepEqual([a.querySelector('.ic').style.width, a.querySelector('.ic svg').getAttribute('width')], ['14px', '14'], a.dataset.tab);
+  // SH-2: a 16px line icon before each name (the mock's too; the walk measured 14).
+  for (const a of links) assert.deepEqual([a.querySelector('.ic').style.width, a.querySelector('.ic svg').getAttribute('width')], ['16px', '16'], a.dataset.tab);
   assert.deepEqual([...nav.querySelectorAll('[aria-current="page"]')], [links[1]]);
   assert.equal(links[1].getAttribute('aria-current'), 'page');
   assert.deepEqual([...nav.querySelectorAll('.on')], [links[1]]);

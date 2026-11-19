@@ -14,6 +14,20 @@ a.tab.mdl-tab{text-decoration:none;}
 .mdl-tab-count{flex:none;}
 .mdl-panel{display:flex;flex-direction:column;gap:16px;width:100%;min-width:0;}
 .mdl-panel[hidden]{display:none;}
+/* Each tab's message line (models.html) is empty almost always (reportStatus toasts ok/err and blanks it): empty, it
+   takes no room, so the tab's first block sits under the tab row (the line's 12px + 16px + the panel's gap were 44px). */
+.mdl-panel > .form-msg:empty{display:none;}
+
+/* A select with marks (ADD-2, FRM-1; brand-marks.mjs markedSelect): the native select, the picked value's sm mark
+   inside its left edge as the mock's closed select draws it; the mark never takes the click. */
+.mdl-picksel{position:relative;display:flex;align-items:center;min-width:0;}
+.mdl-picksel > select{flex:1 1 auto;width:100%;min-width:0;}
+.mdl-picksel > .mdl-mark{position:absolute;left:10px;top:50%;transform:translateY(-50%);pointer-events:none;}
+.mdl-picksel.has-mark > select{padding-left:34px;}
+/* The import sheets' Model column: the mark beside the name and id (ADD-3). */
+.mdl-sheet-name{display:flex;align-items:flex-start;gap:10px;min-width:0;}
+.mdl-sheet-name > .mdl-mark{margin-top:1px;}
+.mdl-sheet-name-tx{min-width:0;}
 
 /* Brand marks: the one place brand colour appears, always in a tile that is light in both themes.
    own = worca's mark (a model you added) or the Marketplace bag (a plugin's model), white on a gradient:
@@ -52,8 +66,11 @@ a.tab.mdl-tab{text-decoration:none;}
 .mdl-st.fail::before{background:var(--red);}
 .mdl-st.off::before{color:var(--slate);background:none;box-shadow:inset 0 0 0 2px currentColor;}
 
-/* "Best performance" on a .badge: worca's blue gradient, white text. */
-.mdl-best{background:linear-gradient(135deg,var(--best-a),var(--best-b));color:var(--on-mark);}
+/* "Best performance" on a .badge: worca's blue gradient, white text. The solid --best-a after the shorthand (which
+   resets background-color) paints under the gradient: it is what verify:theme measures, as it skips gradients. */
+.mdl-best{background:linear-gradient(135deg,var(--best-a),var(--best-b));background-color:var(--best-a);color:var(--on-mark);}
+/* "Beta" on a harness group head and a harness tile: the shared .badge.blue ink is ~3.6:1 on --blue-bg, the strong one ~5:1. */
+.mdl-grp-toggle > .badge.blue,.mdl-hx-t > .badge.blue{color:var(--blue-ink-strong);}
 
 /* The Providers tab (models/providers-tab.mjs): two headed cards of fold rows. The rows stay .drow dividers, never
    boxes: inside .mdl-prov a row's vertical padding moves into its head, so the dividers stay even and the head's hover
@@ -64,7 +81,8 @@ a.tab.mdl-tab{text-decoration:none;}
    and pushed every row of a narrow card past its edge. */
 .mdl-prov .mv-providers-split{gap:0;grid-template-columns:minmax(0,1fr);}
 .mdl-prov .drow.mv-pv-card{padding-top:0;padding-bottom:0;}
-.mdl-fold{display:flex;align-items:center;gap:12px;min-height:48px;padding:8px 0;}
+/* 8px on the right: the head's inset keyboard ring (.row-btn:focus-visible, -2px) sat on the state word's last letters. */
+.mdl-fold{display:flex;align-items:center;gap:12px;min-height:48px;padding:8px 8px 8px 0;}
 .mdl-fold-caret{width:28px;height:28px;flex:none;display:inline-flex;align-items:center;justify-content:center;color:var(--ink-2);}
 /* The chevron turns down on an open row, and on the image row's Advanced disclosure (.mdl-disc). */
 .mdl-fold-caret > .ic,.mdl-disc .ic{transition:transform .12s ease;}
@@ -81,6 +99,13 @@ a.tab.mdl-tab{text-decoration:none;}
 @container drows (max-width:560px){
   .mdl-fold{flex-wrap:wrap;row-gap:4px;}
   .mdl-fold > .mdl-st{flex-basis:100%;padding-left:88px;white-space:normal;overflow-wrap:anywhere;}
+  .mdl-fold-body{padding-left:0;}
+}
+/* Narrow screens (VIS-4, ≤860px, as the mock): every field grid of a row is one column and the body loses its indent.
+   model-bridge.css stacks them only at 720px or in a 560px card; at (0,4,0) and later in parts.json, these win. */
+@media (max-width:860px){
+  .mdl-prov .mv-pv-card .mv-pv-row .mv-pv-ctl,.mdl-prov .mv-im-row .mdl-adv{grid-template-columns:minmax(0,1fr);}
+  .mdl-prov .mv-or-row .mv-or-key{grid-column:auto;}
   .mdl-fold-body{padding-left:0;}
 }
 
@@ -177,6 +202,10 @@ a.tab.mdl-tab{text-decoration:none;}
 .mdl-hx-check{position:absolute;right:10px;bottom:10px;width:20px;height:20px;}
 .mdl-hx-check circle{fill:var(--ink);}
 .mdl-hx-check path{fill:none;stroke:var(--on-ink);stroke-width:2.4;stroke-linecap:round;stroke-linejoin:round;}
+/* The picked tile's state line stops short of the disc and wraps there ("Ready · Default for new runs" ran under it). */
+.mdl-hx-t.on .mdl-hx-state{padding-right:26px;white-space:normal;align-items:flex-start;}
+.mdl-hx-t.on .mdl-hx-state.mdl-st::before{margin-top:calc(.5lh - 3px);}
+.mdl-hx-t.best.on .mdl-hx-state{padding-right:32px;}
 .mdl-hx-name{max-width:100%;font-size:var(--fs-meta);font-weight:600;line-height:var(--lh-title);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
 /* The state is a .mdl-st word (its dot, green or a hollow ring), at the tile's smaller size. */
 .mdl-hx-state{font-size:var(--fs-caption);}
@@ -251,11 +280,11 @@ a.tab.mdl-tab{text-decoration:none;}
 .mdl-opt:disabled .mdl-opt-d{color:var(--ink-3);}
 /* A provider: its select with the provider's state word beside it. */
 .mdl-add-prow{display:flex;align-items:center;gap:12px;flex-wrap:wrap;min-width:0;}
-.mdl-add-prow > .mdl-add-provider{flex:0 1 280px;min-width:0;}
+.mdl-add-prow > .mdl-picksel{flex:0 1 280px;min-width:0;}
 .mdl-add-prow > .mdl-st{flex:none;}
 /* Step 2: the toolbar (provider, filter, "Enter an id instead"), then an OpenAI-compatible endpoint's address and key. */
 .mdl-add-bar{display:flex;align-items:center;gap:8px;flex-wrap:wrap;min-width:0;}
-.mdl-add-bar > .mdl-add-provider{flex:0 1 240px;min-width:0;}
+.mdl-add-bar > .mdl-picksel{flex:0 1 240px;min-width:0;}
 .mdl-add-bar > .mimp-filter{flex:1 1 240px;min-width:0;}
 .mdl-add-bar > .mdl-manual{flex:none;margin-left:auto;}
 .mdl-add-src{display:grid;grid-template-columns:minmax(0,1.4fr) minmax(0,1fr);align-items:start;gap:12px 16px;}

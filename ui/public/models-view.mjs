@@ -3,12 +3,12 @@
 // Mirrors guardrails-view.mjs: every function takes `doc` via opts (defaults to
 // the browser global) and returns DETACHED elements — no fetch, no listeners
 // outside the returned tree. app.js owns endpoint calls and mounting.
-// Interactive elements carry data-id + a routing class (mv-edit, mv-delete,
-// mv-promote, mv-save, mv-cancel, mv-env-add, mv-env-rm) so app.js wires ONE
-// delegated listener on the list container.
+// Buttons carry a routing class (mv-save, mv-cancel, mv-back, mv-rewhere,
+// mv-env-*, mvx-*) so app.js wires ONE delegated click listener on the model
+// dialog (onModelDialogClick); an edit form's root carries data-id.
 
 import { renderConnectionSection, collectConnection, applyConnectionMode, connectionWhere, setConnectionWhere, wheresFor, infoTip, tippedField } from './bridge-view.mjs';
-import { modelMark } from './models/brand-marks.mjs';
+import { modelMark, markedSelect, paintMarkedSelect } from './models/brand-marks.mjs';
 import { displayName } from './models/catalogue-model.mjs';
 import { providerState } from './models/provider-state.mjs';
 import { icon } from './icons.mjs';
@@ -28,21 +28,6 @@ function h(doc, tag, cls, text) {
   if (cls) n.className = cls;
   if (text != null) n.textContent = text;
   return n;
-}
-
-/** "medium · high" or "all efforts" (the full set carries no signal). */
-export function effortsSummary(efforts, allEfforts) {
-  const list = Array.isArray(efforts) ? efforts : [];
-  if (!list.length || (allEfforts && list.length === allEfforts.length)) return 'all efforts';
-  return list.join(' · ');
-}
-
-/** "2 env vars · routes via base URL" | "1 env var" | '' (none). */
-export function envSummary(env) {
-  const keys = Object.keys(env || {});
-  if (!keys.length) return '';
-  const n = `${keys.length} env var${keys.length === 1 ? '' : 's'}`;
-  return keys.includes('ANTHROPIC_BASE_URL') ? `${n} · routes via base URL` : n;
 }
 
 /** The per-Mtok rate keys, in editor order, with their display labels. Mirrors
@@ -85,6 +70,17 @@ export function suggestDuplicateId(id, takenIds = []) {
     if (!taken.has(c.toLowerCase())) return c;
   }
   return base; // 998 copies of one model: let the server reject the duplicate
+}
+
+/**
+ * The label a duplicate of `src` starts with: `<label> copy` for a label the user chose; '' for one that is only the
+ * id (or none), so the copy's label defaults to its own new id. models/brand-marks.mjs vendorOf reads past both.
+ * @param {{ id: string, label?: string }} src
+ * @returns {string}
+ */
+export function suggestDuplicateLabel(src) {
+  const label = String(src?.label ?? '');
+  return label && label !== src.id ? `${label} copy` : '';
 }
 
 /** One env key/value editor row. Existing values arrive MASKED; leaving a
@@ -255,7 +251,8 @@ export function renderModelEditor(model, efforts, { doc = globalThis.document, p
   }
   engineSel.value = engineNow;
   engineSel.disabled = editing;
-  grid.appendChild(fieldOf(doc, 'Harness', engineSel, { tip: editing ? TIPS.harnessFixed : TIPS.harness }));
+  // FRM-1: the picked harness's mark inside the select; the label still names the select.
+  grid.appendChild(fieldOf(doc, 'Harness', markedSelect(doc, engineSel, 'harness'), { tip: editing ? TIPS.harnessFixed : TIPS.harness, names: engineSel }));
 
   // ── Connection (model-bridge-design.md §8.3): Provider and Upstream model id here, its folds after Pricing ──
   const connEl = renderConnectionSection(model, { doc, providers, copilotModels, where: whereNow, provider });
@@ -402,6 +399,7 @@ export function setModelEngine(rootEl, engine) {
   if (!sel) return;
   const next = MODEL_ENGINE_NAMES.includes(engine) ? engine : 'claude';
   sel.value = next;
+  paintMarkedSelect(sel.closest('.mdl-picksel'));
   if (rootEl.dataset.engine !== next) {
     let lists = {};
     try { lists = JSON.parse(rootEl.dataset.effortLists || '{}') || {}; } catch { lists = {}; }
@@ -562,6 +560,7 @@ function paintProviderState(rootEl, conn) {
   const word = rootEl.querySelector('.mv-conn-provider-hint');
   if (!word) return;
   const choice = rootEl.querySelector('.mv-conn-provider')?.value || '';
+  paintMarkedSelect(rootEl.querySelector('.mv-conn-provider')?.closest('.mdl-picksel'));   // a pick made by code too
   const st = conn._providers && choice ? providerState(conn._providers, choice, { hasModels: true }) : null;
   word.hidden = !st || !st.text;
   word.textContent = st ? st.text : '';

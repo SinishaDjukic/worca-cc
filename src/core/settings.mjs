@@ -1298,7 +1298,7 @@ export const SETTINGS_POST_KEYS = Object.freeze([
   'runLimits',                               // Settings › Runs › Machine load { maxConcurrentRuns, testWorkers, keepRunsDays }
   'actions',                                 // Settings › Runs › Actions { keep, portLow, portHigh, editor, terminal, maxCheckouts }
   'runEngine', 'stepModels', 'utilityModels',
-  'modelRoles',                              // Models › Roles: { <engine>: { deep|everyday|quick: { model, effort } } }
+  'modelRoles',                              // Models › Jobs › Roles: { <engine>: { deep|everyday|quick: { model, effort } } }
   'requirementsInterview',                  // Models › Jobs › Helper jobs: the requirements interview { model, effort }
   'askEngine', 'askModels',                  // Chat's engine for new chats and its model per engine (user-only, D17)
   'designModels',                            // Models › Jobs › Design: { <engine>: { lead|builder: { model, effort } } }
@@ -3004,11 +3004,12 @@ export function openRouterConfig() {
 
 /**
  * Patch { apiKey?, maxConcurrent?, order?, sort?, allowFallbacks? }. A key left out keeps its value; '' or null
- * resets it to its default. Validates the whole patch before writing.
+ * resets it to its default. Validates the whole patch before writing. `dryRun` validates the same way and returns
+ * the would-be config without writing (Chat's model card, as updateProvider's).
  * @returns {Promise<ReturnType<typeof openRouterConfig>>} the effective config
  * @throws {Error}
  */
-export async function updateOpenRouter(patch = {}) {
+export async function updateOpenRouter(patch = {}, { dryRun = false } = {}) {
   assertTestSettingsAccess();
   if (!isObj(patch)) throw new Error('openrouter patch must be an object');
   for (const [k, v] of Object.entries(patch)) {
@@ -3024,6 +3025,8 @@ export async function updateOpenRouter(patch = {}) {
     const stored = isClearInput(v) ? undefined : openRouterStoredValue(k, v);
     if (stored === undefined) delete next[k]; else next[k] = stored;
   }
+  // A dry run returns before `all` (settings.providers itself) changes or anything is written.
+  if (dryRun) return { ...openRouterDefaults(), ...sanitizeOpenRouter(next) };
   if (Object.keys(sanitizeOpenRouter(next, OPENROUTER_QUIET)).length) all.openrouter = next; else delete all.openrouter;
   if (Object.keys(all).length) settings.providers = all; else delete settings.providers;
   await persistSettings(settings);

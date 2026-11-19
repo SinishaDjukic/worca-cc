@@ -1,18 +1,17 @@
 // test/bridge-view.test.mjs
 // The model bridge's pure renderers (model-bridge-design.md §8): Providers
-// row states, the sign-in block, the import sheet + select-all + collect,
+// row states, the sign-in block, the import sheet + collect,
 // the editor Connection section (mode reveal, provider→api coupling, Advanced
 // only for key-based providers, efforts collapse for a translated model
-// without reasoning), collect/set round-trips, the bridge badges, a bridged model in the Catalogue (its row, its
+// without reasoning), collect/set round-trips, a bridged model in the Catalogue (its row, its
 // provider's state and its side panel: catalogue-model.mjs) and renderModelEditor.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { JSDOM } from 'jsdom';
 import {
-  collectProviderRow, renderCopilotSignIn, renderImportSheet, collectImportSheet, applyImportSelectAll,
+  collectProviderRow, renderCopilotSignIn, renderImportSheet, collectImportSheet,
   renderConnectionSection, applyConnectionMode, setModelUpstream, collectConnection, connectionWhere, setConnectionWhere,
-  bridgedBadge, needsSignInPill, degradationLine,
   renderCopilotRow, renderOpenRouterRow, renderEndpointRow, renderSpeechRow, renderImagesRow, renderSoundRow,
   collectImagesRow, applyImagesPreset,
 } from '../ui/public/bridge-view.mjs';
@@ -237,7 +236,7 @@ test('row-level collectors: a body collects by itself', () => {
   assert.equal(collectImagesRow(im).service, 'xai');
 });
 
-test('import sheet: rows, disabled policy rows, status column, select-all and collect', () => {
+test('import sheet: rows, disabled policy rows, status column and collect', () => {
   const models = [
     { id: 'gpt-5', name: 'GPT-5', vendor: 'OpenAI', contextWindow: 128000, toolCalls: true, vision: true, reasoning: true, preview: true, pickerEnabled: true, policyState: 'enabled', inCatalog: false },
     { id: 'claude-sonnet-4.5', name: 'Claude Sonnet 4.5', vendor: 'Anthropic', contextWindow: 200000, toolCalls: true, vision: true, reasoning: false, pickerEnabled: true, policyState: 'enabled', inCatalog: true },
@@ -252,9 +251,12 @@ test('import sheet: rows, disabled policy rows, status column, select-all and co
   assert.ok(rows[2].classList.contains('mvi-disabled'));
   assert.equal(rows[2].querySelector('.mvi-cb').disabled, true);
   assert.equal(rows[0].querySelectorAll('td')[3].textContent, '128k');
+  // ADD-3: the Model column draws the model's mark beside its name (its vendor's, else the own mark).
+  assert.deepEqual(rows.map((r) => r.querySelectorAll('td')[1].querySelector(':scope .mdl-mark.sm img')?.getAttribute('src')),
+    ['/vendor/brand-icons/openai.svg', '/vendor/brand-icons/claude-color.svg', '/vendor/brand-icons/xai.svg']);
   assert.deepEqual(collectImportSheet(sheet), []);
-  applyImportSelectAll(sheet, true);
-  assert.deepEqual(collectImportSheet(sheet), ['gpt-5', 'claude-sonnet-4.5']);
+  for (const c of sheet.querySelectorAll('.mvi-cb')) c.checked = true;
+  assert.deepEqual(collectImportSheet(sheet), ['gpt-5', 'claude-sonnet-4.5'], 'a disabled row is never collected, even ticked');
   const empty = renderImportSheet([], { doc });
   assert.ok(empty.querySelector('.hist-empty'));
   assert.equal(empty.querySelector('.mvi-go').disabled, true);
@@ -373,16 +375,9 @@ test('catalogue: a bridged model sits under its provider, which says Needs sign-
   assert.deepEqual(buildModelPanel(data({}), 'copilot-claude').limits, [], 'not translated: no limits');
   const plugin = buildModelPanel(data({}), 'p-gpt');
   assert.deepEqual([fact(plugin, 'Source'), plugin.limits.length], ['Plugin p', 3]);
-  assert.equal(bridgedBadge(gpt, { doc }).textContent, 'bridged: copilot');
-  assert.equal(degradationLine(gpt), 'translated: no thinking blocks, no WebSearch/WebFetch, prompt limit ~128k tokens');
-  assert.equal(bridgedBadge({ bridged: false }, { doc }), null);
-  assert.equal(needsSignInPill({ needsSignIn: false }, { doc }), null);
-  assert.equal(needsSignInPill({ needsSignIn: true, signInReason: 'no_key', bridged: 'openai' }, { doc }).querySelector('.mv-signin').textContent, 'Set key');
-  assert.equal(needsSignInPill({ needsSignIn: true, signInReason: 'not_signed_in', bridged: 'copilot' }, { doc }).querySelector('.badge').textContent, 'needs sign-in');
-  assert.equal(degradationLine(claude), '');
 });
 
-test('connection + cards: the Responses API is offered for copilot and openai, labelled, and described', () => {
+test('connection: the Responses API is offered for copilot and openai, labelled in the segment and the summary, and collected', () => {
   const conn = renderConnectionSection(null, { doc, providers: PROVIDERS });
   const pressed = () => [...conn.querySelectorAll('.mv-conn-api-seg button[aria-pressed="true"]')].map((b) => b.textContent);
   setModelUpstream(conn, { provider: 'openai', api: 'openai-responses', model: 'gpt-5-codex', capabilities: { reasoning: true } });
@@ -393,9 +388,6 @@ test('connection + cards: the Responses API is offered for copilot and openai, l
   setModelUpstream(conn, { provider: 'copilot', api: 'openai-responses', model: 'gpt-6-astra' });
   assert.deepEqual(pressed(), ['OpenAI Responses']);
   assert.equal(conn.querySelectorAll('.mv-conn-api-seg button').length, 3, 'Copilot also speaks Messages and chat completions');
-  assert.equal(degradationLine({ upstream: { api: 'openai-responses', capabilities: { maxPromptTokens: 272000 } } }), 'translated: reasoning summaries only, no WebSearch/WebFetch, prompt limit ~272k tokens');
-  assert.equal(degradationLine({ upstream: { api: 'openai-chat', capabilities: {} } }), 'translated: no thinking blocks, no WebSearch/WebFetch');
-  assert.match(bridgedBadge({ bridged: 'copilot', upstream: { model: 'gpt-6-astra', api: 'openai-responses' } }, { doc }).title, /as gpt-6-astra \(OpenAI Responses\)/);
 });
 
 test('editor: stored efforts all outside the model\'s levels fall back to the levels it offers — never an empty (= every effort) save', () => {

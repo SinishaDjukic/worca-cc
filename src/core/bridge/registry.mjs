@@ -49,7 +49,7 @@ const nonEmptyList = (v) => Array.isArray(v) && v.length > 0;
 const effectiveBase = (upstream, oa) => (upstream && upstream.baseUrl) || oa.baseUrl;
 
 /** Whether `upstream` is OpenRouter's: provider openai and an effective base URL on openrouter.ai. */
-function isOpenRouterEntry(upstream, oa) {
+export function isOpenRouterEntry(upstream, oa) {
   return !!upstream && upstream.provider === 'openai' && isOpenRouterBaseUrl(effectiveBase(upstream, oa));
 }
 

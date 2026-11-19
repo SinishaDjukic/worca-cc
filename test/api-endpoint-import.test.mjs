@@ -12,7 +12,7 @@ import { join } from 'node:path';
 import { JSDOM } from 'jsdom';
 import { _resetForTests } from '../src/core/db.mjs';
 import { cmdModels } from '../src/cli/models.mjs';
-import { renderEndpointSheet, collectImportSheet, applyImportSelectAll } from '../ui/public/bridge-view.mjs';
+import { renderEndpointSheet, collectImportSheet } from '../ui/public/bridge-view.mjs';
 
 let srv, base, endpoint, endpointUrl, homeDir, worcaHomeDir;
 const prevEnv = {
@@ -147,13 +147,15 @@ test('the import sheet: a blocked row cannot be ticked, an unknown window says w
   const rows = [...sheet.querySelectorAll('tbody tr')];
   assert.deepEqual(rows.map((r) => r.dataset.id), ['qwen3-coder:30b', 'glm-4.7-flash:latest', 'nomic-embed-text:latest']);
   assert.equal(rows[0].querySelector('td.num').textContent, '66k');
+  // ADD-3: a mark beside each name: Qwen's and GLM's vendors; an embedding model of no known vendor wears the own mark.
+  assert.deepEqual(rows.map((r) => r.querySelectorAll('td')[1].querySelector('.mdl-mark.sm')?.className), ['mdl-mark sm', 'mdl-mark sm', 'mdl-mark sm own g-blue']);
   assert.equal(rows[1].querySelector('.mvi-ctx-unknown').textContent, '? · supports 203k');
   assert.equal(rows[1].querySelector('.mvi-status').textContent, 'In catalogue · not loaded');
   assert.ok(rows[2].classList.contains('mvi-disabled'));
   assert.equal(rows[2].querySelector('.mvi-cb').disabled, true);
   assert.match(rows[2].querySelector('.mvi-status').textContent, /an embedding model/);
-  applyImportSelectAll(sheet, true);
-  assert.deepEqual(collectImportSheet(sheet), ['qwen3-coder:30b', 'glm-4.7-flash:latest'], 'select-all skips what cannot be imported');
+  for (const c of sheet.querySelectorAll('.mvi-cb')) c.checked = true;
+  assert.deepEqual(collectImportSheet(sheet), ['qwen3-coder:30b', 'glm-4.7-flash:latest'], 'a row that cannot be imported is never collected, even ticked');
   // Nothing importable: the button is dead rather than posting an empty pick.
   const empty = renderEndpointSheet({ serverLabel: 'Ollama', baseUrl: 'http://x/v1', models: [{ id: 'e', importable: false }] }, { doc });
   assert.equal(empty.querySelector('.mvi-go').disabled, true);

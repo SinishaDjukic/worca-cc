@@ -60,7 +60,8 @@ the models the design's engine runs (**More models** for the rest), and **Effort
 
 **Default** is, in this order:
 
-1. The **Design lead** or **Design builders** row of the design's engine on the Models page (Engines card, Design).
+1. The **Design lead** or **Design builders** row of the design's engine on Models › Jobs (its harness tile, the
+   **Design** card).
 2. The model role: **Deep thinking** for the lead, **Everyday tasks** for the builders.
 3. The engine's own default model.
 
@@ -93,11 +94,11 @@ already running waits for a free agent before it starts its next section.
 
 ## Engines
 
-A design builds on the **Default engine** (Models page, Engines card, or its project's own) as it is when the
-design is created. Claude runs as is. Every other engine needs **Allow unguarded** when a design is created, once,
-because it cannot be held to worca's rules. When you send, a dialog names the engine and what it cannot hold:
-**Allow unguarded** creates the design on that engine anyway, **Use Claude** creates it on Claude, and **Cancel**
-creates nothing.
+A design builds on the engine that is **Default for new runs** (Models › Catalogue, a harness group's ⋯ menu), or on
+its project's own **Default engine**, as it is when the design is created. Claude runs as is. Every other engine
+needs **Allow unguarded** when a design is created, once, because it cannot be held to worca's rules. When you send,
+a dialog names the engine and what it cannot hold: **Allow unguarded** creates the design on that engine anyway,
+**Use Claude** creates it on Claude, and **Cancel** creates nothing.
 
 - **Codex** runs in its own sandbox, not under worca's guardrails. The sandbox holds its agents' writes to their
   own folder.
@@ -105,7 +106,7 @@ creates nothing.
   stop a command their agents run, or a file they change outside the design.
 - **Copilot** reports no cost and cannot fully hold the rules.
 - **OpenCode** needs a model set first: a lead and a builders model for OpenCode (the design's pickers, the
-  Models page's Design rows or the roles, see [Models](#models)), or `WORCA_OPENCODE_ALLOW_DEFAULT_MODEL=1` to let it
+  Design rows on Models › Jobs or the roles, see [Models](#models)), or `WORCA_OPENCODE_ALLOW_DEFAULT_MODEL=1` to let it
   run its own default.
 - **Goose** cannot be used: it cannot be held to one folder or kept from running commands, so it has no **Allow
   unguarded**.

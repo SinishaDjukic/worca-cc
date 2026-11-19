@@ -465,7 +465,7 @@
                 </label>
                 <div class="field drow" id="smartNamingModelRow">
                   <span class="drow-label">Model</span>
-                  <small class="hint drow-help" id="smartNamingModelHint"><span data-min-level="expert"><a href="#models/jobs/helpers">Models › Jobs › Helper jobs › Run naming</a>. </span><span id="smartNamingCost"></span></small>
+                  <small class="hint drow-help" id="smartNamingModelHint"><span data-min-level="expert"><a href="#models/jobs/helpers/claude">Models › Jobs › Helper jobs › Run naming</a>. </span><span id="smartNamingCost"></span></small>
                 </div>
                 <div class="field drow" id="smartNamingPatternRow">
                   <label class="drow-label" for="smartNamingPattern">Branch pattern</label>
@@ -957,7 +957,9 @@
                 <div class="sub">What worca remembers across runs and chats: the global rules and preferences every agent sees (a project's own memory is on its project page).</div>
               </div>
             </div>
-            <!-- The Memory defragment model is Claude's "Memory defragment" helper job (the Models page › Engines). -->
+            <!-- A Memory defragment run uses its run engine's "Memory defragment" helper job (Models › Jobs › Helper jobs) when
+                 that harness has one, else that harness's own Quick jobs role (Models › Jobs › Roles): app.js
+                 paintMemoryModelLink sets the address and the words. -->
             <p class="hint mem-model-link" data-min-level="expert">The model every Memory defragment run uses is a helper job: <a href="#models/jobs/helpers">Models › Jobs › Helper jobs</a>.</p>
             <p id="memory-msg" class="form-msg" aria-live="polite"></p>
             <div id="memory-host" class="mem-host"></div>

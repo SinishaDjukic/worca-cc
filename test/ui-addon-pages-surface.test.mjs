@@ -1,6 +1,6 @@
 // Marketplace and Providers: each list is ONE card holding divided rows (docs/design-system.md › Cards versus divided
 // rows), the .card primitive with no values of its own; the rows keep their divider and are never boxes. The Models
-// page Engines card is a page card, not a flat Settings card, so no view-scoped override is needed.
+// page's Jobs tab draws page cards, not flat Settings cards, so no view-scoped override is needed.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
@@ -55,13 +55,4 @@ test('the Models Jobs tab draws page cards, full width, not flat Settings cards'
   const view = read('ui/public/models/jobs-view.mjs');
   assert.match(view, /make\(doc, 'section', 'card drows mdl-job-card'\)/);
   assert.doesNotMatch(view, /settings-card/);
-});
-
-test('the built-in model strips use the card tokens, no colour literal', () => {
-  for (const sel of ['.mv-builtin', '.mv-hide-builtin-row']) {
-    const body = rules.filter((r) => r.sel === sel).map((r) => r.body).join(';');
-    assert.match(body, /border:1px solid var\(--line\)/, sel);
-    assert.match(body, /background:var\(--panel\)/, sel);
-    assert.doesNotMatch(body, /#[0-9a-f]{3,8}\b|rgba?\(|hsla?\(|\bwhite\b|\bblack\b/i, sel);
-  }
 });

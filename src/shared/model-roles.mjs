@@ -1,5 +1,5 @@
 // Model roles (plans/setup-assistant-design.md D1–D5): three kinds of work every model slot falls back to.
-// Pure: shared by src/core (resolution) and ui/public (the Roles card and the Engines rows' "From …" text).
+// Pure: shared by src/core (resolution) and ui/public (Models › Jobs: the role picks and the job rows' "From …" text).
 import { MODEL_ENGINE_NAMES } from './engine-switch.mjs';
 
 export const MODEL_ROLES = Object.freeze(['deep', 'everyday', 'quick']);
@@ -74,7 +74,7 @@ export function roleOfSettingId(settingId, { name = '' } = {}) {
   const [, engine, rest] = m;
   if (rest.startsWith('roles.')) return null;
   if (rest.startsWith('steps.')) return roleOf(rest, { name });
-  // Design's agents (Engines card › Design): the lead thinks deep, the builders write everyday code.
+  // Design's agents (Models › Jobs › Design): the lead thinks deep, the builders write everyday code.
   if (rest === 'design.lead') return roleOf('designLead');
   if (rest === 'design.builder') return roleOf('designBuilder');
   const job = rest.startsWith('utility.') ? rest.slice('utility.'.length) : rest;

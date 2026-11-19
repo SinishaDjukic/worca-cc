@@ -1,7 +1,7 @@
 // ui/public/models/page-tabs.mjs — the Models page's tabs (models-menu P1, contract C1). The first path part of the
 // address names the tab: #models is Catalogue (#models/model/<id> opens one model there), #models/jobs is Jobs
-// (#models/jobs/<card>), #models/providers/<row> is Providers at one row of PROVIDER_ROWS. The strip mirrors
-// Marketplace's: links in the shared .tab skin, lit by .on and aria-current="page".
+// (#models/jobs/<card>, #models/jobs/<card>/<harness>), #models/providers/<row> is Providers at one row of
+// PROVIDER_ROWS. The strip mirrors Marketplace's: links in the shared .tab skin, lit by .on and aria-current="page".
 import { icon } from '../icons.mjs';
 
 export const MODELS_PAGE_TABS = Object.freeze(['catalogue', 'jobs', 'providers']);
@@ -45,7 +45,7 @@ export function renderModelsTabs(doc, { active = 'catalogue', count = null } = {
     const name = doc.createElement('span');
     name.className = 'mdl-tab-name';
     name.textContent = LABELS[tab];
-    a.append(icon(doc, ICON_OF[tab], 14), name);
+    a.append(icon(doc, ICON_OF[tab], 16), name);   // SH-2: a 16px line icon
     if (tab === 'catalogue') {
       const pill = doc.createElement('span');
       pill.className = 'badge mdl-tab-count';
