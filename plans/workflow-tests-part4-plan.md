@@ -172,7 +172,7 @@ D1–D85 hold. These continue them. The `(technical)` rows are for the reviewer.
 | D99 | **Compare by criterion (board 12).** One row per criterion of each compared example, plus each automatic check with `said` (a criterion switched to an exact check, labelled with the person's words and "Can be checked exactly"). Columns: met on A and on B ("X of N" over checked tries), Worca's checking (the trust mark and its line). A row whose two rates differ by at least one try's worth is coloured (green better, red worse) when it decides; rows met in every try by both versions collapse into "N more criteria, all met in every try by both versions". |
 | D100 | **The pair question (P4-Q8).** Blind: "Result 1" and "Result 2", asked in both orders. The same winner both times = that winner; different = "unsure"; "same" both times = a tie. Stored as one judgement row (`purpose 'pair'`, both try ids, `winner` a / b / tie / unsure). With a result you liked, the question is which is closer to it. Never decides. Only for examples with criteria or a result you liked. |
 | D101 | **A result you liked.** `wf_test_liked`, one per example: a text (`kind 'text'`: an uploaded UTF-8 file of at most 2 MB, or a try's or past run's main result) or, for a project example, changes (`kind 'changes'`: the result and its diff, at most 2 MB, named "Changes from the run on <date> · N files"). It is the first choice of Check the checker's good result and the reference of the pair question. It is not part of the fingerprint. |
-| D102 | **Suggested criteria (board 3, P4-Q10).** One call reads the note, the request and the run's result and returns at most 3 sentences, each a criterion (D86's rules). Shown as chips; a press adds one. Cost: ledger purpose `suggest`. Mock: the note's first three sentences. |
+| D102 | **Suggested criteria (board 3, P4-Q10).** One call reads the note, the request and the run's result and returns at most 3 sentences, each a criterion (D86's rules). Shown as chips; a press adds one. Cost: ledger purpose `suggest`. Mock: the note's first three sentences of at least 15 characters. |
 | D103 | **Copy is plain words** (the evals copy standard): criterion, met, not met, reliable, unreliable, check, answer, proof is "Proof from the result". Never "judge", "LLM", "score", "confidence", "fingerprint", "calibration" or "position bias" in the UI. |
 | D104 | *(technical)* **Prompts are Worca's own words**, written for this plan, so no licence text comes along (the research allowed copying MIT/Apache prompts with attribution; not needed). Clearer words: one call with the criterion and the cards the person marked Wrong returns one rewording of at most 300 characters. |
 | D105 | *(technical)* **The suggested checking model.** Among the catalog's Claude models (no "(1M)" twins unless nothing else), Opus first, then Fable, Sonnet, Haiku, each family newest first (the catalog's order); the first the workflow's latest 10 finished tries did not write with (`manifestModels` of their `pipelines.stepper`). If they wrote with all, the first, without "· suggested" (P4-C7). |
@@ -3590,7 +3590,7 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
 - Consumes: `modelCall`, `judgeCriterion` (Task 6), `firstObject`, `replyText` (judge-prompt.mjs), `insertJudgement`, `setAnswer`, `answerOf`, `readLiked` (Tasks 7, 8, 12), `subjectOfTry` (Task 7), `recordTestJudgeCost` (Task 5), `mainResult` (result.mjs).
 - Produces (planted.mjs, pure): `FILLER`, `padded(text) → string`, `deterministicPlants(text) → [{ how, excerpt, text }]`, `PLANT_SYSTEM_PROMPT`, `plantPrompt({ criterion, result }) → string`, `parsePlantReply(text) → { excerpt, broken: [{ how, text }] } | null`, `applyPlants(result, reply) → [{ how, excerpt, text }] | null`.
 - Produces (criteria-store.mjs): `createRound({ workflowId, exampleId, criterionId, fp, model, source, by }) → round`, `readRound(id)`, `updateRound(id, { status, detail })`, `roundJudgements(roundId) → judgement[]`, `roundSpentUsd(roundId) → number`. A round is `{ id, workflowId, exampleId, criterionId, fp, model, source, status, detail, createdAt, finishedAt }`.
-- Produces (checker.mjs): `NO_SOURCE_TEXT`, `createChecker(deps) → { start({ workflowId, exampleId, criterionId, by }) → round, view(round, { by, anyone }) → view, answer(round, judgementId, right, { by }) → view, reword(round, { by }) → { text } }`, `goodResultOf(example, deps) → { kind, text, label, mock, tryId?, pipelineId? } | null` (`mock`: the text came from a mock try; the round then runs on the mock, I14); store: `triesForExample(exampleId)`, `mockPipeline(pipelineId) → boolean`. A view is `{ round, criterion, source, cards: [{ judgementId, card, planted: how|null, excerpt, met, reason, answer }], left, auto: { same: { n, of }, padding: { n, of }, proof: { n, of } }, costUsd, canUse }`.
+- Produces (checker.mjs): `NO_SOURCE_TEXT`, `createChecker(deps) → { start({ workflowId, exampleId, criterionId, by }) → round, view(round, { by, anyone }) → view, answer(round, judgementId, right, { by }) → view, reword(round, { by }) → { text } }`, `goodResultOf(example, deps) → { kind, text, label, mock, tryId?, pipelineId? } | null` (`mock`: the text came from a mock try; the round then runs on the mock, I14); store: `triesForExample(exampleId)`, `mockPipeline(pipelineId) → boolean`. A view is `{ round, exampleName, criterion, source, cards: [{ judgementId, card, planted: how|null, excerpt, met, reason, answer }], left, auto: { same: { n, of }, padding: { n, of }, proof: { n, of } }, costUsd, canUse }`.
 - Routes: `POST …/examples/:ex/checker` `{ criterionId }` → 201 `{ round }` (422 `NO_SOURCE`, 409 while one is being made); `GET …/examples/:ex/checker/:round` → view; `POST …/examples/:ex/checker/:round/answers` `{ judgementId, right }` → view; `POST …/examples/:ex/checker/:round/reword` → `{ text }`.
 
 - [ ] **Step 1: Write the failing test**
@@ -3921,7 +3921,7 @@ export function createChecker(deps = {}) {
     const left = cards.filter((c) => c.answer === null).length;
     const ex = store.readExample(round.workflowId, round.exampleId);
     const criterion = ex ? ex.criteria.find((c) => c.id === round.criterionId) : null;
-    return { round, criterion: criterion ? criterion.text : null, source: round.source, cards, left,
+    return { round, exampleName: ex ? ex.name : null, criterion: criterion ? criterion.text : null, source: round.source, cards, left,
       auto: { same: { n: same, of: main.length }, padding: { n: pad, of: main.length }, proof: { n: main.filter((j) => j.proofFound).length, of: main.length } },
       costUsd: cs.roundSpentUsd(round.id), canUse: round.status === 'done' };
   }
@@ -4231,7 +4231,7 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
 
 **Interfaces:**
 - Produces: `SUGGEST_SYSTEM_PROMPT`, `REWORD_SYSTEM_PROMPT`, `parseSuggestions(text) → string[]` (at most 3, each a valid criterion), `mockSuggestions(note) → string[]`, `suggestCriteria({ note, request, result, model, mock, book }, d) → Promise<{ suggestions, costUsd }>`, `rewordCriterion({ criterion, wrong, model, mock, book }, d) → Promise<{ text }>`.
-- Routes: `POST /api/workflow-tests/suggest-criteria` `{ workflowId, pipelineId?, note }` → `{ suggestions }` (400 for a note under 20 characters); `POST …/examples/:ex/checker/:round/reword` → `{ text }`.
+- Routes: `POST /api/workflow-tests/suggest-criteria` `{ workflowId, pipelineId?, note }` → `{ suggestions }` (400 for a note under 20 characters, or a `pipelineId` that is not a usable past run of that workflow, M17); `POST …/examples/:ex/checker/:round/reword` → `{ text }`.
 
 - [ ] **Step 1: Write the failing test**
 
@@ -4313,7 +4313,7 @@ export function parseSuggestions(text) {
   }
   return out;
 }
-/** The free stand-in: the note's sentences (6 characters or more), at most three. */
+/** The free stand-in: the note's first three sentences of at least 15 characters (a shorter one is not a criterion). */
 export const mockSuggestions = (note) => String(note ?? '').split(/(?<=[.!?])\s+/).map((x) => valid(x)).filter((x) => x && x.length >= 15).slice(0, 3);
 
 export async function suggestCriteria({ note, request = '', result = '', model, mock = false, book = () => {} }, d = {}) {
@@ -4352,7 +4352,7 @@ export async function rewordCriterion({ criterion, wrong = [], model, mock = fal
     return rewordCriterion({ criterion: v.criterion, wrong, model: round.model, mock: d.mock() || !!(round.source && round.source.mock), book });   // I14
   }
 ```
-`criteria-routes.mjs`: append `['POST', `${W}/examples/:ex/checker/:round/reword`]` and `['POST', '/api/workflow-tests/suggest-criteria']` to `CRITERIA_ROUTES`; import `suggestCriteria`, `judgeModelsView`, `mainResult` (from `./result.mjs`), `recordTestJudgeCost`; then:
+`service.mjs`: export `usablePastRun` (`async function usablePastRun` → `export async function usablePastRun`, `service.mjs:412`; no other change). `criteria-routes.mjs`: append `['POST', `${W}/examples/:ex/checker/:round/reword`]` and `['POST', '/api/workflow-tests/suggest-criteria']` to `CRITERIA_ROUTES`; import `suggestCriteria`, `judgeModelsView`, `mainResult` (from `./result.mjs`), `usablePastRun` (from `./service.mjs`), `recordTestJudgeCost`; then:
 ```js
   route('POST', `${W}/examples/:ex/checker/:round/reword`, async (req, res) => { const ex = exampleOf(req); res.json(await checker.reword(roundOf(req, ex), { by: by(req) })); });
   // D102, P4-Q10: board 3's suggestions; the model is the suggested checking model (P4-Q3: no example exists yet).
@@ -4363,9 +4363,11 @@ export async function rewordCriterion({ criterion, wrong = [], model, mock = fal
     if (!workflowId || note.length < 20) throw store.testError('write at least 20 characters about what a good result has', 'BAD_REQUEST');
     const view = await judgeModelsView(workflowId);
     if (!view.suggested) throw store.testError('no AI model can check criteria here', 'NOT_READY');
-    const m = typeof b.pipelineId === 'string' && b.pipelineId ? await mainResult(b.pipelineId) : { text: '' };
+    // M17: only a past run of this workflow that can become its example is read and sent to the model (as from-run checks it).
+    const past = typeof b.pipelineId === 'string' && b.pipelineId ? await usablePastRun(workflowId, b.pipelineId) : null;
+    const m = past ? await mainResult(past.pipelineId) : { text: '' };
     const model = view.suggested.id;
-    res.json(await suggestCriteria({ note, request: typeof b.request === 'string' ? b.request : '', result: m.text || '', model,
+    res.json(await suggestCriteria({ note, request: past ? past.request : '', result: m.text || '', model,
       book: (usd, costKind) => recordTestJudgeCost({ workflowId, purpose: 'suggest', model, amountUsd: usd, costKind }) }));
   });
 ```
@@ -5375,12 +5377,12 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
 Board 11 draws the ready state; its other states are P4-M3. The task starts after P4-M3 is approved (one page, built once).
 
 **Files:**
-- Modify: `ui/public/workflows/criteria-pages.mjs` (`renderChecker`), `ui/public/workflows/tests-app.mjs` (view `checker`, its address, polling, actions), `ui/public/workflows/tests-view.mjs` (`testsAddress`: `…/tests/<example>/checker/<round>`), `ui/public/workflows/workflow-tests.css`
+- Modify: `ui/public/workflows/criteria-pages.mjs` (`renderChecker`), `ui/public/workflows/tests-app.mjs` (view `checker`, polling, actions, the editor's confirm link: about 45 lines), `ui/public/workflows/tests-view.mjs` (`testsAddress`: `…/tests/<example>/checker/<round>`; `TESTS_ROUTE_RE`), `ui/public/workflows/workflow-tests.css`
 - Test: `test/ui-workflow-test-checker.test.mjs`
 
 **Interfaces:**
 - Consumes: the round view (Task 13), `POST …/checker`, `…/answers`, `…/reword` (Tasks 13, 15).
-- Produces: `renderChecker(root, v, actions, { doc, exampleName })`; actions `answer(judgementId, right)`, `reword()`, `back()`, `use()`. Address `#workflows/<id>/tests/<example>/checker/<round>` (the `route` regex in `tests-app.mjs` gains `|\/(\d+)\/checker\/(\d+)`).
+- Produces: `renderChecker(root, v, actions, { doc, exampleName, empty, reworded })` (`v` null with `empty`: P4-M3's no-good-result state; `reworded`: Worca's clearer words after a Wrong, P4-M3); actions `answer(judgementId, right)`, `reword()`, `back()`, `use()`. Address `#workflows/<id>/tests/<example>/checker/<round>`: `testsAddress({ …, view: 'checker', exampleId, roundId })`, and `TESTS_ROUTE_RE` (exported by `tests-view.mjs`, used by `tests-app.mjs` `route`) = `/^tests(?:\/(\d+)|\/run\/(\d+)|\/(\d+)\/checker\/(\d+))?$/`.
 - Copy (board 11): crumb = the example's name; title "Check the checker"; subtitle "Before Worca uses your new criterion, make sure it judges results the way you would. Worca took a good result and broke it on purpose in a few ways."; "Your criterion"; panel "Did Worca get these right?" with "N of 4 left"; card heads "<source label> · <version, date>" and "Broken on purpose: <how>"; "Worca says: met." / "Worca says: not met." with the reason; "Right", "Wrong"; "You said: right" / "You said: wrong"; hint "If you say "wrong", Worca suggests clearer words for the criterion and asks again."; "Worca also tested its own checking" / "No answers needed from you." and the three rows with "N of 4" badges (green when all, red otherwise); "This check cost $0.12. Your answers also count toward how far Worca's checking is trusted."; "Back", "Use this criterion" (disabled until done).
 
 - [ ] **Step 1: Write the failing test**
@@ -5419,6 +5421,16 @@ test('board 11: the criterion, the four cards, the answers left, the self-tests 
   assert.equal(root.querySelector('button.wft-cc-use').disabled, true);
   renderChecker(root, view([true, true, false, true]), { answer: () => {}, back: () => {}, use: () => {}, reword: () => {} }, { doc, exampleName: 'E' });
   assert.equal(root.querySelector('button.wft-cc-use').disabled, false);
+});
+```
+Add the address and the route (import `testsAddress`, `TESTS_ROUTE_RE` from `../ui/public/workflows/tests-view.mjs`):
+```js
+test('the checker\'s address, and the route that opens it after a reload', () => {
+  assert.equal(testsAddress({ workflowId: 'wf_a', shown: true, view: 'checker', exampleId: 4, roundId: 7 }), '#workflows/wf_a/tests/4/checker/7');
+  assert.equal(testsAddress({ workflowId: 'wf_a', shown: true, view: 'checker', exampleId: 4, roundId: null }), '#workflows/wf_a/tests/4', 'no round yet: the example');
+  assert.deepEqual([...TESTS_ROUTE_RE.exec('tests/4/checker/7')].slice(1, 5), [undefined, undefined, '4', '7']);
+  assert.deepEqual([...TESTS_ROUTE_RE.exec('tests/run/12')].slice(1, 3), [undefined, '12'], 'Part 2\'s forms still match');
+  assert.equal(TESTS_ROUTE_RE.exec('tests/4/checker/x'), null);
 });
 ```
 Then pin P4-M3's approved words (preparing, no good result, failed, limit, after a Wrong) as one more test before Step 3.
@@ -5486,7 +5498,84 @@ Then P4-M3's states from the approved mock (pinned in Step 1).
 
 - [ ] **Step 4: The controller** (`tests-app.mjs`)
 
-View `checker` with `{ exampleId, roundId }`: `onCriterion.confirm(c)` (Task 18) posts `POST …/examples/:ex/checker { criterionId }` (a 422 shows P4-M3's no-result state; a 409 opens the round that runs), then shows the round and polls `GET …/checker/:round` every 2 s while `round.status === 'making'` (stops when the view changes). `answer` posts `…/answers` and repaints with the answer's view; `use` and `back` go back to the editor; `reword` posts `…/reword` and shows the clearer words as P4-M3 draws them. `testsAddress` writes `#workflows/<id>/tests/<example>/checker/<round>` for view `checker`, and `route` opens it.
+1. `tests-view.mjs`:
+```js
+/** routeWorkflows' tests part (tests-app.mjs route): an example, a test, or Check the checker of an example (Part 4). */
+export const TESTS_ROUTE_RE = /^tests(?:\/(\d+)|\/run\/(\d+)|\/(\d+)\/checker\/(\d+))?$/;
+```
+and in `testsAddress({ workflowId, shown, view, runId, exampleId, roundId = null })`, before the last line:
+```js
+  if (view === 'checker' && Number.isInteger(exampleId) && Number.isInteger(roundId)) return `${base}/${exampleId}/checker/${roundId}`;
+  if (view === 'checker' && Number.isInteger(exampleId)) return `${base}/${exampleId}`;
+```
+2. `tests-app.mjs` (import `renderChecker` from `./criteria-pages.mjs`, `TESTS_ROUTE_RE` from `./tests-view.mjs`). `WFT_EMPTY` gains `roundId: null`. In `wftRefresh`, the page key becomes `` `${wft.runId}|${wft.exampleId}|${wft.roundId}` `` (both places). In `wftSyncHash`, pass `exampleId: wft.view === 'checker' ? wft.exampleId : wft.example ? wft.example.id : null, roundId: wft.roundId`. In `wftReadView`:
+```js
+    if (wft.view === 'checker') {
+      return wft.roundId ? wftCall('GET', `${wftBase(id)}/examples/${wft.exampleId}/checker/${wft.roundId}`) : Promise.resolve({ ok: true, data: null });
+    }
+```
+In `wftRenderView`, first line:
+```js
+    if (wft.view === 'checker') {
+      renderChecker(root, wft.data, wftCheckerActions(), { doc, exampleName: (wft.data && wft.data.exampleName) || '', empty: wft.checkerEmpty || null,
+        reworded: wft.reworded || null });   // `reworded`: P4-M3's "after a Wrong" state
+      wftPollChecker();
+      return;
+    }
+```
+and beside them:
+```js
+  /** D97 (Task 22): Check the checker of one criterion. 422 = no good result yet (P4-M3's empty state); 409 = a round of it runs. */
+  async function wftConfirmCriterion(exampleId, criterion) {
+    const id = wftWorkflowId();
+    if (!id) return;
+    if (exampleId == null || !criterion || !criterion.id) { notify({ tone: 'info', title: 'Save the example first', detail: 'Then Worca can check this criterion.' }); return; }
+    const r = await wftCall('POST', `${wftBase(id)}/examples/${exampleId}/checker`, { criterionId: criterion.id });
+    if (wftWorkflowId() !== id) return;
+    if (r.ok) { wftShow('checker', { exampleId, roundId: r.data.round.id, checkerEmpty: null, reworded: null }); return; }
+    if (r.status === 422) { wftShow('checker', { exampleId, roundId: null, checkerEmpty: r.error, reworded: null }); return; }
+    notify({ tone: r.status === 409 ? 'info' : 'err', title: 'Check the checker did not start', detail: r.error });
+  }
+  let wftCheckerTimer = null;
+  /** D97: while Worca makes the round, read it again every 2 s; stops when the view, the workflow or the round changes. */
+  function wftPollChecker() {
+    if (wftCheckerTimer) { win.clearTimeout(wftCheckerTimer); wftCheckerTimer = null; }
+    if (wft.view !== 'checker' || !wft.data || wft.data.round.status !== 'making') return;
+    const key = `${wftWorkflowId()}|${wft.roundId}`;
+    wftCheckerTimer = win.setTimeout(() => {
+      wftCheckerTimer = null;
+      if (currentView() === 'workflows' && wft.view === 'checker' && `${wftWorkflowId()}|${wft.roundId}` === key) void wftRefresh();
+    }, 2000);
+  }
+  function wftCheckerActions() {
+    const id = wftWorkflowId();
+    const { exampleId, roundId } = wft;
+    const base = `${wftBase(id)}/examples/${exampleId}/checker/${roundId}`;
+    const still = () => wft.view === 'checker' && wft.roundId === roundId && wftWorkflowId() === id;
+    const back = () => { void wftOpenExample(exampleId); };
+    return {
+      answer: async (judgementId, right) => {
+        const r = await wftCall('POST', `${base}/answers`, { judgementId, right });
+        if (!r.ok) { notify({ tone: 'err', title: 'Your answer was not saved', detail: r.error }); return; }
+        if (still()) { wft.data = r.data; wftRender(); }
+      },
+      reword: async () => {   // Task 15's clearer words, shown as P4-M3 draws them (wft.reworded)
+        const r = await wftCall('POST', `${base}/reword`, {});
+        if (!r.ok) { notify({ tone: 'err', title: 'No clearer words', detail: r.error }); return; }
+        if (still()) { wft.reworded = r.data.text; wftRender(); }
+      },
+      back,
+      use: back,
+    };
+  }
+```
+In `wftRenderEditor`, add to `renderExampleEditor`'s options: `onConfirmCriterion: (c) => { void wftConfirmCriterion(session.exampleId, c); },` (Task 18 left it null). In `route`, use the shared regex and open the checker:
+```js
+    const m = TESTS_ROUTE_RE.exec(sub);
+    …
+      else if (m[3]) wftShow('checker', { exampleId: Number(m[3]), roundId: Number(m[4]), checkerEmpty: null });
+```
+The notify titles are proposals; P4-M3's approved words replace them (pinned in Step 1).
 
 - [ ] **Step 5: Run the tests and the guards**
 
@@ -5616,7 +5705,27 @@ Board 13 shows "2 missed" style badges on bad tests; the approved P4-M4 mock dec
     page.append(card);
   }
 ```
-(`page` = the list's page element as `renderTestsPage` names it.) `tests-app.mjs`: view `trust` reads `GET …/trust`, renders, `fix` / `confirm` open the editor of that example and start Check the checker for that criterion (Task 22's flow); `testsAddress` writes `#workflows/<id>/tests/trust`; `route` matches `tests/trust`.
+(`page` = the list's page element as `renderTestsPage` names it.)
+
+`tests-view.mjs`: `TESTS_ROUTE_RE` gains the report, `/^tests(?:\/(\d+)|\/run\/(\d+)|\/(\d+)\/checker\/(\d+)|\/(trust))?$/`, and `testsAddress` writes it: `if (view === 'trust') return `${base}/trust`;` (before the last line). Add to the Step 1 test: `assert.equal(testsAddress({ workflowId: 'wf_a', shown: true, view: 'trust' }), '#workflows/wf_a/tests/trust');` and `assert.equal(TESTS_ROUTE_RE.exec('tests/trust')[5], 'trust');`.
+
+`tests-app.mjs` (about 15 lines; import `renderTrustReport`):
+```js
+    // wftReadView
+    if (wft.view === 'trust') return wftCall('GET', `${wftBase(id)}/trust`);
+```
+```js
+    // wftRenderView, after the `!wft.data` guard
+    if (wft.view === 'trust') { renderTrustReport(root, wft.data, wftTrustActions(), { doc, dateText: wftDate }); return; }
+```
+```js
+  /** Board 13's "What to do": Fix the criterion and Confirm 4 results both start Check the checker of it (D97, Task 22). */
+  function wftTrustActions() {
+    const open = (exampleId, criterionId) => { void wftConfirmCriterion(exampleId, { id: criterionId }); };
+    return { fix: open, confirm: open, back: () => wftShow('list', { overview: null }) };
+  }
+```
+`wftListActions` gains `openTrust: () => wftShow('trust'),`; Task 21's `byCriterion` passes `onTrust: () => wftShow('trust')`; `route` adds `else if (m[5]) wftShow('trust');`.
 
 - [ ] **Step 5: Run the tests and the guards**
 
@@ -5637,12 +5746,12 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
 ## Task 24: UI: a result you liked, suggested criteria, and the pair block (boards 2, 3, 6, 32; after P4-M2, P4-M6, P4-M7)
 
 **Files:**
-- Modify: `ui/public/workflows/criteria-editor.mjs` (the liked row), `ui/public/workflows/test-dialogs.mjs` (`openFromRunDialog`: the liked box and the chips), `ui/public/workflows/criteria-rows.mjs` (`pairBlock`), `ui/public/workflows/test-compare.mjs` (one line: the pair block above the try tabs), `ui/public/workflows/tests-app.mjs` (the calls), `ui/public/workflows/workflow-tests.css`
+- Modify: `ui/public/workflows/criteria-editor.mjs` (the liked row, `openLikedDialog`), `ui/public/workflows/example-editor.mjs` (appends the liked row: about 4 lines), `ui/public/workflows/test-dialogs.mjs` (`openFromRunDialog`: the liked box and the chips), `ui/public/workflows/criteria-rows.mjs` (`pairBlock`), `ui/public/workflows/test-compare.mjs` (one line: the pair block above the try tabs), `ui/public/workflows/tests-app.mjs` (the calls), `src/core/workflow-tests/service.mjs` (`pastRunSummary.hasResult`: one line), `ui/public/workflows/workflow-tests.css`
 - Test: `test/ui-workflow-test-liked-suggest.test.mjs`
 
 **Interfaces:**
 - Consumes: `example.liked` (Task 12), `PUT/DELETE …/examples/:ex/liked`, `POST /api/workflow-tests/suggest-criteria` (Task 15), the side by side's `pair` (Task 14).
-- Produces: `likedRow(doc, liked, { project, onReplace, onRemove }) → Element` (board 2: "A result you liked · optional", hint "When two versions are compared, Worca also says which result is closer to this one." / board 32: "… which changes are closer to these.", the file pill, "Replace"); in `openFromRunDialog`: the row "This result, as a result you liked" in "Keep from this run" (board 3) whose value goes to `POST …/from-run` as `liked`, and under the note "Worca turned your note into criteria · Click one to add it. You can change the words later." with up to three "+ <criterion>" chips whose picks go to the new example as `criteria`; `pairBlock(doc, pair, labels, { onAnswer }) → Element` (board 6: "Which brief is better overall?" / "Which result is closer to the one you liked?", "Worca read both without knowing which version wrote which.", "<version>'s result." or "They are about the same." or "Worca could not decide: it answered differently when the order changed.", the reason, Agree / Disagree).
+- Produces: `likedRow(doc, liked, { project, onReplace, onRemove }) → Element` (board 2: "A result you liked · optional", hint "When two versions are compared, Worca also says which result is closer to this one." / board 32: "… which changes are closer to these.", the file pill, "Replace"); in `openFromRunDialog`: the row "This result, as a result you liked" in "Keep from this run" (board 3) whose value goes to `POST …/from-run` as `liked`, and under the note "Worca turned your note into criteria · Click one to add it. You can change the words later." with up to three "+ <criterion>" chips whose picks go to the new example as `criteria`; `pairBlock(doc, pair, labels, { onAnswer }) → Element` ("Which result is better overall?", board 6's "Which brief is better overall?" in words that fit any workflow / "Which result is closer to the one you liked?", "Worca read both without knowing which version wrote which.", "<version>'s result." or "They are about the same." or "Worca could not decide: it answered differently when the order changed.", the reason, Agree / Disagree).
 
 - [ ] **Step 1: Write the failing test**
 
@@ -5700,7 +5809,51 @@ export function likedRow(doc, liked, { project = false, onReplace, onRemove }) {
   return sect;
 }
 ```
-Remove is added from P4-M2 (an icon button beside Replace). `renderExampleEditor` appends `likedRow(…)` after the criteria section for a saved example; `onReplace` opens a small `testDialog` with "Upload a file" (a file input, read as base64, `PUT …/liked { name, dataBase64 }`) and "Use a try's result" (the latest finished tries of this example, `PUT …/liked { tryId }`), as P4-M2 draws it.
+Remove is added from P4-M2 (an icon button beside Replace). In `renderExampleEditor` (example-editor.mjs, about 4 lines), after `c3.append(crit.el);`, for a saved example:
+```js
+  if (draft.id) c3.append(likedRow(doc, draft.liked || null, { project: !!pick.key,
+    onReplace: () => openLikedDialog({ doc, win, tries: likedTries, onFile: (f) => actions.putLiked(f), onTry: (tryId) => actions.putLiked({ tryId }) }),
+    onRemove: () => actions.removeLiked() }));
+```
+(`likedTries` = a new `renderExampleEditor` option, the example's latest finished tries `[{ id, label }]`, default `[]`.) `criteria-editor.mjs` (append):
+```js
+/** P4-M2: "A result you liked": upload a UTF-8 file, or keep a try's result. Words follow the approved mock. */
+export function openLikedDialog({ doc, win, tries = [], onFile, onTry }) {
+  const file = el(doc, 'input');
+  file.type = 'file'; file.id = 'wft-liked-file';
+  const pick = el(doc, 'select');
+  pick.id = 'wft-liked-try';
+  for (const t of tries) { const o = el(doc, 'option', '', t.label); o.value = String(t.id); pick.append(o); }
+  return testDialog({ doc, win, title: 'A result you liked', confirmLabel: 'Keep it',
+    body: [field(doc, 'Upload a file', file, { id: file.id, hint: 'A text file, at most 2 MB.' }),
+      ...(tries.length ? [field(doc, "Or use a try's result", pick, { id: pick.id })] : [])],
+    onConfirm: async () => {
+      const f = file.files && file.files[0];
+      if (f) {
+        if (f.size > 2 * 1024 * 1024) return { ok: false, error: 'Pick a file of at most 2 MB.' };
+        const bytes = new Uint8Array(await f.arrayBuffer());
+        let bin = ''; for (const b of bytes) bin += String.fromCharCode(b);
+        return onFile({ name: f.name, dataBase64: win.btoa(bin) });
+      }
+      if (tries.length) return onTry(Number(pick.value));
+      return { ok: false, error: 'Pick a file first.' };
+    } });
+}
+```
+(import `testDialog` and `field` from `./test-ui.mjs`). `tests-app.mjs` `wftEditorActions` gains:
+```js
+      putLiked: async (body) => {   // Task 12's route; the editor repaints with the example the route returns
+        const r = await wftCall('PUT', `${base}/examples/${session.exampleId}/liked`, body);
+        if (r.ok && wftEditorLive(session)) { wft.example = r.data.example; wftRender(); }
+        return r.ok ? { ok: true } : r;
+      },
+      removeLiked: async () => {
+        const r = await wftCall('DELETE', `${base}/examples/${session.exampleId}/liked`);
+        if (!r.ok) { notify({ tone: 'err', title: 'Not removed', detail: r.error }); return; }
+        if (wftEditorLive(session)) { wft.example = r.data.example; wftRender(); }
+      },
+```
+and `wftOpenExample` reads the example's latest finished tries for `likedTries` from the overview's row when it has them, else passes `[]` (the upload still works).
 
 `criteria-rows.mjs` (append):
 ```js
@@ -5725,9 +5878,37 @@ export function pairBlock(doc, pair, labels, { onAnswer }) {
 
 - [ ] **Step 4: Board 3's liked box and chips** (`test-dialogs.mjs` `openFromRunDialog`; after P4-M7)
 
-1. In "Keep from this run", after the answers row: `const liked = keepRow(doc, 'wft-fr-liked', 'This result, as a result you liked');` (shown only when the past run has a result: `past.hasResult`, which `pastRunSummary` already knows from its main result read; add the boolean there if it is missing). Its checkbox's value goes into the submit body as `liked`.
-2. Under the note: a `div.wft-sugg-chips` filled when the note box loses focus with at least 20 characters and a note different from the last one asked: `POST /api/workflow-tests/suggest-criteria { workflowId, pipelineId: past.pipelineId, note }` (through a new `onSuggest(note)` option the controller provides). Title "Worca turned your note into criteria", hint "Click one to add it. You can change the words later.", one `button.btn.btn-sm` "+ <text>" per suggestion; a press adds it to `picked` and shows P4-M7's added state. The submit body gains `criteria: picked.map((text) => ({ text }))`.
-3. `routes.mjs` `from-run`: pass `criteria` through to the new example: `if (Array.isArray(b.criteria) && b.criteria.length && out.example) out.example = await service.saveExample(wid(req), out.example.id, { criteria: b.criteria });` (the save stores the suggested model, D87).
+1. `service.pastRunSummary` does not know whether the run left a result yet: add `hasResult: !reason && !!String((await mainResult(row.id)).text || '').trim(),` to its returned object (one line; `mainResult` is imported there already).
+2. `openFromRunDialog({ doc, win, past, onSubmit, onSuggest = null, dateText })`. In "Keep from this run", after the answers row:
+```js
+  const liked = past.hasResult ? keepRow(doc, 'wft-fr-liked', 'This result, as a result you liked') : null;   // board 3
+  if (liked) { liked.box.checked = false; keep.append(liked.row); }
+```
+3. Under the note (P4-M7's words are pinned first; these are the board's):
+```js
+  const chips = el(doc, 'div', 'wft-sugg-chips');
+  chips.hidden = true;
+  const picked = [];
+  let asked = '';
+  note.addEventListener('blur', async () => {
+    const text = note.value.trim();
+    if (!onSuggest || text.length < 20 || text === asked) return;
+    asked = text;
+    const list = await onSuggest(text);   // the controller: POST /api/workflow-tests/suggest-criteria; [] on a failure
+    if (asked !== text) return;            // a newer note was asked meanwhile
+    chips.replaceChildren();
+    if (!list.length) { chips.hidden = true; return; }
+    chips.append(el(doc, 'b', '', 'Worca turned your note into criteria'), el(doc, 'span', 'hint', 'Click one to add it. You can change the words later.'));
+    for (const s of list) {
+      const b = btn(doc, `+ ${s}`, () => { if (!picked.includes(s)) picked.push(s); b.disabled = true; b.textContent = `${s} · Added`; }, 'btn btn-sm');
+      chips.append(b);
+    }
+    chips.hidden = false;
+  });
+```
+and put `chips` after `noteField(doc, note)` in the body. The submit body gains `...(liked ? { liked: liked.box.checked } : {}), ...(picked.length ? { criteria: picked.map((text) => ({ text })) } : {})`.
+4. `tests-app.mjs` `wftAddFromRun`: pass `onSuggest: async (note) => { const r = await wftCall('POST', '/api/workflow-tests/suggest-criteria', { workflowId: past.workflowId, pipelineId: past.pipelineId, note }); return r.ok ? r.data.suggestions : []; }`.
+5. `routes.mjs` `from-run`: pass `criteria` through to the new example: `if (Array.isArray(b.criteria) && b.criteria.length && out.example) out.example = await service.saveExample(wid(req), out.example.id, { criteria: b.criteria });` (the save stores the suggested model, D87).
 
 - [ ] **Step 5: Run the tests and the guards**
 
@@ -5737,7 +5918,7 @@ Expected: PASS.
 - [ ] **Step 6: Commit**
 
 ```bash
-git add ui/public/workflows/criteria-editor.mjs ui/public/workflows/criteria-rows.mjs ui/public/workflows/test-dialogs.mjs ui/public/workflows/test-compare.mjs ui/public/workflows/tests-app.mjs ui/public/workflows/workflow-tests.css src/core/workflow-tests/routes.mjs test/ui-workflow-test-liked-suggest.test.mjs
+git add ui/public/workflows/criteria-editor.mjs ui/public/workflows/example-editor.mjs ui/public/workflows/criteria-rows.mjs ui/public/workflows/test-dialogs.mjs ui/public/workflows/test-compare.mjs ui/public/workflows/tests-app.mjs ui/public/workflows/workflow-tests.css src/core/workflow-tests/routes.mjs src/core/workflow-tests/service.mjs test/ui-workflow-test-liked-suggest.test.mjs
 git commit -m "feat(workflow-tests): a result you liked, suggested criteria, and the pair question in the UI
 
 Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
