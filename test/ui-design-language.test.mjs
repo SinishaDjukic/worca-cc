@@ -169,6 +169,7 @@ const GRADIENT_OK = new Set(['.wf-pop-canvas', '.run-flow-wrap', '.ask-wfcard-gr
   '.shipit-desc-busy-label', '.ask-thinking-label', '.ask-wfcard-step.is-live .st-label', '.wfc-act-l', '.pp-shimmer',
   '.ask-ctx-bar-buffer', '.ask-ctx-stat[data-stat="buffer"] .ask-ctx-swatch', '.chat-dock::before',
   '.plan-md.collapsed::after', '.sn-adorn.sn-loading .input', '.rs-hand', '.dz-trail',
+  '[data-view="settings"] > .settings-tabs::before', '[data-view="settings"] > .settings-tabs::after',
   // Brand gradients, not textures: the Models page's own/plugin mark tile and its Best chip.
   '.mdl-mark.own', '.mdl-best']);
 test('gradients only as functional textures (D15)', () => {

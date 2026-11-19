@@ -9,18 +9,20 @@
              elements, not the literal routing attribute name in this source. -->
         <section class="view hidden" data-view="settings">
           <div class="tabs settings-tabs" id="settings-tabs" role="group" aria-label="Settings section">
-            <!-- Ordered by mode (Simple, Advanced, Expert) so each mode sees a gap-free prefix of the
-                 strip. Plugins, Sets, Models and Providers left for the Add-ons pages. -->
-            <button type="button" class="tab on" data-tab="general" data-min-level="simple" aria-pressed="true">General</button>
-            <button type="button" class="tab" data-tab="tags" data-min-level="simple" aria-pressed="false">Labels &amp; cost tags</button>
-            <button type="button" class="tab" data-tab="presets" data-min-level="advanced" aria-pressed="false">Presets</button>
-            <button type="button" class="tab" data-tab="runs" data-min-level="simple" aria-pressed="false">Runs</button>
-            <button type="button" class="tab" data-tab="automations" data-min-level="advanced" data-flag="gitAutomations" data-flag-chip aria-pressed="false">Automations</button>
+            <!-- On a wide screen the strip stands as a left column (info-tooltips.css); showSettingsTab lists the
+                 open tab's cards under General and Runs. Runs and Chat wear the left menu's own icons.
+                 Ordered by meaning: you, runs and what shapes them, chat and agents, Labs last. A mode hides
+                 its tabs wherever they stand. Plugins, Sets, Models and Providers left for the Add-ons pages. -->
+            <button type="button" class="tab on" data-tab="general" data-min-level="simple" aria-pressed="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 6h8M18 6h2M4 12h2M12 12h8M4 18h8M18 18h2"/><circle cx="15" cy="6" r="2.2"/><circle cx="9" cy="12" r="2.2"/><circle cx="15" cy="18" r="2.2"/></svg>General</button>
+            <button type="button" class="tab" data-tab="runs" data-min-level="simple" aria-pressed="false"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 12a9 9 0 1 0 3-6.7"/><path d="M3 4v4h4"/><path d="M12 8v4l3 2"/></svg>Runs</button>
+            <button type="button" class="tab" data-tab="presets" data-min-level="advanced" aria-pressed="false"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 3h12v18l-6-4.5L6 21z"/></svg>Presets</button>
+            <button type="button" class="tab" data-tab="tags" data-min-level="simple" aria-pressed="false"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 11V4h7l10.5 10.5-7 7z"/><circle cx="7.5" cy="8" r="1.2"/></svg>Labels &amp; cost tags</button>
+            <button type="button" class="tab" data-tab="automations" data-min-level="advanced" data-flag="gitAutomations" data-flag-chip aria-pressed="false"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M13 2 4.5 13.5H11L10 22l8.5-11.5H12z"/></svg>Automations</button>
+            <button type="button" class="tab" data-tab="ask" data-min-level="advanced" aria-pressed="false"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M11 5H4.5A2.5 2.5 0 0 0 2 7.5v8A2.5 2.5 0 0 0 4.5 18H6v2.2c0 .9 1.1 1.3 1.7.6L10.5 18h6A2.5 2.5 0 0 0 19 15.5v-3"/><path d="M18 2.2Q18.8 5.2 21.8 6Q18.8 6.8 18 9.8Q17.2 6.8 14.2 6Q17.2 5.2 18 2.2z"/></svg>Chat</button>
+            <button type="button" class="tab" data-tab="guardrails" data-min-level="advanced" aria-pressed="false"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3l8 3v6c0 5-3.4 8-8 9-4.6-1-8-4-8-9V6z"/><path d="M9 12l2 2 4-4.5"/></svg>Guardrails</button>
+            <button type="button" class="tab" data-tab="memory" data-min-level="advanced" aria-pressed="false"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 3h12v18H6zM9.5 3v18M13 8h2M13 12h2"/></svg>Memory</button>
             <!-- Labs (docs/feature-flags.md) shows at every level: flags are not levels. -->
-            <button type="button" class="tab" data-tab="experimental" data-min-level="simple" aria-pressed="false">Labs</button>
-            <button type="button" class="tab" data-tab="ask" data-min-level="advanced" aria-pressed="false">Chat</button>
-            <button type="button" class="tab" data-tab="guardrails" data-min-level="advanced" aria-pressed="false">Guardrails</button>
-            <button type="button" class="tab" data-tab="memory" data-min-level="advanced" aria-pressed="false">Memory</button>
+            <button type="button" class="tab" data-tab="experimental" data-min-level="simple" aria-pressed="false"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 3h6M10 3v6.5L4.8 18a2 2 0 0 0 1.7 3h11a2 2 0 0 0 1.7-3L14 9.5V3M7.5 15h9"/></svg>Labs</button>
           </div>
           <p id="settingsLoadMsg" class="form-msg err settings-load-msg" role="alert" hidden></p>
 
@@ -30,16 +32,6 @@
                 <div class="sub">Machine-wide Worca CC preferences</div>
               </div>
             </div>
-
-            <!-- Setup assistant: Run setup reopens the seven-step dialog with the saved values
-                 (ui/public/setup-assistant.mjs). No info-tip and no static .hint (the row explains itself). -->
-            <section class="card settings-card" id="setup-assistant-card" data-min-level="simple">
-              <div class="label-row"><h2>Setup assistant</h2></div>
-              <div class="gs-settings-row">
-                <p class="gs-settings-text">Configure your Worca installation.</p>
-                <button type="button" id="setupRunAgain" class="btn btn-sm">Run setup</button>
-              </div>
-            </section>
 
             <section class="card settings-card" id="appearance-card" data-min-level="simple">
               <div class="card-head">
@@ -79,6 +71,27 @@
                     </select>
                   </div>
                 </div>
+              </div>
+            </section>
+
+            <!-- Interface mode (docs/ui-levels.md): the same setting as the account menu's Interface mode row. -->
+            <section class="card settings-card" id="mode-settings-card" data-min-level="simple">
+              <div class="card-head">
+                <div class="label-row">
+                  <h2>Interface mode</h2>
+                  <button type="button" class="info-tip" aria-label="About interface mode">i<span class="tip-content hidden">
+                    How much of Worca is on screen. Nothing is switched off: a hidden page still opens from a link,
+                    and settings made in a higher mode keep applying. The choice applies to every browser that opens this Worca.
+                  </span></button>
+                </div>
+              </div>
+              <div class="mode-current">
+                <span class="mode-current-icon" id="modeSettingsIcon"></span>
+                <div class="mode-current-text">
+                  <strong id="modeSettingsName">Expert</strong>
+                  <span id="modeSettingsDesc"></span>
+                </div>
+                <button type="button" class="btn btn-sm" id="modeSettingsChange" data-mode-open="button" aria-haspopup="dialog">Change&hellip;</button>
               </div>
             </section>
 
@@ -122,32 +135,35 @@
               <div id="credentialsHost"></div>
             </section>
 
+            <!-- Setup assistant: Run setup reopens the seven-step dialog with the saved values
+                 (ui/public/setup-assistant.mjs). No info-tip and no static .hint (the row explains itself). -->
+            <section class="card settings-card" id="setup-assistant-card" data-min-level="simple">
+              <div class="label-row"><h2>Setup assistant</h2></div>
+              <div class="gs-settings-row">
+                <p class="gs-settings-text">Configure your Worca installation.</p>
+                <button type="button" id="setupRunAgain" class="btn btn-sm">Run setup</button>
+              </div>
+            </section>
+
+            <!-- Getting started: the checklist's Hide is undone here. Only the checklist —
+                 the welcome dialog stays seen. No info-tip (the row explains itself);
+                 the .hint is painted by app.js like every other settings status line. -->
+            <section class="card settings-card" id="getting-started-card" data-min-level="simple">
+              <div class="label-row">
+                <h2>Getting started</h2>
+              </div>
+              <div class="gs-settings-row">
+                <p class="gs-settings-text">The Getting started checklist walks through the first nine things to do with Worca. Hid it, or want the guided tour back?</p>
+                <button type="button" id="gsShowAgain" class="btn btn-sm">Show again</button>
+              </div>
+              <small class="hint" id="gsSettingsMsg"></small>
+            </section>
+
             <!-- Browser extension (docs/browser-extension.md): install info painted by paintExtensionInstall, pairings by paintExtensionPairings. -->
             <section class="card settings-card" id="extension-settings-card" data-min-level="simple">
               <div class="card-head"><div class="label-row"><h2>Browser extension</h2> <button class="info-tip" type="button" aria-label="About the browser extension">i<span class="tip-content hidden">The Worca extension for Chrome, Edge and Firefox chats with this Worca from a browser sidebar and brings the page you are reading into context. It ships with Worca: install it from the folder below or from the release zips. Each paired extension has its own token, and you can revoke it here. It works with a local Worca only.</span></button></div></div>
               <div id="extensionInstallHost"></div>
               <div id="extensionPairingsHost"></div>
-            </section>
-
-            <!-- Interface mode (docs/ui-levels.md): the same setting as the account menu's Interface mode row. -->
-            <section class="card settings-card" id="mode-settings-card" data-min-level="simple">
-              <div class="card-head">
-                <div class="label-row">
-                  <h2>Interface mode</h2>
-                  <button type="button" class="info-tip" aria-label="About interface mode">i<span class="tip-content hidden">
-                    How much of Worca is on screen. Nothing is switched off: a hidden page still opens from a link,
-                    and settings made in a higher mode keep applying. The choice applies to every browser that opens this Worca.
-                  </span></button>
-                </div>
-              </div>
-              <div class="mode-current">
-                <span class="mode-current-icon" id="modeSettingsIcon"></span>
-                <div class="mode-current-text">
-                  <strong id="modeSettingsName">Expert</strong>
-                  <span id="modeSettingsDesc"></span>
-                </div>
-                <button type="button" class="btn btn-sm" id="modeSettingsChange" data-mode-open="button" aria-haspopup="dialog">Change&hellip;</button>
-              </div>
             </section>
 
             <section class="card settings-card" id="root-settings-card" data-min-level="advanced">
@@ -217,20 +233,6 @@
                 <button type="button" id="debugSpawnReset" class="btn btn-sm">Reset to default</button>
                 <button type="button" id="debugSpawnSave" class="btn btn-primary btn-sm">Save</button>
               </div>
-            </section>
-
-            <!-- Getting started: the checklist's Hide is undone here. Only the checklist —
-                 the welcome dialog stays seen. No info-tip (the row explains itself);
-                 the .hint is painted by app.js like every other settings status line. -->
-            <section class="card settings-card" id="getting-started-card" data-min-level="simple">
-              <div class="label-row">
-                <h2>Getting started</h2>
-              </div>
-              <div class="gs-settings-row">
-                <p class="gs-settings-text">The Getting started checklist walks through the first nine things to do with Worca. Hid it, or want the guided tour back?</p>
-                <button type="button" id="gsShowAgain" class="btn btn-sm">Show again</button>
-              </div>
-              <small class="hint" id="gsSettingsMsg"></small>
             </section>
 
             <!-- About: no info-tip and no .hint. Links are anchors (target=_blank rel=noopener noreferrer). Controls: the update-check
@@ -443,25 +445,6 @@
               <small class="hint" id="budgetMsg"></small>
             </section>
 
-            <!-- Away mode (src/core/night/*): the user layer of the Away mode config, rendered by
-                 night-mode-form.mjs with its live summary, plus the status buttons (nightModeToggle). -->
-            <section class="card settings-card" id="night-settings-card" data-min-level="advanced">
-              <div class="card-head">
-                <div class="label-row">
-                  <h2>Away mode</h2>
-                  <button type="button" class="info-tip" aria-label="About Away mode">i<span class="tip-content hidden">
-                    While you're away, worca answers the questions your runs are waiting on. You can see every answer and why it was chosen. When worca isn't sure, it marks the answer "please check" and keeps going. When the run ends, it tells you how many answers to check.
-                  </span></button>
-                </div>
-              </div>
-              <div class="away-status" id="awayStatus" role="group" aria-label="Away mode status"></div>
-              <div class="drows" id="night-mode-host"></div>
-              <div class="add-project-actions" style="margin-top:14px">
-                <button type="button" id="nightModeReset" class="btn btn-sm">Use defaults</button>
-                <button type="button" id="nightModeSave" class="btn btn-primary btn-sm">Save</button>
-              </div>
-            </section>
-
             <!-- Smart run naming (Labs): the smartRunNaming flag, the same value as its Settings › Labs row. -->
             <section class="card settings-card" id="smart-naming-settings-card" data-min-level="simple">
               <div class="card-head">
@@ -516,6 +499,86 @@
                 <button type="button" id="smartNamingSave" class="btn btn-primary btn-sm">Save</button>
               </div>
               <p class="form-msg" id="smartNamingMsg" role="status"></p>
+            </section>
+
+            <!-- Away mode (src/core/night/*): the user layer of the Away mode config, rendered by
+                 night-mode-form.mjs with its live summary, plus the status buttons (nightModeToggle). -->
+            <section class="card settings-card" id="night-settings-card" data-min-level="advanced">
+              <div class="card-head">
+                <div class="label-row">
+                  <h2>Away mode</h2>
+                  <button type="button" class="info-tip" aria-label="About Away mode">i<span class="tip-content hidden">
+                    While you're away, worca answers the questions your runs are waiting on. You can see every answer and why it was chosen. When worca isn't sure, it marks the answer "please check" and keeps going. When the run ends, it tells you how many answers to check.
+                  </span></button>
+                </div>
+              </div>
+              <div class="away-status" id="awayStatus" role="group" aria-label="Away mode status"></div>
+              <div class="drows" id="night-mode-host"></div>
+              <div class="add-project-actions" style="margin-top:14px">
+                <button type="button" id="nightModeReset" class="btn btn-sm">Use defaults</button>
+                <button type="button" id="nightModeSave" class="btn btn-primary btn-sm">Save</button>
+              </div>
+            </section>
+
+            <section class="card settings-card" id="schedule-settings-card" data-min-level="advanced">
+              <div class="card-head">
+                <div class="label-row">
+                  <h2>Scheduled runs</h2>
+                  <button type="button" class="info-tip" aria-label="About scheduled run defaults">i<span class="tip-content hidden">
+                    Defaults for new schedules. A scheduled run starts only while Worca is running and this computer is awake; these settings decide what happens when it was not.
+                  </span></button>
+                </div>
+              </div>
+              <div class="drows">
+                <div class="field drow">
+                  <label class="drow-label" for="schedIfMissed">If Worca is not running at that time</label>
+                  <div class="drow-control"><div class="select-wrap">
+                    <select id="schedIfMissed" data-setting="schedule.ifMissed" class="select">
+                      <option value="run">Start it late</option>
+                      <option value="skip">Skip it</option>
+                    </select>
+                  </div></div>
+                </div>
+                <div class="field drow">
+                  <label class="drow-label" for="schedGraceMin">At most this late</label>
+                  <div class="drow-control"><div class="select-wrap">
+                    <select id="schedGraceMin" data-setting="schedule.graceMin" class="select">
+                      <option value="30">30 minutes</option>
+                      <option value="60">1 hour</option>
+                      <option value="120">2 hours</option>
+                      <option value="360">6 hours</option>
+                      <option value="720">12 hours</option>
+                      <option value="1440">24 hours</option>
+                    </select>
+                  </div></div>
+                </div>
+              <div class="field drow">
+                <div class="label-row drow-label">
+                  <label for="schedMaxFailures">Pause a repeating schedule after failures in a row</label>
+                  <button type="button" class="info-tip" aria-label="About pausing after failures">i<span class="tip-content hidden">
+                    A run that could not start, a missed slot, or a run that ended in an error each count. A successful run resets the count. 0 never pauses a schedule. Every failure is reported in Schedules either way.
+                  </span></button>
+                </div>
+                <div class="drow-control"><input id="schedMaxFailures" data-setting="schedule.maxFailures" class="input" type="number" min="0" max="100" step="1" inputmode="numeric" placeholder="3" autocomplete="off" /></div>
+              </div>
+              </div>
+              <div class="add-project-actions" style="margin-top:14px">
+                <button type="button" id="schedDefaultsReset" class="btn btn-sm">Use defaults</button>
+                <button type="button" id="schedDefaultsSave" class="btn btn-primary btn-sm">Save</button>
+              </div>
+            </section>
+
+            <!-- Chat notifications (chat-connectivity-design.md §4.8): which run
+                 events ping which chat channels. Body rendered by
+                 chat-settings-view.mjs; app.js owns fetch/save/Test wiring. -->
+            <section class="card settings-card" id="chat-settings-card" data-min-level="advanced">
+              <div class="label-row">
+                <h2>Chat notifications</h2>
+              </div>
+              <div id="chat-settings-host"></div>
+              <div class="add-project-actions" style="margin-top:14px">
+                <button id="chatSettingsSave" class="btn btn-primary btn-sm" type="button">Save</button>
+              </div>
             </section>
 
             <!-- Scheduled runs: the defaults a NEW schedule inherits. Each schedule keeps
@@ -573,89 +636,62 @@
               </div>
             </section>
 
-            <section class="card settings-card" id="schedule-settings-card" data-min-level="advanced">
-              <div class="card-head">
-                <div class="label-row">
-                  <h2>Scheduled runs</h2>
-                  <button type="button" class="info-tip" aria-label="About scheduled run defaults">i<span class="tip-content hidden">
-                    Defaults for new schedules. A scheduled run starts only while Worca is running and this computer is awake; these settings decide what happens when it was not.
-                  </span></button>
-                </div>
-              </div>
+            <section class="card settings-card" id="pr-settings-card" data-min-level="simple" data-needs-git>
+              <div class="card-head"><div class="label-row"><h2>Pull requests</h2></div></div>
               <div class="drows">
-                <div class="field drow">
-                  <label class="drow-label" for="schedIfMissed">If Worca is not running at that time</label>
-                  <div class="drow-control"><div class="select-wrap">
-                    <select id="schedIfMissed" data-setting="schedule.ifMissed" class="select">
-                      <option value="run">Start it late</option>
-                      <option value="skip">Skip it</option>
-                    </select>
-                  </div></div>
-                </div>
-                <div class="field drow">
-                  <label class="drow-label" for="schedGraceMin">At most this late</label>
-                  <div class="drow-control"><div class="select-wrap">
-                    <select id="schedGraceMin" data-setting="schedule.graceMin" class="select">
-                      <option value="30">30 minutes</option>
-                      <option value="60">1 hour</option>
-                      <option value="120">2 hours</option>
-                      <option value="360">6 hours</option>
-                      <option value="720">12 hours</option>
-                      <option value="1440">24 hours</option>
-                    </select>
-                  </div></div>
-                </div>
-              <div class="field drow">
-                <div class="label-row drow-label">
-                  <label for="schedMaxFailures">Pause a repeating schedule after failures in a row</label>
-                  <button type="button" class="info-tip" aria-label="About pausing after failures">i<span class="tip-content hidden">
-                    A run that could not start, a missed slot, or a run that ended in an error each count. A successful run resets the count. 0 never pauses a schedule. Every failure is reported in Schedules either way.
-                  </span></button>
-                </div>
-                <div class="drow-control"><input id="schedMaxFailures" data-setting="schedule.maxFailures" class="input" type="number" min="0" max="100" step="1" inputmode="numeric" placeholder="3" autocomplete="off" /></div>
-              </div>
+              <label class="field drow switch-drow" for="prAutoDescribe">
+                <span class="drow-label">Draft the PR description with AI automatically
+                  <button type="button" class="info-tip" aria-label="About drafting the PR description automatically">i<span class="tip-content hidden">Each time the Create PR dialog opens, Worca runs the PR description model to draft the description, as if you had pressed Generate. You can stop it, edit the draft or generate again.</span></button>
+                </span>
+                <span class="drow-control"><input id="prAutoDescribe" data-setting="autoGeneratePrDescription" class="sw-input" type="checkbox" role="switch"><span class="switch" aria-hidden="true"></span></span>
+              </label>
               </div>
               <div class="add-project-actions" style="margin-top:14px">
-                <button type="button" id="schedDefaultsReset" class="btn btn-sm">Use defaults</button>
-                <button type="button" id="schedDefaultsSave" class="btn btn-primary btn-sm">Save</button>
+                <button type="button" id="prSettingsSave" class="btn btn-primary btn-sm">Save</button>
               </div>
             </section>
 
-            <!-- Wait for the network (network-wait.mjs): a step that loses the network waits for its
-                 endpoint and retries by itself, up to the longest wait from the first failure. -->
-            <section class="card settings-card" id="network-wait-settings-card" data-min-level="advanced">
-              <div class="card-head">
-                <div class="label-row">
-                  <h2>Wait for the network</h2>
-                  <button type="button" class="info-tip" aria-label="About waiting for the network">i<span class="tip-content hidden">
-                    When a step loses the network (internet down, provider unreachable), worca checks the endpoint that step uses and retries by itself once it answers. A run paused that way, or stopped by a restart while it waited, is resumed when the network is back, but only within the longest wait, counted from the first failure. Cost caps, usage limits, sign-in problems and your own pauses are never resumed.
-                  </span></button>
-                </div>
-              </div>
+            <!-- Actions (issue #529): keep policy for finished-run checkouts, the port range for
+                 automatic port variables, editor/terminal overrides and the checkout cap. -->
+            <section class="card settings-card" id="actions-settings-card" data-min-level="advanced" data-needs-git>
+              <div class="card-head"><div class="label-row"><h2>Actions</h2>
+                <button type="button" class="info-tip" aria-label="About actions">i<span class="tip-content hidden">
+                  Check out a finished run and run its project's actions from Worca. Actions are off on hosted
+                  deployments unless an administrator enables them.
+                </span></button></div></div>
               <div class="drows">
-              <label class="drow switch-drow" id="networkWaitEnabledRow">
-                <span class="drow-label">Wait for the network to come back</span>
-                <span class="drow-control"><input id="networkWaitEnabled" data-setting="networkWait.enabled" class="sw-input" type="checkbox" role="switch" checked><span class="switch"></span></span>
-              </label>
-              <div class="field drow">
-                <label class="drow-label" for="networkWaitMaxMin">Longest wait</label>
-                <div class="drow-control"><div class="select-wrap">
-                  <select id="networkWaitMaxMin" data-setting="networkWait.maxWaitMin" class="select">
-                    <option value="30">30 minutes</option>
-                    <option value="60">1 hour</option>
-                    <option value="120">2 hours</option>
-                    <option value="240">4 hours</option>
-                    <option value="480">8 hours</option>
-                    <option value="720">12 hours</option>
-                    <option value="1440">24 hours</option>
-                  </select>
-                </div></div>
+              <div class="field drow"><label class="drow-label" for="act-keep">Keep checkouts</label><div class="drow-control"><div class="select-wrap"><select id="act-keep" data-setting="actions.keep" class="select">
+                <option value="never">Re-create on demand</option><option value="on-success">Keep after a successful run</option>
+                <option value="until-pr">Keep until the PR is merged or closed</option></select></div></div></div>
+              <div class="field drow act-port-range"><label class="drow-label" for="act-port-low">Ports for automatic port variables</label>
+                <div class="drow-control"><input id="act-port-low" data-setting="actions.portLow actions.portRange" class="input" type="number" min="1024" max="65535" placeholder="4400" aria-label="Low port"> –
+                <input id="act-port-high" data-setting="actions.portHigh actions.portRange" class="input" type="number" min="1024" max="65535" placeholder="4499" aria-label="High port"></div></div>
+              <div class="field drow drow-wide act-launcher" data-launcher="editor">
+                <div class="label-row drow-label"><label for="act-editor">Editor</label>
+                  <button type="button" class="info-tip" aria-label="About the editor command">i<span class="tip-content hidden" id="act-editor-tip">
+                    The command that opens a folder in your IDE or code editor, as you would type it in a terminal. Leave it blank to use the one Worca detects. {folder} marks where the checkout folder goes; without it, the folder is added at the end.
+                  </span></button></div>
+                <div class="drow-control act-launcher-row">
+                  <input id="act-editor" data-setting="actions.editor" class="input mono" placeholder="Detected automatically" aria-describedby="act-editor-note" autocomplete="off" spellcheck="false">
+                  <div class="select-wrap act-choose-wrap" data-dirty-ignore><select id="act-editor-choose" class="select" aria-label="Pick an installed editor, or browse for one"><option value="">Pick an app</option></select></div>
+                  <button type="button" class="btn btn-sm act-try" id="act-editor-try">Try</button>
+                </div>
+                <small class="hint drow-help act-hint" id="act-editor-note"></small></div>
+              <div class="field drow drow-wide act-launcher" data-launcher="terminal">
+                <div class="label-row drow-label"><label for="act-terminal">Terminal</label>
+                  <button type="button" class="info-tip" aria-label="About the terminal command">i<span class="tip-content hidden" id="act-terminal-tip">
+                    The command that opens a terminal in a folder, as you would type it in a terminal. Leave it blank to use the one Worca detects. {folder} marks where the checkout folder goes; without it, the folder is added at the end.
+                  </span></button></div>
+                <div class="drow-control act-launcher-row">
+                  <input id="act-terminal" data-setting="actions.terminal" class="input mono" placeholder="Detected automatically" aria-describedby="act-terminal-note" autocomplete="off" spellcheck="false">
+                  <div class="select-wrap act-choose-wrap" data-dirty-ignore><select id="act-terminal-choose" class="select" aria-label="Pick an installed terminal, or browse for one"><option value="">Pick an app</option></select></div>
+                  <button type="button" class="btn btn-sm act-try" id="act-terminal-try">Try</button>
+                </div>
+                <small class="hint drow-help act-hint" id="act-terminal-note"></small></div>
+              <div class="field drow"><label class="drow-label" for="act-max">Keep at most</label><small class="hint drow-help">checkouts (oldest removed first)</small><div class="drow-control"><input id="act-max" data-setting="actions.maxCheckouts" class="input" type="number" min="1" max="100" placeholder="No limit"></div></div>
               </div>
-              </div>
-              <div class="add-project-actions" style="margin-top:14px">
-                <button type="button" id="networkWaitReset" class="btn btn-sm">Use defaults</button>
-                <button type="button" id="networkWaitSave" class="btn btn-primary btn-sm">Save</button>
-              </div>
+              <div class="add-project-actions"><button type="button" class="btn btn-sm" id="act-reset">Reset</button>
+                <button type="button" class="btn btn-primary btn-sm" id="act-save">Save</button></div>
             </section>
 
             <!-- Machine load (runLimits; run-slots.mjs, run-retention.mjs): how many runs work at once, the
@@ -722,79 +758,6 @@
               </div>
             </section>
 
-            <!-- Network proxy (docs/network-proxy.md, networkProxy.enabled): the corporate proxy Worca's local
-                 proxy logs in to, and the saved login (domain, user, NT hash). The body is built by
-                 settings-network-proxy.mjs; timeouts and the local port fold under "More". -->
-            <section class="card settings-card" id="network-proxy-settings-card" data-min-level="simple">
-              <div class="card-head">
-                <div class="label-row">
-                  <h2>Network proxy</h2>
-                  <button type="button" class="info-tip" aria-label="About the network proxy">i<span class="tip-content hidden">
-                    Worca logs in to your corporate proxy (NTLMv2) for every agent, tool and plugin. It saves your domain, user name and the NT hash of your password, never the password itself, in a file only you can read. A wrong password stops all logins at once, so your account is not locked.
-                  </span></button>
-                </div>
-              </div>
-              <div id="networkProxyBody"></div>
-            </section>
-
-            <!-- Actions (issue #529): keep policy for finished-run checkouts, the port range for
-                 automatic port variables, editor/terminal overrides and the checkout cap. -->
-            <section class="card settings-card" id="actions-settings-card" data-min-level="advanced" data-needs-git>
-              <div class="card-head"><div class="label-row"><h2>Actions</h2>
-                <button type="button" class="info-tip" aria-label="About actions">i<span class="tip-content hidden">
-                  Check out a finished run and run its project's actions from Worca. Actions are off on hosted
-                  deployments unless an administrator enables them.
-                </span></button></div></div>
-              <div class="drows">
-              <div class="field drow"><label class="drow-label" for="act-keep">Keep checkouts</label><div class="drow-control"><div class="select-wrap"><select id="act-keep" data-setting="actions.keep" class="select">
-                <option value="never">Re-create on demand</option><option value="on-success">Keep after a successful run</option>
-                <option value="until-pr">Keep until the PR is merged or closed</option></select></div></div></div>
-              <div class="field drow act-port-range"><label class="drow-label" for="act-port-low">Ports for automatic port variables</label>
-                <div class="drow-control"><input id="act-port-low" data-setting="actions.portLow actions.portRange" class="input" type="number" min="1024" max="65535" placeholder="4400" aria-label="Low port"> –
-                <input id="act-port-high" data-setting="actions.portHigh actions.portRange" class="input" type="number" min="1024" max="65535" placeholder="4499" aria-label="High port"></div></div>
-              <div class="field drow drow-wide act-launcher" data-launcher="editor">
-                <div class="label-row drow-label"><label for="act-editor">Editor</label>
-                  <button type="button" class="info-tip" aria-label="About the editor command">i<span class="tip-content hidden" id="act-editor-tip">
-                    The command that opens a folder in your IDE or code editor, as you would type it in a terminal. Leave it blank to use the one Worca detects. {folder} marks where the checkout folder goes; without it, the folder is added at the end.
-                  </span></button></div>
-                <div class="drow-control act-launcher-row">
-                  <input id="act-editor" data-setting="actions.editor" class="input mono" placeholder="Detected automatically" aria-describedby="act-editor-note" autocomplete="off" spellcheck="false">
-                  <div class="select-wrap act-choose-wrap" data-dirty-ignore><select id="act-editor-choose" class="select" aria-label="Pick an installed editor, or browse for one"><option value="">Pick an app</option></select></div>
-                  <button type="button" class="btn btn-sm act-try" id="act-editor-try">Try</button>
-                </div>
-                <small class="hint drow-help act-hint" id="act-editor-note"></small></div>
-              <div class="field drow drow-wide act-launcher" data-launcher="terminal">
-                <div class="label-row drow-label"><label for="act-terminal">Terminal</label>
-                  <button type="button" class="info-tip" aria-label="About the terminal command">i<span class="tip-content hidden" id="act-terminal-tip">
-                    The command that opens a terminal in a folder, as you would type it in a terminal. Leave it blank to use the one Worca detects. {folder} marks where the checkout folder goes; without it, the folder is added at the end.
-                  </span></button></div>
-                <div class="drow-control act-launcher-row">
-                  <input id="act-terminal" data-setting="actions.terminal" class="input mono" placeholder="Detected automatically" aria-describedby="act-terminal-note" autocomplete="off" spellcheck="false">
-                  <div class="select-wrap act-choose-wrap" data-dirty-ignore><select id="act-terminal-choose" class="select" aria-label="Pick an installed terminal, or browse for one"><option value="">Pick an app</option></select></div>
-                  <button type="button" class="btn btn-sm act-try" id="act-terminal-try">Try</button>
-                </div>
-                <small class="hint drow-help act-hint" id="act-terminal-note"></small></div>
-              <div class="field drow"><label class="drow-label" for="act-max">Keep at most</label><small class="hint drow-help">checkouts (oldest removed first)</small><div class="drow-control"><input id="act-max" data-setting="actions.maxCheckouts" class="input" type="number" min="1" max="100" placeholder="No limit"></div></div>
-              </div>
-              <div class="add-project-actions"><button type="button" class="btn btn-sm" id="act-reset">Reset</button>
-                <button type="button" class="btn btn-primary btn-sm" id="act-save">Save</button></div>
-            </section>
-
-            <section class="card settings-card" id="pr-settings-card" data-min-level="simple" data-needs-git>
-              <div class="card-head"><div class="label-row"><h2>Pull requests</h2></div></div>
-              <div class="drows">
-              <label class="field drow switch-drow" for="prAutoDescribe">
-                <span class="drow-label">Draft the PR description with AI automatically
-                  <button type="button" class="info-tip" aria-label="About drafting the PR description automatically">i<span class="tip-content hidden">Each time the Create PR dialog opens, Worca runs the PR description model to draft the description, as if you had pressed Generate. You can stop it, edit the draft or generate again.</span></button>
-                </span>
-                <span class="drow-control"><input id="prAutoDescribe" data-setting="autoGeneratePrDescription" class="sw-input" type="checkbox" role="switch"><span class="switch" aria-hidden="true"></span></span>
-              </label>
-              </div>
-              <div class="add-project-actions" style="margin-top:14px">
-                <button type="button" id="prSettingsSave" class="btn btn-primary btn-sm">Save</button>
-              </div>
-            </section>
-
             <section class="card settings-card" id="ws-scan-models-card" data-min-level="advanced">
               <div class="card-head">
                 <div class="label-row">
@@ -831,17 +794,56 @@
               </div>
             </section>
 
-            <!-- Chat notifications (chat-connectivity-design.md §4.8): which run
-                 events ping which chat channels. Body rendered by
-                 chat-settings-view.mjs; app.js owns fetch/save/Test wiring. -->
-            <section class="card settings-card" id="chat-settings-card" data-min-level="advanced">
-              <div class="label-row">
-                <h2>Chat notifications</h2>
+            <!-- Wait for the network (network-wait.mjs): a step that loses the network waits for its
+                 endpoint and retries by itself, up to the longest wait from the first failure. -->
+            <section class="card settings-card" id="network-wait-settings-card" data-min-level="advanced">
+              <div class="card-head">
+                <div class="label-row">
+                  <h2>Wait for the network</h2>
+                  <button type="button" class="info-tip" aria-label="About waiting for the network">i<span class="tip-content hidden">
+                    When a step loses the network (internet down, provider unreachable), worca checks the endpoint that step uses and retries by itself once it answers. A run paused that way, or stopped by a restart while it waited, is resumed when the network is back, but only within the longest wait, counted from the first failure. Cost caps, usage limits, sign-in problems and your own pauses are never resumed.
+                  </span></button>
+                </div>
               </div>
-              <div id="chat-settings-host"></div>
+              <div class="drows">
+              <label class="drow switch-drow" id="networkWaitEnabledRow">
+                <span class="drow-label">Wait for the network to come back</span>
+                <span class="drow-control"><input id="networkWaitEnabled" data-setting="networkWait.enabled" class="sw-input" type="checkbox" role="switch" checked><span class="switch"></span></span>
+              </label>
+              <div class="field drow">
+                <label class="drow-label" for="networkWaitMaxMin">Longest wait</label>
+                <div class="drow-control"><div class="select-wrap">
+                  <select id="networkWaitMaxMin" data-setting="networkWait.maxWaitMin" class="select">
+                    <option value="30">30 minutes</option>
+                    <option value="60">1 hour</option>
+                    <option value="120">2 hours</option>
+                    <option value="240">4 hours</option>
+                    <option value="480">8 hours</option>
+                    <option value="720">12 hours</option>
+                    <option value="1440">24 hours</option>
+                  </select>
+                </div></div>
+              </div>
+              </div>
               <div class="add-project-actions" style="margin-top:14px">
-                <button id="chatSettingsSave" class="btn btn-primary btn-sm" type="button">Save</button>
+                <button type="button" id="networkWaitReset" class="btn btn-sm">Use defaults</button>
+                <button type="button" id="networkWaitSave" class="btn btn-primary btn-sm">Save</button>
               </div>
+            </section>
+
+            <!-- Network proxy (docs/network-proxy.md, networkProxy.enabled): the corporate proxy Worca's local
+                 proxy logs in to, and the saved login (domain, user, NT hash). The body is built by
+                 settings-network-proxy.mjs; timeouts and the local port fold under "More". -->
+            <section class="card settings-card" id="network-proxy-settings-card" data-min-level="simple">
+              <div class="card-head">
+                <div class="label-row">
+                  <h2>Network proxy</h2>
+                  <button type="button" class="info-tip" aria-label="About the network proxy">i<span class="tip-content hidden">
+                    Worca logs in to your corporate proxy (NTLMv2) for every agent, tool and plugin. It saves your domain, user name and the NT hash of your password, never the password itself, in a file only you can read. A wrong password stops all logins at once, so your account is not locked.
+                  </span></button>
+                </div>
+              </div>
+              <div id="networkProxyBody"></div>
             </section>
           </section>
           <!-- /pane runs -->

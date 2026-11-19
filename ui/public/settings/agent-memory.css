@@ -24,6 +24,8 @@
 .mem-list,.mem-history{min-width:0;}
 .mem-list-head{display:flex;align-items:center;justify-content:space-between;margin-bottom:8px;}
 .mem-list-title{font:600 12px var(--sans);color:var(--ink-2);}
+/* History has no button in its head: its title takes the Files head's 28px row, so the two titles share a line. */
+.mem-history > .mem-list-title{display:block;line-height:28px;margin-bottom:8px;}
 .mem-row{display:flex;flex-direction:column;gap:2px;padding:10px 8px;border-bottom:1px solid var(--line);border-radius:0;}
 .mem-row:hover{background:var(--hover);}
 .mem-row.on{border-radius:var(--r-sm);border-bottom-color:transparent;background:var(--field);box-shadow:none;}
