@@ -130,7 +130,7 @@ const MESSAGE_FOLDER_RE = /^askm_[0-9a-f]{8}$/;
  *  one. Pure, exported for tests. */
 export function humanErrorText(errorClass) {
   switch (errorClass) {
-    case 'model': return "This model isn't available in your environment — Claude Code couldn't use it. Try another model, or add your custom model on the Models page (Expert mode).";
+    case 'model': return "This model isn't available in your environment — Claude Code couldn't use it. Try another model, or add your custom model under Models › Catalogue (Expert mode).";
     case 'auth': return 'Authentication failed — check the credentials behind this model.';
     case 'usage_limit': return 'A usage limit was reached — wait for it to reset.';
     case 'rate_limit': return 'The endpoint is rate-limiting — try again shortly.';
@@ -1393,7 +1393,7 @@ class AskTurn extends EventEmitter {
 
   /** A locked-down turn's `result` that carries no cost, priced with worca's rates from its token usage when worca has a
    *  price: an engine that reports no cost (Copilot, Gemini CLI, Qwen Code) is booked and capped like one that does. A
-   *  reported cost passes through (the reducer re-prices it with a Models page price, resolveModelCost). */
+   *  reported cost passes through (the reducer re-prices it with a Models › Catalogue price, resolveModelCost). */
   _priced(e) {
     if (!e || e.type !== 'result' || Number.isFinite(e.costUsd) || !isPriceableUsage(e.usage)) return e;
     const rates = this._ratesFor();

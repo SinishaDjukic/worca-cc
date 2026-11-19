@@ -4,6 +4,8 @@
 // nothing on worca's side (the catalog, an Ask proposal, an agent's env) can send a
 // key anywhere else (guarantee K2). Pure.
 
+import { gheTenantOfUrl } from '../core/ghe-host.mjs';
+
 export const PROTOCOLS = Object.freeze(['anthropic', 'openai', 'github']);
 export const AUTH_STYLES = Object.freeze(['x-api-key', 'bearer', 'copilot', 'github-user', 'none']);
 const HEADER_NAME_RE = /^[a-z0-9-]{1,64}$/;
@@ -157,6 +159,11 @@ export function mergeSlots(builtins, extra) {
         try { origin = new URL(s[k]).origin; } catch { throw new Error(`${where}: ${k} is not a URL`); }
         const issue = upstreamIssue(origin);
         if (issue) throw new Error(`${where}: ${k}: ${issue}`);
+      }
+      // A Copilot slot names its GHE.com tenant through these URLs (the broker derives its trusted gateway from them).
+      if (s.auth === 'copilot') {
+        const t1 = gheTenantOfUrl(s.exchangeUrl); const t2 = gheTenantOfUrl(s.deviceBaseUrl);
+        if (t1 && t2 && t1 !== t2) throw new Error(`${where}: exchangeUrl and deviceBaseUrl name different GHE.com tenants`);
       }
       // "Push as me" signs in only through the operator's app: no client ID, no sign-in.
       if (s.auth === 'github-user' && !s.clientId) delete s.signIn;

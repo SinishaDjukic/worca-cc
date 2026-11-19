@@ -271,7 +271,7 @@ test('each engine\'s list holds the newest of each family; its More models the r
   ctx.doc.querySelector('[data-ask-model-btn]').click(); await ctx.tick();
   assert.deepEqual(groups(ctx), ['Claude Code']);
   assert.deepEqual(names(ctx), ['Opus 5.5']);
-  assert.deepEqual(engineRows(ctx), ['OpenAI Codex (beta)', 'GitHub Copilot (beta)']);
+  assert.deepEqual(engineRows(ctx), ['OpenAI Codex (beta)', 'GitHub Copilot CLI (beta)']);
   ctx.doc.querySelector('[data-ask-more-models]').click(); await ctx.tick();
   assert.deepEqual(names(ctx), ['Opus 5'], 'only the shown engine\'s more models');
   ctx.doc.querySelector('.ask-pop-model [data-ask-pane-back]').click(); await ctx.tick();
@@ -279,7 +279,7 @@ test('each engine\'s list holds the newest of each family; its More models the r
   assert.deepEqual(names(ctx), ['Claude Sonnet 5.5', 'GPT-6.1 Sol', 'Gemini 4 Argon'], 'the newest of each family');
   ctx.doc.querySelector('.ask-pop-model [data-ask-more-models]').click(); await ctx.tick();
   assert.deepEqual(names(ctx), ['Claude Sonnet 5', 'GPT-5.4 Mini']);
-  assert.equal(ctx.doc.querySelector('.ask-pop-model [data-ask-pane-back]').textContent, '‹ GitHub Copilot (beta)');
+  assert.equal(ctx.doc.querySelector('.ask-pop-model [data-ask-pane-back]').textContent, '‹ GitHub Copilot CLI (beta)');
   ctx.doc.querySelector('.ask-pop-model [data-ask-pane-back]').click(); await ctx.tick();
   assert.deepEqual(names(ctx), ['Claude Sonnet 5.5', 'GPT-6.1 Sol', 'Gemini 4 Argon'], 'back to Copilot\'s list, not the main one');
 });

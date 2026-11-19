@@ -47,6 +47,24 @@ const RESULT = {
 };
 const render = (data = DATA, over = {}) => renderBench(data, { doc, projects: PROJECTS, caseState: new Map(), highlight: async (t) => t, ...over });
 
+test('the bench\'s Command field has the shared editor features: gutter, grip, a large window titled by the script, and no run control inside it', () => {
+  const root = render();
+  doc.body.appendChild(root);
+  const box = root.querySelector('.bench-params');
+  assert.ok(box.querySelector('.code-editor .code-editor-gutter'));
+  assert.ok(box.querySelector('.code-editor .code-editor-grip'));
+  assert.ok(box.querySelector('.code-editor-warnings'), 'the shell warnings list is there too (the bench has no card to mark)');
+  box.querySelector('.code-editor-expand').click();
+  const modal = doc.querySelector('body > .code-editor-modal');
+  assert.equal(modal.querySelector('h2').textContent, 'Run tests — Command');
+  const inField = [...box.querySelectorAll('.code-editor button'), ...modal.querySelectorAll('button')].map((b) => `${b.textContent} ${b.getAttribute('aria-label') || ''}`);
+  for (const label of inField) assert.doesNotMatch(label, /\b(run|test)\b/i);
+  assert.equal(box.querySelector('.bench-run'), null, 'the run control stays in the bench bar');
+  modal.querySelector('.code-editor-modal-close').click();
+  root._editors.forEach((e) => e.destroy());
+  root.remove();
+});
+
 test('caseListFor: shipped first, the overlay after, and the writable half', () => {
   assert.deepEqual(caseListFor(DATA).cases.map((c) => [c.id, c.writable]), [['c_failing', true]]);
   assert.equal(caseListFor(DATA).writableIndex, 'cases');

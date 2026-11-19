@@ -114,6 +114,7 @@
   },
   "dependencies": {
     "@highlightjs/cdn-assets": "11.12.0",
+    "@lobehub/icons-static-svg": "1.103.0",
     "@modelcontextprotocol/sdk": "1.32.2",
     "@ricky0123/vad-web": "0.0.31",
     "@xterm/addon-fit": "0.11.0",

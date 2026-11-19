@@ -699,6 +699,6 @@ export function bridgeExcludedTools(upstream) {
 }
 
 // ── providers: account-level state shared by bridged entries (§6.2) ─────────
-export const COPILOT_ACCOUNT_TYPES = Object.freeze(['individual', 'business', 'enterprise']);
+export const COPILOT_ACCOUNT_TYPES = Object.freeze(['individual', 'business', 'enterprise', 'ghe-com']);
 export const DEFAULT_PROVIDER_CONCURRENCY = Object.freeze({ copilot: 4, openai: 8, anthropic: 8 });
 export const MAX_PROVIDER_CONCURRENCY = 64;

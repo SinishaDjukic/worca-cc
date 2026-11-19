@@ -1,5 +1,5 @@
 // ui/public/ask-engine.mjs — Chat's engine rules for the panel (cascading-settings-design.md D12, D16, §6; #943). Pure.
-import { engineChoiceLabel, engineLabel, CHAT_ENGINE_NAMES, chatAttachRefusal } from '../../src/shared/engine-switch.mjs';
+import { isBetaEngine, engineLabel, CHAT_ENGINE_NAMES, chatAttachRefusal } from '../../src/shared/engine-switch.mjs';
 /** The engines an Ask chat runs on, in picker order (engine-switch.mjs `chat`, as src/core/model-env.mjs ASK_ENGINES). */
 export const ASK_CHAT_ENGINES = CHAT_ENGINE_NAMES;
 import { runsOn } from '../../src/shared/connections.mjs';
@@ -15,6 +15,12 @@ export function chatEngineOf(rows, model, catalog, serverEngine = null) {
   const hit = catalog && Array.isArray(catalog.models) ? catalog.models.find((m) => m && m.id === model) : null;
   return engineOfEntry(hit);
 }
+/** An engine's name in a model picker. The Copilot engine is the Copilot CLI: "GitHub Copilot" alone reads like the
+ *  GitHub Copilot provider, whose models run on Claude Code through the bridge and sit under that engine. */
+export function pickerEngineLabel(engine, { beta = false } = {}) {
+  const name = engine === 'copilot' ? 'GitHub Copilot CLI' : engineLabel(engine);
+  return beta && isBetaEngine(engine) ? `${name} (beta)` : name;
+}
 /** The picker's sections: one per engine present (Claude first); `lock` keeps only that engine; `active` (the chat's
  *  engine) is labelled "· this chat". */
 export function pickerGroups(models, { lock = null, active = null } = {}) {
@@ -23,7 +29,8 @@ export function pickerGroups(models, { lock = null, active = null } = {}) {
     if (lock && lock !== engine) continue;
     // A model whose connection both harnesses reach (an OpenAI Responses endpoint) is in both sections.
     const own = (Array.isArray(models) ? models : []).filter((m) => m && runsOn(m, engine));
-    const label = engine === active ? `${engineChoiceLabel(engine)} · this chat` : engineChoiceLabel(engine);
+    const name = pickerEngineLabel(engine, { beta: true });
+    const label = engine === active ? `${name} · this chat` : name;
     if (own.length) out.push({ engine, label, models: own });
   }
   return out;
@@ -105,5 +112,5 @@ function tokensLabel(n) {
 /** The engine name a model button shows (#943; Chat and the extension): the engine the next message runs on, whenever
  *  the catalog offers more than one chat engine; '' when it offers one, as the picker then shows no engine headings. */
 export function pickerEngineName(models, engine) {
-  return pickerGroups(models).length > 1 ? engineLabel(engine) : '';
+  return pickerGroups(models).length > 1 ? pickerEngineLabel(engine) : '';
 }

@@ -123,7 +123,8 @@ export function renderSpendCard(budget, { doc = globalThis.document, fmt = DEFAU
     const btn = h(doc, 'button', 'mi menu-item mc-free');
     btn.type = 'button';
     btn.setAttribute('role', 'menuitem');
-    btn.dataset.nav = 'providers';
+    btn.dataset.nav = 'models';
+    btn.dataset.hash = 'models/providers/openrouter';
     if (fr.tone) btn.dataset.tone = fr.tone;
     btn.title = fr.title;
     btn.appendChild(h(doc, 'span', 'mi-lbl', 'Free requests today'));

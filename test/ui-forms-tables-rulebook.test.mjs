@@ -27,7 +27,7 @@ test('Settings: every static field is a divided row with its control in .drow-co
 });
 
 test('every inherit-field host is a .drows container, so its rows stack on phones', () => {
-  for (const id of ['ask-engine-root', 'engine-settings-root']) assert.ok(doc.getElementById(id).classList.contains('drows'), `#${id}`);
+  for (const id of ['ask-engine-root']) assert.ok(doc.getElementById(id).classList.contains('drows'), `#${id}`);
   assert.match(read('ui/public/project-settings-view.mjs'), /body\.className = 'pd-settings-body drows'/);
 });
 

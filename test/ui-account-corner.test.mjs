@@ -156,14 +156,14 @@ test('a mouse passing over the corner does not open the menu: it opens on a clic
   assert.equal($('acct-menu').hidden, false, 'a click opens it');
 });
 
-test('the spend card\'s free-request row: amber when low, opens the Providers page and closes the menu; none when OpenRouter is off', async () => {
+test('the spend card\'s free-request row: amber when low, opens the Providers tab and closes the menu; none when OpenRouter is off', async () => {
   let ctx = await boot();
   const row = ctx.doc.querySelector('#acct-spend .mc-free');
   assert.deepEqual([row.querySelector('.mi-lbl').textContent, row.querySelector('.mi-val').textContent, row.dataset.tone], ['Free requests today', '4 / 50', 'warn']);
   ctx.click(ctx.$('side-acct'));
   ctx.click(row);
   await settle();
-  assert.equal(ctx.window.location.hash, '#providers');
+  assert.equal(ctx.window.location.hash, '#models/providers/openrouter');
   assert.equal(ctx.$('acct-menu').hidden, true);
   ctx = await boot({ free: null });
   assert.equal(ctx.doc.querySelector('#acct-spend .mc-free'), null);

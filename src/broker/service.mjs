@@ -9,7 +9,8 @@ import { resolveToken, tokenFromHeaders, parseMintRequest, mintToken, safeEqual,
 import { createUsageTap, priceUsage, listRatesFor, requestWithUsage, UNPRICED_RATES } from './usage.mjs';
 import { scrubText } from './scrub.mjs';
 import { createLimits } from './limits.mjs';
-import { createCopilotExchange, parseGithubSecret, refreshGithubToken } from './copilot.mjs';
+import { createCopilotExchange, copilotHostCheck, parseGithubSecret, refreshGithubToken } from './copilot.mjs';
+import { gheTenantOfUrl } from '../core/ghe-host.mjs';
 import { fetchUpstream } from './upstream-request.mjs';
 
 export const MAX_REQUEST_BYTES = 32 << 20;
@@ -174,8 +175,9 @@ export function createBrokerService({ config, slots: baseSlots, store, log = () 
   const copilotFor = (slot) => {
     if (!exchanges.has(slot.id)) {
       exchanges.set(slot.id, createCopilotExchange({
-        fetchImpl, now, defaultHost: new URL(slot.upstream).origin,
+        fetchImpl, now, log, defaultHost: new URL(slot.upstream).origin,
         ...(slot.exchangeUrl ? { exchangeUrl: slot.exchangeUrl } : {}),
+        allowHost: copilotHostCheck(gheTenantOfUrl(slot.exchangeUrl) || gheTenantOfUrl(slot.deviceBaseUrl)),
       }));
     }
     return exchanges.get(slot.id);
@@ -265,11 +267,14 @@ export function createBrokerService({ config, slots: baseSlots, store, log = () 
     return { authorization: `Bearer ${secret}` };
   }
 
-  /** One request to a slot's verify path with `secret`. {ok} or {ok:false, error}. */
-  function verifyCredential(slot, secret) {
+  /**
+   * One request to a slot's verify path with `secret`. {ok} or {ok:false, error}.
+   * `phase` ('stored' | 'sign-in' | 'token') only words a Copilot refusal; see createCopilotExchange.
+   */
+  function verifyCredential(slot, secret, { phase = 'stored' } = {}) {
     if (!slot.verify) return Promise.resolve({ ok: true });
     if (slot.auth === 'copilot') {
-      return copilotFor(slot).token(secret, { force: true }).then(() => ({ ok: true }), (err) => ({ ok: false, status: err.status, error: scrubText(err.message, [secret]) }));
+      return copilotFor(slot).token(secret, { force: true, phase }).then(() => ({ ok: true }), (err) => ({ ok: false, status: err.status, error: scrubText(err.message, [secret]) }));
     }
     // What to ask: the slot's verify request; a Claude subscription can't list models, so it
     // gets the smallest possible message (one output token of the smallest model); GitHub: /user.
@@ -304,14 +309,14 @@ export function createBrokerService({ config, slots: baseSlots, store, log = () 
     });
   }
 
-  /** Verify, then seal and store a person's credential. */
-  async function saveCredential(billTo, slotId, secret) {
+  /** Verify, then seal and store a person's credential. `via` 'device' = a GitHub sign-in just finished; else a pasted token. */
+  async function saveCredential(billTo, slotId, secret, { via = 'token' } = {}) {
     const slot = slotById.get(slotId);
     if (!slot || slot.credential !== 'per-person') return { ok: false, status: 404, error: 'unknown slot' };
     if (!config.vaultKey) return { ok: false, status: 500, error: 'the broker has no vault key' };
     const s = String(secret || '').trim();
     if (s.length < 8 || s.length > 4096 || /\s/.test(s)) return { ok: false, status: 422, error: 'that does not look like a key: paste the whole value, without spaces' };
-    const v = await verifyCredential(slot, s);
+    const v = await verifyCredential(slot, s, { phase: via === 'device' ? 'sign-in' : 'token' });
     if (!v.ok) return { ok: false, status: 422, error: `${slotName(slot)} was not accepted: ${v.error}` };
     const kind = credentialKind(slot, s);
     const suffix = suffixOf(slot.auth === 'github-user' ? parseGithubSecret(s).token : s);

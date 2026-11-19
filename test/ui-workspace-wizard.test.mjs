@@ -946,7 +946,7 @@ test('E10: a registered import row whose project has team memory available carri
   assert.equal(mark('/x/api'), null, 'a new row is not a project yet');
 });
 
-test('with an Everyday coding role covering the scan, Scan sends no pick (re-scans follow the role) unless a picker was changed', async () => {
+test('with an Everyday tasks role covering the scan, Scan sends no pick (re-scans follow the role) unless a picker was changed', async () => {
   const roleSettings = { workspaceScan: null, workspaceScanFromRole: true,
     workspaceScanDefault: { scanModel: 'claude-opus-5-5', scanEffort: 'high', agentModel: 'sonnet', agentEffort: 'medium' } };
   const posts = [];

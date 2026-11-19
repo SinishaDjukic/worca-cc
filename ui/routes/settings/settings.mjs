@@ -23,7 +23,7 @@ import { resolvePrDescriptionModel } from '../../../src/core/pr-description.mjs'
 import { listProjects, normalizeProjectPath } from '../../../src/core/projects.mjs';
 import { DEFAULT_INTERVIEW_EFFORT, requirementsModel } from '../../../src/core/requirements/interview.mjs';
 import { settingsErrorReply } from '../../../src/core/settings-errors.mjs';
-import { actionsSettings, agentGenModel as storedAgentGenModel, askEngineSetting, askMaxBudgetUsd, askMaxTurns, askModelsSetting, askWeb, autoGeneratePrDescription, autoTestWorkers, autoWorkflowModel as storedAutoWorkflowModel, chatPrefs, commandSummaryModel as storedCommandSummaryModel, costLimitResetPeriod, debugSpawnEnabled as storedDebugSpawnEnabled, defaultProjectsRoot, designModelsSetting, defaultRoot, effectiveDebugSpawn, getWorcaRoot, hideBuiltinModels, humanRateUsdPerHour, keepAwakeEnabled, memoryCaps, memoryDefragModel, modelRolesSetting, namingModel as storedNamingModel, networkWaitSettings, nightModeSettings, nightModeToggle, nightModeToggleFor, pipelineCostLimitUsd, prDescriptionModel as storedPrDescriptionModel, rawProjectsRoot, requirementsInterviewSetting, resumeAfterUsageLimit, runEngineSetting, runLimits, scheduleDefaults, screensaverSettings, secondOpinionModelSetting, smartNaming, stepModelsSetting, syncDefaults, theme as storedTheme, titleModel as storedTitleModel, totalCostLimitUsd, updateCheckEnabled, userEnforceTags, userTagDimensions, utilityModelsSetting, workspaceScanModels } from '../../../src/core/settings.mjs';
+import { actionsSettings, agentGenModel as storedAgentGenModel, askEngineSetting, askMaxBudgetUsd, askMaxTurns, askModelsSetting, askWeb, autoGeneratePrDescription, autoTestWorkers, autoWorkflowModel as storedAutoWorkflowModel, chatPrefs, commandSummaryModel as storedCommandSummaryModel, costLimitResetPeriod, debugSpawnEnabled as storedDebugSpawnEnabled, defaultProjectsRoot, designModelsSetting, defaultRoot, effectiveDebugSpawn, getWorcaRoot, hideBuiltinEngines, hideBuiltinModels, humanRateUsdPerHour, keepAwakeEnabled, memoryCaps, memoryDefragModel, modelRolesSetting, namingModel as storedNamingModel, networkWaitSettings, nightModeSettings, nightModeToggle, nightModeToggleFor, pipelineCostLimitUsd, prDescriptionModel as storedPrDescriptionModel, rawProjectsRoot, requirementsInterviewSetting, resumeAfterUsageLimit, runEngineSetting, runLimits, scheduleDefaults, screensaverSettings, secondOpinionModelSetting, smartNaming, stepModelsSetting, syncDefaults, theme as storedTheme, titleModel as storedTitleModel, totalCostLimitUsd, updateCheckEnabled, userEnforceTags, userTagDimensions, utilityModelsSetting, workspaceScanModels } from '../../../src/core/settings.mjs';
 import { describeTitleModel } from '../../../src/core/title.mjs';
 import process from 'node:process';
 import { APP_INFO, REMOTE_MODE, actionsEnabledHere, agentMayBeCaller, applySettingsPatch, autoDetectedBuiltins, awayPersonOf, effectiveUiLevel, emitMemoryChanged, liveDefragRun, memoryError, refuseAgentCaller, requireFsAllowed, teamOriginOk, teamWarn } from '../../server.mjs';
@@ -119,6 +119,7 @@ const settingsState = () => ({
   titleModel: storedTitleModel(),                         // the STORED id (the select), null = run's model
   titleModelEffective: describeTitleModel(),              // env override / stale id, for the hint line (#422)
   hideBuiltinModels: hideBuiltinModels(),
+  hideBuiltinEngines: hideBuiltinEngines(),              // Models › Catalogue: Codex / Copilot hide their built-ins
   theme: storedTheme(),                                   // system | light | dark (dark-mode design §6)
   screensaver: screensaverSettings(),                     // Settings › Appearance: { enabled, idleMinutes }
   schedule: scheduleDefaults(),                           // defaults a NEW schedule inherits
@@ -133,19 +134,19 @@ const settingsState = () => ({
   git: (({ available, version }) => ({ available, version }))(currentGitState()),   // is git usable here (CONTRACT §0)
   memoryDefrag: memoryDefragModel(),                      // Settings › Memory: the STORED { model, effort } (null = the workflow default)
   memoryDefragDefault: defragDefaultModel(),              // what "(default)" means there: Worca's factory default
-  secondOpinionModel: secondOpinionModelSetting(),        // Models › Helper jobs › Second-opinion reviewer: the STORED pair (null = the factory default)
-  factoryModels: factoryModelsPayload(),                  // what "(default)" means on the Claude tab's helper and step rows
+  secondOpinionModel: secondOpinionModelSetting(),        // Models › Jobs › Helper jobs › Second-opinion reviewer: the STORED pair (null = the factory default)
+  factoryModels: factoryModelsPayload(),                  // what "(default)" means on Claude Code's helper rows (Models › Jobs › Helper jobs)
   workspaceScan: workspaceScanModels(),                   // Settings › Runs › Workspaces: the STORED pick (null = the defaults)
-  // What null means: the Everyday coding role as the scan model when set, else Sonnet 5 · medium; project agents sonnet · medium.
+  // What null means: the Everyday tasks role as the scan model when set, else Sonnet 5 · medium; project agents sonnet · medium.
   workspaceScanDefault: withScanRole(null, WORKSPACE_SCAN_DEFAULT_MODELS) || WORKSPACE_SCAN_DEFAULT_MODELS,
   workspaceScanFromRole: !!withScanRole(null, WORKSPACE_SCAN_DEFAULT_MODELS),   // the wizard stores no pick of its own then (re-scans follow the role)
   runEngine: runEngineSetting() ?? null,
   stepModels: stepModelsSetting(),
-  designModels: designModelsSetting(),                    // Models › Engines › Design: { <engine>: { lead|builder: { model, effort } } }
-  modelRoles: modelRolesSetting(),                         // Models › Roles (D1): { <engine>: { deep|everyday|quick: { model, effort } } }
+  designModels: designModelsSetting(),                    // Models › Jobs › Design: { <engine>: { lead|builder: { model, effort } } }
+  modelRoles: modelRolesSetting(),                         // Models › Jobs › Roles (D1): { <engine>: { deep|everyday|quick: { model, effort } } }
   utilityModels: utilityModelsSetting(),
   askEngine: askEngineSetting() ?? null,                  // Chat: the engine new chats start on (D17)
-  // Models › Engines › Claude: the STORED { model?, effort? } (null = the default); only while the requirements flag is on
+  // Models › Jobs › Helper jobs: the STORED { model?, effort? } (null = the default); only while the requirements flag is on
   ...(flagEnabled('requirements') ? { requirementsInterview: requirementsInterviewSetting() ?? null } : {}),
   askModels: askModelsSetting(),                          // Chat: the model per engine (D17)
   nightMode: nightModeSettings(),                         // night mode: the user layer (only the fields set)
@@ -190,13 +191,13 @@ async function agentGenModelState() {
   return { agentGenModel: stored, agentGenModelEffective: resolveAgentGenModel(withRole(stored, 'claude', 'agentGenModel'), await listModels('')) };
 }
 
-/** Models › Helper jobs › Run naming: the stored pair + what a suggestion will actually run on. */
+/** Models › Jobs › Helper jobs › Run naming: the stored pair + what a suggestion will actually run on. */
 async function namingModelState() {
   const stored = storedNamingModel();
   return { namingModel: stored, namingModelEffective: resolveNamingModel(withRole(stored, 'claude', 'namingModel'), await listModels(''), modelCostConfig) };
 }
 
-/** Models › Helper jobs › Command summaries: the stored pair + what a summary will actually run on. */
+/** Models › Jobs › Helper jobs › Command summaries: the stored pair + what a summary will actually run on. */
 async function commandSummaryModelState() {
   const stored = storedCommandSummaryModel();
   return { commandSummaryModel: stored, commandSummaryModelEffective: resolveNamingModel(withRole(stored, 'claude', 'commandSummaryModel'), await listModels(''), modelCostConfig) };

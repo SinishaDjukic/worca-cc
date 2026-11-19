@@ -72,7 +72,7 @@ const read = (doc) => {
 // One boot per stored sync value (cuts the count, not the time).
 test('the Sync before run card (Runs tab, Advanced) paints the stored defaults, adding an off-list refresh interval as an option rather than a blank select', async () => {
   await checkRows([
-    { name: 'the Sync before run card sits on the Runs tab before Scheduled runs, Advanced level, and paints the stored defaults', run: async () => {
+    { name: 'the Sync before run card sits on the Runs tab before Pull requests, Advanced level, and paints the stored defaults', run: async () => {
       const { window, openSettings } = await boot({ settings: { ...SETTINGS, sync: { beforeRun: false, remote: 'upstream', refreshMinutes: 30, onDiverged: 'fail' } } });
       await openSettings();
       const doc = window.document;
@@ -80,7 +80,7 @@ test('the Sync before run card (Runs tab, Advanced) paints the stored defaults, 
       assert.ok(card.closest('.settings-pane[data-tab="runs"]'), 'on the Runs tab');
       assert.equal(card.dataset.minLevel, 'advanced');
       assert.equal(card.querySelector('h2').textContent.trim(), 'Sync before run');
-      assert.equal(card.nextElementSibling.id, 'schedule-settings-card');
+      assert.equal(card.nextElementSibling.id, 'pr-settings-card');
       assert.deepEqual(read(doc), { beforeRun: false, onDiverged: 'fail', remote: 'upstream', refreshMinutes: '30' });
       assert.deepEqual([...doc.getElementById('syncDefOnDiverged').options].map((o) => o.value), ['ask', 'origin', 'fail']);
       assert.match(card.textContent, /scheduled run cannot ask/i, 'the tip says what Ask me means for a schedule');

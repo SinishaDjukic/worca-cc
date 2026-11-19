@@ -75,7 +75,7 @@ export async function open(overrides = {}) {
   const c = createComposer(s.hostEls, {
     doc: s.doc, api: { ...API, ...(overrides.api || {}) }, raf: s.raf,
     viewport: () => ({ ...RECT }), storage: overrides.storage || null, portsFn: overrides.portsFn || portsFn,
-    highlight: overrides.highlight || null, allLevels: overrides.allLevels === true,
+    highlight: overrides.highlight || null, allLevels: overrides.allLevels === true, lintDelayMs: overrides.lintDelayMs,
   });
   c.mount();
   c.loadTemplate(overrides.template === undefined ? fixture() : overrides.template);
@@ -1257,5 +1257,149 @@ test('a field typed for one card and let go after a press selects another commit
   assert.deepEqual(t.nodes.find((n) => n.id === shell.id).config.params, { command: 'echo half typed' }, 'the typed command stays on the Shell card');
   assert.equal(JSON.stringify(t.nodes.find((n) => n.id === other.id).config), before, 'the pressed card takes no stray "param:command" key');
   assert.deepEqual(s.c.selection(), { kind: 'node', id: other.id });
+  s.c.destroy();
+});
+
+// ---- shell warnings: the card mark, the live path and the large window (Shell Commands) ----
+
+const SH_PORTS = portsFnFor(AGENTS, { shell: SHELL });
+const BAD_CMD = "echo 'hi";
+const sleepMs = (ms) => new Promise((r) => setTimeout(r, ms));
+/** task -> script card -> end: a legal canvas, so only the card's own warnings show. */
+function scriptCanvas(id, key, config) {
+  return {
+    id: 'wf_s', name: 'S', version: 2, domain: 'coding',
+    nodes: [{ id: 'n_task', kind: 'task', x: 60, y: 143, config: {} }, { id, kind: 'script', key, x: 400, y: 80, config },
+      { id: 'n_end', kind: 'end', x: 760, y: 143, config: {} }],
+    wires: [{ id: 'w1', from: { node: 'n_task', port: 'task' }, to: { node: id, port: 'in' } },
+      { id: 'w2', from: { node: id, port: 'log' }, to: { node: 'n_end', port: 'result' } }],
+  };
+}
+/** A canvas holding one wired Shell card whose Command is `command`, the card selected so its inspector is open. */
+async function openShell(command, over = {}) {
+  const tpl = scriptCanvas('n_sh', 'shell', { ports: SHELL.defaultPorts, ...(command === undefined ? {} : { params: { command } }) });
+  const s = await open({ highlight: async (t) => t, portsFn: SH_PORTS, template: tpl, lintDelayMs: 30, ...over });
+  s.c.setScripts({ shell: SHELL });
+  await sleepMs(10);                  // setScripts re-renders bare, then validates on the next turn
+  s.c.select({ kind: 'node', id: 'n_sh' });
+  return s;
+}
+const pip = (s, id = 'n_sh') => s.c.view.nodeEl(id).querySelector(':scope > .nwarn');
+const cmdTa = (s) => s.el.insBody.querySelector('textarea[data-field="param:command"]');
+const typeInto = (s, ta, v) => { ta.value = v; ta.dispatchEvent(new s.win.Event('input', { bubbles: true })); };
+const fire = (s, ta, type) => ta.dispatchEvent(new s.win.Event(type, { bubbles: true }));
+const nodeCmd = (s) => (s.c.template().nodes.find((n) => n.id === 'n_sh').config.params || {}).command;
+
+test('shell warnings on the card: a stored defect shows the amber pip and chip at load, Save stays enabled', async () => {
+  const s = await openShell(BAD_CMD);
+  assert.ok(pip(s), 'the card carries the warning pip');
+  assert.match(pip(s).title, /1 shell warning/);
+  assert.equal(s.el.errors.hidden, false);
+  assert.equal(s.el.errors.textContent, '1 warning');
+  assert.equal(s.el.save.disabled, false, 'warnings never disable Save');
+  s.c.destroy();
+});
+
+test('shell warnings on the card: a clean Command, a blank one and a js code param never pip', async () => {
+  await checkRows([
+    { name: 'a clean command', run: async () => { const s = await openShell('npm test'); assert.equal(pip(s), null); s.c.destroy(); } },
+    { name: 'no command at all (V22 incomplete, no warning)', run: async () => { const s = await openShell(undefined); assert.equal(pip(s), null); s.c.destroy(); } },
+    { name: 'a js card with a broken code value', run: async () => {
+      const JS = { ...SHELL, key: 'js', runtime: 'node', params: [{ id: 'source', type: 'code', language: 'js', required: true }] };
+      const tpl = scriptCanvas('n_js', 'js', { ports: SHELL.defaultPorts, params: { source: 'echo "x' } });
+      const s = await open({ highlight: async (t) => t, portsFn: portsFnFor(AGENTS, { js: JS }), template: tpl });
+      assert.equal(pip(s, 'n_js'), null);
+      s.c.destroy();
+    } },
+  ]);
+});
+
+test('shell warnings, live: fixing the Command clears the pip after the pause, with no commit and no inspector rebuild', async () => {
+  const s = await openShell(BAD_CMD);
+  assert.ok(pip(s));
+  const ta = cmdTa(s);
+  typeInto(s, ta, "echo 'hi'");
+  assert.ok(pip(s), 'still there until the pause');
+  await sleepMs(80);
+  assert.equal(pip(s), null, 'the mark goes once the warning is fixed');
+  assert.equal(s.el.errors.hidden, true);
+  assert.equal(ta.isConnected, true, 'the inspector was not repainted under the typist');
+  assert.equal(cmdTa(s), ta);
+  assert.equal(nodeCmd(s), BAD_CMD, 'nothing is stored until the field commits');
+  fire(s, ta, 'change');
+  await sleepMs(20);
+  assert.equal(nodeCmd(s), "echo 'hi'");
+  assert.equal(pip(s), null, 'the validator agrees with the live count after the commit');
+  typeInto(s, cmdTa(s), 'echo "x');
+  await sleepMs(80);
+  assert.match(pip(s).title, /1 shell warning/, 'and a new defect brings it back');
+  s.c.destroy();
+});
+
+test('shell warnings: two Command params make one pip, and fixing the bad one clears it', async () => {
+  const TWO = { ...SHELL, key: 'two', params: [{ id: 'a', type: 'command', label: 'A' }, { id: 'b', type: 'command', label: 'B' }] };
+  const tpl = scriptCanvas('n_two', 'two', { ports: SHELL.defaultPorts, params: { a: BAD_CMD, b: 'echo ok' } });
+  const s = await open({ highlight: async (t) => t, portsFn: portsFnFor(AGENTS, { two: TWO }), template: tpl, lintDelayMs: 30 });
+  s.c.setScripts({ two: TWO });
+  await sleepMs(10);
+  s.c.select({ kind: 'node', id: 'n_two' });
+  assert.equal(s.c.view.nodeEl('n_two').querySelectorAll(':scope > .nwarn').length, 1);
+  const a = s.el.insBody.querySelector('textarea[data-field="param:a"]');
+  typeInto(s, a, 'echo ok');
+  await sleepMs(80);
+  assert.equal(s.c.view.nodeEl('n_two').querySelector(':scope > .nwarn'), null);
+  s.c.destroy();
+});
+
+test('large window in the composer: titled by the step, deferring inspector repaints, committing once on close', async () => {
+  const s = await openShell('echo a');
+  const ta = cmdTa(s);
+  ta.closest('.ins-f').querySelector('.code-editor-expand').click();
+  const root = s.doc.querySelector('body > .code-editor-modal');
+  assert.equal(root.querySelector('h2').textContent, 'Shell · n_sh — command');
+  await checkRows([
+    { name: 'the chat waits while the window is open', run: () => assert.equal(s.c.inspectorFocused(), true) },
+    { name: 'a background op and a model reload leave the field and the window alone', run: () => {
+      assert.equal(s.c.applyOps([{ op: 'move', id: 'n_task', x: 80, y: 150 }]).ok !== undefined, true);
+      s.c.setModels({ models: [{ id: 'sonnet', label: 'Sonnet' }], efforts: ['low'] });
+      assert.equal(ta.isConnected, true);
+      assert.equal(s.doc.querySelectorAll('body > .code-editor-modal').length, 1);
+      assert.equal(s.c.inspectorFocused(), true);
+    } },
+  ]);
+  const depth = s.c.undoDepth();
+  typeInto(s, root.querySelector('textarea'), 'echo a\necho b');
+  assert.equal(nodeCmd(s), 'echo a', 'typing in the window stores nothing yet');
+  root.querySelector('.code-editor-modal-close').click();
+  assert.equal(nodeCmd(s), 'echo a\necho b', 'the close commits the typed text');
+  assert.equal(s.c.undoDepth(), depth + 1, 'one close, one undo step');
+  const fresh = cmdTa(s);
+  assert.notEqual(fresh, ta, 'the deferred repaint ran');
+  assert.equal(fresh.value, 'echo a\necho b');
+  assert.equal(s.doc.activeElement, fresh, 'focus is back on the field');
+  assert.equal(s.c.inspectorFocused(), true);
+  s.c.destroy();
+});
+
+test('large window in the composer: closing with no edit stores nothing and adds no undo step', async () => {
+  const s = await openShell('echo a');
+  const depth = s.c.undoDepth();
+  cmdTa(s).closest('.ins-f').querySelector('.code-editor-expand').click();
+  s.c.setModels({ models: [{ id: 'sonnet', label: 'Sonnet' }], efforts: ['low'] });
+  s.doc.querySelector('body > .code-editor-modal .code-editor-modal-close').click();
+  assert.equal(s.c.undoDepth(), depth);
+  assert.ok(cmdTa(s).isConnected);
+  s.c.destroy();
+});
+
+test('required-blank stays: a whitespace Command deletes the key, flags the field and V22 incomplete', async () => {
+  const s = await openShell('echo a');
+  const ta = cmdTa(s);
+  typeInto(s, ta, '   ');
+  fire(s, ta, 'change');
+  await sleepMs(20);
+  assert.equal('params' in s.c.template().nodes.find((n) => n.id === 'n_sh').config, false);
+  assert.ok(cmdTa(s).closest('.ins-f').classList.contains('ins-missing'));
+  assert.equal(pip(s), null);
   s.c.destroy();
 });

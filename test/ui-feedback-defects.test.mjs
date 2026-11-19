@@ -102,8 +102,11 @@ test('#555 D1: a delete success (marketplace / guardrail set / model) survives t
         'GET /api/models': { status: 200, body: { models: [{ id: 'acme-fast', label: 'ACME Fast' }], predefined: [], efforts: [] } },
       } });
       await go('models');
-      window.document.querySelector('.mv-delete[data-id="acme-fast"]')
-        .dispatchEvent(new window.Event('click', { bubbles: true }));
+      const doc = window.document;
+      // The row opens its side panel; Delete sits in the panel's More menu.
+      doc.querySelector('#models-list .mdl-row[data-id="acme-fast"]').dispatchEvent(new window.Event('click', { bubbles: true }));
+      doc.querySelector('#model-panel-host .mdl-act-more').dispatchEvent(new window.Event('click', { bubbles: true }));
+      [...doc.querySelectorAll('.wfv-menu [role^="menuitem"]')].find((b) => b.querySelector('.wfv-menu-l').textContent === 'Delete').click();
       await confirmDialog(window);
       for (let i = 0; i < 10; i++) await tick();
       assert.deepEqual(lastToast(window.document), { tone: 'ok', title: 'Deleted.', detail: '', action: '' });
@@ -152,23 +155,55 @@ test('#555: the model editor Save — a missing id is a field error, a refusal a
   let patch = { status: 400, body: { error: 'baseUrl must be http(s)' } };
   const { window, go } = await boot({ routes: {
     'PATCH /api/models/acme-fast': { get status() { return patch.status; }, get body() { return patch.body; } },
-    'GET /api/models': { status: 200, body: { models: [{ id: 'acme-fast', label: 'ACME Fast' }], predefined: [], efforts: [] } },
+    'GET /api/models': { status: 200, body: { models: [{ id: 'acme-fast', label: 'ACME Fast' }, { id: 'cp-x', label: 'CP X', efforts: [], upstream: { provider: 'copilot', api: 'anthropic', model: 'x' } }], predefined: [], efforts: [] } },
   } });
   await go('models');
   const doc = window.document;
-  // Add model with no id: the id field says so; nothing is sent.
-  doc.getElementById('model-create-btn').click();
-  for (let i = 0; i < 4; i++) await tick();
+  // Add model › Next (a sign-in) with no id: the id field says so; nothing is sent.
+  await openAddForm(doc);
   const add = doc.querySelector('#mv-editor-host .mv-editor');
-  add.querySelector('.mv-save').click();
+  assert.equal(add.querySelector('.mv-save').disabled, true, 'Save is disabled while the id is empty');
+  // A click that slips past the disabled button (a plain event) still sends nothing: the id field says why.
+  add.querySelector('.mv-save').dispatchEvent(new window.Event('click', { bubbles: true }));
   for (let i = 0; i < 4; i++) await tick();
   const { fieldErrorText, cardAlertOf } = await import('./helpers/feedback.mjs');
   assert.match(fieldErrorText(add.querySelector('.mv-id')), /model id is required/);
   assert.equal(add.querySelector('.mv-editor-msg').textContent, '');
   add.querySelector('.mv-cancel').click();
   for (let i = 0; i < 4; i++) await tick();
-  // Edit: the server refuses → a card alert in the editor, which stays open.
-  doc.querySelector('.mv-edit[data-id="acme-fast"]').dispatchEvent(new window.Event('click', { bubbles: true }));
+  const openFromPanel = async (id, act) => {
+    doc.querySelector(`#models-list .mdl-row[data-id="${id}"]`).dispatchEvent(new window.Event('click', { bubbles: true }));
+    doc.querySelector(`#model-panel-host .mdl-act[data-act="${act}"]`).dispatchEvent(new window.Event('click', { bubbles: true }));
+    for (let i = 0; i < 4; i++) await tick();
+    return doc.querySelector('#mv-editor-host .mv-editor');
+  };
+  const closed = () => doc.getElementById('model-editor-modal').classList.contains('hidden');
+  // Duplicate: the prefill writes the id with no input event, and Save follows it; removing a refused row clears it.
+  const dup = await openFromPanel('acme-fast', 'duplicate');
+  assert.deepEqual([dup.querySelector('.mv-id').value, dup.querySelector('.mv-save').disabled], ['acme-fast-copy', false]);
+  dup.querySelector('.mv-env-add').click();
+  const envKey = dup.querySelector('.mv-env-row .mv-env-key');
+  envKey.value = 'WORCA_X';
+  envKey.dispatchEvent(new window.Event('input', { bubbles: true }));
+  assert.equal(dup.querySelector('.mv-save').disabled, true, 'a refused name');
+  dup.querySelector('.mv-env-row .mv-env-rm').click();
+  assert.equal(dup.querySelector('.mv-save').disabled, false, 'the row is gone, and so is the refusal');
+  // The head's Close closes at once, like Cancel.
+  dup.querySelector('.mdl-close').click();
+  for (let i = 0; i < 4; i++) await tick();
+  assert.equal(closed(), true);
+  // A Copilot model: a change in its folds (after Pricing) is a connection change — "Trust the CLI" moves to Free.
+  const cp = await openFromPanel('cp-x', 'edit');
+  assert.equal(cp.querySelector('.mv-cost-seg [aria-pressed="true"]').textContent, 'Trust the CLI');
+  const vision = cp.querySelector('.mv-conn-more .mv-conn-cap-cb[data-cap="vision"]');
+  vision.checked = true;
+  vision.dispatchEvent(new window.Event('change', { bubbles: true }));
+  assert.equal(cp.querySelector('.mv-cost-seg [aria-pressed="true"]').textContent, 'Free ($0)');
+  cp.querySelector('.mv-cancel').click();
+  for (let i = 0; i < 4; i++) await tick();
+  // Edit (the row's side panel): the server refuses → a card alert in the editor, which stays open.
+  doc.querySelector('#models-list .mdl-row[data-id="acme-fast"]').dispatchEvent(new window.Event('click', { bubbles: true }));
+  doc.querySelector('#model-panel-host .mdl-act[data-act="edit"]').dispatchEvent(new window.Event('click', { bubbles: true }));
   for (let i = 0; i < 4; i++) await tick();
   const editor = doc.querySelector('#mv-editor-host .mv-editor');
   assert.ok(doc.querySelector('#mv-editor-host .mv-editor.dlg > .dlg-foot .mv-editor-btns'), 'the shared dialog anatomy');
@@ -193,8 +228,7 @@ test('model editor: never on a backdrop click; Escape over a change asks ("This 
   } });
   await go('settings/models');
   const doc = window.document;
-  doc.getElementById('model-create-btn').click();
-  for (let i = 0; i < 4; i++) await tick();
+  await openAddForm(doc);
   const modal = doc.getElementById('model-editor-modal');
   const idField = doc.querySelector('#mv-editor-host .mv-id');
   idField.value = 'acme-new';
@@ -220,8 +254,7 @@ test('model editor: an env row added or removed is a change, so Escape asks with
   const envRows = () => doc.querySelectorAll('#mv-editor-host .mv-env-row').length;
   await checkRows([
     { name: '"+ env var" on a new model: Escape asks; Keep editing keeps the row', run: async () => {
-      doc.getElementById('model-create-btn').click();
-      for (let i = 0; i < 4; i++) await tick();
+      await openAddForm(doc);
       doc.querySelector('#mv-editor-host .mv-env-add').click();
       assert.equal(envRows(), 1);
       pressEscape(window);
@@ -233,7 +266,8 @@ test('model editor: an env row added or removed is a change, so Escape asks with
       assert.equal(modal.classList.contains('hidden'), true);
     } },
     { name: 'a model\'s env row removed: Escape asks; Discard closes', run: async () => {
-      doc.querySelector('.mv-edit[data-id="acme-env"]').click();
+      doc.querySelector('#models-list .mdl-row[data-id="acme-env"]').click();
+      doc.querySelector('#model-panel-host .mdl-act[data-act="edit"]').click();
       for (let i = 0; i < 4; i++) await tick();
       assert.equal(envRows(), 1);
       doc.querySelector('#mv-editor-host .mv-env-row .mv-env-rm').click();
@@ -247,7 +281,7 @@ test('model editor: an env row added or removed is a change, so Escape asks with
   ]);
 });
 
-test('model import: never on a backdrop click; a typed base URL makes Escape ask; the list filter is a view, not a change', async () => {
+test('model import (Add model, step 2): never on a backdrop click; a typed base URL makes Escape ask; filtering is a view, not a change', async () => {
   const { window, go } = await boot({ routes: {
     'GET /api/models': { status: 200, body: { models: [], predefined: [], efforts: [] } },
     'GET /api/providers/openai/models': { status: 200, body: { server: 'openrouter', serverLabel: 'OpenRouter', baseUrl: 'https://openrouter.ai/api/v1', warnings: [],
@@ -255,13 +289,13 @@ test('model import: never on a backdrop click; a typed base URL makes Escape ask
   } });
   await go('settings/models');
   const doc = window.document;
-  const modal = doc.getElementById('model-import-modal');
+  const modal = doc.getElementById('model-editor-modal');
+  const step2 = () => doc.querySelector('#mv-editor-host .mdl-add[data-step="2"]');
   await checkRows([
     { name: 'a typed base URL: no backdrop close, Escape asks, Discard closes', run: async () => {
-      doc.getElementById('model-import-btn').click();
-      for (let i = 0; i < 2; i++) await tick();
+      await openAddList(window, doc, 'openai');
       assert.equal(modal.classList.contains('hidden'), false);
-      const base = doc.getElementById('mimp-base');
+      const base = step2().querySelector('.mimp-base');
       base.value = 'http://127.0.0.1:11434/v1';
       base.dispatchEvent(new window.Event('input', { bubbles: true }));
       backdropClick(window, modal);
@@ -273,9 +307,8 @@ test('model import: never on a backdrop click; a typed base URL makes Escape ask
       assert.equal(modal.classList.contains('hidden'), true);
     } },
     { name: 'typing in the list filter alone: Escape closes with no question', run: async () => {
-      doc.getElementById('model-import-btn').click();
-      for (let i = 0; i < 2; i++) await tick();
-      const filter = doc.getElementById('mimp-filter');
+      await openAddList(window, doc, 'openai');
+      const filter = step2().querySelector('.mimp-filter');
       filter.value = 'llama';
       filter.dispatchEvent(new window.Event('input', { bubbles: true }));
       pressEscape(window);
@@ -283,12 +316,11 @@ test('model import: never on a backdrop click; a typed base URL makes Escape ask
       assert.equal(modal.classList.contains('hidden'), true);
     } },
     { name: 'OpenRouter\'s Free / Tools / Window filters only narrow the view too: one toggled, then Escape, closes with no question', run: async () => {
-      doc.getElementById('model-import-btn').click();
-      for (let i = 0; i < 2; i++) await tick();
-      const base = doc.getElementById('mimp-base');
+      await openAddList(window, doc, 'openai');
+      const base = step2().querySelector('.mimp-base');
       base.value = 'https://openrouter.ai/api/v1';
       base.dispatchEvent(new window.Event('input', { bubbles: true }));
-      doc.getElementById('mimp-list').click();
+      step2().querySelector('.mimp-list').click();
       for (let i = 0; i < 4; i++) await tick();
       edit(window, doc.querySelector('#mimp-body .mvi-or-filters .mvi-f-free'), true);
       pressEscape(window);
@@ -298,7 +330,7 @@ test('model import: never on a backdrop click; a typed base URL makes Escape ask
   ]);
 });
 
-test('model import: while "Import selected" is out, Cancel is disabled and Escape does nothing; the answer gives both back', async () => {
+test('model import (Add model, step 2): while "Add N models" is out, Back, Close and Add are disabled and Escape does nothing; the answer gives them back', async () => {
   const open = async () => {
     const { window, go } = await boot({ routes: {
       'GET /api/providers/copilot/models': { status: 200, body: { models: [{ id: 'gpt-5', name: 'GPT-5', vendor: 'OpenAI' }] } },
@@ -311,25 +343,38 @@ test('model import: while "Import selected" is out, Cancel is disabled and Escap
     const gate = new Promise((r) => { answer = r; });
     const realFetch = globalThis.fetch;                          // app.js calls the global fetch
     globalThis.fetch = (url, opts) => (String(url) === '/api/providers/copilot/import-models' ? gate : realFetch(url, opts));
-    doc.getElementById('model-import-btn').click();
-    for (let i = 0; i < 4; i++) await tick();                    // the Copilot list loads by itself
+    await openAddList(window, doc);                              // Copilot: its list loads by itself
     edit(window, doc.querySelector('#mimp-body .mvi-cb'), true); // a model ticked: a change
     doc.getElementById('mimp-go').click();
     await tick();
-    const modal = doc.getElementById('model-import-modal');
-    const cancel = doc.getElementById('mimp-cancel');
-    assert.equal(cancel.disabled, true, 'no way out while the request is out');
-    cancel.dispatchEvent(new window.Event('click', { bubbles: true }));   // a synthetic click reaches a disabled button: cancel() must hold too
+    const modal = doc.getElementById('model-editor-modal');
+    const step = doc.querySelector('#mv-editor-host .mdl-add[data-step="2"]');
+    const back = step.querySelector('.mv-back');
+    const close = step.querySelector('.mdl-close');
+    const go2 = doc.getElementById('mimp-go');
+    assert.deepEqual([back.disabled, close.disabled, go2.disabled], [true, true, true], 'no way out and no second import while the request is out');
+    // A synthetic click reaches a disabled button: Back and Close must hold too.
+    back.dispatchEvent(new window.Event('click', { bubbles: true }));
+    close.dispatchEvent(new window.Event('click', { bubbles: true }));
     pressEscape(window);
     assert.equal(discardPrompt(doc), null, 'not even the question');
     assert.equal(modal.classList.contains('hidden'), false);
-    return { window, doc, modal, cancel, answer };
+    assert.equal(doc.querySelector('#mv-editor-host .mdl-add[data-step="2"]'), step, 'still on the list');
+    edit(window, step.querySelector('.mdl-add-provider'), 'openai');
+    assert.equal(doc.querySelector('#mv-editor-host .mdl-add[data-step="2"]'), step, 'no other provider meanwhile');
+    assert.equal(step.querySelector('.mdl-add-provider').value, 'copilot');
+    const cb = doc.querySelector('#mimp-body .mvi-cb');
+    edit(window, cb, false);
+    edit(window, cb, true);
+    assert.equal(go2.disabled, true, 'a tick changed meanwhile does not arm a second import');
+    return { window, doc, modal, back, close, go2, answer };
   };
   await checkRows([
-    { name: 'refused: the error shows in the dialog that stayed open, Cancel is back and Escape asks again', run: async () => {
-      const { window, doc, modal, cancel, answer } = await open();
+    { name: 'refused: the error shows in the dialog that stayed open, Back, Close and Add are back and Escape asks again', run: async () => {
+      const { window, doc, modal, back, close, go2, answer } = await open();
       answer({ ok: false, status: 502, json: async () => ({ error: 'Copilot refused the import' }) });
-      await waitFor(() => !cancel.disabled);
+      await waitFor(() => !back.disabled);
+      assert.deepEqual([close.disabled, go2.disabled], [false, false]);
       assert.equal(doc.getElementById('mimp-msg').textContent, 'Copilot refused the import');
       pressEscape(window);
       assert.ok(discardPrompt(doc), 'the ticked model is a change');
@@ -337,14 +382,38 @@ test('model import: while "Import selected" is out, Cancel is disabled and Escap
       await tick();
       assert.equal(modal.classList.contains('hidden'), true);
     } },
-    { name: 'accepted: the dialog closes itself, and Cancel is armed for the next open', run: async () => {
-      const { modal, cancel, answer } = await open();
+    { name: 'accepted: the dialog closes itself, and the next open is not busy', run: async () => {
+      const { window, doc, modal, answer } = await open();
       answer({ ok: true, status: 200, json: async () => ({ created: ['copilot-gpt-5'], updated: [], skipped: [] }) });
-      await waitFor(() => !cancel.disabled);
-      assert.equal(modal.classList.contains('hidden'), true);
+      await waitFor(() => modal.classList.contains('hidden'));
+      await openAddList(window, doc);
+      const step = doc.querySelector('#mv-editor-host .mdl-add[data-step="2"]');
+      assert.deepEqual([step.querySelector('.mv-back').disabled, step.querySelector('.mdl-close').disabled], [false, false]);
+      pressEscape(window);
+      await tick();
+      assert.equal(modal.classList.contains('hidden'), true, 'Escape closes again');
     } },
   ]);
 });
+
+// Add model › Next: the model form for a sign-in (step 1 opens on one).
+async function openAddForm(doc) {
+  doc.getElementById('model-create-btn').click();
+  for (let i = 0; i < 4; i++) await tick();
+  doc.querySelector('#mv-editor-host .mdl-add[data-step="1"] .mdl-next').click();
+  for (let i = 0; i < 4; i++) await tick();
+}
+
+// Add model › A provider (`provider`, else the default) › Next: step 2's list.
+async function openAddList(window, doc, provider = '') {
+  doc.getElementById('model-create-btn').click();
+  for (let i = 0; i < 4; i++) await tick();
+  const step1 = doc.querySelector('#mv-editor-host .mdl-add[data-step="1"]');
+  step1.querySelector('.mdl-opt[data-where="provider"]').click();
+  if (provider) edit(window, step1.querySelector('select.mdl-add-provider'), provider);
+  step1.querySelector('.mdl-next').click();
+  for (let i = 0; i < 4; i++) await tick();
+}
 
 // D3: Sync all, Push now and the "Include my runs" switch used to swallow a refusal.
 async function waitFor(pred, ms = 3000) {
