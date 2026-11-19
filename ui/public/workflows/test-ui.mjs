@@ -18,12 +18,19 @@ export function startInto(doc, node, start, dateText, { bold = false, dev = fals
   if (!dev && st.subject) node.append(doc.createTextNode(` · "${st.subject}"`));
   return node;
 }
+/** Text with file paths into `node`: a break opportunity (<wbr>) after each "/", so a narrow box wraps a path between its
+ *  folders ("test/" | "feature.test.mjs"), not inside a name. The text itself is unchanged. */
+export function pathInto(doc, node, text) {
+  String(text ?? '').split(/(?<=\/)(?=.)/).forEach((p, i) => { if (i) node.append(doc.createElement('wbr')); node.append(doc.createTextNode(p)); });
+  return node;
+}
 /** A check as the editor, the dialog's preview and the side by side write it: the command, folders and patterns in code
  *  (boards 32, 33, 36; P47), any other check as its label. Inline, in one span. */
 export function checkWords(doc, c, label) {
   const s = el(doc, 'span');
-  const codes = (list, sep) => list.forEach((x, i) => { if (i) s.append(doc.createTextNode(sep(i, list.length))); s.append(el(doc, 'span', 'code', x)); });
-  if (c && c.kind === 'command') s.append(doc.createTextNode('The command '), el(doc, 'span', 'code', c.cmd),
+  const code = (x) => pathInto(doc, el(doc, 'span', 'code'), x);
+  const codes = (list, sep) => list.forEach((x, i) => { if (i) s.append(doc.createTextNode(sep(i, list.length))); s.append(code(x)); });
+  if (c && c.kind === 'command') s.append(doc.createTextNode('The command '), code(c.cmd),
     doc.createTextNode(c.metWhen === 'breaks-nothing' ? ' breaks nothing that passed before' : ' passes'));   // D82, U4 (board 43)
   else if (c && c.kind === 'under' && Array.isArray(c.dirs) && c.dirs.length) {
     s.append(doc.createTextNode('Changes only files under '));

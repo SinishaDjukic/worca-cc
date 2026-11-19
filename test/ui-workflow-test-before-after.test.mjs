@@ -9,6 +9,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { JSDOM } from 'jsdom';
 import { renderSideBySide } from '../ui/public/workflows/test-compare.mjs';
+import { pathInto, checkWords } from '../ui/public/workflows/test-ui.mjs';
 import { openTestVersionDialog } from '../ui/public/workflows/test-dialogs.mjs';
 import { renderTestProgress } from '../ui/public/workflows/test-progress.mjs';
 import { estimateOf } from '../src/shared/workflow-tests/compare.mjs';
@@ -439,4 +440,22 @@ test('side by side: check names in code; a cell\'s value beside its dot on a pho
   assert.match(css, /\.wft-crow \.code[^{]*\{[^}]*font-family:var\(--mono\)/, 'the code in a check\'s name is set in the code font');
   const phone = css.split('\n').filter((l) => l.startsWith('@media (max-width:700px)')).join('\n');
   assert.match(phone, /\.wft-crow \[data-label\] > \.wft-res-v\{[^}]*flex:1 1 0/, 'on a phone the value takes the rest of the dot\'s line');
+  // UI nits #1: at 1440 px the 130 px cell broke the path inside its name ("test/feature.test.mj" | "s"); it may now break after "/".
+  assert.equal(cell.querySelector('.wft-res-v').innerHTML, 'Changed test/<wbr>feature.test.mjs');
+});
+
+test('UI nits #1: a path breaks after a "/", never inside a name: pathInto, and the code in a check\'s words', () => {
+  const { window } = new JSDOM('<!doctype html><body></body>');
+  const doc = window.document;
+  const html = (t) => pathInto(doc, doc.createElement('span'), t).innerHTML;
+  assert.equal(html('src/core/a.test.mjs'), 'src/<wbr>core/<wbr>a.test.mjs');
+  assert.equal(html('src/'), 'src/', 'nothing after a last "/"');
+  assert.equal(html('2 passed, 1 failed'), '2 passed, 1 failed');
+  assert.equal(html(undefined), '');
+  assert.equal(html('<b>x</b>/y'), '&lt;b&gt;x&lt;/<wbr>b&gt;/<wbr>y', 'text, never markup');
+  const words = checkWords(doc, { kind: 'under', dirs: ['src/core/', 'docs/'] }, 'label');
+  assert.equal(words.textContent, 'Changes only files under src/core/ and docs/');
+  assert.deepEqual([...words.querySelectorAll('.code')].map((n) => n.innerHTML), ['src/<wbr>core/', 'docs/']);
+  const cmd = checkWords(doc, { kind: 'command', cmd: 'node --test test/a.test.mjs' }, 'label');
+  assert.equal(cmd.querySelector('.code').innerHTML, 'node --test test/<wbr>a.test.mjs');
 });
