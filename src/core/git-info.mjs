@@ -749,37 +749,46 @@ async function ghPrVerdict(projectDir, url) {
   if (!v.ok) return null;
   try { return prVerdictOf(JSON.parse(v.stdout || 'null')); } catch { return null; }
 }
+/**
+ * The gh lookup as a result: { ok:true, pr } | { ok:false, reason } (see lookupPrForBranch). "No PR" needs every gh
+ * call the answer depends on to succeed: a failed or unparseable list, or a failed read of the recorded PR with no
+ * live PR in the list, is a failure. A failed verdict view is not (the PR comes back without `verdict`).
+ */
 async function ghFindPrForBranch({ projectDir, head, prUrl = null, withVerdict = false, includeClosed = false }) {
-  const done = async (pr) => (withVerdict && pr && pr.state === 'OPEN' ? { ...pr, verdict: await ghPrVerdict(projectDir, pr.url) } : pr);
+  const done = async (pr) => ({ ok: true, pr: withVerdict && pr.state === 'OPEN' ? { ...pr, verdict: await ghPrVerdict(projectDir, pr.url) } : pr });
   let closedAtUrl = null;
+  let viewFailed = false;
   if (prUrl) {
     const v = await _run('gh', ['pr', 'view', prUrl, '--json', PR_FIELDS], { cwd: projectDir, env: (await githubEnv('read', { repo: ownerRepoOfPrUrl(prUrl) })).env });
-    if (v.ok) {
-      let obj = null;
-      try { obj = JSON.parse(v.stdout || 'null'); } catch { obj = null; }
-      if (obj && typeof obj === 'object' && !Array.isArray(obj) && obj.url) {
-        const pr = normalizePr(obj);
-        if (pr.state === 'OPEN' || pr.state === 'MERGED') return done(pr);
-        // CLOSED: fall through to the branch search below; includeClosed's last resort.
-        if (pr.state === 'CLOSED') closedAtUrl = pr;
-      }
-    }
+    let obj = null;
+    if (v.ok) { try { obj = JSON.parse(v.stdout || 'null'); } catch { obj = null; } }
+    if (obj && typeof obj === 'object' && !Array.isArray(obj) && obj.url) {
+      const pr = normalizePr(obj);
+      if (pr.state === 'OPEN' || pr.state === 'MERGED') return done(pr);
+      // CLOSED: fall through to the branch search below; includeClosed's last resort.
+      if (pr.state === 'CLOSED') closedAtUrl = pr;
+    } else viewFailed = true;
   }
   const r = await _run(
     'gh',
     ['pr', 'list', '--head', head, '--state', 'all', '--json', PR_FIELDS, '--limit', '30'],
     { cwd: projectDir, env: (await githubEnv('read', { repo: null })).env },
   );
-  let norm = [];
-  try {
-    const arr = r.ok ? JSON.parse(r.stdout || '[]') : [];
-    if (Array.isArray(arr)) norm = arr.map(normalizePr);
-  } catch { /* unparseable output: no PR */ }
+  if (!r.ok) return { ok: false, reason: 'gh-failed' };
+  let arr;
+  try { arr = JSON.parse(r.stdout || '[]'); } catch { arr = null; }
+  if (!Array.isArray(arr)) return { ok: false, reason: 'gh-bad-output' };
+  const norm = arr.map(normalizePr);
   // Requirement is binary: hide the button if any OPEN or MERGED PR exists.
   const live = norm.find((p) => p.state === 'OPEN') || norm.find((p) => p.state === 'MERGED');
   if (live) return done(live);
-  if (!includeClosed) return null;
-  return closedAtUrl || norm.find((p) => p.state === 'CLOSED') || null;
+  // The recorded PR could not be read, and a cwd branch search cannot prove a cross-repo PR is gone —
+  // unless the list itself names the recorded PR, which then is its known state.
+  if (viewFailed) {
+    closedAtUrl = norm.find((p) => p.url === prUrl) || null;
+    if (!closedAtUrl) return { ok: false, reason: 'gh-failed' };
+  }
+  return { ok: true, pr: includeClosed ? (closedAtUrl || norm.find((p) => p.state === 'CLOSED') || null) : null };
 }
 
 /** A PR's current body via its (repo-agnostic) URL. { ok, body } | { ok:false, error }. Never throws. */
@@ -1056,23 +1065,34 @@ export async function prMergeable(opts = {}) {
  * { state: OPEN|MERGED, url, number, isDraft, mergeable } | null for `head`, by forge (see ghFindPrForBranch). Never throws.
  * `includeClosed` adds a CLOSED (Azure: abandoned; Bitbucket: declined) PR as the last resort.
  * `withVerdict` (GitHub only): an OPEN PR also carries `verdict` (prVerdictOf), for the Runs list's PR chip (D31).
+ * A failed lookup also reads null here; lookupPrForBranch is the failure-aware variant.
  */
-export async function findPrForBranch({ projectDir, head, prUrl = null, withVerdict = false, includeClosed = false } = {}) {
-  if (!projectDir || !head) return null;
+export async function findPrForBranch(opts) {
+  const r = await lookupPrForBranch(opts);
+  return r.ok ? r.pr : null;
+}
+
+/**
+ * findPrForBranch as a result that tells a failed lookup apart from "no PR". Never throws:
+ * { ok:true, pr: Pr|null } | { ok:false, reason: 'gh-failed'|'gh-bad-output'|'gh-unavailable' } (`reason` is diagnostic).
+ * Only the gh path reports failures; Azure and Bitbucket keep collapsing theirs to `{ ok:true, pr:null }`.
+ */
+export async function lookupPrForBranch({ projectDir, head, prUrl = null, withVerdict = false, includeClosed = false } = {}) {
+  if (!projectDir || !head) return { ok: true, pr: null };
   const strip = (pr) => (pr ? { state: pr.state, url: pr.url, number: pr.number, isDraft: pr.isDraft === true, mergeable: pr.mergeable || 'UNKNOWN' } : null);
   const byUrl = restFor(forgeOfPrUrl(prUrl));
   if (byUrl) {
     const pr = await byUrl.pr.viewPr({ prUrl, withMergeable: true });
-    if (pr && (pr.state === 'OPEN' || pr.state === 'MERGED')) return strip(pr);
+    if (pr && (pr.state === 'OPEN' || pr.state === 'MERGED')) return { ok: true, pr: strip(pr) };
     // CLOSED: search the branch; the closed PR behind the URL stays the last resort.
     const found = await byUrl.pr.findPrForBranch({ head, baseRepo: byUrl.parse(prUrl), includeClosed });
-    if (found && found.state !== 'CLOSED') return strip(found);
-    if (!includeClosed) return null;
-    return strip(pr?.state === 'CLOSED' ? pr : found);
+    if (found && found.state !== 'CLOSED') return { ok: true, pr: strip(found) };
+    if (!includeClosed) return { ok: true, pr: null };
+    return { ok: true, pr: strip(pr?.state === 'CLOSED' ? pr : found) };
   }
   const r = prUrl ? null : await restBaseRemote(projectDir);
-  if (r) return strip(await restFor(forgeOf(r)).pr.findPrForBranch({ head, baseRepo: r, includeClosed, withMergeable: true }));
-  if (!(await ghUsable())) return null;
+  if (r) return { ok: true, pr: strip(await restFor(forgeOf(r)).pr.findPrForBranch({ head, baseRepo: r, includeClosed, withMergeable: true })) };
+  if (!(await ghUsable())) return { ok: false, reason: 'gh-unavailable' };
   return ghFindPrForBranch({ projectDir, head, prUrl, withVerdict, includeClosed });
 }
 

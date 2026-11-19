@@ -165,3 +165,115 @@ test('enrichPipelinesPr batches {projectKey,id,pr} with a final done; one empty 
     } },
   ]);
 });
+
+// Quota stub: gh is present, but every `gh pr …` call fails as an exhausted GraphQL quota does.
+function stubQuota() {
+  gitInfo.setRunner((cmd, args) => {
+    if (cmd === 'gh' && args[0] === '--version') return Promise.resolve({ ok: true, stdout: 'gh 2.x', stderr: '', code: 0 });
+    if (cmd === 'gh' && args[0] === 'pr') return Promise.resolve({ ok: false, stdout: '', stderr: 'GraphQL: API rate limit exceeded', code: 1 });
+    if (cmd === 'git' && args[0] === 'rev-parse') return Promise.resolve({ ok: true, stdout: 'ref\n', stderr: '', code: 0 });
+    return Promise.resolve({ ok: true, stdout: '', stderr: '', code: 0 });
+  });
+}
+
+// gh answers: the recorded PR reads CLOSED and the branch has no PR, so the lookup worked and found none.
+function stubClosedView(url, number) {
+  gitInfo.setRunner((cmd, args) => {
+    if (cmd === 'gh' && args[0] === '--version') return Promise.resolve({ ok: true, stdout: 'gh 2.x', stderr: '', code: 0 });
+    if (cmd === 'gh' && args[0] === 'pr' && args[1] === 'view') return Promise.resolve({ ok: true, stdout: JSON.stringify({ number, state: 'CLOSED', url }), stderr: '', code: 0 });
+    if (cmd === 'gh' && args[0] === 'pr') return Promise.resolve({ ok: true, stdout: '[]', stderr: '', code: 0 });
+    if (cmd === 'git' && args[0] === 'rev-parse') return Promise.resolve({ ok: true, stdout: 'ref\n', stderr: '', code: 0 });
+    return Promise.resolve({ ok: true, stdout: '', stderr: '', code: 0 });
+  });
+}
+
+test('enrichPipelinesPr: a failed lookup never clears a known PR', async () => {
+  const { enrichPipelinesPr, readPrState, persistPrState, writeStoreMeta } = await import('../src/core/artifacts.mjs');
+  const { projectKey } = await import('../src/core/store.mjs');
+  writeStoreMeta(projectKey(repo), 'project', { key: projectKey(repo), path: repo, name: 'Repo' });
+  const url = 'https://gh/x/pull/5';
+  const run = async () => {
+    const batches = [];
+    await enrichPipelinesPr((items, done) => batches.push({ items, done }), { batchSize: 1 });
+    return batches;
+  };
+  const itemOf = (batches, id) => batches.flatMap((b) => b.items).find((x) => x.id === id);
+  await checkRows([
+    { name: 'a stored MERGED PR comes back stale on a quota failure, and the DB keeps it', run: async () => {
+      gitInfo.reset();
+      const id = await seed();
+      persistPrState(id, { url, number: 5, state: 'MERGED' });
+      const before = readPrState(id);
+      stubQuota();
+      const it = itemOf(await run(), id);
+      assert.ok(it, 'the row is sent');
+      assert.equal(it.pr.state, 'MERGED');
+      assert.equal(it.pr.url, url);
+      assert.equal(it.pr.stale, true);
+      assert.deepEqual(readPrState(id), before, 'a failed lookup writes nothing');
+    } },
+    { name: 'a failed lookup with nothing stored omits the row; the final batch still says done', run: async () => {
+      gitInfo.reset();
+      const id = await seed();
+      stubQuota();
+      const batches = await run();
+      assert.equal(itemOf(batches, id), undefined, 'never a null for a failed lookup');
+      assert.equal(batches.at(-1).done, true);
+      assert.equal(batches.filter((b) => b.done).length, 1, 'exactly one final batch');
+    } },
+    { name: 'a successful empty list after a stored MERGED PR sends the closed PR; a fresh row sends null', run: async () => {
+      gitInfo.reset();
+      const id = await seed();
+      persistPrState(id, { url, number: 5, state: 'MERGED' });
+      stubClosedView(url, 5);
+      const it = itemOf(await run(), id);
+      assert.ok(it);
+      // includeClosed: the recorded PR, now closed, is the last resort — a known answer, never stale.
+      assert.equal(it.pr?.state ?? null, 'CLOSED');
+      assert.equal('stale' in it.pr, false);
+      const fresh = await seed();
+      assert.equal(itemOf(await run(), fresh).pr, null, 'a genuine no PR still clears');
+    } },
+    { name: 'a successful lookup carries no stale key', run: async () => {
+      gitInfo.reset();
+      const id = await seed();
+      stubGh({ state: 'MERGED', url, number: 5 });
+      const it = itemOf(await run(), id);
+      assert.equal(it.pr.state, 'MERGED');
+      assert.equal('stale' in it.pr, false);
+    } },
+  ]);
+});
+
+test('withPr: a failed lookup keeps the stored PR, stale', async () => {
+  const { listPipelines, readPrState, persistPrState } = await import('../src/core/artifacts.mjs');
+  const url = 'https://gh/x/pull/5';
+  const rowOf = async (id) => (await listPipelines(repo, { withPr: true })).find((r) => r.id === id);
+  await checkRows([
+    { name: 'a stored MERGED PR and a quota failure: the row keeps it, stale, and the DB is unchanged', run: async () => {
+      gitInfo.reset();
+      const id = await seed();
+      persistPrState(id, { url, number: 5, state: 'MERGED' });
+      const before = readPrState(id);
+      stubQuota();
+      const row = await rowOf(id);
+      assert.equal(row.pr.state, 'MERGED');
+      assert.equal(row.pr.url, url);
+      assert.equal(row.pr.stale, true);
+      assert.deepEqual(readPrState(id), before, 'a failed lookup writes nothing');
+    } },
+    { name: 'nothing stored and a quota failure: pr is null', run: async () => {
+      gitInfo.reset();
+      const id = await seed();
+      stubQuota();
+      assert.equal((await rowOf(id)).pr, null);
+    } },
+    { name: 'a lookup that worked and found the recorded PR closed: pr is null', run: async () => {
+      gitInfo.reset();
+      const id = await seed();
+      persistPrState(id, { url, number: 5, state: 'MERGED' });
+      stubClosedView(url, 5);
+      assert.equal((await rowOf(id)).pr, null);
+    } },
+  ]);
+});
