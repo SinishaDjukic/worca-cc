@@ -4847,3 +4847,267 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
 
 ---
 
+## Task 22: UI: Check the checker (board 11, after P4-M3)
+
+Board 11 draws the ready state; its other states are P4-M3. The task starts after P4-M3 is approved (one page, built once).
+
+**Files:**
+- Modify: `ui/public/workflows/criteria-pages.mjs` (`renderChecker`), `ui/public/workflows/tests-app.mjs` (view `checker`, its address, polling, actions), `ui/public/workflows/tests-view.mjs` (`testsAddress`: `…/tests/<example>/checker/<round>`), `ui/public/workflows/workflow-tests.css`
+- Test: `test/ui-workflow-test-checker.test.mjs`
+
+**Interfaces:**
+- Consumes: the round view (Task 13), `POST …/checker`, `…/answers`, `…/reword` (Tasks 13, 15).
+- Produces: `renderChecker(root, v, actions, { doc, exampleName })`; actions `answer(judgementId, right)`, `reword()`, `back()`, `use()`. Address `#workflows/<id>/tests/<example>/checker/<round>` (the `route` regex in `tests-app.mjs` gains `|\/(\d+)\/checker\/(\d+)`).
+- Copy (board 11): crumb = the example's name; title "Check the checker"; subtitle "Before Worca uses your new criterion, make sure it judges results the way you would. Worca took a good result and broke it on purpose in a few ways."; "Your criterion"; panel "Did Worca get these right?" with "N of 4 left"; card heads "<source label> · <version, date>" and "Broken on purpose: <how>"; "Worca says: met." / "Worca says: not met." with the reason; "Right", "Wrong"; "You said: right" / "You said: wrong"; hint "If you say "wrong", Worca suggests clearer words for the criterion and asks again."; "Worca also tested its own checking" / "No answers needed from you." and the three rows with "N of 4" badges (green when all, red otherwise); "This check cost $0.12. Your answers also count toward how far Worca's checking is trusted."; "Back", "Use this criterion" (disabled until done).
+
+- [ ] **Step 1: Write the failing test**
+
+Create `test/ui-workflow-test-checker.test.mjs`:
+```js
+// test/ui-workflow-test-checker.test.mjs — board 11's ready state and its answers; P4-M3's states are pinned here once approved.
+import { test } from 'node:test';
+import assert from 'node:assert/strict';
+import { JSDOM } from 'jsdom';
+import { renderChecker } from '../ui/public/workflows/criteria-pages.mjs';
+
+const view = (answers = [true, true, null, null]) => ({ round: { id: 7, status: answers.every((a) => a !== null) ? 'done' : 'ready' },
+  criterion: 'Names a success metric with a number, and how to measure it', source: { label: 'From a real result' },
+  cards: [null, 'number removed', 'how to measure removed', 'only a vague goal'].map((planted, i) => ({ judgementId: 20 + i, card: i, planted,
+    excerpt: `Excerpt ${i}`, met: i === 0, reason: i === 0 ? 'A number (60%) and how it is counted.' : 'It gives no number.', answer: answers[i] })),
+  left: answers.filter((a) => a === null).length, auto: { same: { n: 4, of: 4 }, padding: { n: 4, of: 4 }, proof: { n: 3, of: 4 } },
+  costUsd: 0.12, canUse: answers.every((a) => a !== null) });
+
+test('board 11: the criterion, the four cards, the answers left, the self-tests and the cost', () => {
+  const { document: doc } = new JSDOM('<!doctype html><div id="r"></div>').window;
+  const root = doc.getElementById('r');
+  const sent = [];
+  renderChecker(root, view(), { answer: (id, right) => sent.push([id, right]), back: () => {}, use: () => {}, reword: () => {} }, { doc, exampleName: 'Bulk invoice export' });
+  assert.match(root.textContent, /Check the checker/);
+  assert.equal(root.querySelector('.wft-cc-crit').textContent, 'Names a success metric with a number, and how to measure it');
+  assert.equal(root.querySelector('.qcount').textContent, '2 of 4 left');
+  const cards = [...root.querySelectorAll('.wft-cc-card')];
+  assert.equal(cards[1].querySelector('.wft-cc-planted').textContent, 'Broken on purpose: number removed');
+  assert.match(cards[0].textContent, /Worca says: met\.\s*A number \(60%\) and how it is counted\.[\s\S]*You said: right/);
+  cards[2].querySelector('button.wft-cc-wrong').click();
+  assert.deepEqual(sent, [[22, false]]);
+  assert.deepEqual([...root.querySelectorAll('.wft-cc-auto .badge')].map((b) => [b.textContent, b.className]),
+    [['4 of 4', 'badge green'], ['4 of 4', 'badge green'], ['3 of 4', 'badge red']]);
+  assert.match(root.textContent, /This check cost \$0\.12\./);
+  assert.equal(root.querySelector('button.wft-cc-use').disabled, true);
+  renderChecker(root, view([true, true, false, true]), { answer: () => {}, back: () => {}, use: () => {}, reword: () => {} }, { doc, exampleName: 'E' });
+  assert.equal(root.querySelector('button.wft-cc-use').disabled, false);
+});
+```
+Then pin P4-M3's approved words (preparing, no good result, failed, limit, after a Wrong) as one more test before Step 3.
+
+- [ ] **Step 2: Run it to see it fail**
+
+Run: `node tools/test.mjs test/ui-workflow-test-checker.test.mjs`
+Expected: FAIL (`renderChecker` is not exported).
+
+- [ ] **Step 3: `renderChecker`** (`criteria-pages.mjs`, append; import `btn`, `fmtUsd` from `../../../src/shared/workflow-tests/checks.mjs`)
+
+```js
+const CC_SUB = 'Before Worca uses your new criterion, make sure it judges results the way you would. Worca took a good result and broke it on purpose in a few ways.';
+const AUTO = [['same', 'Gives the same verdict when asked 3 times'], ['padding', 'Adding filler text does not change the verdict'],
+  ['proof', 'Quotes the part of the result each verdict is based on, and the quote is really there']];
+/** Board 11 (ready and done); P4-M3's other states are added from the approved mock. `v` = GET …/checker/:round. */
+export function renderChecker(root, v, actions, { doc, exampleName }) {
+  root.replaceChildren();
+  const head = el(doc, 'div', 'wft-titles');
+  const crumb = el(doc, 'a', '', exampleName); crumb.href = '#';
+  crumb.addEventListener('click', (e) => { e.preventDefault(); actions.back(); });
+  head.append(crumb, el(doc, 'h1', 'wft-title', 'Check the checker'), el(doc, 'p', 'subtitle', CC_SUB));
+  const crit = el(doc, 'section', 'card wft-cc-head');
+  crit.append(el(doc, 'span', 'hint', 'Your criterion'), el(doc, 'span', 'wft-cc-crit', v.criterion || ''));
+  const panel = el(doc, 'section', 'qpanel wft-cc-panel');
+  panel.setAttribute('aria-labelledby', 'wft-cc-q');
+  const ph = el(doc, 'div', 'qpanel-head');
+  const q = el(doc, 'b', '', 'Did Worca get these right?'); q.id = 'wft-cc-q';
+  ph.append(q, el(doc, 'span', 'qcount', `${v.left} of ${v.cards.length} left`));
+  const grid = el(doc, 'div', 'wft-cc-cards');
+  for (const c of v.cards) {
+    const card = el(doc, 'div', 'wft-cc-card');
+    card.append(c.planted ? el(doc, 'span', 'wft-cc-planted', `Broken on purpose: ${c.planted}`) : el(doc, 'span', 'wft-cc-src', v.source.label || 'From a real result'));
+    card.append(el(doc, 'div', 'wft-cc-excerpt', c.excerpt || ''));
+    const verdict = el(doc, 'div', 'wft-cc-verdict');
+    const dot = el(doc, 'span', `wft-dot ${c.met ? 'ok' : 'no'}`); dot.setAttribute('aria-hidden', 'true');
+    verdict.append(dot, el(doc, 'b', '', `Worca says: ${c.met ? 'met' : 'not met'}.`), doc.createTextNode(` ${c.reason || ''}`));
+    card.append(verdict);
+    if (c.answer === null) {
+      const acts = el(doc, 'div', 'wft-acts');
+      acts.append(btn(doc, 'Right', () => actions.answer(c.judgementId, true), 'btn btn-sm wft-cc-right'), btn(doc, 'Wrong', () => actions.answer(c.judgementId, false), 'btn btn-sm wft-cc-wrong'));
+      card.append(acts);
+    } else card.append(el(doc, 'span', 'wft-cc-done', `You said: ${c.answer ? 'right' : 'wrong'}`));
+    grid.append(card);
+  }
+  panel.append(ph, grid, el(doc, 'p', 'hint', 'If you say "wrong", Worca suggests clearer words for the criterion and asks again.'));
+  const auto = el(doc, 'section', 'card wft-cc-auto');
+  auto.append(el(doc, 'h2', '', 'Worca also tested its own checking'), el(doc, 'p', 'hint', 'No answers needed from you.'));
+  for (const [k, words] of AUTO) {
+    const r = el(doc, 'div', 'wft-cc-auto-row');
+    const x = v.auto[k];
+    r.append(el(doc, 'span', '', words), el(doc, 'span', x.n === x.of ? 'badge green' : 'badge red', `${x.n} of ${x.of}`));
+    auto.append(r);
+  }
+  const foot = el(doc, 'div', 'wft-cc-foot');
+  const use = btn(doc, 'Use this criterion', () => actions.use(), 'btn btn-primary wft-cc-use');
+  use.disabled = !v.canUse;
+  const acts = el(doc, 'div', 'wft-acts');
+  acts.append(btn(doc, 'Back', () => actions.back(), 'btn'), use);
+  foot.append(el(doc, 'span', 'hint', `This check cost ${fmtUsd(v.costUsd)}. Your answers also count toward how far Worca's checking is trusted.`), acts);
+  root.append(head, crit, panel, auto, foot);
+}
+```
+Then P4-M3's states from the approved mock (pinned in Step 1).
+
+- [ ] **Step 4: The controller** (`tests-app.mjs`)
+
+View `checker` with `{ exampleId, roundId }`: `onCriterion.confirm(c)` (Task 18) posts `POST …/examples/:ex/checker { criterionId }` (a 422 shows P4-M3's no-result state; a 409 opens the round that runs), then shows the round and polls `GET …/checker/:round` every 2 s while `round.status === 'making'` (stops when the view changes). `answer` posts `…/answers` and repaints with the answer's view; `use` and `back` go back to the editor; `reword` posts `…/reword` and shows the clearer words as P4-M3 draws them. `testsAddress` writes `#workflows/<id>/tests/<example>/checker/<round>` for view `checker`, and `route` opens it.
+
+- [ ] **Step 5: Run the tests and the guards**
+
+Run: `node tools/test.mjs test/ui-workflow-test-checker.test.mjs test/ui-workflow-tests-view.test.mjs`, then the design guards. `tests-app.mjs` stays below 1000 lines.
+Expected: PASS.
+
+- [ ] **Step 6: Commit**
+
+```bash
+git add ui/public/workflows/criteria-pages.mjs ui/public/workflows/tests-app.mjs ui/public/workflows/tests-view.mjs ui/public/workflows/workflow-tests.css test/ui-workflow-test-checker.test.mjs
+git commit -m "feat(workflow-tests): Check the checker page (board 11, P4-M3)
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
+```
+
+---
+
+## Task 23: UI: the trust report and the Tests list's trust card (boards 13 and 1; P4-M4 for the early states)
+
+Board 13's full state and board 1's card are drawn; the early states wait for P4-M4. Build Steps 1–4 once P4-M4 is approved too (one page).
+
+**Files:**
+- Modify: `ui/public/workflows/criteria-pages.mjs` (`renderTrustReport`), `ui/public/workflows/tests-view.mjs` (board 1's card), `ui/public/workflows/tests-app.mjs` (view `trust`, `#workflows/<id>/tests/trust`), `ui/public/workflows/workflow-tests.css`
+- Test: `test/ui-workflow-test-trust-report.test.mjs`
+
+**Interfaces:**
+- Consumes: `GET …/trust` (Task 16), the overview's `trust` counts (Task 11), `TRUST_TESTS`, `trustTestLine`, `listTrustSentence`.
+- Produces: `renderTrustReport(root, m, actions, { doc })` with actions `fix(exampleId, criterionId)`, `confirm(exampleId, criterionId)`, `back()`; board 1's card "Can you trust Worca's checking?" with `listTrustSentence(o.trust)` when `o.trust.total > 0`, opening the report.
+- Copy (board 13): title "How reliable is Worca's checking?"; subtitle "Worca uses AI to check your criteria. AI can be wrong, so Worca tests its own checking in six ways. The results show where you can trust it and where you should not."; tiles "Agrees with people" (`N%`, "of N answers"), "Planted mistakes caught" (`X of Y`, "the N missed are on one criterion" / "… on N criteria"), "Criteria you can trust" (`X of Y`, "1 unreliable (shown, does not decide), 1 waits for your answers"); "The six tests" and "They run again whenever the checking model or a criterion changes. Last run <date> · cost $X."; "What to do": "<criterion> is unreliable." + "Fix the criterion", "<criterion> is new. Confirm 4 results so Worca knows it judges it your way." + "Confirm 4 results".
+
+- [ ] **Step 1: Write the failing test**
+
+Create `test/ui-workflow-test-trust-report.test.mjs`:
+```js
+// test/ui-workflow-test-trust-report.test.mjs — board 13 and board 1's card.
+import { test } from 'node:test';
+import assert from 'node:assert/strict';
+import { JSDOM } from 'jsdom';
+import { renderTrustReport } from '../ui/public/workflows/criteria-pages.mjs';
+import { trustReportModel } from '../src/shared/workflow-tests/criteria-report.mjs';
+
+test('board 13: tiles, six tests with their states, what to do', () => {
+  const { document: doc } = new JSDOM('<!doctype html><div id="r"></div>').window;
+  const m = trustReportModel({ criteria: [
+    { exampleId: 1, exampleName: 'B', criterionId: 'k_1', text: 'Names a metric', trust: { state: 'reliable', n: 20, agree: 18, decides: true } },
+    { exampleId: 2, exampleName: 'P', criterionId: 'k_2', text: 'Proposes a test within 4 weeks', trust: { state: 'unreliable', n: 10, agree: 6, decides: false } }],
+    rounds: [], pairs: [], proofs: { found: 214, of: 216 }, lastAt: '2026-10-19T10:00:00Z', costUsd: 1.8 });
+  const root = doc.getElementById('r');
+  const fixed = [];
+  renderTrustReport(root, m, { fix: (e, c) => fixed.push([e, c]), confirm: () => {}, back: () => {} }, { doc, dateText: () => '19 Oct' });
+  assert.match(root.textContent, /How reliable is Worca's checking\?/);
+  assert.deepEqual([...root.querySelectorAll('.wft-tile-value')].map((x) => x.textContent), ['80%', '0 of 0', '1 of 2']);
+  assert.equal(root.querySelectorAll('.wft-tr-test').length, 6);
+  assert.match(root.textContent, /Last run 19 Oct · cost \$1\.80\./);
+  root.querySelector('button.wft-tr-fix').click();
+  assert.deepEqual(fixed, [[2, 'k_2']]);
+});
+```
+Add a `renderTestsPage` case to `test/ui-workflow-test-criteria-list.test.mjs`: with `trust: { total: 12, reliable: 10, unreliable: 1, waiting: 1 }` the card reads "Can you trust Worca's checking?" and "Reliable for 10 of 12 criteria. 1 is unreliable, 1 needs your answers."; with `total: 0`, no card. Pin P4-M4's early states as one more case.
+
+- [ ] **Step 2: Run them to see them fail**
+
+Run: `node tools/test.mjs test/ui-workflow-test-trust-report.test.mjs test/ui-workflow-test-criteria-list.test.mjs`
+Expected: FAIL.
+
+- [ ] **Step 3: `renderTrustReport`** (`criteria-pages.mjs`, append; import `TRUST_TESTS`, `trustTestLine`)
+
+```js
+function tile(doc, label, value, sub) {
+  const t = el(doc, 'section', 'card wft-tile');
+  t.append(el(doc, 'div', 'wft-tile-label', label), el(doc, 'div', 'wft-tile-value', value), el(doc, 'small', 'wft-tile-sub', sub));
+  return t;
+}
+/** Board 13. `m` = GET …/trust (trustReportModel). */
+export function renderTrustReport(root, m, actions, { doc, dateText = (s) => s }) {
+  root.replaceChildren();
+  const head = el(doc, 'div', 'wft-titles');
+  head.append(el(doc, 'h1', 'wft-title', "How reliable is Worca's checking?"),
+    el(doc, 'p', 'subtitle', 'Worca uses AI to check your criteria. AI can be wrong, so Worca tests its own checking in six ways. The results show where you can trust it and where you should not.'));
+  const { agree, planted, trusted } = m.tiles;
+  const tiles = el(doc, 'div', 'wft-tiles');
+  const crits = new Set(planted.missedOn).size;
+  tiles.append(
+    tile(doc, 'Agrees with people', `${agree.n ? Math.round((agree.agree / agree.n) * 100) : 0}%`, `of ${agree.n} ${agree.n === 1 ? 'answer' : 'answers'}`),
+    tile(doc, 'Planted mistakes caught', `${planted.caught} of ${planted.of}`, planted.of - planted.caught
+      ? `the ${planted.of - planted.caught} missed are on ${crits === 1 ? 'one criterion' : `${crits} criteria`}` : 'none missed'),
+    tile(doc, 'Criteria you can trust', `${trusted.n} of ${trusted.of}`,
+      [trusted.unreliable ? `${trusted.unreliable} unreliable (shown, does not decide)` : null, trusted.waiting ? `${trusted.waiting} ${trusted.waiting === 1 ? 'waits' : 'wait'} for your answers` : null].filter(Boolean).join(', ') || 'all of them'));
+  const tests = el(doc, 'section', 'card wft-tr-tests');
+  tests.append(el(doc, 'h2', '', 'The six tests'), el(doc, 'p', 'hint',
+    `They run again whenever the checking model or a criterion changes.${m.lastAt ? ` Last run ${dateText(m.lastAt)} · cost ${fmtUsd(m.costUsd)}.` : ''}`));
+  m.tests.forEach((t, i) => {
+    const row = el(doc, 'div', 'wft-tr-test');
+    const [title, words] = TRUST_TESTS[t.key];
+    const body = el(doc, 'div', '');
+    body.append(el(doc, 'b', '', title), el(doc, 'p', '', words));
+    const out = el(doc, 'span', 'wft-tr-out');
+    out.append(el(doc, 'span', t.state === 'good' ? 'badge green' : t.state === 'bad' ? 'badge red' : 'badge', t.state === 'good' ? 'Good' : t.state === 'bad' ? 'Look at it' : 'Not run yet'),
+      el(doc, 'span', '', trustTestLine(t)));
+    row.append(el(doc, 'span', 'wft-tr-n', String(i + 1)), body, out);
+    tests.append(row);
+  });
+  const todo = el(doc, 'section', 'card wft-tr-todo');
+  todo.append(el(doc, 'h2', '', 'What to do'));
+  for (const x of m.todo) {
+    const r = el(doc, 'div', 'wft-tr-todo-row');
+    const words = el(doc, 'span', '');
+    words.append(el(doc, 'b', '', `"${x.text}"`), doc.createTextNode(x.kind === 'fix' ? ' is unreliable.' : ' is new. Confirm 4 results so Worca knows it judges it your way.'));
+    r.append(words, x.kind === 'fix' ? btn(doc, 'Fix the criterion', () => actions.fix(x.exampleId, x.criterionId), 'btn btn-sm wft-tr-fix')
+      : btn(doc, 'Confirm 4 results', () => actions.confirm(x.exampleId, x.criterionId), 'btn btn-sm wft-tr-confirm'));
+    todo.append(r);
+  }
+  root.append(head, tiles, tests, ...(m.todo.length ? [todo] : []));
+}
+```
+Board 13 shows "2 missed" style badges on bad tests; the approved P4-M4 mock decides between "Look at it" and board 13's counted badge words, pinned in Step 1 before building.
+
+- [ ] **Step 4: The list card and the controller**
+
+`tests-view.mjs`, after the examples table (board 1's two-card grid; Part 5's "Make the tests harder" card is not built):
+```js
+  if (o.trust && o.trust.total > 0) {
+    const card = el(doc, 'a', 'card wft-trust-card');
+    card.href = '#';
+    card.append(el(doc, 'span', 'wft-trust-title', "Can you trust Worca's checking?"), el(doc, 'span', 'hint', listTrustSentence(o.trust)));
+    card.addEventListener('click', (e) => { e.preventDefault(); actions.openTrust(); });
+    page.append(card);
+  }
+```
+(`page` = the list's page element as `renderTestsPage` names it.) `tests-app.mjs`: view `trust` reads `GET …/trust`, renders, `fix` / `confirm` open the editor of that example and start Check the checker for that criterion (Task 22's flow); `testsAddress` writes `#workflows/<id>/tests/trust`; `route` matches `tests/trust`.
+
+- [ ] **Step 5: Run the tests and the guards**
+
+Run: `node tools/test.mjs test/ui-workflow-test-trust-report.test.mjs test/ui-workflow-test-criteria-list.test.mjs test/ui-workflow-tests-view.test.mjs`, then the design guards.
+Expected: PASS.
+
+- [ ] **Step 6: Commit**
+
+```bash
+git add ui/public/workflows/criteria-pages.mjs ui/public/workflows/tests-view.mjs ui/public/workflows/tests-app.mjs ui/public/workflows/workflow-tests.css test/ui-workflow-test-trust-report.test.mjs test/ui-workflow-test-criteria-list.test.mjs
+git commit -m "feat(workflow-tests): How reliable is Worca's checking, and its card on the Tests list (boards 13, 1)
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
+```
+
+---
+
