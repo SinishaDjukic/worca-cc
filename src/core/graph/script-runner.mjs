@@ -25,6 +25,11 @@ import { agentIdentity, agentSpawn, killAgentGroupSync } from '../agent-user.mjs
 import { agentIdentityFor } from '../agent-pool.mjs';
 import { currentOwner } from '../billing.mjs';
 import { gitAvailable } from '../git-available.mjs';
+import { readinessForRun, workspaceMapForRun, cardAOf } from '../repo-readiness/run-view.mjs';
+import { readStepQuestions } from '../artifacts.mjs';
+import { projectKey as storeProjectKey } from '../store.mjs';
+import { resolveRunEngine } from '../settings-cascade.mjs';
+import { readinessIgnore } from '../settings.mjs';
 import { withNoGitPath } from '../nogit-stub.mjs';
 
 const CHILD_PATH = fileURLToPath(new URL('./script-child.mjs', import.meta.url));
@@ -127,6 +132,8 @@ export function buildEnvelope(ctx) {
     outputs: outs,
     verdictPath: ctx.verdict?.path ?? null,
     params: script.params || {},
+    // The chip's view of the run's checkout, computed by the parent (runScriptExecution): the child imports no store.
+    ...(script.meta?.readiness === true ? { readiness: ctx.readiness ?? null } : {}),
     wiredParams: Array.isArray(ctx.wiredParams) ? ctx.wiredParams : [],   // ids a wire set (additive — apiVersion stays 1)
     ctx: {
       cwd: ctx.projectDir,                                   // the run's work dir (D12)
@@ -146,6 +153,48 @@ export function buildEnvelope(ctx) {
       bench: Boolean(ctx.bench),
     },
   };
+}
+
+/** The chip's view for a `meta.readiness` script: one view of the run's checkout, or per member on a workspace run
+ *  (`{ members, workspaceMap }`: the workspace's reviewed map, or null). Both carry `cardA` once, at the top: who
+ *  answered the Map's card A on this run (`{ by: 'user' | 'away' | null }`, run-view `cardAOf`). Never throws. */
+async function readinessViewFor(ctx) {
+  let cardA = { by: null };
+  try { if (ctx.pipelineId) cardA = cardAOf(readStepQuestions(ctx.pipelineId)); } catch { /* no stored answers: nobody confirmed */ }
+  const projectDir = ctx.runCtx?.projectDir ?? ctx.projectDir;
+  // The paths each member's teardown commit leaves out (run-harness `_excludePathspecs`, by projectKey; a single run's
+  // one entry whatever its key). No map (a bench execution): readinessForRun's default set.
+  const excludesOf = (key) => {
+    const map = ctx.commitExcludes;
+    if (!map || typeof map !== 'object') return undefined;
+    const list = Object.hasOwn(map, key) ? map[key] : (Object.keys(map).length === 1 ? Object.values(map)[0] : undefined);
+    return Array.isArray(list) ? list : undefined;
+  };
+  const one = async ({ dir, key, dirOfProject, folder }) => {
+    const pdir = dirOfProject || projectDir;
+    const runEngine = resolveRunEngine({ projectDir: pdir, projectKey: key }).engine || 'claude';
+    return readinessForRun({ dir, projectKey: key, projectDir: pdir, runEngine, folder, exclude: excludesOf(key),
+      ignore: readinessIgnore({ projectDir: pdir, projectKey: key }) });
+  };
+  // ctx.repos entries carry no projectDir: a member's live project comes from the workspace channel, by key.
+  const memberDirs = new Map((workspaceEnvelope(ctx.workspace)?.members || []).map((m) => [m.key, m.projectDir]));
+  try {
+    const noGit = (m) => m === 'folder' || m === 'none';   // a run on a copy of the folder: no git in it
+    if (ctx.workspace && Array.isArray(ctx.repos) && ctx.repos.length) {
+      const members = {};
+      for (const r of ctx.repos) {
+        if (!r?.projectKey || !r.dir) continue;
+        members[r.projectKey] = await one({ dir: r.dir, key: r.projectKey, dirOfProject: memberDirs.get(r.projectKey) || r.projectDir, folder: noGit(r.workMode) });
+      }
+      // The workspace's reviewed map rides beside the members (not per member): Map takes the relations from it.
+      let workspaceMap = null;
+      try { workspaceMap = await workspaceMapForRun(workspaceEnvelope(ctx.workspace)?.id, { pipelineDir: ctx.pipelineDir }); } catch { /* no map: Map derives the relations */ }
+      return { members, workspaceMap, cardA };
+    }
+    return { ...(await one({ dir: ctx.projectDir, key: storeProjectKey(projectDir), folder: noGit(ctx.workMode) })), cardA };
+  } catch (err) {
+    return { engines: [], labels: {}, sources: {}, limits: null, judged: [], report: null, cardA, error: String(err?.message || err) };
+  }
 }
 
 /** The child's environment (D11 + §4.3): the server's env minus WORCA_HOME /
@@ -532,6 +581,7 @@ export async function runScriptExecution(ctx) {
   }
   script = { ...script, params: wiredParams.params };
   ctx = { ...ctx, script, wiredParams: wiredParams.wired };
+  if (meta.readiness === true) ctx = { ...ctx, readiness: await readinessViewFor(ctx) };
   const envelope = buildEnvelope(ctx);
   const envelopePath = envelopeAuditPath(ctx);
   await mkdir(dirname(envelopePath), { recursive: true });

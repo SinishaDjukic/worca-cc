@@ -106,7 +106,7 @@ function armAutoClose(t, ms) {
  * until dismissed. `action` = { label, run } (Undo | Open | Retry | Details). A toast with
  * the same `key` replaces the older one. Never moves focus. Returns { el, close }.
  */
-export function notify({ tone = 'info', title = '', detail = '', action = null, key = null, timeout } = {}, { doc = globalThis.document } = {}) {
+export function notify({ tone = 'info', title = '', detail = '', action = null, extraAction = null, key = null, timeout } = {}, { doc = globalThis.document } = {}) {
   const t0 = TONES.has(tone) ? tone : 'info';
   const r = toastRegion(doc);
   if (key) for (const old of toastsIn(r)) if (old.dataset.key === key) dismiss(old);
@@ -123,6 +123,12 @@ export function notify({ tone = 'info', title = '', detail = '', action = null, 
     const b = el(doc, 'button', 'btn btn-sm toast-act', action.label);
     b.type = 'button';
     b.addEventListener('click', () => { dismiss(t); action.run(); });
+    body.append(b);
+  }
+  if (action && extraAction && extraAction.label && typeof extraAction.run === 'function') {
+    const b = el(doc, 'button', 'btn btn-sm btn-quiet toast-act', extraAction.label);
+    b.type = 'button';
+    b.addEventListener('click', () => { dismiss(t); extraAction.run(); });
     body.append(b);
   }
   const x = el(doc, 'button', 'btn btn-sm btn-quiet btn-icon toast-x');

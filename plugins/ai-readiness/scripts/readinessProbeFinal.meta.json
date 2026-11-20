@@ -1,0 +1,21 @@
+{
+  "key": "readinessProbeFinal",
+  "metaVersion": 2,
+  "displayName": "Readiness probe (after setup)",
+  "description": "Measures the generated files and runs the documented commands again, once per fix cycle.",
+  "domain": "readiness",
+  "color": "teal",
+  "order": 31,
+  "runtime": "node",
+  "file": "readiness-probe.mjs",
+  "readiness": true,
+  "timeoutMs": 1800000,
+  "inputs": [
+    { "id": "map", "type": "json" },
+    { "id": "view", "type": "json" },
+    { "id": "tests", "type": "json", "required": false },
+    { "id": "plan", "type": "json", "required": false },
+    { "id": "after", "type": "void", "required": false }
+  ],
+  "outputs": [ { "id": "probe", "type": "json", "filename": "readiness-probe-final-cycle{cycle}.json" } ]
+}

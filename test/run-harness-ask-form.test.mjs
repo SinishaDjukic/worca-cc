@@ -15,6 +15,7 @@ function harness({ auto = false } = {}) {
   const h = Object.create(RunHarness.prototype);
   h.auto = auto;
   h.pendingQuestion = null;
+  h._answeredBy = new Map();   // the constructor's: who answered each question id
   h.state = { status: 'running', steps: [], totalActiveMs: 0 };
   h._metricsIv = { questions: 0 };
   h.emitted = [];
@@ -82,6 +83,7 @@ test('AUTO mode answers a form with the D10 auto answer — no hang, no pending 
   const answer = await h._ask({ ...ASK, autoValues: { verdict: 'approve' }, validate: validator });
   assert.deepEqual(answer, { form: 'review-mockups', version: 2, values: { verdict: 'approve' } });
   assert.equal(h.pendingQuestion, null, 'auto never installs a pending question');
+  assert.equal(h.answeredBy(ASK.id), 'auto', 'the auto answer is recorded as nobody');
   const none = await h._ask({ ...ASK, validate: validator });
   assert.deepEqual(none, { form: 'review-mockups', version: 2, values: {} }, 'a missing autoValues degrades to {}, never to a hang');
 });
