@@ -617,3 +617,54 @@ test('G with a selection opens the picker for the selection, anchored at the bar
   await ticks(ctx, 8);
   assert.deepEqual(rec.groupCalls.at(-1)[2].threadIds, ['ask_00000002', 'ask_10000000']);
 });
+
+// ── Runs under chats (View › Runs › Under chats): the Runs list's rows under the chat that started them ──
+test('runs a chat started sit under it with the Runs dots; a double click folds them; a run opens beside its chat; Separate drops them', async () => {
+  const { runItemRow } = await import('../ui/public/runs-list.mjs');
+  const refs = [{ runId: 'run-1', pipelineId: 'pa' }, { runId: 'run-2', pipelineId: 'pb' }];
+  const rowsFor = {
+    'run-1': runItemRow({ live: { runId: 'run-1', pipelineId: 'pa', title: 'Pager between runs', status: 'running', startedAt: iso(60e3) } }, NOW),
+    'run-2': runItemRow({ hist: { id: 'pb', projectKey: 'worka-1', title: 'Trail in the top bar', status: 'done', startedAt: iso(3600e3) } }, NOW),
+  };
+  const opened = [];
+  const list = [T('ask_000000d1', { title: 'Plan the API rewrite', startedRuns: 2, startedRunRefs: refs }), T('ask_000000d2')];
+  const { col, doc, ctx } = await bootOn({ list, deps: { chatDeps: {
+    chatRunRows: (rs) => rs.map((r) => rowsFor[r.runId] || null),
+    openRunPanel: (ref) => { opened.push(ref); },
+  } } });
+  const members = () => [...col.querySelectorAll('.runs-item[data-row-key="chat:ask_000000d1"] > .runs-members-chat > .runs-item')];
+  assert.deepEqual(members().map((n) => n.querySelector('.runs-row-title').textContent), ['Pager between runs', 'Trail in the top bar']);
+  assert.deepEqual(members().map((n) => n.querySelector('.runs-pick .status-dot').dataset.state || n.querySelector('a.runs-row').dataset.state),
+    [rowsFor['run-1'].model.state, rowsFor['run-2'].model.state], 'each run wears its Runs list state');
+  assert.equal(col.querySelector('.runs-item[data-row-key="chat:ask_000000d2"] .runs-members'), null, 'a chat with no runs has none');
+  assert.deepEqual(members().map((n) => n.querySelector('a.runs-row > .runs-row-sub')), [null, null], 'a run under its chat has no status text');
+  const { prChip } = await import('../ui/public/runs-list.mjs');
+  const chip = prChip(doc, { id: 'closed', icon: 'git-pull-request-closed', word: 'Closed', title: 'PR #7 closed' }, { word: false });
+  assert.equal(chip.querySelector('.runs-pr-word'), null, 'its PR chip is the icon alone');
+  assert.equal(chip.getAttribute('aria-label'), 'Closed');
+  // Select mode picks chats only: the chat gets a box, its runs keep their dot with none.
+  col.querySelector('.runs-item[data-row-key="chat:ask_000000d1"] > .runs-pick .runs-check').click();
+  await ticks(ctx);
+  assert.ok(col.querySelector('.runs-list').classList.contains('is-selecting'));
+  assert.deepEqual(members().map((n) => !!n.querySelector('.runs-check')), [false, false], 'a run has no box');
+  assert.deepEqual(members().map((n) => n.classList.contains('is-checked')), [false, false]);
+  key(doc, rowLink(col, 'ask_000000d1'), { key: 'Escape' });
+  await ticks(ctx);
+  assert.equal(col.querySelector('.runs-item[data-row-key="chat:ask_000000d1"] > a.runs-row .runs-count'), null, 'no count on a chat');
+  const chatRow = () => rowLink(col, 'ask_000000d1');
+  chatRow().dispatchEvent(new doc.defaultView.MouseEvent('dblclick', { bubbles: true, cancelable: true }));
+  await ticks(ctx);
+  assert.equal(members().length, 0, 'the double click folded them');
+  assert.equal(col.querySelector('.runs-item[data-row-key="chat:ask_000000d1"] .runs-expand').getAttribute('aria-expanded'), 'false');
+  chatRow().dispatchEvent(new doc.defaultView.MouseEvent('dblclick', { bubbles: true, cancelable: true }));
+  await ticks(ctx);
+  assert.equal(members().length, 2, 'and a second one unfolds them');
+  mclick(doc, members()[0].querySelector('a.runs-row'));
+  await ticks(ctx);
+  assert.deepEqual(opened, [{ runId: 'run-1', pipelineId: 'pa', projectKey: '' }]);
+  assert.equal(ctx.panel.threadId(), 'ask_000000d1', 'its chat opened first');
+  col.querySelector('#chats-view-btn').click();
+  [...doc.querySelectorAll('.wfv-menu .wfv-seg [role="menuitemradio"]')].find((b) => b.textContent === 'Separate').click();
+  await ticks(ctx);
+  assert.equal(col.querySelectorAll('.runs-members-chat').length, 0, 'Separate keeps the column to chats');
+});

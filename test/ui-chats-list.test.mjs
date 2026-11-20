@@ -145,7 +145,7 @@ test('Show = Archived and Group by None are flat (bare); the chip names the view
     assert.equal(chatsViewChip({ show: 'all', sort: 'activity', groupBy }, { shown: 4 }), '', 'grouping draws no chip (the Runs rule)');
   }
   const mem = { m: new Map([[CHATS_VIEW_KEY, '{"show":"bogus","sort":"cost"}']]), getItem(k) { return this.m.get(k) ?? null; } };
-  assert.deepEqual(loadChatsView(mem), { show: 'all', sort: 'cost', groupBy: 'date' });
+  assert.deepEqual(loadChatsView(mem), { show: 'all', sort: 'cost', groupBy: 'date', runs: 'nested' });
 });
 
 test('Sort by orders rows inside a section, not across sections', () => {
@@ -286,4 +286,25 @@ test('group ⋯: Archive group is disabled with the reason while a member is bus
   assert.ok(grouped.includes('Add to group…') && grouped.includes('Remove from group'));
   const loose = chatRowMenuItems(chatRow(thread('z')), { mac: true, on: {} }).map((i) => i.label);
   assert.ok(loose.includes('Add to group…') && !loose.includes('Remove from group'));
+});
+
+test('View › Runs › Under chats: a chat\'s started runs fold under it as its members, open until folded; Separate keeps chats only', () => {
+  const refs = [{ runId: 'r1', pipelineId: 'p1' }, { runId: 'r2', pipelineId: null }, { runId: 'gone', pipelineId: 'px' }];
+  const known = { r1: { runId: 'r1', pipelineId: 'p1', kind: 'live', title: 'Build', model: { state: 'working' } },
+    r2: { runId: 'r2', pipelineId: '', kind: 'live', title: 'Plan', model: { state: 'starting' } } };
+  const asked = [];
+  const runRows = (rs) => { asked.push(rs); return rs.map((r) => known[r.runId] || null); };
+  const threads = [thread('a', { startedRuns: 3, startedRunRefs: refs }), thread('b')];
+  const row = (m, id) => m.sections.flatMap((s) => s.rows).find((r) => r.id === id);
+  const m = buildChatsModel({ threads, runRows, now: NOW });
+  const a = row(m, 'a');
+  assert.deepEqual(a.members.map((x) => [x.key, x.title, x.chatId]), [['chatrun:a/p1', 'Build', 'a'], ['chatrun:a/r2', 'Plan', 'a']],
+    'a run this tab does not know is left out');
+  assert.equal(a.open, true);
+  assert.equal(a.memberNoun, 'runs');
+  assert.equal(row(m, 'b').members, undefined, 'a chat with no runs has none');
+  assert.deepEqual(asked, [refs]);
+  assert.equal(row(buildChatsModel({ threads, runRows, toggled: new Map([['chat:a', false]]), now: NOW }), 'a').open, false);
+  assert.equal(row(buildChatsModel({ threads, runRows, view: { runs: 'separate' }, now: NOW }), 'a').members, undefined);
+  assert.equal(row(buildChatsModel({ threads, now: NOW }), 'a').members, undefined, 'no runRows: chats only');
 });

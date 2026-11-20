@@ -60,12 +60,14 @@ const segment = (label, value, opts, onSelect) => ({ segmented: true, label, val
 /** Items for openMenu. `onPick(patch)` gets {show} | {sort} | {groupBy} | {person} | {select: true} | {shortcuts: true}.
  *  Show is radio rows with counts; `sortOpts` (the Chats column) adds a segmented Sort by; Group by is segmented. A sort or
  *  group option's third entry is its segment title. `mac` picks the Select hint's glyph (⌘ or Ctrl). */
-export function viewMenuItems(v, counts, { people = [], onPick, showOpts = SHOW, sortOpts = null, groupOpts = GROUP, mac = false }) {
+export function viewMenuItems(v, counts, { people = [], onPick, showOpts = SHOW, sortOpts = null, groupOpts = GROUP, extraSegments = [], mac = false }) {
   const n = (x) => (x == null ? '' : String(x));
   const items = [{ header: 'Show' }];
   for (const [id, label] of showOpts) items.push({ label, hint: n(counts[id]), checked: v.show === id, onSelect: () => onPick({ show: id }) });
   if (sortOpts) items.push(segment('Sort by', v.sort, sortOpts, (id) => onPick({ sort: id })));
   items.push(segment('Group by', v.groupBy, groupOpts, (id) => onPick({ groupBy: id })));
+  // `extraSegments` (the Chats column's Runs): more segmented rows, each `{ label, key, opts }` picking `{ [key]: id }`.
+  for (const x of extraSegments) items.push(segment(x.label, v[x.key], x.opts, (id) => onPick({ [x.key]: id })));
   if (people.length) {
     items.push({ header: 'Started by' }, { label: 'Everyone', checked: !v.person, onSelect: () => onPick({ person: '' }) });
     for (const p of people) items.push({ label: p.name, checked: v.person === p.key, onSelect: () => onPick({ person: p.key }) });

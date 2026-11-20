@@ -46,7 +46,7 @@ body.view-runs .main{display:flex;flex-direction:column;overflow:hidden;padding:
 .runs-pick{display:grid;place-items:center;height:36px;}
 .runs-pick .runs-check{display:none;margin:0;}
 /* Only the row itself flips its dot: hovering or focusing an expanded member must not flip its group's dot too. */
-.runs-list.is-selecting .runs-pick .status-dot{display:none;}
+.runs-list.is-selecting .runs-pick:has(.runs-check) .status-dot{display:none;}
 .runs-list.is-selecting .runs-pick .runs-check{display:block;}
 /* QA 2: the title keeps at least half the row; a right column (count, PR chip) that does not fit beside it wraps to
    the next line, still ending at the row's right edge (the layout audit's right-edge rule). */
@@ -65,6 +65,16 @@ body.view-runs .main{display:flex;flex-direction:column;overflow:hidden;padding:
 /* Rows inside a group draw no dividers; the group item's own bottom border separates it from the next top-level row. */
 .runs-members > .runs-item{border-bottom:0;}
 .runs-members .runs-pick,.runs-members .runs-row-title{padding-left:16px;}
+/* The runs a chat started, under it (Chats column, View › Runs › Under chats): a wider status column and a tree line
+   from the chat's dot down to each run's. */
+.runs-members-chat > .runs-item{position:relative;grid-template-columns:44px minmax(0,1fr) 56px;}
+.runs-members-chat > .runs-item > .runs-pick{padding-left:16px;}
+.runs-members-chat > .runs-item > .runs-row .runs-row-title{padding-left:2px;}
+.runs-members-chat > .runs-item::before{content:'';position:absolute;left:13px;top:0;width:10px;height:13px;border-left:1px solid var(--ink-3);border-bottom:1px solid var(--ink-3);border-bottom-left-radius:var(--r-sm);pointer-events:none;}
+.runs-members-chat > .runs-item:not(:last-child)::after{content:'';position:absolute;left:13px;top:0;bottom:0;border-left:1px solid var(--ink-3);pointer-events:none;}
+@media (pointer: coarse){.runs-members-chat > .runs-item::before{height:20px;}}
+/* Select mode picks chats only: a chat's runs keep their dot and step back. */
+.runs-list.is-selecting .runs-members-chat > .runs-item{opacity:.55;}
 /* #955: two row levels. A row inside a group is one line: a 12px / 400 title, its status on the same line at the right
    (it ellipsises first), then the PR chip; 26px (18px line + 4px + 4px), 40px on touch screens. A live member's 3px
    line sits under its title. The ⋯ keeps its 28px (list-row action) centred in the 26px tail. */

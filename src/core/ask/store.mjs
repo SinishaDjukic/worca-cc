@@ -195,6 +195,9 @@ function excerptAround(text, q) {
   return `${from > 0 ? '…' : ''}${flat.slice(from, to)}${to < flat.length ? '…' : ''}`;
 }
 
+/** The runs a list row names as started by its chat (the Chats column draws them under it), oldest first. */
+const STARTED_REFS_MAX = 50;
+
 /** A list row's link counts and what the chat did (the Chats column's kind icon), over `t`. A run card's launch links its
  *  run WITH the card id and a track_run without one; a later track of a run the chat started only patches the row, so
  *  its card id stays. A workflow card is a propose_workflow (`workflow`) or build_workflow (`workflow-build`) card in
@@ -202,6 +205,8 @@ function excerptAround(text, q) {
 const LIST_FACTS_SQL = `(SELECT count(*) FROM ask_run_links l WHERE l.thread_id = t.id) AS run_links,
            (SELECT count(*) FROM ask_run_links l WHERE l.thread_id = t.id AND l.card_id IS NOT NULL) AS started_runs,
            (SELECT count(*) FROM ask_run_links l WHERE l.thread_id = t.id AND l.card_id IS NULL) AS tracked_runs,
+           (SELECT json_group_array(json_array(s.run_id, s.pipeline_id)) FROM (SELECT l.run_id, l.pipeline_id FROM ask_run_links l
+              WHERE l.thread_id = t.id AND l.card_id IS NOT NULL ORDER BY l.created_at, l.run_id LIMIT ${STARTED_REFS_MAX}) s) AS started_refs,
            EXISTS (SELECT 1 FROM ask_messages m, json_each(CASE WHEN json_valid(m.blocks) THEN m.blocks END) b
                    WHERE m.thread_id = t.id AND m.blocks LIKE '%"type":"workflow%' AND json_extract(b.value, '$.kind') = 'card'
                      AND json_extract(b.value, '$.card.type') IN ('workflow', 'workflow-build')) AS workflow_card,
@@ -214,7 +219,10 @@ function toListRow(r, q) {
   const match = !q || r.title_hit ? {}
     : r.group_hit != null ? { match: { group: r.group_hit } }
     : r.hit_text != null ? { match: { snippet: excerptAround(r.hit_text, q) } } : {};
+  const refs = parse(r.started_refs, []);
   return { ...t, runLinks: r.run_links, startedRuns: r.started_runs, trackedRuns: r.tracked_runs, hasWorkflowCard: !!r.workflow_card,
+    // Each run this chat's run cards launched: { runId, pipelineId } (pipelineId null until the run's first state).
+    startedRunRefs: Array.isArray(refs) ? refs.map(([runId, pipelineId]) => ({ runId, pipelineId: pipelineId ?? null })) : [],
     worktrees: r.worktrees, ...match };
 }
 
