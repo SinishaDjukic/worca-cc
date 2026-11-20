@@ -320,6 +320,11 @@ export function roundUsd(n) {
 /** Session records a pause or a crash must find in the row (Task 43; C43: `member_bound` keeps an epoch's first host id). */
 const SESSION_PERSIST_KINDS = new Set(['open', 'degrade', 'member_bound', 'turn_end', 'rotate', 'restart', 'pause', 'close']);
 
+/** The attached-requirements option as a fresh list of plain copies: anything that is not a list of objects is none. */
+function attachedList(raw) {
+  return Array.isArray(raw) ? raw.filter((item) => item && typeof item === 'object').map((item) => ({ ...item })) : [];
+}
+
 /** A usage of either shape (API, the session demux's {in,out,cr,cw}, Ask's) with the API keys config.mjs resolveModelCost
  *  prices, `cache_creation` buckets kept (session groups, Task 42). */
 function apiUsage(u) {
@@ -1092,6 +1097,9 @@ export class RunHarness extends EventEmitter {
     // Shape it first (spec D5): { perspectives } for a shaped run, null otherwise. NOT `this.shape` — the
     // orchestrator's Auto path already uses "shape" for the classifier's shape.
     this.runShape = this.opts.shape || this.resumeOpts?.resumePoint?.shape || null;
+    // Requirements features attached at start ([{seq,id,title,version,ready,criteriaCount,agreed}]): the agreement gate
+    // asks before the first node. A resumed run reads the list back from its point, with the agreements already given.
+    this.attachedRequirements = attachedList(this.opts.attachedRequirements ?? this.resumeOpts?.resumePoint?.attachedRequirements);
     // Shaper D28: the recorded half of shapeStats (questions, revises, score); null on an unshaped run.
     // A resumed run reads it back from its row (shape_stats).
     this._shapeRec = this.runShape ? shapeRecordFrom(safeParse(this.resumeOpts?.row?.shape_stats)) : null;
@@ -1386,6 +1394,7 @@ export class RunHarness extends EventEmitter {
     if (pq.kind === 'workflow') line = `Workflow proposal **${d === 'decline' ? 'declined' : d || 'answered'}**`;
     else if (pq.kind === 'gate') line = `Gate **${d || 'answered'}**`;
     else if (pq.kind === 'recovery') line = `Recovery decision **${d || 'answered'}**`;
+    else if (pq.kind === PLAN_ASK_KIND && pq.plan?.attached) line = `Attached requirements **${d === 'approve' ? 'agreed' : d || 'answered'}**`;
     else if (pq.kind === PLAN_ASK_KIND && pq.plan?.outline) line = `Slice outline **${d || 'answered'}** (round ${pq.plan.round || 1})`;
     else if (pq.kind === PLAN_ASK_KIND && pq.concern) line = `Plan concern **${d === 'revise' ? 'accepted' : d === 'approve' ? 'overridden' : d || 'answered'}**`;
     else if (pq.kind === PLAN_ASK_KIND) line = `Plan approval **${d || 'answered'}**`;
@@ -6590,6 +6599,7 @@ export class RunHarness extends EventEmitter {
         // An outline ask keeps its marker and round, so _auditDecision can word its answer (F38).
         this.pendingQuestion = { id, kind, resolve: resolveP, reject: rejectP, validate: typeof validate === 'function' ? validate : null,
           ...(plan && plan.outline ? { plan: { outline: true, round: plan.round } } : {}),
+          ...(plan && plan.attached ? { plan: { attached: true } } : {}),
           ...(concern ? { concern: true } : {}) };
         // A throw inside a Promise executor REJECTS the ask (and fails the node): night mode
         // must never break a question the user could still answer.

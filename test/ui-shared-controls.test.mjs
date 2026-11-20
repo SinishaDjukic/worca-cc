@@ -159,6 +159,7 @@ const JS_CHECKBOX_OK = [
   ['marketplace/remove-view.mjs', 'mk-purge-box', 'opt-in consent in the Remove dialog'],
   ['marketplace/update-view.mjs', 'mk-reviewed', 'acknowledges the reviewed changes'], ['marketplace/update-view.mjs', 'mk-include', 'picks updates'],
   ['design/export-dialog.mjs', 'dsx-replace', 'consent: replace the listed files'],
+  ['requirements-attach/picker.mjs', 'attach-pick-', 'picks the features to attach to a run or a chat'],
   ['mcp-server-import.mjs', 'mcp-imp-pick', 'picks servers to import'],
 ].map(([file, token, reason]) => ({ file: `ui/public/${file}`, token, reason }));
 function checkboxEmitters(files) {

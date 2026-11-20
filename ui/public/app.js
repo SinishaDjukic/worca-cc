@@ -346,6 +346,14 @@ import { registerAskRenderer, askRendererFor, askKindOf } from './ask/registry.m
 import { activeAgents } from './ask-run-card.mjs';
 import { registerChatRunCard } from './chat/run-card.mjs';
 import { registerDirectionAddon } from './chat/direction.mjs';
+import { mountNewRunAttach, newRunScope, jsonFetcher as attachFetcher } from './requirements-attach/entries.mjs';
+import { createAttachStore } from './requirements-attach/store.mjs';
+import { renderAttachedCards } from './requirements-attach/cards.mjs';
+import { guardScopeChange } from './requirements-attach/scope-guard.mjs';
+import { createProjectChange } from './requirements-attach/target-change.mjs';
+import { suggestTitle } from './requirements-attach/title.mjs';
+import { attachHashSearch } from './requirements-attach/hash-search.mjs';
+import { revalidate as revalidateAttached } from './requirements-attach/revalidate.mjs';
 import { renderPlanBody } from './shape/plan-body.mjs';
 import { renderOutlineBody } from './shape/outline-body.mjs';
 import { renderFeature, featureModelOf } from './shape/feature-view.mjs';
@@ -7741,11 +7749,40 @@ function refreshMentionPopup(ta) {
   renderMentionPopup();
 }
 
+// Requirements features attached to the New run prompt (not sent until Start). Seqs only go on the wire.
+const newRunAttachStore = createAttachStore({ storage: (() => { try { return window.sessionStorage; } catch { return null; } })(), key: 'worca-cc.attach.newrun' });
+const newRunHash = new Map();   // textarea -> its `#` search
+const attachAllowed = () => flagOn('requirements') && !state.activePluginSource;
+/** The page's run target, in the shape the attach entry reads. */
+function newRunTarget() {
+  const workspaceId = (el.workspaceSelect && el.workspaceSelect.value) || '';
+  return { runTarget: state.runTarget, projectKey: selectedProjectKey(), projectPath: selectedProjectPath(), workspaceId,
+    workspacePaths: ((state.workspaces || []).find((w) => w && w.id === workspaceId) || {}).projectPaths || [] };
+}
+/** A person-initiated target change: asks before it would remove attached features. `changed` false applies at once. */
+function guardNewRunScope(apply, revert, changed = true) {
+  if (!changed) return Promise.resolve(apply());
+  return guardScopeChange({ store: newRunAttachStore, apply, revert, ask: askNewRunRemoveFeatures });
+}
+async function askNewRunRemoveFeatures() {
+  return (await confirmModal({
+    title: 'Remove attached features?', confirmLabel: 'Remove features and change', cancelLabel: 'Cancel', danger: true,
+    message: 'The attached features belong to the current project or workspace. Changing the target removes them.',
+  })) ? 'remove' : 'cancel';
+}
+function newRunHashInput(ta) {
+  const hash = newRunHash.get(ta);
+  if (!hash) return;
+  if (attachAllowed()) hash.onInput(); else hash.close();
+}
+
 function attachMentionAutocomplete(ta) {
-  ta.addEventListener('input', () => refreshMentionPopup(ta));
+  ta.addEventListener('input', () => { refreshMentionPopup(ta); newRunHashInput(ta); });
   ta.addEventListener('click', () => refreshMentionPopup(ta));
-  ta.addEventListener('blur', () => { if (mention.ta === ta) closeMentionPopup(); });
+  ta.addEventListener('blur', () => { if (mention.ta === ta) closeMentionPopup(); newRunHash.get(ta)?.close(); });
   ta.addEventListener('keydown', (e) => {
+    if (e.isComposing) return;   // an IME's Enter confirms its text; it must not attach
+    if (newRunHash.get(ta)?.handleKey(e)) return;   // an open `#` search claims Enter, Tab, arrows and Esc first
     if (mentionPopup.hidden || mention.ta !== ta) return;
     if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
       e.preventDefault();
@@ -8184,6 +8221,7 @@ function renderProjectOptions(selectName, { quiet = false } = {}) {
 }
 
 function onProjectChanged() {
+  projectPrev = el.projectSelect.value;
   const path = selectedProjectPath();
   paintFormWorkMode();
   showEngineRefusal(null); // the refusal and any consent were for the OLD project's context
@@ -8747,13 +8785,26 @@ function resetSyncChoice() {
   paintBranches();
 }
 
+// The project the page last APPLIED (onProjectChanged records it). A Cancel restores this, never a value captured by
+// a focus event: code sets the select too (load, presets, add project, the `#` Tab cycle, the attach picker).
+let projectPrev = el.projectSelect.value;
+for (const ev of ['focus', 'pointerdown']) el.projectSelect.addEventListener(ev, () => { projectPrev = el.projectSelect.value; });
+/** A person's project choice: asks before it removes attached features, lifts the run target to Project inside the answer. */
+const applyNewRunProject = createProjectChange({
+  store: newRunAttachStore, getRunTarget: () => state.runTarget, setRunTarget: (t) => setRunTarget(t), getApplied: () => projectPrev,
+  setSelect: (path) => { el.projectSelect.value = path; hideAddProject(); },
+  reapply: () => reapplyPresetAfter(onProjectChanged()),
+  ask: () => askNewRunRemoveFeatures(),
+});
 el.projectSelect.addEventListener('change', () => {
   if (el.projectSelect.value === '__add__') {
     openAddProject();
     return;
   }
   hideAddProject();
-  void reapplyPresetAfter(onProjectChanged());
+  const prev = projectPrev;
+  const path = el.projectSelect.value;
+  void guardNewRunScope(() => reapplyPresetAfter(onProjectChanged()), () => { el.projectSelect.value = prev; }, path !== prev);
 });
 
 function openAddProject() {
@@ -9282,11 +9333,15 @@ async function ensureWorkspaceOptions({ keepMembers = false } = {}) {
 
 if (el.targetSeg) {
   $$('#target-seg button[data-target]').forEach((btn) => {
-    btn.addEventListener('click', () => void reapplyPresetAfter(setRunTarget(btn.dataset.target)));
+    // A person's click asks before it removes attached features; Cancel leaves the segment where it was.
+    btn.addEventListener('click', () => { const prev = state.runTarget; void guardNewRunScope(() => reapplyPresetAfter(setRunTarget(btn.dataset.target)), () => {}, btn.dataset.target !== prev); });
   });
 }
 if (el.workspaceSelect) {
-  el.workspaceSelect.addEventListener('change', () => {
+  let workspacePrev = el.workspaceSelect.value;
+  for (const ev of ['focus', 'pointerdown']) el.workspaceSelect.addEventListener(ev, () => { workspacePrev = el.workspaceSelect.value; });
+  const onWorkspaceChanged = () => {
+    workspacePrev = el.workspaceSelect.value;   // the last APPLIED workspace: what a Cancel restores
     state.selectedWorkspaceId = el.workspaceSelect.value || '';
     void runPrFields().refresh();
     if (state.selectedWorkspaceId) localStorage.setItem(LAST_WORKSPACE_KEY, state.selectedWorkspaceId);
@@ -9304,6 +9359,10 @@ if (el.workspaceSelect) {
     if (state.activePluginSource && state.activePluginSource.multiProfile) {
       mountPluginSourcePane(state.activePluginSource);
     }
+  };
+  el.workspaceSelect.addEventListener('change', () => {
+    const prev = workspacePrev;
+    void guardNewRunScope(() => { onWorkspaceChanged(); }, () => { el.workspaceSelect.value = prev; }, el.workspaceSelect.value !== prev);
   });
 }
 
@@ -15895,6 +15954,8 @@ el.form.addEventListener('submit', async (e) => {
   const body = buildRunBody();
 
   const psrc = state.activePluginSource;
+  // Attached Requirements features stand in for the typed task; only their seqs go to the server.
+  const attachedItems = flagOn('requirements') && !psrc ? newRunAttachStore.get().items : [];
   if (isDefragRun) {
     // A defragment run needs no task text: synthesise the same brief and title the API wrapper
     // sends, whatever the shared source switch says (the markdown / plugin panes are skipped).
@@ -15914,11 +15975,15 @@ el.form.addEventListener('submit', async (e) => {
       profile: state.activePluginProfile || undefined,
     };
   } else if (source === 'markdown') {
-    if (!mdText) return fieldError(el.promptMarkdown, 'Provide markdown text or load a .md file.');
-    body.promptMarkdown = mdText;
+    if (!mdText && !attachedItems.length) return fieldError(el.promptMarkdown, 'Provide markdown text or load a .md file.');
+    if (mdText) body.promptMarkdown = mdText;
   } else {
-    if (!promptText) return fieldError(el.prompt, 'Provide a prompt describing the task.');
-    body.prompt = promptText;
+    if (!promptText && !attachedItems.length) return fieldError(el.prompt, 'Provide a prompt describing the task.');
+    if (promptText) body.prompt = promptText;
+  }
+  if (attachedItems.length) {
+    body.requirements = attachedItems.map((i) => ({ seq: i.seq }));
+    if (!title) body.title = suggestTitle(attachedItems);
   }
 
   // A time picked earlier (Schedule… in the split menu, Schedules › Schedule a run, Change…)
@@ -15992,6 +16057,28 @@ el.form.addEventListener('submit', async (e) => {
           data = await safeJson(res);
         }
       }
+      // A feature already running: ask once, resend with the person's answer.
+      if (res.status === 409 && data && data.code === 'RUN_IN_PROGRESS') {
+        const again = await confirmModal({
+          title: 'A feature is already running', confirmLabel: 'Run again', cancelLabel: 'Cancel',
+          message: data.error || 'An attached feature already has a run in progress. Start another run anyway?',
+        });
+        if (!again) {
+          startSubmitInFlight = false;
+          if (el.startMore) el.startMore.disabled = false;
+          notify({ tone: 'warn', title: 'Start cancelled' });
+          return { ok: false, cancelled: true };
+        }
+        lastSentBody = { ...lastSentBody, confirmAttachedRunning: true };
+        res = await fetch('/api/run', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(lastSentBody) });
+        data = await safeJson(res);
+      }
+      // An attached feature was archived, removed or moved out of scope: the server says which.
+      if (res.status === 409 && data && data.code === 'REQUIREMENTS_UNAVAILABLE') {
+        startSubmitInFlight = false;
+        if (el.startMore) el.startMore.disabled = false;
+        return notStarted(data.error || 'An attached feature is no longer available.');
+      }
       // #527: the base diverged (or could not be fetched) — ask once, resend with the choice.
       if (!res.ok && data && (data.code === 'sync-diverged' || data.code === 'sync-fetch-failed')) {
         const choice = await chooseSyncRefusal(data);
@@ -16048,6 +16135,7 @@ el.form.addEventListener('submit', async (e) => {
         resetSyncChoice();
         showEngineRefusal(null);
         clearTask(submittedTask);
+        if (attachedItems.length) newRunAttachStore.clear();   // the server accepted the run: the features it took are spent
         applyPresetSwitches();   // clearTask unchecks Run on the source branch (#688); a preset keeps its own
         // Keep the warn tone when the server attached a budget warning. The Schedules page already
         // shows the ticket, so the toast needs no Open action.
@@ -16066,6 +16154,7 @@ el.form.addEventListener('submit', async (e) => {
       resetSyncChoice();
       showEngineRefusal(null);
       clearTask(submittedTask);
+      if (attachedItems.length) newRunAttachStore.clear();   // the server accepted the run: the features it took are spent
       applyPresetSwitches();
       // D6: the user is on the run's page now, so the result is a toast, not a #form-msg line.
       // The run's page is the confirmation (audit F-24): no toast when it is already open.
@@ -33404,6 +33493,65 @@ if (typeof window !== 'undefined' && window.__np) window.__np.chatRunControls = 
 // CONTRACT §3: registered before createAskPanel runs (this line evaluates long before the mount at the end of the file).
 chatRunCards = registerChatRunCard({ controls: chatRunControls, runStore: askRunStore });
 registerDirectionAddon();                      // R10: the composer's "→ <run title>" chip
+// Attach Requirements features to a New run: the button, the `#` search in both prompt boxes, and the title hint.
+const pullBtn = document.getElementById('pull-from-requirements');
+const attachFetch = attachFetcher();
+const attachByKey = {   // the picker speaks project keys; the select's values are paths
+  get options() { return (state.projects || []).filter((p) => p && p.key).map((p) => ({ value: p.key, textContent: p.name || p.key })); },
+  set value(key) { const p = (state.projects || []).find((x) => x && x.key === key); if (p) attachByKeyPath = p.path; },
+  // The picker's choice goes through the Target guard like any other change: Cancel restores the whole previous target.
+  dispatchEvent: () => { if (attachByKeyPath) void applyNewRunProject(attachByKeyPath); return true; },
+};
+let attachByKeyPath = '';
+function cycleNewRunProject() {
+  const projects = (state.projects || []).filter((p) => p && p.path);
+  if (!projects.length) return;
+  const at = projects.findIndex((p) => p.path === el.projectSelect.value);
+  void applyNewRunProject(projects[(at + 1) % projects.length].path);
+}
+for (const ta of [el.prompt, el.promptMarkdown]) {
+  newRunHash.set(ta, attachHashSearch({
+    textarea: ta, store: newRunAttachStore, doc: document, onProjectCycle: cycleNewRunProject,
+    getScope: () => newRunScope(newRunTarget()).scope,
+    searchFn: ({ scopeType, scopeKey, q = '', exclude = [] }) => {
+      const params = new URLSearchParams({ scopeType, scopeKey, q });
+      if (exclude.length) params.set('exclude', exclude.join(','));
+      return attachFetch(`/api/requirements/search?${params}`);
+    },
+    position: (t, caret) => {
+      const { x, y } = mentionAnchor(t, caret);
+      return { left: Math.min(x, Math.max(0, (window.innerWidth || 0) - 330)), top: y + 4 };
+    },
+  }));
+}
+// The project adapter's change applies the target inside the Target guard, so the entry's own setRunTarget does nothing here.
+mountNewRunAttach({ button: pullBtn, store: newRunAttachStore, getTarget: newRunTarget, setRunTarget: () => {}, projectSelect: attachByKey });
+/** Attach is for the built-in Prompt / Markdown sources: a plugin source supplies its own task. */
+function syncNewRunAttach() {
+  if (pullBtn) pullBtn.disabled = !!state.activePluginSource;
+  const items = newRunAttachStore.get().items;
+  el.title.placeholder = items.length ? suggestTitle(items) : NEW_RUN_TITLE_PLACEHOLDER;
+  const cards = document.getElementById('attach-cards');
+  if (cards) {
+    const shown = state.activePluginSource ? [] : items;
+    renderAttachedCards(cards, shown, { onRemove: (seq) => newRunAttachStore.remove(seq), flagOn: () => flagOn('requirements') });
+    cards.hidden = !shown.length;
+  }
+  // The wrapper is not flag-gated: it hides only when the flag is off AND no card is left to explain.
+  const field = document.getElementById('pull-field');
+  if (field) field.hidden = !flagOn('requirements') && !(state.activePluginSource ? [] : items).length;
+}
+const NEW_RUN_TITLE_PLACEHOLDER = el.title.placeholder;
+newRunAttachStore.subscribe(syncNewRunAttach);
+onFlagChange('requirements', syncNewRunAttach);
+el.sourceSeg?.addEventListener('click', () => setTimeout(syncNewRunAttach, 0));
+syncNewRunAttach();
+/** On entering New run: the store is restored from the session by construction; check it against the server once. */
+function restoreNewRunAttach() {
+  syncNewRunAttach();
+  const fetchJson = (url, opts = {}) => attachFetch(url, { ...opts, body: typeof opts.body === 'string' ? JSON.parse(opts.body) : opts.body, method: opts.method });
+  void revalidateAttached(newRunAttachStore, fetchJson, newRunScope(newRunTarget()).scope, () => flagOn('requirements')).catch(() => {});
+}
 
 /** History Overview DURATION sub-line: `9 executions · 2 loop deliveries`. */
 function histCountsLine(st) {
@@ -40809,6 +40957,7 @@ function showView(name, param = '') {
   if (name === 'profile') worca.showProfile(document.getElementById('profile-level-host'), () => currentShownView === 'profile');   // #profile/level
   if (name === 'new') {
     loadTaskSources(); applyBudgetToNewView(); refreshMentionHighlights();
+    restoreNewRunAttach();
     paintNewRunAwayHint();
     if (!state.awayMode) void fetchAwayMode().then((d) => { if (d) { state.awayMode = d; paintNewRunAwayHint(); } });
     schedulePolicyLine();                    // team policy notes for the current target (board 8)

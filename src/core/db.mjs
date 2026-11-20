@@ -64,7 +64,7 @@ const OPEN_BACKOFF_MS = 15;
 /** Latest schema version. Bump + append a new migration step when the DDL grows.
  *  Exported so migration tests assert "reached the module's current version"
  *  instead of hardcoding the number — a schema bump then touches no test file. */
-export const SCHEMA_VERSION = 95;
+export const SCHEMA_VERSION = 96;
 
 /** store_meta row holding the install's default guardrail set id (JSON string). */
 export const GUARDRAILS_DEFAULT_META_KEY = 'guardrails:default';
@@ -847,7 +847,8 @@ const INCREMENTAL_COLUMNS = {
   req_turns:              { engine: 'TEXT', notices_json: 'TEXT' },   // v89: the harness a step ran on, its D12 notices (9c)
   req_helper_messages:    { engine: 'TEXT', notices_json: 'TEXT' },   // v89: as req_turns
   req_briefs:             { engine: 'TEXT', made_cost_usd: 'REAL', made_cost_kind: 'TEXT' },   // v89: the harness that made the brief (9c D18); NULL = Claude; the cost of its last make and its kind (billed | estimated | unknown); NULL = not booked (before 9c, a mock make)
-  req_starts:             { files_json: "TEXT NOT NULL DEFAULT '[]'" },   // v77: the files a start sent (A8 D14)
+  req_starts:             { files_json: "TEXT NOT NULL DEFAULT '[]'",   // v77: the files a start sent (A8 D14)
+                            note: 'TEXT', note_overrides: 'INTEGER NOT NULL DEFAULT 0' },   // v96: the run's note (null when empty); 1 when started anyway after a contradiction warning
   run_groups:             { name_source: "TEXT NOT NULL DEFAULT 'user'" },   // v79: 'suggested' | 'user' (Smart naming), as ask_chat_groups
   req_export_links:       { origin: "TEXT NOT NULL DEFAULT 'export'" },   // v88: where the link came from, 'export' | 'import' (A6.1 D11, D13)
   req_attachments:        { fetch_json: 'TEXT', read_engine: 'TEXT' },   // v88: the tracker file a row comes from (A6.1 D10, D13); NULL for an upload; v89: the harness that read the file (9c)
@@ -2875,6 +2876,8 @@ export function migrate(db) {
     if (current < 94) db.exec(DESIGN_PICTURES_DDL);
     // v95 Design sound: designs.sound_json (the design's sound choice, D2) — INCREMENTAL_COLUMNS, added by the hoisted
     // repairSchemaGaps (a v92+ DB) or by the v92 DDL above (an older DB). First written as v92.
+    // v96 Requirements run note: req_starts.note + req_starts.note_overrides — INCREMENTAL_COLUMNS, added by the hoisted
+    // repairSchemaGaps (a v95 DB); the base DDL does not carry them.
     db.exec(`PRAGMA user_version = ${SCHEMA_VERSION}`);
     db.exec('COMMIT');
   } catch (err) {
