@@ -203,6 +203,9 @@ The Runs list's groups (runs redesign §3.3) are the one new named state of the 
 - `run_group_members` holds one row per ad-hoc member: `pipeline_id` is the primary key, so a run is in one group at a
   time. Its `group_id` names either a `run_groups.id` or a Shaper feature (`shape_features.id`); it has no foreign key,
   `src/core/run-groups.mjs` checks it. A feature's own slices are not rows here: they come from `shape_feature_slices`.
+  A feature's row in `shape_features` also holds its Care position and the kind of each agreed requirement (schema v96):
+  `care` (default `balanced`), `care_chosen_by` (default `default`), `care_worca_pick` (NULL = no pick) and
+  `requirement_kinds` (JSON keyed by requirement id; NULL = every requirement is owned by its run).
   Removing the last member of a user group deletes the group. Shipping a user group as one PR writes a branch named
   after the group (`worca-cc/` + slug + group id) and records the PR on every member's `pr_url`; no new column.
 - `run_groups.name_source` (v79) is `'suggested'` or `'user'`, as `ask_chat_groups.name_source`: whether Smart naming

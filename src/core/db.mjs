@@ -64,7 +64,7 @@ const OPEN_BACKOFF_MS = 15;
 /** Latest schema version. Bump + append a new migration step when the DDL grows.
  *  Exported so migration tests assert "reached the module's current version"
  *  instead of hardcoding the number — a schema bump then touches no test file. */
-export const SCHEMA_VERSION = 95;
+export const SCHEMA_VERSION = 96;
 
 /** store_meta row holding the install's default guardrail set id (JSON string). */
 export const GUARDRAILS_DEFAULT_META_KEY = 'guardrails:default';
@@ -917,7 +917,11 @@ const INCREMENTAL_COLUMNS = {
                             pr_open: 'TEXT',          // v87: the feature's PR-when-done choice, saved at outline approval; NULL = before v87 (reads as none)
                             pr_slices: 'TEXT',        // v87: 'each' | 'one'
                             pr_source: 'TEXT',        // v87: JSON { open, slices } — where the values came from
-                            pr_outcome: 'TEXT' },     // v87: JSON outcome of the automatic one-PR attempt; NULL = none yet
+                            pr_outcome: 'TEXT',       // v87: JSON outcome of the automatic one-PR attempt; NULL = none yet
+                            care: "TEXT NOT NULL DEFAULT 'balanced'",           // v96 (Shaper small runs A2): the feature's Care position, 'lean' | 'balanced' | 'thorough'
+                            care_chosen_by: "TEXT NOT NULL DEFAULT 'default'",  // v96 (Shaper small runs A2): who chose it, 'default' | 'person' (the person is created_by)
+                            care_worca_pick: 'TEXT',  // v96 (Shaper small runs A2): the position Worca suggested; NULL = no pick
+                            requirement_kinds: 'TEXT' },   // v96 (Shaper small runs A2): JSON { 'R-po-1': {kind:'owned'} | {kind:'confirmed', role} }; NULL = every requirement owned by its run
   shape_feature_slices:   { draft_pr_url: 'TEXT',      // v58 (D24): the PR openSliceDraft opened as a draft
                             kind: 'TEXT' },            // v67 (Shaper s5): 'extra' | 'follow-up' (appendFeatureRun); NULL = from the outline
   pipeline_events:        { actor: 'TEXT' },         // v38: who did it (identity.mjs actor); NULL = the run itself / before attribution
@@ -2875,6 +2879,7 @@ export function migrate(db) {
     if (current < 94) db.exec(DESIGN_PICTURES_DDL);
     // v95 Design sound: designs.sound_json (the design's sound choice, D2) — INCREMENTAL_COLUMNS, added by the hoisted
     // repairSchemaGaps (a v92+ DB) or by the v92 DDL above (an older DB). First written as v92.
+    // v96 (Shaper small runs A2): shape_features.care, care_chosen_by, care_worca_pick, requirement_kinds — INCREMENTAL_COLUMNS, added by the hoisted repairSchemaGaps
     db.exec(`PRAGMA user_version = ${SCHEMA_VERSION}`);
     db.exec('COMMIT');
   } catch (err) {

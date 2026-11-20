@@ -100,9 +100,11 @@ test('baseline: createSliceFeature chains linearly, flag off and on', () => {
   assert.deepEqual(on, off);
 });
 
-test('baseline: featureView keys unchanged, flag off and on', () => {
+test("baseline: featureView has dev's keys with the flag off; on adds care and requirementKinds, last (A2)", () => {
+  const dev = JSON.parse(readFileSync(new URL('./fixtures/shaper/dev-feature-view-keys.json', import.meta.url), 'utf8')).view;
   const { off, on } = offAndOn(() => Object.keys(featureView(mk(3).id)));
-  assert.deepEqual(on, off);
+  assert.deepEqual(off, dev);
+  assert.deepEqual(on, [...dev, 'care', 'requirementKinds']);
 });
 
 test("the helper's flag read is visible to the usage scan", () => {

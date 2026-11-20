@@ -7,6 +7,8 @@ import { createTicket, getTicket, cancelTicket, updateTicket, previousBranchesOf
 import { readPrState, readPipelineExtras, readRunResultsById, readClarifyRow } from '../artifacts.mjs';
 import { projectKey } from '../store.mjs';
 import { sliceBrief, replanBrief } from '../../shared/shape/slices.mjs';
+import { normalizeCare, normalizeRequirementKinds, careOfRow, requirementKindsOf } from '../../shared/shape/feature-record.mjs';
+import { shaperSmallRunsOn } from './small-runs.mjs';
 import { requirementsCheck } from '../../shared/review/requirements-coverage.mjs';
 import { acceptanceGate, ledgerCheck } from '../../shared/shape/acceptance.mjs';
 import { latestChecklist, checklistMarkdown } from '../../shared/shape/review-checklist.mjs';
@@ -55,12 +57,30 @@ export function sliceRequest({ feature, index, outline, perspectives, workflowId
   };
 }
 
+/** Shaper small runs A2: the Care values and requirement kinds a new feature stores, validated before anything is
+ *  written. A re-plan keeps the replaced feature's Care, and its confirmed kinds for ids still agreed, when the caller
+ *  passes none; the replaced row is read tolerantly, so it never refuses the re-plan. Throws an Error carrying `code`. */
+function featureRecord({ care, requirementKinds, replaces, outline }) {
+  const agreed = Array.isArray(outline.agreed) ? outline.agreed : [];
+  const kept = replaces && (care === null || requirementKinds === null)
+    ? getDb().prepare('SELECT care, care_chosen_by, care_worca_pick, requirement_kinds FROM shape_features WHERE id = ?').get(String(replaces)) : null;
+  const keptKinds = () => Object.fromEntries(requirementKindsOf(j(kept.requirement_kinds, null), outline)
+    .filter((k) => k.kind === 'confirmed').map(({ id, kind, role }) => [id, { kind, role }]));
+  const c = normalizeCare(care === null && kept ? careOfRow(kept) : care);
+  const k = c.ok ? normalizeRequirementKinds(requirementKinds === null && kept ? keptKinds() : requirementKinds, agreed.map((a) => a.id)) : c;
+  if (!k.ok) throw Object.assign(new Error(k.error), { code: k.code });
+  return { care: c.care, kinds: agreed.length ? JSON.stringify(k.kinds) : null };
+}
+
 /** L5: the feature row, its slice rows and the chained tickets for slices 2..N, in one transaction. Idempotent per
- *  slice-1 pipeline: an earlier active feature of the same run is cancelled and marked replanned (§5.3 note). */
+ *  slice-1 pipeline: an earlier active feature of the same run is cancelled and marked replanned (§5.3 note).
+ *  `care` and `requirementKinds` (Shaper small runs A2) are read only with the flag on; a refused one throws before the tx. */
 // node:sqlite refuses to bind `undefined`: every bound value has a default.
 export function createSliceFeature({ pipelineId, projectDir, title, outline, proposed = null, merges = 0, removals = 0,
-  approveEach = false, perspectives, workflowId, base = {}, replaces = null, startedBy = null, pr = null, now = Date.now() }) {
+  approveEach = false, perspectives, workflowId, base = {}, replaces = null, startedBy = null, pr = null, care = null,
+  requirementKinds = null, now = Date.now() }) {
   const db = getDb();
+  const record = shaperSmallRunsOn() ? featureRecord({ care, requirementKinds, replaces, outline }) : null;
   const id = `feat_${randomUUID().replace(/-/g, '').slice(0, 12)}`;
   const ts = iso(now);
   const total = outline.slices.length;
@@ -75,6 +95,8 @@ export function createSliceFeature({ pipelineId, projectDir, title, outline, pro
       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'active', ?, ?, ?, ?, NULL, ?, ?, ?)`)
       .run(id, title, projectDir, String(pipelineId), sourceOf(pipelineId), JSON.stringify(outline), JSON.stringify(base),
         JSON.stringify(perspectives), workflowId, approveEach ? 1 : 0, proposed, merges, removals, replaces, startedBy, ts, ts);
+    if (record) db.prepare('UPDATE shape_features SET care = ?, care_chosen_by = ?, care_worca_pick = ?, requirement_kinds = ? WHERE id = ?')
+      .run(record.care.position, record.care.chosenBy, record.care.worcaPick, record.kinds, id);
     const addSlice = db.prepare('INSERT INTO shape_feature_slices (feature_id, idx, slice_id, title, ticket_id, pipeline_id) VALUES (?, ?, ?, ?, ?, ?)');
     addSlice.run(id, 1, outline.slices[0].id, outline.slices[0].title, null, pipelineId);
     let prev = { kind: 'pipeline', id: pipelineId };
@@ -315,6 +337,8 @@ export function featureView(id, { live = () => null } = {}) {
     held: held ? { index: held.index, ticketId: held.ticketId } : null,
     replacedBy: f.replaced_by || null, replan, slices, ship,
     originPipelineId: f.origin_pipeline_id, ask, log: featureLog(f, slices), notes: { ideas },
+    // Shaper small runs A2: the record's 2 keys, last, and only with the flag on (off is dev's exact shape).
+    ...(shaperSmallRunsOn() ? { care: careOfRow(f), requirementKinds: requirementKindsOf(j(f.requirement_kinds, null), f.outline) } : {}),
   };
 }
 

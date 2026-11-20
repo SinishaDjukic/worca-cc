@@ -4,7 +4,7 @@
 import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { EventEmitter } from 'node:events';
-import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { spawnSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -148,6 +148,30 @@ test('GET feature: the view, 404 for an unknown id, and the re-plan successor wi
   assert.equal(viaA.id, b.id);
   assert.equal(viaA.replanOf, a.id);
   assert.equal((await view(b.id)).replanOf, null);
+});
+
+// Shaper small runs A2: flag off is dev's exact body; on adds the record's 2 keys (test/fixtures/shaper/dev-feature-view-keys.json).
+test("GET feature and the card's feature: dev's exact keys with small runs off, plus care and requirementKinds with it on", async () => {
+  const DEV = JSON.parse(readFileSync(new URL('./fixtures/shaper/dev-feature-view-keys.json', import.meta.url), 'utf8'));
+  const RECORD = ['care', 'requirementKinds'];
+  const { id, pid } = mk(2);                                     // running: not ready to ship, so no ship.hint
+  const keys = async () => {
+    const api = await view(id);
+    const card = await (await get(`/api/shape/pipelines/${pid}/card`)).json();
+    return { api, card: card.feature };
+  };
+  const off = await withEnvVars({ WORCA_FLAGS: undefined }, keys);
+  assert.deepEqual(Object.keys(off.api), DEV.api);
+  assert.deepEqual(Object.keys(off.card), DEV.view);
+  assert.deepEqual(Object.keys(off.api.slices[0]), DEV.slice);
+  assert.deepEqual(Object.keys(off.api.ship), DEV.ship);
+  const on = await withEnvVars({ WORCA_FLAGS: 'shaperSmallRuns' }, keys);
+  assert.deepEqual(Object.keys(on.api).sort(), [...DEV.api, ...RECORD].sort());
+  assert.deepEqual(Object.keys(on.card), [...DEV.view, ...RECORD]);
+  assert.deepEqual([on.api.care, on.api.requirementKinds], [{ position: 'balanced', chosenBy: 'default', worcaPick: null }, []]);
+  assert.deepEqual([on.card.care, on.card.requirementKinds], [on.api.care, on.api.requirementKinds]);
+  // Everything dev returns is the same with the flag on.
+  for (const k of DEV.api) assert.deepEqual(on.api[k], off.api[k], k);
 });
 
 test('GET feature: a settled entry is ignored (the pipelines row decides), a paused or plan-asking one is shown (F26)', async () => {
