@@ -230,6 +230,11 @@ test('what step 2 does per provider', () => {
   assert.deepEqual(addStep2Plan('openai', P), { kind: 'list', source: 'endpoint', baseUrl: '', auto: false });
   assert.deepEqual(addStep2Plan('openai', null), { kind: 'list', source: 'endpoint', baseUrl: '', auto: false });
   assert.deepEqual(addStep2Plan('anthropic', P), { kind: 'nolist', text: 'No list to pick from' });
+  // OpenCode lists its own models whatever the provider select says (the models name their own providers).
+  assert.deepEqual(addStep2Plan('copilot', P, { engine: 'opencode' }), { kind: 'list', source: 'opencode' });
+  assert.deepEqual(addStep2Plan('openrouter', P, { engine: 'opencode' }), { kind: 'list', source: 'opencode' });
+  assert.deepEqual(addStep2Plan('openrouter', null, { engine: 'opencode' }), { kind: 'list', source: 'opencode' },
+    "an OpenCode list never depends on a provider's state");
 });
 
 test("step 2's toolbar and foot", () => {
@@ -295,6 +300,23 @@ test("step 2's toolbar and foot", () => {
   assert.deepEqual(read(), ['1 selected', 'Add 1 model', false]);
   paintAddSelection(cp, 0);
   assert.deepEqual(read(), ['', 'Add models', true]);
+});
+
+test("step 2 for OpenCode: a static source label instead of the provider select, the filter and Enter-an-id kept", () => {
+  const doc = docOf();
+  const oc = renderAddStep2({ provider: 'copilot', engine: 'opencode' }, { doc, providers: P });
+  assert.equal(oc.dataset.engine, 'opencode');
+  assert.equal(oc.querySelector('select.mdl-add-provider'), null, 'there is no provider to pick: the models name their own');
+  const src = oc.querySelector('.mdl-add-bar > .mdl-add-source');
+  assert.ok(src, 'the toolbar names the source');
+  assert.equal(src.querySelector('.mdl-add-source-t').textContent, 'OpenCode');
+  assert.match(src.querySelector('.mdl-mark img')?.getAttribute('src') || '', /opencode\.svg$/, "OpenCode's harness mark");
+  assert.ok(oc.querySelector('.mdl-add-bar > input#mimp-filter'), 'the filter stays');
+  assert.equal(oc.querySelector('.mdl-add-bar > button.mdl-manual').textContent, 'Enter an id instead');
+  assert.equal(oc.querySelector('#mimp-base'), null, 'no endpoint row');
+  assert.equal(oc.querySelector('.mimp-preset'), null);
+  const foot = [...oc.querySelectorAll(':scope > .mdl-add-foot.mv-editor-btns > *')].map((n) => n.className);
+  assert.deepEqual(foot, ['mdl-add-note', 'btn mv-back', 'btn btn-primary mimp-go']);
 });
 
 test('the sheets say "In catalogue"', () => {
