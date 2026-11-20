@@ -464,3 +464,9 @@ input.wft-mono[type="text"],textarea.wft-mono{font-family:var(--mono);}
 .wft-crit-meta .wft-linkbtn{font-weight:600;text-decoration:none;}
 .wft-crit-meta .wft-linkbtn:hover{text-decoration:underline;}
 .wft-crit-sect > .field{margin:10px 0 0;}
+/* Part 4, P4-M2 (boards 50–52): the sentence box and its Remove button on one line; the two Add buttons side by side; the amber
+   "Confirm 4 results" badge is a button. */
+.wft-crit-in{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:6px;align-items:center;}
+.wft-crit-adds{display:flex;flex-wrap:wrap;gap:8px;}
+button.badge.wft-confirm{border:0;font-family:inherit;font-weight:600;cursor:pointer;}
+button.badge.wft-confirm:hover{text-decoration:underline;}

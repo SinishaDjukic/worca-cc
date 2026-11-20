@@ -555,3 +555,18 @@ test('Part 4 (Task 18): no models read: an empty select, and no judge is sent', 
   assert.equal(root.querySelector('.wft-crit-sect .wft-grp-hint').textContent.includes('Worca reads the result'), true);
   assert.deepEqual([ed.value().criteria, ed.value().judge], [[], null]);
 });
+
+test('Part 4 (P4-M2): a new example says "Not checked yet"; Add an exact check opens the check dialog and adds a check', async () => {
+  const { root, doc, ed } = boot({ ...BLANK_EXAMPLE, criteria: [{ text: 'Names a success metric with a number' }] },
+    { ctx: { criteriaTrust: { k_9: { state: 'reliable', n: 20, agree: 20, decides: true } } } });
+  assert.match(root.querySelector('.wft-crit .wft-crit-meta').textContent, /^Not checked yet Save the example first\./);
+  click(root.querySelector('button.wft-add-exact'));
+  const kind = doc.querySelector('#wft-ck-kind');
+  kind.value = 'mentions'; kind.dispatchEvent(new doc.defaultView.Event('change'));
+  const text = doc.querySelector('#wft-ck-text');
+  text.value = '200 invoices'; text.dispatchEvent(new doc.defaultView.Event('input'));
+  click(doc.querySelector('.wft-dlg-ok'));
+  await tick();
+  assert.equal(ed.value().checks.at(-1).text, '200 invoices');
+  assert.equal(ed.value().criteria.length, 1, 'the criteria stay');
+});

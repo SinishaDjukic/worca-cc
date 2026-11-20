@@ -768,9 +768,12 @@ export function renderExampleEditor(root, ex, actions, { doc, win, scripts = [],
   c3.append(sect);
   // Part 4 (boards 2, 32): Your criteria and Checked with, after the automatic checks. Switch (D94) is handled here, where the
   // draft's checks live (review I8): the new check joins draft.checks, and the criterion leaves the section's own list.
-  crit = renderCriteriaSection(doc, draft, { models: judgeModels, trust: criteriaTrust, project: !!pick.key, onConfirm: onConfirmCriterion,
+  // P4-M2: an example not saved yet has no trust to read ("Not checked yet"); "Add an exact check" adds an automatic check.
+  crit = renderCriteriaSection(doc, draft, { models: judgeModels, trust: draft.id == null ? null : criteriaTrust, project: !!pick.key,
+    onConfirm: onConfirmCriterion,
     onSwitch: (c, alt) => openCheckDialog({ doc, win, scripts: listed, project: !!pick.key, suggest: { criterion: c, alt },
-      onSave: (nc) => { draft.checks.push(nc); repaintCheckRows(); crit.remove(c); } }) });
+      onSave: (nc) => { draft.checks.push(nc); repaintCheckRows(); crit.remove(c); } }),
+    onAddExact: () => openCheckDialog({ doc, win, scripts: listed, project: !!pick.key, onSave: (nc) => { draft.checks.push(nc); repaintCheckRows(); } }) });
   c3.append(crit.el);
 
   const cols = el(doc, 'div', 'wft-cols');
