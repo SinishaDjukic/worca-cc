@@ -1,6 +1,7 @@
 // src/shared/workflow-tests/criteria-report.mjs — Part 4's report models (plans/workflow-tests-part4-plan.md D99; boards 1, 5, 12; Task 16
 // adds board 13). Pure and browser-safe: the server computes, the pages format.
 import { finishedTry } from './criteria-verdicts.mjs';
+import { ANSWERS_NEEDED, AGREE_MIN } from './criteria.mjs';
 
 /** D99: one row per criterion of each example, and per automatic check made from a criterion (`said`), with met counts per side. */
 export function byCriterionModel({ examples = [], hasA = true, tries = [] }) {
@@ -61,8 +62,11 @@ const pct = (a, n) => (n ? Math.round((a / n) * 100) : 0);
  * `colleagues` is false until Part 5 brings their blind reviews, so tile 1's sub-line is "of N answers" (n).
  */
 export function trustReportModel({ criteria = [], rounds = [], pairs = [], proofs = { found: 0, of: 0 }, lastAt = null, costUsd = 0 }) {
-  const n = criteria.reduce((s, c) => s + (c.trust ? c.trust.n : 0), 0);
-  const agree = criteria.reduce((s, c) => s + (c.trust ? c.trust.agree : 0), 0);
+  // Trust is per criterion words and model, so criteria shared by several examples (same `trustKey`) count their answers once.
+  const once = new Map();
+  criteria.forEach((c, i) => { if (c.trust) once.set(c.trustKey != null ? c.trustKey : `row${i}`, c.trust); });
+  const n = [...once.values()].reduce((s, t) => s + t.n, 0);
+  const agree = [...once.values()].reduce((s, t) => s + t.agree, 0);
   let caught = 0; let of = 0; const missedOn = [];
   for (const r of rounds) {
     const planted = r.cards.filter((c) => c.planted);
@@ -70,18 +74,20 @@ export function trustReportModel({ criteria = [], rounds = [], pairs = [], proof
     of += planted.length; caught += planted.length - miss;
     if (miss) missedOn.push(r.criterionText);
   }
-  const again = rounds.filter((r) => r.same.n === r.same.of).length;
-  const fooled = rounds.filter((r) => r.padding.n < r.padding.of).length;
+  const sameRounds = rounds.filter((r) => r.same.of > 0);   // a round whose repeats did not run says nothing
+  const padRounds = rounds.filter((r) => r.padding.of > 0);
+  const again = sameRounds.filter((r) => r.same.n === r.same.of).length;
+  const fooled = padRounds.filter((r) => r.padding.n < r.padding.of).length;
   const pairsSame = pairs.filter((p) => p.winner && p.winner !== 'unsure').length;
   const count = (s) => criteria.filter((c) => c.trust && c.trust.state === s).length;
   const state = (ok, any) => (!any ? 'none' : ok ? 'good' : 'bad');
   const tests = [
     { key: 'planted', state: state(caught === of, of), caught, of, missedOn },
-    { key: 'again', state: state(again === rounds.length, rounds.length), n: again, of: rounds.length },
+    { key: 'again', state: state(again === sameRounds.length, sameRounds.length), n: again, of: sameRounds.length },
     { key: 'order', state: state(pairsSame === pairs.length, pairs.length), n: pairsSame, of: pairs.length },
-    { key: 'longer', state: state(fooled === 0, rounds.length), fooled },
+    { key: 'longer', state: state(fooled === 0, padRounds.length), fooled },
     { key: 'proof', state: state(proofs.found === proofs.of, proofs.of), n: proofs.found, of: proofs.of },
-    { key: 'people', state: state(n >= 10 && pct(agree, n) >= 80, n), n, agree, pct: pct(agree, n) },
+    { key: 'people', state: state(pct(agree, n) >= AGREE_MIN * 100, n >= ANSWERS_NEEDED), n, agree, pct: pct(agree, n) },
   ];
   const todo = [
     ...criteria.filter((c) => c.trust && c.trust.state === 'unreliable').map((c) => ({ kind: 'fix', exampleId: c.exampleId, criterionId: c.criterionId, text: c.text })),

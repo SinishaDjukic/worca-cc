@@ -217,16 +217,24 @@ export function pairOf(tA, tB, { by = null } = {}) {
 /** Board 13 (D95-D100): the trust report of a workflow. `checker` = the routes' instance, for its `view`. */
 export function trustReportOf(workflowId, { checker }) {
   const memo = new Map();
-  const criteria = store.listExamples(workflowId).flatMap((e) => {
+  const examples = store.listExamples(workflowId);
+  const live = new Set();   // `${fp}|${model}` of every criterion as it stands: only these count (old words and old models do not)
+  const liveEx = new Set(); // `${exampleId}|${model}`
+  const criteria = examples.flatMap((e) => {
     const t = trustOfExample(e, memo);
-    return e.criteria.map((c) => ({ exampleId: e.id, exampleName: e.name, criterionId: c.id, text: c.text, trust: t[c.id] }));
+    const model = e.judge ? e.judge.model : null;
+    if (model) liveEx.add(`${e.id}|${model}`);
+    return e.criteria.map((c) => {
+      const key = model ? `${cs.criterionFp(c.text)}|${model}` : null;
+      if (key) live.add(key);
+      return { exampleId: e.id, exampleName: e.name, criterionId: c.id, text: c.text, trust: t[c.id], trustKey: key };
+    });
   });
-  const live = new Set(criteria.map((c) => cs.criterionFp(c.text)));
-  const rounds = cs.latestRounds(workflowId).filter((r) => live.has(r.fp)).map((r) => {
+  const rounds = cs.latestRounds(workflowId).filter((r) => live.has(`${r.fp}|${r.model}`)).map((r) => {
     const v = checker.view(r, { anyone: true });   // I9: whoever answered a card, not only the viewer
     return { criterionText: v.criterion, cards: v.cards, same: v.auto.same, padding: v.auto.padding, at: r.finishedAt, cost: v.costUsd };
   });
-  const pairs = cs.pairJudgements(workflowId).map((j) => ({ winner: j.winner, swapped: j.variant ? j.variant.swapped : null }));
+  const pairs = cs.pairJudgements(workflowId, liveEx).map((j) => ({ winner: j.winner, swapped: j.variant ? j.variant.swapped : null }));
   const lastAt = rounds.map((r) => r.at).filter(Boolean).sort().at(-1) || null;
-  return trustReportModel({ criteria, rounds, pairs, proofs: cs.tryProofCounts(workflowId), lastAt, costUsd: rounds.reduce((s, r) => s + r.cost, 0) });
+  return trustReportModel({ criteria, rounds, pairs, proofs: cs.tryProofCounts(workflowId, live), lastAt, costUsd: rounds.reduce((s, r) => s + r.cost, 0) });
 }

@@ -115,3 +115,17 @@ test('trustReportModel: the early states (P4-M4) and the words of each test', ()
   assert.equal(trustTestLine({ key: 'planted', state: 'bad', caught: 4, of: 6, missedOn: ['A', 'B'] }), '4 of 6 caught. Missed on "A", "B".');
   assert.equal(TRUST_TESTS.order[0], 'Order swapped');
 });
+
+test('trustReportModel fix round 1: a shared criterion counts once; below 10 answers the people test waits; empty repeats are left out', () => {
+  const shared = { state: 'collecting', n: 6, agree: 6, decides: true };
+  const row = (id) => ({ exampleId: id, exampleName: `E${id}`, criterionId: `k_${id}`, text: 'Same words', trust: shared, trustKey: 'fp|model' });
+  const m = trustReportModel({ criteria: [row(1), row(2)] });
+  assert.deepEqual(m.tiles.agree, { n: 6, agree: 6 });   // not 12
+  assert.equal(m.tests.find((t) => t.key === 'people').state, 'none');   // 100% of 6 is waiting, never bad
+  const ten = trustReportModel({ criteria: [{ ...row(1), trust: { state: 'unreliable', n: 10, agree: 7, decides: false } }] });
+  assert.equal(ten.tests.find((t) => t.key === 'people').state, 'bad');
+  const rounds = [{ criterionText: 'A', cards: [], same: { n: 0, of: 0 }, padding: { n: 0, of: 0 } }];
+  const r = trustReportModel({ criteria: [row(1)], rounds });
+  assert.equal(r.tests.find((t) => t.key === 'again').state, 'none');
+  assert.equal(r.tests.find((t) => t.key === 'longer').state, 'none');
+});

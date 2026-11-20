@@ -409,3 +409,43 @@ test('GET trust: the report of the workflow', async () => {
   assert.equal(r.body.tests.length, 6);
   assert.equal(r.body.tiles.trusted.of, store.listExamples('wf_api_c').reduce((s, e) => s + e.criteria.length, 0));   // the brief's 1 assumed a smaller file
 });
+
+test('GET trust fix round 1: only the newest ready round of the current words and model counts; proof and pairs only count live work', async () => {
+  const ex = store.listExamples('wf_api_c')[0];
+  const crit = ex.criteria[0];
+  const model = ex.judge.model;
+  const fp = cs.criterionFp(crit.text);
+  const mkRound = (f, m, status, how) => {
+    const r = cs.createRound({ workflowId: 'wf_api_c', exampleId: ex.id, criterionId: crit.id, fp: f, model: m, source: { criterionText: crit.text } });
+    cs.updateRound(r.id, { status });
+    const mk = (purpose, card, met) => cs.insertJudgement({ workflowId: 'wf_api_c', exampleId: ex.id, criterionId: crit.id, fp: f, model: m, purpose, roundId: r.id, card,
+      variant: purpose === 'real' ? null : { how: 'x' }, j: { met, reason: 'r', proof: 'p', proofFound: true, costUsd: 0, ms: 1 } });
+    for (const [i, met] of how.entries()) mk(i === 0 ? 'real' : 'planted', i, met);
+    return r;
+  };
+  mkRound(fp, model, 'ready', [true, true, false, false]);      // live: 3 planted, 1 missed
+  mkRound(fp, model, 'failed', [true, true, true, true]);       // newer but failed: never counts
+  mkRound('stale-fp', model, 'ready', [true, true, true, true]); // old words: never counts
+  mkRound(fp, 'old-model', 'ready', [true, true, true, true]);   // old model: never counts
+  const r = await call('GET', `${WF}/trust`);
+  assert.equal(r.status, 200);
+  assert.equal(r.body.tiles.planted.of, 3);
+  assert.equal(r.body.tiles.planted.caught, 2);
+  assert.deepEqual(r.body.tiles.planted.missedOn, [crit.text]);
+  assert.equal(r.body.tests.find((t) => t.key === 'planted').state, 'bad');
+  // proof counts only the live (words, model) pairs
+  const liveKeys = new Set([`${fp}|${model}`]);
+  const before = cs.tryProofCounts('wf_api_c', liveKeys);
+  const allBefore = cs.tryProofCounts('wf_api_c').of;
+  cs.insertJudgement({ workflowId: 'wf_api_c', exampleId: ex.id, criterionId: crit.id, fp: 'gone', model, purpose: 'try', tryId: store.triesOfRun(store.listTestRuns('wf_api_c')[0].id)[0].id,
+    j: { met: true, reason: 'r', proof: 'p', proofFound: false, costUsd: 0, ms: 1 } });
+  assert.deepEqual(cs.tryProofCounts('wf_api_c', liveKeys), before);
+  assert.equal(cs.tryProofCounts('wf_api_c').of, allBefore + 1);
+  // pairs: of a removed example or an old model do not count
+  const tid = store.triesOfRun(store.listTestRuns('wf_api_c')[0].id)[0].id;
+  const pair = (exId, m) => cs.insertJudgement({ workflowId: 'wf_api_c', exampleId: exId, fp: 'pair', model: m, purpose: 'pair', tryId: tid, otherTryId: tid + 1000,
+    j: { winner: 'a', reason: 'r', swapped: 'a', costUsd: 0, ms: 1 } });
+  pair(ex.id, model); pair(ex.id, 'old-model'); pair(99999, model);
+  const live = new Set([`${ex.id}|${model}`]);
+  assert.equal(cs.pairJudgements('wf_api_c', live).length, cs.pairJudgements('wf_api_c').length - 2);
+});

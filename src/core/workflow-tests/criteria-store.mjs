@@ -180,13 +180,17 @@ export function latestRounds(workflowId) {
       AND id = (SELECT MAX(id) FROM wf_test_checker_rounds x WHERE x.workflow_id = r.workflow_id AND x.criterion_fp = r.criterion_fp AND x.model = r.model
       AND x.status IN ('ready', 'done'))`).all(workflowId).map(roundOf);
 }
-export function pairJudgements(workflowId) {
+/** `live` = the keys `${exampleId}|${model}` of the examples that still exist with their current model. */
+export function pairJudgements(workflowId, live = null) {
   getDb();
-  return prepare(`SELECT ${J_COLS} FROM wf_test_judgements WHERE workflow_id = ? AND purpose = 'pair' AND winner IS NOT NULL`).all(workflowId).map(judgementOf);
+  return prepare(`SELECT ${J_COLS} FROM wf_test_judgements WHERE workflow_id = ? AND purpose = 'pair' AND winner IS NOT NULL`).all(workflowId).map(judgementOf)
+    .filter((j) => !live || live.has(`${j.exampleId}|${j.model}`));
 }
-export function tryProofCounts(workflowId) {
+/** `live` = the keys `${fp}|${model}` of the criteria as they stand; null counts everything. */
+export function tryProofCounts(workflowId, live = null) {
   getDb();
   const r = prepare(`SELECT COUNT(*) AS n, COALESCE(SUM(proof_found), 0) AS f FROM wf_test_judgements WHERE workflow_id = ? AND purpose = 'try'
-      AND (met IS NOT NULL OR error = 'no-proof')`).get(workflowId);
+      AND (met IS NOT NULL OR error = 'no-proof') AND (? IS NULL OR criterion_fp || '|' || model IN (SELECT value FROM json_each(?)))`)
+    .get(workflowId, live ? JSON.stringify([...live]) : null, live ? JSON.stringify([...live]) : null);
   return { found: Number(r.f || 0), of: Number(r.n || 0) };
 }
