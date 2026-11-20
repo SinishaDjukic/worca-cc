@@ -19,13 +19,15 @@ const num = (v, what) => {
   return n;
 };
 
+/** The same wrapper as Part 2's (routes.mjs), a deliberate copy: an error's `errors` list reaches the response. Exported for its unit test. */
+export const handle = (fn) => async (req, res) => {
+  try { await fn(req, res); } catch (e) {
+    res.status(STATUS[e && e.code] || 500).json({ error: e && e.message ? e.message : String(e), ...(e && Array.isArray(e.errors) ? { errors: e.errors } : {}) });
+  }
+};
+
 export function registerCriteriaRoutes(app, { runner = null, criteriaJudge = null, deps = {} } = {}) {
   const gate = requireFlag('workflowTests');
-  const handle = (fn) => async (req, res) => {
-    try { await fn(req, res); } catch (e) {
-      res.status(STATUS[e && e.code] || 500).json({ error: e && e.message ? e.message : String(e) });
-    }
-  };
   const route = (method, path, fn) => app[method.toLowerCase()](path, gate, handle(fn));
   const wid = (req) => String(req.params.id || '');
   const by = (req) => actorOf(req) || null;
@@ -50,5 +52,6 @@ export function registerCriteriaRoutes(app, { runner = null, criteriaJudge = nul
     cs.setAnswer(j.id, { agree, by: by(req) });
     res.json({ answer: cs.answerOf(j.id, by(req)), trust: j.purpose === 'pair' ? null : trustFor(j.workflowId, j.fp, j.model) });
   });
-  return { runner, criteriaJudge, deps, wid, by, judgement, exampleOf };
+  void exampleOf;   // defined here for Task 18 (4a) and Tasks 12-15 (4b), which use it
+  return { runner, criteriaJudge, deps };
 }

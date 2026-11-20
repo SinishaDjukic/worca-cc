@@ -60,3 +60,24 @@ test('answers: one per person and verdict, replaced and removed; counted per key
     VALUES ('wf', 1, 'k_1', 'f1', 'm', '{}', 'done', 'now')`).run();
   assert.equal(trustFor('wf', 'f1', 'm').state, 'collecting');
 });
+
+// Rules pinned at their edges (Task 8 fix round 1).
+const mk = (purpose, met, { fp = 'f1', model = 'm' } = {}) => cs.insertJudgement({ workflowId: 'wf', exampleId: 1, fp, model, purpose, tryId: 1,
+  j: { met, reason: 'r', proof: 'p', proofFound: true } }).id;
+
+test('answers on another criterion, on a null verdict, and on again / padded judgements do not count', () => {
+  cs.setAnswer(mk('try', true), { agree: true, by: 'ana' });
+  cs.setAnswer(mk('try', true, { fp: 'f2' }), { agree: true, by: 'ana' });
+  cs.setAnswer(mk('try', null), { agree: true, by: 'ana' });
+  cs.setAnswer(mk('again', true), { agree: true, by: 'ana' });
+  cs.setAnswer(mk('padded', false), { agree: true, by: 'ana' });
+  assert.deepEqual(cs.answersFor('wf', 'f1', 'm'), [{ judgeMet: true, agree: true }]);
+  assert.equal(cs.answersFor('wf', 'f2', 'm').length, 1);
+});
+
+test('the exact edges: 8 of 10 is reliable, 7 of 10 is not; a side at 7 of 10 is fine, at 6 of 10 it is not', () => {
+  assert.equal(trustOf({ answers: [...ans(true, true, 8), ...ans(true, false, 2)] }).state, TRUST.RELIABLE);
+  assert.equal(trustOf({ answers: [...ans(true, true, 7), ...ans(true, false, 3)] }).state, TRUST.UNRELIABLE);
+  assert.equal(trustOf({ answers: [...ans(true, true, 7), ...ans(true, false, 3), ...ans(false, true, 10)] }).state, TRUST.RELIABLE);
+  assert.equal(trustOf({ answers: [...ans(true, true, 6), ...ans(true, false, 4), ...ans(false, true, 10)] }).state, TRUST.UNRELIABLE);
+});

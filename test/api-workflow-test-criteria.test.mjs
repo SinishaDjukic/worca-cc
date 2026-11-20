@@ -81,3 +81,24 @@ test('Agree and Disagree on a verdict, and its trust', async () => {
   assert.equal((await call('POST', `/api/workflows/wf_other/tests/judgements/${j.id}/answer`, { agree: true })).status, 404);
   assert.ok(ex);
 });
+
+test('Undo (agree: null) through the route removes the answer of the person', async () => {
+  const [j] = cs.tryJudgements(store.triesOfRun(store.listTestRuns('wf_api_c')[0].id).map((t) => t.id));
+  const done = await call('POST', `${WF}/judgements/${j.id}/answer`, { agree: true });
+  assert.equal(done.body.answer, true);
+  const undone = await call('POST', `${WF}/judgements/${j.id}/answer`, { agree: null });
+  assert.equal(undone.status, 200);
+  assert.equal(undone.body.answer, null);
+  assert.equal(undone.body.trust.n, 0);
+  assert.equal(cs.answerOf(j.id, null), null);
+});
+
+test('handle forwards the `errors` of an error list like Part 2 (unit test of the exported handle)', async () => {
+  const { handle } = await import('../src/core/workflow-tests/criteria-routes.mjs');
+  let code; let body;
+  const res = { status(c) { code = c; return this; }, json(b) { body = b; return this; } };
+  await handle(async () => { throw Object.assign(new Error('bad'), { code: 'BAD_REQUEST', errors: ['a', 'b'] }); })({}, res);
+  assert.deepEqual([code, body], [400, { error: 'bad', errors: ['a', 'b'] }]);
+  await handle(async () => { throw new Error('plain'); })({}, res);
+  assert.deepEqual([code, body], [500, { error: 'plain' }]);
+});
