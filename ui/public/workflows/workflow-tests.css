@@ -475,3 +475,11 @@ button.badge.wft-confirm:hover{text-decoration:underline;}
 .wft-sugg-tag{align-self:flex-start;background:var(--violet-bg);color:var(--violet-ink);font-size:var(--fs-meta);font-weight:700;padding:4px 9px;border-radius:var(--r-sm);}
 .wft-sugg-why{font-size:var(--fs-body);line-height:1.5;}
 .wft-sugg-why b{font-weight:600;}
+/* Part 4, Task 20 (boards 6, 36): under a criterion's row in the side by side, why Worca says yes or no, its proof, the trust line and
+   Agree / Disagree; red for a "Not met", neutral for a "Met". */
+.wft-crit-why{grid-column:1 / -1;display:flex;flex-wrap:wrap;align-items:center;gap:10px 14px;padding:10px 12px;border-radius:var(--r-sm);background:var(--field);color:var(--ink);font-size:var(--fs-body);line-height:1.45;}
+.wft-crit-why.is-bad{background:var(--red-bg);}
+.wft-crit-txt{flex:1 1 360px;display:flex;flex-direction:column;gap:6px;min-width:0;}
+.wft-crit-why p{margin:0;overflow-wrap:anywhere;}
+.wft-crit-why b{font-weight:600;}
+.wft-crit-why .hint{color:var(--ink-2);}

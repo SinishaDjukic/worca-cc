@@ -173,6 +173,13 @@ export function createWorkflowTests(deps) {
         openWholeResult({ doc, win, title, name: wftPatchCut.has(tryId) ? PATCH_CUT_TEXT : null, text: patch || NO_DIFF_TEXT });
       },
       commandOutput: (title, output) => openWholeResult({ doc, win, title, text: output || '' }),
+      // Part 4 (D96, boards 6, 36): Agree / Disagree on one verdict (null takes it back); resolves { answer, trust }, or undefined.
+      answer: async (judgementId, agree) => {
+        const r = await wftCall('POST', `${wftBase(id)}/judgements/${judgementId}/answer`, { agree });
+        if (!r.ok) { notify({ tone: 'err', title: r.error }); return undefined; }
+        if (still()) void wftRefresh();
+        return r.data;
+      },
     };
   }
   /** Board 20's actions. The workflow and the test are read when the page paints: an answer that lands after the page

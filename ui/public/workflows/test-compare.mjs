@@ -10,6 +10,7 @@ import { fmtUsd, fmtUsdFine } from '../../../src/shared/workflow-tests/checks.mj
 import { estimateOf, aboutUsd, agoText, countsText, fmtDuration, pctDelta, durationDelta, countDelta, fmtTimes } from '../../../src/shared/workflow-tests/compare.mjs';
 import { serverName } from '../../../src/shared/workflow-tests/connector-name.mjs';
 import { splitPatchSections, parseFileSection } from '../diff-view.mjs';
+import { criteriaGroup } from './criteria-rows.mjs';
 import { changesTitle, changeCountText, FILE_BADGE, READ_ALL_CHANGES, BOTH_STARTED_FROM, DEV_CAPTION, DEV_SBS_HINT, DEV_START_LEAD, DEV_SETUP_LEAD,
   changesLine, notMetFor, COMMAND_ENDED, COMMAND_TIMED_OUT, SEE_COMMAND_OUTPUT, NOTHING_PUSHED_TEXT, REAL_BLOCKED_TEXT, EACH_ANSWERED_TEXT,
   EACH_STOPPED_ANSWERED_TEXT, READING_CHANGES, inSentence,
@@ -641,6 +642,8 @@ export function renderSideBySide(root, s, actions, { doc, tryIndex = 0, renderMa
       inner.append(row);
     }
   }
+  // Part 4 (boards 6, 36): Your criteria · checked by Worca.
+  for (const e of criteriaGroup(doc, cur, s.labels, { once, actions: { answer: actions.answer ? (id, agree) => actions.answer(id, agree) : null } })) inner.append(e);
   scroll.append(inner);
   sec.append(scroll);
   page.append(sec);
