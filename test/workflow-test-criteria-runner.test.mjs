@@ -97,6 +97,28 @@ test('a new criterion re-checks the reused try in the criteria phase and never r
   assert.equal(store.spentOfRun(second.id), 0.1, 'the second test paid only for its check');
 });
 
+test('P4-M5: the criteria phase says how many earlier tries it checks, and how many are done (board 20\'s line)', async () => {
+  const seen = [];
+  let runner;
+  const h = harness({ deps: { notify: (f) => { const p = runner.criteriaProgressOf(f.testRunId); if (p) seen.push(p); } } });
+  const ex = example([{ text: 'Names a success metric' }]);
+  runner = createTestRunner(h.deps);
+  const first = await runner.start({ workflowId: WF, kind: 'once', b: 'draft', exampleIds: [ex.id], tries: 1, reuseB: true });
+  await waitDone(runner, first.id);
+  store.updateExample(WF, ex.id, { criteria: [...ex.criteria, { text: 'Explains the legal reasons' }] });
+  seen.length = 0;
+  const second = await runner.start({ workflowId: WF, kind: 'once', b: 'draft', exampleIds: [ex.id], tries: 1, reuseB: true });
+  await waitDone(runner, second.id);
+  assert.deepEqual(seen, [{ done: 0, of: 0 }, { done: 0, of: 1 }, { done: 1, of: 1 }], 'the phase starts (not counted yet); one reused try misses a criterion');
+  assert.equal(runner.criteriaProgressOf(second.id), null, 'none once the phase is over');
+  // judgeMissing alone: a try that misses nothing is not counted.
+  const judge = createCriteriaJudge({ subjectOf: async () => TEXT, contextOf: () => '', book: () => {},
+    judgeCriterion: async () => ({ met: true, reason: 'r', proof: 'Cut tickets by 60%', proofFound: true, error: null, costUsd: 0, ms: 1 }) });
+  const steps = [];
+  await judge.judgeMissing(store.readTestRun(second.id), { onProgress: (p) => steps.push(p) });
+  assert.deepEqual(steps, [{ done: 0, of: 0 }]);
+});
+
 test('M13: an unfinished try is never checked, and the criteria phase stops when asked or over the cap', async () => {
   const calls = [];
   const judge = createCriteriaJudge({ subjectOf: async () => TEXT, contextOf: () => '', book: () => {},

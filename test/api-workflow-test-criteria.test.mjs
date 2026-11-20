@@ -175,6 +175,8 @@ test('review: a criterion added after the test is new, one the limit left unchec
   const compare = await call('GET', `${WF}/runs/${run.id}/compare`);
   assert.deepEqual(compare.body.notes.notChecked.map((n) => [n.reason, n.criteria]).sort(),
     [['new', ['Names the users']], ['unchecked', ['Explains the legal reasons']]]);
+  assert.equal(compare.body.costUnknown, false, 'P4-Q17: every check of this test has a known cost');
+  assert.equal((await call('GET', `${WF}/runs/${run.id}`)).body.criteriaPhase, null, 'P4-M5: the progress read; no criteria phase now');
   // Test again with every try reused: the plan counts the reused try that still misses criteria, and the estimate prices it.
   const plan = (await call('GET', `${WF}/plan?b=draft&examples=${ex.id}&tries=1`)).body;
   assert.equal(plan.b.reusable, 1);

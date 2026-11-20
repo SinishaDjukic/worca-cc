@@ -857,7 +857,7 @@ export async function compareOf(workflowId, runId, { registry = loadAgentRegistr
   }
   return { run, title: testTitle(run, ctx), labels: { a: input.a ? input.a.label : null, b: input.b.label },
     examples: input.examples.length, costUsd: store.spentOfRun(run.id), model: compareModel(input), notes: compareNotes(input), changes, fair,
-    madeAgain: store.madeAgainOf(run.id) };   // U-T2: the page adds it to the fair-comparison lines
+    madeAgain: store.madeAgainOf(run.id), costUnknown: store.costUnknownOfRun(run.id) };   // U-T2: the fair-comparison lines; P4-Q17
 }
 
 /** Board 6 (G2: one column for Try it once now) and board 31 (what a pretend try would have sent). The cards show the

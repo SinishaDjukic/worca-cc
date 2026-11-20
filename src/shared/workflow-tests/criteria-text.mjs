@@ -48,6 +48,30 @@ export const BY_CRITERION = 'By criterion';
 export const BY_EXAMPLE = 'By example';
 export const SEE_BY_CRITERION = 'See by criterion';
 
+/** P4-M5: Compare's lines about criteria that did not decide every try, and board 20's line in the criteria phase. */
+export const CRITERIA_CHANGED_TEXT = 'Your criteria changed after this test. New criteria show as "Not checked yet" until Worca checks them on these tries.';
+export const CHECK_THEM = 'Check them on these tries';
+export const NOT_EVERY_TRY = 'Not checked on every try, so it does not decide yet';
+export const CHECKING_CRITERIA_TEXT = 'Worca is checking your criteria on these tries… No test of this workflow can start until it is done.';
+export const CHECKED_CRITERIA_TEXT = 'Worca checked your criteria on these tries.';
+export const CAP_CHECKS_TEXT = 'This test reached its cost limit, so Worca checks nothing more on it. Test again to check your criteria.';
+export const ADDED_AFTER_TEXT = 'Added after this test';
+export const NO_CHECKED_TRY = 'No checked try';
+export const COST_UNKNOWN_NOTE = 'the cost of some checks is not known';
+export const CRITERIA_PHASE_TEXT = 'Checking your criteria on earlier tries';
+/** "Not checked on every try, so it does not decide yet: "A", "B" in Example 1; "C" in Example 2." (`entries` = notes.notChecked). */
+export const notEveryTryText = (entries) => `${NOT_EVERY_TRY}: ${entries.map((e) => `"${e.criteria.join('", "')}" in ${e.name}`).join('; ')}.`;
+/** In short (D98): the examples that differ only in unreliable criteria. `b` and `a` are the versions' labels, as In short's other
+ *  sentences write them (compare.mjs inShortSentences: "v5 draft is cheaper …"). */
+export function unreliableOnlyText(a, b, names) {
+  const who = `${b} differs from ${a}`;
+  return names.length === 1 ? `${who} on 1 example only in a criterion Worca cannot judge reliably yet: ${names[0]}.`
+    : `${who} on ${names.length} examples only in criteria Worca cannot judge reliably yet: ${names.join(', ')}.`;
+}
+/** The example's row in By example: the criteria it differs in (none known: the words without them). */
+export const unreliableWhyText = (labels) => (labels.length ? `Differs only in "${labels.join('", "')}", which Worca cannot judge reliably yet`
+  : 'Differs only in criteria Worca cannot judge reliably yet');
+
 /** Board 13: each test's title, what it does, and its result line. */
 export const TRUST_TESTS = Object.freeze({
   planted: ['Planted mistakes', 'Worca breaks good results on purpose, for example removes a number or adds a made-up quote, and checks that it notices.'],

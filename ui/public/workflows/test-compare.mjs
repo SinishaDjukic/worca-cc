@@ -11,7 +11,8 @@ import { estimateOf, aboutUsd, agoText, countsText, fmtDuration, pctDelta, durat
 import { serverName } from '../../../src/shared/workflow-tests/connector-name.mjs';
 import { splitPatchSections, parseFileSection } from '../diff-view.mjs';
 import { criteriaGroup } from './criteria-rows.mjs';
-import { compareCriteriaParts } from './criteria-pages.mjs';
+import { compareCriteriaParts, compareCriteriaNotes } from './criteria-pages.mjs';
+import { COST_UNKNOWN_NOTE } from '../../../src/shared/workflow-tests/criteria-text.mjs';
 import { changesTitle, changeCountText, FILE_BADGE, READ_ALL_CHANGES, BOTH_STARTED_FROM, DEV_CAPTION, DEV_SBS_HINT, DEV_START_LEAD, DEV_SETUP_LEAD,
   changesLine, notMetFor, COMMAND_ENDED, COMMAND_TIMED_OUT, SEE_COMMAND_OUTPUT, NOTHING_PUSHED_TEXT, REAL_BLOCKED_TEXT, EACH_ANSWERED_TEXT,
   EACH_STOPPED_ANSWERED_TEXT, READING_CHANGES, inSentence,
@@ -211,6 +212,9 @@ export function renderCompare(root, c, actions, { doc, now = Date.now(), mock = 
   const held = heldFocus(root, doc);
   root.replaceChildren();
   const runId = c.run.id;
+  // P4-M5: the criteria lines (the band, the fair line, In short's sentence, a row's line).
+  const cn = compareCriteriaNotes(doc, c, { root, act: (label, fn, cls, key, o) => act(doc, root, runId, label, fn, cls, key, o),
+    testAgain: () => actions.testAgain(), checkCriteria: actions.checkCriteria ? () => actions.checkCriteria() : null });
   const page = el(doc, 'div', 'wft-page wft-compare');
   const m = c.model;
   const A = c.labels.a || '—';
@@ -219,21 +223,25 @@ export function renderCompare(root, c, actions, { doc, now = Date.now(), mock = 
   const when = c.run.status === 'stopped' ? 'stopped early' : `ready ${agoText(c.run.finishedAt, now)}`;
   const meta = el(doc, 'span', 'hint', `${countsText(c.examples, c.run.tries)} · ${when} · cost `);
   meta.append(el(doc, 'span', 'code', fmtUsd(c.costUsd)));
+  if (c.costUnknown) meta.append(doc.createTextNode(` · ${COST_UNKNOWN_NOTE}`));   // P4-Q17
   head.append(titles(doc, act(doc, root, runId, 'Tests', () => actions.back(), 'wft-crumb', 'wft-cmp-back'), el(doc, 'h2', 'wft-title', c.title), meta));
   const acts = el(doc, 'div', 'wft-acts');
-  acts.append(act(doc, root, runId, 'Test again', () => actions.testAgain(), 'btn', 'wft-cmp-again', { busy: true }));
+  const again = act(doc, root, runId, 'Test again', () => actions.testAgain(), 'btn', 'wft-cmp-again', { busy: true });
+  if (cn.checking) again.disabled = true;   // no test of the workflow starts while Worca checks its criteria (P4-M5)
+  acts.append(again);
   head.append(acts);
   page.append(head);
   if (mock) page.append(mockNote(doc));   // F52
+  if (cn.band) page.append(cn.band);
 
   let short = null;
-  if (m.inShort.length) {   // C2: the model's sentences; none when nothing compares (D38)
+  if (m.inShort.length || cn.short) {   // C2: the model's sentences; none when nothing compares (D38)
     const s = (short = el(doc, 'section', 'wft-short'));
     const box = el(doc, 'div');
     const h = el(doc, 'h2', '', 'In short');
     h.id = 'wft-short-h';
     s.setAttribute('aria-labelledby', h.id);
-    const p = el(doc, 'p', '', m.inShort.join(' '));
+    const p = el(doc, 'p', '', [...m.inShort, ...(cn.short ? [cn.short] : [])].join(' '));
     if (m.look) p.append(doc.createTextNode(` ${m.look.before}`), el(doc, 'b', '', m.look.name), doc.createTextNode(m.look.after));
     box.append(h, p);
     s.append(box);
@@ -296,6 +304,8 @@ export function renderCompare(root, c, actions, { doc, now = Date.now(), mock = 
           act(doc, root, runId, `Try ${Math.min(3, MAX_TRIES - c.run.tries)} more`, () => actions.tryMore(r.id), 'wft-linkbtn', `wft-cmp-more-${r.id}`, { busy: true }));
       }
       row.append(why);
+    } else if (cn.whyOf(r.id)) {
+      row.append(el(doc, 'span', 'wft-why', cn.whyOf(r.id)));   // P4-M5: a difference only in unreliable criteria
     } else if (r.why) {
       row.append(el(doc, 'span', 'wft-why', r.why));
     }
@@ -334,6 +344,7 @@ export function renderCompare(root, c, actions, { doc, now = Date.now(), mock = 
     p.append(icon(doc, 'alert', 14), el(doc, 'span', '', f));
     ch.append(p);
   }
+  if (cn.fair) ch.append(cn.fair);
   if (crit) ch.append(crit.line);
   cols.append(ch);
   page.append(cols);

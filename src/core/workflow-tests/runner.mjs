@@ -335,9 +335,10 @@ export function createTestRunner(deps) {
     if (!st.stopping && deps.judgeMissing) {
       st.criteriaPhase = true;
       notify(run);
-      try { await deps.judgeMissing(run, { stopped: () => !!st.stopping, overCap: () => overCap(run) }); }
+      const onProgress = (p) => { st.criteriaProgress = p; notify(run); };   // P4-M5: board 20's "7 of 12 tries"
+      try { await deps.judgeMissing(run, { stopped: () => !!st.stopping, overCap: () => overCap(run), onProgress }); }
       catch (e) { console.error(`[workflow-tests] could not check the criteria of test ${run.id}: ${msgOf(e)}`); }
-      finally { st.criteriaPhase = false; notify(run); }
+      finally { st.criteriaPhase = false; st.criteriaProgress = null; notify(run); }
     }
   }
 
@@ -779,6 +780,8 @@ export function createTestRunner(deps) {
 
   /** D91: the test is in its criteria phase (the reused tries and any missing check are being checked). */
   function criteriaPhaseOf(runId) { const st = live.get(Number(runId)); return !!(st && st.criteriaPhase); }
+  /** P4-M5: in the criteria phase, how many earlier tries it checks and how many are done ({ done, of }); else null. */
+  function criteriaProgressOf(runId) { const st = live.get(Number(runId)); return st && st.criteriaPhase ? { ...(st.criteriaProgress || { done: 0, of: 0 }) } : null; }
 
-  return { start, stop, continueRun, recover, idle, costOf, phaseOf, diskOf, beforeNowOf, stoppingOf, criteriaPhaseOf, checkCriteriaLater, criteriaCheckOf, criteriaCheckingOf };
+  return { start, stop, continueRun, recover, idle, costOf, phaseOf, diskOf, beforeNowOf, stoppingOf, criteriaPhaseOf, criteriaProgressOf, checkCriteriaLater, criteriaCheckOf, criteriaCheckingOf };
 }

@@ -115,7 +115,25 @@ export function createWorkflowTests(deps) {
         if (!r.ok) { notify({ tone: 'err', title: 'More tries did not start', detail: r.error }); return; }
         if (still()) wftShow('progress', { runId: r.data.run.id });   // elsewhere by now: the results-ready toast opens it (C13)
       },
+      checkCriteria: async () => {   // P4-Q15, P4-M5: "Check them on these tries"; the page shows the check at once, then polls
+        const r = await wftCall('POST', `${wftBase(id)}/runs/${run.id}/criteria/check`, {});
+        if (!r.ok) { notify({ tone: 'err', title: 'Worca did not start checking', detail: r.error }); return; }
+        if (still()) { await wftRefresh(); wftPollCriteria(id, run.id); }
+      },
     };
+  }
+  /** P4-Q15: while Worca checks an older test's criteria, read again every 2 s; stops when the view moves on. The runner's
+   *  workflow-tests-changed frame (wftChanged) also repaints Compare when the check ends. */
+  function wftPollCriteria(id, runId) {
+    const still = () => currentView() === 'workflows' && wftWorkflowId() === id && wft.view === 'compare' && wft.runId === runId;
+    const tick = async () => {
+      if (!still()) return;
+      const r = await wftCall('GET', `${wftBase(id)}/runs/${runId}/criteria`);
+      if (!still()) return;
+      if (r.ok && r.data.checking) { win.setTimeout(tick, 2000); return; }
+      void wftRefresh();
+    };
+    win.setTimeout(tick, 2000);
   }
   /** Board 31's excerpt (M1): a try's result through hdMarkdown (marked + DOMPurify, ask-markdown.mjs); plain text until the
    *  renderer has loaded, then the open side by side repaints once. */

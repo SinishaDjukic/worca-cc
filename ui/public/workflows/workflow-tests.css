@@ -521,3 +521,20 @@ button.badge.wft-confirm:hover{text-decoration:underline;}
 .wft-bc-foot{margin:0;}
 .wft-by-crit[hidden],.wft-by .wft-table[hidden],.wft-compare .wft-tiles[hidden],.wft-compare .wft-short[hidden],.wft-compare .wft-changes[hidden]{display:none;}
 @media (max-width:900px){.wft-bc-legend-grid{grid-template-columns:minmax(0,1fr);}}
+/* Part 4, P4-M5: Compare's band about the criteria (amber: changed after the test or at the cost limit; plain while Worca checks; green
+   once checked), a "Not checked yet" or "—" count in By criterion, and board 20's line while the criteria phase runs. */
+.wft-crit-band{display:flex;flex-wrap:wrap;gap:10px 16px;align-items:center;justify-content:space-between;padding:12px 16px;border-radius:var(--r-md);font-size:var(--fs-body);line-height:1.45;color:var(--ink);}
+.wft-crit-band.is-amber{background:var(--amber-wash);border:1px solid var(--amber-line);}
+.wft-crit-band.is-plain{background:var(--panel);border:1px solid var(--line-2);}
+.wft-crit-band.is-ok{background:var(--green-bg);}
+.wft-crit-band-l{display:flex;gap:10px;align-items:flex-start;flex:1 1 360px;min-width:0;}
+.wft-crit-band-l .ic{flex:0 0 auto;margin-top:2px;}
+.wft-crit-band.is-amber .wft-crit-band-l .ic{color:var(--amber-ink-strong);}
+.wft-crit-band.is-plain .wft-crit-band-l .ic{color:var(--peach-ink);}
+.wft-crit-band.is-ok .wft-crit-band-l .ic{color:var(--green-ink-strong);}
+.wft-crit-band .code{font-family:var(--mono);}
+.wft-bc-n.is-none{color:var(--ink-3);}
+.wft-crit-phase{display:flex;flex-wrap:wrap;gap:8px 18px;align-items:center;margin:12px 0 0;font-size:var(--fs-body);}
+.wft-crit-phase .ic{color:var(--peach-ink);}
+.wft-crit-phase b{font-weight:600;}
+.wft-crit-phase .hint{margin:0;}

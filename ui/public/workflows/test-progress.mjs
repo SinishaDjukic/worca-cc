@@ -5,6 +5,7 @@ import { el, btn, startInto, mockNote } from './test-ui.mjs';
 import { fmtUsd, fmtUsdFine, parseUsd } from '../../../src/shared/workflow-tests/checks.mjs';
 import { aboutUsd, fmtDuration } from '../../../src/shared/workflow-tests/compare.mjs';
 import { icon } from '../icons.mjs';
+import { CRITERIA_PHASE_TEXT } from '../../../src/shared/workflow-tests/criteria-text.mjs';
 import { DISK_IN_USE, diskInUseSub, fmtGb, PHASES, PHASE_SUB, PHASES_TITLE, phasesShownFor, nowText, forMinutes, RUNNING_LEAD, FROM_LEAD,
   SETUP_STOP_REST, SETUP_STOP_HINT, SEE_SETUP_OUTPUT, setupWhere, SETUP_FIX_HINT, SETUP_EDITED_HINT, START_NEW_TEST, SETUP_NO_OUTPUT, EDIT_EXAMPLE, TRY_AGAIN,
   worcaStoppedText, worcaBeforeStoppedText, madeAgainText, BEFORE_NOW_TITLE, BEFORE_NOW_LEAD, beforeNowRest, BEFORE_PHASE, BEFORE_NOW_WHY, PHASES_BEFORE_HINT } from '../../../src/shared/workflow-tests/project-text.mjs';
@@ -301,6 +302,14 @@ export function renderTestProgress(root, p, actions, { doc, dateText = (s) => s,
     : fact(doc, 'Time left', p.minutesLeft ? `about ${p.minutesLeft} min` : 'not known yet');
   facts.append(timeFact, fact(doc, over ? 'Cost' : 'Cost so far', fmtUsdFine(p.costUsd), costLine), ...(diskFact ? [diskFact] : []), quickFact);   // board 35's order
   prog.append(bar, facts);
+  if (st === 'running' && p.criteriaPhase) {   // P4-M5: after the last try, Worca checks the criteria of the tries it reused
+    const cp = el(doc, 'p', 'wft-crit-phase');
+    cp.setAttribute('role', 'status');
+    const n = p.criteriaPhase.of;
+    cp.append(icon(doc, 'spinner', 16), el(doc, 'b', '', CRITERIA_PHASE_TEXT));
+    if (n > 0) cp.append(el(doc, 'span', 'hint', `${p.criteriaPhase.done} of ${n} ${n === 1 ? 'try' : 'tries'}`));
+    prog.append(cp);
+  }
   let stopped = null;
   let setupCard = null;
   if (st === 'running') {

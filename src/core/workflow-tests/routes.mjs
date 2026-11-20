@@ -190,7 +190,7 @@ export function registerWorkflowTestRoutes(app, { broadcast = () => {}, deps = {
     const st = p.project && p.project.phases && p.project.phases.start;
     if (st) st.subject = await service.subjectOfStart(st);   // F26
     if (p.project && p.project.setupStop) p.project.setupStop.edited = await service.progressEdited(wid(req), p.run);
-    res.json(p);
+    res.json({ ...p, criteriaPhase: runner.criteriaProgressOf ? runner.criteriaProgressOf(p.run.id) : null });   // P4-M5
   });
   route('POST', `${W}/runs/:run/stop`, async (req, res) => {
     const run = service.runOf(wid(req), num(req.params.run, 'test'));

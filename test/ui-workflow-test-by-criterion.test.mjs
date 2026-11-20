@@ -106,3 +106,122 @@ test('board 5: with criteria, the tabs and the line; By criterion paints full wi
   renderCompare(none, cmp({ criteria: { ...data, counts: { total: 0, reliable: 0, unreliable: 0, waiting: 0 }, rows: [], more: 0 } }), actions, { doc, now: NOW });
   assert.equal(none.querySelector('.wft-by-tabs'), null, 'no criteria: no tabs');
 });
+
+// P4-M5 (approved): the states of the criteria lines in Compare, By criterion's not-checked rows, and the progress line.
+test('P4-M5 By criterion: "—" when a side has no checked try; a new criterion is "Not checked yet", added after this test', () => {
+  const { document: doc } = new JSDOM('<!doctype html><div id="r"></div>').window;
+  const root = doc.getElementById('r');
+  renderByCriterion(root, { ...data, more: 0, rows: [
+    { key: '1|k:5', label: 'Says who may export, and why', exampleName: 'Bulk invoice export', exact: false, trust: { state: 'collecting', n: 3, agree: 3, decides: false },
+      a: { met: 0, of: 0 }, b: { met: 2, of: 3 }, changed: null, unreliableChange: false, uneven: true, reason: 'unchecked' },
+    { key: '3|k:6', label: 'Names who asked for the feature', exampleName: 'A feature we already have', exact: false, trust: { state: 'confirm', n: 0, agree: 0, decides: true },
+      a: { met: 0, of: 0 }, b: { met: 0, of: 0 }, changed: null, unreliableChange: false, uneven: true, reason: 'new' },
+  ] }, { doc, labels: { a: 'v4', b: 'v5' } });
+  const rows = [...root.querySelectorAll('.wft-bc-row:not(.is-head)')];
+  const cells = (r) => [...r.querySelectorAll('.wft-bc-n')].map((x) => [x.textContent, x.getAttribute('aria-label')]);
+  assert.deepEqual(cells(rows[0]), [['—', 'No checked try'], ['2 of 3', null]]);
+  assert.deepEqual([rows[0].querySelector('.badge').textContent, rows[0].querySelector('small').textContent],
+    ['Needs your answers', 'Not checked on every try, so it does not decide yet']);
+  assert.deepEqual(cells(rows[1]), [['Not checked yet', null], ['Not checked yet', null]]);
+  assert.deepEqual([rows[1].querySelector('.badge').textContent, rows[1].querySelector('small').textContent], ['Confirm 4 results', 'Added after this test']);
+});
+
+const NEW = { id: 3, name: 'A feature we already have', reason: 'new', criteria: ['Names who asked for the feature'] };
+const UNCHECKED = { id: 1, name: 'Bulk invoice export', reason: 'unchecked', criteria: ['Names a success metric'] };
+const notes = (over = {}) => ({ unreliableOnly: [], notChecked: [NEW, UNCHECKED], ...over });
+function bootCmp(c) {
+  const { window } = new JSDOM('<!doctype html><div id="r"></div>');
+  const doc = window.document;
+  const root = doc.getElementById('r');
+  const calls = [];
+  const actions = { back() {}, testAgain: () => calls.push('testAgain'), open() {}, tryMore() {}, checkCriteria: () => calls.push('checkCriteria') };
+  renderCompare(root, c, actions, { doc, now: NOW });
+  return { root, calls, again: (d) => renderCompare(root, d, actions, { doc, now: NOW }) };
+}
+
+test('P4-M5 Compare: criteria changed after the test, with the price of checking them; the line for criteria not checked on every try', () => {
+  const { root, calls } = bootCmp(cmp({ notes: notes(), criteria: { ...cmp().criteria, checkUsd: 0.4 } }));
+  const band = root.querySelector('.wft-crit-band');
+  assert.equal(band.querySelector('.wft-crit-band-l').textContent,
+    'Your criteria changed after this test. New criteria show as "Not checked yet" until Worca checks them on these tries.');
+  const price = band.querySelector('button');
+  assert.equal(price.textContent, 'Check them on these tries (about $0.40)');
+  assert.equal(price.querySelector('.code').textContent, '$0.40');
+  click(price);
+  const fair = [...root.querySelectorAll('.wft-changes .wft-fair')].at(-1);
+  assert.equal(fair.textContent, 'Not checked on every try, so it does not decide yet: "Names a success metric" in Bulk invoice export. Check them on these tries');
+  click(fair.querySelector('button'));
+  assert.deepEqual(calls, ['checkCriteria', 'checkCriteria']);
+  const order = [...root.querySelector('.wft-changes').children].map((n) => n.className);
+  assert.ok(order.indexOf('wft-fair') < order.indexOf('hint wft-check-line'), "the fair lines, then Worca's checking (board P4-M5)");
+  assert.ok(root.querySelector('.wft-crit-band').compareDocumentPosition(root.querySelector('.wft-tiles')) & 4, 'the band is above the tiles');
+
+  const unknown = bootCmp(cmp({ notes: notes({ notChecked: [NEW] }), criteria: { ...cmp().criteria, checkUsd: null } }));
+  assert.equal(unknown.root.querySelector('.wft-crit-band button').textContent, 'Check them on these tries (cost not known yet)');
+  assert.equal(unknown.root.querySelector('.wft-changes .wft-fair'), null);
+  const none = bootCmp(cmp({ notes: notes({ notChecked: [] }) }));
+  assert.equal(none.root.querySelector('.wft-crit-band'), null);
+});
+
+test('P4-M5 Compare: while Worca checks, the band says so and nothing starts; when it ends, it says it checked', () => {
+  const c = cmp({ notes: notes(), criteria: { ...cmp().criteria, checkUsd: 0.4, checking: true } });
+  const { root, again } = bootCmp(c);
+  const band = root.querySelector('.wft-crit-band');
+  assert.equal(band.getAttribute('role'), 'status');
+  assert.equal(band.textContent, 'Worca is checking your criteria on these tries… No test of this workflow can start until it is done.');
+  assert.equal([...root.querySelectorAll('button')].filter((b) => /Check them/.test(b.textContent)).length, 0, 'no second check');
+  assert.equal([...root.querySelectorAll('.wft-acts button')].find((b) => b.textContent === 'Test again').disabled, true);
+  again(cmp({ notes: notes({ notChecked: [] }), criteria: { ...cmp().criteria, checkUsd: 0 } }));
+  assert.equal(root.querySelector('.wft-crit-band').textContent, 'Worca checked your criteria on these tries.');
+  assert.equal(root.querySelector('.wft-crit-band').getAttribute('role'), 'status');
+  again(cmp({ notes: notes({ notChecked: [] }), criteria: { ...cmp().criteria, checkUsd: 0 } }));
+  assert.equal(root.querySelector('.wft-crit-band').textContent, 'Worca checked your criteria on these tries.', 'a later frame keeps it');
+  again({ ...cmp({ notes: notes({ notChecked: [] }) }), run: { ...cmp().run, id: 8 } });
+  assert.equal(root.querySelector('.wft-crit-band'), null, 'another test: no such line');
+});
+
+test('P4-M5 Compare: a test at its own cost limit checks nothing more: Test again instead of the check', () => {
+  const { root, calls } = bootCmp(cmp({ notes: notes(), costUsd: 15, criteria: { ...cmp().criteria, checkUsd: 0.4 } }));
+  const band = root.querySelector('.wft-crit-band');
+  assert.equal(band.querySelector('.wft-crit-band-l').textContent, 'This test reached its cost limit, so Worca checks nothing more on it. Test again to check your criteria.');
+  assert.equal([...root.querySelectorAll('button')].filter((b) => /Check them/.test(b.textContent)).length, 0);
+  assert.match(root.querySelector('.wft-changes').textContent, /Not checked on every try, so it does not decide yet: "Names a success metric" in Bulk invoice export\./,
+    'the criteria not checked are still said (the run can end done although its criteria phase stopped)');
+  click(band.querySelector('button'));
+  assert.deepEqual(calls, ['testAgain']);
+});
+
+test("P4-M5 Compare: a change only in unreliable criteria, in In short and the example's row; the cost of some checks is not known", () => {
+  const rows = [{ ...data.rows[1], key: '1|k:2', exampleName: 'Bulk invoice export', unreliableChange: true }];
+  const { root } = bootCmp(cmp({ costUnknown: true, notes: notes({ notChecked: [], unreliableOnly: [{ id: 1, name: 'Bulk invoice export' }] }),
+    criteria: { ...cmp().criteria, rows } }));
+  assert.equal(root.querySelector('.wft-titles .hint').textContent, '1 example, 1 try each · ready 2 hours ago · cost $2.00 · the cost of some checks is not known');
+  assert.match(root.querySelector('.wft-short p').textContent,
+    /v5 draft differs from v4 on 1 example only in a criterion Worca cannot judge reliably yet: Bulk invoice export\.$/);
+  assert.equal(root.querySelector('.wft-crow2:not(.is-head) .wft-why').textContent,
+    'Differs only in "Proposes a test within 4 weeks", which Worca cannot judge reliably yet');
+});
+
+test('P4-M5 progress: after the last try, the line while Worca checks the criteria of earlier tries', async () => {
+  const { renderTestProgress } = await import('../ui/public/workflows/test-progress.mjs');
+  const { window } = new JSDOM('<!doctype html><div id="r"></div>');
+  const doc = window.document;
+  const root = doc.getElementById('r');
+  const p = { run: { id: 9, kind: 'compare', a: 4, b: 'draft', tries: 3, status: 'running', stopReason: null, stopDetail: null, exampleIds: [1] }, title: 'T',
+    rows: [{ exampleId: 1, name: 'Bulk invoice export', label: null, dots: ['passed'], summary: 'Done' }], done: 18, total: 18, costUsd: 1, estimateUsd: 2, capUsd: 15,
+    minutesLeft: null, quick: null, criteriaPhase: { done: 7, of: 12 } };
+  const actions = { back() {}, stop() {}, continue() {}, open() {} };
+  renderTestProgress(root, p, actions, { doc });
+  const line = root.querySelector('.wft-crit-phase');
+  assert.equal(line.getAttribute('role'), 'status');
+  assert.deepEqual([line.querySelector('b').textContent, line.querySelector('.hint').textContent], ['Checking your criteria on earlier tries', '7 of 12 tries']);
+  renderTestProgress(root, { ...p, criteriaPhase: null }, actions, { doc });
+  assert.equal(root.querySelector('.wft-crit-phase'), null);
+});
+
+test('tests-app.mjs (P4-Q15): Check them on these tries posts the check, repaints, and reads again every 2 s while Worca checks', async () => {
+  const { readFileSync } = await import('node:fs');
+  const ctl = readFileSync(new URL('../ui/public/workflows/tests-app.mjs', import.meta.url), 'utf8');
+  assert.ok(/checkCriteria: async \(\) => \{[\s\S]*?wftCall\('POST', `\$\{wftBase\(id\)\}\/runs\/\$\{run\.id\}\/criteria\/check`, \{\}\)/.test(ctl));
+  assert.ok(/function wftPollCriteria\(id, runId\) \{[\s\S]*?r\.ok && r\.data\.checking\) \{ win\.setTimeout\(tick, 2000\); return; \}/.test(ctl));
+});

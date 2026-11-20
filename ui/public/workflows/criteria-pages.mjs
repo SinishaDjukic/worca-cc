@@ -2,7 +2,11 @@
 // (board 12) and its tabs and line in Compare (board 5); Check the checker (board 11) and How reliable is Worca's checking (board 13)
 // follow. Pure DOM, text only.
 import { el, btn } from './test-ui.mjs';
-import { TRUST_BADGE, trustLine, checkingSentence, BY_EXAMPLE, BY_CRITERION, SEE_BY_CRITERION } from '../../../src/shared/workflow-tests/criteria-text.mjs';
+import { icon } from '../icons.mjs';
+import { fmtUsd } from '../../../src/shared/workflow-tests/checks.mjs';
+import { TRUST_BADGE, trustLine, checkingSentence, BY_EXAMPLE, BY_CRITERION, SEE_BY_CRITERION, NOT_CHECKED, CRITERIA_CHANGED_TEXT, CHECK_THEM, NOT_EVERY_TRY,
+  CHECKING_CRITERIA_TEXT, CHECKED_CRITERIA_TEXT, CAP_CHECKS_TEXT, ADDED_AFTER_TEXT, NO_CHECKED_TRY, notEveryTryText, unreliableOnlyText, unreliableWhyText }
+  from '../../../src/shared/workflow-tests/criteria-text.mjs';
 
 const LEGEND = [
   ['reliable', 'Worca agrees with people almost every time and catches the mistakes planted on purpose.'],
@@ -20,8 +24,19 @@ function trustCell(doc, r) {
   const c = el(doc, 'span', 'wft-bc-trust');
   c.append(badgeOf(doc, r.trust ? r.trust.state : 'collecting'));
   if (r.exact) c.append(el(doc, 'span', 'wft-exact', 'Can be checked exactly'));
-  else if (r.trust && r.trust.state !== 'confirm') c.append(el(doc, 'small', '', rowLine(r.trust)));
+  // P4-M5: a criterion not checked on every try decides nothing yet; one added after the test says so instead.
+  if (r.uneven) c.append(el(doc, 'small', '', r.reason === 'new' ? ADDED_AFTER_TEXT : NOT_EVERY_TRY));
+  else if (!r.exact && r.trust && r.trust.state !== 'confirm') c.append(el(doc, 'small', '', rowLine(r.trust)));
   return c;
+}
+/** A side's count; P4-M5: "—" when the side has no checked try, "Not checked yet" for a criterion added after the test. */
+function countCell(doc, r, x, cls) {
+  if (r.uneven && r.reason === 'new') return el(doc, 'span', `${cls} is-none`, NOT_CHECKED.pending);
+  if (x && x.of) return el(doc, 'span', cls, nOf(x));
+  const n = el(doc, 'span', `${cls} is-none`, '—');
+  n.setAttribute('role', 'img');
+  n.setAttribute('aria-label', NO_CHECKED_TRY);
+  return n;
 }
 
 /** Board 12. `data` = GET …/runs/:run/criteria; `labels` = { a, b } (a is null for Try it once). */
@@ -46,7 +61,7 @@ export function renderByCriterion(root, data, { doc, labels, onTrust = null }) {
     const row = el(doc, 'div', `wft-bc-row${r.changed ? ` is-${r.changed}` : ''}`);
     const name = el(doc, 'span', 'wft-bc-name');
     name.append(el(doc, 'b', '', r.label), el(doc, 'span', 'wft-bc-ex', r.exampleName));
-    row.append(name, ...(one ? [] : [el(doc, 'span', 'wft-bc-n', nOf(r.a))]), el(doc, 'span', 'wft-bc-n is-b', nOf(r.b)), trustCell(doc, r));
+    row.append(name, ...(one ? [] : [countCell(doc, r, r.a, 'wft-bc-n')]), countCell(doc, r, r.b, 'wft-bc-n is-b'), trustCell(doc, r));
     inner.append(row);
   }
   if (data.more) {   // the collapsed rows are all reliable (criteria-report.mjs byCriterionModel)
@@ -116,4 +131,68 @@ export function compareCriteriaParts(doc, { root, runId, criteria, labels, table
   line.append(el(doc, 'b', '', CHECKING), doc.createTextNode(`${checkingSentence(criteria.counts).slice(CHECKING.length)} `),
     btn(doc, SEE_BY_CRITERION, () => { show(true); cr.focus(); }, 'wft-linkbtn'));
   return { tabs, box, line, done: (h) => { hide = h.filter(Boolean); show(BY_CRIT.get(root) === runId); } };
+}
+
+/** root → { runId, was, done }: whether "Check them on these tries" was running at the last paint, and has ended since. */
+const CHECKED = new WeakMap();
+
+/**
+ * P4-M5: Compare's criteria lines. `c` = the compare read with its criteria; `act(label, fn, cls, key, opts)` = test-compare.mjs's
+ * button (busy across repaints). Returns the band above In short (checking, checked, at the cost limit, or criteria changed after the
+ * test with the price of checking them), the fair-comparison line for criteria not checked on every try, In short's sentence and
+ * each example row's line for a change only in unreliable criteria.
+ */
+export function compareCriteriaNotes(doc, c, { root, act, testAgain, checkCriteria }) {
+  const crit = c.criteria || null;
+  const notes = c.notes || {};
+  const checking = !!(crit && crit.checking);
+  const was = CHECKED.get(root);
+  const mine = was && was.runId === c.run.id ? was : { runId: c.run.id, was: false, done: false };
+  if (mine.was && !checking) mine.done = true;
+  mine.was = checking;
+  CHECKED.set(root, mine);
+  const notChecked = Array.isArray(notes.notChecked) ? notes.notChecked : [];
+  const fresh = notChecked.filter((n) => n.reason === 'new');
+  const unchecked = notChecked.filter((n) => n.reason !== 'new');
+  // The test's own cap (criteria-routes.mjs refuses the check at it): Test again, never a press that is refused.
+  const atCap = c.run.capUsd != null && Number(c.costUsd) >= Number(c.run.capUsd);
+  const canCheck = !checking && !atCap && typeof checkCriteria === 'function';
+  const band = (tone, iconName, words, role = null) => {
+    const b = el(doc, 'section', `wft-crit-band is-${tone}`);
+    if (role) b.setAttribute('role', role);
+    const l = el(doc, 'span', 'wft-crit-band-l');
+    l.append(icon(doc, iconName, 15), el(doc, 'span', '', words));
+    b.append(l);
+    return b;
+  };
+  let top = null;
+  if (checking) top = band('plain', 'spinner', CHECKING_CRITERIA_TEXT, 'status');
+  else if (notChecked.length && atCap) {
+    top = band('amber', 'alert', CAP_CHECKS_TEXT);
+    top.setAttribute('aria-label', 'Your criteria were not checked');
+    top.append(act('Test again', () => testAgain(), 'btn btn-sm', 'wft-crit-again'));
+  } else if (fresh.length) {
+    top = band('amber', 'alert', CRITERIA_CHANGED_TEXT);
+    top.setAttribute('aria-label', 'Your criteria changed');
+    if (canCheck) {
+      const usd = crit && typeof crit.checkUsd === 'number' && Number.isFinite(crit.checkUsd) ? crit.checkUsd : null;
+      const b = act(CHECK_THEM, () => checkCriteria(), 'btn btn-sm', 'wft-crit-check', { busy: true, busyKey: 'wft-crit-check' });
+      if (usd === null) b.textContent = `${CHECK_THEM} (cost not known yet)`;   // P4-C6
+      else b.replaceChildren(doc.createTextNode(`${CHECK_THEM} (about `), el(doc, 'span', 'code', fmtUsd(usd)), doc.createTextNode(')'));
+      top.append(b);
+    }
+  } else if (mine.done) top = band('ok', 'check', CHECKED_CRITERIA_TEXT, 'status');
+  let fair = null;
+  if (unchecked.length) {   // also when the limit or the cap left a criterion unchecked on every try (the run can still end done)
+    fair = el(doc, 'p', 'wft-fair');
+    const words = el(doc, 'span', '', notEveryTryText(unchecked));
+    if (canCheck) words.append(doc.createTextNode(' '), act(CHECK_THEM, () => checkCriteria(), 'wft-linkbtn', 'wft-crit-check-line', { busy: true, busyKey: 'wft-crit-check' }));
+    fair.append(icon(doc, 'alert', 14), words);
+  }
+  const only = Array.isArray(notes.unreliableOnly) ? notes.unreliableOnly : [];
+  const short = only.length && c.labels.a ? unreliableOnlyText(c.labels.a, c.labels.b, only.map((x) => x.name)) : null;
+  const rows = (crit && Array.isArray(crit.rows)) ? crit.rows : [];
+  const whyOf = (exampleId) => (only.some((x) => x.id === exampleId)
+    ? unreliableWhyText(rows.filter((r) => r.unreliableChange && String(r.key).split('|')[0] === String(exampleId)).map((r) => r.label)) : null);
+  return { band: top, fair, short, whyOf, checking };
 }

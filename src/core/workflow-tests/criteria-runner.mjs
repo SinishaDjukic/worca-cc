@@ -24,12 +24,16 @@ export async function subjectOfTry(t, { readMain = mainResult, readPatch = readT
 export function createCriteriaJudge(deps = {}) {
   const d = { judgeCriterion, judgePair, subjectOf: (t) => subjectOfTry(t), contextOf: (ex) => exampleSourcesText(ex), book: recordTestJudgeCost, ...deps };
 
+  /** The criteria of `example` that the finished try `t` still needs checked by the example's model. */
+  const missingOf = (example, t) => {
+    const model = example && example.judge ? example.judge.model : null;
+    if (!model || !finishedTry(t)) return [];
+    return ((example && example.criteria) || []).filter((c) => cs.needsJudging(t.id, cs.criterionFp(c.text), model));
+  };
   /** D91: each criterion of `example` that `t` still needs, with the example's model. Returns the new judgements. */
   async function judgeTry(example, t, { testRunId = null, mock = false, stopped = () => false, overCap = () => false } = {}) {
-    const criteria = (example && example.criteria) || [];
     const model = example && example.judge ? example.judge.model : null;
-    if (!criteria.length || !model || !finishedTry(t)) return [];
-    const todo = criteria.filter((c) => cs.needsJudging(t.id, cs.criterionFp(c.text), model));
+    const todo = missingOf(example, t);
     if (!todo.length) return [];
     const subject = await d.subjectOf(t);
     const context = d.contextOf(example);
@@ -56,15 +60,18 @@ export function createCriteriaJudge(deps = {}) {
     return out;
   }
 
-  /** D91: the criteria phase: every finished try the test shows (its own and the reused ones) that still misses a criterion. */
-  async function judgeMissing(run, { stopped = () => false, overCap = () => false } = {}) {
+  /** D91: the criteria phase: every finished try the test shows (its own and the reused ones) that still misses a criterion.
+   *  P4-M5: `onProgress({ done, of })` before the first and after each such try (board 20's "7 of 12 tries"). */
+  async function judgeMissing(run, { stopped = () => false, overCap = () => false, onProgress = null } = {}) {
     const examples = new Map();
     const exampleOf = (id) => { if (!examples.has(id)) examples.set(id, store.readExample(run.workflowId, id)); return examples.get(id); };
-    for (const t of store.triesOfRun(run.id)) {
+    const todo = store.triesOfRun(run.id).filter((t) => (t.status === 'passed' || t.status === 'failed') && missingOf(exampleOf(t.exampleId), t).length);
+    const say = (done) => { if (onProgress) onProgress({ done, of: todo.length }); };
+    say(0);
+    for (const [i, t] of todo.entries()) {
       if (stopped() || overCap()) return;
-      if (t.status !== 'passed' && t.status !== 'failed') continue;
-      const ex = exampleOf(t.exampleId);
-      if (ex) await judgeTry(ex, t, { testRunId: run.id, mock: !!t.mock, stopped, overCap });
+      await judgeTry(exampleOf(t.exampleId), t, { testRunId: run.id, mock: !!t.mock, stopped, overCap });
+      say(i + 1);
     }
     await judgePairs(run, { stopped, overCap });
   }
