@@ -1,4 +1,4 @@
-// test/db-migrate-v96.test.mjs — pipelines.finished_at (set once when a run first reaches done) and pipelines.credit_key.
+// test/db-migrate-v96.test.mjs — Requirements run note: req_starts.note + req_starts.note_overrides.
 // A comment-only rung: both columns come from INCREMENTAL_COLUMNS, added by the hoisted repairSchemaGaps.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -7,23 +7,29 @@ import { migrate, SCHEMA_VERSION } from '../src/core/db.mjs';
 
 const cols = (db, t) => db.prepare(`PRAGMA table_info(${t})`).all().map((c) => c.name);
 const version = (db) => db.prepare('PRAGMA user_version').get().user_version;
+const dropBoth = (db) => db.exec('ALTER TABLE req_starts DROP COLUMN note; ALTER TABLE req_starts DROP COLUMN note_overrides');
 
-test('v96 adds finished_at and credit_key; a v95 DB upgrades; self-heal adds them', () => {
-  const fresh = new DatabaseSync(':memory:'); migrate(fresh);
-  assert.ok(SCHEMA_VERSION >= 96);
-  assert.equal(version(fresh), SCHEMA_VERSION);
-  for (const c of ['finished_at', 'credit_key']) assert.ok(cols(fresh, 'pipelines').includes(c), `fresh DB has ${c}`);
-
-  const old = new DatabaseSync(':memory:'); migrate(old);
-  old.exec('ALTER TABLE pipelines DROP COLUMN finished_at; ALTER TABLE pipelines DROP COLUMN credit_key; PRAGMA user_version = 95');
-  assert.equal(cols(old, 'pipelines').includes('finished_at'), false);
-  migrate(old);
-  assert.equal(version(old), SCHEMA_VERSION);
-  for (const c of ['finished_at', 'credit_key']) assert.ok(cols(old, 'pipelines').includes(c), `v95 DB gained ${c}`);
-
-  const healed = new DatabaseSync(':memory:'); migrate(healed);
-  healed.exec('ALTER TABLE pipelines DROP COLUMN finished_at; ALTER TABLE pipelines DROP COLUMN credit_key');
-  migrate(healed);
-  assert.equal(version(healed), SCHEMA_VERSION);
-  for (const c of ['finished_at', 'credit_key']) assert.ok(cols(healed, 'pipelines').includes(c), `self-heal added ${c}`);
+test('a v95 DB gains req_starts.note (null) and note_overrides (0) for old rows, stamped current', () => {
+  const db = new DatabaseSync(':memory:'); migrate(db); assert.ok(SCHEMA_VERSION >= 96);
+  dropBoth(db); db.exec('PRAGMA user_version = 95');
+  assert.equal(cols(db, 'req_starts').includes('note'), false);
+  assert.equal(cols(db, 'req_starts').includes('note_overrides'), false);
+  db.prepare("INSERT INTO req_features (seq, scope_type, scope_key, title, description, status, spec_json, created_at, updated_at) VALUES (1, 'project', 'p', 'T', 'd', 'draft', '{}', 'x', 'x')").run();
+  db.prepare(`INSERT INTO req_starts (feature_seq, version, run_id, spec_json, title, ready, failing_json, started_at)
+    VALUES (1, 1, 'r1', '{}', 'T', 1, '[]', 'x')`).run();
+  migrate(db);
+  assert.equal(version(db), SCHEMA_VERSION);
+  assert.ok(cols(db, 'req_starts').includes('note'));
+  assert.ok(cols(db, 'req_starts').includes('note_overrides'));
+  const row = db.prepare("SELECT note, note_overrides FROM req_starts WHERE run_id = 'r1'").get();
+  assert.equal(row.note, null);
+  assert.equal(row.note_overrides, 0);
+});
+test('stamped current without them: healed on open, the stamp untouched', () => {
+  const db = new DatabaseSync(':memory:'); migrate(db);
+  dropBoth(db);
+  migrate(db);
+  assert.ok(cols(db, 'req_starts').includes('note'));
+  assert.ok(cols(db, 'req_starts').includes('note_overrides'));
+  assert.equal(version(db), SCHEMA_VERSION);
 });

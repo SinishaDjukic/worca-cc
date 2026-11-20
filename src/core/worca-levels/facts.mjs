@@ -22,7 +22,7 @@ import { firstParallelPair, activeDayKeys, firstRunsOnDays, activeDaysWindow } f
 // The pipelines owner column: started_by, else the credit key a deleted run keeps.
 const RUN_OWNER = 'COALESCE(started_by, credit_key)';
 
-// The finish instant of a pipelines row `p`: finished_at (set once when the run first reached done), else updated_at for a row from before v96.
+// The finish instant of a pipelines row `p`: finished_at (set once when the run first reached done), else updated_at for a row from before v97.
 const FINISH_AT_P = 'COALESCE(p.finished_at, p.updated_at)';
 const RUN_OWNER_P = 'COALESCE(p.started_by, p.credit_key)';
 

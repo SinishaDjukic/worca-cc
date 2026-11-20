@@ -21,7 +21,10 @@ test('a live run opens in the panel on Details; the Runs page stays empty and re
   assert.equal(screen.dataset.presentation, 'panel');
   assert.equal(screen.dataset.mode, 'details');
   assert.equal(screen.querySelector('.rd-details').hidden, false);
-  assert.equal(screen.querySelector('.rd-glance').hidden, true);
+  // One level: the run card is the Overview tab's body, inside Details (no glance of its own).
+  assert.equal(screen.querySelector('.rd-tab.active').dataset.sec, 'overview');
+  assert.ok(screen.querySelector('.rd-sec[data-sec="overview"] > .rd-glance'), 'the card sits in the Overview tab');
+  assert.equal(screen.querySelector(':scope > .rd-glance'), null);
   assert.equal(screen.querySelector('.rd-title').textContent, 'Add dark mode');
   assert.equal(panelOf(ctx).hidden, false);
   assert.equal(panelOf(ctx).getAttribute('aria-label'), 'Run details');

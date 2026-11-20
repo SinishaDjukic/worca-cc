@@ -414,9 +414,16 @@ test('workspace Ship it is a form: a backdrop click keeps it and its picks; Esca
 
 const memberChecks = (watch) => ({ checks: { state: 'passing', total: 3, failed: 0, pending: 0, skipped: 0 }, mergeable: 'MERGEABLE',
   status: { tone: 'ok', label: 'Ready to merge', detail: 'All 3 checks passed' }, watch });
+// One level: the Overview has no PR rows; each member PR's Watch is an item in the card head's View PRs ▾.
 const ovRows = (w) => [...w.document.querySelectorAll('#hist-detail .hd-ov-pr')];
+const prMenuOf = (w) => w.document.querySelector('#hist-detail .rd-pr-menu');
+const openPrMenu = async (ctx) => {
+  click(ctx.window, ctx.window.document.querySelector('#hist-detail .rd-head-acts .rd-pr-split .rd-pr-more'));
+  await settle(ctx.window, 6);
+  return prMenuOf(ctx.window);
+};
 
-test('workspace detail: each open member PR gets its own Overview row, watch and Watch switch', async () => {
+test('workspace detail: each open member PR gets its own Watch item in the head\'s View PRs ▾ (no Overview rows)', async () => {
   const states = { [API]: { watching: true, status: 'fixing', reason: null, activePipelineId: 'f1' },
     [WEB]: { watching: false, status: null, reason: null, activePipelineId: null } };
   const arms = (url, opts) => {
@@ -425,22 +432,23 @@ test('workspace detail: each open member PR gets its own Overview row, watch and
     return null;
   };
   const ctx = await bootShip({ detail: WS_DETAIL, arms, rows: [wsRow([
-    member(API, 'api', { pr: { state: 'OPEN', url: 'https://github.com/o/api/pull/1' } }),
-    member(WEB, 'web', { pr: { state: 'OPEN', url: 'https://github.com/o/web/pull/2' } }),
-    member(DOC, 'doc', { pr: { state: 'MERGED', url: 'https://github.com/o/doc/pull/3' } })])] });
+    member(API, 'api', { pr: { state: 'OPEN', url: 'https://github.com/o/api/pull/1', number: 1 } }),
+    member(WEB, 'web', { pr: { state: 'OPEN', url: 'https://github.com/o/web/pull/2', number: 2 } }),
+    member(DOC, 'doc', { pr: { state: 'MERGED', url: 'https://github.com/o/doc/pull/3', number: 3 } })])] });
+  ctx.window.document.documentElement.dataset.level = 'advanced';
   await openDetail(ctx, `${wksDetailHash}/details/overview`); await settle(ctx.window, 6);
-  const rows = ovRows(ctx.window);
-  assert.equal(rows.length, 2, 'a merged member gets no row');
-  assert.match(rows[0].querySelector('.hd-ov-pr-label').textContent, /^Pull request · /);
-  assert.match(rows[0].textContent, /Fixing/);
-  assert.doesNotMatch(rows[1].textContent, /Fixing|Watching/);
-  for (const row of rows) assert.equal(row.querySelector('.rd-prs-watch').dataset.minLevel, 'advanced');
+  assert.deepEqual(ovRows(ctx.window), [], 'the Overview lists no PR rows');
   assert.equal(ctx.window.document.querySelector('#hist-detail .hd-pr-watch'), null, 'no switch in the header or its repo rows');
-  click(ctx.window, rows[1].querySelector('.rd-prs-watch')); await settle(ctx.window);
+  const menu = await openPrMenu(ctx);
+  assert.ok(menu, 'View PRs ▾ opens');
+  const sw = [...menu.querySelectorAll('[role="menuitemcheckbox"]')];
+  assert.equal(sw.length, 2, 'a merged member gets no Watch');
+  assert.deepEqual(sw.map((b) => b.getAttribute('aria-checked')), ['true', 'false']);
+  click(ctx.window, sw[1]); await settle(ctx.window);
   const post = ctx.calls.find((c) => c.url.endsWith('/api/pr/watch') && c.opts.method === 'POST');
   assert.deepEqual(JSON.parse(post.opts.body), { id: ROW.id, projectKey: WKS_KEY, memberKey: WEB, watch: true });
-  assert.match(rows[1].querySelector('.rd-prs-watch').title, /nope/);
-  assert.doesNotMatch(rows[0].querySelector('.rd-prs-watch').title, /nope/, 'the failure belongs to the member row');
+  assert.match(sw[1].title, /nope/);
+  assert.doesNotMatch(sw[0].title, /nope/, 'the failure belongs to the member item');
 });
 
 test('workspace detail: pr-watch-changed for the run\'s store key rereads only the named member', async () => {

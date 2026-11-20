@@ -31,12 +31,18 @@ export const TASK_PREAMBLE = 'Build this feature. The acceptance criteria `R-po-
   + 'and the review. Confirmed assumptions are decisions; open ones are guesses the product owner accepted when starting. '
   + 'Rejected assumptions are not to be built.';
 
+/** The line that follows a per-run note: the note wins over the spec for that run. */
+export const NOTE_PRECEDENCE = 'Where these instructions conflict with the spec above, follow these instructions for this run.';
+
 /** The task a run started from a feature gets (A2 D7): the preamble, then the given (frozen) spec as
- *  renderSpecMarkdown renders it, its heading naming the version (`# FEAT-7 v2: …`). */
-export function renderTaskMarkdown(feature, { spec = feature.spec, targetName = null, version = 1 } = {}) {
+ *  renderSpecMarkdown renders it, its heading naming the version (`# FEAT-7 v2: …`). A non-empty `note` (the person's
+ *  per-run instructions) is appended verbatim as a last section with the precedence line; an empty one changes nothing. */
+export function renderTaskMarkdown(feature, { spec = feature.spec, targetName = null, version = 1, note = null } = {}) {
   const lines = renderSpecMarkdown({ ...feature, spec }, { targetName }).split('\n');
   lines[0] = `# ${feature.id} v${version}: ${feature.title}`;
-  return `${TASK_PREAMBLE}\n\n${lines.join('\n')}`;
+  const task = `${TASK_PREAMBLE}\n\n${lines.join('\n')}`;
+  if (typeof note !== 'string' || !note.trim()) return task;
+  return `${task}\n## Extra instructions for this run\n\n${note}\n\n${NOTE_PRECEDENCE}\n`;
 }
 
 /** A criterion as one ticket line (A6 D4): "R-po-1 <text>", with A8's "(from <name>)" — except in the ticket the criterion came

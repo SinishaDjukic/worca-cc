@@ -1014,7 +1014,7 @@ test('a v2 run page: progress reads numerically, .rd-step names what runs (no st
   ]);
 });
 
-test('History: the header meta carries the End chip and the Overview the counts + quiescence note (v2 only; D5 untouched)', async () => {
+test('History: the header meta carries the End chip and the Overview the quiescence note (v2 only; D5 untouched)', async () => {
   const window = await bootApp();
   const np = window.__np;
   const doc = window.document;
@@ -1038,20 +1038,19 @@ test('History: the header meta carries the End chip and the Overview the counts 
   np.paintHdHeaderMeta(screen, record, { state: { ...base, endReached: false, result: { type: 'md', path: '/tmp/p/plan.md' } } });
   assert.equal(screen.querySelector('.hd-meta .hd-result'), null, 'no chip until End binds — a recorded result on a quiescent run is not one');
   assert.equal(screen.querySelector('.hd-meta .hd-model'), null, 'D5: History never shows model/effort');
-  // Overview: the DURATION sub-line counts executions/deliveries; the note appears once, v2 only.
+  // Overview: the stat cards are gone (time and cost are the card's tiles); the note appears once, v2 only.
   const sec = doc.createElement('div');
   const done = [{ key: 'x:n_a:1', executionId: 'x:n_a:1', nodeId: 'n_a', ordinal: 1, cycle: 1, status: 'done', activeMs: 1000 }];
   np.buildHdOverview(sec, record, { state: { ...base, endReached: false, wireDeliveries: { w1: 2 }, steps: done }, results: null });
-  assert.equal(sec.querySelector('.hd-ov-card-duration .hd-ov-sub').textContent, '1 execution · 2 loop deliveries');
+  assert.equal(sec.querySelector('.hd-ov-card-duration'), null, 'no Overview stat cards any more');
   const note = sec.querySelector('.hd-ov-note.run-warn');
-  assert.ok(note, 'the one-line note under the stat grid');
+  assert.ok(note, 'the one-line quiescence note');
   assert.equal(note.getAttribute('role'), 'status');
   assert.equal(note.textContent, 'finished at quiescence — End not reached');
   np.buildHdOverview(sec, record, { state: { ...base, endReached: true, result: { type: 'void' }, steps: done }, results: null });
   assert.equal(sec.querySelector('.hd-ov-note'), null, 'a run that bound End carries no note');
   np.buildHdOverview(sec, record, { state: { ...base, stepper: V1_STEPPER, steps: [{ key: 'plan', nodeId: 's0_0', cycle: 1, status: 'done' }] }, results: null });
-  assert.match(sec.querySelector('.hd-ov-card-duration .hd-ov-sub').textContent, /^\d+ steps? · \d+ cycles?$/, 'v1 keeps its steps · cycles line');
-  assert.equal(sec.querySelector('.hd-ov-note'), null);
+  assert.equal(sec.querySelector('.hd-ov-note'), null, 'a v1 run never carries the note');
 });
 
 // -------------------------------------------------------------------- MAJ-20

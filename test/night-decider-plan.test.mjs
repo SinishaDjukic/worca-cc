@@ -33,6 +33,8 @@ const WAITS = [
   ['chat notes', plan({ notes: [{ kind: 'plan', text: 'use a log scale' }] })],
   ['uncovered requirements', plan({ coverage: { ok: false, passed: 7, total: 8, items: [] } })],
   ['coverage that could not be read', plan({ coverage: null })],
+  ['attached requirements agreement on an otherwise clean plan', plan({ attached: { features: [{ id: 'f1', title: 'Feature' }] } })],
+  ['attached requirements agreement on an outline ask', outline({ attached: { features: [{ id: 'f1', title: 'Feature' }] } })],
 ];
 
 for (const [name, q] of WAITS) {

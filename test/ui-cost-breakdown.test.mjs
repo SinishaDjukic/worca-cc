@@ -1,5 +1,5 @@
 // test/ui-cost-breakdown.test.mjs — the run cost broken into agents, Away mode, Auto workflow and the
-// run title: the header cost's panel, the glance tile and the Overview cost card, on the run page and
+// run title: the header cost's panel and the run card's cost tile (in the Overview tab), on the run page and
 // on the History run page. History boot + fixtures: helpers/history-detail-boot.mjs (its generic boot()
 // also drives the run page through the socket it captures).
 import { test } from 'node:test';
@@ -121,7 +121,8 @@ test('run page: the header cost opens its breakdown; a repaint keeps it open; a 
   assert.equal(pop.hidden, false);
   click(window, rd.querySelector('.rd-title'));
   assert.equal(pop.hidden, true);
-  // Escape closes an open panel and stays on Details (the capture-phase arm would otherwise go back to the glance).
+  // Escape closes an open panel and stays on the run (the capture-phase arm would otherwise leave for the list in the slide).
+  doc.getElementById('runs-shell').dataset.layout = 'slide';
   rd.querySelector('.rd-meta .rd-cost').click();
   assert.equal(pop.hidden, false);
   const hash = window.location.hash;
@@ -130,10 +131,10 @@ test('run page: the header cost opens its breakdown; a repaint keeps it open; a 
   assert.equal(pop.hidden, true, 'Escape closed the panel');
   assert.equal(window.location.hash, hash, 'and did not leave Details');
   assert.equal(doc.activeElement, rd.querySelector('.rd-meta .rd-cost'), 'focus back on the trigger');
-  // With the panel closed, Escape is the page's again.
+  // With the panel closed, Escape is the page's again: in the slide it goes back to the list.
   doc.dispatchEvent(new window.KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
   await settle(window, 2);
-  assert.notEqual(window.location.hash, hash);
+  assert.equal(window.location.hash, '#runs');
 });
 
 test('run page: the panel\'s Total is the header\'s total, not a re-sum of the steps', async () => {
@@ -166,22 +167,21 @@ test('run page: agent turns a pause cut off open the breakdown even with no Away
 // --- the run page and the History run page ------------------------------------------------------
 const histDetail = (steps) => ({ ...DETAIL, state: { ...DETAIL.state, steps, totalCostUsd: TOTAL } });
 
-test('run page and History: the header cost opens the same breakdown; glance tile and Overview card carry the Away mode share', async () => {
+test('run page and History: the header cost opens the same breakdown; the card\'s cost tile carries the Away mode share', async () => {
   await checkRows([
-    { name: 'run page: the glance cost tile and the Overview cost card carry the Away mode share', run: async () => {
+    { name: 'run page: the card\'s cost tile (in the Overview tab) carries the Away mode share', run: async () => {
       const ctx = await bootRun();
       const { rd } = ctx;
-      const ov = rd.querySelector('.rd-sec[data-sec="overview"] .hd-ov-card-cost') || rd.querySelector('.hd-ov-card-cost');
-      assert.ok(ov, 'the Overview cost card renders');
-      assert.match(ov.querySelector('.hd-ov-sub').textContent, / · incl\. \$0\.12 Away mode$/);
-      go(ctx.window, 'running/r1');
-      await settle(ctx.window, 6);
-      assert.deepEqual(glanceCost(rd.querySelector('.rd-glance')), ['$3.33', 'incl. $0.12 Away mode']);
+      const card = rd.querySelector('.rd-sec[data-sec="overview"] .rd-glance');
+      assert.ok(card, 'the run card is the Overview tab\'s body');
+      assert.deepEqual(glanceCost(card), ['$3.33', 'incl. $0.12 Away mode']);
+      assert.equal(rd.querySelector('.hd-ov-card-cost'), null, 'no Overview stat cards any more');
     } },
-    { name: 'History: the header cost opens the same breakdown; the glance and the Overview carry the share', run: async () => {
+    { name: 'History: the header cost opens the same breakdown; the card carries the share', run: async () => {
       const ctx = await bootDetail({ detail: histDetail(STEPS()) });
       await openDetail(ctx, 'details/overview');
       const doc = ctx.window.document;
+      doc.getElementById('runs-shell').dataset.layout = 'slide';
       const btn = doc.querySelector('#hist-detail .hd-meta .hd-cost');
       assert.equal(btn.tagName, 'BUTTON');
       assert.equal(btn.textContent, '$3.33');
@@ -190,16 +190,14 @@ test('run page and History: the header cost opens the same breakdown; glance til
       btn.click();
       assert.equal(pop.hidden, false);
       assert.deepEqual(panelRows(pop), EXPECTED_ROWS);
-      // Escape closes the panel before History's capture-phase arm can step back to the glance.
+      // Escape closes the panel before History's capture-phase arm can leave the run.
       const hash = ctx.window.location.hash;
       doc.dispatchEvent(new ctx.window.KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
       await settle(ctx.window, 2);
       assert.equal(pop.hidden, true);
       assert.equal(ctx.window.location.hash, hash);
-      const card = secOf(doc, 'overview').querySelector('.hd-ov-card-cost');
-      assert.equal(card.querySelector('.hd-ov-sub').textContent, 'across 4 steps · incl. $0.12 Away mode');
-      await openDetail(ctx, '');
-      assert.deepEqual(glanceCost(doc.querySelector('#hist-detail .hd-glance')), ['$3.33', 'incl. $0.12 Away mode']);
+      assert.equal(secOf(doc, 'overview').querySelector('.hd-ov-card-cost'), null, 'no Overview stat cards any more');
+      assert.deepEqual(glanceCost(secOf(doc, 'overview').querySelector('.hd-glance')), ['$3.33', 'incl. $0.12 Away mode']);
     } },
   ]);
 });
@@ -216,19 +214,14 @@ test('an old run (no shares kept), live or History: plain cost, no panel, no \'i
       const pop = rd.querySelector('.rd-header > .cost-pop');
       assert.ok(!pop || (pop.hidden && !pop.childElementCount), 'no panel content');
       assert.doesNotMatch(rd.textContent, /incl\.|NaN|undefined/);
-      go(ctx.window, 'running/r1');
-      await settle(ctx.window, 6);
-      assert.deepEqual(glanceCost(rd.querySelector('.rd-glance')), ['$3.33', 'cost']);
-      assert.doesNotMatch(rd.textContent, /incl\.|NaN|undefined/);
+      assert.deepEqual(glanceCost(rd.querySelector('.rd-sec[data-sec="overview"] .rd-glance')), ['$3.33', 'cost']);
     } },
     { name: 'History, an old run: the plain cost and no "incl." anywhere', run: async () => {
       const ctx = await bootDetail({ detail: histDetail(OLD_STEPS()) });
       await openDetail(ctx, 'details/overview');
       const doc = ctx.window.document;
       assert.equal(doc.querySelector('#hist-detail .hd-meta .hd-cost').tagName, 'SPAN');
-      assert.equal(secOf(doc, 'overview').querySelector('.hd-ov-card-cost .hd-ov-sub').textContent, 'across 4 steps');
-      await openDetail(ctx, '');
-      assert.deepEqual(glanceCost(doc.querySelector('#hist-detail .hd-glance')), ['$3.33', 'cost']);
+      assert.deepEqual(glanceCost(secOf(doc, 'overview').querySelector('.hd-glance')), ['$3.33', 'cost']);
       assert.doesNotMatch(doc.querySelector('#hist-detail').textContent, /incl\.|NaN|undefined/);
     } },
   ]);
@@ -245,7 +238,9 @@ test('awayTotalText: booked reviews, else the stopped reviews\' lower bound apar
   assert.equal(awayTotalText(runCostBreakdown(OLD_STEPS(), TOTAL), fmt), '');
 });
 
-test('History: "Answered for you" names each review\'s model and cost, and the heading sums the steps\' reviews', async () => {
+// One level: no "Answered for you" on the History run page either (so no per-ask model or review cost, no summed
+// heading); the card's away note keeps the counts, the Q&A tab lists each answer with its reason.
+test('History: the card\'s away note counts the stored answers; no "Answered for you" section, no review cost', async () => {
   const decisions = [
     { questionId: 'c-1', kind: 'clarify', at: '2026-01-01T14:02:00', choice: 'Redis', strategy: 'analysis', model: null,
       reviewId: 'night-decider-ab12cd34', reviewStatus: 'finished', costUsd: 0.05, tokens: 900, executionId: 'n_plan:1', flagged: false, rationale: 'r',
@@ -256,11 +251,13 @@ test('History: "Answered for you" names each review\'s model and cost, and the h
     arms: (url) => (url.includes('/api/night-decisions') ? Promise.resolve({ ok: true, status: 200, json: async () => ({ decisions }) }) : null) });
   await openDetail(ctx, '');
   await settle(ctx.window, 4);
-  const sec = ctx.window.document.querySelector('#hist-detail .hd-night-sec');
-  assert.equal(sec.hidden, false);
-  assert.deepEqual([...sec.querySelectorAll('.rd-na .rd-slabel')].map((c) => c.textContent),
-    ['Clarifying questions · 14:02 · the default model · $0.05', 'Review loop · 14:52 · rule · $0.00']);
-  assert.equal(sec.querySelector('h3').textContent, 'Answered for you · 2 answers · $0.12');
+  const hd = ctx.window.document.querySelector('#hist-detail');
+  assert.equal(hd.querySelector('.hd-night-sec'), null);
+  assert.equal(hd.querySelector('.rd-na'), null);
+  const note = secOf(ctx.window.document, 'overview').querySelector('.rd-sheet .rd-away-note');
+  assert.equal(note.hidden, false);
+  assert.equal(note.querySelector('.rd-away-note-text').textContent, 'Away mode: 2 answers while you were away — nothing to check.');
+  assert.doesNotMatch(note.textContent, /\$/, 'the note names no cost');
 });
 
 test('a run on an engine that reports no cost: Agents reads "cost unknown", the Total is worca\'s own calls', () => {
@@ -289,30 +286,30 @@ test('cost unknown, never $0.00: a Cursor run on the run page and in History; a 
     return ctx.window.document.querySelector('#run-detail .rd');
   };
   await checkRows([
-    { name: 'run page, Cursor: the header and the Overview card read cost unknown', run: async () => {
+    { name: 'run page, Cursor: the header reads cost unknown', run: async () => {
       const rd = await runPage('cursor');
       assert.equal(rd.querySelector('.rd-meta .rd-cost').textContent, 'cost unknown');
       assert.match(rd.querySelector('.rd-meta .rd-cost').title, /Cursor reports no cost/);
-      assert.equal(rd.querySelector('.hd-ov-card-cost .hd-ov-value').textContent, 'cost unknown');
+      assert.equal(rd.querySelector('.hd-ov-card-cost'), null, 'no Overview stat cards any more');
       assert.doesNotMatch(rd.querySelector('.rd-meta').textContent, /\$0\.00/);
     } },
     { name: 'run page, Codex with 0: $0.00 as today', run: async () => {
       const rd = await runPage('codex');
       assert.equal(rd.querySelector('.rd-meta .rd-cost').textContent, '$0.00');
     } },
-    { name: 'History, Cursor: the header and the COST card read cost unknown', run: async () => {
+    { name: 'History, Cursor: the header reads cost unknown', run: async () => {
       const ctx = await bootDetail({ detail: { ...DETAIL, state: { ...DETAIL.state, steps: OLD_STEPS(), totalCostUsd: 0, runEngine: 'cursor' } } });
       await openDetail(ctx, 'details/overview');
       const doc = ctx.window.document;
       assert.equal(doc.querySelector('#hist-detail .hd-meta .hd-cost').textContent, 'cost unknown');
-      assert.equal(secOf(doc, 'overview').querySelector('.hd-ov-card-cost .hd-ov-value').textContent, 'cost unknown');
+      assert.doesNotMatch(doc.querySelector('#hist-detail .hd-meta').textContent, /\$0\.00/);
     } },
-    { name: 'History, a reporting engine with no cost number: the empty header cost and the — card as today', run: async () => {
+    { name: 'History, a reporting engine with no cost number: no header cost', run: async () => {
       const ctx = await bootDetail({ detail: { ...DETAIL, state: { ...DETAIL.state, steps: OLD_STEPS(), totalCostUsd: undefined, runEngine: 'codex' } } });
       await openDetail(ctx, 'details/overview');
       const doc = ctx.window.document;
       assert.equal(doc.querySelector('#hist-detail .hd-meta .hd-cost'), null);
-      assert.equal(secOf(doc, 'overview').querySelector('.hd-ov-card-cost .hd-ov-value').textContent, '—');
+      assert.doesNotMatch(doc.querySelector('#hist-detail').textContent, /NaN|undefined/);
     } },
   ]);
 });

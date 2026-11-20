@@ -178,8 +178,7 @@ const inPane = await ev(`(() => {
   return { listW: document.getElementById('runs-list-pane').offsetWidth, selected: row.classList.contains('selected'),
     current: row.getAttribute('aria-current'), kind: document.getElementById('runs-pane').dataset.kind,
     crumbs: [...document.querySelectorAll('#group-detail .gpage-bar .rd-crumbs:not([hidden]) .rd-crumb')].map((c) => c.textContent),
-    bar: document.querySelector('#group-detail .gpage-bar').getBoundingClientRect().height,
-    headGap: document.querySelector('#group-detail .gpage-head').getBoundingClientRect().top - document.querySelector('#group-detail .gpage-bar').getBoundingClientRect().bottom };
+    title: document.querySelector('#group-detail .gpage-title').getBoundingClientRect().top };
 })()`);
 check(inPane.listW > 0 && inPane.selected && inPane.current === 'true', `PASS group page in the pane: the list stays and the feature row is .selected (${JSON.stringify(inPane)})`);
 check(inPane.kind === 'group', `PASS group page in the pane: #runs-pane[data-kind="group"] (${inPane.kind})`);
@@ -193,14 +192,15 @@ const member = await ev(`(() => {
   return { open: row.classList.contains('member-open'), selected: row.classList.contains('selected'), current: row.getAttribute('aria-current'),
     crumbs: [...document.querySelectorAll('#hist-detail .hd-bar .rd-crumbs .rd-crumb')].map((c) => c.textContent),
     chip: !!document.querySelector('#hist-detail .hd-glance .rd-page-head .kind-chip'),
-    bar: document.querySelector('#hist-detail .hd-bar').getBoundingClientRect().height,
-    headGap: document.querySelector('#hist-detail .hd-glance .rd-page-head').getBoundingClientRect().top - document.querySelector('#hist-detail .hd-bar').getBoundingClientRect().bottom };
+    title: document.querySelector('#hist-detail .hd-header .hd-title').getBoundingClientRect().top };
 })()`);
 check(member.open && !member.selected && member.current === 'location', `PASS group page in the pane: a member open turns its group row member-open (${JSON.stringify(member)})`);
 check(JSON.stringify(member.crumbs) === JSON.stringify(['Runs', 'Run tags and cost allocation', 'Run 2']) && member.chip === false,
   `PASS group page in the pane: the run page reads Runs › the feature › Run 2, no kind chip in its head (${JSON.stringify(member.crumbs)}, chip ${member.chip})`);
-check(Math.abs(inPane.bar - member.bar) <= 1 && Math.abs(inPane.headGap - member.headGap) <= 1,
-  `PASS group page in the pane: the group bar is the run page's bar (height ${inPane.bar} vs ${member.bar}) and the title sits as far under it (${inPane.headGap} vs ${member.headGap})`);
+// One-level run page: its bar holds only the breadcrumb and its title sits in the header card, so the bars differ;
+// the titles still sit at one height, so moving between the group and a member does not jump.
+check(Math.abs(inPane.title - member.title) <= 1,
+  `PASS group page in the pane: the group page's title sits at the run page's title height (${inPane.title} vs ${member.title})`);
 // A phone: the row tap slides the group page in, full screen, with its Back; the list is inert.
 await cdp('Emulation.setDeviceMetricsOverride', { width: 375, height: 800, deviceScaleFactor: 1, mobile: true });
 await ev(`localStorage.removeItem('worca-cc.runs.last');0`);
