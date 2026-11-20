@@ -28,6 +28,7 @@ import { ensureStartCommit, treeBytes, freeDiskBytes, removeTryCheckout, pinStar
   commitDate, copySubject, remoteUrl } from './project-copy.mjs';
 import { parseRemoteUrl, forgeOf as forgeOfRemote, FORGE_LABEL } from '../forge.mjs';
 import { pushRemoteOf } from './guard-calls.mjs';
+import { withCriteriaFor, compareNotes } from './criteria-read.mjs';
 import { leftOutText, folderMissingText, folderProjectText, notRegisteredText, diskRefusalText, diskRefusalOnceText, PAST_RUN_REFUSALS } from '../../shared/workflow-tests/project-text.mjs';
 import { mainResult, readTryPatch } from './result.mjs';
 import { readBefore, beforeSpecOf, beforeHash } from './before-run.mjs';
@@ -465,7 +466,7 @@ export async function examplesFromRuns(workflowId, pipelineIds, opts = {}) {
 }
 
 function cellOf(ex, use, fpNow) {
-  const tries = store.latestTriesFor({ workflowId: ex.workflowId, exampleId: ex.id, use });
+  const tries = withCriteriaFor(ex.workflowId, store.latestTriesFor({ workflowId: ex.workflowId, exampleId: ex.id, use }));
   if (tries.length) {
     return { passed: tries.filter((t) => t.status === 'passed').length, total: tries.length,
       stale: tries.some((t) => t.fp !== fpNow || t.exampleFp !== ex.fingerprint), past: null,
@@ -480,7 +481,7 @@ function cellOf(ex, use, fpNow) {
 const firstExampleName = (run) => { const ex = store.readExample(run.workflowId, run.exampleIds[0]); return ex ? ex.name : ''; };
 function modelInput(run, ctx) {
   const examples = run.exampleIds.map((id) => store.readExample(run.workflowId, id)).filter(Boolean).map(({ id, name }) => ({ id, name }));
-  return { examples, a: run.a != null ? { label: useLabel(run.a, ctx) } : null, b: { label: useLabel(run.b, ctx) }, tries: store.triesOfRun(run.id) };
+  return { examples, a: run.a != null ? { label: useLabel(run.a, ctx) } : null, b: { label: useLabel(run.b, ctx) }, tries: withCriteriaFor(run.workflowId, store.triesOfRun(run.id)) };
 }
 
 /** U-T7 (F13, D7): the newest saved version whose useFingerprint equals the draft's, or null (a fingerprint that cannot be
@@ -842,7 +843,7 @@ export async function compareOf(workflowId, runId, { registry = loadAgentRegistr
     else if (input.tries.some((t) => t.exampleId === id && t.exampleFp !== ex.fingerprint)) fair.push(`"${ex.name}" was edited after this test.`);
   }
   return { run, title: testTitle(run, ctx), labels: { a: input.a ? input.a.label : null, b: input.b.label },
-    examples: input.examples.length, costUsd: store.spentOfRun(run.id), model: compareModel(input), changes, fair,
+    examples: input.examples.length, costUsd: store.spentOfRun(run.id), model: compareModel(input), notes: compareNotes(input), changes, fair,
     madeAgain: store.madeAgainOf(run.id) };   // U-T2: the page adds it to the fair-comparison lines
 }
 
@@ -850,12 +851,12 @@ export async function compareOf(workflowId, runId, { registry = loadAgentRegistr
  *  first PREVIEW_MAX characters; tryResult reads all. 3a (boards 36, 37): a project try's changes and setup, and what the
  *  guard stopped in both modes. `forgeFor(remoteNames)` → forgeOf (forgeNamer): only the remotes the guarded pushes
  *  named are looked up. */
-export async function sideBySide(workflowId, runId, exampleId, { forgeFor = null } = {}) {
+export async function sideBySide(workflowId, runId, exampleId, { forgeFor = null, by = null } = {}) {
   const run = runOf(workflowId, runId);
   const ex = store.readExample(workflowId, exampleId);
   if (!ex || !run.exampleIds.includes(ex.id)) throw err(`no example ${exampleId} in this test`, 'NOT_FOUND');
   const ctx = labelCtx(workflowId);
-  const tries = store.triesOfRun(run.id).filter((t) => t.exampleId === ex.id && FIN.has(t.status));
+  const tries = withCriteriaFor(workflowId, store.triesOfRun(run.id), { withAnswers: true, by }).filter((t) => t.exampleId === ex.id && FIN.has(t.status));
   const list = (side) => tries.filter((t) => t.side === side).sort((x, y) => x.tryNo - y.tryNo || x.id - y.id);
   const A = run.a != null ? list('a') : [];
   const B = list('b');

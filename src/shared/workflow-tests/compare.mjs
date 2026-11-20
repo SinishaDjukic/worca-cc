@@ -1,7 +1,7 @@
 // src/shared/workflow-tests/compare.mjs
 // Comparing two versions on the same examples (plans/workflow-tests-part2-plan.md D28; canvas boards 1, 4, 5, 6, 20).
 // Pure and browser-safe: the server computes the model, the pages format it. Better or worse is decided by tries
-// passed (Basics and automatic checks only, D18). "In short" is put together from the fixed sentences of C2, never by AI.
+// passed (Basics, automatic checks and deciding criteria, D18, Part 4 D98). "In short" is put together from the fixed sentences of C2, never by AI.
 import { fmtUsd, fmtUsdFine } from './checks.mjs';
 
 export { fmtUsd };
@@ -57,12 +57,14 @@ export function agoText(iso, now = Date.now()) {
   return d === 1 ? 'yesterday' : `${d} days ago`;
 }
 
-/** How many of the given tries missed each Basic or check (label → count). */
+/** How many of the given tries missed each Basic, check or deciding criterion (label → count). Part 4 (D98): a criterion that does
+ *  not decide (not checked, unreliable) is never "missed". */
 function missCounts(list) {
   const counts = new Map();
   for (const t of list) {
     const v = t.verdict || {};
-    for (const item of [...(v.basics || []), ...(v.checks || [])]) if (item && !item.met && !item.notChecked) counts.set(item.label, (counts.get(item.label) || 0) + 1);
+    const items = [...(v.basics || []), ...(v.checks || []), ...(v.criteria || []).filter((c) => c.decides)];
+    for (const item of items) if (item && !item.met && !item.notChecked) counts.set(item.label, (counts.get(item.label) || 0) + 1);
   }
   return counts;
 }

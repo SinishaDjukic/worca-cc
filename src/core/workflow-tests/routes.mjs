@@ -188,7 +188,7 @@ export function registerWorkflowTestRoutes(app, { broadcast = () => {}, deps = {
     const ex = example(req);
     // P9: board 37's "… on GitHub", for the remotes the guarded pushes named (git remote get-url, read only)
     const forgeFor = ex.project ? (names) => service.forgeNamer(ex.project.key, names) : null;
-    res.json(await service.sideBySide(wid(req), num(req.params.run, 'test'), ex.id, { forgeFor }));
+    res.json(await service.sideBySide(wid(req), num(req.params.run, 'test'), ex.id, { forgeFor, by: by(req) }));
   });
   route('GET', `${W}/runs/:run/tries/:try/result`, async (req, res) =>
     res.json(await service.tryResult(wid(req), num(req.params.run, 'test'), num(req.params.try, 'try'))));

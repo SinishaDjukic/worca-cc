@@ -93,6 +93,17 @@ test('Undo (agree: null) through the route removes the answer of the person', as
   assert.equal(cs.answerOf(j.id, null), null);
 });
 
+test('I9: the side by side carries the viewer\'s earlier answer', async () => {
+  const run = store.listTestRuns('wf_api_c')[0];
+  const [t] = store.triesOfRun(run.id);
+  const [j] = cs.tryJudgements([t.id]);
+  assert.equal((await call('POST', `${WF}/judgements/${j.id}/answer`, { agree: true })).status, 200);
+  const r = await call('GET', `${WF}/runs/${run.id}/examples/${t.exampleId}`);
+  assert.equal(r.status, 200);
+  const crit = r.body.tries.flatMap((x) => [x.a, x.b]).filter(Boolean).flatMap((v) => (v.verdict && v.verdict.criteria) || []);
+  assert.equal(crit.find((c) => c.judgementId === j.id).answer, true);
+});
+
 test('handle forwards the `errors` of an error list like Part 2 (unit test of the exported handle)', async () => {
   const { handle } = await import('../src/core/workflow-tests/criteria-routes.mjs');
   let code; let body;
