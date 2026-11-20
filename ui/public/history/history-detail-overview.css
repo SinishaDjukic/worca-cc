@@ -53,6 +53,7 @@ button.hd-mem-chip:focus-visible{outline:2px solid var(--ink);outline-offset:2px
 .run-setup-h{margin:0;font:600 var(--fs-body) var(--sans);color:var(--ink);}
 .run-setup-sub{margin:4px 0 0;font:600 var(--fs-meta) var(--sans);color:var(--ink-2);}
 .run-setup-list{display:grid;grid-template-columns:minmax(0,2fr) minmax(0,3fr);gap:8px 16px;margin:0;font-size:var(--fs-meta);}
+.run-setup-row{display:contents;}   /* one row per <div> so a level hides it whole; the grid lays out its dt and dd */
 .run-setup-list dt{color:var(--ink-2);overflow-wrap:anywhere;}
 .run-setup-list dd{margin:0;color:var(--ink);overflow-wrap:anywhere;}
 .run-task{display:flex;flex-direction:column;gap:16px;padding:var(--pad-card);background:var(--panel);border:1px solid var(--line);border-radius:var(--r-card);}

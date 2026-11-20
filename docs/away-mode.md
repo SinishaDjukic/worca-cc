@@ -50,9 +50,9 @@ Your own cost caps always hold. Worca goes past the team's soft cap only if you 
 
 ## Every answer on record
 
-The run page lists *Answered for you*, one group per ask: the question, the answer, the reason and the model that
-decided. Answers to check are marked and listed first. A note above the list reads like "5 answers while you were
-away — 2 to check".
+The run card carries a note like "Away mode: 5 answers while you were away — 2 to check". Its **See the answers**
+opens the Q&A tab, where each answered question says who answered it. The run page does not show the model and cost
+of each Away mode review for now; the run's cost breakdown still counts what the reviews cost.
 
 A short notice tells you when away hours start and end, and a violet dot sits on your avatar while you're away.
 Turning **Away** off in the account menu ends it.
