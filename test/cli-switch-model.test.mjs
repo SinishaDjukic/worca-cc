@@ -104,10 +104,10 @@ test('the listing names the run engine and a one-model-for-all resume (m3)', asy
   const id = await seedPaused('cli-msw-head');
   const list = await run(['switch-model', id]);
   assert.equal(list.code, 0, list.stderr);
-  assert.match(list.stdout, /Engine: Claude\n/);
+  assert.match(list.stdout, /Engine: Claude Code\n/);
   assert.doesNotMatch(list.stdout, /for every remaining stage/);
   const codex = await seedPaused('cli-msw-codex', 'paused', { claude: { engine: 'codex' } });
-  assert.match((await run(['switch-model', codex])).stdout, /Engine: Codex\n/);
+  assert.match((await run(['switch-model', codex])).stdout, /Engine: OpenAI Codex\n/);
   const forAll = await seedPaused('cli-msw-forall', 'paused', { claude: { model: 'claude-sonnet-5-5', modelForAll: true } });
   assert.match((await run(['switch-model', forAll])).stdout,
     /Resumed with claude-sonnet-5-5 for every remaining stage — per-stage models and efforts do not apply\./);
