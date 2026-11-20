@@ -3,6 +3,20 @@
 Notes on merged features that have no release page yet. `/worca-changelog` folds
 them into the next page and empties this file.
 
+## Long spec items are kept whole
+
+**A long step, rule or criterion no longer ends mid-word in the spec, the download or the run.**
+
+A spec item (the goal, a main-flow step, a rule, a criterion, an assumption) holds up to 10000 characters instead of 500, and the interviewer is told the limit, so it splits a long item rather than writing past it. Worca used to cut every item at 500 characters when it saved the spec, so Copy, Download, Save to specs/ and the run's task all carried the cut text. If the model still writes past the limit, the item ends at a whole word with "…". Text you type yourself is never cut: past 10000 characters Worca says so and keeps your edit open. Items cut before this fix stay cut; edit them to restore the end.
+
+Chips: 10000 characters per item · the interviewer knows the limit · never mid-word · your text refused, not cut
+
+Read it: [Requirements](../requirements.md)
+
+Pull requests (add each number when it opens):
+
+- Requirements: keep long spec items whole
+
 ## Copilot on your GHE.com tenant
 
 **Use GitHub Copilot with a GitHub Enterprise Cloud data-residency tenant.**
