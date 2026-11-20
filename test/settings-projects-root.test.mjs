@@ -326,13 +326,14 @@ test('GET /api/settings returns {root, projectsRoot, projectsRootDefault, defaul
     // `app` = static identity for the Settings ▸ About card (version, repo URL,
     // release-tag URL — read from package.json). GET-only: POST still echoes settingsState() + chat.
     assert.deepEqual(Object.keys(j).sort(), ['actions', 'actionsDetected', 'actionsGate', 'agentGenModel', 'agentGenModelEffective', 'app', 'askEngine', 'askMaxBudgetUsd', 'askMaxTurns', 'askModels', 'askWeb', 'autoGeneratePrDescription', 'autoWorkflowModel', 'autoWorkflowModelEffective', 'chat', 'commandSummaryModel', 'commandSummaryModelEffective', 'costLimitResetPeriod',
-      'debugSpawnEffective', 'debugSpawnEnabled', 'default', 'designModels', 'enforceTags', 'factoryModels', 'flags', 'git', 'hideBuiltinModels', 'humanRateUsdPerHour', 'keepAwake', 'memoryDefrag', 'memoryDefragDefault', 'modelRoles', 'namingModel', 'namingModelEffective', 'networkWait', 'nightMode', 'nightModeEffective', 'nightModeToggle', 'pipelineCostLimitUsd', 'prDescriptionModel', 'prDescriptionModelEffective', 'projectsRoot', 'projectsRootDefault', 'resumeAfterUsageLimit', 'root', 'runEngine', 'runLimits',
-      'schedule', 'secondOpinionModel', 'smartNaming', 'stepModels', 'sync', 'tagDimensions', 'testWorkersAuto', 'theme', 'titleModel', 'titleModelEffective', 'totalCostLimitUsd', 'uiLevel', 'updateCheck', 'utilityModels', 'workspaceScan', 'workspaceScanDefault', 'workspaceScanFromRole']);
+      'debugSpawnEffective', 'debugSpawnEnabled', 'default', 'designModels', 'enforceTags', 'factoryModels', 'flags', 'git', 'hideBuiltinEngines', 'hideBuiltinModels', 'humanRateUsdPerHour', 'keepAwake', 'memoryDefrag', 'memoryDefragDefault', 'modelRoles', 'namingModel', 'namingModelEffective', 'networkWait', 'nightMode', 'nightModeEffective', 'nightModeToggle', 'pipelineCostLimitUsd', 'prDescriptionModel', 'prDescriptionModelEffective', 'projectsRoot', 'projectsRootDefault', 'resumeAfterUsageLimit', 'root', 'runEngine', 'runLimits',
+      'schedule', 'screensaver', 'secondOpinionModel', 'smartNaming', 'stepModels', 'sync', 'tagDimensions', 'testWorkersAuto', 'theme', 'titleModel', 'titleModelEffective', 'totalCostLimitUsd', 'uiLevel', 'updateCheck', 'utilityModels', 'workspaceScan', 'workspaceScanDefault', 'workspaceScanFromRole']);
     assert.deepEqual(Object.keys(j.actionsDetected).sort(), ['editor', 'terminal'], 'what blank Editor / Terminal fall back to');
     assert.equal(j.autoWorkflowModel, '', 'no classifier model stored -> the catalog default applies');
     assert.equal(j.titleModel, null, 'no title model stored -> the run\'s model');
     assert.deepEqual(j.titleModelEffective, { model: null, source: 'run', stale: null });
     assert.equal(j.hideBuiltinModels, false);
+    assert.deepEqual(j.hideBuiltinEngines, {}, 'no harness hides its built-ins by default');
     assert.deepEqual(j.memoryDefrag, { model: null, effort: null }, 'no defragment model stored -> the workflow default');
     assert.equal(j.memoryDefragDefault, 'claude-sonnet-5');
     assert.deepEqual(j.agentGenModel, { model: null, effort: null }, 'no agent generation model stored -> the CLI default');
@@ -340,7 +341,7 @@ test('GET /api/settings returns {root, projectsRoot, projectsRootDefault, defaul
     assert.deepEqual(j.commandSummaryModel, { model: null, effort: null }, 'no command summaries model stored -> the cheapest ready Claude model');
     assert.equal(j.workspaceScan, null, 'no scan models stored -> the defaults');
     assert.deepEqual(j.workspaceScanDefault, { scanModel: 'claude-sonnet-5', scanEffort: 'medium', agentModel: 'sonnet', agentEffort: 'medium' });
-    assert.equal(j.workspaceScanFromRole, false, 'no Everyday coding role: the scan default is the built-in one');
+    assert.equal(j.workspaceScanFromRole, false, 'no Everyday tasks role: the scan default is the built-in one');
     assert.equal(j.root, '', 'nothing set yet');
     assert.equal(j.projectsRoot, '', 'the RAW setting — "" when unset, exactly like root');
     assert.equal(j.projectsRootDefault, projectsHome(), 'what applies while it is blank');

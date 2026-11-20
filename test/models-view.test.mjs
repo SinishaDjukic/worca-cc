@@ -6,56 +6,21 @@ import assert from 'node:assert/strict';
 import { JSDOM } from 'jsdom';
 import { checkRows } from './helpers/rows.mjs';
 import {
-  suggestDuplicateId, renderModelsList, renderModelEditor,
+  suggestDuplicateId, suggestDuplicateLabel, deleteRefsSummary, renderModelEditor,
   collectModelEditor, makeEnvRow, setModelCost, setModelEngine,
-  renderExportWizard, collectExportWizard, applyConnectionModeIn,
+  renderExportWizard, collectExportWizard, applyConnectionModeIn, envRowsProblem, setFormWhere,
 } from '../ui/public/models-view.mjs';
-import { bridgedBadge, degradationLine } from '../ui/public/bridge-view.mjs';
+import { connectionWhere, setConnectionWhere, wheresFor } from '../ui/public/bridge-view.mjs';
 import { readIndexHtml } from '../src/core/read-index-html.mjs';
 import { readStyleCss } from '../src/core/read-style-css.mjs';
 
 const doc = new JSDOM('<!doctype html><body></body>').window.document;
 
 const EFFORTS = ['medium', 'high', 'xhigh', 'max'];
-const PREDEFINED = [
-  { id: 'claude-opus-5-5', label: 'Opus 5.5', efforts: EFFORTS },
-  { id: 'claude-sonnet-4-6', label: 'Sonnet 4.6', efforts: ['medium', 'high', 'max'] },
-];
 const GLOBAL = {
   id: 'glm-4.7', label: 'GLM (proxy)', efforts: ['medium', 'high'],
   env: { ANTHROPIC_BASE_URL: '••••••e/v1', ANTHROPIC_AUTH_TOKEN: '••••••1234', X_REF: '${MY_VAR}' },
 };
-const SHADOW = { id: 'claude-sonnet-4-6', label: 'Sonnet via proxy', efforts: ['medium'], env: { ANTHROPIC_BASE_URL: '••••••e/v1' } };
-
-test('list: global cards get Edit/Delete + shadow badge; legacy get Promote; built-ins read-only + overridden badge', () => {
-  const el = renderModelsList({
-    globals: [GLOBAL, SHADOW],
-    legacy: [{ id: 'old-local', label: 'Old Local' }],
-    predefined: PREDEFINED,
-    efforts: EFFORTS,
-    projectName: 'my-repo',
-  }, { doc });
-
-  const cards = el.querySelectorAll('.mv-card:not(.mv-legacy)');
-  assert.equal(cards.length, 2);
-  assert.equal(cards[0].dataset.id, 'glm-4.7');
-  assert.equal(cards[0].querySelector('.mv-shadow'), null, 'non-shadow entry has no override badge');
-  assert.ok(cards[0].querySelector('.mv-edit'));
-  assert.ok(cards[0].querySelector('.mv-delete'));
-  assert.match(cards[0].querySelector('.mv-summary').textContent, /3 env vars · routes via base URL/);
-  assert.equal(cards[1].querySelector('.mv-shadow').textContent, 'overrides built-in');
-
-  const legacy = el.querySelectorAll('.mv-legacy');
-  assert.equal(legacy.length, 1);
-  assert.equal(legacy[0].querySelector('.mv-origin').textContent, 'project (legacy)');
-  assert.equal(legacy[0].querySelector('.mv-promote').dataset.id, 'old-local');
-
-  const builtins = el.querySelectorAll('.mv-builtin');
-  assert.equal(builtins.length, 2);
-  assert.equal(builtins[0].querySelector('.mv-shadowed'), null);
-  assert.equal(builtins[1].querySelector('.mv-shadowed').textContent, 'overridden', 'sonnet is overridden by SHADOW');
-  assert.equal(builtins[0].querySelector('button'), null, 'built-ins carry no actions');
-});
 
 test('editor (edit): id locked, efforts reflect the entry, masked env rows carry data-original', () => {
   const el = renderModelEditor(GLOBAL, EFFORTS, { doc });
@@ -109,45 +74,6 @@ test('collect (edit): removed env rows become null-deletes; kept masked values a
 
 // ── plugin section + export wizard (design §9.5–§9.6) ────────────────────────
 
-const PLUGINS = [
-  {
-    id: 'ds-stable', label: 'DS Stable', efforts: ['medium', 'high'], plugin: 'team-models',
-    env: { ANTHROPIC_BASE_URL: '••••••mple', ANTHROPIC_AUTH_TOKEN: '(secret: ds-token)' },
-    secrets: [{ key: 'ds-token', label: 'DS token', set: false }],
-  },
-  { id: 'claude-sonnet-4-6', label: 'Sonnet via plugin', efforts: ['medium'], plugin: 'team-models', env: {}, secrets: [] },
-];
-
-test('list: plugin cards are read-only with provenance + secret status + Edit-a-copy; shadows badge both ways', () => {
-  const el = renderModelsList({
-    globals: [{ ...GLOBAL, id: 'ds-stable' }],
-    plugins: PLUGINS,
-    predefined: PREDEFINED,
-    efforts: EFFORTS,
-  }, { doc });
-
-  const cards = [...el.querySelectorAll('.mv-plugin')];
-  assert.equal(cards.length, 2);
-  assert.equal(cards[0].dataset.plugin, 'team-models');
-  assert.equal(cards[0].querySelector('.mv-origin').textContent, 'plugin: team-models');
-  assert.equal(cards[0].querySelector('.mv-edit'), null, 'no Edit on plugin cards');
-  assert.equal(cards[0].querySelector('.mv-delete'), null, 'no Delete on plugin cards');
-  const copy = cards[0].querySelector('.mv-copy');
-  assert.equal(copy.dataset.id, 'ds-stable');
-  assert.equal(copy.dataset.plugin, 'team-models');
-  assert.match(cards[0].querySelector('.mv-secret').textContent, /NOT SET/);
-  assert.match(cards[0].querySelector('.mv-shadowed').textContent, /overridden by your copy/,
-    'the user global with the same id shadows this plugin entry');
-
-  // The user's global card says it overrides the plugin (not a built-in).
-  const globalCard = el.querySelector('.mv-card:not(.mv-plugin):not(.mv-legacy)');
-  assert.equal(globalCard.querySelector('.mv-shadow').textContent, 'overrides plugin');
-
-  // A plugin entry with a predefined id marks the built-in overridden.
-  const sonnetRow = [...el.querySelectorAll('.mv-builtin')].find((r) => r.dataset.id === 'claude-sonnet-4-6');
-  assert.equal(sonnetRow.querySelector('.mv-shadowed').textContent, 'overridden');
-});
-
 test('export wizard: renders picks + env policy (secret-ish defaults) and collects the POST body', () => {
   const globals = [
     { id: 'ds-stable', label: 'DS Stable', efforts: EFFORTS, env: { ANTHROPIC_BASE_URL: '••••••mple', ANTHROPIC_AUTH_TOKEN: '••••••1234' } },
@@ -194,6 +120,66 @@ test('export wizard: token LIMITS are not credentials (MAX_OUTPUT_TOKENS default
   assert.equal(mode('API_KEY'), 'secret');
 });
 
+const SHARE_GLOBALS = () => [
+  { id: 'ds-stable', label: 'DS Stable', efforts: EFFORTS, env: { ANTHROPIC_BASE_URL: '••••••mple', ANTHROPIC_AUTH_TOKEN: '••••••1234' } },
+  { id: 'other', label: 'Other', efforts: EFFORTS },
+];
+const fire = (node, type) => { node.dispatchEvent(new doc.defaultView.Event(type, { bubbles: true })); };
+
+test('share as plugin (SHR-1, SHR-2): three numbered parts, and Export scaffold stays disabled until it can work', () => {
+  const w = renderExportWizard(SHARE_GLOBALS(), { doc });
+  assert.equal(w.querySelector(':scope > .mvx-head > .mv-editor-title').textContent, 'Share as plugin');
+  assert.ok(w.querySelector(':scope > .mvx-head > button.btn.mdl-close[aria-label="Close"]'), 'the head closes the dialog');
+  assert.deepEqual([...w.querySelectorAll(':scope > .mvx-step > h4.mvx-step-title')].map((t) => t.textContent), ['1 Models', '2 Env vars', '3 Plugin']);
+  assert.deepEqual([...w.querySelectorAll('.mvx-model .opt-name')].map((n) => n.textContent), ['DS Stable', 'Other']);
+  assert.equal(w.querySelectorAll('.mvx-model .mdl-mark').length, 2, 'each model wears its mark');
+  assert.deepEqual([...w.querySelectorAll('.mvx-step .mvx-fields .mv-field-label')].map((l) => l.textContent),
+    ['Plugin name', 'Version', 'Description', 'Destination folder']);
+  assert.equal(w.querySelector('.mvx-desc').placeholder, 'What these models are for');
+  assert.ok([...w.querySelectorAll('small.hint')].every((s) => s.textContent.length <= 80), 'no hint paragraphs (L18)');
+  assert.deepEqual([...w.querySelectorAll('.mv-editor-btns > .btn')].map((b) => b.textContent), ['Cancel', 'Export scaffold'], 'Export comes last');
+
+  const go = w.querySelector('.mvx-export');
+  assert.equal(go.disabled, true, 'nothing ticked, nothing named');
+  const cb = w.querySelector('.mvx-model-cb');
+  cb.checked = true; fire(cb, 'change');
+  assert.equal(go.disabled, true, 'a model alone is not enough');
+  w.querySelector('.mvx-name').value = 'team-models'; fire(w.querySelector('.mvx-name'), 'input');
+  assert.equal(go.disabled, true, 'still no folder');
+  w.querySelector('.mvx-dest').value = '~/dev/team-models'; fire(w.querySelector('.mvx-dest'), 'input');
+  assert.equal(go.disabled, false, 'a model, a name and a folder');
+  w.querySelector('.mvx-name').value = ''; fire(w.querySelector('.mvx-name'), 'input');
+  assert.equal(go.disabled, true, 'clearing the name disables it again');
+  w.querySelector('.mvx-name').value = 'team-models'; fire(w.querySelector('.mvx-name'), 'input');
+  w.querySelector('.mvx-dest').value = '  '; fire(w.querySelector('.mvx-dest'), 'input');
+  assert.equal(go.disabled, true, 'clearing the folder disables it again');
+  w.querySelector('.mvx-dest').value = '~/dev/team-models'; fire(w.querySelector('.mvx-dest'), 'input');
+  cb.checked = false; fire(cb, 'change');
+  assert.equal(go.disabled, true, 'unticking the last model disables it again');
+});
+
+test('share as plugin: a credential is flagged and defaults to "Require at install"; the segment drives the body', () => {
+  const w = renderExportWizard(SHARE_GLOBALS(), { doc });
+  const row = (k) => [...w.querySelectorAll('.mvx-env-row')].find((r) => r.dataset.key === k);
+  const pressed = (r) => [...r.querySelectorAll('.seg.mvx-seg[role="group"] > button[aria-pressed="true"]')].map((b) => b.textContent);
+  const token = row('ANTHROPIC_AUTH_TOKEN');
+  assert.equal(token.querySelector('span.badge.mvx-warn').textContent, 'Looks like a credential');
+  assert.deepEqual([...token.querySelectorAll('.mvx-seg > button')].map((b) => b.textContent), ['Include value', 'Require at install', 'Omit']);
+  assert.deepEqual(pressed(token), ['Require at install']);
+  assert.equal(row('ANTHROPIC_BASE_URL').querySelector('.mvx-warn'), null, 'a base URL is no credential');
+  assert.deepEqual(pressed(row('ANTHROPIC_BASE_URL')), ['Include value']);
+  assert.equal(token.querySelector('select.mvx-mode').hidden, true, 'the segment is the face of the hidden select');
+
+  const changes = [];
+  w.addEventListener('change', (e) => changes.push(e.target.className));
+  [...token.querySelectorAll('.mvx-seg > button')].find((b) => b.textContent === 'Omit').click();
+  assert.deepEqual(pressed(token), ['Omit']);
+  assert.equal(token.querySelector('.mvx-mode').value, 'omit');
+  assert.deepEqual(changes, ['select mvx-mode'], 'a pick is a change the dialog sees');
+  w.querySelector('.mvx-model-cb[value="ds-stable"]').checked = true;
+  assert.equal(collectExportWizard(w).models[0].env.ANTHROPIC_AUTH_TOKEN, 'omit');
+});
+
 // ── Pricing: the opt-in per-model cost override (config.mjs resolveModelCost) ──
 
 const PRICED = {
@@ -201,7 +187,6 @@ const PRICED = {
   env: { ANTHROPIC_BASE_URL: '••••••e/v1' },
   cost: { perMtok: { input: 0.5, output: 1.5 } },
 };
-const FREE = { id: 'onprem', label: 'On-prem', efforts: EFFORTS, cost: { free: true } };
 const mode = (el) => el.querySelector('.mv-cost-mode-rb:checked')?.value;
 const rate = (el, k) => el.querySelector(`.mv-cost-rate-in[data-rate="${k}"]`);
 
@@ -263,56 +248,24 @@ test('setModelCost: loads any override into an editor (the ONE cost -> form mapp
   setModelCost(doc.createElement('div'), { free: true }); // never throws without the block
 });
 
-test('list: priced/free/unpriced badges and summaries on global and plugin cards', async () => {
-  await checkRows([
-    { name: 'list: a priced model shows its rates and drops the now-meaningless "cost not verified" badge', run: () => {
-      const el = renderModelsList({
-        globals: [
-          { ...PRICED, costUnreliable: true },
-          { ...FREE, costUnreliable: true },
-          { ...GLOBAL, costUnreliable: true },
-        ],
-        predefined: [], efforts: EFFORTS,
-      }, { doc });
-      const cards = [...el.querySelectorAll('.mv-card')];
-      const badges = (c) => [...c.querySelectorAll('.badge')].map((b) => b.textContent);
-
-      assert.ok(badges(cards[0]).includes('priced'));
-      assert.ok(!badges(cards[0]).includes('cost not verified'),
-        'an override GOVERNS the spend — the unreliable flag says nothing about it');
-      assert.match(cards[0].querySelector('.mv-summary').textContent, /input \$0\.5 · output \$1\.5 \/Mtok/);
-
-      assert.ok(badges(cards[1]).includes('free'));
-      assert.match(cards[1].querySelector('.mv-summary').textContent, /priced free/);
-
-      // A model with NO override still shows the flag — unchanged.
-      assert.ok(badges(cards[2]).includes('cost not verified'));
-      assert.ok(!badges(cards[2]).includes('priced'));
-    } },
-    { name: 'list: a plugin card shows its MANIFEST price, same rules as a global card', run: () => {
-      const el = renderModelsList({
-        globals: [],
-        plugins: [
-          { id: 'pp-rated', label: 'PP Rated', efforts: EFFORTS, plugin: 'priced-plug', secrets: [],
-            env: { ANTHROPIC_BASE_URL: '••••••mple' }, cost: { perMtok: { input: 1, output: 3 } }, costUnreliable: true },
-          { id: 'pp-free', label: 'PP Free', efforts: EFFORTS, plugin: 'priced-plug', secrets: [], cost: { free: true } },
-          { id: 'pp-plain', label: 'PP Plain', efforts: EFFORTS, plugin: 'priced-plug', secrets: [], costUnreliable: true },
-        ],
-        predefined: [], efforts: EFFORTS,
-      }, { doc });
-      const cards = [...el.querySelectorAll('.mv-plugin')];
-      const badges = (c) => [...c.querySelectorAll('.badge')].map((b) => b.textContent);
-
-      assert.ok(badges(cards[0]).includes('priced'));
-      assert.ok(!badges(cards[0]).includes('cost not verified'), 'a pinned price governs the spend');
-      assert.match(cards[0].querySelector('.mv-summary').textContent, /input \$1 · output \$3 \/Mtok/);
-      assert.ok(badges(cards[1]).includes('free'));
-      assert.ok(badges(cards[2]).includes('cost not verified'), 'unpriced plugin model: flag unchanged');
-    } },
-  ]);
-});
-
 // ── Duplicate ────────────────────────────────────────────────────────────────
+
+test('deleteRefsSummary (PAN-7): one count of every job the delete clears; an override clears nothing', () => {
+  const ask = (refs) => deleteRefsSummary('my-gpt', refs);
+  assert.equal(ask({ predefinedShadow: false, steps: [], nodes: [], jobs: [] }), 'Delete model "my-gpt"? No job uses it.');
+  assert.equal(ask({ steps: [{}], jobs: [{}, {}] }), 'Delete model "my-gpt"? This also clears 3 jobs that use it.');
+  assert.equal(ask({ jobs: [{}] }), 'Delete model "my-gpt"? This also clears 1 job that uses it.');
+  assert.equal(ask({ nodes: [{}], steps: [{}] }), 'Delete model "my-gpt"? This also clears 2 jobs that use it.');
+  assert.equal(ask({}), 'Delete model "my-gpt"? No job uses it.', 'a refs read answered {}');
+  assert.equal(ask(null), 'Delete model "my-gpt"? No job uses it.', 'a failed refs read');
+  assert.equal(ask({ memoryDefrag: true, jobs: [] }), 'Delete model "my-gpt"? This also clears 1 job that uses it.');
+  assert.equal(ask({ memoryDefrag: true, jobs: [{ kind: 'helper', engine: 'claude', key: 'memoryDefrag' }] }),
+    'Delete model "my-gpt"? This also clears 1 job that uses it.', 'the defrag pick is counted once');
+  assert.equal(ask({ memoryDefrag: true, jobs: [{ kind: 'helper', engine: 'codex', key: 'memoryDefrag' }] }),
+    'Delete model "my-gpt"? This also clears 2 jobs that use it.', "Codex's own defragment job is another job");
+  assert.equal(ask({ predefinedShadow: true, steps: [], nodes: [], jobs: [] }),
+    'Remove the override of built-in "my-gpt"? The built-in entry comes back; nothing else changes.');
+});
 
 test('suggestDuplicateId: first free -copy, then numbered, case-insensitively', () => {
   assert.equal(suggestDuplicateId('glm-4.7', []), 'glm-4.7-copy');
@@ -324,37 +277,15 @@ test('suggestDuplicateId: first free -copy, then numbered, case-insensitively', 
   assert.equal(suggestDuplicateId('glm-4.7-copy', ['glm-4.7-copy']), 'glm-4.7-copy-copy');
 });
 
-// ── #422: endpoint-routed badge ──
-
-test('list (#422): endpoint-routed badge on global + plugin cards whose env carries ANTHROPIC_BASE_URL, and only those', () => {
-  const plain = { id: 'plain', label: 'Plain', efforts: [], env: { ANTHROPIC_AUTH_TOKEN: '••••' } };
-  const plug = { id: 'pm', label: 'PM', efforts: [], plugin: 'p', env: { ANTHROPIC_BASE_URL: '••••' }, secrets: [] };
-  const root = renderModelsList({ globals: [GLOBAL, plain], plugins: [plug], predefined: PREDEFINED, efforts: EFFORTS }, { doc });
-  const badgeOf = (id) => root.querySelector(`.mv-card[data-id="${id}"] .mv-routed`);
-  assert.ok(badgeOf('glm-4.7'), 'routed global');
-  assert.equal(badgeOf('plain'), null, 'no base url → no badge');
-  assert.ok(badgeOf('pm'), 'routed plugin');
-  assert.match(badgeOf('glm-4.7').title, /haiku\/sonnet\/opus\/fable/);
+test('suggestDuplicateLabel: " copy" after a label the user chose, none for a label that is the id', () => {
+  assert.equal(suggestDuplicateLabel({ id: 'gw-claude', label: 'Gateway' }), 'Gateway copy');
+  assert.equal(suggestDuplicateLabel({ id: 'gw-claude', label: 'Gateway copy' }), 'Gateway copy copy');
+  assert.equal(suggestDuplicateLabel({ id: 'gw-claude', label: 'gw-claude' }), '');
+  assert.equal(suggestDuplicateLabel({ id: 'gw-claude', label: '' }), '');
+  assert.equal(suggestDuplicateLabel({ id: 'gw-claude' }), '');
 });
 
 const CODEX_EFFORTS = ['minimal', 'low', 'medium', 'high'];
-
-test('list: Codex built-ins have their own group; a Codex custom model carries a Codex badge', () => {
-  const el = renderModelsList({
-    globals: [{ id: 'gpt-5.5-tuned', label: 'Tuned', efforts: ['low', 'high'], engine: 'codex' }],
-    predefined: PREDEFINED, efforts: EFFORTS,
-    codex: [{ id: 'gpt-5.5', label: 'GPT-5.5', efforts: CODEX_EFFORTS }], codexEfforts: CODEX_EFFORTS,
-  }, { doc });
-  const sec = el.querySelector('.mv-section[data-section="codex"]');
-  assert.ok(sec);
-  assert.equal(sec.querySelector('.mv-section-title').textContent, 'Codex built-in models');
-  assert.deepEqual([...sec.querySelectorAll('.mv-builtin.mv-codex')].map((r) => r.dataset.id), ['gpt-5.5']);
-  assert.match(sec.querySelector('.mv-summary').textContent, /gpt-5\.5: all efforts/);
-  const card = el.querySelector('.mv-card[data-id="gpt-5.5-tuned"]');
-  assert.equal(card.querySelector('.mv-engine').textContent, 'OpenAI Codex');
-  assert.match(card.querySelector('.mv-summary').textContent, /low · high/);
-  assert.equal(el.querySelectorAll('.mv-builtin:not(.mv-codex)').length, 2);
-});
 
 test('editor: the engine swaps the efforts and hides env for Codex; collect sends it', () => {
   const el = renderModelEditor(null, EFFORTS, { doc, codexEfforts: CODEX_EFFORTS });
@@ -365,7 +296,7 @@ test('editor: the engine swaps the efforts and hides env for Codex; collect send
   assert.equal(engine.value, 'codex');
   assert.deepEqual([...el.querySelectorAll('.mv-effort-cb')].map((c) => c.value), CODEX_EFFORTS);
   assert.equal(el.querySelector('.mv-env').closest('.mv-field').hidden, true);
-  assert.equal(el.querySelector('.mv-conn').closest('.mv-field').hidden, false, 'a Codex model keeps a (narrowed) Connection');
+  assert.deepEqual(wheresFor(el.dataset.engine), ['signin', 'provider'], 'a Codex model keeps a (narrowed) Connection');
   el.querySelector('.mv-id').value = 'gpt-5.5-tuned';
   el.querySelector('.mv-effort-cb[value="minimal"]').checked = false;
   const { id, body } = collectModelEditor(el);
@@ -383,41 +314,38 @@ test('editor: the engine swaps the efforts and hides env for Codex; collect send
   assert.equal(edit.querySelector('.mv-env').closest('.mv-field').hidden, true);
 });
 
-test('editor: a new model picks its connection first; through a provider it is Claude Code\'s, and an OpenAI Responses endpoint runs on OpenAI Codex too', () => {
+test('editor: a new model picks where it runs first; a harness that cannot reach a provider leaves for Claude Code, and the id follows the provider', () => {
   const providers = { openai: { configured: false, keySet: false, keyOptional: false } };
   const el = renderModelEditor(null, EFFORTS, { doc, codexEfforts: CODEX_EFFORTS, providers });
   const conn = el.querySelector('.mv-conn');
-  const signin = el.querySelector('.mv-signin-field');
-  // A new entry is on no engine until its connection says so: every mode, whatever the sign-in.
-  setModelEngine(el, 'codex');
-  const shown = [...conn.querySelectorAll('.mv-conn-mode')].filter((l) => !l.hidden);
-  assert.deepEqual(shown.map((l) => l.querySelector('.mv-conn-mode-rb').value), ['direct', 'env', 'provider']);
-  assert.equal(shown[0].querySelector('.mv-conn-mode-title').textContent, "A harness's own sign-in");
-  assert.equal(signin.hidden, false, 'the sign-in asks which harness');
-  assert.match(conn.querySelector('.mv-conn-runs').textContent, /^Runs on OpenAI Codex only/);
-  // Through a provider the entry is Claude Code's: the sign-in leaves, the efforts are Claude Code's list.
-  conn.querySelector('.mv-conn-mode-rb[value="provider"]').checked = true;
-  applyConnectionModeIn(el);
-  assert.equal(signin.hidden, true);
+  const harness = el.querySelector('.mv-engine').closest('.mv-field');
+  // A new entry starts on a sign-in, and the harness field asks which one.
+  setModelEngine(el, 'copilot');
+  assert.equal(connectionWhere(el), 'signin');
+  assert.equal(harness.hidden, false, 'the sign-in asks which harness');
+  assert.equal(conn.querySelector('.mv-conn-body').hidden, true);
+  // Through a provider a Copilot-harness entry is Claude Code's: the harness leaves, the efforts are Claude Code's list.
+  setConnectionWhere(el, 'provider');
+  assert.equal(harness.hidden, true);
   assert.equal(el.dataset.engine, 'claude');
   assert.deepEqual([...el.querySelectorAll('.mv-effort-cb')].map((c) => c.value), EFFORTS);
   const prov = conn.querySelector('.mv-conn-provider');
   assert.equal(prov.disabled, false);
   prov.value = 'openai';
-  conn.querySelector('.mv-conn-api').value = 'openai-responses';
+  el.querySelector('.mv-conn-api').value = 'openai-responses';
   conn.querySelector('.mv-conn-model').value = 'gpt-5.5';
   applyConnectionModeIn(el);
-  assert.equal(conn.querySelector('.mv-conn-api').value, 'openai-responses');
-  assert.equal(conn.querySelector('.mv-conn-runs').textContent, "Runs on Claude Code (through worca's bridge) and OpenAI Codex (directly).");
+  assert.equal(el.querySelector('.mv-conn-api').value, 'openai-responses');
   // The id follows the provider and the upstream model until typed: gpt-5.5 itself is Codex's own sign-in.
   assert.equal(el.querySelector('.mv-id').value, 'openai-gpt-5.5');
   const { body } = collectModelEditor(el);
   assert.equal('engine' in body, false, 'stored as Claude Code\'s; its harnesses follow from the connection');
   assert.equal(body.id, 'openai-gpt-5.5');
   assert.equal(body.upstream.model, 'gpt-5.5');
-  conn.querySelector('.mv-conn-api').value = 'openai-chat';
+  // OpenRouter is an OpenAI-compatible endpoint: the suggested id names openai, not openrouter.
+  prov.value = 'openrouter';
   applyConnectionModeIn(el);
-  assert.match(conn.querySelector('.mv-conn-runs').textContent, /^Runs on Claude Code, through worca's bridge\./);
+  assert.equal(el.querySelector('.mv-id').value, 'openai-gpt-5.5');
   // A typed id is kept.
   el.querySelector('.mv-id').value = 'my-gpt'; el.querySelector('.mv-id').dataset.auto = 'off';
   applyConnectionModeIn(el);
@@ -428,42 +356,22 @@ test('editor (edit): a stored Codex endpoint model keeps codex\'s rules — its 
   const upstream = { provider: 'openai', api: 'openai-responses', model: 'qwen3-coder', baseUrl: 'http://127.0.0.1:8000/v1', apiKey: '${CX_KEY}', headers: { 'X-Team': 'blue' } };
   const edit = renderModelEditor({ id: 'cx-local', engine: 'codex', efforts: CODEX_EFFORTS, upstream }, EFFORTS, { doc, codexEfforts: CODEX_EFFORTS });
   const conn = edit.querySelector('.mv-conn');
-  const shown = [...conn.querySelectorAll('.mv-conn-mode')].filter((l) => !l.hidden);
-  assert.deepEqual(shown.map((l) => l.querySelector('.mv-conn-mode-rb').value), ['direct', 'provider'], 'no env mode on Codex');
-  assert.deepEqual(shown.map((l) => l.querySelector('.mv-conn-mode-title').textContent), ['Codex default', 'OpenAI-compatible endpoint']);
-  assert.equal(edit.querySelector('.mv-conn-mode-rb:checked').value, 'provider');
+  assert.deepEqual(wheresFor('codex'), ['signin', 'provider'], 'no env on Codex');
+  assert.equal(connectionWhere(edit), 'provider');
   const prov = conn.querySelector('.mv-conn-provider');
   assert.equal(prov.value, 'openai');
   assert.equal(prov.disabled, true);
-  assert.deepEqual([...conn.querySelectorAll('.mv-conn-api option')].map((o) => o.value), ['openai-responses'], 'codex no longer speaks chat completions');
-  assert.equal(conn.querySelector('.mv-conn-caps').hidden, true, 'the bridge\'s capability pins do not apply');
-  assert.match(conn.querySelector('.mv-conn-note').textContent, /Codex calls the endpoint’s Responses API itself/);
-  assert.equal(conn.querySelector('.mv-conn-runs').textContent, "Runs on Claude Code (through worca's bridge) and OpenAI Codex (directly).");
+  assert.deepEqual([...edit.querySelectorAll('.mv-conn-api option')].map((o) => o.value), ['openai-responses'], 'codex no longer speaks chat completions');
+  assert.equal(edit.querySelector('.mv-conn-caps').hidden, true, 'the bridge\'s capability pins do not apply');
   const { body } = collectModelEditor(edit);
   assert.deepEqual(body.env, {});
   assert.deepEqual(body.upstream, upstream);
-  edit.querySelector('.mv-conn-mode-rb[value="direct"]').checked = true;
+  // Its efforts are Codex's, drawn after its harness: never the bridge's medium-only rule for a translated Claude model.
+  assert.deepEqual(body.efforts, [], 'every Codex effort stored: the default, sent as []');
+  const two = renderModelEditor({ id: 'cx-local', engine: 'codex', efforts: ['low', 'medium'], upstream }, EFFORTS, { doc, codexEfforts: CODEX_EFFORTS });
+  assert.deepEqual(collectModelEditor(two).body.efforts, ['low', 'medium'], 'a stored subset is kept');
+  setConnectionWhere(edit, 'signin');
   assert.equal(collectModelEditor(edit).body.upstream, null, 'switching back to codex\'s default clears the endpoint');
-});
-
-test('cards: a Codex endpoint model says endpoint, not bridged, and carries no translation line', () => {
-  const m = { id: 'cx-local', engine: 'codex', bridged: 'openai', upstreamModel: 'qwen3-coder', upstream: { provider: 'openai', api: 'openai-responses', model: 'qwen3-coder' } };
-  const b = bridgedBadge(m, { doc });
-  assert.equal(b.textContent, 'endpoint: openai');
-  assert.match(b.title, /Codex connects to this OpenAI-compatible endpoint itself as qwen3-coder/);
-  assert.equal(degradationLine(m), '');
-});
-
-test('list: a Codex built-in shadowed by a same-id model of any engine says overridden', () => {
-  const el = renderModelsList({
-    globals: [{ id: 'gpt-5.5', label: 'GPT via proxy', efforts: ['medium'] }],
-    predefined: PREDEFINED, efforts: EFFORTS,
-    codex: [{ id: 'gpt-5.5', label: 'GPT-5.5', efforts: CODEX_EFFORTS }, { id: 'gpt-5.6-sol', label: 'Sol', efforts: CODEX_EFFORTS }], codexEfforts: CODEX_EFFORTS,
-    policy: [{ id: 'gpt-5.6-sol', label: 'Sol via Acme', efforts: ['medium'], home: 'acme/gateway' }],
-  }, { doc });
-  const badge = (id) => !!el.querySelector(`.mv-builtin.mv-codex[data-id="${id}"] .mv-shadowed`);
-  assert.equal(badge('gpt-5.5'), true, 'a Claude global of the same id owns it');
-  assert.equal(badge('gpt-5.6-sol'), true, 'a team-policy model of the same id owns it');
 });
 
 test('editor: Cursor takes no env, no endpoint, no effort and no pricing; the fields come back off Cursor', () => {
@@ -476,11 +384,9 @@ test('editor: Cursor takes no env, no endpoint, no effort and no pricing; the fi
   assert.equal(el.querySelector('.mv-cost-edit').closest('.mv-field').hidden, true, 'the whole Pricing field');
   assert.equal(el.querySelector('.mv-efforts').closest('.mv-field').hidden, true);
   const conn = el.querySelector('.mv-conn');
-  const shown = [...conn.querySelectorAll('.mv-conn-mode')].filter((l) => !l.hidden);
-  // A new entry still offers every connection; on Cursor's sign-in it runs on Cursor alone.
-  assert.equal(shown.length, 3);
-  assert.equal(conn.querySelector('.mv-conn-mode-rb:checked').value, 'direct');
-  assert.match(conn.querySelector('.mv-conn-runs').textContent, /^Runs on Cursor only/);
+  // On Cursor's sign-in it runs on Cursor alone (a new entry may still pick a provider, which makes it Claude Code's).
+  assert.deepEqual(wheresFor('cursor'), ['signin']);
+  assert.equal(connectionWhere(el), 'signin');
   assert.equal(conn.querySelector('.mv-conn-body').hidden, true);
   el.querySelector('.mv-id').value = 'sonnet-4.5';
   const { body } = collectModelEditor(el);
@@ -501,7 +407,7 @@ test('editor: Goose takes no env and no endpoint; its efforts are GOOSE_THINKING
   assert.equal(el.querySelector('.mv-env').closest('.mv-field').hidden, true);
   assert.equal(el.querySelector('.mv-cost-edit').closest('.mv-field').hidden, false, 'Goose prices its own runs; an override still applies');
   const conn = el.querySelector('.mv-conn');
-  assert.match(conn.querySelector('.mv-conn-runs').textContent, /^Runs on Goose only/);
+  assert.equal(connectionWhere(el), 'signin');
   assert.equal(conn.querySelector('.mv-conn-body').hidden, true);
   el.querySelector('.mv-id').value = 'google/gemini-2.5-flash';
   const { body } = collectModelEditor(el);
@@ -517,11 +423,9 @@ test('editor: OpenCode takes no env and no endpoint; its efforts are the variant
   assert.equal(el.querySelector('.mv-env').closest('.mv-field').hidden, true);
   assert.equal(el.querySelector('.mv-cost-edit').closest('.mv-field').hidden, false, 'OpenCode prices its own runs; an override still applies');
   const conn = el.querySelector('.mv-conn');
-  const shown = [...conn.querySelectorAll('.mv-conn-mode')].filter((l) => !l.hidden);
-  // A new entry still offers every connection; on OpenCode's providers it runs on OpenCode alone.
-  assert.equal(shown.length, 3);
-  assert.equal(conn.querySelector('.mv-conn-mode-rb:checked').value, 'direct');
-  assert.match(conn.querySelector('.mv-conn-runs').textContent, /^Runs on OpenCode only/);
+  // On OpenCode's providers it runs on OpenCode alone (a new entry may still pick a provider, which makes it Claude Code's).
+  assert.deepEqual(wheresFor('opencode'), ['signin']);
+  assert.equal(connectionWhere(el), 'signin');
   assert.equal(conn.querySelector('.mv-conn-body').hidden, true);
   el.querySelector('.mv-id').value = 'anthropic/claude-sonnet-4-5';
   const { body } = collectModelEditor(el);
@@ -532,15 +436,19 @@ test('editor: OpenCode takes no env and no endpoint; its efforts are the variant
 
 test('editor: editing a Goose model offers only its own providers', () => {
   const el = renderModelEditor({ id: 'google/gemini-2.5-flash', label: 'Flash', engine: 'goose', efforts: ['high'] }, EFFORTS, { doc, codexEfforts: CODEX_EFFORTS, gooseEfforts: ['low', 'medium', 'high', 'max'] });
-  const shown = [...el.querySelectorAll('.mv-conn .mv-conn-mode')].filter((l) => !l.hidden);
-  assert.deepEqual(shown.map((l) => l.querySelector('.mv-conn-mode-title').textContent), ['Goose providers']);
+  assert.deepEqual(wheresFor(el.dataset.engine), ['signin']);
+  // An edit keeps its harness: a where the harness cannot reach falls back to its sign-in.
+  setConnectionWhere(el, 'provider');
+  assert.equal(connectionWhere(el), 'signin');
+  assert.equal(el.dataset.engine, 'goose');
   assert.equal(el.querySelector('.mv-conn-body').hidden, true);
 });
 
 test('editor: editing an OpenCode model offers only its own providers', () => {
   const el = renderModelEditor({ id: 'anthropic/claude-sonnet-4-5', label: 'Sonnet', engine: 'opencode', efforts: ['high'] }, EFFORTS, { doc, codexEfforts: CODEX_EFFORTS, opencodeEfforts: ['minimal', 'low', 'medium', 'high', 'max'] });
-  const shown = [...el.querySelectorAll('.mv-conn .mv-conn-mode')].filter((l) => !l.hidden);
-  assert.deepEqual(shown.map((l) => l.querySelector('.mv-conn-mode-title').textContent), ['OpenCode providers']);
+  assert.deepEqual(wheresFor(el.dataset.engine), ['signin']);
+  setConnectionWhere(el, 'env');
+  assert.equal(connectionWhere(el), 'signin');
   assert.equal(el.querySelector('.mv-conn-body').hidden, true);
 });
 
@@ -552,9 +460,9 @@ for (const [engine, label, efforts] of [['gemini', 'Gemini CLI', ['low', 'medium
     assert.equal(el.querySelector('.mv-env').closest('.mv-field').hidden, true);
     assert.equal(el.querySelector('.mv-cost-edit').closest('.mv-field').hidden, false, "a chat's cost cap and spend use the price");
     const conn = el.querySelector('.mv-conn');
-    // A new entry still offers every connection; on its CLI's sign-in it runs on that CLI alone.
-    assert.equal(conn.querySelector('.mv-conn-mode-rb:checked').value, 'direct');
-    assert.match(conn.querySelector('.mv-conn-runs').textContent, new RegExp(`^Runs on ${label} only`));
+    // On its CLI's sign-in it runs on that CLI alone.
+    assert.deepEqual(wheresFor(engine), ['signin']);
+    assert.equal(connectionWhere(el), 'signin');
     assert.equal(conn.querySelector('.mv-conn-body').hidden, true);
     el.querySelector('.mv-id').value = 'm-1';
     const { body } = collectModelEditor(el);
@@ -565,35 +473,389 @@ for (const [engine, label, efforts] of [['gemini', 'Gemini CLI', ['low', 'medium
     const el = renderModelEditor({ id: 'm-1', label: 'm-1', engine, efforts }, EFFORTS, { doc, codexEfforts: CODEX_EFFORTS });
     assert.equal(el.querySelectorAll('.mv-effort-cb').length, efforts.length);
     assert.equal(el.querySelector('.mv-efforts').closest('.mv-field').hidden, false);
-    const shown = [...el.querySelectorAll('.mv-conn .mv-conn-mode')].filter((l) => !l.hidden);
-    assert.deepEqual(shown.map((l) => l.querySelector('.mv-conn-mode-title').textContent), [`${label} default`]);
+    assert.deepEqual(wheresFor(el.dataset.engine), ['signin']);
+    assert.equal(connectionWhere(el), 'signin');
   });
 
-  test(`list: a ${label} model carries its badge and no effort summary of Claude's`, () => {
-    const el = renderModelsList({ globals: [{ id: 'm-1', label: 'm-1', efforts: [], engine }], predefined: PREDEFINED, efforts: EFFORTS, codexEfforts: CODEX_EFFORTS }, { doc });
-    assert.equal(el.querySelector('.mv-card[data-id="m-1"] .mv-engine').textContent, label);
-  });
 }
 
-test('list: a Cursor custom model carries a Cursor badge, and there is no Cursor filter chip', () => {
-  const el = renderModelsList({
-    globals: [{ id: 'sonnet-4.5', label: 'Sonnet via Cursor', efforts: [], engine: 'cursor' }],
-    predefined: PREDEFINED, efforts: EFFORTS, codexEfforts: CODEX_EFFORTS, cursorEfforts: [],
-  }, { doc });
-  assert.equal(el.querySelector('.mv-card[data-id="sonnet-4.5"] .mv-engine').textContent, 'Cursor');
-  assert.equal([...el.querySelectorAll('[data-filter]')].some((c) => c.dataset.filter === 'cursor'), false);
+// ── The model form (DESIGN FRM-1…FRM-7): where it runs picks the fields; the request bodies stay today's ────────────
+
+/** GET /api/providers: Copilot signed in, OpenRouter's key set, the OpenAI-compatible row keyed with no address. */
+const P = Object.freeze({
+  copilot: { connected: true }, openrouter: { keySet: true }, openai: { configured: true, keySet: true, baseUrl: '' },
+  anthropic: {}, broker: { enabled: false },
+});
+/** A Copilot model as GET /api/models lists it (its efforts the full effective list). */
+const BRIDGED = Object.freeze({
+  id: 'copilot-gpt-x', label: 'GPT X', efforts: [...EFFORTS],
+  upstream: { provider: 'copilot', api: 'openai-responses', model: 'gpt-x', capabilities: { toolCalls: true, vision: true, maxPromptTokens: 272000 } },
+});
+const win = doc.defaultView;
+/** No ancestor of `el` is hidden. */
+const shows = (el) => { for (let n = el; n; n = n.parentElement) if (n.hidden) return false; return true; };
+const fieldNames = (ed) => [...ed.querySelectorAll('.mv-field')].filter(shows).map((f) => f.querySelector('.mv-field-label').textContent);
+const typeInto = (input, value) => { input.value = value; input.dispatchEvent(new win.Event('input', { bubbles: true })); };
+const folds = (ed) => [...ed.querySelectorAll('.mdl-disc')].map((b) => [b.querySelector('.mdl-disc-name').textContent, b.querySelector('.mdl-disc-sum').textContent, b.getAttribute('aria-expanded')]);
+
+test('envRowsProblem: reserved names, the provider\'s own four, a shared name, a value with no name — the first one', () => {
+  assert.equal(envRowsProblem([{ key: 'A', value: '1' }]), '');
+  assert.equal(envRowsProblem([{ key: 'WORCA_X', value: '1' }]), 'WORCA_ names are reserved');
+  assert.equal(envRowsProblem([{ key: 'ANTHROPIC_MODEL', value: 'm' }], { provider: true }), 'ANTHROPIC_MODEL is set by the provider');
+  assert.equal(envRowsProblem([{ key: 'ANTHROPIC_MODEL', value: 'm' }]), '');
+  assert.equal(envRowsProblem([{ key: 'A', value: '1' }, { key: 'A', value: '2' }]), 'Two variables share a name');
+  assert.equal(envRowsProblem([{ key: '', value: 'v' }]), 'Name the variable');
 });
 
-test('phones: the Models header and the model cards wrap at 760px instead of running off a 375px screen', async () => {
+test('form (FRM-1, FRM-2): the fields follow where the model runs', () => {
+  assert.deepEqual(fieldNames(renderModelEditor(null, EFFORTS, { doc, where: 'signin' })), ['Name', 'ID', 'Harness', 'Env vars', 'Efforts', 'Pricing']);
+  assert.deepEqual(fieldNames(renderModelEditor(null, EFFORTS, { doc, providers: P, where: 'provider' })).slice(0, 4), ['Name', 'ID', 'Provider', 'Upstream model id']);
+  const env = renderModelEditor(null, EFFORTS, { doc, where: 'env' });
+  assert.deepEqual([...env.querySelectorAll('.mv-env-key')].map((k) => k.value), ['ANTHROPIC_BASE_URL', 'ANTHROPIC_AUTH_TOKEN'], 'a new custom endpoint starts with the two it needs');
+  assert.deepEqual([...env.querySelectorAll('.mv-env-row')].map((r) => r.dataset.key), [undefined, undefined], 'new rows, not stored ones');
+  assert.deepEqual([...env.querySelectorAll('.mv-engine option')].filter((o) => !o.hidden).map((o) => o.value), ['claude'], 'a custom endpoint offers Claude Code only');
+});
+
+test('form (FRM-1, FRM-5): titles, steps and the foot; Save waits for a free id and clean env vars', () => {
+  const add = renderModelEditor(null, EFFORTS, { doc, steps: true, takenIds: ['my-gpt'] });
+  assert.deepEqual([...add.children].map((c) => c.className).filter((c, i, all) => i === 0 || i >= all.length - 2), ['mv-editor-head', 'form-msg mv-editor-msg', 'mv-editor-btns']);
+  assert.equal(add.querySelector(':scope > .mv-editor-head > .mv-editor-title').textContent, 'Add model');
+  assert.ok(add.querySelector(':scope > .mv-editor-head .mdl-steps'));
+  assert.ok(add.querySelector(':scope > .mv-editor-head > .mdl-close.btn[aria-label="Close"]'));
+  assert.equal(add.querySelector('.mv-rewhere'), null);
+  assert.deepEqual([...add.querySelectorAll('.mv-editor-btns > button')].map((b) => b.textContent), ['Back', 'Cancel', 'Add model'], 'Save last');
+  const save = add.querySelector('.mv-save');
+  assert.equal(save.disabled, true, 'no id yet');
+  typeInto(add.querySelector('.mv-id'), 'gpt-local');
+  assert.equal(save.disabled, false);
+  typeInto(add.querySelector('.mv-id'), 'My-GPT');
+  assert.equal(save.disabled, true, 'the id is taken, whatever its case');
+  typeInto(add.querySelector('.mv-id'), 'gpt-local');
+  assert.equal(save.disabled, false);
+  const row = makeEnvRow({ doc });
+  add.querySelector('.mv-env').appendChild(row);
+  typeInto(row.querySelector('.mv-env-key'), 'WORCA_X');
+  assert.equal(save.disabled, true);
+  const problem = add.querySelector('.mv-env-problem');
+  assert.deepEqual([problem.hidden, problem.textContent], [false, 'WORCA_ names are reserved']);
+  assert.equal(add.querySelector('.mv-env-note').hidden, true);
+  setModelEngine(add, 'codex');
+  assert.equal(save.disabled, false, 'env vars are Claude Code\'s: a Codex model sends none, so none is refused');
+
+  const model = { id: 'my-gpt', label: 'My GPT', efforts: ['high'] };
+  const edit = renderModelEditor(model, EFFORTS, { doc });
+  assert.equal(edit.querySelector('.mv-editor-title').textContent, 'Edit My GPT');
+  assert.ok(edit.querySelector('.mv-rewhere'));
+  assert.equal(edit.querySelector('.mdl-steps'), null);
+  assert.equal(edit.querySelector('.mv-back'), null);
+  assert.equal(edit.querySelector('.mv-id').disabled, true);
+  assert.deepEqual([edit.querySelector('.mv-save').textContent, edit.querySelector('.mv-save').disabled], ['Save', false]);
+
+  const copy = renderModelEditor(model, EFFORTS, { doc, copyFrom: 'my-gpt', id: 'my-gpt-copy' });
+  assert.equal(copy.querySelector('.mv-editor-title').textContent, 'Add a copy');
+  assert.deepEqual([copy.querySelector('.mv-id').disabled, copy.querySelector('.mv-id').value], [false, 'my-gpt-copy']);
+  assert.equal(copy.querySelector('.mv-save').disabled, false, 'enabled with no event');
+  assert.equal(copy.querySelector('.mv-rewhere'), null);
+  assert.deepEqual([copy.dataset.mode, copy.dataset.copyFrom], ['create', 'my-gpt']);
+});
+
+test('form (FRM-4): a provider model folds Connection and Capabilities and limits after Pricing, each with its summary', () => {
+  const ed = renderModelEditor(BRIDGED, EFFORTS, { doc, providers: P });
+  assert.deepEqual(folds(ed), [['Connection', 'OpenAI Responses', 'false'], ['Capabilities and limits', 'Tools, vision · 272k prompt', 'false']]);
+  assert.ok(ed.querySelector('.mv-cost-edit').compareDocumentPosition(ed.querySelector('.mv-conn-more')) & win.Node.DOCUMENT_POSITION_FOLLOWING, 'the folds come after Pricing');
+  assert.equal(ed.querySelector('.mv-conn .mv-conn-more'), null, 'moved out of the connection field');
+  const disc = ed.querySelector('.mdl-disc');
+  assert.ok(disc.classList.contains('btn') && disc.classList.contains('btn-quiet'));
+  const body = ed.querySelector(`#${disc.getAttribute('aria-controls')}`);
+  assert.equal(body.hidden, true);
+  disc.click();
+  assert.deepEqual([disc.getAttribute('aria-expanded'), body.hidden], ['true', false]);
+  disc.click();
+  assert.deepEqual([disc.getAttribute('aria-expanded'), body.hidden], ['false', true]);
+  // The summaries follow the fields.
+  ed.querySelector('.mv-conn-cap-cb[data-cap="reasoning"]').checked = true;
+  applyConnectionModeIn(ed);
+  assert.equal(folds(ed)[1][1], 'Tools, vision, reasoning · 272k prompt');
+  for (const cb of ed.querySelectorAll('.mv-conn-cap-cb')) cb.checked = false;
+  ed.querySelector('.mv-conn-limit-in[data-limit="maxPromptTokens"]').value = '';
+  applyConnectionModeIn(ed);
+  assert.equal(folds(ed)[1][1], 'No capabilities');
+  const own = renderModelEditor({ ...BRIDGED, upstream: { ...BRIDGED.upstream, provider: 'openai', api: 'openai-chat', baseUrl: 'https://gw.example/v1' } }, EFFORTS, { doc, providers: P });
+  assert.equal(folds(own)[0][1], 'OpenAI chat completions · own address');
+});
+
+test('form: the API segment drives the hidden select the collector reads; Pricing is a segment over the kept radios', () => {
+  const ed = renderModelEditor(BRIDGED, EFFORTS, { doc, providers: P });
+  const sel = ed.querySelector('select.mv-conn-api');
+  assert.equal(sel.hidden, true);
+  const segs = () => [...ed.querySelectorAll('.mv-conn-api-seg button')].map((b) => [b.textContent, b.getAttribute('aria-pressed')]);
+  assert.deepEqual(segs(), [['Anthropic Messages', 'false'], ['OpenAI chat completions', 'false'], ['OpenAI Responses', 'true']]);
+  let changes = 0;
+  ed.addEventListener('change', (e) => { if (e.target === sel) changes += 1; });
+  [...ed.querySelectorAll('.mv-conn-api-seg button')].find((b) => b.textContent === 'OpenAI chat completions').click();
+  assert.equal(collectModelEditor(ed).body.upstream.api, 'openai-chat');
+  assert.equal(changes, 1, 'a bubbling change: app.js and the modal guard see it');
+  assert.deepEqual(segs(), [['Anthropic Messages', 'false'], ['OpenAI chat completions', 'true'], ['OpenAI Responses', 'false']]);
+  assert.equal(folds(ed)[0][1], 'OpenAI chat completions');
+  const pressed = () => ed.querySelector('.mv-cost-seg [aria-pressed="true"]').textContent;
+  assert.equal(pressed(), 'Trust the CLI');
+  setModelCost(ed, { free: true });
+  assert.equal(pressed(), 'Free ($0)');
+  [...ed.querySelectorAll('.mv-cost-seg button')].find((b) => b.textContent === 'Per million tokens').click();
+  assert.equal(ed.querySelector('.mv-cost-mode-rb:checked').value, 'perMtok');
+  assert.equal(ed.querySelector('.mv-cost-rates').hidden, false);
+  assert.equal(pressed(), 'Per million tokens');
+});
+
+test('form: the Provider select offers OpenRouter, an OpenAI-compatible endpoint at openrouter.ai; an untouched model collects today\'s body', () => {
+  const add = renderModelEditor(null, EFFORTS, { doc, providers: P, where: 'provider' });
+  const sel = add.querySelector('select.mv-conn-provider');
+  assert.deepEqual([...sel.options].map((o) => [o.value, o.textContent]), [['copilot', 'GitHub Copilot'], ['openrouter', 'OpenRouter'], ['openai', 'OpenAI-compatible'], ['anthropic', 'Anthropic-compatible']]);
+  // FRM-1: "a select with marks" — the picked provider's mark inside it, also after a pick made by code.
+  const provMark = () => add.querySelector('.mv-conn-prov-row > .mdl-picksel > .mdl-mark img')?.getAttribute('src') || '';
+  assert.equal(sel.parentElement.matches('.mv-conn-prov-row > .mdl-picksel'), true);
+  assert.match(provMark(), /githubcopilot\.svg$/);
+  const bu = add.querySelector('.mv-conn-baseurl');
+  sel.value = 'openrouter';
+  applyConnectionModeIn(add);
+  assert.match(provMark(), /openrouter\.svg$/, 'the mark follows the select');
+  assert.equal(bu.value, 'https://openrouter.ai/api/v1');
+  const up = collectModelEditor(add).body.upstream;
+  assert.deepEqual([up.provider, up.baseUrl], ['openai', 'https://openrouter.ai/api/v1']);
+  sel.value = 'openai';
+  applyConnectionModeIn(add);
+  assert.equal(bu.value, '', 'leaving OpenRouter clears its address');
+  bu.value = 'https://openrouter.ai/api/v1';
+  applyConnectionModeIn(add);
+  assert.equal(sel.value, 'openai', 'typing a URL never moves the select');
+  // A preset OpenRouter form fills the address at render; its state word is OpenRouter's own row's.
+  const preset = renderModelEditor(null, EFFORTS, { doc, providers: { ...P, openrouter: { keySet: false } }, where: 'provider', provider: 'openrouter' });
+  assert.equal(preset.querySelector('.mv-conn-baseurl').value, 'https://openrouter.ai/api/v1');
+  const word = preset.querySelector('.mv-conn-provider-hint');
+  assert.deepEqual([word.className, word.textContent], ['mdl-st mv-conn-provider-hint need', 'Needs key'], 'not the OpenAI-compatible row\'s "Key set"');
+
+  const PO = { ...P, openai: { ...P.openai, baseUrl: 'https://openrouter.ai/api/v1' } };
+  const OR = { id: 'or-gpt', label: 'OR GPT', efforts: [...EFFORTS], upstream: { provider: 'openai', api: 'openai-chat', model: 'openai/gpt-x', capabilities: { toolCalls: true, vision: false, reasoning: false } } };
+  const ed = renderModelEditor(OR, EFFORTS, { doc, providers: PO });
+  assert.equal(ed.querySelector('.mv-conn-provider').value, 'openrouter');
+  assert.equal(ed.querySelector('.mv-conn-baseurl').value, '', 'rendering changes no field');
+  assert.deepEqual(collectModelEditor(ed), { id: 'or-gpt', body: {
+    label: 'OR GPT', efforts: ['medium'], env: {}, cost: null,
+    upstream: { provider: 'openai', api: 'openai-chat', model: 'openai/gpt-x', capabilities: { toolCalls: true, vision: false, reasoning: false } },
+  } });
+  const E5 = ['low', 'medium', 'high', 'xhigh', 'max'];
+  const OR2 = { ...OR, efforts: ['low', 'high'], upstream: { ...OR.upstream, capabilities: { toolCalls: true, vision: false, reasoning: true, reasoningEfforts: ['low', 'high'] } } };
+  assert.deepEqual(collectModelEditor(renderModelEditor(OR2, E5, { doc, providers: PO })), { id: 'or-gpt', body: {
+    label: 'OR GPT', efforts: ['low', 'high'], env: {}, cost: null,
+    upstream: { provider: 'openai', api: 'openai-chat', model: 'openai/gpt-x', capabilities: { toolCalls: true, vision: false, reasoning: true, reasoningEfforts: ['low', 'high'] } },
+  } });
+});
+
+test('form (Review Focus 2): a rename keeps what the form does not draw — headers, reasoning efforts, efforts', () => {
+  const stored = { ...BRIDGED, upstream: { ...BRIDGED.upstream, headers: { 'X-Team': 'a' }, capabilities: { ...BRIDGED.upstream.capabilities, reasoning: true, reasoningEfforts: ['low', 'high'] } } };
+  const plain = collectModelEditor(renderModelEditor(stored, EFFORTS, { doc, providers: P })).body;
+  const ed = renderModelEditor(stored, EFFORTS, { doc, providers: P });
+  ed.querySelector('.mv-label').value = 'Renamed';
+  const { body } = collectModelEditor(ed);
+  assert.equal(body.label, 'Renamed');
+  assert.deepEqual(body.upstream.headers, { 'X-Team': 'a' });
+  assert.deepEqual(body.upstream.capabilities.reasoningEfforts, ['low', 'high']);
+  assert.deepEqual(body.efforts, plain.efforts);
+  // Another upstream model is another model: what was stored for gpt-x does not follow it.
+  ed.querySelector('.mv-conn-model').value = 'gpt-y';
+  assert.equal('headers' in collectModelEditor(ed).body.upstream, false);
+  // Off Copilot the form draws the headers, so it decides: cleared headers stay cleared.
+  const gw = renderModelEditor({ ...stored, upstream: { ...stored.upstream, provider: 'openai', api: 'openai-chat' } }, EFFORTS, { doc, providers: P });
+  gw.querySelector('.mv-conn-headers').value = '';
+  assert.equal('headers' in collectModelEditor(gw).body.upstream, false);
+});
+
+test('form (Review Focus 1): a copy echoes the masks and names its source; a removed row is simply not sent', () => {
+  const gw = { id: 'gw', label: 'Gateway', efforts: [...EFFORTS], env: { X: '••••••abcd' }, upstream: { provider: 'openai', api: 'openai-chat', model: 'm', apiKey: '••••••1234', capabilities: { toolCalls: true, vision: false, reasoning: true } } };
+  const ed = renderModelEditor(gw, EFFORTS, { doc, providers: P, copyFrom: 'gw', id: 'gw-copy', label: 'Gateway copy' });
+  assert.ok(ed.querySelector('.mv-env-row[data-key="X"] .mv-env-copy'), 'a stored row keeps its copy button');
+  const { id, body } = collectModelEditor(ed);
+  assert.equal(id, null);
+  assert.deepEqual([body.id, body.label, body.copyFrom], ['gw-copy', 'Gateway copy', 'gw']);
+  assert.equal(body.upstream.apiKey, '••••••1234');
+  assert.deepEqual(body.env, { X: '••••••abcd' });
+  ed.querySelector('.mv-env-row').remove();
+  assert.deepEqual(collectModelEditor(ed).body.env, {}, 'no null: a copy deletes nothing');
+});
+
+test('form: "Change where it runs" goes through setConnectionWhere; a Codex form stays Codex through a provider', () => {
+  assert.deepEqual([wheresFor('claude'), wheresFor('codex'), wheresFor('cursor')], [['signin', 'env', 'provider'], ['signin', 'provider'], ['signin']]);
+  const ed = renderModelEditor(BRIDGED, EFFORTS, { doc, providers: P });
+  assert.equal(connectionWhere(ed), 'provider');
+  setConnectionWhere(ed, 'signin');
+  assert.deepEqual([ed.dataset.where, ed.querySelector('.mv-conn').dataset.where], ['signin', 'signin']);
+  assert.equal(collectModelEditor(ed).body.upstream, null);
+  assert.equal(ed.querySelector('.mv-conn-mode-rb'), null);
+  assert.equal(ed.querySelector('.mv-engine').closest('.mv-field').hidden, false, 'the harness field comes back');
+
+  const add = renderModelEditor(null, EFFORTS, { doc, providers: P, codexEfforts: CODEX_EFFORTS });
+  setModelEngine(add, 'codex');
+  setConnectionWhere(add, 'provider');
+  assert.equal(add.dataset.engine, 'codex');
+  const caps = [...add.querySelectorAll('.mdl-disc')].find((b) => b.querySelector('.mdl-disc-name').textContent === 'Capabilities and limits');
+  assert.equal(caps.hidden, true);
+  add.querySelector('.mv-id').value = 'gpt-x-local';
+  const { body } = collectModelEditor(add);
+  assert.deepEqual([body.engine, body.upstream.provider, body.upstream.api], ['codex', 'openai', 'openai-responses']);
+});
+
+test('form: the edit title names the model as the Catalogue does (displayName)', () => {
+  const title = (m) => renderModelEditor(m, EFFORTS, { doc, providers: P }).querySelector('.mv-editor-title').textContent;
+  assert.equal(title({ id: 'copilot-gpt-5', label: 'GPT-5 (Copilot)', efforts: [...EFFORTS], upstream: { provider: 'copilot', api: 'openai-chat', model: 'gpt-5' } }), 'Edit GPT-5', 'no import suffix');
+  assert.equal(title({ id: 'or-x', label: 'OpenAI: GPT-X', efforts: [...EFFORTS], upstream: { provider: 'openai', api: 'openai-chat', model: 'openai/gpt-x' } }), 'Edit GPT-X', 'no OpenRouter vendor prefix');
+  assert.equal(title({ id: 'bare', efforts: [] }), 'Edit bare', 'no label: the id');
+});
+
+test('form: the id suggested through a provider is written with no input event, and Save follows it', () => {
+  const ed = renderModelEditor(null, EFFORTS, { doc, providers: P, where: 'provider', steps: true });
+  const save = ed.querySelector('.mv-save');
+  assert.equal(save.disabled, true, 'no id yet');
+  ed.querySelector('.mv-conn-model').value = 'gpt-x';
+  applyConnectionModeIn(ed);   // app.js onModelsConnChange, on the field's change
+  assert.equal(ed.querySelector('.mv-id').value, 'copilot-gpt-x');
+  assert.equal(save.disabled, false);
+});
+
+test('form: through a provider the bridge sets the routing names, so an ANTHROPIC_MODEL row blocks Save', () => {
+  const ed = renderModelEditor(null, EFFORTS, { doc, providers: P, where: 'provider' });
+  typeInto(ed.querySelector('.mv-id'), 'gw-x');
+  const save = ed.querySelector('.mv-save');
+  assert.equal(save.disabled, false);
+  const row = makeEnvRow({ doc });
+  ed.querySelector('.mv-env').appendChild(row);
+  typeInto(row.querySelector('.mv-env-key'), 'ANTHROPIC_MODEL');
+  const problem = ed.querySelector('.mv-env-problem');
+  assert.equal(save.disabled, true);
+  assert.deepEqual([problem.hidden, problem.textContent], [false, 'ANTHROPIC_MODEL is set by the provider']);
+  setConnectionWhere(ed, 'signin');
+  assert.equal(save.disabled, false, 'on a sign-in the name is the model\'s to set');
+});
+
+/** gw-claude as GET /api/models lists it: a custom endpoint, each value masked. */
+const GW = Object.freeze({ id: 'gw-claude', label: 'GW Claude', efforts: [...EFFORTS], env: Object.freeze({ ANTHROPIC_BASE_URL: '••••••mple', ANTHROPIC_AUTH_TOKEN: '••••••9999' }) });
+const envOf = (ed) => [...ed.querySelectorAll('.mv-env-row')].map((r) => [r.querySelector('.mv-env-key').value, r.querySelector('.mv-env-val').value, r.dataset.key]);
+
+test('envRowsProblem (endpoint): a custom endpoint needs its ANTHROPIC_BASE_URL, after every other problem', () => {
+  assert.equal(envRowsProblem([{ key: 'ANTHROPIC_BASE_URL', value: '' }, { key: 'ANTHROPIC_AUTH_TOKEN', value: 't' }], { endpoint: true }), 'ANTHROPIC_BASE_URL needs a value');
+  assert.equal(envRowsProblem([{ key: 'ANTHROPIC_BASE_URL', value: '   ' }], { endpoint: true }), 'ANTHROPIC_BASE_URL needs a value', 'blank is no address');
+  assert.equal(envRowsProblem([{ key: 'A', value: '1' }], { endpoint: true }), 'ANTHROPIC_BASE_URL needs a value', 'no row at all');
+  assert.equal(envRowsProblem([{ key: ' ANTHROPIC_BASE_URL ', value: 'http://x' }], { endpoint: true }), '');
+  assert.equal(envRowsProblem([{ key: 'ANTHROPIC_BASE_URL', value: '' }]), '', 'only on a custom endpoint');
+  assert.equal(envRowsProblem([{ key: 'WORCA_X', value: '1' }], { endpoint: true }), 'WORCA_ names are reserved', 'the others first');
+});
+
+test('form (M4): a new custom endpoint waits for an id and its address', () => {
+  const ed = renderModelEditor(null, EFFORTS, { doc, where: 'env', steps: true });
+  const save = ed.querySelector('.mv-save');
+  const problem = ed.querySelector('.mv-env-problem');
+  assert.equal(save.disabled, true);
+  typeInto(ed.querySelector('.mv-id'), 'gw-local');
+  assert.equal(save.disabled, true, 'an id alone is not enough');
+  assert.deepEqual([problem.hidden, problem.textContent], [false, 'ANTHROPIC_BASE_URL needs a value']);
+  const url = ed.querySelector('.mv-env-row .mv-env-val');   // the first row: ANTHROPIC_BASE_URL
+  typeInto(url, 'http://127.0.0.1:4000');
+  assert.equal(save.disabled, false);
+  assert.equal(problem.hidden, true);
+  typeInto(ed.querySelector('.mv-id'), '');
+  assert.equal(save.disabled, true, 'the id still counts');
+});
+
+test('form (M4): setFormWhere out of a custom endpoint removes its two rows, so the PATCH deletes them', () => {
+  const ed = renderModelEditor(GW, EFFORTS, { doc, providers: P });
+  assert.equal(connectionWhere(ed), 'env');
+  setFormWhere(ed, 'signin');
+  assert.equal(connectionWhere(ed), 'signin');
+  assert.equal(ed.querySelectorAll('.mv-env-row').length, 0);
+  assert.equal(ed.querySelector('.mv-save').disabled, false);
+  const { body } = collectModelEditor(ed);
+  assert.deepEqual(body.env, { ANTHROPIC_BASE_URL: null, ANTHROPIC_AUTH_TOKEN: null });
+  assert.equal(body.upstream, null);
+  // Only those two: another row stays, sent as it is.
+  const more = renderModelEditor({ ...GW, env: { ...GW.env, X_REF: '${MY_VAR}' } }, EFFORTS, { doc, providers: P });
+  setFormWhere(more, 'provider');
+  assert.deepEqual(collectModelEditor(more).body.env, { X_REF: '${MY_VAR}', ANTHROPIC_BASE_URL: null, ANTHROPIC_AUTH_TOKEN: null });
+  assert.deepEqual([more.querySelector('.mv-save').disabled, more.querySelector('.mv-env-problem').hidden], [false, true], 'no refusal left of the rows it removed');
+});
+
+test('form (M4): setFormWhere into a custom endpoint adds the rows it lacks, and Save waits for the address', () => {
+  const ed = renderModelEditor(BRIDGED, EFFORTS, { doc, providers: P });
+  setFormWhere(ed, 'env');
+  assert.equal(connectionWhere(ed), 'env');
+  assert.deepEqual(envOf(ed), [['ANTHROPIC_BASE_URL', '', undefined], ['ANTHROPIC_AUTH_TOKEN', '', undefined]], 'new rows, not stored ones');
+  const save = ed.querySelector('.mv-save');
+  const problem = ed.querySelector('.mv-env-problem');
+  assert.equal(save.disabled, true);
+  assert.deepEqual([problem.hidden, problem.textContent], [false, 'ANTHROPIC_BASE_URL needs a value']);
+  typeInto(ed.querySelector('.mv-env-row .mv-env-val'), 'https://gw.example');
+  assert.equal(save.disabled, false);
+  const { body } = collectModelEditor(ed);
+  assert.equal(body.env.ANTHROPIC_BASE_URL, 'https://gw.example');
+  assert.equal(body.upstream, null);
+  setFormWhere(ed, 'env');
+  assert.equal(ed.querySelectorAll('.mv-env-row').length, 2, 'the same place adds nothing');
+  // A row the model already names is not added again.
+  const tok = renderModelEditor({ id: 'tok', label: 'Tok', efforts: [...EFFORTS], env: { ANTHROPIC_AUTH_TOKEN: '••••••1234' } }, EFFORTS, { doc, providers: P });
+  assert.equal(connectionWhere(tok), 'signin');
+  setFormWhere(tok, 'env');
+  assert.deepEqual(envOf(tok).map(([k]) => k), ['ANTHROPIC_AUTH_TOKEN', 'ANTHROPIC_BASE_URL']);
+  // A harness that cannot run there keeps its sign-in, and its rows.
+  const cx = renderModelEditor({ id: 'cx', engine: 'codex', efforts: [], upstream: { provider: 'openai', api: 'openai-responses', model: 'q' } }, EFFORTS, { doc, providers: P, codexEfforts: CODEX_EFFORTS });
+  setFormWhere(cx, 'env');
+  assert.deepEqual([connectionWhere(cx), cx.querySelectorAll('.mv-env-row').length], ['signin', 0]);
+});
+
+test('form (M5): a copy names its source only while a masked echo is left for the server to fill', () => {
+  const gw = { id: 'gw', label: 'Gateway', efforts: [...EFFORTS], env: { X: '••••••abcd', Y: 'lit' }, upstream: { provider: 'openai', api: 'openai-chat', model: 'm', apiKey: '••••••1234', capabilities: { toolCalls: true } } };
+  const ed = renderModelEditor(gw, EFFORTS, { doc, providers: P, copyFrom: 'gw', id: 'gw-copy' });
+  const x = ed.querySelector('.mv-env-row[data-key="X"] .mv-env-val');
+  const key = ed.querySelector('.mv-conn-key');
+  assert.equal(collectModelEditor(ed).body.copyFrom, 'gw');
+  x.value = 'real-x';
+  assert.equal(collectModelEditor(ed).body.copyFrom, 'gw', 'the key is still masked');
+  key.value = 'sk-real';
+  const { body } = collectModelEditor(ed);
+  assert.equal('copyFrom' in body, false, 'every mask typed over: the source is not needed');
+  assert.deepEqual([body.env, body.upstream.apiKey], [{ X: 'real-x', Y: 'lit' }, 'sk-real']);
+  x.value = '••••••abcd';
+  assert.equal(collectModelEditor(ed).body.copyFrom, 'gw', 'an env mask alone');
+  assert.equal('copyFrom' in collectModelEditor(renderModelEditor(gw, EFFORTS, { doc, providers: P })).body, false, 'an edit never names one');
+});
+
+test('form (L18): no paragraph of explanation — every hint is 80 characters or fewer', () => {
+  const forms = [
+    ...['signin', 'env', 'provider'].map((where) => [where, renderModelEditor(null, EFFORTS, { doc, providers: P, where })]),
+    ['provider edit', renderModelEditor(BRIDGED, EFFORTS, { doc, providers: P })],
+  ];
+  for (const [name, ed] of forms) {
+    assert.deepEqual([...ed.querySelectorAll('small.hint')].map((s) => s.textContent).filter((t) => t.length > 80), [], name);
+  }
+});
+
+test('phones: the Models header actions wrap at 760px instead of running off a 375px screen', async () => {
   const { readFileSync } = await import('node:fs');
   const html = readIndexHtml();
-  assert.match(html, /<div class="mv-head-actions">\s*<button type="button" id="model-share-btn"/, 'the header buttons sit in a styled group, not an inline-styled div');
+  assert.match(html, /<div class="mv-head-actions"(?: data-tab-only="catalogue")?>\s*<button type="button" id="models-more-btn" class="btn btn-quiet btn-icon" aria-label="More">\s*<svg[^>]*>(?:(?!<\/button>)[\s\S])*<\/svg>\s*<\/button>\s*<button type="button" id="model-create-btn"/, 'the header buttons sit in a styled group, not an inline-styled div: More (an icon), then Add model');
   const css = readStyleCss();
   assert.match(css, /\n\.mv-head-actions\{display:flex;gap:8px;flex:0 0 auto;\}/);
-  const phone = css.match(/@media \(max-width:760px\)\{\s*\[data-view="models"\] \.topbar\{[^}]*\}[^@]*/);
+  // The page head (the tab strip and these actions) wraps in models-page.css; the actions' own phone rule stays here.
+  assert.match(readFileSync(new URL('../ui/public/models/models-page.css', import.meta.url), 'utf8'), /@media \(max-width:760px\)\{\.mdl-head\{flex-wrap:wrap\}\}/);
+  const phone = css.match(/@media \(max-width:760px\)\{\s*\.mv-head-actions\{[^}]*\}[^@]*/);
   assert.ok(phone, 'a phone block for the Models page');
-  assert.match(phone[0], /\[data-view="models"\] \.topbar\{flex-wrap:wrap;\}/);
   assert.match(phone[0], /\.mv-head-actions\{flex:1 1 100%;flex-wrap:wrap;\}/);
-  assert.match(phone[0], /\.mv-card\{flex-wrap:wrap;\}/);
-  assert.match(phone[0], /\.mv-body\{flex-basis:100%;\}/);
+});
+
+test('form (FRM-1): the Harness select carries the picked harness\'s mark, and follows setModelEngine', () => {
+  const ed = renderModelEditor(null, EFFORTS, { doc, providers: P, where: 'signin' });
+  const sel = ed.querySelector('select.mv-engine');
+  const mark = () => sel.parentElement.querySelector(':scope > .mdl-mark img')?.getAttribute('src') || '';
+  assert.ok(sel.parentElement.matches('.mdl-picksel'));
+  assert.match(mark(), /\/vendor\/brand-icons\/claudecode-color\.svg$/);
+  setModelEngine(ed, 'codex');
+  assert.match(mark(), /\/vendor\/brand-icons\/codex-color\.svg$/, 'a harness set by code');
+  assert.equal(ed.querySelector(`label[for="${sel.id}"]`)?.textContent, 'Harness', 'the label still names the select');
 });

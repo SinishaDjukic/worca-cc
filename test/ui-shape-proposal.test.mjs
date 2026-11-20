@@ -94,7 +94,7 @@ async function reqCard(over = {}, { lead = 'architect', flags } = {}) {
   const ui = shapeCardExtras(d, { nudge: nudge({ perspectives: ['architect', 'qa', 'security'], ...over }) });
   d.body.appendChild(ui.el);
   await tick();
-  return { d, ui, triggers: () => [...ui.el.querySelectorAll('.spick-b')] };
+  return { d, ui, triggers: () => [...ui.el.querySelectorAll('.shape-lead-pick')] };
 }
 
 test('large: one facts line, the sentence with two pickers, no choices and no chips row', async () => {
@@ -125,9 +125,9 @@ test('first time (no saved lead, or the profile fetch fails): "pick a role", not
     const ui = shapeCardExtras(d, { nudge: nudge() });
     d.body.appendChild(ui.el);
     assert.equal(ui.blocked(), true, 'blocked before the profile loads');
-    assert.equal(ui.el.querySelector('.spick-b'), null, 'the sentence paints after the profile');
+    assert.equal(ui.el.querySelector('.shape-lead-pick'), null, 'the sentence paints after the profile');
     await tick();
-    const [lead] = [...ui.el.querySelectorAll('.spick-b')];
+    const [lead] = [...ui.el.querySelectorAll('.shape-lead-pick')];
     assert.equal(lead.textContent, 'pick a role');
     assert.equal(ui.blocked(), true);
     lead.click();
@@ -265,7 +265,7 @@ test('shape-lead-change fires when the sentence paints and when the lead is pick
   ui.el.addEventListener('shape-lead-change', () => { n += 1; });
   await tick();
   assert.equal(n, 1);
-  ui.el.querySelector('.spick-b').click();
+  ui.el.querySelector('.shape-lead-pick').click();
   menuItems(d)[1].click();
   assert.equal(n, 2);
 });
@@ -278,7 +278,7 @@ test('small: the facts line and today\'s chips; no sentence; today\'s body', asy
   assert.equal(ui.requirements, false);
   assert.deepEqual(texts(ui.el, '.shape-facts'), ['Small task · ≈ $2 · ~9 min']);
   assert.ok(ui.el.querySelector('.shape-chips'));
-  assert.equal(ui.el.querySelector('.spick-b'), null);
+  assert.equal(ui.el.querySelector('.shape-lead-pick'), null);
   assert.equal(ui.el.querySelector('.shape-choice'), null);
   assert.equal(ui.blocked(), false);
   assert.deepEqual(ui.body(), { workflowId: 'wf_shape', shape: { perspectives: ['product', 'architect'], size: 'small' } });
@@ -322,7 +322,7 @@ test('direct card, small: the facts line and chipsEl; no lead in the body', asyn
   assert.equal(ui.requirements, false);
   assert.deepEqual(texts(ui.el, '.shape-facts'), ['Small task · no estimate yet']);
   assert.ok(ui.chipsEl.matches('.shape-chips'));
-  assert.equal(ui.el.querySelector('.spick-b'), null);
+  assert.equal(ui.el.querySelector('.shape-lead-pick'), null);
   assert.equal(ui.blocked(), false);
   assert.deepEqual(ui.body(), { workflowId: 'wf_shape', shape: { perspectives: ['product', 'qa'], size: 'small' } });
 });

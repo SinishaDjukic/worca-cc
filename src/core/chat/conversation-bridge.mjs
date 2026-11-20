@@ -188,7 +188,10 @@ export function createConversationBridge(deps) {
   /** One progress edit: only when the text changed, never while one is in flight or a 429 asked to wait. */
   function tickStatus(st) {
     if (st.done || st.lost || st.editing || deps.now() < st.pauseUntil) return;
-    const text = statusText({ elapsedMs: deps.now() - st.startedAt, activity: st.activity });
+    // To the nearest second: an interval can fire a few ms before the wall clock has moved a whole tick (libuv starts
+    // it from the loop's cached time), and 4,998 ms would floor to "0 s" on the first tick.
+    const elapsedMs = Math.round((deps.now() - st.startedAt) / 1000) * 1000;
+    const text = statusText({ elapsedMs, activity: st.activity });
     if (text === st.shown) return;
     st.editing = true;
     st.chain = st.chain.then(async () => {

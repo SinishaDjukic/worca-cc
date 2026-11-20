@@ -1,6 +1,6 @@
 // ui/public/account-menu.mjs
-// The account corner at the foot of the sidebar and the menu it opens (docs/ui-levels.md): the spend
-// ring around the avatar, the spend card with its free-request row, who is signed in, and the away
+// The account corner at the foot of the sidebar and the menu it opens (docs/ui-levels.md): the
+// spend card with its free-request row, who is signed in, and the away
 // row. Pure: models, detached DOM and painters that write into the elements they are handed — no
 // fetch, no listeners. app.js fetches, mounts and routes; every figure and name is painted as text.
 import { BUDGET_WARN_AT, DEFAULT_FMT, fmtResetAt, periodWord, windowSaved, signedUsd, SAVED_NOTE } from './stats-view.mjs';
@@ -12,8 +12,10 @@ import { renderSegments } from './worca-level/segments.mjs';
 const SVG_NS = 'http://www.w3.org/2000/svg';
 const MONTHS = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
 
-/** The avatar ring's radius (viewBox 0 0 38 38) and the spend card's mini ring (viewBox 0 0 20 20). */
+/** The avatar's outer ring radius (viewBox 0 0 38 38), its inner ring's (the usage rings' long window) and the
+ *  mini ring's (viewBox 0 0 20 20: the spend card, the Usage row and submenu). */
 export const RING_R = 17.5;
+export const INNER_R = 14;
 export const MINI_R = 7.5;
 
 function h(doc, tag, cls, text) {
@@ -55,7 +57,8 @@ export function spendPeriod(b) {
   return ms == null ? 'this month' : `in ${MONTHS[new Date(ms).getMonth()]}`;
 }
 
-function ringSvg(doc, cls, size, r, ratio) {
+/** A ring as an SVG: a track and an arc filling `ratio` of it. The one ring builder (usage-view.mjs draws with it). */
+export function ringSvg(doc, cls, size, r, ratio) {
   const svg = doc.createElementNS(SVG_NS, 'svg');
   svg.setAttribute('class', cls);
   svg.setAttribute('viewBox', `0 0 ${size} ${size}`);
@@ -120,7 +123,8 @@ export function renderSpendCard(budget, { doc = globalThis.document, fmt = DEFAU
     const btn = h(doc, 'button', 'mi menu-item mc-free');
     btn.type = 'button';
     btn.setAttribute('role', 'menuitem');
-    btn.dataset.nav = 'providers';
+    btn.dataset.nav = 'models';
+    btn.dataset.hash = 'models/providers/openrouter';
     if (fr.tone) btn.dataset.tone = fr.tone;
     btn.title = fr.title;
     btn.appendChild(h(doc, 'span', 'mi-lbl', 'Free requests today'));
@@ -156,22 +160,24 @@ export function describeAccount(who) {
 }
 
 const MENU_WHAT = 'spend, away mode, interface mode and settings';
+const MENU_WHAT_USAGE = 'spend, usage, away mode, interface mode and settings';
 
-function limitPhrase(b, fmt) {
-  if (!b) return '';
-  if (!hasLimit(b)) return b.blocked ? 'new runs blocked' : '';
-  const s = `${fmt.usd(b.windowSpendUsd)} of ${fmt.usd(b.totalLimitUsd)} spent ${spendPeriod(b)}`;
-  return b.blocked ? `${s}, new runs blocked` : s;
+/** The avatar no longer shows spend (the spend card does), but a block is never hidden: it still names it. */
+function limitPhrase(b) {
+  return b && b.blocked ? 'new runs blocked' : '';
 }
 
-/** The corner's accessible name and tooltip: who it is, then away and the limit, then what the menu holds. */
-export function accountLabel(acct, { away = false, budget = null, fmt = DEFAULT_FMT, level = '' } = {}) {
-  const extra = [away ? 'away' : '', limitPhrase(budget, fmt), level].filter(Boolean).join(' · ');
+/** The corner's accessible name and tooltip: who it is, then away, a block and each drawn usage ring (usage-view.mjs
+ *  `ringParts`), then the level, then what the menu holds. */
+export function accountLabel(acct, { away = false, budget = null, level = '', usageParts = [] } = {}) {
+  const usage = (usageParts || []).filter(Boolean).join('; ');
+  const extra = [away ? 'away' : '', limitPhrase(budget), usage, level].filter(Boolean).join(' · ');
   const tail = extra ? ` · ${extra}` : '';
   const who = acct.kind === 'local' ? 'Profile' : acct.name;
+  const what = usage ? MENU_WHAT_USAGE : MENU_WHAT;
   return {
-    label: `${who}${tail}: ${MENU_WHAT}`,
-    title: acct.kind === 'local' ? `Profile: ${MENU_WHAT}${tail}` : `${acct.name}${tail}`,
+    label: `${who}${tail}: ${what}`,
+    title: acct.kind === 'local' ? `Profile: ${what}${tail}` : `${acct.name}${tail}`,
   };
 }
 
@@ -204,19 +210,16 @@ function paintAvatar(ava, acct, avatar) {
 }
 
 /** Paint the corner button (#side-acct): the avatar (the level image when `avatar` {src, alt} is given,
- *  else the initials), the short name, the spend ring (data-spend none | ok | warn | over), the away
- *  badge with its walking person (data-presence) and the label. With an image the native title goes and
- *  the aria-label also names the level. */
-export function paintAccountCorner(btn, acct, { budget = null, away = false, fmt = DEFAULT_FMT, avatar = null } = {}) {
+ *  else the initials), the short name, the away badge with its walking person (data-presence) and the label.
+ *  The usage rings are usage-view.mjs `paintUsageRings`; their texts come in as `usageParts`. With an image the
+ *  aria-label also names the level, and the native title carries only a block and the usage parts (none: no title). */
+export function paintAccountCorner(btn, acct, { budget = null, away = false, avatar = null, usageParts = [] } = {}) {
   if (!btn) return;
-  const ring = spendRing(budget);
   btn.dataset.account = acct.kind;
-  btn.dataset.spend = ring ? (ring.tone || 'ok') : 'none';
+  btn.removeAttribute('data-spend');
   btn.dataset.presence = away ? 'away' : 'here';
   const dot = btn.querySelector('.acct-dot');
   if (dot && !dot.firstChild) dot.innerHTML = iconSvg('stepped-out', 8);   // the icon set's own literal, never data
-  const arc = btn.querySelector('.acct-ring .arc');
-  if (arc) arc.setAttribute('stroke-dasharray', ringDash(ring ? ring.ratio : 0, RING_R));
   const ava = btn.querySelector('.acct-ava');
   const shown = avatar && typeof avatar.src === 'string' && avatar.src
     ? { src: avatar.src, alt: String(avatar.alt || ''), key: typeof avatar.key === 'string' ? avatar.key : '' }
@@ -224,10 +227,12 @@ export function paintAccountCorner(btn, acct, { budget = null, away = false, fmt
   if (ava) paintAvatar(ava, acct, shown);
   const name = btn.querySelector('.acct-name');
   if (name) name.textContent = acct.short;
-  const { label, title } = accountLabel(acct, { away, budget, fmt, level: shown ? shown.alt : '' });
+  const { label, title } = accountLabel(acct, { away, budget, level: shown ? shown.alt : '', usageParts });
   btn.setAttribute('aria-label', label);
-  if (shown) btn.removeAttribute('title');
-  else btn.title = title;
+  if (!shown) { btn.title = title; return; }
+  const tip = [limitPhrase(budget), (usageParts || []).filter(Boolean).join('; ')].filter(Boolean).join(' · ');
+  if (tip) btn.title = tip;
+  else btn.removeAttribute('title');
 }
 
 /** The identity card (#acct-id): "Signed in as", the full value and how; a shared identity only. */
@@ -246,7 +251,7 @@ export function paintIdentityCard(card, acct) {
 const CARD_AVATAR_PX = 22;
 const TOP_NOTE = "You've reached the top level.";
 
-/** The level card, placed directly above the Interface mode row: a 22px avatar, the level name and
+/** The level card, the account menu's first item: a 22px avatar, the level name and
  *  "View level"; then "To <Next>" with the progress ("1 of 4", or "12 of 30 days"); then small segments.
  *  At the top level it says so instead, with no second row and no segments. The progress is in the
  *  button's accessible name, so the segments are aria-hidden. Opens #profile/level. No data-min-level:
@@ -296,6 +301,15 @@ export function renderLevelCard(view, { doc = globalThis.document } = {}) {
  *  mode, the appearance switcher's own icon), the same person as the corner's away badge. One icon in
  *  both states: the switch at the row's right edge shows whether you are away. */
 const AWAY_ICON_PATHS = Object.freeze([...ICONS['stepped-out'].matchAll(/\bd="([^"]+)"/g)].map((m) => m[1]));
+
+/** Fill the Appearance row's empty `svg.mi-ic` placeholder with ICONS.appearance, as SVG-namespace nodes
+ *  (the markup is parsed with an xmlns, so the circle and path render). No-op on null or a filled one. */
+export function paintAppearanceIcon(svg) {
+  if (!svg || svg.firstChild) return;
+  const doc = svg.ownerDocument;
+  const parsed = new doc.defaultView.DOMParser().parseFromString(`<svg xmlns="${SVG_NS}">${ICONS.appearance}</svg>`, 'image/svg+xml');
+  svg.replaceChildren(...[...parsed.documentElement.childNodes].map((node) => doc.importNode(node, true)));
+}
 
 /** Paint the away row (#acct-away, a menuitemcheckbox: checked = away) from describeAwayRow's answer.
  *  The label stays "Away"; aria-checked carries the state. `busy`: a click is in flight; `err`: the last

@@ -64,9 +64,10 @@ import {
   EFFORTS, CODEX_EFFORTS, effortsForEngine, MODEL_ENGINES, RUN_ENGINES, ASK_ENGINES, HELPER_ENGINES, OWN_SIGNIN_ENGINES, aModelOf, ownSignInNote, modelIdProblem, SUBAGENT_MODELS, isReservedModelEnvKey, assertModelCost, envFlag,
   assertModelUpstream, upstreamEnvConflict, modelEnvRef, codexUpstreamProblem,
   UPSTREAM_PROVIDERS, COPILOT_ACCOUNT_TYPES, DEFAULT_PROVIDER_CONCURRENCY, MAX_PROVIDER_CONCURRENCY,
-  isUpstreamBaseUrl, REASONING_EFFORT_LEVELS,
+  isUpstreamBaseUrl, REASONING_EFFORT_LEVELS, OPENROUTER_SORTS,
 } from './model-env.mjs';
 import { MODEL_ROLES } from '../shared/model-roles.mjs';
+import { GHE_COM_ACCOUNT_TYPE, normalizeGheHost, copilotBlockHost } from './ghe-host.mjs';
 import { CODEX_PRICES, listPriceFor } from './list-prices.mjs';
 import { engineLabel } from '../shared/engine-switch.mjs';
 import { validateNightPatch, NIGHT_TOGGLES } from './night/config.mjs';
@@ -1277,17 +1278,19 @@ export const SETTINGS_POST_KEYS = Object.freeze([
   'resumeAfterUsageLimit',
   'updateCheck',                             // Settings › About: check npm for a newer stable Worca (#841)
   'titleModel', 'hideBuiltinModels',
+  'hideBuiltinEngines',                      // Models › Catalogue: Codex / Copilot hide their built-ins { codex?, copilot? }
   'theme',
-  'uiLevel',                                 // interface mode (docs/ui-levels.md)
+  'screensaver',                             // Settings › Appearance: the screensaver { enabled, idleMinutes }
+  'uiLevel',                                // interface mode (docs/ui-levels.md)
   'flags',                                   // feature flags { key: bool } (docs/feature-flags.md)
   'autoWorkflowModel',                       // auto-workflow spec D14
   'prDescriptionModel',                      // the "Ship it?" modal's Generate with AI
   'autoGeneratePrDescription',               // run that Generate with AI when the modal opens
   'memoryDefrag',                            // Settings › Memory: the defragment model + effort
   'agentGenModel',                           // the agent wizard's Generate: model + effort (Claude, user-level)
-  'namingModel',                             // Smart run naming's model + effort (Models › Helper jobs, Claude, user-level)
-  'commandSummaryModel',                     // Command summaries' model + effort (Models › Helper jobs, Claude, user-level)
-  'secondOpinionModel',                      // Second-opinion reviewer's model + effort (Models › Helper jobs, Claude, user-level)
+  'namingModel',                             // Smart run naming's model + effort (Models › Jobs › Helper jobs, Claude, user-level)
+  'commandSummaryModel',                     // Command summaries' model + effort (Models › Jobs › Helper jobs, Claude, user-level)
+  'secondOpinionModel',                      // Second-opinion reviewer's model + effort (Models › Jobs › Helper jobs, Claude, user-level)
   'workspaceScan',                           // Settings › Runs › Workspaces: the scan's models
   'schedule',                                // scheduled-run defaults { graceMin, ifMissed, maxFailures }
   'nightMode',                               // night mode user layer (night/config.mjs fields)
@@ -1297,10 +1300,10 @@ export const SETTINGS_POST_KEYS = Object.freeze([
   'runLimits',                               // Settings › Runs › Machine load { maxConcurrentRuns, testWorkers, keepRunsDays }
   'actions',                                 // Settings › Runs › Actions { keep, portLow, portHigh, editor, terminal, maxCheckouts }
   'runEngine', 'stepModels', 'utilityModels',
-  'modelRoles',                              // Models › Roles: { <engine>: { deep|everyday|quick: { model, effort } } }
-  'requirementsInterview',                  // Models › Engines › Claude: the requirements interview { model, effort }
+  'modelRoles',                              // Models › Jobs › Roles: { <engine>: { deep|everyday|quick: { model, effort } } }
+  'requirementsInterview',                  // Models › Jobs › Helper jobs: the requirements interview { model, effort }
   'askEngine', 'askModels',                  // Chat's engine for new chats and its model per engine (user-only, D17)
-  'designModels',                            // Models › Engines › Design: { <engine>: { lead|builder: { model, effort } } }
+  'designModels',                            // Models › Jobs › Design: { <engine>: { lead|builder: { model, effort } } }
   'tagDimensions',                           // Settings › Tags › Tag dimensions [{ key, label, values, required, default? }]
   'enforceTags',                             // Settings › Tags › Require mandatory tags to start a run
 ]);
@@ -1397,7 +1400,7 @@ export async function setAskModels(input) {
 /** Design's agents: the lead (the main agent) and the builders (one per section). */
 export const DESIGN_AGENT_ROLES = Object.freeze(['lead', 'builder']);
 /** The Models page's Design picks, { <engine>: { lead?: {model, effort?}, builder?: {model, effort?} } } (user-only). A
- *  design's own pick wins over these; an unset one falls back to the Deep thinking (lead) or Everyday coding (builder) role. */
+ *  design's own pick wins over these; an unset one falls back to the Deep thinking (lead) or Everyday tasks (builder) role. */
 export function designModelsSetting() {
   if (homeGuarded()) return {};
   const value = readSettings().designModels;
@@ -1655,6 +1658,49 @@ export async function setHideBuiltinModels(input) {
   return { hideBuiltinModels: hideBuiltinModels() };
 }
 
+// `hideBuiltinEngines` is the same switch for the other harnesses that ship built-ins
+// (Models › Catalogue, CAT-8): `{ codex?: true, copilot?: true }`. Only `true` is stored and
+// an empty object is removed. It has no team default (L7): `hideBuiltinModels` keeps Claude
+// Code's meaning for setup, CLI, Ask and team policy.
+const HIDE_BUILTIN_ENGINE_NAMES = Object.freeze(['codex', 'copilot']);
+const hideEnginesMap = (on) => Object.fromEntries(HIDE_BUILTIN_ENGINE_NAMES.filter((e) => on.has(e)).map((e) => [e, true]));
+/** The stored value as `{ <engine>: true }`, or null when it is not one. */
+const storedHideEngines = (v) => (isObj(v) && Object.entries(v).every(([e, on]) => HIDE_BUILTIN_ENGINE_NAMES.includes(e) && on === true)
+  ? hideEnginesMap(new Set(Object.keys(v))) : null);
+
+/** Which harnesses besides Claude Code hide their built-ins: `{ codex?: true, copilot?: true }`, `{}` when none. */
+export function hideBuiltinEngines() {
+  const v = readSettings().hideBuiltinEngines;
+  if (v === undefined) return {};
+  const hidden = storedHideEngines(v);
+  if (hidden) return hidden;
+  console.warn(`[worca] invalid hideBuiltinEngines ${JSON.stringify(v)} — no harness hides its built-ins`);
+  return {};
+}
+
+/**
+ * @throws {Error} unless `input` is `{ codex?: boolean, copilot?: boolean }`. Every message starts with
+ * `hideBuiltinEngines ` so a 400 names that field, never a path under it (settings-errors.mjs).
+ */
+export function assertHideBuiltinEnginesInput(input) {
+  if (!isObj(input)) throw new Error('hideBuiltinEngines must be an object');
+  for (const [engine, on] of Object.entries(input)) {
+    if (!HIDE_BUILTIN_ENGINE_NAMES.includes(engine)) throw new Error(`hideBuiltinEngines must name only ${HIDE_BUILTIN_ENGINE_NAMES.join(' or ')}, not ${JSON.stringify(engine)}`);
+    if (typeof on !== 'boolean') throw new Error(`hideBuiltinEngines must set ${engine} to true or false`);
+  }
+}
+
+/** Merges per harness: `true` stores, `false` deletes; an invalid stored value is replaced. */
+export async function setHideBuiltinEngines(input) {
+  assertHideBuiltinEnginesInput(input);
+  const settings = readSettings();
+  const on = new Set(Object.keys(storedHideEngines(settings.hideBuiltinEngines) || {}));
+  for (const [engine, hide] of Object.entries(input)) { if (hide) on.add(engine); else on.delete(engine); }
+  if (on.size) settings.hideBuiltinEngines = hideEnginesMap(on); else delete settings.hideBuiltinEngines;
+  await persistSettings(settings);
+  return { hideBuiltinEngines: hideBuiltinEngines() };
+}
+
 // ── Theme mode (2026-09-04 dark-mode design §6.1) ────────────────────────────
 // One machine-wide preference: `system` follows the OS, `light`/`dark` force a
 // scheme. The server writes it into the shell's <html data-theme> at serve time
@@ -1686,6 +1732,60 @@ export async function setTheme(input) {
   else settings.theme = input;
   await persistSettings(settings);
   return { theme: theme() };
+}
+
+// ── Screensaver (Settings › General › Appearance) ────────────────────────────
+// One machine-wide preference: a switch (off by default) and the idle minutes
+// before it starts. Only non-default fields are stored; a POST carries a partial
+// object that is merged onto the stored values, so each control saves only its own field.
+export const SCREENSAVER_IDLE_MINUTES = Object.freeze([5, 10, 15, 20, 25, 30]);
+export const DEFAULT_SCREENSAVER = Object.freeze({ enabled: false, idleMinutes: 5 });
+
+/** The resolved screensaver setting; a missing field is its default, an invalid one is its default (loudly). */
+export function screensaverSettings(settings = readSettings()) {
+  const v = settings.screensaver;
+  const out = { ...DEFAULT_SCREENSAVER };
+  if (v === undefined) return out;
+  if (!isObj(v)) {
+    console.warn(`[worca] invalid screensaver ${JSON.stringify(v)} — using the defaults`);
+    return out;
+  }
+  if ('enabled' in v) {
+    if (isBool(v.enabled)) out.enabled = v.enabled;
+    else console.warn(`[worca] invalid screensaver.enabled ${JSON.stringify(v.enabled)} — using the default (${DEFAULT_SCREENSAVER.enabled})`);
+  }
+  if ('idleMinutes' in v) {
+    if (SCREENSAVER_IDLE_MINUTES.includes(v.idleMinutes)) out.idleMinutes = v.idleMinutes;
+    else console.warn(`[worca] invalid screensaver.idleMinutes ${JSON.stringify(v.idleMinutes)} — using the default (${DEFAULT_SCREENSAVER.idleMinutes})`);
+  }
+  return out;
+}
+
+/** @throws {Error} unless `input` is a clear or a partial { enabled?: boolean, idleMinutes?: 5|10|…|30 }. */
+export function assertScreensaverInput(input) {
+  if (isClearInput(input)) return;
+  if (!isObj(input)) throw new Error('screensaver must be an object with enabled and the minutes');
+  const unknown = Object.keys(input).find((k) => k !== 'enabled' && k !== 'idleMinutes');
+  if (unknown !== undefined) throw new Error(`screensaver has an unknown field "${unknown}"`);
+  if ('enabled' in input && !isBool(input.enabled)) throw new Error('screensaver.enabled must be true or false');
+  if ('idleMinutes' in input && !SCREENSAVER_IDLE_MINUTES.includes(input.idleMinutes)) {
+    throw new Error('screensaver.idleMinutes must be 5, 10, 15, 20, 25 or 30');
+  }
+}
+
+export async function setScreensaver(input) {
+  assertScreensaverInput(input);
+  const settings = readSettings();
+  if (isClearInput(input)) delete settings.screensaver;
+  else {
+    const next = { ...screensaverSettings(settings), ...input };
+    const stored = {};
+    for (const k of Object.keys(DEFAULT_SCREENSAVER)) if (next[k] !== DEFAULT_SCREENSAVER[k]) stored[k] = next[k];
+    if (Object.keys(stored).length) settings.screensaver = stored;
+    else delete settings.screensaver;
+  }
+  await persistSettings(settings);
+  return { screensaver: screensaverSettings(settings) };
 }
 
 // ── Auto workflow classifier model (auto-workflow spec D14) ─────────────────
@@ -1809,7 +1909,7 @@ export async function setAgentGenModel(input, { models = null } = {}) {
   return { agentGenModel: agentGenModel() };
 }
 
-// ── Run naming model (Models › Engines › Claude › Helper jobs › Run naming) ───
+// ── Run naming model (Models › Jobs › Helper jobs › Run naming) ───
 // `namingModel`: the { model, effort } pair of Smart run naming's one cheap call (naming.mjs suggestNames).
 // User-level and Claude-only like agentGenModel: naming always runs on Claude (auxTextCall) and the New run
 // form's suggestion is not a run, so there is no project override and no other engine's slot. Unset = the
@@ -1851,7 +1951,7 @@ export async function setNamingModel(input, { models = null } = {}) {
   return { namingModel: namingModel() };
 }
 
-// ── Command summaries model (Models › Engines › Claude › Helper jobs › Command summaries) ───
+// ── Command summaries model (Models › Jobs › Helper jobs › Command summaries) ───
 // `commandSummaryModel`: the { model, effort } pair of the chat command summary call (ask/command-summary.mjs).
 // User-level and Claude-only like namingModel. Unset = the cheapest ready Claude model at its lowest effort
 // (naming.mjs#resolveNamingModel); none ready = no summary, the row keeps the raw command.
@@ -1891,7 +1991,7 @@ export async function setCommandSummaryModel(input, { models = null } = {}) {
   return { commandSummaryModel: commandSummaryModel() };
 }
 
-// ── Second-opinion reviewer (Models › Engines › Claude › Helper jobs › Second-opinion reviewer) ───
+// ── Second-opinion reviewer (Models › Jobs › Helper jobs › Second-opinion reviewer) ───
 // `secondOpinionModel`: the { model, effort } pair of the one role a role review names as `secondOpinion` (Shaper's
 // Product reviewer), so it judges on another model than its step. User-level only and no model role: mapped to a
 // role it would land on its step's model again. Codex's is `utilityModels.codex.secondOpinion`. Unset = Worca's factory
@@ -2488,12 +2588,13 @@ export async function removeGlobalModel(id) {
 // it in memory. Readers are loud-and-lenient; setters throw.
 //
 //   providers: {
-//     copilot:   { githubToken?, accountType?, maxConcurrent?, login? },
+//     copilot:   { githubToken?, accountType?, enterpriseHost?, maxConcurrent?, login? },   // enterpriseHost: only with accountType 'ghe-com' (a GHE.com tenant, like acme.ghe.com)
 //     openai:    { baseUrl?, apiKey?, maxConcurrent? },
 //     anthropic: { baseUrl?, apiKey?, maxConcurrent? },
 //     speech:    { stt: {...}, tts: {...} },   // voice mode, NOT an upstream — see the Speech block below
 //     images:    { service?, baseUrl?, model?, apiKey?, price? },   // Design pictures, NOT an upstream — see the Images block below
 //     sound:     { apiKey? },   // Design sound (ElevenLabs)
+//     openrouter: { apiKey?, maxConcurrent?, order?, sort?, allowFallbacks? },   // OpenRouter's row, NOT an upstream — see the OpenRouter block below
 //   }
 //   (An older Worca also stored copilot.acknowledgedTerms / termsVersion; readers ignore them.)
 // ---------------------------------------------------------------------------
@@ -2515,6 +2616,12 @@ function sanitizeProvider(name, raw) {
     if (r.accountType !== undefined) {
       if (COPILOT_ACCOUNT_TYPES.includes(r.accountType)) out.accountType = r.accountType;
       else warn('accountType', `must be one of ${COPILOT_ACCOUNT_TYPES.join(' | ')}`);
+    }
+    if (r.enterpriseHost !== undefined) {
+      const h = normalizeGheHost(r.enterpriseHost);
+      if (out.accountType !== GHE_COM_ACCOUNT_TYPE) warn('enterpriseHost', `ignored unless accountType is ${GHE_COM_ACCOUNT_TYPE}`);
+      else if (h) out.enterpriseHost = h;
+      else warn('enterpriseHost', 'must be a GHE.com host like acme.ghe.com');   // the ghe-com block stays; every network path then refuses (NO_HOST)
     }
     if (r.login !== undefined) {
       if (typeof r.login === 'string' && r.login.trim()) out.login = r.login.trim();
@@ -2582,7 +2689,7 @@ export function assertProviderPatch(name, patch) {
   if (!UPSTREAM_PROVIDERS.includes(name)) throw new Error(`unknown provider ${JSON.stringify(name)}`);
   if (!patch || typeof patch !== 'object' || Array.isArray(patch)) throw new Error('provider patch must be an object');
   const allowed = new Set([...PROVIDER_SECRET_KEYS[name], 'maxConcurrent',
-    ...(name === 'copilot' ? ['accountType', 'login'] : ['baseUrl'])]);
+    ...(name === 'copilot' ? ['accountType', 'enterpriseHost', 'login'] : ['baseUrl'])]);
   for (const [k, v] of Object.entries(patch)) {
     if (!allowed.has(k)) throw new Error(`unknown provider field ${JSON.stringify(k)} for ${name}`);
     if (isClearInput(v)) continue;
@@ -2590,6 +2697,8 @@ export function assertProviderPatch(name, patch) {
       if (typeof v !== 'string' || !v.trim()) throw new Error(`${k} must be a non-empty string`);
     } else if (k === 'accountType') {
       if (!COPILOT_ACCOUNT_TYPES.includes(v)) throw new Error(`accountType must be one of ${COPILOT_ACCOUNT_TYPES.join(' | ')}`);
+    } else if (k === 'enterpriseHost') {
+      if (!normalizeGheHost(v)) throw new Error('enterpriseHost must be a GHE.com host like acme.ghe.com, with no path, port or credentials');
     } else if (k === 'baseUrl') {
       if (!isUpstreamBaseUrl(v)) throw new Error('baseUrl must be an http(s) URL with no query or fragment');
     } else if (k === 'maxConcurrent') {
@@ -2602,13 +2711,37 @@ export function assertProviderPatch(name, patch) {
 /** One provider's stored block after `patch` (validated by the caller). */
 function mergeProviderBlock(currentProviders, name, patch) {
   const cur = isObj(currentProviders) && isObj(currentProviders[name]) ? { ...currentProviders[name] } : {};
+  const before = { ...cur };
   for (const [k, v] of Object.entries(patch)) {
     if (isClearInput(v)) delete cur[k];
     else if (k === 'maxConcurrent') cur[k] = Number(v);
     else if (k === 'baseUrl') cur[k] = v.trim().replace(/\/+$/, '');
+    else if (k === 'enterpriseHost') cur[k] = normalizeGheHost(v);
     else cur[k] = typeof v === 'string' ? v.trim() : v;
   }
+  if (name === 'copilot') reconcileCopilotBlock(before, cur, patch);
   return cur;
+}
+
+/**
+ * The cross-field rules of the copilot block, applied to the merged `after` in place (it throws
+ * before anything is written): a host belongs to accountType ghe-com and ghe-com needs one; a
+ * block that changes GitHub host loses its sign-in in the same write (a token belongs to one
+ * host). A patch touching neither accountType nor enterpriseHost never trips the "needs a host"
+ * rule, so a hand-edited block without one can still be signed out.
+ */
+function reconcileCopilotBlock(before, after, patch) {
+  const type = after.accountType ?? 'individual';
+  const setsHost = Object.hasOwn(patch, 'enterpriseHost') && !isClearInput(patch.enterpriseHost);
+  if (setsHost && type !== GHE_COM_ACCOUNT_TYPE) throw new Error(`enterpriseHost applies only to accountType ${GHE_COM_ACCOUNT_TYPE}`);
+  if (type !== GHE_COM_ACCOUNT_TYPE) delete after.enterpriseHost;
+  else if (!normalizeGheHost(after.enterpriseHost) && (Object.hasOwn(patch, 'accountType') || Object.hasOwn(patch, 'enterpriseHost'))) {
+    throw new Error(`accountType ${GHE_COM_ACCOUNT_TYPE} needs enterpriseHost (your GHE.com tenant, like acme.ghe.com)`);
+  }
+  if (copilotBlockHost(before) !== copilotBlockHost(after) && !Object.hasOwn(patch, 'githubToken')) {
+    delete after.githubToken;
+    delete after.login;
+  }
 }
 
 /** updateProvider's merge, pure: the whole next `providers` block (undefined = delete it). */
@@ -2623,15 +2756,22 @@ export function nextProviders(currentProviders, name, patch) {
 /**
  * Patch a provider's stored block. Omitted keys are kept; null/'' deletes a
  * key. Validates the whole patch before writing. `dryRun` returns the
- * would-be effective config without persisting.
+ * would-be effective config without persisting. `expectCopilotHost` (null =
+ * github.com, else the tenant) refuses the write with code HOST_CHANGED when the
+ * stored GitHub host differs.
  * @returns {Promise<object>} the effective config
  * @throws {Error}
  */
-export async function updateProvider(name, patch = {}, { dryRun = false } = {}) {
+export async function updateProvider(name, patch = {}, { dryRun = false, expectCopilotHost } = {}) {
   if (!UPSTREAM_PROVIDERS.includes(name)) throw new Error(`unknown provider ${JSON.stringify(name)}`);
   assertTestSettingsAccess();
   assertProviderPatch(name, patch);
   const settings = readSettings();
+  if (expectCopilotHost !== undefined) {
+    // A device-flow sign-in commits its token here: refuse when the GitHub host moved since it began.
+    const stored = isObj(settings.providers) && isObj(settings.providers.copilot) ? settings.providers.copilot : {};
+    if (copilotBlockHost(stored) !== (expectCopilotHost || 'github.com')) throw Object.assign(new Error('the Copilot GitHub host changed during the sign-in — start it again'), { code: 'HOST_CHANGED' });
+  }
   if (dryRun) return { ...providerDefaults(name), ...sanitizeProvider(name, mergeProviderBlock(settings.providers, name, patch)) };
   const v = nextProviders(settings.providers, name, patch);
   if (v === undefined) delete settings.providers; else settings.providers = v;
@@ -2890,6 +3030,102 @@ export async function updateSound(patch = {}) {
   if (Object.keys(all).length) settings.providers = all; else delete settings.providers;
   await persistSettings(settings);
   return soundConfig();
+}
+
+// ── OpenRouter (Models menu P2) ──
+//   providers: { …, openrouter: { apiKey?, maxConcurrent?, order?, sort?, allowFallbacks? } }
+// OpenRouter's own row: its key (literal or whole-value ${VAR}), its concurrency cap and its routing defaults
+// (provider order, sort, allow fallbacks). NOT an upstream: it never joins UPSTREAM_PROVIDERS or allProviders().
+// Stored minimally: a field holding its default is not written (allowFallbacks only as false), and an empty
+// block is removed, and so is an empty providers.
+
+const OPENROUTER_FIELDS = Object.freeze(['apiKey', 'maxConcurrent', 'order', 'sort', 'allowFallbacks']);
+const OPENROUTER_DEFAULT_CONCURRENCY = 8;
+const OPENROUTER_QUIET = Object.freeze({ quiet: true });
+const openRouterDefaults = () => ({ apiKey: '', maxConcurrent: OPENROUTER_DEFAULT_CONCURRENCY, order: [], sort: '', allowFallbacks: true });
+
+/** A provider order from a string[] or a comma string, trimmed with blanks dropped; null when it is neither. */
+function openRouterOrder(v) {
+  const list = typeof v === 'string' ? v.split(',') : v;
+  if (!Array.isArray(list) || list.some((s) => typeof s !== 'string')) return null;
+  return list.map((s) => s.trim()).filter(Boolean);
+}
+
+/** Why `v` is not a valid value for openrouter field `k` (one of OPENROUTER_FIELDS), or null when it is. */
+function openRouterFieldError(k, v) {
+  if (k === 'apiKey') return typeof v === 'string' && v.trim() ? null : 'apiKey must be a non-empty string';
+  if (k === 'maxConcurrent') {
+    const n = Number(v);
+    return Number.isInteger(n) && n >= 1 && n <= MAX_PROVIDER_CONCURRENCY ? null : `maxConcurrent must be an integer from 1 to ${MAX_PROVIDER_CONCURRENCY}`;
+  }
+  if (k === 'order') return openRouterOrder(v) ? null : 'order must be a list of provider names';
+  if (k === 'sort') return v === '' || OPENROUTER_SORTS.includes(v) ? null : `sort must be one of ${OPENROUTER_SORTS.join(' | ')}, or empty`;
+  return typeof v === 'boolean' ? null : 'allowFallbacks must be true or false';
+}
+
+/** A valid value of field `k` in its stored form; undefined when it is the default (nothing to store). */
+function openRouterStoredValue(k, v) {
+  if (k === 'apiKey') return v.trim();
+  if (k === 'maxConcurrent') { const n = Number(v); return n === OPENROUTER_DEFAULT_CONCURRENCY ? undefined : n; }
+  if (k === 'order') { const list = openRouterOrder(v); return list.length ? list : undefined; }
+  if (k === 'sort') return v || undefined;
+  return v === false ? false : undefined;
+}
+
+/** The stored block's valid, non-default fields. Never throws. */
+function sanitizeOpenRouter(raw, { quiet = false } = {}) {
+  const r = isObj(raw) ? raw : {};
+  const out = {};
+  for (const k of OPENROUTER_FIELDS) {
+    if (r[k] === undefined) continue;
+    const why = openRouterFieldError(k, r[k]);
+    if (why) { if (!quiet) console.warn(`[worca] providers.openrouter.${k}: ${why} — ignored`); continue; }
+    const v = openRouterStoredValue(k, r[k]);
+    if (v !== undefined) out[k] = v;
+  }
+  return out;
+}
+
+/**
+ * The OpenRouter row's effective config: the defaults under the stored block. The key stays raw (literal or
+ * whole-value ${VAR}), '' when none. Never throws: a bad stored value reads as its default.
+ * @returns {{ apiKey: string, maxConcurrent: number, order: string[], sort: ''|'price'|'throughput'|'latency', allowFallbacks: boolean }}
+ */
+export function openRouterConfig() {
+  if (process.env.NODE_TEST_CONTEXT && !process.env.WORCA_TEST_ALLOW_HOME_FALLBACK) return openRouterDefaults();
+  const all = readSettings().providers;
+  return { ...openRouterDefaults(), ...sanitizeOpenRouter(isObj(all) ? all.openrouter : undefined) };
+}
+
+/**
+ * Patch { apiKey?, maxConcurrent?, order?, sort?, allowFallbacks? }. A key left out keeps its value; '' or null
+ * resets it to its default. Validates the whole patch before writing. `dryRun` validates the same way and returns
+ * the would-be config without writing (Chat's model card, as updateProvider's).
+ * @returns {Promise<ReturnType<typeof openRouterConfig>>} the effective config
+ * @throws {Error}
+ */
+export async function updateOpenRouter(patch = {}, { dryRun = false } = {}) {
+  assertTestSettingsAccess();
+  if (!isObj(patch)) throw new Error('openrouter patch must be an object');
+  for (const [k, v] of Object.entries(patch)) {
+    if (!OPENROUTER_FIELDS.includes(k)) throw new Error(`unknown provider field ${JSON.stringify(k)} for openrouter`);
+    if (isClearInput(v)) continue;
+    const why = openRouterFieldError(k, v);
+    if (why) throw new Error(why);
+  }
+  const settings = readSettings();
+  const all = isObj(settings.providers) ? settings.providers : {};
+  const next = isObj(all.openrouter) ? { ...all.openrouter } : {};
+  for (const [k, v] of Object.entries(patch)) {
+    const stored = isClearInput(v) ? undefined : openRouterStoredValue(k, v);
+    if (stored === undefined) delete next[k]; else next[k] = stored;
+  }
+  // A dry run returns before `all` (settings.providers itself) changes or anything is written.
+  if (dryRun) return { ...openRouterDefaults(), ...sanitizeOpenRouter(next) };
+  if (Object.keys(sanitizeOpenRouter(next, OPENROUTER_QUIET)).length) all.openrouter = next; else delete all.openrouter;
+  if (Object.keys(all).length) settings.providers = all; else delete settings.providers;
+  await persistSettings(settings);
+  return openRouterConfig();
 }
 
 /** Forget the Copilot sign-in (token + login). */

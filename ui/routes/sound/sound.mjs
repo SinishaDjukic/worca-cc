@@ -9,7 +9,7 @@ const VOICE_ID_RE = /^[A-Za-z0-9-]{1,64}$/;
 export function register(app) {
 
 // Behind the global guards only (host and identity, agent caller), as /api/images and the
-// Providers page are: every signed-in person reads the same state, which holds no key. The
+// other reads of Models › Providers are: every signed-in person reads the same state, which holds no key. The
 // index registers this module before the models module, so PATCH /api/providers/:name and
 // POST /api/providers/:name/test never see "sound".
 app.get('/api/sound', (_req, res) => {

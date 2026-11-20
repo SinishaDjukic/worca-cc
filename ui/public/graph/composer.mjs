@@ -22,7 +22,7 @@ import { hitRoute } from '../../../src/shared/graph/route.mjs';
 import { PARAMS_PORT, SESSION_ID_RE } from '../../../src/shared/graph/constants.mjs';
 import { canWire, newNode, newWire, normalizeTemplate, serializeTemplate }
   from '../../../src/shared/graph/template.mjs';
-import { validateGraph, CANVAS_WARNING_CODES } from '../../../src/shared/graph/validate.mjs';
+import { validateGraph, shellWarningIssue, CANVAS_WARNING_CODES } from '../../../src/shared/graph/validate.mjs';
 import { autoLayout } from '../../../src/shared/graph/layout.mjs';
 import { applyCanvasOps, newRealErrors } from '../../../src/shared/graph/canvas-ops.mjs';
 import { mintId, normalizeSessions } from '../../../src/shared/graph/template.mjs';
@@ -57,7 +57,7 @@ export const isBuiltinWorkflow = (w) => Boolean(w) && (isReservedWorkflowId(w.id
 const isTyping = (t) => !!t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.tagName === 'SELECT' || t.isContentEditable);
 
 export function createComposer(hostEls, { doc = globalThis.document, api, raf = null, viewport = null, storage = null, portsFn, highlight = null, notify = null, allLevels = false, insetRight: insetRightOpt = null,
-  sessionVerified = SESSION_SUBAGENTS_VERIFIED } = {}) {
+  sessionVerified = SESSION_SUBAGENTS_VERIFIED, lintDelayMs } = {}) {
   const win = doc.defaultView || globalThis;
   const schedule = raf || ((fn) => win.requestAnimationFrame(fn));
   const stats = { rectReads: 0, frames: 0, pointerMoves: 0, validations: 0 };
@@ -851,7 +851,26 @@ export function createComposer(hostEls, { doc = globalThis.document, api, raf = 
   // is the only place that sees both sides of the swap. With no `highlight`
   // injected the hook is null and renderParamsForm keeps P1b's plain textarea.
   const insEditors = [];
-  const insEditorFor = paramEditorHook({ doc, highlight, editors: insEditors });
+  const insEditorFor = paramEditorHook({ doc, highlight, editors: insEditors, onLint: onInsLint, onExpandedChange: onInsExpanded, lintDelayMs });
+  const insExpanded = () => insEditors.some((e) => e.isExpanded());
+  // A repaint asked for while a field is expanded waits: it would destroy the field the large window mirrors into.
+  let insStale = false;
+  function onInsExpanded(open) {
+    if (!open && insStale) paintInspector();
+  }
+  /** A Command editor's lint changed. Move that card's shell-warning mark NOW, from the open editors' counts, without
+   *  waiting for the field to commit; the next validateGraph recomputes it from the stored config. Only the canvas and
+   *  the chrome repaint — never the inspector, whose field is being typed in. */
+  function onInsLint() {
+    const panel = hostEls.insBody && hostEls.insBody.querySelector('.ins-panel[data-node-id]');
+    const nodeId = panel && panel.dataset.nodeId;
+    if (!nodeId) return;
+    const count = insEditors.reduce((sum, ed) => sum + ed.getWarnings().length, 0);
+    const issue = shellWarningIssue(nodeId, count);
+    lastReport = { ...lastReport, warnings: [...lastReport.warnings.filter((w) => !(w.code === 'V33' && w.nodeId === nodeId)), ...(issue ? [issue] : [])] };
+    view.render(tpl, { selection: sel, report: shownReport() });
+    paintChrome();
+  }
   function disposeInsEditors() {
     for (const ed of insEditors) ed.destroy();
     insEditors.length = 0;
@@ -879,6 +898,8 @@ export function createComposer(hostEls, { doc = globalThis.document, api, raf = 
   function paintInspector() {
     const hostBody = hostEls.insBody;
     if (!hostBody) return;
+    if (insExpanded()) { insStale = true; return; }
+    insStale = false;
     const active = doc.activeElement;
     const inside = Boolean(active && active !== doc.body && hostBody.contains(active));
     const had = inside ? active : (insFrom && hostBody.contains(insFrom) ? insFrom : null);
@@ -1385,8 +1406,8 @@ export function createComposer(hostEls, { doc = globalThis.document, api, raf = 
     selection: () => (sel ? { ...sel } : null),
     select,
     gesture: () => gesture,
-    /** True while focus sits in the inspector (the Workflows More / Params popover): the chat waits before committing. */
-    inspectorFocused: () => Boolean(hostEls.insBody && doc.activeElement && hostEls.insBody.contains(doc.activeElement)),
+    /** True while focus sits in the inspector (the Workflows More / Params popover), or a field's large window is open: the chat waits before committing. */
+    inspectorFocused: () => insExpanded() || Boolean(hostEls.insBody && doc.activeElement && hostEls.insBody.contains(doc.activeElement)),
     isDirty: () => dirty,
     setReady(v) { ready = v; paintChrome(); },
     // A registry reload (MAJ-16) must re-validate the OPEN canvas: a wire into a

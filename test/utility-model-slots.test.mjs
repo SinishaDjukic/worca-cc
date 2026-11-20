@@ -160,7 +160,7 @@ test('requirementsInterview: assertRequirementsInterviewInput and the codex job 
   try { assertUtilityModelsInput({ codex: { requirementsInterview: { model: 'gpt-5.5' } } }); } catch (e) { err = e; }
   assert.match(err.message, /unknown job "requirementsInterview"/);
   const reply = settingsErrorReply(err, 'utilityModels');
-  assert.equal(reply.error, 'The requirements interview runs on Claude: set it on the Claude tab.');
+  assert.equal(reply.error, 'The requirements interview runs on Claude: set it under Models › Jobs › Claude Code.');
   assert.equal(reply.field, 'utilityModels');
 });
 

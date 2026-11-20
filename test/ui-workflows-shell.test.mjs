@@ -299,6 +299,34 @@ test('a command/code param in the Params popover keeps its own Escape (Tab-out):
   assert.equal(s.doc.activeElement, params);
 });
 
+test('a Command\'s large window opens over the Params popover: canvas keys are muted, Escape closes only the window and the popover keeps its field', async () => {
+  const s = await bootShell({ highlight: async (text) => text });
+  s.c.setScripts({ shell: { key: 'shell', displayName: 'Shell', runtime: 'shell', metaVersion: 2, inputs: [], outputs: [],
+    params: [{ id: 'command', type: 'command', label: 'Command', required: true }] } });
+  const node = s.c.spawn({ kind: 'script', key: 'shell' });
+  s.c.select({ kind: 'node', id: node.id });
+  click(s.doc.querySelector('.wfv-tb [data-tb="params"]'));
+  const ta = s.doc.querySelector('.wfv-pop .code-editor textarea');
+  click(s.doc.querySelector('.wfv-pop .code-editor-expand'));
+  const modal = s.doc.querySelector('body > .viewer-modal.code-editor-modal');
+  assert.ok(modal, 'the large window sits in <body>, outside the popover');
+  assert.equal(modal.closest('.wfv-pop'), null);
+  const n0 = s.c.template().nodes.length;
+  keydown(s.doc.body, 'Delete');
+  assert.equal(s.c.template().nodes.length, n0, 'the canvas keys stand down behind the window');
+  const inner = modal.querySelector('textarea');
+  inner.value = 'echo hi';
+  inner.dispatchEvent(new s.win.Event('input', { bubbles: true }));
+  keydown(inner, 'Escape');
+  assert.equal(s.doc.querySelector('body > .code-editor-modal'), null, 'Escape closes the window');
+  assert.ok(s.doc.querySelector('.wfv-pop'), '… and only the window: the popover stays');
+  const back = s.doc.querySelector('.wfv-pop textarea[data-field="param:command"]');
+  assert.equal(back.value, 'echo hi');
+  assert.equal(s.doc.activeElement, back, 'the caret is back in the same field');
+  assert.deepEqual(s.c.template().nodes.find((n) => n.id === node.id).config.params, { command: 'echo hi' });
+  assert.ok(ta, 'precondition: the field was a code editor');
+});
+
 // Review cycle 2 M1: a menu pick and a toolbar edit removed or rebuilt the element that held the focus, so it fell to
 // <body>, where the canvas owns Delete / Backspace / the arrows (the next Delete deleted the selected card).
 const del = (s) => keydown(s.doc.activeElement, 'Delete');

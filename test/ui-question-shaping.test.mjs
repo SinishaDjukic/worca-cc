@@ -78,12 +78,12 @@ test('a shaping run\'s Clarify is a step card: Answer, Use defaults, the head sa
   assert.equal(head.textContent, '', 'the run page heading stays empty for a step card');
 });
 
-test('run 4 D2, D3: on a Clarify ask the bar reads "Answer", and its click focuses the first option', async () => {
+test('one-level run page: on a Clarify ask the header has no Answer (the card sits right under it, above the tabs)', async () => {
   const { ctx, panel } = await openShaping();
-  const bar = ctx.window.document.querySelector('#run-detail .rd-bar .rd-actions [data-model-action="answer"]');
-  assert.equal(bar.textContent, 'Answer');
-  click(ctx, bar);
-  assert.equal(ctx.window.document.activeElement, panel.querySelector('.qopt'));
+  const end = ctx.window.document.querySelector('#run-detail .rd-row1 > .rd-bar-end');
+  assert.ok(end, 'the header holds the bar controls');
+  assert.equal(end.querySelector('[data-model-action="answer"]:not([hidden])'), null);
+  assert.ok(panel.closest('.rd-questions'), 'the question card is drawn on the page');
 });
 
 test('Answer posts the picked answers once', async () => {

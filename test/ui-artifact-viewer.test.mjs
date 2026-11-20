@@ -366,7 +366,7 @@ test('raw previews mount their element; a second viewer replaces the first; Tab 
 
   await p.open({ artifact: { kind: 'x', relPath: 'notes.txt' } }).ready;
   const card = p.doc.querySelector('.apv .apv-card');
-  const dl = card.querySelector('.apv-dl');
+  const dl = card.querySelector('.apv-copy');           // a text preview: Copy is the first control
   const close = card.querySelector('.apv-close');
   const stage = card.querySelector('.apv-body');
   assert.equal(stage.tabIndex, 0, 'the preview is a Tab stop: the keyboard scrolls it');
@@ -1027,7 +1027,7 @@ test('Tab reaches the controls a preview keeps in a shadow root (the c4 viewer\'
   const zoom = shadow.querySelector('button');
   zoom.focus();
   tab(zoom);
-  assert.equal(p.doc.activeElement, card.querySelector('.apv-dl'), 'past the diagram\'s last control: round to the first');
+  assert.equal(p.doc.activeElement, card.querySelector('.apv-copy'), 'past the diagram\'s last control: round to the first (Copy: c4 is text)');
   tab(p.doc.activeElement, true);
   assert.equal(shadow.activeElement, zoom, 'Shift+Tab from the first control: the diagram\'s last one');
 });
@@ -1198,7 +1198,7 @@ test('Shift+Tab from the first control reaches a preview\'s trailing select (a s
   });
   await p.open({ artifact: { kind: 'c4', relPath: 'arch/model.c4', bytes: 16 } }).ready;
   const shadow = p.doc.querySelector('.apv worca-c4').shadowRoot;
-  const first = p.doc.querySelector('.apv .apv-dl');
+  const first = p.doc.querySelector('.apv .apv-copy');
   first.focus();
   first.dispatchEvent(new p.win.KeyboardEvent('keydown', { key: 'Tab', bubbles: true, cancelable: true, composed: true, shiftKey: true }));
   assert.equal(shadow.activeElement, shadow.querySelector('select'));
@@ -1370,4 +1370,77 @@ test('a pinned html (or c4, or junk) view is never framed: the renderer reads it
   await p.open({ artifact: { relPath: 'att_6/page.html', bytes: 8, previewKind: 'html' } }).ready;
   assert.equal(p.doc.querySelector('.apv iframe'), null);
   assert.ok(!p.calls.some((c) => c.includes('/raw/att_6')), 'never fetched as raw bytes');
+});
+
+test('Copy puts the shown file\'s text on the clipboard; it is hidden for a raw preview and the info view', async () => {
+  const bodies = { 'a.md': '# A\n\n```js\nx\n```', 'b.txt': 'B text' };
+  const p = page((url) => {
+    const rel = decodeURIComponent((url.split('rel=')[1] || ''));
+    return url.startsWith('/t?') ? { status: 200, body: { rel, text: bodies[rel] } } : null;
+  });
+  const copied = [];
+  Object.defineProperty(p.win.navigator, 'clipboard', { value: { writeText: async (t) => { copied.push(t); } }, configurable: true });
+  const list = [{ kind: 'plan', relPath: 'a.md', bytes: 10 }, { kind: 'notes', relPath: 'b.txt', bytes: 6 }, { kind: 'deck', relPath: 'deck/deck.pptx', bytes: 9 }];
+  await p.open({ artifact: list[0], list }).ready;
+  const btn = p.doc.querySelector('.apv .apv-copy');
+  assert.ok(btn.classList.contains('copy-btn') && btn.classList.contains('copy-btn-action'), 'the one copy button, as a labelled action');
+  assert.equal(btn.getAttribute('aria-label'), 'Copy');
+  assert.equal(btn.hidden, false);
+  assert.equal(btn.nextElementSibling, p.doc.querySelector('.apv .apv-dl'), 'beside Download');
+  tap(p.win, btn);
+  await tick(p.win);
+  assert.deepEqual(copied, [bodies['a.md']], 'the file\'s source, not the rendered page');
+  assert.ok(btn.classList.contains('copied'));
+
+  press(p.win, p.doc.querySelector('.apv-card'), 'ArrowRight');
+  await tick(p.win);
+  tap(p.win, btn);
+  await tick(p.win);
+  assert.deepEqual(copied, [bodies['a.md'], 'B text'], 'the file shown now');
+
+  press(p.win, p.doc.querySelector('.apv-card'), 'ArrowRight');
+  await tick(p.win);
+  assert.ok(p.doc.querySelector('.apv').classList.contains('is-info'));
+  assert.equal(btn.hidden, true, 'no text, no Copy');
+
+  const raw = page();
+  await raw.open({ artifact: { kind: 'shot', relPath: 'shots/s1.png' } }).ready;
+  assert.equal(raw.doc.querySelector('.apv .apv-copy').hidden, true, 'an image has no text to copy');
+});
+
+test('Copy on a rendered markdown preview carries the page as HTML beside the source; other files carry text alone', async () => {
+  const md = '# Plan\n\nSome **bold** and a [link](https://x.test).\n\n```js\nconst a = 1;\n```';
+  const p = page((url) => {
+    const rel = decodeURIComponent((url.split('rel=')[1] || ''));
+    return url.startsWith('/t?') ? { status: 200, body: { rel, text: rel.endsWith('.md') ? md : 'plain' } } : null;
+  });
+  const writes = [];
+  const blobText = (b) => new Promise((res) => { const r = new p.win.FileReader(); r.onload = () => res(r.result); r.readAsText(b); });
+  p.win.ClipboardItem = class { constructor(items) { this.items = items; } };
+  Object.defineProperty(p.win.navigator, 'clipboard', { configurable: true, value: {
+    write: async ([item]) => { writes.push({ html: await blobText(item.items['text/html']), text: await blobText(item.items['text/plain']) }); },
+    writeText: async (t) => { writes.push({ text: t }); },
+  } });
+  const deps = { loadMarkdown: async () => ({ marked: (await import('marked')).marked, createDOMPurify: (await import('dompurify')).default }) };
+  const list = [{ kind: 'plan', relPath: 'plans/plan.md', bytes: 60 }, { kind: 'notes', relPath: 'notes.txt', bytes: 5 }];
+  await p.open({ artifact: list[0], list, deps }).ready;
+  const btn = p.doc.querySelector('.apv .apv-copy');
+  tap(p.win, btn);
+  await tick(p.win, 20);
+  assert.equal(writes.length, 1);
+  assert.equal(writes[0].text, md, 'plain targets get the markdown source');
+  const holder = p.doc.createElement('div');
+  holder.innerHTML = writes[0].html;
+  assert.equal(holder.querySelector('h1').textContent, 'Plan');
+  assert.equal(holder.querySelector('strong').textContent, 'bold');
+  assert.equal(holder.querySelector('a').getAttribute('href'), 'https://x.test');
+  assert.equal(holder.querySelector('pre code').textContent, 'const a = 1;\n');
+  assert.equal(holder.querySelector('button'), null, 'the code block\'s own copy button stays behind');
+  assert.equal(holder.querySelector('[class]'), null, 'no page classes travel');
+
+  press(p.win, p.doc.querySelector('.apv-card'), 'ArrowRight');
+  await tick(p.win);
+  tap(p.win, btn);
+  await tick(p.win);
+  assert.deepEqual(writes[1], { text: 'plain' }, 'a text file is copied as text');
 });

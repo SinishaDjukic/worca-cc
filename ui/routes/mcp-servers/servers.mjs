@@ -4,12 +4,14 @@ import { SERVER_ID_RE, SET_ID_RE, validateMcpDefinition } from '../../../src/cor
 import { McpStoreError, addManualServer, createSet, deleteMember, deleteSet, deleteSkillMember, duplicateSet, editManualServer, putMember, putSkillMember, removeServerEverywhere, renameSet, setProjectAssignment } from '../../../src/core/mcp/store.mjs';
 import { isTeamSkillId, teamAction, teamForget, teamSkillAction, teamSkillConsent } from '../../../src/core/mcp/team.mjs';
 import { retestAfterSave, retestServers, testMembership } from '../../../src/core/mcp/test.mjs';
-import { getSetView, listCatalogView, listSetsView, projectAssignmentView, teamDuplicateSource, teamMemberRefusal, teamSkillMemberRefusal, viewContext } from '../../../src/core/mcp/views.mjs';
+import { getSetView, listCatalogView, listSetsView, manualNameTaken, projectAssignmentView, teamDuplicateSource, teamMemberRefusal, teamSkillMemberRefusal, viewContext } from '../../../src/core/mcp/views.mjs';
 import { approveCommittedMcp, committedMcpStatus } from '../../../src/core/mcpjson-approval.mjs';
 import { listProjects } from '../../../src/core/projects.mjs';
 import { SKILL_ID_RE } from '../../../src/core/skills-registry/ids.mjs';
 import { PROJECT_KEY_RE } from '../../../src/core/store.mjs';
-import { badRequest, isPlainObject } from '../../server.mjs';
+import { discoverForSettings, importMcpServers, previewMcpImport } from '../../../src/core/ask/mcp-deps.mjs';
+import { scrub } from '../../../src/core/ask/mcp-proposal.mjs';
+import { agentMayBeCaller, badRequest, isPlainObject } from '../../server.mjs';
 
 export function register(app) {
 
@@ -42,13 +44,7 @@ app.post('/api/mcp/servers/validate', async (req, res) => {
   const [name, raw] = mcpDefinitionBody(req);
   try {
     const { errors } = validateMcpDefinition(raw, { name, source: 'manual' });
-    if (req.query.edit !== '1') {
-      const { snapshot, catalog } = await viewContext();
-      // What P1 addManualServer refuses: a manual name in use, a base another id holds (a removed manual server keeps
-      // its own base, so its name can be added again) or a catalog server's declared name.
-      const held = Object.entries(snapshot.bases).some(([sid, b]) => b === name && sid !== `manual:${name}`);
-      if (Object.hasOwn(snapshot.manual, name) || held || catalog.some((e) => e.name === name)) errors.push(`the name "${name}" is taken`);
-    }
+    if (req.query.edit !== '1' && manualNameTaken(await viewContext(), name)) errors.push(`the name "${name}" is taken`);
     res.json({ errors });
   } catch (err) { sendMcpError(res, err); }
 });
@@ -290,5 +286,74 @@ app.post(['/api/sets/teams/:home/skills/:skillId/turn-on', '/api/mcp/teams/:home
   if (typeof expectHash !== 'string' || !/^[0-9a-f]{64}$/.test(expectHash)) return badRequest(res, 'expectHash must be the hash the consent dialog showed');
   try { res.json({ ok: true, ...(await teamSkillAction('turn-on', home, skillId, { expectHash })) }); }
   catch (err) { sendMcpError(res, err); }
+});
+
+// Import from other tools (docs/mcp-servers.md "From the Servers view"): the chat's discovery, import card and apply
+// (src/core/ask/mcp-deps.mjs), in a person's words. Every value stays masked; secrets become empty secret fields. Each
+// handler runs whole inside its try: an Express 4 async handler that throws outside it exits the server.
+/** The optional registered project whose files are scanned too: [] for none, [{key, path}], or null after a 400 / 404. */
+async function discoverProjects(raw, res) {
+  if (raw === undefined || raw === null || raw === '') return [];
+  if (typeof raw !== 'string' || !PROJECT_KEY_RE.test(raw)) { res.status(400).json({ error: 'invalid project key', code: 'BAD_PROJECT' }); return null; }
+  const p = (await listProjects()).find((x) => x.key === raw);
+  if (!p) { res.status(404).json({ error: 'project not found', code: 'NOT_FOUND' }); return null; }
+  return [{ key: p.key, path: p.path }];
+}
+const importError = (res, status, error, code) => res.status(status).json({ error: scrub(error), code });
+/** A validation failure's body, every text scrubbed. */
+const importFailure = (r) => {
+  const errors = (r.errors || []).map((e) => scrub(e));
+  return { error: errors.join('; '), code: r.code, errors, alreadyPresent: r.alreadyPresent || [], skipped: r.skipped || [] };
+};
+
+app.get('/api/mcp/discover', async (req, res) => {
+  try {
+    const projects = await discoverProjects(req.query.project, res);
+    if (!projects) return;
+    const row = projects.length ? (await listProjects()).find((x) => x.key === projects[0].key) : null;
+    const out = await discoverForSettings({ projects });
+    res.json({ ...out, project: row ? { key: row.key, name: row.name } : null });
+  } catch (err) { importError(res, 500, err?.message || String(err), 'ERROR'); }
+});
+
+const DIGEST_RE = /^[0-9a-f]{64}$/;
+/** Shape checks before any discovery or write: null when the body is fine, else [error, code]. typeof only, no coercion. */
+function importBodyProblem(b) {
+  if (!isPlainObject(b)) return ['body must be an object', 'BAD_REQUEST'];
+  const list = b.servers;
+  if (!Array.isArray(list) || list.length < 1 || list.length > 10 || !list.every(isPlainObject)) return ['servers must list 1–10 picks', 'BAD_REQUEST'];
+  for (const p of list) {
+    if (typeof p.id !== 'string' || p.id.length < 1 || p.id.length > 200) return ['each pick needs an id of 1–200 characters', 'BAD_REQUEST'];
+    if (p.as !== undefined && (typeof p.as !== 'string' || p.as.length > 40)) return ['a worca name is at most 40 characters', 'BAD_REQUEST'];
+  }
+  if (b.apply !== undefined && typeof b.apply !== 'boolean') return ['apply must be true or false', 'BAD_REQUEST'];
+  if (b.apply === true && (typeof b.digest !== 'string' || !DIGEST_RE.test(b.digest))) return ['apply needs the digest of the review', 'DIGEST_REQUIRED'];
+  return null;
+}
+
+app.post('/api/mcp/import', async (req, res) => {
+  try {
+    const b = req.body;
+    const problem = importBodyProblem(b);
+    if (problem) return importError(res, 400, problem[0], problem[1]);
+    const projects = await discoverProjects(b.projectKey, res);
+    if (!projects) return;
+    const servers = b.servers.map((p) => { const as = typeof p.as === 'string' ? p.as.trim() : ''; return as ? { id: p.id, as } : { id: p.id }; });
+    if (b.apply !== true) {
+      const r = await previewMcpImport({ projects, servers });
+      if (!r.ok) return res.status(400).json(importFailure(r));
+      return res.json({ ok: true, digest: r.digest, review: r.review });
+    }
+    // D6: the second agent-caller layer behind G1 (as the cards route has): a person confirms an import.
+    if (agentMayBeCaller(req)) {
+      return res.status(403).json({ error: 'Agents cannot import MCP servers — a person confirms it on Connectors › MCP servers', code: 'MCP_IMPORT_AGENT_BLOCKED' });
+    }
+    const r = await importMcpServers({ projects, servers, digest: b.digest });
+    if (!r.ok) return res.status(r.code === 'IMPORT_CHANGED' ? 409 : 400).json(importFailure(r));
+    res.json({ ok: true, names: r.names, alreadyPresent: r.alreadyPresent, detail: r.detail });
+  } catch (err) {
+    if (err instanceof McpStoreError) return importError(res, err.status, err.message, 'STORE');
+    importError(res, 500, err?.message || String(err), err?.code || 'ERROR');
+  }
 });
 }

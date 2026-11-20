@@ -36,8 +36,8 @@ test('app.js mounts the pane and routes term-* frames to it', () => {
   assert.ok(app.includes('if (terminalPane) terminalPane.onContextChange();'));
 });
 
-test('Escape typed in the terminal is the shell\'s: the wizard and the three detail screens ignore it (D16)', () => {
-  assert.equal(app.match(/if \(e\.target\?\.closest\?\.\('\.term-pane'\)\) return;/g)?.length, 4);
+test('Escape typed in the terminal is the shell\'s: the wizard, the three detail screens and the Catalogue\'s side panel ignore it (D16)', () => {
+  assert.equal(app.match(/if \(e\.target\?\.closest\?\.\('\.term-pane'\)\) return;/g)?.length, 5);
 });
 
 test('the Commands list is gone: no rules for it, or for its toggle, remain', () => {

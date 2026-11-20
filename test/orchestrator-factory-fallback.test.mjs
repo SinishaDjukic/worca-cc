@@ -124,7 +124,7 @@ test('user-set Opus 5.5 Plan Review step while signed out: the start is refused 
   const h = start({ claudeAuth: authOf('signed-out') });
   const res = await h.done;
   assert.equal(res.status, 'error');
-  assert.match(res.error, /^engine claude: Claude Code isn't signed in, and Models › Step models › Plan Review names Opus 5\.5, which needs it — pick a model routed through a provider on the Models page, or sign in/);
+  assert.match(res.error, /^engine claude: Claude Code isn't signed in, and Models › Jobs › Steps › Plan Review names Opus 5\.5, which needs it — pick a model routed through a provider on the Models page, or sign in/);
   assert.deepEqual(h.execs.filter((e) => e.agentKey), [], 'no agent ran');
 });
 
@@ -133,7 +133,7 @@ test('user-set Second-opinion reviewer while signed out: refused naming Helper j
   const h = start({ claudeAuth: authOf('signed-out') });
   const res = await h.done;
   assert.equal(res.status, 'error');
-  assert.match(res.error, /Models › Helper jobs › Second-opinion reviewer names Opus 5\.5, which needs it/);
+  assert.match(res.error, /Models › Jobs › Helper jobs › Second-opinion reviewer names Opus 5\.5, which needs it/);
   assert.deepEqual(h.execs.filter((e) => e.agentKey), []);
 });
 

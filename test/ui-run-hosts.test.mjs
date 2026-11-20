@@ -957,6 +957,29 @@ test('a v2 run page: progress reads numerically, .rd-step names what runs (no st
       np.paintRunWarnings(banners, np.runDecorFor(q, 'monitor'));
       assert.deepEqual(shown(), [QUIET, DEAD], 'quiescence, then the dead end');
     } },
+    { name: 'E9 in the real app: the run scope notices and a legacy outside-checkout line are ONE muted line under the amber banners', run: async () => {
+      const window = await bootApp();
+      const np = window.__np;
+      const DROP = "Plan: claude-opus-5-5 is not on Codex, runs Codex's default model";
+      const LEGACY = 'n_a read or wrote 2 paths outside its checkout: /tmp/x.py, /etc/y (see executions.ndjson)';
+      const notice = (executionId, path) => ({ nodeId: 'n_a', executionId, count: 1, expectedCount: 3, cross: false, notable: [{ path, tool: 'Bash' }] });
+      const r = np.makeRun({ runId: 'r1', title: 't', projectDir: '/p', status: 'running' });
+      np.onState(r, { status: 'running', stepper: MANIFEST, active: [], warnings: [DROP, LEGACY], steps: [],
+        scopeNotices: [notice('x:n_a:1', '/etc/hosts'), notice('x:n_a:2', '/opt/z'), notice('x:n_a:3', '/etc/hosts')] });
+      const banners = window.document.createElement('div');
+      np.paintRunWarnings(banners, np.runDecorFor(r, 'monitor'));
+      np.paintRunWarnings(banners, np.runDecorFor(r, 'monitor'));
+      assert.deepEqual([...banners.querySelectorAll('.run-warn')].map((el) => el.textContent), [DROP], 'only the real warning is amber');
+      const lines = banners.querySelectorAll('.run-scope');
+      assert.equal(lines.length, 1);
+      assert.equal(lines[0].querySelector('.run-scope-sum').textContent, '1 step touched 4 files outside the checkout');
+      assert.equal(banners.lastElementChild, lines[0], 'under the banners');
+      // A later real warning still lands above the quiet line.
+      np.onState(r, { status: 'running', stepper: MANIFEST, active: [], warnings: ['finished at quiescence — End not reached', DROP], steps: [] });
+      np.paintRunWarnings(banners, np.runDecorFor(r, 'monitor'));
+      assert.equal(banners.querySelectorAll('.run-warn').length, 2);
+      assert.equal(banners.lastElementChild.className, 'run-scope', 'a new banner goes above the line');
+    } },
     { name: 'the detail header .rd-step names what runs on a v2 run, with no step count', run: async () => {
       const window = await bootApp();
       const np = window.__np;
@@ -991,7 +1014,7 @@ test('a v2 run page: progress reads numerically, .rd-step names what runs (no st
   ]);
 });
 
-test('History: the header meta carries the End chip and the Overview the counts + quiescence note (v2 only; D5 untouched)', async () => {
+test('History: the header meta carries the End chip and the Overview the quiescence note (v2 only; D5 untouched)', async () => {
   const window = await bootApp();
   const np = window.__np;
   const doc = window.document;
@@ -1015,20 +1038,19 @@ test('History: the header meta carries the End chip and the Overview the counts 
   np.paintHdHeaderMeta(screen, record, { state: { ...base, endReached: false, result: { type: 'md', path: '/tmp/p/plan.md' } } });
   assert.equal(screen.querySelector('.hd-meta .hd-result'), null, 'no chip until End binds — a recorded result on a quiescent run is not one');
   assert.equal(screen.querySelector('.hd-meta .hd-model'), null, 'D5: History never shows model/effort');
-  // Overview: the DURATION sub-line counts executions/deliveries; the note appears once, v2 only.
+  // Overview: the stat cards are gone (time and cost are the card's tiles); the note appears once, v2 only.
   const sec = doc.createElement('div');
   const done = [{ key: 'x:n_a:1', executionId: 'x:n_a:1', nodeId: 'n_a', ordinal: 1, cycle: 1, status: 'done', activeMs: 1000 }];
   np.buildHdOverview(sec, record, { state: { ...base, endReached: false, wireDeliveries: { w1: 2 }, steps: done }, results: null });
-  assert.equal(sec.querySelector('.hd-ov-card-duration .hd-ov-sub').textContent, '1 execution · 2 loop deliveries');
+  assert.equal(sec.querySelector('.hd-ov-card-duration'), null, 'no Overview stat cards any more');
   const note = sec.querySelector('.hd-ov-note.run-warn');
-  assert.ok(note, 'the one-line note under the stat grid');
+  assert.ok(note, 'the one-line quiescence note');
   assert.equal(note.getAttribute('role'), 'status');
   assert.equal(note.textContent, 'finished at quiescence — End not reached');
   np.buildHdOverview(sec, record, { state: { ...base, endReached: true, result: { type: 'void' }, steps: done }, results: null });
   assert.equal(sec.querySelector('.hd-ov-note'), null, 'a run that bound End carries no note');
   np.buildHdOverview(sec, record, { state: { ...base, stepper: V1_STEPPER, steps: [{ key: 'plan', nodeId: 's0_0', cycle: 1, status: 'done' }] }, results: null });
-  assert.match(sec.querySelector('.hd-ov-card-duration .hd-ov-sub').textContent, /^\d+ steps? · \d+ cycles?$/, 'v1 keeps its steps · cycles line');
-  assert.equal(sec.querySelector('.hd-ov-note'), null);
+  assert.equal(sec.querySelector('.hd-ov-note'), null, 'a v1 run never carries the note');
 });
 
 // -------------------------------------------------------------------- MAJ-20

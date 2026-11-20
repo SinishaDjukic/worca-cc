@@ -651,6 +651,18 @@ test('applyReport: errors pip red, V16–V19 warnings pip amber (only where no e
   assert.equal(view.nodeEl(w2.from.node).querySelector(':scope > .nwarn'), null);
 });
 
+test('applyReport: a card with several canvas warnings lists each on its pip, one per line, without repeats', async () => {
+  const { doc, host } = boot();
+  const { createGraphView } = await import(viewPath);
+  const view = createGraphView(host, { doc, mode: 'edit', portsFn, agents: AGENTS });
+  const tpl = fixture();
+  const [a] = tpl.nodes;
+  view.render(tpl, { report: { errors: [], warnings: [{ code: 'V18', message: 'double fire', nodeId: a.id },
+    { code: 'V33', message: `script node '${a.id}' has 1 shell warning`, nodeId: a.id }, { code: 'V18', message: 'double fire', nodeId: a.id }] } });
+  assert.equal(view.nodeEl(a.id).querySelector(':scope > .nwarn').title, `double fire\nscript node '${a.id}' has 1 shell warning`);
+  assert.equal(view.nodeEl(a.id).querySelectorAll(':scope > .nwarn').length, 1);
+});
+
 test('a flow host keeps every wire inside its left edge: a row-wrap S flattens (xMin)', async () => {
   const { doc, host } = boot();
   const { createGraphView } = await import(viewPath);

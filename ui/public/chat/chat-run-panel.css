@@ -27,7 +27,7 @@
    names it) rather than Open full page and Close dropping onto a second row. */
 .crp .rd-bar-end > .rd-night-wrap{flex:0 1 auto;min-width:72px;}
 .crp .rd-bar .rd-night{flex:1 1 auto;width:100%;min-width:0;}
-.crp :is(.rd-to-run,.hd-to-run,.term-opener){display:none;}
+.crp .term-opener{display:none;}
 .crp :is(.rd > .rd-error,.hd > .hd-error){flex:none;margin:8px 16px 0;}
 .crp :is(.rd-details,.hd-details){flex:1 1 auto;min-height:0;overflow-x:hidden;overflow-y:auto;}
 .crp :is(.rd-header,.hd-header){margin:12px 16px 0;padding:16px 18px 14px;}
@@ -74,9 +74,11 @@
   .chat-page .ask-composer-row{gap:4px;}
   .chat-page .ask-composer-row > .ask-meter{display:none;}
 }
-/* A narrow panel: the bar's buttons go icon-only (their words stay for screen readers), then the tab badges go. */
+/* A narrow panel: the bar's buttons go icon-only (their words stay for screen readers), then the tab badges go.
+   Resume keeps its word: a paused run's one way on, and a bare ▶ beside ■ does not read as a button. */
 @container crp (max-width:560px){
   .crp :is(.rd-bar,.hd-bar) :is(.rd-btn-label,.hd-btn-label){position:absolute;width:1px;height:1px;overflow:hidden;clip-path:inset(50%);white-space:nowrap;}
+  .crp :is(.rd-bar,.hd-bar) :is(.hd-resume .hd-btn-label,.rd-pause[data-action="resume"] .rd-btn-label){position:static;width:auto;height:auto;overflow:visible;clip-path:none;}
   .crp :is(.rd-tab,.hd-tab) > svg{display:none;}
 }
 @container crp (max-width:420px){

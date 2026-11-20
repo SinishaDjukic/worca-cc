@@ -83,7 +83,9 @@ const state = {
 const GROUP_PAGE = { host: null, route: '', id: '', tab: 'runs', featureId: '', gone: false, failed: false, resolving: false, reentered: false, paintQueued: false, unmarked: 0 };
 
 import { icon } from './icons.mjs';
-import { subagentAliasLabel, subagentAliasTitle } from '../../src/shared/model-roles.mjs';
+import { subagentAliasLabel, subagentAliasTitle, roleOf, ROLE_LABELS } from '../../src/shared/model-roles.mjs';
+import { HELPER_JOBS } from '../../src/shared/model-jobs.mjs';
+import { paintMarkedSelect } from './models/brand-marks.mjs';
 import { telemetrySlotHtml, paintTelemetry } from './run-telemetry-view.mjs';
 import { copyButton, copyFromButton, flashCopy, writeClipboard } from './copy-button.mjs';
 import { paintSessionsTab, sessionsTabVisible, sessionsBadge, sessionRowLine, sessionRowEl } from './run-sessions-view.mjs';
@@ -99,17 +101,18 @@ import { createLogDrawer } from './log-drawer.mjs';
 import { mountRunsResize } from './runs-resize.mjs';
 import { decorFromState, applyDecor, isGraphManifest, ledgerRows } from './graph/run-decor.mjs';
 import { mountRunGraph } from './graph/run-hosts.mjs';
-import { trailColumns, nowRows, glanceCopy, nodeLabel, preflightOpen, dotState } from './run-glance.mjs';
+import { paintRunScope } from './run-scope-line.mjs';
+import { nowRows, glanceCopy, nodeLabel, preflightOpen, dotState } from './run-glance.mjs';
 import { workModeOf, isGitRun, isFolderRun, isNoProjectRun, NO_PROJECT_KEY, projectKind, kindChip, RUN_KIND_CHIP, folderMembersOf } from './run-kind.mjs';
 import { changesCounts, filesWord, renderCountsNode, applyBarModel, paintApplyBar, runChangesUrl, openApplyDialog, discardChanges, CHANGE_SIGN, CHANGE_WORD } from './folder-changes.mjs';
 import { runProgress, progressWidth } from '../../src/shared/run-progress.mjs';
 import { claudeCheckedWhere } from '../../src/shared/claude-sign-in.mjs';
 import { DEFAULT_HOME_PINS, isPinned, pinWorkflow, unpinWorkflow } from '../../src/shared/home-pins.mjs';
 import { outcomeNote } from './run-outcome.mjs';
-import { CREATE_PR_LABEL, CREATE_PR_FAILED, CREATING_PR, PR_CREATED, VIEW_PR_LABEL, VIEW_PRS_LABEL, createPrLabel, doneStatusWord } from './ship-words.mjs';
+import { CREATE_PR_LABEL, CREATE_PR_FAILED, CREATING_PR, PR_CREATED, VIEW_PR_LABEL, VIEW_PRS_LABEL, viewPrLabel, createPrLabel, doneStatusWord } from './ship-words.mjs';
 import { worktreeNoticeModel, worktreeRowState, retainedCommands, recoveryPatchKind, uncommittedPatchName, applyConfirmMessage, applyOutcome, checkoutRowValue, memberLabel } from './worktree-notice.mjs';
 import { limitNotice, resumeTicketOf, countdownText } from './limit-notice.mjs';
-import { buildRunsModel, countNeedsYou, isRowSelected, isMemberOpen, renderRunsList, paintStageBlocks, RECENT_PAGE, groupRow, memberPrsOf, prChip, memberCostUsd, whenLabel, isFolded, setFolded } from './runs-list.mjs';
+import { buildRunsModel, countNeedsYou, isRowSelected, isMemberOpen, renderRunsList, paintStageBlocks, RECENT_PAGE, groupRow, memberPrsOf, rowMenuPrs, prChip, memberCostUsd, whenLabel, isFolded, setFolded } from './runs-list.mjs';
 import { paintRunStatus, syncActions, pauseResumeOwn } from './run-status-card.mjs';
 import { buildGroupPage, paintGroupPage, runReceipts, groupPrList } from './group-page.mjs';
 import { paintGroupShip, resetGroupShip } from './ship-group-dialog.mjs';
@@ -154,10 +157,10 @@ import { registerScopeSwitchCard } from './chat/scope-switch-card.mjs';
 import { registerQuestionCard } from './chat/question-card.mjs';
 import { registerFilesCard, filesForViewer, fileViewerUrls } from './chat/files-card.mjs';
 import { createTerminalPane } from './terminal-pane.mjs';
-import { notify, announce, withButton, fieldError, clearFieldErrors, cardAlert, trackDirty, splitMessage, BUTTON_DONE_MS } from './feedback.mjs';
+import { notify, announce, withButton, fieldError, clearFieldErrors, cardAlert, trackDirty, splitMessage, BUTTON_DONE_MS, feedbackIcon } from './feedback.mjs';
 import { layoutDialog, watchDialogEdges } from './dialog-layout.mjs';
 import { setEngineLocks, engineLock, applyEngineLocks } from './engine-locks.mjs';
-import { guardModal, dialogOpen } from './modal-guard.mjs';
+import { guardModal, dialogOpen, DISCARD_MESSAGE } from './modal-guard.mjs';
 import { createVoiceController } from './ask-voice.mjs';
 import { renderGettingStarted, renderGettingStartedPill, bindWelcome, doneCount, allStepsDone, GETTING_STARTED_STEPS } from './getting-started.mjs';
 import { createGuideSpot } from './guide-spot.mjs';
@@ -173,6 +176,7 @@ import {
 } from './file-tree.mjs';
 import { groupCommentThreads, commentWhen } from './comment-thread.mjs';
 import { createMarkdownRenderer } from './ask-markdown.mjs';
+import { runSetupModel, renderRunSetup } from './run-setup-view.mjs';
 import { exportSlugPreview } from './export-slug.mjs';
 import { fillMarketplaceSelect, marketplaceExportBody, marketplaceNameProblem, marketplacePlanExtras, marketplaceDoneView,
   renderMarketplaceSkipped, marketplaceLoadError, syncMarketplaceButtons, requestTicket, ticketIsCurrent } from './export-marketplace.mjs';
@@ -186,39 +190,50 @@ import {
   channelBadge, renderNeedsGit,
 } from './plugins-view.mjs';
 import { mountMarketplace, tabFromParam, targetFromParam } from './marketplace/index.mjs';
+import { parseModelsParam, modelsHash, renderModelsTabs, paintModelsTabs } from './models/page-tabs.mjs';
+import { renderProvidersTab, toggleProviderRow } from './models/providers-tab.mjs';
+import { providerModelCounts, providerState } from './models/provider-state.mjs';
+import { renderAddStep1, collectAddStep1, renderAddStep2, addStep2Plan, paintAddSelection, paintAddList } from './models/add-model-dialog.mjs';
+import { buildCatalogue, buildModelPanel, CATALOGUE_VIEW_DEFAULT } from './models/catalogue-model.mjs';
+import { renderCatalogue, renderModelPanel } from './models/catalogue-view.mjs';
+import { buildJobs, jobsSaved, jobsSaveBody, jobsDirty } from './models/jobs-model.mjs';
+import { renderJobs, openOverrideMenu } from './models/jobs-view.mjs';
+import { openModelPicker } from './models/model-picker.mjs';
 import { renderChatSettings, collectChatSettings, renderScriptToolsToggle, collectScriptToolsToggle, renderSuggestionsToggle, collectSuggestionsToggle, renderSummariesToggle, collectSummariesToggle, renderAskWebFields, collectAskWebFields } from './chat-settings-view.mjs';
 import { renderCredentials } from './credentials-view.mjs';
 import { renderExtensionPairings, browserLabel, formatPairCode, renderExtensionInstall, selectInstallBrowser, detectBrowser } from './extension-settings-view.mjs';
 import { mountNetworkProxyCard } from './settings-network-proxy.mjs';
-import { openSetupAssistant, setupStepForSignIn, teamNotice, TEAM_SEEN_KEY } from './setup-assistant.mjs';
+import { openSetupAssistant, teamNotice, TEAM_SEEN_KEY } from './setup-assistant.mjs';
 import { loadCredentials, credentialSuffix } from './credential-badges.mjs';
 import { freeRequestsSuffix, typicalFreeRun, newRunFreeWarning, providerFreeLine } from './openrouter-free-view.mjs';
 import { PORT_ID_RE, MAX_PORTS_PER_SIDE, PORT_TYPES, SYNC_EXECUTION_ID } from '../../src/shared/graph/constants.mjs';
 import { FORM_ID_RE, validateFormDef, normalizeAskBlock } from '../../src/shared/forms/form-def.mjs';
 import { ASK_LIMITS } from '../../src/shared/forms/catalog.mjs';
 import { WORKSPACE_MAX_PROJECTS, workspaceSizeLevel } from '../../src/shared/workspace-size.mjs';
-import { engineLabel, usageLimitSwitches, engineSwitchNote, engineReportsCost, ENGINE_NAMES, isBetaEngine, SIGN_IN_ENGINE_NAMES, SESSION_SUBAGENTS_VERIFIED } from '../../src/shared/engine-switch.mjs';
-import { runsOn, effortsOn, harnessesLabel, connectionKey, modelGroups, PROVIDER_LABELS } from '../../src/shared/connections.mjs';
+import { engineLabel, usageLimitSwitches, engineSwitchNote, engineReportsCost, ENGINE_NAMES, MODEL_ENGINE_NAMES, isBetaEngine, SIGN_IN_ENGINE_NAMES, SESSION_SUBAGENTS_VERIFIED } from '../../src/shared/engine-switch.mjs';
+import { runsOn, effortsOn, harnessesLabel, connectionKey, modelGroups, PROVIDER_LABELS, connectionOf } from '../../src/shared/connections.mjs';
 import {
   guardrailSummary, renderGuardrailList, renderGuardrailEditor, collectGuardrailEditor,
   renderStartStep, collectStartStep, renderGuardrailReferences409, isReadOnlyGuardrailSet,
 } from './guardrails-view.mjs';
 import {
-  renderModelsList, renderModelEditor, collectModelEditor, makeEnvRow, applyCostMode, setModelCost,
-  suggestDuplicateId, deleteRefsSummary,
-  renderExportWizard, collectExportWizard, applyConnectionModeIn, setModelEngine,
+  renderModelEditor, collectModelEditor, makeEnvRow, applyCostMode, setModelCost,
+  suggestDuplicateId, suggestDuplicateLabel, deleteRefsSummary,
+  renderExportWizard, collectExportWizard, applyConnectionModeIn, setModelEngine, paintEditorSave, setFormWhere,
 } from './models-view.mjs';
 import {
-  renderProvidersCard, collectProviderRow, collectSpeechRow, formatSpeechBytes, renderImportSheet, renderEndpointSheet, collectImportSheet, applyImportSelectAll,
-  applyProviderPreset, endpointRowMatches, ENDPOINT_PRESETS,
-  setModelUpstream, applyImagesPreset, collectImagesRow, showImagesTest, showImagesSaveError, collectSoundRow,
+  collectProviderRow, collectSpeechRow, formatSpeechBytes, renderImportSheet, renderEndpointSheet, collectImportSheet,
+  collectOpenRouterRow, endpointRowMatches, ENDPOINT_PRESETS,
+  setModelUpstream, applyImagesPreset, collectImagesRow, imagesRowProblem, showImagesTest, showImagesSaveError, collectSoundRow,
+  connectionWhere, syncCopilotHostField,
 } from './bridge-view.mjs';
 import {
   renderSourcePane, collectSourcePane, renderProfileGate, renderProfileBar,
 } from './source-pane.mjs';
 import { renderStatsBody, renderStatsView, renderBudgetReadout, renderCostPauseBanner, statsQuery, groupsToCsv, statsRangeLabel, DEFAULT_FMT } from './stats-view.mjs';
 import { createCostReport } from './cost-report.mjs';
-import { personInitials, describeAccount, paintAccountCorner, paintIdentityCard, renderSpendCard, paintAwayRow } from './account-menu.mjs';
+import { personInitials, describeAccount, paintAccountCorner, paintIdentityCard, renderSpendCard, paintAwayRow, paintAppearanceIcon } from './account-menu.mjs';
+import { usageModel, ringParts, paintUsageRings, paintUsageRow, renderUsageMenu } from './usage-view.mjs';
 import { createComposer, isReservedWorkflowId, isBuiltinWorkflow } from './graph/composer.mjs';
 import { createWorkflowsShell, toSpawnEntry } from './workflows/shell.mjs';
 import { createLibrary, folderLabel, folderKeys } from './workflows/library.mjs';
@@ -252,8 +267,7 @@ import { createArtifactBrowser } from './artifacts/browser.mjs';
 import { baseName as artifactBaseName } from './artifacts/common.mjs';
 import { resolveNodeTunables, modifiedFieldsOf, pruneNodeSelection, buildGraphNodeRows as ntBuildGraphNodeRows, buildNodeConfigRows as ntBuildNodeConfigRows } from './node-tunables.mjs';
 import { buildFeedbackRows as ntBuildFeedbackRows } from './loop-rows.mjs';
-import { renderEngineSection, readEngineSection, enginePatchToSettingsBody, utilityId, designRowId, renderAskEngineSection, readAskEngineSection, askPatchToSettingsBody, renderRolesSection, readRolesValues, rolesPatchToSettingsBody, paintRoleFallbacks } from './engine-settings-view.mjs';
-import { DESIGN_ENGINE_NAMES } from '../../src/shared/design-names.mjs';
+import { renderAskEngineSection, readAskEngineSection, askPatchToSettingsBody } from './engine-settings-view.mjs';
 import { mountProjectSettings } from './project-settings-view.mjs';
 import { mountHouseBrief } from './house-brief-view.mjs';
 import { appendModelGroups, modelOptionText } from './model-options.mjs';
@@ -300,6 +314,7 @@ import { createDesignChat } from './design/chat.mjs';
 import { createDesignActivity } from './design/activity.mjs';
 import { createLevelController, levelAtLeast, currentLevel, tagLevel, keepVisible, minLevelFor, LEVEL_INFO, UI_LEVELS } from './ui-level.mjs';
 import { applyFlags, currentFlags, decorateFlagChips, flagOn, onFlagChange } from './flags.mjs';
+import { SETTING_ENTRIES } from './settings-index.mjs';
 import { gitOn, applyGit, onGitChange as onGitFlip, refreshGit, GIT_MISSING_TEXT } from './git-gate.mjs';
 import { PROBE_DEBOUNCE_MS, defaultAddMode, detectModel } from './project-add.mjs';
 import { presetMenuGroups, presetHiddenItems, presetNodePick, renderBrokenCard, resetItem, saveDialogError, configWithPreset } from './run-presets-picker.mjs';
@@ -671,6 +686,7 @@ const designActivity = createDesignActivity({
   onChange: () => updateNavCounts(),
 });
 let awayScreensaver = null;    // the away screensaver easter egg (away-screensaver.mjs) — assigned beside Activity; timerTick uses awayScreensaver?.
+let screensaverPref = { enabled: false, idleMinutes: 5 };   // Settings › Appearance › Screensaver, as the server last said (getState reads it)
 let terminalPane = null;       // terminal pane (#573) — assigned by the boot mount; every seam uses terminalPane?.
 let newPipelinePrefill = null; // one-shot card → New Pipeline handoff (§10.2 seam 7, consumed by Task 11)
 // Engine readiness (GET /api/engines): which engines a usage-limit pause offers. Fetched on demand, refreshed after
@@ -861,6 +877,9 @@ const el = {
   viewerClose: $('#viewer-close'),
 
   settingsRoot: $('#settingsRoot'),
+  screensaverOn: $('#screensaverOn'),
+  screensaverAfter: $('#screensaverAfter'),
+  screensaverAfterRow: $('#screensaverAfterRow'),
   settingsProjectsRoot: $('#settingsProjectsRoot'),
   settingsProjectsRootBrowse: $('#settingsProjectsRootBrowse'),
   settingsSave: $('#settingsSave'),
@@ -1010,28 +1029,18 @@ const el = {
   flagsMsg: $('#flags-msg'),
   flagsReset: $('#flags-reset'),
 
-  // Models view
+  // Models view: the Catalogue tab's list and line, the Jobs tab's line, the Providers tab's card and line
   modelsList: $('#models-list'),
+  modelPanelHost: $('#model-panel-host'),
   modelsMsg: $('#models-msg'),
+  modelsJobsMsg: $('#models-jobs-msg'),
+  jobsRoot: $('#jobs-root'),
   providersList: $('#providers-list'),
   providersMsg: $('#providers-msg'),
-  modelImportBtn: $('#model-import-btn'),
-  modelImportModal: $('#model-import-modal'),
   modelEditorModal: $('#model-editor-modal'),
   modelEditorHost: $('#mv-editor-host'),
-  mimpSource: $('#mimp-source'),
-  mimpBase: $('#mimp-base'),
-  mimpBaseField: null,          // set below: the label wrapping #mimp-base
-  mimpKey: $('#mimp-key'),
-  mimpKeyField: null,           // set below: the label wrapping #mimp-key
-  mimpList: $('#mimp-list'),
-  mimpMsg: $('#mimp-msg'),
-  mimpFilter: $('#mimp-filter'),
-  mimpBody: $('#mimp-body'),
-  mimpGo: $('#mimp-go'),
-  mimpCancel: $('#mimp-cancel'),
   modelCreateBtn: $('#model-create-btn'),
-  modelShareBtn: $('#model-share-btn'),
+  modelsMoreBtn: $('#models-more-btn'),
 
   // Statistics view
   statsBody: $('#stats-body'),
@@ -1050,6 +1059,25 @@ const el = {
   reportCreate: $('#report-create-issue'),
   reportFiled: $('#report-filed'),
 };
+// The Models page's tab strip (Catalogue, Jobs, Providers; models/page-tabs.mjs). Mounted here, long before the boot
+// route, so a reload on a #models… address paints a strip that is there. Every paint uses this node: the strip is
+// built at runtime, so nothing looks it up by its id.
+const modelsTabsNav = renderModelsTabs(document, {});
+document.getElementById('models-tabs-host')?.replaceChildren(modelsTabsNav);
+// The tab the Models page showed last: when showView runs the hash already names the new one, so only this tells a
+// tab change from a repaint. Declared up here because the boot route (bottom of the file) runs during evaluation.
+let modelsTabShown = '';
+// The content the Providers tab was last drawn from (paintProvidersTab compares it): '' = draw on the next show.
+let providersDrawnKey = '';
+// The number of the newest loadModelsView call and its promise: an older call writes nothing and resolves after it.
+let modelsLoadSeq = 0;
+let modelsLoadNewest = null;
+// The number of the newest Models page entry: only its post-load paint and reveals run.
+let modelsEntrySeq = 0;
+// The number of the newest Jobs tab read (loadJobs): an older read writes no settings and draws nothing.
+let jobsLoadSeq = 0;
+// The 3 s clears of the Jobs blocks an address flashed, by block id: a repaint draws a new block with the same id.
+const jobsFoundTimers = new Map();
 // The shared dialog anatomy (dialog-layout.mjs): keep the head/foot edge dividers of every static .dlg current.
 watchDialogEdges(document);
 
@@ -1521,7 +1549,9 @@ async function refreshFreeDaily({ force = false } = {}) {
 function paintFreeDaily() {
   paintSpendCard();
   applyFreeDailyToNewView();
-  if (currentView() === 'providers') paintProviderFreeDaily();
+  // On any Models tab: the row is in the Providers panel, drawn or not (paintProviderFreeDaily no-ops without it), so
+  // an answer that lands while another tab shows is still on the row when Providers opens.
+  if (currentView() === 'models') paintProviderFreeDaily();
 }
 
 /** The new-run form: warn when a node's model is :free and fewer requests are left than a run takes. */
@@ -1541,11 +1571,11 @@ function recentRunsForFree() {
   return [...runs.values()].sort((a, b) => String(b.startedAt || '').localeCompare(String(a.startedAt || '')));
 }
 
-/** The Providers card: the allowance under the OpenAI-compatible row, without pressing Test. */
+/** Models › Providers: the allowance under the OpenRouter row, without pressing Test. */
 function paintProviderFreeDaily() {
   const line = providerFreeLine(freeDailyState.status);
   const root = providerRoot();
-  const row = root && root.querySelector('.mv-pv-row[data-provider="openai"] .mv-pv-msg');
+  const row = root && root.querySelector('.mv-pv-row[data-provider="openrouter"] .mv-pv-msg');
   if (!row || !line || (row.textContent && !row.dataset.freeDaily)) return;
   row.textContent = line;
   row.dataset.freeDaily = '1';
@@ -1573,7 +1603,7 @@ async function refreshBudget() {
 function paintBudget() {
   const b = budgetState.budget;
   if (!b) return;
-  // A block is never hidden at any interface mode: the ring turns red and full, the card says until when.
+  // A block is never hidden at any interface mode: the corner's name says so, the card says until when.
   paintAccount();
   paintSpendCard();
   applyBudgetToNewView();
@@ -1617,6 +1647,8 @@ function startBudgetTick() {
   const idleRefetchMs = typeof window.__budgetIdleRefetchMs === 'number'
     ? window.__budgetIdleRefetchMs : BUDGET_IDLE_REFETCH_MS;
   budgetState.timer = setInterval(() => {
+    // The usage rings: a window whose reset has passed is refetched (the server drops it), never polled otherwise.
+    if (usageResetPassed()) void refreshUsage();
     const b = budgetState.budget;
     if (!b) return;
     // Refetch when spend can actually move (live runs) or the window has rolled
@@ -1712,26 +1744,78 @@ function repaintPeople() {
 }
 
 // ── The account corner and its menu (account-menu.mjs) ─────────────────────────
-// The corner sits at the foot of the sidebar: the avatar (who is looking), a ring that fills
-// toward the total spend limit, a violet dot while away. Its menu opens upward: the spend card,
-// "Signed in as" (a shared identity only), Interface mode (a side menu), Settings, the Away and Keep awake switches,
-// and the appearance icons last. A level, a switch or a theme change leaves it open; a route closes it.
+// The corner sits at the foot of the sidebar: the avatar (who is looking), the usage rings (usage-view.mjs),
+// a violet dot while away. Its menu opens upward: the level card, "Signed in as" (a shared identity only), the spend
+// card with Usage under it (a side menu), the Away and Keep awake switches, then the preferences: the team setup notice,
+// the appearance icons, Interface mode (a side menu) and Settings last. A level, a switch or a theme change leaves it
+// open; a route closes it.
 const acctState = { account: describeAccount(null), away: null };   // away: describeAwayRow's last answer
 const acctBtn = document.getElementById('side-acct');
 const acctMenu = document.getElementById('acct-menu');
-// focusChecked: false — a keyboard open lands on the spend card, not on the checked theme icon.
+// focusChecked: false — a keyboard open lands on the first item (the level card, else the spend card), not on the
+// checked theme icon.
 // The team setup notice repaints each time the menu opens (paintTeamNotice is a hoisted function declaration below).
 const acctFly = createFlyout({ trigger: acctBtn, menu: acctMenu, mode: 'up', focusChecked: false, onOpen: () => { void paintTeamNotice(); } });
+paintAppearanceIcon(document.querySelector('#acct-menu .theme-sect > .mi-ic'));
 // Interface mode's side menu hangs off the menu (side-flyout closes it with the menu, and Escape
 // closes it first); ui-level.mjs fills it, and a pick there is a choose like a dialog card.
 createFlyout({ trigger: document.getElementById('acct-lvl'), menu: document.getElementById('lvl-menu'), mode: 'beside', parent: acctMenu });
+// Usage (usage-view.mjs): the providers' plan-limit readings (GET /api/usage-limits) as the avatar's rings, the
+// menu's row under the spend card and its submenu, which hangs off the menu exactly as Interface mode's does. Refetched on its push
+// (usage-limits-changed), on hello and on pipelines-changed (a usage-limit pause, resume or stop), and on the budget
+// tick only when a window's reset has passed. One fetch in flight plus one trailing; a failure keeps the last answer.
+const usageState = { answer: null, fetching: false, pending: false };
+const usageRow = document.getElementById('acct-usage');
+const usageMenu = document.getElementById('usage-menu');
+const usageFly = createFlyout({ trigger: usageRow, menu: usageMenu, mode: 'beside', parent: acctMenu,
+  onOpen: () => { renderUsageMenu(usageMenu, currentUsageModel()); usageFly.reposition(); } });
+const currentUsageModel = () => usageModel(usageState.answer, { now: Date.now() });
+function usageResetPassed() {
+  const hs = usageState.answer && Array.isArray(usageState.answer.harnesses) ? usageState.answer.harnesses : [];
+  const now = Date.now();
+  return hs.some((h) => h && Array.isArray(h.windows) && h.windows.some((w) => w && typeof w.resetsAt === 'number' && w.resetsAt <= now));
+}
+async function refreshUsage() {
+  if (usageState.fetching) { usageState.pending = true; return; }
+  usageState.fetching = true;
+  try {
+    do {
+      usageState.pending = false;
+      try {
+        const res = await fetch('/api/usage-limits', { signal: AbortSignal.timeout(15000) });
+        const data = await safeJson(res);
+        if (res.ok && data && Array.isArray(data.harnesses)) usageState.answer = data;
+      } catch { /* transient: keep the last answer */ }
+      paintUsage();
+    } while (usageState.pending);
+  } finally { usageState.fetching = false; usageState.pending = false; }
+}
+/** The avatar's rings and name, the Usage row and an open submenu. A row that hides takes its open submenu with
+ *  it, and focus goes to the menu's first item. */
+function paintUsage() {
+  const model = currentUsageModel();
+  const active = document.activeElement;
+  const hadFocus = !!active && (usageMenu.contains(active) || usageRow.contains(active));
+  if (!model.row && usageFly.isOpen()) usageFly.close();
+  paintUsageRings(acctBtn, model);
+  paintAccount();
+  paintUsageRow(usageRow, model);
+  renderUsageMenu(usageMenu, model);
+  if (!model.row && hadFocus && acctFly.isOpen()) {
+    const first = [...acctMenu.querySelectorAll('[role^="menuitem"]')].find((el) => !el.closest('[hidden]') && !el.hidden);
+    first?.focus();
+  }
+  if (acctFly.isOpen()) acctFly.reposition();
+  usageFly.reposition();
+}
 // The worca level (worca-level/app-wiring.mjs): the last served view feeds the corner avatar, the shelf and the menu row.
 const worca = createWorcaLevelWiring({ trigger: acctBtn, menu: acctMenu, repaint: () => { paintAccount(); paintShelf(); }, isSettled: () => gs.settled, setupOpen: () => !!setupDialog });
 function paintAccount() {
   const level = worca.state.view && worca.state.view.level;
   paintAccountCorner(acctBtn, acctState.account, {
-    budget: budgetState.budget, away: acctState.away?.state === 'away', fmt: { usd: fmtUsd, usd4: fmtUsd4 },
+    budget: budgetState.budget, away: acctState.away?.state === 'away',
     avatar: level ? { src: level.avatar, alt: level.name } : null,
+    usageParts: ringParts(currentUsageModel()),
   });
 }
 paintAccount();                // the first paint: "Profile" until /api/whoami answers
@@ -1776,6 +1860,7 @@ function handleServerMessage(msg) {
     conn.back();
     onHello(msg);
     refreshRunningActions();
+    void refreshUsage();
     if (terminalPane) terminalPane.onHello(msg);
     if (Array.isArray(msg.extensionPairs)) msg.extensionPairs.forEach((r) => void promptExtensionPair(r));
     return;
@@ -1871,6 +1956,7 @@ function handleServerMessage(msg) {
     scheduleOnboardingRefresh();
     refreshAllCounts();
     refreshBudget();
+    void refreshUsage();
     // An archive / delete names the parked live runs the server evicted; every tab drops its copies of them.
     if (Array.isArray(msg.removedRunIds) && msg.removedRunIds.length) {
       const gone = new Set(msg.removedRunIds);
@@ -1889,6 +1975,11 @@ function handleServerMessage(msg) {
   // is global, so repaint it regardless of the open view.
   if (msg.type === 'budget-changed') {
     refreshBudget();
+    return;
+  }
+  // A provider's plan-limit reading changed (usage-view.mjs): the avatar's rings, the Usage row and its submenu.
+  if (msg.type === 'usage-limits-changed') {
+    void refreshUsage();
     return;
   }
   // Requirements: a feature changed (a round finished, an edit, another tab), or a Product brief (`brief`:
@@ -1942,6 +2033,10 @@ function handleServerMessage(msg) {
     void refreshAwayBodies().catch(() => {});
     // The default engine or a slot may have changed in another tab: New pipeline re-reads them.
     if (currentView() === 'new') void loadRunDefaults(state.runTarget === 'workspace' ? '' : (state.projectDir || ''));
+    // The Catalogue's Used by, Default and hidden built-ins follow what another tab saved.
+    if (currentView() === 'models') void loadModelsView();
+    // The Jobs tab re-reads what is saved under its draft (kept); never the readiness preflight, from any view.
+    if (mvState.jobs.loaded) void loadJobs({ engines: false });
     loadSettings();
     return;
   }
@@ -2502,7 +2597,7 @@ function makeRun({
     stepSkills: {},   // {`${nodeId}|${cycle}`: string[]} — MAIN-agent skills per dropdown group
     stepGraphify: {}, // {`${nodeId}|${cycle}`: number} — MAIN-agent graphify-use count per group
     // v2 (graph-engine) run-level outcome fields; a v1 run never sends them.
-    active: [], endReached: undefined, result: null, warnings: [], wireDeliveries: {}, tokens: {}, gate: null,
+    active: [], endReached: undefined, result: null, warnings: [], scopeNotices: [], wireDeliveries: {}, tokens: {}, gate: null,
     el: null,
     _finished: false,
     staleBoot: false,  // a restarted server never re-listed it (onHello): the run died with the old process
@@ -3090,7 +3185,8 @@ function onState(r, msg) {
   // v2 run-level outcome fields (ignored by v1 runs, which never send them).
   // roleReviews: the role-review rounds runModel's live role rows read (review A12).
   // sessionHosts: each session's summary (session groups), read by the tray decor and the Sessions tab.
-  for (const k of ['active', 'endReached', 'result', 'warnings', 'wireDeliveries', 'tokens', 'gate', 'progressFacts', 'roleReviews', 'sessionHosts']) {
+  // scopeNotices (E9): the paths each execution touched outside its checkout, the run page's one quiet scope line.
+  for (const k of ['active', 'endReached', 'result', 'warnings', 'scopeNotices', 'wireDeliveries', 'tokens', 'gate', 'progressFacts', 'roleReviews', 'sessionHosts']) {
     if (msg[k] !== undefined) r[k] = msg[k];
   }
   // Skills registry §6 board 9: the run's set skills (run-harness state.skillMount) for its Overview.
@@ -4214,7 +4310,7 @@ function renderModelEffortPair(modelSel, effortSel, caption, sel = {}) {
   if (caption) {
     const mLabel = model ? model.label : 'default model';
     caption.textContent = `${mLabel} · ${effortSel.value || 'default effort'}`
-      + (model && model.needsSignIn ? ' (needs sign-in on the Providers page)' : '');
+      + (model && model.needsSignIn ? ' (needs sign-in under Models › Providers)' : '');
     caption.classList.toggle('err', !!(model && model.needsSignIn));
   }
 }
@@ -4989,12 +5085,12 @@ function paintEngineHints() {
     el.engineHint.hidden = state.engine === 'claude';
     const project = Object.values(state.runDefaults?.steps?.[state.engine] || {}).some((s) => s?.source === 'project');
     el.engineHint.textContent = state.engine === 'copilot'
-      ? `GitHub Copilot CLI runs this pipeline, including titles and summaries (on its default model). Step models: ${project ? 'project Settings' : 'Models › Copilot'}. Sign in once with copilot login.`
+      ? `GitHub Copilot CLI runs this pipeline, including titles and summaries (on its default model). Step models: ${project ? 'project Settings' : 'Models › Jobs'}. Sign in once with copilot login.`
       : state.engine === 'cursor'
-      ? `Cursor runs this pipeline. Helper jobs (titles, summaries) run on Claude. Step models: ${project ? 'project Settings' : 'Models › Cursor'}.`
+      ? `Cursor runs this pipeline. Helper jobs (titles, summaries) run on Claude. Step models: ${project ? 'project Settings' : 'Models › Jobs'}.`
       : SIGN_IN_ENGINE_NAMES.includes(state.engine)
-      ? `${engineLabel(state.engine)} runs this pipeline. Helper jobs (titles, summaries) run on Claude. Step models: ${project ? 'project Settings' : `Models › ${engineLabel(state.engine)}`}.`
-      : `Codex runs this pipeline, including titles and summaries. Its models: ${project ? 'project Settings' : 'Models › Codex'}`;
+      ? `${engineLabel(state.engine)} runs this pipeline. Helper jobs (titles, summaries) run on Claude. Step models: ${project ? 'project Settings' : 'Models › Jobs'}.`
+      : `Codex runs this pipeline, including titles and summaries. Its models: ${project ? 'project Settings' : 'Models › Jobs'}`;
   }
   if (el.engineDefaultHint) {
     const source = state.runDefaults?.engine?.value === state.engine ? state.runDefaults.engine.source : null;
@@ -5340,17 +5436,15 @@ async function saveHumanInLoop(on) {
 if (el.humanInLoop) el.humanInLoop.addEventListener('change', () => saveHumanInLoop(el.humanInLoop.checked));
 
 // "+ Add model…" in any model dropdown: restore the selection and jump to the
-// global Models view with the create editor open (models are added GLOBALLY —
+// global Models view with Add model open (models are added GLOBALLY —
 // configurable-models-design.md §4.9; the old per-project window.prompt flow
 // is gone).
 function goAddModel(restore) {
   if (typeof restore === 'function') restore();
   mvState.editing = null;
-  mvState.openCreate = true;
-  mvState.openShare = false;
-  // "+ Add model…" on a non-Claude run starts a model of that engine (D10); the editor applies `engine`.
-  mvState.prefill = state.engine !== 'claude' ? { id: '', engine: state.engine } : null;
-  mvState.openEditorOnLoad = true;         // survives the view switch: loadModelsView opens it
+  mvState.prefill = null;
+  // Step 1 opens on a sign-in with the run's harness picked (D10): a Codex run adds a Codex model.
+  mvState.openEditorOnLoad = { where: 'signin', engine: state.engine };   // survives the view switch: readModelsView opens it
   showView('models');
 }
 
@@ -10676,7 +10770,7 @@ let wizModelCatalog = [];
 // sends the four still-empty selects (the scan route answers 400 to an empty pick).
 let wizModelsPainted = Promise.resolve();
 // The wizard stores a scan pick on the new workspace only when one is needed: the user changed a picker, or no
-// Everyday coding role covers the scan (a re-scan would then ask for a model). Otherwise its re-scans follow the role.
+// Everyday tasks role covers the scan (a re-scan would then ask for a model). Otherwise its re-scans follow the role.
 let wizScanTouched = false;
 let wizScanPickNeeded = true;
 let wsScanCatalog = [];
@@ -16460,12 +16554,12 @@ function setSettingsLoadMsg(text) {
   if (!n) return;
   n.textContent = text ? `Could not load settings: ${text}` : '';
   n.hidden = !text;
-  // The Models page loads the same payload (its Engines card and helper pickers) but sits outside
-  // Settings, so the line above is not on screen there: say it on the page's own line, and take it
-  // back once a load works (only that message: the line also reports imports and deletes).
+  // The Models page loads the same payload but sits outside
+  // Settings, so the line above is not on screen there: say it on the Jobs tab's own line, and take it
+  // back once a load works (only that message: anything else on the line stays).
   if (currentView() !== 'models') return;
-  if (text) setModelsMsg(`Could not load settings: ${text}`, 'err-inline');
-  else if (el.modelsMsg && el.modelsMsg.textContent.startsWith('Could not load settings: ')) setModelsMsg('');
+  if (text) reportStatus(el.modelsJobsMsg, 'form-msg', `Could not load settings: ${text}`, 'err-inline');
+  else if (el.modelsJobsMsg && el.modelsJobsMsg.textContent.startsWith('Could not load settings: ')) reportStatus(el.modelsJobsMsg, 'form-msg', '');
 }
 
 async function loadSettings() {
@@ -16476,6 +16570,7 @@ async function loadSettings() {
     if (!res.ok) { setSettingsLoadMsg(data.error || `HTTP ${res.status}`); return; }
     paintSettings(data);
     paintTheme(data.theme);
+    paintScreensaver(data.screensaver);
     levelCtl.confirm(data.uiLevel);
     paintAbout(data.app);
     if (el.aboutUpdateCheck) el.aboutUpdateCheck.checked = data.updateCheck !== false;
@@ -16489,11 +16584,12 @@ async function loadSettings() {
     paintNetworkWaitSettings(data);
     paintRunLimitsSettings(data);
     paintSmartNamingSettings(data);
+    paintMemoryModelLink(data);
     paintActionsSettings(data);
     paintDebugSpawnSettings(data);
     paintKeepAwakeRow(data.keepAwake !== false);
     paintPrSettings(data);
-    await paintEngineSettings(data);
+    syncRunEngine(data);
     await paintWorkspaceScanModelsSettings(data);
     paintBudgetReadout();
     paintTeamCapsReadout();                 // team policy (design board 7): each home's caps, read-only
@@ -17063,6 +17159,40 @@ async function chooseTheme(mode) {
   }
   paintTheme(data.theme);
 }
+// Settings › Appearance › Screensaver: the switch and its Start after minutes. Each control saves only its own field
+// (the server merges a partial { screensaver }), with the same optimistic paint and revert as chooseTheme.
+const SCREENSAVER_MINUTES = [5, 10, 15, 20, 25, 30];
+let screensaverSeq = 0;              // out-of-order POST resolutions never repaint a stale answer
+const screensaverNotSaved = (detail) => notify({ tone: 'err', title: 'Screensaver not saved', detail, key: 'screensaver' });
+function paintScreensaver(s) {
+  const enabled = s?.enabled === true;
+  const idleMinutes = SCREENSAVER_MINUTES.includes(s?.idleMinutes) ? s.idleMinutes : 5;
+  screensaverPref = { enabled, idleMinutes };
+  if (el.screensaverOn) el.screensaverOn.checked = enabled;
+  if (el.screensaverAfterRow) el.screensaverAfterRow.hidden = !enabled;
+  if (el.screensaverAfter) el.screensaverAfter.value = String(idleMinutes);
+}
+async function chooseScreensaver(patch) {
+  const mine = ++screensaverSeq;
+  const previous = { ...screensaverPref };
+  paintScreensaver({ ...previous, ...patch });                             // optimistic
+  let res; let data;
+  try {
+    res = await fetch('/api/settings', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ screensaver: patch }) });
+    data = await safeJson(res);
+  } catch (e) { if (mine === screensaverSeq) { paintScreensaver(previous); screensaverNotSaved(e.message || 'network error'); } return; }
+  if (mine !== screensaverSeq) return;                                     // a later change owns the paint now
+  if (!res.ok) {
+    screensaverNotSaved(data.error || `The server answered ${res.status}.`);
+    // Paint what the SERVER holds; a failed re-fetch falls back to the last confirmed value.
+    try { const d2 = await safeJson(await fetch('/api/settings')); if (mine === screensaverSeq) paintScreensaver(d2.screensaver || previous); }
+    catch { if (mine === screensaverSeq) paintScreensaver(previous); }
+    return;
+  }
+  paintScreensaver(data.screensaver);
+}
+el.screensaverOn?.addEventListener('change', () => chooseScreensaver({ enabled: el.screensaverOn.checked }));
+el.screensaverAfter?.addEventListener('change', () => chooseScreensaver({ idleMinutes: Number(el.screensaverAfter.value) }));
 for (const id of ['theme-seg', 'acct-theme']) {
   document.getElementById(id)?.addEventListener('click', (e) => {
     const btn = e.target.closest && e.target.closest('button[data-theme-mode]');
@@ -17477,7 +17607,7 @@ function snPaintTypes() {
     return add;
   })());
 }
-// The model is a helper job (Models › Engines › Helper jobs › Run naming); the card only says which one runs and
+// The model is a helper job (Models › Jobs › Helper jobs › Run naming); the card only says which one runs and
 // what a suggestion costs. /api/naming/config answers 404 while the flag is off, so the cost line waits for it.
 async function snPaintCost(naming) {
   const out = document.getElementById('smartNamingCost');
@@ -17491,6 +17621,23 @@ async function snPaintCost(naming) {
     else if (model) out.textContent = `${model}${base}`;
   }
   settingsCardPainted('smartNamingSave');
+}
+/** Settings › Memory's link to the Defragment model. A defragment run takes its run engine's own "Memory defragment"
+ *  job (orchestrator.mjs defragSlotPair): the line names that harness's Helper jobs when it has the job. A harness
+ *  without it (Cursor, Copilot…) has an empty slot (settings-cascade.mjs utilityModelFor), so its run falls to that
+ *  harness's own role for the job (model-roles.mjs withRole): the line names that harness's Roles, never Claude's job. */
+function paintMemoryModelLink(data) {
+  const line = document.querySelector('.mem-model-link');
+  const a = line?.querySelector('a');
+  if (!a) return;
+  // A name that is no harness (a hand-edited "constructor") reads as the default, Claude Code.
+  const named = data && typeof data.runEngine === 'string' ? data.runEngine : '';
+  const engine = MODEL_ENGINE_NAMES.includes(named) ? named : 'claude';
+  const hasJob = (HELPER_JOBS[engine] || []).some((j) => j.key === 'memoryDefrag');
+  const lead = hasJob ? 'a helper job' : `the ${ROLE_LABELS[roleOf('memoryDefrag')]} role`;
+  a.setAttribute('href', hasJob ? `#models/jobs/helpers/${engine}` : `#models/jobs/roles/${engine}`);
+  a.textContent = hasJob ? 'Models › Jobs › Helper jobs' : 'Models › Jobs › Roles';
+  line.replaceChildren(`The model every Memory defragment run uses is ${lead}: `, a, '.');
 }
 function paintSmartNamingSettings(data) {
   const d = data && data.smartNaming;
@@ -17524,7 +17671,7 @@ document.getElementById('smartNamingSave')?.addEventListener('click', (e) => pos
 document.getElementById('smartNamingReset')?.addEventListener('click', (e) => postSmartNaming(
   { smartNaming: null }, { button: e.currentTarget, gate: false, busy: 'Resetting…', done: 'Reset' }));
 settingsCardDirty('smartNamingSave');
-onFlagChange('smartRunNaming', () => { snPaintMuted(); void snPaintCost(null); void paintHelperModelCards(); });
+onFlagChange('smartRunNaming', () => { snPaintMuted(); void snPaintCost(null); repaintJobs(); });
 // Settings › Network proxy (networkProxy.enabled; Simple level, no flag).
 mountNetworkProxyCard({ onOpenSetup: (step) => openSetup({ entry: 'fix', step }) });
 
@@ -17739,9 +17886,8 @@ document.getElementById('prSettingsSave')?.addEventListener('click', (e) => post
   { card: document.getElementById('pr-settings-card'), paint: paintPrSettings, dirty: settingsCardDirty('prSettingsSave'), button: e.currentTarget }));
 settingsCardDirty('prSettingsSave');
 
-// ---- Helper models: Claude's title, Auto and PR description slots are rows of the Engines card's Helper jobs
-// (engine-settings-view.mjs). What stays here: the project-less catalog every model picker reads, the Claude-only
-// list builder the workspace scan picker uses, and a row's Test.
+// ---- Model pickers outside the Models page: the project-less catalog every model picker reads, the Claude-only
+// list builder the workspace scan picker uses, and a row's Test (Settings › Chat, Project settings, Models › Jobs).
 async function fetchTitleModelCatalog() {
   try {
     const res = await fetch('/api/config');
@@ -17796,7 +17942,7 @@ async function paintWorkspaceScanModelsSettings(data) {
   paintScanModelPickers(WS_SCAN_SETTINGS_IDS, pick, wsScanCatalog);
   // An EMPTY catalog is a failed GET, not an empty catalog: it condemns nothing (the Auto card's rule).
   const stale = !!pick.scanModel && wsScanCatalog.length > 0 && !wsScanCatalog.some((m) => m && m.id === pick.scanModel);
-  keepVisible(document.getElementById('ws-scan-models-card'), !!(data && data.workspaceScan));
+  syncSettingsSubKeep(keepVisible(document.getElementById('ws-scan-models-card'), !!(data && data.workspaceScan)));
   setHintMsg('wsScanModelsNote', stale ? `Model "${pick.scanModel}" is no longer in the catalog. Scans fall back to the default.` : '', stale ? 'warn' : '');
   settingsCardPainted('wsScanModelsSave');
 }
@@ -19613,137 +19759,342 @@ async function loadGuardrailsView(param = '') {
 // arrive MASKED and are write-only (unchanged masked echoes mean "keep").
 // ---------------------------------------------------------------------------
 const mvState = {
-  data: null, editing: null, openCreate: false, openShare: false, prefill: null,
-  // Model bridge (model-bridge-design.md §8): the Providers card payload, an
+  data: null, editing: null, prefill: null,
+  // Model bridge (model-bridge-design.md §8): the Providers tab payload, an
   // in-flight Copilot sign-in, the import sheet and its list, and Copilot's
   // models list for the editor's datalist (fetched once per view load when
   // connected; empty otherwise).
-  // Importing is a DIALOG now (§8.4): its state lives in `mimp`, not here. copilotModels stays —
+  // Importing is step 2 of Add model (models-menu P5): its state lives in `dlg`, not here. copilotModels stays —
   // it feeds the editor's upstream-id datalist. justImported filters the list to what just landed.
-  providers: null, signIn: null, copilotModels: [], justImported: null, openEditorOnLoad: false,
-  // The catalog's own narrowing (the list runs to several screens with built-ins, plugin and team
-  // models in it): a search box, one chip, and which groups are folded. Built-ins start folded —
-  // 12 rows nobody edits — and a search opens every group that still has a hit.
-  query: '', filter: 'all', collapsed: { builtin: true, plugin: false, policy: false, global: false },
-  // A panel that JUST opened is scrolled to after the repaint: the editor and the import sheets
-  // render under the Providers card, which is taller than the viewport on a laptop, so opening one
-  // otherwise looks like nothing happened. Set by the flows that open a panel; cleared on use.
-  revealPanel: false,
+  // openEditorOnLoad: Add model's options ({ where, engine }) from a picker on another page, opened once the catalog is here.
+  providers: null, signIn: null, copilotModels: [], justImported: null, openEditorOnLoad: null,
+  // The model dialog while it is open (one modal, one screen at a time), else null:
+  // { screen: 'step1'|'list'|'form'|'share', add: { where, provider, engine }, list: { provider, baseUrl, apiKey, ticked: Set,
+  //   filter, payload: { endpoint, data, baseUrl, apiKey } | null } (provider: whose list it is; baseUrl/apiKey: what the
+  //   screen holds, redrawn; payload: the last list that answered, with the address and key it was asked with),
+  //   form: { mode, copyFrom, formEl } | null, from: 'step1'|'list'|null (where the form's Back goes), busy (an import is
+  //   out), formDirty (a form left with changes), seq (late answers of another open, provider or screen are dropped),
+  //   engines (GET /api/engines' rows for the harness tiles; null until it answers) }.
+  dlg: null,
+  // The Providers tab's unfolded rows, by row name: kept through every redraw (a head click, a link, a failure).
+  pvOpen: {},
+  // The Catalogue's view state, kept for the session (catalogue-model.mjs): the search, one chip, the Source select,
+  // which harness groups are folded (Claude Code starts open, the others folded) and the row the side panel shows.
+  // A copy: the default is frozen. `count` is the listed models (the tab's pill; null until the catalogue drew) and
+  // `runEngine` the default harness for new runs (GET /api/settings; null reads as Claude Code).
+  cat: { ...CATALOGUE_VIEW_DEFAULT, fold: { ...CATALOGUE_VIEW_DEFAULT.fold } }, count: null, runEngine: null,
+  // The side panel's Test (PAN-3) by lower-cased id: { busy, text, err }. A repaint while it runs draws the panel anew
+  // and the new one still reads "Testing…" with Test off; a finished answer stays while that model's panel shows.
+  tests: new Map(),
+  // The Jobs tab (models-menu P6), kept for the session: the harness it shows (null until the first load picks the
+  // default; a "Used by" press may set it first), the draft by setting id ({ model?, effort? }, null = cleared), each
+  // card's Show all, the rows an Override pick revealed, the last reads (GET /api/settings, /api/config's catalogue
+  // and steps as { catalog, steps }, GET /api/engines' rows or null), whether a read ever drew the tab and whether a
+  // Save is out (its POST not answered yet).
+  jobs: { engine: null, draft: {}, showAll: { steps: false, helpers: false }, revealed: new Set(), settings: null, config: null, engines: null, loaded: false, saving: false },
 };
 
 function setModelsMsg(text, kind) {
   reportStatus(el.modelsMsg, 'form-msg', text, kind);
 }
 
+/** What the Catalogue's view model reads (catalogue-model.mjs): the GET /api/models body with every list defaulted (a
+ *  partial body still draws), its `providers` (the server's list of names) REPLACED by the GET /api/providers payload
+ *  (null while unknown, so no provider state is claimed), and the page's own facts: the selected project's models, the
+ *  engines (from readyEngines' 60 s cache; null until it answered, so no "Not ready" is claimed), the default harness
+ *  for new runs, the broker's locks and the ids just imported. */
+function catalogueData() {
+  const d = mvState.data || {};
+  const list = (x) => (Array.isArray(x) ? x : []);
+  const obj = (x) => (x && typeof x === 'object' && !Array.isArray(x) ? x : {});
+  const pp = selectedProjectPath();
+  const ready = readyEngines(repaintCatalogue);
+  return {
+    ...d,
+    models: list(d.models), plugin: list(d.plugin), policy: list(d.policy),
+    predefined: list(d.predefined), codex: list(d.codex), copilot: list(d.copilot),
+    uses: obj(d.uses), hiddenBuiltins: obj(d.hiddenBuiltins),
+    providers: mvState.providers ?? null,
+    legacy: pp ? list(state.config?.customModels) : [],
+    projectName: pp ? pp.split('/').pop() : '',
+    engines: ready === null ? null : MODEL_ENGINE_NAMES.map((name) => ({ name, ready: ready.includes(name) })),
+    runEngine: mvState.runEngine,
+    engineLocks: MODEL_ENGINE_NAMES.filter((name) => engineLock(name) !== null).map((name) => ({ name, reason: 'Off while the credential broker is on' })),
+    justImported: mvState.justImported ?? null,
+  };
+}
+
+/** readyEngines' waiter: one function, so the waiters' Set holds it once however often the list draws meanwhile. */
+function repaintCatalogue() { renderModelsViewBody(); }
+
+// The Catalogue's controls a draw makes anew. A repaint nobody asked for (the engines answer, another tab's
+// settings-changed, a window focus) hands the keyboard back to the same control, and the search its caret.
+const CAT_FOCUS_CLASSES = ['mv-search', 'mdl-source', 'filter-chip', 'mdl-show-all', 'mdl-grp-toggle', 'mdl-grp-more', 'mdl-row',
+  'mdl-fix', 'mv-hide-builtin', 'mdl-side-close', 'mdl-act', 'mdl-act-more', 'mdl-copy-id', 'mdl-use'];
+/** What tells a control from its look-alikes: its group's harness and its own data-* keys (dataset compares only). */
+const catFocusSig = (n) => JSON.stringify([n.closest('.mdl-grp[data-engine]')?.dataset.engine || '', n.dataset.id || '',
+  n.dataset.filter || '', n.dataset.engine || '', n.dataset.row || '', n.dataset.act || '']);
+function catFocusTwins(host, cls, sig) {
+  return [...host.querySelectorAll('button, input, select')].filter((n) => n.classList.contains(cls) && catFocusSig(n) === sig);
+}
+/** The focused Catalogue control as { host, cls, sig, nth, caret }, or null when the focus is elsewhere. */
+function catalogueFocus() {
+  const a = document.activeElement;
+  const host = !a || !a.classList ? null : el.modelsList?.contains(a) ? el.modelsList : el.modelPanelHost?.contains(a) ? el.modelPanelHost : null;
+  const cls = host && CAT_FOCUS_CLASSES.find((c) => a.classList.contains(c));
+  if (!cls) return null;
+  const sig = catFocusSig(a);
+  return { host, cls, sig, nth: catFocusTwins(host, cls, sig).indexOf(a), caret: cls === 'mv-search' ? [a.selectionStart, a.selectionEnd] : null };
+}
+function restoreCatalogueFocus(f) {
+  if (!f) return;
+  const twins = catFocusTwins(f.host, f.cls, f.sig);
+  const next = twins[Math.min(Math.max(f.nth, 0), twins.length - 1)];
+  if (!next || document.activeElement === next) return;
+  try { next.focus({ preventScroll: true }); } catch { /* jsdom */ }
+  if (f.caret) { try { next.setSelectionRange(f.caret[0], f.caret[1]); } catch { /* search inputs vary */ } }
+}
+
 function renderModelsViewBody() {
   if (!el.modelsList) return;
-  const d = mvState.data || { models: [], predefined: [], efforts: [] };
-  const pp = selectedProjectPath();
-  const legacy = pp && state.config && Array.isArray(state.config.customModels) ? state.config.customModels : [];
-  const frag = document.createDocumentFragment();
-  // The Providers card is its own tab now (§8.1): at 1000+px it buried the catalog it unlocks,
-  // and importing — the one flow that spanned both — moved here, where its rows land.
-  if (mvState.openShare) {
-    frag.appendChild(renderExportWizard(d.models || []));
-  }
-  frag.appendChild(renderModelsList({
-    query: mvState.query,
-    filter: mvState.filter,
-    collapsed: mvState.collapsed,
-    highlight: mvState.justImported || [],
-    globals: d.models || [],
-    legacy,
-    plugins: d.plugin || [],
-    policy: d.policy || [],
-    predefined: d.predefined || [],
-    codex: d.codex || [],
-    codexEfforts: d.codexEfforts || [],
-    copilot: d.copilot || [],
-    copilotEfforts: d.copilotEfforts || [],
-    gooseEfforts: d.gooseEfforts || [],
-    opencodeEfforts: d.opencodeEfforts || [],
-    efforts: d.efforts || [],
-    hideBuiltin: !!d.hideBuiltinModels,
-    projectName: pp ? pp.split('/').pop() : '',
-  }));
-  el.modelsList.replaceChildren(frag);
-  if (mvState.revealPanel) {
-    mvState.revealPanel = false;
-    revealModelsPanel();
+  const focus = catalogueFocus();
+  const data = catalogueData();
+  const vm = buildCatalogue(data, mvState.cat);
+  // The tab's pill counts the listed models once the catalogue loaded (SH-3); nothing before.
+  mvState.count = mvState.data ? vm.count : null;
+  // Providers is a tab of its own (§8.1): as a card at 1000+px it buried the catalog it unlocks. Importing, the model
+  // form and Share as plugin are screens of the model dialog (models-menu P5): the list holds the Catalogue alone.
+  const { query, filter, source } = mvState.cat;
+  el.modelsList.replaceChildren(renderCatalogue(vm, { doc: document, query, filter, source }));
+  paintModelPanel(data);
+  restoreCatalogueFocus(focus);
+  paintModelsTabs(modelsTabsNav, { active: modelsTabShown || 'catalogue', count: mvState.count });
+}
+
+/** The side panel of the open row into #model-panel-host; an id the loaded catalogue no longer holds closes it. */
+function paintModelPanel(data = catalogueData()) {
+  if (!el.modelPanelHost) return;
+  const panel = mvState.cat.open ? buildModelPanel(data, mvState.cat.open) : null;
+  if (!panel && mvState.data) mvState.cat.open = null;
+  const node = panel ? renderModelPanel(panel, { doc: document }) : null;
+  // A finished Test answer belongs to the panel that shows it: one opened again starts clean.
+  const shown = panel ? String(panel.id).toLowerCase() : '';
+  for (const [lc, t] of mvState.tests) { if (!t.busy && lc !== shown) mvState.tests.delete(lc); }
+  if (node) el.modelPanelHost.replaceChildren(node);
+  else el.modelPanelHost.replaceChildren();
+  if (node) paintModelTest(shown);
+}
+
+// A Test button this page turned off for a running test (and so turns on again), as opposed to one drawn off.
+const heldTestButtons = new WeakSet();
+/** The panel's Test button and result line from `mvState.tests` (PAN-3), when the panel on screen shows `lc`. */
+function paintModelTest(lc) {
+  const open = mvState.cat.open;
+  if (typeof open !== 'string' || open.toLowerCase() !== lc) return;
+  const t = mvState.tests.get(lc);
+  const btn = el.modelPanelHost?.querySelector('.mdl-act[data-act="test"]');
+  const out = el.modelPanelHost?.querySelector('.mdl-test-result');
+  if (btn && t?.busy && !btn.disabled) { btn.disabled = true; heldTestButtons.add(btn); }
+  if (btn && !t?.busy && heldTestButtons.has(btn)) { btn.disabled = false; heldTestButtons.delete(btn); }
+  if (btn && t) paintTestLabel(btn, t);
+  if (out && t) {
+    out.textContent = t.text;
+    out.className = `mdl-test-result hint${t.err ? ' err' : ''}`;
   }
 }
 
-/** Bring an open in-page panel (the share wizard) into view. */
-function revealModelsPanel() {
-  const panel = el.modelsList && el.modelsList.querySelector('.mv-editor');
-  if (!panel) return;
-  try { panel.scrollIntoView({ behavior: 'smooth', block: 'start' }); } catch { /* jsdom */ }
+/** PAN-3: Test reads "Testing…" with the spinner while it runs, then "Works" for BUTTON_DONE_MS, the look withButton
+ *  paints (action-feedback.css keys on data-fb-state). Painted from `mvState.tests`, so a panel drawn anew mid-test
+ *  shows it too; the answer itself stays on the result line. */
+function paintTestLabel(btn, t) {
+  const state = t.busy ? 'busy' : t.done ? 'done' : '';
+  if ((btn.dataset.fbState || '') === state) return;
+  if (state) btn.dataset.fbState = state; else delete btn.dataset.fbState;
+  btn.classList.toggle('is-busy', state === 'busy');
+  btn.classList.toggle('is-done', state === 'done');
+  if (state === 'busy') btn.setAttribute('aria-busy', 'true'); else btn.removeAttribute('aria-busy');
+  const doc = btn.ownerDocument;
+  if (state === 'busy') {
+    const spin = doc.createElement('span');
+    spin.className = 'btn-spin';
+    spin.setAttribute('aria-hidden', 'true');
+    btn.replaceChildren(spin, 'Testing…');
+  } else if (state === 'done') {
+    btn.replaceChildren(feedbackIcon(doc, 'ok', 'btn-ic'), 'Works');
+  } else {
+    btn.replaceChildren('Test');
+  }
 }
 
-// ── Model editor dialog (configurable-models-design.md §4.10) ───────────────
-// The editor is a task: it opens over the catalog, owns Escape and the backdrop, and guards unsaved
-// work on the way out. `mvState.editing` / `openCreate` / `prefill` still say WHAT it edits.
+/** The row of `id` in the drawn list: in `engine`'s group when given, else its first (a dataset compare, ignoring case
+ *  as ids do). */
+function modelRowEl(id, engine = '') {
+  if (!el.modelsList || !id) return null;
+  const lc = String(id).toLowerCase();
+  const rows = [...el.modelsList.querySelectorAll('.mdl-grp[data-engine] .mdl-row[data-id]')].filter((n) => n.dataset.id.toLowerCase() === lc);
+  return rows.find((n) => !engine || n.closest('.mdl-grp')?.dataset.engine === engine) || rows[0] || null;
+}
+
+// ── Model dialog (configurable-models-design.md §4.10; models-menu P5) ──────
+// One modal (#model-editor-modal > #mv-editor-host) shows the screen the flow is on: Add model's step 1 ("Where it
+// runs"), step 2's list (the import) or the model form (add, edit, Duplicate, Edit a copy). Each screen is a
+// section.card a pure module builds; showModelScreen lays it out and mounts it. `mvState.editing` / `prefill` still say
+// WHAT the form edits, `mvState.dlg` where the flow is.
 const mvEditor = { lastFocus: null };
-// A form: a backdrop click never closes it; Escape asks once something changed (an env row added or removed
-// counts). Cancel closes at once — never asks; a successful Save closes it too.
+// Bumped on every open, close and provider change: a list or import answer carrying an older one draws nothing.
+let modelDlgSeq = 0;
+// A Save (withButton) or an import is out: Escape, Cancel, Close and the screens' own steps wait for its answer.
+const modelDialogBusy = () => !!mvState.dlg?.busy || !!el.modelEditorModal?.querySelector('[data-fb-state="busy"]');
+// A form: a backdrop click never closes it; Escape asks once something changed (an env row added or removed counts,
+// and so does a form left by Back with changes). Cancel and Close close at once — never ask; a successful Save (or an
+// export) closes it too. One guard, installed once; each open hands it that open's rules (modelGuardOptions).
 const modelEditorGuard = el.modelEditorModal ? guardModal(el.modelEditorModal, {
   kind: 'form', close: () => closeModelEditorDialog(), discardMessage: 'This model has unsaved changes.',
 }) : null;
 
-/** The open editor, wherever it lives (the dialog today; the page while it is closing). */
-function modelEditorEl() {
-  return (el.modelEditorHost && el.modelEditorHost.querySelector('.mv-editor'))
-    || (el.modelsList && el.modelsList.querySelector('.mv-editor'));
+/** This open's guard rules: `busy` keeps the default check (a withButton Save) beside an import in flight, and the dirty rule
+ *  spans the screens (Next alone never asks, filter typing never does, form text typed before a Back still does). Escape's
+ *  question names a model; Share as plugin's is the dialogs' own (`discardMessage`). */
+function modelGuardOptions(discardMessage = 'This model has unsaved changes.') {
+  return {
+    discardMessage,
+    busy: modelDialogBusy,
+    isDirty: () => modelEditorGuard.changed() || !!mvState.dlg?.formDirty,
+  };
 }
 
+/** Step 2's list state for `provider`: the address and key typed, the ticked ids, the filter and the last listed payload. */
+const freshAddList = (provider, baseUrl = '') => ({ provider, baseUrl: baseUrl || '', apiKey: '', ticked: new Set(), filter: '', payload: null });
+
+/** A fresh flow state for one open of the dialog. */
+function beginModelDialog(add = {}, { baseUrl = '' } = {}) {
+  const first = { where: 'signin', provider: 'copilot', engine: 'claude', ...add };
+  mvState.dlg = {
+    screen: null, add: first, list: freshAddList(first.provider, baseUrl),
+    form: null, from: null, busy: false, formDirty: false, seq: ++modelDlgSeq, engines: null,
+    // "Change where it runs": the edit form's harness while step 1 shows for it (no tiles; Continue returns to the form).
+    fixedEngine: '',
+  };
+  return mvState.dlg;
+}
+
+/** The form, when the dialog shows it (step 2's sheets are .mv-editor too, but carry no data-mode). */
+function modelEditorEl() {
+  return el.modelEditorHost ? el.modelEditorHost.querySelector('.mv-editor[data-mode]') : null;
+}
+
+/** Mount `card` as the dialog's screen: layoutDialog (a no-op on a card laid out before), the screen's title names the
+ *  modal (aria-labelledby), then the modal shows and its guard takes this open's rules; when it already shows, the new
+ *  screen is the guard's clean state (`keep`: a redraw of the same screen keeps it). `focus`: a selector, after a tick;
+ *  `discardMessage`: Escape's question for this open (the model form's when not given). */
+function showModelScreen(card, { head = [], foot = [], focus = '', keep = false, discardMessage } = {}) {
+  if (!el.modelEditorModal || !el.modelEditorHost) return;
+  layoutDialog(card, { head, foot });
+  const title = card.querySelector('.mv-editor-title');
+  if (title) title.id = 'mv-editor-heading';
+  el.modelEditorHost.replaceChildren(card);
+  if (el.modelEditorModal.classList.contains('hidden')) {
+    mvEditor.lastFocus = document.activeElement;
+    el.modelEditorModal.classList.remove('hidden');
+    modelEditorGuard?.opened(modelGuardOptions(discardMessage));
+  } else if (!keep) modelEditorGuard?.markClean();
+  if (!focus) return;
+  setTimeout(() => {
+    if (!card.isConnected) return;
+    try { card.querySelector(focus)?.focus({ preventScroll: true }); } catch { /* jsdom */ }
+  }, 0);
+}
+
+/** renderModelEditor's options from the loaded catalogue: the providers, Copilot's models and every engine's efforts. */
+function modelFormOptions(d = mvState.data || {}) {
+  return { providers: mvState.providers, copilotModels: mvState.copilotModels, ...(d.codexEfforts ? { codexEfforts: d.codexEfforts } : {}), cursorEfforts: d.cursorEfforts || [], copilotEfforts: d.copilotEfforts || [], gooseEfforts: d.gooseEfforts || [], opencodeEfforts: d.opencodeEfforts || [] };
+}
+
+/** Mount a model form as the dialog's screen; its Back (reached through step 1) returns to `from`. */
+function showModelForm(editor, { mode, copyFrom = '', from = null } = {}) {
+  const dlg = mvState.dlg || beginModelDialog();
+  dlg.screen = 'form';
+  dlg.from = from;
+  dlg.form = { mode, copyFrom, formEl: editor };
+  // The shared dialog anatomy: the head (mark, title, Close) stays pinned, the Save/Cancel row too (dialog-layout.mjs).
+  // A fresh form starts empty enough to type into; an edit keeps the caret out of the way.
+  showModelScreen(editor, {
+    head: [editor.querySelector(':scope > .mv-editor-head')],
+    foot: [editor.querySelector(':scope > .mv-editor-msg'), editor.querySelector(':scope > .mv-editor-btns')],
+    focus: mode === 'edit' ? '.mv-editor-btns .btn-primary' : 'input:not([type="checkbox"]):not([disabled]), select, textarea',
+  });
+}
+
+/** The form on its own (Edit, Edit a copy): a new open of the dialog with what mvState.editing / prefill say. Edit a
+ *  copy's form is drawn for where the plugin model runs (its harness, connection and env), and may take that model's
+ *  own id: the global entry it saves shadows the plugin's. */
 function openModelEditorDialog() {
   if (!el.modelEditorModal || !el.modelEditorHost) return;
   const d = mvState.data || { efforts: [] };
-  const editor = renderModelEditor(mvState.editing, d.efforts || [], { providers: mvState.providers, copilotModels: mvState.copilotModels, ...(d.codexEfforts ? { codexEfforts: d.codexEfforts } : {}), cursorEfforts: d.cursorEfforts || [], copilotEfforts: d.copilotEfforts || [], gooseEfforts: d.gooseEfforts || [], opencodeEfforts: d.opencodeEfforts || [] });
-  if (!mvState.editing && mvState.prefill) prefillModelEditor(editor, mvState.prefill);
-  const title = editor.querySelector('.mv-editor-title');
-  if (title) title.id = 'mv-editor-heading';
-  // The shared dialog anatomy: the title stays pinned, the Save/Cancel row too (dialog-layout.mjs).
-  layoutDialog(editor, { head: [title], foot: [editor.querySelector(':scope > .mv-editor-msg'), editor.querySelector(':scope > .mv-editor-btns')] });
-  el.modelEditorHost.replaceChildren(editor);
-  mvEditor.lastFocus = document.activeElement;
-  el.modelEditorModal.classList.remove('hidden');
-  modelEditorGuard?.opened();
-  // A fresh create starts empty enough to type into; an edit keeps the caret out of the way.
-  setTimeout(() => {
-    const first = editor.querySelector(mvState.editing ? '.mv-editor-btns .btn-primary' : 'input:not([type="checkbox"]):not([disabled]), select, textarea');
-    try { first?.focus({ preventScroll: true }); } catch { /* jsdom */ }
-  }, 0);
+  const pre = mvState.editing ? null : mvState.prefill;
+  const copyOpts = pre ? { where: connectionOf({ engine: pre.engine, upstream: pre.upstream, env: pre.env }).kind, takenIds: takenModelIds({ shadowing: pre.id }) } : {};
+  const editor = renderModelEditor(mvState.editing, d.efforts || [], { ...modelFormOptions(d), ...copyOpts });
+  if (pre) {
+    prefillModelEditor(editor, pre);
+    // The prefill writes the id and adds env rows without an input event: Save follows them here.
+    paintEditorSave(editor);
+  }
+  beginModelDialog();
+  showModelForm(editor, { mode: mvState.editing ? 'edit' : pre ? 'copy' : 'add' });
 }
 
 function closeModelEditorDialog() {
   if (!el.modelEditorModal || el.modelEditorModal.classList.contains('hidden')) return;
   el.modelEditorModal.classList.add('hidden');
   el.modelEditorHost?.replaceChildren();
-  mvState.editing = null; mvState.openCreate = false; mvState.prefill = null;
+  mvState.editing = null; mvState.prefill = null;
+  // What is still out for this open (the engines, a list) finds no dialog and draws nothing.
+  mvState.dlg = null;
+  modelDlgSeq += 1;
   try { mvEditor.lastFocus?.focus(); } catch { /* the opener may be gone */ }
 }
 
-// "Hide built-in models" (#422): one settings key, saved on change. Every picker
-// reads the flag off /api/config, so the refresh below repaints them all.
+// "Hide built-in models" per harness (#422; models-menu P4), saved on change: Claude Code's is the `hideBuiltinModels`
+// key (setup, the CLI, Ask and team policy read it), Codex's and Copilot's are `hideBuiltinEngines`. Every picker reads
+// the flags off /api/config, so the refresh below repaints them all. Hiding closes a side panel on a built-in of that
+// harness: its row leaves the list.
+const BUILTIN_LIST_OF = Object.freeze({ claude: 'predefined', codex: 'codex', copilot: 'copilot' });
 async function saveHideBuiltinModels(cb) {
   const wanted = cb.checked;
+  const engine = cb.dataset.engine || 'claude';
+  const name = engineLabel(engine);
+  const hadFocus = document.activeElement === cb;
   cb.disabled = true;
   try {
     const res = await fetch('/api/settings', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ hideBuiltinModels: wanted }),
+      body: JSON.stringify(engine === 'claude' ? { hideBuiltinModels: wanted } : { hideBuiltinEngines: { [engine]: wanted } }),
     });
     const data = await safeJson(res);
     if (!res.ok) { cb.checked = !wanted; return setModelsMsg(data.error || `HTTP ${res.status}`, 'err'); }
-    setModelsMsg(wanted ? 'Built-in models hidden from every picker. Runs that already use one keep working.' : 'Built-in models shown again.', 'ok');
+    setModelsMsg(wanted ? `${name}'s built-in models hidden from every picker. Runs that already use one keep working.` : `${name}'s built-in models shown again.`, 'ok');
+    if (wanted && openBuiltinOf(engine)) closeModelPanel();
     await refreshModelsEverywhere();
   } catch (e) {
     cb.checked = !wanted;
     setModelsMsg(e.message, 'err');
   } finally {
     cb.disabled = false;
+    // The refresh drew the switch anew, and a browser may drop the focus of a control while it is off: the keyboard
+    // goes back to this harness's switch, unless it moved somewhere else meanwhile.
+    if (hadFocus && (!document.activeElement || document.activeElement === document.body)) {
+      const next = [...(el.modelsList?.querySelectorAll('.mv-hide-builtin[data-engine]') || [])].find((n) => n.dataset.engine === engine);
+      try { next?.focus({ preventScroll: true }); } catch { /* jsdom */ }
+    }
   }
+}
+
+/** Does the side panel show a built-in of `engine` (its row comes from that harness's built-in list)? */
+function openBuiltinOf(engine) {
+  const open = mvState.cat.open;
+  if (!open || buildModelPanel(catalogueData(), open)?.source !== 'builtin') return false;
+  const lc = open.toLowerCase();
+  return (mvState.data?.[BUILTIN_LIST_OF[engine]] || []).some((m) => m && String(m.id).toLowerCase() === lc);
 }
 
 // "Edit a copy" prefill (design §9.6): create-mode editor seeded from a plugin
@@ -19757,6 +20108,9 @@ function prefillModelEditor(editor, pre) {
   if (pre.engine) setModelEngine(editor, pre.engine);
   const idInput = editor.querySelector('.mv-id');
   if (idInput) idInput.value = pre.id || '';
+  // The plugin model's id is the copy's on purpose (it shadows the plugin's): the upstream set below must not swap
+  // it for a <provider>-<upstream id> handle (applyConnectionModeIn suggests one only while data-auto is not "off").
+  if (idInput && pre.id) idInput.dataset.auto = 'off';
   const labelInput = editor.querySelector('.mv-label');
   if (labelInput) labelInput.value = pre.label && pre.label !== pre.id ? pre.label : '';
   const efforts = new Set(pre.efforts || []);
@@ -19764,7 +20118,7 @@ function prefillModelEditor(editor, pre) {
     for (const cb of editor.querySelectorAll('.mv-effort-cb')) cb.checked = efforts.has(cb.value);
   }
   setModelCost(editor, pre.cost || null);
-  // A bridged source (Edit a copy of a plugin model, Duplicate): the upstream
+  // A bridged source (Edit a copy of a plugin model): the upstream
   // travels, but a MASKED key echo must not — create mode stores literally.
   if (pre.upstream) {
     const { apiKey, ...rest } = pre.upstream;
@@ -19772,80 +20126,68 @@ function prefillModelEditor(editor, pre) {
   }
   const wrap = editor.querySelector('.mv-env');
   if (!wrap) return;
-  for (const [k, v] of Object.entries(pre.env || {})) {
+  // A form for its own endpoint starts with the two rows it needs (ANTHROPIC_BASE_URL, ANTHROPIC_AUTH_TOKEN): the
+  // plugin's value, or its secret's empty row, takes the empty new row of that name, so no two rows share one.
+  const rowFor = (k) => {
+    const free = [...wrap.querySelectorAll('.mv-env-row:not([data-key])')]
+      .find((r) => r.querySelector('.mv-env-key').value === k && !r.querySelector('.mv-env-val').value);
+    if (free) return free;
     const row = makeEnvRow();
     row.querySelector('.mv-env-key').value = k;
-    row.querySelector('.mv-env-val').value = v;
     wrap.appendChild(row);
-  }
+    return row;
+  };
+  for (const [k, v] of Object.entries(pre.env || {})) rowFor(k).querySelector('.mv-env-val').value = v;
   for (const k of pre.secretKeys || []) {
-    const row = makeEnvRow();
-    row.querySelector('.mv-env-key').value = k;
-    row.querySelector('.mv-env-val').placeholder = 'value required: the plugin secret is not copied';
-    wrap.appendChild(row);
+    rowFor(k).querySelector('.mv-env-val').placeholder = 'value required: the plugin secret is not copied';
   }
   const msg = editor.querySelector('.mv-editor-msg');
   if (msg && (pre.secretKeys || []).length) {
     msg.textContent = `Fill in ${pre.secretKeys.join(', ')}. Secret values never leave the plugin.`;
-  } else if (msg && pre.duplicatedFrom) {
-    msg.textContent = `Copy of ${pre.duplicatedFrom}. Change what should differ, then Add model.`;
   }
 }
 
 /**
- * Duplicate a global entry: a CREATE editor seeded from it, with a free id
- * suggested. Deriving a sibling that differs in one parameter is the common way
- * a catalog grows — same endpoint, a different wire id or effort set or price.
+ * Duplicate a global entry: a copy form drawn from it (renderModelEditor's
+ * `copyFrom`), with a free id suggested. Deriving a sibling that differs in one
+ * parameter is the common way a catalog grows — same endpoint, a different wire
+ * id or effort set or price. The copy keeps the source's harness and connection.
  *
- * The raw env values are fetched first (GET :id/env-value, the same deliberate
- * reveal the editor's "Show values" uses). The card only ever holds MASKED ones,
- * and create-mode values are stored literally — seeding from the masks would
- * write a row of bullets into settings.json as if it were a token.
+ * The page holds only the MASKS GET /api/models lists, never a raw value: the
+ * POST names its source (`copyFrom`) and the server fills each masked echo
+ * (an env value, the provider key) with the source's stored one. "Show values"
+ * and a row's copy read the source's on request (data-copy-from).
  */
-async function duplicateModelFlow(id) {
+function duplicateModelFlow(id) {
   const d = mvState.data || {};
   const src = (d.models || []).find((m) => m.id === id);
-  if (!src) return;
-  let env = {};
-  if (src.env && Object.keys(src.env).length) {
-    try {
-      const res = await fetch(`/api/models/${encodeURIComponent(id)}/env-value`);
-      const data = await safeJson(res);
-      if (!res.ok || !data.env) return setModelsMsg(data.error || `HTTP ${res.status}`, 'err');
-      env = data.env;
-    } catch (e) {
-      return setModelsMsg(e.message, 'err');
-    }
-  }
+  if (!src || !el.modelEditorModal || !el.modelEditorHost) return;
   // Every id the catalog knows — the add is rejected for colliding with ANY of
   // them, so a suggestion has to clear all four layers, not just the global one.
   const taken = [d.models, d.plugin, d.predefined].flatMap((xs) => (xs || []).map((m) => m.id));
-  const newId = suggestDuplicateId(src.id, taken);
   mvState.editing = null;
-  mvState.openCreate = true;
-  mvState.openShare = false;
-  mvState.prefill = {
-    id: newId,
-    // Only suffix a label the user actually chose; an entry that never had one
-    // keeps none, so the copy's label defaults to its own new id.
-    label: src.label && src.label !== src.id ? `${src.label} copy` : '',
-    efforts: src.efforts,
-    env,
-    secretKeys: [],
-    ...(src.cost ? { cost: src.cost } : {}),
-    duplicatedFrom: src.id,
-  };
-  openModelEditorDialog();
+  mvState.prefill = null;
+  const editor = renderModelEditor(src, d.efforts || [], {
+    ...modelFormOptions(d),
+    copyFrom: src.id,
+    id: suggestDuplicateId(src.id, taken),
+    label: suggestDuplicateLabel(src),
+    where: connectionOf(src).kind,
+    takenIds: takenModelIds(),
+  });
+  beginModelDialog();
+  showModelForm(editor, { mode: 'copy', copyFrom: src.id });
 }
 
 async function editPluginCopyFlow(plugin, id) {
+  // The dialog as it was when asked: a screen opened while the plugin answered stays (the form never replaces it).
+  const dlg = mvState.dlg;
   try {
     const res = await fetch(`/api/plugins/${encodeURIComponent(plugin)}/model-env?id=${encodeURIComponent(id)}`);
     const data = await safeJson(res);
     if (!res.ok) return setModelsMsg(data.error || `HTTP ${res.status}`, 'err');
+    if (mvState.dlg !== dlg) return;
     mvState.editing = null;
-    mvState.openCreate = true;
-    mvState.openShare = false;
     mvState.prefill = data;
     openModelEditorDialog();
   } catch (e) {
@@ -19853,8 +20195,28 @@ async function editPluginCopyFlow(plugin, id) {
   }
 }
 
+/** Share as plugin (DESIGN SHR-1): the export wizard over the user's own models, a screen of the model dialog (the
+ *  page head's More menu opens it). Escape asks with the dialogs' own sentence once a box or a field changed. */
+function openShareDialog() {
+  if (!el.modelEditorModal || !el.modelEditorHost) return;
+  mvState.editing = null;
+  mvState.prefill = null;
+  const models = Array.isArray(mvState.data?.models) ? mvState.data.models : [];
+  const card = renderExportWizard(models, { doc: document });
+  beginModelDialog().screen = 'share';
+  showModelScreen(card, {
+    head: [card.querySelector(':scope > .mvx-head')],
+    foot: [card.querySelector(':scope > .mvx-msg'), card.querySelector(':scope > .mv-editor-btns')],
+    focus: '.mvx-model-cb, .mvx-name',
+    discardMessage: DISCARD_MESSAGE,
+  });
+}
+
+/** "Export scaffold" (SHR-2): POST the dialog's wizard; on success the dialog closes and a toast says where the scaffold
+ *  went and what it left out (`omitted`: a literal provider key, a secret-named header). A refusal stays in .mvx-msg. */
 async function exportPluginFlow() {
-  const wiz = el.modelsList && el.modelsList.querySelector('.mvx');
+  const dlg = mvState.dlg;
+  const wiz = dlg?.screen === 'share' ? el.modelEditorHost?.querySelector('.mvx') : null;
   if (!wiz) return;
   const msg = wiz.querySelector('.mvx-msg');
   const say = (text) => { if (msg) { msg.textContent = text; msg.className = 'form-msg mvx-msg err'; } };
@@ -19862,181 +20224,314 @@ async function exportPluginFlow() {
   if (!body.models.length) return say('pick at least one model');
   if (!body.name) return say('plugin name is required');
   if (!body.dest) return say('destination folder is required');
-  try {
+  if (msg) { msg.textContent = ''; msg.className = 'form-msg mvx-msg'; }
+  // withButton holds the guard's busy rule while the request is out: Escape, Cancel and Close wait for the answer.
+  const r = await withButton(wiz.querySelector('.mvx-export'), async () => {
     const res = await fetch('/api/models/export-plugin', {
       method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
     });
     const data = await safeJson(res);
-    if (!res.ok) return say(data.error || `HTTP ${res.status}`);
-    mvState.openShare = false;
-    setModelsMsg(`Plugin scaffold written to ${data.dir}. Run git init + push it, then teammates install it from the Marketplace page.`, 'ok');
-    renderModelsViewBody();
-  } catch (e) {
-    say(e.message);
+    return res.ok ? { ok: true, data } : { ok: false, error: data.error || `HTTP ${res.status}` };
+  }, { busy: 'Exporting…', done: 'Exported' });
+  if (r.skipped) return;
+  // The answer belongs to the open that asked: a screen opened meanwhile (the page's Add model, by keyboard) stays, and a
+  // refusal it can no longer show in .mvx-msg is a toast.
+  const live = mvState.dlg === dlg;
+  if (!r.ok) return live ? say(r.error) : notify({ tone: 'err', title: 'Not exported', detail: r.error });
+  if (live) closeModelEditorDialog();
+  // Its own title and detail, never splitMessage: a short folder would split the title at "Not included: …".
+  const omitted = Array.isArray(r.data?.omitted) ? r.data.omitted : [];
+  notify({
+    tone: 'ok',
+    title: `Plugin scaffold written to ${r.data?.dir}.`,
+    detail: omitted.length ? `Not included: ${omitted.map((o) => `${o.what} (${o.id})`).join(', ')}.` : '',
+  });
+}
+
+/** Every settings read lands here: the Catalogue's "Default" chip and its group menus follow the default harness. */
+function syncRunEngine(data) {
+  const runEngine = (data && data.runEngine) || null;
+  if (runEngine !== mvState.runEngine) {
+    mvState.runEngine = runEngine;
+    if (mvState.data) renderModelsViewBody();
   }
 }
 
-const CODEX_HELPER_JOBS = ['title', 'classifier', 'overview', 'prDescription', 'memoryDefrag', 'workspaceScan', 'secondOpinion'];
-// src/core/model-env.mjs HELPER_ENGINES (the browser cannot load /src/core): the engines with helper slots of their own.
-const HELPER_ENGINES = ['claude', 'codex'];
-// Claude's helper slots at user level are their own settings keys (settings-cascade.mjs CLAUDE_USER): a model id for
-// titles, Auto and PR descriptions (no effort), and the Memory defragment, Agent generation, Run naming and Command
-// summaries pairs. No user-level overview slot. Agent generation, Run naming and Command summaries are Claude's alone
-// (they always run on Claude), so no other tab has their rows; Run naming shows only while smartRunNaming is on, Command
-// summaries only while commandSummaries is on.
-const CLAUDE_USER_HELPER_JOBS = ['title', 'classifier', 'prDescription', 'memoryDefrag', 'agentGen', 'naming', 'commandSummary', 'secondOpinion'];
-const helperPair = (p) => (p && p.model ? { model: p.model, ...(p.effort ? { effort: p.effort } : {}) } : undefined);
-// Run naming shows only while smartRunNaming is on, Command summaries only while commandSummaries is on; the
-// Requirements interview is a user-only slot (settings key requirementsInterview), listed only while its flag is on.
-// All asked at paint time, never a module constant.
-const claudeUserHelperJobs = () => [...CLAUDE_USER_HELPER_JOBS.filter((job) => (job !== 'naming' || flagOn('smartRunNaming'))
-  && (job !== 'commandSummary' || flagOn('commandSummaries'))),
-  ...(flagOn('requirements') ? ['requirementsInterview'] : [])];
-const CLAUDE_USER_HELPER_OWN = (data) => ({
-  title: data.titleModel ? { model: data.titleModel } : undefined,
-  classifier: data.autoWorkflowModel ? { model: data.autoWorkflowModel } : undefined,
-  prDescription: data.prDescriptionModel ? { model: data.prDescriptionModel } : undefined,
-  memoryDefrag: helperPair(data.memoryDefrag),
-  agentGen: helperPair(data.agentGenModel),
-  requirementsInterview: data.requirementsInterview && (data.requirementsInterview.model || data.requirementsInterview.effort)
-    ? { ...(data.requirementsInterview.model ? { model: data.requirementsInterview.model } : {}), ...(data.requirementsInterview.effort ? { effort: data.requirementsInterview.effort } : {}) } : undefined,
-  naming: helperPair(data.namingModel),
-  commandSummary: helperPair(data.commandSummaryModel),
-  secondOpinion: helperPair(data.secondOpinionModel),
-});
-let lastEngineSettingsData = null;
-// The catalog the Models cards last painted with, and whether it loaded (the Roles card's catalog-failure line).
-let lastModelCatalog = []; let lastModelCatalogOk = true;
-/** The Engines card, then the Roles card (each paints on its own). A repaint that a Save of this card did not ask for
- *  (`force`) keeps a card with unsaved rows as it is: another card's Save or a settings-changed broadcast. */
-async function paintEngineSettings(data, { force = false } = {}) {
-  const root = document.getElementById('engine-settings-root');
+// ---- Models › Jobs (models-menu P6): which model does which job. jobs-model.mjs builds the view model from the last
+// reads and the draft, jobs-view.mjs draws it into #jobs-root, model-picker.mjs is every pick's menu. One draft holds
+// the edits of every harness; Save sends what differs in one POST /api/settings.
+
+/** One GET of the tab: its JSON object ({} when the body is no object), or null when the read failed or threw. */
+async function jobsRead(url) {
+  try {
+    const res = await fetch(url);
+    if (!res.ok) return null;
+    const body = await safeJson(res);
+    return body && typeof body === 'object' && !Array.isArray(body) ? body : {};
+  } catch { return null; }
+}
+
+/** Reads the Jobs tab: GET /api/settings and /api/config (no project) and, with `engines`, GET /api/engines (the
+ *  readiness preflight: on a show only, never from a broadcast), together. The newest call wins: an older one writes
+ *  no settings and draws nothing. A failed settings or config read draws nothing new and leaves `loaded` as it was; a
+ *  body without steps, models or engines reads as empty. The draft is kept: what is saved changes underneath it.
+ *  Never rejects, and never writes #models-jobs-msg (loadSettings' load error lives there). */
+async function loadJobs({ engines = true } = {}) {
+  const seq = ++jobsLoadSeq;
+  const j = mvState.jobs;
+  const [settings, cfg, eng] = await Promise.all([jobsRead('/api/settings'), jobsRead('/api/config'), engines ? jobsRead('/api/engines') : null]);
+  // The readiness rows and the broker's locks are kept from whichever read brought them; a body without the list
+  // keeps both (the locks the boot learned from /api/engine-locks too).
+  const rows = Array.isArray(eng?.engines) ? eng.engines : null;
+  if (rows) {
+    j.engines = rows;
+    setEngineLocks(rows); applyEngineLocks();
+  }
+  if (seq !== jobsLoadSeq) { if (rows) repaintJobs(); return; }
+  if (!settings || !cfg) return;
+  j.settings = settings;
+  j.config = {
+    catalog: Array.isArray(cfg.models) ? cfg.models : [],
+    steps: Array.isArray(cfg.steps) ? cfg.steps.filter((s) => s && typeof s.key === 'string').map((s) => ({ key: s.key, label: s.label })) : [],
+  };
+  // The first read opens the tab on the default harness, unless a "Used by" press already named one.
+  if (j.engine === null) j.engine = (typeof settings.runEngine === 'string' && settings.runEngine) || 'claude';
+  syncRunEngine(settings);
+  j.loaded = true;
+  renderJobsTab();
+}
+
+/** What buildJobs reads: the last reads, the broker's locks, the flags and the ids GET /api/models marks testable. */
+function jobsData() {
+  const j = mvState.jobs;
+  const d = mvState.data || {};
+  const testable = new Set();
+  for (const key of ['predefined', 'codex', 'copilot', 'models', 'plugin', 'policy']) {
+    for (const m of Array.isArray(d[key]) ? d[key] : []) if (m && m.testable === true && typeof m.id === 'string') testable.add(m.id);
+  }
+  return {
+    settings: j.settings || {}, steps: j.config?.steps || [], catalog: j.config?.catalog || [], engines: j.engines, locks: addEngineLocks(),
+    flags: { requirements: flagOn('requirements'), design: flagOn('design'), smartRunNaming: flagOn('smartRunNaming'), commandSummaries: flagOn('commandSummaries') },
+    testable,
+  };
+}
+
+/** The view model and its data. Below Expert the tab shows the default harness; a locked one gives way to Claude Code
+ *  (the harness tiles press the first unlocked tile). */
+function jobsModel() {
+  const j = mvState.jobs;
+  const data = jobsData();
+  const def = (typeof data.settings.runEngine === 'string' && data.settings.runEngine) || 'claude';
+  const want = levelAtLeast('expert') ? (j.engine || def) : def;
+  const engine = data.locks.some((l) => l.name === want) ? 'claude' : want;
+  return { data, vm: buildJobs(data, j.draft, { engine, showAll: j.showAll, revealed: j.revealed }) };
+}
+
+/** A role tile's or a job row's view model by setting id, else null. */
+const jobsRow = (vm, id) => vm.roles.find((r) => r.id === id) || vm.sections.flatMap((s) => s.rows).find((r) => r.id === id) || null;
+
+// The tab's controls a draw makes anew: a repaint hands the keyboard back to the same one, told apart by its row's
+// setting id, its card and its harness.
+const JOBS_FOCUS_CLASSES = ['mdl-hx-t', 'mdl-default-btn', 'mdl-tile', 'mdl-pick', 'mdl-job-test', 'mdl-job-clear', 'mdl-override', 'mdl-show-all', 'mdl-discard', 'mdl-save'];
+const jobsFocusSig = (n) => JSON.stringify([n.closest('[data-setting]')?.dataset.setting || '', n.closest('[data-section]')?.dataset.section || '', n.dataset.engine || '']);
+/** The focused control of the tab as { cls, sig }, or null when the focus is elsewhere. */
+function jobsFocus(root) {
+  const a = document.activeElement;
+  if (!a || !a.classList || !root.contains(a)) return null;
+  const cls = JOBS_FOCUS_CLASSES.find((c) => a.classList.contains(c));
+  return cls ? { cls, sig: jobsFocusSig(a) } : null;
+}
+/** Focus the new twin of `f`; a row's clear or Test that is gone hands it to the row's picker. */
+function restoreJobsFocus(root, f) {
+  if (!f) return;
+  const twin = (cls) => [...root.querySelectorAll(`.${cls}`)].find((n) => jobsFocusSig(n) === f.sig);
+  const next = twin(f.cls) || twin('mdl-pick');
+  if (!next || document.activeElement === next) return;
+  try { next.focus({ preventScroll: true }); } catch { /* detached */ }
+}
+
+/** Draws the tab into #jobs-root from the last reads and the draft. Keeps the scroll, the focused control and the
+ *  flash of the block an address opened (the new block takes it over by id). While a Save is out the Save it draws is
+ *  busy ("Saving…", off), as withButton draws it. Fetches nothing. */
+function renderJobsTab() {
+  const root = el.jobsRoot;
   if (!root) return;
-  let cfg = {}; let cfgOk = true;
-  try { const res = await fetch('/api/config'); cfgOk = res.ok; cfg = await safeJson(res); } catch { cfgOk = false; }
-  const roles = Array.isArray(cfg?.steps) ? cfg.steps : Object.keys(cfg?.config?.steps || {}).map((key) => ({ key, label: key }));
-  const catalog = Array.isArray(cfg?.models) ? cfg.models : [];
-  const fields = { 'run.engine': { own: data.runEngine, inherited: { value: 'claude', source: 'default' } } };
-  for (const engine of ENGINE_NAMES) for (const role of roles) fields[`models.${engine}.steps.${role.key}`] = { own: data.stepModels?.[engine]?.[role.key], inherited: { value: undefined, source: 'default' } };
-  for (const engine of HELPER_ENGINES.filter((e) => e !== 'claude')) {
-    for (const job of CODEX_HELPER_JOBS) fields[utilityId(engine, job)] = { own: data.utilityModels?.[engine]?.[job], inherited: { value: undefined, source: 'default' } };
+  const { data, vm } = jobsModel();
+  const focus = jobsFocus(root);
+  const found = new Set([...root.querySelectorAll('.is-found[id]')].map((n) => n.id));
+  const scrolled = [];
+  for (let n = root.parentElement; n; n = n.parentElement) if (n.scrollTop) scrolled.push([n, n.scrollTop]);
+  root.replaceChildren(renderJobs(vm, { doc: document, engines: data.engines, locks: data.locks }));
+  const save = mvState.jobs.saving ? root.querySelector('.mdl-save') : null;
+  if (save) {
+    const spin = document.createElement('span');
+    spin.className = 'btn-spin';
+    spin.setAttribute('aria-hidden', 'true');
+    save.replaceChildren(spin, document.createTextNode('Saving…'));
+    save.classList.add('is-busy');
+    save.setAttribute('aria-busy', 'true');
+    save.disabled = true;
   }
-  // Design's lead and builders per engine (Engines card › Design), while the design flag is on.
-  const designEngines = flagOn('design') ? DESIGN_ENGINE_NAMES.filter((e) => ENGINE_NAMES.includes(e)) : [];
-  for (const engine of designEngines) for (const role of ['lead', 'builder']) fields[designRowId(engine, role)] = { own: data.designModels?.[engine]?.[role], inherited: { value: undefined, source: 'default' } };
-  const claudeOwn = CLAUDE_USER_HELPER_OWN(data || {});
-  const claudeJobs = claudeUserHelperJobs();
-  for (const job of claudeJobs) fields[utilityId('claude', job)] = { own: claudeOwn[job], inherited: { value: undefined, source: 'default' } };
-  // Worca's factory defaults (src/core/factory-models.mjs) read "(default)" on the Claude tab: the Second-opinion
-  // reviewer and Memory defragment (unless the Quick jobs role, which it takes first, names a model). A step's applies to
-  // role reviews only, and only when no role names a model, so its row keeps the role or default text and its hint
-  // names the factory default.
-  const factory = data?.factoryModels?.claude;
-  const factoryPair = (p) => (p && p.model ? { value: { model: p.model, ...(p.effort ? { effort: p.effort } : {}) }, source: 'default' } : null);
-  const quickRole = data?.modelRoles?.claude?.quick?.model;
-  for (const job of ['secondOpinion', ...(quickRole ? [] : ['memoryDefrag'])]) {
-    const inherited = factoryPair(factory?.helpers?.[job]);
-    if (inherited && fields[utilityId('claude', job)]) fields[utilityId('claude', job)].inherited = inherited;
-  }
-  const claudeStepHints = {};
-  for (const [key, pick] of Object.entries(factory?.steps || {})) {
-    if (!pick?.model) continue;
-    const label = catalog.find((m) => m.id === pick.model)?.label || pick.model;
-    claudeStepHints[key] = `Role reviews (Shaper) use your role; with none set, ${label}${pick.effort ? ` · ${pick.effort}` : ''}`;
-  }
-  // The interview's empty choices read "Opus 5.5 (default)" and "medium (default)" (the answer's requirementsInterviewDefault).
-  const interviewDefault = data?.requirementsInterviewDefault;
-  if (interviewDefault?.model && claudeJobs.includes('requirementsInterview')) fields[utilityId('claude', 'requirementsInterview')].inherited = { value: { model: interviewDefault.model, ...(interviewDefault.effort ? { effort: interviewDefault.effort } : {}) }, source: 'default' };
-  // Command summaries: unset runs on the cheapest ready Claude model, so the empty option names it ("Haiku 5.5 (default)").
-  const csAuto = data?.commandSummaryModelEffective;
-  if (fields[utilityId('claude', 'commandSummary')] && csAuto && csAuto.source === 'auto' && csAuto.model) {
-    fields[utilityId('claude', 'commandSummary')].inherited = { value: { model: csAuto.model }, source: 'default' };
-  }
-  lastModelCatalog = catalog; lastModelCatalogOk = cfgOk && catalog.length > 0;
-  const keep = !force && root.querySelector('.inherit-field[data-dirty="1"]');
-  if (!keep) {
-    renderEngineSection(root, { level: 'user', roles, catalog, fields, status: document.getElementById('engineSettingsMsg'), onTest: testModelRow,
-      noEffort: ['title', 'classifier', 'prDescription'].map((job) => utilityId('claude', job)),
-      defaultLabels: { claude: 'the default model' }, stepHints: { claude: claudeStepHints },
-      jobs: { claude: claudeJobs, codex: CODEX_HELPER_JOBS, cursor: [], goose: [], opencode: [] }, modelRoles: data.modelRoles || {}, designEngines });
-  }
-  lastEngineSettingsData = data;
-  paintModelRoles(data);
-  // Each non-Claude card's readiness line (GET /api/engines). Only on the Models page, where the cards live: a
-  // settings-changed broadcast repaints this from any view, and that must not spawn a preflight.
-  if (currentView() === 'models') void paintEngineCardStatus(root);
+  for (const n of root.querySelectorAll('[id]')) if (found.has(n.id)) n.classList.add('is-found');
+  restoreJobsFocus(root, focus);
+  for (const [n, top] of scrolled) n.scrollTop = top;
 }
-/** Models › Roles: the role rows, then every unset Engines row's "From Everyday coding · …" text from them (AC-1.5). */
-function paintModelRoles(data, { force = false } = {}) {
-  const rolesRoot = document.getElementById('model-roles-root'); const engineRoot = document.getElementById('engine-settings-root');
-  if (!rolesRoot) return;
-  const keep = !force && rolesRoot.querySelector('.inherit-field[data-dirty="1"]');
-  if (!keep) {
-    renderRolesSection(rolesRoot, { roles: data.modelRoles || {}, catalog: lastModelCatalog, engine: data.runEngine || 'claude',
-      status: document.getElementById('modelRolesMsg'), onChange: (roles) => { if (engineRoot) paintRoleFallbacks(engineRoot, roles, lastModelCatalog); } });
-  }
-  if (engineRoot) paintRoleFallbacks(engineRoot, readRolesValues(rolesRoot), lastModelCatalog);
-  // The catalog failure has its own line, so the dirty counter and "Saved." on #modelRolesMsg never hide it.
-  const catalogMsg = document.getElementById('modelRolesCatalogMsg');
-  if (catalogMsg) catalogMsg.hidden = lastModelCatalogOk;
-}
-document.getElementById('modelRolesSave')?.addEventListener('click', async () => {
-  const rolesRoot = document.getElementById('model-roles-root');
-  const body = rolesPatchToSettingsBody(readEngineSection(rolesRoot));
-  if (!body.modelRoles) { setHintMsg('modelRolesMsg', 'Nothing changed.', ''); return; }
-  try {
-    const res = await fetch('/api/settings', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
-    const data = await safeJson(res);
-    if (!res.ok) return setHintMsg('modelRolesMsg', data?.error || `HTTP ${res.status}`, 'err');
-    // Only the Roles card repaints; the Engines rows take the new roles through paintRoleFallbacks.
-    lastEngineSettingsData = data; paintModelRoles(data, { force: true }); setHintMsg('modelRolesMsg', 'Saved.', 'ok');
-  } catch (error) { setHintMsg('modelRolesMsg', error?.message || 'network error', 'err'); }
-});
-/** Fill each engine card's `.engine-card-status` from GET /api/engines: text only (no buttons). An answer
- *  with no `engines` array leaves the lines empty. */
-async function paintEngineCardStatus(root) {
-  let list = null;
-  try { const res = await fetch('/api/engines'); const d = res.ok ? await safeJson(res) : null; list = Array.isArray(d?.engines) ? d.engines : null; } catch { list = null; }
-  for (const line of root.querySelectorAll('.engine-card .engine-card-status')) {
-    const e = list && list.find((x) => x && x.name === line.closest('.engine-card')?.dataset.engine);
-    // Say what was checked: the engine's run-start preflight (its CLI is installed and signed in).
-    line.textContent = !e ? '' : !e.ready ? `${e.label} can't start runs yet: ${String(e.reason || 'its check did not answer').replace(/\.$/, '')}.`
-      : `${e.label} can start runs: its CLI is installed and signed in.${e.reason ? ` Note: ${String(e.reason).replace(/\.$/, '')}.` : ''}`;
-  }
-}
-// The flag flips while the Models page is open: the Engines card gains / loses the interview row. Refetched, since
-// GET /api/settings carries the row's stored pair and its default only while the flag is on.
-onFlagChange('requirements', () => { if (currentView() === 'models' && lastEngineSettingsData) void paintHelperModelCards({ force: true }); });
-// The design flag flips while the Models page is open: the Engines card gains / loses its Design rows.
-onFlagChange('design', () => { if (currentView() === 'models' && lastEngineSettingsData) void paintEngineSettings(lastEngineSettingsData, { force: true }); });
-document.getElementById('engineSettingsSave')?.addEventListener('click', async () => {
-  const root = document.getElementById('engine-settings-root');
-  const body = enginePatchToSettingsBody(readEngineSection(root));
-  if (!Object.keys(body).length) { setHintMsg('engineSettingsMsg', 'Nothing changed.', ''); return; }
-  try {
-    const res = await fetch('/api/settings', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
-    const data = await safeJson(res);
-    if (!res.ok) return setHintMsg('engineSettingsMsg', data?.error || `HTTP ${res.status}`, 'err');
-    await paintEngineSettings(data, { force: true }); setHintMsg('engineSettingsMsg', 'Saved.', 'ok');
-  } catch (error) { setHintMsg('engineSettingsMsg', error?.message || 'network error', 'err'); }
-});
 
-async function loadModelsView() {
-  if (!el.modelsList) return;
+/** Redraws the tab while it shows (a flag, the interface level). Fetches nothing; off the tab it does nothing. */
+function repaintJobs() {
+  if (mvState.jobs.loaded && currentModelsTab() === 'jobs') renderJobsTab();
+}
+document.addEventListener('worca:level', () => repaintJobs());
+// The requirements flag flips: GET /api/settings carries the interview's stored pair and its default only while it
+// is on, so the tab reads again.
+onFlagChange('requirements', () => { if (mvState.jobs.loaded) void loadJobs({ engines: false }); });
+// The design flag flips: the Design card comes or goes.
+onFlagChange('design', () => repaintJobs());
+
+/** The Jobs block each address word opens: the blocks' own words, and the old card addresses (also under jobs/). */
+const JOBS_PART_OF = Object.freeze({ roles: 'roles', steps: 'steps', helpers: 'helpers', design: 'design',
+  'model-roles-card': 'roles', engine: 'steps', 'engine-settings-card': 'steps', 'title-model': 'helpers' });
+/** Scrolls to and flashes (markFound) the block `rest` names (the part of a '<part>/<harness>' address), its first
+ *  enabled button focused. An unknown word or a block that is not drawn (Design with its flag off) reveals nothing;
+ *  the address stays as typed. The flash ends after 3 s on whichever block holds its id then, as a repaint draws a new one. */
+function revealJobsPart(rest) {
+  const part = Object.hasOwn(JOBS_PART_OF, rest) ? JOBS_PART_OF[rest] : '';
+  const block = part ? document.getElementById(`jobs-${part}`) : null;
+  if (!block || !el.jobsRoot?.contains(block)) return;
+  markFound(block, [...block.querySelectorAll('button')].find((b) => !b.disabled) || null);
+  const id = block.id;
+  clearTimeout(jobsFoundTimers.get(id));
+  jobsFoundTimers.set(id, setTimeout(() => {
+    jobsFoundTimers.delete(id);
+    for (const n of el.jobsRoot?.querySelectorAll('.is-found[id]') || []) if (n.id === id) n.classList.remove('is-found');
+  }, 3000));
+}
+
+/** Opens the picker of a role tile or a job row with that row's value and rules; a pick goes into the draft. */
+function openJobPicker(anchor) {
+  const id = anchor.closest('[data-setting]')?.dataset.setting || '';
+  const { data, vm } = jobsModel();
+  const row = jobsRow(vm, id);
+  if (!row) return;
+  openModelPicker({ doc: document, win: window, anchor, catalog: data.catalog, engine: vm.engine, value: row.value, clearLabel: row.clearLabel,
+    modelOnly: !!row.modelOnly, allowEffortOnly: !!row.allowEffortOnly,
+    onPick: (value) => { mvState.jobs.draft[id] = value; renderJobsTab(); } });
+}
+
+/** "Override a step" / "Override a helper job": a pick shows that row (nothing is stored until its own pick, L27) and
+ *  opens its picker. */
+function openJobsOverride(anchor) {
+  const key = anchor.closest('[data-section]')?.dataset.section || '';
+  const section = jobsModel().vm.sections.find((s) => s.key === key);
+  if (!section) return;
+  openOverrideMenu({ doc: document, win: window, anchor, section, onPick: (id) => {
+    mvState.jobs.revealed.add(id);
+    renderJobsTab();
+    const pick = [...(el.jobsRoot?.querySelectorAll('.mdl-job-row') || [])].find((r) => r.dataset.setting === id)?.querySelector('.mdl-pick');
+    if (pick) openJobPicker(pick);
+  } });
+}
+
+/** Save: what differs from what is saved, in one POST /api/settings; its answer is what is saved now. A refusal keeps
+ *  the draft and says why on the Jobs line. The tab can repaint while the POST is out (a pick, the save's own
+ *  settings-changed): Save stays busy and a press on it sends nothing; a pick made meanwhile stays in the draft, as only
+ *  the ids still holding the value sent leave it, and only the rows revealed before the save fold again. */
+async function saveJobs(btn) {
+  const j = mvState.jobs;
+  if (j.saving) return;
+  const body = jobsSaveBody(j.draft, jobsSaved(j.settings || {}));
+  if (!Object.keys(body).length) return;   // an empty body would mean "nothing"; the bar shows only with changes
+  const sent = { ...j.draft };
+  const shown = new Set(j.revealed);
+  j.saving = true;
+  let r;
+  try {
+    r = await withButton(btn, async () => {
+      try {
+        const res = await fetch('/api/settings', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+        const data = await safeJson(res);
+        return res.ok ? { ok: true, data } : { ok: false, error: data?.error || `HTTP ${res.status}` };
+      } catch (e) { return { ok: false, error: `Worca did not answer (${e.message}).` }; }
+    }, { busy: 'Saving…', done: 'Saved' });
+  } finally { j.saving = false; }
+  if (r.skipped) return;
+  // A refusal redraws too: a Save drawn while the POST was out is busy until then.
+  if (!r.ok) { reportStatus(el.modelsJobsMsg, 'form-msg', r.error, 'err-inline'); renderJobsTab(); return; }
+  if (r.data && typeof r.data === 'object' && !Array.isArray(r.data)) {
+    ++jobsLoadSeq;   // a read sent before this answer is older than it: it draws nothing
+    j.settings = r.data;
+  }
+  const changed = new Set(jobsDirty(j.draft, sent));
+  for (const id of Object.keys(sent)) if (Object.hasOwn(j.draft, id) && !changed.has(id)) delete j.draft[id];
+  for (const id of shown) if (!Object.hasOwn(j.draft, id)) j.revealed.delete(id);
+  syncRunEngine(j.settings);
+  reportStatus(el.modelsJobsMsg, 'form-msg', 'Saved.', 'ok');
+  renderJobsTab();
+}
+
+/** The tab's clicks (one delegate on #jobs-root): the harness tiles, Default for new runs, the role tiles and row
+ *  pickers, a row's Test and clear, Override, Show all, and the save bar. */
+async function onJobsClick(ev) {
+  const t = ev.target.closest('button');
+  const root = el.jobsRoot;
+  if (!t || !root || !root.contains(t) || t.disabled) return;
+  const j = mvState.jobs;
+  const is = (c) => t.classList.contains(c);
+  const id = t.closest('[data-setting]')?.dataset.setting || '';
+  const section = t.closest('[data-section]')?.dataset.section || '';
+  if (is('mdl-hx-t')) {
+    // The tile's own listener already moved aria-pressed; the draft stays.
+    if (t.dataset.engine) { j.engine = t.dataset.engine; renderJobsTab(); }
+  } else if (is('mdl-default-btn')) {
+    const engine = jobsModel().vm.engine;
+    if (await setDefaultRunEngine(engine) === true) { j.settings = { ...(j.settings || {}), runEngine: engine }; renderJobsTab(); }
+  } else if (is('mdl-tile') || is('mdl-pick')) openJobPicker(t);
+  else if (is('mdl-job-clear')) { if (id) { j.draft[id] = null; renderJobsTab(); } }
+  else if (is('mdl-override')) openJobsOverride(t);
+  else if (is('mdl-show-all')) { if (section) { j.showAll[section] = !j.showAll[section]; renderJobsTab(); } }
+  else if (is('mdl-job-test')) { const model = jobsRow(jobsModel().vm, id)?.value?.model; if (model) void testModelRow(model, t); }
+  else if (is('mdl-discard')) {
+    j.draft = {};
+    j.revealed.clear();
+    // A refused Save's line goes with the draft it was about (loadSettings' load error stays).
+    if (!el.modelsJobsMsg?.textContent.startsWith('Could not load settings: ')) reportStatus(el.modelsJobsMsg, 'form-msg', '');
+    renderJobsTab();
+  }
+  else if (is('mdl-save')) await saveJobs(t);
+}
+el.jobsRoot?.addEventListener('click', (ev) => { void onJobsClick(ev); });
+
+/** Reads the catalogue and the providers into mvState and draws the Catalogue. Each call takes a number and the
+ *  newest one wins (an entry, a window focus, refreshModelsEverywhere): an older call writes no payload and no line,
+ *  and resolves false once the newest call has written, so its caller acts on the newest state or not at all.
+ *  Resolves true when this call wrote. An older call therefore settles only when the newest one does. */
+function loadModelsView() {
+  const seq = ++modelsLoadSeq;
+  return (modelsLoadNewest = readModelsView(seq));
+}
+
+async function readModelsView(seq) {
+  if (!el.modelsList) return false;
   setModelsMsg('');
   try {
-    const [res, pres] = await Promise.all([fetch('/api/models'), fetch('/api/providers'), loadCredentials()]);
-    const data = await safeJson(res);
-    if (!res.ok) return setModelsMsg(data.error || `HTTP ${res.status}`, 'err-inline');
-    mvState.data = data;
-    // Providers are best-effort: a failed read paints the card in its
-    // "not connected" state rather than hiding the catalog.
-    const pdata = await safeJson(pres);
+    // A selected project's team policy decides what its pickers hide (hiddenBuiltins): the catalogue asks for it.
+    const pp = selectedProjectPath();
+    const [res, pres] = await Promise.all([fetch(pp ? `/api/models?projectDir=${encodeURIComponent(pp)}` : '/api/models'), fetch('/api/providers'), loadCredentials()]);
+    const [data, pdata] = await Promise.all([safeJson(res), safeJson(pres)]);
+    if (seq !== modelsLoadSeq) return modelsLoadNewest.then(() => false);
+    // The Providers tab's payload first, so a failed catalogue read still lets that tab draw. A failed read
+    // says so on the tab's own line and leaves the payload null (the tab then draws no card).
     mvState.providers = pres.ok ? pdata : null;
+    if (!pres.ok) setProvidersMsg(pdata.error || `HTTP ${pres.status}`, 'err-inline');
+    else setProvidersMsg('');
+    if (!res.ok) { setModelsMsg(data.error || `HTTP ${res.status}`, 'err-inline'); return true; }
+    mvState.data = data;
     renderModelsViewBody();
-    void paintHelperModelCards();
-    // "+ Add model…" from a picker on another page: the dialog opens once the catalog is here.
-    if (mvState.openEditorOnLoad) { mvState.openEditorOnLoad = false; openModelEditorDialog(); }
+    // The Jobs tab's pickers list /api/config and its Test buttons read the catalogue's testable ids: it re-reads (a
+    // window focus re-reads the catalogue there), with no readiness preflight.
+    if (mvState.jobs.loaded && currentModelsTab() === 'jobs') void loadJobs({ engines: false });
+    // "+ Add model…" from a picker on another page: Add model opens once the catalog is here.
+    if (mvState.openEditorOnLoad) { const add = mvState.openEditorOnLoad; mvState.openEditorOnLoad = null; openAddModelDialog(add); }
     // Copilot's models feed the editor's upstream-id datalist; fetched in the
     // background when connected so the view never waits on GitHub.
     if (mvState.providers?.copilot?.connected && !mvState.copilotModels.length) {
@@ -20044,33 +20539,12 @@ async function loadModelsView() {
         if (j && Array.isArray(j.models)) mvState.copilotModels = j.models;
       }).catch(() => {});
     }
+    return true;
   } catch (e) {
+    if (seq !== modelsLoadSeq) return modelsLoadNewest.then(() => false);
     setModelsMsg(e.message, 'err-inline');
-  }
-}
-
-// Models › Engines: its pickers list the catalog, so they repaint whenever it loads — a model added a moment ago is
-// selectable without leaving the page.
-async function paintHelperModelCards({ force = false } = {}) {
-  try {
-    const res = await fetch('/api/settings');
-    if (!res.ok) return;
-    await paintEngineSettings(await safeJson(res), { force });
-  } catch { /* the card keeps its last paint */ }
-}
-
-/** The Providers page: the same card, on a page of its own (§8.1). */
-async function loadProvidersView() {
-  if (!el.providersList) return;
-  setProvidersMsg('');
-  try {
-    const res = await fetch('/api/providers');
-    const data = await safeJson(res);
-    if (!res.ok) return setProvidersMsg(data.error || `HTTP ${res.status}`, 'err-inline');
-    mvState.providers = data;
-    renderProvidersViewBody();
-  } catch (e) {
     setProvidersMsg(e.message, 'err-inline');
+    return true;
   }
 }
 
@@ -20078,33 +20552,130 @@ function setProvidersMsg(text, kind) {
   reportStatus(el.providersMsg, 'form-msg', text, kind);
 }
 
+/** The catalogue's models (your own, plugin and team policy) counted per provider row: the rows' summaries and states. */
+function providerCounts() {
+  const d = mvState.data;
+  return providerModelCounts([...(d?.models || []), ...(d?.plugin || []), ...(d?.policy || [])], mvState.providers);
+}
+
+/** What a draw of the Providers tab shows. Draw and paint compare this one key, so a catalogue change redraws. */
+function providersKey(counts) {
+  return JSON.stringify([mvState.providers, mvState.signIn, counts]);
+}
+
+// Typing survives a redraw (a fold, another row's Save, Refresh usage, a sign-in, a catalogue change). Every drawn field
+// is stamped with what it was drawn with (data-drawn); before the next draw each field whose value differs is read,
+// keyed by its row, its classes and data-provider/-kind/-field, and put back into its twin once drawn. A Save re-stamps
+// its own row (patchProviderFlow), so the row just saved shows the server's values.
+const PV_FIELDS = 'input, select';
+const pvValue = (c) => (c.type === 'checkbox' ? String(c.checked) : c.value);
+const pvFieldKey = (c) => [c.className, c.dataset.provider || '', c.dataset.kind || '', c.dataset.field || ''].join('|');
+/** The image model is one field drawn two ways (the service's list, or a typed id): carried by its field alone. */
+const isImagesModel = (c) => c.matches('.mv-im-model-pick, .mv-im-model');
+
+function stampProviderFields(scope) {
+  for (const c of scope.querySelectorAll(PV_FIELDS)) c.dataset.drawn = pvValue(c);
+}
+
+/** The edited fields on screen, row by row; the image service and the speech engines marked as leads. */
+function providerEdits(root) {
+  const edits = [];
+  for (const item of root.querySelectorAll('.mv-pv-card[data-row]')) {
+    for (const c of item.querySelectorAll(PV_FIELDS)) {
+      if (c.dataset.drawn === pvValue(c)) continue;
+      edits.push({ row: item.dataset.row, key: isImagesModel(c) ? 'model' : pvFieldKey(c), value: pvValue(c), lead: c.matches('.mv-im-service, .mv-sp-engine') });
+    }
+  }
+  return edits;
+}
+
+/** The image model put back the way a pick goes: an id on the service's list is selected, anything else is typed. */
+function restoreImagesModel(item, value) {
+  if (!item.querySelector('.mv-im-model-pick')) item.querySelector('.mv-im-model-list')?.click();   // the list, when the service has one
+  const pick = item.querySelector('.mv-im-model-pick');
+  if (pick && value !== '__other__' && [...pick.options].some((o) => o.value === value)) { pick.value = value; return; }
+  if (pick) { pick.value = '__other__'; pick.dispatchEvent(new window.Event('change', { bubbles: true })); }   // "Other model…"
+  const typed = item.querySelector('.mv-im-model');
+  if (typed) typed.value = value === '__other__' ? '' : value;
+}
+
+/** Put the edits back into the tab just drawn. The image service and the speech engines go first, each announced
+ *  (applyImagesPreset and the engine's own listener set the fields they decide); the rest follow. */
+function restoreProviderEdits(root, edits) {
+  if (!edits.length) return;
+  const focused = document.activeElement;
+  for (const e of [...edits.filter((x) => x.lead), ...edits.filter((x) => !x.lead)]) {
+    const item = [...root.querySelectorAll('.mv-pv-card[data-row]')].find((r) => r.dataset.row === e.row);
+    if (!item) continue;
+    if (e.key === 'model') { restoreImagesModel(item, e.value); continue; }
+    const c = [...item.querySelectorAll(PV_FIELDS)].find((n) => pvFieldKey(n) === e.key);
+    if (!c) continue;
+    if (c.type === 'checkbox') c.checked = e.value === 'true';
+    else c.value = e.value;
+    if (e.lead) c.dispatchEvent(new window.Event('change', { bubbles: true }));
+  }
+  // "Other model…" and "Pick from list" focus the field they draw: a redraw moves no cursor.
+  const now = document.activeElement;
+  if (now !== focused && root.contains(now)) {
+    if (focused && focused !== document.body && focused.isConnected) focused.focus();
+    else now.blur();
+  }
+}
+
+/** The Providers tab, drawn from mvState (loadModelsView reads it), with the open rows and the catalogue's model
+ *  counts; what was typed is carried over. Records what it drew (paintProvidersTab).
+ *  No payload (before the first read, or after a failed one, whose line says why): no card, and a card an earlier
+ *  read drew is taken away, so no flow acts on a payload that is gone (a Save would send a form of defaults). */
 function renderProvidersViewBody() {
   if (!el.providersList) return;
-  el.providersList.replaceChildren(renderProvidersCard(mvState.providers, { signIn: mvState.signIn, split: true }));
-  // OpenRouter's free-model allowance, read afresh each time the card opens.
+  if (!mvState.providers) { providersDrawnKey = ''; el.providersList.replaceChildren(); return; }
+  const counts = providerCounts();
+  const edits = providerEdits(el.providersList);
+  el.providersList.replaceChildren(renderProvidersTab(mvState.providers, { signIn: mvState.signIn, open: mvState.pvOpen, counts }));
+  stampProviderFields(el.providersList);
+  restoreProviderEdits(el.providersList, edits);
+  syncCopilotHostField(el.providersList);   // a restored Account choice shows or hides the GHE.com host
+  providersDrawnKey = providersKey(counts);
+  // OpenRouter's free-model allowance, read afresh each time the card is drawn.
   refreshFreeDaily({ force: true });
 }
 
-/** A page-level message, on whichever of the two pages is showing. */
+/** The Providers tab, drawn only while that tab shows and only when its content changed since the last draw:
+ *  a tab switch keeps a typed key, and a window focus that re-reads the same payload (a broker's) redraws nothing. */
+function paintProvidersTab() {
+  if (currentModelsTab() !== 'providers') return;
+  if (providersKey(providerCounts()) === providersDrawnKey) return;
+  renderProvidersViewBody();
+}
+
+/** A page-level message, on the line of the Models tab that is showing (Providers, else the Catalogue's). */
 function setTabMsg(text, kind) {
-  if (currentView() === 'providers') setProvidersMsg(text, kind);
+  if (currentModelsTab() === 'providers') setProvidersMsg(text, kind);
   else setModelsMsg(text, kind);
 }
 
-/** The providers card lives on its own page now, but its flows still repaint by name. */
+/** The provider rows live on the Providers tab, but their flows still repaint by name. */
 function repaintProviders() {
-  if (currentView() === 'providers') renderProvidersViewBody();
+  if (currentModelsTab() === 'providers') renderProvidersViewBody();
   else if (currentView() === 'models') renderModelsViewBody();
 }
 
 // ── Providers (model-bridge-design.md §8.1/§8.2/§8.4) ──────────────────────
-/** The providers card's home: its own tab's list. */
+/** Where the provider rows render: the Providers tab's list. */
 function providerRoot() { return el.providersList; }
 
-/** A provider card's failure, the house way (#555): a card alert above the card's buttons. null clears it. */
+/** A provider card's failure, the house way (#555): a card alert above the card's buttons. null clears it.
+ *  A failure unfolds its row, so it can be seen; a clear unfolds nothing. */
 function providerAlert(name, title, detail) {
   const row = providerRoot()?.querySelector(`.mv-pv-row[data-provider="${name}"]`);
-  if (row) cardAlert(row.closest('.mv-pv-card') || row, title ? { title, detail } : null);
+  if (!row) return;
+  if (title) { mvState.pvOpen[name] = true; toggleProviderRow(providerRoot(), name, true); }
+  cardAlert(row.closest('.mv-pv-card') || row, title ? { title, detail } : null);
+}
+
+/** Row `name`'s fold item on the Providers tab (section.mv-pv-card[data-row]), or null. */
+function providerItem(name) {
+  return [...(providerRoot()?.querySelectorAll('.mv-pv-card[data-row]') || [])].find((r) => r.dataset.row === name) || null;
 }
 
 /** The card's grey guidance line; an error goes to providerAlert under `title` instead. '' clears both. */
@@ -20135,7 +20706,7 @@ async function copilotSignInFlow() {
     const res = await fetch('/api/providers/copilot/login', { method: 'POST' });
     const flow = await safeJson(res);
     if (!res.ok) return setProviderMsg('copilot', flow.error || `HTTP ${res.status}`, true, 'Sign-in did not start');
-    mvState.signIn = { ...flow, status: 'Waiting for approval on github.com…' };
+    mvState.signIn = { ...flow, status: `Waiting for approval on ${flow.host || 'github.com'}…` };
     repaintProviders();
     const poll = async () => {
       if (!mvState.signIn || mvState.signIn.deviceCode !== flow.deviceCode) return;
@@ -20157,7 +20728,7 @@ async function copilotSignInFlow() {
           return;
         }
         const status = providerRoot()?.querySelector('.mv-cp-status');
-        if (status) status.textContent = 'Waiting for approval on github.com…';
+        if (status) status.textContent = `Waiting for approval on ${flow.host || 'github.com'}…`;
         copilotPollTimer = setTimeout(poll, Math.max(3, Number(j.interval) || flow.interval || 5) * 1000);
       } catch (e) {
         copilotPollTimer = setTimeout(poll, 8000);
@@ -20185,26 +20756,34 @@ async function copilotSignOutFlow() {
   }
 }
 
-// #555: the row's Save button shows busy → "Saved"; the row's line carries only errors. A change
-// on a select (account type, concurrency) has no button, so its success is the new value itself.
+// #555: the row's Save button shows busy → "Saved"; the row's line carries only errors.
 // `onError(message)`, when given, shows a refused Save in the row's own place instead of the card's alert.
 async function patchProviderFlow(name, body, { btn = null, onError = null } = {}) {
   setProviderMsg(name, '');
+  const wasConnected = name === 'copilot' && !!(mvState.providers && mvState.providers.copilot && mvState.providers.copilot.connected);
   const r = await withButton(btn, async () => {
     const res = await fetch(`/api/providers/${encodeURIComponent(name)}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
     const data = await safeJson(res);
     if (!res.ok) return { ok: false, error: data.error || `HTTP ${res.status}` };
     mvState.providers = data;
+    // The row just saved shows what the server keeps (a typed key gives way to its masked echo): its fields count as
+    // drawn, so neither redraw below carries them over. Other rows keep what was typed in them.
+    const saved = providerItem(name);
+    if (saved) stampProviderFields(saved);
     repaintProviders();
     // Readiness may have changed: the catalog's needs-sign-in state and every picker follow.
     await refreshModelsEverywhere();
     return { ok: true };
   }, { done: 'Saved' });
-  if (r.skipped) return;
+  if (r.skipped) return false;
   if (!r.ok) {
     if (onError) onError(r.error);
     else setProviderMsg(name, r.error, true, 'Not saved');
-    return;
+    return false;
+  }
+  // A change of the GitHub host signs the Copilot account out (a token belongs to one host): say so.
+  if (wasConnected && !(mvState.providers.copilot && mvState.providers.copilot.connected)) {
+    setProviderMsg('copilot', `Signed out: sign in again on ${copilotHostLabel(mvState.providers.copilot)}.`);
   }
   // The repaint replaced the clicked button: give its successor the "Saved" state.
   if (btn && !btn.isConnected) {
@@ -20212,6 +20791,43 @@ async function patchProviderFlow(name, body, { btn = null, onError = null } = {}
     const next = providerRoot()?.querySelector(`.mv-pv-row[data-provider="${name}"] .${cls}`);
     if (next) await withButton(next, () => undefined, { done: 'Saved' });
   }
+  return true;
+}
+
+const COPILOT_ACCOUNT_LABELS = { individual: 'Individual', business: 'Business', enterprise: 'Enterprise', 'ghe-com': 'GHE.com tenant' };
+
+/** Where the Copilot sign-in lives, for messages: githubHost is null for a GHE.com tenant setting without a usable host. */
+function copilotHostLabel(c) {
+  return (c && c.githubHost) || (c && c.accountType === 'ghe-com' ? 'your GHE.com tenant' : 'github.com');
+}
+
+/** Ask before a Copilot change that moves the GitHub host while signed in (the sign-in belongs to the old host). */
+function confirmCopilotHostSwitch(c, toLabel) {
+  return confirmModal({
+    title: `Switch to ${toLabel}?`,
+    message: `Switch to ${toLabel}? This signs you out of GitHub Copilot${c.login ? ` (@${c.login})` : ''}, because the sign-in belongs to ${copilotHostLabel(c)}.`,
+    confirmLabel: 'Switch and sign out', danger: true,
+  });
+}
+
+/** The Copilot row's Save: the account, the GHE.com host (with a GHE.com account) and the cap go together. A change that
+ *  moves the GitHub host while signed in asks first: the server signs the account out (a sign-in belongs to one host). */
+async function copilotSaveFlow(btn) {
+  const body = collectProviderRow(providerRoot(), 'copilot');
+  if (!body) return;
+  const c = (mvState.providers && mvState.providers.copilot) || {};
+  // The server's normalization (normalizeGheHost), so an unchanged host typed with https:// or a trailing / asks nothing.
+  const toHost = body.accountType === 'ghe-com'
+    ? String(body.enterpriseHost || '').toLowerCase().replace(/^https:\/\//, '').replace(/\/$/, '')
+    : 'github.com';
+  // Where the sign-in lives now: githubHost, else github.com for the non-GHE.com types. Null (a GHE.com setting
+  // without a usable host) never equals the new host: the save moves the sign-in.
+  const fromHost = c.githubHost || (c.accountType === 'ghe-com' ? null : 'github.com');
+  if (c.connected && toHost !== fromHost) {
+    const label = body.accountType === 'ghe-com' ? (toHost || 'the new host') : (COPILOT_ACCOUNT_LABELS[body.accountType] || body.accountType);
+    if (!(await confirmCopilotHostSwitch(c, label))) return;
+  }
+  await patchProviderFlow('copilot', body, { btn });
 }
 
 /** "Remove speech models": frees the built-in engines' downloads; the next mic use fetches them again. */
@@ -20300,7 +20916,8 @@ async function testProviderFlow(btn) {
   // What the user is LOOKING at, not what is stored: an unsaved base URL or key is tested as typed,
   // and a local endpoint therefore answers for itself instead of for api.openai.com.
   const typed = (name === 'copilot' ? null : collectProviderRow(providerRoot(), name)) || {};
-  const label = PROVIDER_LABELS[name] || name;
+  // The OpenRouter row is not an upstream provider, so the shared labels do not name it.
+  const label = name === 'openrouter' ? 'OpenRouter' : PROVIDER_LABELS[name] || name;
   setProviderMsg(name, '');
   // #555: the button shows Testing… → Connected, the toast says what answered; a failure is the card's alert.
   const r = await withButton(btn, async () => {
@@ -20319,7 +20936,7 @@ async function testProviderFlow(btn) {
         return { ok: true, detail };
       }
       const why = data.message || data.error || `The server answered ${res.status}.`;
-      return { ok: false, error: `${where ? `${where}: ` : ''}${why}${providerFixHint(why)}` };
+      return { ok: false, error: `${where ? `${where}: ` : ''}${why}${providerFixHint(why, name)}` };
     } catch (e) { return { ok: false, error: `Worca did not answer (${e.message}).` }; }
   }, { busy: 'Testing…', done: 'Connected' });
   if (r.skipped) return;
@@ -20334,11 +20951,12 @@ function hasUnsavedProviderEdits(name, typed) {
   return !!(typed.baseUrl && typed.baseUrl.replace(/\/+$/, '') !== String(cur.baseUrl || '').replace(/\/+$/, ''));
 }
 
-/** One line of "what to do about it" for the failures that have an obvious answer. */
-function providerFixHint(why) {
+/** One line of "what to do about it" for the failures that have an obvious answer. `name` is the row's: the
+ *  OpenRouter row has no base URL to point at a local server. */
+function providerFixHint(why, name) {
   const w = String(why).toLowerCase();
   if (w.includes('authentication failed')) return '. Check the API key, then Save.';
-  if (w.includes('no api key configured')) return '. Set a key above, or point the base URL at a local server (no key needed).';
+  if (w.includes('no api key configured')) return name === 'openrouter' ? '. Set a key above, then Save.' : '. Set a key above, or point the base URL at a local server (no key needed).';
   if (w.includes('${var} is not set')) return '. Set that variable in the shell that starts Worca, then restart it.';
   if (w.includes('unreachable')) return '. Is the server running, and is the base URL right?';
   if (w.includes('endpoint answered 404')) return '. The base URL usually ends in /v1.';
@@ -20361,79 +20979,199 @@ async function refreshCopilotQuotaFlow(btn) {
 }
 
 
-// ── Import models (model-bridge-design.md §8.4) ─────────────────────────────
-// ONE dialog, two sources: GitHub Copilot's catalog, and any OpenAI-compatible server you run.
-// It belongs to the CATALOG, not to a provider — what it produces is catalog rows, and a flow
-// whose result lands on another tab reads as "nothing happened". The Providers tab links into it.
-const mimp = { source: 'copilot', baseUrl: '', payload: null, lastFocus: null, importing: false };
-// A form: a backdrop click never closes it; Escape asks once a model is ticked or a URL typed since the last
-// list. While "Import selected" is out, Cancel and Escape wait for its answer.
-const importGuard = el.modelImportModal ? guardModal(el.modelImportModal, { kind: 'form', close: () => closeImportDialog(), busy: () => mimp.importing }) : null;
+// ── Add model (models-menu P5, DESIGN ADD-1…ADD-6) ──────────────────────────
+// Step 1 "Where it runs" (models/add-model-dialog.mjs), then the model: picked from the provider's own list (step 2: the
+// import, which was a dialog of its own) or entered in the model form. All of it in the model dialog, over the catalog
+// the import fills; the Providers tab's Import opens step 2 there.
 
-function setImportMsg(text, kind) {
-  if (!el.mimpMsg) return;
-  el.mimpMsg.textContent = text || '';
-  el.mimpMsg.className = `form-msg mimp-msg${kind ? ` ${kind}` : ''}`;
+/** Step 2's screen, while it shows. */
+const addListCard = () => (mvState.dlg?.screen === 'list' && el.modelEditorHost?.querySelector('.mdl-add[data-step="2"]')) || null;
+/** True while the dialog still shows `seq`'s screen `screen` — and, given `card`, that very card: an answer for another
+ *  open, provider or screen is dropped, and so is one for a list left and drawn again meanwhile (Back, then Next). */
+const addLive = (seq, screen, card = null) => !!mvState.dlg && mvState.dlg.seq === seq && mvState.dlg.screen === screen
+  && (!card || addListCard() === card);
+// Step 2 screens with a list request out: Enter, a preset or List models waits for its answer (one request per card).
+const addListing = new WeakSet();
+/** A step screen's pinned regions for layoutDialog. */
+const addScreenParts = (card) => ({ head: [card.querySelector(':scope > .mdl-add-head')], foot: [card.querySelector(':scope > .mdl-add-foot')] });
+
+/** Every id the catalogue lists, lower-cased: a new model may take none of them (FRM-5; the add is refused for colliding
+ *  with ANY layer, as Duplicate's suggestion knows, duplicateModelFlow). `shadowing`: Edit a copy's plugin model, whose
+ *  own plugin row does not count (the global entry the copy saves under its id shadows it). */
+function takenModelIds({ shadowing = '' } = {}) {
+  const d = mvState.data || {};
+  const own = String(shadowing).toLowerCase();
+  const plugin = (d.plugin || []).filter((m) => !own || String(m.id).toLowerCase() !== own);
+  return [d.models, plugin, d.predefined].flatMap((xs) => (xs || []).map((m) => String(m.id).toLowerCase()));
 }
 
-/** Copilot is offered only when signed in; a local endpoint needs nothing but a URL. */
-function importSources() {
-  const connected = !!(mvState.providers && mvState.providers.copilot && mvState.providers.copilot.connected);
-  return [
-    { id: 'copilot', label: connected ? 'GitHub Copilot' : 'GitHub Copilot (sign in first)', disabled: !connected },
-    // The servers are named in the Base URL hint; a 60-character option truncates in the control.
-    { id: 'openai', label: 'OpenAI-compatible', disabled: false },
-  ];
-}
-
-function paintImportSource() {
-  if (!el.mimpSource) return;
-  const opts = importSources();
-  el.mimpSource.replaceChildren(...opts.map((o) => {
-    const node = document.createElement('option');
-    node.value = o.id; node.textContent = o.label; node.disabled = o.disabled;
-    if (o.id === mimp.source) node.selected = true;
-    return node;
-  }));
-  // Copilot has no base URL, and loads by itself; the whole field (with its button) goes away.
-  if (el.mimpBaseField) el.mimpBaseField.classList.toggle('hidden', mimp.source !== 'openai');
-  if (el.mimpKeyField) el.mimpKeyField.classList.toggle('hidden', mimp.source !== 'openai');
-}
+/** The tiles' locks, as the Catalogue builds them (catalogueData): the harnesses the credential broker turns off. */
+const addEngineLocks = () => MODEL_ENGINE_NAMES.filter((name) => engineLock(name) !== null).map((name) => ({ name, reason: 'Off while the credential broker is on' }));
 
 /**
- * @param {{source?:string, baseUrl?:string, goToModels?:boolean}} [o] goToModels comes from the
- *   Providers page's shortcut: the dialog opens over the catalog the import will fill.
+ * Open Add model: step 1, or step 2's list for a provider. The harness tiles draw at once with no engine list
+ * (`engines: null`), then again when this open's one GET /api/engines answers (the app's readyEngines cache keeps only
+ * the ready names; the tiles want each harness's reason too).
  */
-function openImportDialog({ source, baseUrl, goToModels } = {}) {
-  if (goToModels && currentView() !== 'models') showView('models');
-  mimp.lastFocus = document.activeElement;
-  const connected = !!(mvState.providers && mvState.providers.copilot && mvState.providers.copilot.connected);
-  mimp.source = source || (connected ? 'copilot' : 'openai');
-  mimp.baseUrl = baseUrl || (mvState.providers && mvState.providers.openai && mvState.providers.openai.baseUrl) || '';
-  mimp.payload = null;
-  if (el.mimpBase) el.mimpBase.value = mimp.baseUrl;
-  if (el.mimpKey) el.mimpKey.value = '';
-  paintImportSource();
-  if (el.mimpBody) el.mimpBody.replaceChildren();
-  if (el.mimpGo) el.mimpGo.disabled = true;
-  setImportMsg('');
-  el.modelImportModal?.classList.remove('hidden');
-  importGuard?.opened();
-  setTimeout(() => (mimp.source === 'openai' ? el.mimpBase : el.mimpList)?.focus(), 0);
-  // Copilot has one catalog, so it loads at once; an endpoint is listed only when the caller NAMED
-  // one (the Providers shortcut). The provider's stored URL is offered as a default, not queried —
-  // listing api.openai.com without a key would greet the dialog with an error nobody asked for.
-  if (mimp.source === 'copilot' || baseUrl) listImportModels();
+function openAddModelDialog({ step = 1, where = 'signin', provider = 'copilot', engine = 'claude', baseUrl = '' } = {}) {
+  if (!el.modelEditorModal || !el.modelEditorHost) return;
+  mvState.editing = null;
+  mvState.prefill = null;
+  const dlg = beginModelDialog({ where: step === 2 ? 'provider' : where, provider, engine: engine || 'claude' }, { baseUrl });
+  void loadAddEngines(dlg);
+  if (step === 2) showAddList();
+  else showAddStep1();
 }
 
-/** Narrow the LISTED rows (model, id, vendor, detail) — a view filter, never a change to the pick. */
-function applyImportFilter() {
-  const sheet = el.mimpBody && el.mimpBody.querySelector('.mvi');
+/** This open's /api/engines rows for the tiles; step 1 is drawn again while it shows. */
+async function loadAddEngines(dlg) {
+  let rows = null;
+  try {
+    const res = await fetch('/api/engines');
+    const data = res.ok ? await safeJson(res) : null;
+    rows = Array.isArray(data?.engines) ? data.engines : null;
+  } catch { /* the tiles keep saying nothing about readiness */ }
+  if (mvState.dlg !== dlg || !rows) return;   // closed, or another open meanwhile
+  dlg.engines = rows;
+  if (dlg.screen === 'step1') showAddStep1({ redraw: true });
+}
+
+/** Which control of step 1 has the focus, so a redraw hands it back: its class and its data-where / data-engine. */
+function addFocusSig(n) {
+  const cls = ['mdl-opt', 'mdl-hx-t', 'mdl-add-provider', 'mdl-next', 'mv-cancel', 'mdl-close'].find((c) => n?.classList?.contains(c));
+  return cls ? { cls, where: n.dataset.where || '', engine: n.dataset.engine || '' } : null;
+}
+
+/** Step 1 from the flow's state. `redraw` (the engines answered): from what the step on screen holds, focus kept. */
+function showAddStep1({ redraw = false } = {}) {
+  const dlg = mvState.dlg;
+  if (!dlg) return;
+  const old = redraw ? el.modelEditorHost.querySelector('.mdl-add[data-step="1"]') : null;
+  if (redraw && !old) return;
+  if (old) dlg.add = { ...dlg.add, ...collectAddStep1(old) };
+  const sig = old && old.contains(document.activeElement) ? addFocusSig(document.activeElement) : null;
+  dlg.screen = 'step1';
+  // "Change where it runs" is still the edit: its head keeps the waiting form's title ("Edit <name>").
+  const title = dlg.fixedEngine ? dlg.form?.formEl?.querySelector('.mv-editor-title')?.textContent || '' : '';
+  const card = renderAddStep1(dlg.add, { doc: document, providers: mvState.providers, engines: dlg.engines, locks: addEngineLocks(), fixedEngine: dlg.fixedEngine || '', title });
+  showModelScreen(card, { ...addScreenParts(card), focus: redraw ? '' : '.mdl-opt[aria-checked="true"]', keep: redraw });
+  if (!sig) return;
+  const twin = [...card.querySelectorAll(`.${sig.cls}`)].find((n) => (n.dataset.where || '') === sig.where && (n.dataset.engine || '') === sig.engine);
+  try { twin?.focus({ preventScroll: true }); } catch { /* jsdom */ }
+}
+
+/** "Change where it runs" (L26), on an edit form: step 1 on the form's own harness (no tiles; the cards wheresFor refuses
+ *  are off), preset to where it runs now. The form waits, detached, with everything typed into it. */
+function showRewhereStep() {
+  const dlg = mvState.dlg;
+  const form = modelEditorEl();
+  if (!dlg || !form || dlg.form?.formEl !== form) return;
+  dlg.formDirty = dlg.formDirty || !!modelEditorGuard?.changed();
+  dlg.fixedEngine = form.dataset.engine || 'claude';
+  dlg.add = { where: connectionWhere(form), provider: form.querySelector('.mv-conn-provider')?.value || 'copilot', engine: dlg.fixedEngine };
+  showAddStep1();
+}
+
+/** "Change where it runs" › Continue: the same form back, now running where step 1 says; a provider's select follows
+ *  step 1's choice with a bubbling change, so onModelsConnChange applies it (OpenRouter's address, Copilot's pricing). */
+function rewhereContinue(card) {
+  const dlg = mvState.dlg;
+  const form = dlg?.form?.formEl;
+  if (!form) return;
+  const pick = collectAddStep1(card);
+  const was = { where: connectionWhere(form), provider: form.querySelector('.mv-conn-provider')?.value || '' };
+  dlg.fixedEngine = '';
+  showModelForm(form, { mode: dlg.form.mode, copyFrom: dlg.form.copyFrom, from: dlg.from });
+  // setFormWhere, not setConnectionWhere alone: a custom endpoint gains its routing rows (and Save waits for its address),
+  // and a model leaving one loses them, so Save sends the kind picked.
+  setFormWhere(form, pick.where);
+  const sel = pick.where === 'provider' ? form.querySelector('.mv-conn-provider') : null;
+  if (sel) {
+    sel.value = pick.provider;
+    sel.dispatchEvent(new window.Event('change', { bubbles: true }));
+  }
+  // Where it runs is part of what Save sends: a new place is a change, so Escape asks.
+  if (pick.where !== was.where || (sel && pick.provider !== was.provider)) dlg.formDirty = true;
+}
+
+/** Step 1's Next: a provider goes to its list; a sign-in or a custom endpoint to the form (a sign-in with its harness).
+ *  On "Change where it runs" it is Continue: back to the edit form. */
+function addStep1Next(card) {
+  const dlg = mvState.dlg;
+  if (!dlg || !card) return;
+  if (dlg.fixedEngine) { rewhereContinue(card); return; }
+  const pick = collectAddStep1(card);
+  // Another provider than the kept list is for (the list says whose it is; dlg.add may hold a pick a redraw kept): its
+  // ticks, filter and answers go.
+  if (pick.provider !== dlg.list.provider) { dlg.list = freshAddList(pick.provider); dlg.seq = ++modelDlgSeq; }
+  dlg.add = pick;
+  if (pick.where === 'provider') showAddList();
+  else showAddForm({ where: pick.where, engine: pick.engine, from: 'step1' });
+}
+
+/** Step 2 by hand (ADD-6): the model form reached through step 1 or the list, its Back going to `from`. A form this open
+ *  already holds (left by Back) comes back with everything typed into it, moved to the place and provider picked now. */
+function showAddForm({ where, engine = '', provider = '', from }) {
+  const dlg = mvState.dlg;
+  if (!dlg) return;
+  mvState.editing = null;
+  mvState.prefill = null;
+  const kept = dlg.form?.mode === 'add' ? dlg.form.formEl : null;
+  if (kept) {
+    showModelForm(kept, { mode: 'add', from });
+    // Step 1 shows harness tiles for a sign-in only: a provider or a custom endpoint runs on Claude Code, as a new form does.
+    const harness = where === 'signin' ? engine || 'claude' : 'claude';
+    if ((kept.dataset.engine || 'claude') !== harness) setModelEngine(kept, harness);
+    setFormWhere(kept, where);
+    const sel = where === 'provider' && provider ? kept.querySelector('.mv-conn-provider') : null;
+    if (sel && sel.value !== provider) {
+      sel.value = provider;
+      sel.dispatchEvent(new window.Event('change', { bubbles: true }));   // onModelsConnChange: OpenRouter's address, Copilot's pricing
+    }
+    paintEditorSave(kept);
+    // Moving the form is not typing into it: what was typed before Back is dlg.formDirty, the guard starts clean here.
+    modelEditorGuard?.markClean();
+    return;
+  }
+  const d = mvState.data || { efforts: [] };
+  const editor = renderModelEditor(null, d.efforts || [], { ...modelFormOptions(d), where, steps: true, provider, takenIds: takenModelIds() });
+  if (where === 'signin' && engine) setModelEngine(editor, engine);
+  paintEditorSave(editor);
+  showModelForm(editor, { mode: 'add', from });
+}
+
+/** "N selected" and "Add N models" from the ticked rows, which the flow keeps (a list drawn again ticks them again), and
+ *  the head box's ticked / mixed / clear state over what shows (ADD-3). */
+function paintAddTicks(card) {
+  const dlg = mvState.dlg;
+  const sheet = card.querySelector('.mimp-body .mvi');
+  const ids = sheet ? collectImportSheet(sheet) : [];
+  if (dlg) dlg.list.ticked = new Set(ids);
+  paintAddSelection(card, ids.length);
+  paintAddList(card);
+  const go = card.querySelector('.mimp-go');
+  if (go && dlg?.busy) go.disabled = true;
+}
+
+function setAddListMsg(card, text, kind) {
+  const msg = card && card.querySelector('.mimp-msg');
+  if (!msg) return;
+  msg.textContent = text || '';
+  msg.className = `form-msg mimp-msg${kind ? ` ${kind}` : ''}`;
+}
+
+/** Narrow the LISTED rows (model, id, vendor, detail; a hosted list's Free / Tools / Window too): a view, never a change
+ *  to the pick. The filter's text is kept with the list. */
+function applyAddFilter(card) {
+  const field = card.querySelector('.mimp-filter');
+  const raw = field ? field.value : '';
+  if (mvState.dlg) mvState.dlg.list.filter = raw;
+  const sheet = card.querySelector('.mimp-body .mvi');
   if (!sheet) return;
-  const q = (el.mimpFilter?.value || '').trim().toLowerCase();
+  const q = raw.trim().toLowerCase();
   let shown = 0; let total = 0;
   for (const tr of sheet.querySelectorAll('tbody tr')) {
-    const hit = endpointRowMatches(tr, sheet, q);   // text, plus a hosted sheet's Free / Tools / window
+    const hit = endpointRowMatches(tr, sheet, q);
     tr.classList.toggle('is-filtered', !hit);
     total += 1;
     if (hit) shown += 1;
@@ -20445,117 +21183,268 @@ function applyImportFilter() {
       none.className = 'hist-empty mimp-nohits';
       sheet.appendChild(none);
     }
-    none.textContent = q ? `Nothing here matches “${el.mimpFilter.value.trim()}”.` : 'Nothing here matches these filters.';
+    none.textContent = q ? `Nothing here matches “${raw.trim()}”.` : 'Nothing here matches these filters.';
   } else if (none) none.remove();
+  paintAddList(card);                                    // ADD-3: "N of M shown", the head box over what shows
 }
 
-function closeImportDialog() {
-  el.modelImportModal?.classList.add('hidden');
-  mimp.payload = null;
-  if (el.mimpBody) el.mimpBody.replaceChildren();
-  try { mimp.lastFocus?.focus(); } catch { /* the opener may be gone */ }
+/** A provider that cannot list (addStep2Plan `blocked`: its state word and the button that fixes it) or that has no list
+ *  (`nolist`: "No list to pick from", the button enters an id instead). */
+function paintAddBlocked(card, plan) {
+  const box = card.querySelector('.mdl-add-blocked');
+  if (!box) return;
+  const word = box.querySelector('.mdl-st');
+  const fix = box.querySelector('.mdl-add-fix');
+  const blocked = plan.kind === 'blocked';
+  word.className = `mdl-st ${blocked ? providerState(mvState.providers, plan.row, { hasModels: true }).tone : 'need'}`;
+  word.textContent = plan.text;
+  fix.textContent = blocked ? plan.fix : 'Enter an id instead';
+  if (blocked) fix.dataset.row = plan.row;
+  else fix.dataset.manual = '';
+  box.hidden = false;
 }
 
-/** Ask the chosen source what it has, and paint its sheet into the dialog. */
-async function listImportModels() {
-  const endpoint = mimp.source === 'openai';
-  mimp.baseUrl = el.mimpBase ? el.mimpBase.value.trim() : '';
-  mimp.apiKey = el.mimpKey ? el.mimpKey.value.trim() : '';
-  if (endpoint && !mimp.baseUrl) { setImportMsg('Give the endpoint a base URL, e.g. http://127.0.0.1:11434/v1', 'err'); el.mimpBase?.focus(); return; }
-  if (el.mimpList) el.mimpList.disabled = true;
-  if (el.mimpGo) el.mimpGo.disabled = true;
-  setImportMsg(endpoint ? 'Asking the endpoint what it serves…' : 'Loading Copilot models…');
+/** Step 2 for the flow's provider (addStep2Plan): the list kept from before, else asked for when it can be (Copilot, a
+ *  provider with its address); a provider that cannot list says why. */
+function showAddList() {
+  const dlg = mvState.dlg;
+  if (!dlg) return;
+  dlg.screen = 'list';
+  const provider = dlg.add.provider;
+  const card = renderAddStep2({ provider, baseUrl: dlg.list.baseUrl }, { doc: document, providers: mvState.providers });
+  const filter = card.querySelector('.mimp-filter');
+  if (filter) filter.value = dlg.list.filter;
+  const key = card.querySelector('.mimp-key');
+  if (key) key.value = dlg.list.apiKey;
+  const plan = addStep2Plan(provider, mvState.providers, { baseUrl: dlg.list.baseUrl });
+  if (plan.kind !== 'list') paintAddBlocked(card, plan);
+  showModelScreen(card, { ...addScreenParts(card), focus: provider === 'openai' ? '.mimp-base' : '.mimp-filter' });
+  if (plan.kind !== 'list') return;
+  if (dlg.list.payload) mountAddSheet(card, dlg.list.payload);
+  else if (plan.source === 'copilot' || plan.auto) void listAddModels();
+}
+
+/** Draw a listed payload into step 2: the sheet without its own title, note, buttons and message (the screen has them),
+ *  the kept ticks back on, the filter applied, the foot counted. */
+function mountAddSheet(card, { endpoint, data }) {
+  const dlg = mvState.dlg;
+  const sheet = endpoint ? renderEndpointSheet(data, { doc: document }) : renderImportSheet(data.models || [], { doc: document });
+  sheet.querySelector(':scope > h3.mv-editor-title')?.remove();
+  sheet.querySelector(':scope > small.hint:not(.mvi-warn)')?.remove();
+  sheet.querySelector(':scope > .mv-editor-btns')?.remove();
+  sheet.querySelector(':scope > .mvi-msg')?.remove();
+  for (const cb of sheet.querySelectorAll('.mvi-cb')) if (!cb.disabled && dlg?.list.ticked.has(cb.value)) cb.checked = true;
+  card.querySelector('.mimp-body')?.replaceChildren(sheet);
+  applyAddFilter(card);
+  paintAddTicks(card);
+  const rows = sheet.querySelectorAll('.mvi-cb:not([disabled])').length;
+  if (endpoint && Array.isArray(data.models) && !data.models.length) setAddListMsg(card, 'This endpoint lists no models.', 'err');
+  else setAddListMsg(card, rows ? '' : 'Nothing here can be imported.', rows ? '' : 'err');
+}
+
+/** Ask the provider what it has (Copilot's catalog, or an OpenAI-compatible endpoint with the key the screen holds) and
+ *  draw its sheet into step 2. */
+async function listAddModels() {
+  const dlg = mvState.dlg;
+  const card = addListCard();
+  if (!dlg || !card || dlg.busy || addListing.has(card)) return;
+  const typed = dlg.add.provider === 'openai';
+  // The screen's address and key are kept for a redraw; the pair this request asks with travels with its answer
+  // (payload) and only that pair is ever imported with, so a key typed for another address never reaches this one.
+  if (typed) keepAddList(card);
+  const plan = addStep2Plan(dlg.add.provider, mvState.providers, { baseUrl: dlg.list.baseUrl });
+  if (plan.kind !== 'list') return;
+  const endpoint = plan.source === 'endpoint';
+  if (endpoint && !plan.baseUrl) {
+    setAddListMsg(card, 'Give the endpoint a base URL, e.g. http://127.0.0.1:11434/v1', 'err');
+    card.querySelector('.mimp-base')?.focus();
+    return;
+  }
+  const apiKey = typed ? dlg.list.apiKey : '';
+  const seq = dlg.seq;
+  addListing.add(card);
+  const listBtn = card.querySelector('.mimp-list');
+  if (listBtn) listBtn.disabled = true;
+  const go = card.querySelector('.mimp-go');
+  if (go) go.disabled = true;
+  setAddListMsg(card, endpoint ? 'Asking the endpoint what it serves…' : 'Loading Copilot models…');
   try {
-    const url = endpoint ? `/api/providers/openai/models?baseUrl=${encodeURIComponent(mimp.baseUrl)}` : '/api/providers/copilot/models';
+    const url = endpoint ? `/api/providers/openai/models?baseUrl=${encodeURIComponent(plan.baseUrl)}` : '/api/providers/copilot/models';
     // The endpoint's own key rides a header, never the URL (server logs, history).
-    const res = await fetch(url, endpoint && mimp.apiKey ? { headers: { 'X-Worca-Endpoint-Key': mimp.apiKey } } : {});
+    const res = await fetch(url, endpoint && apiKey ? { headers: { 'X-Worca-Endpoint-Key': apiKey } } : {});
     const data = await safeJson(res);
-    if (!res.ok) { setImportMsg(data.error || `HTTP ${res.status}`, 'err'); return; }
-    mimp.payload = data;
-    const sheet = endpoint ? renderEndpointSheet(data) : renderImportSheet(data.models || []);
-    // The sheet's own footer is the dialog's footer here.
-    sheet.querySelector('.mv-editor-btns')?.remove();
-    sheet.querySelector('.mvi-msg')?.remove();
-    el.mimpBody?.replaceChildren(sheet);
-    const rows = sheet.querySelectorAll('.mvi-cb:not([disabled])').length;
-    // Worth a filter only once the list is long enough to hunt through (Copilot lists dozens).
-    if (el.mimpFilter) {
-      el.mimpFilter.classList.toggle('hidden', sheet.querySelectorAll('tbody tr').length < 8);
-      el.mimpFilter.value = '';
-    }
-    applyImportFilter();
-    importGuard?.markClean();   // a fresh list is the new starting point
-    if (el.mimpGo) el.mimpGo.disabled = !rows;
-    setImportMsg(rows ? '' : 'Nothing here can be imported.', rows ? '' : 'err');
-    if (endpoint && Array.isArray(data.models) && !data.models.length) setImportMsg('This endpoint lists no models.', 'err');
+    if (!addLive(seq, 'list', card)) return;
+    if (!res.ok) { setAddListMsg(card, data.error || `HTTP ${res.status}`, 'err'); return; }
+    dlg.list.payload = { endpoint, data, baseUrl: endpoint ? plan.baseUrl : '', apiKey };
+    dlg.list.ticked = new Set();
+    dlg.list.filter = '';
+    const filter = card.querySelector('.mimp-filter');
+    if (filter) filter.value = '';
+    mountAddSheet(card, dlg.list.payload);
+    modelEditorGuard?.markClean();   // a fresh list is the new starting point
   } catch (e) {
-    setImportMsg(e.message, 'err');
+    if (addLive(seq, 'list', card)) setAddListMsg(card, e.message, 'err');
   } finally {
-    if (el.mimpList) el.mimpList.disabled = false;
+    addListing.delete(card);
+    if (listBtn) listBtn.disabled = false;
+    // A refused or failed list keeps the one already shown, with the address and key IT was listed with: its ticks arm
+    // "Add N models" again.
+    if (addLive(seq, 'list', card)) paintAddTicks(card);
   }
 }
 
-/** Import what is ticked; the rows land in the catalog behind the dialog. */
-async function importModelsFlow() {
-  const sheet = el.mimpBody && el.mimpBody.querySelector('.mvi');
-  if (!sheet) return;
+/** Keep what step 2 holds before it is left: the typed address and key, for drawing the screen again (an import sends
+ *  the listed pair, dlg.list.payload, never these). The ticks and the filter are kept as they change. */
+function keepAddList(card) {
+  const dlg = mvState.dlg;
+  if (!dlg || !card || dlg.add.provider !== 'openai') return;
+  dlg.list.baseUrl = (card.querySelector('.mimp-base')?.value || '').trim();
+  dlg.list.apiKey = (card.querySelector('.mimp-key')?.value || '').trim();
+}
+
+/** Step 2's provider changed: a new list, its ticks and filter cleared, an answer still out for the old one dropped. */
+function changeAddProvider(sel) {
+  const dlg = mvState.dlg;
+  if (!dlg) return;
+  // markedSelect painted the picked value's mark on the change: a value put back repaints it.
+  if (dlg.busy) { sel.value = dlg.add.provider; paintMarkedSelect(sel.closest('.mdl-picksel')); return; }
+  dlg.add = { ...dlg.add, where: 'provider', provider: sel.value };
+  dlg.list = freshAddList(sel.value);
+  dlg.seq = ++modelDlgSeq;
+  showAddList();
+}
+
+/** "Enter an id instead": the provider form with the list's provider; its Back returns to the list with its ticks. */
+function addManualForm() {
+  const dlg = mvState.dlg;
+  const card = addListCard();
+  if (!dlg || !card) return;
+  keepAddList(card);
+  showAddForm({ where: 'provider', provider: dlg.add.provider, from: 'list' });
+}
+
+/** Back: from the form to where it was reached from (its typed work counts on the way out), from the list to step 1. */
+function modelDialogBack() {
+  const dlg = mvState.dlg;
+  if (!dlg) return;
+  if (dlg.screen === 'form') {
+    dlg.formDirty = dlg.formDirty || !!modelEditorGuard?.changed();
+    if (dlg.from === 'list') showAddList();
+    else if (dlg.from === 'step1') showAddStep1();
+  } else if (dlg.screen === 'list') {
+    keepAddList(addListCard());
+    showAddStep1();
+  }
+}
+
+/** The blocked box's button: a provider that cannot list is fixed where it is fixed, with the dialog closed — Copilot
+ *  signs in inside the setup assistant (AC-4.5, as the Catalogue's own fix), a key is set on its Providers row; with no
+ *  list at all it enters an id instead. */
+function addFixFlow(btn) {
+  if ('manual' in btn.dataset) { addManualForm(); return; }
+  const row = btn.dataset.row;
+  if (!row) return;
+  closeModelEditorDialog();
+  if (row === 'copilot') openSetup({ entry: 'fix', step: 'access' });
+  else goToProviders(row);
+}
+
+/** A hosted API's preset fills its base URL and the usual ${VAR} for its key (bridge-view.mjs ENDPOINT_PRESETS), then lists. */
+function applyAddPreset(btn) {
+  const card = addListCard();
+  const p = ENDPOINT_PRESETS[btn.dataset.preset];
+  if (!card || !p || addListing.has(card)) return;   // a list is out: the fields stay what it asks
+  const base = card.querySelector('.mimp-base');
+  const key = card.querySelector('.mimp-key');
+  if (base) base.value = p.baseUrl;
+  if (key) key.value = p.keyRef;
+  void listAddModels();
+}
+
+/** While an import is out: no Back, no Close, no second "Add N models" (Escape waits too: modelDialogBusy). */
+function paintAddBusy(card, on) {
+  if (mvState.dlg) mvState.dlg.busy = on;
+  for (const b of card.querySelectorAll('.mv-back, .mdl-close, .mimp-go')) b.disabled = on;
+  if (!on) paintAddTicks(card);
+}
+
+/** "Add N models": today's import request. On success the dialog closes and the Catalogue shows what landed: every
+ *  narrowing cleared, then "Just imported" when something was added or refreshed, Claude Code's group unfolded. */
+async function importAddModelsFlow() {
+  const dlg = mvState.dlg;
+  const card = addListCard();
+  const sheet = card && card.querySelector('.mimp-body .mvi');
+  if (!dlg || !sheet) return;
   const ids = collectImportSheet(sheet);
-  if (!ids.length) return setImportMsg('Pick at least one model.', 'err');
+  if (!ids.length) { setAddListMsg(card, 'Pick at least one model.', 'err'); return; }
   const endpoint = sheet.dataset.source === 'endpoint';
-  if (el.mimpGo) el.mimpGo.disabled = true;
-  mimp.importing = true;
-  if (el.mimpCancel) el.mimpCancel.disabled = true;
-  setImportMsg('Importing…');
+  // The key the shown list was asked with (its payload), never what the key field holds now: a re-list that was
+  // refused, or a key typed before Back, belongs to another address.
+  const apiKey = endpoint ? dlg.list.payload?.apiKey || '' : '';
+  paintAddBusy(card, true);
+  setAddListMsg(card, 'Importing…');
   try {
     const res = endpoint
-      ? await fetch('/api/providers/openai/import-models', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ids, baseUrl: sheet.dataset.baseurl || '', ...(mimp.apiKey ? { apiKey: mimp.apiKey } : {}) }) })
+      ? await fetch('/api/providers/openai/import-models', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ids, baseUrl: sheet.dataset.baseurl || '', ...(apiKey ? { apiKey } : {}) }) })
       : await fetch('/api/providers/copilot/import-models', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ids }) });
     const data = await safeJson(res);
-    if (!res.ok) { setImportMsg(data.error || `HTTP ${res.status}`, 'err'); return; }
+    // The answer belongs to the open that asked: a screen opened meanwhile (the page's Add model, by keyboard) is left as
+    // it is, and a refusal that screen cannot show is a toast.
+    const live = mvState.dlg === dlg;
+    if (!res.ok) {
+      const why = data.error || `HTTP ${res.status}`;
+      if (live) setAddListMsg(card, why, 'err');
+      else notify({ tone: 'err', title: 'Not imported', detail: why });
+      return;
+    }
     const parts = [];
     if (data.created?.length) parts.push(`${data.created.length} added`);
     if (data.updated?.length) parts.push(`${data.updated.length} refreshed`);
     if (data.skipped?.length) parts.push(`${data.skipped.length} skipped`);
     // A local server's rows can be skipped for a reason worth reading (an embedding model, no tools).
     const why = endpoint && Array.isArray(data.skipped) ? data.skipped.filter((s) => s && s.why).map((s) => `${s.id}: ${s.why}`) : [];
-    closeImportDialog();
-    if (currentView() !== 'models') showView('models');
-    setModelsMsg(`Imported from ${endpoint ? (data.serverLabel || 'the endpoint') : 'Copilot'}: ${parts.join(', ') || 'nothing changed'}.${why.length ? ` ${why.join('; ')}` : ''}`, 'ok');
+    dlg.busy = false;
+    if (live) closeModelEditorDialog();
+    showAllModels();
     // Land ON what was imported: the list filters to the new ids until the filter is cleared.
     const fresh = [...(data.created || []), ...(data.updated || [])];
     if (fresh.length) mvState.justImported = fresh;
+    mvState.cat.fold = { ...mvState.cat.fold, claude: false };
+    if (currentModelsTab() !== 'catalogue') showView('models');
     await refreshModelsEverywhere();
+    setModelsMsg(`Imported from ${endpoint ? (data.serverLabel || 'the endpoint') : 'Copilot'}: ${parts.join(', ') || 'nothing changed'}.${why.length ? ` ${why.join('; ')}` : ''}`, 'ok');
   } catch (e) {
-    setImportMsg(e.message, 'err');
+    if (mvState.dlg === dlg) setAddListMsg(card, e.message, 'err');
+    else notify({ tone: 'err', title: 'Not imported', detail: e.message });
   } finally {
-    if (el.mimpGo) el.mimpGo.disabled = false;
-    mimp.importing = false;
-    if (el.mimpCancel) el.mimpCancel.disabled = false;
+    if (mvState.dlg === dlg) paintAddBusy(card, false);
+    else dlg.busy = false;
   }
 }
 
-/** A catalog row's "needs sign-in" now LEAVES for the Providers page and lands on the row. */
-function goToProviders(provider) {
-  if (currentView() !== 'providers') showView('providers');
-  setTimeout(() => focusProviderRow(provider), 0);
+/** A provider row's Import: what it imports lands in the CATALOG, so that shows first (showView syncs #models). */
+function openAddFromProviders(opts) {
+  if (currentModelsTab() !== 'catalogue') showView('models');
+  openAddModelDialog(opts);
 }
 
-function focusProviderRow(provider) {
-  const card = providerRoot() && providerRoot().querySelector('.mv-providers');
-  if (!card) return;
-  try { card.scrollIntoView({ behavior: 'smooth', block: 'start' }); } catch { /* jsdom */ }
-  const row = provider ? card.querySelector(`.mv-pv-row[data-provider="${provider}"]`) : null;
-  const focus = row && (row.querySelector('.mv-cp-signin') || row.querySelector('.mv-pv-key'));
-  if (focus) { try { focus.focus(); } catch { /* ignore */ } }
+/** A catalog row's "needs sign-in" goes to the Providers tab and lands on the row: the route's reveal unfolds it,
+ *  flashes it and focuses its sign-in or key (revealProviderRow). */
+function goToProviders(provider) {
+  location.hash = modelsHash('providers', provider);
 }
 
 // Any catalog mutation must repaint BOTH surfaces: this view and the composer's
 // model dropdowns (state.models comes from /api/config).
 async function refreshModelsEverywhere() {
-  await loadModelsView();
-  // The Providers page shares mvState.providers with the catalog: a sign-in, a key or a cap that
-  // just changed must show on whichever of the two the user is looking at.
-  if (currentView() === 'providers') renderProvidersViewBody();
+  const newest = await loadModelsView();
+  // The Providers tab shares mvState.providers with the catalog: a sign-in, a key or a cap that
+  // just changed must show on whichever of the two the user is looking at. A newer load (a window
+  // focus) that overtook this one wrote the newest state but never draws over a card on screen, so
+  // the card follows it here when what it shows differs (an entry that drew it already keeps it).
+  if (currentModelsTab() === 'providers') { if (newest) renderProvidersViewBody(); else paintProvidersTab(); }
+  // The Jobs tab's pickers list /api/config's catalogue: a model added or removed shows there too.
+  if (mvState.jobs.loaded) void loadJobs({ engines: false });
   try { await loadConfig(selectedProjectPath() || ''); } catch { /* dropdowns refresh best-effort */ }
 }
 
@@ -20566,7 +21455,8 @@ async function refreshModelsEverywhere() {
 async function copyModelEnvValue(btn) {
   const row = btn.closest('.mv-env-row');
   const editor = btn.closest('.mv-editor');
-  const id = editor && editor.dataset.id;
+  // A copy (Duplicate) has no id of its own yet: its stored rows are its source's (data-copy-from).
+  const id = editor && (editor.dataset.id || editor.dataset.copyFrom);
   const key = row && row.dataset.key;
   if (!id || !key) return;
   try {
@@ -20586,7 +21476,8 @@ async function copyModelEnvValue(btn) {
 // save just rewrites the same value.
 async function toggleModelEnvReveal(btn) {
   const editor = btn.closest('.mv-editor');
-  const id = editor && editor.dataset.id;
+  // A copy reveals its source's values (data-copy-from): the rows it shows are the source's masks.
+  const id = editor && (editor.dataset.id || editor.dataset.copyFrom);
   if (!id) return;
   const rows = editor.querySelectorAll('.mv-env-row[data-key]');
   if (btn.dataset.on) {
@@ -20627,6 +21518,7 @@ async function toggleModelEnvReveal(btn) {
 async function saveModelEditorFlow() {
   const rootEl = modelEditorEl();
   if (!rootEl) return;
+  const dlg = mvState.dlg;
   rootEl.querySelector('.mv-editor-btns')?.setAttribute('data-card-actions', '');
   clearFieldErrors(rootEl);
   cardAlert(rootEl, null);
@@ -20643,33 +21535,55 @@ async function saveModelEditorFlow() {
     return res.ok ? { ok: true } : { ok: false, error: data.error || `HTTP ${res.status}` };
   }, editing ? {} : { done: 'Added' });
   if (r.skipped) return;
-  if (!r.ok) { cardAlert(rootEl, { title: editing ? 'Not saved' : 'Not added', detail: r.error }); return; }
+  // The answer belongs to the open that asked: a screen opened meanwhile (the page's Add model, by keyboard) stays.
+  const live = mvState.dlg === dlg;
+  if (!r.ok) {
+    // A copy whose source was deleted meanwhile is refused for as long as it echoes a mask (collectModelEditor sends
+    // copyFrom only then): say what gets it saved.
+    const detail = /^unknown model to copy from /.test(r.error) ? 'The model this copies was removed. Type the values it masked, then Add.' : r.error;
+    const title = editing ? 'Not saved' : 'Not added';
+    if (!live) { notify({ tone: 'err', title, detail }); return; }
+    cardAlert(rootEl, { title, detail });
+    // withButton turned Save back on: what the form holds now (an id cleared, a refused row typed meanwhile) decides.
+    paintEditorSave(rootEl);
+    return;
+  }
   // Saved work is no longer unsaved work: the dialog closes without asking.
-  closeModelEditorDialog();
-  setModelsMsg(editing ? 'Model saved.' : 'Model added.', 'ok');
+  if (live) closeModelEditorDialog();
   await refreshModelsEverywhere();
+  // A new model shows where it landed (FRM-7): every narrowing cleared, its group unfolded, its side panel open. After
+  // the reload: the panel is built from the loaded catalogue, which did not hold the id before.
+  if (!editing) openModelFromAddress(body.id);
+  setModelsMsg(editing ? 'Model saved.' : 'Model added.', 'ok');
 }
 
+/** Resolves true once the DELETE went through, else false. The side panel on `id` closes before the reload, so it
+ *  closes even when the reload still lists the id. */
 async function deleteModelFlow(id) {
   let refs = null;
   try {
     const r = await fetch(`/api/models/${encodeURIComponent(id)}/refs`);
-    refs = await safeJson(r);
+    if (r.ok) refs = await safeJson(r);
   } catch { /* preview is best-effort; the confirm still names the model */ }
   const ok = await confirmModal({
     title: refs && refs.predefinedShadow ? 'Remove override' : 'Delete model',
-    message: deleteRefsSummary(id, refs),
+    // A failed preview counts nothing, so it claims no count either way.
+    message: refs ? deleteRefsSummary(id, refs) : `Delete model "${id}"? Jobs that use it will be cleared.`,
     confirmLabel: refs && refs.predefinedShadow ? 'Remove override' : 'Delete',
   });
-  if (!ok) return;
+  if (!ok) return false;
   try {
     const res = await fetch(`/api/models/${encodeURIComponent(id)}`, { method: 'DELETE' });
     const data = await safeJson(res);
-    if (!res.ok) return setModelsMsg(data.error || `HTTP ${res.status}`, 'err');
-    setModelsMsg('Deleted.', 'ok');
+    if (!res.ok) { setModelsMsg(data.error || `HTTP ${res.status}`, 'err'); return false; }
+    // The entry is gone either way; a job clear that failed comes back as `warning`.
+    setModelsMsg(data.warning || 'Deleted.', data.warning ? 'warn' : 'ok');
+    if (typeof mvState.cat.open === 'string' && mvState.cat.open.toLowerCase() === String(id).toLowerCase()) mvState.cat.open = null;
     await refreshModelsEverywhere();
+    return true;
   } catch (e) {
     setModelsMsg(e.message, 'err');
+    return false;
   }
 }
 
@@ -20691,41 +21605,62 @@ async function promoteModelFlow(id) {
 }
 
 // Live connectivity check — explicit user action -> POST /api/models/:id/test
-// (mirrors the chat-test handler). Paints the card's own result line instead
-// of repainting the view, so an open editor survives the round trip.
-async function testModelFlow(btn) {
-  const id = btn.dataset.id;
-  const out = btn.closest('.mv-card')?.querySelector('.mv-test-result');
-  const paint = (text, err) => {
-    if (!out) return;
-    out.textContent = text;
-    out.className = `mv-test-result hint${err ? ' err' : ''}`;
+// (mirrors the chat-test handler). The state lives in `mvState.tests`, so a panel drawn
+// anew meanwhile still shows it; it paints the panel's own Test and result line instead of
+// repainting the view (an open editor survives the round trip), and only while that panel shows `id`.
+async function testModelFlow(id) {
+  const lc = String(id).toLowerCase();
+  if (mvState.tests.get(lc)?.busy) return;                              // one test per model at a time
+  const paint = (text, { busy = false, err = false, done = false } = {}) => {
+    // An answer no panel shows is dropped: a panel of this model opened later starts clean.
+    const open = mvState.cat.open;
+    if (!busy && (typeof open !== 'string' || open.toLowerCase() !== lc)) { mvState.tests.delete(lc); return; }
+    mvState.tests.set(lc, { busy, text, err, done });
+    paintModelTest(lc);
   };
-  btn.disabled = true;
-  paint('Testing…');
+  // "Works" is a beat on the button (PAN-3); the answer stays on the line under it.
+  const settleDone = () => {
+    const t = mvState.tests.get(lc);
+    if (!t?.done) return;
+    mvState.tests.set(lc, { ...t, done: false });
+    paintModelTest(lc);
+  };
+  paint('', { busy: true });
   try {
     const res = await fetch(`/api/models/${encodeURIComponent(id)}/test`, { method: 'POST' });
     const data = await safeJson(res);
-    if (!res.ok) return paint(`${data.error || `HTTP ${res.status}`}`, true);
-    if (data.ok) return paint(`Replied: ${data.text}`);
-    paint(`${data.hint || data.message}`, true);
+    if (!res.ok) return paint(`${data.error || `HTTP ${res.status}`}`, { err: true });
+    if (data.ok) {
+      paint(`Replied: ${data.text}`, { done: true });
+      setTimeout(settleDone, BUTTON_DONE_MS)?.unref?.();
+      return;
+    }
+    paint(`${data.hint || data.message}`, { err: true });
   } catch (e) {
-    paint(`${e.message}`, true);
-  } finally {
-    btn.disabled = false;
+    paint(`${e.message}`, { err: true });
   }
 }
 
-// The Providers page's own delegation (§8.1): the same buttons, on the page that now owns them.
+// The Providers tab's own delegation (§8.1): the same buttons, on the tab that now owns them.
 if (el.providersList) {
   el.providersList.addEventListener('click', (ev) => {
     const t = ev.target.closest('button');
     if (!t) return;
-    if (t.classList.contains('mv-cp-signin')) copilotSignInFlow();
+    // A row's head folds or unfolds it; the open rows are kept through every redraw.
+    if (t.classList.contains('mdl-fold')) {
+      const row = t.closest('.mv-pv-card[data-row]')?.dataset.row;
+      if (row) mvState.pvOpen[row] = toggleProviderRow(providerRoot(), row);
+    } else if (t.classList.contains('mv-cp-signin')) copilotSignInFlow();
     else if (t.classList.contains('mv-cp-cancel')) { stopCopilotPoll(); mvState.signIn = null; renderProvidersViewBody(); }
     else if (t.classList.contains('mv-cp-signout')) copilotSignOutFlow();
-    else if (t.classList.contains('mv-cp-fetch-models')) openImportDialog({ source: 'copilot' });
+    // Like OpenRouter's and the OpenAI-compatible row's: the import lands in the CATALOG, so it opens there (step 2).
+    else if (t.classList.contains('mv-cp-fetch-models')) openAddFromProviders({ step: 2, provider: 'copilot' });
     else if (t.classList.contains('mv-cp-quota-refresh')) refreshCopilotQuotaFlow(t);
+    // The OpenRouter row's Save before the generic one, which would send only its key and cap.
+    else if (t.classList.contains('mv-pv-save') && t.dataset.provider === 'openrouter') {
+      const body = collectOpenRouterRow(t.closest('.mv-or-row'));
+      if (body) patchProviderFlow('openrouter', body, { btn: t });
+    } else if (t.classList.contains('mv-pv-save') && t.dataset.provider === 'copilot') copilotSaveFlow(t);
     else if (t.classList.contains('mv-pv-save')) {
       const body = collectProviderRow(providerRoot(), t.dataset.provider);
       if (body) patchProviderFlow(t.dataset.provider, body, { btn: t });
@@ -20734,107 +21669,227 @@ if (el.providersList) {
       const body = collectSpeechRow(providerRoot());
       if (body) patchProviderFlow('speech', body, { btn: t });
     } else if (t.classList.contains('mv-sp-test')) testSpeechFlow(t);
-    else if (t.classList.contains('mv-im-save')) patchProviderFlow('images', collectImagesRow(providerRoot()), { btn: t, onError: (msg) => showImagesSaveError(providerRoot(), msg) });
+    else if (t.classList.contains('mv-im-save')) {
+      // A row that cannot be saved is refused here, in the row's words, and sends nothing.
+      const problem = imagesRowProblem(providerRoot());
+      if (problem) showImagesSaveError(providerRoot(), problem);
+      else patchProviderFlow('images', collectImagesRow(providerRoot()), { btn: t, onError: (msg) => showImagesSaveError(providerRoot(), msg) });
+    }
     else if (t.classList.contains('mv-im-test')) testImagesFlow(t);
     else if (t.classList.contains('mv-so-save')) patchProviderFlow('sound', collectSoundRow(providerRoot()), { btn: t });
     else if (t.classList.contains('mv-so-test')) testSoundFlow(t);
     else if (t.classList.contains('mv-sp-clear')) clearSpeechCacheFlow(t);
-    else if (t.classList.contains('mv-pv-preset')) {
-      // Fills the fields only; the row's Test / Save do the rest, exactly as for a typed URL.
-      applyProviderPreset(providerRoot(), t.dataset.provider, t.dataset.preset);
-      setProviderMsg(t.dataset.provider, 'OpenRouter filled in. Set the key (or keep ${OPENROUTER_KEY} and export it where Worca starts), Test connection, then Save.');
-    } else if (t.classList.contains('mv-pv-browse')) {
+    // OpenRouter's catalog, listed with the key its calls carry; the import lands in the CATALOG, like the row below.
+    else if (t.classList.contains('mv-or-browse')) openAddFromProviders({ step: 2, provider: 'openrouter' });
+    else if (t.classList.contains('mv-pv-browse')) {
       // The import lands in the CATALOG, so it opens there — with this row's endpoint filled in.
       const row = t.closest('.mv-pv-row');
       const input = row && row.querySelector('.mv-pv-baseurl');
-      openImportDialog({ source: 'openai', baseUrl: input ? input.value.trim() : '', goToModels: true });
+      openAddFromProviders({ step: 2, provider: 'openai', baseUrl: input ? input.value.trim() : '' });
     }
   });
   el.providersList.addEventListener('change', (ev) => {
     const t = ev.target;
     if (!t || !t.classList) return;
-    if (t.classList.contains('mv-cp-account')) patchProviderFlow('copilot', { accountType: t.value });
+    if (t.classList.contains('mv-cp-account')) syncCopilotHostField(providerRoot());
     else if (t.classList.contains('mv-im-service')) applyImagesPreset(providerRoot(), t.value);
-    else if (t.classList.contains('mv-pv-conc') && t.dataset.provider === 'copilot') patchProviderFlow('copilot', { maxConcurrent: Number(t.value) });
   });
 }
 
-// The catalog list and the editor dialog share these handlers: the editor moved into an overlay
-// (§4.10), and every branch below already finds its own root from the event target.
+// The catalog list's own changes (the hide switches, the Source); the model dialog has its own below.
 function onModelsListChange(ev) {
   const t = ev.target;
-  if (t && t.classList && t.classList.contains('mv-hide-builtin')) saveHideBuiltinModels(t);
+  if (!t || !t.classList) return;
+  if (t.classList.contains('mv-hide-builtin')) saveHideBuiltinModels(t);
+  else if (t.classList.contains('mdl-source')) {
+    mvState.cat.source = t.value || 'any';
+    redrawCatalogue((root) => root.querySelector('.mdl-source'));
+  }
 }
 
-/** The catalog's toolbar: typing narrows, a chip picks a layer, a header folds its group. */
+/** The Catalogue's search: typing narrows; the redrawn field keeps the focus and the caret (renderModelsViewBody). */
 function onModelsToolbar(ev) {
   const t = ev.target;
   if (!t || !t.classList) return;
   if (t.classList.contains('mv-search')) {
-    mvState.query = t.value;
-    const at = t.selectionStart;
+    mvState.cat.query = t.value;
     renderModelsViewBody();
-    const next = el.modelsList && el.modelsList.querySelector('.mv-search');
-    if (next) { next.focus(); try { next.setSelectionRange(at, at); } catch { /* search inputs vary */ } }
   }
 }
+
+/** Redraw the Catalogue, then focus the control `find(list)` names again (the click's own button was drawn anew). */
+function redrawCatalogue(find) {
+  renderModelsViewBody();
+  const next = el.modelsList && find(el.modelsList);
+  try { next?.focus({ preventScroll: true }); } catch { /* jsdom */ }
+}
+
+/** The Catalogue's own buttons: a chip picks a filter, Show all clears every narrowing, a group head folds or unfolds
+ *  its harness, its More opens the group menu, a sub-group's fix goes where the fix is, a row opens its side panel (the
+ *  same row again closes it). */
 function onModelsToolbarClick(t) {
   if (t.classList.contains('filter-chip') && t.closest('.mv-filters')) {
-    mvState.filter = t.dataset.filter || 'all';
-    renderModelsViewBody();
+    const key = t.dataset.filter || 'all';
+    mvState.cat.filter = key;
+    redrawCatalogue((root) => [...root.querySelectorAll('.mv-filters .filter-chip[data-filter]')].find((n) => n.dataset.filter === key));
     return true;
   }
-  if (t.classList.contains('mv-sec-toggle')) {
-    const key = t.dataset.section;
-    if (key) mvState.collapsed = { ...mvState.collapsed, [key]: !mvState.collapsed[key] };
-    renderModelsViewBody();
+  if (t.classList.contains('mdl-show-all')) {
+    showAllModels();
+    redrawCatalogue((root) => root.querySelector('.mv-search'));
+    return true;
+  }
+  const engine = t.closest('.mdl-grp[data-engine]')?.dataset.engine || '';
+  if (t.classList.contains('mdl-grp-toggle') && engine) {
+    const fold = mvState.cat.fold;
+    mvState.cat.fold = { ...fold, [engine]: !(fold[engine] ?? engine !== 'claude') };
+    redrawCatalogue((root) => [...root.querySelectorAll('.mdl-grp[data-engine]')].find((n) => n.dataset.engine === engine)?.querySelector('.mdl-grp-toggle'));
+    return true;
+  }
+  if (t.classList.contains('mdl-grp-more') && engine) {
+    openGroupMenu(t, engine);
+    return true;
+  }
+  if (t.classList.contains('mdl-fix') && t.dataset.row) {
+    // Copilot signs in inside the setup assistant (AC-4.5); a key is set on its Providers row.
+    if (t.dataset.row === 'copilot') openSetup({ entry: 'fix', step: 'access' });
+    else goToProviders(t.dataset.row);
+    return true;
+  }
+  if (t.classList.contains('mdl-row') && t.dataset.id) {
+    const id = t.dataset.id;
+    const open = mvState.cat.open;
+    mvState.cat.open = typeof open === 'string' && open.toLowerCase() === id.toLowerCase() ? null : id;
+    redrawCatalogue(() => modelRowEl(id, engine));
     return true;
   }
   return false;
 }
-function onModelsClick(ev) {
-    const t = ev.target.closest('button');
-    if (!t) return;
-    if (onModelsToolbarClick(t)) return;
-    if (t.classList.contains('mv-edit')) {
-      mvState.editing = (mvState.data && mvState.data.models || []).find((m) => m.id === t.dataset.id) || null;
-      mvState.openCreate = false;
-      mvState.openShare = false;
+
+/** A harness group's More menu (CAT-4): "Default for new runs", ticked on the default, off while not ready or locked. */
+function openGroupMenu(anchor, engine) {
+  const g = buildCatalogue(catalogueData(), mvState.cat).groups.find((x) => x.engine === engine);
+  if (!g) return;
+  openMenu({ doc: document, anchor, align: 'end', label: `More for ${g.name}`, items: [{
+    label: 'Default for new runs', checked: g.isDefault, disabled: !g.canDefault, hint: g.defaultHint,
+    onSelect: () => { void setDefaultRunEngine(engine); },
+  }] });
+}
+
+/** Make `engine` the default for new runs (the user's own `runEngine`), then say so and mark its group. Resolves true
+ *  once it is saved (the Jobs tab then marks its button), else undefined. */
+async function setDefaultRunEngine(engine) {
+  try {
+    const res = await fetch('/api/settings', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ runEngine: engine }),
+    });
+    const data = await safeJson(res);
+    if (!res.ok) return setModelsMsg(data.error || `HTTP ${res.status}`, 'err');
+    mvState.runEngine = engine;
+    // New run re-reads its defaults only on a project change or a broadcast while it shows: re-read them now, so the
+    // form opened next starts on this engine (an engine the person already picked there stays, as loadRunDefaults keeps).
+    void loadRunDefaults(state.runTarget === 'workspace' ? '' : (state.projectDir || ''));
+    setModelsMsg(`${engineLabel(engine)} is the default for new runs`, 'ok');
+    renderModelsViewBody();
+    return true;
+  } catch (e) {
+    setModelsMsg(e.message, 'err');
+  }
+}
+
+/** Close the side panel: no open row, an empty host, no row marked; `focusRow` puts the focus on the row it showed. */
+function closeModelPanel({ focusRow = false } = {}) {
+  const id = mvState.cat.open;
+  mvState.cat.open = null;
+  el.modelPanelHost?.replaceChildren();
+  renderModelsViewBody();
+  if (focusRow && id) {
+    try { modelRowEl(id)?.focus({ preventScroll: true }); } catch { /* jsdom */ }
+  }
+}
+
+/** The Jobs block a "Used by" row opens, by the use's kind (catalogue-model.mjs panelUses). */
+const USE_JOBS_PART = Object.freeze({ role: 'roles', step: 'steps', helper: 'helpers', design: 'design' });
+
+/** The side panel's buttons (PAN-3, PAN-6). Every action acts on the open row's model, by its own id. */
+function onModelPanelClick(ev) {
+  const t = ev.target.closest('button');
+  if (!t || !el.modelPanelHost.contains(t)) return;
+  if (t.classList.contains('mdl-side-close')) { closeModelPanel({ focusRow: true }); return; }
+  const panel = mvState.cat.open ? buildModelPanel(catalogueData(), mvState.cat.open) : null;
+  if (!panel) return;
+  const id = panel.id;
+  if (t.classList.contains('mdl-copy-id')) void copyFromButton(t, id);
+  else if (t.classList.contains('mdl-use')) {
+    // The use's harness, then its block; a project's step or node pick is no row of the tab: the tab itself.
+    if (t.dataset.engine) mvState.jobs.engine = t.dataset.engine;
+    location.hash = modelsHash('jobs', USE_JOBS_PART[t.dataset.kind] || '');
+  }
+  else if (t.classList.contains('mdl-act-more')) {
+    openMenu({ doc: document, anchor: t, align: 'end', label: 'More', items: [
+      { label: panel.actions.delLabel, danger: true, onSelect: () => { void deleteModelFlow(id); } },
+    ] });
+  } else if (t.classList.contains('mdl-act')) {
+    const act = t.dataset.act;
+    if (act === 'test') void testModelFlow(id);
+    else if (act === 'edit') {
+      mvState.editing = (mvState.data?.models || []).find((m) => m.id === id) || null;
       mvState.prefill = null;
       openModelEditorDialog();
-    } else if (t.classList.contains('mv-delete')) {
-      deleteModelFlow(t.dataset.id);
-    } else if (t.classList.contains('mv-promote')) {
-      promoteModelFlow(t.dataset.id);
-    } else if (t.classList.contains('mv-duplicate')) {
-      duplicateModelFlow(t.dataset.id);
-    } else if (t.classList.contains('mv-copy')) {
-      editPluginCopyFlow(t.dataset.plugin, t.dataset.id);
-    } else if (t.classList.contains('mv-test')) {
-      testModelFlow(t);
-    } else if (t.classList.contains('mv-signin')) {
-      const step = setupStepForSignIn(t);   // a Copilot pill signs in inside the setup assistant (AC-4.5)
-      if (step) openSetup({ entry: 'fix', step }); else goToProviders(t.dataset.provider);
-    } else if (t.classList.contains('mvx-export')) {
-      exportPluginFlow();
-    } else if (t.classList.contains('mvx-cancel')) {
-      mvState.openShare = false;
-      renderModelsViewBody();
-    } else if (t.classList.contains('mv-cancel')) {
-      modelEditorGuard?.cancel();
-    } else if (t.classList.contains('mv-env-add')) {
-      const wrap = modelEditorEl()?.querySelector('.mv-env');
-      if (wrap) wrap.appendChild(makeEnvRow());
-    } else if (t.classList.contains('mv-env-rm')) {
-      const row = t.closest('.mv-env-row');
-      if (row) row.remove();
-    } else if (t.classList.contains('mv-env-copy')) {
-      copyModelEnvValue(t);
-    } else if (t.classList.contains('mv-env-reveal')) {
-      toggleModelEnvReveal(t);
-    } else if (t.classList.contains('mv-save')) {
-      saveModelEditorFlow();
-    }
+    } else if (act === 'duplicate') void duplicateModelFlow(id);
+    else if (act === 'copy') void editPluginCopyFlow(panel.plugin, id);
+    else if (act === 'promote') void promoteModelFlow(id);
+  }
+}
+
+/** The Catalogue's own clicks: its toolbar, rows and fixes (Share as plugin is a screen of the model dialog). */
+function onModelsClick(ev) {
+  const t = ev.target.closest('button');
+  if (t) onModelsToolbarClick(t);
+}
+
+/** The model dialog's buttons, whichever screen shows them (one delegation on the modal). */
+function onModelDialogClick(ev) {
+  const t = ev.target.closest('button');
+  if (!t || !el.modelEditorModal.contains(t)) return;
+  const c = t.classList;
+  if (c.contains('mv-cancel') || c.contains('mvx-cancel') || c.contains('mdl-close')) { modelEditorGuard?.cancel(); return; }
+  // A Save or an import is out: every screen stays as it is (a synthetic click reaches a disabled button too).
+  if (modelDialogBusy()) return;
+  if (c.contains('mdl-next')) addStep1Next(t.closest('.mdl-add'));
+  else if (c.contains('mv-back')) modelDialogBack();
+  else if (c.contains('mv-rewhere')) showRewhereStep();
+  else if (c.contains('mdl-manual')) addManualForm();
+  else if (c.contains('mdl-add-fix')) addFixFlow(t);
+  else if (c.contains('mimp-go')) void importAddModelsFlow();
+  else if (c.contains('mimp-list')) void listAddModels();
+  else if (c.contains('mimp-preset')) applyAddPreset(t);
+  else if (c.contains('mv-env-add')) {
+    const wrap = modelEditorEl()?.querySelector('.mv-env');
+    if (wrap) { wrap.appendChild(makeEnvRow()); paintEditorSave(modelEditorEl()); }
+  } else if (c.contains('mv-env-rm')) {
+    const row = t.closest('.mv-env-row');
+    const editorEl = t.closest('.mv-editor');
+    if (row) { row.remove(); paintEditorSave(editorEl); }
+  } else if (c.contains('mv-env-copy')) copyModelEnvValue(t);
+  else if (c.contains('mv-env-reveal')) toggleModelEnvReveal(t);
+  else if (c.contains('mv-save')) saveModelEditorFlow();
+  else if (c.contains('mvx-export')) void exportPluginFlow();
+}
+
+/** Step 2's own changes: the provider (a new list), a tick or select-all (the foot's count), OpenRouter's filters. */
+function onModelDialogChange(ev) {
+  const t = ev.target;
+  const card = t && t.closest ? t.closest('.mdl-add[data-step="2"]') : null;
+  if (!card) return;
+  if (t.classList.contains('mdl-add-provider')) changeAddProvider(t);
+  else if (t.classList.contains('mvi-all')) {
+    const sheet = t.closest('.mvi');
+    // Select-all means what is ON SCREEN: ticking a row the filter hides would import a surprise.
+    if (sheet) for (const c of sheet.querySelectorAll('tbody tr:not(.is-filtered) .mvi-cb')) { if (!c.disabled) c.checked = t.checked; }
+    paintAddTicks(card);
+  } else if (t.classList.contains('mvi-cb')) paintAddTicks(card);
+  else if (t.closest('.mvi-or-filters')) { applyAddFilter(card); paintAddTicks(card); }
 }
 // Pricing mode. A `change` listener, not the click one above: arrow-key
 // navigation within a radio group changes the selection without a click.
@@ -20855,86 +21910,62 @@ function onModelsEngineChange(ev) {
 }
 function onModelsConnChange(ev) {
     const t = ev.target;
-    if (!t.classList || !t.closest('.mv-conn')) return;
+    // The connection and its folds (the form puts them after Pricing); Pricing is in neither, so a pick there stays.
+    if (!t.classList || !t.closest('.mv-conn, .mv-conn-more')) return;
     const editorEl = t.closest('.mv-editor');
     if (!editorEl) return;
     applyConnectionModeIn(editorEl);
     const conn = editorEl.querySelector('.mv-conn');
-    const mode = conn && conn.querySelector('.mv-conn-mode-rb:checked')?.value;
-    const provider = conn && conn.querySelector('.mv-conn-provider')?.value;
-    if (mode === 'provider' && provider === 'copilot' && (editorEl.querySelector('.mv-cost-mode-rb:checked')?.value || 'cli') === 'cli') {
+    // conn.dataset.provider: the provider it stores (OpenRouter's is openai), '' off a provider.
+    const provider = conn && connectionWhere(conn) === 'provider' ? conn.dataset.provider : '';
+    if (provider === 'copilot' && (editorEl.querySelector('.mv-cost-mode-rb:checked')?.value || 'cli') === 'cli') {
       setModelCost(editorEl, { free: true });
     }
 }
 
 el.modelsList?.addEventListener('input', onModelsToolbar);
-for (const host of [el.modelsList, el.modelEditorModal]) {
-  if (!host) continue;
-  host.addEventListener('change', onModelsListChange);
-  host.addEventListener('click', onModelsClick);
-  host.addEventListener('change', onModelsCostChange);
-  host.addEventListener('change', onModelsConnChange);
-  host.addEventListener('change', onModelsEngineChange);
-}
-
-// ── Import dialog wiring ────────────────────────────────────────────────────
-if (el.modelImportModal) {
-  el.mimpBaseField = el.mimpBase ? el.mimpBase.closest('.mimp-base-field') : null;
-  el.mimpKeyField = el.mimpKey ? el.mimpKey.closest('.mimp-key-field') : null;
-  // A hosted API's preset fills its base URL and the usual ${VAR} for its key (bridge-view.mjs ENDPOINT_PRESETS).
-  for (const b of el.modelImportModal.querySelectorAll('.mimp-preset')) {
-    b.addEventListener('click', () => {
-      const p = ENDPOINT_PRESETS[b.dataset.preset];
-      if (!p) return;
-      if (el.mimpBase) el.mimpBase.value = p.baseUrl;
-      if (el.mimpKey) el.mimpKey.value = p.keyRef;
-      listImportModels();
-    });
-  }
-  el.modelImportBtn?.addEventListener('click', () => openImportDialog({}));
-  el.mimpSource?.addEventListener('change', () => {
-    mimp.source = el.mimpSource.value;
-    mimp.payload = null;
-    el.mimpBody?.replaceChildren();
-    if (el.mimpGo) el.mimpGo.disabled = true;
-    setImportMsg('');
-    paintImportSource();
-    if (mimp.source === 'copilot') listImportModels();
+el.modelPanelHost?.addEventListener('click', onModelPanelClick);
+// SH-5: Escape closes the Catalogue's side panel, last: an open menu stops its own Escape first (this is the bubble
+// phase), an open dialog owns it, and so do Ask beside the page, the terminal and the guide.
+document.addEventListener('keydown', (e) => {
+  if (e.key !== 'Escape' || e.defaultPrevented) return;
+  if (currentModelsTab() !== 'catalogue' || !mvState.cat.open || !el.modelPanelHost?.querySelector('.mdl-side')) return;
+  if (dialogOpen(document)) return;                                    // a pop-up owns Escape
+  if (document.querySelector('.wfv-menu, .group-picker, .label-picker')) return;   // an open menu or picker closes first
+  // Escape typed in a text field (the search) is the field's: the browser clears it (a switch or a button is no field).
+  if (e.target?.matches?.('input:not([type=checkbox]):not([type=radio]), textarea, select')) return;
+  if (e.target?.closest?.('#ask-side')) return;                      // Ask worca beside the page: the chat's Escape
+  if (askPanel?.ownsKey(e)) return;
+  if (e.target?.closest?.('.term-pane')) return;                     // Escape typed in the terminal (vim, less) is the shell's
+  if (document.querySelector('.guide-layer')) return;                // the guide owns Escape
+  e.preventDefault();
+  closeModelPanel({ focusRow: true });
+});
+el.modelsList?.addEventListener('change', onModelsListChange);
+el.modelsList?.addEventListener('click', onModelsClick);
+// The model dialog: every screen's buttons, the form's own changes, step 2's filter and its address's Enter.
+if (el.modelEditorModal) {
+  el.modelEditorModal.addEventListener('click', onModelDialogClick);
+  for (const fn of [onModelDialogChange, onModelsCostChange, onModelsConnChange, onModelsEngineChange]) el.modelEditorModal.addEventListener('change', fn);
+  el.modelEditorModal.addEventListener('input', (ev) => {
+    const card = ev.target?.classList?.contains('mimp-filter') ? ev.target.closest('.mdl-add[data-step="2"]') : null;
+    if (card) applyAddFilter(card);
   });
-  el.mimpList?.addEventListener('click', () => listImportModels());
-  el.mimpBase?.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); listImportModels(); } });
-  el.mimpKey?.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); listImportModels(); } });
-  el.mimpFilter?.addEventListener('input', () => applyImportFilter());
-  el.mimpGo?.addEventListener('click', () => importModelsFlow());
-  el.mimpCancel?.addEventListener('click', () => importGuard?.cancel());
-  // The select-all box lives inside the sheet the dialog hosts.
-  el.modelImportModal.addEventListener('change', (ev) => {
-    const t = ev.target;
-    if (t && t.classList && t.classList.contains('mvi-all')) {
-      const sheet = t.closest('.mvi');
-      // Select-all means what is ON SCREEN: ticking a row the filter hides would import a surprise.
-      if (sheet) for (const c of sheet.querySelectorAll('tbody tr:not(.is-filtered) .mvi-cb')) { if (!c.disabled) c.checked = t.checked; }
-    } else if (t && t.closest && t.closest('.mvi-or-filters')) applyImportFilter();   // Free / Tools / window
+  el.modelEditorModal.addEventListener('keydown', (ev) => {
+    if (ev.key !== 'Enter' || !ev.target?.classList) return;
+    if (!ev.target.classList.contains('mimp-base') && !ev.target.classList.contains('mimp-key')) return;
+    ev.preventDefault();
+    void listAddModels();
   });
 }
 
-if (el.modelCreateBtn) {
-  el.modelCreateBtn.addEventListener('click', () => {
-    mvState.editing = null;
-    mvState.openCreate = true;
-    mvState.openShare = false;
-    mvState.prefill = null;
-    openModelEditorDialog();
-  });
-}
-if (el.modelShareBtn) {
-  el.modelShareBtn.addEventListener('click', () => {
-    mvState.editing = null;
-    mvState.openCreate = false;
-    mvState.prefill = null;
-    mvState.openShare = true;
-    mvState.revealPanel = true;
-    renderModelsViewBody();
+if (el.modelCreateBtn) el.modelCreateBtn.addEventListener('click', () => openAddModelDialog());
+// More: the page's rarer actions in a menu (today Share as plugin, which opens in the model dialog).
+if (el.modelsMoreBtn) {
+  el.modelsMoreBtn.addEventListener('click', () => {
+    openMenu({ doc: document, anchor: el.modelsMoreBtn, align: 'end', label: 'More', items: [
+      { label: 'Share as plugin', onSelect: () => openShareDialog() },
+    ] });
   });
 }
 
@@ -24335,13 +25366,13 @@ function hdGoDetails(tab = '') {
 // setRdMode, for the History screen). `tab` opens that tab when the level shows it.
 function setHdMode(screen, mode, tab = '', { focus = true } = {}) {
   if (!screen) return;
-  const details = mode === 'details';
-  const changed = screen.dataset.mode !== (details ? 'details' : 'glance');
-  screen.dataset.mode = details ? 'details' : 'glance';
-  screen.querySelector('.hd-glance').hidden = details;
-  screen.querySelector('.hd-details').hidden = !details;
-  screen.querySelector('.hd-back').hidden = details;
-  screen.querySelector('.hd-to-run').hidden = !details;
+  // One level, as on the live page: Details with the run card as its Overview tab.
+  if (mode !== 'details' && !tab) tab = 'overview';
+  const details = true;
+  const changed = screen.dataset.mode !== 'details';
+  screen.dataset.mode = 'details';
+  screen.querySelector('.hd-details').hidden = false;
+  screen.querySelector('.hd-back').hidden = false;
   if (details) {
     const tabs = detailTabsOf(screen);
     if (tabs && tab && tabs.cells.has(tab) && levelAtLeast(tabs.cells.get(tab).tab.level || 'simple') && (gitOn() || !tabs.cells.get(tab).tab.needsGit)) tabs.activate(tab);
@@ -24351,8 +25382,7 @@ function setHdMode(screen, mode, tab = '', { focus = true } = {}) {
   if (changed && focus) {
     // Side by side the glance's way back to the list is hidden (the list is in view), so
     // coming back from Details lands on the glance's title (tabindex="-1") instead.
-    const target = details ? screen.querySelector('.hd-to-run')
-      : runsLayout() === 'split' ? screen.querySelector('.hd-glance .rd-page-title') : screen.querySelector('.hd-back');
+    const target = runsLayout() === 'split' ? screen.querySelector('.hd-title') : screen.querySelector('.hd-back');
     if (target && !target.hidden) target.focus({ preventScroll: true });
   }
 }
@@ -24428,13 +25458,11 @@ function openHistDetail(parsed, { instant = false, host: where = 'page' } = {}) 
   host.appendChild(screen);
   histDetailState.screen = screen;
   // The panel has no glance, so there is no page title to watch.
-  if (panel) presentRunScreenInPanel(screen); else watchPageTitle(screen, 'hd');
+  if (panel) presentRunScreenInPanel(screen); else { barIntoHeader(screen); watchPageTitle(screen, 'hd'); }
 
   screen.querySelector('.hd-back').addEventListener('click', () => backToRunsList());   // slice 2: the list itself, never the D6 restore
   // Glance <-> Details are routes, so the browser's back and forward walk them.
   const toDetails = (tab = '') => { hdGoDetails(tab); };
-  const toRun = () => { if (histDetailState && histDetailState.host !== 'panel') location.hash = hdHash(histDetailState); };
-  screen.querySelector('.hd-to-run').addEventListener('click', toRun);
   // Run 3 (D13): the saved bar is the primary action, Run after, Stop and ⋯; ⋯ drives the controls CSS hides there.
   screen.querySelector('.hd-bar-more')?.addEventListener('click', (e) => {
     toggleMenu({ doc: document, anchor: e.currentTarget, items: runMoreItems(screen), align: 'end', label: 'More for this run' });
@@ -26019,7 +27047,6 @@ function hdSyncPr(projectKey, id, row) {
   if (row) { histDetailState.record = row; askPanel?.pageChanged?.(); }   // a deep link's minimal record upgrades to the real row
   paintHdPr(histDetailState.screen, histDetailState.record, histDetailState.data);
   paintHdHeaderMeta(histDetailState.screen, histDetailState.record, histDetailState.data);
-  paintHdOvPrs(histDetailState.screen.querySelector('.hd-ov-prs'), histDetailState.record);
   paintHdBase(histDetailState.screen, histDetailState.record, histDetailState.data);   // an open PR owns the pipeline Resolve
   paintHdAfter(histDetailState.screen, histDetailState.record, histDetailState.data);
   void paintHdSavePreset(histDetailState.screen, histDetailState.data);
@@ -26035,7 +27062,7 @@ function hdSyncPr(projectKey, id, row) {
 function paintHdGlance(screen, record, data) {
   const glance = screen && screen.querySelector('.hd-glance');
   if (!glance || !data || !data.state) return;
-  void loadHdAwayAnswers(screen, record && record.id, data.state.steps);   // `st` is declared below (TDZ)
+  void loadHdAwayAnswers(screen, record && record.id);
   const st = data.state;
   const run = { status: st.status, steps: st.steps, stepper: st.stepper, pendingQuestion: null, active: st.active };
   const meta = histStatusMeta({ status: st.status });
@@ -26072,20 +27099,14 @@ function paintHdGlance(screen, record, data) {
   // Time · Cost · Changes, then the Cost tags row, as on the Running page in every state.
   paintHdFacts(screen, record, data);
 
-  // The result: every tab, the actions. The things to check live in Overview only.
+  // The local copy's way out; the tabs are the tab bar's.
   const host = glance.querySelector('.hd-result');
   const keptRow = host.querySelector('.rd-srow-checkout');
   const keptFocus = keptRow && keptRow.contains(document.activeElement) ? document.activeElement : null;
-  host.replaceChildren();
-  const trail = trailColumns(run);
+  host.replaceChildren(rdCheckoutGroup());
   const co = hdCheckoutFor(record);
   const held = hdRetainedFor(record, st);
   const canTry = hdCanTry(record, st, held.retained, held.provisional);
-  host.append(...rdActivityGroups(screen, {
-    overview: activityOverviewValue(results),
-    workflow: trail.count ? `${trail.count} step${trail.count === 1 ? '' : 's'}` : '',
-    actions: checkoutRowValue(co, { when: shortWhen, canTry }),
-  }));
   paintActionsRowValue(screen, co, canTry, () => hdCurrentRecord(record), keptRow);
   if (keptFocus && keptFocus.isConnected) keptFocus.focus();   // detaching the row dropped its focus
 
@@ -26439,8 +27460,8 @@ function paintHdPr(screen, record, data) {
   btn.onclick = () => openShipItModal(record, data);
 }
 
-// Watch PR (#619): the PR's status and Watch switch live on the Overview tab (paintHdOvPrs), drawn by paintRdPrStatus;
-// the run page card reads the same answer through its .rd-pr-feed (slice 3). The words are run-head.mjs's
+// Watch PR (#619): the run card reads the PR's status through its .rd-pr-feed (slice 3, paintRdPrStatus); its
+// View PR ▾ menu carries the Watch item. The words are run-head.mjs's
 // (HD_PR_WATCH_ACTIVE, hdPrWatchLabel).
 const hdPrWatchTone = (state) => (state.status === 'needs-person' ? 'bad' : HD_PR_WATCH_ACTIVE.has(state.status) ? 'run' : '');
 const HD_PR_WATCH_TIP = 'Watch: start a fix run when checks fail or reviewers ask for changes';
@@ -27977,6 +28998,7 @@ function reloadHistDetail() {
 // --- section tabs: pill row + lazily-built section bodies -------------------
 
 const HD_TAB_ICONS = {
+  task: '<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><rect x="5" y="4" width="14" height="17" rx="2"/><path d="M9 4.5V3h6v1.5M9 10h6M9 14h6M9 18h3" stroke-linecap="round" stroke-linejoin="round"/></svg>',
   diff: '<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><path d="M6 3h8l4 4v14H6z" stroke-linejoin="round"/><path d="M14 3v4h4" stroke-linejoin="round"/></svg>',
   overview: '<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><circle cx="12" cy="12" r="8"/><path d="M12 8h.01M11 12h1v4h1" stroke-linecap="round" stroke-linejoin="round"/></svg>',
   agents: '<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><circle cx="6" cy="6" r="2.4"/><circle cx="6" cy="18" r="2.4"/><circle cx="18" cy="12" r="2.4"/><path d="M8 6h5a3 3 0 0 1 3 3v0M8 18h5a3 3 0 0 0 3-3v0" stroke-linecap="round"/></svg>',
@@ -28023,6 +29045,10 @@ function initDetailTabs(screen, tabs, ctx, opts) {
   if (!bar || !secs) return;   // a screen whose template lacks the two hosts
   bar.innerHTML = '';
   bar.classList.add('tabs');
+  // The run card lives in the Overview section (adoptRunCard): park it back at the screen's top level, so the
+  // rebuilt Overview adopts it again rather than the reset destroying it.
+  const card = secs.querySelector('.rd-glance');
+  if (card) screen.insertBefore(card, screen.querySelector(':scope > :is(.rd-details,.hd-details)'));
   secs.innerHTML = '';
   const shown = tabs.filter((t) => t.visible(ctx));
   const cells = new Map();
@@ -28124,10 +29150,12 @@ const HD_TABS = [
   // counted in filesDeleted, so adding filesDeleted double-counts every deletion
   // against the rendered file list.
   // ONE order on both run pages (RD_TABS matches), in the order a reader asks: what did
-  // it produce (Overview · Diff · Artifacts), what can I do with it (Actions), then how did it
+  // it produce and what was it asked (Overview · Task · Diff · Artifacts), what can I do with it (Actions), then how did it
   // get there, coarse to fine (Workflow · Q&A · Logs · Agents). "Details ›" opens the first shown tab; the trail
   // opens Workflow.
   { key: 'overview', label: 'Overview', level: 'simple', badge: () => null, visible: () => true, build: (...a) => buildHdOverview(...a) },
+  // The run's prompt, second: what it was asked, right after what it did.
+  { key: 'task', label: 'Task', level: 'simple', badge: () => null, visible: () => true, build: (...a) => buildHdTask(...a) },
   { key: 'diff', label: 'Diff', level: 'simple', needsGit: true,
     badge: (d) => { const r = gitOnlyResults(d.results, (d.folderMembers || []).map((m) => m.memberKey)); return r && r.summary ? String((r.summary.filesNew || 0) + (r.summary.filesChanged || 0)) : null; },
     visible: (d) => isGitRun(d.state), build: (...a) => buildHdDiff(...a) },
@@ -29663,16 +30691,6 @@ function hdWorktreeRow(word, dir) {
   return row;
 }
 
-function hdStatCard(kind, label, value, sub) {
-  const card = document.createElement('div');
-  card.className = `hd-ov-card hd-ov-card-${kind}`;
-  const l = document.createElement('div'); l.className = 'hd-ov-label'; l.textContent = label;
-  const v = document.createElement('div'); v.className = 'hd-ov-value'; v.textContent = value;
-  card.append(l, v);
-  if (sub) { const s = document.createElement('div'); s.className = 'hd-ov-sub'; s.textContent = sub; card.appendChild(s); }
-  return card;
-}
-
 // Workspace results have NO top-level keyThingsToCheck — findings live under
 // perProject[<key>].keyThingsToCheck (the rollup summary only counts them), so a
 // workspace run would otherwise always read "Clean".
@@ -29685,57 +30703,32 @@ function hdChecks(r) {
   return r.keyThingsToCheck || [];
 }
 
-// "What did the run touch?" without the Diff tab (docs/ui-levels.md): Diff is advanced, so the
-// Overview — the one results tab Simple mode has — lists the files in plain words. No hunks, no
-// comments; from advanced up a button hands over to the real diff.
-const HD_FILES_SHOWN = 12;
-function hdFilesChangedBox(sec, results, { diffLink = true } = {}) {
-  if (!results) return null;
-  const rows = hdDiffFileRows(results);
-  if (!rows.length) return null;
-  const box = document.createElement('div');
-  box.className = 'hd-ov-files';
-  const head = document.createElement('div'); head.className = 'hd-ov-files-head';
-  const l = document.createElement('div'); l.className = 'hd-ov-label';
-  l.textContent = rows.length === 1 ? 'Files changed · 1' : `Files changed · ${rows.length}`;
-  const open = tagLevel(document.createElement('button'), 'advanced');
-  open.type = 'button'; open.className = 'link-btn'; open.textContent = 'Open the diff';
-  open.dataset.needsGit = '';
-  open.addEventListener('click', () => {
-    const screen = histDetailState && histDetailState.screen;   // the state is keyed on the cloned template root
-    const tabs = screen && detailTabState.get(screen);
-    if (tabs && tabs.cells.has('diff')) tabs.activate('diff');
-  });
-  head.append(l);
-  if (diffLink) head.append(open);
-  box.appendChild(head);
-  const list = document.createElement('ul'); list.className = 'hd-ov-files-list';
-  for (const { project, f, isNew } of rows.slice(0, HD_FILES_SHOWN)) {
-    const li = document.createElement('li');
-    const kind = document.createElement('span');
-    const word = isNew ? 'new' : (f.status === 'D' ? 'deleted' : (f.status === 'R' ? 'renamed' : 'edited'));
-    kind.className = `hd-ov-file-kind k-${word}`; kind.textContent = word;
-    const name = document.createElement('span'); name.className = 'hd-ov-file-path mono';
-    name.textContent = project ? `${project}/${f.path}` : f.path; name.title = name.textContent;
-    li.append(kind, name);
-    list.appendChild(li);
-  }
-  box.appendChild(list);
-  if (rows.length > HD_FILES_SHOWN) {
-    const more = document.createElement('div'); more.className = 'hint';
-    more.textContent = `and ${rows.length - HD_FILES_SHOWN} more`;
-    box.appendChild(more);
-  }
-  return box;
+// One level (no separate glance): the run card is the Overview tab's body. Moves the screen's card (.rd-glance) into
+// `sec`, puts the Overview's short facts (`side`: the verdict, the run's state) in the card's right column and its long
+// lists (`below`: findings, checklists, skills, memory) under the card, full width. A screen without the card (the Chat run panel
+// takes it out) gets both alone. A rebuild swaps only the Overview's own parts: the card stays attached, so a field
+// being edited in it (Edit cost tags) keeps its focus.
+function adoptRunCard(sec, side, below) {
+  const glance = sec.closest('.rd, .hd')?.querySelector('.rd-glance') || null;
+  for (const c of [...sec.children]) if (c !== glance) c.remove();
+  const nav = glance && glance.querySelector('.rd-sheet-nav');
+  const sheet = glance && glance.querySelector(':scope > .rd-sheet');
+  if (!nav || !sheet) { sec.append(side, below); return; }
+  for (const old of glance.querySelectorAll('.hd-ov')) old.remove();
+  nav.appendChild(side);
+  sheet.after(below);
+  if (glance.parentNode !== sec) sec.appendChild(glance);
 }
 
 function buildHdOverview(sec, record, data) {
-  sec.innerHTML = '';
   const st = data.state;
   const results = data.results;
+  // Short facts beside the card's details; the long lists under the card, full width.
   const wrap = document.createElement('div');
   wrap.className = 'hd-ov';
-  sec.appendChild(wrap);
+  const below = document.createElement('div');
+  below.className = 'hd-ov hd-ov-below';
+  adoptRunCard(sec, wrap, below);
 
   // 1) Verdict banner (+ findings list).
   const verdict = document.createElement('div');
@@ -29762,42 +30755,14 @@ function buildHdOverview(sec, record, data) {
     verdict.append(chip, document.createTextNode(' No review results captured. The run did not complete.'));
   }
   if (verdict.childNodes.length) wrap.appendChild(verdict);
-  // The open pull request(s) as GitHub sees them now, beside the review's verdict from the run.
-  const prs = document.createElement('div');
-  prs.className = 'hd-ov-prs';
-  prs.dataset.needsGit = '';
-  wrap.appendChild(prs);
-  paintHdOvPrs(prs, record);
+  // The pull request is the card head's; the Actions tab has the controls.
   const git = gitOn() && isGitRun(hdRunOf(record, data));
-  if (git && isTerminalStatus(record.status)) {
-    const strip = document.createElement('div'); strip.className = 'act-strip'; tagLevel(strip, 'advanced');
-    strip.dataset.needsGit = '';
-    wrap.appendChild(strip);
-    paintActionsStrip(strip, record.id, runActionQuery(record.projectDir, record).toString());
-  }
-  if (checks.length) wrap.appendChild(issueList(checks.map((c) => ({ ...c, origin: 'review' }))));
+  if (checks.length) below.appendChild(issueList(checks.map((c) => ({ ...c, origin: 'review' }))));
   // spec D7: the same groups as the run page
   const cl = renderChecklistGroups(document, data.reviews);
-  if (cl) wrap.appendChild(cl);
+  if (cl) below.appendChild(cl);
 
-  // 2) Stat cards.
-  const grid = document.createElement('div');
-  grid.className = 'hd-ov-grid';
-  const steps = Array.isArray(st.steps) ? st.steps : [];
-  const maxCycle = steps.reduce((m, s) => Math.max(m, Number(s && s.cycle) || 0), 0) || 1;
-  grid.appendChild(hdStatCard('duration', 'Duration',
-    typeof st.totalActiveMs === 'number' ? fmtDuration(st.totalActiveMs) : '—',
-    isGraphManifest(st.stepper)
-      ? histCountsLine(st)
-      : `${steps.length} step${steps.length === 1 ? '' : 's'} · ${maxCycle} cycle${maxCycle === 1 ? '' : 's'}`));
-  const histCost = runCostText(st, st.totalCostUsd, '—');
-  const costCard = hdStatCard('cost', 'Cost',
-    histCost.text,
-    [`across ${steps.length} step${steps.length === 1 ? '' : 's'}`,
-      costSummaryText(runCostBreakdown(steps, st.totalCostUsd), fmtUsd)].filter(Boolean).join(' · '));
-  if (histCost.title) costCard.querySelector('.hd-ov-value').title = histCost.title;
-  else if (typeof st.totalCostUsd === 'number') costCard.querySelector('.hd-ov-value').title = estTitle(st.totalCostUsd);
-  grid.appendChild(costCard);
+  // Time and cost are the card's tiles. The worktree row (Expert) stays here.
   const wt = st.branch && typeof st.branch === 'object' ? st.branch : {};
   // `worktreeRemoved` is ABSENT on a paused run, `true` after teardown
   // (orchestrator.mjs:1443/1489/1498/1597/1604) and explicitly `false` on the
@@ -29817,7 +30782,6 @@ function buildHdOverview(sec, record, data) {
   // refreshHdFromRow — nothing else ever rebuilds a tab. (Do not "simplify" that
   // call away: the header painters run on every row arrival, but the tab bodies do
   // not, so without it the card would read `released` for the life of the screen.)
-  wrap.appendChild(grid);
   // The row and the notice card read one model (audit F-2): a checkout shows here as well as on the card.
   const ovModel = worktreeNoticeModel({ ...hdRetainedFor(record, st), checkout: hdCheckoutFor(record),
     workspace: record.target === 'workspace', names: memberNamesOf(record) });
@@ -29826,9 +30790,7 @@ function buildHdOverview(sec, record, data) {
   if (git) wrap.appendChild(tagLevel(hdWorktreeRow(wtRowState.word, wtRowState.dir || wt.worktreeDir || ''), 'expert'));
   // Skills registry §6 board 9: the set skills the run got (run.json.skillMount, in the detail payload).
   const skillsCard = renderRunSkills(data.skillMount, { doc: document });
-  if (skillsCard) wrap.appendChild(tagLevel(skillsCard, 'advanced'));
-  const filesBox = hdFilesChangedBox(sec, results, { diffLink: git });
-  if (filesBox) wrap.appendChild(filesBox);
+  if (skillsCard) below.appendChild(tagLevel(skillsCard, 'advanced'));
   // Agent memory (§6): what this run wrote into worca's memory, per execution.
   const memRows = memoryChangesRows(data.memory || (results && results.memory));
   if (memRows.length) {
@@ -29865,7 +30827,7 @@ function buildHdOverview(sec, record, data) {
       }
       box.appendChild(line);
     }
-    wrap.appendChild(box);
+    below.appendChild(box);
   }
   // spec §8: the one-line quiescence note, under the stat grid, v2 runs only.
   if (isGraphManifest(st.stepper) && decorFromState(st, { live: false, now: 0 }).quiescent) {
@@ -29875,44 +30837,85 @@ function buildHdOverview(sec, record, data) {
     note.textContent = 'finished at quiescence — End not reached';
     wrap.appendChild(note);
   }
+}
 
-  // 3) Task card.
-  const task = document.createElement('div');
-  task.className = 'hd-ov-task';
-  const th = document.createElement('div'); th.className = 'hd-ov-task-h'; th.textContent = 'Task';
-  task.appendChild(th);
-  const prompt = String(st.prompt || '').trim();
-  const p = document.createElement('p');
-  const LIMIT = 600;
-  if (prompt.length > LIMIT) {
-    p.textContent = prompt.slice(0, LIMIT) + '…';
-    const more = document.createElement('button');
-    more.type = 'button';
-    more.className = 'hd-ov-more';
-    more.textContent = 'Show more';
-    more.addEventListener('click', () => { p.textContent = prompt; more.remove(); });
-    task.append(p, more);
-  } else {
-    p.textContent = prompt || '(no prompt recorded)';
-    task.appendChild(p);
-  }
-  const chips = document.createElement('div');
-  chips.className = 'hd-ov-chips';
-  // The agents' own sub-agents: worca's AI calls (run title, Auto workflow, Away mode) are on the Agents tab.
-  const subCount = Array.isArray(st.subAgents) ? st.subAgents.filter((s) => !isWorcaSub(s)).length : 0;
-  for (const text of [
-    record.projectName || record.projectKey || '',
-    (st.branch && typeof st.branch === 'object' ? st.branch.source : '') || record.sourceBranch || '',
-    subCount ? `${subCount} sub-agent${subCount === 1 ? '' : 's'}` : '',
-  ]) {
+/** The Task tab: the run's prompt in full, rendered as the markdown it was written in, under the run's place (project,
+ *  source branch, sub-agents). `chips`: those words, empty ones dropped. */
+function runTaskCard(prompt, chips) {
+  const card = document.createElement('div');
+  card.className = 'run-task';
+  const tags = document.createElement('div');
+  tags.className = 'hd-ov-chips';
+  for (const text of chips) {
     if (!text) continue;
     const c = document.createElement('span');
     c.className = 'hd-ov-tag mono';
     c.textContent = text;
-    chips.appendChild(c);
+    tags.appendChild(c);
   }
-  task.appendChild(chips);
-  wrap.appendChild(task);
+  if (tags.childElementCount) card.appendChild(tags);
+  const body = document.createElement('div');
+  body.className = 'run-task-body';
+  const text = String(prompt || '').trim();
+  if (!text) body.textContent = '(no prompt recorded)';
+  else if (!bindMarkdown(body, text)) void bindMarkdownReady().then((ok) => { if (ok && body.isConnected) bindMarkdown(body, text); });
+  card.appendChild(body);
+  return card;
+}
+/** While a graph run goes: its workflow in the card's summary column, framed on the running step(s) (the `focus` host),
+ *  the way into the Workflow tab. Gone once the run ends, and never in the Chat run panel (its column is too narrow). */
+function paintRdLive(screen, r) {
+  const panel = screen.querySelector('.rd-live');
+  if (!panel) return;
+  const on = !RD_TERMINAL.includes(r.status) && isGraphRun(r) && screen.dataset.presentation !== 'panel';
+  if (on) {
+    panel.hidden = false;
+    paintGraphFor(panel.querySelector('.run-flow'), r.stepper, runDecorFor(r, 'focus'), r.steps);
+  } else if (!panel.hidden) {
+    destroyGraphMounts(panel);
+    panel.hidden = true;
+  }
+}
+
+/** The run's setup as it started (GET /api/pipelines/:id/setup), once per run per page load: it never changes. */
+const runSetupCache = new Map();   // pipelineId → Promise<setup | null>
+function loadRunSetup(pipelineId) {
+  if (!pipelineId) return Promise.resolve(null);
+  if (!runSetupCache.has(pipelineId)) {
+    runSetupCache.set(pipelineId, fetch(`/api/pipelines/${encodeURIComponent(pipelineId)}/setup`)
+      .then((r) => (r.ok ? r.json() : null)).then((d) => (d && d.setup) || null)
+      .catch(() => { runSetupCache.delete(pipelineId); return null; }));
+  }
+  return runSetupCache.get(pipelineId);
+}
+/** The Task tab's body: the prompt, and beside it (under it when narrow) the choices the run started with. */
+function paintTaskTab(sec, card, pipelineId, state) {
+  const wrap = document.createElement('div');
+  wrap.className = 'run-task-tab';
+  const side = document.createElement('div');
+  side.className = 'run-task-side';
+  const paint = (setup) => {
+    const el = renderRunSetup(document, runSetupModel(setup, state));
+    side.hidden = !el;
+    side.replaceChildren(...(el ? [el] : []));
+  };
+  paint(null);
+  wrap.append(card, side);
+  sec.replaceChildren(wrap);
+  void loadRunSetup(pipelineId).then((setup) => { if (setup && side.isConnected) paint(setup); });
+}
+// The agents' own sub-agents: worca's AI calls (run title, Auto workflow, Away mode) are on the Agents tab.
+const taskSubWord = (subs) => {
+  const n = Array.isArray(subs) ? subs.filter((s) => !isWorcaSub(s)).length : 0;
+  return n ? `${n} sub-agent${n === 1 ? '' : 's'}` : '';
+};
+function buildHdTask(sec, record, data) {
+  const st = (data && data.state) || {};
+  paintTaskTab(sec, runTaskCard(st.prompt, [
+    record.projectName || record.projectKey || '',
+    (st.branch && typeof st.branch === 'object' ? st.branch.source : '') || record.sourceBranch || '',
+    taskSubWord(st.subAgents),
+  ]), record.id, st);
 }
 
 // One sub-agent's wall time. `durationMs` is authoritative when the orchestrator
@@ -30193,11 +31196,16 @@ const RD_WORKFLOW_ICON = '<svg width="15" height="15" viewBox="0 0 24 24" fill="
 // not here.
 const RD_TABS = [
   // The same order as History's HD_TABS: results first, then the process —
-  // Overview · Diff · Artifacts · Actions · Workflow · Q&A · Logs · Agents.
+  // Overview · Task · Diff · Artifacts · Actions · Workflow · Q&A · Logs · Agents.
   {
     key: 'overview', label: 'Overview', icon: HD_TAB_ICONS.overview, level: 'simple',
     badge: () => null, visible: () => true,
     build: (sec, ctx) => buildRdOverview(sec, ctx),
+  },
+  {
+    key: 'task', label: 'Task', icon: HD_TAB_ICONS.task, level: 'simple',
+    badge: () => null, visible: () => true,
+    build: (sec, ctx) => buildRdTask(sec, ctx),
   },
   {
     key: 'diff', label: 'Diff', icon: HD_TAB_ICONS.diff, level: 'simple', needsGit: true,
@@ -31198,95 +32206,25 @@ function rdOvStateBanner(host, r) {
   ensureLimitTick();
 }
 
-function rdOvStats(host, r) {
-  const prevWt = host.querySelector('.hd-ov-wt');
-  host.innerHTML = '';
-  const { n, m, name } = runStepLabel(r);
-  const stepSub = `step ${n}/${m}${name ? ` · ${name}` : ''}`;
-
-  const elapsed = hdStatCard('elapsed', 'Elapsed',
-    fmtDuration(liveTotalMs(r.steps, Date.now())) || '0s', stepSub);
-  // `.run-time` is the class the 1 s interval writes, so tagging the value node
-  // makes this card tick with the header and the graph — one timer, no second
-  // interval to drift against it (§11).
-  elapsed.querySelector('.hd-ov-value').classList.add('run-time');
-  host.appendChild(elapsed);
-
-  const steps = Array.isArray(r.steps) ? r.steps : [];
-  // The per-pipeline cap comes from the SAME budget record renderCostPauseBanner
-  // consumes (budgetState.budget; the field is budgetStatus()'s
-  // pipelineLimitUsd) — i.e. the value that drives pauseReason 'cost_pipeline'.
-  // null/absent means no cap is configured, and the sub-line falls back to a fact
-  // rather than a fabricated number.
-  const cap = Number(budgetState.budget && budgetState.budget.pipelineLimitUsd);
-  const costSub = [Number.isFinite(cap) && cap > 0
-    ? `cap ${fmtUsd(cap)} per pipeline`
-    : `across ${steps.length} step${steps.length === 1 ? '' : 's'}`,
-  costSummaryText(runCostBreakdown(steps, r.totalCostUsd), fmtUsd)].filter(Boolean).join(' · ');
-  const soFar = runCostText(r, r.totalCostUsd);
-  const cost = hdStatCard('cost', 'Cost so far', soFar.text, costSub);
-  cost.querySelector('.hd-ov-value').title = soFar.title || estTitle(r.totalCostUsd || 0);
-  host.appendChild(cost);
-
-  // No worktree row unless gitOn() && isGitRun(r) (SEAMS S8): a prevWt from a git-mode paint went with the reset above.
-  if (!(gitOn() && isGitRun(r))) return;
-  // Tri-state, exactly like History's card: absent while the run holds the
-  // worktree, true after teardown, explicitly false on the commit-failure path.
-  // `!== true` is the correct test for all three.
-  const held = !!r.worktreeDir && r.worktreeRemoved !== true;
-  // Live frames repaint this grid: keep the row (its hover and "copied" tick) while
-  // nothing about it changed.
-  const wtRec = r.pipelineId ? rdHistoryRecord(r) : null;
-  const wtModel = wtRec ? worktreeNoticeModel({ ...hdRetainedFor(wtRec, null), checkout: RD_TERMINAL.includes(r.status) ? hdCheckoutFor(wtRec) : null,
-    workspace: wtRec.target === 'workspace', names: memberNamesOf(wtRec) }) : null;
-  const wtState = worktreeRowState(wtModel && wtModel.kind === 'checkout' ? wtModel : null,
-    { live: held, dir: r.worktreeDir || '', removed: r.worktreeRemoved });
-  const wtRow = hdWorktreeRow(wtState.word, wtState.dir || r.worktreeDir || '');
-  host.appendChild(prevWt && prevWt.dataset.sig === wtRow.dataset.sig ? prevWt : tagLevel(wtRow, 'expert'));
-}
-
-function rdOvTask(r) {
-  const task = document.createElement('div');
-  task.className = 'hd-ov-task';
-  const h = document.createElement('div');
-  h.className = 'hd-ov-task-h';
-  h.textContent = 'Task';
-  task.appendChild(h);
-  const prompt = String(r.prompt || '').trim();
-  const p = document.createElement('p');
-  const LIMIT = 600;
-  if (prompt.length > LIMIT) {
-    p.textContent = prompt.slice(0, LIMIT) + '…';
-    const more = document.createElement('button');
-    more.type = 'button';
-    more.className = 'hd-ov-more';
-    more.textContent = 'Show more';
-    more.addEventListener('click', () => { p.textContent = prompt; more.remove(); });
-    task.append(p, more);
-  } else {
-    p.textContent = prompt || '(no prompt recorded)';
-    task.appendChild(p);
-  }
-  const chips = document.createElement('div');
-  chips.className = 'hd-ov-chips';
-  // The agents' own sub-agents: worca's AI calls (run title, Auto workflow, Away mode) are on the Agents tab.
-  const subCount = Array.isArray(r.subAgents) ? r.subAgents.filter((s) => !isWorcaSub(s)).length : 0;
-  // A workspace run carries NO projectDir (the New form sends workspaceId
-  // instead) — name it by its member list rather than letting projectName()
-  // print "(no project)".
+function buildRdTask(sec, ctx) {
+  const r = ctx.run;
+  // A workspace run carries NO projectDir (the New form sends workspaceId instead): name it by its member list
+  // rather than letting projectName() print "(no project)".
   const project = isNoProjectRun(r) ? 'No project'   // P3-D10: its work folder is not a project name
-    : r.projectDir
-      ? projectName(r.projectDir)
-      : (Array.isArray(r.projectNames) ? r.projectNames.join(' · ') : '');
-  for (const text of [project, r.branchSource || '', subCount ? `${subCount} sub-agent${subCount === 1 ? '' : 's'}` : '']) {
-    if (!text) continue;
-    const c = document.createElement('span');
-    c.className = 'hd-ov-tag mono';
-    c.textContent = text;
-    chips.appendChild(c);
-  }
-  task.appendChild(chips);
-  return task;
+    : r.projectDir ? projectName(r.projectDir) : (Array.isArray(r.projectNames) ? r.projectNames.join(' · ') : '');
+  const paint = () => paintTaskTab(sec, runTaskCard(r.prompt, [project, r.branchSource || '', taskSubWord(r.subAgents)]), r.pipelineId, r);
+  paint();
+  // The prompt rides state snapshots, and a run parked on a question sends none after the page opens: read it (and
+  // the source branch) from the run's saved state instead.
+  if (String(r.prompt || '').trim()) return;
+  const wrap = sec.firstElementChild;
+  void rdLoadData(r).then((data) => {
+    const st = data && data.state;
+    if (!st || !String(st.prompt || '').trim() || sec.firstElementChild !== wrap) return;
+    r.prompt = st.prompt;
+    if (!r.branchSource && st.branch && typeof st.branch === 'object' && st.branch.source) r.branchSource = st.branch.source;
+    paint();
+  });
 }
 
 /** Skills registry §6 board 9: a run's set-skill card into `host` (hidden without a record). */
@@ -31314,33 +32252,24 @@ function paintRdChecklists(host, run) {
 }
 
 function buildRdOverview(sec, ctx) {
-  sec.innerHTML = '';
   const wrap = document.createElement('div');
   wrap.className = 'hd-ov';
   const banner = document.createElement('div');
   banner.className = 'rd-ov-state';
-  const grid = document.createElement('div');
-  grid.className = 'hd-ov-grid';
   // The Task card is built ONCE and never re-rendered: the prompt cannot change
   // mid-run, and rebuilding it would slam the "Show more" expander shut under the
-  // user on every arriving `state` frame.
-  // Actions strip: terminal runs only, filled once the run has its pipeline id.
-  const strip = document.createElement('div'); strip.className = 'act-strip'; tagLevel(strip, 'advanced');
-  strip.dataset.needsGit = '';
-  strip.hidden = true;
+  // user on every arriving `state` frame. Time and cost are the run card's tiles; the Actions tab has the controls.
   const skills = tagLevel(document.createElement('div'), 'advanced');   // the set skills it got (§6 board 9)
   skills.className = 'hd-ov-skills-host';
   const checklists = document.createElement('div');   // Perspective checklists (spec D7)
   checklists.className = 'rd-checklists';
   checklists.hidden = true;
-  wrap.append(banner, strip, grid, checklists, skills, rdOvTask(ctx.run));
-  sec.appendChild(wrap);
-  const paintStrip = (run) => {
-    const on = gitOn() && isGitRun(run) && isTerminalStatus(run.status) && !!run.pipelineId;
-    strip.hidden = !on;
-    if (on && strip.dataset.runId !== run.pipelineId) paintActionsStrip(strip, run.pipelineId, rdScopeQuery(run));
-  };
-  const paint = (c) => { rdOvStateBanner(banner, c.run); paintStrip(c.run); rdOvStats(grid, c.run); paintRdChecklists(checklists, c.run); paintRunSkills(skills, c.run.skillMount); };
+  const below = document.createElement('div');
+  below.className = 'hd-ov hd-ov-below';
+  wrap.append(banner);
+  below.append(checklists, skills);
+  adoptRunCard(sec, wrap, below);
+  const paint = (c) => { rdOvStateBanner(banner, c.run); paintRdChecklists(checklists, c.run); paintRunSkills(skills, c.run.skillMount); };
   paint(ctx);
   sec.__update = paint;
 }
@@ -31730,10 +32659,7 @@ document.addEventListener('keydown', (e) => {
   // a guard here is the only way to opt a subtree out.
   if (e.target && typeof e.target.closest === 'function' && e.target.closest('.hd-cmt-composer')) return;
   if (closeCostPop({ focusTrigger: true })) return;
-  // Details steps back to the run's glance; the glance steps back to the list, in the
-  // slide only: side by side the list is already there.
-  const hs = histDetailState;
-  if (hs && hs.screen && hs.screen.dataset.mode === 'details') { location.hash = hdHash(hs); return; }
+  // The run page steps back to the list, in the slide only: side by side the list is already there.
   if (runsLayout() === 'slide') location.hash = 'runs';
 }, true);
 
@@ -31752,10 +32678,7 @@ document.addEventListener('keydown', (e) => {
   if (e.target?.closest?.('.wf-log-drawer')) return;                 // the step log drawer owns its Escape (closes itself)
   // The header cost's breakdown owns Escape while it is open (same reason as History's ⋯ menu).
   if (closeCostPop({ focusTrigger: true })) return;
-  // Details steps back to the run's glance; the glance steps back to the list, in the
-  // slide only: side by side the list is already there.
-  const screen = runDetailState.screen;
-  if (screen && screen.dataset.mode === 'details') { location.hash = rdHash(runDetailState.runId); return; }
+  // The run page steps back to the list, in the slide only: side by side the list is already there.
   if (runsLayout() === 'slide') location.hash = 'runs';
 }, true);
 
@@ -32258,7 +33181,7 @@ function runDecorFor(r, mode = 'monitor') {
 
 /** The run's warnings (decor.warnings: a dropped model pick, the scheduler's lines, the quiescence line of spec §8) as
  *  amber banners in .rd-banners / .hd-banners: one `.run-warn` per distinct text, in order. Idempotent; an empty list
- *  leaves none. */
+ *  leaves none. Under them, E9's ONE quiet scope line (decor.scope: run-scope-line.mjs), never a banner per spawn. */
 function paintRunWarnings(host, decor) {
   if (!host) return;
   const texts = [...new Set((decor && Array.isArray(decor.warnings) ? decor.warnings : []).filter(Boolean))];
@@ -32269,12 +33192,13 @@ function paintRunWarnings(host, decor) {
       el = document.createElement('div');
       el.className = 'run-warn';
       el.setAttribute('role', 'status');
-      host.appendChild(el);
+      host.insertBefore(el, host.querySelector(':scope > .run-scope'));
     }
     el.textContent = text;
     el.hidden = false;
   });
   for (const el of els.slice(texts.length)) el.remove();
+  paintRunScope(host, decor ? decor.scope : null, { doc: document });
 }
 
 /** The P5 line ("Build · task 2 of 4"); supersedes the D15 "3/6 done" counter (spec 2026-10-14 P12). '' on a v1 run. */
@@ -34336,7 +35260,7 @@ function memberRun(m) {
   // Runs redesign slice 4 (D24): a member's round / Watch PR facts pass through untouched; the run model words them.
   const facts = { round: m.round || (h && h.round) || null, watch: m.watch || (h && h.watch) || null };
   // A chain member carries its PR as `prUrl` (a shared One PR before History has it), a run-groups member as `pr`.
-  if (h) return { status: h.status, pauseReason: h.pauseReason, pr: runPrFor(h, m.pr || (m.prUrl ? { url: m.prUrl } : null)), ...(h.inBase ? { inBase: h.inBase } : {}), ...facts };
+  if (h) return { status: h.status, pauseReason: h.pauseReason, pr: runPrFor(h, m.pr || (m.prUrl ? { url: m.prUrl } : null)), ...(h.inBase ? { inBase: h.inBase } : {}), ...(memberPrsOf(h).length ? { memberPrs: memberPrsOf(h) } : {}), ...facts };
   if (m.status) return { status: m.status, pr: runPrFor(null, m.pr), ...facts };
   return { status: CHAIN_MEMBER_STATUS[m.state] || 'stopped', pr: runPrFor(null, m.prUrl ? { url: m.prUrl } : null), ...facts };
 }
@@ -35288,6 +36212,7 @@ function runsRowMenuItems(r, more) {
   const prUrl = (r.model.pr && r.model.pr.url) || (r.kind === 'chain' && r.model.current && r.model.current.pr && r.model.current.pr.url) || '';
   // An archived row's E brings it back (D7): the run page's word, the bulk restore action.
   const back = r.archived ? planBulk('restore', [t]) : null;
+  const prs = rowMenuPrs(r);
   return [
     { label: 'Select', key: 'toggle', hint: k('Space'), onSelect: () => { runsUi.selecting = true; runsUi.anchorKey = r.key; toggleRunsKey(r.key); } },
     { label: 'Stop', key: 'stop', hint: k('S'), disabled: !m.stop.count, title: m.stop.title, onSelect: () => runBulkAction('stop', [t]) },
@@ -35300,7 +36225,10 @@ function runsRowMenuItems(r, more) {
     ...(adv && r.kind !== 'chain' && r.pipelineId && !(g && !adhoc) ? [{ sep: true }, { label: 'Add to group…', key: 'add-to-group', hint: k('G'),
       onSelect: () => openAddToGroup(more, runsUi.sel.has(r.key) ? pipelineTargets(selectedTargets()) : [{ pipelineId: r.pipelineId, title: r.title }], r.key) }] : []),
     ...(adv && adhoc ? [{ sep: true }, { label: 'Remove from group', key: 'leave-group', hint: k('shift', 'G'), onSelect: () => removeRunFromGroup(r) }] : []),
-    ...(prUrl ? [{ label: VIEW_PR_LABEL, onSelect: () => window.open(prUrl, '_blank', 'noopener') }] : []),
+    // A workspace run with PRs in several repositories opens each one, as the run page's View PRs ▾ does.
+    ...(prs.length ? [{ sep: true },
+      ...prs.map((p) => ({ label: p.repo ? `${viewPrLabel(p.number)} · ${p.repo}` : viewPrLabel(p.number), onSelect: () => window.open(p.url, '_blank', 'noopener') })),
+    ] : prUrl ? [{ label: VIEW_PR_LABEL, onSelect: () => window.open(prUrl, '_blank', 'noopener') }] : []),
     ...(r.groupKind === 'feature' ? [{ label: 'Open feature', onSelect: () => { location.hash = r.href; } }] : []),
   ];
 }
@@ -35524,7 +36452,7 @@ function setRunsLayout(w) {
   const open = el.runsPane && el.runsPane.dataset.kind;
   if (want !== 'slide' || !inList || !open) return;
   const screen = open === 'live' ? el.runDetail : open === 'group' ? el.groupDetail : el.histDetail;
-  const back = screen && [...screen.querySelectorAll('.rd-back, .hd-back, .rd-to-run, .hd-to-run, .gpage-back')].find((b) => !b.hidden);
+  const back = screen && [...screen.querySelectorAll('.rd-back, .hd-back, .gpage-back')].find((b) => !b.hidden);
   if (back) back.focus({ preventScroll: true });
 }
 // showView calls this as the section becomes visible, before routing opens anything, so the
@@ -35784,13 +36712,13 @@ installInputMode(document);
 
 function setRdMode(screen, mode, tab = '', { focus = true } = {}) {
   if (!screen) return;
-  const details = mode === 'details';
-  const changed = screen.dataset.mode !== (details ? 'details' : 'glance');
-  screen.dataset.mode = details ? 'details' : 'glance';
-  screen.querySelector('.rd-glance').hidden = details;
-  screen.querySelector('.rd-details').hidden = !details;
-  screen.querySelector('.rd-back').hidden = details;
-  screen.querySelector('.rd-to-run').hidden = !details;
+  // One level: the run page IS Details, and the run card is its Overview tab. The glance route opens Overview.
+  if (mode !== 'details' && !tab) tab = 'overview';
+  const details = true;
+  const changed = screen.dataset.mode !== 'details';
+  screen.dataset.mode = 'details';
+  screen.querySelector('.rd-details').hidden = false;
+  screen.querySelector('.rd-back').hidden = false;
   if (details) {
     const tabs = detailTabsOf(screen);
     // P5: a tab the bar has leaves nothing pending, so a later rebuild keeps the person's pick.
@@ -35808,8 +36736,7 @@ function setRdMode(screen, mode, tab = '', { focus = true } = {}) {
   if (changed && focus) {
     // Side by side the glance's way back to the list is hidden (the list is in view), so
     // coming back from Details lands on the glance's title (tabindex="-1") instead.
-    const target = details ? screen.querySelector('.rd-to-run')
-      : runsLayout() === 'split' ? screen.querySelector('.rd-glance .rd-page-title') : screen.querySelector('.rd-back');
+    const target = runsLayout() === 'split' ? screen.querySelector('.rd-title') : screen.querySelector('.rd-back');
     if (target && !target.hidden) target.focus({ preventScroll: true });
   }
 }
@@ -35829,17 +36756,19 @@ function openRunDetail(runId, { instant = false, host: where = 'page' } = {}) {
   host.appendChild(screen);
   runDetailState = { runId, screen, host: panel ? 'panel' : 'page' };
   // The panel has no glance, so there is no page title to watch (the bar never repeats the name there).
-  if (panel) presentRunScreenInPanel(screen); else watchPageTitle(screen, 'rd');
+  if (panel) presentRunScreenInPanel(screen); else { barIntoHeader(screen); watchPageTitle(screen, 'rd'); }
 
   screen.querySelector('.rd-back').addEventListener('click', () => backToRunsList());
   // Glance <-> Details are routes, so the browser's own back and forward walk them.
   const toDetails = (tab = '') => { rdGoDetails(tab); };
-  const toRun = () => { if (runDetailState.host !== 'panel') location.hash = rdHash(runDetailState.runId); };
-  screen.querySelector('.rd-to-run').addEventListener('click', toRun);
   // While a question waits, the status header ("? Waiting for you / Step: …") is a way to it.
   const statusTop = screen.querySelector('.rd-now-top');
   const toQuestions = () => { if (screen.dataset.glance === 'ask') scrollToQuestions(screen); };
   statusTop.addEventListener('click', toQuestions);
+  // The live graph is a way to the Workflow tab.
+  const livePanel = screen.querySelector('.rd-live');
+  livePanel.addEventListener('click', () => rdGoDetails('workflow'));
+  livePanel.addEventListener('keydown', (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); rdGoDetails('workflow'); } });
   statusTop.addEventListener('keydown', (e) => {
     if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); toQuestions(); }
   });
@@ -35848,15 +36777,6 @@ function openRunDetail(runId, { instant = false, host: where = 'page' } = {}) {
     const row = e.target.closest && e.target.closest('[data-rd-tab]');
     if (row) toDetails(row.dataset.rdTab);
   });
-  // Live view: the switch flips the remembered choice; the panel is a way to Workflow.
-  const liveSwitch = screen.querySelector('.rd-live-switch');
-  const livePanel = screen.querySelector('.rd-live');
-  const onKey = (fn) => (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); fn(); } };
-  const flipLive = () => toggleLiveView(screen);
-  liveSwitch.addEventListener('click', flipLive);
-  liveSwitch.addEventListener('keydown', onKey(flipLive));
-  livePanel.addEventListener('click', () => toDetails('workflow'));
-  livePanel.addEventListener('keydown', onKey(() => toDetails('workflow')));
   // Keep the address in step with the open tab without adding a history entry per click.
   screen.querySelector('.rd-tabs').addEventListener('click', (e) => {
     const btn = e.target.closest && e.target.closest('.rd-tab');
@@ -35999,7 +36919,7 @@ function openRunDetail(runId, { instant = false, host: where = 'page' } = {}) {
       away.push({ sep: true });
     }
     // Run after is the bar's own quick button; only a shaped run's bar folds it (D31), so only there does ⋯ carry it.
-    const extra = after && !after.hidden && levelAtLeast('advanced') && screen.querySelector('.rd-bar')?.hasAttribute('data-shaped')
+    const extra = after && !after.hidden && levelAtLeast('advanced') && screen.querySelector('.rd-bar-end')?.hasAttribute('data-shaped')
       ? [{ label: after.querySelector('.rd-btn-label').textContent, title: after.title, onSelect: () => after.click() }] : [];
     toggleMenu({ doc: document, anchor: e.currentTarget, items: runMoreItems(screen, { away, extra }), align: 'end', label: 'More for this run' });
   });
@@ -36142,38 +37062,39 @@ async function loadNightDecisions(r) {
 }
 
 function paintNightDecisions(screen, r) {
-  paintAwayAnswers(screen.querySelector('.rd-night-sec'), r.nightDecisions, rdGlanceRun(r).steps);
+  paintAwayNote(screen.querySelector('.rd-away-note'), r.nightDecisions, () => rdGoDetails('qa'));
 }
 
-/** The History run page's copy of the list: read once per run from the stored answers. */
-async function loadHdAwayAnswers(screen, pipelineId, steps = []) {
-  const sec = screen && screen.querySelector('.hd-night-sec');
-  if (!sec || !pipelineId || sec.dataset.for === pipelineId) return;
-  sec.dataset.for = pipelineId;
-  sec.hidden = true;
+/** The History run page's Away note: the stored answers, read once per run. Q&A lists each one with its reason. */
+async function loadHdAwayAnswers(screen, pipelineId) {
+  const note = screen && screen.querySelector('.rd-away-note');
+  if (!note || !pipelineId || note.dataset.for === pipelineId) return;
+  note.dataset.for = pipelineId;
+  note.hidden = true;
   try {
     const res = await fetch(`/api/night-decisions?pipelineId=${encodeURIComponent(pipelineId)}`);
     const data = res.ok ? await safeJson(res) : null;
-    if (sec.dataset.for !== pipelineId) return;                 // another run was opened meanwhile
-    paintAwayAnswers(sec, data && Array.isArray(data.decisions) ? data.decisions : [], steps);
-  } catch { /* the section stays hidden */ }
+    if (note.dataset.for !== pipelineId) return;                 // another run was opened meanwhile
+    paintAwayNote(note, data && Array.isArray(data.decisions) ? data.decisions : [], () => {
+      const tabs = detailTabsOf(screen);
+      if (!tabs || !tabs.cells.has('clarify')) return;
+      tabs.activate('clarify');
+      try { window.history.replaceState(null, '', `#${hdScreenHash('details', 'clarify')}`); } catch { /* sandboxed */ }
+    });
+  } catch { /* the note stays hidden */ }
 }
 
-/** The note at the top of the run's card (run page and History run page), painted from the same
- *  answers as the list below it, so the two never disagree: how many answers, how many to check,
- *  and a button down to the first one to check. Hidden when Away mode gave no answer. */
-function paintAwayNote(sec, counts) {
-  const note = sec.closest('.rd-glance')?.querySelector('.rd-away-note');
+/** The note at the top of the run card (run page and History run page): how many answers Away mode gave, how many to
+ *  check, and a hop to the Q&A tab, where each answer shows with its reason. Hidden when Away mode gave no answer. */
+function paintAwayNote(note, decisions, toQa) {
   if (!note) return;
-  const line = awayAnswersSummary(counts);
+  const line = awayAnswersSummary(awayAnswerCounts(Array.isArray(decisions) ? decisions : []));
   note.hidden = !line;
   if (!line) return;
-  note.classList.toggle('has-checks', counts.checks > 0);
-  note.querySelector('.rd-away-note-text').textContent = `Away mode: ${line}.`;
-  note.querySelector('.rd-away-jump').onclick = () => {
-    const to = sec.querySelector('.rd-na-row.is-check') || sec;
-    if (!sec.hidden) to.scrollIntoView({ behavior: 'smooth', block: 'center' });
-  };
+  note.classList.toggle('has-checks', awayAnswerCounts(decisions).checks > 0);
+  const text = note.querySelector('.rd-away-note-text');
+  if (text.textContent !== `Away mode: ${line}.`) text.textContent = `Away mode: ${line}.`;
+  note.querySelector('.rd-away-jump').onclick = toQa;
 }
 
 /** "Answered for you" into `sec` (run page and History run page): one group per ask, captioned with
@@ -36194,7 +37115,6 @@ function paintAwayAnswers(sec, decisions, steps = []) {
   sec.querySelector('.rd-night-count').textContent = (counts.answers
     ? ` · ${counts.answers} answer${counts.answers === 1 ? '' : 's'}${counts.checks ? `, ${counts.checks} to check` : ''}` : '')
     + (spent ? ` · ${spent}` : '');
-  paintAwayNote(sec, counts);
   const host = sec.querySelector('.rd-night-asks');
   const open = new Set([...host.querySelectorAll('.rd-na-row.open')].map((li) => li.dataset.key));
   const focused = document.activeElement && host.contains(document.activeElement) ? document.activeElement.closest('.rd-na-row') : null;
@@ -36939,7 +37859,9 @@ function paintRdActions(screen, r, m = rdModel(r)) {
     own: { ...pauseResumeOwn(pause, st), stop },
     pool: [pause, stop],                                  // a "Pause" left from a run that has ended is hidden
     // Slice 2: Archive and Report live in the ⋯ (runMoreItems); slice 3: the head actions in the card head (run-head.mjs).
-    skip: [...MENU_ACTIONS, ...HEAD_ACTIONS],
+    // The full page draws the waiting question right under its header, on every tab: an Answer that only scrolls to it
+    // is noise there. The Chat panel keeps it.
+    skip: [...MENU_ACTIONS, ...HEAD_ACTIONS, ...(screen.dataset.presentation === 'panel' ? [] : ['answer'])],
     // The model reads pausing as paused, but chatRunControls.resume does nothing while the run is still live.
     disable: { 'ask-changes': "Ask for changes from the run's chat", ...(st === 'pausing' ? { resume: 'Pausing…' } : {}) },
     labels: { answer: answerLabelOf(screen.querySelector('.rd-questions')) },
@@ -37052,18 +37974,9 @@ function paintRdGlance(screen, r) {
   paintMemberBars(screen, { pipelineId: live.pipelineId, status: live.status, members: rdFm });
   if ((folder || rdFm.length) && terminal) rdPaintTabBadges(screen, rdCtx(live));   // the saved counts land after the tabs were built (P5: a mixed run's Folder members too)
 
-  const trail = trailColumns(r);
-  paintRdLive(screen, live);
+  paintRdLive(screen, r);
   paintRdNowList(screen, r, copy.state);
-  paintRdResult(screen, r, { glance: copy.state, trailCount: trail.count });
-  // In Details the way back doubles as the cue that a question waits on the glance.
-  const back = screen.querySelector('.rd-to-run');
-  if (back) {
-    const ask = copy.state === 'ask';
-    back.classList.toggle('ask', ask);
-    back.querySelector('.rd-to-run-label').textContent = ask ? 'Answer' : 'Run';
-    back.setAttribute('aria-label', ask ? 'Back to the run to answer' : 'Back to the run');
-  }
+  paintRdResult(screen, r);
 }
 
 function rdSheetRow({ label, detail = '', value = '', tab = '', state = '', icon = null, since = '' }) {
@@ -37103,65 +38016,20 @@ function rdSrowValue(text) {
   return v;
 }
 
-// The glance's way into Details (there is no Details button): EVERY tab the run has and
-// the interface level shows, in the tab bar's order, under two headings — what the run
-// produced, then how it ran. Each row is named like its tab, carries its icon and
-// previews its content: `values[key]`, else the tab's own badge with a unit.
-const ACTIVITY_GROUPS = [
-  ['Results', ['overview', 'diff', 'changes', 'artifacts', 'actions']],
-  ['How it ran', ['workflow', 'qa', 'clarify', 'logs', 'sessions', 'agents']],
-];
-const ACTIVITY_UNITS = { diff: 'file', changes: 'file', qa: 'question', clarify: 'question', sessions: 'session', agents: 'agent' };
-function rdActivityGroups(screen, values = {}) {
-  const tabs = detailTabsOf(screen);
-  if (!tabs) return [];
-  const order = [...tabs.cells.keys()];
-  const out = [];
-  for (const [title, keys] of ACTIVITY_GROUPS) {
-    const rows = [];
-    for (const key of order) {
-      if (!keys.includes(key)) continue;
-      const cell = tabs.cells.get(key);
-      if (!levelAtLeast(cell.tab.level || 'simple')) continue;
-      let value = values[key] || '';
-      if (!value) {
-        const badge = cell.btn.querySelector('.rd-tab-badge, .hd-tab-badge');
-        const n = badge ? badge.textContent.trim() : '';
-        const unit = ACTIVITY_UNITS[key];
-        value = n && unit && /^\d+$/.test(n) ? `${n} ${unit}${n === '1' ? '' : 's'}` : n;
-      }
-      // The tab's own icon, cloned from its pill, so the row and the tab can never differ.
-      const icon = cell.btn.querySelector('svg');
-      const row = rdSheetRow({ label: cell.tab.label, value, tab: key, icon: icon ? icon.cloneNode(true) : null });
-      if (cell.tab.needsGit) row.dataset.needsGit = '';
-      rows.push(row);
-    }
-    if (rows.length) out.push(rdSheetGroup(title, rows));
-  }
-  return out;
-}
+// The run's tabs are the tab bar's: the card lists only the local copy's way out (Discard / Unlink), which
+// paintActionsRowValue fills while a checkout exists. Archive is blocked until it goes, so it is never hidden.
+function rdCheckoutGroup() { return rdSheetGroup('Local copy', []); }
 
-// The Results › Actions row says where the local copy stands. At Advanced it is the Actions tab's row (the tab owns
-// the controls), patched in place: the banner painters rerun on every History row, the activity groups only when
-// they rebuild. At Simple there is no Actions tab, so a plain row carries Discard / Unlink while a checkout exists:
-// Archive is blocked until it goes, so the way out may never be hidden. `carrier()` is the current History record.
-// `kept`: the plain row of a Results list the caller just rebuilt, reused while it still says the same (D14).
+// The Local copy row says where the local copy stands and carries Discard / Unlink while a checkout exists, at every
+// level (the Actions tab owns the rest of the controls). `carrier()` is the current History record. `kept`: the row of a
+// list the caller just rebuilt, reused while it still says the same (D14).
 const shortWhen = (iso) => whenLabel(iso, Date.now(), browserTimeZone());
 function paintActionsRowValue(screen, checkout, canTry, carrier, kept = null) {
-  const list = screen && screen.querySelector('.rd-result .rd-slist');   // the Results group comes first
+  const list = screen && screen.querySelector('.rd-result .rd-slist');
   if (!list) return;
   const text = checkoutRowValue(checkout, { when: shortWhen, canTry });
-  const tabRow = list.querySelector('.rd-srow[data-rd-tab="actions"]');
   let plain = list.querySelector('.rd-srow-checkout');
   if (!plain && kept) { list.appendChild(kept); plain = kept; }
-  if (tabRow) {
-    if (plain) plain.remove();
-    const v = tabRow.querySelector('.rd-srow-v');
-    if (!text) { if (v) v.remove(); return; }
-    if (!v) tabRow.appendChild(rdSrowValue(text));
-    else if (v.textContent !== text) v.textContent = text;
-    return;
-  }
   const members = (checkout && checkout.members) || [];
   if (!members.length) { if (plain) plain.remove(); return; }
   const sig = `${text}|${members.map((m) => `${m.projectKey}:${m.external === true}`).join(',')}`;
@@ -37210,12 +38078,20 @@ function paintRunKindChip(meta, mode) {
   if (chip) meta.appendChild(chip);
 }
 
+// The full page puts no controls above the run's title: the bar's controls (Run after, Pause/Resume, Stop, ⋯) end the
+// header's title row. The bar keeps Back (slide layout) and the breadcrumb. The Chat run panel keeps them in its bar.
+function barIntoHeader(screen) {
+  const end = screen.querySelector(':scope > :is(.rd-bar,.hd-bar) > .rd-bar-end');
+  const row = screen.querySelector('.rd-row1, .hd-row1');
+  if (end && row) row.appendChild(end);
+}
+
 // The bar repeats the run's name only once the page title has scrolled under it
 // (CSS: [data-title-out]). One observer per page kind; a new screen replaces the old.
 const pageTitleWatch = { rd: null, hd: null };
 function watchPageTitle(screen, kind) {
   if (pageTitleWatch[kind]) { pageTitleWatch[kind].disconnect(); pageTitleWatch[kind] = null; }
-  const h = screen && screen.querySelector('.rd-page-title');
+  const h = screen && screen.querySelector('.rd-title, .hd-title');   // the Details header's: the card's own title is hidden
   if (!h || typeof IntersectionObserver !== 'function') return;
   const io = new IntersectionObserver(([e]) => {
     if (!e) return;
@@ -37225,13 +38101,6 @@ function watchPageTitle(screen, kind) {
   }, { rootMargin: '-64px 0px 0px 0px' });
   io.observe(h);
   pageTitleWatch[kind] = io;
-}
-
-// The Overview row's preview: what the review made of the run.
-function activityOverviewValue(results) {
-  if (!results) return '';
-  const n = hdChecks(results).length;
-  return n ? `${n} to check` : 'Nothing flagged';
 }
 
 // The run's facts, each once and each labelled: Time · Cost · Changes. `ticking` hands
@@ -37870,13 +38739,6 @@ function rdHistoryRecord(r) {
   return (state.historyAll || []).find((p) => p && p.id === r.pipelineId) || null;
 }
 
-// The Diff row's preview: read from the run, not the tab's badge (the badge is not
-// repainted when the saved results land after the tabs were built).
-function rdDiffRowValue(r) {
-  const n = rdDiffBadge(r);
-  return n ? `${n} file${n === '1' ? '' : 's'}` : '';
-}
-
 // The headline's file count, from results.json once it has loaded.
 function rdFilesChanged(r) {
   const s = r._rdData && r._rdData.data && r._rdData.data.results && r._rdData.data.results.summary;
@@ -37887,9 +38749,6 @@ function rdFilesChanged(r) {
 // state frame's branch.changes (P1a's folder member record).
 function rdFolderChanges(r) {
   const rec = rdHistoryRecord(r); const d = r._rdData && r._rdData.data; return (rec && rec.changes) || (d && d.state && d.state.changes) || (r.kind !== 'workspace-run' && r.branch && typeof r.branch === 'object' && r.branch.changes) || null;   // P5: a workspace's branch is its first member's mirror
-}
-function rdChangesRowValue(r) {
-  const c = changesCounts(rdFolderChanges(r)); return c && c.total ? filesWord(c.total) : '';
 }
 
 // The open PR's own state under its button (.rd-pr-status): its checks (passed, running,
@@ -38140,38 +38999,13 @@ function refreshRdPrStatus(projectKey, id, memberKey = '') {
     if (host._prLoading) host._prAgain = true;
     else void loadRdPrStatus(host, sc);
   }
-}
-
-/** Overview tab: one row per open pull request under the review verdict (a workspace run: one per
- *  member repo), each drawn by paintRdPrStatus. Rows are rebuilt only when the set of PRs changes. */
-function paintHdOvPrs(box, record) {
-  if (!box || !record) return;
-  const scopes = [];
-  if (record.target === 'workspace' && hasWsMembers(record)) {
-    for (const m of histWsMembers(record)) {
-      if (prLive(m.pr) && prStateOf(m.pr) === 'OPEN') scopes.push({ id: record.id, projectKey: record.projectKey, memberKey: m.memberKey, name: m.name || m.memberKey });
-    }
-  } else if (record.pr && typeof record.pr === 'object' && String(record.pr.state || '').toUpperCase() === 'OPEN' && record.pr.url) {
-    scopes.push({ id: record.id, projectKey: record.projectKey, name: '' });
-  }
-  const sig = JSON.stringify(scopes);
-  if (box.dataset.sig !== sig) {
-    box.dataset.sig = sig;
-    box.replaceChildren(...scopes.map((sc) => {
-      const row = document.createElement('div');
-      row.className = 'hd-ov-pr';
-      const label = document.createElement('span');
-      label.className = 'hd-ov-pr-label';
-      label.textContent = sc.name ? `Pull request · ${sc.name}` : 'Pull request';
-      const host = document.createElement('div');
-      host.className = 'rd-pr-status hd-ov-pr-status';
-      host.hidden = true;
-      row.append(label, host);
-      return row;
-    }));
-  }
-  const hosts = box.querySelectorAll('.hd-ov-pr-status');
-  scopes.forEach(({ name, ...scope }, i) => paintRdPrStatus(hosts[i], scope));
+  // A workspace member's status has no host of its own: the open run page's head reads it (ensurePrStatus from
+  // headFactsOf), so repaint that head and it reads the dropped entry again.
+  if (!memberKey) return;
+  const hd = histDetailState;
+  if (hd && hd.screen && hd.screen.isConnected && hd.data && hd.record && hd.record.id === id) paintHdHead(hd.screen, hdCurrentRecord(hd.record), hd.data);
+  const rd = runDetailState && runDetailState.screen && runDetailState.screen.isConnected ? runs.get(runDetailState.runId) : null;
+  if (rd && rd.pipelineId === id) paintRdHead(runDetailState.screen, rd);
 }
 
 /** Slice 3: the live page's card head (paintRunHead), from History's row once a finished run has one. Create PR hands
@@ -38205,40 +39039,16 @@ function paintRdHead(screen, r, m = rdModel(r)) {
 // Time · Cost · Changes in every state).
 // Numbers come from results.json. Rebuilt only when its content changes (a replaced row
 // loses :hover).
-function paintRdResult(screen, r, { glance = 'run', trailCount = 0 } = {}) {
+function paintRdResult(screen, r) {
   const host = screen.querySelector('.rd-result');
   if (!host) return;
   paintRdMenuCarriers(screen, r);                        // slice 2: the ⋯ Archive's gate reads this row's checkout facts
-  const terminal = RD_TERMINAL.includes(r.status);
-  const steps = trailCount ? `${trailCount} step${trailCount === 1 ? '' : 's'}` : '';
-  if (!terminal) {
-    // Cheap to build, compared by text: the badges (live diff, artifacts, agents) move.
-    const groups = rdActivityGroups(screen, { workflow: steps, diff: rdDiffRowValue(r), changes: rdChangesRowValue(r) });
-    const sig = `live|${currentLevel()}|${groups.map((g) => g.textContent).join('|')}`;
-    if (host.dataset.key === sig) return;
-    host.dataset.key = sig;
-    host.replaceChildren(...groups);
-    host.hidden = !groups.length;
-    return;
-  }
+  if (!RD_TERMINAL.includes(r.status)) { host.hidden = true; return; }   // a live run has no local copy yet
   host.hidden = false;
-  const data = r._rdData && r._rdData.data;
-  const sig = [r.status, glance, data ? 1 : 0, r.totalCostUsd, steps, currentLevel(), rdChangesRowValue(r)].join('|');
-  if (host.dataset.key === sig) return;
-  host.dataset.key = sig;
-  const keptRow = host.querySelector('.rd-srow-checkout');
-  const keptFocus = keptRow && keptRow.contains(document.activeElement) ? document.activeElement : null;
-  host.replaceChildren();
-
-  const results = data && data.results;
+  if (!host.querySelector('.rd-slist')) host.replaceChildren(rdCheckoutGroup());
   const rec = r.pipelineId ? rdHistoryRecord(r) : null;
-  const co = hdCheckoutFor(rec);
   const kept = !(r._retainedDiscarded || r._retainedApplied) && ((rec && rec.retainedWork) || rdRetainedFor(r));
-  const canTry = !!(rec && rec.branch) && !kept;
-  host.append(...rdActivityGroups(screen, { overview: activityOverviewValue(results), workflow: steps, diff: rdDiffRowValue(r), changes: rdChangesRowValue(r),
-    actions: checkoutRowValue(co, { when: shortWhen, canTry }) }));
-  paintActionsRowValue(screen, co, canTry, () => rdNoticeCarrier(r), keptRow);
-  if (keptFocus && keptFocus.isConnected) keptFocus.focus();   // detaching the row dropped its focus
+  paintActionsRowValue(screen, hdCheckoutFor(rec), !!(rec && rec.branch) && !kept, () => rdNoticeCarrier(r));
 }
 
 // The heading over a waiting question on the glance: what is asked, by which step. It
@@ -38266,12 +39076,6 @@ function paintShaperWait(screen, r) {
   const wait = shaperWait(r, true);
   if (wait) glance.dataset.shaperWait = wait;
   else delete glance.dataset.shaperWait;
-  // The Chat panel moved .rd-questions into its own head (presentRunScreenInPanel): leave it there.
-  if (host.parentElement !== glance) return;
-  const now = glance.querySelector(':scope > .rd-now');
-  const night = glance.querySelector(':scope > .rd-night-sec');
-  if (wait && now && host.previousElementSibling !== now) now.after(host);
-  else if (!wait && night && host.nextElementSibling !== night) night.before(host);
 }
 
 function paintRdQuestions(screen, r) {
@@ -38491,103 +39295,6 @@ function paintRdGraph(screen, r) {
   paintGraphFor(host, r.stepper, isGraphRun(r) ? runDecorFor(r, 'monitor') : null, r.steps);
 }
 
-// ---- Live view: the glance's running step(s), centred in a fogged graph beside the card ----
-// (below it on a narrow page). The choice is remembered per browser and offered only while
-// the run is not over. Entering: the left column slides aside (flipGlance), the graph
-// mounts at its final size, then the panel fades in (style.css `.rd-live.is-in`).
-// Leaving runs the other way round, and the graph is dropped only once the panel is gone.
-const LIVE_VIEW_KEY = 'worca-cc.run.liveView';
-/** The exit's fallback when no transitionend comes: past style.css's longest `.rd-live` exit. */
-const LIVE_EXIT_MS = 500;
-const LIVE_EXITS = new WeakMap();   // .rd-live -> { timer, onEnd } while it animates out
-// On unless switched off: a new user (nothing stored) sees it, and '0' keeps it off.
-// Where storage is blocked the choice lives in memory, so the switch still works.
-let liveViewMemo = null;
-function liveViewWanted() {
-  try { return localStorage.getItem(LIVE_VIEW_KEY) !== '0'; } catch { return liveViewMemo !== '0'; }
-}
-function reducedMotion() {
-  try { return typeof window.matchMedia === 'function' && window.matchMedia('(prefers-reduced-motion: reduce)').matches; } catch { return false; }
-}
-function toggleLiveView(screen) {
-  const on = !liveViewWanted();
-  liveViewMemo = on ? '1' : '0';
-  try { localStorage.setItem(LIVE_VIEW_KEY, liveViewMemo); } catch { /* private mode */ }
-  const r = rdOpenRun();
-  if (r) paintRdLive(screen, r);
-}
-
-function paintRdLive(screen, r) {
-  const row = screen.querySelector('.rd-live-row');
-  const panel = screen.querySelector('.rd-live');
-  if (!row || !panel) return;
-  const offered = !RD_TERMINAL.includes(r.status) && isGraphRun(r);
-  const wanted = liveViewWanted();
-  row.hidden = !offered;
-  const sw = row.querySelector('.rd-live-switch');
-  sw.classList.toggle('on', wanted);
-  sw.setAttribute('aria-checked', String(wanted));
-  if (offered && wanted) liveEnter(screen, r); else liveExit(screen);
-}
-
-function liveEnter(screen, r) {
-  const glance = screen.querySelector('.rd-glance');
-  const panel = screen.querySelector('.rd-live');
-  cancelLiveExit(panel);                   // back on mid-exit: the same graph carries on
-  if (panel.hidden) flipGlance(glance, () => { glance.dataset.live = 'on'; panel.hidden = false; });
-  paintGraphFor(panel.querySelector('.run-flow'), r.stepper, runDecorFor(r, 'focus'), r.steps);
-  if (!panel.classList.contains('is-in')) {
-    void panel.offsetWidth;                // commit the out state, so the class change transitions
-    panel.classList.add('is-in');
-  }
-}
-
-function liveExit(screen) {
-  const panel = screen.querySelector('.rd-live');
-  if (!panel || panel.hidden || LIVE_EXITS.has(panel)) return;
-  panel.classList.remove('is-in');
-  if (reducedMotion()) { finishLiveExit(screen); return; }
-  // Opacity is the exit's last transition in both layouts; the card's own ones bubble here too.
-  const onEnd = (e) => { if (e.target === panel && (!e.propertyName || e.propertyName === 'opacity')) finishLiveExit(screen); };
-  panel.addEventListener('transitionend', onEnd);
-  LIVE_EXITS.set(panel, { timer: setTimeout(() => finishLiveExit(screen), LIVE_EXIT_MS), onEnd });
-}
-
-function cancelLiveExit(panel) {
-  const x = LIVE_EXITS.get(panel);
-  if (!x) return;
-  clearTimeout(x.timer);
-  panel.removeEventListener('transitionend', x.onEnd);
-  LIVE_EXITS.delete(panel);
-}
-
-function finishLiveExit(screen) {
-  const glance = screen.querySelector('.rd-glance');
-  const panel = screen.querySelector('.rd-live');
-  cancelLiveExit(panel);
-  destroyGraphMounts(panel);
-  flipGlance(glance, () => { delete glance.dataset.live; panel.hidden = true; });
-}
-
-/** Slide the glance's left column (title + card) to where a layout change puts it: measure,
- *  change, then play each from its old place (FLIP). A slide still running is measured where
- *  it is on screen, so a quick second toggle turns it round without a jump. */
-function flipGlance(glance, change) {
-  const items = [...glance.querySelectorAll(':scope > .rd-now, :scope > .rd-sheet')];
-  const animate = !reducedMotion() && items.every((n) => typeof n.animate === 'function');
-  const before = animate ? items.map((n) => n.getBoundingClientRect()) : null;
-  if (animate) for (const n of items) for (const a of (n.getAnimations ? n.getAnimations() : [])) a.cancel();
-  change();
-  if (!animate) return;
-  items.forEach((n, i) => {
-    const after = n.getBoundingClientRect();
-    const dx = before[i].left - after.left, dy = before[i].top - after.top;
-    if (Math.abs(dx) < 0.5 && Math.abs(dy) < 0.5) return;
-    n.animate([{ transform: `translate(${dx}px, ${dy}px)` }, { transform: 'none' }],
-      { duration: 420, easing: 'cubic-bezier(.2,.7,.3,1)' });
-  });
-}
-
 // A bold-mono '·' separator, the twin of hdDot().
 function rdDot() {
   const s = document.createElement('span');
@@ -38772,7 +39479,7 @@ function paintRdHeader(screen, r) {
   // Run 3 (D13): every run page's bar is the primary action, Run after, Stop and ⋯ (D31's fold, for every run now; CSS
   // hides Away mode and the terminal, and ⋯ drives them; a shaped run's bar folds Run after too).
   const shapedBar = isShapingRun(r);
-  screen.querySelector('.rd-bar')?.toggleAttribute('data-shaped', shapedBar);
+  screen.querySelector('.rd-bar-end')?.toggleAttribute('data-shaped', shapedBar);
   const barMore = screen.querySelector('.rd-bar-more');
   if (barMore) barMore.hidden = false;
   paintRdMenuCarriers(screen, r);
@@ -39295,7 +40002,7 @@ const gsDialogUp = (id) => { const m = document.getElementById(id); return !!(m 
 const gsMenuUp = (id) => { const m = document.getElementById(id); return !!(m && !m.hidden); };
 /** The run just started, on its own page (beginRun opens it): the closing stops of every tour
  *  that starts one — what it is doing, its numbers, a waiting question (only while one waits),
- *  then the rows that open each part of it. `first` is the tour's own line for the first stop.
+ *  then the tabs that open each part of it. `first` is the tour's own line for the first stop.
  *  On the Runs list instead (the user went back), one stop on the run's row. */
 const gsRunPageHops = (first) => {
   // The run Start just began (beginRun notes it) when it is on the list; the first row otherwise.
@@ -39305,16 +40012,16 @@ const gsRunPageHops = (first) => {
     return [{ id: 'card', info: true, nextLabel: 'Done', target: card,
       text: 'This is your run. Open it to follow what it is doing; a question it needs answered shows there too. When it finishes, its row says how it ended.' }];
   }
-  const on = (sel) => [`#run-detail .rd[data-mode="glance"] ${sel}`, ...card];
-  const asking = !!document.querySelector('#run-detail .rd[data-mode="glance"] .rd-questions:not([hidden])');
+  const on = (sel) => [`#run-detail .rd ${sel}`, ...card];
+  const asking = !!document.querySelector('#run-detail .rd .rd-questions:not([hidden])');
   return [
-    { id: 'card', info: true, target: on('.rd-now-top'), text: first },
-    { id: 'facts', info: true, target: on('.rd-facts'),
+    { id: 'card', info: true, target: on('.rd-glance .rd-now-top'), text: first },
+    { id: 'facts', info: true, target: on('.rd-glance .rd-facts'),
       text: 'Time, cost and the files it has changed so far, kept current while it works.' },
     asking ? { id: 'ask', info: true, target: on('.rd-questions .rd-ask-head'),
-      text: 'A question from the run lands here, below its panel. Answer, then Submit, and it carries on. The status line at the top leads here too.' } : null,
-    { id: 'rows', info: true, nextLabel: 'Done', target: on('.rd-result'),
-      text: 'Each row opens a part of the run: its Overview, the Diff of the changes so far, the Workflow and more. When it finishes, its row says how it ended.' },
+      text: 'A question from the run lands here, above its tabs. Answer, then Submit, and it carries on. The status line leads here too.' } : null,
+    { id: 'rows', info: true, nextLabel: 'Done', target: on('.rd-tabs'),
+      text: 'Each tab opens a part of the run: this Overview, the Diff of the changes so far, the Workflow and more. When it finishes, its card says how it ended.' },
   ].filter(Boolean);
 };
 // Test hook, added here: the object at the top of the file is built while this const is
@@ -39798,15 +40505,15 @@ const navLinks = $$('.nav button[data-nav], #acct-settings');
 // workflows took over composer, agents, scripts and agent-create (see MOVED_ROUTES); workspaces + workspace-create are appended.
 // workspace-create is in the array (so deep-links resolve) but has no nav link.
 // guardrails LEFT this array: it is a Settings tab now, reached as #settings/guardrails
-// (old addresses redirect — see MOVED_ROUTES). The four Add-ons pages went the other way:
-// Settings tabs once, pages of their own now.
-const VIEW_NAMES = ['chat', 'design', 'new', 'getting-started', 'runs', 'running', 'schedules', 'history', 'stats', 'team-metrics', 'team-policy', 'workflows', 'requirements', 'workspaces', 'workspace-create', 'projects', 'settings', 'marketplace', 'connectors', 'models', 'providers', 'profile', 'feature', 'group'];
+// (old addresses redirect — see MOVED_ROUTES). The Add-ons pages went the other way:
+// Settings tabs once, pages of their own now (Providers then became a tab of Models).
+const VIEW_NAMES = ['chat', 'design', 'new', 'getting-started', 'runs', 'running', 'schedules', 'history', 'stats', 'team-metrics', 'team-policy', 'workflows', 'requirements', 'workspaces', 'workspace-create', 'projects', 'settings', 'marketplace', 'connectors', 'models', 'profile', 'feature', 'group'];
 // One Runs page, five route names: the bare list (#runs), the two run routes every deep link already uses
 // (#running/<id>…, #history/<projectKey>/<id>…) and the group page's two (#feature/<id>…, #group/<id>…, run 3 D1).
 // All five render the `data-view="runs"` section and light the one Runs nav button.
 const RUNS_VIEWS = new Set(['runs', 'running', 'history', 'feature', 'group']);
 // The Add-ons pages (sidebar group "Add-ons"): Settings tabs once, pages of their own now.
-const ADDON_VIEWS = ['marketplace', 'connectors', 'models', 'providers'];
+const ADDON_VIEWS = ['marketplace', 'connectors', 'models'];
 const viewSection = (name) => (RUNS_VIEWS.has(name) ? 'runs' : name);
 function inRunsView(v = currentView()) { return RUNS_VIEWS.has(v); }
 
@@ -39831,14 +40538,14 @@ const levelCtl = createLevelController({
 const VIEW_MIN_LEVEL = Object.freeze({
   stats: 'advanced', workspaces: 'advanced', 'workspace-create': 'advanced',
   'team-metrics': 'expert', 'team-policy': 'expert',
-  schedules: 'advanced', marketplace: 'advanced', connectors: 'advanced', models: 'expert', providers: 'expert',
+  schedules: 'advanced', marketplace: 'advanced', connectors: 'advanced', models: 'expert',
 });
 const SETTINGS_TAB_MIN_LEVEL = Object.freeze({ ask: 'advanced', guardrails: 'advanced', memory: 'advanced', presets: 'advanced' });
 const VIEW_TITLES = Object.freeze({
   chat: 'Chat', stats: 'Statistics', workflows: 'Workflows', workspaces: 'Workspaces', 'workspace-create': 'Workspaces',
   'team-metrics': 'Team metrics', 'team-policy': 'Team policy',
   guardrails: 'Guardrails', memory: 'Memory', ask: 'Chat', tags: 'Labels & cost tags',
-  marketplace: 'Marketplace', connectors: 'Connectors', models: 'Models', providers: 'Providers',
+  marketplace: 'Marketplace', connectors: 'Connectors', models: 'Models',
   schedules: 'Schedules', presets: 'Presets',
   requirements: 'Requirements', design: 'Design',
 });
@@ -39896,7 +40603,7 @@ document.addEventListener('worca:level', () => {
 // so that is view 'settings', param 'guardrails/<id>' — no parseHash change.
 const SETTINGS_TABS = ['general', 'tags', 'presets', 'runs', 'automations', 'experimental', 'ask', 'guardrails', 'memory'];
 // Tabs whose cards are painted from GET /api/settings (loadSettings paints every card, wherever
-// it sits). The Models page loads it too: it holds the Engines card and the Claude helper pickers.
+// it sits). The Models page loads it too: the Catalogue's Default chip and the Jobs tab's load-error line.
 const SETTINGS_FORM_TABS = ['general', 'tags', 'runs', 'ask'];
 const settingsPanes = $$('[data-view="settings"] .settings-pane');
 // Old addresses keep working. The hashchange listener DROPS a view it does not know
@@ -39910,7 +40617,8 @@ const MOVED_ROUTES = Object.freeze({
   'settings/plugins': 'marketplace',      // Settings tabs that became pages of their own
   'settings/mcp': 'connectors',
   'settings/models': 'models',
-  'settings/providers': 'providers',
+  'settings/providers': 'models/providers',
+  providers: 'models/providers',          // the Providers page became the Models page's third tab
   // The Workflows view took over the Workflow Composer, the Agents page, the Scripts page and the
   // agent wizard (2026-10 redesign); their addresses (and Ask's #scripts/<key> links) land inside it.
   composer: 'workflows',
@@ -39959,6 +40667,8 @@ function fallbackToChat(raw) {
 }
 // Test hook: lets a test call the router the way an in-app caller does.
 if (typeof window !== 'undefined') window.__np = Object.assign(window.__np || {}, { showView });
+// Test hook: redraws the Providers tab the way its flows do (a Save, a sign-in, Refresh usage).
+if (typeof window !== 'undefined') window.__np.repaintProviders = repaintProviders;
 // CDP proofs (D12): flip a flag through the real API; every tab follows through the `flags` frame.
 if (typeof window !== 'undefined') {
   window.__np = Object.assign(window.__np || {}, {
@@ -40208,15 +40918,41 @@ function showView(name, param = '') {
   if (name === 'marketplace') enterMarketplace(param, prevView);
   if (name === 'connectors') void showConnectors(param);
   if (name === 'models') {
-    // The Engines card (its Helper jobs rows included) is painted from GET /api/settings, so a link or a reload
-    // straight to the page loads it too; '#models/<card>' scrolls to a card ('#models/engine'), and
-    // '#models/model/<id>' (a top bar search pick) to a catalogue row.
-    const modelId = modelParamId(param);
-    if (modelId) showAllModels();
-    void loadSettings().then(() => focusSettingsCard(views.find((v) => v.dataset.view === 'models'), param));
-    void loadModelsView().then(() => { if (modelId) revealModelCard(modelId, param); });
+    // Three tabs, the first part of the param (parseModelsParam): Catalogue, Jobs, Providers. Entering the page (or
+    // a hop before the catalogue ever loaded) reads the catalogue, the providers and GET /api/settings (the
+    // Catalogue's Default chip, the load error on the Jobs line). A switch to Catalogue or Providers only shows
+    // another panel, so what was typed stays; each Jobs show reads that tab (showModelsTab).
+    const { tab, rest } = parseModelsParam(param);
+    const entry = prevView !== 'models' || !mvState.data;
+    if (prevView !== 'models') {
+      providersDrawnKey = '';   // each entry draws the Providers tab once
+      // No hook runs on leaving the page: an entry starts with the side panel closed, unless the address names a model
+      // (showModelsTab opens it just below).
+      if (!(tab === 'catalogue' && modelParamId(rest))) {
+        mvState.cat.open = null;
+        el.modelPanelHost?.replaceChildren();
+      }
+    }
+    showModelsTab(tab, rest);
+    if (entry) {
+      // The reveals below use the tab and rest of THIS route; revealModelCard and revealProviderRow check the live
+      // address themselves, so a load that lands after the user moved on flashes nothing. A Jobs block's reveal
+      // follows the tab's own read (showModelsTab).
+      void loadSettings();
+      // Runs on the newest read: this entry's, or a window focus' or a refresh's that overtook it. A later entry
+      // paints and reveals instead.
+      const entrySeq = ++modelsEntrySeq;
+      void loadModelsView().then(() => {
+        if (entrySeq !== modelsEntrySeq) return;
+        paintProvidersTab();
+        // A reload or a search pick from another page on '#models/model/<id>' opens the panel once the catalogue is here
+        // (only while the address still names it).
+        const modelId = tab === 'catalogue' ? modelParamId(rest) : '';
+        if (modelId && currentModelsTab() === 'catalogue' && parseHash()[1] === rest) openModelFromAddress(modelId, rest);
+        if (tab === 'providers') revealProviderRow(rest);
+      });
+    }
   }
-  if (name === 'providers') void loadProvidersView().then(() => revealProviderRow(param));
   if (prevView !== name) worca.onViewShown(name);   // once per navigation, not per repaint: Statistics, Team metrics and Team policy feed the level
   if (name === 'profile') worca.showProfile(document.getElementById('profile-level-host'), () => currentShownView === 'profile');   // #profile/level
   if (name === 'new') {
@@ -40277,6 +41013,11 @@ function showSettingsTab(param = '') {
       b.setAttribute('aria-pressed', on ? 'true' : 'false');
     }
   }
+  paintSettingsSub(tab);
+  // A narrow screen scrolls the strip sideways: keep the open tab in sight (centred, the page itself does not move).
+  const strip = el.settingsTabs, onTab = strip?.querySelector('button.on');
+  if (onTab && strip.scrollWidth > strip.clientWidth) strip.scrollLeft = onTab.offsetLeft - (strip.clientWidth - onTab.offsetWidth) / 2;
+  markSettingsStrip();
   // Same contract the per-view loaders had: a tab that is never opened costs no
   // request, and re-entry refetches (which is what lets grvExitWizard's
   // '#settings/guardrails/<id>' -> '#settings/guardrails' hop reset the wizard).
@@ -40294,10 +41035,75 @@ function showSettingsTab(param = '') {
   if (tab === 'experimental') loadFlagsTab(sub);
 }
 
-// A link to one card ('#settings/runs/actions', '#models/engine', a top bar search pick '#settings/general/appearance-card'):
+// The open tab's cards as links under it, for the two long tabs only (the left column, wide screens). A link is
+// the card's own address and name from settings-index.mjs (what the top bar search shows) and carries the card's
+// mode, Labs and git gates, so the same CSS rules hide it with its card.
+const SETTINGS_LISTS_CARDS = ['general', 'runs'];
+const SETTINGS_CARD_ENTRY = new Map(SETTING_ENTRIES.filter((e) => e.type === 'card').map((e) => [e.id.slice('card:'.length), e]));
+function paintSettingsSub(tab) {
+  if (!el.settingsTabs) return;
+  el.settingsTabs.querySelector('.settings-sub')?.remove();
+  const pane = SETTINGS_LISTS_CARDS.includes(tab) && settingsPanes.find((p) => p.dataset.tab === tab);
+  if (!pane) return;
+  const sub = document.createElement('div');
+  sub.className = 'settings-sub';
+  for (const card of pane.querySelectorAll(':scope > .settings-card')) {
+    const entry = SETTINGS_CARD_ENTRY.get(card.id);
+    if (!entry) continue;
+    const a = document.createElement('a');
+    a.href = entry.href;
+    a.textContent = a.title = entry.title;
+    a.dataset.card = card.id;
+    for (const k of ['minLevel', 'levelKeep', 'flag', 'needsGit']) if (k in card.dataset) a.dataset[k] = card.dataset[k];
+    sub.append(a);
+  }
+  el.settingsTabs.querySelector(`button[data-tab="${tab}"]`).after(sub);
+  markSettingsSub();
+}
+// Which card is on screen. Colour only; nothing scrolls. By position: the last card whose top passed the upper part
+// of the page; at the end of the page the last card, which is too short to get that high. The card in the address
+// wins while all of it is on screen, so a short card near the end is the one marked after its link is picked.
+function markSettingsSub() {
+  const links = [...(el.settingsTabs?.querySelectorAll('.settings-sub a') || [])].filter((a) => a.getClientRects().length);
+  if (!links.length) return;
+  const box = el.settingsTabs.closest('.main');
+  const atEnd = !!box && box.scrollTop > 0 && box.scrollTop >= box.scrollHeight - box.clientHeight - 1;
+  let cur = null;
+  for (const a of links) {
+    const card = document.getElementById(a.dataset.card);
+    if (!card || !card.getClientRects().length) continue;
+    const r = card.getBoundingClientRect();
+    if (a.getAttribute('href') === location.hash && r.top >= 0 && r.bottom <= window.innerHeight) { cur = a; break; }
+    if (!cur || atEnd || r.top < 220) cur = a;
+  }
+  for (const a of el.settingsTabs.querySelectorAll('.settings-sub a')) { if (a === cur) a.setAttribute('aria-current', 'true'); else a.removeAttribute('aria-current'); }
+}
+// Which sides of the narrow strip hide more tabs ('' | 'left' | 'right' | 'left right'): the CSS fades that edge.
+function markSettingsStrip() {
+  const strip = el.settingsTabs;
+  if (!strip) return;
+  const max = strip.scrollWidth - strip.clientWidth;
+  strip.dataset.more = [strip.scrollLeft > 1 ? 'left' : '', strip.scrollLeft < max - 1 ? 'right' : ''].filter(Boolean).join(' ');
+}
+el.settingsTabs?.addEventListener('scroll', markSettingsStrip, { passive: true });
+window.addEventListener('resize', markSettingsStrip);
+// The page's own scroll only (a list scrolling inside a pane measures nothing).
+el.settingsTabs?.closest('.main')?.addEventListener('scroll', () => { if (currentShownView === 'settings') markSettingsSub(); }, { passive: true });
+// A mode, Labs or git change shows or hides tabs and cards by CSS: redo the strip's hints and the card mark.
+for (const ev of ['worca:level', 'worca:flags', 'worca:git']) document.addEventListener(ev, () => { markSettingsStrip(); markSettingsSub(); });
+// A card kept on screen below its mode (keepVisible) keeps its link too: call this after the card's marker changes.
+function syncSettingsSubKeep(card) {
+  const a = card && el.settingsTabs?.querySelector(`.settings-sub a[data-card="${card.id}"]`);
+  if (!a) return;
+  if (card.dataset.levelKeep) a.dataset.levelKeep = card.dataset.levelKeep; else delete a.dataset.levelKeep;
+  markSettingsSub();
+}
+
+// A link to one card ('#settings/runs/actions', a top bar search pick '#settings/general/appearance-card'):
 // scroll to `<sub>-settings-card` (else the card whose id IS `sub`) inside `scope`, focus its first field and
 // highlight it for 3 s (A-7). Any other sub is ignored. The Add-ons pages' own links land the same way:
-// '#models/model/<id>' (a catalogue row), '#providers/<row>' (a provider row), '#connectors/servers/<id>' (a server row).
+// '#models/model/<id>' (a catalogue row), '#models/jobs/<part>' (a Jobs block, revealJobsPart),
+// '#models/providers/<row>' (a provider row), '#connectors/servers/<id>' (a server row).
 const foundTimers = new WeakMap();
 /** Scroll `el` into view, focus `focusEl` (when given) and highlight `el` for 3 s (A-7); a repeat pick restarts it. */
 function markFound(el, focusEl = null) {
@@ -40315,33 +41121,97 @@ function focusSettingsCard(scope, sub) {
   if (!card || !scope || !scope.contains(card)) return;
   markFound(card, card.querySelector('input, select, textarea'));
 }
+// The Models tab the address names ('catalogue' | 'jobs' | 'providers'), or '' off the Models page.
+function currentModelsTab() {
+  return currentView() === 'models' ? parseModelsParam(parseHash()[1]).tab : '';
+}
+// Show one Models tab: its panel, its lit tab, the head actions that belong to it; then the place `rest` names on it
+// (a catalogue row, a Jobs block, a provider row). The Catalogue and Providers draw from what is loaded; a Jobs show
+// reads that tab (settings, /api/config and the readiness preflight), then reveals its block.
+function showModelsTab(tab, rest) {
+  const section = views.find((v) => v.dataset.view === 'models');
+  if (!section) return;
+  for (const panel of section.querySelectorAll('.mdl-panel[data-tab]')) panel.hidden = panel.dataset.tab !== tab;
+  paintModelsTabs(modelsTabsNav, { active: tab, count: mvState.count ?? null });
+  for (const n of section.querySelectorAll('[data-tab-only]')) n.hidden = n.dataset.tabOnly !== tab;
+  // The info-tip bubble lives on <body>: a tip opened on one tab must not float over the next.
+  if (tab !== modelsTabShown) hideInfoTip();
+  modelsTabShown = tab;
+  // Leaving the Catalogue closes the side panel (SH-6): nothing else redraws its host, so it would show again on return.
+  if (tab !== 'catalogue' && (mvState.cat.open || el.modelPanelHost?.childElementCount)) closeModelPanel();
+  if (tab === 'catalogue') {
+    const id = modelParamId(rest);
+    if (!id) return;
+    // A hop to a row inside the open page draws from the loaded catalogue (the narrowing that could hide it cleared).
+    openModelFromAddress(id, rest);
+  } else if (tab === 'jobs') {
+    // '<part>/<harness>' names the harness that owns what a link means (Settings' Run naming is Claude's helper job, its
+    // Memory defragment the run engine's): show it first, as "Used by" does, else the default harness's card opens (P6 review s1).
+    const [part, owner = ''] = rest.split('/');
+    if (MODEL_ENGINE_NAMES.includes(owner)) mvState.jobs.engine = owner;
+    // The block only while the address still names it: the read can land after the user moved on.
+    void loadJobs().then(() => { if (rest && currentModelsTab() === 'jobs' && parseModelsParam(parseHash()[1]).rest === rest) revealJobsPart(part); });
+  } else if (tab === 'providers') {
+    paintProvidersTab();
+    revealProviderRow(rest);
+  }
+}
 // '#models/model/<id>': the catalogue row a top bar search pick names (settings-index.mjs addonEntriesFrom).
 function modelParamId(param) {
   if (!param.startsWith('model/') || param.length <= 6) return '';
   try { return decodeURIComponent(param.slice(6)); } catch { return ''; }
 }
-// The catalogue's own narrowing can hide the row a pick names: clear its search, chip and just-imported filter and
-// unfold the groups that hold your own, plugin and team-policy models.
+// The catalogue's own narrowing can hide the row a pick names (or "Show all"): clear its search, chip, Source and
+// just-imported filter.
 function showAllModels() {
-  mvState.query = '';
-  mvState.filter = 'all';
+  mvState.cat.query = '';
+  mvState.cat.filter = 'all';
+  mvState.cat.source = 'any';
   mvState.justImported = null;
-  Object.assign(mvState.collapsed, { global: false, plugin: false, policy: false });
 }
-// Still on that address once the catalogue painted: scroll to the row, focus its first button, highlight it.
+// '#models/model/<id>' (a built-in too): every narrowing cleared, the first harness group holding the id unfolded, its
+// side panel open; then the row is scrolled to, focused and highlighted. Built-ins carry no `engine`, so the group
+// comes from the view model, not the model.
+function openModelFromAddress(id, param) {
+  showAllModels();
+  const lc = id.toLowerCase();
+  const g = buildCatalogue(catalogueData(), mvState.cat).groups
+    .find((x) => x.subs.some((s) => s.rows.some((r) => String(r.id).toLowerCase() === lc)));
+  if (g) mvState.cat.fold = { ...mvState.cat.fold, [g.engine]: false };
+  mvState.cat.open = id;
+  if (mvState.data) renderModelsViewBody();
+  revealModelCard(id, param);
+}
+// Still on that address once the catalogue painted: scroll to the row, focus it (the row is the button), highlight it.
 function revealModelCard(id, param) {
   if (currentView() !== 'models' || parseHash()[1] !== param || !el.modelsList) return;
-  const card = [...el.modelsList.querySelectorAll('.mv-card[data-id]')].find((n) => n.dataset.id === id);
-  if (card) markFound(card, card.querySelector('button'));
+  const row = modelRowEl(id);
+  if (row) markFound(row, row);
 }
-// '#providers/<copilot|openai|anthropic|speech|images|sound>': the provider's row, highlighted, with its sign-in or key field
-// focused (focusProviderRow's choice), else its first control.
+// '#models/providers/<copilot|openrouter|openai|anthropic|speech|images|sound>': the provider's row unfolded (never
+// folded) and highlighted, with its sign-in or key field focused, else its first field, else its first button. Only
+// while the address still names that row: a stale reveal unfolds and marks nothing.
 function revealProviderRow(param) {
-  if (!param || currentView() !== 'providers' || parseHash()[1] !== param || !el.providersList) return;
+  if (!param || currentModelsTab() !== 'providers' || parseModelsParam(parseHash()[1]).rest !== param || !el.providersList) return;
   const row = [...el.providersList.querySelectorAll('.mv-pv-row[data-provider]')].find((n) => n.dataset.provider === param);
   if (!row) return;
-  markFound(row.closest('.mv-pv-card') || row,
-    row.querySelector('.mv-cp-signin') || row.querySelector('.mv-pv-key') || row.querySelector('input, select, textarea, button'));
+  mvState.pvOpen[param] = true;
+  toggleProviderRow(el.providersList, param, true);
+  markFound(row.closest('.mv-pv-card') || row, providerRevealTarget(row));
+}
+// Where a link to a provider row puts the cursor: the Copilot sign-in, else the key, else the first field (an info tip
+// is no field), else the first button. Never a control the row body hides (Advanced, a speech server's fields), nor,
+// under the credential broker, one it hides (keys, the Copilot sign-in, sign-out and usage, Test connection).
+function providerRevealTarget(row) {
+  const broker = !!row.closest('.mv-providers--broker');
+  const usable = (c) => {
+    if (c.classList.contains('info-tip')) return false;
+    const hidden = c.closest('[hidden]');
+    if (hidden && row.contains(hidden)) return false;
+    return !broker || !(c.matches('.mv-cp-signin, .mv-cp-signout, .mv-cp-quota-refresh, .mv-pv-test') || c.closest('.mv-field')?.querySelector('.mv-pv-key'));
+  };
+  const first = (sel) => [...row.querySelectorAll(sel)].find(usable) || null;
+  return first('.mv-cp-signin') || first('.mv-pv-key') || first('input, select, textarea') || first('button');
 }
 // '#connectors/servers/<id>': the Servers view, then that server's row highlighted.
 async function showConnectors(param) {
@@ -40457,7 +41327,7 @@ activityMenu = $('#topnav-activity') ? createActivityMenu({
   navigate: (hash) => { location.hash = hash; },
 }) : null;
 
-// The away screensaver easter egg: Away mode now (the account corner's state), the Keep awake row, and the runs
+// The screensaver: the Settings › Appearance switch and its Start after time (screensaverPref), and the runs
 // counted as the Runs list counts them. Chats arrive through onAskFrame; the open chat's unread dot through askPanel.
 awayScreensaver = createAwayScreensaver({
   doc: document, win: window,
@@ -40466,8 +41336,8 @@ awayScreensaver = createAwayScreensaver({
     const asking = live.filter((r) => r.pendingQuestion != null);
     const lingered = [...runs.values()].filter(isLingering);
     return {
-      away: acctState.away?.state === 'away',
-      keepAwake: el.acctKeepAwake?.getAttribute('aria-checked') === 'true',
+      enabled: screensaverPref.enabled,
+      idleMinutes: screensaverPref.idleMinutes,
       runs: {
         running: live.length - asking.length,
         questions: asking.length,
@@ -40484,6 +41354,11 @@ awayScreensaver = createAwayScreensaver({
 // Settings tabs are hash-first, exactly like the nav buttons: the single
 // hashchange listener drives showView, so a click renders once.
 el.settingsTabs?.addEventListener('click', (e) => {
+  // A card link is a plain hash link; picking the same one again fires no hashchange, so land on it by hand.
+  const link = e.target.closest && e.target.closest('.settings-sub a');
+  // A modifier click opens the link elsewhere and leaves this page alone.
+  const plain = !e.button && !e.metaKey && !e.ctrlKey && !e.shiftKey && !e.altKey;
+  if (link && plain && location.hash === link.getAttribute('href')) showView('settings', location.hash.slice('#settings/'.length));
   const btn = e.target.closest && e.target.closest('button[data-tab]');
   if (!btn) return;
   const param = settingsParamFor(btn.dataset.tab);
@@ -42085,12 +42960,15 @@ if ($('#ask-side') && $('#topnav-ask')) {
     if (e.target?.closest?.('a[href^="#"]')) askSide.uncover();
   });
 }
-// Command summaries (#911) and the account menu's Keep awake row: read the person's switches once.
+// Command summaries (#911), the account menu's Keep awake row, the screensaver and Settings › Memory's model link (a
+// later settings read repaints it, loadSettings): read the person's switches once.
 Promise.resolve().then(() => fetch('/api/settings')).then((r) => safeJson(r)).then((d) => {
   setChatSummariesPref(d && d.chat);
   paintKeepAwakeRow(!(d && d.keepAwake === false));
+  paintMemoryModelLink(d);
+  paintScreensaver(d && d.screensaver);
 }).catch(() => { /* keep: on */ });
-onFlagChange('commandSummaries', () => { askPanel?.refreshCommandCards(); void paintHelperModelCards(); });
+onFlagChange('commandSummaries', () => { askPanel?.refreshCommandCards(); repaintJobs(); });
 // One delegated handler for every Summaries / Raw switch (Logs tab, History Logs, both drawers, Chat's run
 // panel): they are cloned on every build, so per-node listeners would be lost on each rebuild.
 document.addEventListener('click', (e) => {
@@ -42146,7 +43024,9 @@ window.addEventListener('focus', () => { void refreshVersionStatus(); });
 {
   const repaintPickers = () => {
     if (currentView() === 'new') refreshNewPipelinePickers();
-    if (currentView() === 'models') loadModelsView();
+    // A re-read never redraws a card on screen (what was typed stays); it draws one only into a Providers tab that
+    // a failed read left empty, where nothing is lost.
+    if (currentView() === 'models') void loadModelsView().then(() => { if (!el.providersList?.firstElementChild) paintProvidersTab(); });
   };
   loadCredentials().then((d) => { if (d) repaintPickers(); });
   window.addEventListener('focus', () => { loadCredentials().then((d) => { if (d) repaintPickers(); }); });

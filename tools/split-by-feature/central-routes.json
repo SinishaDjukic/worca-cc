@@ -14,5 +14,6 @@
   { "method": "GET", "path": "`${prefix}${name}`", "reason": "vendor asset: the voice files (VOICE_VENDOR) on an allow-list, before the /vendor 404 tail" },
   { "method": "GET", "path": "route", "reason": "vendor asset: the terminal pane's xterm files (terminalVendorFiles), before the /vendor 404 tail" },
   { "method": "GET", "path": "/vendor/speech/lib/:name", "reason": "vendor asset: the speech runtime from the asset store, before the /vendor 404 tail" },
-  { "method": "GET", "path": "/^\\/vendor\\/speech\\/hf\\/([^/]+\\/[^/]+)\\/resolve\\/[^/]+\\/(.+)$/", "reason": "vendor asset: the speech models from the asset store, before the /vendor 404 tail" }
+  { "method": "GET", "path": "/^\\/vendor\\/speech\\/hf\\/([^/]+\\/[^/]+)\\/resolve\\/[^/]+\\/(.+)$/", "reason": "vendor asset: the speech models from the asset store, before the /vendor 404 tail" },
+  { "method": "GET", "path": "/vendor/brand-icons/:file", "reason": "vendor asset: the Models page's brand marks (@lobehub/icons-static-svg) one svg at a time, before the /vendor 404 tail" }
 ]

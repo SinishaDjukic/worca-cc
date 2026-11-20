@@ -6,6 +6,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { JSDOM } from 'jsdom';
+import { readFileSync } from 'node:fs';
 import { checkRows } from './helpers/rows.mjs';
 import { readIndexHtml } from '../src/core/read-index-html.mjs';
 import { readStyleCss } from '../src/core/read-style-css.mjs';
@@ -100,9 +101,12 @@ const ROWS = [
     .map((sel) => [sel, 'ui-history-detail-tabs: the saved run bar shares the run page bar\'s rules']),
   ['.hd-sec', 'ui-projects-view: the projects shell is a twin of the History track'], ['.pd-sec', 'ui-projects-view: the projects shell is a twin of the History track'],
   ['.rd-questions', 'ui-running-detail: the question panel rises in'],
+  ['.rd-live', 'ui-running-detail: the live workflow in the card\'s right column goes when the run ends'],
   ['.wm-add-msg', 'workspace-map-css: hidden lines stay hidden'],
   // The account corner's popups and cards (side-flyout.mjs and app.js toggle `hidden`).
   ...['.acct-menu', '.lvl-menu', '.acct-spend', '.id-card'].map((sel) => [sel, 'ui-account-corner: a closed menu, an empty card']),
+  // The Usage section and submenu (usage-view.mjs): no reading, no row, no hairline, no space.
+  ...['.usage-menu', '.usage-sect'].map((sel) => [sel, 'usage rings: a hidden Usage section takes no space']),
   // The top bar's Activity popover and its badge (side-flyout.mjs and activity-menu.mjs toggle `hidden`).
   ...['.activity-pop', '.topnav-badge'].map((sel) => [sel, 'ui-activity-topnav: a closed popover, a zero badge']),
   ['.tsearch-pop', 'ui-topnav-search: the top bar search\'s closed listbox'],
@@ -131,16 +135,6 @@ test('[hidden] beats the author display rule on every element app.js hides by at
         if (win && win.r.style.display !== 'none') shown.push(`${el.tagName.toLowerCase()}${el.id ? `#${el.id}` : ''}${[...el.classList].map((c) => `.${c}`).join('')}: ${win.s} { display: ${win.r.style.display} }`);
       }
       assert.deepEqual(shown, []);
-    } },
-    { name: 'ui-running-detail: the Live view sits beside the card when the pane has room, under it otherwise; the two-column layout never outranks [hidden]', run: () => {
-      const live = displays('.rd-glance').filter(({ s }) => subject(s).includes('.rd-glance[data-live="on"]'));
-      assert.ok(live.length, 'the wide layout sets display somewhere');
-      assert.deepEqual(live.filter(({ s }) => !subject(s).includes(':not([hidden])')).map(({ s }) => s), []);
-      assert.deepEqual(live.filter(({ r }) => !(r.parentRule?.conditionText === 'rd (min-width: 960px)')).map(({ s }) => s), [],
-        'only a wide pane (the rd container) lays the glance out in two columns');
-      const graph = flat.find((r) => r.parentRule?.conditionText === 'rd (min-width: 960px)'
-        && sels(r).some((s) => /^\.rd-glance\[data-live="on"\]\S*\s*>\s*\.rd-live$/.test(s)));
-      assert.equal(graph?.style.getPropertyValue('grid-column'), '2', 'the graph takes the column beside the card');
     } },
   ]);
 });
@@ -187,23 +181,26 @@ test('run 4 D21, D14: the Chat run card is divided sections, the group page Ship
   assert.match(flat.at(-1).selectorText, /^:is\(\.ask-card,\.chat-rc,\.shape-feature\) :is\(\.qpanel,/, 'the in-card override is the last rule');
 });
 
-test('slice 2: at split layout every Back keeps a display (no rule hides .rd-back, .hd-back or .gpage-back)', () => {
+test('one-level run page: beside the Runs list the run pages drop Back (the list is right there); the group page and the slide layout keep it', () => {
   document.body.innerHTML = `<div class="runs-shell" data-layout="split"><div class="runs-pane">
     <div class="run-shell detail-open"><div class="rd"><div class="rd-bar"><button class="btn btn-sm btn-quiet btn-icon rd-back"></button></div></div></div>
     <div class="hist-shell detail-open"><div class="hd"><div class="hd-bar"><button class="btn btn-sm btn-quiet btn-icon hd-back"></button></div></div></div>
     <div class="group-shell detail-open"><div class="gpage"><div class="gpage-bar rd-bar"><a class="btn btn-sm btn-quiet btn-icon gpage-back"></a></div></div></div>
   </div></div>`;
-  for (const cls of ['rd-back', 'hd-back', 'gpage-back']) {
+  const winner = (cls) => {
     const el = document.querySelector(`.${cls}`);
     // Every top-level rule (no @media / @container arm) that sets display on this element; the cascade's winner.
     const hits = flat.map((r, i) => ({ r, i })).filter(({ r }) => topLevel(r) && r.style.getPropertyValue('display'))
       .flatMap(({ r, i }) => sels(r).filter((s) => { try { return el.matches(s); } catch { return false; } })
         .map((s) => ({ r, i, imp: important(r), spec: specificity(s) })));
     hits.sort((x, y) => (x.imp - y.imp) || cmp(x.spec, y.spec) || (x.i - y.i));
-    const win = hits.at(-1);
-    assert.ok(win, `${cls}: some rule gives it a display`);
-    assert.notEqual(win.r.style.getPropertyValue('display'), 'none', `${cls} is hidden at split by "${win.r.selectorText}"`);
-  }
+    return hits.at(-1);
+  };
+  const display = (cls) => { const w = winner(cls); assert.ok(w, `${cls}: some rule gives it a display`); return w.r.style.getPropertyValue('display'); };
+  for (const cls of ['rd-back', 'hd-back']) assert.equal(display(cls), 'none', `${cls} is hidden beside the Runs list`);
+  assert.notEqual(display('gpage-back'), 'none', 'the group page keeps its Back');
+  document.querySelector('.runs-shell').dataset.layout = 'slide';
+  for (const cls of ['rd-back', 'hd-back', 'gpage-back']) assert.notEqual(display(cls), 'none', `${cls} shows in the slide layout`);
   document.body.innerHTML = '';
 });
 
@@ -236,7 +233,8 @@ test('run page bar: every .rd-bar-end button is one height, font size and paddin
     <button class="btn btn-quiet btn-icon ${bar === 'rd-bar' ? 'rd' : 'hd'}-bar-more"></button>
     <span class="crp-bar-btns"><button class="btn crp-full"></button></span>
   </span></div>`;
-  document.body.innerHTML = `<div class="crp">${end('rd-bar')}${end('hd-bar')}</div>`;
+  // The run page roots (.rd / .hd) hold the bar: the button rules are scoped to them, wherever the end group sits.
+  document.body.innerHTML = `<div class="crp"><div class="rd">${end('rd-bar')}</div><div class="hd">${end('hd-bar')}</div></div>`;
   for (const bar of ['rd-bar', 'hd-bar']) {
     const q = (s) => document.querySelector(`.${bar} ${s}`);
     const labelled = ['.rd-after,.hd-after', '[data-k="primary"]', '[data-k="made"]', '[data-k="split"]', '[data-k="stop"]'].map(q);
@@ -261,4 +259,40 @@ test('run page bar: every .rd-bar-end button is one height, font size and paddin
     assert.equal(winning(q('.crp-full'), 'padding-left').value, '0px', `${bar} .crp-full padding (by "${winning(q('.crp-full'), 'padding-left').by}")`);
   }
   document.body.innerHTML = '';
+});
+
+test('narrow chat run panel: Resume keeps its word, the other bar buttons go icon-only', () => {
+  // The rules inside `@container crp (max-width:560px)`, in order; the cascade replayed for `position`.
+  const narrow = flat.map((r, i) => ({ r, i }))
+    .filter(({ r }) => /crp\s*\(max-width:\s*560px\)/.test(r.parentRule?.conditionText || r.parentRule?.cssText?.split('{')[0] || ''));
+  assert.ok(narrow.length, 'the narrow crp container rules are found');
+  const position = (el) => {
+    const hits = narrow.filter(({ r }) => r.style.getPropertyValue('position'))
+      .flatMap(({ r, i }) => sels(r).filter((s) => { try { return el.matches(s); } catch { return false; } })
+        .map((s) => ({ r, i, spec: specificity(s) })));
+    hits.sort((x, y) => cmp(x.spec, y.spec) || (x.i - y.i));
+    return hits.at(-1)?.r.style.getPropertyValue('position');
+  };
+  document.body.innerHTML = `<div class="crp">
+    <div class="rd-bar"><button class="btn rd-pause" data-action="resume"><span class="rd-btn-label" data-k="rd-resume">Resume</span></button>
+      <button class="btn rd-pause" data-action="pause"><span class="rd-btn-label" data-k="rd-pause">Pause</span></button>
+      <button class="btn rd-stop"><span class="rd-btn-label" data-k="rd-stop">Stop</span></button></div>
+    <div class="hd-bar"><button class="btn hd-resume"><span class="hd-btn-label" data-k="hd-resume">Resume</span></button>
+      <button class="btn hd-stop"><span class="hd-btn-label" data-k="hd-stop">Stop</span></button></div></div>`;
+  const q = (k) => document.querySelector(`[data-k="${k}"]`);
+  for (const k of ['rd-resume', 'hd-resume']) assert.equal(position(q(k)), 'static', `${k}: the word shows`);
+  for (const k of ['rd-pause', 'rd-stop', 'hd-stop']) assert.equal(position(q(k)), 'absolute', `${k}: icon-only`);
+  document.body.innerHTML = '';
+});
+
+test('usage rings (account-corner.css): the 24px avatar under an inner ring, theme-free rules, the -strong inks are light-dark pairs', () => {
+  const css = readFileSync(new URL('../ui/public/shell/account-corner.css', import.meta.url), 'utf8');
+  assert.match(css, /\.acct\[data-usage-l\]:not\(\[data-usage-l="none"\]\) \.acct-ava\{width:24px;height:24px;/);
+  const usage = css.split('\n').filter((l) => /usage|uw-|ring-s|ring-l|data-tone="(?:ok|warn|over)"\] > \.mini-ring/.test(l));
+  assert.ok(usage.length >= 10, usage.join('\n'));
+  assert.deepEqual(usage.filter((l) => /\[data-theme|prefers-color-scheme/.test(l)), []);
+  assert.equal(/data-spend[^\n]*acct-ring|\.acct\[data-spend/.test(css), false, 'the avatar has no spend ring rules');
+  const tokens = readFileSync(new URL('../ui/public/shell/self-hosted.css', import.meta.url), 'utf8');
+  assert.match(tokens, /--red-ink-strong:light-dark\(/);
+  assert.match(tokens, /--amber-ink-strong:light-dark\(/);
 });

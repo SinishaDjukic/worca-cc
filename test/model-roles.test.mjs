@@ -386,7 +386,7 @@ test('sub-agent alias labels name the Claude model, with the role words as a hin
   const { SUBAGENT_ALIAS_LABELS, subagentAliasLabel, subagentAliasTitle } = await import('../src/shared/model-roles.mjs');
   // Sub-agents do not follow the roles, so a label never names a role on its own.
   assert.equal(subagentAliasLabel('opus'), 'Opus (deep thinking)');
-  assert.equal(subagentAliasLabel('sonnet'), 'Sonnet (everyday coding)');
+  assert.equal(subagentAliasLabel('sonnet'), 'Sonnet (everyday tasks)');
   assert.equal(subagentAliasLabel('fable'), 'Fable (premium)');
   assert.equal(subagentAliasLabel('auto'), 'agent picks');
   assert.equal(subagentAliasLabel('inherit'), 'inherit');
@@ -395,6 +395,13 @@ test('sub-agent alias labels name the Claude model, with the role words as a hin
   assert.deepEqual(Object.keys(SUBAGENT_ALIAS_LABELS).sort(), ['auto', 'fable', 'inherit', 'opus', 'sonnet']);
   assert.equal(subagentAliasTitle('opus'), "Always Claude's Opus: sub-agents don't follow your model roles");
   assert.equal(subagentAliasTitle('auto'), '');
+});
+
+test('the role is called Everyday tasks; the role tiles carry a short sub-line each', async () => {
+  const { ROLE_LABELS, ROLE_SUBS, subagentAliasLabel } = await import('../src/shared/model-roles.mjs');
+  assert.equal(ROLE_LABELS.everyday, 'Everyday tasks');
+  assert.equal(subagentAliasLabel('sonnet'), 'Sonnet (everyday tasks)');
+  assert.deepEqual(ROLE_SUBS, { deep: 'Plans and reviews', everyday: 'Code and Chat answers', quick: 'Short helper calls' });
 });
 
 test('roles exist on every engine with models; a team policy carries Claude\'s and Codex\'s only', async () => {

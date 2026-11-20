@@ -7,8 +7,8 @@ import assert from 'node:assert/strict';
 import { JSDOM } from 'jsdom';
 import { BUDGET_WARN_AT } from '../ui/public/stats-view.mjs';
 import {
-  spendRing, ringDash, spendPeriod, renderSpendCard, RING_R, MINI_R,
-  personInitials, describeAccount, accountLabel, paintAccountCorner, paintIdentityCard, paintAwayRow, renderLevelCard,
+  spendRing, ringDash, spendPeriod, renderSpendCard, RING_R, MINI_R, INNER_R, ringSvg,
+  personInitials, describeAccount, accountLabel, paintAccountCorner, paintIdentityCard, paintAwayRow, paintAppearanceIcon, renderLevelCard,
 } from '../ui/public/account-menu.mjs';
 import { describeAwayRow } from '../src/shared/away-mode/describe.mjs';
 import { createLevelController, levelMenuHtml, LEVEL_SHORT, LEVEL_INFO, UI_LEVELS } from '../ui/public/ui-level.mjs';
@@ -137,12 +137,12 @@ test('free-request row: "Free requests today  37 / 50", amber when low, red when
       assert.equal(freeDailyRow(FREE({ remaining: 0 }), { now }).tone, 'over', 'used up');
       assert.match(freeDailyRow(FREE({ remaining: 0 }), { now }).title, /one request\. Used up: free models pause until the reset\.$/);
     } },
-    { name: 'the card carries the row last; it routes to the Providers page', run: () => {
+    { name: 'the card carries the row last; it routes to the Models page\'s Providers tab, at the OpenRouter row', run: () => {
       const card = renderSpendCard(LIMIT, { doc, free: FREE({ remaining: 4 }), now });
       const row = card.lastElementChild;
       assert.ok(row.classList.contains('mc-free'));
-      assert.deepEqual([row.tagName, row.type, row.getAttribute('role'), row.dataset.nav, row.dataset.tone],
-        ['BUTTON', 'button', 'menuitem', 'providers', 'warn']);
+      assert.deepEqual([row.tagName, row.type, row.getAttribute('role'), row.dataset.nav, row.dataset.hash, row.dataset.tone],
+        ['BUTTON', 'button', 'menuitem', 'models', 'models/providers/openrouter', 'warn']);
       assert.equal(row.querySelector('.mi-lbl').textContent, 'Free requests today');
       assert.equal(row.querySelector('.mi-val').textContent, '4 / 50');
     } },
@@ -201,15 +201,15 @@ test('describeAccount: shared = initials + the name up to "@" + the card; operat
   ]);
 });
 
-test('accountLabel: who, then away and the limit, then what the menu holds', () => {
+test('accountLabel: who, then away, a block and the usage rings, then what the menu holds', () => {
   const acct = describeAccount(SHARED);
   assert.deepEqual(accountLabel(acct), { label: `${ME}: spend, away mode, interface mode and settings`, title: ME });
   assert.deepEqual(accountLabel(acct, { away: true, budget: LIMIT }), {
-    label: `${ME} · away · $20.00 of $50.00 spent in October: spend, away mode, interface mode and settings`,
-    title: `${ME} · away · $20.00 of $50.00 spent in October`,
-  });
+    label: `${ME} · away: spend, away mode, interface mode and settings`,
+    title: `${ME} · away`,
+  }, 'a budget with a limit adds no spend amount to the label');
   assert.equal(accountLabel(acct, { budget: { ...LIMIT, windowSpendUsd: 52.13, blocked: true } }).title,
-    `${ME} · $52.13 of $50.00 spent in October, new runs blocked`);
+    `${ME} · new runs blocked`, 'a blocked budget keeps "new runs blocked"');
   assert.equal(accountLabel(acct, { budget: NO_LIMIT }).title, ME, 'no limit: nothing to say about spend');
   const local = describeAccount(null);
   assert.deepEqual(accountLabel(local, { away: true }), {
@@ -218,6 +218,10 @@ test('accountLabel: who, then away and the limit, then what the menu holds', () 
   });
   assert.equal(accountLabel(local, { budget: { ...NO_LIMIT, blocked: true } }).title,
     'Profile: spend, away mode, interface mode and settings · new runs blocked', 'a block is named even without a limit');
+  const usageParts = ['Session · Codex: 86%, resets 14:50', 'Week · Claude Code: 73%, resets Mon 09:00'];
+  assert.equal(accountLabel(local, { away: true, budget: { ...LIMIT, blocked: true }, usageParts, level: 'Curious' }).label,
+    'Profile · away · new runs blocked · Session · Codex: 86%, resets 14:50; Week · Claude Code: 73%, resets Mon 09:00 · Curious: spend, usage, away mode, interface mode and settings',
+    'order: away, blocked, usage, level; the menu names usage while it shows');
 });
 
 test('paintAccountCorner: initials, the short name, the ring and the away dot; names stay text', async () => {
@@ -230,20 +234,43 @@ test('paintAccountCorner: initials, the short name, the ring and the away dot; n
       assert.equal(btn.querySelector('.acct-name').textContent, 'ada.lovelace');
       assert.equal(btn.title, ME);
       assert.equal(btn.getAttribute('aria-label'), `${ME}: spend, away mode, interface mode and settings`);
-      assert.deepEqual([btn.dataset.account, btn.dataset.spend, btn.dataset.presence], ['shared', 'none', 'here']);
+      assert.deepEqual([btn.dataset.account, btn.dataset.spend, btn.dataset.presence], ['shared', undefined, 'here']);
     } },
-    { name: 'a limit fills the ring; amber from the warn band; red and full when blocked', run: () => {
+    { name: 'no spend ring for any sign-in: no data-spend, the arcs are usage-view.mjs\'s; a block still reads in the label and title', run: () => {
       const doc = shell();
       const btn = doc.getElementById('side-acct');
       const arc = btn.querySelector('.acct-ring .arc');
-      paintAccountCorner(btn, describeAccount(null), { budget: LIMIT });
-      assert.deepEqual([btn.dataset.spend, arc.getAttribute('stroke-dasharray')], ['ok', ringDash(0.4, RING_R)]);
-      paintAccountCorner(btn, describeAccount(null), { budget: { ...LIMIT, windowSpendUsd: 41.23 } });
-      assert.equal(btn.dataset.spend, 'warn');
-      paintAccountCorner(btn, describeAccount(null), { budget: { ...LIMIT, blocked: true } });
-      assert.deepEqual([btn.dataset.spend, arc.getAttribute('stroke-dasharray')], ['over', ringDash(1, RING_R)]);
-      paintAccountCorner(btn, describeAccount(null), { budget: null });
-      assert.deepEqual([btn.dataset.spend, arc.getAttribute('stroke-dasharray')], ['none', ringDash(0, RING_R)], 'no snapshot yet: no ring');
+      const before = arc.getAttribute('stroke-dasharray');
+      for (const budget of [LIMIT, { ...LIMIT, windowSpendUsd: 41.23 }, { ...LIMIT, blocked: true }, { ...NO_LIMIT, blocked: true }, null]) {
+        btn.dataset.spend = 'ok';
+        paintAccountCorner(btn, describeAccount(null), { budget });
+        assert.equal(btn.dataset.spend, undefined);
+        assert.equal(arc.getAttribute('stroke-dasharray'), before, 'the corner painter leaves the rings alone');
+        assert.equal(btn.dataset.usageS, undefined);
+        assert.equal(/new runs blocked/.test(btn.getAttribute('aria-label')), !!budget?.blocked);
+        assert.equal(/new runs blocked/.test(btn.title), !!budget?.blocked);
+        assert.equal(/\$/.test(btn.getAttribute('aria-label')), false, 'no spend amount');
+      }
+    } },
+    { name: 'with a level avatar image: blocked and usage parts in the title, no title when there are none', run: () => {
+      const doc = shell();
+      const btn = doc.getElementById('side-acct');
+      const avatar = { src: '/levels/curious.svg', alt: 'Curious' };
+      paintAccountCorner(btn, describeAccount(null), { budget: { ...NO_LIMIT, blocked: true }, avatar });
+      assert.match(btn.getAttribute('aria-label'), /new runs blocked · Curious/);
+      assert.equal(btn.title, 'new runs blocked');
+      paintAccountCorner(btn, describeAccount(null), { avatar, usageParts: ['Session · Codex: 86%, resets 14:50'] });
+      assert.equal(btn.title, 'Session · Codex: 86%, resets 14:50');
+      assert.match(btn.getAttribute('aria-label'), /Session · Codex: 86%, resets 14:50 · Curious: spend, usage,/);
+      paintAccountCorner(btn, describeAccount(null), { budget: { ...LIMIT, blocked: true }, avatar, usageParts: ['Session · Codex: 86%, resets 14:50'] });
+      assert.equal(btn.title, 'new runs blocked · Session · Codex: 86%, resets 14:50');
+      paintAccountCorner(btn, describeAccount(null), { avatar });
+      assert.equal(btn.hasAttribute('title'), false);
+    } },
+    { name: 'ringSvg and INNER_R are exported for usage-view.mjs', run: () => {
+      assert.equal(INNER_R, 14);
+      const svg = ringSvg(doc, 'mini-ring', 20, MINI_R, 0.5);
+      assert.equal(svg.querySelector('.arc').getAttribute('stroke-dasharray'), ringDash(0.5, MINI_R));
     } },
     { name: 'away: the dot shows and the label says so', run: () => {
       const doc = shell();
@@ -491,7 +518,7 @@ test('renderLevelCard: nothing to show without a level view', () => {
   assert.equal(renderLevelCard({}, { doc }), null);
 });
 
-test('the level card sits directly above Interface mode (R-po-15) and never joins the mode pickers (R-po-1)', async () => {
+test('the level card is the account menu\'s first item and never joins the mode pickers (R-po-1)', async () => {
   const { createWorcaLevelWiring } = await import('../ui/public/worca-level/app-wiring.mjs');
   const dom = new JSDOM(`<!doctype html><html data-level="advanced"><body><div id="acct-menu" role="menu"><div class="msect" role="group">${LEVEL_SHELL}</div></div>` +
     '<div id="mode-modal" class="viewer-modal hidden"><div id="mode-cards"></div><small id="mode-msg" class="hint"></small><button type="button" id="mode-done">Done</button></div></body></html>');
@@ -505,7 +532,7 @@ test('the level card sits directly above Interface mode (R-po-15) and never join
   } finally { globalThis.fetch = realFetch; }
   const card = d.getElementById('acct-level-card');
   assert.equal(d.querySelectorAll('#acct-level-card').length, 1, 'a re-render replaces it, never duplicates');
-  assert.equal(card.nextElementSibling, d.getElementById('acct-lvl'));
+  assert.equal(d.getElementById('acct-menu').firstElementChild, card, 'the first item of the menu, not inside a section');
   const ctl = createLevelController({ doc: d, save: async (l) => ({ ok: true, level: l }) });
   ctl.paint();
   ctl.open(null);
@@ -513,6 +540,22 @@ test('the level card sits directly above Interface mode (R-po-15) and never join
   assert.deepEqual(names('#lvl-menu [data-level-choice]'), ['Simple', 'Advanced', 'Expert']);
   assert.equal(d.querySelectorAll('#mode-cards [data-level-choice]').length, 3);
   for (const host of ['#lvl-menu', '#mode-cards']) assert.doesNotMatch(d.querySelector(host).textContent, /Runner|Hooked|Curious|Council|Worcaholic/, `${host} lists modes only`);
+});
+
+test('paintAppearanceIcon: fills the placeholder from ICONS.appearance, once', () => {
+  const svg = doc.createElementNS('http://www.w3.org/2000/svg', 'svg');
+  svg.setAttribute('class', 'mi-ic');
+  paintAppearanceIcon(svg);
+  const circles = svg.querySelectorAll('circle');
+  const paths = svg.querySelectorAll('path');
+  assert.equal(circles.length, 1);
+  assert.equal(circles[0].getAttribute('r'), '8.5');
+  assert.equal(paths.length, 1);
+  assert.deepEqual([paths[0].getAttribute('fill'), paths[0].getAttribute('stroke')], ['currentColor', 'none'], 'the filled half');
+  for (const el of [circles[0], paths[0]]) assert.equal(el.namespaceURI, 'http://www.w3.org/2000/svg', 'SVG nodes, so they render');
+  paintAppearanceIcon(svg);
+  assert.equal(svg.children.length, 2, 'a second call adds nothing');
+  assert.doesNotThrow(() => paintAppearanceIcon(null));
 });
 
 test('the profile route: VIEW_NAMES lists it', () => {
