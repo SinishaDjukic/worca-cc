@@ -152,6 +152,11 @@ export function roundSpentUsd(roundId) {
   getDb();
   return Number(prepare('SELECT COALESCE(SUM(amount_usd), 0) AS s FROM wf_test_judge_ledger WHERE round_id = ?').get(Number(roundId)).s || 0);
 }
+/** P4-Q17: some call of the round reported no cost (booked as a $0 'unknown' row). */
+export function roundCostUnknown(roundId) {
+  getDb();
+  return !!prepare("SELECT 1 FROM wf_test_judge_ledger WHERE round_id = ? AND cost_kind = 'unknown' LIMIT 1").get(Number(roundId));
+}
 /** M18: at boot, a round left 'making' by a restart is failed (its calls stopped with the old process). Returns how many. */
 export function recoverRounds() {
   getDb();

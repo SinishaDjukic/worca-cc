@@ -317,7 +317,8 @@ export function renderCompare(root, c, actions, { doc, now = Date.now(), mock = 
   table.append(scroll);
   // Part 4 (boards 5, 12): with criteria, "By example · By criterion" tabs instead of the heading, and the line "Worca's checking".
   const crit = c.criteria && c.criteria.counts && c.criteria.counts.total > 0
-    ? compareCriteriaParts(doc, { root, runId, criteria: c.criteria, labels: c.labels, table, onTrust: actions.trust ? () => actions.trust() : null }) : null;
+    ? compareCriteriaParts(doc, { root, runId, criteria: c.criteria, labels: c.labels, table, onTrust: actions.trust ? () => actions.trust() : null,
+      onConfirm: actions.confirmCriterion ? (exampleId, c) => actions.confirmCriterion(exampleId, c) : null }) : null;   // Task 22
   if (crit) { by.removeAttribute('aria-labelledby'); by.setAttribute('aria-label', 'Results'); by.append(crit.tabs, table, crit.box); } else by.append(hb, table);
   cols.append(by);
 

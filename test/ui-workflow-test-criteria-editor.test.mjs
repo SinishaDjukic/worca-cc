@@ -84,11 +84,11 @@ test('a new criterion: "Confirm 4 results" opens Check the checker; without it (
   assert.deepEqual(asked, ['k_1']);
 });
 
-test('tests-app.mjs reads the models and the trust when the editor opens, and hands them to the editor (no confirm link before Task 22)', () => {
+test('tests-app.mjs reads the models and the trust when the editor opens, and hands them to the editor with the confirm link (Task 22)', () => {
   const ctl = readFileSync(new URL('../ui/public/workflows/tests-app.mjs', import.meta.url), 'utf8');
   assert.match(ctl, /wftCall\('GET', `\$\{wftBase\(id\)\}\/judge-models`\)/);
   assert.match(ctl, /exampleId != null \? await wftCall\('GET', `\$\{wftBase\(id\)\}\/examples\/\$\{exampleId\}\/criteria`\) : null/);
-  assert.match(ctl, /judgeModels: wft\.judgeModels, criteriaTrust: wft\.criteriaTrust \|\| \{\}, onConfirmCriterion: null/);
+  assert.match(ctl, /judgeModels: wft\.judgeModels, criteriaTrust: wft\.criteriaTrust \|\| \{\},[\s\S]{0,400}?onConfirmCriterion: \(c\) => \{ void wftConfirmCriterion\(session\.exampleId, c/);
 });
 
 // P4-M2 (approved 2026-11-20, boards 50–52): the states board 2 did not draw.

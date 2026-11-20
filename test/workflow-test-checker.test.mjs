@@ -263,3 +263,12 @@ test('applyPlants compares with the original loosely: case and spacing only does
   const reply = { excerpt: ex0, broken: [{ how: 'a', text: '  CUT export  tickets by 60% within one quarter. ' }, { how: 'b', text: 'x one.' }, { how: 'c', text: 'y two.' }] };
   assert.equal(applyPlants(GOOD.replace('Cut export tickets by 60% within one quarter, counted by the Export tag.', ex0), reply), null);
 });
+
+test('P4-M3, P4-Q17: the view says when the cost of some of the round\'s checks is not known', async () => {
+  const known = setup();
+  const r1 = await known.checker.start({ workflowId: 'wf', exampleId: known.ex.id, criterionId: known.ex.criteria[0].id });
+  assert.equal(known.checker.view(cs.readRound(r1.id), { by: 'x' }).costUnknown, false);
+  const u = setup({ extra: { modelCall: async () => ({ text: '{}', costUsd: 0, costKind: 'unknown' }) } });
+  const r2 = await u.checker.start({ workflowId: 'wf', exampleId: u.ex.id, criterionId: u.ex.criteria[0].id });
+  assert.equal(u.checker.view(cs.readRound(r2.id), { by: 'x' }).costUnknown, true);
+});

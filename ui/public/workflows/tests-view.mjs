@@ -52,11 +52,16 @@ function howCard(doc, { first, onHide }) {
   return c;
 }
 
-/** F35: the address of the Tests page that shows: #workflows/<id>/tests[/run/<runId>|/<exampleId>]. No page shown: #workflows. */
-export function testsAddress({ workflowId, shown, view, runId, exampleId }) {
+/** routeWorkflows' tests part (tests-app.mjs route): an example, a test, or Check the checker of an example (Part 4). */
+export const TESTS_ROUTE_RE = /^tests(?:\/(\d+)|\/run\/(\d+)|\/(\d+)\/checker\/(\d+))?$/;
+/** F35: the address of the Tests page that shows: #workflows/<id>/tests[/run/<runId>|/<exampleId>[/checker/<round>]]. No page shown: #workflows. */
+export function testsAddress({ workflowId, shown, view, runId, exampleId, roundId = null }) {
   if (!shown || !workflowId) return '#workflows';
   const base = `#workflows/${workflowId}/tests`;
   if (['progress', 'compare', 'detail'].includes(view) && Number.isInteger(runId)) return `${base}/run/${runId}`;
+  // Part 4 (Task 22): Check the checker of an example's criterion; with no round yet (P4-M3's no good result, the limit), the example.
+  if (view === 'checker' && Number.isInteger(exampleId) && Number.isInteger(roundId)) return `${base}/${exampleId}/checker/${roundId}`;
+  if (view === 'checker' && Number.isInteger(exampleId)) return `${base}/${exampleId}`;
   return view === 'editor' && Number.isInteger(exampleId) ? `${base}/${exampleId}` : base;
 }
 

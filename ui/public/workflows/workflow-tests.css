@@ -538,3 +538,46 @@ button.badge.wft-confirm:hover{text-decoration:underline;}
 .wft-crit-phase .ic{color:var(--peach-ink);}
 .wft-crit-phase b{font-weight:600;}
 .wft-crit-phase .hint{margin:0;}
+/* Part 4, Task 22 (board 11, P4-M3): Check the checker. The criterion, the four results (Right / Wrong), Worca's own three tests and
+   the cost; P4-M3's boxes stand where "Did Worca get these right?" stands. Worca's clearer words reuse .wft-sugg (board 2). */
+.wft-cc .subtitle{margin:2px 0 0;color:var(--ink-2);max-width:680px;}
+.wft-cc-head{padding:16px 20px;display:flex;flex-direction:column;gap:4px;}
+.wft-cc-head .hint{margin:0;}
+.wft-cc-crit{font-size:var(--fs-section);font-weight:600;overflow-wrap:anywhere;}
+.wft-cc-panel{margin:0;display:flex;flex-direction:column;gap:14px;}
+.wft-cc-panel .hint{margin:0;}
+.wft-cc-cards{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px;}
+.wft-cc-card{display:flex;flex-direction:column;gap:10px;min-width:0;padding:16px 18px;border-radius:var(--r-md);background:var(--panel);border:1px solid var(--line);}
+.wft-cc-src{font-size:var(--fs-meta);font-weight:600;color:var(--ink-2);}
+.wft-cc-planted{align-self:flex-start;background:var(--field);color:var(--ink);font-size:var(--fs-caption);font-weight:600;padding:3px 9px;border-radius:var(--r-sm);}
+.wft-cc-excerpt{font-size:var(--fs-body);line-height:1.5;padding:10px 12px;border-radius:var(--r-md);background:var(--field);overflow-wrap:anywhere;white-space:pre-wrap;}
+.wft-cc-verdict{display:flex;align-items:flex-start;gap:8px;font-size:var(--fs-body);line-height:1.45;}
+.wft-cc-verdict .wft-dot{margin-top:5px;}
+.wft-cc-verdict b{font-weight:600;}
+.wft-cc-done{font-size:var(--fs-meta);font-weight:600;color:var(--green-ink-strong);}
+.wft-cc-done.is-wrong{color:var(--red-ink-strong);}
+.wft-cc-state{padding:18px 20px;display:flex;flex-direction:column;gap:12px;}
+.wft-cc-state h2{margin:0;font-size:var(--fs-section);}
+.wft-cc-state .hint{margin:0;}
+.wft-cc-wait{display:flex;align-items:center;gap:12px;font-size:var(--fs-body);font-weight:600;}
+.wft-cc-wait .ic{flex:0 0 auto;color:var(--peach-ink);}
+.wft-cc-ghosts{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px;}
+.wft-cc-ghost{height:74px;border-radius:var(--r-md);background:var(--field);}
+.wft-cc-say{margin:0;font-size:var(--fs-body);line-height:1.5;}
+.wft-cc-stop{display:flex;gap:10px;align-items:flex-start;padding:12px 14px;border-radius:var(--r-md);font-size:var(--fs-body);line-height:1.5;color:var(--ink);}
+.wft-cc-stop .ic{flex:0 0 auto;margin-top:2px;}
+.wft-cc-stop.is-err{background:var(--red-bg);}
+.wft-cc-stop.is-err .ic{color:var(--red-ink-strong);}
+.wft-cc-stop.is-limit{background:var(--amber-wash);border:1px solid var(--amber-line);}
+.wft-cc-stop.is-limit .ic{color:var(--amber-ink-strong);}
+.wft-cc-words{font-size:var(--fs-body);font-weight:600;line-height:1.45;overflow-wrap:anywhere;}
+.wft-cc .hint .code{font-family:var(--mono);}
+.wft-cc-auto{padding:18px 22px;}
+.wft-cc-auto h2{margin:0 0 4px;font-size:var(--fs-section);}
+.wft-cc-auto > .hint{margin:0 0 6px;}
+.wft-cc-auto-row{display:flex;justify-content:space-between;align-items:center;gap:12px;padding:10px 0;border-bottom:1px solid var(--line);font-size:var(--fs-body);}
+.wft-cc-auto-row:last-child{border-bottom:none;}
+.wft-cc-auto-row .badge{flex:0 0 auto;}
+.wft-cc-foot{display:flex;flex-wrap:wrap;justify-content:space-between;align-items:center;gap:12px;}
+.wft-cc-foot .hint{margin:0;flex:1 1 420px;}
+@media (max-width:800px){.wft-cc-cards,.wft-cc-ghosts{grid-template-columns:minmax(0,1fr);}}

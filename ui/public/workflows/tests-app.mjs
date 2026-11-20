@@ -10,17 +10,21 @@ import { bytesToBase64 } from '../attach-files.mjs';
 import { isGitRun, isNoProjectRun } from '../run-kind.mjs';
 import { isReservedWorkflowId } from '../graph/composer.mjs';
 import { toggleMenu } from './menu.mjs';
-import { renderTestsPage, testsAddress } from './tests-view.mjs';
+import { renderTestsPage, testsAddress, TESTS_ROUTE_RE } from './tests-view.mjs';
 import { sentence as wftSentence } from './test-ui.mjs';
 import { renderExampleEditor, BLANK_EXAMPLE } from './example-editor.mjs';
 import { openFromRunDialog, openPickRunDialog, canUseAsExample, openTestVersionDialog, defaultPicks } from './test-dialogs.mjs';
 import { renderTestProgress } from './test-progress.mjs';
 import { renderCompare, renderSideBySide, openWholeResult, askMoreTries } from './test-compare.mjs';
+import { renderChecker } from './criteria-pages.mjs';
 import { SAVE_FIRST_TEXT, CHANGES_NOT_READ_TITLE, NO_DIFF_TEXT, PATCH_CUT_TEXT } from '../../../src/shared/workflow-tests/project-text.mjs';
 import { useLabel as wftUseLabel } from '../../../src/shared/workflow-tests/compare.mjs';
+import { NO_SOURCE_TEXT } from '../../../src/shared/workflow-tests/criteria-text.mjs';
 
 const WFT_EMPTY = Object.freeze({ view: 'list', workflowId: null, overview: null, error: null, example: null, runId: null,
-  exampleId: null, tryIndex: 0, data: null, scripts: [], perTryUsd: null, editorToken: 0 });
+  exampleId: null, tryIndex: 0, data: null, scripts: [], perTryUsd: null, editorToken: 0, roundId: null });
+/** Task 22: what Check the checker keeps besides its round, reset whenever it opens. */
+const WFT_CHECKER_FRESH = Object.freeze({ checkerEmpty: null, checkerCrit: null, checkerName: null, reworded: null });
 const wftBase = (id) => `/api/workflows/${encodeURIComponent(id)}/tests`;
 const wftDate = (iso) => { const d = new Date(iso); return Number.isNaN(d.getTime()) ? '' : d.toLocaleDateString(undefined, { day: 'numeric', month: 'short' }); };
 
@@ -62,16 +66,19 @@ export function createWorkflowTests(deps) {
     wftSyncHash();
     if (wft.view === 'editor') return;
     const view = wft.view;
-    const page = `${wft.runId}|${wft.exampleId}`;                    // which test and example the view shows
+    const page = `${wft.runId}|${wft.exampleId}|${wft.roundId}`;     // which test, example and checker round the view shows
     if (view === 'list' && !wft.overview) renderTestsPage(els.tests, null, wftListActions(), { doc, loading: true });
     const r = view === 'list' ? await wftCall('GET', wftBase(id)) : await wftReadView(id);
-    if (wftWorkflowId() !== id || wft.view !== view || `${wft.runId}|${wft.exampleId}` !== page) return;   // another workflow, view or test meanwhile
+    if (wftWorkflowId() !== id || wft.view !== view || `${wft.runId}|${wft.exampleId}|${wft.roundId}` !== page) return;   // another workflow, view or test meanwhile
     if (!r.ok && r.status === 404 && view !== 'list') { wftShow('list', { overview: null }); return; }   // F35: an address naming a test that is gone: the list
     if (view === 'list') wft.overview = r.ok ? r.data : null; else wft.data = r.ok ? r.data : null;
     wft.error = r.ok ? null : r.error;
     wftRender();
   }
   function wftReadView(id) {
+    if (wft.view === 'checker') {   // Task 22: no round yet (P4-M3's no good result, the limit) reads nothing
+      return wft.roundId ? wftCall('GET', `${wftBase(id)}/examples/${wft.exampleId}/checker/${wft.roundId}`) : Promise.resolve({ ok: true, data: null });
+    }
     const base = `${wftBase(id)}/runs/${wft.runId}`;
     if (wft.view === 'progress') return wftCall('GET', base);
     if (wft.view === 'compare') return wftCompareRead(base);
@@ -84,6 +91,12 @@ export function createWorkflowTests(deps) {
     return r.ok && crit.ok ? { ...r, data: { ...r.data, criteria: crit.data } } : r;
   }
   function wftRenderView(root) {
+    if (wft.view === 'checker' && (wft.data || wft.checkerEmpty)) {
+      renderChecker(root, wft.data, wftCheckerActions(), { doc, exampleName: (wft.data && wft.data.exampleName) || wft.checkerName || '',
+        criterion: wft.checkerCrit || null, empty: wft.checkerEmpty || null, reworded: wft.reworded || null });
+      wftPollChecker();
+      return;
+    }
     if (!wft.data) { renderTestsPage(root, null, wftListActions(), { doc, error: wft.error }); return; }
     if (wft.view === 'progress') { renderTestProgress(root, wft.data, wftProgressActions(), { doc, dateText: wftDate, mock: mock() }); return; }
     if (wft.view === 'compare') { renderCompare(root, wft.data, wftCompareActions(), { doc, mock: mock() }); return; }
@@ -120,6 +133,8 @@ export function createWorkflowTests(deps) {
         if (!r.ok) { notify({ tone: 'err', title: 'Worca did not start checking', detail: r.error }); return; }
         if (still()) { await wftRefresh(); wftPollCriteria(id, run.id); }
       },
+      // Task 22 (board 12): By criterion's Confirm 4 results and Fix it
+      confirmCriterion: (exampleId, c) => wftConfirmCriterion(exampleId, c, { exampleName: c.exampleName }),
     };
   }
   /** P4-Q15: while Worca checks an older test's criteria, read again every 2 s; stops when the view moves on. The runner's
@@ -134,6 +149,79 @@ export function createWorkflowTests(deps) {
       void wftRefresh();
     };
     win.setTimeout(tick, 2000);
+  }
+  /** D97 (Task 22): Check the checker of one saved criterion. A 422 is P4-M3's no good result or the spending limit (the page, no
+   *  round); a 409 (a round of it runs), and every other refusal, a toast in the server's words. */
+  async function wftConfirmCriterion(exampleId, criterion, { exampleName = null } = {}) {
+    const id = wftWorkflowId();
+    if (!id || exampleId == null || !criterion || !criterion.id) return;
+    const r = await wftCall('POST', `${wftBase(id)}/examples/${exampleId}/checker`, { criterionId: criterion.id });
+    if (wftWorkflowId() !== id) return;
+    const keep = { ...WFT_CHECKER_FRESH, exampleId, checkerCrit: { id: criterion.id, text: criterion.text || '' }, checkerName: exampleName || null };
+    if (r.ok) { wftShow('checker', { ...keep, roundId: r.data.round.id }); return; }
+    if (r.status === 422) {
+      wftShow('checker', { ...keep, roundId: null, checkerEmpty: { kind: r.error === NO_SOURCE_TEXT ? 'none' : 'limit', text: r.error } });
+      return;
+    }
+    notify({ tone: r.status === 409 ? 'info' : 'err', title: 'Check the checker did not start', detail: r.error });
+  }
+  let wftCheckerTimer = null;
+  /** D97: while Worca makes the round, read it again every 2 s; stops when the view, the workflow or the round changes. */
+  function wftPollChecker() {
+    if (wftCheckerTimer) { win.clearTimeout(wftCheckerTimer); wftCheckerTimer = null; }
+    if (wft.view !== 'checker' || !wft.data || wft.data.round.status !== 'making') return;
+    const key = `${wftWorkflowId()}|${wft.roundId}`;
+    wftCheckerTimer = win.setTimeout(() => {
+      wftCheckerTimer = null;
+      if (currentView() === 'workflows' && wft.view === 'checker' && `${wftWorkflowId()}|${wft.roundId}` === key) void wftRefresh();
+    }, 2000);
+  }
+  /** Board 11's and P4-M3's actions. An answer that lands after the page moved on (another round, view or workflow) changes nothing. */
+  function wftCheckerActions() {
+    const id = wftWorkflowId();
+    const { exampleId, roundId } = wft;
+    const v = wft.data;
+    const base = `${wftBase(id)}/examples/${exampleId}/checker/${roundId}`;
+    const still = () => wft.view === 'checker' && wft.roundId === roundId && wft.exampleId === exampleId && wftWorkflowId() === id;
+    const crit = { id: v ? v.round.criterionId : wft.checkerCrit && wft.checkerCrit.id, text: v ? v.criterion : wft.checkerCrit && wft.checkerCrit.text };
+    const name = (v && v.exampleName) || wft.checkerName || null;
+    const back = () => { void wftOpenExample(exampleId); };
+    /** Task 15: Worca's clearer words are only offered (P4-M3); the reword route saves nothing. */
+    const reword = async () => {
+      const r = await wftCall('POST', `${base}/reword`, {});
+      if (!still()) return;
+      wft.reworded = r.ok ? { text: String(r.data.text || '') } : { error: r.error, limit: r.status === 422 };
+      wftRender();
+    };
+    return {
+      answer: async (judgementId, right) => {
+        const r = await wftCall('POST', `${base}/answers`, { judgementId, right });
+        if (!r.ok) { notify({ tone: 'err', title: r.error }); return; }
+        if (!still()) return;
+        wft.data = r.data;
+        wftRender();
+        if (right === false) await reword();   // board 11: "If you say "wrong", Worca suggests clearer words …"
+      },
+      reword,
+      keepWords: () => { if (still()) { wft.reworded = null; wftRender(); } },
+      // "Use these words and check again": the criterion is saved through the example's save (its id kept), then a new round starts.
+      useWords: async (text) => {
+        const ex = await wftCall('GET', `${wftBase(id)}/examples/${exampleId}`);
+        if (!ex.ok) { notify({ tone: 'err', title: ex.error }); return; }
+        const criteria = (ex.data.example.criteria || []).map((c) => (c.id === crit.id ? { ...c, text } : c));
+        const s = await wftCall('PUT', `${wftBase(id)}/examples/${exampleId}`, { criteria });
+        if (!s.ok) { notify({ tone: 'err', title: s.error }); return; }
+        if (still()) await wftConfirmCriterion(exampleId, { id: crit.id, text }, { exampleName: name });
+      },
+      retry: () => wftConfirmCriterion(exampleId, crit, { exampleName: name }),
+      tryOnce: async () => {   // P4-M3's "Try your draft once now": a try of the example, then its progress (G2)
+        const r = await wftCall('POST', `${wftBase(id)}/examples/${exampleId}/try-once`, {});
+        if (!r.ok) { notify({ tone: 'err', title: 'The test did not start', detail: r.error }); return; }
+        if (wft.view === 'checker' && wftWorkflowId() === id) wftShow('progress', { runId: r.data.run.id });
+      },
+      back,
+      use: back,
+    };
   }
   /** Board 31's excerpt (M1): a try's result through hdMarkdown (marked + DOMPurify, ask-markdown.mjs); plain text until the
    *  renderer has loaded, then the open side by side repaints once. */
@@ -277,7 +365,8 @@ export function createWorkflowTests(deps) {
   function wftSyncHash() {
     const els = wfvEls();
     const shown = currentView() === 'workflows' && !!(els.tests && !els.tests.hidden) && flagOn('workflowTests');
-    const h = testsAddress({ workflowId: wftWorkflowId(), shown, view: wft.view, runId: wft.runId, exampleId: wft.example ? wft.example.id : null });
+    const h = testsAddress({ workflowId: wftWorkflowId(), shown, view: wft.view, runId: wft.runId,
+      exampleId: wft.view === 'checker' ? wft.exampleId : wft.example ? wft.example.id : null, roundId: wft.roundId });
     if (win.location.hash === h || (!shown && !/^#workflows\/[A-Za-z0-9_-]+\/tests(\/|$)/.test(win.location.hash))) return;
     try { win.history.replaceState(null, '', h); } catch { /* sandboxed */ }
   }
@@ -399,7 +488,10 @@ export function createWorkflowTests(deps) {
       // 3a (boards 32, 39): the projects to pick, whether the workflow needs one, and the overview's drift of this example's pin
       projects: wft.projects || null, needsProject: !!(o && o.needsProject), workflowName: o ? o.name : '',
       projectView: row ? row.project : null, dateText: wftDate,
-      judgeModels: wft.judgeModels, criteriaTrust: wft.criteriaTrust || {}, onConfirmCriterion: null });   // Task 22 adds Check the checker
+      judgeModels: wft.judgeModels, criteriaTrust: wft.criteriaTrust || {},
+      // Task 22: Confirm 4 results and Fix it open Check the checker. The editor offers them only on a saved example's saved criteria
+      // (a trust line needs the example's id and the criterion's), so the round is always of the saved criterion.
+      onConfirmCriterion: (c) => { void wftConfirmCriterion(session.exampleId, c, { exampleName: wft.example && wft.example.name }); } });
   }
   async function wftOpenExample(exampleId) {
     const id = wftWorkflowId();
@@ -508,15 +600,16 @@ export function createWorkflowTests(deps) {
     wftSyncHash();
     void wftRefresh();
   }
-  /** routeWorkflows, after it opened `head`: #workflows/<id>/tests[/<example>|/run/<test>] (Use as test example, the
+  /** routeWorkflows, after it opened `head`: #workflows/<id>/tests[/<example>|/run/<test>|/<example>/checker/<round>] (Use as test example, the
    *  results-ready toast). Only when the canvas holds that row itself: a built-in or plugin row opens as an unsaved copy
    *  (#1127), which has no tests. */
   function route(head, sub, opened) {
-    const m = /^tests(?:\/(\d+)|\/run\/(\d+))?$/.exec(sub);
+    const m = TESTS_ROUTE_RE.exec(sub);
     if (opened && m && flagOn('workflowTests') && composer().template().id === head) {
       wfvShowPage('tests');
       if (m[1]) void wftOpenExample(Number(m[1]));
       else if (m[2]) wftShow('progress', { runId: Number(m[2]) });
+      else if (m[3]) wftShow('checker', { exampleId: Number(m[3]), roundId: Number(m[4]), ...WFT_CHECKER_FRESH });
     }
   }
   return { refresh: wftRefresh, syncHash: wftSyncHash, enterList, changed: wftChanged, runMenuItems: wftRunMenuItems, route };

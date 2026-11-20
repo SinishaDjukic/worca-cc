@@ -12,12 +12,10 @@ import { SUBJECT_MAX, clipText, fenceTag } from './judge-prompt.mjs';
 import { rewordCriterion } from './suggest.mjs';
 import * as store from './store.mjs';
 import * as cs from './criteria-store.mjs';
-import { NOT_CHECKED } from '../../shared/workflow-tests/criteria-text.mjs';
+import { NOT_CHECKED, NO_SOURCE_TEXT, LIMIT_TEXT } from '../../shared/workflow-tests/criteria-text.mjs';
 
-/** P4-M3's empty state, and the refusal. */
-export const NO_SOURCE_TEXT = 'Try this example once first, so Worca has a good result to break.';
-/** The words of Task 11's check route when the total spending limit is already reached. */
-export const LIMIT_TEXT = 'Total cost limit reached — nothing was sent to the model. Raise the limit in worca Settings.';
+/** P4-M3's empty state and the limit refusal: shared words, so the page can tell the two 422s apart. */
+export { NO_SOURCE_TEXT, LIMIT_TEXT };
 const EXCERPT_MAX = 400;
 const clip = (s) => { const t = String(s ?? '').trim(); return t.length > EXCERPT_MAX ? `${t.slice(0, EXCERPT_MAX - 1)}…` : t; };
 
@@ -123,7 +121,7 @@ export function createChecker(deps = {}) {
     const changed = !!criterion && cs.criterionFp(criterion.text) !== round.fp;
     return { round, exampleName: ex ? ex.name : null, criterion: ranOn, ...(changed ? { textChanged: true } : {}), source: round.source, cards, left,
       auto: { same: { n: same, of: reps.length }, padding: { n: pad, of: pads.length }, proof: { n: main.filter((j) => j.proofFound).length, of: main.length } },
-      costUsd: cs.roundSpentUsd(round.id), canUse: round.status === 'done' };
+      costUsd: cs.roundSpentUsd(round.id), costUnknown: cs.roundCostUnknown(round.id), canUse: round.status === 'done' };   // P4-Q17
   }
 
   /** D96, D97: Right (true) or Wrong (false) on one card; the round is done when all four are answered. */

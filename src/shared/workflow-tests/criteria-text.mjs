@@ -61,6 +61,10 @@ export const CAP_CHECKS_TEXT = 'This test reached its cost limit, so Worca check
 export const ADDED_AFTER_TEXT = 'Added after this test';
 export const NO_CHECKED_TRY = 'No checked try';
 export const COST_UNKNOWN_NOTE = 'the cost of some checks is not known';
+/** P4-M3: Check the checker's refusals (checker.mjs throws them; the page tells them apart). */
+export const NO_SOURCE_TEXT = 'Try this example once first, so Worca has a good result to break.';
+/** The words of Task 11's check route when the total spending limit is already reached. */
+export const LIMIT_TEXT = 'Total cost limit reached — nothing was sent to the model. Raise the limit in worca Settings.';
 export const CRITERIA_PHASE_TEXT = 'Checking your criteria on earlier tries';
 /** "Not checked on every try, so it does not decide yet: "A", "B" in Example 1; "C" in Example 2." (`entries` = notes.notChecked). */
 export const notEveryTryText = (entries) => `${NOT_EVERY_TRY}: ${entries.map((e) => `"${e.criteria.join('", "')}" in ${e.name}`).join('; ')}.`;
