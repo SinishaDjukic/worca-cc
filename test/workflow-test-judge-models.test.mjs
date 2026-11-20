@@ -99,6 +99,15 @@ test('Fix round 2: the connection is named before a key in the model env', () =>
   assert.equal(paysFor({ id: 'x', label: 'X' }, { modelEnv: { ANTHROPIC_BASE_URL: 'https://gw.example', ANTHROPIC_AUTH_TOKEN: 'k' }, processEnv: {}, userEnv: {}, userSettings: {} }), 'Custom endpoint');
 });
 
+test('your Claude Code settings go over the model env (except over the bridge), so a cloud they switch on is named', () => {
+  assert.equal(pays2({ envOf: () => ({ CLAUDE_CODE_USE_VERTEX: '0' }), userEnv: { CLAUDE_CODE_USE_VERTEX: '1' } }), 'Google Vertex AI, set in your Claude Code settings');
+  assert.equal(paysFor({ id: 'x', label: 'X' }, { modelEnv: { ANTHROPIC_BASE_URL: 'https://gw.example', CLAUDE_CODE_USE_VERTEX: '0' }, processEnv: {}, userEnv: { CLAUDE_CODE_USE_VERTEX: '1' }, userSettings: {} }),
+    'Google Vertex AI, set in your Claude Code settings', 'a gateway row: the settings switch the cloud back on');
+  const bridged = { id: 'claude-opus-5-5', label: 'Opus 5.5', connection: { kind: 'provider', provider: 'openai', api: null, codex: false, prefer: 'claude' } };
+  const bridgeEnv = { ANTHROPIC_BASE_URL: 'http://127.0.0.1:9/m/claude-opus-5-5', ANTHROPIC_AUTH_TOKEN: 'loopback', CLAUDE_CODE_USE_VERTEX: '0' };
+  assert.equal(paysFor(bridged, { modelEnv: bridgeEnv, processEnv: {}, userEnv: { CLAUDE_CODE_USE_VERTEX: '1' }, userSettings: {} }), connectionLabel(bridged), 'the bridge keeps its routing');
+});
+
 test('Fix round 2: a cloud switch set where Worca runs or in your settings beats a model-env key, unless the model env sets it', () => {
   const key = { ANTHROPIC_API_KEY: 'k' };
   assert.equal(pays2({ envOf: () => key, processEnv: { CLAUDE_CODE_USE_VERTEX: '1' } }), 'Google Vertex AI, set where Worca runs');

@@ -7,6 +7,7 @@ import { resolveModelEnv } from '../config.mjs';
 import { PROVIDER_MODE_ENV_KEYS } from '../model-env.mjs';
 import { brokerEnabled } from '../broker-client.mjs';
 import { readUserSignIn } from '../engines/claude-sign-in.mjs';
+import { carryOverModelEnv } from '../engines/claude.mjs';
 import { manifestModels } from '../broker-routing.mjs';
 import { findPipelineRowById } from '../artifacts.mjs';
 import { getDb, prepare } from '../db.mjs';
@@ -34,15 +35,18 @@ const userClaude = () => { try { const u = readUserSignIn(); return { env: (u &&
  *  cannot see managed Claude Code settings; P4-Q17 says so. */
 export function paysFor(m, { modelEnv, processEnv = process.env, userEnv = {}, userSettings = {} } = {}) {
   if (brokerEnabled(processEnv)) return "Worca's credential broker";
+  // Your Claude Code settings env goes OVER the model env at spawn, except over Worca's in-process bridge (carryOverModelEnv,
+  // engines/claude.mjs), so a cloud it switches on pays even when the model env turns that cloud off.
+  const yours = carryOverModelEnv(modelEnv) ? cloudIn(userEnv) : '';
   const own = cloudIn(modelEnv);
   if (own) return own;
+  if (yours) return `${yours}, set in your Claude Code settings`;
   const label = connectionLabel(m);
   if (label !== 'Claude sign-in' || (modelEnv && 'ANTHROPIC_BASE_URL' in modelEnv)) return label === 'Claude sign-in' ? 'Custom endpoint' : label;
-  // A row that otherwise reads as signed in. The CLI drops a key when a cloud switch is on, so a cloud set elsewhere beats the model's key.
+  // A row that otherwise reads as signed in. The CLI drops a key when a cloud switch is on, so a cloud set elsewhere beats the
+  // model's key; the model env goes over the env where Worca runs, so a switch it sets itself wins there.
   const here = cloudIn(processEnv, modelEnv);
   if (here) return `${here}, set where Worca runs`;
-  const yours = cloudIn(userEnv, modelEnv);
-  if (yours) return `${yours}, set in your Claude Code settings`;
   if (apiKeyIn(modelEnv)) return "An API key in this model's settings";
   if (tokenIn(modelEnv)) return "A Claude sign-in token in this model's settings";
   if (baseUrlIn(processEnv)) return 'Custom endpoint, set where Worca runs';
