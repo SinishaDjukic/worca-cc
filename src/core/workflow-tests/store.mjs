@@ -4,6 +4,7 @@
 import { createHash, randomBytes } from 'node:crypto';
 import { getDb, prepare, tx } from '../db.mjs';
 import { canon } from '../../shared/graph/diff-graphs.mjs';
+import { normaliseCriteria, normaliseJudge } from '../../shared/workflow-tests/criteria.mjs';
 import { normaliseCheck, normaliseBasics, DEFAULT_BASICS, PROJECT_KINDS } from '../../shared/workflow-tests/checks.mjs';
 
 export const OTHERWISE = Object.freeze(['pick', 'fail']);
@@ -87,8 +88,13 @@ export function normaliseExample(input = {}, { hasProject = false } = {}) {
   const tries = input.tries === undefined ? 3 : Number(input.tries);
   if (!TRY_COUNTS.includes(tries)) errors.push('tries must be 1, 3 or 5');
   const note = typeof input.note === 'string' && input.note.trim() ? input.note.trim().slice(0, NOTE_MAX) : null;
+  // Part 4 (D86, D87): not part of the fingerprint below, so a changed criterion re-checks tries and never re-runs them.
+  const { criteria, error: criteriaError } = normaliseCriteria(input.criteria, () => `k_${randomBytes(5).toString('hex')}`);
+  if (criteriaError) errors.push(criteriaError);
+  const { judge, error: judgeError } = normaliseJudge(input.judge);
+  if (judgeError) errors.push(judgeError);
   if (errors.length) return { value: null, errors };
-  return { value: { name, request, answers, otherwise, basics, checks, tries, note }, errors: [] };
+  return { value: { name, request, answers, otherwise, basics, checks, tries, note, criteria, judge }, errors: [] };
 }
 
 /** D26: what a try depends on — what Worca gets and how it is judged. Not the name, the note or the number of tries. */
@@ -102,7 +108,7 @@ export function exampleFingerprint(ex) {
   return createHash('sha256').update(canon(body)).digest('hex').slice(0, 16);
 }
 
-const EX_COLS = `id, workflow_id, name, request, answers, otherwise, basics, checks, tries, note, from_pipeline, from_use,
+const EX_COLS = `id, workflow_id, name, request, answers, otherwise, basics, checks, tries, note, criteria, judge, from_pipeline, from_use,
   from_verdict, created_by, created_at, updated_at`;
 function filesOf(exampleId) {
   return prepare('SELECT name, size, sha256 FROM wf_test_example_files WHERE example_id = ? ORDER BY name').all(exampleId)
@@ -167,6 +173,7 @@ function exampleOf(r) {
     answers: parse(r.answers, []), otherwise: r.otherwise,
     basics: normaliseBasics(parse(r.basics, {})).basics || { ...DEFAULT_BASICS },
     checks: parse(r.checks, []), tries: Number(r.tries), note: r.note ?? null,
+    criteria: parse(r.criteria, []), judge: parse(r.judge, null),
     from: r.from_pipeline ? { pipelineId: r.from_pipeline, use: r.from_use ? useOf(r.from_use) : null, verdict: r.from_verdict ?? null } : null,
     project: projectOf(Number(r.id)),
     files: filesOf(Number(r.id)), createdBy: r.created_by ?? null, createdAt: r.created_at, updatedAt: r.updated_at,
@@ -184,9 +191,10 @@ export function createExample(workflowId, input, { by = null, from = null, proje
   const at = nowIso();
   const id = tx(() => {
     const info = prepare(`INSERT INTO wf_test_examples (workflow_id, name, request, answers, otherwise, basics, checks, tries, note,
-        from_pipeline, from_use, from_verdict, created_by, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+        criteria, judge, from_pipeline, from_use, from_verdict, created_by, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
       .run(workflowId, value.name, value.request, JSON.stringify(value.answers), value.otherwise, JSON.stringify(value.basics),
-        JSON.stringify(value.checks), value.tries, value.note, from ? from.pipelineId : null,
+        JSON.stringify(value.checks), value.tries, value.note, JSON.stringify(value.criteria), value.judge ? JSON.stringify(value.judge) : null,
+        from ? from.pipelineId : null,
         from && from.use != null ? useRef(from.use) : null, from ? from.verdict ?? null : null, by, at, at);
     const newId = Number(info.lastInsertRowid);
     if (pinned) writePin(newId, pinned);
@@ -225,10 +233,11 @@ export function updateExample(workflowId, id, input = {}, { project } = {}) {
     if (run && run.exampleIds.includes(was.id)) throw testError('a test is trying this example: stop it first', 'BUSY');
   }
   tx(() => {
-    prepare(`UPDATE wf_test_examples SET name = ?, request = ?, answers = ?, otherwise = ?, basics = ?, checks = ?, tries = ?, note = ?,
+    prepare(`UPDATE wf_test_examples SET name = ?, request = ?, answers = ?, otherwise = ?, basics = ?, checks = ?, tries = ?, note = ?, criteria = ?, judge = ?,
         updated_at = ? WHERE workflow_id = ? AND id = ?`)
       .run(value.name, value.request, JSON.stringify(value.answers), value.otherwise, JSON.stringify(value.basics),
-        JSON.stringify(value.checks), value.tries, value.note, nowIso(), workflowId, was.id);
+        JSON.stringify(value.checks), value.tries, value.note, JSON.stringify(value.criteria), value.judge ? JSON.stringify(value.judge) : null,
+        nowIso(), workflowId, was.id);
     if (project === null) prepare('DELETE FROM wf_test_example_projects WHERE example_id = ?').run(was.id);
     else if (pinned) writePin(was.id, pinned);
   });
@@ -242,6 +251,11 @@ export function deleteExample(workflowId, id) {
   tx(() => {
     prepare('DELETE FROM wf_test_example_files WHERE example_id = ?').run(ex.id);
     prepare('DELETE FROM wf_test_example_projects WHERE example_id = ?').run(ex.id);
+    // Part 4 (D106): its judgements, answers, rounds and liked result go with it; wf_test_judge_ledger stays (spend never goes back).
+    prepare('DELETE FROM wf_test_judge_answers WHERE judgement_id IN (SELECT id FROM wf_test_judgements WHERE example_id = ?)').run(ex.id);
+    prepare('DELETE FROM wf_test_judgements WHERE example_id = ?').run(ex.id);
+    prepare('DELETE FROM wf_test_checker_rounds WHERE example_id = ?').run(ex.id);
+    prepare('DELETE FROM wf_test_liked WHERE example_id = ?').run(ex.id);
     prepare('DELETE FROM wf_test_examples WHERE workflow_id = ? AND id = ?').run(workflowId, ex.id);
   });
   return true;
