@@ -4,7 +4,7 @@
 import { recordTestJudgeCost } from '../cost-budget.mjs';
 import { mainResult, readTryPatch } from './result.mjs';
 import { exampleSourcesText } from './sources-text.mjs';
-import { judgeCriterion } from './judge.mjs';
+import { judgeCriterion, JUDGE_DEFAULTS } from './judge.mjs';
 import { SUBJECT_MAX, CHANGES_HEADING } from './judge-prompt.mjs';
 import { finishedTry } from '../../shared/workflow-tests/criteria-verdicts.mjs';
 import * as store from './store.mjs';
@@ -38,9 +38,18 @@ export function createCriteriaJudge(deps = {}) {
       if (stopped() || overCap()) break;
       const fp = cs.criterionFp(c.text);
       // Every real call books its spend (D92): judgeCriterion calls book(usd, costKind) as the model answers.
-      const book = (usd, costKind) => d.book({ workflowId: example.workflowId, exampleId: example.id, testRunId, purpose: 'try', model,
-        amountUsd: usd, costKind });
-      const j = await d.judgeCriterion({ criterion: c.text, subject, context, model, mock: mock || !!t.mock, book });
+      const book = (usd, costKind) => {
+        try {
+          return d.book({ workflowId: example.workflowId, exampleId: example.id, testRunId, purpose: 'try', model, amountUsd: usd, costKind });
+        } catch (e) {
+          // A paid call whose booking failed: the amount would vanish from the cap and the ledger, so say it, then let it surface.
+          console.error(`[workflow-tests] spend not recorded: USD ${usd} (${costKind}), model ${model}, workflow ${example.workflowId}, example ${example.id}, test run ${testRunId}: ${e && e.message ? e.message : e}`);
+          throw e;
+        }
+      };
+      // The judge may ask twice (an unreadable reply, a missing proof): its own budget check also reports "over" when this test's cap is reached.
+      const budget = () => (overCap() ? { blocked: true } : JUDGE_DEFAULTS.budget());
+      const j = await d.judgeCriterion({ criterion: c.text, subject, context, model, mock: mock || !!t.mock, book }, { budget });
       out.push(cs.insertJudgement({ workflowId: example.workflowId, exampleId: example.id, criterionId: c.id, fp, model, purpose: 'try', tryId: t.id, j }));
       if (j.error === 'limit') break;   // the rest wait for the next pass
     }

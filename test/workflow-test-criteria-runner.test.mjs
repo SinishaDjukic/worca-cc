@@ -23,7 +23,7 @@ after(async () => { _resetForTests(); delete process.env.WORCA_HOME; await Promi
 const WF = 'wf_brief';
 const TEXT = '## Success metric\n\nCut tickets by 60% within one quarter.';
 /** The runner on a fake run handler (as test/workflow-test-runner.test.mjs), with a fake judge that costs $0.10 a call. */
-function harness() {
+function harness(over = {}) {
   const entries = new Map();
   let n = 0;
   const calls = [];
@@ -31,6 +31,7 @@ function harness() {
     subjectOf: async () => TEXT, contextOf: () => '',
     judgeCriterion: async ({ criterion, book }) => { calls.push(criterion); book(0.1, 'billed'); return { met: /metric/i.test(criterion), reason: 'r', proof: 'Cut tickets by 60%', proofFound: true, error: null, costUsd: 0.1, ms: 1 }; },
     book: (row) => recordTestJudgeCost(row),
+    ...(over.judge || {}),
   });
   const deps = {
     startRun: async (_body, { workflowTest }) => {
@@ -56,6 +57,7 @@ function harness() {
     fingerprintOf: async (_wf, use) => `fp-${store.useRef(use)}`,
     mockMode: () => false,
     pollMs: 5,
+    ...(over.deps || {}),
   };
   return { deps, calls, started: () => n };
 }
@@ -135,4 +137,95 @@ test('every real judge call books its spend: the default book is recordTestJudge
   const rows = prepare('SELECT purpose, model, amount_usd, cost_kind, test_run_id, example_id FROM wf_test_judge_ledger').all();
   assert.deepEqual(rows.map((r) => ({ ...r })), [{ purpose: 'try', model: 'claude-haiku-4-5', amount_usd: 0.25, cost_kind: 'billed', test_run_id: run.id, example_id: ex.id }]);
   assert.equal(store.spentOfRun(run.id), 0.25);
+});
+
+const doneVerdict = { passed: true, facts: { status: 'done' }, basics: [], checks: [] };
+function seedTry(ex, verdict, status = 'passed') {
+  const run = store.createTestRun({ workflowId: WF, kind: 'once', b: 'draft', bFp: 'f', exampleIds: [ex.id], tries: 1 });
+  const t = store.insertTry({ runId: run.id, workflowId: WF, exampleId: ex.id, use: 'draft', fp: 'f', exampleFp: ex.fingerprint, tryNo: 1 });
+  store.linkTry(run.id, t.id, 'b');
+  store.updateTry(t.id, { status, pipelineId: 'p0000001', verdict });
+  return { run, t: store.readTry(t.id) };
+}
+
+test('a booking that fails after a paid call is logged with its amount, then thrown; the try still ends passed or failed', async () => {
+  const lines = [];
+  const orig = console.error; console.error = (...a) => { lines.push(a.join(' ')); };
+  try {
+    const h = harness({ judge: { book: () => { throw new Error('disk full'); } } });
+    const ex = example([{ text: 'Names a success metric' }]);
+    const runner = createTestRunner(h.deps);
+    const run = await runner.start({ workflowId: WF, kind: 'once', b: 'draft', exampleIds: [ex.id], tries: 1 });
+    await waitDone(runner, run.id);
+    const [t] = store.triesOfRun(run.id);
+    assert.ok(t.status === 'passed' || t.status === 'failed', `the try ended ${t.status}`);
+    assert.notEqual(store.readTestRun(run.id).status, 'running');
+    const line = lines.find((l) => l.includes('spend not recorded'));
+    assert.ok(line, `a log line says the spend was not recorded: ${lines.join(' | ')}`);
+    for (const part of ['0.1', 'billed', 'claude-haiku-4-5', WF, ex.id, String(run.id)]) assert.ok(line.includes(part), `the line names ${part}: ${line}`);
+  } finally { console.error = orig; }
+});
+
+test('the cap of the test holds between the two asks of a judge: an unreadable first reply, a cap reached, no second call', async () => {
+  let replies = 0; let capped = false;
+  const helperCall = async () => { replies += 1; capped = true; return { text: 'not json at all', costUsd: 0.3, costKind: 'billed' }; };
+  const { judgeCriterion } = await import('../src/core/workflow-tests/judge.mjs');
+  const judge = createCriteriaJudge({ subjectOf: async () => TEXT, contextOf: () => '', book: () => {},
+    judgeCriterion: (args, d) => judgeCriterion(args, { ...d, mock: () => false, userSignIn: () => false, helperCall }) });
+  const ex = example([{ text: 'Names a success metric' }]);
+  const { run, t } = seedTry(ex, doneVerdict);
+  const out = await judge.judgeTry(ex, t, { testRunId: run.id, overCap: () => capped });
+  assert.equal(replies, 1, 'the second attempt was not made');
+  assert.equal(out[0].error, 'limit');
+});
+
+test('the judge spend reaches the cap partway through the criteria of a try: the second is not asked and the test stops as cap', async () => {
+  const h = harness();
+  const ex = example([{ text: 'Names a success metric' }, { text: 'Explains the legal reasons' }]);
+  const runner = createTestRunner(h.deps);
+  const run = await runner.start({ workflowId: WF, kind: 'once', b: 'draft', exampleIds: [ex.id], tries: 1, capUsd: 0.55 });
+  await waitDone(runner, run.id);
+  assert.deepEqual(h.calls, ['Names a success metric']);
+  const r = store.readTestRun(run.id);
+  assert.equal(r.status, 'stopped');
+  assert.equal(r.stopReason, 'cap');
+});
+
+test('a try Worca set aside, or whose run did not finish, is never judged', async () => {
+  const calls = [];
+  const judge = createCriteriaJudge({ subjectOf: async () => TEXT, contextOf: () => '', book: () => {},
+    judgeCriterion: async ({ criterion }) => { calls.push(criterion); return { met: true, reason: 'r', proof: 'x', proofFound: true, error: null, costUsd: 0, ms: 1 }; } });
+  const ex = example([{ text: 'Names a success metric' }]);
+  const a = seedTry(ex, { worcaProblem: 'Worca could not run this try.', facts: { status: 'done' } }, 'failed');
+  assert.deepEqual(await judge.judgeTry(ex, a.t, { testRunId: a.run.id }), []);
+  const b = seedTry(ex, { passed: false, facts: { status: 'failed' }, basics: [], checks: [] }, 'failed');
+  assert.deepEqual(await judge.judgeTry(ex, b.t, { testRunId: b.run.id }), []);
+  assert.deepEqual(calls, [], 'the judge was never called');
+});
+
+test('a judgeCriteria that throws leaves the try passed or failed, and the test finishes', async () => {
+  const orig = console.error; console.error = () => {};
+  try {
+    const h = harness({ deps: { judgeCriteria: async () => { throw new Error('boom'); } } });
+    const ex = example([{ text: 'Names a success metric' }]);
+    const runner = createTestRunner(h.deps);
+    const run = await runner.start({ workflowId: WF, kind: 'once', b: 'draft', exampleIds: [ex.id], tries: 1 });
+    await waitDone(runner, run.id);
+    const [t] = store.triesOfRun(run.id);
+    assert.ok(t.status === 'passed' || t.status === 'failed');
+    assert.equal(store.readTestRun(run.id).status, 'done');
+  } finally { console.error = orig; }
+});
+
+test('the end of the criteria phase notifies, while the test still runs', async () => {
+  const frames = [];
+  let runner;
+  const h = harness({ deps: { notify: (f) => { frames.push({ phase: runner.criteriaPhaseOf(f.testRunId), status: store.readTestRun(f.testRunId).status }); } } });
+  const ex = example([{ text: 'Names a success metric' }]);
+  runner = createTestRunner(h.deps);
+  const run = await runner.start({ workflowId: WF, kind: 'once', b: 'draft', exampleIds: [ex.id], tries: 1 });
+  await waitDone(runner, run.id);
+  const at = frames.findIndex((f) => f.phase === true);
+  assert.ok(at >= 0, 'the phase start notified');
+  assert.ok(frames.slice(at + 1).some((f) => f.phase === false && f.status === 'running'), 'a frame after the phase ended, before the test did');
 });

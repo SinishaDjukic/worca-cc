@@ -9,7 +9,7 @@ import { join } from 'node:path';
 import { useTempHome } from './helpers/temp-home.mjs';
 
 useTempHome(after);
-let homeDir, prevHome, srv, base, store, cs, getDb, prepare;
+let homeDir, prevHome, srv, base, store, cs, prepare;
 const JSONH = { 'Content-Type': 'application/json' };
 const WF = '/api/workflows/wf_api_c/tests';
 const call = async (method, p, body) => {
@@ -42,7 +42,7 @@ before(async () => {
   const mod = await import('../ui/server.mjs');
   store = await import('../src/core/workflow-tests/store.mjs');
   cs = await import('../src/core/workflow-tests/criteria-store.mjs');
-  ({ getDb, prepare } = await import('../src/core/db.mjs'));
+  ({ prepare } = await import('../src/core/db.mjs'));
   srv = http.createServer(mod.app);
   await new Promise((r) => srv.listen(0, '127.0.0.1', r));
   base = `http://127.0.0.1:${srv.address().port}`;

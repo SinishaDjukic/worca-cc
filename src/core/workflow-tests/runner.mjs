@@ -138,7 +138,8 @@ export function createTestRunner(deps) {
   async function checkCriteria(run, st, example, tryId) {
     if (!deps.judgeCriteria || st.stopping) return;
     try {
-      await deps.judgeCriteria(example, store.readTry(tryId), { testRunId: run.id, mock: !!store.readTry(tryId).mock,
+      const t = store.readTry(tryId);
+      await deps.judgeCriteria(example, t, { testRunId: run.id, mock: !!t.mock,
         stopped: () => !!st.stopping, overCap: () => overCap(run) });
     } catch (e) { console.error(`[workflow-tests] could not check the criteria of try ${tryId}: ${msgOf(e)}`); }
   }
@@ -315,7 +316,7 @@ export function createTestRunner(deps) {
       notify(run);
       try { await deps.judgeMissing(run, { stopped: () => !!st.stopping, overCap: () => overCap(run) }); }
       catch (e) { console.error(`[workflow-tests] could not check the criteria of test ${run.id}: ${msgOf(e)}`); }
-      finally { st.criteriaPhase = false; }
+      finally { st.criteriaPhase = false; notify(run); }
     }
   }
 
