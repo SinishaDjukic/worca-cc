@@ -16,7 +16,7 @@ import { seedPipelineRow } from './helpers/db-seed.mjs';
 import { getDb } from '../src/core/db.mjs';
 import { projectKey } from '../src/core/store.mjs';
 import { createThread, linkRun as askLinkRun, listMessages } from '../src/core/ask/store.mjs';
-import { createSliceFeature, featureView, recordShapePlan, retireFeaturesOf } from '../src/core/shape/features.mjs';
+import { createSliceFeature, featureView, recordShapePlan, recordShip, retireFeaturesOf } from '../src/core/shape/features.mjs';
 import { getTicket } from '../src/core/scheduler.mjs';
 import { nightModeToggle } from '../src/core/settings.mjs';
 import { writeStoreMeta } from '../src/core/artifacts.mjs';
@@ -1134,4 +1134,51 @@ reqShipT('one: a held feature ships when the last requirement is marked over HTT
   assert.equal((await featureOutcome(w.f.id)).status, 'opened');
   assert.equal(ghCalls(seen, 'create').length, 1);
   assert.equal((await view(w.f.id)).ship.mode, 'one');
+});
+
+// ── Shaper small runs A4: a finished feature's figures, recorded on settle and on an acceptance save ────────────────
+const SMALL_ON = { WORCA_FLAGS: 'shaperSmallRuns' };
+const SMALL_OFF = { WORCA_FLAGS: undefined };
+const figureRows = (fid) => getDb().prepare('SELECT figures FROM shape_feature_figures WHERE feature_id = ?').all(fid).map((r) => JSON.parse(r.figures));
+const plainSettle = (pid) => ({ runShape: null, getState: () => ({ status: 'done', id: pid }) });
+
+reqShipT('figures: the last slice settling done records 1 row, a round after Ship re-records it; the flag off records none', async () => {
+  const seen = []; stubGh(seen);
+  await withEnvVars(SMALL_ON, async () => {
+    const a = stackedFeature();
+    setPipe(a.p2, 'running');
+    await testing.afterRunSettled(plainSettle(a.p1));
+    assert.equal(figureRows(a.f.id).length, 0, 'slice 2 still running');
+    setPipe(a.p2, 'done');
+    await testing.afterRunSettled(plainSettle(a.p2));
+    assert.deepEqual(figureRows(a.f.id).map((f) => f.changesAfterShip), [0]);
+    recordShip(a.f.id, { mode: 'one', now: Date.now() - 3_600_000 });
+    const r = nextId();
+    seedPipelineRow({ id: r, projectKey: projectKey(project), status: 'done', title: r, startedAt: new Date().toISOString(),
+      branch: { source: 'main', feature: `feat/${r}`, roundOf: { pipelineId: a.p1, round: 2 } } });
+    await testing.afterRunSettled(plainSettle(r));
+    assert.deepEqual(figureRows(a.f.id).map((f) => f.changesAfterShip), [1]);
+  });
+  await withEnvVars(SMALL_OFF, async () => {
+    const b = stackedFeature();
+    await testing.afterRunSettled(plainSettle(b.p1));
+    await testing.afterRunSettled(plainSettle(b.p2));
+    assert.equal(figureRows(b.f.id).length, 0);
+  });
+});
+
+reqShipT('figures: PUT acceptance answers the same with the flag on and off; on, the stored requirementsMet follows the marks', async () => {
+  const seen = []; stubGh(seen);
+  const on = stackedFeature(); withAgreed(on.f.id);
+  const off = stackedFeature(); withAgreed(off.f.id);
+  const answer = async (env, fid, entries) => withEnvVars(env, async () => { const r = await putMarks(fid, entries); return { status: r.status, body: await r.json() }; });
+  const marks = [{ id: 'R-po-1', mark: 'met' }];
+  const a = await answer(SMALL_ON, on.f.id, marks);
+  const b = await answer(SMALL_OFF, off.f.id, marks);
+  assert.equal(a.status, 200);
+  assert.deepEqual(a, b);
+  assert.deepEqual(figureRows(on.f.id).map((f) => f.requirementsMet), [{ met: 1, total: 2 }]);
+  await answer(SMALL_ON, on.f.id, [{ id: 'R-ops-1', mark: 'met' }]);
+  assert.deepEqual(figureRows(on.f.id).map((f) => f.requirementsMet), [{ met: 2, total: 2 }]);
+  assert.equal(figureRows(off.f.id).length, 0);
 });

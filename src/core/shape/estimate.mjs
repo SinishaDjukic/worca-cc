@@ -11,14 +11,24 @@ const median = (xs) => {
   return s.length % 2 ? s[m] : (s[m - 1] + s[m]) / 2;
 };
 
-/** Map(agentKey -> {cost:number[], ms:number[]}): one sample per (run, agent), loops summed. */
-export function stepHistory({ sinceDays = ESTIMATE_HISTORY_DAYS, now = Date.now() } = {}) {
-  const since = new Date(now - sinceDays * 86_400_000).toISOString();
-  // agent_key, not phase: phase also holds script keys (orchestrator.mjs:1539-1541).
-  const rows = prepare(`SELECT s.agent_key AS agent, SUM(s.cost_usd) AS cost, SUM(s.active_ms) AS ms
+/** Map(agentKey -> {cost:number[], ms:number[]}): one sample per (run, agent), loops summed. `pipelineIds` (Shaper small
+ *  runs A4) restricts it to those runs and drops the date window; `[]` is an empty Map. */
+export function stepHistory({ sinceDays = ESTIMATE_HISTORY_DAYS, now = Date.now(), pipelineIds = null } = {}) {
+  let rows;
+  if (Array.isArray(pipelineIds)) {
+    if (!pipelineIds.length) return new Map();
+    rows = prepare(`SELECT s.agent_key AS agent, SUM(s.cost_usd) AS cost, SUM(s.active_ms) AS ms
+    FROM pipeline_steps s JOIN pipelines p ON p.id = s.pipeline_id
+    WHERE p.status = 'done' AND s.pipeline_id IN (${pipelineIds.map(() => '?').join(', ')}) AND s.agent_key IS NOT NULL
+    GROUP BY s.pipeline_id, s.agent_key`).all(...pipelineIds.map(String));
+  } else {
+    const since = new Date(now - sinceDays * 86_400_000).toISOString();
+    // agent_key, not phase: phase also holds script keys (orchestrator.mjs:1539-1541).
+    rows = prepare(`SELECT s.agent_key AS agent, SUM(s.cost_usd) AS cost, SUM(s.active_ms) AS ms
     FROM pipeline_steps s JOIN pipelines p ON p.id = s.pipeline_id
     WHERE p.status = 'done' AND p.started_at >= ? AND s.agent_key IS NOT NULL
     GROUP BY s.pipeline_id, s.agent_key`).all(since);
+  }
   const out = new Map();
   for (const r of rows) {
     const h = out.get(r.agent) || { cost: [], ms: [] };

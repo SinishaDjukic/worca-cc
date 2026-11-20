@@ -208,6 +208,9 @@ The Runs list's groups (runs redesign §3.3) are the one new named state of the 
   `requirement_kinds` (JSON keyed by requirement id; NULL = every requirement is owned by its run).
   Removing the last member of a user group deletes the group. Shipping a user group as one PR writes a branch named
   after the group (`worca-cc/` + slug + group id) and records the PR on every member's `pr_url`; no new column.
+- `shape_feature_figures` (schema v97) holds one row per finished feature (flag `shaperSmallRuns`), keyed by `feature_id`, with
+  no foreign key: its `care` position plus the figures JSON. It is rewritten each time the feature finishes again. Statistics
+  and the team metrics record never read it, and it is never sent anywhere.
 - `run_groups.name_source` (v79) is `'suggested'` or `'user'`, as `ask_chat_groups.name_source`: whether Smart naming
   named the group. Add to group takes several runs; a run already in another user group moves (the group it leaves is
   deleted once empty), and a Shaper slice is skipped. Its Undo is an in-memory one-shot token

@@ -136,3 +136,24 @@ test('stepHistory: one sample per (done run, agent), loops summed, failed and ol
   assert.deepEqual(h.get('planner').ms.sort((a, b) => a - b), [1000, 4000]);
   assert.deepEqual(h.get('implementer'), { cost: [5], ms: [5000] });
 });
+
+test('stepHistory({ pipelineIds }): only the listed runs, old ones too, and [] is empty; no options keeps the 60-day window', async () => {
+  const dir = await realpath(await mkdtemp(join(tmpdir(), 'worca-cc-estimate-')));
+  homes.push(dir);
+  _resetForTests();
+  process.env.WORCA_HOME = dir;
+  const db = getDb();
+  const now = Date.parse('2026-10-14T12:00:00.000Z');
+  const run = db.prepare('INSERT INTO pipelines (id, project_key, status, started_at) VALUES (?, ?, ?, ?)');
+  run.run('a', 'k', 'done', '2026-10-10T12:00:00.000Z');
+  run.run('b', 'k', 'done', '2026-10-11T12:00:00.000Z');
+  run.run('old', 'k', 'done', '2026-07-01T12:00:00.000Z');
+  const step = db.prepare('INSERT INTO pipeline_steps (pipeline_id, key, agent_key, cost_usd, active_ms) VALUES (?, ?, ?, ?, ?)');
+  step.run('a', '0:n_impl', 'implementer', 2, 2000);
+  step.run('b', '0:n_impl', 'implementer', 7, 7000);
+  step.run('old', '0:n_impl', 'implementer', 5, 5000);
+
+  assert.deepEqual(stepHistory({ now, pipelineIds: ['a', 'old'] }).get('implementer').cost.sort((x, y) => x - y), [2, 5]);
+  assert.equal(stepHistory({ now, pipelineIds: [] }).size, 0);
+  assert.deepEqual(stepHistory({ now }).get('implementer').cost.sort((x, y) => x - y), [2, 7], 'no options: the old run stays out, b stays in');
+});

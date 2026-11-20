@@ -454,6 +454,7 @@ import { featureView, currentFeatureId, featureOfPipeline, featuresOfTickets, ca
   sliceOfPipeline, slicePrPreamble, featureShipSuggestion, recordSliceDraft, recordShip, clearShip, featureShipInput,
   liveSliceFrom, shaperCard, featureThread, addFeatureNote, appendFeatureRun, liveRoundOf, acceptanceRefusal, featureHoldsTicket } from '../src/core/shape/features.mjs';
 import { roundsOf, roundOrigin, nextRound, setRoundOutcome } from '../src/core/shape/rounds.mjs';
+import { recordFiguresAfterRun } from '../src/core/shape/measure.mjs';
 import { changesCard, applyChanges, applyRoute, landingFacts, landingFactsOfFeature, shapeToolCheck, threadWork, shapeThreadFacts } from '../src/core/shape/changes.mjs';
 import { defaultShapeToolDeps } from '../src/core/ask/shape-tool-deps.mjs';
 import { routeCardVerb, changesCardVerb } from '../src/shared/shape/route.mjs';
@@ -4184,6 +4185,10 @@ function afterRunSettled(orch) {
   if (automationsOn()) kickAutomations();
   try {
     const st = orch.getState?.();
+    // Shaper small runs A4: a finished feature records its figures (a round re-records its feature). Never the outcome.
+    if (st?.id && st.status === 'done') {
+      try { recordFiguresAfterRun(st.id); } catch (err) { console.error(`[worca-ui] feature figures failed: ${err?.message || err}`); }
+    }
     // The Ship card is offered once the last slice is done (offerShipCard checks).
     if (orch.runShape?.slice && st?.status === 'done' && st.id) {
       card = Promise.resolve().then(() => offerShipCard(st.id))
