@@ -19,7 +19,8 @@ const plainId = (id) => String(id || '').toLowerCase().replace(/\[1m\]$/, '');
 const CLOUDS = Object.freeze({ CLAUDE_CODE_USE_VERTEX: 'Google Vertex AI', CLAUDE_CODE_USE_BEDROCK: 'Amazon Bedrock', CLAUDE_CODE_USE_FOUNDRY: 'Microsoft Foundry' });
 // The CLI's own rule (model-env.mjs `cliTruthy`, not exported): only 1, true, yes, on are on.
 const isOn = (v) => typeof v === 'string' && ['1', 'true', 'yes', 'on'].includes(v.trim().toLowerCase());
-const cloudIn = (env) => { for (const k of PROVIDER_MODE_ENV_KEYS) if (env && isOn(env[k])) return CLOUDS[k]; return null; };
+// `own`: the model's env. A cloud switch it sets itself (even to '0') is its own word, so an ambient one does not apply.
+const cloudIn = (env, own = null) => { for (const k of PROVIDER_MODE_ENV_KEYS) if (env && isOn(env[k]) && !(own && k in own)) return CLOUDS[k]; return null; };
 const has = (env, keys) => !!env && keys.some((k) => typeof env[k] === 'string' && env[k].trim());
 const apiKeyIn = (env) => has(env, ['ANTHROPIC_API_KEY', 'ANTHROPIC_AUTH_TOKEN']);
 const tokenIn = (env) => has(env, ['CLAUDE_CODE_OAUTH_TOKEN']);
@@ -35,22 +36,23 @@ export function paysFor(m, { modelEnv, processEnv = process.env, userEnv = {}, u
   if (brokerEnabled(processEnv)) return "Worca's credential broker";
   const own = cloudIn(modelEnv);
   if (own) return own;
-  if (apiKeyIn(modelEnv)) return "An API key in this model's settings";
-  if (tokenIn(modelEnv)) return "A Claude sign-in token in this model's settings";
   const label = connectionLabel(m);
   if (label !== 'Claude sign-in' || (modelEnv && 'ANTHROPIC_BASE_URL' in modelEnv)) return label === 'Claude sign-in' ? 'Custom endpoint' : label;
-  const here = cloudIn(processEnv);
+  // A row that otherwise reads as signed in. The CLI drops a key when a cloud switch is on, so a cloud set elsewhere beats the model's key.
+  const here = cloudIn(processEnv, modelEnv);
   if (here) return `${here}, set where Worca runs`;
-  if (baseUrlIn(processEnv)) return 'Custom endpoint, set where Worca runs';
-  if (apiKeyIn(processEnv)) return 'an API key set where Worca runs';
-  if (tokenIn(processEnv)) return 'A Claude sign-in token set where Worca runs';
-  const yours = cloudIn(userEnv);
+  const yours = cloudIn(userEnv, modelEnv);
   if (yours) return `${yours}, set in your Claude Code settings`;
+  if (apiKeyIn(modelEnv)) return "An API key in this model's settings";
+  if (tokenIn(modelEnv)) return "A Claude sign-in token in this model's settings";
+  if (baseUrlIn(processEnv)) return 'Custom endpoint, set where Worca runs';
+  if (apiKeyIn(processEnv)) return 'An API key set where Worca runs';
+  if (tokenIn(processEnv)) return 'A Claude sign-in token set where Worca runs';
   if (baseUrlIn(userEnv)) return 'Custom endpoint, set in your Claude Code settings';
   const st = userSettings || {};
   if (has(st, ['apiKeyHelper'])) return 'An API key helper in your Claude Code settings';
   if (has(st, ['awsAuthRefresh', 'awsCredentialExport'])) return 'Amazon Bedrock, set in your Claude Code settings';
-  if (apiKeyIn(userEnv)) return 'an API key set in your Claude Code settings';
+  if (apiKeyIn(userEnv)) return 'An API key set in your Claude Code settings';
   if (tokenIn(userEnv)) return 'A Claude sign-in token set in your Claude Code settings';
   return 'Claude sign-in';
 }
@@ -97,7 +99,9 @@ export async function judgeModelsView(workflowId, { catalog = () => listModels()
 }
 
 export async function checkJudgeModel(model, { catalog = () => listModels() } = {}) {
-  if (!claudeModels(await catalog()).some((m) => m.id === model)) {
+  // Validators ignore `hidden` (config.mjs: pickers skip it): a model saved before built-ins were hidden still validates.
+  const rows = await catalog();
+  if (!(Array.isArray(rows) ? rows : []).some((m) => m && m.id === model && typeof m.id === 'string' && runsOn(m, 'claude'))) {
     throw testError('pick one of the AI models in the list to check your criteria', 'BAD_REQUEST');
   }
 }
