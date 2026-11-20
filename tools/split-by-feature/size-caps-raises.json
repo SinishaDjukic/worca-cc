@@ -36,5 +36,7 @@
   { "file": "ui/server.mjs", "from": 10541, "to": 10544, "commit": "d6f6475b8",
     "why": "dev's own growth: Stillhet feature 1 (#1205 to #1243, merged from d6f6475b8) added a net 3 lines to the residual ui/server.mjs (10456 to 10459 on dev); measured with wc -l on this merge" },
   { "file": "ui/server.mjs", "from": 10544, "to": 10573, "commit": "beb686c22",
-    "why": "Models P1 Task 2: the /vendor/brand-icons route; measured with grep -c" }
+    "why": "Models P1 Task 2: the /vendor/brand-icons route; measured with grep -c" },
+  { "file": "ui/server.mjs", "from": 10573, "to": 10574, "commit": "c2acccaea",
+    "why": "Ticket comments per run event (#1508): the one-line announcePrOpened call after a PR is opened, in createRunPr; the helper itself lives in src/core/sources.mjs; measured with wc -l on this branch merged with dev 2fd95ae5a" }
 ]
