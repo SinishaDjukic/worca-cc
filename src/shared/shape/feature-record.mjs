@@ -19,10 +19,10 @@ export const REQUIREMENT_KINDS = Object.freeze(['owned', 'confirmed']);
 const ROLE_ECHO_MAX = 60;
 const isObject = (v) => !!v && typeof v === 'object' && !Array.isArray(v);
 const refuse = (code, error) => ({ ok: false, code, error });
-const roleNames = () => `${CONFIRM_ROLES.slice(0, -1).map((r) => r.label).join(', ')} or ${CONFIRM_ROLES.at(-1).label}`;
+export const roleNames = () => `${CONFIRM_ROLES.slice(0, -1).map((r) => r.label).join(', ')} or ${CONFIRM_ROLES.at(-1).label}`;
 
 /** A role's stored key (`'Compliance'` and `' compliance '` are `compliance`), or null when it is not one of the 7. */
-function roleKey(role) {
+export function roleKey(role) {
   const k = typeof role === 'string' ? role.trim().toLowerCase() : '';
   return CONFIRM_ROLES.some((r) => r.key === k) ? k : null;
 }

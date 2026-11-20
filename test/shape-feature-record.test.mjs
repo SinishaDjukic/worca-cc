@@ -5,7 +5,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import {
   CARE_POSITIONS, CARE_LABELS, CARE_CHOSEN_BY, CARE_DEFAULT, CONFIRM_ROLES, REQUIREMENT_KINDS,
-  normalizeCare, normalizeRequirementKinds, careOfRow, requirementKindsOf,
+  normalizeCare, normalizeRequirementKinds, careOfRow, requirementKindsOf, roleKey, roleNames,
 } from '../src/shared/shape/feature-record.mjs';
 import { criterionPerspective } from '../src/shared/shape/requirements.mjs';
 
@@ -137,4 +137,11 @@ test('the shared module never reads the flag and imports nothing from core', () 
   assert.ok(!src.includes('flagEnabled'));
   assert.ok(!/core\//.test(src));
   assert.deepEqual([...src.matchAll(/^import .* from '(.*)';$/gm)].map((m) => m[1]), ['../review/coverage.mjs']);
+});
+
+test('A3: roleKey and roleNames are exported for the split check', () => {
+  assert.equal(roleKey(' compliance '), 'compliance');
+  assert.equal(roleKey('Compliance'), 'compliance');
+  assert.equal(roleKey('Legal'), null);
+  assert.equal(roleNames(), ROLE_NAMES);
 });

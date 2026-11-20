@@ -13,7 +13,8 @@ import { projectKey } from '../src/core/store.mjs';
 import { getTicket } from '../src/core/scheduler.mjs';
 import { createSliceFeature, featureView } from '../src/core/shape/features.mjs';
 import { checkSlices } from '../src/shared/shape/slices.mjs';
-import { shaperSmallRunsOn } from '../src/core/shape/small-runs.mjs';
+import { shaperSmallRunsOn, splitRulesOptions } from '../src/core/shape/small-runs.mjs';
+import { resolveShapeRequest } from '../src/core/shape/run.mjs';
 
 useTempHome(after, 'worca-shape-small-runs-');
 
@@ -117,3 +118,40 @@ test('the shared slices module never reads a flag', () => {
   assert.ok(!src.includes('flagEnabled'));
   assert.ok(!/flags\.mjs/.test(src));
 });
+
+test('splitRulesOptions: {} by default, {smallRuns:true, care:\'balanced\'} with the injected reader on', () => {
+  const prev = process.env.WORCA_FLAGS;
+  delete process.env.WORCA_FLAGS;
+  try { assert.deepEqual(splitRulesOptions(), {}); } finally { if (prev !== undefined) process.env.WORCA_FLAGS = prev; }
+  assert.deepEqual(splitRulesOptions({ flagEnabled: () => false }), {});
+  assert.deepEqual(splitRulesOptions({ flagEnabled: (k) => k === 'shaperSmallRuns' }), { smallRuns: true, care: 'balanced' });
+});
+
+const ticketOf15 = () => ({ shape: { slice: { feature: 'f1', index: 2, total: 15, outline: outlineOf(15) } }, workflowId: 'wf_shape' });
+
+test('normalizeSliceRef: a 15-run ticket is accepted with the flag on', () => {
+  const { on } = offAndOn(() => resolveShapeRequest(ticketOf15(), { internal: true }));
+  assert.equal(on.ok, true, on.error);
+  assert.equal(on.shape.slice.total, 15);
+  assert.equal(on.shape.slice.outline.slices.length, 15);
+});
+
+test('normalizeSliceRef: a stored ref with confirmed keeps its small-runs owners with the flag off', () => {
+  const o = outlineOf(3);
+  o.slices[0].requirements = ['R-po-1']; o.slices[1].requirements = ['R-po-1']; o.slices[2].requirements = ['R-po-2'];
+  Object.assign(o, { agreed: ['R-po-1', 'R-sec-1', 'R-po-2'].map((id) => ({ id, text: id })), confirmed: [{ id: 'R-sec-1', role: 'Security' }] });
+  const req = { shape: { slice: { feature: 'f1', index: 2, total: 3, outline: o } }, workflowId: 'wf_shape' };
+  const { off } = offAndOn(() => resolveShapeRequest(req, { internal: true }));
+  assert.equal(off.ok, true, off.error);
+  assert.deepEqual(off.shape.slice.outline.slices[1].requirements, ['R-po-1']);
+  assert.deepEqual(off.shape.slice.outline.confirmed, [{ id: 'R-sec-1', role: 'Security' }]);
+});
+
+test('normalizeSliceRef: a 15-run ticket stored with the flag on still resumes with the flag off', () => {
+  // dev never stores more than 12 slices, so a ref over 12 (or one carrying `confirmed`) was made under small runs.
+  const { off } = offAndOn(() => resolveShapeRequest(ticketOf15(), { internal: true }));
+  assert.equal(off.ok, true, off.error);
+  assert.equal(off.shape.slice.total, 15);
+  assert.equal(off.shape.slice.outline.slices.length, 15);
+});
+
