@@ -572,3 +572,16 @@ test('U-T14 (F25): the picker names the example a run already is, and pre-select
   assert.doesNotMatch(rows[1].textContent, /already an example/);
   assert.deepEqual(rows.map((r) => r.querySelector('input').checked), [false, false]);
 });
+
+test('Part 4, board 4: the "Checking your criteria" row, priced or not known yet (P4-C6)', async () => {
+  const run = async (checkA, checkB) => {
+    const { doc, win } = dom();
+    openTestVersionDialog({ doc, win, options: OPTIONS, a: 4, b: 'draft', examples: SIX, dateText: () => '19 Oct',
+      loadPlan: async (q) => { const p = planFor(q); p.a = { ...p.a, checkUsd: checkA }; p.b = { ...p.b, checkUsd: checkB }; p.criteria = { pairsUsd: 0 }; return p; },
+      onStart: async () => ({ ok: true }) });
+    await tick();
+    return estRows(doc).find((r) => r[0] === 'Checking your criteria');
+  };
+  assert.deepEqual(await run({ fresh: 0.5, withReuse: 0.2 }, { fresh: 0.7, withReuse: 0.7 }), ['Checking your criteria', 'about $0.90']);
+  assert.deepEqual(await run({ fresh: 0.5, withReuse: 0.2 }, null), ['Checking your criteria', 'cost not known yet']);
+});

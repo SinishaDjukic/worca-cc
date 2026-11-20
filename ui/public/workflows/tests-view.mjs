@@ -146,6 +146,7 @@ function table(doc, o0, actions, dateText) {
     const kinds = el(doc, 'span', 'wft-kinds');
     kinds.append(el(doc, 'span', 'wft-kind', `Basics ${e.basics}`));
     if (e.checks) kinds.append(el(doc, 'span', 'wft-kind', `Automatic ${e.checks}`));
+    if (e.criteria) kinds.append(el(doc, 'span', 'wft-kind', `Your criteria ${e.criteria}`));   // Part 4, board 1
     const more = iconBtn(doc, 'more', `More for ${e.name}`, null, 'btn btn-sm btn-quiet btn-icon wft-more');
     more.setAttribute('aria-haspopup', 'menu');
     more.addEventListener('click', () => actions.exampleMenu(more, e));

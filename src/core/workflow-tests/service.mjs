@@ -528,7 +528,7 @@ export async function testsOverview(workflowId, { registry = loadAgentRegistry()
     examples.push({
       id: ex.id, name: ex.name, hasRequest: !!ex.request.trim(), files: ex.files.map((f) => f.name),
       fromAt: from ? from.started_at || null : null, note: ex.note, tries: ex.tries,
-      basics: basicsList(ex.basics).length, checks: ex.checks.length,
+      basics: basicsList(ex.basics).length, checks: ex.checks.length, criteria: ex.criteria.length,
       cells: Object.fromEntries(uses.map((use) => [store.useRef(use), cellOf(ex, use, fpNow[store.useRef(use)])])),
       project, ready: ready.ready, reason: ready.reason,
       readyText: ready.ready ? null : readinessText(ex, ready.reason, { reg: project ? projects.find((p) => p.key === project.key) || null : null }),

@@ -418,6 +418,8 @@ export function openTestVersionDialog({ doc, win, options = [], a = null, b = 'd
       for (const side of ['a', 'b']) {
         if (reused(side)) line(`${startOfLine(plan[side].short)} ${plan[side].reusable === 1 ? 'result' : 'results'} from ${plan[side].reusableAt ? dateText(plan[side].reusableAt) : 'earlier'}`, '$0.00');
       }
+      // Part 4 (board 4): checking the criteria (the tries to run, reused tries missing a check, the pair question); P4-C6 when no price is known yet.
+      if (plan.criteria && (e.toRun.a || e.toRun.b || e.criteriaUsd !== 0)) line('Checking your criteria', e.criteriaUsd === null ? 'cost not known yet' : `about ${fmtUsd(e.criteriaUsd)}`);
       line(timeShown ? 'Total' : e.minutes ? `Total · ready in about ${e.minutes} ${e.minutes === 1 ? 'minute' : 'minutes'}` : 'Total', e.usd === null ? 'cost not known yet' : fmtUsdRange(e.low, e.high), 'is-total');
       if (!capTouched) cap.value = `$${e.capUsd}`;
     }
