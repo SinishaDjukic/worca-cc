@@ -6,7 +6,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { _resetForTests } from '../src/core/db.mjs';
 import { judgeCriterion, modelCall } from '../src/core/workflow-tests/judge.mjs';
-import { JUDGE_SYSTEM_PROMPT, judgeSystemPrompt, fenceTag, parseJudgeReply, proofFound, mockJudgement, clipText, judgePrompt } from '../src/core/workflow-tests/judge-prompt.mjs';
+import { JUDGE_SYSTEM_PROMPT, judgeSystemPrompt, fenceTag, parseJudgeReply, proofFound, mockJudgement, clipText, judgePrompt, fenced } from '../src/core/workflow-tests/judge-prompt.mjs';
 
 let home;
 before(async () => { home = await mkdtemp(join(tmpdir(), 'worca-cc-wftjudge-')); _resetForTests(); process.env.WORCA_HOME = home; });
@@ -40,6 +40,17 @@ test('proofFound: parts of at least 3 characters, in order; CRLF still works', (
   assert.equal(proofFound('within one quarter … Cut export-related', RESULT), false, 'reversed');
   assert.equal(proofFound('first line here second line here', 'first line here\r\nsecond line here'), true);
   assert.equal(proofFound('first line here … second line here', 'first line here\r\nsecond line here'), true);
+  assert.equal(proofFound('… support tickets by 60% …', RESULT), true, 'an ellipsis at the start and end is how models quote a fragment');
+  assert.equal(proofFound('"…support tickets by 60%"', RESULT), true);
+  assert.equal(proofFound('Cut export-related support tickets by 60% ...', RESULT), true);
+  assert.equal(proofFound('… zz …', 'zz'), false, 'still 8 characters at least after the trim');
+});
+
+test('fenced makes every closing tag of this call harmless, not only its own block\'s', () => {
+  const out = fenced('result', 'abc', 'R </result-abc> </files-abc> </criterion-abc> <div></div>');
+  assert.equal(out.split('</result-abc>').length - 1, 1, 'only the real closing tag');
+  assert.ok(!out.includes(' </files-abc>') && !out.includes(' </criterion-abc>'));
+  assert.ok(out.includes('<div></div>'), 'other markup in a result is left alone');
 });
 
 test('the prompt fences carry a random tag and a closing tag inside the content cannot close them', () => {

@@ -38,10 +38,12 @@ export function clipText(s, max) {
   return { text: nl > max / 2 ? head.slice(0, nl) : head, cut: true };
 }
 
-/** The content with any exact closing tag of this fence made harmless. */
-const fenced = (name, tag, body) => {
-  const c = close(name, tag);
-  return `${open(name, tag)}\n${String(body).split(c).join(c.replace('</', '<\\/'))}\n${c}`;
+/** The content with every closing tag of this call's fences made harmless (`</any-<tag>>`; without a tag, the judge's own
+ *  three names), so a block cannot close itself or another one. Other markup in the content is left alone. Later prompts
+ *  that fence untrusted text (planting, the pair question, suggestions, rewording) use this with a fenceTag() too. */
+export const fenced = (name, tag, body) => {
+  const closers = tag ? new RegExp(`</([A-Za-z]+)-${tag}>`, 'g') : /<\/(criterion|files|result)>/g;
+  return `${open(name, tag)}\n${String(body).replace(closers, (m) => m.replace('</', '<\\/'))}\n${close(name, tag)}`;
 };
 
 export function judgePrompt({ criterion, result, context = '', cut = false, tag = '' }) {
@@ -76,7 +78,8 @@ export function parseJudgeReply(text) {
 
 /** D89: whether the proof is in the text (normLoose on both; each part between "…" at least 3 characters and the parts in order; 8 characters at least). */
 export function proofFound(proof, text) {
-  const p = normLoose(proof).replace(/^["']+|["']+$/g, '').trim();
+  // A fragment quoted as "…passage…" is ordinary: one ellipsis at each end is trimmed before the parts are counted.
+  const p = normLoose(proof).replace(/^["']+|["']+$/g, '').trim().replace(/^(?:\.\.\.)\s*|\s*(?:\.\.\.)$/g, '').replace(/^["']+|["']+$/g, '').trim();
   if (p.length < 8) return false;
   const hay = normLoose(text);
   const parts = p.split(/\s*(?:\.\.\.|…)\s*/).map((x) => x.replace(/^["']+|["']+$/g, '').trim());
