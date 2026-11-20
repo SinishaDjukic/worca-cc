@@ -8,10 +8,29 @@
 .code-editor .code-editor-hl,.code-editor .code-editor-ta{
   margin:0;padding:12px 14px;font-family:var(--mono);font-size:12px;line-height:1.55;
   white-space:pre;tab-size:2;border:0;letter-spacing:normal;}
+.code-editor .code-editor-body{position:relative;}
 .code-editor .code-editor-hl{position:absolute;inset:0;overflow:auto;pointer-events:none;color:var(--ink);background:transparent;}
 .code-editor .code-editor-hl code{font:inherit;color:inherit;background:none;padding:0;}
-.code-editor .code-editor-ta{position:relative;display:block;width:100%;min-height:0;resize:vertical;
+.code-editor .code-editor-ta{position:relative;display:block;width:100%;min-height:0;resize:none;
   overflow:auto;background:transparent;color:transparent;caret-color:var(--ink);outline:none;}
+/* The line-number gutter shares the layers' metrics so one row is one logical line. */
+.code-editor{--ce-gutter:calc(var(--ce-digits,2)*1ch + 18px);}
+.code-editor .code-editor-gutter{position:absolute;inset-block:0;left:0;width:var(--ce-gutter);box-sizing:border-box;
+  margin:0;padding:12px 8px 12px 0;font-family:var(--mono);font-size:12px;line-height:1.55;white-space:pre;tab-size:2;
+  overflow:hidden;text-align:right;color:var(--ink-3);background:var(--field);border-right:1px solid var(--line);
+  pointer-events:none;user-select:none;z-index:1;}
+.code-editor:focus-within .code-editor-gutter{background:var(--field-focus);}
+.code-editor .code-editor-gutter .warn{color:var(--amber-ink);background:var(--amber-bg);}
+.code-editor.has-gutter .code-editor-hl,.code-editor.has-gutter .code-editor-ta{padding-left:calc(var(--ce-gutter) + 10px);}
+.code-editor .code-editor-foot{display:flex;align-items:center;gap:6px;border-top:1px solid var(--line);}
+.code-editor .code-editor-grip{flex:1;height:10px;display:flex;align-items:center;justify-content:center;cursor:ns-resize;
+  touch-action:none;border-radius:var(--r-ctrl);}
+.code-editor .code-editor-grip::before{content:"";width:28px;height:3px;border-radius:var(--r-ctrl);background:var(--line-2);}
+.code-editor .code-editor-grip:focus-visible{outline:none;box-shadow:0 0 0 2px var(--ink);}
+.code-editor .code-editor-expand{margin-left:auto;}
+.code-editor .code-editor-warnings{margin:0;padding:6px 14px;list-style:none;border-top:1px solid var(--line);
+  color:var(--amber-ink);font-size:11px;max-height:7.5em;overflow:auto;}
+.code-editor .code-editor-warnings[hidden]{display:none;}
 .code-editor .code-editor-ta::selection{background:var(--selection);}
 .code-editor.ro{background:var(--field);}
 .code-editor.ro .code-editor-ta{cursor:default;caret-color:transparent;}
@@ -25,3 +44,20 @@
 .code-editor :is(.hljs-title,.hljs-section,.hljs-name){color:var(--hd-syntax-title);}
 .code-editor :is(.hljs-comment,.hljs-quote){font-style:italic;}
 
+
+/* The large editor window: a body-level .viewer-modal (scrim, fixed, centred) above the popover and the
+   Scripts sheet, below #confirm-modal. It is no .card, so the .viewer-modal .card cap does not apply. */
+.viewer-modal.code-editor-modal{z-index:56;}
+.code-editor-modal-card{width:min(1400px,94vw);height:90vh;display:flex;flex-direction:column;background:var(--panel);
+  border-radius:var(--r-card);box-shadow:var(--shadow-sheet);overflow:hidden;}
+.code-editor-modal-head{display:flex;align-items:center;gap:12px;padding:10px 12px 10px 16px;border-bottom:1px solid var(--line);}
+.code-editor-modal-title{margin:0;font-size:15px;font-weight:600;}
+.code-editor-modal-caption{font-size:12px;color:var(--ink-3);}
+.code-editor-modal-close{margin-left:auto;}
+.code-editor-modal-card .code-editor{flex:1;min-height:0;display:flex;flex-direction:column;border:0;border-radius:0;}
+.code-editor-modal-card .code-editor .code-editor-body{flex:1;min-height:0;}
+.code-editor-modal-card .code-editor .code-editor-ta{height:100%;}
+@media (max-height:640px),(max-width:640px){
+  .viewer-modal.code-editor-modal{padding:0;}
+  .code-editor-modal-card{width:100vw;height:100vh;border-radius:0;}
+}

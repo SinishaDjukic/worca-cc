@@ -181,6 +181,60 @@ test('B: a key OpenRouter answers without an allowance, and no key at all', asyn
   });
 });
 
+// ── B: whose key — the OpenRouter row (providers.openrouter), else the OpenAI-compatible row as before ──
+
+/** Runs `fn` with OPENROUTER_KEY set to `v` (undefined = unset); withSettings does not save it. */
+async function withOpenRouterKey(v, fn) {
+  const prev = process.env.OPENROUTER_KEY;
+  if (v === undefined) delete process.env.OPENROUTER_KEY; else process.env.OPENROUTER_KEY = v;
+  try { return await fn(); } finally { if (prev === undefined) delete process.env.OPENROUTER_KEY; else process.env.OPENROUTER_KEY = prev; }
+}
+const OR_FREE = OR_SETTINGS.models[0];
+const freeCall = (account) => recordBridgeCall({ tag: 't', catalogId: 'nemo-free', provider: 'openai', api: 'openai-chat', initiator: 'user', free: true, account });
+
+test('B: the OpenRouter row\'s key is the one read, and the cache answers for the account the bridge lowers', async () => {
+  const settings = {
+    providers: { openai: { baseUrl: 'http://127.0.0.1:8080/v1', apiKey: 'sk-local' }, openrouter: { apiKey: 'sk-or' } },
+    // Its own base: the OpenAI-compatible row points at a local server, so freeModelIds counts it only this way.
+    models: [{ ...OR_FREE, upstream: { ...OR_FREE.upstream, baseUrl: 'https://openrouter.ai/api/v1' } }],
+  };
+  await withOpenRouterKey(undefined, () => withSettings(settings, async () => {
+    const reads = [];
+    const s = await freeDailyStatus({ fetch: fakeKeyFetch(reads) });
+    assert.deepEqual(reads, [{ url: 'https://openrouter.ai/api/v1/key', auth: 'Bearer sk-or' }]);
+    assert.equal(s.remaining, 941);
+    freeCall(keyAccount('sk-or'));
+    assert.deepEqual(cachedFreeDailyCounts(), { used: 60, limit: 1000 });
+  }));
+});
+
+test('B: a setup from before the OpenRouter row reads as it did: the OpenAI-compatible row\'s own base and key, regional too', async () => {
+  for (const [base, key] of [['https://openrouter.ai/api/v1', 'sk-old'], ['https://eu.openrouter.ai/api/v1', 'sk-eu']]) {
+    await withOpenRouterKey(undefined, () => withSettings({ providers: { openai: { baseUrl: base, apiKey: key } }, models: [OR_FREE] }, async () => {
+      const reads = [];
+      await freeDailyStatus({ fetch: fakeKeyFetch(reads) });
+      assert.deepEqual(reads, [{ url: `${base}/key`, auth: `Bearer ${key}` }], base);
+      assert.deepEqual(cachedFreeDailyCounts(), { used: 59, limit: 1000 }, base);
+    }));
+  }
+});
+
+test('B: the row\'s key kept in ${OPENROUTER_KEY}: unset, nothing is read (never the OpenAI-compatible key); set, its value is read and counted', async () => {
+  const settings = { providers: { openai: { baseUrl: 'https://openrouter.ai/api/v1', apiKey: 'sk-old' }, openrouter: { apiKey: '${OPENROUTER_KEY}' } }, models: [OR_FREE] };
+  await withOpenRouterKey(undefined, () => withSettings(settings, async () => {
+    const s = await freeDailyStatus({ fetch: async () => { throw new Error('must not be called'); } });
+    assert.deepEqual(s, { enabled: true, known: false, models: ['nemo-free'], reason: 'no OpenRouter key to read' });
+    assert.deepEqual(cachedFreeDailyCounts(), {});
+  }));
+  await withOpenRouterKey('sk-env', () => withSettings(settings, async () => {
+    const reads = [];
+    await freeDailyStatus({ fetch: fakeKeyFetch(reads) });
+    assert.deepEqual(reads, [{ url: 'https://openrouter.ai/api/v1/key', auth: 'Bearer sk-env' }], 'the value, never the ${VAR} text');
+    freeCall(keyAccount('sk-env'));
+    assert.deepEqual(cachedFreeDailyCounts(), { used: 60, limit: 1000 }, 'counted under the key the bridge sends');
+  }));
+});
+
 // ── B: the UI helpers ───────────────────────────────────────────────────────
 
 const KNOWN = (remaining, limit = 1000) => ({ enabled: true, known: true, used: limit - remaining, limit, remaining, resetAt: '2026-09-28T00:00:00.000Z' });

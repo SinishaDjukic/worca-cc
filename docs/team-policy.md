@@ -36,7 +36,7 @@ No run is ever blocked by a policy. The two Chat web fields are the exception to
 | Chat web access | off switches web access off for chats pinned to the project; a policy can never switch it on | soft (off only) |
 | Chat web allowlist | the most a developer may allow: hosts outside it are dropped from their own list for chats pinned to the project; it never adds a host | soft |
 | Guardrails default set / minimum tier | what the New pipeline picker starts on; a run below the tier warns | default / soft |
-| Model roles (`models.roles`) | Deep thinking, Everyday coding, Quick jobs per harness, by upstream model; each machine maps it to its own source | default / soft |
+| Model roles (`models.roles`) | Deep thinking, Everyday tasks, Quick jobs per harness, by upstream model; each machine maps it to its own source | default / soft |
 | Interface level, AI-written PR descriptions, Smart run names, Coding agent, Sync before run, Wait for the network (`setup.*`) | offered in the setup assistant on Review; nothing changes before Apply | default |
 | Allowed models, step defaults, hide built-ins | pickers warn on an off-list model; roles you have not configured start from the team's | soft / default |
 | Marketplaces, required plugins, blocked plugins | marketplaces are added once (metadata only); required plugins go through the setup checklist with consent; blocked ones warn | default / soft |
@@ -73,7 +73,7 @@ team setup: "which models do which work" and the team's working defaults, publis
 - **The notice.** When the Setup fields of a policy home change, each developer's account menu shows "Your team
   updated the recommended setup · Review", which opens the setup assistant on Review with only the changed rows.
 - **The Setup tab.** The Team policy editor has a Setup tab: six model-role rows (Claude and Codex × Deep
-  thinking, Everyday coding, Quick jobs) and one control per sub-key of each record field.
+  thinking, Everyday tasks, Quick jobs) and one control per sub-key of each record field.
 - **Tags stay here.** Team tags stay in `runs.tagDimensions` and `runs.enforceTags`; a team setup file does not
   carry them.
 

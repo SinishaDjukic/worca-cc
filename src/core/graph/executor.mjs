@@ -53,7 +53,6 @@ import { SUBAGENT_MODELS } from '../model-env.mjs';
 import { AWAIT_PORT } from '../../shared/graph/constants.mjs';
 import { withRecheck } from '../../shared/graph/verdict.mjs';
 import { perspectivesBlock } from '../../shared/shape/perspectives.mjs';
-import { clarifyPerspectivesBlock, capClarifyByPerspective, CLARIFY_TOTAL } from '../../shared/shape/perspective-set.mjs';
 import { roleChecklistOf, genericRoleBrief, roleTargetOf } from '../../shared/graph/role-review-step.mjs';
 import { reviewChecklistBlock } from '../../shared/shape/review-checklist.mjs';
 import { slicingBlock, outlineFeedbackBlock, FLAT_NOTE, sliceScopeBlock } from '../../shared/shape/slices.mjs';
@@ -445,7 +444,7 @@ export function resolveMockRole({ meta, expandsPort = null }) {
 // ── verdicts ──────────────────────────────────────────────────────────────────
 
 import { readVerdict, checkVerdict, clearAllocated, assertOutputsWritten, publishable } from './exec-io.mjs';
-import { createScopeWatch, outsideWarning, writeExecManifest } from './exec-manifest.mjs';
+import { createScopeWatch, outsideWarning, scopeRecord, writeExecManifest } from './exec-manifest.mjs';
 export { readVerdict, publishable };
 
 // ── prompt assembly ───────────────────────────────────────────────────────────
@@ -499,8 +498,6 @@ const joinHints = (a, b) => [a, b].map((s) => String(s || '').trim()).filter(Boo
 
 /** The agents whose prompt carries the Perspectives block (spec D5: the planner writes for them, Refine checks them). */
 const PERSPECTIVE_AGENT_KEYS = new Set(['planner', 'refiner']);
-/** The agent whose prompt and questions follow a run's chosen perspective set (flag proposedPerspectives). */
-const CLARIFY_AGENT_KEY = 'clarify';
 /** Spec §3.8: the agent that may write the slice outline, and the agents that get the slice scope (F15). */
 export const SLICE_PLANNER_KEY = 'planner';
 export const SLICE_SCOPE_AGENT_KEYS = PERSPECTIVE_AGENT_KEYS;
@@ -612,9 +609,6 @@ export function buildAgentPrompt(ctx) {
   const perspectives = PERSPECTIVE_AGENT_KEYS.has(node?.key) && Array.isArray(ctx.shape?.perspectives)
     ? perspectivesBlock(ctx.shape.perspectives, { refiner: node.key === 'refiner', agreedIds: ctx.shapeAgreedIds || [] })
     : '';
-  // A run with a chosen perspective set only (ctx.chosenPerspectives): every other Clarify prompt stays byte-identical.
-  const clarifyPersp = node?.key === CLARIFY_AGENT_KEY && Array.isArray(ctx.chosenPerspectives)
-    ? clarifyPerspectivesBlock(ctx.chosenPerspectives) : '';
   const slicing = node?.key === SLICE_PLANNER_KEY ? slicingPromptBlock(ctx) : '';
   const sliceScope = SLICE_SCOPE_AGENT_KEYS.has(node?.key) && ctx.shapeSliceScope
     ? sliceScopeBlock({ ...ctx.shapeSliceScope, refiner: node.key !== SLICE_PLANNER_KEY })
@@ -642,7 +636,7 @@ export function buildAgentPrompt(ctx) {
     '\n## What to do\n\n' +
     baseInstruction(meta.runnerType, meta) + '\n\n' +
     (hints ? hints + '\n\n' : '') +
-    perspectives + clarifyPersp +
+    perspectives +
     roleBrief +
     sliceScope +
     slicing +
@@ -793,7 +787,7 @@ async function spawnAgent(full, { role, prompt, systemPrompt, allowedTools }) {
   const run = full.sessionHost ? (o) => full.sessionHost.run(o, memberInfo(full)) : (_testing.runClaude || runClaude);
   try {
     const { text } = await run(opts);
-    return { text, sessionId, outside: scope.paths() };
+    return { text, sessionId, scope: scope.result({ sessionId }) };
   } catch (err) {
     outcome = 'error'; failure = limit.error || err;
     if (limit.error) throw limit.error;
@@ -802,14 +796,15 @@ async function spawnAgent(full, { role, prompt, systemPrompt, allowedTools }) {
     try {
       const { text } = await run({ ...opts, pluginDirs: undefined });
       outcome = 'ok'; failure = null;
-      return { text, sessionId, outside: scope.paths() };
+      return { text, sessionId, scope: scope.result({ sessionId }) };
     } catch (again) { failure = limit.error || again; throw failure; }
   } finally {
     limit.stop();
-    const outside = scope.paths();
-    // Telemetry sees the outside paths as one event per spawn (the recorder's `outside` record).
+    // Split at the end: the own-session classes need the session id the spawn reported.
+    const { notable: outside, expected: outsideExpected } = scope.result({ sessionId });
+    // Telemetry sees the notable outside paths as one event per spawn (the recorder's `outside` record).
     if (outside.length && typeof inner === 'function') { try { inner({ type: 'scope', paths: outside }); } catch { /* listener */ } }
-    await writeExecManifest(full, { opts, prompt, systemPrompt, sessionId, initModel, startedAt, outcome, error: failure, outside });
+    await writeExecManifest(full, { opts, prompt, systemPrompt, sessionId, initModel, startedAt, outcome, error: failure, outside, outsideExpected });
   }
 }
 
@@ -876,12 +871,13 @@ export async function runAgentExecution(ctx) {
   // E6: a fresh attempt starts from no outputs, so a retry or a resume never publishes the failed
   // attempt's files. A resumed SESSION continues the same attempt: its own earlier writes stand.
   if (!ctx.resumeSessionId) await clearAllocated({ outputs, verdict, bindings: ctx.bindings });
-  const { text, sessionId, outside = [] } = await spawnAgent(full, { role, prompt, systemPrompt, allowedTools });
+  const { text, sessionId, scope = { notable: [], expected: [] } } = await spawnAgent(full, { role, prompt, systemPrompt, allowedTools });
   const review = verdict?.path ? withRecheck(await readVerdict(verdict.path), ctx.ordinal ?? 1) : null;
   // Non-fatal problems the scheduler folds into state.warnings + the run log.
   const warnings = [];
-  const away = outsideWarning(ctx, outside);                       // E9: on the run log, not only in the manifest
-  if (away) warnings.push(away);
+  // E9: notable outside paths ride a structured record (state.scopeNotices, one quiet line on the run page) and a
+  // short run log line, never a warning banner; expected ones stay in the manifest only.
+  const scopeNotice = scopeRecord(ctx, scope);
   // An agent that stopped to ask (the questions loop resumes it with the answers), or a slicing Planner
   // that stopped at its slice outline (the outline loop resumes it), has not finished: its outputs and
   // verdict come on the resumed spawn, which is checked like any other.
@@ -901,6 +897,7 @@ export async function runAgentExecution(ctx) {
     outputs: publishable(ports, outputs),
     verdict: review,
     warnings,
+    ...(scopeNotice ? { scope: scopeNotice, scopeLine: outsideWarning(ctx, scope.notable) } : {}),
     sessionId,
     prompt,
     systemPrompt,
@@ -1064,17 +1061,6 @@ export async function runClarifierExecution(ctx) {
     }
     questions = gate.questions;               // the downgrade takes the legacy arm below
     sessionId = gate.sessionId ?? sessionId;
-  }
-
-  // A run with a chosen perspective set: one question per perspective, 3 in total, on the questions arm only and before
-  // the node's own cap, so the cap holds even when the agent ignores the prompt's block. Gated like that block: the
-  // Clarify node only.
-  if (node?.key === CLARIFY_AGENT_KEY && Array.isArray(ctx.chosenPerspectives)) {
-    const kept = capClarifyByPerspective(questions, ctx.chosenPerspectives);
-    if (kept.dropped.length) {
-      warnings.push(`${node.id}: Clarify asked ${questions.length} questions; keeping ${kept.questions.length} (one per perspective, ${CLARIFY_TOTAL} in total)`);
-      questions = kept.questions;
-    }
   }
 
   // Shape it first (spec D3): a node may cap its questions below the protocol's 8. normalizeClarify already

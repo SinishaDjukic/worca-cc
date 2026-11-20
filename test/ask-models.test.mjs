@@ -5,7 +5,7 @@
 // built-in) is inherited, not re-implemented here.
 import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtemp, rm } from 'node:fs/promises';
+import { mkdtemp, rm, mkdir, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { useTempHome } from './helpers/temp-home.mjs';
@@ -148,4 +148,33 @@ test('askCatalog: Codex models are offered with their engine and validate (Plan 
   const cat = await withCodex.askCatalog();
   assert.equal(cat.models.find((m) => m.id === 'gpt-5.5').engine, 'codex');
   assert.deepEqual(await withCodex.validateModelEffort('gpt-5.5', 'low'), { ok: true, model: 'gpt-5.5', effort: 'low' });
+});
+
+// A bridged row that is not ready names the Providers row that fixes it (Models › Providers › <row>).
+const needsKey = (id, extra = {}) => ({ id, label: id, efforts: ['medium', 'high'], custom: 'global', hasEnv: false, bridged: 'openai', upstreamApi: 'openai-chat', needsSignIn: true, signInReason: 'no_key', ...extra });
+const signInOf = async (deps, id) => (await createAskModels({ pluginModels: () => [], secretStatus: () => [], askPrefs: () => ({ engine: 'claude', slots: {} }), ...deps }).askCatalog()).models.find((m) => m.id === id).signInMessage;
+
+test('signInMessage names the Providers row: OpenRouter for a model on openrouter.ai, else the bridged provider\'s row', async () => {
+  const listModels = () => [needsKey('or-m'), needsKey('cp-m', { bridged: 'copilot', signInReason: 'not_signed_in' })];
+  assert.equal(await signInOf({ listModels, isOpenRouterModel: () => true }, 'or-m'), 'No API key for OpenRouter — Models › Providers › OpenRouter.');
+  assert.equal(await signInOf({ listModels, isOpenRouterModel: () => false }, 'or-m'), 'No API key for OpenAI-compatible — Models › Providers › OpenAI-compatible.');
+  assert.equal(await signInOf({ listModels, isOpenRouterModel: () => false }, 'cp-m'), 'Not signed in to GitHub Copilot — Models › Providers › GitHub Copilot.');
+});
+
+test('signInMessage: the default reader finds an OpenRouter model by its catalogue entry\'s openrouter.ai base URL', async () => {
+  const prevAllow = process.env.WORCA_TEST_ALLOW_HOME_FALLBACK;
+  process.env.WORCA_TEST_ALLOW_HOME_FALLBACK = '1';
+  try {
+    await mkdir(join(sandboxHome, '.worca-cc'), { recursive: true });
+    await writeFile(join(sandboxHome, '.worca-cc', 'settings.json'), JSON.stringify({ models: [
+      { id: 'or-m', label: 'OR', upstream: { provider: 'openai', api: 'openai-chat', model: 'qwen/qwen3-coder', baseUrl: 'https://openrouter.ai/api/v1' } },
+      { id: 'oa-m', label: 'OA', upstream: { provider: 'openai', api: 'openai-chat', model: 'gpt-5', baseUrl: 'https://api.openai.com/v1' } },
+    ] }));
+    const listModels = () => [needsKey('or-m'), needsKey('oa-m')];
+    assert.equal(await signInOf({ listModels }, 'or-m'), 'No API key for OpenRouter — Models › Providers › OpenRouter.');
+    assert.equal(await signInOf({ listModels }, 'oa-m'), 'No API key for OpenAI-compatible — Models › Providers › OpenAI-compatible.');
+  } finally {
+    if (prevAllow === undefined) delete process.env.WORCA_TEST_ALLOW_HOME_FALLBACK; else process.env.WORCA_TEST_ALLOW_HOME_FALLBACK = prevAllow;
+    await rm(join(sandboxHome, '.worca-cc', 'settings.json'), { force: true });
+  }
 });

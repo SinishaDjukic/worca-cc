@@ -647,7 +647,7 @@ test('not set up, its key missing, or under the broker: Pictures · Set up leads
     const off = host.querySelector('.dz-pics-off');
     const a = off.querySelector('a.dz-pics-setup');
     assert.deepEqual([off.hidden, host.querySelector('.dz-pics-on').hidden, off.querySelector('.switch-label').textContent, a.textContent, a.getAttribute('href'), a.hasAttribute('data-nav')],
-      [false, true, 'Pictures', 'Set up', '#providers/images', true]);
+      [false, true, 'Pictures', 'Set up', '#models/providers/images', true]);
     setText('A page'); host.querySelector('.ask-send').click(); await tick();
     assert.equal('pictures' in posts.at(-1).body, false);
   }

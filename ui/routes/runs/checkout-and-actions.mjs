@@ -480,7 +480,9 @@ app.post('/api/runs/:id/resolve-pipeline', async (req, res) => {
     updateBranchRecords(row.id, [m.projectKey], (br) => { br.baseResolve = mark; });
     let out;
     try {
-      out = await startRunAs(req, body, { _resolveOf: { runId: row.id, member: m.projectKey } });
+      // mergeIn: the ref the brief tells the agent to merge, so the run's diff counts only the resolution.
+      out = await startRunAs(req, body, { _resolveOf: { runId: row.id, member: m.projectKey },
+        ...(typeof rec.baseRef === 'string' ? { _mergeIn: { ref: rec.baseRef } } : {}) });
     } catch (e) { out = { status: 500, body: { error: e?.message || String(e) } }; }
     if (out.status !== 200 || !out.body?.runId) {
       updateBranchRecords(row.id, [m.projectKey], (br) => { if (br.baseResolve?.at === mark.at && !br.baseResolve.runId) delete br.baseResolve; });

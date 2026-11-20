@@ -70,9 +70,8 @@ test('crew labels read at 4.5:1 on every crew colour', () => {
 });
 test('the guide names the exceptions, and no stage rule has an accent edge', () => {
   const g = readFileSync(new URL('../docs/design-system.md', import.meta.url), 'utf8');
-  const m = readFileSync(new URL('../docs/rail/motion.md', import.meta.url), 'utf8');
   assert.match(g, /### Design stage exceptions/);
-  assert.match(m, /The named exceptions are the away screensaver[\s\S]*? and the Design stage/);
+  assert.match(g, /The named exceptions are the away screensaver .* and the Design stage/);
   for (const r of ALL.filter((x) => /\.dz-|\.overlay-doc|\.frame-box/.test(x.sel))) assert.doesNotMatch(r.body, /border-left/, r.sel);
 });
 
@@ -102,4 +101,20 @@ test('the sound cards are the white ask card: no .dsc-sound- rule names an amber
     assert.doesNotMatch(r.body, /--[\w-]*(?:amber|yellow|warn)/, r.sel);
     assert.doesNotMatch(r.body, /border-left/, r.sel);
   }
+});
+
+test('select-fit sizes a drow select to its content', () => {
+  const ds = readFileSync(new URL('../ui/public/design-system/design-system.css', import.meta.url), 'utf8');
+  assert.match(ds, /\.drow-control \.select\.select-fit\{width:auto;?\}/);
+  const g = readFileSync(new URL('../docs/design-system.md', import.meta.url), 'utf8');
+  const field = g.slice(g.indexOf('### Field'), g.indexOf('### Switch (checked)'));
+  assert.match(field, /`\.select-fit`/);
+});
+
+test('docs: the screensaver is a Settings › Appearance setting', () => {
+  const g = readFileSync(new URL('../docs/design-system.md', import.meta.url), 'utf8');
+  assert.match(g, /chosen in Settings › Appearance \(off by default\)/);
+  const away = readFileSync(new URL('../docs/away-mode.md', import.meta.url), 'utf8');
+  assert.doesNotMatch(away, /AWAY_SCREENSAVER/);
+  assert.match(away, /Settings › General › Appearance/);
 });

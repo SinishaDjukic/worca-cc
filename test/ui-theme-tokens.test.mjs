@@ -90,7 +90,8 @@ const PAIRS = [
   ...['comment', 'keyword', 'type', 'string', 'literal', 'title'].map((s) => [`--hd-syntax-${s}`, '--panel', 4.5]),
   ['--chip-ink', '--field', 4.5], ['--trunc-ink', '--panel', 4.5], ['--h-blue-ink', '--blue-bg', 4.5], ['--h-peach-ink', '--peach-bg', 4.5],
   ['--blue-ink-strong', '--blue-bg', 4.5], ['--violet-ink', '--violet-bg', 4.5],   // the PR state colours (.rd-pr-fill.pr-view / .pr-merged, .hd-pr-link)
-  ['--amber-ink-strong', '--field', 4.5], ['--red-ink-strong', '--field', 4.5],   // the account menu's spend card tones on its --field panel
+  ['--amber-ink-strong', '--field', 4.5], ['--red-ink-strong', '--field', 4.5],   // the -strong amber and red inks on a --field ground
+  ['--amber-ink-strong', '--panel', 4.5], ['--red-ink-strong', '--panel', 4.5],   // the account menu's spend card tones, flat on the --panel sheet
   ['--side-ink', '--side-bg', 4.5], ['--side-sel-ink', '--side-sel-bg', 4.5],   // the sidebar rows and group labels (.nav button, .nav-sect) and the open page
   ['--on-signal', '--amber', 4.5], ['--on-signal', '--red', 4.5],   // the status dot's '?' / '!' glyph (ui/public/status-dot.mjs)
   ['--violet-ink-strong', '--violet-bg', 4.5], ['--lime-ink-strong', '--lime-bg', 4.5], ['--slate-ink-strong', '--slate-bg', 4.5],

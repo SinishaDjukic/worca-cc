@@ -7,7 +7,7 @@ import { badRequest, emitChanged } from '../../server.mjs';
 export function register(app) {
 
 // Behind the global guards only (host and identity, agent caller), as /api/speech and the
-// Providers page are: every signed-in person reads the same state, which holds no key. The
+// other reads of Models › Providers are: every signed-in person reads the same state, which holds no key. The
 // index registers this module before /api/providers/:name, so that param route never sees "images".
 app.get('/api/images', (_req, res) => {
   res.json(imagesState());

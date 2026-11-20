@@ -5,7 +5,7 @@
 // Restart / Show again are trivially safe, and an established install meets a
 // checklist that already knows what it has done. The only stored flags are the
 // prefs in settings.mjs#onboardingPrefs (hidden, welcomeSeen, workspaceGuideSeen,
-// stillhetAsked, guidesSeen).
+// guidesSeen).
 import { getDb } from './db.mjs';
 import { countProjects } from './projects.mjs';
 import { countWorkspaces } from './workspaces.mjs';
@@ -57,7 +57,7 @@ export async function detectClaude({ recheck = false, ready = claudeReady, probe
  * @param {{recheck?:boolean, detect?:typeof detectClaude}} [opts]  `detect`: a test seam
  * @returns {Promise<{steps:Record<string,boolean>, done:number, total:number,
  *   claude:{bin:string, hint:string|null, auth:'signed-in'|'signed-out'|'unknown'|null, configDirectory:string|null},
- *   hidden:boolean, welcomeSeen:boolean, workspaceGuideSeen:boolean, stillhetAsked:boolean,
+ *   hidden:boolean, welcomeSeen:boolean, workspaceGuideSeen:boolean,
  *   guidesSeen:Record<string,true>}>}
  */
 export async function onboardingStatus({ recheck = false, detect = detectClaude } = {}) {

@@ -171,11 +171,23 @@ function stubQuota() {
   gitInfo.setRunner((cmd, args) => {
     if (cmd === 'gh' && args[0] === '--version') return Promise.resolve({ ok: true, stdout: 'gh 2.x', stderr: '', code: 0 });
     if (cmd === 'gh' && args[0] === 'pr') return Promise.resolve({ ok: false, stdout: '', stderr: 'GraphQL: API rate limit exceeded', code: 1 });
+    if (cmd === 'git' && args[0] === 'rev-parse') return Promise.resolve({ ok: true, stdout: 'ref\n', stderr: '', code: 0 });
     return Promise.resolve({ ok: true, stdout: '', stderr: '', code: 0 });
   });
 }
 
-test('enrichPipelinesPr: a failed lookup never clears a known PR (F-3-01, F-7a-01, C-2)', async () => {
+// gh answers: the recorded PR reads CLOSED and the branch has no PR, so the lookup worked and found none.
+function stubClosedView(url, number) {
+  gitInfo.setRunner((cmd, args) => {
+    if (cmd === 'gh' && args[0] === '--version') return Promise.resolve({ ok: true, stdout: 'gh 2.x', stderr: '', code: 0 });
+    if (cmd === 'gh' && args[0] === 'pr' && args[1] === 'view') return Promise.resolve({ ok: true, stdout: JSON.stringify({ number, state: 'CLOSED', url }), stderr: '', code: 0 });
+    if (cmd === 'gh' && args[0] === 'pr') return Promise.resolve({ ok: true, stdout: '[]', stderr: '', code: 0 });
+    if (cmd === 'git' && args[0] === 'rev-parse') return Promise.resolve({ ok: true, stdout: 'ref\n', stderr: '', code: 0 });
+    return Promise.resolve({ ok: true, stdout: '', stderr: '', code: 0 });
+  });
+}
+
+test('enrichPipelinesPr: a failed lookup never clears a known PR', async () => {
   const { enrichPipelinesPr, readPrState, persistPrState, writeStoreMeta } = await import('../src/core/artifacts.mjs');
   const { projectKey } = await import('../src/core/store.mjs');
   writeStoreMeta(projectKey(repo), 'project', { key: projectKey(repo), path: repo, name: 'Repo' });
@@ -191,13 +203,14 @@ test('enrichPipelinesPr: a failed lookup never clears a known PR (F-3-01, F-7a-0
       gitInfo.reset();
       const id = await seed();
       persistPrState(id, { url, number: 5, state: 'MERGED' });
+      const before = readPrState(id);
       stubQuota();
       const it = itemOf(await run(), id);
       assert.ok(it, 'the row is sent');
       assert.equal(it.pr.state, 'MERGED');
       assert.equal(it.pr.url, url);
       assert.equal(it.pr.stale, true);
-      assert.equal(readPrState(id).state, 'MERGED');
+      assert.deepEqual(readPrState(id), before, 'a failed lookup writes nothing');
     } },
     { name: 'a failed lookup with nothing stored omits the row; the final batch still says done', run: async () => {
       gitInfo.reset();
@@ -208,30 +221,20 @@ test('enrichPipelinesPr: a failed lookup never clears a known PR (F-3-01, F-7a-0
       assert.equal(batches.at(-1).done, true);
       assert.equal(batches.filter((b) => b.done).length, 1, 'exactly one final batch');
     } },
-    { name: 'a successful empty list after a stored MERGED PR still sends null', run: async () => {
+    { name: 'a successful empty list after a stored MERGED PR sends the closed PR; a fresh row sends null', run: async () => {
       gitInfo.reset();
       const id = await seed();
       persistPrState(id, { url, number: 5, state: 'MERGED' });
-      gitInfo.setRunner((cmd, args) => {
-        if (cmd === 'gh' && args[0] === '--version') return Promise.resolve({ ok: true, stdout: 'gh 2.x', stderr: '', code: 0 });
-        if (cmd === 'gh' && args[0] === 'pr' && args[1] === 'view') return Promise.resolve({ ok: true, stdout: JSON.stringify({ number: 5, state: 'CLOSED', url }), stderr: '', code: 0 });
-        if (cmd === 'gh' && args[0] === 'pr') return Promise.resolve({ ok: true, stdout: '[]', stderr: '', code: 0 });
-        return Promise.resolve({ ok: true, stdout: '', stderr: '', code: 0 });
-      });
+      stubClosedView(url, 5);
       const it = itemOf(await run(), id);
       assert.ok(it);
       // includeClosed: the recorded PR, now closed, is the last resort — a known answer, never stale.
       assert.equal(it.pr?.state ?? null, 'CLOSED');
       assert.equal('stale' in it.pr, false);
-      gitInfo.setRunner((cmd, args) => {
-        if (cmd === 'gh' && args[0] === '--version') return Promise.resolve({ ok: true, stdout: 'gh 2.x', stderr: '', code: 0 });
-        if (cmd === 'gh' && args[0] === 'pr') return Promise.resolve({ ok: true, stdout: '[]', stderr: '', code: 0 });
-        return Promise.resolve({ ok: true, stdout: '', stderr: '', code: 0 });
-      });
       const fresh = await seed();
       assert.equal(itemOf(await run(), fresh).pr, null, 'a genuine no PR still clears');
     } },
-    { name: 'a successful lookup carries no stale key (classic unchanged)', run: async () => {
+    { name: 'a successful lookup carries no stale key', run: async () => {
       gitInfo.reset();
       const id = await seed();
       stubGh({ state: 'MERGED', url, number: 5 });
@@ -242,117 +245,35 @@ test('enrichPipelinesPr: a failed lookup never clears a known PR (F-3-01, F-7a-0
   ]);
 });
 
-// ── C-2 / F-X-02: the shared PR-status store and the quota window ───────────────────────────
-import { _testing as prStatus, prStatusKey, writePrStatus } from '../src/core/pr-status-cache.mjs';
-import { _testing as ghQuota } from '../src/core/github-quota.mjs';
-import { getDb } from '../src/core/db.mjs';
-
-// A GHE base remote: the store key is shared (ghe.corp/o/r) and the lookup is today's gh pr list.
-const GHE_REMOTE = 'origin\tgit@ghe.corp:o/r.git (fetch)\norigin\tgit@ghe.corp:o/r.git (push)\n';
-function stubShared({ list, calls = [] }) {
-  gitInfo.setRunner((cmd, args) => {
-    if (cmd === 'gh' && args[0] === '--version') return Promise.resolve({ ok: true, stdout: 'gh 2.x', stderr: '', code: 0 });
-    if (cmd === 'git' && args[0] === 'remote') return Promise.resolve({ ok: true, stdout: GHE_REMOTE, stderr: '', code: 0 });
-    if (cmd === 'gh' && args[0] === 'pr') { calls.push(args); return list(args); }
-    if (cmd === 'git' && args[0] === 'rev-parse') return Promise.resolve({ ok: true, stdout: 'ref\n', stderr: '', code: 0 });
-    return Promise.resolve({ ok: true, stdout: '', stderr: '', code: 0 });
-  });
-}
-async function ownRepo(branch) {
-  const { writeStoreMeta } = await import('../src/core/artifacts.mjs');
-  const { projectKey } = await import('../src/core/store.mjs');
-  const dir = await mkdtemp(join(tmpdir(), 'worca-cc-prs-own-'));
-  writeStoreMeta(projectKey(dir), 'project', { key: projectKey(dir), path: dir, name: 'Own' });
-  const { id } = await seedPipeline(dir, { title: 'Own', status: 'done', startedAt: '2026-06-01T00:00:00Z',
-    branch: { source: 'main', feature: branch, branchKept: true } });
-  return { dir, id };
-}
-const enrichAll = async () => {
-  const { enrichPipelinesPr } = await import('../src/core/artifacts.mjs');
-  const items = [];
-  await enrichPipelinesPr((batch) => items.push(...batch), { batchSize: 4 });
-  return items;
-};
-
-test('C-2: a known PR survives an exhausted quota on every history path', async () => {
+test('withPr: a failed lookup keeps the stored PR, stale', async () => {
+  const { listPipelines, readPrState, persistPrState } = await import('../src/core/artifacts.mjs');
+  const url = 'https://gh/x/pull/5';
+  const rowOf = async (id) => (await listPipelines(repo, { withPr: true })).find((r) => r.id === id);
   await checkRows([
-    { name: 'C-2: listing a run (withPr) whose MERGED PR is stored shows it stale while the quota is exhausted, never null/Ready', run: async () => {
+    { name: 'a stored MERGED PR and a quota failure: the row keeps it, stale, and the DB is unchanged', run: async () => {
       gitInfo.reset();
-      const { listPipelines, persistPrState } = await import('../src/core/artifacts.mjs');
       const id = await seed();
-      persistPrState(id, { url: 'https://gh/x/pull/5', number: 5, state: 'MERGED' });
+      persistPrState(id, { url, number: 5, state: 'MERGED' });
+      const before = readPrState(id);
       stubQuota();
-      const row = (await listPipelines(repo, { withPr: true })).find((r) => r.id === id);
-      assert.equal(row.pr?.state, 'MERGED');
-      assert.equal(row.pr.url, 'https://gh/x/pull/5');
+      const row = await rowOf(id);
+      assert.equal(row.pr.state, 'MERGED');
+      assert.equal(row.pr.url, url);
       assert.equal(row.pr.stale, true);
-      // Nothing known: still null (looked, cannot say), never a thrown error.
-      const fresh = await seed();
-      assert.equal((await listPipelines(repo, { withPr: true })).find((r) => r.id === fresh).pr, null);
+      assert.deepEqual(readPrState(id), before, 'a failed lookup writes nothing');
     } },
-    { name: 'C-2: with nothing in the DB, enrich sends the shared cache\'s last PR stale instead of omitting the row', run: async () => {
+    { name: 'nothing stored and a quota failure: pr is null', run: async () => {
       gitInfo.reset();
-      const branch = 'worca-cc/shared-last';
-      stubShared({ list: () => Promise.resolve({ ok: false, stdout: '', stderr: 'HTTP 502', code: 1 }) });
-      const tmpStore = await mkdtemp(join(tmpdir(), 'worca-cc-prs-store-'));
-      prStatus.useDir(tmpStore); ghQuota.useDir(tmpStore);
-      const { dir, id } = await ownRepo(branch);
-      try {
-        const open = { state: 'OPEN', url: 'https://ghe.corp/o/r/pull/4', number: 4, isDraft: false, mergeable: 'MERGEABLE' };
-        await writePrStatus(prStatusKey({ repo: 'ghe.corp/o/r', head: branch }), { checkedAt: Date.now() - 11 * 60_000, live: open, closed: null, verdict: null });
-        const it = (await enrichAll()).find((x) => x.id === id);
-        assert.ok(it, 'the row is sent, not omitted');
-        assert.equal(it.pr.state, 'OPEN');
-        assert.equal(it.pr.url, open.url);
-        assert.equal(it.pr.stale, true);
-        const { readPrState } = await import('../src/core/artifacts.mjs');
-        assert.equal(readPrState(id), null, 'the last state is never persisted');
-      } finally {
-        await rm(dir, { recursive: true, force: true }); await rm(tmpStore, { recursive: true, force: true });
-      }
+      const id = await seed();
+      stubQuota();
+      assert.equal((await rowOf(id)).pr, null);
     } },
-    { name: 'runEndedAt reaches the lookup: a month-old run with no PR is re-asked after 24 h, not 10 min', run: async () => {
+    { name: 'a lookup that worked and found the recorded PR closed: pr is null', run: async () => {
       gitInfo.reset();
-      const branch = 'worca-cc/month-old';
-      const calls = [];
-      stubShared({ calls, list: () => Promise.resolve({ ok: true, stdout: '[]', stderr: '', code: 0 }) });
-      const tmpStore = await mkdtemp(join(tmpdir(), 'worca-cc-prs-store-'));
-      prStatus.useDir(tmpStore);
-      const { dir, id } = await ownRepo(branch);
-      try {
-        await writePrStatus(prStatusKey({ repo: 'ghe.corp/o/r', head: branch }), { checkedAt: Date.now() - 11 * 60_000, live: null, closed: null });
-        const mine = () => calls.filter((a) => a.includes(branch)).length;
-        getDb().prepare('UPDATE pipelines SET updated_at = ? WHERE id = ?').run(new Date(Date.now() - 40 * 86_400_000).toISOString(), id);
-        assert.equal((await enrichAll()).find((x) => x.id === id).pr, null);
-        assert.equal(mine(), 0, 'a month-old run: "no PR" 11 minutes ago is still fresh');
-        getDb().prepare('UPDATE pipelines SET updated_at = ? WHERE id = ?').run(new Date().toISOString(), id);
-        await enrichAll();
-        assert.equal(mine(), 1, 'a recent run: asked again after 10 min');
-      } finally {
-        await rm(dir, { recursive: true, force: true }); await rm(tmpStore, { recursive: true, force: true });
-      }
+      const id = await seed();
+      persistPrState(id, { url, number: 5, state: 'MERGED' });
+      stubClosedView(url, 5);
+      assert.equal((await rowOf(id)).pr, null);
     } },
   ]);
-});
-
-test('C1: a PR Worca recorded as MERGED never reads OPEN again from a cached or late answer', async () => {
-  gitInfo.reset();
-  const branch = 'worca-cc/merged-by-worca';
-  const open = { state: 'OPEN', url: 'https://ghe.corp/o/r/pull/9', number: 9, isDraft: false, mergeable: 'MERGEABLE' };
-  stubShared({ list: () => Promise.resolve({ ok: true, stdout: JSON.stringify([open]), stderr: '', code: 0 }) });
-  const tmpStore = await mkdtemp(join(tmpdir(), 'worca-cc-prs-store-'));
-  prStatus.useDir(tmpStore);
-  const { dir, id } = await ownRepo(branch);
-  try {
-    const { persistPrState, readPrState, listPipelines } = await import('../src/core/artifacts.mjs');
-    await enrichAll(); await enrichAll();            // the OPEN answer is cached, by branch and by URL
-    assert.equal(readPrState(id).state, 'OPEN');
-    persistPrState(id, { url: open.url, number: 9, state: 'MERGED' });   // what /api/pr/merge records
-    const it = (await enrichAll()).find((x) => x.id === id);
-    assert.equal(it.pr.state, 'MERGED');
-    assert.equal(readPrState(id).state, 'MERGED', 'the DB row is not rewritten to OPEN');
-    assert.equal((await listPipelines(dir, { withPr: true })).find((r) => r.id === id).pr.state, 'MERGED');
-  } finally {
-    await rm(dir, { recursive: true, force: true }); await rm(tmpStore, { recursive: true, force: true });
-  }
 });

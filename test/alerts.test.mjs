@@ -443,7 +443,8 @@ test('card markup: after Appearance in General, every level, two switches, a tes
   const c = $('#alerts-card');
   assert.ok(c, 'the card exists');
   assert.equal(c.dataset.minLevel, 'simple');
-  assert.equal($('#appearance-card').nextElementSibling, c, 'right after Appearance');
+  assert.equal($('#mode-settings-card').nextElementSibling, c, 'after Appearance and Interface mode');
+  assert.equal($('#appearance-card').nextElementSibling, $('#mode-settings-card'));
   assert.ok(c.closest('.settings-pane[data-tab="general"]'));
   assert.equal(c.querySelector('h2').textContent, 'Alerts');
   assert.equal($('#alertsNotify').type, 'checkbox');

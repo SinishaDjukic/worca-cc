@@ -227,14 +227,15 @@ test('refresh: answers that arrive out of order never paint the older level', as
   assert.equal(cornerImg(doc).getAttribute('src'), '/assets/worca-levels/hooked.svg');
 });
 
-test('account menu: the level card opens #profile/level, sits above Interface mode and follows the level', async () => {
+test('account menu: the level card opens #profile/level, is the menu\'s first item and follows the level', async () => {
   const { doc, window, ctl, poke } = await boot({ view: viewAt(2) });
   const card = await until(() => doc.querySelector('#acct-menu #acct-level-card'));
   assert.ok(card, 'the card is mounted in the account menu');
   assert.equal(card.dataset.hash, 'profile/level');
   assert.match(card.textContent, /Runner/);
   assert.match(card.textContent, /To Hooked/);
-  assert.equal(card.nextElementSibling?.id, 'acct-lvl', 'directly above the Interface-mode row');
+  assert.equal(card, doc.getElementById('acct-menu').firstElementChild, 'the first item of the account menu');
+  assert.equal(card.nextElementSibling?.id, 'acct-id', '"Signed in as" follows it');
   ctl.view = viewAt(3);
   poke('worca-level-changed');
   await until(() => /Hooked/.test(doc.querySelector('#acct-level-card .wl-card-name')?.textContent || ''));

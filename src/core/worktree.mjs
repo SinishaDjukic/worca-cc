@@ -546,6 +546,113 @@ export async function isAncestor(dir, a, b, { timeout } = {}) {
   return (await git(dir, ['merge-base', '--is-ancestor', x, y], { timeout })).ok;
 }
 
+/** Where a conflict run's synthetic diff base is pinned while the run lives (gc insurance). */
+export const DIFF_BASE_REF_PREFIX = 'refs/worca/diff-base/';
+const DIFF_BASE_PART = /^[A-Za-z0-9._-]+$/;
+const validDiffBasePart = (s) => typeof s === 'string' && DIFF_BASE_PART.test(s) && s !== '.' && s !== '..';
+
+/** A fixed identity and dates: the same two parents always give the same synthetic commit. */
+const AUTO_MERGE_ENV = Object.freeze({
+  GIT_AUTHOR_NAME: 'worca', GIT_AUTHOR_EMAIL: 'worca@localhost',
+  GIT_COMMITTER_NAME: 'worca', GIT_COMMITTER_EMAIL: 'worca@localhost',
+  GIT_AUTHOR_DATE: '@0 +0000', GIT_COMMITTER_DATE: '@0 +0000',
+});
+
+/** git's own merge of `ours` and `theirs` as a deterministic commit pinned under
+ *  refs/worca/diff-base/<pipelineId>/<key>. null on bad input, a non-commit side, git < 2.38 or any failure.
+ *  The tree is `merge-tree --write-tree`'s, conflict markers included, so `git diff <sha>` against the
+ *  agent's resolution shows only the resolution (the same lines `git show --remerge-diff` shows). Never throws. */
+export async function autoMergeBase(dir, { ours, theirs, pipelineId, key, timeout = 120_000 } = {}) {
+  if (!validDiffBasePart(pipelineId) || !validDiffBasePart(key)) return null;
+  const [o, t] = await Promise.all([commitOf(dir, ours), commitOf(dir, theirs)]);
+  if (!o || !t) return null;
+  const mt = await git(dir, ['merge-tree', '--write-tree', '--no-messages', o, t], { timeout });
+  const tree = (mt.stdout.split('\n')[0] || '').trim();
+  if ((mt.code !== 0 && mt.code !== 1) || !/^[0-9a-f]{40}([0-9a-f]{24})?$/.test(tree)) return null;
+  const ct = await git(dir, ['commit-tree', tree, '-p', o, '-p', t, '-m', 'worca: auto-merge diff base'], { timeout, env: AUTO_MERGE_ENV });
+  const sha = ct.ok ? ct.stdout.trim() : '';
+  if (!/^[0-9a-f]{40}([0-9a-f]{24})?$/.test(sha)) return null;
+  // The ref is gc insurance only: a failure here still returns the base.
+  await git(dir, ['update-ref', `${DIFF_BASE_REF_PREFIX}${pipelineId}/${key}`, sha], { timeout });
+  return { sha, tree, ours: o, theirs: t, conflicted: mt.code === 1 };
+}
+
+const FULL_SHA = /^[0-9a-f]{40}([0-9a-f]{24})?$/;
+const validTips = (tips) => (Array.isArray(tips) ? tips : [])
+  .filter((t) => t && typeof t.ref === 'string' && typeof t.sha === 'string' && FULL_SHA.test(t.sha));
+
+/** The newest base commit in `heads`' history that `start` does not already have — what GitHub measures a pull
+ *  request from (`git merge-base <base> <head>`), limited to base content newer than the run's start. For each head
+ *  (HEAD, and MERGE_HEAD while a merge is in progress) and each of `tips` (`[{ref, sha}]`, full shas: the run's base
+ *  refs now and at its start), the merge base of the two counts unless it is `start` or an ancestor of it. Of those,
+ *  the one every other is an ancestor of; when none is (two unrelated lines), the one with the fewest commits up to
+ *  its head. How the commit got there does not matter: a merge (either parent order, or via another branch that
+ *  contains it), a fast-forward, a rebase or a reset. `{onto, ref}`, or null when the heads hold no base commit newer
+ *  than the start. Never throws. */
+export async function newestBaseIn(dir, { heads, start, tips } = {}) {
+  const s = await commitOf(dir, start);
+  if (!s) return null;
+  const found = [];
+  for (const head of Array.isArray(heads) ? heads : []) {
+    const h = await commitOf(dir, head);
+    if (!h) continue;
+    for (const t of validTips(tips)) {
+      const mb = await git(dir, ['merge-base', h, t.sha]);
+      const onto = mb.ok ? mb.stdout.trim().split('\n')[0] : '';
+      if (!FULL_SHA.test(onto) || found.some((f) => f.onto === onto)) continue;
+      if (onto === s || (await git(dir, ['merge-base', '--is-ancestor', onto, s])).ok) continue;
+      const c = await git(dir, ['rev-list', '--count', `${onto}..${h}`]);
+      const count = c.ok ? Number(c.stdout.trim()) : NaN;
+      found.push({ onto, ref: t.ref, count: Number.isFinite(count) ? count : Infinity });
+    }
+  }
+  if (!found.length) return null;
+  found.sort((x, y) => x.count - y.count);
+  for (const f of found) {
+    let newest = true;
+    for (const o of found) {
+      if (o !== f && !(await git(dir, ['merge-base', '--is-ancestor', o.onto, f.onto])).ok) { newest = false; break; }
+    }
+    if (newest) return { onto: f.onto, ref: f.ref };
+  }
+  return { onto: found[0].onto, ref: found[0].ref };
+}
+
+/** Lines added + removed by `git diff --numstat a b` (binary files count 0), or null on failure. Never throws. */
+export async function diffLineCount(dir, a, b) {
+  const [x, y] = await Promise.all([commitOf(dir, a), commitOf(dir, b)]);
+  if (!x || !y) return null;
+  const r = await git(dir, ['diff', '--no-renames', '--numstat', x, y], { timeout: 120_000 });
+  if (!r.ok) return null;
+  let n = 0;
+  for (const line of r.stdout.split('\n')) {
+    const [add, del] = line.split('\t');
+    n += (Number(add) || 0) + (Number(del) || 0);
+  }
+  return n;
+}
+
+/** Point refs/worca/diff-base/<pipelineId>/<key> at `sha` (gc insurance for a synthetic diff base). Never throws. */
+export async function pinDiffBase(dir, pipelineId, key, sha) {
+  if (!validDiffBasePart(pipelineId) || !validDiffBasePart(key) || !FULL_SHA.test(String(sha))) return false;
+  return (await git(dir, ['update-ref', `${DIFF_BASE_REF_PREFIX}${pipelineId}/${key}`, sha])).ok;
+}
+
+/** Remove refs/worca/diff-base/<pipelineId>/<key> (or every key of the pipeline when key is omitted).
+ *  Returns how many refs were removed. Never throws. */
+export async function dropDiffBaseRefs(dir, pipelineId, key = null) {
+  if (!validDiffBasePart(pipelineId) || (key != null && !validDiffBasePart(key))) return 0;
+  const prefix = `${DIFF_BASE_REF_PREFIX}${pipelineId}/`;
+  const r = await git(dir, ['for-each-ref', '--format=%(refname)', prefix]);
+  if (!r.ok) return 0;
+  // for-each-ref matches a literal pattern as a prefix of path components; keep exact matches only.
+  const names = r.stdout.split('\n').map((s) => s.trim())
+    .filter((n) => n.startsWith(prefix) && (key == null ? DIFF_BASE_PART.test(n.slice(prefix.length)) : n === prefix + key));
+  let removed = 0;
+  for (const n of names) if ((await git(dir, ['update-ref', '-d', n])).ok) removed++;
+  return removed;
+}
+
 /**
  * The diff base of a REUSED feature branch: where it forks from the source — the remote's copy
  * first (`<remote>/<source>`: what is merged upstream is not this branch's change), else the local

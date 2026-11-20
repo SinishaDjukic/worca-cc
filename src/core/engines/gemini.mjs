@@ -57,6 +57,7 @@ import {
 import { makeChatDescriptor } from './chat-descriptor.mjs';
 import { chatSelfTest, SELF_TEST_MODEL } from './chat-selftest.mjs';
 import { GEMINI_CLI } from './cli-specs.mjs';
+import { noteGeminiModel } from '../gemini-quota.mjs';
 
 /** Read at call time (not import time), so a test or a server child can point it at a fake after import. */
 export const geminiDefaultBin = () => process.env.WORCA_GEMINI_BIN || 'gemini';
@@ -286,7 +287,8 @@ export function createGeminiNormalizer({ model, mcpNames = [], cwd = null } = {}
 export const classifyGeminiError = classifyFamilyError;
 
 /** Whether Gemini CLI has a sign-in to use: an API key or Vertex env (also from its .env files), or a sign-in chosen
- *  in its user settings (`gemini` signs in once interactively). Credentials themselves are never read. */
+ *  in its user settings (`gemini` signs in once interactively). Credentials are not read here; only gemini-quota.mjs
+ *  reads the Login-with-Google access token, in memory, for the quota call. */
 export function geminiSignedIn(given = process.env) {
   const base = (typeof given.GEMINI_CLI_HOME === 'string' && given.GEMINI_CLI_HOME.trim()) || homeOf(given);
   const env = { ...readDotenv([join(base, '.gemini', '.env'), join(homeOf(given), '.env')]), ...given };
@@ -371,7 +373,10 @@ const GEMINI_SPEC = Object.freeze({
 
 /** Run one Gemini CLI turn (engines/gemini-family.mjs runFamilyProcess). */
 export function runGeminiProcess(opts = {}) {
-  return runFamilyProcess(GEMINI_SPEC, { ...opts, bin: opts.bin || geminiDefaultBin() });
+  const onEvent = opts.onEvent || (() => {});
+  // The model a session runs picks the quota bucket the usage rings show (gemini-quota.mjs).
+  const noting = (e) => { if (e?.type === 'session' && e.model) noteGeminiModel(e.model); return onEvent(e); };
+  return runFamilyProcess(GEMINI_SPEC, { ...opts, onEvent: noting, bin: opts.bin || geminiDefaultBin() });
 }
 
 // ── chat ─────────────────────────────────────────────────────────────────────

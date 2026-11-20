@@ -1,5 +1,5 @@
 // "How it works" copy for the build areas: Workflows, Requirements, Marketplace, Connectors, Models
-// and Providers. Static data only: no imports, no state, no DOM. area-guides.mjs freezes and serves it.
+// (Providers is one of its tabs). Static data only: no imports, no state, no DOM. area-guides.mjs freezes and serves it.
 
 export const BUILD_GUIDES = {
   workflows: {
@@ -102,43 +102,29 @@ export const BUILD_GUIDES = {
     title: 'How Models work',
     tour: null,
     steps: [
-      { id: 'what', title: 'Roles and Engines', paras: [
-        'Roles say which model does each kind of work. Engines are the tools that run those models. Models show at the Expert level.',
+      { id: 'what', title: 'Catalogue, Jobs and Providers', paras: [
+        'One page, three tabs. Catalogue lists every model, Jobs says which model does which job, and Providers holds the sign-ins and keys the models share. Models show at the Expert level.',
       ] },
-      { id: 'fallback', title: 'Roles are fallbacks', paras: [
-        'A role is only the default. A workflow card that names its own model keeps it.',
+      { id: 'catalogue', title: 'Add a model', paras: [
+        'Add model, on the Catalogue tab, picks where a model runs and then which model it is. A model that runs on two harnesses is added once.',
       ] },
-      { id: 'share', title: 'Bring models in, share them out', paras: [
-        'Import models… brings in the models a provider or a server offers. Share as plugin… exports your models as a plugin a teammate can install.',
+      { id: 'jobs', title: 'Roles are fallbacks', paras: [
+        'On the Jobs tab, Roles say which model does each kind of work, one harness at a time. A role is only the default: a workflow card that names its own model keeps it.',
       ] },
-    ],
-    controls: [
-      { label: 'Roles', file: 'ui/public/models/models.html' },
-      { label: 'Engines', file: 'ui/public/models/models.html' },
-      { label: 'Import models…', file: 'ui/public/models/models.html' },
-      { label: 'Share as plugin…', file: 'ui/public/models/models.html' },
-    ],
-  },
-
-  providers: {
-    title: 'How Providers work',
-    tour: null,
-    steps: [
-      { id: 'what', title: 'One connection for many models', paras: [
-        'A provider is an account-level connection. Every bridged model that uses it shares that one connection. Providers show at the Expert level.',
-      ] },
-      { id: 'kinds', title: 'Three kinds of provider', paras: [
-        'GitHub Copilot signs in with a device code. OpenAI-compatible and Anthropic-compatible providers take a base URL and an API key instead.',
-      ] },
-      { id: 'usage', title: 'Usage and models', paras: [
-        'On the Copilot card, Sign in… connects the account and Refresh usage shows how much of your allowance is left.',
-        'Import models… on a card brings that provider’s models in.',
+      { id: 'providers', title: 'One connection for many models', paras: [
+        'A provider is an account-level connection that every model using it shares. GitHub Copilot needs Sign in; the other providers take a key instead.',
+        'Refresh usage shows how much of the Copilot allowance is left, and Import models on a provider brings its models in.',
       ] },
     ],
     controls: [
-      { label: 'Sign in…', file: 'ui/public/bridge-view.mjs' },
+      { label: 'Catalogue', file: 'ui/public/models/page-tabs.mjs' },
+      { label: 'Jobs', file: 'ui/public/models/page-tabs.mjs' },
+      { label: 'Providers', file: 'ui/public/models/page-tabs.mjs' },
+      { label: 'Add model', file: 'ui/public/models/models.html' },
+      { label: 'Roles', file: 'ui/public/models/jobs-view.mjs' },
+      { label: 'Sign in', file: 'ui/public/bridge-view.mjs' },
       { label: 'Refresh usage', file: 'ui/public/bridge-view.mjs' },
-      { label: 'Import models…', file: 'ui/public/bridge-view.mjs' },
+      { label: 'Import models', file: 'ui/public/bridge-view.mjs' },
     ],
   },
 };

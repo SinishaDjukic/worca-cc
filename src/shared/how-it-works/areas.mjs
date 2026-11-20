@@ -4,7 +4,7 @@
 
 export const GUIDE_AREA_IDS = Object.freeze([
   'chat', 'design', 'runs', 'new', 'schedules', 'stats', 'team-metrics', 'workflows',
-  'requirements', 'marketplace', 'connectors', 'models', 'providers', 'projects',
+  'requirements', 'marketplace', 'connectors', 'models', 'projects',
   'workspaces', 'team-policy', 'settings',
 ]);
 

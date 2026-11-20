@@ -53,7 +53,7 @@ test('findPrForBranch branch search: argv, normalization, OPEN > MERGED > CLOSED
     { name: 'findPrForBranch returns a single MERGED PR, normalized, queried by head', run: async () => {
       const seen = [];
       gitInfo.setRunner((cmd, args) => {
-        if (cmd === 'gh') seen.push([cmd, ...args]);   // after the remote listing (git)
+        seen.push([cmd, ...args]);
         return Promise.resolve({
           ok: true,
           stdout: JSON.stringify([{ number: 9, state: 'MERGED', url: 'https://gh/x/pull/9', isDraft: false, mergeable: 'UNKNOWN' }]),
@@ -166,7 +166,7 @@ test('findPrForBranch branch search: argv, normalization, OPEN > MERGED > CLOSED
   ]);
 });
 
-test('lookupPrForBranch tells a failed lookup apart from no PR (F-3-01, F-7a-01)', async () => {
+test('lookupPrForBranch tells a failed lookup apart from no PR', async () => {
   const PR_FIELDS = 'number,state,url,isDraft,mergeable';
   const quota = { ok: false, stdout: '', stderr: 'GraphQL: API rate limit exceeded', code: 1 };
   const ok = (v) => ({ ok: true, stdout: typeof v === 'string' ? v : JSON.stringify(v), stderr: '', code: 0 });
@@ -200,7 +200,7 @@ test('lookupPrForBranch tells a failed lookup apart from no PR (F-3-01, F-7a-01)
         { ok: true, pr: { state: 'MERGED', url: 'https://gh/x/pull/12', number: 12, isDraft: false, mergeable: 'UNKNOWN' } });
       gitInfo.reset();
     } },
-    { name: 'a failed view of the recorded PR with an empty list is a failure (rule 5)', run: async () => {
+    { name: 'a failed view of the recorded PR with an empty list is a failure', run: async () => {
       stub({ view: quota, list: ok([]) });
       assert.equal((await lookupPrForBranch({ projectDir: '/r', head: 'b', prUrl, includeClosed: true })).ok, false);
       gitInfo.reset();
@@ -217,7 +217,7 @@ test('lookupPrForBranch tells a failed lookup apart from no PR (F-3-01, F-7a-01)
       assert.equal((await lookupPrForBranch({ projectDir: '/r', head: 'b', prUrl, includeClosed: true })).ok, false);
       gitInfo.reset();
     } },
-    { name: 'an OPEN PR whose verdict view fails still comes back, without a verdict (D3)', run: async () => {
+    { name: 'an OPEN PR whose verdict view fails still comes back, without a verdict', run: async () => {
       stub({ list: ok([{ ...merged, state: 'OPEN' }]), verdict: quota });
       const r = await lookupPrForBranch({ projectDir: '/r', head: 'b', withVerdict: true });
       assert.equal(r.ok, true);

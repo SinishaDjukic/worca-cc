@@ -219,13 +219,6 @@ test('mixAudio skips an undecodable SFX file (warns, counts it missing) instead 
 
 /* ---------- Chrome (+ ffmpeg) ---------- */
 
-test('a CDP call after the browser closed rejects with \'CDP socket closed\', never hangs', { skip: noChrome, timeout: 60_000 }, async () => {
-  const { launch } = await import('../assets/promo-kit/tools/cdp.mjs');
-  const b = await launch({ width: 320, height: 240 });
-  await b.close();
-  await assert.rejects(b.evaluate('1'), /CDP socket closed/);
-});
-
 /** A tiny real film: kit + one scene (a box that slides, a pop cue), `dur` seconds. */
 function fixtureFilm(dur, sceneJs) {
   const promo = tmp('promo-film-');

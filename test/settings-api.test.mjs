@@ -294,7 +294,8 @@ test('every SETTINGS_POST_KEYS key is exempt from the legacy "no known key clear
     const probes = {
       projectsRoot: '', chat: {}, pipelineCostLimitUsd: '', totalCostLimitUsd: '', costLimitResetPeriod: '', humanRateUsdPerHour: '',
       askMaxTurns: '', askMaxBudgetUsd: '', askWeb: null, smartNaming: null, debugSpawnEnabled: false, keepAwake: true, resumeAfterUsageLimit: false, autoGeneratePrDescription: false, updateCheck: true,
-      titleModel: '', hideBuiltinModels: false, theme: '', pulseFor: '', uiLevel: '',
+      titleModel: '', hideBuiltinModels: false, hideBuiltinEngines: {}, theme: '', uiLevel: '',
+      screensaver: {},                                       // Settings › Appearance: {} is a no-op
       autoWorkflowModel: '',
       prDescriptionModel: '',
       memoryDefrag: null,
@@ -318,6 +319,7 @@ test('every SETTINGS_POST_KEYS key is exempt from the legacy "no known key clear
       tagDimensions: [],                                     // Settings › Tags › Tag dimensions: [] clears (already clear)
       enforceTags: false,                                    // Settings › Tags › Require mandatory tags: false clears (already clear)
     };
+    for (const k of Object.keys(probes)) assert.ok(SETTINGS_POST_KEYS.includes(k), `${k} is probed but not a POST key: a ${k}-only body would clear root`);
     for (const k of SETTINGS_POST_KEYS) {
       if (k === 'root') continue;
       assert.ok(k in probes, `test probe missing for new key ${k}`);
@@ -381,6 +383,48 @@ test('POST rejects an unknown theme → 400, nothing written', async () => {
   assert.equal(body.field, 'theme');
   const j = await (await fetch(`${base}/api/settings`)).json();
   assert.equal(j.theme, 'system');
+});
+
+test('screensaver: defaults, round-trip, refusals', async () => {
+  const file = join(home, '.worca-cc', 'settings.json');
+  const stored = () => (existsSync(file) ? JSON.parse(readFileSync(file, 'utf8')) : {});
+  // A capturing socket in the broadcast set: this suite serves `app` alone, with no /ws upgrade.
+  const frames = [];
+  const sock = { OPEN: 1, readyState: 1, send: (d) => { try { frames.push(JSON.parse(String(d))); } catch { /* not JSON */ } } };
+  testing.sockets.add(sock);
+  try {
+    assert.deepEqual((await (await fetch(`${base}/api/settings`)).json()).screensaver, { enabled: false, idleMinutes: 5 });
+
+    const ok = await postJson({ screensaver: { enabled: true, idleMinutes: 15 } });
+    assert.equal(ok.status, 200);
+    assert.deepEqual((await ok.json()).screensaver, { enabled: true, idleMinutes: 15 });
+    assert.deepEqual((await (await fetch(`${base}/api/settings`)).json()).screensaver, { enabled: true, idleMinutes: 15 });
+    assert.deepEqual(stored().screensaver, { enabled: true, idleMinutes: 15 });
+    for (const t0 = Date.now(); !frames.some((f) => f.type === 'settings-changed') && Date.now() - t0 < 1500;) await new Promise((res) => setTimeout(res, 10));
+    assert.ok(frames.some((f) => f.type === 'settings-changed'), JSON.stringify(frames.map((f) => f.type)));
+
+    const before = readFileSync(file, 'utf8');
+    const badOn = await postJson({ screensaver: { enabled: 'yes' } });
+    assert.equal(badOn.status, 400);
+    assert.deepEqual(await badOn.json(), { error: '“Screensaver” must be true or false.', field: 'screensaver.enabled' });
+    const badMin = await postJson({ screensaver: { idleMinutes: 7 } });
+    assert.equal(badMin.status, 400);
+    assert.deepEqual(await badMin.json(), { error: '“Start after” must be 5, 10, 15, 20, 25 or 30.', field: 'screensaver.idleMinutes' });
+    const str = await postJson({ screensaver: { idleMinutes: '10' } });
+    assert.equal(str.status, 400);
+    assert.equal(readFileSync(file, 'utf8'), before, 'a refusal writes nothing');
+
+    const mixed = await postJson({ theme: 'dark', screensaver: { idleMinutes: 7 } });
+    assert.equal(mixed.status, 400);
+    assert.equal(readFileSync(file, 'utf8'), before, 'a mixed body with a bad screensaver changes neither theme nor screensaver');
+    assert.equal((await (await fetch(`${base}/api/settings`)).json()).theme, 'system');
+
+    assert.deepEqual((await (await postJson({ screensaver: { enabled: false, idleMinutes: 5 } })).json()).screensaver, { enabled: false, idleMinutes: 5 });
+    assert.equal('screensaver' in stored(), false, 'all-default removes the key');
+  } finally {
+    testing.sockets.delete(sock);
+    await postJson({ screensaver: null });
+  }
 });
 
 test('GET has askWeb; POST askWeb validates, saves, and null clears', async () => {
@@ -492,22 +536,6 @@ test('chat.summariseCommands defaults on, saves false, rejects a non-boolean (#9
   const body = await r.json();
   assert.equal(body.field, 'chat');
   assert.equal(typeof body.error, 'string');
-});
-
-test('chat.promptCheck defaults off, saves true, rejects a non-boolean', async () => {
-  let s = await (await fetch(`${base}/api/settings`)).json();
-  assert.equal(s.chat.promptCheck, false);
-  let r = await fetch(`${base}/api/settings`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ chat: { promptCheck: true } }) });
-  assert.equal(r.status, 200);
-  s = await (await fetch(`${base}/api/settings`)).json();
-  assert.equal(s.chat.promptCheck, true);
-  r = await fetch(`${base}/api/settings`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ chat: { promptCheck: 'yes' } }) });
-  assert.equal(r.status, 400);
-  const body = await r.json();
-  assert.equal(body.field, 'chat');
-  assert.equal(typeof body.error, 'string');
-  r = await fetch(`${base}/api/settings`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ chat: { promptCheck: false } }) });
-  assert.equal(r.status, 200);
 });
 
 test('POST modelRoles: a model outside the catalog or a bad effort is 400 and writes nothing; ids are stored canonical', async () => {

@@ -24,7 +24,7 @@ const addBtn = (doc, label, data) => { const b = button(doc, 'btn btn-sm', label
 const PLACEHOLDER_RE = /\{([A-Za-z][A-Za-z0-9_]{0,31})\}/g;
 // Mirrors QUERY_SECRET_RE in src/core/mcp-secrets.mjs (test/ui-mcp-definition-form.test.mjs pins the two).
 const QUERY_SECRET_RE = /^(api[-_]?key|key|token|access[-_]?token|secret|password|auth|sig|signature)$/i;
-const fieldKeyFor = (name) => {
+export const fieldKeyFor = (name) => {
   const k = String(name).replace(/[^A-Za-z0-9_]/g, '_').replace(/^[^A-Za-z]+/, '');
   return (k || 'field').slice(0, 32);
 };

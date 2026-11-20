@@ -38,7 +38,7 @@ exactly the commit you reviewed.
 `worca plugin update --diff` adds the full diff. `worca plugin purge <name>` deletes the settings and secrets a
 removed plugin left behind.
 
-To package your own, use **Export…** on a saved workflow or **Share as plugin…** on the Models page. See the
+To package your own, use **Export…** on a saved workflow or More › **Share as plugin** on the Models page. See the
 [authoring guide](../.claude/skills/creating-worca-cc-plugins/SKILL.md).
 
 ## The built-in marketplace

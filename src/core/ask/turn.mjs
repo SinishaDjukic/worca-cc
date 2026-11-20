@@ -44,6 +44,8 @@ import { validateCloneProposal } from './clone-deps.mjs';
 import { validateProjectProposal } from './project-deps.mjs';
 import { validateWorkspaceChange } from './workspace-deps.mjs';
 import { validateActionsChange } from './actions-deps.mjs';
+import { validateMcpChange } from './mcp-deps.mjs';
+import { scrub } from './mcp-proposal.mjs';
 import { actionsProposalInput } from './actions-proposal.mjs';
 import { validateProxyChange, validateProxyFlagOn } from './proxy-deps.mjs';
 import { scriptApprovalCard } from './script-approval.mjs';
@@ -75,7 +77,7 @@ import {
 import { budgetStatus, recordAskCostDelta } from '../cost-budget.mjs';
 import { generateSuggestion, suggestionModel, claimSuggestion, releaseSuggestion, cancelSuggestion, SUGGESTION_TIMEOUT_MS } from './suggest.mjs';
 import { setPendingCardComments } from '../diff-comments.mjs';
-import { recordUsageLimit } from '../usage-limits.mjs';
+import { recordClaudeLimit } from '../usage-limits.mjs';
 
 export function createAskTurn(opts) { return new AskTurn(opts); }
 
@@ -128,7 +130,7 @@ const MESSAGE_FOLDER_RE = /^askm_[0-9a-f]{8}$/;
  *  one. Pure, exported for tests. */
 export function humanErrorText(errorClass) {
   switch (errorClass) {
-    case 'model': return "This model isn't available in your environment — Claude Code couldn't use it. Try another model, or add your custom model on the Models page (Expert mode).";
+    case 'model': return "This model isn't available in your environment — Claude Code couldn't use it. Try another model, or add your custom model under Models › Catalogue (Expert mode).";
     case 'auth': return 'Authentication failed — check the credentials behind this model.';
     case 'usage_limit': return 'A usage limit was reached — wait for it to reset.';
     case 'rate_limit': return 'The endpoint is rate-limiting — try again shortly.';
@@ -270,6 +272,7 @@ class AskTurn extends EventEmitter {
       validateProjectProposal: deps.validateProjectProposal ?? validateProjectProposal,
       validateWorkspaceChange: deps.validateWorkspaceChange ?? validateWorkspaceChange,
       validateActionsChange: deps.validateActionsChange ?? validateActionsChange,
+      validateMcpChange: deps.validateMcpChange ?? validateMcpChange,
       // The web card's authoritative check runs against THIS turn's resolved access (allowlist + team cap).
       claimAgentFile: deps.claimAgentFile ?? ((file) => claimFileForAgent(file, agentIdentityFor(currentOwner()))),
       // 1.4: the thread's folder goes to this turn's agent user's own group (store.mjs); throws on a planted one.
@@ -904,6 +907,28 @@ class AskTurn extends EventEmitter {
     this._persistBlocks();
   }
 
+  /** propose_mcp_change RESULT: an ok child result is re-validated against the registry before a card is minted
+   *  (the child's verdict is only the model's self-correction); a rejection becomes a notice. */
+  async _onMcpProposal(input, text, isError) {
+    if (isError) return;
+    let out = null;
+    try { out = JSON.parse(text); } catch { out = null; }
+    if (!out || out.ok !== true) return;
+    const d = this.deps;
+    try {
+      const r = await d.validateMcpChange(input && typeof input === 'object' ? input : {}, { pin: this.pinnedScope });
+      if (r && r.ok) this.reducer.addBlock({ kind: 'card', id: d.newAskId('card'), state: 'proposed', card: r.card });
+      else {
+        const errors = (r && Array.isArray(r.errors) && r.errors.length) ? r.errors : ['invalid proposal'];
+        this.reducer.addBlock({ kind: 'notice', text: `MCP server change rejected: ${errors.join('; ')}` });
+      }
+    } catch (err) {
+      // D19: a thrown reader error can quote a path, a name or a value; scrub it like the route's apply error.
+      this.reducer.addBlock({ kind: 'notice', text: `MCP server change rejected: ${scrub(err?.message || err)}` });
+    }
+    this._persistBlocks();
+  }
+
   /**
    * propose_network_proxy_change / propose_corporate_proxy_on RESULT: the child's {ok:true} is only a hint — the parent
    * re-validates the same INPUT against the flag and the stored settings now, and mints the card. A child {ok:false}
@@ -1015,7 +1040,7 @@ class AskTurn extends EventEmitter {
     try { liveRates = (this.lockedDown ? this._ratesFor() : d.liveCostRates(this.model)) ?? null; } catch { liveRates = null; }
     this.reducer = createTurnReducer({
       onFrame: (f) => this._frame(f),
-      onLimit: (evt) => recordUsageLimit(this.engine, evt),
+      onLimit: (evt) => recordClaudeLimit(evt),
       now: d.now,
       setTimeout: d.setTimeout,
       clearTimeout: d.clearTimeout,
@@ -1053,6 +1078,7 @@ class AskTurn extends EventEmitter {
       onProjectProposal: ({ input, text, isError }) => this._onProjectProposal(input, text, isError),
       onWorkspaceProposal: ({ input, text, isError }) => this._onWorkspaceProposal(input, text, isError),
       onActionsProposal: ({ input, text, isError }) => this._onActionsProposal(input, text, isError),
+      onMcpProposal: ({ input, text, isError }) => this._onMcpProposal(input, text, isError),
       onProxyProposal: ({ input, text, isError }) => this._onProxyProposal('propose_network_proxy_change', input, text, isError),
       onProxyFlagProposal: ({ input, text, isError }) => this._onProxyProposal('propose_corporate_proxy_on', input, text, isError),
       onWebProposal: ({ input, text, isError }) => this._onWebProposal(input, text, isError),
@@ -1367,7 +1393,7 @@ class AskTurn extends EventEmitter {
 
   /** A locked-down turn's `result` that carries no cost, priced with worca's rates from its token usage when worca has a
    *  price: an engine that reports no cost (Copilot, Gemini CLI, Qwen Code) is booked and capped like one that does. A
-   *  reported cost passes through (the reducer re-prices it with a Models page price, resolveModelCost). */
+   *  reported cost passes through (the reducer re-prices it with a Models › Catalogue price, resolveModelCost). */
   _priced(e) {
     if (!e || e.type !== 'result' || Number.isFinite(e.costUsd) || !isPriceableUsage(e.usage)) return e;
     const rates = this._ratesFor();

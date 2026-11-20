@@ -105,7 +105,7 @@ test('first paint, live flip, events, and flags × levels', async () => {
   ]);
 });
 
-test('Settings › Labs view: rows, toggle PATCH body, locked row, requires confirm, Reset all', async () => {
+test('Settings › Labs view: rows, toggle PATCH body, locked row, requires confirm, All, Reset all', async () => {
   const { document: doc } = page();
   const host = doc.getElementById('flags-host');
   const calls = []; const confirms = [];
@@ -164,6 +164,31 @@ test('Settings › Labs view: rows, toggle PATCH body, locked row, requires conf
       assert.equal(host.querySelector('[data-flag-row="childFlag"] .flag-row-docs').getAttribute('href'), 'https://x/blob/dev/docs/c.md');
       await view.toggle('childFlag');
       assert.equal(confirms.at(-1), 'Turn on Child?');
+    } },
+    { name: 'All: on only when every unlocked flag is on; a click turns all unlocked on, then all off, in one PATCH; locked flags untouched', run: async () => {
+      state = [
+        { key: 'flagsDemo', title: 'Flags demo', description: 'D', stage: 'experimental', on: true, source: 'settings', locked: false, docs: null, docsUrl: null, requires: [] },
+        { key: 'childFlag', title: 'Child', description: 'D', stage: 'beta', on: false, source: 'default', locked: false, docs: null, docsUrl: null, requires: [] },
+        { key: 'lockedFlag', title: 'Locked', description: 'D', stage: 'beta', on: false, source: 'env', locked: true, docs: null, docsUrl: null, requires: [] },
+      ];
+      await view.load();
+      const all = () => host.querySelector('[data-flag-all]');
+      assert.equal(host.firstElementChild.id, 'flag-row-all', 'the All row comes first');
+      assert.equal(all().getAttribute('aria-checked'), 'false');
+      all().click(); await tick(); await tick();
+      assert.deepEqual(calls.at(-1), ['PATCH', { flagsDemo: true, childFlag: true }]);
+      assert.equal(all().getAttribute('aria-checked'), 'true');
+      all().focus();
+      all().dispatchEvent(new doc.defaultView.KeyboardEvent('keydown', { key: ' ', bubbles: true }));
+      await tick(); await tick();
+      assert.deepEqual(calls.at(-1), ['PATCH', { flagsDemo: false, childFlag: false }]);
+      assert.equal(all().getAttribute('aria-checked'), 'false');
+      assert.ok(doc.activeElement.hasAttribute('data-flag-all'), 'focus survives the repaint');
+    } },
+    { name: 'All: no row when every flag is locked', run: async () => {
+      state = state.map((f) => ({ ...f, locked: true }));
+      await view.load();
+      assert.equal(host.querySelector('[data-flag-all]'), null);
     } },
   ]);
 });
@@ -345,14 +370,3 @@ test('bindFlagSwitch (a single flag\'s switch outside Labs, here a whole <button
     } },
   ]);
 });
-
-test('createFlagsView keep: Settings › Labs shows the Stillhet row in every case, off or on, asked or not', async () => {
-  const { stillhetLabsRow } = await import('../ui/public/stillhet.mjs');
-  const { flagRowsHtml } = await import('../ui/public/flags-view.mjs');
-  const rows = [{ key: 'rail', title: 'Stillhet', description: 'd', stage: 'experimental', on: false, locked: false }, { key: 'runLabels', title: 'Labels', description: 'd', stage: 'experimental', on: false, locked: false }];
-  const shown = (keep) => (flagRowsHtml(rows.filter(keep)).match(/data-flag-row="(\w+)"/g) || []).length;
-  assert.equal(shown(stillhetLabsRow()), 2, 'off, the ask switch off: the one way in');
-  rows[0].on = true;
-  assert.equal(shown(stillhetLabsRow()), 2, 'on: the way out');
-});
-

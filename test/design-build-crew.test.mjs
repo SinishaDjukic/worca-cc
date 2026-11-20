@@ -101,11 +101,15 @@ test('never more than the cap at once, and the queue is plan order', async () =>
   assert.deepEqual(order.slice(0, 5), ['hero', 'features', 'pricing', 'faq', 'team']);
 });
 
+// The stagger spaces the global slots on performance.now(); a spawn reaches runClaude a few ms after its slot (the spend
+// gates are async, and a timer can fire a hair early), and that lag differs per spawn. So the gaps are read on the same
+// clock with a quarter of the stagger as slack: a missing stagger gives gaps of a few ms, far below it.
 test('spawns are staggered', async () => {
   const at = [];
-  const { build } = newBuild(newDesign(), { brief: 'MOCK_SECTIONS=3', deps: { staggerMs: 40, runClaude: (o) => { if (o.cwd.includes('sections')) at.push(Date.now()); return runClaude({ ...o, mock: true }); } } });
+  const { build } = newBuild(newDesign(), { brief: 'MOCK_SECTIONS=3', deps: { staggerMs: 100, runClaude: (o) => { if (o.cwd.includes('sections')) at.push(performance.now()); return runClaude({ ...o, mock: true }); } } });
   await build.run();
-  assert.ok(at[1] - at[0] >= 35 && at[2] - at[1] >= 35);
+  const gaps = [at[1] - at[0], at[2] - at[1]].map((g) => Math.round(g));
+  assert.ok(gaps.every((g) => g >= 75), `gaps ${gaps.join(', ')} ms, staggerMs 100`);
 });
 
 test('M7: setFast raises the cap for the next spawn and never kills', async () => {

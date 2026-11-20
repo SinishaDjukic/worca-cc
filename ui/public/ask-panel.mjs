@@ -23,19 +23,18 @@ import { ENGINE_EFFORTS } from './engine-settings-view.mjs';
 import { ENGINE_NAMES, engineLabel, isBetaEngine } from '../../src/shared/engine-switch.mjs';
 import { PR_OPEN, PR_OPEN_LABELS, prSourceText } from '../../src/shared/pr-auto.mjs';
 import { lockEngineOptions } from './engine-locks.mjs';
-import { runsOn, modelGroups } from '../../src/shared/connections.mjs';
+import { runsOn, modelGroups, connectionOf, connectionLabel } from '../../src/shared/connections.mjs';
 import { appendModelGroups, modelOptionText } from './model-options.mjs';
 import { classifyLoops } from '../../src/shared/graph/loops.mjs';
 import { portsFnFor } from '../../src/shared/graph/ports.mjs';
 import { parseMcpToolName } from '../../src/shared/mcp-tool-name.mjs';
 import { mcpSkipView, mcpCopyNote, skillSkipView } from './mcp-run-picker.mjs';
-import { engineOfEntry, chatEngineOf, pickerGroups, ASK_CHAT_ENGINES, isEngineSetupNotice, engineSwitchConfirm, readEnginePicks, rememberEnginePick, engineLead, switchEffort, pickerEngineName } from './ask-engine.mjs';
+import { engineOfEntry, chatEngineOf, pickerGroups, ASK_CHAT_ENGINES, isEngineSetupNotice, engineSwitchConfirm, readEnginePicks, rememberEnginePick, engineLead, switchEffort, pickerEngineName, pickerEngineLabel } from './ask-engine.mjs';
 import { formatQuotedMessage, parseQuotedMessage } from './pinpoint-model.mjs';
 import { ATTACH_MAX_MESSAGE_BYTES, bytesToBase64 as attachBase64, carriesFiles, checkAttachment, createPasteNamer, pastedFiles } from './attach-files.mjs';
 import { notify } from './feedback.mjs';
 import { currentLevel, levelShows } from './ui-level.mjs';
 import { chatCardBuilder, composerAddons } from './chat/extensions.mjs';
-import { mountPromptCheckChip, promptCheckOn } from './prompt-check/chip-host.mjs';
 import { keepFocus } from './chat/keep-focus.mjs';
 import { flagOn } from './flags.mjs';
 import { mountChatsColumn } from './chats-column.mjs';
@@ -54,8 +53,6 @@ import { withoutChips } from './ask-page-chips.mjs';
 import { sideSuggestions } from './ask-side-suggest.mjs';
 import { makeSwitch } from './switch.mjs';
 import { shapeCardExtras, shapeWhatHappens, shapeAdvancedSummary } from './shape/proposal.mjs';
-import { button as railButton } from './design-system/components/button.mjs';
-import { toElement } from './design-system/components/html.mjs';
 import { createAskComposerCards, ASK_COMPOSER_CARD_TYPES } from './ask-composer-cards.mjs';
 import { cardKit, scriptApprovalCardView } from './workflows/card-views.mjs';
 import { applyPresetStart } from '../../src/shared/run-presets.mjs';
@@ -208,7 +205,7 @@ const HISTORY_KEY = 'worca-cc.chat.history';
 const HISTORY_OPEN_MIN_W = 1600;
 const HISTORY_OVERLAY_BELOW = 1100;
 
-export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContext, openNewPipeline, openComposer = null, showTerminal = () => {}, openClaudeSetup = null, loadMarkdown, hljsLoader, storage, raf, now, runStore = null, createVoice = null, voiceLongPressMs = 500, chatDeps = null, onRoute = null, onUnread = null, composerActions = null, summariseCommands = () => true, getPageChips = () => [], getPageScope = () => null, sideActions = null, promptCheckTimers = undefined }) {
+export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContext, openNewPipeline, openComposer = null, showTerminal = () => {}, openClaudeSetup = null, loadMarkdown, hljsLoader, storage, raf, now, runStore = null, createVoice = null, voiceLongPressMs = 500, chatDeps = null, onRoute = null, onUnread = null, composerActions = null, summariseCommands = () => true, getPageChips = () => [], getPageScope = () => null, sideActions = null }) {
   const homePick = browserPick();         // hoisted declaration (defined below)
   const st = {
     open: false,
@@ -922,7 +919,6 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     const cur = el.input.value;
     el.input.value = cur && !/\s$/.test(cur) ? `${cur} ${text}` : `${cur}${text}`;
     fitInput();                                   // a programmatic write fires no input event
-    addonsInput();
     if (!autoSend) { focusComposer(); return; }
     // While a reply runs (barge-in included) sendMessage() queues it like a typed send; the queue sends it after.
     voiceSend();
@@ -970,22 +966,12 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
         if (st.quote === quoted) setQuote(null);
         el.input.value = '';
         fitInput();                                  // a programmatic clear fires no input event
-        addonsInput();
         updateSendStop();
         return true;
       }
     }
-    // The add-ons see the draft as sent once it is taken: queued behind a running reply, or the message accepted (202).
-    // A refused send keeps the draft, and the add-ons keep what they show for it (a new chat made for it included).
-    let told = false;
-    const tellSent = () => { if (!queued && !told && st.addons.length) { told = true; addonsSent(draft.text); } };
     // A reply is running (or loaded, not yet adopted): the composer's message waits in this chat's queue.
-    if (turnBusy()) {
-      if (queued) return 'busy';
-      const r = enqueueDraft(draft);
-      if (r) tellSent();
-      return r;
-    }
+    if (turnBusy()) return queued ? 'busy' : enqueueDraft(draft);
     // …or one the user started while an add-on decided (the same check, above the add-ons).
     if (typeof st.wantThread === 'string' && st.wantThread !== st.threadId) return false;
     if (st.addons.length) text = addonsTransform(text);
@@ -1014,7 +1000,6 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
         id = body.thread.id;
         loadGen += 1;                     // a pending loadThread() must not replace this fresh model
         st.threadId = id;
-        madeThread = id;
         st.model = createThreadModel({ threadId: id });
         st.model.load({ thread: body.thread, messages: [], attachments: [], runLinks: [], inFlight: null });
         setContexts(body.thread && body.thread.contexts);
@@ -1058,8 +1043,16 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
       st.scopeHeld = null;                           // S39: this message carried the held pick (its pinned is authoritative)
       // A toggle made while this POST was out PATCHed a value the route then overwrote with sentOff: re-send the latest.
       if (st.mcp.off !== sentOff) patchMcpOff(id, st.mcp.off);
-      const { userMessageId, attachments: stored, contexts } = await res.json();
+      const { userMessageId, attachments: stored, contexts, scope: switched } = await res.json();
+      // Reading the body yields: the user may have left the chat meanwhile. Its contexts, scope and echo belong to the
+      // chat they left; a `scope` applied here would move another chat's pill (review M2).
+      if (st.destroyed || st.model !== model || st.threadId !== id) return !!queued;
       if (Array.isArray(contexts)) setContexts(contexts);   // an older server omits it: keep what is shown
+      // A link in this message switched the No-project chat (docs/chat-home.md "Scope from a pasted link"): the pill
+      // follows even when the ask-scope frame was missed, so the next send cannot switch the chat back.
+      if (switched && typeof switched === 'object' && switched.pinned === true && typeof switched.projectKey === 'string') {
+        applyServerScope(switched, switched.label);
+      }
       // Prefer the server's rows: they carry the store-minted ids that key the
       // image thumbnail (#398) and the thread's attachment ledger. The pending
       // files are the fallback for a server that predates the field.
@@ -1072,7 +1065,6 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
       // the ask-title frame lands (ask-model marks title dirty, flushExtra repaints).
       // A drained queue item leaves the composer alone: it holds whatever the user is typing now.
       if (!queued) {
-        tellSent();
         el.input.value = '';
         fitInput();                                    // a programmatic clear fires no input event
         st.pendingFiles = [];
@@ -1401,7 +1393,6 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     if (st.hist.idx >= 0) st.hist = { idx: -1, draft: '' };
     // Anything typed after a reply retires that reply's suggestion — also one still being written.
     if (el.input.value) st.suggestDismissed = newestAssistantId();
-    addonsInput();
     updateSendStop();
   }
 
@@ -1439,7 +1430,6 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
   function showHistory(text) {
     el.input.value = text;
     fitInput();                                      // a programmatic write fires no input event
-    addonsInput();
     try { el.input.selectionStart = el.input.selectionEnd = text.length; } catch { /* jsdom */ }
     updateSendStop();
   }
@@ -1777,7 +1767,6 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     const cur = el.input.value;
     el.input.value = cur ? `${cur.replace(/\s*$/, '')}\n${add}` : add;
     fitInput();                                    // a programmatic write fires no input event
-    addonsInput();
     focusComposer();
     try { el.input.selectionStart = el.input.selectionEnd = el.input.value.length; } catch { /* jsdom */ }
     return true;
@@ -2348,7 +2337,10 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     el.modelBtnEngine.textContent = engName;
     el.modelBtnEngine.hidden = !engName;
     const btn = el.modelBtnLabel.parentNode;
-    if (btn) { btn.dataset.engine = eng; btn.title = `${engineLabel(eng)} · ${entry ? entry.label : st.picker.model}`; }
+    // The tooltip names the connection too: the same model can come from the Copilot CLI or from GitHub Copilot
+    // through the bridge (and from a GHE.com tenant).
+    const via = entry && connectionOf(entry).kind === 'provider' ? ` · ${connectionLabel(entry)}` : '';
+    if (btn) { btn.dataset.engine = eng; btn.title = `${pickerEngineLabel(eng)} · ${entry ? entry.label : st.picker.model}${via}`; }
   }
 
   function coerceEffort(entry, effort) {
@@ -2624,7 +2616,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
           `${m.secretsMissing.join(', ')} is not set. Configure it in the ${m.plugin ? `“${m.plugin}” ` : ''}plugin's Model secrets, or this model will fail.`));
       }
       if (m.needsSignIn) {
-        item.appendChild(tag('needs sign-in', 'is-err', m.signInMessage || 'The provider behind this model is not usable yet. See the Providers page.'));
+        item.appendChild(tag('needs sign-in', 'is-err', m.signInMessage || 'The provider behind this model is not usable yet. See Models › Providers.'));
       }
       if (moves && (readEnginePicks(storage)[engine] || {}).model === m.id) item.appendChild(tag('last used', null, 'The model you last used on this engine.'));
       // Credential broker: whether the signed-in person has the key this model spends from.
@@ -2634,11 +2626,12 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
       return item;
     };
     // Inside an engine's section the models group by connection, like every model picker (modelGroups); a sub-heading
-    // only when the section holds more than one connection.
+    // when the section holds more than one connection, or when its one connection is a provider (GitHub Copilot through
+    // the bridge must never pass for the Copilot CLI's own models).
     const appendByConnection = (models, engine) => {
       const groups = modelGroups(models, { engine });
       for (const c of groups) {
-        if (groups.length > 1) panel.appendChild(make('div', 'ask-pop-subgroup', c.label));
+        if (groups.length > 1 || connectionOf(c.models[0]).kind === 'provider') panel.appendChild(make('div', 'ask-pop-subgroup', c.label));
         for (const m of c.models) panel.appendChild(modelItem(m, engine));
       }
     };
@@ -3098,6 +3091,15 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     st.scope = { ...scopeFromContext(context), label: null };
     updateScopeButton();          // the raw key shows until the name resolves
     if (st.scope.pinned) resolveScopeLabel();
+  }
+
+  /** A scope the server already stored (an ask-scope frame, a send's 202 after a link switched the chat): the pill
+   *  follows with no PATCH, so the next send keeps it. */
+  function applyServerScope(scope, rawLabel) {
+    const label = typeof rawLabel === 'string' && rawLabel ? rawLabel : null;
+    st.scopeHeld = null;                                    // S39: the server's switch wins over a held pick
+    setScope({ ...scopeFromContext(scope), label }, { persist: false, focus: false });
+    if (st.scope.pinned && !label) resolveScopeLabel();
   }
 
   function resolveScopeLabel() {
@@ -5114,6 +5116,88 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     return { el: rootEl };
   }
 
+  // ---- MCP server card (propose_mcp_change): add, edit or remove a Manual server ------------------------------
+  // Every command, argument, URL, env and header name the card would save is shown word for word (docs/mcp-servers.md
+  // "Chat"). Applying saves a definition only; the user turns it on in a set on Connectors › MCP servers.
+  const MCP_KIND_LABEL = { add: 'Add server', edit: 'Edit definition', remove: 'Remove server', import: 'Import servers' };
+  const MCP_APPLY_LABEL = { add: 'Add', edit: 'Save', remove: 'Remove', import: 'Import' };
+  /** proposed → applied | failed, or declined. */
+  function buildMcpCard(block) {
+    const card = block.card || {};
+    const summary = card.summary || 'MCP server change';
+    if (block.state === 'declined') return { el: make('div', 'ask-card-stub', `Declined: ${summary}`) };
+    const rootEl = make('div', `ask-card ask-mcard ask-acard ask-mcpcard is-${block.state}`);
+    rootEl.setAttribute('data-ask-mcpcard', block.state);
+    const head = make('div', 'ask-mcard-head');
+    head.appendChild(make('span', 'ask-mcard-title', block.state === 'applied' ? 'Applied MCP server change' : block.state === 'failed' ? 'MCP server change failed' : 'Proposed MCP server change'));
+    head.appendChild(make('span', 'ask-mcard-kind', MCP_KIND_LABEL[card.kind] || card.kind || ''));
+    rootEl.appendChild(head);
+    const body = make('div', 'ask-mcard-body');
+    const sum = make('div', 'ask-mcard-summary');
+    if (block.state === 'applied') sum.appendChild(svgIcon(WF_ICO.check, 15, 2.4));
+    sum.appendChild(make('span', null, summary));
+    body.appendChild(sum);
+    if (card.note) body.appendChild(make('div', 'ask-mcard-note', card.note));
+    const ul = make('ul', 'ask-mcard-changes');
+    for (const c of Array.isArray(card.changes) ? card.changes : []) {
+      const li = make('li', 'ask-acard-change');
+      li.setAttribute('data-op', c.op || '');
+      li.appendChild(make('span', 'ask-mcard-change-label', c.label || ''));
+      const val = make('span', 'ask-mcard-change-val');
+      const both = c.before != null && c.after != null;
+      if (c.before != null && (block.state === 'proposed' || !both)) {
+        if (both) val.appendChild(make('span', 'ask-acard-tag', 'Now'));
+        val.appendChild(make('span', 'ask-mcard-before ask-acard-cmd', String(c.before)));
+      }
+      if (c.after != null) {
+        if (both && block.state === 'proposed') val.appendChild(make('span', 'ask-acard-tag', 'New'));
+        val.appendChild(make('span', 'ask-mcard-after ask-acard-cmd', String(c.after)));
+      }
+      li.appendChild(val);
+      ul.appendChild(li);
+    }
+    body.appendChild(ul);
+    if (block.state === 'proposed') {
+      for (const [items, cls] of [[card.warnings, 'ask-mcard-effects ask-wscard-warn'], [card.effects, 'ask-mcard-effects ask-wscard-effects']]) {
+        if (!Array.isArray(items) || !items.length) continue;
+        const list = make('ul', cls);
+        for (const w of items) list.appendChild(make('li', null, w));
+        body.appendChild(list);
+      }
+      // An import card: discovered servers worca already has (same name and command or URL); the card adds none of
+      // them. ask-mcard-present is a test hook only: the list takes the effects styling it rides on.
+      if (Array.isArray(card.alreadyPresent) && card.alreadyPresent.length) {
+        const have = make('ul', 'ask-mcard-effects ask-wscard-effects ask-mcard-present');
+        for (const p of card.alreadyPresent) have.appendChild(make('li', null, `Already in worca: ${p.name || ''} (${p.from || ''})`));
+        body.appendChild(have);
+      }
+    }
+    const result = card.result || null;
+    if (block.state === 'failed') {
+      const failed = make('div', 'ask-mcard-failed', `Could not apply: ${block.error || (result && result.error) || 'unknown error'}`);
+      failed.setAttribute('role', 'alert');
+      body.appendChild(failed);
+    } else if (block.state === 'applied' && result && result.detail) body.appendChild(make('div', 'ask-mcard-detail', result.detail));
+    if (block.state !== 'proposed') {
+      const open = make('a', 'ask-card-sched-link', 'Manage in Connectors › MCP servers');
+      open.href = '#connectors/servers';
+      body.appendChild(open);
+    }
+    rootEl.appendChild(body);
+    rootEl.appendChild(make('div', 'ask-card-err'));
+    if (block.state === 'proposed') {
+      const actions = make('div', 'ask-mcard-actions');
+      const btn = (cls, text, attr) => { const b = make('button', cls, text); b.type = 'button'; b.setAttribute(attr, ''); return b; };
+      const decline = btn('btn btn-sm btn-quiet ask-card-not-now', 'Decline', 'data-ask-mcp-decline');
+      decline.addEventListener('click', () => postCard(block, rootEl, { state: 'declined' }, decline));
+      const apply = btn(`btn btn-sm ${card.kind === 'remove' ? 'btn-danger' : 'btn-primary'}`, MCP_APPLY_LABEL[card.kind] || 'Apply', 'data-ask-mcp-apply');
+      apply.addEventListener('click', () => postCard(block, rootEl, { state: 'applied' }, apply));
+      actions.append(make('span', 'ask-card-actions-spacer'), decline, apply);
+      rootEl.appendChild(actions);
+    }
+    return { el: rootEl };
+  }
+
   /** The model · effort picker (mockup §C): the panel's popover chrome, anchored under the chip. Rows are menuitems (PD28). */
   function openChipPicker(chip, nodeId, card, wf, handle) {
     const node = card.nodes && card.nodes[nodeId];
@@ -5250,10 +5334,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     head.appendChild(tagRow);
     if (typeof card.note === 'string' && card.note) head.appendChild(make('p', 'ask-rp-why', card.note));
     // A shaped card follows card.shape; the nudge is advisory.
-    // Proposed perspectives (flag): every card shows the chips, a plain one too, and the prompt check proposes them.
-    const proposedOn = flagOn('proposedPerspectives', doc);
-    const shapeUi = card.shape || card.nudge || proposedOn
-      ? shapeCardExtras(doc, card, { fetch, ...(proposedOn ? { proposedPerspectives: true } : {}) }) : null;
+    const shapeUi = card.shape || card.nudge ? shapeCardExtras(doc, card, { fetch }) : null;
     local.shapeUi = shapeUi;
     // A direct Shaper card on the requirements workflow: Shape requirements is its only start button.
     const direct = !!(card.shape && shapeUi && shapeUi.requirements);
@@ -5363,19 +5444,6 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     const count = make('span', 'ask-rp-count');
     briefFoot.append(hint, count);
     briefSec.appendChild(briefFoot);
-    // The prompt check chip (docs/prompt-check.md "The chip"): a brief is always a task. A tracker task has no brief.
-    const pcheck = card.source ? null : mountPromptCheckChip({
-      doc, host: briefFoot, before: count,
-      surface: { kind: 'run-card', id: block.id }, ids: { threadId: st.threadId, cardId: block.id },
-      forceTask: true, fetchImpl: (...a) => fetch(...a), timers: promptCheckTimers,
-      field: {   // Improve writes through the brief's own input path (count, height, re-check)
-        read: () => brief.value,
-        write: (text) => { brief.value = text; brief.dispatchEvent(new win.Event('input', { bubbles: true })); },
-        focus: () => brief.focus(),
-      },
-      project: () => st.scope.projectKey,
-      ...(proposedOn && promptCheckOn() ? { onAssessment: (a) => local.shapeUi?.proposeFrom?.(a, brief.value) } : {}),
-    });
     if (card.source) {
       // The task IS a tracker task (propose_run source): the run reads it when it starts, so the
       // card shows the reference — never an editable copy that would silently go stale.
@@ -5415,7 +5483,6 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     };
     brief.addEventListener('input', () => {
       grow();
-      if (pcheck) pcheck.input(brief.value);
       const pos = typeof brief.selectionStart === 'number' ? brief.selectionStart : brief.value.length;
       if (brief.value[pos - 1] === '@') openAtPopover(brief, pos, local, renderPills);
       else if (st.popover && st.popover.trigger === brief) closePopover({ focusTrigger: false });   // typed past the @: the picker never filters, so it goes
@@ -5532,7 +5599,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     }
     // Shape it first: Start holds an icon and a text node, so only the text node is relabelled.
     let shapeBtn = null;
-    if (shapeUi && !shapeUi.plain) {
+    if (shapeUi) {
       const setLabel = (b, t) => { const n = [...b.childNodes].find((x) => x.nodeType === 3); if (n) n.textContent = t; else b.append(t); };
       if (card.shape && !shapeUi.requirements) {
         setLabel(startBtn, 'Start planning');            // a shaped card is never scheduled
@@ -5540,7 +5607,9 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
         if (shapeUi.requirements) {
           // Medium or large: Shape requirements is the one primary, Run as is steps back. Until a
           // lead is picked it stays in the tab order, aria-disabled, described by "You lead as".
-          shapeBtn = toElement(doc, railButton({ label: 'Shape requirements', kind: 'primary', attrs: { 'data-ask-card-shape': '' } }));
+          shapeBtn = make('button', 'btn btn-sm btn-primary', 'Shape requirements');
+          shapeBtn.type = 'button';
+          shapeBtn.setAttribute('data-ask-card-shape', '');
           if (!card.shape) startBtn.classList.replace('btn-primary', 'btn-quiet');
           const syncLead = () => {
             const blocked = shapeUi.blocked();
@@ -5874,8 +5943,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
       rootEl.__rp.refreshTagRules = refreshTagRules;
       refreshTagRules();
     }
-    if (pcheck) pcheck.input(brief.value, { silent: true });   // graded once on mount; its first result is not announced
-    return { el: rootEl, dispose: pcheck ? () => pcheck.dispose() : null };
+    return rootEl;
   }
 
   function collectCardBody(rootEl, local, card) {
@@ -5975,8 +6043,6 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
       }
       const body = { ...collectCardBody(rootEl, local, block.card || {}), askThreadId: st.threadId, askCardId: block.id, ...(schedule || {}) };
       if (local.shapeUi && (shaped || (block.card || {}).shape)) Object.assign(body, local.shapeUi.body());
-      // Proposed perspectives (flag): an unshaped start sends the chosen set and the proposal, never the Shaper.
-      else if (local.shapeUi?.proposeFrom && flagOn('proposedPerspectives', doc)) Object.assign(body, local.shapeUi.body(false));
       if (overlay) body.overlay = overlay;
       // Run chains: "the branch of the run before it" is a flag, and the wire refuses it next to a branch name.
       // Keyed off the schedule being POSTED — a Start now on an after-proposal carries none and keeps the picked branch.
@@ -6257,7 +6323,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     if (card.type === PROGRESS_CARD_TYPE) return true;
     if (card.type && chatCardBuilder(card.type)) return false;      // an extension type is never a run card, whatever its state
     if (ASK_COMPOSER_CARD_TYPES.includes(card.type)) return false;   // Ask's draft / graph cards are never run cards
-    if (card.type === COMMAND_CARD_TYPE || card.type === 'workflow' || card.type === 'metrics' || card.type === 'policy' || card.type === 'schedule' || card.type === 'model' || card.type === 'clone' || card.type === 'web' || card.type === 'workspace' || card.type === 'actions' || card.type === 'away' || card.type === 'project' || card.type === 'proxy' || card.type === SCRIPT_APPROVAL_TYPE) return false;
+    if (card.type === COMMAND_CARD_TYPE || card.type === 'workflow' || card.type === 'metrics' || card.type === 'policy' || card.type === 'schedule' || card.type === 'model' || card.type === 'clone' || card.type === 'web' || card.type === 'workspace' || card.type === 'actions' || card.type === 'mcp' || card.type === 'away' || card.type === 'project' || card.type === 'proxy' || card.type === SCRIPT_APPROVAL_TYPE) return false;
     return block.state === 'started' || (block.state === 'failed' && !!block.runId);
   }
   // #958: one build per card per reconcile. renderTranscript asks for a card twice (is it away? then the tail paint);
@@ -6304,6 +6370,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     const isWorkspace = !!(block.card && block.card.type === 'workspace');
     const isWeb = !!(block.card && block.card.type === 'web');
     const isActions = !!(block.card && block.card.type === 'actions');
+    const isMcp = !!(block.card && block.card.type === 'mcp');
     const isAway = !!(block.card && block.card.type === 'away');
     const isProxy = !!(block.card && block.card.type === 'proxy');
     const isCommand = !!(block.card && block.card.type === COMMAND_CARD_TYPE);
@@ -6315,7 +6382,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     // Ask's draft cards also change with the cards AROUND them (a newer draft of the key replaces one): rebuilt when
     // what they show changes, not only their state.
     const view = isComposer ? composerCards().view(block) : '';
-    if (cached && !sumStale && cached.state === block.state && (cached.view || '') === view && (isWorkflow || isMetrics || isSchedule || isModel || isClone || isProject || isWeb || isWorkspace || isActions || isAway || isProxy || isCommand || isComposer || isScriptApproval || isProgress || block.state === 'proposed')) return cached.el;
+    if (cached && !sumStale && cached.state === block.state && (cached.view || '') === view && (isWorkflow || isMetrics || isSchedule || isModel || isClone || isProject || isWeb || isWorkspace || isActions || isMcp || isAway || isProxy || isCommand || isComposer || isScriptApproval || isProgress || block.state === 'proposed')) return cached.el;
     if (cached) disposeCardEntry(cached);
     const built = isWorkflow ? buildWorkflowCard(block, cached)
       : isMetrics ? buildMetricsCard(block)
@@ -6326,6 +6393,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
       : isWeb ? buildWebCard(block)
       : isWorkspace ? buildWorkspaceCard(block)
       : isActions ? buildActionsCard(block)
+      : isMcp ? buildMcpCard(block)
       : isAway ? buildAwayCard(block)
       : isProxy ? buildProxyCard(block)
       : isCommand ? buildCommandCard(block)
@@ -6333,7 +6401,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
       : isScriptApproval ? buildScriptApprovalCard(block)
       : isProgress ? buildProgressCard(block)
         : custom ? { el: make('div', 'ask-card-stub', (block.card && (block.card.summary || block.card.title)) || 'Card unavailable') }
-        : block.state === 'proposed' ? buildCardForm(block) : { el: buildCardTerminal(block) };
+        : { el: block.state === 'proposed' ? buildCardForm(block) : buildCardTerminal(block) };
     st.cardEls.set(block.id, { el: built.el, state: block.state, view, rev, custom: custom || null, handle: built.handle || null, dispose: built.dispose || null, animate: !!built.animate, cancelAnim: null, lastW: -1, sum: summariesOn() });
     return built.el;
   }
@@ -7434,10 +7502,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     if (frame.type === 'ask-scope') {                           // Projects, any way P4 (CONTRACT §4): a server-side switch
       // The open chat's pill follows it with no PATCH (the server stored it), so the next send keeps the new scope.
       if (frame.threadId === st.threadId && frame.scope && typeof frame.scope === 'object') {
-        const label = typeof frame.label === 'string' && frame.label ? frame.label : null;
-        st.scopeHeld = null;                                    // S39: the server's switch wins over a held pick
-        setScope({ ...scopeFromContext(frame.scope), label }, { persist: false, focus: false });
-        if (st.scope.pinned && !label) resolveScopeLabel();
+        applyServerScope(frame.scope, frame.label);
       }
       return;
     }
@@ -7669,20 +7734,14 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
       runLinks: [...st.model.runLinks()].map(([runId, l]) => ({ runId, ...l })),
     };
   }
-  let madeThread = null;
   const addonCtx = {
     doc, fetch,
     threadId: () => st.threadId,
-    madeThread: () => madeThread,         // the thread the composer's last first send created (null until one does)
     thread: () => threadSnapshot(),
     runStore,
     setPlaceholder: (text) => { st.basePlaceholder = typeof text === 'string' && text ? text : INPUT_PLACEHOLDER; updateSuggestion(); },
     focus: () => focusComposer(),
     announce: (text) => announce(text),
-    // Prompt check Improve (docs/prompt-check.md): the composer's text, a write through its input path, its project.
-    text: () => el.input.value,
-    setText: (text) => { el.input.value = text; fitInput(); addonsInput(); updateSendStop(); },
-    projectKey: () => st.scope.projectKey,
   };
   function mountAddons() {
     for (const addon of composerAddons()) {
@@ -7724,27 +7783,6 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
       } catch (err) { console.warn(`[worca] composer add-on "${a.id}" transformSend failed`, err); }
     }
     return out;
-  }
-  /** The optional input hook (CONTRACT §2): the composer's text after every edit, typed or programmatic. `answering`
-   *  is true while an add-on routes the send elsewhere (holdsSend, e.g. the direction chip). */
-  function addonsInput() {
-    if (!st.addons.length) return;
-    const text = el.input.value;
-    let answering = false;
-    for (const a of st.addons) {
-      try { if (typeof a.handle.holdsSend === 'function' && a.handle.holdsSend()) answering = true; } catch { /* a dead hook counts as not holding */ }
-    }
-    for (const a of st.addons) {
-      if (typeof a.handle.input !== 'function') continue;
-      try { a.handle.input(text, { answering }); } catch (err) { console.warn(`[worca] composer add-on "${a.id}" input failed`, err); }
-    }
-  }
-  /** The optional sent hook: the raw draft (never the transformSend result), once it is taken. */
-  function addonsSent(text) {
-    for (const a of st.addons) {
-      if (typeof a.handle.sent !== 'function') continue;
-      try { a.handle.sent(text); } catch (err) { console.warn(`[worca] composer add-on "${a.id}" sent failed`, err); }
-    }
   }
   function destroyAddons() {
     for (const a of st.addons.splice(0)) {

@@ -77,9 +77,3 @@ test('design is a beta flag, on by default, documented, with its window restarte
   assert.ok(f.extendedOn > f.added, 'the move to beta restarts the review window');
   assert.ok(typeof f.extendReason === 'string' && f.extendReason.trim(), 'the restart says why');
 });
-
-test('proposedPerspectives: an experimental flag, off by default, reviewed within 90 days', () => {
-  const f = flagByKey('proposedPerspectives');
-  assert.deepEqual([f.title, f.stage, f.default, f.owner, f.added, f.reviewBy, f.docs],
-    ['Proposed perspectives', 'experimental', false, 'e-angelov', '2026-11-14', '2027-02-11', 'docs/feature-flags.md']);
-});

@@ -21,8 +21,6 @@ review later checks the code against the checklists the plan ended with.
   [Chat home](chat-home.md)). Describe the task; Worca proposes a shaped run on a card.
 - **The nudge.** When Chat judges a task to have open decisions, the run card
   offers **Shaper** next to **Run as is**, with an estimate of each.
-  Its `assess` (size, open decisions, perspectives) is read through the prompt check's shared assessment; see
-  [Prompt check](prompt-check.md) for its fields.
 - **New run.** The New run page links to the same flow.
 
 ## Questions
@@ -456,6 +454,9 @@ feature's runs, its next run and its open step, and it has two tools it calls wh
 - **route_message** posts a **Where does this go?** card (chip `Route`) while the feature has runs to go: Add to the
   feature (into the next run's plan, or as an extra run), Own run now (from the base, its own PR), or Save for later.
   The preselected choice and its one-line reason are Chat's guess; you can pick another.
+
+A run either card starts (a round, a follow-up, an added run, Own run now) uses the guardrail set of the run or feature
+it changes, never the install's default; one that would land on Permissive starts on Normal and says so in its log.
 
 worca refuses a call that does not fit the chat (the wrong tool for the feature's state, a run that is still going,
 an open step), and Chat answers in words instead. A Plan, Split, Clarify or Gate step is answered on its step

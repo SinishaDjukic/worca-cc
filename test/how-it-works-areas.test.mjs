@@ -7,7 +7,7 @@ import { GUIDE_AREA_IDS, isGuideAreaId, isGuideSeen } from '../src/shared/how-it
 
 const IDS = [
   'chat', 'design', 'runs', 'new', 'schedules', 'stats', 'team-metrics', 'workflows',
-  'requirements', 'marketplace', 'connectors', 'models', 'providers', 'projects',
+  'requirements', 'marketplace', 'connectors', 'models', 'projects',
   'workspaces', 'team-policy', 'settings',
 ];
 

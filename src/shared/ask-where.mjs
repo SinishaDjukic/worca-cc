@@ -20,7 +20,6 @@ export const WHERE_PAGES = Object.freeze({
   marketplace: page('Marketplace', 'bag'),
   connectors: page('Connectors', 'plug'),
   models: page('Models', 'cube'),
-  providers: page('Providers', 'layers'),
   projects: page('Projects', 'project'),
   'project-detail': page('Project', 'project'),
   workspaces: page('Workspaces', 'workspace'),

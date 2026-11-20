@@ -571,6 +571,7 @@
           ".rd-graph",
           ".hd-graph",
           ".run-warn",
+          ".run-scope",
           ".rg-hint",
           ".gv-wrap-monitor",
           ".run-strip"
@@ -630,7 +631,9 @@
           ".mcp-def-row",
           ".mcp-def-fill",
           ".mcp-res-",
-          ".mcp-resolution"
+          ".mcp-resolution",
+          "#plugin-modal .card:has(.mcp-imp)",
+          ".mcp-imp"
         ],
         "feature": "mcp-servers",
         "name": "server-fields"
@@ -1326,15 +1329,6 @@
         "^Run rows \\(\\.rc\\-\\*\\)",
         "^Scheduled runs"
       ],
-      "html": []
-    },
-    {
-      "name": "prompt-check",
-      "doc": "docs/prompt-check.md",
-      "routes": [
-        "/api/prompt-check"
-      ],
-      "css": [],
       "html": []
     },
     {

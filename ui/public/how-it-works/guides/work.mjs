@@ -172,7 +172,7 @@ export const WORK_GUIDES = {
         'It shows at the Expert level.',
       ] },
       { id: 'views', title: 'Two tabs', paras: [
-        'Overview adds the record up. Timeline is a calendar of work items: runs grouped by ticket or branch, plus pull requests opened outside Worca.',
+        'Overview adds the record up. Timeline is a calendar of work items: runs grouped by ticket or branch, plus pull requests created outside Worca.',
       ] },
       { id: 'on', title: 'Switch it on per project', paras: [
         'Open a project, go to its Team tab and choose Set up metrics…. Nothing is shared until you do.',
