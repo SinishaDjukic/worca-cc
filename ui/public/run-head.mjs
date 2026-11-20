@@ -280,9 +280,9 @@ export function prRef(pr) {
   const url = String((pr && pr.url) || '');
   const m = /github\.com\/([^/]+\/[^/]+)\/pull\/(\d+)/.exec(url);
   if (m) return `${m[1]}#${m[2]}`;
-  // A PR opened in this session has no number yet (number: null until a reload); Azure DevOps (/pullrequest/N) and
-  // Bitbucket (/pull-requests/N) URLs carry it.
-  const n = (pr && pr.number) || (/\/pull(?:request|-requests)\/(\d+)(?:[/?#]|$)/.exec(url) || [])[1];
+  // A PR opened in this session has no number yet (number: null until a reload); Azure DevOps (/pullrequest/N),
+  // Bitbucket (/pull-requests/N) and Gitea family (/pulls/N) URLs carry it.
+  const n = (pr && pr.number) || (/\/pull(?:request|-requests|s)\/(\d+)(?:[/?#]|$)/.exec(url) || [])[1];
   return `#${n || ''}`;
 }
 

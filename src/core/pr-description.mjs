@@ -15,6 +15,7 @@ import { utilityModelFor, scopeForRunKey } from './settings-cascade.mjs';
 import { prDescriptionModel as storedPrDescriptionModel } from './settings.mjs';
 import { roleModelFor, jobSlot } from './model-roles.mjs';
 import { AUX_EFFORT, helperEngineFor } from './model-env.mjs';
+import { FORGE_LABEL, isFamilyForge } from './forge.mjs';
 import { pickCatalogModel } from './auto/model.mjs';
 import {
   lookupPipelineRow, runDirForRow, upsertSubAgent, readPipelineExtras, runEngineOfRow,
@@ -56,6 +57,8 @@ export const PR_DESCRIPTION_SYSTEM_PROMPT = [
 /** The system prompt for the PR host: GitHub's as before; Azure DevOps names the host and its 4,000-char cap;
  *  Bitbucket names the host and plain markdown (it renders no GitHub-only syntax). */
 export function prDescriptionSystemPrompt(forge = 'github') {
+  // The Gitea family renders GitHub-flavoured Markdown (task lists included): only the host name changes.
+  if (isFamilyForge(forge)) return PR_DESCRIPTION_SYSTEM_PROMPT.replace('a GitHub pull request', `a ${FORGE_LABEL[forge]} pull request`);
   if (forge === 'bitbucket') {
     return PR_DESCRIPTION_SYSTEM_PROMPT
       .replace('a GitHub pull request', 'a Bitbucket pull request')

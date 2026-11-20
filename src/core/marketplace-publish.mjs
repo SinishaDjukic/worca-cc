@@ -19,7 +19,8 @@ import { exportWorkflowPlugin } from './workflow-export.mjs';
 import { readWorkflow } from './workflows.mjs';
 import { PLUGIN_NAME_RE } from './plugin-manifest.mjs';
 import { runPluginScriptCases } from './plugin-script-cases.mjs';
-import { parseRemoteUrl, forgeOf, remoteRepoSlug, FORGE_LABEL } from './forge.mjs';
+import { parseRemoteUrl, forgeOf, remoteRepoSlug, FORGE_LABEL, isFamilyForge } from './forge.mjs';
+import { isFamilyCredentialKey } from './gitea-family-credentials.mjs';
 import { gitEnvFor, stripHostCredentials, isTrackerTokenKey } from './host-credentials.mjs';
 import { readAzureCredentials, AZURE_DEVOPS_CREDENTIAL_KEYS } from './azure-credentials.mjs';
 import { GITHUB_CREDENTIAL_KEYS } from './github-credentials.mjs';
@@ -75,8 +76,9 @@ export function publishTargetOf(entry) {
  * same rule a hosted project clone applies, clone-project.mjs). Pure.
  */
 export function publishRefusal(entry, { env = process.env } = {}) {
-  if (typeof entry?.url === 'string' && forgeOf(parseRemoteUrl(entry.url)) === 'bitbucket') {
-    return 'Bitbucket marketplaces are not supported yet: publish to a GitHub or Azure DevOps marketplace';
+  const f = typeof entry?.url === 'string' ? forgeOf(parseRemoteUrl(entry.url)) : null;
+  if (f === 'bitbucket' || isFamilyForge(f)) {
+    return `${FORGE_LABEL[f]} marketplaces are not supported yet: publish to a GitHub or Azure DevOps marketplace`;
   }
   const t = publishTargetOf(entry);
   if (!t) return 'not a GitHub or Azure DevOps repository';
@@ -337,8 +339,9 @@ const TOKEN_ENV_KEYS = [...GITHUB_CREDENTIAL_KEYS, ...AZURE_DEVOPS_CREDENTIAL_KE
 function liveCredentialValues(...envs) {
   const az = readAzureCredentials();
   const bb = readBitbucketCredentials();
-  const trackers = (e) => Object.keys(e || {}).filter(isTrackerTokenKey).map((k) => e[k]);   // WORCA_JIRA_TOKEN(_*)
-  return [...[process.env, ...envs].flatMap((e) => [...TOKEN_ENV_KEYS.map((k) => e && e[k]), ...trackers(e)]), az.read, az.write, bb.read, bb.write]
+  // WORCA_JIRA_TOKEN(_*) and the Gitea family's tokens (per host, so not a fixed list) are matched by key shape.
+  const dynamic = (e) => Object.keys(e || {}).filter((k) => isTrackerTokenKey(k) || (isFamilyCredentialKey(k) && k.includes('TOKEN'))).map((k) => e[k]);
+  return [...[process.env, ...envs].flatMap((e) => [...TOKEN_ENV_KEYS.map((k) => e && e[k]), ...dynamic(e)]), az.read, az.write, bb.read, bb.write]
     .filter((v) => typeof v === 'string' && v);
 }
 

@@ -9,6 +9,8 @@ import {
   listRunArtifacts, readRunProgress, resolveIndexedArtifactForRow, listRunPrIndex, readPrState, readMemberPrStates,
 } from '../artifacts.mjs';
 import { parsePrRef, prRefMatches } from '../forge.mjs';
+import { giteaHosts } from '../gitea-credentials.mjs';
+import { forgejoHosts } from '../forgejo-credentials.mjs';
 import { watchFixRuns, watchFixRunOf } from '../pr-watch.mjs';
 import { DIFF_PATCH_FILE } from '../results.mjs';
 import { GUARDRAIL_PRESETS } from '../guardrails.mjs';
@@ -106,6 +108,7 @@ export function defaultToolDeps({ threadId, viewer = null }) {
     // PR lookups (list_runs pr, get_run pr): the parsers and the bulk / per-run readers, injected so tools.mjs stays import-free.
     parsePrRef,
     prRefMatches,
+    prHosts: [...giteaHosts(), ...forgejoHosts()],   // the configured Gitea / Forgejo hosts: PR URLs on them are kept
     runPrIndex: () => ({ prs: listRunPrIndex(), fixes: watchFixRuns() }),
     readRunPrs: (row) => {
       const p = readPrState(row.id);
