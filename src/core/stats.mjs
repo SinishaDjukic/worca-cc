@@ -21,7 +21,7 @@ import { actorLabel } from './identity.mjs';
 import { readTagsFor } from './run-tags-store.mjs';
 import {
   budgetStatus, costWindowStart, costWindowEnd, roundUsd,
-  askWindowedSpendUsd, requirementsWindowedSpendUsd, designWindowedSpendUsd, utilityTotals,
+  askWindowedSpendUsd, requirementsWindowedSpendUsd, designWindowedSpendUsd, testJudgeWindowedSpendUsd, utilityTotals,
   REAL_RUN_HOURS,
 } from './cost-budget.mjs';
 import { savedUsd } from '../shared/human-estimate.mjs';
@@ -480,7 +480,7 @@ function designTotals(fromMs, toMs) {
  *  hours × rate − spent over the budget's own reset window. The same cohort (runs STARTED in
  *  [windowStartMs, windowEndMs), archived included), the same rate and the same spend as the
  *  Statistics "Saved" tile for the matching range, so the spend card and the tile never disagree.
- *  Test tries (is_test) are left out of the hours AND of the spend subtracted here, like the tile: their spend
+ *  Test tries (is_test) and Part 4's judge calls are left out of the hours AND of the spend subtracted here, like the tile: their spend
  *  still counts in `budget.windowSpendUsd` and the spending limit, but a test must not make "Saved" go negative.
  *  A lean SUM rather than cohortTotals(): /api/budget is refetched on every tick while runs
  *  are live, and the pipeline_steps join TOTALS_SELECT carries is dead weight for one column.
@@ -498,7 +498,7 @@ export function budgetWindowSavings(budget) {
   // Same window as cost-budget's windowedSpendUsd (ts >= windowStart), test tries only.
   const testRow = prepare(`SELECT SUM(l.amount_usd) AS s FROM cost_ledger l JOIN pipelines p ON p.id = l.pipeline_id
     WHERE l.ts >= ? AND p.is_test IS NOT NULL`).get(budget.windowStartMs);
-  const spendUsd = roundUsd(budget.windowSpendUsd - (testRow?.s || 0));
+  const spendUsd = roundUsd(budget.windowSpendUsd - (testRow?.s || 0) - testJudgeWindowedSpendUsd(budget.windowStartMs));
   return {
     windowHumanHours,
     windowSavedUsd: savedUsd(windowHumanHours, effectiveHumanRateUsd(), spendUsd),
