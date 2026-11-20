@@ -24,7 +24,9 @@
 
 ---
 
-## Open items (for the user; nothing is built until they are decided)
+## Open items (decided)
+
+**Decided 2026-11-20: the user approved Part 4 and accepted the recommendation (R) of every item P4-Q1–Q17.** The alternatives below are kept for the record only. For P4-Q14 the user also chose: the Claude subscription pays, never Vertex, and the check leaves no file in `~/.claude` (Task 26). The undrawn UI (P4-M1–M7) is still mocked and approved before its task builds it.
 
 Each item has a recommendation (**R**) and the alternative(s). Where a task depends on one, the task says "depends on P4-Qn" and is written for the recommendation.
 
@@ -6143,6 +6145,8 @@ The user's rule: real model calls run **only on the Claude sign-in**, never on t
 Why `WORCA_HOME` alone is not enough (review N1): Worca's settings file, and with it the model catalog and every model's `env`, is always `join(HOME || USERPROFILE || homedir(), '.worca-cc', 'settings.json')` (`settingsFile()`, `src/core/settings.mjs:84-92`), whatever `WORCA_HOME` says. `listGlobalModels()` reads it (`settings.mjs:2273`), and so do `listModels()` and `resolveModelEnv()`. So `HOME` and `USERPROFILE` must move to scratch too, and the CLI's sign-in is kept reachable through `CLAUDE_CONFIG_DIR`.
 
 `CLAUDE_CONFIG_DIR` was checked, not assumed (2026-11-19, `claude auth status`, which makes no model call): with `HOME` and `USERPROFILE` in an empty scratch folder it reported `loggedIn: false`; with `CLAUDE_CONFIG_DIR` set to the real `~/.claude` as well it reported `loggedIn: true`, `authMethod: "claude.ai"`, `apiProvider: "firstParty"`; with `CLAUDE_CODE_USE_VERTEX=1` added it reported `authMethod: "third_party"`, `apiProvider: "vertex"`. Worca itself treats `CLAUDE_CONFIG_DIR` as the folder the CLI reads (`claude-sign-in.mjs userSettingsFile`, `preflight.mjs parseClaudeAuthConfigDir`). With it set, the CLI keeps its state file `.claude.json` in that folder (`~/.claude/.claude.json`) instead of the home folder; the check may update that file, and nothing else in `~/.claude`.
+
+**The user's choice (2026-11-20): the Claude subscription pays, never Vertex, and no file is left behind in `~/.claude`.** Before anything in Step 1 runs, the controller records whether `~/.claude/.claude.json` exists (Test-Path, nothing read). After Step 3, if it did not exist before, the controller deletes `~/.claude/.claude.json` and any `~/.claude/backups/.claude.json.backup.*` created during the check (compare creation times with the check's start; Claude Code's own backups of the home `~/.claude.json` stay), and says what it deleted. Nothing else under `~/.claude` is touched.
 
 1. **The scratch home.** Make an empty folder `<scratch>/paid-home` (never a copy of anything under the real home). Write one file into it, `<scratch>/paid-home/.worca-cc/settings.json` = `{ "totalCostLimitUsd": 3 }`: Worca's own spending limit, so the $3 cap is enforced, not watched (review N12; the setting is `settings.mjs:26`, `:666`, and it lives in this scratch file, never the user's). The paid run's data goes to `WORCA_HOME=<scratch>/paid-home/.worca-cc`.
 2. **One launcher for both processes**, so the check and the server get exactly the same environment. Write `<scratch>/paid-check/clean-run.mjs`:
