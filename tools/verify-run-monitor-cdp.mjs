@@ -347,6 +347,9 @@ try {
 
   // ---- the Running DETAIL (a monitor host) ---------------------------------
   const RD = '#run-detail .rd-graph .run-flow-wrap';
+  // The waiting question sits above the tabs on every tab, so it can push the graph under the 900px window
+  // (clicks and elementFromPoint then miss it): bring the tab bar to the top.
+  const tabsToTop = async () => { await ev(`document.querySelector('#run-detail .rd-tabs').scrollIntoView({block:'start'});0`); await settle('graph in view'); };
   await go(`running/${runId}/details/workflow`);   // the graph lives in Details › Workflow
   await until(`document.querySelector('${RD} .gv-stage .gv-world .node')`, 'the detail graph');
   await ev('window.scrollTo(0,0);0'); await settle('detail');
@@ -392,6 +395,8 @@ try {
     && axis.opts[0] === 'all nodes' && axis.opts.includes('Clarify'), axis);
   await go(`running/${runId}/details/workflow`);
   await until(`document.querySelector('${RD} .gv-stage .gv-world .node')`, 'the detail graph again');
+  // BEFORE any measurement below (createNav re-reads its rect at the start of every gesture).
+  await tabsToTop();
 
   // (4a) ants: the in-flight execution's trigger wire marches. The animation lives
   // ON THE PATH (the :root clock is retired — it forced a whole-document style
@@ -543,6 +548,7 @@ try {
   // re-lays the shell out — a fresh screen puts every card back under its fit.
   await go(`running/${runId}/details/workflow`);   // the graph lives in Details › Workflow
   await until(`document.querySelector('${RD} .gv-stage .gv-world .node[data-node-id="n_clarify"] .xtoggle')`, 'the clarify strip');
+  await tabsToTop();
   await clickCentre(`${RD} .gv-world .node[data-node-id="n_clarify"] .xtoggle`, 'clarify strip');
   await settle('expand');
   await until(`document.querySelector('${RD} .gv-world .node[data-node-id="n_clarify"] .xrow')`, 'the clarify exec row');
