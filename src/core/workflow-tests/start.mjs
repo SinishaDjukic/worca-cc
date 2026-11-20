@@ -6,6 +6,7 @@ import { PROJECT_KEY_RE, testCopyKeyOf } from '../store.mjs';
 import { sweepStaleStagingDirs } from './try-spawn.mjs';
 import { CONNECTOR_MODES, recoverInterruptedTestRuns } from './store.mjs';
 import { sweepTestCopies } from './project-copy.mjs';
+import { recoverRounds } from './criteria-store.mjs';
 import { sweepBeforeRuns } from './before-run.mjs';
 import { SETUP_TIMEOUT_MS } from './shell-step.mjs';
 
@@ -78,7 +79,7 @@ export function holdTryOrch(workflowTest, orch, runKey) {
  * @returns {{runs: number, stagingDirs: number}} what was stopped and removed (0 when a sweep failed)
  */
 export function recoverTestsAtBoot({ tmpDir } = {}) {
-  const out = { runs: 0, stagingDirs: 0 };
+  const out = { runs: 0, rounds: 0, stagingDirs: 0 };
   try {
     out.runs = recoverInterruptedTestRuns().runs;
     if (out.runs) console.log(`[worca-ui] workflow tests: ${out.runs} interrupted test(s) stopped`);

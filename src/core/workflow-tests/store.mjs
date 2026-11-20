@@ -519,3 +519,14 @@ export function recoverInterruptedTestRuns(now = nowIso()) {
   });
   return out;
 }
+
+/** Part 4 (D97): an example's tries, newest first (Check the checker's good result). */
+export function triesForExample(exampleId) {
+  getDb();
+  return prepare(`SELECT ${TRY_COLS} FROM wf_test_tries t WHERE t.example_id = ? ORDER BY t.id DESC LIMIT 50`).all(Number(exampleId)).map(tryOf);
+}
+/** Part 4 (I14): whether a pipeline is a mock try's (its text is fixture text, checked only by the mock). */
+export function mockPipeline(pipelineId) {
+  getDb();
+  return !!prepare('SELECT 1 FROM wf_test_tries WHERE pipeline_id = ? AND mock = 1 LIMIT 1').get(String(pipelineId || ''));
+}

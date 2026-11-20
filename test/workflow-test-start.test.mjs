@@ -77,7 +77,7 @@ test('the boot seams never throw and report what they did', async () => {
     mkdirSync(old);
     const t = new Date(Date.now() - 3 * 24 * 60 * 60 * 1000);
     utimesSync(old, t, t);
-    assert.deepEqual(start.recoverTestsAtBoot({ tmpDir: tmp }), { runs: 0, stagingDirs: 1 });
+    assert.deepEqual(start.recoverTestsAtBoot({ tmpDir: tmp }), { runs: 0, rounds: 0, stagingDirs: 1 });
   } finally { rmSync(tmp, { recursive: true, force: true }); }
   assert.equal(testCopiesRoot(), join(home, 'workflow-tests', 'repos'));
   const logged = [];

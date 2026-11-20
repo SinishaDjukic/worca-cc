@@ -125,3 +125,35 @@ export function readLiked(exampleId) {
   return r ? { kind: r.kind, name: r.name, text: Buffer.from(r.data).toString('utf8'), fromPipeline: r.from_pipeline ?? null } : null;
 }
 export function deleteLiked(exampleId) { getDb(); prepare('DELETE FROM wf_test_liked WHERE example_id = ?').run(Number(exampleId)); }
+
+const R_COLS = 'id, workflow_id, example_id, criterion_id, criterion_fp, model, source, status, detail, created_by, created_at, finished_at';
+const roundOf = (r) => (r ? { id: Number(r.id), workflowId: r.workflow_id, exampleId: Number(r.example_id), criterionId: r.criterion_id, fp: r.criterion_fp,
+  model: r.model, source: parse(r.source, {}), status: r.status, detail: r.detail ?? null, createdBy: r.created_by ?? null, createdAt: r.created_at,
+  finishedAt: r.finished_at ?? null } : null);
+export function createRound({ workflowId, exampleId, criterionId, fp, model, source, by = null }) {
+  getDb();
+  const info = prepare(`INSERT INTO wf_test_checker_rounds (workflow_id, example_id, criterion_id, criterion_fp, model, source, status, created_by, created_at)
+      VALUES (?, ?, ?, ?, ?, ?, 'making', ?, ?)`).run(workflowId, Number(exampleId), criterionId, fp, model, JSON.stringify(source), by, nowIso());
+  return readRound(Number(info.lastInsertRowid));
+}
+export function readRound(id) { getDb(); return roundOf(prepare(`SELECT ${R_COLS} FROM wf_test_checker_rounds WHERE id = ?`).get(Number(id))); }
+export function updateRound(id, { status, detail = null }) {
+  getDb();
+  const end = status === 'making' ? null : nowIso();
+  prepare('UPDATE wf_test_checker_rounds SET status = ?, detail = ?, finished_at = ? WHERE id = ?').run(status, detail, end, Number(id));
+  return readRound(id);
+}
+export function roundJudgements(roundId) {
+  getDb();
+  return prepare(`SELECT ${J_COLS} FROM wf_test_judgements WHERE round_id = ? ORDER BY id`).all(Number(roundId)).map(judgementOf);
+}
+export function roundSpentUsd(roundId) {
+  getDb();
+  return Number(prepare('SELECT COALESCE(SUM(amount_usd), 0) AS s FROM wf_test_judge_ledger WHERE round_id = ?').get(Number(roundId)).s || 0);
+}
+/** M18: at boot, a round left 'making' by a restart is failed (its calls stopped with the old process). Returns how many. */
+export function recoverRounds() {
+  getDb();
+  return Number(prepare(`UPDATE wf_test_checker_rounds SET status = 'failed', detail = 'Worca restarted before this round was ready. Try again.',
+      finished_at = ? WHERE status = 'making'`).run(nowIso()).changes || 0);
+}

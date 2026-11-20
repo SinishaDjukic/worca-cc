@@ -353,3 +353,15 @@ test('the result you liked comes only from this workflow\'s own runs and tries; 
     for (const id of ids) prepare('DELETE FROM pipelines WHERE id = ?').run(id);
   }
 });
+
+test('Check the checker on the mock: start, read until ready, answer all four', async () => {
+  const ex = store.listExamples('wf_api_c')[0];
+  const s = await call('POST', `${WF}/examples/${ex.id}/checker`, { criterionId: ex.criteria[0].id });
+  assert.equal(s.status, 201);
+  let v;
+  for (let i = 0; i < 100; i += 1) { v = await call('GET', `${WF}/examples/${ex.id}/checker/${s.body.round.id}`); if (v.body.round.status !== 'making') break; await new Promise((r) => setTimeout(r, 50)); }
+  assert.equal(v.body.round.status, 'ready');
+  for (const c of v.body.cards) v = await call('POST', `${WF}/examples/${ex.id}/checker/${s.body.round.id}/answers`, { judgementId: c.judgementId, right: true });
+  assert.equal(v.body.canUse, true);
+  assert.equal(prepare('SELECT COUNT(*) AS n FROM wf_test_judge_ledger').get().n, 0);
+});

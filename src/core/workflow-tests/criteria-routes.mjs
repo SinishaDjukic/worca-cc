@@ -9,6 +9,7 @@ import { findPipelineRowById } from '../artifacts.mjs';
 import { pastRunSummary, NOT_TESTABLE_REASONS } from './service.mjs';
 import { judgeModelsView } from './judge-models.mjs';
 import { budgetStatus as realBudgetStatus } from '../cost-budget.mjs';
+import { createChecker } from './checker.mjs';
 
 const STATUS = Object.freeze({ BAD_REQUEST: 400, NOT_FOUND: 404, BUSY: 409, NOT_READY: 422 });
 const W = '/api/workflows/:id/tests';
@@ -114,6 +115,24 @@ export function registerCriteriaRoutes(app, { runner = null, criteriaJudge = nul
     const ex = exampleOf(req);
     cs.deleteLiked(ex.id);
     res.json({ example: store.readExample(wid(req), ex.id) });
+  });
+  // D97: Check the checker. The spending limit is refused up front inside checker.start (not for a mock round, which pays nothing).
+  const checker = deps.checker || createChecker({ budgetStatus: deps.budgetStatus || realBudgetStatus });
+  const roundOf = (req, ex) => {
+    const r = cs.readRound(num(req.params.round, 'round'));
+    if (!r || r.workflowId !== wid(req) || r.exampleId !== ex.id) throw store.testError(`no round ${req.params.round}`, 'NOT_FOUND');
+    return r;
+  };
+  route('POST', `${W}/examples/:ex/checker`, async (req, res) => {
+    const ex = exampleOf(req);
+    res.status(201).json({ round: await checker.start({ workflowId: wid(req), exampleId: ex.id, criterionId: String((req.body || {}).criterionId || ''), by: by(req) }) });
+  });
+  route('GET', `${W}/examples/:ex/checker/:round`, async (req, res) => { const ex = exampleOf(req); res.json(checker.view(roundOf(req, ex), { by: by(req) })); });
+  route('POST', `${W}/examples/:ex/checker/:round/answers`, async (req, res) => {
+    const ex = exampleOf(req);
+    const b = req.body || {};
+    if (typeof b.right !== 'boolean') throw store.testError('right must be true or false', 'BAD_REQUEST');
+    res.json(await checker.answer(roundOf(req, ex), num(b.judgementId, 'card'), b.right, { by: by(req) }));
   });
   void exampleOf;   // defined here for Task 18 (4a) and Tasks 12-15 (4b), which use it
   return { runner, criteriaJudge, deps };
