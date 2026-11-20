@@ -94,22 +94,56 @@ export function needsCriteriaJudging(example, t) {
   if (!model || !finishedTry(t)) return 0;
   return (example.criteria || []).filter((c) => cs.needsJudging(t.id, cs.criterionFp(c.text), model)).length;
 }
-/** P4-M5, board 4: what "Check them on these tries" would cost: the checks the test's finished tries still miss, at the price of
- *  one check. 0 only when nothing needs checking; null when something does and its price is not known (never $0). */
-export function checkUsdOf(workflowId, run) {
-  const examples = new Map();
+/** The price of one check per model, asked once per helper call (each read is a ledger query). null = not known. */
+const priceMemo = () => { const m = new Map(); return (model) => { if (!m.has(model)) m.set(model, judgeCallUsd(model)); return m.get(model); }; };
+/**
+ * What checking the criteria these finished tries still miss would cost, each at its own example's model: 0 only when nothing is
+ * missing (or the tries are mock: a mock check is free); null when something is missing and its price is not known (never $0).
+ * `pairs` = [{ ex, t }]. Shared by "Check them on these tries" and the estimate of reused tries.
+ */
+export function missingChecksUsd(pairs, price = priceMemo()) {
   let usd = 0;
-  for (const t of store.triesOfRun(run.id)) {
-    if (t.status !== 'passed' && t.status !== 'failed') continue;
-    if (!examples.has(t.exampleId)) examples.set(t.exampleId, store.readExample(workflowId, t.exampleId));
-    const ex = examples.get(t.exampleId);
-    const n = ex ? needsCriteriaJudging(ex, t) : 0;
+  for (const { ex, t } of pairs) {
+    if (!ex || !t || t.mock) continue;
+    const n = needsCriteriaJudging(ex, t);
     if (!n) continue;
-    const one = judgeCallUsd(ex.judge.model);
+    const one = price(ex.judge.model);
     if (one === null) return null;
     usd += n * one;
   }
   return usd;
+}
+/** P4-M5, board 4: what "Check them on these tries" would cost for this test. */
+export function checkUsdOf(workflowId, run) {
+  const examples = new Map();
+  const pairs = [];
+  for (const t of store.triesOfRun(run.id)) {
+    if (t.status !== 'passed' && t.status !== 'failed') continue;
+    if (!examples.has(t.exampleId)) examples.set(t.exampleId, store.readExample(workflowId, t.exampleId));
+    pairs.push({ ex: examples.get(t.exampleId), t });
+  }
+  return missingChecksUsd(pairs);
+}
+/**
+ * Board 4, one side of a test: what checking its criteria costs per example (that example's criteria x its model's price), with
+ * every try new (`fresh`) or with the reusable tries kept (`withReuse`: the new ones, plus the checks the kept ones still miss).
+ * `items` = [{ ex, kept }] for every example to try; `mock` = a mock test, whose checks are free. null = a price is not known.
+ */
+export function sideCheckPlan(items, tries, { mock = false } = {}) {
+  if (mock) return { fresh: 0, withReuse: 0 };
+  const price = priceMemo();
+  let fresh = 0;
+  let fromNew = 0;
+  for (const { ex, kept } of items) {
+    const n = ex.judge ? (ex.criteria || []).length : 0;
+    if (!n) continue;
+    const one = price(ex.judge.model);
+    if (one === null) return { fresh: null, withReuse: null };
+    fresh += tries * n * one;
+    fromNew += Math.max(0, tries - kept.length) * n * one;
+  }
+  const missing = missingChecksUsd(items.flatMap(({ ex, kept }) => kept.map((t) => ({ ex, t }))), price);
+  return { fresh, withReuse: missing === null ? null : fromNew + missing };
 }
 
 const median = (xs) => { const s = [...xs].sort((a, b) => a - b); if (!s.length) return null; const m = s.length >> 1; return s.length % 2 ? s[m] : (s[m - 1] + s[m]) / 2; };
@@ -117,8 +151,8 @@ const median = (xs) => { const s = [...xs].sort((a, b) => a - b); if (!s.length)
 const PAIRS_ASKED = false;
 /** Board 4: what one check of a criterion costs on `model`: its own last 20, else a typical call (6000 tokens in, 250 out) at its price. */
 export function judgeCallUsd(model, { rates = (m) => ratesFor('claude', m), estimate = estimateCost } = {}) {
-  // The ledger has no try or criterion column, so one row is priced as one check (a call the judge repeated books twice and
-  // prices a check a little high, never low). M6: an 'unknown'-cost row is a $0 that is not a price; if any of the recent rows
+  // The ledger has no try or criterion column, so one row is priced as one check (a check the judge asked twice books two rows,
+  // so a per-row median errs a little LOW for repeated checks, never high). M6: an 'unknown'-cost row is a $0 that is not a price; if any of the recent rows
   // is one, the price is not known (null), never a median pulled down to $0.
   const rows = prepare(`SELECT amount_usd AS u, cost_kind AS k FROM wf_test_judge_ledger WHERE purpose = 'try' AND model = ? ORDER BY id DESC LIMIT 20`).all(model);
   if (rows.some((r) => r.k === 'unknown')) return null;
@@ -129,13 +163,15 @@ export function judgeCallUsd(model, { rates = (m) => ratesFor('claude', m), esti
 }
 /** Board 4 (Task 11): per try, the average cost of checking the chosen examples' criteria; the pairs (2 calls per example that has
  *  criteria, P4-Q8). null when no chosen example has criteria. */
-export function criteriaPlanOf(workflowId, exampleIds = [], { hasA = false } = {}) {
+export function criteriaPlanOf(workflowId, exampleIds = [], { hasA = false, mock = false } = {}) {
   const exs = store.listExamples(workflowId).filter((e) => (!exampleIds.length || exampleIds.includes(e.id)) && e.criteria.length && e.judge);
   if (!exs.length) return null;
-  const per = exs.map((e) => { const u = judgeCallUsd(e.judge.model); return u === null ? null : u * e.criteria.length; });
+  if (mock) return { perTryUsd: 0, pairsUsd: 0 };   // a mock test checks for free
+  const price = priceMemo();
+  const per = exs.map((e) => { const u = price(e.judge.model); return u === null ? null : u * e.criteria.length; });
   if (per.some((u) => u === null)) return { perTryUsd: null, pairsUsd: null };
   const all = store.listExamples(workflowId).filter((e) => !exampleIds.length || exampleIds.includes(e.id));
   // M6: pairs are asked only from Task 14 (4b); until then this is 0, and Task 14 changes `PAIRS_ASKED` to true.
   return { perTryUsd: per.reduce((s, u) => s + u, 0) / all.length,
-    pairsUsd: PAIRS_ASKED && hasA ? exs.reduce((s, e) => s + 2 * judgeCallUsd(e.judge.model), 0) : 0 };
+    pairsUsd: PAIRS_ASKED && hasA ? exs.reduce((s, e) => s + 2 * price(e.judge.model), 0) : 0 };
 }

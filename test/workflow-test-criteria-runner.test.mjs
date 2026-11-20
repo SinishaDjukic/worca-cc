@@ -7,7 +7,8 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { _resetForTests, prepare, getDb } from '../src/core/db.mjs';
-import { judgeCallUsd } from '../src/core/workflow-tests/criteria-read.mjs';
+import { judgeCallUsd, sideCheckPlan, checkUsdOf, criteriaPlanOf } from '../src/core/workflow-tests/criteria-read.mjs';
+import { estimateOf } from '../src/shared/workflow-tests/compare.mjs';
 import * as store from '../src/core/workflow-tests/store.mjs';
 import * as cs from '../src/core/workflow-tests/criteria-store.mjs';
 import { createTestRunner } from '../src/core/workflow-tests/runner.mjs';
@@ -292,4 +293,52 @@ test('the check has its own busy text; start, continueRun and a second press all
   await assert.rejects(runner.continueRun(first.id), { code: 'BUSY', message: TEXT_CHECKING });
   release(); await job;
   assert.equal(runner.criteriaCheckingOf(WF), false);
+});
+
+/** Round 2: `n` finished tries of an example in a run, none of them checked yet. */
+function triesOf(ex, n, { mock = false } = {}) {
+  const run = store.createTestRun({ workflowId: WF, kind: 'once', b: 'draft', bFp: 'f', exampleIds: [ex.id], tries: n });
+  const list = [];
+  for (let i = 1; i <= n; i += 1) {
+    const t = store.insertTry({ runId: run.id, workflowId: WF, exampleId: ex.id, use: 'draft', fp: 'f', exampleFp: ex.fingerprint, tryNo: i, mock });
+    store.linkTry(run.id, t.id, 'b');
+    store.updateTry(t.id, { status: 'passed', pipelineId: `p000000${i}`, verdict: { passed: true, facts: { status: 'done' }, basics: [], checks: [] } });
+    list.push(store.readTry(t.id));
+  }
+  return { run, list };
+}
+const priceHaiku = (usd) => { for (let i = 0; i < 3; i += 1) recordTestJudgeCost({ workflowId: WF, purpose: 'try', model: 'claude-haiku-4-5', amountUsd: usd, costKind: 'billed' }); };
+
+test('round 2: reused tries are priced per missing check at their own example\'s price, not at a diluted average (the reviewer\'s probe)', () => {
+  getDb();
+  priceHaiku(0.05);
+  const withCriteria = example([{ text: 'Names a success metric' }, { text: 'Explains the legal reasons' }, { text: 'Names the users' }]);
+  const bare = [1, 2, 3].map(() => example([]));
+  const { list } = triesOf(withCriteria, 3);
+  const items = [{ ex: withCriteria, kept: list }, ...bare.map((ex) => ({ ex, kept: [] }))];
+  const side = sideCheckPlan(items, 3);
+  assert.equal(Math.round(side.withReuse * 1e6) / 1e6, 0.45, '9 missing checks x $0.05');
+  const plan = { b: { want: 12, reusable: 3, perTryUsd: 0.5, checkUsd: side }, perTryMs: 1000, criteria: { perTryUsd: 0.1125, pairsUsd: 0 } };
+  const e = estimateOf(plan, { reuseB: true });
+  assert.equal(Math.round(e.criteriaUsd * 100) / 100, 0.45 + 0, 'the new tries of the examples without criteria add nothing');
+  const bareOnly = sideCheckPlan(bare.map((ex) => ({ ex, kept: [] })), 3);
+  assert.deepEqual([bareOnly.fresh, bareOnly.withReuse], [0, 0], 'examples without criteria cost nothing');
+  assert.equal(sideCheckPlan([{ ex: withCriteria, kept: list }], 3).fresh, 0.45, 'fresh: 3 tries x 3 criteria x $0.05');
+  recordTestJudgeCost({ workflowId: WF, purpose: 'try', model: 'claude-haiku-4-5', amountUsd: 0, costKind: 'unknown' });
+  const unknown = sideCheckPlan(items, 3);
+  assert.deepEqual([unknown.fresh, unknown.withReuse], [null, null], 'a price that is not known is not $0');
+  assert.equal(estimateOf({ ...plan, b: { ...plan.b, checkUsd: unknown } }, { reuseB: true }).usd, null);
+});
+
+test('round 2: mock tries and mock plans cost nothing to check', () => {
+  getDb();
+  priceHaiku(0.05);
+  const ex = example([{ text: 'Names a success metric' }]);
+  const { run, list } = triesOf(ex, 2, { mock: true });
+  assert.equal(checkUsdOf(WF, run), 0, 'mock tries are checked for free');
+  assert.equal(sideCheckPlan([{ ex, kept: list }], 2).withReuse, 0, 'kept mock tries miss checks that cost nothing');
+  assert.equal(sideCheckPlan([{ ex, kept: [] }], 2, { mock: true }).fresh, 0);
+  assert.deepEqual(criteriaPlanOf(WF, [ex.id], { mock: true }), { perTryUsd: 0, pairsUsd: 0 });
+  const real = triesOf(ex, 2);
+  assert.equal(Math.round(checkUsdOf(WF, real.run) * 1e6) / 1e6, 0.1, 'real tries: 2 x $0.05');
 });

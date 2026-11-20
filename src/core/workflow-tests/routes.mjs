@@ -155,7 +155,7 @@ export function registerWorkflowTestRoutes(app, { broadcast = () => {}, deps = {
     const plan = await service.testPlan(wid(req), { a: q.a ? store.parseUse(String(q.a)) : null, b: store.parseUse(String(q.b || 'draft')) || 'draft',
       exampleIds: ids, tries, connectors: q.connectors === 'real' ? 'real' : 'pretend' },
     { mock: !!(deps.mockMode && deps.mockMode()), connectorsPreview: deps.connectorsPreview || null });
-    res.json({ ...plan, criteria: criteriaPlanOf(wid(req), ids, { hasA: !!q.a }) });
+    res.json({ ...plan, criteria: criteriaPlanOf(wid(req), ids, { hasA: !!q.a, mock: !!(deps.mockMode && deps.mockMode()) }) });
   });
   route('POST', `${W}/runs`, async (req, res) => {
     knownWorkflow(req);

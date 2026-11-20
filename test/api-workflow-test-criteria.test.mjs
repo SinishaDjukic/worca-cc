@@ -160,16 +160,16 @@ test('review: a criterion added after the test is new, one the limit left unchec
   const rowOf = (label) => r.body.rows.find((x) => x.label === label);
   assert.deepEqual([rowOf('Names the users').uneven, rowOf('Names the users').reason], [true, 'new']);
   assert.deepEqual([rowOf('Explains the legal reasons').uneven, rowOf('Explains the legal reasons').reason], [true, 'unchecked']);
-  assert.ok(typeof r.body.checkUsd === 'number' && r.body.checkUsd > 0, 'two checks are missing, and the button has a price');
+  assert.equal(r.body.checkUsd, 0, 'two checks are missing, but the checks of a mock test are free (its price is in the runner test)');
   const compare = await call('GET', `${WF}/runs/${run.id}/compare`);
   assert.deepEqual(compare.body.notes.notChecked.map((n) => [n.reason, n.criteria]).sort(),
     [['new', ['Names the users']], ['unchecked', ['Explains the legal reasons']]]);
   // Test again with every try reused: the plan counts the reused try that still misses criteria, and the estimate prices it.
   const plan = (await call('GET', `${WF}/plan?b=draft&examples=${ex.id}&tries=1`)).body;
-  assert.deepEqual([plan.b.reusable, plan.b.judgeMissing], [1, 1]);
+  assert.deepEqual([plan.b.reusable, plan.b.judgeMissing], [1, 2], 'two checks of the reused try are missing');
   const e = estimateOf(plan, { reuseB: true });
   assert.equal(e.total, 0);
-  assert.ok(e.usd > 0, 'never $0 while paid checks will be made');
+  assert.deepEqual([plan.criteria, plan.b.checkUsd.withReuse], [{ perTryUsd: 0, pairsUsd: 0 }, 0], 'a mock test checks for free (round 2); a real one is priced in the runner test');
   assert.equal((await call('POST', `${WF}/runs/${run.id}/criteria/check`)).status, 202);
   assert.equal((await checkDone(run.id)).checkUsd, 0, 'checked now');
 });
@@ -238,9 +238,11 @@ test('review: the overview says whether a check is running, and its latest test 
   assert.equal(o.body.checking, false);
   const run = store.listTestRuns('wf_api_c')[0];
   prepare(`UPDATE wf_test_runs SET kind = 'compare' WHERE id = ?`).run(run.id);   // the once-test stands in for a compare in the list
-  const ex = store.listExamples('wf_api_c')[0];
-  store.updateExample('wf_api_c', ex.id, { criteria: [...ex.criteria, { text: 'Gives a deadline' }] });
-  const latest = (await call('GET', WF)).body.latest;
-  assert.equal(latest.runId, run.id);
-  assert.ok(latest.notChecked >= 1, 'the new criterion was not checked on the test');
+  try {
+    const ex = store.listExamples('wf_api_c')[0];
+    store.updateExample('wf_api_c', ex.id, { criteria: [...ex.criteria, { text: 'Gives a deadline' }] });
+    const latest = (await call('GET', WF)).body.latest;
+    assert.equal(latest.runId, run.id);
+    assert.ok(latest.notChecked >= 1, 'the new criterion was not checked on the test');
+  } finally { prepare(`UPDATE wf_test_runs SET kind = 'once' WHERE id = ?`).run(run.id); }
 });
