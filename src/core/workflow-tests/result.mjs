@@ -243,6 +243,7 @@ export async function checkTry(example, outcome, { runScript = runScriptCheck, r
   const results = new Array(checks.length);
   const later = [];
   let sources = null;
+  let sourcesFailed = false;
   for (const [i, check] of checks.entries()) {
     if (check.kind === 'script' || check.kind === 'command' || NETWORK_KINDS.includes(check.kind)) { later.push(i); continue; }
     const label = checkLabel(check);
@@ -265,7 +266,14 @@ export async function checkTry(example, outcome, { runScript = runScriptCheck, r
       }
       changes = { touched: [], total: 0 };
     }
-    if (SOURCE_KINDS.includes(check.kind) && sources === null) sources = readSources(example);
+    if (SOURCE_KINDS.includes(check.kind) && sources === null && !sourcesFailed) {
+      // The files could not be read (a database error): Worca's own problem, never the workflow's. The other checks still run.
+      try { sources = readSources(example); } catch { sourcesFailed = true; }
+    }
+    if (SOURCE_KINDS.includes(check.kind) && sourcesFailed) {
+      results[i] = { id: check.id, label, met: false, value: "Not run: the example's files could not be read", worcaProblem: true };
+      continue;
+    }
     const r = runCheck(check, { text, files: outcome.files, changes, sources: sources || '' });
     results[i] = { id: check.id, label, met: r.met, value: r.value, ...scope };
   }

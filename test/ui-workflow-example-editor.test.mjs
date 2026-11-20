@@ -517,3 +517,11 @@ test('final review UI 6: with no version yet the draft is "your draft" inside th
   const { root } = boot(example(), { ctx: { draftLabel: 'Your draft' } });
   assert.equal(root.querySelector('.wft-estimate').textContent, 'About $0.55 a try with your draft, so about $1.65 for this example.');
 });
+
+test('fix round 1: the check dialog does not list the four Part 4 kinds (quotes, numbers, personal data, links)', () => {
+  const { root, doc } = boot();
+  click(byText(root, '.wft-sect button', 'Add an automatic check'));
+  const values = [...doc.querySelector('#wft-ck-kind').options].map((o) => o.value);
+  for (const k of ['quotes', 'numbers', 'no-personal', 'links']) assert.ok(!values.includes(k), `${k} is not offered yet`);
+  assert.ok(values.includes('words'), 'the other kinds still are');
+});

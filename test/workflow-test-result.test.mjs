@@ -198,3 +198,19 @@ test('U-T10 (F18): a script run with no verdict checked nothing and is Not met; 
   assert.equal((await run({ status: 'blocking', summary: 'Too long', verdict: { issues: [{ severity: 'major', message: 'x' }] } })).met, false);
   assert.deepEqual(await run({ status: 'clean', summary: '', verdict: { issues: [] } }), { met: true, value: 'Met' });
 });
+
+test('fix round 1: a readSources error is Worca\'s own problem for the quotes and numbers checks; the other checks still run', async () => {
+  const t = await seedTry({ work: { 'brief.md': BRIEF } });
+  const example = { basics: {}, checks: [
+    { id: 'q1', ...normaliseCheck({ kind: 'quotes' }).check },
+    { id: 'n1', ...normaliseCheck({ kind: 'numbers' }).check },
+    { id: 'f1', ...normaliseCheck({ kind: 'file', name: 'brief.md' }).check },
+  ] };
+  let reads = 0;
+  const v = await checkTry(example, await readTryOutcome(t.id), { readSources: () => { reads += 1; throw new Error('database is locked'); } });
+  assert.deepEqual(v.checks.map((c) => c.met), [false, false, true]);
+  assert.deepEqual(v.checks.slice(0, 2).map((c) => c.worcaProblem), [true, true]);
+  assert.match(v.checks[0].value, /^Not run: /);
+  assert.equal(v.checks[2].worcaProblem, undefined);
+  assert.equal(reads, 1, 'the failed read is not retried for the second check');
+});

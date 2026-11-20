@@ -69,3 +69,36 @@ test('exampleSourcesText: the request, the answers and the UTF-8 files; binary f
     { name: 'b.png', data: Buffer.from([0xff, 0xfe, 0x00, 0x81]) }] });
   assert.equal(text, 'Write the brief.\n\nFormats?\nPDF and CSV.\n\nInterview: 200 invoices');
 });
+
+test('fix round 1: a quote after a CRLF blank line is still found, and a quote never spans one', () => {
+  assert.deepEqual(quotesIn('The 27" monitor.\r\n\r\nShe said "I export every month and it stops" ok'), ['I export every month and it stops']);
+  assert.deepEqual(quotesIn('An open " mark.\r\n\r\nShe said "I export every month and it stops" ok'), ['I export every month and it stops']);
+});
+
+test('fix round 1: bracketed ellipses split a quote like a bare one', () => {
+  assert.deepEqual(quotesCheck('A customer: "I export every month [...] at 200 invoices".', FILES), { met: true, value: 'Met' });
+  assert.deepEqual(quotesCheck('A customer: "I export every month (…) at 200 invoices".', FILES), { met: true, value: 'Met' });
+  assert.deepEqual(quotesCheck('A customer: "I export every month […] at 200 invoices".', FILES), { met: true, value: 'Met' });
+  assert.equal(quotesCheck('A customer: "I would pay twice [...] for this tomorrow".', FILES).met, false);
+});
+
+test('fix round 1: heading section numbers and clock times are not numbers', () => {
+  assert.deepEqual(numbersIn('## 1.1 Scope\n### 2.3 Risks\nWe have 140 tickets.').map((x) => x.n), ['140']);
+  assert.deepEqual(numbersIn('The call is at 14:00 and ends 9:30, for 140 tickets.').map((x) => x.n), ['140']);
+  assert.deepEqual(numbersCheck('## 1.1 Scope\nMeeting at 14:00. Tickets: 140 a month.', FILES), { met: true, value: 'Met' });
+  assert.deepEqual(numbersIn('Version 1.1 shipped, 2026 was the year.').map((x) => x.n), ['1.1', '2026'], 'prose numbers and years stay');
+});
+
+test('fix round 1: a number past 2 MB of sources is found; the result side stays capped', () => {
+  const sources = `${'filler words '.repeat(200000)}\nThe total was 4711 invoices.`;
+  assert.ok(sources.length > 2 * 1024 * 1024);
+  assert.deepEqual(numbersCheck('There were 4711 invoices.', sources), { met: true, value: 'Met' });
+  const longResult = `${'x'.repeat(2 * 1024 * 1024 + 10)} 4711`;
+  assert.deepEqual(numbersCheck(longResult, sources), { met: true, value: 'No numbers' }, 'the result is scanned only up to the cap');
+});
+
+test('fix round 1: two phone numbers separated by a space are both found', () => {
+  assert.equal(personalData('Tel 030 1234567 030 7654321').phones, 2);
+  assert.equal(personalData('Tel 030 1234567').phones, 1);
+  assert.equal(personalData('Call +49 30 1234567 or +49 30 7654321').phones, 2);
+});

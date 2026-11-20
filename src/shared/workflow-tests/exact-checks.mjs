@@ -11,7 +11,7 @@ export function normLoose(s) {
   return String(s ?? '').normalize('NFKC').replace(/[‘’‚‛`´]/g, "'").replace(/[“”„‟«»]/g, '"').replace(/[‐‑‒–—―]/g, '-')
     .replace(/[*_#>]/g, '').replace(/\s+/g, ' ').trim().toLowerCase();
 }
-const straight = (s) => String(s ?? '').normalize('NFKC').replace(/[“”„‟«»]/g, '"');
+const straight = (s) => String(s ?? '').normalize('NFKC').replace(/\r\n?/g, '\n').replace(/[“”„‟«»]/g, '"');
 const words = (s) => s.split(/\s+/).filter((w) => /[\p{L}\p{N}]/u.test(w)).length;
 
 /** Text in double quotation marks of at least four words (shorter ones are names and terms). A quote never spans a blank line. */
@@ -36,7 +36,7 @@ export function quotesCheck(text, sources) {
   if (!quotes.length) return { met: true, value: 'No quotes' };
   const hay = normLoose(sources);
   const bad = quotes.filter((q) => {
-    const parts = normLoose(q).split(/\s*(?:\.\.\.|…)\s*/).map((p) => p.replace(/^[\s,.;:!?'"-]+|[\s,.;:!?'"-]+$/g, '')).filter((p) => p.length >= 3);
+    const parts = normLoose(q).split(/\s*[[(]?(?:\.\.\.|…)[\])]?\s*/).map((p) => p.replace(/^[\s,.;:!?'"-]+|[\s,.;:!?'"-]+$/g, '')).filter((p) => p.length >= 3);
     return !parts.length || !parts.every((p) => hay.includes(p));
   });
   return bad.length ? { met: false, value: `Not in the files: "${clip(bad[0])}"${more(bad.length - 1)}` } : { met: true, value: 'Met' };
@@ -46,13 +46,18 @@ const NUM_RE = /(?<![\p{L}\p{N}_.,])(\d{1,3}(?:[,  ]\d{3})+|\d+)(?:[.,](\d+))?(
 /** M7, M8: a date (2026-11-19, 19.11.2026, 01/02/2026), with a time after it (12:30), is neither a number of the result nor a phone number. */
 const DATE_RE = /(?<![\d.\/-])(?:\d{4}-\d{1,2}-\d{1,2}|\d{1,2}[./]\d{1,2}[./]\d{2,4})(?:,?\s+\d{1,2}:\d{2})?(?![\d.\/-]?\d)/g;
 const blankDates = (s) => s.replace(DATE_RE, (m) => ' '.repeat(m.length));
+const HEAD_NUM_RE = /^(\s*#{1,6}\s+)\d+(?:\.\d+)*\.?(?=\s)/;   // "## 1.1 Scope": a section number, not a number of the text
+const TIME_RE = /\b\d{1,2}:\d{2}\b/g;   // 14:00
 const LIST_MARK_RE = /^(\s*(?:#{1,6}\s+)?(?:[-*+]\s+)?)\d{1,3}[.)](?=\s)/;
 /** The numbers of a text: "1,200" → 1200, "3.50" → 3.5, "60 %" → 60. A list marker or numbered heading ("1.", "## 2)") and a
  *  single digit without a per cent sign are skipped. `shown` is the number as written. */
-export function numbersIn(text) {
+export function numbersIn(text, { cap = true } = {}) {
   const out = [];
-  for (const raw of String(text ?? '').normalize('NFKC').slice(0, MAX_SCAN).split(/\r?\n/)) {
-    const line = blankDates(raw.replace(LIST_MARK_RE, (m, lead) => `${lead}${' '.repeat(m.length - lead.length)}`));
+  const all = String(text ?? '').normalize('NFKC');
+  const blankTo = (m, lead) => `${lead}${' '.repeat(m.length - lead.length)}`;
+  // The result side is capped (MAX_SCAN); the sources side is not, so a number past 2 MB is still found (a linear scan, no backtracking).
+  for (const raw of (cap ? all.slice(0, MAX_SCAN) : all).split(/\r?\n/)) {
+    const line = blankDates(raw.replace(HEAD_NUM_RE, blankTo).replace(TIME_RE, (m) => ' '.repeat(m.length)).replace(LIST_MARK_RE, blankTo));
     for (const m of line.matchAll(NUM_RE)) {
       const whole = m[1].replace(/[,  ]/g, '');
       if (!m[2] && !m[3] && whole.length === 1) continue;
@@ -66,7 +71,7 @@ export function numbersIn(text) {
 export function numbersCheck(text, sources) {
   const nums = numbersIn(text);
   if (!nums.length) return { met: true, value: 'No numbers' };
-  const have = new Set(numbersIn(sources).map((x) => x.n));
+  const have = new Set(numbersIn(sources, { cap: false }).map((x) => x.n));
   const bad = [...new Set(nums.filter((x) => !have.has(x.n)).map((x) => x.shown))];
   return bad.length ? { met: false, value: `Not in the files: ${bad.slice(0, 3).join(', ')}${more(bad.length - 3)}` } : { met: true, value: 'Met' };
 }
@@ -107,7 +112,9 @@ export function personalData(text) {
   const cards = blank((t.match(CARD_RE) || []).filter((c) => luhnValid(c.replace(/\D/g, ''))));
   const emails = blank(t.match(EMAIL_RE) || []);
   t = blankDates(t);   // M7
-  const phones = (t.match(PHONE_RE) || []).filter((p) => { const n = p.replace(/\D/g, '').length; return n >= 9 && n <= 15; }).length;
+  const digits = (p) => p.replace(/\D/g, '').length;
+  // Two numbers side by side ("030 1234567 030 7654321") match as one of more than 15 digits: split it before each "0" or "+".
+  const phones = (t.match(PHONE_RE) || []).flatMap((p) => (digits(p) > 15 ? p.split(/ (?=[+0])/) : [p])).filter((p) => digits(p) >= 9 && digits(p) <= 15).length;
   return { emails, phones, ibans, cards };
 }
 export function personalCheck(text) {
