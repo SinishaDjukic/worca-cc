@@ -4,7 +4,7 @@ import { requireFlag } from '../flags.mjs';
 import { actorOf } from '../identity.mjs';
 import * as store from './store.mjs';
 import * as cs from './criteria-store.mjs';
-import { trustFor, byCriterionOf, likedFromPipeline, trustReportOf } from './criteria-read.mjs';
+import { trustFor, byCriterionOf, likedFromPipeline, trustReportOf, trustOfExample } from './criteria-read.mjs';
 import { findPipelineRowById } from '../artifacts.mjs';
 import { pastRunSummary, usablePastRun, NOT_TESTABLE_REASONS } from './service.mjs';
 import { mainResult } from './result.mjs';
@@ -27,6 +27,7 @@ export const CRITERIA_ROUTES = Object.freeze([
   ['DELETE', `${W}/examples/:ex/liked`],
   ['POST', `${W}/examples/:ex/checker/:round/reword`],
   ['POST', '/api/workflow-tests/suggest-criteria'],
+  ['GET', `${W}/examples/:ex/criteria`],
 ].map(([method, path]) => Object.freeze({ method, path })));
 
 const num = (v, what) => {
@@ -101,6 +102,8 @@ export function registerCriteriaRoutes(app, { runner = null, criteriaJudge = nul
     void runner.checkCriteriaLater(run);   // throws BUSY synchronously; never rejects afterwards (it logs)
     res.status(202).json({ checking: true });
   });
+  // Task 18 (boards 2, 32): how far Worca's checking of each of the example's criteria is trusted, for the editor's rows.
+  route('GET', `${W}/examples/:ex/criteria`, async (req, res) => res.json({ trust: trustOfExample(exampleOf(req)) }));
   // D101: the result you liked: an uploaded file, a try's result, or a run's result; DELETE takes it back.
   route('PUT', `${W}/examples/:ex/liked`, async (req, res) => {
     const ex = exampleOf(req);
@@ -188,6 +191,5 @@ export function registerCriteriaRoutes(app, { runner = null, criteriaJudge = nul
     if (out.error === 'limit') throw store.testError(LIMIT_TEXT, 'NOT_READY');
     res.json({ suggestions: out.suggestions });
   });
-  void exampleOf;   // defined here for Task 18 (4a) and Tasks 12-15 (4b), which use it
   return { runner, criteriaJudge, deps };
 }

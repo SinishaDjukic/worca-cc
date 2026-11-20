@@ -134,6 +134,16 @@ test('GET judge-models lists Claude models with a suggestion', async () => {
   assert.equal(typeof r.body.suggested.id, 'string');
 });
 
+test('Task 18: GET an example\'s criteria gives the trust of each criterion; another workflow\'s example is 404', async () => {
+  const ex = store.listExamples('wf_api_c')[0];
+  const r = await call('GET', `${WF}/examples/${ex.id}/criteria`);
+  assert.equal(r.status, 200);
+  assert.deepEqual(Object.keys(r.body.trust), ex.criteria.map((c) => c.id));
+  assert.equal(typeof r.body.trust[ex.criteria[0].id].state, 'string');
+  assert.equal((await call('GET', `/api/workflows/wf_other/tests/examples/${ex.id}/criteria`)).status, 404);
+  assert.equal((await call('GET', `${WF}/examples/999999/criteria`)).status, 404);
+});
+
 test('by criterion, the overview trust counts and the plan estimate', async () => {
   const run = store.listTestRuns('wf_api_c')[0];
   const r = await call('GET', `${WF}/runs/${run.id}/criteria`);

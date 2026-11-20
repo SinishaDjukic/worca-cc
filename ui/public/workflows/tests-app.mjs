@@ -368,7 +368,8 @@ export function createWorkflowTests(deps) {
       draftLabel: o ? wftUseLabel('draft', o.ctx) : 'your draft', testRunning: !!(o && o.running), runningExampleIds: o && o.running ? o.running.exampleIds || [] : [], confirm: confirmModal,   // G19; F17
       // 3a (boards 32, 39): the projects to pick, whether the workflow needs one, and the overview's drift of this example's pin
       projects: wft.projects || null, needsProject: !!(o && o.needsProject), workflowName: o ? o.name : '',
-      projectView: row ? row.project : null, dateText: wftDate });
+      projectView: row ? row.project : null, dateText: wftDate,
+      judgeModels: wft.judgeModels, criteriaTrust: wft.criteriaTrust || {}, onConfirmCriterion: null });   // Task 22 adds Check the checker
   }
   async function wftOpenExample(exampleId) {
     const id = wftWorkflowId();
@@ -387,8 +388,12 @@ export function createWorkflowTests(deps) {
     const pj = await wftCall('GET', '/api/workflow-tests/projects');   // 3a: the Project select (board 32); null when not read
     const plan = await wftCall('GET', `${wftBase(id)}/plan?b=draft&tries=1`);
     const o = await wftCall('GET', wftBase(id));                      // fresh: G19 reads whether a test runs
+    // Part 4 (Task 18): the "Checked with" list, and how far Worca's checking of a saved example's criteria is trusted.
+    const jm = await wftCall('GET', `${wftBase(id)}/judge-models`);
+    const ct = exampleId != null ? await wftCall('GET', `${wftBase(id)}/examples/${exampleId}/criteria`) : null;
     if (stale()) return;
     wft = { ...wft, workflowId: id, view: 'editor', example, scripts, ...(o.ok ? { overview: o.data } : {}),
+      judgeModels: jm.ok ? jm.data : { models: [], suggested: null }, criteriaTrust: ct && ct.ok ? ct.data.trust : {},
       perTryUsd: plan.ok && plan.data.b ? plan.data.b.perTryUsd : null, projects: pj.ok ? pj.data.projects : null };
     wftSyncHash();
     wftRender();

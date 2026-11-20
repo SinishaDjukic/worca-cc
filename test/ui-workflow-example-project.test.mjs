@@ -436,3 +436,12 @@ test('U-T14 (F26): the start point reads "{branch} · {date} · "{commit subject
   assert.deepEqual(texts(doc, '.wft-pick-text'), ['main · 28 Oct · "Fix the date filter"', 'release · 28 Oct']);   // dateText is a fixed stub here
   assert.equal(doc.querySelector('.mk-dialog').textContent.includes('abc1234'), false, 'no commit id outside "For developers"');
 });
+
+test('Part 4 (Task 18, board 32): a project example\'s criteria hint says "what changed"; No project gives the result words back', () => {
+  const { root, doc } = boot(example({ criteria: [{ id: 'k_1', text: 'Adds a test that shows the rounding problem from the ticket' }], judge: null }));
+  const hint = () => root.querySelector('.wft-crit-sect .wft-grp-hint').textContent;
+  assert.equal(hint(), 'Write each one as a short sentence that is true of a good result. Worca reads what changed, answers yes or no for each sentence, and says why.');
+  const sel = root.querySelector('#wft-ex-project');
+  sel.value = ''; sel.dispatchEvent(new doc.defaultView.Event('change'));
+  assert.equal(hint(), 'Write each one as a short sentence that is true of a good result. Worca reads the result, answers yes or no for each sentence, and says why.');
+});

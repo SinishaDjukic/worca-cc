@@ -455,3 +455,12 @@ input.wft-mono[type="text"],textarea.wft-mono{font-family:var(--mono);}
 .wft-crow .code{font-family:var(--mono);overflow-wrap:anywhere;}
 .wft-res-v{min-width:0;overflow-wrap:anywhere;}
 @media (max-width:700px){.wft-crow [data-label] > .wft-res-v{flex:1 1 0;}}
+/* Part 4: Your criteria (boards 2, 32): a sentence box per criterion with its trust line under it; the exact suggestion in violet. */
+.wft-crit-lines{gap:12px;}
+.wft-crit{display:flex;flex-direction:column;gap:5px;align-self:stretch;}
+.wft-crit input{box-sizing:border-box;width:100%;min-width:0;}
+.wft-crit-meta{display:flex;flex-wrap:wrap;gap:6px 8px;align-items:center;font-size:var(--fs-meta);color:var(--ink-2);line-height:1.4;}
+.wft-crit-meta.is-exact{color:var(--violet-ink);}
+.wft-crit-meta .wft-linkbtn{font-weight:600;text-decoration:none;}
+.wft-crit-meta .wft-linkbtn:hover{text-decoration:underline;}
+.wft-crit-sect > .field{margin:10px 0 0;}

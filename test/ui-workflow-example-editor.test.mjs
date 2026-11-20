@@ -525,3 +525,33 @@ test('fix round 1: the check dialog does not list the four Part 4 kinds (quotes,
   for (const k of ['quotes', 'numbers', 'no-personal', 'links']) assert.ok(!values.includes(k), `${k} is not offered yet`);
   assert.ok(values.includes('words'), 'the other kinds still are');
 });
+
+test('Part 4 (Task 18): Your criteria and Checked with after the automatic checks; value() sends them; Switch makes an exact check', async () => {
+  const judgeModels = { models: [{ id: 'claude-opus-5-5', label: 'Opus 5.5' }, { id: 'claude-haiku-4-5', label: 'Haiku 4.5' }],
+    suggested: { id: 'claude-opus-5-5', label: 'Opus 5.5', suggested: true } };
+  const ex = { ...example(), criteria: [{ id: 'k_1', text: 'Names a success metric' }, { id: 'k_2', text: 'Mentions the 200 invoices limit' }],
+    judge: { model: 'claude-haiku-4-5' } };
+  const { root, doc, ed } = boot(ex, { ctx: { judgeModels, criteriaTrust: { k_1: { state: 'collecting', n: 4, agree: 4, decides: true } } } });
+  const grps = [...root.querySelectorAll('.wft-c3 .wft-grp')].map((g) => g.textContent);
+  assert.deepEqual(grps, ['Basics', 'Automatic checks', 'Your criteria']);
+  assert.match(root.querySelectorAll('.wft-crit')[0].textContent, /Worca has 4 of the 10 answers it needs/);
+  assert.equal(doc.getElementById('wft-judge').value, 'claude-haiku-4-5');
+  assert.deepEqual([ed.value().criteria, ed.value().judge], [ex.criteria, { model: 'claude-haiku-4-5' }]);
+  click(root.querySelectorAll('.wft-crit')[1].querySelector('button.wft-switch'));
+  assert.ok(doc.querySelector('.wft-dlg-ok'), 'Switch opens the check dialog');
+  doc.querySelector('#wft-ck-kind').value = 'mentions';
+  doc.querySelector('#wft-ck-kind').dispatchEvent(new doc.defaultView.Event('change'));
+  const text = doc.querySelector('#wft-ck-text');
+  text.value = '200'; text.dispatchEvent(new doc.defaultView.Event('input'));
+  click(doc.querySelector('.wft-dlg-ok'));
+  await tick();
+  assert.equal(ed.value().checks.at(-1).text, '200', 'the exact check joins the checks');
+  assert.deepEqual(ed.value().criteria.map((c) => c.id), ['k_1'], 'and the criterion leaves the list (I8)');
+  assert.equal(root.querySelectorAll('.wft-crit').length, 1);
+});
+
+test('Part 4 (Task 18): no models read: an empty select, and no judge is sent', () => {
+  const { root, ed } = boot({ ...example(), criteria: [], judge: null });
+  assert.equal(root.querySelector('.wft-crit-sect .wft-grp-hint').textContent.includes('Worca reads the result'), true);
+  assert.deepEqual([ed.value().criteria, ed.value().judge], [[], null]);
+});

@@ -6,6 +6,7 @@ import { el, btn, iconBtn, seg, field, card, testDialog, sentence, BUSY_HINT, st
 import { makeSwitch } from '../switch.mjs';
 import { icon } from '../icons.mjs';
 import { withButton } from '../feedback.mjs';
+import { renderCriteriaSection } from './criteria-editor.mjs';
 import {
   CHECK_KINDS, PROJECT_KINDS, PART4_KINDS, CHECK_KIND_LABELS, DEFAULT_BASICS, PROJECT_FILE_KIND_LABEL, COMMAND_TIMEOUTS, checkLabel, normaliseCheck, normaliseBasics, fmtUsd, parseUsd,
 } from '../../../src/shared/workflow-tests/checks.mjs';
@@ -300,7 +301,8 @@ function basicRow(doc, id, text, on, extra = null, after = null) {
  * @returns {{value: () => object}}
  */
 export function renderExampleEditor(root, ex, actions, { doc, win, scripts = [], perTryUsd = null, draftLabel = 'your draft', testRunning = false,
-  runningExampleIds = [], confirm = null, projects = null, needsProject = false, workflowName = '', projectView = null, dateText = (s) => s }) {
+  runningExampleIds = [], confirm = null, projects = null, needsProject = false, workflowName = '', projectView = null, dateText = (s) => s,
+  judgeModels = { models: [], suggested: null }, criteriaTrust = {}, onConfirmCriterion = null }) {
   const listed = scripts;
   const lib = Array.isArray(scripts) ? scripts : [];
   const draft = clone({ ...BLANK_EXAMPLE, ...ex });
@@ -484,6 +486,7 @@ export function renderExampleEditor(root, ex, actions, { doc, win, scripts = [],
   c1.append(field(doc, 'Name of the example', name, { id: name.id }), field(doc, 'Request', request, { id: request.id }), field(doc, 'Files', files));
   const c1Hint = c1.querySelector(':scope > .hint');
   let checksHint = null;   // card 3's Automatic checks hint (below)
+  let crit = null;   // Part 4: Your criteria (below); its hint follows the project too
 
   // ── 1b. Where it starts (board 32; board 39's states; D41, D63, P2–P4) ──
   const reg = (key) => (Array.isArray(projects) ? projects.find((p) => p.key === key) : null) || null;
@@ -624,6 +627,7 @@ export function renderExampleEditor(root, ex, actions, { doc, win, scripts = [],
     if (usableProject && !setup.dataset.touched) setup.value = stored && stored.key === pick.key ? (stored.setupCmd || '') : (r.setupCmd || '');
     c1Hint.textContent = pick.key ? CARD1_HINT_PROJECT : P2_CARD1_HINT;
     if (checksHint) checksHint.textContent = pick.key ? CHECKS_HINT_PROJECT : P2_CHECKS_HINT;
+    if (crit) crit.setProject(!!pick.key);
     paintBusy();
   };
   /** A start button's load: disabled by paintBusy (busyWhile), and aria-busy while it runs. */
@@ -762,6 +766,12 @@ export function renderExampleEditor(root, ex, actions, { doc, win, scripts = [],
   checksHint = el(doc, 'p', 'wft-grp-hint', P2_CHECKS_HINT);   // C3; a project example's is board 32's (paintWhere)
   sect.append(el(doc, 'p', 'wft-grp', 'Automatic checks'), checksHint, lines);
   c3.append(sect);
+  // Part 4 (boards 2, 32): Your criteria and Checked with, after the automatic checks. Switch (D94) is handled here, where the
+  // draft's checks live (review I8): the new check joins draft.checks, and the criterion leaves the section's own list.
+  crit = renderCriteriaSection(doc, draft, { models: judgeModels, trust: criteriaTrust, project: !!pick.key, onConfirm: onConfirmCriterion,
+    onSwitch: (c, alt) => openCheckDialog({ doc, win, scripts: listed, project: !!pick.key, suggest: { criterion: c, alt },
+      onSave: (nc) => { draft.checks.push(nc); repaintCheckRows(); crit.remove(c); } }) });
+  c3.append(crit.el);
 
   const cols = el(doc, 'div', 'wft-cols');
   const left = el(doc, 'div', 'wft-col');
@@ -796,7 +806,7 @@ export function renderExampleEditor(root, ex, actions, { doc, win, scripts = [],
         maxCostUsd: rows.cost.input.checked ? orNull(readMoney()) : null,
         maxSentBack: rows.fix.input.checked ? orNull(readFix()) : null,
       },
-      checks: draft.checks, tries: draft.tries, note: noteBox.value.trim() || null,
+      checks: draft.checks, tries: draft.tries, note: noteBox.value.trim() || null, ...crit.read(),
       // D41, P2–P4: the server keeps the pin unless the key, the branch (`ref`), `repin` or the changes switch say otherwise.
       // The setup only while "For developers" shows: '' clears it; left out, the server keeps the pin's.
       project: !pick.key ? null : {
