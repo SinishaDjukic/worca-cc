@@ -192,9 +192,9 @@ a call's cost is known only once the model reports it.
 answers you can submit answers, edit the spec, add files or start a round. Only what you accept or submit reaches the
 interview. **Send**, **Accept** and **Clear chat** wait while Worca answers.
 
-**Starting from the chat.** The Ask panel's **Pull feature** (see [Pull from Requirements](#pull-from-requirements)) starts a run
-from a feature without leaving the chat: its card shows in the thread, titled with the feature, and tracks the run like any other.
-It is not the same as **Feature chat**, which talks about a feature; this one builds it.
+**Using a feature in another chat.** The Ask panel's **Pull from Requirements** (see [Pull from Requirements](#pull-from-requirements))
+attaches a started feature's spec to a message, so a chat can use it without leaving the chat. It is not the same as **Feature chat**,
+which talks about a feature and its interview; the attached text is context only.
 
 **Clear chat** (⋯) deletes the feature's chat; changes you accepted stay in the spec. An archived feature's chat can be read,
 not used. Everything here is behind the `requirements` flag.
@@ -341,34 +341,51 @@ waits for you, on a question, a gate or the Auto confirmation, says **Waiting fo
 
 ## Pull from Requirements
 
-You do not have to leave **New run** or **Chat** to build a feature you have specified.
+You do not have to leave **New run** or **Chat** to build with a feature you have specified: **attach** it. Attaching sends or starts
+nothing. The features go along when you click **Send** or **Run**.
 
-- **New run**: **Pull from Requirements** (under the project or workspace pickers) lists the active features of the project or
-  workspace you picked, searchable by name, each with its state and "Ready N of 6". Pick one and it opens the same **Start this run**
-  step as **Start in Worca**, with the note field below. A start opens the run page.
-- **Chat**: **Pull feature** in the composer's add-ons does the same for the chat's project or workspace, and the run's card is
-  posted into the thread. A chat with no project or workspace says to pick one first.
+- **New run**: **Pull from Requirements** (next to the Source switch) opens a picker with a search box, a checkbox on each feature and
+  **Attach N**. It lists the active features of the project or workspace you picked as the Target. With no Target yet, the picker has a
+  project chooser inside it.
+- **Chat**: **Pull from Requirements** (next to the project button in the composer) does the same for the chat's project or workspace.
+  A chat with no project asks for one in the picker.
+- **`#` in the box**: type `#` at the start of a word, or after a space, and a list of the scope's features opens. Keep typing to
+  search by title or `FEAT-7`. The arrows move, **Enter** attaches the highlighted feature (it never sends or starts), **Tab** cycles the
+  project and **Esc** closes. Only the `#` and what you typed after it are removed from your text. A Markdown heading (`# ` followed by a
+  space) is left alone.
 
-Both start the run **exactly as Start in Worca does** (the same server path): the spec is the task, a feature that is not Ready asks
-for a reason first, an archived feature cannot start, and the start shows under **Runs from this feature**. Neither entry starts a
-run without the feature's own checks. Both are behind the `requirements` flag, like the page.
+Each attached feature shows as a card under the box with its title, ID and number of criteria, and an **x** to remove it. The button
+reads **N features** while some are attached. You can attach up to 10. Features you attach are kept when you leave the page and come
+back, and checked again when you return.
 
-**The note.** The **Note for this run (optional)** field (up to 2,000 characters) holds instructions for this run only. It is added to
-the end of the run's task as *Extra instructions for this run*, followed by the line "Where these instructions conflict with the spec
-above, follow these instructions for this run." The spec itself never changes. The feature page shows the note under the run, in
-**Runs from this feature**.
+**Context only.** The feature's spec text goes into the message or the run's task. Nothing else travels: no files or brief documents,
+and no run is linked to the feature. Neither entry writes a start, a turn or a ticket comment, so the feature page's **Runs from this
+feature** does not list these runs. **Start in Worca** works as before.
 
-**The contradiction check.** Before the run starts, a note that is not empty is checked against the spec by one short call to the
-feature's helper model. It reports only obvious contradictions (a note that adds detail or narrows the work is not one). It is
-**advisory**: when it finds one, the overlay says **Your note may conflict with the spec**, quotes the part and says which part of the
-spec it contradicts, and offers **Edit note** or **Start anyway**. When the check cannot run (no reply, an unreadable reply, the
-spending limit, a timeout), there is no warning and the run starts normally. A start that went on after a warning is marked **Overrode
-the spec** on the feature page. Each check is one model call, counted as Requirements spend; in mock mode a note holding the text
-`[conflict]` raises a warning and costs nothing.
+**Which text.** The text comes from the feature's **latest started version**, never from the draft you may be editing, and it is read
+again when you click Send or Run. The task text is optional in New run: with features attached, the run's title is the first feature's
+title, or `<title> + N more`.
 
-**A run is already going.** When the feature already has a run that has not ended, Worca says so before the setup opens (*This
-feature already has a run in progress.*). **Start another** goes on, **Cancel** stops. The server checks the same thing, so two people
-or two tabs cannot start a second run by accident.
+**Only what this scope holds.** Search and the picker offer only features of the project (or workspace) you picked. A feature that was
+never started is listed as **Not started yet** and cannot be attached. A feature that is archived or deleted, or no longer in this
+project, shows on its card and blocks **Send** and **Run** until you remove it. Changing the project or workspace with features attached
+first asks **Remove features and change** or **Cancel**; Cancel changes nothing.
+
+**Ready means the latest start was Ready.** For an attached feature that was not Ready when it last started, the run pauses before any
+work starts, in every workflow, and shows the Requirements card: each feature with **Agreed** on the Ready ones, and one **Agree and
+plan** for the rest. Away mode and `--yes` never agree for you. Nothing pauses when every attached feature was Ready, and a run
+that resumes does not ask again once you agreed. A Chat message starts no run, so it has no pause.
+
+**A run is already going.** In New run, when an attached feature already has a run that has not ended, Worca says so and asks you to
+confirm before it starts yours.
+
+**In the chat.** A sent message shows each feature as a card. Click it to read the requirements it carried in place; that text is a
+snapshot from the moment you sent, and does not change when the feature does. If the feature has since been archived or deleted, the card
+says *This feature is no longer available.* A chat proposal card started with **Run** or **Shape it first** carries the features of the
+message it answers.
+
+Both entries are behind the `requirements` flag, like the page: with it off the button and `#` are gone, a card says **Requirements
+unavailable**, and nothing is sent.
 
 ## Follow-up rounds
 

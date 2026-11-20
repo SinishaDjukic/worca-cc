@@ -754,7 +754,14 @@
           ".form-msg.req-msg-warn",
           "a.chip.req-export-chip",
           ".fp-",
-          ".feature-pick"
+          ".feature-pick",
+          ".ask-chip-feature",
+          ".ask-chip-id",
+          ".ask-chip-status",
+          ".mention-item[aria-disabled",
+          ".sent-feature",
+          ".shape-attached-list",
+          ".attached-feature"
         ],
         "feature": "requirements",
         "name": "requirements"

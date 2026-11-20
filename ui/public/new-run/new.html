@@ -169,11 +169,6 @@
                   <small class="hint">Global: the rules every project shares. Project: this project's memory. The run restructures that scope and nothing else. The task text is optional, and it runs with the Normal guardrails unless you pick another set.</small>
                 </div>
 
-                <!-- Pull a feature from Requirements: outside the advanced-only Task source field, so basic level sees it. -->
-                <div class="field field-compact" id="pull-field" data-flag="requirements">
-                  <button type="button" class="btn fp-pull-btn" id="pull-from-requirements" data-flag="requirements" hidden>Pull from Requirements</button>
-                </div>
-
                 <!-- Task source switch; the panes below span the full width. -->
                 <div class="field field-compact" id="source-field" data-min-level="advanced">
                   <label>Task source</label>
@@ -184,6 +179,13 @@
                   <!-- hidden radios kept as the source of truth read at submit -->
                   <input type="radio" name="source" value="prompt" checked hidden />
                   <input type="radio" name="source" value="markdown" hidden />
+                </div>
+
+                <!-- Attach Requirements features: right after the Task source switch, but outside the advanced-only field so basic level sees it. -->
+                <!-- No data-flag on the wrapper or the strip: with Requirements off, attached cards must stay visible to say "Requirements unavailable". -->
+                <div class="field field-compact" id="pull-field" hidden>
+                  <button type="button" class="btn fp-pull-btn" id="pull-from-requirements" data-flag="requirements" hidden>Pull from Requirements</button>
+                  <div class="ask-chips" id="attach-cards" hidden></div>
                 </div>
 
                 <div class="field">

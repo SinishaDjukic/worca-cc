@@ -15,3 +15,30 @@
 .feature-pick-row:focus-visible{outline:2px solid var(--ink);outline-offset:2px}
 .feature-pick-title{flex:1 1 auto;min-width:0;font-weight:600;overflow:hidden;text-overflow:ellipsis}
 @media (max-width:600px){.viewer-modal.req-dlg-wrap .req-dlg.feature-pick{padding:18px 16px}}
+/* Attach: the card strip under the composer, the # popover's disabled rows, the picker's rows and project chooser, the sent
+   feature card with its in-place panel and the agreement list on the run page. Tokens only; the cards sit on the existing .ask-chip. */
+.ask-chip-feature{flex-wrap:wrap;max-width:100%}
+.ask-chip-id,.ask-chip-count{font-size:11px;color:var(--ink-3);white-space:nowrap}
+.ask-chip-status{flex-basis:100%;font-size:11px;color:var(--ink-2)}
+.mention-item[aria-disabled="true"],.feature-pick-row[aria-disabled="true"]{color:var(--ink-3);cursor:not-allowed}
+.mention-item[aria-disabled="true"]:hover{background:transparent}
+.feature-pick-row[aria-disabled="true"]:hover{background:var(--panel)}
+.feature-pick-row input[type="checkbox"]{flex:none;margin:0}
+.feature-pick-row input[type="checkbox"]:focus-visible{outline:2px solid var(--ink);outline-offset:2px}
+.feature-pick-project{display:flex;flex-direction:column;gap:6px}
+.feature-pick-project select{width:100%;box-sizing:border-box}
+.sent-feature-card{display:flex;flex-direction:column;max-width:100%;border:1px solid var(--line);border-radius:var(--r-sm);background:var(--panel);color:var(--ink);font-size:12px}
+.sent-feature-head{display:flex;flex-wrap:wrap;align-items:center;gap:4px 8px;width:100%;box-sizing:border-box;padding:7px 10px;border:0;border-radius:var(--r-sm);background:transparent;color:inherit;font:inherit;text-align:left;cursor:pointer}
+.sent-feature-head:hover{background:var(--hover)}
+.sent-feature-head:focus-visible{outline:2px solid var(--ink);outline-offset:2px}
+.sent-feature-title{flex:1 1 auto;min-width:0;font-weight:600;overflow:hidden;text-overflow:ellipsis}
+.sent-feature-id,.sent-feature-count{font-size:11px;color:var(--ink-3);white-space:nowrap}
+.sent-feature-head[aria-expanded="true"] svg{transform:rotate(180deg)}
+.sent-feature-panel{max-height:320px;overflow-y:auto;padding:8px 12px 10px;border-top:1px solid var(--line)}
+.sent-feature-panel[hidden]{display:none}
+.sent-feature-note{margin-top:8px;font-size:11px;color:var(--ink-2)}
+.shape-attached-list{display:flex;flex-direction:column;gap:6px;margin:8px 0}
+.attached-feature{padding:8px 10px;border:1px solid var(--line);border-radius:var(--r-sm);background:var(--panel);font-size:13px}
+.attached-feature-title{font-weight:600}
+.attached-feature-count{color:var(--ink-3)}
+.attached-feature-agreed{color:var(--ink-2)}

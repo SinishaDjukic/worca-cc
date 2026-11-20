@@ -36,6 +36,7 @@ import { mediaToolProblems } from './graph/media-preflight.mjs';
 import { mockEnabled, runClaude } from './claude-runner.mjs';
 import { createSessionHosts } from './session-host.mjs';
 import { registryPortsFn } from './graph/registry-ports.mjs';
+import { applyAgreement, pendingAgreement, validateAgreement } from './requirements/attached-gate.mjs';
 import { checkPlan } from './shape/check.mjs';
 import { clarifyCounts, shapeScoreOf } from './shape/stats.mjs';
 import { PLAN_ASK_KIND, validatePlanAnswer, validateOutlineAnswer, renderPlanFeedback, SHAPING_FEEDBACK_PREVIEW } from './shape/run.mjs';
@@ -974,6 +975,8 @@ export class GraphOrchestrator extends RunHarness {
     // A Memory defragment run appends the scope's health (run-harness.mjs _defragBrief — '' on
     // every other run, so their document stays byte-identical).
     this._taskArtifact = { text: renderPromptArtifact(this.pipeline.promptText, this.extrasFiles) + await this._defragBrief() };
+    // Requirements features attached at start: nothing runs until the person agrees to every one that is not Ready.
+    await this._attachedAgreementGate();
     // Session groups (Task 45): one SessionHost per session the gate resolved; the kill switch builds nothing (C36).
     this._sessions = !this._sessionsDisabled && this._sessionSpecs?.length
       ? createSessionHosts({ specs: this._sessionSpecs, decisions: this._sessionDecisions, port: this._sessionPort(),
@@ -1120,6 +1123,41 @@ export class GraphOrchestrator extends RunHarness {
   }
 
   /**
+   * The agreement gate for attached Requirements features (any workflow): while any is neither Ready nor agreed, ask
+   * once, before the scheduler exists, and wait. The open ask rides the resume point, so a restart raises it again; an
+   * approve stores the agreements and re-stamps the point. A run without attached features returns at once.
+   */
+  async _attachedAgreementGate() {
+    if (!pendingAgreement(this.attachedRequirements).length) return;
+    const stamp = async () => {
+      this.state.resumePoint = this._buildResumePoint(this._graphSnapshot ?? null);
+      await this._persist();
+    };
+    await stamp();
+    const id = 'plan-attached-agreement';
+    const features = this.attachedRequirements.map((f) => ({
+      seq: f.seq, id: f.id, title: f.title, criteriaCount: f.criteriaCount ?? null,
+      markdown: typeof f.markdown === 'string' ? f.markdown : '', agreed: f.ready === true || f.agreed === true,
+    }));
+    const payload = await this._enqueueAsk(() => this._ask({
+      id, kind: PLAN_ASK_KIND,
+      plan: { attached: { features }, revisable: false },
+      validate: (raw) => {
+        const out = validateAgreement(this.attachedRequirements, raw);
+        if (!out.ok) return out;
+        return { ok: true, payload: raw.decision === 'stop' ? { decision: 'stop' } : { decision: 'approve', agreedSeqs: [...raw.agreedSeqs] } };
+      },
+    }));
+    this._checkAbort();
+    const d = payload?.decision;
+    if (d === 'stop') { this.stop(this.answeredBy(id)); this._checkAbort(); return; }
+    if (d === 'approve') this.attachedRequirements = applyAgreement(this.attachedRequirements, payload.agreedSeqs);
+    // Fail closed: the scheduler never starts while a feature is still unagreed, whatever the answer was.
+    if (pendingAgreement(this.attachedRequirements).length) throw new Error('attached requirements were not agreed');
+    await stamp();
+  }
+
+  /**
    * Serialize the run position into a JSON-safe resume-v2 point. The scheduler
    * snapshot IS the position; the manifest freezes the topology (resume never
    * re-reads the workflow row); everything else is the run identity a fresh
@@ -1183,6 +1221,7 @@ export class GraphOrchestrator extends RunHarness {
       memoryScope: this.memoryScope || null,   // agent memory §7.3: a paused defrag resumes with ONE scope (B10)
       ...(this.memoryOff ? { noMemory: true } : {}),   // #943: a run started without memory resumes without it
       ...(this.runShape ? { shape: this.runShape } : {}),
+      ...(this.attachedRequirements.length ? { attachedRequirements: this.attachedRequirements.map((f) => ({ ...f })) } : {}),
       ...(this.state.shaping ? { shaping: jsonClone(this.state.shaping) } : {}),
       checkpointRef: this.checkpointRef || null,
       checkpointRefs: { ...this.checkpointRefs },

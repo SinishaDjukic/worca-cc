@@ -67,7 +67,7 @@ function optionalBoolean(value, name) {
 
 /** The run id of the feature's newest start whose run is live (a summary that throws or is null counts as not live), or null.
  *  Reads runSummary directly, not startView: asking must not link pipelines. */
-async function liveRunId(seq, runSummary) {
+export async function liveRunId(seq, runSummary) {
   for (const start of listStarts(seq)) {
     let s = null;
     try { s = await runSummary({ runId: start.runId, pipelineId: start.pipelineId }); } catch { s = null; }
@@ -241,5 +241,29 @@ export function createRunEventHook({ notify }) {
     } catch (err) {
       console.error(`[worca-ui] requirements run link failed: ${err && err.message ? err.message : err}`);
     }
+  };
+}
+
+/** A requirements start's run as the feature shows it (A2 D10): the live entry while the server has it, else the pipeline row on
+ *  disk (after a restart). null when neither knows the run. A resume gives the run a new UUID, so the pipeline id finds the live
+ *  entry first. `href`: the live run's page while the server has it, else the saved run's History page
+ *  (#history/<projectKey | workspaces/<key>>/<pipelineId>). `settled`: the statuses that no longer wait on anyone. */
+export function createRunSummary({ liveRunEntry, readPipelineStateById, settled }) {
+  return ({ runId, pipelineId }) => {
+    const live = (pipelineId && liveRunEntry(pipelineId)) || liveRunEntry(runId);
+    const id = pipelineId || (live && live.pipelineId) || null;
+    let state = null;
+    if (id) { try { state = readPipelineStateById(id); } catch { state = null; } }
+    if (!live && !state) return null;
+    const key = state && (state.target === 'workspace' && state.workspaceKey ? `workspaces/${state.workspaceKey}` : state.projectKey);
+    return {
+      status: (live && live.status) || (state && state.status) || null,
+      phase: (state && state.phase) || null,
+      costUsd: state?.totalCostUsd ?? null,
+      pipelineId: id,
+      href: live ? `#running/${live.id}` : key && id ? `#history/${key}/${id}` : null,
+      // waits on a question, a gate or the Auto confirmation: entry.pendingQuestion, as the Running page reads it
+      waiting: !!(live && live.pendingQuestion && !settled.has(String(live.status || ''))),
+    };
   };
 }

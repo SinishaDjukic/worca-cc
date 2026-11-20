@@ -349,3 +349,17 @@ On Windows with Node 24, a plugin call that made one web request (such as Jira's
 Pull requests (add each number when it opens):
 
 - Plugins: keep a plugin's answer when its process crashes on exit (#1051)
+
+## Attach Requirements features in Chat and New run
+
+**Bring a feature you specified into a message or a run, without opening Requirements.**
+
+**Pull from Requirements** in Chat and New run now attaches features instead of starting a run. Pick them from a list with checkboxes, or type `#` in the box and search by title or `FEAT-7`. Each shows as a card with its title, ID and criteria count, up to 10. Nothing is sent or started until you click Send or Run, and the task text is optional. Only the feature's spec text goes in, from its latest started version, as context: no files, and no run linked to the feature. Features are limited to the project or workspace you picked, a feature never started cannot be attached, and an archived or deleted one blocks Send and Run until you remove it. Changing the project asks before it removes anything. If an attached feature was not Ready when it last started, the run pauses before any work and asks you to agree, in every workflow and in Away mode too. A sent message shows each feature as a card that opens the text it carried. If a feature already has a run going, New run asks you to confirm.
+
+Chips: attach with # or a picker · up to 10 · context only · latest started version · agree before work if not Ready · project scope asks first
+
+Read it: [Requirements](../requirements.md#pull-from-requirements)
+
+Pull requests (add each number when it opens):
+
+- Requirements: attach features in Chat and New run
