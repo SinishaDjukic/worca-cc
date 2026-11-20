@@ -4,7 +4,7 @@
 import { recordTestJudgeCost } from '../cost-budget.mjs';
 import { mainResult, readTryPatch } from './result.mjs';
 import { exampleSourcesText } from './sources-text.mjs';
-import { judgeCriterion, JUDGE_DEFAULTS } from './judge.mjs';
+import { judgeCriterion, judgePair, JUDGE_DEFAULTS } from './judge.mjs';
 import { SUBJECT_MAX, CHANGES_HEADING } from './judge-prompt.mjs';
 import { finishedTry } from '../../shared/workflow-tests/criteria-verdicts.mjs';
 import * as store from './store.mjs';
@@ -22,7 +22,7 @@ export async function subjectOfTry(t, { readMain = mainResult, readPatch = readT
 }
 
 export function createCriteriaJudge(deps = {}) {
-  const d = { judgeCriterion, subjectOf: (t) => subjectOfTry(t), contextOf: (ex) => exampleSourcesText(ex), book: recordTestJudgeCost, ...deps };
+  const d = { judgeCriterion, judgePair, subjectOf: (t) => subjectOfTry(t), contextOf: (ex) => exampleSourcesText(ex), book: recordTestJudgeCost, ...deps };
 
   /** D91: each criterion of `example` that `t` still needs, with the example's model. Returns the new judgements. */
   async function judgeTry(example, t, { testRunId = null, mock = false, stopped = () => false, overCap = () => false } = {}) {
@@ -66,6 +66,40 @@ export function createCriteriaJudge(deps = {}) {
       const ex = exampleOf(t.exampleId);
       if (ex) await judgeTry(ex, t, { testRunId: run.id, mock: !!t.mock, stopped, overCap });
     }
+    await judgePairs(run, { stopped, overCap });
   }
-  return { judgeTry, judgeMissing };
+
+  /** D100, P4-Q8: one pair per compared example with criteria or a result you liked: the first finished try of each side. */
+  async function judgePairs(run, { stopped = () => false, overCap = () => false } = {}) {
+    if (run.a == null) return;
+    const tries = store.triesOfRun(run.id).filter((t) => (t.status === 'passed' || t.status === 'failed') && finishedTry(t));
+    for (const id of run.exampleIds) {
+      if (stopped() || overCap()) return;
+      const ex = store.readExample(run.workflowId, id);
+      const liked = ex ? cs.readLiked(ex.id) : null;
+      if (!ex || !ex.judge || (!ex.criteria.length && !liked)) continue;
+      const first = (side) => tries.filter((t) => t.exampleId === id && t.side === side).sort((x, y) => x.tryNo - y.tryNo)[0] || null;
+      const A = first('a'); const B = first('b');
+      if (!A || !B) continue;
+      const fp = cs.pairFp(liked ? cs.likedSha(ex.id) : null);
+      const had = cs.pairJudgement(A.id, B.id);
+      if (had && had.fp === fp && !cs.RETRY_ERRORS.includes(had.error)) continue;
+      const book = (usd, costKind) => {
+        try {
+          return d.book({ workflowId: run.workflowId, exampleId: id, testRunId: run.id, purpose: 'pair', model: ex.judge.model, amountUsd: usd, costKind });
+        } catch (e) {
+          console.error(`[workflow-tests] spend not recorded: USD ${usd} (${costKind}), model ${ex.judge.model}, workflow ${run.workflowId}, example ${id}, test run ${run.id}: ${e && e.message ? e.message : e}`);
+          throw e;
+        }
+      };
+      // The pair's own budget check also reports "over" when this test's cap is reached (as for a criterion).
+      const budget = () => (overCap() ? { blocked: true } : JUDGE_DEFAULTS.budget());
+      const j = await d.judgePair({ a: await d.subjectOf(A), b: await d.subjectOf(B), liked: liked ? liked.text : null, context: d.contextOf(ex),
+        model: ex.judge.model, mock: !!(A.mock || B.mock), book }, { budget });
+      cs.insertJudgement({ workflowId: run.workflowId, exampleId: id, fp, model: ex.judge.model, purpose: 'pair', tryId: A.id, otherTryId: B.id,
+        variant: { question: liked ? 'liked' : 'better', swapped: j.swapped }, j });
+      if (j.error === 'limit') return;   // the rest wait for the next pass
+    }
+  }
+  return { judgeTry, judgeMissing, judgePairs };
 }

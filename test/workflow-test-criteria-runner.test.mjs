@@ -358,3 +358,80 @@ test('round 3: an example unknown price makes its new tries unknown, but not its
   const fresh = triesOf(example([{ text: 'Explains the legal reasons' }]), 1);   // a kept try that still misses a check
   assert.equal(sideCheckPlan([{ ex: store.readExample(WF, fresh.list[0].exampleId), kept: fresh.list }], 1).withReuse, null);
 });
+
+test('D100: one pair per compared example, blind (texts only), stored once; a second pass asks nothing', async () => {
+  const h = harness();
+  const seen = [];
+  const judge = createCriteriaJudge({
+    subjectOf: async (t) => `${TEXT} (${t.side})`, contextOf: () => '',
+    judgeCriterion: async ({ book }) => { book(0.1, 'billed'); return { met: true, reason: 'r', proof: 'Cut tickets by 60%', proofFound: true, error: null, costUsd: 0.1, ms: 1 }; },
+    judgePair: async (args) => { seen.push(args); return { winner: 'b', reason: 'r', swapped: 'b', costUsd: 0.04, error: null, ms: 1 }; },
+    book: (row) => recordTestJudgeCost(row),
+  });
+  h.deps.judgeCriteria = (ex, t, o) => judge.judgeTry(ex, t, o);
+  h.deps.judgeMissing = (run, o) => judge.judgeMissing(run, o);
+  const ex = example([{ text: 'Names a success metric' }]);
+  const runner = createTestRunner(h.deps);
+  const run = await runner.start({ workflowId: WF, kind: 'compare', a: 1, b: 'draft', exampleIds: [ex.id], tries: 1, reuseA: false });
+  await waitDone(runner, run.id);
+  const tries = store.triesOfRun(run.id);
+  const A = tries.find((t) => t.side === 'a'); const B = tries.find((t) => t.side === 'b');
+  const pairs = () => prepare("SELECT try_id, other_try_id, winner FROM wf_test_judgements WHERE purpose = 'pair'").all().map((r) => ({ ...r }));
+  assert.deepEqual(pairs(), [{ try_id: A.id, other_try_id: B.id, winner: 'b' }]);
+  assert.deepEqual(Object.keys(seen[0]).sort(), ['a', 'b', 'book', 'context', 'liked', 'mock', 'model'], 'blind: no version label reaches the question');
+  assert.deepEqual([seen[0].a, seen[0].b], [`${TEXT} (a)`, `${TEXT} (b)`]);
+  await judge.judgeMissing(store.readTestRun(run.id));
+  assert.equal(seen.length, 1, 'asked once');
+  assert.equal(pairs().length, 1);
+});
+
+test('D100: a pair call books nothing unless judgePair books; the real one books purpose pair through the default book (fails if it books nothing)', async () => {
+  const helperCall = async () => ({ text: '{"winner":"1","reason":"Clearer."}', costUsd: 0.03, costKind: 'billed' });
+  const { judgePair } = await import('../src/core/workflow-tests/judge.mjs');
+  const judge = createCriteriaJudge({ subjectOf: async (t) => `${TEXT} (${t.side})`, contextOf: () => '',
+    judgeCriterion: async () => ({ met: true, reason: 'r', proof: 'Cut tickets by 60%', proofFound: true, error: null, costUsd: 0, ms: 1 }),
+    judgePair: (args, dd) => judgePair(args, { ...dd, mock: () => false, userSignIn: () => false, helperCall }) });
+  const h = harness();
+  h.deps.judgeCriteria = (e, t, o) => judge.judgeTry(e, t, o);
+  h.deps.judgeMissing = (run, o) => judge.judgeMissing(run, o);
+  const ex = example([{ text: 'Names a success metric' }]);
+  const runner = createTestRunner(h.deps);
+  const run = await runner.start({ workflowId: WF, kind: 'compare', a: 1, b: 'draft', exampleIds: [ex.id], tries: 1, reuseA: false });
+  await waitDone(runner, run.id);
+  const rows = prepare("SELECT purpose, model, amount_usd, test_run_id, example_id FROM wf_test_judge_ledger WHERE purpose = 'pair' ORDER BY id").all().map((r) => ({ ...r }));
+  assert.deepEqual(rows, [0, 1].map(() => ({ purpose: 'pair', model: 'claude-haiku-4-5', amount_usd: 0.03, test_run_id: run.id, example_id: ex.id })));
+});
+
+test('D100: the test\'s cost limit reached stops the pair: no call, the pair stays to ask later', async () => {
+  const h = harness();
+  const calls = [];
+  const judge = createCriteriaJudge({ subjectOf: async () => TEXT, contextOf: () => '',
+    judgeCriterion: async () => ({ met: true, reason: 'r', proof: 'Cut tickets by 60%', proofFound: true, error: null, costUsd: 0, ms: 1 }),
+    judgePair: async (args, dd) => { calls.push(dd.budget()); return { error: 'limit', winner: null, reason: null, swapped: null, costUsd: 0, ms: 1 }; } });
+  h.deps.judgeCriteria = (e, t, o) => judge.judgeTry(e, t, o);
+  h.deps.judgeMissing = (run, o) => judge.judgeMissing(run, o);
+  const ex = example([{ text: 'Names a success metric' }]);
+  const runner = createTestRunner(h.deps);
+  const run = await runner.start({ workflowId: WF, kind: 'compare', a: 1, b: 'draft', exampleIds: [ex.id], tries: 1, reuseA: false });
+  await waitDone(runner, run.id);
+  await judge.judgePairs(store.readTestRun(run.id), { overCap: () => true });
+  assert.equal(calls.length, 1, 'only the first pass asked; an over-cap pass asks nothing');
+  assert.equal(cs.pairJudgement(...store.triesOfRun(run.id).sort((x, y) => (x.side < y.side ? -1 : 1)).map((t) => t.id)).error, 'limit');
+});
+
+test('D100: pairOf gives the side by side its pair (winner, reason, question, the viewer\'s answer); none without one; a pair is priced from now on', async () => {
+  const { pairOf } = await import('../src/core/workflow-tests/criteria-read.mjs');
+  const ex = example([{ text: 'Names a success metric' }]);
+  const run = store.createTestRun({ workflowId: WF, kind: 'compare', a: 1, b: 'draft', bFp: 'f', exampleIds: [ex.id], tries: 1 });
+  const mk = (side) => { const t = store.insertTry({ runId: run.id, workflowId: WF, exampleId: ex.id, use: side, fp: 'f', exampleFp: ex.fingerprint, tryNo: 1 }); store.linkTry(run.id, t.id, side); return t; };
+  const A = mk('a'); const B = mk('b');
+  assert.equal(pairOf(A, B), null);
+  assert.equal(pairOf(null, B), null);
+  const j = cs.insertJudgement({ workflowId: WF, exampleId: ex.id, fp: cs.pairFp(null), model: 'm', purpose: 'pair', tryId: A.id, otherTryId: B.id,
+    variant: { question: 'better', swapped: 'b' }, j: { winner: 'b', reason: 'B is clearer.', costUsd: 0.04, ms: 1 } });
+  cs.setAnswer(j.id, { agree: false, by: 'me' });
+  assert.deepEqual(pairOf(A, B, { by: 'me' }), { judgementId: j.id, winner: 'b', reason: 'B is clearer.', question: 'better', answer: false });
+  assert.equal(pairOf(A, B).answer, null);
+  assert.deepEqual(cs.answersFor(WF, cs.pairFp(null), 'm'), [], 'a pair answer never counts toward trust');
+  assert.ok(criteriaPlanOf(WF, [ex.id], { hasA: true }).pairsUsd !== 0, 'two calls per example are priced');
+});

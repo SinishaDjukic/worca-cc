@@ -157,3 +157,18 @@ export function recoverRounds() {
   return Number(prepare(`UPDATE wf_test_checker_rounds SET status = 'failed', detail = 'Worca restarted before this round was ready. Try again.',
       finished_at = ? WHERE status = 'making'`).run(nowIso()).changes || 0);
 }
+
+/** D100: a pair's key: "better overall", or "closer to" one liked result (its sha256, so a new liked result asks again). */
+export const PAIR_BETTER = 'pair:better';
+export const pairFp = (likedSha = null) => (likedSha ? `pair:liked:${String(likedSha).slice(0, 16)}` : PAIR_BETTER);
+/** The newest pair answer of these two tries (A, B), or null. */
+export function pairJudgement(tryA, tryB) {
+  getDb();
+  return judgementOf(prepare(`SELECT ${J_COLS} FROM wf_test_judgements WHERE purpose = 'pair' AND try_id = ? AND other_try_id = ? ORDER BY id DESC LIMIT 1`)
+    .get(Number(tryA), Number(tryB)));
+}
+export function likedSha(exampleId) {
+  getDb();
+  const r = prepare('SELECT sha256 FROM wf_test_liked WHERE example_id = ?').get(Number(exampleId));
+  return r ? r.sha256 : null;
+}

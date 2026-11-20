@@ -150,8 +150,8 @@ export function sideCheckPlan(items, tries, { mock = false } = {}) {
 }
 
 const median = (xs) => { const s = [...xs].sort((a, b) => a - b); if (!s.length) return null; const m = s.length >> 1; return s.length % 2 ? s[m] : (s[m - 1] + s[m]) / 2; };
-/** Whether the criteria phase asks the pair question (Task 14 sets it to true when it adds judgePairs). */
-const PAIRS_ASKED = false;
+/** Whether the criteria phase asks the pair question (judgePairs, Task 14). */
+const PAIRS_ASKED = true;
 /** Board 4: what one check of a criterion costs on `model`: its own last 20, else a typical call (6000 tokens in, 250 out) at its price. */
 export function judgeCallUsd(model, { rates = (m) => ratesFor('claude', m), estimate = estimateCost } = {}) {
   // The ledger has no try or criterion column, so one row is priced as one check (a check the judge asked twice books two rows,
@@ -169,7 +169,7 @@ export function judgeCallUsd(model, { rates = (m) => ratesFor('claude', m), esti
 export function criteriaPlanOf(workflowId, exampleIds = [], { hasA = false, mock = false } = {}) {
   const exs = store.listExamples(workflowId).filter((e) => (!exampleIds.length || exampleIds.includes(e.id)) && e.criteria.length && e.judge);
   if (!exs.length) return null;
-  if (mock || !PAIRS_ASKED || !hasA) return { pairsUsd: 0 };   // a mock test checks for free; pairs are asked only from Task 14 (4b)
+  if (mock || !PAIRS_ASKED || !hasA) return { pairsUsd: 0 };   // a mock test checks for free
   const price = priceMemo();
   const prices = exs.map((e) => price(e.judge.model));
   return { pairsUsd: prices.some((u) => u === null) ? null : prices.reduce((sum, u) => sum + 2 * u, 0) };
@@ -195,4 +195,12 @@ export async function likedFromPipeline(example, pipelineId, { readMain = mainRe
   const text = p && p.patch ? `${m.text}\n\n${CHANGES_HEADING}\n${p.patch}` : m.text;
   cs.putLiked(example.id, { kind: 'changes', name: `Changes from the run${on} · ${files} ${files === 1 ? 'file' : 'files'}`,
     data: utf8Clip(text, cs.LIKED_MAX), fromPipeline: pipelineId });
+}
+
+/** D100: the pair answer of an example's first tries, for the side by side (P4-M6); null without one. */
+export function pairOf(tA, tB, { by = null } = {}) {
+  if (!tA || !tB) return null;
+  const j = cs.pairJudgement(tA.id, tB.id);
+  if (!j || !j.winner) return null;
+  return { judgementId: j.id, winner: j.winner, reason: j.reason, question: j.variant && j.variant.question === 'liked' ? 'liked' : 'better', answer: cs.answerOf(j.id, by) };
 }

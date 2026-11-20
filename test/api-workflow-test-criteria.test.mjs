@@ -112,6 +112,7 @@ test('I9: the side by side carries the viewer\'s earlier answer', async () => {
   assert.equal((await call('POST', `${WF}/judgements/${j.id}/answer`, { agree: true })).status, 200);
   const r = await call('GET', `${WF}/runs/${run.id}/examples/${t.exampleId}`);
   assert.equal(r.status, 200);
+  assert.equal(r.body.pair, null, 'D100: a test of one version has no pair');
   const crit = r.body.tries.flatMap((x) => [x.a, x.b]).filter(Boolean).flatMap((v) => (v.verdict && v.verdict.criteria) || []);
   assert.equal(crit.find((c) => c.judgementId === j.id).answer, true);
 });

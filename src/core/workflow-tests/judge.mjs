@@ -10,7 +10,8 @@ import { userClaudeSignIn } from '../claude-user-settings.mjs';
 import { mockEnabled } from '../claude-runner.mjs';
 import { budgetStatus } from '../cost-budget.mjs';
 import { worcaHome } from '../projects.mjs';
-import { judgeSystemPrompt, fenceTag, SUBJECT_MAX, CONTEXT_MAX, clipText, judgePrompt, parseJudgeReply, proofFound, mockJudgement } from './judge-prompt.mjs';
+import { judgeSystemPrompt, fenceTag, SUBJECT_MAX, CONTEXT_MAX, clipText, judgePrompt, parseJudgeReply, proofFound, mockJudgement,
+  pairSystemPrompt, pairPrompt, parsePairReply } from './judge-prompt.mjs';
 
 export const JUDGE_TIMEOUT_MS = 120_000;
 /** D88: an empty folder of Part 4's own, so no project's settings, skills or CLAUDE.md load into a call. */
@@ -77,4 +78,40 @@ export async function judgeCriterion({ criterion, subject, context = '', model, 
     last = { error: 'no-proof', reason: p.reason, proof: p.proof };   // P4-Q7: asked once more, then not counted
   }
   return done(last);
+}
+
+/** D100: which of two results is better (or closer to `liked`), asked in both orders, blind. Each ask is fenced with its own tag. */
+export async function judgePair({ a, b, liked = null, context = '', model, mock = false, signal = null, book = () => {} }, d = {}) {
+  const x = { ...JUDGE_DEFAULTS, ...d };
+  const t0 = Date.now();
+  let cost = 0;
+  const done = (r) => ({ winner: null, reason: null, swapped: null, error: null, ...r, costUsd: Math.round(cost * 1e6) / 1e6, ms: Date.now() - t0 });
+  if (!String(a ?? '').trim() || !String(b ?? '').trim()) return done({ error: 'no-result' });
+  if (mock || x.mock()) return done({ winner: 'tie', reason: 'Mock check: both results look alike.', swapped: 'tie' });
+  const half = Math.floor(SUBJECT_MAX / 2);
+  const A = clipText(a, half).text; const B = clipText(b, half).text;
+  const L = liked ? clipText(liked, half).text : null; const C = clipText(context, CONTEXT_MAX).text;
+  const ask = async (first, second) => {
+    const bb = x.budget();
+    if (bb && bb.blocked) return { error: 'limit' };
+    const tag = fenceTag();
+    try {
+      const r = await modelCall({ model, system: pairSystemPrompt(tag), prompt: pairPrompt({ first, second, liked: L, context: C, tag }), signal }, x);
+      cost += r.costUsd;
+      if (r.costUsd > 0 || r.costKind === 'unknown') book(r.costUsd, r.costKind);   // P4-Q17: an unknown cost books a $0 row
+      return parsePairReply(r.text) || { error: 'unreadable' };
+    } catch (e) {
+      const s = Number(e && e.costUsd) || 0;
+      cost += s;
+      if (s > 0) book(s, (e && e.costKind) || 'billed');
+      return { error: 'failed', detail: firstLine(e) };
+    }
+  };
+  const one = await ask(A, B);
+  if (one.error) return done(one);
+  const two = await ask(B, A);
+  if (two.error) return done(two);
+  const w1 = one.winner === 'first' ? 'a' : one.winner === 'second' ? 'b' : 'tie';
+  const w2 = two.winner === 'first' ? 'b' : two.winner === 'second' ? 'a' : 'tie';
+  return done({ winner: w1 === w2 ? w1 : 'unsure', reason: one.reason, swapped: w2 });
 }

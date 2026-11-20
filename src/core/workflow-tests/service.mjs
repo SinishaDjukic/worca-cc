@@ -28,7 +28,7 @@ import { ensureStartCommit, treeBytes, freeDiskBytes, removeTryCheckout, pinStar
   commitDate, copySubject, remoteUrl } from './project-copy.mjs';
 import { parseRemoteUrl, forgeOf as forgeOfRemote, FORGE_LABEL } from '../forge.mjs';
 import { pushRemoteOf } from './guard-calls.mjs';
-import { withCriteriaFor, compareNotes, notCheckedOf, sideCheckPlan } from './criteria-read.mjs';
+import { withCriteriaFor, compareNotes, notCheckedOf, sideCheckPlan, pairOf } from './criteria-read.mjs';
 import { withJudgeModel } from './judge-models.mjs';
 import { leftOutText, folderMissingText, folderProjectText, notRegisteredText, diskRefusalText, diskRefusalOnceText, PAST_RUN_REFUSALS } from '../../shared/workflow-tests/project-text.mjs';
 import { mainResult, readTryPatch } from './result.mjs';
@@ -896,7 +896,7 @@ export async function sideBySide(workflowId, runId, exampleId, { forgeFor = null
   const labels = { a: run.a != null ? useLabel(run.a, ctx) : null, b: useLabel(run.b, ctx) };
   const m = compareModel({ examples: [{ id: ex.id, name: ex.name }], a: labels.a ? { label: labels.a } : null, b: { label: labels.b }, tries });
   return { run, compareTitle: testTitle(run, ctx, { exampleName: ex.name }), example: { id: ex.id, name: ex.name }, labels, row: m.examples[0],
-    connectors: run.connectors, tries: out,
+    connectors: run.connectors, tries: out, pair: pairOf(A[0], B[0], { by }),
     start: ex.project ? { ref: ex.project.startRef, short: ex.project.startSha.slice(0, 7), at: ex.project.startAt, sha: ex.project.startSha, subject: await subjectOfStart({ key: ex.project.key, sha: ex.project.startSha }), setupCmd: ex.project.setupCmd,
       setupMs: store.avgSetupMs(ex.id, ex.project.startCommit) } : null,
     nothingPushed: !!ex.project,
