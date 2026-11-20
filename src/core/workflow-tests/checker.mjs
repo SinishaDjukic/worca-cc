@@ -11,6 +11,7 @@ import { padded, deterministicPlants, plantSystemPrompt, plantPrompt, parsePlant
 import { SUBJECT_MAX, clipText, fenceTag } from './judge-prompt.mjs';
 import * as store from './store.mjs';
 import * as cs from './criteria-store.mjs';
+import { NOT_CHECKED } from '../../shared/workflow-tests/criteria-text.mjs';
 
 /** P4-M3's empty state, and the refusal. */
 export const NO_SOURCE_TEXT = 'Try this example once first, so Worca has a good result to break.';
@@ -53,7 +54,7 @@ export function createChecker(deps = {}) {
           prompt: plantPrompt({ criterion: criterion.text, result: clipText(good.text, SUBJECT_MAX).text, tag }) });
         if (r.costUsd > 0 || r.costKind === 'unknown') book(r.costUsd, r.costKind);   // P4-Q17: an unknown cost books a $0 row
         plants = applyPlants(good.text, parsePlantReply(r.text));
-      } catch (e) { if (Number(e && e.costUsd) > 0) book(Number(e.costUsd), e.costKind || 'billed'); }
+      } catch (e) { if (Number(e && e.costUsd) > 0 || (e && e.costKind === 'unknown')) book(Number(e.costUsd) || 0, e.costKind || 'billed'); }
     }
     plants = (plants || deterministicPlants(good.text)).slice(0, 3);
     const real = { how: null, excerpt: clip(good.text.split(/\n{2,}/).find((p) => p.trim() && !/^#/.test(p.trim())) || good.text), text: good.text };
@@ -64,10 +65,14 @@ export function createChecker(deps = {}) {
       return cs.insertJudgement({ workflowId: round.workflowId, exampleId: ex.id, criterionId: criterion.id, fp: round.fp, model: round.model, purpose,
         roundId: round.id, card, variant, subject: purpose === 'real' || purpose === 'planted' ? subject.slice(0, SUBJECT_MAX) : null, j });
     };
-    for (const [i, c] of cards.entries()) await ask(c.text, i === 0 ? 'real' : 'planted', i, { how: c.how, excerpt: clip(c.excerpt) });
+    const mainJs = [];
+    for (const [i, c] of cards.entries()) mainJs.push(await ask(c.text, i === 0 ? 'real' : 'planted', i, { how: c.how, excerpt: clip(c.excerpt) }));
     for (const [i, c] of cards.entries()) { await ask(c.text, 'again', i, null); await ask(c.text, 'again', i, null); }
     for (const [i, c] of cards.entries()) await ask(padded(c.text), 'padded', i, null);
-    cs.updateRound(round.id, { status: 'ready' });
+    // A card with no verdict (limit, failed, no proof, unreadable) is not a verdict the person can answer: the round fails, its calls stay booked.
+    const bad = mainJs.find((j) => j.met === null);
+    if (bad) cs.updateRound(round.id, { status: 'failed', detail: NOT_CHECKED[bad.error] || NOT_CHECKED.failed });
+    else cs.updateRound(round.id, { status: 'ready' });
   }
 
   async function start({ workflowId, exampleId, criterionId, by = null }) {
@@ -89,10 +94,10 @@ export function createChecker(deps = {}) {
     let round;
     try {
       round = cs.createRound({ workflowId, exampleId: ex.id, criterionId: criterion.id, fp: cs.criterionFp(criterion.text), model: ex.judge.model,
-        source: { kind: good.kind, tryId: good.tryId ?? null, pipelineId: good.pipelineId ?? null, label: good.label, mock: !!good.mock }, by });
+        source: { criterionText: criterion.text, kind: good.kind, tryId: good.tryId ?? null, pipelineId: good.pipelineId ?? null, label: good.label, mock: !!good.mock }, by });
     } catch (e) { making.delete(key); throw e; }
     const job = make(round, ex, criterion, good)
-      .catch((e) => cs.updateRound(round.id, { status: 'failed', detail: firstLine(e) }))
+      .catch((e) => { try { cs.updateRound(round.id, { status: 'failed', detail: firstLine(e) }); } catch { /* the round stays making until the next boot */ } })
       .finally(() => making.delete(key));
     if (d.inline) await job;
     return cs.readRound(round.id);
@@ -104,21 +109,28 @@ export function createChecker(deps = {}) {
     const main = js.filter((j) => j.purpose === 'real' || j.purpose === 'planted');
     const cards = main.map((j) => ({ judgementId: j.id, card: j.card, planted: j.variant && j.variant.how ? j.variant.how : null,
       excerpt: j.variant ? j.variant.excerpt : null, met: j.met, reason: j.reason, answer: anyone ? cs.latestAnswerOf(j.id) : cs.answerOf(j.id, by) }));
-    const same = main.filter((m) => js.filter((j) => j.purpose === 'again' && j.card === m.card).every((j) => j.met === m.met)).length;
-    const pad = main.filter((m) => { const p = js.find((j) => j.purpose === 'padded' && j.card === m.card); return p && p.met === m.met; }).length;
+    // An errored repeat or filler check (no verdict) is left out of the totals.
+    const reps = main.map((m) => ({ m, r: js.filter((j) => j.purpose === 'again' && j.card === m.card && j.met !== null) })).filter((x) => x.r.length > 0);
+    const same = reps.filter((x) => x.r.every((j) => j.met === x.m.met)).length;
+    const pads = main.map((m) => ({ m, p: js.find((j) => j.purpose === 'padded' && j.card === m.card && j.met !== null) })).filter((x) => x.p);
+    const pad = pads.filter((x) => x.p.met === x.m.met).length;
     const left = cards.filter((c) => c.answer === null).length;
     const ex = store.readExample(round.workflowId, round.exampleId);
     const criterion = ex ? ex.criteria.find((c) => c.id === round.criterionId) : null;
-    return { round, exampleName: ex ? ex.name : null, criterion: criterion ? criterion.text : null, source: round.source, cards, left,
-      auto: { same: { n: same, of: main.length }, padding: { n: pad, of: main.length }, proof: { n: main.filter((j) => j.proofFound).length, of: main.length } },
+    const ranOn = typeof round.source.criterionText === 'string' ? round.source.criterionText : (criterion ? criterion.text : null);
+    const changed = !!criterion && cs.criterionFp(criterion.text) !== round.fp;
+    return { round, exampleName: ex ? ex.name : null, criterion: ranOn, ...(changed ? { textChanged: true } : {}), source: round.source, cards, left,
+      auto: { same: { n: same, of: reps.length }, padding: { n: pad, of: pads.length }, proof: { n: main.filter((j) => j.proofFound).length, of: main.length } },
       costUsd: cs.roundSpentUsd(round.id), canUse: round.status === 'done' };
   }
 
   /** D96, D97: Right (true) or Wrong (false) on one card; the round is done when all four are answered. */
   async function answer(round, judgementId, right, { by = null } = {}) {
     const j = cs.readJudgement(judgementId);
+    if (round.status === 'failed') throw store.testError('This round did not finish. Start a new round.', 'BUSY');
+    if (round.status === 'making') throw store.testError('Worca is not done with this round', 'BUSY');
     if (!j || j.roundId !== round.id || (j.purpose !== 'real' && j.purpose !== 'planted')) throw store.testError(`no card ${judgementId} in this round`, 'NOT_FOUND');
-    if (round.status === 'making' || round.status === 'failed') throw store.testError('Worca is not done with this round', 'BUSY');
+    if (j.met === null) throw store.testError('Worca has no verdict on this card to answer', 'BAD_REQUEST');
     cs.setAnswer(j.id, { agree: !!right, by });
     const v = view(round, { by });
     if (v.left === 0 && round.status !== 'done') cs.updateRound(round.id, { status: 'done' });

@@ -361,7 +361,20 @@ test('Check the checker on the mock: start, read until ready, answer all four', 
   let v;
   for (let i = 0; i < 100; i += 1) { v = await call('GET', `${WF}/examples/${ex.id}/checker/${s.body.round.id}`); if (v.body.round.status !== 'making') break; await new Promise((r) => setTimeout(r, 50)); }
   assert.equal(v.body.round.status, 'ready');
+  assert.ok(v.body.cards.length === 4 && v.body.cards.every((c) => c.met !== null), 'every card has a real verdict');
   for (const c of v.body.cards) v = await call('POST', `${WF}/examples/${ex.id}/checker/${s.body.round.id}/answers`, { judgementId: c.judgementId, right: true });
   assert.equal(v.body.canUse, true);
   assert.equal(prepare('SELECT COUNT(*) AS n FROM wf_test_judge_ledger').get().n, 0);
+});
+
+test('the generic answer route refuses a verdict of a round that is not ready; the round route takes it', async () => {
+  const ex = store.listExamples('wf_api_c')[0];
+  const round = cs.createRound({ workflowId: 'wf_api_c', exampleId: ex.id, criterionId: ex.criteria[0].id, fp: 'f', model: 'm', source: {} });
+  const j = cs.insertJudgement({ workflowId: 'wf_api_c', exampleId: ex.id, criterionId: ex.criteria[0].id, fp: 'f', model: 'm', purpose: 'real',
+    roundId: round.id, card: 0, j: { met: true, reason: 'r', proof: 'p', proofFound: true, costUsd: 0, ms: 1 } });
+  const refused = await call('POST', `${WF}/judgements/${j.id}/answer`, { agree: true });
+  assert.equal(refused.status, 409);
+  assert.equal(cs.answerOf(j.id, null), null);
+  cs.updateRound(round.id, { status: 'ready' });
+  assert.equal((await call('POST', `${WF}/judgements/${j.id}/answer`, { agree: true })).status, 200);
 });

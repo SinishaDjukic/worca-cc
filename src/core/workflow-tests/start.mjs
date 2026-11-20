@@ -83,6 +83,8 @@ export function recoverTestsAtBoot({ tmpDir } = {}) {
   try {
     out.runs = recoverInterruptedTestRuns().runs;
     if (out.runs) console.log(`[worca-ui] workflow tests: ${out.runs} interrupted test(s) stopped`);
+    out.rounds = recoverRounds();
+    if (out.rounds) console.log(`[worca-ui] workflow tests: ${out.rounds} unfinished check-the-checker round(s) stopped`);
   } catch (err) {
     console.error(`[worca-ui] workflow tests sweep failed: ${err && err.message ? err.message : err}`);
   }

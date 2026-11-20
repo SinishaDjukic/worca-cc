@@ -9,7 +9,7 @@ import { findPipelineRowById } from '../artifacts.mjs';
 import { pastRunSummary, NOT_TESTABLE_REASONS } from './service.mjs';
 import { judgeModelsView } from './judge-models.mjs';
 import { budgetStatus as realBudgetStatus } from '../cost-budget.mjs';
-import { createChecker } from './checker.mjs';
+import { createChecker, LIMIT_TEXT } from './checker.mjs';
 
 const STATUS = Object.freeze({ BAD_REQUEST: 400, NOT_FOUND: 404, BUSY: 409, NOT_READY: 422 });
 const W = '/api/workflows/:id/tests';
@@ -59,6 +59,10 @@ export function registerCriteriaRoutes(app, { runner = null, criteriaJudge = nul
     const j = judgement(req);
     const agree = req.body ? req.body.agree : undefined;
     if (agree !== true && agree !== false && agree !== null) throw store.testError('agree must be true, false or null', 'BAD_REQUEST');
+    if (j.roundId != null) {   // a Check the checker card is answered through its round, and only when the round is ready
+      const r = cs.readRound(j.roundId);
+      if (!r || (r.status !== 'ready' && r.status !== 'done')) throw store.testError('Worca is not done with this round', 'BUSY');
+    }
     cs.setAnswer(j.id, { agree, by: by(req) });
     res.json({ answer: cs.answerOf(j.id, by(req)), trust: j.purpose === 'pair' ? null : trustFor(j.workflowId, j.fp, j.model) });
   });
@@ -83,7 +87,7 @@ export function registerCriteriaRoutes(app, { runner = null, criteriaJudge = nul
     }
     // The total spending limit: refused up front, as the chat's refusal words it, so no 'limit' judgement is booked for nothing.
     if ((deps.budgetStatus || realBudgetStatus)().blocked) {
-      throw store.testError('Total cost limit reached — nothing was sent to the model. Raise the limit in worca Settings.', 'NOT_READY');
+      throw store.testError(LIMIT_TEXT, 'NOT_READY');
     }
     void runner.checkCriteriaLater(run);   // throws BUSY synchronously; never rejects afterwards (it logs)
     res.status(202).json({ checking: true });

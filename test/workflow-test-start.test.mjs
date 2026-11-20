@@ -93,3 +93,11 @@ test('the boot copy sweep also takes a before run a restart left, its owner gone
   assert.deepEqual(r.beforeRuns, { runs: 1, kept: 0 });
   assert.equal(existsSync(left), false);
 });
+
+test('M18: boot fails a round a restart left making and reports how many', async () => {
+  const cs = await import('../src/core/workflow-tests/criteria-store.mjs');
+  const r = cs.createRound({ workflowId: 'wf', exampleId: 1, criterionId: 'k_1', fp: 'f', model: 'm', source: {} });
+  const tmp = mkdtempSync(join(tmpdir(), 'worca-cc-wftstart-tmp-'));
+  try { assert.equal(start.recoverTestsAtBoot({ tmpDir: tmp }).rounds, 1); } finally { rmSync(tmp, { recursive: true, force: true }); }
+  assert.equal(cs.readRound(r.id).status, 'failed');
+});

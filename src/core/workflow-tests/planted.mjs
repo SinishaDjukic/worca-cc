@@ -69,5 +69,7 @@ export function applyPlants(result, reply) {
     at = lines.slice(0, i).join('\n').length + (i ? 1 : 0);
     len = lines[i].length;
   }
-  return reply.broken.map((b) => ({ how: b.how, excerpt: b.text, text: `${t.slice(0, at)}${b.text}${t.slice(at + len)}` }));
+  const broken = reply.broken.filter((b) => b.text.trim() !== reply.excerpt.trim());   // a broken passage equal to the original breaks nothing
+  if (broken.length < 3) return null;
+  return broken.map((b) => ({ how: b.how, excerpt: b.text, text: `${t.slice(0, at)}${b.text}${t.slice(at + len)}` }));
 }

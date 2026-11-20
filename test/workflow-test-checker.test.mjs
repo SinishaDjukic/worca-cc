@@ -162,3 +162,68 @@ test('M18: a round left making by a restart is failed at boot, so the page stops
   assert.equal(cs.recoverRounds(), 1);
   assert.deepEqual([cs.readRound(r.id).status, cs.recoverRounds()], ['failed', 0]);
 });
+
+test('a check that errors on a real or planted card fails the round, books every paid call, and no answer is accepted', async () => {
+  let n = 0;
+  const { ex, checker } = setup({ extra: { judgeCriterion: async ({ subject, book }) => { n += 1; book(0.01, 'billed');
+    if (n === 3) return { met: null, reason: null, proof: null, proofFound: false, error: 'limit', costUsd: 0.01, ms: 1 };
+    return { met: /60%/.test(subject), reason: 'r', proof: 'p', proofFound: true, error: null, costUsd: 0.01, ms: 1 }; } } });
+  const round = await checker.start({ workflowId: 'wf', exampleId: ex.id, criterionId: ex.criteria[0].id });
+  const r = cs.readRound(round.id);
+  assert.equal(r.status, 'failed');
+  assert.match(r.detail, /spending limit is reached/);
+  assert.ok(prepare("SELECT COUNT(*) AS n FROM wf_test_judge_ledger WHERE purpose = 'checker' AND round_id = ?").get(round.id).n >= 3);
+  const v = checker.view(r, { by: 'ana' });
+  await assert.rejects(checker.answer(r, v.cards[0].judgementId, true, { by: 'ana' }), { code: 'BUSY' });
+});
+
+test('answer() refuses a card whose verdict is empty, even in a ready round', async () => {
+  const { ex, checker } = setup();
+  const round = await checker.start({ workflowId: 'wf', exampleId: ex.id, criterionId: ex.criteria[0].id });
+  const j = cs.insertJudgement({ workflowId: 'wf', exampleId: ex.id, criterionId: ex.criteria[0].id, fp: round.fp, model: round.model, purpose: 'planted',
+    roundId: round.id, card: 9, j: { met: null, error: 'failed' } });
+  await assert.rejects(checker.answer(cs.readRound(round.id), j.id, true, { by: 'ana' }), { code: 'BAD_REQUEST' });
+});
+
+test('errored repeats and filler checks are left out of the totals, and the round stays ready', async () => {
+  const subjects = [];
+  const { ex, checker } = setup({ extra: { judgeCriterion: async ({ subject, book }) => { subjects.push(subject); book(0.01, 'billed');
+    const filler = subject.includes('adds no new facts');
+    if (filler && subjects.filter((s) => s.includes('adds no new facts')).length === 1) return { met: null, error: 'failed', proofFound: false, costUsd: 0.01, ms: 1 };
+    return { met: /60%/.test(subject), reason: 'r', proof: 'p', proofFound: true, error: null, costUsd: 0.01, ms: 1 }; } } });
+  const round = await checker.start({ workflowId: 'wf', exampleId: ex.id, criterionId: ex.criteria[0].id });
+  assert.equal(cs.readRound(round.id).status, 'ready');
+  assert.deepEqual(checker.view(cs.readRound(round.id), { by: 'ana' }).auto.padding, { n: 3, of: 3 });
+});
+
+test('a failed planting call that reported an unknown $0 cost books a $0 unknown row (P4-Q17)', async () => {
+  const u = setup({ extra: { modelCall: async () => { throw Object.assign(new Error('x'), { costUsd: 0, costKind: 'unknown' }); } } });
+  const r = await u.checker.start({ workflowId: 'wf', exampleId: u.ex.id, criterionId: u.ex.criteria[0].id });
+  assert.equal(prepare("SELECT COUNT(*) AS n FROM wf_test_judge_ledger WHERE round_id = ? AND cost_kind = 'unknown'").get(r.id).n, 1);
+});
+
+test('applyPlants drops a broken passage equal to the excerpt; fewer than 3 left falls back to the deterministic plants', async () => {
+  const ex0 = 'Cut export tickets by 60% within one quarter, counted by the Export tag.';
+  const reply = { excerpt: ex0, broken: [{ how: 'same', text: ex0 }, { how: 'a', text: 'Cut tickets.' }, { how: 'b', text: 'Happier.' }] };
+  assert.equal(applyPlants(GOOD, reply), null);
+  const { ex, checker } = setup({ plantReply: JSON.stringify(reply) });
+  const round = await checker.start({ workflowId: 'wf', exampleId: ex.id, criterionId: ex.criteria[0].id });
+  assert.deepEqual(checker.view(cs.readRound(round.id), { by: 'x' }).cards.map((c) => c.planted), [null, 'numbers removed', 'a made-up quote added', 'a part removed']);
+});
+
+test('the view shows the criterion text the round ran on, and says when the text was changed since', async () => {
+  const { ex, checker } = setup();
+  const round = await checker.start({ workflowId: 'wf', exampleId: ex.id, criterionId: ex.criteria[0].id });
+  assert.equal(checker.view(cs.readRound(round.id), { by: 'x' }).textChanged, undefined);
+  store.updateExample('wf', ex.id, { criteria: [{ ...ex.criteria[0], text: 'Names a success metric, with a number and a date' }] });
+  const v = checker.view(cs.readRound(round.id), { by: 'x' });
+  assert.equal(v.criterion, 'Names a success metric with a number');
+  assert.equal(v.textChanged, true);
+});
+
+test('a failed round has its own words when started again', async () => {
+  const { ex, checker } = setup({ extra: { judgeCriterion: async () => { throw new Error('x'); } } });
+  const round = await checker.start({ workflowId: 'wf', exampleId: ex.id, criterionId: ex.criteria[0].id });
+  assert.equal(round.status, 'failed');
+  await assert.rejects(checker.answer(round, 1, true, {}), { message: 'This round did not finish. Start a new round.' });
+});
