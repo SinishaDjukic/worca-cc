@@ -1,5 +1,5 @@
 // src/core/worca-levels/timeline.mjs — pure time helpers for the Worca Levels facts layer: the first
-// moment two runs were in flight together, and the person's "council" streak of busy days. No I/O,
+// moment two runs were in flight together, and the day counts behind runs-on-days and active days. No I/O,
 // no clock (the caller passes `now`), and no input is mutated.
 
 const DAY_MS = 24 * 3600 * 1000;
@@ -21,12 +21,6 @@ export function dayKey(iso, tz) {
   const parts = {};
   for (const p of formatterFor(tz).formatToParts(new Date(ms))) parts[p.type] = p.value;
   return `${parts.year}-${parts.month}-${parts.day}`;
-}
-
-// Calendar arithmetic on a 'YYYY-MM-DD' key, done on the UTC date so DST never shifts it.
-function addDays(key, n) {
-  const [y, m, d] = key.split('-').map(Number);
-  return new Date(Date.UTC(y, m - 1, d) + n * DAY_MS).toISOString().slice(0, 10);
 }
 
 // Binary min-heap of { ms, iso, id } ordered by ms.
@@ -81,35 +75,66 @@ export function firstParallelPair(intervals) {
   return best ? { at: best.at, ids: best.ids } : null;
 }
 
-// Consecutive days with at least `perDay` finishes. `metAt` is the `perDay`-th finish on the last day of
-// the first run of `days` such days; `current` is the raw run ending yesterday, plus today if it qualifies.
-export function councilStreak(finishTimes, tz, now, { days = 30, perDay = 2 } = {}) {
-  const byDay = new Map();
-  for (const t of finishTimes || []) {
-    const ms = Date.parse(t);
-    if (!Number.isFinite(ms)) continue;
-    const key = dayKey(ms, tz);
-    const list = byDay.get(key);
-    if (list) list.push(ms); else byDay.set(key, [ms]);
-  }
-  const qualifying = [...byDay.keys()].filter((k) => byDay.get(k).length >= perDay).sort();
+const ms = (iso) => Date.parse(iso);
+const dayNumber = (key) => { const [y, m, d] = key.split('-').map(Number); return Date.UTC(y, m - 1, d) / DAY_MS; };
 
-  let metAt = null;
-  let run = 0;
-  let prev = null;
-  for (const key of qualifying) {
-    run = prev !== null && addDays(prev, 1) === key ? run + 1 : 1;
-    prev = key;
-    if (run >= days) {
-      const sorted = [...byDay.get(key)].sort((a, b) => a - b);
-      metAt = new Date(sorted[perDay - 1]).toISOString();
-      break;
+// The usable rows ({ ms, row }) oldest finish first; a row with no readable finish is skipped.
+function byFinish(rows) {
+  const out = [];
+  for (const row of rows || []) {
+    const t = ms(row?.finishedAt);
+    if (Number.isFinite(t)) out.push({ ms: t, row });
+  }
+  return out.sort((a, b) => a.ms - b.ms);
+}
+
+// The active days of real-run rows ({ id, finishedAt, scheduleId }): Map<dayKey, firstFinishMs>, oldest first.
+// A day is active with one real run. Runs of one schedule count one day in total, the day of the schedule's
+// first real finish, so a repeating schedule earns a single active-day credit (D-9).
+export function activeDayKeys(rows, tz) {
+  const days = new Map();
+  const seenSchedules = new Set();
+  for (const { ms: t, row } of byFinish(rows)) {
+    if (row.scheduleId) {
+      if (seenSchedules.has(row.scheduleId)) continue;
+      seenSchedules.add(row.scheduleId);
     }
+    const key = dayKey(t, tz);
+    if (!days.has(key)) days.set(key, t);
   }
+  return days;
+}
 
-  const qualifies = new Set(qualifying);
-  const today = dayKey(now, tz);
-  let current = qualifies.has(today) ? 1 : 0;
-  for (let k = addDays(today, -1); qualifies.has(k); k = addDays(k, -1)) current += 1;
-  return { current, metAt };
+// { metAt, runs, days } over all rows: `metAt` is the finish of the first run at which both thresholds hold
+// (at least `runs` runs on at least `days` distinct local days), else null. Every run counts as a run, but the
+// runs of one schedule add a single day in total, the day of its first finish (D-9, as in activeDayKeys).
+export function firstRunsOnDays(rows, tz, { runs = 10, days = 3 } = {}) {
+  const seen = new Set();
+  const seenSchedules = new Set();
+  let count = 0;
+  let metAt = null;
+  for (const { ms: t, row } of byFinish(rows)) {
+    count += 1;
+    const repeat = !!row.scheduleId && seenSchedules.has(row.scheduleId);
+    if (row.scheduleId) seenSchedules.add(row.scheduleId);
+    if (!repeat) seen.add(dayKey(t, tz));
+    if (metAt === null && count >= runs && seen.size >= days) metAt = new Date(t).toISOString();
+  }
+  return { metAt, runs: count, days: seen.size };
+}
+
+// { inWindow, metAt } from the active-day map: `inWindow` counts the active days in [today-(window-1), today];
+// `metAt` is the first finish that completed `need` active days inside some `window`-day window. A day
+// without activity never resets anything.
+export function activeDaysWindow(dayMap, tz, now, { need = 20, window = 30 } = {}) {
+  const sorted = [...dayMap.entries()].map(([key, t]) => ({ n: dayNumber(key), t })).sort((a, b) => a.n - b.n);
+  const today = dayNumber(dayKey(now, tz));
+  const inWindow = sorted.filter((d) => d.n > today - window && d.n <= today).length;
+  let metAt = null;
+  let lo = 0;
+  for (let hi = 0; hi < sorted.length && metAt === null; hi++) {
+    while (sorted[hi].n - sorted[lo].n >= window) lo += 1;
+    if (hi - lo + 1 >= need) metAt = new Date(sorted[hi].t).toISOString();
+  }
+  return { inWindow, metAt };
 }

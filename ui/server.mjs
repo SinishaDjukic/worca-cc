@@ -351,6 +351,7 @@ import { chatScopeOf, withChatScope, sameScope, scopeBody, targetInScope, scopeR
 import { hostAllowed as askHostAllowed } from '../src/core/web-allowlist.mjs';
 import { registryPortsFn } from '../src/core/graph/registry-ports.mjs';
 import { sweepV1Runs, V1_RUN_RETIRED, getDb } from '../src/core/db.mjs';
+import { isRealRun } from '../src/core/real-run.mjs';
 import {
   registerRequirementsRoutes, requirementsChangeNotifier, REQUIREMENTS_UPLOAD_ROUTES, REQUIREMENTS_UPLOAD_JSON_LIMIT, requirementsUploadSlots,
   STATUS as REQUIREMENTS_STATUS,
@@ -493,7 +494,7 @@ import {
 import { memoryCaps } from '../src/core/settings.mjs';
 import { onboardingPrefs, setOnboardingPrefs } from '../src/core/settings.mjs';
 import { settingsErrorReply, asSettingsField } from '../src/core/settings-errors.mjs';
-import { configuredClaudeBin, onboardingStatus } from '../src/core/onboarding.mjs';   // a THIRD settings import line (the two blocks above are unrelated readers)
+import { configuredClaudeBin, ensureSetupMarker, onboardingStatus } from '../src/core/onboarding.mjs';   // a THIRD settings import line (the two blocks above are unrelated readers)
 import { probeClaudeAuth, CLAUDE_SIGNED_OUT_CODE, CLAUDE_SIGNED_OUT_MESSAGE } from '../src/core/preflight.mjs';
 import { failedBecauseSignedOut, claudeChatSignedOut, claudeRunSignedOut } from '../src/core/claude-auth.mjs';
 import { createAgentGen, resolveAgentGenModel } from '../src/core/agent-gen.mjs';
@@ -1670,6 +1671,9 @@ function wireRun(entry) {
         } catch (err) { console.error(`[worca-ui] round frame failed: ${err && err.message ? err.message : err}`); }
       }
 
+      // The run-finished message: the client cannot tell a demo or $0 run from a real one, so the done frame says
+      // (additive field). The row is persisted before the harness emits `done`; any other ending is never real.
+      if (name === 'done') event.real = entry.status === 'done' && isRealRun(entry.pipelineId);
       record(event);
       if (name === 'done') settleRunEntry(entry);
       // Only the events that can change status or pendingQuestion; log/token frames are far too
@@ -10463,6 +10467,7 @@ if (isMain) {
     }).then(() => { wroteInstanceFile = true; }, (err) => {
       console.error(`[worca-ui] could not write the instance file (\`worca ui stop\` cannot stop this server — use Ctrl+C): ${err && err.message ? err.message : err}`);
     });
+    ensureSetupMarker({ isFresh: isFreshInstall() }).catch((err) => console.error(`[worca-ui] setup marker at boot failed: ${err && err.message ? err.message : err}`));
     try { channelHost.start(); } catch (err) {
       console.error(`[worca-ui] chat channel host failed to start: ${err && err.message ? err.message : err}`);
     }

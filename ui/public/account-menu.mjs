@@ -6,8 +6,6 @@
 import { BUDGET_WARN_AT, DEFAULT_FMT, fmtResetAt, periodWord, windowSaved, signedUsd, SAVED_NOTE } from './stats-view.mjs';
 import { freeDailyRow } from './openrouter-free-view.mjs';
 import { ICONS, iconSvg } from './icons.mjs';
-import { setAvatarSrc, tooltipModel } from './worca-level/model.mjs';
-import { renderSegments } from './worca-level/segments.mjs';
 
 const SVG_NS = 'http://www.w3.org/2000/svg';
 const MONTHS = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
@@ -213,12 +211,13 @@ function paintAvatar(ava, acct, avatar) {
  *  else the initials), the short name, the away badge with its walking person (data-presence) and the label.
  *  The usage rings are usage-view.mjs `paintUsageRings`; their texts come in as `usageParts`. With an image the
  *  aria-label also names the level, and the native title carries only a block and the usage parts (none: no title). */
-export function paintAccountCorner(btn, acct, { budget = null, away = false, avatar = null, usageParts = [] } = {}) {
+export function paintAccountCorner(btn, acct, { budget = null, away = false, avatar = null, noLevel = false, usageParts = [] } = {}) {
   if (!btn) return;
   btn.dataset.account = acct.kind;
   btn.removeAttribute('data-spend');
   btn.dataset.presence = away ? 'away' : 'here';
   const dot = btn.querySelector('.acct-dot');
+  if (dot) dot.toggleAttribute('data-no-level', noLevel);   // a person with no level yet: initials and a dot
   if (dot && !dot.firstChild) dot.innerHTML = iconSvg('stepped-out', 8);   // the icon set's own literal, never data
   const ava = btn.querySelector('.acct-ava');
   const shown = avatar && typeof avatar.src === 'string' && avatar.src
@@ -248,52 +247,8 @@ export function paintIdentityCard(card, acct) {
 
 // ── Your level ───────────────────────────────────────────────────────────────
 
-const CARD_AVATAR_PX = 22;
-const TOP_NOTE = "You've reached the top level.";
-
-/** The level card, the account menu's first item: a 22px avatar, the level name and
- *  "View level"; then "To <Next>" with the progress ("1 of 4", or "12 of 30 days"); then small segments.
- *  At the top level it says so instead, with no second row and no segments. The progress is in the
- *  button's accessible name, so the segments are aria-hidden. Opens #profile/level. No data-min-level:
- *  every interface mode reaches it. null until the level view has loaded. app-wiring mounts it. */
-export function renderLevelCard(view, { doc = globalThis.document } = {}) {
-  const level = view && view.level;
-  if (!level || typeof level.name !== 'string' || !level.name) return null;
-  const m = tooltipModel(view);
-  const card = h(doc, 'button', 'wl-card');
-  card.type = 'button';
-  card.id = 'acct-level-card';
-  card.setAttribute('role', 'menuitem');
-  card.dataset.nav = 'profile';
-  card.dataset.hash = 'profile/level';
-
-  const head = h(doc, 'span', 'wl-card-head');
-  const img = h(doc, 'img', 'wl-card-ava');
-  setAvatarSrc(img, level.avatar);
-  img.setAttribute('alt', '');
-  img.setAttribute('width', String(CARD_AVATAR_PX));
-  img.setAttribute('height', String(CARD_AVATAR_PX));
-  head.append(img, h(doc, 'span', 'wl-card-name', m.name), h(doc, 'span', 'wl-card-go', 'View level'));
-  card.appendChild(head);
-
-  if (m.topLine || !m.nextName) {
-    card.appendChild(h(doc, 'span', 'wl-card-top', TOP_NOTE));
-    card.setAttribute('aria-label', `${m.name}, you've reached the top level. View level`);
-    return card;
-  }
-  const row = h(doc, 'span', 'wl-card-row');
-  row.appendChild(h(doc, 'span', 'wl-card-next', `To ${m.nextName}`));
-  if (m.segments) row.appendChild(h(doc, 'b', 'wl-card-prog', view.progress.unit === 'days' ? m.progressText : `${m.segments.done} of ${m.segments.total}`));
-  card.appendChild(row);
-  if (m.segments) {
-    const seg = renderSegments(doc, m.segments, { size: 'sm' });
-    seg.setAttribute('aria-hidden', 'true');
-    card.appendChild(seg);
-  }
-  const progress = m.progressText ? `, ${m.progressText}` : '';
-  card.setAttribute('aria-label', `${m.name}, to ${m.nextName}${progress}. View level`);
-  return card;
-}
+// The level card is the account menu's first group; worca-level/level-card.mjs builds it and app-wiring mounts it.
+export { renderLevelCard, renderNoLevelCard } from './worca-level/level-card.mjs';
 
 // ── The away row ─────────────────────────────────────────────────────────────
 
