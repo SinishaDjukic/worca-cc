@@ -4,7 +4,7 @@ import { requireFlag } from '../flags.mjs';
 import { actorOf } from '../identity.mjs';
 import * as store from './store.mjs';
 import * as cs from './criteria-store.mjs';
-import { trustFor, byCriterionOf, likedFromPipeline } from './criteria-read.mjs';
+import { trustFor, byCriterionOf, likedFromPipeline, trustReportOf } from './criteria-read.mjs';
 import { findPipelineRowById } from '../artifacts.mjs';
 import { pastRunSummary, usablePastRun, NOT_TESTABLE_REASONS } from './service.mjs';
 import { mainResult } from './result.mjs';
@@ -19,6 +19,7 @@ const W = '/api/workflows/:id/tests';
 /** Every Part 4 route, in registration order: the flag-off test walks it. Later tasks append theirs. */
 export const CRITERIA_ROUTES = Object.freeze([
   ['GET', `${W}/judge-models`],
+  ['GET', `${W}/trust`],
   ['POST', `${W}/judgements/:j/answer`],
   ['GET', `${W}/runs/:run/criteria`],
   ['POST', `${W}/runs/:run/criteria/check`],
@@ -139,6 +140,7 @@ export function registerCriteriaRoutes(app, { runner = null, criteriaJudge = nul
     const ex = exampleOf(req);
     res.status(201).json({ round: await checker.start({ workflowId: wid(req), exampleId: ex.id, criterionId: String((req.body || {}).criterionId || ''), by: by(req) }) });
   });
+  route('GET', `${W}/trust`, async (req, res) => res.json(trustReportOf(wid(req), { checker })));
   route('GET', `${W}/examples/:ex/checker/:round`, async (req, res) => { const ex = exampleOf(req); res.json(checker.view(roundOf(req, ex), { by: by(req) })); });
   route('POST', `${W}/examples/:ex/checker/:round/answers`, async (req, res) => {
     const ex = exampleOf(req);

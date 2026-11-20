@@ -1,8 +1,8 @@
 // test/workflow-test-criteria-report.test.mjs — board 12 (D99), boards 1 and 5's sentences, and board 4's estimate row.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { byCriterionModel, checkingCounts } from '../src/shared/workflow-tests/criteria-report.mjs';
-import { checkingSentence, listTrustSentence, exactLine } from '../src/shared/workflow-tests/criteria-text.mjs';
+import { byCriterionModel, checkingCounts, trustReportModel } from '../src/shared/workflow-tests/criteria-report.mjs';
+import { TRUST_TESTS, trustTestLine, checkingSentence, listTrustSentence, exactLine } from '../src/shared/workflow-tests/criteria-text.mjs';
 import { estimateOf } from '../src/shared/workflow-tests/compare.mjs';
 
 const R = { state: 'reliable', n: 20, agree: 19, decides: true };
@@ -76,4 +76,42 @@ test('review: an example whose tries all errored is not uneven; a finished try w
   assert.deepEqual(errored.rows.map((r) => r.uneven), [false]);
   const finished = byCriterionModel({ examples: [ex], hasA: true, tries: [tr(1, 'a', 'done'), tr(2, 'b', 'done')] });
   assert.deepEqual(finished.rows.map((r) => r.uneven), [true]);
+});
+
+test("trustReportModel: board 13's tiles, the six tests and what to do", () => {
+  const criteria = [
+    { exampleId: 1, exampleName: 'Bulk', criterionId: 'k_1', text: 'Names a success metric', trust: { state: 'reliable', n: 20, agree: 19, decides: true } },
+    { exampleId: 2, exampleName: 'Pricing', criterionId: 'k_2', text: 'Proposes a test within 4 weeks', trust: { state: 'unreliable', n: 10, agree: 6, decides: false } },
+    { exampleId: 3, exampleName: 'GDPR', criterionId: 'k_3', text: 'Explains the legal reason', trust: { state: 'confirm', n: 0, agree: 0, decides: true } },
+  ];
+  const rounds = [
+    { criterionText: 'Names a success metric', cards: [{ planted: null, met: true }, { planted: 'number removed', met: false }, { planted: 'x', met: false }, { planted: 'y', met: false }],
+      same: { n: 4, of: 4 }, padding: { n: 4, of: 4 } },
+    { criterionText: 'Proposes a test within 4 weeks', cards: [{ planted: null, met: true }, { planted: 'a', met: true }, { planted: 'b', met: true }, { planted: 'c', met: false }],
+      same: { n: 3, of: 4 }, padding: { n: 4, of: 4 } },
+  ];
+  const m = trustReportModel({ criteria, rounds, pairs: [{ winner: 'a', swapped: 'a' }, { winner: 'unsure', swapped: 'b' }], proofs: { found: 214, of: 216 } });
+  assert.deepEqual(m.tiles.agree, { n: 30, agree: 25 });
+  assert.deepEqual(m.tiles.planted, { caught: 4, of: 6, missedOn: ['Proposes a test within 4 weeks'] });
+  assert.deepEqual(m.tiles.trusted, { n: 1, of: 3, unreliable: 1, waiting: 1 });
+  assert.deepEqual(m.tests.map((t) => [t.key, t.state]), [['planted', 'bad'], ['again', 'bad'], ['order', 'bad'], ['longer', 'good'], ['proof', 'bad'], ['people', 'good']]);
+  assert.deepEqual(m.todo.map((x) => [x.kind, x.text]), [['fix', 'Proposes a test within 4 weeks'], ['confirm', 'Explains the legal reason']]);
+  assert.equal(m.state, 'ready');
+});
+
+test('trustReportModel: the early states (P4-M4) and the words of each test', () => {
+  const none = trustReportModel({});
+  assert.equal(none.state, 'no-criteria');
+  assert.ok(none.tests.every((t) => t.state === 'none'));
+  assert.deepEqual(none.tiles.agree, { n: 0, agree: 0 });
+  const waiting = trustReportModel({ criteria: [{ exampleId: 1, exampleName: 'A', criterionId: 'k_1', text: 'T', trust: { state: 'collecting', n: 0, agree: 0, decides: true } }] });
+  assert.equal(waiting.state, 'no-answers');
+  assert.equal(waiting.tiles.trusted.waiting, 1);
+  const some = trustReportModel({ criteria: [{ exampleId: 1, exampleName: 'A', criterionId: 'k_1', text: 'T', trust: { state: 'collecting', n: 3, agree: 3, decides: true } }] });
+  assert.equal(some.state, 'ready');
+  assert.equal(some.colleagues, false);   // Part 5 brings colleagues' data; the tile's sub-line is "of N answers"
+  assert.equal(trustTestLine({ key: 'people', state: 'bad', n: 3, agree: 3, pct: 100 }), '100% · of 3 answers');
+  assert.equal(trustTestLine({ key: 'planted', state: 'none' }), 'Not run yet');
+  assert.equal(trustTestLine({ key: 'planted', state: 'bad', caught: 4, of: 6, missedOn: ['A', 'B'] }), '4 of 6 caught. Missed on "A", "B".');
+  assert.equal(TRUST_TESTS.order[0], 'Order swapped');
 });

@@ -47,3 +47,22 @@ export const exactLine = (alt) => (alt && alt.kind === 'mentions' ? `Can be chec
 export const BY_CRITERION = 'By criterion';
 export const BY_EXAMPLE = 'By example';
 export const SEE_BY_CRITERION = 'See by criterion';
+
+/** Board 13: each test's title, what it does, and its result line. */
+export const TRUST_TESTS = Object.freeze({
+  planted: ['Planted mistakes', 'Worca breaks good results on purpose, for example removes a number or adds a made-up quote, and checks that it notices.'],
+  again: ['Asked again', 'The same result is checked 3 times. The verdict should not change.'],
+  order: ['Order swapped', 'When Worca picks the better of two results, it sees them in both orders. The winner must not depend on which one comes first.'],
+  longer: ['Longer is not better', 'Filler text is added to a result. A longer result must not get a better verdict.'],
+  proof: ['Proof for every verdict', 'Each verdict must quote the part of the result it is based on. Worca checks that the quote is really there. Verdicts without proof are not counted.'],
+  people: ['Agreement with people', 'From your Agree and Disagree answers and Check the checker.'],
+});
+export function trustTestLine(t) {
+  if (t.state === 'none') return 'Not run yet';
+  if (t.key === 'planted') return t.state === 'good' ? `${t.caught} of ${t.of} caught` : `${t.caught} of ${t.of} caught. Missed on "${t.missedOn.join('", "')}".`;
+  if (t.key === 'again') return `${t.n} of ${t.of} criteria give the same verdict`;
+  if (t.key === 'order') return `Same winner in ${t.n} of ${t.of} pairs`;
+  if (t.key === 'longer') return t.fooled ? `${t.fooled} ${t.fooled === 1 ? 'criterion' : 'criteria'} fooled` : 'No criterion fooled';
+  if (t.key === 'proof') return `${t.n} of ${t.of} verdicts had proof. ${t.of - t.n} ${t.of - t.n === 1 ? 'was' : 'were'} not counted.`;
+  return `${t.pct}% · of ${t.n} answers`;
+}

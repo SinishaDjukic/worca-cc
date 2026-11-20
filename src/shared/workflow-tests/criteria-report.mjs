@@ -53,3 +53,41 @@ export function checkingCounts(trusts) {
   const is = (...s) => list.filter((t) => s.includes(t.state)).length;
   return { total: list.length, reliable: is('reliable', 'exact'), unreliable: is('unreliable'), waiting: is('confirm', 'collecting') };
 }
+
+const pct = (a, n) => (n ? Math.round((a / n) * 100) : 0);
+/**
+ * Board 13. Agreement: people's answers over every criterion (pairs never count, D96). The board's words are in criteria-text.mjs.
+ * P4-M4's early states: `state` is 'no-criteria' (nothing to trust yet), 'no-answers' (criteria, but nobody answered) or 'ready';
+ * `colleagues` is false until Part 5 brings their blind reviews, so tile 1's sub-line is "of N answers" (n).
+ */
+export function trustReportModel({ criteria = [], rounds = [], pairs = [], proofs = { found: 0, of: 0 }, lastAt = null, costUsd = 0 }) {
+  const n = criteria.reduce((s, c) => s + (c.trust ? c.trust.n : 0), 0);
+  const agree = criteria.reduce((s, c) => s + (c.trust ? c.trust.agree : 0), 0);
+  let caught = 0; let of = 0; const missedOn = [];
+  for (const r of rounds) {
+    const planted = r.cards.filter((c) => c.planted);
+    const miss = planted.filter((c) => c.met === true && c.answer !== true).length;   // met on a planted mistake, unless the person said that is right
+    of += planted.length; caught += planted.length - miss;
+    if (miss) missedOn.push(r.criterionText);
+  }
+  const again = rounds.filter((r) => r.same.n === r.same.of).length;
+  const fooled = rounds.filter((r) => r.padding.n < r.padding.of).length;
+  const pairsSame = pairs.filter((p) => p.winner && p.winner !== 'unsure').length;
+  const count = (s) => criteria.filter((c) => c.trust && c.trust.state === s).length;
+  const state = (ok, any) => (!any ? 'none' : ok ? 'good' : 'bad');
+  const tests = [
+    { key: 'planted', state: state(caught === of, of), caught, of, missedOn },
+    { key: 'again', state: state(again === rounds.length, rounds.length), n: again, of: rounds.length },
+    { key: 'order', state: state(pairsSame === pairs.length, pairs.length), n: pairsSame, of: pairs.length },
+    { key: 'longer', state: state(fooled === 0, rounds.length), fooled },
+    { key: 'proof', state: state(proofs.found === proofs.of, proofs.of), n: proofs.found, of: proofs.of },
+    { key: 'people', state: state(n >= 10 && pct(agree, n) >= 80, n), n, agree, pct: pct(agree, n) },
+  ];
+  const todo = [
+    ...criteria.filter((c) => c.trust && c.trust.state === 'unreliable').map((c) => ({ kind: 'fix', exampleId: c.exampleId, criterionId: c.criterionId, text: c.text })),
+    ...criteria.filter((c) => c.trust && c.trust.state === 'confirm').map((c) => ({ kind: 'confirm', exampleId: c.exampleId, criterionId: c.criterionId, text: c.text })),
+  ];
+  return { state: !criteria.length ? 'no-criteria' : n === 0 ? 'no-answers' : 'ready', colleagues: false,
+    tiles: { agree: { n, agree }, planted: { caught, of, missedOn }, trusted: { n: count('reliable'), of: criteria.length, unreliable: count('unreliable'),
+      waiting: count('confirm') + count('collecting') } }, tests, todo, lastAt, costUsd };
+}

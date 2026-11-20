@@ -172,3 +172,21 @@ export function likedSha(exampleId) {
   const r = prepare('SELECT sha256 FROM wf_test_liked WHERE example_id = ?').get(Number(exampleId));
   return r ? r.sha256 : null;
 }
+
+/** The newest round per criterion key and model in a workflow that is ready or done. */
+export function latestRounds(workflowId) {
+  getDb();
+  return prepare(`SELECT ${R_COLS} FROM wf_test_checker_rounds r WHERE workflow_id = ? AND status IN ('ready', 'done')
+      AND id = (SELECT MAX(id) FROM wf_test_checker_rounds x WHERE x.workflow_id = r.workflow_id AND x.criterion_fp = r.criterion_fp AND x.model = r.model
+      AND x.status IN ('ready', 'done'))`).all(workflowId).map(roundOf);
+}
+export function pairJudgements(workflowId) {
+  getDb();
+  return prepare(`SELECT ${J_COLS} FROM wf_test_judgements WHERE workflow_id = ? AND purpose = 'pair' AND winner IS NOT NULL`).all(workflowId).map(judgementOf);
+}
+export function tryProofCounts(workflowId) {
+  getDb();
+  const r = prepare(`SELECT COUNT(*) AS n, COALESCE(SUM(proof_found), 0) AS f FROM wf_test_judgements WHERE workflow_id = ? AND purpose = 'try'
+      AND (met IS NOT NULL OR error = 'no-proof')`).get(workflowId);
+  return { found: Number(r.f || 0), of: Number(r.n || 0) };
+}

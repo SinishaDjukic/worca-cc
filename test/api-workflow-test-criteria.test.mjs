@@ -402,3 +402,10 @@ test('the generic answer route sends a round card through the round: no undo, no
   assert.equal((await call('POST', `${WF}/judgements/${only.id}/answer`, { agree: true })).status, 200);
   assert.equal(cs.readRound(r2.id).status, 'done');
 });
+
+test('GET trust: the report of the workflow', async () => {
+  const r = await call('GET', `${WF}/trust`);
+  assert.equal(r.status, 200);
+  assert.equal(r.body.tests.length, 6);
+  assert.equal(r.body.tiles.trusted.of, store.listExamples('wf_api_c').reduce((s, e) => s + e.criteria.length, 0));   // the brief's 1 assumed a smaller file
+});

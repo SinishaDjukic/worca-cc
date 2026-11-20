@@ -6,7 +6,7 @@ import { mainResult, readTryPatch } from './result.mjs';
 import { CHANGES_HEADING } from './judge-prompt.mjs';
 import * as store from './store.mjs';
 import { compareModel } from '../../shared/workflow-tests/compare.mjs';
-import { byCriterionModel, checkingCounts } from '../../shared/workflow-tests/criteria-report.mjs';
+import { byCriterionModel, checkingCounts, trustReportModel } from '../../shared/workflow-tests/criteria-report.mjs';
 import { prepare } from '../db.mjs';
 import { ratesFor } from '../helper-call/cost.mjs';
 import { estimateCost } from '../config.mjs';
@@ -212,4 +212,21 @@ export function pairOf(tA, tB, { by = null } = {}) {
   const j = cs.pairJudgement(tA.id, tB.id);
   if (!j || !j.winner) return null;
   return { judgementId: j.id, winner: j.winner, reason: j.reason, question: j.variant && j.variant.question === 'liked' ? 'liked' : 'better', answer: cs.answerOf(j.id, by) };
+}
+
+/** Board 13 (D95-D100): the trust report of a workflow. `checker` = the routes' instance, for its `view`. */
+export function trustReportOf(workflowId, { checker }) {
+  const memo = new Map();
+  const criteria = store.listExamples(workflowId).flatMap((e) => {
+    const t = trustOfExample(e, memo);
+    return e.criteria.map((c) => ({ exampleId: e.id, exampleName: e.name, criterionId: c.id, text: c.text, trust: t[c.id] }));
+  });
+  const live = new Set(criteria.map((c) => cs.criterionFp(c.text)));
+  const rounds = cs.latestRounds(workflowId).filter((r) => live.has(r.fp)).map((r) => {
+    const v = checker.view(r, { anyone: true });   // I9: whoever answered a card, not only the viewer
+    return { criterionText: v.criterion, cards: v.cards, same: v.auto.same, padding: v.auto.padding, at: r.finishedAt, cost: v.costUsd };
+  });
+  const pairs = cs.pairJudgements(workflowId).map((j) => ({ winner: j.winner, swapped: j.variant ? j.variant.swapped : null }));
+  const lastAt = rounds.map((r) => r.at).filter(Boolean).sort().at(-1) || null;
+  return trustReportModel({ criteria, rounds, pairs, proofs: cs.tryProofCounts(workflowId), lastAt, costUsd: rounds.reduce((s, r) => s + r.cost, 0) });
 }
