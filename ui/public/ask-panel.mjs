@@ -205,7 +205,7 @@ const HISTORY_KEY = 'worca-cc.chat.history';
 const HISTORY_OPEN_MIN_W = 1600;
 const HISTORY_OVERLAY_BELOW = 1100;
 
-export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContext, openNewPipeline, openComposer = null, showTerminal = () => {}, openClaudeSetup = null, loadMarkdown, hljsLoader, storage, raf, now, runStore = null, createVoice = null, voiceLongPressMs = 500, chatDeps = null, onRoute = null, onUnread = null, composerActions = null, summariseCommands = () => true, getPageChips = () => [], getPageScope = () => null, sideActions = null }) {
+export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContext, openNewPipeline, openComposer = null, showTerminal = () => {}, openClaudeSetup = null, openAddModel = null, loadMarkdown, hljsLoader, storage, raf, now, runStore = null, createVoice = null, voiceLongPressMs = 500, chatDeps = null, onRoute = null, onUnread = null, composerActions = null, summariseCommands = () => true, getPageChips = () => [], getPageScope = () => null, sideActions = null }) {
   const homePick = browserPick();         // hoisted declaration (defined below)
   const st = {
     open: false,
@@ -2641,7 +2641,21 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
       const lead = active && g.engine !== active ? engineLead(g.models, readEnginePicks(storage)[g.engine], ((st.catalog && st.catalog.defaults) || {})[g.engine]) : null;
       return splitCatalog(lead ? [lead, ...g.models.filter((x) => x !== lead)] : g.models);
     };
-    const sectionsNow = () => pickerGroups(st.catalog ? st.catalog.models : [], { active: activeEngine() });
+    // The engine whose section is always offered, models or not (unlike the others OpenCode ships no built-ins, so
+    // it would otherwise be missing until a model is added). Its empty section's row points at Add model.
+    const ALWAYS_CHAT_ENGINE = 'opencode';
+    const sectionsNow = () => {
+      const sections = pickerGroups(st.catalog ? st.catalog.models : [], { active: activeEngine() });
+      if (!sections.some((x) => x.engine === ALWAYS_CHAT_ENGINE)) {
+        const name = pickerEngineLabel(ALWAYS_CHAT_ENGINE, { beta: true });
+        sections.push({
+          engine: ALWAYS_CHAT_ENGINE,
+          label: activeEngine() === ALWAYS_CHAT_ENGINE ? `${name} · this chat` : name,
+          models: [], empty: true,
+        });
+      }
+      return sections;
+    };
     // The engine the main pane lists: the chat's, else the picked model's, else the first with models.
     const shownEngine = () => {
       const sections = sectionsNow();
@@ -2654,6 +2668,15 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
       moreRow.appendChild(make('span', null, 'More models'));
       moreRow.appendChild(make('span', 'ask-pop-row-chev', '›'));
       return moreRow;
+    };
+    // An engine with no models (OpenCode's always-offered section): one row that opens Add model on that harness,
+    // so a chat can move to it the moment its first model exists.
+    const addEngineModelRow = (engine) => {
+      const row = menuItem('ask-engine-empty', () => { if (typeof openAddModel === 'function') openAddModel(engine); });
+      row.appendChild(make('span', 'ask-model-name', `Add ${engineLabel(engine)} model`));
+      row.appendChild(make('span', 'ask-pop-row-chev', '›'));
+      row.disabled = typeof openAddModel !== 'function';
+      return row;
     };
     let shownPane = 'main';
     let effortPaneKey = '';   // the model + effort list the effort pane was painted from
@@ -2688,11 +2711,15 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
         panel.appendChild(back);
         panel.appendChild(make('div', 'ask-pop-divider'));
         if (g) {
-          const split = sectionSplit(g, activeEngine());
-          appendByConnection(more ? split.rest : split.primary, g.engine);
-          if (!more && split.rest.length) {
-            panel.appendChild(make('div', 'ask-pop-divider'));
-            panel.appendChild(moreModelsRow(engine));
+          if (g.empty) {
+            panel.appendChild(addEngineModelRow(g.engine));
+          } else {
+            const split = sectionSplit(g, activeEngine());
+            appendByConnection(more ? split.rest : split.primary, g.engine);
+            if (!more && split.rest.length) {
+              panel.appendChild(make('div', 'ask-pop-divider'));
+              panel.appendChild(moreModelsRow(engine));
+            }
           }
         }
       } else {
@@ -2704,9 +2731,12 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
         let hasMore = false;
         if (g) {
           if (sections.length > 1) panel.appendChild(make('div', 'ask-pop-group', g.label));
-          const split = sectionSplit(g, activeEngine());
-          appendByConnection(split.primary, g.engine);
-          hasMore = split.rest.length > 0;
+          if (g.empty) panel.appendChild(addEngineModelRow(g.engine));
+          else {
+            const split = sectionSplit(g, activeEngine());
+            appendByConnection(split.primary, g.engine);
+            hasMore = split.rest.length > 0;
+          }
         }
         const others = sections.filter((x) => x !== g);
         if (others.length) panel.appendChild(make('div', 'ask-pop-divider'));

@@ -26,12 +26,12 @@ test('the default view is frozen and folds every harness but Claude Code', () =>
   const loose = build(data(), { query: undefined, filter: undefined, source: undefined, fold: undefined, open: undefined });
   assert.deepEqual(loose, build());
   assert.deepEqual(build(data(), {}), build());
-  assert.deepEqual(build(data(), view({ fold: { codex: undefined } })).groups.map((g) => g.open), [true, false, false]);
+  assert.deepEqual(build(data(), view({ fold: { codex: undefined } })).groups.map((g) => g.open), [true, false, false, false]);
 });
 
 test('1–3: groups, sub-groups, order and names', () => {
   const cat = build();
-  assert.deepEqual(cat.groups.map((g) => g.engine), ['claude', 'codex', 'copilot']);
+  assert.deepEqual(cat.groups.map((g) => g.engine), ['claude', 'codex', 'copilot', 'opencode']);
   const claude = group(cat, 'claude');
   assert.deepEqual(claude.subs.map((s) => [s.name, s.builtIn]), [
     ['Claude sign-in', false], ['Custom endpoint', false], ['GitHub Copilot', false], ['OpenRouter', false],
@@ -48,7 +48,7 @@ test('1–3: groups, sub-groups, order and names', () => {
   assert.deepEqual(ids(group(cat, 'codex').subs[0].rows), ['gpt-6.1-sol', 'gpt-6-luna']);
   assert.deepEqual(group(cat, 'copilot').subs.map((s) => s.name), ['Built in · Copilot sign-in']);
   assert.deepEqual(group(cat, 'copilot').subs[0].rows.map((r) => r.source), ['builtin']);
-  assert.deepEqual(cat.groups.map((g) => [g.name, g.beta]), [['Claude Code', false], ['OpenAI Codex', true], ['GitHub Copilot', true]]);
+  assert.deepEqual(cat.groups.map((g) => [g.name, g.beta]), [['Claude Code', false], ['OpenAI Codex', true], ['GitHub Copilot', true], ['OpenCode', true]]);
   // Only the built-in sub-group has a switch; the others carry no note.
   assert.deepEqual(claude.subs.map((s) => s.hide), [null, null, null, null, { on: false, ariaLabel: 'Hide the models built into Claude Code' }]);
   assert.deepEqual(claude.subs.map((s) => s.note), ['', '', '', '', '']);
@@ -57,7 +57,7 @@ test('1–3: groups, sub-groups, order and names', () => {
 
 test('2 + 7: a harness with no built-ins gets a group once it has a model, and no built-in sub-group', () => {
   const cat = build(plus('models', { id: 'cursor-fast', label: 'Cursor Fast', engine: 'cursor' }));
-  assert.deepEqual(cat.groups.map((g) => g.engine), ['claude', 'codex', 'copilot', 'cursor']);
+  assert.deepEqual(cat.groups.map((g) => g.engine), ['claude', 'codex', 'copilot', 'cursor', 'opencode']);
   const cursor = group(cat, 'cursor');
   assert.deepEqual(cursor.subs.map((s) => [s.key, s.name]), [['signin', 'Cursor sign-in']]);
   assert.deepEqual([cursor.name, cursor.beta, cursor.hiddenText, cursor.customText], ['Cursor', true, '', '1 custom']);
@@ -138,7 +138,11 @@ test('6: search and filters', () => {
   assert.deepEqual(none.groups, []);
   assert.equal(build().noMatch, false);
   const empty = data({ models: [], plugin: [], policy: [], predefined: [], codex: [], copilot: [], legacy: [] });
-  assert.deepEqual(build(empty).groups, []);
+  assert.deepEqual(build(empty).groups.map((g) => g.engine), ['opencode'], 'an always-shown harness keeps its placeholder group');
+  assert.deepEqual(build(empty).groups[0], {
+    engine: 'opencode', name: 'OpenCode', beta: true, state: null, isDefault: false, canDefault: true, defaultHint: '',
+    nBuilt: 0, customText: '', hiddenText: '', open: false, subs: [], empty: true, emptyText: 'No OpenCode models yet',
+  });
   assert.equal(build(empty).noMatch, false, 'nothing searched (a failed read lists nothing): no "No model matches"');
   assert.equal(build(empty, view({ query: 'x' })).noMatch, true);
   const team = rowsOf(build(data(), view({ source: 'team' })));
@@ -225,9 +229,9 @@ test('8: the custom pill', () => {
 });
 
 test('9: fold', () => {
-  assert.deepEqual(build().groups.map((g) => g.open), [true, false, false]);
-  assert.deepEqual(build(data(), view({ fold: { claude: true, codex: false } })).groups.map((g) => g.open), [false, true, false]);
-  assert.deepEqual(build(data(), view({ fold: {} })).groups.map((g) => g.open), [true, false, false]);
+  assert.deepEqual(build().groups.map((g) => g.open), [true, false, false, false]);
+  assert.deepEqual(build(data(), view({ fold: { claude: true, codex: false } })).groups.map((g) => g.open), [false, true, false, false]);
+  assert.deepEqual(build(data(), view({ fold: {} })).groups.map((g) => g.open), [true, false, false, false]);
 });
 
 test('10: readiness and the default', () => {
@@ -241,20 +245,20 @@ test('10: readiness and the default', () => {
     engineLocks: [{ name: 'copilot', reason: 'Off while the credential broker is on' }],
   }));
   assert.deepEqual(cat.groups.map((g) => [g.isDefault, g.canDefault, g.defaultHint]), [
-    [true, false, ''], [false, false, 'Not ready'], [false, false, 'Off while the credential broker is on'],
+    [true, false, ''], [false, false, 'Not ready'], [false, false, 'Off while the credential broker is on'], [false, false, 'Not ready'],
   ]);
   assert.deepEqual(cat.groups.map((g) => g.state), [
-    { tone: 'ok', text: 'Ready' }, { tone: 'off', text: 'Not ready' }, { tone: 'off', text: 'Not ready' },
+    { tone: 'ok', text: 'Ready' }, { tone: 'off', text: 'Not ready' }, { tone: 'off', text: 'Not ready' }, { tone: 'off', text: 'Not ready' },
   ]);
   // A harness the engine list leaves out is not ready.
   const partial = build(data({ engines: [{ name: 'claude', ready: true }] }));
   assert.deepEqual(partial.groups.map((g) => [g.state?.text, g.canDefault, g.defaultHint]), [
-    ['Ready', false, ''], ['Not ready', false, 'Not ready'], ['Not ready', false, 'Not ready'],
+    ['Ready', false, ''], ['Not ready', false, 'Not ready'], ['Not ready', false, 'Not ready'], ['Not ready', false, 'Not ready'],
   ]);
   // The run engine names the default; a locked harness that reports ready is still refused.
   const run = build(data({ runEngine: 'codex', engineLocks: [{ name: 'copilot', reason: 'Locked' }] }));
   assert.deepEqual(run.groups.map((g) => [g.isDefault, g.canDefault, g.defaultHint]), [
-    [false, true, ''], [true, false, ''], [false, false, 'Locked'],
+    [false, true, ''], [true, false, ''], [false, false, 'Locked'], [false, true, ''],
   ]);
 });
 

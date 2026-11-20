@@ -128,8 +128,11 @@ Agents run on Claude Code by default. The other engines are all in **beta**: Ope
 
 **Models › Catalogue** lists the catalog, one group per harness. Claude Code,
 OpenAI Codex and GitHub Copilot ship built-in models, so they always have a
-group; another harness gets one once it has a model. A model that runs on two
-harnesses shows in both groups and is counted once.
+group; another harness gets one once it has a model. OpenCode is the exception:
+it ships no built-in list, yet its group is always shown (OpenCode is a sign-in
+engine — when you have not added a model yet, the group's body says so and its
+**Add OpenCode model** opens `Add model` with the harness already picked). A
+model that runs on two harnesses shows in both groups and is counted once.
 
 - **A group's head** names the harness, its counts (built-in, *custom*, *built-in
   hidden*), the chips *Default* and *Beta*, and its state, *Ready* or *Not ready*.

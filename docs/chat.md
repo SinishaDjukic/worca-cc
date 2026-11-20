@@ -3,6 +3,12 @@
 Chat (Ask Worca) is Worca's home page. It answers from Worca's own records, and any change it suggests comes as a
 card you confirm. To drive runs from Telegram, Slack, Discord or Teams, see [Plugins](plugins.md).
 
+## Which engine answers
+
+A chat runs on the model you pick. The composer's model button lists each engine that has models; **OpenCode** is
+always offered there, so you can switch a chat to it (or jump to `Add model` on it) even before you have added an
+OpenCode model — see [Models > Catalogue](models.md#the-catalogue-tab).
+
 ## A chat that is the home page
 
 Open **Chat** from the first sidebar row or the worca logo. It's also the last row of the top bar's search (⌘K /

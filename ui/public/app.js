@@ -19740,7 +19740,7 @@ function repaintCatalogue() { renderModelsViewBody(); }
 // The Catalogue's controls a draw makes anew. A repaint nobody asked for (the engines answer, another tab's
 // settings-changed, a window focus) hands the keyboard back to the same control, and the search its caret.
 const CAT_FOCUS_CLASSES = ['mv-search', 'mdl-source', 'filter-chip', 'mdl-show-all', 'mdl-grp-toggle', 'mdl-grp-more', 'mdl-row',
-  'mdl-fix', 'mv-hide-builtin', 'mdl-side-close', 'mdl-act', 'mdl-act-more', 'mdl-copy-id', 'mdl-use'];
+  'mdl-fix', 'mv-hide-builtin', 'mdl-empty-add', 'mdl-side-close', 'mdl-act', 'mdl-act-more', 'mdl-copy-id', 'mdl-use'];
 /** What tells a control from its look-alikes: its group's harness and its own data-* keys (dataset compares only). */
 const catFocusSig = (n) => JSON.stringify([n.closest('.mdl-grp[data-engine]')?.dataset.engine || '', n.dataset.id || '',
   n.dataset.filter || '', n.dataset.engine || '', n.dataset.row || '', n.dataset.act || '']);
@@ -21658,6 +21658,11 @@ function onModelsToolbarClick(t) {
   }
   if (t.classList.contains('mdl-grp-more') && engine) {
     openGroupMenu(t, engine);
+    return true;
+  }
+  if (t.classList.contains('mdl-empty-add') && t.dataset.engine) {
+    // An always-shown harness with no models: step 1 of Add model opens on that harness's sign-in.
+    openAddModelDialog({ where: 'signin', engine: t.dataset.engine });
     return true;
   }
   if (t.classList.contains('mdl-fix') && t.dataset.row) {
@@ -43062,6 +43067,9 @@ askPanel = createAskPanel({
   openComposer: (id) => { openWorkflowFromAsk(id, { reveal: true }); },
   composerActions: askComposerActions(),        // Ask's draft and graph cards: the Workflows chat's actions (ask-composer-cards.mjs)
   openClaudeSetup: () => { openClaudeSetup(); },
+  // An always-offered chat engine with no models (OpenCode): the row opens the Models view with Add model on its
+  // harness, so the chat can move to it the moment a model exists.
+  openAddModel: (engine) => { askSide?.uncover(); mvState.openEditorOnLoad = { where: 'signin', engine }; showView('models'); },
   loadMarkdown: loadAskMarkdown,
   hljsLoader: diffHljsLoader,
   storage: localStorage,
