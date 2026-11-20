@@ -313,16 +313,43 @@ test('the result you liked comes only from this workflow\'s own runs and tries; 
   assert.ok(fr.body.example.liked);
   assert.equal(cs.readLiked(fr.body.example.id).fromPipeline, fr.body.example.from.pipelineId);
   assert.equal(store.listExamples('wf_api_c').length, before + 1);
-  // A run that left no result: refused before any example exists.
-  prepare('CREATE TEMP TABLE IF NOT EXISTS p_copy AS SELECT * FROM pipelines WHERE 0').run();
-  prepare('INSERT INTO p_copy SELECT * FROM pipelines WHERE id = ?').run(mine.body.pipelineId);
-  prepare('UPDATE p_copy SET id = ?').run('f00dc0de');
-  prepare('INSERT INTO pipelines SELECT * FROM p_copy').run();
-  prepare('DROP TABLE p_copy').run();
-  const none = await call('POST', `${WF}/examples/from-run`, { pipelineId: 'f00dc0de', liked: true });
-  assert.deepEqual([none.status, none.body.error], [400, 'this run left no result to keep']);
-  assert.equal(store.listExamples('wf_api_c').length, before + 1, 'nothing was created');
-  const wrong = await call('POST', `${WF}/examples/from-run`, { pipelineId: theirs.body.pipelineId, liked: true });
-  assert.equal(wrong.status, 400);
-  assert.equal(store.listExamples('wf_api_c').length, before + 1);
+  // Fake pipeline rows (copies of a real run), always removed again.
+  const fake = (id, set = '') => {
+    prepare('CREATE TEMP TABLE IF NOT EXISTS p_copy AS SELECT * FROM pipelines WHERE 0').run();
+    prepare('INSERT INTO p_copy SELECT * FROM pipelines WHERE id = ?').run(mine.body.pipelineId);
+    prepare('UPDATE p_copy SET id = ?' + set).run(id);
+    prepare('INSERT INTO pipelines SELECT * FROM p_copy').run();
+    prepare('DROP TABLE p_copy').run();
+  };
+  const ids = ['f00dc0de', 'f00dc0df', 'f00dc0e0', 'f00dc0e1'];
+  try {
+    fake(ids[0]);
+    const none = await call('POST', `${WF}/examples/from-run`, { pipelineId: ids[0], liked: true });
+    assert.deepEqual([none.status, none.body.error], [400, 'this run left no result to keep']);
+    assert.equal(store.listExamples('wf_api_c').length, before + 1, 'nothing was created');
+    const wrong = await call('POST', `${WF}/examples/from-run`, { pipelineId: theirs.body.pipelineId, liked: true });
+    assert.equal(wrong.status, 400);
+    assert.equal(store.listExamples('wf_api_c').length, before + 1);
+    // The workflow is checked before the result is read: another workflow's run with no result says so.
+    prepare("UPDATE pipelines SET stepper = (SELECT stepper FROM pipelines WHERE id = ?) WHERE id = ?").run(theirs.body.pipelineId, ids[0]);
+    const leak = await call('POST', `${WF}/examples/from-run`, { pipelineId: ids[0], liked: true });
+    assert.deepEqual([leak.status, leak.body.error], [400, 'this run is of another workflow']);
+    // A hidden try's pipeline, an unfinished run and an archived run are not kept through { pipelineId }.
+    fake(ids[1], ', is_test = 1');
+    const hidden = await put({ pipelineId: ids[1] });
+    assert.deepEqual([hidden.status, hidden.body.error], [400, 'A test try cannot become a result you liked; pick it as a try instead.']);
+    fake(ids[2], ", status = 'running'");
+    const running = await put({ pipelineId: ids[2] });
+    assert.deepEqual([running.status, running.body.error], [400, 'Wait until the run has finished.']);
+    fake(ids[3], ", archived_at = '2026-01-01T00:00:00Z'");
+    assert.equal((await put({ pipelineId: ids[3] })).status, 404);
+    assert.equal(cs.readLiked(ex.id).fromPipeline, mine.body.pipelineId, 'none of them replaced the kept result');
+    // The directory-name form of the id: this workflow's own run is accepted, another's is refused.
+    const dirForm = (id) => `2026-01-01-run-${id}`;
+    assert.equal((await put({ pipelineId: dirForm(theirs.body.pipelineId) })).status, 400);
+    assert.equal((await put({ pipelineId: dirForm(mine.body.pipelineId) }, exB)).status, 200);
+    assert.equal(cs.readLiked(exB.id).fromPipeline, mine.body.pipelineId);
+  } finally {
+    for (const id of ids) prepare('DELETE FROM pipelines WHERE id = ?').run(id);
+  }
 });

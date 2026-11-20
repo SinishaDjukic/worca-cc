@@ -105,6 +105,8 @@ export function registerWorkflowTestRoutes(app, { broadcast = () => {}, deps = {
     // All or nothing: a run with no result is refused before any example exists.
     let main = null;
     if (b.liked === true) {
+      // The workflow first (404 for a deleted run), so another workflow's run says nothing about its result.
+      if ((await service.pastRunSummary(String(b.pipelineId || ''))).workflowId !== wid(req)) throw store.testError('this run is of another workflow', 'BAD_REQUEST');
       main = await mainResult(String(b.pipelineId || ''));
       if (typeof main.text !== 'string' || !main.text.trim()) throw store.testError('this run left no result to keep', 'BAD_REQUEST');
     }

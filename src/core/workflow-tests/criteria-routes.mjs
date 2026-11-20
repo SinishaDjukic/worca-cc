@@ -6,7 +6,7 @@ import * as store from './store.mjs';
 import * as cs from './criteria-store.mjs';
 import { trustFor, byCriterionOf, likedFromPipeline } from './criteria-read.mjs';
 import { findPipelineRowById } from '../artifacts.mjs';
-import { pastRunSummary } from './service.mjs';
+import { pastRunSummary, NOT_TESTABLE_REASONS } from './service.mjs';
 import { judgeModelsView } from './judge-models.mjs';
 import { budgetStatus as realBudgetStatus } from '../cost-budget.mjs';
 
@@ -99,7 +99,13 @@ export function registerCriteriaRoutes(app, { runner = null, criteriaJudge = nul
       const row = pipelineId ? findPipelineRowById(pipelineId) : null;
       if (!row) throw store.testError('pick a file, a try or a run to keep as the result you liked', 'BAD_REQUEST');
       // A run of another workflow is never kept (same words as from-run); a try was checked above.
-      if (b.tryId == null && (await pastRunSummary(row.id)).workflowId !== wid(req)) throw store.testError('this run is of another workflow', 'BAD_REQUEST');
+      if (b.tryId == null) {
+        const past = await pastRunSummary(row.id);   // 404 for a run that is archived or deleted
+        if (past.workflowId !== wid(req)) throw store.testError('this run is of another workflow', 'BAD_REQUEST');
+        // A hidden try is picked as a try (its example is checked there); an unfinished run has no result yet.
+        if (past.reason === 'test-try') throw store.testError('A test try cannot become a result you liked; pick it as a try instead.', 'BAD_REQUEST');
+        if (past.reason === 'not-finished') throw store.testError(NOT_TESTABLE_REASONS['not-finished'], 'BAD_REQUEST');
+      }
       await likedFromPipeline(ex, row.id, { at: row.started_at });
     }
     res.json({ example: store.readExample(wid(req), ex.id) });
