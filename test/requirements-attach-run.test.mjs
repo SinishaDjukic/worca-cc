@@ -7,8 +7,9 @@ import { useTempHome } from './helpers/temp-home.mjs';
 import { gitDir } from './helpers/git-dir.mjs';
 import { stopAndSettle } from './helpers/stop-and-settle.mjs';
 import { emptySpec } from '../src/core/requirements/spec.mjs';
-import { createFeature, updateFeature, createStart, listStarts } from '../src/core/requirements/store.mjs';
+import { createFeature, updateFeature, createStart, listStarts, appendTurn } from '../src/core/requirements/store.mjs';
 import { getDb } from '../src/core/db.mjs';
+import { pendingAgreement } from '../src/core/requirements/attached-gate.mjs';
 
 useTempHome(after, 'worca-req-attach-run-');
 const prevFlags = process.env.WORCA_FLAGS;
@@ -38,9 +39,15 @@ after(async () => {
 });
 
 const specWith = (...texts) => ({ ...emptySpec(), goal: { text: 'G', measure: '' }, criteria: texts.map((t, i) => ({ id: `R-po-${i + 1}`, text: t })) });
-const feat = (title, { scopeKey = projKey, ready = true, spec = specWith('alpha', 'beta'), begun = true } = {}) => {
+const readySpec = (...texts) => ({ ...emptySpec(), goal: { text: 'G', measure: 'M' }, criteria: texts.map((t, i) => ({ id: `R-po-${i + 1}`, text: t })) });
+/** `readyNow` makes the feature Ready now: a done interview round and a spec that passes every check. */
+const feat = (title, { scopeKey = projKey, ready = true, spec = specWith('alpha', 'beta'), begun = true, readyNow = false } = {}) => {
   const f = createFeature({ scopeType: 'project', scopeKey, title, description: `d ${title}` });
   if (begun) createStart({ featureSeq: f.seq, version: 1, runId: `old-run-${f.seq}-${n++}`, spec, title, ready });
+  if (readyNow) {
+    appendTurn(f.seq, { kind: 'round', payload: { questions: [], done: true } });
+    updateFeature(f.seq, { status: 'done', spec: readySpec('current one', 'current two', 'current three') });
+  }
   return f;
 };
 const send = async (body) => {
@@ -89,7 +96,7 @@ test('a malformed requirements field is a 400', async () => {
   assert.equal(r.status, 400);
 });
 
-test('an attached feature that is archived, not started, or in another project is a 409 naming it; nothing starts', async () => {
+test('an attached feature that is archived, not Ready, or in another project is a 409 naming it; nothing starts', async () => {
   const arch = feat('Gone later'); updateFeature(arch.seq, { status: 'archived' });
   const draft = feat('Draft only', { begun: false });
   const away = feat('Elsewhere', { scopeKey: otherKey });
@@ -99,11 +106,27 @@ test('an attached feature that is archived, not started, or in another project i
   assert.equal(r.body.code, 'REQUIREMENTS_UNAVAILABLE');
   assert.deepEqual(r.body.features.map((x) => [x.seq, x.id, x.title, x.reason]), [
     [arch.seq, `FEAT-${arch.seq}`, 'Gone later', 'archived'],
-    [draft.seq, `FEAT-${draft.seq}`, 'Draft only', 'not started'],
+    [draft.seq, `FEAT-${draft.seq}`, 'Draft only', 'not Ready'],
     [away.seq, `FEAT-${away.seq}`, 'Elsewhere', 'not in this target'],
   ]);
   assert.match(r.body.error, /^Remove FEAT-\d+ "Gone later" \(archived\)/);
   assert.equal(runs.size, before);
+});
+
+test('a Ready never-started feature attaches with its current spec; agreed, so the run does not pause; no start row', async () => {
+  const f = feat('Ready fresh', { begun: false, readyNow: true });
+  const rows = startRows();
+  const r = await send({ prompt: 'x', requirements: [{ seq: f.seq }] });
+  assert.equal(r.status, 200, JSON.stringify(r.body));
+  const o = optsOf(r.runId);
+  assert.match(o.prompt, new RegExp(`# FEAT-${f.seq} \\(current spec\\): Ready fresh`));
+  assert.match(o.prompt, /current three/);
+  assert.deepEqual(o.attachedRequirements, [
+    { seq: f.seq, id: `FEAT-${f.seq}`, title: 'Ready fresh', version: null, ready: true, criteriaCount: 3, agreed: true },
+  ]);
+  assert.deepEqual(pendingAgreement(o.attachedRequirements), []);
+  assert.equal(startRows(), rows, 'no req_starts row is written');
+  assert.equal(listStarts(f.seq).length, 0);
 });
 
 test('a feature with a live run needs confirmAttachedRunning; with it the run starts', async () => {

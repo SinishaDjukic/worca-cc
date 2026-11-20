@@ -3,9 +3,12 @@
 // The real server in mock mode over a temp home.
 import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
+import { mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { useTempHome } from './helpers/temp-home.mjs';
 import { emptySpec } from '../src/core/requirements/spec.mjs';
-import { createFeature, updateFeature, createStart, listStarts } from '../src/core/requirements/store.mjs';
+import { createFeature, updateFeature, createStart, listStarts, appendTurn } from '../src/core/requirements/store.mjs';
 import { getDb } from '../src/core/db.mjs';
 import { renderAttachedRequirementsPrompt, buildTurnPrompt, buildContextHeader, buildHandoffPrompt } from '../src/core/ask/prompt.mjs';
 
@@ -18,8 +21,12 @@ const JSONH = { 'Content-Type': 'application/json' };
 const MODEL = { model: 'claude-opus-5-5', effort: 'high' };
 const SCOPE = 'chat-shop-0a1b2c3d';
 let mod; let srv; let base; let n = 0;
+let readyKey; let readyDir;   // a registered project: only there can a feature be Ready now (SCOPE is never registered)
 
 before(async () => {
+  const { addProject } = await import('../src/core/projects.mjs');
+  readyDir = mkdtempSync(join(tmpdir(), 'req-attach-chat-ready-'));
+  readyKey = (await addProject({ name: 'chat-ready', path: readyDir })).find((p) => p.name === 'chat-ready').key;
   mod = await import('../ui/server.mjs');
   srv = mod.server;
   await new Promise((r) => srv.listen(0, '127.0.0.1', r));
@@ -34,6 +41,7 @@ after(async () => {
     ]);
   }
   for (const [k, v] of [['WORCA_FLAGS', prev.flags], ['WORCA_MOCK', prev.mock]]) { if (v === undefined) delete process.env[k]; else process.env[k] = v; }
+  if (readyDir) rmSync(readyDir, { recursive: true, force: true });
 });
 
 const specWith = (...texts) => ({ ...emptySpec(), goal: { text: 'Ship it', measure: '' }, criteria: texts.map((t, i) => ({ id: `R-po-${i + 1}`, text: t })) });
@@ -119,9 +127,26 @@ test('an unavailable feature: 409 REQUIREMENTS_UNAVAILABLE with the same body as
   const r = await send(t.id, { requirements: [{ seq: fresh.seq }, { seq: draft.seq }, { seq: elsewhere.seq }] });
   assert.equal(r.status, 409);
   assert.equal(r.json.code, 'REQUIREMENTS_UNAVAILABLE');
-  assert.deepEqual(r.json.features.map((x) => [x.seq, x.reason]), [[draft.seq, 'not started'], [elsewhere.seq, 'not in this target']]);
-  assert.match(r.json.error, /^Remove FEAT-\d+ "Draft only" \(not started\) to continue\.$/);
+  assert.deepEqual(r.json.features.map((x) => [x.seq, x.reason]), [[draft.seq, 'not Ready'], [elsewhere.seq, 'not in this target']]);
+  assert.match(r.json.error, /^Remove FEAT-\d+ "Draft only" \(not Ready\) to continue\.$/);
   assert.equal((await (await fetch(`${base}/api/ask/threads/${t.id}`)).json()).messages.length, 0);
+});
+
+test('a Ready never-started feature is accepted: the block holds the current spec, version null, ready true; req_starts untouched', async () => {
+  const f = createFeature({ scopeType: 'project', scopeKey: readyKey, title: 'Ready fresh', description: 'd' });
+  appendTurn(f.seq, { kind: 'round', payload: { questions: [], done: true } });
+  updateFeature(f.seq, { status: 'done', spec: { ...emptySpec(), goal: { text: 'Ship it', measure: 'M' },
+    criteria: [{ id: 'R-po-1', text: 'current criterion' }] } });
+  const rows = startRows();
+  const t = await newThread();
+  const r = await send(t.id, { context: { pinned: true, projectKey: readyKey }, requirements: [{ seq: f.seq }] });
+  assert.equal(r.status, 202, JSON.stringify(r.json));
+  const block = userBlocks(await settle(t.id)).find((x) => x.kind === 'feature');
+  assert.deepEqual([block.seq, block.version, block.ready, block.criteriaCount], [f.seq, null, true, 1]);
+  assert.match(block.markdown, new RegExp(`^# FEAT-${f.seq} \\(current spec\\): Ready fresh\n`));
+  assert.match(block.markdown, /current criterion/);
+  assert.equal(startRows(), rows);
+  assert.equal(listStarts(f.seq).length, 0);
 });
 
 test('more than 10 features: 400 REQUIREMENTS_LIMIT; a non-list is 400', async () => {
@@ -191,7 +216,7 @@ test('a stored feature block never changes: a newer start and a rename after the
 });
 
 test('the chat route hands the frozen spec to the turn prompt (the renderer is wired, not just exported)', async () => {
-  const { readFileSync } = await import('node:fs');
-  const src = readFileSync(new URL('../ui/server.mjs', import.meta.url), 'utf8');
+  const { readServerSource } = await import('../src/core/read-server-source.mjs');
+  const src = readServerSource();
   assert.match(src.replace(/\s+/g, ' '), /askBuildTurnPrompt\(composerBlock \? `\$\{header\}\\n\\n\$\{composerBlock\}` : header, text, inline, chatBlock \? askRenderChatContextPrompt\(chatBlock\) : '', askRenderAttachedRequirementsPrompt\(featureBlocks\)\)/);
 });

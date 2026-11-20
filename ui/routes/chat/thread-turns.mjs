@@ -45,7 +45,7 @@ export function closeOpenDesignQuestions(threadId) {
 }
 
 /** A chat message's attached requirements (FEAT-21): `body.requirements` is `[{seq}]` and nothing else of it is read. Resolved
- *  now from each feature's newest STARTED version, against the chat's scope; a message starts no run, so no live-run check.
+ *  now from each feature's current spec when it is Ready, else its newest started version, against the chat's scope; a message starts no run, so no live-run check.
  *  `{ features: [] }` when the field is absent or empty (the send is unchanged); `{ refusal: { status, body } }` otherwise
  *  when it must not go on. A refusal body has the run start's shape. */
 export async function resolveChatRequirements(body, scope) {

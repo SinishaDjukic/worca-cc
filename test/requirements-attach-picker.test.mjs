@@ -63,12 +63,18 @@ test('search passes scope and the already-attached seqs as exclude, and re-queri
   assert.equal(searchCalls.at(-1).q, 'cart');
 });
 
-test('not started disabled: the row shows the label and cannot be checked', async () => {
-  await open({ features: [feat(1), feat(2, { startable: false, label: 'Not started yet', ready: false })] });
+test('not Ready disabled: the row shows the label and cannot be checked', async () => {
+  await open({ features: [feat(1), feat(2, { startable: false, label: 'Not Ready yet', ready: false })] });
   assert.equal(boxes()[1].disabled, true);
-  assert.match(rows()[1].textContent, /Not started yet/);
+  assert.match(rows()[1].textContent, /Not Ready yet/);
   assert.equal(boxes()[0].disabled, false);
   assert.match(rows()[0].textContent, /Feature 1/);
+});
+
+test('not Ready without a label falls back to "Not Ready yet"', async () => {
+  await open({ features: [feat(3, { startable: false, label: null, ready: false })] });
+  assert.equal(boxes()[0].disabled, true);
+  assert.match(rows()[0].textContent, /Not Ready yet/);
 });
 
 test('limit: more than 10 shows the message and blocks the button', async () => {

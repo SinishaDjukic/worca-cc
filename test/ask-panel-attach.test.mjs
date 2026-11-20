@@ -126,6 +126,18 @@ test('send blocked, A-7 message: an archived item stops the send and keeps text 
   assert.equal(strip(ctx).length, 1);
 });
 
+test('a not_ready item blocks Send with the "not Ready" line and keeps text and card', async () => {
+  const { ctx, state, input } = rig({ resolve: (seqs) => seqs.map((seq) => ({ seq, status: 'not_ready' })) });
+  await attachViaHash(ctx, input);
+  typeText(ctx, input, 'build it');
+  key(ctx.window, input, 'Enter');
+  await settle(ctx);
+  assert.equal(state.posted.length, 0);
+  assert.match(ctx.doc.querySelector('.ask-composer-msg').textContent, /^Remove FEAT-5 "Login flow" \(not Ready\) to continue\.$/);
+  assert.equal(input.value, 'build it');
+  assert.equal(strip(ctx).length, 1);
+});
+
 test('wrong_scope (a programmatic scope change) blocks Send and asks nothing', async () => {
   const { ctx, state, input } = rig({ resolve: (seqs) => seqs.map((seq) => ({ seq, status: 'wrong_scope' })) });
   await attachViaHash(ctx, input);

@@ -3,6 +3,20 @@
 Notes on merged features that have no release page yet. `/worca-changelog` folds
 them into the next page and empties this file.
 
+## Attach Ready features without starting them
+
+**A Ready feature can go into a chat or a run as it is, without Start in Worca.**
+
+**Pull from Requirements** in Chat and New run, and the `#` popover, now offer every feature that is Ready, not only the ones started before. A feature that is Ready when you click Send or Run carries its current spec, read again at that moment, under "FEAT-n (current spec)", and the run does not pause for agreement. A feature that is no longer Ready but was started carries its latest started version, as before. A feature that is neither shows **Not Ready yet** and cannot be attached; attaching still writes no start.
+
+Chips: Ready is enough · current spec at Send or Run · Not Ready yet · no start written
+
+Read it: [Requirements](../requirements.md#pull-from-requirements)
+
+Pull requests (add each number when it opens):
+
+- Requirements: attach Ready features without starting them
+
 ## Choose who interviews, per feature
 
 **Pick the harness, model and effort for a feature's Requirements.**

@@ -8,7 +8,7 @@ const MSG_LIMIT = `You can attach up to ${MAX_ATTACHED} features.`;
 const MSG_EMPTY = 'No features to attach.';
 const MSG_NO_SCOPE = 'Pick a project first.';
 const MSG_LOAD_FAILED = 'The features could not be loaded.';
-const LABEL_NOT_STARTED = 'Not started yet';
+const LABEL_NOT_READY = 'Not Ready yet';
 const SEARCH_DEBOUNCE_MS = 150;
 
 function h(doc, tag, attrs = {}, ...kids) {
@@ -88,7 +88,7 @@ export function openAttachPicker({
         box, ' ',
         h(doc, 'span', { class: 'feature-pick-title', text: String(f.title || '') }), ' ',
         meta ? h(doc, 'span', { class: 'hint', text: meta }) : null,
-        startable ? null : h(doc, 'span', { class: 'badge', text: f.label || LABEL_NOT_STARTED }));
+        startable ? null : h(doc, 'span', { class: 'badge', text: f.label || LABEL_NOT_READY }));
     }
 
     function paint() {

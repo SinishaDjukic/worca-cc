@@ -7,7 +7,7 @@ const STATUS_LINES = Object.freeze({
   archived: `Archived${REMOVE_SUFFIX}`,
   missing: `Deleted${REMOVE_SUFFIX}`,
   wrong_scope: `Not in this project${REMOVE_SUFFIX}`,
-  not_started: 'Not started yet',
+  not_ready: 'Not Ready yet',
 });
 
 /** The composer button label: the call to action, or how many features are attached. */

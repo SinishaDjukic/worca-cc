@@ -65,6 +65,7 @@ test('search order and filter: archived hidden, Ready first, exclude and q honou
   const all = await call('GET', search(base_));
   assert.deepEqual(all.json.features.map((f) => f.seq), [ready.seq, started.seq, unstarted.seq]);
   assert.equal(all.json.features[2].startable, false);
+  assert.equal(all.json.features[2].label, 'Not Ready yet');
   const ex = await call('GET', search({ ...base_, exclude: `${ready.seq},FEAT-${started.seq}` }));
   assert.deepEqual(ex.json.features.map((f) => f.seq), [unstarted.seq]);
   const q = await call('GET', search({ ...base_, q: 'beta' }));
@@ -93,7 +94,7 @@ test('resolve: the latest started spec, no markdown key, statuses only', async (
   assert.equal(r.status, 200);
   const [a, b, c] = r.json.items;
   assert.deepEqual([a.status, a.version, a.ready, a.criteriaCount], ['ok', 2, false, 3]);
-  assert.equal(b.status, 'not_started');
+  assert.equal(b.status, 'not_ready');
   assert.equal(c.status, 'missing');
   for (const i of r.json.items) assert.ok(!('markdown' in i), 'no markdown key');
   assert.ok(!JSON.stringify(r.json).includes('DRAFT ONLY'));

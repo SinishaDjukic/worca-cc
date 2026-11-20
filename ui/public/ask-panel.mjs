@@ -987,7 +987,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
         return true;
       }
     }
-    // Attached Requirements features: a stale one (archived, deleted, not started, in another scope) blocks the send until
+    // Attached Requirements features: a stale one (archived, deleted, not Ready, in another scope) blocks the send until
     // it is removed. The statuses are read fresh first; a failed read keeps what is known (the server decides at commit).
     if (!queued && attachStore.get().items.length && requirementsOn()) {
       st.sending = true;
@@ -1433,7 +1433,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
   // ---- Requirements attach (the Chat composer): the store, the card strip, the `#` popover, the scope guard ------------
   const requirementsOn = () => flagOn('requirements', doc);
   /** Why a status blocks a send (the server's A-7 wording). `unavailable` (flag off) does not: nothing is sent. */
-  const ATTACH_BLOCKS = Object.freeze({ archived: 'archived', missing: 'deleted', not_started: 'not started', wrong_scope: 'not in this target' });
+  const ATTACH_BLOCKS = Object.freeze({ archived: 'archived', missing: 'deleted', not_ready: 'not Ready', wrong_scope: 'not in this target' });
 
   /** The chat's scope as the attach modules read it: {scopeType, scopeKey}, or null (No project). */
   function attachScope() {

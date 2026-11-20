@@ -45,7 +45,7 @@ test('status lines follow the plan', () => {
   assert.match(line('archived'), /^Archived — remove to send\/run$/);
   assert.match(line('missing'), /^Deleted — remove to send\/run$/);
   assert.match(line('wrong_scope'), /^Not in this project — remove to send\/run$/);
-  assert.equal(line('not_started'), 'Not started yet');
+  assert.equal(line('not_ready'), 'Not Ready yet');
 });
 
 test('flag off: every card says Requirements unavailable', () => {

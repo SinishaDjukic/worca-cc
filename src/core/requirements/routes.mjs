@@ -11,7 +11,7 @@ import { gitAvailable, GIT_MISSING } from '../git-available.mjs';
 import { actorOf } from '../identity.mjs';
 import { workspaceTarget } from '../ask/workflow-deps.mjs';
 import { RequirementsError, SCOPE_TYPES, parseFeatureSeq } from './spec.mjs';
-import { checkTarget } from './target.mjs';
+import { checkTarget, readinessTarget } from './target.mjs';
 import {
   createFeature, requireFeature, listFeatures, listTurns, getContext, setContext, updateFeature, setEarlyStartReason, listStarts, latestStart,
   getBrief, usableBrief, listBriefs, setBriefSections, deleteBrief, briefUsers, listAttachments, countHelperMessages,
@@ -539,11 +539,7 @@ function madeBrief(scopeType, scopeKey) {
 }
 
 /** The feature's target for readiness: never throws; an unknown target is `{ ok: false, hint }`. */
-async function targetFor(f) {
-  try { return await checkTarget(f.scopeType, f.scopeKey); } catch {
-    return { ok: false, hint: f.scopeType === 'workspace' ? 'the workspace no longer exists' : 'the project is not registered' };
-  }
-}
+const targetFor = (f) => readinessTarget(f.scopeType, f.scopeKey);
 
 /** A workspace's member projects (D2: their source bindings decide the default connection when they agree); [] otherwise. */
 async function memberKeysOf(scopeType, scopeKey) {
@@ -822,7 +818,7 @@ export function registerRequirementsRoutes(app, { broadcast, server, deps = {} }
     [`GET ${P}/estimates`]: async (req, res) => res.json(estimatesView(req.query || {}, d)),
     [`GET ${P}/search`]: async (req, res) => {
       const q = req.query || {};
-      res.json(searchFeatures({
+      res.json(await searchFeatures({
         scopeType: queryText(q.scopeType), scopeKey: queryText(q.scopeKey), q: queryText(q.q),
         exclude: queryText(q.exclude).split(',').map((x) => x.trim()).filter(Boolean), limit: searchLimit(q.limit),
       }));

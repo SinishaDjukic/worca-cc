@@ -20,3 +20,11 @@ export async function checkTarget(scopeType, scopeKey) {
   if (!ws) throw new RequirementsError('BAD_REQUEST', 'unknown workspace');
   return { name: ws.name, ok: true, label: `Workspace ${ws.name} exists` };
 }
+
+/** The feature target for readiness: never throws; an unknown target is `{ ok: false, hint }`. Shared by routes.mjs (the
+ *  views) and attach.mjs (Ready now), so both read readiness against the same target. */
+export async function readinessTarget(scopeType, scopeKey) {
+  try { return await checkTarget(scopeType, scopeKey); } catch {
+    return { ok: false, hint: scopeType === 'workspace' ? 'the workspace no longer exists' : 'the project is not registered' };
+  }
+}

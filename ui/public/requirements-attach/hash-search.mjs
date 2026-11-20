@@ -9,7 +9,7 @@ const MSG_EMPTY = 'No matching features.';
 const MSG_LOADING = 'Loading…';
 const MSG_FAILED = 'The features could not be loaded.';
 const MSG_LIMIT = `You can attach up to ${MAX_ATTACHED} features.`;
-const LABEL_NOT_STARTED = 'Not started yet';
+const LABEL_NOT_READY = 'Not Ready yet';
 
 function h(doc, tag, attrs = {}, ...kids) {
   const node = doc.createElement(tag);
@@ -84,7 +84,7 @@ export function attachHashSearch({
     const el = h(doc, 'div', {
       class: `mention-item${index === sel ? ' sel' : ''}`, role: 'option', 'data-ui': 'attach-hash-row',
       'aria-selected': index === sel ? 'true' : 'false', 'aria-disabled': startable ? null : 'true',
-    }, String(f.title || ''), meta ? ` ${meta}` : null, startable ? null : ` ${f.label || LABEL_NOT_STARTED}`);
+    }, String(f.title || ''), meta ? ` ${meta}` : null, startable ? null : ` ${f.label || LABEL_NOT_READY}`);
     el.addEventListener('mousedown', (e) => {
       e.preventDefault();
       sel = index;

@@ -362,16 +362,19 @@ back, and checked again when you return.
 and no run is linked to the feature. Neither entry writes a start, a turn or a ticket comment, so the feature page's **Runs from this
 feature** does not list these runs. **Start in Worca** works as before.
 
-**Which text.** The text comes from the feature's **latest started version**, never from the draft you may be editing, and it is read
-again when you click Send or Run. The task text is optional in New run: with features attached, the run's title is the first feature's
+**Which text.** When the feature is Ready at the moment you click Send or Run, its **current spec** is sent, read again at that moment,
+under the heading "FEAT-n (current spec)". When it is not Ready then but was started, the **latest started version** is sent. The draft
+of a feature that is not Ready is never sent. The task text is optional in New run: with features attached, the run's title is the first feature's
 title, or `<title> + N more`.
 
-**Only what this scope holds.** Search and the picker offer only features of the project (or workspace) you picked. A feature that was
-never started is listed as **Not started yet** and cannot be attached. A feature that is archived or deleted, or no longer in this
+**Only what this scope holds.** Search and the picker offer only features of the project (or workspace) you picked. A feature that is
+neither Ready nor started is listed as **Not Ready yet** and cannot be attached. If one stops being Ready before Send or Run and was
+never started, it blocks until you remove it. A feature that is archived or deleted, or no longer in this
 project, shows on its card and blocks **Send** and **Run** until you remove it. Changing the project or workspace with features attached
 first asks **Remove features and change** or **Cancel**; Cancel changes nothing.
 
-**Ready means the latest start was Ready.** For an attached feature that was not Ready when it last started, the run pauses before any
+**Ready means Ready now, or the latest start was Ready.** A feature attached because it is Ready now never pauses the run. A started
+feature that is not Ready now uses its latest start's Ready flag: when it was not Ready at that start, the run pauses before any
 work starts, in every workflow, and shows the Requirements card: each feature with **Agreed** on the Ready ones, and one **Agree and
 plan** for the rest. Away mode and `--yes` never agree for you. Nothing pauses when every attached feature was Ready, and a run
 that resumes does not ask again once you agreed. A Chat message starts no run, so it has no pause.

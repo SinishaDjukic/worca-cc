@@ -53,7 +53,7 @@ test('click expands the frozen snapshot in place and toggles closed; no navigati
 });
 
 test('first open resolves once; archived and missing add the note, ok does not', async () => {
-  for (const [status, noted] of [['archived', true], ['missing', true], ['ok', false], ['not_started', false]]) {
+  for (const [status, noted] of [['archived', true], ['missing', true], ['ok', false], ['not_ready', false]]) {
     const calls = [];
     const fetchJson = async (url, init) => { calls.push({ url, init }); return { items: [{ seq: 4, status }] }; };
     const { card } = mk({}, { fetchJson });

@@ -6,7 +6,7 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-let home; let prev; let projKey; let projDir; let checkTarget; let liveRunId;
+let home; let prev; let projKey; let projDir; let checkTarget; let readinessTarget; let liveRunId;
 before(async () => {
   home = await mkdtemp(join(tmpdir(), 'worca-req-target-'));
   prev = {};
@@ -18,7 +18,7 @@ before(async () => {
   projDir = await mkdtemp(join(home, 'shop-'));
   const { addProject } = await import('../src/core/projects.mjs');
   projKey = (await addProject({ name: 'shop', path: projDir })).find((p) => p.name === 'shop').key;
-  ({ checkTarget } = await import('../src/core/requirements/target.mjs'));
+  ({ checkTarget, readinessTarget } = await import('../src/core/requirements/target.mjs'));
   ({ liveRunId } = await import('../src/core/requirements/start.mjs'));
 });
 after(async () => {
@@ -38,6 +38,15 @@ test('checkTarget rejects a bad scope type, a blank key and unknown targets with
   for (const args of [['team', 'x'], ['project', '  '], ['project', 'no-such-key'], ['workspace', 'no-such-ws']]) {
     await assert.rejects(() => checkTarget(...args), (e) => e.code === 'BAD_REQUEST', args.join('/'));
   }
+});
+
+test('readinessTarget never throws: a registered project passes; an unknown one is ok:false with the old hints', async () => {
+  const t = await readinessTarget('project', projKey);
+  assert.equal(t.ok, true);
+  assert.equal(t.path, projDir);
+  assert.deepEqual(await readinessTarget('project', 'no-such-key'), { ok: false, hint: 'the project is not registered' });
+  assert.deepEqual(await readinessTarget('workspace', 'no-such-ws'), { ok: false, hint: 'the workspace no longer exists' });
+  assert.deepEqual(await readinessTarget('team', 'x'), { ok: false, hint: 'the project is not registered' });
 });
 
 test('liveRunId is exported and is null when the feature has no start', async () => {

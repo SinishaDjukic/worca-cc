@@ -168,11 +168,18 @@ describe('hash-search', async () => {
     assert.equal(hs.handleKey(key('a')), false);
   });
 
-  test('a never-started row is aria-disabled with its label and cannot be attached', async () => {
-    const { hs, store } = await setup({ features: [feat(1, { startable: false, label: 'Not started yet' }), feat(2)] });
+  test('a not Ready row with no label falls back to "Not Ready yet" and is aria-disabled', async () => {
+    await setup({ features: [feat(1, { startable: false, label: null }), feat(2)] });
     const [first] = rows();
     assert.equal(first.getAttribute('aria-disabled'), 'true');
-    assert.match(first.textContent, /Not started yet/);
+    assert.match(first.textContent, /Not Ready yet/);
+  });
+
+  test('a not Ready row is aria-disabled with its label and cannot be attached', async () => {
+    const { hs, store } = await setup({ features: [feat(1, { startable: false, label: 'Not Ready yet' }), feat(2)] });
+    const [first] = rows();
+    assert.equal(first.getAttribute('aria-disabled'), 'true');
+    assert.match(first.textContent, /Not Ready yet/);
     const enter = key('Enter');
     assert.equal(hs.handleKey(enter), true, 'Enter is still claimed so it cannot send');
     assert.equal(enter.defaultPrevented, true);
