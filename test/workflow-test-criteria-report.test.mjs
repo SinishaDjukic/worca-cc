@@ -129,3 +129,9 @@ test('trustReportModel fix round 1: a shared criterion counts once; below 10 ans
   assert.equal(r.tests.find((t) => t.key === 'again').state, 'none');
   assert.equal(r.tests.find((t) => t.key === 'longer').state, 'none');
 });
+
+test("trustReportModel: the people test compares the true share, so 79.6% is not rounded up to a pass", () => {
+  const people = (n, agree) => trustReportModel({ criteria: [{ trustKey: 'k', trust: { n, agree } }] }).tests.find((t) => t.key === 'people');
+  assert.notEqual(people(250, 199).state, 'good', '199 of 250 is 79.6%');
+  assert.equal(people(250, 200).state, 'good', '200 of 250 is 80%');
+});

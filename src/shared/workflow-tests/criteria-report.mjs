@@ -87,7 +87,7 @@ export function trustReportModel({ criteria = [], rounds = [], pairs = [], proof
     { key: 'order', state: state(pairsSame === pairs.length, pairs.length), n: pairsSame, of: pairs.length },
     { key: 'longer', state: state(fooled === 0, padRounds.length), fooled },
     { key: 'proof', state: state(proofs.found === proofs.of, proofs.of), n: proofs.found, of: proofs.of },
-    { key: 'people', state: state(pct(agree, n) >= AGREE_MIN * 100, n >= ANSWERS_NEEDED), n, agree, pct: pct(agree, n) },
+    { key: 'people', state: state(n > 0 && agree / n >= AGREE_MIN, n >= ANSWERS_NEEDED), n, agree, pct: pct(agree, n) },
   ];
   const todo = [
     ...criteria.filter((c) => c.trust && c.trust.state === 'unreliable').map((c) => ({ kind: 'fix', exampleId: c.exampleId, criterionId: c.criterionId, text: c.text })),
