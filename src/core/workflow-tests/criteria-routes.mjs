@@ -5,6 +5,7 @@ import { actorOf } from '../identity.mjs';
 import * as store from './store.mjs';
 import * as cs from './criteria-store.mjs';
 import { trustFor } from './criteria-read.mjs';
+import { judgeModelsView } from './judge-models.mjs';
 
 const STATUS = Object.freeze({ BAD_REQUEST: 400, NOT_FOUND: 404, BUSY: 409, NOT_READY: 422 });
 const W = '/api/workflows/:id/tests';
@@ -52,6 +53,8 @@ export function registerCriteriaRoutes(app, { runner = null, criteriaJudge = nul
     cs.setAnswer(j.id, { agree, by: by(req) });
     res.json({ answer: cs.answerOf(j.id, by(req)), trust: j.purpose === 'pair' ? null : trustFor(j.workflowId, j.fp, j.model) });
   });
+  // D87, D105: the Claude models that can check criteria, and the suggested one.
+  route('GET', `${W}/judge-models`, async (req, res) => res.json(await judgeModelsView(wid(req))));
   void exampleOf;   // defined here for Task 18 (4a) and Tasks 12-15 (4b), which use it
   return { runner, criteriaJudge, deps };
 }

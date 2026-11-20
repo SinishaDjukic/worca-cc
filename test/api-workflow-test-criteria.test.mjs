@@ -113,3 +113,10 @@ test('handle forwards the `errors` of an error list like Part 2 (unit test of th
   await handle(async () => { throw new Error('plain'); })({}, res);
   assert.deepEqual([code, body], [500, { error: 'plain' }]);
 });
+
+test('GET judge-models lists Claude models with a suggestion', async () => {
+  const r = await call('GET', `${WF}/judge-models`);
+  assert.equal(r.status, 200);
+  assert.ok(r.body.models.some((m) => m.id === 'claude-opus-5-5'));
+  assert.equal(typeof r.body.suggested.id, 'string');
+});

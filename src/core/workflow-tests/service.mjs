@@ -29,6 +29,7 @@ import { ensureStartCommit, treeBytes, freeDiskBytes, removeTryCheckout, pinStar
 import { parseRemoteUrl, forgeOf as forgeOfRemote, FORGE_LABEL } from '../forge.mjs';
 import { pushRemoteOf } from './guard-calls.mjs';
 import { withCriteriaFor, compareNotes } from './criteria-read.mjs';
+import { withJudgeModel } from './judge-models.mjs';
 import { leftOutText, folderMissingText, folderProjectText, notRegisteredText, diskRefusalText, diskRefusalOnceText, PAST_RUN_REFUSALS } from '../../shared/workflow-tests/project-text.mjs';
 import { mainResult, readTryPatch } from './result.mjs';
 import { readBefore, beforeSpecOf, beforeHash } from './before-run.mjs';
@@ -253,7 +254,8 @@ export async function resolveProjectInput(was, input) {
 export async function saveExample(workflowId, id, body = {}, { by = null } = {}) {
   const was = id == null ? null : store.readExample(workflowId, id);
   if (id != null && !was) throw err(`no example ${id}`, 'NOT_FOUND');
-  const { project: input, ...fields } = body && typeof body === 'object' ? body : {};
+  const { project: input, ...raw } = body && typeof body === 'object' ? body : {};
+  const fields = await withJudgeModel(workflowId, raw, was);   // Part 4 (D87, D105)
   const project = await resolveProjectInput(was, input);
   return id == null ? store.createExample(workflowId, fields, { by, project: project ?? null })
     : store.updateExample(workflowId, was.id, fields, { project });
