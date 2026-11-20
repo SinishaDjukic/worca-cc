@@ -9,6 +9,7 @@ import { mainResult } from './result.mjs';
 import { exampleSourcesText } from './sources-text.mjs';
 import { padded, deterministicPlants, plantSystemPrompt, plantPrompt, parsePlantReply, applyPlants } from './planted.mjs';
 import { SUBJECT_MAX, clipText, fenceTag } from './judge-prompt.mjs';
+import { rewordCriterion } from './suggest.mjs';
 import * as store from './store.mjs';
 import * as cs from './criteria-store.mjs';
 import { NOT_CHECKED } from '../../shared/workflow-tests/criteria-text.mjs';
@@ -137,5 +138,19 @@ export function createChecker(deps = {}) {
     if (v.left === 0 && round.status !== 'done') cs.updateRound(round.id, { status: 'done' });
     return view(cs.readRound(round.id), { by });
   }
-  return { start, view, answer, making: () => [...making] };
+  /** D104, P4-M3: clearer words from the cards the person marked Wrong (not saved: the editor shows them). Nothing marked Wrong: nothing is sent. */
+  async function reword(round, { by = null } = {}) {
+    const v = view(round, { by });
+    const wrong = v.cards.filter((c) => c.answer === false).map((c) => ({ excerpt: c.excerpt, met: c.met }));
+    const criterion = v.criterion || '';
+    const mock = d.mock() || !!(round.source && round.source.mock);   // I14
+    if (!wrong.length) return { text: criterion, costUsd: 0 };
+    if (!mock) {
+      const b = d.budgetStatus();
+      if (b && b.blocked) throw store.testError(LIMIT_TEXT, 'NOT_READY');
+    }
+    const book = (usd, costKind) => d.book({ workflowId: round.workflowId, exampleId: round.exampleId, roundId: round.id, purpose: 'reword', model: round.model, amountUsd: usd, costKind });
+    return rewordCriterion({ criterion, wrong, model: round.model, mock, book }, { modelCall: d.modelCall, mock: d.mock, budget: d.budgetStatus });
+  }
+  return { start, view, answer, reword, making: () => [...making] };
 }

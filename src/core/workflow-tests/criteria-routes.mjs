@@ -6,9 +6,12 @@ import * as store from './store.mjs';
 import * as cs from './criteria-store.mjs';
 import { trustFor, byCriterionOf, likedFromPipeline } from './criteria-read.mjs';
 import { findPipelineRowById } from '../artifacts.mjs';
-import { pastRunSummary, NOT_TESTABLE_REASONS } from './service.mjs';
+import { pastRunSummary, usablePastRun, NOT_TESTABLE_REASONS } from './service.mjs';
+import { mainResult } from './result.mjs';
+import { suggestCriteria } from './suggest.mjs';
+import { mockEnabled } from '../claude-runner.mjs';
 import { judgeModelsView } from './judge-models.mjs';
-import { budgetStatus as realBudgetStatus } from '../cost-budget.mjs';
+import { budgetStatus as realBudgetStatus, recordTestJudgeCost } from '../cost-budget.mjs';
 import { createChecker, LIMIT_TEXT } from './checker.mjs';
 
 const STATUS = Object.freeze({ BAD_REQUEST: 400, NOT_FOUND: 404, BUSY: 409, NOT_READY: 422 });
@@ -21,6 +24,8 @@ export const CRITERIA_ROUTES = Object.freeze([
   ['POST', `${W}/runs/:run/criteria/check`],
   ['PUT', `${W}/examples/:ex/liked`],
   ['DELETE', `${W}/examples/:ex/liked`],
+  ['POST', `${W}/examples/:ex/checker/:round/reword`],
+  ['POST', '/api/workflow-tests/suggest-criteria'],
 ].map(([method, path]) => Object.freeze({ method, path })));
 
 const num = (v, what) => {
@@ -140,6 +145,32 @@ export function registerCriteriaRoutes(app, { runner = null, criteriaJudge = nul
     const b = req.body || {};
     if (typeof b.right !== 'boolean') throw store.testError('right must be true or false', 'BAD_REQUEST');
     res.json(await checker.answer(roundOf(req, ex), num(b.judgementId, 'card'), b.right, { by: by(req) }));
+  });
+  route('POST', `${W}/examples/:ex/checker/:round/reword`, async (req, res) => { const ex = exampleOf(req); res.json(await checker.reword(roundOf(req, ex), { by: by(req) })); });
+  // D102, P4-Q10: board 3's suggestions; the model is the suggested checking model (P4-Q3: no example exists yet).
+  route('POST', '/api/workflow-tests/suggest-criteria', async (req, res) => {
+    const b = req.body || {};
+    const workflowId = String(b.workflowId || '');
+    const note = typeof b.note === 'string' ? b.note.trim().slice(0, 2000) : '';
+    if (!workflowId || note.length < 20) throw store.testError('write at least 20 characters about what a good result has', 'BAD_REQUEST');
+    const view = await (deps.judgeModelsView || judgeModelsView)(workflowId);
+    if (!view.suggested) throw store.testError('no AI model can check criteria here', 'NOT_READY');
+    // M17: only a past run of this workflow that can become its example is read and sent to the model (as from-run checks it).
+    let past = null;
+    if (typeof b.pipelineId === 'string' && b.pipelineId) {
+      try { past = await usablePastRun(workflowId, b.pipelineId); } catch (e) { throw store.testError(e && e.message ? e.message : 'this run cannot be used', 'BAD_REQUEST'); }
+    }
+    const mock = (deps.mock || (() => mockEnabled({})))();
+    // The total spending limit, refused up front (a mock call pays nothing, so it is never refused).
+    if (!mock && (deps.budgetStatus || realBudgetStatus)().blocked) throw store.testError(LIMIT_TEXT, 'NOT_READY');
+    const m = past ? await mainResult(past.pipelineId) : { text: '' };
+    const model = view.suggested.id;
+    const existing = Array.isArray(b.existing) ? b.existing.filter((x) => typeof x === 'string').slice(0, 12) : [];
+    const book = deps.book || recordTestJudgeCost;
+    const out = await suggestCriteria({ note, request: past ? past.request : '', result: m.text || '', existing, model, mock,
+      book: (usd, costKind) => book({ workflowId, purpose: 'suggest', model, amountUsd: usd, costKind }) },
+    { ...(deps.modelCall ? { modelCall: deps.modelCall } : {}), budget: deps.budgetStatus || realBudgetStatus, mock: () => mock });
+    res.json({ suggestions: out.suggestions });
   });
   void exampleOf;   // defined here for Task 18 (4a) and Tasks 12-15 (4b), which use it
   return { runner, criteriaJudge, deps };

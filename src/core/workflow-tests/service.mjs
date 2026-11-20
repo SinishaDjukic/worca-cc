@@ -412,7 +412,7 @@ export async function pastRunSummary(pipelineId, { registry = loadAgentRegistry(
 const exampleName = (name, past) => (typeof name === 'string' && name.trim() ? name.trim() : past.title || 'Example').slice(0, 120);
 
 /** A past run that can become an example of `workflowId`, or the error why not. */
-async function usablePastRun(workflowId, pipelineId, registry) {
+export async function usablePastRun(workflowId, pipelineId, registry) {
   const past = await pastRunSummary(pipelineId, registry ? { registry } : {});
   if (past.workflowId !== workflowId) throw err('this run is of another workflow', 'BAD_REQUEST');
   if (!past.testable) throw err(NOT_TESTABLE_REASONS[past.reason], 'BAD_REQUEST');
