@@ -643,7 +643,7 @@ export function renderSideBySide(root, s, actions, { doc, tryIndex = 0, renderMa
     }
   }
   // Part 4 (boards 6, 36): Your criteria · checked by Worca.
-  for (const e of criteriaGroup(doc, cur, s.labels, { once, actions: { answer: actions.answer ? (id, agree) => actions.answer(id, agree) : null } })) inner.append(e);
+  for (const e of criteriaGroup(doc, cur, s.labels, { once, patches, actions: { answer: actions.answer ? (id, agree) => actions.answer(id, agree) : null } })) inner.append(e);
   scroll.append(inner);
   sec.append(scroll);
   page.append(sec);

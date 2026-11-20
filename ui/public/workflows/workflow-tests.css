@@ -483,3 +483,10 @@ button.badge.wft-confirm:hover{text-decoration:underline;}
 .wft-crit-why p{margin:0;overflow-wrap:anywhere;}
 .wft-crit-why b{font-weight:600;}
 .wft-crit-why .hint{color:var(--ink-2);}
+/* Part 4, P4-M6: after an answer, what was said and Undo; board 36's proof from the changes in code font; a "Not checked" cell's words. */
+.wft-said{display:inline-flex;flex-wrap:wrap;align-items:center;gap:8px;font-size:var(--fs-body);font-weight:600;color:var(--ink);}
+.wft-said.is-agree{color:var(--green-ink-strong);}
+.wft-said .wft-linkbtn{font-weight:600;text-decoration:none;}
+.wft-said .wft-linkbtn:hover{text-decoration:underline;}
+.wft-crit-code{display:block;margin-top:4px;padding:6px 10px;border-radius:var(--r-sm);background:var(--panel);font-family:var(--mono);font-size:var(--fs-meta);white-space:pre;overflow-x:auto;color:var(--ink);}
+.wft-crow.is-crit .wft-res.is-none{line-height:1.35;}

@@ -1,16 +1,48 @@
 // ui/public/workflows/criteria-rows.mjs — "Your criteria · checked by Worca" in one example side by side (plans/workflow-tests-part4-plan.md
 // Task 20; boards 6 and 36, P4-M6): each criterion's verdict per version, and under the row, for the version whose verdict is shown (the one
-// that missed it, else B): why, the proof Worca found, how far its checking is trusted, and Agree / Disagree (D96).
+// that missed it, else B): why, the proof Worca found (a project try's from its changes, in code font), how far its checking is trusted,
+// and Agree / Disagree (D96), which turn into "You agreed." / "You disagreed: Worca notes it." with Undo.
 import { el, btn } from './test-ui.mjs';
+import { icon } from '../icons.mjs';
+import { splitPatchSections } from '../diff-view.mjs';
 import { trustLine } from '../../../src/shared/workflow-tests/criteria-text.mjs';
 import { inSentence } from '../../../src/shared/workflow-tests/project-text.mjs';
+import { normLoose } from '../../../src/shared/workflow-tests/exact-checks.mjs';
 
 export const CRITERIA_GROUP = 'Your criteria · checked by Worca';
 /** Boards 6 and P4-M6 draw this note in the pair question's block (Task 24), not under the criteria rows. */
 export const DISAGREE_NOTE = 'When you disagree, Worca notes it. Over time this shows how far Worca\'s checking can be trusted.';
-const trustSentence = (t) => (t && t.state === 'reliable' ? `Worca's checking of this criterion is reliable: it agrees with people ${t.agree} of ${t.n} times.` : trustLine(t));
+const AGREED = 'You agreed.';
+const DISAGREED = 'You disagreed: Worca notes it.';
+
+/** Boards 6, 36: the trust line under the proof. The other states keep P4-C1's line. */
+export function trustSentence(t) {
+  if (t && t.state === 'reliable') return `Worca's checking of this criterion is reliable: it agrees with people ${t.agree} of ${t.n} times.`;
+  if (t && t.state === 'collecting') return `Worca's checking of this criterion needs your answers: ${trustLine(t)}.`;
+  return trustLine(t);
+}
 /** A real verdict (met or not met) that can be answered; a "Not checked" one (met null) never can. */
 const verdictOf = (it) => !!it && (it.met === true || it.met === false);
+
+// Board 36: the changed file whose diff holds the proof (D89's loose match, the parts between "…" in order), or null.
+const FILE_MEMO = new Map();
+function proofFileIn(proof, patch, tryId) {
+  if (typeof patch !== 'string' || !patch || typeof proof !== 'string') return null;
+  const k = `${tryId}|${patch.length}|${proof}`;   // a try's diff, once read, never changes
+  if (FILE_MEMO.has(k)) return FILE_MEMO.get(k);
+  const parts = normLoose(proof).split(/\s*(?:\.\.\.|…)\s*/).map((x) => x.replace(/^["']+|["']+$/g, '').trim()).filter((x) => x.length >= 3);
+  let found = null;
+  if (parts.length) {
+    for (const sec of splitPatchSections(patch)) {
+      const hay = normLoose(sec.raw);
+      let from = 0;
+      if (sec.path && parts.every((x) => { const i = hay.indexOf(x, from); if (i < 0) return false; from = i + x.length; return true; })) { found = sec.path; break; }
+    }
+  }
+  if (FILE_MEMO.size > 200) FILE_MEMO.delete(FILE_MEMO.keys().next().value);
+  FILE_MEMO.set(k, found);
+  return found;
+}
 
 function cell(doc, it, label) {
   const span = el(doc, 'span', 'wft-res');
@@ -23,26 +55,66 @@ function cell(doc, it, label) {
   return span;
 }
 
-function whyBlock(doc, it, versionLabel, actions) {
+/** Agree / Disagree, or (after an answer, also one given before a reload: `it.answer`) what was said and Undo (agree: null). */
+function answerArea(doc, it, actions, trustEl) {
+  const area = el(doc, 'div', 'wft-acts wft-crit-acts');
+  const keyed = (b, k) => { b.dataset.focusKey = `wft-crit-${it.judgementId}-${k}`; return b; };
+  let send;
+  const paint = (focus) => {
+    area.replaceChildren();
+    let first;
+    if (it.answer === true || it.answer === false) {
+      const said = el(doc, 'span', `wft-said ${it.answer ? 'is-agree' : 'is-dis'}`);
+      said.setAttribute('role', 'status');
+      if (it.answer) said.append(icon(doc, 'check', 14));
+      first = keyed(btn(doc, 'Undo', () => send(null), 'wft-linkbtn'), 'undo');
+      said.append(doc.createTextNode(it.answer ? AGREED : DISAGREED), first);
+      area.append(said);
+    } else {
+      first = keyed(btn(doc, 'Agree', () => send(true), 'btn btn-sm wft-agree'), 'agree');
+      area.append(first, keyed(btn(doc, 'Disagree', () => send(false), 'btn btn-sm wft-disagree'), 'disagree'));
+    }
+    if (focus) first.focus();
+  };
+  send = async (agree) => {
+    const had = area.contains(doc.activeElement);
+    const bs = [...area.querySelectorAll('button')];
+    if (bs.some((b) => b.disabled)) return;
+    for (const b of bs) b.disabled = true;
+    let r;
+    try { r = await actions.answer(it.judgementId, agree); } catch { r = undefined; }
+    if (r && typeof r === 'object') {
+      it.answer = r.answer === true || r.answer === false ? r.answer : null;
+      if (r.trust) { it.trust = r.trust; trustEl.textContent = trustSentence(r.trust); }
+    }
+    paint(had);
+  };
+  paint(false);
+  return area;
+}
+
+function whyBlock(doc, it, versionLabel, v, actions, patches) {
   const box = el(doc, 'div', `wft-crit-why${it.met ? '' : ' is-bad'}`);
   const words = el(doc, 'p', '');
   words.append(el(doc, 'b', '', `Why Worca says ${it.met ? 'yes' : 'no'} for ${inSentence(versionLabel)}: `), doc.createTextNode(`"${it.reason}"`));
-  const proof = el(doc, 'p', '');
-  proof.append(el(doc, 'b', '', 'Proof from the result: '), doc.createTextNode(`"${it.proof}" `), el(doc, 'span', 'hint', '· found in the result'));
-  const txt = el(doc, 'div', 'wft-crit-txt');
-  txt.append(words, proof, el(doc, 'p', 'hint', trustSentence(it.trust)));
-  box.append(txt);
-  if (it.judgementId && actions.answer) {
-    const acts = el(doc, 'div', 'wft-acts');
-    const send = (agree) => actions.answer(it.judgementId, agree);
-    acts.append(btn(doc, 'Agree', () => send(true), 'btn btn-sm wft-agree'), btn(doc, 'Disagree', () => send(false), 'btn btn-sm wft-disagree'));
-    box.append(acts);
+  const proof = el(doc, 'p', 'wft-crit-proof');
+  const file = v && v.project && patches ? proofFileIn(it.proof, patches.get(v.tryId), v.tryId) : null;
+  if (file) {   // board 36: quoted from the changes, in code font, under the file it is in
+    proof.append(el(doc, 'b', '', 'Proof from the changes: '), el(doc, 'span', 'hint', `${file} · found in the changes`), el(doc, 'span', 'wft-crit-code', it.proof));
+  } else {
+    proof.append(el(doc, 'b', '', 'Proof from the result: '), doc.createTextNode(`"${it.proof}" `), el(doc, 'span', 'hint', '· found in the result'));
   }
+  const trust = el(doc, 'p', 'hint wft-crit-trust', trustSentence(it.trust));
+  const txt = el(doc, 'div', 'wft-crit-txt');
+  txt.append(words, proof, trust);
+  box.append(txt);
+  if (it.judgementId && actions.answer) box.append(answerArea(doc, it, actions, trust));
   return box;
 }
 
-/** The group title and its rows for try `cur` ({ n, a, b }: the try views); `labels` = { a, b } version labels. */
-export function criteriaGroup(doc, cur, labels, { once = false, actions = {} } = {}) {
+/** The group title and its rows for try `cur` ({ n, a, b }: the try views); `labels` = { a, b } version labels; `patches`: each
+ *  project try's diff by try id, once read (the side by side's). */
+export function criteriaGroup(doc, cur, labels, { once = false, actions = {}, patches = null } = {}) {
   const ids = [];
   for (const v of [once ? null : cur.a, cur.b]) for (const it of (v && v.verdict && v.verdict.criteria) || []) if (!ids.some((x) => x.id === it.id)) ids.push(it);
   if (!ids.length) return [];
@@ -55,9 +127,10 @@ export function criteriaGroup(doc, cur, labels, { once = false, actions = {} } =
     const B = pick(cur.b, c.id);
     if (!once) row.append(cell(doc, A, `${labels.a} · try ${cur.n}`));
     row.append(cell(doc, B, `${labels.b} · try ${cur.n}`));
-    // The block explains the version that missed it (board 6: "Why Worca says no for v5"), else B's verdict; a "Not checked" cell has none.
-    const shown = B && B.met === false ? [B, labels.b] : A && A.met === false ? [A, labels.a] : B && B.met === true ? [B, labels.b] : null;
-    if (shown) row.append(whyBlock(doc, shown[0], shown[1], actions));
+    // The block explains the version that missed it (board 6: "Why Worca says no for v5"), else B's verdict; a "Not checked" cell has
+    // none (P4-M6), so it is never answered.
+    const shown = B && B.met === false ? [B, labels.b, cur.b] : A && A.met === false ? [A, labels.a, cur.a] : B && B.met === true ? [B, labels.b, cur.b] : null;
+    if (shown) row.append(whyBlock(doc, shown[0], shown[1], shown[2], actions, patches));
     out.push(row);
   }
   return out;

@@ -62,3 +62,100 @@ test('the side by side shows the group after Automatic checks, and Agree reaches
   await new Promise((r) => setImmediate(r));
   assert.deepEqual(sent, [[12, true]]);
 });
+
+// P4-M6 (board 53): after an answer, Undo, the "Not checked" rows, and board 36's proof from the changes.
+const dom = () => new JSDOM('<!doctype html><body></body>').window.document;
+const mount = (doc, els) => { for (const e of els) doc.body.append(e); return doc; };
+const tick = () => new Promise((r) => setImmediate(r));
+
+test('P4-M6: after Disagree the box says so with Undo; Undo takes it back and the buttons return', async () => {
+  const doc = dom();
+  const sent = [];
+  mount(doc, criteriaGroup(doc, { n: 2, a: v(true), b: v(false) }, { a: 'v4', b: 'v5 draft' }, {
+    actions: { answer: async (id, agree) => { sent.push([id, agree]); return { answer: agree, trust: { ...R, n: 21 } }; } } }));
+  const why = doc.querySelector('.wft-crit-why');
+  why.querySelector('button.wft-disagree').focus();
+  why.querySelector('button.wft-disagree').click();
+  await tick();
+  const said = why.querySelector('.wft-said');
+  assert.equal(said.getAttribute('role'), 'status');
+  assert.equal(said.textContent, 'You disagreed: Worca notes it.Undo');
+  assert.equal(why.querySelector('button.wft-agree'), null);
+  assert.equal(doc.activeElement.textContent, 'Undo', 'the focus stays in the box');
+  assert.match(why.textContent, /it agrees with people 19 of 21 times\./, 'the reply\'s trust');
+  said.querySelector('button').click();
+  await tick();
+  assert.deepEqual(sent, [[12, false], [12, null]]);
+  assert.equal(why.querySelector('.wft-said'), null);
+  assert.deepEqual([...why.querySelectorAll('button')].map((b) => [b.textContent, b.disabled]), [['Agree', false], ['Disagree', false]]);
+});
+
+test('P4-M6: after Agree, "You agreed." with a check; a failed answer gives the buttons back', async () => {
+  const doc = dom();
+  let ok = true;
+  mount(doc, criteriaGroup(doc, { n: 2, a: v(true), b: v(true) }, { a: 'v4', b: 'v5 draft' }, {
+    actions: { answer: async (_id, agree) => (ok ? { answer: agree, trust: R } : undefined) } }));
+  const why = doc.querySelector('.wft-crit-why');
+  assert.ok(!why.classList.contains('is-bad'), 'a met verdict: the neutral box');
+  assert.match(why.textContent, /Why Worca says yes for v5 draft:/);
+  why.querySelector('button.wft-agree').click();
+  await tick();
+  const said = why.querySelector('.wft-said.is-agree');
+  assert.equal(said.textContent, 'You agreed.Undo');
+  assert.ok(said.querySelector('svg'), 'the check icon');
+  ok = false;
+  said.querySelector('button').click();
+  await tick();
+  assert.equal(why.querySelector('.wft-said').textContent, 'You agreed.Undo', 'not taken back: the answer stays');
+  assert.equal(why.querySelector('.wft-said button').disabled, false);
+});
+
+test('P4-M6: after a reload the earlier answer shows, not the buttons', () => {
+  const doc = dom();
+  mount(doc, criteriaGroup(doc, { n: 1, a: v(true), b: v(false, { answer: false }) }, { a: 'v4', b: 'v5 draft' }, { actions: { answer: async () => ({}) } }));
+  assert.equal(doc.querySelector('.wft-said.is-dis').textContent, 'You disagreed: Worca notes it.Undo');
+  assert.equal(doc.querySelector('button.wft-agree'), null);
+});
+
+test('P4-M6: a "Not checked" cell is grey with no dot, and a row or box never offers answers on it', () => {
+  const doc = dom();
+  const nc = (extra = {}) => v(null, { value: "Not checked: Worca's proof was not in the result", judgementId: 13, reason: 'x', proof: 'y', ...extra });
+  mount(doc, criteriaGroup(doc, { n: 2, a: v(true), b: nc() }, { a: 'v4', b: 'v5 draft' }, { actions: { answer: async () => ({}) } }));
+  const row = doc.querySelector('.wft-crow.is-crit');
+  const cells = [...row.querySelectorAll('.wft-res')];
+  assert.equal(cells[1].textContent, "Not checked: Worca's proof was not in the result");
+  assert.ok(cells[1].classList.contains('is-none'));
+  assert.equal(cells[1].querySelector('.wft-dot'), null);
+  assert.equal(row.querySelector('.wft-crit-why'), null, 'board P4-M6: no box under a Met beside a Not checked');
+  assert.equal(doc.querySelector('button.wft-agree'), null);
+  const doc2 = dom();
+  mount(doc2, criteriaGroup(doc2, { n: 2, a: v(false), b: nc({ judgementId: 14 }) }, { a: 'v4', b: 'v5 draft' }, { actions: { answer: async () => ({}) } }));
+  assert.match(doc2.querySelector('.wft-crit-why').textContent, /Why Worca says no for v4:/, 'the box explains the version with a verdict');
+  assert.equal(doc2.querySelectorAll('button.wft-agree').length, 1);
+});
+
+test('board 36: the trust line while Worca needs answers', () => {
+  const doc = dom();
+  mount(doc, criteriaGroup(doc, { n: 2, a: v(true), b: v(false, { trust: { state: 'collecting', n: 4, agree: 4, decides: true } }) }, { a: 'v2', b: 'v3 draft' }, { actions: {} }));
+  assert.equal(doc.querySelector('.wft-crit-why .wft-crit-trust').textContent,
+    "Worca's checking of this criterion needs your answers: Worca has 4 of the 10 answers it needs.");
+});
+
+test('board 36: proof from the changes names the file and shows the line in code font', () => {
+  const patch = ['diff --git a/src/core/billing/total.mjs b/src/core/billing/total.mjs', '--- a/src/core/billing/total.mjs', '+++ b/src/core/billing/total.mjs',
+    '@@ -1,1 +1,1 @@', '-const x = 1;', '+const x = 2;',
+    'diff --git a/src/core/billing/round.mjs b/src/core/billing/round.mjs', '--- a/src/core/billing/round.mjs', '+++ b/src/core/billing/round.mjs',
+    '@@ -3,1 +3,1 @@', '-  return Math.round(value * 100) / 100;', '+   return toCents(value) / 100;', ''].join('\n');
+  const proj = (id, met, proof) => ({ tryId: id, project: { changes: { files: [] } }, ...v(met, { proof, judgementId: id + 100 }) });
+  const cur = { n: 2, a: proj(1, true, 'Adds a test'), b: proj(2, false, '+   return toCents(value) / 100;') };
+  const doc = dom();
+  mount(doc, criteriaGroup(doc, cur, { a: 'v2', b: 'v3 draft' }, { actions: {}, patches: new Map([[2, patch]]) }));
+  const proof = doc.querySelector('.wft-crit-why .wft-crit-proof');
+  assert.equal(proof.querySelector('b').textContent, 'Proof from the changes: ');
+  assert.equal(proof.querySelector('.hint').textContent, 'src/core/billing/round.mjs · found in the changes');
+  assert.equal(proof.querySelector('.wft-crit-code').textContent, '+   return toCents(value) / 100;');
+  const doc2 = dom();
+  mount(doc2, criteriaGroup(doc2, cur, { a: 'v2', b: 'v3 draft' }, { actions: {}, patches: new Map() }));
+  assert.match(doc2.querySelector('.wft-crit-proof').textContent, /^Proof from the result: "\+ {3}return toCents\(value\) \/ 100;" · found in the result$/,
+    'the changes not read yet: the result\'s words');
+});
