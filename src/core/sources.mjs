@@ -13,7 +13,7 @@ import { readPluginsLock, pluginCurrentDir } from './plugins-lock.mjs';
 import { listProfiles, DEFAULT_PROFILE } from './plugin-config.mjs';
 import { normalizeManifest } from './plugin-manifest.mjs';
 import { getDb } from './db.mjs';
-import { runDirForRow, readStoreMeta, readPromptFile } from './artifacts.mjs';
+import { runDirForRow, readStoreMeta, readPromptFile, appendAuditById } from './artifacts.mjs';
 import { RESULTS_FILE } from './results.mjs';
 import { anyPrHost, findPrForBranch } from './git-info.mjs';
 import { moveFor } from './ticket-updates.mjs';
@@ -464,4 +464,21 @@ export async function reportRunEvent(pipelineId, event, extra = {}) {
   } catch (err) {
     return { ok: false, error: err?.message || String(err) };
   }
+}
+
+/**
+ * Post a run's "PR opened" ticket comment (#1456) and record how it went on the run's timeline. Fire-and-forget: the PR
+ * response never waits for the tracker, and nothing here can reject. Prompt runs and opted-out runs skip silently.
+ * Called for a PR the run's PR call opened, never for one it linked: a linked PR is not announced again.
+ * @param {string} id  the pipeline id
+ * @param {{prUrl: string, draft: boolean, memberName: string|null}} extra
+ */
+export function announcePrOpened(id, extra) {
+  reportRunEvent(id, 'pr-opened', extra).then((outcome) => {
+    if (outcome?.ok === false) {
+      appendAuditById(id, `Pull request could not be reported to the task source: ${pluginTextLine(outcome.error)}.`);
+    } else if (outcome?.ok && !outcome.skipped) {
+      appendAuditById(id, reportedAuditLine(outcome, 'pr-opened'));
+    }
+  }).catch(() => {});
 }

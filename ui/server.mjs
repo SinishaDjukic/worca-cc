@@ -537,7 +537,7 @@ import { TokenBucket } from '../src/core/chat/rate-limiter.mjs';
 import { renderTest } from '../src/core/chat/renderers.mjs';
 import { readPluginsLock, pluginCurrentDir } from '../src/core/plugins-lock.mjs';
 import { normalizeManifest, validatePluginDir, PLUGIN_NAME_RE as MANIFEST_PLUGIN_NAME_RE } from '../src/core/plugin-manifest.mjs';
-import { listTaskSources, pluginTextLine, reportedAuditLine, reportRunEvent, retryWriteback, resolveTaskInput, sourcePlaceholderTitle } from '../src/core/sources.mjs';
+import { announcePrOpened, listTaskSources, retryWriteback, resolveTaskInput, sourcePlaceholderTitle } from '../src/core/sources.mjs';
 import {
   createTicket, getTicket, listTickets, updateTicket, cancelTicket, requestRunNow, setTicketPipeline,
   createSchedule, getSchedule, listSchedules, updateSchedule, pauseSchedule, resumeSchedule, skipNext,
@@ -7032,26 +7032,9 @@ async function createRunPr({ id, state, target, base, memberKey = null, remotes:
     // Who shipped it (the footer names who STARTED the run). No actor: worca opened it (a slice's draft).
     const where = memberKey ? ` in \`${target.memberName}\`` : '';
     appendAuditById(pipelineIdForPr, `PR ${pr.existed ? 'linked' : (newDraft ? 'created (draft)' : 'created')}${where}${byActor(actor)}: ${pr.url}`, { actor });
-    // The ticket hears about a PR this call opened (#1456); a linked one is not announced again.
     if (!pr.existed) announcePrOpened(pipelineIdForPr, { prUrl: pr.url, draft: newDraft, memberName: memberKey ? target.memberName : null });
   }
   return { ok: true, pr, newDraft, remotes, pushRemote, baseRemote, repo, headOwner, baseR, pipelineIdForPr, closes: !!closing || !!workItemId };
-}
-
-/**
- * Post a run's "PR opened" ticket comment (#1456) and record how it went on the run's timeline. Fire-and-forget: the PR
- * response never waits for the tracker, and nothing here can reject. Prompt runs and opted-out runs skip silently.
- * @param {string} id  the pipeline id
- * @param {{prUrl: string, draft: boolean, memberName: string|null}} extra
- */
-function announcePrOpened(id, extra) {
-  reportRunEvent(id, 'pr-opened', extra).then((outcome) => {
-    if (outcome?.ok === false) {
-      appendAuditById(id, `Pull request could not be reported to the task source: ${pluginTextLine(outcome.error)}.`);
-    } else if (outcome?.ok && !outcome.skipped) {
-      appendAuditById(id, reportedAuditLine(outcome, 'pr-opened'));
-    }
-  }).catch(() => {});
 }
 
 /** Did a run's automation source (pipelines.source_ref, sources.mjs) come through this base remote's repository? A
