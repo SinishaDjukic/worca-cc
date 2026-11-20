@@ -696,3 +696,21 @@ test('5c: the hide switch never takes the keyboard back from a control you moved
   assert.equal(group(doc, 'codex').querySelector('.mv-hide-builtin[data-engine="codex"]').checked, true, 'the refresh drew the saved switch');
   assert.equal(doc.activeElement, search, 'the keyboard stays in the search');
 });
+
+test('an always-shown harness\'s Add-model call to action opens Add model on it', async () => {
+  const { window, doc } = await boot({ hash: 'models' });
+  const oc = group(doc, 'opencode');
+  assert.ok(oc, 'the OpenCode group is listed with no OpenCode models');
+  assert.equal(oc.querySelector('.mdl-grp-toggle').getAttribute('aria-expanded'), 'false', 'folded like the other harnesses');
+  press(window, toggle(doc, 'opencode'));
+  const add = doc.querySelector('#models-list .mdl-grp[data-engine="opencode"] .mdl-empty-add');
+  assert.ok(add, 'the empty group\'s body holds the Add-model call to action');
+  assert.equal(add.textContent, 'Add OpenCode model');
+  press(window, add);
+  await settle();
+  const modal = doc.querySelector('#model-editor-modal');
+  assert.equal(modal.classList.contains('hidden'), false, 'Add model opened');
+  const picked = modal.querySelector('.mdl-hx-t[aria-pressed="true"]');
+  assert.ok(picked, 'a harness is picked');
+  assert.equal(picked.dataset.engine, 'opencode', 'the harness that had no models is the pick');
+});
