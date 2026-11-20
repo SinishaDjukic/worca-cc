@@ -143,7 +143,7 @@ test('automatic checks: the G1 dialog with a live label, refusals in plain words
   const { root, doc, ed } = boot();
   click(byText(root, '.wft-sect button', 'Add an automatic check'));
   const kind = doc.querySelector('#wft-ck-kind');
-  assert.deepEqual([...kind.options].map((o) => o.textContent), ['Length in words', 'Has these sections', 'Must mention a text', 'Must not mention a text', 'A file with this name is in the result', 'A Library script']);
+  assert.deepEqual([...kind.options].map((o) => o.textContent), ['Length in words', 'Has these sections', 'Must mention a text', 'Must not mention a text', 'Every quote is in the files', 'Numbers come from the files', 'No personal data', 'Links work', 'A file with this name is in the result', 'A Library script']);
   assert.equal(doc.querySelector('.wft-dlg-ok').textContent, 'Add check', 'a new check: Add check (board 33)');
   click(doc.querySelector('.wft-dlg-ok'));
   await tick();
@@ -518,11 +518,11 @@ test('final review UI 6: with no version yet the draft is "your draft" inside th
   assert.equal(root.querySelector('.wft-estimate').textContent, 'About $0.55 a try with your draft, so about $1.65 for this example.');
 });
 
-test('fix round 1: the check dialog does not list the four Part 4 kinds (quotes, numbers, personal data, links)', () => {
+test('P4-M1: the check dialog lists the four Part 4 kinds (quotes, numbers, personal data, links) after the text checks', () => {
   const { root, doc } = boot();
   click(byText(root, '.wft-sect button', 'Add an automatic check'));
   const values = [...doc.querySelector('#wft-ck-kind').options].map((o) => o.value);
-  for (const k of ['quotes', 'numbers', 'no-personal', 'links']) assert.ok(!values.includes(k), `${k} is not offered yet`);
+  for (const k of ['quotes', 'numbers', 'no-personal', 'links']) assert.ok(values.includes(k), `${k} is offered`);
   assert.ok(values.includes('words'), 'the other kinds still are');
 });
 

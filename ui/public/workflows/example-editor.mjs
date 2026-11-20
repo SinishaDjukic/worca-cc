@@ -7,6 +7,7 @@ import { makeSwitch } from '../switch.mjs';
 import { icon } from '../icons.mjs';
 import { withButton } from '../feedback.mjs';
 import { renderCriteriaSection } from './criteria-editor.mjs';
+import { EXACT_KIND_HINTS } from '../../../src/shared/workflow-tests/criteria-text.mjs';
 import {
   CHECK_KINDS, PROJECT_KINDS, PART4_KINDS, CHECK_KIND_LABELS, DEFAULT_BASICS, PROJECT_FILE_KIND_LABEL, COMMAND_TIMEOUTS, checkLabel, normaliseCheck, normaliseBasics, fmtUsd, parseUsd,
 } from '../../../src/shared/workflow-tests/checks.mjs';
@@ -39,9 +40,11 @@ const scriptGone = (scripts, key) => Array.isArray(scripts) && !!key && !scripts
 /** A select in the shared .select-wrap, whose ::after draws the chevron (boards 32, 33). */
 const skinned = (doc, select, cls = '') => { const w = el(doc, 'div', `select-wrap${cls ? ` ${cls}` : ''}`); w.append(select); return w; };
 
+const LINKS_LIMIT_HINT = 'Worca opens at most 20 links of a result. It never opens a link that may carry data from your example.';   // P4-M1
+const SAME_CHOICE_HINT = 'The same choice is on Every quote is in the files and No personal data. Links work always reads the final result.';
 const P2_CARD1_HINT = 'The same request and files are used every time this example is tried.';
 const P2_CHECKS_HINT = 'Counted exactly, without AI. Pick a ready check, or a script from the Library.';   // C3
-const TEXT_KIND_SET = new Set(['words', 'sections', 'mentions', 'not-mentions']);
+const TEXT_KIND_SET = new Set(['words', 'sections', 'mentions', 'not-mentions', 'quotes', 'numbers', 'no-personal']);
 /** A check as its line shows it. The line's text is a flex column, so the words go in one inline span. */
 function checkLineEl(doc, c, label) {
   const s = el(doc, 'span', 'wft-line-text');
@@ -97,7 +100,7 @@ export function openAnswerDialog({ doc, win, pair = null, onSave, onRemove = nul
 /** G1: Add an automatic check — the kind, its fields, and the label it will have. `scripts` null: the Library did not load.
  *  `project`: the example works on a project (board 33): the kinds go in two groups, the command check joins, and a text
  *  check can read a file in the project. */
-export function openCheckDialog({ doc, win, check = null, scripts = [], project = false, onSave, onRemove = null }) {
+export function openCheckDialog({ doc, win, check = null, scripts = [], project = false, suggest = null, onSave, onRemove = null }) {
   const listed = scripts;
   scripts = Array.isArray(scripts) ? scripts : [];
   const kind = el(doc, 'select');
@@ -105,8 +108,9 @@ export function openCheckDialog({ doc, win, check = null, scripts = [], project 
   const opt = (k, label = CHECK_KIND_LABELS[k]) => { const o = el(doc, 'option', '', label); o.value = k; return o; };
   // An edited script check keeps its kind, also when the Library lists none.
   // The project checks (3a D57, 3b D73) are their own group.
-  const resultKinds = CHECK_KINDS.filter((k) => !PROJECT_KINDS.includes(k) && !PART4_KINDS.includes(k) &&   // P4-M1: shown from Task 19
+  const plainKinds = CHECK_KINDS.filter((k) => !PROJECT_KINDS.includes(k) && !PART4_KINDS.includes(k) &&
      !(k === 'script' && !scripts.some(declaresVerdict) && !(check && check.kind === 'script')));   // U-T10 (D9): no verdict script, no kind
+  const resultKinds = [...plainKinds.slice(0, 4), ...PART4_KINDS, ...plainKinds.slice(4)];   // P4-M1: the four exact kinds follow the text checks
   if (project) {
     const g1 = el(doc, 'optgroup'); g1.label = GROUP_RESULT;
     for (const k of resultKinds) g1.append(opt(k, k === 'file' ? PROJECT_FILE_KIND_LABEL : undefined));   // D59, board 33
@@ -117,7 +121,7 @@ export function openCheckDialog({ doc, win, check = null, scripts = [], project 
     for (const k of resultKinds) kind.append(opt(k));
     if (check && PROJECT_KINDS.includes(check.kind)) kind.append(opt(check.kind));   // an edited project check keeps its kind
   }
-  kind.value = check ? check.kind : 'words';
+  kind.value = check ? check.kind : suggest ? suggest.alt.kind : 'words';
   const fields = el(doc, 'div', 'wft-ck-fields');
   const preview = el(doc, 'p', 'hint wft-ck-preview');
   preview.setAttribute('aria-live', 'polite');
@@ -150,9 +154,13 @@ export function openCheckDialog({ doc, win, check = null, scripts = [], project 
       fields.append(field(doc, 'Section names', names, { id: names.id, hint: 'Separate them with commas, for example Problem, Users, Risks. A section is a heading in the result.' }));
       read = () => ({ kind: 'sections', names: names.value });
     } else if (kind.value === 'mentions' || kind.value === 'not-mentions') {
-      const text = input('wft-ck-text', 'text', c.text ?? '', { maxLength: 200 });
+      const text = input('wft-ck-text', 'text', c.text ?? (suggest && suggest.alt.kind === kind.value ? suggest.alt.text : ''), { maxLength: 200 });
       fields.append(field(doc, 'Text', text, { id: text.id, hint: 'Case and spacing do not matter.' }));
       read = () => ({ kind: kind.value, text: text.value });
+    } else if (PART4_KINDS.includes(kind.value)) {   // D93, P4-M1: no fields; the hint says what is checked
+      fields.append(el(doc, 'p', 'hint wft-ck-kind-hint', EXACT_KIND_HINTS[kind.value]));
+      if (kind.value === 'links') fields.append(el(doc, 'p', 'hint wft-ck-kind-hint', LINKS_LIMIT_HINT));
+      read = () => ({ kind: kind.value });
     } else if (kind.value === 'file') {
       const name = input('wft-ck-file', 'text', c.name ?? '', { maxLength: 200 });
       fields.append(field(doc, 'File name', name, { id: name.id, hint: 'A file the result must have, such as summary.md.' }));
@@ -243,6 +251,7 @@ export function openCheckDialog({ doc, win, check = null, scripts = [], project 
       fields.append(rads, from);
       const base = read;
       read = () => ({ ...base(), ...(fil.r.checked && from.value.trim() ? { file: from.value.trim() } : {}) });
+      if (PART4_KINDS.includes(kind.value) && kind.value !== 'links') fields.append(el(doc, 'p', 'hint', SAME_CHOICE_HINT));
       refuse = () => (fil.r.checked && !from.value.trim() ? FILE_NAME_NEEDED : null);   // P24: "A file in the project" needs its name
     } else if (c.file && TEXT_KIND_SET.has(kind.value)) {   // the project was unpicked: an edited check keeps the file it reads
       const base = read;
@@ -252,19 +261,34 @@ export function openCheckDialog({ doc, win, check = null, scripts = [], project 
   };
   kind.addEventListener('change', paintFields);
   paintFields();
-  return testDialog({
+  // P4-M1: opened from a criterion's Switch, a box says why; its two buttons replace "Add check" (user decision 1).
+  let dlg = null;
+  const box = suggest ? el(doc, 'div', 'wft-sugg') : null;
+  if (box) {
+    const acts = el(doc, 'div', 'wft-acts');
+    acts.append(btn(doc, 'Switch to an exact check', () => dlg && dlg.okButton.click(), 'btn btn-sm btn-primary'),
+      btn(doc, 'Keep it as a criterion', () => dlg && dlg.close(), 'btn btn-sm'));
+    const why = el(doc, 'span', 'wft-sugg-why', 'Your criterion ');
+    why.append(el(doc, 'b', '', `"${suggest.criterion.text}"`), doc.createTextNode(' can be checked exactly. An exact check is free, fast, and gives the same answer every time.'));
+    box.append(el(doc, 'span', 'wft-sugg-tag', 'Worca suggests'), why, acts);
+  }
+  // D99: a check made from a criterion keeps its words; an edited check keeps the words it had.
+  const said = suggest ? { said: suggest.criterion.text } : check && check.said ? { said: check.said } : {};
+  dlg = testDialog({
     doc, win, title: check ? 'Edit the automatic check' : 'Add an automatic check', confirmLabel: check ? 'Save check' : ADD_CHECK,
-    body: [el(doc, 'p', 'hint', project ? CHECK_DIALOG_HINT_PROJECT : 'Counted exactly, without AI.'), field(doc, 'What to check', skinned(doc, kind), { id: kind.id }), fields, preview],
+    body: [...(box ? [box] : []), el(doc, 'p', 'hint', project ? CHECK_DIALOG_HINT_PROJECT : 'Counted exactly, without AI.'), field(doc, 'What to check', skinned(doc, kind), { id: kind.id }), fields, preview],
     onRemove: check && onRemove ? onRemove : null,
     onConfirm: () => {
       const own = refuse();
       if (own) return { ok: false, error: own };
-      const { check: ok, error } = normaliseCheck({ ...read(), ...(check && check.id ? { id: check.id } : {}) });
+      const { check: ok, error } = normaliseCheck({ ...read(), ...said, ...(check && check.id ? { id: check.id } : {}) });
       if (!ok) return { ok: false, error: sentence(error) };
       onSave(ok);
       return { ok: true };
     },
   });
+  if (box) dlg.okButton.hidden = true;
+  return dlg;
 }
 
 /** A Basic is on or off, so a switch (docs/design-system.md › Switch). `extra` (a field) and `after` ("times") sit beside
@@ -740,6 +764,7 @@ export function renderExampleEditor(root, ex, actions, { doc, win, scripts = [],
   };
   c3.append(el(doc, 'p', 'wft-grp', 'Basics'), rows.noError.wrap, rows.noHelp.wrap, rows.cost.wrap, rows.fix.wrap);
   const lines = el(doc, 'div', 'wft-lines');
+  const addCheck = (nc) => { draft.checks.push(nc); repaintCheckRows(); };   // the one way a new check joins the draft
   const scriptName = (k) => (lib.find((s) => s.key === k) || {}).displayName || k;
   let addCk = null;
   const repaintCheckRows = () => {
@@ -757,7 +782,7 @@ export function renderExampleEditor(root, ex, actions, { doc, win, scripts = [],
       line.append(main, edit);
       lines.append(line);
     });
-    addCk = btn(doc, 'Add an automatic check', () => openCheckDialog({ doc, win, scripts: listed, project: !!pick.key, onSave: (nc) => { draft.checks.push(nc); repaintCheckRows(); } }));
+    addCk = btn(doc, 'Add an automatic check', () => openCheckDialog({ doc, win, scripts: listed, project: !!pick.key, onSave: addCheck }));
     addCk.dataset.focusKey = 'ck-add';
     lines.append(addCk);
   };
@@ -772,8 +797,8 @@ export function renderExampleEditor(root, ex, actions, { doc, win, scripts = [],
   crit = renderCriteriaSection(doc, draft, { models: judgeModels, trust: draft.id == null ? null : criteriaTrust, project: !!pick.key,
     onConfirm: onConfirmCriterion,
     onSwitch: (c, alt) => openCheckDialog({ doc, win, scripts: listed, project: !!pick.key, suggest: { criterion: c, alt },
-      onSave: (nc) => { draft.checks.push(nc); repaintCheckRows(); crit.remove(c); } }),
-    onAddExact: () => openCheckDialog({ doc, win, scripts: listed, project: !!pick.key, onSave: (nc) => { draft.checks.push(nc); repaintCheckRows(); } }) });
+      onSave: (nc) => { addCheck(nc); crit.remove(c); } }),
+    onAddExact: () => openCheckDialog({ doc, win, scripts: listed, project: !!pick.key, onSave: addCheck }) });
   c3.append(crit.el);
 
   const cols = el(doc, 'div', 'wft-cols');

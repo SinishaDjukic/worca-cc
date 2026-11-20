@@ -66,3 +66,11 @@ export function trustTestLine(t) {
   if (t.key === 'proof') return `${t.n} of ${t.of} verdicts had proof. ${t.of - t.n} ${t.of - t.n === 1 ? 'was' : 'were'} not counted.`;
   return `${t.pct}% · of ${t.n} answers`;
 }
+
+/** P4-C4: the hint under "What to check" for each Part 4 exact kind (board P4-M1). */
+export const EXACT_KIND_HINTS = Object.freeze({
+  quotes: "Each sentence in quotation marks must appear word for word in the example's files or request. Small differences in spacing and quotation marks are ignored.",
+  numbers: "Each number in the result must appear in the example's files or request.",
+  'no-personal': 'No e-mail addresses, phone numbers, bank account or card numbers.',
+  links: 'Every link in the result opens a real page.',
+});

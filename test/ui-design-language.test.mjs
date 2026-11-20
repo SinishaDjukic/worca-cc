@@ -885,7 +885,7 @@ test('no glyph at the edge of a visible string; use icon(doc, …) (F-12)', () =
 // Marketplace kind colours give the chat kind its violet tile and facet dot (docs/design-system.md › Marketplace exceptions). Exact selectors, no substring match.
 const VIOLET_OK = new Set(['.badge.flag-stage-experimental', '.status-dot.is-violet', '.rg-orb-merged .rg-orb-bg', '.rg-orb-merged .rg-orb-line',
   '.sn-chip', '.sn-adorn.sn-loading .input', '.mk-t-chat', '.mk-dot-chat', '.rd-route-dot.is-merged',
-  '.rd-fact-tx.is-merged', '.wft-crit-meta.is-exact']);   // workflow tests Part 4 (board 2): violet = an exact check, without AI
+  '.rd-fact-tx.is-merged', '.wft-crit-meta.is-exact', '.wft-sugg', '.wft-sugg-tag']);   // workflow tests Part 4 (board 2): violet = an exact check, without AI
 test('violet only inside Labs selectors and the merged dot and orb (F-13)', () => {
   const bad = ALL.filter((r) => r.sel !== ':root' && /var\(--violet/.test(r.body) && !splitTop(r.sel).every((s) => VIOLET_OK.has(s.trim())))
     .map((r) => where(r, 'violet'));

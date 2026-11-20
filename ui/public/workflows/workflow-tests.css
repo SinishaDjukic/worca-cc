@@ -470,3 +470,8 @@ input.wft-mono[type="text"],textarea.wft-mono{font-family:var(--mono);}
 .wft-crit-adds{display:flex;flex-wrap:wrap;gap:8px;}
 button.badge.wft-confirm{border:0;font-family:inherit;font-weight:600;cursor:pointer;}
 button.badge.wft-confirm:hover{text-decoration:underline;}
+/* Part 4, P4-M1 (board 10): the box "Worca suggests" when the check dialog opens from a criterion's Switch; violet = an exact check. */
+.wft-sugg{display:flex;flex-direction:column;gap:10px;padding:14px 16px;border-radius:var(--r-md);background:var(--violet-wash);border:1px solid var(--violet-bg);}
+.wft-sugg-tag{align-self:flex-start;background:var(--violet-bg);color:var(--violet-ink);font-size:var(--fs-meta);font-weight:700;padding:4px 9px;border-radius:var(--r-sm);}
+.wft-sugg-why{font-size:var(--fs-body);line-height:1.5;}
+.wft-sugg-why b{font-weight:600;}
