@@ -10,22 +10,18 @@
    happens. */
 @container rd-bar (max-width:900px){ .rd-night-wrap > .txt{display:none;} }
 .rd-bar-mid{flex:1 1 0;display:flex;justify-content:flex-start;align-items:center;gap:8px;min-width:0;}   /* basis 0: the name truncates before the controls wrap; flex-start: it sits at the bar's left, the controls at its right */
-/* The run's name. Details has it as its header's title, so the bar leaves it blank there. */
-/* The glance's page title owns the name; the bar repeats it only once that heading has
+/* The run's name. The page header's title owns it; the bar repeats it only once that heading has
    scrolled out of view (app.js watchPageTitle sets data-title-out), like a large title
-   collapsing into the navigation bar. Details has its own header, so never there. */
+   collapsing into the navigation bar. */
 .rd-bar-title{min-width:0;overflow:hidden;white-space:nowrap;text-overflow:ellipsis;font:600 var(--fs-body) var(--sans);color:var(--ink);
   opacity:0;transition:opacity .2s;}
-.rd[data-title-out="1"][data-mode="glance"] .rd-bar-title,.hd[data-title-out="1"][data-mode="glance"] .rd-bar-title{opacity:1;}
+:is(.rd,.hd)[data-title-out="1"] .rd-bar-title{opacity:1;}
 @media (prefers-reduced-motion:reduce){.rd-bar-title{transition:none;}}
 .rd-bar-end{display:flex;align-items:center;justify-content:flex-end;flex-wrap:wrap;gap:8px;min-width:0;}
 /* Every control in the bar keeps its words on one line: a squeezed bar wraps whole controls
    onto a second row, never the text inside one ("Run after" over two lines). */
 .rd-bar-end > *{flex:none;white-space:nowrap;}
-.rd-to-run,.hd-to-run{display:inline-flex;align-items:center;gap:8px;}
-.rd-to-run.ask{background:var(--panel);border-color:var(--amber);color:var(--amber-ink);}   /* a question waits on the glance */
-.rd-back[hidden],.hd-bar .hd-back[hidden],.hd-to-run[hidden],.rd-to-run[hidden]{display:none;}
-.rd-to-run:focus-visible,.hd-to-run:focus-visible{outline:2px solid var(--ink);outline-offset:2px;}
+.rd-back[hidden],.hd-bar .hd-back[hidden]{display:none;}
 /* A page that focuses its way back (or a menu handing focus back to its trigger) would otherwise paint that as
    :focus-visible after a click. The ring shows only to keyboard users (app.js sets data-input from the last keydown /
    pointerdown). Fields are not listed: a clicked field keeps its ink border. */
@@ -33,13 +29,6 @@
 .rd > .rd-error{margin:12px 32px 0;}
 .rd-glance[hidden],.rd-details[hidden]{display:none;}
 
-.rd-glance{max-width:none;margin:0 auto;padding:28px 32px var(--ask-dock-clearance);display:flex;flex-direction:column;gap:22px;}
-/* Run 3 (D16): everything but the graph keeps the old 544px measure; the graph takes the pane's content width, under
-   the run details at every list and pane width. A waiting question reads easier wide: it opens to twice the run panel's
-   width, while the header and the card keep their measure and do not move. */
-.rd-glance > :not(.rd-live){width:100%;max-width:544px;align-self:center;}
-.rd-glance:has(> .rd-questions:not([hidden])) > .rd-questions{max-width:1152px;}
-.rd-glance > .rd-live{align-self:stretch;width:100%;max-width:none;}
 /* Run progress (runs redesign §2.3): four neutral sections; the run's state is told by the status dot, not the fill. */
 .run-prog{position:relative;margin-top:10px;outline:none;}
 .run-prog[hidden]{display:none;}
@@ -101,11 +90,10 @@
    for the rest of the line wraps under the text and truncates there. */
 .rd-page-meta{display:flex;flex-wrap:wrap;align-items:center;gap:6px 10px;color:var(--ink-2);}
 .rd-page-meta:empty{display:none;}
-/* The card's head: the status line top left, the Live view switch (app.js paintRdLive)
-   top right, level with the state word; after it the head buttons (.rd-head-acts: run-head.mjs, with the pull request
-   control .rd-pr-slot among them). The live row shows only while the run has not ended and the buttons only once it
-   has, so the two never meet; if they did, the buttons take their own column after the row. */
-.rd-sheet-head{container:rd-head / inline-size;display:grid;grid-template-columns:minmax(0,1fr) auto auto;align-items:start;min-width:0;
+/* The card's head: the status line top left; top right, level with the state word, the head buttons (.rd-head-acts:
+   run-head.mjs, with the pull request control .rd-pr-slot among them), then Publish branch on a saved run (column 4).
+   Column 2 is empty (the Live view switch's old column). */
+.rd-sheet-head{container:rd-head / inline-size;display:grid;grid-template-columns:minmax(0,1fr) auto auto auto;align-items:start;min-width:0;
   --rd-word-line:calc(var(--fs-section) * var(--lh-title));--rd-btn-h:32px;}
 @media (pointer:coarse){.rd-sheet-head{--rd-btn-h:40px;}}   /* the touch .btn's min-height */
 /* The status block spans every head column so its bar (and the group bar, role rows) take the card's width; a subgrid
@@ -114,7 +102,6 @@
 .rd-sheet-head > .run-status{grid-area:1 / 1 / 2 / -1;grid-template-columns:subgrid;column-gap:0;}
 .rd-sheet-head > .run-status > *{grid-column:1 / -1;}
 .rd-sheet-head > .run-status > .run-status-head{grid-column:1;}
-.rd-sheet-head > .rd-live-row{grid-area:1 / 2;height:var(--rd-word-line);margin-left:16px;}   /* the state word's line box */
 /* Slice 3: centred on the state word's line (the detail may add lines under it): the buttons (32px, 40px on touch screens) overhang
    that line each way, so the head is the status block's height with or without them, and the PR control's fade-out moves
    nothing. A narrow card wraps them under the status. */
@@ -232,6 +219,11 @@
    what runs now, and the way into Details. */
 .rd-sheet{background:var(--panel);border:1px solid var(--line);border-radius:var(--r-card);box-shadow:none;
   padding:var(--pad-card);display:flex;flex-direction:column;gap:16px;}
+/* The card's two halves: the run's details (.rd-sheet-main), then the Overview's own parts (.rd-sheet-nav). One column
+   here; side by side on a wide pane (run-card.css). */
+.rd-sheet-main,.rd-sheet-nav{display:flex;flex-direction:column;gap:16px;min-width:0;}
+.rd-sheet-nav:not(:has(> .rd-facts:not(:empty), > .rd-live:not([hidden]), > .rd-nowlist:not(:empty), > .rd-result:not([hidden]):has(.rd-srow), > .hd-ov:not(:empty))){display:none;}
+.rd-result:not(:has(.rd-srow)){display:none;}   /* the Local copy group, only while a checkout exists */
 .rd-sheet .rd-banners:has(> :not([hidden])){margin-top:0;}
 .rd-sheet .rd-banners:not(:has(> :not([hidden]))){display:none;}
 .rd-nowlist{display:flex;flex-direction:column;gap:16px;}
@@ -303,14 +295,6 @@ button.rd-srow:hover{background:var(--hover-on-field);}
 .rd-prs-text{font-weight:600;color:var(--ink);}
 .rd-prs-sep{color:var(--ink-3);}
 .rd-prs-detail{color:var(--ink-2);}
-/* Overview: the open PR(s) under the review verdict, one row each, hidden until GitHub answers. */
-.hd-ov-prs{display:flex;flex-direction:column;gap:8px;}
-.hd-ov-prs:empty{display:none;}
-.hd-ov-pr{display:flex;align-items:center;gap:12px;flex-wrap:wrap;padding:12px 16px;border-radius:var(--r-ctrl);
-  background:var(--panel);box-shadow:inset 0 0 0 1px var(--line);}
-.hd-ov-pr:has(> .rd-pr-status[hidden]){display:none;}
-.hd-ov-pr-label{font:600 12px var(--sans);color:var(--ink-3);white-space:nowrap;}
-.hd-ov-pr .rd-pr-status{flex:1 1 auto;min-width:0;padding:0;border:0;}
 .rd-prs-link{color:var(--blue-ink-strong);font-weight:600;text-decoration:none;}
 .rd-prs-link:hover{text-decoration:underline;}
 button.rd-prs-link{background:none;border:0;padding:0;font:inherit;cursor:pointer;}
@@ -366,7 +350,6 @@ button.rd-prs-link:disabled{opacity:.6;cursor:default;text-decoration:none;}
   .rd-bar,.hd-bar{padding:10px 16px;flex-wrap:wrap;gap:8px;}
   .rd-bar-end{margin-left:auto;gap:6px;}
   .rd-bar-end:empty{display:none;}
-  .rd-glance{padding:20px 16px var(--ask-dock-clearance);}
   .rd-details .rd-header{margin:16px 16px 0;}
   .rd-details .rd-body{padding-inline:16px;}
 }

@@ -188,6 +188,9 @@ a.req-run-row:focus-visible{outline:2px solid var(--ink);outline-offset:2px}
 .req-run-label{font-weight:500;font-size:13px;overflow-wrap:anywhere}
 .req-run-cost{font-family:var(--mono);font-size:12px;color:var(--ink-2)}
 .req-run-go{color:var(--ink-3)}
+.req-run-note{margin:-4px 0 0;padding:0 14px}.req-run-note p{margin:0;font-size:13px;color:var(--ink-2);white-space:pre-wrap;overflow-wrap:anywhere}
+.req-run-note-text.clamped{display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical;overflow:hidden}
+.req-run-override{color:var(--amber, var(--ink-2))}
 .req-runs .req-run-total{margin:0}
 .req-run-total code{font-family:var(--mono)}
 .req-changed{display:flex;gap:12px;align-items:flex-start;padding:14px 16px;border-radius:var(--r-md);background:var(--amber-wash);border:1px solid var(--amber-bg)}

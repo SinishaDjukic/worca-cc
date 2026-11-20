@@ -13,7 +13,9 @@
 import { gitOn, onGitChange, GIT_MISSING_TEXT } from './git-gate.mjs';
 import { makeSwitch } from './switch.mjs';
 import { icon as sharedIcon } from './icons.mjs';
-import { openRunSetupOverlay } from './run-setup-overlay.mjs';
+import { openRunSetupOverlay, RUN_IN_PROGRESS_TEXT } from './run-setup-overlay.mjs';
+import { STATE, READY_CHECKS, RUN_LIVE, liveStart, readyText } from './feature-pull/labels.mjs';
+import { START_AGAIN_TEXT } from './feature-pull/run-flow.mjs';
 import { engineLabel } from '../../src/shared/engine-switch.mjs';
 import { whoInterviews, recommendationNote, defaultLine, fallbackLine, harnessLine, otherHarnessPrivacy, modelChip, modelDialog, switchConfirm, choiceBox,
   briefRefreshDialog, stepMeta, stepNotices, costDialog, costWord, totalCostWord } from './requirements-model.mjs';
@@ -21,17 +23,6 @@ import {
   ATTACH_BINARY, ATTACH_TEXT_EXT, extOf, checkAttachment, bytesToBase64, carriesFiles, pastedFiles, createPasteNamer, REQ_ATTACH, reqLimits,
 } from './attach-files.mjs';
 
-// The displayed state (A2 §4), always the server's `f.state`: the page never derives it. `started` is
-// drawn as the latest run's pill (runPill), not as a badge.
-const STATE = Object.freeze({
-  looking: { label: 'Looking', cls: 'running' },
-  thinking: { label: 'Thinking', cls: 'running' },
-  your_turn: { label: 'Your turn', cls: 'amber' },
-  decide: { label: 'Decide', cls: 'amber' },
-  ready: { label: 'Ready', cls: 'green' },
-  started: { label: 'Started', cls: '' },
-  archived: { label: 'Archived', cls: '' },
-});
 // The list's filter tabs. Counts leave archived out; Archived fetches with archived=1 and has no count.
 const FILTERS = Object.freeze([
   { key: 'open', label: 'All open', has: (s) => s !== 'archived' },
@@ -40,8 +31,7 @@ const FILTERS = Object.freeze([
   { key: 'started', label: 'Started', has: (s) => s === 'started' },
   { key: 'archived', label: 'Archived', has: (s) => s === 'archived', noCount: true },
 ]);
-const READY_CHECKS = 6;
-const RUN_LIVE = ['created', 'starting', 'running', 'pausing'];
+const NOTE_CLAMP = 200;   // a start's note longer than this is clamped in the runs list, with Show more
 const SECTIONS = [['goal', 'Goal'], ['actors', 'Actors'], ['flow', 'Main flow'], ['edgeCases', 'Edge cases'],
   ['rules', 'Business rules'], ['outOfScope', 'Out of scope'], ['openQuestions', 'Open questions']];
 // The long lists the spec card folds behind one link.
@@ -112,8 +102,8 @@ function icon(shapes, { size = 16, label = null, width = 2, fill = 'none', strok
   return svg;
 }
 
-async function api(method, url, body) {
-  const res = await fetch(url, { method, headers: { 'Content-Type': 'application/json' }, ...(body === undefined ? {} : { body: JSON.stringify(body) }) });
+async function api(method, url, body, signal) {
+  const res = await fetch(url, { method, headers: { 'Content-Type': 'application/json' }, ...(body === undefined ? {} : { body: JSON.stringify(body) }), ...(signal ? { signal } : {}) });
   let data = {};
   try { data = await res.json(); } catch { /* empty body */ }
   if (!res.ok) { const err = new Error(data.error || `HTTP ${res.status}`); err.status = res.status; err.data = data; throw err; }
@@ -249,9 +239,9 @@ function rowMeta(f) {
     }
     case 'decide': {
       const n = Number(f.openAssumptions) || 0;
-      return { text: `Interview done · Ready ${Number(f.ready) || 0} of ${READY_CHECKS}${n > 0 ? ` · ${plural(n, 'assumption')} to decide` : ''}`, need: true };
+      return { text: `Interview done · ${readyText({ ready: Number(f.ready) || 0 })}${n > 0 ? ` · ${plural(n, 'assumption')} to decide` : ''}`, need: true };
     }
-    case 'ready': return { text: `Ready ${READY_CHECKS} of ${READY_CHECKS}` };
+    case 'ready': return { text: readyText({ ready: READY_CHECKS }) };
     case 'started': {
       // the interview goes on after a start (A2 D11): questions waiting are said here too
       const k = Number.isInteger(f.pendingCount) && f.pendingCount > 0 ? f.pendingCount : 0;
@@ -364,7 +354,7 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
   // Unsaved input of the feature page, kept across repaints (read from the DOM before a rebuild, put back after).
   let ui = freshUi();
   function freshUi() {
-    return { editVals: null, crit: '', critOpen: false, orientOpen: false, moreOpen: false, menu: null, decideMore: false, specTab: 'draft' };
+    return { editVals: null, crit: '', critOpen: false, orientOpen: false, moreOpen: false, menu: null, decideMore: false, specTab: 'draft', notesOpen: new Set() };
   }
 
   if (subEl) subEl.textContent = 'Define a feature with Worca before anything is built. Nothing runs until you start it.';
@@ -2052,12 +2042,21 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
       const early = Array.isArray(s.failing) && s.failing.length > 0;
       const label = h('span', { class: 'req-run-label', title: early && s.reason ? s.reason : null,
         text: `Run · spec v${s.version}${early ? ' · started before Ready' : ''}` });
+      const over = s.noteOverrides ? h('span', { class: 'hint req-run-override', text: 'Overrode the spec' }) : null;   // A-8
       if (!s.run) {
-        return h('div', { class: 'req-run-row gone' }, h('span', { class: 'req-run-main' }, label, h('span', { class: 'hint', text: 'Run not found' })));
+        return h('div', { class: 'req-run-row gone' }, h('span', { class: 'req-run-main' }, label, over, h('span', { class: 'hint', text: 'Run not found' })));
       }
       return h('a', { class: 'req-run-row', href: s.run.href || `#running/${s.runId}` },
-        runPill(s.run), h('span', { class: 'req-run-main' }, label),
+        runPill(s.run), h('span', { class: 'req-run-main' }, label, over),
         h('span', { class: 'req-run-cost', text: usd(s.run.costUsd) }), h('span', { class: 'req-run-go', 'aria-hidden': 'true', text: '→' }));
+    };
+    // The note the person gave this start: text only, clamped when long. Beside the row (a link), not inside it.
+    const noteBlock = (s) => {
+      if (!s.note) return null;
+      const long = s.note.length > NOTE_CLAMP, open = ui.notesOpen.has(s.runId);
+      return h('div', { class: 'req-run-note' }, h('p', { class: `req-run-note-text${long && !open ? ' clamped' : ''}`, text: s.note }),
+        long ? h('button', { type: 'button', class: 'link-btn', 'data-ui': 'run-note-more', 'aria-expanded': String(open),
+          onclick: () => { ui.notesOpen[open ? 'delete' : 'add'](s.runId); redraw(); } }, open ? 'Show less' : 'Show more') : null);
     };
     return h('section', { class: 'card req-runs', 'aria-label': 'Runs from this feature' },
       h('div', { class: 'req-card-head' }, h('h3', { text: 'Runs from this feature' }),
@@ -2065,7 +2064,7 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
           disabled: !changed || isLocked(f) || starting || !(r.ok || r.overridable),
           title: changed ? null : 'Nothing changed since the last start',
           onclick: (e) => startFlow(f, { trigger: e.currentTarget }) }, `Start again with v${nextVersion(f)}`)),
-      h('div', { class: 'req-run-rows' }, ...starts.map(row)),
+      h('div', { class: 'req-run-rows' }, ...starts.flatMap((s) => [row(s), noteBlock(s)])),
       reportRow(f, 'runs'),   // A6 D15: Start again reports back too
       h('p', { class: 'hint req-run-total' }, `Total for ${f.id} so far: `, h('code', { text: `${f.anyEstimated && req > 0 ? '≈' : ''}${usd(req + build)}` }),
         ` (requirements ${reqWord} + build ${usd(build)})`));
@@ -2244,8 +2243,8 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
 
   // ---- Start (A2 D5): a plain start, or with `override` the start-before-Ready dialog straight away.
   // A plain start the server refuses as NOT_READY opens the dialog too, naming the checks it reported. ----
-  // A press while the workflow list loads waits for it. Auto starts at once (a Ready feature) or after its reason (an
-  // early start); any other workflow opens the run setup overlay first, after the reason for an early start.
+  // A press while the workflow list loads waits for it. Every start (Auto too) opens the run setup overlay with its note step,
+  // after the reason for an early start.
   async function startFlow(f, { override = false, trigger = null } = {}) {
     if (starting || dialog) return;
     // Auto needs no list: it is what a failed list falls back to as well. Another remembered workflow waits for the answer.
@@ -2254,11 +2253,8 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
       if (starting || dialog || seqShown !== f.seq) return;
       if (workflowsFailed) return;   // the list failed while we waited: the card now says only Auto is offered; the person presses again
     }
-    const setup = effectiveWorkflow(choiceOf(f)) !== AUTO_WORKFLOW;
-    const early = override || (setup && !!f.readiness && f.readiness.ok === false);
-    if (early) { openStartDialog(f, failingChecks(f), trigger, { setup }); return; }
-    if (setup) { openRunSetup(f, { trigger }); return; }
-    void startPlain(f, trigger);
+    if (override || (f.readiness && f.readiness.ok === false)) openStartDialog(f, failingChecks(f), trigger);
+    else void openRunSetup(f, { trigger });
   }
   // The checks that fail: the server's keys (NOT_READY) looked up in the readiness, else every failing one.
   function failingChecks(f, keys = null) {
@@ -2287,35 +2283,18 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
     if (typeof deps.openRun === 'function') deps.openRun(runId);
     else location.hash = `#running/${runId}`;
   };
-  async function startPlain(f, trigger) {
-    say('');
-    starting = true;
-    for (const b of host.querySelectorAll('[data-start]')) b.disabled = true;
-    const triggerUi = trigger && trigger.getAttribute ? trigger.getAttribute('data-ui') : null;
-    try {
-      started(f, await postStart(f));
-    } catch (err) {
-      starting = false;
-      redraw();
-      if (seqShown !== f.seq) return;   // the person left this feature while it started: its dialog or message is not for this page
-      if (err && err.status === 409 && err.data && Array.isArray(err.data.failing)) {
-        const now = current && current.f.seq === f.seq ? current.f : f;
-        openStartDialog(now, failingChecks(now, err.data.failing), host.querySelector(`[data-ui="${triggerUi}"]`) || trigger);
-      } else fail(err);
-    }
-  }
 
   // The start-before-Ready dialog (board StartAnyway.dc.html): the upstream modal overlay (.viewer-modal),
   // on <body> so a live repaint of the page never drops what is typed. Escape and Keep deciding close it;
   // Tab stays inside; the focus goes to the reason on open and back to the trigger on close.
   // FEAT-9: the reason is saved on the feature as soon as it is given (PUT early-start-reason) and kept through a cancel or
-  // a failed start; the dialog opens with what is kept. `setup`: the start goes on to the run setup overlay (the label is
-  // then "Continue"); `overlay`: an overlay already confirmed (the start was refused as not Ready after it), sent with the reason.
+  // a failed start; the dialog opens with what is kept, then goes on to the run setup overlay ("Continue"). `carry`: the fields of an
+  // overlay already confirmed (overlay, note, noteOverrides, confirmRunning; refused as not Ready after it), sent with the reason.
   async function putReason(f, reason) {
     const r = await api('PUT', `/api/requirements/${f.seq}/early-start-reason`, { reason });
     if (current && current.f.seq === f.seq) current = { ...current, f: { ...current.f, earlyStartReason: r.earlyStartReason ?? null } };
   }
-  function openStartDialog(f, failing, trigger, { setup = false, overlay = null } = {}) {
+  function openStartDialog(f, failing, trigger, { carry = null } = {}) {
     closeDialog(false);
     const kept = (current && current.f.seq === f.seq ? current.f : f).earlyStartReason || '';
     const openN = ((f.spec && f.spec.assumptions) || []).filter((a) => a.status === 'open').length;
@@ -2326,7 +2305,7 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
     const count = h('span', { class: 'hint req-dlg-count', id: 'req-dlg-count', text: `0 / ${REASON_MAX}` });
     const msg = h('p', { class: 'form-msg err req-dlg-msg', role: 'alert' });
     const go = h('button', { type: 'button', class: 'btn btn-primary', disabled: true },
-      setup ? 'Continue' : assumptionsFail && openN ? `Start with ${openN} open` : 'Start anyway');
+      !carry ? 'Continue' : assumptionsFail && openN ? `Start with ${openN} open` : 'Start anyway');
     const sync = () => { count.textContent = `${area.value.length} / ${REASON_MAX}`; go.disabled = busy || !area.value.trim(); };
     area.value = kept;
     sync();
@@ -2337,8 +2316,8 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
       try {
         const reason = area.value.trim();
         await putReason(f, reason);
-        if (setup) { starting = false; if (seqShown === f.seq) openRunSetup(f, { trigger, reason }); return; }
-        const data = await postStart(f, { reason, ...(overlay ? { overlay } : {}) });
+        if (!carry) { starting = false; if (seqShown === f.seq) void openRunSetup(f, { trigger, reason }); return; }
+        const data = await postStart(f, { reason, ...carry });
         closeDialog(false);
         started(f, data);
       } catch (err) {
@@ -2364,21 +2343,36 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
         h('button', { type: 'button', class: 'btn', onclick: () => { if (!busy) closeDialog(true); } }, 'Keep deciding'), go));
     openModal(card, { trigger, first: area, canClose: () => !busy });
   }
-  // The run setup overlay (FEAT-9): the card's workflow is fixed; the person applies a preset and changes agents and loops for this
-  // run only. Confirm starts the run with that overlay (and the kept reason, for an early start) and goes to the run; a refusal
-  // stays in the overlay. A start refused as not Ready after the overlay closes it and asks for the reason, then sends the
-  // same confirmed overlay.
-  function openRunSetup(f, { trigger = null, reason = '' } = {}) {
+  // The run setup overlay (FEAT-9): the card's workflow is fixed (Auto shows the note and Start only); the person applies a preset,
+  // changes agents and loops for this run only, and may add a note (checked against the spec). A live run asks first. Confirm starts
+  // the run with the overlay, note and the kept reason and goes to the run; a refusal stays in the overlay. A start refused as not
+  // Ready closes it, asks for the reason, then sends the same confirmed fields.
+  function askRunning(trigger) {
+    return new Promise((resolve) => {
+      const button = (name, text, yes, cls = '') => h('button', { type: 'button', class: `btn${cls}`, 'data-ui': name, text, onclick: () => { resolve(yes); closeDialog(!yes); } });
+      const cancel = button('run-confirm-cancel', 'Cancel', false);
+      openModal(h('section', { class: 'card req-dialog', role: 'dialog', 'aria-modal': 'true', 'aria-labelledby': 'req-run-title' },
+        h('h2', { id: 'req-run-title', text: 'A run is already going' }), h('p', { text: RUN_IN_PROGRESS_TEXT }),
+        h('div', { class: 'req-dlg-btns' }, cancel, button('run-confirm-go', 'Start another', true, ' btn-primary'))),
+      { trigger, first: cancel, onClose: () => resolve(false) });
+    });
+  }
+  async function openRunSetup(f, { trigger = null, reason = '' } = {}) {
     closeDialog(false);
-    const c = choiceOf(f);
-    const wfId = effectiveWorkflow(c);
-    const ref = f.scopeKey;
+    let confirmRunning = false;
+    if (liveStart(f.starts)) {
+      if (!await askRunning(trigger) || seqShown !== f.seq) return;
+      confirmRunning = true;
+    }
+    const wfId = effectiveWorkflow(choiceOf(f));
     let handle = null;
-    const confirm = async (overlay) => {
+    const confirm = async (overlay, { note = '', noteOverrides = false } = {}) => {
+      const fields = { ...(overlay ? { overlay } : {}), ...(note ? { note, ...(noteOverrides ? { noteOverrides: true } : {}) } : {}),
+        ...(confirmRunning ? { confirmRunning: true } : {}) };
       starting = true;
       for (const b of host.querySelectorAll('[data-start]')) b.disabled = true;
       try {
-        const data = await postStart(f, { ...(reason ? { reason } : {}), ...(overlay ? { overlay } : {}) });
+        const data = await postStart(f, { ...(reason ? { reason } : {}), ...fields });
         handle.close();
         started(f, data);
         return {};
@@ -2386,20 +2380,25 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
         starting = false;
         redraw();
         if (seqShown !== f.seq) return {};   // the overlay closed with the page: nothing to open or say here
+        if (err && err.status === 409 && err.data && err.data.code === 'RUN_IN_PROGRESS') { confirmRunning = true; return { error: RUN_IN_PROGRESS_TEXT + START_AGAIN_TEXT }; }
         if (err && err.status === 409 && err.data && Array.isArray(err.data.failing)) {
           const now = current && current.f.seq === f.seq ? current.f : f;
           handle.close();
-          openStartDialog(now, failingChecks(now, err.data.failing), host.querySelector(`[data-ui="${trigger && trigger.getAttribute ? trigger.getAttribute('data-ui') : ''}"]`) || trigger, { overlay });
+          openStartDialog(now, failingChecks(now, err.data.failing), host.querySelector(`[data-ui="${trigger && trigger.getAttribute ? trigger.getAttribute('data-ui') : ''}"]`) || trigger, { carry: fields });
           return {};
         }
         return { error: errText(err) };
       }
     };
+    const checkNote = async (note, signal) => {
+      const res = await api('POST', `/api/requirements/${f.seq}/note-check`, { note }, signal);
+      return res && res.skipped ? { skipped: true } : { conflicts: res && Array.isArray(res.conflicts) ? res.conflicts : [] };
+    };
     handle = openRunSetupOverlay({
       modal: { open: (card, o) => openModal(card, o), close: (restore) => closeDialog(restore) },
       workflowId: wfId, workflowName: workflowName(wfId), projectDir: setupProjectDir(f),
-      scopeRef: { kind: f.scopeType === 'workspace' ? 'workspace' : 'project', ref, name: targetName(f) },
-      fetchers: deps.setupFetchers || null, trigger, onConfirm: confirm, onCancel: () => {},
+      scopeRef: { kind: f.scopeType === 'workspace' ? 'workspace' : 'project', ref: f.scopeKey, name: targetName(f) },
+      fetchers: deps.setupFetchers || null, trigger, note: true, checkNote, onConfirm: confirm, onCancel: () => {},
     });
   }
   /** A modal on the page (the start dialog's pattern): Escape closes it when `canClose()`, Tab stays inside, the page

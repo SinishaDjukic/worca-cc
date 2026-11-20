@@ -14,6 +14,9 @@ import { autoScopeKeys, matchScopeFromLinks, messageLinkTargets } from '../../..
 import { isSurfaceMode } from '../../../src/core/ask/thread-modes.mjs';
 import { appendMessage as askAppendMessage, getThread as askGetThread, listAttachments as askListAttachments, listMessages as askListMessages, listRunLinks as askListRunLinks, newAskId, setArchived as askSetArchived, switchThreadEngine as askSwitchThreadEngine, updateThread as askUpdateThread } from '../../../src/core/ask/store.mjs';
 import { validateAttachmentUploads } from '../../../src/core/attachment-upload.mjs';
+import { resolveAttachments, unavailableRefusal } from '../../../src/core/requirements/attach.mjs';
+import { STATUS as REQUIREMENTS_STATUS } from '../../../src/core/requirements/routes.mjs';
+import { RequirementsError } from '../../../src/core/requirements/spec.mjs';
 import { brokerEngineRefusal } from '../../../src/core/broker-client.mjs';
 import { claudeChatSignedOut } from '../../../src/core/claude-auth.mjs';
 import { mockEnabled } from '../../../src/core/claude-runner.mjs';
@@ -42,6 +45,31 @@ export function closeOpenDesignQuestions(threadId) {
       if (b && b.kind === 'card' && b.state === 'asking' && b.card && (b.card.type === 'design-questions' || b.card.type === 'design-sound')) flipCard(threadId, b.id, { state: 'closed' });
     }
   }
+}
+
+/** A chat message's attached requirements (FEAT-21): `body.requirements` is `[{seq}]` and nothing else of it is read. Resolved
+ *  now from each feature's current spec when it is Ready, else its newest started version, against the chat's scope; a message starts no run, so no live-run check.
+ *  `{ features: [] }` when the field is absent or empty (the send is unchanged); `{ refusal: { status, body } }` otherwise
+ *  when it must not go on. A refusal body has the run start's shape. */
+export async function resolveChatRequirements(body, scope) {
+  if (body.requirements === undefined || body.requirements === null) return { features: [] };
+  if (!Array.isArray(body.requirements)) return { refusal: { status: 400, body: { error: 'requirements must be a list of { seq }' } } };
+  if (!body.requirements.length) return { features: [] };
+  if (!flagEnabled('requirements')) return { refusal: { status: 403, body: { error: 'Requirements disabled', code: 'REQUIREMENTS_DISABLED' } } };
+  const target = scope && scope.projectKey ? { type: 'project', key: scope.projectKey }
+    : scope && scope.workspaceId ? { type: 'workspace', key: String(scope.workspaceId).trim().replace(/^workspaces\//, '') } : null;
+  if (!target) return { refusal: { status: 400, body: { error: 'Requirements attach to a chat with a project or workspace, not to a chat without a project.', code: 'REQUIREMENTS_SCOPE' } } };
+  let items;
+  try {
+    ({ items } = await resolveAttachments(body.requirements.map((r) => (r && typeof r === 'object' ? r.seq : undefined)),
+      { scope: target, withMarkdown: true }));
+  } catch (err) {
+    if (!(err instanceof RequirementsError)) throw err;
+    return { refusal: { status: REQUIREMENTS_STATUS[err.code] || 500, body: { ...(err.data || {}), error: err.message } } };
+  }
+  const unavailable = unavailableRefusal(items);
+  if (unavailable) return unavailable;
+  return { features: items.map((i) => ({ seq: i.seq, id: i.id, title: i.title, version: i.version, criteriaCount: i.criteriaCount, ready: i.ready, markdown: i.markdown })) };
 }
 
 export function register(app) {
@@ -292,6 +320,10 @@ app.post('/api/ask/threads/:id/messages', async (req, res) => {
       }
     }
 
+    // FEAT-21: attached requirements are resolved before any write, against the scope this message runs in.
+    const attached = await resolveChatRequirements(body, scope);
+    if (attached.refusal) return res.status(attached.refusal.status).json(attached.refusal.body);
+
     // A No-project chat and a message with issue / pull request links: one matching project switches the chat (below,
     // through the same switch as any scope change), 2–3 give this turn's context block a hint. After every refusal
     // check above, so a refused send changes nothing.
@@ -324,7 +356,7 @@ app.post('/api/ask/threads/:id/messages', async (req, res) => {
     if (composerState) askUpdateThread(id, { composer: composerState });
     if (designState) { closeOpenDesignQuestions(id); askUpdateThread(id, { composer: designState }); }
     if (thread.archivedAt) askSetArchived(id, false);   // #948 s2: a message brings an archived chat back
-    const r = await startAskTurn({ threadId: id, thread, ctx, model: mv.model, effort: mv.effort, text, files, signedIn: askSignedIn(req), reader: askViewer(req), mcpOff: mo.value, agentMode: body.agentMode, client: req.worcaExtension ? 'browser-extension' : null, scopeNote });
+    const r = await startAskTurn({ threadId: id, thread, ctx, model: mv.model, effort: mv.effort, text, files, signedIn: askSignedIn(req), reader: askViewer(req), mcpOff: mo.value, agentMode: body.agentMode, client: req.worcaExtension ? 'browser-extension' : null, scopeNote }, { features: attached.features });
     if (!r.ok) return res.status(r.status).json({ error: r.error, ...(r.code ? { code: r.code } : {}), ...(r.budget ? { budget: r.budget } : {}) });
     // `attachments` carries the store-minted ids so the sender's own echo can key
     // image thumbnails and the thread budget off them (the ask-message broadcast

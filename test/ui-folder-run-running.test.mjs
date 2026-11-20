@@ -8,7 +8,7 @@ const COUNTS = { added: 9, modified: 4, deleted: 1 };
 const ok = (body) => Promise.resolve({ ok: true, status: 200, json: async () => body });
 const tabs = (ctx) => [...ctx.window.document.querySelectorAll('#run-detail .rd-tab')].map((b) => b.dataset.sec);
 const $ = (ctx, sel) => ctx.window.document.querySelector(`#run-detail ${sel}`);
-const FOLDER_TABS = ['overview', 'changes', 'artifacts', 'workflow', 'qa', 'logs', 'agents'];
+const FOLDER_TABS = ['overview', 'task', 'changes', 'artifacts', 'workflow', 'qa', 'logs', 'agents'];
 
 test('a live folder run: Changes in place of Diff and Actions, from its hello or its run-created frame', async () => {
   await checkRows([
@@ -84,12 +84,14 @@ test('a finished folder run before its saved row lands: Ready · 14 files change
   assert.equal($(ctx, '.rd-pr-slot').hidden, true);
   const tile = [...ctx.window.document.querySelectorAll('#run-detail .rd-facts .rd-stats > div')].find((t) => t.lastElementChild.textContent === 'files changed');
   assert.equal(tile.querySelector('b').textContent, '+9 ~4 −1');
-  const rows = [...ctx.window.document.querySelectorAll('#run-detail .rd-result .rd-srow')].map((r) => [r.dataset.rdTab, (r.querySelector('.rd-srow-v') || { textContent: '' }).textContent]);
-  assert.deepEqual(rows.find((r) => r[0] === 'changes'), ['changes', '14 files']);
-  assert.equal(rows.some((r) => r[0] === 'diff' || r[0] === 'actions'), false);
+  // One level: the card lists no tab-opening rows; the Changes tab's badge carries the count.
+  assert.equal(ctx.window.document.querySelector('#run-detail .rd-result .rd-srow[data-rd-tab]'), null, 'no tab rows on the card');
+  assert.equal($(ctx, '.rd-tab[data-sec="changes"] .rd-tab-badge').textContent, '14');
+  assert.equal($(ctx, '.rd-tab[data-sec="diff"]'), null);
+  assert.equal($(ctx, '.rd-tab[data-sec="actions"]'), null);
   ctx.go('running/r1/details/overview');
   await ctx.settle();
-  assert.equal($(ctx, '.rd-sec[data-sec="overview"] .act-strip').hidden, true);
+  assert.equal($(ctx, '.rd-sec[data-sec="overview"] .act-strip'), null, 'no Overview Actions strip');
   assert.equal($(ctx, '.rd-sec[data-sec="overview"] .hd-ov-wt'), null);
 });
 
@@ -185,7 +187,7 @@ test('a finished git run while git is missing: no pull-request placeholder, a li
   assert.equal($(ctx, '.rd-now-top').dataset.text, 'Finished', 'not "Ready to ship": Ship it is hidden');
 });
 
-test('a finished folder run: changes that land after the detail payload fill the Changes row', async () => {
+test('a finished folder run: changes that land after the detail payload fill the Changes tab badge', async () => {
   const NOCH = { state: { id: 'p1', title: 'Rename receipts', status: 'done', workMode: 'folder', branch: { workMode: 'folder' }, steps: [], subAgents: [] },
     results: null, clarify: { questions: [], answers: [] }, stepQuestions: [], artifacts: [] };
   const ctx = await bootApp({ fetchHandler: (url) => {
@@ -196,11 +198,11 @@ test('a finished folder run: changes that land after the detail payload fill the
   helloRun(ctx, { runId: 'r1', pipelineId: 'p1', status: 'done', workMode: 'folder', projectDir: '/tmp/tax' });
   ctx.go('running/r1');
   await ctx.settle(8);
-  const row = () => [...ctx.window.document.querySelectorAll('#run-detail .rd-result .rd-srow')].map((r) => [r.dataset.rdTab, (r.querySelector('.rd-srow-v') || { textContent: '' }).textContent]).find((r) => r[0] === 'changes');
-  assert.deepEqual(row(), ['changes', '']);
+  const badge = () => $(ctx, '.rd-tab[data-sec="changes"] .rd-tab-badge')?.textContent || '';
+  assert.equal(badge(), '');
   ctx.dispatch({ type: 'state', runId: 'r1', id: 'p1', status: 'done', steps: [], workMode: 'folder', branch: { workMode: 'folder', changes: { state: 'pending', counts: COUNTS } } });
   await ctx.settle(4);
-  assert.deepEqual(row(), ['changes', '14 files']);
+  assert.equal(badge(), '14');
 });
 
 test('the Runs list: a live Folder run names its group kind and its settled changes before any saved row', async () => {

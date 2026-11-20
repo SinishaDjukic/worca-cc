@@ -83,7 +83,8 @@ test('the composer box keeps the Ask order: lead, chips, input, message, row; se
   const mine = buildComposer(h.doc, { placeholder: 'x', onInput() {}, onSend() {}, onStop() {} });
   const top = (box) => [...box.children].map((c) => [...c.classList].sort().join(' '));
   // Ask worca beside the page: the page chips are the web app's (the page on screen); the extension's page is its own context.
-  assert.deepEqual(top(mine.el.querySelector('.ask-composer-box')), top(refBox).filter((c) => c !== 'ask-page-chips'));
+  // The attached-feature cards belong to the web app's Requirements flag, which the sidebar does not have.
+  assert.deepEqual(top(mine.el.querySelector('.ask-composer-box')), top(refBox).filter((c) => c !== 'ask-page-chips' && c !== 'ask-attach-cards ask-chips'));
   const askPanelSrc = readFileSync('ui/public/ask-panel.mjs', 'utf8');
   assert.equal(/\bsend: '([^']+)'/.exec(askPanelSrc)[1], SEND_ICON_PATH);
   for (const cls of ['ask-send', 'ask-stop']) assert.ok(refBox.querySelector(`.${cls}`) && mine.el.querySelector(`.${cls}`), cls);
@@ -94,10 +95,10 @@ test('the shared icons are ask-panel.mjs ICONS, path for path', () => {
   for (const k of ['plus', 'chevronDown', 'send']) assert.equal(new RegExp(`\\b${k}: '([^']+)'`).exec(ASK_SRC)[1], ICON[k], k);
 });
 
-test('the composer row keeps Ask\'s order and controls, minus voice and Sets, plus the capture button', async () => {
+test('the composer row keeps Ask\'s order and controls, minus voice, Sets and the feature attach button, plus the capture button', async () => {
   const h = await loaded();
   const key = (c) => (c.tagName === 'INPUT' ? `input[${c.type}]` : [...c.classList].sort().join(' '));
-  const ref = [...h.doc.querySelector('.ask-composer-row').children].filter((c) => !c.matches('.ask-sets-btn, .ask-voice')).map(key);
+  const ref = [...h.doc.querySelector('.ask-composer-row').children].filter((c) => !c.matches('.ask-sets-btn, .ask-voice, .ask-pull-btn')).map(key);
   const mine = buildComposer(h.doc, { placeholder: 'x', onInput() {}, onSend() {}, onStop() {} });
   const row = mine.el.querySelector('.ask-composer-row');
   assert.deepEqual([...row.children].filter((c) => !c.matches('[data-wx-capture-btn]')).map(key), ref);

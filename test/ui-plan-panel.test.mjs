@@ -58,6 +58,15 @@ test('the run page renders the plan panel, not a Clarify form', async () => {
 
 const doc = (ctx) => ctx.window.document;
 const glance = (ctx) => doc(ctx).querySelector('#run-detail .rd-glance');
+// One level: a waiting question sits in Details, right after its header and above the tabs body.
+const assertQuestionAboveTabs = (ctx) => {
+  const details = doc(ctx).querySelector('#run-detail .rd-details');
+  const q = details.querySelector(':scope > .rd-questions');
+  assert.ok(q, 'the question lives in Details');
+  assert.equal(q.previousElementSibling, details.querySelector(':scope > .rd-header'));
+  assert.equal(q.nextElementSibling, details.querySelector(':scope > .rd-body'));
+  assert.equal(glance(ctx).querySelector('.rd-questions'), null, 'never moved into the run card');
+};
 const menuLabels = (ctx) => [...doc(ctx).querySelectorAll('.wfv-menu .wfv-menu-item')].map((b) => b.querySelector('.wfv-menu-l').textContent);
 
 test('the step card\'s head says whose turn it is, once (the run page heading stays empty)', async () => {
@@ -67,13 +76,14 @@ test('the step card\'s head says whose turn it is, once (the run page heading st
   assert.equal(panel.querySelector('.ask-mcard-kind').textContent, 'Plan');
 });
 
-test('shaped run waiting on its plan: card first, status card hidden whole, Pause hidden, top bar ⋯', async () => {
+test('shaped run waiting on its plan: question above the tabs, status card hidden whole, Pause hidden, top bar ⋯', async () => {
   const { ctx } = await openPlan();
   const g = glance(ctx);
-  assert.equal(g.querySelector(':scope > .rd-now').nextElementSibling, g.querySelector('.rd-questions'));
+  assertQuestionAboveTabs(ctx);
+  assert.equal(doc(ctx).querySelector('#run-detail .rd-questions').hidden, false);
   assert.equal(g.dataset.shaperWait, 'plan');
   assert.equal(g.querySelector('.rd-wait-more'), null, 'D1: no Run details › — the whole card hides');
-  const bar = doc(ctx).querySelector('#run-detail .rd-bar');
+  const bar = doc(ctx).querySelector('#run-detail .rd-bar-end');   // the bar's controls, at the end of the header's title row
   assert.ok(bar.hasAttribute('data-shaped'));
   assert.equal(bar.querySelector('.rd-pause').hidden, true);
   assert.equal(bar.querySelector('.rd-stop').hidden, false);
@@ -96,7 +106,7 @@ async function working(ctx) {
   await ctx.settle();
 }
 
-test('once answered the run page is back to today\'s order, nothing folded', async () => {
+test('once answered the run page is back to today\'s order, nothing folded (no Answered for you section)', async () => {
   const { ctx } = await openPlan();
   ctx.dispatch({ type: 'hello', runs: [runRow({ pendingQuestion: null })] });
   await ctx.settle();
@@ -104,7 +114,8 @@ test('once answered the run page is back to today\'s order, nothing folded', asy
   const g = glance(ctx);
   assert.equal(g.dataset.shaperWait, undefined);
   assert.equal(g.querySelector('.rd-wait-more'), null);
-  assert.equal(g.querySelector('.rd-questions').nextElementSibling, g.querySelector('.rd-night-sec'));
+  assertQuestionAboveTabs(ctx);
+  assert.equal(doc(ctx).querySelector('#run-detail .rd-night-sec'), null, 'away answers live in the Q&A tab');
   assert.equal(doc(ctx).querySelector('#run-detail .rd-pause').hidden, false);
 });
 
@@ -112,29 +123,33 @@ test('an unshaped run: today\'s top bar and layout', async () => {
   const { ctx } = await openPlan({ row: { shaping: undefined } });
   const g = glance(ctx);
   assert.equal(g.dataset.shaperWait, undefined);
-  assert.equal(g.querySelector('.rd-questions').nextElementSibling, g.querySelector('.rd-night-sec'));
-  const bar = doc(ctx).querySelector('#run-detail .rd-bar');
+  assertQuestionAboveTabs(ctx);
+  assert.equal(doc(ctx).querySelector('#run-detail .rd-night-sec'), null);
+  const bar = doc(ctx).querySelector('#run-detail .rd-bar-end');   // the bar's controls, at the end of the header's title row
   assert.equal(bar.hasAttribute('data-shaped'), false);
   // Run 3 (D13): every run page's bar folds its secondary controls into ⋯, shaped or not.
   assert.equal(bar.querySelector('.rd-bar-more').hidden, false);
-  // The plan still waits: the one run model's Needs you actions (slice 4), Answer then Stop, and no Pause.
-  assert.deepEqual([...bar.querySelectorAll('[data-model-action]')].filter((b) => !b.hidden).map((b) => b.dataset.modelAction), ['answer', 'stop']);
+  // The plan still waits: the one run model's Needs you actions (slice 4) less Answer (the card is right under the
+  // header), so Stop, and no Pause.
+  assert.deepEqual([...bar.querySelectorAll('[data-model-action]')].filter((b) => !b.hidden).map((b) => b.dataset.modelAction), ['stop']);
   assert.equal(bar.querySelector('.rd-pause').hidden, true);
 });
 
-test('wide Live view: the graph sits beside the card, but a shaped run waiting on the person stays one column (D30)', () => {
+test('wide pane: the card splits 70:30, but a shaped run waiting on the person stays one column (D30); the live graph is a column item', () => {
   const css = readStyleCss();
   const at = css.indexOf('@container rd (min-width: 960px)');
-  assert.ok(at > -1, 'a wide pane lays the graph beside the card');
+  assert.ok(at > -1, 'a wide pane splits the card');
   const wide = css.slice(at, css.indexOf('\n}\n', at));
-  const rules = wide.match(/\.rd-glance\[data-live="on"\][^{]*\{/g) || [];
-  assert.ok(rules.length, 'the wide rules key on the glance\'s data-live');
-  // Its card and graph hide while it waits (run 4 D1), so no wide rule may place them.
-  for (const r of rules) assert.match(r, /^\.rd-glance\[data-live="on"\]:not\(\[data-shaper-wait\]\)/, r);
-  // Narrow, and while a shaped run waits: every glance child but the graph keeps the 544px measure; the graph takes the
-  // pane's content width.
-  assert.match(css, /\.rd-glance > :not\(\.rd-live\)\{width:100%;max-width:544px;align-self:center;\}/);
-  assert.match(css, /\.rd-glance > \.rd-live\{align-self:stretch;width:100%;max-width:none;\}/);
+  const rules = wide.match(/\.rd-glance[^{]*\{/g) || [];
+  assert.ok(rules.length, 'the wide rules key on the glance');
+  // Its card hides while it waits (run 4 D1), so no wide rule may place it.
+  for (const r of rules) assert.match(r, /^\.rd-glance:not\(\[data-shaper-wait\]\) > \.rd-sheet/, r);
+  assert.match(wide, /grid-template-columns:minmax\(0,7fr\) minmax\(0,3fr\)/);
+  // No Live view switch or layout state: the live graph is a plain item of the card's right column (.rd-sheet-nav),
+  // so it hides with the card while a shaped run waits.
+  assert.doesNotMatch(css, /data-live=/);
+  assert.doesNotMatch(css, /rd-live-switch|rd-live-row/);
+  assert.match(css, /\.rd-live\{cursor:pointer;/);
 });
 
 test('the Away mode select is not repainted while a change posts (a ⋯ pick leaves focus on ⋯)', async () => {
@@ -199,9 +214,9 @@ test('a failing check row wraps on a narrow card: the detail keeps a real width 
   assert.match(rule('.plan-check-detail'), /flex:1 1 \d+(?:\.\d+)?em/, 'a basis that pushes the detail to its own line');
 });
 
-test('run 4 D1: while a shaped run waits, the status card and the graph hide whole; the one-line fold is gone', () => {
+test('run 4 D1: while a shaped run waits, the status card hides whole; the one-line fold is gone', () => {
   const css = readStyleCss();
-  assert.match(css, /\.rd-glance\[data-shaper-wait\] > :is\(\.rd-sheet,\.rd-live\)\{display:none;\}/);
+  assert.match(css, /\.rd-glance\[data-shaper-wait\] > \.rd-sheet\{display:none;\}/);
   assert.doesNotMatch(css, /data-wait-open/);
   assert.doesNotMatch(css, /\.rd-glance\[data-shaper-wait\][^{]*\.rd-sheet\{flex-direction:row/);
 });
@@ -215,14 +230,8 @@ test('run 4 D1: the waiting state is set while waiting and gone once the run wor
   assert.equal(g.dataset.shaperWait, undefined);
 });
 
-test('run 4 D2, D3: the bar names the plan card\'s primary, and its click is that primary\'s click', async () => {
+test('one-level run page: the plan card\'s own primary is the only Approve; the header does not repeat it', async () => {
   const { ctx, panel } = await openPlan();
-  const own = panel.querySelector('.plan-actions .btn-primary');
-  const bar = doc(ctx).querySelector('#run-detail .rd-bar .rd-actions [data-model-action="answer"]');
-  assert.equal(bar.textContent, own.textContent);
-  assert.equal(bar.textContent, 'Approve and build');
-  let clicks = 0;
-  own.addEventListener('click', () => { clicks += 1; });
-  click(ctx, bar);
-  assert.equal(clicks, 1);
+  assert.equal(panel.querySelector('.plan-actions .btn-primary').textContent, 'Approve and build');
+  assert.equal(doc(ctx).querySelector('#run-detail .rd-bar-end [data-model-action="answer"]:not([hidden])'), null);
 });
