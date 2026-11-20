@@ -2,7 +2,7 @@
 // One interview round, without I/O (plans/requirements-design.md §4): the prompts Worca sends, and what
 // Worca enforces on whatever comes back — the question cap, ids it assigns itself, sections the product
 // owner edited, items only the product owner removes. The interview runner (interview.mjs) calls these.
-import { SECTIONS, MAX_QUESTIONS, MAX_ROUNDS, clip, normalizeSection, nextIdNumber } from './spec.mjs';
+import { SECTIONS, MAX_QUESTIONS, MAX_ROUNDS, LIMITS, clip, clipItem, normalizeSection, nextIdNumber } from './spec.mjs';
 
 export class RoundError extends Error {
   constructor(message) { super(message); this.name = 'RoundError'; }
@@ -32,6 +32,7 @@ export const ROUND_SYSTEM_PROMPT = [
   '- When a criterion, an assumption or a question comes from a file in <attachments> or a document in <product_brief>, set its "source" to that file\'s name exactly as written there; otherwise null.',
   '- Turn every gap you cannot close into an assumption the product owner can confirm or reject.',
   '- Acceptance criteria are observable, testable statements of behaviour. Keep the ids of existing criteria and assumptions; give new ones the id null.',
+  `- Keep every item (a step, a rule, a criterion, an assumption, the goal) to one or two sentences, at most ${LIMITS.item} characters, and each list to at most ${LIMITS.items} items: split a long item instead.`,
   '- Never remove a criterion or an assumption, and never change a section listed in <edited_by_product_owner>.',
   '- Never re-add a criterion the product owner removed, under any id or wording.',
   '- Set "done" to true when nothing important is left to ask; "questions" is then empty.',
@@ -294,10 +295,10 @@ export function applyRound(prev, raw, { criteriaSeq = 0, assumptionSeq = 0, fina
 
   let cSeq = nextIdNumber(criteriaSeq, spec.criteria, 'R-po-') - 1;
   const crit = new Map(spec.criteria.map((c) => [c.id, c]));
-  const critSeen = new Set([...spec.criteria.map((c) => c.text), ...removedCriteria.map((t) => clip(t))].map((t) => t.toLowerCase()));
+  const critSeen = new Set([...spec.criteria.map((c) => c.text), ...removedCriteria.map((t) => clipItem(t))].map((t) => t.toLowerCase()));
   let added = 0;
   for (const it of Array.isArray(raw.criteria) ? raw.criteria : []) {
-    const text = clip(it && it.text);
+    const text = clipItem(it && it.text);
     if (!text) continue;
     const src = sourceOf(it.source, sources);
     const cur = it.id ? crit.get(it.id) : null;
@@ -319,7 +320,7 @@ export function applyRound(prev, raw, { criteriaSeq = 0, assumptionSeq = 0, fina
   const asmSeen = new Set(spec.assumptions.map((a) => a.text.toLowerCase()));
   added = 0;
   for (const it of Array.isArray(raw.assumptions) ? raw.assumptions : []) {
-    const text = clip(it && it.text);
+    const text = clipItem(it && it.text);
     if (!text) continue;
     const src = sourceOf(it.source, sources);
     const cur = it.id ? asm.get(it.id) : null;

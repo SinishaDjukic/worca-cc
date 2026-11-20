@@ -112,7 +112,10 @@ export async function launch({ width = 1920, height = 1080, scale = 1, chrome, f
   const gone = new Promise((_, rej) => { lost = rej; });
   gone.catch(() => { /* nobody waiting */ });
   ws.onclose = () => { for (const { rej } of pending.values()) rej(new Error('CDP socket closed')); pending.clear(); lost(new Error('CDP socket closed')); };
+  // A socket that is closing or closed drops what it is sent without a word, and its onclose has already settled the
+  // waits it had: a call made then would wait for ever (a poll that ends on "closed" hung on it), so it fails at once.
   const send = (method, params = {}, sessionId) => new Promise((res, rej) => {
+    if (ws.readyState !== WebSocket.OPEN) { rej(new Error('CDP socket closed')); return; }
     const i = ++id; pending.set(i, { res, rej });
     ws.send(JSON.stringify({ id: i, method, params, ...(sessionId ? { sessionId } : {}) }));
   });

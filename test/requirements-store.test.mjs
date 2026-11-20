@@ -31,7 +31,8 @@ test('normalizeSection: goal and lists, trimmed, deduplicated, capped', () => {
   assert.deepEqual(normalizeSection('actors', ' Customer \n\nSupport agent\ncustomer'), ['Customer', 'Support agent']);
   assert.deepEqual(normalizeSection('flow', ['a', '', 7, 'b']), ['a', '7', 'b']);
   assert.equal(normalizeSection('rules', Array.from({ length: 50 }, (_, i) => `r${i}`)).length, LIMITS.items);
-  assert.equal(normalizeSection('rules', ['x'.repeat(900)])[0].length, LIMITS.item);
+  assert.equal(normalizeSection('rules', ['x'.repeat(LIMITS.item + 400)])[0].length, LIMITS.item);   // one long word: cut with "…"
+  assert.ok(normalizeSection('rules', ['x'.repeat(LIMITS.item + 400)])[0].endsWith('…'));
   assert.throws(() => normalizeSection('nope', []), (e) => e instanceof RequirementsError && e.code === 'BAD_REQUEST');
 });
 
