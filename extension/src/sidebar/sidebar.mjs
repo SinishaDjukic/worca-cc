@@ -11,7 +11,7 @@ import { buildMessageBody, pickModel, validPick, reservedSlots } from '../compos
 import { CAPTURE_MAX } from '../page-context.mjs';
 import { COMMANDS } from '../manifest.mjs';
 import { ATTACH_MAX_FILES, bytesToBase64, carriesFiles, checkAttachment, createPasteNamer, pastedFiles } from '../../../ui/public/attach-files.mjs';
-import { chatEngineOf, engineOfEntry } from '../../../ui/public/ask-engine.mjs';
+import { chatEngineOf, engineOfEntry, pickerEngineName } from '../../../ui/public/ask-engine.mjs';
 import { createThreadModel } from '../../../ui/public/ask-model.mjs';
 import { createMarkdownRenderer } from '../../../ui/public/ask-markdown.mjs';
 import * as V from './sidebar-view.mjs';
@@ -267,6 +267,15 @@ async function openSocket() {
     if (!st.model || f.threadId !== st.threadId) return;
     const out = st.model.apply(f);
     if (out && out.gap) { void openThread(st.threadId).catch(reportLoadError); return; }   // a seq gap: re-fetch the snapshot
+    // #943: the chat moved to another engine (in Chat): its next message uses the new pair.
+    if (f.type === 'ask-engine' && typeof f.model === 'string' && typeof f.effort === 'string') {
+      st.pick = { model: f.model, effort: f.effort };
+      patchModel();
+      if (pops && el && pops.isOpen(el.model)) pops.rebuild();   // an open model menu lists the new engine's models
+    }
+    // The chat's scope moved on the server (a pasted link, or a pick in Chat): the pill follows, so the next message
+    // carries the new scope instead of switching the chat back (review M1).
+    if (f.type === 'ask-scope') adoptServerScope(f.scope, f.label);
     renderTranscript();
   };
   ws.onclose = (ev) => {
@@ -395,6 +404,10 @@ async function send() {
     // A resync may have replaced the model meanwhile (its snapshot then already holds this message, and noteLocal…
     // dedupes by id); a switch away means this thread is not on screen.
     if (st.model && st.threadId === threadId) st.model.noteLocalUserMessage({ id: r.userMessageId, text: body.text, attachments: V.echoAttachments(r.attachments) });   // kind → attKind (m8)
+    // A link in this message switched the No-project chat (docs/chat-home.md "Scope from a pasted link"): the pill
+    // follows even when the ask-scope frame was missed. Only for the chat still open (review M1).
+    const sw = r && r.scope;
+    if (st.threadId === threadId && sw && typeof sw === 'object' && sw.pinned === true && typeof sw.projectKey === 'string') adoptServerScope(sw, sw.label);
     // Only now: a failed send keeps the draft (M4). The state is cleared first. `el` may be null when the socket
     // dropped during the POST and setPhase('offline') unmounted the composer (v7); the message was still sent, so a
     // remount must not restore the text and invite a double send.
@@ -416,6 +429,16 @@ async function send() {
 
 async function stop() {
   if (st.threadId) await client.call(`/api/ask/threads/${encodeURIComponent(st.threadId)}/stop`, { method: 'POST', body: {} }).catch(() => null);
+}
+
+/** A scope the server already stored (an ask-scope frame, a send's 202): adopted with no PATCH, read as openThread
+ *  reads a snapshot's context. A label names the pin before the lists load. */
+function adoptServerScope(scope, label) {
+  const s = scope && typeof scope === 'object' ? scope : {};
+  st.scope = s.pinned === true ? { pinned: true, projectKey: s.projectKey || null, workspaceId: s.workspaceId || null } : { pinned: false };
+  if (st.scope.pinned && typeof label === 'string' && label) st.scopeNames.set(st.scope.workspaceId ? `w:${st.scope.workspaceId}` : `p:${st.scope.projectKey}`, label);
+  patchScope();
+  if (pops && el && pops.isOpen(el.scope)) pops.rebuild();
 }
 
 async function setScope(value) {
@@ -691,6 +714,13 @@ function patchModel() {
   el.modelLabel.textContent = (entry ? entry.label || entry.id : (st.pick ? st.pick.model : '')) + (flagged ? ' ⚠' : '');
   el.modelEffort.textContent = entry && entry.noEffort ? '' : (st.pick ? st.pick.effort : '');
   el.modelEffort.hidden = !!(entry && entry.noEffort);
+  // #943: the engine the next message runs on, as Chat's button says it.
+  const eng = pickerEngine();
+  const engName = pickerEngineName((st.catalog && st.catalog.models) || [], eng);
+  el.modelEngine.textContent = engName;
+  el.modelEngine.hidden = !engName;
+  const btn = el.modelLabel.parentNode;
+  if (btn) btn.dataset.engine = eng;
 }
 
 /** The meter and an open context popover, only when the figures changed: every streaming frame lands here. */

@@ -205,6 +205,8 @@ test('save (new row): writes origin=auto with the node tunables baked in, flips 
   const rows = await (await fetch(`${base}/api/workflows`)).json();
   const row = rows.workflows.find((x) => x.id === body.block.workflowId);
   assert.equal(row.origin, 'auto'); assert.equal(row.name, 'Rename fix');
+  // #1126: every open tab hears a chat save wrote a workflow row (an open Workflows Library re-reads its list).
+  await waitFor(() => w.msgs.find((m) => m.type === 'workflows-changed'));
   // deepEqual holds because the implement-only recipe carries NO stage tunables (measured: the assembled agent node has config {}); a recipe
   // with a stage model/effort would add keys here — assert the two accepted keys, not the whole config, if the recipe ever changes (v6).
   assert.deepEqual(row.nodes.find((n) => n.kind === 'agent').config, { model: 'claude-opus-5-5', effort: 'high' });
@@ -228,10 +230,14 @@ test('save (twin = the built-in Default): adopts it, writes nothing, ignores nam
   const before = (await (await fetch(`${base}/api/workflows`)).json()).workflows.length;
   const { thread, card } = await proposeWorkflow({ projectKey }, TWIN_TEXT);
   assert.deepEqual(card.card.match, { id: 'wf_default', name: 'Default' }, 'a plain prompt is the Default\'s twin (the only candidate in a fresh home)');
+  const wa = openWs(); await wa.opened;                                      // bare, before the adopt save: it must hear any frame that save sends (#1126)
   const r = await post(`/api/ask/threads/${thread.id}/cards/${card.id}`, { state: 'saved', name: 'Ignored' });
   const body = await r.json();
   assert.equal(body.block.workflowId, 'wf_default'); assert.equal(body.block.card.name, 'Default'); assert.equal(body.block.card.adopted, true);
   assert.equal((await (await fetch(`${base}/api/workflows`)).json()).workflows.length, before, 'no row written');
+  await waitFor(() => frames(wa.msgs, thread.id, 'ask-done').length >= 1);   // the adopt's event turn ended: a frame sent before it has arrived
+  assert.equal(wa.msgs.filter((m) => m.type === 'workflows-changed').length, 0, 'an adopted twin writes no row: no frame');
+  wa.ws.close();
   assert.equal((await post(`/api/ask/threads/${thread.id}/cards/${card.id}`, { state: 'saved' })).status, 409);
   assert.equal((await post(`/api/ask/threads/${thread.id}/cards/${card.id}`, { state: 'declined' })).status, 409);
   const d = await proposeWorkflow({ projectKey }, NEW_TEXT);
@@ -407,6 +413,7 @@ test('Ask graph card (workflow-build on an Ask chat): Save writes the graph (ori
 
   const bad = await post(`/api/ask/threads/${thread.id}/cards/card_0000b003`, { state: 'saved' });
   assert.equal(bad.status, 422);
+  assert.equal(w.msgs.filter((m) => m.type === 'workflows-changed').length, 0, 'a refused save writes no row: no frame');
   assert.match((await bad.json()).error, /not valid/);
   assert.equal((await snapshot(thread.id)).messages.flatMap((m) => m.blocks || []).find((b) => b.id === 'card_0000b003').state, 'proposed', 'a refused save leaves the card proposed');
 
@@ -420,6 +427,7 @@ test('Ask graph card (workflow-build on an Ask chat): Save writes the graph (ori
   const row = rows.find((x) => x.id === body.block.workflowId);
   assert.equal(row.origin, 'auto');
   assert.equal(row.name, 'Ask graph');
+  await waitFor(() => w.msgs.find((m) => m.type === 'workflows-changed'));
   await waitFor(() => frames(w.msgs, thread.id, 'ask-done').length >= 1);
   const notice = (await snapshot(thread.id)).messages.find((m) => m.role === 'user' && (m.blocks || []).some((b) => b.kind === 'notice' && b.synthetic));
   assert.equal(notice.text, `[worca event] workflow card card_0000b001 saved as ${body.block.workflowId} "Ask graph"; thenRun=false; project=${projectKey}`);

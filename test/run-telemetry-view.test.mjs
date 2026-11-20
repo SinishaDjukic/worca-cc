@@ -115,3 +115,32 @@ test('paintTelemetry fetches once, fills the slots and the harness line; flag of
   await paintTelemetry(off.getElementById('s'), 'run2', { fetchImpl });
   assert.ok(!urls.some((u) => u.includes('run2')), 'flag off: no request');
 });
+
+test('stepFigures: wall time and cost, the sub-agent wait and test time', () => {
+  const f = stepFigures({ ...STEP, wallMs: 754_000, costUsd: 3.456, agentWaitMs: 866_000, testMs: 125_000, testRuns: 2 });
+  const texts = f.map((x) => x.text);
+  assert.equal(texts[1], 'wall 12m 34s · $3.46');
+  assert.ok(texts.includes('waiting on sub-agents 14m 26s'));
+  assert.ok(texts.includes('tests 2m 5s (2 runs)'));
+});
+
+test('harnessFigures: GC pauses and machine load', () => {
+  assert.deepEqual(harnessFigures({ windows: 2, gcs: 4, gcMs: 30, gcMaxMs: 12, loadAvg: 3.25, loadMax: 6 }),
+    ['4 GC pauses · 30ms · max 12ms', 'machine load avg 3.3 · max 6.0']);
+});
+
+test('contextChart: scaled to the peak, not a 1M window; the window is named off scale; labels and a tooltip', () => {
+  const doc = dom('runTelemetry');
+  const st = { ...STEP, window: 1_000_000, series: [[0, 140_000], [600_000, 512_000], [1_380_000, 300_000]], compactions: [],
+    subSeries: [[300_000, 60_000], [400_000, 90_000]] };
+  const fig = contextChart(doc, st);
+  assert.equal(fig.querySelector('line.tel-win'), null, '1M is off a 589k scale');
+  assert.equal(fig.querySelector('line.tel-trig'), null);
+  const path = fig.querySelector('path.tel-line').getAttribute('d');
+  const ys = [...path.matchAll(/,([\d.]+)/g)].map((m) => Number(m[1]));
+  assert.ok(Math.min(...ys) < 15, `the peak reaches near the top of a 64-px chart (y ${Math.min(...ys)})`);
+  assert.ok(fig.querySelector('path.tel-sub'), 'sub-agent calls drawn');
+  assert.match(fig.querySelector('svg title').textContent, /start 140\.0k, peak 512\.0k at 10m 0s/);
+  const cap = [...fig.querySelectorAll('figcaption span')].map((n) => n.textContent);
+  assert.deepEqual(cap, ['start 140.0k', 'peak 512.0k at 10m 0s', 'sub-agents 90.0k max', 'window 1M (off scale)', '23m 0s']);
+});

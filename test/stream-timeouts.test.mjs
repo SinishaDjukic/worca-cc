@@ -3,8 +3,8 @@
 // and retried from scratch: by Bun's own fetch timeout (CLI 2.1.281 lifts it
 // only under its stream watchdog, or with API_FORCE_IDLE_TIMEOUT=0), by the CLI
 // watchdog where that runs, and by API_TIMEOUT_MS (600s). A gateway that buffers
-// the stream (Vertex through the Bosch farm, 2026-09-28) sends nothing until a
-// long xhigh turn is done, so every retry died at the same wall. Every spawn
+// the stream (Vertex behind a corporate gateway, 2026-09-28) sends nothing until
+// a long xhigh turn is done, so every retry died at the same wall. Every spawn
 // routed off first party now lifts Bun's timeout and carries the CLI's ceiling
 // (30 min) for the rest, unless the operator's env or the model entry sets one.
 import { test, after } from 'node:test';

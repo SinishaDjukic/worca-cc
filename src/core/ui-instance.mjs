@@ -41,7 +41,11 @@ export function uiInstanceFile() {
   return join(worcaHome(), 'ui.json');
 }
 
-/** A fresh shutdown token (hex, 32 bytes of entropy). */
+/** The request header that carries the instance token on API calls (G1: under agent
+ *  isolation a caller on this machine needs it, see ui/server.mjs#agentMayBeCaller). */
+export const UI_TOKEN_HEADER = 'x-worca-ui-token';
+
+/** A fresh per-boot token (hex, 32 bytes of entropy): shutdown, and API calls from this box. */
 export function newUiToken() {
   return randomBytes(32).toString('hex');
 }
@@ -92,10 +96,19 @@ export function removeUiInstance({ ifPid } = {}) {
   }
 }
 
+/** Node's 5 s keep-alive default closes an idle connection the browser is about to reuse; headersTimeout stays above it. */
+export function keepIdleConnections(server) {
+  server.keepAliveTimeout = 65_000;
+  server.headersTimeout = 66_000;
+  return server;
+}
+
 /** Host as it appears inside a URL (IPv6 literals need brackets). */
 export function urlHost(host) {
   if (!host) return 'localhost';
-  if (host === '127.0.0.1' || host === '::1' || host === '[::1]' || host === 'localhost') return 'localhost';
+  // A server bound to 127.0.0.1 is opened as 127.0.0.1: `localhost` tries ::1 first and every new connection pays the fallback.
+  if (host === '127.0.0.1') return '127.0.0.1';
+  if (host === '::1' || host === '[::1]' || host === 'localhost') return 'localhost';
   return host.includes(':') && !host.startsWith('[') ? `[${host}]` : host;
 }
 

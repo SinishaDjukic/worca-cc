@@ -9,17 +9,20 @@
 import { spawnSync } from 'node:child_process';
 import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs';
 import { dirname, join, relative, resolve, sep } from 'node:path';
+import { INDEX_HTML } from '../src/core/read-index-html.mjs';
+import { STYLE_CSS } from '../src/core/read-style-css.mjs';
 
 const SCAN_DIRS = ['src', 'ui', 'bin', 'agents', 'tools', 'test', 'templates', 'plugins'];
 const SKIP_DIRS = new Set(['node_modules', '.git', '.worca-cc-test', 'fixtures', 'snapshots']);
 const CODE = /\.(mjs|cjs|js)$/;
 // The runner, its config and the dependency set: a change here can affect any test.
-export const FULL_SUITE = [/^package(-lock)?\.json$/, /^tools\/test(-run|-related)?\.mjs$/, /^test\/tiers\.json$/,
+export const FULL_SUITE = [/^package\.json$/, /^npm-shrinkwrap\.json$/, /^tools\/test(-run|-related)?\.mjs$/, /^test\/tiers\.json$/,
   /^test\/helpers\/no-real-claude\//, /^\.nvmrc$/];
 const TEST_FILE = /^test\/[^/]+\.test\.mjs$/;
 
 const posix = (p) => p.split(sep).join('/');
 const ROOT_DIRS = new Set(['src', 'ui', 'test', 'tools', 'docs']);   // too broad to mean "reads every file in it"
+const SHELL = new Set([STYLE_CSS, INDEX_HTML]);   // deleted by the #919 split, still read through src/core
 
 function walk(root, dir, out) {
   let entries;
@@ -46,7 +49,7 @@ export function referencesOf(root, file, src) {
     const rel = posix(relative(root, abs)).replace(/\/$/, '');
     if (!rel || rel.startsWith('..')) return;
     let st;
-    try { st = statSync(abs); } catch { return; }
+    try { st = statSync(abs); } catch { if (SHELL.has(rel)) out.add(rel); return; }
     if (st.isDirectory() && (!dirs || ROOT_DIRS.has(rel))) return;
     out.add(rel);
   };

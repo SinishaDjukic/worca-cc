@@ -3,17 +3,16 @@
 // sourceFromPrevious, run branches are grouped in the picker, and workspace mode uses the switch.
 import { test, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { JSDOM } from 'jsdom';
 import { useDomRelease } from './helpers/jsdom-release.mjs';
 import { lastToast, fieldErrorText, cardAlertOf } from './helpers/feedback.mjs';
 import { checkRows } from './helpers/rows.mjs';
+import { readIndexHtml } from '../src/core/read-index-html.mjs';
 
 // Release each booted window after its test (see test/helpers/jsdom-release.mjs).
 const trackDom = useDomRelease(afterEach);
 
-const htmlPath = fileURLToPath(new URL('../ui/public/index.html', import.meta.url));
 const appPath = fileURLToPath(new URL('../ui/public/app.js', import.meta.url));
 const PROJECTS = [{ name: 'svc-iam', path: '/a/svc-iam', exists: true }, { name: 'svc-ui', path: '/a/svc-ui', exists: true }, { name: 'svc-empty', path: '/a/svc-empty', exists: true }];
 const WORKSPACES = [
@@ -43,7 +42,7 @@ async function branchesReady(doc) {
 }
 
 async function boot(hash, { withSync = false, runReply = null, seedProject = '', gitOff = false } = {}) {
-  const dom = trackDom(new JSDOM(readFileSync(htmlPath, 'utf8'), { url: `http://localhost:4317/${hash}` }));
+  const dom = trackDom(new JSDOM(readIndexHtml(), { url: `http://localhost:4317/${hash}` }));
   const { window } = dom;
   window.Element.prototype.scrollIntoView = function () {};
   window.WebSocket = class { constructor() { this.readyState = 1; } send() {} close() {} addEventListener() {} };
@@ -66,6 +65,8 @@ async function boot(hash, { withSync = false, runReply = null, seedProject = '',
     if (u.includes('/api/schedules/after/g1')) return json({ kind: 'pipeline', id: 'g1', title: 'Restored', status: 'done', projectDir: '/a/svc-iam', workspaceId: null, branchGone: true });
     if (u.includes('/api/schedules/after/g2')) return json({ kind: 'pipeline', id: 'g2', title: 'Restored ws', status: 'done', projectDir: null, workspaceId: 'ws_1', branchGone: true });
     if (u.includes('/api/schedules/after/e1')) return json({ kind: 'pipeline', id: 'e1', title: 'Broken', status: 'error', projectDir: '/a/svc-iam', workspaceId: null });
+    if (u.includes('/api/schedules/after/i1')) return json({ kind: 'pipeline', id: 'i1', title: 'Slice 1', status: 'interrupted', resumable: true, projectDir: '/a/svc-iam', workspaceId: null });
+    if (u.includes('/api/schedules/after/i2')) return json({ kind: 'pipeline', id: 'i2', title: 'Swept', status: 'interrupted', resumable: false, projectDir: '/a/svc-iam', workspaceId: null });
     if (u.includes('/api/schedules/after/w2')) return json({ kind: 'pipeline', id: 'w2', title: 'Empty run', status: 'done', projectDir: null, workspaceId: 'ws_2' });
     if (u.includes('/api/schedules/after/w3')) return json({ kind: 'pipeline', id: 'w3', title: 'Folders run', status: 'done', projectDir: null, workspaceId: 'ws_3' });
     if (u.includes('/api/schedules/after/w4')) return json({ kind: 'pipeline', id: 'w4', title: 'Mixed run', status: 'done', projectDir: null, workspaceId: 'ws_4' });
@@ -267,6 +268,22 @@ test('#new/after/e1: a predecessor that already ended badly is picked with the a
   doc.getElementById('start-btn').click();
   await tick(3);
   assert.equal(runBodies[0].afterPolicy, 'any', 'resolveAfterRef would refuse done for an errored run');
+});
+
+test('#new/after/i1|i2: an interrupted predecessor that can resume is waited for under done; one that cannot is picked with any', async () => {
+  await checkRows([
+    { name: 'i1 (resumable): done — it has not ended, it waits for a Resume', hash: '#new/after/i1', policy: 'done', text: 'Starts when ‘Slice 1’ finishes' },
+    { name: 'i2 (no resume point): any — it ended, done would be refused', hash: '#new/after/i2', policy: 'any', text: 'Starts when ‘Swept’ finishes' },
+  ].map(({ name, hash, policy, text }) => ({ name, run: async () => {
+    const { window, runBodies } = await boot(hash);
+    const doc = window.document;
+    await branchesReady(doc);
+    assert.equal(doc.getElementById('new-sched-text').textContent, text);
+    doc.getElementById('prompt').value = 'Next slice';
+    doc.getElementById('start-btn').click();
+    await tick(3);
+    assert.equal(runBodies[0].afterPolicy, policy);
+  } })));
 });
 
 test('P5: "Branch off the run before it" needs git and a Git member — an all-Folder workspace, or git off, keeps the switch off and posts no sourceFromPrevious', async () => {

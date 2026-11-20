@@ -7,22 +7,21 @@
 //      cannot have profiles, and validateConfig is a task-source op.
 import { test, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { JSDOM } from 'jsdom';
 import { useDomRelease } from './helpers/jsdom-release.mjs';
+import { readIndexHtml } from '../src/core/read-index-html.mjs';
 
 // Release each booted window after its test (see test/helpers/jsdom-release.mjs).
 const trackDom = useDomRelease(afterEach);
 
-const htmlPath = fileURLToPath(new URL('../ui/public/index.html', import.meta.url));
 const appPath = fileURLToPath(new URL('../ui/public/app.js', import.meta.url));
 
 const json = (body) => Promise.resolve({ ok: true, status: 200, json: async () => body });
 
 // Boot app.js in jsdom with a controllable fetch (mirrors ui-source-pane-mount).
 async function boot(handlers) {
-  const dom = trackDom(new JSDOM(readFileSync(htmlPath, 'utf8'), { url: 'http://localhost:4319/' }));
+  const dom = trackDom(new JSDOM(readIndexHtml(), { url: 'http://localhost:4319/' }));
   const { window } = dom;
   window.Element.prototype.scrollIntoView = function () {};
   window.WebSocket = class {

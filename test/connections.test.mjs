@@ -75,9 +75,10 @@ test('efforts: a model on two harnesses keeps its own list; the other harness ta
 test('the editor words: a suggested id and what a connection runs on', () => {
   assert.equal(suggestModelHandle('gpt-5.5', 'openai'), 'openai-gpt-5.5');
   assert.equal(suggestModelHandle('Org/Model X'), 'gw-org-model-x');
-  assert.match(runsOnText({ kind: 'signin', engine: 'codex' }), /^Runs on Codex only/);
+  assert.match(runsOnText({ kind: 'signin', engine: 'codex' }), /^Runs on OpenAI Codex only/);
   assert.match(runsOnText({ kind: 'env' }), /^Runs on Claude Code only/);
-  assert.equal(runsOnText({ kind: 'provider', provider: 'openai', api: 'openai-responses', codex: true }), "Runs on Claude Code (through worca's bridge) and Codex (directly).");
+  assert.equal(runsOnText({ kind: 'provider', provider: 'openai', api: 'openai-responses', codex: true }), "Runs on Claude Code (through worca's bridge) and OpenAI Codex (directly).");
+  assert.equal(runsOnText({ kind: 'provider', provider: 'openai', api: 'openai-chat' }), "Runs on Claude Code, through worca's bridge. OpenAI Codex reaches only an OpenAI-compatible Responses endpoint without OpenRouter routing.");
 });
 
 test('catalog: an OpenAI Responses endpoint added once runs on Claude Code and Codex; a run on either keeps it', async () => {
@@ -126,4 +127,23 @@ test('Chat knows the engines: list_models carries harnesses; the prompt keeps be
   assert.match(prompt, /Leave engine out and the run starts on the default engine \(the project's, else the user's, else the team's\)/);
   assert.equal(prompt.includes("the user's default engine"), false, 'one engine order in the prompt (rule 18, propose_run): project, user, team');
   assert.match(prompt, /never pick a beta engine on your own/);
+});
+
+test('a Copilot provider row on a GHE.com tenant names the tenant in its connection label; github.com does not', async () => {
+  assert.equal(connectionLabel({ id: 'x', upstream: { provider: 'copilot', api: 'anthropic', model: 'x' } }), 'GitHub Copilot');
+  assert.equal(connectionLabel({ id: 'x', bridged: 'copilot', bridgedHost: 'acme.ghe.com' }), 'GitHub Copilot · acme.ghe.com');
+  assert.equal(connectionLabel({ id: 'x', bridged: 'openai', bridgedHost: 'acme.ghe.com' }), 'OpenAI-compatible', 'only Copilot has a GitHub host');
+  const { updateProvider } = await import('../src/core/settings.mjs');
+  await addGlobalModel({ id: 'copilot-claude-sonnet-5.5', label: 'Claude Sonnet 5.5 (Copilot)', upstream: { provider: 'copilot', api: 'anthropic', model: 'claude-sonnet-5.5' } });
+  let row = (await listModels('')).find((r) => r.id === 'copilot-claude-sonnet-5.5');
+  assert.equal(row.bridgedHost, undefined);
+  assert.equal(connectionLabel(row), 'GitHub Copilot');
+  await updateProvider('copilot', { accountType: 'ghe-com', enterpriseHost: 'acme.ghe.com' });
+  row = (await listModels('')).find((r) => r.id === 'copilot-claude-sonnet-5.5');
+  assert.equal(row.bridgedHost, 'acme.ghe.com');
+  assert.equal(connectionLabel(row), 'GitHub Copilot · acme.ghe.com');
+  assert.equal(connectionKey(row), 'provider:copilot', 'the tenant does not split the connection');
+  const { askCatalog } = await import('../src/core/ask/models.mjs');
+  const ask = (await askCatalog()).models.find((r) => r.id === 'copilot-claude-sonnet-5.5');
+  assert.equal(ask.bridgedHost, 'acme.ghe.com', 'the chat catalog (GET /api/ask/models) carries it');
 });

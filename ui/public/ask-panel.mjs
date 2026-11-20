@@ -15,42 +15,48 @@ import { createDotOrbs, turnPhase } from './dot-orb.mjs';
 import { workflowPickerLabel } from './results-view.mjs';
 import { renderAutoProposal, AUTO_PROPOSAL_ORDER_CARD } from './auto-proposal.mjs';
 import { createRunProgressCard, snapshotFromState, PROGRESS_CARD_TYPE } from './ask-run-card.mjs';
-import { createCommandCard, COMMAND_CARD_TYPE } from './ask-command-card.mjs';
-import { commandRuns, groupHead } from './ask-command-group.mjs';
+import { createCommandCard, createCommandGroup, COMMAND_CARD_TYPE } from './ask-command-card.mjs';
+import { commandRuns } from './ask-command-group.mjs';
 import { buildTrace, scheduleTrace, playAssembly } from './auto-build.mjs';
-import { buildNodeConfigRows, pruneNodeSelection, modifiedFieldsOf, healForEngine } from './node-tunables.mjs';
+import { buildNodeConfigRows, buildRoleRows, pruneNodeSelection, modifiedFieldsOf, healForEngine } from './node-tunables.mjs';
 import { ENGINE_EFFORTS } from './engine-settings-view.mjs';
 import { ENGINE_NAMES, engineLabel, isBetaEngine } from '../../src/shared/engine-switch.mjs';
+import { PR_OPEN, PR_OPEN_LABELS, prSourceText } from '../../src/shared/pr-auto.mjs';
 import { lockEngineOptions } from './engine-locks.mjs';
-import { runsOn, modelGroups } from '../../src/shared/connections.mjs';
+import { runsOn, modelGroups, connectionOf, connectionLabel } from '../../src/shared/connections.mjs';
 import { appendModelGroups, modelOptionText } from './model-options.mjs';
 import { classifyLoops } from '../../src/shared/graph/loops.mjs';
 import { portsFnFor } from '../../src/shared/graph/ports.mjs';
 import { parseMcpToolName } from '../../src/shared/mcp-tool-name.mjs';
 import { mcpSkipView, mcpCopyNote, skillSkipView } from './mcp-run-picker.mjs';
-import { engineOfEntry, chatEngineOf, pickerGroups, ASK_CHAT_ENGINES, isEngineSetupNotice } from './ask-engine.mjs';
+import { engineOfEntry, chatEngineOf, pickerGroups, ASK_CHAT_ENGINES, isEngineSetupNotice, engineSwitchConfirm, readEnginePicks, rememberEnginePick, engineLead, switchEffort, pickerEngineName, pickerEngineLabel } from './ask-engine.mjs';
 import { formatQuotedMessage, parseQuotedMessage } from './pinpoint-model.mjs';
-import { ATTACH_ACCEPT, ATTACH_MAX_MESSAGE_BYTES, bytesToBase64 as attachBase64, carriesFiles, checkAttachment, createPasteNamer, pastedFiles } from './attach-files.mjs';
+import { ATTACH_MAX_MESSAGE_BYTES, bytesToBase64 as attachBase64, carriesFiles, checkAttachment, createPasteNamer, pastedFiles } from './attach-files.mjs';
 import { notify } from './feedback.mjs';
 import { currentLevel, levelShows } from './ui-level.mjs';
 import { chatCardBuilder, composerAddons } from './chat/extensions.mjs';
 import { keepFocus } from './chat/keep-focus.mjs';
 import { flagOn } from './flags.mjs';
 import { mountChatsColumn } from './chats-column.mjs';
+import { CHATS_PAGE } from './chats-list.mjs';
 import { chatPageKeyAction, keyHint, isMac, LIST_FIELD } from './list-keys.mjs';
 import { openKeysSheet } from './keys-sheet.mjs';
 import { gitOn } from './git-gate.mjs';
+import { originMark, platformName } from './chat-origin.mjs';
 import { NO_PROJECT_KEY, NO_PROJECT_NAME, NEEDS_REPO_NOTE } from '../../src/shared/no-project.mjs';
 import { createTagInput, fetchTagVocabulary, createTagRulesLine } from './tag-input.mjs';
-import { shapeFirstOn } from './chat/shape-gate.mjs';
 import { INTENTS, splitIntentLead } from './chat/intent.mjs';
 import { homeIcon } from './chat/home-icons.mjs';
 import { NO_PROJECT_LABEL, scopeFromContext, scopeKind, scopeIcon, kindChip, projectKind } from './chat/scope-ui.mjs';
-import { icon } from './icons.mjs';
+import { icon, ICONS as ICON_NAMES } from './icons.mjs';
+import { withoutChips } from './ask-page-chips.mjs';
+import { sideSuggestions } from './ask-side-suggest.mjs';
 import { makeSwitch } from './switch.mjs';
 import { shapeCardExtras, shapeWhatHappens, shapeAdvancedSummary } from './shape/proposal.mjs';
 import { createAskComposerCards, ASK_COMPOSER_CARD_TYPES } from './ask-composer-cards.mjs';
+import { cardKit, scriptApprovalCardView } from './workflows/card-views.mjs';
 import { applyPresetStart } from '../../src/shared/run-presets.mjs';
+import { subagentAliasLabel, subagentAliasTitle } from '../../src/shared/model-roles.mjs';
 import {
   fmtTokens, CTX_COMPACT_BUFFER, CTX_WARN, CTX_HIGH, CTX_COST_HINT, kTok,
   fmtWindow, ctxTrigger, ctxLevel, ctxPercent, fmtCtx, ctxTitle, fmtShare, ctxBreakdown, fmtUsd,
@@ -83,6 +89,8 @@ const ICONS = {
   check: 'M5 13l4 4L19 7',
   pin: ['M12 17v5', 'M9 10.76a2 2 0 0 1-1.11 1.79l-1.78.9A2 2 0 0 0 5 15.24V16a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1v-.76a2 2 0 0 0-1.11-1.79l-1.78-.9A2 2 0 0 1 15 10.76V7a1 1 0 0 1 1-1 2 2 0 0 0 0-4H8a2 2 0 0 0 0 4 1 1 0 0 1 1 1z'],
   search: ['M5 11a6 6 0 1 0 12 0a6 6 0 1 0-12 0', 'M20 20l-4.5-4.5'],    // the Workflows Library's search glyph
+  expand: ['M14 4h6v6', 'M10 20H4v-6', 'M20 4l-6.5 6.5', 'M4 20l6.5-6.5'],      // Open in Chat (the side column's head)
+  sideHide: ['M5 4h14a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2z', 'M15 4v16', 'M8 10l2 2-2 2'],   // Hide chat
 };
 // One icon per voice mode; the mic button and the ▾ menu both draw from this.
 const VOICE_MODE_ICONS = { dictate: ICONS.mic, talk: ICONS.voiceTalk, handsfree: ICONS.voiceHandsFree };
@@ -143,6 +151,7 @@ function toolArgs(input) {
 }
 
 const SCRIPT_TOOL_NAMES = new Set(['list_scripts', 'get_script', 'save_script', 'test_script']);
+const SCRIPT_APPROVAL_TYPE = 'script-approval';   // G6: src/core/ask/script-approval.mjs
 
 /**
  * The script tools' thread line (scripts-workbench-design.md §9.3): the key instead of a JSON
@@ -196,7 +205,7 @@ const HISTORY_KEY = 'worca-cc.chat.history';
 const HISTORY_OPEN_MIN_W = 1600;
 const HISTORY_OVERLAY_BELOW = 1100;
 
-export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContext, openNewPipeline, openComposer = null, showTerminal = () => {}, openClaudeSetup = null, loadMarkdown, hljsLoader, storage, raf, now, runStore = null, createVoice = null, voiceLongPressMs = 500, chatDeps = null, onRoute = null, onUnread = null, composerActions = null, summariseCommands = () => true }) {
+export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContext, openNewPipeline, openComposer = null, showTerminal = () => {}, openClaudeSetup = null, loadMarkdown, hljsLoader, storage, raf, now, runStore = null, createVoice = null, voiceLongPressMs = 500, chatDeps = null, onRoute = null, onUnread = null, composerActions = null, summariseCommands = () => true, getPageChips = () => [], getPageScope = () => null, sideActions = null }) {
   const homePick = browserPick();         // hoisted declaration (defined below)
   const st = {
     open: false,
@@ -220,6 +229,17 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     // label caches the display name once resolved.
     scope: { pinned: false, projectKey: null, workspaceId: null, label: null },
     scopeHeld: null,          // S39: the thread id whose scope PATCH a running reply refused; the next send carries it
+    leftOut: new Set(),       // Ask worca beside the page: the page chips the person left out (ids on screen only)
+    pageChipsSig: null,       // what the chip row shows now: a repaint that changes nothing keeps the row (and its focus)
+    host: 'page',             // Ask worca beside the page: who shows the chat page — the Chat section or the side column ('dock')
+    scopeFollowsPage: true,   // a new chat's scope follows the page in the side column until a pick in the pill or a send (L3)
+    recent: [],               // the newest chats by activity (the side column's empty state shows 3)
+    recentSig: null,          // the recent chats now on screen: a repaint that changes nothing keeps the rows (and their focus)
+    recentFrom: null,         // the Chats column's list they last came from (onThreads): a repaint of the same list changes nothing
+    recentGen: 0,             // the newest recent-rows answer wins (loadRecent; the column's own list bumps it too)
+    recentStale: false,       // the Chat page skipped an apart fetch: the side column asks when it shows the chat page
+    fitW: null,               // the composer field's width when a resize last fitted it (the side column slides in from 0px)
+    sideSig: null,            // the side empty state's suggestions now on screen
     popover: null,           // {panel, trigger, onClose, build, refreshOn, refresh}
     contexts: [],             // the open chat's topics (thread.contexts), shown in the context popover
     threadsRefresh: null,     // the debounce timer behind the History popover's ask-run-status refetch
@@ -234,7 +254,8 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     commandFrames: new Map(), // blockId → the last ask-command view that arrived before its card was built
     commandsOpen: new Set(),  // blockIds whose output the user unfolded (the card's toggle; outlives a rebuild of the card)
     commandsRowOpen: new Map(),  // blockId → the person's open choice on a summary row (#911); absent = none
-    commandGroupOf: new Map(),   // blockId → the blockIds of its group (#911), for the head's live total
+    commandsGroupOpen: new Map(),  // a group's first blockId → the person's recorded fold (#911)
+    commandGroupOf: new Map(),   // blockId → its group { ids, box, live } (#911), for the head's live total
     pinned: true,
     leftAt: null,          // #958: { threadId, top, pinned } recorded when the page hides; read on the next show
     restoreTop: null,      // #958: a scrollTop the next applyPin() writes back (a same-chat return, unpinned)
@@ -242,6 +263,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     scrollHeld: false,     // #958: a press on the transcript (its scrollbar) is held until pointerup
     cardMemo: null,        // #958: card id → element built in the current renderTranscript pass (one build per card)
     wantThread: undefined,    // the chat the page shows or is loading: an id, null = home (a new chat), undefined = none yet
+    threadLoad: null,         // the last switchThread's load (a promise): Pinpoint's send waits on a chat still loading
     unread: false,            // what onUnread was last told (the Chat row's dot)
     historyStale: true,       // the History rows need a fetch at the next show (a refresh frame landed while hidden)
     historyAsPush: false,     // the column was opened as a push column: narrowing the window below 1100px closes it
@@ -250,6 +272,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     pendingFiles: [],
     quote: null,          // Pinpoint (#669): {text, src?, code?} sent above the next message as a blockquote
     sending: false,
+    switching: false,
     subscribedFor: null,
     elapsedTimer: null,
     elapsedStart: null,
@@ -262,7 +285,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     voiceSwallowClick: false, // the click that ends a long-press must not also start dictation
     lastAnswerRender: 0,
     rowEls: null,
-    seenRows: new Set(),      // message ids the transcript has already shown — see renderTranscript
+    seenRows: new Set(),      // #959: message ids this page has shown, in ANY chat (ids are unique): only a row never shown rises — see renderTranscript
     cardEls: null,
     cardOptions: null,
     catalogLoading: null,
@@ -430,6 +453,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     page.setAttribute('data-chat-page', '');
     page.dataset.view = 'home';
     page.dataset.panel = 'closed';
+    page.dataset.host = 'page';
     st.historyAsPush = initialHistoryOpen();          // never below 1100px: there a load starts closed
     page.dataset.history = st.historyAsPush ? 'open' : 'closed';
 
@@ -440,7 +464,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     el.scrim.hidden = true;
     el.scrim.addEventListener('click', () => {
       setHistoryOpen(false, { persist: false });
-      try { el.historyBtn.focus(); } catch { /* detached */ }   // as Escape does
+      try { historyToggle().focus(); } catch { /* detached */ }   // as Escape does
     });
     page.appendChild(el.scrim);
 
@@ -455,6 +479,36 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     el.title = make('div', 'ask-title', 'New chat');
     head.appendChild(el.title);
     head.appendChild(make('span', 'chat-head-spacer'));
+    // Ask worca beside the page: the side column's head (style.css shows it only there) — the chat's title opens the
+    // chats menu (the Chats column as a dropdown), then New chat, Open in Chat and Hide chat (app.js sideActions).
+    el.sideThread = make('button', 'ask-side-thread');
+    el.sideThread.type = 'button';
+    el.sideThread.setAttribute('data-ask-side-thread', '');
+    el.sideThread.setAttribute('aria-haspopup', 'dialog');
+    el.sideThread.setAttribute('aria-controls', 'chat-history');
+    el.sideThread.setAttribute('aria-expanded', 'false');
+    el.sideThreadLabel = make('span', 'ask-side-thread-t', 'New chat');
+    el.sideThread.append(el.sideThreadLabel, svgIcon(ICONS.chevronDown, 14, 2));
+    el.sideThread.addEventListener('click', () => toggleHistory());
+    head.appendChild(el.sideThread);
+    const sideNew = iconButton('btn btn-quiet btn-icon chat-head-btn ask-side-btn', 'New chat', ICONS.plus, () => {
+      if (historyOverlayOpen()) setHistoryOpen(false, { persist: false });
+      newThread();
+      route(null);
+    });
+    sideNew.setAttribute('data-ask-new-btn', '');
+    sideNew.setAttribute('data-ask-side-new', '');
+    head.appendChild(sideNew);
+    const inChat = iconButton('btn btn-quiet btn-icon chat-head-btn ask-side-btn', 'Open in Chat', ICONS.expand, () => {
+      if (sideActions && typeof sideActions.openInChat === 'function') sideActions.openInChat(threadIdNow());
+    });
+    inChat.setAttribute('data-ask-open-in-chat', '');
+    head.appendChild(inChat);
+    const hide = iconButton('btn btn-quiet btn-icon chat-head-btn ask-side-btn', 'Hide chat', ICONS.sideHide, () => {
+      if (sideActions && typeof sideActions.hide === 'function') sideActions.hide();
+    });
+    hide.setAttribute('data-ask-side-hide', '');
+    head.appendChild(hide);
     convo.appendChild(head);
 
     el.home = make('div', 'chat-home');
@@ -463,6 +517,8 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     el.heroSlot.setAttribute('data-chat-hero-slot', '');
     el.home.appendChild(el.heroSlot);
     convo.appendChild(el.home);
+    el.sideEmpty = buildSideEmpty();                   // the side column's home (style.css: the column only)
+    convo.appendChild(el.sideEmpty);
 
     el.transcript = make('div', 'ask-transcript');
     el.transcript.setAttribute('data-ask-scroll', '');
@@ -582,7 +638,10 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     if (el.input.value.trim() || (st.model && st.model.live())) { appendToComposer(add); return false; }
     el.input.value = add;
     fitInput();
-    Promise.resolve().then(() => sendMessage()).catch(() => false).then((ok) => { if (!ok) focusComposer(); });
+    // Ask worca beside the page: the side column's first show is still loading the stored chat — send once it is there
+    // (sendMessage refuses while a chat loads, and the old route to Chat never waited on one).
+    const loading = typeof st.wantThread === 'string' && st.wantThread !== st.threadId ? st.threadLoad : null;
+    (loading ? loading.catch(() => null) : Promise.resolve()).then(() => sendMessage()).catch(() => false).then((ok) => { if (!ok) focusComposer(); });
     return true;
   }
 
@@ -875,7 +934,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
   }
 
   /**
-   * Send the composer's message — or `queued`, an item the queue drains ({text, quote, files}). While a reply runs the
+   * Send the composer's message — or `queued`, an item the queue drains ({text, quote, files, page}). While a reply runs the
    * composer's message joins this chat's queue instead ('queued'); a queued item that meets a running turn answers
    * 'busy' and stays first. true = sent, false = not sent (the reason is on the composer line).
    * @returns {Promise<boolean|'queued'|'busy'>}
@@ -955,7 +1014,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
         model: st.picker.model,
         effort: st.picker.effort,
         // The browser's zone rides along: "tomorrow 02:00" is read in it (docs/scheduled-runs.md "Chat").
-        context: { ...scopedContext(getPageContext() || {}), timeZone: browserTimeZone() },
+        context: { ...scopedContext(draft.page || pageContext()), timeZone: browserTimeZone() },
         // MCP registry §9.4: every message carries the picker's choices, so each turn runs what the picker shows —
         // a refused first message (429/403/400, network) or a PATCH still in flight would leave the stored ones behind.
         mcpOff: sentOff,
@@ -984,8 +1043,16 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
       st.scopeHeld = null;                           // S39: this message carried the held pick (its pinned is authoritative)
       // A toggle made while this POST was out PATCHed a value the route then overwrote with sentOff: re-send the latest.
       if (st.mcp.off !== sentOff) patchMcpOff(id, st.mcp.off);
-      const { userMessageId, attachments: stored, contexts } = await res.json();
+      const { userMessageId, attachments: stored, contexts, scope: switched } = await res.json();
+      // Reading the body yields: the user may have left the chat meanwhile. Its contexts, scope and echo belong to the
+      // chat they left; a `scope` applied here would move another chat's pill (review M2).
+      if (st.destroyed || st.model !== model || st.threadId !== id) return !!queued;
       if (Array.isArray(contexts)) setContexts(contexts);   // an older server omits it: keep what is shown
+      // A link in this message switched the No-project chat (docs/chat-home.md "Scope from a pasted link"): the pill
+      // follows even when the ask-scope frame was missed, so the next send cannot switch the chat back.
+      if (switched && typeof switched === 'object' && switched.pinned === true && typeof switched.projectKey === 'string') {
+        applyServerScope(switched, switched.label);
+      }
       // Prefer the server's rows: they carry the store-minted ids that key the
       // image thumbnail (#398) and the thread's attachment ledger. The pending
       // files are the fallback for a server that predates the field.
@@ -1027,7 +1094,8 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
       renderQueue();
       return false;
     }
-    const item = { key: `q${++queueSeq}`, text: draft.text, quote: draft.quote || null, files: draft.files.slice() };
+    // Ask worca beside the page: the page it was typed on rides with it — the person may be elsewhere when it sends.
+    const item = { key: `q${++queueSeq}`, text: draft.text, quote: draft.quote || null, files: draft.files.slice(), page: draft.page || pageContext() };
     q.items.push(item);
     el.input.value = '';
     fitInput();                                      // a programmatic clear fires no input event
@@ -1443,6 +1511,12 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     el.lead.setAttribute('data-chat-composer-lead', '');
     box.appendChild(el.lead);
 
+    // Ask worca beside the page: the page on screen as chips (paintPageChips), after the lead row (pinned first).
+    el.pageChips = make('div', 'ask-page-chips');
+    el.pageChips.setAttribute('data-ask-page-chips', '');
+    el.pageChips.hidden = true;
+    box.appendChild(el.pageChips);
+
     el.chips = make('div', 'ask-chips');
     el.chips.hidden = true;
     box.appendChild(el.chips);
@@ -1472,7 +1546,6 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     el.fileInput = doc.createElement('input');
     el.fileInput.type = 'file';
     el.fileInput.multiple = true;
-    el.fileInput.accept = ATTACH_ACCEPT;
     el.fileInput.hidden = true;
     el.fileInput.addEventListener('change', () => { addFiles(el.fileInput.files); el.fileInput.value = ''; });
     row.appendChild(el.fileInput);
@@ -1552,8 +1625,11 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     modelBtn.type = 'button';
     modelBtn.setAttribute('data-ask-model-btn', '');
     modelBtn.dataset.minLevel = 'advanced';
+    el.modelBtnEngine = make('span', 'ask-model-btn-engine');   // #943: the engine, when the catalog offers more than one
+    el.modelBtnEngine.hidden = true;
     el.modelBtnLabel = make('span', 'ask-model-btn-label', st.picker.model);
     el.modelBtnEffort = make('span', 'ask-model-btn-effort', st.picker.effort);
+    modelBtn.appendChild(el.modelBtnEngine);
     modelBtn.appendChild(el.modelBtnLabel);
     modelBtn.appendChild(el.modelBtnEffort);
     modelBtn.appendChild(svgIcon(ICONS.chevronDown, 12, 2));
@@ -1597,9 +1673,10 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
 
   /** Never under a dialog: the welcome (app.js shows it on Chat BEFORE the route opens the page) or a confirm keeps its
    *  focus. */
+  function dialogUp() { return !!doc.querySelector('.viewer-modal:not(.hidden), dialog[open]'); }
   function focusComposer() {
     // …nor under the History overlay (below 1100px): closing it hands the focus on (a pick, a delete, Escape).
-    if (historyOverlayOpen() || doc.querySelector('.viewer-modal:not(.hidden), dialog[open]')) return;
+    if (historyOverlayOpen() || dialogUp()) return;
     try { el.input.focus({ preventScroll: true }); } catch { try { el.input.focus(); } catch { /* detached */ } }
   }
 
@@ -1619,26 +1696,30 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
    * repaints the run cards and re-previews the Sets; the FIRST one also loads the model catalog and — only for a
    * bare open() with no route — the stored chat. (`req`, not `route`: route() is the address callback below.)
    */
-  function openPage(req) {
+  function openPage(req, { focus = true } = {}) {
     if (st.destroyed) return;
     const routed = !!(req && typeof req === 'object' && Object.prototype.hasOwnProperty.call(req, 'threadId'));
     const showing = !st.open;
     if (showing) {
       st.open = true;
-      setUnread(false);
+      // Ask worca beside the page: a route that brings the side column back shows the chat it showed, so news in ANOTHER
+      // chat (the dot's) is still unseen — the dot stays until that chat shows (switchThread) or the button opens it.
+      const shownId = routed ? (typeof req.threadId === 'string' && req.threadId ? req.threadId : null) : threadIdNow();
+      if (st.host !== 'dock' || !st.unreadThread || st.unreadThread === shownId) setUnread(false);
       // #958: back on the chat the page left: restore that place (the bottom when it was following). Another chat,
-      // or home, opens at the bottom.
+      // or home, opens at the bottom. Only from the Chat page to the Chat page: the side column slides in from 0px wide
+      // and a host move changes the width, so a pixel place taken there lands on another message — it shows at the bottom.
       const back = st.leftAt;
       st.leftAt = null;
-      const target = routed ? (typeof req.threadId === 'string' && req.threadId ? req.threadId : null)
-        : (typeof st.wantThread === 'string' ? st.wantThread : st.threadId);
-      if (back && back.threadId === target && !back.pinned) { st.pinned = false; st.restoreTop = back.top; }
+      const samePlace = back && back.host === 'page' && st.host === 'page';
+      if (samePlace && back.threadId === shownId && !back.pinned) { st.pinned = false; st.restoreTop = back.top; }
       else { st.pinned = true; st.restoreTop = null; }
       ensureFirstOpen({ restore: !routed });
       composerCards().stale();   // the chat was hidden: a wizard may have saved a draft meanwhile
       scheduleFlush();
       repaintProgressCards({ hydrate: true });
       refChips.show();                               // run chips skipped the store events while hidden
+      onPageChange();                                // the page may have changed while the chat was hidden
       scheduleMcpRefresh();                          // the page may have changed while Chat was hidden
       if (st.historyStale) loadHistory();            // the first show, or a refresh frame landed while hidden
       if (createVoice && voiceUsedBefore()) voice().preload();   // the mic is ready by the time it is clicked
@@ -1646,7 +1727,14 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     if (routed) showThread(req.threadId);
     // Text appended while the page was hidden (openChat from another page) was measured at 0px under display:none:
     // size the textarea again now that it has a box.
-    if (showing) { fitInput(); focusComposer(); }
+    // Ask worca beside the page: a route that brings the side column back (focus:false) leaves the focus on the page.
+    if (showing) {
+      fitInput();
+      if (focus) focusComposer();
+      // Open History in Chat below 1100px: the History overlay is up, so the composer refused the focus; the overlay takes
+      // it, as toggleHistory does — never <body>, and never under a dialog (the composer refused for that one too).
+      if (focus && historyOverlayOpen() && !dialogUp() && (!doc.activeElement || doc.activeElement === doc.body)) { try { el.history.focus({ preventScroll: true }); } catch { /* detached */ } }
+    }
   }
 
   /** Show chat `id` (null = home). A no-op for the chat already shown or loading, so the address echo of onRoute
@@ -1654,6 +1742,9 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
   function showThread(id) {
     const want = typeof id === 'string' && id ? id : null;
     if (st.wantThread === want) return;
+    // Home that was never left (no chat shown or loading yet) is the new chat already: Open in Chat of a side column chat
+    // with no row (its page scope, its Sets, its model pick) must not reset it on the way to chat/new.
+    if (!want && st.wantThread === undefined && isNewChat()) { st.wantThread = null; storeThread(null); return; }
     if (want) switchThread(want);
     else newThread();
   }
@@ -1687,7 +1778,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     // #958: display:none drops the scroller's offset: remember it (and the pin) for a return to this chat. A switch
     // still loading has no place worth keeping.
     const loading = typeof st.wantThread === 'string' && st.wantThread !== st.threadId;
-    st.leftAt = st.threadId && !loading ? { threadId: st.threadId, top: el.transcript.scrollTop, pinned: st.pinned } : null;
+    st.leftAt = st.threadId && !loading ? { threadId: st.threadId, top: el.transcript.scrollTop, pinned: st.pinned, host: st.host } : null;
     stopVoice();
     closePopover({ focusTrigger: false });
     if (historyOverlayOpen()) setHistoryOpen(false, { persist: false });
@@ -1704,13 +1795,191 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     const home = !loading && (!st.model || st.model.messages().length === 0);
     const view = home ? 'home' : 'thread';
     if (el.page.dataset.view !== view) el.page.dataset.view = view;
-    const slot = home ? el.heroSlot : el.chatDock;
+    const slot = home && st.host !== 'dock' ? el.heroSlot : el.chatDock;   // the side column has no hero: its composer stays docked
     if (el.composer.parentNode !== slot) {
       const hadFocus = el.composer.contains(doc.activeElement);
       slot.appendChild(el.composer);
       if (hadFocus) focusComposer();
     }
     paintHistoryCurrent();
+  }
+
+  /** The chat's title, in the Chat page's head and on the side column's chats menu button. */
+  function paintTitle(text) {
+    el.title.textContent = text;
+    if (el.sideThreadLabel) el.sideThreadLabel.textContent = text;
+  }
+  function threadIdNow() { return (typeof st.wantThread === 'string' ? st.wantThread : st.threadId) || null; }
+  /** The chat opens a page itself (a topic row, Manage in Connectors, a run card's Open run): where the side column
+   *  covers the page it steps aside first (app.js sideActions.uncover), so that page shows. A no-op elsewhere. */
+  function uncoverSide() {
+    if (sideActions && typeof sideActions.uncover === 'function') sideActions.uncover();
+  }
+  function goToPage(href) {
+    uncoverSide();
+    if (win.location.hash !== href) win.location.hash = href.slice(1);
+    // Beside the page (> 1080px) the column stays: a topic row or Manage in Connectors left with its menu, so the field
+    // takes the focus, never <body>. Where the column stepped aside, uncover() gave it to the header button already.
+    if (st.open && st.host === 'dock' && (!doc.activeElement || doc.activeElement === doc.body)) focusComposer();
+  }
+
+  // ---- Ask worca beside the page: the side column host ----------------------------
+  /** The ONE chat page is shown by the Chat section ('page') or by the side column ('dock'): app.js moves the root, this
+   *  changes its looks (style.css .chat-page[data-host="dock"]) and its History (a dropdown in the column, the stored
+   *  choice on the Chat page). Nothing is rebuilt or refetched: the thread, a live reply, the queue and the scope come along. */
+  function setHost(next) {
+    if ((next !== 'page' && next !== 'dock') || next === st.host || st.destroyed) return;
+    st.host = next;
+    el.page.dataset.host = next;
+    closePopover({ focusTrigger: false });
+    setHistoryOpen(next === 'dock' ? false : initialHistoryOpen(), { persist: false });
+    syncView();
+    onPageChange();
+    applyPin();                                      // a moved scroller can come back at the top: a pinned reply stays at the bottom
+    if (next === 'dock' && st.recentStale) loadRecent();   // the Chat page skipped them (its view was not All)
+  }
+  /** A chat with no row yet (home): no thread, none loading. */
+  function isNewChat() { return !st.threadId && typeof st.wantThread !== 'string'; }
+  /** A new chat in the side column starts in the page's project or workspace (getPageScope; null = No project) and
+   *  follows the page until the person picks in the pill or sends (L3). No PATCH: there is no row yet. */
+  function followPageScope() {
+    let next = null;
+    try { next = getPageScope(pageContext()); } catch { next = null; }   // a chip left out is out of the scope too
+    const want = next && next.pinned === true && (next.projectKey || next.workspaceId)
+      ? { pinned: true, projectKey: next.projectKey || null, workspaceId: next.projectKey ? null : next.workspaceId, label: next.label || null }
+      : { pinned: false };
+    const cur = st.scope;
+    if (cur.pinned === want.pinned && (cur.projectKey || null) === (want.projectKey || null) && (cur.workspaceId || null) === (want.workspaceId || null)) return;
+    setScope(want, { persist: false, focus: false });
+    if (want.pinned && !want.label) resolveScopeLabel();
+  }
+  /** The side column's home: what to ask about this page (ask-side-suggest.mjs), the newest chats, the way to the rest. */
+  function buildSideEmpty() {
+    const box = make('div', 'ask-side-empty');
+    box.setAttribute('data-ask-side-empty', '');
+    el.sideEmptyH = make('h2', 'ask-side-empty-h', 'Ask worca');
+    el.sideSuggest = make('div', 'ask-side-suggest');
+    el.sideSuggest.setAttribute('data-ask-side-suggest', '');
+    const recent = make('div', 'ask-side-recent');
+    recent.hidden = true;
+    recent.appendChild(make('div', 'ask-side-recent-cap', 'Recent chats'));
+    el.sideRecentBox = recent;
+    el.sideRecent = make('div', 'ask-side-recent-list');
+    recent.appendChild(el.sideRecent);
+    const all = make('button', 'btn btn-sm btn-quiet ask-side-history', 'History');
+    all.type = 'button';
+    all.addEventListener('click', () => toggleHistory());
+    recent.appendChild(all);
+    box.append(el.sideEmptyH, el.sideSuggest, recent);
+    return box;
+  }
+  function paintSideEmpty() {
+    if (!el.sideEmpty || st.host !== 'dock') return;
+    const ctx = pageContext();
+    const run = readPageChips().find((c) => c && c.kind === 'run' && !st.leftOut.has(c.id));
+    const s = sideSuggestions(ctx, { runStatus: run && run.status ? run.status : '', diffPath: ctx.diffPath || '' });
+    const sig = JSON.stringify(s);
+    if (sig !== st.sideSig) {
+      st.sideSig = sig;
+      el.sideEmptyH.textContent = s.heading;
+      el.sideSuggest.replaceChildren(...s.items.map((text) => {
+        const b = make('button', 'ask-side-opt', text);
+        b.type = 'button';
+        b.addEventListener('click', () => prefillComposer(text));
+        return b;
+      }));
+    }
+    paintSideRecent();
+  }
+  /** A recent chat's topics: the first one's name plus "+N", every name in the hover. Display-only. */
+  function threadTopics(t) {
+    const list = validContexts(t.contexts);
+    if (!list.length) return null;
+    const name = (c) => c.label || c.id;
+    const span = make('span', 'ask-side-recent-topics', list.length > 1 ? `${name(list[0])} +${list.length - 1}` : name(list[0]));
+    span.title = list.map((c) => `${name(c)}${c.source === 'chat' ? ' (mentioned)' : ''}`).join('\n');
+    return span;
+  }
+  /** A recent chat's meter line: the start date leads, bold on the primary ink, then topics · context fill · cost ·
+   *  agents in the meter's grey. An unusable createdAt drops the date and its separator with it. */
+  function threadMeter(t) {
+    const meter = make('span', 'ask-side-recent-meter');
+    const tot = t.totals || {};
+    const when = fmtStarted(t.createdAt, now());
+    if (when) meter.appendChild(make('span', 'ask-side-recent-when', when));
+    const fillText = fmtCtx(tot.ctx, tot.ctxWindow);
+    let fill = fillText;
+    if (fillText && Number.isInteger(tot.ctxWindow) && tot.ctxWindow > 0) {
+      const level = ctxLevel(tot.ctx, tot.ctxWindow);
+      fill = make('span', `ask-side-recent-fill${level === 'warn' ? ' is-ctx-warn' : level === 'high' ? ' is-ctx-high' : ''}`, fillText);
+      const title = ctxTitle(tot.ctx, tot.ctxWindow);
+      if (title) fill.title = title;
+    }
+    const parts = [threadTopics(t), fill, fmtUsd(tot.costUsd), fmtAgents(tot.agents)].filter(Boolean);
+    parts.forEach((p, i) => {
+      if (when || i > 0) meter.appendChild(doc.createTextNode(' · '));
+      meter.appendChild(typeof p === 'string' ? doc.createTextNode(p) : p);
+    });
+    return meter;
+  }
+  /** The newest three chats of `threads` by activity: a Chats page puts pinned chats first, the recent rows do not. */
+  function setRecent(threads) {
+    const at = (t) => { const ms = Date.parse(t.updatedAt || t.createdAt || ''); return Number.isFinite(ms) ? ms : 0; };
+    st.recent = (Array.isArray(threads) ? threads : []).filter((t) => t && t.id).sort((a, b) => at(b) - at(a)).slice(0, 3);
+    paintSideRecent();
+  }
+  /** The recent rows when the Chats column's view cannot tell them: the All view's first page in activity order (pinned
+   *  chats lead it, so a full page, not three). Only in the side column — setHost catches up; the newest answer wins and a
+   *  failed one keeps the rows on screen. */
+  function loadRecent() {
+    if (st.host !== 'dock') { st.recentStale = true; return; }
+    st.recentStale = false;
+    const gen = ++st.recentGen;
+    Promise.resolve()
+      .then(() => fetch(`/api/ask/threads?show=all&sort=activity&limit=${CHATS_PAGE}`))
+      .then((r) => (r && r.ok ? r.json() : null))
+      .catch(() => null)
+      .then((body) => {
+        if (st.destroyed || gen !== st.recentGen || !body || !Array.isArray(body.threads)) return;
+        setRecent(body.threads);
+      });
+  }
+  /** Chats that are gone (a delete; a history clear, null = every one) leave the recent rows, whatever the column's view. */
+  function dropRecent(ids) {
+    const next = ids ? st.recent.filter((t) => !ids.includes(t.id)) : [];
+    if (next.length === st.recent.length) return;
+    st.recent = next;
+    paintSideRecent();
+  }
+  function paintSideRecent() {
+    if (!el.sideRecent) return;
+    // Every page change repaints the empty state (a live run: every frame); rows rebuilt under a press or a keyboard focus
+    // lose it, so only a change to what they show (a chat, its meter, its "3m ago") rebuilds them.
+    const sig = JSON.stringify(st.recent.map((t) => [t, fmtStarted(t.createdAt, now())]));
+    if (sig === st.recentSig) return;
+    st.recentSig = sig;
+    el.sideRecent.replaceChildren(...st.recent.map((t) => {
+      const b = make('button', 'ask-side-recent-row');
+      b.type = 'button';
+      b.dataset.threadId = t.id;
+      const title = make('span', 'ask-side-recent-t', t.title || 'New chat');
+      const mark = originMark(doc, t.origin);
+      if (mark) title.prepend(mark);
+      b.appendChild(title);
+      b.appendChild(threadMeter(t));
+      b.addEventListener('click', () => { showThread(t.id); route(t.id); focusComposer(); });   // the row leaves with the empty state
+      return b;
+    }));
+    el.sideRecentBox.hidden = !st.recent.length;
+  }
+  /** A suggestion's prefill (app.js chatPrefill's rule): an empty composer takes it as is, a draft gets it on a new line.
+   *  Nothing is sent. */
+  function prefillComposer(text) {
+    if (el.input.value.trim()) { appendToComposer(text); return; }
+    el.input.value = text;
+    el.input.dispatchEvent(new win.Event('input', { bubbles: true }));
+    focusComposer();
+    try { el.input.selectionStart = el.input.selectionEnd = text.length; } catch { /* jsdom */ }
   }
 
   // ---- layout changes ---------------------------------------------------------
@@ -1720,6 +1989,10 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
    *  bottom and an open context popover re-anchors. */
   function onWinResize() {
     if (st.destroyed || !st.open) return;
+    // Ask worca beside the page: the side column slides in from 0px wide (and the grip narrows it), so a draft — or the
+    // placeholder — measured while the field was narrow wraps differently now: fit it again when its width changes.
+    const fitW = el.input.clientWidth;
+    if (fitW !== st.fitW) { st.fitW = fitW; fitInput(); }
     // Narrowed past 1100px with the push column open: as an overlay it would cover the chat (and the focused composer).
     // Close it, as a load at that width does (initialHistoryOpen); the stored choice is kept.
     if (st.historyAsPush && overlayMode() && historyOpen()) setHistoryOpen(false, { persist: false });
@@ -1756,16 +2029,20 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     e.preventDefault();
     if (st.popover) { closePopover({ focusTrigger: true }); return; }
     setHistoryOpen(false, { persist: false });       // the overlay (below 1100px) closes; focus back on its toggle
-    try { el.historyBtn.focus(); } catch { /* detached */ }
+    try { historyToggle().focus(); } catch { /* detached */ }
   }
 
   /** A press outside the open popover (and its trigger) closes it. The page itself never closes on a press — the
    *  router owns it. A dialog (a confirm opened from a popover), the diff comment card, the shared terminal and the
    *  top bar search keep the popover. */
   function onDocPointerdown(e) {
-    if (st.destroyed || !st.open || !st.popover) return;
+    if (st.destroyed || !st.open) return;
     const t = e.target;
     if (!t || typeof t.closest !== 'function') return;
+    // The side column's chats menu: its scrim covers only the column, so a press on the page beside it closes it too —
+    // never one in a menu, group picker or keys sheet the Chats column opened (they sit outside the page, as dialogs do).
+    if (st.host === 'dock' && historyOverlayOpen() && !el.page.contains(t) && !t.closest('.viewer-modal, #confirm-modal, .wfv-menu, .group-picker, .keys-modal')) setHistoryOpen(false, { persist: false });
+    if (!st.popover) return;
     if (st.popover.panel.contains(t) || st.popover.trigger.contains(t)) return;
     if (t.closest('.viewer-modal, #confirm-modal, .info-bubble, .mention-popup, .hd-cmt-card, .term-pane, .tsearch')) return;
     closePopover({ focusTrigger: false });
@@ -1885,12 +2162,37 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
       // #948 s3: Delete group removed these chats; the open one goes home, as a deleted chat does (deleteThread).
       onChatsGone: (ids) => {
         for (const id of ids) { if (readStoredThread() === id) storeThread(null); st.askedIn.delete(id); st.queues.delete(id); }
+        if (st.unread && ids.includes(st.unreadThread)) setUnread(false);   // the dot never points at a chat that is gone
+        dropRecent(ids);                             // nor does the side column's Recent chats
         if (ids.includes(st.threadId) || ids.includes(st.wantThread)) {
           if (historyOverlayOpen()) setHistoryOpen(false, { persist: false });
           newThread();
           route(null, { replace: true });
         }
+      },
+      // Ask worca beside the page: the side column's empty state shows the newest chats. The column's list holds them
+      // only in its All view in activity order (or with every chat loaded); in any other view (Needs you, Archived, A–Z
+      // with more to page) they come apart (loadRecent). "Loading chats…" (a view change) and a repaint of the same
+      // list keep the rows on screen.
+      onThreads: (threads, _view, { loaded = true, newest = false } = {}) => {
+        if (!loaded || threads === st.recentFrom) return;
+        st.recentFrom = threads;
+        if (!newest) { loadRecent(); return; }
+        st.recentGen += 1;                           // an older apart fetch never paints over these
+        setRecent(threads);
       } });
+    // Ask worca beside the page: the dropdown's way to the whole list (style.css shows the footer only in the side column),
+    // after the column's own parts (mountChatsColumn replaces the host's children).
+    const foot = make('div', 'chat-history-foot');
+    const inChat = make('button', 'btn btn-sm btn-quiet chat-history-in-chat', 'Open History in Chat');
+    inChat.type = 'button';
+    inChat.setAttribute('data-ask-history-in-chat', '');
+    inChat.addEventListener('click', () => {
+      setHistoryOpen(false, { persist: false });
+      if (sideActions && typeof sideActions.openHistoryInChat === 'function') sideActions.openHistoryInChat();
+    });
+    foot.appendChild(inChat);
+    el.history.appendChild(foot);
     el.historyBtn.after(el.headPlus = newChatPlus());
     // D28: the open chat's figures, once, as the context popover's button (the composer's .ask-meter hides by CSS).
     el.headMeter = make('button', 'btn btn-sm btn-quiet chat-head-meter');
@@ -1909,7 +2211,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     const res = await fetch(`/api/ask/threads/${encodeURIComponent(r.id)}`, { method: 'PATCH',
       headers: { 'content-type': 'application/json' }, body: JSON.stringify({ title }) }).catch(() => null);
     if (!res || !res.ok) { notify({ tone: 'err', title: 'Could not rename the chat', detail: res ? (await res.json().catch(() => ({}))).error || '' : '' }, { doc }); return; }
-    if (r.id === st.threadId) el.title.textContent = title;
+    if (r.id === st.threadId) paintTitle(title);
     loadHistory();
   }
   function openChatKeys(opener) {
@@ -1918,6 +2220,8 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
   function onChatKeys(e) {
     if (!chatsCol || !st.open || st.destroyed || e.defaultPrevented || modalUp() || el.page.closest('[inert]')) return;
     const t = e.target;
+    // Ask worca beside the page: the side column takes the Chat keys only from inside it — the page beside it keeps its own.
+    if (st.host === 'dock' && !(t && el.page.contains(t))) return;
     const inField = !!(t && typeof t.closest === 'function' && t.closest(LIST_FIELD));
     const act = chatPageKeyAction({ key: e.key, code: e.code, metaKey: e.metaKey, ctrlKey: e.ctrlKey, altKey: e.altKey, shiftKey: e.shiftKey, inField }, { mac: isMac(win) });
     if (act) {
@@ -1937,7 +2241,10 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     }
   }
 
-  function overlayMode() { return (win.innerWidth || 0) < HISTORY_OVERLAY_BELOW; }
+  /** The column is an overlay below 1100px and always in the side column (a dropdown under its head). */
+  function overlayMode() { return st.host === 'dock' || (win.innerWidth || 0) < HISTORY_OVERLAY_BELOW; }
+  /** The control that opens the column: the History button on the Chat page, the chats menu in the side column. */
+  function historyToggle() { return st.host === 'dock' ? el.sideThread : el.historyBtn; }
   function historyOpen() { return !!el.page && el.page.dataset.history === 'open'; }
   function historyOverlayOpen() { return historyOpen() && overlayMode(); }
   /** Closed under an overlay width; else the stored choice; else open from 1600px. */
@@ -1969,6 +2276,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     if (!el.page) return;
     const open = historyOpen();
     if (el.historyBtn) el.historyBtn.setAttribute('aria-pressed', String(open));
+    if (el.sideThread) el.sideThread.setAttribute('aria-expanded', String(open && st.host === 'dock'));
     if (el.scrim) el.scrim.hidden = !(open && overlayMode());
   }
 
@@ -2004,13 +2312,13 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
 
   // ---- catalog + picker (D8) ------------------------------------------------
   function catalogEntry(id) { return st.catalog ? st.catalog.models.find((m) => m && m.id === id) || null : null; }
-  /** The engine this chat is locked to (D12), or null for a chat without a turn yet. */
-  function lockedEngine() {
+  /** The engine this chat runs on now (D12; #943 lets the person move it), or null for a chat without a turn yet. */
+  function activeEngine() {
     const thread = st.model && typeof st.model.thread === 'function' ? st.model.thread() : null;
     return chatEngineOf(st.model ? st.model.messages() : [], st.picker.model, st.catalog, thread && thread.engine);
   }
-  /** The engine the next message will run on: the lock, else the picked model's. */
-  function pickerEngine() { return lockedEngine() || engineOfEntry(catalogEntry(st.picker.model)); }
+  /** The engine the next message will run on: the chat's, else the picked model's. */
+  function pickerEngine() { return activeEngine() || engineOfEntry(catalogEntry(st.picker.model)); }
 
   function updatePickerButton() {
     if (!el.modelBtnLabel) return;
@@ -2022,6 +2330,17 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     // A model that takes no reasoning effort shows none (the bridge leaves it out).
     el.modelBtnEffort.textContent = entry && entry.noEffort ? '' : st.picker.effort;
     el.modelBtnEffort.hidden = !!(entry && entry.noEffort);
+    // #943: the button names the engine the next message runs on, in text whenever the catalog offers more than one
+    // engine (the extension's button says the same).
+    const eng = pickerEngine();
+    const engName = pickerEngineName(st.catalog ? st.catalog.models : [], eng);
+    el.modelBtnEngine.textContent = engName;
+    el.modelBtnEngine.hidden = !engName;
+    const btn = el.modelBtnLabel.parentNode;
+    // The tooltip names the connection too: the same model can come from the Copilot CLI or from GitHub Copilot
+    // through the bridge (and from a GHE.com tenant).
+    const via = entry && connectionOf(entry).kind === 'provider' ? ` · ${connectionLabel(entry)}` : '';
+    if (btn) { btn.dataset.engine = eng; btn.title = `${pickerEngineLabel(eng)} · ${entry ? entry.label : st.picker.model}${via}`; }
   }
 
   function coerceEffort(entry, effort) {
@@ -2181,6 +2500,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     st.pickerFromThread = false;                    // the user's own pick now, not the thread's
     st.pickerExplicit = true;
     storeModel();
+    rememberEnginePick(storage, pickerEngine(), st.picker);   // #943: this browser's last pick on this engine
     persistThreadPick();
     updatePickerButton();
     scheduleMcpRefresh();                           // the model sets the §5.6 tool-name limit
@@ -2192,10 +2512,77 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     st.picker = { ...st.picker, effort };
     st.effortFromStore = true;                      // the effort only — the model slot is untouched (D11)
     storeModel();
+    rememberEnginePick(storage, pickerEngine(), st.picker);   // #943: this browser's last pick on this engine
     persistThreadPick();
     updatePickerButton();
     closePopover({ focusTrigger: false });
     focusComposer();
+  }
+
+  // ---- engine switch (#943) ---------------------------------------------------
+  /** A model row's click: a model of the chat's engine (or any, before its first reply) is a pick; another engine's
+   *  model moves the chat there, after the server's preview and the person's confirm. */
+  function pickModelRow(m, engine) {
+    const active = activeEngine();
+    if (!active || engine === active) { setPickerModel(m.id); return; }
+    closePopover({ focusTrigger: false });
+    void switchEngine(m, engine);
+  }
+
+  async function postEngine(id, body) {
+    const res = await fetch(`/api/ask/threads/${id}/engine`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      // The refusal's code and setup link ride along: the toast offers the next step (askEnginePreflight).
+      const { code = null, docsUrl = null, setupLabel = null } = data || {};
+      throw Object.assign(new Error((data && data.error) || `request failed (${res.status})`), { code, docsUrl, setupLabel });
+    }
+    return data;
+  }
+
+  async function switchEngine(m, engine) {
+    const id = st.threadId;
+    if (!id || st.switching) return;
+    // Never mid-reply: the server refuses it too (TURN_IN_FLIGHT). A row can be enabled still when the menu opened
+    // before the reply began, so say why nothing happens.
+    const busyNote = () => notify({ tone: 'err', title: `Could not switch this chat to ${engineLabel(engine)}`, detail: 'A reply is running. Switch engines when it finishes.', key: `ask-engine-${id}` }, { doc });
+    if (turnBusy()) { busyNote(); return; }
+    st.switching = true;
+    try {
+      const effort = switchEffort(m, engine, readEnginePicks(storage), st.catalog && st.catalog.defaults);
+      const plan = await postEngine(id, { engine, model: m.id, effort, dryRun: true });
+      if (st.threadId !== id || st.destroyed) return;
+      const ok = await confirm(engineSwitchConfirm(plan, m.label || m.id, { noEffort: !!m.noEffort }));
+      if (!ok || st.threadId !== id || st.destroyed) { focusComposer(); return; }
+      if (turnBusy()) { busyNote(); focusComposer(); return; }   // a reply began while the confirm was open: the server would refuse
+      const done = await postEngine(id, { engine, model: plan.model, effort: plan.effort, dropTurns: plan.transcript.droppedTurns });
+      rememberEnginePick(storage, engine, done.engineSwitch);
+      // The same frames the server broadcast, applied now: this tab need not wait for the socket (a repeat is a no-op).
+      pushServerFrame({ type: 'ask-message', threadId: id, message: done.message });
+      pushServerFrame({ type: 'ask-engine', threadId: id, ...done.engineSwitch, ...(done.thread && done.thread.totals ? { threadTotals: done.thread.totals } : {}) });
+      focusComposer();
+    } catch (e) {
+      // The next step, when there is one: a new preview (more turns now drop), or the engine's setup page.
+      const again = !!e && e.code === 'confirm-dropped-turns';
+      const action = again ? { label: 'Review again', run: () => { void switchEngine(m, engine); } }
+        : e && e.docsUrl ? { label: e.setupLabel || 'Set up', run: () => { try { win.open(e.docsUrl, '_blank', 'noopener'); } catch { /* blocked */ } } }
+          : null;
+      notify({ tone: 'err', title: `Could not switch this chat to ${engineLabel(engine)}`, detail: (e && e.message) || 'network error', action, key: `ask-engine-${id}` }, { doc });
+      focusComposer();
+    } finally {
+      st.switching = false;
+    }
+  }
+
+  /** The open chat moved to another engine (this tab's switch, or another tab's ask-engine frame): the picker shows the
+   *  new pair as the thread's own. */
+  function applyEnginePick(frame) {
+    if (frame.threadId !== st.threadId || typeof frame.model !== 'string' || typeof frame.effort !== 'string') return;
+    st.picker = { model: frame.model, effort: frame.effort };
+    st.pickerFromThread = true;
+    st.pickerExplicit = false;
+    updatePickerButton();
+    scheduleMcpRefresh();
   }
 
   function openModelPopover(trigger) {
@@ -2207,8 +2594,14 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
       if (title) t.title = title;
       return t;
     };
-    const modelItem = (m) => {
-      const item = menuItem('ask-model-item', () => setPickerModel(m.id));
+    const modelItem = (m, engine) => {
+      const active = activeEngine();
+      const moves = !!active && !!engine && engine !== active;   // #943: this row moves the chat to another engine
+      const item = menuItem('ask-model-item', () => pickModelRow(m, engine || engineOfEntry(m)));
+      if (moves) {
+        item.dataset.engine = engine;
+        if (turnBusy() || st.switching) { item.disabled = true; item.title = 'Wait for this reply to finish before switching engines.'; }
+      }
       // The row carries NO provenance: a plugin name is arbitrary text and an origin
       // badge starved the label in a 292px panel. Where a model comes from is the
       // Models view's job; here the name is the thing being picked.
@@ -2223,22 +2616,44 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
           `${m.secretsMissing.join(', ')} is not set. Configure it in the ${m.plugin ? `“${m.plugin}” ` : ''}plugin's Model secrets, or this model will fail.`));
       }
       if (m.needsSignIn) {
-        item.appendChild(tag('needs sign-in', 'is-err', m.signInMessage || 'The provider behind this model is not usable yet. See the Providers page.'));
+        item.appendChild(tag('needs sign-in', 'is-err', m.signInMessage || 'The provider behind this model is not usable yet. See Models › Providers.'));
       }
+      if (moves && (readEnginePicks(storage)[engine] || {}).model === m.id) item.appendChild(tag('last used', null, 'The model you last used on this engine.'));
       // Credential broker: whether the signed-in person has the key this model spends from.
       const cb = credentialBadge(m.id);
       if (cb) item.appendChild(tag(cb.text, cb.missing ? 'is-err' : 'is-key', cb.title));
-      if (m.id === st.picker.model) item.appendChild(checkMark());
+      if (m.id === st.picker.model && !moves) item.appendChild(checkMark());   // #943: never on the same model in another engine's section
       return item;
     };
     // Inside an engine's section the models group by connection, like every model picker (modelGroups); a sub-heading
-    // only when the section holds more than one connection.
+    // when the section holds more than one connection, or when its one connection is a provider (GitHub Copilot through
+    // the bridge must never pass for the Copilot CLI's own models).
     const appendByConnection = (models, engine) => {
       const groups = modelGroups(models, { engine });
       for (const c of groups) {
-        if (groups.length > 1) panel.appendChild(make('div', 'ask-pop-subgroup', c.label));
-        for (const m of c.models) panel.appendChild(modelItem(m));
+        if (groups.length > 1 || connectionOf(c.models[0]).kind === 'provider') panel.appendChild(make('div', 'ask-pop-subgroup', c.label));
+        for (const m of c.models) panel.appendChild(modelItem(m, engine));
       }
+    };
+    // #943: another engine's section leads with the model last used there (else its default), in BOTH panes, so the
+    // main/more split is the same and no model falls between them.
+    const sectionSplit = (g, active) => {
+      const lead = active && g.engine !== active ? engineLead(g.models, readEnginePicks(storage)[g.engine], ((st.catalog && st.catalog.defaults) || {})[g.engine]) : null;
+      return splitCatalog(lead ? [lead, ...g.models.filter((x) => x !== lead)] : g.models);
+    };
+    const sectionsNow = () => pickerGroups(st.catalog ? st.catalog.models : [], { active: activeEngine() });
+    // The engine the main pane lists: the chat's, else the picked model's, else the first with models.
+    const shownEngine = () => {
+      const sections = sectionsNow();
+      const want = pickerEngine();
+      return (sections.find((x) => x.engine === want) || sections[0] || {}).engine || null;
+    };
+    const moreModelsRow = (engine) => {
+      const moreRow = menuItem('ask-more-models', () => renderPane(`more:${engine}`));
+      moreRow.setAttribute('data-ask-more-models', '');
+      moreRow.appendChild(make('span', null, 'More models'));
+      moreRow.appendChild(make('span', 'ask-pop-row-chev', '›'));
+      return moreRow;
     };
     let shownPane = 'main';
     let effortPaneKey = '';   // the model + effort list the effort pane was painted from
@@ -2260,28 +2675,47 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
           if (eff === st.picker.effort) item.appendChild(checkMark());
           panel.appendChild(item);
         }
-      } else if (pane === 'more') {
-        const back = menuItem('ask-pane-back', () => renderPane('main'));
+      } else if (pane.startsWith('more:') || pane.startsWith('engine:')) {
+        // 'engine:<name>': another engine's main list, led by the model last used there (else its default), so a pick
+        // moves the chat after a confirm; 'more:<name>': that engine's more models, back to the list it came from.
+        const more = pane.startsWith('more:');
+        const engine = pane.slice(pane.indexOf(':') + 1);
+        const g = sectionsNow().find((x) => x.engine === engine);
+        const home = engine === shownEngine() ? 'main' : `engine:${engine}`;
+        const back = menuItem('ask-pane-back', () => renderPane(more ? home : 'main'));
         back.setAttribute('data-ask-pane-back', '');
-        back.appendChild(make('span', null, '‹ Models'));
+        back.appendChild(make('span', null, more && home === 'main' ? '‹ Models' : `‹ ${g ? g.label : 'Models'}`));
         panel.appendChild(back);
         panel.appendChild(make('div', 'ask-pop-divider'));
-        // Each engine's more models under its name, as in the main pane, when more than one engine has some.
-        const more = pickerGroups(st.catalog ? st.catalog.models : [], { lock: lockedEngine() })
-          .map((g) => ({ ...g, rest: splitCatalog(g.models).rest })).filter((g) => g.rest.length);
-        for (const g of more) {
-          if (more.length > 1) panel.appendChild(make('div', 'ask-pop-group', g.label));
-          appendByConnection(g.rest, g.engine);
+        if (g) {
+          const split = sectionSplit(g, activeEngine());
+          appendByConnection(more ? split.rest : split.primary, g.engine);
+          if (!more && split.rest.length) {
+            panel.appendChild(make('div', 'ask-pop-divider'));
+            panel.appendChild(moreModelsRow(engine));
+          }
         }
       } else {
-        // D12: a new chat shows each engine under its name; inside a chat only the chat's engine is offered.
-        const sections = pickerGroups(st.catalog ? st.catalog.models : [], { lock: lockedEngine() });
-        const rest = [];
-        for (const g of sections) {
+        // D12 / #943: the shown engine's models under its name (the chat's own is marked); every other engine is one
+        // row that opens its own list, so the menu stays short however many engines have models.
+        const sections = sectionsNow();
+        const shown = shownEngine();
+        const g = sections.find((x) => x.engine === shown);
+        let hasMore = false;
+        if (g) {
           if (sections.length > 1) panel.appendChild(make('div', 'ask-pop-group', g.label));
-          const split = splitCatalog(g.models);
+          const split = sectionSplit(g, activeEngine());
           appendByConnection(split.primary, g.engine);
-          rest.push(...split.rest);
+          hasMore = split.rest.length > 0;
+        }
+        const others = sections.filter((x) => x !== g);
+        if (others.length) panel.appendChild(make('div', 'ask-pop-divider'));
+        for (const o of others) {
+          const engineRow = menuItem('ask-engine-row', () => renderPane(`engine:${o.engine}`));
+          engineRow.setAttribute('data-ask-engine-group', o.engine);
+          engineRow.appendChild(make('span', null, o.label));
+          engineRow.appendChild(make('span', 'ask-pop-row-chev', '›'));
+          panel.appendChild(engineRow);
         }
         panel.appendChild(make('div', 'ask-pop-divider'));
         const noEffort = !!catalogEntry(st.picker.model)?.noEffort;
@@ -2298,13 +2732,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
           effortRow.appendChild(make('span', 'ask-pop-row-chev', '›'));
         }
         panel.appendChild(effortRow);
-        if (rest.length) {
-          const moreRow = menuItem('ask-more-models', () => renderPane('more'));
-          moreRow.setAttribute('data-ask-more-models', '');
-          moreRow.appendChild(make('span', null, 'More models'));
-          moreRow.appendChild(make('span', 'ask-pop-row-chev', '›'));
-          panel.appendChild(moreRow);
-        }
+        if (hasMore) panel.appendChild(moreModelsRow(shown));
       }
       focusFirst();
     };
@@ -2336,7 +2764,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     st.mcp.queued = false;
     const gen = ++st.mcp.gen;
     const body = {
-      context: scopedContext(getPageContext() || {}),
+      context: scopedContext(pageContext()),
       mcpOff: st.mcp.off,                       // the client holds the choices: they override the stored ones
       ...(st.picker.model ? { model: st.picker.model } : {}),
       ...(st.threadId ? { threadId: st.threadId } : {}),
@@ -2388,7 +2816,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
   function mcpManageItem(text, hash) {
     const item = menuItem('ask-mcp-manage', () => {
       closePopover({ focusTrigger: false });        // the route hides the page; the picker goes first
-      if (win.location.hash !== hash) win.location.hash = hash.slice(1);
+      goToPage(hash);
     });
     item.dataset.mcpKey = 'manage';                 // a re-render keeps focus on the footer too
     item.appendChild(make('span', null, text));
@@ -2515,6 +2943,60 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
   }
 
   // ---- scope selector (#397) ------------------------------------------------
+  /** Ask worca beside the page: what a message (and the MCP preview) says about the page — the page context minus the
+   *  chips the person left out (ask-page-chips.mjs withoutChips), read at send time. */
+  function pageContext() {
+    const page = getPageContext() || {};
+    if (!st.leftOut.size) return page;
+    return withoutChips(page, readPageChips(), st.leftOut);
+  }
+  function readPageChips() {
+    try { const c = getPageChips(); return Array.isArray(c) ? c : []; } catch { return []; }
+  }
+  /** The page on screen changed (a route, a Details tab, a Diff file, a chip left out) or the chat was shown. */
+  function onPageChange() {
+    paintPageChips();
+    if (st.host === 'dock' && st.scopeFollowsPage && isNewChat()) followPageScope();
+    paintSideEmpty();
+  }
+  /** The composer's page chips (getPageChips): each names a part of the page on screen, its × leaves it out of the next
+   *  messages. leftOut keeps only ids on screen, so a chip comes back on a later visit; a left-out run takes its file. */
+  function paintPageChips() {
+    if (!el.pageChips || st.destroyed) return;
+    const chips = readPageChips();
+    const ids = new Set(chips.map((c) => c && c.id));
+    for (const id of [...st.leftOut]) if (!ids.has(id)) st.leftOut.delete(id);
+    const shown = chips.filter((c) => c && !st.leftOut.has(c.id) && !(c.parent && st.leftOut.has(c.parent)));
+    const sig = JSON.stringify(shown.map((c) => [c.id, c.caption, c.name, c.icon, c.leaveOut]));
+    if (sig === st.pageChipsSig) return;
+    st.pageChipsSig = sig;
+    el.pageChips.replaceChildren(...shown.map(pageChipEl));
+    el.pageChips.hidden = !shown.length;
+  }
+  function pageChipEl(chip) {
+    const c = make('span', 'ask-page-chip');
+    c.dataset.chipId = chip.id;
+    c.dataset.kind = chip.kind;
+    c.appendChild(icon(doc, chip.icon, 13));
+    c.appendChild(make('span', 'ask-page-chip-cap', chip.caption));
+    const name = make('b', 'ask-page-chip-name', chip.name);
+    name.title = chip.name;
+    c.appendChild(name);
+    const x = make('button', 'ask-page-chip-x');
+    x.type = 'button';
+    x.setAttribute('aria-label', chip.leaveOut);
+    x.title = chip.leaveOut;
+    x.appendChild(icon(doc, 'x', 12));
+    x.addEventListener('click', () => {
+      st.leftOut.add(chip.id);
+      onPageChange();
+      if (!st.scope.pinned) scheduleMcpRefresh();   // No project: the page is what the Sets preview reads
+      focusComposer();
+    });
+    c.appendChild(x);
+    return c;
+  }
+
   /** Per-field merge: the page context's TARGET keys never ride (CONTRACT §4); view/run/diff-file context still
    *  follow the page. A pin adds its one key. No project sends pinned:false and no page target, so the server never
    *  resurrects a stale thread pin over an explicit choice. */
@@ -2550,6 +3032,11 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     if (el.fitScope) el.fitScope();
   }
 
+  /** A pick in the scope pill is the person's: a new chat stops following the page (Ask worca beside the page, L3). */
+  function pickScope(next) {
+    st.scopeFollowsPage = false;
+    setScope(next);
+  }
   /** `persist:false` sends no PATCH (the server stored it already); `focus:false` neither closes popovers nor focuses
    *  the composer (the panel API and server switches never move the focus). */
   function setScope(next, { persist = true, focus = true } = {}) {
@@ -2592,6 +3079,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     const next = scopeFromContext(scope);
     if (scope.pinned === true && !next.pinned) return false;
     const label = typeof scope.label === 'string' && scope.label ? scope.label : null;
+    st.scopeFollowsPage = false;                  // a scope app.js set (a project just added) is a pick too
     setScope({ ...next, label }, { focus: false });
     if (next.pinned && !label) resolveScopeLabel();
     return true;
@@ -2603,6 +3091,15 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     st.scope = { ...scopeFromContext(context), label: null };
     updateScopeButton();          // the raw key shows until the name resolves
     if (st.scope.pinned) resolveScopeLabel();
+  }
+
+  /** A scope the server already stored (an ask-scope frame, a send's 202 after a link switched the chat): the pill
+   *  follows with no PATCH, so the next send keeps it. */
+  function applyServerScope(scope, rawLabel) {
+    const label = typeof rawLabel === 'string' && rawLabel ? rawLabel : null;
+    st.scopeHeld = null;                                    // S39: the server's switch wins over a held pick
+    setScope({ ...scopeFromContext(scope), label }, { persist: false, focus: false });
+    if (st.scope.pinned && !label) resolveScopeLabel();
   }
 
   function resolveScopeLabel() {
@@ -2668,7 +3165,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
       };
       panel.appendChild(radio('ask-scope-none', !st.scope.pinned,
         [scopeIcon(doc, 'none', 14), make('span', 'ask-model-name', NO_PROJECT_LABEL)],
-        () => setScope({ pinned: false })));
+        () => pickScope({ pinned: false })));
       const projects = opts.projects.filter((p) => p && p.key);
       if (projects.length) {
         panel.appendChild(divider());
@@ -2677,7 +3174,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
           const it = radio('ask-scope-proj', st.scope.pinned && st.scope.projectKey === p.key, [
             scopeIcon(doc, 'project', 14),
             col(p.exists === false ? `${p.name} (missing)` : p.name, kindChip(doc, projectKind(p)), p.displayPath || p.path),
-          ], () => setScope({ pinned: true, projectKey: p.key, label: p.name }));
+          ], () => pickScope({ pinned: true, projectKey: p.key, label: p.name }));
           if (p.path) it.title = p.path;          // the absolute path; the sub-line shows displayPath (S22), as text only
           panel.appendChild(it);
         }
@@ -2690,7 +3187,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
           panel.appendChild(radio('ask-scope-ws', st.scope.pinned && st.scope.workspaceId === w.id, [
             scopeIcon(doc, 'workspace', 14),
             col(w.name || w.id, null, null),
-          ], () => setScope({ pinned: true, workspaceId: w.id, label: w.name || w.id })));
+          ], () => pickScope({ pinned: true, workspaceId: w.id, label: w.name || w.id })));
         }
       }
       // Add project… opens the app's Add project dialog (chatDeps.openAddProject, read at call time; SEAMS S19).
@@ -2857,7 +3354,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     const mentioned = c.source === 'chat';                       // only a page topic is ever pinned
     const pinned = c.pinned && !mentioned;
     const row = href
-      ? menuItem('ask-ctx-topic', () => { closePopover({ focusTrigger: false }); if (win.location.hash !== href) win.location.hash = href.slice(1); })
+      ? menuItem('ask-ctx-topic', () => { closePopover({ focusTrigger: false }); goToPage(href); })
       : make('div', 'ask-ctx-topic');
     if (mentioned) row.classList.add('is-mentioned');
     if (pinned) row.classList.add('is-pinned');
@@ -2967,7 +3464,9 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
   }
 
   // ---- thread actions -------------------------------------------------------
-  function newThread() {
+  /** `focus:false`: a chat that went away by itself (a 404, all history cleared) — the side column beside a page never
+   *  takes the focus for that. */
+  function newThread({ focus = true } = {}) {
     stopVoice();
     loadGen += 1;                       // a load still in flight must not resurrect the old thread
     st.threadId = null;
@@ -2975,13 +3474,14 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     st.model = null;
     st.hist = { idx: -1, draft: '' };
     st.suggestDismissed = null;
-    st.seenRows = new Set();            // a different chat: its rows have never been shown
     st.subscribedFor = null;
     stopElapsed();
     storeThread(null);
-    el.title.textContent = 'New chat';
+    paintTitle('New chat');
     st.scopeHeld = null;                // S39: a held pick belongs to the chat it was made in
     applyThreadScope(null);             // U5: a brand-new chat starts in No project
+    st.scopeFollowsPage = true;         // Ask worca beside the page: in the side column it starts in the page's scope (L3)
+    if (st.host === 'dock') followPageScope();
     setContexts([]);
     restoreBrowserPick();               // …and on the browser-level pick, not the last chat's
     st.mcp.off = { sets: [], members: [] };   // …and with every MCP server on
@@ -2994,7 +3494,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     updateSendStop();
     setComposerMsg(null);
     updateAddons();                     // CONTRACT §2: the add-ons see the new (empty) chat
-    focusComposer();
+    if (focus) focusComposer();
   }
 
   async function deleteThread(t) {
@@ -3015,6 +3515,8 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     if (!(await deleteOrReport(`/api/ask/threads/${t.id}`, 'Could not delete the chat', `ask-thread-del-${t.id}`))) { back(); return; }
     if (readStoredThread() === t.id) storeThread(null);
     st.askedIn.delete(t.id);                         // a stopped turn's late reply never lights the Chat row for it
+    if (st.unread && st.unreadThread === t.id) setUnread(false);   // the dot never points at a chat that is gone (as ask-history-cleared)
+    dropRecent([t.id]);                              // nor does the side column's Recent chats
     st.queues.delete(t.id);                          // its queued messages go with it (newThread below repaints)
     loadHistory();                                   // the column drops the row
     // The chat shown — or the one still loading (its GET may answer after the delete) — goes home; an overlay closes,
@@ -3086,12 +3588,18 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
   // centered between two hairlines. A project's Git/Folder chip comes from the cached /api/projects; No project and an
   // unknown project get none.
   function buildDivider(b) {
-    const s = scopeFromContext(b.scope);
     const text = String(b.text || '');
     const d = make('div', 'ask-divider');
     d.setAttribute('role', 'separator');
     d.setAttribute('aria-label', text);
     const inner = make('span', 'ask-divider-in');
+    if (b.engineSwitch) {   // #943: "Switched from Codex to Claude", between two hairlines
+      d.classList.add('ask-divider-engine');
+      inner.appendChild(make('span', 'ask-divider-t', text));
+      d.appendChild(inner);
+      return d;
+    }
+    const s = scopeFromContext(b.scope);
     inner.append(scopeIcon(doc, scopeKind(s), 13), make('span', 'ask-divider-t', text));
     if (s.workspaceId) inner.appendChild(kindChip(doc, 'ws'));
     else if (s.projectKey) {
@@ -3178,7 +3686,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
   }
   function rpSelect(className, ariaLabel) {
     const s = doc.createElement('select');
-    s.className = className;
+    s.className = `select ${className}`;           // #959: the shared field (design-system › Field)
     s.setAttribute('aria-label', ariaLabel);
     return s;
   }
@@ -3236,14 +3744,23 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     // them as its defaults ("Save as project defaults", saveLaneEdits). `explicit`: a workspace card's rows are the
     // built-in defaults, not the run's baseline (laneOverlay names its picks outright). `proposal` / `proposed` /
     // `warnings`: Ask Worca's per-agent picks (card.nodes) once applyProposal lays them in as the lane's baseline.
-    return { wf, registry, runConfig, rows, edits: {}, editable: true, explicit: !projectDir, engine, defaultEngine, allModels, proposal: {}, proposed: {}, warnings: [],
+    // `reviewRoleRows`: a role-review node's declared roles (node-tunables buildRoleRows); their edits live apart from
+    // the node rows' in `reviewRoleEdits[nodeId][roleKey]` (`row.role` already names Default's legacy step role).
+    return { wf, registry, runConfig, rows, edits: {}, reviewRoleRows: buildRoleRows(wf, rows, runConfig), reviewRoleEdits: {},
+      editable: true, explicit: !projectDir, engine, defaultEngine, allModels, proposal: {}, proposed: {}, warnings: [],
+      prDefault: defaults && defaults.pr && defaults.pr.scope === 'project' ? defaults.pr : null,
       models, efforts: engine === 'claude' ? (Array.isArray(cfg.efforts) ? cfg.efforts : []) : [...(ENGINE_EFFORTS[engine] || [])],
       subagentModels: Array.isArray(cfg.subagentModels) ? cfg.subagentModels : [] };
   }
   const laneEffective = (lane, row) => ({ ...row, ...(lane.edits[row.nodeId] || {}) });
   const laneCaps = (row) => ({ asksQuestions: row.askQuestions !== null, questionsLocked: row.questionsLocked });
-  const laneEditedRows = (lane) => lane.rows.filter((r) => lane.edits[r.nodeId]);
-  const laneOverrideCount = (lane) => lane.rows.filter((r) => modifiedFieldsOf(laneEffective(lane, r), r.def, laneCaps(r)).length).length;
+  const laneReviewRoleEdit = (lane, rr) => (lane.reviewRoleEdits[rr.nodeId] || {})[rr.roleKey] || null;
+  const laneReviewRoleEffective = (lane, rr) => ({ ...rr, ...(laneReviewRoleEdit(lane, rr) || {}) });
+  const laneReviewRoleChanged = (lane, rr) => { const c = laneReviewRoleEffective(lane, rr); return (c.model || '') !== (rr.def.model || '') || (c.effort || '') !== (rr.def.effort || ''); };
+  const laneReviewRoleEdited = (lane) => (lane.reviewRoleRows || []).filter((rr) => laneReviewRoleEdit(lane, rr));
+  const laneEditedRows = (lane) => lane.rows.filter((r) => lane.edits[r.nodeId] || laneReviewRoleEdited(lane).some((rr) => rr.nodeId === r.nodeId));
+  const laneOverrideCount = (lane) => lane.rows.filter((r) => modifiedFieldsOf(laneEffective(lane, r), r.def, laneCaps(r)).length).length
+    + (lane.reviewRoleRows || []).filter((rr) => laneReviewRoleChanged(lane, rr)).length;
   const modelLabel = (lane, id) => { const m = lane.models.find((x) => x.id === id); return m ? (m.label || m.id).replace(' (1M)', '') : id; };
   function laneSummary(lane) {
     const counts = new Map();
@@ -3261,6 +3778,24 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     const next = { ...(lane.edits[row.nodeId] || {}), ...patch };
     for (const k of Object.keys(next)) if (next[k] === row[k]) delete next[k];   // back to the proposal = no edit
     if (Object.keys(next).length) lane.edits[row.nodeId] = next; else delete lane.edits[row.nodeId];
+  }
+  /** laneSet for a review-role row: the same "back to the row = no edit" rule, keyed by node and role. */
+  function laneReviewRoleSet(lane, rr, patch) {
+    const byRole = { ...(lane.reviewRoleEdits[rr.nodeId] || {}) };
+    const next = { ...(byRole[rr.roleKey] || {}), ...patch };
+    for (const k of Object.keys(next)) if (next[k] === rr[k]) delete next[k];
+    if (Object.keys(next).length) byRole[rr.roleKey] = next; else delete byRole[rr.roleKey];
+    if (Object.keys(byRole).length) lane.reviewRoleEdits[rr.nodeId] = byRole; else delete lane.reviewRoleEdits[rr.nodeId];
+  }
+  /** What a review-role row runs as a pick `{ model?, effort? }`, or null for "the node's setting". "Node's model" over
+   *  a template or project pick names the node's own model, since a pick cannot be cleared by naming nothing. */
+  function laneReviewRolePick(lane, rr) {
+    const c = laneReviewRoleEffective(lane, rr);
+    const node = lane.rows.find((r) => r.nodeId === rr.nodeId);
+    const n = node ? laneEffective(lane, node) : {};
+    const pair = c.model ? { model: c.model, effort: c.effort } : (rr.def.model && n.model ? { model: n.model, effort: c.effort || n.effort } : { effort: c.effort });
+    const out = { ...(pair.model ? { model: pair.model } : {}), ...(pair.effort ? { effort: pair.effort } : {}) };
+    return Object.keys(out).length ? out : null;
   }
   // Ask Worca's per-agent picks (card.nodes) are the lane's BASELINE edits: "changed" means the user moved a row off
   // them; with no proposal that is exactly "the row has an edit", as before.
@@ -3334,6 +3869,14 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
       if ((c.subagentModel || '') !== (row.subagentModel || '')) e.subagentModel = c.subagentModel || row.def.subagentModel || 'auto';
       if (Object.keys(e).length) nodes[row.nodeId] = e;
     }
+    // Edited review-role rows that differ from the project's (or template's) pick ride as `nodes[id].roles[key]`; a
+    // node entry may carry roles only.
+    for (const rr of laneReviewRoleEdited(lane)) {
+      if (!laneReviewRoleChanged(lane, rr)) continue;
+      const pick = laneReviewRolePick(lane, rr);
+      if (!pick) continue;
+      nodes[rr.nodeId] = { ...(nodes[rr.nodeId] || {}), roles: { ...((nodes[rr.nodeId] || {}).roles || {}), [rr.roleKey]: pick } };
+    }
     return { nodes };
   }
   /** Ask Worca's picks as proposed (card.nodes), for a Start whose lane has not loaded (still loading, or it could
@@ -3364,7 +3907,15 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     if (!lane || !lane.editable || !projectDir) return null;
     const workflowId = local.workflowId();
     for (const row of laneEditedRows(lane)) {
-      const patch = pruneNodeSelection(row, lane.edits[row.nodeId]);
+      const patch = pruneNodeSelection(row, lane.edits[row.nodeId] || {});
+      // The node's role picks are written whole (setNodeModel replaces the map): the stored ones, the edits over them.
+      const roleRows = (lane.reviewRoleRows || []).filter((rr) => rr.nodeId === row.nodeId);
+      if (roleRows.some((rr) => laneReviewRoleEdit(lane, rr))) {
+        const stored = (((lane.runConfig || {}).nodes || {})[row.nodeId] || {}).roles || {};
+        patch.roles = Object.fromEntries(roleRows
+          .map((rr) => [rr.roleKey, laneReviewRoleEdit(lane, rr) ? laneReviewRolePick(lane, rr) : (Object.hasOwn(stored, rr.roleKey) ? stored[rr.roleKey] : null)])
+          .filter(([, pick]) => pick));
+      }
       const body = row.role
         ? { projectDir, step: row.role, ...patch }
         : { projectDir, workflowId, nodes: { [row.nodeId]: patch } };
@@ -3426,7 +3977,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
       return;
     }
     // "changed" = rows the user moved off the proposal (Ask Worca's picks are the baseline, not the user's edits).
-    const edited = lane.rows.filter((r) => laneDiverged(lane, r)).length;
+    const edited = lane.rows.filter((r) => laneDiverged(lane, r)).length + laneReviewRoleEdited(lane).length;
     const picked = laneProposedCount(lane);
     const over = laneOverrideCount(lane);
     const overText = `${over} override${over === 1 ? '' : 's'} of the workflow defaults`;
@@ -3435,7 +3986,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
       : picked ? `Chat picked ${picked} agent${picked > 1 ? 's' : ''} for this run · ${overText}`
         : `proposed by Worca · ${overText}`;
     reset.hidden = !edited;
-    reset.addEventListener('click', () => { lane.edits = cloneEdits(lane.proposal); if (lane.dropped) lane.dropped.clear(); renderLane(laneSec, lane, lc); });
+    reset.addEventListener('click', () => { lane.edits = cloneEdits(lane.proposal); lane.reviewRoleEdits = {}; if (lane.dropped) lane.dropped.clear(); renderLane(laneSec, lane, lc); });
     // The lane shows at every mode while Ask Worca's picks are laid in (data-level-keep, set when the card is built);
     // healed away on another engine, or on another workflow, it is Expert-only again — and the team policy's word on
     // the picks (card.warnings, soft: the run still starts) goes with them.
@@ -3534,7 +4085,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
       subWrap.appendChild(make('span', null, 'Sub-agents'));
       const subSel = rpSelect('ask-rp-subagent', `Sub-agent model for ${row.label}`);
       subSel.appendChild(opt('', 'subs: default (agent picks)'));
-      for (const v of lane.subagentModels) subSel.appendChild(opt(v, v === 'auto' ? 'subs: agent picks' : `subs: ${v}`));
+      for (const v of lane.subagentModels) { const o = opt(v, `subs: ${subagentAliasLabel(v)}`); const t = subagentAliasTitle(v); if (t) o.title = t; subSel.appendChild(o); }
       subSel.value = lane.subagentModels.includes(c.subagentModel) ? c.subagentModel : '';
       subSel.disabled = !lane.editable;
       subSel.title = 'Model for the sub-agents this node spawns (needs fan-out)';
@@ -3560,6 +4111,54 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
       tile.appendChild(l2);
       box.appendChild(tile);
     });
+    // A role-review node's declared roles, below the node tiles: a model select and effort pills, nothing else.
+    for (const rr of lane.reviewRoleRows || []) {
+      const node = lane.rows.find((r) => r.nodeId === rr.nodeId);
+      const c = laneReviewRoleEffective(lane, rr);
+      const tile = make('div', `ask-rp-tile ask-rp-role${laneReviewRoleEdit(lane, rr) ? ' mod' : ''}`);
+      tile.dataset.nodeId = rr.nodeId;
+      tile.dataset.role = rr.roleKey;
+      const l1 = make('div', 'ask-rp-tile-l1');
+      l1.appendChild(make('span', `ask-rp-acc${node && RP_ACC.has(node.color) ? ` ${node.color}` : ''}`));
+      const name = make('div', 'ask-rp-name');
+      name.appendChild(make('b', null, rr.label));
+      l1.appendChild(name);
+      const sel = rpSelect('ask-rp-model', `Model for ${rr.label}`);
+      sel.appendChild(opt('', "Node's model"));
+      appendModelGroups(sel, lane.models.filter((m) => (!m.hidden && !m.needsSignIn) || m.id === c.model), {
+        engine: lane.engine, text: (m) => modelOptionText(m) + (m.needsSignIn ? ' (needs sign-in)' : '') });
+      sel.value = c.model || '';
+      sel.disabled = !lane.editable;
+      sel.addEventListener('change', () => {
+        const mid = sel.value;
+        const list = (lane.models.find((m) => m.id === mid) || {}).efforts || [];
+        const keep = list.includes(c.effort) ? c.effort : (list[1] || list[0] || '');
+        laneReviewRoleSet(lane, rr, { model: mid, effort: mid ? keep : '' });
+        renderLane(laneSec, lane, lc);
+      });
+      l1.appendChild(sel);
+      if (lane.efforts.length) {
+        // A role naming no model runs on the node's: its pills follow the node tile's model.
+        const runsOnModel = c.model || (node ? laneEffective(lane, node).model : '');
+        const eff = make('div', `ask-rp-eff${c.model ? '' : ' unset'}`);
+        eff.setAttribute('role', 'radiogroup');
+        eff.setAttribute('aria-label', `Effort for ${rr.label}`);
+        const offered = (lane.models.find((m) => m.id === runsOnModel) || {}).efforts || [];
+        for (const e of lane.efforts) {
+          const b = make('button', `ask-rp-effbtn${e === c.effort ? ' on' : ''}`, e);
+          b.type = 'button';
+          b.setAttribute('role', 'radio');
+          b.setAttribute('aria-checked', String(e === c.effort));
+          b.disabled = !lane.editable || !offered.includes(e);
+          if (!offered.includes(e) && runsOnModel) b.title = `Not offered by ${modelLabel(lane, runsOnModel)}`;
+          b.addEventListener('click', () => { laneReviewRoleSet(lane, rr, { effort: e }); renderLane(laneSec, lane, lc); });
+          eff.appendChild(b);
+        }
+        l1.appendChild(eff);
+      }
+      tile.appendChild(l1);
+      box.appendChild(tile);
+    }
     // A per-run lane: changes (and Ask Worca's picks) apply to THIS run only, unless the user saves them as the
     // project's defaults — a project target only (agent defaults are per project).
     const foot = make('div', 'ask-rp-agents-foot');
@@ -3714,6 +4313,22 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     };
   }
 
+  /** "Saved to Workflows: <name>" under a saved card's name (#1126). The name is a real link to the row's address;
+   *  with the app's openComposer the click takes the card's own way in (the Library then shows the row). */
+  function savedToLine(workflowId, name) {
+    const line = make('div', 'ask-wfcard-savedto', 'Saved to Workflows: ');
+    const a = make('a', 'ask-wfcard-savedlink', name || workflowId);
+    a.href = `#workflows/${encodeURIComponent(workflowId)}`;
+    a.setAttribute('data-ask-wf-link', '');
+    a.addEventListener('click', (e) => {
+      if (typeof openComposer !== 'function') return;      // a bare host: the href navigates
+      e.preventDefault();
+      openComposer(workflowId);
+    });
+    line.appendChild(a);
+    return line;
+  }
+
   function buildWorkflowCard(block, prev) {
     const card = block.card || {};
     const name = card.name || '';
@@ -3761,6 +4376,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
       handle.parts.name.replaceWith(saved);
       // The chip says Saved and the tag says Auto: the line stays only when it says something new.
       if (card.adopted) saved.after(make('div', 'ask-wfcard-savedline', 'Uses a workflow you already had'));
+      else if (block.workflowId) saved.after(savedToLine(block.workflowId, name));   // a new row: say where it went (#1126)
     } else if (matched) {
       const hint = make('div', 'ask-wfcard-hint', 'Model and effort come from that saved workflow. Edit them in the Workflows view.');
       handle.parts.match.after(hint);
@@ -4207,9 +4823,10 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     sum.appendChild(make('span', null, summary));
     body.appendChild(sum);
     if (card.note) body.appendChild(make('div', 'ask-mcard-note', card.note));
-    const azureCard = /^https:\/\/dev\.azure\.com\//i.test(String(card.url || ''));
+    const cardUrl = String(card.url || '');
+    const hostLabel = /^https:\/\/dev\.azure\.com\//i.test(cardUrl) ? 'Azure DevOps' : /^https:\/\/bitbucket\.org\//i.test(cardUrl) ? 'Bitbucket' : 'GitHub';
     const rows = [['Repository', card.url], ['Branch', card.branch || 'default branch'], ['Folder', card.dir],
-      [azureCard ? 'Azure DevOps' : 'GitHub', card.github]];
+      [hostLabel, card.github]];
     const ul = make('ul', 'ask-mcard-changes');
     for (const [label, value] of rows) {
       if (!value) continue;
@@ -4311,6 +4928,14 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
   // ---- Workspace card (propose_workspace_change): create, add / remove members, rename ------------------------------
   const WS_KIND_LABEL = { create: 'Create', add_members: 'Add members', remove_member: 'Remove member', rename: 'Rename' };
   const WS_APPLY_LABEL = { create: 'Create', add_members: 'Add', remove_member: 'Remove', rename: 'Rename' };
+  const WS_RESCAN = ['none', 'partial', 'full'];
+  const WS_RESCAN_LABEL = { none: 'no re-scan', partial: 'partial re-scan', full: 'full re-scan' };
+  const WS_RESCAN_TITLE = { none: 'No re-scan', partial: 'Partial re-scan', full: 'Full re-scan' };
+  const WS_RESCAN_HINT = {
+    none: 'Keep the pruned map. Instant — no agent runs.',
+    partial: 'One agent rewrites the overview and notes from the pruned map. A few minutes.',
+    full: 'Scan every member left again. The slowest; runs in the background.',
+  };
   /** proposed → applied | failed, or declined. Every value is text. */
   function buildWorkspaceCard(block) {
     const card = block.card || {};
@@ -4348,12 +4973,35 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
       ul.appendChild(li);
     }
     body.appendChild(ul);
+    let rescanPick = null;
     if (block.state === 'proposed') {
       for (const [items, cls] of [[card.warnings, 'ask-mcard-effects ask-wscard-warn'], [card.effects, 'ask-mcard-effects ask-wscard-effects']]) {
         if (!Array.isArray(items) || !items.length) continue;
         const list = make('ul', cls);
         for (const w of items) list.appendChild(make('li', null, w));
         body.appendChild(list);
+      }
+      // A removal: worca's recommended re-scan and its reason (shown only here), and the three options, recommended preselected.
+      if (card.kind === 'remove_member' && card.recommendation) {
+        const rec = card.recommendation;
+        const box = make('fieldset', 'ask-wscard-rescan');
+        box.setAttribute('data-ask-ws-rescan', '');
+        box.appendChild(make('div', 'ask-wscard-rescan-reason', `Recommended: ${WS_RESCAN_LABEL[rec.level] || rec.level}. ${rec.reason || ''}`.trim()));
+        // The card's pick, unless it is the disabled partial (then worca's level) — never an empty group.
+        const chosen = WS_RESCAN.includes(card.rescan) && !(card.rescan === 'partial' && !rec.partialAvailable) ? card.rescan : rec.level;
+        for (const value of WS_RESCAN) {
+          const off = value === 'partial' && !rec.partialAvailable;
+          const lab = make('label', `radio-card${off ? ' disabled' : ''}`);
+          const input = make('input');
+          input.type = 'radio'; input.name = `ask-ws-rescan-${block.id}`; input.value = value;
+          input.checked = value === chosen && !off; input.disabled = off;
+          const text = make('span', 'radio-card-text');
+          text.append(make('b', null, `${WS_RESCAN_TITLE[value]}${value === rec.level ? ' — recommended' : ''}`), make('small', 'hint', WS_RESCAN_HINT[value]));
+          lab.append(input, text);
+          box.appendChild(lab);
+        }
+        rescanPick = () => (box.querySelector('input[type="radio"]:checked') || {}).value || null;
+        body.appendChild(box);
       }
     }
     const result = card.result || null;
@@ -4378,7 +5026,10 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
       decline.addEventListener('click', () => postCard(block, rootEl, { state: 'declined' }, decline));
       const destructive = card.kind === 'remove_member';
       const apply = btn(destructive ? 'btn btn-sm btn-danger' : 'btn btn-sm btn-primary', WS_APPLY_LABEL[card.kind] || 'Apply', 'data-ask-ws-apply', destructive ? null : WF_ICO.save);
-      apply.addEventListener('click', () => postCard(block, rootEl, { state: 'applied' }, apply));
+      apply.addEventListener('click', () => {
+        const pick = rescanPick ? rescanPick() : null;
+        postCard(block, rootEl, { state: 'applied', ...(pick ? { rescan: pick } : {}) }, apply);
+      });
       actions.append(make('span', 'ask-card-actions-spacer'), decline, apply);
       rootEl.appendChild(actions);
     }
@@ -4458,6 +5109,88 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
       const decline = btn('btn btn-sm btn-quiet ask-card-not-now', 'Decline', 'data-ask-act-decline');
       decline.addEventListener('click', () => postCard(block, rootEl, { state: 'declined' }, decline));
       const apply = btn('btn btn-sm btn-primary', 'Save', 'data-ask-act-apply', WF_ICO.save);
+      apply.addEventListener('click', () => postCard(block, rootEl, { state: 'applied' }, apply));
+      actions.append(make('span', 'ask-card-actions-spacer'), decline, apply);
+      rootEl.appendChild(actions);
+    }
+    return { el: rootEl };
+  }
+
+  // ---- MCP server card (propose_mcp_change): add, edit or remove a Manual server ------------------------------
+  // Every command, argument, URL, env and header name the card would save is shown word for word (docs/mcp-servers.md
+  // "Chat"). Applying saves a definition only; the user turns it on in a set on Connectors › MCP servers.
+  const MCP_KIND_LABEL = { add: 'Add server', edit: 'Edit definition', remove: 'Remove server', import: 'Import servers' };
+  const MCP_APPLY_LABEL = { add: 'Add', edit: 'Save', remove: 'Remove', import: 'Import' };
+  /** proposed → applied | failed, or declined. */
+  function buildMcpCard(block) {
+    const card = block.card || {};
+    const summary = card.summary || 'MCP server change';
+    if (block.state === 'declined') return { el: make('div', 'ask-card-stub', `Declined: ${summary}`) };
+    const rootEl = make('div', `ask-card ask-mcard ask-acard ask-mcpcard is-${block.state}`);
+    rootEl.setAttribute('data-ask-mcpcard', block.state);
+    const head = make('div', 'ask-mcard-head');
+    head.appendChild(make('span', 'ask-mcard-title', block.state === 'applied' ? 'Applied MCP server change' : block.state === 'failed' ? 'MCP server change failed' : 'Proposed MCP server change'));
+    head.appendChild(make('span', 'ask-mcard-kind', MCP_KIND_LABEL[card.kind] || card.kind || ''));
+    rootEl.appendChild(head);
+    const body = make('div', 'ask-mcard-body');
+    const sum = make('div', 'ask-mcard-summary');
+    if (block.state === 'applied') sum.appendChild(svgIcon(WF_ICO.check, 15, 2.4));
+    sum.appendChild(make('span', null, summary));
+    body.appendChild(sum);
+    if (card.note) body.appendChild(make('div', 'ask-mcard-note', card.note));
+    const ul = make('ul', 'ask-mcard-changes');
+    for (const c of Array.isArray(card.changes) ? card.changes : []) {
+      const li = make('li', 'ask-acard-change');
+      li.setAttribute('data-op', c.op || '');
+      li.appendChild(make('span', 'ask-mcard-change-label', c.label || ''));
+      const val = make('span', 'ask-mcard-change-val');
+      const both = c.before != null && c.after != null;
+      if (c.before != null && (block.state === 'proposed' || !both)) {
+        if (both) val.appendChild(make('span', 'ask-acard-tag', 'Now'));
+        val.appendChild(make('span', 'ask-mcard-before ask-acard-cmd', String(c.before)));
+      }
+      if (c.after != null) {
+        if (both && block.state === 'proposed') val.appendChild(make('span', 'ask-acard-tag', 'New'));
+        val.appendChild(make('span', 'ask-mcard-after ask-acard-cmd', String(c.after)));
+      }
+      li.appendChild(val);
+      ul.appendChild(li);
+    }
+    body.appendChild(ul);
+    if (block.state === 'proposed') {
+      for (const [items, cls] of [[card.warnings, 'ask-mcard-effects ask-wscard-warn'], [card.effects, 'ask-mcard-effects ask-wscard-effects']]) {
+        if (!Array.isArray(items) || !items.length) continue;
+        const list = make('ul', cls);
+        for (const w of items) list.appendChild(make('li', null, w));
+        body.appendChild(list);
+      }
+      // An import card: discovered servers worca already has (same name and command or URL); the card adds none of
+      // them. ask-mcard-present is a test hook only: the list takes the effects styling it rides on.
+      if (Array.isArray(card.alreadyPresent) && card.alreadyPresent.length) {
+        const have = make('ul', 'ask-mcard-effects ask-wscard-effects ask-mcard-present');
+        for (const p of card.alreadyPresent) have.appendChild(make('li', null, `Already in worca: ${p.name || ''} (${p.from || ''})`));
+        body.appendChild(have);
+      }
+    }
+    const result = card.result || null;
+    if (block.state === 'failed') {
+      const failed = make('div', 'ask-mcard-failed', `Could not apply: ${block.error || (result && result.error) || 'unknown error'}`);
+      failed.setAttribute('role', 'alert');
+      body.appendChild(failed);
+    } else if (block.state === 'applied' && result && result.detail) body.appendChild(make('div', 'ask-mcard-detail', result.detail));
+    if (block.state !== 'proposed') {
+      const open = make('a', 'ask-card-sched-link', 'Manage in Connectors › MCP servers');
+      open.href = '#connectors/servers';
+      body.appendChild(open);
+    }
+    rootEl.appendChild(body);
+    rootEl.appendChild(make('div', 'ask-card-err'));
+    if (block.state === 'proposed') {
+      const actions = make('div', 'ask-mcard-actions');
+      const btn = (cls, text, attr) => { const b = make('button', cls, text); b.type = 'button'; b.setAttribute(attr, ''); return b; };
+      const decline = btn('btn btn-sm btn-quiet ask-card-not-now', 'Decline', 'data-ask-mcp-decline');
+      decline.addEventListener('click', () => postCard(block, rootEl, { state: 'declined' }, decline));
+      const apply = btn(`btn btn-sm ${card.kind === 'remove' ? 'btn-danger' : 'btn-primary'}`, MCP_APPLY_LABEL[card.kind] || 'Apply', 'data-ask-mcp-apply');
       apply.addEventListener('click', () => postCard(block, rootEl, { state: 'applied' }, apply));
       actions.append(make('span', 'ask-card-actions-spacer'), decline, apply);
       rootEl.appendChild(actions);
@@ -4592,21 +5325,19 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     // Run presets (#712 slice 3): a card proposed from a preset names it; Start adds what the card has no control for.
     const presetLine = card.preset ? make('div', 'ask-card-preset muted', `From preset ${card.preset.name}`) : null;
     if (presetLine) head.appendChild(presetLine);
-    // Run tags (#718), behind the experimental flag: prefilled from the proposal, sent on Start.
+    // Run tags (#718): prefilled from the proposal, sent on Start.
     // s2: suggestions follow the card's project and its target's policy dimensions (getters: both exist only later).
-    const tagInput = flagOn('runTags', doc) ? createTagInput(doc, { value: card.tags || [],
-      suggest: () => fetchTagVocabulary(local.projectDir() || null), dims: () => rootEl.__rp?.tagRules?.dims() || [] }) : null;
-    const tagRow = tagInput ? make('div', 'ask-rp-tags') : null;
-    if (tagInput) {
-      tagRow.appendChild(tagInput.el);
-      head.appendChild(tagRow);
-    }
+    const tagInput = createTagInput(doc, { value: card.tags || [],
+      suggest: () => fetchTagVocabulary(local.projectDir() || null), dims: () => rootEl.__rp?.tagRules?.dims() || [] });
+    const tagRow = make('div', 'ask-rp-tags');
+    tagRow.appendChild(tagInput.el);
+    head.appendChild(tagRow);
     if (typeof card.note === 'string' && card.note) head.appendChild(make('p', 'ask-rp-why', card.note));
-    // A shaped card follows card.shape: the server puts it there only while the gate is on, and a card built before the
-    // first hello (a boot on Chat) must still start its shaped run. The nudge is advisory and needs the client gate.
-    const shapeUi = card.shape ? shapeCardExtras(doc, card)
-      : card.nudge && shapeFirstOn() ? shapeCardExtras(doc, card) : null;
+    // A shaped card follows card.shape; the nudge is advisory.
+    const shapeUi = card.shape || card.nudge ? shapeCardExtras(doc, card, { fetch }) : null;
     local.shapeUi = shapeUi;
+    // A direct Shaper card on the requirements workflow: Shape requirements is its only start button.
+    const direct = !!(card.shape && shapeUi && shapeUi.requirements);
     rootEl.appendChild(head);
 
     // target section
@@ -4668,6 +5399,13 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     lvTag(engineField, 'advanced', !!card.engine && card.engine !== 'claude');
     wfRow.append(wfField, engineField, guardField);
     targetSec.appendChild(wfRow);
+    // Pull request when the run finishes: "Use the setting" sends nothing (the project's or workspace's value, with its source, once the lane has read it); a pick is this run's own choice.
+    const prSel = rpSelect('ask-card-pr', 'Pull request when done');
+    fillSelect(prSel, [{ value: '', label: 'Use the setting' }, ...PR_OPEN.map((v) => ({ value: v, label: PR_OPEN_LABELS[v] }))], (card.pr && card.pr.open) || '');
+    const prField = lvTag(rpField('Pull request when done', prSel), 'advanced', !!(card.pr && card.pr.open));
+    const prRow = make('div', 'ask-rp-grid wf-row');
+    prRow.appendChild(prField);
+    targetSec.appendChild(prRow);
     if (shapeUi) rootEl.appendChild(shapeUi.el);
     rootEl.appendChild(targetSec);
     engineSel.addEventListener('change', () => reloadLane());   // the agent rows offer the engine's models
@@ -4765,9 +5503,12 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     // ONE feature-branch input for both targets; renderTarget moves it into the current grid.
     const feature = doc.createElement('input');
     feature.type = 'text';
-    feature.className = 'ask-card-feature';
+    feature.className = 'input ask-card-feature';
     feature.value = card.featureBranch || '';
     feature.setAttribute('aria-label', 'Feature branch');
+    // #959: a long branch ellipsizes (style.css); its whole name is the tooltip.
+    feature.title = feature.value;
+    feature.addEventListener('input', () => { feature.title = feature.value; });
 
     // Run on the source branch (branch.sameAsSource): ONE checkbox for both targets, like `feature`.
     const sameSw = makeSwitch(doc, { ariaLabel: 'Run on the source branch', checked: card.sameAsSource === true, inputClass: 'ask-card-same-source' });
@@ -4851,21 +5592,46 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
       laterBtn.dataset.minLevel = 'advanced';
       laterBtn.addEventListener('click', async () => {
         const picked = await openScheduleSheet(sheetOpts());
-        if (picked) startCard(block, rootEl, local, picked);
+        if (!picked) return;
+        if (card.shape && shapeUi) shapeUi.commit();     // a direct card's lead is saved as Shape requirements saves it
+        startCard(block, rootEl, local, picked);
       });
     }
     // Shape it first: Start holds an icon and a text node, so only the text node is relabelled.
     let shapeBtn = null;
     if (shapeUi) {
       const setLabel = (b, t) => { const n = [...b.childNodes].find((x) => x.nodeType === 3); if (n) n.textContent = t; else b.append(t); };
-      if (card.shape) {
+      if (card.shape && !shapeUi.requirements) {
         setLabel(startBtn, 'Start planning');            // a shaped card is never scheduled
       } else {
-        shapeBtn = make('button', 'btn btn-sm', 'Shaper');
-        shapeBtn.type = 'button';
-        shapeBtn.dataset.askCardShape = '';
-        shapeBtn.addEventListener('click', () => startCard(block, rootEl, local, null, { shaped: true }));
-        setLabel(startBtn, 'Run as is');                 // D32: the choice card's own words, never "anyway"
+        if (shapeUi.requirements) {
+          // Medium or large: Shape requirements is the one primary, Run as is steps back. Until a
+          // lead is picked it stays in the tab order, aria-disabled, described by "You lead as".
+          shapeBtn = make('button', 'btn btn-sm btn-primary', 'Shape requirements');
+          shapeBtn.type = 'button';
+          shapeBtn.setAttribute('data-ask-card-shape', '');
+          if (!card.shape) startBtn.classList.replace('btn-primary', 'btn-quiet');
+          const syncLead = () => {
+            const blocked = shapeUi.blocked();
+            if (blocked) shapeBtn.setAttribute('aria-disabled', 'true'); else shapeBtn.removeAttribute('aria-disabled');
+            // described by "You lead as" only once that span exists (the profile is still loading before)
+            if (blocked && shapeUi.el.querySelector(`#${shapeUi.labelId}`)) shapeBtn.setAttribute('aria-describedby', shapeUi.labelId); else shapeBtn.removeAttribute('aria-describedby');
+            if (direct) laterBtn.disabled = blocked;     // Schedule… starts a run too: no requirements run without a lead
+          };
+          shapeUi.el.addEventListener('shape-lead-change', syncLead);
+          syncLead();
+          shapeBtn.addEventListener('click', () => {
+            if (shapeUi.blocked()) return;
+            shapeUi.commit();
+            startCard(block, rootEl, local, null, { shaped: true });
+          });
+        } else {
+          shapeBtn = make('button', 'btn btn-sm', 'Shaper');
+          shapeBtn.type = 'button';
+          shapeBtn.dataset.askCardShape = '';
+          shapeBtn.addEventListener('click', () => startCard(block, rootEl, local, null, { shaped: true }));
+        }
+        if (!card.shape) setLabel(startBtn, 'Run as is');   // D32: the choice card's own words, never "anyway"
       }
     }
     foot.append(openNp, summary, dismissBtn, laterBtn, ...(shapeBtn ? [shapeBtn] : []), startBtn);
@@ -4874,6 +5640,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     // Shaper (D20, mock board 13): a shaped card shows the title, the brief clamped, Project, Base branch,
     // Perspectives and what happens; every other field MOVES, unchanged, into a collapsed Advanced. Moves only: each
     // control keeps its class, so collectCardBody / startCard read the same values and the request is unchanged.
+    // The requirements layout drops Perspectives and What happens: the lead sentence, in .shape-card above, says both.
     let paintAdvanced = () => {};
     if (card.shape && shapeUi) {
       const kicker = eyebrow.querySelector('.ask-rp-kicker');
@@ -4889,7 +5656,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
       more.addEventListener('click', () => { preview.hidden = true; more.hidden = true; briefSec.hidden = false; grow(); });
       const what = make('div', 'ask-rp-shape-what');
       what.append(make('span', 'ask-rp-label', 'What happens'), make('span', null, shapeWhatHappens(card.shape)));
-      main.append(preview, more, briefSec, targetHost, rpField('Perspectives', shapeUi.el), what);
+      main.append(preview, more, briefSec, targetHost, ...(shapeUi.requirements ? [] : [rpField('Perspectives', shapeUi.chipsEl || shapeUi.el), what]));
       const adv = doc.createElement('details');
       adv.className = 'ask-rp-adv disclosure';
       adv.setAttribute('data-ask-card-advanced', '');
@@ -4907,7 +5674,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
       rootEl.insertBefore(adv, err);
       openNp.classList.add('link-btn');
       delete openNp.dataset.minLevel;                       // one of the small card's own controls (D20)
-      foot.replaceChildren(openNp, dismissBtn, startBtn);   // the Advanced summary stands in for the lane summary
+      foot.replaceChildren(openNp, dismissBtn, direct ? shapeBtn : startBtn);   // the Advanced summary stands in for the lane summary
       let advLane = null;
       paintAdvanced = (lane = advLane) => {
         advLane = lane;
@@ -5100,6 +5867,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
         }
         if (lane) {
           engineSel.options[0].textContent = `${engineLabel(lane.defaultEngine)} (default)`;
+          prSel.options[0].textContent = lane.prDefault && local.target === 'project' ? `Use the setting: ${PR_OPEN_LABELS[lane.prDefault.open.value]} (${prSourceText(lane.prDefault.open.source)})` : 'Use the setting';
           for (const o of engineSel.options) o.hidden = o.value !== '' && o.value === lane.defaultEngine && engineSel.value !== o.value;   // listed once
         }
         wfDesc.textContent = lane ? workflowDesc(lane.wf, lane.registry, lane.runConfig) : '';
@@ -5110,7 +5878,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
         const unseen = lane ? null : proposalOverlay(card, workflowId);
         if (unseen) {
           laneSec.dataset.levelKeep = '1';
-          const list = Object.entries(unseen.nodes).map(([id, p]) => `${id} → ${p.model}${p.effort ? ` · ${p.effort}` : ''}${p.subagentModel ? ` · sub-agents ${p.subagentModel}` : ''}`);
+          const list = Object.entries(unseen.nodes).map(([id, p]) => `${id} → ${p.model}${p.effort ? ` · ${p.effort}` : ''}${p.subagentModel ? ` · sub-agents ${subagentAliasLabel(p.subagentModel)}` : ''}`);
           laneSec.appendChild(make('div', 'ask-rp-lane-msg', `Start runs Chat's picks as proposed (checked again at Start): ${list.join(', ')}`));
         } else if (!lane) delete laneSec.dataset.levelKeep;
       });
@@ -5155,7 +5923,8 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
       const line = createTagRulesLine(doc, tagInput);
       tagRow.appendChild(line.el);
       rootEl.__rp.tagRules = line;
-      const sync = () => { const why = line.blocked(); startBtn.disabled = !!why; startBtn.title = why || ''; };
+      const gated = direct ? shapeBtn : startBtn;
+      const sync = () => { const why = line.blocked(); gated.disabled = !!why || !!local.workflowUnavailable; gated.title = why || ''; };   // a missing workflow keeps Start off
       line.onChange(sync);
       let gen = 0;
       let lastQ = null;
@@ -5192,6 +5961,10 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     if (tags.length) body.tags = tags;                      // none: a legacy body, byte for byte
     const engine = (rootEl.querySelector('.ask-card-engine') || {}).value;
     if (engine) body.engine = engine;                       // none: /api/run's default engine
+    // Pull request when done: only an explicit pick (and the proposal's slices mode on a project run); none: the setting decides.
+    const prOpen = (rootEl.querySelector('.ask-card-pr') || {}).value;
+    const pr = { ...(prOpen ? { open: prOpen } : {}), ...(card.pr && card.pr.slices && local.target === 'project' ? { slices: card.pr.slices } : {}) };
+    if (local.target !== 'none' && Object.keys(pr).length) body.pr = pr;
     // A tracker task: the reference, never a prompt (POST /api/run takes source OR prompt).
     if (card.source) {
       delete body.prompt;
@@ -5241,7 +6014,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     const err = rootEl.querySelector('.ask-card-err');
     const startBtn = rootEl.querySelector('[data-ask-card-start]');
     err.textContent = '';
-    startBtn.disabled = true;
+    if (startBtn) startBtn.disabled = true;               // a direct card's only start button is Shape requirements
     const shapeBtn = rootEl.querySelector('[data-ask-card-shape]');
     if (shapeBtn) shapeBtn.disabled = true;               // a double click must not post /api/run twice
     freezeTargetInputs(rootEl, true);
@@ -5304,7 +6077,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
       // (beginRun is NEVER called — spec §10.5).
     } finally {
       const tagBlocked = !!rootEl.__rp?.tagRules?.blocked();   // an enforced tag still missing keeps Start off
-      startBtn.disabled = tagBlocked;
+      if (startBtn) startBtn.disabled = tagBlocked;
       if (shapeBtn) shapeBtn.disabled = tagBlocked;            // Shaper starts a run too: the same tag rule
       freezeTargetInputs(rootEl, false);
       // freezeTargetInputs re-enabled the select; a shaped card's workflow is fixed.
@@ -5550,7 +6323,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     if (card.type === PROGRESS_CARD_TYPE) return true;
     if (card.type && chatCardBuilder(card.type)) return false;      // an extension type is never a run card, whatever its state
     if (ASK_COMPOSER_CARD_TYPES.includes(card.type)) return false;   // Ask's draft / graph cards are never run cards
-    if (card.type === COMMAND_CARD_TYPE || card.type === 'workflow' || card.type === 'metrics' || card.type === 'policy' || card.type === 'schedule' || card.type === 'model' || card.type === 'clone' || card.type === 'web' || card.type === 'workspace' || card.type === 'actions' || card.type === 'away' || card.type === 'project' || card.type === 'proxy') return false;
+    if (card.type === COMMAND_CARD_TYPE || card.type === 'workflow' || card.type === 'metrics' || card.type === 'policy' || card.type === 'schedule' || card.type === 'model' || card.type === 'clone' || card.type === 'web' || card.type === 'workspace' || card.type === 'actions' || card.type === 'mcp' || card.type === 'away' || card.type === 'project' || card.type === 'proxy' || card.type === SCRIPT_APPROVAL_TYPE) return false;
     return block.state === 'started' || (block.state === 'failed' && !!block.runId);
   }
   // #958: one build per card per reconcile. renderTranscript asks for a card twice (is it away? then the tail paint);
@@ -5583,7 +6356,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
       try { made = custom(block, cardCtx); } catch (err) { console.warn('[worca] a chat card builder failed', err); }
       if (made && made.el) {
         if (cached) disposeCardEntry(cached);
-        st.cardEls.set(block.id, { el: made.el, state: block.state, rev, custom, handle: made.handle || null, dispose: made.dispose || null, animate: !!made.animate, cancelAnim: null, lastW: -1, shapeOn: shapeFirstOn() });
+        st.cardEls.set(block.id, { el: made.el, state: block.state, rev, custom, handle: made.handle || null, dispose: made.dispose || null, animate: !!made.animate, cancelAnim: null, lastW: -1 });
         return made.el;
       }
     }
@@ -5597,20 +6370,19 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     const isWorkspace = !!(block.card && block.card.type === 'workspace');
     const isWeb = !!(block.card && block.card.type === 'web');
     const isActions = !!(block.card && block.card.type === 'actions');
+    const isMcp = !!(block.card && block.card.type === 'mcp');
     const isAway = !!(block.card && block.card.type === 'away');
     const isProxy = !!(block.card && block.card.type === 'proxy');
     const isCommand = !!(block.card && block.card.type === COMMAND_CARD_TYPE);
     const isComposer = !!(block.card && ASK_COMPOSER_CARD_TYPES.includes(block.card.type));
+    const isScriptApproval = !!(block.card && block.card.type === SCRIPT_APPROVAL_TYPE);
     const isProgress = isProgressBlock(block);
-    // Proposed cards only: `card.nudge` stays on the block after it flips to 'started', and a live run card must never
-    // be disposed and remounted because the gate changed.
-    const nudgeStale = block.state === 'proposed' && !!(block.card && block.card.nudge) && cached && cached.shapeOn !== shapeFirstOn();
     // #911: a command card is built in the mode the gate gives; a changed mode rebuilds it (the dispose below clears its ticker).
     const sumStale = isCommand && cached && cached.sum !== summariesOn();
     // Ask's draft cards also change with the cards AROUND them (a newer draft of the key replaces one): rebuilt when
     // what they show changes, not only their state.
     const view = isComposer ? composerCards().view(block) : '';
-    if (cached && !nudgeStale && !sumStale && cached.state === block.state && (cached.view || '') === view && (isWorkflow || isMetrics || isSchedule || isModel || isClone || isProject || isWeb || isWorkspace || isActions || isAway || isProxy || isCommand || isComposer || isProgress || block.state === 'proposed')) return cached.el;
+    if (cached && !sumStale && cached.state === block.state && (cached.view || '') === view && (isWorkflow || isMetrics || isSchedule || isModel || isClone || isProject || isWeb || isWorkspace || isActions || isMcp || isAway || isProxy || isCommand || isComposer || isScriptApproval || isProgress || block.state === 'proposed')) return cached.el;
     if (cached) disposeCardEntry(cached);
     const built = isWorkflow ? buildWorkflowCard(block, cached)
       : isMetrics ? buildMetricsCard(block)
@@ -5621,14 +6393,16 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
       : isWeb ? buildWebCard(block)
       : isWorkspace ? buildWorkspaceCard(block)
       : isActions ? buildActionsCard(block)
+      : isMcp ? buildMcpCard(block)
       : isAway ? buildAwayCard(block)
       : isProxy ? buildProxyCard(block)
       : isCommand ? buildCommandCard(block)
       : isComposer ? composerCards().render(block)
+      : isScriptApproval ? buildScriptApprovalCard(block)
       : isProgress ? buildProgressCard(block)
         : custom ? { el: make('div', 'ask-card-stub', (block.card && (block.card.summary || block.card.title)) || 'Card unavailable') }
         : { el: block.state === 'proposed' ? buildCardForm(block) : buildCardTerminal(block) };
-    st.cardEls.set(block.id, { el: built.el, state: block.state, view, rev, custom: custom || null, handle: built.handle || null, dispose: built.dispose || null, animate: !!built.animate, cancelAnim: null, lastW: -1, shapeOn: shapeFirstOn(), sum: summariesOn() });
+    st.cardEls.set(block.id, { el: built.el, state: block.state, view, rev, custom: custom || null, handle: built.handle || null, dispose: built.dispose || null, animate: !!built.animate, cancelAnim: null, lastW: -1, sum: summariesOn() });
     return built.el;
   }
   function disposeCardEntry(c) {
@@ -5676,22 +6450,36 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     return false;
   }
 
+  /** G6: the card that asks before a draft script runs or a saved one is replaced (workflows/card-views.mjs, shared with
+   *  the Workflows chat). Its click runs or saves on the server and starts the event turn. */
+  function buildScriptApprovalCard(block) {
+    const { h, button } = cardKit(doc, { onChange: () => scheduleFlush() });
+    const wrap = make('div', 'ask-ccard');
+    wrap.dataset.cardId = block.id;
+    wrap.appendChild(scriptApprovalCardView(block, { h, button, onAnswer: async (body) => {
+      try { await postCardJson(block, body); return ''; }
+      catch (err) { return err && err.message === 'turn in flight' ? 'Chat is still replying. Try again once the answer lands.' : (err && err.message) || 'failed'; }
+    } }));
+    return { el: wrap };
+  }
+
   // ---- command cards (ui/public/ask-command-card.mjs; Ask agent mode, #574) ------------------------------------------
   /** The gate (#911): the Labs flag and the person's Settings › Chat switch. */
   function summariesOn() { return flagOn('commandSummaries', doc) && summariseCommands() !== false; }
+  function stopCommand(sid) {
+    fetch(`/api/terminal/sessions/${encodeURIComponent(sid)}/stop`, { method: 'POST' }).catch(() => { /* the next frame says what happened */ });
+  }
   /** One command Ask ran: hydrated once over REST (a reload, a finished block), then live from ask-command frames. */
   function buildCommandCard(block) {
     const card = block.card || {};
     const blockId = String(card.blockId || '');
     const sum = summariesOn();
-    const handle = createCommandCard({ doc, card, summarise: sum, onStop: (sid) => {
-      fetch(`/api/terminal/sessions/${encodeURIComponent(sid)}/stop`, { method: 'POST' }).catch(() => { /* the next frame says what happened */ });
-    }, onShow: (sid) => showTerminal(sid), expanded: st.commandsOpen.has(blockId), keepInPlace, onToggle: (open) => {
+    const handle = createCommandCard({ doc, card, summarise: sum, onStop: stopCommand, onShow: (sid) => showTerminal(sid), expanded: st.commandsOpen.has(blockId), keepInPlace, onToggle: (open) => {
       if (open) st.commandsOpen.add(blockId); else st.commandsOpen.delete(blockId);
     },
     rowOpen: st.commandsRowOpen.has(blockId) ? st.commandsRowOpen.get(blockId) : undefined,
     onRowToggle: (open) => { st.commandsRowOpen.set(blockId, open); },
-    onTick: () => { const ids = st.commandGroupOf.get(blockId); if (ids) paintGroupHead(ids); } });
+    onTick: () => { const g = st.commandGroupOf.get(blockId); if (g) paintGroupHead(g); } });
     st.commands.set(blockId, handle);
     const early = st.commandFrames.get(blockId);
     if (early) { st.commandFrames.delete(blockId); handle.update(early); }
@@ -5705,6 +6493,9 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
           // A `running` reply may be older than a frame that already landed (even the final one): it only fills an empty card.
           if (view && typeof view.status === 'string') { if (!handle.view || view.status !== 'running') handle.update(view); }
           else if (!handle.view) handle.update({ status: 'done', exitCode: null, tail: '' });   // 404/403: the command, an `ended` pill
+          // #911: a reloaded group's words, total and fold (a failure opens it) come from these views too.
+          const g = st.commandGroupOf.get(blockId);
+          if (g) paintGroupHead(g);
         });
     }
     // No `handle` here: relayoutCards() measures a graph on cached handles, and this card has none.
@@ -5716,19 +6507,19 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     const handle = st.commands.get(view.blockId);
     if (handle) {
       handle.update(view);
-      const ids = st.commandGroupOf.get(view.blockId);
-      if (ids) paintGroupHead(ids);
+      const g = st.commandGroupOf.get(view.blockId);
+      if (g) paintGroupHead(g);
       return;
     }
     st.commandFrames.set(view.blockId, view);                  // the turn's card block and the first frames race
     if (st.commandFrames.size > 50) st.commandFrames.delete(st.commandFrames.keys().next().value);
   }
 
-  /** #911: the group head's live total, on the group's first row. */
-  function paintGroupHead(ids) {
-    const first = st.commands.get(ids[0]);
-    if (!first || !first.setGroup) return;
-    first.setGroup({ role: 'first', head: groupHead(ids.map((id) => (st.commands.get(id) || {}).view || null)) });
+  /** #911: the group head's words, live total and fold. */
+  function paintGroupHead(g) {
+    const handles = g.ids.map((id) => st.commands.get(id) || {});
+    const run = handles.find((x) => x.view && x.view.status === 'running');
+    g.box.update(handles.map((x) => x.view || null), { live: g.live(), current: run ? run.text || '' : '' });
   }
   /** #911: the flag or the person's switch changed: rebuild the command cards in the other mode. */
   function refreshCommandCards() { if (st.model) { renderTranscript(); scheduleFlush(); } }
@@ -5776,7 +6567,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     const ident = progressIdent(block);
     const handle = createRunProgressCard({ doc, ident, onOpen: (href) => {
       // The route hides the Chat page (app.js showView); nothing to close here.
-      if (href && href.startsWith('#') && win.location.hash !== href) win.location.hash = href.slice(1);
+      if (href && href.startsWith('#')) goToPage(href);
     } });
     const entry = { ident, handle, rest: null, hydrating: false, nextHydrateAt: 0 };
     st.progress.set(block.id, entry);
@@ -6173,6 +6964,43 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
   /** #958: a user/system row's content, to tell a resync's same row from a changed one (null: treat as changed). */
   function shownKeyOf(r) { try { return JSON.stringify(r); } catch { return null; } }
 
+  /** Freeform chat (discord-chat 0.4.0): a user row's chat-context block — the message it replied to, the channel's
+   *  recent history and the files left out — as a collapsed <details>. Quoted text is DATA: text nodes only. */
+  function buildChatContext(b) {
+    const box = make('details', 'ask-user-context');
+    const parts = [];
+    if (b.replyTo && typeof b.replyTo.author === 'string') parts.push(`reply to ${b.replyTo.author}`);
+    const history = Array.isArray(b.history) ? b.history : [];
+    if (history.length) parts.push(`${history.length} earlier message${history.length === 1 ? '' : 's'}`);
+    const own = Array.isArray(b.files) ? b.files.filter((f) => f && typeof f.name === 'string') : [];
+    if (own.length) parts.push(`${own.length} file${own.length === 1 ? '' : 's'} not saved`);
+    const where = platformName(b.platform) || 'chat';
+    box.appendChild(make('summary', 'ask-user-context-h', `Context from ${where}${parts.length ? `: ${parts.join(', ')}` : ''}`));
+    const fileLine = (f) => make('div', 'ask-user-context-f', f.note ? `${f.name} — ${String(f.note)}` : f.name);
+    const quote = (q) => {
+      if (!q || typeof q !== 'object') return;
+      const row = make('div', 'ask-user-context-q');
+      const when = typeof q.at === 'string' && Number.isFinite(Date.parse(q.at)) ? new Date(q.at).toLocaleString() : '';
+      const head = make('div', 'ask-user-context-by', `${String(q.author || '')}${when ? ` · ${when}` : ''}`);
+      if (typeof q.link === 'string' && q.link.startsWith('https://')) {
+        const a = make('a', 'ask-user-context-link', 'Open');
+        a.href = q.link;
+        a.target = '_blank';
+        a.rel = 'noopener noreferrer';
+        head.append(' · ', a);
+      }
+      row.appendChild(head);
+      if (typeof q.text === 'string' && q.text) row.appendChild(make('div', 'ask-user-context-t', q.text));
+      for (const f of Array.isArray(q.files) ? q.files : []) if (f && typeof f.name === 'string') row.appendChild(fileLine(f));
+      box.appendChild(row);
+    };
+    quote(b.replyTo);
+    for (const q of history) quote(q);
+    for (const f of own) box.appendChild(fileLine(f));
+    for (const n of Array.isArray(b.notes) ? b.notes : []) if (typeof n === 'string' && n) box.appendChild(make('div', 'ask-user-context-f', n));
+    return box;
+  }
+
   function buildMessage(row) {
     const wrap = make('div', `ask-msg ask-msg-${row.role}`);
     // The model REPLACES a row object on upsert (ask-model upsertRow), so every
@@ -6206,13 +7034,25 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
           card.append(make('div', 'ask-user-quote-h', quote.src ? `From ${quote.src}` : 'Quoted'), make('div', 'ask-user-quote-t', quote.text));
           wrap.appendChild(card);
         }
+        // Freeform chat: the quoted reply / history a chat message brought, collapsed above the person's own words.
+        const chatCtx = (row.blocks || []).find((b) => b && b.kind === 'chat-context');
+        if (chatCtx) wrap.appendChild(buildChatContext(chatCtx));
         const bubbleText = quote ? rest : own.text;
-        if (bubbleText || (!quote && !own.intent)) wrap.appendChild(make('div', 'ask-user-bubble', bubbleText));
+        // A chat message with only a reply or files has no words of its own: no empty bubble under its context.
+        if (bubbleText || (!quote && !own.intent && !chatCtx)) wrap.appendChild(make('div', 'ask-user-bubble', bubbleText));
         const atts = (row.blocks || []).filter((b) => b && b.kind === 'attachment');
         if (atts.length) {
           const pills = make('div', 'extras-pills ask-user-pills');
           for (const b of atts) pills.appendChild(buildAttachmentPill(b));
           wrap.appendChild(pills);
+        }
+        // Ask worca beside the page: where the message was sent ("on Run · Diff"), from the server's where block.
+        const where = (row.blocks || []).find((b) => b && b.kind === 'where' && typeof b.label === 'string' && b.label);
+        if (where) {
+          const cap = make('div', 'ask-user-where');
+          if (typeof where.icon === 'string' && Object.hasOwn(ICON_NAMES, where.icon)) cap.appendChild(icon(doc, where.icon, 12));
+          cap.appendChild(make('span', null, `on ${where.label}`));
+          wrap.appendChild(cap);
         }
       }
     } else if (row.role === 'system') {
@@ -6228,25 +7068,50 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
       // Inline cards (a command card) sit between answer pieces, in the order they happened: [card, piece] per card.
       let inline = [];
       const answerDivs = () => [answer, ...inline.map((x) => x.piece)];
-      /** #911: consecutive command cards with only blank text between them share one card (summary mode only). */
+      const groups = new Map();   // #911: a group's first blockId → its box in this message
+      /** #911: consecutive command cards with only blank text between them sit in one group box (summary mode only). */
       const paintGroups = () => {
         const cards = inlineCards(cur);
         // Most streamed tokens land in a message with no command card: stop before any work (renderAnswer runs per token).
         if (!cards.some((b) => b.card && b.card.type === COMMAND_CARD_TYPE)) return;
         const handles = cards.map((b) => (b.card && b.card.type === COMMAND_CARD_TYPE ? st.commands.get(String(b.card.blockId || '')) : null));
-        for (const handle of handles) if (handle && handle.setGroup) handle.setGroup(null);
         for (const b of cards) if (b.card && b.card.blockId) st.commandGroupOf.delete(String(b.card.blockId));
-        if (!summariesOn()) return;
-        const isLive = !!(st.model && st.model.live() && st.model.live().messageId === cur.id);
-        const pieces = answerPieces(isLive ? st.model.live().text : cur.text || '', cards);
-        for (const [a, z] of commandRuns(handles.map(Boolean), pieces)) {
-          const ids = cards.slice(a, z + 1).map((b) => String(b.card.blockId));
-          for (let i = a; i <= z; i += 1) {
-            st.commandGroupOf.set(ids[i - a], ids);
-            handles[i].setGroup({ role: i === a ? 'first' : i === z ? 'last' : 'mid' });
+        const live = () => !!(st.model && st.model.live() && st.model.live().messageId === cur.id);
+        const runs = summariesOn() ? commandRuns(handles.map(Boolean), answerPieces(live() ? st.model.live().text : cur.text || '', cards)) : [];
+        // The first renderAnswer runs before renderTail builds `inline`, and a patch can run while `inline` still holds
+        // the previous card list: move elements only when `inline` is exactly these cards.
+        const placed = inline.length === cards.length && cards.every((b, i) => inline[i].id === b.id);
+        const grouped = new Set();
+        const kept = new Set();
+        for (const [a, z] of runs) {
+          const members = cards.slice(a, z + 1).map((b) => b.card);
+          const ids = members.map((c) => String(c.blockId));
+          let box = groups.get(ids[0]);
+          if (!box) {
+            box = createCommandGroup({ doc, keepInPlace, choice: st.commandsGroupOpen.get(ids[0]),
+              onToggle: (open) => { st.commandsGroupOpen.set(ids[0], open); },
+              onStop: () => { for (const c of members) if (((st.commands.get(String(c.blockId)) || {}).view || {}).status === 'running') stopCommand(c.sessionId); } });
+            groups.set(ids[0], box);
           }
-          paintGroupHead(ids);
+          kept.add(ids[0]);
+          const g = { ids, box, live };
+          for (const id of ids) st.commandGroupOf.set(id, g);
+          if (placed) {
+            // The box stands where the first card stood; only an out-of-place element moves (keeps scroll, no re-animation).
+            if (box.el.nextSibling !== inline[a].piece) inline[a].piece.before(box.el);
+            let prev = null;
+            for (let i = a; i <= z; i += 1) {
+              const want = prev ? prev.nextSibling : box.body.firstChild;
+              if (inline[i].card !== want) box.body.insertBefore(inline[i].card, want);
+              prev = inline[i].card;
+              grouped.add(i);
+            }
+          }
+          paintGroupHead(g);
         }
+        // A card in no group goes back before its answer piece; a box with no group goes away.
+        if (placed) cards.forEach((b, i) => { if (!grouped.has(i) && inline[i].card.parentNode !== wrap) inline[i].piece.before(inline[i].card); });
+        for (const [id, box] of groups) if (!kept.has(id)) { box.el.remove(); groups.delete(id); }
       };
       renderAnswer = () => { answerKey = answerKeyOf(cur); renderAnswerInto(answerDivs(), cur); paintGroups(); };
       renderAnswer();
@@ -6422,21 +7287,23 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
       if (res && res.status === 404 && readStoredThread() === id) storeThread(null);
       // A routed chat that is gone (a stale link, deleted elsewhere): home, and the address says so. Any other
       // failure (a 500, a proxy error) keeps the chat on screen and gives the want back (abandonWant).
-      if (res && res.status === 404 && st.wantThread === id) { newThread(); route(null, { replace: true }); }
+      if (res && res.status === 404 && st.wantThread === id) { newThread({ focus: st.host !== 'dock' }); route(null, { replace: true }); }
       else abandonWant(id);
       return null;
     }
     let snap = null;
     try { snap = await res.json(); } catch { if (gen === loadGen) abandonWant(id); return null; }
     if (gen !== loadGen || st.destroyed) return null;
-    // A SWITCH starts a fresh ledger, so the new chat rises in. A resync or a
-    // reconnect re-loads the SAME thread and must keep it: those repaint rows the
-    // user is already reading, mid-turn.
+    // #959: a switch keeps the rise ledger: message ids are unique across chats, so a chat shown before rises in only
+    // its new rows, and one never shown rises in whole. A resync or a reconnect re-loads the SAME thread and keeps it
+    // too: those repaint rows the user is already reading, mid-turn.
     const switched = st.threadId !== id;
     if (switched) stopVoice();
-    if (switched) st.seenRows = new Set();
     st.threadId = id;
     if (st.open && st.unread && st.unreadThread === id) setUnread(false);   // the dot's chat is on screen now
+    // #943: the engine this tab last knew. activeEngine, not thread.engine: a chat begun in this tab was loaded from
+    // the create answer, whose engine is null until a reload.
+    const wasEngine = !switched && st.model ? activeEngine() : null;
     st.model = createThreadModel({ threadId: id });
     st.model.load(snap);
     if (switched) { st.hist = { idx: -1, draft: '' }; st.suggestDismissed = null; }
@@ -6444,14 +7311,17 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     const q = queueOf(id);
     if (q && q.items.length && !snap.inFlight && !q.draining) q.paused = true;
     renderQueue();
-    el.title.textContent = (snap.thread && snap.thread.title) || 'New chat';
+    paintTitle((snap.thread && snap.thread.title) || 'New chat');
     if (switched) st.scopeHeld = null;    // S39: a held pick belongs to the chat it was made in
     // #397: restore the pin — S39: a resync of the same chat does not undo a held pick (the stored row is older).
     if (switched || st.scopeHeld !== id) applyThreadScope(snap.thread && snap.thread.context);
     setContexts(snap.thread && snap.thread.contexts);
     // The picker follows the chat — on a SWITCH only: a resync of the same thread
     // would otherwise clobber a pick the user just made (its PATCH may not have landed).
-    if (switched) applyThreadPick(snap.thread);
+    // #943: and on a resync that finds the chat on another engine (moved in another tab while this one was offline):
+    // the old pick would only be refused.
+    const nowEngine = snap.thread && snap.thread.engine;
+    if (switched || (wasEngine && nowEngine && nowEngine !== wasEngine)) applyThreadPick(snap.thread);
     if (switched) st.mcp.off = mcpOffOf(snap.thread && snap.thread.mcpOff);   // §9.4: the chat's own choices
     scheduleMcpRefresh();
     renderTranscript();
@@ -6477,7 +7347,8 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     st.wantThread = id;
     storeThread(id);
     syncView();                                      // a chat that loads is a thread already: no home flash
-    return loadThread(id);
+    st.threadLoad = loadThread(id);                  // sendQuoted waits on it
+    return st.threadLoad;
   }
   /** A switch to `id` failed for a reason other than "gone" (offline, a 500): the page still shows the chat it showed,
    *  so the want, the stored pointer and the address go back to it — and a later pick of `id` tries again (showThread
@@ -6585,6 +7456,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     }
     else if (frame.type === 'ask-message' && frame.message && typeof frame.message.text === 'string'
       && /is waiting for your answer/.test(frame.message.text)) announce('run needs an answer');
+    if (frame.type === 'ask-engine') applyEnginePick(frame);   // #943
   }
 
   // Settings → "Delete all chat history" broadcast (seq-less, threadId-less): every
@@ -6593,7 +7465,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
   function onHistoryCleared() {
     closePopover({ focusTrigger: false });
     // The Chats column already dropped the rows (chats-column.mjs onFrame) and re-reads the list.
-    if (st.threadId) { newThread(); route(null, { replace: true }); }
+    if (st.threadId) { newThread({ focus: st.host !== 'dock' }); route(null, { replace: true }); }
   }
 
   function pushServerFrame(frame) {
@@ -6607,6 +7479,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
       // …and so do their queues (every one when it names none).
       if (Array.isArray(frame.threadIds)) for (const id of frame.threadIds) st.queues.delete(id);
       else st.queues.clear();
+      dropRecent(Array.isArray(frame.threadIds) ? frame.threadIds : null);   // …and the side column's Recent chats
       if (st.unread && (!Array.isArray(frame.threadIds) || frame.threadIds.includes(st.unreadThread))) setUnread(false);
       // A shared deployment's clear names the threads it removed: only a tab showing one of them resets.
       if (Array.isArray(frame.threadIds) && !frame.threadIds.includes(st.threadId)) { scheduleThreadsRefresh(); return; }
@@ -6629,10 +7502,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     if (frame.type === 'ask-scope') {                           // Projects, any way P4 (CONTRACT §4): a server-side switch
       // The open chat's pill follows it with no PATCH (the server stored it), so the next send keeps the new scope.
       if (frame.threadId === st.threadId && frame.scope && typeof frame.scope === 'object') {
-        const label = typeof frame.label === 'string' && frame.label ? frame.label : null;
-        st.scopeHeld = null;                                    // S39: the server's switch wins over a held pick
-        setScope({ ...scopeFromContext(frame.scope), label }, { persist: false, focus: false });
-        if (st.scope.pinned && !label) resolveScopeLabel();
+        applyServerScope(frame.scope, frame.label);
       }
       return;
     }
@@ -6712,7 +7582,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     }
     const d = st.model.takeDirty();
     if (d.suggestion) updateSuggestion();
-    if (d.title) el.title.textContent = st.model.thread().title || 'New chat';
+    if (d.title) paintTitle(st.model.thread().title || 'New chat');
     if (d.structure) {
       renderTranscript();
     } else {
@@ -6936,7 +7806,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
   doc.addEventListener('worca:level', onLevelChange);
   win.addEventListener('resize', onWinResize);
   // MCP registry §9.4: in Auto the page is the scope, so a route change re-previews the picker.
-  const onHashChange = () => { if (!st.scope.pinned) scheduleMcpRefresh(); };
+  const onHashChange = () => { onPageChange(); if (!st.scope.pinned) scheduleMcpRefresh(); };
   win.addEventListener('hashchange', onHashChange);
   // The rail, the history column and the run panel change the conversation column's width with no window
   // resize; observe the column itself (guarded: jsdom has no ResizeObserver — P5's idiom). The transcript column
@@ -6956,7 +7826,12 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
   function paintDockClearance() {
     if (st.destroyed) return;
     const h = el.chatDock.offsetHeight;
-    if (h > 0) { el.sheet.style.setProperty('--chat-dock-h', `${h}px`); applyPin(); }   // 0: home hides the dock
+    if (h > 0) {                                     // 0: home hides the dock
+      el.sheet.style.setProperty('--chat-dock-h', `${h}px`);
+      // Ask worca beside the page: where the side column covers the page the toasts rise above its composer (style.css).
+      doc.body?.style.setProperty('--ask-side-dock-h', `${h}px`);
+      applyPin();
+    }
   }
 
   function destroy() {
@@ -7001,6 +7876,9 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     setHistoryOpen: (open, opts) => setHistoryOpen(open, opts),
     unreadThreadId: () => (st.unread ? st.unreadThread : null),
     contextChanged: () => onHashChange(),           // P4: the run panel's run changed with no hashchange (replaceState)
+    pageChanged: () => onPageChange(),              // Ask worca beside the page: a Details tab or a Diff file changed (no hashchange)
+    setHost,                                        // Ask worca beside the page: 'page' (the Chat section) or 'dock' (the side column)
+    host: () => st.host,
     appendToComposer,
     setQuote,
     sendQuoted,

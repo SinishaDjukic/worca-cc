@@ -1,0 +1,31 @@
+/* ---------- Live log ---------- */
+.log-card .card-head{margin-bottom:14px;}
+.log-tools,.log-controls{display:flex;align-items:center;gap:14px;}
+.log{background:var(--panel);border:1px solid var(--line);border-radius:var(--r-card);min-height:260px;max-height:380px;overflow-y:auto;
+  padding:18px 20px;font-family:var(--mono);font-size:var(--fs-meta);line-height:1.85;color:var(--ink-2);
+  white-space:pre-wrap;word-break:break-word;}
+.log .t{color:var(--ink-3);}
+.log .ok{color:var(--green-ink);} .log .run{color:var(--peach-ink);} .log .info{color:var(--blue-ink);}
+.log .cur{display:inline-block;width:7px;height:14px;background:var(--ink);vertical-align:-2px;animation:blink 1.1s steps(1) infinite;}
+@keyframes blink{50%{opacity:0;}}
+
+/* log lines emitted by app.js: .log-line / .log-ts / .log-src / .log-msg + level variants */
+.log-line{display:flex;gap:10px;padding:1px 0;}
+.log-ts{color:var(--ink-3);flex:0 0 auto;}
+.log-src{font-weight:600;color:var(--ink-2);flex:0 0 auto;}
+.log-msg{color:var(--ink-2);flex:1;}
+.lvl-phase .log-msg{color:var(--green-ink);font-weight:600;}
+.lvl-artifact .log-msg{color:var(--blue-ink-strong);}   /* link-like text at 12.5px: the strong token is the accessible one (5.9:1 vs 3.8:1) */
+.lvl-error .log-msg{color:var(--red-ink);}
+.lvl-warn .log-msg{color:var(--amber-ink);}
+.lvl-system .log-msg{color:var(--ink-3);font-style:italic;}
+
+/* sub-agent lines: nested under their parent agent (fan-out) */
+.log-line.sub-agent{padding-left:1.6em;opacity:.72;}
+.log-line.sub-agent .log-src{color:var(--peach-ink);}
+
+/* cycle separator: where a feedback loop rewound and re-ran the same steps */
+.log-sep{display:flex;align-items:center;gap:8px;margin:6px 0 4px;
+  color:var(--ink-2);font-size:12px;font-weight:600;}
+.log-sep::before,.log-sep::after{content:"";flex:1;height:1px;background:var(--line);}
+

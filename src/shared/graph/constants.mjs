@@ -99,6 +99,16 @@ export const WIRE_ID_RE = /^w_?[a-z0-9]{1,32}$/;
 /** Port ids are lowerCamel, at most 32 chars (`task`, `revise`, `in1`, `await`). */
 export const PORT_ID_RE = /^[a-z][A-Za-z0-9]{0,31}$/;
 
+/** Session groups (spec §4, §11): 2–4 consecutive agent cards run as sub-agents of ONE harness session. Membership is
+ *  `node.config.session` (an id minted with mintId('s_', taken)); the optional, sparse settings live in
+ *  `template.sessions[sid]` = {label?, mode?, hostModel?, hostEffort?} (C16). Absent means the defaults. */
+export const MAX_SESSION_MEMBERS = 4;
+export const SESSION_MIN_MEMBERS = 2;
+export const SESSION_ID_RE = /^s_[0-9a-z]{8}$/;
+export const SESSION_MODES = Object.freeze(['subagents', 'shared']);
+export const SESSION_LABEL_MAX = 60;
+export const SESSION_SETTING_KEYS = Object.freeze(['label', 'mode', 'hostModel', 'hostEffort']);
+
 /** The ledger rows a run writes for its own bookends (P8 makes them `exec` rows
  *  keyed exactly so). Shared by the run monitor and the CLI so neither counts
  *  them as executions or progress. Preflight and Done are always written; the

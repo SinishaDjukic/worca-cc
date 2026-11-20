@@ -2,7 +2,6 @@
 // No app.js boot: every renderer takes `doc` explicitly and returns detached DOM.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
 import { JSDOM } from 'jsdom';
 import {
   renderInstallConsent, renderUpdatePreview,
@@ -10,6 +9,7 @@ import {
   relTime,
 } from '../ui/public/plugins-view.mjs';
 import { checkRows } from './helpers/rows.mjs';
+import { readStyleCss } from '../src/core/read-style-css.mjs';
 
 const doc = new JSDOM('<!doctype html><body></body>').window.document;
 
@@ -296,13 +296,13 @@ test('the Available list is gone: Browse tiles replace it (marketplace P3)', asy
   const mod = await import('../ui/public/plugins-view.mjs');
   assert.equal('renderAvailableList' in mod, false);
   assert.equal('renderPluginList' in mod || 'renderOrphanList' in mod, false, 'the Installed tab replaced them (marketplace P5)');
-  assert.doesNotMatch(readFileSync(new URL('../ui/public/style.css', import.meta.url), 'utf8'), /\.pl-avail|\.pl-available/);
+  assert.doesNotMatch(readStyleCss(), /\.pl-avail|\.pl-available/);
 });
 
 test('the old Marketplaces list is gone: marketplace cards replace it (marketplace P7)', async () => {
   const mod = await import('../ui/public/plugins-view.mjs');
   assert.equal('renderMarketplaceList' in mod, false);
-  assert.doesNotMatch(readFileSync(new URL('../ui/public/style.css', import.meta.url), 'utf8'), /\.pl-mkt/);
+  assert.doesNotMatch(readStyleCss(), /\.pl-mkt/);
 });
 
 test('relTime: fixed-now buckets (pure, jsdom-safe) (C4)', () => {

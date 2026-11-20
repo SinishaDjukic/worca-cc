@@ -7,7 +7,7 @@ import { join } from 'node:path';
 import { spawnSync } from 'node:child_process';
 import {
   parseShortstat, normalizeMergeable, diffShortstat, branchExists,
-  findPrForBranch, commitsAhead, readPrBody, editPrBody, _testing as gitInfo,
+  findPrForBranch, lookupPrForBranch, commitsAhead, readPrBody, editPrBody, withRefSnapshot, _testing as gitInfo,
 } from '../src/core/git-info.mjs';
 import { checkRows } from './helpers/rows.mjs';
 
@@ -166,6 +166,73 @@ test('findPrForBranch branch search: argv, normalization, OPEN > MERGED > CLOSED
   ]);
 });
 
+test('lookupPrForBranch tells a failed lookup apart from no PR', async () => {
+  const PR_FIELDS = 'number,state,url,isDraft,mergeable';
+  const quota = { ok: false, stdout: '', stderr: 'GraphQL: API rate limit exceeded', code: 1 };
+  const ok = (v) => ({ ok: true, stdout: typeof v === 'string' ? v : JSON.stringify(v), stderr: '', code: 0 });
+  const merged = { number: 12, state: 'MERGED', url: 'https://gh/x/pull/12', isDraft: false, mergeable: 'UNKNOWN' };
+  const prUrl = 'https://github.com/o/r/pull/7';
+  // Stub by call: the PR-URL view, the verdict view (other --json fields) and the branch list.
+  const stub = ({ view, verdict, list }) => gitInfo.setRunner((cmd, args) => {
+    if (args[1] === 'list') return Promise.resolve(list);
+    if (args[1] === 'view' && args.includes(PR_FIELDS)) return Promise.resolve(view);
+    return Promise.resolve(verdict);
+  });
+  await checkRows([
+    { name: 'a quota-exhausted list is a failure, not "no PR"', run: async () => {
+      stub({ list: quota });
+      assert.deepEqual(await lookupPrForBranch({ projectDir: '/r', head: 'b' }), { ok: false, reason: 'gh-failed' });
+      gitInfo.reset();
+    } },
+    { name: 'unparseable list output is a failure', run: async () => {
+      stub({ list: ok('not json') });
+      assert.deepEqual(await lookupPrForBranch({ projectDir: '/r', head: 'b' }), { ok: false, reason: 'gh-bad-output' });
+      gitInfo.reset();
+    } },
+    { name: 'an empty list is a genuine no PR', run: async () => {
+      stub({ list: ok([]) });
+      assert.deepEqual(await lookupPrForBranch({ projectDir: '/r', head: 'b' }), { ok: true, pr: null });
+      gitInfo.reset();
+    } },
+    { name: 'a MERGED PR in the list is found', run: async () => {
+      stub({ list: ok([merged]) });
+      assert.deepEqual(await lookupPrForBranch({ projectDir: '/r', head: 'b' }),
+        { ok: true, pr: { state: 'MERGED', url: 'https://gh/x/pull/12', number: 12, isDraft: false, mergeable: 'UNKNOWN' } });
+      gitInfo.reset();
+    } },
+    { name: 'a failed view of the recorded PR with an empty list is a failure', run: async () => {
+      stub({ view: quota, list: ok([]) });
+      assert.equal((await lookupPrForBranch({ projectDir: '/r', head: 'b', prUrl, includeClosed: true })).ok, false);
+      gitInfo.reset();
+    } },
+    { name: 'a failed view of the recorded PR still finds a MERGED PR in the list', run: async () => {
+      stub({ view: quota, list: ok([merged]) });
+      const r = await lookupPrForBranch({ projectDir: '/r', head: 'b', prUrl });
+      assert.equal(r.ok, true);
+      assert.equal(r.pr.state, 'MERGED');
+      gitInfo.reset();
+    } },
+    { name: 'a CLOSED recorded PR with a failed list is a failure, even with includeClosed', run: async () => {
+      stub({ view: ok({ number: 7, state: 'CLOSED', url: prUrl }), list: quota });
+      assert.equal((await lookupPrForBranch({ projectDir: '/r', head: 'b', prUrl, includeClosed: true })).ok, false);
+      gitInfo.reset();
+    } },
+    { name: 'an OPEN PR whose verdict view fails still comes back, without a verdict', run: async () => {
+      stub({ list: ok([{ ...merged, state: 'OPEN' }]), verdict: quota });
+      const r = await lookupPrForBranch({ projectDir: '/r', head: 'b', withVerdict: true });
+      assert.equal(r.ok, true);
+      assert.equal(r.pr.state, 'OPEN');
+      assert.equal(r.pr.verdict ?? null, null);
+      gitInfo.reset();
+    } },
+    { name: 'findPrForBranch keeps null on a failed lookup for every other caller', run: async () => {
+      stub({ list: quota });
+      assert.equal(await findPrForBranch({ projectDir: '/r', head: 'b' }), null);
+      gitInfo.reset();
+    } },
+  ]);
+});
+
 test('commitsAhead counts source..feature; null on failure', async () => {
   const seen = [];
   gitInfo.setRunner((cmd, args, opts) => { seen.push([cmd, ...args, opts.cwd]);
@@ -175,6 +242,27 @@ test('commitsAhead counts source..feature; null on failure', async () => {
   gitInfo.setRunner(() => Promise.resolve({ ok: false, stdout: '', stderr: 'bad rev', code: 128 }));
   assert.equal(await commitsAhead('/r/api', 'main', 'f-api'), null);
   assert.equal(await commitsAhead(null, 'main', 'f'), null);
+  gitInfo.reset();
+});
+
+test('commitsAhead in a ref snapshot: remembered per commit ids, asked again once a tip moves, 0 for equal tips', async () => {
+  const A = 'a'.repeat(40), B = 'b'.repeat(40), C = 'c'.repeat(40);
+  let tip = B; const revs = [];
+  gitInfo.setRunner((cmd, args) => {
+    if (args[0] === 'for-each-ref') return Promise.resolve({ ok: true, stdout: `refs/heads/main ${A}\nrefs/heads/f ${tip}\nrefs/heads/same ${A}\n`, stderr: '', code: 0 });
+    revs.push(args.at(-1));
+    return Promise.resolve({ ok: true, stdout: '2\n', stderr: '', code: 0 });
+  });
+  // three refreshes, each its own scope (one request each): git counts once
+  for (let i = 0; i < 3; i += 1) assert.equal(await withRefSnapshot(() => commitsAhead('/r', 'main', 'f')), 2);
+  assert.deepEqual(revs, ['main..f']);
+  tip = C;                                                    // a commit on the branch: a new id, so git is asked again
+  assert.equal(await withRefSnapshot(() => commitsAhead('/r', 'main', 'f')), 2);
+  assert.equal(revs.length, 2);
+  assert.equal(await withRefSnapshot(() => commitsAhead('/r', 'main', 'same')), 0, 'equal tips are 0 without rev-list');
+  assert.equal(revs.length, 2);
+  await commitsAhead('/r', 'main', 'f');                     // outside a scope every call asks git
+  assert.equal(revs.length, 3);
   gitInfo.reset();
 });
 

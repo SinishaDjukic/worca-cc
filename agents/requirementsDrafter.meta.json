@@ -1,0 +1,28 @@
+{
+  "key": "requirementsDrafter",
+  "metaVersion": 2,
+  "progressStage": "plan",
+  "mockRole": "requirements-draft",
+  "promptHints": "Draft the keyed acceptance criteria for the request: WHAT must be true when it ships, not how to build it. One line per criterion, `- **R-<prefix>-<n>** <criterion>`, at most 6 per perspective.",
+  "wantsRequest": true,
+  "workspaceFanOut": true,
+  "workspaceStrategy": "explore",
+  "inputs": [
+    { "id": "task", "type": "md" },
+    { "id": "revise", "type": "md", "required": false, "loop": true,
+      "directive": "## Revise the requirements\n\nThe person asked for changes to the requirements. Write the next draft from scratch, addressing EVERY point in the feedback below. Keep every criterion id the feedback does not ask you to drop." }
+  ],
+  "outputs": [{ "id": "requirements", "type": "md", "filename": "{base}-requirements-draft.md", "store": "run" }],
+  "domain": "coding",
+  "displayName": "Draft requirements",
+  "description": "Drafts the keyed acceptance criteria (R-po-1, R-sec-2, …) the plan must deliver, before any plan is written.",
+  "color": "violet",
+  "icon": "<path d=\"M7 4h10v16H7z\" stroke-linejoin=\"round\"/><path d=\"M10 9h4M10 13h4M10 17h2\" stroke-linecap=\"round\"/>",
+  "agentFile": "worca-cc-requirements-drafter.md",
+  "runnerType": "producer",
+  "fanOut": true,
+  "asksQuestions": true,
+  "questionsLocked": false,
+  "questionsDefault": false,
+  "order": 78
+}

@@ -1,0 +1,35 @@
+        <!-- ===== VIEW: MODELS (sidebar › Add-ons; a Settings tab before that) =====
+             Three tabs, the first part of the address (models-menu C1/C2): Catalogue (#models), Jobs (#models/jobs) and
+             Providers (#models/providers/<row>; the sign-ins and keys were a page of their own before). The strip is
+             built at runtime into #models-tabs-host and is the page's header, as on Marketplace: no page intro. -->
+        <section class="view hidden" data-view="models">
+            <div class="mdl-head">
+              <div id="models-tabs-host"></div>
+              <!-- More (its menu: Share as plugin, in the model dialog) wears icons.mjs's `more`, as .mdl-grp-more does. -->
+              <div class="mv-head-actions" data-tab-only="catalogue">
+                <button type="button" id="models-more-btn" class="btn btn-quiet btn-icon" aria-label="More">
+                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><circle cx="6" cy="12" r="1.5" fill="currentColor" stroke="none"></circle><circle cx="12" cy="12" r="1.5" fill="currentColor" stroke="none"></circle><circle cx="18" cy="12" r="1.5" fill="currentColor" stroke="none"></circle></svg>
+                </button>
+                <button type="button" id="model-create-btn" class="btn btn-primary" style="white-space:nowrap">
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M12 5v14M5 12h14"></path></svg>
+                  Add model
+                </button>
+              </div>
+            </div>
+            <div class="mdl-panel" id="models-tab-catalogue" data-tab="catalogue">
+              <p id="models-msg" class="form-msg" aria-live="polite"></p>
+              <div class="run-list" id="models-list"></div>
+              <div id="model-panel-host"></div>
+            </div>
+            <div class="mdl-panel" id="models-tab-jobs" data-tab="jobs" hidden>
+              <p id="models-jobs-msg" class="form-msg" aria-live="polite"></p>
+              <!-- Built at runtime (jobs-view.mjs): the harness tiles, the role tiles #jobs-roles, the cards #jobs-steps,
+                   #jobs-helpers and #jobs-design, and the one save bar. -->
+              <div id="jobs-root"></div>
+            </div>
+            <div class="mdl-panel" id="models-tab-providers" data-tab="providers" hidden>
+              <p id="providers-msg" class="form-msg" aria-live="polite"></p>
+              <div class="run-list" id="providers-list"></div>
+            </div>
+        </section>
+        <!-- /view models -->

@@ -94,3 +94,13 @@ test('task markdown: the preamble first, the version in the heading, the passed 
   assert.doesNotMatch(md, /R-po-9|Later edit/);
   assert.match(md, /- \*\*A-1\*\* \(confirmed\) Full refund/);
 });
+
+test('A8 D13: criteria and assumptions from a file end in "(from <name>)", in the Markdown and in the run task', () => {
+  const f = { id: 'FEAT-3', title: 'Cancel', description: 'd', scopeType: 'project', scopeKey: 'k', status: 'done',
+    spec: { ...emptySpec(), criteria: [{ id: 'R-po-1', text: 'Cancel until printed', source: 'tickets.pdf' }, { id: 'R-po-2', text: 'Plain' }],
+      assumptions: [{ id: 'A-1', text: 'Card refunds', status: 'open', source: 'policy.md' }] } };
+  const md = renderSpecMarkdown(f);
+  assert.ok(md.includes('- **R-po-1** Cancel until printed (from tickets.pdf)\n- **R-po-2** Plain\n'));
+  assert.ok(md.includes('- **A-1** (open) Card refunds (from policy.md)'));
+  assert.ok(renderTaskMarkdown(f).includes('- **R-po-1** Cancel until printed (from tickets.pdf)'));
+});

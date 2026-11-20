@@ -1,11 +1,11 @@
 // test/marketplace-page.test.mjs — the Marketplace page controller (marketplace P3, CONTRACT §3.5, §4, §5).
 import { test, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
 import { useDomRelease } from './helpers/jsdom-release.mjs';
 import { OFF, ROWS, pageHarness } from './helpers/marketplace-fixtures.mjs';
-import { tabFromParam, tabHash, updatesChip } from '../ui/public/marketplace/page.mjs';
+import { tabFromParam, tabHash, targetFromParam, updatesChip } from '../ui/public/marketplace/page.mjs';
 import { createSheet } from '../ui/public/marketplace/layers.mjs';
+import { readStyleCss } from '../src/core/read-style-css.mjs';
 
 const trackDom = useDomRelease(afterEach);
 const tick = () => new Promise((r) => setTimeout(r, 0));
@@ -305,7 +305,7 @@ test('setFilters before the first load only stores the patch', () => {
 });
 
 test('style.css: the tab strip keeps one height, an empty header slot and an empty message line take no room; a sha version is mono', () => {
-  const CSS = readFileSync(new URL('../ui/public/style.css', import.meta.url), 'utf8');
+  const CSS = readStyleCss();
   for (const re of [/\.mk-tabs\{flex:1 1 auto;padding-top:4px;\}/, /\.mk-head-actions:empty\{display:none;\}/,
     /\[data-view="marketplace"\] > \.form-msg:empty\{margin:0;min-height:0;\}/, /\.mk-ver\.mk-sha\{font-family:var\(--mono\);/]) assert.match(CSS, re);
 });
@@ -349,4 +349,15 @@ test('a re-render whose twin of the focused control comes back disabled moves th
   off = true;
   await page.load({ background: true });
   assert.equal(doc.activeElement, doc.querySelector('#mk-root .mk-head-actions .mk-add-mkt'));
+});
+
+test('targetFromParam: installed/<name>[/settings] opens the manage sheet, browse/<marketplace>/<name> the install sheet; anything else names a tab only', () => {
+  assert.deepEqual(targetFromParam('installed/jira'), { kind: 'manage', name: 'jira', section: null });
+  assert.deepEqual(targetFromParam('installed/a%20b/settings'), { kind: 'manage', name: 'a b', section: 'settings' });
+  assert.deepEqual(targetFromParam('browse/m%2F1/slack-chat'), { kind: 'install', marketplace: 'm/1', name: 'slack-chat' });
+  for (const p of ['', 'installed', 'browse', 'marketplaces', 'installed/jira/health', 'installed/jira/settings/x',
+    'browse/m1', 'browse/m1/x/y', 'installed/%E0%A4%A', 'marketplaces/m1/x']) {
+    assert.equal(targetFromParam(p), null, JSON.stringify(p));
+  }
+  assert.equal(tabFromParam('installed/jira/settings'), 'installed', 'the tab still reads the first segment');
 });

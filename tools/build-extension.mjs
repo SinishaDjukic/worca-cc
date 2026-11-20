@@ -15,6 +15,7 @@ import { buildManifest, manifestVersion } from '../extension/src/manifest.mjs';
 import { normalizeBaseUrl } from '../extension/src/worca-client.mjs';
 import { sidebarCss, shadowCss } from './extension-css.mjs';
 import { zipDirectory } from './zip.mjs';
+import { readStyleCss } from '../src/core/read-style-css.mjs';
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const SRC = join(ROOT, 'extension/src');
@@ -78,7 +79,7 @@ export async function buildOne(browser, { test = false, demo = false, dist = DIS
   rmSync(out, { recursive: true, force: true });
   mkdirSync(join(out, 'fonts'), { recursive: true });
   mkdirSync(join(out, 'icons'), { recursive: true });
-  const style = readFileSync(join(ROOT, 'ui/public/style.css'), 'utf8');
+  const style = readStyleCss();
   const shadow = shadowCss(style, readFileSync(join(SRC, 'content/shadow.css'), 'utf8'));
   const define = { __WORCA_EXT_TEST__: JSON.stringify(hooks), __WORCA_EXT_DEMO__: JSON.stringify(demo), __WORCA_EXT_BROWSER__: JSON.stringify(browser), __WORCA_EXT_DEFAULT_BASE_URL__: JSON.stringify(baseUrl || '') };
   const shadowPlugin = { name: 'worca-shadow-css', setup(b) {

@@ -33,7 +33,11 @@ export function connectionOf(m) {
   if (m && m.connection && typeof m.connection === 'object' && m.connection.kind) return m.connection;
   const up = m?.upstream && typeof m.upstream === 'object' ? m.upstream
     : (m?.bridged ? { provider: m.bridged, api: m.upstreamApi || null, openrouter: !!m.openrouter } : null);
-  if (up && up.provider) return { kind: 'provider', provider: up.provider, api: up.api || null, codex: codexReaches(up), prefer: signinEngine(m) };
+  if (up && up.provider) {
+    // `bridgedHost`: a composed row's GitHub host when its Copilot sign-in is a GHE.com tenant (config.mjs bridgeShape).
+    const host = up.provider === 'copilot' && typeof m.bridgedHost === 'string' && m.bridgedHost ? { host: m.bridgedHost } : {};
+    return { kind: 'provider', provider: up.provider, api: up.api || null, codex: codexReaches(up), prefer: signinEngine(m), ...host };
+  }
   if (m?.env && typeof m.env === 'object' && 'ANTHROPIC_BASE_URL' in m.env) return { kind: 'env' };
   if (m?.routed && !m?.bridged && signinEngine(m) === 'claude') return { kind: 'env' };
   return { kind: 'signin', engine: signinEngine(m) };
@@ -59,7 +63,8 @@ export function connectionLabel(m) {
   const c = connectionOf(m);
   if (c.kind === 'signin') return SIGNIN_LABELS[c.engine] || `${engineLabel(c.engine)} sign-in`;
   if (c.kind === 'env') return 'Custom endpoint';
-  return PROVIDER_LABELS[c.provider] || c.provider;
+  const name = PROVIDER_LABELS[c.provider] || c.provider;
+  return c.host ? `${name} · ${c.host}` : name;   // a GHE.com tenant says which one
 }
 
 /** A stable key for "the same connection" (a usage limit spent on one is spent for every model on it). */
@@ -109,9 +114,6 @@ export function effortsOn(m, engine) {
   return list.filter((e) => mapped.has(e));
 }
 
-/** The harnesses by their product names, where a sentence names the CLI (the engine labels stay short: Claude). */
-export const HARNESS_NAMES = Object.freeze({ claude: 'Claude Code', codex: 'Codex', cursor: 'Cursor', gemini: 'Gemini CLI', goose: 'Goose', opencode: 'OpenCode', qwen: 'Qwen Code', copilot: 'Copilot' });
-
 /** A free catalog id for a model `upstreamId` reached through `provider` ('openai', 'copilot', 'anthropic', or 'gw' for a
  *  routing-env endpoint): the id is worca's handle, the upstream id is what the endpoint is sent. */
 export function suggestModelHandle(upstreamId, provider = 'gw') {
@@ -119,14 +121,14 @@ export function suggestModelHandle(upstreamId, provider = 'gw') {
   return `${provider || 'gw'}-${base}`;
 }
 
-/** "Runs on Claude Code and Codex — …" for the model editor: what a connection reaches, in words. */
+/** "Runs on Claude Code and OpenAI Codex — …" for the model editor: what a connection reaches, in words. */
 export function runsOnText(connection) {
   const hs = harnessesOf({ connection });
-  if (connection.kind === 'signin') return `Runs on ${HARNESS_NAMES[connection.engine] || engineLabel(connection.engine)} only — a subscription works in its own harness.`;
+  if (connection.kind === 'signin') return `Runs on ${engineLabel(connection.engine)} only — a subscription works in its own harness.`;
   if (connection.kind === 'env') return 'Runs on Claude Code only — the routing env is Claude Code\'s.';
   return hs.includes('codex')
-    ? 'Runs on Claude Code (through worca\'s bridge) and Codex (directly).'
-    : 'Runs on Claude Code, through worca\'s bridge. Codex reaches only an OpenAI-compatible Responses endpoint without OpenRouter routing.';
+    ? `Runs on Claude Code (through worca's bridge) and ${engineLabel('codex')} (directly).`
+    : `Runs on Claude Code, through worca's bridge. ${engineLabel('codex')} reaches only an OpenAI-compatible Responses endpoint without OpenRouter routing.`;
 }
 
 /** Engines that own catalog models, for pickers that group by harness. */

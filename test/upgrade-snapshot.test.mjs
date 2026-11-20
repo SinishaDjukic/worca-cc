@@ -5,7 +5,6 @@ import { test, before, after, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
 import http from 'node:http';
 import { mkdtemp, rm } from 'node:fs/promises';
-import { readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
@@ -16,6 +15,7 @@ import { createSchedule, createTicket } from '../src/core/scheduler.mjs';
 import { RUN_STATES } from '../src/shared/run-model.mjs';
 import { SNAPSHOT, loadUpgradeSnapshot } from './helpers/upgrade-snapshot.mjs';
 import { useDomRelease } from './helpers/jsdom-release.mjs';
+import { readIndexHtml } from '../src/core/read-index-html.mjs';
 
 const trackDom = useDomRelease(afterEach);
 const ROOT = new URL('..', import.meta.url);
@@ -76,7 +76,7 @@ test('the server lists every recorded run: active in History, archived in the ar
 });
 
 async function bootList(view) {
-  const html = readFileSync(new URL('ui/public/index.html', ROOT), 'utf8');
+  const html = readIndexHtml();
   const dom = trackDom(new JSDOM(html, { url: 'http://localhost/#runs' }));
   const { window } = dom;
   let ws;

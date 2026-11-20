@@ -85,6 +85,8 @@ Set `cycle = 1`.
    `<pipelineDir>/review-cycle{cycle}.json`, the cycle number, the graph instruction.
 2. Read `<pipelineDir>/review-cycle{cycle}.json`. **Blocking = any issue with
    `severity` of `critical` or `major`** (normalize case; unknown -> non-blocking).
+   In cycle 1 only, a critical or major item under `fixed` also counts as blocking, so
+   cycle 2 re-checks the refiner's own fixes.
    Update `PLAN` to the new `-vN` path the refiner wrote.
 3. Decide:
    - No blocking issues -> exit the loop.

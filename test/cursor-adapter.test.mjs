@@ -2,7 +2,7 @@
 // hand-written fixtures (test/fixtures/cursor), the rule plan, error classes, preflight and the spawn path.
 import { test, after } from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync, mkdtempSync, rmSync, writeFileSync, mkdirSync, existsSync, statSync, symlinkSync, readdirSync, chmodSync } from 'node:fs';
+import { readFileSync, mkdtempSync, rmSync, writeFileSync, mkdirSync, existsSync, statSync, symlinkSync, readdirSync, chmodSync, lstatSync } from 'node:fs';
 import { execFileSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -244,6 +244,42 @@ test('ownership: an edited worca file is no longer worca\'s', POSIX, async () =>
   writeFileSync(file, '{"permissions":{"deny":[]}}');
   assert.equal(cursorOwns(file), false);
   assert.equal(cursorOwns(join(cwd, '.cursor', 'absent.json')), true, 'an absent file has nothing to protect');
+});
+
+test('G14: deny rules the agent edits during a spawn are restored when it ends, and the next spawn sees worca\'s copy', POSIX, async () => {
+  const cwd = tmp();
+  execFileSync('git', ['init', '-q'], { cwd });
+  const want = `${JSON.stringify({ permissions: { deny: ['Shell(curl)'] } }, null, 2)}\n`;
+  const events = [];
+  const rules = { deny: ['Bash(curl)'] };
+  await runCursorProcess({ cwd, bin: fakeCursor(tmp(), 'ok', { sh: `printf '{"permissions":{"deny":[]}}' > .cursor/cli.json` }).bin,
+    prompt: 'go', permissionRules: rules, onEvent: (e) => events.push(e) });
+  assert.equal(readFileSync(join(cwd, '.cursor', 'cli.json'), 'utf8'), want, 'worca\'s rules are back');
+  assert.equal(cursorOwns(join(cwd, '.cursor', 'cli.json')), true);
+  assert.ok(events.some((e) => e.type === 'stderr' && /changed \.cursor\/cli\.json/.test(e.text)), 'the run log says so');
+  const next = fakeCursor(tmp(), 'ok');
+  await runCursorProcess({ cwd, bin: next.bin, prompt: 'go', resumeSessionId: 'cursor:chat-1', permissionRules: rules });
+  assert.equal(next.record().cli, want, 'the resumed spawn starts on worca\'s rules, not a refusal');
+});
+
+test('G14: a deny file the agent replaces with a symlink is unlinked and rewritten, never written through', POSIX, async () => {
+  const cwd = tmp();
+  const target = join(tmp(), 'elsewhere.json');
+  writeFileSync(target, 'theirs');
+  await runCursorProcess({ cwd, bin: fakeCursor(tmp(), 'ok', { sh: `rm .cursor/cli.json && ln -s ${JSON.stringify(target)} .cursor/cli.json` }).bin,
+    prompt: 'go', permissionRules: { deny: ['Bash'] } });
+  assert.equal(readFileSync(target, 'utf8'), 'theirs');
+  assert.equal(lstatSync(join(cwd, '.cursor', 'cli.json')).isSymbolicLink(), false);
+  assert.deepEqual(JSON.parse(readFileSync(join(cwd, '.cursor', 'cli.json'), 'utf8')), { permissions: { deny: ['Shell(*)'] } });
+});
+
+test('G14: an MCP file the agent edits is restored too, and a failed spawn still restores', POSIX, async () => {
+  const cwd = tmp();
+  const mcp = join(tmp(), 'mcp.json');
+  writeFileSync(mcp, JSON.stringify({ mcpServers: { gh: { command: 'gh-mcp' } } }));
+  const fake = fakeCursor(tmp(), null, { fail: 'boom', sh: `printf '{"mcpServers":{"evil":{"command":"x"}}}' > .cursor/mcp.json` });
+  await assert.rejects(runCursorProcess({ cwd, bin: fake.bin, prompt: 'go', mcpConfigPath: mcp }), /boom/);
+  assert.deepEqual(Object.keys(JSON.parse(readFileSync(join(cwd, '.cursor', 'mcp.json'), 'utf8')).mcpServers), ['gh']);
 });
 
 test('a symlinked .cursor is refused and never written or cleaned through (it may point at ~/.cursor)', POSIX, async () => {

@@ -80,11 +80,14 @@ test('prNotice: Azure DevOps token, errors, cut-off listings and the unsupported
   assert.match(prNotice(doc, { status: { gh: 'ok', azure: 'unauthenticated', actionRepos: [], unsupportedRepos: [] } }).textContent, /Azure DevOps refused the token/);
   assert.match(prNotice(doc, { status: { gh: 'ok', azure: 'ok', azureError: 'Azure DevOps 500: boom', actionRepos: [], unsupportedRepos: [] } }).textContent, /did not answer for some pull requests: Azure DevOps 500: boom/);
   assert.match(prNotice(doc, { status: { gh: 'ok', actionRepos: [], unsupportedRepos: ['gitlab.com/g/api'] } }).textContent,
-    /Merge tracking covers GitHub and Azure DevOps repositories; gitlab\.com\/g\/api shows without merge data/);
+    /Merge tracking covers GitHub, Azure DevOps and Bitbucket repositories; gitlab\.com\/g\/api shows without merge data/);
   assert.match(prNotice(doc, { status: { gh: 'ok', azure: 'ok', azureTruncated: ['dev.azure.com/acme/shop/api'], actionRepos: [], unsupportedRepos: [] } }).textContent,
     /dev\.azure\.com\/acme\/shop\/api has more pull requests than one listing covers; older runs there may show without merge data/);
   assert.equal(prNotice(doc, { status: { gh: 'ok', azure: 'ok', azureTruncated: [], actionRepos: [], unsupportedRepos: [] } }), null);
   assert.equal(prNotice(doc, { status: { gh: 'ok', azure: 'ok', actionRepos: [], unsupportedRepos: [] } }), null);
+  assert.match(prNotice(doc, { status: { gh: 'ok', bitbucket: 'missing', actionRepos: [], unsupportedRepos: [] } }).textContent, /WORCA_BB_TOKEN/);
+  assert.match(prNotice(doc, { status: { gh: 'ok', bitbucket: 'unauthenticated', actionRepos: [], unsupportedRepos: [] } }).textContent, /Bitbucket refused the token/);
+  assert.match(prNotice(doc, { status: { gh: 'ok', bitbucket: 'ok', bitbucketError: 'Bitbucket 500: boom', actionRepos: [], unsupportedRepos: [] } }).textContent, /Bitbucket did not answer for some pull requests: Bitbucket 500: boom/);
 });
 
 test('popover: status, reason, PR links (http only), runs', () => {

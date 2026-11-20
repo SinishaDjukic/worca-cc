@@ -34,7 +34,7 @@ test('defaultTab: Needs you, else Running, else Recent chats, else Workflows —
   assert.equal(defaultTab({ needs: 0, running: 0, chats: 0 }), 'workflows', 'never plans');
 });
 
-test('the tab strip: a tablist with five tabs (Plans hidden), one panel, roving focus and arrow keys', () => {
+test('the tab strip: a tablist with five tabs, one panel, roving focus and arrow keys', () => {
   const doc = docOf();
   const picks = [];
   const tabs = createHomeTabs({ doc, onSelect: (t, o) => { picks.push([t, o]); tabs.select(t); } });
@@ -43,7 +43,8 @@ test('the tab strip: a tablist with five tabs (Plans hidden), one panel, roving 
   assert.equal(list.getAttribute('aria-label'), 'Runs and chats');
   const btn = (t) => tabs.el.querySelector(`.chat-home-tab[data-tab="${t}"]`);
   assert.deepEqual([...list.querySelectorAll('[role="tab"]')].map((b) => b.textContent), ['Needs you', 'Running', 'Recent chats', 'Plans', 'Workflows']);
-  assert.equal(btn('plans').hidden, true, 'Plans starts hidden');
+  assert.equal(btn('plans').hidden, false, 'Plans always shows');
+  assert.deepEqual(tabs.visibleTabs(), ['needs', 'running', 'chats', 'plans', 'workflows']);
   assert.equal(tabs.panel.getAttribute('role'), 'tabpanel');
   assert.equal(btn('needs').getAttribute('aria-controls'), tabs.panel.id);
   assert.equal(tabs.selected(), null);
@@ -56,29 +57,18 @@ test('the tab strip: a tablist with five tabs (Plans hidden), one panel, roving 
   btn('running').dispatchEvent(new doc.defaultView.KeyboardEvent('keydown', { key: 'ArrowRight', bubbles: true }));
   assert.deepEqual(picks.at(-1), ['chats', { user: true }]);
   assert.equal(doc.activeElement, btn('chats'));
-  btn('chats').dispatchEvent(new doc.defaultView.KeyboardEvent('keydown', { key: 'End', bubbles: true }));
-  assert.equal(tabs.selected(), 'workflows', 'End skips the hidden Plans');
-  btn('workflows').dispatchEvent(new doc.defaultView.KeyboardEvent('keydown', { key: 'ArrowRight', bubbles: true }));
-  assert.equal(tabs.selected(), 'needs', 'wraps');
-  btn('needs').dispatchEvent(new doc.defaultView.KeyboardEvent('keydown', { key: 'ArrowLeft', bubbles: true }));
-  assert.equal(tabs.selected(), 'workflows', 'wraps back');
-  tabs.setVisible('plans', true);
-  assert.equal(btn('plans').hidden, false);
-  assert.deepEqual(tabs.visibleTabs(), ['needs', 'running', 'chats', 'plans', 'workflows']);
   btn('chats').dispatchEvent(new doc.defaultView.KeyboardEvent('keydown', { key: 'ArrowRight', bubbles: true }));
-  assert.equal(tabs.selected(), 'plans', 'a shown Plans sits between Recent chats and Workflows');
+  assert.equal(tabs.selected(), 'plans', 'Plans sits between Recent chats and Workflows');
   btn('plans').dispatchEvent(new doc.defaultView.KeyboardEvent('keydown', { key: 'ArrowRight', bubbles: true }));
   assert.equal(tabs.selected(), 'workflows');
   btn('workflows').dispatchEvent(new doc.defaultView.KeyboardEvent('keydown', { key: 'ArrowLeft', bubbles: true }));
   assert.equal(tabs.selected(), 'plans');
   btn('plans').dispatchEvent(new doc.defaultView.KeyboardEvent('keydown', { key: 'End', bubbles: true }));
   assert.equal(tabs.selected(), 'workflows');
-  tabs.setVisible('plans', false);
-  assert.equal(btn('plans').hidden, true);
-  assert.deepEqual(tabs.visibleTabs(), ['needs', 'running', 'chats', 'workflows']);
-  tabs.select('workflows');
   btn('workflows').dispatchEvent(new doc.defaultView.KeyboardEvent('keydown', { key: 'ArrowRight', bubbles: true }));
   assert.equal(tabs.selected(), 'needs', 'wraps');
+  btn('needs').dispatchEvent(new doc.defaultView.KeyboardEvent('keydown', { key: 'ArrowLeft', bubbles: true }));
+  assert.equal(tabs.selected(), 'workflows', 'wraps back');
   btn('needs').click();
   assert.deepEqual(picks.at(-1), ['needs', { user: true }]);
   tabs.destroy();

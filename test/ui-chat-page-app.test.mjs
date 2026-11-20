@@ -4,13 +4,12 @@
 // you left, New chat is home), and leaving Chat hides the page while a reply that lands meanwhile lights the row's dot.
 import { test, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { JSDOM } from 'jsdom';
 import { useDomRelease } from './helpers/jsdom-release.mjs';
+import { readIndexHtml } from '../src/core/read-index-html.mjs';
 
 const trackDom = useDomRelease(afterEach);
-const htmlPath = fileURLToPath(new URL('../ui/public/index.html', import.meta.url));
 const appPath = fileURLToPath(new URL('../ui/public/app.js', import.meta.url));
 const TID = 'ask_00000001';
 const MID = 'askm_00000001';
@@ -18,7 +17,7 @@ const THREAD = { id: TID, title: 'T', createdAt: 't', updatedAt: 't', model: nul
 const settle = async (n = 6) => { for (let i = 0; i < n; i += 1) await new Promise((r) => setTimeout(r, 0)); };
 
 async function boot({ hash = '', askDown = false, stored = null, onboarding = null } = {}) {
-  const dom = trackDom(new JSDOM(readFileSync(htmlPath, 'utf8'), { url: `http://localhost:4317/${hash}` }));
+  const dom = trackDom(new JSDOM(readIndexHtml(), { url: `http://localhost:4317/${hash}` }));
   const { window } = dom;
   window.Element.prototype.scrollIntoView = function () {};
   let lastWs = null;
@@ -161,8 +160,8 @@ test('the Workflows view\'s Back returns to the address Chat swapped to (the log
 test('an entry point with text (openChat) from another page reopens the chat you left and adds the text, unsent', async () => {
   const { window, doc, calls } = await boot();
   await send(doc, 'hello');
-  window.location.hash = '#runs';
-  await settle();
+  window.location.hash = '#workflows';                // Ask worca beside the page (L7): a page with the side column opens it instead
+  await settle(8);
   window.__np.chat.openChat({ text: '[diff comment dc_1 — a.js:3 (new)] "why?"' });
   await settle();
   assert.equal(window.location.hash, `#chat/${TID}`);
@@ -190,8 +189,8 @@ test('the Chat row with the unread dot opens the chat whose reply is unread, not
   await settle();
   assert.equal(window.location.hash, `#chat/${A}`, 'the unread chat (A), not the last one (B)');
   assert.equal(dot.hidden, true, 'read');
-  window.location.hash = '#runs';
-  await settle();
+  window.location.hash = '#workflows';                // L7: from Workflows an entry point still goes to the Chat page
+  await settle(8);
   recv(done(B));
   await settle();
   assert.equal(dot.hidden, false, 'B replied');

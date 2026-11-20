@@ -1,0 +1,8 @@
+
+/* Settings › Network proxy: a new surface (Simple level), so placeholders and hints use --ink-2. */
+#network-proxy-settings-card .input::placeholder{color:var(--ink-2);}
+#network-proxy-settings-card .hint{color:var(--ink-2);}
+/* The "More" fold reuses details.advanced; inside the card's rows it draws no extra rule (fit-2-1). */
+#network-proxy-settings-card .np-more{margin-top:0;border-top:0;padding-top:0;}
+#network-proxy-settings-card .np-results{list-style:none;margin:8px 0 0;padding:0;display:flex;flex-direction:column;gap:4px;font-size:var(--fs-meta);}
+#network-proxy-settings-card .np-results li[data-ok="false"]{color:var(--red-ink);}

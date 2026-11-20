@@ -1,0 +1,95 @@
+/* ---------- end diff comments ---------- */
+/* The `+` affordance rides inside the hovered row's code cell (one shared node), so
+   the cell needs a positioning context. `left:0`, never a negative offset: a negative
+   offset would overhang `.hd-dl-n-new`, which is `position:sticky; z-index:2` with an
+   opaque `background:var(--panel)` and therefore paints OVER a z-index:1 button — the
+   overhang would be invisible at rest, not just while scrolled.
+   Be accurate about what `left:0` does: `.hd-dl-code` is `padding:0 18px 0 10px`, and
+   an absolutely-positioned child resolves `left` against the PADDING box, so the 16px
+   button spans 0-16px while the text starts at 10px — it overlaps the first ~6px of
+   `.hd-dl-sign`. That is accepted, not accidental: the button is hover-only, it is
+   what GitHub does, and the alternative (`left:10px`, or padding the cell wider)
+   either hides it under the gutter or reflows every row. */
+.hd-dl-code{position:relative;}
+.hd-cmt-add{position:absolute;left:0;top:50%;transform:translateY(-50%);
+  width:16px;height:16px;display:grid;place-items:center;padding:0;
+  border:none;border-radius:var(--r-sm);background:var(--blue-ink-strong);color:var(--on-status);
+  font:600 12px var(--sans);line-height:1;cursor:pointer;z-index:1;}
+.hd-cmt-add:focus-visible{outline:2px solid var(--ink);outline-offset:1px;}
+.hd-dl-code:focus-visible{outline:2px solid var(--ink);outline-offset:-2px;}
+.hd-cmt-badge{flex:0 0 auto;min-width:17px;padding:1px 6px;border-radius:var(--r-xs);
+  background:var(--amber-bg);color:var(--amber-ink);font:600 var(--fs-caption) var(--sans);text-align:center;}
+/* The pane head says a file is refused BEFORE the user writes anything. Not hidden
+   and not a disabled button: the floor is a basename match, so it also catches
+   ordinary files (src/secrets/README.md), and the run really did change this one.
+   margin-left:auto so this third child does not re-space the head's existing pair. */
+.hd-diff-guarded{flex:0 0 auto;margin-left:auto;padding:1px 7px;border-radius:var(--r-xs);
+  background:var(--amber-bg);color:var(--amber-ink);font:600 var(--fs-caption) var(--sans);white-space:nowrap;}
+/* Author `display` beats the UA [hidden] rule — every toggled class needs the twin. */
+.hd-tree{display:block;}
+.hd-tree-group{display:block;}
+.hd-tree-group[hidden]{display:none;}
+.hd-tree-project{padding:9px 12px 4px;color:var(--ink-2);font:600 11px var(--mono);}
+.hd-tree-dir,.hd-tree-file{
+  width:100%;
+  border:0;
+  margin:0;
+  padding-block:9px;
+  padding-inline-end:12px;
+  background:transparent;
+  color:inherit;
+  font:inherit;
+  text-align:left;
+  appearance:none;
+  display:flex;
+  align-items:center;
+  gap:8px;
+  cursor:pointer;
+  border-radius:var(--r-sm);
+}
+.hd-tree-dir,.hd-tree-file{padding-inline-start:var(--tree-indent,10px);}
+.hd-tree-dir:hover,.hd-tree-file:hover,.hd-tree-file.active{background:var(--hover);}
+.hd-tree-dir:focus-visible,.hd-tree-file:focus-visible{
+  outline:2px solid var(--ink);
+  outline-offset:-2px;
+}
+.hd-tree-file .hd-diff-path{
+  flex:1;
+  min-width:0;
+  font-size:12px;
+  color:var(--ink);
+  direction:ltr;
+  text-align:left;
+  white-space:nowrap;
+  overflow:hidden;
+  text-overflow:ellipsis;
+}
+.hd-tree-file .hd-diff-path::before{content:none;}
+.hd-tree-file.deleted .hd-diff-path{opacity:1;color:var(--ink);text-decoration:none;}
+.hd-tree-status,.hd-tree-chevron,.hd-tree-folder-icon{flex:0 0 auto;}
+.hd-tree-status{width:18px;height:18px;display:grid;place-items:center;color:var(--ink);}
+.hd-tree-file.add .hd-tree-status{color:var(--green-ink);}
+.hd-tree-file.del .hd-tree-status{color:var(--red-ink);}
+.hd-tree-file-icon,.hd-tree-folder-icon{width:18px;height:18px;display:block;}
+.hd-tree-chevron{width:12px;height:14px;color:var(--ink-2);transition:transform .15s;}
+.hd-tree-dir[aria-expanded="true"] .hd-tree-chevron{transform:rotate(90deg);}
+.hd-tree-folder-icon{color:var(--ink);}
+.hd-tree-dir-label{
+  flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;
+  font-size:12px;color:var(--ink);
+}
+.hd-diff-pane :is(.hljs-comment,.hljs-quote,.hljs-punctuation){color:var(--hd-syntax-comment);}
+.hd-diff-pane :is(.hljs-keyword,.hljs-operator,.hljs-meta,.hljs-deletion){color:var(--hd-syntax-keyword);}
+.hd-diff-pane :is(.hljs-type,.hljs-built_in,.hljs-attr,.hljs-attribute,
+  .hljs-selector-class,.hljs-selector-id,.hljs-selector-tag){color:var(--hd-syntax-type);}
+.hd-diff-pane :is(.hljs-string,.hljs-regexp,.hljs-addition){color:var(--hd-syntax-string);}
+.hd-diff-pane :is(.hljs-number,.hljs-literal,.hljs-symbol,.hljs-bullet,
+  .hljs-variable,.hljs-template-variable){color:var(--hd-syntax-literal);}
+.hd-diff-pane :is(.hljs-title,.hljs-section,.hljs-name){color:var(--hd-syntax-title);}
+.hd-diff-pane :is(.hljs-comment,.hljs-quote){font-style:italic;}
+.hd-diff-pane .hint,.hd-diff-list .hint,.hd-tree .hint,.hd-diff-note{color:var(--ink-2);}
+.hd-diff-empty{margin-top:24px;padding:40px;text-align:center;color:var(--ink-2);
+  background:var(--panel);border:1px solid var(--line);border-radius:var(--r-card);}
+.hd-diff-partial{margin-bottom:14px;padding:10px 14px;background:var(--amber-bg);color:var(--amber-ink);
+  border:1px solid var(--line);border-radius:var(--r-card);font:400 var(--fs-body)/var(--lh-body) var(--sans);}
+

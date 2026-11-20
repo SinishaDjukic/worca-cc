@@ -1,5 +1,5 @@
-// test/ui-chat-plans-tab.test.mjs — Shape it first, slice 4: the Chat home's gated Plans tab (home.mjs st.plans /
-// applyFlags / loadPlans / refreshPlans, home-lists.mjs buildPlansList).
+// test/ui-chat-plans-tab.test.mjs — Shape it first, slice 4: the Chat home's Plans tab (home.mjs st.plans /
+// loadPlans / refreshPlans, home-lists.mjs buildPlansList).
 import { test, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
 import { JSDOM } from 'jsdom';
@@ -18,7 +18,7 @@ const FEATURE = (over = {}) => ({ id: 'feat-1', status: 'active', total: 3, done
 const ROW = (over = {}) => ({ threadId: 't1', cardId: 'card_00000001', title: 'Add login', threadTitle: 'Login chat', state: 'shaping', feature: null, ...over });
 const RUNS = (o = {}) => ({ needs: [], running: [], finished: [], project: 'worca-cc', ...o });
 
-function setup({ plans = [], flags = { shapeFirst: true }, stored = null, threads = [] } = {}) {
+function setup({ plans = [], flags = { scripts: true }, stored = null, threads = [] } = {}) {
   const dom = trackDom(new JSDOM(SHELL, { url: 'http://localhost:4317/' }));
   const { window } = dom;
   const doc = window.document;
@@ -60,24 +60,11 @@ const selected = (doc) => (doc.querySelector('.chat-home-tab[aria-selected="true
 const key = (doc, el, k) => el.dispatchEvent(new doc.defaultView.KeyboardEvent('keydown', { key: k, bubbles: true, cancelable: true }));
 const plansCalls = (s) => s.calls.filter((c) => c[0] === 'plans').length;
 
-test('the Plans tab is hidden until the flags carry shapeFirst, then shown; a flag change shows and hides it', async () => {
-  const s = setup({ flags: { scripts: true } });
-  await settle(s.window);
-  assert.equal(tab(s.doc, 'plans').hidden, true);
-  assert.equal(plansCalls(s), 0, 'a hidden tab loads nothing');
-  s.home.update({ flags: { shapeFirst: true } });
-  assert.equal(tab(s.doc, 'plans').hidden, false);
-  assert.equal(tab(s.doc, 'plans').textContent, 'Plans');
-  await settle(s.window);
-  assert.equal(plansCalls(s), 1, 'shown while visiting: loaded once');
-  s.home.update({ flags: { shapeFirst: false } });
-  assert.equal(tab(s.doc, 'plans').hidden, true);
-});
-
-test('with the flag on from the first answer, the tab shows and the plans load once per visit (plus refreshPlans)', async () => {
+test('the Plans tab always shows and the plans load once per visit (plus refreshPlans)', async () => {
   const s = setup({ plans: [ROW()] });
   await settle(s.window);
   assert.equal(tab(s.doc, 'plans').hidden, false);
+  assert.equal(tab(s.doc, 'plans').textContent, 'Plans');
   assert.equal(plansCalls(s), 1);
   tab(s.doc, 'plans').click();
   assert.equal(selected(s.doc), 'plans');
@@ -133,32 +120,6 @@ test('a feature <details> mounts its view only when first opened, and the 1 s ti
   assert.equal(d.open, true);
 });
 
-test('a stored plans tab while hidden falls back to the default tab', async () => {
-  const s = setup({ flags: { scripts: true }, stored: 'plans' });
-  await settle(s.window);
-  assert.notEqual(selected(s.doc), 'plans');
-});
-
-test('a Plans tab hidden by a flag change falls back; when it cannot choose yet nothing is selected and the panel is busy', async () => {
-  const s = setup({ plans: [ROW()] });
-  await settle(s.window);
-  tab(s.doc, 'plans').click();
-  assert.equal(selected(s.doc), 'plans');
-  s.home.update({ flags: { shapeFirst: false } });
-  assert.notEqual(selected(s.doc), 'plans');
-  assert.equal(s.panel().querySelector('.chat-home-plan'), null, 'the old list is gone');
-
-  const b = setup({ plans: [ROW()] });
-  await settle(b.window);
-  tab(b.doc, 'plans').click();
-  b.setRuns(RUNS({ ready: false }));
-  b.tick();
-  b.home.update({ flags: { shapeFirst: false } });
-  assert.equal(selected(b.doc), null, 'no tab is aria-selected');
-  assert.equal(b.panel().getAttribute('aria-busy'), 'true');
-  assert.equal(b.panel().querySelector('.chat-home-plan'), null);
-});
-
 test('a feature that halts (status and done unchanged) changes the signature, so the headline updates', async () => {
   const s = setup({ plans: [ROW({ feature: FEATURE() })] });
   await settle(s.window);
@@ -203,19 +164,18 @@ test('an opened feature stays open (view mounted) across a signature change; a c
   assert.equal(s.panel().querySelector('details.chat-home-plan-feature').open, false, 'closing is remembered');
 });
 
-test('arrow keys and Home/End skip the hidden Plans tab, and include it once shown', async () => {
-  const s = setup({ flags: { scripts: true } });
+test('arrow keys and Home/End include the Plans tab, between Recent chats and Workflows', async () => {
+  const s = setup();
   await settle(s.window);
   tab(s.doc, 'chats').click();
   key(s.doc, tab(s.doc, 'chats'), 'ArrowRight');
+  assert.equal(selected(s.doc), 'plans');
+  key(s.doc, tab(s.doc, 'plans'), 'ArrowRight');
   assert.equal(selected(s.doc), 'workflows');
-  key(s.doc, tab(s.doc, 'workflows'), 'ArrowLeft');
-  assert.equal(selected(s.doc), 'chats');
-  key(s.doc, tab(s.doc, 'chats'), 'End');
-  assert.equal(selected(s.doc), 'workflows');
-  s.home.update({ flags: { shapeFirst: true } });
   key(s.doc, tab(s.doc, 'workflows'), 'ArrowLeft');
   assert.equal(selected(s.doc), 'plans');
+  key(s.doc, tab(s.doc, 'plans'), 'End');
+  assert.equal(selected(s.doc), 'workflows');
 });
 
 test('buildPlansList: a feature row built with its id in `open` is open and mounted at once', () => {

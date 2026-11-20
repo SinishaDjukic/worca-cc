@@ -1,9 +1,8 @@
 import { test, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
-import { fileURLToPath } from 'node:url';
 import { JSDOM } from 'jsdom';
 import { useDomRelease } from './helpers/jsdom-release.mjs';
+import { readIndexHtml } from '../src/core/read-index-html.mjs';
 
 // Release each booted window after its test (see test/helpers/jsdom-release.mjs).
 const trackDom = useDomRelease(afterEach);
@@ -12,8 +11,7 @@ const trackDom = useDomRelease(afterEach);
 // throwing, and the shell must expose exactly twelve routed views. This is the
 // guard that catches a module-top null-dereference when the markup changes.
 test('app.js boots without throwing and finds 14 views', async () => {
-  const htmlPath = fileURLToPath(new URL('../ui/public/index.html', import.meta.url));
-  const dom = trackDom(new JSDOM(readFileSync(htmlPath, 'utf8'), { url: 'http://localhost:4317/' }));
+  const dom = trackDom(new JSDOM(readIndexHtml(), { url: 'http://localhost:4317/' }));
   const { window } = dom;
 
   // Stub the network primitives app.js touches at boot (WS + a couple of fetches).
@@ -50,5 +48,5 @@ test('app.js boots without throwing and finds 14 views', async () => {
     threw = e;
   }
   assert.equal(threw, null, threw && threw.stack);
-  assert.equal(window.document.querySelectorAll('section.view[data-view]').length, 18);   // the feature page renders in the Runs pane now (run 3, D1); + requirements (behind its flag) + getting-started + schedules + team-policy (team-policy design §11); Running + History merged into Runs; + the four Add-ons pages; Workflows replaced Composer, Agents, Scripts and Create agent; + chat (worca Chat — its page root's data-view="home|thread" is no routed view)
+  assert.equal(window.document.querySelectorAll('section.view[data-view]').length, 19);   // the feature page renders in the Runs pane now (run 3, D1); + requirements (behind its flag) + getting-started + schedules + team-policy (team-policy design §11); Running + History merged into Runs; + the three Add-ons pages (Providers is a tab of Models); Workflows replaced Composer, Agents, Scripts and Create agent; + chat (worca Chat — its page root's data-view="home|thread" is no routed view); + profile (worca level); + design (behind its flag)
 });

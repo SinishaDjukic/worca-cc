@@ -1,0 +1,13 @@
+/* A markdown-by-contract body (workspace description, its edit preview, a task-source
+   body) keeps the .viewer frame but drops the pre look once it actually rendered:
+   sans type, normal flow (marked emits its own breaks) and no stray outer margins. */
+.viewer.artifact-markdown,.sp-prev-body.artifact-markdown{white-space:normal;font-family:var(--sans);font-size:13px;line-height:1.55;}
+.artifact-markdown>:first-child{margin-top:0;}
+.artifact-markdown>:last-child{margin-bottom:0;}
+.artifact-markdown :is(h1,h2,h3){font-size:var(--fs-body);font-weight:600;}
+.artifact-markdown h1{font-size:15px;}
+.artifact-markdown :is(ul,ol){padding-left:22px;margin:6px 0;}
+.artifact-markdown li{margin:2px 0;}
+.artifact-markdown p{margin:6px 0;}
+.md-preview{min-height:72px;}
+.md-preview:empty::before{content:'Nothing to preview yet';color:var(--ink-2);}

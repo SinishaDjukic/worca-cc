@@ -6,10 +6,12 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { JSDOM } from 'jsdom';
+import { readIndexHtml } from '../src/core/read-index-html.mjs';
+import { readStyleCss } from '../src/core/read-style-css.mjs';
 
-const read = (p) => readFileSync(new URL(`../ui/public/${p}`, import.meta.url), 'utf8');
-const html = read('index.html');
-const css = read('style.css');
+const appJs = () => readFileSync(new URL('../ui/public/app.js', import.meta.url), 'utf8');
+const html = readIndexHtml();
+const css = readStyleCss();
 const doc = new JSDOM(html).window.document;
 
 /** The body of the FIRST rule written exactly as `selector {…}` (house rule: no comment inside a rule body). */
@@ -84,16 +86,17 @@ test('the open page is a soft grey fill and hover the lighter field grey; nothin
   assert.equal(ruleBody('.nav button.active .nav-count'), null, 'no white-on-wash count: the fill is light now');
 });
 
-test('the first group has no label: "Activity" is gone, Build, Add-ons and Manage remain; Chat leads the nav, Runs right under it', () => {
+test('the first group has no label: "Activity" is gone, Build, Add-ons and Manage remain; Chat leads the nav, Design right under it, then Runs', () => {
   assert.deepEqual([...doc.querySelectorAll('.nav .nav-sect')].map((s) => s.textContent.trim()), ['Build', 'Add-ons', 'Manage']);
   assert.equal(doc.querySelector('.nav').firstElementChild.dataset.nav, 'chat');
-  assert.equal(doc.querySelector('.nav').firstElementChild.nextElementSibling.dataset.nav, 'runs');
+  assert.equal(doc.querySelector('.nav').firstElementChild.nextElementSibling.dataset.nav, 'design');
+  assert.equal(doc.querySelector('.nav').firstElementChild.nextElementSibling.nextElementSibling.dataset.nav, 'runs');
 });
 
 test('New run has no sidebar row (the top bar\'s button opens it): no "+" tile, no nav-new, no nav-cta anywhere', () => {
   assert.equal(doc.querySelector('.nav [data-nav="new"], .nav-new, .nav-tile'), null);
   const themeTool = readFileSync(new URL('../tools/verify-theme-cdp.mjs', import.meta.url), 'utf8');
-  for (const [name, src] of [['index.html', html], ['style.css', css], ['app.js', read('app.js')], ['tools/verify-theme-cdp.mjs', themeTool]]) {
+  for (const [name, src] of [['index.html', html], ['style.css', css], ['app.js', appJs()], ['tools/verify-theme-cdp.mjs', themeTool]]) {
     assert.doesNotMatch(src, /\bnav-(?:cta|new|tile)\b/, `${name} still names the old row`);
   }
   assert.ok(themeTool.includes("'.topnav-new'"), 'verify:theme hovers New run in the top bar');
@@ -128,7 +131,7 @@ test('counts: a plain grey mono number, the amber needs-you count is the one pil
     assert.equal(el.hidden, true, `#${id} ships hidden (a zero)`);
     assert.equal(el.textContent, '0');
   }
-  for (const [name, src] of [['index.html', html], ['style.css', css], ['app.js', read('app.js')]]) {
+  for (const [name, src] of [['index.html', html], ['style.css', css], ['app.js', appJs()]]) {
     assert.doesNotMatch(src, /\bn-run\b/, `${name} still names the green n-run`);
   }
 });

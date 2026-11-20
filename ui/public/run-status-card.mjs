@@ -9,6 +9,7 @@ import { fmtUsd } from './graph/run-decor.mjs';
 import { ACTION_LABEL } from '../../src/shared/run-model.mjs';
 import { icon } from './icons.mjs';
 import { CREATE_PR_LABEL } from './ship-words.mjs';
+import { buildCheckFold } from './shape/check-row.mjs';
 
 const BAR_STATES = new Set(['starting', 'working', 'needs-you', 'paused']);       // D20: the states the list draws a bar for
 const GROUP_ENDED = new Set(['ready', 'in-review', 'merged']);
@@ -134,9 +135,10 @@ export function paintRunStatus(host, m, { hold = false } = {}) {
  * handler; one element may stand for two ids (Pause / Resume). Every other id gets a small button made here (kept in
  * `host.__made`, never confused with an own element), which calls `onAction(id, button)`. Every action shown carries
  * data-model-action. Own elements that live inside `host` (the chat card's Pause / Stop) are ordered with the made
- * ones; own elements elsewhere (the run page's bar) are only shown or hidden.
+ * ones; own elements elsewhere (the run page's bar) are only shown or hidden. `plain`: actions that are not the primary
+ * here for now (Answer, while the waiting card's own field holds the primary).
  */
-export function syncActions(host, m, { own = {}, pool = [], covered = {}, disable = {}, labels = {}, skip = [], onAction = () => {} } = {}) {
+export function syncActions(host, m, { own = {}, pool = [], covered = {}, disable = {}, labels = {}, skip = [], plain = [], onAction = () => {} } = {}) {
   if (!host) return;
   const doc = host.ownerDocument;
   // `skip`: actions this host leaves to another control (the run page's ⋯ owns Archive and Report, slice 2).
@@ -157,7 +159,7 @@ export function syncActions(host, m, { own = {}, pool = [], covered = {}, disabl
   // An own element inside the host (the chat card's Resume) is ranked like a made one; one elsewhere keeps its
   // painter's look.
   const inHost = (id) => !!own[id] && own[id].parentNode === host;
-  const primary = want.find((id) => PRIMARY.has(id) && (!drawn(id) || inHost(id))) || null;
+  const primary = want.find((id) => PRIMARY.has(id) && !plain.includes(id) && (!drawn(id) || inHost(id))) || null;
   for (const b of new Set(Object.values(own).filter((o) => o && o.parentNode === host))) {
     b.classList.toggle('btn-primary', !!primary && own[primary] === b);
   }
@@ -215,8 +217,9 @@ export function memberStatusText(m) {
 
 /** D11, D13: a group's member rows (Planning first, unnumbered), the same table on the group page and the chat card
  *  (A13, spec §3.4): each row is title over status, then PR, cost and a quiet chevron, with the title link stretched
- *  over the row. */
-export function renderMemberRows(doc, row) {
+ *  over the row. `checks` (the chat card's feature) maps a member's key to its Requirements check: that row gets the
+ *  check's fold under its status line. */
+export function renderMemberRows(doc, row, { checks } = {}) {
   const ol = doc.createElement('ol');
   ol.className = 'run-members is-table';
   const items = [...(row.planning && row.planning.model ? [{ ...row.planning, isPlanning: true }] : []), ...(row.members || [])];
@@ -240,6 +243,8 @@ export function renderMemberRows(doc, row) {
     const num = textEl(doc, 'span', 'run-member-num', unnumbered ? '' : String(mb.position));
     const main = textEl(doc, 'span', 'run-member-main', '');
     main.append(title, line);
+    const check = checks && !mb.isPlanning ? checks[mb.pipelineId || mb.ticketId] : null;
+    if (check) { const f = buildCheckFold(doc, check, 'Requirements'); main.append(f.line, f.rows); }
     const go = doc.createElement('span');
     go.className = 'run-member-go';
     go.setAttribute('aria-hidden', 'true');

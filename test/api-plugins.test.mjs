@@ -145,6 +145,45 @@ test('POST /api/plugins/install -> { ok, inventory }; plugin then lists', async 
   assert.equal(p.pinnedSha, repoSha);
 });
 
+test('POST /api/plugins/install refuses a sha that is not a full commit id, and the store survives (G8)', async () => {
+  const lock = join(pluginDir('local-src'), '..', 'plugins.lock.json');
+  assert.equal(existsSync(lock), true, 'the earlier install wrote the lock');
+  for (const sha of ['../../.', '../..', 'abc1234', `${repoSha}/..`, repoSha.toUpperCase(), `-${repoSha.slice(1)}`]) {
+    const r = await post('/api/plugins/install', { repoUrl: repoDir, subdir: '', name: 'evil-one', sha });
+    assert.equal(r.status, 400, sha);
+    assert.match((await r.json()).error, /full commit id/, sha);
+  }
+  assert.equal(existsSync(lock), true, 'plugins store untouched');
+  assert.equal(existsSync(pluginDir('local-src')), true, 'installed plugin untouched');
+});
+
+test('update confirm installs the previewed commit and refuses when the source moved (G9)', async () => {
+  const git = (...args) => run('git', ['-C', repoDir, ...args]);
+  const commit = async (n) => {
+    await writeFile(join(repoDir, 'CHANGELOG.md'), `${n}\n`);
+    await git('add', '-A'); await git('commit', '-q', '-m', `c${n}`);
+    return (await git('rev-parse', 'HEAD')).stdout.trim();
+  };
+  const pinned = async () => (await (await get('/api/plugins')).json()).plugins.find((x) => x.name === 'local-src').pinnedSha;
+  const reviewed = await commit(2);
+  const pre = await (await post('/api/plugins/local-src/update', {})).json();
+  assert.equal(pre.preview.candidateSha, reviewed);
+  const moved = await commit(3);   // the source moves between review and confirm
+  let r = await post('/api/plugins/local-src/update', { confirm: true });
+  assert.equal(r.status, 400, 'a confirm names the commit it previewed');
+  r = await post('/api/plugins/local-src/update', { confirm: true, candidateSha: '../../.' });
+  assert.equal(r.status, 400);
+  r = await post('/api/plugins/local-src/update', { confirm: true, candidateSha: reviewed });
+  assert.equal(r.status, 409);
+  assert.match((await r.json()).error, /since the preview.*review the update again/);
+  assert.equal(await pinned(), repoSha, 'still pinned');
+  const again = await (await post('/api/plugins/local-src/update', {})).json();
+  assert.equal(again.preview.candidateSha, moved);
+  r = await post('/api/plugins/local-src/update', { confirm: true, candidateSha: moved });
+  assert.equal(r.status, 200, await r.clone().text());
+  assert.equal(await pinned(), moved);
+});
+
 test('POST /api/plugins/:name/enable toggles; 404/400 guards hold', async () => {
   assert.equal((await post('/api/plugins/local-src/enable', {})).status, 400, 'non-boolean enabled -> 400');
   assert.equal((await post('/api/plugins/nope/enable', { enabled: true })).status, 404);

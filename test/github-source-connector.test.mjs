@@ -210,7 +210,7 @@ test('getTask: assembles issue body + ## Comments section + meta', async () => {
   const t = await src.getTask('acme/api#7');
   assert.equal(t.id, 'acme/api#7');
   assert.equal(t.body, 'Fix the flux\n\n## Comments\n\n**@alice** (2026-02-03T04:05:06Z):\n\ntry X\n');
-  assert.deepEqual(t.meta, { repo: 'acme/api', number: 7, labels: ['bug'], assignee: 'alice' });
+  assert.deepEqual(t.meta, { repo: 'acme/api', project: 'acme/api', number: 7, labels: ['bug'], assignee: 'alice' });
 });
 
 // ── reportResult ───────────────────────────────────────────────────────────────

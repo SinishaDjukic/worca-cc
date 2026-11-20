@@ -10,7 +10,7 @@ import { toMessagesResponse } from './translate/response.mjs';
 import { toResponsesRequest } from './translate/responses-request.mjs';
 import { ResponsesStreamTranslator, toMessagesResponseFromResponses } from './translate/responses-stream.mjs';
 import { mapUpstreamError, mapNetworkError, bridgeErrors, anthropicError, isFailedResponseOverflow, PAYLOAD_CEILING_BYTES } from './errors.mjs';
-import { copilotToken, invalidateCopilotToken, copilotApiHost, copilotHeaders, bodyHasImage, requestInitiator } from './providers/copilot.mjs';
+import { copilotToken, invalidateCopilotToken, copilotAccountHost, copilotGateway, copilotHeaders, bodyHasImage, requestInitiator } from './providers/copilot.mjs';
 import { upstreamSettings, providerReadiness } from './registry.mjs';
 import { brokerEnabled, slotBaseUrl } from '../broker-client.mjs';
 import { routeBridgedUpstream } from '../broker-routing.mjs';
@@ -83,9 +83,12 @@ async function prepareUpstream(us, body, { fetch: f, requestHeaders }) {
   if (us.provider === 'copilot') {
     const initiator = requestInitiator(body);
     const vision = bodyHasImage(body);
+    // A ghe-com config without a valid host throws NO_HOST here: the bridge's normal upstream error,
+    // never a fall back to github.com.
+    const eh = copilotAccountHost(us);
     const build = async (force) => {
-      const { token, apiHost } = await copilotToken(us.githubToken, { fetch: f, force });
-      const host = apiHost || copilotApiHost(us.accountType);
+      const { token, apiHost } = await copilotToken(us.githubToken, { fetch: f, force, enterpriseHost: eh });
+      const host = copilotGateway({ apiHost, accountType: us.accountType, enterpriseHost: eh });
       const path = us.api === 'anthropic' ? '/v1/messages' : us.api === 'openai-responses' ? '/responses' : '/chat/completions';
       const headers = { ...copilotHeaders(token, { vision, initiator }), ...us.headers };
       if (us.api === 'anthropic') {
@@ -95,7 +98,7 @@ async function prepareUpstream(us, body, { fetch: f, requestHeaders }) {
       return { url: `${host}${path}`, headers, initiator };
     };
     const first = await build(false);
-    return { ...first, provider: 'copilot', retryAuth: () => { invalidateCopilotToken(us.githubToken); return build(true); } };
+    return { ...first, provider: 'copilot', retryAuth: () => { invalidateCopilotToken(us.githubToken, { enterpriseHost: eh }); return build(true); } };
   }
   const initiator = requestInitiator(body);
   if (us.api === 'anthropic') {
@@ -141,7 +144,7 @@ export async function handleMessages({ entry, body, requestHeaders = {}, tag = '
   const upstream = entry.upstream;
   const ready = providerReadiness(upstream);
   if (!ready.ok) {
-    const e = ready.reason === 'terms' ? bridgeErrors.termsNotAcknowledged(upstream.provider) : bridgeErrors.notSignedIn(upstream.provider, ready.message.split('— ')[1] || ready.message);
+    const e = bridgeErrors.notSignedIn(upstream.provider, ready.message.split('— ')[1] || ready.message);
     recordBridgeError({ tag, catalogId: entry.id, provider: upstream.provider, status: e.status, message: e.body.error.message });
     return reply.json(e.status, e.body);
   }
@@ -204,13 +207,16 @@ export async function handleMessages({ entry, body, requestHeaders = {}, tag = '
     return reply.json(e.status, e.body);
   }
 
-  // Concurrency cap (§7.4).
-  if (semaphore.active(us.provider) >= us.maxConcurrent) {
-    warnOnce(`queue:${us.provider}:${tag}`, `[worca] bridge: requests queued for ${us.provider} (cap ${us.maxConcurrent}) — raise it on the Providers page if this is slow`, log);
+  // Concurrency cap (§7.4), per queue: OpenRouter's entries wait apart from other OpenAI-compatible calls.
+  if (semaphore.active(us.queue) >= us.maxConcurrent) {
+    const line = us.queue === 'openrouter'
+      ? `[worca] bridge: requests queued for OpenRouter (cap ${us.maxConcurrent}) — raise it on the OpenRouter row under Models › Providers if this is slow`
+      : `[worca] bridge: requests queued for ${us.provider} (cap ${us.maxConcurrent}) — raise it under Models › Providers if this is slow`;
+    warnOnce(`queue:${us.queue}:${tag}`, line, log);
   }
   let release;
   try {
-    release = await semaphore.acquire(us.provider, us.maxConcurrent, { signal });
+    release = await semaphore.acquire(us.queue, us.maxConcurrent, { signal });
   } catch {
     return reply.end();  // the CLI went away while waiting
   }

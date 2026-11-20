@@ -2,6 +2,8 @@
 // Run a whole v2 graph offline: the real scheduler + the real executor, wired by the
 // same ctx shape P4's GraphOrchestrator._execute will build (minus the ledger, the DB
 // and the harness). Everything spawns through the offline mock (`claudeOpts.mock`).
+import { mkdtempSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createScheduler } from '../../src/core/graph/scheduler.mjs';
 import {
@@ -9,6 +11,7 @@ import {
   readDecomposition, publishable,
 } from '../../src/core/graph/executor.mjs';
 import { scriptNodeCtx } from '../../src/shared/graph/script-meta.mjs';
+import { realRegistryIndex, realPortsFn } from './graph-ports.mjs';
 
 /**
  * @param {object} o
@@ -97,5 +100,35 @@ export async function runGraphOffline({
     events,
     calls,
     execSeq: events.filter((e) => e.name === 'exec' && e.status === 'start').map((e) => `${e.nodeId} c${e.ordinal}`),
+  };
+}
+
+/** ONE agent execution's ctx, built as `runGraphOffline`'s execute builds it, for the real registry's `key` on a lone
+ *  node `n_<key>` in its own scratch dirs, on the mock. `over` is spread last (session groups, Task 45's seam test). */
+export function agentCtx(key, over = {}) {
+  const meta = realRegistryIndex()[key] || {};
+  const node = { id: `n_${key}`, kind: 'agent', key, config: {} };
+  const template = { nodes: [node], wires: [] };
+  const portsFn = realPortsFn();
+  const ports = portsFn(node) || {};
+  const pipelineDir = mkdtempSync(join(tmpdir(), 'graph-ctx-p-'));
+  const projectDir = mkdtempSync(join(tmpdir(), 'graph-ctx-d-'));
+  const runCtx = { pipelineDir, projectDir, baseName: 'feature', datePrefix: '01-01-26', workspaceKey: null, duplicateKey: false, slice: null, planVersion: () => 1 };
+  const executionId = `x:${node.id}:1`;
+  return {
+    node: { ...node, fanOut: !!meta.fanOut, agentPrompt: `You are ${meta.displayName || key}.`, tools: [], promptHints: meta.promptHints },
+    nodeId: node.id, executionId, ordinal: 1, cycle: 1, bindings: {}, trigger: { wireIds: [], freshPorts: [] },
+    signal: new AbortController().signal, slice: null,
+    template, portsFn, ports, meta,
+    outputs: allocateOutputs({ node, ports, executionId, ordinal: 1, runCtx }),
+    verdict: allocateVerdict({ node, ports, ordinal: 1, runCtx }),
+    expandsPort: expandsOutputPort(template, portsFn, node.id),
+    runCtx, taskArtifact: { text: '# Task\n\nBUILD IT\n' },
+    projectDir, pipelineDir, taskPrompt: 'BUILD IT', toolInstruction: 'TOOLS',
+    extras: [], workspace: null, agentPrompts: {}, checkpointRef: 'abc1234',
+    claudeOpts: { mock: true },
+    ask: async () => ({ answers: [] }),
+    onEvent: () => {},
+    ...over,
   };
 }

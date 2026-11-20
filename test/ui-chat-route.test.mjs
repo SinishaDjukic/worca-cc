@@ -4,16 +4,15 @@
 // and openChat routes to Chat and stacks text in the composer.
 import { test, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { JSDOM } from 'jsdom';
 import { useDomRelease } from './helpers/jsdom-release.mjs';
 import { pageTitle } from '../ui/public/topnav.mjs';
+import { readIndexHtml } from '../src/core/read-index-html.mjs';
 
 const trackDom = useDomRelease(afterEach);
-const htmlPath = fileURLToPath(new URL('../ui/public/index.html', import.meta.url));
 const appPath = fileURLToPath(new URL('../ui/public/app.js', import.meta.url));
-const html = readFileSync(htmlPath, 'utf8');
+const html = readIndexHtml();
 const THREAD_URL = /^\/api\/ask\/threads\/(ask_[0-9a-f]{8})$/;
 
 const settle = async (n = 6) => { for (let i = 0; i < n; i += 1) await new Promise((r) => setTimeout(r, 0)); };
@@ -61,7 +60,7 @@ test('the Chat row leads the sidebar (simple, "Chat", an unread dot that starts 
   assert.equal(first.dataset.nav, 'chat');
   assert.equal(first.dataset.minLevel, 'simple');
   assert.equal(first.querySelector(':scope > span:not(.nav-count)').textContent, 'Chat');
-  assert.equal(first.nextElementSibling.dataset.nav, 'runs', 'right above Runs');
+  assert.equal(first.nextElementSibling.dataset.nav, 'design', 'right above Design');
   const dot = first.querySelector('#nav-chat-unread');
   assert.ok(dot && dot.hidden, 'the unread dot starts hidden');
   assert.ok(dot.classList.contains('nav-count') && dot.classList.contains('nav-dot'), 'a nav-count: never the row label, rides the rail corner');
@@ -165,7 +164,7 @@ test('chatDeps.openRunPanel is the Chat run panel (P4): a saved run by its pipel
 });
 
 test('openChat routes to Chat and stacks text in the composer without sending; a thread id opens that chat', async () => {
-  const { window, doc, chat, calls } = await boot('#runs');
+  const { window, doc, chat, calls } = await boot('#workflows');   // Ask worca beside the page (L7): #runs would open the side column
   chat.openChat({ text: '[diff comment dc_1 — a.js:3 (new)] "why?"' });
   await settle();
   assert.equal(window.location.hash, '#chat');

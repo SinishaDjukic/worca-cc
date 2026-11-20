@@ -65,6 +65,11 @@ test('publishRefusal: WORCA_CLONE_ALLOW scopes the targets on a hosted Worca (D1
     { name: 'outside → reason', run: () => assert.equal(publishRefusal(other, { env: { WORCA_CLONE_ALLOW: 'github.com/acme/*' } }), 'github.com/someone/market is not in WORCA_CLONE_ALLOW') },
     { name: 'azure: owner is org/project (decoded)', run: () => assert.equal(publishRefusal(ado, { env: { WORCA_CLONE_ALLOW: 'dev.azure.com/org/My%20Proj/*' } }), null) },
     { name: 'not a forge', run: () => assert.equal(publishRefusal({ id: 'l', url: '/srv/m' }, { env: {} }), 'not a GitHub or Azure DevOps repository') },
+    { name: 'a Bitbucket marketplace is refused by name', run: () => {
+      assert.equal(publishRefusal({ id: 'b', url: 'https://bitbucket.org/acme/market.git' }, { env: {} }),
+        'Bitbucket marketplaces are not supported yet: publish to a GitHub or Azure DevOps marketplace');
+      assert.equal(publishTargetOf({ id: 'b', url: 'git@bitbucket.org:acme/market.git' }), null, 'never an Azure-shaped target');
+    } },
     { name: 'listPublishTargets skips it with the reason', run: () => {
       const r = listPublishTargets([gh, other], { env: { WORCA_CLONE_ALLOW: 'github.com/acme/*' } });
       assert.deepEqual(r.targets.map((t) => t.id), ['gh']);

@@ -58,6 +58,8 @@ const MEMORY_WRITE_TOOLS = new Set(['mcp__worca__remember', 'mcp__worca__forget'
 // `scripts-changed` broadcast the REST routes emit — a script the chat saved shows up in an
 // open Scripts tab. There is no delete tool, and test_script writes nothing outside the bench.
 const SCRIPT_WRITE_TOOLS = new Set(['mcp__worca__save_script']);
+// G6: the two calls that wait on the user's card — main stream only (a sub-agent's call mints nothing and ran nothing).
+const SCRIPT_APPROVAL_TOOLS = new Set(['mcp__worca__save_script', 'mcp__worca__test_script']);
 // The direct schedule writes (docs/scheduled-runs.md "Chat"): reversible, never a run start.
 const SCHEDULE_WRITE_TOOLS = new Set(['mcp__worca__pause_schedule', 'mcp__worca__resume_schedule',
   'mcp__worca__skip_next_run', 'mcp__worca__mark_schedule_activity_read']);
@@ -68,6 +70,9 @@ const CHAT_ACTION_TOOLS = new Set(['mcp__worca__change_setting', 'mcp__worca__pa
   'mcp__worca__pause_schedule', 'mcp__worca__resume_schedule', 'mcp__worca__propose_changes', 'mcp__worca__route_message']);
 // The Workflows chat's card tools (D13): their RESULT becomes a composer card in the parent (turn.mjs).
 const COMPOSER_CARD_TOOLS = new Set(['mcp__worca__edit_canvas', 'mcp__worca__build_workflow', 'mcp__worca__draft_agent', 'mcp__worca__draft_script']);
+// The Design chat's tools (Design P5): the child validated; the PARENT acts on the RESULT — starts or changes the build,
+// or posts the clarifying-questions card (turn.mjs _onDesignAction). Main stream only.
+const DESIGN_ACTION_TOOLS = new Set(['mcp__worca__start_design_build', 'mcp__worca__change_design', 'mcp__worca__design_questions']);
 /** True when a SUCCESSFUL call of `name` with `input` changed this thread's worktree rows. */
 export function worktreeMutatingCall(name, input) {
   if (!WORKTREE_TOOLS.has(name)) return false;
@@ -154,6 +159,10 @@ export function labelForTool(name, input = {}, attachmentNames = {}) {
     case 'draft_script': return 'Drafting a script';
     case 'get_agent': return input?.key ? `Reading agent: ${String(input.key).slice(0, 60)}` : 'Reading an agent';
     case 'get_workflow': return 'Reading a workflow';
+    case 'get_design': return 'Reading the design';
+    case 'start_design_build': return 'Starting the build';
+    case 'change_design': return 'Starting a change';
+    case 'design_questions': return 'Asking you';
     case 'read_file': { const base = String(input?.path ?? '').split(/[\\/]/).filter(Boolean).pop(); return base ? `Reading ${base.slice(0, 60)}` : 'Reading a file'; }
     case 'grep': return 'Searching files';
     case 'glob': return 'Listing files';
@@ -209,6 +218,9 @@ export function labelForTool(name, input = {}, attachmentNames = {}) {
     case 'get_run_checkout': return input?.id ? `Checking the checkout of ${String(input.id).slice(0, 40)}` : 'Checking a run checkout';
     case 'list_running_actions': return 'Looking at running actions';
     case 'propose_actions_change': return 'Proposing an actions change';
+    case 'list_mcp_servers': return 'Looking at MCP servers';
+    case 'discover_mcp_servers': return 'Looking for MCP servers in other tools';
+    case 'propose_mcp_change': return 'Proposing an MCP server change';
     case 'get_network_proxy': return 'Reading the corporate proxy';
     case 'test_network_proxy': return 'Testing the corporate proxy';
     case 'propose_network_proxy_change': return 'Proposing a proxy change';
@@ -226,6 +238,7 @@ export function labelForTool(name, input = {}, attachmentNames = {}) {
     case 'web_search': return 'Searching the web';
     case 'propose_web_access': return 'Asking to read a new site';
     case 'propose_scope_switch': return 'Asking which project';
+    case 'ask_question': return 'Asking a question';
     case 'Skill': return typeof input?.skill === 'string' && input.skill ? `Using ${input.skill.slice(0, 80)}` : 'Using a skill';   // skills registry §4.4
     default: return `Using ${n}`;
   }
@@ -233,6 +246,7 @@ export function labelForTool(name, input = {}, attachmentNames = {}) {
 
 // ── script tools on the thread row (scripts-workbench-design.md §9.3) ─────────
 const SCRIPT_TOOL_NAMES = new Set(['list_scripts', 'get_script', 'save_script', 'test_script']);
+const SCRIPT_PENDING_NOTE = 'waiting for you';
 
 /**
  * The key a script tool was called with, stamped on the block at the CALL: a save_script input
@@ -256,6 +270,8 @@ export function scriptResultNote(name, text, isError = false) {
   let parsed = null;
   try { parsed = JSON.parse(text); } catch { return null; }
   if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return null;
+  // G6: a pending call waits on the user's card (script-approval.mjs) — nothing was saved or run yet.
+  if (parsed.ok === true && parsed.pending === true) return n === 'save_script' ? { saved: SCRIPT_PENDING_NOTE } : { status: SCRIPT_PENDING_NOTE };
   if (n === 'save_script') return { saved: parsed.ok === true ? (parsed.created === true ? 'created' : 'updated') : 'not saved' };
   const r = parsed.ok === true && parsed.result && typeof parsed.result === 'object' ? parsed.result : null;
   if (!r) return { status: 'not run' };
@@ -287,6 +303,7 @@ export function scriptResultNote(name, text, isError = false) {
  */
 export function createTurnReducer({
   onFrame,
+  onLimit = null,   // the CLI's plan-limit reading (a `limit` event): kept for the usage rings, never rendered
   redact = redactAskText,
   now = Date.now,
   setTimeout: setT = globalThis.setTimeout,
@@ -302,8 +319,10 @@ export function createTurnReducer({
   onProjectProposal = null,      // propose_project_change RESULT (project card; same split)
   onWorkspaceProposal = null,    // propose_workspace_change RESULT (workspace card; same split)
   onActionsProposal = null,      // propose_actions_change RESULT (actions card; same split)
+  onMcpProposal = null,          // propose_mcp_change RESULT (MCP card; the parent re-validates the input)
   onWebProposal = null,          // propose_web_access RESULT (web card; same split)
   onScopeSwitch = null,          // propose_scope_switch RESULT (P4: the scope ask card; same split)
+  onQuestion = null,             // ask_question RESULT (freeform chat D5: the question card; same split)
   onScheduleMutation = null,     // a direct schedule write succeeded in the MCP child
   onTrackRun = null,
   onRunCommand = null,           // run_command RESULT (#574): the command card
@@ -318,7 +337,9 @@ export function createTurnReducer({
   onMemoryMutation = null,
   onMemoryRead = null,           // read_memory RESULT → { scope, projectKey, name, layer } (memory usage counts; never the body)
   onScriptMutation = null,        // save_script RESULT { ok: true, key, created } → { key, action }
+  onScriptApproval = null,        // G6: save_script / draft test_script RESULT { ok: true, pending: true } → the approval card
   onComposerResult = null,     // Workflows chat: edit_canvas / build_workflow / draft_* RESULT → a composer card (turn.mjs)
+  onDesignAction = null,       // Design chat: start_design_build / change_design / design_questions RESULT → the parent acts (turn.mjs)
   estimateLiveCost = null,
   attachmentNames = {},
   resolveCost = null,
@@ -648,7 +669,7 @@ export function createTurnReducer({
     if (isError || !SCRIPT_WRITE_TOOLS.has(name) || typeof onScriptMutation !== 'function') return;
     try {
       const parsed = JSON.parse(text);
-      if (!parsed || parsed.ok !== true || typeof parsed.key !== 'string' || !parsed.key) return;
+      if (!parsed || parsed.ok !== true || parsed.pending === true || typeof parsed.key !== 'string' || !parsed.key) return;
       onScriptMutation({ key: parsed.key, action: parsed.created === true ? 'created' : 'updated' });
     } catch { /* unparseable result — no poke; the next open refetches anyway */ }
   }
@@ -712,10 +733,28 @@ export function createTurnReducer({
           if (ret && typeof ret.then === 'function') pendingHooks.push(ret.then(() => {}, () => { reducerErrors += 1; }));
         } catch { reducerErrors += 1; }
       }
+      if (SCRIPT_APPROVAL_TOOLS.has(b.name) && !c.is_error && typeof onScriptApproval === 'function') {
+        // The parent mints the card from the INPUT only when the child said pending (script-approval.mjs).
+        let pending = false;
+        try { const parsed = JSON.parse(text); pending = parsed?.ok === true && parsed.pending === true; } catch { pending = false; }
+        if (pending) {
+          try {
+            const ret = onScriptApproval({ toolUseId: b.id, name: short(b.name), input: fullInputs.get(b.id) ?? {} });
+            if (ret && typeof ret.then === 'function') pendingHooks.push(ret.then(() => {}, () => { reducerErrors += 1; }));
+          } catch { reducerErrors += 1; }
+        }
+      }
       if (COMPOSER_CARD_TOOLS.has(b.name) && typeof onComposerResult === 'function') {
         // The RAW result text: the parent builds the card from what the child simulated and validated (D13).
         try {
           const ret = onComposerResult({ toolUseId: b.id, name: b.name, text, isError: !!c.is_error });
+          if (ret && typeof ret.then === 'function') pendingHooks.push(ret.then(() => {}, () => { reducerErrors += 1; }));
+        } catch { reducerErrors += 1; }
+      }
+      if (DESIGN_ACTION_TOOLS.has(b.name) && typeof onDesignAction === 'function') {
+        // Main stream only (a sub-agent's result never gets here: the !isMain branch above continues). settle() awaits it.
+        try {
+          const ret = onDesignAction({ toolUseId: b.id, name: short(b.name), text, isError: !!c.is_error });
           if (ret && typeof ret.then === 'function') pendingHooks.push(ret.then(() => {}, () => { reducerErrors += 1; }));
         } catch { reducerErrors += 1; }
       }
@@ -768,6 +807,13 @@ export function createTurnReducer({
           if (ret && typeof ret.then === 'function') pendingHooks.push(ret.then(() => {}, () => { reducerErrors += 1; }));
         } catch { reducerErrors += 1; }
       }
+      if (b.name === 'mcp__worca__ask_question' && typeof onQuestion === 'function') {
+        // Same split as the scope card: the parent re-validates the INPUT and mints the question card (question-card.mjs).
+        try {
+          const ret = onQuestion({ toolUseId: b.id, input: fullInputs.get(b.id) ?? {}, text, isError: !!c.is_error });
+          if (ret && typeof ret.then === 'function') pendingHooks.push(ret.then(() => {}, () => { reducerErrors += 1; }));
+        } catch { reducerErrors += 1; }
+      }
       if (b.name === 'mcp__worca__propose_clone_project' && typeof onCloneProposal === 'function') {
         // Same split as the model card: the parent re-validates the INPUT and adds how GitHub is reached (clone-proposal.mjs).
         try {
@@ -793,6 +839,13 @@ export function createTurnReducer({
         // Same split as the workspace card: the parent re-validates the INPUT against the stored config (actions-proposal.mjs).
         try {
           const ret = onActionsProposal({ toolUseId: b.id, input: fullInputs.get(b.id) ?? {}, text, isError: !!c.is_error });
+          if (ret && typeof ret.then === 'function') pendingHooks.push(ret.then(() => {}, () => { reducerErrors += 1; }));
+        } catch { reducerErrors += 1; }
+      }
+      if (b.name === 'mcp__worca__propose_mcp_change' && typeof onMcpProposal === 'function') {
+        // Same split as the actions card: the parent re-validates the INPUT against the registry (mcp-proposal.mjs).
+        try {
+          const ret = onMcpProposal({ toolUseId: b.id, input: fullInputs.get(b.id) ?? {}, text, isError: !!c.is_error });
           if (ret && typeof ret.then === 'function') pendingHooks.push(ret.then(() => {}, () => { reducerErrors += 1; }));
         } catch { reducerErrors += 1; }
       }
@@ -864,7 +917,8 @@ export function createTurnReducer({
   function handle(evt) {
     if (!evt || typeof evt !== 'object') return;
     if (!isNormalized(evt)) { for (const n of normalize(evt)) handle(n); return; }
-    if (evt.type === 'compact') return;                                   // Run telemetry's, never a chat's
+    if (evt.type === 'compact' || evt.type === 'toolInput') return;       // Run telemetry's and Design's, never a chat's
+    if (evt.type === 'limit') { if (onLimit) onLimit(evt); return; }      // the usage rings' reading, never a chat line
     if (!labels.length) label('Thinking');
     const isMain = (evt.parentId ?? null) === null;
     switch (evt.type) {

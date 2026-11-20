@@ -13,6 +13,12 @@
 //   IncomingMessage   = { chatId, userId, text, meta } (platform payloads stay
 //                       in the worker — no `raw` across the pipe: size + secret
 //                       hygiene, deliberate deviation from the old adapter.js)
+// v2 additive: optional `controls`, `send.options`, `interaction`/`interaction-reply` frames — only for `interactive` channels
+// v2 additive (chat context): optional inbound `attachments`, `replyTo`, `history` and the `history` host frame
+// v2 additive (live status): the `typing` host frame (start / stop the platform's typing indicator in one chat)
+// v2 additive (worker file fetch): an attachment may carry an opaque `ref` (the worker downloads it, with its own
+// platform credential, when the host sends a `file` frame; the bytes come back as `file-chunk` frames) or
+// `unavailable` (listed by name with the reason, never downloaded)
 
 export const MESSAGE_SEGMENT_KINDS = ['text', 'bold', 'code', 'code_block', 'link', 'markdown'];
 export const SEVERITY_LEVELS = ['info', 'success', 'warning', 'error'];
@@ -28,8 +34,84 @@ export const MAX_FRAME_BYTES = 1024 * 1024;
 /** Op/send error kinds — same vocabulary as PluginOpError (plugin spec §11). */
 export const ERROR_KINDS = ['auth', 'rate-limit', 'network', 'plugin', 'timeout', 'protocol'];
 
-export const HOST_FRAMES = ['hello', 'send', 'webhook', 'config', 'ping', 'shutdown'];
-export const WORKER_FRAMES = ['ready', 'status', 'inbound', 'send-result', 'webhook-result', 'state-delta', 'pong', 'log'];
+export const HOST_FRAMES = ['hello', 'send', 'webhook', 'config', 'ping', 'shutdown', 'interaction-reply', 'react', 'history', 'typing', 'file'];
+export const WORKER_FRAMES = ['ready', 'status', 'inbound', 'send-result', 'webhook-result', 'state-delta', 'pong', 'log', 'interaction', 'file-chunk'];
+
+/** Native controls (interactive channels only). Executable controls carry a host-issued opaque `ref`; the platform
+ *  echoes it back in an `interaction` frame. Links carry no ref and execute nothing. */
+export const CONTROL_KINDS = ['button', 'link', 'select'];
+export const BUTTON_STYLES = ['primary', 'secondary', 'success', 'danger'];
+export const INTERACTION_KINDS = ['button', 'select', 'modal'];
+export const CONTROL_REF_RE = /^[A-Za-z0-9_-]{16,64}$/;
+const MODAL_FIELD_ID_RE = /^[a-z][a-z0-9_]{0,31}$/;
+/** A chat id in an interaction or a react frame. Teams reply-chain ids (`19:…@thread.tacv2;messageid=…`) run past 64. */
+export const MAX_CHAT_ID = 256;
+export const CONTROL_LIMITS = Object.freeze({
+  controls: 10, selects: 1, selectOptions: 25, label: 80, optionValue: 100, optionLabel: 100, description: 100,
+  placeholder: 100, url: 512, modalTitle: 45, modalFields: 5, modalFieldLabel: 45, modalFieldMax: 4000,
+  interactionValues: 25, fieldValue: 4000, replyText: 2000,
+});
+const L = CONTROL_LIMITS;
+const str = (v, max, min = 1) => typeof v === 'string' && v.length >= min && v.length <= max;
+
+function isValidModal(m) {
+  if (!m || typeof m !== 'object' || !str(m.title, L.modalTitle)) return false;
+  if (!Array.isArray(m.fields) || m.fields.length < 1 || m.fields.length > L.modalFields) return false;
+  return m.fields.every((f) => f && typeof f === 'object' && typeof f.id === 'string' && MODAL_FIELD_ID_RE.test(f.id)
+    && str(f.label, L.modalFieldLabel) && (f.style === 'short' || f.style === 'paragraph')
+    && typeof f.required === 'boolean' && Number.isInteger(f.maxLength) && f.maxLength >= 1 && f.maxLength <= L.modalFieldMax);
+}
+
+export function isValidControl(c) {
+  if (!c || typeof c !== 'object' || !CONTROL_KINDS.includes(c.kind)) return false;
+  if (c.kind === 'link') {
+    if (!str(c.label, L.label) || !str(c.url, L.url)) return false;
+    try { const u = new URL(c.url); return u.protocol === 'https:' || u.protocol === 'http:'; } catch { return false; }
+  }
+  if (typeof c.ref !== 'string' || !CONTROL_REF_RE.test(c.ref)) return false;
+  if (c.kind === 'button') {
+    return str(c.label, L.label) && BUTTON_STYLES.includes(c.style) && (c.modal === undefined || isValidModal(c.modal));
+  }
+  if (c.placeholder !== undefined && !str(c.placeholder, L.placeholder)) return false;
+  if (!Array.isArray(c.options) || c.options.length < 1 || c.options.length > L.selectOptions) return false;
+  const seen = new Set();
+  for (const o of c.options) {
+    if (!o || typeof o !== 'object' || !str(o.value, L.optionValue) || !str(o.label, L.optionLabel)) return false;
+    if (o.description !== undefined && !str(o.description, L.description)) return false;
+    if (seen.has(o.value)) return false;
+    seen.add(o.value);
+  }
+  return true;
+}
+
+export function isValidControls(list) {
+  if (!Array.isArray(list) || list.length > L.controls) return false;
+  if (list.filter((c) => c && c.kind === 'select').length > L.selects) return false;
+  return list.every(isValidControl);
+}
+
+/** send.options: at most one of edit {messageId} | thread {fromMessageId, name} (start a thread off a message). */
+export function isValidSendOptions(o) {
+  if (!o || typeof o !== 'object' || Array.isArray(o)) return false;
+  const keys = Object.keys(o);
+  if (keys.length !== 1) return false;
+  if (keys[0] === 'edit') return !!o.edit && typeof o.edit === 'object' && str(o.edit.messageId, 64);
+  if (keys[0] === 'thread') return !!o.thread && typeof o.thread === 'object' && str(o.thread.fromMessageId, 64) && str(o.thread.name, 100);
+  return false;
+}
+
+/** One component interaction the worker already acknowledged. No platform token ever rides it. */
+export function isValidInteraction(e) {
+  if (!e || typeof e !== 'object') return false;
+  if (!str(e.id, 64) || !str(e.chatId, MAX_CHAT_ID) || typeof e.userId !== 'string') return false;
+  if (typeof e.ref !== 'string' || !CONTROL_REF_RE.test(e.ref) || !INTERACTION_KINDS.includes(e.kind)) return false;
+  if (e.values !== undefined && !(Array.isArray(e.values) && e.values.length <= L.interactionValues && e.values.every((v) => str(v, L.optionValue)))) return false;
+  if (e.fields !== undefined) {
+    if (!e.fields || typeof e.fields !== 'object' || Array.isArray(e.fields)) return false;
+    for (const [k, v] of Object.entries(e.fields)) if (!MODAL_FIELD_ID_RE.test(k) || !str(v, L.fieldValue, 0)) return false;
+  }
+  return e.meta === undefined || (e.meta !== null && typeof e.meta === 'object');
+}
 
 export function isValidSegment(seg) {
   if (!seg || typeof seg !== 'object') return false;
@@ -41,7 +123,56 @@ export function isValidMessage(msg) {
   if (!msg || typeof msg !== 'object') return false;
   if (msg.title !== null && typeof msg.title !== 'string') return false;
   if (!Array.isArray(msg.body) || !msg.body.every(isValidSegment)) return false;
-  return SEVERITY_LEVELS.includes(msg.severity);
+  return SEVERITY_LEVELS.includes(msg.severity) && (msg.controls === undefined || isValidControls(msg.controls));
+}
+
+/** Chat context around an inbound message (v2 additive, every field optional): the files on it, the message it replies
+ *  to and recent channel history. The host validates all of it and treats the content as untrusted DATA: it is quoted
+ *  to the model, never obeyed. A worker that sends none behaves exactly as before. */
+export const INBOUND_LIMITS = Object.freeze({
+  attachments: 10, attachmentName: 255, contentType: 128, url: 2048, attachmentSize: 2 ** 40,
+  author: 100, text: 4000, at: 40, link: 512, history: 50, unavailable: 200,
+});
+const IL = INBOUND_LIMITS;
+const httpsUrl = (v, max) => {
+  if (!str(v, max)) return false;
+  try { return new URL(v).protocol === 'https:'; } catch { return false; }
+};
+
+/** An attachment the worker downloads itself: an opaque id it minted (never a URL, never a credential). */
+export const FILE_REF_RE = /^[A-Za-z0-9_-]{16,128}$/;
+/** Worker file fetch: data bytes per `file-chunk` frame (its base64 stays under MAX_FRAME_BYTES), the largest file a
+ *  host may ask for, and the worker's own deadline for one download. */
+export const FILE_LIMITS = Object.freeze({ chunkBytes: 512 * 1024, maxBytes: 100 * 1024 * 1024, minTimeoutMs: 1000, maxTimeoutMs: 120_000 });
+const FILE_CHUNK_B64_MAX = Math.ceil(FILE_LIMITS.chunkBytes / 3) * 4;
+const B64_RE = /^[A-Za-z0-9+/]*={0,2}$/;
+
+/** One file on a message, from exactly one source: `url` (the host downloads it, only from the plugin's declared
+ *  attachmentHosts), `ref` (the worker downloads it on a `file` request) or `unavailable` (listed with that reason). */
+export function isValidAttachmentRef(a) {
+  if (!a || typeof a !== 'object' || Array.isArray(a)) return false;
+  if (!str(a.name, IL.attachmentName) || !Number.isSafeInteger(a.size) || a.size < 0 || a.size > IL.attachmentSize) return false;
+  if (!(a.contentType === undefined || a.contentType === null || str(a.contentType, IL.contentType))) return false;
+  const sources = (a.url !== undefined) + (a.ref !== undefined) + (a.unavailable !== undefined);
+  if (sources !== 1) return false;
+  if (a.url !== undefined) return httpsUrl(a.url, IL.url);
+  if (a.ref !== undefined) return typeof a.ref === 'string' && FILE_REF_RE.test(a.ref);
+  return str(a.unavailable, IL.unavailable);
+}
+const isValidAttachmentList = (list) => Array.isArray(list) && list.length <= IL.attachments && list.every(isValidAttachmentRef);
+
+/** A quoted message (`replyTo`, a `history` entry): who wrote it, when, its text, its link and its files. */
+export function isValidQuotedMessage(q) {
+  return !!q && typeof q === 'object' && !Array.isArray(q)
+    && str(q.author, IL.author) && str(q.text, IL.text, 0)
+    && str(q.at, IL.at) && Number.isFinite(Date.parse(q.at))
+    && (q.link === undefined || q.link === null || httpsUrl(q.link, IL.link))
+    && (q.attachments === undefined || isValidAttachmentList(q.attachments));
+}
+
+/** A history list (oldest first), from an inbound frame or a `history` RPC answer. */
+export function isValidHistory(list) {
+  return Array.isArray(list) && list.length <= IL.history && list.every(isValidQuotedMessage);
 }
 
 export function isValidIncoming(inc) {
@@ -49,7 +180,16 @@ export function isValidIncoming(inc) {
   return typeof inc.chatId === 'string' && inc.chatId !== ''
     && typeof inc.userId === 'string'
     && typeof inc.text === 'string'
-    && (inc.meta === undefined || (inc.meta !== null && typeof inc.meta === 'object'));
+    && (inc.meta === undefined || (inc.meta !== null && typeof inc.meta === 'object'))
+    && (inc.attachments === undefined || isValidAttachmentList(inc.attachments))
+    && (inc.replyTo === undefined || isValidQuotedMessage(inc.replyTo))
+    && (inc.history === undefined || isValidHistory(inc.history));
+}
+
+/** The message without its chat context: what a worker still delivers when only the context was refused. */
+export function withoutInboundContext(inc) {
+  const { attachments, replyTo, history, ...rest } = inc || {};
+  return rest;
 }
 
 /** Structural check of any protocol frame (either direction). Loose by design:
@@ -65,7 +205,36 @@ export function isValidFrame(frame) {
         && !!frame.config && typeof frame.config === 'object'
         && !!frame.state && typeof frame.state === 'object';
     case 'send':
-      return typeof frame.id === 'string' && typeof frame.chatId === 'string' && isValidMessage(frame.message);
+      return typeof frame.id === 'string' && typeof frame.chatId === 'string' && isValidMessage(frame.message)
+        && (frame.options === undefined || isValidSendOptions(frame.options));
+    case 'interaction-reply':
+      return typeof frame.id === 'string' && typeof frame.interactionId === 'string' && frame.interactionId !== ''
+        && typeof frame.text === 'string' && frame.text.length >= 1 && frame.text.length <= CONTROL_LIMITS.replyText;
+    case 'react':   // v2 interactive: add/remove the bot's OWN reaction on one message
+      return typeof frame.id === 'string'
+        && typeof frame.chatId === 'string' && frame.chatId !== '' && frame.chatId.length <= MAX_CHAT_ID
+        && typeof frame.messageId === 'string' && frame.messageId !== '' && frame.messageId.length <= 64
+        && typeof frame.emoji === 'string' && frame.emoji !== '' && frame.emoji.length <= 32
+        && typeof frame.on === 'boolean';
+    case 'history':   // v2 interactive (chat context): the recent messages of one chat before one message
+      return typeof frame.id === 'string'
+        && typeof frame.chatId === 'string' && frame.chatId !== '' && frame.chatId.length <= MAX_CHAT_ID
+        && typeof frame.before === 'string' && frame.before !== '' && frame.before.length <= 64
+        && Number.isInteger(frame.limit) && frame.limit >= 1 && frame.limit <= INBOUND_LIMITS.history;
+    case 'typing':   // v2 interactive (live status): start (`on`) or stop the typing indicator in one chat; the worker refreshes it
+      return typeof frame.id === 'string'
+        && typeof frame.chatId === 'string' && frame.chatId !== '' && frame.chatId.length <= MAX_CHAT_ID
+        && typeof frame.on === 'boolean';
+    case 'file':   // v2 (worker file fetch): the bytes of one attachment the worker announced with `ref`
+      return typeof frame.id === 'string' && typeof frame.ref === 'string' && FILE_REF_RE.test(frame.ref)
+        && Number.isSafeInteger(frame.maxBytes) && frame.maxBytes >= 1 && frame.maxBytes <= FILE_LIMITS.maxBytes
+        && Number.isInteger(frame.timeoutMs) && frame.timeoutMs >= FILE_LIMITS.minTimeoutMs && frame.timeoutMs <= FILE_LIMITS.maxTimeoutMs;
+    case 'file-chunk':   // worker → host: one slice of a `file` answer, in order from seq 0; a send-result ends it
+      return typeof frame.id === 'string' && Number.isInteger(frame.seq) && frame.seq >= 0
+        && typeof frame.dataB64 === 'string' && frame.dataB64.length >= 1 && frame.dataB64.length <= FILE_CHUNK_B64_MAX
+        && B64_RE.test(frame.dataB64);
+    case 'interaction':
+      return isValidInteraction(frame.evt);
     case 'webhook':
       return typeof frame.id === 'string' && typeof frame.method === 'string'
         && typeof frame.path === 'string'

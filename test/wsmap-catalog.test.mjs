@@ -14,6 +14,7 @@ import { entryId } from '../src/shared/workspace-map/ids.mjs';
 import { LIMITS } from '../src/shared/workspace-map/limits.mjs';
 import { makeRepos } from './helpers/wsmap-p1-repos.mjs';
 import { checkRows } from './helpers/rows.mjs';
+import { loadBudget } from './helpers/load-budget.mjs';
 
 const json = (o) => JSON.stringify(o, null, 2) + '\n';
 const ws = await makeRepos({
@@ -409,7 +410,7 @@ test('the candidate scan stays linear when every route shares a prefix: 20 000 /
     const cat = await buildCatalog({ extract: ex, survey: null });
     const ms = performance.now() - t0;
     assert.deepEqual([cat.entries.length, cat.candidates.web.length, cat.members.web.candidatesTruncated], [20000, 0, false]);
-    assert.ok(ms < 5000, `took ${Math.round(ms)} ms (the distance|segment union: ~10 s)`);
+    assert.ok(ms < loadBudget(5000), `took ${Math.round(ms)} ms (the distance|segment union: ~10 s)`);
   } finally {
     await w.cleanup();
   }

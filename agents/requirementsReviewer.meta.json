@@ -1,0 +1,28 @@
+{
+  "key": "requirementsReviewer",
+  "metaVersion": 2,
+  "progressStage": "plan",
+  "mockRole": "requirements-review",
+  "promptHints": "Review the drafted REQUIREMENTS against the original request and the real codebase. Do NOT rewrite them. Only critical/major block.",
+  "wantsRequest": true,
+  "workspaceFanOut": true,
+  "workspaceStrategy": "explore",
+  "verdict": { "filename": "requirements-review-cycle{cycle}.json" },
+  "inputs": [{ "id": "requirements", "type": "md" }],
+  "outputs": [
+    { "id": "review", "type": "md", "when": "blocking", "filename": "{base}-requirements-review.md", "store": "run" },
+    { "id": "pass", "type": "void", "when": "clean" }
+  ],
+  "domain": "coding",
+  "displayName": "Review requirements",
+  "description": "Reviews the drafted requirements from one perspective: what is missing, unclear or not testable.",
+  "color": "amber",
+  "icon": "<path d=\"M10.5 4a6.5 6.5 0 1 0 0 13 6.5 6.5 0 0 0 0-13Z\"/><path d=\"M15.5 15.5L21 21\" stroke-linecap=\"round\"/><path d=\"M8 10.5h5\" stroke-linecap=\"round\"/>",
+  "agentFile": "worca-cc-requirements-reviewer.md",
+  "runnerType": "verifier",
+  "fanOut": true,
+  "asksQuestions": true,
+  "questionsLocked": false,
+  "questionsDefault": false,
+  "order": 79
+}

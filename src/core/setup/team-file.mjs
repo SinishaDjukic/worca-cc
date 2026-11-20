@@ -11,6 +11,7 @@ import { homedir } from 'node:os';
 import { normalizePolicyDoc, looksLikeSecret, POLICY_SCHEMA, FIELDS } from '../policy/registry.mjs';
 import { settingsFile } from '../settings.mjs';
 import { mapUpstreamModel, shareUpstream, MODEL_ROLES } from '../model-roles.mjs';
+import { TEAM_ROLE_HARNESSES } from '../../shared/model-roles.mjs';
 
 export const TEAM_SETUP_FILE = 'team-setup.json';
 export const TEAM_SETUP_MAX_BYTES = 64 * 1024;
@@ -208,6 +209,8 @@ export function buildTeamSetup({ settings = {}, catalog = [] } = {}) {
   for (const [harness, picks] of Object.entries(isObj(settings.modelRoles) ? settings.modelRoles : {})) {
     for (const role of MODEL_ROLES) {
       const p = picks?.[role]; if (!isObj(p) || typeof p.model !== 'string' || !p.model.trim()) continue;
+      // A team setup carries Claude's and Codex's roles only (policy registry 'roles'): another engine's would refuse it.
+      if (!TEAM_ROLE_HARNESSES.includes(harness)) { left.push(`models.roles.${harness}.${role}: a team setup shares Claude's and Codex's roles only — left out`); continue; }
       const up = shareUpstream(p.model, catalog);
       if (!up) { left.push(`models.roles.${harness}.${role}: ${p.model} is not a model every machine knows — left out`); continue; }
       (roles[harness] ||= {})[role] = { model: up, ...(p.effort ? { effort: p.effort } : {}) };

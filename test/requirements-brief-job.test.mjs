@@ -8,7 +8,8 @@ import { join } from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { useTempHome } from './helpers/temp-home.mjs';
 import { prepare } from '../src/core/db.mjs';
-import { getBrief, setBriefSections, beginBrief, setContext } from '../src/core/requirements/store.mjs';
+import { getBrief, setBriefSections, beginBrief, setContext, insertAttachment, mintAttachmentId, updateAttachment } from '../src/core/requirements/store.mjs';
+import { REQUIREMENTS_READ_DENY_RULES } from '../src/core/ask/deny-rules.mjs';
 import { recordRequirementsCostDelta } from '../src/core/cost-budget.mjs';
 import { REPO_LOOK_TOOLS } from '../src/core/auto/classify.mjs';
 import { commitOf, defaultBranchRef } from '../src/core/worktree.mjs';
@@ -145,10 +146,10 @@ test('refusals write nothing and call nothing: switch off, no repository, no def
   const k1 = key();
   setContext('project', k1, { lookAtCode: false });
   await refused('project', k1, deps({ runner, lk, projects: [project(k1, r.dir)] }), 'CONFLICT',
-    'Looking at the code is off for this project. Turn it on under Your notes for Worca.');
+    'Code looks are off for this project. Turn them on under Your notes for Worca.');
   setContext('workspace', 'ws-off', { lookAtCode: false });
   await refused('workspace', 'ws-off', deps({ runner, lk, ws: { id: 'ws-off', name: 'WS', description: '', members: [{ projectKey: 'a', projectName: 'A', projectDir: r.dir }] } }),
-    'CONFLICT', 'Looking at the code is off for this workspace. Turn it on under Your notes for Worca.');
+    'CONFLICT', 'Code looks are off for this workspace. Turn them on under Your notes for Worca.');
 
   const NO_REPO = 'There is no repository to look at.';
   const k2 = key();
@@ -221,6 +222,7 @@ test('a look reads the default branch, not the checked-out one: the call, sectio
   // A1.1's call path (design §9): replace mode and the hermetic flags (runClaude puts the host-guard preamble first)
   assert.equal(call.systemPromptMode, 'replace');
   assert.deepEqual(call.settingSources, ['project']);
+  assert.equal(call.noSessionPersistence, true, 'A8 D15: the look reads the documents\' summaries, so no session transcript');
   assert.equal(call.disableSlashCommands, true);
   assert.equal(call.strictMcpConfig, true);
   assert.equal(call.cwd, lk.lookDir);
@@ -416,11 +418,11 @@ test('an empty reply: "Worca ran out of steps…", the earlier brief kept, the c
 test('a call that throws after spending books what it spent; the checkout is closed', async () => {
   const r = repo();
   const lk = looks();
-  const runner = fakeRunner([{ costFirst: 0.07, error: new Error('the model is overloaded') }]);
+  const runner = fakeRunner([{ costFirst: 0.07, error: new Error('the model crashed') }]);
   const k = key();
   await (await makeBrief('project', k, {}, deps({ runner, lk, projects: [project(k, r.dir)] }))).job;
   const b = getBrief('project', k);
-  assert.deepEqual({ code: b.error.code, message: b.error.message }, { code: 'FAILED', message: 'the model is overloaded' });
+  assert.deepEqual({ code: b.error.code, message: b.error.message }, { code: 'FAILED', message: 'the model crashed' });
   assert.equal(b.costUsd, 0.07);
   assert.deepEqual(ledger(b.id), [{ feature_seq: 0, brief_id: b.id, amount_usd: 0.07, model: 'claude-opus-5-5' }]);
   assert.equal(lk.closed, 1);
@@ -522,7 +524,7 @@ test('recoverBriefs: a brief left making by a restart gets INTERRUPTED; a runnin
   const b = getBrief('project', k);
   assert.equal(b.status, 'empty');
   assert.deepEqual({ code: b.error.code, message: b.error.message },
-    { code: 'INTERRUPTED', message: 'The look at the code did not finish because Worca restarted. Try again.' });
+    { code: 'INTERRUPTED', message: 'The code look did not finish because Worca restarted. Try again.' });
   assert.equal(getBrief('project', k2).status, 'making');
   assert.equal(getBrief('project', k2).error, null);
   gate.resolve();
@@ -812,7 +814,7 @@ test('the switch turned off while the target is read refuses the press, writing 
   const runner = fakeRunner([]);
   const listProjects = async () => { setContext('project', k, { lookAtCode: false }); return [project(k, r.dir)]; };
   await assert.rejects(makeBrief('project', k, {}, deps({ runner, listProjects })),
-    (e) => e.code === 'CONFLICT' && e.message === 'Looking at the code is off for this project. Turn it on under Your notes for Worca.');
+    (e) => e.code === 'CONFLICT' && e.message === 'Code looks are off for this project. Turn them on under Your notes for Worca.');
   assert.equal(getBrief('project', k), null);
   assert.equal(runner.calls.length, 0);
 });
@@ -865,4 +867,43 @@ test('staleness: the memo keeps the commits, not the areas; edits and added area
   const s = await briefStaleness({ ...brief, sections: { ...brief.sections, areas: [renamed, ACCOUNTS, added] } }, counting);
   assert.deepEqual(s.areas, ['Order history', 'Orders: Gift']);
   assert.equal(n, 1, 'the git part came from the memo every time');
+});
+
+test('A8: the brief look carries Ask\'s deny rules (its documents are third-party material)', async () => {
+  const r = repo();
+  const lk = looks();
+  const runner = fakeRunner([goodReply(lk.lookDir)]);
+  const k = key();
+  await (await makeBrief('project', k, {}, deps({ runner, lk, projects: [project(k, r.dir)] }))).job;
+  assert.deepEqual(runner.calls[0].permissionRules, { deny: [...REQUIREMENTS_READ_DENY_RULES] });
+  assert.equal('readGuard' in runner.calls[0], false, 'a look reads its checkout: no one-file guard');
+});
+
+test('A8 D6: a refresh hands the brief\'s documents to the look as <brief_documents>; a first look has none', async () => {
+  const r = repo();
+  const lk = looks();
+  const runner = fakeRunner([goodReply(lk.lookDir), goodReply(lk.lookDir)]);
+  const k = key();
+  const d = deps({ runner, lk, projects: [project(k, r.dir)] });
+  await (await makeBrief('project', k, {}, d)).job;
+  const doc = insertAttachment({ id: mintAttachmentId(), ownerType: 'brief', ownerId: getBrief('project', k).id, name: 'tone.md', kind: 'text',
+    mime: 'text/markdown', bytes: 3, sha256: 'tone1' });
+  updateAttachment(doc.id, { status: 'done', summary: 'Friendly and short.' });
+  await (await makeBrief('project', k, {}, d)).job;
+  assert.equal(runner.calls[0].prompt.includes('<brief_documents>'), false);
+  assert.match(runner.calls[1].prompt, /<brief_documents>\ntone\.md: Friendly and short\.\n<\/brief_documents>\n\nThese documents are the product owner's material/);
+});
+
+test('A8 D13: a brief item the reply gives a document as its source keeps it, with the listed spelling', async () => {
+  const r = repo();
+  const lk = looks();
+  const runner = fakeRunner([goodReply(lk.lookDir), goodReply(lk.lookDir, { users: [{ name: 'Shopper', can: 'orders.', source: 'TONE.md' }] })]);
+  const k = key();
+  const d = deps({ runner, lk, projects: [project(k, r.dir)] });
+  await (await makeBrief('project', k, {}, d)).job;
+  const doc = insertAttachment({ id: mintAttachmentId(), ownerType: 'brief', ownerId: getBrief('project', k).id, name: 'tone.md', kind: 'text',
+    mime: 'text/markdown', bytes: 3, sha256: 'tone2' });
+  updateAttachment(doc.id, { status: 'done', summary: 'Friendly.' });
+  await (await makeBrief('project', k, {}, d)).job;
+  assert.equal(getBrief('project', k).sections.users[0].source, 'tone.md');
 });

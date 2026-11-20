@@ -9,6 +9,7 @@ export const KIND_LABELS = Object.freeze({
   workflow: 'Approving a proposed workflow',
   recovery: 'A step failed: retry or give up',
   'cost-cap': "Continuing past the team's cost cap",   // a record kind only (run-harness.mjs), not in NIGHT_KINDS
+  plan: 'Approving a plan',                            // a record kind only too: no "Always wait for me on…" tick
 });
 export const kindLabel = (k) => KIND_LABELS[k] || String(k);
 
@@ -21,6 +22,7 @@ export const KIND_SHORT = Object.freeze({
   workflow: 'Proposed workflow',
   recovery: 'Failed step',
   'cost-cap': "Team's cost cap",
+  plan: 'Plan approval',
 });
 export const kindShort = (k) => KIND_SHORT[k] || String(k);
 
@@ -30,6 +32,7 @@ const OUTCOMES = Object.freeze({
   workflow: { accept: 'Accepted' },
   recovery: { retry: 'Retried', pause: 'Stopped retrying' },
   'cost-cap': { continue: 'Continued past the cap' },
+  plan: { approve: 'Approved' },
 });
 const LIMITS = Object.freeze({ maxDecisions: 'Paused: answer limit reached', spendCap: 'Paused: spending cap reached' });
 const sentence = (s) => {
@@ -105,7 +108,7 @@ export const FIELD_LABELS = Object.freeze({
   neverDecide: { label: 'Always wait for me on…', hint: 'Ticked kinds are never answered by worca, even while you are away. The run pauses on them.' },
   spendCapUsd: { label: 'Pause everything at', hint: 'Counted from the start of the current away stretch, across all projects. Not set = no cap.' },
   maxDecisions: { label: 'Pause a run after', hint: 'When worca has answered this many times on one run, the run pauses and waits for you.' },
-  maxExtraCycles: { label: 'Extra fix rounds in a review loop', hint: 'When critical or major issues remain, worca may ask for this many more fix rounds. After that it continues and flags it.' },
+  maxExtraCycles: { label: 'Extra fix rounds in a review loop', hint: 'When critical or major issues remain, worca may ask for this many more fix rounds (0 by default). After that it continues and flags it.' },
   allowCostCapOverride: { label: "May exceed the team's cost cap", hint: "Off: a run pauses at the team's soft cost cap while you are away. On: worca keeps going and flags it." },
   deciderModel: { label: 'Decided by', hint: 'The model worca uses when it weighs the options.' },
   deciderEffort: { label: 'Effort', hint: 'How hard that model thinks while it weighs the options. Higher costs more. Not set = medium.' },

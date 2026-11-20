@@ -1,0 +1,34 @@
+        <!-- ===== VIEW: TEAM METRICS ===== -->
+        <section class="view hidden" data-view="team-metrics">
+          <div class="topbar">
+            <div>
+              <div class="sub">Shared across the team from the <code>worca-metrics</code> branch · costs are Claude Code estimates, not billing</div>
+            </div>
+            <div class="sync-chip" id="tm-sync" hidden></div>
+          </div>
+          <div class="tm-filter">
+            <div class="select-wrap tm-scope-wrap"><select id="tm-scope" class="select" aria-label="Scope"></select></div>
+            <div class="tabs tm-tabs" id="tm-tabs" role="tablist" aria-label="Team metrics view">
+              <button type="button" class="tab on" role="tab" data-tm-tab="overview" aria-selected="true">Overview</button>
+              <button type="button" class="tab" role="tab" data-tm-tab="timeline" aria-selected="false">Timeline</button>
+            </div>
+            <div class="seg" id="tm-range" role="group" aria-label="Time range">
+              <button type="button" data-range="this-month">This month</button>
+              <button type="button" data-range="last-month">Last month</button>
+              <button type="button" data-range="quarter">Quarter</button>
+              <button type="button" data-range="year">Year</button>
+              <button type="button" data-range="all">All time</button>
+              <button type="button" data-range="custom">Custom</button>
+            </div>
+            <span class="tm-custom" id="tm-custom" hidden>
+              <input type="date" id="tm-from" class="input" aria-label="From" /> – <input type="date" id="tm-to" class="input" aria-label="To" />
+            </span>
+            <select id="tm-tag" class="select select-sm" aria-label="Filter by cost tag" hidden></select>
+          </div>
+          <div class="tm-active-filters" id="tm-filters" hidden></div>
+          <div id="tm-body"><small class="hint">Loading…</small></div>
+          <div id="tm-timeline" hidden></div>
+          <div id="tm-tip" class="chart-tip" hidden></div>
+        </section>
+        <!-- /view team-metrics -->
+

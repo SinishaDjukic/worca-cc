@@ -1,0 +1,64 @@
+/* ===================== Action feedback (#555, feedback.mjs) =====================
+   Words use --ink / --ink-2; tone colour is for the icon, the invalid border and the
+   done button only. Every status text here is ≥ 4.5:1 in both themes. */
+.toasts{position:fixed;right:20px;bottom:calc(var(--ask-dock-clearance) + env(safe-area-inset-bottom,0px));display:grid;gap:10px;
+  width:min(380px,calc(100vw - 32px));z-index:71;pointer-events:none;}
+.toasts:empty{display:none;}
+.toast{pointer-events:auto;background:var(--panel);color:var(--ink);border:1px solid var(--line-2);border-radius:var(--r-card);
+  box-shadow:var(--shadow-sheet);padding:12px 12px 12px 14px;display:grid;grid-template-columns:auto 1fr auto;gap:12px;
+  align-items:start;animation:toast-in .18s ease-out;}
+@keyframes toast-in{from{opacity:0;transform:translateY(8px);}to{opacity:1;transform:none;}}
+.toast .ti{width:26px;height:26px;border-radius:var(--r-sm);display:grid;place-items:center;}
+.toast .ti svg{width:15px;height:15px;}
+.toast.ok .ti{background:var(--green-bg);color:var(--green-ink);}
+.toast.err .ti{background:var(--red-bg);color:var(--red-ink);}
+.toast.warn .ti{background:var(--amber-bg);color:var(--amber-ink);}
+.toast.info .ti{background:var(--blue-bg);color:var(--blue-ink);}
+.toast .tb{min-width:0;display:grid;gap:3px;}
+.toast .tt{font-size:var(--fs-body);font-weight:600;line-height:1.35;overflow-wrap:anywhere;}
+.toast .td{font-size:13px;color:var(--ink-2);line-height:1.4;overflow-wrap:anywhere;}
+.toast .toast-act{justify-self:start;margin-top:6px;}
+.toast-x,.ca-x{display:grid;place-items:center;}
+.toast-x svg,.ca-x svg{width:14px;height:14px;}
+@media (max-width:760px){.toasts{left:12px;right:12px;width:auto;bottom:calc(84px + env(safe-area-inset-bottom,0px));}}
+
+/* (v4) Keyed on the state withButton paints, NOT on .btn: it also wraps .tm-check-now (.linkish).
+   (v5) Busy-and-disabled is (0,4,0), so it outranks any (0,3,0) disabled rule that comes later and
+   the busy button never sits at opacity .45. Done is (0,3,0) and never disabled; done:hover is
+   (0,4,0) and beats .btn-primary:hover:not(:disabled) (0,3,0). */
+.is-busy[data-fb-state="busy"]:not(.btn),.is-done[data-fb-state="done"]:not(.btn){display:inline-flex;align-items:center;gap:6px;}
+.is-busy[data-fb-state="busy"] .btn-spin{width:12px;height:12px;border-radius:50%;border:2px solid currentColor;border-right-color:transparent;
+  animation:ws-spin .8s linear infinite;flex:none;}
+.is-done[data-fb-state="done"] .btn-ic{width:13px;height:13px;flex:none;}
+/* After the spinner rule, at the same specificity, so it wins. */
+@media (prefers-reduced-motion:reduce){.toast{animation:none;}.is-busy[data-fb-state="busy"] .btn-spin{animation:none;}}
+.is-busy.is-busy[data-fb-state="busy"]:disabled{opacity:1;cursor:progress;transform:none;filter:none;}
+.is-done[data-fb-state="done"].is-done,.is-done[data-fb-state="done"].is-done:hover{background:var(--green-ink);border-color:var(--green-ink);
+  color:var(--on-ink);text-decoration:none;transform:none;box-shadow:none;cursor:default;}
+.linkish.is-done[data-fb-state="done"]{padding:2px 8px;border-radius:var(--r-ctrl);}
+
+.field-invalid,.field-invalid:focus{border-color:var(--red-ink)!important;box-shadow:0 0 0 1px var(--red-ink);}
+.field-invalid.field-invalid::placeholder{color:var(--ink-2);}   /* the field needs attention: its hint must be readable (the house placeholder grey misses 4.5:1 on the grey field) */
+/* --red-ink-strong: a field error now sits on the --bg canvas (Settings lost its white cards), where --red-ink is 4.26:1. */
+.field-error{flex-basis:100%;width:100%;font-size:var(--fs-body);line-height:1.4;color:var(--red-ink-strong);display:flex;gap:6px;align-items:flex-start;margin-top:6px;}
+.ac-field .field-error{margin-top:4px;}
+.field-error .fe-ic{width:14px;height:14px;flex:none;margin-top:1px;}
+
+.card-alert{display:grid;grid-template-columns:auto 1fr auto;gap:10px;align-items:start;border-radius:var(--r-ctrl);
+  padding:12px 14px;margin:14px 0 12px;background:var(--red-bg);color:var(--ink);}
+.card-alert.warn{background:var(--amber-bg);}
+.card-alert.info{background:var(--blue-bg);}
+.card-alert.ok{background:var(--green-bg);}
+.card-alert .ca-ic svg{width:18px;height:18px;}
+.card-alert.err .ca-ic{color:var(--red-ink);}
+.card-alert.warn .ca-ic{color:var(--amber-ink);}
+.card-alert.info .ca-ic{color:var(--blue-ink);}
+.card-alert.ok .ca-ic{color:var(--green-ink);}
+.card-alert .ca-body{display:grid;gap:2px;min-width:0;}
+.card-alert .ca-title{font-size:var(--fs-body);}
+.card-alert .ca-detail{font-size:13px;color:var(--ink-2);overflow-wrap:anywhere;}
+
+.dirty-mark{display:inline-flex;align-items:center;gap:6px;font-size:var(--fs-meta);color:var(--ink-2);margin-right:auto;}
+.dirty-mark[hidden]{display:none;}
+.dirty-dot{width:7px;height:7px;border-radius:50%;background:var(--amber);}
+

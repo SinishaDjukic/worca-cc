@@ -2,18 +2,19 @@
 // `upstream` on a global catalog entry and the `providers` settings key
 // (model-bridge-design.md §6): every §6.1 rejection, the minimal stored shape,
 // PATCH semantics, the lenient reader, provider defaults/masking/patching, the
-// terms acknowledgement, and the plugin-manifest / team-policy mirrors.
+// Copilot sign-in, and the plugin-manifest / team-policy mirrors.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtemp, readFile, rm } from 'node:fs/promises';
+import { mkdtemp, readFile, rm, mkdir, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { join, dirname } from 'node:path';
 import {
   settingsFile, listGlobalModels, addGlobalModel, updateGlobalModel,
   providerConfig, allProviders, updateProvider, providerSecretSet, resolveProviderSecret,
-  copilotTermsAcknowledged, acknowledgeCopilotTerms, clearCopilotSignIn, readSettings,
+  clearCopilotSignIn, readSettings,
 } from '../src/core/settings.mjs';
-import { assertModelUpstream, assertModelCapabilities, upstreamEnvConflict, bridgeExcludedTools, isTranslatedApi, UPSTREAM_APIS, COPILOT_TERMS_VERSION } from '../src/core/model-env.mjs';
+import { assertModelUpstream, assertModelCapabilities, upstreamEnvConflict, bridgeExcludedTools, isTranslatedApi, UPSTREAM_APIS } from '../src/core/model-env.mjs';
+import { providerReadiness } from '../src/core/bridge/registry.mjs';
 import { normalizeManifest } from '../src/core/plugin-manifest.mjs';
 import { normalizePolicyDoc } from '../src/core/policy/registry.mjs';
 
@@ -110,7 +111,7 @@ test('reader: a malformed upstream is dropped loudly, a clashing env key is drop
   });
 });
 
-test('providers: defaults, patch, delete, masking inputs, secrets and the terms acknowledgement', async () => {
+test('providers: defaults, patch, delete, masking inputs, secrets and clearing the Copilot sign-in', async () => {
   await withSandbox(async () => {
     assert.deepEqual(providerConfig('copilot'), { maxConcurrent: 4, accountType: 'individual' });
     assert.deepEqual(providerConfig('openai'), { maxConcurrent: 8, baseUrl: 'https://api.openai.com/v1' });
@@ -118,7 +119,6 @@ test('providers: defaults, patch, delete, masking inputs, secrets and the terms 
     assert.deepEqual(Object.keys(allProviders()), ['copilot', 'openai', 'anthropic']);
     assert.throws(() => providerConfig('nope'), /unknown provider/);
     assert.equal(providerSecretSet('copilot'), false);
-    assert.equal(copilotTermsAcknowledged(), false);
 
     const c = await updateProvider('copilot', { githubToken: ' gho_abc ', accountType: 'business', maxConcurrent: 2, login: 'octo' });
     assert.deepEqual(c, { maxConcurrent: 2, accountType: 'business', githubToken: 'gho_abc', login: 'octo' });
@@ -131,14 +131,11 @@ test('providers: defaults, patch, delete, masking inputs, secrets and the terms 
     await assert.rejects(updateProvider('openai', { baseUrl: 'nope' }), /baseUrl must be an http/);
     await assert.rejects(updateProvider('nope', {}), /unknown provider/);
 
-    await acknowledgeCopilotTerms(new Date('2026-09-20T10:00:00Z'));
-    assert.equal(copilotTermsAcknowledged(), true);
-    assert.equal(providerConfig('copilot').termsVersion, COPILOT_TERMS_VERSION);
     await clearCopilotSignIn();
     const after = providerConfig('copilot');
     assert.equal(after.githubToken, undefined);
     assert.equal(after.login, undefined);
-    assert.equal(after.acknowledgedTerms, '2026-09-20T10:00:00.000Z');   // the acknowledgement stays
+    await assert.rejects(updateProvider('copilot', { acknowledgedTerms: '2026-09-20T10:00:00Z' }), /unknown provider field "acknowledgedTerms"/);
 
     const o = await updateProvider('openai', { apiKey: '${OPENAI_KEY}', baseUrl: 'https://gw.example/v1/' });
     assert.equal(o.baseUrl, 'https://gw.example/v1');
@@ -147,6 +144,156 @@ test('providers: defaults, patch, delete, masking inputs, secrets and the terms 
     assert.equal(resolveProviderSecret('literal', {}), 'literal');
     await updateProvider('openai', { apiKey: null, baseUrl: '' });
     assert.equal(readSettings().providers.openai, undefined);
+  });
+});
+
+
+test('Copilot: signed in = ready; an old acknowledgement in settings.json loads silently and changes nothing', async () => {
+  await withSandbox(async () => {
+    const prevBroker = process.env.WORCA_BROKER_URL; delete process.env.WORCA_BROKER_URL;
+    const warns = []; const orig = console.warn; console.warn = (...a) => warns.push(a.join(' '));
+    try {
+      // Not signed in: the only Copilot readiness reason left.
+      assert.deepEqual(providerReadiness({ provider: 'copilot' }).reason, 'not_signed_in');
+      // Signed in, never acknowledged anything: ready.
+      await updateProvider('copilot', { githubToken: 'gho_abc' });
+      assert.deepEqual(providerReadiness({ provider: 'copilot' }), { ok: true });
+      assert.equal('acknowledgedTerms' in (await readRaw()).providers.copilot, false);
+      // A settings.json written by an older Worca still loads: the stale keys are ignored, never warned about.
+      await mkdir(dirname(settingsFile()), { recursive: true });
+      await writeFile(settingsFile(), JSON.stringify({ providers: { copilot: { githubToken: 'gho_old', acknowledgedTerms: '2026-01-01T00:00:00.000Z', termsVersion: 1 } } }));
+      assert.deepEqual(providerConfig('copilot'), { maxConcurrent: 4, accountType: 'individual', githubToken: 'gho_old' });
+      assert.deepEqual(providerReadiness({ provider: 'copilot' }), { ok: true });
+      // A later provider write keeps the file's other keys as they were (no migration, no rewrite of the old ones).
+      await updateProvider('copilot', { maxConcurrent: 2 });
+      assert.equal((await readRaw()).providers.copilot.termsVersion, 1);
+      assert.deepEqual(warns.filter((w) => /acknowledgedTerms|termsVersion/.test(w)), []);
+    } finally {
+      console.warn = orig;
+      if (prevBroker === undefined) delete process.env.WORCA_BROKER_URL; else process.env.WORCA_BROKER_URL = prevBroker;
+    }
+  });
+});
+
+test('copilot enterpriseHost: normalized on save; invalid forms refused with the field message; clearing works', async () => {
+  await withSandbox(async () => {
+    const c = await updateProvider('copilot', { accountType: 'ghe-com', enterpriseHost: ' https://ACME.ghe.com/ ' });
+    assert.deepEqual(c, { maxConcurrent: 4, accountType: 'ghe-com', enterpriseHost: 'acme.ghe.com' });
+    assert.deepEqual((await readRaw()).providers.copilot, { accountType: 'ghe-com', enterpriseHost: 'acme.ghe.com' });
+    for (const bad of ['acme.ghe.com/path', 'acme.ghe.com:443', 'http://acme.ghe.com', 'user@acme.ghe.com', 'github.com', 'ghe.com', 'api.acme.ghe.com', 5]) {
+      await assert.rejects(updateProvider('copilot', { enterpriseHost: bad }), /enterpriseHost must be a GHE\.com host like acme\.ghe\.com, with no path, port or credentials/, String(bad));
+    }
+    await assert.rejects(updateProvider('openai', { enterpriseHost: 'acme.ghe.com' }), /unknown provider field "enterpriseHost"/);
+    await updateProvider('copilot', { accountType: 'individual', enterpriseHost: null });
+    assert.equal(providerConfig('copilot').enterpriseHost, undefined);
+  });
+});
+
+test('ghe-com needs a host; a host needs ghe-com; switching to another type drops the host', async () => {
+  await withSandbox(async () => {
+    await assert.rejects(updateProvider('copilot', { accountType: 'ghe-com' }), /accountType ghe-com needs enterpriseHost/);
+    await assert.rejects(updateProvider('copilot', { enterpriseHost: 'acme.ghe.com' }), /enterpriseHost applies only to accountType ghe-com/);
+    await assert.rejects(updateProvider('copilot', { accountType: 'business', enterpriseHost: 'acme.ghe.com' }), /enterpriseHost applies only to accountType ghe-com/);
+    await updateProvider('copilot', { accountType: 'ghe-com', enterpriseHost: 'acme.ghe.com' });
+    await assert.rejects(updateProvider('copilot', { enterpriseHost: null }), /accountType ghe-com needs enterpriseHost/);
+    await updateProvider('copilot', { maxConcurrent: 2 });                              // an unrelated patch keeps the pair
+    assert.equal(providerConfig('copilot').enterpriseHost, 'acme.ghe.com');
+    await updateProvider('copilot', { accountType: 'enterprise' });                    // the type alone drops the host
+    assert.deepEqual((await readRaw()).providers.copilot, { accountType: 'enterprise', maxConcurrent: 2 });
+  });
+});
+
+test('changing the GitHub host signs out in the same write; individual↔business↔enterprise keeps the sign-in', async () => {
+  await withSandbox(async () => {
+    const signed = (extra = {}) => updateProvider('copilot', { githubToken: 'gho_a', login: 'octo', ...extra });
+    // individual → ghe-com
+    await signed();
+    let c = await updateProvider('copilot', { accountType: 'ghe-com', enterpriseHost: 'acme.ghe.com' });
+    assert.equal(c.githubToken, undefined); assert.equal(c.login, undefined);
+    // tenant A → B
+    await signed();
+    c = await updateProvider('copilot', { enterpriseHost: 'other.ghe.com' });
+    assert.equal(c.githubToken, undefined); assert.equal(c.enterpriseHost, 'other.ghe.com');
+    // same host again keeps the sign-in
+    await signed();
+    c = await updateProvider('copilot', { enterpriseHost: 'https://other.ghe.com' });
+    assert.equal(c.githubToken, 'gho_a');
+    // ghe-com → enterprise
+    c = await updateProvider('copilot', { accountType: 'enterprise' });
+    assert.equal(c.githubToken, undefined); assert.equal(c.login, undefined); assert.equal(c.enterpriseHost, undefined);
+    // individual ↔ business ↔ enterprise keep it
+    await signed();
+    for (const t of ['business', 'individual', 'enterprise']) {
+      c = await updateProvider('copilot', { accountType: t });
+      assert.equal(c.githubToken, 'gho_a', t);
+    }
+    assert.equal(c.login, 'octo');
+  });
+});
+
+test('a patch that sets githubToken and enterpriseHost together keeps the new token', async () => {
+  await withSandbox(async () => {
+    await updateProvider('copilot', { githubToken: 'gho_old', login: 'old' });
+    const c = await updateProvider('copilot', { accountType: 'ghe-com', enterpriseHost: 'acme.ghe.com', githubToken: 'gho_new', login: 'new' });
+    assert.equal(c.githubToken, 'gho_new'); assert.equal(c.login, 'new');
+    const d = await updateProvider('copilot', { enterpriseHost: 'b.ghe.com', githubToken: 'gho_b' });
+    assert.equal(d.githubToken, 'gho_b'); assert.equal(d.login, 'new');   // login not in the patch: only the token was replaced
+  });
+});
+
+test('a refused patch writes nothing (the stored block is byte-equal)', async () => {
+  await withSandbox(async () => {
+    await updateProvider('copilot', { githubToken: 'gho_a', login: 'octo', maxConcurrent: 3 });
+    const before = await readFile(settingsFile(), 'utf8');
+    for (const patch of [{ accountType: 'ghe-com' }, { enterpriseHost: 'acme.ghe.com' }, { accountType: 'ghe-com', enterpriseHost: 'nope' }, { maxConcurrent: 2, enterpriseHost: 'x' }]) {
+      await assert.rejects(updateProvider('copilot', patch));
+      assert.equal(await readFile(settingsFile(), 'utf8'), before);
+    }
+  });
+});
+
+test('dryRun applies the same rules and persists nothing', async () => {
+  await withSandbox(async () => {
+    await updateProvider('copilot', { githubToken: 'gho_a', login: 'octo' });
+    const before = await readFile(settingsFile(), 'utf8');
+    const c = await updateProvider('copilot', { accountType: 'ghe-com', enterpriseHost: 'acme.ghe.com' }, { dryRun: true });
+    assert.deepEqual(c, { maxConcurrent: 4, accountType: 'ghe-com', enterpriseHost: 'acme.ghe.com' });   // signed out in the preview too
+    await assert.rejects(updateProvider('copilot', { accountType: 'ghe-com' }, { dryRun: true }), /needs enterpriseHost/);
+    assert.equal(await readFile(settingsFile(), 'utf8'), before);
+  });
+});
+
+test('expectCopilotHost: a mismatch throws HOST_CHANGED and stores no token', async () => {
+  await withSandbox(async () => {
+    await updateProvider('copilot', { accountType: 'ghe-com', enterpriseHost: 'acme.ghe.com' });
+    const before = await readFile(settingsFile(), 'utf8');
+    for (const expect of [null, 'other.ghe.com']) {
+      await assert.rejects(updateProvider('copilot', { githubToken: 'gho_x' }, { expectCopilotHost: expect }), (e) => e.code === 'HOST_CHANGED' && /host changed during the sign-in/.test(e.message));
+    }
+    assert.equal(await readFile(settingsFile(), 'utf8'), before);
+    const ok = await updateProvider('copilot', { githubToken: 'gho_x' }, { expectCopilotHost: 'acme.ghe.com' });
+    assert.equal(ok.githubToken, 'gho_x');
+    await updateProvider('copilot', { accountType: 'individual' });
+    await assert.rejects(updateProvider('copilot', { githubToken: 'gho_y' }, { expectCopilotHost: 'acme.ghe.com' }), (e) => e.code === 'HOST_CHANGED');
+    assert.equal((await updateProvider('copilot', { githubToken: 'gho_y' }, { expectCopilotHost: null })).githubToken, 'gho_y');
+  });
+});
+
+test('sanitize: hand-edited ghe-com without a valid host stays ghe-com with no host (warns); a host under another type is ignored; sign-out still works', async () => {
+  await withSandbox(async () => {
+    const warns = []; const orig = console.warn; console.warn = (...a) => warns.push(a.join(' '));
+    try {
+      await mkdir(dirname(settingsFile()), { recursive: true });
+      await writeFile(settingsFile(), JSON.stringify({ providers: { copilot: { accountType: 'ghe-com', enterpriseHost: 'https://github.com', githubToken: 'gho_t' } } }));
+      assert.deepEqual(providerConfig('copilot'), { maxConcurrent: 4, accountType: 'ghe-com', githubToken: 'gho_t' });
+      assert.ok(warns.some((w) => /enterpriseHost.*must be a GHE\.com host like acme\.ghe\.com/.test(w)));
+      await clearCopilotSignIn();                                                         // logout is not blocked by the bad host
+      assert.equal(providerConfig('copilot').githubToken, undefined);
+      await writeFile(settingsFile(), JSON.stringify({ providers: { copilot: { accountType: 'business', enterpriseHost: 'acme.ghe.com' } } }));
+      warns.length = 0;
+      assert.deepEqual(providerConfig('copilot'), { maxConcurrent: 4, accountType: 'business' });
+      assert.ok(warns.some((w) => /enterpriseHost.*ignored unless accountType is ghe-com/.test(w)));
+    } finally { console.warn = orig; }
   });
 });
 

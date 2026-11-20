@@ -8,8 +8,8 @@ import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { basename, join } from 'node:path';
 import { ASK_LIMITS } from '../src/core/ask/limits.mjs';
-import { createProposalValidator, isSyntacticRef, PROPOSAL_ERRORS, pickCardAttachments } from '../src/core/ask/proposal.mjs';
-import { GRAPH_SHAPE_WORKFLOW, GRAPH_SHAPE_UX_WORKFLOW } from '../src/core/graph/builtin-workflows.mjs';
+import { createProposalValidator, isSyntacticRef, PROPOSAL_ERRORS, pickCardAttachments, cardEngineRefusal, cardGuardrails } from '../src/core/ask/proposal.mjs';
+import { GRAPH_SHAPE_REQ_WORKFLOW, GRAPH_SHAPE_UX_REQ_WORKFLOW } from '../src/core/graph/builtin-workflows.mjs';
 
 const dirA = mkdtempSync(join(tmpdir(), 'worca-ask-prop-a-'));
 const dirB = mkdtempSync(join(tmpdir(), 'worca-ask-prop-b-'));
@@ -285,13 +285,12 @@ test('sameAsSource: a card carries it only when true; a non-boolean is an error'
 });
 
 // Shape it first (spec D9): `shape` proposes wf_shape (wf_shape_ux with UX); `assess` nudges a plain card.
-test('Shape it first: shape / slices / schedule refusal / the gate, and the assess nudge with its estimates', async () => {
-  const on = (extra = {}) => createProposalValidator({ ...deps, shapeFirst: () => true, ...extra }).validateProposal;
-  const off = createProposalValidator({ ...deps, shapeFirst: () => false }).validateProposal;
+test('Shape it first: shape / slices / schedule refusal, and the assess nudge with its estimates', async () => {
+  const on = (extra = {}) => createProposalValidator({ ...deps, ...extra }).validateProposal;
   const base = { projectKey: 'demo-00000001', brief: 'x' };
   const large = { size: 'large', openDecisions: [] };
   await checkRows([
-    { name: 'gate on: shape → card shape and wf_shape; ux in perspectives → wf_shape_ux', run: async () => {
+    { name: 'shape → card shape and wf_shape; ux in perspectives → wf_shape_ux', run: async () => {
       const card = ok(await on()({ ...base, shape: {} }));
       assert.equal(card.workflowId, 'wf_shape');
       assert.deepEqual(card.shape, { perspectives: ['product', 'architect', 'qa'] });
@@ -305,9 +304,6 @@ test('Shape it first: shape / slices / schedule refusal / the gate, and the asse
         assert.equal(card.workflowId, 'wf_shape_ux', JSON.stringify(extra));
         assert.ok(card.shape.perspectives.includes('ux'), JSON.stringify(extra));
       }
-    } },
-    { name: 'gate off: workflowId wf_shape is refused (the slice-1 gap)', run: async () => {
-      assert.deepEqual(errs(await off({ ...base, workflowId: 'wf_shape' })), ['workflow "wf_shape" is not available on this server']);
     } },
     { name: 'slices: "off" / "auto" ride the card; anything else refused', run: async () => {
       for (const slices of ['off', 'auto']) {
@@ -332,11 +328,6 @@ test('Shape it first: shape / slices / schedule refusal / the gate, and the asse
       assert.deepEqual(errs(await on()({ ...base, shape: {}, workflowId: 'wf_default' })),
         ['a shaped run uses the Shaper workflow (wf_shape), not "wf_default"']);
     } },
-    { name: 'gate off: shape refused, assess ignored (no nudge)', run: async () => {
-      assert.deepEqual(errs(await off({ ...base, shape: {} })), ['shape is not available on this server']);
-      const card = ok(await off({ ...base, assess: large }));
-      assert.equal('nudge' in card, false);
-    } },
     { name: 'assess large → card nudge with the injected estimates; a throwing estimate → nulls', run: async () => {
       const est = { asIs: { costUsd: 1, minutes: 5, samples: 3 }, shaped: { costUsd: 2, minutes: 9, samples: 3 } };
       const card = ok(await on({ estimate: async () => est })({ ...base, assess: large }));
@@ -347,13 +338,13 @@ test('Shape it first: shape / slices / schedule refusal / the gate, and the asse
       const thrown = ok(await on({ estimate: async () => { throw new Error('no history'); } })({ ...base, assess: large }));
       assert.deepEqual(thrown.nudge.estimates, { asIs: null, shaped: null });
     } },
-    { name: 'assess.perspectives with ux → the estimate is asked for GRAPH_SHAPE_UX_WORKFLOW; otherwise GRAPH_SHAPE_WORKFLOW', run: async () => {
+    { name: 'assess.perspectives with ux → the estimate is asked for GRAPH_SHAPE_UX_REQ_WORKFLOW; otherwise GRAPH_SHAPE_REQ_WORKFLOW', run: async () => {
       const seen = [];
       const v = on({ estimate: async (wfs) => { seen.push(wfs); return null; } });
       ok(await v({ ...base, assess: { ...large, perspectives: ['product', 'ux'] } }));
       ok(await v({ ...base, assess: large }));
-      assert.equal(seen[0].shaped, GRAPH_SHAPE_UX_WORKFLOW);
-      assert.equal(seen[1].shaped, GRAPH_SHAPE_WORKFLOW);
+      assert.equal(seen[0].shaped, GRAPH_SHAPE_UX_REQ_WORKFLOW);
+      assert.equal(seen[1].shaped, GRAPH_SHAPE_REQ_WORKFLOW);
       assert.equal(seen[1].asIs.id, 'wf_default');
     } },
     { name: 'no nudge for a scheduled card, nor for a failing one', run: async () => {
@@ -368,7 +359,7 @@ test('Shape it first: shape / slices / schedule refusal / the gate, and the asse
       assert.equal(card.workflowId, 'wf_default');
       assert.equal('shape' in card, false);
     } },
-    { name: 'the pinned key set is unchanged without shape / assess (gate on)', run: async () => {
+    { name: 'the pinned key set is unchanged without shape / assess', run: async () => {
       const card = ok(await on()(base));
       assert.deepEqual(Object.keys(card).sort(), ['attachments', 'brief', 'featureBranch', 'guardrailsId', 'members', 'memoryScope', 'note', 'projectDir', 'projectKey', 'projectName',
         'sourceBranch', 'sourceBranchByKey', 'target', 'title', 'workflowId', 'workflowName', 'workspaceId', 'workspaceName']);
@@ -396,13 +387,12 @@ test('P3 noProject: a card with no project keeps the pinned key set; its refusal
   }
   assert.ok(errs(await validateProposal({ noProject: true, brief: 'x', workflowId: 'wf_memory_defrag', memoryScope: 'project' })).includes('memoryScope needs a project'));
   assert.equal(ok(await validateProposal({ noProject: true, brief: 'x', workflowId: 'wf_memory_defrag', memoryScope: 'global' })).memoryScope, 'global', 'U13: Memory defragment runs on global memory with no project');
-  const on = createProposalValidator({ ...deps, shapeFirst: () => true }).validateProposal;
-  const plain = ok(await on({ noProject: true, brief: 'x', shape: {} }));
+  const plain = ok(await validateProposal({ noProject: true, brief: 'x', shape: {} }));
   assert.deepEqual([plain.target, plain.workflowId, plain.shape.slices], ['none', 'wf_shape', 'off'], 'U13: with no project a shaped run is never sliced');
-  assert.ok(errs(await on({ noProject: true, brief: 'x', shape: { slices: 'auto' } })).includes('a run without a project cannot be planned in slices yet'));
-  const shaped = ok(await on({ noProject: true, brief: 'x', shape: { slices: 'off' } }));
+  assert.ok(errs(await validateProposal({ noProject: true, brief: 'x', shape: { slices: 'auto' } })).includes('a run without a project cannot be planned in slices yet'));
+  const shaped = ok(await validateProposal({ noProject: true, brief: 'x', shape: { slices: 'off' } }));
   assert.deepEqual([shaped.target, shaped.workflowId, shaped.shape.slices], ['none', 'wf_shape', 'off']);
-  assert.equal(ok(await on({ noProject: true, brief: 'x', assess: { size: 'large', openDecisions: [] } })).nudge, undefined,
+  assert.equal(ok(await validateProposal({ noProject: true, brief: 'x', assess: { size: 'large', openDecisions: [] } })).nudge, undefined,
     'no Shape-it-first nudge: its shaped run would be sliced');
 });
 
@@ -442,4 +432,35 @@ test('smart naming off: the card carries no marker and keeps today\'s name', asy
     assert.match(card.featureBranch, /^worca-cc\/.+-3f2a9c01$/);
     assert.equal('featureBranchDerived' in card, false);
   } finally { if (prev === undefined) delete process.env.WORCA_FLAGS; else process.env.WORCA_FLAGS = prev; }
+});
+
+test('propose_run pr: validated into errors, carried on the card, slices dropped for a workspace and no-project runs', async () => {
+  const card = ok(await validateProposal({ projectKey: 'demo-00000001', brief: 'x', pr: { open: 'draft', slices: 'one' } }));
+  assert.deepEqual(card.pr, { open: 'draft', slices: 'one' });
+  assert.equal('pr' in ok(await validateProposal({ projectKey: 'demo-00000001', brief: 'x' })), false, 'a card without it keeps its shape');
+  assert.deepEqual(errs(await validateProposal({ projectKey: 'demo-00000001', brief: 'x', pr: { open: 'always' } })), ['pr.open must be one of none | draft | ready']);
+  assert.deepEqual(errs(await validateProposal({ projectKey: 'demo-00000001', brief: 'x', pr: 'draft' })), ['pr must be an object like { "open": "draft" }']);
+  assert.deepEqual(errs(await validateProposal({ projectKey: 'demo-00000001', brief: 'x', pr: { nope: 1 } })), ['pr: unknown key "nope"']);
+  assert.deepEqual(ok(await validateProposal({ workspaceId: 'wks-team-0000abcd', brief: 'x', pr: { open: 'ready', slices: 'one' } })).pr, { open: 'ready' });
+  assert.equal('pr' in ok(await validateProposal({ workspaceId: 'wks-team-0000abcd', brief: 'x', pr: { slices: 'one' } })), false);
+  assert.equal('pr' in ok(await validateProposal({ noProject: true, brief: 'x', pr: { open: 'draft' } })), false);
+});
+
+test('cardEngineRefusal: a card start moved to Normal on a non-Claude engine is refused unless unguarded is allowed', () => {
+  const note = 'Guardrails: Normal, not Permissive';
+  assert.deepEqual(cardEngineRefusal(note, { engine: 'codex' }), { code: 'GUARDRAILS_CARD_ENGINE',
+    error: 'this run would start on the Normal guardrail set, which codex cannot enforce — start it from New run and pick a guardrail set' });
+  assert.equal(cardEngineRefusal(null, { engine: 'codex' }), null);
+  assert.equal(cardEngineRefusal(note, {}), null);
+  assert.equal(cardEngineRefusal(note, { engine: 'codex', allowUnguardedEngine: true }), null);
+});
+
+test('cardGuardrails: a pick is trimmed, blank falls back; an unpicked Permissive on a card start moves to Normal with a note', () => {
+  const perm = () => 'permissive';
+  assert.deepEqual(cardGuardrails({ guardrailsId: ' strict ', fallback: perm }), { guardrailsId: 'strict', guardrailsNote: null });
+  assert.deepEqual(cardGuardrails({ guardrailsId: '  ', fallback: perm }), { guardrailsId: 'permissive', guardrailsNote: null });
+  const moved = cardGuardrails({ cardStart: true, guardrailsId: 'permissive', fallback: perm });
+  assert.equal(moved.guardrailsId, 'normal');
+  assert.match(moved.guardrailsNote, /the run it changes is on Permissive/);
+  assert.equal(cardGuardrails({ askLink: {}, guardrailsId: 'permissive', fallback: perm }).guardrailsNote, null);
 });

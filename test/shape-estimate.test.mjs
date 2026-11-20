@@ -8,7 +8,7 @@ import { join } from 'node:path';
 import { estimateGraph, estimateChoices, stepHistory, ESTIMATE_MIN_SAMPLES, PLANNING_AGENTS } from '../src/core/shape/estimate.mjs';
 import { getDb, _resetForTests } from '../src/core/db.mjs';
 import {
-  GRAPH_DEFAULT_WORKFLOW, GRAPH_SHAPE_WORKFLOW, GRAPH_SHAPE_UX_WORKFLOW, AUTO_WORKFLOW_STUB,
+  GRAPH_DEFAULT_WORKFLOW, GRAPH_SHAPE_WORKFLOW, GRAPH_SHAPE_UX_WORKFLOW, GRAPH_SHAPE_REQ_WORKFLOW, AUTO_WORKFLOW_STUB,
 } from '../src/core/graph/builtin-workflows.mjs';
 
 const DEFAULT_AGENTS = ['clarify', 'planner', 'refiner', 'implementer', 'reviewer'];
@@ -21,7 +21,7 @@ function fakeHistory(agents, { n = 3 } = {}) {
 }
 
 test('estimateGraph: sums per-agent medians, split into planning (clarify, planner, planReviewer, refiner) and build', () => {
-  assert.deepEqual(PLANNING_AGENTS, ['clarify', 'planner', 'planReviewer', 'refiner']);
+  assert.deepEqual(PLANNING_AGENTS, ['clarify', 'planner', 'planReviewer', 'refiner', 'requirementsDrafter', 'requirementsReviewer', 'requirementsRefiner']);
   const got = estimateGraph(GRAPH_DEFAULT_WORKFLOW, fakeHistory(DEFAULT_AGENTS));
   assert.deepEqual(got, { costUsd: 10, planningUsd: 6, buildUsd: 4, minutes: 10, samples: 3 });
 });
@@ -70,6 +70,12 @@ test('estimateChoices: Shaper includes its planning; with no planReviewer histor
   assert.equal(got.shaped.planningUsd, got.asIs.planningUsd + refinerMedian, 'the role reviews are planning cost');
   assert.equal(got.shaped.buildUsd, got.asIs.buildUsd);
   assert.deepEqual(got.shaped, { costUsd: 12, planningUsd: 8, buildUsd: 4, minutes: 12, samples: 3 });
+});
+
+test('estimateGraph: with no requirements-agent history the requirements stage borrows planner, planReviewer and refiner', () => {
+  const got = estimateGraph(GRAPH_SHAPE_REQ_WORKFLOW, fakeHistory(DEFAULT_AGENTS));
+  // Shaper's 12 without Clarify (2), plus the drafter (planner), reviewer (planReviewer → refiner) and refiner: 3 × 2.
+  assert.deepEqual(got, { costUsd: 16, planningUsd: 12, buildUsd: 4, minutes: 16, samples: 3 });
 });
 
 test('estimateGraph: with 3 planReviewer samples its own median is used', () => {

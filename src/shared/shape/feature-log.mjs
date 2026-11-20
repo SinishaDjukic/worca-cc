@@ -8,6 +8,7 @@ export const planApprovedText = (rounds) => (rounds > 0 ? `Plan approved · afte
 export const splitText = (n) => (n < 2 ? 'Planned as one run' : `Split into ${n} runs`);
 export const gateText = (d) => (d === 'another' ? 'Another cycle started' : 'Accepted as is');
 export const NOT_SPLIT_TEXT = 'Not split · planned as one run';
+const AWAY_KEPT_TEXT = 'Plan kept as written · by Away mode · please check';
 export function replanText(indexes) {
   const xs = [...indexes].sort((a, b) => a - b);
   if (!xs.length) return 'Re-planning';
@@ -41,12 +42,17 @@ export function parseBaseLine(text) {
 }
 
 /** run-harness.mjs _auditDecision's lines: "Plan approval **approve** by ann." (the actor part is optional). */
-const LINES = [['plan', /^Plan approval \*\*(\w+)\*\*/], ['outline', /^Slice outline \*\*(\w+)\*\*/], ['gate', /^Gate \*\*(\w+)\*\*/]];
+const LINES = [['plan', /^Plan approval \*\*(\w+)\*\*/], ['outline', /^Slice outline \*\*(\w+)\*\*/], ['gate', /^Gate \*\*(\w+)\*\*/],
+  ['concern', /^Plan concern \*\*(\w+)\*\*/]];
 export function parseDecisionLine(text) {
   const t = String(text || '');
-  for (const [kind, re] of LINES) { const m = re.exec(t); if (m) return { kind, decision: m[1] }; }
+  for (const [kind, re] of LINES) {
+    const m = re.exec(t);
+    if (m) return { kind, decision: m[1], ...(t.endsWith(' by night-mode.') ? { away: true } : {}) };
+  }
   return null;
 }
+const byAway = (text, d) => (d.away ? `${text} · by Away mode` : text);
 
 /**
  * The answered steps, oldest first: { key, run: number|null, text, detail: string[] }.
@@ -76,11 +82,14 @@ export function buildDecisionLog({ clarify = null, origin = [], sliced = false, 
       if (!d) return;
       const key = `${run || 'p'}-${n}`;
       if (d.kind === 'outline') {
-        if (d.decision === 'approve' && sliced) out.push({ key, run: null, text: splitText(slices.length), detail: slices.map((s) => `${s.index} · ${s.title}`) });
+        if (d.decision === 'approve' && sliced) out.push({ key, run: null, text: byAway(splitText(slices.length), d), detail: slices.map((s) => `${s.index} · ${s.title}`) });
         else if (d.decision === 'flat') out.push({ key, run: null, text: NOT_SPLIT_TEXT, detail: [] });
       } else if (d.kind === 'plan') {
         if (d.decision === 'revise') revises += 1;
-        else if (d.decision === 'approve') { out.push({ key, run, text: planApprovedText(revises), detail: run ? goalOf(run) : [] }); revises = 0; }
+        else if (d.decision === 'approve') { out.push({ key, run, text: byAway(planApprovedText(revises), d), detail: run ? goalOf(run) : [] }); revises = 0; }
+      } else if (d.kind === 'concern') {
+        // A person's concern line stays silent. Away's approve is the plan's approval here, and it is one to check.
+        if (d.decision === 'overridden' && d.away) { out.push({ key, run, text: AWAY_KEPT_TEXT, detail: [] }); revises = 0; }
       } else out.push({ key, run, text: gateText(d.decision), detail: [] });
     });
   };

@@ -19,6 +19,9 @@ export function renderChangesCard(doc, { state, card }, { onStart, onNotNow }) {
   root.append(head, body);
   if (state === 'applied') { body.appendChild(h('div', 'ask-changescard-done', (APPLIED[l.kind] || (() => 'Done'))(card.result || {}))); return root; }
   body.appendChild(h('blockquote', 'ask-changescard-quote', card.text));
+  // Shaper requirements s3 (3.C): a shipped feature with agreed requirements updates them before it plans.
+  const first = card.requirementsFirst && Number.isInteger(card.requirementsFirst.count) ? card.requirementsFirst.count : 0;
+  if (first) body.appendChild(h('div', 'ask-changescard-first', `Requirements first: the ${first} agreed ${first === 1 ? 'requirement is' : 'requirements are'} updated before the plan.`));
   if (l.kind === 'round') body.appendChild(h('div', 'ask-changescard-where', [`Branch ${l.target.sourceBranch}`, l.target.pr && l.target.pr.number ? `PR #${l.target.pr.number}` : ''].filter(Boolean).join(' · ')));
   const err = h('div', 'ask-card-err'); err.setAttribute('aria-live', 'polite');
   const actions = h('div', 'ask-mcard-actions');

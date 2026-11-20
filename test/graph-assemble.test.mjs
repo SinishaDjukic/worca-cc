@@ -71,12 +71,15 @@ test('selfLoop accepts true | n | {maxCycles}; loops resolve by id or by a uniqu
     stages: [{ id: 'p', agent: 'planner' }, { agent: 'refiner', selfLoop: true }, { agent: 'implementer' }, { agent: 'reviewer', selfLoop: { maxCycles: 5 } }, { agent: 'implementer', loop: false }],
     loops: [{ from: 'reviewer', to: 'p' }, { from: 's4', to: 's3', maxCycles: 2 }],
   });
-  assert.deepEqual(s.stages[1].selfLoop, { maxCycles: 3 });
+  assert.deepEqual(s.stages[1].selfLoop, { maxCycles: 1, onExhausted: 'clean' }, 'a bare true is Default\'s one light refine cycle');
   assert.deepEqual(s.stages[3].selfLoop, { maxCycles: 5 });
   assert.equal(s.stages[4].loop, false);
   assert.deepEqual(s.loops, [{ from: 's4', to: 'p', maxCycles: 3 }, { from: 's4', to: 's3', maxCycles: 2 }]);
   assert.ok(codes(() => normalizeShape({ stages: [{ agent: 'implementer' }, { agent: 'implementer' }], loops: [{ from: 'implementer', to: 'implementer' }] })).includes('LOOP_ENDPOINT'));
   assert.ok(codes(() => normalizeShape({ stages: [{ agent: 'reviewer', selfLoop: 99 }] })).includes('BAD_CYCLES'));
+  assert.deepEqual(normalizeShape(s).stages[1].selfLoop, { maxCycles: 1, onExhausted: 'clean' }, 'idempotent');
+  assert.deepEqual(normalizeShape({ stages: [{ agent: 'refiner', selfLoop: { maxCycles: 2, onExhausted: 'gate' } }] }).stages[0].selfLoop, { maxCycles: 2, onExhausted: 'gate' });
+  assert.ok(codes(() => normalizeShape({ stages: [{ agent: 'refiner', selfLoop: { maxCycles: 2, onExhausted: 'later' } }] })).includes('BAD_ON_EXHAUSTED'));
   assert.ok(codes(() => normalizeShape({ stages: [] })).includes('NO_STAGES'));
   assert.ok(codes(() => normalizeShape({ stages: [{ agent: 'not a key!' }] })).includes('BAD_AGENT'));
   assert.ok(codes(() => normalizeShape({ stages: [{ id: 'x', agent: 'a' }, { id: 'x', agent: 'b' }] })).includes('DUP_STAGE_ID'));
@@ -134,7 +137,7 @@ test('the prompt base shape assembles to the built-in Default graph (isomorphic)
   assert.ok(wire(template, 'n_task', 'task', 'n_planner', 'task'), 'a required md input walks past clarify to the task card');
   assert.ok(wire(template, 'n_clarify', 'answers', 'n_planner', 'answers'), 'an optional input binds from the immediate predecessor');
   assert.ok(!wire(template, 'n_clarify', 'answers', 'n_implementer', 'task'), 'an optional expands input never reaches back past its predecessor');
-  assert.deepEqual(wire(template, 'n_refiner', 'revise', 'n_refiner', 'revise').config, { maxCycles: 3 });
+  assert.deepEqual(wire(template, 'n_refiner', 'revise', 'n_refiner', 'revise').config, { maxCycles: 1, onExhausted: 'clean' });
   assert.deepEqual(wire(template, 'n_reviewer', 'review', 'n_implementer', 'fix').config, { maxCycles: 3 }, 'a verifier auto-loops to the nearest loop input');
   assert.ok(wire(template, 'n_reviewer', 'pass', 'n_end', 'result'));
   assert.ok(!template.nodes.some((n) => n.config?.awaitAll), 'no seed node needs awaitAll');

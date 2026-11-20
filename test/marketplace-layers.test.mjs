@@ -1,16 +1,16 @@
 // test/marketplace-layers.test.mjs — the 600px sheet, the centred dialog and menus above them (marketplace P3, CONTRACT §3.3).
 import { test, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
 import { JSDOM } from 'jsdom';
 import { useDomRelease } from './helpers/jsdom-release.mjs';
 import { createSheet, createDialog, LAYER_CLOSED } from '../ui/public/marketplace/layers.mjs';
 import { dialogOpen, guardModal } from '../ui/public/modal-guard.mjs';
 import { openMenu } from '../ui/public/workflows/menu.mjs';
 import { ICONS } from '../ui/public/icons.mjs';
+import { readStyleCss } from '../src/core/read-style-css.mjs';
 
 const trackDom = useDomRelease(afterEach);
-const CSS = readFileSync(new URL('../ui/public/style.css', import.meta.url), 'utf8');
+const CSS = readStyleCss();
 function setup() {
   const { window } = trackDom(new JSDOM('<!doctype html><body><button id="opener" class="mk-tile" data-key="off/a">a</button></body>'));
   return { doc: window.document, win: window };

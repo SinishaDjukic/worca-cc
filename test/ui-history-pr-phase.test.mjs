@@ -7,21 +7,20 @@
 // delivered via wsBox.ws.dispatch('message', { data }) (harness per test/ui-question.test.mjs).
 import { test, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { JSDOM } from 'jsdom';
 import { useDomRelease } from './helpers/jsdom-release.mjs';
 import { checkRows } from './helpers/rows.mjs';
+import { readIndexHtml } from '../src/core/read-index-html.mjs';
 
 // Release each booted window after its test (see test/helpers/jsdom-release.mjs).
 const trackDom = useDomRelease(afterEach);
 
-const htmlPath = fileURLToPath(new URL('../ui/public/index.html', import.meta.url));
 const appPath = fileURLToPath(new URL('../ui/public/app.js', import.meta.url));
 const PROJECT = '/tmp/proj';
 
 async function boot({ fetchHandler } = {}) {
-  const dom = trackDom(new JSDOM(readFileSync(htmlPath, 'utf8'), { url: 'http://localhost:4317/' }));
+  const dom = trackDom(new JSDOM(readIndexHtml(), { url: 'http://localhost:4317/' }));
   const { window } = dom;
   window.Element.prototype.scrollIntoView = function () {};
   const wsBox = { ws: null };
@@ -324,4 +323,25 @@ test('a failing-checks PR batch counts the run on the Runs badge at once (no lea
   assert.equal(nc.hidden, false, 'the badge shows');
   assert.equal(nc.querySelector('.nav-count-n').textContent, '1');
   assert.match(doc.querySelector('.nav button[data-nav="runs"]').getAttribute('aria-label'), /1 needs you/);
+});
+
+test('a stale history-pr item draws as the PR it carries; a row the final batch leaves out keeps its PR', async () => {
+  const ctx = await boot({ fetchHandler: (url) => (url.endsWith('/api/history') ? skeleton([ROW(READY)]) : null) });
+  ctx.showRuns();
+  await ctx.tick();
+  assert.equal(wordOf(ctx), 'Ready to ship', 'before any batch the row offers to ship');
+  // The lookup failed on the server: it resends the stored PR, marked stale.
+  ctx.dispatchPr({ token: ctx.prTokens().at(-1), items: [{ projectKey: 'proj-0000abcd', id: 'p1',
+    pr: { state: 'MERGED', url: 'https://gh/x/pull/9', number: 9, stale: true } }] });
+  await ctx.tick();
+  assert.equal(wordOf(ctx), 'Merged', 'a stale PR reads as the PR it carries');
+
+  // Reload, and the lookup fails again with the row left out of the final batch.
+  ctx.refresh();
+  await ctx.tick();
+  ctx.dispatchPr({ token: ctx.prTokens().at(-1), done: true, items: [] });
+  await ctx.tick();
+  assert.equal(busy(ctx), 'false', 'the final batch settled the list');
+  // "Ready to ship" is the state that offers Create PR: the row must not fall back to it.
+  assert.equal(wordOf(ctx), 'Merged', 'a row no batch names keeps its PR, so no Create PR is offered');
 });

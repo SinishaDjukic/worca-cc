@@ -205,3 +205,16 @@ test('totalWindowSpendUsd + budgetStatus combine both ledgers; ask growth flips 
   await setTotalCostLimitUsd('');
   await setCostLimitResetPeriod('');
 });
+
+test('allTimeTotals: a mock run adds nothing to the human hours; a real one does', async () => {
+  const base = allTimeTotals().humanHours;
+  const db = getDb();
+  const add = async (setup) => {
+    const { id } = await seedPipeline(await mkdtemp(join(tmpdir(), 'worca-hours-')), { title: 'h', status: 'done', startedAt: '2026-06-01T00:00:00Z' });
+    db.prepare('UPDATE pipelines SET human_hours = 3, run_setup = ? WHERE id = ?').run(setup, id);
+  };
+  await add(JSON.stringify({ workflowId: 'wf_auto', mock: true }));
+  assert.equal(allTimeTotals().humanHours, base);
+  await add(JSON.stringify({ workflowId: 'wf_auto' }));
+  assert.equal(allTimeTotals().humanHours, base + 3);
+});

@@ -106,6 +106,9 @@ test('publish → rows show the fold with local settings; a hand-posted bad doc 
 
   const notes = await (await get(`/api/policy/notes?scope=project:${gwKey}&guardrailsId=permissive&models=claude-opus-4-8`)).json();
   assert.deepEqual(notes.notes.map((n) => n.code), ['guardrails:permissive<normal', 'model:claude-opus-4-8', 'plugin-missing:acme-jira']);
+  // No guardrailsId: the notes use the install default a start runs on (Normal here), not Permissive (V21).
+  const byDefault = await (await get(`/api/policy/notes?scope=project:${gwKey}`)).json();
+  assert.deepEqual(byDefault.notes.map((n) => n.code), ['plugin-missing:acme-jira']);
   await post('/api/settings', { pipelineCostLimitUsd: '' });
 });
 

@@ -3,12 +3,16 @@
 // through the classifier's repo look (D7), then rounds that are single tool-less model calls. One job
 // per feature at a time; a job never throws out — a failure becomes an `error` turn and the feature goes
 // back to the product owner. Spend is checked before every call and booked after it (D9).
-import { mkdirSync, readFileSync } from 'node:fs';
-import { homedir } from 'node:os';
-import { join } from 'node:path';
+import { mkdirSync } from 'node:fs';
+import { join, isAbsolute } from 'node:path';
 import { runClaude, mockEnabled } from '../claude-runner.mjs';
-import { normalizingOnEvent } from '../engines/claude-events.mjs';
-import { resolveModelEnv, resolveModelCost, listModels } from '../config.mjs';
+import { helperCall } from '../helper-call/index.mjs';
+import { capabilities, stepNotices } from '../helper-call/profiles.mjs';
+import { addCost } from '../helper-call/cost.mjs';
+import { featureModel } from './feature-model.mjs';
+import { requirementsModel, interviewModel, DEFAULT_INTERVIEW_EFFORT } from './interview-model.mjs';
+export { requirementsModel, interviewModel, DEFAULT_INTERVIEW_EFFORT };
+import { resolveModelEnv, listModels } from '../config.mjs';
 import { safeParseJson } from '../protocol.mjs';
 import { budgetStatus, recordRequirementsCostDelta } from '../cost-budget.mjs';
 import { openRepoLook, openWorkspaceRepoLook } from '../auto/repo-look.mjs';
@@ -20,15 +24,17 @@ import { utilityModelFor } from '../settings-cascade.mjs';
 import { withRole } from '../model-roles.mjs';
 import { workspaceTarget } from '../ask/workflow-deps.mjs';
 import { RequirementsError, MAX_ROUNDS, LIMITS, clip } from './spec.mjs';
-import { unaskedRejections } from './ready.mjs';
+import { unaskedRejections, unaskedFiles } from './ready.mjs';
 import {
-  requireFeature, getFeature, updateFeature, appendTurn, listTurns, getContext, addFeatureCost, listFeatures, usableBrief,
+  requireFeature, getFeature, updateFeature, appendTurn, listTurns, getContext, addFeatureCost, listFeatures, usableBrief, listAttachments,
 } from './store.mjs';
 import { renderBriefForPrompt } from './brief.mjs';
 import {
-  ROUND_SYSTEM_PROMPT, ORIENTATION_SYSTEM_PROMPT, buildRoundPrompt, buildOrientationPrompt, applyRound,
+  ROUND_SYSTEM_PROMPT, ORIENTATION_SYSTEM_PROMPT, orientationSystemPrompt, buildRoundPrompt, buildOrientationPrompt, applyRound,
   normalizeOrientation, mockRoundReply, RoundError, removedCriteria, pendingRound,
 } from './round.mjs';
+import { readsSettled, queueUnread, promptFiles, isReading, isDownloading, filesPending } from './attachment-job.mjs';
+import { isStarting, STARTING_MESSAGE } from './starting.mjs';
 
 export const ROUND_TIMEOUT_MS = 180_000;
 const DEFAULTS = Object.freeze({
@@ -40,43 +46,8 @@ const DEFAULTS = Object.freeze({
 });
 
 // Keys of the user settings' `env` block that sign Claude Code in or route its traffic (A1.1 D6).
-const SIGN_IN_ENV_KEYS = new Set([
-  'CLAUDE_CODE_OAUTH_TOKEN', 'NODE_EXTRA_CA_CERTS', 'CLOUD_ML_REGION', 'GOOGLE_APPLICATION_CREDENTIALS',
-  'CLAUDE_CODE_CLIENT_CERT', 'CLAUDE_CODE_CLIENT_KEY',
-]);
-const isSignInEnvKey = (k) => SIGN_IN_ENV_KEYS.has(k) || /^https?_proxy$/i.test(k) || k.startsWith('ANTHROPIC_')
-  || k.startsWith('CLAUDE_CODE_USE_') || k.startsWith('AWS_');
-
-/**
- * Whether the user-level Claude Code settings carry sign-in or network configuration (A1.1 D6): a
- * non-empty `apiKeyHelper`, `awsAuthRefresh` or `awsCredentialExport`, or an `env` block with CLAUDE_CODE_OAUTH_TOKEN,
- * CLAUDE_CODE_USE_* (Vertex, Bedrock, Foundry...), AWS_*, CLOUD_ML_REGION, GOOGLE_APPLICATION_CREDENTIALS,
- * CLAUDE_CODE_CLIENT_CERT / _KEY, ANTHROPIC_*, HTTP(S)_PROXY (either case) or NODE_EXTRA_CA_CERTS. Then an interview keeps all setting sources, since
- * `--setting-sources project` would drop that file and the call would not be signed in. The file is the
- * one the CLI reads: `settings.json` in CLAUDE_CONFIG_DIR, else in `<home>/.claude` (as
- * skills-registry/host.mjs). A MISSING file (ENOENT / ENOTDIR), a blank one, or valid JSON that is not an object means false
- * (hermetic); a file that exists but cannot be read or parsed means true (keep user settings, A2's behaviour). Never throws.
- * Not seen: a model profile's modelEnv can set CLAUDE_CONFIG_DIR / HOME for the child, which moves the file the CLI
- * reads; this guard looks at the server's own environment only.
- */
-export function userClaudeSignIn({ env = process.env, home, read = (p) => readFileSync(p, 'utf8') } = {}) {
-  try {
-    const dir = typeof env?.CLAUDE_CONFIG_DIR === 'string' && env.CLAUDE_CONFIG_DIR.trim()
-      ? env.CLAUDE_CONFIG_DIR.trim() : join(home ?? homedir(), '.claude');   // homedir() can throw: inside the try
-    let raw;
-    try { raw = String(read(join(dir, 'settings.json'))); } catch (err) {
-      return !(err && (err.code === 'ENOENT' || err.code === 'ENOTDIR'));   // missing: hermetic; unreadable: keep
-    }
-    const text = raw.charCodeAt(0) === 0xFEFF ? raw.slice(1) : raw;   // a leading BOM is tolerated
-    if (!text.trim()) return false;   // a blank file holds no sign-in: hermetic
-    let s;
-    try { s = JSON.parse(text); } catch { return true; }
-    if (!s || typeof s !== 'object' || Array.isArray(s)) return false;
-    for (const key of ['apiKeyHelper', 'awsAuthRefresh', 'awsCredentialExport']) if (typeof s[key] === 'string' && s[key] !== '') return true;
-    const e = s.env;
-    return !!e && typeof e === 'object' && !Array.isArray(e) && Object.keys(e).some(isSignInEnvKey);
-  } catch { return false; }
-}
+import { userClaudeSignIn } from '../claude-user-settings.mjs';
+export { userClaudeSignIn };
 
 let signInLogged = false;
 /** The default `userSignIn`: the check, and the first time it keeps the user settings, one log line. */
@@ -93,52 +64,49 @@ function userSignInLogged() {
 export const MAX_JOBS = 4;
 const jobs = new Map();
 export const isBusy = (seq) => jobs.has(Number(seq));
-/** Throws BUSY when MAX_JOBS jobs are running: checked before anything is written for a new job. */
+/** A8 D2: the longest round 1 waits for the reads of a new feature's files. */
+export const ROUND1_WAIT_MS = 360_000;
+const waitingReads = new Set();   // features whose create job waits for its reads: not counted against MAX_JOBS
+let heldSlots = 0;   // A3 D11: slots held by Feature chat calls (helper.mjs), which never make their feature busy
+const activeJobs = () => jobs.size - waitingReads.size + heldSlots;
+let slotWaiters = [];   // resolvers woken whenever a slot may have come free: a job ended or started waiting
+function slotFreed() { const w = slotWaiters; slotWaiters = []; for (const r of w) r(); }
+/** A waiting job leaves the waiting set once a slot is free, checked again (synchronously) at every slotFreed. */
+async function takeSlot(seq) {
+  await null;   // startJob has registered the job (and its waiting mark) by now
+  while (activeJobs() >= MAX_JOBS) await new Promise((r) => { slotWaiters.push(r); });
+  waitingReads.delete(seq);
+}
+/** `p`, or nothing once `ms` have passed. */
+const within = (p, ms) => { let t; return Promise.race([p, new Promise((r) => { t = setTimeout(r, ms); })]).finally(() => clearTimeout(t)); };
+/** Throws BUSY when MAX_JOBS jobs are running (a create waiting for its files' reads does not count): checked before
+ *  anything is written for a new job. */
 export function assertCapacity() {
-  if (jobs.size >= MAX_JOBS) throw new RequirementsError('BUSY', 'Worca is working on several features; try again in a moment.');
+  if (activeJobs() >= MAX_JOBS) throw new RequirementsError('BUSY', 'Worca is working on several features; try again in a moment.');
+}
+/** A3 D11: one of the MAX_JOBS slots for a Feature chat call, which does not make its feature busy. Throws BUSY when every slot
+ *  is taken (assertCapacity's message). Returns the release: it frees the slot once (a second call does nothing) and wakes
+ *  the creates waiting for a slot. */
+export function holdSlot() {
+  assertCapacity();
+  heldSlots += 1;
+  let held = true;
+  return () => {
+    if (!held) return;
+    held = false;
+    heldSlots -= 1;
+    slotFreed();
+  };
 }
 /** Resolves when the feature's current job (if any) has finished. Tests and the routes' callers await it. */
 export const settled = (seq) => jobs.get(Number(seq)) || Promise.resolve();
 
 const message = (err) => (err && err.message ? err.message : String(err));
-const scratchDir = () => { const d = join(worcaHome(), 'tmp', 'requirements'); mkdirSync(d, { recursive: true }); return d; };
+export const scratchDir = () => { const d = join(worcaHome(), 'tmp', 'requirements'); mkdirSync(d, { recursive: true }); return d; };
 
-/** D8: the first plain (not [1m]) Opus in the catalog, which lists the newest first. */
-export async function requirementsModel(list = listModels) {
-  try {
-    const m = (await list(null)).find((x) => x && /^claude-opus-/.test(x.id) && !x.id.includes('['));
-    return m ? m.id : undefined;
-  } catch { return undefined; }
-}
-
-export const DEFAULT_INTERVIEW_EFFORT = 'medium';
-
-/**
- * A1.1 D2: the model and effort of an interview call. The stored `requirementsInterview` pair counts for
- * its model only while the catalog still lists it (a failing catalog read: it counts); otherwise the
- * default Opus applies, with the default effort unless the pair names one. Unset = the default pair.
- * `source` is 'settings' when a stored model or effort was used. Never throws.
- */
-export async function interviewModel(deps = {}) {
-  const d = { ...DEFAULTS, ...deps };
-  let slot = {};
-  try { slot = d.interviewSlot() || {}; } catch { slot = {}; }
-  let stored = null;
-  if (typeof slot.model === 'string' && slot.model) {
-    stored = slot.model;   // a failing catalog read: it counts as stored
-    try {
-      const want = slot.model.toLowerCase();
-      const hit = (await d.listModels(null)).find((m) => m && typeof m.id === 'string' && m.id.toLowerCase() === want);
-      stored = hit ? hit.id : null;   // the catalog's spelling, so label and cost lookups agree
-    } catch { /* keep it */ }
-  }
-  const model = stored || await requirementsModel(d.listModels);
-  const effort = slot.effort || (stored ? null : DEFAULT_INTERVIEW_EFFORT);
-  return { model: model ?? null, effort: effort || null, source: stored || slot.effort ? 'settings' : 'default' };
-}
-
-/** `job.kind` says what is running ('look' or 'round'): an error turn records it so retry re-runs the right thing. */
-function startJob(seq, d, fn, by, kind = 'round') {
+/** `job.kind` says what is running ('look' or 'round'): an error turn records it so retry re-runs the right thing.
+ *  `waiting` (A8 D2): the job starts outside MAX_JOBS and takes a slot itself (takeSlot) before it calls a model. */
+function startJob(seq, d, fn, by, kind = 'round', { waiting = false } = {}) {
   seq = Number(seq);
   if (jobs.has(seq)) throw new RequirementsError('BUSY', 'Worca is still working on this feature. Try again in a moment.');
   assertCapacity();
@@ -146,14 +114,20 @@ function startJob(seq, d, fn, by, kind = 'round') {
     const job = { kind };
     try { await fn(job); }
     catch (err) {
-      try { failTurn(seq, { code: err?.code || 'FAILED', message: message(err), job: job.kind }, by, failedStatus(seq, job.kind)); }
+      try { failTurn(seq, { code: err?.code || 'FAILED', message: message(err), job: job.kind, docsUrl: err?.docsUrl ?? null, engine: err?.engine ?? null, notices: err?.notices ?? null }, by, failedStatus(seq, job.kind)); }
       catch (e) { console.error('requirements: could not record the failure:', message(e)); }
     } finally {
       jobs.delete(seq);
+      waitingReads.delete(seq);
+      slotFreed();
+      // A8 D8: a job that kept Worca's own follow-up from starting (a look or a round while a read ended) lets it start now.
+      // No loop: a round that carried every file leaves none unasked, and a follow-up never starts while a read is pending.
+      if (!filesPending({ type: 'feature', id: seq })) maybeFollowUpFiles(seq, d);
       notify(d, seq);
     }
   })();
   jobs.set(seq, p);
+  if (waiting) waitingReads.add(seq);
   return p;
 }
 
@@ -165,9 +139,11 @@ function notify(d, seq) {
 const isArchived = (seq) => getFeature(seq)?.status === 'archived';
 
 /** The one way a failure is recorded: an error turn (with whatever the failed work cost, booked too), then the status. */
-function failTurn(seq, { code, message: msg, job, costUsd = 0, model = null }, by, status) {
-  const turnId = appendTurn(seq, { kind: 'error', payload: { code, message: msg, job }, model: model || null, costUsd: costUsd || null }, { by });
-  charge(seq, turnId, costUsd, model);
+function failTurn(seq, { code, message: msg, job, costUsd = 0, model = null, docsUrl = null, engine = null, notices = null, costKind = 'billed', inputTokens = null, outputTokens = null }, by, status) {
+  // costKind null: the step never ran (not signed in, not offered), so nothing is booked, not even an 'unknown' row.
+  const turnId = appendTurn(seq, { kind: 'error', payload: { code, message: msg, job, ...(code === 'NOT_READY' ? { docsUrl } : {}) }, model: model || null, costUsd: costUsd || null,
+    engine, notices }, { by });
+  charge(seq, turnId, costUsd, model, { engine, step: job, costKind, inputTokens, outputTokens });
   setStatus(seq, status, by);
 }
 
@@ -177,7 +153,7 @@ function setStatus(seq, status, by, extra = {}) {
   updateFeature(seq, { ...extra, status: now && now.status === 'archived' ? 'archived' : status }, { by });
 }
 
-function assertBudget(d) {
+export function assertBudget(d) {
   const b = d.budget();
   if (b && b.blocked) {
     throw new RequirementsError('BUDGET', `The spending limit${b.totalLimitUsd != null ? ` of $${b.totalLimitUsd}` : ''} is reached for this period. The interview continues when the limit resets or is raised.`);
@@ -185,11 +161,52 @@ function assertBudget(d) {
 }
 
 /** The cost on the feature and its ledger row, in one transaction: both or neither (the brief's book() does the same). */
-function charge(seq, turnId, costUsd, model) {
-  if (!(costUsd > 0)) return;
+function charge(seq, turnId, costUsd, model, extra = null) {
+  if (!bookable(costUsd, extra)) return;
   tx(() => {
-    addFeatureCost(seq, costUsd);
-    recordRequirementsCostDelta({ featureSeq: seq, turnId, amountUsd: costUsd, model: model || null });
+    if (costUsd > 0) addFeatureCost(seq, costUsd);
+    recordRequirementsCostDelta({ featureSeq: seq, turnId, amountUsd: costUsd, model: model || null, ...ledgerExtra(extra) });
+  });
+}
+
+/** 9c D14: does a call leave a ledger row? Money always does; a harness that ran and reports no cost leaves a $0 'unknown' row
+ *  (counted apart); a call that never ran (costKind null) leaves none; a Claude call that reported none books nothing, as before. */
+export function bookable(costUsd, extra) {
+  if (extra && extra.costKind === null) return false;
+  if (costUsd > 0) return true;
+  return !!extra && extra.costKind === 'unknown' && !!extra.engine && extra.engine !== 'claude';
+}
+
+/** The ledger row's 9c columns for a call: engine, step, cost kind and tokens. Nothing without an engine (the pre-9c shape). */
+export function ledgerExtra(extra) {
+  if (!extra || !extra.engine) return {};
+  return { engine: extra.engine, step: extra.step || null, costKind: extra.costKind || 'billed', inputTokens: extra.inputTokens ?? null, outputTokens: extra.outputTokens ?? null };
+}
+
+/** Fold a call's (or failed call's) result into a running total: money and kind by addCost's rule, tokens summed. */
+export function foldCall(total, part) {
+  const next = total || { costUsd: 0, costKind: null, inputTokens: null, outputTokens: null };
+  if (part && part.costKind) {
+    const p = { costUsd: Number(part.costUsd) || 0, costKind: part.costKind };
+    const c = next.costKind ? addCost({ costUsd: next.costUsd, costKind: next.costKind }, p) : p;
+    next.costUsd = c.costUsd; next.costKind = c.costKind;
+  }
+  if (part?.inputTokens != null) next.inputTokens = (next.inputTokens ?? 0) + part.inputTokens;
+  if (part?.outputTokens != null) next.outputTokens = (next.outputTokens ?? 0) + part.outputTokens;
+  return next;
+}
+
+/** A3 D13: Worca's reply row (`writeRow()`, which returns it), the call's cost on the feature ("$X so far") and its ledger row
+ *  (`helper_message_id` = the row's id, no turn), all in one transaction, so the reply never stands without what it cost and the
+ *  cost counts toward the spending limit like every requirements call. A call that cost nothing writes the row only. */
+export function chargeHelper(seq, costUsd, model, writeRow, extra = null) {
+  return tx(() => {
+    const row = writeRow();
+    if (bookable(costUsd, extra)) {
+      if (costUsd > 0) addFeatureCost(seq, costUsd);
+      recordRequirementsCostDelta({ featureSeq: seq, helperMessageId: row.id, amountUsd: costUsd, model: model || null, ...ledgerExtra(extra) });
+    }
+    return row;
   });
 }
 
@@ -197,11 +214,16 @@ const CALL_KINDS = Object.freeze({
   look: () => ({ systemPrompt: ORIENTATION_SYSTEM_PROMPT, tools: REPO_LOOK_TOOLS, maxTurns: REPO_LOOK_MAX_TURNS }),
   round: () => ({ systemPrompt: ROUND_SYSTEM_PROMPT, tools: [], maxTurns: null }),
 });
-const CALL_KEYS = new Set(['cwd', 'prompt', 'model', 'systemPrompt', 'tools', 'maxTurns', 'effort']);
+const CALL_KEYS = new Set(['cwd', 'prompt', 'model', 'systemPrompt', 'tools', 'allowedTools', 'maxTurns', 'effort', 'permissionRules', 'readGuard', 'noSessionPersistence']);
 
 /**
  * The runClaude options of one interview call, without `signal` / `onEvent` (design §9, the lane contract).
- * `kind` is 'look' or 'round'; systemPrompt, tools, maxTurns and effort override that kind's defaults.
+ * `kind` is 'look' or 'round'; systemPrompt, tools, allowedTools, maxTurns and effort override that kind's defaults.
+ * Two overrides of their own, emitted only when given (A8, plans/requirements-a8-design.md D3): `permissionRules`
+ * (a file read's and the brief look's deny rules) and `readGuard` (the one file a read may open, file-read-guard.mjs),
+ * which when present at all must be an absolute path: an empty or relative value throws instead of meaning "no guard".
+ * A third, `noSessionPersistence: true` (D15: file reads, asks and the brief look), asks Claude Code to keep no session
+ * transcript of the call; any other value emits nothing, so the other calls' options stay as they were.
  * Every call, whatever the overrides, replaces Claude Code's system prompt with Worca's and turns slash
  * commands off; it also loads only the project's setting sources (no user plugins, hooks or skills,
  * A1.1 D6) unless `keepUserSettings` (the user settings carry sign-in: `userClaudeSignIn`).
@@ -210,49 +232,64 @@ const CALL_KEYS = new Set(['cwd', 'prompt', 'model', 'systemPrompt', 'tools', 'm
 export function interviewCallOptions(kind, args = {}, { keepUserSettings = false } = {}) {
   if (!Object.hasOwn(CALL_KINDS, kind)) throw new TypeError(`interviewCallOptions: unknown kind ${JSON.stringify(kind)}`);
   for (const k of Object.keys(args)) if (!CALL_KEYS.has(k)) throw new TypeError(`interviewCallOptions: unknown option "${k}"`);
+  const guarded = Object.hasOwn(args, 'readGuard');
+  if (guarded && (typeof args.readGuard !== 'string' || !isAbsolute(args.readGuard))) {
+    throw new TypeError('interviewCallOptions: readGuard must be the absolute path of the one file the call may read');
+  }
   const def = CALL_KINDS[kind]();
   const { cwd, prompt, model } = args;
   const pick = (k) => (args[k] !== undefined ? args[k] : def[k]);
   const tools = pick('tools');
   if (!Array.isArray(tools)) throw new TypeError('interviewCallOptions: tools must be an array');
+  // A8 §9: a file read allows one Read rule naming its copy; without the override the allow list is the tools, as before.
+  const allowed = args.allowedTools !== undefined ? args.allowedTools : tools;
+  if (!Array.isArray(allowed)) throw new TypeError('interviewCallOptions: allowedTools must be an array');
   const maxTurns = pick('maxTurns');
   return {
     cwd, systemPrompt: pick('systemPrompt'), systemPromptMode: 'replace', prompt, model, modelEnv: resolveModelEnv(model),
-    allowedTools: [...tools], tools: [...tools], strictMcpConfig: true,
+    allowedTools: [...allowed], tools: [...tools], strictMcpConfig: true,
     ...(keepUserSettings ? {} : { settingSources: ['project'] }), disableSlashCommands: true,
     ...(maxTurns ? { maxTurns } : {}),
-    ...(args.effort ? { effort: args.effort } : {}), permissionMode: 'acceptEdits',
+    ...(args.effort ? { effort: args.effort } : {}),
+    ...(args.permissionRules ? { permissionRules: args.permissionRules } : {}), ...(guarded ? { readGuard: args.readGuard } : {}),
+    ...(args.noSessionPersistence === true ? { noSessionPersistence: true } : {}),
+    permissionMode: 'acceptEdits',
     spawnKind: 'aux',   // credential broker: a short-lived token, as pr-description.mjs
   };
 }
 
-export async function callModel(d, { kind, cwd, prompt, model, timeoutMs, ...overrides }) {
-  // Read per call, so a changed user settings file applies without a restart (D6).
-  const keepUserSettings = !!(d.userSignIn || DEFAULTS.userSignIn)();
-  const options = interviewCallOptions(kind, { cwd, prompt, model, ...overrides }, { keepUserSettings });
-  const ctrl = new AbortController();
-  let timedOut = false;
-  const timer = setTimeout(() => { timedOut = true; ctrl.abort(); }, timeoutMs);
-  let costUsd = 0;
-  try {
-    const res = await d.runClaudeImpl({
-      ...options, signal: ctrl.signal,
-      onEvent: normalizingOnEvent((e) => {
-        if (e.type !== 'result' || e.costUsd == null) return;
-        const c = resolveModelCost(model, Number(e.costUsd), e.usage ?? null);
-        if (Number.isFinite(c)) costUsd += c;
-        else if (Number.isFinite(Number(e.costUsd))) costUsd += Number(e.costUsd);
-      }),
-    });
-    return { text: res?.text || '', costUsd };
-  } catch (err) {
-    // Money may already be spent when a call fails: the error carries it so the caller books it.
-    const out = timedOut
-      ? Object.assign(new Error(`Worca got no reply within ${Math.round(timeoutMs / 1000)} seconds. Try again.`), { code: 'TIMEOUT' })
-      : (err instanceof Error ? err : new Error(String(err)));
-    out.costUsd = costUsd;
-    throw out;
-  } finally { clearTimeout(timer); }
+/**
+ * One interview call (A1.1 §9): the built options plus a timeout, the caller's `signal` (A8: a removed file stops its
+ * read) and the cost of every `result`. Resolves to `{ text, costUsd, events }`, plus `readGuardDecisions` when the
+ * runner returned them (a guarded read, file-read-guard.mjs). `events` are the call's normalized events, one shape
+ * only (engines/claude-events.mjs), so a read can check that the guard decided every tool call the stream shows.
+ * A failed call throws with the money already spent on it as `costUsd`.
+ */
+export async function callModel(d, { kind, cwd, prompt, model, timeoutMs, signal = null, engine = 'claude', profile = null, files = [], roots = null, ...overrides }) {
+  const common = { engine, model, cwd, prompt, timeoutMs, signal };
+  const deps = {
+    run: d.runClaudeImpl,
+    ...(d.gate ? { gate: d.gate } : {}), ...(d.engines ? { engines: d.engines() } : {}),
+    ...(d.writeFilesMcpConfig ? { writeFilesMcpConfig: d.writeFilesMcpConfig } : {}), ...(d.removeCodexThread ? { removeCodexThread: d.removeCodexThread } : {}),
+    ...(d.scratch ? { scratch: d.scratch } : {}), ...(d.ratesFor ? { ratesFor: d.ratesFor } : {}), ...(d.helperMock ? { mock: d.helperMock } : {}),
+  };
+  let res;
+  if (!engine || engine === 'claude') {
+    // Read per call, so a changed user settings file applies without a restart (D6).
+    const keepUserSettings = !!(d.userSignIn || DEFAULTS.userSignIn)();
+    const claudeOptions = interviewCallOptions(kind, { cwd, prompt, model, ...overrides }, { keepUserSettings });
+    res = await helperCall({ ...common, engine: 'claude', claudeOptions, files }, deps);
+  } else {
+    const def = CALL_KINDS[kind]();
+    const prof = profile ?? (kind === 'look' ? 'repo' : 'none');
+    res = await helperCall({
+      ...common, profile: prof, files, roots, effort: overrides.effort,
+      systemPrompt: overrides.systemPrompt ?? (kind === 'look' ? orientationSystemPrompt(engine) : def.systemPrompt),
+      maxTurns: overrides.maxTurns ?? def.maxTurns,
+    }, deps);
+  }
+  const { text, costUsd, events, readGuardDecisions, costKind, inputTokens, outputTokens, notices } = res;
+  return { text, costUsd, events, ...(readGuardDecisions ? { readGuardDecisions } : {}), engine: res.engine, costKind, inputTokens, outputTokens, notices };
 }
 
 async function openLookFor(f, d, signal) {
@@ -265,8 +302,9 @@ async function openLookFor(f, d, signal) {
   return ws && ws.members.length ? d.openWorkspaceLook(ws.members, base, { signal }) : null;
 }
 
-/** A7 D10: the scope's usable brief as the prompts carry it (provenance line first), or null. */
-function briefFor(f) {
+/** A7 D10: the scope's usable brief as the prompts carry it (provenance line first), or null. A8 D6: `documents`, the
+ *  scope's documents as renderDocumentsForPrompt writes them, follow its sections. */
+export function briefFor(f, documents = '') {
   const b = usableBrief(f.scopeType, f.scopeKey);
   if (!b) return null;
   const day = String(b.madeAt).slice(0, 10);
@@ -274,14 +312,14 @@ function briefFor(f) {
   const provenance = f.scopeType === 'workspace'
     ? `Made from ${(b.sources || []).length} project${(b.sources || []).length === 1 ? '' : 's'} on ${day}.`
     : `Made from ${(src && src.branch) || 'HEAD'}${src && src.sha ? ` @ ${String(src.sha).slice(0, 7)}` : ''} on ${day}.`;
-  return { id: b.id, madeAt: b.madeAt, text: renderBriefForPrompt(b.sections, { provenance }) };
+  return { id: b.id, madeAt: b.madeAt, text: renderBriefForPrompt(b.sections, { provenance, documents }) };
 }
 
 // Less time than this left after the checkout: the look fails as a timeout rather than starting a call it cannot finish.
 const LOOK_MIN_CALL_MS = 1000;
 
 /** D7: a short product-language summary of what exists, or why there is none. Never throws. With a brief
- *  this is A7's closer look (D11): it asks only for what the brief does not say, and for the area. */
+ *  this is A7's code look (D11): it asks only for what the brief does not say, and for the area. */
 async function orient(f, d, brief = null) {
   const ctx = getContext(f.scopeType, f.scopeKey);
   if (!ctx.lookAtCode) return { summary: '', files: [], skipped: 'off' };
@@ -289,31 +327,41 @@ async function orient(f, d, brief = null) {
   // why after git comes back (Look closer and the brief answer GIT_MISSING at the route, routes.mjs REQUIREMENTS_GIT_ROUTES).
   if (!gitAvailable()) return { summary: '', files: [], skipped: 'no-git' };
   if (mockEnabled({}) && brief) {
-    return { summary: `[mock] A closer look: "${f.title}" needs something the brief does not describe yet.`, files: ['/tmp/mock/auto-look-0000abcd/README.md'], area: 'Orders', skipped: null };
+    return { summary: `[mock] A code look: "${f.title}" needs something the brief does not describe yet.`, files: ['/tmp/mock/auto-look-0000abcd/README.md'], area: 'Orders', skipped: null };
   }
   if (mockEnabled({})) return { summary: `[mock] What exists around "${f.title}": orders, each with a status.`, files: [], skipped: null };
   let look = null;
   let model = null;
+  let engine = null;
   // One deadline over checkout and call (as the brief job): the checkout is aborted at it, the call gets what is left.
   const deadline = Date.now() + REPO_LOOK_TIMEOUT_MS;
   const ctrl = new AbortController();
   const timer = setTimeout(() => ctrl.abort(), REPO_LOOK_TIMEOUT_MS);
   try {
+    const fm = await featureModel(f, d);
+    engine = fm.engine;
+    // 9c D12: a harness that cannot read the repo makes no call: the look is skipped and says why.
+    if (!capabilities(fm.engine).repo) {
+      return { summary: '', files: [], skipped: 'engine', engine: fm.engine, notices: stepNotices({ engine: fm.engine, profile: 'repo' }).slice(0, 1) };
+    }
     look = await openLookFor(f, d, ctrl.signal);
     if (!look) return { summary: '', files: [], skipped: 'no-repo' };
-    const im = await interviewModel(d);
-    model = im.model || undefined;
+    model = fm.model || undefined;
     if (isArchived(f.seq)) return { summary: '', files: [], skipped: 'archived' };
     const timeoutMs = deadline - Date.now();
     if (timeoutMs < LOOK_MIN_CALL_MS) throw Object.assign(new Error('Worca could not read the code in time. Try again.'), { code: 'TIMEOUT' });
-    const { text, costUsd } = await callModel(d, {
+    const r = await callModel(d, {
       kind: 'look', cwd: look.cwd,
       prompt: buildOrientationPrompt({ feature: f, context: ctx.body, members: look.members || null, cwd: look.cwd, brief: brief ? brief.text : null }),
-      model, ...(im.effort ? { effort: im.effort } : {}), timeoutMs,
+      model, engine: fm.engine, ...(fm.effort ? { effort: fm.effort } : {}), timeoutMs,
     });
-    return { ...normalizeOrientation(safeParseJson(text)), skipped: null, model: model || null, costUsd };
+    const notices = [...(fm.notice ? [fm.notice] : []), ...r.notices];
+    return { ...normalizeOrientation(safeParseJson(r.text)), skipped: null, model: model || null, costUsd: r.costUsd, engine: r.engine, notices,
+      costKind: r.costKind, inputTokens: r.inputTokens, outputTokens: r.outputTokens };
   } catch (err) {
-    return { summary: '', files: [], skipped: 'failed', error: message(err), model, costUsd: Number(err?.costUsd) || 0 };
+    if (err?.code === 'NOT_READY') throw Object.assign(err, { engine });   // D13: never a silent switch; the job records the NOT_READY error turn
+    return { summary: '', files: [], skipped: 'failed', error: message(err), model, costUsd: Number(err?.costUsd) || 0, engine,
+      notices: err?.notices || null, costKind: err?.costKind, inputTokens: null, outputTokens: null };
   } finally {
     clearTimeout(timer);
     if (look) await look.close();
@@ -322,7 +370,7 @@ async function orient(f, d, brief = null) {
 
 async function runOrientation(seq, d, by, { useBrief = false } = {}) {
   const f0 = requireFeature(seq);
-  const brief = briefFor(f0);
+  const brief = briefFor(f0, promptFiles(f0).documents);   // A8 D6: the code look reads the brief's documents too
   // A7 D11: every stored look names the scope it was made for and the brief it was made against (null: none yet).
   // The scope cannot change while the look runs (header edits wait for the job), so it is read here.
   const stamp = { scopeType: f0.scopeType, scopeKey: f0.scopeKey, briefId: brief ? brief.id : null };
@@ -335,65 +383,95 @@ async function runOrientation(seq, d, by, { useBrief = false } = {}) {
   setStatus(seq, 'looking', by);
   notify(d, seq);
   const f = requireFeature(seq);
-  if (getContext(f.scopeType, f.scopeKey).lookAtCode && gitAvailable() && !mockEnabled({})) assertBudget(d);   // only when a call will follow
+  let reads = true;   // a harness that cannot read the repo makes no call (orient), so no budget check either
+  if (getContext(f.scopeType, f.scopeKey).lookAtCode && gitAvailable() && !mockEnabled({})) {
+    try { reads = capabilities((await featureModel(f, d)).engine).repo; } catch { reads = true; }
+    if (reads) assertBudget(d);   // only when a call will follow
+  }
   const o = await orient(f, d, brief);
   if (o.skipped === 'archived') return;   // archived meanwhile: nothing was spent, nothing to record
   const turnId = appendTurn(seq, { kind: 'orientation', payload: { summary: o.summary, files: o.files, skipped: o.skipped, error: o.error || null },
-    model: o.model || null, costUsd: o.costUsd || null }, { by });
-  charge(seq, turnId, o.costUsd, o.model);
+    model: o.model || null, costUsd: o.costUsd || null, engine: o.engine || null, notices: o.notices || null }, { by });
+  charge(seq, turnId, o.costUsd, o.model, { engine: o.engine, step: 'look', costKind: o.costKind, inputTokens: o.inputTokens, outputTokens: o.outputTokens });
   updateFeature(seq, { orientation: { summary: o.summary, files: o.files, skipped: o.skipped, ...(brief && o.area ? { area: o.area } : {}), ...stamp,
     at: new Date().toISOString() } }, { by });
 }
 
-async function runRound(seq, d, by, { final = false, followUp = null } = {}) {
+/** `followUpFiles` (A8 D8): the ids of the files a follow-up asks about; one removed since is left out (none left: an
+ *  ordinary round). */
+async function runRound(seq, d, by, { final = false, followUp = null, followUpFiles = null } = {}) {
   if (isArchived(seq)) return;
+  queueUnread(seq, d);   // A8 D5: files a spending limit stopped are read again once it allows
   setStatus(seq, 'thinking', by);
   notify(d, seq);
   const f = requireFeature(seq);
   const found = followUp ? f.spec.assumptions.filter((a) => followUp.includes(a.id) && a.status === 'rejected').map((a) => ({ id: a.id, text: a.text })) : [];
   const followItems = found.length ? found : null;   // none left rejected: an ordinary round
-  const isFinal = final || (!followItems && f.rounds + 1 >= MAX_ROUNDS);
   const turns = listTurns(seq);
-  const brief = briefFor(f);   // A7 D10: every round reads the scope's usable brief and records which one
-  const seqs = { criteriaSeq: f.criteriaSeq, assumptionSeq: f.assumptionSeq, final: isFinal, removedCriteria: removedCriteria(turns) };
+  const files = promptFiles(f);   // A8 D6: the feature's files and the scope's documents, as the prompts carry them
+  const askFiles = Array.isArray(followUpFiles) ? files.rows.filter((r) => followUpFiles.includes(r.id)) : [];
+  const fileNames = askFiles.length ? askFiles.map((r) => r.name) : null;   // removed since: an ordinary round
+  const isFinal = final || (!followItems && !fileNames && f.rounds + 1 >= MAX_ROUNDS);
+  const brief = briefFor(f, files.documents);   // A7 D10: every round reads the scope's usable brief and records which one
+  const seqs = { criteriaSeq: f.criteriaSeq, assumptionSeq: f.assumptionSeq, final: isFinal, removedCriteria: removedCriteria(turns), sources: files.sources };
   let applied = null;
   let model = null;
   let cost = 0;
   let lastErr = null;
+  let engine = null;
+  let notices = [];
+  let acc = null;   // the rounds' cost so far, combined by addCost's rule
+  const addPart = (p) => { acc = acc ? addCost(acc, p) : p; };
+  let inTok = null;
+  let outTok = null;
+  const costKind = () => (acc ? acc.costKind : null);
+  const addTokens = (r) => { if (r?.inputTokens != null) inTok = (inTok ?? 0) + r.inputTokens; if (r?.outputTokens != null) outTok = (outTok ?? 0) + r.outputTokens; };
   if (mockEnabled({})) {
-    applied = applyRound(f.spec, mockRoundReply(f, isFinal, { followUp: followItems }), seqs);
+    applied = applyRound(f.spec, mockRoundReply(f, isFinal, { followUp: followItems, followUpFiles: fileNames, sources: files.sources }), seqs);
   } else {
     const ctx = getContext(f.scopeType, f.scopeKey);
-    const prompt = buildRoundPrompt({ feature: f, context: ctx.body, turns, final: isFinal, round: f.rounds + 1, followUp: followItems, brief: brief?.text });
-    const im = await interviewModel(d);
-    model = im.model || undefined;
-    const effort = im.effort || undefined;
+    const prompt = buildRoundPrompt({ feature: f, context: ctx.body, turns, final: isFinal, round: f.rounds + 1, followUp: followItems, brief: brief?.text,
+      attachments: files.attachments, followUpFiles: fileNames });
+    const fm = await featureModel(f, d);
+    engine = fm.engine;
+    if (fm.notice) notices.push(fm.notice);
+    model = fm.model || undefined;
+    const effort = fm.effort || undefined;
     const cwd = scratchDir();
-    const fail = (code, msg) => failTurn(seq, { code, message: msg, job: 'round', costUsd: cost, model }, by, 'your_turn');
+    const fail = (code, msg, extra = {}) => failTurn(seq, { code, message: msg, job: 'round', costUsd: cost, model, engine, notices, costKind: costKind(),
+      inputTokens: inTok, outputTokens: outTok, ...extra }, by, 'your_turn');
     try {
       for (let attempt = 1; attempt <= 2 && !applied; attempt += 1) {
         if (isArchived(seq)) { if (cost > 0) fail('ARCHIVED', 'The feature was archived before the next attempt.'); return; }
         assertBudget(d);   // before every call; an earlier attempt is already counted in `cost`
-        const r = await callModel(d, { kind: 'round', cwd, prompt, model, ...(effort ? { effort } : {}), timeoutMs: ROUND_TIMEOUT_MS });
+        const r = await callModel(d, { kind: 'round', cwd, prompt, model, engine: fm.engine, ...(effort ? { effort } : {}), timeoutMs: ROUND_TIMEOUT_MS });
         cost += r.costUsd;
+        addPart({ costUsd: r.costUsd, costKind: r.costKind });
+        addTokens(r);
+        for (const n of r.notices || []) if (!notices.includes(n)) notices.push(n);
         try { applied = applyRound(f.spec, safeParseJson(r.text), seqs); }
         catch (err) { if (!(err instanceof RoundError)) throw err; lastErr = err; }
       }
     } catch (err) {
       // Everything spent so far (earlier attempts + the call that threw) is booked on the error turn.
       cost += Number(err?.costUsd) || 0;
-      fail(err?.code || 'FAILED', message(err));
+      if (err?.costKind) addPart({ costUsd: Number(err.costUsd) || 0, costKind: err.costKind });
+      for (const n of err?.notices || []) if (!notices.includes(n)) notices.push(n);
+      fail(err?.code || 'FAILED', message(err), { docsUrl: err?.docsUrl ?? null });
       return;
     }
   }
   if (!applied) {
-    failTurn(seq, { code: 'BAD_REPLY', message: `Worca's reply could not be read (${lastErr.message}). Try again.`, job: 'round', costUsd: cost, model }, by, 'your_turn');
+    failTurn(seq, { code: 'BAD_REPLY', message: `Worca's reply could not be read (${lastErr.message}). Try again.`, job: 'round', costUsd: cost, model, engine, notices,
+      costKind: costKind(), inputTokens: inTok, outputTokens: outTok }, by, 'your_turn');
     return;
   }
-  const turnId = appendTurn(seq, { kind: 'round', payload: { questions: applied.questions, note: applied.note, done: applied.done, final: isFinal, ...(followItems ? { followUp: followItems.map((a) => a.id) } : {}),
-    ...(brief ? { brief: { id: brief.id, madeAt: brief.madeAt } } : {}) },
-    model: model || null, costUsd: cost || null }, { by });
-  charge(seq, turnId, cost, model);
+  const turnId = appendTurn(seq, { kind: 'round', payload: { questions: applied.questions, note: applied.note, done: applied.done, final: isFinal,
+    ...(followItems || fileNames ? { followUp: (followItems || []).map((a) => a.id) } : {}), ...(fileNames ? { followUpFiles: askFiles.map((r) => r.id) } : {}),
+    ...(brief ? { brief: { id: brief.id, madeAt: brief.madeAt } } : {}),
+    ...(files.carried.length ? { files: files.carried } : {}) },   // A8 D8: the files this round asked about (absent without any)
+    model: model || null, costUsd: cost || null, engine, notices }, { by });
+  charge(seq, turnId, cost, model, { engine, step: 'round', costKind: costKind(), inputTokens: inTok, outputTokens: outTok });
   setStatus(seq, applied.done ? 'done' : 'your_turn', by, {
     spec: applied.spec, criteriaSeq: applied.criteriaSeq, assumptionSeq: applied.assumptionSeq, rounds: f.rounds + 1,
   });
@@ -413,26 +491,68 @@ export function startOrientation(seq, { by = null, thenRound = true } = {}, deps
   const f = guard(seq);
   // A7 D11: with the switch off an explicit look would overwrite the brief's skipped orientation with "off".
   if (!thenRound && !getContext(f.scopeType, f.scopeKey).lookAtCode && usableBrief(f.scopeType, f.scopeKey)) {
-    throw new RequirementsError('CONFLICT', `Looking at the code is off for this ${f.scopeType === 'workspace' ? 'workspace' : 'project'}.`);
+    throw new RequirementsError('CONFLICT', `Code looks are off for this ${f.scopeType === 'workspace' ? 'workspace' : 'project'}.`);
   }
+  // A8 D2: round 1 waits for the reads of the files the feature was created with, at most ROUND1_WAIT_MS; then it runs
+  // and lists a file still being read by name only. The waiting job does not count against MAX_JOBS (the feature is
+  // busy meanwhile, as during any job: its status stays `looking` and the page says "Reading N files…"). The look before
+  // it and round 1 after it each take a job slot only when one is free, so MAX_JOBS still bounds the model calls. Such a
+  // job is outside MAX_JOBS from its start, so several creates in a row are all taken while their reads run.
+  // A6.1 D10: a file still being downloaded counts as one being read.
+  const waits = thenRound && listAttachments('feature', f.seq).some((r) => isReading(r.id) || isDownloading(r.id));
   return startJob(seq, d, async (job) => {
+    if (waits) await takeSlot(f.seq);
     await runOrientation(seq, d, by, { useBrief: thenRound });
-    if (thenRound) { job.kind = 'round'; await runRound(seq, d, by); }
-    else setStatus(seq, restingStatus(seq), by);
-  }, by, 'look');
+    if (thenRound) {
+      if (waits) {
+        waitingReads.add(f.seq);
+        slotFreed();
+        try {
+          await within(readsSettled({ type: 'feature', id: f.seq }), d.round1WaitMs ?? ROUND1_WAIT_MS);
+          await takeSlot(f.seq);
+        } finally { waitingReads.delete(f.seq); }
+      }
+      job.kind = 'round';
+      await runRound(seq, d, by);
+    } else setStatus(seq, restingStatus(seq), by);
+  }, by, 'look', { waiting: waits });
 }
 
-/** Ask about the assumptions the product owner rejected since the last round: one extra round, past the round cap. */
-export function followUp(seq, { by = null } = {}, deps = {}) {
+/** Ask about the assumptions the product owner rejected and the files added or replaced since the interview finished
+ *  (A2-D4, A8 D8): one extra round, past the round cap. `filesOnly`: Worca's own follow-up after the reads (D8). */
+export function followUp(seq, { by = null, filesOnly = false } = {}, deps = {}) {
   const d = { ...DEFAULTS, ...deps };
   const f = guard(seq);
   const turns = listTurns(seq);
   // The round waiting for answers comes first: its answers start the next round, which sees the rejection.
   if (f.status === 'your_turn' && pendingRound(turns)) throw new RequirementsError('CONFLICT', 'answer the questions waiting first');
-  const ids = unaskedRejections(f.spec, turns);
-  if (!ids.length) throw new RequirementsError('CONFLICT', 'no rejected assumption is waiting for a follow-up');
-  appendTurn(seq, { kind: 'followup', payload: { assumptions: ids } }, { by });
-  return startJob(seq, d, () => runRound(seq, d, by, { followUp: ids }), by);
+  if (isStarting(seq)) throw new RequirementsError('BUSY', STARTING_MESSAGE);   // the run gets the spec as it is now
+  const ids = filesOnly ? [] : unaskedRejections(f.spec, turns);
+  // Only files whose text the prompt carries: one still being read (by name only) stays unasked for the follow-up after its read.
+  const unasked = unaskedFiles(listAttachments('feature', f.seq), turns);
+  const carried = unasked.length ? promptFiles(f).carried : [];
+  const files = unasked.filter((id) => carried.includes(id));
+  if (!ids.length && !files.length) {
+    throw new RequirementsError('CONFLICT', unasked.length ? 'Worca is reading this file.' : 'nothing is waiting for a follow-up');
+  }
+  appendTurn(seq, { kind: 'followup', payload: { assumptions: ids, ...(files.length ? { files } : {}) } }, { by });
+  return startJob(seq, d, () => runRound(seq, d, by, { followUp: ids, followUpFiles: files.length ? files : null }), by);
+}
+
+/** A8 D8: once a feature has nothing left to read or answer, files added or replaced after its interview finished get one
+ *  short follow-up round, started by Worca when it can start (not busy, not archived, under MAX_JOBS, within the budget);
+ *  otherwise the Decide panel offers it. Never throws. */
+export function maybeFollowUpFiles(seq, deps = {}) {
+  try {
+    const d = { ...DEFAULTS, ...deps };
+    const f = getFeature(seq);
+    if (!f || f.status !== 'done' || isBusy(seq) || isStarting(seq) || activeJobs() >= MAX_JOBS) return false;
+    if (!unaskedFiles(listAttachments('feature', f.seq), listTurns(seq)).length) return false;
+    const b = d.budget();
+    if (b && b.blocked) return false;
+    followUp(seq, { by: null, filesOnly: true }, deps);
+    return true;
+  } catch { return false; }
 }
 
 /** Where a feature rests between jobs: done when its latest round said so, else the product owner's turn. */
@@ -477,11 +597,15 @@ export function finishInterview(seq, { by = null } = {}, deps = {}) {
 export function retry(seq, { by = null } = {}, deps = {}) {
   const d = { ...DEFAULTS, ...deps };
   const f = guard(seq);
-  if (listTurns(seq).at(-1)?.kind !== 'error') throw new RequirementsError('CONFLICT', 'nothing to retry');
-  const lastReal = listTurns(seq).filter((t) => t.kind !== 'error').at(-1);
+  // A8 / A6 / A6.1: a file's, an export's or the import's turns never hide the error Try again answers
+  const turns = listTurns(seq).filter((t) => t.kind !== 'file' && t.kind !== 'export' && t.kind !== 'import');
+  if (turns.at(-1)?.kind !== 'error') throw new RequirementsError('CONFLICT', 'nothing to retry');
+  const lastReal = turns.filter((t) => t.kind !== 'error').at(-1);
   if (!f.orientation) return startOrientation(seq, { by }, deps);
-  if (listTurns(seq).at(-1).payload.job === 'look') return startOrientation(seq, { by, thenRound: false }, deps);
-  if (lastReal?.kind === 'followup') return startJob(seq, d, () => runRound(seq, d, by, { followUp: lastReal.payload.assumptions }), by);
+  if (turns.at(-1).payload.job === 'look') return startOrientation(seq, { by, thenRound: false }, deps);
+  if (lastReal?.kind === 'followup') {
+    return startJob(seq, d, () => runRound(seq, d, by, { followUp: lastReal.payload.assumptions, followUpFiles: lastReal.payload.files || null }), by);
+  }
   return startJob(seq, d, () => runRound(seq, d, by, { final: lastReal?.kind === 'finish' }), by);
 }
 
@@ -493,7 +617,7 @@ export function recoverInterrupted() {
     if ((f.status !== 'looking' && f.status !== 'thinking') || isBusy(f.seq)) continue;
     const job = f.status === 'looking' ? 'look' : 'round';
     const msg = job === 'look'
-      ? 'The look at the code did not finish because Worca restarted. Try again.'
+      ? 'The code look did not finish because Worca restarted. Try again.'
       : 'The last round did not finish because Worca restarted. Try again.';
     appendTurn(f.seq, { kind: 'error', payload: { code: 'INTERRUPTED', message: msg, job } });
     updateFeature(f.seq, { status: failedStatus(f.seq, job) });

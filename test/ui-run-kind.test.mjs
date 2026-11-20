@@ -1,9 +1,9 @@
 // test/ui-run-kind.test.mjs — Projects, any way (P1b): how a run worked, and the kind chips.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
 import { JSDOM } from 'jsdom';
 import { workModeOf, isGitRun, isFolderRun, isNoProjectRun, projectKind, kindChip, KIND_LABELS, RUN_KIND_CHIP } from '../ui/public/run-kind.mjs';
+import { readStyleCss } from '../src/core/read-style-css.mjs';
 
 test('workModeOf: the run, its saved state or its branch record names the mode; anything else is a git run', () => {
   assert.equal(workModeOf({ workMode: 'folder' }), 'folder');
@@ -41,7 +41,7 @@ test('kindChip: one chip per kind with the canvas words; nothing for an unknown 
 });
 
 test('kind chip CSS: modifiers scoped to .kind-chip, readable tokens in both themes', () => {
-  const css = readFileSync(new URL('../ui/public/style.css', import.meta.url), 'utf8');
+  const css = readStyleCss();
   assert.match(css, /--teal-ink-strong:light-dark\(#1F6B63,#9FE0D8\)/);
   // Runs redesign (D13): corners and type come from the one grouped chip rule; the own rule sets neither.
   // The design-system feature put the 18px height first in that rule; corners and type still come only from it.
@@ -55,7 +55,7 @@ test('kind chip CSS: modifiers scoped to .kind-chip, readable tokens in both the
 });
 
 test('the run page head has no kind chip link rules; the shared chip rules stay', () => {
-  const css = readFileSync(new URL('../ui/public/style.css', import.meta.url), 'utf8');
+  const css = readStyleCss();
   assert.doesNotMatch(css, /\.rd-title-row a\.kind-chip/);
   assert.match(css, /^\.kind-chip\{display:inline-flex;align-items:center;height:18px;/m);
   assert.match(css, /^\.rd-title-row\{display:flex;align-items:center;gap:8px;min-width:0;\}/m);

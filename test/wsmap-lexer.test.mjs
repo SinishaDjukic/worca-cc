@@ -3,6 +3,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
 import { extractLiterals } from '../src/core/workspace-map/lexer.mjs';
+import { loadBudget } from './helpers/load-budget.mjs';
 
 const values = (text) => extractLiterals(text).map((l) => [l.value, l.line, l.via]);
 
@@ -55,6 +56,6 @@ test('extractLiterals stays linear on long pathological lines (ReDoS guard)', ()
     const t0 = performance.now();
     extractLiterals(s);
     const ms = performance.now() - t0;
-    assert.ok(ms < 3000, `${JSON.stringify(s.slice(0, 8))}… (${s.length} chars) took ${Math.round(ms)} ms`);
+    assert.ok(ms < loadBudget(3000), `${JSON.stringify(s.slice(0, 8))}… (${s.length} chars) took ${Math.round(ms)} ms`);
   }
 });

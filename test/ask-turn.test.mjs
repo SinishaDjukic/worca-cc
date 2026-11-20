@@ -462,6 +462,54 @@ test('card proposals (metrics, workspace, away, web): the parent re-validates th
       assert.deepEqual(mid.filter((b) => b.kind === 'card').map((b) => [b.state, b.card.type, b.card.kind]), [['proposed', 'proxy', 'settings'], ['proposed', 'proxy', 'flag']]);
       assert.ok(mid.some((b) => b.kind === 'notice' && b.text === 'Proxy change rejected: nothing to change'));
     } },
+    { name: 'MCP cards: the re-validation gets the chat pin (an import reads the pinned project\'s files)', run: async () => {
+      const s = seed();
+      const opts = [];
+      const { turn } = makeTurn(s, { pinnedScope: { projectKey: 'demo-00000001' } }, {
+        validateMcpChange: async (inp, o) => { opts.push(o); return { ok: true, card: { type: 'mcp', kind: 'import', summary: 'p' } }; },
+        runClaudeImpl: async (o) => {
+          awayCall(o.onEvent, 1, 'mcp__worca__propose_mcp_change', { kind: 'import', servers: ['cursor:user:x'] }, '{"ok":true,"card":{"type":"mcp"}}');
+          for (let i = 0; i < 2; i++) await new Promise((r) => setImmediate(r));
+          push(o.onEvent, RESULT());
+          return { text: '', exitCode: 0 };
+        },
+      });
+      await turn.run();
+      assert.deepEqual(opts, [{ pin: { projectKey: 'demo-00000001' } }]);
+    } },
+    { name: 'MCP cards: the parent mints from its own re-validation; a refusal or a thrown reader error is a scrubbed notice', run: async () => {
+      const s = seed();
+      const TOKEN = 'ghp_' + 'a'.repeat(36);
+      const seen = [];
+      let mid = null;
+      const { turn } = makeTurn(s, {}, {
+        validateMcpChange: async (inp) => {
+          seen.push(inp);
+          if (inp.name === 'boom') throw new Error('read failed ' + TOKEN);
+          return inp.name === 'github' ? { ok: true, card: { type: 'mcp', summary: 'parent' } } : { ok: false, errors: ['the name "x" is taken'] };
+        },
+        runClaudeImpl: async (opts) => {
+          const child = '{"ok":true,"card":{"type":"mcp","summary":"child"}}';
+          awayCall(opts.onEvent, 1, 'mcp__worca__propose_mcp_change', { kind: 'add', name: 'github' }, child);
+          awayCall(opts.onEvent, 2, 'mcp__worca__propose_mcp_change', { kind: 'add', name: 'x' }, child);
+          awayCall(opts.onEvent, 3, 'mcp__worca__propose_mcp_change', { kind: 'add', name: 'boom' }, child);
+          awayCall(opts.onEvent, 4, 'mcp__worca__propose_mcp_change', { kind: 'add', name: 'github' }, '{"ok":false,"errors":["x"]}');
+          for (let i = 0; i < 4; i++) await new Promise((r) => setImmediate(r));
+          mid = getMessage(s.asst.id).blocks;
+          push(opts.onEvent, RESULT());
+          return { text: '', exitCode: 0 };
+        },
+      });
+      await turn.run();
+      assert.equal(seen.length, 3, 'a child {ok:false} is never re-validated');
+      const cards = mid.filter((b) => b.kind === 'card');
+      assert.deepEqual(cards.map((b) => [b.state, b.card.type, b.card.summary]), [['proposed', 'mcp', 'parent']]);
+      assert.ok(mid.some((b) => b.kind === 'notice' && b.text === 'MCP server change rejected: the name "x" is taken'));
+      const thrown = mid.find((b) => b.kind === 'notice' && b.text.startsWith('MCP server change rejected: read failed'));
+      assert.ok(thrown, JSON.stringify(mid));
+      assert.ok(thrown.text.includes('••••'));
+      assert.equal(JSON.stringify(mid).includes(TOKEN), false);
+    } },
   ]);
 });
 
@@ -1599,13 +1647,65 @@ test('relay: the turn hands its web access to the relay, marks the spawn relayed
       const modes = [];
       const fs = { mkdir: async () => {}, writeFile: async (p, _d, o) => { if (/mcp-.*\.json$/.test(p)) modes.push(o.mode); }, unlink: async () => {} };
       const fail = async () => { throw Object.assign(new Error('claude exited with code 1: boom'), { errorClass: 'api' }); };
-      const relayedTurn = makeTurn(seed(), {}, { fs, agentRelay: () => ({ url: 'http://127.0.0.1:1/api/ask/relay', token: 't', dispose: () => {} }), runClaudeImpl: fail }).turn;
+      const claimed = [];
+      const relayedTurn = makeTurn(seed(), {}, { fs, claimAgentFile: (p) => claimed.push(p), agentRelay: () => ({ url: 'http://127.0.0.1:1/api/ask/relay', token: 't', dispose: () => {} }), runClaudeImpl: fail }).turn;
       await relayedTurn.run();
-      const plainTurn = makeTurn(seed(), {}, { fs, runClaudeImpl: fail }).turn;
+      const plainTurn = makeTurn(seed(), {}, { fs, claimAgentFile: (p) => claimed.push(p), runClaudeImpl: fail }).turn;
       await plainTurn.run();
       assert.deepEqual(modes, [0o640, 0o600]);
+      // V10: the relayed file goes to the turn's agent user's own group, never left to all of worca-share.
+      assert.equal(claimed.length, 1);
+      assert.match(claimed[0], /mcp-.*\.json$/);
     } },
   ]);
+});
+
+// 1.3: tmp/ask is sticky but group-writable for every pool user, and the message id shows under ask/<thread>/skills/
+// first, so another person's agent can make mcp-<id>.json before worca does. Worca then refuses: it never writes the
+// relay token into a file someone else made, nor through a link they left.
+test('1.3: a pre-made relay MCP config (a file or a link) is never written into, and the turn never spawns', { skip: process.platform === 'win32' ? 'POSIX links' : false }, async () => {
+  const { worcaHome } = await import('../src/core/projects.mjs');
+  const { mkdirSync, writeFileSync, symlinkSync } = await import('node:fs');
+  const scratch = join(worcaHome(), 'tmp', 'ask');
+  mkdirSync(scratch, { recursive: true });
+  for (const plant of ['file', 'link']) {
+    const s = seed();
+    const target = join(scratch, `mcp-${s.asst.id}.json`);
+    const aimed = join(scratch, `aimed-${s.asst.id}.json`);
+    writeFileSync(aimed, 'PLANTED');
+    if (plant === 'file') writeFileSync(target, 'PLANTED'); else symlinkSync(aimed, target);
+    let spawned = false; const claimed = [];
+    const { turn } = makeTurn(s, {}, {
+      claimAgentFile: (p) => claimed.push(p),
+      agentRelay: () => ({ url: 'http://127.0.0.1:1/api/ask/relay', token: 'RELAY-TOKEN', dispose: () => {} }),
+      runClaudeImpl: async () => { spawned = true; throw new Error('never'); },
+    });
+    await turn.run();
+    assert.equal(readFileSync(aimed, 'utf8'), 'PLANTED', `${plant}: the token never lands in it`);
+    assert.equal(spawned, false, `${plant}: no spawn`);
+    assert.deepEqual(claimed, [], `${plant}: nothing claimed`);
+    assert.equal(getMessage(s.asst.id).status, 'error');
+  }
+});
+
+// 1.4: the turn claims its thread's folder for its agent user before it mounts or spawns anything; a refused claim
+// (a planted folder) ends the turn without a spawn.
+test('1.4: the turn claims its thread folder first; a refused claim never spawns', async () => {
+  const s = seed();
+  const order = [];
+  await makeTurn(s, {}, {
+    claimThreadDir: (id) => order.push(`claim:${id}`),
+    runClaudeImpl: async () => { order.push('spawn'); throw Object.assign(new Error('claude exited with code 1: boom'), { errorClass: 'api' }); },
+  }).turn.run();
+  assert.deepEqual(order.slice(0, 2), [`claim:${s.thread.id}`, 'spawn']);
+  const s2 = seed();
+  let spawned = false;
+  await makeTurn(s2, {}, {
+    claimThreadDir: () => { throw new Error('ask/x belongs to uid 1, not worca'); },
+    runClaudeImpl: async () => { spawned = true; throw new Error('never'); },
+  }).turn.run();
+  assert.equal(spawned, false);
+  assert.equal(getMessage(s2.asst.id).status, 'error');
 });
 
 // set_away_now / set_run_away_mode: the child validated; the parent applies and the chat shows the line.

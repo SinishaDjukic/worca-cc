@@ -8,7 +8,7 @@ import { join } from 'node:path';
 import { checkRows } from './helpers/rows.mjs';
 import { useTempHome } from './helpers/temp-home.mjs';
 import { gitDir } from './helpers/git-dir.mjs';
-import { _testing as cap } from '../src/core/git-available.mjs';
+import { _testing as cap, BITBUCKET_NEEDS_GIT } from '../src/core/git-available.mjs';
 import { withNoGit, gitArrives } from './helpers/git-off.mjs';
 import { addPluginRepo, fetchCandidate, exportVersion } from '../src/core/plugin-repo.mjs';
 import { inventoryFromCache } from '../src/core/plugin-inventory.mjs';
@@ -45,6 +45,7 @@ test('U2a features while git is missing', async (t) => {
     { name: 'marketplaces: add refuses, a plugin folder still links, refresh-all reaches GitHub over HTTPS, a failure is a warning', run: async () => {
       const x = counting(); seedBuiltinMarketplace();
       await assert.rejects(addMarketplace(URL_, { exec: x.fn }), { code: 'GIT_MISSING', message: 'git is not installed on this machine' });
+      await assert.rejects(addMarketplace('https://bitbucket.org/acme/plugins', { exec: x.fn }), { code: 'GIT_MISSING', message: BITBUCKET_NEEDS_GIT });
       const folder = mkdtempSync(join(tmpdir(), 'worca-p0-plugin-'));
       writeFileSync(join(folder, 'worca-cc-plugin.json'), '{"name":"p0"}');
       await assert.rejects(addMarketplace(folder, { exec: x.fn }), { code: 'PLUGIN_FOLDER' });

@@ -212,12 +212,14 @@ async function requestFromFlags(flags, { projectDir, extras, promptText, stageId
   const request = {
     projectDir,
     workflowId: flags.workflow || 'wf_default',
+    ...(flags.guardrailsId ? { guardrailsId: flags.guardrailsId } : {}),
     ...(flags.title ? { title: flags.title } : {}),
     ...(flags.mock ? { mock: true } : {}),
     ...(flags.sourceBranch ? { sourceBranch: flags.sourceBranch } : {}),
     ...(flags.featureBranch ? { featureBranch: flags.featureBranch } : {}),
     ...(flags.onSourceBranch ? { sameAsSource: true } : {}),
     ...(flags.memoryScope ? { memoryScope: flags.memoryScope } : {}),
+    ...(flags.noMemory ? { noMemory: true } : {}),
     ...(flags.humanInLoop === false ? { humanInLoop: false } : {}),
     ...(flags.nightMode ? { nightMode: true } : {}),   // --night: POST /api/run's own opt-in field
     ...(flags.tags?.length ? { tags: flags.tags } : {}),

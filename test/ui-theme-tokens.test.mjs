@@ -4,11 +4,10 @@
 // outside the token blocks.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
-import { fileURLToPath } from 'node:url';
 import { checkRows } from './helpers/rows.mjs';
+import { readStyleCss } from '../src/core/read-style-css.mjs';
 
-const css = readFileSync(fileURLToPath(new URL('../ui/public/style.css', import.meta.url)), 'utf8');
+const css = readStyleCss();
 const bare = css.replace(/\/\*[\s\S]*?\*\//g, '');            // comments stripped
 
 /** The declarations of the FIRST block opened by `selector` (the house ruleBody idiom). */
@@ -91,13 +90,15 @@ const PAIRS = [
   ...['comment', 'keyword', 'type', 'string', 'literal', 'title'].map((s) => [`--hd-syntax-${s}`, '--panel', 4.5]),
   ['--chip-ink', '--field', 4.5], ['--trunc-ink', '--panel', 4.5], ['--h-blue-ink', '--blue-bg', 4.5], ['--h-peach-ink', '--peach-bg', 4.5],
   ['--blue-ink-strong', '--blue-bg', 4.5], ['--violet-ink', '--violet-bg', 4.5],   // the PR state colours (.rd-pr-fill.pr-view / .pr-merged, .hd-pr-link)
-  ['--amber-ink-strong', '--field', 4.5], ['--red-ink-strong', '--field', 4.5],   // the account menu's spend card tones on its --field panel
+  ['--amber-ink-strong', '--field', 4.5], ['--red-ink-strong', '--field', 4.5],   // the -strong amber and red inks on a --field ground
+  ['--amber-ink-strong', '--panel', 4.5], ['--red-ink-strong', '--panel', 4.5],   // the account menu's spend card tones, flat on the --panel sheet
   ['--side-ink', '--side-bg', 4.5], ['--side-sel-ink', '--side-sel-bg', 4.5],   // the sidebar rows and group labels (.nav button, .nav-sect) and the open page
   ['--on-signal', '--amber', 4.5], ['--on-signal', '--red', 4.5],   // the status dot's '?' / '!' glyph (ui/public/status-dot.mjs)
   ['--violet-ink-strong', '--violet-bg', 4.5], ['--lime-ink-strong', '--lime-bg', 4.5], ['--slate-ink-strong', '--slate-bg', 4.5],
   ['--pink-ink-strong', '--pink-bg', 4.5],   // the Marketplace kind tiles' glyphs (.mk-t-chat / -skill / -wf / -mix)
   ['--teal-ink-strong', '--teal-bg', 4.5], ['--indigo-ink', '--indigo-bg', 4.5], ['--cocoa-ink', '--cocoa-bg', 4.5],   // and .mk-t-mcp / -model / -script
   ['--green-ink-strong', '--green-bg', 4.5], ['--amber-ink-strong', '--amber-bg', 4.5], ['--red-ink-strong', '--red-bg', 4.5],   // Marketplace status chips (L19)
+  ['--ink-2', '--sess-head', 4.5], ['--red-ink-strong', '--sess-head', 4.5],   // the session tray's header text, and its error text (.gv-sess-head, .gv-sess.bad)
   ['--ink-2', '--hover', 4.5],   // the Marketplace "off" chip (.mk-chip-off)
   ['--ink-2', '--line', 4.5],   // the Marketplace counts (.mk-count in the tabs and group heads, LC-P3-18)
   ['--slate-ink', '--slate-bg', 4.5],   // .badge.slate: the Official and policy badges

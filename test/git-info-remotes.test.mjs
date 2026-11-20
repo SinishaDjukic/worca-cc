@@ -8,8 +8,9 @@ import {
   pushBranch, createPr, ghRepoAccess, ghForkRepo, prMergeable, findPrForBranch, prLifecycleState, prProviderFor, prHostsAvailable, anyPrHost,
   markPrReady, closePr, _testing as gitInfo,
 } from '../src/core/git-info.mjs';
-import { forgeOf, forgeOfPrUrl, prNumberFromUrl } from '../src/core/forge.mjs';
+import { forgeOf, forgeOfPrUrl, prNumberFromUrl, prIdentity, parsePrRef, prRefMatches } from '../src/core/forge.mjs';
 import * as azurePr from '../src/core/pr/azure.mjs';
+import * as bitbucketPr from '../src/core/pr/bitbucket.mjs';
 import { execFileSync } from 'node:child_process';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -17,7 +18,7 @@ import { join } from 'node:path';
 import { checkRows } from './helpers/rows.mjs';
 import { withEnv } from './helpers/with-env.mjs';
 
-const NO_ADO = { WORCA_ADO_TOKEN: undefined, WORCA_ADO_READ_TOKEN: undefined, WORCA_ADO_WRITE_TOKEN: undefined, AZURE_DEVOPS_EXT_PAT: undefined };
+const NO_ADO = { WORCA_ADO_TOKEN: undefined, WORCA_ADO_READ_TOKEN: undefined, WORCA_ADO_WRITE_TOKEN: undefined, AZURE_DEVOPS_EXT_PAT: undefined, WORCA_BB_TOKEN: undefined, WORCA_BB_READ_TOKEN: undefined, WORCA_BB_WRITE_TOKEN: undefined };
 /** Every ambient variable that opens a D6/D7/D20 host-lookup gate: Azure credentials, push-as-person, App mode. */
 const CLOSED_GATES = { ...NO_ADO, WORCA_GH_AS_PERSON: undefined, WORCA_BROKER_URL: undefined,
   WORCA_GH_APP_ID: undefined, WORCA_GH_APP_KEY_FILE: undefined, WORCA_GH_APP_KEY_B64: undefined };
@@ -94,6 +95,15 @@ test('listRemotes: parses git remote -v (push URL wins); empty output and git fa
       assert.equal(r.remotes[2].owner, 'y', 'push URL wins for the owner');
       assert.deepEqual([r.remotes[3].owner, r.remotes[3].slug], [null, null], 'unparseable stays listed, unparsed');
     } },
+    { name: 'listRemotes: a disabled push URL (`git remote set-url --push upstream DISABLED`) falls back to the fetch URL', run: async () => {
+      gitInfo.setRunner(() => okOut([
+        'upstream\thttps://github.com/up/repo.git (fetch)',
+        'upstream\tDISABLED (push)',
+        '',
+      ].join('\n')));
+      const { remotes } = await listRemotes('/repo');
+      assert.deepEqual([remotes[0].owner, remotes[0].slug, remotes[0].forge], ['up', 'up/repo', 'github']);
+    } },
     { name: 'listRemotes: empty output is an empty list; git failures are reported without throwing', run: async () => {
       gitInfo.setRunner(() => okOut(''));
       assert.deepEqual(await listRemotes('/repo'), { ok: true, remotes: [] });
@@ -133,6 +143,7 @@ test('Azure DevOps remotes: one identity for every spelling; sameRepo across ssh
       assert.equal(forgeOf(parseRemoteUrl('https://github.com/o/r')), 'github');
       assert.equal(forgeOf(parseRemoteUrl('https://dev.azure.com/acme/Shop/_git/api')), 'azure');
       assert.equal(forgeOf(parseRemoteUrl('https://gitlab.com/g/r')), null);
+      assert.equal(forgeOf(parseRemoteUrl('git@bitbucket.org:acme/api.git')), 'bitbucket');
       assert.equal(forgeOf(null), null);
       assert.equal(forgeOfPrUrl('https://github.com/o/r/pull/3'), 'github');
       assert.equal(forgeOfPrUrl('https://dev.azure.com/acme/Shop/_git/api/pullrequest/9'), 'azure');
@@ -532,7 +543,10 @@ test('prProviderFor / prHostsAvailable / anyPrHost', async () => {
     assert.equal(prProviderFor({ host: 'dev.azure.com', org: 'a', owner: 'a/p', repo: 'r' }).label, 'Azure DevOps');
     assert.equal(prProviderFor(null).label, 'GitHub');
     assert.deepEqual(await prProviderFor(null).available(), { ok: false, reason: 'GitHub CLI (gh) is not available' });
-    assert.deepEqual(await prHostsAvailable(), { github: false, azure: false });
+    assert.equal(prProviderFor({ host: 'bitbucket.org', owner: 'acme', repo: 'api' }).label, 'Bitbucket');
+    assert.deepEqual(await prProviderFor({ host: 'bitbucket.org', owner: 'acme', repo: 'api' }).available(),
+      { ok: false, reason: 'Bitbucket is not configured: set WORCA_BB_TOKEN (an access token, or an Atlassian API token with WORCA_BB_EMAIL) with Repositories and Pull requests: Read & Write, and Pipelines: Read, where worca runs' });
+    assert.deepEqual(await prHostsAvailable(), { github: false, azure: false, bitbucket: false });
     assert.equal(await anyPrHost(), false);
   });
 });
@@ -607,3 +621,75 @@ test('markPrReady and closePr: gh argv; an already-ready PR counts as ready; a m
   assert.equal((await markPrReady({})).ok, false);
   assert.equal((await closePr({})).ok, false);
 }));
+
+test('Bitbucket base remote: createPr, mergeable and findPrForBranch go over REST, never gh', () => withEnv({ ...NO_ADO, WORCA_BB_TOKEN: 'bbtok' }, async () => {
+  const calls = [];
+  gitInfo.setRunner((cmd, args) => { calls.push([cmd, ...args].join(' ')); return cmd === 'git' && args[0] === 'remote'
+    ? okOut('origin\tgit@bitbucket.org:acme/api.git (fetch)\norigin\tgit@bitbucket.org:acme/api.git (push)\n') : fail('gh must not run', 1); });
+  const urls = [];
+  bitbucketPr._testing.setFetch(async (url, init = {}) => {
+    urls.push(`${init.method || 'GET'} ${new URL(url).pathname}`);
+    const ok = (b) => ({ status: 200, ok: true, headers: { get: () => null }, json: async () => b });
+    if (/\/pullrequests\/4\/conflicts\?/.test(url)) return ok({ values: [] });
+    // #4 as Bitbucket answers it: abbreviated commits.
+    const pr4 = { id: 4, state: 'OPEN', source: { branch: { name: 'feat' }, commit: { hash: 'a1b2c3d4e5f6' }, repository: { full_name: 'acme/api' } },
+      destination: { branch: { name: 'main' }, commit: { hash: '0f9e8d7c6b5a' } } };
+    if (/\/pullrequests\/4$/.test(url)) return ok(pr4);
+    if ((init.method || 'GET') === 'POST') return { ...ok({ id: 4 }), status: 201 };
+    // createPr's open-PR lookup (state=OPEN&pagelen=50) finds none; findPrForBranch's all-states listing finds #4.
+    return ok({ values: /\?state=OPEN&pagelen=50&/.test(url) ? [] : [pr4] });
+  });
+  try {
+    const { remotes } = await listRemotes('/r');
+    assert.equal(remotes[0].forge, 'bitbucket');
+    const pr = await createPr({ projectDir: '/r', base: 'main', head: 'feat', title: 'T', baseRemote: remotes[0], pushRemote: remotes[0] });
+    assert.deepEqual(pr, { ok: true, url: 'https://bitbucket.org/acme/api/pull-requests/4', number: 4, existed: false });
+    assert.equal(await prMergeable({ projectDir: '/r', head: 'feat' }), 'MERGEABLE');
+    assert.deepEqual((({ number, mergeable }) => ({ number, mergeable }))(await findPrForBranch({ projectDir: '/r', head: 'feat' })),
+      { number: 4, mergeable: 'MERGEABLE' }, 'the Runs list\'s PR chip can say "conflicts" for Bitbucket too');
+    assert.ok(urls.includes('GET /2.0/repositories/acme/api/pullrequests/4/conflicts'), 'the PR\'s file conflicts');
+    const prUrl = 'https://bitbucket.org/acme/api/pull-requests/4';
+    assert.equal(await prMergeable({ projectDir: '/r', prUrl }), 'MERGEABLE', 'a stored Bitbucket PR URL reads its file conflicts');
+    assert.equal(await prLifecycleState({ projectDir: '/r', prUrl }), 'OPEN');
+    assert.ok(!calls.some((c) => c.startsWith('gh pr')), 'gh pr never ran');
+  } finally { bitbucketPr._testing.reset(); }
+}));
+
+test('prIdentity: GitHub / Azure (both spellings) / Bitbucket canonical keys; tails, case, query ignored; unsupported hosts null', () => {
+  const k = 'github.com/o/r/pull/7';
+  for (const u of ['https://github.com/o/r/pull/7', 'https://www.GitHub.com/O/R/pull/7/files', 'http://github.com/o/r/pull/7?x=1#c', ' https://github.com/o/r/pull/7/ ']) {
+    assert.equal(prIdentity(u)?.key, k, u);
+  }
+  assert.deepEqual(prIdentity('https://github.com/O/r/pull/7'), { forge: 'github', owner: 'O', repo: 'r', number: 7, key: k });
+  const az = prIdentity('https://dev.azure.com/Acme/Shop/_git/api/pullrequest/9');
+  assert.equal(az.key, 'dev.azure.com/acme/shop/api/pullrequest/9');
+  assert.equal(prIdentity('https://acme.visualstudio.com/Shop/_git/api/pullrequest/9?a=1').key, az.key);
+  assert.equal(prIdentity('https://bitbucket.org/o/r/pull-requests/3').key, 'bitbucket.org/o/r/pull-requests/3');
+  assert.equal(prIdentity('https://gitlab.com/o/r/-/merge_requests/1'), null);
+  assert.equal(prIdentity('https://github.com/o/r/pull/0'), null);
+  assert.equal(prIdentity(null), null);
+});
+
+test('parsePrRef: url, owner/repo#N, number, #number; rejects zero, non-numeric, gitlab', () => {
+  assert.deepEqual(parsePrRef(' 1069 '), { kind: 'number', number: 1069 });
+  assert.deepEqual(parsePrRef('#1069'), { kind: 'number', number: 1069 });
+  assert.deepEqual(parsePrRef('o/r#5'), { kind: 'slug', owner: 'o', repo: 'r', number: 5 });
+  assert.deepEqual(parsePrRef('https://github.com/o/r/pull/5/files'), { kind: 'url', number: 5, key: 'github.com/o/r/pull/5', forge: 'github' });
+  for (const bad of ['0', '#0', 'abc', '', 'o/r', 'https://gitlab.com/o/r/-/merge_requests/1', null, 5]) assert.equal(parsePrRef(bad), null, String(bad));
+});
+
+test('prRefMatches: number via pr_number or URL tail; slug owner/repo incl. Azure org|project; never throws on null', () => {
+  const gh = { url: 'https://github.com/Own/Repo/pull/12', number: null };
+  assert.equal(prRefMatches(parsePrRef('12'), gh), true);
+  assert.equal(prRefMatches(parsePrRef('13'), gh), false);
+  assert.equal(prRefMatches(parsePrRef('12'), { url: 'x', number: 12 }), true);
+  assert.equal(prRefMatches(parsePrRef('own/repo#12'), gh), true);
+  assert.equal(prRefMatches(parsePrRef('other/repo#12'), gh), false);
+  assert.equal(prRefMatches(parsePrRef('https://github.com/own/repo/pull/12/files'), gh), true);
+  const az = { url: 'https://dev.azure.com/Acme/Shop/_git/api/pullrequest/9' };
+  assert.equal(prRefMatches(parsePrRef('acme/api#9'), az), true);
+  assert.equal(prRefMatches(parsePrRef('shop/api#9'), az), true);
+  assert.equal(prRefMatches(parsePrRef('nope/api#9'), az), false);
+  assert.equal(prRefMatches(null, gh), false);
+  assert.equal(prRefMatches(parsePrRef('12'), null), false);
+});

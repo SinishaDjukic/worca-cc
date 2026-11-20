@@ -8,7 +8,7 @@ import { checkRows } from './helpers/rows.mjs';
 import { normalizeManifest } from '../src/core/plugin-manifest.mjs';
 import { writePluginConfig, createProfile } from '../src/core/plugin-config.mjs';
 import { writePluginsLock, readPluginsLock, pluginCurrentDir } from '../src/core/plugins-lock.mjs';
-import { pluginSetupState } from '../src/core/plugin-setup-state.mjs';
+import { pluginSetupState, pluginHasSettings } from '../src/core/plugin-setup-state.mjs';
 import { listInstalledPlugins } from '../src/core/plugin-store.mjs';
 
 useTempHome(after);
@@ -76,6 +76,31 @@ test('pluginSetupState: required fields still empty per task source, profile and
       writePluginsLock({ ...readPluginsLock(), 'row-setup': { repo: null, subdir: '', pinnedSha: null, version: '0.1.0', enabled: true, installedAt: 'x', linked: true } });
       const row = listInstalledPlugins().find((p) => p.name === 'row-setup');
       assert.deepEqual(row.setup, { ok: false, missing: [{ kind: 'taskSource', id: 'src', keys: ['token'] }], noProfiles: [] });
+    } },
+    { name: 'pluginHasSettings: a source or channel with config fields, or model secrets unless the broker holds them', run: () => {
+      assert.equal(pluginHasSettings(man({}), { broker: false }), false, 'nothing to set');
+      assert.equal(pluginHasSettings(man({ taskSources: [SRC()] }), { broker: false }), false, 'a source with no fields shows no Settings');
+      assert.equal(pluginHasSettings(man({ taskSources: [SRC({ configSchema: [{ key: 'base' }] })] }), { broker: false }), true);
+      const chan = man({ chatChannels: [{ id: 'slack', module: './chat.mjs', platform: 'slack', displayName: 'Slack',
+        capabilities: { inbound: true, outbound: true }, configSchema: [{ key: 'botToken', secret: true, required: true }] }] });
+      assert.equal(pluginHasSettings(chan, { broker: false }), true);
+      const secrets = man({ modelSecrets: [{ key: 'API_KEY', label: 'API key' }] });
+      assert.equal(pluginHasSettings(secrets, { broker: false }), true);
+      assert.equal(pluginHasSettings(secrets, { broker: true }), false, 'the broker holds model keys: only a chip, no fields');
+      assert.equal(pluginHasSettings(null), false);
+    } },
+    { name: 'listInstalledPlugins rows carry hasSettings', run: () => {
+      const raw = { name: 'row-has-settings', version: '0.1.0', taskSources: [SRC({ configSchema: [{ key: 'base' }] })] };
+      mkdirSync(pluginCurrentDir('row-has-settings'), { recursive: true });
+      writeFileSync(join(pluginCurrentDir('row-has-settings'), 'worca-cc-plugin.json'), JSON.stringify(raw));
+      const bare = { name: 'row-no-settings', version: '0.1.0' };
+      mkdirSync(pluginCurrentDir('row-no-settings'), { recursive: true });
+      writeFileSync(join(pluginCurrentDir('row-no-settings'), 'worca-cc-plugin.json'), JSON.stringify(bare));
+      const lock = (v) => ({ repo: null, subdir: '', pinnedSha: null, version: v, enabled: true, installedAt: 'x', linked: true });
+      writePluginsLock({ ...readPluginsLock(), 'row-has-settings': lock('0.1.0'), 'row-no-settings': lock('0.1.0') });
+      const rows = listInstalledPlugins();
+      assert.equal(rows.find((p) => p.name === 'row-has-settings').hasSettings, true);
+      assert.equal(rows.find((p) => p.name === 'row-no-settings').hasSettings, false);
     } },
   ]);
 });

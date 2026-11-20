@@ -6,11 +6,14 @@ import { readFileSync } from 'node:fs';
 import { JSDOM } from 'jsdom';
 import { layoutDialog, syncDialogEdges, watchDialogEdges } from '../ui/public/dialog-layout.mjs';
 import { cardAlert } from '../ui/public/feedback.mjs';
+import { renderAddStep2 } from '../ui/public/models/add-model-dialog.mjs';
 import { cssRules } from './helpers/css-rules.mjs';
+import { readIndexHtml } from '../src/core/read-index-html.mjs';
+import { readStyleCss } from '../src/core/read-style-css.mjs';
 
 const read = (p) => readFileSync(new URL(`../${p}`, import.meta.url), 'utf8');
-const css = read('ui/public/style.css');
-const page = new JSDOM(read('ui/public/index.html')).window.document;
+const css = readStyleCss();
+const page = new JSDOM(readIndexHtml()).window.document;
 const ALL = cssRules(css);
 const has = (sel, re) => ALL.some((r) => r.sel === sel && re.test(r.body));
 
@@ -189,7 +192,12 @@ test('no rule re-enables card scrolling (static and JS-built), and only bounded 
 });
 
 test('already-pinned dialogs keep their own head outside their scroller', () => {
-  assert.ok(page.querySelector('#model-import-modal .mimp > #mimp-body'));
+  // Add model's step 2 (the import inside it), laid out as app.js showAddList does: the list scrolls in its own box,
+  // under the pinned head.
+  const step2 = renderAddStep2({ provider: 'copilot' }, { doc: page });
+  layoutDialog(step2, { head: [step2.querySelector(':scope > .mdl-add-head')], foot: [step2.querySelector(':scope > .mdl-add-foot')] });
+  assert.ok(step2.querySelector(':scope > .dlg-head > .mdl-add-head'));
+  assert.ok(step2.querySelector(':scope > .dlg-body #mimp-body'));
   assert.ok(has('#mimp-body', /min-height:0;overflow:auto;/));
   assert.ok(has('.folder-modal .card', /display:flex;flex-direction:column;overflow:hidden;/));
   assert.ok(has('.apv-body', /min-height:0;overflow:auto;/));

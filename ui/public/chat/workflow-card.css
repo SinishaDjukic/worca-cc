@@ -1,0 +1,253 @@
+/* ---------- workflow card build (ui/public/auto-build.mjs; mockup §B/§F motion) ---------- */
+.ask-wfcard-graph .gv-world .node{transition:opacity .28s cubic-bezier(.2,.7,.3,1),translate .28s cubic-bezier(.2,.7,.3,1);}
+.ask-wfcard-graph .gv-world .node.is-hid{opacity:0;translate:0 8px;}
+.ask-wfcard-graph .gv-wires path.wire{transition:opacity .42s cubic-bezier(.4,0,.2,1);}
+.ask-wfcard-graph .gv-wires path.wire.is-hid,.ask-wfcard-graph .gv-world .wbadge.is-hid{opacity:0;}
+.ask-wfcard-match.is-hid,.ask-wfcard-loops.is-hid{opacity:0;}
+.ask-wfcard-match,.ask-wfcard-loops{transition:opacity .2s ease;}
+.ask-wfcard-trace{display:flex;flex-direction:column;margin:12px 0 0;padding:0;list-style:none;}
+.ask-wfcard-step{display:flex;align-items:center;gap:12px;height:28px;font-size:13px;color:var(--ink-3);}
+.ask-wfcard-step .st-ico{width:14px;height:14px;flex:0 0 14px;display:grid;place-items:center;}
+.ask-wfcard-step .st-dot{width:6px;height:6px;border-radius:50%;background:var(--ink-3);}
+.ask-wfcard-step .st-check{width:14px;height:14px;stroke:var(--green);fill:none;stroke-width:2.4;display:none;}
+.ask-wfcard-step .st-label{font-weight:500;white-space:nowrap;}
+.ask-wfcard-step .st-meter{font-family:var(--mono);font-size:11px;color:var(--ink-3);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-variant-numeric:tabular-nums;}
+.ask-wfcard-step.is-live .st-label{background:linear-gradient(100deg,var(--ink-3) 0%,var(--ink-3) 34%,var(--ink) 50%,var(--ink-3) 66%,var(--ink-3) 100%);
+  background-size:220% 100%;-webkit-background-clip:text;background-clip:text;color:transparent;animation:ask-shimmer 2.4s linear infinite;}
+.ask-wfcard-step.is-live .st-dot,.ask-wfcard-step.is-done .st-dot{display:none;}
+.ask-wfcard-step.is-done{color:var(--ink-2);}
+.ask-wfcard-step.is-done .st-check{display:block;}
+@media (prefers-reduced-motion: reduce){
+  .ask-wfcard-step.is-live .st-label{background:none;-webkit-background-clip:border-box;background-clip:border-box;color:var(--ink-2);animation:none;}
+}
+
+.ask-jump{position:absolute;left:0;right:0;bottom:calc(var(--ask-box-top) + 9px);margin:0 auto;width:max-content;
+  display:flex;align-items:center;gap:7px;padding:6px 12px;border:1px solid var(--line-2);border-radius:var(--r-sm);
+  background:var(--panel);color:var(--ink);font-family:inherit;font-weight:600;font-size:11px;cursor:pointer;
+  box-shadow:var(--shadow-pop);transition:border-color .15s;}
+.ask-jump:hover{border-color:var(--hover-outline);}
+.ask-jump[hidden]{display:none;}
+.ask-jump:focus-visible{outline:2px solid var(--ink);outline-offset:2px;}
+
+/* File drag-and-drop (ask-panel.mjs buildDropTarget): the overlay covers the
+   whole sheet while files hover it. pointer-events:none keeps the drag events
+   on the sheet's children, where the depth counter expects them. The fade is
+   an animation, which the global reduced-motion rule (transitions only) misses. */
+.ask-drop{position:absolute;inset:0;z-index:8;display:flex;align-items:center;justify-content:center;pointer-events:none;
+  margin:6px;border:2px dashed var(--ink-3);border-radius:var(--r-sm);
+  background:var(--panel-veil);animation:ask-drop-in .12s ease-out both;}
+.ask-drop[hidden]{display:none;}
+.ask-drop-label{padding:8px 16px;border:1px solid var(--line-2);border-radius:var(--r-sm);background:var(--panel);
+  color:var(--ink);font-weight:600;font-size:13px;box-shadow:var(--shadow-pop);}
+@keyframes ask-drop-in{from{opacity:0;}to{opacity:1;}}
+@media (prefers-reduced-motion: reduce){.ask-drop{animation:none;}}
+
+/* The band is the padded outer strip (no border-top: the box is the separation);
+   the box holds chips → textarea → msg → row, rounded and bordered, on the same
+   cap as the transcript column. Panel background, not field: the textarea keeps
+   the contrast baseline (scripts/verify-theme-cdp.mjs) it has today. */
+.ask-composer{position:relative;flex:0 0 auto;padding:10px 16px 14px;display:flex;flex-direction:column;}
+.ask-composer-box{width:100%;max-width:var(--ask-col-max);margin-inline:auto;padding:8px 10px;
+  border:1px solid var(--line-2);border-radius:var(--r-lg);background:var(--panel);
+  display:flex;flex-direction:column;gap:4px;}
+/* Ask worca beside the page: the page on screen as chips above the attachments (ask-panel.mjs paintPageChips): an icon,
+   a caption, the name, and the × that leaves it out of the next messages. */
+.ask-page-chips{display:flex;flex-wrap:wrap;gap:6px;padding:2px 4px;}
+.ask-page-chips[hidden]{display:none;}
+.ask-page-chip{display:inline-flex;align-items:center;gap:6px;max-width:100%;min-width:0;height:28px;padding:0 4px 0 8px;box-sizing:border-box;
+  border-radius:var(--r-sm);background:var(--field);color:var(--ink-2);font-size:var(--fs-meta);}
+.ask-page-chip .ic{flex:none;color:var(--ink-3);}
+.ask-page-chip-cap{flex:none;}
+.ask-page-chip-name{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-weight:500;color:var(--ink);}
+.ask-page-chip-x{flex:none;display:inline-flex;align-items:center;justify-content:center;width:20px;height:20px;padding:0;border:0;
+  border-radius:var(--r-sm);background:transparent;color:var(--ink-3);cursor:pointer;}
+.ask-page-chip-x:hover{background:var(--hover-on-field);color:var(--ink);}
+.ask-page-chip-x:focus-visible{outline:2px solid var(--ink);outline-offset:0;}
+.ask-chips{display:flex;flex-wrap:wrap;gap:6px;padding:2px 4px 4px;}
+.ask-chips[hidden]{display:none;}
+.ask-chip{display:inline-flex;align-items:center;gap:7px;padding:5px 8px 5px 9px;border:1px solid var(--line);
+  border-radius:var(--r-sm);background:var(--field);color:var(--ink-2);font-family:var(--mono);font-size:11px;max-width:240px;}
+.ask-chip-name{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+.ask-chip-thumb{width:24px;height:24px;object-fit:cover;border-radius:var(--r-sm);flex:none;}
+.ask-chip-x{border:0;background:transparent;color:var(--ink-3);cursor:pointer;font-family:inherit;
+  font-size:13px;line-height:1;padding:1px 4px;border-radius:var(--r-sm);transition:.15s;}
+.ask-chip-x:hover{background:var(--hover-on-field);color:var(--ink);}
+.ask-composer textarea.ask-input{min-height:0;height:auto;max-height:120px;resize:none;border:0;border-radius:0;
+  background:transparent;padding:6px 6px 8px;font-size:var(--fs-body);line-height:1.6;}
+.ask-composer textarea.ask-input:focus{background:transparent;border-color:transparent;}
+.ask-composer textarea.ask-input:focus-visible{outline:none;}
+.ask-composer-msg{font-size:var(--fs-meta);color:var(--red-ink);padding:0 6px;}
+.ask-composer-msg[hidden]{display:none;}
+.ask-composer-row{display:flex;align-items:center;gap:8px;position:relative;}
+/* The queue: messages sent while a reply runs, stacked above the box, oldest card nearest the input. */
+.ask-queue{width:100%;max-width:var(--ask-col-max);margin:0 auto 6px;display:flex;flex-direction:column;gap:4px;}
+.ask-queue[hidden]{display:none;}
+.ask-queue-bar{display:flex;align-items:center;gap:8px;padding:0 6px;font-size:11px;color:var(--ink-3);}
+.ask-queue-resume{border:1px solid var(--line);border-radius:var(--r-sm);background:var(--panel);color:var(--ink);font:inherit;font-size:11px;padding:2px 10px;cursor:pointer;transition:.15s;}
+.ask-queue-resume:hover{border-color:var(--hover-outline);}
+.ask-queue-resume[hidden]{display:none;}
+.ask-queue-list{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:4px;}
+.ask-queue-item{display:flex;align-items:center;gap:6px;padding:4px 4px 4px 10px;border:1px solid var(--line);border-radius:var(--r-sm);background:var(--panel);color:var(--ink-2);font-size:12px;transition:transform .2s cubic-bezier(.65,.02,.28,1),opacity .15s;}
+.ask-queue-item.is-entering{animation:ask-queue-in .16s ease-out backwards;}
+.ask-queue-item.is-sending{opacity:.55;}
+.ask-queue-text{flex:1 1 auto;min-width:0;padding:2px 0;border:0;background:transparent;color:inherit;font:inherit;text-align:left;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;cursor:pointer;}
+.ask-queue-text:disabled{cursor:default;}
+.ask-queue-meta{flex:none;font-family:var(--mono);font-size:11px;color:var(--ink-3);}
+.ask-queue-x{flex:none;}
+.ask-queue-x:disabled{visibility:hidden;}
+.ask-queue-pen{flex:none;display:grid;place-items:center;width:22px;height:22px;border:0;border-radius:var(--r-sm);background:transparent;color:var(--ink-3);cursor:pointer;transition:.15s;}
+.ask-queue-pen:hover{color:var(--ink);background:var(--hover);}
+.ask-queue-pen:disabled{visibility:hidden;}
+.ask-queue-item.is-editing{border-color:var(--hover-outline);color:var(--ink);}
+.ask-queue-item.is-editing .ask-queue-text{display:none;}
+.ask-queue-item.is-editing .ask-queue-pen{color:var(--ink);}
+.ask-queue-item textarea.ask-queue-edit{flex:1 1 auto;width:auto;min-width:0;min-height:0;height:auto;max-height:120px;margin:0;padding:2px 0;
+  border:0;border-radius:0;outline:0;resize:none;background:transparent;color:inherit;font:inherit;line-height:1.4;overflow-y:auto;}
+/* The card's is-editing border is the focus cue; the field itself stays flat. */
+.ask-queue-item textarea.ask-queue-edit:focus{background:transparent;border-color:transparent;}
+.ask-queue-item textarea.ask-queue-edit:focus-visible{outline:none;}
+.ask-queue-ghost{position:absolute;margin:0;pointer-events:none;animation:ask-queue-out .2s cubic-bezier(.65,.02,.28,1) both;}
+.ask-composer :is(.ask-queue-text,.ask-queue-pen,.ask-queue-x,.ask-queue-resume):focus-visible{outline:2px solid var(--ink);outline-offset:2px;}
+.ask-send:disabled,.ask-send:disabled:hover{opacity:.4;}
+@keyframes ask-queue-in{from{opacity:0;transform:translateY(6px);}to{opacity:1;transform:none;}}
+@keyframes ask-queue-out{from{opacity:1;transform:none;}to{opacity:0;transform:translateY(-18px);}}
+@media (prefers-reduced-motion: reduce){.ask-queue-item,.ask-queue-item.is-entering,.ask-queue-ghost{animation:none;transition:none;}}
+.ask-meter{display:flex;align-items:center;gap:7px;font-family:var(--mono);font-size:11px;
+  color:var(--ink-3);white-space:nowrap;}
+.ask-meter-cost{color:var(--ink-2);}
+/* The context ring opens the context popover. ask-panel.mjs ctxRing: a track and an arc on a 100-unit
+   path; updateMeters sets the arc's stroke-dasharray to the fill. */
+.ask-ctx-ring{display:inline-flex;align-items:center;justify-content:center;flex:none;}
+.ask-ctx-ring[aria-expanded="true"]{background:var(--hover);}
+.ask-ctx-ring:focus-visible{outline:2px solid var(--ink);outline-offset:1px;}
+.ask-ctx-ring-track{stroke:var(--line-2);}
+.ask-ctx-ring-arc{stroke:var(--blue);transition:stroke-dasharray .3s;}
+/* Context window levels (ask-panel.mjs ctxLevel): amber from 75% of the compaction trigger, red from 90%. */
+.ask-ctx-ring.is-ctx-warn .ask-ctx-ring-arc{stroke:var(--amber);}
+.ask-ctx-ring.is-ctx-high .ask-ctx-ring-arc{stroke:var(--red);}
+.ask-agent-tokens.is-ctx-warn{color:var(--amber-ink);}
+.ask-agent-tokens.is-ctx-high{color:var(--red-ink);font-weight:600;}
+.ask-model-btn{display:flex;align-items:center;gap:7px;}
+.ask-model-btn-effort{font-weight:500;color:var(--ink-3);}
+.ask-model-btn-engine{font-weight:500;color:var(--ink-2);}
+.ask-send,.ask-stop{display:inline-flex;align-items:center;justify-content:center;flex:none;}
+.ask-send[hidden]{display:none;}
+.ask-stop[hidden]{display:none;}
+.ask-voice{display:inline-flex;align-items:center;gap:2px;flex:none;}
+.ask-voice-mic{display:inline-flex;align-items:center;justify-content:center;flex:none;}
+.ask-voice-mic.is-on{background:var(--ink);color:var(--panel);border-color:var(--ink);}
+.ask-voice-mic.is-handsfree{animation:wr-pulse 1.6s ease-in-out infinite;}
+.ask-voice-mic.is-error{border-color:var(--red);color:var(--red-ink);}
+.ask-voice-caret{display:inline-flex;align-items:center;justify-content:center;}
+.ask-voice-status{font-size:11px;color:var(--ink-3);white-space:nowrap;margin-right:4px;}
+.ask-voice-status[hidden]{display:none;}
+.ask-voice-status[data-state="speaking"],.ask-voice-status[data-state="listening"]{color:var(--ink);}
+.ask-voice-status[data-state="error"]{color:var(--red-ink);}
+.ask-pop-voice{right:var(--ask-col-inset);bottom:calc(var(--ask-box-top) + 6px);width:260px;}
+.ask-voice-item svg{flex:0 0 auto;}
+.ask-composer :is(.ask-voice-mic,.ask-voice-caret):focus-visible{outline:2px solid var(--ink);outline-offset:2px;}
+.ask-composer :is(.ask-model-btn,.ask-send,.ask-stop,.ask-chip-x):focus-visible{outline:2px solid var(--ink);outline-offset:2px;}
+
+.ask-pop{position:absolute;z-index:3;}
+/* The composer popovers hug the box (--ask-col-inset, see .ask-sheet) and float
+   just above it (--ask-box-top). */
+.ask-pop-scope{left:var(--ask-col-inset);bottom:calc(var(--ask-box-top) + 6px);width:300px;max-height:min(420px,70%);overflow-y:auto;}
+.ask-pop-model{right:var(--ask-col-inset);bottom:calc(var(--ask-box-top) + 6px);width:292px;
+  max-height:min(420px,70%);overflow-y:auto;overscroll-behavior:contain;}   /* ~10 rows, then it scrolls, like the scope and MCP pickers */
+/* The per-chat MCP picker (MCP registry §9.4) opens over the scope pill it sits beside. Level 1 rows hold a
+   small switch and a drill button; level 2 rows a copy name and its switch. */
+.ask-pop-mcp{left:var(--ask-col-inset);bottom:calc(var(--ask-box-top) + 6px);width:300px;max-height:min(420px,70%);overflow-y:auto;}
+.ask-mcp-row{display:flex;align-items:center;gap:6px;padding:0 11px;}
+.ask-mcp-row .ask-pop-item{flex:1 1 auto;min-width:0;padding-left:6px;}
+.ask-mcp-copy{flex:1 1 auto;min-width:0;padding:9px 0;font-family:var(--mono);font-size:12px;color:var(--ink);
+  overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+.ask-mcp-member.is-skipped .ask-model-name{font-family:var(--mono);font-size:12px;color:var(--ink-3);}
+.ask-mcp-member.is-problem .ask-pop-row-value{color:var(--amber-ink);}
+/* Skills registry §6.8: a level-1 set row's "2 servers · 1 skill · pinned" line under the set name. */
+.ask-pop-mcp .ask-model-name small{display:block;font-size:var(--fs-caption);font-weight:400;color:var(--ink-3);}
+.ask-notice-mcp{padding:0;border:0;background:none;color:var(--blue-ink);font:inherit;cursor:pointer;}
+/* Context popover (ask-panel.mjs buildCtxPopover): the window's fill, the chat's topics, agents and
+   worktrees. Above the ring (JS sets its right edge); capped, it scrolls when the lists run long. */
+.ask-pop-ctx{right:calc(var(--ask-col-inset) + 120px);bottom:calc(var(--ask-box-top) + 6px);width:340px;z-index:4;
+  max-height:min(460px,70%);overflow-y:auto;}
+.ask-ctx-bar{position:relative;height:6px;margin:2px 10px 8px;border-radius:var(--r-sm);background:var(--field);overflow:hidden;}
+.ask-ctx-bar-used{position:absolute;left:0;top:0;bottom:0;background:var(--blue);}
+.ask-ctx-bar-buffer{position:absolute;right:0;top:0;bottom:0;
+  background:repeating-linear-gradient(135deg,var(--line-2) 0 3px,transparent 3px 6px);}
+.ask-ctx-stat{display:flex;align-items:center;gap:8px;padding:3px 10px;font-size:12px;color:var(--ink-2);}
+.ask-ctx-swatch{flex:none;width:9px;height:9px;border-radius:var(--r-xs);background:var(--line-2);}
+.ask-ctx-stat[data-stat="used"] .ask-ctx-swatch{background:var(--blue);}
+.ask-ctx-stat[data-stat="buffer"] .ask-ctx-swatch{background:repeating-linear-gradient(135deg,var(--line-2) 0 2px,transparent 2px 4px);border:1px solid var(--line-2);}
+.ask-ctx-stat[data-stat="free"] .ask-ctx-swatch{background:var(--field);border:1px solid var(--line-2);}
+.ask-ctx-stat-name{flex:1;min-width:0;}
+.ask-ctx-stat-tokens{font-family:var(--mono);font-size:11px;color:var(--ink-3);}
+.ask-ctx-stat-share{width:48px;text-align:right;font-family:var(--mono);font-size:11px;}
+.ask-ctx-bar-used.is-ctx-warn,.ask-ctx-stat.is-ctx-warn .ask-ctx-swatch{background:var(--amber);}
+.ask-ctx-bar-used.is-ctx-high,.ask-ctx-stat.is-ctx-high .ask-ctx-swatch{background:var(--red);}
+.ask-ctx-foot{padding:6px 10px 4px;font-size:12px;color:var(--ink-2);}
+.ask-ctx-foot.is-ctx-high{color:var(--red-ink);font-weight:600;}
+.ask-ctx-hint{padding:0 10px 4px;font-size:11px;color:var(--ink-3);}
+.ask-ctx-topics{padding-bottom:4px;}
+.ask-ctx-group{padding:6px 10px 2px;font-family:var(--mono);font-size:12px;color:var(--ink-2);font-weight:600;}
+.ask-ctx-topic{display:flex;align-items:center;gap:8px;padding:5px 10px;border-radius:var(--r-sm);font-size:12px;color:var(--ink);}
+.ask-ctx-topic.ask-pop-item{padding:5px 10px;}
+.ask-ctx-topic[data-kind="project"] .ask-ctx-swatch{background:var(--slate);}
+.ask-ctx-topic[data-kind="run"] .ask-ctx-swatch{background:var(--blue);}
+.ask-ctx-topic[data-kind="workspace"] .ask-ctx-swatch{background:var(--green);}
+.ask-ctx-topic[data-kind="page"] .ask-ctx-swatch{background:var(--amber);}
+.ask-ctx-topic-name{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;text-align:left;}
+.ask-ctx-topic svg{flex:none;color:var(--slate-ink);}
+.ask-ctx-topic-pin{font-family:var(--mono);font-size:11px;color:var(--slate-ink);}
+.ask-ctx-topic-kind{flex:none;font-family:var(--mono);font-size:11px;color:var(--ink-3);}
+.ask-ctx-topic.is-mentioned{color:var(--ink-2);}
+/* The chip picker (ask-panel.mjs openChipPicker) is the only JS-positioned panel: a band
+   chip sits wherever the transcript scrolled it. Its rows are the WHOLE model catalog, so
+   the menu outgrows the sheet, which clips -- the same cap .ask-pop-scope carries keeps
+   the Effort row reachable, and chipPickerTop() flips it above the chip when that fits. */
+.ask-pop-chip{width:288px;max-height:min(420px,70%);overflow-y:auto;}
+.ask-pop-caption,.ask-pop-caption-row .ask-pop-caption{padding:8px 10px 6px;font-weight:600;font-size:12px;color:var(--ink-2);}
+.ask-pop-caption-row{display:flex;align-items:baseline;gap:8px;}
+.ask-pop-caption-meter{margin-left:auto;padding-right:10px;font-family:var(--mono);font-size:var(--fs-caption);color:var(--ink-3);}
+.ask-pop-empty{padding:10px 10px 12px;font-size:12px;color:var(--ink-3);}
+.ask-pop-divider{height:1px;margin:6px 11px;background:var(--line);}
+.ask-pop-group { padding: 6px 12px 2px; font-size: 12px; color: var(--ink-2);font-weight:600; }
+/* A connection inside an engine's section (Claude sign-in, OpenAI-compatible, …): quieter than the section. */
+.ask-pop-subgroup { padding: 6px 12px 2px; font-size: var(--fs-meta); font-weight: 600; color: var(--ink-3); }
+.ask-pop-item{display:flex;align-items:center;gap:10px;width:100%;text-align:left;}
+.ask-model-name{font-weight:500;font-size:var(--fs-body);color:var(--ink);}
+.ask-model-check{margin-left:auto;color:var(--ink);font-weight:600;}
+.ask-pop-row-value{margin-left:auto;font-weight:400;font-size:var(--fs-meta);color:var(--ink-3);}
+.ask-pop-row-chev{color:var(--ink-3);}
+/* .ask-pop-model is a fixed 292px panel (256px of row content), so something in the
+   row has to give: rigid badges win every negotiation, and measured in Chrome an
+   origin badge -- "DS Fast" + "plugin: example-models" + "secret not set" --
+   starved the name to 0px and spilled the row 45px past the panel, which sets no
+   overflow of its own (.ask-sheet then chops the check mark off). The row shows no
+   provenance at all now, so its only variable-width text IS the name: it shrinks to
+   a legible floor and never grows (badges keep hugging it), while the two status
+   badges opt out of shrinking -- ellipsising "⚠cost" to a bare "…" would eat the
+   warning itself. The shrink props on the base badge outlive the origin badge in
+   case a plain one returns. */
+.ask-model-tag{flex:0 1 auto;min-width:0;max-width:45%;overflow:hidden;text-overflow:ellipsis;
+  font-size:var(--fs-caption);font-weight:700;letter-spacing:.01em;padding:2px 8px;
+  border-radius:var(--r-xs);white-space:nowrap;background:var(--field);color:var(--ink-3);}
+.ask-model-tag.is-warn{flex:0 0 auto;max-width:none;background:var(--amber-bg);color:var(--amber-ink);}
+.ask-model-tag.is-err{flex:0 0 auto;max-width:none;background:var(--red-bg);color:var(--red-ink);}
+.ask-model-tag.is-key{flex:0 0 auto;max-width:none;background:var(--green-bg);color:var(--green-ink);}
+.ask-model-item .ask-model-name{flex:0 1 auto;min-width:4.5ch;overflow:hidden;text-overflow:ellipsis;
+  white-space:nowrap;}
+/* The worktree rows' trash (the context popover's Worktrees section). */
+.ask-thread-trash{display:inline-flex;align-items:center;justify-content:center;width:26px;height:26px;
+  flex:0 0 26px;margin-right:5px;border:0;border-radius:var(--r-sm);background:transparent;color:var(--seq);
+  cursor:pointer;transition:.15s;}
+.ask-thread-trash:hover{background:var(--red-bg);color:var(--red-ink);}
+.ask-thread-trash:focus-visible{outline:2px solid var(--ink);outline-offset:2px;}
+.ask-runinfo-row{display:flex;align-items:center;gap:9px;padding:7px 10px;border-radius:var(--r-sm);}
+.ask-runinfo-row:hover{background:var(--hover);}
+.ask-runinfo-col{display:flex;flex-direction:column;gap:1px;flex:1 1 auto;min-width:0;}
+.ask-runinfo-name{font-family:var(--mono);font-size:11px;color:var(--ink);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+.ask-runinfo-sub{font-family:var(--mono);font-size:11px;color:var(--ink-3);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+.ask-runinfo-elapsed{flex:none;margin-left:auto;font-family:var(--mono);font-size:11px;color:var(--seq);white-space:nowrap;}
+.ask-wt-row .ask-runinfo-sub.ask-wt-path{cursor:pointer;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:260px;}
+.ask-wt-row .ask-thread-trash{flex:none;}
+

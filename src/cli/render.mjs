@@ -143,6 +143,125 @@ export function formatTotals({ executions = 0, activeMs = 0, costUsd = 0, engine
   return `${executions} execution${executions === 1 ? '' : 's'} · ${fmtDur(activeMs)} active · ${runCostLabel(engine, costUsd, usd)}`;
 }
 
+/** `(id) => label` over a run manifest (pipelines.stepper): the node's label, else its id. */
+export const manifestLabelOf = (manifest) => (id) => labelOf(manifest || {}, id);
+
+// ── Sessions (session groups, Task 55) ──
+const SESSION_MODE_WORDS = { subagents: 'sub-agents', shared: 'one conversation', separate: 'separate sessions' };
+const finite = (x) => Number.isFinite(x);
+const plural = (n, one, many = `${one}s`) => `${n} ${n === 1 ? one : many}`;
+const turnNo = (turnId) => String(turnId ?? '').split(':').pop() || '?';
+/** A session figure as text: unknown (null, or an engine without cost: the figure is then not the run's) never prints $0.00. */
+const sessionUsd = (engine, x) => (finite(x) && engineReportsCost(engine) ? runCostLabel(engine, x, usd) : 'cost unknown');
+const tok = (n) => (!finite(n) ? '0' : n >= 999950 ? `${(n / 1e6).toFixed(1)}M` : n >= 1000 ? `${(n / 1000).toFixed(1)}k` : String(n));
+const cut = (s, max) => (s.length > max ? `${s.slice(0, max - 1)}…` : s);
+const SESSION_COLS = [['turn', 6], ['step', 24], ['attempt', 9], ['duration', 10], ['tokens in/out/cache', 21], ['cost', 8], ['source', 9], ['verdict', 0]];
+const cols = (cells) => `  ${cells.map((x, i) => (SESSION_COLS[i][1] ? String(x).padEnd(SESSION_COLS[i][1]) : String(x))).join('')}`;
+/** Two figures that differ only past the cent print with four decimals, so a failed check never reads "$0.00 vs $0.00". */
+const usdPair = (a, b) => {
+  const f = (x, d) => (finite(x) ? `$${x.toFixed(d)}` : 'unknown');
+  return f(a, 2) === f(b, 2) && finite(a) && finite(b) && a !== b ? [f(a, 4), f(b, 4)] : [f(a, 2), f(b, 2)];
+};
+const HISTORY_WORDS = { rotate: 'rotated to a fresh host', restart: 'restarted fresh', resume: 'resumed', pause: 'paused', degrade: 'runs as separate sessions' };
+/** A session reason in the words the tray and the tab use: the flag's key is not copy ("never 'group'"), its Labs title is
+ *  "One session" (run-decor.mjs `sessionReasonText`, Task 56). */
+const reasonText = (r) => String(r ?? '').replace('the Labs flag sessionGroups is off', 'the One session Labs flag is off');
+/** One history entry in words; a reason that only repeats the kind (a pause record's `pause`) is dropped. */
+function historyText(h) {
+  const reason = h.reason && h.reason !== h.kind ? reasonText(h.reason) : null;
+  const word = HISTORY_WORDS[h.kind] ?? h.kind;
+  if (!reason) return word;
+  return h.kind === 'resume' ? `${word} after ${reason}` : h.kind === 'degrade' ? `${word} — ${reason}` : `${word} (${reason})`;
+}
+
+/** A separate session that never had a host (a runtime degrade keeps its host id): every restore writes resume or
+ *  restart for it, which says nothing about it. */
+const neverHosted = (ev) => ev.mode === 'separate' && ev.hostSessionId == null;
+
+/** The live line for one `sessionHost` event, or null for the transitions that print nothing (turn_start, member_bound,
+ *  member_done, turn_end, cost, reconcile, verdict, pause, mode, and a watchdog warning). A session that runs as separate
+ *  sessions from the start prints one line, its degrade line (after the run-start line that names its mode): no open
+ *  line, no resume or restart line (it never had a host to resume), and no close line when it ran no host turn. */
+export function formatSessionHostLine(ev, { labelOf: nameOf = (id) => id, color = (n, s) => s } = {}) {
+  if (!ev || typeof ev !== 'object') return null;
+  const head = `${color('magenta', '◇')} session ${ev.sid} · `;
+  switch (ev.transition) {
+    case 'open': return ev.mode === 'separate' ? null : `${head}opened (${SESSION_MODE_WORDS[ev.mode] ?? ev.mode} on ${engineLabel(ev.engine)})`;
+    case 'degrade': return `${head}runs as separate sessions${ev.reason ? ` — ${reasonText(ev.reason)}` : ''}`;
+    case 'dispatch': return `${head}dispatch ${nameOf(ev.nodeId) ?? ev.nodeId} (attempt ${ev.attempt}, turn ${turnNo(ev.turnId)})`;
+    case 'rotate': return `${head}rotated to a fresh host (${ev.reason})`;
+    case 'restart': return neverHosted(ev) ? null : `${head}restarted fresh (${ev.reason})`;
+    case 'resume': return neverHosted(ev) ? null : `${head}resumed${ev.reason ? ` after ${ev.reason}` : ''}`;
+    case 'watchdog': return ev.level && ev.level !== 'error' ? null : `${head}${color('yellow', `dispatch ${ev.dispatchId} failed — ${ev.reason}`)}`;
+    case 'close': {
+      const turns = finite(ev.turns) ? ev.turns : 0;
+      if (turns === 0 && ev.mode === 'separate') return null;
+      return `${head}closed · ${plural(turns, 'turn')}${finite(ev.costUsd) || turns > 0 ? ` · ${sessionUsd(ev.engine, ev.costUsd)}` : ''}`;
+    }
+    default: return null;
+  }
+}
+
+/** `worca sessions <run>`: one block per session (the head, the host line, the per-turn table, then any failed cost
+ *  check, skipped trace line and history). `report` is session-trace.mjs `sessionsReport`. */
+export function formatSessionsReport(report, { color = (n, s) => s, labelOf: nameOf = (id) => id } = {}) {
+  const blocks = [];
+  for (const s of (report && Array.isArray(report.sessions) ? report.sessions : [])) {
+    const e = s.engine;
+    const lines = [];
+    const how = s.mode === 'separate' ? `separate sessions${s.modeReason ? ` — ${reasonText(s.modeReason)}` : ''}` : (SESSION_MODE_WORDS[s.mode] ?? s.mode ?? 'mode unknown');
+    // No open read: no host to name; one conversation has no main agent (Task 66).
+    const host2 = s.mode === 'separate' || s.mode == null || s.mode === 'shared' ? '' : ` · main agent ${s.hostModel || 'default model'}`;
+    lines.push(color('bold', `Session ${s.sid} · ${s.label || 'One session'} · ${how}${e ? ` · ${engineLabel(e)}` : ''}${host2}`));
+    // One conversation names its conversation and counts no dispatch or rotation: it has neither (Task 66).
+    const conv = s.mode === 'shared';
+    const host = s.hostSessionId ? `${conv ? 'conversation' : 'host'} ${s.hostSessionId} (epoch ${s.hostEpoch})` : conv ? 'no conversation' : 'no host session';
+    // A session separate from the start never had a host: every restore writes a resume or restart for it (the live lines
+    // drop them, correction 42), so its report counts and lists none.
+    const never = s.mode === 'separate' && s.hostSessionId == null && !(s.turns > 0);
+    const steps = finite(s.costUsd) ? Math.max(0, s.costUsd - (finite(s.hostOverheadUsd) ? s.hostOverheadUsd : 0)) : null;
+    const split = s.mode === 'shared' ? '' : ` (steps ${sessionUsd(e, steps)}, hand-offs ${finite(s.hostOverheadUsd) ? sessionUsd(e, s.hostOverheadUsd) : 'unknown'})`;
+    const cost = finite(s.costUsd) && engineReportsCost(e) ? `${sessionUsd(e, s.costUsd)}${split}`
+      : (s.turns ?? 0) > 0 ? 'cost unknown' : conv ? 'no turn' : 'no host turn';   // a separate session's steps book on their own rows
+    const ok = s.reconcile ? s.reconcile.ok : s.reconciled;  // null: nothing was checked (an unreadable trace, no valid line)
+    // The tab's words (correction 50): nothing compared is not "reconciled" — a session with no host turn, or an engine
+    // that reports no cost (its figures are tokens only). One conversation's turns list no tokens (Task 66): not checked.
+    const rec = ok === false ? color('yellow', 'not reconciled') : ok == null || !((s.turns ?? 0) > 0) ? 'not checked'
+      : !engineReportsCost(e) ? (conv ? 'not checked' : 'tokens only') : 'reconciled';
+    const counts = conv ? '' : ` · ${plural(s.dispatches ?? 0, 'dispatch', 'dispatches')} · ${plural(s.rotations ?? 0, 'rotation')}`;
+    lines.push(`  ${host} · ${plural(s.turns ?? 0, 'turn')}${counts} · ${plural(never ? 0 : s.restarts ?? 0, 'restart')} · ${cost} · ${rec}`);
+    const rows = Array.isArray(s.turnRows) ? s.turnRows : [];
+    if (rows.length) {
+      lines.push(color('gray', cols(SESSION_COLS.map(([h]) => h)).replace(/\s+$/, '')));
+      for (const r of rows) {
+        const t = r.tokens;
+        const usdRow = !engineReportsCost(e) || r.costSource === 'none' || (!finite(r.memberUsd) && !finite(r.hostOverheadUsd)) ? '—'
+          : usd((finite(r.memberUsd) ? r.memberUsd : 0) + (finite(r.hostOverheadUsd) ? r.hostOverheadUsd : 0));
+        const verdict = r.verdict === 'blocking' && finite(r.issues) ? `blocking · ${plural(r.issues, 'issue')}` : (r.verdict ?? '—');
+        lines.push(cols([turnNo(r.turnId), cut(String(nameOf(r.nodeId) ?? r.nodeId ?? '—'), 22), r.attempt ?? '—', finite(r.durationMs) ? fmtDur(r.durationMs) : '—',
+          t ? `${tok(t.in)}/${tok(t.out)}/${tok((t.cr || 0) + (t.cw || 0))}` : '—', usdRow, r.costSource ?? '—', verdict]));
+      }
+    }
+    for (const m of (s.reconcile && Array.isArray(s.reconcile.mismatches) ? s.reconcile.mismatches : [])) {
+      const [a, b] = usdPair(m.harnessUsd, m.otherUsd);
+      lines.push(color('yellow', m.method === 'epoch' ? `  ⚠ host epoch${m.epoch != null ? ` ${m.epoch}` : ''}: harness ${a} vs booked ${b}` : `  ⚠ ${m.turnId}: harness ${a} vs ${m.method} ${b}`));
+    }
+    const g = s.integrity || {};
+    if (g.unreadable) lines.push(color('yellow', '  ⚠ trace: the file could not be read'));
+    else if (g.torn || g.invalid || g.seqGaps) {
+      lines.push(color('yellow', `  ⚠ trace: ${plural(g.torn || 0, 'torn line')}, ${plural(g.invalid || 0, 'invalid line')}, ${plural(g.seqGaps || 0, 'seq gap')} (skipped lines are not shown)`));
+    }
+    // A session separate from the start: its degrade entry only repeats the head line's reason, and its resumes and
+    // restarts are the restores of a host it never had.
+    const repeats = (h) => s.mode === 'separate' && !(s.turns > 0) && h.kind === 'degrade' && (h.reason ?? null) === (s.modeReason ?? null);
+    const hist = (Array.isArray(s.history) ? s.history : []).filter((h) => !repeats(h) && !(never && (h.kind === 'resume' || h.kind === 'restart')))
+      .map((h) => historyText(h));
+    if (hist.length) lines.push(`  history: ${hist.join(' · ')}`);
+    blocks.push(lines.join('\n'));
+  }
+  return blocks.join('\n\n');
+}
+
 /** The count-only twin of formatRunSummary's execution rows: v2 stepper rows that
  *  carry a real executionId (bookends excluded). null for a v1/no-stepper run —
  *  callers omit the count rather than claim one. */

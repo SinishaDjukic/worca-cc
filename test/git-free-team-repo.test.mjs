@@ -15,6 +15,7 @@ import { _testing as ghTesting } from '../src/core/git-free/github.mjs';
 import { fakeGithub } from './helpers/fake-github.mjs';
 import { withNoGit } from './helpers/git-off.mjs';
 import { withEnv } from './helpers/with-env.mjs';
+import { BITBUCKET_NEEDS_GIT } from '../src/core/git-available.mjs';
 
 const NO_CREDS = { GH_TOKEN: undefined, GITHUB_TOKEN: undefined, WORCA_GH_READ_TOKEN: undefined, WORCA_GH_WRITE_TOKEN: undefined,
   WORCA_GH_APP_ID: undefined, WORCA_GH_APP_KEY_FILE: undefined, WORCA_GH_APP_KEY_B64: undefined };
@@ -119,6 +120,7 @@ test('setTypedTeamRepo: owner/name or a github.com URL, checked on GitHub, store
   assert.equal(await setTypedTeamRepo(key, dir, 'acme/billing-api'), 'Acme/Billing-API');
   assert.equal(readTeamRepo(key), 'Acme/Billing-API');
   await assert.rejects(setTypedTeamRepo(key, dir, 'https://gitlab.com/a/b'), { code: 'GIT_MISSING' });
+  await assert.rejects(setTypedTeamRepo(key, dir, 'https://jdoe@bitbucket.org/acme/api.git'), { code: 'GIT_MISSING', message: BITBUCKET_NEEDS_GIT });
   await assert.rejects(setTypedTeamRepo(key, dir, 'not a repo'), { code: 'BAD_REQUEST', message: 'repo must be owner/name or a github.com URL' });
   await withEnv(NO_CREDS, () => assert.rejects(setTypedTeamRepo(key, dir, 'acme/missing'),
     { code: 'BAD_REQUEST', message: 'not found on GitHub: acme/missing (a private repository needs GH_TOKEN)' }));

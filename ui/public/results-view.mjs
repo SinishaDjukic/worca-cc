@@ -141,6 +141,8 @@ export function memoryChangesRows(memory) {
       ...(c.rejected || []).map((r) => ({ kind: 'rej', text: file(r), title: String(r.reason || ''), scope: r.scope, name: r.name })),
       // A write that never reached the mount (a refused tool call): nothing in the store to open.
       ...(c.failed || []).map((r) => ({ kind: 'fail', text: `⊘ ${file(r)}`, title: String(r.reason || ''), scope: r.scope, name: r.name })),
+      // #943: an ordinary run's notes wait for approval (Memory › Proposed by runs); nothing in the store yet.
+      ...(c.proposed || []).map((r) => ({ kind: 'prop', text: `? ${file(r)}`, title: r.kind === 'delete' ? 'proposed removal, waiting for approval' : 'proposed, waiting for approval', scope: r.scope, name: r.name })),
     ];
     if (chips.length) rows.push({ node: c.agentKey || c.nodeId || 'run', chips });
   }

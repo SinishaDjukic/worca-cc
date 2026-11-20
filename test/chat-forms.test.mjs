@@ -94,7 +94,7 @@ function fixture(pq, { answer } = {}) {
   const router = createCommandRouter({ actions, chatContext, logger: () => {} });
   const send = (t) => router.handleIncoming({
     plugin: 'p', channelId: 'main', platform: 'testchat',
-    channelConfig: CONFIG, msg: { chatId: '42', userId: 'u1', text: t, meta: {} },
+    channelConfig: CONFIG, msg: { chatId: '42', userId: 'u1', text: t, meta: { isGroup: false } },
   });
   return { send, calls };
 }

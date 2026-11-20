@@ -181,3 +181,109 @@ test('s2: threadWork hands readRunLabels to its fact deps, so a route or tool ca
   const work = threadWork([{ pipelineId: 'tw000001' }], deps);
   assert.deepEqual([work.run.tags, work.run.labels], [['client:acme'], ['hotfix']]);
 });
+
+// ── Shaper requirements s3 (D12, D14): Changes after ship on a feature with agreed requirements ───────────────────
+const AGREED = [{ id: 'R-po-1', text: 'Export the report' }, { id: 'R-sec-2', text: 'Sign every export' }];
+const shippedFeature = (merged, over = {}) => {
+  const pr = { number: 52, url: 'https://x/pull/52', state: merged ? 'MERGED' : 'OPEN' };
+  return { feature: { id: 'f1', title: 'Charts', base: 'dev', projectDir: '/p', shipPr: pr, shipped: true, agreed: AGREED,
+    acceptance: [{ id: 'R-po-1', mark: 'met' }], perspectives: ['product', 'qa'],
+    slices: [{ index: 1, state: 'done', pipelineId: 'p1', branch: { source: 'dev', feature: 'worca/c-1' }, pr, rounds: 1 }], ...over } };
+};
+
+test('requirements first: a round runs shaped (medium, no slices) and its prompt lists the agreed requirements as criteria', async () => {
+  const { criterionIds } = await import('../src/shared/review/coverage.mjs');
+  const card = changesCard({ text: 'make it blue', facts: shippedFeature(false) });
+  assert.equal(card.landing.kind, 'round');
+  assert.deepEqual(card.run.shape, { perspectives: ['product', 'qa'], size: 'medium', slices: 'off' });
+  assert.match(card.run.prompt, /^make it blue\n\n## Agreed requirements\n/);
+  assert.match(card.run.prompt, /^- \*\*R-po-1\*\* Export the report$/m);
+  assert.deepEqual(criterionIds(card.run.prompt), ['R-po-1', 'R-sec-2']);
+  assert.match(card.run.prompt, /Marked before the PR: R-po-1 met\./);
+  assert.equal(card.requirementsFirst.count, 2);
+  const started = [];
+  await applyChanges(card, { startRun: async (body, extra) => { started.push({ body, extra }); return { status: 202, body: { runId: 'r' } }; } });
+  assert.deepEqual(started[0].body.shape, card.run.shape);
+  assert.equal(started[0].extra._roundOf.request, 'make it blue');
+});
+
+test('requirements first: a follow-up appends its run with requirementsFirst and the agreed requirements in its goal', async () => {
+  const appended = [];
+  const card = changesCard({ text: 'add a pie', facts: shippedFeature(true) });
+  assert.equal(card.landing.kind, 'follow-up');
+  assert.equal('run' in card, false);
+  await applyChanges(card, { appendRun: (id, o) => { appended.push([id, o]); return { index: 2, ticketId: 't2' }; }, tick: () => {} });
+  assert.equal(appended[0][1].requirementsFirst, true);
+  assert.equal(appended[0][1].kind, 'follow-up');
+  assert.match(appended[0][1].goal, /^add a pie\n\n## Agreed requirements\n[\s\S]*^- \*\*R-sec-2\*\* Sign every export$/m);
+});
+
+test('requirements first does not apply: not shipped or no agreed requirements → today\'s round and follow-up', async () => {
+  for (const facts of [shippedFeature(false, { shipped: false }), shippedFeature(false, { agreed: [] })]) {
+    const card = changesCard({ text: 'make it blue', facts });
+    assert.equal('shape' in card.run, false);
+    assert.equal(card.run.prompt, 'make it blue');
+    assert.equal('requirementsFirst' in card, false);
+  }
+  const appended = [];
+  const off = changesCard({ text: 'add a pie', facts: shippedFeature(true, { agreed: [] }) });
+  await applyChanges(off, { appendRun: (id, o) => { appended.push(o); return { index: 2 }; }, tick: () => {} });
+  assert.deepEqual(appended, [{ title: 'add a pie', goal: 'add a pie', kind: 'follow-up' }]);
+});
+
+test('requirements first through propose_changes: the card says so', () => {
+  const work = { feature: { id: 'f1', title: 'Charts', status: 'done', slices: [{ index: 1, state: 'done' }] }, facts: shippedFeature(false), open: null };
+  const on = shapeToolFit('changes', { pipelineId: 'p1', request: 'make it blue' }, work);
+  assert.equal(on.card.requirementsFirst.count, 2);
+});
+
+// ── Guardrails: a Changes round, a follow-up and Own run now take the set of the run they change ───────────────────
+test('guardrails: a round and a plain follow-up carry the changed run\'s guardrailsId; a run with none sends none', async () => {
+  const round = changesCard({ text: 'x', facts: { run: { ...RUN, guardrailsId: 'normal' }, feature: null } });
+  assert.equal(round.landing.kind, 'round');
+  assert.equal(round.run.guardrailsId, 'normal');
+  const merged = { ...RUN, guardrailsId: 'secure', pr: { number: 41, url: 'https://x/pull/41', state: 'MERGED' } };
+  const fu = changesCard({ text: 'x', facts: { run: merged, feature: null } });
+  assert.equal(fu.landing.kind, 'follow-up');
+  assert.equal(fu.run.guardrailsId, 'secure');
+  assert.equal(Object.hasOwn(changesCard({ text: 'x', facts: { run: RUN, feature: null } }).run, 'guardrailsId'), false);
+  const bodies = [];
+  const startRun = async (b) => { bodies.push(b); return { status: 200, body: { runId: 'r' } }; };
+  await applyChanges(round, { startRun });
+  await applyChanges(fu, { startRun });
+  assert.deepEqual(bodies.map((b) => b.guardrailsId), ['normal', 'secure']);
+});
+
+test('guardrails: a feature round takes the set of the run it changes, else the feature\'s', () => {
+  const f = shippedFeature(false, { guardrailsId: 'normal',
+    slices: [{ index: 1, state: 'done', pipelineId: 'p1', guardrailsId: 'strict-x', branch: { source: 'dev', feature: 'worca/c-1' }, pr: null, rounds: 1 }] });
+  const card = changesCard({ text: 'x', facts: f });
+  assert.equal(card.landing.kind, 'round');
+  assert.equal(card.run.guardrailsId, 'strict-x');
+  const noSlice = shippedFeature(false, { guardrailsId: 'normal' });
+  assert.equal(changesCard({ text: 'x', facts: noSlice }).run.guardrailsId, 'normal');
+});
+
+test('guardrails: Own run now starts on the feature\'s set; a route card through the tool carries it', async () => {
+  const rc = routeCard({ text: 'hotfix', feature: { id: 'f1', title: 'Charts', base: 'dev', projectDir: '/p', guardrailsId: 'normal', slices: [] },
+    guess: { choice: 'own', reason: 'a fix' } });
+  assert.equal(rc.guardrailsId, 'normal');
+  let sent = null;
+  await applyRoute(rc, { verb: 'own' }, { startRun: async (b) => { sent = b; return { status: 200, body: { runId: 'r' } }; } });
+  assert.equal(sent.guardrailsId, 'normal');
+  const w = featWork('active', ['done', 'planned']);
+  w.facts.feature.guardrailsId = 'normal';
+  assert.equal(shapeToolFit('route', { ...ROUTE_IN, guess: 'own' }, w).card.guardrailsId, 'normal');
+  const bare = routeCard({ text: 'h', feature: { id: 'f1', title: 'C', slices: [] }, guess: { choice: 'own' } });
+  sent = null;
+  await applyRoute(bare, { verb: 'own' }, { startRun: async (b) => { sent = b; return { status: 200, body: { runId: 'r' } }; } });
+  assert.equal(Object.hasOwn(sent, 'guardrailsId'), false);
+});
+
+test('guardrails: the landing facts of a plain run read its stored guardrails_id', () => {
+  const deps = { findPipelineRowById: (id) => ({ id, target: 'project', status: 'done', title: 't', project_key: 'nope', branch: null, guardrails_id: 'normal' }),
+    readPrState: () => null, readRunTags: () => [], readRunLabels: () => [] };
+  assert.equal(threadWork([{ pipelineId: 'tw000002' }], deps).run.guardrailsId, 'normal');
+  const legacy = { ...deps, findPipelineRowById: (id) => ({ ...deps.findPipelineRowById(id), guardrails_id: null }) };
+  assert.equal(threadWork([{ pipelineId: 'tw000003' }], legacy).run.guardrailsId, null);
+});

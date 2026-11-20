@@ -315,6 +315,17 @@ test('readPluginWorkflows resolves script keys: a built-in script and the plugin
   assert.match(skipped[0].errors.join('\n'), /ghostScript/);
 });
 
+test('readPluginWorkflows validates a template\'s session settings: a bad mode is skipped with V30', () => {
+  const tpl = graphTpl('Bad Session');
+  tpl.nodes.find((n) => n.id === 'n_a').config.session = 's_k3f9a2b1';
+  tpl.sessions = { s_k3f9a2b1: { mode: 'auto' } };
+  const versionDir = installFakePlugin('demo', { 'bad-session.json': tpl });
+  const { ready, skipped } = readPluginWorkflows('demo', versionDir, { quiet: true });
+  assert.deepEqual(ready, []);
+  assert.deepEqual(skipped.map((s) => s.file), ['bad-session.json']);
+  assert.deepEqual(skipped[0].errors, [`V30: session 's_k3f9a2b1' mode must be 'subagents' or 'shared' (got "auto")`]);
+});
+
 /** Add a shipped script (sidecar + source + an empty cases file) to a fake plugin. */
 function addPluginScript(versionDir, key) {
   mkdirSync(join(versionDir, 'scripts'), { recursive: true });

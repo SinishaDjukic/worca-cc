@@ -10,6 +10,7 @@ export const ICONS = Object.freeze({
   track: '<path d="M3 12h4l2.5-6 4 12 2.5-6H21"></path>',
   diff: '<path d="M12 4.5v7M8.5 8h7M8.5 17.5h7"></path>',
   script: '<path d="M8.5 8 4.5 12l4 4M15.5 8l4 4-4 4M13.5 5.5l-3 13"></path>',
+  terminal: '<path d="m5 17 5-5-5-5"></path><path d="M12 18h7"></path>',
   clone: '<path d="M12 4v11M7.5 10.5 12 15l4.5-4.5M5 19.5h14"></path>',
   project: '<path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"></path><path d="M12 11v6M9 14h6"></path>',
   more: '<circle cx="6" cy="12" r="1.5" fill="currentColor" stroke="none"></circle><circle cx="12" cy="12" r="1.5" fill="currentColor" stroke="none"></circle><circle cx="18" cy="12" r="1.5" fill="currentColor" stroke="none"></circle>',
@@ -21,6 +22,7 @@ export const ICONS = Object.freeze({
   remember: '<path d="M7 4.5h10v15l-5-3.5-5 3.5z"></path>',
   tasks: '<path d="M10 7h10M10 12h10M10 17h10M4 7l1.2 1.2L7.5 6M4 12l1.2 1.2 2.3-2.2M4 17l1.2 1.2 2.3-2.2"></path>',
   x: '<path d="M7 7l10 10M17 7 7 17"></path>',
+  expand: '<path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5"></path>',
   chevron: '<path d="M9.5 6l6 6-6 6"></path>',
   'chevron-left': '<path d="M14.5 6l-6 6 6 6"></path>',
   'chevron-down': '<path d="M6 9.5l6 6 6-6"></path>',
@@ -52,6 +54,8 @@ export const ICONS = Object.freeze({
   link: '<path d="M10 14a4 4 0 0 0 5.7 0l3-3a4 4 0 0 0-5.7-5.7l-1 1"></path><path d="M14 10a4 4 0 0 0-5.7 0l-3 3a4 4 0 0 0 5.7 5.7l1-1"></path>',
   shield: '<path d="M12 3l8 3v6c0 4.5-3.4 7.6-8 9-4.6-1.4-8-4.5-8-9V6l8-3z"></path><path d="M9 12l2 2 4-4"></path>',
   pulse: '<path d="M3 12h4l2-5 4 10 2-5h6"></path>',
+  // The account menu's Settings cog (shell/sidebar.html #acct-settings), for a settings button elsewhere.
+  settings: '<path d="M10.06 3.93L10.39 1.22A10.9 10.9 0 0 1 13.61 1.22L13.94 3.93A8.3 8.3 0 0 1 16.34 4.92L18.48 3.24A10.9 10.9 0 0 1 20.76 5.52L19.08 7.66A8.3 8.3 0 0 1 20.07 10.06L22.78 10.39A10.9 10.9 0 0 1 22.78 13.61L20.07 13.94A8.3 8.3 0 0 1 19.08 16.34L20.76 18.48A10.9 10.9 0 0 1 18.48 20.76L16.34 19.08A8.3 8.3 0 0 1 13.94 20.07L13.61 22.78A10.9 10.9 0 0 1 10.39 22.78L10.06 20.07A8.3 8.3 0 0 1 7.66 19.08L5.52 20.76A10.9 10.9 0 0 1 3.24 18.48L4.92 16.34A8.3 8.3 0 0 1 3.93 13.94L1.22 13.61A10.9 10.9 0 0 1 1.22 10.39L3.93 10.06A8.3 8.3 0 0 1 4.92 7.66L3.24 5.52A10.9 10.9 0 0 1 5.52 3.24L7.66 4.92A8.3 8.3 0 0 1 10.06 3.93z"></path><circle cx="12" cy="12" r="3"></circle>',
   gear: '<circle cx="12" cy="12" r="3"></circle><path d="M12 2.5v3M12 18.5v3M2.5 12h3M18.5 12h3M5.3 5.3l2.1 2.1M16.6 16.6l2.1 2.1M5.3 18.7l2.1-2.1M16.6 7.4l2.1-2.1"></path>',
   trash: '<path d="M3 6h18M8 6V4a1 1 0 0 1 1-1h6a1 1 0 0 1 1 1v2m2 0v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6"></path><path d="M10 11v6M14 11v6"></path>',
   spinner: '<path d="M12 3a9 9 0 1 0 9 9"></path>',
@@ -64,6 +68,25 @@ export const ICONS = Object.freeze({
   skill: '<path d="M12 3l1.8 5.2L19 10l-5.2 1.8L12 17l-1.8-5.2L5 10l5.2-1.8z"></path>',
   layers: '<path d="M12 3l9 4.5-9 4.5-9-4.5z"></path><path d="M3 12l9 4.5 9-4.5"></path><path d="M3 16.5l9 4.5 9-4.5"></path>',
   none: '<rect x="5" y="5" width="14" height="14" rx="3" stroke-dasharray="3 3"></rect>',
+  // The Design stage (ui/public/design/): the hide-cursors toggle, the viewport switch, and an agent's Stop.
+  cursor: '<path d="M5 3.5l5.2 16.5 2.7-6.7 6.6-2.7z"></path>',
+  'cursor-off': '<path d="M5 3.5l5.2 16.5 2.7-6.7 6.6-2.7z"></path><path d="M3.5 3.5l17 17"></path>',
+  desktop: '<rect x="3" y="4.5" width="18" height="12" rx="2"></rect><path d="M9 20h6M12 16.5V20"></path>',
+  tablet: '<rect x="5.5" y="3" width="13" height="18" rx="2"></rect><path d="M11 18h2"></path>',
+  phone: '<rect x="7.5" y="3" width="9" height="18" rx="2"></rect><path d="M11 18h2"></path>',
+  'stop-square': '<rect x="6" y="6" width="12" height="12" rx="2"></rect>',
+  // A video's sound in the film's transport: Mute, and Unmute once muted.
+  volume: '<path d="M4 9.5h3.5L12 5.5v13l-4.5-4H4z"></path><path d="M15.5 9a4 4 0 0 1 0 6"></path><path d="M18.5 6.5a7.5 7.5 0 0 1 0 11"></path>',
+  'volume-off': '<path d="M4 9.5h3.5L12 5.5v13l-4.5-4H4z"></path><path d="M16 9.5l5 5M21 9.5l-5 5"></path>',
+  // The account menu's Appearance row: a contrast circle, half filled.
+  appearance: '<circle cx="12" cy="12" r="8.5"></circle><path d="M12 3.5a8.5 8.5 0 0 1 0 17z" fill="currentColor" stroke="none"></path>',
+  // The Providers tab's service marks (models/providers-tab.mjs): Speech, Image generation and Sound.
+  mic: '<rect x="9" y="3" width="6" height="11" rx="3"></rect><path d="M5.5 11a6.5 6.5 0 0 0 13 0M12 17.5V21"></path>',
+  image: '<rect x="4" y="5" width="16" height="14" rx="2"></rect><circle cx="9" cy="10" r="1.5"></circle><path d="M5 17l5-4.5 3.5 3 2.5-2 3 3.5"></path>',
+  wave: '<path d="M4 10v4M8 6.5v11M12 3.5v17M16 7.5v9M20 10v4"></path>',
+  // The Models page's Jobs and Providers tabs (models/page-tabs.mjs); a plain cloud, unlike `remote`'s arrow.
+  briefcase: '<rect x="4" y="8" width="16" height="11" rx="2"></rect><path d="M9 8V6.5A1.5 1.5 0 0 1 10.5 5h3A1.5 1.5 0 0 1 15 6.5V8M4 13h16"></path>',
+  cloud: '<path d="M7.5 18a4 4 0 0 1-.6-7.96 5.5 5.5 0 0 1 10.6 1.02A3.5 3.5 0 0 1 17 18z"></path>',
 });
 
 const px = (size) => (Number(size) > 0 ? Number(size) : 16);

@@ -1,11 +1,11 @@
 // test/helpers/git-app-boot.mjs — boot the real shell + app.js in jsdom with <html data-git>, a recording fetch and a
 // WS stub (ui-clone-project.test.mjs's recipe). The caller passes its useDomRelease tracker.
-import { readFileSync } from 'node:fs';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { JSDOM } from 'jsdom';
 import { renderIndexHtml } from '../../src/core/index-html.mjs';
+import { readIndexHtml } from '../../src/core/read-index-html.mjs';
 
-const html = readFileSync(fileURLToPath(new URL('../../ui/public/index.html', import.meta.url)), 'utf8');
+const html = readIndexHtml();
 const appPath = fileURLToPath(new URL('../../ui/public/app.js', import.meta.url));
 const tick = () => new Promise((r) => setTimeout(r, 0));
 const json = (status, body) => Promise.resolve({ ok: status < 300, status, json: async () => body });

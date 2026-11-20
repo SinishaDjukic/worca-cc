@@ -129,7 +129,7 @@ export async function setTypedTeamRepo(key, projectDir, raw) {
   if (!gh) {
     // Only another host needs git: a github.com URL that names no single repository is a typing mistake.
     const host = parseRemoteUrl(typed)?.host;
-    if (host && !/^(?:www\.)?github\.com$/.test(host)) throw gitMissingError();
+    if (host && !/^(?:www\.)?github\.com$/.test(host)) throw gitMissingError(typed);
     throw badRequest('repo must be owner/name or a github.com URL');
   }
   let info;

@@ -3,7 +3,8 @@
 // descriptors existed.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { CHAT_ENGINES, chatDescriptor, chatDescriptors, chatCostCapRefusal } from '../src/core/engines/chat.mjs';
+import { CHAT_ENGINES, chatDescriptor, chatDescriptors, chatCostCapRefusal, chatEngineGate } from '../src/core/engines/chat.mjs';
+import { makeChatDescriptor } from '../src/core/engines/chat-descriptor.mjs';
 import { listEngines } from '../src/core/engines/index.mjs';
 import { ASK_ENGINES, lockedChatEngine } from '../src/core/model-env.mjs';
 import { ENGINES, CHAT_ENGINE_NAMES, chatAttachRefusal } from '../src/shared/engine-switch.mjs';
@@ -47,17 +48,17 @@ test('every descriptor: a lockdown, a not-ready code and docs link, attachments 
 test('Codex and Copilot keep their words', () => {
   const codex = chatDescriptor('codex');
   assert.equal(codex.notReady.docsUrl, 'https://github.com/SinishaDjukic/worca-cc/blob/dev/docs/models.md#codex');
-  assert.equal(codex.notReady.prefix, "Codex isn't ready");
-  assert.equal(codex.notReady.setupLabel, 'Codex setup');
+  assert.equal(codex.notReady.prefix, "OpenAI Codex isn't ready");
+  assert.equal(codex.notReady.setupLabel, 'OpenAI Codex setup');
   assert.equal(codex.notReady.flag, 'codexSetup');
-  assert.equal(codex.shellTrippedMessage, 'Codex tried to run a shell command although its shell was switched off — worca stopped the turn.');
+  assert.equal(codex.shellTrippedMessage, 'OpenAI Codex tried to run a shell command although its shell was switched off — worca stopped the turn.');
   assert.equal(codex.suggestionModel, 'gpt-5.6-luna');
   assert.equal(codex.titles, true);
   const copilot = chatDescriptor('copilot');
   assert.equal(copilot.notReady.docsUrl, 'https://github.com/SinishaDjukic/worca-cc/blob/dev/docs/models.md#github-copilot-cli');
   assert.equal(copilot.notReady.flag, 'copilotSetup');
   assert.equal(copilot.noLockdownMessage, 'Chat on Copilot is unavailable: this copilot cannot be locked down for a chat. Use a Claude chat.');
-  assert.equal(copilot.shellTrippedMessage, 'Copilot tried to run a shell command although it was given none — worca stopped the turn.');
+  assert.equal(copilot.shellTrippedMessage, 'GitHub Copilot tried to run a shell command although it was given none — worca stopped the turn.');
   assert.equal(copilot.suggestionModel, 'gpt-5-mini');
   assert.equal(chatCostCapRefusal(codex, 'nope', () => false), "A per-turn cost cap is set, and worca has no price for nope, so it cannot keep this turn under it. Set the model's price on the Models page, pick a priced model, or turn the cap off (Settings › Chat).");
   assert.equal(chatCostCapRefusal(codex, 'gpt-5.5', () => true), null);
@@ -67,12 +68,33 @@ test('Codex and Copilot keep their words', () => {
 test('what a chat takes, by engine', () => {
   assert.equal(chatAttachRefusal({ engine: 'claude', kind: 'binary', pdf: true }), null);
   assert.equal(chatAttachRefusal({ engine: 'codex', kind: 'image' }), null);
-  assert.equal(chatAttachRefusal({ engine: 'codex', kind: 'binary', pdf: true }), 'a Codex chat cannot view PDFs (Claude, Copilot, Gemini CLI, OpenCode or Qwen Code chats can)');
+  assert.equal(chatAttachRefusal({ engine: 'codex', kind: 'binary', pdf: true }), 'an OpenAI Codex chat cannot view PDFs (Claude Code, GitHub Copilot, Gemini CLI, OpenCode or Qwen Code chats can)');
   assert.equal(chatAttachRefusal({ engine: 'goose', kind: 'image' }), null);
-  assert.equal(chatAttachRefusal({ engine: 'goose', kind: 'binary', pdf: true }), 'a Goose chat cannot view PDFs (Claude, Copilot, Gemini CLI, OpenCode or Qwen Code chats can)');
+  assert.equal(chatAttachRefusal({ engine: 'goose', kind: 'binary', pdf: true }), 'a Goose chat cannot view PDFs (Claude Code, GitHub Copilot, Gemini CLI, OpenCode or Qwen Code chats can)');
   for (const engine of ['copilot', 'gemini', 'opencode', 'qwen']) {
     assert.equal(chatAttachRefusal({ engine, kind: 'image' }), null, engine);
     assert.equal(chatAttachRefusal({ engine, kind: 'binary', pdf: true }), null, engine);
   }
   for (const engine of ['copilot', 'gemini', 'qwen']) assert.equal(chatAttachRefusal({ engine, kind: 'text' }), null, engine);
+});
+
+test('chatEngineGate: the turn gate\'s checks, in its order, without a turn (#943)', async () => {
+  const calls = [];
+  const d = makeChatDescriptor({ engine: 'codex', lockdown: () => ({}),
+    askSupport: async () => { calls.push('support'); return {}; },
+    preflight: async ({ model }, impl) => { if (impl) return impl({ model }); calls.push(`preflight:${model}`); return { refusal: 'codex is not signed in' }; } });
+  assert.deepEqual(await chatEngineGate(d, { model: 'gpt-5.5' }), { message: 'codex is not signed in', code: 'codex-not-ready', notReady: true });
+  assert.deepEqual(calls, ['support', 'preflight:gpt-5.5']);
+  calls.length = 0;
+  assert.equal(await chatEngineGate(d, { model: 'gpt-5.5', mock: true }), null, 'the mock asks no binary');
+  assert.deepEqual(calls, []);
+  assert.equal(await chatEngineGate(d, { model: 'gpt-5.5', relay: true }), null, 'a relayed chat skips the sign-in check');
+  assert.deepEqual(calls, ['support']);
+  const off = makeChatDescriptor({ engine: 'codex', lockdown: () => null });
+  assert.deepEqual(await chatEngineGate(off, { model: 'gpt-5.5' }), { message: off.noLockdownMessage });
+  assert.match((await chatEngineGate(d, { model: 'gpt-5.5', capped: true, modelPriced: () => false })).message, /^A per-turn cost cap is set/);
+  const old = makeChatDescriptor({ engine: 'codex', lockdown: () => ({}), askSupport: async () => ({ refusal: 'codex is too old' }) });
+  assert.deepEqual(await chatEngineGate(old, { model: 'gpt-5.5' }), { message: 'codex is too old', code: 'codex-not-ready', notReady: true });
+  const seam = await chatEngineGate(d, { model: 'gpt-5.5', seams: { preflight: async () => ({}) } });
+  assert.equal(seam, null, 'a seam replaces the adapter call, as the turn\'s deps do');
 });

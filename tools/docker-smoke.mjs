@@ -143,8 +143,9 @@ async function singleVolume() {
   }
   ok(`single-volume: /api/health -> ${health.name} ${health.version}`);
 
-  // PID 1 (tini) stays root by design; every node process (CLI + server) must not.
-  const users = inBox('ps -C node -o user= | sort -u');
+  // PID 1 (tini) stays root by design; every node process (CLI + server) must not. Node 24+ names its
+  // main thread MainThread (uv_thread_setname), which is the process name on Linux, so look for both.
+  const users = inBox('ps -C node,MainThread -o user= | sort -u');
   if (users !== 'worca') fail(`single-volume: node processes run as [${users.replace(/\n/g, ', ')}], expected only worca`);
   else ok('single-volume: the CLI and server run as worca');
 
@@ -152,7 +153,7 @@ async function singleVolume() {
   if (owner !== 'worca') fail(`single-volume: /data owners = ${owner}`);
   else ok('single-volume: the volume is owned by worca');
 
-  const homeEnv = inBox('tr "\\0" "\\n" < /proc/$(pgrep -u worca -o node)/environ | grep -E "^(HOME|WORCA_HOME|WORCA_PROJECTS_ROOT)=" | sort', 'worca');
+  const homeEnv = inBox('tr "\\0" "\\n" < /proc/$(pgrep -u worca -o -x "node|MainThread")/environ | grep -E "^(HOME|WORCA_HOME|WORCA_PROJECTS_ROOT)=" | sort', 'worca');
   if (homeEnv !== 'HOME=/data/home\nWORCA_HOME=/data/worca\nWORCA_PROJECTS_ROOT=/data/projects') fail(`single-volume: server env\n${homeEnv}`);
   else ok('single-volume: HOME, WORCA_HOME and WORCA_PROJECTS_ROOT are on the volume');
 
@@ -178,19 +179,19 @@ async function singleVolume() {
  * a project worca owns; the server must then be able to remove what the agent wrote.
  */
 async function agentIsolation(inBox) {
-  const serverEnv = inBox('tr "\\0" "\\n" < /proc/$(pgrep -u worca -o node)/environ | grep -E "^WORCA_AGENT_(USER|HOME)=" | sort', 'worca');
+  const serverEnv = inBox('tr "\\0" "\\n" < /proc/$(pgrep -u worca -o -x "node|MainThread")/environ | grep -E "^WORCA_AGENT_(USER|HOME)=" | sort', 'worca');
   if (serverEnv !== 'WORCA_AGENT_HOME=/data/agent-home\nWORCA_AGENT_USER=worca-agent') { fail(`agent isolation: server env\n${serverEnv}`); return; }
   ok('agent isolation: the server knows its agent user');
 
   const perms = inBox('stat -c "%a %G %n" /data/projects /data/worca/.worca-cc/runs /data/worca/.worca-cc/store /data/agent-home /data/worca/.worca-cc');
-  const want = ['2770 worca-share /data/projects', '2770 worca-share /data/worca/.worca-cc/runs', '2770 worca-share /data/worca/.worca-cc/store', '700 worca-share /data/agent-home', '711 worca /data/worca/.worca-cc'];
+  const want = ['2770 worca-share /data/projects', '3770 worca-share /data/worca/.worca-cc/runs', '3770 worca-share /data/worca/.worca-cc/store', '700 worca-share /data/agent-home', '711 worca /data/worca/.worca-cc'];
   if (perms !== want.join('\n')) fail(`agent isolation: permissions\n${perms}`);
-  else ok('agent isolation: shared dirs are setgid worca-share, the worca home is traverse-only');
+  else ok('agent isolation: shared dirs are setgid worca-share, runs and store are sticky, the worca home is traverse-only');
 
   inBox('cd /data/projects && umask 0007 && git init -q -b main iso && cd iso && git -c user.name=s -c user.email=s@x commit -q --allow-empty -m init', 'worca');
   writeFileSync(join(tmpdir(), `fake-claude-${stamp}`), [
     '#!/bin/sh',
-    'p=$(pgrep -u worca -o node)',
+    'p=$(pgrep -u worca -o -x "node|MainThread")',
     'r() { if cat "$1" >/dev/null 2>&1; then echo read; else echo denied; fi; }',
     'cd /data/projects/iso && echo agent > by-agent.txt && git add by-agent.txt && git -c user.name=a -c user.email=a@x commit -qm agent && c=committed || c=nocommit',
     'printf \'{"type":"result","subtype":"success","is_error":false,"result":"user=%s environ=%s db=%s home=%s gh=%s commit=%s"}\\n\' "$(id -un)" "$(r /proc/$p/environ)" "$(r /data/worca/.worca-cc/worca-cc.db)" "$(ls /data/home >/dev/null 2>&1 && echo read || echo denied)" "${GH_TOKEN:-none}" "$c"',

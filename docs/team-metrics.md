@@ -4,8 +4,17 @@ Team metrics is a **git-backed, team-wide record of finished runs**. Every teamm
 Worca has a project enabled writes one small JSON file per finished run to an orphan branch
 (`worca-metrics`) on the project's own `origin` remote. There is no separate metrics server:
 the branch itself is the shared store, fetched and pushed like any other git ref. A **Team
-metrics** page (top-level, alongside History and Statistics) reads that branch back and
+metrics** page (sidebar, Expert level, alongside Runs and Statistics) reads that branch back and
 aggregates spend, runs, duration, autonomy and review cycles per project or per workspace.
+
+For one project or workspace and a range (This month, Last month, Quarter, Year, All time or
+Custom), the Overview tab shows Spend, Runs, Cost per run, Duration, Autonomy and Review cycles
+tiles, each with its change against the previous period (plus **Saved** when runs carry
+human-hour estimates, see [Human hours and "Saved"](#human-hours-and-saved)); Spend per week
+(grouped by workflow or another dimension) and Runs per week by outcome; the By workflow, By
+ticket, By actor and By model mix tables; the runs table; and **Export CSV**.
+
+![Team metrics page for the nimbus-crm project on the Overview tab, range Last month and synced just now: Spend, Runs, Cost per run, Duration, Autonomy and Review cycles tiles with their change against the previous month, Spend per week grouped by workflow, Runs per week by outcome, and the By workflow and By ticket tables](screenshots/team-metrics.png)
 
 Nothing about a run's own branch or history changes — `worca-metrics` carries only
 `.worca-metrics/` and is never merged into anything.
@@ -90,7 +99,7 @@ workspace runs follow that switch).
 
 ## Cost
 
-While the `runTags` feature flag is on, the Overview tab opens with three chips: **Overview** (the
+The Overview tab opens with three chips: **Overview** (the
 page as before), **By person** (the By actor table on its own) and **Cost**. Cost is the same Cost and
 value report as Statistics › Cost (see [statistics.md](./statistics.md)): KPIs, a filter bar,
 Allocate by → then by, a stacked area chart, one expandable table, saved views and Download CSV, over
@@ -203,9 +212,9 @@ It degrades rather than fails:
   period), lead time is hidden, and items read "Done".
 - **gh answers only partly** (rate limit, a repository the viewer cannot read): the note quotes
   GitHub's error; those runs stay unknown and are asked again later.
-- **Not GitHub** (GitLab, Bitbucket, Azure DevOps): merge tracking covers GitHub and Azure DevOps
-  repositories (Azure: set `WORCA_ADO_TOKEN`, see [Azure DevOps](azure-devops.md)); GitLab and
-  Bitbucket items show without merge data.
+- **Not GitHub** (GitLab, Bitbucket, Azure DevOps): merge tracking covers GitHub, Azure DevOps and Bitbucket Cloud
+  repositories (Azure: set `WORCA_ADO_TOKEN`, see [Azure DevOps](azure-devops.md); Bitbucket: set `WORCA_BB_TOKEN`,
+  see [Bitbucket](bitbucket.md)); GitLab and Bitbucket Data Center items show without merge data.
 
 ## Chat
 
@@ -409,6 +418,35 @@ no network, the same answer every time. It never looks at which agent ran; custo
 plugins are credited the same way, and a plugin can tune its agents with `humanEffort` in the
 agent's `meta.json` (`{ "factor": 1.5 }` scales the estimate, `{ "hours": 0.25 }` fixes it,
 `{ "factor": 0 }` opts out).
+
+**Which code counts.** The code lines and files are the run's diff: what its checkout changed since
+the run started (a reused branch: since it forks from the source branch). The same diff feeds the
+live diff, `results.json`, the run size and the credit. Commits the branch picks up from a base
+branch during the run are not the run's work, so the diff base moves with them. The base branches
+are the run's source branch, the repository's default branch, and the remote-tracking copy of each
+(for a conflict run, also the ref it was told to merge), at the run's start and now.
+
+The rule is GitHub's, kept to the run's own start. GitHub measures a pull request from the newest
+base commit its branch contains. Worca finds the newest base commit in the branch's history (and in
+a merge still in progress) that the run's start did not have, however it got there: a merge, a
+`git pull`, a fast-forward, a merge of another branch that contains it, a merge with the parents
+swapped, a rebase or a reset.
+
+- If the run's start is an ancestor of that commit (a fast-forward, or a branch cut from the base
+  that merged it), the base is that commit, exactly as on GitHub.
+- Otherwise the base is git's own merge of the run's start and that commit (`git merge-tree`,
+  conflict markers included). The conflict resolution, the run's work before and after the merge,
+  and uncommitted work count. Unlike GitHub, commits the source branch had before the run (a run
+  started from a feature branch, or a reused branch) do not count either.
+- After a rebase or reset (the run's start is no longer in the branch's history), the base is that
+  merge or the base commit itself, whichever is closer to the result. A conflicted rebase counts
+  only its resolution and later work.
+
+Limits: commits cherry-picked from a base branch count as the run's work, as they do on GitHub.
+After a rebase or reset, what the start carried and the result dropped is not counted as removed.
+Once a reused branch picks up a base commit, its commits from before the run stop counting. Each
+change of base is one line in the run's audit log, and a restarted server recomputes the same base
+from the run's record.
 
 Runs are credited whatever their outcome: a run stopped after three plan refinements keeps
 those hours, and a paused run credits what it had done when it finishes after the resume.

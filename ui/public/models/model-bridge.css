@@ -1,0 +1,203 @@
+/* ---- Model bridge (model-bridge-design.md §8): the Providers tab, Connection,
+   import sheet, sign-in block. Same 18px rhythm and card chrome as the rest
+   of the Models view; every revealed block gets an explicit [hidden] rule
+   because the grid/flex rules here otherwise beat the UA hidden rule. ---- */
+.mv-providers{padding:var(--pad-card);display:grid;gap:14px;}
+/* The Providers TAB: one card per account, so three unrelated sign-ins stop reading as one form. */
+.mv-pv-card .mv-pv-row{border:0;padding:0;margin:0;}
+/* A provider card reads top to bottom: name + state, what it is, then its fields side by side in one row, then the
+   verdict and buttons. Description beside a column of fields left the left half empty and the card tall. */
+.mv-pv-card .mv-pv-row{grid-template-columns:minmax(0,1fr);gap:14px;}
+.mv-pv-card .mv-sp-row .mv-pv-main .hint{max-width:72ch;}
+/* Speech: Speech-to-text and Text-to-speech side by side, each its own column of fields. */
+.mv-pv-card .mv-sp-row .mv-pv-ctl{grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:14px 24px;align-items:start;}
+.mv-sp-kind{display:grid;gap:10px;align-content:start;min-width:0;}
+.mv-pv-card .mv-pv-main > :empty{display:none;}   /* an unfilled status line would add a gap */
+.mv-pv-card .mv-sp-row > .mv-pv-btns{padding-top:12px;border-top:1px solid var(--line-2);}
+.mv-pv-card .mv-pv-row:not(.mv-sp-row) .mv-pv-main .hint{max-width:72ch;}
+.mv-pv-card .mv-pv-row:not(.mv-sp-row) .mv-pv-ctl{grid-template-columns:minmax(0,1fr) minmax(0,1fr) auto;gap:10px 14px;align-items:start;}
+.mv-pv-card .mv-pv-row:not(.mv-sp-row) .mv-pv-ctl .mv-field:has(.mv-pv-conc):last-child:nth-child(3){max-width:190px;}
+.mv-pv-card .mv-pv-row:not(.mv-sp-row) .mv-pv-btns{padding-top:12px;border-top:1px solid var(--line-2);}
+@container drows (max-width:560px){
+  .mv-pv-card .mv-pv-row:not(.mv-sp-row) .mv-pv-ctl{grid-template-columns:minmax(0,1fr);}
+}
+/* Image generation (Design pictures): Service · Model (the widest: model ids are long) · API key. Under them a preset
+   service's "Advanced" button, then its region on the same three columns: Base URL over two · Price. Other has no
+   fold: the same two fields sit openly in the grid, the endpoint line under them. After the block above, so its own
+   grid wins over the field grid at the same weight. The Test picture is shown whole. */
+.mv-im-result{display:flex;gap:12px;align-items:center;}
+.mv-im-result[hidden],.mv-im-shot[hidden]{display:none;}
+.mv-im-shot{flex:none;width:96px;height:96px;object-fit:contain;border:1px solid var(--line);border-radius:var(--r-sm);background:var(--field);}
+.mv-pv-card .mv-pv-row.mv-im-row .mv-pv-ctl,.mv-im-row .mdl-adv{grid-template-columns:minmax(0,1fr) minmax(0,1.5fr) minmax(0,1fr);gap:10px 14px;align-items:start;}
+.mv-im-row .mdl-adv{display:grid;grid-column:1/-1;}
+.mv-im-row .mdl-disc{grid-column:1/-1;justify-self:start;}
+.mv-im-row .mv-im-baseurl{grid-column:span 2;}
+.mv-im-row .mv-im-price{max-width:190px;}
+.mv-im-row .mv-im-price .input{max-width:120px;}
+.mv-im-row .mv-im-endpoint{grid-column:1/-1;margin:0;}
+/* A typed model id, with "Pick from list" beside it while the service has a list. */
+.mdl-model-typed{display:flex;gap:6px;align-items:center;min-width:0;}
+.mdl-model-typed .input{flex:1 1 auto;min-width:0;}
+.mv-im-model-list{flex:none;}
+@container drows (max-width:560px){
+  .mv-pv-card .mv-pv-row.mv-im-row .mv-pv-ctl,.mv-im-row .mdl-adv{grid-template-columns:minmax(0,1fr);}
+  .mv-im-row .mv-im-baseurl{grid-column:auto;}
+}
+/* Sound (Design): one key field, as wide as the Image generation key above it, then the buttons. The Test's line
+   is a .hint (display:block), which beats the UA hidden rule, so it hides by its own. */
+.mv-so-result[hidden]{display:none;}
+.mv-pv-card .mv-pv-row.mv-so-row .mv-pv-ctl{grid-template-columns:minmax(0,2fr) minmax(0,1fr);gap:10px 14px;align-items:start;}
+@container drows (max-width:560px){
+  .mv-pv-card .mv-pv-row.mv-so-row .mv-pv-ctl{grid-template-columns:minmax(0,1fr);}
+}
+/* OpenRouter: API key over two columns · Max concurrent, then Provider order · Sort providers by, then the switch on
+   a line of its own. After the field grid above, so its own grid wins at the same weight. */
+.mv-pv-card .mv-pv-row.mv-or-row .mv-pv-ctl{grid-template-columns:minmax(0,1fr) minmax(0,1fr) 160px;gap:10px 14px;align-items:start;}
+.mv-or-row .mv-or-key{grid-column:span 2;}
+.mv-or-row .mv-pv-ctl > .switch-row{grid-column:1/-1;}
+@container drows (max-width:560px){
+  .mv-pv-card .mv-pv-row.mv-or-row .mv-pv-ctl{grid-template-columns:minmax(0,1fr);}
+  .mv-or-row .mv-or-key{grid-column:auto;}
+}
+/* A field whose hint is an ⓘ tip (bridge-view.mjs tippedField): Settings' .label-row adds a bottom margin and a 13px
+   label, so the row restates .mv-field-label's size and weight, and the 28px tip hangs over its 18px line instead of
+   heightening it. A tipped label then sits as an untipped one does, and the inputs of one grid line stay level. */
+.mv-pv-row .label-row{margin:0;}
+.mv-pv-row .label-row > .mv-field-label{font-size:12px;font-weight:600;}
+.mv-pv-row .label-row > .info-tip{margin-block:-6px;}
+/* New surface, new contrast: the house `.hint` / placeholder grey (--ink-3) sits at
+   2.8:1 on a white card and is only tolerated where the light baseline predates the
+   dark theme (test/fixtures/contrast-baseline-light.json — shrink, never grow). The
+   bridge's copy uses --ink-2 (6.5:1) so the theme proof passes without a new entry. */
+.mv-providers .hint,.mv-conn .hint,.mvi .hint,.mv-cp-signin-box .hint{color:var(--ink-2);}
+.mv-providers .hint.err,.mv-conn .hint.err,.mvi .hint.err,.mv-cp-signin-box .hint.err{color:var(--red-ink);}
+.mv-providers .hint.warn,.mv-conn .hint.warn,.mvi .hint.warn,.mv-cp-signin-box .hint.warn{color:var(--amber-ink);}
+.mv-providers .hint.ok,.mv-conn .hint.ok,.mvi .hint.ok,.mv-cp-signin-box .hint.ok{color:var(--green-ink);}
+.mv-pv-row .input::placeholder,.mv-conn .input::placeholder,.mv-conn .textarea::placeholder{color:var(--ink-2);}
+/* Settings → Ask Worca → Web access: its fields are new, so their placeholders use --ink-2 like the rule
+   above instead of joining the legacy light contrast baseline (the allowlist textarea failed at 2.58:1). */
+.ask-web .input::placeholder{color:var(--ink-2);}
+.mv-pv-row{display:grid;grid-template-columns:minmax(0,1.4fr) minmax(0,1fr);gap:12px 18px;padding:14px 0 0;border-top:1px solid var(--line-2);}
+.mv-pv-main{display:grid;gap:6px;align-content:start;min-width:0;}
+.mv-pv-main .hint{margin:0;}
+.mv-pv-ctl{display:grid;gap:10px;align-content:start;}
+.mv-pv-btns{grid-column:1 / -1;display:flex;gap:10px;flex-wrap:wrap;justify-content:flex-end;align-items:center;}
+
+/* Add model's step 2 (app.js showAddList; models/add-model-dialog.mjs renderAddStep2): the import that was a dialog of
+   its own. The provider's sheet mounts in #mimp-body without its title, note, buttons and message (the screen has them),
+   and its card chrome is dropped here rather than in two renderers. The endpoint's address with "List models" beside
+   it, then the hosted presets. */
+.mdl-add .mimp-base-row{display:flex;gap:8px;min-width:0;}
+.mdl-add .mimp-base-row .input{flex:1 1 auto;min-width:0;}
+.mdl-add .mimp-base-row .btn{flex:0 0 auto;}
+.mdl-add .mimp-presets{display:flex;gap:6px;}
+/* The warnings sit clear of the scroll edge: flush against it, Chrome clipped their first glyph. The table is what may
+   scroll sideways, and it starts below them. */
+#mimp-body .mvi>.hint,#mimp-body .mvi-warn{padding-right:2px;}
+.mimp-msg{margin:0;}
+#mimp-body{flex:1 1 auto;min-height:0;overflow:auto;padding:0 4px;}
+#mimp-body tr.is-filtered{display:none;}
+/* The sheet carries .card, and `.viewer-modal .card` gives every card its own max-height + scroll:
+   inside the dialog that made a SECOND scrollbar beside the body's. The body is the one scroller. */
+#mimp-body .mvi{box-shadow:none;border:0;background:transparent;padding:0;margin:0;max-height:none;overflow:visible;}
+#mimp-body .mv-editor-title{display:none;}
+
+/* Model editor dialog (app.js openModelEditorDialog; configurable-models-design.md §4.10). The
+   editor renders its own .card, so the host only sizes and scrolls it. */
+.mv-editor-host{width:min(880px,100%);}
+.mv-editor-host .mv-editor{margin:0;}
+
+/* The Catalogue tab's filter chips (models/catalogue-view.mjs renderCatalogue; the toolbar and its search are in models-page.css). */
+.mv-filters{display:flex;flex-wrap:wrap;gap:6px;}
+/* The Advanced disclosure's chevron (new-run/advanced-disclosure.css) holds still under reduced motion. */
+@media (prefers-reduced-motion: reduce){.advanced .adv-chev{transition:none;}}
+.mv-pv-row .input,.mv-pv-row .select{font-family:var(--mono);font-size:12px;padding:0 12px;}
+.mv-pv-row .mv-pv-conc{max-width:120px;}
+.mv-cp-signin-box{display:grid;gap:12px;padding:14px 16px;border:1px solid var(--line-2);border-radius:var(--r-sm);background:var(--field);min-width:0;}
+/* The code is its own copy button (the code as its label, design-system.md › Copy button); Open follows. */
+.mv-cp-code-row{display:flex;align-items:center;gap:8px 12px;flex-wrap:wrap;min-width:0;}
+.mv-cp-copy .mv-cp-code{font-size:var(--fs-subpage);font-weight:700;}
+/* The wait (spinner + line) on the left, Cancel on the right of the same row. */
+.mv-cp-foot{display:flex;align-items:center;justify-content:space-between;gap:12px;min-width:0;}
+.mv-cp-wait{display:flex;align-items:center;gap:8px;min-width:0;}
+.mv-cp-wait .mv-cp-status{min-width:0;overflow-wrap:anywhere;}
+.mv-cp-status.err{color:var(--red);}
+/* The GHE.com host shows only while Account is GHE.com tenant (.mv-field sets display, which would beat [hidden]). */
+.mv-cp-host-field[hidden]{display:none;}
+.mv-cp-signin-box .mv-cp-cancel{flex:none;}
+.mv-conn{display:grid;gap:12px;}
+.mv-conn-body{display:grid;gap:12px;padding:12px 14px;border:1px solid var(--line-2);border-radius:var(--r-sm);}
+.mv-conn-body[hidden]{display:none;}
+.mv-conn-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:10px 14px;}
+/* A field without a hint sits beside one with a hint: start-align so the
+   select keeps its own height instead of stretching to the row's. */
+.mv-conn-grid .mv-field{align-content:start;}
+/* The upstream model id is an id (mono); the Provider select names a provider. */
+.mv-conn-grid .input{font-family:var(--mono);font-size:12px;}
+/* The Provider select and the provider's state word (provider-state.mjs) on one line. */
+.mv-conn-prov-row{display:flex;align-items:center;gap:10px;min-width:0;}
+.mv-conn-prov-row > .select,.mv-conn-prov-row > .mdl-picksel{flex:1 1 auto;min-width:0;}
+.mv-conn-prov-row > .mdl-st{flex:none;}
+.mv-conn-prov-row > .mdl-st[hidden]{display:none;}
+/* The connection's two folds, "Connection" and "Capabilities and limits" (the model form puts them after Pricing):
+   a hairline above and below; P3's quiet disclosure button (.mdl-disc, whose chevron turns in models-page.css) spans
+   the row with its summary at the right; the body sits under the name. */
+.mv-conn-more{display:grid;gap:4px;padding:4px 0;border-top:1px solid var(--line);border-bottom:1px solid var(--line);}
+.mv-conn-more[hidden]{display:none;}
+.mv-conn-more > .mdl-disc{width:100%;justify-content:flex-start;}
+.mv-conn-more > .mdl-disc[hidden]{display:none;}
+.mdl-disc-name{font-weight:500;color:var(--ink);}
+.mdl-disc-sum{margin-left:auto;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-weight:400;color:var(--ink-2);}
+.mv-conn-fold{display:grid;gap:12px;padding:4px 0 16px 24px;}
+.mv-conn-fold[hidden]{display:none;}
+.mv-conn-own,.mv-conn-or{display:grid;gap:12px;}
+.mv-conn-own[hidden],.mv-conn-or[hidden]{display:none;}
+.mv-conn-fold .input,.mv-conn-fold .textarea{font-family:var(--mono);font-size:12px;}
+.mv-conn-more .input::placeholder,.mv-conn-more .textarea::placeholder{color:var(--ink-2);}
+.mv-conn-caps{display:grid;gap:6px;}
+.mv-conn-caps[hidden]{display:none;}
+.mv-conn-caps-row{display:flex;gap:14px;flex-wrap:wrap;align-items:center;}
+.mv-conn-cap{display:flex;align-items:center;gap:6px;font-size:var(--fs-body);cursor:pointer;}
+.mv-conn-limit{display:flex;align-items:center;gap:6px;font-size:12px;}
+.mv-conn-limit .mv-conn-limit-in{max-width:120px;font-family:var(--mono);font-size:12px;padding:7px 10px;}
+.mvi-tbl{margin-top:8px;}
+.mvi-tbl td{vertical-align:top;}
+/* A hosted catalog's filters (OpenRouter lists hundreds): the shared .chip-select pills, one row. */
+.mvi-or-filters{margin-top:10px;}
+.mvi-or-filters .mvi-f-ctx{padding:2px 6px;font-size:12px;min-height:0;}
+.mvi-tbl .mvi-id{display:block;margin:2px 0 0;font-family:var(--mono);}
+.mvi-tbl tr.mvi-disabled{opacity:.55;}
+.mvi-status{color:var(--ink-3);font-size:12px;}
+@media (max-width:720px){.mv-pv-row{grid-template-columns:1fr;}.mv-pv-card .mv-pv-row .mv-pv-ctl{grid-template-columns:1fr;}}
+
+/* ---- Model plugins (design §9.6): Share as plugin, and the base URL in a plugin's install consent ---- */
+/* Share as plugin (DESIGN SHR-1, models-view.mjs renderExportWizard): the head (title, Close), three numbered parts,
+   each after the first opening on a hairline, then the message and Cancel / Export scaffold. Margins, never a gap on
+   the card: once the dialog lays it out (layoutDialog) the head and foot leave the card's flow for its pinned regions
+   and the parts sit in .dlg-body, whose edge rules zero the outer margins. */
+.mvx-head{display:flex;align-items:center;gap:12px;min-width:0;margin:0 0 20px;}
+.mvx-head > .mv-editor-title{flex:1 1 auto;min-width:0;margin:0;overflow-wrap:anywhere;}
+.mvx-head > .mdl-close{flex:none;}
+/* A part: its numbered name and the ⓘ tip beside it on the first row, everything else across under them. */
+.mvx-step{display:grid;grid-template-columns:auto minmax(0,1fr);align-items:center;gap:12px 6px;}
+.mvx-step > *{grid-column:1 / -1;}
+.mvx-step > .mvx-step-title{grid-column:1;margin:0;font-size:var(--fs-meta);font-weight:600;line-height:var(--lh-title);color:var(--ink-2);}
+.mvx-step > .info-tip{grid-column:2;justify-self:start;margin-block:-6px;}
+.mvx-step > .hint{margin:0;}
+.mvx-step + .mvx-step{margin-top:20px;padding-top:20px;border-top:1px solid var(--line);}
+/* 1 Models: two columns of the shared .opt-row (box, mark, name). */
+.mvx-models{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:8px 24px;}
+/* 2 Env vars: the name, the credential badge, the segment at the right (under the name when the row is narrow). */
+.mvx-envs{display:grid;gap:8px;}
+.mvx-env-row{display:flex;align-items:center;gap:8px 12px;flex-wrap:wrap;min-height:40px;}
+.mvx-env-key{min-width:0;font-size:var(--fs-meta);overflow-wrap:anywhere;}
+.mvx-seg{margin-left:auto;max-width:100%;flex-wrap:wrap;}
+.mvx-env-row > .mvx-mode[hidden]{display:none;}
+.badge.mvx-warn{background:var(--red-bg);color:var(--red-ink);}
+/* 3 Plugin: Plugin name | Version, then Description and Destination folder across. */
+.mvx-fields{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:16px;}
+.mvx-fields > .mvx-wide{grid-column:1 / -1;}
+.mvx-fields .mvx-dest{font-family:var(--mono);font-size:var(--fs-meta);}
+@media (max-width:860px){.mvx-models,.mvx-fields{grid-template-columns:minmax(0,1fr);}}
+.mvx-warn{color:var(--red);}
+.pl-baseurl{word-break:break-all;}

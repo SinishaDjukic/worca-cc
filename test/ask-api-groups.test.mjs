@@ -116,3 +116,17 @@ test('DELETE deleteChats=false ungroups (chats stay); deleteChats=true deletes t
   assert.equal(r.deleted, 1);
   assert.equal((await call('GET', `/api/ask/threads/${a.id}`)).status, 404);
 });
+
+test('Add to group answers an Undo token: Undo puts the chat back in its old group once, then 410', async () => {
+  process.env.WORCA_FLAGS = '';
+  const [a, b] = [await chat('ua'), await chat('ub')];
+  const one = (await (await call('POST', '/api/ask/groups', { name: 'One', threadIds: [a.id] })).json()).group;
+  const made = await (await call('POST', '/api/ask/groups', { name: 'Two', threadIds: [b.id] })).json();
+  assert.match(made.undo, /^undo_/);
+  const moved = await (await call('POST', `/api/ask/groups/${made.group.id}/threads`, { threadIds: [a.id] })).json();
+  assert.match(moved.undo, /^undo_/);
+  assert.equal((await call('POST', '/api/ask/groups/undo', { token: moved.undo })).status, 200);
+  const page = await (await call('GET', '/api/ask/threads?show=all&limit=50')).json();
+  assert.equal(page.threads.find((t) => t.id === a.id).groupId, one.id);
+  assert.equal((await call('POST', '/api/ask/groups/undo', { token: moved.undo })).status, 410);
+});

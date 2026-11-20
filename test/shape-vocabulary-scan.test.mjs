@@ -10,7 +10,7 @@ const ROOT = fileURLToPath(new URL('..', import.meta.url));
 const OLD = /Shape it first|Plan it with me|while shaping/i;
 const REFUSED = /\bRun anyway\b/;   // D32: a button names its outcome (case-sensitive: prose "to run anyway" is no label)
 const bad = (l) => OLD.test(l) || REFUSED.test(l);
-const SKIP_DIRS = new Set(['node_modules', '.git', 'dist', 'coverage', 'vendor']);   // as test/shape-gate-scan.test.mjs
+const SKIP_DIRS = new Set(['node_modules', '.git', 'dist', 'coverage', 'vendor']);
 function walk(dir, out = []) {
   for (const name of readdirSync(dir)) {
     if (SKIP_DIRS.has(name)) continue;

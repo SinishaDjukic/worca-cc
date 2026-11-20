@@ -81,6 +81,8 @@ export function snapshotFromState(state, { now = Date.now(), extras = null } = {
     moreArtifacts: !!(x && x.moreArtifacts),
     artifactsTotal: x && Number.isInteger(x.artifactsTotal) ? x.artifactsTotal : null,   // P3: the run card's Artifacts · <n>
     pr,
+    // A run on its source branch (extras.source, sourceShipFacts): the run page's Push rule reads these.
+    ...(x && x.source && x.source.sameAsSource === true ? { sameAsSource: true, sourceBranch: x.source.sourceBranch || null, mergeBack: x.source.mergeBack || null, push: x.source.push || null } : {}),
     rounds: x && Array.isArray(x.rounds) ? x.rounds : [],          // Shaper s5: the run's rounds (askRunCardExtras)
     watch: x && x.watch && typeof x.watch === 'object' ? x.watch : null,   // Shaper s5: a watch that gave up on its PR
     archived: !!state.archivedAt,                    // archived: the run folder and its History row are gone
@@ -105,6 +107,7 @@ export function runPill(snap) {
   if (!snap) return { family: 'peach', text: 'Starting' };
   const s = snap.status;
   if (s === 'pausing') return { family: 'amber', text: 'Pausing…' };
+  if (snap.resumePending) return { family: 'amber', text: 'Resuming…' };
   if (s === 'paused') { const why = PAUSE_WHY[snap.pauseReason]; return { family: 'amber', text: why ? `Paused · ${why}` : 'Paused' }; }
   if (s === 'interrupted') return { family: 'amber', text: 'Interrupted' };
   if (snap.pendingQuestion) return { family: 'amber', text: snap.pendingQuestion.kind === 'workflow' ? 'Waiting · your decision' : 'Waiting for your answer' };

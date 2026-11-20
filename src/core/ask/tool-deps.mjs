@@ -6,13 +6,17 @@ import { readFile, access } from 'node:fs/promises';
 import { join } from 'node:path';
 import {
   listAllPipelines, lookupPipelineRow, findPipelineRowById, totalsFor, readStoreMeta, runDirForRow, readMemoryLedger,
-  listRunArtifacts, readRunProgress, resolveIndexedArtifactForRow,
+  listRunArtifacts, readRunProgress, resolveIndexedArtifactForRow, listRunPrIndex, readPrState, readMemberPrStates,
 } from '../artifacts.mjs';
+import { parsePrRef, prRefMatches } from '../forge.mjs';
+import { watchFixRuns, watchFixRunOf } from '../pr-watch.mjs';
 import { DIFF_PATCH_FILE } from '../results.mjs';
 import { GUARDRAIL_PRESETS } from '../guardrails.mjs';
 import { buildCatalog } from './catalog.mjs';
 import { validateProposal } from './proposal.mjs';
 import { chatScopeOf, scopeCardKeys, validateScopeSwitch } from './scope.mjs';
+import { validateQuestion } from './question-card.mjs';
+import { conversationForThread } from '../chat/conversations.mjs';
 import { readAttachmentText, readAttachmentRaw, getAttachment, attachmentPath, getThread, listAttachments, listMessages } from './store.mjs';
 import { redactAskText } from './redact.mjs';
 import { htmlToText } from './html-text.mjs';
@@ -22,10 +26,9 @@ import { getDb } from '../db.mjs';
 import { listProjects, displayPath } from '../projects.mjs';
 import { runStatusLine } from '../run-status.mjs';
 import { readNightDecisions } from '../night/store.mjs';
-import { shapeFirstEnabled } from '../shape/gate.mjs';
 import { PERSPECTIVE_KEYS } from '../../shared/shape/perspectives.mjs';
 import { listPresets } from '../run-presets-store.mjs';
-import { flagEnabled } from '../flags.mjs';
+import { defaultGuardrailSetId } from '../guardrail-store.mjs';
 
 /** Who started runs (pipelines.started_by), one row per person, most active first. Scope: a
  *  projectKey or a workspaceKey, else everything. Archived and pre-attribution (NULL) runs are
@@ -95,9 +98,19 @@ export function defaultToolDeps({ threadId, viewer = null }) {
   return {
     // The person signed in to this chat on a shared sign-in (WORCA_ASK_READER), else null: list_runs "me".
     viewer: typeof viewer === 'string' && viewer ? viewer : null,
-    // Run presets (#712 slice 3): null when the feature is off, so list_presets says so.
-    listPresets: () => (flagEnabled('runPresets') ? listPresets({ owner: typeof viewer === 'string' && viewer ? viewer : null }) : null),
+    // Run presets (#712 slice 3): the viewer's presets for list_presets.
+    // A preset naming no guardrails starts on the install default (list_presets shows it).
+    defaultGuardrailsId: defaultGuardrailSetId,
+    listPresets: () => listPresets({ owner: typeof viewer === 'string' && viewer ? viewer : null }),
     listPeople,
+    // PR lookups (list_runs pr, get_run pr): the parsers and the bulk / per-run readers, injected so tools.mjs stays import-free.
+    parsePrRef,
+    prRefMatches,
+    runPrIndex: () => ({ prs: listRunPrIndex(), fixes: watchFixRuns() }),
+    readRunPrs: (row) => {
+      const p = readPrState(row.id);
+      return { pr: p ? { url: p.url, number: p.number, state: p.state } : null, members: readMemberPrStates(row.id), fixesPrUrl: watchFixRunOf(row.id) };
+    },
     readRunActions,
     buildCatalog,
     listAllPipelines,
@@ -138,8 +151,7 @@ export function defaultToolDeps({ threadId, viewer = null }) {
     // converter). Injected, never imported — tools.mjs stays import-free by house rule.
     htmlToText,
     validateProposal,
-    // Shape it first (spec D9, D12): the propose_run schema's gate and keys. Injected: tools.mjs stays import-free.
-    shapeFirstOn: () => shapeFirstEnabled(),
+    // Shape it first (spec D9, D12): the propose_run schema's perspective keys. Injected: tools.mjs stays import-free.
     perspectiveKeys: PERSPECTIVE_KEYS,
     // The run card's attachment pills (propose_run attachmentIds): the ledger of
     // the owning thread only — never another thread's files. An unreadable DB means
@@ -175,6 +187,14 @@ export function defaultToolDeps({ threadId, viewer = null }) {
         return validateScopeSwitch(input, { scope: chatScopeOf(thread?.context ?? null), projects, asked: scopeCardKeys(messages) });
       },
     },
+    // ask_question (freeform chat D5): only on a thread bound to a chat conversation (read per tool list, like
+    // pinnedScope). Absent everywhere else, so browser chats keep their exact tool list.
+    chatQuestions: (() => {
+      if (!threadId) return null;
+      let bound = null;
+      try { bound = conversationForThread(threadId); } catch { bound = null; }
+      return bound ? { validate: (input) => validateQuestion(input) } : null;
+    })(),
     // The SECURE preset is the floor, not the run's own set: guardrailsId defaults
     // to 'permissive' (empty protectedPaths), so resolving per row would show the
     // model every credential file on most runs. This only ever omits more.

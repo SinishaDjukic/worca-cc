@@ -1,0 +1,105 @@
+{
+  "rounds": [
+    {
+      "pass": 1,
+      "round": 1,
+      "plan": "plans/old-v1.md — every finding fixed, 9 raised",
+      "summary": "Old round: all 9 findings fixed",
+      "roles": [
+        {
+          "key": "correctness",
+          "findings": [
+            { "id": "correctness-1-1", "severity": "minor", "title": "nothing open here", "section": "Testing", "fix": "all 4 fixed", "status": "fixed" },
+            { "id": "correctness-1-2", "severity": "minor", "title": "fixed, not disputed", "section": "Steps", "fix": "done", "status": "disputed", "reason": "actually fixed in v2" },
+            { "id": "correctness-1-3", "severity": "minor", "title": "this one was fixed", "section": "Risks", "fix": "fixed", "status": "wontfix", "evidence": "fixed: 3 of 3" }
+          ]
+        },
+        {
+          "key": "security",
+          "findings": [
+            { "id": "security-1-1", "severity": "minor", "title": "open, 4 disputed", "section": "Auth", "fix": "dispute all", "status": "fixed" }
+          ]
+        }
+      ],
+      "dispositions": { "dispositions": [{ "id": "correctness-1-1", "status": "disputed", "reason": "everything was disputed" }] }
+    },
+    {
+      "pass": 2,
+      "round": 1,
+      "node": "n_reviewer",
+      "target": "plan",
+      "plan": "plans/demo-v1.md — 7 findings, all 5 fixed",
+      "summary": "All 5 fixed, nothing disputed, nothing open",
+      "roles": [
+        {
+          "key": "qa",
+          "label": "QA",
+          "counts": { "raised": 2, "fixed": 1, "disputed": 1, "open": 0 },
+          "findings": [
+            { "id": "qa-1-1", "severity": "minor", "title": "all 5 fixed", "section": "Testing", "fix": "nothing open", "status": "open" },
+            { "id": "qa-1-2", "severity": "minor", "title": "9 raised, 0 disputed", "section": "Steps", "fix": "all fixed", "status": "open" }
+          ]
+        },
+        {
+          "key": "security",
+          "label": "Security",
+          "counts": { "raised": 2, "fixed": 2, "disputed": 0, "open": 0 },
+          "findings": [
+            { "id": "security-1-1", "severity": "minor", "title": "3 disputed, 3 open", "section": "Auth", "fix": "nothing fixed", "status": "open" },
+            { "id": "security-1-2", "severity": "minor", "title": "still open", "section": "Rollback", "fix": "open", "status": "disputed", "reason": "disputed by everyone" }
+          ]
+        }
+      ],
+      "counts": { "raised": 4, "fixed": 3, "disputed": 1, "open": 0 },
+      "dispositions": { "dispositions": [{ "id": "qa-1-1", "status": "fixed" }, { "id": "qa-1-2", "status": "fixed" }] }
+    },
+    {
+      "pass": 2,
+      "round": 2,
+      "node": "n_reviewer",
+      "target": "plan",
+      "plan": "plans/demo-v2.md — 0 raised",
+      "summary": "Nothing raised this round, 12 fixed",
+      "roles": [
+        {
+          "key": "qa",
+          "label": "Quality",
+          "counts": { "raised": 1, "fixed": 0, "disputed": 0, "open": 1 },
+          "findings": [
+            { "id": "qa-2-1", "severity": "minor", "title": "fixed in v3", "section": "Testing", "fix": "fixed already", "status": "fixed" }
+          ]
+        },
+        {
+          "key": "security",
+          "label": "Security (skipped copy)",
+          "skipped": true,
+          "counts": { "raised": 2, "fixed": 2, "disputed": 0, "open": 0 },
+          "findings": [
+            { "id": "security-1-1", "severity": "minor", "title": "copy", "section": "Auth", "fix": "copy", "status": "fixed" },
+            { "id": "security-1-2", "severity": "minor", "title": "copy", "section": "Rollback", "fix": "copy", "status": "fixed" }
+          ]
+        }
+      ],
+      "counts": { "raised": 1, "fixed": 0, "disputed": 0, "open": 1 }
+    },
+    {
+      "pass": 3,
+      "round": 1,
+      "node": "n_code_review",
+      "target": "diff",
+      "summary": "The diff is clean: 0 raised",
+      "roles": [
+        {
+          "key": "security",
+          "label": "Security",
+          "counts": { "raised": 2, "fixed": 1, "disputed": 1, "open": 0 },
+          "findings": [
+            { "id": "security-1-1", "severity": "minor", "title": "no issue, 0 raised", "section": "src/a.mjs:8", "fix": "none", "status": "open" },
+            { "id": "security-1-2", "severity": "minor", "title": "open forever", "section": "src/b.mjs:2", "fix": "none", "status": "open" }
+          ]
+        }
+      ],
+      "counts": { "raised": 2, "fixed": 1, "disputed": 1, "open": 0 }
+    }
+  ]
+}

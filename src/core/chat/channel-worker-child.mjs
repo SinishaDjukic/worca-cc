@@ -9,18 +9,20 @@
 // (nonzero exit -> the supervisor restarts with backoff).
 //
 // The plugin module must export:
-//   createChannelWorker(ctx) -> { start(), stop(), send(chatId, msg),
-//                                 handleWebhook?(req), onConfig?(config) }
+//   createChannelWorker(ctx) -> { start(), stop(), send(chatId, msg, options),
+//                                 handleWebhook?(req), onConfig?(config), replyInteraction?(interactionId, text),
+//                                 react?(chatId, messageId, emoji, on), history?(chatId, before, limit),
+//                                 typing?(chatId, on), fetchFile?(ref, {maxBytes, signal}) -> {data: Uint8Array, contentType?} }
 //   validateConfig?(config)  -> {ok:true, identity?} | {ok:false, errors:[...]}
 // ctx = { apiVersion, platform, mock, config, state:{get,set}, log,
-//         emitMessage, setStatus, shutdownSignal }
+//         emitMessage, emitInteraction, setStatus, shutdownSignal }
 //
 // `--check` argv mode (doctor / `worca plugin channel --check`): read hello,
 // run validateConfig once, write ONE result line, exit 0.
 
 import { createInterface } from 'node:readline';
 import { pathToFileURL } from 'node:url';
-import { encodeFrame, decodeFrame, isValidIncoming, isValidMessage, CONNECTION_STATES } from './channel-protocol.mjs';
+import { encodeFrame, decodeFrame, isValidIncoming, isValidMessage, isValidInteraction, isValidSendOptions, CONNECTION_STATES, withoutInboundContext, FILE_LIMITS } from './channel-protocol.mjs';
 import { useEnvProxy, proxyNotice } from '../env-proxy.mjs';
 
 const CHECK_MODE = process.argv.includes('--check');
@@ -92,8 +94,30 @@ async function main() {
     },
     log: (level, msg) => writeFrame({ type: 'log', level: String(level || 'info'), msg: String(msg).slice(0, MAX_LOG_CHARS) }),
     emitMessage: (msg) => {
-      if (!isValidIncoming(msg)) { ctx.log('warn', 'emitMessage: invalid IncomingMessage dropped'); return; }
-      writeFrame({ type: 'inbound', msg: { chatId: msg.chatId, userId: msg.userId, text: msg.text, meta: msg.meta ?? {} } });
+      // v2 chat context (attachments / replyTo / history) is optional: a refused context is dropped with a warning and
+      // the message itself still goes through, exactly as from an older worker.
+      let m = msg;
+      if (!isValidIncoming(m) && m && typeof m === 'object' && isValidIncoming(withoutInboundContext(m))) {
+        ctx.log('warn', 'emitMessage: invalid reply, history or attachments dropped');
+        m = withoutInboundContext(m);
+      }
+      if (!isValidIncoming(m)) { ctx.log('warn', 'emitMessage: invalid IncomingMessage dropped'); return; }
+      const base = { chatId: m.chatId, userId: m.userId, text: m.text, meta: m.meta ?? {} };
+      const withContext = m.attachments !== undefined || m.replyTo !== undefined || m.history !== undefined;
+      const full = withContext ? { ...base, ...(m.attachments !== undefined ? { attachments: m.attachments } : {}),
+        ...(m.replyTo !== undefined ? { replyTo: m.replyTo } : {}), ...(m.history !== undefined ? { history: m.history } : {}) } : base;
+      if (writeFrame({ type: 'inbound', msg: full })) return;
+      // Over the 1 MiB frame cap: the message without its context still fits.
+      if (withContext && writeFrame({ type: 'inbound', msg: base })) ctx.log('warn', 'emitMessage: chat context over the frame cap dropped');
+    },
+    // v2 (interactive channels): a component click / select / modal submit the worker has ALREADY acknowledged to the
+    // platform. Only the opaque ref and the chosen values travel; the platform's interaction token stays in the worker.
+    emitInteraction: (evt) => {
+      if (!isValidInteraction(evt)) { ctx.log('warn', 'emitInteraction: invalid interaction dropped'); return; }
+      writeFrame({ type: 'interaction', evt: {
+        id: evt.id, chatId: evt.chatId, userId: evt.userId, ref: evt.ref, kind: evt.kind,
+        ...(evt.values ? { values: evt.values } : {}), ...(evt.fields ? { fields: evt.fields } : {}), meta: evt.meta ?? {},
+      } });
     },
     setStatus: (state, detail) => {
       if (!CONNECTION_STATES.includes(state)) return;
@@ -156,7 +180,7 @@ async function main() {
         (async () => {
           try {
             if (!isValidMessage(frame.message)) throw Object.assign(new Error('invalid NormalizedMessage'), { kind: 'protocol' });
-            const r = await worker.send(frame.chatId, frame.message);
+            const r = await worker.send(frame.chatId, frame.message, frame.options || {});
             writeFrame({ type: 'send-result', id: frame.id, ok: true, ...(r && typeof r === 'object' ? { detail: r } : {}) });
           } catch (err) {
             writeFrame({
@@ -164,6 +188,112 @@ async function main() {
               error: {
                 kind: errKind(err), message: err?.message || String(err),
                 ...(Number.isFinite(err?.retryAfterMs) ? { retryAfterMs: err.retryAfterMs } : {}),
+                ...(err?.permanent === true ? { permanent: true } : {}),
+              },
+            });
+          }
+        })();
+        break;
+      }
+      case 'interaction-reply': {
+        (async () => {
+          try {
+            if (typeof worker.replyInteraction !== 'function') throw Object.assign(new Error('worker cannot reply to interactions'), { kind: 'plugin' });
+            await worker.replyInteraction(frame.interactionId, frame.text);
+            writeFrame({ type: 'send-result', id: frame.id, ok: true });
+          } catch (err) {
+            writeFrame({ type: 'send-result', id: frame.id, ok: false, error: { kind: errKind(err), message: err?.message || String(err) } });
+          }
+        })();
+        break;
+      }
+      case 'react': {
+        (async () => {
+          try {
+            // Optional: a worker without it answers a permanent refusal (the host never retries it).
+            if (typeof worker.react !== 'function') throw Object.assign(new Error('worker cannot add reactions'), { kind: 'plugin', permanent: true });
+            await worker.react(frame.chatId, frame.messageId, frame.emoji, frame.on);
+            writeFrame({ type: 'send-result', id: frame.id, ok: true });
+          } catch (err) {
+            writeFrame({
+              type: 'send-result', id: frame.id, ok: false,
+              error: {
+                kind: errKind(err), message: err?.message || String(err),
+                ...(Number.isFinite(err?.retryAfterMs) ? { retryAfterMs: err.retryAfterMs } : {}),
+                ...(err?.permanent === true ? { permanent: true } : {}),
+              },
+            });
+          }
+        })();
+        break;
+      }
+      case 'typing': {
+        (async () => {
+          try {
+            // Optional: a worker without it answers a permanent refusal (the host then shows no typing indicator).
+            if (typeof worker.typing !== 'function') throw Object.assign(new Error('worker cannot show typing'), { kind: 'plugin', permanent: true });
+            await worker.typing(frame.chatId, frame.on);
+            writeFrame({ type: 'send-result', id: frame.id, ok: true });
+          } catch (err) {
+            writeFrame({
+              type: 'send-result', id: frame.id, ok: false,
+              error: {
+                kind: errKind(err), message: err?.message || String(err),
+                ...(Number.isFinite(err?.retryAfterMs) ? { retryAfterMs: err.retryAfterMs } : {}),
+                ...(err?.permanent === true ? { permanent: true } : {}),
+              },
+            });
+          }
+        })();
+        break;
+      }
+      case 'history': {
+        (async () => {
+          try {
+            // Optional: a worker without it answers a permanent refusal (the host then starts the chat without history).
+            if (typeof worker.history !== 'function') throw Object.assign(new Error('worker cannot read channel history'), { kind: 'plugin', permanent: true });
+            const messages = await worker.history(frame.chatId, frame.before, frame.limit);
+            writeFrame({ type: 'send-result', id: frame.id, ok: true, detail: { messages: Array.isArray(messages) ? messages : [] } });
+          } catch (err) {
+            writeFrame({
+              type: 'send-result', id: frame.id, ok: false,
+              error: {
+                kind: errKind(err), message: err?.message || String(err),
+                ...(Number.isFinite(err?.retryAfterMs) ? { retryAfterMs: err.retryAfterMs } : {}),
+                ...(err?.permanent === true ? { permanent: true } : {}),
+              },
+            });
+          }
+        })();
+        break;
+      }
+      case 'file': {
+        (async () => {
+          try {
+            // Optional: a worker without it answers a permanent refusal (the host lists the file as not downloaded).
+            if (typeof worker.fetchFile !== 'function') throw Object.assign(new Error('worker cannot download files'), { kind: 'plugin', permanent: true });
+            const signal = AbortSignal.any([shutdownController.signal, AbortSignal.timeout(frame.timeoutMs)]);
+            const r = await worker.fetchFile(frame.ref, { maxBytes: frame.maxBytes, signal });
+            const raw = r?.data;
+            if (!(raw instanceof Uint8Array)) throw Object.assign(new Error('worker returned no file bytes'), { kind: 'protocol' });
+            const data = Buffer.from(raw.buffer, raw.byteOffset, raw.byteLength);
+            if (data.length > frame.maxBytes) throw Object.assign(new Error('file is over the size limit'), { kind: 'plugin', tooBig: true, permanent: true });
+            let seq = 0;
+            for (let at = 0; at < data.length; at += FILE_LIMITS.chunkBytes) {
+              const dataB64 = data.subarray(at, at + FILE_LIMITS.chunkBytes).toString('base64');
+              if (!writeFrame({ type: 'file-chunk', id: frame.id, seq, dataB64 })) throw Object.assign(new Error('file chunk not written'), { kind: 'protocol' });
+              seq += 1;
+            }
+            const contentType = typeof r.contentType === 'string' && r.contentType ? r.contentType.slice(0, 128) : null;
+            writeFrame({ type: 'send-result', id: frame.id, ok: true, detail: { bytes: data.length, chunks: seq, contentType } });
+          } catch (err) {
+            writeFrame({
+              type: 'send-result', id: frame.id, ok: false,
+              error: {
+                kind: errKind(err), message: err?.message || String(err),
+                ...(err?.tooBig === true ? { tooBig: true } : {}),
+                ...(Number.isFinite(err?.retryAfterMs) ? { retryAfterMs: err.retryAfterMs } : {}),
+                ...(err?.permanent === true ? { permanent: true } : {}),
               },
             });
           }

@@ -34,7 +34,7 @@ let srv; let port; let broker;
 before(async () => {
   const { config, errors } = readBrokerConfig({
     WORCA_BROKER_MODE: 'multi', WORCA_BROKER_SECRET: 'q'.repeat(40), WORCA_BROKER_VAULT_KEY: VK.toString('base64'),
-    WORCA_BROKER_PUBLIC_URL: 'https://worca-01-keys.example.com', WORCA_IDENTITY_HEADER: 'x-email',
+    WORCA_BROKER_PUBLIC_URL: 'https://worca-01-keys.example.com', WORCA_IDENTITY_HEADER: 'x-email', WORCA_IDENTITY_TRUSTED_PROXIES: '127.0.0.1',
     WORCA_BROKER_HOST: '127.0.0.1', WORCA_BROKER_PORT: '0', WORCA_BROKER_UI_PORT: '0',
   });
   assert.deepEqual(errors, []);

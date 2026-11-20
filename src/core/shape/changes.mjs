@@ -7,6 +7,7 @@ import { getDb } from '../db.mjs';
 import { readStoreMeta } from '../artifacts.mjs';
 import { roundsOf, roundOrigin } from './rounds.mjs';
 import { featureOfPipeline, currentFeatureId, featureBase, featureView } from './features.mjs';
+import { changesRequirementsBlock } from '../../shared/shape/acceptance.mjs';
 
 const MAX = 4000;
 const clip = (t) => String(t || '').trim().slice(0, MAX);
@@ -19,7 +20,9 @@ const planNote = (featureId, text, deps) => {
   return n && n.runIndex != null ? { ok: true, result: { note: 'plan', index: n.runIndex } } : { ok: false, status: 409, error: NO_NEXT };
 };
 
-/** The `changes` card (state 'proposed'). `run` is the start body for a round or a plain follow-up (D3, D18). */
+/** The `changes` card (state 'proposed'). `run` is the start body for a round or a plain follow-up (D3, D18).
+ *  Shaper requirements s3 (D12): a shipped feature with agreed requirements updates them first:
+ *  the card says so (`requirementsFirst`), a round runs shaped and its prompt lists the agreed requirements. */
 export function changesCard({ text, facts }) {
   const landing = landingFor(facts);
   if (!landing) return null;
@@ -29,14 +32,24 @@ export function changesCard({ text, facts }) {
   const projectDir = (f && f.projectDir) || (r && r.projectDir) || null;
   const tags = (f && f.tags) || (r && r.tags) || [];          // D19: the origin's tags, so enforced tag rules pass
   const labels = (f && f.labels) || (r && r.labels) || [];    // s2: and its labels
-  const withTags = (b) => ({ ...b, ...(tags.length ? { tags } : {}), ...(labels.length ? { labels } : {}) });
-  const run = landing.kind === 'round'
+  // The set of the run it changes (a feature round: that run's, else the feature's), never the install default. A run
+  // with none stored sends none; the start then guards a card start against a Permissive default (ui/server.mjs).
+  const roundRun = landing.kind === 'round' && f ? (f.slices || []).find((s) => s.pipelineId === landing.target.roundOf) : null;
+  const guardrailsId = (roundRun && roundRun.guardrailsId) || (f && f.guardrailsId) || (r && r.guardrailsId) || null;
+  const withTags = (b) => ({ ...b, ...(guardrailsId ? { guardrailsId } : {}), ...(tags.length ? { tags } : {}), ...(labels.length ? { labels } : {}) });
+  const first = !!f && f.shipped === true && Array.isArray(f.agreed) && f.agreed.length > 0
+    && (landing.kind === 'round' || landing.kind === 'follow-up');
+  const run = landing.kind === 'round' && first
+    ? withTags({ prompt: `${req}\n\n${changesRequirementsBlock(f.agreed, f.acceptance)}`, projectDir, sourceBranch: landing.target.sourceBranch,
+      sameAsSource: true, syncBeforeStart: false, shape: { perspectives: [...(f.perspectives || [])], size: 'medium', slices: 'off' } })
+    : landing.kind === 'round'
     ? withTags({ prompt: req, projectDir, sourceBranch: landing.target.sourceBranch, sameAsSource: true, syncBeforeStart: false })
     : landing.kind === 'follow-up' && !landing.target.featureId
       ? withTags({ prompt: req, projectDir, ...(landing.target.sourceBranch ? { sourceBranch: landing.target.sourceBranch } : {}) })
       : null;
   return { type: 'changes', text: req, landing, ...(run ? { run } : {}),
-    featureId: (f && f.id) || null, pipelineId: (r && r.pipelineId) || null };
+    featureId: (f && f.id) || null, pipelineId: (r && r.pipelineId) || null,
+    ...(first ? { requirementsFirst: { count: f.agreed.length, block: changesRequirementsBlock(f.agreed, f.acceptance) } } : {}) };
 }
 
 /** Start on a changes card. @returns {Promise<{ok: true, result: object}|{ok: false, status: number, error: string}>} */
@@ -51,7 +64,9 @@ export async function applyChanges(card, deps) {
   }
   if (kind === 'next-plan') return planNote(target.featureId, card.text, deps);
   if (kind === 'extra-run' || (kind === 'follow-up' && target.featureId)) {
-    const a = deps.appendRun(target.featureId, { title: firstLine(card.text), goal: card.text, kind: kind === 'extra-run' ? 'extra' : 'follow-up' });
+    const first = kind === 'follow-up' && card.requirementsFirst ? card.requirementsFirst : null;   // s3 (D12)
+    const a = deps.appendRun(target.featureId, { title: firstLine(card.text), goal: first ? `${card.text}\n\n${first.block}` : card.text,
+      kind: kind === 'extra-run' ? 'extra' : 'follow-up', ...(first ? { requirementsFirst: true } : {}) });
     deps.tick();
     return { ok: true, result: { index: a.index, ticketId: a.ticketId } };
   }
@@ -68,7 +83,8 @@ export function routeCard({ text, feature, guess }) {
   const choice = ROUTE_CHOICES.includes(guess && guess.choice) ? guess.choice : 'save';
   const g = { choice, where: choice === 'add' ? (hasNext ? 'next' : 'extra') : null, reason: oneLine(guess && guess.reason, 200) };
   return { type: 'route', text: clip(text), featureId: feature.id, featureTitle: feature.title, base: feature.base || null,
-    projectDir: feature.projectDir || null, tags: feature.tags || [], labels: feature.labels || [], guess: g, hasNext, primary: routeLabel(g.choice, feature.title) };
+    projectDir: feature.projectDir || null, tags: feature.tags || [], labels: feature.labels || [], guardrailsId: feature.guardrailsId || null,
+    guess: g, hasNext, primary: routeLabel(g.choice, feature.title) };
 }
 
 export async function applyRoute(card, v, deps) {
@@ -80,6 +96,7 @@ export async function applyRoute(card, v, deps) {
   if (v.verb === 'save') return { ok: true, result: { note: 'idea', index: deps.addNote(card.featureId, { kind: 'idea', text: card.text }).runIndex } };
   // own: from the base at once, runs alongside, its own PR (no shape, no marker)
   const r = await deps.startRun({ prompt: card.text, projectDir: card.projectDir, ...(card.base ? { sourceBranch: card.base } : {}),
+    ...(card.guardrailsId ? { guardrailsId: card.guardrailsId } : {}),
     ...(card.tags && card.tags.length ? { tags: card.tags } : {}), ...(card.labels && card.labels.length ? { labels: card.labels } : {}) }, {});
   return r.status < 300 ? { ok: true, result: { runId: r.body.runId } } : startError(r);
 }
@@ -103,7 +120,8 @@ export function landingFacts(pipelineId, deps) {
   const rounds = roundsOf([row.id]).get(row.id) || [];
   return { feature: null, run: { pipelineId: row.id, title: row.title || 'this run', status: row.status, projectDir: readStoreMeta(row.project_key)?.path ?? null,
     finished: FINISHED.has(row.status) && !rounds.some((r) => LIVE_ROUND.has(r.status)),
-    branch: parse(row.branch), pr: deps.readPrState(row.id), rounds: 1 + rounds.length, tags: tagsOf(deps, row.id), labels: labelsOf(deps, row.id) } };
+    branch: parse(row.branch), pr: deps.readPrState(row.id), rounds: 1 + rounds.length, tags: tagsOf(deps, row.id), labels: labelsOf(deps, row.id),
+    guardrailsId: row.guardrails_id || null } };
 }
 
 /** The landing facts of a feature (its current successor after a re-plan). */
@@ -112,16 +130,21 @@ export function landingFactsOfFeature(featureId, deps) {
   const v = deps.featureView(fid);
   if (!v) return null;
   const db = getDb();
-  const row = db.prepare('SELECT project_dir, origin_pipeline_id FROM shape_features WHERE id = ?').get(fid);
-  const branchOf = (pid) => (pid ? parse(db.prepare('SELECT branch FROM pipelines WHERE id = ?').get(pid)?.branch) : null);
-  const slices = v.slices.map((s) => ({ index: s.index, state: s.state, pipelineId: s.pipelineId, title: s.title, goal: s.goal || '',
-    branch: branchOf(s.pipelineId), pr: s.pr, rounds: 1 + (s.rounds || []).length }));
+  const row = db.prepare('SELECT project_dir, origin_pipeline_id, outline, perspectives, request_base FROM shape_features WHERE id = ?').get(fid);
+  const outline = parse(row && row.outline) || {};
+  const pipeOf = (pid) => (pid ? db.prepare('SELECT branch, guardrails_id FROM pipelines WHERE id = ?').get(pid) : null);
+  const slices = v.slices.map((s) => { const p = pipeOf(s.pipelineId); return { index: s.index, state: s.state, pipelineId: s.pipelineId, title: s.title,
+    goal: s.goal || '', branch: parse(p && p.branch), guardrailsId: (p && p.guardrails_id) || null, pr: s.pr, rounds: 1 + (s.rounds || []).length }; });
   // Before Ship there is no ship PR (a round then lands "before Ship"); after it, the PR Ship opened or updated.
   const shipUrl = v.ship && v.ship.mode ? (v.ship.prUrl || v.ship.lastPrUrl) : null;
   const owner = shipUrl ? db.prepare('SELECT id FROM pipelines WHERE pr_url = ? LIMIT 1').get(shipUrl) : null;
   const shipPr = !shipUrl ? null : (owner && deps.readPrState(owner.id)) || (slices.length ? slices[slices.length - 1].pr : null);
+  // s3 (D12): shipped, and the agreed requirements with their marks, for a requirements-first Changes run.
   return { run: null, feature: { id: fid, title: v.title, status: v.status, base: featureBase(fid), projectDir: (row && row.project_dir) || null,
-    shipPr, tags: tagsOf(deps, row && row.origin_pipeline_id), labels: labelsOf(deps, row && row.origin_pipeline_id), slices } };
+    shipPr, tags: tagsOf(deps, row && row.origin_pipeline_id), labels: labelsOf(deps, row && row.origin_pipeline_id), slices,
+    shipped: !!(v.ship && v.ship.mode), agreed: Array.isArray(outline.agreed) ? outline.agreed.map(({ id, text }) => ({ id, text })) : [],
+    acceptance: Array.isArray(outline.acceptance) ? outline.acceptance : [], perspectives: parse(row && row.perspectives) || [],
+    guardrailsId: (parse(row && row.request_base) || {}).guardrailsId || null } };
 }
 
 // ---- the two Ask Worca tools (propose_changes, route_message): which work a thread follows, and the rule ----
@@ -190,7 +213,8 @@ export function shapeToolFit(kind, input, work) {
     if (kind === 'route') {
       if (!routeFits) return no(`${f.title} has no runs to go: use propose_changes`);
       const ff = work.facts.feature;
-      return { ok: true, card: routeCard({ text: raw, feature: { ...f, base: ff.base, projectDir: ff.projectDir, tags: ff.tags, labels: ff.labels },
+      return { ok: true, card: routeCard({ text: raw, feature: { ...f, base: ff.base, projectDir: ff.projectDir, tags: ff.tags, labels: ff.labels,
+        guardrailsId: ff.guardrailsId },
         guess: { choice: input.guess, reason: input.reason } }) };
     }
     if (routeFits) return no(`${f.title} still has runs to go: use route_message`);

@@ -3,11 +3,11 @@
 // sourceFromPrevious, run branches are grouped in the picker, and workspace mode uses the switch.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { JSDOM } from 'jsdom';
+import { readIndexHtml } from '../src/core/read-index-html.mjs';
+import { readStyleCss } from '../src/core/read-style-css.mjs';
 
-const htmlPath = fileURLToPath(new URL('../ui/public/index.html', import.meta.url));
 const appPath = fileURLToPath(new URL('../ui/public/app.js', import.meta.url));
 const PROJECTS = [{ name: 'svc-iam', path: '/a/svc-iam', exists: true }, { name: 'svc-ui', path: '/a/svc-ui', exists: true }, { name: 'svc-empty', path: '/a/svc-empty', exists: true }];
 const WORKSPACES = [
@@ -32,7 +32,7 @@ async function branchesReady(doc) {
 }
 
 async function boot(hash, { withSync = false } = {}) {
-  const dom = new JSDOM(readFileSync(htmlPath, 'utf8'), { url: `http://localhost:4317/${hash}` });
+  const dom = new JSDOM(readIndexHtml(), { url: `http://localhost:4317/${hash}` });
   const { window } = dom;
   window.Element.prototype.scrollIntoView = function () {};
   window.WebSocket = class { constructor() { this.readyState = 1; } send() {} close() {} addEventListener() {} };
@@ -174,7 +174,7 @@ test('the switch goes with the task: cleared after a run starts, back with Reuse
 });
 
 test('the switch row is a flex row: the branch field\'s block labels must not collapse its switch', () => {
-  const css = readFileSync(fileURLToPath(new URL('../ui/public/style.css', import.meta.url)), 'utf8');
+  const css = readStyleCss();
   assert.match(css, /\.branches-new > label\{display:block;/, 'the rule this guards against is still there');
   assert.match(css, /\.branches-new > label\.same-src-row\{display:flex;/);
 });

@@ -1,0 +1,167 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Runs list: PR fix rounds stacked under their run</title>
+<style>
+:root{
+  --bg:#1f1f1e;--pane:#262625;--row:#2c2c2a;--line:#3a3a37;--line-strong:#4a4a46;
+  --text:#ecebe6;--sub:#a9a79f;--muted:#7d7b74;--accent:#85b7eb;
+  --warn:#ef9f27;--warn-bg:#33291c;--warn-line:#7a5a26;
+  --ok:#97c459;--work:#f0997b;
+}
+@media (prefers-color-scheme: light){
+  :root{--bg:#f5f4ef;--pane:#ffffff;--row:#ffffff;--line:#e3e1d9;--line-strong:#cfccc2;
+    --text:#2c2c2a;--sub:#5f5e5a;--muted:#888780;--accent:#185fa5;
+    --warn:#ba7517;--warn-bg:#faeeda;--warn-line:#e7c58c;--ok:#639922;--work:#d85a30;}
+}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--text);font:14px/1.5 Poppins,-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif}
+main{max-width:1180px;margin:0 auto;padding:32px 24px 48px}
+h1{font-size:20px;font-weight:500;margin:0 0 4px}
+.lede{color:var(--sub);margin:0 0 20px;max-width:760px}
+.seg{display:flex;gap:6px;margin:0 0 20px;flex-wrap:wrap}
+.seg button{font:inherit;font-size:13px;color:var(--text);background:transparent;border:1px solid var(--line-strong);border-radius:4px;padding:6px 12px;cursor:pointer}
+.seg button.on{background:var(--row);border-color:var(--text)}
+.wrap{display:grid;grid-template-columns:minmax(0,560px) minmax(0,1fr);gap:28px;align-items:start}
+@media (max-width:900px){.wrap{grid-template-columns:1fr}}
+.pane{background:var(--pane);border:1px solid var(--line);border-radius:4px;padding:14px 14px 10px}
+.hd{display:flex;justify-content:space-between;align-items:center;padding:2px 6px 12px;border-bottom:1px solid var(--line)}
+.hd b{font-weight:500;font-size:17px}
+.badge{font-size:13px;color:var(--warn);margin-left:8px}
+.view{color:var(--sub);font-size:13px}
+.sec{display:flex;justify-content:space-between;color:var(--sub);font-size:13px;font-weight:500;padding:16px 6px 8px;border-bottom:1px solid var(--line);margin-bottom:6px}
+.card{border:1px solid var(--line);border-radius:4px;padding:10px 12px;margin-bottom:6px;background:var(--row)}
+.card.need{border-color:var(--warn-line);background:var(--warn-bg)}
+.row{display:flex;align-items:center;gap:10px;min-width:0}
+.dot{width:9px;height:9px;border-radius:50%;flex:none}
+.t{font-weight:500;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;flex:1;min-width:0}
+.l{color:var(--sub);font-size:13px;margin:2px 0 0 19px}
+.chip{font-size:12px;white-space:nowrap;display:inline-flex;align-items:center;gap:4px;flex:none}
+.chip svg{width:13px;height:13px}
+.c-warn{color:var(--warn)}.c-sub{color:var(--sub)}
+.n{color:var(--sub);font-size:13px}
+.more{color:var(--sub);letter-spacing:1px;flex:none}
+.m{display:flex;align-items:center;gap:10px;padding:6px 0 4px 8px;font-size:13px;min-width:0}
+.m .t{font-weight:400}
+.bar{height:3px;background:var(--line);border-radius:2px;margin:8px 0 4px 19px}
+.rline{display:flex;align-items:center;gap:10px;margin-left:27px;font-size:12px;color:var(--sub)}
+.rline span{flex:1;min-width:0}
+.exp{font:inherit;font-size:12px;color:var(--accent);background:none;border:none;padding:0;cursor:pointer;flex:none}
+.rounds{margin:4px 0 4px 27px;border-left:1px solid var(--line-strong);padding-left:10px}
+.rl{display:flex;gap:10px;font-size:12px;color:var(--sub);padding:3px 0;text-decoration:none}
+.rl:hover{color:var(--text)}
+.rl .rn{width:24px;color:var(--muted)}
+.rl .rw{flex:1}
+.rl .live{color:var(--text)}
+.rmore{font:inherit;font-size:12px;color:var(--accent);background:none;border:none;padding:3px 0;cursor:pointer}
+@keyframes p{50%{opacity:.35}}
+.pulse{animation:p 1.4s infinite}
+.notes{font-size:13px;color:var(--sub)}
+.notes h2{font-size:14px;font-weight:500;color:var(--text);margin:0 0 6px}
+.notes ul{margin:0 0 18px;padding-left:18px}
+.notes li{margin:0 0 6px}
+.notes code{font-size:12px;color:var(--text)}
+</style>
+</head>
+<body>
+<main>
+<h1>Runs list: PR fix rounds stacked under their run</h1>
+<p class="lede">One pull request, one Needs-you item. Watch PR and Resolve fix runs are rounds of the run that opened the PR. They stack under it instead of being listed as separate runs. Example: PR #947 after 7 conflict rounds.</p>
+
+<div class="seg" id="seg" role="group" aria-label="State">
+  <button data-s="today">Today</button>
+  <button data-s="prop" class="on">Proposed</button>
+  <button data-s="live">Proposed · round 9 running</button>
+</div>
+
+<div class="wrap">
+  <div class="pane">
+    <div class="hd"><span><b>Runs</b><span class="badge" id="badge">1</span></span><span class="view">View ⌄</span></div>
+    <div id="list"></div>
+  </div>
+  <div class="notes" id="notes"></div>
+</div>
+</main>
+
+<script>
+const PR='<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="6" cy="18" r="2"/><circle cx="6" cy="6" r="2"/><circle cx="18" cy="18" r="2"/><path d="M6 8v8"/><path d="M11 6h5a2 2 0 0 1 2 2v8"/><path d="M14 9l-3-3 3-3"/></svg>';
+const MERGE='<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="7" cy="18" r="2"/><circle cx="7" cy="6" r="2"/><circle cx="17" cy="12" r="2"/><path d="M7 8v8"/><path d="M7 8a4 4 0 0 0 4 4h4"/></svg>';
+const SPIN='<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 3a9 9 0 1 0 9 9"/></svg>';
+const css=(v)=>getComputedStyle(document.documentElement).getPropertyValue(v).trim();
+const rounds=[[8,'pushed 3e4f5a6','Thu'],[7,'pushed 91c02de','Wed'],[6,'pushed 5b7a113','Mon'],[5,'pushed e02f9c4','Sun'],[4,'pushed 77d1a08','Sun'],[3,'pushed 0c4e2b1','Sun'],[2,'pushed a19f6d3','Sat']];
+let s='prop',open=false,all=false;
+const dot=(c,extra='')=>`<span class="dot ${extra}" style="background:${css(c)}"></span>`;
+const more='<span class="more">···</span>';
+const conf=`<span class="chip c-warn">${PR}Conflicts</span>`;
+const fix=`<span class="chip c-sub">${SPIN}Fixing</span>`;
+const review=`<span class="chip c-sub">${MERGE}In review</span>`;
+const mem=(c,n,chip,extra='')=>`<div class="m">${dot(c,extra)}<span class="t">${n}</span>${chip}${more}</div>`;
+
+function stack(live){
+  const list=live?[[9,'running','now'],...rounds]:rounds;
+  const latest=live?'Running · Round 9 · merge dev in':'Round 8 · merge dev in · pushed 3e4f5a6 · Thu';
+  let h=`<div class="rline"><span>${latest}</span><button class="exp" id="ex" aria-expanded="${open}">${open?'▾':'▸'} ${list.length} rounds</button></div>`;
+  if(open){
+    const shown=all?list:list.slice(0,5);
+    h+='<div class="rounds" role="list">'+shown.map(r=>`<a class="rl" href="#" role="listitem"><span class="rn">R${r[0]}</span><span class="rw">merge dev in · ${r[1]==='running'?'<span class="live">running</span>':r[1]}</span><span>${r[2]}</span></a>`).join('')
+      +(!all&&list.length>5?`<button class="rmore" id="rmore">+${list.length-5} earlier</button>`:'')+'</div>';
+  }
+  return h;
+}
+function group(live){
+  const need=!live;
+  return `<div class="card ${need?'need':''}">
+    <div class="row">${dot(need?'--warn':'--work',live?'pulse':'')}<span class="t">Flag runs that finish without being successful</span><span class="n">3/3</span><span class="n">⌄</span>${more}</div>
+    <div class="l">${need?'Run 3 needs you · Conflicts · 7 rounds merged dev in':'Running · Run 3 · Round 9 · merge dev in'}</div>
+    <div class="bar"></div>
+    ${mem('--ok','1 · Catch a run that finished without success',review)}
+    ${mem('--ok','2 · Show done, unsuccessful in the list',review)}
+    ${mem(live?'--work':'--warn','3 · Route swallowed step failures',live?fix:conf,live?'pulse':'')}
+    ${stack(live)}
+  </div>`;
+}
+const others=()=>`<div class="sec"><span>rbsm-spectrum</span><span>2</span></div>
+  <div class="card"><div class="row">${dot('--ok')}<span class="t">Tech debt audit: rbsm-analytics</span>${more}</div><div class="l">Ready to ship · Fri</div></div>
+  <div class="card"><div class="row">${dot('--ok')}<span class="t">Scan workspace interconnections</span>${more}</div><div class="l">Ready to ship · Fri</div></div>`;
+function today(){
+  const titles=['Merge dev into PR 947 and resolve conflicts','Merge origin/dev into PR 947 and resolve conflicts','Merge dev into PR 947 and resolve conflicts','Merge dev into PR 947 and resolve conflicts','Merge dev into PR 947 and resolve conflicts','Merge dev into PR 947 and resolve conflicts','Merge origin/dev into PR #947 branch and resolve conflicts'];
+  return `<div class="sec"><span>Needs you</span><span>8</span></div>
+    <div class="card need"><div class="row">${dot('--warn')}<span class="t">Flag runs that finish without being successful</span><span class="n">3/3</span>${more}</div><div class="l">Run 3 needs you · Conflicts</div></div>`
+    +titles.map(t=>`<div class="card need"><div class="row">${dot('--warn')}<span class="t">${t}</span>${conf}${more}</div><div class="l">In review</div></div>`).join('')+others();
+}
+const NOTES={
+  today:`<h2>Today</h2><ul>
+    <li>Each conflict fix is its own run. It's already marked as round 2–8 of run 3 (<code>branch.roundOf</code>), but the list ignores the mark.</li>
+    <li>Every round carries PR #947, so each one shows <code>Conflicts</code> and lands in Needs you.</li>
+    <li>The badge says 8 for one pull request. Every Resolve adds another card.</li></ul>`,
+  prop:`<h2>Proposed</h2><ul>
+    <li>Rounds fold under the run whose PR they fix: here member 3 of the feature group. They never appear as separate runs.</li>
+    <li>The member's line is the newest round's: <code>Round 8 · merge dev in · pushed 3e4f5a6</code>.</li>
+    <li><code>▸ 7 rounds</code> opens the trail: the newest 5, then <code>+2 earlier</code>. Each line opens that round's page.</li>
+    <li>The PR belongs to the run that opened it, so Needs you shows it once. Badge: 1.</li>
+    <li>The group count stays 3/3, because rounds aren't members.</li></ul>`,
+  live:`<h2>Proposed · a round is running</h2><ul>
+    <li>The stack takes the live round's state: the dot pulses and the line reads <code>Running · Round 9 · merge dev in</code>.</li>
+    <li>The chip reads <code>Fixing</code> instead of <code>Conflicts</code>. Worca is on it, so it isn't Needs you, and the group moves to Running.</li>
+    <li>A round that asks a question or pauses for a limit still raises Needs you.</li></ul>`,
+};
+function render(){
+  const L=document.getElementById('list'),b=document.getElementById('badge');
+  if(s==='today'){L.innerHTML=today();b.textContent='8';}
+  else if(s==='prop'){L.innerHTML=`<div class="sec"><span>Needs you</span><span>1</span></div>`+group(false)+others();b.textContent='1';}
+  else{L.innerHTML=`<div class="sec"><span>Running</span><span>1</span></div>`+group(true)+others();b.textContent='';}
+  document.getElementById('notes').innerHTML=NOTES[s];
+  const ex=document.getElementById('ex');if(ex)ex.onclick=()=>{open=!open;all=false;render();};
+  const rm=document.getElementById('rmore');if(rm)rm.onclick=()=>{all=true;render();};
+  L.querySelectorAll('a.rl').forEach(a=>a.onclick=(e)=>e.preventDefault());
+}
+document.querySelectorAll('#seg button').forEach(x=>x.onclick=()=>{
+  document.querySelectorAll('#seg button').forEach(y=>y.classList.remove('on'));
+  x.classList.add('on');s=x.dataset.s;open=false;all=false;render();
+});
+render();
+</script>
+</body>
+</html>

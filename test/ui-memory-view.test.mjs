@@ -3,7 +3,6 @@
 // (agent-memory-design.md §10, §7.3).
 import { test, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { JSDOM } from 'jsdom';
 import { confirmDialog } from './helpers/confirm-modal.mjs';
@@ -11,11 +10,11 @@ import { useDomRelease } from './helpers/jsdom-release.mjs';
 import { checkRows } from './helpers/rows.mjs';
 import { useAppTimers } from './helpers/app-timers.mjs';
 import { cardAlertOf, lastToast, edit, fieldErrorText } from './helpers/feedback.mjs';
+import { readIndexHtml } from '../src/core/read-index-html.mjs';
 
 // Release each booted window after its test (see test/helpers/jsdom-release.mjs).
 const trackDom = useDomRelease(afterEach);
 
-const htmlPath = fileURLToPath(new URL('../ui/public/index.html', import.meta.url));
 const appPath = fileURLToPath(new URL('../ui/public/app.js', import.meta.url));
 
 const HEALTH = { files: 1, bytes: 40, oversized: 0, overHard: 0, invalidFrontmatter: 0, alwaysOnBytes: 25, alwaysOnFiles: 1, writesSinceDefrag: 2, lastWriteAt: '2026-09-09T10:00:00.000Z', lastDefragAt: null, lastDefragRunId: null, level: 'ok', reasons: [] };
@@ -40,7 +39,7 @@ class WSStub {
 const json = (body) => Promise.resolve({ ok: true, status: 200, json: async () => body });
 
 async function boot({ fetchHandler, projects = PROJECTS } = {}) {
-  const dom = trackDom(new JSDOM(readFileSync(htmlPath, 'utf8'), { url: 'http://localhost:4321/' }));
+  const dom = trackDom(new JSDOM(readIndexHtml(), { url: 'http://localhost:4321/' }));
   const { window } = dom;
   window.Element.prototype.scrollIntoView = function () {};
   window.WebSocket = WSStub;
@@ -71,7 +70,7 @@ async function boot({ fetchHandler, projects = PROJECTS } = {}) {
     if (u.includes('/api/workflows/')) return json(WORKFLOWS.find((w) => u.endsWith(w.id)) || WORKFLOWS[0]);
     if (u.includes('/api/agents')) return json({ agents: [], channels: [] });
     if (u.includes('/api/workspaces')) return json({ workspaces: [] });
-    if (u.includes('/api/guardrails')) return json({ guardrails: GUARDRAILS });
+    if (u.includes('/api/guardrails')) return json({ guardrails: GUARDRAILS, default: 'permissive' });   // an upgraded install: the defrag run still lifts it to Normal
     if (u.includes('/api/run') && method === 'POST') return json({ runId: 'run-uuid-1' });
     if (u.includes('/api/branches')) return json({ branches: ['main'], current: 'main' });
     return json({ config: { steps: {}, customModels: [] }, models: [], efforts: [], branches: [] });
@@ -421,7 +420,7 @@ test('New Pipeline Memory scope: row only for wf_memory_defrag, run body carries
       await tick(); await tick(); await tick();
       const plain = calls.filter((c) => c.url.endsWith('/api/run') && c.method === 'POST').pop();
       assert.equal('memoryScope' in plain.body, false, 'a legacy run body is unchanged');
-      assert.equal('guardrailsId' in plain.body && plain.body.guardrailsId !== undefined, false, 'and so is its guardrail key');
+      assert.equal(plain.body.guardrailsId, 'permissive', 'and its guardrail key is the picked set, sent as is');
     } },
     { name: 'New Pipeline: a workspace target disables Memory defragment and falls back to Default', run: async () => {
       await go(window, 'new');
@@ -559,8 +558,54 @@ test('Settings › Memory: the defragment model lives in Engines › Helper jobs
   await settle();
   assert.equal(window.document.getElementById('mem-defrag-model-card'), null, 'no card of its own');
   const link = window.document.querySelector('.mem-model-link a');
-  assert.equal(link.getAttribute('href'), '#models');
+  assert.equal(link.getAttribute('href'), '#models/jobs/helpers/claude', 'no run engine set: Claude\'s helper job');
   assert.equal(link.closest('.mem-model-link').dataset.minLevel, 'expert');
+});
+
+// A defragment run takes its run engine's own "Memory defragment" job (orchestrator.mjs defragSlotPair). A harness
+// without that job (Cursor, Copilot) has an empty slot (settings-cascade.mjs utilityModelFor), so its run falls to that
+// harness's own Quick jobs role (model-roles.mjs withRole): the link names that harness's Roles, never Claude's job.
+test('Settings › Memory: the defragment link names the run engine\'s Helper jobs when it has the job, else its Roles', async () => {
+  const HELPER_LINE = 'The model every Memory defragment run uses is a helper job: Models › Jobs › Helper jobs.';
+  const ROLE_LINE = 'The model every Memory defragment run uses is the Quick jobs role: Models › Jobs › Roles.';
+  for (const [runEngine, want, line] of [
+    ['codex', '#models/jobs/helpers/codex', HELPER_LINE],
+    ['cursor', '#models/jobs/roles/cursor', ROLE_LINE],
+    ['copilot', '#models/jobs/roles/copilot', ROLE_LINE],
+    ['claude', '#models/jobs/helpers/claude', HELPER_LINE],
+    // A hand-edited settings.json naming no harness: Claude's job, and nothing throws on the way.
+    ['constructor', '#models/jobs/helpers/claude', HELPER_LINE],
+  ]) {
+    const base = dmHandler([]);
+    const { window } = await boot({ fetchHandler: (u, o) => (u === '/api/settings' && (o.method || 'GET').toUpperCase() === 'GET'
+      ? json({ memoryDefrag: { model: null, effort: null }, memoryDefragDefault: 'claude-sonnet-5', runEngine }) : base(u, o)) });
+    const errors = [];
+    window.addEventListener('error', (e) => errors.push(String(e.error?.message || e.message)));
+    await go(window, 'settings/memory');
+    await settle();
+    const p = window.document.querySelector('.mem-model-link');
+    assert.equal(p.querySelector('a').getAttribute('href'), want, `run engine ${runEngine}`);
+    assert.equal(p.textContent.replace(/\s+/g, ' ').trim(), line, `run engine ${runEngine}: the line names what the run reads`);
+    assert.deepEqual(errors, [], `run engine ${runEngine}: nothing threw`);
+  }
+  // The run engine changed in another tab: the settings-changed frame's re-read repaints the link.
+  let runEngine = 'claude';
+  const base = dmHandler([]);
+  const { window } = await boot({ fetchHandler: (u, o) => (u === '/api/settings' && (o.method || 'GET').toUpperCase() === 'GET'
+    ? json({ memoryDefrag: { model: null, effort: null }, memoryDefragDefault: 'claude-sonnet-5', runEngine }) : base(u, o)) });
+  await go(window, 'settings/memory');
+  await settle();
+  assert.equal(window.document.querySelector('.mem-model-link a').getAttribute('href'), '#models/jobs/helpers/claude');
+  runEngine = 'codex';
+  WSStub.last._message({ type: 'settings-changed' });
+  await settle();
+  assert.equal(window.document.querySelector('.mem-model-link a').getAttribute('href'), '#models/jobs/helpers/codex', 'repainted on the frame');
+  runEngine = 'cursor';
+  WSStub.last._message({ type: 'settings-changed' });
+  await settle();
+  const p = window.document.querySelector('.mem-model-link');
+  assert.equal(p.querySelector('a').getAttribute('href'), '#models/jobs/roles/cursor', 'repainted to Cursor\'s Roles');
+  assert.match(p.textContent, /is the Quick jobs role: Models › Jobs › Roles\.$/, 'and its words with it');
 });
 
 test('Settings › Memory: a settings-changed frame re-reads the card and reloads the scope — keeping a draft, with no conflict warning', async () => {

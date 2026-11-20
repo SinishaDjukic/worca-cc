@@ -6,8 +6,9 @@ import { readFileSync } from 'node:fs';
 import { JSDOM } from 'jsdom';
 import { mountNetworkProxyCard, AUTH_OPTIONS, SAVED_TEXT, NOT_SAVED_TEXT, TESTING_TEXT } from '../ui/public/settings-network-proxy.mjs';
 import { BUTTON_DONE_MS } from '../ui/public/feedback.mjs';
+import { readIndexHtml } from '../src/core/read-index-html.mjs';
 
-const HTML = readFileSync(new URL('../ui/public/index.html', import.meta.url), 'utf8');
+const HTML = readIndexHtml();
 const READY_LINE = 'ready: via proxy.acme.example:8080 (NTLMv2) as ACME\\jdoe.';
 const STATUS = {
   state: 'ready', text: 'ready', line: READY_LINE, upstream: 'proxy.acme.example:8080', running: true, restartNeeded: false,

@@ -20,9 +20,12 @@ import { EFFORTS, CODEX_EFFORTS, ALL_EFFORTS, MODEL_ENGINES, COPILOT_MODEL_PREFI
 import { findBridgedEntry, providerReadiness } from './bridge/registry.mjs';
 import { engineLabel } from '../shared/engine-switch.mjs';
 import { normaliseTags } from '../shared/run-tags.mjs';
+import { cleanPick } from '../shared/graph/role-slots.mjs';
+import { ROLE_KEY_RE } from '../shared/graph/role-review-step.mjs';
 import { connectionOf, harnessesOf, runsOn, harnessesLabel, effortsOn } from '../shared/connections.mjs';
 import { bridgeBaseUrl, bridgeSecret } from './bridge/server.mjs';
-import { listGlobalModels, addGlobalModel, removeGlobalModel, hideBuiltinModels, readSettings, memoryDefragModel, setMemoryDefragModel, modelRolesSetting } from './settings.mjs';
+import { copilotBlockHost } from './ghe-host.mjs';
+import { providerConfig, listGlobalModels, addGlobalModel, removeGlobalModel, hideBuiltinModels, hideBuiltinEngines, readSettings, memoryDefragModel, setMemoryDefragModel, modelRolesSetting, assertDesignModelsInput } from './settings.mjs';
 /** Whether the developer stored the hide-built-ins flag (a team default applies only when not). */
 const readSettingsHideStored = () => { const s = readSettings(); return typeof s.hideBuiltinModels === 'boolean' || s.hideBuiltinModelsChosen === true; };
 import { listPluginModels, allPluginModels, flattenPluginModelEnv } from './plugin-models.mjs';
@@ -219,6 +222,20 @@ export async function readConfig(projectDir) {
 }
 
 /**
+ * Which harnesses hide their UNSHADOWED built-ins from the pickers (Models › Catalogue, CAT-8):
+ * `{ claude, codex, copilot }` effective booleans. Claude Code keeps #422's rule: the developer's
+ * stored choice once they made one, else a team-policy `models.hideBuiltins` default for
+ * `projectDir` or the flag itself. Codex and Copilot follow `hideBuiltinEngines` only (no team
+ * default, L7). Cosmetic: no run path reads it, so a job naming a hidden built-in keeps working.
+ */
+export function builtinsHidden({ projectDir = null } = {}) {
+  const teamHide = projectDir ? teamDefault(projectDir, 'models.hideBuiltins') : undefined;
+  const claude = readSettingsHideStored() ? hideBuiltinModels() : (teamHide === true || hideBuiltinModels());
+  const engines = hideBuiltinEngines();
+  return { claude, codex: engines.codex === true, copilot: engines.copilot === true };
+}
+
+/**
  * Compose the EFFECTIVE catalog (configurable-models-design.md §4.2, §9.2):
  * predefined ⊕ plugin models ⊕ global settings entries ⊕ legacy per-project
  * custom models. Precedence on an id collision: global (user) beats plugin
@@ -248,10 +265,11 @@ function composeCatalog(projectCustom = [], { projectDir = null } = {}) {
   // read by every picker. The entry stays in the catalog — hiding an id must
   // never stop it resolving, or a stored run / plugin reference that names it
   // would break — so pickers skip `hidden`, validators ignore it.
-  // A team-policy default applies only while the developer has not stored the flag themselves.
-  const teamHide = projectDir ? teamDefault(projectDir, 'models.hideBuiltins') : undefined;
-  const hideStored = readSettingsHideStored();
-  const hidden = (hideStored ? hideBuiltinModels() : (teamHide === true || hideBuiltinModels())) ? { hidden: true } : {};
+  // Each harness decides for its own built-ins (builtinsHidden); an un-hidden row gets NO `hidden` key.
+  const hides = builtinsHidden({ projectDir });
+  const hidden = hides.claude ? { hidden: true } : {};
+  const codexHidden = hides.codex ? { hidden: true } : {};
+  const copilotHidden = hides.copilot ? { hidden: true } : {};
   // Bridged entries (model-bridge-design.md §8.5): `bridged` names the provider
   // (false otherwise), `upstreamApi` the wire protocol, `needsSignIn` whether
   // the provider is usable right now (pickers skip such entries unless they are
@@ -259,15 +277,26 @@ function composeCatalog(projectCustom = [], { projectDir = null } = {}) {
   // true too: the CLI IS pointed at a custom endpoint (worca's own bridge).
   // provider + the entry's own key/base URL -> readiness (both can decide it)
   const readiness = new Map();
+  // The GHE.com tenant the Copilot provider signs in to, so pickers can tell it from github.com (null for github.com,
+  // and with the credential broker on, where worca's own host setting is unused).
+  let tenant;
+  const copilotTenant = () => {
+    if (tenant === undefined) {
+      const h = brokerEnabled() ? null : copilotBlockHost(providerConfig('copilot'));
+      tenant = h && h !== 'github.com' ? h : null;
+    }
+    return tenant;
+  };
   const bridgeShape = (m) => {
     if (!m.upstream) return {};
     const p = m.upstream.provider;
     const key = `${p}\n${m.upstream.apiKey || ''}\n${m.upstream.baseUrl || ''}`;
     if (!readiness.has(key)) readiness.set(key, providerReadiness(m.upstream));
     const r = readiness.get(key);
+    const host = p === 'copilot' ? copilotTenant() : null;
     return {
-      connection: connectionOf(m),
-      bridged: p, upstreamApi: m.upstream.api, upstreamModel: m.upstream.model,
+      connection: connectionOf(host ? { ...m, bridgedHost: host } : m),
+      bridged: p, upstreamApi: m.upstream.api, upstreamModel: m.upstream.model, ...(host ? { bridgedHost: host } : {}),
       needsSignIn: !r.ok, ...(r.ok ? {} : { signInReason: r.reason }),
       ...(m.upstream.capabilities ? { capabilities: { ...m.upstream.capabilities } } : {}),
     };
@@ -299,7 +328,7 @@ function composeCatalog(projectCustom = [], { projectDir = null } = {}) {
     out.push(shadow
       ? { id: m.id, label: shadow.label, efforts: [...shadow.efforts], engine: engineTag(shadow), custom: 'global', hasEnv: !!shadow.env, routed: routedOrBridged(shadow), ...unreliable(lc), ...bridgeShape(shadow) }
       : pshadow ? pluginShape(m.id, pshadow, lc)
-        : { id: m.id, label: m.label, efforts: [...m.efforts], engine: 'codex', builtin: true, custom: false, hasEnv: false, routed: false });
+        : { id: m.id, label: m.label, efforts: [...m.efforts], engine: 'codex', builtin: true, custom: false, hasEnv: false, routed: false, ...codexHidden });
     seen.add(lc);
   }
   for (const m of COPILOT_BUILTIN_MODELS) {
@@ -310,7 +339,7 @@ function composeCatalog(projectCustom = [], { projectDir = null } = {}) {
     out.push(shadow
       ? { id: m.id, label: shadow.label, efforts: [...shadow.efforts], engine: engineTag(shadow), custom: 'global', hasEnv: !!shadow.env, routed: routedOrBridged(shadow), ...unreliable(lc), ...bridgeShape(shadow) }
       : pshadow ? pluginShape(m.id, pshadow, lc)
-        : { id: m.id, label: m.label, efforts: [...m.efforts], engine: 'copilot', builtin: true, custom: false, hasEnv: false, routed: false });
+        : { id: m.id, label: m.label, efforts: [...m.efforts], engine: 'copilot', builtin: true, custom: false, hasEnv: false, routed: false, ...copilotHidden });
     seen.add(lc);
   }
   for (const m of globals) {
@@ -574,7 +603,10 @@ export function resolveModelCost(modelId, cliCostUsd, usage, costCfg = undefined
 // APPROXIMATION ONLY: it feeds the chat footer's live "≈" estimate while a turn
 // streams (ask/events.mjs `estimatedCostUsd`). The CLI's result.total_cost_usd,
 // re-priced by resolveModelCost, stays the ONLY figure any message row, thread
-// total, ledger or budget ever books — nothing here is read by those paths.
+// total, ledger or budget ever books. The one ledger path that reads these rates is a
+// session turn (session groups, session-cost.mjs): it only DIVIDES the CLI's own
+// figure between the step and the main agent at these list rates (listCostRates), and
+// prices a turn cut before its result as an estimate (C9).
 // Ids missing here get no estimate (null), which is the pre-existing behaviour;
 // `[1m]` twins and dated ids resolve to their base row (the long-context premium
 // is not modelled). cacheWrite = 1.25× input (5-minute TTL), cacheWrite1h = 2×
@@ -599,6 +631,15 @@ export function liveCostRates(modelId) {
   try { cfg = modelCostConfig(id); } catch { cfg = null; }
   if (cfg && cfg.free === true) return FREE_RATES;
   if (cfg && cfg.perMtok && typeof cfg.perMtok === 'object') return cfg.perMtok;
+  return listCostRates(id);
+}
+
+/** The built-in list price of `modelId` ([1m] twins and dated ids at their base row), IGNORING any operator override:
+ *  the rates the CLI's own figure is priced at. A session turn's split takes the main agent's share out of that figure
+ *  at these rates, then re-prices each part with its override (session groups, Task 42). Null when no table knows it. */
+export function listCostRates(modelId) {
+  const id = typeof modelId === 'string' ? modelId.trim() : '';
+  if (!id) return null;
   const base = id.toLowerCase().replace(/\[1m\]$/, '').replace(/-\d{8}$/, '');
   if (PREDEFINED_LIST_PRICES[base]) return PREDEFINED_LIST_PRICES[base];
   const cx = CODEX_PRICES[id.toLowerCase()];
@@ -645,7 +686,7 @@ export function resolveModelEnv(modelId, { tag } = {}) {
   // carry `upstream` too but ride the same lookup (registry.findBridgedEntry).
   const bridged = findBridgedEntry(id);
   if (bridged) {
-    // Fail fast (§8.5): a provider that is not signed in / not acknowledged
+    // Fail fast (§8.5): a provider that is not signed in (or has no key)
     // would otherwise surface as an opaque 401 mid-run. This is the ONE case
     // in which this resolver throws; every dispatch site already routes a
     // runClaude failure to its error path, and the Test button's hint keys on
@@ -832,6 +873,15 @@ export async function assertSlotModels(items, { projectDir = '', pending = [] } 
     // A pending row has no efforts yet; only a catalog row is checked (role efforts never reach here, A7).
     if (value.effort && models.includes(hit) && !effortsOn(hit, engine).includes(value.effort)) throw bad(`${hit.id} does not offer effort "${value.effort}" on ${engineLabel(engine)}`);
   }
+}
+
+/** POST /api/settings `designModels` (Models › Jobs › Design): the patch's shape, then every pick against the catalog
+ *  (a model its engine runs, with an effort it takes), before anything is written. */
+export async function assertDesignModelsSlots(input) {
+  const patch = assertDesignModelsInput(input);
+  const items = [];
+  for (const [engine, roles] of Object.entries(patch)) for (const [role, value] of Object.entries(roles)) if (value) items.push({ id: `designModels.${engine}.${role}`, engine, value });
+  await assertSlotModels(items);
 }
 
 /**
@@ -1134,6 +1184,51 @@ function cleanNodeSel(selection) {
   };
 }
 
+/** A stored `roles` column as `{ key: { model?, effort? } }`, or null (none, unparseable JSON, nothing usable). */
+function storedRolePicks(text) {
+  if (typeof text !== 'string' || !text) return null;
+  let raw;
+  try { raw = JSON.parse(text); } catch { return null; }
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return null;
+  const out = {};
+  for (const [k, v] of Object.entries(raw)) {
+    const pick = ROLE_KEY_RE.test(k) ? cleanPick(v) : null;
+    if (pick) out[k] = pick;
+  }
+  return Object.keys(out).length ? out : null;
+}
+
+/** A node or role pick checked against the effective catalog (setStep's rules). */
+function assertCatalogPick(model, effort, models) {
+  const entry = model ? models.find((m) => m.id === model) : null;
+  if (model && !entry) throw new Error(`unknown model "${model}"`);
+  if (effort) {
+    if (!ALL_EFFORTS.includes(effort)) throw new Error(`unknown effort "${effort}"`);
+    if (!entry) throw new Error('select a model before choosing an effort');
+    if (!entry.efforts.includes(effort)) {
+      throw new Error(`model "${model}" does not support effort "${effort}"`);
+    }
+  }
+}
+
+const MAX_ROLE_PICKS = 12;
+
+/** `selection.roles` of setNodeModel, checked and cleaned: `{ key: { model?, effort? } }` (blank picks dropped). */
+function cleanRolePicks(raw, models) {
+  if (raw === null || typeof raw !== 'object' || Array.isArray(raw)) throw new Error('roles must be an object keyed by role');
+  const keys = Object.keys(raw);
+  if (keys.length > MAX_ROLE_PICKS) throw new Error(`roles names more than ${MAX_ROLE_PICKS} roles`);
+  const out = {};
+  for (const k of keys) {
+    if (!ROLE_KEY_RE.test(k)) throw new Error(`role key ${JSON.stringify(k.slice(0, 64))} must be 1–24 lowercase letters`);
+    const pick = cleanPick(raw[k]);
+    if (!pick) continue;
+    assertCatalogPick(pick.model || '', pick.effort || '', models);
+    out[k] = pick;
+  }
+  return out;
+}
+
 /**
  * Rebuild the nested workflows map { [workflowId]: { nodes, feedbacks } } from the
  * normalized config_workflow_nodes + config_workflow_feedbacks rows for a project.
@@ -1154,7 +1249,7 @@ function readWorkflowsMap(key) {
     return workflows[wf];
   };
   for (const r of prepare(
-    'SELECT workflow_id, node_id, model, effort, fan_out, ask_questions, subagent_model FROM config_workflow_nodes WHERE project_key = ?'
+    'SELECT workflow_id, node_id, model, effort, fan_out, ask_questions, subagent_model, roles FROM config_workflow_nodes WHERE project_key = ?'
   ).all(key)) {
     const sel = {};
     if (r.model) sel.model = r.model;
@@ -1162,6 +1257,8 @@ function readWorkflowsMap(key) {
     if (isSubagentModelValue(r.subagent_model)) sel.subagentModel = r.subagent_model;
     if (r.fan_out !== null && r.fan_out !== undefined) sel.fanOut = !!r.fan_out;
     if (r.ask_questions !== null && r.ask_questions !== undefined) sel.askQuestions = !!r.ask_questions;
+    const roles = storedRolePicks(r.roles);
+    if (roles) sel.roles = roles;
     // Only attach a node entry that carries something (matches cleanNodeSel output).
     if (Object.keys(sel).length) ensure(r.workflow_id).nodes[r.node_id] = sel;
   }
@@ -1241,15 +1338,8 @@ export async function setNodeModel(projectDir, workflowId, nodeId, selection = {
   const model = typeof selection.model === 'string' ? selection.model.trim() : '';
   const effort = typeof selection.effort === 'string' ? selection.effort.trim() : '';
   const models = await listModels(projectDir);
-  const entry = model ? models.find((m) => m.id === model) : null;
-  if (model && !entry) throw new Error(`unknown model "${model}"`);
-  if (effort) {
-    if (!ALL_EFFORTS.includes(effort)) throw new Error(`unknown effort "${effort}"`);
-    if (!entry) throw new Error('select a model before choosing an effort');
-    if (!entry.efforts.includes(effort)) {
-      throw new Error(`model "${model}" does not support effort "${effort}"`);
-    }
-  }
+  assertCatalogPick(model, effort, models);
+  const roles = selection.roles === undefined ? undefined : cleanRolePicks(selection.roles, models);
 
   {
     const issue = subagentModelIssue(selection.subagentModel);
@@ -1259,7 +1349,7 @@ export async function setNodeModel(projectDir, workflowId, nodeId, selection = {
   const key = projectKey(projectDir);
   getDb();
   const prev = prepare(
-    'SELECT fan_out, ask_questions, subagent_model FROM config_workflow_nodes WHERE project_key = ? AND workflow_id = ? AND node_id = ?'
+    'SELECT fan_out, ask_questions, subagent_model, roles FROM config_workflow_nodes WHERE project_key = ? AND workflow_id = ? AND node_id = ?'
   ).get(key, workflowId, nodeId);
   const prevFanOut = prev && prev.fan_out !== null && prev.fan_out !== undefined ? !!prev.fan_out : undefined;
   const fanOut = inheritOr(selection.fanOut, prevFanOut);
@@ -1267,28 +1357,31 @@ export async function setNodeModel(projectDir, workflowId, nodeId, selection = {
   const askQuestions = inheritOr(selection.askQuestions, prevAsk);
   const subagentModel = inheritOrSubagentModel(selection.subagentModel, prev && prev.subagent_model);
   const sel = cleanNodeSel({ model: selection.model, effort: selection.effort, subagentModel, fanOut, askQuestions });
+  // Role picks are inherited when omitted; an empty map clears them. A row holding only role picks is kept.
+  const rolesJson = roles === undefined ? (prev?.roles ?? null) : (Object.keys(roles).length ? JSON.stringify(roles) : null);
 
   tx(() => {
-    if (!sel) {
+    if (!sel && !rolesJson) {
       prepare(
         'DELETE FROM config_workflow_nodes WHERE project_key = ? AND workflow_id = ? AND node_id = ?'
       ).run(key, workflowId, nodeId);
       return;
     }
     prepare(`
-      INSERT INTO config_workflow_nodes (project_key, workflow_id, node_id, model, effort, fan_out, ask_questions, subagent_model)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+      INSERT INTO config_workflow_nodes (project_key, workflow_id, node_id, model, effort, fan_out, ask_questions, subagent_model, roles)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
       ON CONFLICT(project_key, workflow_id, node_id)
       DO UPDATE SET model = excluded.model, effort = excluded.effort,
                     fan_out = excluded.fan_out, ask_questions = excluded.ask_questions,
-                    subagent_model = excluded.subagent_model
+                    subagent_model = excluded.subagent_model, roles = excluded.roles
     `).run(
       key, workflowId, nodeId,
-      sel.model ?? null,
-      sel.effort ?? null,
-      sel.fanOut === undefined ? null : (sel.fanOut ? 1 : 0),
-      sel.askQuestions === undefined ? null : (sel.askQuestions ? 1 : 0),
-      sel.subagentModel ?? null,
+      sel?.model ?? null,
+      sel?.effort ?? null,
+      sel?.fanOut === undefined ? null : (sel.fanOut ? 1 : 0),
+      sel?.askQuestions === undefined ? null : (sel.askQuestions ? 1 : 0),
+      sel?.subagentModel ?? null,
+      rolesJson,
     );
   });
 }
@@ -1746,7 +1839,8 @@ function allProjectConfigRows() {
 /**
  * Preview what removing a global catalog entry would clear, for the UI's
  * confirmation dialog. `predefinedShadow: true` means the removal only reverts
- * an override and clears nothing. `memoryDefrag: true` (present only then) —
+ * an override of a built-in (Claude's, Codex's or Copilot's list: an override of
+ * the last two is an engine-tagged global) and clears nothing. `memoryDefrag: true` (present only then) —
  * Settings › Memory's defragment model is this id. Synchronous; never throws.
  * @param {string} id
  * @returns {{predefinedShadow: boolean,
@@ -1756,7 +1850,7 @@ function allProjectConfigRows() {
  */
 export function globalModelRefs(id) {
   const lc = (typeof id === 'string' ? id : '').trim().toLowerCase();
-  if (PREDEFINED_MODELS.some((m) => m.id.toLowerCase() === lc)) {
+  if ([PREDEFINED_MODELS, CODEX_BUILTIN_MODELS, COPILOT_BUILTIN_MODELS].some((list) => list.some((m) => m.id.toLowerCase() === lc))) {
     return { predefinedShadow: true, steps: [], nodes: [] };
   }
   const defrag = memoryDefragModel().model;
@@ -1765,6 +1859,34 @@ export function globalModelRefs(id) {
     ...refsForModelId(lc, allProjectConfigRows()),
     ...(defrag && defrag.toLowerCase() === lc ? { memoryDefrag: true } : {}),
   };
+}
+
+/**
+ * Every project-level model pick: step picks (project_config.steps) and workflow node picks
+ * (config_workflow_nodes), one read each — never one query per catalogue id. A pick whose
+ * project's legacy customModels carry the same id is left out: it keeps resolving there
+ * (refsForModelId's carve-out). Synchronous; feeds model-uses.mjs.
+ * @returns {Array<{kind:'project-step', projectKey:string, step:string, model:string}
+ *               | {kind:'project-node', projectKey:string, workflowId:string, nodeId:string, model:string}>}
+ */
+export function projectModelPicks() {
+  const rows = allProjectConfigRows();
+  const legacy = new Map(rows.map((r) => [r.projectKey, new Set(r.customModels.map((m) => m.id.toLowerCase()))]));
+  const legacyKeeps = (key, model) => !!legacy.get(key)?.has(model.toLowerCase());
+  const picks = [];
+  for (const r of rows) {
+    for (const [step, v] of Object.entries(r.steps)) {
+      if (typeof v?.model === 'string' && v.model && !legacyKeeps(r.projectKey, v.model)) {
+        picks.push({ kind: 'project-step', projectKey: r.projectKey, step, model: v.model });
+      }
+    }
+  }
+  for (const n of prepare('SELECT project_key, workflow_id, node_id, model FROM config_workflow_nodes WHERE model IS NOT NULL').all()) {
+    if (typeof n.model === 'string' && n.model && !legacyKeeps(n.project_key, n.model)) {
+      picks.push({ kind: 'project-node', projectKey: n.project_key, workflowId: n.workflow_id, nodeId: n.node_id, model: n.model });
+    }
+  }
+  return picks;
 }
 
 /** Cross-project step/node refs to one lowercased model id, minus projects

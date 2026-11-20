@@ -110,8 +110,8 @@ if nobody answers it says **The pairing request expired**, and if you click Canc
 
 **Under agent isolation** (`WORCA_AGENT_USER` set), approve through Worca's published address, not
 from a loopback browser on the same machine. On loopback, a person and an agent running as the
-same user look the same to Worca, so the approval is refused with `extension-agent-blocked`, exactly
-as Terminal is.
+same user look the same to Worca, so it refuses the whole API there (`AGENT_CALLER_BLOCKED`, see
+[docker.md](docker.md)), the approval included.
 
 ## What goes with a message
 
@@ -283,14 +283,14 @@ Firefox's manifest declares that the extension collects no data.
   `http://localhost:<port>` under **Worca address** and click **Save**. Only loopback addresses are accepted. Saving
   forgets the token, so pair again.
 - **"No Ask model is available in Worca".** Ask has no model to answer with. Set one up in Worca
-  under Settings → **Models**.
+  on the **Models** page.
 - **"Worca could not load this chat".** Worca answered with an error; the sidebar shows its text.
 - **The page chip says "Click the Worca button…".** The extension has no access to this tab yet,
   or lost it on navigation. Click the toolbar button (see
   [Pinpoint on web pages](#pinpoint-on-web-pages)).
 - **"Worca could not capture this page".** The extension lost its access to the tab (usually after a
   navigation). Click the toolbar button or press **Alt+Shift+S** and capture again.
-- **The approval is refused with `extension-agent-blocked`.** Agent isolation is on: approve
+- **The approval is refused with `AGENT_CALLER_BLOCKED`.** Agent isolation is on: approve
   through Worca's published address (see [Pairing](#pairing)).
 
 ## Safari

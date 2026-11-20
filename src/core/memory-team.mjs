@@ -19,7 +19,7 @@ import { memoryCaps, teamMemoryEnabled, teamMemoryLoad } from './settings.mjs';
 import './settings-cascade.mjs';   // side effect: installs the project-layer reader teamMemoryEnabled and memoryCaps consult
 import {
   memoryRoot, projectScope, scopeDir, listMemory, readMemory, writeMemory, removeMemory, setMemoryExtra, snapshotScope,
-  listSnapshots, SNAPSHOT_KEEP, parseMemoryFile, renderMemoryFile, repairMemoryFile, hashText, isValidMemoryName, flattenLine,
+  listSnapshots, SNAPSHOT_KEEP, parseMemoryFile, rolesOf, renderMemoryFile, repairMemoryFile, hashText, isValidMemoryName, flattenLine,
   TEAM_MARKER_KEY, MemoryError,
 } from './memory-store.mjs';
 import { withStoreLock } from './memory-sync.mjs';
@@ -1052,30 +1052,50 @@ const rankTeam = (notes) => Object.keys(notes).sort((a, b) =>
   String(notes[b].updated || '').localeCompare(String(notes[a].updated || '')) || (a < b ? -1 : a > b ? 1 : 0));
 /** The rules-copy folder of one mounted project dir: `team` on a single-project run (or chat), `team/<key>` per workspace member. */
 export function teamMountRel(d) { return d.rel === 'project' ? 'team' : `team/${d.scope.projectKey}`; }
-/** Pure: the team notes a run or chat LOADS, in load order — not shadowed by a local note of the same name
+/** A note with `paths:` loads only when the agent touches a matching file, so it costs no context until then (memoryHealth's
+ *  always-on rule); a note without paths loads into every agent at launch. A glob whose first segment holds a wildcard
+ *  (`**`, `*.mjs`) matches files anywhere in the repo, so a note with one loads about as often as an
+ *  always-on note and counts as one: a teammate cannot pass the cap by scoping a note to everything. A note with `roles:`
+ *  is always-on for its roles whatever its paths (renderRoleNotes puts its body in their system prompt). `n`: a snapshot
+ *  entry (its `text` holds the roles) or `{paths, roles}`. */
+const noteRoles = (n) => (Array.isArray(n?.roles) ? n.roles : typeof n?.text === 'string' ? rolesOf(parseMemoryFile(n.text).meta) : []);
+const isScopedNote = (n) => Array.isArray(n?.paths) && n.paths.length > 0 && !noteRoles(n).length
+  && n.paths.every((g) => { const first = String(g).replace(/^\.?\/+/, '').split('/')[0]; return !!first && !/[*?[\]{}!]/.test(first); });
+/** Scoped notes loaded per always-on slot: bounds what a branch with thousands of scoped notes puts in the rules copy,
+ *  well above what a project grows (worca itself: 65 scoped team notes against the default cap of 50). */
+export const TEAM_SCOPED_PER_ALWAYS_ON = 4;
+/** Pure: `picks` (in load order) with at most the newest `maxFiles` always-on ones and `maxFiles × 4` scoped ones. The
+ *  first cap bounds what loads at launch; the scoped cap is loose because a scoped note costs nothing until a matching
+ *  file is read (an age cap of `maxFiles` on those dropped old, precise notes). */
+function capTeamLoads(picks, isScoped, maxFiles) {
+  if (!(maxFiles > 0)) return picks;
+  let alwaysOn = 0, scoped = 0;
+  return picks.filter((p) => (isScoped(p) ? scoped++ < maxFiles * TEAM_SCOPED_PER_ALWAYS_ON : alwaysOn++ < maxFiles));
+}
+/** Pure: the team notes a run or chat LOADS, in load order (newest first) — not shadowed by a local note of the same name
  *  (case-insensitive: the store refuses case twins), no bigger than the local per-file cap (a hand-pushed giant never
- *  fills an agent's context), newest `maxFiles` first. One rule for the mount and the status API's `mounted`. */
+ *  fills an agent's context), the newest `maxFiles` always-on notes and up to 4× as many scoped ones (isScopedNote). One rule for the mount and the
+ *  status API's `mounted`. */
 export function teamMountNames(notes, localNames, { maxFiles = 0, maxBytes = 0 } = {}) {
   const shadowed = new Set([...(localNames || [])].map((n) => String(n).toLowerCase()));
-  return rankTeam(notes || {})
-    .filter((n) => !shadowed.has(n.toLowerCase()) && !(maxBytes > 0 && notes[n].bytes > maxBytes))
-    .slice(0, maxFiles > 0 ? maxFiles : undefined);
+  const picks = rankTeam(notes || {}).filter((n) => !shadowed.has(n.toLowerCase()) && !(maxBytes > 0 && notes[n].bytes > maxBytes));
+  return capTeamLoads(picks, (n) => isScopedNote(notes[n]), maxFiles);
 }
 /** Pure: what a project whose team memory loads team notes only (`memory.team: "only"`) loads, over teamNoteStates
  *  rows. Its local notes that ARE team notes — `shared` (a tracked copy) and `pending` (on its way to the team: loads
  *  before its push lands) — and the team's other notes: never shadowed by a local note that does not load, still by a
- *  queued intent (a removal on its way), none over the local per-file cap. Newest `maxFiles` of them IN ALL.
+ *  queued intent (a removal on its way), none over the local per-file cap. The newest `maxFiles` always-on and up to 4×
+ *  as many scoped ones (a local row's `scoped`), IN ALL.
  *  @returns {{local:Set<string>, team:Set<string>}} the local notes (into project/) and the team's (into team/) */
 export function teamOnlyLoad({ rows = [], snapshot = null, queued = [], maxFiles = 0, maxBytes = 0 }) {
   const team = snapshot && !snapshot.missing ? snapshot.notes || {} : {};
   const local = rows.filter((r) => r.local && (r.state === 'shared' || r.state === 'pending'));
   const shadowed = new Set([...local.map((r) => r.name), ...queued].map((n) => String(n).toLowerCase()));
-  const picks = [
-    ...local.map((r) => ({ name: r.name, updated: r.updated, local: true })),
+  const picks = capTeamLoads([
+    ...local.map((r) => ({ name: r.name, updated: r.updated, local: true, scoped: !!r.scoped })),
     ...Object.keys(team).filter((n) => !shadowed.has(n.toLowerCase()) && !(maxBytes > 0 && team[n].bytes > maxBytes))
-      .map((n) => ({ name: n, updated: team[n].updated, local: false })),
-  ].sort((a, b) => String(b.updated || '').localeCompare(String(a.updated || '')) || (a.name < b.name ? -1 : a.name > b.name ? 1 : 0))
-    .slice(0, maxFiles > 0 ? maxFiles : undefined);
+      .map((n) => ({ name: n, updated: team[n].updated, local: false, scoped: isScopedNote(team[n]) })),
+  ].sort((a, b) => String(b.updated || '').localeCompare(String(a.updated || '')) || (a.name < b.name ? -1 : a.name > b.name ? 1 : 0)), (p) => p.scoped, maxFiles);
   return { local: new Set(picks.filter((p) => p.local).map((p) => p.name)), team: new Set(picks.filter((p) => !p.local).map((p) => p.name)) };
 }
 /** A hold (1b: a same-name clash the user skipped while seeding) lasts while the team holds a note of that name,
@@ -1106,14 +1126,14 @@ export async function teamMountNotes(projectKey) {
 }
 /** Make `dir` hold exactly `notes` (*.md): per-file atomic writes, other *.md removed, sub-directories and another
  *  writer's in-flight temp files untouched. A file that cannot be written keeps its previous copy. */
-export async function writeTeamDir(dir, notes) {
-  await mkdir(dir, { recursive: true });
+export async function writeTeamDir(dir, notes, { dirMode, fileMode } = {}) {
+  await mkdir(dir, { recursive: true, mode: dirMode });
   const keep = new Set();
   for (const n of notes) {
     const target = join(dir, `${n.name}.md`);
     keep.add(`${n.name}.md`);
     const tmp = `${target}.tmp-${process.pid}-${Date.now()}`;
-    try { await writeFile(tmp, n.text, 'utf8'); await rename(tmp, target); }
+    try { await writeFile(tmp, n.text, { encoding: 'utf8', mode: fileMode }); await rename(tmp, target); }
     catch { await rm(tmp, { force: true }).catch(() => {}); }
   }
   for (const e of await readdir(dir, { withFileTypes: true }).catch(() => [])) {
@@ -1162,7 +1182,7 @@ export async function memoryLoadPlans(dirs) {
  * (memoryLoadPlans, the ones the local copies were mounted with) — read here when not given.
  * @returns {Promise<Array<{key:string, rel:string, count:number, load:string}>>} one entry per opted-in project
  */
-export async function mountTeamLayer({ rules, dirs, plans = null }) {
+export async function mountTeamLayer({ rules, dirs, plans = null, modes = {}, role = null }) {
   const out = [];
   for (const d of dirs || []) {
     if (d.scope?.kind !== 'project') continue;
@@ -1172,9 +1192,10 @@ export async function mountTeamLayer({ rules, dirs, plans = null }) {
     // One workspace member that cannot be mounted (a disk error) never costs the next one its team notes.
     try {
       const plan = plans?.get(key) ?? (plans ? null : await memoryLoadPlan(key));
-      if (!plan || plan.load === 'local') { if (existsSync(target)) await writeTeamDir(target, []); continue; }
-      const notes = plan.team;
-      await writeTeamDir(target, notes);
+      if (!plan || plan.load === 'local') { if (existsSync(target)) await writeTeamDir(target, [], modes); continue; }
+      // `role` (#943): as refreshMount — a team note kept for other roles stays out of this mount.
+      const notes = role ? plan.team.filter((n) => { const r = rolesOf(parseMemoryFile(n.text).meta); return !r.length || r.includes(role); }) : plan.team;
+      await writeTeamDir(target, notes, modes);
       out.push({ key, rel, count: notes.length, load: plan.load });
     } catch (err) {
       console.warn(`[worca] team memory: ${key}: team notes not mounted (${err?.code || err?.message || err})`);
@@ -1244,7 +1265,7 @@ export function teamNoteStates({ local = [], statuses = {}, queued = new Set(), 
     const l = localBy.get(name) || null;
     const t = byName(team, name);
     const s = byName(statuses, name);
-    const row = { name, local: !!l, team: !!t, mounted: mounted.has(name), updated: l?.updated || t?.updated || null, author: t?.author || null };
+    const row = { name, local: !!l, team: !!t, mounted: mounted.has(name), scoped: isScopedNote(l || t), updated: l?.updated || t?.updated || null, author: t?.author || null };
     if (queued.has(name)) rows.push({ ...row, state: l && s?.state !== 'deleting' && !(queued instanceof Map && queued.get(name) === 'delete') ? 'pending' : 'deleting', error: s?.error || null });
     else if (l && s?.state === 'blocked' && s.hash === l.hash) rows.push({ ...row, state: 'blocked', reason: s.reason || '', findings: s.findings || [] });
     // 1b: a held clash — the team holds a different note of this name and no change of it is shared until resolved.
@@ -1283,7 +1304,7 @@ async function noteRows(projectKey, caps) {
   const snapshot = await readTeamSnapshot(projectKey);
   const queued = await readQueuedOps(projectKey);
   const rows = teamNoteStates({
-    local: [...local].map(([name, f]) => ({ name, hash: f.hash, marker: f.marker, updated: f.updated })),
+    local: [...local].map(([name, f]) => ({ name, hash: f.hash, marker: f.marker, updated: f.updated, paths: f.meta.paths, roles: rolesOf(f.meta) })),
     statuses: await readStatuses(projectKey), queued, snapshot,
     maxFiles: caps.teamMaxFiles, maxBytes: caps.hardBytesPerFile, load: teamMemoryLoadOf(projectKey),
   });

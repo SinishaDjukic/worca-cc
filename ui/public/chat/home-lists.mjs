@@ -6,6 +6,7 @@ import { fmtUsd } from '../graph/run-decor.mjs';
 import { fmtStarted } from '../ask-panel.mjs';
 import { classifyLoops } from '../../../src/shared/graph/loops.mjs';
 import { homeIcon } from './home-icons.mjs';
+import { originMark } from '../chat-origin.mjs';
 import { featureHeadline } from '../shape/feature-view.mjs';
 
 export const HOME_TABS = Object.freeze(['needs', 'running', 'chats', 'plans', 'workflows']);
@@ -16,7 +17,7 @@ export const HOME_TAB_KEY = 'worca-cc.chat.homeTab';
 export const RECENT_CHATS_MAX = 6;
 export const WORKFLOWS_MAX = 12;
 /** The server's built-ins (ui/server.mjs GET /api/workflows; library.mjs RESERVED). */
-export const BUILTIN_WORKFLOW_IDS = Object.freeze(['wf_default', 'wf_memory_defrag']);
+export const BUILTIN_WORKFLOW_IDS = Object.freeze(['wf_default', 'wf_lean_build', 'wf_memory_defrag']);
 const PANEL_ID = 'chat-home-panel';
 /** The screen-reader words for the three dots (worca Chat P1): Replying, Needs you, Following a run. */
 const DOT_TEXT = Object.freeze({ think: 'Replying', wait: 'Needs you', live: 'Following a run' });
@@ -56,7 +57,6 @@ export function createHomeTabs({ doc, onSelect }) {
     b.setAttribute('aria-selected', 'false');
     b.setAttribute('aria-controls', PANEL_ID);
     b.tabIndex = t === HOME_TABS[0] ? 0 : -1;
-    if (t === 'plans') b.hidden = true;           // Shape it first: home.mjs shows it while the gate is on
     b.appendChild(make(doc, 'span', 'chat-home-tab-l', HOME_TAB_LABELS[t]));
     if (t === 'needs') {
       const n = make(doc, 'span', 'chat-home-tab-n');
@@ -82,7 +82,7 @@ export function createHomeTabs({ doc, onSelect }) {
   });
   el.append(list, panel);
 
-  /** The tabs whose button shows (Plans is hidden while the Shape it first gate is off). */
+  /** The tabs whose button shows. */
   function visibleTabs() { return HOME_TABS.filter((t) => !btns.get(t).hidden); }
   let sel = null;
   /** A phone-width strip scrolls sideways: bring the selected tab into it when the SELECTION changes — never from
@@ -108,18 +108,13 @@ export function createHomeTabs({ doc, onSelect }) {
     else { panel.removeAttribute('aria-labelledby'); delete panel.dataset.tab; }
     revealSelected();
   }
-  function setVisible(t, on) {
-    const b = btns.get(t);
-    if (!b) return;
-    b.hidden = !on;
-  }
   function setNeeds(n) {
     const c = btns.get('needs').querySelector('.chat-home-tab-n');
     const v = Number(n) > 0 ? String(n) : '';
     if (c.textContent !== v) c.textContent = v;
     c.hidden = !v;
   }
-  return { el, panel, select, selected: () => sel, setNeeds, setVisible, visibleTabs, destroy() {} };
+  return { el, panel, select, selected: () => sel, setNeeds, visibleTabs, destroy() {} };
 }
 
 /** A chat row's dot: green while its reply streams, amber while a run it follows waits on you, violet while a run it
@@ -154,7 +149,10 @@ export function buildChatsList(doc, threads, { onOpen, now = Date.now() }) {
     dot.setAttribute('aria-hidden', 'true');
     if (state) dot.title = DOT_TEXT[state];
     const col = make(doc, 'span', 'chat-home-chat-col');
-    col.append(make(doc, 'span', 'chat-home-chat-t', t.title || 'New chat'), make(doc, 'span', 'chat-home-chat-m', chatMeta(t, now)));
+    const title = make(doc, 'span', 'chat-home-chat-t', t.title || 'New chat');
+    const mark = originMark(doc, t.origin);
+    if (mark) title.prepend(mark);
+    col.append(title, make(doc, 'span', 'chat-home-chat-m', chatMeta(t, now)));
     const chev = make(doc, 'span', 'chat-home-chev');
     chev.appendChild(homeIcon(doc, 'chevron', 14));
     b.append(dot, col);

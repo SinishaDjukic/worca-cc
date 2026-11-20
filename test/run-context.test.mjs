@@ -37,6 +37,7 @@ import { createOrchestrator } from '../src/core/orchestrator.mjs';
 import { NO_PROJECT_KEY } from '../src/shared/no-project.mjs';
 import { withEnv } from './helpers/with-env.mjs';
 import { checkRows } from './helpers/rows.mjs';
+import { strictMcpFor } from '../src/core/phases.mjs';
 
 const WIN_SYMLINK = { skip: process.platform === 'win32' ? 'creating symlinks needs a privilege (Developer Mode / admin) on Windows' : false };
 
@@ -804,11 +805,18 @@ test('codex: enableAllProjectMcpServers approves every committed server but a di
   assert.match(committedWarning(rcOff.warnings)[0], /: a, b, c, d\. /);
 });
 
-test('claude: the committed servers load natively, no mcp.json; the unapproved ones are named and not granted', async () => {
-  const { member, home } = await committedMcpMember({ user: { enabledMcpjsonServers: ['a', 'b'] } });
+test('claude: the approved committed servers join mcp.json too, so a node can run under --strict-mcp-config; the unapproved ones are named and not granted', async () => {
+  const { member, home, wt } = await committedMcpMember({ user: { enabledMcpjsonServers: ['a', 'b'] } });
   const rc = await assemble({ runRoot: await mkRunRoot(), members: [member], homeDir: home, platform: 'darwin' });
-  assert.equal(rc.mcpConfigPath, null);
-  assert.deepEqual(rc.mcpServerNames, ['a'], 'the real dir\'s identical, approved `a` is granted, as before');
+  const file = JSON.parse(await readFile(rc.mcpConfigPath, 'utf8')).mcpServers;
+  // --strict-mcp-config loads no .mcp.json, so a granted server mcp.json lacks would turn strict off and every
+  // user-scope, plugin and claude.ai server would ride each call (#943). Without strict the CLI loads both, and
+  // the mcp.json definition runs with no second process (V3(d), probed again on CC 2.1.311).
+  assert.deepEqual(Object.keys(file).sort(), ['a', 'b'], 'the real dir\'s identical `a` and the committed-only `b`');
+  assert.deepEqual(file.b.args, [join(wt, 'srv', 'b.js')], 'resolved against the worktree, where Claude Code would load it');
+  assert.deepEqual(rc.mcpConfigServers, ['a', 'b']);
+  assert.deepEqual(rc.mcpServerNames, ['a', 'b'], 'both granted');
+  assert.equal(strictMcpFor({ runRoot: '/r', mcpConfigServers: rc.mcpConfigServers, mcpServerGrants: rc.mcpServerNames.map((s) => `mcp__${s}`) }), true);
   const [w] = committedWarning(rc.warnings);
   assert.match(w, /^engine claude: .* are not started: c, d\. /, 'the runner holds them (claude-runner.mjs); the run says so');
 });

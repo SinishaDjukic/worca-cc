@@ -6,12 +6,13 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync, readdirSync } from 'node:fs';
+import { INDEX_HTML, readIndexHtml } from '../src/core/read-index-html.mjs';
 
-const read = (p) => readFileSync(new URL(`../${p}`, import.meta.url), 'utf8');
+const read = (p) => (p === INDEX_HTML ? readIndexHtml() : readFileSync(new URL(`../${p}`, import.meta.url), 'utf8'));
 
 test('no user-visible "Settings › Models" / "Settings › Providers" and no #settings/models link is left (comments aside)', () => {
   const files = [
-    'ui/public/index.html',
+    INDEX_HTML,
     ...readdirSync(new URL('../ui/public/', import.meta.url)).filter((f) => /\.(m?js)$/.test(f)).map((f) => `ui/public/${f}`),
     ...readdirSync(new URL('../src/core/ask/', import.meta.url)).filter((f) => f.endsWith('.mjs')).map((f) => `src/core/ask/${f}`),
   ];

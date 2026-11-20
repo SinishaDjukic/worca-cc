@@ -74,5 +74,12 @@ test('consent modal: listed servers, nothing when none, "unknown. Refresh" for a
 test('consent modal: a Codex model says so', () => {
   const entry = { name: 'acme-models', repoUrl: 'https://github.com/acme/m', sha: 'a1b2c3d4e5f6' };
   const el = renderInstallConsent(entry, { models: [{ id: 'acme-codex', label: 'Acme Codex', engine: 'codex', envKeys: [], baseUrl: null }, { id: 'acme-claude', label: 'Acme', envKeys: [], baseUrl: null }] }, { doc });
-  assert.deepEqual([...el.querySelectorAll('.pl-engine')].map((n) => n.textContent), ['Codex']);
+  assert.deepEqual([...el.querySelectorAll('.pl-engine')].map((n) => n.textContent), ['OpenAI Codex']);
+});
+
+test('consent modal: says plugin code is trusted with what Worca can read (G12)', () => {
+  const entry = { name: 'acme-tools', repoUrl: 'https://github.com/acme/p', sha: 'a1b2c3d4e5f6' };
+  const note = renderInstallConsent(entry, { agents: [], mcpServers: [] }, { doc }).querySelector('.pl-consent-trust');
+  assert.ok(note, 'every install shows the trust note');
+  assert.match(note.textContent, /other plugins' secrets/);
 });

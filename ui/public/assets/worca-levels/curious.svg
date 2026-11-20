@@ -1,0 +1,21 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100" role="img">
+<defs>
+<radialGradient id="promoShine-curious" cx="38%" cy="30%" r="70%"><stop offset="0" stop-color="#fff" stop-opacity=".38"></stop><stop offset=".55" stop-color="#fff" stop-opacity="0"></stop><stop offset="1" stop-color="#000" stop-opacity=".18"></stop></radialGradient>
+<linearGradient id="promoNose-curious" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#fff" stop-opacity=".28"></stop><stop offset="1" stop-color="#000" stop-opacity=".12"></stop></linearGradient>
+</defs>
+<circle cx="50" cy="50" r="50" fill="oklch(0.92 0.04 235)"></circle>
+<g transform="translate(6.44 12.32) scale(0.86)">
+<ellipse cx="46" cy="88" rx="20" ry="2.6" fill="#000" opacity=".12"></ellipse>
+<rect x="37" y="70" width="7" height="17" rx="3.5" fill="#D98A6A"></rect>
+<rect x="48" y="70" width="7" height="17" rx="3.5" fill="#D98A6A"></rect>
+<path d="M39 36 C37 28 36 22 33 17 M53 35 C54 27 55 21 58 16" fill="none" stroke="#C0583A" stroke-width="2.6" stroke-linecap="round"></path>
+<circle cx="46" cy="54" r="24" fill="#EEA383"></circle>
+<circle cx="46" cy="54" r="24" fill="url(#promoShine-curious)"></circle>
+<circle cx="60" cy="46" r="6.5" fill="#fff" stroke="#1B1E24" stroke-width=".7"></circle>
+<circle cx="61.6" cy="46.6" r="3.4" fill="#1B1E24"></circle>
+<circle cx="62.7" cy="45.3" r="1" fill="#fff"></circle>
+<rect x="56" y="54" width="34" height="10" rx="5" fill="#EEA383"></rect>
+<rect x="56" y="54" width="34" height="10" rx="5" fill="url(#promoNose-curious)"></rect>
+<g><path d="M23 44 C22 26 70 26 69 44 Z" fill="#EFE6D2"></path><rect x="21" y="40" width="50" height="7" rx="3.5" fill="#E3D7BE"></rect><path d="M26 40.5 V46.5 M31 40.5 V46.5 M36 40.5 V46.5 M41 40.5 V46.5 M46 40.5 V46.5 M51 40.5 V46.5 M56 40.5 V46.5 M61 40.5 V46.5 M66 40.5 V46.5" stroke="#CFC2A6" stroke-width=".8"></path><path d="M46 28 V14" stroke="#B8945E" stroke-width="1.6"></path><circle cx="46" cy="28" r="3.6" fill="#F5EEDD"></circle><circle cx="46" cy="37" r="4.6" fill="#1B1E24"></circle><text x="46" y="39.3" text-anchor="middle" font-family="Poppins, sans-serif" font-size="6.2" font-weight="700" fill="#fff">W</text><rect x="38" y="3" width="16" height="13" rx="2.5" fill="#fff" stroke="#1B1E24" stroke-width="1.4"></rect><text x="46" y="13.6" text-anchor="middle" font-family="Poppins, sans-serif" font-size="10" font-weight="700" fill="#E4673A">?</text></g>
+</g>
+</svg>

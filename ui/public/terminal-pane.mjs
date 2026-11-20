@@ -287,21 +287,21 @@ export function createTerminalPane({ doc, win, fetch, sendWs, getPageContext, co
   }
   async function startRun(key) {
     const t = st.target;
-    let m = memberNow();
-    if (m.state === 'needs-checkout') {                  // a finished run with no checkout: make it, then start there
-      st.busy = 'Making a checkout of this run…';
-      render();
-      const ok = await api('POST', `/api/runs/${encodeURIComponent(t.runId)}/checkout?${t.query}`, { members: [m.projectKey] }).catch(showError);
-      if (!ok || startKey() !== key) return null;
-      const ctx = await api('GET', `/api/runs/${encodeURIComponent(t.runId)}/terminal?${t.query}`).catch(showError);
-      if (!ctx || startKey() !== key) return null;
-      st.ctx = ctx;
-      m = memberNow();
-      if (!m?.cwd) { st.note = m?.reason || 'This run has no folder.'; return null; }
-    }
+    const m = memberNow();
+    // A finished run with no checkout: the start makes one server-side. Never POST /checkout for it —
+    // that route refuses a member the run did not change, and "No changes in this project" is no answer
+    // to "give me a shell". Say what is happening while the folder is made.
+    const fresh = m.state === 'needs-checkout';
+    if (fresh) { st.busy = 'Making a checkout of this run…'; render(); }
     const size = await termSize();
     if (startKey() !== key) return null;
-    return api('POST', `/api/runs/${encodeURIComponent(t.runId)}/terminal?${t.query}`, { member: m.projectKey, ...size }).catch(showError);
+    const r = await api('POST', `/api/runs/${encodeURIComponent(t.runId)}/terminal?${t.query}`, { member: m.projectKey, ...size }).catch(showError);
+    // That start made a checkout, so the picker's 'needs-checkout' is stale: read the context again.
+    if (r && fresh && startKey() === key) {
+      const ctx = await api('GET', `/api/runs/${encodeURIComponent(t.runId)}/terminal?${t.query}`).catch(() => null);
+      if (ctx && startKey() === key) st.ctx = ctx;
+    }
+    return r;
   }
   async function startProject() {
     const size = await termSize();
@@ -343,17 +343,19 @@ export function createTerminalPane({ doc, win, fetch, sendWs, getPageContext, co
   }
   /**
    * Shows one terminal (an Ask session) because the user asked to (a click on a command card's folder): attaches
-   * it, opens the pane and focuses it, even after the user closed the pane.
+   * it, opens the pane and focuses it, even after the user closed the pane. Resolves false when there is no shell
+   * to show (it closed: idle, or Worca restarted), so the card can say so instead of doing nothing.
    */
   async function showSession(id) {
-    if (st.destroyed) return;
-    if (!st.sessions.get(id)) await refreshInfo();
+    if (st.destroyed) return false;
+    if (st.sessions.get(id)?.status !== 'running') await refreshInfo();
     const s = st.sessions.get(id);
-    if (!st.enabled || !s || s.status !== 'running') return;
+    if (!st.enabled || !s || s.status !== 'running') return false;
     st.focusNext = true;
     if (st.current !== id) await attach(id);
     if (!st.open) await open({ focus: true });
     else { st.focusNext = false; focusTerm(); }
+    return true;
   }
   /**
    * A tab's ×: closes that terminal (an ended one just leaves). One that has run a command asks first. The

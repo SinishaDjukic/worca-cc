@@ -7,12 +7,17 @@
 // The client id, the token-exchange endpoint and the editor headers are the
 // values every community bridge sends (ericc-ch/copilot-api, MIT — see
 // THIRD_PARTY_NOTICES.md). Worca identifies itself the same way because the
-// gateway serves no other client; the user acknowledges that once (§8.2).
+// gateway serves no other client.
 //
 // Every network call takes an injectable `fetch` so the whole module is
 // testable against a stub without touching github.com.
+//
+// Every helper takes an optional `enterpriseHost` (a GHE.com tenant, like
+// acme.ghe.com; null = github.com, the unchanged default). All URLs derive from
+// it through ghe-host.mjs's gheUrls().
 
 import { EFFORTS, REASONING_EFFORT_LEVELS } from '../../model-env.mjs';
+import { GHE_COM_ACCOUNT_TYPE, copilotBlockHost, gheUrls, gheGatewayFallback, isTenantOrigin } from '../../ghe-host.mjs';
 
 export const GITHUB_CLIENT_ID = 'Iv1.b507a08c87ecfe98';
 export const GITHUB_SCOPES = 'read:user';
@@ -23,11 +28,49 @@ const EDITOR_VERSION = 'vscode/1.104.0';
 const PLUGIN_VERSION = 'copilot-chat/0.31.0';
 const USER_AGENT = 'GitHubCopilotChat/0.31.0';
 
+function noHostError() {
+  return Object.assign(new Error('GitHub Copilot is set to a GHE.com tenant but has no valid host — set it under Models › Providers › GitHub Copilot (worca models set copilot enterpriseHost=<tenant>.ghe.com)'), { code: 'NO_HOST' });
+}
+
+/**
+ * The GitHub host of a stored copilot config: null for github.com, the tenant for
+ * accountType ghe-com. A ghe-com config without a valid host throws NO_HOST — a
+ * tenant token must never be sent to github.com by accident.
+ */
+export function copilotAccountHost(block = {}) {
+  const h = copilotBlockHost(block);
+  if (h === 'github.com') return null;
+  if (!h) throw noHostError();
+  return h;
+}
+
+/** A Copilot gateway origin GitHub operates (*.githubcopilot.com), over plain https: no port, no credentials. */
+export function isGithubCopilotOrigin(origin) {
+  try {
+    const u = new URL(origin);
+    return u.protocol === 'https:' && !u.port && !u.username && !u.password
+      && (u.hostname === 'githubcopilot.com' || u.hostname.endsWith('.githubcopilot.com'));
+  } catch { return false; }
+}
+
 /** The API host for an account type when the token exchange names none. */
-export function copilotApiHost(accountType) {
+export function copilotApiHost(accountType, enterpriseHost = null) {
+  if (accountType === GHE_COM_ACCOUNT_TYPE) return gheGatewayFallback(copilotAccountHost({ accountType, enterpriseHost }));
   if (accountType === 'business') return 'https://api.business.githubcopilot.com';
   if (accountType === 'enterprise') return 'https://api.enterprise.githubcopilot.com';
   return 'https://api.githubcopilot.com';
+}
+
+/**
+ * The gateway a request goes to. Without a tenant: the exchange's `endpoints.api`, else the
+ * account type's host (today's rule). On a tenant `endpoints.api` is used only when GitHub
+ * operates it for that tenant (https, no port or credentials, *.<tenant> or *.githubcopilot.com);
+ * anything else falls back to copilot-api.<tenant>.
+ */
+export function copilotGateway({ apiHost, accountType, enterpriseHost } = {}) {
+  if (!enterpriseHost) return apiHost || copilotApiHost(accountType);
+  const h = copilotAccountHost({ accountType: GHE_COM_ACCOUNT_TYPE, enterpriseHost });
+  return apiHost && (isTenantOrigin(apiHost, h) || isGithubCopilotOrigin(apiHost)) ? apiHost : gheGatewayFallback(h);
 }
 
 /** Headers for github.com / api.github.com calls (device flow, exchange, user). */
@@ -97,27 +140,106 @@ export function requestInitiator(body) {
   return 'user';
 }
 
+// ── GitHub's refusal of the token exchange ───────────────────────────────────
+
+const REFUSAL_BODY_CAP = 8 * 1024;
+const REFUSAL_MESSAGE_CAP = 300;
+
+const httpsUrl = (v) => {
+  if (typeof v !== 'string') return null;
+  try { return new URL(v).protocol === 'https:' ? v : null; } catch { return null; }
+};
+
+/**
+ * What GitHub said when it refused the Copilot token exchange: the reason
+ * (`error_details.message` / `message`), its link, the notification id and the
+ * `X-GitHub-SSO` header. Reads the body once (8 KB cap) and never throws, so it
+ * can never replace a 401/403 with a parsing error.
+ * @returns {Promise<{message:string|null, url:string|null, sso:{required:boolean,url:string|null}|null, notificationId:string|null}>}
+ */
+export async function readGithubRefusal(res) {
+  const out = { message: null, url: null, sso: null, notificationId: null };
+  try {
+    const raw = typeof res?.text === 'function' ? String(await res.text()).slice(0, REFUSAL_BODY_CAP) : '';
+    let body = null;
+    try { body = raw ? JSON.parse(raw) : null; } catch { body = null; }
+    if (body && typeof body === 'object') {
+      const d = body.error_details && typeof body.error_details === 'object' ? body.error_details : {};
+      const msg = [d.message, body.message].find((m) => typeof m === 'string' && m.trim());
+      if (msg) {
+        const clean = msg.replace(/[\x00-\x1f\x7f]/g, ' ').trim();
+        out.message = clean.length > REFUSAL_MESSAGE_CAP ? `${clean.slice(0, REFUSAL_MESSAGE_CAP)}…` : clean || null;
+      }
+      out.url = httpsUrl(d.url);
+      if (typeof d.notification_id === 'string' && d.notification_id && d.notification_id.length <= 100) out.notificationId = d.notification_id;
+    }
+  } catch { /* an unreadable body is "no reason" */ }
+  try {
+    const v = res?.headers?.get?.('x-github-sso');
+    if (typeof v === 'string' && v) {
+      const m = /\burl=(\S+?)(?:[;,\s]|$)/.exec(v);
+      out.sso = { required: /\brequired\b/.test(v), url: m ? httpsUrl(m[1]) : null };
+    }
+  } catch { /* no header */ }
+  return out;
+}
+
+/** GitHub's reason as one sentence fragment; '' when it gave none. */
+export function githubReasonText(g) {
+  if (!g) return '';
+  let text = '';
+  if (g.message) text = `GitHub says: "${g.message}"${g.url ? ` (${g.url})` : ''}`;
+  else if (g.url) text = `GitHub gave a link: ${g.url}`;
+  if (g.sso && g.sso.required) {
+    const sso = `single sign-on authorization is required${g.sso.url ? ` — ${g.sso.url}` : ''}`;
+    text = text ? `${text}; ${sso}` : sso;
+  }
+  return text;
+}
+
+/**
+ * The text for a Copilot refusal of a credential that is NOT stored (the
+ * sign-in poll, a pasted token): never "stored token" / "sign in again".
+ * @param {{host:string, status:number, login?:string, github?:object|null, via?:'sign-in'|'token'}} p
+ */
+export function copilotRefusalText({ host, status, login = '', github = null, via = 'sign-in' }) {
+  const lead = via === 'token'
+    ? `GitHub refused Copilot access for this token on ${host} (${status})`
+    : `the sign-in on ${host} worked${login ? ` (as ${login})` : ''}, but GitHub refused Copilot access (${status})`;
+  const reason = githubReasonText(github);
+  const step = host === 'github.com'
+    ? 'Check that this GitHub account has a Copilot subscription or seat.'
+    : `Ask your enterprise admin to check your Copilot seat and that the Copilot policy allows this editor.`;
+  return `${lead}${reason ? `: ${reason}` : ' and gave no reason'}. ${step}`;
+}
+
 // ── device flow ──────────────────────────────────────────────────────────────
 
 /**
  * Start the GitHub device flow. Returns the code the user types at
- * github.com/login/device plus the poll interval.
- * @param {{fetch?:typeof fetch}} [deps]
+ * <host>/login/device plus the poll interval and the `host` it was issued on.
+ * @param {{fetch?:typeof fetch, enterpriseHost?:string|null}} [deps]
  */
-export async function startDeviceFlow({ fetch: f = globalThis.fetch } = {}) {
-  const r = await f(`${GITHUB_BASE}/login/device/code`, {
+export async function startDeviceFlow({ fetch: f = globalThis.fetch, enterpriseHost = null } = {}) {
+  const { host, web } = gheUrls(enterpriseHost);
+  const r = await f(`${web}/login/device/code`, {
     method: 'POST', headers: githubHeaders(),
     body: JSON.stringify({ client_id: GITHUB_CLIENT_ID, scope: GITHUB_SCOPES }),
   });
-  if (!r.ok) throw new Error(`GitHub device flow could not start (${r.status})`);
+  if (!r.ok) {
+    throw new Error(enterpriseHost
+      ? `GitHub device flow could not start on ${host} (${r.status}) — check the host, and that your enterprise allows the GitHub Copilot app`
+      : `GitHub device flow could not start (${r.status})`);
+  }
   const j = await r.json();
   if (!j.device_code || !j.user_code) throw new Error('GitHub device flow: malformed response');
   return {
     deviceCode: j.device_code,
     userCode: j.user_code,
-    verificationUri: j.verification_uri || `${GITHUB_BASE}/login/device`,
+    verificationUri: j.verification_uri || `${web}/login/device`,
     interval: Number(j.interval) || 5,
     expiresIn: Number(j.expires_in) || 900,
+    host,
   };
 }
 
@@ -126,10 +248,11 @@ export async function startDeviceFlow({ fetch: f = globalThis.fetch } = {}) {
  * approved yet (also for slow_down, with `interval` raised), `{ok:true, token}`
  * once approved, `{error}` when the code expired or was denied.
  * @param {string} deviceCode
- * @param {{fetch?:typeof fetch}} [deps]
+ * @param {{fetch?:typeof fetch, enterpriseHost?:string|null}} [deps]
  */
-export async function pollDeviceFlow(deviceCode, { fetch: f = globalThis.fetch } = {}) {
-  const r = await f(`${GITHUB_BASE}/login/oauth/access_token`, {
+export async function pollDeviceFlow(deviceCode, { fetch: f = globalThis.fetch, enterpriseHost = null } = {}) {
+  const { host, web } = gheUrls(enterpriseHost);
+  const r = await f(`${web}/login/oauth/access_token`, {
     method: 'POST', headers: githubHeaders(),
     body: JSON.stringify({ client_id: GITHUB_CLIENT_ID, device_code: deviceCode, grant_type: 'urn:ietf:params:oauth:grant-type:device_code' }),
   });
@@ -138,13 +261,13 @@ export async function pollDeviceFlow(deviceCode, { fetch: f = globalThis.fetch }
   if (j.error === 'authorization_pending') return { pending: true };
   if (j.error === 'slow_down') return { pending: true, interval: Number(j.interval) || 10 };
   if (j.error === 'expired_token') return { error: 'the device code expired — start the sign-in again' };
-  if (j.error === 'access_denied') return { error: 'the sign-in was denied on github.com' };
+  if (j.error === 'access_denied') return { error: `the sign-in was denied on ${host}` };
   return { error: j.error_description || j.error || `GitHub answered ${r.status}` };
 }
 
 /** The GitHub login of the token's user (display only). */
-export async function githubLogin(githubToken, { fetch: f = globalThis.fetch } = {}) {
-  const r = await f(`${GITHUB_API}/user`, { headers: githubHeaders(githubToken) });
+export async function githubLogin(githubToken, { fetch: f = globalThis.fetch, enterpriseHost = null } = {}) {
+  const r = await f(`${gheUrls(enterpriseHost).api}/user`, { headers: githubHeaders(githubToken) });
   if (!r.ok) throw new Error(`GitHub /user answered ${r.status}`);
   const j = await r.json();
   return typeof j.login === 'string' ? j.login : '';
@@ -153,37 +276,76 @@ export async function githubLogin(githubToken, { fetch: f = globalThis.fetch } =
 // ── token exchange (memory cache) ────────────────────────────────────────────
 
 const REFRESH_MARGIN_S = 60;
-const cache = new Map();   // githubToken -> { token, expiresAt (ms), apiHost }
+const cache = new Map();   // `${host}\n${githubToken}` -> { token, expiresAt (ms), apiHost }
+const refusalLogged = new Map();   // `${host}|${status}|${message}` -> last logged at (ms)
+const REFUSAL_LOG_EVERY_MS = 10 * 60 * 1000;
+const defaultLog = (line) => console.warn(line);
+/** A link for the server log: origin and path only; the query, fragment and any credentials are dropped. */
+const logSafeUrl = (v) => {
+  try { const u = new URL(v); return `${u.origin}${u.pathname}`; } catch { return String(v).split(/[?#]/)[0]; }
+};
+const cacheKey = (githubToken, enterpriseHost) => `${enterpriseHost || 'github.com'}\n${githubToken}`;
+
+/**
+ * One server-log line per distinct refusal per 10 minutes; the GitHub token never appears in it,
+ * and GitHub's link is logged without its query or fragment (the user-facing message keeps it whole).
+ */
+function logRefusal({ log, now, githubToken, url, host, status, github }) {
+  const dedupeKey = `${host}|${status}|${github.message || ''}`;
+  const at = now();
+  const last = refusalLogged.get(dedupeKey);
+  if (last !== undefined && at - last < REFUSAL_LOG_EVERY_MS) return;
+  if (refusalLogged.size >= 100) {
+    for (const [k, v] of refusalLogged) if (at - v >= REFUSAL_LOG_EVERY_MS) refusalLogged.delete(k);
+  }
+  refusalLogged.set(dedupeKey, at);
+  const line = `[worca] copilot: token exchange ${url} answered ${status}${github.message ? `: ${github.message}` : ' with no reason'}`
+    + `${github.url ? ` (${logSafeUrl(github.url)})` : ''}${github.notificationId ? ` [notification ${github.notificationId}]` : ''}`
+    + `${github.sso ? ` [sso${github.sso.required ? ' required' : ''}]` : ''}`;
+  try { log(line.split(githubToken).join('[redacted]')); } catch { /* logging must not mask the refusal */ }
+}
 
 /**
  * A live Copilot token for `githubToken`, exchanged on first use and refreshed
  * before expiry. Returns `{token, apiHost}`; `apiHost` is the gateway the
  * exchange named (`endpoints.api`) or null.
  * @param {string} githubToken
- * @param {{fetch?:typeof fetch, now?:() => number, force?:boolean}} [deps]
+ * A 401/403 throws `code: 'AUTH'` with the status, the `host` and GitHub's own
+ * reason (`github`, see readGithubRefusal); the message is the STORED-token
+ * wording, which the sign-in poll re-words from those fields.
+ * @param {{fetch?:typeof fetch, now?:() => number, force?:boolean, enterpriseHost?:string|null, log?:(line:string)=>void}} [deps]
  */
-export async function copilotToken(githubToken, { fetch: f = globalThis.fetch, now = Date.now, force = false } = {}) {
+export async function copilotToken(githubToken, { fetch: f = globalThis.fetch, now = Date.now, force = false, enterpriseHost = null, log = defaultLog } = {}) {
   if (!githubToken) throw Object.assign(new Error('not signed in to GitHub Copilot'), { code: 'NOT_SIGNED_IN' });
-  const hit = cache.get(githubToken);
+  const key = cacheKey(githubToken, enterpriseHost);
+  const hit = cache.get(key);
   if (!force && hit && hit.expiresAt - now() > REFRESH_MARGIN_S * 1000) return { token: hit.token, apiHost: hit.apiHost };
-  const r = await f(`${GITHUB_API}/copilot_internal/v2/token`, { headers: githubHeaders(githubToken) });
+  const url = `${gheUrls(enterpriseHost).api}/copilot_internal/v2/token`;
+  const r = await f(url, { headers: githubHeaders(githubToken) });
   if (r.status === 401 || r.status === 403) {
-    cache.delete(githubToken);
-    throw Object.assign(new Error(`GitHub rejected the stored token (${r.status}) — sign in again`), { code: 'AUTH', status: r.status });
+    cache.delete(key);
+    const github = await readGithubRefusal(r);
+    const host = enterpriseHost || 'github.com';
+    logRefusal({ log, now, githubToken, url, host, status: r.status, github });
+    const reason = githubReasonText(github);
+    throw Object.assign(
+      new Error(`GitHub rejected the stored token (${r.status}) — sign in again${reason ? ` (${reason})` : ''}`),
+      { code: 'AUTH', status: r.status, host, github },
+    );
   }
   if (!r.ok) throw Object.assign(new Error(`Copilot token exchange answered ${r.status}`), { code: 'EXCHANGE', status: r.status });
   const j = await r.json();
   if (!j.token) throw Object.assign(new Error('Copilot token exchange: no token in the response (is Copilot enabled for this account?)'), { code: 'EXCHANGE' });
   const expiresAt = Number(j.expires_at) > 0 ? Number(j.expires_at) * 1000 : now() + 25 * 60 * 1000;
   const apiHost = j.endpoints && typeof j.endpoints.api === 'string' ? j.endpoints.api.replace(/\/+$/, '') : null;
-  cache.set(githubToken, { token: j.token, expiresAt, apiHost });
+  cache.set(key, { token: j.token, expiresAt, apiHost });
   return { token: j.token, apiHost };
 }
 
 /** Drop a cached Copilot token (after a 401 from the gateway). */
-export function invalidateCopilotToken(githubToken) { cache.delete(githubToken); }
+export function invalidateCopilotToken(githubToken, { enterpriseHost = null } = {}) { cache.delete(cacheKey(githubToken, enterpriseHost)); }
 /** Test hook. */
-export function _resetCopilotCache() { cache.clear(); }
+export function _resetCopilotCache() { cache.clear(); refusalLogged.clear(); }
 
 // ── models + quota ───────────────────────────────────────────────────────────
 
@@ -284,11 +446,11 @@ export function catalogEntryForCopilotModel(m) {
 /**
  * The Copilot models list, normalized. Chat models only.
  * @param {string} githubToken
- * @param {{accountType?:string, fetch?:typeof fetch}} [deps]
+ * @param {{accountType?:string, enterpriseHost?:string|null, fetch?:typeof fetch}} [deps]
  */
-export async function listCopilotModels(githubToken, { accountType = 'individual', fetch: f = globalThis.fetch } = {}) {
-  const { token, apiHost } = await copilotToken(githubToken, { fetch: f });
-  const host = apiHost || copilotApiHost(accountType);
+export async function listCopilotModels(githubToken, { accountType = 'individual', enterpriseHost = null, fetch: f = globalThis.fetch } = {}) {
+  const { token, apiHost } = await copilotToken(githubToken, { fetch: f, enterpriseHost });
+  const host = copilotGateway({ apiHost, accountType, enterpriseHost });
   const r = await f(`${host}/models`, { headers: copilotHeaders(token) });
   if (!r.ok) throw Object.assign(new Error(`Copilot /models answered ${r.status}`), { status: r.status });
   const j = await r.json();
@@ -300,8 +462,8 @@ export async function listCopilotModels(githubToken, { accountType = 'individual
  * The premium-request quota snapshot, or null when the account exposes none.
  * @returns {Promise<{used:number|null, entitlement:number|null, remaining:number|null, percentRemaining:number|null, unlimited:boolean, resetDate:string|null}|null>}
  */
-export async function copilotUsage(githubToken, { fetch: f = globalThis.fetch } = {}) {
-  const r = await f(`${GITHUB_API}/copilot_internal/user`, { headers: githubHeaders(githubToken) });
+export async function copilotUsage(githubToken, { fetch: f = globalThis.fetch, enterpriseHost = null } = {}) {
+  const r = await f(`${gheUrls(enterpriseHost).api}/copilot_internal/user`, { headers: githubHeaders(githubToken) });
   if (!r.ok) return null;
   const j = await r.json().catch(() => null);
   const q = j && j.quota_snapshots && j.quota_snapshots.premium_interactions;

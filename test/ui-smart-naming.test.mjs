@@ -2,14 +2,13 @@
 // flag on: suggested / loading / edited / failed states, the type select, the Start markers, the manual trigger, prefill.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { JSDOM } from 'jsdom';
 import { applyFlags } from '../ui/public/flags.mjs';
 import { renderIndexHtml } from '../src/core/index-html.mjs';
 import { createSuggestedName } from '../ui/public/smart-naming.mjs';
+import { readIndexHtml } from '../src/core/read-index-html.mjs';
 
-const htmlPath = fileURLToPath(new URL('../ui/public/index.html', import.meta.url));
 const appPath = fileURLToPath(new URL('../ui/public/app.js', import.meta.url));
 const PROJECTS = [{ name: 'svc-iam', path: '/a/svc-iam', exists: true }];
 const TASK = 'Login redirects back to /login after SSO on Safari';
@@ -18,7 +17,7 @@ const SUGGESTION = { source: 'model', title: 'Fix Safari SSO redirect loop', typ
 const tick = (n = 1) => new Promise((r) => setTimeout(r, n));
 
 async function boot({ suggest = () => SUGGESTION, config = { trigger: 'debounce', pattern: '{type}/{slug}' }, on = true } = {}) {
-  const dom = new JSDOM(readFileSync(htmlPath, 'utf8'), { url: 'http://localhost:4317/#new' });
+  const dom = new JSDOM(readIndexHtml(), { url: 'http://localhost:4317/#new' });
   const { window } = dom;
   window.Element.prototype.scrollIntoView = function () {};
   window.WebSocket = class { constructor() { this.readyState = 1; } send() {} close() {} addEventListener() {} };
@@ -80,7 +79,7 @@ test('flag off: typing a task never calls the model and shows no chip', async ()
 });
 
 test('flag off: the shell hides every naming control', () => {
-  const html = renderIndexHtml(readFileSync(htmlPath, 'utf8'), 'system', 'simple', { smartRunNaming: false });
+  const html = renderIndexHtml(readIndexHtml(), 'system', 'simple', { smartRunNaming: false });
   assert.match(html, /<style id="flag-gates">[^<]*\[data-flag~="smartRunNaming"\]\{display:none/);
 });
 

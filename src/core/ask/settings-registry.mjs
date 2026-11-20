@@ -8,7 +8,7 @@
 import {
   assertThemeInput, assertUiLevelInput, assertDebugSpawnInput, assertUpdateCheckInput, assertAutoGeneratePrDescriptionInput, assertCostLimitInputs,
   assertHumanRateInput, assertAskLimitInputs, assertAskEngineInput, assertRunEngineInput, assertSyncSettingsInput,
-  assertScheduleDefaultsInput, assertWorkspaceScanInput, assertMemoryDefragModelInput, assertAgentGenModelInput, assertNamingModelInput, normalizeModelPair, normalizeRolePair,
+  assertScheduleDefaultsInput, assertWorkspaceScanInput, assertMemoryDefragModelInput, assertAgentGenModelInput, assertNamingModelInput, assertSecondOpinionModelInput, normalizeModelPair, normalizeRolePair,
   SETTINGS_POST_KEYS, DEFAULT_SYNC_SETTINGS, DEFAULT_SCHEDULE_GRACE_MIN, DEFAULT_SCHEDULE_IF_MISSED,
   DEFAULT_SCHEDULE_MAX_FAILURES, DEFAULT_COST_RESET_PERIOD, DEFAULT_HUMAN_RATE_USD, DEFAULT_ASK_MAX_TURNS,
 } from '../settings.mjs';
@@ -16,6 +16,7 @@ import { RUN_ENGINES, MODEL_ENGINES, ASK_ENGINES, EFFORTS, SUBAGENT_MODELS, effo
 import { engineLabel } from '../../shared/engine-switch.mjs';
 import { MODEL_ROLES, ROLE_LABELS, ROLE_HARNESSES } from '../../shared/model-roles.mjs';
 import { receiptCard } from './receipt.mjs';
+import { WORKSPACE_SCAN_DEFAULT_MODELS } from '../factory-models.mjs';
 
 /** What the chat never reads or changes, and why (list_settings returns `what`; a refused change names `why`). */
 export const SETTING_EXCLUSIONS = Object.freeze([
@@ -24,11 +25,12 @@ export const SETTING_EXCLUSIONS = Object.freeze([
   { match: ['askWeb', 'chat.scriptTools'], what: "Chat web access and the chat's script tools", why: "the chat's own powers are only the user's to grant" },
   { match: ['chat.channels'], what: 'Chat channels', why: 'they send messages to another service' },
   { match: ['nightMode', 'nightModeToggle'], what: 'Away mode settings', why: 'Away mode keeps its own card (propose_away_mode_change) and switch (set_away_now)' },
-  { match: ['providers', 'models', 'speech', 'credentials', 'mcp', 'plugins', 'marketplaces'], what: 'Providers, model catalog entries, speech, credentials, MCP servers and plugins', why: 'they hold keys and tokens, or run outside code' },
+  { match: ['providers', 'models', 'speech', 'credentials', 'mcp', 'plugins', 'marketplaces'], what: 'Providers, model catalog entries, speech, credentials, MCP servers (list_mcp_servers and propose_mcp_change cover them) and plugins', why: 'they hold keys and tokens, or run outside code' },
   { match: ['policy', 'metrics'], what: 'Team policy and team metrics', why: 'they publish to the team' },
   { match: ['memory.team'], what: 'Team memory sharing', why: 'it publishes to the team' },
   { match: ['guardrails'], what: 'Guardrail sets', why: 'editing a set can loosen it' },
-  { match: ['hideBuiltinModels'], what: 'Hide built-in models', why: 'once set it overrides the team default, and a Revert could not bring that back — the Models page sets it' },
+  { match: ['hideBuiltinModels'], what: 'Hide built-in models', why: 'once set it overrides the team default, and a Revert could not bring that back — Models › Catalogue sets it' },
+  { match: ['hideBuiltinEngines'], what: 'Hide built-in models (Codex, Copilot)', why: 'Models › Catalogue sets it, one switch per harness' },
 ]);
 const exclusionOf = (id) => SETTING_EXCLUSIONS.find((e) => e.match.some((m) => id === m || id.startsWith(`${m}.`))) || null;
 const WRITE_NEVER = new Set(['root', 'projectsRoot', 'actions']);
@@ -58,9 +60,10 @@ const MOUNT = choice([['copy', 'Copy'], ['symlink', 'Link']]);
 const RUN_ENGINE = choice(RUN_ENGINES.map((e) => [e, engineLabel(e)]));
 const CHAT_ENGINE = choice(ASK_ENGINES.map((e) => [e, engineLabel(e)]));
 const NOTIFY = Object.freeze({ question: 'Approval / question needed', done: 'Run finished', error: 'Run failed', paused: 'Run paused', away: 'Away hours start or end' });
-const JOBS = Object.freeze({ title: 'Title model', classifier: 'Auto workflow classifier model', overview: 'Run overview model', prDescription: 'PR description model', memoryDefrag: 'Memory defragment model', workspaceScan: 'Workspace scan model' });
+const JOBS = Object.freeze({ title: 'Title model', classifier: 'Auto workflow classifier model', overview: 'Run overview model', prDescription: 'PR description model', memoryDefrag: 'Memory defragment model', workspaceScan: 'Workspace scan model', secondOpinion: 'Second-opinion reviewer model' });
 const CLAUDE_HELPER_KEYS = Object.freeze({ title: 'titleModel', classifier: 'autoWorkflowModel', prDescription: 'prDescriptionModel' });
-const CODEX_JOBS = Object.freeze(['title', 'classifier', 'overview', 'prDescription', 'memoryDefrag', 'workspaceScan']);
+const CODEX_JOBS = Object.freeze(['title', 'classifier', 'overview', 'prDescription', 'memoryDefrag', 'workspaceScan', 'secondOpinion']);
+const SECOND_OPINION_ID = 'models.claude.secondOpinion';
 const RUN_JOBS = new Set(['title', 'classifier', 'overview', 'prDescription']);
 const AGENT_GEN_ID = 'models.claude.utility.agentGen';
 const NAMING_ID = 'models.claude.utility.naming';
@@ -75,9 +78,10 @@ const PROJECT_ONLY = Object.freeze({
   contextMaxBytesTotal: { label: 'Context size in all', group: 'Runs', fmt: bytes, allowed: 'a whole number of bytes' },
   skillMount: { label: 'Skill mount', group: 'Runs', fmt: MOUNT.fmt, allowed: MOUNT.allowed },
   watchNewPrs: { label: 'Watch new pull requests', group: 'Runs', fmt: onOff, allowed: 'true | false' },
+  runUserClaudeSettings: { label: 'Runs load my Claude Code setup', group: 'Runs', fmt: onOff, allowed: 'true | false' },
   'memory.softBytesPerFile': { label: 'Memory: flag files above', group: 'Memory', fmt: bytes, allowed: 'a whole number of bytes' },
   'memory.maxBytesPerFile': { label: 'Memory: largest file', group: 'Memory', fmt: bytes, allowed: 'a whole number of bytes' },
-  'memory.teamMaxFiles': { label: 'Memory: most team notes loaded', group: 'Memory', fmt: String, allowed: 'a whole number' },
+  'memory.teamMaxFiles': { label: 'Memory: most always-on team notes loaded', group: 'Memory', fmt: String, allowed: 'a whole number' },
   'memory.maxFilesPerScope': { label: 'Memory: most files', group: 'Memory', fmt: String, allowed: 'a whole number' },
   'memory.hookMaxChars': { label: 'Memory: hook length', group: 'Memory', fmt: (n) => `${n} characters`, allowed: 'a whole number of characters' },
   'memory.defrag.writes': { label: 'Memory defragment due after writes', group: 'Memory', fmt: String, allowed: 'a whole number' },
@@ -224,6 +228,18 @@ function buildUserDefs(roles, scanDefaults) {
         await ctx.slot([{ id: ctx.def.id, engine: 'claude', value }]);
         return value;
       } }),
+    // The Second-opinion reviewer: a Claude { model, effort } pair on its own key, user scope only.
+    userDef({ id: SECOND_OPINION_ID, label: `${JOBS.secondOpinion} (${engineLabel('claude')})`, group: 'Models', fmt: pairText, allowed: pairAllowed('claude'),
+      read: (s) => (isObj(s.secondOpinionModel) && typeof s.secondOpinionModel.model === 'string' && s.secondOpinionModel.model.trim()
+        ? { model: s.secondOpinionModel.model.trim(), ...(typeof s.secondOpinionModel.effort === 'string' && s.secondOpinionModel.effort ? { effort: s.secondOpinionModel.effort } : {}) } : null),
+      body: (unit) => ({ secondOpinionModel: unit && unit.model ? { model: unit.model, effort: unit.effort || '' } : null }),
+      check: async (v, ctx) => {
+        const pair = assertSecondOpinionModelInput(v, await ctx.models());
+        if (!pair) return null;
+        const value = { model: pair.model, ...(pair.effort ? { effort: pair.effort } : {}) };
+        await ctx.slot([{ id: ctx.def.id, engine: 'claude', value }]);
+        return value;
+      } }),
     ...CODEX_JOBS.map((job) => pairDef(RUN_JOBS.has(job) ? `models.codex.utility.${job}` : `models.codex.${job}`, `${JOBS[job]} (${engineLabel('codex')})`, 'Models', 'codex',
       (s) => (isObj(s.utilityModels) && isObj(s.utilityModels.codex) && isObj(s.utilityModels.codex[job]) ? s.utilityModels.codex[job] : null),
       (unit) => ({ utilityModels: { codex: { [job]: unit ?? null } } }))),
@@ -231,7 +247,7 @@ function buildUserDefs(roles, scanDefaults) {
   return defs;
 }
 
-const MODEL_ID_RE = new RegExp(`^models\\.(${MODEL_ENGINES.join('|')})\\.(?:steps\\.(.+)|utility\\.(title|classifier|overview|prDescription)|(memoryDefrag|workspaceScan))$`);
+const MODEL_ID_RE = new RegExp(`^models\\.(${MODEL_ENGINES.join('|')})\\.(?:steps\\.(.+)|utility\\.(title|classifier|overview|prDescription)|(memoryDefrag|workspaceScan|secondOpinion))$`);
 function buildProjectDefs(ids, userDefs, roles) {
   const twins = new Map(userDefs.map((d) => [d.id, d]));
   return ids.filter((id) => id !== 'askWeb' && id !== 'memory.team' && !id.startsWith('nightMode.')).map((id) => {
@@ -274,7 +290,7 @@ export function createSettingsRegistry(deps = {}) {
     readSettings: () => ({}), roles: () => [], listModels: async () => [], assertSlotModels: async () => {},
     resolveSetting: () => { throw new Error('no project settings here'); }, assertProjectSettingsPatch: () => [],
     projectSettingIds: () => [], projects: async () => [],
-    scanDefaults: { scanModel: 'claude-sonnet-5', scanEffort: 'medium', agentModel: 'sonnet', agentEffort: 'medium' },
+    scanDefaults: WORKSPACE_SCAN_DEFAULT_MODELS,
     applyUser: null, applyProject: null, serial: null, ...deps,
   };
   const roleList = () => { try { return (D.roles() || []).filter((r) => r && typeof r.key === 'string' && r.key); } catch { return []; } };

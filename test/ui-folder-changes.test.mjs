@@ -2,7 +2,6 @@
 // the Apply to folder dialog, Discard) and run-glance's headline for a finished folder run.
 import { test, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
 import { JSDOM } from 'jsdom';
 import { useDomRelease } from './helpers/jsdom-release.mjs';
 import { checkRows } from './helpers/rows.mjs';
@@ -11,6 +10,7 @@ import {
   runChangesUrl, openApplyDialog, discardChanges, CHANGE_SIGN, CHANGE_WORD,
 } from '../ui/public/folder-changes.mjs';
 import { glanceCopy } from '../ui/public/run-glance.mjs';
+import { readStyleCss } from '../src/core/read-style-css.mjs';
 
 const trackDom = useDomRelease(afterEach);
 const COUNTS = { added: 9, modified: 4, deleted: 1 };
@@ -291,7 +291,7 @@ test('discardChanges: POST discard; the server\'s reason when it refuses', async
 });
 
 test('folder CSS: the bar and dialog use theme tokens, no amber wash, no accent edge', () => {
-  const css = readFileSync(new URL('../ui/public/style.css', import.meta.url), 'utf8');
+  const css = readStyleCss();
   const block = css.slice(css.indexOf('/* Folder runs (Projects, any way)'), css.indexOf('/* end Folder runs */'));
   assert.ok(block.length > 200, 'the block is there');
   assert.match(block, /\.fc-bar\{[^}]*background:color-mix\(in srgb,var\(--teal-bg\) 60%,var\(--panel\)\)/);

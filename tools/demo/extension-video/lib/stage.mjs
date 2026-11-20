@@ -7,17 +7,18 @@
 import { readFileSync } from 'node:fs';
 import { cutPiece, SHADOW_PIECES, toShadowTokens } from '../../../extension-css.mjs';
 import { easeInOut, hudCapX } from './camera.mjs';
+import { readStyleCss } from '../../../../src/core/read-style-css.mjs';
 
 const ROOT = new URL('../../../../', import.meta.url);
 const b64 = (rel) => readFileSync(new URL(rel, ROOT)).toString('base64');
 
 export function stageCss() {
-  const style = readFileSync(new URL('ui/public/style.css', ROOT), 'utf8');
+  const style = readStyleCss();
   const tokens = toShadowTokens(cutPiece(style, SHADOW_PIECES.find((p) => p.name === 'tokens')).text);
   const font = (w) => `@font-face{font-family:'Stage Poppins';font-weight:${w};font-display:block;src:url(data:font/woff2;base64,${b64(`ui/public/fonts/poppins-latin-${w}-normal.woff2`)}) format('woff2')}`;
   return `${[400, 500, 600, 700].map(font).join('\n')}\n${tokens}\n${readFileSync(new URL('../stage/stage.css', import.meta.url), 'utf8')}`;
 }
-export const logoDataUri = () => `data:image/png;base64,${b64('ui/public/assets/worca-logo.png')}`;
+export const logoDataUri = () => `data:image/svg+xml;base64,${b64('ui/public/assets/worca-logo.svg')}`;
 
 /** Dock sidebar.html (pinned to this tab) on the right; the app keeps the rest of the width. */
 export async function mountSidebar(page, { extensionId, tabId, windowId, width = 440 }) {

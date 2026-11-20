@@ -36,4 +36,5 @@ MOCK_ROLE: generic-producer
 MOCK_CYCLE: 2
 MOCK_BASE: feature
 MOCK_OUT: <PIPELINE_DIR>/promo-script.json
+MOCK_OUTS: <PIPELINE_DIR>/promo-storyboard.md
 MOCK_IN: /abs/task.md

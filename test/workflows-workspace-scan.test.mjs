@@ -11,6 +11,7 @@ import { join } from 'node:path';
 import { useTempHome } from './helpers/temp-home.mjs';
 import {
   WORKSPACE_SCAN_WORKFLOW_ID, GRAPH_WORKSPACE_SCAN_WORKFLOW, RESERVED_WORKFLOW_IDS, isReservedWorkflowId, WORKSPACE_SCAN_DEFAULT_MODELS,
+  GRAPH_WORKSPACE_RESYNTH_WORKFLOW, WORKSPACE_RESYNTH_WORKFLOW_ID, isWorkspaceScanWorkflow,
 } from '../src/core/graph/builtin-workflows.mjs';
 import {
   readWorkflow, assertRunnableWorkflow, resolveGraph, listWorkflows, writeGraphWorkflow,
@@ -61,14 +62,36 @@ test('wf_workspace_scan is the reserved hybrid map pipeline, wired exactly as th
   ]);
   assert.deepEqual(GRAPH_WORKSPACE_SCAN_WORKFLOW.wires.map((w) => `${w.from.node}.${w.from.port}->${w.to.node}.${w.to.port}`), WIRES);
   const cfg = Object.fromEntries(GRAPH_WORKSPACE_SCAN_WORKFLOW.nodes.map((n) => [n.id, { ...n.config }]));
-  const M = WORKSPACE_SCAN_DEFAULT_MODELS;
-  const fan = { model: M.scanModel, effort: M.scanEffort, subagentModel: M.agentModel, subagentEffort: M.agentEffort };
-  assert.deepEqual(cfg.n_scan, fan);
-  assert.deepEqual(cfg.n_usage, fan);
-  assert.deepEqual(cfg.n_synth, { model: M.scanModel, effort: M.scanEffort });
+  for (const id of ['n_scan', 'n_usage', 'n_synth']) assert.deepEqual(cfg[id], {}, `${id}: no model pins in the template`);
   for (const id of ['n_catalog', 'n_join', 'n_render']) assert.deepEqual(cfg[id], { awaitAll: true }, id);
   assert.deepEqual(cfg.n_extract, {});
   assert.equal(Object.isFrozen(GRAPH_WORKSPACE_SCAN_WORKFLOW.nodes[2].config), true, 'deep-frozen');
+  // With no scan models named, the factory defaults resolve onto the scan's agent nodes exactly as the pins did.
+  const M = WORKSPACE_SCAN_DEFAULT_MODELS;
+  const resolved = await resolveScan();
+  for (const id of ['n_scan', 'n_usage']) {
+    const nc = resolved.nodes[id];
+    assert.deepEqual([nc.model, nc.effort, nc.subagentModel, nc.subagentEffort], [M.scanModel, M.scanEffort, M.agentModel, M.agentEffort], id);
+  }
+  assert.deepEqual([resolved.nodes.n_synth.model, resolved.nodes.n_synth.effort], [M.scanModel, M.scanEffort]);
+});
+
+test('wf_workspace_resynth: seed -> synth -> render, no code graph, reserved, a scan for every scan behaviour', async () => {
+  const wf = GRAPH_WORKSPACE_RESYNTH_WORKFLOW;
+  assert.equal(wf.id, 'wf_workspace_resynth');
+  assert.equal(wf.codeGraph, false);
+  assert.deepEqual(wf.nodes.map((x) => [x.id, x.kind, x.key ?? null]), [
+    ['n_task', 'task', null], ['n_seed', 'script', 'workspaceMapResynth'], ['n_synth', 'agent', 'workspaceSynthesizer'],
+    ['n_render', 'script', 'workspaceMapRender'], ['n_end', 'end', null]]);
+  assert.deepEqual(wf.wires.map((w) => `${w.from.node}.${w.from.port}->${w.to.node}.${w.to.port}`), [
+    'n_task.task->n_seed.task', 'n_seed.brief->n_synth.brief', 'n_seed.map->n_render.map',
+    'n_synth.synthesis->n_render.synthesis', 'n_render.workspace->n_end.result']);
+  assert.deepEqual(wf.nodes[2].config, GRAPH_WORKSPACE_SCAN_WORKFLOW.nodes.find((x) => x.id === 'n_synth').config, 'the same synth config as the full scan');
+  assert.equal(isReservedWorkflowId(WORKSPACE_RESYNTH_WORKFLOW_ID), true);
+  assert.equal(isWorkspaceScanWorkflow('wf_workspace_scan'), true);
+  assert.equal(isWorkspaceScanWorkflow('wf_workspace_resynth'), true);
+  assert.equal(isWorkspaceScanWorkflow('wf_default'), false);
+  assert.equal(await readWorkflow(WORKSPACE_RESYNTH_WORKFLOW_ID), wf);
 });
 
 test('it is runnable (assertRunnableWorkflow) and never listed', async () => {

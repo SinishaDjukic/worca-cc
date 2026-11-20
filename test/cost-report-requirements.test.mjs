@@ -4,7 +4,6 @@
 // already spent shows.
 import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -16,6 +15,7 @@ import { seedPipeline } from './helpers/db-seed.mjs';
 import { getDb } from '../src/core/db.mjs';
 import { getStats } from '../src/core/stats.mjs';
 import { recordCostDelta, recordAskCostDelta, recordRequirementsCostDelta, roundUsd } from '../src/core/cost-budget.mjs';
+import { readStyleCss } from '../src/core/read-style-css.mjs';
 
 // ---- allocation (pure) ----
 const run = (id, usd, tags) => ({ id, usd, hours: 1, inCohort: true, status: 'finished', pr: null,
@@ -79,7 +79,7 @@ test('report UI: a muted Requirements row after Chat, no hours, and Spent adds i
   assert.equal(tr.cells[3].textContent, '—', 'no human hours');
   assert.equal(tr.cells[6].textContent, '—', 'no runs');
   assert.match(doc.querySelector('.cr-kpis .stat-tile').textContent, /\$11\.25/);     // 10 runs + 0.5 Chat + 0.75 Requirements
-  assert.match(readFileSync(new URL('../ui/public/style.css', import.meta.url), 'utf8'), /\.cr-table tr\.cr-kind-requirements td/);
+  assert.match(readStyleCss(), /\.cr-table tr\.cr-kind-requirements td/);
 });
 
 

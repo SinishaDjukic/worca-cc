@@ -72,7 +72,7 @@ test('one invalid key writes nothing; the 400 names it (Review Focus 5)', async 
     [{ bogus: 1 }, /unknown setting "bogus"/],
     [{ askMaxTurns: 9999 }, /^askMaxTurns must be an integer between 1 and 500$/],
     [{ askMaxTurns: 5, pipelineCostLimitUsd: -1 }, /^pipelineCostLimitUsd must be a positive number of USD$/],
-    [{ askMaxTurns: 5, 'models.codex.steps.planner': { model: 'claude-opus-5-5' } }, /models\.codex\.steps\.planner: "claude-opus-5-5" runs on Claude — this slot picks a model Codex can run/],
+    [{ askMaxTurns: 5, 'models.codex.steps.planner': { model: 'claude-opus-5-5' } }, /models\.codex\.steps\.planner: "claude-opus-5-5" runs on Claude Code — this slot picks a model OpenAI Codex can run/],
     [{ 'models.codex.workspaceScan': { model: 'gpt-5.5' } }, /is set per user, not per project/],
     [{ 'models.claude.steps.ghost': { model: 'claude-opus-5-5' } }, /unknown step "ghost"/],
   ];
@@ -127,4 +127,24 @@ test('watchNewPrs (s4): off by default, a PATCH round-trips on GET, null clears 
   const clear = await call('PATCH', url, { watchNewPrs: null });
   assert.equal('watchNewPrs' in clear.body.own, false);
   assert.deepEqual(clear.body.effective.watchNewPrs, { value: false, source: 'default' });
+});
+
+test('pr.open / pr.slices: a PATCH round-trips; a bad value is a 400 naming the values', async () => {
+  const url = `/api/projects/${key}/settings`;
+  const first = await call('GET', url);
+  assert.deepEqual(first.body.effective['pr.open'], { value: 'none', source: 'default' });
+  assert.deepEqual(first.body.effective['pr.slices'], { value: 'each', source: 'default' });
+  const set = await call('PATCH', url, { 'pr.open': 'draft', 'pr.slices': 'one' });
+  assert.equal(set.status, 200, JSON.stringify(set.body));
+  const got = await call('GET', url);
+  assert.equal(got.body.own['pr.open'], 'draft');
+  assert.deepEqual(got.body.effective['pr.open'], { value: 'draft', source: 'project' });
+  assert.deepEqual(got.body.effective['pr.slices'], { value: 'one', source: 'project' });
+  const bad = await call('PATCH', url, { 'pr.open': 'always' });
+  assert.equal(bad.status, 400);
+  assert.equal(bad.body.error, 'pr.open must be one of none | draft | ready');
+  assert.equal((await call('PATCH', url, { 'pr.slices': 'both' })).body.error, 'pr.slices must be one of each | one');
+  assert.equal((await call('GET', url)).body.own['pr.open'], 'draft', 'a refused patch writes nothing');
+  const clear = await call('PATCH', url, { 'pr.open': null, 'pr.slices': null });
+  assert.deepEqual(clear.body.effective['pr.open'], { value: 'none', source: 'default' });
 });

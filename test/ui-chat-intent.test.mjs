@@ -11,7 +11,6 @@ import {
   createIntentAddon, installIntentAddon, intentText, splitIntentLead, INTENTS, EXAMPLES, EXAMPLE_MS, INTENT_ADDON_ID,
 } from '../ui/public/chat/intent.mjs';
 import { composerAddons, _resetChatExtensions } from '../ui/public/chat/extensions.mjs';
-import { setShapeFirst } from './helpers/shape-gate.mjs';
 
 const trackDom = useDomRelease(afterEach);
 const DEFAULT_PH = 'Ask about any run, agent, or project…';   // P1's resting placeholder (setPlaceholder(null))
@@ -192,27 +191,18 @@ test('every intent: a chip label, an icon, a placeholder and one plain sentence 
   assert.deepEqual(Object.keys(INTENTS).filter((id) => INTENTS[id].prefill), ['away']);
 });
 
-test('Shaper (Shape it first): refused while the gate is off; with it on it arms and the send leads with its sentence', () => {
+test('Shaper (Shape it first): it arms and the send leads with its sentence', () => {
   assert.equal(INTENTS.shape.label, 'Shaper');
   assert.equal(INTENTS.shape.help, undefined);
-  assert.equal(INTENTS.shape.badge, 'Beta');
+  assert.equal(INTENTS.shape.badge, undefined, 'no Beta badge: Shaper is no longer beta');
   const s = setup();
-  try {
-    setShapeFirst(false);
-    assert.equal(s.ctl.set('shape'), false, 'gate off (the default): no intent');
-    assert.equal(s.ctl.current(), null);
-    assert.equal(s.chip(), null);
-    setShapeFirst(true);
-    assert.equal(s.ctl.set('shape'), true);
-    assert.equal(s.ctl.current(), 'shape');
-    assert.equal(s.chip().querySelector('.chat-intent-l').textContent, 'Shaper');
-    assert.equal(s.input.placeholder, 'Describe the problem…');
-    const sent = s.handle.transformSend('Uploads fail on large files');
-    assert.ok(sent.startsWith(INTENTS.shape.lead), sent);
-    assert.equal(sent, `${INTENTS.shape.lead}\n\nUploads fail on large files`);
-  } finally {
-    setShapeFirst(false);
-  }
+  assert.equal(s.ctl.set('shape'), true);
+  assert.equal(s.ctl.current(), 'shape');
+  assert.equal(s.chip().querySelector('.chat-intent-l').textContent, 'Shaper');
+  assert.equal(s.input.placeholder, 'Describe the problem…');
+  const sent = s.handle.transformSend('Uploads fail on large files');
+  assert.ok(sent.startsWith(INTENTS.shape.lead), sent);
+  assert.equal(sent, `${INTENTS.shape.lead}\n\nUploads fail on large files`);
 });
 
 test('examples rotate on the home while idle; they stop when typing, with an intent, or on a thread — never over an intent', () => {

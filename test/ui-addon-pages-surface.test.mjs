@@ -1,15 +1,17 @@
 // Marketplace and Providers: each list is ONE card holding divided rows (docs/design-system.md › Cards versus divided
 // rows), the .card primitive with no values of its own; the rows keep their divider and are never boxes. The Models
-// page Engines card is a page card, not a flat Settings card, so no view-scoped override is needed.
+// page's Jobs tab draws page cards, not flat Settings cards, so no view-scoped override is needed.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { JSDOM } from 'jsdom';
 import { renderAllInstalled, renderLeftover } from '../ui/public/marketplace/installed-view.mjs';
-import { renderProvidersCard } from '../ui/public/bridge-view.mjs';
+import { renderProvidersTab } from '../ui/public/models/providers-tab.mjs';
+import { readIndexHtml } from '../src/core/read-index-html.mjs';
+import { readStyleCss } from '../src/core/read-style-css.mjs';
 
 const read = (p) => readFileSync(new URL(`../${p}`, import.meta.url), 'utf8');
-const bare = read('ui/public/style.css').replace(/\/\*[\s\S]*?\*\//g, '');
+const bare = readStyleCss().replace(/\/\*[\s\S]*?\*\//g, '');
 const rules = [...bare.matchAll(/([^{}]+)\{([^}]*)\}/g)].map((m) => ({ sel: m[1].trim(), body: m[2] }));
 const doc = new JSDOM('<!doctype html><body></body>').window.document;
 
@@ -26,13 +28,14 @@ test('Marketplace lists are one .card each, holding divided rows that are not bo
   }
 });
 
-test('Providers page: the split list is one .card of divided rows; the Models-view card keeps its head', () => {
-  const split = renderProvidersCard({}, { doc, split: true });
-  assert.ok(split.classList.contains('card') && split.classList.contains('drows') && split.classList.contains('mv-providers-split'));
-  const rows = split.querySelectorAll(':scope > .mv-pv-card');
-  assert.ok(rows.length > 0);
-  for (const r of rows) assert.ok(r.classList.contains('drow') && !r.classList.contains('card'), r.className);
-  assert.ok(renderProvidersCard({}, { doc }).classList.contains('card'));
+test('Providers tab: two .card lists of divided rows, seven rows in all', () => {
+  const tab = renderProvidersTab({}, { doc });
+  const cards = [...tab.querySelectorAll('.mv-providers-split')];
+  assert.equal(cards.length, 2);
+  for (const c of cards) assert.ok(c.classList.contains('card') && c.classList.contains('drows'), c.className);
+  const rows = cards.flatMap((c) => [...c.querySelectorAll(':scope > .mv-pv-card')]);
+  assert.equal(rows.length, 7);
+  for (const r of rows) assert.ok(r.classList.contains('drow') && r.classList.contains('drow-stack') && !r.classList.contains('card'), r.className);
 });
 
 test('no rule boxes a list row or restyles a list card: the .card and .drow primitives carry the look', () => {
@@ -44,19 +47,12 @@ test('no rule boxes a list row or restyles a list card: the .card and .drow prim
   assert.ok(rules.some((r) => r.sel === '.card.drows:empty' && /display:none/.test(r.body)), 'an empty list draws no card');
 });
 
-test('the Models Engines card is a page card, full width, not a flat Settings card', () => {
-  const page = new JSDOM(read('ui/public/index.html')).window.document;
-  const card = page.getElementById('engine-settings-card');
-  assert.ok(card.closest('[data-view="models"]'));
-  assert.ok(card.classList.contains('card'));
-  assert.equal(card.classList.contains('settings-card'), false, '.settings-card is the 760px Settings-pane card');
-});
-
-test('the built-in model strips use the card tokens, no colour literal', () => {
-  for (const sel of ['.mv-builtin', '.mv-hide-builtin-row']) {
-    const body = rules.filter((r) => r.sel === sel).map((r) => r.body).join(';');
-    assert.match(body, /border:1px solid var\(--line\)/, sel);
-    assert.match(body, /background:var\(--panel\)/, sel);
-    assert.doesNotMatch(body, /#[0-9a-f]{3,8}\b|rgba?\(|hsla?\(|\bwhite\b|\bblack\b/i, sel);
-  }
+test('the Models Jobs tab draws page cards, full width, not flat Settings cards', () => {
+  const page = new JSDOM(readIndexHtml()).window.document;
+  assert.ok(page.getElementById('jobs-root').closest('[data-view="models"] #models-tab-jobs'), 'the tab draws into #jobs-root');
+  assert.equal(page.getElementById('engine-settings-card'), null, 'the old Engines card is gone');
+  // jobs-view.mjs builds each job card: a page .card, never .settings-card (the 760px Settings-pane card).
+  const view = read('ui/public/models/jobs-view.mjs');
+  assert.match(view, /make\(doc, 'section', 'card drows mdl-job-card'\)/);
+  assert.doesNotMatch(view, /settings-card/);
 });

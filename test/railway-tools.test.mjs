@@ -124,6 +124,14 @@ test('verify: anonymous goes to sign-in; the service token headers are used and 
   assert.equal(await main(['verify', 't1'], bad.ctx), 1, 'an open app (200 anonymous) fails');
 });
 
+test('V21: the in-container probe expects G1: no instance token 403 under agent isolation, the token 200', () => {
+  const p = readFileSync(new URL('../tools/railway/in-container-probe.sh', import.meta.url), 'utf8');
+  assert.doesNotMatch(p, /want "in-container localhost -> 200"/, 'a plain in-box call is no longer the operator');
+  assert.match(p, /want "in-container localhost, no instance token -> 403 \(G1\)" "\$\(code http:\/\/127\.0\.0\.1:4317\/api\/projects\)" 403/);
+  assert.match(p, /\/data\/worca\/\.worca-cc\/ui\.json/, 'the token is read from worca\'s ui.json');
+  assert.match(p, /want "in-container localhost \+ instance token -> 200" "\$\(code -H "x-worca-ui-token: \$tok" http:\/\/127\.0\.0\.1:4317\/api\/projects\)" 200/);
+});
+
 test('Azure DevOps: the in-container probe reports and tests the token', () => {
   const p = readFileSync(new URL('../tools/railway/in-container-probe.sh', import.meta.url), 'utf8');
   assert.match(p, /broker=%s ado=%s"\}\\n'/, 'the agent prints whether it sees an Azure token');

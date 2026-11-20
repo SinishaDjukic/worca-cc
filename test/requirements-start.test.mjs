@@ -2,17 +2,21 @@
 // A bare express app with the requirements routes and fake run-handler deps: no server, no real run.
 import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { createHash } from 'node:crypto';
 import express from 'express';
 import { useTempHome } from './helpers/temp-home.mjs';
 import { emptySpec } from '../src/core/requirements/spec.mjs';
 import {
   createFeature, updateFeature, appendTurn, listTurns, listStarts, latestStart, getFeature, setContext, createStart,
+  beginBrief, saveBriefResult, deleteBrief, listAttachments, updateAttachment, getAttachment, saveExportLink, setEarlyStartReason,
 } from '../src/core/requirements/store.mjs';
+import { addAttachments, readsSettled, replaceAttachment, removeAttachment, attachmentFile } from '../src/core/requirements/attachment-job.mjs';
 import { startOrientation, settled, isBusy } from '../src/core/requirements/interview.mjs';
 import { startFeature, startView } from '../src/core/requirements/start.mjs';
+import { markExporting, unmarkExporting } from '../src/core/requirements/starting.mjs';
 import { registerRequirementsRoutes } from '../src/core/requirements/routes.mjs';
 import { buildRoundPrompt } from '../src/core/requirements/round.mjs';
 
@@ -39,6 +43,7 @@ before(async () => {
   registerRequirementsRoutes(app, { broadcast: () => {}, deps: {
     startRun: async (body, opts) => { calls.push({ body, opts }); return runImpl(body, opts); },
     runSummary: (q) => summaryImpl(q),
+    interviewModel: async () => ({ model: 'start-model', effort: null, source: 'settings' }),   // the looks below are made on it
   } });
   srv = app.listen(0, '127.0.0.1');
   await new Promise((r) => srv.once('listening', r));
@@ -87,7 +92,7 @@ test('a Ready project feature starts through the run handler with the D6 body; v
   assert.match(body.promptMarkdown, new RegExp(`# FEAT-${f.seq} v1: Cancel order`));
   assert.match(body.promptMarkdown, /R-po-1/);
   assert.match(body.promptMarkdown, /R-po-2/);
-  assert.equal(body.title, `FEAT-${f.seq}: Cancel order`);
+  assert.equal(body.title, 'Cancel order', 'the run title is the feature title alone: FEAT-n is worca-only');
   assert.equal(body.projectDir, projDir);
   assert.equal(body.workflowId, 'wf_auto');
   assert.equal(body.guardrailsId, 'normal');
@@ -166,6 +171,85 @@ test('not Ready: refused without a reason (409 NOT_READY, failing keys); with on
   assert.deepEqual([s.ready, s.failing, s.reason], [false, ['interview', 'openQuestions', 'assumptions'], 'Demo on Friday']);
   assert.deepEqual(listTurns(f.seq).at(-1).payload, { version: 1, runId: s.runId, override: true });
   assert.equal(go.json.feature.starts[0].reason, 'Demo on Friday');
+});
+
+test('overlay: rides the run body verbatim; the rest of the body and the options are the same without it', async () => {
+  reset();
+  const f = readyFeature();
+  const overlay = { nodes: { n_plan: { model: 'claude-opus-5-5', effort: 'high' } }, wires: { w_1: { maxCycles: 3 } } };
+  assert.equal((await call('POST', `/api/requirements/${f.seq}/start`, { workflowId: 'wf_full', overlay })).status, 201);
+  assert.equal((await call('POST', `/api/requirements/${f.seq}/start`, { workflowId: 'wf_full' })).status, 201);
+  const [withO, without] = calls;
+  assert.deepEqual(withO.body.overlay, overlay);
+  assert.equal(withO.body.guardrailsId, 'normal');
+  for (const k of ['presetId', 'humanInLoop', 'engine']) assert.equal(k in withO.body, false, k);
+  assert.equal('overlay' in without.body, false);
+  const { overlay: _o, promptMarkdown: p1, ...restA } = withO.body;
+  const { promptMarkdown: p2, ...restB } = without.body;
+  assert.deepEqual(restA, restB);
+  assert.equal(p1.replace(/ v1:/, ' v2:'), p2);
+  assert.deepEqual(Object.keys(withO.opts).sort(), Object.keys(without.opts).sort());
+});
+
+test('overlay: with Auto it is refused before the run handler; a bad shape is a 400 and no call; null is absent', async () => {
+  reset();
+  const f = readyFeature();
+  const auto = await call('POST', `/api/requirements/${f.seq}/start`, { overlay: { nodes: {} } });
+  assert.equal(auto.status, 400);
+  assert.equal(auto.json.error, 'pick a workflow to set agents for this run');
+  const autoExplicit = await call('POST', `/api/requirements/${f.seq}/start`, { workflowId: 'wf_auto', overlay: { wires: {} } });
+  assert.equal(autoExplicit.status, 400);
+  for (const overlay of [[], 'x', 7, { nodes: {}, presetId: 'p' }, { other: {} }]) {
+    const r = await call('POST', `/api/requirements/${f.seq}/start`, { workflowId: 'wf_full', overlay });
+    assert.equal(r.status, 400, JSON.stringify(overlay));
+  }
+  assert.equal(calls.length, 0);
+  assert.equal(latestStart(f.seq), null);
+  const nul = await call('POST', `/api/requirements/${f.seq}/start`, { overlay: null });
+  assert.equal(nul.status, 201);
+  assert.equal('overlay' in calls[0].body, false);
+});
+
+test('overlay: an empty object is absent', async () => {
+  reset();
+  const f = readyFeature();
+  assert.equal((await call('POST', `/api/requirements/${f.seq}/start`, { workflowId: 'wf_full', overlay: {} })).status, 201);
+  assert.equal('overlay' in calls[0].body, false);
+});
+
+test("overlay: the run handler's 400 about it comes back as the start's 400 and nothing is stored", async () => {
+  reset();
+  const f = readyFeature();
+  runImpl = async () => ({ status: 400, body: { error: 'unknown agent n_zzz' } });
+  const r = await call('POST', `/api/requirements/${f.seq}/start`, { workflowId: 'wf_full', overlay: { nodes: { n_zzz: { model: 'm' } } } });
+  assert.equal(r.status, 400);
+  assert.equal(r.json.error, 'unknown agent n_zzz');
+  assert.equal(latestStart(f.seq), null);
+});
+
+test('the kept early-start reason: a successful start clears it (Ready, Auto, early); a refusal, NOT_READY or throw keeps it', async () => {
+  reset();
+  const f = readyFeature();
+  setEarlyStartReason(f.seq, 'Demo on Friday');
+  runImpl = async () => ({ status: 409, body: { error: 'engine refused' } });
+  assert.equal((await call('POST', `/api/requirements/${f.seq}/start`, {})).status, 409);
+  runImpl = async () => { throw new Error('boom'); };
+  assert.equal((await call('POST', `/api/requirements/${f.seq}/start`, {})).status, 500);
+  assert.equal((await call('POST', `/api/requirements/${f.seq}/start`, { workflowId: 'x;rm' })).status, 400);
+  assert.equal((await call('POST', `/api/requirements/${f.seq}/start`, { workflowId: 'wf_full', overlay: [] })).status, 400);
+  assert.equal(getFeature(f.seq).earlyStartReason, 'Demo on Friday');
+  runImpl = ok();
+  const go = await call('POST', `/api/requirements/${f.seq}/start`, { workflowId: 'wf_full' });
+  assert.equal(go.status, 201);
+  assert.equal(go.json.feature.earlyStartReason, null);
+  assert.equal(getFeature(f.seq).earlyStartReason, null);
+
+  const g = notReadyFeature();
+  setEarlyStartReason(g.seq, 'Kept');
+  assert.equal((await call('POST', `/api/requirements/${g.seq}/start`, {})).status, 409);
+  assert.equal(getFeature(g.seq).earlyStartReason, 'Kept');
+  assert.equal((await call('POST', `/api/requirements/${g.seq}/start`, { reason: 'Kept' })).status, 201);
+  assert.equal(getFeature(g.seq).earlyStartReason, null);
 });
 
 test('a Ready start ignores a reason', async () => {
@@ -376,13 +460,13 @@ test('list: state, ready, latestRun; lookCostUsd and spend', async () => {
   const other = r.json.features.find((x) => x.seq === g.seq);
   assert.deepEqual([other.state, other.ready, other.latestRun], ['decide', 3, null]);
   assert.equal(r.json.lookCostUsd, null);
-  assert.deepEqual(Object.keys(r.json.spend).sort(), ['resetPeriod', 'totalLimitUsd', 'windowUsd']);
+  assert.deepEqual(Object.keys(r.json.spend).sort(), ['resetPeriod', 'totalLimitUsd', 'unknownSteps', 'windowUsd']);
   assert.equal(r.json.spend.resetPeriod, 'monthly', 'the budget period (the default)');
   assert.equal(r.json.spend.totalLimitUsd, null);
   const w0 = r.json.spend.windowUsd;
-  for (const c of [0.3, 0.1, 0.2, 0.5]) appendTurn(g.seq, { kind: 'orientation', payload: {}, costUsd: c });
+  for (const c of [0.3, 0.1, 0.2, 0.5]) appendTurn(g.seq, { kind: 'orientation', payload: {}, costUsd: c, model: 'start-model' });
   assert.equal((await call('GET', '/api/requirements')).json.lookCostUsd, 0.25);
-  appendTurn(g.seq, { kind: 'orientation', payload: {}, costUsd: 0.9 });
+  appendTurn(g.seq, { kind: 'orientation', payload: {}, costUsd: 0.9, model: 'start-model' });
   assert.equal((await call('GET', '/api/requirements')).json.lookCostUsd, 0.3);
   const { recordRequirementsCostDelta } = await import('../src/core/cost-budget.mjs');
   recordRequirementsCostDelta({ featureSeq: g.seq, amountUsd: 0.07 });
@@ -445,4 +529,214 @@ test('startView: run.waiting only when the summary says so', async () => {
   const s = createStart({ featureSeq: f.seq, version: 1, runId: 'r-wait-1', spec: f.spec, title: 't', ready: true });
   assert.equal((await startView(s, () => ({ status: 'running', phase: 'idle', costUsd: 0, waiting: true }))).run.waiting, true);
   assert.equal('waiting' in (await startView(s, () => ({ status: 'running', phase: 'idle', costUsd: 0, waiting: false }))).run, false);
+});
+
+// ── A8 D14: the files go to the run ─────────────────
+const file = (name, text) => { const data = Buffer.from(text); return { name, kind: 'text', mime: 'text/markdown', data, text, bytes: data.length, sha256: createHash('sha256').update(data).digest('hex') }; };
+const MOCK = { mockEnabled: () => true };
+async function withFiles(f, files) {
+  updateFeature(f.seq, { status: 'your_turn' });   // mid-interview (D8 a): no follow-up round starts when the reads end
+  const rows = addAttachments({ type: 'feature', id: f.seq }, files, {}, MOCK);
+  await readsSettled({ type: 'feature', id: f.seq });
+  appendTurn(f.seq, { kind: 'round', payload: { questions: [], done: true, files: rows.map((r) => r.id) } });   // the next round carried them
+  updateFeature(f.seq, { status: 'done' });
+  return rows;
+}
+/** A made brief for the shop project with these documents (read in mock mode); `on` names the ones sent with every run. */
+async function briefWith(files, on = []) {
+  const brief = beginBrief('project', projKey);
+  saveBriefResult(brief.id, { sections: { product: 'P', users: [], terms: [], areas: [] } });
+  const owner = { type: 'brief', id: brief.id, scopeType: 'project', scopeKey: projKey };
+  const rows = addAttachments(owner, files, {}, MOCK);
+  await readsSettled(owner);
+  for (const r of rows) if (on.includes(r.name)) updateAttachment(r.id, { sendWithRun: true });
+  return rows;
+}
+const dropBrief = () => deleteBrief('project', projKey);
+
+test('Start sends the switched-on files and documents as extrasFiles and records them on the start row', async () => {
+  reset();
+  const f = readyFeature();
+  const [a, b] = await withFiles(f, [file('notes.md', 'notes'), file('left-out.md', 'out')]);
+  updateAttachment(a.id, { sendWithRun: true });
+  try {
+    const [g] = await briefWith([file('glossary.md', 'g'), file('not-sent.md', 'n')], ['glossary.md']);
+    const r = await call('POST', `/api/requirements/${f.seq}/start`, {});
+    assert.equal(r.status, 201, JSON.stringify(r.json));
+    const { opts } = calls[0];
+    assert.deepEqual(opts.extrasFiles.map((x) => x.name), ['notes.md', 'glossary.md']);
+    assert.ok(opts.extrasFiles.every((x) => typeof x.path === 'string' && x.path.endsWith('.txt')));
+    assert.deepEqual(opts.extrasFiles.map((x) => x.sha256), [a.sha256, g.sha256], 'the staging checks each copy against its hash');
+    assert.deepEqual(opts.extrasFiles.map((x) => x.id), [a.id, g.id], 'and asks its row whether a failed copy is a change or a damaged body');
+    assert.deepEqual(latestStart(f.seq).files, [{ id: a.id, name: 'notes.md', sha256: a.sha256, from: 'feature' }, { id: g.id, name: 'glossary.md', sha256: g.sha256, from: 'brief' }]);
+    assert.deepEqual(r.json.feature.starts[0].files.map((x) => x.name), ['notes.md', 'glossary.md']);
+    assert.equal(b.sendWithRun, false);
+  } finally { dropBrief(); }
+});
+
+test('a start in flight refuses Add files (409, isStarting)', async () => {
+  reset();
+  const f = readyFeature();
+  let open;
+  const gate = new Promise((res) => { open = res; });
+  runImpl = async (_b, opts) => { await gate; return { status: 200, body: { runId: opts.runId } }; };
+  const start = call('POST', `/api/requirements/${f.seq}/start`, {});
+  await new Promise((res) => setTimeout(res, 30));
+  const add = await call('POST', `/api/requirements/${f.seq}/attachments`, { attachments: [{ name: 'x.md', dataBase64: Buffer.from('x').toString('base64') }] });
+  assert.deepEqual([add.status, add.json.error], [409, 'this feature is starting a run. Try again in a moment.']);
+  open();
+  assert.equal((await start).status, 201);
+  assert.deepEqual(listAttachments('feature', f.seq), []);
+});
+
+test('a start without files sends no extrasFiles key; a request body cannot hand the start files', async () => {
+  reset();
+  const f = readyFeature();
+  await call('POST', `/api/requirements/${f.seq}/start`, { extrasFiles: [{ name: 'x', path: projDir }], _extrasPaths: [projDir] });
+  assert.equal('extrasFiles' in calls[0].opts, false);
+  assert.deepEqual(Object.keys(calls[0].opts).sort(), ['runId', 'startedBy']);
+  assert.deepEqual(latestStart(f.seq).files, []);
+});
+
+test('Changed since the run started lists file lines; Undo turns the feature switches back, not the bodies', async () => {
+  reset();
+  const f = readyFeature();
+  const [a, b] = await withFiles(f, [file('a.md', 'a'), file('b.md', 'b')]);
+  updateAttachment(a.id, { sendWithRun: true });
+  await call('POST', `/api/requirements/${f.seq}/start`, {});
+  await call('PATCH', `/api/requirements/${f.seq}/attachments/${a.id}`, { sendWithRun: false });
+  const v = (await call('PATCH', `/api/requirements/${f.seq}/attachments/${b.id}`, { sendWithRun: true })).json.feature;
+  assert.deepEqual(v.changedSinceStart, [{ kind: 'file', change: 'added', name: 'b.md' }, { kind: 'file', change: 'removed', name: 'a.md' }]);
+  const u = (await call('POST', `/api/requirements/${f.seq}/revert`, { version: 1 })).json.feature;
+  assert.deepEqual(u.attachments.map((x) => [x.name, x.sendWithRun]), [['a.md', true], ['b.md', false]]);
+  assert.deepEqual(u.changedSinceStart, []);
+});
+
+test('Start sees the files no round asked about (D8): Interview finished fails, so a start needs a reason', async () => {
+  reset();
+  const f = readyFeature();
+  updateFeature(f.seq, { status: 'your_turn' });
+  addAttachments({ type: 'feature', id: f.seq }, [file('late.md', 'late')], {}, MOCK);
+  await readsSettled({ type: 'feature', id: f.seq });
+  appendTurn(f.seq, { kind: 'round', payload: { questions: [], done: true } });   // a round that did not carry the file
+  updateFeature(f.seq, { status: 'done' });
+  const no = await call('POST', `/api/requirements/${f.seq}/start`, {});
+  assert.deepEqual([no.status, no.json.failing], [409, ['interview']]);
+  assert.equal(calls.length, 0);
+  const go = await call('POST', `/api/requirements/${f.seq}/start`, { reason: 'the file repeats the description' });
+  assert.equal(go.status, 201, JSON.stringify(go.json));
+  assert.deepEqual([latestStart(f.seq).ready, latestStart(f.seq).failing], [false, ['interview']]);
+});
+
+test('a switched-on file Worca cannot open refuses the start, naming it; a file whose read failed still goes', async () => {
+  const refusal = (name) => `${name} cannot go with the run: Worca could not open the stored file. Replace it, or leave it out of the run.`;
+  const f = readyFeature();
+  const [a, b, c, e] = await withFiles(f, [file('a.md', 'a'), file('b.md', 'b'), file('c.md', 'c'), file('e.md', 'e')]);
+  for (const r of [a, b, c, e]) updateAttachment(r.id, { sendWithRun: true });
+  const body = (r) => attachmentFile(getAttachment(r.id));
+  const tries = [
+    // a replace whose new body could not be stored (D11): the row is STORE_FAILED, and whatever is on disk is not its version
+    [a, () => updateAttachment(a.id, { status: 'failed', error: { code: 'STORE_FAILED', message: 'Worca could not store the new version. Replace it again.', at: 'now' } }),
+      () => updateAttachment(a.id, { status: 'done', error: null })],
+    [b, () => rmSync(body(b)), () => writeFileSync(body(b), 'b')],                // the body is gone
+    [c, () => writeFileSync(body(c), 'cc'), () => writeFileSync(body(c), 'c')],   // the body is not the row's (another size)
+  ];
+  for (const [r, spoil, mend] of tries) {
+    reset();
+    spoil();
+    const no = await call('POST', `/api/requirements/${f.seq}/start`, {});
+    assert.deepEqual([no.status, no.json], [409, { error: refusal(r.name) }], r.name);
+    assert.doesNotMatch(JSON.stringify(no.json), /[\\/]/, 'never a path');
+    assert.deepEqual([calls.length, latestStart(f.seq)], [0, null], 'nothing started, nothing stored');
+    mend();
+  }
+  reset();
+  updateAttachment(e.id, { status: 'failed', error: { code: 'FAILED', message: 'Worca could not read it. Try again.', at: 'now' } });
+  const go = await call('POST', `/api/requirements/${f.seq}/start`, {});
+  assert.equal(go.status, 201, JSON.stringify(go.json));
+  assert.deepEqual(calls[0].opts.extrasFiles.map((x) => x.name), ['a.md', 'b.md', 'c.md', 'e.md']);
+});
+
+test("after a start: a document's switch is no change and Undo leaves it; a feature file replaced or removed is, and stays so", async () => {
+  reset();
+  const f = readyFeature();
+  const [a, b] = await withFiles(f, [file('a.md', 'a'), file('b.md', 'b')]);
+  updateAttachment(a.id, { sendWithRun: true });
+  updateAttachment(b.id, { sendWithRun: true });
+  try {
+    const [g, h] = await briefWith([file('g.md', 'g'), file('h.md', 'h')], ['g.md']);
+    assert.equal((await call('POST', `/api/requirements/${f.seq}/start`, {})).status, 201);
+    assert.deepEqual(latestStart(f.seq).files.map((x) => [x.name, x.from]), [['a.md', 'feature'], ['b.md', 'feature'], ['g.md', 'brief']]);
+    updateAttachment(g.id, { sendWithRun: false });   // the documents' switches: a setting of the whole scope
+    updateAttachment(h.id, { sendWithRun: true });
+    assert.deepEqual((await call('GET', `/api/requirements/${f.seq}`)).json.feature.changedSinceStart, []);
+    const own = { type: 'feature', id: f.seq };
+    replaceAttachment(own, a.id, file('a-v2.md', 'a2'), {}, MOCK);
+    await readsSettled(own);
+    removeAttachment(own, b.id, {}, MOCK);
+    const lines = [{ kind: 'file', change: 'replaced', name: 'a-v2.md' }, { kind: 'file', change: 'removed', name: 'b.md' }];
+    assert.deepEqual((await call('GET', `/api/requirements/${f.seq}`)).json.feature.changedSinceStart, lines);
+    await call('PATCH', `/api/requirements/${f.seq}/attachments/${a.id}`, { sendWithRun: false });
+    const u = (await call('POST', `/api/requirements/${f.seq}/revert`, { version: 1 })).json.feature;
+    assert.deepEqual(u.attachments.map((x) => [x.name, x.sendWithRun]), [['a-v2.md', true]], 'the switch goes back; the body stays the new one');
+    assert.deepEqual(u.changedSinceStart, lines, 'Undo cannot bring back a removed or replaced body');
+    assert.deepEqual(u.briefDocuments.map((x) => [x.name, x.sendWithEveryRun]), [['g.md', false], ['h.md', true]], "the documents' switches stay");
+    assert.equal(listTurns(f.seq).filter((t) => t.kind === 'followup').length, 0, 'no follow-up round after a start');
+  } finally { dropBrief(); }
+});
+
+test('Start again with v2 sends the files switched on now and records them', async () => {
+  reset();
+  const f = readyFeature();
+  const [a, b] = await withFiles(f, [file('a.md', 'a'), file('b.md', 'b')]);
+  updateAttachment(a.id, { sendWithRun: true });
+  await call('POST', `/api/requirements/${f.seq}/start`, {});
+  updateAttachment(a.id, { sendWithRun: false });
+  updateAttachment(b.id, { sendWithRun: true });
+  const r = await call('POST', `/api/requirements/${f.seq}/start`, {});
+  assert.deepEqual([r.status, r.json.version], [201, 2]);
+  assert.deepEqual(calls.map((c) => c.opts.extrasFiles.map((x) => x.name)), [['a.md'], ['b.md']]);
+  assert.deepEqual(r.json.feature.starts.map((s) => [s.version, s.files.map((x) => x.name)]), [[2, ['b.md']], [1, ['a.md']]]);
+  assert.deepEqual(r.json.feature.changedSinceStart, [], 'compared with the newest start');
+});
+
+// ---- A6 D15: Report back ----
+const linkTicket = (seq) => saveExportLink(seq, { plugin: 'jira-source', sourceId: 'jira', profile: 'acme', trackerProject: 'SHOP', key: 'SHOP-123',
+  url: 'https://acme.test/browse/SHOP-123', createdAt: '2026-10-26T10:42:00.000Z', exportedAt: '2026-10-26T10:42:00.000Z', spec: readySpec(), fingerprint: 'f' });
+
+test('A6 D15: a feature with a ticket reports back by default: reportTo names the link\'s own connection and turns write-back on', async () => {
+  reset();
+  const f = readyFeature({ title: 'Report me' });
+  linkTicket(f.seq);
+  const r = await call('POST', `/api/requirements/${f.seq}/start`, {});
+  assert.equal(r.status, 201, JSON.stringify(r.json));
+  assert.deepEqual(calls[0].opts.reportTo, { plugin: 'jira-source', sourceId: 'jira', profile: 'acme', taskId: 'SHOP-123',
+    url: 'https://acme.test/browse/SHOP-123', title: 'Report me', inputs: { writeBack: 'yes' }, project: 'SHOP' });
+  assert.equal(calls[0].body.promptMarkdown.includes('# FEAT-'), true, 'the task is still the spec');
+});
+
+test('A6 D15: reportBack false sends no reportTo; no ticket sends none; a non-boolean is 400', async () => {
+  reset();
+  const f = readyFeature({ title: 'Quiet' });
+  linkTicket(f.seq);
+  assert.equal((await call('POST', `/api/requirements/${f.seq}/start`, { reportBack: false })).status, 201);
+  assert.equal('reportTo' in calls[0].opts, false);
+  reset();
+  const g = readyFeature({ title: 'No ticket' });
+  assert.equal((await call('POST', `/api/requirements/${g.seq}/start`, { reportBack: true })).status, 201);
+  assert.equal('reportTo' in calls[0].opts, false);
+  reset();
+  const h = readyFeature({ title: 'Bad flag' });
+  const bad = await call('POST', `/api/requirements/${h.seq}/start`, { reportBack: 'yes' });
+  assert.deepEqual([bad.status, bad.json.error, calls.length], [400, 'reportBack must be true or false', 0]);
+});
+
+test('A6 D13: Start is refused while the feature is being exported', async () => {
+  reset();
+  const f = readyFeature({ title: 'Exporting' });
+  markExporting(f.seq);
+  try {
+    const r = await call('POST', `/api/requirements/${f.seq}/start`, {});
+    assert.deepEqual([r.status, r.json.error, calls.length], [409, 'Worca is exporting this feature. Try again in a moment.', 0]);
+  } finally { unmarkExporting(f.seq); }
 });

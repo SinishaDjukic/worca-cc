@@ -5,7 +5,10 @@ other: which member calls another's API, consumes the messages it publishes, bui
 package or shares its tables. Every scanned edge carries file:line evidence and a confidence,
 every member a coverage level. The map is stored with the workspace, shown on the workspace
 page's **Map** tab, and rendered into the workspace description that every agent of a
-workspace run receives (`## Workspace Context`).
+workspace run receives (`## Workspace Context`). Workspaces group 2–40 related projects, Git
+repositories or Folder projects, under **Workspaces** (Advanced level).
+
+![The Nimbus workspace's Map tab: coverage chips for nimbus-crm, nimbus-web and nimbus-jobs, a graph of REST API, message/queue and shared DB edges, and the Edges table with confidence badges, file:line evidence and Confirm/Reject buttons above the Add edge form](screenshots/workspace-map.png)
 
 ## How a scan works
 
@@ -40,13 +43,20 @@ extracts facts and does all the matching; agents fill the gaps code leaves and c
   the overview is generated.
 - The scan agent model runs survey, usage and synth; the project agent model runs their
   investigators (Settings › Runs › Workspaces, or the scan's own Models pick).
-- A scan runs on the workspace's **saved scan model** — captured at creation, or set any time
-  (and cleared) with the **Scan model** control on the workspace header. A re-scan uses that
-  saved pick silently. A workspace without one (a legacy workspace, or a saved pick whose model
-  left the catalog) does not fall back to a default: the re-scan opens the pick-a-model window,
-  pre-filled from Settings › Runs › Workspaces — save your choice and the scan runs on it and
-  keeps it for later; close the window and the re-scan is skipped. A pick you never chose
-  (Settings or the built-in default) is never stored on the workspace.
+- With nothing chosen, the scan agent runs on your **Everyday tasks** role (else Sonnet 5 ·
+  medium) and the project agents on `sonnet` · medium. Settings › Runs › Workspaces overrides that
+  for every workspace.
+- A workspace can also have its own **saved scan model**: chosen when you change the Models pick
+  while creating it, or set any time (and cleared) with the **Scan model** control on the
+  workspace header. A re-scan uses that saved pick silently. Create workspace saves a pick only
+  when you change one, or when you have no Everyday tasks role; otherwise its re-scans follow
+  your role as it changes.
+- A workspace without a usable pick (a legacy workspace, one created without a pick, or a saved
+  pick whose model left the catalog) re-scans silently when your Everyday tasks role covers the
+  scan: on Settings › Runs › Workspaces when that is set, else on the role. Without a role it does
+  not fall back to a default: the re-scan opens the pick-a-model window, pre-filled from Settings ›
+  Runs › Workspaces — save your choice and the scan runs on it and keeps it for later; close the
+  window and the re-scan is skipped. A pick you never chose is never stored on the workspace.
 - A scan changes no member: it never creates a repository and never commits. A Git member must be
   the top folder of its own git repository and have a commit; a scan or re-scan with any other
   Git member (a folder inside a monorepo, a repository with no commit) is refused and names it: add
@@ -105,7 +115,9 @@ A re-scan replaces the description, hand edits included.
 ## Reviewing the map
 
 On the **Map** tab you can confirm an edge or reject it, clear either, add an edge the scan
-missed (from, to, kind, a one-line name and an optional detail) and delete it again.
+missed (from, to, kind, a one-line name and an optional detail) and delete it again. The edge
+list filters by project (either end), kind, confidence and state; a manual edge has no
+confidence, so a confidence filter never shows it.
 
 - A rejected edge leaves the description and the Map tab's graph; the merged graph file (see
   below) keeps every scanned edge. A manual edge is marked `(manual)` unless the description is
@@ -139,6 +151,8 @@ The same actions over HTTP:
 
 ## Creating a workspace
 
+**How workspaces work.** The Workspaces page has a *How workspaces work* button that opens a four-screen walkthrough (what a workspace is, how links are found, checking the Map, how the change order guides a run) with a sample map. It also opens by itself the first time someone with no workspace presses Create workspace, and again after the last workspace is deleted. Opening it never changes a workspace.
+
 **Workspaces › Create workspace** opens the wizard: a name, the member projects (2–40) and the
 scan's models. The project list shows every registered project. Repositories that are not projects
 yet come in through **Add…** or the box under it — paste paths, one per line, then press
@@ -162,7 +176,7 @@ yet come in through **Add…** or the box under it — paste paths, one per line
   existing rows start ticked, up to the 40-project limit; untick what you do not want.
 - **Scan interconnections** registers the ticked new rows as projects first — named after the
   `.code-workspace` entry or the folder; a name already taken gets its parent folder's name in
-  front — then starts the scan.
+  front — then starts the scan. The workspace is saved when that scan ends.
 - Importing only reads: it lists folders, reads the `.code-workspace` file and runs
   `git rev-parse`. It never writes into a repository. The projects Scan registers are ordinary
   projects from then on, with the same background fetches as a project added under **Projects**.
@@ -175,7 +189,7 @@ yet come in through **Add…** or the box under it — paste paths, one per line
 ## Changing members
 
 A workspace's members can change after it is created: **Add projects** and **Remove** on the
-workspace page's Projects card, `POST /api/workspaces/:id/members` with `{ "add": [paths] }` or
+Projects card of the workspace page's Overview tab, `POST /api/workspaces/:id/members` with `{ "add": [paths] }` or
 `{ "remove": path }`, or Chat's workspace card. The workspace keeps its id, so its runs,
 schedules, homes and map reviews stay attached; runs already started keep the members they
 started with.
@@ -186,16 +200,67 @@ started with.
   described the old order); coordination notes stay until the next scan. A description the scan wrote is re-rendered without it; a hand-edited one is left
   alone. Removing the member that is the metrics or policy home clears that home.
 - An added member has no edges until the next scan.
-- Every change starts a Workspace scan run of the new set (graphs, map and description, saved
-  when it ends done); the Projects card follows it — a paused one you resume included — and
-  shows how it ended until you next leave the page. A newer member change stops the one it
-  started and scans again. A scan you started yourself (paused ones included) — or any other
-  active run of the workspace, including one the CLI or another UI runs — blocks a member change
-  until it ends (409); a crashed run's record blocks nothing. The scan launch
-  guard follows each workspace's current members, not its id: a first scan of the set a
-  workspace once spanned is not refused as "already running". A scan that finishes after the members changed
-  saves nothing (`SET_CHANGED`). A member the scan cannot read (not the top of its own
-  repository, or no commit) still joins; the page says why no scan ran.
+- A removed member also leaves the merged cross-project graph (`workspace-graph.json` in the
+  workspace's store): its nodes, its links and every bridge that names it. A graph worca cannot
+  rewrite — or one a scan replaced while the member was being removed — is dropped, and with it
+  the description's "Cross-project graph" line, until the next scan.
+- **Adding** members starts a full Workspace scan run of the new set (graphs, map and description,
+  saved when it ends done). **Removing** one re-scans as you choose (below). The Projects card
+  follows the run — a paused one you resume included — and shows how it ended until you next leave
+  the page. A newer member change stops the automatic re-scan an earlier one started. A scan you
+  started yourself (paused ones included) — or any other active run of the workspace, including one
+  the CLI or another UI runs — blocks a member change until it ends (409); a crashed run's record
+  blocks nothing. The scan launch guard follows each workspace's current members, not its id: a
+  first scan of the set a workspace once spanned is not refused as "already running". A scan that
+  finishes after the members changed saves nothing (`SET_CHANGED`). A member the scan cannot read
+  (not the top of its own repository, or no commit) still joins; the page says why no scan ran.
+
+### Removing a member: no, partial or full re-scan
+
+The Remove confirm (and Ask Worca's card, and `POST /api/workspaces/:id/members` with
+`{ "remove": path, "rescan": "none" | "partial" | "full" }`) offers three re-scans:
+
+| Option | What runs | Cost |
+|---|---|---|
+| No re-scan | Nothing: the pruned map stands. When the map misses a member left, or this change stopped an earlier change's re-scan, the pruned notice says so (`rescan.note`). | Instant |
+| Partial re-scan | `wf_workspace_resynth`: one agent rewrites the overview, missing roles and coordination notes from the stored, pruned map and its reviews. No member is scanned again; the map keeps its scan date. | One agent |
+| Full re-scan | `wf_workspace_scan` over every member left. | Every member |
+
+worca recommends one, worked out in code from the stored map before the removal (no model call;
+`GET /api/workspaces/:id/members/remove-impact?path=` returns it), and explains it in a sentence or
+two. With no `rescan`, the server applies its recommendation. The rules, in order:
+
+1. An automatic re-scan for an earlier member change is still running: at least that one (this change replaces it).
+2. No stored map: full. Partial is not available.
+3. The map does not describe exactly the members left (an add whose scan never finished): full.
+   Partial is not available — it re-writes notes for the map as stored.
+4. The member joined after the last scan: none.
+5. Full when the member shared a name with a member left (members tied at the strongest claim share
+   the name and it names none of them — without it, those uses can now resolve to the other one),
+   was in a dependency cycle (a use that matched more than one member was left out or tie-broken;
+   without it, it can match differently), was a hub (8 or more live edges, or edges with 3 or more
+   members), or provided something to 2 or more members (their uses may now match another member's
+   weaker claim, which the map does not keep).
+6. Full when it had edges and the map is more than 30 days old.
+7. Partial when it had live edges, or the overview or coordination notes mention it.
+8. Otherwise none.
+
+Live edges are the scanned edges plus confirmed and manual ones, minus rejected ones. Reviews that
+name the removed member are dropped whichever option runs. A re-scan can still find relations the
+stored map never recorded (a weaker claim, a match that was ambiguous); pick Full when in doubt.
+
+A partial re-scan saves exactly like a full one: a member change while it runs makes it save nothing
+(`SET_CHANGED`). If the stored map no longer covers the members when it is about to start, worca runs
+a full re-scan instead and says so; a partial run that still cannot read a matching map ends as
+failed (never paused), so Re-scan stays available.
+
+## Workspace runs
+
+In **New pipeline**, set **Target** to **Workspace**. The planner writes one plan whose every
+task is tagged with the projects it touches (`Projects: <projectKey>[, ...]`), and each
+implementer edits only those. Every Git member gets its own branch and worktree; every Folder
+member gets its own copy, which you apply to its folder (or discard) on its own. **Workspace
+Review** reviews each changed member and merges the findings into one verdict per review cycle.
 
 ## Cross-project graph
 

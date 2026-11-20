@@ -24,7 +24,7 @@ test('lines per aux kind in fixed order, agents = total − Σ aux, lower bounds
   assert.equal(b.floorUsd, 0.0234);
   assert.equal(b.stopped, 1);
   assert.deepEqual(b.cut, { turns: 2, tokens: 21000, floorUsd: 0.31 });
-  assert.deepEqual([...AUX_ORDER], ['away', 'auto', 'title']);
+  assert.deepEqual([...AUX_ORDER], ['away', 'auto', 'title', 'session']);
 });
 
 test('the total is the run total the header shows (not Σ steps); a missing or null total falls back to Σ steps', () => {

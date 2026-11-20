@@ -1,5 +1,6 @@
 // ui/public/artifacts/viewer.mjs — the artifact popup (Chat P5): a modal over the page with the file's preview
-// (preview.mjs), its name and `<Step> · cycle N · size`, ←/→ through a list, Download, Full screen and Close. A file
+// (preview.mjs), its name and `<Step> · cycle N · size`, ←/→ through a list, Copy (a text preview), Download, Full
+// screen and Close. A file
 // with no preview — or one too large to preview — opens the full-window info view with its facts and Download. One
 // viewer per document: opening another replaces it. Esc, the backdrop and Close dismiss it and focus goes back to
 // what opened it. While it is open, Esc and ←/→ are its own: a WINDOW capture listener runs before the run pages'
@@ -8,6 +9,7 @@ import {
   relOf, baseName, displayPath, formatBytes, previewKindFor, RAW_PREVIEW_KINDS, TEXT_PREVIEW_MAX_BYTES,
 } from './common.mjs';
 import { renderPreview, PINNABLE_PREVIEW_KINDS } from './preview.mjs';
+import { copyButton, copyFromButton } from '../copy-button.mjs';
 
 const GLYPH = {
   prev: '<path d="M15 6l-6 6 6 6"/>',
@@ -26,6 +28,24 @@ const NUL = String.fromCharCode(0);
 /** Dialogs that can stack over the popup (the confirm, the Stop warning, a native <dialog>): they own the keys and the focus. */
 const STACKED = '#confirm-modal:not(.hidden), #stop-modal:not(.hidden), dialog[open]';
 const OPEN = new WeakMap();                     // document -> the viewer open in it
+
+/** A rendered markdown preview as HTML for the clipboard (null for any other preview, or markdown shown as text): the
+ *  sanitized page the popup shows, without its code blocks' copy buttons or the highlight classes. */
+function renderedHtml(stage) {
+  const md = stage.querySelector('.artifact-markdown');
+  if (!md) return null;
+  const copy = md.cloneNode(true);
+  for (const b of copy.querySelectorAll('.md-code-copy')) b.remove();
+  for (const n of copy.querySelectorAll('[class]')) n.removeAttribute('class');
+  return copy.innerHTML;
+}
+
+/** Close the popup open in `doc`, if any: an entry point that opens the chat beside the page (app.js openChat), where
+ *  the route to Chat used to close it. */
+export function closeOpenViewer(doc, opts) {
+  const open = OPEN.get(doc);
+  if (open) open.close(opts);
+}
 
 /** Where a popup is: the view (the first hash segment) and the run it belongs to — a run page's run (`#running/<id>…`,
  *  `#history/<key>/<id>…`, its Details suffix dropped), the run the Chat panel shows (`#chat/<thread>/run/<id>…`). */
@@ -182,10 +202,15 @@ export function openArtifactViewer({ doc, win = doc.defaultView, fetch: fetchFn,
   dlBtn.type = 'button';
   dlBtn.setAttribute('aria-label', 'Download');
   dlBtn.append(svg(GLYPH.download), h('span', null, 'Download'));
+  // Copy: the file's text, shown only once a text preview has rendered (a raw preview, the info view and a failed load
+  // have no text to copy). The one copy button (copy-button.mjs) as a labelled action beside Download.
+  const copyBtn = copyButton(doc, { name: 'Copy', action: true, cls: 'apv-copy' });
+  copyBtn.classList.remove('btn-sm');         // Download's size, not a small button beside it
+  copyBtn.hidden = true;
   const fullBtn = iconBtn('apv-full', 'Full screen', GLYPH.full);
   fullBtn.setAttribute('aria-pressed', 'false');
   const closeBtn = iconBtn('apv-close', 'Close', GLYPH.close);
-  actions.append(prevBtn, pos, nextBtn, dlBtn, fullBtn, closeBtn);
+  actions.append(prevBtn, pos, nextBtn, copyBtn, dlBtn, fullBtn, closeBtn);
   head.append(titles, actions);
   const note = h('p', 'apv-note');
   note.setAttribute('role', 'alert');
@@ -210,6 +235,8 @@ export function openArtifactViewer({ doc, win = doc.defaultView, fetch: fetchFn,
   let token = 0;
   let closed = false;
   let undecorate = null;
+  let copyText = null;                        // the shown file's text, once its text preview rendered
+  let copyHtml = null;                        // a markdown preview's rendered page, copied beside the source
   const undo = () => { const u = undecorate; undecorate = null; if (typeof u === 'function') { try { u(); } catch { /* a decoration never blocks the viewer */ } } };
   const sizes = new Map();                    // rel -> bytes a HEAD found for a row that did not carry them
   const sizeOf = (a) => (a.bytes != null ? a.bytes : sizes.get(relOf(a)));
@@ -289,6 +316,9 @@ export function openArtifactViewer({ doc, win = doc.defaultView, fetch: fetchFn,
     const a = items[index];
     const my = ++token;
     undo();
+    copyText = null;
+    copyHtml = null;
+    copyBtn.hidden = true;
     header(a);
     root.classList.remove('is-info');
     const stage = h('div', 'apv-stage artifact-view');
@@ -343,9 +373,11 @@ export function openArtifactViewer({ doc, win = doc.defaultView, fetch: fetchFn,
         if (!live()) return;
         if (wide == null) { info(stage, a, 'No preview for this file type'); return; }
         await renderPreview({ kind: a.kind || null, relPath: shown, text: wide, previewKind: a.previewKind || null }, stage, deps);
+        if (live()) { copyText = wide; copyBtn.hidden = false; }
         return;
       }
       await renderPreview({ kind: a.kind || null, relPath: shown, text, previewKind: a.previewKind || null }, stage, deps);
+      if (live()) { copyText = text; copyHtml = renderedHtml(stage); copyBtn.hidden = false; }
       if (live() && typeof decorate === 'function') {
         try { undecorate = decorate({ artifact: a, stage, body, root }) || null; } catch { undecorate = null; }
       }
@@ -485,6 +517,7 @@ export function openArtifactViewer({ doc, win = doc.defaultView, fetch: fetchFn,
 
   prevBtn.addEventListener('click', () => { if (index > 0) show(index - 1); });
   nextBtn.addEventListener('click', () => { if (index < items.length - 1) show(index + 1); });
+  copyBtn.addEventListener('click', () => { void copyFromButton(copyBtn, copyText || '', { html: copyHtml }); });
   dlBtn.addEventListener('click', (e) => { if (!(e.detail > 1)) download(); });
   fullBtn.addEventListener('click', () => setFull(!root.classList.contains('is-full')));
   closeBtn.addEventListener('click', () => close());

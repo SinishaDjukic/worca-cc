@@ -7,12 +7,18 @@ import { engineLabel } from '../../shared/engine-switch.mjs';
 import { envFlag } from '../model-env.mjs';
 import { cachedReadiness, storeReadiness } from './ready-cache.mjs';
 import { probeClaudeAuth } from '../preflight.mjs';
+import { configuredClaudeBin, explainUnspawnableCli } from '../cli-resolve.mjs';
+import { CLAUDE_CLI } from './cli-specs.mjs';
 import { brokerEngineRefusal } from '../broker-client.mjs';
 
 /** Claude's readiness: its sign-in (claude auth status, cached; env keys and the broker count as signed in). Only a
  *  definite signed-out refuses — an unknown answer (an older CLI) reads as ready, as the run-start check treats it. */
 async function claudeSignIn() {
-  const a = await probeClaudeAuth({ bin: process.env.WORCA_CLAUDE_BIN || 'claude' });
+  const bin = configuredClaudeBin();
+  // A Windows npm shim that cannot be spawned reads as the same hint the run start and the Getting started tile show.
+  const hint = explainUnspawnableCli(bin, CLAUDE_CLI);
+  if (hint) return { refusal: hint };
+  const a = await probeClaudeAuth({ bin });
   return a.state === 'signed-out' ? { refusal: 'Claude Code is not signed in — run claude, then /login' } : {};
 }
 

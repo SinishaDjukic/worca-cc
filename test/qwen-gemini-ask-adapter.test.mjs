@@ -3,7 +3,7 @@
 // support check and what an Ask spawn leaves to the turn (a session the CLI no longer knows).
 import { test, after } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, rmSync, writeFileSync, chmodSync, existsSync, mkdirSync, statSync, realpathSync } from 'node:fs';
+import { mkdtempSync, rmSync, writeFileSync, chmodSync, existsSync, mkdirSync, statSync, realpathSync, symlinkSync, readdirSync } from 'node:fs';
 import { worcaHome } from '../src/core/projects.mjs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -117,6 +117,22 @@ test('Gemini chat spawn: the chat folder\'s settings (no built-in, no hook, no d
   assert.equal(rec.env.GEMINI_CLI_TRUST_WORKSPACE, 'true');
   assert.match(rec.stdin, /^=== SYSTEM ===\n[\s\S]*SYS\n=== END SYSTEM ===\n\np$/);
   assert.equal(existsSync(join(cwd, '.gemini', 'settings.json')), false, 'the settings file (it names the thread) is removed');
+});
+
+test('Gemini chat spawn: a chat folder under tmp/ask that is a link (another agent made it first) is refused, nothing written', POSIX, async () => {
+  const dir = tmp();
+  const fake = fakeGemini(dir, 'hi');
+  const prev = process.env.WORCA_HOME;
+  process.env.WORCA_HOME = join(dir, 'home');   // a Worca home of its own: its tmp/ask/gemini is the link
+  const ask = join(worcaHome(), 'tmp', 'ask'); const elsewhere = join(dir, 'elsewhere');
+  mkdirSync(ask, { recursive: true }); mkdirSync(elsewhere);
+  symlinkSync(elsewhere, join(ask, 'gemini'));
+  try {
+    await assert.rejects(runGeminiProcess({ cwd: join(ask, 'gemini', 'ask_00000003'), bin: fake.bin, prompt: 'p', askLockdown: true, sandbox: 'read-only', mcpConfigPath: mcpFile(dir) }),
+      /not a folder worca made/);
+  } finally { process.env.WORCA_HOME = prev; }
+  assert.equal(fake.record(), null, 'gemini never ran');
+  assert.deepEqual(readdirSync(elsewhere), [], 'nothing was written through the link');
 });
 
 test('the Ask path of each adapter: no read-only refusal, no Worca-home refusal of its cwd', POSIX, async () => {

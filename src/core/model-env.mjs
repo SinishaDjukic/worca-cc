@@ -160,9 +160,10 @@ export function withProviderModesOff(env) {
 // itself (300s to first byte off first party, +1s per 32 KB of request); and
 // API_TIMEOUT_MS (default 600s), which caps the watchdog and is the only bound
 // left once Bun's timeout is lifted. A gateway that buffers the stream (Vertex
-// via the Bosch farm, 2026-09-28) sends nothing until a long xhigh turn is done,
-// so every retry died at the same wall. 30 min is the CLI's clamp ceiling for
-// the watchdogs; API_TIMEOUT_MS matches it so it never undercuts them.
+// behind a corporate gateway, 2026-09-28) sends nothing until a long xhigh
+// turn is done, so every retry died at the same wall. 30 min is the CLI's
+// clamp ceiling for the watchdogs; API_TIMEOUT_MS matches it so it never
+// undercuts them.
 export const STREAM_TIMEOUT_MS = '1800000';
 export const STREAM_TIMEOUT_ENV = Object.freeze({
   API_FORCE_IDLE_TIMEOUT: '0',
@@ -207,11 +208,13 @@ export function withStreamTimeouts(env) {
 // entry silently flooring every fan-out child would contradict the per-node
 // control the UI shows. CLAUDE_CODE_FORK_SUBAGENT is worca's own: the Claude adapter sets it to 0 on
 // every spawn (engines/claude.mjs CLAUDE_SPAWN_ENV), and an entry that turned forks back on would
-// bypass the pinned investigator and that same per-node policy.
+// bypass the pinned investigator and that same per-node policy. CLAUDE_CODE_SIMPLE and CLAUDE_CODE_SAFE_MODE switch
+// every settings hook off, the fail-closed read and write guards included (engines/claude.mjs HOOKS_OFF_ENV_KEYS).
 export const RESERVED_MODEL_ENV_KEYS = [
   'PATH', 'HOME', 'TMPDIR', 'SHELL', 'USER', 'LOGNAME', 'TERM',
   'NODE_OPTIONS', 'NODE_EXTRA_CA_CERTS',
   'CLAUDECODE', 'CLAUDE_CODE_SUBPROCESS_ENV_SCRUB', 'CLAUDE_CODE_SUBAGENT_MODEL', 'CLAUDE_CODE_FORK_SUBAGENT',
+  'CLAUDE_CODE_SIMPLE', 'CLAUDE_CODE_SAFE_MODE',
 ];
 export const RESERVED_MODEL_ENV_PREFIXES = ['WORCA_'];
 
@@ -696,9 +699,6 @@ export function bridgeExcludedTools(upstream) {
 }
 
 // ── providers: account-level state shared by bridged entries (§6.2) ─────────
-export const COPILOT_ACCOUNT_TYPES = Object.freeze(['individual', 'business', 'enterprise']);
+export const COPILOT_ACCOUNT_TYPES = Object.freeze(['individual', 'business', 'enterprise', 'ghe-com']);
 export const DEFAULT_PROVIDER_CONCURRENCY = Object.freeze({ copilot: 4, openai: 8, anthropic: 8 });
 export const MAX_PROVIDER_CONCURRENCY = 64;
-/** Bump when the Copilot terms notice wording changes materially — a stored
- *  acknowledgement of an older version is shown again (§8.2). */
-export const COPILOT_TERMS_VERSION = 1;

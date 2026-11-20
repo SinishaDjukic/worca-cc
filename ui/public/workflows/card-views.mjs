@@ -133,3 +133,97 @@ export function buildCardView(b, { h, graph = null, title = 'Proposed workflow',
   el.appendChild(row);
   return el;
 }
+
+/** G6 (src/core/ask/script-approval.mjs): the chat asks before it runs a draft script or replaces a saved one. The
+ *  program is shown open — it is exactly what the click runs or saves. `onAnswer(body)` posts the card's verb and
+ *  resolves to '' or the refusal to show. */
+export function scriptApprovalCardView(b, { h, button, onAnswer }) {
+  const c = b.card || {};
+  const isSave = c.kind === 'save';
+  const isSaved = !isSave && !c.draft && !!c.saved;   // a saved script run by its key (built-in, plugin, or a command/code param set)
+  const p = (isSave ? c.save : c.draft || c.saved) || {};
+  const m = p.meta || {};
+  const el = h('div', `wfc-card wfc-draft wfc-approval is-${b.state}`);
+  el.setAttribute('role', 'group');
+  el.setAttribute('aria-label', isSave ? 'Replace a script' : 'Run a draft script');
+  if (b.state === 'declined') { el.appendChild(h('p', 'wfc-muted', `Declined: ${c.summary || c.key}`)); return el; }
+  const what = isSaved ? 'Script' : 'Draft script';
+  const title = b.state === 'applied' ? (isSave ? 'Script saved' : `${what} ran`)
+    : b.state === 'failed' ? (isSave ? 'Script not saved' : `${what} did not run`)
+      : (isSave ? 'Chat wants to replace your script' : isSaved ? 'Chat wants to run a script' : 'Chat wants to run a draft script');
+  el.appendChild(h('div', 'wfc-card-t', title));
+  const id = h('div', 'wfc-ident');
+  id.append(h('span', 'wfc-name', c.displayName || m.displayName || c.key),
+    h('span', 'wfc-chip mono', c.runtime === 'shell' ? 'Shell' : c.runtime === 'python' ? 'Python' : 'Node.js'), h('span', 'mono wfc-muted', c.key));
+  el.appendChild(id);
+  if (b.state === 'proposed') {
+    const r = c.request || {};
+    el.appendChild(h('p', 'wfc-reason', isSave
+      ? 'Saving replaces the program your workflows and schedules run with this one.'
+      : `It runs on this machine with your access and no sandbox, in ${r.cwd === 'project' ? `the checkout of ${r.projectKey}` : 'an empty scratch folder'}, for up to ${r.timeoutSec || 120} s.`));
+  }
+  // Every value that decides what runs, open: a command/code param or meta.command replaces or drives the program.
+  for (const v of Array.isArray(c.values) ? c.values : []) {
+    const vd = h('details', 'wfc-src');
+    vd.open = b.state === 'proposed';
+    vd.appendChild(h('summary', '', v.type === 'meta' ? 'Command' : `${v.type === 'code' ? 'Code' : 'Command'} (param ${v.id})`));
+    vd.appendChild(h('pre', 'mono', String(v.value ?? '')));
+    el.appendChild(vd);
+  }
+  const det = h('details', 'wfc-src');
+  det.open = b.state === 'proposed';
+  det.appendChild(h('summary', '', isSaved ? 'Saved program' : 'Program'));
+  det.appendChild(h('pre', 'mono', p.source || ''));
+  if (p.sourceTruncated) det.appendChild(h('p', 'wfc-muted', `Shortened here: the whole program is on the Scripts page (${c.key}).`));
+  el.appendChild(det);
+  if (p.sourceWin32) {
+    const win = h('details', 'wfc-src');
+    win.appendChild(h('summary', '', 'Program (Windows)'));
+    win.appendChild(h('pre', 'mono', p.sourceWin32));
+    el.appendChild(win);
+  }
+  // Which exit codes count as clean or blocking, and the saved test cases, change what a check reports: show them too.
+  // A save that removes them (exitCodes null, no cases) says so: an absent section would read as "unchanged".
+  const codes = m.exitCodes && typeof m.exitCodes === 'object' ? m.exitCodes : null;
+  const codesRemoved = isSave && m.exitCodes === null;
+  if (codes || codesRemoved) {
+    const ec = h('details', 'wfc-src');
+    ec.open = b.state === 'proposed';
+    ec.appendChild(h('summary', '', codesRemoved ? 'Exit codes: removed' : 'Exit codes'));
+    const list = (v) => (Array.isArray(v) && v.length ? v.join(', ') : 'none');
+    ec.appendChild(h('pre', 'mono', codesRemoved ? 'The saved exit codes are removed: the script falls back to the default rule.'
+      : `clean: ${list(codes.clean)}\nblocking: ${list(codes.blocking)}`));
+    el.appendChild(ec);
+  }
+  if (Array.isArray(p.cases)) {
+    const casesRemoved = isSave && p.cases.length === 0;
+    const tc = h('details', 'wfc-src');
+    tc.open = b.state === 'proposed';
+    tc.appendChild(h('summary', '', casesRemoved ? 'Test cases: removed' : `Test cases (${p.cases.length})`));
+    tc.appendChild(h('pre', 'mono', casesRemoved ? 'Every saved test case of this script is deleted.' : JSON.stringify(p.cases, null, 2)));
+    el.appendChild(tc);
+  }
+  const err = h('p', 'wfc-err');
+  err.hidden = true;
+  err.setAttribute('role', 'status');
+  const answer = async (body) => {
+    err.hidden = true;
+    const why = await onAnswer(body);
+    if (why) { err.textContent = why; err.hidden = false; }
+  };
+  const row = h('div', 'wfc-actions');
+  const res = (c.result && c.result.result) || null;
+  if (b.state === 'failed') row.appendChild(h('span', 'wfc-err', b.error || (c.result && c.result.error) || 'failed'));
+  else if (b.state === 'applied') {
+    row.appendChild(okChip(h, isSave ? 'Saved to your scripts'
+      : `${res && res.status ? res.status : 'done'}${res && Number.isInteger(res.exitCode) ? `, exit ${res.exitCode}` : ''}`));
+  } else {
+    row.append(
+      button(isSave ? 'Don’t save' : 'Don’t run', 'btn btn-sm', () => answer({ state: 'declined' })),
+      h('span', 'wfc-spacer'),
+      button(isSave ? 'Save' : 'Run', 'btn btn-sm btn-primary', () => answer({ state: 'applied' })),
+    );
+  }
+  el.append(row, err);
+  return el;
+}

@@ -104,6 +104,14 @@ export function createLogDrawer({ doc, win = {}, storage = null, onClose = null,
       el.hidden = false;
     },
     setLive(on) { live.hidden = !on; },
+    /** A line under the head (a session member's place, Task 59): an element, or null to remove it. Nothing is added
+     *  to the drawer until a caller hands one. */
+    setSub(node) {
+      const old = el.querySelector(':scope > .wf-log-sub');
+      if (old === node) return;
+      if (old) old.remove();
+      if (node) el.insertBefore(node, body);
+    },
     close,
     isOpen: () => !el.hidden,
     setHeight,

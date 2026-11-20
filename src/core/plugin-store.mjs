@@ -35,7 +35,7 @@ import { normalizeAskBlock, validateFormDef } from '../shared/forms/form-def.mjs
 import { fileAccepts } from '../shared/forms/answer.mjs';
 import { normalizeScriptMeta, resolvePlatformValue } from '../shared/graph/script-meta.mjs';
 import { pluginModelSecretStatus } from './plugin-models.mjs';
-import { pluginSetupState } from './plugin-setup-state.mjs';
+import { pluginSetupState, pluginHasSettings } from './plugin-setup-state.mjs';
 import { pluginLatest } from './plugin-latest.mjs';
 import { referencedPluginModels } from './config.mjs';
 import { clearBindingsForPlugin } from './source-bindings.mjs';
@@ -44,6 +44,7 @@ import { parseFrontmatter } from './frontmatter.mjs';
 import { agentIdentity } from './agent-user.mjs';
 import { gitAvailable } from './git-available.mjs';
 import { withNoGitPath } from './nogit-stub.mjs';
+import { runNpm } from './npm-command.mjs';
 
 const execFileP = promisify(execFile);
 const defaultExec = (cmd, args, opts = {}) =>
@@ -288,20 +289,19 @@ export function ignoredContributions(name, dir, opts = {}) {
 const setupEnv = () => (gitAvailable() ? {} : { env: withNoGitPath(process.env) });
 
 /** Declared setup FACTS only (spec §4.1): setup.node -> npm ci (lockfile
- *  required, scripts ignored); setup.python 'pyproject' -> uv sync. */
-export async function runSetup(versionDir, manifest, { exec = defaultExec } = {}) {
+ *  required, scripts ignored); setup.python 'pyproject' -> uv sync. `npm` is
+ *  npmCommand's context (platform, env, execPath, exists), for tests. */
+export async function runSetup(versionDir, manifest, { exec = defaultExec, npm } = {}) {
   const commands = [];
   if (manifest?.setup?.node) {
     if (!existsSync(join(versionDir, 'package-lock.json'))) {
       throw new Error(`setup.node declared but ${join(versionDir, 'package-lock.json')} is missing (npm ci requires a lockfile)`);
     }
-    // cwd instead of --prefix so no native path is passed as an argument: on
-    // Windows npm is `npm.cmd`, which needs a shell (bare `npm` -> ENOENT, and
-    // execFile of a `.cmd` -> EINVAL on modern Node), and shell:true does NOT
-    // quote args — a `--prefix C:\…` path would be mangled. With the dir as cwd
-    // the only args left are flag literals, safe through the shell.
-    await exec('npm', ['ci', '--ignore-scripts', '--omit=dev'],
-      { cwd: versionDir, shell: IS_WINDOWS, ...setupEnv() });
+    // On Windows npm is `npm.cmd`, which needs a shell; runNpm starts npm's
+    // npm-cli.js with node there, or one quoted command line through the shell
+    // (npm-command.mjs). The dir is the cwd, not a --prefix argument, to keep
+    // the arguments to flag literals.
+    await runNpm(exec, ['ci', '--ignore-scripts', '--omit=dev'], { cwd: versionDir, ...setupEnv() }, npm);
     commands.push('npm ci');
   }
   if (manifest?.setup?.python === 'pyproject') {
@@ -372,12 +372,12 @@ const rmLink = (path) => {
  *  (EPERM). It CAN create a directory JUNCTION unprivileged, so there we
  *  remove-then-create a junction in place. A junction needs an ABSOLUTE target
  *  (POSIX keeps the relative "versions/<sha7>" so the link survives a moved
- *  plugin dir); rmSync on a junction drops only the link, never the target. */
+ *  plugin dir); unlinking a junction drops only the link, never the target. */
 function swapCurrent(name, target) {
   const current = pluginCurrentDir(name);
   mkdirSync(pluginDir(name), { recursive: true });
   if (IS_WINDOWS) {
-    rmSync(current, { force: true });
+    rmLink(current); // unlink drops the junction only; rmSync without recursive throws EISDIR on it
     symlinkSync(resolve(pluginDir(name), target), current, 'junction');
     return;
   }
@@ -422,6 +422,10 @@ function precheck(versionDir, manifest) {
     throw new Error(`doctor precheck failed: ${bad.map((x) => `${x.id} (${x.detail})`).join('; ')}`);
   }
 }
+
+/** A full commit id (SHA-1, or SHA-256 for a sha256 repository): what the
+ *  consent routes accept as the pin a person reviewed. */
+export const COMMIT_SHA_RE = /^(?:[0-9a-f]{40}|[0-9a-f]{64})$/;
 
 /**
  * Install (spec §6.1): ensure cache -> export pinned sha -> validate -> setup ->
@@ -829,6 +833,7 @@ export function listInstalledPlugins({ marketplaces = null } = {}) {
       // registry, so its templates would misreport V4.
       ignored: manifest && e.enabled !== false ? ignoredContributions(name, cur, { registry, drops, scripts, scriptDrops }) : [],
       setup: manifest ? pluginSetupState(name, manifest) : { ok: true, missing: [], noProfiles: [] },
+      hasSettings: manifest ? pluginHasSettings(manifest) : false,
       description: manifest?.description || null,
       ref: e.ref ?? null,
       notes,

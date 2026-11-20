@@ -184,3 +184,19 @@ test('Gemini CLI and Qwen Code: step slots only, like Cursor', () => {
     assert.deepEqual(utilityModelFor(e, 'title'), { model: null, effort: null, source: 'default' });
   }
 });
+
+test('pr.open: project > team default > none; no user layer (settings.json is ignored)', () => {
+  const doc = (fields) => writeTeamPolicyPrefs(projectKey(dir), { present: true, docKnown: true, slug: 'acme/cascade', headSha: 'abc1234', delegateTo: null, doc: { ...TEAM_DOC, fields }});
+  assert.deepEqual(pick(resolveSetting('pr.open', { projectDir: dir })), { value: 'none', source: 'default' });
+  assert.deepEqual(pick(resolveSetting('pr.slices', { projectDir: dir })), { value: 'each', source: 'default' });
+  doc({ 'pr.open': { kind: 'default', value: 'ready' }, 'pr.slices': { kind: 'default', value: 'one' } });
+  assert.deepEqual(pick(resolveSetting('pr.open', { projectDir: dir })), { value: 'ready', source: 'team' });
+  assert.deepEqual(pick(resolveSetting('pr.slices', { projectDir: dir })), { value: 'one', source: 'team' });
+  writeUser({ pr: { open: 'draft' } });
+  assert.equal(resolveSetting('pr.open', { projectDir: dir }).source, 'team', 'a user layer never applies');
+  writeProjectRow({ extra: { settings: { pr: { open: 'draft' } } } });
+  doc({ 'pr.open': { kind: 'default', value: 'ready' } });
+  const r = resolveSetting('pr.open', { projectDir: dir });
+  assert.deepEqual(pick(r), { value: 'draft', source: 'project' });
+  assert.equal(r.layers.user, undefined);
+});

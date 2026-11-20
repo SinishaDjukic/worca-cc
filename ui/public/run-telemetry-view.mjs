@@ -9,7 +9,8 @@ import { ctxLevel, ctxTrigger, fmtWindow, kTok } from './ask-meter.mjs';
 const LIVE_TTL_MS = 5000;
 const MISSING_TTL_MS = 30_000;   // a live run that recorded nothing (flag off when it started): ask rarely
 const SVG_NS = 'http://www.w3.org/2000/svg';
-const W = 320, H = 48, PAD = 2;
+const W = 320, H = 64, PAD = 3;
+const HEADROOM = 1.15;   // the y-axis tops out a little above the peak, not at the window
 
 const CACHE_MAX = 20;   // runs kept; the least recently painted one goes first
 const cache = new Map();   // runId -> { at (last settled fetch), data, inflight }, oldest use first
@@ -53,10 +54,14 @@ export function stepFigures(st) {
     out.push({ text: `session input ${kTok(st.sessionInput)}`,
       title: 'This engine reports usage only at the end of a session: the input of every call added up, not a context size.' });
   }
+  const totals = [st.wallMs ? `wall ${fmtMs(st.wallMs)}` : '', Number.isFinite(st.costUsd) && st.costUsd > 0 ? `$${st.costUsd.toFixed(2)}` : ''].filter(Boolean);
+  if (totals.length) out.push({ text: totals.join(' · '), title: 'Wall: the time the step ran, paused stretches left out. Cost: what the engine reported for the step, sub-agents included.' });
   if (st.perCall) out.push({ text: plural(st.calls, 'call') });
   if (st.sessions > 1) out.push({ text: plural(st.sessions, 'session'), title: 'Retries, resumes and question rounds each run a session.' });
   const time = [st.startupMs ? `start ${fmtMs(st.startupMs)}` : '', st.modelMs ? `model ${fmtMs(st.modelMs)}` : '', st.toolMs ? `tools ${fmtMs(st.toolMs)}` : ''].filter(Boolean);
   if (time.length) out.push({ text: time.join(' · '), title: 'Start: until the agent\'s first event. Model: waiting for each call (approximate). Tools: tool run times added up; tools that ran in parallel each count, so the parts can add up to more than the step took.' });
+  if (st.agentWaitMs) out.push({ text: `waiting on sub-agents ${fmtMs(st.agentWaitMs)}`, title: 'The agent sat in foreground sub-agent calls this long (parallel ones count once). Not part of the tools time.' });
+  if (st.testMs) out.push({ text: `tests ${fmtMs(st.testMs)}${st.testRuns > 1 ? ` (${plural(st.testRuns, 'run')})` : ''}`, title: 'Shell calls that ran a test command, in the agent and its sub-agents (parallel ones count once).' });
   if (st.cacheShare != null) out.push({ text: `cache ${Math.round(st.cacheShare * 100)}%`, title: 'Share of all prompt tokens read from the prompt cache.' });
   if (st.toolErrors) out.push({ text: plural(st.toolErrors, 'tool error') });
   if (st.retries) out.push({ text: plural(st.retries, 'retry', 'retries'), level: 'warn' });
@@ -72,6 +77,8 @@ export function harnessFigures(h) {
   if (h.persists) out.push(`${plural(h.persists, 'save')} · avg ${fmtMs(h.persistAvgMs) || '0ms'} · max ${fmtMs(h.persistMaxMs) || '0ms'} · ${Math.round(h.rowsPerPersist || 0)} rows each`);
   if (h.emits) out.push(`${plural(h.emits, 'live update')} · avg ${fmtBytes(h.emitAvgBytes)} · max ${fmtBytes(h.emitMaxBytes)}`);
   if (h.lagMaxMs != null) out.push(`event loop delay p99 ≤ ${fmtMs(h.lagP99MaxMs) || '0ms'} · max ${fmtMs(h.lagMaxMs) || '0ms'}`);
+  if (h.gcs) out.push(`${plural(h.gcs, 'GC pause')} · ${fmtMs(h.gcMs) || '0ms'} · max ${fmtMs(h.gcMaxMs) || '0ms'}`);
+  if (h.loadMax != null) out.push(`machine load avg ${h.loadAvg.toFixed(1)} · max ${h.loadMax.toFixed(1)}`);
   return out;
 }
 
@@ -81,29 +88,49 @@ function el(doc, tag, attrs = {}, ns = null) {
   return n;
 }
 
-/** The context-over-time chart: the series, the window (dashed), where compaction starts (dotted). */
+/** The context-over-time chart: the series scaled to its own peak (×1.15), sub-agent calls as dots, and the window
+ *  (dashed) and the compaction start (dotted) only where they fall inside that scale. Its caption names the start,
+ *  the peak and when, and the duration; the window says when it is off the scale. */
 export function contextChart(doc, st) {
   const pts = Array.isArray(st?.series) ? st.series : [];
   if (!st?.perCall || pts.length < 2) return null;     // end-of-session sums are no context over time
-  const xMax = Math.max(1, pts[pts.length - 1][0]);
+  const sub = Array.isArray(st.subSeries) ? st.subSeries : [];
+  const xMax = Math.max(1, pts[pts.length - 1][0], ...sub.map((p) => p[0]));
   const trigger = ctxTrigger(st.window);
-  const yMax = Math.max(st.window || 0, ...pts.map((p) => p[1])) || 1;
+  const peakPt = pts.reduce((a, p) => (p[1] > a[1] ? p : a), pts[0]);
+  const yMax = Math.max(1, ...pts.map((p) => p[1]), ...sub.map((p) => p[1])) * HEADROOM;
   const x = (v) => PAD + (v / xMax) * (W - 2 * PAD);
   const y = (v) => H - PAD - (v / yMax) * (H - 2 * PAD);
-  const svg = el(doc, 'svg', { viewBox: `0 0 ${W} ${H}`, preserveAspectRatio: 'none', class: 'tel-chart', role: 'img',
-    'aria-label': `Context over time: peak ${kTok(st.peak ?? 0)}${st.window ? ` of ${fmtWindow(st.window)}` : ''}` }, SVG_NS);
+  const box = el(doc, 'figure', { class: 'tel-chart-box' });
+  const label = `Context over time: start ${kTok(pts[0][1])}, peak ${kTok(peakPt[1])} at ${fmtMs(peakPt[0]) || '0s'}, `
+    + `last ${kTok(pts[pts.length - 1][1])} after ${fmtMs(pts[pts.length - 1][0]) || '0s'}${st.window ? ` (window ${fmtWindow(st.window)})` : ''}`;
+  const svg = el(doc, 'svg', { viewBox: `0 0 ${W} ${H}`, preserveAspectRatio: 'none', class: 'tel-chart', role: 'img', 'aria-label': label }, SVG_NS);
+  svg.appendChild(el(doc, 'title', {}, SVG_NS)).textContent = label;
   const line = (y0, cls) => svg.appendChild(el(doc, 'line', { x1: PAD, x2: W - PAD, y1: y0, y2: y0, class: cls }, SVG_NS));
-  if (st.window) line(y(st.window), 'tel-win');
-  if (trigger && trigger !== st.window) line(y(trigger), 'tel-trig');
+  const inRange = (v) => v > 0 && v <= yMax;
+  if (inRange(st.window)) line(y(st.window), 'tel-win');
+  // Two reference lines a few pixels apart read as one smudge: the compaction line only when it stands apart.
+  if (inRange(trigger) && trigger !== st.window && (!inRange(st.window) || Math.abs(y(trigger) - y(st.window)) >= 4)) line(y(trigger), 'tel-trig');
   for (const c of st.compactions || []) {
     if (c.sub) continue;
     const cx = x(Math.min(xMax, Math.max(0, c.at)));
     svg.appendChild(el(doc, 'line', { x1: cx, x2: cx, y1: PAD, y2: H - PAD, class: 'tel-compact' }, SVG_NS));
   }
+  // Zero-length segments with round caps: dots that keep their shape when the chart stretches.
+  if (sub.length) svg.appendChild(el(doc, 'path', { d: sub.map((p) => `M${x(p[0]).toFixed(1)},${y(p[1]).toFixed(1)}l0,0`).join(''), class: 'tel-sub' }, SVG_NS));
   let d = '';
   pts.forEach((p, i) => { d += `${i ? 'L' : 'M'}${x(p[0]).toFixed(1)},${y(p[1]).toFixed(1)}`; });
   svg.appendChild(el(doc, 'path', { d, class: 'tel-line' }, SVG_NS));
-  return svg;
+  box.appendChild(svg);
+  const cap = el(doc, 'figcaption', { class: 'tel-cap mono' });
+  const part = (text, cls = '') => { const s = el(doc, 'span', cls ? { class: cls } : {}); s.textContent = text; cap.appendChild(s); };
+  part(`start ${kTok(pts[0][1])}`);
+  part(`peak ${kTok(peakPt[1])} at ${fmtMs(peakPt[0]) || '0s'}`, 'tel-cap-peak');
+  if (sub.length) part(`sub-agents ${kTok(Math.max(...sub.map((p) => p[1])))} max`, 'tel-cap-sub');
+  if (st.window && !inRange(st.window)) part(`window ${fmtWindow(st.window)} (off scale)`, 'tel-cap-win');
+  part(fmtMs(xMax) || '0s', 'tel-cap-end');
+  box.appendChild(cap);
+  return box;
 }
 
 /** The empty slot a card carries; `paintTelemetry` fills it. '' while the flag is off. */

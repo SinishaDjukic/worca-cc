@@ -1,0 +1,47 @@
+/* Project settings put Save right after the section: the same 18px gap a .field leaves. */
+.pd-settings-body .engine-card{margin-bottom:18px;}
+@media (max-width:640px){
+  .engine-slot-head{display:none;}
+  .engine-slots .inherit-field.engine-slot{grid-template-columns:1fr;row-gap:6px;}
+  .engine-slots .engine-slot .inherit-row{grid-column:1;}
+  .engine-slots .engine-slot .inherit-sub-cap{display:block;}
+  .engine-slot-actions{justify-content:flex-start;}
+}
+.pd-settings-card{margin-top:14px}
+/* House brief (Settings → Project): 4px corners (--r-sm), 2px on inner boxes (--r-xs), 1px dividers;
+   colours are tokens only so light and dark follow data-theme. */
+.card.house-brief{margin-top:14px;border-radius:var(--r-card);}
+.house-brief .btn{border-radius:var(--r-sm);}
+.house-brief .hb-summary{margin:4px 0 0;}
+.house-brief .hb-text{margin:12px 0 0;padding:12px;max-height:420px;overflow:auto;white-space:pre-wrap;word-break:break-word;
+  font:12px/1.55 var(--mono);color:var(--ink);background:var(--field);border:1px solid var(--line);border-radius:var(--r-xs);}
+.house-brief .hb-list{list-style:none;margin:10px 0 0;padding:0;}
+.house-brief .hb-list>li{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:8px 0;border-top:1px solid var(--line);font-size:13px;}
+.house-brief .hb-list>li:last-child{border-bottom:1px solid var(--line);}
+.house-brief .hb-pin-text{min-width:0;overflow-wrap:anywhere;}
+.house-brief .hb-pins-head{margin:18px 0 2px;}
+.house-brief .hb-add{display:flex;gap:9px;margin-top:10px;}
+.house-brief .hb-pin-input{flex:1;min-width:0;padding:8px 10px;font-size:13px;border:1px solid var(--line-2);border-radius:var(--r-xs);}
+.house-brief .hb-actions{margin-top:14px;padding-top:12px;border-top:1px solid var(--line);}
+@media (max-width:600px){
+  .house-brief .hb-add{flex-direction:column;}
+  .house-brief .hb-list>li{flex-wrap:wrap;}
+}
+
+/* Agent readiness: the Settings card. Its head holds the title and "View report" (the header chip's popover) on the right. */
+.rs-head{display:flex;align-items:baseline;justify-content:space-between;gap:12px;}
+.rs-head h3{margin:0;}
+.rs-view{flex:none;}
+.readiness-settings-card{padding:16px;border:1px solid var(--line);border-radius:var(--r-card);margin-bottom:16px;
+  scroll-margin-top:90px;}   /* the pinned .pd-tabs (~74px) plus air: the popover's Settings link lands the head below them */
+.readiness-settings-card h3{margin:0 0 4px;font-size:var(--fs-body);font-weight:600;}
+.rs-row{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:4px 16px;align-items:center;padding:12px 0;border-top:1px solid var(--line);}
+.rs-row:first-of-type{border-top:0;}
+.rs-name{font-weight:600;font-size:var(--fs-body);}
+.rs-find{grid-column:1;font-size:var(--fs-meta);color:var(--ink-2);}
+.rs-row .seg{grid-row:1 / span 2;grid-column:2;}
+.rs-row .seg button:disabled{cursor:not-allowed;opacity:.45;}
+.rs-note{grid-column:1 / -1;font-size:var(--fs-meta);color:var(--ink-2);}
+.readiness-settings-card .rs-skip{display:block;margin:12px 0 8px;padding-top:12px;border-top:1px solid var(--line);}
+.readiness-settings-card .qtune-sw{display:flex;align-items:center;gap:8px;margin-bottom:8px;}
+@media (max-width:560px){.rs-row{grid-template-columns:minmax(0,1fr);}.rs-row .seg{grid-row:auto;grid-column:1;justify-self:start;}}

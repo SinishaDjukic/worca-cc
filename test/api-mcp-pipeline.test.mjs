@@ -16,6 +16,7 @@ import { addManualServer, createSet, putMember, deleteMember, setProjectAssignme
 
 const home = useTempHome(after);
 let srv, base, runs, dir, key, billing;
+const tempDirs = [];   // workspace members, removed once the runs on them have stopped
 const JSONH = { 'Content-Type': 'application/json' };
 const post = (p, b) => fetch(`${base}${p}`, { method: 'POST', headers: JSONH, body: JSON.stringify(b) });
 const inFuture = (ms) => new Date(Date.now() + ms).toISOString();
@@ -44,9 +45,13 @@ before(async () => {
   await setProjectAssignment(key, { sets: [billing.id], includeGeneral: false });
 });
 after(async () => {
+  // The mock runs these tests start keep going in the background (worktree, branch, mock steps):
+  // stop each and wait for it to unwind, or its git writes race the rm below (ENOTEMPTY on .git/logs).
+  for (const e of runs?.values() ?? []) { try { e.orch.stop(); } catch { /* already over */ } }
+  await Promise.all([...(runs?.values() ?? [])].map((e) => e.launch?.catch(() => {})));
   if (srv) await new Promise((r) => srv.close(r));
   delete process.env.WORCA_MOCK;
-  await rm(dir, { recursive: true, force: true });
+  await Promise.all([dir, ...tempDirs].map((d) => rm(d, { recursive: true, force: true })));
 });
 
 test('POST /api/mcp/preview: the resolver arrays for a project target, skips worded, no secret in the answer', async () => {
@@ -124,6 +129,7 @@ test('schedules store mcpOptOut with the request and the firing drops membership
 
 test('POST /api/run on a workspace: mcpOptOut reaches the run (unknown dropped) and the workspace schedule replays it', async () => {
   const other = gitDir('mcp-api-ws-run');
+  tempDirs.push(other);
   const ws = await createWorkspace({ name: 'mcp run ws', projectPaths: [dir, other] });
   const r = await post('/api/run', { workspaceId: ws.id, prompt: 'x', mock: true, mcpOptOut: [`${billing.id}|manual:pg`, 'gone|manual:pg'] });
   assert.equal(r.status, 200, await r.clone().text());

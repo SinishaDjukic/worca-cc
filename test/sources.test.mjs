@@ -103,6 +103,25 @@ test('plugin source: getTask -> "# title\\n\\nbody" + fenced json meta + sourceM
   }
 });
 
+test('Ticket updates (D6): getTask\'s meta.project is pinned as sourceMeta.project; anything else leaves no key', async () => {
+  // The flag is off here: the project is pinned regardless (decided 2026-10-30).
+  process.env.WORCA_MOCK = '1';
+  const task = (meta) => ({ getTask: (args) => ({ id: args.id, title: 'T', url: 'https://tracker.test/SHOP-7', state: 'open', updatedAt: 'x', body: 'b', meta }) });
+  try {
+    setMockSourceResponses(task({ key: 'SHOP-7', project: 'SHOP' }));
+    const pinned = await resolveTaskInput({ type: 'plugin', plugin: 'gh', sourceId: 'issues', taskId: 'SHOP-7', profile: 'acme' }, { projectDir: tmp() });
+    assert.equal(pinned.sourceMeta.project, 'SHOP');
+    for (const meta of [{ project: 42 }, { project: '  ' }, {}]) {
+      setMockSourceResponses(task(meta));
+      const bare = await resolveTaskInput({ type: 'plugin', plugin: 'gh', sourceId: 'issues', taskId: 'SHOP-7' }, { projectDir: tmp() });
+      assert.equal('project' in bare.sourceMeta, false, JSON.stringify(meta));
+    }
+  } finally {
+    delete process.env.WORCA_MOCK;
+    setMockSourceResponses(null);
+  }
+});
+
 test('ticketRunTitle: "[ref] title", the ref after the last "/"; null without a title', async () => {
   await checkRows([
     { name: 'Jira key', run: () => assert.equal(ticketRunTitle({ taskId: 'TECH-104', title: 'Fix the login redirect' }), '[TECH-104] Fix the login redirect') },

@@ -4,7 +4,6 @@
 // file of ~110 tests outgrew the default heap; each suite file runs in its own process.
 import { afterEach } from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { JSDOM } from 'jsdom';
 import { confirmDialog } from './confirm-modal.mjs';
@@ -12,6 +11,7 @@ import { useDomRelease } from './jsdom-release.mjs';
 import { proposalFor } from './auto-proposal-fixture.mjs';
 import { MAX_FILE_SECTION_CODE_UNITS } from '../../ui/public/diff-view.mjs';
 import { MAX_HIGHLIGHT_INPUT_BYTES } from '../../ui/public/syntax-highlight.mjs';
+import { readIndexHtml } from '../../src/core/read-index-html.mjs';
 
 // app.js connects at most this many source rows per step (HD_DIFF_WINDOW_LINES);
 // app.js exports nothing, so the tests pin the number here.
@@ -20,7 +20,6 @@ export const WINDOW = 5000;
 // Each test gets a fresh DOM + a fresh module import (cache-busted) so module
 // top-level state can't leak between cases.
 
-export const htmlPath = fileURLToPath(new URL('../../ui/public/index.html', import.meta.url));
 export const appPath = fileURLToPath(new URL('../../ui/public/app.js', import.meta.url));
 
 export const PROJECT = '/tmp/proj';
@@ -31,7 +30,7 @@ const trackDom = useDomRelease(afterEach);
 
 // `local`: localStorage items set before app.js loads (it reads some once at import, e.g. the Runs View menu).
 export async function boot({ fetchHandler, url = 'http://localhost:4317/', hljsLoader = null, hooks = null, local = null } = {}) {
-  const dom = new JSDOM(readFileSync(htmlPath, 'utf8'), { url });
+  const dom = new JSDOM(readIndexHtml(), { url });
   trackDom(dom);
   const { window } = dom;
 

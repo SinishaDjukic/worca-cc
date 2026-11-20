@@ -11,11 +11,19 @@
 
 import { spawn, spawnSync } from 'node:child_process';
 import { access } from 'node:fs/promises';
-import { join, dirname } from 'node:path';
+import { join } from 'node:path';
 import { homedir } from 'node:os';
-import { constants as FS, existsSync, statSync, openSync, readSync, closeSync, mkdirSync, writeFileSync } from 'node:fs';
+import { constants as FS, existsSync, mkdirSync, writeFileSync } from 'node:fs';
 import { gitAvailable } from './git-available.mjs';
+import { guardedGitEnvSync } from './git-guard.mjs';
 import { withNoGitPath } from './nogit-stub.mjs';
+import { cmpVersions } from './preflight-node.mjs';
+import { isNativeExe, resolveCliBin, explainUnspawnableCli, _testing as resolverTesting } from './cli-resolve.mjs';
+import { CLAUDE_CLI, NPM_CLAUDE_EXE_SEGMENTS } from './engines/cli-specs.mjs';
+
+const _probeChildren = new Set();
+/** Test seam: kill the probes still running (each resolves null), so a stopped run's preflight cannot hold a test process open. */
+export function _stopToolProbes() { for (const child of _probeChildren) { try { child.kill('SIGKILL'); } catch { /* gone */ } } }
 
 /**
  * Run a command and resolve to its trimmed stdout, or null on any failure.
@@ -30,12 +38,14 @@ function execSafe(cmd, args, { timeout = 4000 } = {}) {
       resolveP(null);
       return;
     }
+    _probeChildren.add(child);
     let out = '';
     let settled = false;
     const done = (val) => {
       if (settled) return;
       settled = true;
       clearTimeout(timer);
+      _probeChildren.delete(child);
       resolveP(val);
     };
     const timer = setTimeout(() => {
@@ -241,8 +251,8 @@ export function worktreeGraphInstruction() {
  * Run `graphify update <dir>` headlessly to build/refresh an AST graph at
  * <dir>/graphify-out/. Spawned with cwd=cwd so graphify's stray cwd-relative
  * manifest write lands inside the same worktree, never the main repo. Bounded
- * by timeoutMs (macOS has no timeout(1)); on overrun the child is SIGKILLed.
- * Never throws. Resolves { ok, code, timedOut, stderr }.
+ * by timeoutMs (macOS has no timeout(1)); on overrun the child is SIGKILLed,
+ * and so it is when `signal` aborts. Never throws. Resolves { ok, code, timedOut, stderr }.
  *
  * Before the build, <dir>/graphify-out/.gitignore = `*` makes the output ignore
  * itself (the memory mount's sentinel, memory-sync.mjs mountMemory): a target
@@ -252,11 +262,11 @@ export function worktreeGraphInstruction() {
  * tracks files under graphify-out/ gets no sentinel (it commits its graph on
  * purpose). A failed write is not fatal: the build runs as before.
  */
-export function runGraphifyUpdate({ dir, cwd, timeoutMs = 120000 } = {}) {
+export function runGraphifyUpdate({ dir, cwd, timeoutMs = 120000, signal } = {}) {
   try {
     if (!existsSync(dir)) throw new Error('no dir');
     // A repo that commits its graph keeps doing so: hiding only the NEW files would commit half a graph.
-    const tracked = gitAvailable() ? spawnSync('git', ['ls-files', '--', 'graphify-out'], { cwd: dir, encoding: 'utf8', timeout: 10000 }) : null;
+    const tracked = gitAvailable() ? spawnSync('git', ['ls-files', '--', 'graphify-out'], { cwd: dir, encoding: 'utf8', timeout: 10000, env: guardedGitEnvSync(dir) }) : null;
     if (!(tracked && tracked.status === 0 && tracked.stdout.trim())) {
       mkdirSync(join(dir, 'graphify-out'), { recursive: true });
       writeFileSync(join(dir, 'graphify-out', '.gitignore'), '*\n', 'utf8');
@@ -277,17 +287,24 @@ export function runGraphifyUpdate({ dir, cwd, timeoutMs = 120000 } = {}) {
       if (settled) return;
       settled = true;
       clearTimeout(timer);
+      signal?.removeEventListener('abort', onAbort);
       resolveP(val);
     };
-    const timer = setTimeout(() => {
-      timedOut = true;
+    const kill = () => {
       try {
         child.kill('SIGKILL');
       } catch {
         /* ignore */
       }
+    };
+    const timer = setTimeout(() => {
+      timedOut = true;
+      kill();
       done({ ok: false, code: -1, timedOut: true, stderr: 'graphify update timed out' });
     }, timeoutMs);
+    // signal: the caller stops the build (a run's teardown); resolves once the process has exited.
+    const onAbort = () => kill();
+    if (signal?.aborted) kill(); else signal?.addEventListener('abort', onAbort, { once: true });
     child.stdout?.on('data', () => {});
     child.stderr?.on('data', (d) => {
       stderr += d.toString();
@@ -372,133 +389,34 @@ export async function detectToolsPerProject(projectDirs) {
  */
 // ── Windows: the executable behind a bare `claude` ────────────────────────────
 // Native Windows resolves a bare name on PATH to `.exe` only, and Node refuses
-// to run .cmd/.bat shims without a shell (CVE-2024-27980). The npm install of
-// Claude Code (>= 2.1 — every version Worca supports) puts a `claude.cmd` shim
-// on PATH whose target is a REAL native binary at npm's fixed layout:
-//   <shim dir>\node_modules\@anthropic-ai\claude-code\bin\claude.exe
-// (the package's postinstall copies the platform binary over a ~500-byte text
-// placeholder there). resolveClaudeBin() spawns that .exe directly — no shell,
-// correct kill target, no quoting surface — and explainUnspawnableClaude()
-// covers the cases where that is not possible.
+// to run .cmd/.bat shims without a shell (CVE-2024-27980). The shared resolver
+// (cli-resolve.mjs, spec CLAUDE_CLI) finds the npm package's native claude.exe
+// next to the shim; these wrappers keep Claude's long-standing names and shapes.
 
-export const NPM_CLAUDE_EXE_SEGMENTS = Object.freeze(['node_modules', '@anthropic-ai', 'claude-code', 'bin', 'claude.exe']);
+export { NPM_CLAUDE_EXE_SEGMENTS, isNativeExe };
 
-/** A real PE executable (MZ header, bigger than npm's placeholder stub). */
-export function isNativeExe(p) {
-  try {
-    const st = statSync(p);
-    if (!st.isFile() || st.size < 4096) return false;
-    const fd = openSync(p, 'r');
-    try {
-      const head = Buffer.alloc(2);
-      readSync(fd, head, 0, 2, 0);
-      return head.toString('latin1') === 'MZ';
-    } finally { closeSync(fd); }
-  } catch { return false; }
-}
-
-const _ov = { isNativeExe: null };
-const _resolveCache = new Map();
-/** Test seam (mirrors folder-dialog.mjs): swap the PE check so an end-to-end
- *  test on a POSIX host can stand in a shell script for claude.exe. */
+/** Test seam: delegates to the shared resolver's (PE check swap, memo clear). */
 export const _testing = {
-  set({ isNativeExe: native = _ov.isNativeExe } = {}) { _ov.isNativeExe = native; _resolveCache.clear(); },
-  reset() { _ov.isNativeExe = null; _resolveCache.clear(); },
+  set(o) { resolverTesting.set(o); },
+  reset() { resolverTesting.reset(); },
 };
 
-/** What `bin` reaches on a Windows PATH: a real .exe (spawn works as-is), the
- *  shims found, and — next to the FIRST shim — the npm package's native binary
- *  when present, with whether it is real or still the placeholder. */
-function probeWindowsClaude(bin, { pathEnv, exists, native }) {
-  const name = String(bin || 'claude').trim() || 'claude';
-  const ok = (p) => { try { return !!exists(p); } catch { return false; } }; // a probe error is "absent"
-  const out = { name, exe: null, shims: [], npm: null };
-  if (/\.exe$/i.test(name)) { out.exe = name; return out; }       // explicit .exe: nothing to resolve
-  const explicitPath = /[\\/]/.test(name);
-  const shimExt = /\.(cmd|bat|ps1)$/i.test(name);
-  const stems = explicitPath ? [name] : pathEnv.split(';').filter(Boolean).map((d) => join(d, name));
-  for (const stem of stems) {
-    if (!shimExt && ok(stem + '.exe')) { out.exe = stem + '.exe'; return out; }
-    for (const ext of shimExt ? [''] : ['.cmd', '.bat', '.ps1']) {
-      const shim = stem + ext;
-      if (!ok(shim)) continue;
-      out.shims.push(shim);
-      if (!out.npm) {
-        const candidate = join(dirname(shim), ...NPM_CLAUDE_EXE_SEGMENTS);
-        if (ok(candidate)) out.npm = { exe: candidate, native: !!native(candidate) };
-      }
-    }
-  }
-  return out;
-}
-
 /**
- * The executable to spawn for `bin` on THIS host. Off Windows, and whenever a
- * real .exe is reachable, that is `bin` unchanged (spawn's own PATH lookup is
- * correct). When the only PATH hit is npm's .cmd shim and the package's native
- * claude.exe sits next to it, that .exe is returned instead — with a one-line
- * `note` for the log. Otherwise `bin` unchanged again, and the spawn's ENOENT
- * is what explainUnspawnableClaude() turns into an actionable message.
- *
- * Pure with injected platform/pathEnv/exists/isNativeExe; the default
- * (uninjected) resolution is memoised per bin+PATH — PATH does not change under
- * a running process, and the probe is a handful of stat()s per spawn otherwise.
+ * The executable to spawn for the configured Claude `bin` on THIS host: `bin`
+ * unchanged off Windows or when a real .exe is reachable; the npm package's
+ * native claude.exe when the only PATH hit is npm's shim. See cli-resolve.mjs.
  * @param {string} [bin]
- * @param {{platform?:string, pathEnv?:string, exists?:(p:string)=>boolean, isNativeExe?:(p:string)=>boolean}} [opts]
- * @returns {{bin:string, source:'as-is'|'exe'|'npm', note:string|null}}
+ * @param {object} [opts] injectable platform/pathEnv/exists/isNativeExe
+ * @returns {{bin:string, source:'as-is'|'exe'|'npm'|'shim-exe', note:string|null}}
  */
 export function resolveClaudeBin(bin = 'claude', opts = {}) {
-  const platform = opts.platform ?? process.platform;
-  if (platform !== 'win32') return { bin, source: 'as-is', note: null };
-  const pathEnv = opts.pathEnv ?? (process.env.PATH ?? '');
-  const injected = Object.keys(opts).length > 0;
-  const key = `${bin}\0${pathEnv}`;
-  if (!injected && _resolveCache.has(key)) return _resolveCache.get(key);
-  const p = probeWindowsClaude(bin, {
-    pathEnv, exists: opts.exists ?? existsSync, native: opts.isNativeExe ?? _ov.isNativeExe ?? isNativeExe,
-  });
-  let out;
-  if (p.exe) out = { bin, source: 'exe', note: null };
-  else if (p.npm && p.npm.native) {
-    out = { bin: p.npm.exe, source: 'npm', note:
-      `using the npm-installed Claude Code binary ${p.npm.exe} ("${p.name}" on PATH is npm's .cmd shim, which Node cannot spawn directly)` };
-  } else out = { bin, source: 'as-is', note: null };
-  if (!injected) _resolveCache.set(key, out);
-  return out;
+  const { bin: out, source, note } = resolveCliBin(bin, CLAUDE_CLI, opts);
+  return { bin: out, source, note };
 }
 
-/**
- * Why a bare `claude` cannot be spawned on THIS host, or null when the generic
- * error is the whole story (or when resolveClaudeBin() would have handled it).
- * Two Windows cases get an actionable message: the npm shim with the package's
- * binary still being the postinstall placeholder, and a shim with no native
- * binary next to it at all (non-npm layout, or a pre-native package).
- *
- * Pure: platform / PATH / existence / PE check are injectable. Never throws.
- * @param {string} [bin] the configured claude binary (name or path)
- * @param {{platform?:string, pathEnv?:string, exists?:(p:string)=>boolean, isNativeExe?:(p:string)=>boolean}} [o]
- * @returns {string|null}
- */
-export function explainUnspawnableClaude(bin = 'claude', {
-  platform = process.platform,
-  pathEnv = process.env.PATH ?? '',
-  exists = existsSync,
-  isNativeExe: native = _ov.isNativeExe ?? isNativeExe,
-} = {}) {
-  if (platform !== 'win32') return null;
-  const p = probeWindowsClaude(bin, { pathEnv, exists, native });
-  if (p.exe || !p.shims.length) return null;           // a real exe, or a plain "not installed"
-  if (p.npm && p.npm.native) return null;               // resolveClaudeBin() spawns this one — not a failure
-  const base = `"${p.name}" resolves to a script shim (${p.shims[0]}) — the npm install of Claude Code. ` +
-    'Windows only launches a .exe by name and Node cannot run a .cmd/.bat shim without a shell. ';
-  if (p.npm) {
-    const installer = join(dirname(dirname(p.npm.exe)), 'install.cjs');
-    return base + `Worca would run the package's native binary instead, but ${p.npm.exe} is still npm's ` +
-      `placeholder — the package's postinstall did not run (--ignore-scripts / --omit=optional). Run: node ${installer}, ` +
-      'or reinstall Claude Code without those flags.';
-  }
-  return base + `No native binary was found next to it (${join(dirname(p.shims[0]), ...NPM_CLAUDE_EXE_SEGMENTS)}). ` +
-    'Install the native Windows build (irm https://claude.ai/install.ps1 | iex), or set WORCA_CLAUDE_BIN to the full path of claude.exe.';
+/** Why the configured Claude cannot be spawned on THIS host, or null. Never throws. */
+export function explainUnspawnableClaude(bin = 'claude', o = {}) {
+  return explainUnspawnableCli(bin || 'claude', CLAUDE_CLI, o);
 }
 
 export async function probeClaudeCapabilities(bin = 'claude') {
@@ -508,7 +426,12 @@ export async function probeClaudeCapabilities(bin = 'claude') {
   const raw = await execSafe(exe, ['--version'], { timeout: 8000 });
   const version = raw ? (/(\d+\.\d+\.\d+)/.exec(raw)?.[1] ?? raw.split(/\s+/)[0] ?? null) : null;
   // pluginDir (skills registry §4.1): a set's skills reach a spawn only through --plugin-dir.
-  return { mcpConfig: !!help && help.includes('--mcp-config'), pluginDir: !!help && help.includes('--plugin-dir'), version };
+  // Session groups (Task 29): a host spawn needs --forward-subagent-text (by --help) and `--agents <file>` (by version,
+  // 2.1.281). Never probe --max-turns or --append-subagent-system-prompt by --help: both are hidden there on 2.1.308 but
+  // accepted by the binary (verify suggestion 9).
+  return { mcpConfig: !!help && help.includes('--mcp-config'), pluginDir: !!help && help.includes('--plugin-dir'), version,
+    forwardSubagentText: !!help && help.includes('--forward-subagent-text'),
+    agentsFile: !!version && cmpVersions(version, '2.1.281') >= 0 };
 }
 
 // ── Is the Claude Code CLI signed in? ─────────────────────────────────────────
@@ -522,10 +445,11 @@ export async function probeClaudeCapabilities(bin = 'claude') {
 
 /** Env vars that authenticate the CLI without a stored sign-in, which `claude
  *  auth status` does not (reliably) report: a custom endpoint or the model bridge
- *  (ANTHROPIC_BASE_URL + ANTHROPIC_AUTH_TOKEN), an API key or OAuth token, and
- *  the cloud transports (Bedrock / Vertex / Foundry). */
+ *  (ANTHROPIC_AUTH_TOKEN), an API key or OAuth token, and the cloud transports
+ *  (Bedrock / Vertex / Foundry). ANTHROPIC_BASE_URL is not one: it says where
+ *  calls go, and the CLI still answers "Not logged in" without a credential. */
 export const CLAUDE_AUTH_ENV_KEYS = Object.freeze([
-  'ANTHROPIC_BASE_URL', 'ANTHROPIC_AUTH_TOKEN', 'ANTHROPIC_API_KEY', 'CLAUDE_CODE_OAUTH_TOKEN',
+  'ANTHROPIC_AUTH_TOKEN', 'ANTHROPIC_API_KEY', 'CLAUDE_CODE_OAUTH_TOKEN',
 ]);
 export const CLAUDE_AUTH_ENV_FLAGS = Object.freeze([
   'CLAUDE_CODE_USE_BEDROCK', 'CLAUDE_CODE_USE_VERTEX', 'CLAUDE_CODE_USE_FOUNDRY',
@@ -558,6 +482,21 @@ export function parseClaudeAuthStatus(text) {
   if (/\bnot (logged|signed) in\b|\blogged out\b|\bsigned out\b/i.test(s)) return 'signed-out';
   if (/\b(logged|signed) in\b/i.test(s)) return 'signed-in';
   return 'unknown';
+}
+
+/**
+ * The config folder `claude auth status` says it read (its JSON `configDirectory`), or null. Pure.
+ * A server started with another HOME or CLAUDE_CONFIG_DIR reads another sign-in than the terminal.
+ * @param {string} text  stdout + stderr
+ * @returns {string|null}
+ */
+export function parseClaudeAuthConfigDir(text) {
+  const json = /\{[\s\S]*\}/.exec(String(text || ''));
+  if (!json) return null;
+  try {
+    const dir = JSON.parse(json[0])?.configDirectory;
+    return typeof dir === 'string' && dir.trim() ? dir.trim() : null;
+  } catch { return null; }
 }
 
 /** Run a command with any exit code: resolves {code, out} (stdout+stderr), or
@@ -602,7 +541,8 @@ export function clearClaudeAuthCache() { _authCache.clear(); }
  *    (concurrent callers share one spawn); `force` skips the remembered answer.
  * @param {{bin?:string, env?:Record<string,string|undefined>, mock?:boolean, force?:boolean,
  *   now?:()=>number, run?:(exe:string, args:string[])=>Promise<{code:number,out:string}|null>}} [o]
- * @returns {Promise<{state:'signed-in'|'signed-out'|'unknown', source:'mock'|'env'|'cli', detail:string|null}>}
+ *  The CLI answer also carries `configDirectory`: the folder it read (null when it named none).
+ * @returns {Promise<{state:'signed-in'|'signed-out'|'unknown', source:'mock'|'env'|'cli', detail:string|null, configDirectory?:string|null}>}
  */
 export async function probeClaudeAuth({
   bin = 'claude', env = process.env, mock, force = false, now = Date.now, run = execAnyExit,
@@ -621,8 +561,8 @@ export async function probeClaudeAuth({
   if (!force && hit && now() - hit.at < CLAUDE_AUTH_TTL_MS) return hit.promise;
   const promise = Promise.resolve()
     .then(() => run(exe, ['auth', 'status']))
-    .then((r) => ({ state: r ? parseClaudeAuthStatus(r.out) : 'unknown', source: 'cli', detail: null }))
-    .catch(() => ({ state: 'unknown', source: 'cli', detail: null }));
+    .then((r) => ({ state: r ? parseClaudeAuthStatus(r.out) : 'unknown', source: 'cli', detail: null, configDirectory: r ? parseClaudeAuthConfigDir(r.out) : null }))
+    .catch(() => ({ state: 'unknown', source: 'cli', detail: null, configDirectory: null }));
   _authCache.set(exe, { at: now(), promise });
   return promise;
 }

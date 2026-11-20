@@ -29,6 +29,7 @@ import { keepListNames } from '../mcp/keep-list.mjs';
 import { ASK_DENY_RULES } from './deny-rules.mjs';
 import { chatDescriptor } from '../engines/chat.mjs';
 import { chatSignInEnv } from '../engines/chat-descriptor.mjs';
+import { homeConfigsAllowed } from '../mcp/discover.mjs';
 
 /** Absolute path of the worca MCP server script — the `serverPath` of buildMcpConfig (P2 never guesses it). */
 export const ASK_MCP_SERVER_PATH = fileURLToPath(new URL('./mcp-stdio.mjs', import.meta.url));
@@ -177,8 +178,9 @@ export function buildAskSpawnOptions({ thread = {}, turn = {}, limits = {}, mcpC
   // denied. Skills without `allowed-tools` (most set skills, bundled `simplify`, …) load without any rule.
   const skillAllows = sk && Array.isArray(sk.names) ? sk.names.filter((n) => typeof n === 'string' && QUALIFIED_SKILL_RE.test(n)).map((n) => `Skill(${n})`) : [];
   // With copies, ToolSearch keeps their schemas deferred: `--tools` without it sends every MCP schema in full (§16.1 #9).
-  // The Workflows chat (composer) gets no Task: a sub-agent's edit_canvas / draft_* calls would change the MCP child's
-  // working canvas, but only main-stream tool results become cards (events.mjs onToolResults) — the user would never see them.
+  // The Workflows and Design chats (turn.mjs surfaceLocked passes `composer`) get no Task: a sub-agent's edit_canvas /
+  // draft_* or start_design_build calls would act in the MCP child, but only main-stream tool results become cards or
+  // reach the parent (events.mjs onToolResults) — the user would never see them.
   const own = composer ? ASK_BUILTIN_TOOLS.filter((t) => t !== 'Task') : [...ASK_BUILTIN_TOOLS];
   const builtins = reg ? [...own, 'ToolSearch'] : own;
   // A stdio copy starts through the launcher, which reads the keep-list from the scrubbed claude env (§5.5.1).
@@ -277,7 +279,7 @@ function buildLockedAskOptions({ chat, thread, turn, mcpConfigPath, scratchDir, 
 // folder and allowlist the server clones with (neither is a secret; no credential is ever forwarded).
 // The engines' binary overrides: a locked-down chat's classifier runs its own engine from the child (workflow-deps.mjs).
 export const MCP_FORWARD_ENV = Object.freeze(['WORCA_CLAUDE_BIN', 'ORCH_CLAUDE_BIN', 'WORCA_AUTO_MODEL', 'WORCA_PROJECTS_ROOT', 'WORCA_CLONE_ALLOW',
-  'WORCA_FLAGS',   // a WORCA_FLAGS lock (the shapeFirst gate's propose_run check) reaches the child too
+  'WORCA_FLAGS',   // a WORCA_FLAGS lock (propose_run's flag checks) reaches the child too
   'WORCA_CODEX_BIN', 'WORCA_COPILOT_BIN', 'WORCA_GEMINI_BIN', 'WORCA_GOOSE_BIN', 'WORCA_OPENCODE_BIN', 'WORCA_QWEN_BIN']);
 /** The parent turn's Claude Code sign-in for the child's propose_run check (proposal.mjs claudeAuth): the child runs
  *  inside the chat's env, where the chat model's routing (ANTHROPIC_BASE_URL …) reads as a sign-in. Only the probe's
@@ -307,7 +309,7 @@ export function webMcpEnv(web) {
  * (path.resolve(process.env.WORCA_HOME) or dirname(worcaHome())) — never
  * worcaHome() itself. The argv twins make the child independent of env forwarding.
  */
-export function buildMcpConfig({ homeBase, threadId, execPath = process.execPath, serverPath, env = process.env, reader = null, relay = null, web = null, extraServers = null, commands = null, proxy = null, engine = 'claude', model = null, skillRoot = null, claudeAuth = null, git = undefined }) {
+export function buildMcpConfig({ homeBase, threadId, execPath = process.execPath, serverPath, env = process.env, reader = null, relay = null, web = null, extraServers = null, commands = null, proxy = null, engine = 'claude', model = null, skillRoot = null, designRoots = null, claudeAuth = null, git = undefined }) {
   if (!serverPath) throw new Error('buildMcpConfig: serverPath is required');
   if (typeof homeBase !== 'string' || !homeBase.trim()) throw new Error('buildMcpConfig: homeBase is required');
   const base = resolvePath(homeBase);
@@ -339,11 +341,15 @@ export function buildMcpConfig({ homeBase, threadId, execPath = process.execPath
     env: { WORCA_HOME: base, WORCA_ASK_THREAD_ID: thread, ...forwarded, ...authEnv(claudeAuth), ...(typeof reader === 'string' && reader ? { WORCA_ASK_READER: reader } : {}), ...webMcpEnv(web),
       // The parent's git answer (P0): the child's gitAvailable() reads it, so git-only tools follow this machine.
       ...(typeof git === 'boolean' ? { WORCA_GIT: git ? '1' : '0' } : {}),
+      // MCP discovery (mcp/discover.mjs): a container or hosted worca never lists its own user's tool configs.
+      ...(homeConfigsAllowed(env) ? {} : { WORCA_ASK_NO_HOME_CONFIGS: '1' }),
       // A locked-down chat's child adds read_file / grep / glob (file-deps.mjs) and classifies on its engine (D13, D8).
       ...(chatDescriptor(engine) ? { WORCA_ASK_ENGINE: engine, ...(typeof model === 'string' && model ? { WORCA_ASK_MODEL: model } : {}) } : {}),
       // Such a turn's set skills (#635): this message's mount, one more read-only root of read_file / grep / glob. The
       // file is per message, so the root lives as long as the turn; the child checks it names exactly such a folder.
       ...(chatDescriptor(engine) && typeof skillRoot === 'string' && skillRoot ? { WORCA_ASK_SKILL_ROOT: skillRoot } : {}),
+      // A locked-down Design chat (Design P8 L8.10): its design's work/ folder and project, read roots the child shape-checks.
+      ...(chatDescriptor(engine) && designRoots && typeof designRoots === 'object' ? { WORCA_ASK_DESIGN_ROOTS: JSON.stringify(designRoots) } : {}),
       // Agent mode (#574): the bridge URL only; its token rides spawnEnv (buildAskSpawnOptions), never this file.
       ...(commands && commands.url ? { WORCA_ASK_COMMANDS: JSON.stringify({ url: commands.url }) } : {}),
       ...(proxy && proxy.url ? { WORCA_ASK_PROXY: JSON.stringify({ url: proxy.url }) } : {}) },

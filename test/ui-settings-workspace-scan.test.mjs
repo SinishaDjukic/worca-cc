@@ -1,17 +1,16 @@
 // test/ui-settings-workspace-scan.test.mjs — Settings › Runs › Workspaces (the scan models card).
 import { test, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { JSDOM } from 'jsdom';
 import { useDomRelease } from './helpers/jsdom-release.mjs';
 import { lastToast, edit } from './helpers/feedback.mjs';
 import { checkRows } from './helpers/rows.mjs';
+import { readIndexHtml } from '../src/core/read-index-html.mjs';
 
 // Release each booted window after its test (see test/helpers/jsdom-release.mjs).
 const trackDom = useDomRelease(afterEach);
 
-const htmlPath = fileURLToPath(new URL('../ui/public/index.html', import.meta.url));
 const appPath = fileURLToPath(new URL('../ui/public/app.js', import.meta.url));
 
 const CATALOG = [
@@ -28,7 +27,7 @@ const SETTINGS = {
 const settle = async (window, n = 3) => { for (let i = 0; i < n; i += 1) await new Promise((r) => setTimeout(r, 0)); };
 
 async function boot({ configOk = true } = {}) {
-  const dom = trackDom(new JSDOM(readFileSync(htmlPath, 'utf8'), { url: 'http://localhost:4317/' }));
+  const dom = trackDom(new JSDOM(readIndexHtml(), { url: 'http://localhost:4317/' }));
   const { window } = dom;
   window.Element.prototype.scrollIntoView = function () {};
   window.WebSocket = class { constructor() { this.readyState = 1; } send() {} close() {} addEventListener() {} };
@@ -75,9 +74,9 @@ test('the Workspaces card (Runs tab) shows the defaults; Save posts the four pic
   const { window, openSettings, posts, tick } = await boot(); await openSettings();
   const doc = window.document;
   await checkRows([
-    { name: 'the Workspaces card sits on the Runs tab between Scheduled runs and Chat notifications and shows the defaults', run: async () => {
+    { name: 'the Workspaces card sits on the Runs tab between Machine load and Wait for the network and shows the defaults', run: async () => {
       const runsIds = [...doc.querySelectorAll('.settings-pane[data-tab="runs"] section.card.settings-card')].map((c) => c.id);
-      assert.deepEqual(runsIds, ['budget-settings-card', 'night-settings-card', 'smart-naming-settings-card', 'sync-settings-card', 'schedule-settings-card', 'network-wait-settings-card', 'network-proxy-settings-card', 'actions-settings-card', 'pr-settings-card', 'ws-scan-models-card', 'chat-settings-card']);
+      assert.deepEqual(runsIds, ['budget-settings-card', 'smart-naming-settings-card', 'night-settings-card', 'schedule-settings-card', 'chat-settings-card', 'sync-settings-card', 'pr-settings-card', 'actions-settings-card', 'run-limits-settings-card', 'ws-scan-models-card', 'network-wait-settings-card', 'network-proxy-settings-card']);
       assert.equal(doc.querySelector('#ws-scan-models-card h2').textContent.trim(), 'Workspaces');
       assert.equal(doc.getElementById('ws-scan-models-card').dataset.minLevel, 'advanced');
       assert.deepEqual(vals(doc), ['claude-sonnet-5', 'medium', 'sonnet', 'medium']);
@@ -110,4 +109,19 @@ test('a stored scan model that left the catalog is shown as not installed and Sa
   doc.getElementById('wsScanModelsSave').click(); await tick();
   assert.equal(posts.length, before, 'nothing posted');
   assert.equal(doc.getElementById('wsScanModelsMsg'), null, 'no save line');
+});
+
+// The sidebar lists the Runs cards as links; a card kept on screen below its mode keeps its link.
+test('the Workspaces card link in the Settings sidebar follows the card: kept in Simple while a scan setup is stored', async () => {
+  const { window, setSettings, tick } = await boot();
+  const link = () => window.document.querySelector('#settings-tabs .settings-sub a[data-card="ws-scan-models-card"]');
+  const openSettings = async () => {   // the Runs tab, re-entered so Settings loads again
+    for (const h of ['settings', 'settings/runs']) { window.location.hash = h; window.dispatchEvent(new window.Event('hashchange')); await tick(); await tick(); await tick(); }
+  };
+  setSettings({ workspaceScan: { ...DEFAULTS } }); await openSettings();
+  assert.equal(window.document.getElementById('ws-scan-models-card').dataset.levelKeep, '1');
+  assert.equal(link().dataset.levelKeep, '1', 'the link stays with its card');
+  assert.equal(link().dataset.minLevel, 'advanced');
+  setSettings({ workspaceScan: null }); await openSettings();
+  assert.equal('levelKeep' in link().dataset, false, 'default setup: hidden with the card again');
 });

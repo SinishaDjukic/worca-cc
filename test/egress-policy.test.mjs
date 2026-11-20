@@ -485,8 +485,8 @@ test('corporate proxy: the default gate is settings networkProxy.enabled (no inj
   } finally { await fake.close(); o.server.close(); }
 });
 
-test('corporate proxy, flag off: env untouched whatever HTTP(S)_PROXY or settings say', async () => {
-  const env = { HTTPS_PROXY: 'http://ACME%5Cjdoe:pw@corp.example:8080', NO_PROXY: 'intranet.example', PATH: '/bin' };
+test('corporate proxy, flag off, no login in HTTP(S)_PROXY: env untouched whatever settings say', async () => {
+  const env = { HTTPS_PROXY: 'http://corp.example:8080', NO_PROXY: 'intranet.example', PATH: '/bin' };
   const before = { ...env };
   let settingsRead = 0;
   const r = await startEgressPolicy({ env, proxyOn: FLAG_OFF, settings: () => { settingsRead += 1; return { networkProxy: { upstream: 'http://x:1' } }; } });
@@ -558,17 +558,21 @@ test('corporate proxy end to end: a child process fetch with the child env reach
   try {
     const envProxy = pathToFileURL(fileURLToPath(new URL('../src/core/env-proxy.mjs', import.meta.url))).href;
     const script = `import { useEnvProxy } from ${JSON.stringify(envProxy)}; useEnvProxy();
-      const res = await fetch('http://example.test/x'); console.log(res.status, await res.text());`;
+      const res = await fetch('http://example.test/x'); console.log(\`\${res.status} \${await res.text()}\`);`;
     // async execFile, never spawnSync: the local proxy runs on THIS process's event loop.
     const out = await new Promise((resolve, reject) => {
       execFile(process.execPath, ['--input-type=module', '-e', script],
         { env: { ...process.env, ...env, WORCA_HOST_PID: '' }, timeout: 20_000 },
         (err, stdout, stderr) => (err ? reject(new Error(`${err.message}\n${stderr}`)) : resolve(stdout.trim())));
     });
-    // undici's EnvHttpProxyAgent tunnels http:// targets with CONNECT too, so the fake relays the
-    // GET to the origin instead of answering it itself.
-    assert.equal(out, '200 origin saw /x');
-    assert.ok(fake.stats.heads.some((h) => h.line === 'CONNECT example.test:80 HTTP/1.1'), JSON.stringify(fake.stats.heads));
+    // undici before v7 (Node 22) tunnels http:// targets with CONNECT, so the fake relays the GET to the origin;
+    // later undici (Node 26) sends a plain proxy GET, which the fake answers itself. Either way it went upstream.
+    const heads = JSON.stringify(fake.stats.heads);
+    if (out === '200 origin saw /x') assert.ok(fake.stats.heads.some((h) => h.line === 'CONNECT example.test:80 HTTP/1.1'), heads);
+    else {
+      assert.equal(out, '200 upstream relayed GET http://example.test/x');
+      assert.ok(fake.stats.heads.some((h) => h.line === 'GET http://example.test/x HTTP/1.1'), heads);
+    }
     assert.equal(fake.stats.type3, 1);
     assert.ok(!JSON.stringify(env).includes('@'), 'the child env carries no credentials');
   } finally { await r.close(); await fake.close(); o.server.close(); }
@@ -1058,4 +1062,207 @@ test('R-sec-6: after a swap to a credentialed upstream, only the local URL is in
     assert.equal(env.MY_TOOL_PROXY, env.HTTPS_PROXY, 'the scrubbed variable now names the local URL');
     for (const [k, v] of Object.entries(env)) assert.doesNotMatch(String(v), /secret/, `${k} carries no userinfo`);
   } finally { await live.close(); await a.close(); await b.close(); o.server.close(); }
+});
+
+// --- a login in HTTP(S)_PROXY with networkProxy.enabled unset: the proxy starts anyway ----------------
+
+for (const scheme of ['ntlm', 'basic', 'digest']) {
+  test(`credentialed HTTPS_PROXY, enabled unset (${scheme} upstream): the proxy starts, children get no password, requests go through`, async () => {
+    const o = await origin();
+    const fake = await startFakeUpstream({ scheme, originPort: o.port });
+    const corpUrl = fake.url('Domain%5CUser:Password@');
+    const env = { HTTPS_PROXY: corpUrl, HTTP_PROXY: corpUrl, PATH: '/bin' };
+    const logs = [];
+    const r = await startEgressPolicy({ env, settings: () => ({}), login: () => null, watchLogin: () => () => {}, log: (l) => logs.push(l) });
+    try {
+      assert.equal(r.status, 'on');
+      assert.equal(r.autoStarted, true);
+      for (const [k, v] of Object.entries(env)) assert.doesNotMatch(String(v), /Password/, `${k} carries no password`);
+      assert.equal(env.HTTPS_PROXY, r.url);
+      assert.match(egressNotice(r).text, /started because HTTP\(S\)_PROXY carries a login/);
+      const port = Number(new URL(r.url).port);
+      assert.match(await rawRequest(port, 'CONNECT github.com:443 HTTP/1.1\r\nHost: github.com:443\r\n\r\nGET /t HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n'), /origin saw \/t/);
+      assert.match(await rawRequest(port, `GET http://127.0.0.2:${o.port}/plain HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n`), /^HTTP\/1\.1 200[^]*upstream relayed GET .*\/plain/);
+      if (scheme === 'ntlm') {
+        assert.ok(fake.stats.type3 >= 1);
+        assert.equal(fake.stats.basic + fake.stats.digest, 0, 'NTLM offered: no password scheme');
+      } else {
+        assert.ok(fake.stats[scheme] >= 1, `the URL login went as ${scheme}`);
+        assert.ok(logs.some((l) => /offers no NTLM, so the login from HTTPS_PROXY is sent as/.test(l)), logs.join('\n'));
+      }
+      for (const l of logs) assert.doesNotMatch(l, /Password/);
+    } finally { await r.close(); await fake.close(); o.server.close(); }
+  });
+}
+
+test('credentialed HTTPS_PROXY, enabled true: auth auto still never falls back to Basic', async () => {
+  const o = await origin();
+  const fake = await startFakeUpstream({ scheme: 'basic', originPort: o.port });
+  const env = { HTTPS_PROXY: fake.url('Domain%5CUser:Password@'), PATH: '/bin' };
+  const r = await startEgressPolicy({ env, settings: () => ({ networkProxy: { enabled: true } }), login: () => null, watchLogin: () => () => {} });
+  try {
+    assert.equal(r.autoStarted, false);
+    const out = await rawRequest(Number(new URL(r.url).port), 'CONNECT github.com:443 HTTP/1.1\r\nHost: github.com:443\r\n\r\n');
+    assert.match(out, /^HTTP\/1\.1 502/);
+    assert.match(out, /offers only Basic/);
+    assert.equal(fake.stats.basic, 0);
+  } finally { await r.close(); await fake.close(); o.server.close(); }
+});
+
+test('credentialed HTTPS_PROXY, enabled false: nothing starts, env untouched, and the notice says children go direct', async () => {
+  const env = { HTTPS_PROXY: 'http://ACME%5Cjdoe:pw@corp.example:8080', PATH: '/bin' };
+  const before = { ...env };
+  const r = await startEgressPolicy({ env, settings: () => ({ networkProxy: { enabled: false } }) });
+  assert.equal(r.status, 'off');
+  assert.equal(r.loginWithheld, true);
+  assert.deepEqual(env, before);
+  const n = egressNotice(r);
+  assert.equal(n.level, 'warn');
+  assert.match(n.text, /turned off \(networkProxy\.enabled is false\).*get no proxy and go direct; turn on Use a corporate proxy/);
+  assert.doesNotMatch(n.text, /pw|jdoe/);
+});
+
+test('auto-started proxy: a save that leaves enabled unset keeps the upstream; enabled false drops it', async () => {
+  const o = await origin();
+  const fake = await startFakeUpstream({ scheme: 'basic', originPort: o.port });
+  const env = { HTTPS_PROXY: fake.url('Domain%5CUser:Password@'), PATH: '/bin' };
+  const live = await startLiveEgress({ env, settings: () => ({}), login: () => null, watchLogin: () => () => {}, watch: () => () => {} });
+  try {
+    assert.equal(live.current().autoStarted, true);
+    const port = Number(new URL(env.HTTPS_PROXY).port);
+    const out = await live.apply({ noProxy: 'intranet.example' });
+    assert.equal(out.changed, true);
+    assert.ok(live.current().connector, 'still chained to the upstream from HTTPS_PROXY');
+    assert.match(await rawRequest(port, 'CONNECT github.com:443 HTTP/1.1\r\nHost: github.com:443\r\n\r\nGET /kept HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n'), /origin saw \/kept/);
+    await live.apply({ enabled: false });
+    assert.equal(live.current().connector, null);
+    for (const [k, v] of Object.entries(env)) assert.doesNotMatch(String(v), /Password/, `${k} carries no password`);
+  } finally { await live.close(); await fake.close(); o.server.close(); }
+});
+
+for (const scheme of ['basic', 'digest']) {
+  test(`auto-started proxy, ${scheme} upstream: plain HTTP as the very first request falls back too`, async () => {
+    const o = await origin();
+    const fake = await startFakeUpstream({ scheme, originPort: o.port });
+    const env = { HTTPS_PROXY: fake.url('Domain%5CUser:Password@'), PATH: '/bin' };
+    const r = await startEgressPolicy({ env, settings: () => ({}), login: () => null, watchLogin: () => () => {} });
+    try {
+      const port = Number(new URL(r.url).port);
+      assert.match(await rawRequest(port, `GET http://127.0.0.2:${o.port}/first HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n`), /^HTTP\/1\.1 200[^]*upstream relayed GET .*\/first/);
+      assert.match(await rawRequest(port, `GET http://127.0.0.2:${o.port}/second HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n`), /^HTTP\/1\.1 200[^]*\/second/);
+      assert.ok(fake.stats[scheme] >= 2);
+    } finally { await r.close(); await fake.close(); o.server.close(); }
+  });
+}
+
+test('auto-start chains to the HTTPS_PROXY that carries the login, never to an upstream left in settings', async () => {
+  const o = await origin();
+  const envProxy = await startFakeUpstream({ scheme: 'basic', originPort: o.port });
+  const stale = await startFakeUpstream({ scheme: 'none', originPort: o.port });
+  const env = { HTTPS_PROXY: envProxy.url('Domain%5CUser:Password@'), PATH: '/bin' };
+  const live = await startLiveEgress({ env, settings: () => ({ networkProxy: { upstream: stale.url() } }), login: () => null,
+    watchLogin: () => () => {}, watch: () => () => {} });
+  try {
+    assert.equal(live.current().upstream.upstream, `127.0.0.1:${envProxy.port}`);
+    await live.apply({ upstream: stale.url(), noProxy: 'intranet.example' });
+    assert.equal(live.current().upstream.upstream, `127.0.0.1:${envProxy.port}`, 'a live save keeps it too');
+    const port = Number(new URL(env.HTTPS_PROXY).port);
+    assert.match(await rawRequest(port, 'CONNECT github.com:443 HTTP/1.1\r\nHost: github.com:443\r\n\r\nGET /env HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n'), /origin saw \/env/);
+    assert.equal(stale.stats.sockets, 0, 'the settings upstream is never contacted');
+  } finally { await live.close(); await envProxy.close(); await stale.close(); o.server.close(); }
+});
+
+test('opted out at boot: clearing networkProxy.enabled auto-starts without a restart', async () => {
+  const o = await origin();
+  const fake = await startFakeUpstream({ scheme: 'basic', originPort: o.port });
+  const env = { HTTPS_PROXY: fake.url('Domain%5CUser:Password@'), PATH: '/bin' };
+  const live = await startLiveEgress({ env, settings: () => ({ networkProxy: { enabled: false } }), login: () => null,
+    watchLogin: () => () => {}, watch: () => () => {} });
+  try {
+    assert.equal(live.current().status, 'off');
+    const out = await live.apply({});
+    assert.equal(out.changed, true);
+    assert.equal(live.current().status, 'on');
+    assert.equal(live.current().autoStarted, true);
+    for (const [k, v] of Object.entries(env)) assert.doesNotMatch(String(v), /Password/, `${k} carries no password`);
+  } finally { await live.close(); await fake.close(); o.server.close(); }
+});
+
+// ── GHE.com tenant (Copilot data residency): worca adds the configured tenant to ITS OWN allow policy ──
+import { copilotTenantAllow } from '../src/core/egress-policy.mjs';
+
+const tenantSettings = (host, accountType = 'ghe-com') => ({ providers: { copilot: { accountType, ...(host ? { enterpriseHost: host } : {}) } } });
+const allowEnv = (extra = {}) => ({ PATH: '/bin', WORCA_EGRESS_MODE: 'allow', WORCA_EGRESS_ALLOW: 'app.worca.dev', ...extra });
+
+test('copilotTenantAllow: ghe-com with a valid host only; never throws', () => {
+  assert.deepEqual(copilotTenantAllow(tenantSettings('acme.ghe.com')), ['acme.ghe.com', '.acme.ghe.com']);
+  for (const s of [tenantSettings('acme.ghe.com', 'enterprise'), tenantSettings(null), tenantSettings('github.com'), tenantSettings('acme.ghe.com/x'), {}, null, undefined, { providers: 5 }, { providers: { copilot: 'x' } }]) {
+    assert.deepEqual(copilotTenantAllow(s), []);
+  }
+});
+
+test('allow mode: a configured GHE.com tenant is added (apex + subdomains); api.acme.ghe.com and copilot-api.acme.ghe.com pass, other.ghe.com does not', async () => {
+  const env = allowEnv(); const logs = [];
+  const r = await startEgressPolicy({ env, settings: () => tenantSettings('acme.ghe.com'), log: (l) => logs.push(l), unref: true });
+  try {
+    assert.equal(r.status, 'on');
+    for (const h of ['acme.ghe.com', 'api.acme.ghe.com', 'copilot-api.acme.ghe.com', 'app.worca.dev']) assert.equal(decide(h, r.policy).ok, true, h);
+    for (const h of ['other.ghe.com', 'ghe.com', 'evilacme.ghe.com', 'acme.ghe.com.evil.example', 'github.com']) assert.equal(decide(h, r.policy).ok, false, h);
+    assert.ok(logs.some((l) => /Egress: allowing acme\.ghe\.com, \.acme\.ghe\.com for the GitHub Copilot GHE\.com tenant \(WORCA_EGRESS_DENY still applies\)/.test(l)), logs.join('\n'));
+  } finally { await r.close(); }
+});
+
+test('DENY still wins over an injected tenant (WORCA_EGRESS_DENY=.ghe.com)', async () => {
+  const r = await startEgressPolicy({ env: allowEnv({ WORCA_EGRESS_DENY: '.ghe.com' }), settings: () => tenantSettings('acme.ghe.com'), unref: true });
+  try {
+    assert.equal(decide('api.acme.ghe.com', r.policy).ok, false);
+    assert.equal(decide('api.acme.ghe.com', r.policy).rule, 'deny');
+  } finally { await r.close(); }
+});
+
+test('open mode reads no tenant settings and starts nothing; block mode is unchanged', async () => {
+  const boom = () => { throw new Error('settings must not be read'); };
+  const open = await startEgressPolicy({ env: { PATH: '/bin' }, settings: boom, proxyOn: () => false });
+  assert.equal(open.status, 'off');
+  const inherited = { PATH: '/bin' }; const url = 'http://127.0.0.1:9';
+  Object.assign(inherited, egressChildEnv(url), { WORCA_EGRESS_MODE: 'allow' });
+  assert.equal((await startEgressPolicy({ env: inherited, settings: boom, proxyOn: () => false })).status, 'inherited');
+  const block = await startEgressPolicy({ env: { PATH: '/bin', WORCA_EGRESS_MODE: 'block', WORCA_EGRESS_DENY: 'bad.example' }, settings: () => tenantSettings('acme.ghe.com'), unref: true });
+  try {
+    assert.equal(block.status, 'on');
+    assert.deepEqual(block.policy.allow, []);
+    assert.equal(block.setExtraAllow, undefined);
+    assert.equal(decide('api.acme.ghe.com', block.policy).ok, true);
+  } finally { await block.close(); }
+});
+
+test('a bad stored host injects nothing; a throwing extraAllow keeps the base list', async () => {
+  const r = await startEgressPolicy({ env: allowEnv(), settings: () => tenantSettings('acme.ghe.com/x'), unref: true });
+  try { assert.deepEqual(r.policy.allow, ['app.worca.dev']); } finally { await r.close(); }
+  const t = await startEgressPolicy({ env: allowEnv(), settings: () => tenantSettings('acme.ghe.com'), unref: true, extraAllow: () => { throw new Error('nope'); } });
+  try { assert.deepEqual(t.policy.allow, ['app.worca.dev']); } finally { await t.close(); }
+});
+
+test('live: a settings change adds, swaps and removes the tenant entries without a restart', async () => {
+  let tick = null; let stored = tenantSettings('acme.ghe.com');
+  const logs = [];
+  const live = await startLiveEgress({
+    env: allowEnv(), settings: () => stored, readStrict: () => stored, log: (l) => logs.push(l), unref: true,
+    watch: (fn) => { tick = fn; return () => {}; },
+  });
+  try {
+    const allowed = (h) => decide(h, live.current().policy).ok;
+    assert.equal(allowed('api.acme.ghe.com'), true);
+    stored = tenantSettings('other.ghe.com'); tick();
+    assert.equal(allowed('api.acme.ghe.com'), false);
+    assert.equal(allowed('copilot-api.other.ghe.com'), true);
+    const n = logs.filter((l) => /Egress: allowing/.test(l)).length;
+    tick();                                                           // unchanged: no repeat line
+    assert.equal(logs.filter((l) => /Egress: allowing/.test(l)).length, n);
+    stored = tenantSettings(null, 'individual'); tick();
+    assert.equal(allowed('copilot-api.other.ghe.com'), false);
+    assert.deepEqual(live.current().policy.allow, ['app.worca.dev']);
+    stored = tenantSettings('acme.ghe.com'); tick();
+    assert.equal(allowed('acme.ghe.com'), true);
+  } finally { await live.close(); }
 });

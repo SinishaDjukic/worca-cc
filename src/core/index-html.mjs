@@ -10,6 +10,12 @@ export const INDEX_THEME_ANCHOR = '<html lang="en" data-theme="system">';
 // Feature flags (docs/feature-flags.md, D5): the server fills this empty sheet with one rule per
 // flag that is off, so flagged-off markup never paints. Keys match FLAG_KEY_RE: nothing to escape.
 export const FLAG_GATES_ANCHOR = '<style id="flag-gates"></style>';
+// The shell's Content-Security-Policy (G23, defence in depth). Scripts load only from this origin:
+// index.html holds no inline script or handler attribute (test/ui-index-theme.test.mjs guards
+// it), so an injected <script> or onerror= never runs. 'wasm-unsafe-eval' lets voice mode's
+// onnxruntime compile its WebAssembly; it allows no JS eval. base-uri stops an injected <base>
+// from re-pointing the relative module URLs. Styles stay open: the flag gates are an inline sheet.
+export const SHELL_CSP = "script-src 'self' 'wasm-unsafe-eval'; base-uri 'none'; frame-ancestors 'none'";
 
 /**
  * @param {string} html  the on-disk ui/public/index.html

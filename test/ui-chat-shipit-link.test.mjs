@@ -7,18 +7,17 @@
 // and never asserts a fetch count, so later boot fetches cannot break it.
 import { test, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { JSDOM } from 'jsdom';
 import { useDomRelease } from './helpers/jsdom-release.mjs';
+import { readIndexHtml } from '../src/core/read-index-html.mjs';
 
 const trackDom = useDomRelease(afterEach);
-const htmlPath = fileURLToPath(new URL('../ui/public/index.html', import.meta.url));
 const appPath = fileURLToPath(new URL('../ui/public/app.js', import.meta.url));
 const extensionsUrl = new URL('../ui/public/chat/extensions.mjs', import.meta.url).href;   // the instance app.js registers into
 
 async function boot({ fetchHandler, url = 'http://localhost:4317/' } = {}) {
-  const dom = trackDom(new JSDOM(readFileSync(htmlPath, 'utf8'), { url }));
+  const dom = trackDom(new JSDOM(readIndexHtml(), { url }));
   const { window } = dom;
   window.Element.prototype.scrollIntoView = function () {};
   const wsBox = { ws: null };

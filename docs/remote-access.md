@@ -72,8 +72,11 @@ once per organization, steps 3–7 once per worca deployment.
    action **Allow**, include **Emails** = the people who may use it. Save.
 6. **AUD tag.** Open the application's overview and copy the **Application Audience (AUD) tag**:
    that's `WORCA_CF_ACCESS_AUD`.
-7. **Only if you use the Teams chat channel:** add a second policy with action **Bypass** for the path
-   `/api/ingress/*`. That route checks its own token and never reaches the rest of the API.
+7. **Only if you use the Teams chat channel or GitHub webhooks for automations:** add a second policy with
+   action **Bypass** for the path `/api/ingress/*`. Those routes check their own token or signature
+   (Teams: a per-channel token; GitHub: the `X-Hub-Signature-256` HMAC; Azure DevOps service hooks: a Basic
+   authentication password; docs/git-automations.md) and
+   never reach the rest of the API.
 
 Use one Access application, with its own AUD tag, per worca deployment: a token issued for one
 deployment is then refused by every other.
@@ -136,7 +139,7 @@ Set these where worca runs (for Railway: on the `worca` service).
 | `WORCA_ALLOWED_HOSTS` | `worca.example.com` | Hostnames accepted in `Host` and `Origin` besides loopback. Comma-separated. A leading dot (`.example.com`) matches subdomains, but prefer the exact name. On Railway add `healthcheck.railway.app` (see [deploy-railway.md](deploy-railway.md)). |
 | `WORCA_CF_ACCESS_TEAM_DOMAIN` | `acme.cloudflareaccess.com` | Your team domain. Turns on the token check. |
 | `WORCA_CF_ACCESS_AUD` | `4714c1…` | The application's AUD tag. Tokens issued for any other application are refused. |
-| `WORCA_HOST` | `::` | Listen address. Must be non-loopback so `cloudflared` in another container can reach worca; `::` accepts IPv6 and IPv4. |
+| `WORCA_HOST` | `::` | Listen address. Must be non-loopback so `cloudflared` in another container can reach worca; `::` accepts IPv6 and IPv4. Without `WORCA_ALLOWED_HOSTS` a non-loopback bind still answers only callers on the same machine (a loopback TCP peer, or Docker's gateway in the worca image): a network caller gets a 403 even with `Host: localhost`. |
 | `WORCA_INSECURE_NO_IDENTITY_CHECK` | `1` | Runs with an allowlist but **no** token check, trusting the proxy alone. Never needed with Cloudflare Access; it exists for proxies that sign nothing. |
 
 ### Worca refuses to start if the setup is unsafe
@@ -161,6 +164,7 @@ When it starts in remote mode it logs
 | Missing or invalid Access token | 401 `unauthorized: sign in through the identity proxy (Cloudflare Access)` |
 | Access's public keys can't be fetched (and none are cached) | 503 |
 | `GET /api/health` from outside the box | 200, `{ name, version }` only, no token needed (for platform healthchecks) |
+| `GET /design-preview/<token>/…` from outside the box | Served on the token in the path, with no Access token checked by worca (your proxy's own sign-in still applies). The token opens that design's preview files and nothing else; a wrong `Host` is still 403. Behind an identity proxy, the doc embeds its CSS, fonts and images, so the frame requests nothing else. An image that lands during a build shows once the round ends. Set `WORCA_DESIGN_PREVIEW_INLINE=0` to turn it off. |
 
 ### Callers inside the box
 
@@ -208,7 +212,7 @@ Worca takes the name from the first of these that applies, and never guesses:
 | Source | When |
 | --- | --- |
 | The verified Cloudflare Access token | Always, when the Access check is on |
-| `WORCA_IDENTITY_HEADER` | A header your own identity proxy sets (oauth2-proxy, Tailscale, …). Only when you name it: set it only if the proxy verifies the user and strips any copy the browser sends |
+| `WORCA_IDENTITY_HEADER` | A header your own identity proxy sets (oauth2-proxy, Tailscale, …). Only when you name it: set it only if the proxy verifies the user and strips any copy the browser sends. It is read only from `WORCA_IDENTITY_TRUSTED_PROXIES` (the proxy's IP addresses or CIDRs, comma-separated), the same rule the credential broker's key page keeps; from any other peer it is dropped, and worca does not start with the header set but no trusted proxy. With agent isolation on, it is ignored from the box itself (an agent could set it too), so the proxy must reach worca from another address |
 | `WORCA_IDENTITY_NAME` | A name you declare, for a self-hosted worca with no identity layer |
 | none | Nothing is shown or added, as on a local install |
 
@@ -345,6 +349,13 @@ task sources and chat channels, and a `worca` CLI started under it. `NO_PROXY` i
 loopback only, so no other host goes around the proxy. worca's own outbound calls (`fetch`) go
 through it too. The overlay's default allowlist never applies under a mode. If the proxy can't
 start, worca does not start (exit 78). `open` or no mode: no proxy, nothing changes.
+
+In `allow` mode worca also adds the GitHub Copilot **GHE.com tenant** configured on its Providers
+page (`<t>.ghe.com` and `.<t>.ghe.com`: GitHub's documented Copilot allowlist), live when the
+setting changes, and logs each addition (`Egress: allowing … for the GitHub Copilot GHE.com
+tenant`). `WORCA_EGRESS_DENY` still wins: set `WORCA_EGRESS_DENY=.ghe.com` to refuse it. `block`
+mode and no mode need nothing. Anyone who can write worca's `settings.json` can name a tenant, so
+a platform that does not want that sets the DENY entry.
 
 A refused host gets a `403` whose body names the host and says the organization's outbound
 network policy blocked it, so an agent's tool error says why (`curl`, `git` and `npm` show it as

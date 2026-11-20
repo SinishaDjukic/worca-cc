@@ -5,17 +5,16 @@
 import { test, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
 import { JSDOM } from 'jsdom';
-import { readFileSync } from 'node:fs';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { dirname, join } from 'node:path';
 import { useDomRelease } from './helpers/jsdom-release.mjs';
+import { readIndexHtml } from '../src/core/read-index-html.mjs';
 
 // Release each booted window after its test (see test/helpers/jsdom-release.mjs).
 const trackDom = useDomRelease(afterEach);
 
 const __dir = dirname(fileURLToPath(import.meta.url));
 const root = join(__dir, '..', 'ui', 'public');
-const htmlPath = join(root, 'index.html');
 const appPath = join(root, 'app.js');
 const PROJECT = '/tmp/proj';
 const tick = () => new Promise((r) => setTimeout(r, 0));
@@ -23,7 +22,7 @@ const settle = async (n = 6) => { for (let i = 0; i < n; i++) await tick(); };
 const SOON = new Date(Date.now() + 2 * 3600 * 1000).toISOString();
 
 async function boot() {
-  const dom = trackDom(new JSDOM(readFileSync(htmlPath, 'utf8'), { url: 'http://localhost:4317/' }));
+  const dom = trackDom(new JSDOM(readIndexHtml(), { url: 'http://localhost:4317/' }));
   const { window } = dom;
   window.Element.prototype.scrollIntoView = function () {};
   const calls = [];
@@ -149,4 +148,63 @@ test('a row routed from the Chat page opens the run page in its place', async ()
   assert.equal($('#activity-pop').hidden, true);
   assert.equal($('[data-view="chat"]').classList.contains('hidden'), true, 'the Chat page gave way');
   assert.equal($('[data-view="runs"]').classList.contains('hidden'), false);
+});
+
+// Design builds (behind the design flag): hello lists them whether or not the flag is on, so the app passes them
+// to Activity only while it is on. Activity's amber number then counts them; the Runs badge never does.
+const DID = 'd_000000000001';
+const H = { type: 'hello', runs: [], flags: { design: true }, design: [{ designId: DID, buildId: 'b', title: 'A', status: 'building', waiting: 1 }] };
+
+test('a Design build with a question waiting is Activity\'s amber number (not the Runs badge\'s), a row that opens it, then Running; the flag turning off hides it', async () => {
+  const { $, click, recv } = await boot();
+  const badge = () => { const n = $('#topnav-activity-n'); return [n.textContent, n.dataset.tone, n.hidden]; };
+  recv(H);
+  await settle();
+  assert.deepEqual(badge(), ['1', 'need', false], 'a question waits: Needs you');
+  assert.equal($('#nav-needs-count').hidden, true, 'the Runs badge stays runs only');
+  click('#topnav-activity');
+  await settle();
+  click('#activity-tab-needs');
+  const row = $(`#activity-panel .activity-row[data-key="design:${DID}"]`);
+  assert.ok(row, 'the design row is listed (getRuns passes the builds)');
+  assert.equal(row.getAttribute('href'), `#design/${DID}`);
+  recv({ type: 'design-build', designId: DID, buildId: 'b', seq: 1, ts: 1, status: 'building', waiting: 0, stats: {} });
+  await settle();
+  assert.deepEqual(badge(), ['1', 'run', false], 'the question answered: Running');
+  recv({ type: 'flags', flags: { design: false } });
+  await settle();
+  assert.equal($('#topnav-activity-n').hidden, true, 'the flag turned off: no Design rows');
+});
+
+test('with the design flag off, hello\'s builds are neither counted nor listed', async () => {
+  const { $, click, recv } = await boot();
+  recv({ ...H, flags: { design: false } });
+  await settle();
+  assert.equal($('#topnav-activity-n').hidden, true);
+  click('#topnav-activity');
+  await settle();
+  click('#activity-tab-needs');
+  assert.equal($('#activity-panel .activity-row[data-key^="design:"]'), null, 'a #design/<id> row would lead nowhere');
+});
+
+test('a Design build started in another tab reads "Design" until its title loads, then its name', async () => {
+  const { window, $, click, recv } = await boot();
+  const stub = window.fetch;
+  const asked = [];
+  globalThis.fetch = window.fetch = (u, init) => {
+    const url = String(u);
+    if (!url.startsWith('/api/design/')) return stub(u, init);
+    asked.push(url);
+    return Promise.resolve({ ok: true, status: 200, json: async () => ({ design: { title: 'Landing page' } }) });
+  };
+  recv({ type: 'hello', runs: [], flags: { design: true }, design: [] });
+  await settle();
+  click('#topnav-activity');
+  await settle();
+  recv({ type: 'design-build', designId: 'd_000000000002', buildId: 'b2', seq: 1, ts: 1, status: 'planning', waiting: 0, stats: {} });
+  click('#activity-tab-running');
+  const title = () => $('#activity-panel .activity-row[data-key="design:d_000000000002"] .activity-row-title')?.textContent;
+  assert.equal(title(), 'Design');
+  await settle();
+  assert.deepEqual([title(), asked], ['Landing page', ['/api/design/d_000000000002']], 'the open list repaints with the loaded title');
 });

@@ -4,6 +4,7 @@ import assert from 'node:assert/strict';
 import { JSDOM } from 'jsdom';
 import { renderNodeInspector } from '../ui/public/graph/inspector.mjs';
 import { portsFnFor } from '../src/shared/graph/ports.mjs';
+import { paramEditorHook } from '../ui/public/script-forms.mjs';
 
 const doc = new JSDOM('<!doctype html><body></body>').window.document;
 const SHELL = { key: 'shell', displayName: 'Shell', description: 'Runs a command.', origin: 'builtin', runtime: 'shell', color: 'amber', ports: 'config', timeoutMs: 600000,
@@ -100,4 +101,16 @@ test('the params-port toggle shows only where a wire has something to set, lists
   const stuck = renderNodeInspector({ id: 'n_s', kind: 'script', key: 'shell', config: { ports: SHELL.defaultPorts, paramsPort: true } }, { template: tpl, portsFn, meta: SHELL, doc });
   assert.equal(stuck.querySelector('[data-field="paramsPort"]').checked, true, 'a ticked box always renders: the opt-in V22 refuses can still be un-ticked');
   assert.equal(stuck.querySelector('[data-field="paramsPort"]').closest('.ins-tog').querySelector('.ins-tog-h').textContent, 'json sets: nothing');
+});
+
+test('a script card\'s Command opens a large window titled "<step> · <node id> — <field>"', () => {
+  const editors = [];
+  const node = { id: 'n_sh', kind: 'script', key: 'shell', config: { params: { command: 'ls' } } };
+  const el = renderNodeInspector(node, { template: tpl, portsFn, meta: SHELL, doc, editorFor: paramEditorHook({ doc, highlight: async (t) => t, editors }) });
+  doc.body.appendChild(el);
+  el.querySelector('.code-editor-expand').click();
+  assert.equal(doc.querySelector('body > .code-editor-modal h2').textContent, 'Shell · n_sh — Command');
+  editors.forEach((e) => e.destroy());
+  el.remove();
+  assert.equal(doc.querySelectorAll('.code-editor-modal').length, 0);
 });

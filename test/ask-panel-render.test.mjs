@@ -10,6 +10,7 @@ import { applyLevel } from '../ui/public/ui-level.mjs';
 import { registerFilesCard } from '../ui/public/chat/files-card.mjs';
 import { _resetChatExtensions } from '../ui/public/chat/extensions.mjs';
 import { _resetFileRenderers } from '../ui/public/chat/file-renderers.mjs';
+import { readStyleCss } from '../src/core/read-style-css.mjs';
 
 const TID = 'ask_00000001';
 
@@ -274,7 +275,7 @@ test('ask-panel-render: a tool row is a dot, the tool name, its args (never cut 
   assert.ok(rows[2].querySelector('.ask-tool-dot').classList.contains('is-running'));
   assert.ok(rows[3].querySelector('.ask-tool-dot').classList.contains('is-error'));
   assert.ok(rows[3].querySelector('.ask-tool-name').classList.contains('ask-tool-mcp'));
-  const css = (await import('node:fs')).readFileSync(new URL('../ui/public/style.css', import.meta.url), 'utf8');
+  const css = readStyleCss();
   const target = css.match(/\n\.ask-tool-target\{([^}]*)\}/)[1];
   for (const decl of ['display:-webkit-box', '-webkit-line-clamp:2', '-webkit-box-orient:vertical', 'overflow:hidden', 'white-space:normal', 'overflow-wrap:anywhere']) {
     assert.ok(target.includes(decl), `.ask-tool-target has ${decl}`);
@@ -580,4 +581,30 @@ test('#958: a structural flush (a new row, a resync) keeps every row element con
   before.forEach((n, i) => assert.equal(col.children[i], n, `row ${i} survived the resync`));
   assert.deepEqual(removed.filter((n) => before.includes(n)), [], 'no kept row was ever taken out of the column');
   ctx.panel.destroy();
+});
+
+test('#959 entry rise: a row rises the first time the page shows it — a switch back replays nothing, a new row still rises', async () => {
+  const TID2 = 'ask_00000002';
+  const inB = (row) => ({ ...row, threadId: TID2 });   // userRow/asstRow stamp TID
+  const snaps = {
+    [TID]: snapBody([userRow('askm_u0000001', 1, 'first'), asstRow('askm_00000001', 2)]),
+    [TID2]: snapBody([inB(userRow('askm_u0000002', 1, 'other')), inB(asstRow('askm_00000002', 2))], { thread: { ...snapBody([]).thread, id: TID2, title: 'Other' } }),
+  };
+  const ctx = makePanel({ fetchHandler: (url) => {
+    const m = url.match(/^\/api\/ask\/threads\/(ask_[0-9a-f]{8})(?:$|[?/])/);
+    if (m && snaps[m[1]]) return { ok: true, status: 200, json: async () => snaps[m[1]] };
+    if (url.startsWith('/api/ask/threads')) return { ok: true, status: 200, json: async () => listBody() };
+    return { ok: true, status: 200, json: async () => ({}) };
+  } });
+  const rising = () => [...ctx.doc.querySelectorAll('.ask-msg[data-ask-enter]')].map((m) => m.textContent);
+  await openChat(ctx, TID);
+  assert.equal(rising().length, 2, 'a chat never shown rises in');
+  await openChat(ctx, TID2);
+  assert.equal(rising().length, 2, 'so does another one');
+  await openChat(ctx, TID);
+  assert.deepEqual(rising(), [], 'a switch back replays nothing');
+  snaps[TID] = snapBody([...snaps[TID].messages, userRow('askm_u0000003', 3, 'more')]);
+  await resync(ctx);
+  assert.equal(rising().length, 1, 'a row this chat never showed still rises');
+  assert.match(rising()[0], /more/);
 });

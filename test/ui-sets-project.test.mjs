@@ -10,6 +10,7 @@ import { JSDOM } from 'jsdom';
 import { renderSkillResolution, mountProjectMcp, paintMcpResolution, renderMemberSets, paintAskMcpBlock } from '../ui/public/mcp-view.mjs';
 import { useDomRelease } from './helpers/jsdom-release.mjs';
 import { checkRows } from './helpers/rows.mjs';
+import { readIndexHtml } from '../src/core/read-index-html.mjs';
 
 const trackDom = useDomRelease(afterEach);
 
@@ -127,7 +128,7 @@ test('the project Sets tab paints Servers and Skills in runs on X; paintMcpResol
 });
 
 // ── the booted project page ──────────────────────────────────────────────────
-const html = readFileSync(fileURLToPath(new URL('../ui/public/index.html', import.meta.url)), 'utf8');
+const html = readIndexHtml();
 const appPath = fileURLToPath(new URL('../ui/public/app.js', import.meta.url));
 class WSStub { constructor() { WSStub.last = this; this._l = {}; } send() {} close() {}
   addEventListener(t, fn) { (this._l[t] = this._l[t] || []).push(fn); } _open() { (this._l.open || []).forEach((fn) => fn({})); } }

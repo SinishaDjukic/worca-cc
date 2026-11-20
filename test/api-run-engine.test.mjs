@@ -9,7 +9,11 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { useTempHome } from './helpers/temp-home.mjs';
 import { gitDir } from './helpers/git-dir.mjs';
+import { stopAndSettle } from './helpers/stop-and-settle.mjs';
 
+// after hooks run FIFO: every run's launch (preflight's pip3 probes write into the sandbox HOME) settles
+// before useTempHome swaps WORCA_HOME and before the file's own after() deletes HOME.
+after(() => runs && stopAndSettle(runs));
 useTempHome(after);   // outer isolation: mock runs below finish ASYNC in-process
 
 let sandboxHome, projectsRoot, srv, base, runs;
@@ -96,6 +100,7 @@ test('engine: codex on a set with permission rules is refused at once, with the 
   assert.match(data.error, /^engine codex: guardrail set "normal" has permission rules this engine cannot enforce/);
   assert.match(data.error, /tick Allow unguarded/, 'the UI\'s consent, not the CLI flag');
   assert.doesNotMatch(data.error, /--allow-unguarded-engine/);
+  assert.match(data.error, /run it with the Permissive set/, 'the UI names the set, not --guardrails');
   assert.equal(runs.size, before, 'no run entry is left behind');
 });
 
@@ -105,7 +110,7 @@ test('engine: a scheduled run on codex is checked when it is scheduled, not only
   const data = await r.json();
   assert.equal(data.code, 'engine-refused');
   assert.equal(data.overridable, true);
-  const ok = await post('/api/run', { ...body(), engine: 'codex', scheduledFor: new Date(Date.now() + 3600_000).toISOString() });
+  const ok = await post('/api/run', { ...body(), engine: 'codex', guardrailsId: 'permissive', scheduledFor: new Date(Date.now() + 3600_000).toISOString() });
   assert.equal(ok.status, 202, 'a set the engine can hold schedules as before');
 });
 test('engine: with the consent the same run starts on codex', async () => {

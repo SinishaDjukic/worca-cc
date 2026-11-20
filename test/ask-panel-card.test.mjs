@@ -1,13 +1,11 @@
 // test/ask-panel-card.test.mjs — the Start-run card (spec §9, §10.5, D1-D3).
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
 
 import { makePanel } from './helpers/ask-panel-harness.mjs';
 import { stampFrames } from './helpers/ask-frames.mjs';
 import { checkRows } from './helpers/rows.mjs';
-import { applyFlags } from '../ui/public/flags.mjs';
-import { setShapeFirst } from './helpers/shape-gate.mjs';
+import { _resetAnswerer } from '../ui/public/answerer.mjs';
 
 const TID = 'ask_00000001';
 const MID = 'askm_00000001';
@@ -83,7 +81,7 @@ function apiHandler(recorder = {}) {
       if (recorder.configResponse) return recorder.configResponse;
       return { ok: true, status: 200, json: async () => ({ config: configBody().config }) };
     }
-    if (path === '/api/run-defaults') return { ok: true, status: 200, json: async () => ({ engine: { value: recorder.runEngine || 'claude', source: 'default' } }) };
+    if (path === '/api/run-defaults') return { ok: true, status: 200, json: async () => ({ engine: { value: recorder.runEngine || 'claude', source: 'default' }, ...(recorder.runPr ? { pr: recorder.runPr } : {}) }) };
     if (url === '/api/projects') return { ok: true, status: 200, json: async () => ({ projects: recorder.projects || [{ name: 'proj', path: '/repos/proj', exists: true }, { name: 'other', path: '/repos/other', exists: false }] }) };
     if (url === '/api/workflows') return { ok: true, status: 200, json: async () => ({ workflows: recorder.workflows || [{ id: 'wf_default', name: 'Default' }, { id: 'wf_review', name: 'Review only' }] }) };
     if (url === '/api/guardrails') return { ok: true, status: 200, json: async () => ({ guardrails: [{ id: 'permissive', name: 'Permissive' }, { id: 'normal', name: 'Normal' }, { id: 'strict', name: 'Strict' }] }) };
@@ -120,6 +118,7 @@ function apiHandler(recorder = {}) {
 async function openWithCard(card, recorder = {}, overrides = {}) {
   const ctx = makePanel({ fetchHandler: apiHandler(recorder), ...overrides });
   if (overrides.git) ctx.doc.documentElement.dataset.git = overrides.git;
+  if (overrides.flags) ctx.doc.documentElement.dataset.flags = overrides.flags;
   ctx.storage.setItem('worca-cc.ask.thread', TID);
   ctx.panel.open();
   await ctx.tick(); await ctx.tick(); await ctx.tick();
@@ -1028,6 +1027,20 @@ test('typed cards (model, clone, web, workspace, actions): fields render as text
       assert.deepEqual([...el.querySelectorAll('.ask-mcard-change-label')].map((x) => x.textContent), ['Repository', 'Branch', 'Folder', 'Azure DevOps']);
       assert.equal([...el.querySelectorAll('.ask-mcard-after')].at(-1).textContent, 'the Azure DevOps token (WORCA_ADO_TOKEN)');
     } },
+    { name: 'clone card: a Bitbucket URL labels the credential row "Bitbucket"', run: async () => {
+      const rec = { cardPosts: [] };
+      const ctx = await openWithCard(PROJECT_CARD, rec);
+      const url = 'https://bitbucket.org/acme/api.git';
+      const card = { type: 'clone', kind: 'clone', summary: 'Clone acme/api as project api', url, branch: null,
+        name: 'api', dir: '/data/projects/api', github: 'the Bitbucket token (WORCA_BB_TOKEN)', note: 'why',
+        change: { url, branch: null, name: 'api' } };
+      ctx.panel.pushServerFrame({ type: 'ask-card', block: { kind: 'card', id: 'card_00000014', state: 'proposed', card }, threadId: TID, messageId: MID, seq: 3 });
+      ctx.flush();
+      const el = ctx.doc.querySelector('[data-ask-clonecard="proposed"]');
+      assert.ok(el);
+      assert.deepEqual([...el.querySelectorAll('.ask-mcard-change-label')].map((x) => x.textContent), ['Repository', 'Branch', 'Folder', 'Bitbucket']);
+      assert.equal([...el.querySelectorAll('.ask-mcard-after')].at(-1).textContent, 'the Bitbucket token (WORCA_BB_TOKEN)');
+    } },
     { name: 'web card: host, reason and exact URL as text; Deny / Always allow / Allow in chat post the verbs; applied and failed read as such', run: async () => {
       const rec = { cardPosts: [] };
       const base = apiHandler(rec);
@@ -1111,10 +1124,38 @@ test('typed cards (model, clone, web, workspace, actions): fields render as text
       rmEl.querySelector('[data-ask-ws-decline]').click();
       await ctx.tick();
       assert.deepEqual(rec.cardPosts.at(-1), ['card_00000012', { state: 'declined' }]);
+      // A removal with worca's recommendation: the reason, three options, the recommended one preselected; Apply posts the pick.
+      const proposedCards = () => [...ctx.doc.querySelectorAll('[data-ask-wscard="proposed"]')];
+      const rmRec = { ...rm, rescan: 'partial', recommendation: { level: 'partial', reason: 'api had 1 edge with 1 member (web). A partial re-scan is recommended: one agent rewrites the overview and coordination notes from the pruned map.', partialAvailable: true } };
+      ctx.panel.pushServerFrame({ type: 'ask-card', block: { kind: 'card', id: 'card_00000013', state: 'proposed', card: rmRec }, threadId: TID, messageId: MID, seq: 7 });
+      ctx.flush();
+      const recBox = [...ctx.doc.querySelectorAll('[data-ask-wscard="proposed"] [data-ask-ws-rescan]')].at(-1);
+      assert.ok(recBox, 'the removal card shows the re-scan choice');
+      const recCard = recBox.closest('[data-ask-wscard]');
+      assert.match(recBox.querySelector('.ask-wscard-rescan-reason').textContent, /^Recommended: partial re-scan\. api had 1 edge/);
+      assert.equal([...recCard.querySelectorAll('.ask-wscard-effects li')].some((li) => li.textContent.includes('api had 1 edge')), false, 'the reason is not repeated as an effect');
+      const radios = [...recBox.querySelectorAll('input[type="radio"]')];
+      assert.deepEqual(radios.map((x) => [x.value, x.checked]), [['none', false], ['partial', true], ['full', false]]);
+      radios[0].checked = true;   // rescanPick reads :checked at click time — no change event is needed
+      recCard.querySelector('[data-ask-ws-apply]').click();
+      await ctx.tick();
+      assert.deepEqual(rec.cardPosts.at(-1), ['card_00000013', { state: 'applied', rescan: 'none' }]);
+      // A removal card with no recommendation (an older card) renders no box and posts as before. The earlier
+      // proposed cards (…12 declined, …13 applied) are still "proposed" in the DOM until a server frame flips
+      // them, so take the LAST plain card — the one just pushed.
+      const countBefore = proposedCards().length;
+      ctx.panel.pushServerFrame({ type: 'ask-card', block: { kind: 'card', id: 'card_00000014', state: 'proposed', card: rm }, threadId: TID, messageId: MID, seq: 8 });
+      ctx.flush();
+      assert.equal(proposedCards().length, countBefore + 1, 'the new card rendered');
+      const plain = proposedCards().filter((x) => !x.querySelector('[data-ask-ws-rescan]')).at(-1);
+      assert.equal(plain, proposedCards().at(-1), 'the last proposed card is the plain one just pushed');
+      plain.querySelector('[data-ask-ws-apply]').click();
+      await ctx.tick();
+      assert.deepEqual(rec.cardPosts.at(-1), ['card_00000014', { state: 'applied' }]);
       // P5: a Folder member of a create card carries its kind chip; a Git member carries none.
       const mk = { type: 'workspace', kind: 'create', summary: 'Create workspace Docs with api and notes', name: 'Docs', workspaceId: null, workspaceName: null,
         members: [{ key: 'ka', name: 'api', path: '/r/api' }, { key: 'kn', name: 'notes', path: '/r/notes', vcs: 'none' }], effects: [], warnings: [], followUps: [] };
-      ctx.panel.pushServerFrame({ type: 'ask-card', block: { kind: 'card', id: 'card_00000013', state: 'proposed', card: mk }, threadId: TID, messageId: MID, seq: 7 });
+      ctx.panel.pushServerFrame({ type: 'ask-card', block: { kind: 'card', id: 'card_00000015', state: 'proposed', card: mk }, threadId: TID, messageId: MID, seq: 9 });
       ctx.flush();
       const mkEl = [...ctx.doc.querySelectorAll('[data-ask-wscard="proposed"]')].at(-1);
       const memberRows = [...mkEl.querySelectorAll('.ask-mcard-changes li')].filter((li) => li.querySelector('.ask-mcard-change-label').textContent === 'Member');
@@ -1175,6 +1216,87 @@ test('typed cards (model, clone, web, workspace, actions): fields render as text
       await ctx.tick();
       assert.deepEqual(rec.cardPosts.at(-1), ['card_00000021', { state: 'declined' }]);
     } },
+    { name: 'mcp card: every definition row word for word, Add / Save / Remove (danger), applied link, failed alert, declined stub', run: async () => {
+      const rec = { cardPosts: [] };
+      const base = apiHandler(rec);
+      const ctx = await openWithCard(PROJECT_CARD, rec, { fetchHandler: (url, opts) => {
+        const m = /^\/api\/ask\/threads\/[^/]+\/cards\/(card_[0-9a-f]{8})$/.exec(url);
+        if (m && (opts.method || '').toUpperCase() === 'POST' && m[1] !== CARD_ID) { rec.cardPosts.push([m[1], JSON.parse(opts.body)]); return { ok: true, status: 200, json: async () => ({}) }; }
+        return base(url, opts);
+      } });
+      const push = (id, state, card, extra = {}, seq) => {
+        ctx.panel.pushServerFrame({ type: 'ask-card', block: { kind: 'card', id, state, card, ...extra }, threadId: TID, messageId: MID, seq });
+        ctx.flush();
+      };
+      const add = { type: 'mcp', kind: 'add', summary: 'Add MCP server github (stdio)', note: '<i>for issues</i>',
+        changes: [
+          { op: 'add', label: 'Type', after: 'stdio' }, { op: 'add', label: 'Command', after: 'npx' },
+          { op: 'add', label: 'Argument 1', after: '-y' }, { op: 'add', label: 'env GITHUB_TOKEN', after: '{GITHUB_TOKEN: secret, filled in each set}' },
+        ],
+        warnings: ['the value given for env GITHUB_TOKEN was left out'], effects: ['Applying saves the definition only.'], change: { name: 'github', def: {} } };
+      push('card_00000030', 'proposed', add, {}, 3);
+      const el = ctx.doc.querySelector('[data-ask-mcpcard="proposed"]');
+      assert.ok(el);
+      assert.equal(el.querySelector('.ask-mcard-title').textContent, 'Proposed MCP server change');
+      assert.equal(el.querySelector('.ask-mcard-kind').textContent, 'Add server');
+      const rows = [...el.querySelectorAll('.ask-acard-change')];
+      assert.equal(rows.length, 4);
+      assert.deepEqual(rows.map((r) => [r.querySelector('.ask-mcard-change-label').textContent, r.querySelector('.ask-mcard-after').textContent]),
+        add.changes.map((c) => [c.label, c.after]));
+      assert.match(el.querySelector('.ask-wscard-warn li').textContent, /was left out/);
+      assert.match(el.querySelector('.ask-wscard-effects li').textContent, /saves the definition only/);
+      assert.equal(el.querySelector('.ask-mcard-note i'), null, 'text, never markup');
+      const apply = el.querySelector('[data-ask-mcp-apply]');
+      assert.equal(apply.textContent, 'Add');
+      assert.ok(apply.classList.contains('btn-primary'));
+      apply.click();
+      await ctx.tick();
+      assert.deepEqual(rec.cardPosts.at(-1), ['card_00000030', { state: 'applied' }]);
+      push('card_00000030', 'applied', { ...add, result: { ok: true, detail: 'Added github. It is in no set yet' } }, {}, 4);
+      const done = ctx.doc.querySelector('[data-ask-mcpcard="applied"]');
+      assert.equal(done.querySelector('.ask-mcard-title').textContent, 'Applied MCP server change');
+      assert.equal(done.querySelector('.ask-mcard-detail').textContent, 'Added github. It is in no set yet');
+      const link = done.querySelector('a.ask-card-sched-link');
+      assert.equal(link.textContent, 'Manage in Connectors › MCP servers');
+      assert.equal(link.getAttribute('href'), '#connectors/servers');
+      assert.equal(done.querySelectorAll('button').length, 0);
+      assert.equal(done.querySelector('.ask-wscard-warn'), null, 'warnings belong to the proposal');
+      const rm = { ...add, kind: 'remove', summary: 'Remove MCP server gh', changes: [{ op: 'remove', label: 'Command', before: 'npx' }] };
+      push('card_00000031', 'proposed', rm, {}, 5);
+      const rmEl = ctx.doc.querySelector('[data-ask-mcpcard="proposed"]');
+      const rmBtn = rmEl.querySelector('[data-ask-mcp-apply]');
+      assert.equal(rmBtn.textContent, 'Remove');
+      assert.ok(rmBtn.classList.contains('btn-danger'));
+      assert.equal(rmBtn.classList.contains('btn-primary'), false);
+      rmEl.querySelector('[data-ask-mcp-decline]').click();
+      await ctx.tick();
+      assert.deepEqual(rec.cardPosts.at(-1), ['card_00000031', { state: 'declined' }]);
+      push('card_00000031', 'declined', rm, {}, 6);
+      assert.ok([...ctx.doc.querySelectorAll('.ask-card-stub')].some((x) => x.textContent === 'Declined: Remove MCP server gh'));
+      const ed = { ...add, kind: 'edit', summary: 'Edit MCP server gh', changes: [{ op: 'change', label: 'URL', before: 'https://a.test/', after: 'https://b.test/' }] };
+      push('card_00000032', 'proposed', ed, {}, 7);
+      const edEl = ctx.doc.querySelector('[data-ask-mcpcard="proposed"]');
+      assert.equal(edEl.querySelector('[data-ask-mcp-apply]').textContent, 'Save');
+      assert.deepEqual([...edEl.querySelectorAll('.ask-acard-tag')].map((x) => x.textContent), ['Now', 'New']);
+      push('card_00000032', 'failed', ed, { error: 'gh changed since this card was made — ask the chat again' }, 8);
+      const failed = ctx.doc.querySelector('[data-ask-mcpcard="failed"]');
+      assert.equal(failed.querySelector('.ask-mcard-title').textContent, 'MCP server change failed');
+      const alert = failed.querySelector('.ask-mcard-failed[role="alert"]');
+      assert.equal(alert.textContent, 'Could not apply: gh changed since this card was made — ask the chat again');
+      assert.equal(failed.querySelectorAll('button').length, 0);
+      assert.equal(failed.querySelector('a.ask-card-sched-link').getAttribute('href'), '#connectors/servers');
+      const imp = { type: 'mcp', kind: 'import', summary: 'Import MCP server: files',
+        changes: [{ op: 'add', label: 'files · From', after: 'Cursor · ~/.cursor/mcp.json' }, { op: 'add', label: 'files · Command', after: 'npx' }],
+        warnings: [], effects: [], alreadyPresent: [{ id: 'cursor:user:github', name: 'github', from: 'Cursor · ~/.cursor/mcp.json' }],
+        change: { servers: [{ name: 'files', def: {} }] } };
+      push('card_00000034', 'proposed', imp, {}, 9);
+      const impEl = ctx.doc.querySelector('[data-ask-mcpcard="proposed"]');
+      assert.equal(impEl.querySelector('.ask-mcard-kind').textContent, 'Import servers');
+      assert.equal(impEl.querySelector('[data-ask-mcp-apply]').textContent, 'Import');
+      assert.deepEqual([...impEl.querySelectorAll('.ask-mcard-present li')].map((li) => li.textContent), ['Already in worca: github (Cursor · ~/.cursor/mcp.json)']);
+      push('card_00000034', 'applied', { ...imp, result: { ok: true, detail: 'Added files.' } }, {}, 10);
+      assert.equal(ctx.doc.querySelector('[data-ask-mcpcard="applied"] .ask-mcard-present'), null, 'the list belongs to the proposal');
+    } },
   ]);
 });
 
@@ -1213,9 +1335,9 @@ test('ask-panel-card: the Engine field — Default sends none, a proposed engine
       for (let i = 0; i < 10; i++) await ctx.tick();
       const sel = ctx.doc.querySelector('.ask-card-engine');
       assert.equal(sel.value, '');
-      assert.equal(sel.options[0].textContent, 'Codex (default)');
-      assert.deepEqual([...sel.options].slice(1).map((o) => o.textContent), ['Claude', 'Codex (Beta)', 'Copilot (Beta)', 'Cursor (Beta)', 'Gemini CLI (Beta)', 'Goose (Beta)', 'OpenCode (Beta)', 'Qwen Code (Beta)']);
-      assert.deepEqual([...sel.options].filter((o) => !o.hidden).map((o) => o.value), ['', 'claude', 'copilot', 'cursor', 'gemini', 'goose', 'opencode', 'qwen'], 'Codex is listed once, as the default');
+      assert.equal(sel.options[0].textContent, 'OpenAI Codex (default)');
+      assert.deepEqual([...sel.options].slice(1).map((o) => o.textContent), ['Claude Code', 'OpenAI Codex (Beta)', 'GitHub Copilot (Beta)', 'Cursor (Beta)', 'Gemini CLI (Beta)', 'Goose (Beta)', 'OpenCode (Beta)', 'Qwen Code (Beta)']);
+      assert.deepEqual([...sel.options].filter((o) => !o.hidden).map((o) => o.value), ['', 'claude', 'copilot', 'cursor', 'gemini', 'goose', 'opencode', 'qwen'], 'OpenAI Codex is listed once, as the default');
       ctx.doc.querySelector('[data-ask-card-start]').click();
       for (let i = 0; i < 6; i++) await ctx.tick();
       assert.equal(rec.runBodies.length, 1);
@@ -1247,15 +1369,54 @@ test('ask-panel-card: the Engine field — Default sends none, a proposed engine
   ]);
 });
 
+// Pull request when done: "Use the setting" sends nothing and names the project's value once the lane has read it;
+// a proposal's pr preselects its open value, and only an explicit pick (plus the proposal's slices on a project run) is sent.
+test('ask-panel-card: the Pull request field — Use the setting sends none; a proposed pr is preselected and sent', async () => {
+  await checkRows([
+    { name: 'ask-panel-card: Use the setting names the project value and its source; Start sends no pr', run: async () => {
+      const rec = { runPr: { scope: 'project', open: { value: 'draft', source: 'team' }, slices: { value: 'each', source: 'default' } } };
+      const ctx = await openWithCard(PROJECT_CARD, rec);
+      for (let i = 0; i < 10; i++) await ctx.tick();
+      const sel = ctx.doc.querySelector('.ask-card-pr');
+      assert.equal(sel.value, '');
+      assert.equal(sel.options[0].textContent, 'Use the setting: Create a draft PR (Team default)');
+      assert.deepEqual([...sel.options].slice(1).map((o) => o.value), ['none', 'draft', 'ready']);
+      assert.equal(sel.closest('.ask-rp-field').dataset.minLevel, 'advanced');
+      ctx.doc.querySelector('[data-ask-card-start]').click();
+      for (let i = 0; i < 6; i++) await ctx.tick();
+      assert.equal('pr' in rec.runBodies[0], false);
+    } },
+    { name: 'ask-panel-card: a proposed pr is preselected, stays visible at every mode and is sent with its slices mode', run: async () => {
+      const rec = {};
+      const ctx = await openWithCard({ ...PROJECT_CARD, pr: { open: 'ready', slices: 'one' } }, rec);
+      const sel = ctx.doc.querySelector('.ask-card-pr');
+      assert.equal(sel.value, 'ready');
+      assert.equal(sel.closest('.ask-rp-field').dataset.levelKeep, '1');
+      ctx.doc.querySelector('[data-ask-card-start]').click();
+      for (let i = 0; i < 6; i++) await ctx.tick();
+      assert.deepEqual(rec.runBodies[0].pr, { open: 'ready', slices: 'one' });
+    } },
+    { name: 'ask-panel-card: a pick on the card is sent as the run\'s own choice', run: async () => {
+      const rec = {};
+      const ctx = await openWithCard(PROJECT_CARD, rec);
+      const sel = ctx.doc.querySelector('.ask-card-pr');
+      sel.value = 'none';
+      sel.dispatchEvent(new ctx.window.Event('change', { bubbles: true }));
+      ctx.doc.querySelector('[data-ask-card-start]').click();
+      for (let i = 0; i < 6; i++) await ctx.tick();
+      assert.deepEqual(rec.runBodies[0].pr, { open: 'none' });
+    } },
+  ]);
+});
+
 // Shape it first on the run card (spec §3.2): a shaped card (card.shape) starts its shaped run; a nudged card
-// (card.nudge, client gate on) offers "Shape it first" next to "Run anyway".
+// (card.nudge) offers "Shape it first" next to "Run anyway".
 const NUDGE = { reason: 'decisions', size: 'large', openDecisions: ['Storage engine'], perspectives: ['architect'],
   estimates: { asIs: null, shaped: null }, asIsAuto: false };
 const NUDGED_CARD = { ...PROJECT_CARD, nudge: NUDGE };
+const SMALL_NUDGED_CARD = { ...PROJECT_CARD, nudge: { ...NUDGE, size: 'small' } };   // not eligible for the requirements stage: the plain Shaper start
 const SHAPED_CARD = { ...PROJECT_CARD, workflowId: 'wf_shape', workflowName: 'Shaper', shape: { perspectives: ['architect'] } };
-const gateOn = () => setShapeFirst(true);
-const gateOff = () => setShapeFirst(false);
-// GET /api/workflows while the gate is on: wf_shape is listed, wf_shape_ux never is.
+// GET /api/workflows: wf_shape is listed, wf_shape_ux never is.
 const shapeListed = (rec) => { const base = apiHandler(rec); return (url, opts) => (url === '/api/workflows'
   ? { ok: true, status: 200, json: async () => ({ workflows: [{ id: 'wf_default', name: 'Default' }, { id: 'wf_shape', name: 'Shaper' }] }) }
   : base(url, opts)); };
@@ -1275,14 +1436,13 @@ async function openFromSnapshot(block, rec = {}) {
   await settleCard(ctx);
   return ctx;
 }
-const shapeRow = (name, run) => ({ name, run: async () => { try { await run(); } finally { gateOff(); } } });
+const shapeRow = (name, run) => ({ name, run });
 
 test('ask-panel-card: Shape it first on the run proposal card', async () => {
   await checkRows([
-    shapeRow('gate on + card.nudge: "Shape it first" posts shape and wf_shape; "Run as is" posts neither', async () => {
-      gateOn();
+    shapeRow('card.nudge: "Shape it first" posts shape and wf_shape; "Run as is" posts neither', async () => {
       const rec = {};
-      const ctx = await openWithCard(NUDGED_CARD, rec);
+      const ctx = await openWithCard(SMALL_NUDGED_CARD, rec);
       const cardEl = ctx.doc.querySelector('.ask-card');
       assert.ok(cardEl.querySelector('.shape-card'), 'the nudge renders');
       assert.equal(cardEl.querySelector('.shape-card').nextElementSibling.querySelector('.ask-rp-sec-title').textContent, 'Where it runs');
@@ -1294,14 +1454,13 @@ test('ask-panel-card: Shape it first on the run proposal card', async () => {
       shapeBtn.click();
       for (let i = 0; i < 6; i++) await ctx.tick();
       assert.equal(rec.runBodies[0].workflowId, 'wf_shape');
-      assert.deepEqual(rec.runBodies[0].shape, { perspectives: ['product', 'architect'], size: 'large' });
+      assert.deepEqual(rec.runBodies[0].shape, { perspectives: ['product', 'architect'], size: 'small' });
       startBtn.click();
       for (let i = 0; i < 6; i++) await ctx.tick();
       assert.equal(rec.runBodies[1].workflowId, 'wf_default');
       assert.equal('shape' in rec.runBodies[1], false);
     }),
     shapeRow('card.shape: the workflow select is disabled and Start, labelled "Start planning" with its icon, posts shape', async () => {
-      gateOn();
       const rec = {};
       const ctx = await openWithCard(SHAPED_CARD, rec, { fetchHandler: shapeListed(rec) });
       const cardEl = ctx.doc.querySelector('.ask-card');
@@ -1320,7 +1479,6 @@ test('ask-panel-card: Shape it first on the run proposal card', async () => {
       assert.equal(sel.disabled, true, 'a finished start leaves the fixed workflow disabled');
     }),
     shapeRow('card.shape with wf_shape_ux (never listed): Start stays enabled, no "not available" error', async () => {
-      gateOn();
       const rec = {};
       const ctx = await openWithCard({ ...SHAPED_CARD, workflowId: 'wf_shape_ux', shape: { perspectives: ['ux'] } }, rec, { fetchHandler: shapeListed(rec) });
       const cardEl = ctx.doc.querySelector('.ask-card');
@@ -1328,7 +1486,7 @@ test('ask-panel-card: Shape it first on the run proposal card', async () => {
       assert.doesNotMatch(cardEl.querySelector('.ask-card-err').textContent, /not available/);
       assert.equal(cardEl.querySelector('.ask-card-workflow').value, 'wf_shape_ux');
     }),
-    shapeRow('a card.shape card built before any hello (client gate off) still shows its chips and posts shape', async () => {
+    shapeRow('a card.shape card built before any hello still shows its chips and posts shape', async () => {
       const rec = {};
       const ctx = await openWithCard(SHAPED_CARD, rec);
       const cardEl = ctx.doc.querySelector('.ask-card');
@@ -1337,30 +1495,26 @@ test('ask-panel-card: Shape it first on the run proposal card', async () => {
       for (let i = 0; i < 6; i++) await ctx.tick();
       assert.deepEqual(rec.runBodies[0].shape, { perspectives: ['product', 'architect'] });
     }),
-    shapeRow('a nudged card built gate-off gains the nudge when a gate-on hello re-renders the chat', async () => {
+    shapeRow('a nudged card loaded from the thread shows the nudge, and keeps it when a hello re-renders the chat', async () => {
       const ctx = await openFromSnapshot({ kind: 'card', id: CARD_ID, state: 'proposed', card: NUDGED_CARD });
       assert.ok(ctx.doc.querySelector('.ask-card [data-ask-card-start]'), 'the card loaded from the thread');
-      assert.equal(ctx.doc.querySelector('.shape-card'), null, 'gate off: no nudge');
-      assert.equal(startLabel(ctx.doc.querySelector('[data-ask-card-start]')), 'Start run');
-      gateOn();
+      assert.ok(ctx.doc.querySelector('.shape-card'), 'the nudge renders');
       ctx.panel.onHello([]);                       // the hello's resync re-renders the open chat
       await settleCard(ctx);
-      assert.ok(ctx.doc.querySelector('.shape-card'), 'the nudge appears');
+      assert.ok(ctx.doc.querySelector('.shape-card'), 'the nudge stays');
       assert.ok(ctx.doc.querySelector('[data-ask-card-shape]'));
     }),
-    shapeRow('a STARTED card whose block still carries card.nudge is not remounted when the gate changes', async () => {
+    shapeRow('a STARTED card whose block still carries card.nudge is not remounted by a hello', async () => {
       const ctx = await openFromSnapshot({ kind: 'card', id: CARD_ID, state: 'started', runId: 'run-uuid-1', card: NUDGED_CARD });
       const before = ctx.doc.querySelector('.ask-card a[href="#running/run-uuid-1"]');
       assert.ok(before);
-      gateOn();
       ctx.panel.onHello([]);
       await settleCard(ctx);
       assert.equal(ctx.doc.querySelector('.ask-card a[href="#running/run-uuid-1"]'), before, 'same element');
     }),
     shapeRow('while a start is in flight "Shape it first" is disabled (a second click posts nothing)', async () => {
-      gateOn();
       const rec = { runResponse: new Promise(() => {}) };
-      const ctx = await openWithCard(NUDGED_CARD, rec);
+      const ctx = await openWithCard(SMALL_NUDGED_CARD, rec);
       const shapeBtn = ctx.doc.querySelector('[data-ask-card-shape]');
       shapeBtn.click();
       for (let i = 0; i < 6; i++) await ctx.tick();
@@ -1370,7 +1524,6 @@ test('ask-panel-card: Shape it first on the run proposal card', async () => {
       assert.equal(rec.runBodies.length, 1);
     }),
     shapeRow('after a failed start a shaped card\'s workflow select is still disabled', async () => {
-      gateOn();
       const rec = { runResponse: { ok: false, status: 400, json: async () => ({ error: 'shape it first is off' }) } };
       const ctx = await openWithCard(SHAPED_CARD, rec, { fetchHandler: shapeListed(rec) });
       const cardEl = ctx.doc.querySelector('.ask-card');
@@ -1380,8 +1533,7 @@ test('ask-panel-card: Shape it first on the run proposal card', async () => {
       assert.equal(cardEl.querySelector('.ask-card-workflow').disabled, true);
       assert.equal(cardEl.querySelector('[data-ask-card-start]').disabled, false);
     }),
-    shapeRow('gate on, no shape/nudge on the card: the card is unchanged', async () => {
-      gateOn();
+    shapeRow('no shape/nudge on the card: the card is unchanged', async () => {
       const rec = {};
       const ctx = await openWithCard(PROJECT_CARD, rec);
       const cardEl = ctx.doc.querySelector('.ask-card');
@@ -1391,7 +1543,6 @@ test('ask-panel-card: Shape it first on the run proposal card', async () => {
       assert.equal(cardEl.querySelector('.ask-card-workflow').disabled, false);
     }),
     shapeRow('card.shape: Start sends exactly today\'s body', async () => {
-      gateOn();
       const rec = {};
       const ctx = await openWithCard(SHAPED_CARD, rec, { fetchHandler: shapeListed(rec) });
       ctx.doc.querySelector('.ask-card [data-ask-card-start]').click();
@@ -1403,7 +1554,6 @@ test('ask-panel-card: Shape it first on the run proposal card', async () => {
       });
     }),
     shapeRow('card.shape: the small card — title + label, clamped brief, Project, Base branch, Perspectives, What happens; the rest in a closed Advanced', async () => {
-      gateOn();
       const rec = {};
       const ctx = await openWithCard(SHAPED_CARD, rec, { fetchHandler: shapeListed(rec) });
       for (let i = 0; i < 4; i++) await ctx.tick();
@@ -1420,7 +1570,7 @@ test('ask-panel-card: Shape it first on the run proposal card', async () => {
       assert.equal(main.querySelector('.ask-rp-shape-what').textContent, 'What happensUp to 3 questions, then a plan you approve.');
       const adv = cardEl.querySelector('details[data-ask-card-advanced]');
       assert.equal(adv.open, false, 'Advanced starts collapsed');
-      assert.match(adv.querySelector('summary').textContent, /^Advanced · Claude · Normal guardrails/);
+      assert.match(adv.querySelector('summary').textContent, /^Advanced · Claude Code · Normal guardrails/);
       for (const sel of ['.ask-card-feature', '.ask-card-same-source', '.ask-card-workflow', '.ask-card-engine',
         '.ask-card-guardrails', '.ask-rp-lane', '[data-ask-card-schedule]', '[data-ask-card-seg]']) {
         assert.ok(adv.querySelector(sel), `${sel} is inside Advanced`);
@@ -1435,7 +1585,6 @@ test('ask-panel-card: Shape it first on the run proposal card', async () => {
       assert.equal(main.querySelector('.ask-rp-brief-preview').hidden, true);
     }),
     shapeRow('a card without shape keeps today\'s layout', async () => {
-      gateOn();
       const ctx = await openWithCard(PROJECT_CARD);
       const cardEl = ctx.doc.querySelector('.ask-card');
       assert.equal(cardEl.querySelector('.ask-rp-shape-main'), null);
@@ -1460,7 +1609,7 @@ async function openThread(messages) {
 }
 const userMsg = (seq, text) => ({ id: `askm_u000000${seq}`, threadId: TID, seq, role: 'user', text, blocks: [], status: null, createdAt: 't' });
 
-test('a stored Shaper message shows the chip and the person\'s text, never the lead (gate off too)', async () => {
+test('a stored Shaper message shows the chip and the person\'s text, never the lead', async () => {
   const ctx = await openThread([userMsg(1, `${LEAD}\n\nUploads fail on large files`), userMsg(2, LEAD), userMsg(3, 'plain')]);
   const rows = [...ctx.doc.querySelectorAll('.ask-msg-user')];
   assert.equal(rows[0].querySelector('.ask-user-intent').textContent, 'Shaper');
@@ -1734,14 +1883,13 @@ test('ask-panel-card: Open in New run asks before leaving picks behind that are 
   ]);
 });
 
-// ── Run tags (#718): the card's tag field, behind the experimental `runTags` flag ──
-test('ask-panel-card: run tags show as chips and ride Start and Open in New run while the flag is on; none while it is off', async () => {
+// ── Run tags (#718): the card's tag field ──
+test('ask-panel-card: run tags show as chips and ride Start and Open in New run', async () => {
   await checkRows([
-    { name: 'flag on: 1 chip, Start posts tags, New run gets them', run: async () => {
+    { name: '1 chip, Start posts tags, New run gets them', run: async () => {
       const rec = {};
       const handed = [];
       const ctx = makePanel({ fetchHandler: apiHandler(rec), openNewPipeline: (p) => handed.push(p) });
-      applyFlags({ runTags: true }, ctx.doc);
       ctx.storage.setItem('worca-cc.ask.thread', TID);
       ctx.panel.open();
       await ctx.tick(); await ctx.tick(); await ctx.tick();
@@ -1759,20 +1907,12 @@ test('ask-panel-card: run tags show as chips and ride Start and Open in New run 
       await ctx.tick(); await ctx.tick();
       assert.deepEqual(rec.runBodies[0].tags, ['client:acme']);
     } },
-    { name: 'flag off: no tag field, no tags in the body', run: async () => {
-      const rec = {};
-      const ctx = await openWithCard({ ...PROJECT_CARD, tags: ['client:acme'] }, rec);
-      const card = ctx.doc.querySelector('.ask-card');
-      assert.equal(card.querySelectorAll('.tag-chip').length, 0);
-      card.querySelector('[data-ask-card-start]').click();
-      await ctx.tick(); await ctx.tick();
-      assert.equal(Object.hasOwn(rec.runBodies[0], 'tags'), false);
-    } },
   ]);
 });
 
 // ── Ask Worca's composer cards: drafted agents / scripts and the graph card (ask-composer-cards.mjs) ──
 import { buildGraphManifest } from '../src/shared/graph/manifest.mjs';
+import { readStyleCss } from '../src/core/read-style-css.mjs';
 
 const DRAFT_META = { metaVersion: 2, key: 'releaseNotes', displayName: 'Release Notes', description: 'Writes release notes.', color: 'blue', runnerType: 'producer',
   domain: 'general', order: 99, inputs: [{ id: 'plan', type: 'md' }], outputs: [{ id: 'notes', type: 'md', filename: 'notes.md' }] };
@@ -1899,9 +2039,20 @@ test('Ask graph card: a declined draft refuses Save (nothing posted); Open in Wo
   ctx.flush(); await ticks(ctx, 2);
   const savedCard = [...ctx.doc.querySelectorAll('.ask-ccard [aria-label="Proposed workflow"]')].find((e) => /Saved as wf_fix-and-review/.test(e.textContent));
   assert.ok(savedCard);
-  clickText(savedCard, 'Open in Workflows');
+  // #1126: a line above the buttons names the saved workflow and links its address; its click takes openComposer.
+  const line = savedCard.querySelector('.wfc-savedto');
+  assert.equal(line.textContent, 'Saved to Workflows: Fix and review');
+  assert.equal(line.nextElementSibling, savedCard.querySelector('.wfc-actions'), 'right above the buttons');
+  const link = line.querySelector('a[data-ask-wf-link]');
+  assert.equal(link.getAttribute('href'), '#workflows/wf_fix-and-review');
+  const before = link.ownerDocument.defaultView.location.hash;
+  link.click();
   await ticks(ctx, 2);
   assert.deepEqual(r.opened, ['wf_fix-and-review']);
+  assert.equal(link.ownerDocument.defaultView.location.hash, before, 'the click takes openComposer, never the href');
+  clickText(savedCard, 'Open in Workflows');
+  await ticks(ctx, 2);
+  assert.deepEqual(r.opened, ['wf_fix-and-review', 'wf_fix-and-review']);
 });
 
 test('Ask graph card with a command (D10): every command shows under the import notice above the buttons, and Save confirms them (acceptScripts: the list shown)', async () => {
@@ -2220,7 +2371,6 @@ test('Ask draft card: a Save whose record failed shows the card unsaved (Save re
 // ── Enforced run tags (slice 4A): the card fetches its target's tag rules, pre-fills, and gates Start ──
 async function openFlagged(card, rec) {
   const ctx = makePanel({ fetchHandler: apiHandler(rec) });
-  applyFlags({ runTags: true }, ctx.doc);
   ctx.storage.setItem('worca-cc.ask.thread', TID);
   ctx.panel.open();
   await ctx.tick(); await ctx.tick(); await ctx.tick();
@@ -2317,7 +2467,7 @@ test('ask-panel-card: switching a project card to No project drops the project; 
   cardEl.querySelector('[data-ask-card-seg="none"]').click();
   await ctx.tick();
   assert.equal(cardEl.querySelector('.ask-card-needs-repo').textContent, 'Some steps expect a code repository.');
-  assert.ok(readFileSync(new URL('../ui/public/style.css', import.meta.url), 'utf8').includes('.ask-card-needs-repo{margin:0;color:var(--ink-2);font-size:12px;line-height:1.45;}'),
+  assert.ok(readStyleCss().includes('.ask-card-needs-repo{margin:0;color:var(--ink-2);font-size:12px;line-height:1.45;}'),
     'one quiet line, as New run\'s .hint (no browser-default paragraph margins)');
   assert.equal(cardEl.querySelector('[data-ask-card-start]').disabled, false);
   const wf = cardEl.querySelector('.ask-card-workflow'); wf.value = 'wf_review'; wf.dispatchEvent(new ctx.window.Event('change', { bubbles: true }));
@@ -2535,4 +2685,358 @@ test('#958: the run proposal card\'s title field keeps the focus, value and care
   assert.equal(ctx.doc.activeElement, title, 'a new row kept the focus');
   assert.deepEqual([title.selectionStart, title.selectionEnd], [4, 9]);
   ctx.panel.destroy();
+});
+
+test('#959 run proposal: shared fields (.select/.input), the branch carries its value as its tooltip, the switch field is on its own row', async () => {
+  const ctx = await openWithCard({ ...PROJECT_CARD, featureBranch: 'worca/a-very-long-feature-branch-name' });
+  const cardEl = ctx.doc.querySelector('.ask-card.ask-rp');
+  for (const s of cardEl.querySelectorAll('.ask-rp-grid select')) assert.ok(s.classList.contains('select'), s.className);
+  const feat = cardEl.querySelector('.ask-card-feature');
+  assert.ok(feat.classList.contains('input'));
+  assert.equal(feat.title, 'worca/a-very-long-feature-branch-name');
+  feat.value = 'worca/x'; feat.dispatchEvent(new ctx.window.Event('input'));
+  assert.equal(feat.title, 'worca/x', 'the tooltip follows the typed value');
+  assert.ok(cardEl.querySelector('.ask-card-same-source').closest('.ask-rp-field').querySelector(':scope > .switch-row'), 'the switch field (style.css spans it)');
+});
+
+// Per-role picks (#990 slice 2): a role-review node's declared roles get one Agents row each — a model select and
+// effort pills only — and an edited row rides the run as overlay.nodes[id].roles[key].
+const { GRAPH_SHAPE_WORKFLOW } = await import('../src/core/graph/builtin-workflows.mjs');
+const { loadAgentRegistry } = await import('../src/core/agent-registry.mjs');
+const { PERSPECTIVES } = await import('../src/shared/shape/perspectives.mjs');
+const SHAPE_AGENTS = Object.entries(loadAgentRegistry(undefined, { userAgentsDir: null })).map(([key, m]) => ({ ...m, key }));
+const SONNET = { id: 'claude-sonnet-5-5', label: 'Sonnet 5.5', efforts: ['medium', 'high', 'xhigh', 'max'], custom: false };
+const shapeLane = (rec) => {
+  const base = shapeListed(rec);
+  Object.assign(rec, { agents: SHAPE_AGENTS, extraModels: [SONNET] });
+  return (url, opts) => (url.split('?')[0] === '/api/workflows/wf_shape'
+    ? { ok: true, status: 200, json: async () => structuredClone(GRAPH_SHAPE_WORKFLOW) } : base(url, opts));
+};
+const roleTile = (lane, key) => lane.querySelector(`.ask-rp-role[data-node-id="n_roles"][data-role="${key}"]`);
+const pickModel = (ctx, sel, id) => { sel.value = id; sel.dispatchEvent(new ctx.window.Event('change', { bubbles: true })); };
+const start = async (ctx) => { ctx.doc.querySelector('[data-ask-card-start]').click(); for (let i = 0; i < 6; i++) await ctx.tick(); };
+
+test('ask-panel-card: per-role Agents rows on a role-review node', async () => {
+  await checkRows([
+    shapeRow('a shaped card lists one row per declared role, each with exactly one select and one effort group', async () => {
+      const rec = {};
+      const ctx = await openWithCard(SHAPED_CARD, rec, { fetchHandler: shapeLane(rec) });
+      const lane = await laneOf(ctx);
+      const rows = [...lane.querySelectorAll('.ask-rp-role')];
+      assert.equal(rows.length, PERSPECTIVES.length + 3, 'every declared role, ticked or not, plus Review\'s three code roles (#990 slice 4)');
+      assert.deepEqual(rows.map((r) => r.querySelector('.ask-rp-name b').textContent), [...PERSPECTIVES.map((p) => `Plan Review · ${p.label}`),
+        'Review Implementation · Correctness', 'Review Implementation · Security', 'Review Implementation · Project fit']);
+      for (const r of rows) {
+        assert.equal(r.querySelectorAll('select').length, 1, r.dataset.role);
+        assert.equal(r.querySelectorAll('[role=radiogroup]').length, 1, r.dataset.role);
+        assert.equal(r.querySelectorAll('input[type=checkbox], [role=switch], .ask-rp-tile-l2, button.ask-rp-mini').length, 0, 'no switch, no reset, no line 2');
+      }
+      const arch = roleTile(lane, 'architect');
+      assert.equal(arch.querySelector('.ask-rp-model').options[0].textContent, "Node's model");
+      assert.equal(arch.querySelector('.ask-rp-model').value, '');
+      // The built-in Shaper pins no model (its Plan Review and Second-opinion reviewer models are Worca's factory defaults
+      // on the Models page), so the card has no template pick to show: every role reads the node's setting.
+      assert.equal(roleTile(lane, 'product').querySelector('.ask-rp-model').value, '', 'no template pick');
+    }),
+    shapeRow('Start posts an edited role pick as overlay.nodes.n_roles.roles; untouched rows post nothing; Reset clears it', async () => {
+      const rec = {};
+      const ctx = await openWithCard(SHAPED_CARD, rec, { fetchHandler: shapeLane(rec) });
+      const lane = await laneOf(ctx);
+      pickModel(ctx, roleTile(lane, 'security').querySelector('.ask-rp-model'), 'claude-haiku-4-5');
+      assert.ok(roleTile(lane, 'security').classList.contains('mod'));
+      lane.querySelector('.ask-rp-sec-head .ask-rp-mini').click();
+      assert.equal(roleTile(lane, 'security').querySelector('.ask-rp-model').value, '', 'Reset to proposal clears the role edit');
+      pickModel(ctx, roleTile(lane, 'security').querySelector('.ask-rp-model'), 'claude-haiku-4-5');
+      await start(ctx);
+      assert.deepEqual(rec.runBodies[0].overlay, { nodes: { n_roles: { roles: { security: { model: 'claude-haiku-4-5', effort: 'high' } } } } });
+    }),
+    shapeRow('an untouched shaped card posts no roles', async () => {
+      const rec = {};
+      const ctx = await openWithCard(SHAPED_CARD, rec, { fetchHandler: shapeLane(rec) });
+      await laneOf(ctx);
+      await start(ctx);
+      assert.equal('overlay' in rec.runBodies[0], false);
+    }),
+    shapeRow('Save as project defaults sends the role pick in the node PATCH', async () => {
+      const rec = {};
+      const ctx = await openWithCard(SHAPED_CARD, rec, { fetchHandler: shapeLane(rec) });
+      const lane = await laneOf(ctx);
+      pickModel(ctx, roleTile(lane, 'security').querySelector('.ask-rp-model'), 'claude-haiku-4-5');
+      const save = ctx.doc.querySelector('[data-ctl="saveDefaults"]');
+      save.checked = true; save.dispatchEvent(new ctx.window.Event('change', { bubbles: true }));
+      await start(ctx);
+      assert.deepEqual(rec.configWrites.map((w) => [w.method, Object.keys(w.body.nodes || {})]), [['PATCH', ['n_roles']]]);
+      assert.deepEqual(rec.configWrites[0].body.nodes.n_roles.roles, { security: { model: 'claude-haiku-4-5', effort: 'high' } });
+      assert.equal(rec.configWrites[0].body.nodes.n_roles.model, '', "the node's own pick is re-sent as it was (inherit)");
+      assert.equal('overlay' in rec.runBodies[0], false);
+    }),
+    shapeRow('a nudged card (Default\'s lane) has no role rows and posts no roles', async () => {
+      const rec = {};
+      const ctx = await openWithCard(NUDGED_CARD, rec);
+      const lane = await laneOf(ctx);
+      assert.equal(lane.querySelectorAll('.ask-rp-role').length, 0);
+      await start(ctx);
+      assert.equal(JSON.stringify(rec.runBodies[0].overlay || {}).includes('roles'), false);
+    }),
+  ]);
+});
+
+// Requirements first: a medium or large nudge shows Shape requirements (primary) and Run as is (quiet);
+// the first time, Shape requirements is aria-disabled and described by "You lead as" until a lead is picked.
+const REQ_NUDGE = { ...NUDGE, perspectives: ['architect', 'qa'] };
+const answererApi = (rec, { lead = null, putFails = false } = {}) => {
+  const base = apiHandler(rec);
+  return (url, opts) => {
+    if (url !== '/api/answerer') return base(url, opts);
+    if ((opts.method || 'GET').toUpperCase() === 'PUT') {
+      rec.puts = [...(rec.puts || []), JSON.parse(opts.body)];
+      return putFails ? { ok: false, status: 500, json: async () => ({ error: { message: 'disk full' } }) } : { ok: true, status: 200, json: async () => JSON.parse(opts.body) };
+    }
+    return { ok: true, status: 200, json: async () => ({ lead }) };
+  };
+};
+const openRequirements = async (nudge, rec, answerer) => {
+  _resetAnswerer();
+  const ctx = await openWithCard({ ...PROJECT_CARD, nudge }, rec, { fetchHandler: answererApi(rec, answerer) });
+  for (let i = 0; i < 4; i++) await ctx.tick();
+  ctx.flush();
+  return ctx;
+};
+const settle = async (ctx) => { for (let i = 0; i < 8; i++) await ctx.tick(); };
+
+test('ask-panel-card: large nudge, first time', async () => {
+  await checkRows([
+    shapeRow('Shape requirements is the one primary, aria-disabled and described by "You lead as"; a click posts nothing', async () => {
+      const rec = {};
+      const ctx = await openRequirements(REQ_NUDGE, rec, { lead: null });
+      const cardEl = ctx.doc.querySelector('.ask-card');
+      const shapeBtn = cardEl.querySelector('[data-ask-card-shape]');
+      const startBtn = cardEl.querySelector('[data-ask-card-start]');
+      assert.equal(shapeBtn.textContent, 'Shape requirements');
+      assert.ok(shapeBtn.classList.contains('btn-primary'));
+      assert.ok(startBtn.classList.contains('btn-quiet') && !startBtn.classList.contains('btn-primary'));
+      assert.equal(startLabel(startBtn), 'Run as is');
+      assert.equal(cardEl.querySelector('.shape-choice'), null);
+      assert.equal(shapeBtn.getAttribute('aria-disabled'), 'true');
+      assert.equal(ctx.doc.getElementById(shapeBtn.getAttribute('aria-describedby')).textContent, 'You lead as');
+      shapeBtn.click();
+      await settle(ctx);
+      assert.equal(rec.runBodies, undefined, 'blocked: nothing was started');
+    }),
+    shapeRow('picking a lead enables it; the click saves it once and starts with shape.lead', async () => {
+      const rec = {};
+      const ctx = await openRequirements(REQ_NUDGE, rec, { lead: null });
+      const cardEl = ctx.doc.querySelector('.ask-card');
+      cardEl.querySelector('.shape-lead-pick').click();
+      const items = [...ctx.doc.querySelectorAll('.wfv-menu [role="menuitemradio"]')];
+      items[1].click();
+      const shapeBtn = cardEl.querySelector('[data-ask-card-shape]');
+      assert.equal(shapeBtn.hasAttribute('aria-disabled'), false);
+      assert.equal(shapeBtn.hasAttribute('aria-describedby'), false);
+      assert.equal(rec.puts, undefined, 'a pick alone does not save');
+      shapeBtn.click();
+      await settle(ctx);
+      assert.deepEqual(rec.puts, [{ lead: 'architect' }]);
+      assert.equal(rec.runBodies[0].workflowId, 'wf_shape');
+      assert.deepEqual(rec.runBodies[0].shape, { lead: 'architect', perspectives: ['product', 'architect', 'qa'], size: 'large' });
+    }),
+    shapeRow('a saved lead needs no pick and no save; Run as is posts neither shape nor lead', async () => {
+      const rec = {};
+      const ctx = await openRequirements(REQ_NUDGE, rec, { lead: 'qa' });
+      const cardEl = ctx.doc.querySelector('.ask-card');
+      const shapeBtn = cardEl.querySelector('[data-ask-card-shape]');
+      assert.equal(shapeBtn.hasAttribute('aria-disabled'), false);
+      shapeBtn.click();
+      await settle(ctx);
+      assert.equal(rec.puts, undefined);
+      assert.equal(rec.runBodies[0].shape.lead, 'qa');
+      cardEl.querySelector('[data-ask-card-start]').click();
+      await settle(ctx);
+      assert.equal(rec.runBodies[1].workflowId, 'wf_default');
+      assert.equal('shape' in rec.runBodies[1], false);
+    }),
+    shapeRow('a failing save shows the error toast and the run still starts', async () => {
+      const rec = {};
+      const ctx = await openRequirements(REQ_NUDGE, rec, { lead: null, putFails: true });
+      const cardEl = ctx.doc.querySelector('.ask-card');
+      cardEl.querySelector('.shape-lead-pick').click();
+      [...ctx.doc.querySelectorAll('.wfv-menu [role="menuitemradio"]')][3].click();
+      cardEl.querySelector('[data-ask-card-shape]').click();
+      await settle(ctx);
+      assert.equal(rec.runBodies.length, 1);
+      assert.match(ctx.doc.querySelector('.toast.err .tt')?.textContent ?? '', /Could not save your lead role\. It is used for this run only\./);
+    }),
+    shapeRow('a small nudge keeps Shaper and Run as is (btn-primary), with the facts line', async () => {
+      const rec = {};
+      const ctx = await openRequirements({ ...REQ_NUDGE, size: 'small' }, rec, { lead: 'qa' });
+      const cardEl = ctx.doc.querySelector('.ask-card');
+      const shapeBtn = cardEl.querySelector('[data-ask-card-shape]');
+      const startBtn = cardEl.querySelector('[data-ask-card-start]');
+      assert.equal(shapeBtn.textContent, 'Shaper');
+      assert.ok(!shapeBtn.classList.contains('btn-primary'));
+      assert.ok(startBtn.classList.contains('btn-primary'));
+      assert.equal(startLabel(startBtn), 'Run as is');
+      assert.ok(cardEl.querySelector('.shape-facts'));
+      assert.ok(cardEl.querySelector('.shape-chips'));
+    }),
+  ]);
+});
+
+// Literal, captured before the direct-card change. tag-input-list-N: the tag input's datalist id is a per-process counter.
+const GOLDEN_DIRECT_ASK_CARD = `<div class="ask-card ask-rp"><header class="ask-rp-head"><div class="ask-rp-eyebrow"><span class="ask-rp-kicker ask-rp-kicker-shape">Shaper</span><span class="ask-rp-from">from this chat</span></div><div class="ask-rp-title"><input type="text" aria-label="Run title" placeholder="Run title"><span class="ask-rp-edit">✎ click to rename</span></div><div class="ask-rp-tags"><div class="tag-input"><span class="tag-input-chips"></span><input class="input tag-input-text" placeholder="client:acme, team:web…" aria-label="Cost tags" list="tag-input-list-N"><datalist id="tag-input-list-N"></datalist><span class="hint tag-input-hint" aria-live="polite"></span></div><span class="tag-rule-pickers"></span></div></header><div class="ask-rp-sec ask-rp-shape-main"><div class="ask-rp-brief-preview">Fix the login bug</div><button class="link-btn ask-rp-brief-more" type="button" data-ask-card-brief-more="">Show brief</button><div class="ask-rp-sec ask-rp-brief-host" hidden=""><div class="ask-rp-sec-head"><span class="ask-rp-sec-title">Task brief</span><span class="ask-rp-sec-sub">what the first agent reads · Markdown ok</span><div class="ask-rp-pills"></div></div><textarea class="ask-card-brief ask-rp-brief" aria-label="Task brief" style="height: 2px;"></textarea><div class="ask-rp-brief-foot"><span><kbd>@</kbd> mention an attached file</span><span class="ask-rp-count">17 chars</span></div></div><div class="ask-card-target"><div class="ask-rp-grid two"><div class="ask-rp-field"><span class="ask-rp-label">Project</span><select class="select ask-card-project-select" aria-label="Project"><option value="/repos/proj">proj</option><option value="/repos/other">other (missing)</option></select></div><div class="ask-rp-field" data-needs-git=""><span class="ask-rp-label">Base branch</span><select class="select ask-card-source" aria-label="Source branch"><option value="">current branch (auto)</option><option value="main">main</option><option value="dev">dev</option></select></div></div></div><div class="ask-rp-field"><span class="ask-rp-label">Perspectives</span><div class="shape-card"><div class="shape-chips" role="group" aria-label="Perspectives"><button type="button" class="shape-chip on" data-perspective="product" title="Problem, goal, users, success criteria, out of scope." aria-pressed="true" disabled="" data-locked="1">Product</button><button type="button" class="shape-chip on" data-perspective="qa" title="Acceptance criteria as testable checks, a test plan with file names." aria-pressed="true">QA</button><button type="button" class="shape-chip on" data-perspective="security" title="Trust boundaries, inputs, secrets, permissions, abuse cases." aria-pressed="true">Security</button><button type="button" class="shape-chip-more">+ 5 more</button></div></div></div><div class="ask-rp-shape-what"><span class="ask-rp-label">What happens</span><span>Up to 3 questions, then a plan you approve.</span></div></div><details class="ask-rp-adv disclosure" data-ask-card-advanced=""><summary class="ask-rp-adv-sum">Advanced · Claude Code · Normal guardrails · 3 agents on workflow defaults</summary><p class="ask-rp-why">UI-only change on one module.</p><div class="ask-rp-sec"><div class="ask-rp-sec-head"><span class="ask-rp-sec-title">Where it runs</span><span class="ask-rp-sec-sub">proj · branch current · feature worca/fix-login</span><div class="seg seg-sm ask-card-seg" role="tablist" data-min-level="advanced"><button class="ask-card-seg-btn" type="button" role="tab" data-ask-card-seg="none" aria-selected="false">No project</button><button class="ask-card-seg-btn on" type="button" role="tab" data-ask-card-seg="project" aria-selected="true">Project</button><button class="ask-card-seg-btn" type="button" role="tab" data-ask-card-seg="workspace" aria-selected="false">Workspace</button></div></div><div class="ask-rp-grid two ask-rp-adv-branch"><div class="ask-rp-field" data-min-level="advanced" data-level-keep="1" data-needs-git=""><span class="ask-rp-label">Feature branch<span class="ask-rp-hint"> · created for the run</span></span><input type="text" class="input ask-card-feature" aria-label="Feature branch" title="worca/fix-login"></div><div class="ask-rp-field" data-min-level="advanced" data-needs-git=""><span class="ask-rp-label">Run on the source branch<span class="ask-rp-hint"> · commits onto the source branch</span></span><label class="switch-row"><input type="checkbox" class="sw-input ask-card-same-source" role="switch" aria-label="Run on the source branch"><span class="switch" aria-hidden="true"></span><span class="switch-why" hidden=""></span></label></div></div><div class="ask-rp-grid wf-row"><div class="ask-rp-field"><span class="ask-rp-label">Workflow</span><select class="select ask-card-workflow" aria-label="Workflow" disabled=""><option value="wf_default">Default</option></select><span class="ask-rp-wfdesc" data-for="workflow">3 agents · 1 loop · Review → Implement, max 3 cycles</span></div><div class="ask-rp-field" data-min-level="advanced"><span class="ask-rp-label">Engine</span><select class="select ask-card-engine" aria-label="Engine"><option value="">Claude Code (default)</option><option value="claude" hidden="">Claude Code</option><option value="codex">OpenAI Codex (Beta)</option><option value="copilot">GitHub Copilot (Beta)</option><option value="cursor">Cursor (Beta)</option><option value="gemini">Gemini CLI (Beta)</option><option value="goose">Goose (Beta)</option><option value="opencode">OpenCode (Beta)</option><option value="qwen">Qwen Code (Beta)</option></select></div><div class="ask-rp-field" data-min-level="advanced" data-level-keep="1"><span class="ask-rp-label">Guardrails</span><select class="select ask-card-guardrails" aria-label="Guardrails"><option value="permissive">Permissive</option><option value="normal">Normal</option><option value="strict">Strict</option></select><span class="ask-rp-wfdesc" data-for="guardrails">Applies to every agent in this run</span></div></div><div class="ask-rp-grid wf-row"><div class="ask-rp-field" data-min-level="advanced"><span class="ask-rp-label">Pull request when done</span><select class="select ask-card-pr" aria-label="Pull request when done"><option value="">Use the setting</option><option value="none">Don't create a PR</option><option value="draft">Create a draft PR</option><option value="ready">Create a PR ready for review</option></select></div></div></div><div class="ask-rp-sec ask-rp-lane" data-min-level="expert"><div class="ask-rp-sec-head"><span class="ask-rp-sec-title">Agents</span><span class="ask-rp-sec-sub">proposed by Worca · 0 overrides of the workflow defaults</span><button class="ask-rp-mini" type="button" hidden="">Reset to proposal</button></div><div class="ask-rp-agents"><div class="ask-rp-tile" data-node-id="n_plan"><div class="ask-rp-tile-l1"><span class="ask-rp-acc violet"></span><div class="ask-rp-name"><b>Plan</b><small>step 1 · workflow default</small></div><select class="select ask-rp-model" aria-label="Model for Plan"><option value="">inherit (workflow default)</option><optgroup label="Claude sign-in"><option value="claude-opus-5-5">Opus 5.5</option><option value="claude-fable-5-1">Fable 5.1 (1M)</option><option value="claude-haiku-4-5">Haiku 4.5</option></optgroup></select><div class="ask-rp-eff unset" role="radiogroup" aria-label="Effort for Plan"><button class="ask-rp-effbtn" type="button" role="radio" aria-checked="false" disabled="">medium</button><button class="ask-rp-effbtn" type="button" role="radio" aria-checked="false" disabled="">high</button><button class="ask-rp-effbtn" type="button" role="radio" aria-checked="false" disabled="">xhigh</button><button class="ask-rp-effbtn" type="button" role="radio" aria-checked="false" disabled="">max</button></div></div><div class="ask-rp-tile-l2"><label class="switch-row ask-rp-ctl"><input type="checkbox" class="sw-input" role="switch" aria-label="Fan-out" data-ctl="fanOut"><span class="switch" aria-hidden="true"></span><span class="switch-label">Fan-out</span><span class="switch-why" hidden=""></span></label><label class="ask-rp-ctl"><span>Sub-agents</span><select class="select ask-rp-subagent" aria-label="Sub-agent model for Plan" title="Model for the sub-agents this node spawns (needs fan-out)"><option value="">subs: default (agent picks)</option><option value="sonnet" title="Always Claude's Sonnet: sub-agents don't follow your model roles">subs: Sonnet (everyday tasks)</option><option value="opus" title="Always Claude's Opus: sub-agents don't follow your model roles">subs: Opus (deep thinking)</option><option value="fable" title="Always Claude's Fable: sub-agents don't follow your model roles">subs: Fable (premium)</option><option value="auto">subs: agent picks</option><option value="inherit">subs: inherit</option></select></label><label class="switch-row ask-rp-ctl"><input type="checkbox" class="sw-input" role="switch" aria-label="Questions" data-ctl="questions"><span class="switch" aria-hidden="true"></span><span class="switch-label">Questions</span><span class="switch-why" hidden=""></span></label></div></div><div class="ask-rp-tile" data-node-id="n_impl"><div class="ask-rp-tile-l1"><span class="ask-rp-acc green"></span><div class="ask-rp-name"><b>Implement</b><small>step 2 · workflow default</small></div><select class="select ask-rp-model" aria-label="Model for Implement"><option value="">inherit (workflow default)</option><optgroup label="Claude sign-in"><option value="claude-opus-5-5">Opus 5.5</option><option value="claude-fable-5-1">Fable 5.1 (1M)</option><option value="claude-haiku-4-5">Haiku 4.5</option></optgroup></select><div class="ask-rp-eff" role="radiogroup" aria-label="Effort for Implement"><button class="ask-rp-effbtn" type="button" role="radio" aria-checked="false">medium</button><button class="ask-rp-effbtn on" type="button" role="radio" aria-checked="true">high</button><button class="ask-rp-effbtn" type="button" role="radio" aria-checked="false">xhigh</button><button class="ask-rp-effbtn" type="button" role="radio" aria-checked="false">max</button></div></div><div class="ask-rp-tile-l2"><label class="switch-row ask-rp-ctl"><input type="checkbox" class="sw-input" role="switch" aria-label="Fan-out" data-ctl="fanOut"><span class="switch" aria-hidden="true"></span><span class="switch-label">Fan-out</span><span class="switch-why" hidden=""></span></label><label class="ask-rp-ctl"><span>Sub-agents</span><select class="select ask-rp-subagent" aria-label="Sub-agent model for Implement" title="Model for the sub-agents this node spawns (needs fan-out)"><option value="">subs: default (agent picks)</option><option value="sonnet" title="Always Claude's Sonnet: sub-agents don't follow your model roles">subs: Sonnet (everyday tasks)</option><option value="opus" title="Always Claude's Opus: sub-agents don't follow your model roles">subs: Opus (deep thinking)</option><option value="fable" title="Always Claude's Fable: sub-agents don't follow your model roles">subs: Fable (premium)</option><option value="auto">subs: agent picks</option><option value="inherit">subs: inherit</option></select></label><label class="switch-row ask-rp-ctl"><input type="checkbox" class="sw-input" role="switch" aria-label="Questions" data-ctl="questions"><span class="switch" aria-hidden="true"></span><span class="switch-label">Questions</span><span class="switch-why" hidden=""></span></label></div></div><div class="ask-rp-tile" data-node-id="n_rev"><div class="ask-rp-tile-l1"><span class="ask-rp-acc peach"></span><div class="ask-rp-name"><b>Review</b><small>step 3 · workflow default</small></div><select class="select ask-rp-model" aria-label="Model for Review"><option value="">inherit (workflow default)</option><optgroup label="Claude sign-in"><option value="claude-opus-5-5">Opus 5.5</option><option value="claude-fable-5-1">Fable 5.1 (1M)</option><option value="claude-haiku-4-5">Haiku 4.5</option></optgroup></select><div class="ask-rp-eff unset" role="radiogroup" aria-label="Effort for Review"><button class="ask-rp-effbtn" type="button" role="radio" aria-checked="false" disabled="">medium</button><button class="ask-rp-effbtn" type="button" role="radio" aria-checked="false" disabled="">high</button><button class="ask-rp-effbtn" type="button" role="radio" aria-checked="false" disabled="">xhigh</button><button class="ask-rp-effbtn" type="button" role="radio" aria-checked="false" disabled="">max</button></div></div><div class="ask-rp-tile-l2"><label class="switch-row ask-rp-ctl"><input type="checkbox" class="sw-input" role="switch" aria-label="Fan-out" data-ctl="fanOut"><span class="switch" aria-hidden="true"></span><span class="switch-label">Fan-out</span><span class="switch-why" hidden=""></span></label><label class="ask-rp-ctl"><span>Sub-agents</span><select class="select ask-rp-subagent" aria-label="Sub-agent model for Review" title="Model for the sub-agents this node spawns (needs fan-out)"><option value="">subs: default (agent picks)</option><option value="sonnet" title="Always Claude's Sonnet: sub-agents don't follow your model roles">subs: Sonnet (everyday tasks)</option><option value="opus" title="Always Claude's Opus: sub-agents don't follow your model roles">subs: Opus (deep thinking)</option><option value="fable" title="Always Claude's Fable: sub-agents don't follow your model roles">subs: Fable (premium)</option><option value="auto">subs: agent picks</option><option value="inherit">subs: inherit</option></select></label></div></div><div class="ask-rp-agents-foot"><span class="ask-rp-foot-text">Runs on this project's agent settings</span><label class="switch-row ask-rp-ctl"><input type="checkbox" class="sw-input" role="switch" aria-label="Save as project defaults" data-ctl="saveDefaults"><span class="switch" aria-hidden="true"></span><span class="switch-label">Save as project defaults</span><span class="switch-why" hidden=""></span></label></div></div></div><div class="ask-rp-adv-sched"><button class="btn btn-sm btn-quiet ask-card-not-now ask-card-later" type="button" data-ask-card-schedule="" title="Start this run later" data-min-level="advanced">Schedule…</button></div></details><div class="ask-card-err"></div><footer class="ask-rp-foot"><button class="link-btn ask-card-open-np" type="button" data-ask-card-open-np="">↗ Open in New run</button><button class="btn btn-sm btn-quiet ask-card-not-now" type="button" data-ask-card-dismiss="">Not now</button><button class="btn btn-sm btn-primary" type="button" data-ask-card-start="" title=""><svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M6 4l14 8-14 8V4Z"></path></svg>Start planning</button></footer></div>`;
+
+// A direct Shaper card (card.shape), medium or large: Shape requirements is the only start
+// button, under today's small card without Perspectives and What happens. Small or no size: today's card plus the facts line.
+const DIRECT_SHAPE = { perspectives: ['qa', 'security'], size: 'large' };
+const openDirect = async (shape, rec, answerer) => {
+  _resetAnswerer();
+  const ctx = await openWithCard({ ...PROJECT_CARD, shape }, rec, { fetchHandler: answererApi(rec, answerer) });
+  await settle(ctx);
+  ctx.flush();
+  return { ctx, cardEl: ctx.doc.querySelector('.ask-card') };
+};
+const pickLead = (ctx, cardEl, i = 1) => {
+  cardEl.querySelector('.shape-lead-pick').click();
+  [...ctx.doc.querySelectorAll('.wfv-menu [role="menuitemradio"]')][i].click();
+};
+const fieldLabels = (cardEl) => [...cardEl.querySelectorAll('.ask-rp-shape-main .ask-rp-label')].map((l) => l.textContent);
+
+test('ask-panel-card: direct card, flag on, medium or large', async () => {
+  await checkRows([
+    shapeRow('direct card, flag on, large: the requirements layout', async () => {
+      const { cardEl } = await openDirect(DIRECT_SHAPE, {}, { lead: 'architect' });
+      const shapeCard = cardEl.querySelector('.shape-card');
+      assert.equal(shapeCard.previousElementSibling.tagName, 'HEADER');
+      assert.ok(shapeCard.nextElementSibling.matches('.ask-rp-shape-main'));
+      assert.equal(shapeCard.querySelector('.shape-facts').textContent, 'Large task · no estimate yet');
+      assert.equal(shapeCard.querySelector('.shape-lead-line').textContent, 'You lead as Engineering, supported by QA and Security.');
+      assert.doesNotMatch(cardEl.textContent, /What happens|Up to 3 questions/);
+      assert.equal(cardEl.querySelector('.ask-rp-shape-what'), null);
+      assert.equal(cardEl.querySelector('.shape-chips'), null);
+      assert.equal(fieldLabels(cardEl).includes('Perspectives'), false);
+      assert.equal(cardEl.querySelector('[data-ask-card-start]'), null);
+      const shapeBtn = cardEl.querySelector('[data-ask-card-shape]');
+      assert.equal(shapeBtn.textContent, 'Shape requirements');
+      assert.ok(shapeBtn.classList.contains('btn-primary'));
+      assert.deepEqual([...cardEl.querySelector('.ask-rp-foot').children].map((b) => b.textContent), ['↗ Open in New run', 'Not now', 'Shape requirements']);
+      const main = cardEl.querySelector('.ask-rp-shape-main');
+      assert.ok(main.querySelector('.ask-rp-brief-preview') && main.querySelector('.ask-card-project-select') && main.querySelector('.ask-card-source'));
+      assert.ok(cardEl.querySelector('[data-ask-card-advanced]'));
+      assert.equal(cardEl.querySelector('.ask-card-workflow').disabled, true);
+    }),
+    shapeRow('direct card, flag on, medium: the same layout', async () => {
+      const { cardEl } = await openDirect({ ...DIRECT_SHAPE, size: 'medium' }, {}, { lead: 'architect' });
+      assert.equal(cardEl.querySelector('.shape-facts').textContent, 'Medium task · no estimate yet');
+      assert.equal(cardEl.querySelector('[data-ask-card-shape]').textContent, 'Shape requirements');
+      assert.equal(cardEl.querySelector('[data-ask-card-start]'), null);
+    }),
+    shapeRow('direct card: blocked until a lead; the pick starts the run', async () => {
+      const rec = {};
+      const { ctx, cardEl } = await openDirect(DIRECT_SHAPE, rec, { lead: null });
+      const shapeBtn = cardEl.querySelector('[data-ask-card-shape]');
+      assert.equal(cardEl.querySelector('.shape-lead-pick').textContent, 'pick a role');
+      assert.equal(shapeBtn.getAttribute('aria-disabled'), 'true');
+      assert.equal(ctx.doc.getElementById(shapeBtn.getAttribute('aria-describedby')).textContent, 'You lead as');
+      shapeBtn.click();
+      await settle(ctx);
+      assert.equal(rec.runBodies, undefined, 'blocked: nothing was started');
+      pickLead(ctx, cardEl);
+      assert.equal(shapeBtn.hasAttribute('aria-disabled'), false);
+      assert.equal(rec.puts, undefined, 'a pick alone does not save');
+      shapeBtn.click();
+      await settle(ctx);
+      assert.deepEqual(rec.puts, [{ lead: 'architect' }]);
+      assert.equal(rec.runBodies[0].workflowId, 'wf_shape');
+      assert.deepEqual(rec.runBodies[0].shape, { lead: 'architect', perspectives: ['product', 'architect', 'qa', 'security'], size: 'large' });
+    }),
+    shapeRow('direct card: a saved lead needs neither a pick nor a save', async () => {
+      const rec = {};
+      const { ctx, cardEl } = await openDirect(DIRECT_SHAPE, rec, { lead: 'qa' });
+      const shapeBtn = cardEl.querySelector('[data-ask-card-shape]');
+      assert.equal(shapeBtn.hasAttribute('aria-disabled'), false);
+      shapeBtn.click();
+      await settle(ctx);
+      assert.equal(rec.puts, undefined);
+      assert.equal(rec.runBodies[0].shape.lead, 'qa');
+    }),
+    shapeRow('direct card: start with no Start button', async () => {
+      const rec = {};
+      const { ctx, cardEl } = await openDirect(DIRECT_SHAPE, rec, { lead: 'qa' });
+      const shapeBtn = cardEl.querySelector('[data-ask-card-shape]');
+      shapeBtn.click();
+      assert.equal(shapeBtn.disabled, true);
+      shapeBtn.click();
+      await settle(ctx);
+      assert.equal(rec.runBodies.length, 1, 'a double click posts once');
+      assert.equal(shapeBtn.disabled, false);
+      const failing = { runResponse: { ok: false, status: 500, json: async () => ({ error: 'the server said no' }) } };
+      const f = await openDirect(DIRECT_SHAPE, failing, { lead: 'qa' });
+      const btn = f.cardEl.querySelector('[data-ask-card-shape]');
+      btn.click();
+      await settle(f.ctx);
+      assert.equal(f.cardEl.querySelector('.ask-card-err').textContent, 'the server said no');
+      assert.equal(btn.disabled, false);
+      assert.equal(f.cardEl.querySelector('.ask-card-workflow').disabled, true);
+    }),
+    shapeRow('direct card: an enforced tag blocks Shape requirements', async () => {
+      const rec = { tagRules: { source: 'settings', home: null, enforce: true, prefill: [], dims: [CC_DIM] } };
+      const { ctx, cardEl } = await openDirect(DIRECT_SHAPE, rec, { lead: 'qa' });
+      const shapeBtn = cardEl.querySelector('[data-ask-card-shape]');
+      assert.equal(shapeBtn.disabled, true);
+      assert.equal(shapeBtn.title, 'Add Cost centre to start');
+      const pick = cardEl.querySelector('.ask-rp-tags .tag-rule-pickers select');
+      pick.value = '4420'; pick.dispatchEvent(new ctx.window.Event('change', { bubbles: true }));
+      assert.equal(shapeBtn.disabled, false);
+      assert.equal(shapeBtn.title, '');
+      shapeBtn.click();
+      await settle(ctx);
+      assert.equal(rec.runBodies.length, 1);
+    }),
+    shapeRow('direct card: Schedule… is off until a lead, then saves it', async () => {
+      const rec = {};
+      const { ctx, cardEl } = await openDirect(DIRECT_SHAPE, rec, { lead: null });
+      const later = cardEl.querySelector('[data-ask-card-schedule]');
+      assert.equal(later.disabled, true);
+      pickLead(ctx, cardEl);
+      assert.equal(later.disabled, false);
+      // The sheet reads the page's globals.
+      const saved = globalThis.document;
+      globalThis.document = ctx.doc;
+      try {
+        later.click();
+        await ctx.tick();
+        ctx.doc.querySelector('.sched-ok').click();
+        await settle(ctx);
+      } finally { globalThis.document = saved; }
+      assert.deepEqual(rec.puts, [{ lead: 'architect' }]);
+      assert.ok(rec.runBodies[0].scheduledFor);
+      assert.equal(rec.runBodies[0].shape.lead, 'architect');
+    }),
+  ]);
+});
+
+test('ask-panel-card: direct card, flag on, small or no size', async () => {
+  const smallRule = (name, shape, facts, posted) => shapeRow(name, async () => {
+    const rec = {};
+    const { ctx, cardEl } = await openDirect(shape, rec, { lead: 'qa' });
+    const band = cardEl.querySelector('.shape-card');
+    assert.equal(band.querySelector('.shape-facts').textContent, facts);
+    assert.equal(band.closest('.ask-rp-shape-main'), null);
+    assert.ok(band.nextElementSibling.matches('.ask-rp-shape-main'));
+    assert.equal(band.querySelector('.shape-chips'), null);
+    assert.equal(cardEl.querySelector('.ask-rp-shape-main .ask-rp-field .shape-chips').closest('.ask-rp-field').querySelector('.ask-rp-label').textContent, 'Perspectives');
+    assert.equal(cardEl.querySelector('.ask-rp-shape-what').textContent, 'What happensUp to 3 questions, then a plan you approve.');
+    assert.equal(cardEl.querySelector('[data-ask-card-shape]'), null);
+    const startBtn = cardEl.querySelector('[data-ask-card-start]');
+    assert.equal(startLabel(startBtn), 'Start planning');
+    assert.ok(startBtn.classList.contains('btn-primary'));
+    startBtn.click();
+    await settle(ctx);
+    assert.deepEqual(rec.runBodies[0].shape, posted);
+    assert.equal(rec.puts, undefined);
+  });
+  await checkRows([
+    smallRule('direct card, flag on, small', { perspectives: ['qa'], size: 'small' }, 'Small task · no estimate yet', { perspectives: ['product', 'qa'], size: 'small' }),
+    smallRule('direct card, flag on, no size', { perspectives: ['qa'] }, 'This task · no estimate yet', { perspectives: ['product', 'qa'] }),
+  ]);
 });

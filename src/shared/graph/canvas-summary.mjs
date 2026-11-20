@@ -3,11 +3,12 @@
 // as the user sees it — nodes with their ports and what feeds them, wires, what is broken, what is still
 // to wire, the warnings worth acting on, and the selection. Compact; clipped; pure.
 import { portsOf } from './ports.mjs';
-import { validateGraph, CANVAS_WARNING_CODES } from './validate.mjs';
+import { validateGraph, CANVAS_WARNING_CODES, SESSION_ISSUE_CODES } from './validate.mjs';
 import { classifyLoops } from './loops.mjs';
+import { sessionsOf } from './sessions.mjs';
 import { DEFAULT_MAX_CYCLES } from './constants.mjs';
 
-const CONFIG_KEYS = ['model', 'effort', 'fanOut', 'askQuestions', 'awaitAll', 'subagentModel', 'timeoutMs', 'arity', 'planStoreSeed'];
+const CONFIG_KEYS = ['model', 'effort', 'fanOut', 'askQuestions', 'awaitAll', 'subagentModel', 'timeoutMs', 'arity', 'planStoreSeed', 'session'];
 /** The block's last line: the model reads the canvas up to here, and the user's message after it. */
 export const CANVAS_BLOCK_END = '[/composer canvas]';
 // Every value in the block is the user's or the model's (names, ids, keys, ports, settings): one line, capped. C0,
@@ -45,10 +46,15 @@ export function summarizeCanvas(tpl, portsFn, { selection = null, maxChars = 600
     const cfg = CONFIG_KEYS.filter((k) => n.config && n.config[k] !== undefined).map((k) => `${k}=${one(typeof n.config[k] === 'object' ? JSON.stringify(n.config[k]) : n.config[k])}`).join(' ');
     return line(`- ${one(n.id, 40)} ${one(n.kind, 16)}${n.key ? ` ${one(n.key, 64)}` : ''}${title}${p.known === false ? ' (unknown key)' : ''}${ins ? ` · in ${ins}` : ''}${outs ? ` · out ${outs}` : ''}${cfg ? ` · ${cfg}` : ''}`);
   });
+  // One line per session, and only when the canvas has one (an ungrouped block is byte-for-byte what it was): the
+  // label and the members in step order, so the model can extend, leave or dissolve it by id.
+  const specs = sessionsOf({ ...tpl, nodes, wires }, portsFn);
+  const sessionLines = specs.length ? [`sessions (${specs.length}):`,
+    ...specs.map((s) => line(`- session ${one(s.sid, 40)} (${one(s.settings.label, 60)}): ${s.members.map((m) => one(m, 40)).join(', ')}`))] : [];
   const wireLines = wires.map((w) => line(`- ${one(w.id, 40)} ${end(w.from)} → ${end(w.to)}${loops.has(w.id) ? ` (loop ≤${one((w.config && w.config.maxCycles) || DEFAULT_MAX_CYCLES, 40)})` : ''}`));
   const real = report.errors.filter((e) => !e.incomplete);
   const todo = report.errors.filter((e) => e.incomplete);
-  const warns = report.warnings.filter((w) => CANVAS_WARNING_CODES.includes(w.code));
+  const warns = report.warnings.filter((w) => CANVAS_WARNING_CODES.includes(w.code) || SESSION_ISSUE_CODES.includes(w.code));
   // Some messages never name their node (V4 "unknown agent …"): the model needs the id to act on it.
   const at = (e) => (e.nodeId && !String(e.message || '').includes(e.nodeId) ? ` (node ${one(e.nodeId, 40)})` : '');
   const tail = [
@@ -57,7 +63,7 @@ export function summarizeCanvas(tpl, portsFn, { selection = null, maxChars = 600
     line(`to wire: ${todo.length ? todo.map((e) => `${one(e.message, 120)}${at(e)}`).join(' | ') : 'nothing'}`),
     `warnings: ${warns.length ? '' : 'none'}`, ...warns.map((w) => line(`- ${w.code} ${one(w.message, 160)}${at(w)}`)),
   ];
-  const all = [...head, ...nodeLines, ...tail, CANVAS_BLOCK_END].join('\n');
+  const all = [...head, ...nodeLines, ...sessionLines, ...tail, CANVAS_BLOCK_END].join('\n');
   if (all.length <= maxChars) return all;
   const out = [...head];
   let used = head.join('\n').length;

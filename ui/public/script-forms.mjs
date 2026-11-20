@@ -13,6 +13,7 @@ import { icon } from './icons.mjs';
 import { makeSwitch } from './switch.mjs';
 import { effectiveScriptParams, paramValueError, readConfigPorts } from '../../src/shared/graph/script-meta.mjs';
 import { createCodeEditor } from './code-editor.mjs';
+import { lintShell } from '../../src/shared/shell-lint.mjs';
 
 // ---- DOM primitives (moved out of graph/inspector.mjs; it imports them) -----
 
@@ -29,6 +30,7 @@ export function select(doc, cls, name, label, items, value, { disabled = false, 
   const optionEl = (opt) => {
     const o = doc.createElement('option');
     o.value = opt.value; o.textContent = opt.text;
+    if (opt.title) o.title = opt.title;
     if (opt.value === (value == null ? '' : String(value))) o.selected = true;
     return o;
   };
@@ -110,10 +112,17 @@ export function paramEditorLanguage(param) {
  *  inspector and the bench's setup column so a `code` param looks and behaves the
  *  same in both. Handles are pushed onto `editors`; the CALLER destroys them
  *  before the tree goes (a pending highlight debounce on a detached node is a
- *  leak). No `highlight` means no editor: the plain textarea stays. */
-export function paramEditorHook({ doc = globalThis.document, highlight = null, editors = [] } = {}) {
+ *  leak). No `highlight` means no editor: the plain textarea stays.
+ *  Every editor it builds can open a large window; a `command` param also lints as
+ *  shell (`onLint(param)` tells the host the warnings changed). `lintDelayMs` is for
+ *  tests only. */
+export function paramEditorHook({
+  doc = globalThis.document, highlight = null, editors = [], onLint = null, onExpandedChange = null, lintDelayMs,
+} = {}) {
   if (typeof highlight !== 'function') return null;
-  return (param, value) => {
+  return (param, value, ctx = {}) => {
+    const isCommand = param.type === 'command';
+    const label = param.label || param.id;
     const ed = createCodeEditor({
       doc,
       value: value == null ? '' : String(value),
@@ -121,6 +130,13 @@ export function paramEditorHook({ doc = globalThis.document, highlight = null, e
       language: paramEditorLanguage(param),
       rows: param.type === 'code' ? 8 : 3,
       highlight,
+      expandable: true,
+      title: ctx.subject ? `${ctx.subject} — ${label}` : label,
+      caption: PARAMS_CAPTION,
+      lint: isCommand ? lintShell : null,
+      onLint: isCommand && onLint ? () => onLint(param) : null,
+      onExpandedChange,
+      ...(lintDelayMs === undefined ? {} : { lintDelayMs }),
     });
     editors.push(ed);
     return ed.el;
@@ -131,8 +147,11 @@ export function paramEditorHook({ doc = globalThis.document, highlight = null, e
  *  default ⊕ card) is what the control shows; a required param with neither is
  *  flagged `.ins-missing` (V22's `incomplete`). `editorFor` lets a host swap the
  *  command/code textarea for a richer editor (Task 12's code-editor.mjs); the
- *  element it returns must carry the data-field control itself. */
-export function renderParamsForm(meta, config, { doc = globalThis.document, editorFor = null } = {}) {
+ *  element it returns must carry the data-field control itself. `subject` names the
+ *  step in an editor's large-window title; it defaults to the script's display name. */
+export function renderParamsForm(meta, config, {
+  doc = globalThis.document, editorFor = null, subject = (meta && (meta.displayName || meta.key)) || '',
+} = {}) {
   const frag = doc.createDocumentFragment();
   const declared = Array.isArray(meta && meta.params) ? meta.params : [];
   if (!declared.length) return frag;
@@ -152,7 +171,7 @@ export function renderParamsForm(meta, config, { doc = globalThis.document, edit
     else if (isCode) row = textarea(doc, 'ins-param ins-param-code', name, label, value, p.type === 'code' ? 8 : 3);
     else row = text(doc, 'ins-param', name, label, value);
     if (isCode && typeof editorFor === 'function') {
-      const custom = editorFor(p, value, { doc });
+      const custom = editorFor(p, value, { doc, subject });
       if (custom) row.replaceChild(custom, row.querySelector('textarea'));
     }
     if (p.required && (value === undefined || value === '')) row.classList.add('ins-missing');

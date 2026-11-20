@@ -9,10 +9,12 @@ import { ICONS } from '../ui/public/icons.mjs';
 import { syncActions } from '../ui/public/run-status-card.mjs';
 import { buildGroupPage } from '../ui/public/group-page.mjs';
 import { HEAD_ACTIONS, MENU_ACTIONS } from '../src/shared/run-model.mjs';
+import { readIndexHtml } from '../src/core/read-index-html.mjs';
+import { readStyleCss } from '../src/core/read-style-css.mjs';
 
 const read = (p) => readFileSync(new URL(`../ui/public/${p}`, import.meta.url), 'utf8');
-const html = read('index.html');
-const css = read('style.css').replace(/\/\*[\s\S]*?\*\//g, '');
+const html = readIndexHtml();
+const css = readStyleCss().replace(/\/\*[\s\S]*?\*\//g, '');
 /** Every declaration block whose selector list names `sel` exactly, joined. */
 const decls = (sel) => [...css.matchAll(/([^{}]+)\{([^{}]*)\}/g)]
   .filter((m) => m[1].split(',').map((s) => s.trim()).includes(sel)).map((m) => m[2]).join(';');

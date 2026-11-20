@@ -767,12 +767,12 @@ try {
   // copy where it lives instead: paint a quiescent bag into the REAL .hd-banners
   // through the app's own painter and read the rendered text back.
   const quiet = await ev(`(()=>{const host=document.querySelector('#hist-detail .hd-banners');
-    window.__np.paintQuiescenceBanner(host,{quiescent:true});
+    window.__np.paintRunWarnings(host,{warnings:['finished at quiescence — End not reached']});
     const el=host.querySelector(':scope > .run-warn');
     const out={text:el.textContent,hidden:el.hidden,display:getComputedStyle(el).display,
       background:getComputedStyle(el).backgroundColor};
-    window.__np.paintQuiescenceBanner(host,{quiescent:false});
-    out.afterHidden=host.querySelector(':scope > .run-warn').hidden;return out;})()`);
+    window.__np.paintRunWarnings(host,{warnings:[]});
+    out.afterHidden=!host.querySelector(':scope > .run-warn');return out;})()`);
   check('8b', 'n/a: this run reached End — the quiescence copy is proven by painting a quiescent bag into the real .hd-banners',
     head.endReached === true && quiet.hidden === false && quiet.display !== 'none'
     && quiet.text === 'finished at quiescence — End not reached' && quiet.afterHidden === true, quiet);

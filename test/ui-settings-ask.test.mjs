@@ -9,7 +9,6 @@
 // does NOT sandbox HOME/WORCA_HOME.
 import { test, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { JSDOM } from 'jsdom';
 
@@ -17,11 +16,11 @@ import { confirmDialog, cancelDialog, dialogText } from './helpers/confirm-modal
 import { useDomRelease } from './helpers/jsdom-release.mjs';
 import { fieldErrorText, cardAlertOf, edit, lastToast } from './helpers/feedback.mjs';
 import { checkRows } from './helpers/rows.mjs';
+import { readIndexHtml } from '../src/core/read-index-html.mjs';
 
 // Release each booted window after its test (see test/helpers/jsdom-release.mjs).
 const trackDom = useDomRelease(afterEach);
 
-const htmlPath = fileURLToPath(new URL('../ui/public/index.html', import.meta.url));
 const appPath = fileURLToPath(new URL('../ui/public/app.js', import.meta.url));
 
 const DAY = 86400000;
@@ -56,7 +55,7 @@ const resolveAsk = (body) => {
 // the refetch after a delete paints the empty state.
 // `get` overrides keys of the GET /api/settings body (and of the save response built from it).
 async function boot({ postResponse, history = { threads: 3, worktrees: 2, attachments: 5, inFlight: 0 }, deleteResponse, get = {} } = {}) {
-  const dom = trackDom(new JSDOM(readFileSync(htmlPath, 'utf8'), { url: 'http://localhost:4317/' }));
+  const dom = trackDom(new JSDOM(readIndexHtml(), { url: 'http://localhost:4317/' }));
   const { window } = dom;
   window.Element.prototype.scrollIntoView = function () {};
   window.WebSocket = class { constructor() { this.readyState = 1; } send() {} close() {} addEventListener() {} };

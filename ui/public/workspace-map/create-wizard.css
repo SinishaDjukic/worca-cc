@@ -1,0 +1,42 @@
+
+/* Wizard step panes. */
+.wiz-step.hidden{display:none;}
+.wiz-proj-list{display:flex;flex-direction:column;gap:2px;border:1.5px solid var(--line-2);border-radius:var(--r-ctrl);padding:6px;background:var(--field);}
+.wiz-proj{display:flex;align-items:center;gap:10px;padding:9px 11px;border-radius:var(--r-sm);cursor:pointer;font-size:13px;color:var(--ink);}
+.wiz-proj:hover{background:var(--hover-on-field);}
+.wiz-proj input{margin:0;cursor:pointer;}
+.wiz-proj.missing{color:var(--ink-3);cursor:not-allowed;}
+.wiz-proj-head{display:flex;align-items:baseline;justify-content:space-between;gap:12px;}
+.wiz-select-all{display:inline-flex;align-items:center;gap:6px;font-size:var(--fs-body);color:var(--ink-2);cursor:pointer;}
+.wiz-select-all input{margin:0;cursor:pointer;}
+.wiz-select-all:has(input:disabled){opacity:.5;cursor:not-allowed;}
+/* Workspace size (D24): the project list scrolls inside the card so the size note under it stays in
+   view while a big pick is made; the note's data-level picks the tone. */
+#wiz-projects{max-height:min(52vh,480px);overflow-y:auto;}
+.wiz-size-note{margin-top:8px;font-size:12px;line-height:1.45;border-radius:var(--r-sm);}
+.wiz-size-note[hidden]{display:none;}
+.wiz-size-note[data-level="big"]{color:var(--amber-ink);}
+.wiz-size-note[data-level="very-big"]{color:var(--amber-ink);background:var(--amber-wash);border:1px solid var(--amber-line);padding:8px 11px;font-weight:600;}
+.wiz-size-note[data-level="over"]{color:var(--red-ink);background:var(--red-bg);padding:8px 11px;font-weight:600;}
+.wiz-grid{display:grid;grid-template-columns:minmax(0,1fr) 280px;gap:28px;align-items:start;}
+.wiz-models{border-left:1px solid var(--line);padding-left:24px;}
+.wiz-models-title{font-size:12px;font-weight:600;color:var(--ink-2);margin:2px 0 12px;}
+.wiz-model-pair{display:grid;grid-template-columns:minmax(0,1fr) 108px;gap:8px;}
+/* Import (Add… / paste): what a pick or a paste found, as rows like the project list's. */
+.wiz-import{display:flex;flex-direction:column;gap:8px;margin-top:12px;}
+.wiz-import-bar{display:flex;align-items:center;gap:10px;flex-wrap:wrap;}
+.wiz-import-bar .hint{margin-top:0;}
+.wiz-import-lead{font-size:12px;color:var(--ink-2);}
+.wiz-import-deep{display:inline-flex;align-items:center;gap:6px;margin-left:auto;font-size:var(--fs-body);color:var(--ink-2);cursor:pointer;}
+.wiz-import-deep input{margin:0;cursor:pointer;}
+.wiz-import-paste{min-height:58px;font-family:var(--mono);font-size:12px;}
+.wiz-import-paste::placeholder{color:var(--ink-2);}   /* ink-3 misses 4.5:1 on the grey field (theme proof) */
+.wiz-import-list[hidden]{display:none;}
+#wiz-import-list{max-height:min(36vh,320px);overflow-y:auto;}
+.wiz-import-row{flex-wrap:wrap;}
+.wiz-import-why{flex-basis:100%;padding-left:24px;font-size:12px;color:var(--ink-2);}
+.wiz-import-row[data-status="problem"] .wiz-import-why{color:var(--red-ink);}
+/* A problem row's box is disabled, and .opt-row:has(input:disabled) fades the whole row to .55:
+   keep its red reason readable. */
+.opt-row.wiz-import-row[data-status="problem"]{opacity:1;}
+@media (max-width:760px){.wiz-grid{grid-template-columns:1fr;}.wiz-models{border-left:0;padding-left:0;border-top:1px solid var(--line);padding-top:16px;}}

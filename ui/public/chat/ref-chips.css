@@ -1,0 +1,17 @@
+
+/* Chat: answer ref chips (ui/public/ask-ref-chips.mjs). A neutral chip with the token corner; the
+   status is a coloured word (the .runs-pr.is-* pattern), never a filled pill. */
+.ask-md a.ask-ref-chip{display:inline-flex;align-items:center;gap:5px;max-width:100%;height:22px;box-sizing:border-box;padding:0 6px;border-radius:var(--r-xs);vertical-align:-5px;overflow:hidden;background:var(--field);color:var(--ink);font-size:var(--fs-body);line-height:22px;text-decoration:none;white-space:nowrap;}
+.ask-md a.ask-ref-chip:hover{background:var(--hover);}
+.ask-md a.ask-ref-chip:focus-visible{outline:2px solid var(--ink);outline-offset:1px;}
+.ask-ref-ic{flex:none;}
+.ask-ref-label{flex:none;max-width:28ch;overflow:hidden;text-overflow:ellipsis;font-weight:600;color:var(--blue-ink-strong);}
+.ask-ref-sep{flex:none;}
+.ask-ref-title{min-width:0;max-width:36ch;overflow:hidden;text-overflow:ellipsis;}
+.ask-ref-pill{flex:none;font-size:11px;font-weight:500;line-height:16px;}
+.ask-ref-pill.tone-green{color:var(--green-ink);}
+.ask-ref-pill.tone-red{color:var(--red-ink);}
+.ask-ref-pill.tone-amber{color:var(--amber-ink);}
+.ask-ref-pill.tone-peach{color:var(--h-peach-ink);}
+.ask-ref-pill.tone-blue{color:var(--h-blue-ink);}
+.ask-ref-pill.tone-slate{color:var(--slate-ink);}

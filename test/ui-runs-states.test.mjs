@@ -4,18 +4,17 @@
 import { test, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
 import { JSDOM } from 'jsdom';
-import { readFileSync } from 'node:fs';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { dirname, join } from 'node:path';
 import { useDomRelease } from './helpers/jsdom-release.mjs';
 import { useAppTimers } from './helpers/app-timers.mjs';
 import { OFFLINE_TEXT } from '../ui/public/connection-state.mjs';
 import { UNREACHABLE_DETAIL } from '../ui/public/action-errors.mjs';
+import { readIndexHtml } from '../src/core/read-index-html.mjs';
 
 const trackDom = useDomRelease(afterEach);
 
 const __dir = dirname(fileURLToPath(import.meta.url));
-const htmlPath = join(__dir, '..', 'ui', 'public', 'index.html');
 const appPath = join(__dir, '..', 'ui', 'public', 'app.js');
 const PROJECT = '/tmp/proj';
 const KEY = 'proj-0000abcd';
@@ -36,7 +35,7 @@ const res = (status, body) => ({ ok: status >= 200 && status < 300, status, json
 // `history(n)` answers the n-th GET /api/history (from 1) with a Response-like object or a Promise of one;
 // `bulk(body)` answers POST /api/runs/bulk the same way. `calls.history` counts the History fetches.
 async function boot({ url = 'http://localhost:4317/#runs', history = () => res(200, { pipelines: [] }), bulk = () => res(200, { ok: true, done: [], cancelled: [], skipped: [] }) } = {}) {
-  const dom = trackDom(new JSDOM(readFileSync(htmlPath, 'utf8'), { url }));
+  const dom = trackDom(new JSDOM(readIndexHtml(), { url }));
   const { window } = dom;
   windows.push(window);
   window.Element.prototype.scrollIntoView = function () {};

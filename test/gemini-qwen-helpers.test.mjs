@@ -48,7 +48,7 @@ for (const { engine, fake, hint, signedOut } of ENGINES) {
     const titles = [];
     mockSpawnLog.length = 0;
     const orch = createOrchestrator({
-      projectDir: gitDir(`${engine}-run`), prompt: 'Add a settings page', auto: true,
+      projectDir: gitDir(`${engine}-run`), prompt: 'Add a settings page', auto: true, guardrailsId: 'permissive',
       claude: { mock: true, engine, bin: `/nonexistent/${engine}` },
       titleRunClaude: async (o) => { titles.push(o); return { text: 'Add a settings page' }; },
     });

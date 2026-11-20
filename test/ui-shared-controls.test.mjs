@@ -7,11 +7,13 @@ import { readFileSync, readdirSync, statSync } from 'node:fs';
 import { join, relative, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { JSDOM } from 'jsdom';
+import { INDEX_HTML, readIndexHtml } from '../src/core/read-index-html.mjs';
+import { STYLE_CSS, readStyleCss } from '../src/core/read-style-css.mjs';
 
 const ROOT = fileURLToPath(new URL('..', import.meta.url));
 const read = (p) => readFileSync(join(ROOT, p), 'utf8');
 // Comments blanked, newlines kept (the same parser as test/ui-design-language.test.mjs).
-const css = read('ui/public/style.css').replace(/\/\*[\s\S]*?\*\//g, (m) => m.replace(/[^\n]/g, ' '));
+const css = readStyleCss().replace(/\/\*[\s\S]*?\*\//g, (m) => m.replace(/[^\n]/g, ' '));
 function rules(text) {
   const out = []; const stack = []; let start = 0; let line = 1;
   for (let i = 0; i < text.length; i += 1) {
@@ -49,7 +51,7 @@ const JS = walk(join(ROOT, 'ui/public'));
 const rel = (f) => relative(ROOT, f).split(sep).join('/');
 const code = (t) => t.replace(/\/\*[\s\S]*?\*\//g, (m) => m.replace(/[^\n]/g, '')).split('\n')
   .map((l) => (/^\s*\/\//.test(l) ? '' : l.replace(/\s\/\/\s.*$/, ''))).join('\n');
-const index = new JSDOM(read('ui/public/index.html')).window.document;
+const index = new JSDOM(readIndexHtml()).window.document;
 
 test('colour: the guide has the one meaning table with the status-dot exceptions', () => {
   const g = read('docs/design-system.md');
@@ -92,9 +94,9 @@ test('spacing: one card padding and one tile padding token', () => {
 const REMOVED_SWITCHES = ['switch-sm', 'ask-rp-sw', 'ask-rp-knob'];
 const classRe = (c) => new RegExp(`(?<![\\w-])${c}(?![\\w-])`);
 test('one switch: no other switch skin is defined or emitted in ui/public', () => {
-  const files = [...JS, join(ROOT, 'ui/public/style.css'), join(ROOT, 'ui/public/index.html')];
+  const files = [...JS.map((f) => [f, readFileSync(f, 'utf8')]), [join(ROOT, STYLE_CSS), readStyleCss()], [join(ROOT, INDEX_HTML), readIndexHtml()]];
   const hits = [];
-  for (const f of files) code(readFileSync(f, 'utf8')).split('\n').forEach((l, i) => {
+  for (const [f, text] of files) code(text).split('\n').forEach((l, i) => {
     for (const c of REMOVED_SWITCHES) if (classRe(c).test(l)) hits.push(`${c} — ${rel(f)}:${i + 1}`);
     if (/\.wz \.tog\b|'tog(?:\s|')/.test(l)) hits.push(`wz tog — ${rel(f)}:${i + 1}`);
   });
@@ -136,7 +138,7 @@ test('on/off rule: every checkbox in index.html is a switch or an allowed picker
 // JS emitters: a statement that makes a checkbox must be a switch (sw-input / makeSwitch within 2 lines) or carry the
 // literal class/id token of a listed picker. [file, token, reason]; the token is the string on the emitting statement.
 // The tokens were resolved against the emitters (label-picker `lp-check`, mcp-run-picker's `box` factory,
-// report-run `confirm-checkbox`, actions-view `act-member`, widgets-input's multi-choice list). `ask-markdown.mjs`
+// report-run `confirm-checkbox`, actions-view `act-cb`, widgets-input's multi-choice list). `ask-markdown.mjs`
 // only sanitises rendered task lists and emits no checkbox, so it has no entry.
 const JS_CHECKBOX_OK = [
   ['runs-list.mjs', 'runs-check', 'picks runs'], ['label-picker.mjs', 'lp-check', 'picks labels'], ['mcp-run-picker.mjs', 'const box = (checked, keys, kind)', 'picks MCP sets'],
@@ -145,15 +147,19 @@ const JS_CHECKBOX_OK = [
   ['night-mode-form.mjs', 'offBox', 'No away hours opt-out'], ['night-mode-form.mjs', 'night-never', 'Never opt-out'],
   ['team-policy-view.mjs', 'tp-null', 'No cap opt-out'], ['team-policy-view.mjs', 'tp-cat-effort', 'picks efforts'],
   ['schedule-sheet.mjs', 'sched-between', 'Only between opt-in'], ['report-run.mjs', 'input.dataset.optin', 'consent rows: what the report may include'],
-  ['actions-view.mjs', 'act-member', 'picks projects'], ['actions-config-view.mjs', 'ac-builtin', 'picks built-ins'],
+  ['actions-view.mjs', 'act-cb', 'picks projects in the checkout table'], ['actions-config-view.mjs', 'ac-builtin', 'picks built-ins'],
   ['script-bench-view.mjs', 'expect:fired', 'picks expectations'], ['ask/widgets-input.mjs', "multi ? 'checkbox'", 'a question\'s multi-choice list'], ['app.js', 'folder-pick', 'picks folders'],
   ['app.js', 'wiz-proj-cb', 'picks projects'], ['app.js', 'wiz-import-cb', 'picks imports'], ['app.js', 'wd-add-row', 'picks rows'],
   ['app.js', 'pb-include', 'picks items'], ['app.js', 'shipit-repo-pick', 'picks repos'], ['app.js', 'publish-pick', 'picks items'],
   ['app.js', 'cb.value = opt', 'picks chips'],
   ['memory-view.mjs', 'mem-seed-all', 'picks: select every note to share'], ['memory-view.mjs', 'mem-seed-check', 'picks notes to share'],
   ['marketplace/browse.mjs', 'mk-hide-installed', 'Hide installed: an opt-in filter next to the list'],
+  ['requirements-view.mjs', 'ipv-crit-', 'picks the ticket criteria to start from'], ['requirements-view.mjs', 'ipv-com-', 'picks the ticket comments to take'],
+  ['requirements-view.mjs', 'ipv-att-', 'picks the ticket attachments to add as files'],
   ['marketplace/remove-view.mjs', 'mk-purge-box', 'opt-in consent in the Remove dialog'],
   ['marketplace/update-view.mjs', 'mk-reviewed', 'acknowledges the reviewed changes'], ['marketplace/update-view.mjs', 'mk-include', 'picks updates'],
+  ['design/export-dialog.mjs', 'dsx-replace', 'consent: replace the listed files'],
+  ['mcp-server-import.mjs', 'mcp-imp-pick', 'picks servers to import'],
 ].map(([file, token, reason]) => ({ file: `ui/public/${file}`, token, reason }));
 function checkboxEmitters(files) {
   const out = [];
@@ -210,7 +216,7 @@ test('one menu: the .menu box and .menu-item rows', () => {
   const item = bodyOf('.menu-item');
   assert.match(item, /min-height:30px/);
   assert.match(item, /border-radius:var\(--r-sm\)/);
-  const raw = read('ui/public/style.css');   // the markers are comments, which `css` blanks
+  const raw = readStyleCss();   // the markers are comments, which `css` blanks
   assert.ok(raw.indexOf('\n.menu{') > raw.indexOf('/* ---------- buttons ---------- */')
     && raw.indexOf('\n.menu{') < raw.indexOf('/* ===================== Action feedback'), 'in the buttons section, which the extension cuts');
 });
@@ -228,11 +234,11 @@ test('one menu: the five families keep position and size only, no skin of their 
   assert.deepEqual(bad, []);
 });
 
-test('one menu: the 6 role="menu" boxes in index.html are .menu and their menu items are .menu-item', () => {
+test('one menu: the 7 role="menu" boxes in index.html are .menu and their menu items are .menu-item', () => {
   // The run, history and project pages live in <template>s, whose content querySelectorAll does not enter.
   const inTemplates = (root) => [root, ...[...root.querySelectorAll('template')].flatMap((t) => inTemplates(t.content))];
   const menus = inTemplates(index).flatMap((r) => [...r.querySelectorAll('[role="menu"]')]);
-  assert.equal(menus.length, 6);   // 3 .nav-fly, 3 .btn-split-menu
+  assert.equal(menus.length, 7);   // 4 .nav-fly (with the Usage submenu), 3 .btn-split-menu
   assert.deepEqual(menus.filter((m) => !m.classList.contains('menu')).map((m) => m.id || m.className), []);
   // Segmented rows inside the account menu (the theme icons) are not menu rows.
   assert.deepEqual(menus.flatMap((m) => [...m.querySelectorAll('button[role^="menuitem"], [role="menu"] > button')])
@@ -346,16 +352,69 @@ test('slice 3: the View PR ▾ menu drops under its split, and the Watch row put
   closeMenus();
 });
 
+test('openMenu: a segmented item is one .seg group under its head; ←/→ move inside, ↑/↓ treat it as one stop, a pick keeps the menu open', async () => {
+  const { openMenu, closeMenus } = await import('../ui/public/workflows/menu.mjs');
+  const { window } = new JSDOM('<!doctype html><body><button id="a">View</button></body>');
+  const doc = window.document;
+  const picks = [];
+  const m = openMenu({ doc, anchor: doc.getElementById('a'), items: [
+    { label: 'Select' },
+    { segmented: true, label: 'Group by', value: 'none', onSelect: (id) => picks.push(id),
+      options: [{ id: 'none', label: 'None' }, { id: 'project', label: 'Project' }, { id: 'date', label: 'Date', title: 'Today · Recent · Older' }] },
+    { label: 'Keyboard shortcuts', hint: '?' },
+  ] });
+  const g = m.el.querySelector('.seg.wfv-seg[role="group"]');
+  assert.equal(doc.getElementById(g.getAttribute('aria-labelledby')).textContent, 'Group by');
+  const segs = [...g.querySelectorAll('button[role="menuitemradio"]')];
+  assert.deepEqual(segs.map((b) => [b.textContent, b.getAttribute('aria-checked')]), [['None', 'true'], ['Project', 'false'], ['Date', 'false']]);
+  assert.equal(segs[2].title, 'Today · Recent · Older');
+  const key = (k) => doc.activeElement.dispatchEvent(new window.KeyboardEvent('keydown', { key: k, bubbles: true, cancelable: true }));
+  assert.equal(doc.activeElement.textContent, 'Select');
+  key('ArrowDown'); assert.equal(doc.activeElement, segs[0], '↓ lands on the checked segment');
+  key('ArrowRight'); assert.equal(doc.activeElement, segs[1]);
+  key('ArrowLeft'); key('ArrowLeft'); assert.equal(doc.activeElement, segs[2], '← wraps');
+  key('ArrowDown'); assert.equal(doc.activeElement.textContent, 'Keyboard shortcuts?');
+  key('ArrowUp'); assert.equal(doc.activeElement, segs[0], '↑ comes back to the checked segment');
+  segs[1].click();
+  assert.deepEqual(picks, ['project']);
+  assert.ok(m.el.isConnected, 'a segment pick keeps the menu open');
+  assert.deepEqual(segs.map((b) => b.getAttribute('aria-checked')), ['false', 'true', 'false']);
+  segs[1].click();
+  assert.deepEqual(picks, ['project'], 'the checked segment again does nothing');
+  closeMenus();
+});
+
+test('openMenu: a radio row is ✓ slot | label | count in tabular figures; a 0 count is dimmed', async () => {
+  const { openMenu, closeMenus } = await import('../ui/public/workflows/menu.mjs');
+  const doc = new JSDOM('<!doctype html><body><button id="a">View</button></body>').window.document;
+  const m = openMenu({ doc, anchor: doc.getElementById('a'), items: [
+    { label: 'All', hint: '104', checked: true }, { label: 'Needs you', hint: '0', checked: false }, { label: 'Archived', checked: false }] });
+  const rows = [...m.el.querySelectorAll('.wfv-menu-item[role="menuitemradio"]')];
+  assert.deepEqual(rows.map((r) => [...r.children].map((c) => c.className)),
+    [['wfv-menu-l', 'wfv-menu-hint'], ['wfv-menu-l', 'wfv-menu-hint is-zero'], ['wfv-menu-l']]);
+  assert.equal(computed(rows[0], 'display'), 'grid');
+  assert.equal(computed(rows[0], 'grid-template-columns'), '12px minmax(0,1fr) auto');
+  const hint = rows[0].querySelector('.wfv-menu-hint');
+  assert.equal(computed(hint, 'font-variant-numeric'), 'tabular-nums');
+  assert.equal(computed(hint, 'text-align'), 'right');
+  assert.equal(computed(rows[1].querySelector('.wfv-menu-hint'), 'color'), 'var(--ink-3)');
+  closeMenus();
+});
+
 test('badges: Official and policy are slate, "not installed" is never amber', () => {
   assert.match(bodyOf('.badge.slate'), /background:var\(--slate-bg\);color:var\(--slate-ink\)/);
   const src = (p) => code(read(p));
   assert.match(bodyOf('.badge.mk-chip-built'), /background:var\(--slate-bg\)/);   // the Marketplace's Built-in chip
   assert.match(src('ui/public/marketplace/marketplaces-view.mjs'), /chip\(doc, 'built', 'Built-in'\)/);
-  for (const p of ['ui/public/team-policy-view.mjs', 'ui/public/models-view.mjs', 'ui/public/guardrails-view.mjs']) {
+  for (const p of ['ui/public/team-policy-view.mjs', 'ui/public/guardrails-view.mjs']) {
     const lines = src(p).split('\n').filter((l) => /['"`](?:team )?policy['"`]/i.test(l) && /badge/.test(l));
     assert.ok(lines.length, `${p} has a policy badge`);
     for (const l of lines) assert.match(l, /badge slate/, `${p}: ${l.trim().slice(0, 80)}`);
   }
+  // The Catalogue's row chip ("Team" on a team-policy model; "Plugin", "Project", "Overrides built-in") is slate.
+  assert.match(src('ui/public/models/catalogue-model.mjs'), /team: 'Team'/);
+  const chipLines = src('ui/public/models/catalogue-view.mjs').split('\n').filter((l) => /r\.chip\)/.test(l));
+  assert.deepEqual(chipLines.map((l) => l.trim()), ["if (r.chip) model.append(el(doc, 'span', 'badge slate', r.chip));"]);
   const notInstalled = JS.flatMap((f) => code(readFileSync(f, 'utf8')).split('\n').filter((l) => /not installed/i.test(l) && /badge (?:amber|waiting)|'amber'/.test(l)).map((l) => `${rel(f)}: ${l.trim().slice(0, 80)}`));
   assert.deepEqual(notInstalled, []);
 });
@@ -392,7 +451,7 @@ test('headings: section titles and sub-heads use the shared classes, with no siz
 });
 
 const PAGE_CARDS = ['.chart-card', '.sched-feed', '.tp-ov-card', '.rd-sheet', '.hd-ov-card', '.pd-ov-card', '.hd-cl-card', '.hd-ov-task',
-  '.tp-editor .card.tp-group-card', '.tp-editor details.card', '.tm-empty .card', '.mv-card', '.mv-providers', '.settings-card'];
+  '.tp-editor .card.tp-group-card', '.tp-editor details.card', '.tm-empty .card', '.mv-providers', '.settings-card'];
 const TILES = ['.stat-tile', '.chat-run-tile', '.mcp-setlist'];
 test('cards: every page card pads --pad-card, every tile --pad-tile', () => {
   for (const s of PAGE_CARDS) assert.match(bodyOf(s), /padding:var\(--pad-card\)/, s);

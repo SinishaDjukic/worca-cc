@@ -15,9 +15,10 @@ const defined = (o) => Object.fromEntries(Object.entries(o).filter(([, v]) => v 
 const textOf = (content) => (typeof content === 'string' ? content
   : Array.isArray(content) ? content.filter((c) => c && c.type === 'text' && typeof c.text === 'string').map((c) => c.text).join('') : '');
 
-export function createClaudeNormalizer() {
+export function createClaudeNormalizer({ rootParentId = null } = {}) {
   const agents = new Set();
   const messageIds = new Map();
+  const toolBlocks = new Map(); // index → {id,name}; main stream only, per message
 
   function assistant(raw, parentId, e) {
     const msg = raw.message && typeof raw.message === 'object' ? raw.message : {};
@@ -81,11 +82,39 @@ export function createClaudeNormalizer() {
     if (ev.type === 'message_start') {
       const id = str(ev.message?.id) ?? null;
       messageIds.set(key, id);
+      if (parentId === null) toolBlocks.clear();
       return [{ type: 'usage', messageId: id, parentId, usage: ev.message?.usage ?? null, phase: 'start' }];
     }
     if (ev.type === 'message_delta') return [{ type: 'usage', messageId: messageIds.get(key) ?? null, parentId, usage: ev.usage ?? null, phase: 'delta' }];
     if (parentId === null && ev.type === 'content_block_delta' && ev.delta?.type === 'text_delta' && typeof ev.delta.text === 'string') {
       return [defined({ type: 'text', text: ev.delta.text, parentId, from: 'assistant', delta: true, messageId: messageIds.get(key) ?? undefined })];
+    }
+    if (parentId === null) return toolInput(ev, messageIds.get(key) ?? null);
+    return [];
+  }
+
+  // A main-stream tool_use block's arguments as they stream (C-4): start, then each
+  // input_json_delta, then stop, which forgets the index. Child streams and unknown
+  // indexes emit nothing.
+  function toolInput(ev, messageId) {
+    const index = ev.index;
+    if (ev.type === 'content_block_start') {
+      const b = ev.content_block;
+      if (b?.type !== 'tool_use') return [];
+      const block = { id: str(b.id) ?? null, name: str(b.name) ?? null };
+      toolBlocks.set(index, block);
+      return [{ type: 'toolInput', phase: 'start', parentId: null, messageId, index, toolUseId: block.id, name: block.name }];
+    }
+    const block = toolBlocks.get(index);
+    if (!block) return [];
+    const base = { type: 'toolInput', parentId: null, messageId, index, toolUseId: block.id, name: block.name };
+    if (ev.type === 'content_block_delta' && ev.delta?.type === 'input_json_delta') {
+      const partialJson = typeof ev.delta.partial_json === 'string' ? ev.delta.partial_json : '';
+      return [{ ...base, phase: 'delta', partialJson }];
+    }
+    if (ev.type === 'content_block_stop') {
+      toolBlocks.delete(index);
+      return [{ ...base, phase: 'stop' }];
     }
     return [];
   }
@@ -124,8 +153,13 @@ export function createClaudeNormalizer() {
     if (e.type === 'stderr') return [{ type: 'stderr', stream: 'err', text: e.text }];
     const raw = e.raw;
     if (!raw || typeof raw !== 'object') return e.text ? [{ type: 'text', text: e.text, parentId: null, from: 'assistant' }] : [];
+    const rawPid = raw.parent_tool_use_id ?? raw.message?.parent_tool_use_id ?? null;
+    // Session host re-root (consult R1, Task 30): this stream is ONE member's, the child of the host's Agent call
+    // `rootParentId`. The host's own frames (no parent), the child's result and its init (S9: the host forwards its
+    // session) never reach it; the member's frames become main-stream, so its own Agent calls are sub-agents.
+    if (rootParentId !== null && (rawPid === null || raw.type === 'result' || (raw.type === 'system' && raw.subtype === 'init'))) return [];
     if (raw.mock === true && raw.type !== 'result') return e.text ? [{ type: 'text', text: e.text, parentId: null, from: 'assistant' }] : [];
-    const parentId = raw.parent_tool_use_id ?? raw.message?.parent_tool_use_id ?? null;
+    const parentId = rootParentId !== null && rawPid === rootParentId ? null : rawPid;
     if (isHookEvent(raw)) return [{ type: 'hook', raw }];
     // Text on a frame this vocabulary has no shape for is still worth a log line;
     // `from:'other'` keeps it out of an Ask Worca answer.
@@ -141,7 +175,13 @@ export function createClaudeNormalizer() {
         }
         if (raw.subtype === 'task_notification' && typeof raw.tool_use_id === 'string') {
           const u = raw.usage && typeof raw.usage === 'object' && !Array.isArray(raw.usage) ? raw.usage : {};
-          return [defined({ type: 'subagent', event: raw.status === 'completed' ? 'finish' : 'error', toolUseId: raw.tool_use_id,
+          const event = raw.status === 'completed' ? 'finish' : 'error';
+          // A background Bash job sends the same notification as a background sub-agent (7.2): only a
+          // known Agent/Task call is a sub-agent; anything else is a background job, so counts stay true.
+          if (!agents.has(raw.tool_use_id)) {
+            return [defined({ type: 'background', event, toolUseId: raw.tool_use_id, durationMs: num(Number(u.duration_ms)) })];
+          }
+          return [defined({ type: 'subagent', event, toolUseId: raw.tool_use_id,
             durationMs: num(Number(u.duration_ms)), tokens: num(Number(u.total_tokens)), via: 'notification' })];
         }
         if (raw.subtype === 'api_retry') {
@@ -164,9 +204,23 @@ export function createClaudeNormalizer() {
       case 'user': return user(raw, parentId, e);
       case 'stream_event': return streamEvent(raw, parentId);
       case 'result': return result(raw, e);
+      // The plan-limit reading (the usage rings' source): main stream only.
+      case 'rate_limit_event': return parentId === null ? [limitOf(raw.rate_limit_info)] : otherText();
       default: return otherText();
     }
   };
+}
+
+/** The CLI's plan-limit reading: rate_limit_info carries either `unifiedWindows` ({five_hour: {utilization,
+ *  resetsAt}, seven_day: …}) or only the window currently limiting (`rateLimitType`, `utilization`, `resetsAt`).
+ *  resetsAt is in seconds; the event's is in ms. A window without a numeric utilization keeps it null. */
+function limitOf(info) {
+  const i = info && typeof info === 'object' ? info : {};
+  const win = (window, w) => ({ window, utilization: Number.isFinite(w?.utilization) ? w.utilization : null,
+    resetsAt: Number.isFinite(w?.resetsAt) ? w.resetsAt * 1000 : null });
+  const unified = i.unifiedWindows && typeof i.unifiedWindows === 'object' ? Object.entries(i.unifiedWindows) : null;
+  const windows = unified ? unified.map(([k, w]) => win(k, w)) : typeof i.rateLimitType === 'string' ? [win(i.rateLimitType, i)] : [];
+  return { type: 'limit', status: typeof i.status === 'string' ? i.status : null, windows };
 }
 
 /** Wrap a consumer so it only ever sees normalized events (one normalizer per wrapper = per stream). */

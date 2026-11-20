@@ -103,7 +103,7 @@ test('ui start against a running Worca: friendly block, exit 0, no server spawne
     const home = await freshHome();
     let r = await run(['ui', '--port', String(port)], { home });
     assert.equal(r.code, 0);
-    assert.match(r.stdout, new RegExp(`already running at http://localhost:${port}`));
+    assert.match(r.stdout, new RegExp(`already running at http://127.0.0.1:${port}`));
     assert.match(r.stdout, /Restart it:\s+worca ui restart/);
     assert.match(r.stdout, new RegExp(`Another port:\\s+worca ui --port ${port + 1}`));
     assert.equal(r.stderr, '', 'an expected state prints nothing on stderr');
@@ -115,7 +115,7 @@ test('ui start against a running Worca: friendly block, exit 0, no server spawne
 
     r = await run(['ui', 'status', '--port', String(port)], { home });
     assert.equal(r.code, 0);
-    assert.match(r.stdout, /running at http:\/\/localhost:\d+ \(pid 4242, v1\.0\.0\)/);
+    assert.match(r.stdout, /running at http:\/\/127\.0\.0\.1:\d+ \(pid 4242, v1\.0\.0\)/);
 
     // PORT env is honoured when --port is absent.
     r = await run(['ui', 'status'], { home, extraEnv: { PORT: String(port) } });
@@ -173,7 +173,7 @@ test('lifecycle: real server start -> instance file -> restart (new pid) -> stop
   try {
     const up = await waitForUiState({ port, states: ['worca'], timeoutMs: 45000 });
     assert.ok(up, `server did not come up: ${first.err()}`);
-    assert.match(first.out(), new RegExp(`Starting Worca UI on http://localhost:${port}`));
+    assert.match(first.out(), new RegExp(`Starting Worca UI on http://127.0.0.1:${port}`));
     assert.doesNotMatch(first.out(), /server\.mjs/, 'the script path stays behind the debug-spawn toggle');
     const pid1 = up.info.pid;
 
@@ -187,7 +187,7 @@ test('lifecycle: real server start -> instance file -> restart (new pid) -> stop
     // stop/status/restart find the port from the instance file — no --port needed.
     let r = await run(['ui', 'status'], { home });
     assert.equal(r.code, 0, r.stdout + r.stderr);
-    assert.match(r.stdout, new RegExp(`localhost:${port} \\(pid ${pid1}`));
+    assert.match(r.stdout, new RegExp(`127\\.0\\.0\\.1:${port} \\(pid ${pid1}`));
 
     const second = runDetachedCli(['ui', 'restart'], { home, extraEnv: env });
     try {

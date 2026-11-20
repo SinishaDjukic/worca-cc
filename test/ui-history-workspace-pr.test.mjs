@@ -1,12 +1,12 @@
 // test/ui-history-workspace-pr.test.mjs
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { JSDOM } from 'jsdom';
 import { cardAlertOf } from './helpers/feedback.mjs';
 import { backdropClick, pressEscape, discardPrompt, discardChanges } from './helpers/popups.mjs';
 import { ICONS } from '../ui/public/icons.mjs';
+import { readIndexHtml } from '../src/core/read-index-html.mjs';
 
 // Workspace runs: one PR per AFFECTED member repo. The saved-run detail header's
 // per-repo list and the workspace Ship-it dialog (per-repo rows, sequential POSTs,
@@ -23,13 +23,12 @@ import { ICONS } from '../ui/public/icons.mjs';
 // Each test gets a fresh DOM + a fresh module import (cache-busted) so module
 // top-level state (pendingShipIt, shipItClose, histDetailState) can't leak.
 
-const htmlPath = fileURLToPath(new URL('../ui/public/index.html', import.meta.url));
 const appPath = fileURLToPath(new URL('../ui/public/app.js', import.meta.url));
 
 const PROJECT = '/tmp/proj';
 
 async function boot({ fetchHandler, url = 'http://localhost:4317/' } = {}) {
-  const dom = new JSDOM(readFileSync(htmlPath, 'utf8'), { url });
+  const dom = new JSDOM(readIndexHtml(), { url });
   const { window } = dom;
 
   // jsdom doesn't implement scrollIntoView; the viewer modal calls it on open.

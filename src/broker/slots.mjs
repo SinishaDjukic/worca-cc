@@ -4,6 +4,8 @@
 // nothing on worca's side (the catalog, an Ask proposal, an agent's env) can send a
 // key anywhere else (guarantee K2). Pure.
 
+import { gheTenantOfUrl } from '../core/ghe-host.mjs';
+
 export const PROTOCOLS = Object.freeze(['anthropic', 'openai', 'github']);
 export const AUTH_STYLES = Object.freeze(['x-api-key', 'bearer', 'copilot', 'github-user', 'none']);
 const HEADER_NAME_RE = /^[a-z0-9-]{1,64}$/;
@@ -27,10 +29,12 @@ const OPENAI_PATHS = Object.freeze([
 ]);
 
 /**
- * The built-in slots. `local` exists only when the operator names its upstream; `github`
- * ("push as me") only when the operator configured a GitHub App or OAuth App for it.
+ * The built-in slots. `local` exists only when the operator names its upstream. `github`
+ * ("push as me") exists in multi mode, and in single mode only with a GitHub App or OAuth
+ * App: a pasted token needs no app, the "Sign in with GitHub" flow (and the renewal of an
+ * expiring GitHub App user token) needs its client ID.
  */
-export function builtinSlots({ localUrl = null, github = null } = {}) {
+export function builtinSlots({ localUrl = null, github = null, multi = false } = {}) {
   const slots = [
     {
       // An API key (sk-ant-api…) or a Claude subscription token from `claude setup-token`
@@ -62,14 +66,18 @@ export function builtinSlots({ localUrl = null, github = null } = {}) {
       headers: COPILOT_HEADERS, verify: { exchange: true }, keyHint: '', signIn: 'github-device',
     },
   ];
-  if (github && github.clientId) {
+  const signIn = !!(github && github.clientId);
+  if (signIn || multi) {
     // Never proxied (no paths): worca asks the broker for a short-lived token for ONE
     // git or gh call of the acting person (/internal/github-token), and makes the call.
+    // Without a client ID it is paste-only: no sign-in flow, so /device answers 404.
     slots.push({
       id: 'github', label: 'GitHub (push as me)', protocol: 'github',
       upstream: 'https://api.github.com', auth: 'github-user', credential: 'per-person',
-      paths: Object.freeze([]), verify: { github: true }, keyHint: 'or paste a fine-grained token (github_pat_…)',
-      signIn: 'github-device', clientId: github.clientId, scope: github.scope,
+      paths: Object.freeze([]), verify: { github: true },
+      ...(signIn
+        ? { keyHint: 'or paste a fine-grained token (github_pat_…)', signIn: 'github-device', clientId: github.clientId, scope: github.scope }
+        : { keyHint: 'a fine-grained token, github_pat_…' }),
     });
   }
   if (localUrl) {
@@ -152,6 +160,13 @@ export function mergeSlots(builtins, extra) {
         const issue = upstreamIssue(origin);
         if (issue) throw new Error(`${where}: ${k}: ${issue}`);
       }
+      // A Copilot slot names its GHE.com tenant through these URLs (the broker derives its trusted gateway from them).
+      if (s.auth === 'copilot') {
+        const t1 = gheTenantOfUrl(s.exchangeUrl); const t2 = gheTenantOfUrl(s.deviceBaseUrl);
+        if (t1 && t2 && t1 !== t2) throw new Error(`${where}: exchangeUrl and deviceBaseUrl name different GHE.com tenants`);
+      }
+      // "Push as me" signs in only through the operator's app: no client ID, no sign-in.
+      if (s.auth === 'github-user' && !s.clientId) delete s.signIn;
       byId.set(s.id, s);
     }
   }

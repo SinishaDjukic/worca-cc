@@ -166,3 +166,16 @@ test('enrichPipelinesPr stores the CI verdict read through the real findPrForBra
   await runEnrichment();
   assert.equal(readPrState(id).checks.failed, 3);
 });
+
+test('writeState never overwrites pr_auto (the UPSERT keeps the INSERT value)', async () => {
+  const { createPipeline, writeState } = await import('../src/core/artifacts.mjs');
+  const pa = { open: 'draft', slices: null, source: { open: 'project', slices: null }, scope: 'project' };
+  const { id, dir } = await createPipeline(repo, { prompt: 'x', title: 'x', prAuto: pa });
+  const read = () => JSON.parse(getDb().prepare('SELECT pr_auto FROM pipelines WHERE id = ?').get(id).pr_auto);
+  assert.deepEqual(read(), pa);
+  await writeState(dir, { id, projectKey: 'k', status: 'done' });
+  await writeState(dir, { id, projectKey: 'k', status: 'done' }, { prAuto: { open: 'ready' } });
+  assert.deepEqual(read(), pa, 'neither a plain write nor one carrying another value changes it');
+  const plain = await createPipeline(repo, { prompt: 'y', title: 'y' });
+  assert.equal(getDb().prepare('SELECT pr_auto FROM pipelines WHERE id = ?').get(plain.id).pr_auto, null);
+});

@@ -66,6 +66,7 @@ export function projectLogRecord(rec) {
     ...(rec.path != null ? { path: rec.path } : {}),
     ...(rec.kind != null ? { kind: rec.kind } : {}),
     ...(typeof rec.desc === 'string' && rec.desc ? { desc: rec.desc } : {}),
+    ...(typeof rec.session === 'string' && rec.session ? { session: rec.session } : {}),   // a session's main-agent line (Task 60)
   };
 }
 

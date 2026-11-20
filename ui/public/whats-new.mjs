@@ -9,6 +9,9 @@ export const WHATS_NEW = Object.freeze({
 
 const seen = (storage) => { try { return storage.getItem(WHATS_NEW_KEY) === '1'; } catch { return false; } };
 
+/** Never show the note in this browser (a first start: the old list is not something it has seen). */
+export function markWhatsNewSeen(storage) { storage.setItem(WHATS_NEW_KEY, '1'); }
+
 /** Paint the note into `host` unless dismissed (idempotent). `focusAfter`: where focus goes after "Got it". */
 export function paintWhatsNew(host, { storage, focusAfter = null } = {}) {
   if (!host) return;

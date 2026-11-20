@@ -5,6 +5,7 @@ import { tmpdir } from 'node:os';
 import { splitLines, clip, clipWhole, lineIndex, locate, evidence, fact, blankComments, samePathOrInside, memberForPath, imageRepo, memberForImage, aliasable, onePerKey, cleanUnresolved, isMinified, isLibraryImage, authorityEnd, isSamplePath, hasCode } from '../src/core/workspace-map/detectors/lib/text.mjs';
 import { scanXml } from '../src/core/workspace-map/detectors/lib/xml.mjs';
 import { loadToml, splitDotted, tomlSections, keyLine as tomlKeyLine } from '../src/core/workspace-map/detectors/lib/toml.mjs';
+import { loadBudget } from './helpers/load-budget.mjs';
 
 test('text: CRLF-safe lines, offsets → lines, locate wraps, evidence falls back to the trimmed line', () => {
   const t = 'a\r\nbb\r\n  ccc  \n';
@@ -62,7 +63,7 @@ test('text: evidence on a long line — in-order facts cost one pass, misses are
   assert.equal(evidence(lines, 1, 'k000005').match, 'k000005', 'a step back is still found');
   for (let i = 0; i < 2000; i += 1) evidence(lines, 1, `absent-${i}`);
   const ms = performance.now() - t0;
-  assert.ok(ms < 2000, `took ${ms.toFixed(0)} ms (a whole-line search per fact: ~7 s)`);
+  assert.ok(ms < loadBudget(2000), `took ${ms.toFixed(0)} ms (a whole-line search per fact: ~7 s)`);
   assert.equal(evidence(lines, 1, 'k000007').match, lines[0].slice(0, lines[0].lastIndexOf('"', 200)), 'after 32 misses the long line cites its head, cut before a delimiter');
   const short = ['a b', 'x'.repeat(5000)];
   assert.equal(evidence(short, 1, 'b').match, 'b', 'a short line is searched as before');

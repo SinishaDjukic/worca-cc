@@ -84,7 +84,10 @@ Out of scope:
   software itself; report those to their maintainers (for Claude Code, see
   [Anthropic's disclosure policy](https://www.anthropic.com/responsible-disclosure-policy))
 - behaviour the documentation describes as expected, such as agents in a run
-  being able to read the secrets of the MCP set that run uses
+  being able to read the secrets of the MCP set that run uses, or a plugin
+  reading another plugin's secrets on an install where both run as the same
+  user (every native install; see [docker.md](docs/docker.md) for the
+  container's plugin user)
 - attacks that need an attacker who already controls your machine, your
   Worca home directory or your Claude login
 - reports from automated scanners with no demonstrated impact

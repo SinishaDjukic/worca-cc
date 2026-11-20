@@ -30,13 +30,25 @@ const mockProbes = {
 
 test('detectClaude: the tile and the check agree', async () => {
   const r = await detectClaude({ ready: () => ({ ready: true, bin: '/usr/local/bin/claude', hint: null }),
-    probe: async () => ({ state: 'signed-out', source: 'cli', detail: null }) });
-  assert.deepEqual(r, { ready: true, bin: '/usr/local/bin/claude', hint: null, auth: 'signed-out', connected: false });
+    probe: async () => ({ state: 'signed-out', source: 'cli', detail: null, configDirectory: '/tmp/scratch/.claude' }) });
+  assert.deepEqual(r, { ready: true, bin: '/usr/local/bin/claude', hint: null, auth: 'signed-out', connected: false, configDirectory: '/tmp/scratch/.claude' });
   const unknown = await detectClaude({ ready: () => ({ ready: true, bin: 'claude', hint: null }), probe: async () => ({ state: 'unknown' }) });
   assert.equal(unknown.connected, true, "'unknown' never un-ticks the tile");
   let probed = false;
   const missing = await detectClaude({ ready: () => ({ ready: false, bin: 'claude', hint: null }), probe: async () => { probed = true; return { state: 'signed-in' }; } });
-  assert.deepEqual([missing.connected, missing.auth, probed], [false, null, false]);
+  assert.deepEqual([missing.connected, missing.auth, missing.configDirectory, probed], [false, null, null, false]);
+  assert.equal(unknown.configDirectory, null, 'a probe without one (env, mock) passes none');
+});
+
+test('the Claude check names the folder it checked, only when signed out', async () => {
+  const at = (c) => detectSetup({ probes: { ...mockProbes, claude: fast(c) } }).then(({ checks }) => checks.find((x) => x.id === 'claude'));
+  const out = await at({ ready: true, auth: 'signed-out', configDirectory: '/tmp/scratch/.claude' });
+  assert.equal(out.state, 'no');
+  assert.equal(out.line, `${CLAUDE_SIGNED_OUT_HINT}. Worca checked /tmp/scratch/.claude. If your terminal is signed in, Worca may be running with a different HOME or CLAUDE_CONFIG_DIR.`);
+  assert.deepEqual(out.facts, { configDirectory: '/tmp/scratch/.claude' });
+  const inn = await at({ ready: true, auth: 'signed-in', configDirectory: '/tmp/scratch/.claude' });
+  assert.equal(inn.line, 'Claude Code is installed and signed in.');
+  assert.equal(inn.facts, undefined, 'signed in: no folder');
 });
 
 test('AC-3.1: every check, a state and a line, under 3 s', async () => {
@@ -154,7 +166,7 @@ test('GET /api/setup/detect refuses an agent caller', async () => {
   try {
     const r = await fetch(`${base}/api/setup/detect`);
     assert.equal(r.status, 403);
-    assert.equal((await r.json()).code, 'SETUP_AGENT_BLOCKED');
+    assert.equal((await r.json()).code, 'AGENT_CALLER_BLOCKED');   // G1: the global gate answers before the route's own check
   } finally { delete process.env.WORCA_AGENT_USER; delete process.env.WORCA_AGENT_HOME; }
 });
 
@@ -178,7 +190,7 @@ test('GET /api/setup/team and POST /api/setup/team/draft refuse an agent caller'
       ['/api/setup/team/draft', { method: 'POST', headers: { 'content-type': 'application/json' }, body: '{}' }]]) {
       const r = await fetch(`${base}${url}`, opts);
       assert.equal(r.status, 403, url);
-      assert.equal((await r.json()).code, 'SETUP_AGENT_BLOCKED', url);
+      assert.equal((await r.json()).code, 'AGENT_CALLER_BLOCKED', url);   // G1: the global gate answers first
     }
   } finally { delete process.env.WORCA_AGENT_USER; delete process.env.WORCA_AGENT_HOME; }
 });

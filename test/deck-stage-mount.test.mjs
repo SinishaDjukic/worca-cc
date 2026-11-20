@@ -7,7 +7,7 @@
 // dimmed in the rail, display:none at print, absent from the PDF, and prev()
 // cannot leave it. Reachable with no exotic setup — skip slide 1 from the rail and
 // reload (the `#1` that _applyIndex itself stamps restores index 0).
-import { test } from 'node:test';
+import { after, test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
@@ -15,6 +15,9 @@ import { JSDOM } from 'jsdom';
 import { checkRows } from './helpers/rows.mjs';
 
 const SRC = readFileSync(fileURLToPath(new URL('../assets/deck-kit/deck-stage.js', import.meta.url)), 'utf8');
+// Every window this file opens; closing them stops their timers, which otherwise hold the process seconds after the last test.
+const windows = [];
+after(() => { for (const w of windows) w.close(); });
 
 /** Mount six slides, `skips` of them skipped, and wait for the stage to settle. */
 async function mount(skips, hash = '') {
@@ -28,6 +31,7 @@ async function mount(skips, hash = '') {
   // this file is about.
   dom.window.IntersectionObserver = class { observe() {} unobserve() {} disconnect() {} };
   dom.window.ResizeObserver = class { observe() {} unobserve() {} disconnect() {} };
+  windows.push(dom.window);
   dom.window.eval(SRC);
   // slotchange is async, so the first _applyIndex has not run yet.
   for (let i = 0; i < 40; i++) {
@@ -70,6 +74,7 @@ async function afterMutation(skips, mutate) {
   );
   dom.window.IntersectionObserver = class { observe() {} unobserve() {} disconnect() {} };
   dom.window.ResizeObserver = class { observe() {} unobserve() {} disconnect() {} };
+  windows.push(dom.window);
   dom.window.eval(SRC);
   for (let i = 0; i < 40; i++) {
     if (dom.window.document.querySelector('section[data-deck-active]')) break;

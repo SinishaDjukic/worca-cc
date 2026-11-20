@@ -2,11 +2,11 @@
 // chips (which refs: src/shared/chip-refs.mjs, test/chip-refs.test.mjs) and how the chips fill in, over the REAL
 // marked + DOMPurify output the chat renders.
 import { test } from 'node:test';
-import { readFileSync } from 'node:fs';
 import assert from 'node:assert/strict';
 import { JSDOM } from 'jsdom';
 import { createMarkdownRenderer } from '../ui/public/ask-markdown.mjs';
 import { createRefChips, workItemTone } from '../ui/public/ask-ref-chips.mjs';
+import { readStyleCss } from '../src/core/read-style-css.mjs';
 
 const PR = 'https://github.com/SinishaDjukic/worca-cc/pull/777';
 const UUID = '0b1c2d3e-4f50-6172-8394-a5b6c7d8e9f0';
@@ -278,7 +278,7 @@ test('workItemTone: process states map to tones; unknown states stay neutral', (
 });
 
 test('style.css: a ref chip uses the token corner, a neutral fill and a coloured word, never a filled pill', () => {
-  const css = readFileSync(new URL('../ui/public/style.css', import.meta.url), 'utf8');
+  const css = readStyleCss();
   const rules = [...css.matchAll(/([^{}]*\.ask-ref-(?:chip|pill)[^{}]*)\{([^}]*)\}/g)].map((m) => [m[1].trim(), m[2]]);
   assert.ok(rules.length >= 8, `${rules.length} ref chip rules`);
   for (const [sel, body] of rules) {

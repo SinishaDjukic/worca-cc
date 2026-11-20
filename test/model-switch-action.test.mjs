@@ -158,7 +158,7 @@ test('a paused Codex run refuses a Claude model and is described with the Codex 
   const { id } = await seedPipeline(dir, { status: 'paused', stepper: rp.manifest, resumePoint: rp, steps: STEPS });
   const projectDirFor = () => dir;
   await assert.rejects(switchPausedRunModels(id, { changes: { n_impl: { model: 'claude-opus-5-5' } }, projectDirFor }),
-    (e) => e.code === 'INVALID_SELECTION' && /not on Codex/.test(e.message));
+    (e) => e.code === 'INVALID_SELECTION' && /not on OpenAI Codex/.test(e.message));
   const codexId = CODEX_BUILTIN_MODELS[0].id;
   const out = await switchPausedRunModels(id, { changes: { n_impl: { model: codexId, effort: 'low' } }, projectDirFor });
   assert.deepEqual(out.changed.map((c) => c.nodeId), ['n_impl']);
@@ -169,9 +169,9 @@ test('a paused Codex run refuses a Claude model and is described with the Codex 
   assert.deepEqual(d.efforts, ['minimal', 'low', 'medium', 'high']);
   assert.deepEqual([d.subagents, d.subagentModels, d.subagentEfforts], [true, [], ['medium', 'high']]);
   await assert.rejects(switchPausedRunModels(id, { changes: { n_impl: { subagentEffort: 'low' } }, projectDirFor }),
-    (e) => e.code === 'INVALID_SELECTION' && /unknown sub-agent effort "low" on Codex/.test(e.message));
+    (e) => e.code === 'INVALID_SELECTION' && /unknown sub-agent effort "low" on OpenAI Codex/.test(e.message));
   await assert.rejects(switchPausedRunModels(id, { changes: { n_impl: { subagentModel: 'opus' } }, projectDirFor }),
-    (e) => e.code === 'INVALID_SELECTION' && /Codex does not take a sub-agent model/.test(e.message));
+    (e) => e.code === 'INVALID_SELECTION' && /OpenAI Codex does not take a sub-agent model/.test(e.message));
 });
 
 test('a paused Copilot run is described with no sub-agent values to pick and refuses one', async () => {

@@ -1,0 +1,66 @@
+/* ---------- per-step artifacts (Phase 3 UI) ---------- */
+.artifact-empty{padding:18px 20px;color:var(--ink-2);}
+
+/* Per-node affordance inside an Agents-tab group card. */
+.node-artifacts{flex:0 0 100%;margin-top:8px;padding-top:8px;border-top:1px solid var(--line);}
+.artifact-toggle{appearance:none;border:1px solid var(--line-2);background:var(--field);color:var(--ink);
+  font:600 var(--fs-meta) var(--sans);padding:4px 12px;border-radius:var(--r-sm);cursor:pointer;}
+.artifact-toggle:hover{border-color:var(--hover-outline);}
+.artifact-toggle[aria-expanded="true"]{border-color:var(--hover-outline);}   /* open: the outline stays */
+.artifact-list{display:flex;flex-direction:column;gap:6px;margin-top:8px;}
+/* An author `display:flex` outranks the UA's `[hidden]{display:none}`, so the
+   collapsed state (`body.hidden = true` in buildNodeArtifactAffordance) must be
+   restated here or the toggle can never close the list. */
+.artifact-list[hidden]{display:none;}
+
+/* One kind too bulky to list flat (a deck audit indexes a screenshot per slide):
+   a summary row that reads like an artifact row and expands into real ones. Its
+   rows are built on first expand, so the collapsed state has no children at all
+   — but restate [hidden] anyway, the way .artifact-list has to. */
+.artifact-bulk-toggle{display:flex;align-items:center;gap:10px;width:100%;text-align:left;
+  appearance:none;border:none;background:transparent;cursor:pointer;
+  padding:11px 20px;font:500 var(--fs-meta) var(--sans);color:var(--ink-2);}
+.artifact-bulk-toggle:hover{background:var(--hover);color:var(--ink);}
+/* icons: chevron, chevron-down */
+.artifact-bulk-toggle::after{content:"";width:12px;height:12px;margin-left:auto;color:var(--ink-3);background:currentColor;mask:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M9.5 6l6 6-6 6'/%3E%3C/svg%3E") center/12px no-repeat;}
+.artifact-bulk-toggle[aria-expanded="true"]::after{mask:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M6 9.5l6 6 6-6'/%3E%3C/svg%3E") center/12px no-repeat;}
+.artifact-list .artifact-bulk-toggle{padding:8px 12px;border:1px solid var(--line-2);border-radius:var(--r-sm);background:var(--field);}
+.artifact-bulk-list{display:flex;flex-direction:column;}
+.artifact-bulk-list[hidden]{display:none;}
+
+/* A single clickable artifact row (kind chip · name · byte size). */
+.artifact-row{display:flex;align-items:center;gap:10px;width:100%;text-align:left;
+  appearance:none;border:none;background:transparent;cursor:pointer;
+  padding:11px 20px;font:500 var(--fs-body) var(--sans);color:var(--ink);}
+.artifact-list .artifact-row{padding:8px 12px;border:1px solid var(--line-2);border-radius:var(--r-sm);background:var(--field);}
+.artifact-row:hover{background:var(--hover);}
+.artifact-kind{flex:0 0 auto;
+  padding:2px 8px;background:var(--slate-bg);color:var(--slate-ink);}
+.artifact-name{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+/* --ink-2 at 11px: --ink-3 is 2.8:1 on white, which the light contrast gate flags
+   once the artifacts tab paints a byte size. Still the quiet, secondary ink. */
+.artifact-bytes{margin-left:auto;flex:0 0 auto;font-size:11px;color:var(--ink-2);}
+
+/* Typed viewers rendered by renderArtifact into the .artifact-view host
+   (#viewer, a <pre>, is kept only for plain error strings). The bare
+   .artifact-view rule stays because the host also serves anywhere a <pre> could
+   enclose it; each viewer owns its own white-space below. */
+.artifact-view{white-space:normal;}
+.artifact-text,.artifact-json,.artifact-diff{margin:0;font-family:var(--mono);font-size:12px;line-height:1.55;
+  white-space:pre-wrap;word-break:break-word;color:var(--ink);}
+.artifact-diff{white-space:pre;overflow-x:auto;}
+.artifact-diff-line{display:block;}
+.artifact-diff-line.add{background:var(--green-bg);color:var(--green-ink);}
+.artifact-diff-line.del{background:var(--red-bg);color:var(--red-ink);}
+.artifact-diff-line.hunk{color:var(--blue-ink);background:var(--field);}
+.artifact-diff-line.meta{color:var(--ink-3);}
+.artifact-markdown{font-family:var(--sans);font-size:var(--fs-body);line-height:1.6;color:var(--ink);}
+.artifact-markdown h1,.artifact-markdown h2,.artifact-markdown h3{line-height:1.3;margin:1em 0 .5em;}
+.artifact-markdown pre{background:var(--field);border:1px solid var(--line);border-radius:var(--r-sm);
+  padding:12px;overflow-x:auto;font-family:var(--mono);font-size:12px;}
+.artifact-markdown code{font-family:var(--mono);font-size:.92em;}
+.artifact-markdown :not(pre) > code{background:var(--field);border-radius:var(--r-sm);padding:1px 5px;}
+.artifact-markdown a{color:var(--blue-ink);}
+.artifact-markdown table{border-collapse:collapse;}
+.artifact-markdown th,.artifact-markdown td{border:1px solid var(--line-2);padding:5px 9px;}
+

@@ -6,6 +6,8 @@
 import { classifyLoops } from '../../src/shared/graph/loops.mjs';
 import { portsFnFor } from '../../src/shared/graph/ports.mjs';
 import { runsOn } from '../../src/shared/connections.mjs';
+import { roleReviewOf } from '../../src/shared/graph/role-review-step.mjs';
+import { cleanPick, layerPick } from '../../src/shared/graph/role-slots.mjs';
 
 function catalogEntryOf(catalog, id) {
   if (!id || !catalog) return null;
@@ -255,6 +257,27 @@ export function buildGraphNodeRows(tpl, registry, runConfig, opts = {}) {
       ...(pin ? { pinned: 'settings', storedPair: healPair(stored.model, stored.effort) } : {}),
       ...(healed.enginePair ? { enginePair: healed.enginePair } : {}),
     });
+  }
+  return rows;
+}
+
+// One row per declared role of every agent node that runs a role review (roleReviewOf), in the node rows' order:
+// `${node label} · ${role label}`. `def` is the project's role pick (runConfig.nodes[id].roles[key]) else the
+// template's; '' = the node's setting. Not Shaper-specific: any workflow whose node config declares roles gets rows.
+export function buildRoleRows(workflow, nodeRows, runConfig) {
+  const byId = new Map((Array.isArray(workflow && workflow.nodes) ? workflow.nodes : []).map((n) => [n && n.id, n]));
+  const saved = (runConfig && runConfig.nodes) || {};
+  const rows = [];
+  for (const nr of Array.isArray(nodeRows) ? nodeRows : []) {
+    const node = byId.get(nr.nodeId);
+    const spec = node && node.kind === 'agent' ? roleReviewOf(node.config) : null;
+    if (!spec) continue;
+    const project = saved[nr.nodeId] && saved[nr.nodeId].roles && typeof saved[nr.nodeId].roles === 'object' ? saved[nr.nodeId].roles : {};
+    for (const role of spec.roles) {
+      const pick = layerPick([cleanPick(Object.hasOwn(project, role.key) ? project[role.key] : null), cleanPick(role)]);
+      const def = { model: pick.model || '', effort: pick.effort || '' };
+      rows.push({ nodeId: nr.nodeId, roleKey: role.key, label: `${nr.label} · ${role.label}`, model: def.model, effort: def.effort, def });
+    }
   }
   return rows;
 }

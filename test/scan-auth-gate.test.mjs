@@ -88,7 +88,7 @@ test('POST /api/workspaces/scan: signed-out Claude → 409 claude-signed-out, no
   assert.equal(r.status, 409);
   const body = await r.json();
   assert.equal(body.code, 'claude-signed-out');
-  assert.match(body.error, /isn't signed in/);
+  assert.match(body.error, /needs Claude Code sign-in and no other scan model is set/, 'the factory scan model: names the setting');
   assert.match(body.error, /\/login/);
   assert.equal(body.runId, undefined);
   assert.equal(entries(), before, 'no run registered');
@@ -149,4 +149,17 @@ test('GET /api/onboarding: signed-out Claude is not ticked; ?recheck=1 answers t
     assert.equal(s.claude.auth, 'signed-out');
     assert.equal(s.steps.claude, false);
   }
+});
+
+test('POST /api/run: signed out with no routed model → 409 claude-signed-out, nothing starts; a mock run still starts', { skip }, async () => {
+  const dir = await repo('run-gate');
+  const before = entries();
+  const r = await post('/api/run', { projectDir: dir, prompt: 'do a thing', workflowId: 'wf_auto' });
+  assert.equal(r.status, 409);
+  const body = await r.json();
+  assert.equal(body.code, 'claude-signed-out');
+  assert.equal(body.runId, undefined);
+  assert.equal(entries(), before, 'no run registered');
+  const mock = await post('/api/run', { projectDir: dir, prompt: 'do a thing', workflowId: 'wf_auto', mock: true });
+  assert.notEqual((await mock.json()).code, 'claude-signed-out');
 });

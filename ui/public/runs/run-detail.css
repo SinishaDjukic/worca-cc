@@ -1,0 +1,79 @@
+/* ---- run-detail variant: the ask cards of the "Worca Ask Cards Redesign" canvas ---- */
+/* Every kind reads as a white card here; clarify and form go further below (a card per
+   question, a pill footer). The chat run card's question (`.chat-rc-q`, ui/public/chat/
+   run-card.mjs) shares every rule that draws the card, so the two mounts read alike; its one
+   column, padding and amber line are in the "Chat P3: run card" block.
+   NO `animation` here: Task 6 already put `animation:wr-rise …` on the `.rd-questions`
+   WRAPPER (and neutralizes it under reduced motion). Animating
+   the child too nests the two transforms — 20px of travel and opacity squared.
+   `margin-top:0` also stays where Task 6 put it (its EOF rule comes LATER in the
+   file, so it still wins); this rule must not restate it. */
+:is(.rd-questions,.chat-rc-q) .qpanel{padding:28px 32px;background:var(--panel);
+  border:1px solid var(--line);border-radius:var(--r-card);}
+/* Clarify and form stack their own cards — each question, or the form — with the footer
+   as a pill bar beneath them, so the panel itself draws nothing. */
+:is(.rd-questions,.chat-rc-q) .qpanel:is([data-kind="clarify"],[data-kind="form"]){display:flex;flex-direction:column;gap:14px;
+  padding:0;background:none;border:0;border-radius:0;box-shadow:none;}
+:is(.rd-questions,.chat-rc-q) .qpanel[data-kind="form"] .qbody{gap:14px;margin-top:0;}
+/* A waiting question sits BELOW the run's panel, which never changes: a heading that says
+   what is asked, then the panel. Its own header row (title + count badge) would repeat
+   the heading, so it goes. The amber disc and its glyph are the two pseudo-elements. */
+:is(.rd-ask-head,.chat-rc-q-head){position:relative;display:flex;align-items:center;min-height:36px;margin:0;padding:0 4px 0 52px;
+  font:600 18px/1.35 var(--sans);letter-spacing:-.01em;color:var(--ink);overflow-wrap:anywhere;
+  scroll-margin-top:84px;}   /* the sticky bar (~61px) plus air: "go to the questions" lands the heading below it */
+:is(.rd-ask-head,.chat-rc-q-head)::before{content:'';position:absolute;left:4px;top:50%;width:36px;height:36px;margin-top:-18px;
+  border-radius:var(--r-sm);background:var(--amber-bg);}
+:is(.rd-ask-head,.chat-rc-q-head)::after{content:'';position:absolute;left:13px;top:50%;width:18px;height:18px;margin-top:-9px;
+  background:var(--amber-ink);
+  -webkit-mask:url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2.6' stroke-linecap='round' stroke-linejoin='round'><path d='M9.2 9.2a2.9 2.9 0 0 1 5.6 1c0 1.9-2.8 2.4-2.8 4.3'/><path d='M12 18.4v.1'/></svg>") center/contain no-repeat;mask:url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2.6' stroke-linecap='round' stroke-linejoin='round'><path d='M9.2 9.2a2.9 2.9 0 0 1 5.6 1c0 1.9-2.8 2.4-2.8 4.3'/><path d='M12 18.4v.1'/></svg>") center/contain no-repeat;}
+/* a failed step is not a question: the red disc and an exclamation mark */
+.rd-questions:has(> .qpanel[data-kind="recovery"]) .rd-ask-head::before,
+.chat-rc-q:has(> .chat-rc-qbody > .qpanel[data-kind="recovery"]) .chat-rc-q-head::before{background:var(--red-bg);}
+.rd-questions:has(> .qpanel[data-kind="recovery"]) .rd-ask-head::after,
+.chat-rc-q:has(> .chat-rc-qbody > .qpanel[data-kind="recovery"]) .chat-rc-q-head::after{background:var(--red-ink);
+  -webkit-mask-image:url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2.6' stroke-linecap='round'><path d='M12 6.5v7'/><path d='M12 17.6v.1'/></svg>");mask-image:url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2.6' stroke-linecap='round'><path d='M12 6.5v7'/><path d='M12 17.6v.1'/></svg>");}
+/* While a question waits, the status header leads to it: a borderless row, so the hover fill. */
+.rd-now-top.is-link{cursor:pointer;margin:-8px -12px;padding:8px 12px;border-radius:var(--r-ctrl);transition:background .15s;}
+.rd-now-top.is-link:hover{background:var(--hover);}
+.rd-now-top.is-link:focus-visible{outline:2px solid var(--ink);outline-offset:2px;}.rd-ask-head:empty{display:none;}
+.rd-glance > .rd-questions .qpanel-head{display:none;}
+.rd-glance > .rd-questions .qpanel .qbody > :first-child{margin-top:0;}   /* not padding: the form card keeps its own */
+.rd-questions .qpanel-head{gap:12px;padding-bottom:16px;border-bottom:1px solid var(--amber-line);}
+.rd-questions .qpanel-head b{font-size:15px;color:var(--ink);}
+.rd-questions .qpanel-head .qcount{font-weight:600;font-size:var(--fs-caption);padding:5px 12px;}
+/* One card per question: the question on the left, its answers on the right. */
+:is(.rd-questions,.chat-rc-q) .qblock{display:grid;grid-template-columns:380px minmax(0,1fr);grid-template-rows:auto 1fr;column-gap:56px;row-gap:8px;align-items:start;
+  padding:28px 32px;background:var(--panel);border:1px solid var(--line);border-radius:var(--r-card);}
+/* The number over the question. The text node is an anonymous grid item that cannot be
+   placed, so the grid is one column: the number (and, once answered, the pill beside
+   it) holds row 1, and the text falls to the row below. It spans both answer rows, and
+   the card's second row is 1fr: an item crossing a flexible track is left out of the
+   auto row's sizing, so a long question grows the 1fr row instead of spreading the
+   options apart. Medium, not semibold: a question can run a whole paragraph. */
+:is(.rd-questions,.chat-rc-q) .qtext{grid-column:1;grid-row:1 / span 2;display:grid;grid-template-columns:minmax(0,1fr);row-gap:12px;
+  margin:0;font-weight:500;font-size:var(--fs-section);line-height:1.5;letter-spacing:-.005em;}
+:is(.rd-questions,.chat-rc-q) .qtext .qn{grid-area:1 / 1;justify-self:start;margin-top:0;}
+/* Answered: read off the picked state the renderer already keeps, so no extra markup (a
+   night-mode recommendation preselected with data-preset is not an answer yet). The
+   pill shares the number's cell, pushed past the number. */
+:is(.rd-questions,.chat-rc-q) .qblock:has(.qopt.sel:not([data-preset]),.qfree.has) .qtext::after{content:'Answered';grid-area:1 / 1;justify-self:start;
+  align-self:center;margin-left:24px;padding:3px 10px;border-radius:var(--r-sm);background:var(--green-bg);color:var(--green-ink);
+  font-size:var(--fs-meta);font-weight:600;line-height:1.4;letter-spacing:0;}
+:is(.rd-questions,.chat-rc-q) .qopts{grid-column:2;gap:0;margin:0;padding-left:0;}
+:is(.rd-questions,.chat-rc-q,.plan-decisions) .qopt{font-size:var(--fs-body);line-height:1.5;}
+/* Run 4 (D7): "Write your own" is the shared field, after the options. */
+:is(.rd-questions,.chat-rc-q) .qblock > .qfree{grid-column:2;margin-left:0;margin-top:8px;width:100%;min-height:32px;padding:6px 12px;
+  border:1px solid var(--line-2);border-radius:var(--r-sm);font-size:var(--fs-body);line-height:1.5;background:var(--field);}
+:is(.rd-questions,.chat-rc-q) .qblock > .qfree:is(:focus,.has){border-color:var(--ink);background:var(--field);box-shadow:none;}
+/* one card (gate, recovery, workflow): the actions sit across its foot, under a rule */
+:is(.rd-questions,.chat-rc-q) .qpanel-foot{margin-top:24px;padding-top:20px;border-top:1px solid var(--line);}
+/* a stack of cards (clarify, form): the footer is a pill bar of its own beneath them */
+:is(.rd-questions,.chat-rc-q) .qpanel:is([data-kind="clarify"],[data-kind="form"]) .qpanel-foot{margin-top:0;padding:10px 10px 10px 26px;
+  background:var(--panel);border:1px solid var(--line);border-radius:var(--r-sm);}
+
+/* "N of M answered" (§5.4): left slot of the footer, submit on the right. The
+   base .qpanel-foot is justify-content:flex-end — with a counter present the row
+   becomes space-between, and `margin-right:auto` on the counter achieves that
+   WITHOUT a second .qpanel-foot rule that the footer test would then contradict. */
+.qanswered{margin-right:auto;font:500 var(--fs-meta) var(--mono);color:var(--ink-3);}
+

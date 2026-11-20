@@ -431,8 +431,9 @@ async function persist(dir, key, meta, files, { cases = null, drop = [] } = {}) 
   });
 }
 
-/** Create a user script. `meta.key` is required and must be free in EVERY layer. */
-export async function createScript({ meta: rawMeta, source, sourceWin32, by } = {}) {
+/** Create a user script. `meta.key` is required and must be free in EVERY layer. `dryRun` runs every check and
+ *  writes nothing (the chat's approval card, G6: the model hears a refusal before the user is asked). */
+export async function createScript({ meta: rawMeta, source, sourceWin32, by, dryRun = false } = {}) {
   const raw = stripNullKeys(isObject(rawMeta) ? { ...rawMeta } : {});
   const key = typeof raw.key === 'string' ? raw.key.trim() : '';
   if (!SCRIPT_KEY_RE.test(key)) throw err('script key must be alphanumeric (letters, digits, - or _)', 'BAD_REQUEST');
@@ -445,12 +446,12 @@ export async function createScript({ meta: rawMeta, source, sourceWin32, by } = 
   raw.updatedBy = stamp;
   const files = applyFileRules(raw, key, source, sourceWin32);
   const meta = gate(raw);
-  await persist(requireUserDir(), key, meta, files);
+  if (!dryRun) await persist(requireUserDir(), key, meta, files);
   return { meta: { ...meta, origin: 'user' }, source: files.source, sourceWin32: files.sourceWin32 };
 }
 
-/** Update a user script (meta and/or either source). Built-ins -> BUILTIN (409). */
-export async function updateScript(key, { meta: rawMeta, source, sourceWin32, by } = {}) {
+/** Update a user script (meta and/or either source). Built-ins -> BUILTIN (409). `dryRun`: as createScript's. */
+export async function updateScript(key, { meta: rawMeta, source, sourceWin32, by, dryRun = false } = {}) {
   const existing = requireUserScript(key, 'update');
   const stamp = byStamp(by);
   const current = await readScript(key);
@@ -478,7 +479,7 @@ export async function updateScript(key, { meta: rawMeta, source, sourceWin32, by
   const meta = gate(raw);
   const was = platformNames(existing.file);
   const drop = [was.def, was.win32].filter((n) => n && n !== files.def && n !== files.win32);
-  await persist(requireUserDir(), key, meta, files, { drop });
+  if (!dryRun) await persist(requireUserDir(), key, meta, files, { drop });
   const stale = staleScriptRefs(await listWorkflows({ includeArchived: true }), key, meta);
   const warnings = stale.length ? [`saved pipelines reference a removed port: ${stale.join(', ')}`] : [];
   return { meta: { ...meta, origin: 'user' }, source: files.source, sourceWin32: files.sourceWin32, warnings };

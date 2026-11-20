@@ -1,0 +1,120 @@
+    <!-- ===== Add-project modal ===== -->
+    <div id="project-add-modal" class="viewer-modal confirm-modal hidden" role="dialog" aria-modal="true" aria-labelledby="proj-add-title">
+      <div class="card dlg">
+        <div class="dlg-head">
+          <div class="card-head">
+            <h2 id="proj-add-title">Add project</h2>
+          </div>
+          <!-- Three ways in: New (a name), Folder, Clone from URL. New makes <projects root>/<folder name>
+               (POST /api/projects/create, a dry run on every keystroke fills Location); Folder registers a
+               folder already on this machine (GET /api/projects/probe fills the detect row); Clone from URL
+               clones into the projects folder on the server (POST /api/projects/clone). Opens on New. -->
+          <div class="md-tabs tabs proj-add-tabs" id="proj-add-tabs" role="tablist" aria-label="How to add the project">
+            <button type="button" class="md-tab tab" role="tab" id="proj-add-tab-new" data-mode="new" aria-selected="true" aria-controls="proj-add-new-pane">New</button>
+            <button type="button" class="md-tab tab" role="tab" id="proj-add-tab-folder" data-mode="folder" aria-selected="false" aria-controls="proj-add-folder-pane">Folder</button>
+            <button type="button" class="md-tab tab" role="tab" id="proj-add-tab-clone" data-needs-git data-mode="clone" aria-selected="false" aria-controls="proj-add-clone-pane">Clone from URL</button>
+          </div>
+        </div>
+        <div class="dlg-body">
+          <div class="field" id="proj-add-name-field">
+            <label for="proj-add-name">Name</label>
+            <input id="proj-add-name" class="input" type="text" spellcheck="false" autocomplete="off" placeholder="Project name" />
+          </div>
+          <div id="proj-add-new-pane" role="tabpanel" aria-labelledby="proj-add-tab-new">
+            <div class="field">
+              <label for="proj-add-location">Location</label>
+              <div class="proj-add-loc">
+                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"></path></svg>
+                <input id="proj-add-location" class="input mono" type="text" readonly spellcheck="false" />
+              </div>
+            </div>
+          </div>
+          <div id="proj-add-folder-pane" role="tabpanel" aria-labelledby="proj-add-tab-folder" hidden>
+            <div class="field">
+              <label for="proj-add-path">Folder</label>
+              <div class="path-row">
+                <input id="proj-add-path" class="input" type="text" spellcheck="false" placeholder="/absolute/path/to/project" aria-describedby="proj-add-detect" />
+                <button type="button" id="proj-add-browse" class="btn btn-sm" title="Pick the project folder">Choose folder&hellip;</button>
+                <button type="button" id="proj-add-browse-many" class="btn btn-sm" title="Tick several folders in Worca's folder browser and add them together">Several folders&hellip;</button>
+              </div>
+              <div class="proj-add-detect" id="proj-add-detect" role="status" aria-live="polite" hidden></div>
+              <button type="button" class="link-btn proj-add-root" id="proj-add-root" hidden></button>
+            </div>
+          </div>
+          <label class="switch-row proj-add-git" id="proj-add-git-row" data-needs-git hidden><input id="proj-add-git" class="sw-input" type="checkbox" role="switch"><span class="switch"></span><span class="txt">Use git</span></label>
+          <div id="proj-add-clone-pane" role="tabpanel" aria-labelledby="proj-add-tab-clone" hidden>
+            <div class="field">
+              <label for="proj-clone-url">Repository URL</label>
+              <input id="proj-clone-url" class="input" type="url" spellcheck="false" autocomplete="off" placeholder="https://github.com/owner/repo" />
+            </div>
+            <div class="field">
+              <label for="proj-clone-branch">Branch <span class="opt">(optional)</span></label>
+              <input id="proj-clone-branch" class="input" type="text" spellcheck="false" autocomplete="off" placeholder="the repository's default branch" />
+            </div>
+            <div class="field">
+              <label for="proj-clone-name">Folder name <span class="opt">(optional)</span></label>
+              <input id="proj-clone-name" class="input" type="text" spellcheck="false" autocomplete="off" placeholder="the repository name" />
+            </div>
+          </div>
+        </div>
+        <div class="dlg-foot">
+          <small class="hint" id="proj-add-msg" aria-live="polite"></small>
+          <div class="confirm-actions">
+            <button type="button" id="proj-add-cancel" class="btn">Cancel</button>
+            <button type="button" id="proj-add-save" class="btn btn-primary">Add project</button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ===== Use git / Link remote modal (POST /api/projects/:key/git-init) ===== -->
+    <div id="project-git-modal" class="viewer-modal confirm-modal hidden" role="dialog" aria-modal="true" aria-labelledby="proj-git-title" aria-describedby="proj-git-lead">
+      <div class="card dlg">
+        <div class="dlg-head">
+          <div class="card-head">
+            <h2 id="proj-git-title">Use git for this project</h2>
+          </div>
+        </div>
+        <div class="dlg-body">
+          <p class="confirm-message" id="proj-git-lead"></p>
+          <div class="field">
+            <!-- type=text: type=url would mark the scp form git@host:owner/repo.git invalid. -->
+            <label for="proj-git-url">Remote URL <span class="opt" id="proj-git-url-opt">(optional)</span></label>
+            <input id="proj-git-url" class="input" type="text" spellcheck="false" autocomplete="off" placeholder="https://github.com/owner/repo or git@github.com:owner/repo.git" />
+          </div>
+        </div>
+        <div class="dlg-foot">
+          <small class="hint" id="proj-git-msg" aria-live="polite"></small>
+          <div class="confirm-actions">
+            <button type="button" id="proj-git-cancel" class="btn">Cancel</button>
+            <button type="button" id="proj-git-save" class="btn btn-primary">Use git</button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ===== Add several projects: review list (multi-folder add) ===== -->
+    <!-- One row per picked folder: include tick, editable name (the folder name by default), the
+         path, and after Add its outcome. POST /api/projects/bulk adds the valid rows; a skipped
+         row keeps its reason until it is renamed and added again, or the dialog is closed. -->
+    <div id="project-bulk-modal" class="viewer-modal confirm-modal project-bulk-modal hidden" role="dialog" aria-modal="true" aria-labelledby="proj-bulk-title">
+      <div class="card dlg">
+        <div class="dlg-head">
+          <div class="card-head">
+            <h2 id="proj-bulk-title">Add projects</h2>
+          </div>
+        </div>
+        <div class="dlg-body">
+          <p class="hint">Untick a folder to leave it out. Names default to the folder name.</p>
+          <ul id="proj-bulk-list" class="proj-bulk-list"></ul>
+        </div>
+        <div class="dlg-foot">
+          <small class="hint" id="proj-bulk-msg" aria-live="polite"></small>
+          <div class="confirm-actions" data-card-actions>
+            <button type="button" id="proj-bulk-close" class="btn">Cancel</button>
+            <button type="button" id="proj-bulk-save" class="btn btn-primary">Add projects</button>
+          </div>
+        </div>
+      </div>
+    </div>
+

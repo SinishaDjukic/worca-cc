@@ -1,0 +1,15 @@
+.mk-add-msg{align-items:flex-start;}
+.mk-add-msg-body{display:flex;flex-direction:column;gap:4px;min-width:0;overflow-wrap:anywhere;}
+.mk-add-msg-detail{font-size:var(--fs-meta);}
+/* One line: only the path or URL wraps, so its icon never sits alone above it. */
+.mk-add-meta{display:flex;align-items:center;gap:8px;color:var(--ink-2);font-size:var(--fs-meta);}
+.mk-add-meta > .mk-add-path{min-width:0;overflow-wrap:anywhere;}
+.mk-add-meta > :not(.mk-add-path){flex:none;}
+.mk-prow-main{display:flex;flex-wrap:wrap;align-items:center;gap:4px 8px;}
+.mk-plist > .mk-prow{flex-wrap:wrap;}   /* Install / Installed drops under the name, right-aligned, on a narrow screen */
+.mk-plist > .mk-prow > .mk-prow-main{flex:1 1 120px;}
+.mk-plist > .mk-prow > :last-child:not(.mk-prow-main){margin-left:auto;}
+.mk-t-ok{background:var(--green-bg);color:var(--green-ink-strong);}
+/* Remove marketplace dialog: P5's dialog skin (.mk-dlg-body, .mk-dlg-err); its head centres like P5's remove dialog. */
+#mk-dialog[data-kind="remove-marketplace"] > .mk-dialog-head{align-items:center;}
+#mk-dialog[data-kind="remove-marketplace"] > .mk-dialog-head > .section-title{min-width:0;overflow-wrap:anywhere;}

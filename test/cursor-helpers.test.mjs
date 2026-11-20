@@ -47,7 +47,7 @@ test('a mock Cursor run: agent nodes on cursor, the title spawn on Claude with n
   const titles = [];
   mockSpawnLog.length = 0;
   const orch = createOrchestrator({
-    projectDir: gitDir('cursor-run'), prompt: 'Add a settings page', auto: true,
+    projectDir: gitDir('cursor-run'), prompt: 'Add a settings page', auto: true, guardrailsId: 'permissive',
     claude: { mock: true, engine: 'cursor', bin: FAKE_BIN },
     titleRunClaude: async (o) => { titles.push(o); return { text: 'Add a settings page' }; },
   });

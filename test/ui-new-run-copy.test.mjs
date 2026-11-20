@@ -6,8 +6,9 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync, readdirSync } from 'node:fs';
 import { JSDOM } from 'jsdom';
+import { INDEX_HTML, readIndexHtml } from '../src/core/read-index-html.mjs';
 
-const read = (p) => readFileSync(new URL(`../${p}`, import.meta.url), 'utf8');
+const read = (p) => (p === INDEX_HTML ? readIndexHtml() : readFileSync(new URL(`../${p}`, import.meta.url), 'utf8'));
 
 test('every string that names the page reads "New run"', () => {
   for (const [file, text] of [
@@ -15,14 +16,13 @@ test('every string that names the page reads "New run"', () => {
     ['ui/public/app.js', "emptyText: 'No runs yet. Start one from New run.'"],
     ['ui/public/engine-settings-view.mjs', "hint: 'New run starts on this engine. You can still switch per run.'"],
     ['ui/public/memory-view.mjs', '. Pick another project on the New run page.`'],
-    ['ui/public/models-view.mjs', "'Drops the built-ins from every model picker: New run, the Workflows view, Chat, title generation."],
     ['ui/public/schedules-view.mjs', "', then describe the task. Or use Schedule… next to Start run on New run.'"],
     ['ui/public/stats-view.mjs', "'No pipelines yet. Run one from New run.'"],
     ['ui/public/ui-level.mjs', "adds: 'Shows: New run, Runs, Projects, Workflows (agents and scripts included), budget limits and Chat.'"],
     ['src/core/ask/prompt.mjs', "The team\\'s default guardrail set only preselects the New run picker."],
     ['src/core/policy/registry.mjs', "help: 'What the New run picker starts on."],
   ]) assert.ok(read(file).includes(text), `${file}: ${text}`);
-  const doc = new JSDOM(read('ui/public/index.html')).window.document;
+  const doc = new JSDOM(readIndexHtml()).window.document;
   const find = (sel) => [doc, ...[...doc.querySelectorAll('template')].map((t) => t.content)].map((r) => r.querySelector(sel)).find(Boolean);
   assert.equal(find('.pd-new').textContent.trim(), 'New run', 'the project page\'s button');
   assert.match(find('#getting-started-card .gs-settings-text').textContent, /^The Getting started checklist walks through the first nine things/);
@@ -30,7 +30,7 @@ test('every string that names the page reads "New run"', () => {
 
 test('no user-visible "New pipeline" is left in the UI, Ask\'s prompt or the policy help (comments aside)', () => {
   const files = [
-    'ui/public/index.html',
+    INDEX_HTML,
     ...readdirSync(new URL('../ui/public/', import.meta.url)).filter((f) => /\.(m?js)$/.test(f)).map((f) => `ui/public/${f}`),
     ...readdirSync(new URL('../src/core/ask/', import.meta.url)).filter((f) => f.endsWith('.mjs')).map((f) => `src/core/ask/${f}`),
     'src/core/policy/registry.mjs',

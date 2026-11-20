@@ -2,8 +2,10 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
+import { readIndexHtml } from '../src/core/read-index-html.mjs';
+import { readStyleCss } from '../src/core/read-style-css.mjs';
 
-const css = readFileSync(new URL('../ui/public/style.css', import.meta.url), 'utf8');
+const css = readStyleCss();
 const app = readFileSync(new URL('../ui/public/app.js', import.meta.url), 'utf8');
 
 test('opening the pane moves the toasts left of it, and the page content with them', () => {
@@ -13,7 +15,7 @@ test('opening the pane moves the toasts left of it, and the page content with th
 });
 
 test('the openers live in the run bars and the project title row, never in a corner of every page', () => {
-  const html = readFileSync(new URL('../ui/public/index.html', import.meta.url), 'utf8');
+  const html = readIndexHtml();
   assert.equal(html.match(/class="term-opener btn"/g)?.length, 3);
   for (const anchor of ['<span class="rd-btn-label">Stop</span>', '<span class="hd-btn-label">Stop</span>', '<h1 class="pd-title"></h1>']) {
     const at = html.indexOf(anchor);
@@ -34,8 +36,8 @@ test('app.js mounts the pane and routes term-* frames to it', () => {
   assert.ok(app.includes('if (terminalPane) terminalPane.onContextChange();'));
 });
 
-test('Escape typed in the terminal is the shell\'s: the wizard and the three detail screens ignore it (D16)', () => {
-  assert.equal(app.match(/if \(e\.target\?\.closest\?\.\('\.term-pane'\)\) return;/g)?.length, 4);
+test('Escape typed in the terminal is the shell\'s: the wizard, the three detail screens and the Catalogue\'s side panel ignore it (D16)', () => {
+  assert.equal(app.match(/if \(e\.target\?\.closest\?\.\('\.term-pane'\)\) return;/g)?.length, 5);
 });
 
 test('the Commands list is gone: no rules for it, or for its toggle, remain', () => {

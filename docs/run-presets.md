@@ -4,10 +4,6 @@ A run preset is a named New run setup. Save the choices you make for a kind of r
 pick the preset, type only the prompt and press **Start run**. The run gets the preset's choices
 for that run only: the project's saved settings never change.
 
-Run presets are in beta and on by default. Turn them off in **Settings › Labs ›
-Run presets** (flag `runPresets`, see [Feature flags](feature-flags.md)), or with
-`worca flags off runPresets`.
-
 ## What a preset keeps
 
 A preset keeps the run's **choices**, never its task:
@@ -20,6 +16,7 @@ A preset keeps the run's **choices**, never its task:
 | Human in the loop | Consents given per start: *Allow unguarded*, a team-cap override and its reason, a sync choice |
 | Source branch (project and workspace presets), *Run on the source branch*, *Sync before start* | Schedule fields |
 | Away mark, Sets opt-outs, Mock mode, run tags | |
+| Open a PR when the run finishes (`pr`), only when you changed it from the project's or workspace's setting | |
 
 A preset stores **full picks**. When you save, Worca resolves the workflow for the project you
 are on and fills in every agent's effective values and every loop's budget, so a later change to
@@ -185,6 +182,7 @@ every preset.
 
 `setup` takes the `POST /api/run` keys `workflowId`, `engine`, `guardrailsId`, `mcpOptOut`, `mock`,
 `nightMode`, `humanInLoop`, `sourceBranch`, `sourceBranchByKey`, `sameAsSource`, `syncBeforeStart`,
-`tags` and `overlay` (`nodes` and `wires`, see [Per-agent models for one run](models.md#per-agent-models-for-one-run)).
+`tags`, `pr` (`{ open?: 'none' | 'draft' | 'ready', slices?: 'each' | 'one' }`, see
+[Create a PR when a run finishes](shape-it-first.md#pull-requests-when-a-run-finishes)) and `overlay` (`nodes` and `wires`, see [Per-agent models for one run](models.md#per-agent-models-for-one-run)).
 Any other key is dropped, and a setup larger than 32 KB is refused. A run started from a preset
 sends the preset's choices as an ordinary run body, plus `presetId`, `overlay` and `humanInLoop`.

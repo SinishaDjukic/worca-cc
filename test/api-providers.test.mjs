@@ -1,18 +1,22 @@
 // test/api-providers.test.mjs
 // The provider routes (model-bridge-design.md §9) against a stubbed
 // globalThis.fetch standing in for github.com: state payloads never carry a
-// token, the terms gate on login, the device-flow poll, the models list and
+// token, the device-flow login and poll, the models list and
 // the import, PATCH validation, /api/models' bridged facts, and the CLI's
 // pure formatters. Sandboxes HOME (settings.json) + WORCA_HOME (DB).
 import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import http from 'node:http';
-import { mkdtemp, rm } from 'node:fs/promises';
+import { mkdtemp, rm, readFile, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { _resetForTests } from '../src/core/db.mjs';
 import { _resetCopilotCache } from '../src/core/bridge/providers/copilot.mjs';
+import { settingsFile } from '../src/core/settings.mjs';
+import { testProviderConnection } from '../src/core/bridge/provider-ops.mjs';
 import { formatModelLine, formatProviders, modelsArgs, cmdModels } from '../src/cli/models.mjs';
+import { openRouterConfig } from '../src/core/settings.mjs';
+import { openRouterAccount } from '../src/core/bridge/provider-ops.mjs';
 
 let srv, base, homeDir, worcaHomeDir;
 const prevEnv = {
@@ -22,12 +26,22 @@ const prevEnv = {
 const realFetch = globalThis.fetch;
 const jsonRes = (status, body) => new Response(JSON.stringify(body), { status, headers: { 'content-type': 'application/json' } });
 let pollState = 'pending';
+let pollToken = 'gho_test';   // the access_token the oauth poll hands out once pollState is 'ok'
 let modelsExtra = [];
+const seen = [];   // every non-server URL fetched, in order
 const github = async (url, init = {}) => {
   const u = String(url);
   if (u.startsWith(base)) return realFetch(url, init);
+  seen.push(u);
+  // A GHE.com tenant (acme.ghe.com): its own device flow, REST host and Copilot gateway.
+  if (/^https:\/\/acme\.ghe\.com\/login\/device\/code$/.test(u)) return jsonRes(200, { device_code: 'dc-acme', user_code: 'ACME-0001', verification_uri: 'https://acme.ghe.com/login/device', interval: 1, expires_in: 900 });
+  if (/^https:\/\/api\.acme\.ghe\.com\/user$/.test(u)) return jsonRes(200, { login: 'tenant-octo' });
+  if (/^https:\/\/api\.acme\.ghe\.com\/copilot_internal\/v2\/token$/.test(u) && init.headers.authorization === 'token gho_refused') return jsonRes(403, { message: 'Forbidden', error_details: { message: 'Copilot is not enabled for your account', url: 'https://acme.ghe.com/settings/copilot', notification_id: 'no_copilot_access' } });
+  if (/^https:\/\/api\.acme\.ghe\.com\/copilot_internal\/v2\/token$/.test(u) && init.headers.authorization === 'token gho_bare403') return new Response('', { status: 403 });
+  if (/^https:\/\/api\.acme\.ghe\.com\/copilot_internal\/v2\/token$/.test(u)) return init.headers.authorization === 'token gho_test' ? jsonRes(200, { token: 'cp_acme', expires_at: Math.floor(Date.now() / 1000) + 1800, endpoints: { api: 'https://copilot-api.acme.ghe.com' } }) : jsonRes(401, {});
+  if (/^https:\/\/copilot-api\.acme\.ghe\.com\/models$/.test(u)) return jsonRes(200, { data: [{ id: 'tenant-model', name: 'Tenant Model', vendor: 'OpenAI', capabilities: { type: 'chat' } }] });
   if (/login\/device\/code$/.test(u)) return jsonRes(200, { device_code: 'dc1', user_code: 'WXYZ-9876', verification_uri: 'https://github.com/login/device', interval: 1, expires_in: 900 });
-  if (/oauth\/access_token$/.test(u)) return pollState === 'ok' ? jsonRes(200, { access_token: 'gho_test' }) : jsonRes(200, { error: 'authorization_pending' });
+  if (/oauth\/access_token$/.test(u)) return pollState === 'ok' ? jsonRes(200, { access_token: pollToken }) : jsonRes(200, { error: 'authorization_pending' });
   if (/api\.github\.com\/user$/.test(u)) return jsonRes(200, { login: 'octo' });
   if (/copilot_internal\/v2\/token$/.test(u)) return init.headers.authorization === 'token gho_test' ? jsonRes(200, { token: 'cp_t', expires_at: Math.floor(Date.now() / 1000) + 1800, endpoints: { api: 'https://api.individual.githubcopilot.com' } }) : jsonRes(401, {});
   if (/copilot_internal\/user$/.test(u)) return jsonRes(200, { quota_snapshots: { premium_interactions: { entitlement: 300, remaining: 250 } } });
@@ -69,24 +83,21 @@ test('GET /api/providers: defaults, never a token', async () => {
   const { status, body } = await jfetch('/api/providers');
   assert.equal(status, 200);
   assert.equal(body.copilot.connected, false);
-  assert.equal(body.copilot.termsCurrent, false);
+  assert.equal('termsCurrent' in body.copilot, false);
+  assert.equal('acknowledgedTerms' in body.copilot, false);
   assert.equal(body.copilot.accountType, 'individual');
   assert.equal(body.openai.configured, false);
   assert.equal(body.openai.baseUrl, 'https://api.openai.com/v1');
   assert.equal(JSON.stringify(body).includes('gho_'), false);
 });
 
-test('login is refused until the notice is acknowledged (409 TERMS)', async () => {
-  const r = await post('/api/providers/copilot/login');
-  assert.equal(r.status, 409);
-  assert.equal(r.body.code, 'TERMS');
-  const a = await post('/api/providers/copilot/acknowledge');
-  assert.equal(a.status, 200);
-  assert.equal(a.body.copilot.termsCurrent, true);
-  assert.match(a.body.copilot.acknowledgedTerms, /^\d{4}-\d{2}-\d{2}T/);
+test('Copilot sign-in needs no acknowledgement: the old acknowledge route is gone', async () => {
+  const r = await post('/api/providers/copilot/acknowledge');
+  assert.equal(r.status, 404);
 });
 
 test('device flow: start → pending → ok stores the sign-in; state shows the login; quota on demand; models list; import', async () => {
+  // No acknowledgement first: sign-in starts straight away (the notice is gone).
   const start = await post('/api/providers/copilot/login');
   assert.equal(start.status, 200, JSON.stringify(start.body));
   assert.equal(start.body.userCode, 'WXYZ-9876');
@@ -200,7 +211,6 @@ test('PATCH /api/providers: validation, masked echo = keep, logout flips the cat
 
   const out = await post('/api/providers/copilot/logout');
   assert.equal(out.body.copilot.connected, false);
-  assert.equal(out.body.copilot.termsCurrent, true);   // the acknowledgement stays
   const models = await jfetch('/api/models');
   const gpt = models.body.models.find((m) => m.id === 'copilot-gpt-5');
   assert.equal(gpt.needsSignIn, true);
@@ -212,6 +222,177 @@ test('PATCH /api/providers: validation, masked echo = keep, logout flips the cat
   const lst = await jfetch('/api/providers/copilot/models');
   assert.equal(lst.status, 409);
   assert.equal(lst.body.code, 'NOT_SIGNED_IN');
+});
+
+const copilotPatch = (b) => patch('/api/providers/copilot', b);
+const seenSince = (n) => seen.slice(n);
+
+test('GHE.com tenant end to end: PATCH → login begins on acme.ghe.com and returns host; poll stores the token; state shows host; quota and models hit the tenant', async () => {
+  pollState = 'ok';
+  const set = await copilotPatch({ accountType: 'ghe-com', enterpriseHost: ' https://Acme.ghe.com/ ' });
+  assert.equal(set.status, 200, JSON.stringify(set.body));
+  assert.equal(set.body.copilot.enterpriseHost, 'acme.ghe.com');
+  assert.equal(set.body.copilot.githubHost, 'acme.ghe.com');
+  assert.equal(set.body.copilot.accountType, 'ghe-com');
+  const n0 = seen.length;
+  const start = await post('/api/providers/copilot/login');
+  assert.equal(start.status, 200, JSON.stringify(start.body));
+  assert.equal(start.body.host, 'acme.ghe.com');
+  assert.equal(start.body.verificationUri, 'https://acme.ghe.com/login/device');
+  const done = await jfetch(`/api/providers/copilot/login/${start.body.deviceCode}`, { method: 'POST' });
+  assert.deepEqual(done.body, { ok: true, login: 'tenant-octo' });
+  assert.deepEqual(seenSince(n0), [
+    'https://acme.ghe.com/login/device/code', 'https://acme.ghe.com/login/oauth/access_token',
+    'https://api.acme.ghe.com/user', 'https://api.acme.ghe.com/copilot_internal/v2/token',
+  ]);
+  const n1 = seen.length;
+  const st = await jfetch('/api/providers?quota=1');
+  assert.equal(st.body.copilot.connected, true);
+  assert.equal(st.body.copilot.githubHost, 'acme.ghe.com');
+  assert.equal(st.body.copilot.quota.used, 50);
+  assert.equal(JSON.stringify(st.body).includes('gho_test'), false);
+  assert.deepEqual(seenSince(n1), ['https://api.acme.ghe.com/copilot_internal/user']);
+  const n2 = seen.length;
+  const list = await jfetch('/api/providers/copilot/models');
+  assert.deepEqual(list.body.models.map((m) => m.id), ['tenant-model']);
+  assert.ok(seenSince(n2).includes('https://copilot-api.acme.ghe.com/models'));
+  assert.ok(seenSince(n2).every((u) => /\.acme\.ghe\.com\//.test(u)), 'every call goes to the tenant');
+  const conn = await testProviderConnection('copilot', { fetch: github });
+  assert.deepEqual(conn, { ok: true });
+});
+
+test('changing the host while signed in signs out (state connected:false) in one PATCH', async () => {
+  const before = (await jfetch('/api/providers')).body.copilot;
+  assert.equal(before.connected, true);
+  const r = await copilotPatch({ enterpriseHost: 'other.ghe.com' });
+  assert.equal(r.status, 200, JSON.stringify(r.body));
+  assert.equal(r.body.copilot.connected, false);
+  assert.equal(r.body.copilot.login, null);
+  assert.equal(r.body.copilot.enterpriseHost, 'other.ghe.com');
+  assert.equal(r.body.copilot.githubHost, 'other.ghe.com');
+});
+
+test('PATCH validation: ghe-com without a host, a host with a path or port, a host without ghe-com are 400 with the message; nothing stored', async () => {
+  assert.equal((await copilotPatch({ accountType: 'individual' })).status, 200);
+  const raw = await readFile(settingsFile(), 'utf8');
+  const cases = [
+    [{ accountType: 'ghe-com' }, /needs enterpriseHost/],
+    [{ accountType: 'ghe-com', enterpriseHost: 'acme.ghe.com/x' }, /enterpriseHost must be a GHE\.com host like acme\.ghe\.com/],
+    [{ accountType: 'ghe-com', enterpriseHost: 'acme.ghe.com:443' }, /with no path, port or credentials/],
+    [{ enterpriseHost: 'acme.ghe.com' }, /applies only to accountType ghe-com/],
+    [{ accountType: 'business', enterpriseHost: 'acme.ghe.com' }, /applies only to accountType ghe-com/],
+  ];
+  for (const [body, re] of cases) {
+    const r = await copilotPatch(body);
+    assert.equal(r.status, 400, JSON.stringify(body));
+    assert.match(r.body.error, re);
+  }
+  assert.equal(await readFile(settingsFile(), 'utf8'), raw);
+});
+
+test('host changed between login begin and approval: poll returns the HOST_CHANGED error and stores no token', async () => {
+  pollState = 'ok';
+  assert.equal((await copilotPatch({ accountType: 'ghe-com', enterpriseHost: 'acme.ghe.com' })).status, 200);
+  const start = await post('/api/providers/copilot/login');
+  assert.equal(start.status, 200, JSON.stringify(start.body));
+  assert.equal((await copilotPatch({ enterpriseHost: 'other.ghe.com' })).status, 200);       // the person edits the host meanwhile
+  const done = await jfetch(`/api/providers/copilot/login/${start.body.deviceCode}`, { method: 'POST' });
+  assert.match(done.body.error, /host changed during the sign-in/);
+  assert.equal((await jfetch('/api/providers')).body.copilot.connected, false);
+  assert.equal((await copilotPatch({ accountType: 'individual' })).status, 200);
+});
+
+const signInRefused = async (token) => {
+  pollState = 'ok'; pollToken = token;
+  try {
+    assert.equal((await copilotPatch({ accountType: 'ghe-com', enterpriseHost: 'acme.ghe.com' })).status, 200);
+    const start = await post('/api/providers/copilot/login');
+    assert.equal(start.status, 200, JSON.stringify(start.body));
+    return await jfetch(`/api/providers/copilot/login/${start.body.deviceCode}`, { method: 'POST' });
+  } finally { pollToken = 'gho_test'; }
+};
+const assertNothingStored = async () => {
+  assert.equal((await jfetch('/api/providers')).body.copilot.connected, false);
+  assert.doesNotMatch(await readFile(settingsFile(), 'utf8'), /githubToken|gho_/);
+};
+
+test('GHE.com sign-in refused by Copilot (403 with error_details): the error names the tenant and GitHub\'s reason, never "stored token", and nothing is stored', async () => {
+  const warns = []; const warn = console.warn; console.warn = (m) => warns.push(String(m));
+  let done;
+  try { done = await signInRefused('gho_refused'); } finally { console.warn = warn; }
+  assert.equal(done.status, 200);
+  assert.match(done.body.error, /the sign-in on acme\.ghe\.com worked \(as tenant-octo\), but GitHub refused Copilot access \(403\)/);
+  assert.match(done.body.error, /GitHub says: "Copilot is not enabled for your account" \(https:\/\/acme\.ghe\.com\/settings\/copilot\)/);
+  assert.doesNotMatch(done.body.error, /stored token|sign in again/i);
+  await assertNothingStored();
+  assert.ok(warns.some((w) => /answered 403: Copilot is not enabled/.test(w) && !/gho_refused/.test(w)), warns.join('\n'));
+  assert.equal((await copilotPatch({ accountType: 'individual' })).status, 200);
+});
+
+test('a bare 403 at sign-in says GitHub gave no reason and points at the admin', async () => {
+  _resetCopilotCache();
+  const warn = console.warn; console.warn = () => {};
+  let done;
+  try { done = await signInRefused('gho_bare403'); } finally { console.warn = warn; }
+  assert.match(done.body.error, /the sign-in on acme\.ghe\.com worked/);
+  assert.match(done.body.error, /gave no reason/);
+  assert.match(done.body.error, /enterprise admin/);
+  assert.doesNotMatch(done.body.error, /client id/i);
+  assert.doesNotMatch(done.body.error, /stored token|sign in again/i);
+  await assertNothingStored();
+  assert.equal((await copilotPatch({ accountType: 'individual' })).status, 200);
+});
+
+test('a stored token that later gets 401 still says to sign in again', async () => {
+  const j = JSON.parse(await readFile(settingsFile(), 'utf8'));
+  j.providers = { ...(j.providers || {}), copilot: { githubToken: 'gho_expired' } };
+  await writeFile(settingsFile(), JSON.stringify(j));
+  _resetCopilotCache();
+  const warn = console.warn; console.warn = () => {};
+  try {
+    assert.deepEqual(await testProviderConnection('copilot', { fetch: github }), { ok: false, message: 'GitHub rejected the stored token (401) — sign in again' });
+  } finally { console.warn = warn; }
+  assert.equal((await post('/api/providers/copilot/logout')).status, 200);
+});
+
+test('ghe-com with a hand-edited missing host: login is 400 NO_HOST message; GET /api/providers still 200 with quota null; logout works', async () => {
+  const file = settingsFile();
+  const j = JSON.parse(await readFile(file, 'utf8'));
+  j.providers = { ...(j.providers || {}), copilot: { accountType: 'ghe-com', githubToken: 'gho_test' } };
+  await writeFile(file, JSON.stringify(j));
+  const warn = console.warn; console.warn = () => {};
+  try {
+    const n0 = seen.length;
+    const login = await post('/api/providers/copilot/login');
+    assert.equal(login.status, 400);
+    assert.match(login.body.error, /GHE\.com tenant but has no valid host/);
+    const st = await jfetch('/api/providers?quota=1');
+    assert.equal(st.status, 200);
+    assert.equal(st.body.copilot.quota, null);
+    assert.equal(st.body.copilot.githubHost, null);
+    assert.equal(st.body.copilot.enterpriseHost, null);
+    assert.equal((await jfetch('/api/providers/copilot/models')).status, 400);
+    assert.deepEqual(await testProviderConnection('copilot', { fetch: github }), { ok: false, message: login.body.error });
+    assert.deepEqual(seenSince(n0), [], 'a tenant token never goes to github.com');
+    const out = await post('/api/providers/copilot/logout');
+    assert.equal(out.status, 200);
+    assert.equal(out.body.copilot.connected, false);
+  } finally { console.warn = warn; }
+  assert.equal((await copilotPatch({ accountType: 'individual' })).status, 200);
+});
+
+test('github.com path unchanged: login/poll/user/exchange/quota URLs on github.com and api.github.com', async () => {
+  pollState = 'ok';
+  const n0 = seen.length;
+  const start = await post('/api/providers/copilot/login');
+  assert.equal(start.body.host, 'github.com');
+  await jfetch(`/api/providers/copilot/login/${start.body.deviceCode}`, { method: 'POST' });
+  await jfetch('/api/providers?quota=1');
+  assert.deepEqual(seenSince(n0), [
+    'https://github.com/login/device/code', 'https://github.com/login/oauth/access_token',
+    'https://api.github.com/user', 'https://api.github.com/copilot_internal/v2/token', 'https://api.github.com/copilot_internal/user',
+  ]);
+  assert.equal((await post('/api/providers/copilot/logout')).body.copilot.connected, false);
 });
 
 test('POST/PATCH /api/models with upstream: validation messages surface; masked apiKey echo keeps the stored key', async () => {
@@ -258,10 +439,21 @@ test('CLI formatters + argv parser + `worca models providers/list` through injec
   assert.equal(formatModelLine({ id: 'copilot-gpt-5', label: 'My GPT', custom: 'global', bridged: 'copilot', upstreamModel: 'gpt-5', upstreamApi: 'openai-chat', needsSignIn: true, signInReason: 'not_signed_in' }),
     'copilot-gpt-5  (My GPT)  yours  bridged: copilot → gpt-5 (translated)  NEEDS SIGN-IN');
   assert.equal(formatModelLine({ id: 'claude-opus-4-8', label: 'Opus', custom: false, hidden: true }), 'claude-opus-4-8  (Opus)  built-in  hidden');
-  const lines = formatProviders({ copilot: { connected: true, login: 'o', accountType: 'individual', maxConcurrent: 4, termsCurrent: true, acknowledgedTerms: '2026-09-20T00:00:00Z', quota: { used: 1, entitlement: 5 } }, openai: { configured: false, keySet: true, keySource: 'env', keyRef: '${K}', baseUrl: 'u', maxConcurrent: 8 }, anthropic: { maxConcurrent: 8 } });
-  assert.match(lines[0], /connected as @o.*terms=acknowledged 2026-09-20/);
+  const lines = formatProviders({ copilot: { connected: true, login: 'o', accountType: 'individual', maxConcurrent: 4, quota: { used: 1, entitlement: 5 } }, openai: { configured: false, keySet: true, keySource: 'env', keyRef: '${K}', baseUrl: 'u', maxConcurrent: 8 }, anthropic: { maxConcurrent: 8 } });
+  assert.match(lines[0], /connected as @o/);
+  assert.doesNotMatch(lines[0], /terms=/);
   assert.match(lines[1], /premium requests: 1 \/ 5/);
   assert.match(lines[2], /openai.*key \$\{VAR\} NOT SET \(\$\{K\}\)/);
+  assert.equal(lines.length, 4, 'no openrouter state, no openrouter line');
+  const base = { copilot: { connected: true, login: 'o', accountType: 'individual', maxConcurrent: 4, quota: { used: 1, entitlement: 5 } }, openai: { configured: false, keySet: true, keySource: 'env', keyRef: '${K}', baseUrl: 'u', maxConcurrent: 8 }, anthropic: { maxConcurrent: 8 } };
+  const orLines = formatProviders({ ...base, openrouter: { keySet: false, keySource: 'env', keyRef: '${K}', legacyKey: false, maxConcurrent: 8, order: [], sort: '', allowFallbacks: true } });
+  assert.equal(orLines.length, 5);
+  assert.match(orLines[2], /^openai\s/, 'earlier lines keep their positions');
+  assert.match(orLines.at(-1), /^openrouter\s+key \$\{VAR\} NOT SET \(\$\{K\}\)\s+maxConcurrent=8\s+order=-\s+sort=-\s+fallbacks=on$/);
+  // A key the OpenAI-compatible row still supplies, and routing defaults that are set.
+  assert.match(formatProviders({ ...base, openrouter: { keySet: true, keySource: 'stored', keyRef: null, legacyKey: true, maxConcurrent: 3, order: ['anthropic', 'google'], sort: 'price', allowFallbacks: false } }).at(-1),
+    /^openrouter\s+key from openai\s+maxConcurrent=3\s+order=anthropic,google\s+sort=price\s+fallbacks=off$/);
+  assert.match(formatProviders({ ...base, openrouter: { keySet: false, keySource: null, keyRef: null, legacyKey: false, maxConcurrent: 8, order: [], sort: '', allowFallbacks: true } }).at(-1), /^openrouter\s+no key\s/);
   assert.deepEqual(modelsArgs(['import', 'copilot', '--pick=a,b', '--yes'], ['--pick'], ['--yes']), { _: ['import', 'copilot'], pick: 'a,b', yes: true });
   assert.throws(() => modelsArgs(['--bogus']), /Unknown flag/);
 
@@ -277,10 +469,11 @@ test('CLI formatters + argv parser + `worca models providers/list` through injec
   assert.match(out[0], /worca models/);
   await assert.rejects(cmdModels(['login', 'openai'], io), /only `worca models login copilot`/);
   await assert.rejects(cmdModels(['import', 'copilot', '--all', '--yes'], io), /not signed in/);
-  // login with --accept-terms walks the device flow against the stub.
+  await assert.rejects(cmdModels(['login', 'copilot', '--accept-terms'], io), /Unknown flag/);
+  // login walks the device flow against the stub, with no prompt before it.
   pollState = 'ok';
   out.length = 0;
-  assert.equal(await cmdModels(['login', 'copilot', '--accept-terms'], { ...io, sleep: async () => {} }), 0);
+  assert.equal(await cmdModels(['login', 'copilot'], { ...io, sleep: async () => {} }), 0);
   assert.ok(out.some((l) => /WXYZ-9876/.test(l)));
   assert.ok(out.some((l) => /Connected to GitHub Copilot as @octo/.test(l)));
   out.length = 0;
@@ -303,4 +496,160 @@ test('/api/models: readiness is per entry, not per provider — a keyless local 
   assert.equal(row('cx-api-remote').needsSignIn, true);
   assert.equal(row('cx-api-remote').signInReason, 'no_key');
   assert.equal(formatModelLine({ ...row('cx-api-remote'), custom: 'global', upstreamModel: 'gpt-oss-120b' }), 'cx-api-remote  yours  endpoint: openai → gpt-oss-120b  NEEDS API KEY');
+});
+
+test('formatProviders prints host= for a tenant; cmdModels set copilot accountType=ghe-com enterpriseHost=acme.ghe.com stores both; a bad host fails with the message', async () => {
+  const lines = formatProviders({ copilot: { connected: false, accountType: 'ghe-com', enterpriseHost: 'acme.ghe.com', maxConcurrent: 4 }, openai: {}, anthropic: {} });
+  assert.match(lines[0], /account=ghe-com  host=acme\.ghe\.com  maxConcurrent=4/);
+  assert.doesNotMatch(formatProviders({ copilot: { connected: false, accountType: 'individual', maxConcurrent: 4 }, openai: {}, anthropic: {} })[0], /host=/);
+
+  const out = [];
+  const io = { out: (s) => out.push(s), c: (n, s) => s, fail: (m) => { throw new Error(m); } };
+  await assert.rejects(cmdModels(['set', 'copilot', 'accountType=ghe-com', 'enterpriseHost=acme.ghe.com/x'], io), /enterpriseHost must be a GHE\.com host like acme\.ghe\.com/);
+  await assert.rejects(cmdModels(['set', 'copilot', 'accountType=ghe-com'], io), /needs enterpriseHost/);
+  assert.equal(await cmdModels(['set', 'copilot', 'accountType=ghe-com', 'enterpriseHost=Acme.ghe.com'], io), 0);
+  assert.match(out.join('\n'), /copilot .*account=ghe-com  host=acme\.ghe\.com/);
+  // The CLI sign-in names the tenant it is signing in to.
+  pollState = 'ok'; out.length = 0;
+  const begin = await post('/api/providers/copilot/login');
+  assert.equal(begin.body.host, 'acme.ghe.com');
+  assert.equal(await cmdModels(['login', 'copilot'], { ...io, sleep: async () => {} }), 0);
+  assert.ok(out.some((l) => /Open https:\/\/acme\.ghe\.com\/login\/device \(acme\.ghe\.com\) and enter the code ACME-0001/.test(l)), out.join('\n'));
+  // Back to a different type drops the host (and the sign-in) in the same write.
+  out.length = 0;
+  assert.equal(await cmdModels(['set', 'copilot', 'accountType=enterprise'], io), 0);
+  assert.doesNotMatch(out.join('\n'), /host=/);
+  assert.match(out.join('\n'), /copilot\s+not connected/);
+});
+
+// ── The OpenRouter row (providers.openrouter): state, save and Test. State carries from row to row. ──
+const OR = 'https://openrouter.ai/api/v1';
+const orState = async () => { const r = await jfetch('/api/providers'); assert.equal(r.status, 200); return r.body.openrouter; };
+/** Every outbound call while `fn` runs, as [url, authorization]; OpenRouter's /key accepts only `accept`. */
+const withOpenRouterStub = async (accept, fn) => {
+  const calls = [];
+  globalThis.fetch = async (url, init = {}) => {
+    const u = String(url);
+    if (u.startsWith(base)) return realFetch(url, init);
+    const auth = (init.headers && init.headers.authorization) ?? null;
+    calls.push([u, auth]);
+    if (/\/models$/.test(u)) return jsonRes(200, { data: [{ id: 'a' }] });
+    if (/\/key$/.test(u)) {
+      return accept.some((k) => auth === `Bearer ${k}`)
+        ? jsonRes(200, { data: { label: 'sk-or-v1-sec...ted', limit: 10, limit_remaining: 10, usage: 0, is_free_tier: false, free_model_daily_requests: { used: 0, limit: 1000, remaining: 1000 } } })
+        : jsonRes(401, { error: { message: 'User not found', code: 401 } });
+    }
+    return jsonRes(404, {});
+  };
+  try { await fn(); } finally { globalThis.fetch = github; }
+  return calls;
+};
+
+test('OpenRouter row: defaults in GET /api/providers', async () => {
+  assert.equal((await patch('/api/providers/openai', { apiKey: null, baseUrl: 'https://api.openai.com/v1' })).status, 200);
+  assert.deepEqual(await orState(), { keySet: false, keySource: null, keyRef: null, keyMasked: null, legacyKey: false, maxConcurrent: 8, order: [], sort: '', allowFallbacks: true });
+});
+
+test('OpenRouter row: PATCH saves key, cap and routing defaults; a masked echo keeps the key; never a raw key', async () => {
+  const r = await patch('/api/providers/openrouter', { apiKey: 'sk-or-v1-abcdef1234', maxConcurrent: 4, order: 'anthropic,google', sort: 'throughput', allowFallbacks: false });
+  assert.equal(r.status, 200, JSON.stringify(r.body));
+  const o = r.body.openrouter;
+  assert.equal(o.keySet, true);
+  assert.equal(o.keySource, 'stored');
+  assert.equal(o.keyMasked, '••••••1234');
+  assert.deepEqual([o.maxConcurrent, o.order, o.sort, o.allowFallbacks], [4, ['anthropic', 'google'], 'throughput', false]);
+  assert.ok(!JSON.stringify(r.body).includes('sk-or-v1-abcdef1234'));
+  const keep = await patch('/api/providers/openrouter', { apiKey: o.keyMasked });
+  assert.equal(keep.status, 200, JSON.stringify(keep.body));
+  assert.equal(keep.body.openrouter.keyMasked, '••••••1234');
+  assert.equal(openRouterConfig().apiKey, 'sk-or-v1-abcdef1234', 'the echo is dropped, the stored key kept');
+  assert.equal(keep.body.openai.keySet, false, 'the OpenAI-compatible row gets no key from it');
+});
+
+test('OpenRouter row: its PATCH is not swallowed by /api/providers/:name', async () => {
+  const bad = await patch('/api/providers/openrouter', { baseUrl: 'https://x' });
+  assert.equal(bad.status, 400);
+  assert.equal(bad.body.error, 'unknown provider field "baseUrl" for openrouter');
+  assert.equal((await patch('/api/providers/openrouter', { maxConcurrent: 0 })).status, 400);
+});
+
+test('OpenRouter row: borrows the OpenAI-compatible key only while that row points at openrouter.ai', async () => {
+  assert.equal((await patch('/api/providers/openrouter', { apiKey: null })).status, 200);
+  const on = await patch('/api/providers/openai', { baseUrl: OR, apiKey: 'sk-old-9999' });
+  assert.equal(on.status, 200, JSON.stringify(on.body));
+  const o = on.body.openrouter;
+  assert.deepEqual([o.keySet, o.legacyKey, o.keySource, o.keyMasked], [true, true, 'stored', '••••••9999']);
+  const off = await patch('/api/providers/openai', { baseUrl: 'http://127.0.0.1:11434/v1' });
+  assert.equal(off.status, 200, JSON.stringify(off.body));
+  assert.deepEqual([off.body.openrouter.keySet, off.body.openrouter.legacyKey], [false, false]);
+  assert.deepEqual([off.body.openrouter.keySource, off.body.openrouter.keyMasked], [null, null], 'nor does it show that key');
+  assert.equal(openRouterAccount().base, OR, 'the row\'s own calls go to openrouter.ai, not to the local server');
+});
+
+test('OpenRouter row: a key kept in an unset ${VAR} reads as such, and Test says so without calling out', async () => {
+  const prev = process.env.OPENROUTER_KEY;
+  delete process.env.OPENROUTER_KEY;
+  try {
+    const r = await patch('/api/providers/openrouter', { apiKey: '${OPENROUTER_KEY}' });
+    assert.equal(r.status, 200, JSON.stringify(r.body));
+    const o = r.body.openrouter;
+    assert.deepEqual([o.keySet, o.keySource, o.keyRef, o.keyMasked], [false, 'env', '${OPENROUTER_KEY}', null]);
+    let t;
+    const calls = await withOpenRouterStub([], async () => { t = await post('/api/providers/openrouter/test', {}); });
+    assert.equal(t.status, 200);
+    assert.equal(t.body.ok, false);
+    assert.match(t.body.message, /\$\{OPENROUTER_KEY\} is not set/);
+    assert.deepEqual(calls, []);
+  } finally {
+    if (prev === undefined) delete process.env.OPENROUTER_KEY; else process.env.OPENROUTER_KEY = prev;
+  }
+});
+
+test('OpenRouter row: Test with a typed key goes to openrouter.ai with that key; no key at all → no call', async () => {
+  let t;
+  const calls = await withOpenRouterStub(['sk-typed'], async () => { t = await post('/api/providers/openrouter/test', { apiKey: 'sk-typed' }); });
+  assert.equal(t.body.ok, true, JSON.stringify(t.body));
+  assert.equal(t.body.models, 1);
+  assert.match(t.body.detail, /credit \$10\.00 of \$10\.00 left/);
+  assert.ok(calls.length >= 2, JSON.stringify(calls));
+  for (const [u, auth] of calls) {
+    assert.ok(u.startsWith(`${OR}/`), u);
+    assert.equal(auth, 'Bearer sk-typed');
+  }
+
+  assert.equal((await patch('/api/providers/openrouter', { apiKey: null })).status, 200);
+  assert.equal((await patch('/api/providers/openai', { baseUrl: 'http://127.0.0.1:11434/v1', apiKey: 'sk-local' })).status, 200);
+  let none;
+  const none0 = await withOpenRouterStub(['sk-local'], async () => { none = await post('/api/providers/openrouter/test', {}); });
+  assert.equal(none.body.ok, false);
+  assert.match(none.body.message, /^no API key configured — OpenRouter/);
+  assert.deepEqual(none0, []);
+});
+
+test('OpenRouter row: a regional OpenRouter base on the OpenAI-compatible row keeps its own address', async () => {
+  assert.equal((await patch('/api/providers/openrouter', { apiKey: null })).status, 200);
+  const r = await patch('/api/providers/openai', { baseUrl: 'https://eu.openrouter.ai/api/v1', apiKey: 'sk-eu-5678' });
+  assert.equal(r.status, 200, JSON.stringify(r.body));
+  const o = r.body.openrouter;
+  assert.deepEqual([o.keySet, o.legacyKey, o.keyMasked], [true, true, '••••••5678']);
+  let t;
+  const calls = await withOpenRouterStub(['sk-typed', 'sk-eu-5678'], async () => { t = await post('/api/providers/openrouter/test', {}); });
+  assert.equal(t.body.ok, true, JSON.stringify(t.body));
+  assert.ok(calls.length >= 2, JSON.stringify(calls));
+  for (const [u, auth] of calls) {
+    assert.ok(u.startsWith('https://eu.openrouter.ai/api/v1/'), u);
+    assert.equal(auth, 'Bearer sk-eu-5678');
+  }
+
+  // The row's own key, typed or stored, goes to openrouter.ai, whatever the OpenAI-compatible row points at.
+  let typed;
+  const typedCalls = await withOpenRouterStub(['sk-typed', 'sk-eu-5678'], async () => { typed = await post('/api/providers/openrouter/test', { apiKey: 'sk-typed' }); });
+  assert.equal(typed.body.ok, true, JSON.stringify(typed.body));
+  assert.ok(typedCalls.length >= 2 && typedCalls.every(([u, auth]) => u.startsWith(`${OR}/`) && auth === 'Bearer sk-typed'), JSON.stringify(typedCalls));
+  assert.equal((await patch('/api/providers/openrouter', { apiKey: 'sk-typed' })).status, 200);
+  let stored;
+  // A masked echo (••…) is no typed key: the stored one is tested.
+  const storedCalls = await withOpenRouterStub(['sk-typed', 'sk-eu-5678'], async () => { stored = await post('/api/providers/openrouter/test', { apiKey: '••••••yped' }); });
+  assert.equal(stored.body.ok, true, JSON.stringify(stored.body));
+  assert.ok(storedCalls.length >= 2 && storedCalls.every(([u, auth]) => u.startsWith(`${OR}/`) && auth === 'Bearer sk-typed'), JSON.stringify(storedCalls));
 });

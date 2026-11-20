@@ -5,15 +5,14 @@
 // throwing localStorage.
 import { test, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { JSDOM } from 'jsdom';
 import { useDomRelease } from './helpers/jsdom-release.mjs';
 import { RUN_STATE_ROWS } from './helpers/run-states.mjs';
+import { readIndexHtml } from '../src/core/read-index-html.mjs';
 
 const trackDom = useDomRelease(afterEach);
 
-const htmlPath = fileURLToPath(new URL('../ui/public/index.html', import.meta.url));
 const appPath = fileURLToPath(new URL('../ui/public/app.js', import.meta.url));
 
 function fakeNotification(permission = 'granted') {
@@ -30,7 +29,7 @@ function fakeNotification(permission = 'granted') {
 
 // `route(url)` may answer a request first (a Response-like object); undefined falls through to the stubs below.
 async function boot({ alertsOn = true, unread = 0, storage = null, setup = null, url: pageUrl = 'http://localhost:4317/', route = null } = {}) {
-  const dom = trackDom(new JSDOM(readFileSync(htmlPath, 'utf8'), { url: pageUrl }));
+  const dom = trackDom(new JSDOM(readIndexHtml(), { url: pageUrl }));
   const { window } = dom;
   window.Element.prototype.scrollIntoView = function () {};
   const wsBox = { ws: null };

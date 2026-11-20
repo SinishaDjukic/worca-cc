@@ -1,0 +1,43 @@
+/* ---------- Running detail: header card ---------- */
+/* Card, not a full-bleed band: .run-screen-detail keeps padding:0 so the sticky
+   tabs can pin, and this margin box supplies the inset (mirrors .hd-header:1615). */
+.rd-header{background:var(--panel);border:1px solid var(--line);border-radius:var(--r-card);margin:20px 32px 0;padding:20px 24px 18px;}
+.rd-body{padding:0 32px 40px;}
+.rd-row1{display:flex;align-items:center;gap:14px;}
+.rd-title{margin:0;min-width:0;flex:1;font:700 22px/1.25 var(--sans);letter-spacing:-.02em;
+  white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+.rd-status{flex:0 0 auto;}
+.rd-status[hidden]{display:none;}
+/* The design's slower, softer pulse; .pill-run .pdot (567) supplies the 7px dot
+   and the family fill, this only re-times it. `.parked` = nothing is running. */
+.rd-status .pdot{animation:wr-pulse 1.6s ease-in-out infinite;}
+.rd-status.parked .pdot{animation:none;}
+.rd-meta{display:flex;align-items:center;flex-wrap:wrap;gap:8px;min-width:0;margin-top:12px;
+  font:400 var(--fs-meta) var(--mono);color:var(--ink-3);}
+.rd-meta .strong{font-weight:700;color:var(--ink);}
+.rd-dot{font-weight:700;color:var(--ink);}
+.rd-row3{display:flex;align-items:center;gap:8px;margin-top:6px;min-width:0;}
+.rd-base{color:var(--ink-3);font-size:12px;white-space:nowrap;}
+.rd-base[hidden]{display:none;}
+.rd-branch-copy{display:flex;min-width:16ch;font-family:var(--mono);}
+.rd-branch-copy[hidden]{display:none;}
+.rd-branch-name{min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+.rd-spacer{flex:1 1 24px;}
+/* Pause/Resume and Stop. The saved run's bar (.hd-resume, .hd-pause, .hd-stop) wears the same
+   rules: its Resume and Pause are two buttons where this page toggles one. */
+.hd-resume[hidden],.hd-pause[hidden],.rd-pause[hidden]{display:none;}
+/* Only one of the two glyphs shows; data-action decides which. */
+.rd-pause[data-action="pause"] .ico-play,.rd-pause[data-action="resume"] .ico-pause{display:none;}
+.hd-stop[hidden],.rd-stop[hidden]{display:none;}
+.rd-error{margin-top:24px;color:var(--red-ink);font-size:var(--fs-body);}
+.rd-error[hidden]{display:none;}
+/* .rd-back is focused programmatically by openRunDetail — same reasoning as the .hd-back arm. */
+.rd-back,.hd-back,.gpage-back{display:inline-flex;align-items:center;justify-content:center;}   /* slice 2: a 28px icon button (btn-sm btn-icon) */
+.rd-back:focus-visible{outline:2px solid var(--ink);outline-offset:2px;}
+
+/* MUST sit after the rules above: @media contributes no specificity, so an
+   earlier placement would lose the source-order tie (see the note at :1927-1932). */
+@media (prefers-reduced-motion: reduce){
+  .rd-status .pdot,.rd-status.parked .pdot{animation:none;}
+}
+

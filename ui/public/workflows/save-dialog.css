@@ -1,0 +1,16 @@
+/* ---------- save dialog ---------- */
+.save-dialog{border:none;border-radius:var(--r-card);padding:0;box-shadow:var(--shadow-sheet);max-width:420px;width:92vw;}
+.save-dialog::backdrop{background:var(--scrim-soft);}
+.save-dialog .sd-body{padding:24px;display:flex;flex-direction:column;gap:14px;}
+.save-dialog .sd-title{margin:0;font-size:15px;font-weight:700;letter-spacing:-.015em;}
+.save-dialog .sd-field{display:flex;flex-direction:column;gap:6px;}
+.save-dialog .sd-field label{font-weight:600;font-size:12px;color:var(--ink-2);}
+.save-dialog .sd-field input{width:100%;border:1.5px solid transparent;background:var(--field);
+  border-radius:var(--r-sm);padding:10px 12px;font:13px var(--sans);color:var(--ink);}
+.save-dialog .sd-field input:focus{outline:none;background:var(--field-focus);border-color:var(--ink);}
+.save-dialog .sd-note{margin:0;font-size:12px;line-height:1.5;color:var(--ink-2);
+  background:var(--field);border-radius:var(--r-sm);padding:9px 12px;}
+.save-dialog .sd-msg{margin:0;font-size:12px;line-height:1.5;color:var(--ink-3);white-space:pre-line;}
+.save-dialog .sd-msg:empty{display:none;}
+.save-dialog .sd-msg.err{color:var(--red-ink);}
+.save-dialog .sd-actions{display:flex;justify-content:flex-end;gap:9px;margin-top:2px;}

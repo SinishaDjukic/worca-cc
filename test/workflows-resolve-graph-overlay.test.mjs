@@ -62,3 +62,51 @@ test('a saved workflow: the canonical overlay ({ model, effort: "" }) drops the 
   const stored = await resolveGraph(projectDir, id, REG());
   assert.deepEqual([stored.nodes.n_plan.model, stored.nodes.n_plan.effort], ['claude-opus-5-5', 'max'], 'the project layer is unchanged');
 });
+
+const ROLE_GRAPH = {
+  id: 'wf_rgo_roles', name: 'RGO roles', domain: 'coding',
+  nodes: [{ id: 'n_task', kind: 'task', x: 0, y: 0, config: {} },
+    { id: 'n_plan', kind: 'agent', key: 'planner', x: 300, y: 0, config: {} },
+    { id: 'n_reviewer', kind: 'agent', key: 'reviewer', x: 600, y: 0, config: { model: 'claude-sonnet-5-5', effort: 'medium',
+      roleReview: { roles: [{ key: 'correctness', label: 'Correctness' }, { key: 'security', label: 'Security', model: 'claude-haiku-4-5', effort: 'medium' }, { key: 'fit', label: 'Fit' }],
+        source: 'declared', target: 'plan', sink: 'refiner' } } },
+    { id: 'n_refine', kind: 'agent', key: 'refiner', x: 900, y: 0, config: { awaitAll: true } },
+    { id: 'n_end', kind: 'end', x: 1200, y: 0, config: {} }],
+  wires: [{ id: 'w1', from: { node: 'n_task', port: 'task' }, to: { node: 'n_plan', port: 'task' } },
+    { id: 'w2', from: { node: 'n_plan', port: 'plan' }, to: { node: 'n_reviewer', port: 'plan' } },
+    { id: 'w3', from: { node: 'n_reviewer', port: 'plan' }, to: { node: 'n_refine', port: 'plan' } },
+    { id: 'w4', from: { node: 'n_reviewer', port: 'findings' }, to: { node: 'n_refine', port: 'findings' } },
+    { id: 'w5', from: { node: 'n_refine', port: 'revise' }, to: { node: 'n_reviewer', port: 'revise' }, config: { maxCycles: 2, onExhausted: 'clean' } },
+    { id: 'w6', from: { node: 'n_refine', port: 'plan' }, to: { node: 'n_end', port: 'result' } }],
+};
+
+test('a role-review node resolves its per-role picks: run > project > template, each with its source', async () => {
+  const { id } = await writeGraphWorkflow({ ...ROLE_GRAPH });
+  await setNodeModel(projectDir, id, 'n_reviewer', { roles: { correctness: { model: 'claude-opus-5-5', effort: 'max' }, security: { model: 'claude-opus-5-5' } } });
+  const stored = await resolveGraph(projectDir, id, REG());
+  assert.deepEqual(stored.nodes.n_reviewer.roles, {
+    correctness: { model: 'claude-opus-5-5', effort: 'max', source: 'project' },
+    security: { model: 'claude-opus-5-5', source: 'project' },
+  }, 'the project beats the template; an effort travels with its model');
+  const run = await resolveGraph(projectDir, id, REG(), undefined, { overlay: { nodes: { n_reviewer: { roles: { correctness: { model: 'claude-haiku-4-5', effort: 'high' } } } } } });
+  assert.deepEqual(run.nodes.n_reviewer.roles.correctness, { model: 'claude-haiku-4-5', effort: 'high', source: 'run' });
+  assert.deepEqual(run.nodes.n_reviewer.roles.security, { model: 'claude-opus-5-5', source: 'project' }, 'a role the overlay names nothing for keeps its project pick');
+  await setNodeModel(projectDir, id, 'n_reviewer', { roles: {} });
+  assert.deepEqual((await resolveGraph(projectDir, id, REG())).nodes.n_reviewer.roles, {
+    security: { model: 'claude-haiku-4-5', effort: 'medium', source: 'template' },
+  });
+  assert.equal(Object.hasOwn(stored.nodes.n_reviewer.roles, 'fit'), false, 'a role nothing names is absent');
+});
+
+test('a node without a role review has no roles key; Auto ignores the project layer', async () => {
+  const { id } = await writeGraphWorkflow({ ...ROLE_GRAPH, id: 'wf_rgo_roles_auto' });
+  await setNodeModel(projectDir, id, 'n_reviewer', { roles: { correctness: { model: 'claude-opus-5-5' } } });
+  const g = await resolveGraph(projectDir, id, REG());
+  for (const nid of ['n_task', 'n_plan', 'n_refine', 'n_end']) assert.equal(Object.hasOwn(g.nodes[nid], 'roles'), false, nid);
+  const def = await resolveGraph(projectDir, 'wf_default', REG());
+  for (const [nid, nc] of Object.entries(def.nodes)) assert.equal(Object.hasOwn(nc, 'roles'), false, nid);
+  const auto = await resolveGraph(projectDir, id, REG(), undefined, { ignoreProjectOverrides: true });
+  assert.deepEqual(auto.nodes.n_reviewer.roles, { security: { model: 'claude-haiku-4-5', effort: 'medium', source: 'template' } });
+  const pinned = await resolveGraph(projectDir, id, REG(), undefined, { agentPair: { model: 'claude-opus-5-5' } });
+  assert.equal(Object.hasOwn(pinned.nodes.n_reviewer, 'roles'), false, 'an agentPair pin skips role picks');
+});

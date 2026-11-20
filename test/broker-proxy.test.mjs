@@ -10,19 +10,21 @@ import { readBrokerConfig } from '../src/broker/config.mjs';
 import { builtinSlots, mergeSlots } from '../src/broker/slots.mjs';
 import { startBroker } from '../src/broker/main.mjs';
 import { startFakeUpstream, GOOD_KEY } from './helpers/fake-model-upstream.mjs';
+import { UNPRICED_RATES } from '../src/broker/usage.mjs';
 
 const SECRET = 's'.repeat(48);
 let up; let broker; let base;
 
 before(async () => {
-  up = await startFakeUpstream();
+  up = await startFakeUpstream({ validKeys: [GOOD_KEY, ''] });   // '': the keyless `lan` slot
   const { config, errors } = readBrokerConfig({
     WORCA_BROKER_MODE: 'single', WORCA_BROKER_SECRET: SECRET, WORCA_BROKER_HOST: '127.0.0.1',
     WORCA_BROKER_PORT: '0', WORCA_BROKER_UI_PORT: '1', WORCA_BROKER_KEY_ANTHROPIC: GOOD_KEY,
     WORCA_BROKER_KEY_OPENROUTER: GOOD_KEY, WORCA_BROKER_DEFAULT_DAILY_USD: '1',
   });
   assert.deepEqual(errors, []);
-  const slots = mergeSlots(builtinSlots(), [{ id: 'anthropic', upstream: up.url }, { id: 'openrouter', upstream: up.url }]);
+  const slots = mergeSlots(builtinSlots(), [{ id: 'anthropic', upstream: up.url }, { id: 'openrouter', upstream: up.url },
+    { id: 'lan', label: 'LAN models', protocol: 'anthropic', auth: 'none', credential: 'none', upstream: up.url }]);
   broker = await startBroker({ config: { ...config, port: 0 }, slots, log: () => {} });
   base = `http://127.0.0.1:${broker.ports.private}`;
 });
@@ -194,6 +196,60 @@ test('proxy: OpenAI-shaped slots use Bearer auth and book the provider-reported 
   assert.equal(u.body.rows[0].usd, 0.0123);
 });
 
+const usageOf = async (spawnId) => { await new Promise((r) => setTimeout(r, 20)); return (await internal('GET', `/internal/usage?spawnId=${spawnId}`)).body.rows; };
+
+test('proxy: a model with no list price is booked at the fallback rate, not $0 (G7)', async () => {
+  const { token, spawnId } = await mint();
+  up.set({ model: 'claude-opus-4-5' });
+  try { assert.equal((await messages(token)).status, 200); } finally { up.set({ model: null }); }
+  const [row] = await usageOf(spawnId);
+  assert.equal(row.model, 'claude-opus-4-5');
+  assert.equal(row.usd.toFixed(8), ((10 * UNPRICED_RATES.input + 5 * UNPRICED_RATES.output) / 1e6).toFixed(8));
+});
+
+test('proxy: a keyless slot (local models) books tokens and no dollars', async () => {
+  const { token, spawnId } = await mint({ slots: ['lan'] });
+  up.set({ model: 'qwen-local' });
+  try { assert.equal((await messages(token, { path: '/p/lan/v1/messages' })).status, 200); } finally { up.set({ model: null }); }
+  const [row] = await usageOf(spawnId);
+  assert.deepEqual([row.inputTokens, row.usd], [10, 0]);
+});
+
+test('proxy: a streamed OpenRouter request is made to report its usage and cost', async () => {
+  const { token } = await mint({ slots: ['openrouter'] });
+  up.requests.length = 0;
+  const res = await fetch(`${base}/p/openrouter/api/v1/chat/completions`, {
+    method: 'POST', headers: { 'content-type': 'application/json', authorization: `Bearer ${token}` },
+    body: JSON.stringify({ model: 'x', stream: true, messages: [] }),
+  });
+  assert.equal(res.status, 200);
+  await res.text();
+  const sent = JSON.parse(up.requests.at(-1).body);
+  assert.deepEqual([sent.stream_options, sent.usage], [{ include_usage: true }, { include: true }]);
+  assert.equal(up.requests.at(-1).headers['content-length'], String(Buffer.byteLength(up.requests.at(-1).body)));
+});
+
+test('proxy: a client that hangs up mid-stream is still booked for the whole response (G15)', async () => {
+  const { token, spawnId } = await mint();
+  up.set({ streamDelayMs: 250 });
+  try {
+    const ac = new AbortController();
+    const res = await fetch(`${base}/p/anthropic/v1/messages`, {
+      method: 'POST', signal: ac.signal,
+      headers: { 'content-type': 'application/json', 'anthropic-version': '2023-06-01', authorization: `Bearer ${token}` },
+      body: JSON.stringify({ model: 'claude-sonnet-5', max_tokens: 10, stream: true, messages: [{ role: 'user', content: 'hi' }] }),
+    });
+    const reader = res.body.getReader();
+    await reader.read();                     // message_start (1 output token so far)
+    ac.abort();
+    await reader.read().catch(() => {});
+    await new Promise((r) => setTimeout(r, 400));
+  } finally { up.set({ streamDelayMs: 150 }); }
+  const rows = await usageOf(spawnId);
+  assert.equal(rows.length, 1);
+  assert.equal(rows[0].outputTokens, 500, 'the rest of the stream was drained and counted');
+});
+
 test('proxy: a missing key names the slot and where to add it', async () => {
   const { token } = await mint({ slots: ['openai'] });
   const res = await fetch(`${base}/p/openai/v1/models`, { headers: { authorization: `Bearer ${token}` } });
@@ -206,4 +262,96 @@ test('proxy: a missing key names the slot and where to add it', async () => {
 test('healthz answers on the private port', async () => {
   const r = await fetch(`${base}/healthz`);
   assert.deepEqual((await r.json()).mode, 'single');
+});
+
+test('proxy: a 2xx metadata body that echoes the key is scrubbed; the rest of it passes (G21)', async () => {
+  const { token } = await mint({ slots: ['openrouter'] });
+  const res = await fetch(`${base}/p/openrouter/api/v1/key`, { headers: { authorization: `Bearer ${token}` } });
+  assert.equal(res.status, 200);
+  const text = await res.text();
+  assert.ok(!text.includes(GOOD_KEY.slice(0, 12)), text);
+  const body = JSON.parse(text);
+  assert.match(body.data.label, /removed by worca broker/);
+  assert.equal(body.data.usage, 0.5, 'the numbers worca reads (free daily count) are untouched');
+  assert.equal(res.headers.get('content-length'), String(Buffer.byteLength(text)));
+});
+
+/** A raw request whose body is written by the caller; resolves the response once it comes. */
+function rawPost(port, token, headers) {
+  const req = http.request({
+    host: '127.0.0.1', port, method: 'POST', path: '/p/anthropic/v1/messages',
+    headers: { 'content-type': 'application/json', 'anthropic-version': '2023-06-01', authorization: `Bearer ${token}`, ...headers },
+  });
+  const response = new Promise((resolveP, rejectP) => {
+    req.on('response', (res) => {
+      const parts = [];
+      res.on('data', (c) => parts.push(c));
+      res.on('end', () => resolveP({ status: res.statusCode, headers: res.headers, text: Buffer.concat(parts).toString('utf8') }));
+    });
+    req.on('error', rejectP);
+  });
+  response.catch(() => {});
+  return { req, response };
+}
+
+const within = (p, ms, what) => Promise.race([p, new Promise((_, rej) => setTimeout(() => rej(new Error(`${what}: no answer in ${ms} ms`)), ms))]);
+
+test('proxy: a declared body over the size cap is refused before it is read (G16)', async () => {
+  const { token } = await mint();
+  const { req, response } = rawPost(broker.ports.private, token, { 'content-length': String((32 << 20) + 1) });
+  req.write('{"model":');
+  const r = await within(response, 5000, 'oversized request');
+  req.destroy();
+  assert.equal(r.status, 413);
+  assert.match(r.text, /request body is too large/);
+});
+
+test('proxy: request bodies share one in-flight byte budget across tokens; over it is a retryable overload (G16)', async () => {
+  const { config } = readBrokerConfig({
+    WORCA_BROKER_MODE: 'single', WORCA_BROKER_SECRET: SECRET, WORCA_BROKER_HOST: '127.0.0.1',
+    WORCA_BROKER_PORT: '0', WORCA_BROKER_UI_PORT: '1', WORCA_BROKER_KEY_ANTHROPIC: GOOD_KEY,
+  });
+  const slots = mergeSlots(builtinSlots(), [{ id: 'anthropic', upstream: up.url }]);
+  const small = await startBroker({ config: { ...config, port: 0, inflightBodyBytes: 1000 }, slots, log: () => {} });
+  const port = small.ports.private;
+  const mintOn = async () => {
+    const res = await fetch(`http://127.0.0.1:${port}/internal/tokens`, {
+      method: 'POST', headers: { authorization: `Bearer ${SECRET}`, 'content-type': 'application/json' },
+      body: JSON.stringify({ billTo: 'local', slots: ['anthropic'], spawnId: `sp-${++spawnSeq}`, kind: 'phase', issuer: 'srv-test' }),
+    });
+    return (await res.json()).token;
+  };
+  try {
+    const body = JSON.stringify({ model: 'claude-sonnet-5', max_tokens: 10, messages: [{ role: 'user', content: 'x'.repeat(700) }] });
+    // A holds 750+ bytes of the 1000 while its body is still arriving.
+    const a = rawPost(port, await mintOn(), { 'content-length': String(Buffer.byteLength(body)) });
+    a.req.write(body.slice(0, 20));
+    await new Promise((r) => setTimeout(r, 100));
+
+    // B, on another token, declares a body that doesn't fit: refused at once, with a retry.
+    const tokenB = await mintOn();
+    const b = rawPost(port, tokenB, { 'content-length': String(Buffer.byteLength(body)) });
+    b.req.write(body.slice(0, 20));
+    const rb = await within(b.response, 5000, 'over-budget request');
+    b.req.destroy();
+    assert.equal(rb.status, 503, rb.text);
+    assert.equal(rb.headers['retry-after'], '2');
+    const eb = JSON.parse(rb.text);
+    assert.equal(eb.error.type, 'overloaded_error');
+    assert.match(eb.error.message, /worca-broker: .*busy/);
+
+    // C sends chunked (no length): counted as it arrives, refused once it goes over.
+    const c = rawPost(port, tokenB, { 'transfer-encoding': 'chunked' });
+    c.req.write(body);
+    const rc = await within(c.response, 5000, 'chunked over-budget request');
+    c.req.destroy();
+    assert.equal(rc.status, 503, rc.text);
+
+    // A finishes and frees its bytes; B's retry goes through.
+    a.req.end(body.slice(20));
+    assert.equal((await within(a.response, 5000, 'held request')).status, 200);
+    const again = rawPost(port, tokenB, { 'content-length': String(Buffer.byteLength(body)) });
+    again.req.end(body);
+    assert.equal((await within(again.response, 5000, 'retried request')).status, 200);
+  } finally { await small.close(); }
 });

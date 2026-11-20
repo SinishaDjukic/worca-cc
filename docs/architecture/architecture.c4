@@ -223,7 +223,7 @@ model {
 
     app = process '@worca/app' {
       description 'The core library. docs/ARCHITECTURE.md calls it one Node process; in the code the UI server and each CLI run are separate processes over one SQLite database, and scripts, chat channels, MCP launchers and the Ask MCP server are child processes.'
-      technology 'Node.js >= 22.13, ES modules (src/core)'
+      technology 'Node.js >= 22.19, ES modules (src/core)'
 
       server = module 'HTTP + WebSocket server' {
         description 'Express static UI, REST API and a WebSocket bridge. The composition root: it starts runs in-process, ticks scheduled runs, hosts chat channels, serves Chat and the terminal, and creates pull requests. Default port 4317.'
@@ -428,7 +428,7 @@ model {
           description 'Turns hidden decisions into up to 8 multiple-choice questions; asks none when the task is clear.'
         }
         planner = agent 'Plan' {
-          description 'Explores the codebase and writes an implementation plan with concrete code snippets.'
+          description 'Explores the codebase and writes a design-level implementation plan: contracts, invariants and a test list.'
         }
         refiner = agent 'Refine Plan' {
           #gate

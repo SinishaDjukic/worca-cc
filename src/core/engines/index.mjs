@@ -18,6 +18,8 @@ import * as opencode from './opencode.mjs';
 import * as qwen from './qwen.mjs';
 
 export { CAPABILITY_KEYS, CAPABILITY_FALLBACKS, describeUnattachableMcp } from './capabilities.mjs';
+// #1144: the server boot reaps the agent process groups (superviseSpawn) a SIGKILLed host left running.
+export { reapAgentGroupsAtBoot } from '../agent-groups.mjs';
 
 /** Every adapter's run() emits the normalized vocabulary (src/core/engines/events.mjs).
  *  The Claude runner and the mock still build stream-json envelopes internally;
@@ -25,7 +27,9 @@ export { CAPABILITY_KEYS, CAPABILITY_FALLBACKS, describeUnattachableMcp } from '
 const normalized = (run) => (opts) => {
   const onEvent = typeof opts.onEvent === 'function' ? opts.onEvent : () => {};
   // One throwing listener call must not swallow the rest of that frame's events.
-  return run({ ...opts, onEvent: normalizingOnEvent((e) => { try { onEvent(e); } catch { /* listener errors never break the stream */ } }) });
+  const safe = (e) => { try { onEvent(e); } catch { /* listener errors never break the stream */ } };
+  // A session host turn (session groups, Task 39) reads the RAW envelopes: its demux routes them itself.
+  return run({ ...opts, onEvent: opts.rawEvents === true ? safe : normalizingOnEvent(safe) });
 };
 
 /** Stored session ids of other engines are engine-qualified (`codex:<thread>`);

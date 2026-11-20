@@ -9,7 +9,10 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { runClaude } from './claude-runner.mjs';
-import { resolveModelEnv, engineOfModel } from './config.mjs';
+import { resolveModelEnv, engineOfModel, PREDEFINED_MODELS } from './config.mjs';
+import { listGlobalModels } from './settings.mjs';
+import { listPluginModels } from './plugin-models.mjs';
+import { policyCatalogModels } from './policy/cache.mjs';
 import { AUX_EFFORT, OWN_SIGNIN_ENGINES } from './model-env.mjs';
 import { classifyError, isFreeDailyLimit, freeDailyHint } from './recoverable-error.mjs';
 import { failedBecauseSignedOut } from './claude-auth.mjs';
@@ -53,11 +56,24 @@ export const CODEX_ENDPOINT_NETWORK_HINT = "endpoint unreachable — check this 
 /** Actionable hint for a bridge readiness failure (config.mjs resolveModelEnv). Pure. */
 export function bridgeHintFor(reason, provider = 'the provider') {
   switch (reason) {
-    case 'not_signed_in': return `sign in to ${provider} on the Providers page (or \`worca models login ${provider}\`)`;
-    case 'terms': return 'acknowledge the GitHub Copilot notice on the Providers page first';
-    case 'no_key': return `set an API key for ${provider} on the Providers page, or on this model's Connection`;
+    case 'not_signed_in': return `sign in to ${provider} under Models › Providers (or \`worca models login ${provider}\`)`;
+    case 'no_key': return `set an API key for ${provider} under Models › Providers, or on this model's Connection`;
     default: return '';
   }
+}
+
+/**
+ * Whether the Test button's route (POST /api/models/:id/test) takes `id`, compared case-insensitively: a global
+ * entry, a plugin model, a team-policy model (every cached home) or a Claude built-in. A Codex or Copilot built-in
+ * is not, until the route supports them. GET /api/models stamps this on every row as `testable`.
+ * @param {string} id catalog model id
+ * @returns {boolean}
+ */
+export function canTestModel(id) {
+  const lc = String(id ?? '').toLowerCase();
+  if (!lc) return false;
+  const has = (list) => list.some((m) => String(m.id).toLowerCase() === lc);
+  return has(PREDEFINED_MODELS) || has(listGlobalModels()) || has(listPluginModels()) || has(policyCatalogModels());
 }
 
 /**
@@ -103,7 +119,9 @@ export async function testModel(id, { signal, bin, run = runClaude, signedOut = 
       modelEnv: onClaude ? resolveModelEnv(id) : undefined,
       // Codex and Copilot run it read-only. The sign-in engines have no read-only mode; the prompt is worca's own text.
       ...(onClaude ? {} : { engine, ...(engine === 'codex' || engine === 'copilot' ? { sandbox: 'read-only' } : {}) }),
-      effort: AUX_EFFORT,
+      // Copilot refuses --reasoning-effort on a model without reasoning (Claude Haiku 4.5: "does not support reasoning
+      // effort configuration"), and its built-in rows cannot tell which: the test names no effort there.
+      ...(engine === 'copilot' ? {} : { effort: AUX_EFFORT }),
       permissionMode: 'acceptEdits',
       allowedTools: [],          // empty → no --allowedTools flag; pure text gen
       ...(onClaude ? { tools: [], strictMcpConfig: true } : {}),   // and no tools at all: cwd is the server's own checkout

@@ -9,10 +9,12 @@ import { join, relative, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { JSDOM } from 'jsdom';
 import { cssRules as rules } from './helpers/css-rules.mjs';
+import { readIndexHtml } from '../src/core/read-index-html.mjs';
+import { readStyleCss } from '../src/core/read-style-css.mjs';
 
 const ROOT = fileURLToPath(new URL('..', import.meta.url));
 // Comments blanked but newlines kept, so a rule's line number is its real line.
-const css = readFileSync(join(ROOT, 'ui/public/style.css'), 'utf8').replace(/\/\*[\s\S]*?\*\//g, (m) => m.replace(/[^\n]/g, ' '));
+const css = readStyleCss().replace(/\/\*[\s\S]*?\*\//g, (m) => m.replace(/[^\n]/g, ' '));
 
 /** Split on top-level commas only: commas inside color-mix(…), var(…) or :is(…) stay. */
 function splitTop(v) {
@@ -31,9 +33,10 @@ const where = (r, v) => `style.css:${r.line} ${r.sel.slice(0, 80)} → ${v}`;
 
 const TOKEN = /^(?:var\(--r-(?:xs|sm|md|lg|pill|card|ctrl)\)|0|inherit)$/;
 // D2: the five round kinds. Extend only with a selector of one of these kinds.
-// Dots: nav-rollup, tl-mark.is-open, tl-pr-start, hd-base-pill::before, rg-td, ask-rp-kicker::before, npip/nwarn.
+// Dots: nav-rollup, tl-mark.is-open, tl-pr-start, hd-base-pill::before, rg-td, ask-rp-kicker::before, npip/nwarn,
+// mdl-st::before (the Models page's state word).
 // Knobs: .wz .tog::after. Spinners: the busy::after rings.
-const ROUND = /dot|\bava\b|-ava\b|avatar|person-ini|knob|switch::after|tog::after|spin|busy::after|\bled\b|radio|status-word::before|nav-rollup|tl-mark\.is-open|tl-pr-start|hd-base-pill::before|rg-td|kicker::before|npip|nwarn/;
+const ROUND = /dot|\bava\b|-ava\b|avatar|person-ini|knob|switch::after|tog::after|spin|busy::after|\bled\b|radio|status-word::before|nav-rollup|tl-mark\.is-open|tl-pr-start|hd-base-pill::before|rg-td|kicker::before|npip|nwarn|mdl-st::before/;
 
 test('radius tokens (decided 2026-10-19): xs 4, sm 6, md 8, lg 12, pill; card = md, ctrl = sm', () => {
   const root = ALL.find((r) => r.sel === ':root').body;   // the first :root (line 14) is the token block
@@ -165,7 +168,10 @@ const GRADIENT_OK = new Set(['.wf-pop-canvas', '.run-flow-wrap', '.ask-wfcard-gr
   '.chat-home-wf-tb', '.skel', '.ws-sum-pending', '.shipit-desc-field.is-generating .shipit-desc-busy::before',
   '.shipit-desc-busy-label', '.ask-thinking-label', '.ask-wfcard-step.is-live .st-label', '.wfc-act-l', '.pp-shimmer',
   '.ask-ctx-bar-buffer', '.ask-ctx-stat[data-stat="buffer"] .ask-ctx-swatch', '.chat-dock::before',
-  '.plan-md.collapsed::after', '.sn-adorn.sn-loading .input']);
+  '.plan-md.collapsed::after', '.sn-adorn.sn-loading .input', '.rs-hand', '.dz-trail',
+  '[data-view="settings"] > .settings-tabs::before', '[data-view="settings"] > .settings-tabs::after',
+  // Brand gradients, not textures: the Models page's own/plugin mark tile and its Best chip.
+  '.mdl-mark.own', '.mdl-best']);
 test('gradients only as functional textures (D15)', () => {
   const bad = ALL.flatMap((r) => decls(r.body, 'background(?:-image)?')
     .filter(([, v]) => /gradient\(/.test(v) && !GRADIENT_OK.has(r.sel)).map(([, v]) => where(r, v.slice(0, 40))));
@@ -244,7 +250,7 @@ test('the removed-selector scan flags a reappearance (self-test)', () => {
   } finally { rmSync(dir, { recursive: true, force: true }); }
 });
 test('the Runs header holds no search field or filter row (spec §3.1, Known bug 10 layout)', () => {
-  const doc = new JSDOM(readFileSync(join(ROOT, 'ui/public/index.html'), 'utf8')).window.document;
+  const doc = new JSDOM(readIndexHtml()).window.document;
   const head = doc.querySelector('.runs-head');
   assert.ok(head, 'the Runs header exists');
   // Slice 3's select-all checkbox (input.runs-check.runs-all, ui/public/index.html:671) belongs there; any other
@@ -272,7 +278,7 @@ test('the floating shadow tokens only on floating surfaces (A2)', () => {
 });
 
 // One tab style (review A3, B4): .tab is underline; per-view tab classes keep spacing only.
-const TAB_HOOKS = ['rd-tab', 'hd-tab', 'pd-tab', 'tp-tab', 'chat-home-tab', 'wfl-tab', 'af-tab', 'md-tab', 'hd-cmt-tab', 'activity-tab'];
+const TAB_HOOKS = ['rd-tab', 'hd-tab', 'pd-tab', 'tp-tab', 'chat-home-tab', 'wfl-tab', 'af-tab', 'md-tab', 'hd-cmt-tab', 'activity-tab', 'mdl-tab'];
 const TAB_SKIN = /^(?:height|min-height|border(?:-[a-z]+)*|background(?:-[a-z]+)?|color|font(?:-[a-z]+)?|box-shadow|letter-spacing|text-transform|line-height)$/;
 test('tabs: one underline .tab at 32px; no boxed or per-view tab skin (A3)', () => {
   const tab = (ALL.find((r) => r.sel === '.tab') || {}).body || '';
@@ -338,7 +344,9 @@ const CONTROL_HEIGHTS = { '.tab': 32, '.seg button': 28, '.chat-home-preset': 28
 const OFF_SCALE = [26, 31, 34, 36, 43, 44, 55, 78];
 const CONTROL_WORD = /^(?:tab|tabs|seg|btn|chip|preset|act|folder|switch|button)$/;
 // Rows, not controls (spec §1.2): allowed at their own height. Each entry names its reason.
-const ROW_OK = ['.act-srow'];                            // activity list row, 26px dense row (spec §3.1)
+const ROW_OK = ['.act-srow'];                          // activity list row, 26px dense row (spec §3.1)
+// Ticket updates' phone targets, 36px chips and 44px controls (ticket-updates board 6): only inside its phone @media block, so an off-scale desktop height is still caught
+const rowOk = (r, s) => ROW_OK.some((ok) => s.includes(ok)) || (!!r.media && /max-width:\s*600px/.test(r.media) && /\.mk-tu/.test(s));
 const classWords = (s) => (s.match(/\.[\w-]+/g) || []).flatMap((c) => c.slice(1).split('-'));
 test('control heights on the scale (A5)', () => {
   for (const [sel, h] of Object.entries(CONTROL_HEIGHTS)) {
@@ -347,7 +355,7 @@ test('control heights on the scale (A5)', () => {
   }
   const off = ALL.flatMap((r) => decls(r.body, '(?:min-)?height')
     .filter(([, v]) => /^\d+px$/.test(v) && OFF_SCALE.includes(parseInt(v, 10))
-      && splitTop(r.sel).some((s) => !ROW_OK.some((ok) => s.includes(ok))
+      && splitTop(r.sel).some((s) => !rowOk(r, s)
         && (/\bbutton\b/.test(s) || classWords(lastCompound(s)).some((w) => CONTROL_WORD.test(w)))))
     .map(([, v]) => where(r, v)));
   assert.deepEqual(off, []);
@@ -395,7 +403,7 @@ test('run bars are neutral: no blue fill on a progress bar (A1, spec §2.3)', ()
 
 test('a flag chip in a tab strip sits inside its tab label (A4)', async () => {
   const { decorateFlagChips } = await import('../ui/public/flags.mjs');
-  const doc = new JSDOM(readFileSync(join(ROOT, 'ui/public/index.html'), 'utf8')).window.document;
+  const doc = new JSDOM(readIndexHtml()).window.document;
   decorateFlagChips(doc);
   for (const strip of doc.querySelectorAll('.tabs, .seg, [role="tablist"]')) {
     assert.deepEqual([...strip.children].filter((c) => c.matches('.flag-chip, a')).map((c) => c.outerHTML.slice(0, 60)), []);
@@ -705,6 +713,10 @@ test('#955 Runs list: rows inside a group are one 26px line (40px on touch); a g
   assert.match(bodyOf('.runs-members .runs-row-title'), /font-weight:400/);
   assert.match(bodyOf('.runs-members .runs-row-sub'), /text-overflow:ellipsis/);
   assert.match(bodyOf('.runs-members .runs-row-sub'), /flex:0 1000 auto/, 'the status gives way before the title');
+  // #1012: a staged live member's four-section block wraps under its line, indented with its title.
+  assert.match(bodyOf('.runs-members .runs-row:has(> .runs-stage)'), /flex-wrap:wrap/);
+  assert.match(bodyOf('.runs-members .runs-row > .runs-stage'), /margin:4px 0 2px 16px/);
+  assert.match(bodyOf('.runs-members .runs-stage > .run-prog-track'), /height:2px/, 'one step below the group row\'s 3px line');
   assert.match(bodyOf('.runs-members .runs-pick'), /height:26px/);
   assert.match(bodyOf('.runs-members .runs-row-tail'), /height:26px/);
   assert.match(css, /@media \(pointer: coarse\)\{\.runs-members \.runs-pick,\.runs-members \.runs-row-tail\{height:40px;\}/);
@@ -907,6 +919,14 @@ test('slice 3 (D18): the run page tiles read in the stat face, 22px sans with ta
   assert.match(tile, /padding:var\(--pad-tile\) 8px/);
 });
 
+test('list section head (Runs and Chats): a 12px/600 --ink-2 meta label; its count is an 11px caption', () => {
+  const body = (sel) => ALL.filter((r) => splitTop(r.sel).map((t) => t.trim()).includes(sel)).map((r) => r.body).join(';');
+  assert.match(body('.runs-sec-head'), /font:600 var\(--fs-meta\)\/var\(--lh-body\)/);
+  assert.match(body('.runs-sec-head'), /color:var\(--ink-2\)/);
+  assert.match(body('.runs-count'), /var\(--fs-caption\)/);
+  assert.doesNotMatch(body('.runs-sec-head .runs-count'), /font-size/, 'the head count keeps the caption size');
+});
+
 test('card head: the state word is a 15px/600 headline that never truncates; the detail is 12px --ink-2, 2 lines', () => {
   const body = (sel) => ALL.filter((r) => splitTop(r.sel).map((t) => t.trim()).includes(sel)).map((r) => r.body).join(';');
   const word = body('.run-status-word');
@@ -921,4 +941,63 @@ test('card head: the state word is a 15px/600 headline that never truncates; the
   assert.ok(!ALL.some((r) => /\.run-status-(?:head|word|text)\b/.test(r.sel) && /white-space:nowrap/.test(r.body) && /text-overflow:ellipsis/.test(r.body)),
     'no status head is a nowrap ellipsis line');
   assert.match(body('.chat-rc-status .run-status-word'), /font-size:var\(--fs-body\)/, 'beside a card title the state is 13px');
+});
+
+// #959: chat cards follow one width rule. The column caps every card; no card kind sets a width in the conversation,
+// and no part of a card leaves the column: a graph well is as wide as its card, like the card's other content.
+const CHAT_SCOPE = /\.chat-(?:convo|page)\b/;
+const CHAT_PART = /\.(?:ask-(?:card|card-stub|ccard|rp|cmd|rc|mcard|wfcard)|chat-rc)(?![\w])/;      // a card root or its family's parts
+const CARD_ROOT = /\.(?:ask-card|ask-card-stub|ask-ccard)(?![\w-])/;                                // in the last compound: the card itself (also inside :is(…))
+const cardLast = (s) => s.trim().split(/\s*[\s>+~]\s*/).at(-1);
+const isCardRoot = (s) => CARD_ROOT.test(cardLast(s));
+test('chat cards: one width rule — no card kind sets a width in the conversation; no part of a card leaves the column (#959)', () => {
+  const sized = ALL.filter((r) => splitTop(r.sel).some((s) => CHAT_SCOPE.test(s) && isCardRoot(s)))
+    .flatMap((r) => decls(r.body, '(?:min-|max-)?width|margin-(?:left|right|inline)').map(([p, v]) => where(r, `${p}:${v}`)));
+  assert.deepEqual(sized, []);
+  // A card part sized off the transcript (cqi, vw) or pulled out by a negative or computed margin would break out.
+  const out = ALL.filter((r) => splitTop(r.sel).some((s) => /\.chat-convo\b|\.ask-msg\b/.test(s)))
+    .flatMap((r) => decls(r.body, '(?:min-)?width|margin(?:-(?:left|right|inline(?:-start|-end)?))?')
+      .filter(([, v]) => /cqi|cqw|vw|--chat-card-max|calc\(|(?:^|\s)-/.test(v)).map(([p, v]) => where(r, `${p}:${v}`)));
+  assert.deepEqual(out, [], 'no breakout rule: a graph well is as wide as its card');
+  assert.ok(!/--chat-card-max/.test(css), 'one chat width: --chat-text-max');
+});
+
+// #959: a chat graph well that clips its graph (overflow:hidden) is fitted by its host, so no node is cut at an edge.
+const WELL_HOSTS = {
+  'chat-rc-well': ['ui/public/chat/run-card.mjs', /mountRunGraph\(graphHost, \{ mode: 'card'/],
+  'ask-wfcard-graph': ['ui/public/auto-proposal.mjs', /mountProposalGraph\(graphHost,/],
+  'chat-run-tile-well': ['ui/public/chat/home-run-tile.mjs', /mountRunGraph\(host, \{ mode: TILE_GRAPH_MODE/],
+};
+test('chat graph wells: every well that clips its graph is fitted by its host (#959)', () => {
+  const clipped = new Set(ALL.filter((r) => decls(r.body, 'overflow(?:-x)?').some(([, v]) => v === 'hidden'))
+    .flatMap((r) => [...r.sel.matchAll(/\.((?:chat|ask)-[\w-]*-well|ask-wfcard-graph)(?![\w-])/g)].map((m) => m[1])));
+  assert.deepEqual([...clipped].filter((c) => !WELL_HOSTS[c]), [], 'a new clipped well names its host here');
+  for (const [cls, [file, re]] of Object.entries(WELL_HOSTS)) assert.match(readFileSync(join(ROOT, file), 'utf8'), re, `${cls}: ${file}`);
+  assert.match(readFileSync(join(ROOT, 'ui/public/chat/run-card.mjs'), 'utf8'), /'run-flow-wrap chat-rc-well gv-well'/, 'the run card well is the shared .gv-well');
+});
+
+// #959: tight radii in chat cards (design-system › Corners): no pill, no corner past the card's own 8px anywhere in a
+// card, and the run proposal's parts at 4–6px. Round dots and knobs (ROUND) keep 50%; the shared .switch track is the
+// one pill and is not a chat-card selector.
+test('chat cards: tight radii — no pill, nothing past the card corner, the run proposal at 4–6px (#959)', () => {
+  const TIGHT = /^(?:var\(--r-(?:xs|sm|ctrl)\)|0|inherit)(?:\s+(?:var\(--r-(?:xs|sm|ctrl)\)|0))*$/;
+  const CARD_R = /^var\(--r-(?:card|md)\)$/;
+  const bad = ALL.flatMap((r) => splitTop(r.sel).filter((s) => CHAT_PART.test(s)).flatMap((s) => decls(r.body, 'border(?:-(?:top|bottom)-(?:left|right))?-radius')
+    .filter(([, v]) => !(TIGHT.test(v)
+      || (v === '50%' && ROUND.test(s))
+      || (CARD_R.test(v) && (isCardRoot(s) || !/\.ask-rp/.test(s)))))
+    .map(([, v]) => where(r, v))));
+  assert.deepEqual(bad, []);
+});
+
+test('run proposal: the shared field and one form grid (#959)', () => {
+  const body = (sel) => (ALL.find((r) => r.sel === sel && !r.media) || {}).body || '';
+  assert.equal(ALL.some((r) => r.sel === '.ask-rp :is(select,input[type="text"])'), false, 'no card-own control skin');
+  assert.match(body('.ask-rp-grid'), /grid-template-columns:repeat\(auto-fit,minmax\(min\(100%,200px\),1fr\)\)/);
+  assert.equal(ALL.some((r) => /\.ask-rp-grid\.(?:two|wf-row)/.test(r.sel) && /grid-template-columns/.test(r.body)), false, 'no per-row grid');
+  assert.equal(ALL.some((r) => r.media && /\.ask-rp-grid/.test(r.sel) && /grid-template-columns/.test(r.body)), false, 'no media override: auto-fit stacks');
+  assert.match(body('.ask-rp-field:has(> .switch-row)'), /grid-column:1 \/ -1;/);
+  assert.match(body('.ask-rp-label'), /white-space:nowrap;/);
+  assert.match(body('.ask-rp-ctl > span:first-child'), /white-space:nowrap;/);
+  assert.equal(ALL.some((r) => r.sel === '.ask-rp-tags' && /nowrap|overflow-x/.test(r.body)), false, 'the tags wrap');
 });

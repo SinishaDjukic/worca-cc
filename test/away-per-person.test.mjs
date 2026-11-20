@@ -99,6 +99,7 @@ test('flag unset: runs of different starters share the instance switch, and the 
 test('API: the toggle reads and writes the signed-in person\'s own switch only with the flag on', async () => {
   process.env.WORCA_MOCK = '1';
   process.env.WORCA_IDENTITY_HEADER = 'x-test-user';   // a per-person sign-in (identity.mjs 'header')
+  process.env.WORCA_IDENTITY_TRUSTED_PROXIES = '127.0.0.1,::1';   // X1: the in-process server's callers are loopback
   const mod = await import('../ui/server.mjs');
   const srv = http.createServer(mod.app);
   await new Promise((r) => srv.listen(0, '127.0.0.1', r));

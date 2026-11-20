@@ -220,6 +220,19 @@ push. To make `verify --in-container` test the token too, set `WORCA_ADO_PROBE_O
 organisation's name on the service. PAT scopes, the Boards token, URL shapes and what does not
 work yet: [Azure DevOps](azure-devops.md).
 
+## Bitbucket
+
+For repositories on `bitbucket.org`, set a repository, project or workspace access token on the `worca` service, or
+an Atlassian API token plus `WORCA_BB_EMAIL`. It works next to the GitHub and Azure DevOps credentials; each call uses
+the one for its host.
+
+```bash
+node tools/railway/worca-railway.mjs set mydeploy WORCA_BB_TOKEN --yes    # paste the token (stdin)
+```
+
+Then seal it. A read/write pair (`WORCA_BB_READ_TOKEN`, `WORCA_BB_WRITE_TOKEN`) works as for GitHub. Token scopes, URL
+shapes and what does not work yet: [Bitbucket](bitbucket.md).
+
 ## Operate your deployment
 
 A deployment is a fixed image plus service variables. Pushing to the repository never changes it:
@@ -289,6 +302,7 @@ The instance then runs an unreleased image until you `upgrade` it to a release a
 | GitHub App key, new or rotated | `base64 < key.pem \| tr -d '\n' \| node tools/railway/worca-railway.mjs set mydeploy WORCA_GH_APP_KEY_B64 --yes` |
 | Tokens instead of an App | `set … GH_TOKEN` (or the read/write pair), then `unset … WORCA_GH_APP_ID` and the other `WORCA_GH_APP_*` |
 | Limit what can be cloned | `printf %s 'github.com/acme/*' \| node tools/railway/worca-railway.mjs set mydeploy WORCA_CLONE_ALLOW --yes` |
+| Design's limits and previews | `set … WORCA_DESIGN_MAX_BUILDERS` (Build fast's agents, `up to 6` here), `WORCA_DESIGN_MAX_AGENTS` (the server's agents, 24) or `WORCA_DESIGN_PREVIEW_INLINE` (`0` stops the preview embedding its files); see [Design → Hosted](design.md#hosted) |
 | Several changes, one restart | `--skip-deploys` on each `set` / `unset`, then `redeploy mydeploy --yes` |
 
 After setting a secret, **seal** it in the Railway dashboard (the variable's menu). `status` marks a

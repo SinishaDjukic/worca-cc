@@ -5,9 +5,10 @@ import assert from 'node:assert/strict';
 import { readFileSync, existsSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { checkRows } from './helpers/rows.mjs';
+import { readStyleCss } from '../src/core/read-style-css.mjs';
 
 const fixturePath = fileURLToPath(new URL('./fixtures/theme-kitchen-sink.html', import.meta.url));
-const css = readFileSync(fileURLToPath(new URL('../ui/public/style.css', import.meta.url)), 'utf8');
+const css = readStyleCss();
 
 const bare = css.replace(/\/\*[\s\S]*?\*\//g, '');
 const classSet = (html) => { const set = new Set(); for (const m of html.matchAll(/class="([^"]+)"/g)) for (const c of m[1].split(/\s+/)) if (c) set.add(c); return set; };

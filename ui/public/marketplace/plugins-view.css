@@ -1,0 +1,24 @@
+/* ---- Plugins view ---- */
+.pl-head{display:flex;align-items:center;gap:10px;flex-wrap:wrap;}
+.pl-head .pl-name{font-size:var(--fs-body);font-weight:600;}
+.pl-enable{margin-left:auto;display:inline-flex;align-items:center;gap:6px;font-size:var(--fs-body);color:var(--ink-3);cursor:pointer;}
+.pl-actions{display:flex;gap:8px;margin-top:10px;flex-wrap:wrap;}
+.pl-pick-row{display:flex;align-items:center;gap:10px;justify-content:space-between;padding:8px 0;border-bottom:1px solid var(--line);}
+.pl-consent-h{font-weight:700;font-size:12px;margin:10px 0 4px;}
+.pl-consent-row{font-size:12px;padding:2px 0;}
+.pl-secret{display:inline-flex;margin-left:8px;background:var(--red-bg);color:var(--red-ink);font-size:11px;font-weight:700;padding:2px 8px;border-radius:var(--r-xs);}
+.pl-setup-cmd{background:var(--field);border-radius:var(--r-sm);padding:4px 8px;margin-top:3px;}
+.pl-diffstat{background:var(--field);border-radius:var(--r-sm);padding:10px 12px;font-size:12px;overflow-x:auto;max-height:220px;}
+.pl-commit{font-size:12px;padding:2px 0;}
+.pl-doc-row{display:flex;align-items:baseline;gap:8px;padding:4px 0;font-size:12px;}
+.pl-doc-row .hint{margin-top:0;}
+.pl-uptodate{display:flex;align-items:baseline;gap:8px;padding:4px 0;}
+.pl-uptodate .hint{margin-top:0;font-size:13px;}
+.pl-refs-list{margin:6px 0 0 18px;font-size:12px;}
+.pl-consent .mono,.pl-update .mono,.pl-doc-row .mono,.pl-refs .mono{font-family:var(--mono);}
+.pl-consent-src .pl-needs-git{font-family:var(--sans);}
+.pl-manifest-delta{margin:8px 0;}
+.pl-delta{font-size:12px;}
+.pl-delta-secret{font-size:12px;font-weight:700;color:var(--red-ink);background:var(--red-bg);border-radius:var(--r-sm);padding:3px 8px;margin:2px 0;display:inline-block;}
+#plugin-modal .card{max-width:640px;width:min(92vw,640px);max-height:80vh;}
+

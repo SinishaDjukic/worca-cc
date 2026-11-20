@@ -10,7 +10,7 @@ import { builtinSlots, mergeSlots, pathIssue, isAllowedPath, upstreamIssue } fro
 import { seal, open, keyId, suffixOf } from '../src/broker/vault.mjs';
 import { openStore } from '../src/broker/store.mjs';
 import { mintToken, resolveToken, parseMintRequest, tokenFromHeaders, hashToken, TOKEN_RE } from '../src/broker/tokens.mjs';
-import { createUsageTap, priceUsage } from '../src/broker/usage.mjs';
+import { createUsageTap, priceUsage, listRatesFor, UNPRICED_RATES, unpricedRates, requestWithUsage } from '../src/broker/usage.mjs';
 import { scrubText, REMOVED } from '../src/broker/scrub.mjs';
 import { findLocalCredentials, guardMessage } from '../src/core/broker-guard.mjs';
 import { withBillTo, currentBillTo, resolveBillTo, normalizeBillTo } from '../src/core/billing.mjs';
@@ -18,7 +18,7 @@ import { redactSecrets, redactDeep } from '../src/core/redact.mjs';
 import { classifyError, brokerHint } from '../src/core/recoverable-error.mjs';
 import { retryAfterMs } from '../src/core/recovery-backoff.mjs';
 import { brokerError } from '../src/broker/service.mjs';
-import { PREDEFINED_LIST_PRICES, listPriceFor } from '../src/core/list-prices.mjs';
+import { PREDEFINED_LIST_PRICES, CODEX_PRICES, listPriceFor } from '../src/core/list-prices.mjs';
 import { PREDEFINED_LIST_PRICES as FROM_CONFIG } from '../src/core/config.mjs';
 
 const SECRET = 'x'.repeat(40);
@@ -205,7 +205,53 @@ test('usage: JSON bodies, OpenAI shapes, and an upstream-reported cost winning o
   const u = o.end();
   assert.deepEqual([u.inputTokens, u.outputTokens, u.cacheReadTokens], [7, 3, 2]);
   assert.equal(priceUsage(u), 0.0123);
-  assert.equal(priceUsage({ model: 'unknown', inputTokens: 1e6 }), 0, 'no price, no guess');
+});
+
+test('usage: a model with no list price is booked at the highest list rate, never $0', () => {
+  const allRows = [...Object.values(PREDEFINED_LIST_PRICES), ...Object.keys(CODEX_PRICES).map(listRatesFor)];
+  for (const f of ['input', 'output', 'cacheRead', 'cacheWrite']) {
+    assert.equal(UNPRICED_RATES[f], Math.max(...allRows.map((r) => r[f])), `${f} is the highest list rate`);
+  }
+  assert.ok(UNPRICED_RATES.output >= 50);
+  // The probe from the security evaluation (G7): 1M in and 1M out on a model the table lacks.
+  const probe = { model: 'claude-opus-4-5', inputTokens: 1e6, outputTokens: 1e6 };
+  assert.equal(priceUsage(probe), UNPRICED_RATES.input + UNPRICED_RATES.output);
+  assert.equal(priceUsage({ model: null, inputTokens: 1e6 }), UNPRICED_RATES.input, 'no model named: still charged');
+  // The operator's own fallback (WORCA_BROKER_UNPRICED_USD_PER_MTOK) replaces the default.
+  assert.equal(priceUsage(probe, { input: 1, output: 2, cacheRead: 0, cacheWrite: 0 }), 3);
+  // OpenAI models price from the Codex table, dated ids from their base row.
+  assert.deepEqual(listRatesFor('gpt-5.5'), { input: 5, output: 30, cacheRead: 0.5, cacheWrite: 5 });
+  assert.deepEqual(listRatesFor('gpt-5.5-2026-08-01'), listRatesFor('gpt-5.5'));
+  assert.equal(listRatesFor('claude-sonnet-5'), PREDEFINED_LIST_PRICES['claude-sonnet-5']);
+  assert.equal(listRatesFor('made-up'), null);
+});
+
+test('usage: the operator fallback rate parses from "input,output" USD per million', () => {
+  assert.deepEqual(unpricedRates('3, 15'), { input: 3, output: 15, cacheRead: 0.3, cacheWrite: 3.75 });
+  assert.deepEqual(unpricedRates('0'), { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 });
+  assert.equal(unpricedRates(''), null);
+  assert.ok(Number.isNaN(unpricedRates('cheap')));
+  assert.ok(Number.isNaN(unpricedRates('1,-2')));
+  assert.deepEqual(readBrokerConfig({ WORCA_BROKER_MODE: 'single', WORCA_BROKER_SECRET: SECRET, WORCA_BROKER_UNPRICED_USD_PER_MTOK: '3,15' }).config.unpricedRates,
+    { input: 3, output: 15, cacheRead: 0.3, cacheWrite: 3.75 });
+  assert.ok(readBrokerConfig({ WORCA_BROKER_MODE: 'single', WORCA_BROKER_SECRET: SECRET, WORCA_BROKER_UNPRICED_USD_PER_MTOK: 'x' })
+    .errors.some((e) => /WORCA_BROKER_UNPRICED_USD_PER_MTOK/.test(e)));
+});
+
+test('usage: OpenAI-style requests are made to report their usage (streamed chat, OpenRouter cost)', () => {
+  const j = (b) => JSON.parse(b.toString('utf8'));
+  const chat = Buffer.from(JSON.stringify({ model: 'gpt-5.5', stream: true, messages: [] }));
+  assert.deepEqual(j(requestWithUsage({ protocol: 'openai', upstream: 'https://api.openai.com' }, '/v1/chat/completions', chat)).stream_options, { include_usage: true });
+  const off = Buffer.from(JSON.stringify({ model: 'x', stream: true, stream_options: { include_usage: false, other: 1 }, usage: { include: false } }));
+  const or = j(requestWithUsage({ protocol: 'openai', upstream: 'https://openrouter.ai' }, '/api/v1/chat/completions', off));
+  assert.deepEqual(or.stream_options, { include_usage: true, other: 1 });
+  assert.deepEqual(or.usage, { include: true });
+  const plain = Buffer.from(JSON.stringify({ model: 'x', messages: [] }));
+  assert.equal(requestWithUsage({ protocol: 'openai', upstream: 'https://api.openai.com' }, '/v1/chat/completions', plain), plain, 'unstreamed chat reports usage already');
+  assert.equal(requestWithUsage({ protocol: 'openai', upstream: 'https://api.openai.com' }, '/v1/responses', chat), chat, 'Responses always report usage');
+  assert.equal(requestWithUsage({ protocol: 'anthropic', upstream: 'https://api.anthropic.com' }, '/v1/messages', chat), chat);
+  const junk = Buffer.from('not json');
+  assert.equal(requestWithUsage({ protocol: 'openai', upstream: 'https://api.openai.com' }, '/v1/chat/completions', junk), junk);
 });
 
 test('list prices: one table, re-exported by config.mjs', () => {

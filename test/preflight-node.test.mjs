@@ -42,22 +42,23 @@ test('cmpVersions: numeric order (9 vs 13), v-prefix, pre-release suffix, missin
   ]);
 });
 
-test('meetsMinNode: the 22.13.0 floor (MIN_NODE), boundaries, and the process default', async () => {
+test('meetsMinNode: the 22.19.0 floor (MIN_NODE), boundaries, and the process default', async () => {
   await checkRows([
-    { name: 'MIN_NODE is the flagless node:sqlite floor', run: () => {
-      assert.equal(MIN_NODE, '22.13.0', 'min supported Node is 22.13.0 (flagless node:sqlite)');
+    { name: 'MIN_NODE is the flagless node:sqlite and undici 8 floor', run: () => {
+      assert.equal(MIN_NODE, '22.19.0', 'min supported Node is 22.19.0 (flagless node:sqlite, undici 8)');
     } },
     { name: 'meetsMinNode(actual) is true at/above MIN_NODE, false below', run: () => {
-      assert.equal(meetsMinNode('22.13.0'), true, 'exactly the floor passes');
-      assert.equal(meetsMinNode('22.13.5'), true);
+      assert.equal(meetsMinNode('22.19.0'), true, 'exactly the floor passes');
+      assert.equal(meetsMinNode('22.19.5'), true);
       assert.equal(meetsMinNode('23.4.0'), true);
       assert.equal(meetsMinNode('25.6.1'), true, "this repo's Node passes");
-      assert.equal(meetsMinNode('22.12.0'), false, 'one minor below the floor fails');
+      assert.equal(meetsMinNode('22.18.0'), false, 'one minor below the floor fails');
+      assert.equal(meetsMinNode('22.13.0'), false, 'flagless node:sqlite alone is not enough');
       assert.equal(meetsMinNode('22.5.0'), false, 'flagged-era version fails');
       assert.equal(meetsMinNode('18.20.0'), false, 'old LTS fails');
     } },
     { name: 'meetsMinNode defaults to the running process version when called with no arg', run: () => {
-      // Sanity: under the test runner (Node >= 22.13) this is true. Proves the default
+      // Sanity: under the test runner (Node >= 22.19) this is true. Proves the default
       // path reads process.versions.node.
       assert.equal(meetsMinNode(), true);
     } },

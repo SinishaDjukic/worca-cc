@@ -269,3 +269,13 @@ test('role reviews: a loop wire\'s onExhausted rides the manifest and the rebuil
   assert.deepEqual(back.find((w) => w.id === 'w3').config, { maxCycles: 2, onExhausted: 'clean' });
   assert.deepEqual(back.find((w) => w.id === 'w5').config, { maxCycles: 3 });
 });
+
+test('cell.roles: a role-review node\'s resolved picks ride the cell only when non-empty', () => {
+  const picks = { security: { model: 'claude-opus-5-5', effort: 'max', source: 'run' } };
+  const m = build({ overlays: { nodes: { n_rev: { roles: picks }, n_rev2: { roles: {} } } } });
+  const cell = (id) => m.graph.nodes.find((n) => n.id === id);
+  assert.deepEqual(cell('n_rev').roles, picks);
+  assert.equal('roles' in cell('n_rev2'), false, 'an empty map leaves no key');
+  assert.equal('roles' in cell('n_plan'), false);
+  assert.equal('roles' in build().graph.nodes.find((n) => n.id === 'n_rev'), false);
+});

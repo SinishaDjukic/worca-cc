@@ -3,13 +3,12 @@
 // sub-agent model on Codex, and keep a hidden pick through a save (Review Focus 4).
 import { test, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { JSDOM } from 'jsdom';
 import { useDomRelease } from './helpers/jsdom-release.mjs';
+import { readIndexHtml } from '../src/core/read-index-html.mjs';
 
 const trackDom = useDomRelease(afterEach);
-const htmlPath = fileURLToPath(new URL('../ui/public/index.html', import.meta.url));
 const appPath = fileURLToPath(new URL('../ui/public/app.js', import.meta.url));
 const PROJECT = '/tmp/proj-engine';
 
@@ -58,7 +57,7 @@ function apiFetch({ config = {}, sink = [] } = {}) {
 }
 
 async function boot(fetchHandler) {
-  const dom = trackDom(new JSDOM(readFileSync(htmlPath, 'utf8'), { url: 'http://localhost:4319/' }));
+  const dom = trackDom(new JSDOM(readIndexHtml(), { url: 'http://localhost:4319/' }));
   const { window } = dom;
   window.Element.prototype.scrollIntoView = function () {};
   window.WebSocket = class {
@@ -140,7 +139,7 @@ test('a row healed for the run says which pick of the other engine it keeps (rev
   assert.equal(kept(), null, 'on its own engine the pick is simply shown');
   pick(doc, 'codex');
   await waitFor(() => kept());
-  assert.equal(kept().textContent, 'Your Claude pick Haiku 4.5 is kept for Claude runs. Choose a model here to replace it.');
+  assert.equal(kept().textContent, 'Your Claude Code pick Haiku 4.5 is kept for Claude Code runs. Choose a model here to replace it.');
 });
 
 test('"+ Add model…" in an agent row opens the Models page with the model editor', async () => {
@@ -153,4 +152,21 @@ test('"+ Add model…" in an agent row opens the Models page with the model edit
   await waitFor(() => !doc.getElementById('model-editor-modal').classList.contains('hidden'));
   assert.equal(window.location.hash, '#models');
   assert.equal(doc.querySelector('.view[data-view="models"]').classList.contains('hidden'), false);
+});
+
+test('"Add model…" in a picker on a Codex run lands on step 1 with a sign-in and the Codex harness picked', async () => {
+  const { window } = await boot(apiFetch());
+  await openWf(window);
+  const doc = window.document;
+  pick(doc, 'codex');
+  await waitFor(() => ids(doc, 'n1').includes('gpt-5.5'));
+  const sel = doc.querySelector('.step-model[data-node-id="n1"]');
+  sel.value = '__add__';
+  sel.dispatchEvent(new window.Event('change', { bubbles: true }));
+  await waitFor(() => !doc.getElementById('model-editor-modal').classList.contains('hidden'));
+  assert.equal(window.location.hash, '#models');
+  const step = doc.querySelector('#mv-editor-host .mdl-add[data-step="1"]');
+  assert.ok(step, 'step 1 of Add model');
+  assert.equal(step.querySelector('.mdl-opt[data-where="signin"]').getAttribute('aria-checked'), 'true', '"A sign-in" checked');
+  assert.ok(step.querySelector('.mdl-hx-t[data-engine="codex"][aria-pressed="true"]'), 'the Codex tile pressed');
 });

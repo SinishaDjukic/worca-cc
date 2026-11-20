@@ -14,6 +14,7 @@ import { join, resolve } from 'node:path';
 import { readMcpFile, mcpjsonApproval } from './run-context.mjs';
 import { writeJsonAtomic } from './json-atomic.mjs';
 import { gitAvailable, gitMissingError } from './git-available.mjs';
+import { guardedGitEnvSync } from './git-guard.mjs';
 
 const LOCAL = join('.claude', 'settings.local.json');
 
@@ -23,7 +24,7 @@ function cerr(message, code) {
 
 function git(projectDir, args) {
   if (!gitAvailable()) throw gitMissingError();
-  return execFileSync('git', args, { cwd: projectDir, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'], windowsHide: true });
+  return execFileSync('git', args, { cwd: projectDir, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'], windowsHide: true, env: guardedGitEnvSync(projectDir) });
 }
 
 /** Whether git tracks the project's `.claude/settings.local.json`. Not a repository, not tracked, or git missing (the

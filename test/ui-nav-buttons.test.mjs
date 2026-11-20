@@ -4,21 +4,20 @@
 import { test, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
 import { JSDOM } from 'jsdom';
-import { readFileSync } from 'node:fs';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { dirname, join } from 'node:path';
 import { useDomRelease } from './helpers/jsdom-release.mjs';
 import { checkRows } from './helpers/rows.mjs';
+import { readIndexHtml } from '../src/core/read-index-html.mjs';
 
 // Release each booted window after its test (see test/helpers/jsdom-release.mjs).
 const trackDom = useDomRelease(afterEach);
 
 const __dir = dirname(fileURLToPath(import.meta.url));
 const root = join(__dir, '..', 'ui', 'public');
-const htmlPath = join(root, 'index.html');
 const appPath = join(root, 'app.js');
 const PROJECT = '/tmp/proj';
-const html = readFileSync(htmlPath, 'utf8');
+const html = readIndexHtml();
 
 const tick = () => new Promise((r) => setTimeout(r, 0));
 const click = (window, node) =>

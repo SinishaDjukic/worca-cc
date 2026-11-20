@@ -1,12 +1,13 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { probeTargetForModel, probeReachable, ANTHROPIC_API } from '../src/core/upstream-probe.mjs';
+import { copilotApiHost } from '../src/core/bridge/providers/copilot.mjs';
 
 const deps = (over = {}) => ({
   findBridgedEntry: () => null,
   resolveModelEnv: () => undefined,
   providerConfig: (p) => ({ baseUrl: p === 'openai' ? 'https://api.openai.com/v1' : 'https://api.anthropic.com', accountType: 'individual' }),
-  copilotApiHost: () => 'https://api.githubcopilot.com',
+  copilotApiHost,
   brokerEnabled: () => false,
   slotOfBaseUrl: () => null,
   cachedBrokerInfo: () => null,
@@ -71,4 +72,21 @@ test('probeReachable: a transport error is unreachable; the caller\'s abort is r
   assert.equal(await probeReachable('https://x.invalid', { fetch: async () => { throw new TypeError('fetch failed'); } }), false);
   const ac = new AbortController(); ac.abort();
   await assert.rejects(probeReachable('https://x.invalid', { signal: ac.signal, fetch: async (_u, i) => { i.signal.throwIfAborted(); } }));
+});
+
+test('bridged copilot on a GHE.com tenant probes copilot-api.<t>.ghe.com; ghe-com without a host is null (no probe)', () => {
+  const bridged = (cfg) => deps({ findBridgedEntry: () => ({ id: 'm', upstream: { provider: 'copilot' } }), providerConfig: () => cfg });
+  assert.deepEqual(probeTargetForModel('m', { env: {}, deps: bridged({ accountType: 'ghe-com', enterpriseHost: 'acme.ghe.com' }) }),
+    { origin: 'https://copilot-api.acme.ghe.com', via: 'bridge' });
+  assert.equal(probeTargetForModel('m', { env: {}, deps: bridged({ accountType: 'ghe-com' }) }), null);
+  assert.deepEqual(probeTargetForModel('m', { env: {}, deps: bridged({ accountType: 'business' }) }),
+    { origin: 'https://api.business.githubcopilot.com', via: 'bridge' });
+});
+
+test('bridged copilot with the broker on probes the broker\'s Copilot slot, never worca\'s own host setting', () => {
+  const info = { slots: [{ id: 'anthropic', auth: 'x-api-key', upstream: 'https://api.anthropic.com' }, { id: 'copilot', auth: 'copilot', upstream: 'https://copilot-api.acme.ghe.com' }] };
+  const viaBroker = (over) => deps({ findBridgedEntry: () => ({ id: 'm', upstream: { provider: 'copilot' } }), brokerEnabled: () => true,
+    providerConfig: () => ({ accountType: 'individual' }), cachedBrokerInfo: () => info, ...over });
+  assert.deepEqual(probeTargetForModel('m', { env: {}, deps: viaBroker() }), { origin: 'https://copilot-api.acme.ghe.com', via: 'broker' });
+  assert.equal(probeTargetForModel('m', { env: {}, deps: viaBroker({ cachedBrokerInfo: () => null }) }), null);
 });

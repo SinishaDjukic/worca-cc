@@ -81,6 +81,23 @@ export function checkLine(check, name = 'Shape') {
   return n ? `${score} · ${n} to fix` : score;
 }
 
+/** A shaping round's coverage counts `{ passed, total }` as a check for `checkLine`: `total - passed` failing rows. */
+export function roundCheck(cov) {
+  if (!cov || !Number.isInteger(cov.passed) || !Number.isInteger(cov.total) || cov.total < 1 || cov.total < cov.passed) return null;
+  return { passed: cov.passed, total: cov.total,
+    items: Array.from({ length: cov.total }, (_, i) => ({ id: `r${i + 1}`, label: `r${i + 1}`, pass: i < cov.passed })) };
+}
+
+/** The engine's coverage (`R-ops-1 · not covered by any step`, detail = the criterion text) as the card draws it: an
+ *  uncovered row reads `R-ops-1 · <the criterion>` with the reason as its detail; a covered row keeps the engine's label. */
+export function displayCoverage(cov) {
+  const items = (cov && Array.isArray(cov.items) ? cov.items : []).map((it) => {
+    if (it.pass || !it.detail) return it;
+    return { ...it, label: `${it.id} · ${it.detail}`, detail: 'not covered by any step' };
+  });
+  return { ...cov, items };
+}
+
 /** "Still to fix: missing sections, no test plan" — under the buttons when the check fails (D32). */
 export function unmetLine(check) {
   const bad = failing(check);
@@ -88,12 +105,24 @@ export function unmetLine(check) {
   return `Still to fix: ${bad.map((it) => UNMET_WORDS[it.id] || it.label || it.id).join(', ')}`;
 }
 
-/** One revise for every failing check (D32 "Fix all"); a single failure reads as today's fixFeedback. */
-export function fixAllFeedback(items) {
+/** One revise for every failing check (D32 "Fix all"); a single failure reads as today's fixFeedback. The uncovered
+ *  agreed `requirements` (coverage rows) follow on their own line, worded as requirements, not as shape checks. */
+export function fixAllFeedback(items, requirements = []) {
   const bad = (Array.isArray(items) ? items : []).filter((it) => !it.pass);
-  if (bad.length === 1) return fixFeedback(bad[0]);
-  return `The shape check fails ${bad.length} checks:\n${bad.map((it) => `- "${it.label}"${it.detail ? `: ${it.detail}` : ''}`).join('\n')}\n`
-    + 'Fix the plan so these checks pass.';
+  const req = (Array.isArray(requirements) ? requirements : []).filter((it) => !it.pass);
+  const checkPart = () => {
+    if (bad.length === 1) return fixFeedback(bad[0]);
+    return `The shape check fails ${bad.length} checks:\n${bad.map((it) => `- "${it.label}"${it.detail ? `: ${it.detail}` : ''}`).join('\n')}\n`
+      + 'Fix the plan so these checks pass.';
+  };
+  if (!req.length) return checkPart();
+  // the engine label ("R-ops-1 · not covered by any step") would repeat the sentence: name it by id and criterion
+  const name = (it) => (it.detail ? `${it.id}: ${it.detail}` : it.id || it.label);
+  const reqPart = req.length === 1
+    ? `The agreed requirement ${name(req[0])} is not covered by any step. Fix the plan so a step delivers it and names it on a \`Covers:\` line.`
+    : `${req.length} agreed requirements are not covered by any step:\n${req.map((it) => `- ${name(it)}`).join('\n')}\n`
+      + 'Fix the plan so a step delivers each and names it on a `Covers:` line.';
+  return [bad.length ? checkPart() : '', reqPart].filter(Boolean).join('\n');
 }
 
 /** The plan card's primary names its outcome, never "anyway" (D32); every plan approval starts a build (the split is

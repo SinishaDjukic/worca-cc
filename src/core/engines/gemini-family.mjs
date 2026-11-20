@@ -8,7 +8,7 @@
 //
 // Verified on gemini 0.63.0 and qwen 0.25.0 (test/fixtures/gemini/README.md, test/fixtures/qwen/README.md).
 import { mkdirSync, readFileSync, rmSync } from 'node:fs';
-import { execFile } from 'node:child_process';
+import { execCli, cliRefusal } from './exec-cli.mjs';
 import { randomUUID } from 'node:crypto';
 import { homedir } from 'node:os';
 import { join, relative, resolve, sep, isAbsolute } from 'node:path';
@@ -176,12 +176,12 @@ export function settingsAuthType(file) {
  * (`--version`); `signedIn(env)` says whether a sign-in is configured (neither CLI has a status command, so this reads
  * its env and settings files, never its credentials).
  */
-export function familyPreflight({ bin, env = process.env, timeoutMs = 10000, label, binEnv, signedIn, signInHint }) {
+export function familyPreflight({ bin, cli, env = process.env, timeoutMs = 10000, label, binEnv, signedIn, signInHint }) {
   return new Promise((resolve) => {
-    execFile(bin, ['--version'], { timeout: timeoutMs, env: { ...process.env, ...env } }, (err) => {
+    execCli(cli, bin, ['--version'], { timeout: timeoutMs, env: { ...process.env, ...env } }, (err) => {
       if (err && typeof err.code !== 'number') {
         resolve(/^(ENOENT|EACCES|EINVAL)$/.test(String(err.code))
-          ? { refusal: `cannot run ${bin} (${err.code}) — install ${label}, or point ${binEnv} at it` }
+          ? { refusal: cliRefusal({ bin, err, install: `install ${label}, or point ${binEnv} at it` }) }
           : { warning: `could not run ${bin} --version (${err.message})` });
         return;
       }
@@ -205,14 +205,14 @@ export function versionAtLeast(a, b) {
  * Can this CLI be locked down for a chat? Its `--help` names every flag the lockdown needs and its `--version` is at
  * least the one the lockdown was verified on. Never rejects: {refusal} or {}.
  */
-export function familyAskSupport({ bin, timeoutMs = 15000, flags, minVersion, label, install, binEnv, extra = null }) {
+export function familyAskSupport({ bin, cli, timeoutMs = 15000, flags, minVersion, label, install, binEnv, extra = null }) {
   const run = (args) => new Promise((resolve) => {
-    execFile(bin, args, { timeout: timeoutMs, maxBuffer: 4 * 1024 * 1024 }, (err, stdout) => resolve({ err, out: String(stdout || '') }));
+    execCli(cli, bin, args, { timeout: timeoutMs, maxBuffer: 4 * 1024 * 1024 }, (err, stdout) => resolve({ err, out: String(stdout || '') }));
   });
   return (async () => {
     const v = await run(['--version']);
     if (v.err && typeof v.err.code !== 'number') {
-      return { refusal: /^(ENOENT|EACCES|EINVAL)$/.test(String(v.err.code)) ? `cannot run ${bin} (${v.err.code}) — install ${label} (${install}), or point ${binEnv} at it` : `could not ask ${bin} its version (${v.err.message})` };
+      return { refusal: /^(ENOENT|EACCES|EINVAL)$/.test(String(v.err.code)) ? cliRefusal({ bin, err: v.err, install: `install ${label} (${install}), or point ${binEnv} at it` }) : `could not ask ${bin} its version (${v.err.message})` };
     }
     const version = v.out.trim().split('\n')[0];
     if (!versionAtLeast(version, minVersion)) return { refusal: `this ${bin} is ${version || 'of an unknown version'}; a chat needs ${label} ${minVersion} or newer — update it (${install})` };
@@ -251,15 +251,19 @@ export function withEnvRefs(servers, names) {
 
 // ── spawn ────────────────────────────────────────────────────────────────────
 
-/** The store project folders (`<worca home>/store/<project>`) that hold any of `dirs`. */
+/** The store project/workspace folders (`<worca home>/store/<project>` or `<worca home>/store/workspaces/<workspace>`) that hold any of `dirs`. */
 export function storeProjectDirs(dirs, home = worcaHome()) {
   const store = resolve(home, 'store');
   const out = [];
   for (const d of dirs) {
+    if (!d) continue;
     const rel = relative(store, resolve(d));
     if (!rel || rel.startsWith('..') || isAbsolute(rel)) continue;
-    const p = join(store, rel.split(sep)[0]);
-    if (!out.includes(p)) out.push(p);
+    const parts = rel.split(sep);
+    const p = parts[0] === 'workspaces'
+      ? (parts[1] ? join(store, 'workspaces', parts[1]) : null)
+      : join(store, parts[0]);
+    if (p && !out.includes(p)) out.push(p);
   }
   return out;
 }
@@ -357,7 +361,7 @@ export async function runFamilyProcess(spec, {
       const spawnSignal = signal ? AbortSignal.any([signal, ctrl.signal]) : ctrl.signal;
       safeEmit(onEvent, { type: 'session', sessionId: prefix + id });
       const res = await superviseSpawn({
-        file: bin, args: prepared.argsFor(id, resume), displayBin: bin, cwd, env, stdin: prepared.stdin, signal: spawnSignal, asAgent,
+        file: bin, cli: spec.cli, args: prepared.argsFor(id, resume), displayBin: bin, cwd, env, stdin: prepared.stdin, signal: spawnSignal, asAgent,
         stagedDir: asAgent ? [scratch, ...(prepared.agentDirs || [])] : null, onEvent, cleanup: () => {},
         stdoutErrorDetail: () => normalizer.finish().error || '',
         classify: (m) => spec.classify(m),

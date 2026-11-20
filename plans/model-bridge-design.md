@@ -51,8 +51,7 @@ and it puts a credential-holding proxy outside worca's control. The product goal
   generation, Ask Worca, plugin distribution, team policy — all unchanged.
 - **Honest UI**: a bridged model is labelled as such, the degradations of translation
   (no thinking, no server tools, lower context ceilings, no verified cost) are disclosed
-  where the user picks and configures models, and the Copilot terms-of-service exposure
-  is an explicit, once-acknowledged opt-in.
+  where the user picks and configures models.
 
 ## 3. Non-goals
 
@@ -355,7 +354,6 @@ Account-level state, separate from models so ten Copilot entries share one sign-
     "copilot": {
       "githubToken": "gho_…",               // masked in GET; write-only; or "${GH_COPILOT_TOKEN}"
       "accountType": "individual",          // "individual" | "business" | "enterprise" → api host
-      "acknowledgedTerms": "2026-09-20T…",  // §8.2 notice; absent = not acknowledged
       "maxConcurrent": 4,                   // §7.4
       "login": "octocat"                    // display only, from /user at sign-in
     },
@@ -389,9 +387,7 @@ against the user's own sign-in.
 
 `worca --model <id>` works for bridged ids unchanged (the CLI process starts its own
 bridge). New: `worca models login copilot` (device flow in the terminal, same code path as
-the UI), `worca models logout copilot`, `worca models import copilot [--all|--pick]`. All
-three print the §8.2 notice on first use and require `--accept-terms` or an interactive
-yes.
+the UI), `worca models logout copilot`, `worca models import copilot [--all|--pick]`.
 
 ## 7. GitHub Copilot provider
 
@@ -432,9 +428,8 @@ budget input.
 GitHub's terms and its abuse detection name **unsupported clients** and **scripted /
 automated use** as grounds for suspending Copilot access, and there are public reports of
 suspensions. A worca pipeline with fan-out is high-volume automated use through a client
-that identifies as VS Code. Worca does not hide this: the provider is **opt-in behind an
-explicit acknowledgement** (§8.2), recorded with a timestamp, re-shown when the wording
-version changes. Worca never bundles a GitHub token, never signs in without the user, and
+that identifies as VS Code. Worca does not hide this: the provider is opt-in (the user
+signs in). Worca never bundles a GitHub token, never signs in without the user, and
 ships the concurrency cap on by default.
 
 ### 7.4 Concurrency cap
@@ -456,7 +451,7 @@ level.
 Sits above the catalog list. One row per provider:
 
 - **GitHub Copilot** — state pill: *Not connected* / *Connected as @login (Individual)* /
-  *Token expired — sign in again* / *Sign-in blocked until terms acknowledged*. Actions:
+  *Token expired — sign in again*. Actions:
   **Sign in…** (opens the device-flow sheet: the 8-character code in large type, a
   *Copy code* button, an *Open github.com/login/device* link, a live "waiting for
   approval…" line, cancel), **Sign out**, **Import models…** (§8.4), account type
@@ -470,24 +465,12 @@ Sits above the catalog list. One row per provider:
 - Empty state copy: *Providers let worca run models that don't speak the Anthropic API.
   Sign in once; then add or import models below.*
 
-### 8.2 The Copilot terms notice (every level, blocking)
+### 8.2 The Copilot terms notice — removed
 
-Shown as a modal the first time **Sign in…** or `worca models login copilot` is used,
-and again whenever the notice wording version changes:
-
-> **Using GitHub Copilot from worca**
-> Worca will talk to GitHub Copilot through the same API GitHub's editor extensions use,
-> identifying itself as an editor client. GitHub's terms allow Copilot only through
-> supported clients, and GitHub has suspended Copilot access for automated or
-> unsupported use. Pipelines are automated, high-volume use.
-> • Your GitHub account, not worca, carries this risk.
-> • Worca caps concurrent requests (configurable) and never signs in without you.
-> • Premium-request quotas apply per your plan; worca shows usage but cannot enforce it.
-> [ ] I understand and want to continue      *Cancel* / **Continue**
-
-Stored as `providers.copilot.acknowledgedTerms`. The Providers card shows *acknowledged
-on <date>* with a *Re-read* link. There is no "don't show again" beyond the timestamp;
-it is one click per machine.
+Removed in November 2026: the notice failed silently (a connected, signed-in Copilot still
+refused bridged models) and no other provider had one. Copilot is ready once signed in.
+An older settings.json may still hold `providers.copilot.acknowledgedTerms` / `termsVersion`;
+readers ignore them.
 
 ### 8.3 Model editor (E): a **Connection** section
 
@@ -550,7 +533,7 @@ translation layer (no thinking blocks, no web tools).*
   `· copilot` when the label does not already say so.
 - **Test button**: unchanged path (`POST /api/models/:id/test` → `runClaude` → bridge).
   New hints in `model-test.mjs#hintFor` for the bridge's own error classes:
-  `provider_not_connected`, `terms_not_acknowledged`, `upstream_model_unknown`
+  `provider_not_connected`, `upstream_model_unknown`
   (Copilot 400 "model not found" → *pick an id from the import list*),
   `unsupported_feature`.
 
@@ -581,21 +564,20 @@ this model*. Otherwise unchanged.
 - A new **Getting started** tour stop on the Models view only when `hideBuiltinModels`
   is on (the "I don't have an Anthropic account" cohort): *Sign in to GitHub Copilot to
   use its models here.*
-- `docs/models.md` (new) — providers, the §5 feature matrix in user terms, the §7.3
-  notice verbatim, troubleshooting (*401 → sign in again*, *prompt is too long →
+- `docs/models.md` (new) — providers, the §5 feature matrix in user terms,
+  troubleshooting (*401 → sign in again*, *prompt is too long →
   expected, the run compacts*, *model not found → import list*).
 - `docs/ui-levels.md` catalogue: Providers card, Connection section, import sheet → E;
-  needs-sign-in banner and terms modal → every level.
+  needs-sign-in banner → every level.
 
 ## 9. API
 
-- `GET /api/providers` → `{ copilot: {connected, login, accountType, acknowledgedTerms,
+- `GET /api/providers` → `{ copilot: {connected, login, accountType,
   maxConcurrent, quota?, tokenSource: 'stored'|'env'|null}, openai: {configured,
   baseUrl, keySet, maxConcurrent} }` (never a token).
 - `POST /api/providers/copilot/login` → `{deviceCode, userCode, verificationUri,
   interval, expiresIn}`; `GET /api/providers/copilot/login/:deviceCode` → `{pending}` |
   `{ok, login}` | `{error}` (the UI polls at `interval`); `POST …/logout`.
-- `POST /api/providers/copilot/acknowledge` → records the timestamp (+ notice version).
 - `PATCH /api/providers/:name` → accountType, maxConcurrent, baseUrl, apiKey (write-only).
 - `GET /api/providers/copilot/models` → the normalized models list (§8.4).
 - `POST /api/providers/copilot/import-models` `{ids:[…]}` → created/updated entries.
@@ -614,12 +596,12 @@ this model*. Otherwise unchanged.
    headers, models list, `/usage`), `upstreams/anthropic.mjs`, error envelope,
    concurrency cap; `resolveModelEnv` branch; `settings.mjs` `upstream` + `providers`
    storage and validation; CLI `models login/logout/import`. **Ships Claude-on-Copilot
-   with thinking intact.** Terms notice in CLI and API.
+   with thinking intact.**
 2. **openai-chat translation** — `translate/request.mjs`, `translate/stream.mjs`,
    `translate/response.mjs`, capabilities, `count_tokens`, payload ceiling, tool-list
    trimming in the runner and Ask Worca. **Ships GPT/Gemini-on-Copilot and generic
    OpenAI-compatible endpoints.**
-3. **UI** — Providers card, terms modal, editor Connection section, import sheet, card
+3. **UI** — Providers card, editor Connection section, import sheet, card
    badges and needs-sign-in states, run-surface lines and `bridge_calls`, Ask Worca tool
    row, docs and ui-levels catalogue.
 4. **openai-responses** upstream (codex-class models), plugin `upstream` support, team
@@ -648,9 +630,8 @@ Each phase lands as its own PR against `dev`, tests first.
   needs-sign-in derivation.
 - **runner**: `WebSearch`/`WebFetch` trimmed for `openai-chat` entries only; spawn env
   otherwise byte-identical (extend `test/spawn-args.test.mjs`).
-- **server**: providers routes (never leak a token), acknowledge gating of login,
-  import round-trip, `GET /api/models` shape, 400 messages.
-- **UI (jsdom)**: Providers card states, terms modal gating, Connection section
+- **server**: providers routes (never leak a token), import round-trip, `GET /api/models` shape, 400 messages.
+- **UI (jsdom)**: Providers card states, Connection section
   reveal/validation, import sheet selection and re-import merge, picker exclusion and
   *(needs sign-in)* current-selection carve-out, run-config blocking banner.
 - **End-to-end (mock)**: a `WORCA_MOCK` bridge upstream (an in-test http server speaking
@@ -678,7 +659,7 @@ Each phase lands as its own PR against `dev`, tests first.
 | Provider abstraction | `upstream` on the entry + `providers` for account state | One sign-in shared by many entries; env routing kept verbatim for the existing LiteLLM/Bedrock/Vertex users |
 | Unsupported features | Reject with a named error; trim web tools before spawn | Faking server tools or thinking would hide failures; trimming turns a mid-run error into a known limitation |
 | Copilot cost | `free: true` + a per-run request counter | Copilot bills premium requests; a token price would be invented |
-| Terms exposure | Explicit, timestamped, once-per-machine acknowledgement | The risk is the user's account; worca must not obscure it, nor nag on every run |
+| Terms exposure | No in-app notice (removed Nov 2026) | It failed silently and no other provider had one; signing in is the opt-in |
 | Concurrency cap | Per-provider semaphore, on the provider card, default 4 | The one knob that lowers abuse-detection risk and is cheap to explain |
 | `count_tokens` | Local estimate | No upstream endpoint; a billed round trip for a heuristic is wrong |
 | Responses API | Phase 4 | Only codex-class models need it; chat/completions covers the rest |

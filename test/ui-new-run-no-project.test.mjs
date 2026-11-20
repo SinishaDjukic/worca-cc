@@ -1,17 +1,17 @@
 // test/ui-new-run-no-project.test.mjs — P3: New run's Target segment gains No project (every level).
 import { test, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { JSDOM } from 'jsdom';
 import { useDomRelease } from './helpers/jsdom-release.mjs';
+import { readIndexHtml } from '../src/core/read-index-html.mjs';
+import { readStyleCss } from '../src/core/read-style-css.mjs';
 
 const trackDom = useDomRelease(afterEach);
-const htmlPath = fileURLToPath(new URL('../ui/public/index.html', import.meta.url));
 const appPath = fileURLToPath(new URL('../ui/public/app.js', import.meta.url));
 
 async function boot({ projects = [], workflows = [{ id: 'wf_default', name: 'Default' }], runsRoot = '', runsRootDisplay, posted, local, seen } = {}) {
-  const dom = trackDom(new JSDOM(readFileSync(htmlPath, 'utf8'), { url: 'http://localhost:4317/' }));
+  const dom = trackDom(new JSDOM(readIndexHtml(), { url: 'http://localhost:4317/' }));
   const { window } = dom;
   window.Element.prototype.scrollIntoView = function () {};
   window.WebSocket = class { constructor() { this.readyState = 1; } send() {} close() {} addEventListener() {} };
@@ -84,7 +84,7 @@ test('with projects: Project stays the default; picking No project hides branche
   assert.equal(doc.querySelector('#target-seg [data-target="project"]').getAttribute('aria-pressed'), 'true');
   doc.querySelector('#target-seg [data-target="none"]').click();
   assert.equal(doc.getElementById('run-form').dataset.workMode, 'none');
-  const css = readFileSync(new URL('../ui/public/style.css', import.meta.url), 'utf8');   // jsdom here loads no stylesheet
+  const css = readStyleCss();   // jsdom here loads no stylesheet
   assert.match(css, /#run-form\[data-work-mode="none"\] #start-more\{display:none!important;\}/);
   assert.equal(window.localStorage.getItem('worca-cc.runTarget'), 'none');
   assert.equal(doc.querySelector('#memory-scope-seg [data-scope="project"]').hidden, true, 'Memory defragment: global memory only (U13)');

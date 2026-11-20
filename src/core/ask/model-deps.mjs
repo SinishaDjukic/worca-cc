@@ -9,12 +9,12 @@
 // Never a credential out: env values and keys are masked unless they are ${VAR} references.
 import { listModels, PREDEFINED_MODELS, EFFORTS, globalModelRefs, removeGlobalModelAndRefs, modelCostConfig } from '../config.mjs';
 import { modelFacts } from '../model-tiers.mjs';
-import { listGlobalModels, addGlobalModel, updateGlobalModel, updateProvider, providerConfig } from '../settings.mjs';
+import { listGlobalModels, addGlobalModel, updateGlobalModel, updateProvider, providerConfig, openRouterConfig, updateOpenRouter } from '../settings.mjs';
 import { listPluginModels } from '../plugin-models.mjs';
 import { policyCatalogModels } from '../policy/cache.mjs';
-import { providerReadiness } from '../bridge/registry.mjs';
+import { providerReadiness, openRouterKeyFor } from '../bridge/registry.mjs';
 import {
-  providersState, patchProvider, copilotModelsForImport, importCopilotModels, testProviderConnection,
+  providersState, patchProvider, patchOpenRouter, copilotModelsForImport, importCopilotModels, testProviderConnection,
   endpointModelsForImport, importEndpointModels,
 } from '../bridge/provider-ops.mjs';
 import { UPSTREAM_PROVIDERS } from '../model-env.mjs';
@@ -22,6 +22,13 @@ import { harnessesOf } from '../../shared/connections.mjs';
 import { createModelChangeValidator, mergeEditPatch, maskEntry } from './model-proposal.mjs';
 
 const envHas = (name) => typeof process.env[name] === 'string' && process.env[name].trim() !== '';
+/** The OpenAI-compatible row is on openrouter.ai with key text: OpenRouter models borrow that key while the OpenRouter
+ *  row has none (registry.mjs openRouterKeyFor's 'openai-legacy'). Not providersState().openrouter.legacyKey, which is
+ *  false whenever the OpenRouter row has a key — the very key a proposal may clear. */
+const openRouterLegacyKey = () => {
+  const oa = providerConfig('openai');
+  return openRouterKeyFor({ provider: 'openai', baseUrl: oa.baseUrl }, { openrouter: {}, openai: oa }).source === 'openai-legacy';
+};
 /** One row's picking facts as list_models shows them (model-tiers.mjs): vendor, price tier, list price, free, window —
  *  and `billing: 'copilot'` on a Copilot import (premium requests: no token price, no tier, never free). */
 export const factFields = (f) => (f ? { vendor: f.vendor, tier: f.tier, price: f.price, free: f.free, context: f.context, ...(f.billing ? { billing: f.billing } : {}) } : {});
@@ -33,6 +40,7 @@ export const validateModelChange = createModelChangeValidator({
   providerConfig, providerReadiness, modelRefs: globalModelRefs, envHas,
   copilotModels: () => copilotModelsForImport(),
   endpointModels: (baseUrl, apiKey = '') => endpointModelsForImport({ baseUrl, apiKey }),
+  openRouterConfig, updateOpenRouter, openRouterLegacyKey,
 });
 
 /**
@@ -93,6 +101,10 @@ export async function applyModelChange(card, io = {}) {
       return { ok: true, detail: `${c.id} removed${n ? ` · ${n} workflow selection${n === 1 ? '' : 's'} cleared` : ''}${r?.clearedMemoryDefrag ? ' · Settings › Memory defragment model cleared' : ''}` };
     }
     case 'provider': {
+      if (c.provider === 'openrouter') {
+        await (io.patchOpenRouter ?? patchOpenRouter)(c.set || {});
+        return { ok: true, detail: 'OpenRouter provider saved' };
+      }
       await (io.patchProvider ?? patchProvider)(c.provider, c.set || {});
       return { ok: true, detail: `${c.provider} provider saved` };
     }

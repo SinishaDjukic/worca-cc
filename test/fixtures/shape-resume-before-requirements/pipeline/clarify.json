@@ -1,0 +1,43 @@
+{
+  "questions": [
+    {
+      "id": "invalid-input",
+      "question": "How should the feature handle invalid input — fail fast, coerce, or ignore?",
+      "options": [
+        "Fail fast with a clear error",
+        "Coerce to a safe default",
+        "Ignore and continue",
+        "Reject at the boundary"
+      ],
+      "allowFreeText": true,
+      "confidence": [
+        70,
+        15,
+        5,
+        10
+      ],
+      "recommended": "Fail fast with a clear error"
+    },
+    {
+      "id": "delete-behavior",
+      "question": "Should delete be a hard delete or a soft delete?",
+      "options": [
+        "Hard delete",
+        "Soft delete"
+      ],
+      "allowFreeText": true
+    }
+  ],
+  "answers": [
+    {
+      "id": "invalid-input",
+      "question": "How should the feature handle invalid input — fail fast, coerce, or ignore?",
+      "choice": "Fail fast with a clear error"
+    },
+    {
+      "id": "delete-behavior",
+      "question": "Should delete be a hard delete or a soft delete?",
+      "choice": "Hard delete"
+    }
+  ]
+}

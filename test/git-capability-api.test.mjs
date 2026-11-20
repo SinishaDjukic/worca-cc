@@ -2,12 +2,12 @@
 import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdtemp, rm } from 'node:fs/promises';
-import { readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { WebSocket } from 'ws';
 import { checkRows } from './helpers/rows.mjs';
 import { _testing as cap } from '../src/core/git-available.mjs';
+import { readServerSource } from '../src/core/read-server-source.mjs';
 
 let home, srv, base, prev;
 before(async () => {
@@ -74,7 +74,7 @@ test('git exposure: shell, hello, frame, settings, GET /api/git', async () => {
         assert.match(await (await fetch(`${base}/`)).text(), /data-git="on"/);
       } },
       { name: 'boot order: the probe is awaited at import (CDP proofs import the server), so before isMain: seed, sweeps, loops, listen', run: () => {
-        const src = readFileSync(new URL('../ui/server.mjs', import.meta.url), 'utf8');
+        const src = readServerSource();
         const at = (s) => { const i = src.indexOf(s); assert.ok(i > 0, s); assert.equal(src.indexOf(s, i + 1), -1, `${s} once`); return i; };
         assert.ok(at('\npreflightDeps();\n') < at('\nawait gitState();\n'), 'right after the dependency check');
         assert.ok(at('\nawait gitState();\n') < at('if (isMain) {'), 'at module scope, before the isMain boot');

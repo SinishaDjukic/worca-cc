@@ -356,3 +356,28 @@ test('12 role reviews: a revise answer goes to the Planner through the role node
   assert.equal(expands[3].bindings.revise.path, '/p/rev3.md', 'the budget came back: the pass-2 rewrite is delivered');
   assert.deepEqual(atRound2, { deliveries: 1 });
 });
+
+test('13 #990 s5 an execution answering reviseApproval rewinds to the Planner through the approval node; done is not published', { timeout: 5000 }, async () => {
+  const d = deferredAsk();
+  let impl = 0;
+  const script = { ...rScript, n_i: () => (++impl === 1 ? { reviseApproval: { path: '/concern.md' } } : {}) };
+  const h = harness({ template: approveTpl(), script, onAsk: d.onAsk });
+  const run = h.scheduler.run();
+  await until(() => d.queue.length === 1);
+  d.queue[0].resolve('approve');
+  await until(() => d.queue.length === 2);
+  assert.equal(h.callsFor('n_i').length, 1);
+  assert.equal(h.callsFor('n_p').length, 2);
+  assert.equal(h.callsFor('n_p')[1].bindings.revise.path, '/concern.md');
+  assert.equal(d.queue[1].q.id, 'plan-n_r-2');
+  d.queue[1].resolve('approve');
+  assert.equal(await run, 'done');
+  assert.equal(h.callsFor('n_i').length, 2);
+  assert.equal(h.callsFor('n_i')[1].bindings.fix, undefined, 'no stale fix token on the re-planned build');
+});
+
+test('14 #990 s5 reviseApproval with no approval stop upstream publishes as usual', { timeout: 5000 }, async () => {
+  const h = harness({ template: approveTpl('reviewer', [], {}), script: { ...rScript, n_i: () => ({ reviseApproval: { path: '/c.md' } }) } });
+  assert.equal(await h.scheduler.run(), 'done');
+  assert.equal(h.callsFor('n_p').length, 1);
+});

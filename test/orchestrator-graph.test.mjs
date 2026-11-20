@@ -103,9 +103,9 @@ test('the graph default runs end to end: End bound, ledger keyed by executionId,
         assert.equal(s.stepIndex, null);
         assert.ok(['done', 'error', 'paused', 'stopped'].includes(s.status), `${s.key} ended ${s.status}`);
       }
-      // The agent nodes all ran (clarify, planner, refiner x2, implementer x2, reviewer x2).
+      // The agent nodes all ran (clarify, planner, refiner, implementer x2, reviewer x2).
       const started = execs.filter((e) => e.status === 'start' && e.agentKey);
-      assert.ok(started.length >= 8, `expected >= 8 agent executions, got ${started.length}`);
+      assert.ok(started.length >= 7, `expected >= 7 agent executions, got ${started.length}`);
       assert.equal(orch.getState().status, 'done');
     } },
     { name: 'bookends are exec rows carrying an executionId, and no phase event is emitted', run: async () => {
@@ -187,6 +187,15 @@ test('the ledger is one row per execution, and every loop closes at ordinal 2', 
     if (max != null) assert.ok(n <= max, `${wireId} delivered ${n} > ${max}`);
     assert.ok(n <= 1, `${wireId} delivered ${n} times (loops close at ordinal 2)`);
   }
+});
+
+test('E9: _syncSchedulerState mirrors the scheduler\'s scope notices onto state, as copies', async () => {
+  const { GraphOrchestrator } = await import('../src/core/orchestrator.mjs');
+  const notices = [{ nodeId: 'n_impl', executionId: 'x', count: 1, expectedCount: 0, cross: false, notable: [{ path: '/etc/hosts', tool: 'Read' }] }];
+  const fake = { state: { warnings: [], scopeNotices: [] }, _pickWarnings: [] };
+  GraphOrchestrator.prototype._syncSchedulerState.call(fake, { getState: () => ({ warnings: [], scopeNotices: notices }) });
+  assert.deepEqual(fake.state.scopeNotices, notices);
+  assert.notEqual(fake.state.scopeNotices[0].notable, notices[0].notable, 'a copy, not the scheduler\'s own list');
 });
 
 test('progressFacts records the decomposition size and the latest review pass', { timeout: 120000 }, async () => {

@@ -249,20 +249,20 @@ A team member configures a custom model locally, adapts pipelines to it, and wan
 
 ```json
 {
-  "name": "discretestack-models",
-  "description": "Team routing for the DiscreteStack endpoint",
+  "name": "example-models",
+  "description": "Team routing for a shared gateway endpoint",
   "models": [
-    { "id": "discretestack-stable", "label": "DiscreteStack Stable",
+    { "id": "example-stable", "label": "Example Stable",
       "efforts": ["medium", "high"],
       "env": {
-        "ANTHROPIC_BASE_URL": "https://api.discretestack.com",
+        "ANTHROPIC_BASE_URL": "https://api.example.com",
         "API_TIMEOUT_MS": "3000000",
-        "ANTHROPIC_AUTH_TOKEN": { "secret": "discretestack-token" }
+        "ANTHROPIC_AUTH_TOKEN": { "secret": "example-token" }
       },
       "cost": { "perMtok": { "input": 0.5, "output": 1.5 } } }
   ],
   "modelSecrets": [
-    { "key": "discretestack-token", "label": "DiscreteStack API token" }
+    { "key": "example-token", "label": "Example API token" }
   ]
 }
 ```

@@ -1,14 +1,14 @@
 // test/marketplace-kinds.test.mjs — kinds, the plugin icon rule (U7) and the kind / status tones (marketplace P3).
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
 import { JSDOM } from 'jsdom';
 import { KIND_ORDER, KINDS, MIX, NONE, MKT, TILE_PX, CHIP_TONES, kindCounts, pluginIconKind, kindTile, glyphTile, chip, addsSummary, secretsSummary, landing }
   from '../ui/public/marketplace/kinds.mjs';
 import { ICONS } from '../ui/public/icons.mjs';
+import { readStyleCss } from '../src/core/read-style-css.mjs';
 
 const doc = new JSDOM('<!doctype html><body></body>').window.document;
-const CSS = readFileSync(new URL('../ui/public/style.css', import.meta.url), 'utf8');
+const CSS = readStyleCss();
 
 test('the eight kinds in order, with labels, tones and glyphs; Mix and None', () => {
   assert.deepEqual(KIND_ORDER, ['taskSources', 'chatChannels', 'mcpServers', 'models', 'agents', 'scripts', 'skills', 'workflows']);

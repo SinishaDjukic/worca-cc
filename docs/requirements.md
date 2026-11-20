@@ -7,10 +7,10 @@ turn on **Requirements** in Settings › Labs (the `requirements` flag), or star
 ## How it works
 
 1. **New feature** on the Requirements page: a title, a few sentences, and the project or workspace it is for.
-2. **Worca looks at the code once** (a read-only temporary copy, removed straight after) and writes, in
-   plain words, what already exists in that area. You see it under *What Worca found in the code*;
+2. **Worca does a code look once** (a read-only temporary copy, removed straight after) and writes, in
+   plain words, what already exists in that area. You see it under *Code look: what Worca found*;
    **Look again** (in the **⋯** menu) refreshes it. With a [product brief](#product-brief) for the project or
-   workspace, a new feature skips this look and shows *What Worca knows* instead. Turn looking at the code off
+   workspace, a new feature skips this look and shows *What Worca knows* instead. Turn code looks off
    per project or workspace in **Your notes for Worca** (also in **⋯**).
 3. **The interview**: rounds of at most 3 questions, each with options and a recommended answer, at most
    6 rounds. **Skip, use recommended** answers the rest for you; **Finish now** ends it early. Earlier
@@ -55,16 +55,16 @@ read the checked-out branch). Once there is an estimate, the cost is shown befor
 the median of recent brief looks, failed ones included, project and workspace briefs alike (before the first
 brief look there is none). A brief look is a model call like any other here: it counts toward your spending
 limit and takes a few minutes, and you can leave the page while it works; the page says when the brief is ready
-or could not be made. Worca refuses it, and spends nothing, when looking at the code is switched off, when git is not installed, when there
+or could not be made. Worca refuses it, and spends nothing, when code looks are switched off, when git is not installed, when there
 is no repository or default branch, when a repository could not be read in time (Worca names it; try again), when
 this brief is already being made, when two other briefs are being made, or when the limit is reached.
 Without git on this machine, Create, Refresh, Look closer and Look again are not offered (the API answers 409
-`GIT_MISSING`); a new feature then skips its look at the code and the interview starts right away.
+`GIT_MISSING`); a new feature then skips its code look and the interview starts right away.
 
 **Your edits win.** Edit any part with the pencil; Worca keeps your text and a refresh never overwrites it
 (**Let Worca rewrite this** hands a part back). Each user, word and area needs its own name: a name given twice
 is refused, and your text stays in the editor to fix. Editing **What exists today** makes the areas yours: a refresh
-no longer updates them, and "the code moved on" no longer checks them. Areas added from a closer look (below)
+no longer updates them, and "the code moved on" no longer checks them. Areas added from a code look (below)
 survive a refresh too.
 
 **Staleness.** A brief says what it was made from, for example *Made from main @ 3f96738*. When the default branch
@@ -76,28 +76,196 @@ none of the projects it was made from is in the workspace any more). A workspace
 did not check or that joined after it was made.
 
 **Your notes for Worca.** Standing facts every feature there should know (actors, terms, rules) and the switch
-for looking at the code. It is opened from the brief page or from **⋯** on a feature.
+for code looks. It is opened from the brief page or from **⋯** on a feature.
 
-**How interviews use it.** With a brief, a new feature skips its own look at the code: the New feature page
+**How interviews use it.** With a brief, a new feature skips its own code look: the New feature page
 says "Worca knows <name> from its product brief" and the cost is cents per round, and round 1 starts right
-away. The feature page shows *What Worca knows*. When the brief is not enough, **Look closer** makes one look at
-the code for that feature (its cost is shown first). **Add this to the brief** then keeps what it found as a new
+away. The feature page shows *What Worca knows*. When the brief is not enough, **Look closer** makes one code look
+for that feature (its cost is shown first). **Add this to the brief** then keeps what it found as a new
 area named after the feature ("Orders: <feature title>"); it never replaces an area that is already there. A
-closer look is not part of the brief until you add it, and only a look made for the feature's current project
-or workspace, against its current brief, can be added (otherwise **Look again** first). With looking at the code
+code look is not part of the brief until you add it, and only a look made for the feature's current project
+or workspace, against its current brief, can be added (otherwise **Look again** first). With code looks
 switched off, interviews still read an existing brief; only new looks (Create, Refresh, Look closer) stop.
 
 **Workspaces.** A workspace brief starts from the workspace's own description (its map of projects) and reads at
 most 8 of its projects, each at its default branch; any left out are named on the page before you create it.
 
-## Which model interviews
+**Documents.** A made brief can keep documents (a style guide, a glossary, a policy) that every feature there uses;
+see [Documents on the brief](#files) below. Deleting the brief deletes its documents too.
 
-The newest Opus at medium effort, unless **Requirements interview** on Models › Engines › Claude › Helper
-jobs says otherwise. A model picked with no effort runs at that model's own default effort. A model removed from the catalog
-falls back to the default model but keeps a stored effort. The New feature page
-names the model and effort ("Worca interviews with …").
+## Files
 
-## What a look or round loads
+A feature can come with material: emails, support tickets, a spec, screenshots, a mockup. Add up to 10 files to a
+feature, on **New feature** or later on the feature page's **Files** card: text (`.md`, `.markdown`, `.txt`, `.csv`,
+`.json`, `.log`, `.html`, `.htm`, `.xml`), images (`.png`, `.jpg`, `.jpeg`, `.gif`, `.webp`) and PDF, up to 25 MB each (on
+New feature, up to 100 MB in all; add more on the feature page). Word, Excel and PowerPoint files are not read yet:
+save them as PDF. A file with the same content as one already attached is refused and names that one.
+
+**What Worca reads.** Worca reads each file once, when it is added, with the interview model, and writes down what it
+took from it. Every interview round uses that, and the full text of text files while they stay within 24 KB in all.
+A feature created with files reads them first: the page says **Reading N files…**, then shows round 1. You can edit
+what Worca took from a file; your text wins, and Worca never overwrites it without asking. **Ask about this file…**
+has Worca read the file again for one question; the answer is kept under the summary (one question at a time, up to
+20 answers; the file says **Asking…** meanwhile). **Replace with a newer version…** keeps the file's place and its
+switch, and asks whether to keep your text when you edited it; **Read again** reads the same file again. Earlier
+texts are kept in the file's history (**Earlier text**, in Advanced mode). A file that could not be read says why
+("it ran out of time", "Worca restarted", …) and offers **Try again**; until then the interview knows it by name only.
+Files cannot be changed while Worca works on the feature, while it is archived or while a run starts. When a new
+version cannot be stored, the file says "Worca could not store the new version. Replace it again." and cannot go with
+the run until it is replaced. When New feature cannot store one of its files, the feature is still created and its page
+names the file: "<name> was not added: Worca could not store it. Add it on the feature page."
+
+**What it costs.** A read costs a few cents (about $0.05–0.20; each file says what its reads cost) and counts toward
+your spending limit. When the limit is reached, a new file waits as **Not read yet**, at no cost, and is read
+at the next round once the limit allows, or when you press **Read again**. Worca reads at most two files at a time;
+the others wait as **Reading…**.
+
+**Privacy.** Worca sends each file to the interview model to read it. Text is checked for keys and passwords first;
+images and PDFs go as they are. A read can open only its own copy of the file: a guard refuses any other file and any
+other tool, so a file that asks the reader to open something else gets nowhere. Worca keeps a record of what the guard
+allowed, and throws away a read it cannot confirm ("Worca stopped this read: it could not confirm the read stayed
+inside this file. Try again."). Every read, every question and the product brief's look also refuse private files
+(keys, credentials, Worca's own data, other chats and stored files), as Chat does. Reads, questions, the brief's
+look and Feature chat messages also ask Claude Code to keep no session transcript of the call (`--no-session-persistence`),
+so neither the file nor the chat's prompt is left in Claude Code's own session logs. Interview rounds and looks keep Claude
+Code's usual session logs
+(under its `projects` folder, until Claude Code's own cleanup), and those hold what a round's prompt carries: what
+Worca took from each file and the text of small text files. Remove deletes the file and what Worca took from it from
+Worca; it does not reach Claude Code's logs. Where the files are kept: [storage.md](storage.md).
+
+**Testing.** In mock mode (`WORCA_MOCK=1`) nothing is sent: a read writes a `[mock]` summary at once, or after
+`WORCA_MOCK_READ_MS` milliseconds when that is set (the browser proof uses it to see "Reading N files…").
+A mock download from a ticket waits `WORCA_MOCK_DOWNLOAD_MS` milliseconds when that is set (the proof sees "Downloading…").
+
+**When a file changes the interview.** During the interview the next round uses a new or replaced file. After the
+interview finished, Worca asks about it in one short follow-up round; until that round has run, the feature shows
+**Decide** and the interview check says "<file> to ask about". A feature that is busy gets its follow-up as soon as its
+current round or look ends. When Worca cannot start the round itself (the feature was archived, Worca is already
+running four interviews or looks, or the spending limit is reached), the Decide panel offers **Ask about <file>**.
+After you started a run, a change to the files counts as a change since the start.
+
+**Sources.** A criterion, an assumption or a question that came from a file names it, on the page, in the Markdown and in
+the run's task ("(from <file>)").
+
+**Files and runs.** A file goes to the run only when you switch on **Send with the run** (also on the **Ready to build**
+card's **Files for the run** row, whose chips are the same switches). The run gets it as an attached file, and the
+started version records which files went with it. A file whose stored copy Worca cannot open cannot go with the run:
+Start names it, and you replace it or leave it out. The run's copies are named after the files, made safe for Windows
+(`: * ? " < > |` become `_`, trailing dots and spaces go, a device name such as `CON` gets a leading `_`, and a name
+used twice gets " (2)"); the start keeps the files' own names. The copies Worca stages for a start are removed once the
+run has its own copy, or when the start is refused. **Changed since the run started** lists a file that goes with the
+run now, no longer goes, or was replaced; **Undo my changes** puts the files' Send switches back, but not a removed or
+replaced file, and not the documents' switches.
+
+**Documents on the brief.** A made Product brief has a **Documents** card: every feature of that project or workspace
+uses its documents from its next round. **Send with every run** adds a document to every run started from a feature
+there. The brief's own sections change only when you refresh it.
+
+## Feature chat
+
+**Feature chat** in a feature's header opens a chat about that feature beside the spec. On a wide screen it takes the right
+column, and **Ready to start?**, **Files** and **Spec** move under the question card until you close it; on a narrower screen it
+is a full-screen sheet with **Back**. **Help me answer** on a question of the round waiting for you opens it with that question
+in the composer. You send it yourself: every message costs money.
+
+**What it knows.** What the interview already has: the spec, the interview so far, the product brief, your files (what Worca
+took from them, and small text files in full) and what its code look found. It has no tools: it reads no code and opens no
+file. When that is not enough it says so and suggests **Look closer** or **Ask about this file**.
+
+**Drafts.** Worca can draft answers to the open questions. A draft fills the question card, marked **drafted by Worca**, with
+Worca's reason under the options. **×** puts the question back to the recommended answer, and picking or typing an answer
+yourself removes the mark. A draft is never sent by itself: **Submit** sends it like any answer. A draft for a round that was
+answered meanwhile is dropped, and the reply says so.
+
+**Proposed changes.** Worca can propose spec changes as cards: set a section to a new value (the card shows the lines that
+change), add, reword or remove an acceptance criterion, or confirm or reject an assumption (it never rewrites an assumption's
+text). Nothing changes until you press **Accept**: the change is then your own edit, so later rounds never overwrite it, after
+a start it shows under **Changed since the run started**, and **Undo my changes** undoes it like any edit. **Reject** dismisses
+a card. When the spec changed since Worca proposed something, the card says so and offers **Ask again**.
+
+**Costs.** Each message is one call to the interview model (asked once more if the reply cannot be read; both attempts
+are paid), booked as Requirements spend: the header's "$X so far" includes it, it counts toward the spending limit, and each reply shows what it cost. The composer shows the range of the last messages
+("about $L–H a message"); before the project has any, it shows "about $0.05 a message", the measured cost of a typical message. **Stop** cancels a reply and keeps your message; a stopped reply may be booked low, or at $0, because
+a call's cost is known only once the model reports it.
+
+**The chat and the interview.** The chat never feeds the interview rounds, and it never holds the interview up: while Worca
+answers you can submit answers, edit the spec, add files or start a round. Only what you accept or submit reaches the
+interview. **Send**, **Accept** and **Clear chat** wait while Worca answers.
+
+**Clear chat** (⋯) deletes the feature's chat; changes you accepted stay in the spec. An archived feature's chat can be read,
+not used. Everything here is behind the `requirements` flag.
+
+## Choosing the harness and model
+
+**Who interviews** on New feature has three selects: **Harness**, **Model** and **Effort**. They pick who runs the interview
+rounds, the code looks, the reading of your files and Feature chat for that feature. The choice is stored with the feature:
+changing your Default engine later does not move features you already made, and a feature from before this choice existed keeps
+running on Claude as it always did.
+
+**The default.** The form starts on your Default engine, with that harness's Everyday tasks model and its default effort. On
+Claude it is the newest Opus at medium effort, unless **Requirements interview** on Models › Jobs › Helper jobs (Claude Code) says
+otherwise. A model picked with no effort runs at that model's own default effort; Effort is hidden for a model that has none.
+Changing the harness refills Model with that harness's default. A grey line, "Your default: <model> on <Harness>. Use the
+default", shows only when your pick differs from it. A note under the selects says what a strong model costs ("about $0.50 for a
+code look, about $0.12 a round") and offers **Use <model>** when you picked another one.
+
+**The fallback.** If your Default engine cannot run Requirements, the form starts on Claude and says why before anything runs:
+"Your default engine is Cursor, which can't run Requirements, so this starts on Claude." (or "Codex isn't signed in…", "Codex is
+off while the credential broker is on…", "Copilot isn't installed…"). Only the form does this. A feature that is running never
+moves to Claude by itself. Cursor is not in the harness list, and the API refuses it.
+
+**The list of harnesses.** Claude and every harness Worca can run with its read-only chat lockdown: Codex, Copilot, Gemini CLI and
+the others you have set up. One that is not installed, not signed in, or off while the credential broker is on is greyed with its
+reason. Model lists the models that run on the chosen harness, including plugin and bridged ones.
+
+**What a harness can't do.** Worca skips it with a note on the step, and never sends it to Claude instead.
+
+| | Reads the repo | Files |
+|---|---|---|
+| Claude | yes | images, PDFs and text |
+| Codex, Copilot | yes, read-only | text up to 24 KB |
+| Gemini CLI and others | no: code looks are skipped | text up to 24 KB |
+
+The notes read "Repo not read: Gemini CLI can't read the repo.", "screen.png skipped: Codex gets files as text only." and
+"big.txt skipped: it is too large for Codex." They are grey hint lines under the step, never alerts. The Product brief needs the
+repo, so a harness that cannot read it is greyed under **Who makes it**.
+
+**The copy kept in a harness's history.** On Claude nothing is kept. Codex steps run under a Worca-managed home and Worca removes
+the call's session files when it ends. Copilot, Gemini CLI, Goose and Qwen Code have no way to turn saving off, so the step runs
+and says "Gemini CLI keeps its own copy of this step in its history on this computer." Your text is still sent as data, and
+Worca stores no more of it than before.
+
+**Cost words.** "$0.03" is billed, "≈$0.04" is estimated from list prices because that harness reports none ("Cost estimated:
+Gemini CLI reports none."), and "cost unknown" means no price is known: never "$0.00". The feature's chip shows ≈ as soon as any
+part is estimated, and "Cost unknown so far" when every step's cost is unknown; the dialog's total then reads "cost unknown".
+Estimated costs count toward the Requirements budget; steps with cost unknown cannot. The dialog's budget line says so ("The
+Requirements budget counts nothing of $50.00 this month; the step with cost unknown is not counted."), and the list's line says
+"plus N steps with cost unknown".
+
+**Changing a running feature.** The chip after the cost chip names the model and harness; it opens **Model for this feature**
+with the same three selects. A change applies from the next step: a step already running keeps its model, and steps already done
+keep their answers and their cost. When the new choice loses something, or sends your text to another company, Worca asks first
+("Switch this feature to Gemini CLI?", with what changes) and saves nothing if you cancel. A harness that is not signed in stops
+the step with **Change the model** and **Try again**. A model removed from the catalog falls back to the default model, and the
+step says so.
+
+**The code look is a step.** Each code look shows in the thread like a round: "Code look · 3 files", what ran it and its cost, its
+first sentence and **Show what it found**, which opens the card "Code look: what Worca found". **Look closer** and **Look again**
+start one. A look a harness cannot do shows as a step row with its note, and "Code look stopped" is the error row when one fails.
+The Product brief is made on a choice of its own each time: **Create the brief** and **⋯ › Refresh the brief** have **Who makes
+it**, starting from what made the brief last.
+
+## What each step shows
+
+Every step on the feature page (a round, the code look, a Feature chat reply) names what ran it and its cost on the right:
+"Opus 5.5 on Claude · $0.19" (billed), "≈$0.04" (estimated from list prices) or "cost unknown", never $0.00. The code look is a
+step of its own ("Code look · 3 files", with its first sentence and **Show what it found**). What a step could not do, such as
+the repo it could not read or a file it skipped, is listed under it in grey. A harness that is not signed in stops the step with
+**Change the model** and **Try again**; Worca never switches to Claude by itself. The **so far** chip in the header opens
+**Cost of this feature**: each step, what it ran on and its cost, with what the Requirements budget counts and the steps with
+cost unknown (counted apart, not against the limit).
+
+## What a code look or round loads
 
 Worca's own instructions, not Claude Code's coding-agent ones, and none of your user-level Claude Code
 plugins, hooks, skills or settings. The look's temporary checkout still loads the project's own
@@ -139,6 +307,9 @@ Worca keeps the reason, your name and the checks that failed on the feature, and
 started before Ready. Open assumptions are then treated as confirmed. Worca refuses it without a reason, and
 always refuses a feature that is busy, archived or whose project or workspace is gone.
 
+The reason is saved on the feature as soon as you give it, so it survives a cancel or a start that fails,
+and the next time you start the feature the box opens with it. A run that starts clears it.
+
 ## Start in Worca
 
 **Start in Worca** starts a normal run from the feature:
@@ -146,8 +317,17 @@ always refuses a feature that is busy, archived or whose project or workspace is
 - The run's task is the spec, with the acceptance criteria (`R-po-1`, ...) as its definition of done. The
   run title is `FEAT-<n>: <title>`.
 - It uses the **Auto** workflow and the project's default branch, unless you change them under **Change** on the
-  Ready to build card. Auto picks a workflow for the task and, when the project asks for confirmation, shows
-  its pick on the run page for you to accept.
+  Ready to build card (at every interface level). Auto picks a workflow for the task and, when the project asks
+  for confirmation, shows its pick on the run page for you to accept. If the workflow list cannot be loaded, the
+  card says so and Auto is used.
+- With any other workflow, **Start in Worca** first opens **Set up this run**: the workflow (fixed here; cancel
+  and change it on the card to use another), a **Preset** menu with the run presets saved for that workflow, and
+  each agent's model and effort and each loop's cycle budget. Applying a preset fills in its agent and loop
+  settings only. What you change applies to this run alone: the project's settings and your presets are never
+  written. **Start run** starts it and opens the run page; **Cancel** (or Escape) starts nothing. The overlay
+  opens after the reason when you start before Ready. If the server refuses the picks, the reason is shown in
+  the overlay and you can fix it and try again.
+- The files and brief documents whose Send switch is on go with it as attached files ([Files](#files)).
 - Only runs started from Requirements are checked this way. **New run**, **Ask**, schedules and the CLI
   work as before and do not look at Requirements.
 
@@ -175,3 +355,78 @@ anything.
   changed.
 - Once a run has started, the feature's project or workspace can no longer be changed.
 - Rejecting an assumption and **Done, ask about A-n** still work on a started feature, as before the start.
+
+## Start from a ticket
+
+**New feature › From a ticket…** starts a feature from a ticket your team already wrote in its tracker (Jira today; other
+trackers add the same steps in their own plugins). The button shows once a tracker connection can import; trackers are
+connected on the Marketplace page (**Installed › Jira**, Advanced mode). Importing never changes the ticket: nothing is
+sent to Jira. The import itself costs nothing. Reading the picked comments file and attachments costs what any file read
+costs, through the interview model.
+
+- **Find the ticket.** Pick the connection (only with several) and the Jira project, then search by words, or paste the
+  ticket's key or link to find it in any project. An empty search lists the project's most recently updated tickets. On
+  Jira Cloud an empty search in All projects lists tickets updated in the last year. A ticket another feature already
+  follows says "Linked to FEAT-7".
+- **See what comes along.** The preview shows the title, the description, the acceptance criteria Worca found (in a Jira
+  field, or under an "Acceptance criteria" heading in the description), the comments and the attachments, each with a
+  checkbox. Keys and passwords in the ticket's text are hidden. Comments by people are ticked, those by apps and automation
+  are not; comments visible only to a group or role are left out. Attachments Worca cannot read (Office files, other types,
+  over 25 MB) are not offered, and a new feature takes up to 10 files and 100 MB in all.
+- **Use this ticket** fills New feature: the title, the description (yours to change), the criteria and the ticket's
+  files. **Change ticket…** picks another one; × stops using it and keeps what you typed.
+- **Start the interview** reads the ticket again and opens the feature at once. The ticked criteria start the spec as your
+  own criteria R-po-1…, tagged "SHOP-124"; the picked comments become one file, "SHOP-124 comments.md", that Worca reads
+  like your other files; the picked attachments show **Downloading…** while Worca gets them from Jira, then **Reading…**.
+  Round 1 waits for them (at most 6 minutes). A file Worca could not get says why, with **Try again**.
+- **Linked from the start.** The header shows the ticket (**SHOP-124**), and History records the import. **Export ▾ ›
+  Export to Jira…** updates or comments on the same ticket (an update keeps the ticket's issue type and priority), and
+  **Start in Worca** offers **Report back to SHOP-124**. A ticket another feature already follows starts the new feature
+  unlinked: one ticket follows one feature.
+
+## Export to a tracker
+
+**Export ▾ › Export to Jira…** sends the feature's spec to your team's tracker as a ticket. The item names your tracker
+(Jira today; other trackers add the same steps in their own plugins). Without one connected it reads **Connect a
+tracker…**: trackers are connected on the Marketplace page (**Installed › Jira**, Advanced mode), or by whoever set up
+Worca. Exporting costs nothing: no model is called.
+
+- **Setup.** The first export from a project or workspace asks once: the connection, the Jira project, the issue type
+  (Story by default), labels (`worca` by default), an optional priority, and where the acceptance criteria go (a section
+  of the description, or a Jira multi-line text field). Change it later in **Export ▾ › Export setup…**. The setup names
+  a connection only; the token stays in the plugin. If the saved connection was removed, the list starts with **Choose a
+  connection**.
+- With [Ticket updates](ticket-updates.md) (Labs), the setup's project list holds only the projects you work on in that
+  connection; a project the setup already names stays listed.
+- **Preview.** Every export shows the ticket as Jira will show it: the fields and the description (goal and its measure,
+  actors, main flow, business rules, edge cases, out of scope, acceptance criteria, confirmed assumptions, the names of
+  the files the spec mentions, and the footer "From Worca FEAT-7 · exported 26 Oct 2026"). You can change the issue
+  type, labels and priority for that export. Only what the preview shows is sent; if the spec changes in the meantime,
+  Worca asks you to look at the preview again. The label `worca-FEAT-7` is always added: Worca uses it to find the ticket
+  again.
+- **Not Ready yet.** A feature that is not Ready can be exported with a reason. The reason is recorded on the feature and
+  put at the top of the description: "Exported before Ready: …".
+- **After the export.** The header shows the ticket (**SHOP-123**, opening it in a new tab), and the **History** card lists
+  every export.
+- **Export again.** For a feature with a ticket you choose each time: **Update SHOP-123** (summary, description and
+  fields are rewritten; labels are only added), **Add a comment** (what changed since the last export, shown before it is
+  sent; the description stays) or **Create a new ticket** (the chip then follows the new one). If the description was
+  edited in Jira since your last export, Worca warns before replacing it. If the ticket was deleted, choose **Forget the
+  link** or **New ticket**. A ticket linked from another connection or project needs one **Update** before a comment:
+  that gives Worca a starting point to compare against.
+- **Report back.** Once a feature has a ticket, **Start in Worca** has **Report back to SHOP-123**, on by default: when the
+  run ends, Worca comments on the ticket with the result and the pull request link, and moves it to the status named in
+  the Jira connection (**Transition on completion**), if any. With [Ticket updates](ticket-updates.md) (Labs) saved for that
+  connection, the hint says what its rule for the ticket's project does instead: "and moves the ticket to a Done status
+  (Ticket updates in the Jira connection)", "and moves the ticket to Resolved (…)" ("Resolve (as typed)" for an old setting
+  carried over), or "Ticket updates in the Jira connection leave SHOP tickets where they are".
+- If Jira cannot be reached or refuses a field, nothing is recorded and the preview stays open.
+- If the answer to a create was lost (Jira took too long, the network dropped, or Worca stopped) after Jira made the
+  ticket, the next export finds that ticket instead of making a second one. Usually it then updates the ticket with what
+  the preview shows, and the History card lists "Linked SHOP-123, which an earlier export made" and "Updated SHOP-123 in
+  Jira". If the export setup changed since, or the preview was for another ticket, Worca only links the ticket and says
+  "Linked SHOP-123, which an earlier export made. Nothing was sent." For up to two minutes after a lost answer, an export
+  may ask you to try again in a moment while Worca checks whether Jira made the ticket.
+- On a phone or a narrow window (900 px and narrower) the export dialogs open as full-screen sheets, with **← FEAT-7** to
+  go back and the description folded behind **Show all**.
+- Not in this version: epics and "is blocked by" links, reading changes back from Jira, attachments in Jira.

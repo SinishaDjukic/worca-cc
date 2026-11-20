@@ -1,10 +1,10 @@
 // test/ui-runs-resize.test.mjs — QA 2: the Runs list's resize handle (ui/public/runs-resize.mjs).
 import { test, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
 import { JSDOM } from 'jsdom';
 import { useDomRelease } from './helpers/jsdom-release.mjs';
 import { LIST_W_KEY, MIN_W, MAX_W, DEFAULT_W, KEY_STEP, clampListWidth, defaultListWidth, mountRunsResize } from '../ui/public/runs-resize.mjs';
+import { readStyleCss } from '../src/core/read-style-css.mjs';
 
 const trackDom = useDomRelease(afterEach);
 const memStorage = (seed = {}) => { const m = new Map(Object.entries(seed)); return { getItem: (k) => (m.has(k) ? m.get(k) : null), setItem: (k, v) => m.set(k, String(v)), removeItem: (k) => m.delete(k), m }; };
@@ -118,7 +118,7 @@ test('a storage that throws never breaks the handle', () => {
 });
 
 test('bundle QA 2: the CSS default is 340px inside 280px..min(50%, 640px)', () => {
-  const css = readFileSync(new URL('../ui/public/style.css', import.meta.url), 'utf8');
+  const css = readStyleCss();
   assert.match(css, /\.runs-shell\{[^}]*grid-template-columns:var\(--runs-list-w,clamp\(280px,340px,min\(50%,640px\)\)\) minmax\(0,1fr\);/);
 });
 

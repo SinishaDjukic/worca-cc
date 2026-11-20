@@ -12,8 +12,8 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { useTempHome } from './helpers/temp-home.mjs';
 import { seedPipeline } from './helpers/db-seed.mjs';
-import { getDb } from '../src/core/db.mjs';
-import { getStats, shapingGroups } from '../src/core/stats.mjs';
+import { getDb, migrate } from '../src/core/db.mjs';
+import { getStats, shapingGroups, reviewQuality } from '../src/core/stats.mjs';
 import { recordCostDelta, recordAskCostDelta, recordRequirementsCostDelta, recordUtilityCost, budgetStatus } from '../src/core/cost-budget.mjs';
 import { app, runs } from '../ui/server.mjs';
 
@@ -252,6 +252,12 @@ test('requirements spend shows in totals, prev, all-time, series and the budget 
   assert.equal(budget.allTimeSpendUsd, all.totals.spentUsd, 'the spend card and the all-time tile agree');
 });
 
+test("9c: an 'unknown' $0 row leaves the feature count alone", () => {
+  const before = getStats({ requirementsEnabled: true, range: 'all', now: NOW }).totals.requirements;
+  recordRequirementsCostDelta({ featureSeq: 977, amountUsd: 0, costKind: 'unknown', tsMs: +new Date(2026, 7, 4, 12) });
+  assert.deepEqual(getStats({ requirementsEnabled: true, range: 'all', now: NOW }).totals.requirements, before);
+});
+
 test('a brief look counts in requirements spend but not in the feature count', () => {
   const before = getStats({ requirementsEnabled: true, range: 'all', now: NOW }).totals.requirements;
   recordRequirementsCostDelta({ briefId: 9, amountUsd: 0.5, tsMs: +new Date(2026, 7, 4, 11) });
@@ -308,14 +314,8 @@ test('shapingGroups: finished runs with a size, shaped vs unshaped per size', as
   assert.equal(g[1].unshaped.avgCostUsd, null);
 });
 
-test('GET /api/stats: shaping only with the shapeFirst flag on', async () => {
-  const saved = process.env.WORCA_FLAGS;
-  try {
-    process.env.WORCA_FLAGS = '-shapeFirst';
-    assert.equal('shaping' in await (await fetch(`${base}/api/stats?range=month`)).json(), false);
-    process.env.WORCA_FLAGS = 'shapeFirst';
-    assert.ok(Array.isArray((await (await fetch(`${base}/api/stats?range=all`)).json()).shaping.groups));
-  } finally { if (saved === undefined) delete process.env.WORCA_FLAGS; else process.env.WORCA_FLAGS = saved; }
+test('GET /api/stats carries shaping', async () => {
+  assert.ok(Array.isArray((await (await fetch(`${base}/api/stats?range=all`)).json()).shaping.groups));
 });
 
 test('GET /api/stats?report=1 adds report (runs, prevRuns, buckets, ask); without it there is no report key', async () => {
@@ -336,4 +336,89 @@ test('Smart run naming spend is reported as utility.naming and never joins the s
   assert.deepEqual(after.utility, { naming: { usd: 0.0005, count: 2 } });
   assert.equal(after.totals.spentUsd, before.totals.spentUsd);
   assert.deepEqual(getStats({ range: 'month', now: NOW }).utility.naming.count, 2);
+});
+
+// Review quality (#990 slice 6): appended last; seeded in March 2025, a month no other test uses. Only these rows carry
+// review_stats, so the all-time route reads them alone.
+const setReviewStats = (id, text) => getDb().prepare('UPDATE pipelines SET review_stats = ? WHERE id = ?').run(text, id);
+const rqEntry = (over) => ({ target: 'plan', role: 'qa', label: 'QA', reviews: 1, raised: 2, fixed: 1, disputed: 1, open: 0, ...over });
+const rqRoleReviews = { rounds: [{ target: 'plan', roles: [{ key: 'qa', label: 'QA', counts: { raised: 2, fixed: 1, disputed: 1, open: 0 }, findings: [] }] }] };
+const MAR = (d) => new Date(2025, 2, d).getTime();
+let rqSeeded = false;
+async function seedReviewQuality() {
+  if (rqSeeded) return;
+  rqSeeded = true;
+  const mk = async (status, day, month = 3, roleReviews = rqRoleReviews) => {
+    const { id } = await seedPipeline('/tmp/p', { status, roleReviews });
+    setStarted(id, iso(2025, month, day));
+    return id;
+  };
+  await mk('done', 10);                                                   // through writeState's toPipelineRow
+  const b = await mk('done', 20);
+  setReviewStats(b, JSON.stringify({ v: 1, roles: [rqEntry({ raised: 1, fixed: 0, disputed: 0, open: 1 }),
+    rqEntry({ target: 'diff', role: 'security', label: 'Security', raised: 3, fixed: 3, disputed: 0, open: 0 })] }));
+  await mk('running', 12);                                                // not finished: left out
+  await mk('done', 5, 4);                                                 // April: outside the March window
+  setReviewStats(await mk('done', 14), '{"v":1,"roles":[');               // damaged: skipped
+  setReviewStats(await mk('done', 15), JSON.stringify({ v: 2, roles: [rqEntry()] }));   // unknown version: skipped
+  await mk('done', 16, 3, null);                                     // no role reviews: no summary
+}
+
+test('reviewQuality skips running, out-of-window, damaged and unknown-version rows', async () => {
+  await seedReviewQuality();
+  const q = reviewQuality(MAR(1), new Date(2025, 3, 1).getTime());
+  assert.equal(q.runs, 2);
+  assert.deepEqual(q.roles, [
+    { target: 'plan', role: 'qa', label: 'QA', runs: 2, reviews: 2, raised: 3, fixed: 1, disputed: 1, open: 1 },
+    { target: 'diff', role: 'security', label: 'Security', runs: 1, reviews: 1, raised: 3, fixed: 3, disputed: 0, open: 0 },
+  ]);
+});
+
+test('GET /api/stats/review-quality sums done runs per (target, role) in the window', async () => {
+  await seedReviewQuality();
+  let res = await fetch(`${base}/api/stats/review-quality`);
+  assert.equal(res.status, 200);
+  let body = await res.json();
+  assert.equal(body.startMs, 0);
+  assert.ok(body.endMs > Date.now() - 60000);
+  assert.equal(body.runs, 3);                                             // all time: the April run too
+  assert.deepEqual(body.roles.map((r) => [r.target, r.role, r.runs, r.raised]), [['plan', 'qa', 3, 5], ['diff', 'security', 1, 3]]);
+  res = await fetch(`${base}/api/stats/review-quality?startMs=${MAR(15)}&endMs=${MAR(31)}`);
+  assert.equal(res.status, 200);
+  body = await res.json();
+  assert.deepEqual([body.startMs, body.endMs, body.runs], [MAR(15), MAR(31), 1]);
+  assert.deepEqual(body.roles.map((r) => [r.target, r.role, r.runs, r.raised]), [['plan', 'qa', 1, 1], ['diff', 'security', 1, 3]]);
+  res = await fetch(`${base}/api/stats/review-quality?startMs=&endMs=`);
+  assert.equal((await res.json()).runs, 3, "'' reads as the default");
+});
+
+test('review-quality rejects a malformed or empty window with 400', async () => {
+  for (const qs of ['startMs=abc', 'endMs=-1', `startMs=${MAR(15)}&endMs=${MAR(15)}`, `startMs=${MAR(15)}&endMs=${MAR(10)}`,
+    'startMs=1.5', 'startMs=1&startMs=2', 'endMs=1234567890123456']) {
+    const res = await fetch(`${base}/api/stats/review-quality?${qs}`);
+    assert.equal(res.status, 400, qs);
+    const body = await res.json();
+    assert.deepEqual(Object.keys(body), ['error'], qs);
+  }
+});
+
+test('review-quality hides the DB error behind a fixed 500', async () => {
+  await seedReviewQuality();
+  getDb().exec('ALTER TABLE pipelines DROP COLUMN review_stats');
+  const err = console.error;
+  const logged = [];
+  console.error = (...a) => logged.push(a.map(String).join(' '));
+  try {
+    const res = await fetch(`${base}/api/stats/review-quality`);
+    assert.equal(res.status, 500);
+    const text = await res.text();
+    assert.deepEqual(JSON.parse(text), { error: 'review quality unavailable' });
+    assert.ok(!/review_stats|no such column/i.test(text));
+    assert.ok(logged.some((l) => l.startsWith('[stats] review quality:')), logged.join('\n'));
+  } finally {
+    console.error = err;
+    migrate(getDb());
+  }
+  assert.ok(getDb().prepare('PRAGMA table_info(pipelines)').all().some((c) => c.name === 'review_stats'));
+  assert.equal((await fetch(`${base}/api/stats/review-quality`)).status, 200);
 });

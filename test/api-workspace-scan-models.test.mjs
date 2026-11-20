@@ -120,6 +120,28 @@ test('a pick-less workspace\'s re-scan answers 428 SCAN_MODEL_REQUIRED (never a 
   await post('/api/settings', { workspaceScan: null });
 });
 
+test('with an Everyday tasks role, a pick-less workspace re-scans on the role without asking (and stores no pick)', async () => {
+  const role = await post('/api/settings', { modelRoles: { claude: { everyday: { model: 'claude-opus-5-5', effort: 'high' } } } });
+  assert.equal(role.status, 200, await role.clone().text());
+  try {
+    const settings = await (await fetch(`${base}/api/settings`)).json();
+    assert.equal(settings.workspaceScanFromRole, true, 'the wizard is told the role covers the scan');
+    assert.equal(settings.workspaceScanDefault.scanModel, 'claude-opus-5-5', 'what an unset scan means: the role');
+    const a = await freshRepo();
+    const b = await freshRepo();
+    const { workspace } = await (await post('/api/workspaces', { name: 'Role Covers', projectPaths: [a, b] })).json();
+    const req = await post(`/api/workspaces/${workspace.id}/scan`, {});
+    assert.ok(req.ok, `the role covers the scan: no 428 (got ${req.status})`);
+    const done = await untilSettled((await req.json()).runId);
+    assert.equal(done.status, 'done');
+    assert.deepEqual(pickOf(done), ['claude-opus-5-5', 'high', 'sonnet', 'medium'], 'scan agent on the role, project agents on the default alias');
+    assert.equal((await (await fetch(`${base}/api/workspaces/${workspace.id}`)).json()).workspace.scanModels, null,
+      'a pick nobody chose is never stored: later re-scans follow the role');
+  } finally {
+    await post('/api/settings', { modelRoles: { claude: { everyday: null } } });
+  }
+});
+
 test('a member-add auto-rescan of a pick-less workspace answers needsModel; the prompted flow saves the pick and the re-scan runs on it (the "add a new agent" bug)', async () => {
   const a = await freshRepo();
   const b = await freshRepo();
@@ -129,7 +151,7 @@ test('a member-add auto-rescan of a pick-less workspace answers needsModel; the 
   // member-add auto-rescan resolves the workspace pick (NULL) — and must NOT fall to the default:
   // the members route answers { rescan: { needsModel: true } } and the page opens the window.
   const changed = await (await post(`/api/workspaces/${workspace.id}/members`, { add: [c] })).json();
-  assert.deepEqual(changed.rescan, { needsModel: true }, 'the member change stands but asks for a model');
+  assert.deepEqual(changed.rescan, { mode: 'full', needsModel: true }, 'the member change stands but asks for a model');
   assert.equal(changed.workspace.scanModels, null, 'nothing persisted by the pause');
   // The prompted flow: PUT the pick, then start the auto-tagged re-scan with it.
   assert.ok((await put(`/api/workspaces/${workspace.id}/scan-models`, { workspaceScan: PICK })).ok);

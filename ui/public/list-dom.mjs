@@ -1,5 +1,7 @@
-// The DOM side of the shared list (issue #948): the one roving Tab stop of the Runs list and the Chats column, and the
-// selection bar's counts. list-keys.mjs maps keys to actions; this module moves the focus and paints the bar.
+// The DOM side of the shared list (issue #948): the one roving Tab stop of the Runs list and the Chats column, the
+// selection bar's counts, and pointer selection (⌘/Shift-click, long-press). list-keys.mjs maps keys to actions; this
+// module moves the focus and paints the bar.
+import { rangeKeys } from './runs-selection.mjs';
 
 /** The Tab stops of a list: rows and foldable section heads. */
 export const LIST_NAV = 'a.runs-row, button.runs-sec-head[data-section-key]';
@@ -51,6 +53,41 @@ export function createListRove({ host, state, nav = LIST_NAV, keyOf = navKey, cu
   return { items, find, rove, focus, move, around, keyOf };
 }
 
+/** How long the moved row keeps its fill after Add to group (decision 5). */
+export const LANDED_MS = 1500;
+
+/** The id of the folded section that holds `rowKey` in a list model (Runs or Chats), else null. */
+export function collapsedSectionOf(model, rowKey) {
+  const s = (model?.sections || []).find((x) => (x.rows || []).some((r) => r.key === rowKey));
+  return s && s.collapsed ? s.id : null;
+}
+
+/** `state.landed`'s row (navKey) takes .is-landed until its time is up; every other row loses it. Call after each paint. */
+export function paintLanded(host, state, now = Date.now()) {
+  if (!host) return;
+  for (const a of host.querySelectorAll('a.runs-row.is-landed')) a.classList.remove('is-landed');
+  const l = state.landed;
+  if (!l || now >= l.until) { state.landed = null; return; }
+  const a = [...host.querySelectorAll('a.runs-row')].find((x) => navKey(x) === l.key);
+  if (a) a.classList.add('is-landed');
+}
+
+/**
+ * Focus after Add to group (decision 5), the Runs list's and the Chats column's: `node` (the moved row's link) becomes
+ * the one Tab stop, takes the focus and the brief .is-landed fill (kept across repaints by paintLanded). Never the row
+ * that slid into the old place: the caller finds the moved row itself. No node: `fallback()` (the opener) is focused.
+ */
+export function landOn({ host, rove, state, node, fallback = () => null, win = host?.ownerDocument?.defaultView || globalThis, ms = LANDED_MS, now = Date.now() }) {
+  if (!node) { const f = fallback(); if (f && typeof f.focus === 'function') f.focus(); return null; }
+  state.focusKey = rove.keyOf(node);
+  rove.rove();
+  rove.focus(node);
+  state.landed = { key: state.focusKey, until: now + ms };
+  paintLanded(host, state, now);
+  win.setTimeout(() => paintLanded(host, state), ms);
+  return node;
+}
+
 /** The selection bar: `label` into .runs-bulk-n; per `[data-bulk=KEY]` in `actions`, its .runs-bulk-c count, disabled at
  *  0, its title (removed when empty) and, when given, its .runs-bulk-w word. Buttons not in `actions` are left alone. */
 export function paintBulkBar(bar, { label, actions = {} }) {
@@ -67,4 +104,51 @@ export function paintBulkBar(bar, { label, actions = {} }) {
     const w = a.word != null ? b.querySelector('.runs-bulk-w') : null;
     if (w) w.textContent = a.word;
   }
+}
+
+/**
+ * Pointer selection (A11, spec §3.2), the Runs list's and the Chats column's: ⌘/Ctrl-click toggles a row and sets the
+ * anchor; Shift-click adds the range from the anchor (no anchor, or a row outside `visibleKeys()`: a toggle); a touch
+ * long-press toggles the row and swallows the click that follows. None of them opens the row. A middle click or the
+ * context menu fires no primary `click`, so the browser keeps "open in a new tab". Capture phase on `list`, so the
+ * list's own open handler never sees these clicks. `toggle(key)` and `selectRange(keys)` enter selection and repaint
+ * (the caller owns its state). Returns a disposer.
+ */
+export function bindPointerSelect({ list, visibleKeys, getAnchor, setAnchor, toggle, selectRange, win = list?.ownerDocument?.defaultView, pressMs = 500 }) {
+  if (!list) return () => {};
+  const w = win || globalThis;
+  const keyOf = (n) => (n && n.closest ? n.closest('.runs-item')?.dataset.rowKey || '' : '');
+  let press = null;
+  let pressed = '';
+  const cancel = () => { if (press) w.clearTimeout(press); press = null; };
+  const onDown = (e) => {
+    if (e.pointerType !== 'touch') return;
+    const key = keyOf(e.target);
+    if (!key) return;
+    cancel();
+    press = w.setTimeout(() => { press = null; pressed = key; toggle(key); }, pressMs);
+  };
+  const onClick = (e) => {
+    if (pressed) { e.preventDefault(); e.stopPropagation(); pressed = ''; return; }
+    const row = e.target && e.target.closest ? e.target.closest('a.runs-row') : null;
+    if (!row || e.button || !(e.metaKey || e.ctrlKey || e.shiftKey)) return;
+    const key = keyOf(row);
+    if (!key) return;
+    e.preventDefault();
+    e.stopPropagation();
+    const anchor = getAnchor();
+    const range = e.shiftKey && anchor ? rangeKeys(visibleKeys(), anchor, key) : [];
+    if (range.length) { selectRange(range); return; }   // adds: the range joins the selection
+    setAnchor(key);
+    toggle(key);
+  };
+  list.addEventListener('pointerdown', onDown);
+  for (const t of ['pointerup', 'pointercancel', 'pointermove']) list.addEventListener(t, cancel);
+  list.addEventListener('click', onClick, true);
+  return () => {
+    cancel();
+    list.removeEventListener('pointerdown', onDown);
+    for (const t of ['pointerup', 'pointercancel', 'pointermove']) list.removeEventListener(t, cancel);
+    list.removeEventListener('click', onClick, true);
+  };
 }

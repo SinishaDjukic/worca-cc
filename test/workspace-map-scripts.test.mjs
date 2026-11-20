@@ -23,6 +23,9 @@ import { countLines } from '../src/shared/workspace-map/render.mjs';
 import { edgeId } from '../src/shared/workspace-map/ids.mjs';
 import { scanDescriptionBudget } from '../src/shared/workspace-size.mjs';
 import { realAgentMetas } from './helpers/graph-ports.mjs';
+import resynth from '../scripts/workspace-map-resynth.mjs';
+import { STORED_MAP_FILE } from '../src/core/workspace-map/join.mjs';
+import { sampleMap } from './helpers/wsmap-stored.mjs';
 
 // A card runs for real whatever the mock flag says (none declares a mock); keep the envelope honest.
 delete process.env.WORCA_MOCK;
@@ -282,4 +285,45 @@ test('a member key that is not a safe file name: the brief file, its index line 
   assert.equal(json(cat.outputs.catalog.path).briefs['my app'], 'usage-briefs/my_app.md');
   assert.ok(lines(cat.outputs.brief.path).includes('- my app (My App): usage-briefs/my_app.md'), lines(cat.outputs.brief.path).join('\n'));
   assert.ok(existsSync(join(pipelineDir, 'usage-briefs', 'my_app.md')), 'the file the index line names exists');
+});
+
+// workspaceMapResynth (the partial re-scan's seed): pure file I/O, called in-process. Not in KEYS — it
+// refuses garbage (no frozen map, another member set) instead of degrading to an empty map.
+const seedCtx = (keys) => ({ runId: 'run-resynth', workspace: { id: 'wks-x-00000001', name: 'Shop',
+  members: keys.map((k) => ({ key: k, name: k, dir: `/tmp/${k}`, projectDir: `/tmp/${k}` })), overrides: null } });
+const seedIo = (dir) => ({ outputs: { map: { path: join(dir, 'workspace-map.json') }, brief: { path: join(dir, 'synth-brief.md') } } });
+const noLog = () => {};
+
+test('workspaceMapResynth seeds synth from the frozen stored map: same edges, a brief with its marker lines, scannedAt kept', async () => {
+  const dir = tmp('wsmap-resynth-');
+  const { map } = sampleMap({ keys: ['ka', 'kc'], names: ['a', 'c'] });
+  writeFileSync(join(dir, STORED_MAP_FILE), JSON.stringify({ map: { ...map, graph: { mode: 'full', file: 'workspace-graph.json', nodes: 4, bridges: 1 } } }));
+  writeFileSync(join(dir, 'workspace-graph.json'), '{"nodes":[],"links":[]}');
+  const r = await resynth({ inputs: {}, ...seedIo(dir), ctx: seedCtx(['ka', 'kc']), log: noLog });
+  const out = JSON.parse(readFileSync(join(dir, 'workspace-map.json'), 'utf8'));
+  assert.deepEqual(out.edges, map.edges);
+  assert.equal(out.scannedAt, map.scannedAt, 'a partial re-scan keeps the scan date');
+  assert.ok(out.resynthesizedAt);
+  assert.deepEqual(out.graph, { mode: 'full', file: 'workspace-graph.json', nodes: 4, bridges: 1 }, 'the frozen graph copy is adopted at finalize');
+  const brief = lines(join(dir, 'synth-brief.md'));
+  assert.equal(brief[0], '# Workspace synthesis brief');
+  assert.equal(brief[1], `<!-- worca:map=${join(dir, 'workspace-map.json')} -->`);
+  assert.match(brief[2], /^<!-- worca:check=.*synthesis.*--map/);
+  assert.match(r.summary, /2 members, 3 edges/);
+});
+
+test('workspaceMapResynth drops a graph the run could not copy; its last-resort guard never writes a map', async () => {
+  const dir = tmp('wsmap-resynth-');
+  const { map } = sampleMap({ keys: ['ka', 'kc'], names: ['a', 'c'] });
+  writeFileSync(join(dir, STORED_MAP_FILE), JSON.stringify({ map: { ...map, graph: { mode: 'full', file: 'workspace-graph.json', nodes: 4, bridges: 1 } } }));
+  await resynth({ inputs: {}, ...seedIo(dir), ctx: seedCtx(['ka', 'kc']), log: noLog });
+  assert.deepEqual(JSON.parse(readFileSync(join(dir, 'workspace-map.json'), 'utf8')).graph, { mode: 'none', file: null, nodes: 0, bridges: 0 });
+
+  const empty = tmp('wsmap-resynth-');
+  await assert.rejects(resynth({ inputs: {}, ...seedIo(empty), ctx: seedCtx(['ka', 'kc']), log: noLog }), /no frozen stored map/);
+  assert.equal(existsSync(join(empty, 'workspace-map.json')), false, 'nothing for finalize to save');
+  const other = tmp('wsmap-resynth-');
+  writeFileSync(join(other, STORED_MAP_FILE), JSON.stringify({ map }));
+  await assert.rejects(resynth({ inputs: {}, ...seedIo(other), ctx: seedCtx(['ka', 'kb']), log: noLog }), /different member set/);
+  assert.equal(existsSync(join(other, 'workspace-map.json')), false);
 });

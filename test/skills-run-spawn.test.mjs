@@ -103,7 +103,9 @@ test('safety net: the re-dispatch keeps the abort signal and reports ITS session
   const ac = new AbortController();
   const r = await runAgentExecution(agentCtx({ skillPluginDirs: DIRS, signal: ac.signal }));
   assert.equal(r.sessionId, 'sess-retry', 'a pause after the net resumes the session that ran');
-  assert.equal(calls[1].signal, ac.signal, 'a pause still reaches the re-dispatched child');
+  // The child's signal folds the run's in with the node time limit (E4): a pause still reaches it.
+  ac.abort();
+  assert.equal(calls[1].signal.aborted, true, 'a pause still reaches the re-dispatched child');
 });
 
 test('safety net: a refusal the CLI printed on stdout before init counts too (the runner\'s error then names no reason)', async () => {

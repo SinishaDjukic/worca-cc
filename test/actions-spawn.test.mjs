@@ -19,8 +19,9 @@ test('base env strips worca internals and GitHub credentials', () => {
   assert.deepEqual(Object.keys(env).sort(), ['PATH']);
 });
 
-test('base env strips every Azure DevOps credential', () => {
-  const ADO_KEYS = ['WORCA_ADO_TOKEN', 'WORCA_ADO_READ_TOKEN', 'WORCA_ADO_WRITE_TOKEN', 'AZURE_DEVOPS_EXT_PAT', 'WORCA_ADO_GIT_TOKEN', 'WORCA_ADO_BOARDS_TOKEN'];
+test('base env strips every Azure DevOps and Bitbucket credential', () => {
+  const ADO_KEYS = ['WORCA_ADO_TOKEN', 'WORCA_ADO_READ_TOKEN', 'WORCA_ADO_WRITE_TOKEN', 'AZURE_DEVOPS_EXT_PAT', 'WORCA_ADO_GIT_TOKEN', 'WORCA_ADO_BOARDS_TOKEN',
+    'WORCA_BB_TOKEN', 'WORCA_BB_READ_TOKEN', 'WORCA_BB_WRITE_TOKEN', 'WORCA_BB_EMAIL', 'WORCA_BB_GIT_TOKEN', 'WORCA_BB_GIT_USER'];
   const env = actionBaseEnv({ ...Object.fromEntries(ADO_KEYS.map((k) => [k, 'x'])), PATH: '/b' });
   assert.deepEqual(env, { PATH: '/b' });
 });

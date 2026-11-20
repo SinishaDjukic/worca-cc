@@ -50,7 +50,7 @@ after(async () => {
   await rm(homeDir, { recursive: true, force: true, maxRetries: 20, retryDelay: 100 });
 });
 
-test('GET /api/workflows lists the built-in default first (7-node graph, then wf_memory_defrag) and GET /api/workflows/wf_default returns it with wires', async () => {
+test('GET /api/workflows lists the built-in default first (7-node graph, then wf_lean_build, then wf_memory_defrag) and GET /api/workflows/wf_default returns it with wires', async () => {
   await checkRows([
     { name: 'GET /api/workflows lists the built-in default first', run: async () => {
       const r = await fetch(`${base}/api/workflows`);
@@ -63,8 +63,10 @@ test('GET /api/workflows lists the built-in default first (7-node graph, then wf
       assert.equal(j.workflows[0].version, 2);
       assert.equal(j.workflows[0].nodes.length, 7);
       assert.equal(j.workflows[0].steps, undefined, 'no v1 topology on the default');
-      assert.equal(j.workflows[1].id, 'wf_memory_defrag', 'the Memory defragment built-in is listed second');
-      assert.equal(j.workflows[1].nodes.length, 3);
+      assert.equal(j.workflows[1].id, 'wf_lean_build', 'the Lean built-in is listed second');
+      assert.equal(j.workflows[1].nodes.length, 6);
+      assert.equal(j.workflows[2].id, 'wf_memory_defrag', 'the Memory defragment built-in is listed third');
+      assert.equal(j.workflows[2].nodes.length, 3);
     } },
     { name: 'GET /api/workflows/:id returns the default template', run: async () => {
       const r = await fetch(`${base}/api/workflows/wf_default`);

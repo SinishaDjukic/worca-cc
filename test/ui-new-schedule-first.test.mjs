@@ -4,22 +4,21 @@
 // "Start now instead" / the menu's "Start run now" drop it (docs/scheduled-runs.md "UI").
 import { test, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { JSDOM } from 'jsdom';
 import { useDomRelease } from './helpers/jsdom-release.mjs';
 import { fieldErrorText } from './helpers/feedback.mjs';
+import { readIndexHtml } from '../src/core/read-index-html.mjs';
 
 // Release each booted window after its test (see test/helpers/jsdom-release.mjs).
 const trackDom = useDomRelease(afterEach);
 
-const htmlPath = fileURLToPath(new URL('../ui/public/index.html', import.meta.url));
 const appPath = fileURLToPath(new URL('../ui/public/app.js', import.meta.url));
 const PROJECTS = [{ name: 'svc-iam', path: '/a/svc-iam', exists: true }];
 const tick = (n = 1) => new Promise((r) => setTimeout(r, n));
 
 async function boot(hash = '#new/schedule') {
-  const dom = trackDom(new JSDOM(readFileSync(htmlPath, 'utf8'), { url: `http://localhost:4317/${hash}` }));
+  const dom = trackDom(new JSDOM(readIndexHtml(), { url: `http://localhost:4317/${hash}` }));
   const { window } = dom;
   window.Element.prototype.scrollIntoView = function () {};
   window.WebSocket = class { constructor() { this.readyState = 1; } send() {} close() {} addEventListener() {} };

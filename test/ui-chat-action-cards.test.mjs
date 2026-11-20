@@ -7,6 +7,7 @@ import { buildReceiptCard, buildRunStopCard, buildPullRequestCard, registerChatA
 import { chatCardBuilder, _resetChatExtensions } from '../ui/public/chat/extensions.mjs';
 import { checkRows } from './helpers/rows.mjs';
 import { ICONS } from '../ui/public/icons.mjs';
+import { readStyleCss } from '../src/core/read-style-css.mjs';
 
 const doms = [];
 afterEach(() => { for (const d of doms.splice(0)) d.window.close(); _resetChatExtensions(); });
@@ -268,7 +269,7 @@ test('refine cycle 2: Away now names itself once; declined stubs carry the reada
 
 test('refine cycle 2: the action-card rules that keep every text at 4.5:1 in light (measured in Chrome)', async () => {
   const { readFileSync } = await import('node:fs');
-  const css = readFileSync(new URL('../ui/public/style.css', import.meta.url), 'utf8');
+  const css = readStyleCss();
   const p2 = css.slice(css.indexOf('/* ===== Chat P2: Action cards ===== */'));
   assert.ok(!/is-reverted[^{]*\{[^}]*opacity/.test(p2), 'reverted text is never faded with opacity');
   for (const rule of ['.ask-actcard-stub{color:var(--ink-2);overflow-wrap:anywhere;}', ':is(.ask-rcard,.ask-prcard) .ask-mcard-arrow{color:var(--ink-2);}']) assert.ok(p2.includes(rule), rule);
@@ -290,7 +291,7 @@ test('refine cycle 3 mutation killers: every Revert outcome is spoken once by na
 
 test('refine cycle 3 mutation killers: a disabled Revert / Keep running / Not now keeps --ink-2 on hover; a reverted receipt mutes its new value without opacity', async () => {
   const { readFileSync } = await import('node:fs');
-  const css = readFileSync(new URL('../ui/public/style.css', import.meta.url), 'utf8');
+  const css = readStyleCss();
   const p2 = css.slice(css.indexOf('/* ===== Chat P2: Action cards ===== */'));
   assert.ok(p2.includes('.ask-rcard.is-reverted .ask-rcard-change .ask-mcard-after{color:var(--ink-2);font-weight:400;}'));
   // Revert / Keep running / Not now are .btn-quiet: its hover skips a disabled button, so the --ink-2 text stays.
@@ -353,13 +354,11 @@ test('pull-request: an applied card shows no watch line; each PR link\'s tooltip
   ]);
 });
 
-test('s5: an applied pull-request card carries the Ask for changes field while the gate is on; it posts the run ref', async () => {
+test('s5: an applied pull-request card carries the Ask for changes field; it posts the run ref', async () => {
   const { ctx } = ctxOf();
   const sent = [];
   ctx.postChanges = async (ref, text) => { sent.push([ref, text]); };
   const applied = { ...PR, state: 'applied', card: { ...PR.card, result: { url: 'https://x/pull/7' } } };
-  assert.equal(buildPullRequestCard(applied, ctx).el.querySelector('.ask-changes'), null, 'gate off: no field');
-  ctx.doc.documentElement.dataset.flags = 'shapeFirst';
   assert.equal(buildPullRequestCard(PR, ctx).el.querySelector('.ask-changes'), null, 'proposed: no field');
   const ws = { ...applied, card: { ...applied.card, workspaceId: 'ws_1' } };
   assert.equal(buildPullRequestCard(ws, ctx).el.querySelector('.ask-changes'), null, 'workspace run: no field');

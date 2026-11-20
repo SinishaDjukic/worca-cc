@@ -293,9 +293,12 @@ tag. `docs:publish` warns when the newest stable tag has no changelog entry.
   The publish job builds and checks the list (`tools/check-pack.mjs --require-extension`) before `npm publish`.
   `npm ci` must keep installing devDependencies there (esbuild).
 - **GitHub Release assets.** The `release` job runs `npm run ext:zip` and attaches `worca-chrome-<ver>.zip`,
-  `worca-edge-<ver>.zip` and `worca-firefox-<ver>.zip`, with the install note from
-  `.github/release-notes/browser-extension.md` above the generated notes. Firefox's zip is unsigned (no AMO
-  signing yet).
+  `worca-edge-<ver>.zip` and `worca-firefox-<ver>.zip`. Firefox's zip is unsigned (no AMO signing yet).
+- **Release notes** are GitHub's generated notes and nothing else, counted from the previous **stable**
+  release (`--notes-start-tag`), for an RC as well as a stable release: 1.14.0 and 1.14.0-rc.4 both list
+  every PR since 1.13.1. Left to itself GitHub starts at the newest release of any kind, so a stable release
+  cut from an RC listed nothing but the version bump. Install steps for the zips live in
+  `docs/browser-extension.md`, not in the release body.
 - **A failed upload** fails the `release` job. gh leaves the release as a draft when an upload fails. Re-attach
   from a checkout of the tag (`npm ci && npm run ext:zip`):
   `gh release upload worca-app-v<ver> extension/dist/worca-*-<ver>.zip --clobber`, then
@@ -371,7 +374,7 @@ previously working pipeline breaks.
 | **Moving the job into a GitHub Environment** | Add the environment name to the trusted publisher config; leaving it blank while the job declares one fails the OIDC exchange. |
 | **Adding another package** | A full pass of §3 — new tag prefix, new workflow, new bootstrap, new trusted publisher registration. Nothing is inherited from a sibling package. |
 | **Publishing a package in a subdirectory** | Set `repository.directory`, and give the workflow steps a `working-directory`. |
-| **npm/Node upgrade in CI** | Trusted Publishing needs npm >= 11.5.1 (bundled with Node >= 24.5). The workflow asserts this explicitly rather than failing obscurely at publish time. |
+| **npm/Node upgrade in CI** | Trusted Publishing needs npm >= 11.5.1 (bundled with Node >= 24.5). The workflow asserts this explicitly rather than failing obscurely at publish time. Only `build-and-publish` runs on Node 24 for this; the release's tests and zips run on Node 22, the `engines` floor dev CI proves, and dev CI also runs the fast tests on Node 24. Raising the floor means moving all of them together. |
 | **Adding a maintainer** | npmjs.com → org → members, then grant the team write access to the package. Not needed for CI publishing, which authenticates as the repo, not as a person. |
 | **A release that must go out with the pipeline broken** | Mint a short-lived granular token scoped to the single package, publish locally with `--access public`, revoke it immediately. Do not add a long-lived `NPM_TOKEN` secret to the repo. |
 | **Deprecating a bad version** | `npm deprecate @worca/app@<version> "<reason>"`. Prefer this to unpublishing — it warns installers without breaking anyone already pinned. |
@@ -414,6 +417,7 @@ Release checklist addition — before a stable tag, on the rc image:
 | Symptom | Cause |
 | --- | --- |
 | `npm error code ENEEDAUTH` in CI | Trusted publisher not registered, or workflow filename/repo mismatch, or missing `id-token: write` on the job |
+| `npm error code E404` / `404 Not Found - PUT https://registry.npmjs.org/@worca%2fapp` at **Publish to npm**, after "Signed provenance statement" | The package has no trusted publisher any more: npmjs.com → the package → Settings shows only "Select your publisher". It has gone missing twice (Oct 2026) with nothing in this repo touching it. Register it again (§3.4, needs 2FA), then `gh run rerun <run-id> --failed`: nothing was published, so the same tag and version still work. |
 | `provenance generation failed` / repository mismatch | `repository.url` does not point at the building repo |
 | `You must sign up for private packages` | Missing `--access public` / `publishConfig.access` on a scoped package |
 | `You cannot publish over the previously published versions` | The version was already published — bump it; it cannot be reused |

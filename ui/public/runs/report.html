@@ -1,0 +1,56 @@
+    <!-- ===== Report this run ===== -->
+    <!-- The <pre> shows the EXACT payload that will leave the machine; nothing is
+         sent without a click. Follows the #viewer-card shape (scrollable monospace
+         body) plus the #export-modal checkbox rows.
+         NOTE: the page's capture-phase Escape arms (app.js) stand down for any open
+         .viewer-modal or <dialog> (modal-guard.mjs dialogOpen), so a new overlay needs
+         only that class and a guardModal() — there is no list to extend. -->
+    <div id="report-modal" class="viewer-modal report-modal hidden" role="dialog" aria-modal="true" aria-labelledby="report-title">
+      <div class="card dlg">
+        <!-- Pinned head (dialog-layout.mjs): title, Cancel, and every action. Only the
+             .dlg-body scrolls, so the actions stay reachable while the reporter is
+             reading the JSON preview, and an error or a filed-issue link lands where
+             they are already looking. -->
+        <div class="report-top dlg-head">
+          <div class="card-head">
+            <h2 id="report-title">Report this run</h2>
+            <div class="report-head-actions">
+              <button type="button" id="report-close" class="btn">Cancel</button>
+              <button type="button" id="report-create-issue" class="btn btn-primary">Create GitHub issue</button>
+            </div>
+          </div>
+          <!-- Both outcomes of the button above them, so neither needs a scroll to read. -->
+          <div class="report-error" hidden></div>
+          <p id="report-filed" class="report-filed" hidden></p>
+        </div>
+        <div class="dlg-body">
+          <div class="report-field">
+            <label for="report-reason">What went wrong?</label>
+            <select id="report-reason" class="select"></select>
+          </div>
+          <div class="report-field">
+            <label for="report-expectation">What did you expect? (optional)</label>
+            <textarea id="report-expectation" class="textarea" rows="3" placeholder="What should have happened instead?"></textarea>
+          </div>
+          <div id="report-optins"></div>
+          <div class="report-field">
+            <label for="report-preview">This is exactly what will be sent</label>
+            <pre id="report-preview" class="viewer"></pre>
+          </div>
+        </div>
+        <div class="dlg-foot">
+          <div class="confirm-actions">
+            <button type="button" id="report-copy" class="btn">Copy JSON</button>
+            <button type="button" id="report-download" class="btn">Download JSON</button>
+            <!-- The FALLBACK, hidden until the server says it could not file the issue
+                 itself. An <a>, not a button: a real anchor gives the browser a genuine
+                 user-gesture new tab. app.js strips the href while a rebuild is in
+                 flight, so the link can never fire with a payload that disagrees with
+                 the preview. Its prefilled body can only ASK for the JSON to be pasted
+                 — a URL dies at ~8 KB and half of all runs serialize larger. -->
+            <a id="report-issue" class="btn" target="_blank" rel="noopener noreferrer" hidden>Open a prefilled issue</a>
+          </div>
+        </div>
+      </div>
+    </div>
+

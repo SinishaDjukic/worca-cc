@@ -1,0 +1,20 @@
+/* ---------- Saved-markdown viewer ---------- */
+.viewer{font-family:var(--mono);font-size:12px;line-height:1.7;background:var(--canvas-2);border:1px solid var(--line);
+  border-radius:var(--r-card);padding:18px 20px;max-height:480px;overflow:auto;white-space:pre-wrap;word-break:break-word;margin:0;}
+
+/* ---------- typed artifact viewer ---------- */
+/* The typed host mounts inside <pre class="viewer">, whose max-height:480px
+   otherwise clamps the 80vh host and the 70vh <embed> a PDF renders into. Drop
+   the <pre>'s markdown shell while it is holding one (showViewerHost adds the
+   class, hideViewer removes it) rather than leaning on :has(). */
+.viewer.holds-artifact{max-height:none;overflow:visible;padding:0;background:none;border:0;}
+.artifact-view{max-height:80vh;overflow:auto;}
+.artifact-view iframe{width:100%;aspect-ratio:16/9;border:0;background:var(--bg);border-radius:var(--r-sm);}
+.artifact-view embed{width:100%;height:70vh;border-radius:var(--r-sm);}
+.artifact-view.kind-image img{max-width:100%;cursor:zoom-in;border-radius:var(--r-sm);}
+.artifact-view.kind-image.zoomed img{max-width:none;cursor:zoom-out;}
+/* --blue-ink-strong, not --blue-ink: inline link text at a small size is what that
+   token is for (5.9:1 on white vs 3.8:1), and the light contrast gate flags these
+   artifact links in the History run detail. */
+.log-artifact{color:var(--blue-ink-strong);text-decoration:underline;cursor:pointer;}
+

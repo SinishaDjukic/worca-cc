@@ -1,16 +1,14 @@
 import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import http from 'node:http';
-import { readFileSync } from 'node:fs';
-import { fileURLToPath } from 'node:url';
 
 import { useTempHome } from './helpers/temp-home.mjs';
 import { SUPPORTED_LANGUAGE_IDS } from '../ui/public/syntax-highlight.mjs';
 import { HLJS_GRAMMAR_IDS } from '../ui/public/hljs-loader.mjs';
+import { readIndexHtml } from '../src/core/read-index-html.mjs';
 
 useTempHome(after);
 
-const root = fileURLToPath(new URL('..', import.meta.url));
 let srv;
 let base;
 let testing;
@@ -93,7 +91,7 @@ test('SPA fallback remains narrow and index has no highlighter script tag', asyn
     assert.match(res.headers.get('content-type') || '', /text\/html/i, pathname);
     assert.match(await res.text(), /<!doctype html/i, pathname);
   }
-  const index = readFileSync(`${root}/ui/public/index.html`, 'utf8');
+  const index = readIndexHtml();
   assert.doesNotMatch(index, /highlight(?:\.min)?\.js|window\.hljs|vendor\/hljs/i);
 });
 

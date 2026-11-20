@@ -12,7 +12,7 @@
 
 import { createInterface } from 'node:readline';
 import { spawn } from 'node:child_process';
-import { fstatSync, existsSync } from 'node:fs';
+import { fstatSync, existsSync, statSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import { fileURLToPath } from 'node:url';
 import { dirname, resolve, join, basename } from 'node:path';
@@ -34,6 +34,7 @@ import { projectKey, isNoProjectKey, noProjectWorkDir, isNoProjectWorkDir } from
 import { NO_PROJECT_ERRORS } from '../shared/no-project.mjs';
 import { normaliseTags } from '../shared/run-tags.mjs';
 import { formatExecLine, formatGateHeader, formatRunSummary, formatWorkflowProposal, formatResumeHints } from './render.mjs';
+import { formatSessionHostLine, manifestLabelOf } from './render.mjs';
 // Ask forms (spec §8): the prompt FORMATTING lives in render.mjs too (a second import
 // statement, not a longer first one); the field-by-field asker lives in forms.mjs.
 import { formatFormErrors, FORM_REPROMPT_MAX } from './render.mjs';
@@ -42,12 +43,13 @@ import { createFormAsker } from './forms.mjs';
 import { kindLabel } from '../shared/away-mode/labels.mjs';
 import { pauseExitCode, describePauseReason, promptOptions, REASON } from '../core/failure-policy.mjs';
 import { sigtermGraceMs } from '../core/drain.mjs';
-import { effectiveDebugSpawn, migrateCorporateProxyFlag } from '../core/settings.mjs';
+import { effectiveDebugSpawn, migrateCorporateProxyFlag, readinessIgnore } from '../core/settings.mjs';
 import { SCHEDULE_VALUE_FLAGS, wantsSchedule, readScheduleFlags, createFromFlags, waitAndRun, cmdSchedule, resolveAfterId } from './schedule.mjs';
 import { applyTagRules } from '../core/tag-dimensions.mjs';
 import { inheritedTagsAtCreation } from '../core/scheduler.mjs';
 import { cmdRuns } from './runs.mjs';
 import { cmdLogs } from './logs.mjs';
+import { cmdSessions } from './sessions.mjs';
 import { cmdControl } from './control.mjs';
 import { cmdSwitchModel } from './switch-model.mjs';
 import { cmdModels } from './models.mjs';
@@ -139,10 +141,12 @@ function parseArgs(argv) {
     pastTeamCap: false,     // team policy (design §12): start with the total-cap acknowledgement recorded
     reason: undefined,      // …and the reason the team sees for it
     install: null,
+    force: false,           // --force: with --install, overwrite files that already exist
     sourceBranch: undefined,
     featureBranch: undefined,
     onSourceBranch: false,
     memoryScope: undefined,
+    noMemory: false,        // --no-memory (#943): the run loads no memory notes and proposes none
     after: undefined,
     afterAny: false,
     sourceFromPrevious: false,
@@ -158,6 +162,7 @@ function parseArgs(argv) {
     '--tag',
     '--model',
     '--engine',
+    '--guardrails',
     '--permission-mode',
     '--workflow',
     '--install',
@@ -177,6 +182,7 @@ function parseArgs(argv) {
     '--tag': 'tags',
     '--model': 'model',
     '--engine': 'engine',
+    '--guardrails': 'guardrailsId',
     '--permission-mode': 'permissionMode',
     '--workflow': 'workflow',
     '--install': 'install',
@@ -227,6 +233,8 @@ function parseArgs(argv) {
     if (arg === '--after-any') { out.afterAny = true; continue; }
     if (arg === '--source-from-previous') { out.sourceFromPrevious = true; continue; }
     if (arg === '--on-source-branch') { out.onSourceBranch = true; continue; }
+    if (arg === '--no-memory') { out.noMemory = true; continue; }
+    if (arg === '--force') { out.force = true; continue; }
 
     let inlineValue;
     const eq = arg.indexOf('=');
@@ -319,19 +327,22 @@ Subcommands:
                               (any unique prefix; --json for machines). See: worca runs help
   logs <id> [-f]              Tail a run's live log (--tail N, --component, --level,
                               --json). -f follows; Ctrl-C detaches, the run continues. See: worca logs help
+  sessions <id> [--json]      A run's sessions: host, turns, the cost split and its reconcile. See: worca sessions help
   stop <id>                   Stop a live or paused run (any unique prefix). See: worca stop help
   pause <id>                  Gracefully pause a live run; resume with: worca resume <id>
   switch-model <id>           Change a running or paused run's remaining stages' models
                               (this run only). See: worca switch-model help
-  doctor                      Reconcile crashed runs and sweep leftover run roots.
+  doctor                      Reconcile crashed runs, sweep leftover run roots, check node-pty's spawn-helper and the terminal shell.
   plugin <cmd> [...]          Manage plugins: add|install|list|update|remove|purge|enable|
                               disable|doctor|link|reimport|init|validate|exec. See: worca plugin help
   marketplace <cmd> [...]     Manage plugin marketplaces: add|list|refresh|remove. See: worca marketplace help
+  readiness [--project <key|path>] [--engine <name>]... [--json] [--force]
+                              Check how ready a repo is for the tools it uses. Exit 0 ready/partial, 2 not-ready, 1 error.
   script <cmd> [...]          Manage and test scripts: list|show|new|rm|test. See: worca script help
   config [get|set|unset]      Budget & cost-limit settings
   flags [list|on|off|reset]   Labs features: on/off <key>, reset [<key>]
   ui [start|stop|restart|status]
-                              Run the web UI (default http://localhost:4317). See: worca ui help
+                              Run the web UI (default http://127.0.0.1:4317). See: worca ui help
   workflow <cmd> [...]        Export a workflow (Claude Code skill, JSON, or plugin) / import JSON: list|export|import. See: worca workflow help
   metrics push [--project <path>]   Push pending team-metrics run records (headless flush)
   metrics pr-workflow [--project <path>]   Add the GitHub Action that records PR merges for the Timeline
@@ -367,6 +378,8 @@ Options:
   --model <m>              Claude model id
   --engine <name>          Agent harness for the pipeline's agent nodes: claude (default) | codex (beta) | copilot (beta) | cursor (beta) | gemini (beta) | goose (beta) | opencode (beta) | qwen (beta)
   --allow-unguarded-engine Run on an engine that cannot fully enforce the guardrail set's permission rules
+  --guardrails <id>        Guardrail set the run uses: permissive | normal | secure (Strict) | a saved set's id
+                           (default: the install's default set, Normal on a new install)
   --permission-mode <m>    Claude permission mode: default | acceptEdits | plan |
                            bypassPermissions (default acceptEdits)
   --workflow <id>          Saved pipeline template to run (default: wf_default — the built-in graph)
@@ -374,6 +387,7 @@ Options:
   --no-human               Auto workflow only: no proposal, no clarify, no agent questions (loop-budget, recovery, cost and error pauses still apply)
   --memory-scope <s>       Memory defragment workflow only: global | project — the scope the
                            run restructures (--workflow wf_memory_defrag needs it; no --prompt needed)
+  --no-memory              Run without worca memory: no notes load and none are proposed (to measure what memory is worth)
   --source-branch <name>   Branch to fork the per-run worktree from (default: current HEAD)
   --branch <name>          Feature branch name (default: claude proposes one)
   --on-source-branch       Commit onto the source branch itself: the run works on a hidden branch and
@@ -395,6 +409,7 @@ Options:
                            waited 30 min. Configure in Settings > Away mode.
   --ui                     Same as "worca ui start" (accepts --port, --open, --mock)
   --install <targetDir>    Copy agents + /worca skill into <targetDir>/.claude
+  --force                  With --install: overwrite files that already exist
   -h, --help               Show this help
   -v, -V, --version        Print the version (worca <semver>) and exit
 `;
@@ -699,6 +714,14 @@ async function attachAndDrive(orch, flags, start) {
     if (line) out(line);
   });
 
+  // Session groups (Task 55): one line per transition that matters (open, degrade, dispatch, rotate, restart, resume,
+  // a failed dispatch, close); formatSessionHostLine gives null for the rest.
+  orch.on('sessionHost', (ev) => {
+    if (answering) return; // avoid interleaving with an open question prompt
+    const line = formatSessionHostLine(ev, { labelOf: manifestLabelOf(orch.state && orch.state.stepper), color: c });
+    if (line) out(line);
+  });
+
   orch.on('log', ({ source, level, text }) => {
     if (answering) return; // avoid interleaving with an open question prompt
     const color = LEVEL_COLOR[level] || 'reset';
@@ -718,7 +741,7 @@ async function attachAndDrive(orch, flags, start) {
   orch.on('question', async (payload) => {
     const { id, kind, questions, issues, recovery, agent } = payload;
     if (kind === 'plan') {
-      // A plan approval needs a person and is answered in the worca app (shape-it-first D2). Pause, so the hold
+      // A plan ask is answered in the worca app, by a person or by Away mode once it resumes there. Pause, so the hold
       // stays in the resume point. Deferred one microtask, like abandonAnswer (:608): _ask emits `question`
       // before it parks pendingQuestion.
       out(c('yellow', `The plan ${payload.plan?.file || ''} is waiting for approval in the worca app; pausing the run.`));
@@ -933,7 +956,7 @@ async function attachAndDrive(orch, flags, start) {
 const UI_HELP = `worca ui — the web UI server
 
 Usage:
-  worca ui [start] [--port <n>] [--open] [--mock]   Start the UI (default http://localhost:${DEFAULT_UI_PORT})
+  worca ui [start] [--port <n>] [--open] [--mock]   Start the UI (default http://127.0.0.1:${DEFAULT_UI_PORT})
   worca ui stop [--port <n>]                        Stop the running UI gracefully
   worca ui restart [--port <n>] [--open] [--mock]   Stop it if running, then start it again
   worca ui status [--port <n>]                      Report whether it is running (exit 0 = running, 1 = not)
@@ -1221,6 +1244,100 @@ async function cmdAdd(argv) {
   }
 }
 
+/**
+ * `worca readiness` — evaluate how ready a repo is for agent runs on the tools it uses (the run engine, run
+ * history, tool files, the project's readiness.tools; or each --engine given). Prints what was judged, the result
+ * and one line per failing check with its fix (or the final report with --json). Exit 0 ready/partial,
+ * 2 not-ready (or any failing blocker), 1 error or unknown. WORCA_READINESS=0 turns the feature off unless --force.
+ */
+async function cmdReadiness(argv) {
+  const err = (msg) => { process.stderr.write(`worca readiness: ${msg}\n`); return 1; };
+  const opts = { project: null, engines: [], json: false, force: false };
+  for (let i = 0; i < argv.length; i++) {
+    const a = argv[i];
+    if (a === '--json') opts.json = true;
+    else if (a === '--force') opts.force = true;
+    else if (a === '--project' || a === '--engine') {
+      const v = argv[++i];
+      if (!v || v.startsWith('--')) return err(`${a} needs a value`);
+      if (a === '--engine') opts.engines.push(v); else opts.project = v;
+    } else return err(`unknown option "${a}". Usage: worca readiness [--project <key|path>] [--engine <name>]... [--json] [--force]`);
+  }
+
+  const { evaluateReadiness, readinessEnabled } = await import('../core/repo-readiness/evaluate.mjs');
+  if (!opts.force && !readinessEnabled()) {
+    out('Agent readiness checks are disabled (WORCA_READINESS=0). Use --force to run them anyway.');
+    return 0;
+  }
+  const { buildReport, summaryOf } = await import('../core/repo-readiness/report.mjs');
+  const { usedEngines } = await import('../core/repo-readiness/used.mjs');
+  const { usageInputs } = await import('../core/repo-readiness/cache.mjs');
+  const { engineLabel } = await import('../shared/engine-switch.mjs');
+
+  let dir = process.cwd();
+  let name = null;
+  let key = null;
+  let vcs = null;
+  const found = opts.project
+    ? (await listProjects()).find((p) => p.key === opts.project || p.name.toLowerCase() === opts.project.toLowerCase())
+    : null;
+  if (found) ({ path: dir, name, key, vcs } = found);
+  else {
+    // A path (or the cwd) of a registered project is that project, so a Folder project keeps folder mode.
+    dir = resolve(opts.project || process.cwd());
+    const byPath = getProjectByPath(dir);
+    if (byPath) ({ path: dir, name, key, vcs } = byPath);
+  }
+  if (!existsSync(dir) || !statSync(dir).isDirectory()) return err(`project not found: ${opts.project || dir} (not a registered project or an existing directory)`);
+  name = name || basename(dir);
+  key = key || projectKey(dir);
+
+  let base;
+  try {
+    // A registered Folder project runs on a copy of the folder: no git runs in it (an unregistered folder keeps git mode).
+    const { effectiveWorkMode } = await import('../core/project-kind.mjs');
+    const { gitState } = await import('../core/git-available.mjs');
+    const folder = vcs !== null && effectiveWorkMode(vcs, (await gitState()).available) === 'folder';
+    base = await evaluateReadiness({ dir, projectKey: key, ignore: readinessIgnore({ projectDir: dir, projectKey: key }), timeoutMs: 8000, folder });
+  } catch (e) {
+    return err(e?.message || String(e));
+  }
+
+  const engineNames = Object.keys(base.engines);
+  const unknownEngine = opts.engines.find((e) => !engineNames.includes(e));
+  if (unknownEngine) return err(`unknown engine "${unknownEngine}" (known: ${engineNames.join(', ')})`);
+  const usage = opts.engines.length
+    ? Object.fromEntries(engineNames.map((n) => [n, { used: opts.engines.includes(n), setting: 'used', detected: false, reasons: [{ kind: 'setting', text: '--engine' }] }]))
+    : usedEngines({
+      engines: engineNames, files: base.files,
+      ...usageInputs({ projectKey: key, projectDir: dir, runEngine: resolveRunEngine({ projectDir: dir, projectKey: key }).engine || 'claude' }),
+    });
+  const report = buildReport(base, usage);
+  const judged = engineNames.filter((n) => report.engines[n].used);
+  const inScope = (row) => row.scope === 'repository' || judged.includes(row.engine);
+  const failing = report.checks.filter((r) => r.status === 'fail' && inScope(r));
+  const code = report.level === 'not-ready' || failing.some((r) => r.severity === 'blocker') ? 2 : report.level === 'unknown' ? 1 : 0;
+
+  if (opts.json) {
+    out(JSON.stringify(report, null, 2));
+    return code;
+  }
+
+  const s = summaryOf(report);
+  const why = (n) => (opts.engines.length || !report.engines[n].reasons[0] ? '' : ` (${report.engines[n].reasons[0].text})`);
+  const LEVEL = { ready: 'Ready', partial: 'Partly ready', 'not-ready': 'Not ready', unknown: 'Unknown' };
+  const fixes = [s.mustFix && `${s.mustFix} must fix`, s.shouldFix && `${s.shouldFix} should fix`].filter(Boolean).join(', ');
+  out(`Project: ${name} (${dir})`);
+  out(`Judged: ${judged.length ? judged.map((n) => `${engineLabel(n)}${why(n)}`).join(', ') : 'no tool'}`);
+  out(`Result: ${LEVEL[report.level] || report.level}.${fixes ? ` ${fixes}.` : ''} ${s.passed} of ${s.applicable} checks pass.`);
+  const line = (r) => `  ${r.id}${r.engine ? ` (${engineLabel(r.engine)})` : ''}: ${r.fix}${r.detail ? ` [${r.detail}]` : ''}`;
+  for (const [title, severity] of [['Blocker failures:', 'blocker'], ['Warnings:', 'warn']]) {
+    const rows = failing.filter((r) => r.severity === severity);
+    if (rows.length) out(`\n${title}\n${rows.map(line).join('\n')}`);
+  }
+  return code;
+}
+
 async function cmdList() {
   const items = await listProjects();
   if (items.length === 0) {
@@ -1305,6 +1422,29 @@ async function cmdDoctor() {
     out(`ask worktrees: removed ${res.removedDirs} orphan dir(s), dropped ${res.prunedRows} stale row(s), skipped ${res.failed}`);
   } catch (err) {
     process.stderr.write(`worca doctor: ask-worktree sweep failed: ${err?.message || err}\n`);
+  }
+  // node-pty powers only the web UI's terminal pane (and Ask Worca's commands in it).
+  // Report-only: the server fixes the exec bit itself on the first terminal open
+  // (pty.mjs#ensureSpawnHelper); doctor never chmods, it prints the exact fix.
+  // BEFORE the legacy block for the same reason as the ask-worktree sweep above.
+  try {
+    const { spawnHelperStatus, spawnHelperDoctorLine } = await import('../core/terminal/pty.mjs');
+    let ptyDir = null;
+    try { ptyDir = dirname(createRequire(import.meta.url).resolve('node-pty/package.json')); } catch { /* optional dependency not installed */ }
+    if (!ptyDir) out('node-pty: not installed (the web UI terminal uses plain pipes; docs/terminal.md)');
+    else {
+      const line = spawnHelperDoctorLine(spawnHelperStatus(ptyDir));
+      out(/NOT executable/.test(line) ? c('yellow', line) : line);
+    }
+  } catch (err) {
+    process.stderr.write(`worca doctor: spawn-helper check failed: ${err?.message || err}\n`);
+  }
+  try {
+    const { pickShell, shellDoctorLine } = await import('../core/terminal/shell.mjs');
+    const line = shellDoctorLine(pickShell());
+    out(/no command blocks/.test(line) ? c('yellow', line) : line);
+  } catch (err) {
+    process.stderr.write(`worca doctor: terminal shell check failed: ${err?.message || err}\n`);
   }
   try {
     // A TOTAL no-op while the effective mode is `legacy`: those paths hold every live
@@ -2560,10 +2700,9 @@ async function cmdWorkflow(argv) {
   try {
     switch (verb) {
       case 'list': {
-        // The built-ins (Default, Memory defragment) are not in the user store, so
+        // The built-ins (Default, Lean, Memory defragment) are not in the user store, so
         // prepend them — mirrors the server/UI, which always show them first.
-        const { shapeFirstEnabled } = await import('../core/shape/gate.mjs');
-        const items = [wf.GRAPH_DEFAULT_WORKFLOW, wf.GRAPH_MEMORY_DEFRAG_WORKFLOW, ...(shapeFirstEnabled() ? [wf.GRAPH_SHAPE_WORKFLOW] : []), ...(await wf.listWorkflows())];
+        const items = [wf.GRAPH_DEFAULT_WORKFLOW, wf.GRAPH_LEAN_WORKFLOW, wf.GRAPH_MEMORY_DEFRAG_WORKFLOW, wf.GRAPH_SHAPE_WORKFLOW, ...(await wf.listWorkflows())];
         for (const w of items) out(`${w.id}\t${w.name}\t${(w.domain || 'general')}`);
         return 0;
       }
@@ -3338,6 +3477,11 @@ async function drainTeamPushes() {
 
 const MEMORY_HELP = `worca memory — agent memory
 
+  worca memory proposals [--json]                       The notes pipeline agents proposed, waiting for you (a run never
+                                                        writes memory itself; it starts with the notes as they were)
+  worca memory proposals show <id>                      One proposal's text, and the note it replaces
+  worca memory proposals approve <id>                   Write it to memory (shared with the team when team memory is on)
+  worca memory proposals reject <id>                    Drop it
   worca memory team status [--project <path>] [--json]  The team layer: on/off, the branch, every note's state
   worca memory team on [--team-only] [--project <path>]
                                                         Share this project's NEW and CHANGED notes on its worca-memory branch;
@@ -3359,9 +3503,43 @@ Share existing notes from the project's Memory tab (Team view) in the web UI.
 Exit codes: 0 ok · 1 failure · 2 usage.
 `;
 
+/** `worca memory proposals [show|approve|reject <id>]` (#943): the same store calls as the web UI's routes. */
+async function cmdMemoryProposals(verb, rest) {
+  const { listProposals, approveProposal, rejectProposal } = await import('../core/memory-proposals.mjs');
+  const { memoryRoot } = await import('../core/memory-store.mjs');
+  const root = memoryRoot();
+  const all = await listProposals(root);
+  if (!verb || verb === '--json') {
+    if (verb === '--json' || rest.includes('--json')) { out(JSON.stringify(all.map(({ current: _c, ...p }) => p), null, 2)); return 0; }
+    if (!all.length) { out('no proposed memory notes'); return 0; }
+    for (const p of all) out(`${p.id}  ${p.kind === 'delete' ? 'remove' : p.baseHash ? 'update' : 'add   '}  ${p.scope}/${p.name}.md  run ${p.runId}${p.agentKey ? ` (${p.agentKey})` : ''}${p.stale ? c('yellow', '  changed since the run started') : ''}`);
+    return 0;
+  }
+  if (!['show', 'approve', 'reject'].includes(verb) || !rest[0]) { process.stderr.write(MEMORY_HELP); return 2; }
+  const item = all.find((p) => p.id === rest[0]);
+  if (!item) { process.stderr.write(`worca memory proposals ${verb}: no proposal ${rest[0]}\n`); return 1; }
+  if (verb === 'show') {
+    out(c('bold', `${item.kind === 'delete' ? 'remove' : 'write'} ${item.scope}/${item.name}.md — proposed by run ${item.runId}${item.agentKey ? ` (${item.agentKey})` : ''}`));
+    if (item.text) out(item.text.trimEnd());
+    if (item.current) { out(c('gray', '--- the note in memory now ---')); out(c('gray', item.current.trimEnd())); }
+    return 0;
+  }
+  if (verb === 'reject') { await rejectProposal(root, item.id); out(`rejected ${item.scope}/${item.name}.md`); return 0; }
+  const { memoryCaps } = await import('../core/settings.mjs');
+  await import('../core/settings-cascade.mjs');
+  const project = item.scope.startsWith('projects/') ? (await listProjects()).find((p) => p.key === item.scope.slice('projects/'.length)) : null;
+  if (item.scope !== 'global' && !project) { process.stderr.write(`worca memory proposals approve: the project of ${item.id} is no longer registered\n`); return 1; }
+  const team = await import('../core/memory-team.mjs');
+  await approveProposal(root, item.id, { caps: memoryCaps(project ? { projectDir: project.path } : null), prepare: team.teamClientText });
+  if (project) await team.queueTeamChanges(project.key, [item.name], { source: `run:${item.runId}` }).catch(() => {});
+  out(`${item.kind === 'delete' ? 'removed' : 'wrote'} ${item.scope}/${item.name}.md`);
+  return 0;
+}
+
 async function cmdMemory(argv) {
   const [group, verb, ...rest] = argv;
   if (!group || group === 'help' || (group === 'team' && (!verb || verb === 'help'))) { process.stdout.write(MEMORY_HELP); return 0; }
+  if (group === 'proposals') return cmdMemoryProposals(verb, rest);
   if (group !== 'team' || !['status', 'on', 'off', 'sync', 'rm', 'resolve'].includes(verb)) { process.stderr.write(MEMORY_HELP); return 2; }
   const team = await import('../core/memory-team.mjs');
   const { writeProjectSettings } = await import('../core/settings-cascade.mjs');
@@ -3466,7 +3644,7 @@ async function resolveTeamNote(team, { key, project, name, a }) {
 
 // ── main ──────────────────────────────────────────────────────────────────────────
 
-const SUBCOMMANDS = new Set(['add', 'list', 'remove', 'resume', 'run', 'runs', 'logs', 'stop', 'pause', 'doctor', 'plugin', 'marketplace', 'config', 'flags', 'ui', 'workflow', 'metrics', 'script', 'policy', 'schedule', 'models', 'container', 'broker', 'extension', 'proxy', 'memory', 'setup', 'switch-model']);
+const SUBCOMMANDS = new Set(['add', 'list', 'remove', 'resume', 'run', 'runs', 'logs', 'stop', 'pause', 'doctor', 'plugin', 'marketplace', 'config', 'flags', 'ui', 'workflow', 'metrics', 'script', 'policy', 'schedule', 'models', 'container', 'broker', 'extension', 'proxy', 'memory', 'setup', 'sessions', 'readiness', 'switch-model']);
 
 /** Levenshtein distance, two-row. Only ever called on short argv tokens. */
 function editDistance(a, b) {
@@ -3506,6 +3684,44 @@ function nearestSubcommand(token) {
     if (d < bestD) { bestD = d; best = name; }
   }
   return best;
+}
+
+/**
+ * Words people type in front of a top-level verb that has no group of its own. The
+ * README once listed add/list/remove as "projects (…)", so `worca projects list` is a
+ * real thing users type — and `projects` near-misses no subcommand, so it ran as a
+ * PROMPT. Exact keys only: these are ordinary English words, never fuzzy-matched.
+ */
+const SUBCOMMAND_GROUPS = new Map([
+  ['project', ['add', 'list', 'remove']],
+  ['projects', ['add', 'list', 'remove']],
+]);
+
+/**
+ * The fail() message when the bare positionals are a mistyped command, else null.
+ * (a) the first token near-misses a subcommand (MIN-51), or (b) the first is a group
+ * word and the rest is either at most one more token (`worca projects list` means
+ * `worca list`) or a real verb plus ONE argument (`projects add myproj`: `add` and
+ * `remove` each take a single positional). Anything longer, or a second token that is
+ * not one of the verbs (`projects need a cleanup`, `project add caching to the API`),
+ * stays a prompt.
+ * @param {string[]} tokens the bare positionals (flags._)
+ * @returns {string|null}
+ */
+function mistypedCommand(tokens) {
+  const [first, second] = tokens;
+  const meant = nearestSubcommand(first);
+  if (meant) {
+    if (meant === first) return `"${meant}" is a subcommand and must come first: worca ${meant} [args] (to run a prompt with that word, use --prompt "\u2026")`;
+    return `unknown subcommand "${first}" — did you mean "${meant}"? (to run a prompt, use --prompt "\u2026")`;
+  }
+  const verbs = SUBCOMMAND_GROUPS.get(first);
+  if (!verbs) return null;
+  // verb + its single argument is 3 tokens; with no verb, only the bare/2-token forms.
+  if (tokens.length > 3 || (tokens.length === 3 && !verbs.includes(second))) return null;
+  const pick = verbs.includes(second) ? second : 'list';
+  return `unknown subcommand "${tokens.join(' ')}" — did you mean "${pick}"? `
+    + `The ${first.replace(/s$/, '')} commands are top-level: worca ${verbs.join(' | ')} (to run a prompt, use --prompt "\u2026")`;
 }
 
 async function main() {
@@ -3551,6 +3767,7 @@ async function main() {
     if (sub === 'run') return cmdRun(rest, { out, c, fail });
     if (sub === 'runs') return cmdRuns(rest, { out, c, fail });
     if (sub === 'logs') return cmdLogs(rest, { out, c, fail });
+    if (sub === 'sessions') return flushed(cmdSessions(rest, { out, c, fail }));   // --json can pass 64 KiB on a pipe
     if (sub === 'stop' || sub === 'pause') return cmdControl(sub, rest, { out, c, fail });
     if (sub === 'switch-model') return cmdSwitchModel(rest, { out, c, fail });
     if (sub === 'doctor') return cmdDoctor();
@@ -3570,6 +3787,7 @@ async function main() {
     if (sub === 'extension') return cmdExtension(rest, { out, c, fail });
     if (sub === 'proxy') return cmdProxy(rest, { out, c, fail });
     if (sub === 'setup') return cmdSetup(rest, { out });
+    if (sub === 'readiness') return cmdReadiness(rest);
     if (sub === 'broker') {
       // Loaded lazily: the broker is its own process and needs none of the core graph.
       const { runBrokerCli } = await import('../broker/main.mjs');
@@ -3593,11 +3811,9 @@ async function main() {
   }
 
   if (flags.install) {
-    // Forward --force (and any other extra tokens) to the installer.
-    const passthrough = [];
-    if (process.argv.includes('--force')) passthrough.push('--force');
-    return runInstall(flags.install, passthrough);
+    return runInstall(flags.install, flags.force ? ['--force'] : []);
   }
+  if (flags.force) fail('--force only applies to --install <targetDir>.');
 
   if (flags.mock) {
     process.env.WORCA_MOCK = '1';
@@ -3615,14 +3831,12 @@ async function main() {
   }
   if (!flags.prompt && !flags.file) {
     // Allow a bare positional prompt: `worca "do the thing"`. A lone token that
-    // near-misses a subcommand is a typo, not a task — refuse it here, before a
-    // pipeline row, a worktree or a feature branch exists.
+    // near-misses a subcommand, or a group word before a verb (`projects list`), is a
+    // typo, not a task — refuse it here, before a pipeline row, a worktree or a
+    // feature branch exists.
     if (flags._.length) {
-      const meant = nearestSubcommand(flags._[0]);
-      if (meant) {
-        if (meant === flags._[0]) fail(`"${meant}" is a subcommand and must come first: worca ${meant} [args] (to run a prompt with that word, use --prompt "\u2026")`);
-        fail(`unknown subcommand "${flags._[0]}" — did you mean "${meant}"? (to run a prompt, use --prompt "\u2026")`);
-      }
+      const mistyped = mistypedCommand(flags._);
+      if (mistyped) fail(mistyped);
       flags.prompt = flags._.join(' ');
     } else {
       fail('Provide a task with --prompt "<text>" or --file <markdown>. See --help.');
@@ -3703,10 +3917,16 @@ async function main() {
       fail(`workflow "${flags.workflow}" is started from the worca app (POST /api/run with shape), not the CLI`);
     }
   }
+  // --guardrails: an unknown set would silently run on Permissive (_resolveGuardrails' fallback).
+  if (flags.guardrailsId) {
+    const { readGuardrailSet } = await import('../core/guardrail-store.mjs');
+    if (!(await readGuardrailSet(flags.guardrailsId))) fail(`unknown guardrail set "${flags.guardrailsId}" (see the Guardrails view for the ids)`);
+  }
   {
     const { validateMemoryScope } = await import('../core/memory-sync.mjs');
     const reason = validateMemoryScope({ workflowId: flags.workflow || 'wf_default', memoryScope: flags.memoryScope, isWorkspace: false });
     if (reason) fail(reason);
+    if (flags.noMemory && flags.memoryScope) fail('--no-memory cannot be set on a Memory defragment run');
   }
   // Enforced tags (D14): project-only, no identity (no last-used source); the server's message, exit 2.
   // A Run after with no --tag checks the tags the chain will inherit and stores none (D9a, like tagGate).
@@ -3741,6 +3961,8 @@ async function main() {
     workflowId: flags.workflow || undefined,
     template: row,
     memoryScope: flags.memoryScope || undefined,
+    ...(flags.noMemory ? { noMemory: true } : {}),
+    ...(flags.guardrailsId ? { guardrailsId: flags.guardrailsId } : {}),
     branch: { source: flags.sourceBranch, feature: flags.featureBranch, ...(flags.onSourceBranch ? { sameAsSource: true } : {}) },
     claude: {
       permissionMode: flags.permissionMode,

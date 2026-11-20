@@ -68,3 +68,10 @@ export function bulkBody(action, targets) {
     : { id: t.groupId, kind: t.groupKind, title: t.title }));
   return { action, targets: targets.filter((t) => !t.members).map(ref), groups };
 }
+
+/** Group N's runs: every selected pipeline (a group row's members), deduped, with its title. */
+export function pipelineTargets(targets) {
+  const out = new Map();
+  for (const t of targets) for (const x of (t.members || [t])) if (x.pipelineId && !out.has(x.pipelineId)) out.set(x.pipelineId, { pipelineId: x.pipelineId, title: x.title || '' });
+  return [...out.values()];
+}

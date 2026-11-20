@@ -5,6 +5,7 @@ import { hasBlocking } from '../src/shared/graph/verdict.mjs';
 import {
   CHECKLIST_PR_MARKER,
   normalizeReviewChecklist,
+  mergeReportedChecklists,
   applyChecklist,
   checklistTally,
   checklistTallyText,
@@ -41,6 +42,28 @@ test('normalizeReviewChecklist', async () => {
         { id: 'R-qa-2', status: 'met', evidence: 'x'.repeat(900) }]);
       assert.equal(a.evidence, 'line1 line2');
       assert.equal(b.evidence.length, 500);
+    } },
+  ]);
+});
+
+test('mergeReportedChecklists: one checklist from several role reviewers', async () => {
+  const st = (l) => l.map((c) => [c.id, c.status]);
+  await checkRows([
+    { name: 'no reviewer sent an array: null (the checklist is missing)', run: () => {
+      assert.equal(mergeReportedChecklists([undefined, null, 'x']), null);
+      assert.equal(mergeReportedChecklists([]), null);
+    } },
+    { name: 'unmet beats met beats na; the chosen status keeps its evidence', run: () => {
+      const m = mergeReportedChecklists([
+        [{ id: 'R-qa-1', status: 'met', evidence: 'a' }, { id: 'R-qa-2', status: 'na' }, { id: 'R-arch-1', status: 'na' }],
+        [{ id: 'R-qa-1', status: 'unmet', evidence: 'b' }, { id: 'R-qa-2', status: 'met', evidence: 'c' }],
+      ]);
+      assert.deepEqual(st(m), [['R-qa-1', 'unmet'], ['R-qa-2', 'met'], ['R-arch-1', 'na']]);
+      assert.deepEqual(m.map((c) => c.evidence), ['b', 'c', '']);
+    } },
+    { name: 'one array among omissions counts; raw statuses are normalized', run: () => {
+      assert.deepEqual(st(mergeReportedChecklists([null, [{ id: 'R-qa-1', status: 'n/a' }]])), [['R-qa-1', 'na']]);
+      assert.deepEqual(mergeReportedChecklists([null, []]), []);
     } },
   ]);
 });

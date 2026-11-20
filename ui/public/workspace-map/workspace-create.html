@@ -1,0 +1,77 @@
+        <!-- ===== VIEW: WORKSPACE CREATE (wizard) ===== -->
+        <section class="view hidden" data-view="workspace-create">
+          <div class="topbar">
+            <div>
+              <div class="sub">Pick 2+ projects and scan how they connect</div>
+            </div>
+            <button type="button" id="wiz-close" class="btn">Cancel</button>
+          </div>
+
+          <section class="card" style="max-width:1100px">
+            <!-- Step 1: name + project multi-select -->
+            <div class="wiz-step" id="wiz-step-1">
+              <div class="wiz-grid">
+                <div class="wiz-main">
+                  <div class="field">
+                    <label for="wiz-name">Workspace name</label>
+                    <input id="wiz-name" class="input" type="text" placeholder="e.g. IoT SP Platform" spellcheck="false" />
+                  </div>
+                  <div class="field">
+                    <div class="wiz-proj-head">
+                      <label class="label">Projects <span class="opt">(select 2 to 40)</span></label>
+                      <!-- Outside #wiz-projects so every checkbox in the list stays a project. -->
+                      <label class="wiz-select-all"><input type="checkbox" id="wiz-select-all" /> Select all</label>
+                    </div>
+                    <div class="wiz-proj-list" id="wiz-projects"></div>
+                    <!-- Import: repositories that are not projects yet. Scan registers the ticked new rows first. -->
+                    <div class="wiz-import" data-needs-git>
+                      <div class="wiz-import-bar">
+                        <button type="button" id="wiz-import-add" class="btn btn-sm">Add…</button>
+                        <span class="wiz-import-lead">repositories, a folder of repositories or a <code>.code-workspace</code> file</span>
+                        <label class="wiz-import-deep switch-row"><input type="checkbox" id="wiz-import-deep" class="sw-input" role="switch" /><span class="switch" aria-hidden="true"></span><span class="switch-label">Look two levels deep</span></label>
+                      </div>
+                      <textarea id="wiz-import-paste" class="textarea wiz-import-paste" rows="2" spellcheck="false"
+                        aria-label="Paths to add, one per line" placeholder="…or paste paths, one per line"></textarea>
+                      <div class="wiz-import-bar">
+                        <button type="button" id="wiz-import-paste-add" class="btn btn-sm">Add paths</button>
+                        <small class="hint" id="wiz-import-hint" role="status" aria-live="polite"></small>
+                      </div>
+                      <div class="wiz-proj-list wiz-import-list" id="wiz-import-list" role="group" aria-label="Found repositories" hidden></div>
+                    </div>
+                    <small class="hint" id="wiz-step1-hint">Pick at least two projects, or bring repositories in with Add… or the paste box above.</small>
+                    <div class="wiz-size-note" id="wiz-size-note" role="status" aria-live="polite" hidden></div>
+                  </div>
+                </div>
+                <aside class="wiz-models" aria-label="Scan models">
+                  <h3 class="wiz-models-title">Models</h3>
+                  <div class="field">
+                    <div class="label-row"><label for="wiz-scan-model">Scan agent</label></div>
+                    <div class="wiz-model-pair">
+                      <select id="wiz-scan-model" class="select" aria-label="Scan agent model"></select>
+                      <select id="wiz-scan-effort" class="select" aria-label="Scan agent effort"></select>
+                    </div>
+                  </div>
+                  <div class="field">
+                    <div class="label-row"><label for="wiz-agent-model">Project agents</label></div>
+                    <div class="wiz-model-pair">
+                      <select id="wiz-agent-model" class="select" aria-label="Project agents model"></select>
+                      <select id="wiz-agent-effort" class="select" aria-label="Project agents effort"></select>
+                    </div>
+                  </div>
+                </aside>
+              </div>
+              <div class="actions" style="justify-content:flex-end">
+                <button type="button" id="wiz-start-scan" class="btn btn-primary" disabled>
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M5 12h14M13 6l6 6-6 6"></path></svg>
+                  Scan interconnections
+                </button>
+              </div>
+            </div>
+
+            <!-- Team metrics is NOT a wizard step any more: the home is adopted automatically when
+                 exactly one member already records (POST /api/workspaces), otherwise chosen on the
+                 workspace card ("Choose…"). -->
+          </section>
+        </section>
+        <!-- /view workspace-create -->
+

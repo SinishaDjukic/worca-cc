@@ -5,9 +5,10 @@
 // malformed template — an unknown agent key (V4), a dangling endpoint (V5) or
 // an unknown kind (V3) is an error for the validator to COLLECT, so every
 // lookup guards instead of crashing.
-import { AWAIT_PORT, PARAMS_PORT, FLOW_KINDS, gatePorts, TASK_PORTS, END_PORTS } from './constants.mjs';
+import { AWAIT_PORT, PARAMS_PORT, FLOW_KINDS, gatePorts, TASK_PORTS, END_PORTS, PORT_ID_RE } from './constants.mjs';
 import { hasBlocking } from './verdict.mjs';
 import { readConfigPorts, hasParamsPort } from './script-meta.mjs';
+import { roleReviewOf } from './role-review-step.mjs';
 
 /** Engine flow-card ports. `undefined` for an unknown kind — V3's error. */
 export function flowPorts(node) {
@@ -38,6 +39,57 @@ export const ROLE_REVIEW_PORTS = Object.freeze({
   ]),
 });
 
+/** The port set of a role review on the `diff` target: the reviewer's own port ids, so a reviewer node opts in by config
+ *  with its wires unchanged. `review` carries the merged findings when a role blocks; `pass` fires when none does. Its
+ *  file stem differs from the plan set's: both are run files, so a shared name would overwrite the plan's findings. */
+export const ROLE_REVIEW_DIFF_PORTS = Object.freeze({
+  inputs: Object.freeze([
+    Object.freeze({ id: 'plan', type: 'md' }),
+    Object.freeze({ id: 'done', type: 'void', required: false, as: 'worktree' }),
+  ]),
+  outputs: Object.freeze([
+    Object.freeze({ id: 'review', type: 'md', when: 'blocking', filename: '{base}-code-role-findings-r{cycle}.md', store: 'run' }),
+    Object.freeze({ id: 'pass', type: 'void', when: 'clean' }),
+  ]),
+});
+
+/** The port set of a role review on the `requirements` target: the reviewed requirements in, the round's findings and
+ *  the CURRENT requirements out (as the plan set passes the plan on), so the sink never reads a latched first draft. */
+export const ROLE_REVIEW_REQUIREMENTS_PORTS = Object.freeze({
+  inputs: Object.freeze([
+    Object.freeze({ id: 'requirements', type: 'md' }),
+    Object.freeze({ id: 'revise', type: 'md', required: false, loop: true,
+      directive: 'Review the REVISED requirements below (they replace the first draft). Judge them as your role only.' }),
+  ]),
+  outputs: Object.freeze([
+    Object.freeze({ id: 'findings', type: 'md', when: 'always', filename: '{base}-requirements-findings-r{cycle}.md', store: 'run' }),
+    Object.freeze({ id: 'requirements', type: 'md', when: 'always' }),
+  ]),
+});
+
+const ROLE_PORTS_BY_TARGET = Object.freeze({ diff: ROLE_REVIEW_DIFF_PORTS, requirements: ROLE_REVIEW_REQUIREMENTS_PORTS });
+
+/** At most this many `extraInputs` per node. */
+export const EXTRA_INPUTS_MAX = 4;
+
+/** A node's well-formed `config.extraInputs` as optional md ports: [] for none. The validator names the bad ones;
+ *  resolution skips them, a clash with an own input and a repeat. `extra` marks them as context: an `awaitAll` node
+ *  never waits on one to re-fire. */
+export function extraInputsOf(config, ownIds = []) {
+  const list = Array.isArray(config?.extraInputs) ? config.extraInputs.slice(0, EXTRA_INPUTS_MAX) : [];
+  const seen = new Set(ownIds);
+  const out = [];
+  for (const e of list) {
+    if (!e || typeof e !== 'object' || typeof e.id !== 'string' || !PORT_ID_RE.test(e.id) || e.type !== 'md' || seen.has(e.id)) continue;
+    seen.add(e.id);
+    out.push(Object.freeze({ id: e.id, type: 'md', required: false, extra: true }));
+  }
+  return out;
+}
+
+/** A role review's port set by its target; anything but `diff` or `requirements` is the plan set. */
+export const rolePortsOf = (target) => (Object.hasOwn(ROLE_PORTS_BY_TARGET, String(target)) ? ROLE_PORTS_BY_TARGET[target] : ROLE_REVIEW_PORTS);
+
 const toIndex = (v) => (v instanceof Map ? v : new Map(Object.entries(v && typeof v === 'object' ? v : {})));
 
 /**
@@ -64,11 +116,13 @@ export function portsFnFor(agentsByKey, scriptsByKey = {}) {
 
 function sidecarPorts(meta, node = null) {
   if (!meta) return undefined;
-  const own = node?.config?.roleReview === true ? ROLE_REVIEW_PORTS : meta;
+  const spec = roleReviewOf(node?.config);
+  const own = spec ? rolePortsOf(spec.target) : meta;
   if (!Array.isArray(own.inputs) || !Array.isArray(own.outputs)) {
     return { ...meta, known: true, ported: false, inputs: [], outputs: [] };
   }
-  return { ...meta, known: true, ported: true, inputs: [...own.inputs, AWAIT_PORT], outputs: [...own.outputs] };
+  const extra = extraInputsOf(node?.config, own.inputs.map((p) => p?.id));
+  return { ...meta, known: true, ported: true, inputs: [...own.inputs, ...extra, AWAIT_PORT], outputs: [...own.outputs] };
 }
 
 /** A script card's engine inputs, after its own: the opt-in `params` port, then `await` LAST. */

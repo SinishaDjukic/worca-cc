@@ -89,6 +89,19 @@ export function watchRun(runId) {
   return r ? { runId: r.run_id, prUrl: r.pr_url, pipelineId: r.pipeline_id, createdAt: r.created_at } : null;
 }
 
+/** Every Watch PR fix run's pipeline → the PR it fixes (empty Map on any error). */
+export function watchFixRuns() {
+  try {
+    return new Map(getDb().prepare('SELECT pipeline_id, pr_url FROM pr_watch_runs WHERE pipeline_id IS NOT NULL').all().map((r) => [r.pipeline_id, r.pr_url]));
+  } catch { return new Map(); }
+}
+
+/** The PR a pipeline's Watch PR fix run fixes, or null when it is not a fix run. */
+export function watchFixRunOf(pipelineId) {
+  if (!pipelineId) return null;
+  try { return getDb().prepare('SELECT pr_url FROM pr_watch_runs WHERE pipeline_id=?').get(pipelineId)?.pr_url ?? null; } catch { return null; }
+}
+
 export function updateWatch(prUrl, patch) {
   const allowed = { enabled: 'enabled', status: 'status', reason: 'reason', activeRunId: 'active_run_id',
     activePipelineId: 'active_pipeline_id', pending: 'pending', handled: 'handled', retryState: 'retry_state' };
@@ -200,17 +213,23 @@ export function conflictBrief({ subject, base, ref }) {
 }
 
 export const PR_WATCH_BATCH_LOG_BYTES = 40 * 1024;
+
+/** The ref a conflict fix run is told to merge (`<remote>/<base>`): the brief names it, and the run's start option
+ *  `mergeIn` carries it to the harness, which measures the diff from git's own merge of it. One helper, so they never drift. */
+export function conflictRef(conflict) {
+  return `${conflict.remote}/${conflict.base}`;
+}
+
 export function buildFixTask({ pr, triggers, logs = [] }) {
   if (triggers.conflict?.why === 'behind') {
-    const { base, remote, checks = [] } = triggers.conflict;
+    const { base, checks = [] } = triggers.conflict;
     return [`Pull request ${pr.url} is behind its base branch \`${base}\`, whose latest commit passes checks that fail here: ${checks.join(', ')}.`,
-      `Merge the base in first; that may be the whole fix. Worca already fetched it: run \`git merge --no-ff ${remote}/${base}\`,`,
+      `Merge the base in first; that may be the whole fix. Worca already fetched it: run \`git merge --no-ff ${conflictRef(triggers.conflict)}\`,`,
       'resolve any conflicts so both sides\' changes keep working, run the tests, and commit the merge. Change nothing else in this run.',
       NEVER].join('\n');
   }
   if (triggers.conflict) {
-    const { base, remote } = triggers.conflict;
-    return conflictBrief({ subject: `Pull request ${pr.url}`, base, ref: `${remote}/${base}` });
+    return conflictBrief({ subject: `Pull request ${pr.url}`, base: triggers.conflict.base, ref: conflictRef(triggers.conflict) });
   }
   const quote = (s) => String(s || '').split(/\r?\n/).map((l) => `> ${l}`).join('\n');
   const out = [`Fix the newly reported problems on pull request ${pr.url}.`,
@@ -314,7 +333,7 @@ export function createPrWatchRunner({ tick, intervalMs = 60_000, env = process.e
   return { start, kick, stop };
 }
 
-// One process-global pause: a rate limit on any watched PR (GitHub or Azure DevOps) stops every host call.
+// One process-global pause: a rate limit on any watched PR (GitHub, Azure DevOps or Bitbucket) stops every host call.
 let hostPauseUntil = 0;
 const START_TIMEOUT_MS = 10 * 60_000;
 /** How long a failure waits for the base head's result on the same check before it counts as the PR's. */
@@ -326,7 +345,7 @@ const LIVE = new Set(['starting', 'running', 'paused']);
 /**
  * The Watch PR state machine. Every side effect is injected so the server owns the IO:
  *   originOf(w)                       → { pipelineId, projectKey, projectDir, branch, sourceBranch, baseRemote, guardrailsId, engine, mock, tags?: string[], labels?: string[] } | null
- *   host.{snapshot, jobLog, reply, comment, rerun}  (by the PR URL's forge: GitHub or Azure DevOps)
+ *   host.{snapshot, jobLog, reply, comment, rerun}  (by the PR URL's forge: GitHub, Azure DevOps or Bitbucket)
  *   git.{fetch, status, fastForward, push}   ({ projectDir, branch, remote }); git.subjects({ projectDir, from, to }) → { ok, subjects }
  *                                     git.checkMerge({ projectDir, baseSha, from, to }) → { ok, merged, markers }
  *                                     git.mergeBase({ projectDir, branch, base, remote, headSha }) → { ok, merged, to?, baseSha? }:
@@ -492,8 +511,10 @@ export function createPrWatcher(deps = {}) {
     };
     let r;
     // Shaper s5 (D20): the fix run is a round of the PR's run; the server numbers it (roundsOf).
+    // A conflict / behind run merges conflictRef: the harness then measures from git's own merge of it (mergeIn).
     try { r = await deps.startRun(body, { startedBy: 'pr-watch', runId, prWatchRunId: runId,
-      roundOf: { pipelineId: w.pipelineId, ...fixRoundWords(pending, w.memberKey) } }); }
+      roundOf: { pipelineId: w.pipelineId, ...fixRoundWords(pending, w.memberKey) },
+      ...(triggers.conflict ? { mergeIn: { ref: conflictRef(triggers.conflict) } } : {}) }); }
     catch { r = { status: 500 }; }
     const cur = getWatch(w.prUrl);
     if (r?.status !== 200) {

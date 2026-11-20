@@ -11,7 +11,7 @@ import http from 'node:http';
 import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { addGlobalModel, acknowledgeCopilotTerms } from '../src/core/settings.mjs';
+import { addGlobalModel } from '../src/core/settings.mjs';
 import { startBridge, stopBridge, bridgeBaseUrl } from '../src/core/bridge/server.mjs';
 import { endpointModelsForImport, copilotModelsForImport, testProviderConnection, patchProvider, beginCopilotLogin } from '../src/core/bridge/provider-ops.mjs';
 import { _resetForTests } from '../src/core/db.mjs';
@@ -88,7 +88,6 @@ before(async () => {
   resetBrokerClient();
   await brokerInfo({ force: true });
 
-  await acknowledgeCopilotTerms();
   await addGlobalModel({ id: 'oai-x', upstream: { provider: 'openai', api: 'openai-chat', model: 'gpt-x', baseUrl: `${fakeUrl}/v1` } });
   await addGlobalModel({ id: 'cp-x', upstream: { provider: 'copilot', api: 'openai-chat', model: 'gpt-4o' } });
   await addGlobalModel({ id: 'local-x', upstream: { provider: 'openai', api: 'openai-chat', model: 'qwen', baseUrl: 'http://127.0.0.1:1/v1' } });

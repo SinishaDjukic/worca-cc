@@ -1,0 +1,35 @@
+
+/* ========================================================================== */
+/* Run-flow — the SHARED decor the v2 graph renderer sits inside. The .run-flow */
+/* SCOPE STAYS: the v2 graph is hosted inside .run-flow on every page, and      */
+/* de-scoping drops `.run-flow .node.is-active` from (0,3,0) to (0,2,0), which  */
+/* ties `.gv-world .node` and loses on source order — silently killing the v2   */
+/* status rings (the card is borderless: the ring is a 1.5px box-shadow).      */
+/* ========================================================================== */
+.run-flow-wrap{position:relative;margin:0 0 18px;border-radius:var(--r-card);border:1px solid var(--line);overflow-x:auto;overflow-y:hidden;background-color:var(--canvas-2);background-image:radial-gradient(circle, var(--line-2) 1.1px, transparent 1.1px);background-size:22px 22px;}
+.run-flow{position:relative;display:flex;align-items:center;gap:44px;padding:66px 30px 52px;width:max-content;min-width:100%;}
+/* Status badge (top-right pip). */
+.run-flow .nstat{position:absolute;top:-8px;right:-8px;width:21px;height:21px;border-radius:var(--r-sm);display:grid;place-items:center;z-index:3;}
+.run-flow .nstat svg{width:12px;height:12px;}
+.run-flow .nstat.done{background:var(--green);} .run-flow .nstat.done svg{stroke:var(--on-status);stroke-width:3;}
+.run-flow .nstat.paused{background:var(--amber);} .run-flow .nstat.paused svg{fill:var(--on-status);}
+.run-flow .nstat.stopped{background:var(--red);} .run-flow .nstat.stopped svg{stroke:var(--on-status);stroke-width:3;}
+
+.run-flow .node.is-active{animation:nodeGlow 2.2s ease-in-out infinite;}
+.run-flow .node.is-paused{animation:nodeGlowAmber 2.2s ease-in-out infinite;}
+/* The v2 card's own scope (0,5,0, as is-error below) outranks `.gv-world .node:hover` / `:focus-visible` (0,3,0, later). */
+.run-flow .node.is-stopped,.run-flow.gv-host .gv-world .node.is-stopped{box-shadow:0 0 0 1.5px var(--red-ring),0 0 0 4px var(--red-tint);}
+@keyframes nodeGlow{0%,100%{box-shadow:0 0 0 1.5px color-mix(in srgb, var(--c) 55%, var(--line-2));}50%{box-shadow:0 0 0 1.5px color-mix(in srgb, var(--c) 55%, var(--line-2)),0 0 0 5px color-mix(in srgb, var(--c) 13%, transparent),0 8px 26px color-mix(in srgb, var(--c) 24%, transparent);}}
+@keyframes nodeGlowAmber{0%,100%{box-shadow:0 0 0 1.5px var(--amber-ring);}50%{box-shadow:0 0 0 1.5px var(--amber-ring),0 0 0 5px color-mix(in srgb, var(--amber) 16%, transparent),0 8px 26px color-mix(in srgb, var(--amber) 26%, transparent);}}
+
+/* Sub-agent square strip on a run-graph node. The node wraps so the strip
+   drops to its own full-width row under the meta/cost block. PULSE LIVES HERE
+   AND NOWHERE ELSE: sqPulse attaches only to .run-flow .node .fan .sq.on, so
+   the tree/legend squares (.led/.sq) never animate and history (terminal
+   statuses -> no .on) never pulses. */
+.run-flow .node .fan{flex:0 0 100%;display:flex;align-items:center;flex-wrap:wrap;gap:3px;margin-top:9px;padding-top:8px;border-top:1px solid var(--line);}
+.run-flow .node .fan .sq{width:7px;height:7px;border-radius:var(--r-xs);background:var(--ink-3);opacity:.5;}
+.run-flow .node .fan .sq.on{background:var(--blue);opacity:1;animation:sqPulse 1.5s ease-in-out infinite;}
+.run-flow .node .fan .fl{font-size:11px;font-weight:700;color:var(--ink-3);margin-left:5px;letter-spacing:.02em;}
+.run-flow .node.is-active .fan .fl{color:var(--blue-ink);}
+@keyframes sqPulse{0%,100%{opacity:1;}50%{opacity:.38;}}

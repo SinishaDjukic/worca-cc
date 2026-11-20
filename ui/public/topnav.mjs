@@ -10,6 +10,7 @@
  *  step with the sidebar labels in index.html and with app.js#VIEW_NAMES. */
 export const PAGE_TITLES = Object.freeze({
   chat: 'Chat',
+  design: 'Design',
   new: 'New run',
   'getting-started': 'Getting started',
   runs: 'Runs',
@@ -23,12 +24,12 @@ export const PAGE_TITLES = Object.freeze({
   marketplace: 'Marketplace',
   connectors: 'Connectors',
   models: 'Models',
-  providers: 'Providers',
   projects: 'Projects',
   workspaces: 'Workspaces',
   'team-policy': 'Team policy',
   'workspace-create': 'New workspace',
   settings: 'Settings',
+  profile: 'Profile',
   feature: 'Runs',
   group: 'Runs',
 });

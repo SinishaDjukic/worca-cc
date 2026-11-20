@@ -1,0 +1,38 @@
+{
+  "roles": [
+    { "key": "correctness", "label": "Correctness" },
+    { "key": "security", "label": "Security" }
+  ],
+  "defects": [
+    { "id": "d1", "role": "security", "section": "Auth", "note": "the export route skips the auth middleware" },
+    { "id": "d2", "role": "security", "section": "Rollback", "note": "the new column has no rollback" },
+    { "id": "d3", "role": "correctness", "section": "Testing", "note": "no test for the empty state" },
+    { "id": "d4", "role": "correctness", "section": "Error handling", "note": "a failed write is swallowed" }
+  ],
+  "verdicts": {
+    "correctness": {
+      "summary": "One gap in the tests, one naming nit.",
+      "issues": [
+        { "severity": "minor", "title": "No test for the empty state", "section": " Testing ", "fix": "Add an empty-state case." },
+        { "severity": "minor", "title": "The helper name says nothing", "section": "Naming", "fix": "Rename it." }
+      ]
+    },
+    "security": {
+      "summary": "Two security gaps.",
+      "issues": [
+        { "severity": "minor", "title": "The export route skips auth", "section": "auth", "fix": "Mount it behind the auth middleware." },
+        { "severity": "minor", "title": "The new column cannot be rolled back", "section": "Rollback", "fix": "Say how to roll back." }
+      ]
+    }
+  },
+  "dispositions": {
+    "security-1-1": "fixed",
+    "security-1-2": "disputed",
+    "correctness-1-1": "omit",
+    "correctness-1-2": "fixed"
+  },
+  "expected": {
+    "correctness": { "raised": 2, "fixed": 1, "disputed": 0, "open": 1 },
+    "security": { "raised": 2, "fixed": 1, "disputed": 1, "open": 0 }
+  }
+}

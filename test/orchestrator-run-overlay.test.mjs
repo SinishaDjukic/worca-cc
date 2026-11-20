@@ -85,6 +85,8 @@ test('the overlay record is not a model the run dispatches: the credential prefl
     overlay: { nodes: { n_plan: { model: 'gpt-5.5', effort: '' } } } })._resolveTopology(REG);
   assert.notEqual(dropped.manifest.graph.nodes.find((n) => n.id === 'n_plan').model, 'gpt-5.5');
   assert.equal(manifestModels(dropped.manifest).has('gpt-5.5'), false);
+  assert.deepEqual(dropped.manifest.graph.nodes.find((n) => n.id === 'n_plan').wanted, { model: 'gpt-5.5', source: 'run' }, 'the dropped pick is on the cell as wanted, not as a model to run');
+  assert.equal(manifestModels({ graph: { nodes: [{ id: 'n', roles: { qa: { source: 'template', wanted: { model: 'claude-opus-5-5' } } } }] } }).size, 0, "a role's dropped pick needs no key");
 });
 
 test('an overlay\'s loop budgets reach resolveGraph and the record; a wires-only overlay records no nodes', async () => {

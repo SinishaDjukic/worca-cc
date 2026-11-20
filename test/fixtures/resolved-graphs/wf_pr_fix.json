@@ -1,0 +1,776 @@
+{
+  "agentKeys": [
+    "implementer",
+    "reviewer"
+  ],
+  "agentsByKey": {
+    "implementer": {
+      "agentFile": "worca-cc-implementer.md",
+      "agentPath": "$REPO/agents/worca-cc-implementer.md",
+      "asksQuestions": true,
+      "color": "peach",
+      "description": "Writes the code from the approved plan, strict TDD. In fix mode, addresses only the issues a review flagged.",
+      "displayName": "Implementation",
+      "domain": "coding",
+      "fanOut": true,
+      "frontmatter": {
+        "description": "Implementer for the orchestrator pipeline. Follows the latest approved plan's contracts with NO deviation and writes the function bodies itself, test-first (red-green-refactor) for every change that can plausibly break; deviates only when something does not work AT ALL, and records the deviation. In FIX mode, reads the referenced code review and fixes ONLY the flagged critical/major issues. Invoked by the deterministic orchestrator.",
+        "fields": {
+          "description": "Implementer for the orchestrator pipeline. Follows the latest approved plan's contracts with NO deviation and writes the function bodies itself, test-first (red-green-refactor) for every change that can plausibly break; deviates only when something does not work AT ALL, and records the deviation. In FIX mode, reads the referenced code review and fixes ONLY the flagged critical/major issues. Invoked by the deterministic orchestrator.",
+          "model": "inherit",
+          "name": "worca-cc-implementer",
+          "tools": "Read, Write, Edit, Bash, Grep, Glob, Skill"
+        },
+        "model": "inherit",
+        "name": "worca-cc-implementer",
+        "tools": [
+          "Read",
+          "Write",
+          "Edit",
+          "Bash",
+          "Grep",
+          "Glob",
+          "Skill"
+        ]
+      },
+      "icon": "<path d=\"M9 8l-4 4 4 4M15 8l4 4-4 4\" stroke-linecap=\"round\" stroke-linejoin=\"round\"/>",
+      "inputs": [
+        {
+          "as": "fix-review",
+          "directive": "Address EVERY critical and major issue in the review below, then run the tests that cover what you changed. Follow the plan; deviate only if something does not work at all.",
+          "id": "fix",
+          "loop": true,
+          "required": false,
+          "type": "md"
+        },
+        {
+          "as": "file",
+          "directive": "Implement the task below using TDD (red-green-refactor). The TASK file is a self-contained vertical slice and is AUTHORITATIVE — do exactly what it says and nothing outside its scope. The plan is reference/context only; you do NOT need to read the whole plan.",
+          "expands": true,
+          "id": "task",
+          "required": false,
+          "type": "json"
+        },
+        {
+          "as": "file",
+          "directive": "Implement the plan using TDD (red-green-refactor). Follow its contracts with NO deviation; deviate slightly only if a contract does not work at all.",
+          "id": "plan",
+          "required": true,
+          "type": "md"
+        }
+      ],
+      "key": "implementer",
+      "metaVersion": 2,
+      "mockRole": "implementer",
+      "order": 3,
+      "origin": "builtin",
+      "outputs": [
+        {
+          "id": "done",
+          "type": "void",
+          "when": "always"
+        }
+      ],
+      "portSummary": "Reads fix, task, plan; produces done.",
+      "progressStage": "build",
+      "promptHints": "Work inside the project directory (your cwd). Commit nothing; just edit files and tests.",
+      "questionsDefault": false,
+      "questionsLocked": false,
+      "requiresAssets": [],
+      "requiresSkills": [],
+      "runnerType": "producer",
+      "scope": "project",
+      "sideEffect": "code",
+      "workspaceFanOut": true,
+      "workspaceStrategy": "task"
+    },
+    "reviewer": {
+      "agentFile": "worca-cc-code-reviewer.md",
+      "agentPath": "$REPO/agents/worca-cc-code-reviewer.md",
+      "ask": {
+        "forms": {
+          "review-findings": {
+            "answer": {
+              "properties": {
+                "findings": {
+                  "items": {
+                    "properties": {
+                      "id": {
+                        "type": "string"
+                      },
+                      "note": {
+                        "maxLength": 2000,
+                        "type": "string"
+                      },
+                      "verdict": {
+                        "default": "keep",
+                        "enum": [
+                          "keep",
+                          "waive"
+                        ],
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "id",
+                      "verdict"
+                    ],
+                    "type": "object"
+                  },
+                  "type": "array"
+                },
+                "notes": {
+                  "maxLength": 4000,
+                  "type": "string"
+                }
+              },
+              "required": [
+                "findings"
+              ],
+              "type": "object"
+            },
+            "data": {
+              "properties": {
+                "findings": {
+                  "items": {
+                    "properties": {
+                      "detail": {
+                        "maxLength": 2000,
+                        "type": "string"
+                      },
+                      "id": {
+                        "maxLength": 64,
+                        "type": "string"
+                      },
+                      "severity": {
+                        "enum": [
+                          "critical",
+                          "major",
+                          "minor",
+                          "suggestion"
+                        ],
+                        "type": "string"
+                      },
+                      "title": {
+                        "maxLength": 200,
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "id",
+                      "title"
+                    ],
+                    "type": "object"
+                  },
+                  "maxItems": 20,
+                  "type": "array"
+                },
+                "summary": {
+                  "maxLength": 4000,
+                  "type": "string"
+                }
+              },
+              "required": [
+                "findings"
+              ],
+              "type": "object"
+            },
+            "example": {
+              "findings": [
+                {
+                  "detail": "The plan put it in the client. Was that intentional?",
+                  "id": "f1",
+                  "severity": "major",
+                  "title": "Plan deviation: the retry lives in the caller"
+                },
+                {
+                  "detail": "It is covered by the integration test only.",
+                  "id": "f2",
+                  "severity": "minor",
+                  "title": "No unit test for the empty-list branch"
+                }
+              ],
+              "summary": "Two findings I would waive if the deviation was intended."
+            },
+            "layout": [
+              {
+                "bind": "data.summary",
+                "widget": "markdown"
+              },
+              {
+                "bind": "data.findings",
+                "field": "findings",
+                "label": "Findings",
+                "widget": "review-list"
+              },
+              {
+                "field": "notes",
+                "label": "Notes",
+                "widget": "textarea"
+              }
+            ],
+            "title": "Confirm these findings",
+            "version": 1
+          }
+        }
+      },
+      "asksQuestions": true,
+      "color": "blue",
+      "description": "Reviews the implementation diff against the plan. Honest verdict; blocking findings loop back to the implementer.",
+      "displayName": "Review Implementation",
+      "domain": "coding",
+      "fanOut": true,
+      "frontmatter": {
+        "description": "Code Reviewer for the orchestrator pipeline. Reviews the git diff of the implementation against the plan, writes a review markdown to the given path, and emits review-cycleN.json with honest critical/major/minor/suggestion severities so the Implement -> Review loop terminates correctly. Invoked by the deterministic orchestrator.",
+        "fields": {
+          "description": "Code Reviewer for the orchestrator pipeline. Reviews the git diff of the implementation against the plan, writes a review markdown to the given path, and emits review-cycleN.json with honest critical/major/minor/suggestion severities so the Implement -> Review loop terminates correctly. Invoked by the deterministic orchestrator.",
+          "model": "inherit",
+          "name": "worca-cc-code-reviewer",
+          "tools": "Read, Write, Edit, Bash, Grep, Glob, Skill"
+        },
+        "model": "inherit",
+        "name": "worca-cc-code-reviewer",
+        "tools": [
+          "Read",
+          "Write",
+          "Edit",
+          "Bash",
+          "Grep",
+          "Glob",
+          "Skill"
+        ]
+      },
+      "icon": "<path d=\"M12 3l7 3v5c0 4.4-3 7.6-7 9-4-1.4-7-4.6-7-9V6l7-3Z\" stroke-linejoin=\"round\"/><path d=\"M9 12l2 2 4-4\" stroke-linecap=\"round\" stroke-linejoin=\"round\"/>",
+      "inputs": [
+        {
+          "as": "file",
+          "id": "plan",
+          "required": true,
+          "type": "md"
+        },
+        {
+          "as": "worktree",
+          "id": "done",
+          "required": false,
+          "type": "void"
+        }
+      ],
+      "key": "reviewer",
+      "metaVersion": 2,
+      "mockRole": "reviewer",
+      "needsRepo": true,
+      "order": 4,
+      "origin": "builtin",
+      "outputs": [
+        {
+          "artifactKind": "review",
+          "filename": "{base}-impl-review.md",
+          "id": "review",
+          "store": "project",
+          "type": "md",
+          "when": "blocking"
+        },
+        {
+          "id": "pass",
+          "type": "void",
+          "when": "clean"
+        }
+      ],
+      "portSummary": "Reads plan; produces review.",
+      "progressStage": "review",
+      "promptHints": "Review the git diff of what was implemented against the plan's contracts and invariants, with an adversarial pass and the severity floors.",
+      "questionsDefault": false,
+      "questionsLocked": false,
+      "requiresAssets": [],
+      "requiresSkills": [],
+      "runnerType": "verifier",
+      "scope": "project",
+      "verdict": {
+        "filename": "impl-review-cycle{cycle}.json"
+      },
+      "wantsRequest": true,
+      "workspaceStrategy": "review"
+    }
+  },
+  "loops": {
+    "launchOrder": [
+      "n_task",
+      "n_impl",
+      "n_review",
+      "n_end"
+    ],
+    "loopInputs": [
+      "n_impl.fix"
+    ],
+    "loopWireIds": [
+      "w4"
+    ],
+    "sccOf": {
+      "n_end": 0,
+      "n_impl": 1,
+      "n_review": 1,
+      "n_task": 2
+    }
+  },
+  "nodes": {
+    "n_end": {
+      "config": {},
+      "key": null,
+      "kind": "end",
+      "nodeId": "n_end"
+    },
+    "n_impl": {
+      "agentFile": "worca-cc-implementer.md",
+      "agentPrompt": "---\nname: worca-cc-implementer\ndescription: Implementer for the orchestrator pipeline. Follows the latest approved plan's contracts with NO deviation and writes the function bodies itself, test-first (red-green-refactor) for every change that can plausibly break; deviates only when something does not work AT ALL, and records the deviation. In FIX mode, reads the referenced code review and fixes ONLY the flagged critical/major issues. Invoked by the deterministic orchestrator.\ntools: Read, Write, Edit, Bash, Grep, Glob, Skill\nmodel: inherit\n---\n\nYou are the **Implementer** agent in a deterministic Plan -> Refine -> Implement -> Review pipeline. You are spawned headlessly. You operate in ONE of two modes, stated in the task prompt: `implement` or `fix`. You write real code into the target project working directory (your cwd is the project). The Code Reviewer will inspect your changes via `git diff` against the orchestrator's checkpoint commit, so your changes must be real, committed-quality work. You do not need to stage or commit — the orchestrator records intent-to-add for any new files after you finish so they show up in the reviewer's diff.\n\n## Ports\n\nThe engine binds every port to an absolute path in the task prompt — never hardcode filenames.\n\n- **in `fix`** (md, optional, loop) — a code review to address. When it is bound, you are in FIX mode.\n- **in `task`** (json, optional) — one decomposed vertical slice. When it is bound, that task file is authoritative and the plan is reference only.\n- **in `plan`** (md) — the approved implementation plan. Always bound.\n- **out `done`** (void) — the signal that the working tree now carries your change; it carries no file.\n\n## Cardinal rule: FOLLOW THE PLAN\n\nThe latest plan (its absolute path is in the prompt) is authoritative. Its contracts are binding: implement the files, signatures, data and error shapes, invariants and tests it names, step by step, with NO deviation in approach, file layout, naming, or scope. The function bodies are yours to write, test first; a plan normally gives none, and a body it does give is guidance, not text to copy. Write the code in this working tree yourself: never copy a tree or files from another session's scratch directory. Do not add features the plan does not call for. Do not refactor unrelated code. Do not \"improve\" the design on your own initiative.\n\nIf the prompt provides a `TASK:` path, that self-contained task file is AUTHORITATIVE\ninstead of the full plan — implement exactly that slice and treat the plan as reference\ncontext only. If there is no `TASK:` path, the plan is authoritative as usual.\n\n## Decomposed runs: parallel siblings share your working tree\n\nWhen the prompt has a `## Parallel siblings` block, you are ONE of several implementers\nediting the SAME working tree at the SAME time, each owning one task. There is no file\nlocking. These rules are absolute:\n\n1. Edit ONLY the files your TASK file lists. If you believe you need another file,\n   DO NOT touch it — record a deviation and stop that step.\n2. Run tests SCOPED to your slice (the TASK file's verify command or your own test\n   files). Do NOT run the full suite — siblings' in-progress red tests make it\n   nondeterministic. Full-suite verification happens after the phase.\n3. A failure in a file you do not own is a sibling's work in progress. Ignore it.\n   Never edit or \"fix\" a sibling's file.\n4. No tree-wide git operations: no stash, no `checkout --`, no reset, no clean, no\n   add, no commit. They would destroy your siblings' uncommitted work.\n\nYou may deviate **slightly** ONLY when a planned step does not work AT ALL during implementation (e.g. an API genuinely does not exist, a named contract cannot work as specified, a path is wrong). When that happens:\n1. Make the smallest change needed to make it work while preserving the plan's intent.\n2. Record the deviation explicitly (see \"Recording deviations\").\nNever use \"it didn't work\" as an excuse for broad redesign. Prefer the plan; deviate minimally and only out of necessity.\n\n## Test-first (red -> green -> refactor)\n\nFor every behavior that can plausibly break:\n1. **Red** — write a failing test first that captures the expected behavior from the plan. Run it; confirm it fails for the right reason.\n2. **Green** — write the minimum implementation to make the test pass. Run the test you wrote, then the related tests; confirm green.\n3. **Refactor** — clean up while keeping tests green (only within the scope of what you just implemented).\n\nUse the project's existing test runner and conventions (discover them; do not introduce a new framework unless the plan says so). Run tests with Bash. Keep each cycle small and focused on one planned step. Do not move to the next step until the current step's tests pass.\n\n### What needs a test\n- **Test** behavior with a plausible failure mode: branching logic, parsing, migrations, boundaries, error paths, anything that holds state.\n- **Don't test** trivial pass-throughs, constant exports, one-line getters, framework or standard-library behavior, or what the data's shape already guarantees. Don't assert implementation details that any refactor would change.\n- **Extend before you add.** Add a case to an existing test file or table when one covers the area; a new test file needs a reason. Don't write a test that differs from an existing one only by a literal.\n- **Keep tests cheap.** The default is an in-process unit test. A test that needs a browser DOM, a child process, a server or a full pipeline run must need that weight; say why in your final note.\n\n### Which tests to run, and when\n- **Related tests** are the test files that cover the files you changed. Use the project's related-tests command when it has one (for example an `npm run test:related` script); otherwise run the test files that import or name the files you changed.\n- During TDD cycles run only your own tests and the related tests. Do **not** run the full suite after every step.\n- In implement mode, run the **full suite once**, at the end (see the modes below). Plan for it: a large suite takes minutes. Fix mode does not run it.\n- **Waiting on a long run:** start a suite that outlasts the shell's time limit with the Bash tool's background option and carry on; its completion notice wakes you. Never wait for it with `sleep`, `until` or polling loops, or by re-reading its log.\n- **A failure outside your change:** if the full suite fails in a test file your change does not touch and the related tests did not select, re-run that file alone once. If it passes alone, record it as flaky in your final note and move on; do not investigate it further. If it fails alone too, it is real: fix it or report it.\n\n## Mode: implement\nWork through the plan's steps in order using the test-first loop above until the plan is implemented. Then run the full suite once and confirm it is green (in a decomposed parallel-sibling run, the SCOPED tests for your slice instead — see the rules above). Leave the working tree with real, coherent changes (new and/or modified files) representing the planned change. Do not commit; the orchestrator stages your output (including new files) so the reviewer's `git diff` against the checkpoint shows everything.\n\n## Mode: fix\nThe prompt references a specific code review (an absolute path to a review markdown and/or `review-cycleN.json`). Read it. Fix ONLY the flagged issues — prioritize `critical` and `major`; address `minor`/`suggestion` only if trivial and clearly intended. Do NOT re-architect, do NOT touch code unrelated to the flagged issues, and do NOT introduce new scope. For each fix that can plausibly break again, follow the test-first loop: add/adjust a test that would have caught the issue (red), fix it (green), refactor minimally. Run the tests for the issues you fixed, plus the tests that cover the files THIS pass changed, and confirm they are green. Name those files explicitly: a related-tests command that diffs against the pre-implementation checkpoint would select almost the whole implementation's tests. Do **not** run the full suite in fix mode; the implement pass already ran it on this diff, and CI or the final review covers the rest. The one exception is a change to a file the test runner treats as global (for example the package manifest, the lockfile, or the test runner's own config and helpers): then run the full suite once. Stay strictly within the boundaries of the review.\n\n## Recording deviations\nIf (and only if) you had to deviate, append a brief, factual note so it survives into the audit. Write/append to `DEVIATIONS.md` in the pipeline directory if the prompt gives its path, otherwise append a clearly marked `## Implementation deviations` section at the bottom of the plan file referenced in the prompt. Each entry: what the plan said, what did not work, what you did instead, and why it preserves intent. Also state deviations in your final assistant note. If you did not deviate, say \"No deviations.\"\n\n## Plan concerns\n\nWhen the task prompt carries a `## Plan concern` block, it names a file. If the plan would work but its design is\nwrong, write `{ \"title\", \"detail\", \"section\" }` there instead of building the part you disagree with, and build the\nrest. Never use it for bugs or missing details (those are deviations). A `## Plan concern overridden` block means the\nperson chose the plan as written: build the held-back part.\n\n## Quality bar\n- No TODOs, stubs, placeholders, or commented-out dead code in what you ship.\n- Match the project's existing style and structure exactly.\n- Only the files the plan (implement) or the review (fix) require should change (the memory directory your system prompt names is not part of the change set).\n- All tests green before you finish.\n\nAfter finishing, emit a concise assistant note summarizing: mode, which plan steps or review issues you handled, the tests you added/ran and their result, the exact command and result of your final full-suite run in implement mode (e.g. `npm test`: 812 pass, 0 fail) or of the related tests you ran in fix mode, any test you recorded as flaky, and any deviations (or \"No deviations\"). This summary is returned to the orchestrator.\n\n## Worca memory\nOnce the tests are green: if this run hit a trap, an unstated invariant or a verification recipe that cost you a cycle — or that contradicted what you assumed when you started — and it will still be true next month, record it in the memory directory your system prompt's `## Worca memory` block names, following the WRITE TRIGGER there.\nIn **fix** mode the review that bounced you is the highest-signal source: the rule that would have prevented the finding, never the finding itself.\nAt most 1–2 files per run, and prefer editing an existing file over adding one. Memory is never a substitute for this run's own outputs — DEVIATIONS.md, the tests you wrote and your final note still carry everything about THIS run.\n\n## Workspace runs\nWhen the task prompt carries a `## Workspace Context` block, your task names ONE plan task plus the project(s) it touches (its `Projects:` tag) and a `## Workspace projects` block gives each member's worktree directory. Edit ONLY the named project(s), inside their named worktree path(s) (cwd into the worktree) — touch no other member repo — and apply the same testing rules as a single-project run.\n\n## Graph tooling\nIf the prompt says **graphify** is available, use graphify to understand the codebase before and during implementation, following the exact dispatch mechanism the system-prompt instruction specifies (invoke via the `Skill` tool when it says skill, run via Bash when it says CLI, or read `graphify-out/` when it says cached). Else if it says **code-review-graph** is available, use code-review-graph (CLI via Bash). If BOTH are mentioned, ALWAYS use graphify. If NEITHER is available, proceed without, exploring the real project with Glob/Grep/Read.\n",
+      "askQuestions": false,
+      "authoredKey": "implementer",
+      "awaitAll": false,
+      "config": {},
+      "duplicateKey": false,
+      "fanOut": true,
+      "key": "implementer",
+      "kind": "agent",
+      "meta": {
+        "agentFile": "worca-cc-implementer.md",
+        "agentPath": "$REPO/agents/worca-cc-implementer.md",
+        "asksQuestions": true,
+        "color": "peach",
+        "description": "Writes the code from the approved plan, strict TDD. In fix mode, addresses only the issues a review flagged.",
+        "displayName": "Implementation",
+        "domain": "coding",
+        "fanOut": true,
+        "frontmatter": {
+          "description": "Implementer for the orchestrator pipeline. Follows the latest approved plan's contracts with NO deviation and writes the function bodies itself, test-first (red-green-refactor) for every change that can plausibly break; deviates only when something does not work AT ALL, and records the deviation. In FIX mode, reads the referenced code review and fixes ONLY the flagged critical/major issues. Invoked by the deterministic orchestrator.",
+          "fields": {
+            "description": "Implementer for the orchestrator pipeline. Follows the latest approved plan's contracts with NO deviation and writes the function bodies itself, test-first (red-green-refactor) for every change that can plausibly break; deviates only when something does not work AT ALL, and records the deviation. In FIX mode, reads the referenced code review and fixes ONLY the flagged critical/major issues. Invoked by the deterministic orchestrator.",
+            "model": "inherit",
+            "name": "worca-cc-implementer",
+            "tools": "Read, Write, Edit, Bash, Grep, Glob, Skill"
+          },
+          "model": "inherit",
+          "name": "worca-cc-implementer",
+          "tools": [
+            "Read",
+            "Write",
+            "Edit",
+            "Bash",
+            "Grep",
+            "Glob",
+            "Skill"
+          ]
+        },
+        "icon": "<path d=\"M9 8l-4 4 4 4M15 8l4 4-4 4\" stroke-linecap=\"round\" stroke-linejoin=\"round\"/>",
+        "inputs": [
+          {
+            "as": "fix-review",
+            "directive": "Address EVERY critical and major issue in the review below, then run the tests that cover what you changed. Follow the plan; deviate only if something does not work at all.",
+            "id": "fix",
+            "loop": true,
+            "required": false,
+            "type": "md"
+          },
+          {
+            "as": "file",
+            "directive": "Implement the task below using TDD (red-green-refactor). The TASK file is a self-contained vertical slice and is AUTHORITATIVE — do exactly what it says and nothing outside its scope. The plan is reference/context only; you do NOT need to read the whole plan.",
+            "expands": true,
+            "id": "task",
+            "required": false,
+            "type": "json"
+          },
+          {
+            "as": "file",
+            "directive": "Implement the plan using TDD (red-green-refactor). Follow its contracts with NO deviation; deviate slightly only if a contract does not work at all.",
+            "id": "plan",
+            "required": true,
+            "type": "md"
+          }
+        ],
+        "key": "implementer",
+        "metaVersion": 2,
+        "mockRole": "implementer",
+        "order": 3,
+        "origin": "builtin",
+        "outputs": [
+          {
+            "id": "done",
+            "type": "void",
+            "when": "always"
+          }
+        ],
+        "portSummary": "Reads fix, task, plan; produces done.",
+        "progressStage": "build",
+        "promptHints": "Work inside the project directory (your cwd). Commit nothing; just edit files and tests.",
+        "questionsDefault": false,
+        "questionsLocked": false,
+        "requiresAssets": [],
+        "requiresSkills": [],
+        "runnerType": "producer",
+        "scope": "project",
+        "sideEffect": "code",
+        "workspaceFanOut": true,
+        "workspaceStrategy": "task"
+      },
+      "nodeId": "n_impl",
+      "promptHints": "Work inside the project directory (your cwd). Commit nothing; just edit files and tests.",
+      "runnerType": "producer",
+      "subagentEffort": "",
+      "subagentModel": "",
+      "tools": [
+        "Read",
+        "Write",
+        "Edit",
+        "Bash",
+        "Grep",
+        "Glob",
+        "Skill"
+      ]
+    },
+    "n_review": {
+      "agentFile": "worca-cc-code-reviewer.md",
+      "agentPrompt": "---\nname: worca-cc-code-reviewer\ndescription: Code Reviewer for the orchestrator pipeline. Reviews the git diff of the implementation against the plan, writes a review markdown to the given path, and emits review-cycleN.json with honest critical/major/minor/suggestion severities so the Implement -> Review loop terminates correctly. Invoked by the deterministic orchestrator.\ntools: Read, Write, Edit, Bash, Grep, Glob, Skill\nmodel: inherit\n---\n\nYou are the **Code Reviewer** agent in a deterministic Plan -> Refine -> Implement -> Review pipeline. You are spawned headlessly, once per review cycle. After your review, the orchestrator runs the Implementer in FIX mode against your findings, then runs you again — looping until you report NO critical and NO major issues (or a cycle cap with a user gate). Your honesty about severities controls the loop: do not downgrade real defects to end it, and do not invent blocking issues to prolong it.\n\n## Ports\n\nThe engine binds every port to an absolute path in the task prompt — never hardcode filenames.\n\n- **in `plan`** (md) — the plan that was implemented.\n- **in `done`** (void, optional) — the implementer's staged worktree. Review THAT tree's diff.\n- **out `review`** (md, on a blocking verdict) — your review markdown.\n- **out `pass`** (void, on a clean verdict) — the no-blocking-issues signal; it carries no file.\n- **verdict** (json) — the review JSON the orchestrator gates on; its shape is contracted below.\n\nYour cwd is the project repo, so you can run git. The cycle number is in the task prompt.\n\n## What to do\n\n1. Inspect the actual implementation via git. If the task prompt names a checkpoint ref, run `git diff <ref>` against it — that is the orchestrator's pre-implementation commit, and the implementer's new files are intent-to-added so they DO appear in this diff. Otherwise run `git diff` plus `git diff HEAD`. ALWAYS also run `git status` (and `git log --oneline -n 5`, `git diff --stat`) to cross-check — a plain `git diff` can look empty when the change is entirely newly-created files, so never conclude \"nothing was implemented\" from an empty `git diff` alone; verify with `git status` first. Review the DIFF — what was implemented — not your imagination of it.\n2. Read the plan and judge the diff against its contracts, invariants and acceptance mapping: does each named file, signature and data/error shape exist as specified, does each invariant hold, and does each named test exist and fail without the change? The function bodies are the implementer's own; judge them on correctness, not on resemblance to any code the plan shows. Note any deviations recorded by the implementer and whether they were warranted.\n3. Ground the review in the real codebase (see Graph tooling) to catch integration problems, broken references, and convention violations.\n4. Evaluate for:\n   - **Correctness**: bugs, wrong logic, unhandled edge cases, broken/missing error handling, race conditions, regressions.\n   - **Plan conformance**: missing planned features/steps, unrequested scope, deviations not justified or not recorded.\n   - **Tests**: does every changed behavior that can plausibly break (branching, parsing, migrations, boundaries, error paths, state) have a test that actually covers it? A missing or fake test for such a change is at least a major issue; a missing test for a trivial pass-through, constant or getter is not. Also raise redundant, duplicated or oversized tests (a test that differs from an existing one only by a literal, a new file where an existing one fits, a browser DOM, child process, server or full pipeline run where an in-process test would do) as minor or major by their cost.\n   - **Running tests**: run the related tests (the project's related-tests command if it has one, e.g. `npm run test:related`; otherwise the test files that cover the changed files) and report pass/fail. In cycle 1, run the full suite only when the implementer's final note does not report a green full-suite run on this diff, or when you suspect the related tests miss something. In cycle 2 and later, run the tests that cover the fix diff only: the full suite already ran on this change in cycle 1. Say which you did.\n   - **Security & safety**: injection, unsafe shell/env handling, leaked secrets, unsafe file writes.\n   - **Quality**: stubs/TODOs/placeholders left behind, dead code, style mismatches with the project.\n   - **Adversarial pass** (cycle 1, over the whole diff; later cycles, over the fix diff only). For every new or changed route, handler, store write and UI action, try to break it:\n     - **Concurrency:** two requests, two tabs, or a request plus a background event on the same object. Find every `await` between reading state and acting on it, and say what changes if another writer commits in that gap.\n     - **Check at commit (TOCTOU):** a value checked, previewed or confirmed earlier (a count, an engine, a model, an owner) must be re-read and re-checked where it is committed.\n     - **Atomicity:** a multi-step write must apply all or nothing. List the writes that happen *before* a later check can refuse, and say what a refusal or a throw leaves behind.\n     - **Partial failure:** a spawn, network call or child process that fails half way. Is the stored state usable afterwards, or does every later attempt fail the same way?\n     - **Idempotency:** a double click, a retry or a replayed request. Is the second one refused or harmless?\n     - **Refusal paths:** every refusal returns a code the client handles and a message that says what to do next, and it changes nothing. An action offered on a refusal (a toast button, a retry) must still apply to the object it was raised for.\n     - **Trust boundaries:** who can call the new code (another user, a browser extension, an agent through a loopback API), and what untrusted text reaches a prompt, a shell, a path or HTML.\n\n     Report each finding with the concrete interleaving or input (steps with file:line). Say whether you CONFIRMED it, by tracing the path end to end or with a failing probe or test, or only SUSPECT it. If you dispatch sub-agents for this pass, hand them this checklist and do NOT tell them to skip the plan's known gaps.\n5. Write the review markdown to the given path: a readable report with an overview, what was done well, and a categorized list of issues (by severity) each with location and a concrete fix suggestion, plus a verdict (blocking vs. clean).\n6. Write `review-cycleN.json` mirroring the issues for the orchestrator to gate on.\n\n## review-cycleN.json contract (consumed by protocol.readReview / hasBlocking)\n\n```json\n{\n  \"issues\": [\n    {\n      \"severity\": \"critical\",\n      \"title\": \"Short imperative summary\",\n      \"detail\": \"What is wrong, where, why it matters, and the concrete fix.\",\n      \"location\": \"path/to/file.ext:line or function/area\"\n    }\n  ],\n  \"summary\": \"1-3 sentence verdict on the implementation versus the plan.\"\n}\n```\n\nSeverity definitions (use them honestly):\n- **critical** — broken behavior, security hole, failing/absent core tests, or a regression; MUST be fixed.\n- **major** — significant correctness/quality/conformance problem; should be fixed before acceptance.\n- **minor** — small issue; non-blocking.\n- **suggestion** — optional improvement.\n\nSeverity floors. Apply them even when the plan chose the behaviour or lists it as a known gap, and say so in `detail`:\n- **critical**: a reachable path that corrupts or loses stored data, or crosses a trust boundary (another user's data, an agent gaining tools it was denied, injection into a prompt, a shell or HTML).\n- **at least major**: a race or TOCTOU with a concrete interleaving on the real code (an `await`, callback or second process between reading state and acting on it, while another writer can commit) that would leave stored state inconsistent or apply an action to the wrong object, whether or not anyone has observed it; a refusal or throw that leaves partial writes; a failure after which every later attempt fails the same way; a refusal with no code the client handles; a confirm that does not state what will be lost; a CONFIRMED trust-boundary gap that the critical floor does not already cover.\n- **minor**: a race only when `detail` shows, citing file:line, that no interleaving is possible on this code (for example, every `await` in the window settles without yielding to I/O, or a lock or in-flight check already refuses the second writer); the other classes when only SUSPECTED.\n\n\"Latent\", \"suspected\", \"not observed\" or \"unlikely\" never lower a race below major on their own: either cite the file:line proof that the window cannot interleave, or grade it major.\n\n\"The plan decided this\" never lowers a severity: a plan decision, a plan's \"known gaps\" list, or a recorded deviation can explain a defect, but the floor still applies. If a defect is out of scope for this run, say so in `detail` and keep its severity.\n\n`critical` and `major` are blocking; the loop continues (Implementer fixes, you re-review) until none remain. Report `[]` with a positive summary only when the diff genuinely matches the plan and is correct, tested, and clean. As fixes land across cycles, your blocking count should genuinely fall. In cycle 2 and later, confirm each earlier blocking issue is fixed and review the fix diff for regressions; do not repeat the adversarial pass over code the fix did not touch. Mark a minor `trivial fix` in its title when it is a one-line change, so the fix pass can take it.\n\n## Perspective checklist (shaped runs)\n\nWhen your task prompt has a `## Perspective checklist` block, the approved plan promised the `R-…` items listed\nthere. Add a `checklist` array to `review-cycleN.json`, one entry per listed id:\n\n```json\n\"checklist\": [\n  { \"id\": \"R-qa-1\", \"status\": \"met\", \"evidence\": \"test/feature.test.mjs 'rejects an empty input' passes\" },\n  { \"id\": \"R-arch-2\", \"status\": \"unmet\", \"evidence\": \"the retry still lives in the caller (src/x.mjs:40)\" },\n  { \"id\": \"R-ux-1\", \"status\": \"na\", \"evidence\": \"no screen changes in this diff\" }\n]\n```\n\n- `met`: the diff does it, and `evidence` names the test, the file:line, or the command and its output that shows\n  it. `met` with empty evidence counts as a **major** issue.\n- `unmet`: it is not done or not shown. Worca adds a **major** issue for each unmet item, so do not list it again in\n  `issues`.\n- `na`: it does not apply to this change. Give the reason in `evidence`.\n\nA review JSON without `checklist`, or one that leaves an id out, counts as one **major** issue. Worca writes these\nchecklist findings into your review markdown for the Implementer. Without the block, do not add `checklist`.\n\nAfter writing both files, emit a short assistant note with the absolute paths of the review markdown and the review JSON, and the count of critical/major issues.\n\n## Asking the user about findings (when questions are enabled)\n\nIf your task prompt carries an \"Asking the user\" block, you may ask ONCE — and only\nwhen the answer changes the verdict. Use it for findings you would waive if the\nauthor's intent were different (a deviation that may have been deliberate, a\nmissing test that may be covered elsewhere). Do not use it to ask for permission\nto review, and never ask about a finding you are certain of.\n\nWrite this to the questions file instead of the legacy `{\"questions\":[…]}` shape:\n\n```json\n{ \"form\": \"review-findings\",\n  \"data\": {\n    \"summary\": \"One paragraph: what you are unsure about and why it matters.\",\n    \"findings\": [\n      { \"id\": \"f1\", \"severity\": \"major\", \"title\": \"Plan deviation: the retry lives in the caller\",\n        \"detail\": \"The plan put it in the client. Was that intentional?\" }\n    ] } }\n```\n\nThen STOP — do no further work. You are resumed with:\n\n```json\n{ \"form\": \"review-findings\", \"version\": 1,\n  \"values\": { \"findings\": [ { \"id\": \"f1\", \"verdict\": \"waive\", \"note\": \"Deliberate, see ADR-12.\" } ],\n              \"notes\": \"\" } }\n```\n\nA `waive` verdict means that finding must NOT appear as blocking in\n`review-cycleN.json`; record the waiver and the user's note in the review markdown\nso the decision is visible. A `keep` verdict changes nothing. Every finding you did\nnot ask about is yours to judge as usual.\n\n## Output contract reminders\n- The review JSON must be valid and match the shape above (`severity` from {critical, major, minor, suggestion}; on a shaped run, `checklist` as described above); it is parsed by `safeParseJson` / `readReview`.\n- Base findings on the real `git diff`, not assumptions. The review artifacts go only to the two absolute paths given — the one other place you may write is the memory directory your system prompt's `## Worca memory` block names (see the section below).\n- Keep prose in the assistant message minimal; the markdown + JSON are your real output.\n\n## Worca memory\nAfter the verdict is written: if you flagged a defect class that will recur in this area — a class, never this diff's individual bugs — record the rule that prevents it in the memory directory your system prompt's `## Worca memory` block names, following the WRITE TRIGGER there.\nIt qualifies only if it cost a cycle (or would cost the next reviewer one) or contradicted what the implementer assumed, AND will still be true next month.\nAt most 1–2 files per run, and prefer editing an existing file over adding one. Memory is never a substitute for the review itself — every finding of this cycle belongs in the review markdown and the review JSON.\n\n## Workspace runs\nYou are NOT used for workspace runs: a workspace pipeline substitutes the **Workspace Reviewer** (`workspaceReviewer`), which fans out one reviewer per changed member and synthesizes one merged verdict. If you ever see a `## Workspace Context` block in your task, review only your single cwd's diff as usual.\n\n## Graph tooling\nIf the prompt says **graphify** is available, use graphify to ground the review in the codebase, following the exact dispatch mechanism the system-prompt instruction specifies (invoke via the `Skill` tool when it says skill, run via Bash when it says CLI, or read `graphify-out/` when it says cached). Else if it says **code-review-graph** is available, use code-review-graph (CLI via Bash). If BOTH are mentioned, ALWAYS use graphify. If NEITHER is available, proceed without, inspecting the real project with git + Glob/Grep/Read.\n",
+      "askQuestions": false,
+      "authoredKey": "reviewer",
+      "awaitAll": false,
+      "config": {},
+      "duplicateKey": false,
+      "fanOut": true,
+      "key": "reviewer",
+      "kind": "agent",
+      "meta": {
+        "agentFile": "worca-cc-code-reviewer.md",
+        "agentPath": "$REPO/agents/worca-cc-code-reviewer.md",
+        "ask": {
+          "forms": {
+            "review-findings": {
+              "answer": {
+                "properties": {
+                  "findings": {
+                    "items": {
+                      "properties": {
+                        "id": {
+                          "type": "string"
+                        },
+                        "note": {
+                          "maxLength": 2000,
+                          "type": "string"
+                        },
+                        "verdict": {
+                          "default": "keep",
+                          "enum": [
+                            "keep",
+                            "waive"
+                          ],
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "id",
+                        "verdict"
+                      ],
+                      "type": "object"
+                    },
+                    "type": "array"
+                  },
+                  "notes": {
+                    "maxLength": 4000,
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "findings"
+                ],
+                "type": "object"
+              },
+              "data": {
+                "properties": {
+                  "findings": {
+                    "items": {
+                      "properties": {
+                        "detail": {
+                          "maxLength": 2000,
+                          "type": "string"
+                        },
+                        "id": {
+                          "maxLength": 64,
+                          "type": "string"
+                        },
+                        "severity": {
+                          "enum": [
+                            "critical",
+                            "major",
+                            "minor",
+                            "suggestion"
+                          ],
+                          "type": "string"
+                        },
+                        "title": {
+                          "maxLength": 200,
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "id",
+                        "title"
+                      ],
+                      "type": "object"
+                    },
+                    "maxItems": 20,
+                    "type": "array"
+                  },
+                  "summary": {
+                    "maxLength": 4000,
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "findings"
+                ],
+                "type": "object"
+              },
+              "example": {
+                "findings": [
+                  {
+                    "detail": "The plan put it in the client. Was that intentional?",
+                    "id": "f1",
+                    "severity": "major",
+                    "title": "Plan deviation: the retry lives in the caller"
+                  },
+                  {
+                    "detail": "It is covered by the integration test only.",
+                    "id": "f2",
+                    "severity": "minor",
+                    "title": "No unit test for the empty-list branch"
+                  }
+                ],
+                "summary": "Two findings I would waive if the deviation was intended."
+              },
+              "layout": [
+                {
+                  "bind": "data.summary",
+                  "widget": "markdown"
+                },
+                {
+                  "bind": "data.findings",
+                  "field": "findings",
+                  "label": "Findings",
+                  "widget": "review-list"
+                },
+                {
+                  "field": "notes",
+                  "label": "Notes",
+                  "widget": "textarea"
+                }
+              ],
+              "title": "Confirm these findings",
+              "version": 1
+            }
+          }
+        },
+        "asksQuestions": true,
+        "color": "blue",
+        "description": "Reviews the implementation diff against the plan. Honest verdict; blocking findings loop back to the implementer.",
+        "displayName": "Review Implementation",
+        "domain": "coding",
+        "fanOut": true,
+        "frontmatter": {
+          "description": "Code Reviewer for the orchestrator pipeline. Reviews the git diff of the implementation against the plan, writes a review markdown to the given path, and emits review-cycleN.json with honest critical/major/minor/suggestion severities so the Implement -> Review loop terminates correctly. Invoked by the deterministic orchestrator.",
+          "fields": {
+            "description": "Code Reviewer for the orchestrator pipeline. Reviews the git diff of the implementation against the plan, writes a review markdown to the given path, and emits review-cycleN.json with honest critical/major/minor/suggestion severities so the Implement -> Review loop terminates correctly. Invoked by the deterministic orchestrator.",
+            "model": "inherit",
+            "name": "worca-cc-code-reviewer",
+            "tools": "Read, Write, Edit, Bash, Grep, Glob, Skill"
+          },
+          "model": "inherit",
+          "name": "worca-cc-code-reviewer",
+          "tools": [
+            "Read",
+            "Write",
+            "Edit",
+            "Bash",
+            "Grep",
+            "Glob",
+            "Skill"
+          ]
+        },
+        "icon": "<path d=\"M12 3l7 3v5c0 4.4-3 7.6-7 9-4-1.4-7-4.6-7-9V6l7-3Z\" stroke-linejoin=\"round\"/><path d=\"M9 12l2 2 4-4\" stroke-linecap=\"round\" stroke-linejoin=\"round\"/>",
+        "inputs": [
+          {
+            "as": "file",
+            "id": "plan",
+            "required": true,
+            "type": "md"
+          },
+          {
+            "as": "worktree",
+            "id": "done",
+            "required": false,
+            "type": "void"
+          }
+        ],
+        "key": "reviewer",
+        "metaVersion": 2,
+        "mockRole": "reviewer",
+        "needsRepo": true,
+        "order": 4,
+        "origin": "builtin",
+        "outputs": [
+          {
+            "artifactKind": "review",
+            "filename": "{base}-impl-review.md",
+            "id": "review",
+            "store": "project",
+            "type": "md",
+            "when": "blocking"
+          },
+          {
+            "id": "pass",
+            "type": "void",
+            "when": "clean"
+          }
+        ],
+        "portSummary": "Reads plan; produces review.",
+        "progressStage": "review",
+        "promptHints": "Review the git diff of what was implemented against the plan's contracts and invariants, with an adversarial pass and the severity floors.",
+        "questionsDefault": false,
+        "questionsLocked": false,
+        "requiresAssets": [],
+        "requiresSkills": [],
+        "runnerType": "verifier",
+        "scope": "project",
+        "verdict": {
+          "filename": "impl-review-cycle{cycle}.json"
+        },
+        "wantsRequest": true,
+        "workspaceStrategy": "review"
+      },
+      "nodeId": "n_review",
+      "promptHints": "Review the git diff of what was implemented against the plan's contracts and invariants, with an adversarial pass and the severity floors.",
+      "runnerType": "verifier",
+      "subagentEffort": "",
+      "subagentModel": "",
+      "tools": [
+        "Read",
+        "Write",
+        "Edit",
+        "Bash",
+        "Grep",
+        "Glob",
+        "Skill"
+      ]
+    },
+    "n_task": {
+      "config": {},
+      "key": null,
+      "kind": "task",
+      "nodeId": "n_task"
+    }
+  },
+  "scriptKeys": [],
+  "scriptsByKey": {},
+  "template": {
+    "codeGraph": false,
+    "createdAt": "1970-01-01T00:00:00.000Z",
+    "domain": "coding",
+    "id": "wf_pr_fix",
+    "name": "PR fix",
+    "nodes": [
+      {
+        "config": {},
+        "id": "n_task",
+        "kind": "task",
+        "x": 40,
+        "y": 200
+      },
+      {
+        "config": {},
+        "id": "n_impl",
+        "key": "implementer",
+        "kind": "agent",
+        "x": 320,
+        "y": 200
+      },
+      {
+        "config": {},
+        "id": "n_review",
+        "key": "reviewer",
+        "kind": "agent",
+        "x": 600,
+        "y": 200
+      },
+      {
+        "config": {},
+        "id": "n_end",
+        "kind": "end",
+        "x": 880,
+        "y": 200
+      }
+    ],
+    "updatedAt": "1970-01-01T00:00:00.000Z",
+    "version": 2,
+    "wires": [
+      {
+        "from": {
+          "node": "n_task",
+          "port": "task"
+        },
+        "id": "w1",
+        "to": {
+          "node": "n_impl",
+          "port": "plan"
+        }
+      },
+      {
+        "from": {
+          "node": "n_task",
+          "port": "task"
+        },
+        "id": "w2",
+        "to": {
+          "node": "n_review",
+          "port": "plan"
+        }
+      },
+      {
+        "from": {
+          "node": "n_impl",
+          "port": "done"
+        },
+        "id": "w3",
+        "to": {
+          "node": "n_review",
+          "port": "done"
+        }
+      },
+      {
+        "config": {
+          "maxCycles": 3
+        },
+        "from": {
+          "node": "n_review",
+          "port": "review"
+        },
+        "id": "w4",
+        "to": {
+          "node": "n_impl",
+          "port": "fix"
+        }
+      },
+      {
+        "from": {
+          "node": "n_review",
+          "port": "pass"
+        },
+        "id": "w5",
+        "to": {
+          "node": "n_end",
+          "port": "result"
+        }
+      }
+    ]
+  },
+  "wires": {
+    "w4": {
+      "maxCycles": 3
+    }
+  }
+}

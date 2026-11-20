@@ -19,9 +19,12 @@ import { promptFields, parseAnswerLine } from '../../shared/forms/project.mjs';
 import { giveUpOption, describePauseReason, pauseConsequences } from '../failure-policy.mjs';
 import { chatActor } from '../identity.mjs';
 import { SWITCH_ENGINES, engineLabel, engineList, engineRefusalFor } from '../../shared/engine-switch.mjs';
+import { ACTION_DONE } from './receipts.mjs';
 
 const md = (value) => ({ kind: 'markdown', value });
 const reply = (text, severity = 'info') => ({ title: null, body: [md(text)], severity });
+/** A completed action that still reads as a warning (pause, stop): the message's receipt is ✅, not "refused". */
+const doneReply = (text) => ({ ...reply(text, 'warning'), [ACTION_DONE]: true });
 
 /** 1.0 pipeline statuses -> emoji (statusEmoji port, re-keyed). */
 export function statusEmoji(status) {
@@ -295,7 +298,7 @@ export function createCommandRouter({ actions, chatContext, logger = () => {}, o
       const t = resolveTarget(args[0], scopedRuns(chatKey), [], { wantLive: true });
       if (t.error) return t.error;
       await actions.pause(t.run.runId, actor);
-      return reply(`⏸ Pausing \`${runRef(t.run.runId)}\` — resume from the UI or \`/resume ${runRef(t.run.runId)}\`.`, 'warning');
+      return doneReply(`⏸ Pausing \`${runRef(t.run.runId)}\` — resume from the UI or \`/resume ${runRef(t.run.runId)}\`.`);
     },
 
     stop: async ({ chatKey, args, actor }) => {
@@ -303,7 +306,7 @@ export function createCommandRouter({ actions, chatContext, logger = () => {}, o
       const t = resolveTarget(args[0], live, [], { wantLive: true });
       if (!t.error) {
         await actions.stop(t.run.runId, actor);
-        return reply(`⏹ Stopping \`${runRef(t.run.runId)}\` (${String(t.run.title || '').slice(0, 50)}).`, 'warning');
+        return doneReply(`⏹ Stopping \`${runRef(t.run.runId)}\` (${String(t.run.title || '').slice(0, 50)}).`);
       }
       // Not live: a PAUSED run is stopped through its saved row — by an explicit ref only, so
       // a bare /stop never reaches past the live runs to discard parked work. An interrupted
@@ -338,7 +341,7 @@ export function createCommandRouter({ actions, chatContext, logger = () => {}, o
         return reply(`\`${runRef(row.id)}\` is interrupted — it stays resumable: \`/resume ${runRef(row.id)}\`.`, 'warning');
       }
       const out = await actions.stopPaused(row.id, actor);
-      if (out?.ok) return reply(`⏹ Stopped \`${runRef(row.id)}\` (${String(row.title || '').slice(0, 50)}).`, 'warning');
+      if (out?.ok) return doneReply(`⏹ Stopped \`${runRef(row.id)}\` (${String(row.title || '').slice(0, 50)}).`);
       return reply(`Could not stop \`${runRef(row.id)}\`: ${out?.error || 'unknown error'}`, 'error');
     },
 
@@ -370,12 +373,14 @@ export function createCommandRouter({ actions, chatContext, logger = () => {}, o
       return reply(`Could not resume \`${runRef(t.row.id)}\`${on}: ${why || 'unknown error'}`, 'error');
     },
 
+    // G18 (groupRefusal) is checked in handleIncoming before these run.
     approve: async (env) => answerDecision(env, 'approve'),
     retry: async (env) => answerDecision(env, 'retry'),
     abort: async (env) => answerDecision(env, 'abort'),
     cancel: async (env) => answerDecision(env, 'cancel'),
 
-    answer: async ({ chatKey, args, actor }) => {
+    answer: async (env) => {
+      const { chatKey, args, actor } = env;
       const t = resolveTarget(args[0] && args[0].startsWith('*') ? args[0] : '', scopedRuns(chatKey), [], { wantLive: true });
       if (t.error) return t.error;
       const pq = actions.pendingQuestion(t.run.runId);
@@ -474,7 +479,8 @@ export function createCommandRouter({ actions, chatContext, logger = () => {}, o
     // /direct [*ref] <free text> — a non-blocking direction for a live run. The
     // text is sliced off msg.text, not rebuilt from args: parseCommand collapses
     // whitespace and drops @mentions, and a direction must arrive verbatim.
-    direct: async ({ chatKey, args, msg, platform }) => {
+    direct: async (env) => {
+      const { chatKey, args, msg, platform } = env;
       // A ref is only a ref if it NAMES one of this chat's live runs. Shape alone
       // is not enough to tell one from ordinary prose: `*never*` has a trailing
       // asterisk, but `*please remove* the roadmap` opens with a bare `*please`
@@ -611,6 +617,18 @@ export function createCommandRouter({ actions, chatContext, logger = () => {}, o
     },
   };
 
+  // G18: the commands that steer a live run (/direct, and the answers that decide what it does next) are
+  // refused in a group chat unless the sender is named in allowedUserIds, or the channel opts in
+  // (directInGroups: anyone): being a member of an allowed group is not enough. A chat the worker did not
+  // mark as 1:1 (meta.isGroup !== false) counts as a group. The one rule for all of them, checked in handleIncoming
+  // before the command is accepted (a refused one is never acknowledged).
+  const GROUP_GUARDED = new Set(['direct', 'answer', 'approve', 'retry', 'abort', 'cancel']);
+  function groupRefusal({ msg, plugin, channelConfig, guard }, command) {
+    if (msg?.meta?.isGroup === false || guard?.isListedSender(msg?.userId) || channelConfig?.directInGroups === 'anyone') return null;
+    return reply(`\`/${command}\` is off in group chats. Send it to the bot in a direct message, `
+      + `or add your user ID (\`${msg?.userId}\`) to **Allowed user IDs** in worca → Marketplace → Installed → ${plugin} → Settings.`, 'warning');
+  }
+
   async function answerDecision({ chatKey, args, actor }, verb) {
     const t = resolveTarget(args[0], scopedRuns(chatKey), [], { wantLive: true });
     if (t.error) return t.error;
@@ -652,19 +670,26 @@ export function createCommandRouter({ actions, chatContext, logger = () => {}, o
   return {
     /**
      * @param {{plugin:string, channelId:string, platform:string,
-     *          channelConfig:object, msg:{chatId:string,userId:string,text:string,meta?:object}}} ev
+     *          channelConfig:object, msg:{chatId:string,userId:string,text:string,meta?:object},
+     *          onAccepted?: () => void}} ev
+     * onAccepted: called once the command is accepted (allowed chat, allowed sender, known command, the G18 group rule),
+     * right before it runs.
      * @returns {Promise<object|null>} NormalizedMessage reply or null (ignore)
      */
-    async handleIncoming({ plugin, channelId, platform, channelConfig, msg }) {
+    async handleIncoming({ plugin, channelId, platform, channelConfig, msg, onAccepted = null }) {
       const guard = createAllowlistGuard(parseIdList(channelConfig?.allowedChatIds), {
         debug: (m) => logger('info', m),
-      });
+      }, parseIdList(channelConfig?.allowedUserIds));
       const parsed = parseCommand(msg.text);
       if (!guard.isAllowed({ platform, chatId: msg.chatId })) {
         // Chatter in a watched group is never a refusal; a command is — tell the
         // observer (Settings shows it) and maybe the chat (refuse()).
         return parsed ? refuse({ plugin, channelId, platform, channelConfig, msg }, parsed.command) : null;
       }
+      // An allowed chat that names its senders (allowedUserIds): anyone else in it is
+      // ignored without a reply. The refusal hint names the CHAT to add, which is
+      // already there, and a reply would tell a stranger the bot listens.
+      if (!guard.isSenderAllowed({ platform, chatId: msg.chatId, userId: msg.userId })) return null;
       if (!parsed) return null; // non-commands are never interpreted
       const handler = Object.hasOwn(handlers, parsed.command) ? handlers[parsed.command] : null;
       const chatKey = `${platform}:${msg.chatId}`;
@@ -673,8 +698,16 @@ export function createCommandRouter({ actions, chatContext, logger = () => {}, o
       // user id, never a sign-in identity. Actions that change a run record it.
       const meta = msg.meta && typeof msg.meta === 'object' ? msg.meta : {};
       const actor = chatActor({ platform, userName: meta.username || meta.name || meta.userName || null, userId: msg.userId });
+      // G18 is part of who may send this command: refused here, before the command counts as accepted.
+      const inGroup = GROUP_GUARDED.has(parsed.command) ? groupRefusal({ msg, plugin, channelConfig, guard }, parsed.command) : null;
+      if (inGroup) return inGroup;
+      // Accepted: the caller may acknowledge the message now (freeform chat reactions). A throwing observer never
+      // stops the command.
+      if (typeof onAccepted === 'function') {
+        try { onAccepted(); } catch (err) { logger('error', `chat onAccepted observer failed: ${err?.message || err}`); }
+      }
       try {
-        return await handler({ chatKey, platform, plugin, channelId, msg, args: parsed.args, actor });
+        return await handler({ chatKey, platform, plugin, channelId, channelConfig, guard, msg, args: parsed.args, actor });
       } catch (err) {
         logger('error', `chat command /${parsed.command} failed: ${err?.message || err}`);
         return reply(`Command failed: ${String(err?.message || err).slice(0, 200)}`, 'error');

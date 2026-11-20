@@ -108,7 +108,7 @@ test('askCatalog: Qwen and Gemini rows with their engine\'s efforts, their defau
 test('a Qwen chat takes only Qwen models', async () => {
   const m = mk();
   assert.deepEqual(await m.validateModelEffort('qwen3-coder-plus', 'medium', { engine: 'qwen' }), { ok: true, model: 'qwen3-coder-plus', effort: 'medium' });
-  assert.deepEqual(await m.validateModelEffort('gemini-3-pro', 'medium', { engine: 'qwen' }), { ok: false, error: 'this chat runs on Qwen Code; start a new chat to use Gemini CLI' });
+  assert.deepEqual(await m.validateModelEffort('gemini-3-pro', 'medium', { engine: 'qwen' }), { ok: false, error: 'this chat runs on Qwen Code; switch it to Gemini CLI from the Chat model picker first' });
   assert.equal(chatEngine({ model: 'x', engine: 'gemini' }), 'gemini');
 });
 
@@ -132,7 +132,7 @@ test('the panel: each engine\'s section and what it refuses before upload', () =
   assert.deepEqual(pickerGroups(ROWS).map((g) => g.engine), ['claude', 'gemini', 'qwen']);
   for (const engine of ['qwen', 'gemini', 'goose', 'opencode']) {
     assert.equal(attachRefusal({ ext: '.png', engine }), null);
-    assert.equal(attachRefusal({ ext: '.pdf', engine }), engine === 'goose' ? 'a Goose chat cannot view PDFs (Claude, Copilot, Gemini CLI, OpenCode or Qwen Code chats can)' : null);
+    assert.equal(attachRefusal({ ext: '.pdf', engine }), engine === 'goose' ? 'a Goose chat cannot view PDFs (Claude Code, GitHub Copilot, Gemini CLI, OpenCode or Qwen Code chats can)' : null);
     assert.equal(attachRefusal({ ext: '.md', engine }), null);
   }
   assert.equal(isEngineSetupNotice({ kind: 'notice', qwenSetup: true }), true);

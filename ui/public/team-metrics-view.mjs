@@ -717,7 +717,7 @@ export function renderTmEmptyState({ doc = globalThis.document } = {}) {
   };
   grid.append(
     card('01 · PROJECT', 'Enable team metrics on a project',
-      ['Creates a ', { code: 'worca-metrics' }, " branch on the project's origin. Every finished run is pushed there as one small file, from every teammate's machine. Nothing is added to your code branches."], '#projects', 'Go to Projects', true),
+      ['Creates a ', { code: 'worca-metrics' }, " branch on the project's origin. Every finished run is pushed there as one small file, from every teammate's machine. Nothing is added to your code branches. The project needs a git remote."], '#projects', 'Go to Projects', true),
     card('02 · WORKSPACE', 'Pick a metrics home for a workspace',
       ['Workspace runs touch several repositories, so their cost is attributed to the workspace and written to one member you choose. The choice lives on this machine and can be changed on the workspace card.'], '#workspaces', 'Go to Workspaces', false),
   );

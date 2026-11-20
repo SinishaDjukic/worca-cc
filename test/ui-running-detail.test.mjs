@@ -1,7 +1,6 @@
 // test/ui-running-detail.test.mjs
 import { test, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { JSDOM } from 'jsdom';
 import { confirmDialog } from './helpers/confirm-modal.mjs';
@@ -11,6 +10,7 @@ import { checkRows } from './helpers/rows.mjs';
 import { useAppTimers } from './helpers/app-timers.mjs';
 import { ICONS } from '../ui/public/icons.mjs';
 import { ASK_IN_CHAT } from '../ui/public/run-head.mjs';
+import { readIndexHtml } from '../src/core/read-index-html.mjs';
 
 // Release each booted window after its test (see test/helpers/jsdom-release.mjs).
 const trackDom = useDomRelease(afterEach);
@@ -21,7 +21,6 @@ const trackDom = useDomRelease(afterEach);
 // (itself copied from test/ui-history-routing.test.mjs:25-96); the open() / recv()
 // WebSocket drivers come from test/ui-pipeline-tabs.test.mjs:31-33.
 
-const htmlPath = fileURLToPath(new URL('../ui/public/index.html', import.meta.url));
 const appPath = fileURLToPath(new URL('../ui/public/app.js', import.meta.url));
 
 const PROJECT = '/tmp/proj';
@@ -34,7 +33,7 @@ const STEPPER3 = { steps: [{ label: 'Plan', nodes: [{ id: 'a', label: 'Planner' 
                            { label: 'Review', nodes: [{ id: 'c', label: 'Reviewer' }] }] };
 
 async function boot({ url = 'http://localhost:4317/', fetchHandler } = {}) {
-  const dom = trackDom(new JSDOM(readFileSync(htmlPath, 'utf8'), { url }));
+  const dom = trackDom(new JSDOM(readIndexHtml(), { url }));
   const { window } = dom;
   window.Element.prototype.scrollIntoView = function () {};
 
@@ -584,7 +583,7 @@ test('the Live log tab is the CARD pipeline: bar, switch, hydrated lines, shared
   assert.ok(bar, 'the detail carries the shared filter bar');
   assert.deepEqual(
     [...bar.querySelectorAll('.log-f')].map((n) => n.classList[1]),
-    ['log-f-source', 'log-f-level', 'log-f-step', 'log-f-cycle', 'log-f-exec', 'log-search', 'log-copy']);
+    ['log-f-source', 'log-f-level', 'log-f-step', 'log-f-cycle', 'log-f-exec', 'log-f-session', 'log-search', 'log-copy']);
   assert.ok(sec.querySelector('.switch.autoscroll'), 'the auto-scroll switch rides along');
   // Lines come from r.logLines, not from a fetch: no /log request was made.
   assert.equal(ctx.calls.filter((c) => c.url.endsWith('/log')).length, 0);
@@ -1885,7 +1884,7 @@ test('a run in a chain of three: its breadcrumb links the chain\'s group page; n
 
 test('a live slice\'s breadcrumb links the feature page; no chip; a repaint keeps one breadcrumb', async () => {
   const ctx = await bootRunning();
-  frame(ctx, { type: 'hello', flags: { shapeFirst: true }, runs: [] });
+  frame(ctx, { type: 'hello', runs: [] });
   ctx.box.groups = FEATURE_OF_THREE();
   frame(ctx, { type: 'run-groups-changed' });
   await settle(ctx.window, 4);
@@ -1953,11 +1952,18 @@ test('run page: Apply to branch clears the kept head, and a later state frame do
 });
 
 // A checkout made "now": whenLabel then reads HH:MM. `level` is set before the glance opens (the activity rows read it).
-async function checkoutGlance(level) {
+// `actions`: the Actions model (a function reads it per request), or 'fail'; `arms(url, opts)` answers other calls first.
+async function checkoutGlance(level, { actions = null, arms = null } = {}) {
   const CO = { members: [{ projectKey: KEY, worktreeDir: '/tmp/co', branch: 'worca-cc/dark-p1', at: new Date().toISOString(), policy: 'on-demand' }] };
   const box = { rows: [{ ...HISTORY_ROW, id: 'p1', live: true, survived: true, branch: 'worca-cc/dark-p1', sourceBranch: 'main', pr: null, checkout: CO }] };
   const ctx = await boot({
-    fetchHandler: (url) => {
+    fetchHandler: (url, opts) => {
+      const armed = arms && arms(url, opts);
+      if (armed) return armed;
+      if (actions && url.includes('/api/runs/p1/actions?')) {
+        if (actions === 'fail') return Promise.resolve({ ok: false, status: 500, json: async () => ({ error: 'boom' }) });
+        return ok(typeof actions === 'function' ? actions() : actions);
+      }
       if (url.endsWith('/api/history/pr')) return ok({ ok: true });
       if (url.endsWith('/api/history')) return ok({ pipelines: box.rows, ghAvailable: true });
       if (url.endsWith('/api/budget')) return ok(okBudget());
@@ -1999,6 +2005,74 @@ test('run page, Simple: a checkout gets a plain row with Discard, gone once the 
   assert.doesNotMatch(doc.querySelector('#run-detail .rd-glance').textContent, /worktree/i);
   await discard();
   assert.equal(row(), null);
+});
+
+const GLANCE_MODEL = { enabled: true, finished: true, workspace: false, stacks: [], stackStates: [], instances: [],
+  members: [{ projectKey: KEY, branch: 'worca-cc/dark-p1', setup: null, setupQueued: false,
+    actions: [{ id: 'test', label: 'Test', kind: 'task' }, { id: 'web', label: 'Web', kind: 'service' }], builtins: [] }] };
+const runHead = (doc, id) => doc.querySelector(`#run-detail .rd-head-acts [data-head="${id}"]`);
+
+test('run page card head, Simple: a checked-out run shows Start <first service>, not an empty head', async () => {
+  const { doc, discard } = await checkoutGlance('simple', { actions: GLANCE_MODEL });
+  assert.equal(runHead(doc, 'try'), null);
+  assert.equal(runHead(doc, 'try-start')?.textContent, 'Start Web');
+  assert.equal(runHead(doc, 'try-actions'), null, 'no tab link at Simple');
+  await discard();
+  assert.ok(runHead(doc, 'try'), 'a checkout discarded elsewhere offers Try it again');
+});
+
+test('run page card head: an Actions model that cannot be read says Checked out and is not asked for on every paint', async () => {
+  const { ctx, doc } = await checkoutGlance('advanced', { actions: 'fail' });
+  for (let i = 0; i < 3; i++) { frame(ctx, { type: 'done', runId: 'r1', status: 'done' }); await settle(ctx.window, 4); }
+  assert.equal(runHead(doc, 'try-note')?.textContent, 'Checked out');
+  const reads = ctx.calls.filter((c) => c.url.includes('/api/runs/p1/actions?')).length;
+  assert.ok(reads >= 1 && reads <= 2, `one read (two with the Overview strip), not one per paint: ${reads}`);
+});
+
+const GLANCE_WEB_READY = { instanceId: `act:p1:${KEY}:web`, runId: 'p1', member: KEY, actionId: 'web', label: 'Web', kind: 'service',
+  status: 'ready', ports: { PORT: 4417 }, url: 'http://localhost:4417', startedAt: 1, readyError: null };
+
+test('run page card head: a project with no service links its Actions tab', async () => {
+  const model = { ...GLANCE_MODEL, members: [{ ...GLANCE_MODEL.members[0], actions: [{ id: 'test', label: 'Test', kind: 'task' }] }] };
+  const { ctx, doc } = await checkoutGlance('advanced', { actions: model });
+  assert.equal(runHead(doc, 'try-start'), null);
+  runHead(doc, 'try-actions').dispatchEvent(new ctx.window.Event('click', { bubbles: true }));
+  await settle(ctx.window, 4);
+  assert.match(ctx.window.location.hash, /^#running\/.+\/details\/actions$/);
+});
+
+test('run page card head: Start <first service> starts it, then Open :port and Stop', async () => {
+  const posts = [];
+  let model = GLANCE_MODEL;
+  const { ctx, doc } = await checkoutGlance('advanced', {
+    actions: () => model,
+    arms: (url, opts) => {
+      if (!url.includes('/api/runs/p1/actions/web/start') || opts.method !== 'POST') return null;
+      posts.push(JSON.parse(opts.body));
+      model = { ...GLANCE_MODEL, instances: [GLANCE_WEB_READY] };
+      return ok(GLANCE_WEB_READY);
+    },
+  });
+  runHead(doc, 'try-start').dispatchEvent(new ctx.window.Event('click', { bubbles: true }));
+  await settle(ctx.window, 6);
+  assert.deepEqual(posts, [{ member: KEY }]);
+  assert.equal(runHead(doc, 'try-open')?.textContent, 'Open :4417');
+  assert.equal(runHead(doc, 'try-open').getAttribute('href'), 'http://localhost:4417');
+  assert.ok(runHead(doc, 'try-stop'), 'Stop beside Open');
+});
+
+test('run page card head, Simple: a service started elsewhere shows Open here once actions-changed lands', async () => {
+  let model = GLANCE_MODEL;
+  const { ctx, doc } = await checkoutGlance('simple', { actions: () => model });
+  assert.equal(runHead(doc, 'try-start')?.textContent, 'Start Web');
+  // Only the head reads the model here: drop the Overview strip and the Actions tab's controller (each refetches on the
+  // frame too), as on a screen whose Details tabs never opened.
+  for (const el of doc.querySelectorAll('#run-detail *')) el.__actionsCtl?.destroy();
+  for (const el of doc.querySelectorAll('#run-detail .act-strip')) el.remove();
+  model = { ...GLANCE_MODEL, instances: [GLANCE_WEB_READY] };
+  frame(ctx, { type: 'actions-changed' });
+  await settle(ctx.window, 6);
+  assert.equal(runHead(doc, 'try-open')?.textContent, 'Open :4417');
 });
 
 // ---------------------------------------------------------------------------
@@ -2127,4 +2201,174 @@ test('s2: a failed chain load ends the pending state: the target names the base 
   ctx.box.schedulesFail = true;
   const route = await openChainRoute(ctx);
   assert.equal(route.querySelectorAll('.rd-route-row')[2].querySelector('.rd-route-place').textContent, 'feat/c1');
+});
+
+// --- Pause / Resume show at the click (Pausing… / Resuming…) before the server answers ------------------------
+
+// Hold one endpoint's reply until the test releases it; every other request goes to the boot's own stub.
+function holdFetch(path) {
+  const orig = globalThis.fetch;
+  let release;
+  const held = new Promise((r) => { release = r; });
+  globalThis.fetch = (u, opts) => (String(u).includes(path) ? held : orig(u, opts));
+  return { release: (res) => release(res), restore: () => { globalThis.fetch = orig; } };
+}
+const reply = (status, body) => ({ ok: status < 400, status, json: async () => body });
+
+async function openRunPage(status) {
+  const ctx = await bootRunning();
+  frame(ctx, { type: 'run-created', runId: 'r1', title: 'Add dark mode', projectDir: PROJECT, status: 'running', startedAt: '2026-08-19T10:00:00Z', kind: 'run' });
+  frame(ctx, { type: 'state', runId: 'r1', id: 'p1', status, stepper: V2_MANIFEST, steps: V2_STEPS(), active: [], subAgents: [], totalCostUsd: 1 });
+  go(ctx.window, 'running/r1');
+  await settle(ctx.window, 6);
+  ctx.screen = ctx.window.document.querySelector('#run-detail');
+  return ctx;
+}
+
+test('the run page shows Pausing… at the Pause click, keeps it through a stale reconnect, and a CANNOT_PAUSE refusal does not flash Running', async () => {
+  await checkRows([
+    { name: 'Pause: the status line says pausing before the server answers; a reconnect hello taken before the pause keeps it', run: async () => {
+      const ctx = await openRunPage('running');
+      const hold = holdFetch('/api/pause');
+      try {
+        const btn = ctx.screen.querySelector('.rd-pause');
+        click(ctx.window, btn);
+        await settle(ctx.window, 2);
+        assert.match(statusOf(ctx.screen).dataset.text, /pausing/i, 'the run page says pausing at the click');
+        assert.equal(btn.disabled, true, 'Pause stays disabled while the request runs');
+        // The socket reconnects under load; the server took this snapshot before it handled the pause.
+        frame(ctx, { type: 'hello', runs: [live('r1', { pipelineId: 'p1', status: 'running' })] });
+        await settle(ctx.window, 2);
+        assert.match(statusOf(ctx.screen).dataset.text, /pausing/i, 'a stale hello does not flip it back to Running');
+        hold.release(reply(200, { ok: true }));
+        await settle(ctx.window, 2);
+        frame(ctx, { type: 'state', runId: 'r1', id: 'p1', status: 'paused' });
+        await settle(ctx.window, 2);
+        assert.equal(statusOf(ctx.screen).dataset.state, 'paused');
+        assert.doesNotMatch(statusOf(ctx.screen).dataset.text, /pausing/i, 'the server status takes over');
+      } finally { hold.restore(); }
+    } },
+    { name: 'CANNOT_PAUSE (paused elsewhere first): the refusal\'s status shows at once, with no frame from the server', run: async () => {
+      const ctx = await openRunPage('running');
+      const hold = holdFetch('/api/pause');
+      try {
+        const btn = ctx.screen.querySelector('.rd-pause');
+        click(ctx.window, btn);
+        await settle(ctx.window, 2);
+        hold.release(reply(400, { error: 'cannot pause in the current state', code: 'CANNOT_PAUSE', status: 'paused' }));
+        await settle(ctx.window, 3);
+        assert.equal(statusOf(ctx.screen).dataset.state, 'paused', 'the run reads Paused, not a Pausing… that waits on a frame');
+        assert.equal(btn.dataset.action, 'resume');
+        assert.equal(btn.disabled, false, 'Resume can be clicked');
+        assert.notEqual(lastToast(ctx.window.document)?.title, 'Could not pause the run', 'not reported as a failure');
+      } finally { hold.restore(); }
+    } },
+    { name: 'CANNOT_PAUSE (pausing elsewhere): Pausing… stays until the next status, which then wins', run: async () => {
+      const ctx = await openRunPage('running');
+      const hold = holdFetch('/api/pause');
+      try {
+        click(ctx.window, ctx.screen.querySelector('.rd-pause'));
+        await settle(ctx.window, 2);
+        hold.release(reply(400, { error: 'cannot pause in the current state', code: 'CANNOT_PAUSE', status: 'pausing' }));
+        await settle(ctx.window, 3);
+        assert.match(statusOf(ctx.screen).dataset.text, /pausing/i, 'no flash of Running');
+        assert.notEqual(lastToast(ctx.window.document)?.title, 'Could not pause the run', 'not reported as a failure');
+        // Any next status replaces it, even 'running' (nothing is left waiting on this tab's pause).
+        frame(ctx, { type: 'state', runId: 'r1', id: 'p1', status: 'running', stepper: V2_MANIFEST, steps: V2_STEPS(), active: [{ nodeId: 'n_impl', executionId: 'x:n_impl:2' }] });
+        await settle(ctx.window, 2);
+        assert.equal(statusOf(ctx.screen).dataset.state, 'working');
+      } finally { hold.restore(); }
+    } },
+    { name: 'CANNOT_PAUSE on a run that is not parked (still starting): back to Running, reported', run: async () => {
+      const ctx = await openRunPage('running');
+      const hold = holdFetch('/api/pause');
+      try {
+        click(ctx.window, ctx.screen.querySelector('.rd-pause'));
+        await settle(ctx.window, 2);
+        hold.release(reply(400, { error: 'cannot pause in the current state', code: 'CANNOT_PAUSE', status: 'starting' }));
+        await settle(ctx.window, 3);
+        assert.doesNotMatch(statusOf(ctx.screen).dataset.text, /pausing/i, 'no Pausing… on a run that is not pausing');
+        assert.equal(ctx.screen.querySelector('.rd-pause').disabled, false, 'Pause can be clicked again');
+        assert.equal(lastToast(ctx.window.document)?.title, 'Could not pause the run');
+      } finally { hold.restore(); }
+    } },
+    { name: 'a network error puts the run back to Running', run: async () => {
+      const ctx = await openRunPage('running');
+      const orig = globalThis.fetch;
+      globalThis.fetch = (u, o) => (String(u).includes('/api/pause') ? Promise.reject(new Error('offline')) : orig(u, o));
+      try {
+        click(ctx.window, ctx.screen.querySelector('.rd-pause'));
+        await settle(ctx.window, 3);
+        assert.doesNotMatch(statusOf(ctx.screen).dataset.text, /pausing/i);
+        assert.equal(ctx.screen.querySelector('.rd-pause').disabled, false, 'Pause can be clicked again');
+      } finally { globalThis.fetch = orig; }
+    } },
+  ]);
+});
+
+test('a CANNOT_PAUSE refusal keeps Pause disabled while it reads Pausing…, and the next status re-arms the control', async () => {
+  // Refused (pausing elsewhere first), then a further frame while the run still reads pausing: Pause stays disabled.
+  const refuse = async () => {
+    const ctx = await openRunPage('running');
+    const hold = holdFetch('/api/pause');
+    try {
+      click(ctx.window, ctx.screen.querySelector('.rd-pause'));
+      await settle(ctx.window, 2);
+      hold.release(reply(400, { error: 'cannot pause in the current state', code: 'CANNOT_PAUSE', status: 'pausing' }));
+      await settle(ctx.window, 3);
+    } finally { hold.restore(); }
+    const btn = ctx.screen.querySelector('.rd-pause');
+    assert.match(statusOf(ctx.screen).dataset.text, /pausing/i);
+    assert.equal(btn.disabled, true, 'Pause is not clickable while the run reads Pausing…');
+    frame(ctx, { type: 'cost', runId: 'r1', totalCostUsd: 2 });
+    await settle(ctx.window, 2);
+    assert.equal(btn.disabled, true, 'a frame landing before the status does not re-enable it');
+    return { ctx, btn };
+  };
+  await checkRows([
+    { name: 'the next status is paused: the control is Resume, enabled', run: async () => {
+      const { ctx, btn } = await refuse();
+      frame(ctx, { type: 'state', runId: 'r1', id: 'p1', status: 'paused' });
+      await settle(ctx.window, 2);
+      assert.equal(btn.dataset.action, 'resume');
+      assert.equal(btn.querySelector('.rd-btn-label').textContent, 'Resume');
+      assert.equal(btn.disabled, false);
+    } },
+    { name: 'the next status is running again: Pause, enabled, not stuck', run: async () => {
+      const { ctx, btn } = await refuse();
+      frame(ctx, { type: 'state', runId: 'r1', id: 'p1', status: 'running', stepper: V2_MANIFEST, steps: V2_STEPS(), active: [{ nodeId: 'n_impl', executionId: 'x:n_impl:2' }] });
+      await settle(ctx.window, 2);
+      assert.equal(btn.dataset.action, 'pause');
+      assert.equal(btn.disabled, false, 'Pause can be clicked again');
+    } },
+  ]);
+});
+
+test('the run page shows Resuming… at the Resume click, and a refusal that asks first puts Paused back while the question is open', async () => {
+  await checkRows([
+    { name: 'Resume: the status line says resuming before the server answers', run: async () => {
+      const ctx = await openRunPage('paused');
+      const hold = holdFetch('/api/resume');
+      try {
+        assert.doesNotMatch(statusOf(ctx.screen).dataset.text, /resuming/i);
+        click(ctx.window, ctx.screen.querySelector('.rd-pause'));   // the same control reads Resume on a paused run
+        await settle(ctx.window, 2);
+        assert.match(statusOf(ctx.screen).dataset.text, /resuming/i);
+        hold.release(reply(500, { error: 'boom' }));
+        await settle(ctx.window, 3);
+        assert.doesNotMatch(statusOf(ctx.screen).dataset.text, /resuming/i, 'a failure puts Paused back');
+      } finally { hold.restore(); }
+    } },
+    { name: 'a base-moved refusal clears Resuming… before its confirm opens', run: async () => {
+      const ctx = await openRunPage('paused');
+      const hold = holdFetch('/api/resume');
+      try {
+        click(ctx.window, ctx.screen.querySelector('.rd-pause'));
+        await settle(ctx.window, 2);
+        hold.release(reply(409, { error: 'the base moved', code: 'base-moved', members: [] }));
+        await settle(ctx.window, 3);
+        assert.doesNotMatch(statusOf(ctx.screen).dataset.text, /resuming/i, 'nothing is resuming while the question is open');
+      } finally { hold.restore(); }
+    } },
+  ]);
 });

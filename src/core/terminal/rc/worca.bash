@@ -1,7 +1,7 @@
 # worca terminal (bash), issue #573: load the system and personal bashrc, then print the markers worca
 # reads to record each command as a block. Every mark carries this session's nonce, so output that merely
 # contains a mark (a `cat` of a file) is never mistaken for one: OSC 133 C;<nonce>;<base64 command> = a
-# command starts, D;<nonce>;<exit> = it ended, W;<nonce>;<base64 folder> = the folder, A;<nonce> = the
+# command starts, D;<nonce>;<exit> = it ended, W;<nonce>;<base64 folder> = the folder (`pwd -W` under Git Bash), A;<nonce> = the
 # prompt. Started as `bash --rcfile <this file> -i` by src/core/terminal/shell.mjs.
 __worca_nonce=${WORCA_TERMINAL_NONCE-}
 __worca_norc=${WORCA_TERMINAL_NORC-}
@@ -14,6 +14,12 @@ __worca_hist=
 
 __worca_trim() { local s="$1"; s="${s#"${s%%[![:space:]]*}"}"; builtin printf '%s' "$s"; }
 __worca_b64() { builtin printf '%s' "$1" | base64 | tr -d '\n'; }
+# Git Bash / MSYS2: $PWD may be /c/Users/…, but worca compares folders as Windows paths: `pwd -W` gives C:/Users/….
+if [ -n "${MSYSTEM-}" ] && builtin pwd -W >/dev/null 2>&1; then
+  __worca_cwd() { builtin pwd -W; }
+else
+  __worca_cwd() { builtin printf '%s' "$PWD"; }
+fi
 
 # DEBUG trap: runs before every simple command. Only the first one after a prompt is the command the
 # person typed (__worca_ready); the PROMPT_COMMAND's own commands never are.
@@ -36,7 +42,7 @@ __worca_preexec() {
 __worca_precmd() {
   local ec=$?
   builtin printf '\033]133;D;%s;%s\007\033]133;W;%s;%s\007\033]133;A;%s\007' \
-    "$__worca_nonce" "$ec" "$__worca_nonce" "$(__worca_b64 "$PWD")" "$__worca_nonce"
+    "$__worca_nonce" "$ec" "$__worca_nonce" "$(__worca_b64 "$(__worca_cwd)")" "$__worca_nonce"
 }
 
 trap '__worca_preexec' DEBUG

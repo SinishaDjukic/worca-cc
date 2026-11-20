@@ -4,15 +4,15 @@
 // starting again resends with allowUnguardedEngine: true. Boot copied from test/ui-sync-row.test.mjs.
 import { test, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { JSDOM } from 'jsdom';
 import { useDomRelease } from './helpers/jsdom-release.mjs';
+import { readIndexHtml } from '../src/core/read-index-html.mjs';
+import { readStyleCss } from '../src/core/read-style-css.mjs';
 
 // Release each booted window after its test (see test/helpers/jsdom-release.mjs).
 const trackDom = useDomRelease(afterEach);
 
-const htmlPath = fileURLToPath(new URL('../ui/public/index.html', import.meta.url));
 const appPath = fileURLToPath(new URL('../ui/public/app.js', import.meta.url));
 
 const PROJECTS = [{ name: 'web', path: '/a/web', exists: true }, { name: 'api', path: '/a/api', exists: true }];
@@ -40,7 +40,7 @@ const freshBody = (dir, over = {}) => {
 const ok = (body, status = 200) => ({ ok: status < 400, status, json: async () => body });
 
 async function boot({ fresh = null, syncGet = null, syncPost = null, run = null, workspaces = [] } = {}) {
-  const dom = trackDom(new JSDOM(readFileSync(htmlPath, 'utf8'), { url: 'http://localhost:4317/' }));
+  const dom = trackDom(new JSDOM(readIndexHtml(), { url: 'http://localhost:4317/' }));
   const { window } = dom;
   window.Element.prototype.scrollIntoView = function () {};
   let lastWs = null;
@@ -155,7 +155,7 @@ test('engine: Copilot sends engine copilot, says it runs on its default model, a
   pick(ctx, 'copilot');
   assert.equal(doc.getElementById('engineSelect').value, 'copilot');
   assert.equal(doc.getElementById('engine-hint').hidden, false);
-  assert.match(doc.getElementById('engine-hint').textContent, /^GitHub Copilot CLI runs this pipeline, including titles and summaries \(on its default model\)\. Step models: Models › Copilot\./);
+  assert.match(doc.getElementById('engine-hint').textContent, /^GitHub Copilot CLI runs this pipeline, including titles and summaries \(on its default model\)\. Step models: Models › Jobs\./);
   await submit(ctx);
   assert.equal(ctx.posted.at(-1).engine, 'copilot');
   await waitFor(() => !doc.getElementById('engineRefusal').hidden);
@@ -230,7 +230,7 @@ test('engine: changing guardrails, project, or target clears a shown refusal and
 test('engine: the hint and the checkbox row really hide (explicit [hidden] rules)', () => {
   // jsdom applies no stylesheet, so pin the rules themselves: without them .hint
   // (display:block) and label.check-row (display:inline-flex) stay visible.
-  const css = readFileSync(fileURLToPath(new URL('../ui/public/style.css', import.meta.url)), 'utf8');
+  const css = readStyleCss();
   assert.match(css, /#engine-hint\[hidden\]/);
   assert.match(css, /#engineAllowRow\[hidden\]/);
 });
@@ -239,7 +239,7 @@ test('engine: the Codex hint says the whole pipeline runs on Codex and where its
   const ctx = await boot();
   pick(ctx, 'codex');
   assert.equal(ctx.doc.getElementById('engine-hint').textContent.trim(),
-    'Codex runs this pipeline, including titles and summaries. Its models: Models › Codex');
+    'Codex runs this pipeline, including titles and summaries. Its models: Models › Jobs');
 });
 
 test('engine: Cursor is the third choice; it sends engine cursor and says helper jobs run on Claude', async () => {
@@ -250,7 +250,7 @@ test('engine: Cursor is the third choice; it sends engine cursor and says helper
   assert.equal(doc.getElementById('engineSelect').value, 'cursor');
   const hint = doc.getElementById('engine-hint');
   assert.equal(hint.hidden, false);
-  assert.equal(hint.textContent.trim(), 'Cursor runs this pipeline. Helper jobs (titles, summaries) run on Claude. Step models: Models › Cursor.');
+  assert.equal(hint.textContent.trim(), 'Cursor runs this pipeline. Helper jobs (titles, summaries) run on Claude. Step models: Models › Jobs.');
   assert.doesNotMatch(hint.textContent, /including titles and summaries/);
   await submit(ctx);
   assert.equal(ctx.posted.at(-1).engine, 'cursor');
@@ -262,7 +262,7 @@ test('engine: OpenCode is the fifth choice; it sends engine opencode and says he
   assert.equal(ctx.doc.getElementById('engineSelect').value, 'opencode');
   assert.equal(ctx.doc.querySelector('#engineSelect option[value="opencode"]').textContent, 'OpenCode (Beta)');
   assert.equal(ctx.doc.getElementById('engine-hint').textContent.trim(),
-    'OpenCode runs this pipeline. Helper jobs (titles, summaries) run on Claude. Step models: Models › OpenCode.');
+    'OpenCode runs this pipeline. Helper jobs (titles, summaries) run on Claude. Step models: Models › Jobs.');
   await submit(ctx);
   assert.equal(ctx.posted.at(-1).engine, 'opencode');
 });
@@ -292,7 +292,7 @@ for (const [engine, label] of [['gemini', 'Gemini CLI'], ['qwen', 'Qwen Code']])
     assert.equal(opt.textContent, `${label} (Beta)`, 'marked beta');
     pick(ctx, engine);
     const hint = doc.getElementById('engine-hint');
-    assert.equal(hint.textContent.trim(), `${label} runs this pipeline. Helper jobs (titles, summaries) run on Claude. Step models: Models › ${label}.`);
+    assert.equal(hint.textContent.trim(), `${label} runs this pipeline. Helper jobs (titles, summaries) run on Claude. Step models: Models › Jobs.`);
     await submit(ctx);
     assert.equal(ctx.posted.at(-1).engine, engine);
   });

@@ -52,20 +52,22 @@
 // is deliberately no in-module cache: worcaHome() is read fresh per operation,
 // so a saved root takes effect for new runs/listing without a server restart.
 
+import { isAnswererLead, ANSWERER_LEAD_KEYS } from '../shared/answerer.mjs';
 import { mkdir, writeFile, rename } from 'node:fs/promises';
 import { suggestModelHandle } from '../shared/connections.mjs';
 export { suggestModelHandle };
-import { readFileSync, existsSync, statSync } from 'node:fs';
+import { readFileSync, existsSync, statSync, mkdirSync, writeFileSync, renameSync } from 'node:fs';
 import { join, resolve } from 'node:path';
-import { homedir } from 'node:os';
+import { homedir, availableParallelism } from 'node:os';
 import { randomBytes } from 'node:crypto';
 import {
   EFFORTS, CODEX_EFFORTS, effortsForEngine, MODEL_ENGINES, RUN_ENGINES, ASK_ENGINES, HELPER_ENGINES, OWN_SIGNIN_ENGINES, aModelOf, ownSignInNote, modelIdProblem, SUBAGENT_MODELS, isReservedModelEnvKey, assertModelCost, envFlag,
   assertModelUpstream, upstreamEnvConflict, modelEnvRef, codexUpstreamProblem,
   UPSTREAM_PROVIDERS, COPILOT_ACCOUNT_TYPES, DEFAULT_PROVIDER_CONCURRENCY, MAX_PROVIDER_CONCURRENCY,
-  COPILOT_TERMS_VERSION, isUpstreamBaseUrl, REASONING_EFFORT_LEVELS,
+  isUpstreamBaseUrl, REASONING_EFFORT_LEVELS, OPENROUTER_SORTS,
 } from './model-env.mjs';
 import { MODEL_ROLES } from '../shared/model-roles.mjs';
+import { GHE_COM_ACCOUNT_TYPE, normalizeGheHost, copilotBlockHost } from './ghe-host.mjs';
 import { CODEX_PRICES, listPriceFor } from './list-prices.mjs';
 import { engineLabel } from '../shared/engine-switch.mjs';
 import { validateNightPatch, NIGHT_TOGGLES } from './night/config.mjs';
@@ -73,6 +75,8 @@ import { normalizeDomainList, normalizeDomainPattern, domainError, DOMAIN_LIST_M
 import { normaliseDimensions } from '../shared/tag-dimensions.mjs';
 import { normalizePins, storedPins } from '../shared/home-pins.mjs';
 import { DEFAULT_PATTERN, DEFAULT_TYPES, TYPE_RE, patternProblem } from '../shared/naming/pattern.mjs';
+import { IMAGE_SERVICES, IMAGE_SHAPES, originOf } from '../shared/image-services.mjs';
+export { IMAGE_SERVICES, IMAGE_SHAPES };
 
 /**
  * The real OS home base, honoring HOME/USERPROFILE so tests can sandbox it.
@@ -131,13 +135,16 @@ function expandTilde(p) {
  * Callers pass the object they got from readSettings() with their own key
  * added/deleted — that read-modify-write is what makes unknown keys survive
  * (no migration, no key loss; §5.1 storage note).
+ * The body is synchronous on purpose: a setter that awaits nothing between its
+ * readSettings() and this call reads, merges and commits in one run of the event
+ * loop, so two setters saved at the same moment can never drop each other's change.
  */
 async function persistSettings(settings) {
-  await mkdir(join(defaultRoot(), '.worca-cc'), { recursive: true }); // bootstrap dir
+  mkdirSync(join(defaultRoot(), '.worca-cc'), { recursive: true }); // bootstrap dir
   const file = settingsFile();
   const tmp = `${file}.${randomBytes(4).toString('hex')}.tmp`;
-  await writeFile(tmp, JSON.stringify(settings, null, 2) + '\n', 'utf8');
-  await rename(tmp, file);
+  writeFileSync(tmp, JSON.stringify(settings, null, 2) + '\n', 'utf8');
+  renameSync(tmp, file);
 }
 
 /** Setup apply (D20): set or delete whole top-level keys in ONE read and ONE persistSettings. `undefined` deletes. */
@@ -339,7 +346,7 @@ export const DEFAULT_MEMORY_SOFT_BYTES_PER_FILE = 8192;    // flagged in health 
 export const DEFAULT_MEMORY_HARD_BYTES_PER_FILE = 32768;   // rejected at sync-back / write above this
 export const DEFAULT_MEMORY_MAX_FILES_PER_SCOPE = 50;
 export const DEFAULT_MEMORY_HOOK_MAX_CHARS = 160;
-export const DEFAULT_MEMORY_TEAM_MAX_FILES = 50;   // team notes a run or chat LOADS per project, newest first (team memory 1a)
+export const DEFAULT_MEMORY_TEAM_MAX_FILES = 50;   // team notes WITHOUT paths a run or chat loads per project, newest first; scoped ones always load
 
 export const DEFAULT_MEMORY_DEFRAG_WRITES = 10;     // writesSinceDefrag at which a scope is "due"
 export const DEFAULT_MEMORY_DEFRAG_FILES = 30;      // file count at which a scope is "due"
@@ -580,6 +587,13 @@ export async function setWorkspaceScanModels(input, { models = null } = {}) {
   if (Object.keys(ws).length) settings.workspaces = ws; else delete settings.workspaces;
   await persistSettings(settings);
   return { workspaceScan: workspaceScanModels() };
+}
+
+/** #943: whether pipeline agents (Claude) also load the user's own Claude Code setup — `~/.claude` settings, hooks,
+ *  plugins and skills. Off by default: a node spawns with `--setting-sources project`. A project setting wins. */
+export function runUserClaudeSettings(scope) {
+  const p = projectOverride('runUserClaudeSettings', scope); if (typeof p === 'boolean') return p;
+  return readSettings().runUserClaudeSettings === true;
 }
 
 /** Skill delivery mechanism (§5.6): 'copy' (default, isolated) | 'symlink' (write-through). */
@@ -1260,30 +1274,36 @@ export const SETTINGS_POST_KEYS = Object.freeze([
   'askWeb',                                  // Chat web access { enabled, allowedDomains, search }
   'smartNaming',                             // Smart run naming { suggestTitle, suggestBranch, pattern, types, trigger, addRunId }
   'debugSpawnEnabled',
+  'keepAwake',                               // the account menu's Keep awake switch (default on)
   'resumeAfterUsageLimit',
   'updateCheck',                             // Settings › About: check npm for a newer stable Worca (#841)
   'titleModel', 'hideBuiltinModels',
+  'hideBuiltinEngines',                      // Models › Catalogue: Codex / Copilot hide their built-ins { codex?, copilot? }
   'theme',
-  'uiLevel',                                 // interface mode (docs/ui-levels.md)
+  'screensaver',                             // Settings › Appearance: the screensaver { enabled, idleMinutes }
+  'uiLevel',                                // interface mode (docs/ui-levels.md)
   'flags',                                   // feature flags { key: bool } (docs/feature-flags.md)
   'autoWorkflowModel',                       // auto-workflow spec D14
   'prDescriptionModel',                      // the "Ship it?" modal's Generate with AI
   'autoGeneratePrDescription',               // run that Generate with AI when the modal opens
   'memoryDefrag',                            // Settings › Memory: the defragment model + effort
   'agentGenModel',                           // the agent wizard's Generate: model + effort (Claude, user-level)
-  'namingModel',                             // Smart run naming's model + effort (Models › Helper jobs, Claude, user-level)
-  'commandSummaryModel',                     // Command summaries' model + effort (Models › Helper jobs, Claude, user-level)
+  'namingModel',                             // Smart run naming's model + effort (Models › Jobs › Helper jobs, Claude, user-level)
+  'commandSummaryModel',                     // Command summaries' model + effort (Models › Jobs › Helper jobs, Claude, user-level)
+  'secondOpinionModel',                      // Second-opinion reviewer's model + effort (Models › Jobs › Helper jobs, Claude, user-level)
   'workspaceScan',                           // Settings › Runs › Workspaces: the scan's models
   'schedule',                                // scheduled-run defaults { graceMin, ifMissed, maxFailures }
   'nightMode',                               // night mode user layer (night/config.mjs fields)
   'nightModeToggle',                         // night mode live switch: auto | on | off
   'sync',                                    // sync before run (#527) { beforeRun, remote, refreshMinutes, onDiverged }
   'networkWait',                             // Settings › Runs › Wait for the network {enabled, maxWaitMin}
+  'runLimits',                               // Settings › Runs › Machine load { maxConcurrentRuns, testWorkers, keepRunsDays }
   'actions',                                 // Settings › Runs › Actions { keep, portLow, portHigh, editor, terminal, maxCheckouts }
   'runEngine', 'stepModels', 'utilityModels',
-  'modelRoles',                              // Models › Roles: { <engine>: { deep|everyday|quick: { model, effort } } }
-  'requirementsInterview',                  // Models › Engines › Claude: the requirements interview { model, effort }
+  'modelRoles',                              // Models › Jobs › Roles: { <engine>: { deep|everyday|quick: { model, effort } } }
+  'requirementsInterview',                  // Models › Jobs › Helper jobs: the requirements interview { model, effort }
   'askEngine', 'askModels',                  // Chat's engine for new chats and its model per engine (user-only, D17)
+  'designModels',                            // Models › Jobs › Design: { <engine>: { lead|builder: { model, effort } } }
   'tagDimensions',                           // Settings › Tags › Tag dimensions [{ key, label, values, required, default? }]
   'enforceTags',                             // Settings › Tags › Require mandatory tags to start a run
 ]);
@@ -1295,7 +1315,7 @@ function projectOverride(id, scope) {
   try { return projectLayerReader(id, scope); } catch { return undefined; }
 }
 
-export const UTILITY_JOBS = Object.freeze(['title', 'classifier', 'overview', 'prDescription', 'memoryDefrag', 'workspaceScan']);
+export const UTILITY_JOBS = Object.freeze(['title', 'classifier', 'overview', 'prDescription', 'memoryDefrag', 'workspaceScan', 'secondOpinion']);
 const MODEL_PAIR_MAX_LEN = 200;
 const homeGuarded = () => !!process.env.NODE_TEST_CONTEXT && !process.env.WORCA_TEST_ALLOW_HOME_FALLBACK;
 export function runEngineSetting() {
@@ -1313,7 +1333,7 @@ export function utilityModelsSetting() {
   const value = readSettings().utilityModels;
   return isObj(value) ? value : {};
 }
-/** Ask Worca's engine for NEW chats (cascading-settings-design.md D17): user-only; a chat keeps the engine it started on. */
+/** Ask Worca's engine for NEW chats (cascading-settings-design.md D17): user-only; a chat can move to another engine later (#943, POST /api/ask/threads/:id/engine). */
 export function askEngineSetting() {
   if (homeGuarded()) return undefined;
   const value = readSettings().askEngine;
@@ -1363,14 +1383,65 @@ export function assertAskModelsInput(input) {
   }
   return out;
 }
+/** setAskModels' merge, pure, over an ALREADY asserted patch (setup apply canonicalises ids in between). undefined = delete. */
+export function nextAskModels(current, patch) {
+  const all = isObj(current) ? { ...current } : {};
+  for (const [engine, pair] of Object.entries(patch)) { if (pair === null) delete all[engine]; else all[engine] = pair; }
+  return Object.keys(all).length ? all : undefined;
+}
 export async function setAskModels(input) {
   const patch = assertAskModelsInput(input);
   const settings = readSettings();
-  const all = isObj(settings.askModels) ? { ...settings.askModels } : {};
-  for (const [engine, pair] of Object.entries(patch)) { if (pair === null) delete all[engine]; else all[engine] = pair; }
-  if (Object.keys(all).length) settings.askModels = all; else delete settings.askModels;
+  const v = nextAskModels(settings.askModels, patch);
+  if (v === undefined) delete settings.askModels; else settings.askModels = v;
   await persistSettings(settings);
   return { askModels: askModelsSetting() };
+}
+/** Design's agents: the lead (the main agent) and the builders (one per section). */
+export const DESIGN_AGENT_ROLES = Object.freeze(['lead', 'builder']);
+/** The Models page's Design picks, { <engine>: { lead?: {model, effort?}, builder?: {model, effort?} } } (user-only). A
+ *  design's own pick wins over these; an unset one falls back to the Deep thinking (lead) or Everyday tasks (builder) role. */
+export function designModelsSetting() {
+  if (homeGuarded()) return {};
+  const value = readSettings().designModels;
+  return isObj(value) ? value : {};
+}
+/** One Design pick: { model, effort? } with a model, or null to clear. `engine` checks the effort. */
+export function normalizeDesignPick(engine, input, label = 'model') {
+  const pair = normalizeModelPair(engine, input, label);
+  if (pair && !pair.model) throw new Error(`${label}.model is required: pick a model, or clear the pick`);
+  return pair;
+}
+export function assertDesignModelsInput(input) {
+  if (!isObj(input)) throw new Error('designModels must be { <engine>: { lead|builder: { model, effort } | null } }');
+  const out = {};
+  for (const [engine, roles] of Object.entries(input)) {
+    if (!MODEL_ENGINES.includes(engine)) throw new Error(`designModels: unknown engine "${engine}"`);
+    if (!isObj(roles)) throw new Error(`designModels.${engine} must be an object of lead|builder → { model, effort } | null`);
+    out[engine] = {};
+    for (const [role, value] of Object.entries(roles)) {
+      if (!DESIGN_AGENT_ROLES.includes(role)) throw new Error(`designModels.${engine}: unknown agent "${role}" (one of ${DESIGN_AGENT_ROLES.join(', ')})`);
+      out[engine][role] = normalizeDesignPick(engine, value, `designModels.${engine}.${role}`);
+    }
+  }
+  return out;
+}
+/** setDesignModels' merge, pure, over an ALREADY asserted patch. undefined = delete. */
+export function nextDesignModels(current, patch) {
+  const all = isObj(current) ? { ...current } : {};
+  for (const [engine, roles] of Object.entries(patch)) {
+    const cur = isObj(all[engine]) ? { ...all[engine] } : {};
+    for (const [role, pair] of Object.entries(roles)) { if (pair === null) delete cur[role]; else cur[role] = pair; }
+    if (Object.keys(cur).length) all[engine] = cur; else delete all[engine];
+  }
+  return Object.keys(all).length ? all : undefined;
+}
+/** Merge a Design pick patch (null clears a pick) and write it. Returns what it wrote, so the answer holds under homeGuarded. */
+export async function setDesignModels(input) {
+  const patch = assertDesignModelsInput(input); const settings = readSettings();
+  const v = nextDesignModels(settings.designModels, patch);
+  if (v === undefined) delete settings.designModels; else settings.designModels = v;
+  await persistSettings(settings); return { designModels: v ?? {} };
 }
 export function assertRunEngineInput(input) {
   if (input === null || input === undefined || input === '') return null;
@@ -1509,7 +1580,20 @@ export const SETTING_CHECKS = Object.freeze({
   pct: (value) => isByteCap(value) && value <= 100,
   askMaxTurns: (value) => isAskMaxTurns(value), askMaxBudgetUsd: (value) => value === null || isAskMaxBudget(value),
   skillMount: (value) => SKILL_MOUNTS.includes(value), engine: (value) => MODEL_ENGINES.includes(value), runEngine: (value) => RUN_ENGINES.includes(value),
+  stringArray: (value) => Array.isArray(value) && value.every((item) => typeof item === 'string'),
+  toolMap: (value) => !!value && typeof value === 'object' && !Array.isArray(value)
+    && Object.values(value).every((v) => v === 'used' || v === 'unused'),
 });
+/** Check ids the project's readiness report skips (project layer only — no user inheritance). Unknown ids are kept. */
+export function readinessIgnore(scope) {
+  const value = projectOverride('readiness.ignore', scope);
+  return Array.isArray(value) ? value : [];
+}
+/** The project's per-tool readiness choice: { engine: 'used'|'unused' }; a missing engine is Detect (project layer only). */
+export function readinessTools(scope) {
+  const value = projectOverride('readiness.tools', scope);
+  return SETTING_CHECKS.toolMap(value) ? value : {};
+}
 
 // ── Title-generation model + hidden built-ins (#422) ─────────────────────────
 // `titleModel` is the catalog id every run/chat title is written with; absent
@@ -1574,6 +1658,49 @@ export async function setHideBuiltinModels(input) {
   return { hideBuiltinModels: hideBuiltinModels() };
 }
 
+// `hideBuiltinEngines` is the same switch for the other harnesses that ship built-ins
+// (Models › Catalogue, CAT-8): `{ codex?: true, copilot?: true }`. Only `true` is stored and
+// an empty object is removed. It has no team default (L7): `hideBuiltinModels` keeps Claude
+// Code's meaning for setup, CLI, Ask and team policy.
+const HIDE_BUILTIN_ENGINE_NAMES = Object.freeze(['codex', 'copilot']);
+const hideEnginesMap = (on) => Object.fromEntries(HIDE_BUILTIN_ENGINE_NAMES.filter((e) => on.has(e)).map((e) => [e, true]));
+/** The stored value as `{ <engine>: true }`, or null when it is not one. */
+const storedHideEngines = (v) => (isObj(v) && Object.entries(v).every(([e, on]) => HIDE_BUILTIN_ENGINE_NAMES.includes(e) && on === true)
+  ? hideEnginesMap(new Set(Object.keys(v))) : null);
+
+/** Which harnesses besides Claude Code hide their built-ins: `{ codex?: true, copilot?: true }`, `{}` when none. */
+export function hideBuiltinEngines() {
+  const v = readSettings().hideBuiltinEngines;
+  if (v === undefined) return {};
+  const hidden = storedHideEngines(v);
+  if (hidden) return hidden;
+  console.warn(`[worca] invalid hideBuiltinEngines ${JSON.stringify(v)} — no harness hides its built-ins`);
+  return {};
+}
+
+/**
+ * @throws {Error} unless `input` is `{ codex?: boolean, copilot?: boolean }`. Every message starts with
+ * `hideBuiltinEngines ` so a 400 names that field, never a path under it (settings-errors.mjs).
+ */
+export function assertHideBuiltinEnginesInput(input) {
+  if (!isObj(input)) throw new Error('hideBuiltinEngines must be an object');
+  for (const [engine, on] of Object.entries(input)) {
+    if (!HIDE_BUILTIN_ENGINE_NAMES.includes(engine)) throw new Error(`hideBuiltinEngines must name only ${HIDE_BUILTIN_ENGINE_NAMES.join(' or ')}, not ${JSON.stringify(engine)}`);
+    if (typeof on !== 'boolean') throw new Error(`hideBuiltinEngines must set ${engine} to true or false`);
+  }
+}
+
+/** Merges per harness: `true` stores, `false` deletes; an invalid stored value is replaced. */
+export async function setHideBuiltinEngines(input) {
+  assertHideBuiltinEnginesInput(input);
+  const settings = readSettings();
+  const on = new Set(Object.keys(storedHideEngines(settings.hideBuiltinEngines) || {}));
+  for (const [engine, hide] of Object.entries(input)) { if (hide) on.add(engine); else on.delete(engine); }
+  if (on.size) settings.hideBuiltinEngines = hideEnginesMap(on); else delete settings.hideBuiltinEngines;
+  await persistSettings(settings);
+  return { hideBuiltinEngines: hideBuiltinEngines() };
+}
+
 // ── Theme mode (2026-09-04 dark-mode design §6.1) ────────────────────────────
 // One machine-wide preference: `system` follows the OS, `light`/`dark` force a
 // scheme. The server writes it into the shell's <html data-theme> at serve time
@@ -1605,6 +1732,60 @@ export async function setTheme(input) {
   else settings.theme = input;
   await persistSettings(settings);
   return { theme: theme() };
+}
+
+// ── Screensaver (Settings › General › Appearance) ────────────────────────────
+// One machine-wide preference: a switch (off by default) and the idle minutes
+// before it starts. Only non-default fields are stored; a POST carries a partial
+// object that is merged onto the stored values, so each control saves only its own field.
+export const SCREENSAVER_IDLE_MINUTES = Object.freeze([5, 10, 15, 20, 25, 30]);
+export const DEFAULT_SCREENSAVER = Object.freeze({ enabled: false, idleMinutes: 5 });
+
+/** The resolved screensaver setting; a missing field is its default, an invalid one is its default (loudly). */
+export function screensaverSettings(settings = readSettings()) {
+  const v = settings.screensaver;
+  const out = { ...DEFAULT_SCREENSAVER };
+  if (v === undefined) return out;
+  if (!isObj(v)) {
+    console.warn(`[worca] invalid screensaver ${JSON.stringify(v)} — using the defaults`);
+    return out;
+  }
+  if ('enabled' in v) {
+    if (isBool(v.enabled)) out.enabled = v.enabled;
+    else console.warn(`[worca] invalid screensaver.enabled ${JSON.stringify(v.enabled)} — using the default (${DEFAULT_SCREENSAVER.enabled})`);
+  }
+  if ('idleMinutes' in v) {
+    if (SCREENSAVER_IDLE_MINUTES.includes(v.idleMinutes)) out.idleMinutes = v.idleMinutes;
+    else console.warn(`[worca] invalid screensaver.idleMinutes ${JSON.stringify(v.idleMinutes)} — using the default (${DEFAULT_SCREENSAVER.idleMinutes})`);
+  }
+  return out;
+}
+
+/** @throws {Error} unless `input` is a clear or a partial { enabled?: boolean, idleMinutes?: 5|10|…|30 }. */
+export function assertScreensaverInput(input) {
+  if (isClearInput(input)) return;
+  if (!isObj(input)) throw new Error('screensaver must be an object with enabled and the minutes');
+  const unknown = Object.keys(input).find((k) => k !== 'enabled' && k !== 'idleMinutes');
+  if (unknown !== undefined) throw new Error(`screensaver has an unknown field "${unknown}"`);
+  if ('enabled' in input && !isBool(input.enabled)) throw new Error('screensaver.enabled must be true or false');
+  if ('idleMinutes' in input && !SCREENSAVER_IDLE_MINUTES.includes(input.idleMinutes)) {
+    throw new Error('screensaver.idleMinutes must be 5, 10, 15, 20, 25 or 30');
+  }
+}
+
+export async function setScreensaver(input) {
+  assertScreensaverInput(input);
+  const settings = readSettings();
+  if (isClearInput(input)) delete settings.screensaver;
+  else {
+    const next = { ...screensaverSettings(settings), ...input };
+    const stored = {};
+    for (const k of Object.keys(DEFAULT_SCREENSAVER)) if (next[k] !== DEFAULT_SCREENSAVER[k]) stored[k] = next[k];
+    if (Object.keys(stored).length) settings.screensaver = stored;
+    else delete settings.screensaver;
+  }
+  await persistSettings(settings);
+  return { screensaver: screensaverSettings(settings) };
 }
 
 // ── Auto workflow classifier model (auto-workflow spec D14) ─────────────────
@@ -1728,7 +1909,7 @@ export async function setAgentGenModel(input, { models = null } = {}) {
   return { agentGenModel: agentGenModel() };
 }
 
-// ── Run naming model (Models › Engines › Claude › Helper jobs › Run naming) ───
+// ── Run naming model (Models › Jobs › Helper jobs › Run naming) ───
 // `namingModel`: the { model, effort } pair of Smart run naming's one cheap call (naming.mjs suggestNames).
 // User-level and Claude-only like agentGenModel: naming always runs on Claude (auxTextCall) and the New run
 // form's suggestion is not a run, so there is no project override and no other engine's slot. Unset = the
@@ -1770,7 +1951,7 @@ export async function setNamingModel(input, { models = null } = {}) {
   return { namingModel: namingModel() };
 }
 
-// ── Command summaries model (Models › Engines › Claude › Helper jobs › Command summaries) ───
+// ── Command summaries model (Models › Jobs › Helper jobs › Command summaries) ───
 // `commandSummaryModel`: the { model, effort } pair of the chat command summary call (ask/command-summary.mjs).
 // User-level and Claude-only like namingModel. Unset = the cheapest ready Claude model at its lowest effort
 // (naming.mjs#resolveNamingModel); none ready = no summary, the row keeps the raw command.
@@ -1808,6 +1989,35 @@ export async function setCommandSummaryModel(input, { models = null } = {}) {
   else settings.commandSummaryModel = pair.effort ? pair : { model: pair.model };
   await persistSettings(settings);
   return { commandSummaryModel: commandSummaryModel() };
+}
+
+// ── Second-opinion reviewer (Models › Jobs › Helper jobs › Second-opinion reviewer) ───
+// `secondOpinionModel`: the { model, effort } pair of the one role a role review names as `secondOpinion` (Shaper's
+// Product reviewer), so it judges on another model than its step. User-level only and no model role: mapped to a
+// role it would land on its step's model again. Codex's is `utilityModels.codex.secondOpinion`. Unset = Worca's factory
+// default (factory-models.mjs).
+
+/** The STORED pair, or null when unset or invalid. Sync and never throws. */
+export function secondOpinionModelSetting() {
+  if (homeGuarded()) return null;
+  const v = readSettings().secondOpinionModel;
+  const m = isObj(v) ? v.model : undefined;
+  if (typeof m !== 'string' || !m.trim() || m.length > DEFRAG_MODEL_MAX_LEN) return null;
+  return { model: m.trim(), effort: typeof v.effort === 'string' && EFFORTS.includes(v.effort) ? v.effort : null };
+}
+
+/** Validate a POST value exactly like assertNamingModelInput. */
+export function assertSecondOpinionModelInput(input, models = null) {
+  return assertModelPairInput('secondOpinionModel', input, models);
+}
+
+export async function setSecondOpinionModel(input, { models = null } = {}) {
+  const pair = assertSecondOpinionModelInput(input, models);
+  const settings = readSettings();
+  if (pair === null) delete settings.secondOpinionModel;
+  else settings.secondOpinionModel = pair.effort ? pair : { model: pair.model };
+  await persistSettings(settings);
+  return { secondOpinionModel: secondOpinionModelSetting() };
 }
 
 // ── Spawn-debug diagnostics toggle (the stored side of WORCA_DEBUG_SPAWN) ────
@@ -1864,6 +2074,52 @@ export async function setDebugSpawnEnabled(input) {
   else settings.debugSpawnEnabled = input;
   await persistSettings(settings);
   return { debugSpawnEnabled: debugSpawnEnabled() };
+}
+
+// ── Keep awake (the account menu's switch) ──────────────────────────────────
+// Holds off idle system sleep while runs have agents working (src/core/keep-awake.mjs). Default ON;
+// only `false` is stored. It used to be the beta flag keepAwake: migrateKeepAwakeFlag moves it here.
+export const DEFAULT_KEEP_AWAKE = true;
+
+/** @throws {Error} unless `input` is a boolean. */
+export function assertKeepAwakeInput(input) {
+  if (!isBool(input)) throw new Error('keepAwake must be true or false');
+}
+
+/** True unless keepAwake is stored false. A leftover flags.keepAwake (a home the boot migration
+ *  could not write) still counts while keepAwake is unset. */
+export function keepAwakeEnabled(settings = readSettings()) {
+  const s = settings && typeof settings === 'object' ? settings : {};
+  if (isBool(s.keepAwake)) return s.keepAwake;
+  return !(s.flags && s.flags.keepAwake === false);
+}
+
+export async function setKeepAwake(input) {
+  assertKeepAwakeInput(input);
+  const settings = readSettings();
+  if (input === DEFAULT_KEEP_AWAKE) delete settings.keepAwake;
+  else settings.keepAwake = input;
+  await persistSettings(settings);
+  return { keepAwake: keepAwakeEnabled() };
+}
+
+/** The graduated flag keepAwake becomes the keepAwake setting. Pure: {changed, settings}. */
+export function migrateLegacyKeepAwakeFlag(settings) {
+  const s = settings && typeof settings === 'object' && !Array.isArray(settings) ? settings : {};
+  const flags = s.flags && typeof s.flags === 'object' && !Array.isArray(s.flags) ? s.flags : null;
+  if (!flags || !Object.prototype.hasOwnProperty.call(flags, 'keepAwake')) return { changed: false, settings: s };
+  const { keepAwake: was, ...restFlags } = flags;
+  const next = { ...s };
+  if (Object.keys(restFlags).length) next.flags = restFlags; else delete next.flags;
+  if (was === false && !isBool(next.keepAwake)) next.keepAwake = false;
+  return { changed: true, settings: next };
+}
+
+/** Run once at server boot, before the first syncKeepAwake. @returns {Promise<boolean>} wrote */
+export async function migrateKeepAwakeFlag() {
+  const r = migrateLegacyKeepAwakeFlag(readSettings());
+  if (!r.changed) return false;
+  try { await persistSettings(r.settings); return true; } catch { return false; }   // keepAwakeEnabled still reads the flag
 }
 
 // ── Resume after a usage limit (opt-in) ──────────────────────────────────────
@@ -2332,11 +2588,15 @@ export async function removeGlobalModel(id) {
 // it in memory. Readers are loud-and-lenient; setters throw.
 //
 //   providers: {
-//     copilot:   { githubToken?, accountType?, acknowledgedTerms?, termsVersion?, maxConcurrent?, login? },
+//     copilot:   { githubToken?, accountType?, enterpriseHost?, maxConcurrent?, login? },   // enterpriseHost: only with accountType 'ghe-com' (a GHE.com tenant, like acme.ghe.com)
 //     openai:    { baseUrl?, apiKey?, maxConcurrent? },
 //     anthropic: { baseUrl?, apiKey?, maxConcurrent? },
 //     speech:    { stt: {...}, tts: {...} },   // voice mode, NOT an upstream — see the Speech block below
+//     images:    { service?, baseUrl?, model?, apiKey?, price? },   // Design pictures, NOT an upstream — see the Images block below
+//     sound:     { apiKey? },   // Design sound (ElevenLabs)
+//     openrouter: { apiKey?, maxConcurrent?, order?, sort?, allowFallbacks? },   // OpenRouter's row, NOT an upstream — see the OpenRouter block below
 //   }
+//   (An older Worca also stored copilot.acknowledgedTerms / termsVersion; readers ignore them.)
 // ---------------------------------------------------------------------------
 
 const PROVIDER_SECRET_KEYS = Object.freeze({ copilot: ['githubToken'], openai: ['apiKey'], anthropic: ['apiKey'] });
@@ -2357,13 +2617,11 @@ function sanitizeProvider(name, raw) {
       if (COPILOT_ACCOUNT_TYPES.includes(r.accountType)) out.accountType = r.accountType;
       else warn('accountType', `must be one of ${COPILOT_ACCOUNT_TYPES.join(' | ')}`);
     }
-    if (r.acknowledgedTerms !== undefined) {
-      if (typeof r.acknowledgedTerms === 'string' && !Number.isNaN(Date.parse(r.acknowledgedTerms))) out.acknowledgedTerms = r.acknowledgedTerms;
-      else warn('acknowledgedTerms', 'not an ISO timestamp');
-    }
-    if (r.termsVersion !== undefined) {
-      if (Number.isInteger(r.termsVersion) && r.termsVersion > 0) out.termsVersion = r.termsVersion;
-      else warn('termsVersion', 'not a positive integer');
+    if (r.enterpriseHost !== undefined) {
+      const h = normalizeGheHost(r.enterpriseHost);
+      if (out.accountType !== GHE_COM_ACCOUNT_TYPE) warn('enterpriseHost', `ignored unless accountType is ${GHE_COM_ACCOUNT_TYPE}`);
+      else if (h) out.enterpriseHost = h;
+      else warn('enterpriseHost', 'must be a GHE.com host like acme.ghe.com');   // the ghe-com block stays; every network path then refuses (NO_HOST)
     }
     if (r.login !== undefined) {
       if (typeof r.login === 'string' && r.login.trim()) out.login = r.login.trim();
@@ -2426,18 +2684,12 @@ export function resolveProviderSecret(value, sourceEnv = process.env) {
   return typeof v === 'string' ? v.trim() : '';
 }
 
-/** Whether the Copilot terms notice has been acknowledged at the CURRENT wording version. */
-export function copilotTermsAcknowledged() {
-  const c = providerConfig('copilot');
-  return !!c.acknowledgedTerms && (c.termsVersion || 0) >= COPILOT_TERMS_VERSION;
-}
-
 /** updateProvider's validation alone (it throws the same messages). */
 export function assertProviderPatch(name, patch) {
   if (!UPSTREAM_PROVIDERS.includes(name)) throw new Error(`unknown provider ${JSON.stringify(name)}`);
   if (!patch || typeof patch !== 'object' || Array.isArray(patch)) throw new Error('provider patch must be an object');
   const allowed = new Set([...PROVIDER_SECRET_KEYS[name], 'maxConcurrent',
-    ...(name === 'copilot' ? ['accountType', 'acknowledgedTerms', 'termsVersion', 'login'] : ['baseUrl'])]);
+    ...(name === 'copilot' ? ['accountType', 'enterpriseHost', 'login'] : ['baseUrl'])]);
   for (const [k, v] of Object.entries(patch)) {
     if (!allowed.has(k)) throw new Error(`unknown provider field ${JSON.stringify(k)} for ${name}`);
     if (isClearInput(v)) continue;
@@ -2445,15 +2697,13 @@ export function assertProviderPatch(name, patch) {
       if (typeof v !== 'string' || !v.trim()) throw new Error(`${k} must be a non-empty string`);
     } else if (k === 'accountType') {
       if (!COPILOT_ACCOUNT_TYPES.includes(v)) throw new Error(`accountType must be one of ${COPILOT_ACCOUNT_TYPES.join(' | ')}`);
+    } else if (k === 'enterpriseHost') {
+      if (!normalizeGheHost(v)) throw new Error('enterpriseHost must be a GHE.com host like acme.ghe.com, with no path, port or credentials');
     } else if (k === 'baseUrl') {
       if (!isUpstreamBaseUrl(v)) throw new Error('baseUrl must be an http(s) URL with no query or fragment');
     } else if (k === 'maxConcurrent') {
       const n = Number(v);
       if (!Number.isInteger(n) || n < 1 || n > MAX_PROVIDER_CONCURRENCY) throw new Error(`maxConcurrent must be an integer from 1 to ${MAX_PROVIDER_CONCURRENCY}`);
-    } else if (k === 'acknowledgedTerms') {
-      if (typeof v !== 'string' || Number.isNaN(Date.parse(v))) throw new Error('acknowledgedTerms must be an ISO timestamp');
-    } else if (k === 'termsVersion') {
-      if (!Number.isInteger(v) || v <= 0) throw new Error('termsVersion must be a positive integer');
     }
   }
 }
@@ -2461,13 +2711,37 @@ export function assertProviderPatch(name, patch) {
 /** One provider's stored block after `patch` (validated by the caller). */
 function mergeProviderBlock(currentProviders, name, patch) {
   const cur = isObj(currentProviders) && isObj(currentProviders[name]) ? { ...currentProviders[name] } : {};
+  const before = { ...cur };
   for (const [k, v] of Object.entries(patch)) {
     if (isClearInput(v)) delete cur[k];
     else if (k === 'maxConcurrent') cur[k] = Number(v);
     else if (k === 'baseUrl') cur[k] = v.trim().replace(/\/+$/, '');
+    else if (k === 'enterpriseHost') cur[k] = normalizeGheHost(v);
     else cur[k] = typeof v === 'string' ? v.trim() : v;
   }
+  if (name === 'copilot') reconcileCopilotBlock(before, cur, patch);
   return cur;
+}
+
+/**
+ * The cross-field rules of the copilot block, applied to the merged `after` in place (it throws
+ * before anything is written): a host belongs to accountType ghe-com and ghe-com needs one; a
+ * block that changes GitHub host loses its sign-in in the same write (a token belongs to one
+ * host). A patch touching neither accountType nor enterpriseHost never trips the "needs a host"
+ * rule, so a hand-edited block without one can still be signed out.
+ */
+function reconcileCopilotBlock(before, after, patch) {
+  const type = after.accountType ?? 'individual';
+  const setsHost = Object.hasOwn(patch, 'enterpriseHost') && !isClearInput(patch.enterpriseHost);
+  if (setsHost && type !== GHE_COM_ACCOUNT_TYPE) throw new Error(`enterpriseHost applies only to accountType ${GHE_COM_ACCOUNT_TYPE}`);
+  if (type !== GHE_COM_ACCOUNT_TYPE) delete after.enterpriseHost;
+  else if (!normalizeGheHost(after.enterpriseHost) && (Object.hasOwn(patch, 'accountType') || Object.hasOwn(patch, 'enterpriseHost'))) {
+    throw new Error(`accountType ${GHE_COM_ACCOUNT_TYPE} needs enterpriseHost (your GHE.com tenant, like acme.ghe.com)`);
+  }
+  if (copilotBlockHost(before) !== copilotBlockHost(after) && !Object.hasOwn(patch, 'githubToken')) {
+    delete after.githubToken;
+    delete after.login;
+  }
 }
 
 /** updateProvider's merge, pure: the whole next `providers` block (undefined = delete it). */
@@ -2482,15 +2756,22 @@ export function nextProviders(currentProviders, name, patch) {
 /**
  * Patch a provider's stored block. Omitted keys are kept; null/'' deletes a
  * key. Validates the whole patch before writing. `dryRun` returns the
- * would-be effective config without persisting.
+ * would-be effective config without persisting. `expectCopilotHost` (null =
+ * github.com, else the tenant) refuses the write with code HOST_CHANGED when the
+ * stored GitHub host differs.
  * @returns {Promise<object>} the effective config
  * @throws {Error}
  */
-export async function updateProvider(name, patch = {}, { dryRun = false } = {}) {
+export async function updateProvider(name, patch = {}, { dryRun = false, expectCopilotHost } = {}) {
   if (!UPSTREAM_PROVIDERS.includes(name)) throw new Error(`unknown provider ${JSON.stringify(name)}`);
   assertTestSettingsAccess();
   assertProviderPatch(name, patch);
   const settings = readSettings();
+  if (expectCopilotHost !== undefined) {
+    // A device-flow sign-in commits its token here: refuse when the GitHub host moved since it began.
+    const stored = isObj(settings.providers) && isObj(settings.providers.copilot) ? settings.providers.copilot : {};
+    if (copilotBlockHost(stored) !== (expectCopilotHost || 'github.com')) throw Object.assign(new Error('the Copilot GitHub host changed during the sign-in — start it again'), { code: 'HOST_CHANGED' });
+  }
   if (dryRun) return { ...providerDefaults(name), ...sanitizeProvider(name, mergeProviderBlock(settings.providers, name, patch)) };
   const v = nextProviders(settings.providers, name, patch);
   if (v === undefined) delete settings.providers; else settings.providers = v;
@@ -2595,12 +2876,259 @@ export async function updateSpeech(patch = {}) {
   return speechConfig();
 }
 
-/** Record the Copilot terms acknowledgement at the current wording version. */
-export async function acknowledgeCopilotTerms(now = new Date()) {
-  return updateProvider('copilot', { acknowledgedTerms: now.toISOString(), termsVersion: COPILOT_TERMS_VERSION });
+// ── Images (Design pictures: the lead of a Design round can have a picture made) ──
+//   providers: { …, images: { service?, baseUrl?, model?, apiKey?, price? } }
+// service picks a preset of IMAGE_SERVICES (src/shared/image-services.mjs), which fills the
+// address and the model under the stored block. The price has no default: a save must name
+// one (0 for a free server). NOT a model-bridge upstream: it never joins UPSTREAM_PROVIDERS,
+// PROVIDER_SECRET_KEYS, allProviders() or the catalog. The key is literal or a whole-value
+// ${VAR}, resolved at use time by resolveProviderSecret, and only ever goes to the saved
+// address's origin: a save that moves the address to another origin drops the stored key.
+const IMAGES_FIELDS = Object.freeze(['service', 'baseUrl', 'model', 'apiKey', 'price']);
+const IMAGES_PRICE_MISSING = 'Enter a price; 0 for a free server';
+const IMAGES_QUIET = Object.freeze({ quiet: true });
+
+/** Why `v` is not a valid value for images field `k`, or null when it is. */
+function imagesFieldError(k, v) {
+  if (k === 'service') return typeof v === 'string' && Object.hasOwn(IMAGE_SERVICES, v.trim().toLowerCase()) ? null : `unknown image service "${v}" (openai, xai, openrouter or other)`;
+  if (k === 'baseUrl') return isUpstreamBaseUrl(v) ? null : 'baseUrl must be an http(s) URL with no query or fragment';
+  if (k === 'apiKey') return typeof v === 'string' && v.trim() ? null : 'apiKey must be a non-empty string';
+  if (k === 'price') {
+    const n = typeof v === 'number' ? v : typeof v === 'string' && v.trim() ? Number(v) : NaN;
+    return Number.isFinite(n) && n >= 0 ? null : IMAGES_PRICE_MISSING;
+  }
+  return typeof v === 'string' && SPEECH_ID_RE.test(v.trim()) ? null : `${k} must be an id (letters, digits and . _ - : / @ +)`;
 }
 
-/** Forget the Copilot sign-in (token + login); the acknowledgement stays. */
+function normImagesField(k, v) {
+  if (k === 'baseUrl') return v.trim().replace(/\/+$/, '');
+  if (k === 'price') return Number(v);
+  if (k === 'service') return v.trim().toLowerCase();
+  return v.trim();
+}
+
+/** Stored images block → only the valid fields (never throws; like sanitizeSpeech). `quiet` skips the warnings. */
+function sanitizeImages(raw, { quiet = false } = {}) {
+  const r = isObj(raw) ? raw : {};
+  const out = {};
+  for (const k of IMAGES_FIELDS) {
+    if (r[k] === undefined) continue;
+    const why = imagesFieldError(k, r[k]);
+    if (!why) out[k] = normImagesField(k, r[k]);
+    else if (!quiet) console.warn(`[worca] providers.images.${k}: ${why} — ignored`);
+  }
+  return out;
+}
+
+/** A stored block → the effective config: the checked service's preset under the valid fields. */
+function effectiveImages(block, opts) {
+  const s = sanitizeImages(block, opts);
+  const service = s.service || 'openai';
+  const preset = IMAGE_SERVICES[service];
+  return { service, baseUrl: preset.baseUrl, model: preset.model, apiKey: '', price: null, ...s };
+}
+
+/** Effective images config: the preset under the stored block. The key stays raw (literal or ${VAR}). */
+export function imagesConfig() {
+  if (process.env.NODE_TEST_CONTEXT && !process.env.WORCA_TEST_ALLOW_HOME_FALLBACK) return effectiveImages(undefined);
+  const all = readSettings().providers;
+  return effectiveImages(isObj(all) ? all.images : undefined);
+}
+
+/**
+ * Patch { service?, baseUrl?, model?, apiKey?, price? }; '' / null clears a field. Validates the
+ * whole patch before writing; a block left without a price is refused (D9), and a block
+ * with nothing valid left is removed.
+ * @returns {Promise<object>} the effective config
+ * @throws {Error}
+ */
+export async function updateImages(patch = {}) {
+  assertTestSettingsAccess();
+  if (!isObj(patch)) throw new Error('images patch must be an object');
+  for (const [k, v] of Object.entries(patch)) {
+    if (!IMAGES_FIELDS.includes(k)) throw new Error(`unknown images field ${JSON.stringify(k)}`);
+    if (isClearInput(v)) continue;
+    const why = imagesFieldError(k, v);
+    if (why) throw new Error(why);
+  }
+  const settings = readSettings();
+  const all = isObj(settings.providers) ? settings.providers : {};
+  const stored = isObj(all.images) ? all.images : {};
+  const next = { ...stored };
+  for (const [k, v] of Object.entries(patch)) {
+    if (isClearInput(v)) delete next[k]; else next[k] = normImagesField(k, v);
+  }
+  // The origin rule: a stored key never follows the address to another origin.
+  if (!Object.hasOwn(patch, 'apiKey')
+    && originOf(effectiveImages(next, IMAGES_QUIET).baseUrl) !== originOf(effectiveImages(stored, IMAGES_QUIET).baseUrl)) delete next.apiKey;
+  // The price rule (D9): what survives must name a price, else nothing is written.
+  const kept = sanitizeImages(next, IMAGES_QUIET);
+  if (Object.keys(kept).length && kept.price === undefined) throw new Error(IMAGES_PRICE_MISSING);
+  if (Object.keys(kept).length) all.images = next; else delete all.images;
+  if (Object.keys(all).length) settings.providers = all; else delete settings.providers;
+  await persistSettings(settings);
+  return imagesConfig();
+}
+
+// ── Sound (Design sound: a Design video's voice and music, made through ElevenLabs) ──
+//   providers: { …, sound: { apiKey? } }
+// NOT a model-bridge upstream: it never joins UPSTREAM_PROVIDERS, PROVIDER_SECRET_KEYS,
+// allProviders() or the catalog. The key is literal or a whole-value ${VAR}, resolved at use
+// time by resolveProviderSecret, and only ever goes to ElevenLabs.
+const SOUND_FIELDS = Object.freeze(['apiKey']);
+const SOUND_KEY_MAX = 512;
+const SOUND_QUIET = Object.freeze({ quiet: true });
+
+/** Why `v` is not a valid value for sound field `k`, or null when it is. */
+function soundFieldError(k, v) {
+  if (typeof v !== 'string' || !v.trim()) return `${k} must be a non-empty string`;
+  return v.trim().length > SOUND_KEY_MAX ? `${k} must be at most ${SOUND_KEY_MAX} characters` : null;
+}
+
+/** Stored sound block → only the valid fields, trimmed (never throws; like sanitizeImages). `quiet` skips the warnings. */
+function sanitizeSound(raw, { quiet = false } = {}) {
+  const r = isObj(raw) ? raw : {};
+  const out = {};
+  for (const k of SOUND_FIELDS) {
+    if (r[k] === undefined) continue;
+    const why = soundFieldError(k, r[k]);
+    if (!why) out[k] = r[k].trim();
+    else if (!quiet) console.warn(`[worca] providers.sound.${k}: ${why} — ignored`);
+  }
+  return out;
+}
+
+/** Effective sound config: the default under the stored block. The key stays raw (literal or ${VAR}). */
+export function soundConfig() {
+  if (process.env.NODE_TEST_CONTEXT && !process.env.WORCA_TEST_ALLOW_HOME_FALLBACK) return { apiKey: '' };
+  const all = readSettings().providers;
+  return { apiKey: '', ...sanitizeSound(isObj(all) ? all.sound : undefined) };
+}
+
+/**
+ * Patch { apiKey? }; '' / null clears it. Validates the whole patch before writing; a block
+ * with nothing valid left is removed, and so is an empty providers.
+ * @returns {Promise<{ apiKey: string }>} the effective config
+ * @throws {Error}
+ */
+export async function updateSound(patch = {}) {
+  assertTestSettingsAccess();
+  if (!isObj(patch)) throw new Error('sound patch must be an object');
+  for (const [k, v] of Object.entries(patch)) {
+    if (!SOUND_FIELDS.includes(k)) throw new Error(`unknown sound field ${JSON.stringify(k)}`);
+    if (isClearInput(v)) continue;
+    const why = soundFieldError(k, v);
+    if (why) throw new Error(why);
+  }
+  const settings = readSettings();
+  const all = isObj(settings.providers) ? settings.providers : {};
+  const next = isObj(all.sound) ? { ...all.sound } : {};
+  for (const [k, v] of Object.entries(patch)) {
+    if (isClearInput(v)) delete next[k]; else next[k] = v.trim();
+  }
+  if (Object.keys(sanitizeSound(next, SOUND_QUIET)).length) all.sound = next; else delete all.sound;
+  if (Object.keys(all).length) settings.providers = all; else delete settings.providers;
+  await persistSettings(settings);
+  return soundConfig();
+}
+
+// ── OpenRouter (Models menu P2) ──
+//   providers: { …, openrouter: { apiKey?, maxConcurrent?, order?, sort?, allowFallbacks? } }
+// OpenRouter's own row: its key (literal or whole-value ${VAR}), its concurrency cap and its routing defaults
+// (provider order, sort, allow fallbacks). NOT an upstream: it never joins UPSTREAM_PROVIDERS or allProviders().
+// Stored minimally: a field holding its default is not written (allowFallbacks only as false), and an empty
+// block is removed, and so is an empty providers.
+
+const OPENROUTER_FIELDS = Object.freeze(['apiKey', 'maxConcurrent', 'order', 'sort', 'allowFallbacks']);
+const OPENROUTER_DEFAULT_CONCURRENCY = 8;
+const OPENROUTER_QUIET = Object.freeze({ quiet: true });
+const openRouterDefaults = () => ({ apiKey: '', maxConcurrent: OPENROUTER_DEFAULT_CONCURRENCY, order: [], sort: '', allowFallbacks: true });
+
+/** A provider order from a string[] or a comma string, trimmed with blanks dropped; null when it is neither. */
+function openRouterOrder(v) {
+  const list = typeof v === 'string' ? v.split(',') : v;
+  if (!Array.isArray(list) || list.some((s) => typeof s !== 'string')) return null;
+  return list.map((s) => s.trim()).filter(Boolean);
+}
+
+/** Why `v` is not a valid value for openrouter field `k` (one of OPENROUTER_FIELDS), or null when it is. */
+function openRouterFieldError(k, v) {
+  if (k === 'apiKey') return typeof v === 'string' && v.trim() ? null : 'apiKey must be a non-empty string';
+  if (k === 'maxConcurrent') {
+    const n = Number(v);
+    return Number.isInteger(n) && n >= 1 && n <= MAX_PROVIDER_CONCURRENCY ? null : `maxConcurrent must be an integer from 1 to ${MAX_PROVIDER_CONCURRENCY}`;
+  }
+  if (k === 'order') return openRouterOrder(v) ? null : 'order must be a list of provider names';
+  if (k === 'sort') return v === '' || OPENROUTER_SORTS.includes(v) ? null : `sort must be one of ${OPENROUTER_SORTS.join(' | ')}, or empty`;
+  return typeof v === 'boolean' ? null : 'allowFallbacks must be true or false';
+}
+
+/** A valid value of field `k` in its stored form; undefined when it is the default (nothing to store). */
+function openRouterStoredValue(k, v) {
+  if (k === 'apiKey') return v.trim();
+  if (k === 'maxConcurrent') { const n = Number(v); return n === OPENROUTER_DEFAULT_CONCURRENCY ? undefined : n; }
+  if (k === 'order') { const list = openRouterOrder(v); return list.length ? list : undefined; }
+  if (k === 'sort') return v || undefined;
+  return v === false ? false : undefined;
+}
+
+/** The stored block's valid, non-default fields. Never throws. */
+function sanitizeOpenRouter(raw, { quiet = false } = {}) {
+  const r = isObj(raw) ? raw : {};
+  const out = {};
+  for (const k of OPENROUTER_FIELDS) {
+    if (r[k] === undefined) continue;
+    const why = openRouterFieldError(k, r[k]);
+    if (why) { if (!quiet) console.warn(`[worca] providers.openrouter.${k}: ${why} — ignored`); continue; }
+    const v = openRouterStoredValue(k, r[k]);
+    if (v !== undefined) out[k] = v;
+  }
+  return out;
+}
+
+/**
+ * The OpenRouter row's effective config: the defaults under the stored block. The key stays raw (literal or
+ * whole-value ${VAR}), '' when none. Never throws: a bad stored value reads as its default.
+ * @returns {{ apiKey: string, maxConcurrent: number, order: string[], sort: ''|'price'|'throughput'|'latency', allowFallbacks: boolean }}
+ */
+export function openRouterConfig() {
+  if (process.env.NODE_TEST_CONTEXT && !process.env.WORCA_TEST_ALLOW_HOME_FALLBACK) return openRouterDefaults();
+  const all = readSettings().providers;
+  return { ...openRouterDefaults(), ...sanitizeOpenRouter(isObj(all) ? all.openrouter : undefined) };
+}
+
+/**
+ * Patch { apiKey?, maxConcurrent?, order?, sort?, allowFallbacks? }. A key left out keeps its value; '' or null
+ * resets it to its default. Validates the whole patch before writing. `dryRun` validates the same way and returns
+ * the would-be config without writing (Chat's model card, as updateProvider's).
+ * @returns {Promise<ReturnType<typeof openRouterConfig>>} the effective config
+ * @throws {Error}
+ */
+export async function updateOpenRouter(patch = {}, { dryRun = false } = {}) {
+  assertTestSettingsAccess();
+  if (!isObj(patch)) throw new Error('openrouter patch must be an object');
+  for (const [k, v] of Object.entries(patch)) {
+    if (!OPENROUTER_FIELDS.includes(k)) throw new Error(`unknown provider field ${JSON.stringify(k)} for openrouter`);
+    if (isClearInput(v)) continue;
+    const why = openRouterFieldError(k, v);
+    if (why) throw new Error(why);
+  }
+  const settings = readSettings();
+  const all = isObj(settings.providers) ? settings.providers : {};
+  const next = isObj(all.openrouter) ? { ...all.openrouter } : {};
+  for (const [k, v] of Object.entries(patch)) {
+    const stored = isClearInput(v) ? undefined : openRouterStoredValue(k, v);
+    if (stored === undefined) delete next[k]; else next[k] = stored;
+  }
+  // A dry run returns before `all` (settings.providers itself) changes or anything is written.
+  if (dryRun) return { ...openRouterDefaults(), ...sanitizeOpenRouter(next) };
+  if (Object.keys(sanitizeOpenRouter(next, OPENROUTER_QUIET)).length) all.openrouter = next; else delete all.openrouter;
+  if (Object.keys(all).length) settings.providers = all; else delete settings.providers;
+  await persistSettings(settings);
+  return openRouterConfig();
+}
+
+/** Forget the Copilot sign-in (token + login). */
 export async function clearCopilotSignIn() {
   return updateProvider('copilot', { githubToken: null, login: null });
 }
@@ -2694,33 +3222,36 @@ export async function writeStoredFlags(map) {
 }
 
 // ── Getting started (onboarding) ─────────────────────────────────────────────
-// Two machine-wide flags, nothing more: which steps are DONE is derived from
+// Three machine-wide flags, nothing more: which steps are DONE is derived from
 // product state by src/core/onboarding.mjs and never stored. `hidden` is the
 // checklist's Hide (Settings › General › Getting started shows it again);
-// `welcomeSeen` is the one-time welcome dialog. Both absent = both false.
+// `welcomeSeen` is the one-time welcome dialog; `workspaceGuideSeen` is the
+// "How workspaces work" walkthrough (FEAT-7) — set on every open, cleared when
+// the last workspace is deleted. All absent = all false.
+const ONBOARDING_FLAGS = Object.freeze(['hidden', 'welcomeSeen', 'workspaceGuideSeen']);
+
 export function onboardingPrefs() {
   const o = readSettings().onboarding;
   const obj = o && typeof o === 'object' && !Array.isArray(o) ? o : {};
-  return { hidden: obj.hidden === true, welcomeSeen: obj.welcomeSeen === true };
+  return Object.fromEntries(ONBOARDING_FLAGS.map((k) => [k, obj[k] === true]));
 }
 
-/** @throws {Error} unless every present key is a boolean. Unknown keys are refused. */
+/** @throws {Error} unless every present key is a known flag holding a boolean. */
 export function assertOnboardingPrefsInput(patch) {
   if (!patch || typeof patch !== 'object' || Array.isArray(patch)) throw new Error('onboarding prefs must be an object');
   for (const [k, v] of Object.entries(patch)) {
-    if (k !== 'hidden' && k !== 'welcomeSeen') throw new Error(`unknown onboarding key ${JSON.stringify(k)}`);
+    if (!ONBOARDING_FLAGS.includes(k)) throw new Error(`unknown onboarding key ${JSON.stringify(k)}`);
     if (typeof v !== 'boolean') throw new Error(`onboarding.${k} must be true or false`);
   }
 }
 
-/** Merge `patch` over the stored flags; a store with both flags false drops the key. */
+/** Merge `patch` over the stored flags; a store with every flag false drops the key. */
 export async function setOnboardingPrefs(patch = {}) {
   assertOnboardingPrefsInput(patch);
-  const settings = readSettings();
+  const { onboarding: _previous, ...rest } = readSettings();
   const next = { ...onboardingPrefs(), ...patch };
-  if (!next.hidden && !next.welcomeSeen) delete settings.onboarding;
-  else settings.onboarding = next;
-  await persistSettings(settings);
+  const allFalse = ONBOARDING_FLAGS.every((k) => !next[k]);
+  await persistSettings(allFalse ? rest : { ...rest, onboarding: next });
   return onboardingPrefs();
 }
 
@@ -2804,6 +3335,31 @@ export async function setChatHomePinsFor(person, list) {
   settings.chatHomePins = map;
   await persistSettings(settings);
   return chatHomePinsFor(person);
+}
+
+/** The answerer profile (the lead a person shapes as): per person, keyed like the Chat home pins. It describes the
+ *  person, not a project, so it sits outside the user-to-project settings cascade. */
+function answererMap(settings) {
+  const m = settings.answererProfiles;
+  return Object.assign(Object.create(null), m && typeof m === 'object' && !Array.isArray(m) ? m : {});
+}
+
+/** The person's profile, `{ lead }` (null when never set or unknown). Never throws. */
+export function answererProfileFor(person) {
+  if (homeGuarded()) return { lead: null };
+  const lead = answererMap(readSettings())[pinsPersonKey(person)]?.lead;
+  return { lead: isAnswererLead(lead) ? lead : null };
+}
+
+/** Set the person's lead. Throws { code: 'BAD_LEAD' } before any write. */
+export async function setAnswererProfileFor(person, { lead } = {}) {
+  if (!isAnswererLead(lead)) throw Object.assign(new Error(`Pick one of: ${ANSWERER_LEAD_KEYS.join(', ')}`), { code: 'BAD_LEAD' });
+  const settings = readSettings();
+  const map = answererMap(settings);
+  map[pinsPersonKey(person)] = { lead };
+  settings.answererProfiles = map;
+  await persistSettings(settings);
+  return answererProfileFor(person);
 }
 
 /** Local tag dimensions (Settings › Tags): used when the run target's team policy sets none. Never throws. */
@@ -2940,6 +3496,50 @@ export function effectiveNetworkWait(env = process.env) {
   const n = Number(raw);
   const maxWaitMs = raw != null && raw !== '' && Number.isFinite(n) && n >= 0 ? n : s.maxWaitMin * 60_000;
   return { enabled, maxWaitMs };
+}
+
+// ── Machine load (Settings › Runs › Machine load) ────────────────────────────
+// maxConcurrentRuns: runs past it wait for a free slot (run-slots.mjs, shared by every Worca process on this
+// machine). testWorkers: WORCA_TEST_CONCURRENCY in every agent's env, the worker cap a test runner that reads
+// it uses (null = half the cores). keepRunsDays: finished runs older than this are archived by the daily
+// sweep (run-retention.mjs; null = never). A stored key that is absent follows the default.
+export const DEFAULT_RUN_LIMITS = Object.freeze({ maxConcurrentRuns: 3, testWorkers: null, keepRunsDays: null });
+const RUN_LIMIT_RANGES = Object.freeze({ maxConcurrentRuns: [1, 20], testWorkers: [1, 64], keepRunsDays: [1, 3650] });
+const inRunLimit = (k, v) => Number.isInteger(v) && v >= RUN_LIMIT_RANGES[k][0] && v <= RUN_LIMIT_RANGES[k][1];
+
+export function runLimits() {
+  const stored = readSettings().runLimits;
+  const o = isObj(stored) ? stored : {};
+  return Object.fromEntries(Object.keys(DEFAULT_RUN_LIMITS).map((k) => [k, inRunLimit(k, o[k]) ? o[k] : DEFAULT_RUN_LIMITS[k]]));
+}
+
+/** @throws {Error} on anything but a partial, valid runLimits object (null / '' resets; a null key resets that key). */
+export function assertRunLimitsInput(patch) {
+  if (patch === null || patch === '') return;
+  if (!isObj(patch)) throw new Error('runLimits must be an object');
+  for (const [k, v] of Object.entries(patch)) {
+    if (!Object.hasOwn(DEFAULT_RUN_LIMITS, k)) throw new Error(`unknown runLimits setting: ${k}`);
+    const [lo, hi] = RUN_LIMIT_RANGES[k];
+    if (v !== null && !inRunLimit(k, v)) throw new Error(`runLimits.${k} must be a whole number from ${lo} to ${hi}`);
+  }
+}
+
+/** What an unset runLimits.testWorkers means on this machine: half the cores. */
+export const autoTestWorkers = () => Math.max(1, Math.floor(availableParallelism() / 2));
+
+/** The test-worker cap every agent gets as WORCA_TEST_CONCURRENCY: the setting, else autoTestWorkers(). */
+export function testWorkerCap() {
+  return runLimits().testWorkers ?? autoTestWorkers();
+}
+
+export async function setRunLimits(patch) {
+  assertRunLimitsInput(patch);
+  const settings = readSettings();
+  const next = patch === null || patch === '' ? {} : { ...(isObj(settings.runLimits) ? settings.runLimits : {}) };
+  if (isObj(patch)) for (const [k, v] of Object.entries(patch)) { if (v === null) delete next[k]; else next[k] = v; }
+  if (Object.keys(next).length) settings.runLimits = next; else delete settings.runLimits;
+  await persistSettings(settings);
+  return runLimits();
 }
 
 // Settings › Network proxy (networkProxy.enabled; applied live by egress-policy.mjs startLiveEgress).

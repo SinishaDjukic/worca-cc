@@ -7,14 +7,13 @@
 import { test, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
 import { JSDOM } from 'jsdom';
-import { readFileSync } from 'node:fs';
 import { pathToFileURL, fileURLToPath } from 'node:url';
 import { useDomRelease } from './helpers/jsdom-release.mjs';
 import { bootDetail, openDetail, settle as hSettle, ROW as H_ROW, DETAIL as H_DETAIL } from './helpers/history-detail-boot.mjs';
+import { readIndexHtml } from '../src/core/read-index-html.mjs';
 
 const trackDom = useDomRelease(afterEach);
 
-const htmlPath = fileURLToPath(new URL('../ui/public/index.html', import.meta.url));
 const appPath = fileURLToPath(new URL('../ui/public/app.js', import.meta.url));
 const PROJECT = '/tmp/proj-limit-reset';
 
@@ -31,7 +30,7 @@ function makeServer() {
 }
 
 async function boot({ level, server = makeServer() } = {}) {
-  let html = readFileSync(htmlPath, 'utf8');
+  let html = readIndexHtml();
   if (level) html = html.replace('<html lang="en" data-theme="system">', `<html lang="en" data-theme="system" data-level="${level}">`);
   const dom = trackDom(new JSDOM(html, { url: 'http://localhost:4317/' }));
   live.push(dom);
@@ -180,9 +179,17 @@ function blurOnDisable(btn) {
   });
 }
 
+/** The notice lives on Details › Overview, hidden while the run page shows its glance; a hidden
+ *  button takes no focus (jsdom 30, as browsers), so the keyboard tests open the Overview first. */
+async function onOverview(ctx) {
+  ctx.go('running/r1/details/overview');
+  await ctx.settle(8);
+}
+
 test('keyboard: focus moves Resume at → Cancel → Resume at instead of falling to <body>', async () => {
   const ctx = await boot({ level: 'simple' });
   const page = await pausedCard(ctx, { limitResetAt: iso(Date.now() + 2 * 60 * MIN) });
+  await onOverview(ctx);
   const btn = page.querySelector('.rd-ov-state .limit-resume');
   blurOnDisable(btn);
   btn.focus();
@@ -205,6 +212,7 @@ test('keyboard: focus moves Resume at → Cancel → Resume at instead of fallin
 test('keyboard: a later repaint (the schedules-changed frame after the request) keeps focus on the notice button', async () => {
   const ctx = await boot({ level: 'simple' });
   const page = await pausedCard(ctx, { limitResetAt: iso(Date.now() + 2 * 60 * MIN) });
+  await onOverview(ctx);
   const btn = page.querySelector('.rd-ov-state .limit-resume');
   blurOnDisable(btn);
   btn.focus();
@@ -259,7 +267,7 @@ for (const level of ['simple', 'advanced', 'expert']) {
 }
 
 test('menu item: "Resume at" is the first item of both split menus', () => {
-  const doc = new JSDOM(readFileSync(htmlPath, 'utf8')).window.document;
+  const doc = new JSDOM(readIndexHtml()).window.document;
   for (const [tpl, menu, cls] of [
     ['#run-detail-tpl', '.rd-resume-menu', 'rd-resume-limit'],
     ['#hist-detail-tpl', '.hd-resume-menu', 'hd-resume-limit-item'],

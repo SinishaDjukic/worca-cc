@@ -48,6 +48,7 @@ function stubGh(seen, create = { ok: true, stdout: 'https://github.com/x/y/pull/
   gitInfo.setRunner((cmd, args) => {
     seen.push([cmd, ...args]);
     if (cmd === 'gh' && args[0] === '--version') return Promise.resolve({ ok: true, stdout: 'gh 2.x', stderr: '', code: 0 });
+    if (cmd === 'git' && args[0] === 'remote') return Promise.resolve({ ok: true, stdout: 'origin\thttps://github.com/x/y.git (push)\n', stderr: '', code: 0 });
     if (cmd === 'git' && args[0] === 'push') return Promise.resolve({ ok: true, stdout: '', stderr: '', code: 0 });
     if (cmd === 'gh' && args[0] === 'pr' && args[1] === 'create') return Promise.resolve(create);
     if (cmd === 'gh' && args[0] === 'pr' && args[1] === 'view') return Promise.resolve({ ok: true, stdout: 'MERGEABLE\n', stderr: '', code: 0 });
@@ -153,6 +154,7 @@ test('ask-link refusals name the reason; a failed push leaves the card proposed 
       gitInfo.setRunner((cmd, args) => {
         seen.push([cmd, ...args]);
         if (cmd === 'gh' && args[0] === '--version') return Promise.resolve({ ok: true, stdout: 'gh 2.x', stderr: '', code: 0 });
+        if (cmd === 'git' && args[0] === 'remote') return Promise.resolve({ ok: true, stdout: 'origin\thttps://github.com/x/y.git (push)\n', stderr: '', code: 0 });
         if (cmd === 'git' && args[0] === 'push') return Promise.resolve({ ok: false, stdout: '', stderr: 'denied', code: 1 });
         return Promise.resolve({ ok: true, stdout: '', stderr: '', code: 0 });
       });
@@ -177,6 +179,7 @@ test('a project card already applied is not opened again by naming a member: the
 test('on a shared sign-in another person\'s thread is an unknown askThreadId: nothing pushed, the card stays proposed (impl review m1 mutation killer)', async () => {
   const prev = process.env.WORCA_IDENTITY_HEADER;
   process.env.WORCA_IDENTITY_HEADER = 'x-test-user';         // a per-person sign-in (identity.mjs 'header')
+  process.env.WORCA_IDENTITY_TRUSTED_PROXIES = '127.0.0.1,::1';   // X1: the in-process server's callers are loopback
   try {
     const t = createThread({ createdBy: 'alice@example.com' });
     const askCardId = `card_${String(++n).padStart(8, '0')}`;

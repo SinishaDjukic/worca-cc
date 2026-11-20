@@ -1,0 +1,63 @@
+/* ── Terminal pane (GitHub issue 573): the right side of every page. Opening it shifts the page and the toasts
+   left of it; --term-w is set by the pane's resize handle (default 460px). ── */
+.term-pane{position:fixed;top:0;right:0;bottom:0;width:var(--term-w,460px);z-index:39;display:flex;flex-direction:column;
+  background:var(--panel);border-left:1px solid var(--line);box-shadow:var(--shadow-sheet);
+  /* xterm's 16 ANSI colours (terminal-pane.mjs reads them through probes). Each theme takes its own tone of a
+     token: the -ink tones are the ones written to be read on a light --field, the plain tones on a dark one.
+     "black" and "white" are ink greys, so neither disappears into the background in either theme. */
+  --term-ansi-black:light-dark(var(--ink),var(--ink-3));        --term-ansi-bright-black:var(--ink-3);
+  --term-ansi-red:light-dark(var(--red-ink),var(--red));        --term-ansi-bright-red:var(--red-ink);
+  --term-ansi-green:light-dark(var(--green-ink),var(--green));  --term-ansi-bright-green:var(--green-ink);
+  --term-ansi-yellow:light-dark(var(--amber-ink),var(--amber)); --term-ansi-bright-yellow:var(--amber-ink);
+  --term-ansi-blue:light-dark(var(--blue-ink),var(--blue));     --term-ansi-bright-blue:var(--blue-ink);
+  --term-ansi-magenta:light-dark(var(--pink-ink),var(--pink)); --term-ansi-bright-magenta:var(--pink-ink);
+  --term-ansi-cyan:light-dark(var(--teal-ink),var(--teal));     --term-ansi-bright-cyan:var(--teal-ink);
+  --term-ansi-white:var(--ink-2);                               --term-ansi-bright-white:var(--ink);}
+.term-pane[hidden]{display:none;}
+body.term-open .app{margin-right:var(--term-w,460px);}
+body.term-open .toasts{right:calc(var(--term-w,460px) + 20px);}
+/* The opener: an icon button in the run bar and the project page's title row, at their controls' height. */
+.term-opener{display:inline-flex;align-items:center;justify-content:center;flex:none;}
+.term-opener[aria-expanded="true"]{color:var(--ink);background:var(--hover);}
+.term-opener:focus-visible{outline:2px solid var(--ink);outline-offset:2px;}
+.pd-row1 .term-opener{margin-left:auto;}   /* Back and Remove are 39px here */
+.term-resize{position:absolute;left:-3px;top:0;bottom:0;width:6px;cursor:col-resize;}
+.term-head{display:flex;align-items:center;gap:8px;padding:10px 12px;border-bottom:1px solid var(--line);}
+.term-title{font:600 13px/1 var(--sans);color:var(--ink);margin-right:auto;}
+.term-tabs{display:flex;align-items:flex-end;gap:2px;padding:6px 12px 0;border-bottom:1px solid var(--line);overflow-x:auto;scrollbar-width:none;}
+.term-tabs[hidden]{display:none;}
+.term-tab{flex:0 1 auto;min-width:0;max-width:180px;height:28px;padding:0 10px;margin-bottom:-1px;border:1px solid transparent;border-bottom:0;
+  border-radius:var(--r-ctrl) var(--r-ctrl) 0 0;background:none;color:var(--ink-3);font:12px/1 var(--sans);
+  overflow:hidden;text-overflow:ellipsis;white-space:nowrap;cursor:pointer;}
+.term-tab:hover{color:var(--ink);background:var(--hover);}
+.term-tab[aria-selected="true"]{color:var(--ink);background:var(--panel);border-color:var(--line);}
+.term-tab-item{position:relative;display:flex;flex:0 1 auto;min-width:0;max-width:180px;}
+.term-tab-item .term-tab{flex:1 1 auto;max-width:none;padding-right:26px;}
+.term-tab-close{position:absolute;right:4px;top:4px;width:20px;height:20px;padding:0;border:0;border-radius:var(--r-ctrl);background:none;
+  color:var(--ink-3);font:13px/1 var(--sans);cursor:pointer;}
+.term-tab-close:hover{color:var(--ink);background:var(--hover);}
+.term-tab-close:focus-visible{outline:2px solid var(--ink);outline-offset:-2px;}
+.term-tab-ended .term-tab{font-style:italic;}
+.term-tab-add{flex:none;width:28px;padding:0;font-size:15px;}
+.term-tab:focus-visible{outline:2px solid var(--ink);outline-offset:-2px;}
+.term-icon{display:inline-flex;align-items:center;justify-content:center;}
+.term-context{display:flex;flex-wrap:wrap;align-items:center;gap:6px 8px;padding:6px 12px;border-bottom:1px solid var(--line);}
+.term-context:empty{display:none;}
+.term-member{max-width:160px;min-width:0;}
+.term-folder{flex:1 1 0;min-width:0;font:11px/1.4 var(--mono);color:var(--ink-3);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+.term-note{margin:0;color:var(--ink-2);font-size:12px;flex-basis:100%;}
+.term-error{color:var(--red-ink);}
+.term-warn{margin:0;padding:6px 10px;border-radius:var(--r-ctrl);background:var(--amber-bg);color:var(--amber-ink);font-size:12px;flex-basis:100%;}
+.term-banners:empty{display:none;}
+.term-banners{display:grid;gap:6px;padding:8px 12px 0;}
+.term-banner{margin:0;padding:6px 10px;border-radius:var(--r-ctrl);background:var(--field);color:var(--ink-2);border:1px solid var(--line);font-size:12px;}
+.term-screen{flex:1;min-height:0;margin:8px 12px 12px;padding:6px 8px;background:var(--field);color:var(--ink);
+  border:1px solid var(--line);border-radius:var(--r-ctrl);font-family:var(--mono);overflow:hidden;display:flex;flex-direction:column;}
+/* xterm opens in the host, never in .term-screen itself: FitAddon fits rows and columns to its parent's computed
+   height and width, which under border-box would count the frame's padding and border (one row clipped). */
+.term-host{flex:1;min-height:0;min-width:0;padding:0;border:0;}
+.term-sel-probe{display:none;background:var(--blue-bg);}
+.term-ansi-probe{display:none;}
+@media (max-width:760px){ body.term-open .app{margin-right:0;} .term-pane{width:100vw;} body.term-open .toasts{right:12px;}
+ }
+

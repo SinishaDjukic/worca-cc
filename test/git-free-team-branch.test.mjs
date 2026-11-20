@@ -9,6 +9,7 @@ import { repoOfSlug, lsRemoteHttps, readBranchFile, createOrphanBranch, commitFi
 import { ARCHIVE_LIMITS } from '../src/core/git-free/archive.mjs';
 import { _testing as ghTesting } from '../src/core/git-free/github.mjs';
 import { fakeGithub } from './helpers/fake-github.mjs';
+import { BITBUCKET_NEEDS_GIT } from '../src/core/git-available.mjs';
 import { withEnv } from './helpers/with-env.mjs';
 
 const NO_CREDS = { GH_TOKEN: undefined, GITHUB_TOKEN: undefined, WORCA_GH_READ_TOKEN: undefined, WORCA_GH_WRITE_TOKEN: undefined,
@@ -32,6 +33,7 @@ test('lsRemoteHttps answers in git ls-remote\'s shape; readBranchFile reads one 
   assert.deepEqual(await withEnv(NO_CREDS, () => lsRemoteHttps('acme/missing', 'worca-metrics')),
     { ok: false, stdout: '', stderr: 'not found on GitHub: acme/missing (a private repository needs GH_TOKEN)' });
   assert.deepEqual(await lsRemoteHttps('gitlab.com/acme/x', 'worca-metrics'), { ok: false, stdout: '', stderr: 'git is not installed on this machine' });
+  assert.deepEqual(await lsRemoteHttps('bitbucket.org/acme/x', 'worca-metrics'), { ok: false, stdout: '', stderr: BITBUCKET_NEEDS_GIT });
   assert.deepEqual(await readBranchFile('acme/ls', head, 'README.md'), { ok: true, text: 'r\n' });
   assert.deepEqual(await readBranchFile('acme/ls', head, 'nope.json'), { ok: true, text: null });
   if (POSIX) assert.deepEqual(await readBranchFile('acme/ls', head, 'l.json'), { ok: true, text: 'README.md' });

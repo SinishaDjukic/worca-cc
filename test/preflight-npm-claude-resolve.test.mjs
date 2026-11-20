@@ -147,3 +147,30 @@ test('runClaude on a faked win32 host with the placeholder binary: ENOENT carrie
     (err) => /ENOENT/.test(err.message) && /postinstall did not run/.test(err.message) && /install\.cjs/.test(err.message),
   );
 });
+
+// ── the shared resolver's shim parse, seen through the Claude wrappers ───────
+const SHIM_TAIL = 'endLocal & goto #_undefined_# 2>NUL || title %COMSPEC% & ';
+const NODE_SHIM_TEXT = ['@ECHO off', 'IF EXIST "%dp0%\\node.exe" (', '  SET "_prog=%dp0%\\node.exe"', ') ELSE (', '  SET "_prog=node"', ')',
+  SHIM_TAIL + '"%_prog%"  "%dp0%\\node_modules\\@anthropic-ai\\claude-code\\cli.js" %*'].join('\r\n');
+const EXE_SHIM_TEXT = ['@ECHO off', SHIM_TAIL + '"%dp0%\\node_modules\\@anthropic-ai\\claude-code\\bin\\claude.exe"   %*'].join('\r\n');
+
+test('a Claude shim that launches a node script stays as-is (allowNode:false), with the install hint', () => {
+  const script = join(NPM, 'node_modules', '@anthropic-ai', 'claude-code', 'cli.js');
+  const o = { ...WIN, exists: has(SHIM, script), readFile: () => NODE_SHIM_TEXT };
+  assert.equal(resolveClaudeBin('claude', o).source, 'as-is');
+  assert.match(explainUnspawnableClaude('claude', o), /install\.ps1/);
+});
+
+test('a Claude shim whose direct target is the native claude.exe resolves through the parse', () => {
+  const o = { ...WIN, exists: has(SHIM, EXE), isNativeExe: nativeIf(EXE), readFile: () => EXE_SHIM_TEXT };
+  assert.equal(resolveClaudeBin('claude', o).bin, EXE);
+});
+
+test('a Claude shim whose direct target is NOT the candidate path resolves as shim-exe through the parse', () => {
+  const target = join(NPM, 'node_modules', 'other', 'claude.exe');
+  const text = ['@ECHO off', SHIM_TAIL + '"%dp0%\\node_modules\\other\\claude.exe"   %*'].join('\r\n');
+  const o = { ...WIN, exists: has(SHIM, target), isNativeExe: nativeIf(target), readFile: () => text };
+  const r = resolveClaudeBin('claude', o);
+  assert.equal(r.bin, target);
+  assert.equal(r.source, 'shim-exe');
+});

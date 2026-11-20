@@ -78,7 +78,6 @@ async function main(argv) {
   process.env.WORCA_HOME = path.join(home, '.worca-cc');
   process.env.WORCA_TEST_ALLOW_HOME_FALLBACK = '1';
   process.env.WORCA_MOCK = '1';
-  process.env.WORCA_FLAGS = 'shapeFirst';
   const { server } = await import(new URL('../ui/server.mjs', import.meta.url).href);
   const { shipKit } = await import(new URL('../test/helpers/ship-world.mjs', import.meta.url).href);
   const { createThread, appendMessage, linkRun } = await import(new URL('../src/core/ask/store.mjs', import.meta.url).href);

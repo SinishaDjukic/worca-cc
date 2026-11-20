@@ -14,7 +14,6 @@
 // error per booted window.
 import { test, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { JSDOM, VirtualConsole } from 'jsdom';
 import { previewText, REPORT_PREVIEW_DEBOUNCE_MS } from '../ui/public/report-run.mjs';
@@ -22,8 +21,8 @@ import { useDomRelease } from './helpers/jsdom-release.mjs';
 import { checkRows } from './helpers/rows.mjs';
 import { useAppTimers } from './helpers/app-timers.mjs';
 import { backdropClick, pressEscape, discardPrompt, discardChanges } from './helpers/popups.mjs';
+import { readIndexHtml } from '../src/core/read-index-html.mjs';
 
-const htmlPath = fileURLToPath(new URL('../ui/public/index.html', import.meta.url));
 const appPath = fileURLToPath(new URL('../ui/public/app.js', import.meta.url));
 
 const PKEY = 'proj-alpha-11111111';
@@ -60,7 +59,7 @@ async function boot({ fetchHandler, clipboard } = {}) {
   // (node_modules/jsdom/lib/jsdom/virtual-console.js).
   const virtualConsole = new VirtualConsole();
   virtualConsole.forwardTo(console, { jsdomErrors: 'none' });
-  const dom = new JSDOM(readFileSync(htmlPath, 'utf8'),
+  const dom = new JSDOM(readIndexHtml(),
     { url: 'http://localhost:4317/', virtualConsole });
   trackDom(dom);
   const { window } = dom;

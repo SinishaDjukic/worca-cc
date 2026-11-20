@@ -22,7 +22,7 @@ bottom](screenshots/architecture.png)
   `work/` folder, whose files become its Artifacts.
 - **Models** — each catalog entry can carry routing env, so the same pipeline
   talks to the Anthropic cloud, a gateway/proxy, an on-prem or dev-machine
-  endpoint, or Bedrock/Vertex. See the README's Models section.
+  endpoint, or Bedrock/Vertex. See [Models](models.md).
 
 ### Auto workflow
 

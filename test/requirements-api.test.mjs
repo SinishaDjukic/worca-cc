@@ -80,10 +80,11 @@ test('the whole flow in mock mode, with frames', async () => {
     assert.equal(typeof row.ready, 'number');
     assert.equal(row.latestRun, null);
     assert.ok(listed.lookCostUsd === null || typeof listed.lookCostUsd === 'number');
-    assert.match(listed.interview.model, /^claude-opus-/);
-    assert.ok(listed.interview.label && listed.interview.label.length > 0);
-    assert.equal(listed.interview.effort, 'medium');
-    assert.equal(listed.interview.source, 'default');
+    assert.equal(listed.interview.default.engine, 'claude');
+    assert.match(listed.interview.default.model, /^claude-opus-/);
+    assert.ok(listed.interview.default.label && listed.interview.default.label.length > 0);
+    assert.equal(listed.interview.default.effort, 'medium');
+    assert.equal(listed.interview.fallbackReason, null);
     assert.equal(typeof listed.spend.windowUsd, 'number');
     assert.ok('totalLimitUsd' in listed.spend);
     assert.deepEqual(listed.briefs, [], 'A7 §5: no scope has a brief row yet');
@@ -101,10 +102,47 @@ test('the whole flow in mock mode, with frames', async () => {
   } finally { ws.close(); }
 });
 
+test('PUT early-start-reason: sets, trims, clears; refuses long, non-text, archived and unknown; survives a re-read; updatedAt stays', async () => {
+  const ws = new WebSocket(`${base.replace('http', 'ws')}/ws`, { headers: { host: '127.0.0.1', origin: 'http://127.0.0.1' } });
+  const frames = [];
+  ws.on('message', (d) => { try { const m = JSON.parse(String(d)); if (m.type === 'requirements-changed') frames.push(m); } catch {} });
+  await new Promise((res, rej) => { ws.on('open', res); ws.on('error', rej); });
+  try {
+    const c = await call('POST', '/api/requirements', { scopeType: 'project', scopeKey: projKey, title: 'Reason note', description: 'd' });
+    const seq = c.json.feature.seq;
+    await waitFor(async () => (await call('GET', `/api/requirements/${seq}`)).json.feature.status === 'your_turn');
+    const view = async () => (await call('GET', `/api/requirements/${seq}`)).json.feature;
+    const before = await view();
+    assert.equal(before.earlyStartReason, null);
+    const url = `/api/requirements/${seq}/early-start-reason`;
+    const seen = frames.length;
+    const set = await call('PUT', url, { reason: '  Demo on Friday  ' });
+    assert.deepEqual([set.status, set.json], [200, { earlyStartReason: 'Demo on Friday' }]);
+    await waitFor(() => frames.length > seen);
+    const after = await view();
+    assert.equal(after.earlyStartReason, 'Demo on Friday');
+    assert.equal(after.updatedAt, before.updatedAt);
+    assert.equal((await call('PUT', url, { reason: 'x'.repeat(500) })).status, 200);
+    const long = await call('PUT', url, { reason: 'x'.repeat(501) });
+    assert.deepEqual([long.status, long.json.error], [400, 'the reason must be at most 500 characters']);
+    for (const bad of [7, {}, undefined]) assert.equal((await call('PUT', url, bad === undefined ? {} : { reason: bad })).status, 400, String(bad));
+    assert.equal((await view()).earlyStartReason, 'x'.repeat(500), 'refusals change nothing');
+    assert.deepEqual((await call('PUT', url, { reason: '   ' })).json, { earlyStartReason: null });
+    assert.equal((await call('PUT', url, { reason: 'again' })).status, 200);
+    assert.deepEqual((await call('PUT', url, { reason: null })).json, { earlyStartReason: null });
+    assert.equal((await view()).earlyStartReason, null);
+    assert.equal((await call('PUT', '/api/requirements/999999/early-start-reason', { reason: 'x' })).status, 404);
+    await call('POST', `/api/requirements/${seq}/archive`, {});
+    const arch = await call('PUT', url, { reason: 'x' });
+    assert.deepEqual([arch.status, arch.json.error], [409, 'this feature is archived; restore it first']);
+  } finally { ws.close(); }
+});
+
 // The route table is the one list both the registration and this test use, so a new route cannot be
 // added without the flag-off check covering it.
 const fill = (path) => path.replace(':scopeType/:scopeKey', `project/${projKey}`).replace(':seq', '1')
-  .replace('/criteria/:id', '/criteria/R-po-1').replace('/assumptions/:id', '/assumptions/A-1').replace(':section', 'actors');
+  .replace('/criteria/:id', '/criteria/R-po-1').replace('/assumptions/:id', '/assumptions/A-1').replace(':section', 'actors')
+  .replace(':attId', 'ratt_000000000000').replace(':msgId', '1').replace('/proposals/:n', '/proposals/1');
 
 test('the route table is exactly what gets registered', async () => {
   const { REQUIREMENTS_ROUTES, registerRequirementsRoutes } = await import('../src/core/requirements/routes.mjs');
@@ -124,6 +162,15 @@ test('the route table is exactly what gets registered', async () => {
     .map(([m, p]) => at(m, `/brief/:scopeType/:scopeKey${p}`));
   for (const i of brief) assert.ok(i >= 0 && i < at('GET', ''), `the brief routes precede GET /api/requirements: ${brief}`);
   assert.equal(at('POST', '/:seq/brief-addition'), at('POST', '/:seq/follow-up') + 1);
+  const { REQUIREMENTS_UPLOAD_ROUTES } = await import('../src/core/requirements/routes.mjs');
+  for (const p of REQUIREMENTS_UPLOAD_ROUTES) assert.ok(REQUIREMENTS_ROUTES.some((r) => r.method === 'POST' && r.path === p), p);
+  assert.deepEqual(REQUIREMENTS_UPLOAD_ROUTES, ['/api/requirements', '/api/requirements/:seq/attachments', '/api/requirements/:seq/attachments/:attId/replace',
+    '/api/requirements/brief/:scopeType/:scopeKey/documents', '/api/requirements/brief/:scopeType/:scopeKey/documents/:attId/replace']);
+  for (const [m, p] of [['POST', '/documents'], ['GET', '/documents/:attId'], ['PATCH', '/documents/:attId'], ['DELETE', '/documents/:attId'],
+    ['POST', '/documents/:attId/replace'], ['POST', '/documents/:attId/ask'], ['POST', '/documents/:attId/read-again']]) {
+    const i = at(m, `/brief/:scopeType/:scopeKey${p}`);
+    assert.ok(i >= 0 && i < at('GET', ''), `${m} ${p} precedes GET /api/requirements`);
+  }
 });
 
 test("flag off: every route in the table answers the flag gate's 404", async () => {
@@ -253,10 +300,10 @@ test('the list: interview is null (and the list still answers) when the intervie
 
 test('the list: a stubbed interview model shows its label (the id when the catalog has none) and effort', async () => {
   const r = await listWith({ interviewModel: async () => ({ model: 'my-unlisted-model', effort: 'high', source: 'settings' }) });
-  assert.deepEqual(r.json.interview, { model: 'my-unlisted-model', label: 'my-unlisted-model', effort: 'high', source: 'settings' });
+  assert.deepEqual(r.json.interview, { default: { engine: 'claude', model: 'my-unlisted-model', label: 'my-unlisted-model', effort: 'high' }, fallbackReason: null });
 });
 
-test('the list: lookCostUsd uses the looks of the current model when there are some, else all looks', async () => {
+test('the list: lookCostUsd is the median of the current model own looks, never another model', async () => {
   const { createFeature, appendTurn } = await import('../src/core/requirements/store.mjs');
   const f = createFeature({ scopeType: 'project', scopeKey: projKey, title: 'Cost', description: 'd' });
   appendTurn(f.seq, { kind: 'orientation', model: 'cost-model-a', costUsd: 0.2 });
@@ -265,16 +312,13 @@ test('the list: lookCostUsd uses the looks of the current model when there are s
   const stub = (model) => ({ interviewModel: async () => ({ model, effort: null, source: 'settings' }) });
   assert.equal((await listWith(stub('cost-model-a'))).json.lookCostUsd, 0.3);
   assert.equal((await listWith(stub('cost-model-b'))).json.lookCostUsd, 5);
-  const all = (await import('../src/core/requirements/store.mjs')).recentLookCosts(10).sort((a, b) => a - b);
-  const m = all.length >> 1;
-  const median = all.length % 2 ? all[m] : (all[m - 1] + all[m]) / 2;
-  assert.equal((await listWith(stub('cost-model-none'))).json.lookCostUsd, Math.round(median * 1e4) / 1e4, 'median of all recent looks');
+  assert.equal((await listWith(stub('cost-model-none'))).json.lookCostUsd, null, 'a model without looks gets no borrowed price');
   // the feature page's "Look closer · about $X" is the same model-scoped estimate as the New feature line
   const view = async (model) => (await listWith(stub(model), `/api/requirements/${f.seq}`)).json.feature.lookCostUsd;
   assert.equal(await view('cost-model-a'), 0.3);
   assert.equal(await view('cost-model-b'), 5);
-  assert.equal(await view('cost-model-none'), Math.round(median * 1e4) / 1e4);
+  assert.equal(await view('cost-model-none'), null);
   const broken = await listWith({ interviewModel: async () => { throw new Error('boom'); } }, `/api/requirements/${f.seq}`);
   assert.equal(broken.status, 200, 'an unresolvable model still shows the page');
-  assert.equal(broken.json.feature.lookCostUsd, Math.round(median * 1e4) / 1e4);
+  assert.equal(broken.json.feature.lookCostUsd, null);
 });

@@ -451,3 +451,48 @@ test('a run on an engine that reports no cost (Cursor): no $0.00 pill, no $ in t
   assert.equal(c.totals.n_impl.cost, '$0.60');
   assert.equal(c.footers.n_impl.summary, '2 runs · $0.60');
 });
+
+// ── E9 scope notices: one quiet line for the whole run ──────────────────────
+test('E9: scope notices fold into decor.scope by step; legacy "outside its checkout" warnings fold too and leave the banners', async () => {
+  const { scopeSummaryText } = await import('../ui/public/graph/run-decor.mjs');
+  const n = (nodeId, executionId, notable, extra = {}) => ({ nodeId, executionId, count: notable.length, expectedCount: 2, cross: false, notable, ...extra });
+  const p = (path, tool = 'Bash', cross) => ({ path, tool, ...(cross ? { cross: true } : {}) });
+  await checkRows([
+    { name: 'none, or only expected paths (no notice at all): no scope line', run: () => {
+      assert.equal(decorFromState(S()).scope, null);
+      assert.equal(decorFromState(S({ scopeNotices: [] })).scope, null);
+    } },
+    { name: 'three executions of two steps: grouped by step, distinct files counted once, hidden ones added', run: () => {
+      const d = decorFromState(S({ scopeNotices: [
+        n('n_impl', 'x:n_impl:1', [p('/etc/hosts'), p('/Users/me/.zshrc', 'Read')]),
+        n('n_impl', 'x:n_impl:2', [p('/etc/hosts')]),
+        n('n_plan', 'x:n_plan:1', [p('/opt/a')], { count: 3 }),        // 2 more than it carries
+      ] }));
+      assert.deepEqual(d.scope, { steps: 2, files: 5, cross: false, groups: [
+        { nodeId: 'n_impl', label: 'Implementer', count: 2, paths: [p('/etc/hosts'), p('/Users/me/.zshrc', 'Read')] },
+        { nodeId: 'n_plan', label: 'Planner', count: 3, paths: [p('/opt/a')] },
+      ] });
+      assert.equal(scopeSummaryText(d.scope), '2 steps touched 5 files outside the checkout');
+      assert.deepEqual(d.warnings, [], 'never a banner');
+    } },
+    { name: 'another run\'s or session\'s files mark the whole line cross', run: () => {
+      const d = decorFromState(S({ scopeNotices: [n('n_impl', 'x:n_impl:1', [p('/tmp/claude-501/s/o/a', 'Read', true)], { cross: true })] }));
+      assert.equal(d.scope.cross, true);
+      assert.equal(scopeSummaryText(d.scope), '1 step touched 1 file outside the checkout');
+    } },
+    { name: 'a legacy warning string folds into the line; real warnings stay', run: () => {
+      const LEGACY = 'n_impl read or wrote 18 paths outside its checkout: /tmp/worca-8c0801a5-step1.py, /tmp/o., /etc/x, /a/b, /c/d, … (see executions.ndjson)';
+      const ONE = 'n_plan read or wrote 1 path outside its checkout: /etc/hosts (see executions.ndjson)';
+      const DROP = "Plan: claude-opus-5-5 is not on Codex, runs Codex's default model";
+      const d = decorFromState(S({ status: 'done', endReached: true, warnings: [DROP, LEGACY, ONE, LEGACY] }));
+      assert.deepEqual(d.warnings, [DROP]);
+      assert.deepEqual(d.scope.groups.map((g) => [g.nodeId, g.label, g.count, g.paths.map((x) => x.path)]), [
+        ['n_impl', 'Implementer', 18, ['/tmp/worca-8c0801a5-step1.py', '/tmp/o.', '/etc/x', '/a/b', '/c/d']],
+        ['n_plan', 'Planner', 1, ['/etc/hosts']],
+      ]);
+      assert.equal(d.scope.groups[0].paths[0].tool, null, 'a legacy line names no tool');
+      assert.equal(d.scope.files, 19, 'the repeated line (one spawn painted twice) counts once');
+      assert.equal(d.scope.cross, false);
+    } },
+  ]);
+});

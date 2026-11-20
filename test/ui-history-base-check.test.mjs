@@ -39,7 +39,7 @@ const btn = (li, cls) => li.querySelector(`.${cls}`);
 const shown = (el) => !!el && !el.hidden;
 
 test('conflicts: the pill, the files and both Resolve buttons; no Update branch', async () => {
-  const ctx = await bootBase(CONFLICTS);
+  const ctx = await bootBase({ ...CONFLICTS, at: now(-3 * 60_000) });   // stamped now: AT ages while a loaded suite runs
   assert.equal(box(ctx).hidden, false);
   const [li] = items(ctx);
   assert.equal(items(ctx).length, 1);
@@ -320,7 +320,7 @@ test('Ship it keeps a check made after the last push, even of a head with local 
 
 test('Ship it keeps a current check: the line shows for a recent "clean" check of the branch as pushed', async () => {
   const published = { remote: 'origin', sha: 'c1', at: now(-60_000), by: null };
-  const ctx = await bootShipBase({ ...CLEAN, headSha: 'c1' }, { branch: { published } });
+  const ctx = await bootShipBase({ ...CLEAN, headSha: 'c1', at: now(-3 * 60_000) }, { branch: { published } });   // stamped now: AT ages while a loaded suite runs
   const line = await openShip(ctx);
   assert.equal(ctx.posts.length, 0);
   assert.equal(line.hidden, false);

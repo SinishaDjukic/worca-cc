@@ -3,12 +3,11 @@
 // the box model can never drift from nodeSize/portAnchor.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
-import { fileURLToPath } from 'node:url';
 import { JSDOM } from 'jsdom';
 import { injectGeometry, GEOMETRY_CSS_VARS } from '../src/shared/graph/geometry.mjs';
+import { readStyleCss } from '../src/core/read-style-css.mjs';
 
-const css = readFileSync(fileURLToPath(new URL('../ui/public/style.css', import.meta.url)), 'utf8');
+const css = readStyleCss();
 
 test('every --gv-* variable style.css uses is one injectGeometry writes, and vice versa', () => {
   const dom = new JSDOM('<!doctype html><body><div id="s"></div></body>');

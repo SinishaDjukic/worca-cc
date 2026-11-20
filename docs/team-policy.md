@@ -36,13 +36,16 @@ No run is ever blocked by a policy. The two Chat web fields are the exception to
 | Chat web access | off switches web access off for chats pinned to the project; a policy can never switch it on | soft (off only) |
 | Chat web allowlist | the most a developer may allow: hosts outside it are dropped from their own list for chats pinned to the project; it never adds a host | soft |
 | Guardrails default set / minimum tier | what the New pipeline picker starts on; a run below the tier warns | default / soft |
-| Model roles (`models.roles`) | Deep thinking, Everyday coding, Quick jobs per harness, by upstream model; each machine maps it to its own source | default / soft |
+| Model roles (`models.roles`) | Deep thinking, Everyday tasks, Quick jobs per harness, by upstream model; each machine maps it to its own source | default / soft |
 | Interface level, AI-written PR descriptions, Smart run names, Coding agent, Sync before run, Wait for the network (`setup.*`) | offered in the setup assistant on Review; nothing changes before Apply | default |
 | Allowed models, step defaults, hide built-ins | pickers warn on an off-list model; roles you have not configured start from the team's | soft / default |
 | Marketplaces, required plugins, blocked plugins | marketplaces are added once (metadata only); required plugins go through the setup checklist with consent; blocked ones warn | default / soft |
 | Required MCP servers (`mcp.required`) | servers each developer turns on with consent; they form the **Team** set ([below](#mcp-servers-the-team-set)); never in `workspaceRuns` | soft |
 | Required skills (`skills.required`) | plugin skills each developer turns on with consent; they join the **Team** set ([below](#skills-required-plugin-skills)); never in `workspaceRuns` | soft |
 | Default workflow, human in the loop | when the project has no active workflow / switch of its own | default |
+| Away mode defaults (`night.*`) | the [Away mode](away-mode.md) settings (which runs, away hours, method, thresholds, spend cap and limits) when you have not set your own | default |
+| Create a PR when a run finishes (`pr.open`) | `none` / `draft` / `ready`: what a run does when it finishes with work committed, until the project (or, for a workspace run, the workspace) sets its own; a run can still choose on the New run form. `workspaceRuns` may set it separately | default |
+| Shaper features: pull requests (`pr.slices`) | `each` (a stacked PR per slice) or `one` (one PR when the feature is done), until the project sets its own; never in `workspaceRuns` (a workspace run is never sliced) | default |
 | Record runs to team metrics, minimum Worca version | a hint when "Include my runs" is off; a banner on an older client | soft |
 | Tag dimensions (`runs.tagDimensions`) | up to 10 `{ key, label, values?, required?, default? }` run-tag keys: one New run slot each, a picker of the allowed values; `default` pre-fills it (one of the values, when there are values). A mandatory (`required`) key the run does not carry records a `tag-missing:cc` finding: mandatory keys warn, or block a start with Require mandatory tags on. Setting it replaces the developer's Settings › Tags rows and makes them read-only | soft |
 | Require mandatory tags (`runs.enforceTags`) | bool. On: a run cannot start (New run, Chat, schedules, Run after, API, CLI) while a mandatory tag has no value after pre-fill, or a tag is outside its values; a scheduled firing is skipped with the reason. Off, or unset under a policy that sets `runs.tagDimensions`: mandatory tags only warn. Unset with no policy list: the developer's own Settings › Tags switch applies | soft |
@@ -70,7 +73,7 @@ team setup: "which models do which work" and the team's working defaults, publis
 - **The notice.** When the Setup fields of a policy home change, each developer's account menu shows "Your team
   updated the recommended setup · Review", which opens the setup assistant on Review with only the changed rows.
 - **The Setup tab.** The Team policy editor has a Setup tab: six model-role rows (Claude and Codex × Deep
-  thinking, Everyday coding, Quick jobs) and one control per sub-key of each record field.
+  thinking, Everyday tasks, Quick jobs) and one control per sub-key of each record field.
 - **Tags stay here.** Team tags stay in `runs.tagDimensions` and `runs.enforceTags`; a team setup file does not
   carry them.
 
@@ -217,7 +220,7 @@ any project or workspace that resolves a policy from the cached branch reads
 
 ## The Team policy page
 
-The page separates what the team publishes from what your machine makes of it.
+The page is **Manage › Team policy** in the sidebar (Expert level). It separates what the team publishes from what your machine makes of it.
 
 - The **top right** carries the sync chip that Team metrics uses: how fresh this machine's copy
   is, and **Refresh**. Nothing about the document itself.

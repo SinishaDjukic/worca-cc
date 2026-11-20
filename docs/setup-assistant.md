@@ -39,10 +39,10 @@ assistant step:
 {
   "network": { "networkProxy": { "enabled": true, "upstream": "proxy.acme.example:8080", "auth": "auto" },
                "login": { "domain": "ACME", "user": "jdoe", "password": "…" } },
-  "access":  { "copilot": { "acknowledgeTerms": true, "accountType": "individual", "signIn": true, "importModels": ["gpt-5.5"] },
+  "access":  { "copilot": { "accountType": "individual", "signIn": true, "importModels": ["gpt-5.5"] },
                "openai": { "baseUrl": "http://127.0.0.1:8080/v1", "apiKey": "…", "importModels": ["qwen3"] },
                "anthropic": { "baseUrl": "https://llm.acme.example", "apiKey": "…" } },
-  "models":  { "modelRoles": { "claude": { "everyday": { "model": "claude-sonnet-5-5" } } }, "testRoles": true },
+  "models":  { "modelRoles": { "claude": { "everyday": { "model": "claude-sonnet-5-5" } } }, "askModels": { "claude": { "model": "claude-opus-5-5", "effort": "high" } }, "testRoles": true },
   "work":    { "uiLevel": "simple", "pipelineCostLimitUsd": 5, "totalCostLimitUsd": 50, "costLimitResetPeriod": "weekly",
                "autoGeneratePrDescription": true, "smartNaming": { "suggestTitle": true }, "runEngine": "claude" },
   "fromStep": "copilot-signin"
@@ -61,6 +61,8 @@ Every group and field is optional. The apply runs in three phases:
    `copilot-import`, `openai-import`, then one `role-test.<engine>.<role>` per role. The dialog sends the
    `network` group on its own, from **Next** on Network (see below), so `proxy-swap` and `proxy-login` run
    then, and its final Apply starts at `copilot-signin`.
+
+`models.askModels` is Chat's model per engine (the `askModels` setting): the dialog sends only Chat's saved engine (`askEngine`, Claude when unset), and `null` clears it so Chat follows the Everyday tasks role again. Like a role, it may name a model this apply imports; unlike a role it is not tested (`testRoles` tests roles only).
 
 The answer to a valid apply is 202 `{ id, written, steps: [{ id, label }] }`. Progress then arrives on the
 WebSocket, one frame per step:
@@ -138,24 +140,26 @@ this machine knows is left out with a warning, such as
 (`/api/settings`, `/api/proxy/status`, `/api/providers`, `/api/config`) plus `GET /api/setup/detect`.
 Detection fills a field only when the saved value is empty, and only on a first start. The head shows
 a segmented progress bar (one segment per step), "Step N of 7", the step's title and a subtitle. The foot holds
-the status line and the buttons: the way back or out (Back, Cancel / Set up later, Close) on the left, the primary
-action on the right.
+the status line and the buttons: the way out (Cancel, or Set up later on a first start; Close on the Apply step) on
+the left; the second button below, Back and the primary action on the right, Back and the primary side by side.
+Cancel shows on every step up to Review. Once an answer changed it asks "Discard changes?" (Keep editing /
+Discard), like Escape; untouched it closes at once.
 
-On steps 2–5 a second button appears next to the primary one only when it does something **Next** does not. Both
+On steps 2–5 a second button appears before Back and the primary one only when it does something **Next** does not. Both
 labels put the step back to its saved values and move on:
 
 - **Skip for now** while **Next** is blocked (an untested proxy, a missing sign-in, no source picked).
-- **Discard changes** when the step differs from what is saved (the rows Review marks **Changed**).
+- **Use saved values** when the step differs from what is saved (the rows Review marks **Changed**).
 - No second button when the step is as saved and **Next** is open.
 
 | Step | What it asks |
 |---|---|
 | 1 Check this machine | Nothing. One row per detect check, with OK, Check or No. |
-| 2 Network | Direct, or through a corporate proxy: host and port (**Auto-detect** fills them in from the system settings, see [Auto-detect](network-proxy.md#auto-detect)), login mode, account and password (NTLMv2 only), the hosts that go direct, and under **More** the timeouts (filled in with their defaults) and the local proxy port. **Reset to defaults** puts the login mode, the no-proxy hosts, the local port and the timeouts back. A proxy found in `HTTPS_PROXY` on a first start shows as one "Found in your environment" line with **Change**. **Next** saves and applies these values at once (only when they changed), with its progress inline. |
-| 3 Model access | Which sources to use: Claude Code sign-in, GitHub Copilot, OpenAI-compatible, Anthropic-compatible. Copilot shows its notice, the "I understand" switch, the plan, and the device sign-in inside the dialog. With the credential broker on, keys and the Copilot sign-in stay on the broker's key page. Already connected: Claude Code's **Sign in again** shows the terminal steps (`claude`, then `/logout` and `/login`) and a **Check again** that reads the sign-in past its cache; Copilot's **Use another account** asks first, signs out and runs the device sign-in in the dialog; a saved API key is replaced by typing a new one. |
-| 4 Models | The Models page's Roles: Deep thinking, Everyday coding and Quick jobs per harness. Copilot models picked here are imported by Apply; the list shows the models GitHub's own picker offers, under GitHub Copilot. |
+| 2 Network | Skipped on a first start when the check found a working direct connection and no proxy in the environment (Review's **Change** still opens it). Otherwise: direct, or through a corporate proxy: host and port (**Auto-detect** fills them in from the system settings, see [Auto-detect](network-proxy.md#auto-detect)), login mode, account and password (NTLMv2 only), the hosts that go direct, and under **More** the timeouts (filled in with their defaults) and the local proxy port. **Reset to defaults** puts the login mode, the no-proxy hosts, the local port and the timeouts back. A proxy found in `HTTPS_PROXY` on a first start shows as one "Found in your environment" line with **Change**. **Next** saves and applies these values at once (only when they changed), with its progress inline. |
+| 3 Model access | Which sources to use: Claude Code sign-in, GitHub Copilot, OpenAI-compatible, Anthropic-compatible. Copilot shows the plan and the device sign-in inside the dialog. With the credential broker on, keys and the Copilot sign-in stay on the broker's key page: the dialog re-checks the Copilot sign-in when you come back to its tab, and **Check again** re-checks it on demand. Already connected: Claude Code's **Sign in again** shows the terminal steps (`claude`, then `/logout` and `/login`) and a **Check again** that reads the sign-in past its cache; Copilot's **Use another account** asks first, signs out and runs the device sign-in in the dialog; a saved API key is replaced by typing a new one. |
+| 4 Models | The roles of Models › Jobs: Deep thinking, Everyday tasks and Quick jobs per engine, with an engine switch at every level: Claude, every engine the machine check found ready, your run engine, and any engine that already has roles. Set them here and every step, helper job, Chat and the workspace scan follow them (see [models.md](models.md#model-roles)). Copilot models picked here are imported by Apply (with the credential broker on too); the list shows the models GitHub's own picker offers, under GitHub Copilot. Below them, **Default model for Chat** (model and effort) for Chat's saved engine; its empty choice, "Same as Everyday tasks", stores nothing. A Copilot model picked there is imported too. |
 | 5 How you work | Interface mode, the per-run and total limits, the reset period, AI-written PR descriptions and smart run names. |
-| 6 Review | One row per group. With changed roles, "Test each changed role's model after applying" sits above Apply (on by default): the tests run on the Apply step, once the network, sign-ins and imports are saved. A row that differs from the saved value carries **Changed**, and **Change** jumps back. A re-run lists only the changed rows, plus Network as **Saved** once Next applied it. |
+| 6 Review | One row per group. With changed roles, "Test models after applying" sits above Apply (on by default): the tests run on the Apply step, once the network, sign-ins and imports are saved. A row that differs from the saved value carries **Changed**, and **Change** jumps back. The Models row lists the Chat model too. A re-run lists only the changed rows, plus Network as **Saved** once Next applied it. |
 | 7 Apply | One row per apply step, filled from the `setup-apply` frames (or the poll). |
 
 **The Network gate.** With a corporate proxy picked, **Next** stays disabled until **Test** passes for exactly
@@ -175,12 +179,14 @@ Review offers **Finish**.
 
 **Re-run.** Settings › General › Setup assistant › **Run setup** opens the dialog with the saved values
 in every field. Only the changed groups and fields are sent, and a cleared role is sent as `null`. With nothing
-changed, **Apply** is disabled ("Nothing changed."). A first start with nothing to change shows
-**Finish** instead and posts nothing.
+changed, Review says "No changes to apply. Your current setup is kept." and offers **Finish**, which posts
+nothing; a re-run finished that way returns to the page instead of the welcome. A first start with nothing to
+change shows **Finish** too and posts nothing.
 
 **Fix-it links.** The Network proxy card's **Fix in setup assistant** (shown while the proxy needs a login) opens
-the dialog on Network. A Copilot **Sign in** pill on the Models page opens it on Model access with Copilot
-switched on. A fix-it run closes back to the page it came from.
+the dialog on Network. The **Sign in** button of a GitHub Copilot group on Models › Catalogue (and Add model's, when
+Copilot cannot list its models) opens it on Model access with Copilot switched on. A fix-it run closes back to the
+page it came from.
 
 **Apply and Retry.** The first unfinished row shows a spinner. Each finished row shows Done, Failed, Skipped or
 Refused and its line. **Continue** closes the dialog. On a first start or a re-run, the welcome's three doors
@@ -229,7 +235,7 @@ own source.
 
 **`worca setup --from FILE [--yes]`.** Applies a team setup file with one settings write. It asks one question
 for each of these that the file leaves out: Interface level, Coding agent, Per-run limit ($), Total limit ($),
-Reset, AI-written PR descriptions, and the Deep thinking, Everyday coding and Quick jobs models. Enter keeps the
+Reset, AI-written PR descriptions, and the Deep thinking, Everyday tasks and Quick jobs models. Enter keeps the
 current value. A role the file names but no source here serves counts as set. Then it prints one line per changed
 setting (one per changed sub-key for Sync before run, Wait for the network and Smart run names) and asks
 `Apply these changes? [y/N]`; anything but yes exits 1 with "Nothing changed.". `--yes` asks nothing. A

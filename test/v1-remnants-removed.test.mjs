@@ -105,6 +105,7 @@ const KEY_ALLOW = new Set([
   'src/core/graph/seed-templates.mjs',
   'src/core/graph/builtin-workflows.mjs',
   'src/core/graph/executor.mjs',   // PERSPECTIVE_AGENT_KEYS: the planner/refiner prompts carry the Shape Perspectives block (data)
+  'src/core/automation-templates.mjs',   // #711's ready-made workflow graphs (data, like seed-templates)
   'src/core/auto/recipes.mjs',   // Auto recipes: prompt + mock data (D23 — the ONE Auto module that may name agents)
 ]);
 

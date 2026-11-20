@@ -1,0 +1,79 @@
+/* ---------- Collapsible sidebar: the 60px icon rail ---------- */
+/* No rule here restyles anything the expanded 224px column already had: the rail
+   rules are scoped under `.sidebar.collapsed`, and the rest (`.brand .logo-mark`) styles
+   a node that exists only because of this feature. Below 1080px the rail is forced (tablets) and at 760px
+   the full column becomes the phone drawer; app.js#railCollapsed decides, and the
+   stored preference only applies above 1080px.
+   HOUSE RULE for this whole block: no comment inside a rule body, and no
+   closing brace in any comment — ruleBody() stops its capture at the first one
+   and both would break the tests. */
+.brand .logo-mark{display:none;width:26px;height:26px;border-radius:var(--r-sm);background:var(--ink);
+  -webkit-mask:url(/assets/worca-favicon.svg) center/contain no-repeat;
+  mask:url(/assets/worca-favicon.svg) center/contain no-repeat;}
+
+/* 60 - 1px border-right = 59px, and #side-scroll pads 10px a side: a 39px content box
+   for the 40px squares. ::-webkit-scrollbar makes the vertical gutter SPACE-CONSUMING
+   and would shove the squares off centre, so the rail's scroll band hides it; the band
+   still scrolls by wheel and keyboard. */
+.sidebar.collapsed{width:60px;flex:0 0 60px;}
+.sidebar.collapsed .side-scroll{scrollbar-width:none;}
+.sidebar.collapsed .side-scroll::-webkit-scrollbar{width:0;height:0;}
+/* The logo row stacks: the round mark on top, the mock pill under it, both inside the band's 48px
+   (26 + 3 + a 15px pill), so the rail's hairline stays level with the top bar's. */
+.sidebar.collapsed .brand{flex-direction:column;justify-content:center;gap:3px;padding:0;}
+.sidebar.collapsed .logo{display:none;}
+.sidebar.collapsed .logo-mark{display:block;}
+.sidebar.collapsed .brand .side-mock-pill{margin-right:0;padding:2px 4px;font-size:var(--fs-caption);line-height:11px;letter-spacing:.02em;}
+
+/* The rail's rows: 40x34 squares, 3px apart, centred in the 39px content box; hover and
+   the open page keep the column's greys. Child combinators only (`.nav > button`, and
+   the Getting started pill one level down in its host), so the rows of a flyout inside
+   <nav> keep their full-row look. (0,3,1) out-ranks `.nav button` (0,1,1) and
+   `.nav button:hover` (0,2,1). `flex:0 0 auto` is NOT
+   decoration: .nav is a column flex container whose items default to shrinkable, and
+   these boxes are fixed-size by design. */
+.sidebar.collapsed .nav{align-items:center;gap:3px;}
+.sidebar.collapsed .nav > button,.sidebar.collapsed .gs-pill-host > button{flex:0 0 auto;width:40px;height:32px;padding:0;gap:0;justify-content:center;}
+.sidebar.collapsed .nav .gs-pill .gs-pill-count{display:none;}
+/* NOT display:none. This span is the ONLY source of an accessible name for
+   every nav button — index.html carries no aria-label on any of the 12 and the
+   SVGs carry no title element — and display:none removes it from the
+   accessibility tree. Measured in Chrome: eleven buttons announced with no
+   name, and Running announced as "4" (the count span survives, so
+   name-from-contents wins). Same visually-hidden recipe as .sr-only
+   (:1603-1604), plus the clip-path .sr-only does not carry — `clip` is
+   deprecated and its successor is what modern engines honour. position:absolute
+   takes it out of flow, so the 40px square still centres its glyph, and the
+   button above is position:relative. The Runs badges carry .nav-count, so the
+   :not() guards keep this off them; the child combinators keep it to the label of a
+   row of the rail (never a row of a flyout inside <nav>). */
+.sidebar.collapsed .nav > button > span:not(.nav-count):not(.nav-rollup),
+.sidebar.collapsed .gs-pill-host > button > span:not(.nav-count){
+  position:absolute;width:1px;height:1px;padding:0;margin:-1px;
+  overflow:hidden;clip:rect(0 0 0 0);clip-path:inset(50%);white-space:nowrap;border:0;}
+
+/* Section labels keep their text node; font-size:0 hides it. (They are not exposed as
+   named a11y nodes in either state, so that is NOT the reason.) What is left is a 1px
+   hairline across the 39px box, 6px in from each side, per the mockup. */
+.sidebar.collapsed .nav-sect{align-self:stretch;height:1px;margin:10px 6px;padding:0;font-size:0;
+  letter-spacing:0;background:var(--line);overflow:hidden;}
+
+/* On the rail a count rides the square's top-right corner, small. A zero is already
+   hidden; Runs shows one badge either way (updateNavCounts hides the live count behind
+   the Needs-you pill and writes both numbers into the button's title and aria-label),
+   and the Schedules grey number steps aside while its unread pill shows. */
+.sidebar.collapsed .nav-count{position:absolute;top:3px;right:2px;margin:0;font-size:var(--fs-caption);}
+.sidebar.collapsed .nav-count.n-amber{min-width:15px;height:15px;padding:0 4px;}
+.sidebar.collapsed .nav-count.n-grey:has(~ .nav-count.n-amber:not([hidden])){display:none;}
+/* Collapsed: the needs-you count is the amber number alone, in the square's top-right corner like the other counts
+   (it clears the 16px glyph, which ends 12px in from the square's right edge). */
+.sidebar.collapsed #nav-needs-count{gap:0;min-width:0;height:auto;padding:0;background:none;}
+.sidebar.collapsed #nav-needs-count .nav-count-n{font-size:var(--fs-caption);line-height:1;}
+
+/* The rail's foot centres its tiles (Running actions, the account avatar) inside a 4px
+   side padding (51px wide). */
+.sidebar.collapsed .side-foot{align-items:center;padding:8px 4px 10px;}
+
+/* Nodes on the rail: one square (no chevron) that opens the same flyout to the right. */
+.sidebar.collapsed .nav-group-chev{display:none;}
+

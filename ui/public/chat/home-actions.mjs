@@ -25,12 +25,11 @@ export const ACTION_LEVEL = Object.freeze({
   away: 'simple', metrics: 'expert', model: 'expert', workspace: 'advanced', remember: 'advanced', tasks: 'advanced', more: 'simple',
 });
 /** Actions a server-side switch can take away: action → key of the flags the home loads (deps.flags). */
-export const ACTION_FLAG = Object.freeze({ script: 'scripts', tasks: 'tasks', shape: 'shapeFirst' });
+export const ACTION_FLAG = Object.freeze({ script: 'scripts', tasks: 'tasks' });
 /** Actions that need git: their tiles carry data-needs-git, hidden while git is missing (git-gate.mjs). */
 export const ACTION_NEEDS_GIT = Object.freeze(['diff']);
-/** Before the flags load: script tools on (the setting's default), task sources unknown = none, Shape it first off
- *  until a hello turns it on. */
-export const DEFAULT_FLAGS = Object.freeze({ scripts: true, tasks: false, shapeFirst: false });
+/** Before the flags load: script tools on (the setting's default), task sources unknown = none. */
+export const DEFAULT_FLAGS = Object.freeze({ scripts: true, tasks: false });
 export const PICKER_MAX = 8;
 const PICKERS = Object.freeze({
   track: Object.freeze({ header: 'Live', empty: 'Nothing running', list: 'live' }),
@@ -93,7 +92,7 @@ export function createQuickActions({ doc, deps, getRuns = () => ({ live: [], fin
     menu = toggleMenu({ doc, anchor, items, label: INTENTS[id].label });
   }
 
-  function current() { return splitPins(visiblePins({ pins, workflows, flags })); }
+  function current() { return splitPins(visiblePins({ pins, workflows })); }
 
   function armPin(p) {
     if (p.shaper) { arm('shape'); return; }

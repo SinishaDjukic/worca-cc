@@ -7,20 +7,28 @@
 // applying the card starts ui/server.mjs's clone job, behind the user's click.
 import { planClone, CloneError } from '../clone-project.mjs';
 import { isAzureHost } from '../../shared/azure-remote.mjs';
+import { isBitbucketHost } from '../../shared/bitbucket-remote.mjs';
 
 const str = (v) => (typeof v === 'string' ? v.trim() : '');
 // eslint-disable-next-line no-control-regex
 const BREAKS_RE = /[\x00-\x1f\x7f-\x9f\u2028\u2029]/g;
 const clip = (v, n) => String(v ?? '').replace(BREAKS_RE, ' ').slice(0, n);
 
-/** How the clone authenticates, in words for the card. `mode` = githubMode(), `adoMode` = readAzureCredentials().mode. */
-export function hostCredentialLabel(mode, { host = 'github.com', appId = null, adoMode = 'none' } = {}) {
+/** How the clone authenticates, in words for the card. `mode` = githubMode(), `adoMode` / `bbMode` = the Azure / Bitbucket credential modes. */
+export function hostCredentialLabel(mode, { host = 'github.com', appId = null, adoMode = 'none', bbMode = 'none', asPerson = null } = {}) {
   if (isAzureHost(host)) {
     if (adoMode === 'split') return 'the Azure DevOps read token (WORCA_ADO_READ_TOKEN)';
     if (adoMode === 'single') return 'the Azure DevOps token (WORCA_ADO_TOKEN)';
     return 'none (Azure DevOps: set WORCA_ADO_TOKEN): public repositories only';
   }
+  if (isBitbucketHost(host)) {
+    if (bbMode === 'split') return 'the Bitbucket read token (WORCA_BB_READ_TOKEN)';
+    if (bbMode === 'single') return 'the Bitbucket token (WORCA_BB_TOKEN)';
+    return 'none (Bitbucket: set WORCA_BB_TOKEN): public repositories only';
+  }
   if (host !== 'github.com') return `none (${host} is not GitHub): public repositories only`;
+  // "Push as me" (WORCA_GH_AS_PERSON): the person's own GitHub when they connected it on the key page.
+  if (asPerson) return `your own GitHub account if you connected it on the key page (the clone is then visible to everyone on this worca); otherwise ${hostCredentialLabel(mode, { host, appId })}`;
   if (mode === 'app') return `GitHub App${appId ? ` ${appId}` : ''} (a read-only token for this clone)`;
   if (mode === 'split') return 'the read token (WORCA_GH_READ_TOKEN)';
   if (mode === 'single') return 'the deployment token (GH_TOKEN)';

@@ -56,12 +56,14 @@ function writeTree(root, files) {
     writeFileSync(join(root, rel), content);
   }
 }
+/** npm as runNpm starts it: `npm` (POSIX), node with npm-cli.js, or one `npm …` command line (Windows). */
+const isNpm = (cmd, args) => cmd === 'npm' || /^npm /.test(cmd) || /npm-cli\.js$/i.test(args?.[0] ?? '');
 /** git/tar pass through; npm is faked (mkdir node_modules) or made to throw. */
 function makeExec({ npmFails = false } = {}) {
   const calls = [];
   const exec = async (cmd, args, opts = {}) => {
-    calls.push([cmd, ...args]);
-    if (cmd === 'npm') {
+    calls.push([cmd, ...(args ?? [])]);
+    if (isNpm(cmd, args)) {
       if (npmFails) throw new Error('npm ci exploded (simulated)');
       mkdirSync(join(opts.cwd, 'node_modules'), { recursive: true }); // runSetup scopes npm ci via cwd
       return { stdout: '', stderr: '' };
@@ -160,7 +162,7 @@ test('installPlugin: happy path — export, setup, precheck, symlink swap, lock,
   assert.equal(readlinkSync(current), curTarget(NAME, sha7), 'current -> versions/<sha7>');
   assert.equal(existsSync(join(current, 'worca-cc-plugin.json')), true, 'current resolves');
   assert.equal(existsSync(join(current, 'node_modules')), true, 'fake npm ci ran');
-  assert.ok(calls.some((c) => c[0] === 'npm' && c.includes('ci') && c.includes('--ignore-scripts') && c.includes('--omit=dev')));
+  assert.ok(calls.some((c) => isNpm(c[0], c.slice(1)) && /(^| )ci( |$)/.test(c.join(' ')) && c.join(' ').includes('--ignore-scripts') && c.join(' ').includes('--omit=dev')));
   assert.equal(existsSync(`${current}.tmp`), false, 'swap left no current.tmp');
 
   const entry = readPluginsLock()[NAME];
@@ -848,4 +850,24 @@ test('pythonNoticeFor: only a python script + a failed probe; an ABSENT probe sa
   // the call resolves and never throws.
   await pythonNoticeFor(py);
   await pythonProbeOrNull();
+});
+
+test('updatePlugin: swapping an existing `current` link (junction on Windows) leaves the old version intact', async () => {
+  const name = 'swap-plugin';
+  const o = await makeOriginRepo('origin-swap', name);
+  const { exec } = makeExec();
+  await installPlugin({ repoUrl: o.root, subdir: '', name, sha: o.sha }, { exec });
+  const sha1 = o.sha.slice(0, 7);
+  const oldManifest = join(pluginDir(name), 'versions', sha1, 'worca-cc-plugin.json');
+  assert.ok(lstatSync(pluginCurrentDir(name)).isSymbolicLink(), 'current is a link (symlink / junction)');
+
+  writeFileSync(join(o.root, 'connector/index.mjs'), 'export default () => ({ v: 2 });\n');
+  await git(o.root, 'add', '-A'); await git(o.root, 'commit', '-qm', 'c2');
+  const sha2 = await git(o.root, 'rev-parse', 'HEAD');
+
+  const r = await updatePlugin(name, { exec }); // swaps over the EXISTING link
+  assert.equal(r.updated, true);
+  assert.equal(readlinkSync(pluginCurrentDir(name)), curTarget(name, sha2.slice(0, 7)), 'current -> new version');
+  assert.equal(existsSync(join(pluginCurrentDir(name), 'worca-cc-plugin.json')), true, 'new current resolves');
+  assert.equal(existsSync(oldManifest), true, 'old version files survive the swap (target not deleted through the link)');
 });

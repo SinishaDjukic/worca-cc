@@ -1,11 +1,40 @@
 // plugins/github-source/connector/index.mjs
 // GitHub Issues task source (worca-cc plugin API v1). REST only, injected fetch,
 // zero dependencies. Task ids round-trip opaquely as "owner/repo#123".
+// Ticket updates (plans/ticket-updates-design.md §3, plans/ticket-updates-pr2-plan.md): a repository is a project ("owner/repo");
+// Worca decides what happens to an issue when a run finishes and passes it as reportResult's `move`; this plugin maps an issue's
+// state onto Worca's four categories (D1), says what its old closeOnComplete setting means (legacyMove, D4), and without a
+// `move` behaves exactly as before. Projects (v2) status fields are not read (decision 2).
 
 import { ghFetch } from './github-api.mjs';
 import { ghAuthToken } from './gh-cli.mjs';
 
 const PER_PAGE = 30;
+
+/** D1: GitHub Issues' statuses: open is to do, closed as completed done, closed as not planned cancelled; nothing is in
+ *  progress. The values are the API's own (`state`, `state_reason`). */
+export const STATUSES = Object.freeze([
+  Object.freeze({ value: 'open', label: 'Open', category: 'todo' }),
+  Object.freeze({ value: 'completed', label: 'Closed', category: 'done' }),
+  Object.freeze({ value: 'not_planned', label: 'Closed as not planned', category: 'cancelled' }),
+]);
+const DUPLICATE = Object.freeze({ value: 'duplicate', label: 'Closed as duplicate', category: 'cancelled' });
+/** An issue's status: reopened is open, a close without a reason (older issues) completed, a duplicate cancelled. */
+export function statusOf(issue) {
+  if (issue?.state !== 'closed') return STATUSES[0];
+  if (issue.state_reason === 'not_planned') return STATUSES[2];
+  if (issue.state_reason === 'duplicate') return DUPLICATE;
+  return STATUSES[1];
+}
+/** A repository as Worca keys it (decision 1): owner/repo in GitHub's own characters (an owner of 1 to 39 letters, digits or
+ *  inner hyphens; a repo of 1 to 100 letters, digits, ".", "_" or "-", never "." or ".."), so it is never another path. */
+const REPO_KEY = /^[A-Za-z0-9][A-Za-z0-9-]{0,38}\/(?!\.\.?$)[A-Za-z0-9._-]{1,100}$/;
+function repoKeyOf(project) {
+  const key = String(project ?? '').trim();
+  if (!key) throw Object.assign(new Error('a project is required'), { kind: 'plugin' });
+  if (!REPO_KEY.test(key)) throw Object.assign(new Error('a project is a repository: owner/repo'), { kind: 'plugin' });
+  return key;
+}
 
 /** 'owner/repo#123' -> { repo: 'owner/repo', number: 123 } */
 function parseId(id) {
@@ -83,6 +112,38 @@ export default function createTaskSource(ctx, deps = {}) {
     return json.login;
   }
 
+  /** The token's repositories, the 100 most recently updated (as the Repository input has always listed them). */
+  const repoList = async () => (await ghFetch(gh, '/user/repos?per_page=100&sort=updated')).json;
+
+  // ---- Ticket updates: one move, before the comment (D11) ----
+  /** GitHub's own words for a refusal, without a trailing full stop; "GitHub gave no reason" when it sends none. */
+  const githubSaid = (e) => (String(e?.detail || '').trim() || 'GitHub gave no reason').replace(/\.+$/, '');
+  /** PR 1's rule for a refused move (its Deviation 3), in GitHub's terms: a 4xx other than 401 (auth) and 429, and not a
+   *  secondary rate limit (a 403 that says so), is a line; a 5xx, network error, timeout, refused token or rate limit throws,
+   *  so the write-back fails and can be retried. */
+  const refusedMove = (e) => !!e && e.kind === 'plugin' && e.status >= 400 && e.status < 500 && e.status !== 429
+    && !/rate limit/i.test(e.detail || '');
+  /** Answers { note, moved }. Any Done status closes as completed an issue that is open; a closed one (as not planned too)
+   *  stays as it is. A status move sets that status: open reopens, completed and not_planned close with that reason. Reading
+   *  the issue throws (decision 9). */
+  async function applyMove(repo, number, move) {
+    const none = { note: '', moved: null };
+    const want = move.category === 'done' ? 'completed' : (typeof move.status === 'string' ? move.status.trim() : '');
+    if (move.none === true || !want) return none;
+    const now = statusOf((await ghFetch(gh, `/repos/${repo}/issues/${number}`)).json);
+    if (move.category === 'done' ? now.value !== 'open' : now.value === want) return { ...none, note: `Already in ${now.label}.` };
+    const to = STATUSES.find((s) => s.value === want);
+    if (!to) return { ...none, note: `Not moved: ${repo} has no status named ${move.name || want} any more.` };
+    try {
+      await ghFetch(gh, `/repos/${repo}/issues/${number}`, { method: 'PATCH',
+        body: to.value === 'open' ? { state: 'open' } : { state: 'closed', state_reason: to.value } });
+    } catch (e) {
+      if (refusedMove(e)) return { ...none, note: `Not moved: GitHub refused the move to ${to.label}: ${githubSaid(e)}.` };
+      throw e;
+    }
+    return { note: `Moved to ${to.label}.`, moved: { from: now.label, to: to.label } };
+  }
+
   return {
     async validateConfig() {
       try {
@@ -95,10 +156,15 @@ export default function createTaskSource(ctx, deps = {}) {
       }
     },
 
-    /** inputs[].optionsFrom: "listRepos" */
+    /** The Repository input's options before Ticket updates; kept for any caller that still names it. */
     async listRepos() {
-      const { json } = await ghFetch(gh, '/user/repos?per_page=100&sort=updated');
-      return json.map((r) => ({ value: r.full_name, label: r.full_name }));
+      return (await repoList()).map((r) => ({ value: r.full_name, label: r.full_name }));
+    },
+
+    /** inputs[].optionsFrom: "listProjects" (Ticket updates, D9: a repository is a project, so New run's list is filtered by
+     *  the projects you work on); `name` is the repository's name alone, for the chips (D5). */
+    async listProjects() {
+      return (await repoList()).map((r) => ({ value: r.full_name, label: r.full_name, name: r.name }));
     },
 
     async listTasks({ inputs = {}, search, cursor } = {}) {
@@ -170,6 +236,8 @@ export default function createTaskSource(ctx, deps = {}) {
         body, // ALWAYS markdown (GitHub bodies already are)
         meta: {
           repo,
+          // Ticket updates (D6): the issue's repository as listProjects names it (GitHub's case), whatever case the id was typed in
+          project: /\/repos\/([^/]+\/[^/]+)$/.exec(String(issue.repository_url || ''))?.[1] || repo,
           number,
           labels: (issue.labels || []).map((l) => (typeof l === 'string' ? l : l.name)).filter(Boolean),
           assignee: issue.assignee?.login || null,
@@ -177,12 +245,20 @@ export default function createTaskSource(ctx, deps = {}) {
       };
     },
 
-    async reportResult(id, { status, summary, links = [] }) {
+    async reportResult(id, { status, summary, links = [], move } = {}) {
       const { repo, number } = parseId(id);
       let body = summary || `worca-cc run finished: ${status}`;
       if (links.length) {
         body += '\n\n';
         for (const l of links) body += `- [${l.title}](${l.url})\n`;
+      }
+      if (move && typeof move === 'object') {
+        // Ticket updates (D11): Worca decided the move; the issue changes first, then one comment: the run summary, its links,
+        // then the outcome line last. Without a move (nothing saved in Worca) the old path below runs unchanged (D4).
+        const out = await applyMove(repo, number, move);
+        await ghFetch(gh, `/repos/${repo}/issues/${number}/comments`, { method: 'POST',
+          body: { body: out.note ? `${body.replace(/\s+$/, '')}\n\n${out.note}` : body } });
+        return { commented: true, moved: out.moved, note: out.note };
       }
       await ghFetch(gh, `/repos/${repo}/issues/${number}/comments`, { method: 'POST', body: { body } });
       if (status === 'completed' && closeOnComplete) {
@@ -194,7 +270,17 @@ export default function createTaskSource(ctx, deps = {}) {
     },
 
     capabilities() {
-      return { writeBack: true, incrementalSync: false };
+      return { writeBack: true, incrementalSync: false, ticketUpdates: true };
+    },
+
+    // ---- Ticket updates (plans/ticket-updates-design.md §3) ----
+    /** GitHub Issues has the same three statuses in every repository: nothing is asked. */
+    async listStatuses({ project } = {}) {
+      repoKeyOf(project);
+      return STATUSES.map((s) => ({ ...s }));
+    },
+    legacyMove() {
+      return { field: 'closeOnComplete', target: closeOnComplete ? { category: 'done' } : null };
     },
   };
 }

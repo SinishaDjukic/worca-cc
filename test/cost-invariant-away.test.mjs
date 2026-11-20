@@ -196,6 +196,16 @@ test('every AI call in a run with Away mode on reaches the step costs, the total
     assert.equal(d.costUsd, REVIEW_USD, `record ${d.questionId} names its review's cost`);
     assert.equal(d.reviewStatus, 'finished');
     assert.match(d.reviewId || '', /^night-decider-[0-9a-f]{8}$/);
+    // 6.3: the review is auditable afterwards — its prompt, raw reply, config and the model that answered.
+    const { readFileSync } = await import('node:fs');
+    const rec = JSON.parse(readFileSync(join(orch.pipeline.dir, 'night', `${d.reviewId}.json`), 'utf8'));
+    assert.equal(rec.reviewId, d.reviewId);
+    assert.match(rec.prompt, /which store\?/);
+    assert.ok(rec.systemPrompt.length > 0);
+    assert.match(rec.rawReply, /Postgres/);
+    assert.equal(rec.model, MODEL === rec.model ? MODEL : rec.model);
+    assert.ok(rec.config && typeof rec.config === 'object' && 'criteria' in rec.config);
+    assert.ok('turnModel' in rec);
   }
   // D2a/D5 — every worca AI call has its own sub-agent row (unique ids, nothing overwritten).
   const rows = listSubAgents(id);

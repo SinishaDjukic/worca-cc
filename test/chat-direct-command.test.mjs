@@ -38,7 +38,7 @@ function fixture(overrideActions = {}) {
   const router = createCommandRouter({ actions, chatContext, logger: () => {} });
   const send = (text, chatId = '42') => router.handleIncoming({
     plugin: 'p', channelId: 'main', platform: 'testchat',
-    channelConfig: CONFIG, msg: { chatId, userId: 'u1', text, meta: {} },
+    channelConfig: CONFIG, msg: { chatId, userId: 'u1', text, meta: { isGroup: false } },
   });
   return { send, calls, state };
 }

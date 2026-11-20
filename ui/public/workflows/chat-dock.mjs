@@ -9,7 +9,7 @@
 import { icon } from '../icons.mjs';
 import { createComposerChatClient } from './chat-client.mjs';
 import { createDotOrbs, turnPhase } from '../dot-orb.mjs';
-import { ATTACH_ACCEPT, bytesToBase64, carriesFiles, checkAttachment, createPasteNamer, pastedFiles } from '../attach-files.mjs';
+import { bytesToBase64, carriesFiles, checkAttachment, createPasteNamer, pastedFiles } from '../attach-files.mjs';
 import { createCardController } from './chat-cards.mjs';
 import { toggleMenu, closeMenus } from './menu.mjs';
 import { NO_PROJECT_LABEL, scopeIcon, scopeKind, kindChip, projectKind } from '../chat/scope-ui.mjs';
@@ -155,7 +155,6 @@ export function createChatDock({ doc, host, composer, sessionId, fetch: fetchFn,
   const fileInput = h('input', 'wfc-file-input');
   fileInput.type = 'file';
   fileInput.multiple = true;
-  fileInput.accept = ATTACH_ACCEPT;
   fileInput.hidden = true;
   row.append(spark, input, attachBtn, fileInput, scopeBtn, stopBtn, sendBtn);
   const fileRow = h('div', 'wfc-files');
@@ -581,6 +580,10 @@ export function createChatDock({ doc, host, composer, sessionId, fetch: fetchFn,
       const name = c.name || 'Untitled pipeline';
       return b.state === 'proposed' ? `Proposed workflow: ${name}` : b.state === 'applied' ? `Applied to canvas: ${name}` : '';
     }
+    if (c.type === 'script-approval') {
+      const what = c.summary || 'a script';
+      return b.state === 'proposed' ? `Waiting for you: ${what}` : b.state === 'applied' ? `Done: ${what}` : b.state === 'failed' ? `Failed: ${what}` : '';
+    }
     const kind = c.type === 'agent-draft' ? 'agent' : c.type === 'script-draft' ? 'script' : '';
     if (!kind) return '';
     const name = (c.draft && ((c.draft.meta && c.draft.meta.displayName) || c.draft.key)) || kind;
@@ -648,7 +651,7 @@ export function createChatDock({ doc, host, composer, sessionId, fetch: fetchFn,
       for (const b of msg.blocks || []) {
         if (!b) continue;
         if (b.kind === 'tool') wrap.appendChild(toolLine(b));
-        else if (b.kind === 'card' && b.card && /^(canvas-edit|workflow-build|agent-draft|script-draft)$/.test(b.card.type)) {
+        else if (b.kind === 'card' && b.card && /^(canvas-edit|workflow-build|agent-draft|script-draft|script-approval)$/.test(b.card.type)) {
           // Reuse the card's element while nothing it shows changed: a tool frame mid-turn must not swap the button under
           // the pointer (the click is lost) or collapse an open System prompt / Program.
           const sg = cards.sig(b);

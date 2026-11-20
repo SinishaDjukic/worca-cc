@@ -1,0 +1,64 @@
+/* ---------- Views ---------- */
+.view{display:block;}
+
+/* number-disc tint utilities */
+.n-green{background:var(--green-bg);color:var(--green-ink);}
+.n-peach{background:var(--peach-bg);color:var(--peach-ink);}
+.n-red{background:var(--red-bg);color:var(--red-ink);}
+.n-blue{background:var(--blue-bg);color:var(--blue-ink);}
+.n-violet{background:var(--slate-bg);color:var(--slate-ink);}
+.n-amber{background:var(--amber);color:var(--on-status);}
+.n-grey{background:var(--field);color:var(--ink-3);}
+
+/* ---------- Grid ---------- */
+.grid{display:grid;grid-template-columns:minmax(360px,1fr) minmax(420px,1.25fr);gap:22px;align-items:start;}
+.grid.single{grid-template-columns:minmax(0,864px);justify-content:center;}
+.view[data-view="new"] .topbar{justify-content:center;text-align:center;}
+.view[data-view="new"].sched-first > *{visibility:hidden;}
+.col{display:flex;flex-direction:column;gap:22px;}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:var(--r-card);padding:var(--pad-card);}
+.card-head{display:flex;align-items:center;justify-content:space-between;margin-bottom:18px;}
+.card-head h2{font-size:var(--fs-section);line-height:var(--lh-title);font-weight:600;letter-spacing:-.01em;margin:0;}
+.card h2{font-size:var(--fs-section);line-height:var(--lh-title);font-weight:600;letter-spacing:-.01em;margin:0 0 18px;}
+
+/* ---------- Form ---------- */
+.field{margin-bottom:18px;}
+.field > label,.field .label{display:block;font-weight:600;font-size:13px;margin-bottom:8px;}
+.field > label .opt,.field .opt{color:var(--ink-3);font-weight:500;font-style:normal;}
+.hint{display:block;color:var(--ink-2);font-size:12px;margin-top:7px;line-height:1.45;}
+.hint.err{color:var(--red-ink);}
+.hint.warn{color:var(--amber-ink);}
+.hint.ok{color:var(--green-ink);}
+.stat-tile .stat-value.is-neg{color:var(--red-ink);}
+.stat-tile .stat-value.is-pos{color:var(--green-ink);}
+/* The History Artifacts truncation notice is a BUTTON — it loads the next page —
+   so it must not carry platform button chrome inside a list of artifact rows. It
+   keeps the muted .hint register and says it is clickable by being underlined. */
+button.hint.artifact-truncated{appearance:none;-webkit-appearance:none;background:none;border:0;padding:0;margin-top:7px;width:100%;text-align:left;font:inherit;font-size:12px;color:var(--ink-3);cursor:pointer;text-decoration:underline;}
+button.hint.artifact-truncated:disabled{cursor:default;text-decoration:none;opacity:.6;}
+
+/* One field (docs/design-system.md › Field): 32px, 13px, --field fill, 6px corner. Textareas grow. */
+.input,.select,.textarea,.ta-hl-back,
+input[type="text"],input[type="number"],textarea,select{
+  width:100%;font-family:inherit;font-size:var(--fs-body);color:var(--ink);
+  background:var(--field);border:1px solid transparent;border-radius:var(--r-sm);
+  padding:0 10px;transition:border-color .15s,background .15s;
+}
+.input,.select,input[type="text"],input[type="number"],select{height:32px;}
+.input-sm,.select-sm{height:28px;font-size:var(--fs-meta);}
+.textarea,.ta-hl-back,textarea,textarea.input{padding:8px 10px;}
+.input::placeholder,.textarea::placeholder,
+input[type="text"]::placeholder,input[type="number"]::placeholder,textarea::placeholder{color:var(--ink-2);}
+.input:focus,.select:focus,.textarea:focus,
+input[type="text"]:focus,input[type="number"]:focus,textarea:focus,select:focus{outline:none;background:var(--field-focus);border-color:var(--ink);}
+.input:focus-visible,.select:focus-visible,.textarea:focus-visible,
+input[type="text"]:focus-visible,input[type="number"]:focus-visible,textarea:focus-visible,select:focus-visible{outline:2px solid var(--ink);outline-offset:2px;}
+.textarea,textarea{resize:vertical;min-height:120px;line-height:1.5;}
+input[type="file"]{font-size:var(--fs-meta);color:var(--ink-3);background:transparent;border:none;padding:0;}
+
+.select-wrap{position:relative;}
+.select,select{appearance:none;-webkit-appearance:none;padding-right:30px;cursor:pointer;}
+.select-wrap::after{content:"";position:absolute;right:11px;top:50%;width:7px;height:7px;
+  border-right:1.5px solid var(--ink-2);border-bottom:1.5px solid var(--ink-2);
+  transform:translateY(-65%) rotate(45deg);pointer-events:none;}
+

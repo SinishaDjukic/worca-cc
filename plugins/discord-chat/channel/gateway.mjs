@@ -17,13 +17,13 @@ const RECONNECT_DELAYS = [1000, 5000, 30000];
 
 /**
  * @param {{token:string, gatewayUrl:string,
- *          onMessage:(m:object)=>void, onState:(state:string, detail?:string)=>void,
+ *          onMessage:(m:object)=>void, onInteraction?:(i:object)=>void, onState:(state:string, detail?:string)=>void,
  *          onFatal:(detail:string, kind:'auth'|'plugin')=>void, log:(l:string,m:string)=>void,
  *          WebSocketImpl?:typeof WebSocket, _sleep?:(ms:number)=>Promise<void>,
  *          random?:()=>number}} opts
  */
 export function createGatewayClient({
-  token, gatewayUrl, onMessage, onState, onFatal, log,
+  token, gatewayUrl, onMessage, onInteraction = () => {}, onState, onFatal, log,
   WebSocketImpl = globalThis.WebSocket,
   _sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
   random = Math.random,
@@ -119,6 +119,8 @@ export function createGatewayClient({
           onState('connected');
         } else if (frame.t === 'MESSAGE_CREATE') {
           onMessage(frame.d);
+        } else if (frame.t === 'INTERACTION_CREATE') {
+          onInteraction(frame.d);
         }
         break;
       }

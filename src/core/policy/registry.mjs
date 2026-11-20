@@ -18,8 +18,9 @@
 import { domainError } from '../web-allowlist.mjs';
 import { FIELD_LABELS } from '../../shared/away-mode/labels.mjs';
 import { normaliseDimension, MAX_DIMENSIONS } from '../../shared/tag-dimensions.mjs';
-import { MODEL_ROLES, ROLE_HARNESSES } from '../../shared/model-roles.mjs';
+import { MODEL_ROLES, TEAM_ROLE_HARNESSES } from '../../shared/model-roles.mjs';
 import { ENGINES } from '../../shared/engine-switch.mjs';
+import { PR_OPEN, PR_SLICES } from '../../shared/pr-auto.mjs';
 
 export const POLICY_SCHEMA = 1;
 export const KINDS = Object.freeze(['default', 'soft', 'hard']);
@@ -64,7 +65,7 @@ export const FIELDS = Object.freeze([
   // Team setup (plans/setup-assistant-design.md D12–D15). models.roles applies to the project's runs (effective layer);
   // the setup.* fields are user-level: the setup assistant offers them on Review, and nothing changes before Apply.
   // A team setup never carries network settings, model sources, keys or tokens (D12, src/core/setup/team-file.mjs).
-  { key: 'models.roles', group: 'setup', label: 'Model roles', help: 'Deep thinking, Everyday coding and Quick jobs per harness, named by upstream model (claude-opus-5-5). Each machine maps it to one of its own sources. Default: fills the roles a developer has not set. Soft: applies on this project\'s runs over their own roles.', type: 'roles', kinds: ['default', 'soft'], local: 'modelRoles' },
+  { key: 'models.roles', group: 'setup', label: 'Model roles', help: 'Deep thinking, Everyday tasks and Quick jobs per harness, named by upstream model (claude-opus-5-5). Each machine maps it to one of its own sources. Default: fills the roles a developer has not set. Soft: applies on this project\'s runs over their own roles.', type: 'roles', kinds: ['default', 'soft'], local: 'modelRoles' },
   { key: 'setup.uiLevel', group: 'setup', label: 'Interface level', help: 'Offered in the setup assistant.', type: 'enum', values: SETUP_UI_LEVELS, kinds: ['default'], local: 'uiLevel' },
   { key: 'setup.autoPrDescription', group: 'setup', label: 'AI-written PR descriptions', help: 'Offered in the setup assistant.', type: 'bool', kinds: ['default'], local: 'autoGeneratePrDescription' },
   { key: 'setup.smartNaming', group: 'setup', label: 'Smart run names', help: 'Title and branch suggestions, the branch pattern and its types.', type: 'record', shape: { suggestTitle: 'bool', suggestBranch: 'bool', pattern: 'string', types: 'string[]', trigger: ['debounce', 'manual'], addRunId: 'bool' }, kinds: ['default'], local: 'smartNaming' },
@@ -80,6 +81,8 @@ export const FIELDS = Object.freeze([
   { key: 'plugins.blocked', group: 'plugins', label: 'Blocked plugins', help: 'An enabled blocked plugin warns and is recorded; it is never disabled for you.', type: 'string[]', kinds: ['soft'] },
   { key: 'workflows.default', group: 'runs', label: 'Default workflow', help: 'A built-in (wf_*) or plugin (wfp_*) workflow id. Applies when the project has no active workflow.', type: 'string', kinds: ['default'] },
   { key: 'run.humanInLoop', group: 'runs', label: 'Human in the loop', help: 'Applies until the project sets its own switch.', type: 'bool', kinds: ['default'] },
+  { key: 'pr.open', group: 'runs', label: 'Create a PR when a run finishes', help: 'Applies until the project or workspace sets its own.', type: 'enum', values: PR_OPEN, kinds: ['default'] },
+  { key: 'pr.slices', group: 'runs', label: 'Shaper features: pull requests', help: 'each: a PR per slice, stacked. one: one PR when the feature is done. Applies until the project sets its own.', type: 'enum', values: PR_SLICES, kinds: ['default'], workspaceRuns: false },
   { key: 'metrics.record', group: 'runs', label: 'Record runs to team metrics', help: 'Expected on: the Projects cell hints when "Include my runs" is off.', type: 'bool', kinds: ['soft'] },
   { key: 'worca.minVersion', group: 'runs', label: 'Minimum Worca version', help: 'An older client shows a banner and logs a note.', type: 'semver', kinds: ['soft'] },
   { key: 'runs.tagDimensions', group: 'runs', label: 'Tag dimensions', help: 'Keys every run is asked for (like a cost centre), with allowed values and a default. Mandatory keys warn; with "Require mandatory tags" on they block a start.', type: 'tagDimensions', kinds: ['soft'] },
@@ -320,7 +323,7 @@ function baseError(meta, value) {
     case 'roles': {
       if (!isPlainObject(value)) return 'must be an object of harness → { deep, everyday, quick }';
       for (const [hn, roles] of Object.entries(value)) {
-        if (!ROLE_HARNESSES.includes(hn)) return `harness "${hn}" has no model roles (accepts ${ROLE_HARNESSES.join(' | ')})`;
+        if (!TEAM_ROLE_HARNESSES.includes(hn)) return `harness "${hn}" has no team model roles (accepts ${TEAM_ROLE_HARNESSES.join(' | ')})`;
         if (!isPlainObject(roles)) return `${hn} must be an object of role → { model, effort }`;
         for (const [r, sel] of Object.entries(roles)) {
           if (!MODEL_ROLES.includes(r)) return `${hn}: role "${r}" is not one of ${MODEL_ROLES.join(' | ')}`;

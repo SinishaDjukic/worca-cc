@@ -1,6 +1,10 @@
 // plugins/azure-boards-source/connector/index.mjs
 // Azure Boards task source: WIQL list → workitemsbatch details, work item + comments as markdown, comment +
 // Completed-category state on reportResult. Ids "org/project#123" round-trip. deps.fetch injected by tests.
+// Ticket updates (plans/ticket-updates-design.md §3, plans/ticket-updates-pr2-plan.md): Worca decides what happens to a work
+// item when a run finishes and passes it as reportResult's `move`; this plugin maps Azure's state categories onto Worca's four
+// (D1), lists a project's states, says what its old closeOnComplete setting means (legacyMove, D4), and without a `move`
+// behaves exactly as before.
 import { adoFetch } from './ado-api.mjs';
 import { htmlToMarkdown, markdownToHtml, escapeHtml, safeHref } from './html-md.mjs';
 
@@ -9,6 +13,11 @@ const FIELDS = ['System.Id', 'System.Title', 'System.State', 'System.Tags', 'Sys
 const CLOSED_CATEGORIES = new Set(['Completed', 'Removed']);
 const enc = encodeURIComponent;
 const toBool = (v) => v === true || String(v).toLowerCase() === 'yes';
+
+/** D1: Azure's state categories onto Worca's four (Resolved counts as in progress, so Any Done status is Completed; user,
+ *  2026-10-29); a state without a known category is to do. */
+const CATEGORY = { Proposed: 'todo', InProgress: 'in_progress', Resolved: 'in_progress', Completed: 'done', Removed: 'cancelled' };
+export const categoryOf = (state) => CATEGORY[state?.category] || 'todo';
 
 export function parseWorkItemRef(id) {
   const m = /^([^/#]+)\/(.+)#(\d+)$/.exec(String(id || ''));
@@ -52,6 +61,89 @@ export default function createTaskSource(ctx, deps = {}) {
     ? ((await adoFetch(ado, `${base}/_apis/wit/workitemsbatch`, { method: 'POST', body: { ids, fields: FIELDS, errorPolicy: 'Omit' } }))?.value || []).filter(Boolean)
     : []);
   const one = async (ref) => adoFetch(ado, `${base}/${enc(ref.project)}/_apis/wit/workitems/${ref.id}?$expand=fields`);
+
+  // ---- Ticket updates ----
+  const lc = (s) => String(s ?? '').trim().toLowerCase();
+  /** A project name, never a path (as jira-source's projectKeyOf): ".." would turn /{project}/_apis into another endpoint. */
+  function projectOf(project) {
+    const name = String(project ?? '').trim();
+    if (!name) throw Object.assign(new Error('a project is required'), { kind: 'plugin' });
+    if (name.length > 100 || /^\.+$/.test(name) || /[/\\?#]/.test(name)) {
+      throw Object.assign(new Error('a project name cannot be a path'), { kind: 'plugin' });
+    }
+    return name;
+  }
+  /** Azure's own words for a refusal, without a trailing full stop; "Azure Boards gave no reason" when it sends none. */
+  const azureSaid = (e) => (String(e?.detail || '').trim() || 'Azure Boards gave no reason').replace(/\.+$/, '');
+  /** A refusal as Azure's words ("Azure Boards refused the request: …"), never adoFetch's status and REST URL, which the host's
+   *  reach sentence would show as they are; auth, network and rate limit pass unchanged. */
+  const ownWords = (e) => (e && e.kind === 'plugin' && e.status
+    ? Object.assign(new Error(`Azure Boards refused the request: ${azureSaid(e)}.`), { kind: 'plugin', status: e.status }) : e);
+  /** Every state of the project's visible work item types once, by name, in Azure's order, with its category (D1). Disabled
+   *  types and the hidden ones (Code Review Request, Test Plan, …: Microsoft.HiddenCategory) add nothing. */
+  async function statesOfProject(project) {
+    const p = enc(projectOf(project));
+    const [types, cats] = await Promise.all([adoFetch(ado, `${base}/${p}/_apis/wit/workitemtypes`),
+      adoFetch(ado, `${base}/${p}/_apis/wit/workitemtypecategories`)]);
+    const hiddenCat = (cats?.value || []).find((c) => c?.referenceName === 'Microsoft.HiddenCategory');
+    const hidden = new Set((hiddenCat?.workItemTypes || []).map((t) => t?.name));
+    const seen = new Set();
+    const out = [];
+    for (const t of types?.value || []) {
+      if (!t || t.isDisabled || hidden.has(t.name)) continue;
+      for (const s of Array.isArray(t.states) ? t.states : []) {
+        const name = String(s?.name || '');
+        if (!name || seen.has(lc(name))) continue;
+        seen.add(lc(name));
+        out.push({ value: name, label: name, category: categoryOf(s) });
+      }
+    }
+    return out;
+  }
+  /** PR 1's rule for a refused move (its Deviation 3), in Azure's terms: a 4xx other than 401 (auth, as 203) and 429 (rate
+   *  limit) is a line; a 5xx, network error, timeout, refused token or rate limit throws, so the write-back can be retried. */
+  const refusedMove = (e) => !!e && e.kind === 'plugin' && e.status >= 400 && e.status < 500 && e.status !== 429;
+  /** One move, before the comment (D11). Answers { note, moved }. Any Done status is the type's first Completed-category state,
+   *  never a Removed one; a status move is that state of the work item's own type, with no fallback (decision 3). Reading the
+   *  item or its states throws (decision 9). */
+  async function applyMove(ref, move) {
+    const none = { note: '', moved: null };
+    const want = typeof move.status === 'string' ? move.status.trim() : '';
+    if (move.none === true || (move.category !== 'done' && !want)) return none;
+    const f = (await one(ref))?.fields || {};
+    const type = String(f['System.WorkItemType'] || '');
+    const project = String(f['System.TeamProject'] || ref.project);
+    const from = String(f['System.State'] || '?');
+    // Work Item Type States - List is a preview endpoint in 7.1: pin its version, as closeOnComplete does.
+    const states = ((await adoFetch(ado, `${base}/${enc(ref.project)}/_apis/wit/workitemtypes/${enc(type)}/states?api-version=7.1-preview.1`))?.value || [])
+      .filter((s) => s && s.name);
+    let to;
+    if (move.category === 'done') {
+      const now = states.find((s) => lc(s.name) === lc(from));
+      if (now && (now.category === 'Completed' || now.category === 'Removed')) return { ...none, note: `Already in ${from}.` };
+      to = states.find((s) => s.category === 'Completed');
+      if (!to) return { ...none, note: `Not moved: ${project}'s ${type} type has no Done status.` };
+    } else {
+      const named = typeof move.name === 'string' && move.name.trim() ? move.name.trim() : want;
+      if (lc(from) === lc(want)) return { ...none, note: `Already in ${from}.` };
+      to = states.find((s) => lc(s.name) === lc(want));
+      if (!to) {
+        let has = true;
+        try { has = (await statesOfProject(ref.project)).some((s) => lc(s.value) === lc(want)); } catch { has = true; }   // unknown: the type line
+        return { ...none, note: has ? `Not moved: ${project}'s ${type} type has no status named ${named}.`
+          : `Not moved: ${project} has no status named ${named} any more.` };
+      }
+    }
+    try {
+      await adoFetch(ado, `${base}/${enc(ref.project)}/_apis/wit/workitems/${ref.id}`, {
+        method: 'PATCH', contentType: 'application/json-patch+json', body: [{ op: 'add', path: '/fields/System.State', value: to.name }],
+      });
+    } catch (e) {
+      if (refusedMove(e)) return { ...none, note: `Not moved: Azure Boards refused the move to ${to.name}: ${azureSaid(e)}.` };
+      throw e;
+    }
+    return { note: `Moved to ${to.name}.`, moved: { from, to: to.name } };
+  }
 
   return {
     async validateConfig() {
@@ -100,9 +192,10 @@ export default function createTaskSource(ctx, deps = {}) {
       const c = await adoFetch(ado, `${base}/${enc(ref.project)}/_apis/wit/workItems/${ref.id}/comments?api-version=7.1-preview.4`).catch(() => null);
       const comments = (c?.comments || []).map((x) => `**${x.createdBy?.displayName || 'someone'}** (${x.createdDate}):\n${htmlToMarkdown(x.text || '')}`);
       return { ...summary(w), body: [...parts, ...(comments.length ? [`## Comments\n\n${comments.join('\n\n')}`] : [])].join('\n\n'),
-        meta: { organization: ref.org, project: ref.project, id: ref.id, type: f['System.WorkItemType'] || null } };
+        // meta.project (Ticket updates, D6): the item's own project as listProjects names it, whatever case the id was typed in
+        meta: { organization: ref.org, project: f['System.TeamProject'] || ref.project, id: ref.id, type: f['System.WorkItemType'] || null } };
     },
-    async reportResult(id, { status, summary: text, links = [] }) {
+    async reportResult(id, { status, summary: text, links = [], move } = {}) {
       // A bad id throws like github-source's parseId: sources.mjs records a throw as a failed write-back,
       // while a normal return would be recorded as ok:true for a comment that was never posted.
       const ref = requireRef(id);
@@ -110,6 +203,14 @@ export default function createTaskSource(ctx, deps = {}) {
       // Only http(s) links become anchors (s2); any other scheme is shown as escaped text.
       const item = (l) => (safeHref(l.url) ? `<a href="${escapeHtml(safeHref(l.url))}">${escapeHtml(l.title || l.url)}</a>` : escapeHtml(l.title || l.url || ''));
       const html = `${markdownToHtml(text || `worca pipeline ${status}`)}${links.length ? `<ul>${links.map((l) => `<li>${item(l)}</li>`).join('')}</ul>` : ''}`;
+      if (move && typeof move === 'object') {
+        // Ticket updates (D11): Worca decided the move; the state changes first, then one comment: the run summary, its links,
+        // then the outcome line last. Without a move (nothing saved in Worca) the old path below runs unchanged (D4).
+        const out = await applyMove(ref, move);
+        await adoFetch(ado, `${base}/${enc(ref.project)}/_apis/wit/workItems/${ref.id}/comments?api-version=7.1-preview.4`,
+          { method: 'POST', body: { text: `${html}${out.note ? `<p>${escapeHtml(out.note)}</p>` : ''}` } });
+        return { commented: true, moved: out.moved, note: out.note };
+      }
       await adoFetch(ado, `${base}/${enc(ref.project)}/_apis/wit/workItems/${ref.id}/comments?api-version=7.1-preview.4`, { method: 'POST', body: { text: html } });
       if (status !== 'completed' || !toBool(ctx.config?.closeOnComplete)) return;
       const w = await one(ref);
@@ -124,6 +225,14 @@ export default function createTaskSource(ctx, deps = {}) {
         body: [{ op: 'add', path: '/fields/System.State', value: done.name }],
       });
     },
-    capabilities() { return { writeBack: true, incrementalSync: false }; },
+    capabilities() { return { writeBack: true, incrementalSync: false, ticketUpdates: true }; },
+    // ---- Ticket updates (plans/ticket-updates-design.md §3) ----
+    async listStatuses({ project } = {}) {
+      projectOf(project);   // its own words pass unchanged
+      try { return await statesOfProject(project); } catch (e) { throw ownWords(e); }
+    },
+    legacyMove() {
+      return { field: 'closeOnComplete', target: toBool(ctx.config?.closeOnComplete) ? { category: 'done' } : null };
+    },
   };
 }

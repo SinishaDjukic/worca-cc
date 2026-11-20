@@ -1,0 +1,45 @@
+
+/* Connectors › Skills (mcp-view.mjs, skill-import.mjs; docs/skills.md). Layout only: cards, chips, badges,
+   switches and buttons are the shared ones, and every colour is a theme token, so light and dark both hold. */
+.sk-row{padding:14px 18px;}
+.sk-member{padding:14px 16px;margin-top:10px;}
+.sk-member .pl-enable{margin-left:0;}
+.sk-title{display:flex;align-items:center;gap:12px;flex-wrap:wrap;min-width:0;}
+.sk-title .hint{margin-top:0;}
+.sk-prefix{display:inline-flex;align-items:center;gap:6px;flex-wrap:wrap;}
+.sk-facts .badge{margin-left:8px;}
+.sk-row .mono,.sk-member .mono,.sk-import-form .mono,.sk-pick .mono,.sk-update .mono,.sk-resolution .mono,.sk-members .mono,.sk-chip .mono{font-family:var(--mono);}
+.sk-drawer{margin-top:12px;background:var(--field);border-radius:var(--r-sm);padding:12px 14px;}
+.sk-drawer-head{display:flex;align-items:center;gap:10px;font-size:12px;color:var(--ink-2);margin-bottom:8px;}
+.sk-md{margin:0;font-family:var(--mono);font-size:11px;line-height:1.55;color:var(--ink);white-space:pre-wrap;overflow-wrap:anywhere;max-height:360px;overflow:auto;}
+.sk-tree{display:flex;flex-direction:column;gap:2px;margin-top:8px;max-height:280px;overflow:auto;}
+.sk-tree-row,.sk-delta{display:flex;align-items:center;gap:10px;padding:3px 0;font-size:12px;flex-wrap:wrap;row-gap:4px;}
+.sk-tree-row .mono,.sk-delta .mono{min-width:0;overflow-wrap:anywhere;}
+.sk-tree-row .sz{margin-left:auto;color:var(--ink-3);font-variant-numeric:tabular-nums;white-space:nowrap;}
+.sk-delta.err .mono{color:var(--red-ink);}
+.sk-delta.warn .mono{color:var(--amber-ink);}
+.sk-pick{display:flex;flex-direction:column;max-height:min(52vh,420px);overflow:auto;}
+.sk-pick-row{display:flex;align-items:center;gap:10px;padding:9px 4px;border-bottom:1px solid var(--line);font-size:13px;}
+.sk-pick-row:last-child{border-bottom:0;}
+.sk-pick-row.greyed{color:var(--ink-3);}
+.sk-pick-row .hint{margin:0 0 0 auto;}
+.sk-pick-row input{margin:0;}
+.sk-import-form .seg{margin-bottom:16px;flex-wrap:wrap;}
+.sk-row-input{display:flex;gap:8px;align-items:center;}
+.sk-row-input .input{flex:1 1 auto;min-width:0;}
+.sk-preview{background:var(--field);border-radius:var(--r-sm);padding:14px 16px;margin-top:10px;}
+.sk-preview .pl-head{margin-bottom:6px;}
+.sk-consent{margin-top:14px;padding:12px 14px;background:var(--field);border-radius:var(--r-sm);font-size:13px;color:var(--ink-2);}
+.sk-consent b{color:var(--ink);font-weight:600;}
+.sk-consent-note{margin:6px 0 0;}
+.sk-consent-note.err{color:var(--red-ink);}
+
+.sk-res-group{margin-top:16px;}
+.sk-res-group > .label{display:block;margin-bottom:6px;}
+.sk-res-head{display:grid;grid-template-columns:minmax(0,1.1fr) minmax(0,.9fr) minmax(0,.7fr) minmax(0,1.6fr);gap:12px;padding:0 0 6px;
+  font-size:12px;font-weight:600;color:var(--ink-2);}
+.mcp-res-row.sk-from{grid-template-columns:minmax(0,1.1fr) minmax(0,.9fr) minmax(0,.7fr) minmax(0,1.6fr);}
+.sk-kind{padding:1px 6px;
+  background:var(--blue-bg);color:var(--blue-ink-strong);}
+@media (max-width:760px){.mcp-res-row.sk-from,.sk-res-head{grid-template-columns:minmax(0,1fr) minmax(0,1fr);}}
+

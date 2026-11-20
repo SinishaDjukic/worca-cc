@@ -2,13 +2,13 @@
 // feature or a Run-after chain (ui/public/ship-group-dialog.mjs), painted over the real #shipit-modal in index.html.
 import { test, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
 import { JSDOM } from 'jsdom';
 import { useDomRelease } from './helpers/jsdom-release.mjs';
 import { paintGroupShip, groupShipChoice, resetGroupShip, PER_RUN_NOTE, CHECKING_COMBINE, ONE_GROUP_NOTE, ONE_RUN_GROUP, ONE_LOOSE_REASON } from '../ui/public/ship-group-dialog.mjs';
+import { readIndexHtml } from '../src/core/read-index-html.mjs';
 
 const trackDom = useDomRelease(afterEach);
-const html = readFileSync(new URL('../ui/public/index.html', import.meta.url), 'utf8');
+const html = readIndexHtml();
 const modalOf = () => trackDom(new JSDOM(html)).window.document.getElementById('shipit-modal');
 const setLabel = (modal) => (l) => { modal.querySelector('.shipit-title').textContent = l; modal.querySelector('.shipit-ok').textContent = l; };
 const pick = (modal, v) => { const r = modal.querySelector(`.shipit-prs input[value="${v}"]`); r.checked = true; r.dispatchEvent(new modal.ownerDocument.defaultView.Event('change')); };

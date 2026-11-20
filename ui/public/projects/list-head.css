@@ -1,0 +1,7 @@
+/* ---------- list head + list (the Workspaces and Projects pages) ---------- */
+.saved-head{display:flex;align-items:center;justify-content:space-between;gap:12px;
+  padding:16px 20px;border-bottom:1px solid var(--line);}
+.saved-head b{font-size:15px;font-weight:600;letter-spacing:-.01em;}
+.saved-head .cnt{color:var(--ink-2);font-size:12px;font-weight:600;margin-left:9px;}
+.saved-list{display:flex;flex-direction:column;}
+

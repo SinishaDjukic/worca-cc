@@ -50,11 +50,13 @@ test('mimeForPath covers documents and every deck media type, which are treated 
 });
 
 test('the Ask allowlist is unchanged by the promotion', () => {
-  assert.deepEqual(TEXT_EXTENSIONS, ['.md', '.markdown', '.txt', '.json', '.csv', '.log', '.html', '.htm']);
+  assert.deepEqual(TEXT_EXTENSIONS, ['.md', '.markdown', '.txt', '.json', '.csv', '.log', '.html', '.htm', '.xml']);
   assert.deepEqual(BINARY_EXTENSIONS, ['.png', '.jpg', '.jpeg', '.gif', '.webp', '.pdf']);
   assert.deepEqual(classifyExtension('.html'), { kind: 'text', mime: 'text/html' }, 'html is an Ask TEXT attachment (dev) — the viewer still renders it as html');
   assert.equal(viewerKindFor('deck/deck.html'), 'html');
   assert.deepEqual(classifyExtension('.PNG'), { kind: 'image', mime: 'image/png' });
+  assert.equal(viewerKindFor('data/feed.xml'), 'text', 'an XML attachment opens in the viewer as text');
+  assert.equal(mimeForPath('data/feed.xml'), 'application/xml');
 });
 
 test('isBrowsableKind hides transient markers and the subresources an artifact loads', () => {

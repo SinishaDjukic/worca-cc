@@ -1,0 +1,63 @@
+/* Per-agent fan-out switch in the New Pipeline rows: layout only (the switch is the shared .switch). */
+.fanout-toggle{white-space:nowrap;cursor:pointer;user-select:none;}
+
+/* Per-agent questions toggle shares the fan-out look; [hidden] must win over
+   the inline-flex display when the agent has no questions capability. */
+.questions-toggle[hidden] { display: none; }
+
+/* ========================================================================== */
+/* Workspaces — target selector, management cards, creation wizard, scan loader */
+/* (reuses :root tokens --field/--line/--ink/--panel)                         */
+/* ========================================================================== */
+
+/* New-Pipeline target panes (mutually exclusive). */
+.target-pane.hidden{display:none;}
+div.ws-members{display:flex;flex-wrap:wrap;gap:7px;margin-top:10px;}
+/* With no workspace picked the container is empty, but a flex box still holds
+   its margin — 10px of nothing that made the workspace pane taller than the
+   project pane and relaid the form out on every target flip. */
+div.ws-members:empty{display:none;}
+.ws-members .chip{background:var(--field);color:var(--ink-2);font-weight:600;font-size:12px;padding:6px 12px;border-radius:var(--r-xs);border:1px solid var(--line);}
+.ws-members .chip.missing{background:var(--red-bg);color:var(--red-ink);border-color:var(--red);}
+/* Branches (design v3): one table for a project (one row) or a workspace (a row per member). */
+.branches{display:flex;flex-direction:column;gap:16px;}
+.branches-head{display:flex;align-items:center;flex-wrap:wrap;gap:8px 12px;min-height:42px;}
+.branches-title{font-size:12px;font-weight:600;color:var(--ink);}
+.branches-ctx{font-size:12px;color:var(--ink-2);}
+.branches-mode{display:inline-flex;align-items:center;gap:10px;margin-left:auto;}
+.branches-mode[hidden]{display:none;}
+.branches-mode-label{font-size:var(--fs-meta);color:var(--ink-2);}
+.branch-table{border:0;border-radius:var(--r-sm);background:var(--field);}   /* one border level in the New run card (B2) */
+.bt-head,.bt-row{display:grid;grid-template-columns:minmax(0,150px) minmax(0,220px) minmax(0,1fr);column-gap:18px;align-items:center;padding:8px 16px;}
+.bt-head{padding-top:10px;padding-bottom:10px;font-size:12px;font-weight:600;color:var(--ink-2);}
+.bt-row{min-height:58px;box-sizing:border-box;border-top:1px solid var(--line);}
+.bt-row[hidden]{display:none;}
+.bt-name{font-size:var(--fs-body);font-weight:600;color:var(--ink);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+.bt-row .select-wrap{width:100%;min-width:0;}
+.field-compact .bt-row .select{font-family:var(--mono);font-size:var(--fs-meta);}
+.bt-row select[disabled]{opacity:.55;}
+.bt-outcome{display:flex;align-items:center;gap:10px;min-width:0;color:var(--ink-2);}
+.bt-icon{display:flex;flex-shrink:0;align-self:flex-start;margin-top:1px;}
+.bt-icon:empty{display:none;}
+.bt-words{flex-grow:1;display:flex;flex-direction:column;gap:2px;min-width:0;}
+.bt-text{font-size:13px;font-weight:500;}
+.bt-note{font-size:12px;color:var(--ink-2);}
+.bt-retry{flex-shrink:0;}
+.bt-outcome.tone-ok .bt-icon{color:var(--green-ink);}
+.bt-outcome.tone-ink .bt-text{color:var(--ink);}
+.bt-outcome.tone-blue{color:var(--blue-ink-strong);}
+.bt-outcome.tone-amber{color:var(--amber-ink);}
+.bt-outcome.tone-red{color:var(--red-ink);}
+.bt-outcome.tone-blue .bt-text,.bt-outcome.tone-amber .bt-text,.bt-outcome.tone-red .bt-text{font-weight:600;}
+.bt-outcome.tone-ink .bt-icon,.bt-outcome.tone-muted .bt-icon{color:var(--ink-2);}
+/* Workspace member rows sit directly in the table, row for row with the project row. */
+.ws-source-branches{display:contents;}
+.ws-source-branches.hidden{display:none;}
+.branches-new > label{display:block;font-size:12px;font-weight:600;margin-bottom:5px;}
+#branches-blocked[hidden]{display:none;}
+#branches-blocked{margin-top:0;font-weight:600;}
+@media (max-width:720px){
+  .bt-head{display:none;}
+  .bt-row{grid-template-columns:minmax(0,1fr);row-gap:8px;padding:12px 14px;}
+  .bt-row:first-of-type{border-top:0;}
+}

@@ -6,6 +6,7 @@ import { JSDOM } from 'jsdom';
 import { renderChatSettings, collectChatSettings, renderScriptToolsToggle, collectScriptToolsToggle, renderSuggestionsToggle, collectSuggestionsToggle, renderSummariesToggle, collectSummariesToggle, renderAskWebFields } from '../ui/public/chat-settings-view.mjs';
 import { applyFlags } from '../ui/public/flags.mjs';
 import { checkRows } from './helpers/rows.mjs';
+import { readIndexHtml } from '../src/core/read-index-html.mjs';
 
 const doc = new JSDOM('<!doctype html><body></body>').window.document;
 
@@ -118,9 +119,8 @@ async function bootApp(testResults) {
   const { readFileSync } = await import('node:fs');
   const { fileURLToPath, pathToFileURL } = await import('node:url');
   const { cardAlertOf } = await import('./helpers/feedback.mjs');
-  const htmlPath = fileURLToPath(new URL('../ui/public/index.html', import.meta.url));
   const appPath = fileURLToPath(new URL('../ui/public/app.js', import.meta.url));
-  const dom = new JSDOM(readFileSync(htmlPath, 'utf8'), { url: 'http://localhost:4317/' });
+  const dom = new JSDOM(readIndexHtml(), { url: 'http://localhost:4317/' });
   const { window } = dom;
   window.Element.prototype.scrollIntoView = function () {};
   window.WebSocket = class { constructor() { this.readyState = 1; } send() {} close() {} addEventListener() {} };

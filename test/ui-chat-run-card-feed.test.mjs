@@ -748,7 +748,8 @@ test('panel: a PR fix-run card on a system row renders as the chat run card; its
   ctx.flush();
   const card = ctx.doc.querySelector('.ask-msg-system .chat-rc');
   assert.ok(card, 'the card renders on the system row');
-  assert.equal(card.querySelector('.kind-chip').textContent, 'PR fix run');
+  assert.equal(card.querySelector('.kind-chip').hidden, true, 'a fix run is a single run: no chip (#959)');
+  assert.deepEqual([...card.querySelector('.chat-rc-fix').children].slice(0, 3).map((n) => n.textContent), ['PR fix run', '·', 'Failing checks']);
   const settled = { ...FIX, card: { ...FIX.card, pipelineId: 'abcd1234', fix: { ...FIX.card.fix, outcome: { kind: 'pushed', sha: 'abc1234', stopped: null, fixRuns: 1 } } } };
   ctx.panel.pushServerFrame({ type: 'ask-message', threadId: TID, message: row([settled]), unread: true });
   ctx.flush();

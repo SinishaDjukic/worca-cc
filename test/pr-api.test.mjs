@@ -20,6 +20,7 @@ import { _resetForTests, getDb } from '../src/core/db.mjs';
 import { writeStoreMeta, persistPrState, readPrState, createPipeline, writeState, listAllPipelines } from '../src/core/artifacts.mjs';
 import { _testing as prDesc, PR_BODY_MAX } from '../src/core/pr-description.mjs';
 import * as azurePr from '../src/core/pr/azure.mjs';
+import * as bitbucketPr from '../src/core/pr/bitbucket.mjs';
 import { setPrRemotePrefs, readPrRemotePrefs } from '../src/core/config.mjs';
 import { createTicket, markTicketFired } from '../src/core/scheduler.mjs';
 import { seedPipeline } from './helpers/db-seed.mjs';
@@ -31,6 +32,8 @@ import { withEnv } from './helpers/with-env.mjs';
 
 const NO_ADO = { WORCA_ADO_TOKEN: undefined, WORCA_ADO_READ_TOKEN: undefined, WORCA_ADO_WRITE_TOKEN: undefined, AZURE_DEVOPS_EXT_PAT: undefined };
 const WITH_ADO = { ...NO_ADO, WORCA_ADO_TOKEN: 'pat' };
+const NO_BB = { WORCA_BB_TOKEN: undefined, WORCA_BB_READ_TOKEN: undefined, WORCA_BB_WRITE_TOKEN: undefined, WORCA_BB_EMAIL: undefined };
+const WITH_BB = { ...NO_ADO, ...NO_BB, WORCA_BB_TOKEN: 'bbtok' };
 
 let srv, base, home, prevHome, betaKey, betaId, betaRepo;
 
@@ -56,12 +59,13 @@ after(async () => {
   gitInfo.reset();
   gitSync.reset();
   azurePr._testing.reset();
+  bitbucketPr._testing.reset();
   _resetForTests();
   if (prevHome === undefined) delete process.env.WORCA_HOME; else process.env.WORCA_HOME = prevHome;
   await rm(home, { recursive: true, force: true });
 });
 
-beforeEach(() => { gitInfo.reset(); gitSync.reset(); prDesc.reset(); azurePr._testing.reset(); });
+beforeEach(() => { gitInfo.reset(); gitSync.reset(); prDesc.reset(); azurePr._testing.reset(); bitbucketPr._testing.reset(); });
 
 // git-sync's runner (the base-freshness fetch, #527): upstream is a github remote; every argv
 // lands in `seen`; `rev-list --count` answers `moved`.
@@ -139,6 +143,39 @@ function stubAdo(calls, { create = () => adoJson(201, { pullRequestId: 31 }),
     return adoJson(404, { message: 'not stubbed' });
   });
 }
+const BB = 'https://bitbucket.org/acme/api.git';
+const BB_REMOTES_V = `origin\t${BB} (fetch)\norigin\t${BB} (push)\n`;
+/** gh present; one Bitbucket origin; argv + env recorded. */
+function stubBitbucketRepo(seen, { remotesV = BB_REMOTES_V, getUrl = (name) => (name === 'fork' ? 'https://bitbucket.org/me/api.git' : BB) } = {}) {
+  gitInfo.setRunner((cmd, args, opts = {}) => {
+    seen.push({ argv: [cmd, ...args], env: opts.env });
+    const done = (stdout = '') => Promise.resolve({ ok: true, stdout, stderr: '', code: 0 });
+    if (cmd === 'gh' && args[0] === '--version') return done('gh 2.x');
+    if (cmd === 'git' && args[0] === 'remote' && args[1] === 'get-url') return done(`${getUrl(args[args.length - 1])}\n`);
+    if (cmd === 'git' && args[0] === 'remote') return done(remotesV);
+    if (cmd === 'git' && args[0] === 'for-each-ref') return done(REFS);
+    if (cmd === 'gh') return Promise.resolve({ ok: false, stdout: '', stderr: 'gh must not run for Bitbucket', code: 1 });
+    return done();
+  });
+}
+const bbJson = (status, body) => new Response(JSON.stringify(body), { status, headers: { 'content-type': 'application/json' } });
+/** Bitbucket REST fake: no open PR, POST …/pullrequests answers #31, the PR (with its abbreviated commits) and an empty
+ *  file-conflicts list; every call recorded. */
+function stubBb(calls) {
+  bitbucketPr._testing.setFetch(async (url, init = {}) => {
+    const method = init.method || 'GET';
+    calls.push({ url: String(url), method, body: init.body ? JSON.parse(init.body) : undefined, auth: init.headers?.authorization });
+    const path = new URL(url).pathname;
+    if (method === 'POST' && path.endsWith('/pullrequests')) return bbJson(201, { id: 31 });
+    if (path.endsWith('/conflicts')) return bbJson(200, { values: [] });
+    if (path.endsWith('/pullrequests')) return bbJson(200, { values: [] });
+    if (path.endsWith('/pullrequests/31')) {
+      return bbJson(200, { id: 31, state: 'OPEN', source: { branch: { name: FEATURE }, commit: { hash: 'a1b2c3d4e5f6' }, repository: { full_name: 'acme/api' } },
+        destination: { branch: { name: 'main' }, commit: { hash: '0f9e8d7c6b5a' } } });
+    }
+    return bbJson(404, { error: { message: 'not stubbed' } });
+  });
+}
 const getRemotes =(q) => fetch(`${base}/api/pr/remotes?${new URLSearchParams(q)}`);
 const postMergeable = (body) => fetch(`${base}/api/pr/mergeable`, {
   method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
@@ -169,6 +206,7 @@ test('POST /api/pr pushes, creates the PR, returns url + mergeable', async () =>
   gitInfo.setRunner((cmd, args) => {
     seen.push([cmd, ...args]);
     if (cmd === 'gh' && args[0] === '--version') return Promise.resolve({ ok: true, stdout: 'gh 2.x', stderr: '', code: 0 });
+    if (cmd === 'git' && args[0] === 'remote') return Promise.resolve({ ok: true, stdout: 'origin\thttps://github.com/x/y.git (fetch)\norigin\thttps://github.com/x/y.git (push)\n', stderr: '', code: 0 });
     if (cmd === 'git' && args[0] === 'push') return Promise.resolve({ ok: true, stdout: '', stderr: '', code: 0 });
     if (cmd === 'gh' && args[0] === 'pr' && args[1] === 'create')
       return Promise.resolve({ ok: true, stdout: 'https://github.com/x/y/pull/7\n', stderr: '', code: 0 });
@@ -559,19 +597,19 @@ test('chain ship: One on a forked chain answers 409 before the PR host is asked'
   assert.equal(seen.filter((c) => c[0] === 'gh' && c[1] === 'pr').length, 0);
 });
 
-test('chain ship: One on a chain whose run started from its own branch answers 409 before the PR host is asked', async () => {
+test('chain ship: a Run after that started from its own branch is no chain (#1096): ship answers 404 before the PR host is asked', async () => {
   const r1 = (await seedPipeline(betaRepo, { title: 'cl1', status: 'done', startedAt: '2026-06-02T00:00:00Z',
     branch: { source: 'dev', feature: 'worca-cc/cl1', branchKept: true } })).id;
   const r2 = (await seedPipeline(betaRepo, { title: 'cl2', status: 'done', startedAt: '2026-06-02T00:00:00Z',
     branch: { source: 'dev', feature: 'worca-cc/cl2', branchKept: true } })).id;
   const t = createTicket({ projectDir: betaRepo, title: 'next', request: { projectDir: betaRepo, prompt: 'next' },
-    after: { kind: 'pipeline', id: r1 } });               // Run after, but from its own branch: One would hold only run 2
+    after: { kind: 'pipeline', id: r1 } });               // Run after, but from its own branch: a timing-only wait, no chain
   markTicketFired(t.id, { pipelineId: r2 });
   const seen = [];
   stubForkRepo(seen);
   const r = await shipChain(`p:${r1}`, { mode: 'one' });
-  assert.equal(r.status, 409);
-  assert.match((await r.json()).error, /does not start from the previous run's branch/);
+  assert.equal(r.status, 404);
+  await r.body?.cancel();
   assert.equal(seen.filter((c) => c[0] === 'gh' && c[1] === 'pr').length, 0);
   assert.equal(readPrState(r1), null);
 });
@@ -1012,7 +1050,7 @@ test('POST /api/pr names the host in a create failure: Azure DevOps and GitHub',
     gitInfo.setRunner((cmd, args) => Promise.resolve(
       cmd === 'gh' && args[0] === 'pr' && args[1] === 'create'
         ? { ok: false, stdout: '', stderr: 'no such base\n', code: 1 }
-        : { ok: true, stdout: cmd === 'gh' ? 'gh 2.x' : '', stderr: '', code: 0 }));
+        : { ok: true, stdout: cmd === 'gh' ? 'gh 2.x' : cmd === 'git' && args[0] === 'remote' ? 'origin\thttps://github.com/x/y.git (push)\n' : '', stderr: '', code: 0 }));
     const r = await post({ projectKey: betaKey, id: betaId });
     assert.equal(r.status, 500);
     assert.equal((await r.json()).error, 'GitHub pull request failed: no such base');
@@ -1054,10 +1092,10 @@ test('POST /api/pr/mergeable reads an Azure PR URL over REST', () => withEnv(WIT
 test('GET /api/history and /api/runs expose prHosts next to ghAvailable', () => withEnv(WITH_ADO, async () => {
   stubAzureRepo([]);
   const h = await (await fetch(`${base}/api/history`)).json();
-  assert.deepEqual(h.prHosts, { github: true, azure: true });
+  assert.deepEqual(h.prHosts, { github: true, azure: true, bitbucket: false });
   assert.equal(h.ghAvailable, true);
   const r = await (await fetch(`${base}/api/runs?projectDir=${encodeURIComponent(betaRepo)}`)).json();
-  assert.deepEqual(r.prHosts, { github: true, azure: true });
+  assert.deepEqual(r.prHosts, { github: true, azure: true, bitbucket: false });
 }));
 
 test('POST /api/pr links the Azure Boards work item a run came from', () => withEnv(WITH_ADO, async () => {
@@ -1082,8 +1120,66 @@ test('POST /api/pr/describe drafts for the PR host the modal names', async () =>
   assert.match(seen[0].systemPrompt, /Azure DevOps/);
   assert.doesNotMatch(seen[1].systemPrompt, /Azure DevOps/, 'anything else is GitHub');
   assert.doesNotMatch(seen[2].systemPrompt, /Azure DevOps/);
+  assert.equal((await postDescribe({ projectKey: betaKey, id: betaId, forge: 'bitbucket' })).status, 200);
+  assert.match(seen[3].systemPrompt, /a Bitbucket pull request/);
 });
 
+
+test('POST /api/pr on a Bitbucket origin: pushes with the Bitbucket token, creates over REST, persists #31, reads mergeability', () => withEnv(WITH_BB, async () => {
+  await setPrRemotePrefs(betaRepo, {});
+  const seen = []; const calls = [];
+  stubBitbucketRepo(seen);
+  stubBb(calls);
+  const r = await post({ projectKey: betaKey, id: betaId });
+  const j = await r.json();
+  assert.equal(r.status, 200, JSON.stringify(j));
+  assert.equal(j.url, 'https://bitbucket.org/acme/api/pull-requests/31');
+  assert.equal(j.mergeable, 'MERGEABLE');
+  const push = seen.find((s) => s.argv[1] === 'push');
+  assert.ok(push, 'the branch was pushed');
+  assert.equal(push.env.WORCA_BB_GIT_TOKEN, 'bbtok');
+  assert.equal(push.env.WORCA_BB_GIT_USER, 'x-token-auth');
+  assert.equal(push.env.WORCA_BB_TOKEN, undefined);
+  assert.equal(push.env.GH_TOKEN, undefined);
+  assert.deepEqual(seen.filter((s) => s.argv[0] === 'gh').map((s) => s.argv), [['gh', '--version']], 'gh never ran beyond --version');
+  const create = calls.find((c) => c.method === 'POST');
+  assert.equal(new URL(create.url).pathname, '/2.0/repositories/acme/api/pullrequests');
+  assert.deepEqual([create.body.source.branch.name, create.body.destination.branch.name], [FEATURE, 'main']);
+  assert.equal(create.auth, 'Bearer bbtok');
+  for (const c of calls) assert.equal(new URL(c.url).origin, 'https://api.bitbucket.org');
+  const pr = readPrState(betaId);
+  assert.deepEqual({ number: pr.number, state: pr.state, url: pr.url }, { number: 31, state: 'OPEN', url: 'https://bitbucket.org/acme/api/pull-requests/31' });
+}));
+
+test('POST /api/pr on a Bitbucket origin without a token -> 409 naming WORCA_BB_TOKEN, nothing pushed', () => withEnv({ ...NO_ADO, ...NO_BB }, async () => {
+  const seen = [];
+  stubBitbucketRepo(seen);
+  const r = await post({ projectKey: betaKey, id: betaId });
+  assert.equal(r.status, 409);
+  const j = await r.json();
+  assert.match(j.error, /WORCA_BB_TOKEN/);
+  assert.equal(j.forge, 'bitbucket');
+  assert.ok(!seen.some((s) => s.argv[1] === 'push'), 'nothing was pushed');
+}));
+
+test('POST /api/pr Bitbucket fork (push to another repo) -> 422 unsupported before anything is pushed', () => withEnv(WITH_BB, async () => {
+  const seen = []; const calls = [];
+  stubBitbucketRepo(seen, { remotesV: `fork\thttps://bitbucket.org/me/api.git (fetch)\nfork\thttps://bitbucket.org/me/api.git (push)\n${BB_REMOTES_V}` });
+  stubBb(calls);
+  const r = await post({ projectKey: betaKey, id: betaId, pushRemote: 'fork', baseRemote: 'origin' });
+  assert.equal(r.status, 422);
+  assert.match((await r.json()).error, /Bitbucket pull requests between repositories \(forks\) are not supported yet — push to origin/);
+  assert.ok(!seen.some((s) => s.argv[1] === 'push'));
+  assert.equal(calls.length, 0);
+}));
+
+test('GET /api/pr/remotes labels a Bitbucket remote and names the missing token', () => withEnv({ ...NO_ADO, ...NO_BB }, async () => {
+  stubBitbucketRepo([]);
+  const j = await (await getRemotes({ projectKey: betaKey, id: betaId })).json();
+  const o = j.remotes.find((x) => x.name === 'origin');
+  assert.deepEqual([o.forge, o.prHost, o.prSupported], ['bitbucket', 'Bitbucket', false]);
+  assert.match(o.prReason, /WORCA_BB_TOKEN/);
+}));
 
 // ---------------------------------------------------------------------------
 // Draft PRs and the source issue's closing line.
@@ -1250,6 +1346,22 @@ test('POST /api/pr on an Azure origin: draft reaches the REST create as isDraft;
   assert.equal((await (await getRemotes({ projectKey: betaKey, id })).json()).issue, null, 'no "Will close" line for an Azure base');
 }));
 
+test('POST /api/pr on a Bitbucket origin: draft reaches the REST create; a GitHub issue source adds no Closes line', () => withEnv(WITH_BB, async () => {
+  await setPrRemotePrefs(betaRepo, {});
+  const id = await seedIssueRun({ feature: 'worca-cc/bb-draft-run' });
+  const calls = [];
+  stubBitbucketRepo([]);
+  stubBb(calls);
+  const r = await post({ projectKey: betaKey, id, draft: true, body: 'Did it.' });
+  const j = await r.json();
+  assert.equal(r.status, 200, JSON.stringify(j));
+  assert.equal(j.draft, true);
+  const create = calls.find((c) => c.method === 'POST');
+  assert.equal(create.body.draft, true);
+  assert.doesNotMatch(create.body.description, /Closes/);
+  assert.equal((await (await getRemotes({ projectKey: betaKey, id })).json()).issue, null, 'no "Will close" line for a Bitbucket base');
+}));
+
 test('POST /api/pr on an Azure origin with watch:true watches the new Azure DevOps PR', () => withEnv(WITH_ADO, async () => {
   await setPrRemotePrefs(betaRepo, {});
   const id = await seedIssueRun({ feature: 'worca-cc/azure-watch-run' });
@@ -1342,7 +1454,7 @@ test('POST /api/push: 409 when not merged back, and 409 for a normal run (open a
 // ---------------------------------------------------------------------------
 // Spec D7 (slice 3): a shaped run's PR ends with its perspective checklist, before the attribution footer.
 // ---------------------------------------------------------------------------
-test('POST /api/pr appends the latest perspective checklist after the Closes line and before the footer (gated)', async () => {
+test('POST /api/pr appends the latest perspective checklist after the Closes line and before the footer', async () => {
   const { writeReview } = await import('../src/core/artifacts.mjs');
   const id = await seedIssueRun({ feature: 'worca-cc/checklist-run' });
   const item = (over) => ({ id: 'R-qa-1', perspective: 'qa', text: 'Rejects empty input.', status: 'met', evidence: 'test passes', ...over });
@@ -1355,47 +1467,32 @@ test('POST /api/pr appends the latest perspective checklist after the Closes lin
 
   let seen = [];
   stubForkRepo(seen);
-  await withEnv({ WORCA_FLAGS: 'shapeFirst' }, async () => {
-    assert.equal((await post({ projectKey: betaKey, id, body: 'Did it.', ...FORK })).status, 200);
-  });
+  assert.equal((await post({ projectKey: betaKey, id, body: 'Did it.', ...FORK })).status, 200);
   assert.equal(bodyArg(seen), `Did it.\n\nCloses #42\n\n${section}${footer}`, 'only cycle 2 is used');
 
   seen = [];
   stubForkRepo(seen);
-  await withEnv({ WORCA_FLAGS: '-shapeFirst' }, async () => {
-    assert.equal((await post({ projectKey: betaKey, id, body: 'Did it.', ...FORK })).status, 200);
-  });
-  assert.equal(bodyArg(seen), `Did it.\n\nCloses #42${footer}`, 'gate off: today\'s body');
-
-  seen = [];
-  stubForkRepo(seen);
   const own = 'Mine.\n\n<!-- worca:perspective-checklist -->\n## Perspective checklist\n\n- [x] done';
-  await withEnv({ WORCA_FLAGS: 'shapeFirst' }, async () => {
-    assert.equal((await post({ projectKey: betaKey, id, body: own, ...FORK })).status, 200);
-  });
+  assert.equal((await post({ projectKey: betaKey, id, body: own, ...FORK })).status, 200);
   assert.equal(bodyArg(seen), `${own}\n\nCloses #42${footer}`, 'a description that carries the marker is left alone');
 });
 
-test('POST /api/pr: a gated run without checklist rows is unchanged; a footer-less run ends with the section', async () => {
+test('POST /api/pr: a run without checklist rows is unchanged; a footer-less run ends with the section', async () => {
   const { writeReview } = await import('../src/core/artifacts.mjs');
   let seen = [];
   stubForkRepo(seen);
-  await withEnv({ WORCA_FLAGS: 'shapeFirst' }, async () => {
-    assert.equal((await post({ projectKey: betaKey, id: betaId, body: 'Did it.', ...FORK })).status, 200);
-  });
+  assert.equal((await post({ projectKey: betaKey, id: betaId, body: 'Did it.', ...FORK })).status, 200);
   assert.equal(bodyArg(seen), 'Did it.', 'no rows: byte-identical');
 
   await writeReview(betaId, 'impl', 1, { issues: [], summary: '', checklist: [{ id: 'R-qa-1', perspective: 'qa', text: 'T.', status: 'met', evidence: 'e' }] });
   seen = [];
   stubForkRepo(seen);
-  await withEnv({ WORCA_FLAGS: 'shapeFirst' }, async () => {
-    assert.equal((await post({ projectKey: betaKey, id: betaId, body: 'Did it.', ...FORK })).status, 200);
-  });
+  assert.equal((await post({ projectKey: betaKey, id: betaId, body: 'Did it.', ...FORK })).status, 200);
   assert.equal(bodyArg(seen), 'Did it.\n\n<!-- worca:perspective-checklist -->\n## Perspective checklist\n\n- [x] **R-qa-1** T. — e');
 });
 
-// D22: a slice's PR body starts with its place in the feature, only while the flag is on.
-test('a slice pipeline\'s PR body starts with "Part of FEATURE: slice 1 of 2" (flag on), and not with the flag off', async () => {
+// D22: a slice's PR body starts with its place in the feature.
+test('a slice pipeline\'s PR body starts with "Part of FEATURE: slice 1 of 2"', async () => {
   const { createSliceFeature } = await import('../src/core/shape/features.mjs');
   const sl = (n) => ({ id: `s${n}`, title: `Slice ${n}`, goal: '', inScope: [], outOfScope: [], acceptance: [`ok ${n}`], dependsOn: [], estimate: 'M' });
   const seeded = await seedPipeline(betaRepo, { title: 'Charts · 1/2: Slice 1', status: 'done', startedAt: '2026-06-02T00:00:00Z',
@@ -1403,15 +1500,55 @@ test('a slice pipeline\'s PR body starts with "Part of FEATURE: slice 1 of 2" (f
   createSliceFeature({ pipelineId: seeded.id, projectDir: betaRepo, title: 'Charts', outline: { why: '', slices: [sl(1), sl(2)] },
     perspectives: ['product'], workflowId: 'wf_shape' });
   const bodyOf = (seen) => { const c = seen.find((a) => a[0] === 'gh' && a[1] === 'pr' && a[2] === 'create'); return c[c.indexOf('--body') + 1]; };
-  for (const [flags, starts] of [['shapeFirst', true], ['-shapeFirst', false]]) {
-    await withEnv({ ...NO_ADO, WORCA_FLAGS: flags }, async () => {
-      const seen = [];
-      stubForkRepo(seen);
-      getDb().prepare('UPDATE pipelines SET pr_url = NULL, pr_state = NULL WHERE id = ?').run(seeded.id);
-      const r = await post({ id: seeded.id, projectKey: seeded.key });
-      assert.equal(r.status, 200, await r.clone().text());
-      const body = bodyOf(seen);
-      assert.equal(body.startsWith('Part of Charts: slice 1 of 2\n\n- Slice 2, Slice 2: not opened yet\n\n'), starts, `${flags}: ${body}`);
-    });
-  }
+  await withEnv(NO_ADO, async () => {
+    const seen = [];
+    stubForkRepo(seen);
+    const r = await post({ id: seeded.id, projectKey: seeded.key });
+    assert.equal(r.status, 200, await r.clone().text());
+    const body = bodyOf(seen);
+    assert.ok(body.startsWith('Part of Charts: slice 1 of 2\n\n- Slice 2, Slice 2: not opened yet\n\n'), body);
+  });
+});
+
+test('a requirements slice\'s PR body says which R-ids it satisfies', async () => {
+  const { createSliceFeature } = await import('../src/core/shape/features.mjs');
+  const { runMock, MOCK_REQUIREMENTS_CRITERIA } = await import('../src/core/engines/mock.mjs');
+  const { normalizeOutline, settleLeftOut } = await import('../src/shared/shape/slices.mjs');
+  const { criteriaList } = await import('../src/shared/review/coverage.mjs');
+  const { readFile } = await import('node:fs/promises');
+  const dir = await mkdtemp(join(tmpdir(), 'worca-pr-req-'));
+  const req = join(dir, 'requirements.md');
+  const slicesFile = join(dir, 'slices.json');
+  const text = `# Requirements\n\n${MOCK_REQUIREMENTS_CRITERIA.map(([id, t]) => `- **${id}** ${t}`).join('\n')}\n`;
+  writeFileSync(req, text);
+  await runMock({ cwd: dir, systemPrompt: '', onEvent: () => {},
+    prompt: `MOCK_ROLE: planner-plan\nMOCK_BASE: demo\nMOCK_OUT: ${join(dir, 'plan.md')}\nMOCK_SLICES: ${slicesFile}\nMOCK_REQUIREMENTS: ${req}\nPlan this in slices.` });
+  const outline = settleLeftOut(normalizeOutline(JSON.parse(await readFile(slicesFile, 'utf8')), { agreed: criteriaList(text) }).outline);
+  const seeded = await seedPipeline(betaRepo, { title: 'Export · 1/2: Store', status: 'done', startedAt: '2026-06-03T00:00:00Z',
+    branch: { source: 'main', feature: 'worca-cc/export-s1', branchKept: true, commit: 'abc' } });
+  createSliceFeature({ pipelineId: seeded.id, projectDir: betaRepo, title: 'Export', outline, perspectives: ['product'], workflowId: 'wf_shape' });
+  await withEnv(NO_ADO, async () => {
+    const seen = [];
+    stubForkRepo(seen);
+    const r = await post({ id: seeded.id, projectKey: seeded.key });
+    assert.equal(r.status, 200, await r.clone().text());
+    const c = seen.find((a) => a[0] === 'gh' && a[1] === 'pr' && a[2] === 'create');
+    const body = c[c.indexOf('--body') + 1];
+    assert.ok(body.startsWith('Part of Export: slice 1 of 2\nSatisfies: R-po-1, R-po-2, R-arch-1, R-ux-1\n\n'), body);
+  });
+  await rm(dir, { recursive: true, force: true });
+});
+
+test('POST /api/pr with no remote at all: a 409 that says so, and nothing is pushed', async () => {
+  const seen = [];
+  gitInfo.setRunner((cmd, args) => {
+    seen.push([cmd, ...args]);
+    if (cmd === 'gh' && args[0] === '--version') return Promise.resolve({ ok: true, stdout: 'gh 2.x', stderr: '', code: 0 });
+    return Promise.resolve({ ok: true, stdout: '', stderr: '', code: 0 });
+  });
+  const r = await post({ id: betaId, projectKey: betaKey });
+  const body = await r.json();
+  assert.equal(r.status, 409, JSON.stringify(body));
+  assert.match(body.error, /no git remote/);
+  assert.equal(seen.some((a) => a[1] === 'push'), false);
 });

@@ -1,5 +1,5 @@
 // test/api-shape-first.test.mjs — Shape it first on the server (spec D2, D9, D10, D12): the hello feature, `shape` on
-// POST /api/run, the gated workflow list, POST /api/runs/:id/answer and its never-stranded fallback.
+// POST /api/run, the workflow list, POST /api/runs/:id/answer and its never-stranded fallback.
 // Boot = the server-mock-mode recipe (temp home + WORCA_MOCK BEFORE the dynamic import; listen on the MODULE server).
 import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
@@ -22,13 +22,7 @@ let srv, base, wsBase, runs;
 const JSONH = { 'Content-Type': 'application/json' };
 const post = (p, b) => fetch(`${base}${p}`, { method: 'POST', headers: JSONH, body: JSON.stringify(b) });
 const savedMock = process.env.WORCA_MOCK;
-const savedFlags = process.env.WORCA_FLAGS;
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
-
-async function withGate(on, fn) {
-  process.env.WORCA_FLAGS = on ? 'shapeFirst' : '-shapeFirst';   // WORCA_FLAGS locks it over settings.json
-  try { return await fn(); } finally { process.env.WORCA_FLAGS = '-shapeFirst'; }
-}
 
 before(async () => {
   process.env.WORCA_MOCK = '1';
@@ -46,7 +40,6 @@ after(async () => {
       new Promise((r) => { const t = setTimeout(r, 500); t.unref?.(); }),
     ]);
   }
-  if (savedFlags === undefined) delete process.env.WORCA_FLAGS; else process.env.WORCA_FLAGS = savedFlags;
   if (savedMock === undefined) delete process.env.WORCA_MOCK; else process.env.WORCA_MOCK = savedMock;
 });
 
@@ -60,6 +53,22 @@ function hello() {
       clearTimeout(t);
       ws.close();
       resolve(msg);
+    });
+    ws.on('error', (e) => { clearTimeout(t); reject(e); });
+  });
+}
+
+// A live socket that keeps every `state` frame of one run. It resolves once its hello arrives, so no later frame is
+// missed: the run's buffer cannot be asked afterwards, since settleRunEntry drops state frames when the run is done.
+function collectStateFrames(runId) {
+  return new Promise((resolve, reject) => {
+    const ws = new WebSocket(wsBase);
+    const frames = [];
+    const t = setTimeout(() => { ws.terminate(); reject(new Error('no hello')); }, 3000);
+    ws.on('message', (data) => {
+      const msg = JSON.parse(String(data));
+      if (msg.type === 'hello') { clearTimeout(t); resolve({ frames, close: () => ws.close() }); }
+      else if (msg.type === 'state' && msg.runId === runId) frames.push(msg);
     });
     ws.on('error', (e) => { clearTimeout(t); reject(e); });
   });
@@ -83,36 +92,14 @@ function fakePlanRun(id, answer) {
   runs.set(id, { id, kind: 'run', status: 'running', events: [], orch: { answer }, pendingQuestion: { id: 'plan-n_refine-1', kind: 'plan' } });
 }
 
-test('gate off: hello says shapeFirst false and the workflow list has no wf_shape', () => withGate(false, async () => {
-  assert.equal((await hello()).flags.shapeFirst, false);
-  const { workflows } = await (await fetch(`${base}/api/workflows`)).json();
-  assert.ok(!workflows.some((w) => w.id === 'wf_shape'));
-}));
-
-test('gate off: shape and the shape workflows are refused before any target is created; the answer route is 404', () => withGate(false, async () => {
-  const dir = neverCreatedDir();
-  let r = await post('/api/run', { prompt: 'x', projectDir: dir, shape: { perspectives: ['qa'] } });
-  assert.equal(r.status, 400);
-  assert.match((await r.json()).error, /shape is not available/);
-  r = await post('/api/run', { prompt: 'x', projectDir: dir, workflowId: 'wf_shape' });
-  assert.equal(r.status, 400);
-  assert.equal(existsSync(dir), false, 'no refusal created the target dir');
-
-  fakePlanRun('shape-off-run', () => true);
-  try {
-    r = await post('/api/runs/shape-off-run/answer', { id: 'plan-n_refine-1', decision: 'approve' });
-    assert.equal(r.status, 404, 'a live run is not reachable through the gated route');
-  } finally { runs.delete('shape-off-run'); }
-}));
-
-test('gate on: hello says shapeFirst true and wf_shape follows Memory defragment', () => withGate(true, async () => {
-  assert.equal((await hello()).flags.shapeFirst, true);
+test('hello carries no shapeFirst flag and wf_shape follows Memory defragment', async () => {
+  assert.equal('shapeFirst' in (await hello()).flags, false);
   const { workflows } = await (await fetch(`${base}/api/workflows`)).json();
   const ids = workflows.map((w) => w.id);
   assert.equal(ids.indexOf('wf_shape'), ids.indexOf('wf_memory_defrag') + 1);
-}));
+});
 
-test('gate on: an unknown perspective is a 400 naming it, and the shape workflows cannot be deleted', () => withGate(true, async () => {
+test('an unknown perspective is a 400 naming it, and the shape workflows cannot be deleted', async () => {
   const r = await post('/api/run', { prompt: 'x', projectDir: neverCreatedDir(), shape: { perspectives: ['ops'] } });
   assert.equal(r.status, 400);
   assert.match((await r.json()).error, /ops/);
@@ -121,9 +108,9 @@ test('gate on: an unknown perspective is a 400 naming it, and the shape workflow
     assert.equal(d.status, 400, id);
     assert.match((await d.json()).error, /cannot be deleted/);
   }
-}));
+});
 
-test('gate on: a shaped mock run stops at the plan approval and approving finishes it', () => withGate(true, async () => {
+test('a shaped mock run stops at the plan approval and approving finishes it', async () => {
   const dir = gitDir('shape-first');
   const r = await post('/api/run', { prompt: 'Add a charts page.', projectDir: dir, shape: { perspectives: ['qa'] } });
   const text = await r.text();
@@ -156,9 +143,9 @@ test('gate on: a shaped mock run stops at the plan approval and approving finish
   assert.equal(a.status, 200, await a.text());
   const done = await untilSettled(runId);
   assert.equal(done.status, 'done', JSON.stringify({ status: done.status, reason: done.pauseReason, detail: done.pauseDetail }));
-}));
+});
 
-test('gate on: the plan route answers the held id and refuses the rest', () => withGate(true, async () => {
+test('the plan route answers the held id and refuses the rest', async () => {
   const calls = [];
   const answer = (qid, payload, by) => { calls.push({ qid, payload, by }); return true; };
   fakePlanRun('shape-route-run', answer);
@@ -179,9 +166,9 @@ test('gate on: the plan route answers the held id and refuses the rest', () => w
     assert.equal(r.status, 404);
     assert.equal(calls.length, 2, 'refused answers never reached the run');
   } finally { runs.delete('shape-route-run'); }
-}));
+});
 
-test('gate on: an invalid answer is a 422 with the run\'s field errors', () => withGate(true, async () => {
+test('an invalid answer is a 422 with the run\'s field errors', async () => {
   const errors = [{ path: 'feedback', code: 'required', message: 'revise needs feedback text' }];
   fakePlanRun('shape-422-run', () => { throw Object.assign(new Error('invalid'), { code: 'INVALID_ANSWER', errors }); });
   try {
@@ -189,12 +176,7 @@ test('gate on: an invalid answer is a 422 with the run\'s field errors', () => w
     assert.equal(r.status, 422);
     assert.deepEqual((await r.json()).errors, errors);
   } finally { runs.delete('shape-422-run'); }
-}));
-
-test('gate off: the plan text and Save to plans/ routes are 404', () => withGate(false, async () => {
-  assert.equal((await fetch(`${base}/api/runs/x/plan`)).status, 404);
-  assert.equal((await post('/api/runs/x/plan/save', {})).status, 404);
-}));
+});
 
 /** Answer clarify asks until a plan ask other than `skipId` is open; returns it. */
 async function untilPlanAsk(runId, skipId = null) {
@@ -213,7 +195,7 @@ async function untilPlanAsk(runId, skipId = null) {
   throw new Error(`run ${runId} never reached a plan ask`);
 }
 
-test('gate on: a shaped run serves its plan text, saves it to plans/, revises with perspectives and approves', () => withGate(true, async () => {
+test('a shaped run serves its plan text, saves it to plans/, revises with perspectives and approves', async () => {
   const dir = gitDir('shape-plan');
   const r = await post('/api/run', { prompt: 'Add a charts page.', projectDir: dir, shape: { perspectives: ['qa'] } });
   const text = await r.text();
@@ -251,16 +233,21 @@ test('gate on: a shaped run serves its plan text, saves it to plans/, revises wi
   const pq2 = await untilPlanAsk(runId, pq.id);
   assert.deepEqual(pq2.plan.perspectives, ['product', 'qa', 'security']);
 
-  a = await post(`/api/runs/${runId}/answer`, { id: pq2.id, decision: 'approve' });
-  assert.equal(a.status, 200, await a.text());
-  const done = await untilSettled(runId);
-  assert.equal(done.status, 'done', JSON.stringify({ status: done.status, reason: done.pauseReason, detail: done.pauseDetail }));
-  assert.ok(entry.events.some((e) => e.type === 'state' && e.shaping?.approved?.file === pq2.plan.file), 'a state frame carries shaping.approved');
+  const live = await collectStateFrames(runId);
+  try {
+    a = await post(`/api/runs/${runId}/answer`, { id: pq2.id, decision: 'approve' });
+    assert.equal(a.status, 200, await a.text());
+    const done = await untilSettled(runId);
+    assert.equal(done.status, 'done', JSON.stringify({ status: done.status, reason: done.pauseReason, detail: done.pauseDetail }));
+  } finally {
+    live.close();
+  }
+  assert.ok(live.frames.some((e) => e.shaping?.approved?.file === pq2.plan.file), 'a state frame carries shaping.approved');
   const after = (await hello()).runs.find((x) => x.runId === runId);
   assert.equal(after.shaping.approved.file, pq2.plan.file);
-}));
+});
 
-test('gate on: Save to plans/ refuses a workspace run and saves a single-project one', () => withGate(true, async () => {
+test('Save to plans/ refuses a workspace run and saves a single-project one', async () => {
   const tmp = mkdtempSync(join(tmpdir(), 'worca-cc-shape-save-'));
   const planFile = join(tmp, 'plan.md');
   writeFileSync(planFile, '# Plan\n');
@@ -280,9 +267,9 @@ test('gate on: Save to plans/ refuses a workspace run and saves a single-project
     assert.equal(r.status, 200, JSON.stringify(body));
     assert.equal(readFileSync(join(projectDir, body.path), 'utf8'), '# Plan\n');
   } finally { runs.delete('shape-save-ws'); runs.delete('shape-save-one'); }
-}));
+});
 
-test('gate off: a held plan is still answered through POST /api/answer (never stranded)', () => withGate(false, async () => {
+test('a held plan is also answered through POST /api/answer (never stranded)', async () => {
   const calls = [];
   fakePlanRun('shape-stranded-run', (qid, payload) => { calls.push({ qid, payload }); return true; });
   try {
@@ -290,7 +277,7 @@ test('gate off: a held plan is still answered through POST /api/answer (never st
     assert.equal(r.status, 200, await r.text());
     assert.equal(calls.length, 1);
   } finally { runs.delete('shape-stranded-run'); }
-}));
+});
 
 const STATS = { questions: { asked: 2, skipped: 1 }, revises: [{ round: 1, by: 'person' }], shapeScore: 0.875,
   reviewCycles: 2, checklist: null, cost: { shaping: 12.5, building: 30 } };
@@ -304,8 +291,8 @@ test('GET /api/runs/:id returns state.shapeStats for a shaped run and no shapeSt
   assert.equal('shapeStats' in (await get(plain.id)).state, false);
 });
 
-test('Ask before each run from the card persists, and run 2\'s plan ask opens as a "Plan · run 2" step card', () => withGate(true, async () => {
-  const { createSliceFeature, featureApprovesEach } = await import('../src/core/shape/features.mjs');
+test('Ask before each run from the card persists, and run 2\'s plan ask opens as a "Plan · run 2" step card', async () => {
+  const { createSliceFeature } = await import('../src/core/shape/features.mjs');
   const { seedPipelineRow } = await import('./helpers/db-seed.mjs');
   const { getDb } = await import('../src/core/db.mjs');
   const { projectKey } = await import('../src/core/store.mjs');
@@ -319,8 +306,7 @@ test('Ask before each run from the card persists, and run 2\'s plan ask opens as
   const r = await post(`/api/shape/features/${f.id}/approve-each`, { on: true });
   assert.equal(r.status, 200);
   assert.equal((await (await fetch(`${base}/api/shape/features/${f.id}`)).json()).approveEach, true);
-  assert.equal(featureApprovesEach(f.id), true);
-  // Run 2 raises its plan ask (orchestrator-slices.test.mjs:327 proves "Approve each on → always a plan ask").
+  // Run 2 raises its plan ask (a failing check or an outline change stops a later plan; orchestrator-slices.test.mjs).
   const p2 = 'asf00000002';
   seedPipelineRow({ id: p2, projectKey: projectKey(dir), status: 'running', title: p2, branch: { source: 'feat/a', feature: 'feat/b' } });
   getDb().prepare('UPDATE shape_feature_slices SET pipeline_id = ? WHERE feature_id = ? AND idx = 2').run(p2, f.id);
@@ -332,7 +318,7 @@ test('Ask before each run from the card persists, and run 2\'s plan ask opens as
     assert.equal(card.feature.ask.kind, 'plan');
     assert.equal(stepChip(pq, { shaping: { feature: { id: f.id, index: card.feature.ask.index, total: 2 } } }), 'Plan · run 2');
   } finally { runs.delete('live-asf2'); }
-}));
+});
 
 // ── Shaper s4: the Ship card (offerShipCard, POST /api/ask/threads/:id/cards/:cardId on a `ship` card) ───────────────
 const shipSlice = (n) => ({ id: `s${n}`, title: `Slice ${n}`, goal: `Goal ${n}`, inScope: [`do ${n}`], outOfScope: [], acceptance: [`ok ${n}`],
@@ -430,27 +416,21 @@ const postTurn = async (threadId, text) => {
   }
 };
 /** A two-run feature whose run 1 is the origin pipeline `p1`, and a thread that follows it. */
-async function seedFeature(tag, p1) {
+async function seedFeature(tag, p1, base = {}) {
   const { createSliceFeature } = await import('../src/core/shape/features.mjs');
   const { seedPipelineRow } = await import('./helpers/db-seed.mjs');
   const { projectKey } = await import('../src/core/store.mjs');
   const dir = gitDir(tag);
   sh('git branch dev', { cwd: dir });
   seedPipelineRow({ id: p1, projectKey: projectKey(dir), status: 'done', title: p1, branch: { source: 'dev', feature: 'feat/a' } });
-  const f = createSliceFeature({ pipelineId: p1, projectDir: dir, title: 'Charts', perspectives: ['product'], workflowId: 'wf_shape',
+  const f = createSliceFeature({ pipelineId: p1, projectDir: dir, title: 'Charts', perspectives: ['product'], workflowId: 'wf_shape', base,
     outline: { why: 'w', slices: [1, 2].map((i) => ({ id: `s${i}`, title: `Part ${i}`, goal: 'g', inScope: [], outOfScope: [], acceptance: [], dependsOn: [], estimate: 'M' })) } });
   const thread = createThread();
   askLinkRun(thread.id, { runId: `run-${p1}`, pipelineId: p1, cardId: 'card_5f000001' });
   return { dir, f, thread };
 }
 
-test('s5 gate off: /changes and /reply are 404', () => withGate(false, async () => {
-  const thread = createThread();
-  assert.equal((await post(`/api/ask/threads/${thread.id}/changes`, { pipelineId: 'aaaa0001', text: 'x' })).status, 404);
-  assert.equal((await post(`/api/ask/threads/${thread.id}/reply`, { text: 'x' })).status, 404);
-}));
-
-test('s5: /changes posts a changes card with the run\'s PR; foreign verbs 400; Not now declines once', () => withGate(true, async () => {
+test('s5: /changes posts a changes card with the run\'s PR; foreign verbs 400; Not now declines once', async () => {
   const { id, thread } = await doneRunWithPr('s5-changes');
   const r = await post(`/api/ask/threads/${thread.id}/changes`, { pipelineId: id, text: 'make it blue' });
   assert.equal(r.status, 201, await r.clone().text());
@@ -464,9 +444,9 @@ test('s5: /changes posts a changes card with the run\'s PR; foreign verbs 400; N
   assert.equal(nn.status, 200);
   assert.equal((await nn.json()).block.state, 'declined');
   assert.equal((await post(url, { verb: 'not-now' })).status, 409);
-}));
+});
 
-test('s5: a round starts tag-exempt with its origin\'s bare-key tag (saved before key:value) and carries round 2', () => withGate(true, async () => {
+test('s5: a round starts tag-exempt with its origin\'s bare-key tag (saved before key:value) and carries round 2', async () => {
   const { id, thread } = await doneRunWithPr('s5-round');
   getDb().prepare("INSERT INTO run_tags (pipeline_id, key, value) VALUES (?, 'acme', '')").run(id);
   await post(`/api/ask/threads/${thread.id}/changes`, { pipelineId: id, text: 'make it blue' });
@@ -486,9 +466,9 @@ test('s5: a round starts tag-exempt with its origin\'s bare-key tag (saved befor
   assert.equal(plain.status, 200, await plain.clone().text());
   const { runId } = await plain.json();
   assert.equal((await branchThenStop(runId)).branch.roundOf, undefined);
-}));
+});
 
-test('s2: a round started from a run with tags and labels carries both', () => withGate(true, async () => {
+test('s2: a round started from a run with tags and labels carries both', async () => {
   const { id, thread } = await doneRunWithPr('s2-round');
   getDb().prepare("INSERT INTO run_tags (pipeline_id, key, value) VALUES (?, 'client', 'acme')").run(id);
   editRunLabels(id, ['hotfix']);
@@ -500,9 +480,9 @@ test('s2: a round started from a run with tags and labels carries both', () => w
   const block = (await r.json()).block;
   const { pid } = await branchThenStop(block.card.result.runId);
   assert.deepEqual([readRunTags(pid), readRunLabels(pid)], [['client:acme'], ['hotfix']]);
-}));
+});
 
-test('ordinary stays ordinary: in a thread with a finished run, chat messages are Ask turns — no card, and /reply is gone', () => withGate(true, async () => {
+test('ordinary stays ordinary: in a thread with a finished run, chat messages are Ask turns — no card, and /reply is gone', async () => {
   const { thread } = await doneRunWithPr('s5-ordinary');
   assert.equal((await post(`/api/ask/threads/${thread.id}/reply`, { text: 'make it blue' })).status, 404);
   for (const text of ['summarize the diff', 'thanks, now open the PR']) {
@@ -513,9 +493,9 @@ test('ordinary stays ordinary: in a thread with a finished run, chat messages ar
   }
   assert.deepEqual(listMessages(thread.id).filter((m) => m.role === 'user').map((m) => m.text), ['summarize the diff', 'thanks, now open the PR']);
   assert.equal(blocksOf(thread.id).filter((b) => b.card && (b.card.type === 'changes' || b.card.type === 'route')).length, 0);
-}));
+});
 
-test('propose_changes (askShapeAction) posts the same changes card /reply posted: the run\'s PR, round 2', () => withGate(true, async () => {
+test('propose_changes (askShapeAction) posts the same changes card /reply posted: the run\'s PR, round 2', async () => {
   const { _testing: t } = await import('../ui/server.mjs');
   const { id, thread } = await doneRunWithPr('s5-tool-changes');
   const r = t.askShapeAction({ kind: 'changes', pipelineId: id, request: 'make it blue' }, thread.id);
@@ -528,9 +508,9 @@ test('propose_changes (askShapeAction) posts the same changes card /reply posted
   assert.match(t.askShapeAction({ kind: 'route', featureId: 'f1', text: 'x', guess: 'add', reason: 'r' }, thread.id).notice, /^Not applied: route_message is for a chat that follows a feature/);
   assert.equal(t.askShapeAction({ kind: 'changes', pipelineId: 'beef0001', request: 'x' }, thread.id).notice, 'Not applied: this chat does not follow run beef0001');
   assert.equal(listMessages(thread.id).length, 0, 'askShapeAction itself appends nothing: the turn stores the block');
-}));
+});
 
-test('route_message (askShapeAction): the model\'s guess on the Route card; Save for later stores an idea; Own run now starts from the base', () => withGate(true, async () => {
+test('route_message (askShapeAction): the model\'s guess on the Route card; Save for later stores an idea; Own run now starts from the base', async () => {
   const { _testing: t } = await import('../ui/server.mjs');
   const { featureView } = await import('../src/core/shape/features.mjs');
   const { f, thread } = await seedFeature('s5-tool-route', 'asf5t0001');
@@ -554,9 +534,9 @@ test('route_message (askShapeAction): the model\'s guess on the Route card; Save
   const { branch } = await branchThenStop((await own.json()).block.card.result.runId);
   assert.equal(branch.source, 'dev');
   assert.equal(branch.roundOf, undefined);
-}));
+});
 
-test('an open Plan step: free text is an Ask turn (never the step\'s answer) and both tools are refused', () => withGate(true, async () => {
+test('an open Plan step: free text is an Ask turn (never the step\'s answer) and both tools are refused', async () => {
   const { _testing: t } = await import('../ui/server.mjs');
   const p1 = 'asf5o0001';
   const { f, thread } = await seedFeature('s5-open', p1);
@@ -575,19 +555,16 @@ test('an open Plan step: free text is an Ask turn (never the step\'s answer) and
     assert.equal(seen.length, 0, 'the step was not answered from the chat');
     assert.equal(blocksOf(thread.id).filter((b) => b.card && (b.card.type === 'changes' || b.card.type === 'route')).length, 0, 'no Changes or Route card');
   } finally { runs.delete('live-s5open'); }
-}));
-
-test('the turn context: gate on, a followed run gives ctx.shape; gate off, none (nothing changes vs dev)', async () => {
-  const { _testing: t } = await import('../ui/server.mjs');
-  const { id, thread } = await withGate(true, () => doneRunWithPr('s5-ctx'));
-  await withGate(true, async () => {
-    const ctx = await t.resolveAskContext(thread.id, {}, []);
-    assert.deepEqual(ctx.shape, { run: { id, title: 'Add a chart', status: 'done', finished: true, pr: { number: 41, state: 'open' }, rounds: 1 } });
-  });
-  await withGate(false, async () => assert.equal('shape' in (await t.resolveAskContext(thread.id, {}, [])), false));
 });
 
-test('s5: a Watch PR fix run started through prWatcherDeps is stored as round 2 of the PR\'s run; no block in its thread', () => withGate(true, async () => {
+test('the turn context: a followed run gives ctx.shape', async () => {
+  const { _testing: t } = await import('../ui/server.mjs');
+  const { id, thread } = await doneRunWithPr('s5-ctx');
+  const ctx = await t.resolveAskContext(thread.id, {}, []);
+  assert.deepEqual(ctx.shape, { run: { id, title: 'Add a chart', status: 'done', finished: true, pr: { number: 41, state: 'open' }, rounds: 1 } });
+});
+
+test('s5: a Watch PR fix run started through prWatcherDeps is stored as round 2 of the PR\'s run; no block in its thread', async () => {
   const { _testing: testing } = await import('../ui/server.mjs');
   const { id, dir, thread } = await doneRunWithPr('s5-fix');
   const before = blocksOf(thread.id).length;
@@ -600,4 +577,167 @@ test('s5: a Watch PR fix run started through prWatcherDeps is stored as round 2 
   const got = await (await fetch(`${base}/api/ask/runs/${id}`)).json();
   assert.deepEqual(got.extras.rounds.map((x) => [x.round, x.pipelineId, x.by]), [[2, pid, 'watch']]);
   assert.equal(blocksOf(thread.id).length, before);
-}));
+});
+
+// ── Guardrails of card-started runs: inherited from the run they change; a Chat card never lands on Permissive by default ──
+const { prepare: dbPrepare, GUARDRAILS_DEFAULT_META_KEY } = await import('../src/core/db.mjs');
+/** Run `fn` on an install whose default set is Permissive (a pre-v81 install). */
+async function onPermissiveDefault(fn) {
+  dbPrepare('INSERT OR REPLACE INTO store_meta (key, kind, data) VALUES (?, ?, ?)').run(GUARDRAILS_DEFAULT_META_KEY, 'setting', JSON.stringify('permissive'));
+  try { return await fn(); } finally { dbPrepare('DELETE FROM store_meta WHERE key = ?').run(GUARDRAILS_DEFAULT_META_KEY); }
+}
+const setGuardrails = (pid, id) => getDb().prepare('UPDATE pipelines SET guardrails_id = ? WHERE id = ?').run(id, pid);
+/** The set the started run's orchestrator holds, and the note it got about a refused Permissive default; then stop it. */
+async function startedGuardrails(runId) {
+  const e = runs.get(runId);
+  const got = { id: e.orch.guardrailsId, note: e.orch._guardrailsNote || null };
+  await branchThenStop(runId);
+  return got;
+}
+const startCard = async (threadId, cardId, body) => {
+  const r = await post(`/api/ask/threads/${threadId}/cards/${cardId}`, body);
+  assert.equal(r.status, 200, await r.clone().text());
+  return (await r.json()).block.card.result.runId;
+};
+
+test('guardrails: on a Permissive-default install a round inherits Normal from the Normal run it changes', async () => {
+  await onPermissiveDefault(async () => {
+    const { id, thread } = await doneRunWithPr('gr-round');
+    setGuardrails(id, 'normal');
+    await post(`/api/ask/threads/${thread.id}/changes`, { pipelineId: id, text: 'make it blue' });
+    const card = blocksOf(thread.id).at(-1);
+    assert.equal(card.card.run.guardrailsId, 'normal');
+    assert.deepEqual(await startedGuardrails(await startCard(thread.id, card.id, { verb: 'start' })), { id: 'normal', note: null });
+  });
+});
+
+test('guardrails: a follow-up from a Changes card (merged PR) inherits the changed run\'s set', async () => {
+  const { persistPrState } = await import('../src/core/artifacts.mjs');
+  await onPermissiveDefault(async () => {
+    const { id, thread } = await doneRunWithPr('gr-follow');
+    persistPrState(id, { url: 'https://github.com/o/r/pull/41', number: 41, state: 'MERGED' });
+    setGuardrails(id, 'secure');
+    await post(`/api/ask/threads/${thread.id}/changes`, { pipelineId: id, text: 'add a legend' });
+    const card = blocksOf(thread.id).at(-1);
+    assert.equal(card.card.landing.kind, 'follow-up');
+    assert.deepEqual(await startedGuardrails(await startCard(thread.id, card.id, { verb: 'start' })), { id: 'secure', note: null });
+  });
+});
+
+test('guardrails: Own run now starts on the feature\'s set; Add to the feature queues a run on it', async () => {
+  const { _testing: t } = await import('../ui/server.mjs');
+  const { getTicket } = await import('../src/core/scheduler.mjs');
+  await onPermissiveDefault(async () => {
+    const { f, thread } = await seedFeature('gr-route', 'agr5t0001', { guardrailsId: 'secure' });
+    const own = t.askShapeAction({ kind: 'route', featureId: f.id, text: 'hotfix: login', guess: 'own', reason: 'cannot wait' }, thread.id);
+    const m1 = askAppendMessage(thread.id, { role: 'assistant', text: '', status: 'done', blocks: [{ kind: 'card', id: 'card_9e000001', ...own.block }] });
+    assert.deepEqual(await startedGuardrails(await startCard(thread.id, m1.blocks[0].id, { verb: 'own' })), { id: 'secure', note: null });
+    const add = t.askShapeAction({ kind: 'route', featureId: f.id, text: 'also a PNG', guess: 'add', reason: 'fits' }, thread.id);
+    const m2 = askAppendMessage(thread.id, { role: 'assistant', text: '', status: 'done', blocks: [{ kind: 'card', id: 'card_9e000002', ...add.block }] });
+    const r = await post(`/api/ask/threads/${thread.id}/cards/${m2.blocks[0].id}`, { verb: 'add', where: 'extra' });
+    assert.equal(r.status, 200, await r.clone().text());
+    const { featureView } = await import('../src/core/shape/features.mjs');
+    const slice = featureView(f.id).slices.at(-1);
+    assert.equal(getTicket(slice.ticketId, { withRequest: true }).request.guardrailsId, 'secure');
+  });
+});
+
+test('guardrails: a Changes round from a run with no stored set lands on Normal, not the Permissive default, and says so', async () => {
+  await onPermissiveDefault(async () => {
+    const { id, thread } = await doneRunWithPr('gr-legacy');
+    await post(`/api/ask/threads/${thread.id}/changes`, { pipelineId: id, text: 'make it blue' });
+    const card = blocksOf(thread.id).at(-1);
+    assert.equal(Object.hasOwn(card.card.run, 'guardrailsId'), false);
+    const runId = await startCard(thread.id, card.id, { verb: 'start' });
+    const e = runs.get(runId);
+    await waitFor(() => e.events.some((ev) => ev.type === 'log' && /Guardrails: Normal/.test(ev.text || '')), 60000);
+    const pid = await pipelineOfRun(runId);
+    const audit = () => getDb().prepare('SELECT text FROM pipeline_events WHERE pipeline_id = ?').all(pid).map((r) => r.text);
+    await waitFor(() => audit().some((t) => /Guardrails: Normal, not Permissive/.test(t)), 60000);
+    const got = await startedGuardrails(runId);
+    assert.equal(got.id, 'normal');
+    assert.match(got.note, /Guardrails: Normal, not Permissive — the install default is Permissive/);
+  });
+});
+
+test('guardrails: a Changes round from a run stored on Permissive starts on Normal and says why', async () => {
+  const { id, thread } = await doneRunWithPr('gr-perm');
+  setGuardrails(id, 'permissive');
+  await post(`/api/ask/threads/${thread.id}/changes`, { pipelineId: id, text: 'make it blue' });
+  const card = blocksOf(thread.id).at(-1);
+  assert.equal(card.card.run.guardrailsId, 'permissive');
+  const got = await startedGuardrails(await startCard(thread.id, card.id, { verb: 'start' }));
+  assert.equal(got.id, 'normal');
+  assert.match(got.note, /the run it changes is on Permissive/);
+});
+
+test('guardrails: a feature\'s landing facts read each slice\'s stored set from its run', async () => {
+  const { featureView } = await import('../src/core/shape/features.mjs');
+  const { readPrState } = await import('../src/core/artifacts.mjs');
+  const { landingFactsOfFeature } = await import('../src/core/shape/changes.mjs');
+  const { f } = await seedFeature('gr-slice', 'agr5s0001', { guardrailsId: 'normal' });
+  setGuardrails('agr5s0001', 'secure');
+  const facts = landingFactsOfFeature(f.id, { featureView, readPrState, findPipelineRowById: () => null, readRunTags, readRunLabels });
+  assert.equal(facts.feature.guardrailsId, 'normal');
+  assert.equal(facts.feature.slices[0].pipelineId, 'agr5s0001');
+  assert.equal(facts.feature.slices[0].guardrailsId, 'secure');
+});
+
+test('guardrails: a workspace Chat-card start with no set and a Permissive default lands on Normal and its run says so', { timeout: 120000 }, async () => {
+  const { addProject } = await import('../src/core/projects.mjs');
+  const { createWorkspace } = await import('../src/core/workspaces.mjs');
+  await onPermissiveDefault(async () => {
+    const dirs = [gitDir('gr-ws-a'), gitDir('gr-ws-b')];
+    for (const [i, d] of dirs.entries()) await addProject({ name: `grws${i}`, path: d });
+    const ws = await createWorkspace({ name: 'gr ws', projectPaths: dirs });
+    const thread = createThread();
+    const cardId = askAppendMessage(thread.id, { role: 'assistant', text: '', status: 'done',
+      blocks: [{ kind: 'card', id: 'card_9d000001', state: 'proposed', card: { workspaceId: ws.id, brief: 'x', workflowId: 'wf_default', guardrailsId: 'normal' } }] }).blocks[0].id;
+    const r = await post('/api/run', { prompt: 'x', workspaceId: ws.id, askThreadId: thread.id, askCardId: cardId });
+    assert.equal(r.status, 200, await r.clone().text());
+    const { runId } = await r.json();
+    const e = runs.get(runId);
+    try {
+      assert.equal(e.orch.guardrailsId, 'normal');
+      assert.match(e.orch._guardrailsNote || '', /Guardrails: Normal, not Permissive/);
+    } finally {
+      await post('/api/stop', { runId });
+      await untilSettled(runId);
+    }
+  });
+});
+
+test('guardrails: a Chat-card start moved to Normal on an engine other than Claude is refused up front with the way out', async () => {
+  await onPermissiveDefault(async () => {
+    const dir = gitDir('gr-engine');
+    const thread = createThread();
+    const cardId = askAppendMessage(thread.id, { role: 'assistant', text: '', status: 'done',
+      blocks: [{ kind: 'card', id: 'card_9b000001', state: 'proposed', card: { projectDir: dir, brief: 'x', workflowId: 'wf_default', guardrailsId: 'normal' } }] }).blocks[0].id;
+    const r = await post('/api/run', { prompt: 'x', projectDir: dir, engine: 'codex', askThreadId: thread.id, askCardId: cardId });
+    const j = await r.json();
+    assert.equal(r.status, 409, JSON.stringify(j));
+    assert.equal(j.code, 'GUARDRAILS_CARD_ENGINE');
+    assert.match(j.error, /Normal guardrail set, which codex cannot enforce — start it from New run and pick a guardrail set/);
+    assert.equal(blocksOf(thread.id).find((b) => b.id === cardId).state, 'proposed', 'the card stays answerable');
+  });
+});
+
+test('guardrails: a run proposal card with no set picked lands on Normal; an explicit pick (Permissive too) is kept; no card keeps the default', async () => {
+  await onPermissiveDefault(async () => {
+    const dir = gitDir('gr-card');
+    const thread = createThread();
+    const card = (n) => askAppendMessage(thread.id, { role: 'assistant', text: '', status: 'done',
+      blocks: [{ kind: 'card', id: `card_9c00000${n}`, state: 'proposed', card: { projectDir: dir, brief: 'x', workflowId: 'wf_default', guardrailsId: 'normal' } }] }).blocks[0].id;
+    const start = async (extra) => {
+      const r = await post('/api/run', { prompt: 'x', projectDir: dir, ...extra });
+      assert.equal(r.status, 200, await r.clone().text());
+      return startedGuardrails((await r.json()).runId);
+    };
+    const none = await start({ askThreadId: thread.id, askCardId: card(1) });
+    assert.equal(none.id, 'normal');
+    assert.match(none.note, /Guardrails: Normal, not Permissive/);
+    assert.deepEqual(await start({ askThreadId: thread.id, askCardId: card(2), guardrailsId: 'permissive' }), { id: 'permissive', note: null });
+    assert.deepEqual(await start({ askThreadId: thread.id, askCardId: card(3), guardrailsId: 'secure' }), { id: 'secure', note: null });
+    assert.deepEqual(await start({}), { id: 'permissive', note: null }, 'a start from no card keeps the install default');
+  });
+});

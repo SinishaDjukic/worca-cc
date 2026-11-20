@@ -2,17 +2,16 @@
 import { test, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
 import { checkRows } from './helpers/rows.mjs';
-import { readFileSync } from 'node:fs';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { JSDOM } from 'jsdom';
 import { useDomRelease } from './helpers/jsdom-release.mjs';
 import { lastToast } from './helpers/feedback.mjs';
 import { backdropClick, pressEscape, discardPrompt, keepEditing } from './helpers/popups.mjs';
+import { readIndexHtml } from '../src/core/read-index-html.mjs';
 
 // Release each booted window after its test (see test/helpers/jsdom-release.mjs).
 const trackDom = useDomRelease(afterEach);
 
-const htmlPath = fileURLToPath(new URL('../ui/public/index.html', import.meta.url));
 const appPath = fileURLToPath(new URL('../ui/public/app.js', import.meta.url));
 
 const AGENTS = [
@@ -52,7 +51,7 @@ async function boot({ agentsFail = false, workflows = null, del = null, onboardi
   let agentList = AGENTS;
   let agentsDown = agentsFail;
   let agentFetches = 0;
-  const dom = trackDom(new JSDOM(readFileSync(htmlPath, 'utf8'), { url: 'http://localhost:4317/' }));
+  const dom = trackDom(new JSDOM(readIndexHtml(), { url: 'http://localhost:4317/' }));
   const { window } = dom;
   window.Element.prototype.scrollIntoView = function () {};
   window.requestAnimationFrame = (fn) => setTimeout(fn, 0);
@@ -294,14 +293,14 @@ test('MAJ-16: after a registry reload the OPEN canvas is re-validated against th
   assert.equal(doc.getElementById('wfv-save').disabled, true, 'Save is disabled instead of 422ing later');
 });
 
-test('#workflows mounts once: Task + End on the canvas, body.view-workflows, Library open on Agents with its three-way selector', async () => {
+test('#workflows mounts once: Task + End on the canvas, body.view-workflows, Library open on Workflows (#1127) with its three-way selector', async () => {
   const { window: w } = await boot();
   await go(w, 'workflows');
   const doc = w.document;
   assert.ok(doc.body.classList.contains('view-workflows'));
   assert.equal(doc.querySelectorAll('#wfv-canvas .gv-world .node').length, 2);
-  assert.equal(doc.getElementById('wfv-library').dataset.tab, 'agents');
-  assert.deepEqual([...doc.querySelectorAll('#wfv-library .wfl-seg .wfl-tab')].map((t) => t.dataset.tab), ['agents', 'scripts', 'workflows']);
+  assert.equal(doc.getElementById('wfv-library').dataset.tab, 'workflows');
+  assert.deepEqual([...doc.querySelectorAll('#wfv-library .wfl-seg .wfl-tab')].map((t) => t.dataset.tab), ['workflows', 'agents', 'scripts']);
   assert.equal(typeof w.__gv, 'function');
 });
 
@@ -363,21 +362,21 @@ test('leaving the view closes an open save dialog: a modal left open in the hidd
   assert.equal(w.document.querySelector('#wfv-dialog-host dialog[open]'), null);
 });
 
-test('#workflows/wf_default opens the built-in and normalises the hash to #workflows', async () => {
+test('#workflows/wf_default opens a copy of the built-in (#1127) and normalises the hash to #workflows', async () => {
   const { window: w } = await boot();
   await go(w, 'workflows/wf_default');
   await tick(); await tick();
   assert.equal(w.location.hash, '#workflows');
-  assert.equal(w.document.getElementById('wfv-name').value, 'Default');
+  assert.equal(w.document.getElementById('wfv-name').value, 'Default copy');
 });
 
-test('#workflows/wfp_<plugin>_<slug> opens a plugin workflow', async () => {
+test('#workflows/wfp_<plugin>_<slug> opens a copy of a plugin workflow (#1127)', async () => {
   const PLUGIN_ROW = { ...DEFAULT_ROW, id: 'wfp_demo_quick', name: 'Quick', origin: 'plugin:demo' };
   const { window: w } = await boot({ workflows: [DEFAULT_ROW, PLUGIN_ROW] });
   await go(w, 'workflows/wfp_demo_quick');
   await tick(); await tick();
   assert.equal(w.location.hash, '#workflows');
-  assert.equal(w.document.getElementById('wfv-name').value, 'Quick');
+  assert.equal(w.document.getElementById('wfv-name').value, 'Quick copy');
 });
 
 test('#workflows/<id> of no saved workflow: one error toast, the hash normalised, the canvas untouched', async () => {
@@ -811,12 +810,17 @@ test('drag-free add: a Library "+" spawns the agent on the canvas and selects it
 const EXPORT_BODY = { created: ['/h/.claude/skills/graph-one/SKILL.md'], updated: [], noop: [], skipped: [], conflicts: [], warnings: [], orphans: [],
   written: ['/h/.claude/skills/graph-one/SKILL.md'] };
 const exportReply = () => Promise.resolve({ ok: true, status: 200, json: async () => EXPORT_BODY });
+/** A Library workflow row's ⋯ menu item (#1127: Export… and Delete… live there). */
+function rowMenu(doc, id, label) {
+  doc.querySelector(`#wfv-library .wfl-wf[data-id="${id}"] .wfl-more`).click();
+  [...doc.querySelectorAll('.wfv-menu-item')].find((b) => b.textContent === label).click();
+}
 async function openExport(opts) {
   const { window: win } = await boot(opts);
   await go(win, 'workflows');
   win.__wfv.library().open('workflows');
   const doc = win.document;
-  doc.querySelector('.wfl-wf[data-id="wf_g"] .wfl-export').click();
+  rowMenu(doc, 'wf_g', 'Export…');
   return { win, doc, modal: doc.getElementById('export-modal'), cancel: doc.getElementById('export-cancel') };
 }
 const pickFormat = (win, doc, f) => doc.querySelector(`#export-format .seg-btn[data-format="${f}"]`).dispatchEvent(new win.Event('click'));
@@ -891,7 +895,7 @@ test('MAJ-17 (ported): a refused workflow delete toasts the server error and kee
       const { window: w } = await boot({ del: { status: 400, body: { error: 'the default workflow cannot be deleted' } } });
       await go(w, 'workflows');
       w.__wfv.library().open('workflows');
-      w.document.querySelector('.wfl-wf[data-id="wf_g"] .wfl-del').click();
+      rowMenu(w.document, 'wf_g', 'Delete…');
       await tick();
       w.document.getElementById('confirm-ok').click();
       await tick(); await tick();
@@ -902,7 +906,7 @@ test('MAJ-17 (ported): a refused workflow delete toasts the server error and kee
       const { window: w } = await boot();
       await go(w, 'workflows');
       w.__wfv.library().open('workflows');
-      w.document.querySelector('.wfl-wf[data-id="wf_g"] .wfl-del').click();
+      rowMenu(w.document, 'wf_g', 'Delete…');
       await tick();
       assert.equal(w.document.getElementById('confirm-message').textContent, 'Delete "Graph one"?\n\nThis cannot be undone.', 'it asks first');
       w.document.getElementById('confirm-ok').click();
@@ -1807,10 +1811,10 @@ test('the open Library overlay is kept clear of a fit only while a useful band s
   size(390, 374);
   if (!w.__wfv.library().isOpen()) doc.getElementById('wfv-lib-toggle').click();
   assert.equal(w.__wfv.library().isOpen(), true, 'precondition: the Library overlay is open');
-  w.__wfv.library().openFolder(['workflows']);
+  w.__wfv.library().openFolder(w.__wfv.library().folderOf('workflow', 'wf_default'));
   doc.querySelector('#wfv-library .wfl-wf[data-id="wf_default"] .wfl-main').click();
   await tick(8);
-  assert.equal(doc.getElementById('wfv-name').value, 'Default', 'precondition: Default is on the canvas');
+  assert.equal(doc.getElementById('wfv-name').value, 'Default copy', 'precondition: a copy of Default is on the canvas (#1127)');
   let [left, right, z] = span();
   assert.ok(z > 0.1, `the graph is readable (zoom ${z}), not a dot`);
   assert.ok(left >= 0 && right <= 374 && right - left > 200, `it spans the 374 px stage: ${left}..${right}`);
@@ -1820,13 +1824,12 @@ test('the open Library overlay is kept clear of a fit only while a useful band s
   assert.ok(left >= 0 && right <= 744 - 396 + 0.5, `it fits the band beside the overlay: ${left}..${right}`);
 });
 
-test('the Workflows tour survives a Library search query: ✕ on the open search, Default itself when the query shows it', async () => {
+test('the Workflows tour on a Library that opens on Workflows (#1127): Default in its open Built-in folder; a folded Built-in is the hop; ✕ on an open search; Default itself when the query shows it', async () => {
   const STEPS = ['claude', 'project', 'run', 'ask', 'realRun', 'workflows', 'workspace', 'teamMetrics', 'teamPolicy'];
   const onboarding = { steps: Object.fromEntries(STEPS.map((id) => [id, id === 'claude'])), done: 1, total: 9, claude: { bin: 'claude', hint: null }, hidden: false, welcomeSeen: true };
   const MINE = { ...V2_ROW, id: 'wf_mine', name: 'Mine', domain: 'general' };
   const { window: w } = await boot({ onboarding, workflows: [DEFAULT_ROW, V2_ROW, MINE] });
   const doc = w.document;
-  // jsdom has no layout: every control outside a hidden subtree gets a box, so guide-spot sees it as showing.
   const ZERO = { left: 0, top: 0, width: 0, height: 0, right: 0, bottom: 0, x: 0, y: 0 };
   const BOX = { left: 10, top: 10, width: 100, height: 30, right: 110, bottom: 40, x: 10, y: 10 };
   w.Element.prototype.getBoundingClientRect = function () { return this.closest('[hidden], .hidden') ? ZERO : BOX; };
@@ -1834,26 +1837,26 @@ test('the Workflows tour survives a Library search query: ✕ on the open search
   const text = () => doc.querySelector('.guide-layer .guide-text')?.textContent || '';
   const until = async (fn, ms = 3000) => { const t0 = Date.now(); while (!fn() && Date.now() - t0 < ms) await new Promise((r) => setTimeout(r, 20)); return fn(); };
   const query = (v) => { const f = doc.getElementById('wfl-filter'); f.value = v; f.dispatchEvent(new w.Event('input', { bubbles: true })); };
+  const FOLDED = '#wfv-library .wfl-folder[data-folder="workflows/_builtin"][aria-expanded="false"]';
   await go(w, 'getting-started');
   doc.querySelector('.gs-tile[data-step="workflows"]').click();
   await tick(4);
   doc.querySelector('.nav button[data-nav="workflows"]').click();
   await go(w, 'workflows');
-  assert.equal(await until(() => target() === '#wfv-library #wfl-tab-workflows'), true, `the tour switches the Library to Workflows: ${target()}`);
   try {
-    // A query in Agents rides along to Workflows (the selector keeps it): it hides the folder rows there, so ✕ on the
-    // open search is what is left.
+    assert.equal(await until(() => target() === '#wfv-library .wfl-wf[data-id="wf_default"]'), true, `Workflows is selected and Built-in is open: Default itself: ${target()}`);
+    doc.querySelector('#wfv-library .wfl-folder[data-folder="workflows/_builtin"]').click();      // fold Built-in
+    assert.equal(await until(() => target() === FOLDED), true, `a folded Built-in is the hop: ${target()}`);
+    assert.equal(text(), 'Open “Built-in”: the built-in Default workflow lives in this folder.');
     doc.getElementById('wfl-filter-btn').click();
     query('zzz');
-    doc.getElementById('wfl-tab-workflows').click();
-    assert.equal(await until(() => target() === '#wfv-library .wfl-head.is-searching #wfl-close'), true, `Workflows + a query: ${target()}`);
+    assert.equal(await until(() => target() === '#wfv-library .wfl-head.is-searching #wfl-close'), true, `a query hides the folders: ${target()}`);
     assert.equal(text(), 'Close the search: the folders are under it.');
     await tick(20);
     assert.equal(target(), '#wfv-library .wfl-head.is-searching #wfl-close', 'the tour stays up (it never gives up on a hidden target)');
-    doc.getElementById('wfl-close').click();                 // closes the search and clears the query
+    doc.getElementById('wfl-close').click();
     assert.equal(doc.getElementById('wfv-library').dataset.open, 'true', 'the Library stays open');
-    assert.equal(await until(() => target() === '#wfv-library .wfl-folder[data-folder="workflows/coding"]'), true, `then Default's folder: ${target()}`);
-    // A query that lists Default: the folder hop is done, the tour rings Default in the flat list.
+    assert.equal(await until(() => target() === FOLDED), true, `then the folded Built-in again: ${target()}`);
     doc.getElementById('wfl-filter-btn').click();
     query('def');
     assert.equal(await until(() => target() === '#wfv-library .wfl-wf[data-id="wf_default"]'), true, `Workflows + "def": ${target()}`);
@@ -1880,7 +1883,7 @@ test('Export… → Marketplace: reopening the dialog mid-read starts a fresh ma
   globalThis.fetch = fetchTargets; w.fetch = fetchTargets;
   const options = () => [...doc.getElementById('export-marketplace').options].map((o) => o.value);
   const openMarketplace = async () => {
-    doc.querySelector('.wfl-wf[data-id="wf_g"] .wfl-export').click();
+    rowMenu(doc, 'wf_g', 'Export…');
     doc.querySelector('#export-format .seg-btn[data-format="plugin"]').click();
     doc.querySelector('#export-plugin-dest .seg-btn[data-pdest="marketplace"]').click();
     await tick();
@@ -1952,4 +1955,53 @@ test('F-26: the Save reason shows as text, linked by aria-describedby, and hides
       { id: 'w4', from: { node: 'n_rev', port: 'pass' }, to: { node: 'n_end', port: 'result' } }] });
   await tick(); await tick();
   assert.equal(reason.hidden, true);
+});
+
+test('a workflows-changed frame (a chat save, #1126) re-reads the list into an OPEN Workflows Library; on another page it fetches nothing', async () => {
+  const { window: w, requests, recv } = await boot();
+  await go(w, 'workflows');
+  w.__wfv.library().open('workflows');
+  const chatRow = { id: 'wf_from-chat', name: 'From chat', version: 2, domain: 'coding', origin: 'auto',
+    nodes: [{ id: 'n_task', kind: 'task', x: 60, y: 200, config: {} }, { id: 'n_end', kind: 'end', x: 960, y: 200, config: {} }], wires: [] };
+  w.__rows.push(chatRow);
+  recv({ type: 'workflows-changed', action: 'saved' });
+  await tick(8);
+  // Default, Graph one and Legacy one are all coding: one domain, no folders — every row is drawn in the section.
+  assert.ok(w.document.querySelector('.wfl-wf[data-item="workflow:wf_from-chat"]'), 'the saved row is listed without leaving the view');
+  await go(w, 'running');
+  const n0 = requests.length;
+  recv({ type: 'workflows-changed', action: 'saved' });
+  await tick(8);
+  assert.deepEqual(requests.slice(n0).filter((r) => /\/api\/workflows\b/.test(r.url)).map((r) => r.url), [], 'a closed view reloads on entry anyway');
+});
+
+test('#1127: Edit opens your row in place, Use as template opens a built-in (or ⋯ on yours) as an unsaved copy, #workflows/<id> follows the same rule, and the canvas badge says which', async () => {
+  const { window: w } = await boot();
+  await go(w, 'workflows');
+  const doc = w.document;
+  const lib = doc.getElementById('wfv-library');
+  const badge = doc.getElementById('wfv-doc');
+  const c = w.__gv().c;
+  assert.equal(lib.dataset.tab, 'workflows');
+  assert.deepEqual([...lib.querySelectorAll('.wfl-folder')].map((f) => [f.dataset.folder, f.getAttribute('aria-expanded')]),
+    [['workflows/_yours', 'true'], ['workflows/_builtin', 'true']], 'Yours above Built-in, both open');
+  assert.equal(badge.hidden, true, 'a blank canvas says nothing');
+  doc.querySelector('#wfv-library .wfl-wf[data-id="wf_g"] .wfl-main').click();
+  await tick(8);
+  assert.equal(c.template().id, 'wf_g');
+  assert.deepEqual([badge.hidden, badge.textContent, badge.dataset.kind], [false, 'Editing', 'edit']);
+  doc.querySelector('#wfv-library .wfl-wf[data-id="wf_default"] .wfl-act').click();
+  await tick(8);
+  assert.deepEqual([c.template().id, doc.getElementById('wfv-name').value, badge.textContent, badge.dataset.kind], ['', 'Default copy', 'Unsaved copy', 'copy']);
+  assert.match(badge.title, /“Default” stays as it is/);
+  doc.querySelector('#wfv-library .wfl-wf[data-id="wf_g"] .wfl-more').click();
+  [...doc.querySelectorAll('.wfv-menu-item')].find((b) => b.textContent === 'Use as template').click();
+  await tick(8);
+  assert.deepEqual([c.template().id, doc.getElementById('wfv-name').value], ['', 'Graph one copy'], '⋯ › Use as template on your own row');
+  await go(w, 'workflows/wf_default');
+  assert.deepEqual([c.template().id, doc.getElementById('wfv-name').value, badge.dataset.kind], ['', 'Default copy', 'copy'], 'a built-in address opens a copy');
+  await go(w, 'workflows/wf_g');
+  assert.deepEqual([c.template().id, badge.dataset.kind], ['wf_g', 'edit'], 'your own address opens it to Edit');
+  await go(w, 'workflows/wf_gone');
+  assert.match(lastToast(doc).detail, /"wf_gone" was deleted or renamed/);
 });

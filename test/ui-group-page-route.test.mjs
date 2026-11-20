@@ -1,10 +1,9 @@
 // test/ui-group-page-route.test.mjs — runs redesign slice 4 (D16): #feature/:id and #group/:id render the group page
-// (ui/public/group-page.mjs) into the feature page's section, with the Shaper flag on or off, for features, user
+// (ui/public/group-page.mjs) into the feature page's section, for features, user
 // groups and Run-after chains; its Decisions tab (D15) and its Ship for a user group (D6).
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { bootApp } from './helpers/run-page-boot.mjs';
-import { applyFlags } from '../ui/public/flags.mjs';
 import { REPLAY_FRAMES } from './helpers/run-states.mjs';
 
 const member = (i) => ({ position: i, title: `Slice ${i}`, pipelineId: `p${i}`, ticketId: null, status: 'done', pr: null, ticket: null, adhoc: false, after: null });
@@ -21,9 +20,8 @@ const handler = (url) => (url.startsWith('/api/run-groups') ? json(GROUPS)
 
 async function boot(fetchHandler = handler) {
   const ctx = await bootApp({ fetchHandler });
-  applyFlags({ shapeFirst: true }, ctx.window.document);   // a fresh document per boot: nothing to reset
   ctx.wsBox.ws.dispatch('open', {});
-  ctx.dispatch({ type: 'hello', flags: { shapeFirst: true }, runs: [] });
+  ctx.dispatch({ type: 'hello', runs: [] });
   await ctx.settle();
   return ctx;
 }
@@ -48,6 +46,32 @@ test('#feature/:id for an existing feature renders the group page (Runs tab firs
   ctx.dispatch({ type: 'run-groups-changed' });                  // a reload repaints the page
   await ctx.settle(6);
   assert.equal(gp.querySelector('.gpage-panel[data-tab="overview"] .shape-feature'), view, 'a repaint never remounts the Shaper view');
+});
+
+test('Shaper requirements s3: the header Create PR follows the ledger lock; a shape-feature frame unlocks it', async () => {
+  const ledger = (marked) => ({ items: [], agreed: [{ id: 'R-po-1' }, { id: 'R-ux-1' }], entries: [], covered: [], ready: marked === 2, marked, total: 2 });
+  let acceptance = ledger(0);
+  const ctx = await boot((url) => (url.startsWith('/api/shape/features/feat_1')
+    ? json({ ...FEATURE, ship: { ...FEATURE.ship, acceptance } }) : handler(url)));
+  ctx.go('feature/feat_1');
+  await ctx.settle(6);
+  const cta = () => pageOf(ctx).querySelector('.gpage-card .rd-pr-slot [data-rd-cta]');
+  assert.ok(cta(), 'the header has its Create PR');
+  assert.equal(cta().disabled, true, 'locked while requirements are unmarked');
+  assert.equal(cta().classList.contains('btn-primary'), false, 'not primary while locked');
+  assert.equal(cta().title, 'Mark every requirement before you create the PR · 2 left');
+  acceptance = ledger(2);
+  ctx.dispatch({ type: 'shape-feature', id: 'feat_1' });
+  await ctx.settle(6);
+  assert.equal(cta().disabled, false, 'every requirement marked: enabled');
+  assert.equal(cta().classList.contains('btn-primary'), true, 'and primary again');
+  ctx.go('feature/feat_1/overview');                              // the Overview view's own refetch carries the lock
+  await ctx.settle(6);
+  acceptance = ledger(1);
+  ctx.dispatch({ type: 'shape-feature', id: 'feat_1' });
+  await ctx.settle(6);
+  assert.equal(cta().disabled, true, 'a mark taken back elsewhere locks it again');
+  assert.equal(cta().title, 'Mark every requirement before you create the PR · 1 left');
 });
 
 test('#feature/:id for an unknown id says so; #group/:id renders a user group without Overview', async () => {
@@ -132,18 +156,6 @@ test('#group/:chainId deep link loads the chains first; never "no longer exists"
   assert.equal(gp.querySelector('.kind-chip').textContent, 'Chain');
 });
 
-test('#feature/:id renders the group page with the Shaper flag off, without Overview', async () => {
-  const ctx = await bootApp({ fetchHandler: handler });          // no applyFlags: shapeFirst stays off
-  ctx.wsBox.ws.dispatch('open', {});
-  ctx.dispatch({ type: 'hello', runs: [] });
-  await ctx.settle();
-  ctx.go('feature/feat_1');
-  await ctx.settle(6);
-  const gp = pageOf(ctx).querySelector('.gpage');
-  assert.ok(gp, 'a feature group still has its page');
-  assert.equal(gp.querySelector('.rd-tab[data-tab="overview"]').hidden, true);
-});
-
 test('a finished member\'s row goes to its History page, not back to the group page', async () => {
   const hist = [{ id: 'p1', projectKey: 'acme', title: 'Slice 1', status: 'done', mtime: Date.now() }];
   const h = (url, o) => (url.startsWith('/api/history') ? json({ pipelines: hist }) : handler(url, o));
@@ -223,7 +235,7 @@ test('Decisions: one section per member with a decision or a receipt; a live mem
   assert.equal(pageOf(ctx).querySelectorAll('.gpage-decision').length, 1, 'p1\'s away-mode decision');
   // p2 goes live with the recorded run's last frame: its plan and review receipts, with no decision fetched for it.
   const last = REPLAY_FRAMES[REPLAY_FRAMES.length - 1];
-  ctx.dispatch({ type: 'hello', flags: { shapeFirst: true }, runs: [{ runId: 'r2', pipelineId: 'p2', title: 'Slice 2', projectDir: '/tmp/p', status: 'running', kind: 'run', startedAt: '2026-01-01T00:00:00Z' }] });
+  ctx.dispatch({ type: 'hello', runs: [{ runId: 'r2', pipelineId: 'p2', title: 'Slice 2', projectDir: '/tmp/p', status: 'running', kind: 'run', startedAt: '2026-01-01T00:00:00Z' }] });
   ctx.dispatch({ type: 'state', runId: 'r2', id: 'p2', status: 'running', stepper: last.stepper, steps: last.steps, active: [], progressFacts: last.progressFacts });
   await ctx.settle(8);
   const secs = [...pageOf(ctx).querySelectorAll('.gpage-decision')];

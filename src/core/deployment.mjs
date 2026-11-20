@@ -7,7 +7,7 @@
 //              people reach it through an identity proxy, not from this machine
 //
 // Pure: reads only `env` and the remote-mode flag the server already computed.
-import { readGithubCredentials } from './github-credentials.mjs';
+import { asPersonMode, readGithubCredentials } from './github-credentials.mjs';
 import { readAzureCredentials } from './azure-credentials.mjs';
 import { readEgressPolicy } from './egress-proxy.mjs';
 
@@ -39,7 +39,10 @@ export function deploymentFacts(env = process.env, { remoteMode = false, project
   const ado = readAzureCredentials(env).mode;
   // A hosting platform's outbound network policy (src/core/egress-policy.mjs): the mode only.
   const egress = readEgressPolicy(env);
+  // "Push as me" (docs/credential-broker.md): GitHub calls go out as the acting person who connected GitHub.
+  const asPerson = asPersonMode(env);
   return { deployment, projectsRoot: projectsRoot || null, github: githubMode(env),
+    ...(asPerson ? { githubAsPerson: asPerson } : {}),
     ...(ado !== 'none' ? { azureDevOps: ado } : {}),
     ...(egress.enforced ? { egress: egress.mode } : {}),
     ...(hosted && !on(env.WORCA_ACTIONS_REMOTE) ? { actions: 'off' } : {}),

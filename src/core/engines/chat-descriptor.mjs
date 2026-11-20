@@ -3,7 +3,7 @@
 // lock down for a chat exports one, built here so every field has a value; src/core/engines/chat.mjs collects them, and
 // turn.mjs, ask/models.mjs, ask/spawn.mjs and ask/prompt.mjs read them instead of naming engines. Import-light on
 // purpose: the adapters import it.
-import { ENGINES, engineLabel, chatEnginesTaking } from '../../shared/engine-switch.mjs';
+import { ENGINES, engineLabel, chatEnginesTaking, withArticle } from '../../shared/engine-switch.mjs';
 import { CODEX_PRICES, codexCachedRate, listPriceFor } from '../list-prices.mjs';
 
 const DOCS = 'https://github.com/SinishaDjukic/worca-cc/blob/dev/docs/models.md';
@@ -82,14 +82,14 @@ export function makeChatDescriptor({
 export function attachmentWords(label, { images = false, pdfs = false } = {}) {
   const view = 'whether your model can view it is up to the model: when the result says it could not, tell the user';
   if (images && pdfs) return `Image and PDF attachments are different: read_attachment returns the image or PDF itself, as a block of its result beside its kind and size — read one to look at it (${view}).`;
-  if (images) return `Image attachments are different: read_attachment returns the image itself, as a block of its result beside its kind and size — read one to look at it (${view}). A ${label} chat cannot view a PDF: read_attachment returns only its kind and size, and ${chatEnginesTaking('pdfs')} chats can.`;
-  return `Image and PDF attachments are different: a ${label} chat cannot view them, and read_attachment returns only their kind and size. Tell the user ${chatEnginesTaking('images')} chats can view images${chatEnginesTaking('pdfs') !== chatEnginesTaking('images') ? ` (PDFs: ${chatEnginesTaking('pdfs')})` : ' and PDFs'}.`;
+  if (images) return `Image attachments are different: read_attachment returns the image itself, as a block of its result beside its kind and size — read one to look at it (${view}). ${withArticle(label, { capital: true })} chat cannot view a PDF: read_attachment returns only its kind and size, and ${chatEnginesTaking('pdfs')} chats can.`;
+  return `Image and PDF attachments are different: ${withArticle(label)} chat cannot view them, and read_attachment returns only their kind and size. Tell the user ${chatEnginesTaking('images')} chats can view images${chatEnginesTaking('pdfs') !== chatEnginesTaking('images') ? ` (PDFs: ${chatEnginesTaking('pdfs')})` : ' and PDFs'}.`;
 }
 /** The composer's line for the same. */
 export function composerBinaryWords(label, { images = false, pdfs = false } = {}) {
   if (images && pdfs) return 'For an image or PDF, read_attachment returns the image or PDF itself as a block of its result: read it to look at it.';
-  if (images) return `For an image, read_attachment returns the image itself as a block of its result: read it to look at it; a ${label} chat cannot view a PDF (read_attachment returns only its kind and size).`;
-  return `A ${label} chat cannot view images or PDFs: read_attachment returns only their kind and size.`;
+  if (images) return `For an image, read_attachment returns the image itself as a block of its result: read it to look at it; ${withArticle(label)} chat cannot view a PDF (read_attachment returns only its kind and size).`;
+  return `${withArticle(label, { capital: true })} chat cannot view images or PDFs: read_attachment returns only their kind and size.`;
 }
 
 /** The names in `env` that a chat on `d` signs in with for `model` (its descriptor's `signIn`; never a WORCA_ name). */
@@ -103,6 +103,40 @@ export function chatSignInEnv(d, model, env = process.env) {
  *  `modelPriced(model)` says worca has a price for it (ask/chat-price.mjs chatModelRates), the same rule on every engine. */
 export function chatCostCapRefusal(d, model, modelPriced) {
   if (!modelPriced(model)) return `A per-turn cost cap is set, and worca has no price for ${model || `${d.label}'s default model`}, so it cannot keep this turn under it. Set the model's price on the Models page, pick a priced model, or turn the cap off (Settings › Chat).`;
+  return null;
+}
+
+/**
+ * The checks a chat on descriptor `d` passes before a turn may start, in the order the turn runs them (#943: the switch
+ * route runs the same ones before it moves a chat): the lockdown, the model, a per-turn cost cap it can keep, then —
+ * not for the mock — the binary's lockdown flags (askSupport), the self-test, and — not for a relayed chat, whose agent
+ * user signs in itself — the sign-in preflight. `seams` are the turn's per-engine test deps (`<engine>Lockdown`, …).
+ * @returns {Promise<null|{message:string, code?:string, notReady?:true}>} null when the chat may start
+ */
+export async function chatEngineGate(d, { model, capped = false, modelPriced = () => false, mock = false, relay = false, seams = {} } = {}) {
+  const lockdown = seams.lockdown ?? d.lockdown;
+  if (!lockdown()) return { message: d.noLockdownMessage };
+  const problem = d.modelProblem(model);
+  if (problem) return { message: `${model} cannot run a chat on ${d.label}: ${problem}. Pick another model for this chat.` };
+  if (capped) {
+    const refusal = chatCostCapRefusal(d, model, seams.modelPriced ?? modelPriced);
+    if (refusal) return { message: refusal };
+  }
+  if (mock) return null;
+  const notReady = (refusal) => ({ message: refusal, code: d.notReady.code, notReady: true });
+  let support = null;
+  try { support = await d.askSupport(undefined, seams.askSupport); } catch (err) { support = { refusal: err?.message || String(err) }; }
+  if (support && support.refusal) return notReady(support.refusal);
+  const selfTest = d.selfTest ? () => d.selfTest(undefined, seams.selfTest) : seams.selfTest;
+  if (selfTest) {
+    let st = null;
+    try { st = await selfTest(); } catch (err) { st = { refusal: err?.message || String(err) }; }
+    if (st && st.refusal) return notReady(st.refusal);
+  }
+  if (relay) return null;
+  let pf = null;
+  try { pf = await d.preflight({ model }, seams.preflight); } catch (err) { pf = { warning: err?.message || String(err) }; }
+  if (pf && pf.refusal) return notReady(pf.refusal);
   return null;
 }
 

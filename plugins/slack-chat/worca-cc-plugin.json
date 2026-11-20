@@ -1,7 +1,7 @@
 {
   "name": "slack-chat",
-  "version": "0.1.0",
-  "description": "Two-way Slack channel via Socket Mode: pipeline notifications + chat commands (/status, /pause, /approve…)",
+  "version": "0.4.0",
+  "description": "Two-way Slack channel via Socket Mode: pipeline notifications + chat commands (/status, /pause, /approve…) + freeform chat with native buttons (opt-in)",
   "license": "MIT",
   "engines": { "worca-cc-api": ">=2 <3" },
   "chatChannels": [
@@ -11,7 +11,7 @@
       "platform": "slack",
       "module": "./channel/worker.mjs",
       "ingress": "connect",
-      "capabilities": { "inbound": true, "outbound": true },
+      "capabilities": { "inbound": true, "outbound": true, "interactive": true, "liveStatus": true },
       "configSchema": [
         {
           "key": "botToken",
@@ -19,7 +19,7 @@
           "label": "Bot token (xoxb-…)",
           "secret": true,
           "required": true,
-          "help": "OAuth & Permissions → Bot User OAuth Token. Scopes: chat:write, plus channels:history/groups:history for inbound. Or {\"$env\":\"SLACK_BOT_TOKEN\"}."
+          "help": "OAuth & Permissions → Bot User OAuth Token. Scopes: chat:write, reactions:write, app_mentions:read, channels:history (+ groups:history for private channels), files:read. Or {\"$env\":\"SLACK_BOT_TOKEN\"}."
         },
         {
           "key": "appToken",
@@ -42,11 +42,53 @@
           "help": "Comma-separated channel IDs allowed to send commands. EMPTY = nobody: anyone in an allowed channel can control worca-cc."
         },
         {
+          "key": "allowedUserIds",
+          "type": "text",
+          "label": "Allowed user IDs (optional)",
+          "help": "Comma-separated Slack member IDs (U…; profile → ⋮ → Copy member ID). When set, only these people may send commands, even in an allowed chat; others are ignored. EMPTY = everyone in an allowed chat. In a group chat, /direct and the answer commands are only accepted from these people."
+        },
+        {
+          "key": "directInGroups",
+          "type": "select",
+          "label": "/direct and answers in group chats",
+          "default": "listed users",
+          "options": ["listed users", "anyone"],
+          "help": "/direct, /answer, /approve, /retry, /abort and /cancel steer a live run. listed users (default): in a group chat, only Allowed user IDs may use them (nobody when that is empty); direct messages to the bot always work. anyone: every member of an allowed group chat may."
+        },
+        {
           "key": "channelAllowlist",
           "type": "text",
           "label": "Listen filter (optional)",
           "advanced": true,
           "help": "Optional comma-separated channel IDs to listen on; empty = every channel the bot can read (commands are still gated by Allowed channel IDs)."
+        },
+        {
+          "key": "freeformChat",
+          "type": "select",
+          "label": "Freeform chat",
+          "default": "off",
+          "options": ["off", "on"],
+          "help": "on: mentioning the bot in an Allowed channel starts a Slack thread (a new one under a top-level message, or the existing thread the mention sits in) where a listed member chats with worca's Ask engine (paid model turns). Needs Freeform chat members and Interactivity turned on in the Slack app. off (default): commands and notifications only."
+        },
+        {
+          "key": "chatMembers",
+          "type": "text",
+          "label": "Freeform chat members",
+          "help": "Comma- or newline-separated slackMemberId=worca identity pairs, e.g. U0123ABCDE=ada@example.com (profile → ⋮ → Copy member ID). Only these people may start or continue a freeform chat or press its buttons. The identity is who worca records for their chats and runs (use their worca sign-in on a shared deployment, or local)."
+        },
+        {
+          "key": "historyOnStart",
+          "type": "select",
+          "label": "Read recent history when a conversation starts",
+          "default": "off",
+          "options": ["off", "5", "10", "20", "50"],
+          "help": "Freeform chat: the first reply of a new conversation also quotes this many earlier messages, oldest first, as untrusted context with their files. A mention inside a thread reads the thread's earlier replies; a top-level mention reads the channel. Only in Allowed channels, never in direct messages; other bots' messages are skipped. Uses channels:history (+ groups:history). off (default): only the mention and, inside a thread, its first message."
+        },
+        {
+          "key": "worcaUrl",
+          "type": "text",
+          "label": "Worca address for links (optional)",
+          "help": "Base address for Open in worca buttons, e.g. https://worca.example.com. Empty: messages name the chat instead of linking."
         }
       ]
     }

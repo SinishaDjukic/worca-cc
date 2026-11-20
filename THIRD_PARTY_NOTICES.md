@@ -42,7 +42,7 @@ SOFTWARE.
 ## @modelcontextprotocol/sdk
 
 Test (on the Connectors page, `src/core/mcp/test.mjs`) talks to MCP servers
-through the official SDK, `@modelcontextprotocol/sdk 1.32.1` (MIT, Copyright (c)
+through the official SDK, `@modelcontextprotocol/sdk 1.32.2` (MIT, Copyright (c)
 2024 Anthropic, PBC), pinned exactly in `package.json`. It and the packages it
 pulls in are installed from npm, each under its own license (the text ships in
 the package):
@@ -78,3 +78,12 @@ The minified browser build is vendored as `ui/public/c4/dagre.min.js` and loaded
 through `scripts/c4-dagre.mjs`, by the C4 render card.
 
 - MIT: `@dagrejs/dagre`, `@dagrejs/graphlib`
+
+## Brand marks
+
+The Models page (`ui/public/models/brand-marks.mjs`) draws the marks of AI vendors, tools and providers from
+`@lobehub/icons-static-svg 1.103.0` (MIT, Copyright (c) 2023 LobeHub; its README states the license, and the
+package ships no LICENSE file), served one file at a time from `node_modules` at `/vendor/brand-icons`. Each mark
+is a trademark of its owner, shown only to name that owner's models, tools and services.
+
+- MIT: `@lobehub/icons-static-svg`

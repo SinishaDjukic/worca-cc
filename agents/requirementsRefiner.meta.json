@@ -1,0 +1,34 @@
+{
+  "key": "requirementsRefiner",
+  "metaVersion": 2,
+  "progressStage": "plan",
+  "mockRole": "requirements-refine",
+  "promptHints": "Merge the requirements draft and the role findings into the agreed requirements file, and write every open choice as a decision with a recommended pick.",
+  "wantsRequest": true,
+  "workspaceFanOut": true,
+  "workspaceStrategy": "explore",
+  "verdict": { "filename": "requirements-refine-cycle{cycle}.json" },
+  "inputs": [
+    { "id": "task", "type": "md" },
+    { "id": "requirements", "type": "md" },
+    { "id": "findings", "type": "md", "required": false,
+      "directive": "## Role reviews\n\nIndependent role reviewers checked the requirements bound to your `requirements` input; the findings file below lists what each role found. Write the next requirements version from that draft, fixing every critical and major finding; take minor findings where they help. A gap you cannot settle from the request becomes a decision. In your review JSON add `\"addressed\": [\"qa-1-1\", …]` listing the finding ids you fixed." }
+  ],
+  "outputs": [
+    { "id": "requirements", "type": "md", "when": "clean", "filename": "{base}-requirements.md", "store": "run" },
+    { "id": "decisions", "type": "json", "filename": "{base}-requirements-decisions.json", "store": "run" },
+    { "id": "revise", "type": "md", "when": "blocking", "filename": "{base}-requirements.md", "store": "run" }
+  ],
+  "domain": "coding",
+  "displayName": "Agree requirements",
+  "description": "Merges the role findings into the requirements and lists the open choices as decisions for the person.",
+  "color": "green",
+  "icon": "<path d=\"M7 4h10v16H7z\" stroke-linejoin=\"round\"/><path d=\"M9.5 12.5l2 2 3.5-4\" stroke-linecap=\"round\" stroke-linejoin=\"round\"/>",
+  "agentFile": "worca-cc-requirements-refiner.md",
+  "runnerType": "producer",
+  "fanOut": true,
+  "asksQuestions": true,
+  "questionsLocked": false,
+  "questionsDefault": false,
+  "order": 80
+}

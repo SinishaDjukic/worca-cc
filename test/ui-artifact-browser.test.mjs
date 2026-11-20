@@ -3,10 +3,10 @@
 // results, keyboard, focus, the open/download callbacks — and the P5 stylesheet section's own rules.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
 import { JSDOM } from 'jsdom';
 import { checkRows } from './helpers/rows.mjs';
 import { createArtifactBrowser, artifactTree } from '../ui/public/artifacts/browser.mjs';
+import { readStyleCss } from '../src/core/read-style-css.mjs';
 
 const LABELS = { n_plan: 'Plan', n_impl: 'Implementer', n_rev: 'Review' };
 const A = (relPath, nodeId, cycle, extra = {}) => ({ kind: 'plan', relPath, nodeId, cycle, bytes: 1024, ...extra });
@@ -194,7 +194,7 @@ test('an empty list says so; sources add trailing folders; a double click toggle
 });
 
 test('the P5 stylesheet section: plain backgrounds, no left-edge accents, focus rings, reduced motion', () => {
-  const css = readFileSync(new URL('../ui/public/style.css', import.meta.url), 'utf8');
+  const css = readStyleCss();
   const at = css.indexOf('/* ===== Chat P5: artifacts ===== */');
   assert.ok(at >= 0, 'the bannered section exists');
   const next = css.indexOf('/* ===== Chat P', at + 10);
@@ -312,7 +312,7 @@ test('a live frame that only changes a file\'s size repaints its row; `order` ma
 });
 
 test('reduced motion: every transition or animation in the P5 section is switched off under prefers-reduced-motion', () => {
-  const css = readFileSync(new URL('../ui/public/style.css', import.meta.url), 'utf8');
+  const css = readStyleCss();
   const at = css.indexOf('/* ===== Chat P5: artifacts ===== */');
   const next = css.indexOf('/* ===== Chat P', at + 10);
   const sec = css.slice(at, next < 0 ? undefined : next).replace(/\/\*[\s\S]*?\*\//g, '');

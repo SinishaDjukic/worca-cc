@@ -1,0 +1,257 @@
+{
+ "catalogVersion": 2,
+ "level": "not-ready",
+ "repository": {
+  "level": "ready",
+  "failing": []
+ },
+ "engines": {
+  "claude": {
+   "used": true,
+   "setting": "detect",
+   "detected": true,
+   "reasons": [
+    {
+     "kind": "run-engine",
+     "text": "runs use it"
+    }
+   ],
+   "signals": [
+    {
+     "kind": "run-engine",
+     "text": "runs use it"
+    }
+   ],
+   "detectedReason": "runs use it",
+   "level": "not-ready",
+   "failing": [
+    "instructions.present"
+   ]
+  },
+  "codex": {
+   "used": false,
+   "setting": "detect",
+   "detected": false,
+   "reasons": [],
+   "signals": [],
+   "detectedReason": null,
+   "level": "unused",
+   "failing": []
+  },
+  "copilot": {
+   "used": false,
+   "setting": "detect",
+   "detected": false,
+   "reasons": [],
+   "signals": [],
+   "detectedReason": null,
+   "level": "unused",
+   "failing": []
+  },
+  "cursor": {
+   "used": false,
+   "setting": "detect",
+   "detected": false,
+   "reasons": [],
+   "signals": [],
+   "detectedReason": null,
+   "level": "unused",
+   "failing": []
+  }
+ },
+ "checks": [
+  {
+   "id": "git.repo",
+   "title": "Git repository",
+   "scope": "repository",
+   "severity": "blocker",
+   "status": "pass",
+   "detail": "Runs check out a worktree of this repository",
+   "fix": "Runs check out a git worktree. Run `git init` and commit."
+  },
+  {
+   "id": "instructions.single-source",
+   "title": "Single source of truth",
+   "scope": "repository",
+   "severity": "info",
+   "status": "skip",
+   "fix": "Keep one source: put content in AGENTS.md and @AGENTS.md from CLAUDE.md."
+  },
+  {
+   "id": "commands.test",
+   "title": "Test command discoverable",
+   "scope": "repository",
+   "severity": "warn",
+   "status": "skip",
+   "fix": "Add a test script/target, or name the command in the instruction file."
+  },
+  {
+   "id": "commands.build",
+   "title": "Build command discoverable",
+   "scope": "repository",
+   "severity": "info",
+   "status": "skip",
+   "fix": "Add a build script/target, or name it in the instruction file."
+  },
+  {
+   "id": "commands.lint",
+   "title": "Lint command discoverable",
+   "scope": "repository",
+   "severity": "info",
+   "status": "skip",
+   "fix": "Add a lint/format script/target, or name it in the instruction file."
+  },
+  {
+   "id": "deps.lockfile",
+   "title": "Lockfile committed",
+   "scope": "repository",
+   "severity": "warn",
+   "status": "skip",
+   "fix": "Commit the lockfile so an agent's install matches CI."
+  },
+  {
+   "id": "ignore.heavy-dirs",
+   "title": "Heavy dirs ignored",
+   "scope": "repository",
+   "severity": "warn",
+   "status": "skip",
+   "fix": ".gitignore it; agents read and grep it otherwise."
+  },
+  {
+   "id": "secrets.tracked-names",
+   "title": "No secret-looking tracked files",
+   "scope": "repository",
+   "severity": "warn",
+   "status": "pass",
+   "detail": "No .env, key or certificate files are tracked",
+   "fix": "Remove it and rotate it: agents read the file and send it to the model provider."
+  },
+  {
+   "id": "repo.map",
+   "title": "Monorepo map present",
+   "scope": "repository",
+   "severity": "info",
+   "status": "skip",
+   "fix": "Add a short map of the packages to the instruction file."
+  },
+  {
+   "id": "instructions.present",
+   "title": "Agent instructions present",
+   "scope": "tool",
+   "severity": "blocker",
+   "engine": "claude",
+   "status": "fail",
+   "detail": "none of CLAUDE.md, .claude/CLAUDE.md, CLAUDE.local.md, .claude/rules/*.md, AGENTS.md, .claude/AGENTS.md found",
+   "fix": "Add AGENTS.md (OpenAI Codex and GitHub Copilot read it too) or CLAUDE.md."
+  },
+  {
+   "id": "instructions.committed",
+   "title": "Instructions committed",
+   "scope": "tool",
+   "severity": "warn",
+   "engine": "claude",
+   "status": "skip",
+   "fix": "Commit it: runs on this engine see only committed files."
+  },
+  {
+   "id": "instructions.size",
+   "title": "Instructions within size budget",
+   "scope": "tool",
+   "severity": "warn",
+   "engine": "claude",
+   "status": "skip",
+   "fix": "Trim it or split into .claude/rules/*.md; it is truncated and costs tokens every turn."
+  },
+  {
+   "id": "instructions.present",
+   "title": "Agent instructions present",
+   "scope": "tool",
+   "severity": "blocker",
+   "engine": "codex",
+   "status": "fail",
+   "detail": "none of AGENTS.override.md, AGENTS.md found",
+   "fix": "Add AGENTS.md."
+  },
+  {
+   "id": "instructions.committed",
+   "title": "Instructions committed",
+   "scope": "tool",
+   "severity": "warn",
+   "engine": "codex",
+   "status": "skip",
+   "fix": "Commit it: runs on this engine see only committed files."
+  },
+  {
+   "id": "instructions.size",
+   "title": "Instructions within size budget",
+   "scope": "tool",
+   "severity": "warn",
+   "engine": "codex",
+   "status": "skip",
+   "fix": "Trim it or split into .claude/rules/*.md; it is truncated and costs tokens every turn."
+  },
+  {
+   "id": "instructions.present",
+   "title": "Agent instructions present",
+   "scope": "tool",
+   "severity": "blocker",
+   "engine": "copilot",
+   "status": "fail",
+   "detail": "none of .github/copilot-instructions.md, AGENTS.md, CLAUDE.md, .claude/CLAUDE.md, GEMINI.md, .github/instructions/**/*.instructions.md found",
+   "fix": "Add AGENTS.md or .github/copilot-instructions.md."
+  },
+  {
+   "id": "instructions.committed",
+   "title": "Instructions committed",
+   "scope": "tool",
+   "severity": "warn",
+   "engine": "copilot",
+   "status": "skip",
+   "fix": "Commit it: runs on this engine see only committed files."
+  },
+  {
+   "id": "instructions.size",
+   "title": "Instructions within size budget",
+   "scope": "tool",
+   "severity": "warn",
+   "engine": "copilot",
+   "status": "skip",
+   "fix": "Trim it or split into .claude/rules/*.md; it is truncated and costs tokens every turn."
+  },
+  {
+   "id": "instructions.present",
+   "title": "Agent instructions present",
+   "scope": "tool",
+   "severity": "blocker",
+   "engine": "cursor",
+   "status": "fail",
+   "detail": "none of AGENTS.md, CLAUDE.md, .cursor/rules/**/*.mdc found",
+   "fix": "Add AGENTS.md or a rule in .cursor/rules (a .mdc file)."
+  },
+  {
+   "id": "instructions.committed",
+   "title": "Instructions committed",
+   "scope": "tool",
+   "severity": "warn",
+   "engine": "cursor",
+   "status": "skip",
+   "fix": "Commit it: runs on this engine see only committed files."
+  },
+  {
+   "id": "instructions.size",
+   "title": "Instructions within size budget",
+   "scope": "tool",
+   "severity": "warn",
+   "engine": "cursor",
+   "status": "skip",
+   "fix": "Trim it or split into .claude/rules/*.md; it is truncated and costs tokens every turn."
+  }
+ ],
+ "counts": {
+  "mustFix": 1,
+  "shouldFix": 0,
+  "passed": 2,
+  "applicable": 3
+ },
+ "checkedAt": "2026-10-15T14:22:21.052Z"
+}

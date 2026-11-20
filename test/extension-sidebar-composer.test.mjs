@@ -78,12 +78,11 @@ test('attach: a picked file becomes a chip, × removes it, Send carries it befor
   assert.deepEqual(fileChips(h), [], 'sent files leave the composer');
 });
 
-test('attach: a refused type says so in the composer line', async () => {
+test('attach: any file type attaches', async () => {
   const { route } = rig();
   const h = await bootSidebar({ storage: STORE, route });
   await pickFiles(h, [new h.win.File(['x'], 'tool.exe')]);
-  assert.match(h.$('.ask-composer-msg').textContent, /attachment type not allowed: tool\.exe/);
-  assert.equal(h.$('.ask-composer-msg').hidden, false);
+  assert.equal(fileChips(h).length, 1);
 });
 
 test('model: the popover lists the catalog; a pick relabels the button, is stored and PATCHes the open thread', async () => {
@@ -403,4 +402,62 @@ test('scope: the last good list names a pin while a later reload fails (a reconn
   await h.tick(1500);
   assert.ok(h.calls.filter((c) => c.includes('/api/projects')).length >= 2, 'the lists were re-read');
   assert.equal(h.$('.ask-scope-label').textContent, 'ACME Web');
+});
+
+test('#943: a chat that has run names its engine, offers only that engine\'s models and sends a switch to Chat; another tab\'s switch moves the pick', async () => {
+  const CAT2 = { ...CATALOG, models: [...CATALOG.models, { id: 'gpt-5.5', label: 'GPT-5.5', efforts: ['low', 'medium'], engine: 'codex' }],
+    defaults: { claude: CATALOG.default, codex: { model: 'gpt-5.5', effort: 'medium' } } };
+  const base = SNAP(TID);
+  const snap = { ...base, thread: { ...base.thread, model: 'gpt-5.5', effort: 'low', engine: 'codex' },
+    messages: [...base.messages, { id: 'askm_00000002', threadId: TID, seq: 2, role: 'assistant', text: 'Because.', blocks: [], status: 'done', model: 'gpt-5.5', effort: 'low', createdAt: 't' }] };
+  const { route } = rig((p, o, method) => (p === '/api/ask/models' ? ok(CAT2) : p === `/api/ask/threads/${TID}` && method === 'GET' ? ok(snap) : null),
+    { threads: [{ id: TID, title: 'Rate limits' }] });
+  const h = await bootSidebar({ storage: STORE, route });
+  await h.change(h.$('.chat-head select[aria-label="Chat"]'), TID);
+  assert.equal(h.$('.ask-model-btn').dataset.engine, 'codex');
+  assert.equal(h.$('.ask-model-btn-engine').textContent, 'OpenAI Codex', 'the engine is on the button in text');
+  await h.click(h.$('.ask-model-btn'));
+  assert.deepEqual(h.$$('.ask-pop-model .ask-pop-group').map((g) => g.textContent), ['OpenAI Codex (beta) · this chat']);
+  assert.deepEqual(h.$$('.ask-pop-model .ask-model-name').map((n) => n.textContent), ['GPT-5.5']);
+  assert.match(h.$('.ask-pop-model .ask-pop-empty').textContent, /use the model picker in Chat/);
+  h.sockets.at(-1).onmessage({ data: JSON.stringify({ type: 'ask-engine', threadId: TID, engine: 'claude', model: 'claude-opus-5-5', effort: 'high' }) });
+  await h.flush();
+  assert.equal(h.$('.ask-model-btn-label').textContent, 'Opus 5.5');
+  assert.equal(h.$('.ask-model-btn').dataset.engine, 'claude');
+  assert.equal(h.$('.ask-model-btn-engine').textContent, 'Claude Code');
+  assert.deepEqual(h.$$('.ask-pop-model .ask-pop-group').map((g) => g.textContent), ['Claude Code · this chat'], 'the open menu now lists the new engine');
+});
+
+test('a pasted link\'s auto-switch: the 202 `scope` moves the pill with no PATCH and the next message carries the pin; an ask-scope frame does too (review M1)', async () => {
+  let reply = null;
+  const posts = [];
+  const { route } = rig((p, o, method) => {
+    if (p === `/api/ask/threads/${TID}/messages` && method === 'POST') { posts.push(JSON.parse(o.body)); return ok({ userMessageId: `askm_u${posts.length}`, attachments: [], ...(reply || {}) }); }
+    return null;
+  });
+  const h = await bootSidebar({ storage: STORE, route });
+  reply = { scope: { pinned: false, projectKey: 'acme-api' } };
+  await typeAndSend(h, 'hello');
+  await h.flush();
+  assert.equal(h.$('.ask-scope-label').textContent, 'No project', 'a 202 scope that is not a pin leaves the pill');
+  reply = { scope: { pinned: true, projectKey: 'shop-0001', label: 'Shop' } };
+  await typeAndSend(h, 'fix https://github.com/Acme/Shop/issues/12');
+  await h.flush();
+  assert.equal(posts[1].context.pinned, false, 'the link message itself went out unpinned');
+  assert.equal(h.$('.ask-scope-label').textContent, 'Shop', 'the 202 moved the pill, named by its label');
+  assert.ok(h.$('.ask-scope-btn').classList.contains('is-pinned'));
+  assert.ok(!h.calls.some((c) => c.includes(`/api/ask/threads/${TID} {"scope"`)), 'no PATCH: the server stored it already');
+  reply = null;
+  await typeAndSend(h, 'and then');
+  await h.flush();
+  assert.deepEqual([posts[2].context.pinned, posts[2].context.projectKey], [true, 'shop-0001'], 'the next message keeps the switch');
+  h.sockets.at(-1).onmessage({ data: JSON.stringify({ type: 'ask-scope', threadId: 'askt_00000099', scope: { pinned: true, projectKey: 'acme-api' }, label: 'ACME API' }) });
+  await h.flush();
+  assert.equal(h.$('.ask-scope-label').textContent, 'Shop', 'another chat\'s frame changes nothing');
+  h.sockets.at(-1).onmessage({ data: JSON.stringify({ type: 'ask-scope', threadId: TID, scope: { pinned: true, projectKey: 'acme-web' }, label: 'ACME Web' }) });
+  await h.flush();
+  assert.equal(h.$('.ask-scope-label').textContent, 'ACME Web', 'the open chat\'s frame moves the pill');
+  await typeAndSend(h, 'more');
+  await h.flush();
+  assert.deepEqual([posts[3].context.pinned, posts[3].context.projectKey], [true, 'acme-web']);
 });

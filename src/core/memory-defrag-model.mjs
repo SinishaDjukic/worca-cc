@@ -14,7 +14,7 @@
 // The pair rule holds throughout: an effort travels with its model, so an effort without a model
 // is ignored and no lower layer's effort ever rides under a model it was not chosen for.
 
-import { GRAPH_MEMORY_DEFRAG_WORKFLOW } from './graph/builtin-workflows.mjs';
+import { FACTORY_MODELS } from './factory-models.mjs';
 
 const str = (v) => (typeof v === 'string' && v.trim() ? v.trim() : null);
 
@@ -91,10 +91,9 @@ export function checkStartPair({ model, effort } = {}, models = null) {
   return { pair: { model: id, effort: eff } };
 }
 
-/** What "(default)" means in Settings › Memory: the built-in template's own agent model. */
+/** What "(default)" means in Settings › Memory: Worca's factory default for the defragment model. */
 export function defragDefaultModel() {
-  const agent = GRAPH_MEMORY_DEFRAG_WORKFLOW.nodes.find((n) => n.kind === 'agent');
-  return (agent && agent.config && typeof agent.config.model === 'string' && agent.config.model) || null;
+  return FACTORY_MODELS.helpers.memoryDefrag.model || null;
 }
 
 /**

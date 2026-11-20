@@ -1,0 +1,150 @@
+/* ---------- native control skins (checkbox / radio / switch / rows) -------- */
+/* Everything the browser used to draw for itself. The mark is the one .qopt
+   already draws (:761): a 1.5px --radio-ring hairline on --panel that fills
+   --ink behind a tick in the page colour, so "chosen" reads identically on a
+   question option, a checkbox, a chip and a whole row.
+   Styling the REAL <input> through appearance:none — rather than hiding it
+   behind a span — is what lets every existing emitter keep its markup:
+   :checked, :disabled, :indeterminate, label clicks and keyboard all keep
+   working with no JS. NOTHING here sets `display`, so the hidden inputs behind
+   the segmented controls (#mock, [name=target], [name=source]) stay hidden. */
+
+/* Net for anything never hand-skinned (a future <progress>, a date input, the
+   OS spell-check UI): ink instead of the OS accent.
+   The ink tick (docs/design-system.md › Checkbox): a data URI cannot read a token, so the tick's colour follows the
+   theme through --tick. It is the page colour on the ink fill: white in light, #161614 (--on-ink's dark arm) in dark. */
+:root{accent-color:var(--ink);
+  --tick:url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23fff' stroke-width='3.6' stroke-linecap='round' stroke-linejoin='round'><path d='M5 13l4 4L19 7'/></svg>");
+  --tick-dash:url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23fff' stroke-width='3.6' stroke-linecap='round'><path d='M6 12h12'/></svg>");}
+:root[data-theme="dark"]{
+  --tick:url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23161614' stroke-width='3.6' stroke-linecap='round' stroke-linejoin='round'><path d='M5 13l4 4L19 7'/></svg>");
+  --tick-dash:url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23161614' stroke-width='3.6' stroke-linecap='round'><path d='M6 12h12'/></svg>");}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){
+  --tick:url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23161614' stroke-width='3.6' stroke-linecap='round' stroke-linejoin='round'><path d='M5 13l4 4L19 7'/></svg>");
+  --tick-dash:url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23161614' stroke-width='3.6' stroke-linecap='round'><path d='M6 12h12'/></svg>");}}
+/* Paper is white (the print block forces color-scheme:light): the tick is white on the light ink fill there too. */
+@media print{:root,:root[data-theme="dark"],:root:not([data-theme="light"]){
+  --tick:url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23fff' stroke-width='3.6' stroke-linecap='round' stroke-linejoin='round'><path d='M5 13l4 4L19 7'/></svg>");
+  --tick-dash:url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23fff' stroke-width='3.6' stroke-linecap='round'><path d='M6 12h12'/></svg>");}}
+
+input[type="checkbox"],
+input[type="radio"]{
+  appearance:none;-webkit-appearance:none;
+  flex:0 0 auto;width:18px;height:18px;margin:0;padding:0;
+  border:1.5px solid var(--radio-ring);border-radius:var(--r-sm);
+  background:var(--panel);cursor:pointer;vertical-align:middle;
+  transition:background-color .14s,border-color .14s;}
+input[type="radio"]{border-radius:50%;}
+input[type="checkbox"]:hover:not(:disabled),
+input[type="radio"]:hover:not(:disabled){border-color:var(--ink-3);}
+/* Checked fills ink, never green (green means done). */
+input[type="checkbox"]:checked{border-color:var(--ink);background-color:var(--ink);background-image:var(--tick);
+  background-position:center;background-size:11px 11px;background-repeat:no-repeat;}
+/* "some of these are on" — set from JS, there is no HTML attribute for it */
+input[type="checkbox"]:indeterminate{border-color:var(--ink);background-color:var(--ink);background-image:var(--tick-dash);
+  background-position:center;background-size:11px 11px;background-repeat:no-repeat;}
+/* ring, panel gap and dot from one inset shadow — no pseudo-element, which a
+   replaced element cannot be relied on to render */
+input[type="radio"]:checked{border-color:var(--ink);background:var(--ink);
+  box-shadow:inset 0 0 0 3.5px var(--panel);}
+/* disabled reads as "fixed" (a manifest locked it), never as "broken" */
+input[type="checkbox"]:disabled,
+input[type="radio"]:disabled{background:var(--field);border-color:var(--line-2);cursor:not-allowed;}
+/* the :disabled rule above uses the `background` shorthand, which drops the
+   glyph :checked painted — so a locked-on box has to restate it */
+input[type="checkbox"]:disabled:checked{border-color:var(--seq);background-color:var(--seq);background-image:var(--tick);
+  background-position:center;background-size:11px 11px;background-repeat:no-repeat;}
+input[type="radio"]:disabled:checked{background:var(--seq);border-color:var(--seq);
+  box-shadow:inset 0 0 0 3.5px var(--panel);}
+input[type="checkbox"]:focus-visible,
+input[type="radio"]:focus-visible{outline:2px solid var(--ink);outline-offset:2px;}
+/* markdown task lists (:3019 sets the gap; the blanket margin:0 above would
+   otherwise win on source order) */
+.ask-md input[type="checkbox"]{margin-right:6px;}
+
+@media (prefers-contrast:more),(forced-colors:active){
+  input[type="checkbox"],input[type="radio"]{border-color:CanvasText;}
+  input[type="checkbox"]:checked,input[type="radio"]:checked{background-color:Highlight;border-color:Highlight;}
+}
+
+
+/* ---- checkbox rows inside a .field ----
+   .check-row carried NO rule, so `.field > label` (:304) claimed it: block,
+   600 weight, 13px, 8px bottom margin — which is why "No cap" rendered as a
+   heading welded to its box. Equal specificity class-count, so the qualified
+   selectors are what win. */
+.check-row{display:inline-flex;align-items:center;gap:9px;cursor:pointer;user-select:none;
+  font-weight:500;font-size:var(--fs-body);color:var(--ink-2);}
+/* The engine field's hint and the gate refusal's consent row: hidden must win over
+   .hint's display:block and .check-row's inline-flex. */
+#engine-hint[hidden], #engine-default-hint[hidden], #engineAllowRow[hidden]{display:none;}
+#engineAllowRow{margin-top:6px;}
+.field > label.check-row,
+.field > label.fanout-toggle{display:inline-flex;margin-bottom:0;font-weight:500;}
+/* Same trap for a switch row labelled inside a .field (the schedule sheet's Auto-sync). */
+.field > label.switch-row{display:flex;margin-bottom:0;font-weight:500;}
+
+/* ---- selectable rows ----
+   .qopt generalised: when a choice carries more than a word (a name plus a
+   badge, a path, a model id) the row itself is the target and the whole row
+   shows the selection. Appended here, so it wins the source-order tie against
+   the .grv-source-row / .wiz-proj / .mvx-model base rules those emitters keep
+   for their own layout; their qualified rules (.wiz-proj.missing) still win. */
+.opt-row{display:flex;align-items:center;gap:11px;width:100%;
+  padding:12px 15px;background:var(--panel);border:1.5px solid var(--line);
+  border-radius:var(--r-sm);cursor:pointer;font-size:var(--fs-body);font-weight:500;
+  color:var(--ink);transition:background .14s,border-color .14s;}
+.opt-row:hover{border-color:var(--ink-3);}
+.opt-row:has(input:checked){background:var(--field);border-color:var(--ink);}
+.opt-row:has(input:disabled){opacity:.55;cursor:not-allowed;background:var(--field);}
+.opt-row:has(input:focus-visible){outline:2px solid var(--ink);outline-offset:2px;}
+.opt-row .opt-name{flex:1 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+.opt-row .opt-sub{flex:0 0 auto;font:400 var(--fs-meta) var(--mono);color:var(--ink-3);}
+.wiz-proj-list{gap:8px;}
+
+/* ---- chips ----
+   .chip-select (:1400) already drew the pill and never had a selected state,
+   so the box inside was carrying it alone. */
+.chip-select label{transition:background .14s,border-color .14s;}
+.chip-select label:hover{border-color:var(--ink-3);}
+.chip-select label:has(input:checked){background:var(--field);border-color:var(--ink);}
+.chip-select label:has(input:disabled){opacity:.55;cursor:not-allowed;}
+.chip-select input{width:14px;height:14px;border-radius:var(--r-sm);}
+
+/* ---- confirm/prompt modal internals ---- */
+.confirm-field{margin-bottom:14px;}
+.confirm-field > label{display:block;font-weight:600;font-size:var(--fs-body);margin-bottom:6px;}
+.confirm-field .input{font-size:var(--fs-body);}
+.confirm-field .hint.err{color:var(--red-ink);}
+.confirm-choices{display:flex;flex-direction:column;margin-top:2px;}
+.confirm-choices .radio-card{margin-top:8px;}
+.confirm-checkbox{display:flex;align-items:flex-start;gap:10px;margin:0 0 4px;padding:12px 14px;
+  background:var(--field);border-radius:var(--r-sm);font-size:var(--fs-body);color:var(--ink-2);
+  cursor:pointer;line-height:1.45;}
+.confirm-checkbox.hidden{display:none;}
+.confirm-modal .card h2.danger{color:var(--red-ink);}
+
+/* ---- the rest of the UA chrome ---- */
+/* min/max/step are there to validate, not to be clicked */
+input[type="number"]{-moz-appearance:textfield;}
+input[type="number"]::-webkit-outer-spin-button,
+input[type="number"]::-webkit-inner-spin-button{-webkit-appearance:none;margin:0;}
+/* the WebKit search "x" is grey-on-grey and off-grid; .field-clear replaces it */
+input[type="search"]::-webkit-search-cancel-button,
+input[type="search"]::-webkit-search-decoration{-webkit-appearance:none;}
+.field-clear{position:absolute;right:10px;top:50%;transform:translateY(-50%);
+  width:18px;height:18px;border:none;border-radius:var(--r-sm);background:var(--line-2);
+  color:var(--ink-2);font:600 11px/1 var(--sans);cursor:pointer;display:grid;
+  place-items:center;padding:0;}
+.field-clear:hover{background:var(--ink-3);color:var(--on-ink);}
+.field-clear[hidden]{display:none;}
+/* the OS disclosure triangle, everywhere — .advanced (:601) already did it locally */
+.disclosure > summary{list-style:none;cursor:pointer;display:flex;align-items:center;gap:8px;}
+.disclosure > summary::-webkit-details-marker{display:none;}
+.disclosure > summary::before{content:"";width:0;height:0;flex:0 0 auto;
+  border:4.5px solid transparent;border-left-color:var(--ink-3);
+  transition:transform .16s;transform-origin:2px 50%;}
+.disclosure[open] > summary::before{transform:rotate(90deg);}
+/* Firefox has no ::-webkit-scrollbar, so :899 never reaches it */
+html{scrollbar-color:var(--line-2) transparent;scrollbar-width:thin;}
+

@@ -1,6 +1,6 @@
 // src/cli/models.mjs
 // `worca models …` (model-bridge-design.md §6.5): the provider operations the
-// Providers card offers, for a terminal — sign in to GitHub Copilot with the
+// Providers tab offers, for a terminal — sign in to GitHub Copilot with the
 // device flow, sign out, import Copilot models into the catalog, list the
 // catalog with its bridge facts, and show provider state. Pure helpers are
 // exported for tests; cmdModels takes its I/O injected (the schedule.mjs
@@ -8,9 +8,9 @@
 
 import { createInterface } from 'node:readline';
 import {
-  providersState, beginCopilotLogin, pollCopilotLogin, copilotLogout, acknowledgeTerms,
+  providersState, beginCopilotLogin, pollCopilotLogin, copilotLogout,
   copilotModelsForImport, importCopilotModels, testProviderConnection, patchProvider,
-  endpointModelsForImport, importEndpointModels, OPENROUTER_BASE_URL,
+  endpointModelsForImport, importEndpointModels, OPENROUTER_BASE_URL, patchOpenRouter,
 } from '../core/bridge/provider-ops.mjs';
 import { listModels } from '../core/config.mjs';
 import { isTranslatedApi, GEMINI_OPENAI_BASE_URL, QWEN_OPENAI_BASE_URL, QWEN_CN_OPENAI_BASE_URL } from '../core/model-env.mjs';
@@ -20,8 +20,7 @@ export const MODELS_HELP = `worca models — the model catalog and its providers
 Usage:
   worca models list                       Catalog with provider / bridge facts
   worca models providers                  Provider state (never a token)
-  worca models login copilot [--accept-terms]
-                                          Sign in to GitHub Copilot (device flow)
+  worca models login copilot              Sign in to GitHub Copilot (device flow)
   worca models logout copilot             Forget the Copilot sign-in
   worca models import copilot [--all | --pick <id,id,…>] [--yes]
                                           Add Copilot models to the catalog
@@ -38,20 +37,20 @@ Usage:
                                           The same, against Alibaba Model Studio (international; pass
                                           --base-url ${QWEN_CN_OPENAI_BASE_URL} for mainland China)
   worca models test <provider>            Reachability + auth check (copilot|openai|anthropic|openrouter);
-                                          for OpenRouter also the key's credit and free-model allowance
+                                          openrouter tests OpenRouter's own block: its key, the key's
+                                          credit and free-model allowance
   worca models set <provider> <key>=<value> …
-                                          Patch a provider: accountType, maxConcurrent, baseUrl, apiKey
-  worca models set openrouter apiKey='\${OPENROUTER_KEY}'
-                                          The openai provider, pointed at OpenRouter
+                                          Patch a provider: accountType (individual|business|enterprise|ghe-com), enterpriseHost, maxConcurrent, baseUrl, apiKey
+  worca models set openrouter <key>=<value> …
+                                          OpenRouter's own block: apiKey, maxConcurrent, order, sort,
+                                          allowFallbacks (e.g. apiKey='\${OPENROUTER_KEY}'
+                                          order=anthropic,google sort=price allowFallbacks=false)
 
 Notes:
-  OpenRouter is the openai (OpenAI-compatible) provider with OpenRouter's base URL — one key and
-  one concurrency cap. A model can still point elsewhere on its own Connection.
+  OpenRouter has its own key, cap and routing defaults; models reach it through the
+  OpenAI-compatible API.
   --api-key gives an endpoint that is not the provider's its own key ('\${VAR}' or a literal), stored on
   each imported entry; the provider's key is only ever sent to the provider's own host.
-  Copilot: GitHub allows Copilot only through supported clients and has suspended
-  access for automated use. \`login\` prints the notice; --accept-terms records the
-  acknowledgement non-interactively. Pipelines are automated, high-volume use.
 `;
 
 /** `worca models import gemini|qwen`: the endpoint and the key reference each defaults to. */
@@ -59,18 +58,6 @@ const HOSTED_IMPORTS = Object.freeze({
   gemini: Object.freeze({ baseUrl: GEMINI_OPENAI_BASE_URL, apiKey: '${GEMINI_API_KEY}' }),
   qwen: Object.freeze({ baseUrl: QWEN_OPENAI_BASE_URL, apiKey: '${DASHSCOPE_API_KEY}' }),
 });
-
-/** The notice text, mirrored from ui/public/bridge-view.mjs COPILOT_TERMS (kept
- *  here too: the CLI must not import UI modules). */
-export const COPILOT_TERMS_TEXT = [
-  'Using GitHub Copilot from Worca',
-  '',
-  "Worca will talk to GitHub Copilot through the same API GitHub's editor extensions use, identifying itself as an editor client. GitHub's terms allow Copilot only through supported clients, and GitHub has suspended Copilot access for automated or unsupported use. Pipelines are automated, high-volume use.",
-  '',
-  '  • Your GitHub account, not Worca, carries this risk.',
-  '  • Worca caps concurrent requests (configurable) and never signs in without you.',
-  '  • Premium-request quotas apply per your plan; Worca shows usage but cannot enforce it.',
-].join('\n');
 
 /** Minimal flag parser for the subcommand (mirrors worca-cc.mjs pluginArgs). */
 export function modelsArgs(argv, valueFlags = [], boolFlags = [], fail = (m) => { throw new Error(m); }) {
@@ -102,7 +89,7 @@ export function formatModelLine(m) {
   if (m.bridged && m.engine === 'codex') bits.push(`endpoint: ${m.bridged}${m.upstreamModel ? ` → ${m.upstreamModel}` : ''}`);
   else if (m.bridged) bits.push(`bridged: ${m.bridged}${m.upstreamModel ? ` → ${m.upstreamModel}` : ''}${isTranslatedApi(m.upstreamApi) ? ' (translated)' : ''}`);
   else if (m.routed) bits.push('endpoint-routed');
-  if (m.needsSignIn) bits.push(`NEEDS ${m.signInReason === 'no_key' ? 'API KEY' : m.signInReason === 'terms' ? 'ACKNOWLEDGEMENT' : 'SIGN-IN'}`);
+  if (m.needsSignIn) bits.push(`NEEDS ${m.signInReason === 'no_key' ? 'API KEY' : 'SIGN-IN'}`);
   if (m.hidden) bits.push('hidden');
   return bits.join('  ');
 }
@@ -111,7 +98,7 @@ export function formatModelLine(m) {
 export function formatProviders(p) {
   const c = p.copilot || {};
   const lines = [
-    `copilot     ${c.connected ? `connected${c.login ? ` as @${c.login}` : ''}` : 'not connected'}  account=${c.accountType || 'individual'}  maxConcurrent=${c.maxConcurrent}  terms=${c.termsCurrent ? `acknowledged ${String(c.acknowledgedTerms || '').slice(0, 10)}` : 'not acknowledged'}${c.tokenSource === 'env' ? `  token=${c.tokenRef}` : ''}`,
+    `copilot     ${c.connected ? `connected${c.login ? ` as @${c.login}` : ''}` : 'not connected'}  account=${c.accountType || 'individual'}${c.enterpriseHost ? `  host=${c.enterpriseHost}` : ''}  maxConcurrent=${c.maxConcurrent}${c.tokenSource === 'env' ? `  token=${c.tokenRef}` : ''}`,
   ];
   if (c.quota) {
     lines.push(`            premium requests: ${c.quota.unlimited ? 'unlimited' : `${c.quota.used ?? '?'} / ${c.quota.entitlement ?? '?'}`}${c.quota.resetDate ? ` (resets ${c.quota.resetDate})` : ''}`);
@@ -119,6 +106,12 @@ export function formatProviders(p) {
   for (const name of ['openai', 'anthropic']) {
     const k = p[name] || {};
     lines.push(`${name.padEnd(11)} ${k.configured ? 'key set' : k.keySet ? 'key ${VAR} NOT SET' : 'no key'}${k.keySource === 'env' ? ` (${k.keyRef})` : ''}  baseUrl=${k.baseUrl || '-'}  maxConcurrent=${k.maxConcurrent}`);
+  }
+  // OpenRouter's own block, last so the lines above keep their positions. Its keySet means the key resolves.
+  const o = p.openrouter;
+  if (o) {
+    const key = o.legacyKey && o.keySet ? 'key from openai' : o.keySet ? 'key set' : o.keySource === 'env' ? `key \${VAR} NOT SET (${o.keyRef})` : 'no key';
+    lines.push(`${'openrouter'.padEnd(11)} ${key}  maxConcurrent=${o.maxConcurrent}  order=${o.order && o.order.length ? o.order.join(',') : '-'}  sort=${o.sort || '-'}  fallbacks=${o.allowFallbacks === false ? 'off' : 'on'}`);
   }
   return lines;
 }
@@ -145,11 +138,11 @@ const sleep = (ms) => new Promise((r) => { const t = setTimeout(r, ms); if (t.un
  * @returns {Promise<number>} exit code
  */
 export async function cmdModels(argv, { out, c, fail, sleep: wait = sleep }) {
-  const args = modelsArgs(argv, ['--pick', '--base-url', '--api-key', '--search', '--min-context'], ['--accept-terms', '--all', '--yes', '--free', '--tools', '-h', '--help'], fail);
+  const args = modelsArgs(argv, ['--pick', '--base-url', '--api-key', '--search', '--min-context'], ['--all', '--yes', '--free', '--tools', '-h', '--help'], fail);
   const [verb, ...rest] = args._;
-  // `openrouter` is not a provider of its own: it is the openai provider at OpenRouter's URL, so
-  // every verb below sees `openai` and a base URL that defaults to OpenRouter's.
-  const viaOpenRouter = rest[0] === 'openrouter';
+  // `import openrouter` lists and imports through the openai provider at OpenRouter's URL (the key
+  // comes from OpenRouter's own block); `test` and `set` treat `openrouter` as that block itself.
+  const viaOpenRouter = verb === 'import' && rest[0] === 'openrouter';
   if (viaOpenRouter) rest[0] = 'openai';
   // `gemini` and `qwen` (import only) are the openai provider at Google's / Alibaba's endpoint, with a key of their own.
   const viaHosted = verb === 'import' && HOSTED_IMPORTS[rest[0]] ? HOSTED_IMPORTS[rest[0]] : null;
@@ -173,16 +166,8 @@ export async function cmdModels(argv, { out, c, fail, sleep: wait = sleep }) {
   const provider = rest[0];
   if (verb === 'login') {
     if (provider !== 'copilot') return fail('only `worca models login copilot` is supported');
-    const state = await providersState();
-    if (!state.copilot.termsCurrent) {
-      out(COPILOT_TERMS_TEXT);
-      out('');
-      const ok = args['accept-terms'] || await confirm('I understand and want to continue', false, { c });
-      if (!ok) return fail('sign-in cancelled — pass --accept-terms to acknowledge non-interactively');
-      await acknowledgeTerms();
-    }
     const flow = await beginCopilotLogin();
-    out(`Open ${c('bold', flow.verificationUri)} and enter the code ${c('bold', flow.userCode)}`);
+    out(`Open ${c('bold', flow.verificationUri)}${flow.host && flow.host !== 'github.com' ? ` (${flow.host})` : ''} and enter the code ${c('bold', flow.userCode)}`);
     out(c('dim', `Waiting for approval (code valid ${Math.round(flow.expiresIn / 60)} min)…`));
     let interval = flow.interval;
     const deadline = Date.now() + flow.expiresIn * 1000;
@@ -268,29 +253,31 @@ export async function cmdModels(argv, { out, c, fail, sleep: wait = sleep }) {
 
   if (verb === 'test') {
     if (!provider) return fail('usage: worca models test <copilot|openai|anthropic|openrouter>');
-    const label = viaOpenRouter ? 'openrouter' : provider;
-    const r = await testProviderConnection(provider, viaOpenRouter ? { baseUrl: baseUrlArg } : {});
+    const r = await testProviderConnection(provider);
     if (r.ok) {
-      out(c('green', `✓ ${label} reachable${r.models != null ? ` — ${r.models} models listed` : ''}`));
+      out(c('green', `✓ ${provider} reachable${r.models != null ? ` — ${r.models} models listed` : ''}`));
       if (r.detail) out(`  key: ${r.detail}`);
       return 0;
     }
-    out(c('red', `✗ ${label}: ${r.message}`));
+    out(c('red', `✗ ${provider}: ${r.message}`));
     return 1;
   }
 
   if (verb === 'set') {
     if (!provider) return fail('usage: worca models set <provider> key=value …');
+    const toOpenRouter = provider === 'openrouter';
     const patch = {};
     for (const kv of rest.slice(1)) {
       const i = kv.indexOf('=');
       if (i <= 0) return fail(`expected key=value, got ${JSON.stringify(kv)}`);
       const k = kv.slice(0, i); const v = kv.slice(i + 1);
-      patch[k] = k === 'maxConcurrent' ? Number(v) : v;
+      // OpenRouter's block keeps strings (an empty value clears a field; the block itself validates
+      // and splits `order`): only a set cap becomes a number and true/false become booleans.
+      if (toOpenRouter) patch[k] = k === 'maxConcurrent' && v !== '' ? Number(v) : k === 'allowFallbacks' && (v === 'true' || v === 'false') ? v === 'true' : v;
+      else patch[k] = k === 'maxConcurrent' ? Number(v) : v;
     }
-    if (viaOpenRouter && patch.baseUrl === undefined) patch.baseUrl = OPENROUTER_BASE_URL;
     if (!Object.keys(patch).length) return fail('nothing to set');
-    try { await patchProvider(provider, patch); } catch (err) { return fail(err.message || String(err)); }
+    try { await (toOpenRouter ? patchOpenRouter(patch) : patchProvider(provider, patch)); } catch (err) { return fail(err.message || String(err)); }
     for (const line of formatProviders(await providersState())) out(line);
     return 0;
   }

@@ -9,6 +9,8 @@ import { checkShapeModels } from './auto/classify.mjs';
 import { runsOn, harnessesLabel } from '../shared/connections.mjs';
 import { engineLabel } from '../shared/engine-switch.mjs';
 import { subagentModelIssue } from './model-env.mjs';
+import { roleReviewOf, ROLE_KEY_RE } from '../shared/graph/role-review-step.mjs';
+import { cleanPick } from '../shared/graph/role-slots.mjs';
 
 /** The keys a run overlay's node entry may carry (resolveGraph reads exactly these from it). */
 export const OVERLAY_KEYS = Object.freeze(['model', 'effort', 'fanOut', 'askQuestions', 'subagentModel']);
@@ -17,6 +19,8 @@ export const OVERLAY_MAX_NODES = 64;
 // No server path caps maxCycles today (setWireCycles in src/core/config.mjs only floors at 1, resolveGraph does
 // not clamp, the New run input has no max); 100 bounds a hand-written body without refusing any real config.
 export const OVERLAY_MAX_CYCLES = 100;
+/** A role-review node's per-role picks (`overlay.nodes[id].roles`): at most this many roles, keys as the spec's. */
+export const OVERLAY_MAX_ROLES = 12;
 
 const idText = (id) => JSON.stringify(String(id).slice(0, 64));
 const idPath = (id) => String(id).slice(0, 64);
@@ -43,14 +47,49 @@ export const OVERLAY_ERRORS = Object.freeze({
   wireKey: (id, k) => `overlay.wires.${idPath(id)}: unknown key ${idText(k)}`,
   cycles: (id) => `overlay.wires.${idPath(id)}: maxCycles must be a whole number from 1 to ${OVERLAY_MAX_CYCLES}`,
   notWire: (id, wfId) => `wire ${idText(id)} is not a wire of workflow ${wfId}`,
+  roles: (what, id) => `${what}.${idPath(id)}.roles must be an object keyed by role`,
+  tooManyRoles: (what, id) => `${what}.${idPath(id)}.roles names more than ${OVERLAY_MAX_ROLES} roles`,
+  roleKey: (what, id, k) => `${what}.${idPath(id)}.roles: role key ${idText(k)} must be 1–24 lowercase letters`,
+  roleEntry: (what, id, k) => `${what}.${idPath(id)}.roles.${idPath(k)} must be an object`,
+  roleField: (what, id, k, f) => `${what}.${idPath(id)}.roles.${idPath(k)}: unknown key ${idText(f)}`,
+  roleModel: (what, id, k) => `${what}.${idPath(id)}.roles.${idPath(k)}: model must be a string of at most 200 characters`,
+  roleEffort: (what, id, k) => `${what}.${idPath(id)}.roles.${idPath(k)}: effort must be a string of at most 32 characters`,
+  noRoleReview: (id) => `node ${idPath(id)} has no role review; roles are not allowed`,
+  undeclaredRole: (id, k) => `node ${idPath(id)} declares no role '${idPath(k)}'`,
 });
 
 function fail(errors) { return { error: errors.join('; '), errors }; }
+
+/** One node's `roles` map: `{ key: { model?, effort? } }` trimmed (blank picks dropped), or null; errors pushed. */
+function parseRolePicks(raw, what, id, errors) {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) { errors.push(OVERLAY_ERRORS.roles(what, id)); return null; }
+  const keys = Object.keys(raw);
+  if (keys.length > OVERLAY_MAX_ROLES) { errors.push(OVERLAY_ERRORS.tooManyRoles(what, id)); return null; }
+  const out = new Map();
+  for (const k of keys) {
+    if (!ROLE_KEY_RE.test(k)) { errors.push(OVERLAY_ERRORS.roleKey(what, id, k)); continue; }
+    const sel = raw[k];
+    if (!sel || typeof sel !== 'object' || Array.isArray(sel)) { errors.push(OVERLAY_ERRORS.roleEntry(what, id, k)); continue; }
+    const extra = Object.keys(sel).filter((f) => f !== 'model' && f !== 'effort');
+    if (extra.length) { errors.push(OVERLAY_ERRORS.roleField(what, id, k, extra[0])); continue; }
+    if (sel.model !== undefined) {
+      if (typeof sel.model !== 'string' || sel.model.length > 200) { errors.push(OVERLAY_ERRORS.roleModel(what, id, k)); continue; }
+    }
+    if (sel.effort !== undefined) {
+      if (typeof sel.effort !== 'string' || sel.effort.length > 32) { errors.push(OVERLAY_ERRORS.roleEffort(what, id, k)); continue; }
+    }
+    const pick = cleanPick(sel);
+    if (pick) out.set(k, pick);
+  }
+  return out.size ? Object.fromEntries(out) : null;
+}
 
 /** Shape-check an overlay's nodes map: { nodes } (null = empty) or { error, errors }. Values are typed and trimmed;
  *  '' is simply absent (an overlay names values, it never clears the project's). Built with a Map + fromEntries, so
  *  an id like "__proto__" stays an own key (and the agent-node check refuses it). */
 export function parseOverlayNodes(raw, { what = 'overlay.nodes', keys = OVERLAY_KEYS } = {}) {
+  // A run overlay also takes a role-review node's per-role picks; a proposal's own key list does not.
+  const allowRoles = keys === OVERLAY_KEYS;
   if (raw === undefined || raw === null) return { nodes: null };
   if (typeof raw !== 'object' || Array.isArray(raw)) return fail([OVERLAY_ERRORS.nodes(what)]);
   const ids = Object.keys(raw);
@@ -64,10 +103,13 @@ export function parseOverlayNodes(raw, { what = 'overlay.nodes', keys = OVERLAY_
     const ks = Object.keys(sel);
     // An entry names each allowed key at most once, so more keys than that hold unknown ones: ONE error, never one per
     // key (the body may carry millions — the 64-node bound covers what one entry makes the checks walk too).
-    if (ks.length > keys.length) { errors.push(OVERLAY_ERRORS.keys(what, id, keys)); continue; }
+    if (ks.length > keys.length + (allowRoles ? 1 : 0)) { errors.push(OVERLAY_ERRORS.keys(what, id, keys)); continue; }
     for (const k of ks) {
       const v = sel[k];
-      if (!keys.includes(k)) errors.push(OVERLAY_ERRORS.key(what, id, k));
+      if (k === 'roles' && allowRoles) {
+        const roles = parseRolePicks(v, what, id, errors);
+        if (roles) entry.roles = roles;
+      } else if (!keys.includes(k)) errors.push(OVERLAY_ERRORS.key(what, id, k));
       else if (k === 'model') {
         if (typeof v !== 'string' || !v.trim() || v.length > 200) errors.push(OVERLAY_ERRORS.model(id)); else entry.model = v.trim();
       } else if (k === 'effort') {
@@ -141,6 +183,12 @@ export function overlayStepModels(manifest) {
     if (!n || n.kind !== 'agent' || typeof n.id !== 'string' || !Object.hasOwn(picks, n.id)) continue;
     const pick = picks[n.id] && typeof picks[n.id].model === 'string' ? picks[n.id].model : '';
     if (pick && typeof n.model === 'string' && n.model.toLowerCase() === pick.toLowerCase()) out.push({ role: n.key || n.id, model: n.model });
+    // A role pick the run layer won and the engine runs (resolveRolePicks: source 'run' with a model) runs its slice.
+    const spec = n.roles && typeof n.roles === 'object' ? roleReviewOf(n.config) : null;
+    for (const role of spec ? spec.roles : []) {
+      const r = Object.hasOwn(n.roles, role.key) ? n.roles[role.key] : null;
+      if (r && r.source === 'run' && typeof r.model === 'string' && r.model) out.push({ role: `${n.key || n.id} · ${role.label}`, model: r.model });
+    }
   }
   return out;
 }
@@ -153,13 +201,24 @@ export function overlayStepModels(manifest) {
 export function checkRunOverlay(nodes, { workflow = null, models = [], engine = 'claude', requireModel = false, wires = null } = {}) {
   const errors = [];
   const wfId = workflow && typeof workflow.id === 'string' ? workflow.id : '(unknown)';
-  const agentIds = new Set((Array.isArray(workflow?.nodes) ? workflow.nodes : [])
-    .filter((n) => n && n.kind === 'agent' && typeof n.id === 'string').map((n) => n.id));
+  const agents = new Map((Array.isArray(workflow?.nodes) ? workflow.nodes : [])
+    .filter((n) => n && n.kind === 'agent' && typeof n.id === 'string').map((n) => [n.id, n]));
+  const agentIds = new Set(agents.keys());
   const out = new Map();
   const stages = [];
+  const rolePicks = [];
   for (const [id, sel] of Object.entries(nodes && typeof nodes === 'object' ? nodes : {})) {
     if (!agentIds.has(id)) { errors.push(OVERLAY_ERRORS.notAgent(id, wfId)); continue; }
-    const { reason: _reason, ...tunables } = sel && typeof sel === 'object' ? sel : {};
+    const { reason: _reason, roles, ...tunables } = sel && typeof sel === 'object' ? sel : {};
+    if (roles !== undefined) {
+      // Per-role picks only on a node that declares a role review, and only for the roles it declares.
+      const spec = roleReviewOf(agents.get(id).config);
+      if (!spec) { errors.push(OVERLAY_ERRORS.noRoleReview(id)); continue; }
+      const declared = new Set(spec.roles.map((r) => r.key));
+      const bad = Object.keys(roles || {}).filter((k) => !declared.has(k));
+      if (bad.length) { for (const k of bad) errors.push(OVERLAY_ERRORS.undeclaredRole(id, k)); continue; }
+      for (const [k, pick] of Object.entries(roles || {})) rolePicks.push({ id, key: k, tunables: { ...pick } });
+    }
     if (tunables.model !== undefined && typeof tunables.model !== 'string') { errors.push(OVERLAY_ERRORS.model(id)); continue; }
     if (tunables.effort !== undefined && typeof tunables.effort !== 'string') { errors.push(OVERLAY_ERRORS.effort(id)); continue; }
     if (tunables.effort === '') delete tunables.effort;
@@ -170,6 +229,9 @@ export function checkRunOverlay(nodes, { workflow = null, models = [], engine = 
   if (requireModel) for (const id of agentIds) if (!out.has(id)) stages.push({ id, tunables: {} });
   const catalog = Array.isArray(models) ? models.filter((m) => m && typeof m.id === 'string') : [];
   for (const issue of checkShapeModels({ stages }, catalog, { requireModel })) errors.push(issue.message.replace(/^stage /, 'node '));
+  // Each role pick through the node pick's catalog and effort checks.
+  const roleStages = rolePicks.map((p) => ({ id: `${p.id}.roles.${p.key}`, tunables: p.tunables }));
+  for (const issue of checkShapeModels({ stages: roleStages }, catalog)) errors.push(issue.message.replace(/^stage /, 'node '));
   const byId = new Map(catalog.map((m) => [m.id.toLowerCase(), m]));
   const run = engine || 'claude';
   for (const [id, t] of out) {
@@ -177,6 +239,13 @@ export function checkRunOverlay(nodes, { workflow = null, models = [], engine = 
     const m = byId.get(t.model.toLowerCase());
     if (m && !runsOn(m, run)) errors.push(OVERLAY_ERRORS.foreign(id, m, run));
     if (t.effort === undefined) t.effort = '';
+  }
+  for (const p of rolePicks) {
+    const m = p.tunables.model === undefined ? null : byId.get(p.tunables.model.toLowerCase());
+    if (m && !runsOn(m, run)) errors.push(OVERLAY_ERRORS.foreign(`${p.id}.roles.${p.key}`, m, run));
+    if (!out.has(p.id)) out.set(p.id, {});
+    const t = out.get(p.id);
+    t.roles = { ...(t.roles || {}), [p.key]: p.tunables };
   }
   const wireIds = new Set((Array.isArray(workflow?.wires) ? workflow.wires : []).map((w) => w && w.id).filter(Boolean));
   const outWires = {};

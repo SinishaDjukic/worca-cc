@@ -5,12 +5,12 @@ import { readFileSync } from 'node:fs';
 const read = (p) => JSON.parse(readFileSync(new URL(p, import.meta.url), 'utf8'));
 const PINS = {
   yaml: ['2.9.1', 'sha512-3NxN8+78OdzbT7C/WjGsyfPAtJaN3FNDsWxv7Y7mcDsT/oOmgW8BpyQQFFBnvZE3j9Y2Sdz1ULFLezL7Eb2yFw=='],
-  'smol-toml': ['1.9.0', 'sha512-hpd+HLON7HdZXqYchMM/+LaTTbdK0AU3NngIJ4KVyWbY9bfQqdL9cD+4yf6dUoU2Ap4VsU0JkQi6FxAI1B2mXQ=='],
+  'smol-toml': ['1.9.1', 'sha512-j7WyPdf0CJoutMzMoPLF/bVXHtKZIT9Rb4eGeEbWw8X2t5oirjPgpL+OpaENZrILYaXqYwnVH+qgUwVbl+pUJQ=='],
 };
 
 test('yaml and smol-toml are exact-pinned runtime dependencies, locked with integrity', () => {
   const pkg = read('../package.json');
-  const lock = read('../package-lock.json');
+  const lock = read('../npm-shrinkwrap.json');
   for (const [name, [version, integrity]] of Object.entries(PINS)) {
     assert.equal(pkg.dependencies[name], version, `${name} pinned exactly (no caret)`);
     assert.equal((pkg.devDependencies || {})[name], undefined);
@@ -27,7 +27,10 @@ test('yaml and smol-toml are exact-pinned runtime dependencies, locked with inte
     // gsap + playwright-core: the promo video kit (assets/promo-kit: the film runtime, real-UI plate capture on a system Chrome).
     // diff: Folder runs' changes.patch (src/core/folder-copy.mjs, jsdiff createTwoFilesPatch).
     // tar: GitHub's .tar.gz archives read without git (src/core/git-free/archive.mjs).
-    assert.deepEqual(Object.keys(pkg.dependencies).sort(), ['@highlightjs/cdn-assets', '@modelcontextprotocol/sdk', '@ricky0123/vad-web', '@xterm/addon-fit', '@xterm/xterm', 'diff', 'dompurify', 'express', 'gsap', 'htmlparser2', 'marked', 'onnxruntime-web', 'playwright-core', 'smol-toml', 'tar', 'undici', 'ws', 'yaml']);
+    // morphdom: the Design preview bridge's in-place section merge (src/core/design/preview/bridge.js, build doc only).
+    // fflate: Design's zip export (src/core/design/export.mjs, L25).
+    // @lobehub/icons-static-svg: the Models page's brand marks, served one file at a time at /vendor/brand-icons (ui/server.mjs).
+    assert.deepEqual(Object.keys(pkg.dependencies).sort(), ['@highlightjs/cdn-assets', '@lobehub/icons-static-svg', '@modelcontextprotocol/sdk', '@ricky0123/vad-web', '@xterm/addon-fit', '@xterm/xterm', 'diff', 'dompurify', 'express', 'fflate', 'gsap', 'htmlparser2', 'marked', 'morphdom', 'onnxruntime-web', 'playwright-core', 'smol-toml', 'tar', 'undici', 'ws', 'yaml']);
   }
 });
 

@@ -22,14 +22,9 @@ export const argOf = (argv, flag) => argv[argv.indexOf(flag) + 1];
 export const ghCalls = (seen, sub) => seen.filter((a) => a[0] === 'gh' && a[1] === 'pr' && a[2] === sub);
 export const git = (cwd, ...args) => { const r = spawnSync('git', args, { cwd, encoding: 'utf8' }); if (r.status !== 0) throw new Error(`git ${args.join(' ')}: ${r.stderr}`); return r.stdout.trim(); };
 
-/** Gate on (WORCA_FLAGS locks it), no Azure token, and the git-info runner reset after `fn`. */
+/** No Azure token, and the git-info runner reset after `fn`. */
 export async function withShip(fn) {
-  const saved = process.env.WORCA_FLAGS;
-  process.env.WORCA_FLAGS = 'shapeFirst';
-  try { return await withEnv(NO_ADO, fn); } finally {
-    gitInfo.reset();
-    process.env.WORCA_FLAGS = saved === undefined ? '-shapeFirst' : saved;
-  }
+  try { return await withEnv(NO_ADO, fn); } finally { gitInfo.reset(); }
 }
 
 /** gh/git stub for the ship: `gh pr create` answers `create`, `git describe --tags` answers `describe`, every argv is

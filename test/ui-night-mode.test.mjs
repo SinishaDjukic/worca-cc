@@ -4,14 +4,13 @@
 // duplicated per suite), with arms for the night routes and a POST recorder.
 import { test, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { JSDOM } from 'jsdom';
 import { renderNightForm, readNightForm, updateAwaySummary } from '../ui/public/night-mode-form.mjs';
 import { NIGHT_DEFAULTS, resolveNightConfig } from '../src/core/night/config.mjs';
 import { checkRows } from './helpers/rows.mjs';
+import { readIndexHtml } from '../src/core/read-index-html.mjs';
 
-const htmlPath = fileURLToPath(new URL('../ui/public/index.html', import.meta.url));
 const appPath = fileURLToPath(new URL('../ui/public/app.js', import.meta.url));
 
 const wins = [];
@@ -22,7 +21,7 @@ afterEach(() => {
 });
 
 async function boot({ settings = {}, decisions = [], away, models = [], runData = null } = {}) {
-  const dom = new JSDOM(readFileSync(htmlPath, 'utf8'), { url: 'http://localhost:4317/' });
+  const dom = new JSDOM(readIndexHtml(), { url: 'http://localhost:4317/' });
   const { window } = dom;
   wins.push(window);
   window.Element.prototype.scrollIntoView = function () {};

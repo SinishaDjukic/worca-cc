@@ -1,0 +1,85 @@
+/* ---------- Top bar (#topnav) ---------- */
+/* .app is the sidebar and .main-col; the column stacks the 48px bar over .main, which stays
+   the one scroll container (flex:1;min-height:0 above), so the run pages' sticky
+   .rd-bar/.hd-bar still pin to its top. The bar is a three-slot grid: the page name on the
+   left, search in the centre (240-440px), the actions on the right. The side tracks keep a floor:
+   the right one its content (Activity + New run), the left one the 32px collapse toggle. With 0
+   floors the centre grew to 440px first and both sides spilled under the search pill, which then
+   took their presses; now the centre and the page name give way. Every tier keeps it 48px tall.
+   HOUSE RULE: no comment inside a rule body and no closing brace in a comment. */
+.main-col{flex:1;min-width:0;height:100vh;display:flex;flex-direction:column;}
+.main-row{flex:1;min-width:0;min-height:0;display:flex;position:relative;}
+.topnav{flex:none;height:48px;display:grid;grid-template-columns:minmax(32px,1fr) minmax(240px,440px) minmax(max-content,1fr);
+  align-items:center;gap:12px;padding:0 16px 0 12px;background:var(--panel);border-bottom:1px solid var(--line);}
+.topnav-l{display:flex;align-items:center;gap:6px;min-width:0;}
+.topnav-c{display:flex;justify-content:center;min-width:0;}
+.topnav-r{display:flex;align-items:center;justify-content:flex-end;gap:8px;min-width:0;}
+.topnav-title{min-width:0;margin:0;font-size:var(--fs-body);font-weight:600;line-height:20px;letter-spacing:-.005em;color:var(--ink);
+  white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+.side-toggle{flex:none;}
+.side-toggle svg{width:20px;height:20px;flex:none;}
+.side-toggle .side-toggle-fill,.side-toggle[aria-expanded="false"] .side-toggle-line{display:none;}
+.side-toggle[aria-expanded="false"] .side-toggle-fill{display:inline;}
+.topnav-new{flex:none;white-space:nowrap;}
+.topnav-new svg{width:14px;height:14px;flex:none;}
+/* Activity (#topnav-activity, activity-menu.mjs): an outlined pill with one badge, the amber
+   Needs-you count in the Runs badge's colours, else the running count in blue. Its popover
+   hangs fixed under it (side-flyout.mjs 'down') at the sidebar popups' layer, 43: three tabs,
+   rows that are links (a status dot, the title, the time on the right, a muted line under it),
+   and a footer. */
+.topnav-act{flex:none;white-space:nowrap;}
+.topnav-act[aria-expanded="true"]{background:var(--hover);color:var(--ink);}
+.topnav-act:has(> .topnav-badge:not([hidden])){padding-right:6px;}
+.topnav-act svg{width:14px;height:14px;flex:none;color:var(--ink-2);}
+.topnav-badge{display:inline-flex;align-items:center;justify-content:center;min-width:20px;height:20px;padding:0 6px;
+  border-radius:var(--r-xs);background:var(--field);color:var(--ink-2);font:600 var(--fs-caption)/1 var(--sans);font-variant-numeric:tabular-nums;}
+.topnav-badge[data-tone="need"]{background:var(--amber-bg);color:var(--amber-ink-strong);}
+.topnav-badge[data-tone="run"]{background:var(--blue-bg);color:var(--blue-ink-strong);}
+.topnav-badge[hidden]{display:none;}
+.activity-pop{position:fixed;z-index:43;display:flex;flex-direction:column;width:440px;max-height:min(560px,calc(100vh - 72px));
+  overflow:hidden;border:1px solid var(--line);border-radius:var(--r-card);background:var(--panel);box-shadow:var(--shadow-pop);}
+.activity-pop[hidden]{display:none;}
+.activity-tabs{flex:none;padding:0 16px;}
+.activity-tab-n{font-size:12px;color:var(--ink-3);font-variant-numeric:tabular-nums;}
+.activity-panel{flex:1 1 auto;min-height:0;overflow-y:auto;padding:6px;}
+.activity-glabel{padding:10px 10px 4px;font-size:var(--fs-caption);font-weight:500;line-height:14px;color:var(--ink-3);}
+.activity-row{display:grid;grid-template-columns:8px minmax(0,1fr);align-items:start;column-gap:12px;padding:9px 10px;
+  border-radius:var(--r-sm);color:var(--ink);text-decoration:none;}
+.activity-row:hover{background:var(--hover);}
+.activity-row:focus-visible{outline:2px solid var(--ink);outline-offset:-2px;}
+.activity-dot{width:8px;height:8px;margin-top:6px;border-radius:50%;box-shadow:inset 0 0 0 1.5px var(--seq);}
+.activity-dot[data-tone="need"]{background:var(--amber);box-shadow:none;}
+.activity-dot[data-tone="run"]{background:var(--blue);box-shadow:none;}
+.activity-row-main{display:flex;flex-direction:column;min-width:0;}
+.activity-row-top{display:flex;align-items:baseline;gap:8px;min-width:0;}
+.activity-row-title{min-width:0;font-weight:500;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+.activity-row-time{flex:none;margin-left:auto;font-size:12px;color:var(--ink-2);white-space:nowrap;font-variant-numeric:tabular-nums;}
+.activity-row-sub{font-size:12px;line-height:17px;color:var(--ink-2);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+.activity-empty{margin:0;padding:18px 10px;font-size:13px;color:var(--ink-2);text-align:center;}
+.activity-foot{flex:none;display:flex;align-items:center;justify-content:space-between;gap:8px;padding:8px 8px 8px 16px;
+  border-top:1px solid var(--line);}
+.activity-foot-link{font-size:13px;font-weight:500;color:var(--ink-2);text-decoration:none;}
+.activity-foot-link:hover{color:var(--ink);text-decoration:underline;text-underline-offset:3px;}
+/* Search or ask (.tsearch, topnav-search.mjs): a 34px pill in the centre slot with its listbox under it,
+   as wide as the pill and 360px at least. Open, the pill wears the coral line (--search-line). Open, the whole search stacks at z 41 (nothing above it makes a stacking context): over
+   the run pages' sticky bars, the terminal pane (39) and the Ask dock (40), whose open sheet would cover
+   the listbox, and under the phone drawer (42), the flyouts (43), a tour (44) and the modals (50 and up).
+   Phones fold the pill into #tsearch-open (the "Responsive nav tiers" block); #tsearch-close lives only there. */
+.tsearch{position:relative;width:100%;min-width:0;}
+.tsearch.is-open{z-index:41;}
+.tsearch .tsearch-open,.tsearch .tsearch-close{display:none;}   /* two classes: .btn sets display later */
+.tsearch-field{display:flex;align-items:center;gap:9px;height:34px;padding:0 5px 0 12px;border:1px solid var(--line);border-radius:var(--r-sm);
+  background:var(--field);color:var(--ink-3);cursor:text;transition:border-color .15s;}
+.tsearch-field:hover{border-color:var(--hover-outline);}
+.tsearch.is-open .tsearch-field{background:var(--panel);border-color:var(--search-line);color:var(--ink-2);}
+.tsearch-ic{width:16px;height:16px;flex:none;}
+.tsearch-input{flex:1;min-width:0;height:100%;padding:0;border:0;outline:none;background:transparent;color:var(--ink);
+  font:400 var(--fs-body) var(--sans);-webkit-appearance:none;appearance:none;}
+.tsearch-input::placeholder{color:var(--ink-2);}
+.tsearch-input::-webkit-search-cancel-button,.tsearch-input::-webkit-search-decoration{-webkit-appearance:none;}
+/* The top search chip is the one key chip (issue #948): the Keyboard shortcuts sheet's kbd shares it */
+.tsearch-kbd,.kbd{display:inline-flex;align-items:center;justify-content:center;flex:none;min-width:20px;height:20px;padding:0 5px;
+  border-radius:var(--r-sm);background:var(--panel);box-shadow:inset 0 0 0 1px var(--line-2);color:var(--ink-3);
+  font:500 11px/1 var(--sans);white-space:nowrap;}
+/* The Keyboard shortcuts sheet (keys-sheet.mjs) */
+.keys-modal .card.keys-dlg{width:min(760px,100%);}   /* beats .viewer-modal .card's 860px (0,2,0) */

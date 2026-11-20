@@ -3,6 +3,8 @@ import { test, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { JSDOM } from 'jsdom';
 import { readFileSync } from 'node:fs';
+import { readIndexHtml } from '../src/core/read-index-html.mjs';
+import { readStyleCss } from '../src/core/read-style-css.mjs';
 
 const { window } = new JSDOM('<!doctype html><body></body>', { url: 'http://localhost:4317/#requirements' });
 for (const k of ['document', 'location', 'Event', 'HTMLElement', 'window']) Object.defineProperty(globalThis, k, { value: k === 'window' ? window : window[k], configurable: true, writable: true });
@@ -10,6 +12,8 @@ const clip = [];
 Object.defineProperty(globalThis, 'navigator', { value: { clipboard: { writeText: async (t) => { clip.push(t); } } }, configurable: true, writable: true });
 window.confirm = () => true;
 const tick = () => new Promise((r) => setTimeout(r, 0));
+/** n calendar days before today, at local noon: age() counts calendar days, so DST cannot shift it. */
+const daysAgo = (n) => { const d = new Date(); d.setHours(12, 0, 0, 0); d.setDate(d.getDate() - n); return d.toISOString(); };
 after(() => window.close());
 const { createRequirementsView } = await import('../ui/public/requirements-view.mjs');
 
@@ -49,9 +53,9 @@ function fakeApi(routes) {
 }
 const make = () => {
   const host = document.createElement('div'); const msgEl = document.createElement('p'); const subEl = document.createElement('div');
-  const routed = [];
-  const view = createRequirementsView({ host, subEl, msgEl, deps: { route: (p) => routed.push(p) } });
-  return { host, msgEl, view, routed };
+  const routed = []; const opened = [];
+  const view = createRequirementsView({ host, subEl, msgEl, deps: { route: (p) => routed.push(p), openRun: (id) => opened.push(id) } });
+  return { host, msgEl, view, routed, opened };
 };
 
 // One list row as GET /api/requirements carries it (A2 §4): the server's state, the Ready count, the latest run.
@@ -146,7 +150,7 @@ test('list: each state\'s badge and meta line', async () => {
   assert.equal(meta(12), 'Interview done · Ready 5 of 6 · 1 assumption to decide');
   assert.equal(meta(13), 'Interview done · Ready 5 of 6');
   assert.equal(meta(4), 'Ready 6 of 6');
-  assert.equal(meta(5), 'Worca is looking at the code…');
+  assert.equal(meta(5), 'Worca is doing the code look…');
   assert.equal(meta(6), 'Worca is thinking…');
   assert.equal(meta(7), 'Started · run running · Implement');
   assert.equal(meta(8), 'Started · run done');
@@ -194,6 +198,18 @@ test('list: Archived refetches with archived=1 and shows only the archived featu
   tab(host, /^All open/).click(); await tick(); await tick();
   assert.equal(calls.slice(n).find((c) => c.url.startsWith('/api/requirements'))?.url, '/api/requirements');
   assert.equal(host.querySelectorAll('.req-row').length, 1);
+});
+
+test('list: the spend footer adds "plus N steps with cost unknown" (9c D14)', async () => {
+  const say = async (spend) => {
+    fakeApi({ ...LIST_BASE, 'GET /api/requirements': listOf([row()], { spend }) });
+    const { host, view } = make();
+    await view.show('');
+    return host.querySelector('.req-spend').textContent;
+  };
+  assert.equal(await say({ windowUsd: 2.09, totalLimitUsd: 50, unknownSteps: 2 }), 'Spent on requirements this month: $2.09 of your $50.00 limit plus 2 steps with cost unknown.');
+  assert.equal(await say({ windowUsd: 0.5, totalLimitUsd: null, unknownSteps: 1 }), 'Spent on requirements this month: $0.50 plus 1 step with cost unknown.');
+  assert.equal(await say({ windowUsd: 0.5, totalLimitUsd: null, unknownSteps: 0 }), 'Spent on requirements this month: $0.50.');
 });
 
 test('list: the spend footer, with and without a limit; an empty list or filter never shows "null"', async () => {
@@ -403,42 +419,42 @@ test('new feature: back link, heading, field blocks, the For select with its gro
   const form = host.querySelector('.card.req-new');
   assert.ok(form);
   const fields = [...form.querySelectorAll('.field')];
-  assert.deepEqual(fields.map((f) => f.querySelector('label').firstChild.textContent.trim()), ['Title', 'Describe it', 'For']);
+  assert.deepEqual(fields.map((f) => f.querySelector('label').firstChild.textContent.trim()), ['Title', 'Describe it', 'Files', 'For']);
   assert.equal(fields[0].querySelector('#req-new-title').tagName, 'INPUT');
   assert.equal(fields[1].querySelector('#req-new-desc').tagName, 'TEXTAREA');
   assert.equal(fields[1].querySelector('label .opt').textContent, 'who needs it, what they want to do, and why');
-  const select = fields[2].querySelector('.select-wrap select#req-new-target');
+  const select = fields[3].querySelector('.select-wrap select#req-new-target');
   assert.ok(select);
   assert.deepEqual([...select.querySelectorAll('optgroup')].map((g) => g.label), ['Projects', 'Workspaces']);
   assert.deepEqual([...select.options].map((o) => o.value), ['project:shop-1', 'workspace:ws1']);
-  assert.equal(fields[2].querySelector('.hint').textContent, "Worca looks at this project's code once, read-only, to learn what already exists. Change that in Your notes for Worca.");
+  assert.equal(fields[3].querySelector('.hint').textContent, "Worca does a code look of this project once, read-only, to learn what already exists. Change that in Your notes for Worca.");
   select.value = 'workspace:ws1';
   select.dispatchEvent(new window.Event('change'));
-  assert.equal(fields[2].querySelector('.hint').textContent, "Worca looks at the code of this workspace's projects once, read-only, to learn what already exists. Change that in Your notes for Worca.");
-  assert.equal(fields[2].querySelector('.req-brief-line'), null, 'no brief, no green line');
-  assert.deepEqual([...form.querySelectorAll('.btn, .btn-primary')].map((b) => b.textContent), ['Cancel', 'Start the interview']);
+  assert.equal(fields[3].querySelector('.hint').textContent, "Worca does a code look of this workspace's projects once, read-only, to learn what already exists. Change that in Your notes for Worca.");
+  assert.equal(fields[3].querySelector('.req-brief-line'), null, 'no brief, no green line');
+  // A6.1: From a ticket… is in the form but hidden until a connection can import (none here); it is the one button skipped
+  const fromTicket = form.querySelector('[data-ui="import-open"]');
+  assert.deepEqual([fromTicket && fromTicket.textContent, fromTicket && fromTicket.hidden], ['From a ticket…', true]);
+  assert.deepEqual([...form.querySelectorAll('.btn, .btn-primary')].filter((b) => b.hidden), [fromTicket], 'the only hidden button is From a ticket…');
+  assert.deepEqual([...form.querySelectorAll('.btn, .btn-primary')].filter((b) => !b.hidden).map((b) => b.textContent), ['Cancel', 'Start the interview']);
   assert.ok([...form.querySelectorAll('.btn-primary')].at(-1).textContent === 'Start the interview', 'the CDP proof clicks the last .req-new .btn-primary');
   assert.doesNotMatch(host.textContent, /null|false|undefined/);
 });
 
-test('new feature: the hint says who interviews, then the cost (lane 2 replaces only the part after the dot)', async () => {
+test('new feature: the cost line carries the code look (9c: who interviews is the selects now, the old sentence is gone)', async () => {
   const hint = async (extra) => {
     fakeApi({ ...LIST_BASE, 'GET /api/requirements': listOf([], extra) });
     const { host, view } = make();
     await view.show('new');
     assert.doesNotMatch(host.textContent, /null|false|undefined/);
+    assert.doesNotMatch(host.textContent, /Worca interviews with/);
+    assert.equal(host.querySelector('.req-new-model'), null);
     return host.querySelector('.req-new-cost');
   };
-  let el = await hint({ lookCostUsd: 0.25, interview: { model: 'claude-opus-5-5', label: 'Opus 5.5', effort: 'medium' } });
-  assert.equal(el.textContent, 'Worca interviews with Opus 5.5 at medium effort · about $0.25 for the code look, then cents per round');
-  assert.equal(el.querySelector('.req-new-model').textContent, 'Worca interviews with Opus 5.5 at medium effort');
+  let el = await hint({ lookCostUsd: 0.25, interview: { default: { engine: 'claude', model: 'claude-opus-5-5', label: 'Opus 5.5', effort: 'medium' }, fallbackReason: null } });
+  assert.equal(el.textContent, 'About $0.25 for the code look, then cents per round.');
   assert.ok(el.classList.contains('hint'));
-  el = await hint({ lookCostUsd: null, interview: { model: 'claude-opus-5-5', label: 'Opus 5.5', effort: 'medium' } });
-  assert.equal(el.textContent, 'Worca interviews with Opus 5.5 at medium effort · cents per round');
-  el = await hint({ lookCostUsd: 0.25, interview: { model: 'claude-sonnet-5', label: 'Sonnet 5', effort: null } });
-  assert.equal(el.querySelector('.req-new-model').textContent, 'Worca interviews with Sonnet 5');
-  el = await hint({ lookCostUsd: null, interview: { model: 'claude-sonnet-5', effort: null } });
-  assert.equal(el.textContent, 'Worca interviews with claude-sonnet-5 · cents per round', 'no label: the model id');
+  assert.equal(await hint({ lookCostUsd: null, interview: { model: 'claude-opus-5-5', label: 'Opus 5.5', effort: 'medium' } }), null);
   el = await hint({ lookCostUsd: 0.25, interview: null });
   assert.equal(el.textContent, 'About $0.25 for the code look, then cents per round.', "no interview info: today's hint");
   assert.equal(await hint({ lookCostUsd: null, interview: null }), null);
@@ -577,7 +593,7 @@ test('Save: declining the overwrite confirm sends no second POST', async () => {
 });
 
 test('index.html: a Simple-level, flag-gated nav row and a page section', () => {
-  const html = readFileSync(new URL('../ui/public/index.html', import.meta.url), 'utf8');
+  const html = readIndexHtml();
   assert.match(html, /<button type="button" data-nav="requirements" data-min-level="simple" data-flag="requirements" data-flag-chip>/);
   assert.match(html, /<section class="view hidden" data-view="requirements">[\s\S]*id="requirements-host"/);
   const topnav = readFileSync(new URL('../ui/public/topnav.mjs', import.meta.url), 'utf8');
@@ -857,7 +873,7 @@ test('spec card: pencil buttons with labels, edited inline, remove icons, the fo
   assert.deepEqual(sections(), ['goal', 'actors', 'criteria', 'assumptions', 'openQuestions']);
 });
 
-test('What Worca found in the code: folded below the rounds, with how often it looked, the files and the cost', async () => {
+test('Code look: what Worca found: folded below the rounds, with how often it looked, the files and the cost', async () => {
   const look = (id, costUsd) => ({ id, kind: 'orientation', costUsd, payload: { summary: 'x', files: ['src/o.js'], skipped: null } });
   let turns = [look(2, 0.14)];
   fakeApi({ ...BASE, 'GET /api/requirements/4': () => ({ feature: feature(), turns }) });
@@ -865,7 +881,7 @@ test('What Worca found in the code: folded below the rounds, with how often it l
   await view.show('feature/4');
   const box = () => host.querySelector('.req-left > details.req-orient');
   assert.equal(box().open, false);
-  assert.match(box().querySelector('summary').textContent, /^What Worca found in the code/);
+  assert.match(box().querySelector('summary').textContent, /^Code look: what Worca found/);
   assert.equal(box().querySelector('.req-orient-meta').textContent, 'looked once · 1 file · $0.14');
   turns = [look(2, 0.14), look(7, 0.1)];
   box().open = true;
@@ -969,6 +985,7 @@ const BUILD = {
 };
 const chipsOf = (el) => [...el.querySelectorAll('.chip')].map((c) => c.textContent);
 const pick = (el, value) => { el.value = value; el.dispatchEvent(new window.Event('change', { bubbles: true })); };
+const change = pick;
 
 test('Ready to build: the sentence, the chips, Change reveals the workflow and branch selects; the choices are kept', async () => {
   const calls = fakeApi({ ...BASE, ...BUILD, 'GET /api/requirements/4': () => ({ feature: readyFeature(), turns: [] }) });
@@ -1025,10 +1042,47 @@ const startedFeature = (over = {}) => feature({ ...DONE, state: 'started', readi
   starts: [{ version: 1, runId: 'r9', ready: true, failing: [], reason: null, workflowId: 'wf_x', sourceBranch: 'dev',
     run: { status: 'running', phase: 'plan', costUsd: 0.1, href: '#running/r9' } }], ...over });
 
-test('Start: posts the choices once (the button waits for the answer), repaints as started, says so with a link', async () => {
+// What the run setup overlay loads for the workflow wf_x ("Careful"): two agents and one loop.
+const SETUP_AGENTS = [
+  { key: 'planner', displayName: 'Plan', inputs: [{ id: 'task', type: 'md', required: true }], outputs: [{ id: 'plan', type: 'md', when: 'always' }] },
+  { key: 'implementer', displayName: 'Implement', inputs: [{ id: 'fix', type: 'md', required: false, loop: true }, { id: 'plan', type: 'md', required: true }],
+    outputs: [{ id: 'done', type: 'void', when: 'always' }] },
+  { key: 'reviewer', displayName: 'Review', inputs: [{ id: 'plan', type: 'md', required: true }, { id: 'done', type: 'void', required: false }],
+    outputs: [{ id: 'review', type: 'md', when: 'blocking' }, { id: 'pass', type: 'void', when: 'clean' }] },
+];
+const SETUP_WF = { id: 'wf_x', name: 'Careful', version: 2,
+  nodes: [{ id: 'n_task', kind: 'task', config: {} }, { id: 'n_plan', kind: 'agent', key: 'planner', config: {} },
+    { id: 'n_impl', kind: 'agent', key: 'implementer', config: {} }, { id: 'n_review', kind: 'agent', key: 'reviewer', config: {} }, { id: 'n_end', kind: 'end', config: {} }],
+  wires: [{ id: 'w1', from: { node: 'n_task', port: 'task' }, to: { node: 'n_plan', port: 'task' } },
+    { id: 'w2', from: { node: 'n_plan', port: 'plan' }, to: { node: 'n_impl', port: 'plan' } },
+    { id: 'w3', from: { node: 'n_plan', port: 'plan' }, to: { node: 'n_review', port: 'plan' } },
+    { id: 'w4', from: { node: 'n_impl', port: 'done' }, to: { node: 'n_review', port: 'done' } },
+    { id: 'w5', from: { node: 'n_review', port: 'review' }, to: { node: 'n_impl', port: 'fix' }, config: { maxCycles: 4 } },
+    { id: 'w6', from: { node: 'n_review', port: 'pass' }, to: { node: 'n_end', port: 'result' } }] };
+const SETUP_MODELS = [{ id: 'claude-opus-5-5', label: 'Opus 5.5', efforts: ['medium', 'high'], connection: { kind: 'signin', engine: 'claude' } }];
+const SETUP = {
+  'GET /api/workflows/wf_x': SETUP_WF, 'GET /api/agents?all=1': { agents: SETUP_AGENTS }, 'GET /api/scripts': { scripts: [] },
+  'GET /api/config?projectDir=%2Fp%2Fshop': { config: {}, models: SETUP_MODELS },
+  'GET /api/run-defaults?projectDir=%2Fp%2Fshop': { engine: { value: 'claude' }, steps: { claude: {} } },
+  'GET /api/presets': { presets: [{ id: 'p1', name: 'Careful run', scope: { kind: 'global' },
+    setup: { workflowId: 'wf_x', overlay: { nodes: { n_plan: { model: 'claude-opus-5-5', effort: 'high' } }, wires: { w5: { maxCycles: 6 } } } } }] },
+};
+const setupDlg = () => document.querySelector('.req-runsetup');
+const setupGo = () => setupDlg().querySelector('[data-ui="runsetup-go"]');
+const EDITED_OVERLAY = { nodes: { n_plan: { model: 'claude-opus-5-5', effort: 'high' } }, wires: { w5: { maxCycles: 4 } } };
+/** The card's Change opened, wf_x and dev picked: the choices Start in Worca then uses. */
+async function chooseCareful(host) {
+  host.querySelector('[data-ui="build-change"]').click();
+  await tick(); await tick(); await tick();
+  pick(host.querySelector('[data-ui="build-workflow"]'), 'wf_x');
+  pick(host.querySelector('[data-ui="build-branch"]'), 'dev');
+}
+const startedReply = (over = {}) => ({ __status: 201, body: { runId: 'r9', version: 1, feature: startedFeature(), turns: [], ...over } });
+
+test('Start with a workflow: the setup overlay opens first (nothing posted), its confirm posts the choices and its overlay once, then the run opens', async () => {
   let release;
   const gate = new Promise((r) => { release = r; });
-  const calls = fakeApi({ ...BASE, ...BUILD, 'GET /api/requirements/4': () => ({ feature: readyFeature(), turns: [] }) });
+  const calls = fakeApi({ ...BASE, ...BUILD, ...SETUP, 'GET /api/requirements/4': () => ({ feature: readyFeature(), turns: [] }) });
   const inner = globalThis.fetch;
   globalThis.fetch = async (url, opts = {}) => {
     if (opts.method === 'POST' && url === '/api/requirements/4/start') {
@@ -1038,28 +1092,304 @@ test('Start: posts the choices once (the button waits for the answer), repaints 
     }
     return inner(url, opts);
   };
-  const { host, msgEl, view } = make();
+  const { host, view, opened } = make();
+  document.body.append(host);
   await view.show('feature/4');
-  host.querySelector('[data-ui="build-change"]').click();
-  await tick(); await tick(); await tick();
-  pick(host.querySelector('[data-ui="build-workflow"]'), 'wf_x');
-  pick(host.querySelector('[data-ui="build-branch"]'), 'dev');
-  const go = host.querySelector('[data-ui="start-go"]');
-  go.click();
-  go.click();
-  await tick();
-  assert.equal(host.querySelector('[data-ui="start-go"]').disabled, true, 'disabled while the start is in flight');
+  await chooseCareful(host);
+  assert.equal(host.querySelectorAll('[data-start]').length, 1, 'one Start button on the card');
   host.querySelector('[data-ui="start-go"]').click();
+  host.querySelector('[data-ui="start-go"]').click();
+  for (let i = 0; i < 6; i++) await tick();
+  assert.ok(setupDlg(), 'the overlay is open');
+  assert.equal(calls.filter((c) => c.method === 'POST').length, 0, 'nothing is posted before it is confirmed');
+  assert.equal(document.getElementById(setupDlg().getAttribute('aria-labelledby')).textContent, 'Set up this run');
+  assert.equal(setupDlg().querySelector('[data-ui="runsetup-workflow"]').textContent, 'Careful');
+  assert.equal(setupDlg().querySelector('select#req-build-wf'), null, 'the workflow is a label, not a select');
+  change(setupDlg().querySelector('[data-ui="model-n_plan"]'), 'claude-opus-5-5');
+  change(setupDlg().querySelector('[data-ui="effort-n_plan"]'), 'high');
+  setupGo().click();
+  await tick();
+  assert.equal(setupGo().disabled, true, 'the overlay waits for the answer');
+  assert.equal(host.querySelector('[data-ui="start-go"]').disabled, true, 'so does the card');
+  setupGo().click();
   release();
-  await tick(); await tick(); await tick();
+  for (let i = 0; i < 4; i++) await tick();
   const posts = calls.filter((c) => c.method === 'POST');
   assert.equal(posts.length, 1, 'one start, however often it was pressed');
-  assert.deepEqual(posts[0].body, { workflowId: 'wf_x', sourceBranch: 'dev' });
-  assert.equal(msgEl.textContent, 'Started build v1. Open the run');
-  assert.equal(msgEl.querySelector('a').getAttribute('href'), '#running/r9');
+  assert.deepEqual(posts[0].body, { workflowId: 'wf_x', sourceBranch: 'dev', overlay: EDITED_OVERLAY });
+  assert.deepEqual(opened, ['r9'], 'the run page opens');
+  assert.equal(setupDlg(), null, 'the overlay is gone');
   assert.ok(host.querySelector('.req-runs'), 'repainted from the answer: the feature is started');
-  assert.equal(host.querySelector('.req-build'), null);
   assert.equal(calls.filter((c) => c.url === '/api/requirements/4').length, 1, 'no refetch: the answer carries the feature');
+  assert.ok(!calls.some((c) => c.method === 'PUT' || c.method === 'PATCH'), 'no config or preset is written');
+  host.remove();
+});
+
+test('Start with a workflow: Cancel and Escape send nothing and leave the choices; a second open starts from the normal settings', async () => {
+  const calls = fakeApi({ ...BASE, ...BUILD, ...SETUP, 'GET /api/requirements/4': () => ({ feature: readyFeature(), turns: [] }) });
+  const { host, view, opened } = make();
+  document.body.append(host);
+  await view.show('feature/4');
+  await chooseCareful(host);
+  const go = () => host.querySelector('[data-ui="start-go"]');
+  go().click();
+  for (let i = 0; i < 6; i++) await tick();
+  change(setupDlg().querySelector('[data-ui="model-n_plan"]'), 'claude-opus-5-5');
+  setupDlg().querySelector('[data-ui="runsetup-cancel"]').click();
+  assert.equal(setupDlg(), null);
+  assert.equal(document.activeElement, go(), 'the focus goes back to Start');
+  go().click();
+  for (let i = 0; i < 6; i++) await tick();
+  assert.equal(setupDlg().querySelector('[data-ui="model-n_plan"]').value, '', 'the earlier edit is not kept');
+  document.dispatchEvent(new window.KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+  assert.equal(setupDlg(), null);
+  assert.equal(calls.filter((c) => c.method === 'POST').length, 0);
+  assert.deepEqual(opened, []);
+  assert.deepEqual(chipsOf(host.querySelector('.req-build')), ['Workflow · Careful', 'Branch from · dev'], 'the choices are untouched');
+  host.remove();
+});
+
+test('Start with a workflow: a refusal stays in the overlay, nothing opens, and the next confirm can go through', async () => {
+  let n = 0;
+  const calls = fakeApi({ ...BASE, ...BUILD, ...SETUP, 'GET /api/requirements/4': () => ({ feature: readyFeature(), turns: [] }),
+    'POST /api/requirements/4/start': () => { n += 1; return n === 1 ? { __status: 400, body: { error: 'node "n_plan": unknown model' } } : startedReply(); } });
+  const { host, view, opened } = make();
+  document.body.append(host);
+  await view.show('feature/4');
+  await chooseCareful(host);
+  host.querySelector('[data-ui="start-go"]').click();
+  for (let i = 0; i < 6; i++) await tick();
+  setupGo().click();
+  await tick(); await tick(); await tick();
+  assert.equal(setupDlg().querySelector('.req-runsetup-msg').textContent, 'node "n_plan": unknown model');
+  assert.equal(setupGo().disabled, false);
+  assert.deepEqual(opened, []);
+  setupGo().click();
+  await tick(); await tick(); await tick();
+  assert.deepEqual(opened, ['r9']);
+  assert.equal(calls.filter((c) => c.method === 'POST').length, 2);
+  host.remove();
+});
+
+test('Start with a workflow: the workflow list failing means Auto — the card says so, no overlay, the start has no overlay', async () => {
+  const calls = fakeApi({ ...BASE, 'GET /api/projects': BUILD['GET /api/projects'], 'GET /api/requirements/4': () => ({
+    feature: readyFeature({ starts: [{ version: 1, runId: 'r0', ready: true, failing: [], reason: null, workflowId: 'wf_x', sourceBranch: null, run: null }] }), turns: [] }),
+  'POST /api/requirements/4/start': startedReply() });
+  const { host, view, opened } = make();
+  await view.show('feature/4');
+  await tick(); await tick(); await tick();
+  assert.deepEqual(chipsOf(host.querySelector('.req-build')).slice(0, 1), ['Workflow · Auto']);
+  assert.match(host.querySelector('.req-build').textContent, /Could not load workflows; only Auto is offered\./);
+  host.querySelector('[data-ui="start-go"]').click();
+  await tick(); await tick(); await tick();
+  assert.equal(setupDlg(), null);
+  assert.deepEqual(calls.find((c) => c.method === 'POST').body, { workflowId: 'wf_auto' });
+  assert.deepEqual(opened, ['r9']);
+});
+
+test('Start with a workflow: a press while the list loads waits for it', async () => {
+  let release;
+  const gate = new Promise((r) => { release = r; });
+  fakeApi({ ...BASE, ...BUILD, ...SETUP, 'GET /api/requirements/4': () => ({ feature: readyFeature({ starts: [{ version: 1, runId: 'r0', ready: true, failing: [],
+    reason: null, workflowId: 'wf_x', sourceBranch: null, run: null }] }), turns: [] }) });
+  const inner = globalThis.fetch;
+  globalThis.fetch = async (url, opts = {}) => { if (url === '/api/workflows') await gate; return inner(url, opts); };
+  const { host, view } = make();
+  document.body.append(host);
+  await view.show('feature/4');
+  host.querySelector('[data-ui="start-go"]').click();
+  await tick(); await tick();
+  assert.equal(setupDlg(), null, 'not yet');
+  release();
+  for (let i = 0; i < 8; i++) await tick();
+  assert.ok(setupDlg(), 'the overlay for the remembered workflow');
+  assert.equal(setupDlg().querySelector('[data-ui="runsetup-workflow"]').textContent, 'Careful');
+  setupDlg().querySelector('[data-ui="runsetup-cancel"]').click();
+  host.remove();
+});
+
+const careful = [{ version: 1, runId: 'r0', ready: true, failing: [], reason: null, workflowId: 'wf_x', sourceBranch: null, run: null }];
+const earlyFeature = (over = {}) => feature({ readiness: readiness({ overridable: true }),
+  ...(over.starts ? { changedSinceStart: [{ kind: 'goal', field: 'measure', before: '', after: 'Fewer calls' }] } : {}), ...over });
+const reasonDlg = () => document.querySelector('.req-dialog:not(.req-runsetup)');
+async function typeReason(text) {
+  const area = reasonDlg().querySelector('textarea');
+  area.value = text;
+  area.dispatchEvent(new window.Event('input'));
+}
+
+test('Start before it\'s Ready with a workflow: the reason first (Continue, saved at once), then the overlay, then one start with both', async () => {
+  const calls = fakeApi({ ...BASE, ...BUILD, ...SETUP, 'GET /api/requirements/4': () => ({ feature: earlyFeature({ starts: careful }), turns: [] }),
+    'PUT /api/requirements/4/early-start-reason': { earlyStartReason: 'Sprint today' }, 'POST /api/requirements/4/start': startedReply() });
+  const { host, view, opened } = make();
+  document.body.append(host);
+  await view.show('feature/4');
+  host.querySelector('[data-ui="start-anyway"]').click();
+  for (let i = 0; i < 6; i++) await tick();
+  assert.equal(reasonDlg().querySelector('.btn-primary').textContent, 'Continue');
+  assert.equal(setupDlg(), null, 'the reason comes before the overlay');
+  assert.ok(!calls.some((c) => c.method === 'PUT'), 'nothing is saved before it is given');
+  await typeReason('  Sprint today ');
+  reasonDlg().querySelector('.btn-primary').click();
+  for (let i = 0; i < 8; i++) await tick();
+  const put = calls.findIndex((c) => c.method === 'PUT');
+  assert.deepEqual(calls[put].body, { reason: 'Sprint today' });
+  assert.ok(setupDlg(), 'the overlay follows');
+  assert.equal(reasonDlg(), null);
+  assert.ok(calls.findIndex((c) => c.url === '/api/workflows/wf_x') > put, 'the overlay loads after the reason is saved');
+  assert.equal(calls.filter((c) => c.method === 'POST').length, 0);
+  setupGo().click();
+  await tick(); await tick(); await tick();
+  assert.deepEqual(calls.find((c) => c.method === 'POST').body, { reason: 'Sprint today', workflowId: 'wf_x', overlay: { wires: { w5: { maxCycles: 4 } } } });
+  assert.deepEqual(opened, ['r9']);
+  host.remove();
+});
+
+test('Start before it\'s Ready: Auto goes from the reason to the start (no overlay); the saved reason survives a cancel and a failed start, and prefills the next dialog', async () => {
+  let fail = true;
+  const calls = fakeApi({ ...BASE, 'GET /api/requirements/4': () => ({ feature: earlyFeature(), turns: [] }),
+    'PUT /api/requirements/4/early-start-reason': { earlyStartReason: 'Sprint today' },
+    'POST /api/requirements/4/start': () => (fail ? { __status: 409, body: { error: 'The budget for this month is used up.' } } : startedReply()) });
+  const { host, view, opened } = make();
+  document.body.append(host);
+  await view.show('feature/4');
+  const open = async () => { host.querySelector('[data-ui="start-anyway"]').click(); await tick(); await tick(); };
+  await open();
+  assert.equal(reasonDlg().querySelector('textarea').value, '');
+  assert.equal(reasonDlg().querySelector('.btn-primary').textContent, 'Start with 1 open', 'Auto keeps its labels');
+  await typeReason('Sprint today');
+  reasonDlg().querySelector('.btn-primary').click();
+  for (let i = 0; i < 4; i++) await tick();
+  assert.equal(reasonDlg().querySelector('.req-dlg-msg').textContent, 'The budget for this month is used up.', 'a failed start stays in the dialog');
+  assert.deepEqual(opened, []);
+  btn(reasonDlg(), 'Keep deciding').click();
+  await open();
+  assert.equal(reasonDlg().querySelector('textarea').value, 'Sprint today', 'the reason was kept');
+  assert.equal(setupDlg(), null, 'Auto has no overlay');
+  fail = false;
+  reasonDlg().querySelector('.btn-primary').click();
+  for (let i = 0; i < 4; i++) await tick();
+  assert.deepEqual(calls.filter((c) => c.method === 'POST').at(-1).body, { reason: 'Sprint today', workflowId: 'wf_auto' });
+  assert.deepEqual(opened, ['r9']);
+  host.remove();
+});
+
+test('Start before it\'s Ready: cancelling the overlay keeps the reason; a feature that carries one opens its dialog with it', async () => {
+  const calls = fakeApi({ ...BASE, ...BUILD, ...SETUP, 'GET /api/requirements/4': () => ({ feature: earlyFeature({ starts: careful, earlyStartReason: 'Kept note' }), turns: [] }),
+    'PUT /api/requirements/4/early-start-reason': { earlyStartReason: 'Kept note' } });
+  const { host, view } = make();
+  document.body.append(host);
+  await view.show('feature/4');
+  host.querySelector('[data-ui="start-anyway"]').click();
+  await tick(); await tick();
+  assert.equal(reasonDlg().querySelector('textarea').value, 'Kept note', 'prefilled from the feature');
+  assert.equal(reasonDlg().querySelector('.req-dlg-count').textContent, '9 / 500');
+  reasonDlg().querySelector('.btn-primary').click();
+  for (let i = 0; i < 8; i++) await tick();
+  setupDlg().querySelector('[data-ui="runsetup-cancel"]').click();
+  assert.equal(calls.filter((c) => c.method === 'POST').length, 0);
+  host.querySelector('[data-ui="start-anyway"]').click();
+  await tick(); await tick();
+  assert.equal(reasonDlg().querySelector('textarea').value, 'Kept note', 'still there after the cancel');
+  btn(reasonDlg(), 'Keep deciding').click();
+  host.remove();
+});
+
+test('Start with a workflow: a start refused as not Ready closes the overlay, asks for the reason, and sends the same confirmed overlay', async () => {
+  const calls = fakeApi({ ...BASE, ...BUILD, ...SETUP, 'GET /api/requirements/4': () => ({ feature: readyFeature({ starts: careful }), turns: [] }),
+    'PUT /api/requirements/4/early-start-reason': { earlyStartReason: 'Late reason' },
+    'POST /api/requirements/4/start': () => (calls.at(-1).body.reason ? startedReply()
+      : { __status: 409, body: { error: 'This feature is not Ready. Give a reason to start it anyway.', failing: ['assumptions'] } }) });
+  const { host, view, opened } = make();
+  document.body.append(host);
+  await view.show('feature/4');
+  host.querySelector('[data-ui="start-go"]').click();
+  for (let i = 0; i < 8; i++) await tick();
+  change(setupDlg().querySelector('[data-ui="model-n_plan"]'), 'claude-opus-5-5');
+  change(setupDlg().querySelector('[data-ui="effort-n_plan"]'), 'high');
+  setupGo().click();
+  for (let i = 0; i < 4; i++) await tick();
+  assert.equal(setupDlg(), null, 'the overlay is closed');
+  assert.ok(reasonDlg(), 'the reason is asked');
+  await typeReason('Late reason');
+  reasonDlg().querySelector('.btn-primary').click();
+  for (let i = 0; i < 6; i++) await tick();
+  assert.equal(setupDlg(), null, 'no second overlay');
+  const posts = calls.filter((c) => c.method === 'POST');
+  assert.equal(posts.length, 2);
+  assert.deepEqual(posts[1].body, { reason: 'Late reason', workflowId: 'wf_x', overlay: EDITED_OVERLAY });
+  assert.deepEqual(posts[0].body.overlay, EDITED_OVERLAY);
+  assert.deepEqual(opened, ['r9']);
+  host.remove();
+});
+
+test('Start with a workflow on a workspace feature: the overlay shows the primary project\'s saved settings, not the global ones (M1)', async () => {
+  const saved = { ...SETUP_MODELS[0] };
+  const wsFeature = (over = {}) => readyFeature({ scopeType: 'workspace', scopeKey: 'ws1', starts: careful, ...over });
+  const calls = fakeApi({ ...BASE, ...BUILD, ...SETUP, 'GET /api/workspaces': { workspaces: [{ id: 'ws1', name: 'Storefront', projectPaths: ['/p/shop', '/p/zed'] }] },
+    'GET /api/requirements/4': () => ({ feature: wsFeature(), turns: [] }),
+    'GET /api/config': { config: { workflows: { wf_x: { nodes: { n_plan: { model: 'wrong-global' } } } } }, models: [saved] },
+    'GET /api/config?projectDir=%2Fp%2Fshop': { config: { workflows: { wf_x: { nodes: { n_plan: { model: 'claude-opus-5-5', effort: 'high' } } } } }, models: [saved] },
+    'POST /api/requirements/4/start': startedReply() });
+  const { host, view } = make();
+  document.body.append(host);
+  await view.show('feature/4');
+  host.querySelector('[data-ui="start-go"]').click();
+  for (let i = 0; i < 8; i++) await tick();
+  assert.ok(calls.some((c) => c.url === '/api/config?projectDir=%2Fp%2Fshop'), 'the primary member\'s config is loaded');
+  assert.ok(!calls.some((c) => c.url === '/api/config'), 'not the global one');
+  assert.ok(calls.some((c) => c.url === '/api/run-defaults?projectDir=%2Fp%2Fshop'));
+  assert.equal(setupDlg().querySelector('[data-ui="model-n_plan"]').value, 'claude-opus-5-5', 'the saved model is what is shown');
+  setupGo().click();
+  await tick(); await tick(); await tick();
+  assert.deepEqual(calls.find((c) => c.method === 'POST').body.overlay.nodes.n_plan, { model: 'claude-opus-5-5', effort: 'high' });
+  host.remove();
+});
+
+test('Start before it\'s Ready (Auto): a live frame during the reason\'s save, then a refused start, leaves Start in Worca enabled (M2)', async () => {
+  const calls = fakeApi({ ...BASE, 'GET /api/requirements/4': () => ({ feature: earlyFeature(), turns: [] }),
+    'PUT /api/requirements/4/early-start-reason': { earlyStartReason: 'Sprint today' },
+    'POST /api/requirements/4/start': { __status: 409, body: { error: 'The budget for this month is used up.' } } });
+  const { host, view } = make();
+  document.body.append(host);
+  await view.show('feature/4');
+  host.querySelector('[data-ui="start-anyway"]').click();
+  await tick(); await tick();
+  await typeReason('Sprint today');
+  const inner = globalThis.fetch;
+  globalThis.fetch = async (url, opts = {}) => {
+    const res = await inner(url, opts);
+    if (opts.method === 'PUT') await view.changed(4);   // the PUT's own live frame lands while the start is still in flight
+    return res;
+  };
+  reasonDlg().querySelector('.btn-primary').click();
+  for (let i = 0; i < 8; i++) await tick();
+  assert.ok(calls.some((c) => c.method === 'POST'), 'the start was tried');
+  assert.equal(reasonDlg().querySelector('.req-dlg-msg').textContent, 'The budget for this month is used up.');
+  btn(reasonDlg(), 'Keep deciding').click();
+  assert.equal(host.querySelector('[data-ui="start-anyway"]').disabled, false, 'Start before it\'s Ready is enabled again');
+  host.remove();
+});
+
+test('Start with a workflow: a list that fails while the press waits does not start an Auto run, and a press for a feature left behind opens nothing (m3, m4)', async () => {
+  let release;
+  const gate = new Promise((r) => { release = r; });
+  const calls = fakeApi({ ...BASE, ...BUILD, ...SETUP, 'GET /api/requirements/4': () => ({ feature: readyFeature({ starts: careful }), turns: [] }),
+    'POST /api/requirements/4/start': startedReply() });
+  const inner = globalThis.fetch;
+  globalThis.fetch = async (url, opts = {}) => { if (url === '/api/workflows') { await gate; return { ok: true, status: 200, json: async () => null }; } return inner(url, opts); };
+  const { host, view, opened } = make();
+  document.body.append(host);
+  await view.show('feature/4');
+  host.querySelector('[data-ui="start-go"]').click();
+  await tick();
+  release();   // a null body: the list's own handler throws, which must still count as a failed list
+  for (let i = 0; i < 8; i++) await tick();
+  assert.equal(setupDlg(), null);
+  assert.equal(calls.filter((c) => c.method === 'POST').length, 0, 'no Auto run started behind the note');
+  assert.deepEqual(opened, []);
+  assert.match(host.querySelector('.req-build').textContent, /Could not load workflows; only Auto is offered\./);
+  host.remove();
 });
 
 test('Start: the defaults send only the workflow; an error other than NOT_READY is said, with no dialog', async () => {
@@ -1079,10 +1409,11 @@ test('NOT_READY opens the dialog: the failing checks, a required reason, sent wi
   const f = readyFeature();
   let calls = null;
   calls = fakeApi({ ...BASE, 'GET /api/requirements/4': () => ({ feature: f, turns: [] }),
+    'PUT /api/requirements/4/early-start-reason': { earlyStartReason: 'Sprint today' },
     'POST /api/requirements/4/start': () => (calls.at(-1).body.reason
       ? { __status: 201, body: { runId: 'r9', version: 1, feature: startedFeature(), turns: [] } }
       : { __status: 409, body: { error: 'This feature is not Ready. Give a reason to start it anyway.', failing: ['assumptions'] } }) });
-  const { host, msgEl, view } = make();
+  const { host, view, opened } = make();
   document.body.append(host);
   await view.show('feature/4');
   const go = () => host.querySelector('[data-ui="start-go"]');
@@ -1142,17 +1473,15 @@ test('NOT_READY opens the dialog: the failing checks, a required reason, sent wi
   await tick(); await tick(); await tick();
   assert.deepEqual(calls.filter((c) => c.method === 'POST').at(-1).body, { reason: 'Sprint today', workflowId: 'wf_auto' });
   assert.equal(dlg(), null, 'closed after the start');
-  assert.equal(msgEl.textContent, 'Started build v1. Open the run');
+  assert.deepEqual(opened, ['r9'], 'the run page opens');
   assert.ok(host.querySelector('.req-runs'));
-  assert.ok(host.querySelector('.req-runs').contains(document.activeElement), 'the focus goes to the runs card (the message is not on the page here)');
-  document.body.append(msgEl);
   host.remove();
-  msgEl.remove();
 });
 
 test("Start before it's Ready…: the dialog names every failing check with its hint, posts nothing until confirmed", async () => {
   const f = feature({ readiness: readiness({ overridable: true }) });
   const calls = fakeApi({ ...BASE, 'GET /api/requirements/4': () => ({ feature: f, turns: [] }),
+    'PUT /api/requirements/4/early-start-reason': { earlyStartReason: 'Demo' },
     'POST /api/requirements/4/start': { __status: 409, body: { error: 'Worca is still working on this feature.' } } });
   const { host, view } = make();
   document.body.append(host);
@@ -1197,9 +1526,10 @@ const twoStarts = (over = {}) => {
 
 test('Started: the runs card (newest first), the total, Start again with the next version', async () => {
   let f = twoStarts();
-  const calls = fakeApi({ ...BASE, 'GET /api/requirements/4': () => ({ feature: f, turns: [] }),
+  const calls = fakeApi({ ...BASE, ...BUILD, ...SETUP, 'GET /api/requirements/4': () => ({ feature: f, turns: [] }),
     'POST /api/requirements/4/start': { __status: 201, body: { runId: 'r3', version: 3, feature: twoStarts(), turns: [] } } });
-  const { host, msgEl, view } = make();
+  const { host, view, opened } = make();
+  document.body.append(host);
   await view.show('feature/4');
   const card = () => host.querySelector('.req-left .req-runs');
   assert.ok(card().classList.contains('card'));
@@ -1224,9 +1554,12 @@ test('Started: the runs card (newest first), the total, Start again with the nex
   assert.deepEqual([...host.querySelectorAll('button')].filter((b) => /^Start again/.test(b.textContent)).length, 1);
   assert.equal(again().disabled, false);
   again().click();
-  await tick(); await tick();
-  assert.deepEqual(calls.find((c) => c.method === 'POST').body, { workflowId: 'wf_x' }, 'the last start\'s workflow');
-  assert.equal(msgEl.textContent, 'Started build v3. Open the run');
+  for (let i = 0; i < 8; i++) await tick();
+  assert.equal(setupDlg().querySelector('[data-ui="runsetup-workflow"]').textContent, 'Careful', 'the last start\'s workflow, set up first');
+  setupGo().click();
+  await tick(); await tick(); await tick();
+  assert.deepEqual(calls.find((c) => c.method === 'POST').body, { workflowId: 'wf_x', overlay: { wires: { w5: { maxCycles: 4 } } } });
+  assert.deepEqual(opened, ['r3']);
   f = twoStarts({ changedSinceStart: [] });
   await view.changed(4);
   assert.equal(again().disabled, true, 'nothing changed: nothing to start again');
@@ -1234,6 +1567,7 @@ test('Started: the runs card (newest first), the total, Start again with the nex
   await view.changed(4);
   assert.equal(again().disabled, true, 'not Ready and not overridable');
   assert.doesNotMatch(host.textContent, /null|undefined|NaN/);
+  host.remove();
 });
 
 test('Started: the changed-since notice, one line per change; Undo my changes reverts after a confirm', async () => {
@@ -1349,7 +1683,7 @@ test('focus: a live update keeps the focus on an open menu\'s item; Escape still
 });
 
 test('style.css: the start-anyway link has a disabled look; the req- rules use tokens only', () => {
-  const css = readFileSync(new URL('../ui/public/style.css', import.meta.url), 'utf8');
+  const css = readStyleCss();
   assert.match(css, /\.req-start-anyway:disabled\{[^}]*opacity/);
   const req = css.split('\n').filter((l) => /\.req-/.test(l));
   assert.ok(req.every((l) => !/#[0-9a-fA-F]{3,8}\b/.test(l)), 'no hex colour in a req- rule');
@@ -1562,7 +1896,7 @@ test('brief page, none yet: the head-start card, the four parts, the cost box wi
   const card = host.querySelector('section.req-brief-start');
   assert.ok(card.classList.contains('card'));
   assert.equal(card.querySelector('h3').textContent, 'Give Worca a head start');
-  assert.equal(text(card.querySelector('.req-brief-why')), 'Today Worca looks at the code again for every new feature. A brief is one deeper look, done once, that every feature here reuses: interviews ask better questions sooner, and each feature saves its own look.');
+  assert.equal(text(card.querySelector('.req-brief-why')), 'Today Worca does a code look again for every new feature. A brief is one deeper look, done once, that every feature here reuses: interviews ask better questions sooner, and each feature saves its own code look.');
   const parts = [...card.querySelectorAll('.req-brief-parts li')];
   assert.deepEqual(parts.map(text), ['What the product does, in a few sentences', 'Who uses it and what each of them can do',
     'The words the product uses: its concepts and what they mean', 'What exists today, area by area, and what only partly exists']);
@@ -1629,7 +1963,7 @@ test('brief page, none yet: making, a failed first make, the switch off, no repo
     [briefBody({ brief: briefRow({ status: 'empty', error: { code: 'BAD_REPLY', message: 'Worca ran out of steps before writing the brief.', at: 'x' } }) }),
       { label: 'Try again', disabled: false, failed: 'Worca ran out of steps before writing the brief.' }],
     [briefBody({ notes: { body: '', lookAtCode: false } }), { label: 'Create the brief', disabled: true,
-      hint: 'Looking at the code is off. Turn it on under Your notes for Worca.' }],
+      hint: 'Code looks are off. Turn them on under Your notes for Worca.' }],
     [briefBody({ target: { name: 'shop', branch: null, leftOut: [], slow: [] } }), { label: 'Create the brief', disabled: true,
       hint: 'There is no repository to look at.' }],
   ];
@@ -1684,7 +2018,7 @@ test('brief page: Your notes for Worca: the card, Save notes puts the body and t
   assert.equal(area.value, 'Shoppers order things.');
   const sw = card.querySelector('input[type="checkbox"][data-ui="notes-look"]');
   assert.equal(sw.checked, true);
-  assert.equal(text(sw.closest('label')), 'Let Worca look at the code (for the brief, and when you ask it to look closer at a feature)');
+  assert.equal(text(sw.closest('label')), 'Let Worca do code looks (for the brief, and when you press Look closer on a feature)');
   area.value = 'New notes';
   sw.checked = false;
   const save = btn(host, 'Save notes');
@@ -1694,7 +2028,7 @@ test('brief page: Your notes for Worca: the card, Save notes puts the body and t
   assert.deepEqual(calls.find((c) => c.method === 'PUT').body, { body: 'New notes', lookAtCode: false });
   assert.ok(calls.filter((c) => c.method === 'GET' && c.url === BRIEF_URL).length >= 2, 'repainted from the server');
   assert.equal(createBtn(host).disabled, true, 'the switch, now off, disables Create');
-  assert.equal(text(host.querySelector('.req-brief-why-not')), 'Looking at the code is off. Turn it on under Your notes for Worca.');
+  assert.equal(text(host.querySelector('.req-brief-why-not')), 'Code looks are off. Turn them on under Your notes for Worca.');
   assert.equal(host.querySelector('[data-ui="notes-look"]').checked, false);
   assert.equal(host.querySelector('[data-ui="notes-body"]').value, 'New notes');
 });
@@ -1720,11 +2054,10 @@ test('brief page: unsaved notes survive a live repaint; a workspace has the same
 });
 
 test('list: each group header names its brief: none yet with Create, being made, or its age; each links to the brief page', async () => {
-  const day = 86400000;
   fakeApi({ ...LIST_BASE, 'GET /api/workspaces': { workspaces: [{ id: 'ws:1', name: 'Storefront' }, { id: 'ws2', name: 'Mall' }] },
     'GET /api/requirements': listOf([row(), row({ seq: 3, scopeType: 'workspace', scopeKey: 'ws:1' }), row({ seq: 6, scopeType: 'workspace', scopeKey: 'ws2' })], {
       briefs: [{ scopeType: 'workspace', scopeKey: 'ws:1', status: 'making', madeAt: null, lookAtCode: true },
-        { scopeType: 'workspace', scopeKey: 'ws2', status: 'ready', madeAt: new Date(Date.now() - 3 * day).toISOString(), lookAtCode: true }] }) });
+        { scopeType: 'workspace', scopeKey: 'ws2', status: 'ready', madeAt: daysAgo(3), lookAtCode: true }] }) });
   const { host, view, routed } = make();
   await view.show('');
   assert.deepEqual([...host.querySelectorAll('.req-group h2')].map((x) => x.textContent), ['Project · shop', 'Workspace · Storefront', 'Workspace · Mall']);
@@ -1794,7 +2127,7 @@ test('changed: the brief key splits on its first ":"; who repaints on a brief fr
 });
 
 test('style.css: the req-brief rules use tokens only', () => {
-  const css = readFileSync(new URL('../ui/public/style.css', import.meta.url), 'utf8');
+  const css = readStyleCss();
   const rules = css.split('\n').filter((l) => /\.req-brief|\.req-group-|\.req-knows/.test(l));
   assert.ok(rules.length > 0, 'the brief page has its rules');
   assert.ok(rules.every((l) => !/#[0-9a-fA-F]{3,8}\b|rgba?\(/.test(l)), 'no literal colour');
@@ -1810,7 +2143,6 @@ test('style.css: the req-brief rules use tokens only', () => {
 // ---- A7 Task 8: the brief page with a made brief (board 12): chips, the code-moved-on notice, the brief card and
 // its editors, the right column, Export and ⋯ ----
 
-const DAY = 86400000;
 const MADE_SECTIONS = {
   product: 'An online shop for home goods. Shoppers browse a catalog and follow their order.',
   users: [{ name: 'Shopper', can: 'browses, orders, pays.' }, { name: 'Support agent', can: 'sees every order.' }],
@@ -1824,7 +2156,7 @@ const MADE_SECTIONS = {
 };
 const madeRow = (over = {}) => briefRow({ status: 'ready', sections: MADE_SECTIONS, edited: { users: true },
   sources: [{ project: 'shop-1', branch: 'main', ref: 'refs/heads/main', sha: '3f9c2a1deadbeef00' }], files: ['README.md', 'src/orders.mjs', 'src/slip.mjs'],
-  model: 'claude-opus-5-5', costUsd: 1.42, madeBy: 'po', madeAt: new Date(Date.now() - 2 * DAY).toISOString(), ...over });
+  model: 'claude-opus-5-5', costUsd: 1.42, madeBy: 'po', madeAt: daysAgo(2), ...over });
 const STALE = { known: true, commits: 38, touching: 6, areas: ['Orders', 'Payments'], checked: true, partial: false,
   sources: [{ project: 'shop-1', branch: 'main', ref: 'refs/heads/main', sha: '3f9c2a1deadbeef00', known: true, commits: 38 }] };
 const madeBody = (over = {}) => briefBody({ brief: madeRow(), usedBy: [{ seq: 2, id: 'FEAT-2' }, { seq: 3, id: 'FEAT-3' }], staleness: STALE, ...over });
@@ -1930,7 +2262,7 @@ test('brief page, made: Export (Copy Markdown, Download .md) and ⋯ (Refresh wi
   assert.deepEqual([...more.querySelectorAll('[role="menuitem"]')].map((x) => x.textContent), ['Refresh the brief · about $1.50', 'Delete the brief']);
   // Delete: the confirmation names the features using the brief; No keeps it
   let asked = await withConfirm(false, async () => { host.querySelector('[data-ui="mi-brief-delete"]').click(); await tick(); await tick(); });
-  assert.deepEqual(asked, ['Delete the brief? FEAT-2 and FEAT-3 use this brief; they go back to looking at the code when asked.']);
+  assert.deepEqual(asked, ['Delete the brief? FEAT-2 and FEAT-3 use this brief; they go back to doing their own code look when asked.']);
   assert.equal(calls.filter((c) => c.method === 'DELETE').length, 0);
   await withConfirm(true, async () => { host.querySelector('[data-ui="mi-brief-delete"]').click(); await tick(); await tick(); });
   assert.equal(calls.filter((c) => c.method === 'DELETE' && c.url === BRIEF_URL).length, 1);
@@ -1945,7 +2277,7 @@ test('brief page, made: Export (Copy Markdown, Download .md) and ⋯ (Refresh wi
   // one user, no user
   const one = await openBrief(madeBody({ usedBy: [{ seq: 2, id: 'FEAT-2' }] }));
   asked = await withConfirm(false, async () => { one.host.querySelector('[data-ui="mi-brief-delete"]').click(); await tick(); });
-  assert.deepEqual(asked, ['Delete the brief? FEAT-2 uses this brief; it goes back to looking at the code when asked.']);
+  assert.deepEqual(asked, ['Delete the brief? FEAT-2 uses this brief; it goes back to doing its own code look when asked.']);
   const none = await openBrief(madeBody({ usedBy: [] }));
   asked = await withConfirm(false, async () => { none.host.querySelector('[data-ui="mi-brief-delete"]').click(); await tick(); });
   assert.deepEqual(asked, ['Delete the brief? No feature uses this brief yet.']);
@@ -2233,7 +2565,7 @@ test('brief page, made: How Worca uses it, Your notes for Worca with Edit notes,
   assert.ok(side, 'the right column');
   const how = side.querySelector('section[aria-label="How Worca uses it"]');
   assert.equal(how.querySelector('h3').textContent, 'How Worca uses it');
-  assert.equal(text(how.querySelector('p')), 'Every interview round for shop reads it. New features no longer need their own look at the code; Look closer on a feature adds one when the brief is not enough.');
+  assert.equal(text(how.querySelector('p')), 'Every interview round for shop reads it. New features no longer need their own code look; Look closer on a feature adds one when the brief is not enough.');
   assert.equal(how.querySelector('p b').textContent, 'Look closer');
   const used = how.querySelector('.req-brief-used');
   assert.equal(text(used), 'Used by FEAT-2, FEAT-3');
@@ -2295,9 +2627,9 @@ test('brief page, made: Copy Markdown that fails says so and copies nothing', as
 
 // ---- A7 Task 9: New feature with a brief (board 13); What Worca knows on the feature page (board 14); ⋯ ----
 
-const usableBrief = (over = {}) => ({ scopeType: 'project', scopeKey: 'shop-1', status: 'ready', madeAt: new Date(Date.now() - 2 * DAY).toISOString(), lookAtCode: true, ...over });
+const usableBrief = (over = {}) => ({ scopeType: 'project', scopeKey: 'shop-1', status: 'ready', madeAt: daysAgo(2), lookAtCode: true, ...over });
 const NEW_TARGETS = { 'GET /api/projects': { projects: [{ key: 'shop-1', name: 'shop' }, { key: 'blog', name: 'blog' }] }, 'GET /api/workspaces': { workspaces: [{ id: 'ws1', name: 'Storefront' }] } };
-const forField = (host) => [...host.querySelectorAll('.req-new .field')][2];
+const forField = (host) => [...host.querySelectorAll('.req-new .field')][3];   // Title, Describe it, Files (A8), For
 
 test('new feature: with a brief, the green line names it and links to it; the code-look cost is not shown; it follows the select', async () => {
   fakeApi({ ...NEW_TARGETS, 'GET /api/requirements': listOf([], { lookCostUsd: 0.25,
@@ -2324,7 +2656,7 @@ test('new feature: with a brief, the green line names it and links to it; the co
   select.value = 'project:blog';
   select.dispatchEvent(new window.Event('change'));
   assert.equal(line(), null);
-  assert.match(text(field.querySelector('.req-new-look')), /looks at this project's code once/);
+  assert.match(text(field.querySelector('.req-new-look')), /does a code look of this project once/);
   assert.equal(cost().hidden, false);
   assert.equal(cost().textContent, 'About $0.25 for the code look, then cents per round.');
   // the workspace's brief, made today, with the switch off: no "looks closer" sentence
@@ -2345,7 +2677,7 @@ test('new feature: without a lookCost and with a brief nothing about the cost sh
   assert.equal(host.querySelector('.req-new-cost'), null);
 });
 
-test('new feature with a brief (A1.1 merged): the model part stays; only the words after the dot become "cents per round"', async () => {
+test('new feature with a brief (A1.1 merged): only the words after the dot become "cents per round"', async () => {
   const interview = { model: 'claude-opus-5-5', label: 'Opus 5.5', effort: 'high' };
   fakeApi({ ...NEW_TARGETS, 'GET /api/requirements': listOf([], { lookCostUsd: 0.25, interview, briefs: [usableBrief()] }) });
   const { host, view } = make();
@@ -2353,20 +2685,19 @@ test('new feature with a brief (A1.1 merged): the model part stays; only the wor
   const select = forField(host).querySelector('select');
   const cost = () => host.querySelector('.req-new-cost');
   assert.equal(select.value, 'project:shop-1');
-  assert.equal(cost().textContent, 'Worca interviews with Opus 5.5 at high effort · cents per round', 'board 13');
-  assert.equal(cost().querySelector('.req-new-model').textContent, 'Worca interviews with Opus 5.5 at high effort');
-  assert.equal(cost().hidden, false);
+  assert.equal(cost().hidden, true, 'board 13: with a brief there is no code look and nothing else to say');
   select.value = 'project:blog';   // no usable brief: A1.1's line as is
   select.dispatchEvent(new window.Event('change'));
-  assert.equal(cost().textContent, 'Worca interviews with Opus 5.5 at high effort · about $0.25 for the code look, then cents per round');
+  assert.equal(cost().textContent, 'About $0.25 for the code look, then cents per round.');
+  assert.equal(cost().hidden, false);
   select.value = 'project:shop-1';
   select.dispatchEvent(new window.Event('change'));
-  assert.equal(cost().textContent, 'Worca interviews with Opus 5.5 at high effort · cents per round');
+  assert.equal(cost().hidden, true);
   assert.equal(host.querySelectorAll('.req-new-cost').length, 1);
   assert.doesNotMatch(host.textContent, /null|undefined/);
 });
 
-const briefOf = (over = {}) => ({ id: 3, status: 'ready', madeAt: new Date(Date.now() - 2 * DAY).toISOString(), sources: [], matches: ['Orders', 'Packing', 'Packing slip'], matchesMore: 0, lookAtCode: true, ...over });
+const briefOf = (over = {}) => ({ id: 3, status: 'ready', madeAt: daysAgo(2), sources: [], matches: ['Orders', 'Packing', 'Packing slip'], matchesMore: 0, lookAtCode: true, ...over });
 const SKIPPED = { summary: '', files: [], skipped: 'brief', briefMadeAt: '2026-10-20T10:00:00Z' };
 const knowsFeature = (over = {}) => feature({ brief: briefOf(), lookCostUsd: 0.25, orientation: SKIPPED, ...over });
 const knows = (host) => host.querySelector('.req-left > section.req-knows');
@@ -2378,7 +2709,7 @@ const openKnows = async (f, turns = [], extra = {}) => {
   return { ...m, calls, set: (nf, nt = turns) => { cur = { feature: nf, turns: nt }; } };
 };
 
-test('What Worca knows, before a closer look: from the brief, the matches, the hint and Look closer with its price', async () => {
+test('What Worca knows, before a code look: from the brief, the matches, the hint and Look closer with its price', async () => {
   const { host, calls, routed } = await openKnows(knowsFeature(), [], { 'POST /api/requirements/4/look': { feature: knowsFeature(), turns: [] } });
   const card = knows(host);
   assert.ok(card, 'the card');
@@ -2391,7 +2722,7 @@ test('What Worca knows, before a closer look: from the brief, the matches, the h
   assert.equal(meta.querySelector('a').getAttribute('href'), '#requirements/brief/project/shop-1');
   meta.querySelector('a').click();
   assert.deepEqual(routed, ['brief/project/shop-1']);
-  assert.equal(text(card.querySelector('.req-knows-text')), 'Worca works from the shop brief: Orders, Packing and Packing slip are described there. It has not looked at the code for this feature.');
+  assert.equal(text(card.querySelector('.req-knows-text')), 'Worca works from the shop brief: Orders, Packing and Packing slip are described there. It has not done a code look for this feature.');
   assert.equal(text(card.querySelector('.req-knows-foot .hint')), 'Worth it when the feature touches something the brief only skims.');
   const go = card.querySelector('[data-ui="look-closer"]');
   assert.equal(go.textContent, 'Look closer · about $0.25');
@@ -2404,18 +2735,18 @@ test('What Worca knows, before a closer look: from the brief, the matches, the h
   assert.doesNotMatch(host.textContent, /null|undefined/);
 });
 
-test('What Worca knows, before: one match, no match, no price, made today, a failed closer look, the switch off, locked', async () => {
+test('What Worca knows, before: one match, no match, no price, made today, a failed code look, the switch off, locked', async () => {
   const say = async (over) => text(knows((await openKnows(knowsFeature(over))).host).querySelector('.req-knows-text'));
-  assert.equal(await say({ brief: briefOf({ matches: ['Orders'] }) }), 'Worca works from the shop brief: Orders is described there. It has not looked at the code for this feature.');
-  assert.equal(await say({ brief: briefOf({ matchesMore: 2 }) }), 'Worca works from the shop brief: Orders, Packing, Packing slip and 2 more are described there. It has not looked at the code for this feature.');
-  assert.equal(await say({ brief: briefOf({ matches: ['Orders', 'Refund'], matchesMore: undefined }) }), 'Worca works from the shop brief: Orders and Refund are described there. It has not looked at the code for this feature.');
-  assert.equal(await say({ brief: briefOf({ matches: [], matchesMore: 0 }) }), 'Worca works from the shop brief. It has not looked at the code for this feature.');
+  assert.equal(await say({ brief: briefOf({ matches: ['Orders'] }) }), 'Worca works from the shop brief: Orders is described there. It has not done a code look for this feature.');
+  assert.equal(await say({ brief: briefOf({ matchesMore: 2 }) }), 'Worca works from the shop brief: Orders, Packing, Packing slip and 2 more are described there. It has not done a code look for this feature.');
+  assert.equal(await say({ brief: briefOf({ matches: ['Orders', 'Refund'], matchesMore: undefined }) }), 'Worca works from the shop brief: Orders and Refund are described there. It has not done a code look for this feature.');
+  assert.equal(await say({ brief: briefOf({ matches: [], matchesMore: 0 }) }), 'Worca works from the shop brief. It has not done a code look for this feature.');
   const today = await openKnows(knowsFeature({ brief: briefOf({ madeAt: new Date().toISOString() }), lookCostUsd: null }));
   assert.equal(text(knows(today.host).querySelector('.req-knows-meta')), 'from the product brief · made today');
   assert.equal(knows(today.host).querySelector('[data-ui="look-closer"]').textContent, 'Look closer', 'no price without an estimate');
-  // a closer look that failed: the card stays as before and says so
+  // a code look that failed: the card stays as before and says so
   const failed = await openKnows(knowsFeature({ orientation: { summary: '', files: [], skipped: 'failed' } }));
-  assert.equal(text(knows(failed.host).querySelector('.req-knows-failed')), 'Worca could not look at the code this time.');
+  assert.equal(text(knows(failed.host).querySelector('.req-knows-failed')), 'Worca could not do the code look this time.');
   assert.ok(knows(failed.host).querySelector('[data-ui="look-closer"]'));
   // the switch off: no Look closer, no hint about it
   const off = await openKnows(knowsFeature({ brief: briefOf({ lookAtCode: false }) }));
@@ -2428,7 +2759,7 @@ test('What Worca knows, before: one match, no match, no price, made today, a fai
   }
 });
 
-test('What Worca knows, after a closer look: brief + a closer look, the summary, Add this to the brief until added, Look again', async () => {
+test('What Worca knows, after a code look: brief + a code look, the summary, Add this to the brief until added, Look again', async () => {
   const LOOKED = { summary: 'The packing slip is printed from the order with its prices.', files: ['src/slip.mjs', 'src/order.mjs'], skipped: null, area: 'Orders',
     scopeType: 'project', scopeKey: 'shop-1', briefId: 3 };
   const turns = [{ id: 2, kind: 'orientation', costUsd: 0, payload: SKIPPED }, { id: 7, kind: 'orientation', costUsd: 0.22, payload: { ...LOOKED } }];
@@ -2443,7 +2774,7 @@ test('What Worca knows, after a closer look: brief + a closer look, the summary,
     'POST /api/requirements/4/brief-addition': () => { set(knowsFeature({ orientation: { ...LOOKED, addedToBrief: '2026-10-22T10:00:00Z' } })); return { feature: knowsFeature(), turns }; },
     'POST /api/requirements/4/look': { feature: knowsFeature(), turns } });
   const card = knows(host);
-  assert.equal(text(card.querySelector('.req-knows-meta')), 'brief + a closer look · 2 files · $0.22');
+  assert.equal(text(card.querySelector('.req-knows-meta')), 'brief + a code look · 2 files · $0.22');
   assert.equal(text(card.querySelector('.req-knows-text')), LOOKED.summary);
   const add = card.querySelector('[data-ui="brief-add"]');
   assert.equal(text(add.parentElement), 'Not in the brief yet. Add this to the brief');
@@ -2464,7 +2795,7 @@ test('What Worca knows, after a closer look: brief + a closer look, the summary,
   await view.changed(4);
   assert.equal(knows(host).querySelector('[data-ui="look-again"]'), null);
   assert.equal(knows(host).querySelector('[data-ui="brief-add"]'), null);
-  assert.equal(text(knows(host).querySelector('.req-knows-meta')), 'brief + a closer look · $0.22', 'no files, no file count');
+  assert.equal(text(knows(host).querySelector('.req-knows-meta')), 'brief + a code look · $0.22', 'no files, no file count');
   // locked: both disabled
   const l = await openKnows(knowsFeature({ orientation: LOOKED, busy: true, status: 'thinking', state: 'thinking', pending: null }), turns);
   assert.equal(knows(l.host).querySelector('[data-ui="brief-add"]').disabled, true);
@@ -2477,7 +2808,7 @@ test("A2's box without a brief: skipped for a brief reads it has not looked, wit
   const box = s.host.querySelector('.req-left > details.req-orient');
   assert.ok(box, "A2's box");
   assert.equal(knows(s.host), null);
-  assert.equal(box.querySelector('p').textContent, 'Worca has not looked at the code for this feature.');
+  assert.equal(box.querySelector('p').textContent, 'Worca has not done a code look for this feature.');
   assert.equal(box.querySelector('.req-orient-meta'), null);
   const again = box.querySelector('[data-ui="orient-look-again"]');
   assert.equal(again.textContent, 'Look again');
@@ -2485,7 +2816,7 @@ test("A2's box without a brief: skipped for a brief reads it has not looked, wit
   await tick(); await tick();
   assert.equal(s.calls.filter((c) => c.method === 'POST' && c.url === '/api/requirements/4/look').length, 1);
   const off = await openKnows(feature({ orientation: { summary: '', files: [], skipped: 'off' } }));
-  assert.equal(off.host.querySelector('details.req-orient p').textContent, 'Looking at the code is turned off for this one (Your notes for Worca).');
+  assert.equal(off.host.querySelector('details.req-orient p').textContent, 'Code looks are turned off for this one (Your notes for Worca).');
   assert.equal(off.host.querySelector('[data-ui="orient-look-again"]'), null, 'only for the brief-skipped look');
   const plain = await openKnows(feature());
   assert.equal(plain.host.querySelector('details.req-orient p').textContent, 'Orders have a status.', 'unchanged otherwise');
@@ -2506,7 +2837,7 @@ test('⋯ with a brief: Look closer while the look was skipped for the brief, Lo
   // without a brief, a look skipped for a (since deleted) brief is looked at again
   const d = await openKnows(feature({ orientation: SKIPPED }));
   assert.deepEqual(labels(d.host), ['Your notes for Worca', 'Look again', 'Archive']);
-  // with a brief the entry says what the card says: Look closer until a closer look has been made
+  // with a brief the entry says what the card says: Look closer until a code look has been made
   for (const orientation of [null, { summary: '', files: [], skipped: 'failed' }, { summary: '', files: [], skipped: 'no-repo' }, { summary: '', files: [], skipped: 'off' }]) {
     const e = await openKnows(knowsFeature({ orientation }));
     assert.deepEqual(labels(e.host), ['Your notes for Worca', 'Look closer', 'Archive'], JSON.stringify(orientation));
@@ -2521,7 +2852,7 @@ test('⋯ with a brief: Look closer while the look was skipped for the brief, Lo
 // the code carries data-needs-git, which style.css hides while <html data-git="off">; the rest of the page stays.
 test('git-only controls carry data-needs-git: the brief Create box and Refresh, Look closer and Look again; nothing else', async () => {
   const gated = (el) => !!el && !!el.closest('[data-needs-git]');
-  const css = readFileSync(new URL('../ui/public/style.css', import.meta.url), 'utf8');
+  const css = readStyleCss();
   assert.match(css, /:root\[data-git="off"\] \[data-needs-git\]\{display:none !important;\}/, 'the gate rule exists');
   const none = await openBrief(briefBody());
   assert.ok(gated(createBtn(none.host)), 'Create the brief');
@@ -2558,14 +2889,13 @@ const withGit = async (on, fn) => {
   try { return await fn(); } finally { if (was === undefined) delete el.dataset.git; else el.dataset.git = was; }
 };
 
-test('UI levels (docs/ui-levels.md): Ready to build Change and the brief page What Worca read are Advanced; the chips and the rest stay', async () => {
+test('UI levels (docs/ui-levels.md): the brief page What Worca read is Advanced; Ready to build, with its Change, shows at every level', async () => {
   fakeApi({ ...BASE, ...BUILD, 'GET /api/requirements/4': () => ({ feature: readyFeature(), turns: [] }) });
   const { host, view } = make();
   await view.show('feature/4');
   const card = host.querySelector('.req-build');
-  assert.equal(card.querySelector('[data-ui="build-change"]').getAttribute('data-min-level'), 'advanced');
-  for (const el of [card, card.querySelector('.req-build-chips'), card.querySelector('[data-ui="start-go"]')]) {
-    assert.equal(el.closest('[data-min-level]'), null, 'the card, its chips and Start show at every level');
+    for (const el of [card, card.querySelector('.req-build-chips'), card.querySelector('[data-ui="build-change"]'), card.querySelector('[data-ui="start-go"]')]) {
+    assert.equal(el.closest('[data-min-level]'), null, 'the card, its chips, Change and Start show at every level');
   }
   const made = await openBrief(madeBody());
   assert.equal(made.host.querySelector('details.req-brief-read').getAttribute('data-min-level'), 'advanced');
@@ -2610,7 +2940,7 @@ test('git missing: the list header offers Create only with git; the empty brief 
   const none = await openBrief(briefBody());
   const why = none.host.querySelector('.req-brief-nogit-create');
   assert.equal(text(why), 'A brief needs git to read the code, and git is not installed on this machine.');
-  const css = readFileSync(new URL('../ui/public/style.css', import.meta.url), 'utf8');
+  const css = readStyleCss();
   assert.match(css, /:root:not\(\[data-git="off"\]\) \.req-brief-nogit-create\{display:none\}/);
 });
 
@@ -2619,15 +2949,15 @@ test('git missing: New feature says there is no look and costs cents per round; 
     fakeApi({ ...BASE, 'GET /api/requirements': listOf([], { lookCostUsd: 0.25, interview: { model: 'claude-opus-5-5', label: 'Opus 5.5', effort: 'medium' } }) });
     const { host, view } = make();
     await view.show('new');
-    assert.equal(text(host.querySelector('.req-new-look')), 'Worca does not look at the code: git is not installed on this machine. It starts asking right away.');
-    assert.equal(text(host.querySelector('.req-new-cost')), 'Worca interviews with Opus 5.5 at medium effort · cents per round');
+    assert.equal(text(host.querySelector('.req-new-look')), 'Worca does not do a code look: git is not installed on this machine. It starts asking right away.');
+    assert.equal(host.querySelector('.req-new-cost').hidden, true, 'no look, no files: nothing to say');
     view.destroy();
     const f = await openKnows(feature({ orientation: { summary: '', files: [], skipped: 'no-git' } }));
-    assert.equal(f.host.querySelector('details.req-orient p').textContent, 'Worca did not look at the code: git is not installed on this machine.');
+    assert.equal(f.host.querySelector('details.req-orient p').textContent, 'Worca did not do a code look: git is not installed on this machine.');
   });
   // with git, a feature whose look was skipped for git says so too, after git came back
   const back = await openKnows(feature({ orientation: { summary: '', files: [], skipped: 'no-git' } }));
-  assert.equal(back.host.querySelector('details.req-orient p').textContent, 'Worca did not look at the code: git is not installed on this machine.');
+  assert.equal(back.host.querySelector('details.req-orient p').textContent, 'Worca did not do a code look: git is not installed on this machine.');
 });
 
 test('Add this to the brief: says so in the message line and keeps the focus on the card', async () => {
@@ -2679,7 +3009,7 @@ test('a staleness that cannot be told heads the notice "Worca cannot check this 
 });
 
 test('style: the phone menus open inside the screen, the faint ink is not used for text, the small-screen wraps', () => {
-  const css = readFileSync(new URL('../ui/public/style.css', import.meta.url), 'utf8');
+  const css = readStyleCss();
   assert.match(css, /\.req-head-tools\{[^}]*margin-left:auto/);
   for (const sel of ['.req-group-head .req-group-brief', '.req-id', '.req-round-n', '.req-del']) {
     const esc = sel.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
@@ -2699,10 +3029,10 @@ test('git appears or goes missing: New feature says its look line again and keep
     await view.show('new');
     host.querySelector('#req-new-title').value = 'Typed';
     applyGit({ available: false });
-    assert.match(text(host.querySelector('.req-new-look')), /^Worca does not look at the code/);
+    assert.match(text(host.querySelector('.req-new-look')), /^Worca does not do a code look/);
     assert.equal(host.querySelector('#req-new-title').value, 'Typed', 'the form is not rebuilt');
     applyGit({ available: true });
-    assert.match(text(host.querySelector('.req-new-look')), /^Worca looks at this project's code once/);
+    assert.match(text(host.querySelector('.req-new-look')), /^Worca does a code look of this project once/);
     view.destroy();
     // a scope of its own: views of earlier tests still show other pages
     const URL = '/api/requirements/brief/project/flip-9';
@@ -2739,7 +3069,7 @@ test('the notes switch is the shared switch (role=switch), with its label', asyn
   assert.equal(sw.getAttribute('role'), 'switch');
   assert.ok(sw.classList.contains('sw-input'));
   assert.ok(sw.closest('label').classList.contains('switch-row'));
-  assert.equal(text(sw.closest('label')), 'Let Worca look at the code (for the brief, and when you ask it to look closer at a feature)');
+  assert.equal(text(sw.closest('label')), 'Let Worca do code looks (for the brief, and when you press Look closer on a feature)');
 });
 
 test('Add this to the brief without git: Look again is hidden, so the focus goes to the card', async () => {
@@ -2755,4 +3085,40 @@ test('Add this to the brief without git: Look again is hidden, so the focus goes
       assert.equal(document.activeElement.getAttribute('data-ui'), 'knows');
     } finally { a.host.remove(); a.view.destroy(); }
   });
+});
+
+// ---- 9c fix B1: a feature's or a look's cost in the cost words everywhere (never $0.00 when every step is cost unknown) ----
+test('B1: the list row says "cost unknown" when every step is unknown, ≈ when a part is estimated, the billed money otherwise', async () => {
+  fakeApi({ ...LIST_BASE, 'GET /api/requirements': listOf([
+    row({ seq: 1, id: 'FEAT-1', costUsd: 0, unknownSteps: 3, anyEstimated: false }),
+    row({ seq: 2, id: 'FEAT-2', costUsd: 0.04, unknownSteps: 5, anyEstimated: false }),
+    row({ seq: 3, id: 'FEAT-3', costUsd: 0.04, unknownSteps: 0, anyEstimated: true }),
+    row({ seq: 4, id: 'FEAT-4', costUsd: 0.42 }),
+  ]) });
+  const { host, view } = make();
+  await view.show('');
+  const cost = (seq) => rowOf(host, seq).querySelector('.req-cost').textContent;
+  assert.deepEqual([cost(1), cost(2), cost(3), cost(4)], ['cost unknown', '$0.04', '≈$0.04', '$0.42']);
+});
+
+test('B1: What Worca knows and the Code look box say "cost unknown" for a look whose cost is unknown', async () => {
+  const LOOKED = { summary: 'Found it.', files: ['a.js', 'b.js', 'c.js'], skipped: null, area: 'Orders', scopeType: 'project', scopeKey: 'shop-1', briefId: 3 };
+  const turns = [{ id: 7, kind: 'orientation', costUsd: 0, costKind: 'unknown', engine: 'copilot', payload: { ...LOOKED } }];
+  const { host } = await openKnows(knowsFeature({ orientation: LOOKED }), turns);
+  assert.equal(text(knows(host).querySelector('.req-knows-meta')), 'brief + a code look · 3 files · cost unknown');
+  const est = await openKnows(knowsFeature({ orientation: LOOKED }), [{ ...turns[0], costUsd: 0.04, costKind: 'estimated' }]);
+  assert.equal(text(knows(est.host).querySelector('.req-knows-meta')), 'brief + a code look · 3 files · ≈$0.04');
+  fakeApi({ ...BASE, 'GET /api/requirements/4': () => ({ feature: feature({ orientation: { summary: 'x', files: ['src/o.js'], skipped: null } }),
+    turns: [{ id: 2, kind: 'orientation', costUsd: 0, costKind: 'unknown', payload: { summary: 'x', files: ['src/o.js'], skipped: null } }] }) });
+  const m = make();
+  await m.view.show('feature/4');
+  assert.equal(m.host.querySelector('.req-left > details.req-orient .req-orient-meta').textContent, 'looked once · 1 file · cost unknown');
+});
+
+test('B1: the runs card names the requirements cost in the cost words', async () => {
+  fakeApi({ ...BASE, ...BUILD, ...SETUP, 'GET /api/requirements/4': () => ({ feature: twoStarts({ costUsd: 0, unknownSteps: 4 }), turns: [] }) });
+  const { host, view } = make();
+  await view.show('feature/4');
+  assert.equal(host.querySelector('.req-left .req-runs .req-run-total').textContent,
+    'Total for FEAT-4 so far: $2.84 (requirements cost unknown + build $2.84)');
 });

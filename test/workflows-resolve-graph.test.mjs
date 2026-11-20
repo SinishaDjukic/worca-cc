@@ -206,3 +206,25 @@ test('resolveGraph: an unknown script key throws the registry sentence; the run 
   const live = await assertRunnableWorkflow(id, { registry: REG(), scripts });
   assert.equal(live.id, id);
 });
+
+test('no silent fallbacks: a Codex run records the dropped winning node pick as wanted, with its source', async () => {
+  const withCfg = (cfgs) => GRAPH({ nodes: GRAPH().nodes.map((n) => (cfgs[n.id] ? { ...n, config: cfgs[n.id] } : n)) });
+  const { id } = await writeGraphWorkflow({ ...withCfg({ n_impl: { model: 'claude-opus-5-5' } }), id: 'wf_rg_wanted' });
+  const codex = { engine: 'codex' };
+  const run = await resolveGraph(projectDir, id, REG(), undefined, { ...codex, overlay: { nodes: { n_plan: { model: 'claude-opus-5-5' } } } });
+  assert.equal(run.nodes.n_plan.model, 'tpl-model', 'the pair below runs, as before');
+  assert.deepEqual(run.nodes.n_plan.wanted, { model: 'claude-opus-5-5', source: 'run' });
+  assert.deepEqual(run.nodes.n_impl.wanted, { model: 'claude-opus-5-5', source: 'template' }, 'a template pick is recorded too');
+  assert.equal('wanted' in run.nodes.n_rev, false, 'nothing named, nothing dropped');
+  const over = await resolveGraph(projectDir, id, REG(), undefined, { ...codex, overlay: { nodes: { n_impl: { model: 'gpt-5.5' } } } });
+  assert.equal(over.nodes.n_impl.model, 'gpt-5.5');
+  assert.equal('wanted' in over.nodes.n_impl, false, 'a dropped lower layer under a winning runnable one is no drop');
+  const eff = await resolveGraph(projectDir, id, REG(), undefined, { ...codex, overlay: { nodes: { n_rev: { effort: 'max' } } } });
+  assert.deepEqual(eff.nodes.n_rev.wanted, { effort: 'max', source: 'run' }, 'an effort-only pick the engine lacks');
+  await setNodeModel(projectDir, id, 'n_plan', { model: 'claude-opus-5-5' });
+  const proj = await resolveGraph(projectDir, id, REG(), undefined, codex);
+  assert.deepEqual(proj.nodes.n_plan.wanted, { model: 'claude-opus-5-5', source: 'project' });
+  const claude = await resolveGraph(projectDir, id, REG(), undefined, { overlay: { nodes: { n_rev: { model: 'claude-haiku-4-5' } } } });
+  assert.deepEqual(Object.values(claude.nodes).filter((nc) => 'wanted' in nc), [], 'a Claude run drops nothing');
+  assert.equal(claude.nodes.n_plan.model, 'claude-opus-5-5');
+});

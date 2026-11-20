@@ -31,14 +31,15 @@ const state = {
   // CLI's Task tool refuses catalog ids), not a slice of `models`.
   subagentModels: ['sonnet', 'opus', 'fable', 'auto', 'inherit'],
   workflowId: 'wf_default', // currently selected workflow in New Pipeline
-  guardrailsId: 'permissive', // the guardrail set the next run applies ('permissive' = unrestricted default)
+  guardrailsId: null, // the guardrail set the next run applies; null until the list names the install default
+  guardrailsDefault: 'normal', // the install's default set, from GET /api/guardrails (Normal on a fresh install)
   mcpOptOut: [], // New Pipeline › MCP servers: the '<setId>|<serverId>' memberships the next run opts out of
   mcpPreview: null, // POST /api/mcp/preview for the selected target, or null (control hidden)
   memoryScope: 'global', // Memory defragment only: the scope the next run restructures
   engine: 'claude', // New pipeline: who runs the agent nodes, per run, never remembered
   runDefaults: null,
   engineTouched: false,
-  presets: [],    // GET /api/presets (run presets, #712), while the runPresets flag is on
+  presets: [],    // GET /api/presets (run presets, #712)
   preset: null,   // the applied preset: { id, name, scope, setup, modified, applying, broken[] } — preset mode
   presetWorkflowNames: null,   // { id: name } from GET /api/workflows for preset summaries (run-presets-names.mjs); null = unknown
   guardrailSets: [], // GET /api/guardrails cache for the picker + hint
@@ -56,7 +57,7 @@ const state = {
   runGroups: [],     // GET /api/run-groups: Shaper features and user groups for the Runs list (D10)
   runGroupsLoaded: false, // set by loadRunGroups on every outcome: runGroups starts as [], so it cannot say "loaded"
   ghAvailable: false,// gh CLI availability, from the last /api/history load
-  adoAvailable: false,// an Azure DevOps credential is configured (prHosts.azure), same source
+  adoAvailable: false,// a REST PR host has a credential: prHosts.azure or prHosts.bitbucket (D10), same source
 
   // --- Workspaces ---
   workspaces: [],            // GET /api/workspaces read-model
@@ -79,10 +80,15 @@ const state = {
 };
 // The group page host (runs redesign slice 4, D16). Up here, next to `state`: the boot's synchronous showView runs
 // mountGroupPage on a #feature/… reload, and a `const` declared below that call would still be in its TDZ.
-const GROUP_PAGE = { host: null, route: '', id: '', tab: 'runs', featureId: '', gone: false, failed: false, resolving: false, reentered: false, paintQueued: false };
+const GROUP_PAGE = { host: null, route: '', id: '', tab: 'runs', featureId: '', gone: false, failed: false, resolving: false, reentered: false, paintQueued: false, unmarked: 0 };
 
 import { icon } from './icons.mjs';
+import { subagentAliasLabel, subagentAliasTitle, roleOf, ROLE_LABELS } from '../../src/shared/model-roles.mjs';
+import { HELPER_JOBS } from '../../src/shared/model-jobs.mjs';
+import { paintMarkedSelect } from './models/brand-marks.mjs';
 import { telemetrySlotHtml, paintTelemetry } from './run-telemetry-view.mjs';
+import { copyButton, copyFromButton, flashCopy, writeClipboard } from './copy-button.mjs';
+import { paintSessionsTab, sessionsTabVisible, sessionsBadge, sessionRowLine, sessionRowEl } from './run-sessions-view.mjs';
 import { logLineClass, logLineTime, serializeLog, cycleSeparatorBefore, newCycleState, projectLogRecord } from './log-line.mjs';
 import { readLogView, writeLogView, paintLogMsg, applyLogView, syncLogViewSeg } from './log-view.mjs';
 import { logLineVisible, logFacets, compileLogFilter } from './log-filter.mjs';
@@ -90,35 +96,40 @@ import { alreadyApplied, noteBoot } from './ws-seq.mjs';
 import { createAlerts, mountAlertsCard } from './alerts.mjs';
 import { createConnection, paintConnectionBanner } from './connection-state.mjs';
 import { actionError, httpError } from './action-errors.mjs';
-import { paintWhatsNew } from './whats-new.mjs';
+import { paintWhatsNew, markWhatsNewSeen } from './whats-new.mjs';
 import { createLogDrawer } from './log-drawer.mjs';
 import { mountRunsResize } from './runs-resize.mjs';
 import { decorFromState, applyDecor, isGraphManifest, ledgerRows } from './graph/run-decor.mjs';
 import { mountRunGraph } from './graph/run-hosts.mjs';
+import { paintRunScope } from './run-scope-line.mjs';
 import { trailColumns, nowRows, glanceCopy, nodeLabel, preflightOpen, dotState } from './run-glance.mjs';
 import { workModeOf, isGitRun, isFolderRun, isNoProjectRun, NO_PROJECT_KEY, projectKind, kindChip, RUN_KIND_CHIP, folderMembersOf } from './run-kind.mjs';
 import { changesCounts, filesWord, renderCountsNode, applyBarModel, paintApplyBar, runChangesUrl, openApplyDialog, discardChanges, CHANGE_SIGN, CHANGE_WORD } from './folder-changes.mjs';
 import { runProgress, progressWidth } from '../../src/shared/run-progress.mjs';
+import { claudeCheckedWhere } from '../../src/shared/claude-sign-in.mjs';
 import { DEFAULT_HOME_PINS, isPinned, pinWorkflow, unpinWorkflow } from '../../src/shared/home-pins.mjs';
-import { CREATE_PR_LABEL, CREATE_PR_FAILED, CREATING_PR, PR_CREATED, VIEW_PR_LABEL, VIEW_PRS_LABEL, createPrLabel, doneStatusWord } from './ship-words.mjs';
+import { outcomeNote } from './run-outcome.mjs';
+import { CREATE_PR_LABEL, CREATE_PR_FAILED, CREATING_PR, PR_CREATED, VIEW_PR_LABEL, VIEW_PRS_LABEL, viewPrLabel, createPrLabel, doneStatusWord } from './ship-words.mjs';
 import { worktreeNoticeModel, worktreeRowState, retainedCommands, recoveryPatchKind, uncommittedPatchName, applyConfirmMessage, applyOutcome, checkoutRowValue, memberLabel } from './worktree-notice.mjs';
 import { limitNotice, resumeTicketOf, countdownText } from './limit-notice.mjs';
-import { buildRunsModel, countNeedsYou, isRowSelected, isMemberOpen, renderRunsList, RECENT_PAGE, groupRow, memberPrsOf, prChip, memberCostUsd, whenLabel } from './runs-list.mjs';
+import { buildRunsModel, countNeedsYou, isRowSelected, isMemberOpen, renderRunsList, paintStageBlocks, RECENT_PAGE, groupRow, memberPrsOf, rowMenuPrs, prChip, memberCostUsd, whenLabel, isFolded, setFolded } from './runs-list.mjs';
 import { paintRunStatus, syncActions, pauseResumeOwn } from './run-status-card.mjs';
 import { buildGroupPage, paintGroupPage, runReceipts, groupPrList } from './group-page.mjs';
 import { paintGroupShip, resetGroupShip } from './ship-group-dialog.mjs';
 import { setShipDialogOpener, shipReason } from './shape/ship-card.mjs';
 import { pageModel, runCrumbs, paintCrumbs, syncFacts } from './run-page-head.mjs';
 import { headModel, routeModel, routeGroupOf, renderHeadButtons, renderRoute, prMenuItems, canResolvePr, showsFixConflicts, HD_PR_WATCH_ACTIVE,
-  hdPrWatchLabel, WATCH_HELP, pushLabel, pushTip } from './run-head.mjs';
+  hdPrWatchLabel, WATCH_HELP, pushLabel, pushTip, tryServiceOf } from './run-head.mjs';
 import { delegateQuestion } from './question-delegate.mjs';
 import { loadRunsView, saveRunsView, viewChip, viewMenuItems } from './runs-view-menu.mjs';
-import { createRunsSelection, rowTarget, barModel, bulkBody, rangeKeys, labelTargets } from './runs-selection.mjs';
+import { createRunsSelection, rowTarget, barModel, bulkBody, rangeKeys, labelTargets, pipelineTargets } from './runs-selection.mjs';
 import { bulkConfirm, planBulk, skipText } from '../../src/shared/run-bulk.mjs';
 import { listKeyAction, keyHint, isMac, LIST_FIELD } from './list-keys.mjs';
 import { openKeysSheet } from './keys-sheet.mjs';
-import { createListRove, paintBulkBar, LIST_NAV, navKey } from './list-dom.mjs';
+import { createListRove, paintBulkBar, LIST_NAV, navKey, bindPointerSelect, landOn, paintLanded, collapsedSectionOf } from './list-dom.mjs';
 import { openGroupPicker } from './group-picker.mjs';
+import { openGroupDialog } from './group-dialog.mjs';
+import { readRecentGroups, noteRecentGroup, addedNotice } from './group-add.mjs';
 import { ACTION_LABEL, HEAD_ACTIONS, MENU_ACTIONS, groupModel, runModel } from '../../src/shared/run-model.mjs';
 // Import list only — `statusChip`/`diffBadges`/`mergeFindings`/`reportResultControl`
 // lost their last app.js caller with the retired card accordion, and `sourceBadge` with the
@@ -127,7 +138,7 @@ import { ACTION_LABEL, HEAD_ACTIONS, MENU_ACTIONS, groupModel, runModel } from '
 import { workflowPickerLabel, memoryChangesRows } from './results-view.mjs';
 // The memory view's history list is `renderMemoryHistory`: "History" alone names the saved runs here.
 import {
-  memoryRoute, renderHealthCard, renderFileList, renderEditor, collectEditor,
+  memoryRoute, renderHealthCard, renderFileList, renderEditor, collectEditor, renderProposals,
   renderMemoryHistory, MEMORY_NAME_HELP, formatWhen, parseSnapshotId, patchRunRefs,
   MEMORY_TEAM_SUB, renderMemoryViews, renderTeamCard, renderTeamNotes, renderSeedReview, renderClashCompare, teamLoadOf, teamLoadValue,
   collectSeedDecisions, seedSummary, seedableCount, renderTeamAvailableLine,
@@ -135,18 +146,21 @@ import {
 import { createScriptsController, nextCopyKey } from './scripts-view.mjs';
 import { renderRunPill, renderOverviewStrip, renderShipItStrip, shipItTryState, renderRunningActionRows, historyActionBadges, createActionsController, releaseCheckout } from './actions-view.mjs';
 import { editorFieldEl, renderProjectActionsEditor, renderStackEditor } from './actions-config-view.mjs';
-import { createMcpView, mountProjectMcp, paintMcpResolution, paintAskMcpBlock, setMcpStripRenderer } from './mcp-view.mjs';
+import { createMcpView, mountProjectMcp, paintMcpResolution, paintAskMcpBlock, setMcpStripRenderer, parseMcpParam } from './mcp-view.mjs';
 import { createAskPanel } from './ask-panel.mjs';
+import { pageChips, pageScopeOf } from './ask-page-chips.mjs';
+import { createAskSide, sideTier } from './ask-side.mjs';
 import { ATTACH_MAX_MESSAGE_BYTES } from './attach-files.mjs';
 // worca Chat P2: the receipt, stop and pull-request cards (registered below, before the chat mounts).
 import { registerChatActionCards, refreshChatPrWatch } from './chat/action-cards.mjs';
 import { registerScopeSwitchCard } from './chat/scope-switch-card.mjs';
+import { registerQuestionCard } from './chat/question-card.mjs';
 import { registerFilesCard, filesForViewer, fileViewerUrls } from './chat/files-card.mjs';
 import { createTerminalPane } from './terminal-pane.mjs';
-import { notify, announce, withButton, fieldError, clearFieldErrors, cardAlert, trackDirty, splitMessage, BUTTON_DONE_MS } from './feedback.mjs';
+import { notify, announce, withButton, fieldError, clearFieldErrors, cardAlert, trackDirty, splitMessage, BUTTON_DONE_MS, feedbackIcon } from './feedback.mjs';
 import { layoutDialog, watchDialogEdges } from './dialog-layout.mjs';
 import { setEngineLocks, engineLock, applyEngineLocks } from './engine-locks.mjs';
-import { guardModal, dialogOpen } from './modal-guard.mjs';
+import { guardModal, dialogOpen, DISCARD_MESSAGE } from './modal-guard.mjs';
 import { createVoiceController } from './ask-voice.mjs';
 import { renderGettingStarted, renderGettingStartedPill, bindWelcome, doneCount, allStepsDone, GETTING_STARTED_STEPS } from './getting-started.mjs';
 import { createGuideSpot } from './guide-spot.mjs';
@@ -174,43 +188,54 @@ import {
   renderConfigForm, collectConfigForm, renderConnectResult,
   channelBadge, renderNeedsGit,
 } from './plugins-view.mjs';
-import { mountMarketplace, tabFromParam } from './marketplace/index.mjs';
+import { mountMarketplace, tabFromParam, targetFromParam } from './marketplace/index.mjs';
+import { parseModelsParam, modelsHash, renderModelsTabs, paintModelsTabs } from './models/page-tabs.mjs';
+import { renderProvidersTab, toggleProviderRow } from './models/providers-tab.mjs';
+import { providerModelCounts, providerState } from './models/provider-state.mjs';
+import { renderAddStep1, collectAddStep1, renderAddStep2, addStep2Plan, paintAddSelection, paintAddList } from './models/add-model-dialog.mjs';
+import { buildCatalogue, buildModelPanel, CATALOGUE_VIEW_DEFAULT } from './models/catalogue-model.mjs';
+import { renderCatalogue, renderModelPanel } from './models/catalogue-view.mjs';
+import { buildJobs, jobsSaved, jobsSaveBody, jobsDirty } from './models/jobs-model.mjs';
+import { renderJobs, openOverrideMenu } from './models/jobs-view.mjs';
+import { openModelPicker } from './models/model-picker.mjs';
 import { renderChatSettings, collectChatSettings, renderScriptToolsToggle, collectScriptToolsToggle, renderSuggestionsToggle, collectSuggestionsToggle, renderSummariesToggle, collectSummariesToggle, renderAskWebFields, collectAskWebFields } from './chat-settings-view.mjs';
 import { renderCredentials } from './credentials-view.mjs';
 import { renderExtensionPairings, browserLabel, formatPairCode, renderExtensionInstall, selectInstallBrowser, detectBrowser } from './extension-settings-view.mjs';
 import { mountNetworkProxyCard } from './settings-network-proxy.mjs';
-import { openSetupAssistant, setupStepForSignIn, teamNotice, TEAM_SEEN_KEY } from './setup-assistant.mjs';
+import { openSetupAssistant, teamNotice, TEAM_SEEN_KEY } from './setup-assistant.mjs';
 import { loadCredentials, credentialSuffix } from './credential-badges.mjs';
 import { freeRequestsSuffix, typicalFreeRun, newRunFreeWarning, providerFreeLine } from './openrouter-free-view.mjs';
-import { PORT_ID_RE, MAX_PORTS_PER_SIDE, PORT_TYPES, FLOW_LABEL, KEYED_KINDS, SYNC_EXECUTION_ID } from '../../src/shared/graph/constants.mjs';
+import { PORT_ID_RE, MAX_PORTS_PER_SIDE, PORT_TYPES, SYNC_EXECUTION_ID } from '../../src/shared/graph/constants.mjs';
 import { FORM_ID_RE, validateFormDef, normalizeAskBlock } from '../../src/shared/forms/form-def.mjs';
 import { ASK_LIMITS } from '../../src/shared/forms/catalog.mjs';
 import { WORKSPACE_MAX_PROJECTS, workspaceSizeLevel } from '../../src/shared/workspace-size.mjs';
-import { engineLabel, usageLimitSwitches, engineSwitchNote, engineReportsCost, ENGINE_NAMES, isBetaEngine, SIGN_IN_ENGINE_NAMES } from '../../src/shared/engine-switch.mjs';
-import { runsOn, effortsOn, harnessesLabel, connectionKey, modelGroups, PROVIDER_LABELS } from '../../src/shared/connections.mjs';
+import { engineLabel, usageLimitSwitches, engineSwitchNote, engineReportsCost, ENGINE_NAMES, MODEL_ENGINE_NAMES, isBetaEngine, SIGN_IN_ENGINE_NAMES, SESSION_SUBAGENTS_VERIFIED } from '../../src/shared/engine-switch.mjs';
+import { runsOn, effortsOn, harnessesLabel, connectionKey, modelGroups, PROVIDER_LABELS, connectionOf } from '../../src/shared/connections.mjs';
 import {
   guardrailSummary, renderGuardrailList, renderGuardrailEditor, collectGuardrailEditor,
   renderStartStep, collectStartStep, renderGuardrailReferences409, isReadOnlyGuardrailSet,
 } from './guardrails-view.mjs';
 import {
-  renderModelsList, renderModelEditor, collectModelEditor, makeEnvRow, applyCostMode, setModelCost,
-  suggestDuplicateId, deleteRefsSummary,
-  renderExportWizard, collectExportWizard, applyConnectionModeIn, setModelEngine,
+  renderModelEditor, collectModelEditor, makeEnvRow, applyCostMode, setModelCost,
+  suggestDuplicateId, suggestDuplicateLabel, deleteRefsSummary,
+  renderExportWizard, collectExportWizard, applyConnectionModeIn, setModelEngine, paintEditorSave, setFormWhere,
 } from './models-view.mjs';
 import {
-  renderProvidersCard, collectProviderRow, collectSpeechRow, formatSpeechBytes, renderImportSheet, renderEndpointSheet, collectImportSheet, applyImportSelectAll,
-  applyProviderPreset, endpointRowMatches, ENDPOINT_PRESETS,
-  setModelUpstream, COPILOT_TERMS,
+  collectProviderRow, collectSpeechRow, formatSpeechBytes, renderImportSheet, renderEndpointSheet, collectImportSheet,
+  collectOpenRouterRow, endpointRowMatches, ENDPOINT_PRESETS,
+  setModelUpstream, applyImagesPreset, collectImagesRow, imagesRowProblem, showImagesTest, showImagesSaveError, collectSoundRow,
+  connectionWhere, syncCopilotHostField,
 } from './bridge-view.mjs';
 import {
   renderSourcePane, collectSourcePane, renderProfileGate, renderProfileBar,
 } from './source-pane.mjs';
 import { renderStatsBody, renderStatsView, renderBudgetReadout, renderCostPauseBanner, statsQuery, groupsToCsv, statsRangeLabel, DEFAULT_FMT } from './stats-view.mjs';
 import { createCostReport } from './cost-report.mjs';
-import { personInitials, describeAccount, paintAccountCorner, paintIdentityCard, renderSpendCard, paintAwayRow } from './account-menu.mjs';
-import { createComposer, isReservedWorkflowId } from './graph/composer.mjs';
+import { personInitials, describeAccount, paintAccountCorner, paintIdentityCard, renderSpendCard, paintAwayRow, paintAppearanceIcon } from './account-menu.mjs';
+import { usageModel, ringParts, paintUsageRings, paintUsageRow, renderUsageMenu } from './usage-view.mjs';
+import { createComposer, isReservedWorkflowId, isBuiltinWorkflow } from './graph/composer.mjs';
 import { createWorkflowsShell, toSpawnEntry } from './workflows/shell.mjs';
-import { createLibrary } from './workflows/library.mjs';
+import { createLibrary, folderLabel, folderKeys } from './workflows/library.mjs';
 import { createChatDock } from './workflows/chat-dock.mjs';
 import { mintId } from '../../src/shared/graph/template.mjs';
 // mountStaticGraph is NOT imported here: the New-Pipeline workflow picker is a
@@ -224,7 +249,7 @@ import { createThinkingOrb } from './thinking-orb.mjs';
 import { renderAutoProposal, proposalBands } from './auto-proposal.mjs';
 import { portsFnFor } from '../../src/shared/graph/ports.mjs';
 import { indexByKey } from '../../src/shared/graph/agent-meta.mjs';
-import { classifyLoops } from '../../src/shared/graph/loops.mjs';
+import { SESSION_DEFAULT_LABEL, sessionStartNotices } from '../../src/shared/graph/sessions.mjs';
 import { isBrowsableKind } from '../../src/shared/artifact-kinds.mjs';
 // artifact-view-media.mjs re-exports artifact-view.mjs's whole surface and widens
 // dispatch to the byte kinds, so upstream's module stays byte-identical;
@@ -232,7 +257,7 @@ import { isBrowsableKind } from '../../src/shared/artifact-kinds.mjs';
 import { artifactsByNodeCycle, groupArtifactsByKind, BULK_KIND_THRESHOLD, viewerKindFor, renderArtifact, rawArtifactUrl,
   renderMarkdown as renderArtifactMarkdown } from './artifact-view-c4.mjs';
 // The popup viewer every artifact opener uses (Chat P5).
-import { openArtifactViewer, downloadArtifact } from './artifacts/viewer.mjs';
+import { openArtifactViewer, downloadArtifact, closeOpenViewer } from './artifacts/viewer.mjs';
 // Pinpoint (#669): act on selected text in the chat, run artifacts and the Diff tab.
 import { createPinpoint } from './pinpoint.mjs';
 import { decorateArtifact, decorateDiff } from './pinpoint-surfaces.mjs';
@@ -240,7 +265,8 @@ import { trayKey as pinpointTrayKey } from './pinpoint-model.mjs';
 import { createArtifactBrowser } from './artifacts/browser.mjs';
 import { baseName as artifactBaseName } from './artifacts/common.mjs';
 import { resolveNodeTunables, modifiedFieldsOf, pruneNodeSelection, buildGraphNodeRows as ntBuildGraphNodeRows, buildNodeConfigRows as ntBuildNodeConfigRows } from './node-tunables.mjs';
-import { renderEngineSection, readEngineSection, enginePatchToSettingsBody, utilityId, renderAskEngineSection, readAskEngineSection, askPatchToSettingsBody, renderRolesSection, readRolesValues, rolesPatchToSettingsBody, paintRoleFallbacks } from './engine-settings-view.mjs';
+import { buildFeedbackRows as ntBuildFeedbackRows } from './loop-rows.mjs';
+import { renderAskEngineSection, readAskEngineSection, askPatchToSettingsBody } from './engine-settings-view.mjs';
 import { mountProjectSettings } from './project-settings-view.mjs';
 import { mountHouseBrief } from './house-brief-view.mjs';
 import { appendModelGroups, modelOptionText } from './model-options.mjs';
@@ -262,6 +288,7 @@ import { renderTimeline, renderTimelinePopover, timelineWindow, shiftAnchor, TL_
 import {
   renderProjectTmCell, renderProjectTmChip, projectTmSummary, renderEnableDialogBody, renderMetricsHomePicker, renderWsMetricsRow, renderWsSummary, renderRouteResults, renderWsMetricsPending } from './team-metrics-surfaces.mjs';
 import { renderMapTab, emptyMapFilters } from './workspace-map-view.mjs';
+import { openWorkspaceGuide, shouldAutoOpenWorkspaceGuide } from './workspace-guide.mjs';
 import { paintAboutInto, paintVersionStatusInto, paintUpdateMarkerInto } from './about-links.mjs';
 import { createUpdateUi } from './update-view.mjs';
 import { renderReasonOptions, renderOptIns, previewText, reportBlobParts, REPORT_PREVIEW_DEBOUNCE_MS } from './report-run.mjs';
@@ -279,25 +306,33 @@ import { runCostBreakdown, floorText, auxLabelForSubagent } from '../../src/shar
 import { costBreakdownEl, costSummaryText, awayTotalText } from './cost-breakdown.mjs';
 import { describeRun, describeNewRun, describeAwayRow } from '../../src/shared/away-mode/describe.mjs';
 import { createSchedulesView } from './schedules-view.mjs';
+import { createRunPrFields, mountWorkspacePrSetting, paintRunPrAuto } from './pr-auto-view.mjs';
 import { createRequirementsView } from './requirements-view.mjs';
+import { mountDesignView, pushDesignFrame, pushDesignAskFrame, repaintDesignChat, designHello, designNavCount, paintDesignNav } from './design/view.mjs';
+import { createDesignChat } from './design/chat.mjs';
+import { createDesignActivity } from './design/activity.mjs';
 import { createLevelController, levelAtLeast, currentLevel, tagLevel, keepVisible, minLevelFor, LEVEL_INFO, UI_LEVELS } from './ui-level.mjs';
-import { applyFlags, decorateFlagChips, flagOn, onFlagChange } from './flags.mjs';
+import { applyFlags, currentFlags, decorateFlagChips, flagOn, onFlagChange } from './flags.mjs';
+import { SETTING_ENTRIES } from './settings-index.mjs';
 import { gitOn, applyGit, onGitChange as onGitFlip, refreshGit, GIT_MISSING_TEXT } from './git-gate.mjs';
 import { PROBE_DEBOUNCE_MS, defaultAddMode, detectModel } from './project-add.mjs';
 import { presetMenuGroups, presetHiddenItems, presetNodePick, renderBrokenCard, resetItem, saveDialogError, configWithPreset } from './run-presets-picker.mjs';
 import { runPresetScopeOptions, runPresetRequest, runPresetErrorText, RUN_PRESET_SAVED_NOTE } from './run-presets-save.mjs';
 import { renderPresetsList } from './run-presets-view.mjs';
+import { renderAutomations, renderAutomationsOverview } from './automations-view.mjs';
 import { presetSetupSummary, presetSavedNote, workflowNamesFrom } from './run-presets-names.mjs';
 import { setupFromBody } from '../../src/shared/run-presets.mjs';
 import { createTagInput, tagChip, fetchTagVocabulary, createDimensionSlots, createDimensionEditor, missingSlot } from './tag-input.mjs';
 import { normaliseTags, formatTag, parseTag } from '../../src/shared/run-tags.mjs';
-import { prefillTags, splitByDimensions, tagGroupOptions, tagsProblemText } from '../../src/shared/tag-dimensions.mjs';
+import { prefillTags, splitByDimensions, tagsProblemText } from '../../src/shared/tag-dimensions.mjs';
 import { createFlagsView, bindFlagSwitch } from './flags-view.mjs';
 import { createSmartNaming } from './smart-naming.mjs';
 import { renderPattern, patternProblem, PRESET_TYPES, TYPE_RE } from '../../src/shared/naming/pattern.mjs';
 import { createFlyout } from './side-flyout.mjs';
+import { renderReadinessChip, readinessAddedToast, readinessMenuModel, renderLevelLabel, LEVEL_WORDS } from './readiness-chip.mjs';
 import * as runPanel from './chat/run-panel.mjs';
 import { createTopnavSearch } from './topnav-search.mjs';
+import { createSearchUnlock } from './search-unlock.mjs';
 import { chatRows, CHAT_LIMIT } from './global-search.mjs';
 import { pageTitle } from './topnav.mjs';
 import { activityCounts } from './activity-model.mjs';
@@ -305,11 +340,11 @@ import { createChatHome, findFollowingThread } from './chat/home.mjs';
 import { installIntentAddon } from './chat/intent.mjs';
 import { needsYouItems as chatNeedsYouItems } from './runs-list.mjs';
 import { createActivityMenu } from './activity-menu.mjs';
+import { createAwayScreensaver } from './away-screensaver.mjs';
 import { registerAskRenderer, askRendererFor, askKindOf } from './ask/registry.mjs';
 import { activeAgents } from './ask-run-card.mjs';
 import { registerChatRunCard } from './chat/run-card.mjs';
 import { registerDirectionAddon } from './chat/direction.mjs';
-import { shapeFirstOn, onShapeFirstChange } from './chat/shape-gate.mjs';
 import { renderPlanBody } from './shape/plan-body.mjs';
 import { renderOutlineBody } from './shape/outline-body.mjs';
 import { renderFeature, featureModelOf } from './shape/feature-view.mjs';
@@ -317,7 +352,7 @@ import { renderReleaseRow } from './shape/release-row.mjs';
 import { featureFocusOf, focusFeatureControl, featureMenuItems } from './shape/feature-actions.mjs';
 import { decorateShapingQuestions } from './shape/questions.mjs';
 import { isShapingRun, shaperWait } from './shape/plan-text.mjs';
-import { stepChip, stepTitle, isStepCard, renderGateCard, renderRecoveryCard, questionFocusTarget } from './shape/step-card.mjs';
+import { stepChip, stepTitle, isStepCard, renderGateCard, renderRecoveryCard, questionFocusTarget, answerFieldOpen } from './shape/step-card.mjs';
 import { installInputMode } from './input-mode.mjs';
 import { noteAnswer, forgetAnswer } from './shape/step-receipt.mjs';
 import { renderChecklistGroups } from './shape/checklist-view.mjs';
@@ -330,6 +365,7 @@ import { openLabelPicker, closeLabelPickerFor, fetchLabels, labelChip } from './
 import { labelStates, applyLabelChange, normaliseLabel } from '../../src/shared/run-labels.mjs';
 import { renderLabelsSection, runCount } from './labels-settings.mjs';
 import { makeSwitch } from './switch.mjs';
+import { createWorcaLevelWiring } from './worca-level/app-wiring.mjs';
 
 // With site data blocked, Chrome throws SecurityError on merely reading `localStorage`. Every bare `localStorage` in
 // this module resolves here: the browser's storage, else an in-memory stand-in, so the page boots and forgets on reload.
@@ -401,6 +437,9 @@ function bindMarkdownReady() {
 const pageMarkdown = (text) => (hdMarkdown.isReady() ? hdMarkdown.render(text) : { kind: 'plain' });
 
 let askPanel = null;           // Chat panel — assigned by the boot mount; every seam uses askPanel?.
+let askSide = null;            // Ask worca beside the page: the side column's controller (ask-side.mjs), made after askPanel
+let askHistoryOnChat = false;  // the column's "Open History in Chat": the Chat page opens its History column once it hosts the chat
+let askEntryThread = null;     // openChat({ threadId }) on a hidden column: the chat it opens on (askSide onShow), never the stored one first
 let chatSummariesPref = true;    // Settings › Chat › Summarise commands (#911): GET /api/settings chat.summariseCommands
 function setChatSummariesPref(chat) {
   const on = !(chat && chat.summariseCommands === false);
@@ -419,7 +458,6 @@ let chatPanelRouter = null;    // (segments: ['<runId>', '<tab>'?]) => void — 
 let chatPanelContext = null;   // () => ({ runId?, pipelineId?, projectDir?, projectKey?, workspaceId?, runPage?, diffPath? })
 let chatEntryPending = false;  // openChat() is routing to a bare #chat: enterChatView reopens the LAST chat, not an unread one
 let pendingShapeEntry = null;   // the New run link (§3.6): {text}, armed once Chat home is open
-let lastChatHomeFlags = null;   // the switches chatHomeFlags last read: onHello re-pushes them with the gate, no fetch
 const chatDeps = {
   openRunPanel: (ref, opts) => chatOpenRunPage(ref, opts),
   openArtifact: (ref, artifact) => chatDeps.openRunPanel(ref, { tab: 'artifacts' }),
@@ -441,7 +479,7 @@ const SHAPE_FEATURE_HOSTS = new Map();
 const SLICE_INFO = new Map();
 const SLICE_INFO_WAITERS = new Map();      // pipelineId → Set<onLoad>
 function sliceInfoFor(pipelineId, onLoad) {
-  if (!pipelineId || !shapeFirstOn()) return null;
+  if (!pipelineId) return null;
   const known = SLICE_INFO.get(pipelineId);
   if (known) return known;
   if (typeof onLoad === 'function') {
@@ -480,9 +518,7 @@ async function openRunPlan(ref, projectKey) {
 async function paintShapeFeature(host) {
   const id = SHAPE_FEATURE_HOSTS.get(host);
   if (!id) return;
-  // Bumped on every path, the gate-off one too, so a fetch in flight never lands after the host was cleared.
   const seq = (host.__shapeSeq = (host.__shapeSeq || 0) + 1);       // the last paint wins (act + WS frames race)
-  if (!shapeFirstOn()) { host.replaceChildren(); host.dataset.painted = ''; host.__shapeWant = null; return; }
   const opts = host.__shapeOpts || {};
   // The page's first paint of this feature: say so while it loads, not a blank page (a busy server takes seconds).
   if (opts.loading && host.dataset.painted !== id) {
@@ -505,6 +541,7 @@ async function paintShapeFeature(host) {
   // F47: the route follows replaced_by, so f.id can be a newer feature than the host's id. Frames name f.id, and the
   // actions must reach it.
   host.__shapeShown = f.id;
+  noteGroupFeatureLock(f);                                   // Shaper requirements s3: the page header's Create PR lock
   // A rebuild drops the focus (rule: app-js-repaint-drops-focus): give it back to the same control. An action names
   // its control itself (F39: in Chromium the disabled button has already lost the focus); a WS repaint reads it.
   const act = host.__shapeFocus || featureFocusOf(document, host);
@@ -531,9 +568,10 @@ async function paintShapeFeature(host) {
     },
     runsOpen: !!opts.runsOpen,
     ...(opts.ask ? { mountAsk: (slot, step) => featureMountAsk(host, slot, step) } : {}),
+    ...(host.__shapeFallback ? { focusFallback: host.__shapeFallback } : {}),
   }));
   host.dataset.painted = id;
-  focusFeatureControl(host, act);
+  focusFeatureControl(host, act, host.__shapeFallback ? host.__shapeFallback() : null);
 }
 /** Mount (or re-point) a host. F41: the run card calls it on every repaint (once a second), so it fetches only when
  *  the host is pointed at a new id. A pending or failed fetch is not retried from here: `shape-feature`,
@@ -544,6 +582,8 @@ function mountShapeFeature(host, id, opts = {}) {
   if (host.__shapeWant === id && was && was.ask === o.ask && was.runsOpen === o.runsOpen && was.loading === o.loading
     && was.inGroup === o.inGroup) return;
   host.__shapeWant = id; host.__shapeOpts = o;
+  // Where the focus goes when the control it was on and the view's ⋯ are both gone (the group page's header ⋯).
+  host.__shapeFallback = typeof opts.focusFallback === 'function' ? opts.focusFallback : null;
   SHAPE_FEATURE_HOSTS.set(host, id);
   host.__shapeErr = null;
   paintShapeFeature(host);
@@ -574,7 +614,7 @@ let chatRunCards = null;
  *  answer (a disposed card's listener is a no-op: the controller checks its entry). */
 const SHAPER_CARDS = new Map();   // pipelineId -> { card, miss, loading, again, listeners: Set }
 function shaperCardFor(pid, onChange) {
-  if (!pid || !shapeFirstOn()) return null;
+  if (!pid) return null;
   let e = SHAPER_CARDS.get(pid);
   if (!e) { e = { card: null, miss: false, loading: false, again: false, listeners: new Set() }; SHAPER_CARDS.set(pid, e); loadShaperCard(pid, e); }
   if (typeof onChange === 'function') e.listeners.add(onChange);
@@ -585,7 +625,7 @@ function loadShaperCard(pid, e) {
   e.loading = true;
   fetch(`/api/shape/pipelines/${encodeURIComponent(pid)}/card`)
     .then((r) => {
-      if (r && r.status === 404) { e.miss = true; return null; }   // a plain run (or the gate off): never re-read
+      if (r && r.status === 404) { e.miss = true; return null; }   // a plain run: never re-read
       return r && r.ok ? r.json() : null;
     }).catch(() => null)
     .then((card) => {
@@ -609,7 +649,6 @@ function refreshShaperCardsOf(pid) {
     if (k === pid || member) loadShaperCard(k, e);
   }
 }
-onShapeFirstChange(() => SHAPER_CARDS.clear());
 chatDeps.shaperCard = (pid, onChange) => shaperCardFor(pid, onChange);
 chatDeps.openPlan = (ref) => openRunPlan(ref, ref && ref.projectKey);
 /** Shaper s3 (D18): the run's review rows for the Chat card's checklist line (the run page's rdLoadData); null when this
@@ -622,7 +661,7 @@ chatDeps.checklists = (ref) => {
 /** Shaper s2 (D14): a feature run's ask opens the thread that started the feature, where its card shows the ask. */
 async function featureThreadFor(ref) {
   const pid = ref && ref.pipelineId;
-  if (!pid || !shapeFirstOn()) return null;
+  if (!pid) return null;
   try {
     const r = await fetch(`/api/shape/pipelines/${encodeURIComponent(pid)}/slice`);
     const info = r && r.ok ? await r.json() : null;
@@ -632,6 +671,14 @@ async function featureThreadFor(ref) {
 if (typeof window !== 'undefined') window.__shapeFeature = { mount: mountShapeFeature, refresh: refreshShapeFeatures, paintAsk: (ref, host) => chatPaintQuestion(ref, host),
   shaperCard: shaperCardFor, threadForRun: featureThreadFor };   // test seam
 let activityMenu = null;       // the top bar's Activity (activity-menu.mjs) — assigned beside New run; updateNavCounts uses activityMenu?.
+// The open Design builds Activity lists (design/activity.mjs), from hello's list and the design-build frames. A build
+// first met in a frame reads "Design" until its title loads (asked once; a 404 or a bad body keeps "Design").
+const designActivity = createDesignActivity({
+  loadTitle: async (id) => (await safeJson(await fetch(`/api/design/${encodeURIComponent(id)}`))).design?.title,
+  onChange: () => updateNavCounts(),
+});
+let awayScreensaver = null;    // the away screensaver easter egg (away-screensaver.mjs) — assigned beside Activity; timerTick uses awayScreensaver?.
+let screensaverPref = { enabled: false, idleMinutes: 5 };   // Settings › Appearance › Screensaver, as the server last said (getState reads it)
 let terminalPane = null;       // terminal pane (#573) — assigned by the boot mount; every seam uses terminalPane?.
 let newPipelinePrefill = null; // one-shot card → New Pipeline handoff (§10.2 seam 7, consumed by Task 11)
 // Engine readiness (GET /api/engines): which engines a usage-limit pause offers. Fetched on demand, refreshed after
@@ -743,6 +790,7 @@ const el = {
   hitlRow: $('#hitl-row'),
   humanInLoop: $('#humanInLoop'),
   nightMode: $('#nightMode'),
+  noMemory: $('#noMemory'),
   memoryScopeRow: $('#memory-scope-row'),
   memoryScopeSeg: $('#memory-scope-seg'),
   engineSelect: $('#engineSelect'),
@@ -791,6 +839,7 @@ const el = {
 
   // Workspaces management view
   wsCreateBtn: $('#ws-create-btn'),
+  wsHowtoBtn: $('#ws-howto-btn'),
   wsMsg: $('#ws-msg'),
   wsList: $('#ws-list'),
   wsShell: $('#ws-shell'),
@@ -820,6 +869,9 @@ const el = {
   viewerClose: $('#viewer-close'),
 
   settingsRoot: $('#settingsRoot'),
+  screensaverOn: $('#screensaverOn'),
+  screensaverAfter: $('#screensaverAfter'),
+  screensaverAfterRow: $('#screensaverAfterRow'),
   settingsProjectsRoot: $('#settingsProjectsRoot'),
   settingsProjectsRootBrowse: $('#settingsProjectsRootBrowse'),
   settingsSave: $('#settingsSave'),
@@ -969,28 +1021,18 @@ const el = {
   flagsMsg: $('#flags-msg'),
   flagsReset: $('#flags-reset'),
 
-  // Models view
+  // Models view: the Catalogue tab's list and line, the Jobs tab's line, the Providers tab's card and line
   modelsList: $('#models-list'),
+  modelPanelHost: $('#model-panel-host'),
   modelsMsg: $('#models-msg'),
+  modelsJobsMsg: $('#models-jobs-msg'),
+  jobsRoot: $('#jobs-root'),
   providersList: $('#providers-list'),
   providersMsg: $('#providers-msg'),
-  modelImportBtn: $('#model-import-btn'),
-  modelImportModal: $('#model-import-modal'),
   modelEditorModal: $('#model-editor-modal'),
   modelEditorHost: $('#mv-editor-host'),
-  mimpSource: $('#mimp-source'),
-  mimpBase: $('#mimp-base'),
-  mimpBaseField: null,          // set below: the label wrapping #mimp-base
-  mimpKey: $('#mimp-key'),
-  mimpKeyField: null,           // set below: the label wrapping #mimp-key
-  mimpList: $('#mimp-list'),
-  mimpMsg: $('#mimp-msg'),
-  mimpFilter: $('#mimp-filter'),
-  mimpBody: $('#mimp-body'),
-  mimpGo: $('#mimp-go'),
-  mimpCancel: $('#mimp-cancel'),
   modelCreateBtn: $('#model-create-btn'),
-  modelShareBtn: $('#model-share-btn'),
+  modelsMoreBtn: $('#models-more-btn'),
 
   // Statistics view
   statsBody: $('#stats-body'),
@@ -1009,6 +1051,25 @@ const el = {
   reportCreate: $('#report-create-issue'),
   reportFiled: $('#report-filed'),
 };
+// The Models page's tab strip (Catalogue, Jobs, Providers; models/page-tabs.mjs). Mounted here, long before the boot
+// route, so a reload on a #models… address paints a strip that is there. Every paint uses this node: the strip is
+// built at runtime, so nothing looks it up by its id.
+const modelsTabsNav = renderModelsTabs(document, {});
+document.getElementById('models-tabs-host')?.replaceChildren(modelsTabsNav);
+// The tab the Models page showed last: when showView runs the hash already names the new one, so only this tells a
+// tab change from a repaint. Declared up here because the boot route (bottom of the file) runs during evaluation.
+let modelsTabShown = '';
+// The content the Providers tab was last drawn from (paintProvidersTab compares it): '' = draw on the next show.
+let providersDrawnKey = '';
+// The number of the newest loadModelsView call and its promise: an older call writes nothing and resolves after it.
+let modelsLoadSeq = 0;
+let modelsLoadNewest = null;
+// The number of the newest Models page entry: only its post-load paint and reveals run.
+let modelsEntrySeq = 0;
+// The number of the newest Jobs tab read (loadJobs): an older read writes no settings and draws nothing.
+let jobsLoadSeq = 0;
+// The 3 s clears of the Jobs blocks an address flashed, by block id: a repaint draws a new block with the same id.
+const jobsFoundTimers = new Map();
 // The shared dialog anatomy (dialog-layout.mjs): keep the head/foot edge dividers of every static .dlg current.
 watchDialogEdges(document);
 
@@ -1157,6 +1218,8 @@ const isPhoneNav = () => !!(phoneNavMq && phoneNavMq.matches);
 function railCollapsed() {
   if (isPhoneNav()) return false;
   if (railTierMq && railTierMq.matches) return true;
+  // Ask worca beside the page (L11): a pushing side column folds the menu while the page would be under 640px. Never stored.
+  if (askSide && askSide.forcesRail()) return true;
   return sidebarCollapsed;
 }
 
@@ -1190,6 +1253,8 @@ function applySidebarCollapsed() {
   const aside = $('.sidebar');
   if (aside) aside.classList.toggle('collapsed', collapsed);
   document.body.classList.toggle('rail-collapsed', collapsed);
+  // Ask worca beside the page: while the side column folds the menu, its toggle can neither unfold it nor store a choice.
+  document.body.classList.toggle('ask-side-rail', !isPhoneNav() && !(railTierMq && railTierMq.matches) && !!(askSide && askSide.forcesRail()));
   const btn = $('#side-toggle');
   if (btn) {
     btn.setAttribute('aria-expanded', String(!collapsed));
@@ -1204,12 +1269,13 @@ function applySidebarCollapsed() {
   // `data-rail-title` marks the ones WE wrote, so expanding removes only those.
   // Runs is excluded — updateNavCounts owns its title (the needs-you/live
   // counts). It has not run yet at the boot call below; showView does.
+  // Design is excluded too: paintDesignNav (below) owns its title and live count.
   // `:scope >` mirrors the CSS rule exactly: only the label span is a direct child.
   // The dataset.nav fallback can only fire if a button ever loses its label
   // span; an empty title would otherwise leave the button both tooltip-less and
   // silently "handled".
   // The rail's own squares only (children of .nav).
-  for (const b of $$('.nav > button[data-nav]:not([data-nav="runs"])')) {
+  for (const b of $$('.nav > button[data-nav]:not([data-nav="runs"]):not([data-nav="design"])')) {
     if (collapsed) {
       if (!b.dataset.railTitle) {
         const t = b.querySelector(':scope > span:not(.nav-count):not(.nav-rollup)');
@@ -1221,6 +1287,8 @@ function applySidebarCollapsed() {
       delete b.dataset.railTitle;
     }
   }
+  // One call covers boot, repaintNavMode and the Ask side's onLayout: the rail state just moved.
+  paintDesignNav(document, designNavCount());
 }
 
 /** Everything that renders differently on the rail: one call after the rail state moves
@@ -1240,7 +1308,7 @@ function setSidebarCollapsed(v) {
   repaintNavMode();
 }
 
-$('#side-toggle')?.addEventListener('click', () => setSidebarCollapsed(!sidebarCollapsed));
+$('#side-toggle')?.addEventListener('click', () => { if (!document.body.classList.contains('ask-side-rail')) setSidebarCollapsed(!sidebarCollapsed); });
 
 // The rail's Running actions: one tile (a green dot and the count) opening the same rows, Stop
 // included, in a side flyout — so a running service stays stoppable on the rail too.
@@ -1255,17 +1323,42 @@ const sideActionsFlyout = sideActionsTile && sideActionsFly
 // closes it, so a run's detail never steps back on the same key. Runs, projects and workspaces are
 // read from memory on every render; workflows and schedules are fetched when the popover opens —
 // never per keystroke — and kept for the next open.
-const topnavLazy = { workflows: [], schedules: [], tickets: [] };
+const topnavLazy = { workflows: [], schedules: [], tickets: [], plugins: [], catalog: [], connectors: [] };
+// The plugin lists (GET /api/plugins, GET /api/marketplaces — local reads, never the marketplace sync) are read at most
+// once per popover open and only while stale: plugins-changed marks them, the Marketplace page's own reads refill them.
+let topnavPluginsStale = true;
+function setTopnavPlugins(plugins, marketplaces) {
+  if (Array.isArray(plugins)) {
+    topnavLazy.plugins = plugins.filter((p) => p && typeof p.name === 'string' && p.name).map((p) => ({
+      name: p.name, description: typeof p.description === 'string' ? p.description : '', enabled: p.enabled !== false, hasSettings: p.hasSettings === true }));
+  }
+  if (Array.isArray(marketplaces)) {
+    topnavLazy.catalog = marketplaces.filter((m) => m && m.id).flatMap((m) => (Array.isArray(m.plugins) ? m.plugins : [])
+      .filter((p) => p && typeof p.name === 'string' && p.name)
+      .map((p) => ({ name: p.name, description: typeof p.description === 'string' ? p.description : '', marketplace: m.id,
+        marketplaceName: m.name || m.id, installed: p.installed === true })));
+  }
+  if (Array.isArray(plugins) && Array.isArray(marketplaces)) topnavPluginsStale = false;
+}
+const topnavRead = (url) => fetch(url).then((res) => (res.ok ? safeJson(res) : null)).catch(() => null);
 async function loadTopnavLazy() {
-  const [workflows, sched] = await Promise.all([
+  const stale = topnavPluginsStale;
+  const [workflows, sched, , plugins, mkts, mcp] = await Promise.all([
     listWorkflowsApi(),
-    fetch('/api/schedules').then((res) => (res.ok ? safeJson(res) : null)).catch(() => null),
+    topnavRead('/api/schedules'),
     withWorkspaces(),
+    stale ? topnavRead('/api/plugins') : null,
+    stale ? topnavRead('/api/marketplaces') : null,
+    topnavRead('/api/mcp/servers'),
   ]);
   if (workflows) topnavLazy.workflows = workflows.map((w) => ({ id: w.id, name: w.name, builtin: isReservedWorkflowId(w.id) }));
   if (sched) {
     topnavLazy.schedules = Array.isArray(sched.schedules) ? sched.schedules : [];
     topnavLazy.tickets = Array.isArray(sched.tickets) ? sched.tickets : [];
+  }
+  if (stale) setTopnavPlugins(plugins && plugins.plugins, mkts && mkts.marketplaces);
+  if (mcp && Array.isArray(mcp.servers)) {
+    topnavLazy.connectors = mcp.servers.filter((s) => s && s.id && s.base).map((s) => ({ id: s.id, name: s.base, description: typeof s.description === 'string' ? s.description : '' }));
   }
 }
 function topnavSources() {
@@ -1277,9 +1370,31 @@ function topnavSources() {
     workspaces: (state.workspaces || []).map((w) => ({ id: w.id, name: w.name, projectCount: (w.projectPaths || []).length })),
     // D17: the label words in use on listed runs (the items carry [] while runLabels is off).
     labels: [...new Set([...live, ...history].flatMap((r) => r.labels || []))].sort(),
+    level: currentLevel(), flags: currentFlags(),
+    // Add-ons model rows: your own, plugin and team-policy catalogue entries (state.models, from /api/config at boot).
+    models: (state.models || []).filter((m) => m && (m.custom === 'global' || m.custom === 'plugin' || m.custom === 'policy'))
+      .map((m) => ({ id: m.id, label: m.label || m.id, source: m.custom, plugin: m.plugin || '' })),
     ...topnavLazy,
   };
 }
+// A route by hash text. The same hash fires no hashchange, so route it directly (as the Settings tab buttons do).
+function gotoHash(hash) {
+  const target = String(hash).replace(/^#/, '');
+  if (location.hash.slice(1) !== target) { location.hash = target; return; }
+  const i = target.indexOf('/');
+  showView(i < 0 ? target : target.slice(0, i), i < 0 ? '' : target.slice(i + 1));
+}
+// A locked search result: open the place that unlocks it, then take the user on (search-unlock.mjs).
+const searchUnlock = createSearchUnlock({
+  levelOk: (min) => levelAtLeast(min),
+  flagOk: (key) => flagOn(key),
+  openMode: () => levelCtl.open(),
+  closeMode: () => levelCtl.close(),
+  go: gotoHash,
+  labsHash: (key) => `settings/experimental/${key}`,
+});
+document.addEventListener('worca:level', () => searchUnlock.changed());
+document.addEventListener('worca:flags', () => searchUnlock.changed());
 const topnavSearchRoot = $('.topnav-c .tsearch');
 if (topnavSearchRoot) createTopnavSearch({
   doc: document, win: window, root: topnavSearchRoot,
@@ -1287,8 +1402,11 @@ if (topnavSearchRoot) createTopnavSearch({
   loadLazy: loadTopnavLazy,
   // The Ask Worca row: Chat opens with what was typed in the composer, unsent (worca Chat R3).
   onAsk: (query) => { openChat({ text: query }); },
+  // Ask worca beside the page (L7): on a page with the side column the row says where the text goes.
+  askRow: () => (askSide && askSide.available() ? { title: 'Ask worca', meta: 'with this page' } : { title: 'Ask in Chat', meta: 'opens a chat' }),
   navigate: (href) => { location.hash = href; },
   openWorkflow: (id) => { void openWorkflowFromAsk(id); },
+  openSetting: (row) => { if (row.locks && row.locks.length) searchUnlock.arm(row); else gotoHash(row.href); },
   // D17: "Runs labelled hotfix" adds the word to the Runs list label filter and opens the Runs LIST: a bare #runs
   // reopens the remembered run (D6), which may sit outside the filter, so go through goRunsList.
   onLabel: (label) => {
@@ -1335,9 +1453,10 @@ function setMobileNavOpen(open) {
   document.body.classList.toggle('nav-open', next);
   mbarMenu?.setAttribute('aria-expanded', String(next));
   if (navScrim) navScrim.hidden = !next;
-  for (const n of [$('.main'), $('#topnav'), $('body > .term-pane')]) {
+  for (const n of [$('.main'), $('#topnav'), $('body > .term-pane'), $('#ask-side')]) {
     if (n) n.toggleAttribute('inert', next);
   }
+  paintAskSideCover();
   if (next) $('#side-close')?.focus();
   else if (hadFocus) mbarMenu?.focus();
 }
@@ -1422,7 +1541,9 @@ async function refreshFreeDaily({ force = false } = {}) {
 function paintFreeDaily() {
   paintSpendCard();
   applyFreeDailyToNewView();
-  if (currentView() === 'providers') paintProviderFreeDaily();
+  // On any Models tab: the row is in the Providers panel, drawn or not (paintProviderFreeDaily no-ops without it), so
+  // an answer that lands while another tab shows is still on the row when Providers opens.
+  if (currentView() === 'models') paintProviderFreeDaily();
 }
 
 /** The new-run form: warn when a node's model is :free and fewer requests are left than a run takes. */
@@ -1442,11 +1563,11 @@ function recentRunsForFree() {
   return [...runs.values()].sort((a, b) => String(b.startedAt || '').localeCompare(String(a.startedAt || '')));
 }
 
-/** The Providers card: the allowance under the OpenAI-compatible row, without pressing Test. */
+/** Models › Providers: the allowance under the OpenRouter row, without pressing Test. */
 function paintProviderFreeDaily() {
   const line = providerFreeLine(freeDailyState.status);
   const root = providerRoot();
-  const row = root && root.querySelector('.mv-pv-row[data-provider="openai"] .mv-pv-msg');
+  const row = root && root.querySelector('.mv-pv-row[data-provider="openrouter"] .mv-pv-msg');
   if (!row || !line || (row.textContent && !row.dataset.freeDaily)) return;
   row.textContent = line;
   row.dataset.freeDaily = '1';
@@ -1474,7 +1595,7 @@ async function refreshBudget() {
 function paintBudget() {
   const b = budgetState.budget;
   if (!b) return;
-  // A block is never hidden at any interface mode: the ring turns red and full, the card says until when.
+  // A block is never hidden at any interface mode: the corner's name says so, the card says until when.
   paintAccount();
   paintSpendCard();
   applyBudgetToNewView();
@@ -1518,6 +1639,8 @@ function startBudgetTick() {
   const idleRefetchMs = typeof window.__budgetIdleRefetchMs === 'number'
     ? window.__budgetIdleRefetchMs : BUDGET_IDLE_REFETCH_MS;
   budgetState.timer = setInterval(() => {
+    // The usage rings: a window whose reset has passed is refetched (the server drops it), never polled otherwise.
+    if (usageResetPassed()) void refreshUsage();
     const b = budgetState.budget;
     if (!b) return;
     // Refetch when spend can actually move (live runs) or the window has rolled
@@ -1613,21 +1736,79 @@ function repaintPeople() {
 }
 
 // ── The account corner and its menu (account-menu.mjs) ─────────────────────────
-// The corner sits at the foot of the sidebar: the avatar (who is looking), a ring that fills
-// toward the total spend limit, a violet dot while away. Its menu opens upward: the spend card,
-// "Signed in as" (a shared identity only), Interface mode (a side menu), Settings, the Away and Keep awake switches,
-// and the appearance icons last. A level, a switch or a theme change leaves it open; a route closes it.
+// The corner sits at the foot of the sidebar: the avatar (who is looking), the usage rings (usage-view.mjs),
+// a violet dot while away. Its menu opens upward: the level card, "Signed in as" (a shared identity only), the spend
+// card with Usage under it (a side menu), the Away and Keep awake switches, then the preferences: the team setup notice,
+// the appearance icons, Interface mode (a side menu) and Settings last. A level, a switch or a theme change leaves it
+// open; a route closes it.
 const acctState = { account: describeAccount(null), away: null };   // away: describeAwayRow's last answer
 const acctBtn = document.getElementById('side-acct');
 const acctMenu = document.getElementById('acct-menu');
-// focusChecked: false — a keyboard open lands on the spend card, not on the checked theme icon.
+// focusChecked: false — a keyboard open lands on the first item (the level card, else the spend card), not on the
+// checked theme icon.
 // The team setup notice repaints each time the menu opens (paintTeamNotice is a hoisted function declaration below).
 const acctFly = createFlyout({ trigger: acctBtn, menu: acctMenu, mode: 'up', focusChecked: false, onOpen: () => { void paintTeamNotice(); } });
+paintAppearanceIcon(document.querySelector('#acct-menu .theme-sect > .mi-ic'));
 // Interface mode's side menu hangs off the menu (side-flyout closes it with the menu, and Escape
 // closes it first); ui-level.mjs fills it, and a pick there is a choose like a dialog card.
 createFlyout({ trigger: document.getElementById('acct-lvl'), menu: document.getElementById('lvl-menu'), mode: 'beside', parent: acctMenu });
+// Usage (usage-view.mjs): the providers' plan-limit readings (GET /api/usage-limits) as the avatar's rings, the
+// menu's row under the spend card and its submenu, which hangs off the menu exactly as Interface mode's does. Refetched on its push
+// (usage-limits-changed), on hello and on pipelines-changed (a usage-limit pause, resume or stop), and on the budget
+// tick only when a window's reset has passed. One fetch in flight plus one trailing; a failure keeps the last answer.
+const usageState = { answer: null, fetching: false, pending: false };
+const usageRow = document.getElementById('acct-usage');
+const usageMenu = document.getElementById('usage-menu');
+const usageFly = createFlyout({ trigger: usageRow, menu: usageMenu, mode: 'beside', parent: acctMenu,
+  onOpen: () => { renderUsageMenu(usageMenu, currentUsageModel()); usageFly.reposition(); } });
+const currentUsageModel = () => usageModel(usageState.answer, { now: Date.now() });
+function usageResetPassed() {
+  const hs = usageState.answer && Array.isArray(usageState.answer.harnesses) ? usageState.answer.harnesses : [];
+  const now = Date.now();
+  return hs.some((h) => h && Array.isArray(h.windows) && h.windows.some((w) => w && typeof w.resetsAt === 'number' && w.resetsAt <= now));
+}
+async function refreshUsage() {
+  if (usageState.fetching) { usageState.pending = true; return; }
+  usageState.fetching = true;
+  try {
+    do {
+      usageState.pending = false;
+      try {
+        const res = await fetch('/api/usage-limits', { signal: AbortSignal.timeout(15000) });
+        const data = await safeJson(res);
+        if (res.ok && data && Array.isArray(data.harnesses)) usageState.answer = data;
+      } catch { /* transient: keep the last answer */ }
+      paintUsage();
+    } while (usageState.pending);
+  } finally { usageState.fetching = false; usageState.pending = false; }
+}
+/** The avatar's rings and name, the Usage row and an open submenu. A row that hides takes its open submenu with
+ *  it, and focus goes to the menu's first item. */
+function paintUsage() {
+  const model = currentUsageModel();
+  const active = document.activeElement;
+  const hadFocus = !!active && (usageMenu.contains(active) || usageRow.contains(active));
+  if (!model.row && usageFly.isOpen()) usageFly.close();
+  paintUsageRings(acctBtn, model);
+  paintAccount();
+  paintUsageRow(usageRow, model);
+  renderUsageMenu(usageMenu, model);
+  if (!model.row && hadFocus && acctFly.isOpen()) {
+    const first = [...acctMenu.querySelectorAll('[role^="menuitem"]')].find((el) => !el.closest('[hidden]') && !el.hidden);
+    first?.focus();
+  }
+  if (acctFly.isOpen()) acctFly.reposition();
+  usageFly.reposition();
+}
+// The worca level (worca-level/app-wiring.mjs): the last served view feeds the corner avatar, the shelf and the menu row.
+const worca = createWorcaLevelWiring({ trigger: acctBtn, menu: acctMenu, repaint: () => { paintAccount(); paintShelf(); }, isSettled: () => gs.settled, setupOpen: () => !!setupDialog });
 function paintAccount() {
-  paintAccountCorner(acctBtn, acctState.account, { budget: budgetState.budget, away: acctState.away?.state === 'away', fmt: { usd: fmtUsd, usd4: fmtUsd4 } });
+  const level = worca.state.view && worca.state.view.level;
+  paintAccountCorner(acctBtn, acctState.account, {
+    budget: budgetState.budget, away: acctState.away?.state === 'away',
+    avatar: level ? { src: level.avatar, alt: level.name } : null,
+    usageParts: ringParts(currentUsageModel()),
+  });
 }
 paintAccount();                // the first paint: "Profile" until /api/whoami answers
 
@@ -1671,10 +1852,12 @@ function handleServerMessage(msg) {
     conn.back();
     onHello(msg);
     refreshRunningActions();
+    void refreshUsage();
     if (terminalPane) terminalPane.onHello(msg);
     if (Array.isArray(msg.extensionPairs)) msg.extensionPairs.forEach((r) => void promptExtensionPair(r));
     return;
   }
+  worca.onServerMessage(msg.type);   // the level may have moved; the handlers below still run
   if (msg.type === 'flags') {                 // D6: a flag changed (Settings in any tab, or the API)
     applyFlags(msg.flags);
     if (flagsTabCtl && currentView() === 'settings' && currentSettingsTab === 'experimental') void flagsTabCtl.load();
@@ -1695,13 +1878,19 @@ function handleServerMessage(msg) {
     return;
   }
 
+  // Design frames are tagged by designId + buildId (no runId) and reach every socket: the Design view keeps the
+  // nav count and the open stage. Handle them BEFORE the !msg.runId early-return below.
+  if (typeof msg.type === 'string' && msg.type.startsWith('design-')) { pushDesignFrame(msg); if (msg.type === 'design-build' && designActivity.frame(msg)) updateNavCounts(); return; }
+
   // Ask Worca frames are tagged by threadId (job frames also carry messageId +
   // seq) and ride the same broadcast socket. Handle them BEFORE the
   // !msg.runId early-return below.
   if (typeof msg.type === 'string' && msg.type.startsWith('ask-')) {
     alerts.onAskFrame(msg);   // a card waiting for an OK, in any chat (the panel only applies the open one)
+    awayScreensaver?.onAskFrame(msg);   // chat turns and proposals it counts
     askPanel?.pushServerFrame(msg);
     wfvChat?.pushFrame(msg);          // the Workflows chat keeps only its own composer thread's frames
+    pushDesignAskFrame(msg);          // the open design's chat keeps only its own thread's frames
     // D12: a settled chat turn moves the combined spend — repaint the sidebar
     // indicator and, when open, the Statistics view. ask-error included: an
     // error turn that saw a result frame carries recorded spend. refreshBudget
@@ -1719,6 +1908,16 @@ function handleServerMessage(msg) {
   // same broadcast socket. Handle them BEFORE the !msg.runId early-return below.
   if (msg.type === 'history-pr') {
     onHistoryPr(msg);
+    return;
+  }
+
+  if (msg.type === 'automations-changed') {
+    if (!flagOn('gitAutomations')) return;
+    if (currentView() === 'settings' && currentSettingsTab === 'automations') void loadAutomationsView();
+    const sec = projDetail && projDetail.screen.querySelector('.pd-sec-automations');
+    if (sec && sec.isConnected) void buildPdAutomations(sec, projDetail.key);
+    const wsec = wsDetail && wsDetail.screen && wsDetail.screen.querySelector('.pd-sec-automations');
+    if (wsec && wsec.isConnected) void buildWdAutomations(wsec, wsDetail.id);
     return;
   }
 
@@ -1749,6 +1948,7 @@ function handleServerMessage(msg) {
     scheduleOnboardingRefresh();
     refreshAllCounts();
     refreshBudget();
+    void refreshUsage();
     // An archive / delete names the parked live runs the server evicted; every tab drops its copies of them.
     if (Array.isArray(msg.removedRunIds) && msg.removedRunIds.length) {
       const gone = new Set(msg.removedRunIds);
@@ -1770,6 +1970,11 @@ function handleServerMessage(msg) {
   // is global, so repaint it regardless of the open view.
   if (msg.type === 'budget-changed') {
     refreshBudget();
+    return;
+  }
+  // A provider's plan-limit reading changed (usage-view.mjs): the avatar's rings, the Usage row and its submenu.
+  if (msg.type === 'usage-limits-changed') {
+    void refreshUsage();
     return;
   }
   // Requirements: a feature changed (a round finished, an edit, another tab), or a Product brief (`brief`:
@@ -1797,6 +2002,7 @@ function handleServerMessage(msg) {
   if (msg.type === 'shape-feature') {
     SLICE_INFO.clear();
     refreshShapeFeatures(msg.id);
+    void refreshGroupFeatureLock(msg.id);
     refreshShaperCards();
     chatHome?.refreshPlans();
     return;
@@ -1822,6 +2028,10 @@ function handleServerMessage(msg) {
     void refreshAwayBodies().catch(() => {});
     // The default engine or a slot may have changed in another tab: New pipeline re-reads them.
     if (currentView() === 'new') void loadRunDefaults(state.runTarget === 'workspace' ? '' : (state.projectDir || ''));
+    // The Catalogue's Used by, Default and hidden built-ins follow what another tab saved.
+    if (currentView() === 'models') void loadModelsView();
+    // The Jobs tab re-reads what is saved under its draft (kept); never the readiness preflight, from any view.
+    if (mvState.jobs.loaded) void loadJobs({ engines: false });
     loadSettings();
     return;
   }
@@ -1835,6 +2045,7 @@ function handleServerMessage(msg) {
     return;
   }
   if (msg.type === 'projects-changed') {
+    requirementsView.targetsChanged();   // its projects and workspaces are read again at the next paint
     askPanel?.optionsChanged();
     scheduleOnboardingRefresh();
     refreshAllCounts();
@@ -1844,6 +2055,7 @@ function handleServerMessage(msg) {
     return;
   }
   if (msg.type === 'workspaces-changed') {
+    requirementsView.targetsChanged();
     askPanel?.optionsChanged();
     // The automatic re-scan after a member change (server afterMembersChanged) ends here.
     if (msg.workspaceId && WS_RESCAN_ENDS[msg.action]) endWsRescan(msg.workspaceId, WS_RESCAN_ENDS[msg.action], msg.runId || null);
@@ -1880,6 +2092,8 @@ function handleServerMessage(msg) {
   // A plugin or marketplace changed — another tab, the CLI, or this page's own action (CONTRACT §1.7): re-read while
   // the page is open; never a refresh (SM6). Off the page, the next entry loads anyway.
   if (msg.type === 'plugins-changed') {
+    requirementsView.importChanged();               // what can import (and its connections) is asked again
+    topnavPluginsStale = true;                     // the top bar search reads the lists again on its next open
     if (currentView() === 'marketplace') void marketplacePage.load({ background: true });
     return;
   }
@@ -1913,6 +2127,12 @@ function handleServerMessage(msg) {
     gvAgentsDirty = true;          // the composer re-reads /api/agents AND /api/scripts on re-entry (spec §3.3)
     if (currentShownView === 'workflows') void gvLoadAgents();
     if (scriptsCtl) scriptsCtl.onChanged();
+    return;
+  }
+  // A workflow row written elsewhere (a Chat card's Save, #1126): an OPEN Workflows view re-reads its lists; any
+  // other page reloads them on entry anyway (initWorkflows; New run's re-entry refresh).
+  if (msg.type === 'workflows-changed') {
+    if (currentShownView === 'workflows' && gvComposer) void wfvRefreshWorkflows();
     return;
   }
   // Bench frames are tagged by benchId (not runId) and ride the same broadcast
@@ -1957,6 +2177,22 @@ function handleServerMessage(msg) {
     if (hdCommentState && hdCommentState.key === msg.storeKey && hdCommentState.id === msg.pipelineId) {
       pokeOpenDiffTab();
     }
+    return;
+  }
+
+  // The server's frame names the project in `action` (emitChanged(type, action)); a null one has nothing to refetch.
+  if (msg.type === 'readiness-changed') {
+    // Repaint whatever shows this project's readiness: the Projects list (chip, open popover) or a settings card.
+    const key = msg.action;
+    const shown = key && (currentView() === 'projects'
+      || [...document.querySelectorAll('.readiness-settings-card')].some((c) => c.dataset.key === key));
+    if (shown) void refreshReadiness(key);
+    return;
+  }
+  // A project just added evaluated not-ready: one nudge per project, opening its breakdown.
+  if (msg.type === 'readiness-added') {
+    const toast = readinessAddedToast(msg, { run: () => openReadinessBreakdown(msg.projectKey) });
+    if (toast) notify(toast);
     return;
   }
 
@@ -2052,6 +2288,10 @@ function handleServerMessage(msg) {
     case 'error':
       onError(r, msg);
       break;
+    case 'sessionHost':
+      // A session trace record was written (session groups): the Sessions tab's report is stale (Task 58).
+      r.sessionSeq = (r.sessionSeq || 0) + 1;
+      break;
     default:
       break;
   }
@@ -2080,17 +2320,6 @@ function handleServerMessage(msg) {
   if (crp.waiting && crp.want && msg.runId && (msg.runId === crp.want.id || (runs.get(msg.runId) || {}).pipelineId === crp.want.id)) crpRetryPending();
 }
 
-// Shape it first's UI that nothing else rebuilds: the New run link and the Chat home tile. Run on every hello and
-// whenever the flag flips (Settings › Labs, or a `flags` frame).
-function syncShapeFirstUi() {
-  refreshShapeFeatures();   // a view emptied while the gate was off comes back
-  const shapeLink = document.getElementById('shapeChatLink');
-  if (shapeLink) shapeLink.hidden = !shapeFirstOn();
-  // The spread keeps scripts/tasks: setFlags replaces the set.
-  if (chatHome && lastChatHomeFlags) chatHome.update({ flags: { ...lastChatHomeFlags, shapeFirst: shapeFirstOn() } });
-}
-onShapeFirstChange(syncShapeFirstUi);
-
 // hello greeting carries the server's authoritative run list. We upsert each
 // into our map, backfill-subscribe to non-terminal runs whose buffer we don't
 // yet have, and refresh whatever view is showing.
@@ -2102,7 +2331,7 @@ function onHello(msg) {
   applyServerMock(msg.serverMock);     // every hello: a restarted server may have changed mode
   if (msg.flags) applyFlags(msg.flags);  // every hello: a frame missed while the socket was down, or a restart with a new WORCA_FLAGS
   if (msg.git) applyGit(msg.git);   // every hello: git may have been installed meanwhile
-  syncShapeFirstUi();
+  refreshShapeFeatures();           // every hello: a feature view may have missed frames while the socket was down
   // A restarted server lists only the runs IT started, and nothing below drops the old ones: mark
   // every entry stale, and the upserts below clear the ones it lists. The saved run's bar skips a
   // stale entry (hdPipelineRun), which would otherwise offer a Pause / Stop the server answers
@@ -2196,7 +2425,7 @@ function onHello(msg) {
   if (rebooted) {
     for (const r of runs.values()) {
       if (!r.staleBoot || !['starting', 'running', 'pausing'].includes(r.status)) continue;
-      r.status = 'interrupted';
+      applyServerStatus(r, 'interrupted');
       r.pendingQuestion = null;
     }
   }
@@ -2204,6 +2433,8 @@ function onHello(msg) {
   pokeAskRuns(null, 'hello');
   askPanel?.onHello(msg.ask);
   wfvChat?.onHello();
+  designHello(msg.design ?? [], { rebooted });   // the live builds (an older server's hello has none)
+  designActivity.hello(msg.design);              // Activity's builds, paused ones too (refreshAllCounts below repaints)
 
   // diff-comments-changed is a plain global broadcast with no per-socket buffer
   // (ui/server.mjs:389-398), so any comment written while the socket was down is
@@ -2368,7 +2599,7 @@ function makeRun({
     stepSkills: {},   // {`${nodeId}|${cycle}`: string[]} — MAIN-agent skills per dropdown group
     stepGraphify: {}, // {`${nodeId}|${cycle}`: number} — MAIN-agent graphify-use count per group
     // v2 (graph-engine) run-level outcome fields; a v1 run never sends them.
-    active: [], endReached: undefined, result: null, warnings: [], wireDeliveries: {}, tokens: {}, gate: null,
+    active: [], endReached: undefined, result: null, warnings: [], scopeNotices: [], wireDeliveries: {}, tokens: {}, gate: null,
     el: null,
     _finished: false,
     staleBoot: false,  // a restarted server never re-listed it (onHello): the run died with the old process
@@ -2385,7 +2616,8 @@ function upsertRun(partial) {
     runs.set(partial.runId, r);
   } else {
     for (const k of Object.keys(partial)) {
-      if (partial[k] !== undefined) r[k] = partial[k];
+      if (k === 'status') applyServerStatus(r, partial.status);
+      else if (partial[k] !== undefined) r[k] = partial[k];
     }
     r.staleBoot = false;   // every caller relays the current server: it knows this runId
   }
@@ -2905,8 +3137,17 @@ function addNightDecisions(r, list) {
   r.nightDecisions = cur;
 }
 
+// Every status the server reports lands here. A Pause in flight keeps 'pausing' over a 'running' sent before the
+// server took it. A run never goes back to 'starting' (a start or resume mints a new runId): beginRun's late one,
+// after a start reply that trails the socket's frames (#1090), never replaces a status the server already sent.
+function applyServerStatus(r, status) {
+  if (!status || (r.pausePending && status === 'running') || (status === 'starting' && r.status && r.status !== 'starting')) return;
+  r.status = status;
+  r.pausePending = false;
+}
+
 function onState(r, msg) {
-  if (msg.status) r.status = msg.status;
+  applyServerStatus(r, msg.status);
   if (msg.shaping && typeof msg.shaping === 'object') r.shaping = msg.shaping;
   if (msg.startedAt) { r.startedAt = msg.startedAt; runStartedAts.set(r.runId, msg.startedAt); }
   // The harness mirrors startedBy onto its state (creation-immutable), so a live card
@@ -2968,7 +3209,9 @@ function onState(r, msg) {
   r.subAgents = msg.subAgents || r.subAgents;
   // v2 run-level outcome fields (ignored by v1 runs, which never send them).
   // roleReviews: the role-review rounds runModel's live role rows read (review A12).
-  for (const k of ['active', 'endReached', 'result', 'warnings', 'wireDeliveries', 'tokens', 'gate', 'progressFacts', 'roleReviews']) {
+  // sessionHosts: each session's summary (session groups), read by the tray decor and the Sessions tab.
+  // scopeNotices (E9): the paths each execution touched outside its checkout, the run page's one quiet scope line.
+  for (const k of ['active', 'endReached', 'result', 'warnings', 'scopeNotices', 'wireDeliveries', 'tokens', 'gate', 'progressFacts', 'roleReviews', 'sessionHosts']) {
     if (msg[k] !== undefined) r[k] = msg[k];
   }
   // Skills registry §6 board 9: the run's set skills (run-harness state.skillMount) for its Overview.
@@ -3209,6 +3452,7 @@ let wfvRuntimes = null;     // the script runtime probe (GET /api/scripts/runtim
 let wfvChat = null;         // the composer chat dock (workflows/chat-dock.mjs), mounted with the view
 const WFV_SESSION = mintId('cs_');   // this page load's composer session: the chat applies only cards stamped with it
 const wfvPendingDraft = { agent: null, script: null, build: null };   // a chat draft's Edit… (and Ask's graph card's Open in Workflows), handed to the route it opens
+let wfvRevealId = '';   // a chat card's Open (#1126): routeWorkflows shows this saved row in the Library once
 const gvNewIds = new Set(); // workflows imported this page session (a NEW pill until reload)
 // A saved workflow id, by the server's own rule (workflows.mjs isSafeWorkflowId): a minted `wf_<slug>` (no
 // length cap), a plugin's `wfp_<plugin>_<slug>`, or any safe id a POST /api/workflows body kept (`myflow`).
@@ -3286,7 +3530,7 @@ function wfvEls() {
   const g = (id) => document.getElementById(id);
   return {
     root: g('wfv'), stage: g('wfv-stage'), canvas: g('wfv-canvas'), chip: g('wfv-chip'), back: g('wfv-back'),
-    wfMenu: g('wfv-wf-menu'), name: g('wfv-name'), errors: g('wfv-errors'), importFile: g('wfv-import-file'),
+    wfMenu: g('wfv-wf-menu'), name: g('wfv-name'), docState: g('wfv-doc'), errors: g('wfv-errors'), importFile: g('wfv-import-file'),
     libToggle: g('wfv-lib-toggle'), saveWrap: g('wfv-savewrap'), save: g('wfv-save'), saveReason: g('wfv-save-reason'), add: g('wfv-add'),
     autolayout: g('wfv-autolayout'), zoom: g('wfv-zoom'), zoomLabel: g('wfv-zoom-label'), overlay: g('wfv-overlay'),
     library: g('wfv-library'), sheet: g('wfv-sheet'), sheetTitle: g('wfv-sheet-title'), sheetClose: g('wfv-sheet-close'),
@@ -3323,6 +3567,15 @@ async function wfvRefreshWorkflows() {
   void loadHomePins();                           // the Library ⋯ and Workflows menu labels follow the viewer's pins
 }
 
+/** Show a saved workflow in the Library (#1126): re-read the list first — highlight() finds the row's folder in the
+ *  data it holds, and a row saved since the last read would open none — then open the Library on Workflows and let
+ *  highlight open the row's domain folder and flash it. */
+async function wfvRevealWorkflow(id) {
+  await wfvRefreshWorkflows();
+  wfvShellActions().openLibrary('workflows');
+  wfvLibrary?.highlight('workflow', id);
+}
+
 /** Mount the engine + chrome ONCE. Resolves true on the first mount. */
 async function initWorkflows() {
   if (gvComposer) {
@@ -3336,7 +3589,7 @@ async function initWorkflows() {
   insBody.className = 'wfv-ins';
   gvComposer = createComposer({
     canvas: els.canvas, chip: els.chip, name: els.name, errors: els.errors, autoBtn: els.autolayout,
-    saveBtn: els.save, saveWrap: els.saveWrap, saveReason: els.saveReason, insBody, dialogHost: els.dialogHost,
+    saveBtn: els.save, saveWrap: els.saveWrap, saveReason: els.saveReason, docState: els.docState, insBody, dialogHost: els.dialogHost,
   }, {
     doc: document, api: gvApi, portsFn: (node) => gvPortsFn(node),
     highlight: scriptHighlight,   // a script card's command/code params get the real editor
@@ -3442,7 +3695,7 @@ function wfvShellActions() {
       if (t.id && !gvComposer.isDirty()) { exportRow(t); return; }
       if (gvComposer.isPristine()) {
         wfvSetLibraryOpen(true); wfvLibrary?.open('workflows');
-        notify({ tone: 'info', title: 'Pick a pipeline to export', detail: 'Each saved pipeline has an Export button in the Library.' });
+        notify({ tone: 'info', title: 'Pick a pipeline to export', detail: 'Each saved pipeline has Export… in its ⋯ menu in the Library.' });
         return;
       }
       gvComposer.openSaveDialog({ then: exportRow });
@@ -3530,6 +3783,21 @@ async function openBuildFromAsk(build) {
   else location.hash = 'workflows';
 }
 
+/** Open a saved workflow on the canvas (#1127): the user's own in place (Edit: Save changes it); a built-in or plugin one,
+ *  or any row with `copy`, as a new unsaved copy (Use as template). Asks before discarding (the composer's guard), and
+ *  says why when the row cannot be read — never nothing. Resolves null when the row cannot be read, else whether it opened. */
+async function wfvOpenSaved(id, { copy = false } = {}) {
+  let full = null;
+  try { full = await gvApi.readWorkflow(id); } catch { full = null; }   // a refused fetch: say so below
+  if (!full) {
+    notify({ tone: 'err', title: 'Could not open the workflow', detail: `"${id}" was deleted or renamed, or Worca did not answer.` });
+    return null;
+  }
+  const opened = copy || isBuiltinWorkflow(full) ? await gvComposer.openCopy(full) : await gvComposer.openTemplate(full);
+  if (opened) gvComposer.fit();
+  return Boolean(opened);
+}
+
 /** Route the view's param (D6). In-view hops (sheet ↔ canvas, tab ↔ tab) only route. */
 async function routeWorkflows(param = '') {
   const [head, ...rest] = String(param || '').split('/');
@@ -3564,20 +3832,17 @@ async function routeWorkflows(param = '') {
     return;
   }
   if (!head) return;
-  // Any other head names a saved workflow (Ask's "Open in Workflows", the top-bar search, a bookmark): open it
+  // Any other head names a saved workflow (Ask's "Open in Workflows", the top-bar search, a bookmark): open it as its Library row does (a built-in as a copy, #1127)
   // and normalise the hash, or say why not — never nothing.
+  const reveal = wfvRevealId === head;            // a chat card asked for this row (openWorkflowFromAsk reveal)
+  wfvRevealId = '';
   try { window.history.replaceState(null, '', '#workflows'); } catch { /* sandboxed */ }
   if (!WF_ID_RE.test(head)) {
     notify({ tone: 'err', title: 'Could not open the workflow', detail: `"${head}" is not a workflow id or a Workflows address.` });
     return;
   }
-  let full = null;
-  try { full = await gvApi.readWorkflow(head); } catch { full = null; }   // a refused fetch: say so below
-  if (!full) {
-    notify({ tone: 'err', title: 'Could not open the workflow', detail: `"${head}" was deleted or renamed, or Worca did not answer.` });
-    return;
-  }
-  if (await gvComposer.openTemplate(full)) gvComposer.fit();
+  const opened = await wfvOpenSaved(head);
+  if (reveal && opened !== null) await wfvRevealWorkflow(head);   // also when the discard prompt kept the canvas (D2)
 }
 
 async function enterWorkflowsView(param = '', prevView = '') {
@@ -3741,10 +4006,9 @@ function wfvLibraryActions() {
       const node = gvComposer.spawn(toSpawnEntry(payload));
       if (node) gvComposer.view.centerOn(node.id);
     },
-    openWorkflow: async (id) => {
-      const full = await gvApi.readWorkflow(id);
-      if (full && await gvComposer.openTemplate(full)) gvComposer.fit();
-    },
+    // #1127: a row of the user's opens to Edit (Save changes it); Use as template opens any row as a new unsaved copy.
+    editWorkflow: (id) => wfvOpenSaved(id),
+    useAsTemplate: (id) => wfvOpenSaved(id, { copy: true }),
     deleteWorkflow: async (wf) => {
       const schedNote = await scheduleDependentsNote(`workflowId=${encodeURIComponent(wf.id)}`, 'They will fail to start until you point them at another pipeline.');
       const ok = await confirmModal({ title: 'Delete pipeline', danger: true, confirmLabel: 'Delete',
@@ -3859,7 +4123,7 @@ function agentSummaryText(row) {
   // counted it read as a contradiction. '' (unset -> auto at run time) shows
   // nothing, like every other unset tunable.
   if (row.subagentModel) {
-    parts.push(row.subagentModel === 'auto' ? 'subs: agent picks' : `subs: ${row.subagentModel}`);
+    parts.push(`subs: ${subagentAliasLabel(row.subagentModel)}`);
   }
   if (row.askQuestions) parts.push('questions');
   if (!parts.length) return 'default';
@@ -3874,102 +4138,11 @@ function agentsHeaderText(rows) {
   return n === 0 ? 'all defaults' : `${n} modified`;
 }
 
-// Flatten workflow.feedbacks into row data for the per-loop cycle-count inputs,
-// overlaying the run-config's saved maxCycles (default 3 when unset). Resolves each
-// loop's endpoints (node ids like "s2_0") to human agent names via the registry +
-// workflow.steps, and precomputes the directional `label`:
-//   - normal loop:  "<toName> ← <fromName>"   (feedback points to <- from)
-//   - self loop:    "<name> ↺ (self loop)"    (from === to)
-// A "(step N)" suffix (1-based) disambiguates an endpoint whose display name is shared
-// by more than one node in the workflow. Unknown ids fall back to the raw id.
-
-// v2: one row per LOOP wire (a plain wire has no budget — V13). Labels reuse the
-// v1 vocabulary: "<toName> ← <fromName>", "(step N)" only when a name repeats.
-function buildGraphWireRows(tpl, registry, runConfig, scripts) {
-  const reg = registry || {};
-  const scriptReg = scriptIndex(scripts);
-  const saved = (runConfig && runConfig.wires) || {};
-  const { loopWireIds, launchOrder } = classifyLoops(tpl, panelPortsFn(reg, scriptReg));
-  const byId = new Map(tpl.nodes.map((n) => [n.id, n]));
-  const rank = new Map(launchOrder.map((id, i) => [id, i]));
-  const nameCount = new Map();
-  const nameOf = (id) => {
-    const n = byId.get(id);
-    if (!n) return id;
-    // A flow card has no registry meta and no key: name it from the SHARED
-    // FLOW_LABEL table the manifest uses, never from its raw n_* id (MAJ-21).
-    if (!KEYED_KINDS.includes(n.kind)) return FLOW_LABEL[n.kind] || n.kind;
-    // A script card is keyed too: its name comes from the script registry the panel fetched, else its key.
-    const meta = reg[n.key] || scriptReg[n.key];
-    return (meta && meta.displayName) || n.key || n.id;
-  };
-  for (const n of tpl.nodes) nameCount.set(nameOf(n.id), (nameCount.get(nameOf(n.id)) || 0) + 1);
-  const labelFor = (id) => {
-    const nm = nameOf(id);
-    return (nameCount.get(nm) || 0) > 1 ? `${nm} (step ${(rank.get(id) || 0) + 1})` : nm;
-  };
-  return tpl.wires.filter((w) => loopWireIds.has(w.id)).map((w) => {
-    const rc = saved[w.id] || {};
-    const n = Number(rc.maxCycles);
-    const cfg = Number(w.config && w.config.maxCycles);
-    const fromLabel = labelFor(w.from.node);
-    const toLabel = labelFor(w.to.node);
-    const selfLoop = w.from.node === w.to.node;
-    return {
-      fbId: w.id, from: w.from.node, to: w.to.node, fromLabel, toLabel, selfLoop,
-      label: selfLoop ? `${toLabel} ↺ (self loop)` : `${toLabel} ← ${fromLabel}`,
-      maxCycles: Number.isFinite(n) && n >= 1 ? n : (Number.isFinite(cfg) && cfg >= 1 ? cfg : 3),
-    };
-  });
-}
-
+// Thin wrappers over loop-rows.mjs: this panel supplies its own scripts source and ports source
+// (panelPortsFn, which can fall back to the Composer index).
 function buildFeedbackRows(workflow, registry, runConfig, scripts) {
-  if (workflow && workflow.version === 2) return buildGraphWireRows(workflow, registry, runConfig, scripts);
-  const steps = Array.isArray(workflow && workflow.steps) ? workflow.steps : [];
-  const fbs = Array.isArray(workflow && workflow.feedbacks) ? workflow.feedbacks : [];
-  const reg = registry || {};
-  const saved = (runConfig && runConfig.feedbacks) || {};
-
-  // node id -> { name, step } (1-based) + a display-name frequency map so the
-  // "(step N)" suffix is added only when a name is non-unique.
-  const byId = new Map();
-  const nameCount = new Map();
-  steps.forEach((group, stepIndex) => {
-    (Array.isArray(group) ? group : []).forEach((node) => {
-      if (!node || !node.id) return;
-      const meta = reg[node.key] || null;
-      const name = (meta && meta.displayName) || node.key || node.id; // mirror buildNodeConfigRows
-      byId.set(node.id, { name, step: stepIndex + 1 });
-      nameCount.set(name, (nameCount.get(name) || 0) + 1);
-    });
-  });
-
-  // Endpoint label: display name, disambiguated with "(step N)" when that name is
-  // shared by >1 node. Ids absent from steps fall back to the raw id (never blank).
-  const labelFor = (nodeId) => {
-    const info = byId.get(nodeId);
-    if (!info) return nodeId;
-    return (nameCount.get(info.name) || 0) > 1 ? `${info.name} (step ${info.step})` : info.name;
-  };
-
-  return fbs.map((fb) => {
-    const rc = saved[fb.id] || {};
-    const n = Number(rc.maxCycles);
-    const fromLabel = labelFor(fb.from);
-    const toLabel = labelFor(fb.to);
-    const selfLoop = fb.from === fb.to;
-    const label = selfLoop ? `${toLabel} ↺ (self loop)` : `${toLabel} ← ${fromLabel}`;
-    return {
-      fbId: fb.id,
-      from: fb.from,
-      to: fb.to,
-      fromLabel,
-      toLabel,
-      selfLoop,
-      label,
-      maxCycles: Number.isFinite(n) && n >= 1 ? n : 3,
-    };
-  });
+  const scriptReg = scriptIndex(scripts);
+  return ntBuildFeedbackRows(workflow, registry, runConfig, scriptReg, panelPortsFn(registry || {}, scriptReg));
 }
 
 // First effort a model supports (used to seed a node's effort caption when none
@@ -4056,6 +4229,7 @@ if (typeof window !== 'undefined') {
     applyRunLogFilter,
     focusLogExecution,
     openStepLog,
+    openSessionLog,
     paintLogFilters,
     readLogFilterFrom,
     repaintFilteredLog,
@@ -4063,7 +4237,7 @@ if (typeof window !== 'undefined') {
     paintExecChip,
     wireExecChip,
     openRunArtifact,
-    paintQuiescenceBanner,
+    paintRunWarnings,
     progressText,
     histCountsLine,
     gateWireCopy,
@@ -4078,6 +4252,7 @@ if (typeof window !== 'undefined') {
     // Test seam: the live list-model row (the object the detail screen re-resolves to).
     historyRow: (projectKey, id) => (state.historyAll || []).find((r) => r && r.id === id && r.projectKey === projectKey) || null,
     pauseRun,
+    hdShownStatus,
     upsertRun,
     onHello,
     isPaused,
@@ -4162,7 +4337,7 @@ function renderModelEffortPair(modelSel, effortSel, caption, sel = {}) {
   if (caption) {
     const mLabel = model ? model.label : 'default model';
     caption.textContent = `${mLabel} · ${effortSel.value || 'default effort'}`
-      + (model && model.needsSignIn ? ' (needs sign-in on the Providers page)' : '');
+      + (model && model.needsSignIn ? ' (needs sign-in under Models › Providers)' : '');
     caption.classList.toggle('err', !!(model && model.needsSignIn));
   }
 }
@@ -4303,11 +4478,12 @@ async function loadWorkflowsInto(selectId) {
   const list = [AUTO_WORKFLOW, ...(workflows.length ? workflows : [{ id: 'wf_default', name: 'Default' }])];
   const want = selectId || state.workflowId || AUTO_WORKFLOW_ID;
   sel.innerHTML = '';
-  // Simple mode (docs/ui-levels.md) offers Auto and Default only. The workflow already selected
-  // stays listed whatever it is: a non-default value is never hidden from the run it applies to.
+  // Simple mode (docs/ui-levels.md) offers Auto, Default and the workflows Chat saved (origin 'auto', #1126).
+  // The workflow already selected stays listed whatever it is: a non-default value is never hidden from the
+  // run it applies to.
   const simplePicker = !levelAtLeast('advanced');
   list.forEach((wf) => {
-    if (simplePicker && wf.id !== AUTO_WORKFLOW_ID && wf.id !== 'wf_default' && wf.id !== want) return;
+    if (simplePicker && wf.id !== AUTO_WORKFLOW_ID && wf.id !== 'wf_default' && wf.origin !== 'auto' && wf.id !== want) return;
     const o = option(wf.id, wf.id === AUTO_WORKFLOW_ID ? wf.name : (workflowPickerLabel(wf, enabledPluginNames) || wf.id));
     // Memory defragment holds exactly one scope, and a workspace run has no single project to
     // resolve `project` against (the server 400s) — so it is disabled on a workspace target.
@@ -4342,7 +4518,9 @@ async function listGuardrailsApi() {
   try {
     const res = await fetch('/api/guardrails');
     const data = await safeJson(res);
-    return res.ok && Array.isArray(data.guardrails) ? data.guardrails : null;
+    if (!res.ok || !Array.isArray(data.guardrails)) return null;
+    if (typeof data.default === 'string' && data.default) state.guardrailsDefault = data.default;
+    return data.guardrails;
   } catch { return null; }
 }
 
@@ -4353,7 +4531,7 @@ function updateGuardrailsHint() {
   if (!el.guardrailsHint) return;
   const sel = state.guardrailSets.find((g) => g.id === state.guardrailsId) || null;
   if (!sel || sel.id === 'permissive') {
-    el.guardrailsHint.textContent = 'Applies to every agent this run spawns. Permissive = no restrictions (the legacy default).';
+    el.guardrailsHint.textContent = 'Applies to every agent this run spawns. Permissive = no restrictions.';
     return;
   }
   const members = state.runTarget === 'workspace' ? ' across every workspace member' : '';
@@ -4378,10 +4556,11 @@ async function loadGuardrailsInto(selectId) {
   }
   const list = sets.length ? sets : [{ id: 'permissive', name: 'Permissive', settings: null }];
   state.guardrailSets = list;
-  const want = selectId || state.guardrailsId || 'permissive';
+  const dflt = list.some((g) => g.id === state.guardrailsDefault) ? state.guardrailsDefault : list[0].id;
+  const want = selectId || state.guardrailsId || dflt;
   sel.innerHTML = '';
-  list.forEach((g) => sel.appendChild(option(g.id, g.id === 'permissive' ? 'Permissive (default)' : g.name)));
-  // Fall back to the Permissive default if the wanted id is gone (deleted set) —
+  list.forEach((g) => sel.appendChild(option(g.id, g.id === dflt ? `${g.name} (default)` : g.name)));
+  // Fall back to the install default if the wanted id is gone (deleted set) —
   // and SAY so via the form's message line: a vanished selection must never
   // silently revert while the user believes it is still selected.
   if (state.preset && !list.some((g) => g.id === want)) {
@@ -4392,9 +4571,10 @@ async function loadGuardrailsInto(selectId) {
     o.disabled = true;
     sel.appendChild(o);
   } else {
-    state.guardrailsId = list.some((g) => g.id === want) ? want : 'permissive';
-    if (want !== 'permissive' && state.guardrailsId === 'permissive') {
-      setFormMsg(`Guardrail set "${want}" no longer exists. This run will use Permissive (no restrictions).`, 'err');
+    state.guardrailsId = list.some((g) => g.id === want) ? want : dflt;
+    if (state.guardrailsId !== want) {
+      const name = (list.find((g) => g.id === dflt) || {}).name || dflt;
+      setFormMsg(`Guardrail set "${want}" no longer exists. This run will use ${name}${dflt === 'permissive' ? ' (no restrictions)' : ''}.`, 'err');
     }
   }
   sel.value = state.guardrailsId;
@@ -4408,15 +4588,20 @@ async function loadGuardrailsInto(selectId) {
 // node row per node and a cycle input per feedback.
 async function renderWorkflowConfig(workflowId) {
   const isAuto = workflowId === AUTO_WORKFLOW_ID;
+  const notesGen = (state.sessionNotesGen = (state.sessionNotesGen || 0) + 1);   // only the newest call paints the notice
+  // A newly picked workflow's notice waits for its own fetch: the last one's never stands in for it meanwhile.
+  if (state.sessionNoteArgs && state.sessionNoteArgs.workflowId !== workflowId) paintSessionNotes(null);
   if (el.agentsConfig) el.agentsConfig.hidden = isAuto;
   if (el.hitlRow) el.hitlRow.hidden = !isAuto;
   // Memory defragment (agent memory §7.3 / B11): the ONE run option that workflow needs. Every
   // path that changes the picker ends here, so this single line covers them all.
   if (el.memoryScopeRow) el.memoryScopeRow.hidden = workflowId !== MEMORY_DEFRAG_WORKFLOW_ID;
+  for (const id of ['no-memory-row', 'noMemoryHint']) { const n = document.getElementById(id); if (n) n.hidden = workflowId === MEMORY_DEFRAG_WORKFLOW_ID; }
   // MCP registry (§6.1): a memory-defrag run starts no registry servers, so the control hides at
   // once; the policy-line repaint at the end refetches the preview for every other workflow.
   if (el.mcpRunsField) renderMcpRuns();
   if (isAuto) {
+    paintSessionNotes(null);   // Auto picks its workflow per run: no sessions to tell about yet
     // Auto picks the agents per run (spec §7.2 / D20): no accordion, one switch. On a project target
     // the switch is per PROJECT like the accordion's rows, read from the project config, and
     // saveHumanInLoop drops the write with no project selected — so disable it there instead of
@@ -4453,6 +4638,7 @@ async function renderWorkflowConfig(workflowId) {
   const wf = isDefault ? (fetchedWf || DEFAULT_WF_TOPOLOGY) : fetchedWf;
   const registry = isDefault ? defaultWorkflowRegistry(fetchedReg) : fetchedReg;
   if (!wf || !Object.keys(registry).length) {
+    if (notesGen === state.sessionNotesGen) paintSessionNotes(null);
     if (el.agentRows) el.agentRows.innerHTML = '<div class="hint">Could not load this workflow.</div>';
     if (el.wfFeedbackConfig) { el.wfFeedbackConfig.innerHTML = ''; el.wfFeedbackConfig.hidden = true; }
     setAgentsHeader(null, '');
@@ -4466,6 +4652,13 @@ async function renderWorkflowConfig(workflowId) {
   const rows = buildNodeConfigRows(wf, registry, runConfig,
     isDefault ? { legacySteps: state.config.steps || {} } : {});
   renderAgentRows(rows);
+  const wfNodes = Array.isArray(wf.nodes) ? wf.nodes : [];
+  // A slower fetch for a workflow picked earlier never paints over a newer pick (Auto included).
+  if (notesGen === state.sessionNotesGen) paintSessionNotes({ workflowId, wf, portsFn: panelPortsFn(registry, scripts), labelOf: (id) => {   // the Composer's card label
+    const n = wfNodes.find((x) => x && x.id === id);
+    const m = n && registry[n.key];
+    return (m && m.displayName) || (n && (n.key || n.id)) || id;
+  } });
   renderFeedbackRows(buildFeedbackRows(wf, registry, runConfig, scripts));
   // The cycle inputs write through a different endpoint shape per engine
   // (v1 `feedbacks:{…}` vs v2 `wires:{…}`); stamp which one this row set is.
@@ -4546,7 +4739,7 @@ function paintHiddenSettings() {
   const items = [];
   if (!levelAtLeast('advanced')) {
     const gr = (state.guardrailSets || []).find((g) => g.id === state.guardrailsId);
-    if (state.guardrailsId && state.guardrailsId !== 'permissive') items.push(`${(gr && gr.name) || state.guardrailsId} guardrails`);
+    if (state.guardrailsId && state.guardrailsId !== state.guardrailsDefault) items.push(`${(gr && gr.name) || state.guardrailsId} guardrails`);
     if (state.preset) items.push(...presetHiddenItems(state.preset.setup));   // the preset's picks, counted once (#712)
     else {
       const n = Object.values(agentRowsById || {}).filter((r) => r && r.modified).length;
@@ -4733,10 +4926,10 @@ function renderAgentRows(rows) {
 // (children ride the CLI's own resolution: agent frontmatter, else this node's
 // model); 'auto' is the stored form of the default.
 function renderSubagentModelSelect(sel, value) {
-  const label = (v) => (v === 'auto' ? 'subs: agent picks' : `subs: ${v}`);
+  const label = (v) => `subs: ${subagentAliasLabel(v)}`;
   sel.innerHTML = '';
   sel.appendChild(option('', 'subs: default (agent picks)'));
-  for (const v of state.subagentModels) sel.appendChild(option(v, label(v)));
+  for (const v of state.subagentModels) { const o = option(v, label(v)); const t = subagentAliasTitle(v); if (t) o.title = t; sel.appendChild(o); }
   sel.value = state.subagentModels.includes(value) ? value : '';
 }
 
@@ -4879,6 +5072,7 @@ function setRunEngine(engine) {
   if (el.engineSelect) el.engineSelect.value = state.engine;
   keepVisible(document.getElementById('engine-row'), state.engine !== 'claude');   // Simple shows a non-Claude engine
   paintEngineHints();
+  paintSessionNotes();
   showEngineRefusal(null);
   // D10: the agent rows offer the run engine's models only — repaint them for the new engine. The Sets
   // picker too: another engine names set skills as its .agents/skills mount would.
@@ -4897,17 +5091,33 @@ fetch('/api/engine-locks').then((r) => (r.ok ? r.json() : null)).catch(() => nul
 });
 
 function runSlotDefaults() { return state.runDefaults?.steps?.[state.engine] || null; }
+/** The run-start notice (session groups, Task 62; 05 §6.6): one line per session of the workflow the form shows, saying
+ *  how its steps run on the chosen engine. `next` = { workflowId, wf, portsFn, labelOf } from renderWorkflowConfig (null: none);
+ *  the engine, the Mock switch and the Labs flag repaint it with the last one. A mock run counts as verified (C13). */
+function paintSessionNotes(next) {
+  if (next !== undefined) state.sessionNoteArgs = next;
+  const box = document.getElementById('engine-session-notes');
+  if (!box) return;
+  const a = state.sessionNoteArgs || null;
+  const mock = !!(el.mock && el.mock.checked);
+  const notes = a ? sessionStartNotices(a.wf, a.portsFn, { engine: state.engine, labelOf: a.labelOf, flagOn: flagOn('sessionGroups', document),
+    verified: mock ? { [state.engine]: true } : SESSION_SUBAGENTS_VERIFIED }) : [];
+  box.replaceChildren(...notes.map((t) => Object.assign(document.createElement('p'), { className: 'rs-session-note', textContent: t })));
+  box.hidden = !notes.length;
+  keepVisible(box, state.engine !== 'claude' && notes.length > 0);   // Simple keeps a non-Claude engine on screen: and why its steps run apart
+}
+onFlagChange('sessionGroups', () => paintSessionNotes());
 function paintEngineHints() {
   if (el.engineHint) {
     el.engineHint.hidden = state.engine === 'claude';
     const project = Object.values(state.runDefaults?.steps?.[state.engine] || {}).some((s) => s?.source === 'project');
     el.engineHint.textContent = state.engine === 'copilot'
-      ? `GitHub Copilot CLI runs this pipeline, including titles and summaries (on its default model). Step models: ${project ? 'project Settings' : 'Models › Copilot'}. Sign in once with copilot login.`
+      ? `GitHub Copilot CLI runs this pipeline, including titles and summaries (on its default model). Step models: ${project ? 'project Settings' : 'Models › Jobs'}. Sign in once with copilot login.`
       : state.engine === 'cursor'
-      ? `Cursor runs this pipeline. Helper jobs (titles, summaries) run on Claude. Step models: ${project ? 'project Settings' : 'Models › Cursor'}.`
+      ? `Cursor runs this pipeline. Helper jobs (titles, summaries) run on Claude. Step models: ${project ? 'project Settings' : 'Models › Jobs'}.`
       : SIGN_IN_ENGINE_NAMES.includes(state.engine)
-      ? `${engineLabel(state.engine)} runs this pipeline. Helper jobs (titles, summaries) run on Claude. Step models: ${project ? 'project Settings' : `Models › ${engineLabel(state.engine)}`}.`
-      : `Codex runs this pipeline, including titles and summaries. Its models: ${project ? 'project Settings' : 'Models › Codex'}`;
+      ? `${engineLabel(state.engine)} runs this pipeline. Helper jobs (titles, summaries) run on Claude. Step models: ${project ? 'project Settings' : 'Models › Jobs'}.`
+      : `Codex runs this pipeline, including titles and summaries. Its models: ${project ? 'project Settings' : 'Models › Jobs'}`;
   }
   if (el.engineDefaultHint) {
     const source = state.runDefaults?.engine?.value === state.engine ? state.runDefaults.engine.source : null;
@@ -4915,7 +5125,7 @@ function paintEngineHints() {
     el.engineDefaultHint.hidden = !el.engineDefaultHint.textContent;
   }
 }
-// Run tags (#718): the New run form's chip field, shown while the runTags flag is on. It starts from the
+// Run tags (#718): the New run form's chip field. It starts from the
 // project's default tags; once the person edits it, later project changes leave it alone.
 // s2: suggestions follow the project and the target's policy dimensions.
 const runTagInput = createTagInput(document, {
@@ -4929,7 +5139,7 @@ let runTagDims = createDimensionSlots(document, []);
 document.getElementById('runTagDimsField')?.appendChild(runTagDims.el);
 state.tagDims = { source: null, home: null, dims: [], enforce: false };
 
-/** Enforced tags (D12, D19): the one-line reason Start is disabled, or null. The server sends enforce only with runTags on. */
+/** Enforced tags (D12, D19): the one-line reason Start is disabled, or null. */
 function runTagGate() {
   if (!state.tagDims?.enforce) return null;
   return tagsProblemText(state.tagDims.dims, normaliseTags([...runTagInput.get(), ...runTagDims.get()]).tags);
@@ -4946,7 +5156,7 @@ function paintRunTagDimsWarn(reason = null) {
   }
   applyBudgetToNewView();                 // Start follows the gate
 }
-/** Rebuild the slots for a new target. Painted whatever the flag: the .run-tags-field CSS gate hides it when runTags is off. */
+/** Rebuild the slots for a new target. */
 function paintRunTagDims(info, tags) {
   state.tagDims = info && Array.isArray(info.dims) ? info : { source: null, home: null, dims: [], enforce: false };
   const dims = state.tagDims.dims;
@@ -5005,8 +5215,13 @@ document.getElementById('runTagsSaveDefault')?.addEventListener('click', async (
 });
 
 let runDefaultsGen = 0;
+// The New run form's PR-when-done fields (pr-auto-view.mjs), built on first use.
+function runPrFields() {
+  return (runPrFields.ctl ||= createRunPrFields({ doc: document, onChange: () => notePresetChange(), getTarget: () => ({ kind: state.runTarget === 'workspace' || state.runTarget === 'none' ? state.runTarget : 'project', projectDir: selectedProjectPath(), workspaceId: (el.workspaceSelect && el.workspaceSelect.value) || '' }) }));
+}
 async function loadRunDefaults(projectDir) {
   const gen = ++runDefaultsGen;
+  void runPrFields().refresh();
   let data = null;
   try { const res = await fetch(projectDir ? `/api/run-defaults?projectDir=${encodeURIComponent(projectDir)}` : '/api/run-defaults'); data = res.ok ? await safeJson(res) : null; } catch {}
   if (gen !== runDefaultsGen) return;
@@ -5248,17 +5463,15 @@ async function saveHumanInLoop(on) {
 if (el.humanInLoop) el.humanInLoop.addEventListener('change', () => saveHumanInLoop(el.humanInLoop.checked));
 
 // "+ Add model…" in any model dropdown: restore the selection and jump to the
-// global Models view with the create editor open (models are added GLOBALLY —
+// global Models view with Add model open (models are added GLOBALLY —
 // configurable-models-design.md §4.9; the old per-project window.prompt flow
 // is gone).
 function goAddModel(restore) {
   if (typeof restore === 'function') restore();
   mvState.editing = null;
-  mvState.openCreate = true;
-  mvState.openShare = false;
-  // "+ Add model…" on a non-Claude run starts a model of that engine (D10); the editor applies `engine`.
-  mvState.prefill = state.engine !== 'claude' ? { id: '', engine: state.engine } : null;
-  mvState.openEditorOnLoad = true;         // survives the view switch: loadModelsView opens it
+  mvState.prefill = null;
+  // Step 1 opens on a sign-in with the run's harness picked (D10): a Codex run adds a Codex model.
+  mvState.openEditorOnLoad = { where: 'signin', engine: state.engine };   // survives the view switch: readModelsView opens it
   showView('models');
 }
 
@@ -5463,76 +5676,25 @@ function buildLogLine({ source, level, text, ts, sub, path, kind, desc }) {
 // Keystroke-to-repaint delay for the log search box.
 const LOG_SEARCH_DEBOUNCE_MS = 120;
 
-// Copy already-filtered log records to the clipboard and flash the button.
+// Copy already-filtered log records through the copy button (copy-button.mjs).
 //
 // Serializes from the MODEL, never from the DOM: a log line spaces its
 // ts/src/msg spans with a flex `gap` rather than whitespace, so a native
 // selection-copy would run them together ("12:34:56[planner]text").
-// navigator.clipboard needs a secure context — localhost qualifies — but a
-// hidden-textarea fallback keeps the button working anywhere.
-async function copyLogToClipboard(btn, recs) {
-  const text = serializeLog(recs);
-  if (!text) {
-    // A filtered-empty pane: silence looks like a dead button, and the STALE
-    // clipboard content would pass for the filtered log on the next paste.
-    flashCopyBtn(btn, 'nothing to copy');
-    return;
-  }
-  let ok = true;
-  try {
-    if (navigator.clipboard?.writeText) await navigator.clipboard.writeText(text);
-    else ok = legacyCopy(text);
-  } catch {
-    ok = legacyCopy(text);
-  }
-  flashCopyBtn(btn, ok ? 'copied' : 'copy failed');
+// A filtered-empty pane copies nothing and says so: silence looks like a dead
+// button, and the STALE clipboard would pass for the filtered log on the next paste.
+function copyLogToClipboard(btn, recs) {
+  return copyFromButton(btn, serializeLog(recs));
 }
 
-// Save/flash/restore a copy button's label. `dataset.label` survives repeated
-// clicks so a flash can never become the button's permanent label.
-function flashCopyBtn(btn, msg) {
+// Save/flash/restore a text button's label (the report dialog's footer actions).
+// `dataset.label` survives repeated clicks so a flash can never become the label.
+function flashLabel(btn, msg) {
   const prev = btn.dataset.label || btn.textContent;
   btn.dataset.label = prev;
   btn.textContent = msg;
   clearTimeout(btn._copyTimer);
-  btn._copyTimer = setTimeout(() => { btn.textContent = btn.dataset.label || 'copy'; }, 1200);
-}
-
-// Copy a branch name from a history-card head. The button is icon-only, so
-// feedback is a brief copy→check icon swap (class-driven) instead of the text
-// flash flashCopyBtn does; the title mirrors it for hover/AT users.
-async function copyBranchToClipboard(btn, branch, restTitle = 'Copy branch name') {
-  let ok = true;
-  try {
-    if (navigator.clipboard?.writeText) await navigator.clipboard.writeText(branch);
-    else ok = legacyCopy(branch);
-  } catch {
-    ok = legacyCopy(branch);
-  }
-  btn.classList.toggle('copied', ok);
-  btn.title = ok ? 'Copied' : 'Copy failed';
-  clearTimeout(btn._copyTimer);
-  btn._copyTimer = setTimeout(() => {
-    btn.classList.remove('copied');
-    btn.title = restTitle;
-  }, 1200);
-}
-
-function legacyCopy(text) {
-  try {
-    const ta = document.createElement('textarea');
-    ta.value = text;
-    ta.setAttribute('readonly', '');
-    ta.style.position = 'fixed';
-    ta.style.opacity = '0';
-    document.body.appendChild(ta);
-    ta.select();
-    const ok = document.execCommand('copy');
-    document.body.removeChild(ta);
-    return ok;
-  } catch {
-    return false;
-  }
+  btn._copyTimer = setTimeout(() => { btn.textContent = btn.dataset.label; }, 1200);
 }
 
 // A "── Cycle N ──" rule marking where a feedback loop rewound and re-ran the
@@ -5678,6 +5840,7 @@ function onLog(r, msg) {
     ...(msg.path != null ? { path: msg.path } : {}),
     ...(msg.kind != null ? { kind: msg.kind } : {}),
     ...(typeof msg.desc === 'string' && msg.desc ? { desc: msg.desc } : {}),
+    ...(typeof msg.session === 'string' && msg.session ? { session: msg.session } : {}),   // a session's main-agent line (Task 60)
   };
   r.logLines.push(rec);
   if (r.logLines.length > MAX_LOG_LINES) r.logLines.shift();
@@ -5748,6 +5911,7 @@ function paintLogFilters(r, root = r.el) {
     fillFilterSelect(selStep, 'all steps', facets.steps, r.logFilter.step, (i) => `step ${i + 1}`);
   }
   paintExecChip(r, root);
+  paintSessionChip(r, root);   // not reconciled below either: it reads back what this wrote, and has no facets
   // Cycles are the loop's own 1-based counter, so unlike steps they are NOT
   // shifted for display.
   fillFilterSelect(selCycle, 'all cycles', facets.cycles, r.logFilter.cycle, (c) => `cycle ${c}`);
@@ -5816,6 +5980,42 @@ function wireExecChip(bar, { read, write }) {
     if (!(e.target.closest && e.target.closest('.log-f-step, .log-f-cycle'))) return;
     if (!read().execution) return;
     write({ ...readLogFilterFrom(bar, read().search), execution: '' });
+  });
+}
+
+/** `Showing one session · Implementation + Review` (Task 60): the session's steps by their card labels. */
+function sessionChipText(r, members) {
+  const labelOf = nodeLabelLookup(r.stepper);
+  return `Showing one session · ${members.map((id) => labelOf(id)).join(' + ')}`;
+}
+
+/** Mirror r.logFilter.session (a sid) and its members into the session chip on one bar: the chip's dataset is what
+ *  readLogFilterFrom reads back, as the execution chip's is. */
+function paintSessionChip(r, root) {
+  const chip = root && root.querySelector('.log-f-session');
+  if (!chip) return;
+  const sid = r.logFilter.session || '';
+  const members = sid && Array.isArray(r.logFilter.sessionMembers) ? r.logFilter.sessionMembers.map(String) : [];
+  chip.hidden = !sid;
+  chip.dataset.sessionId = sid;
+  chip.dataset.members = members.join(' ');
+  if (sid) chip.querySelector('.lfe-text').textContent = sessionChipText(r, members);
+}
+
+/** The session chip's rules, bound ONCE per bar (as wireExecChip): a click on it clears the session axis, and so does a
+ *  manual node/step pick (another scope than the session's). */
+function wireSessionChip(bar, { read, write }) {
+  bar.addEventListener('click', (e) => {
+    if (!(e.target.closest && e.target.closest('.log-f-session'))) return;
+    e.stopPropagation();
+    const had = bar.ownerDocument.activeElement === e.target.closest('.log-f-session');
+    write({ session: '', sessionMembers: [] });
+    if (had) bar.querySelector('.log-search')?.focus();   // the chip hides: the focus moves on, not to the page
+  });
+  bar.addEventListener('change', (e) => {
+    if (!(e.target.closest && e.target.closest('.log-f-step'))) return;
+    if (!read().session) return;
+    write({ ...readLogFilterFrom(bar, read().search), session: '', sessionMembers: [] });
   });
 }
 
@@ -6637,7 +6837,7 @@ registerAskRenderer('clarify', {
   // title: unchanged. The visible "A few questions before the plan" heading is askHeading's.
   render: (panel, pq, ctx) => {
     renderClarifyBody(ctx.run, panel, pq);
-    if (isStepCard(pq, ctx.run, shapeFirstOn())) {
+    if (isStepCard(pq, ctx.run, true)) {
       decorateShapingQuestions(panel, pq, { ...ctx, ...stepDeps(ctx, pq),
         collect: () => askRendererFor('clarify').collect(panel), submit: (p) => stepPost(ctx.run, p) });
     }
@@ -6692,13 +6892,13 @@ function stepDeps(ctx, pq) {
 /** The outline body's deps: the plan body's posting rule (the gate read at post time, S4) and its confirm dialog. */
 function outlineBodyDeps(ctx) {
   const r = ctx.run;
-  return { ...stepDeps(ctx, r.pendingQuestion), extras: shapeFirstOn(), confirm: confirmModal,
-    submit: (payload) => stepPost(r, payload, { plan: shapeFirstOn() }) };
+  return { ...stepDeps(ctx, r.pendingQuestion), extras: true, confirm: confirmModal,
+    submit: (payload) => stepPost(r, payload, { plan: true }) };
 }
 
 function planBodyDeps(ctx) {
   const r = ctx.run;
-  const extras = shapeFirstOn();
+  const extras = true;
   const runUrl = (tail) => `/api/runs/${encodeURIComponent(r.runId)}${tail}`;
   return {
     ...stepDeps(ctx, r.pendingQuestion), extras,
@@ -6706,9 +6906,7 @@ function planBodyDeps(ctx) {
       ? fetch(runUrl(`/plan${round ? `?round=${encodeURIComponent(round)}` : ''}`)).then((res) => (res.ok ? res.json() : null)).catch(() => null)
       : Promise.resolve(null)),
     markdown: { ensure: bindMarkdownReady, render: (t) => hdMarkdown.render(t) },
-    // The route is chosen when the answer is POSTED: the panel is rebuilt only when the question id changes, and a hello
-    // can turn the gate off in between. The gated route would then answer 404 and strand the run (D12).
-    submit: (payload) => stepPost(r, payload, { plan: shapeFirstOn() }),
+    submit: (payload) => stepPost(r, payload, { plan: true }),
     openFull: () => {
       // openRunArtifactPopup rejects only a falsy artifact; {relPath:''} would open an empty viewer.
       const file = r.pendingQuestion && r.pendingQuestion.plan ? r.pendingQuestion.plan.file : '';
@@ -6755,14 +6953,14 @@ async function postAnswer(r, payload, { plan = false, onFail = null } = {}) {
   const id = r.pendingQuestion.id;
   const runId = r.runId;
   // The named receipt (shaper-cards D5), BEFORE the POST: the server broadcasts question-resolved before its 200.
-  noteAnswer(runId, r.pendingQuestion, payload, { shaping: shapeFirstOn() && isShapingRun(r) });
+  noteAnswer(runId, r.pendingQuestion, payload, { shaping: isShapingRun(r) });
 
   setPanelBusy(r, true);
   r._answering = true;
 
   try {
     const res = plan
-      // Shape it first (S4): the gated plan route while the gate is on; /api/answer otherwise, so a held run is never stranded.
+      // Shape it first (S4): a step card answers through the plan route; any other ask through /api/answer.
       ? await fetch(`/api/runs/${encodeURIComponent(runId)}/answer`, {
         method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id, ...payload }) })
       : await fetch('/api/answer', {
@@ -6892,7 +7090,7 @@ function finishRun(r, status) {
   r._finishedAs = status;   // onDone re-arms a run that finished as paused (it is stopped later)
   scheduleOnboardingRefresh();
   r._decorSeq = (r._decorSeq || 0) + 1;   // isLive(r) reads _finished/status/pendingQuestion
-  r.status = status;
+  applyServerStatus(r, status);
   r.pendingQuestion = null;
   r._answering = false;
   // No `done` frame carries a timestamp (the orchestrator emits {status,
@@ -7181,6 +7379,7 @@ async function mountPluginSourcePane(src) {
         const r = await pluginApi('PUT', '/api/source-bindings',
           { ...resolved.ref, plugin: src.plugin, sourceId: src.sourceId, profile });
         if (!r.ok) return notify({ tone: 'err', title: 'Could not save the profile binding', detail: r.data.error || '', key: 'profile-binding' });
+        requirementsView.importChanged();   // a binding moves the default connection of an import; no frame is sent for it
         mountPluginSourcePane(src);
       },
     }));
@@ -7203,6 +7402,7 @@ async function mountPluginSourcePane(src) {
       const r = await pluginApi('PUT', '/api/source-bindings',
         { ...ref, plugin: src.plugin, sourceId: src.sourceId, profile });
       if (!r.ok) return notify({ tone: 'err', title: 'Could not save the profile binding', detail: r.data.error || '', key: 'profile-binding' });
+      requirementsView.importChanged();
       mountPluginSourcePane(src);
     },
   }) : null;
@@ -7274,6 +7474,7 @@ function paintMock(on) {
   el.mock.checked = on;
   mockSwitch.classList.toggle('on', on);
   mockSwitch.setAttribute('aria-checked', String(on));
+  paintSessionNotes();   // a mock run's sessions run as sub-agents (C13)
 }
 function toggleMock() {
   if (serverMock.on) return;                 // locked on: the server mocks every run anyway
@@ -7971,6 +8172,7 @@ async function loadProjects(selectName, { quiet = false } = {}) {
   }
   paintNoProjectWorkDir();
   renderProjectOptions(selectName, { quiet });
+  askPanel?.pageChanged?.();   // Ask worca beside the page: a project page's chip and scope name the project now
   if (state.presets.length) paintPresetMenu();   // pinned presets' group labels name the projects
   // P3-D7: the automatic No project default (no stored choice, no project at boot) gives way to the first project.
   if (state.runTargetAuto && state.runTarget === 'none' && state.projects.length) setRunTarget('project', { persist: false });
@@ -8008,6 +8210,7 @@ function renderProjectOptions(selectName, { quiet = false } = {}) {
   const idx = state.projects.findIndex((p) => p.name === want);
   if (keepAdd) add.selected = true;
   else if (idx >= 0) el.projectSelect.selectedIndex = idx + 1; // +1 past the placeholder
+  else if (state.projects.length === 1 && state.projects[0].exists) el.projectSelect.selectedIndex = 1;   // nothing to choose between
   else placeholder.selected = true;
 
   // quiet: only New run's own project choice reloads its state (Workspace / No project hide the select)
@@ -9104,7 +9307,7 @@ async function ensureWorkspaceOptions({ keepMembers = false } = {}) {
     placeholder.selected = true;
   }
   // The select is filled without a change event: the tag-dimension slots follow the restored workspace.
-  if (state.runTarget === 'workspace') void refreshRunTagDims();
+  if (state.runTarget === 'workspace') { void refreshRunTagDims(); void runPrFields().refresh(); }
   // A background list refresh (keepMembers) leaves a still-selected workspace's member rows and
   // branch picks alone; only a changed selection repaints them.
   if (keepMembers && state.selectedWorkspaceId && state.selectedWorkspaceId === shown) return;
@@ -9120,6 +9323,7 @@ if (el.targetSeg) {
 if (el.workspaceSelect) {
   el.workspaceSelect.addEventListener('change', () => {
     state.selectedWorkspaceId = el.workspaceSelect.value || '';
+    void runPrFields().refresh();
     if (state.selectedWorkspaceId) localStorage.setItem(LAST_WORKSPACE_KEY, state.selectedWorkspaceId);
     // D-W1: Human in the loop is per run on a workspace — a new workspace starts it on again. This
     // listener does not re-run renderWorkflowConfig, so repaint the switch here.
@@ -9151,6 +9355,7 @@ async function loadWorkspaces() {
   } catch {
     state.workspaces = [];
   }
+  askPanel?.pageChanged?.();   // Ask worca beside the page: a workspace page's chip and scope name the workspace now
   // A re-scan still running (a reload, another tab's change): follow it on the page.
   for (const w of state.workspaces) if (w && w.rescan && w.rescan.runId) trackWsRescan(w.id, w.rescan);
   // Stale selection guard: a remembered workspace id not in the fetched list is
@@ -9404,7 +9609,7 @@ if (el.wsList) {
 // editing — description, re-scan, delete, metrics home, policy home, routing, the map's overrides —
 // lives here.
 // ---------------------------------------------------------------------------
-const WS_TABS = ['overview', 'map', 'team', 'actions'];
+const WS_TABS = ['overview', 'map', 'team', 'actions', 'automations'];
 // workspaces-changed actions that can change the Map tab: an override (P5 routes) or a scan's save.
 const WD_MAP_ACTIONS = new Set(['map', 'scan-created', 'scan-updated', 'members']);   // members: a removal prunes the map
 function parseWsParam(param = '') {
@@ -9549,6 +9754,8 @@ const WD_TABS = [
   { key: 'map', label: 'Map', level: 'advanced', badge: () => null, visible: () => true, build: (sec, id) => buildWdMap(sec, id) },
   { key: 'team', label: 'Team', level: 'expert', badge: () => null, visible: () => true, build: (sec, id) => buildWdTeam(sec, id) },
   { key: 'actions', needsGit: true, label: 'Actions', level: 'advanced', badge: () => null, visible: () => true, build: (sec, id) => buildWdActions(sec, id) },
+  // Workspace Git event automations: every member's repository, shown while the gitAutomations flag is on.
+  { key: 'automations', needsGit: true, label: 'Automations', level: 'advanced', badge: () => null, visible: () => flagOn('gitAutomations'), build: (sec, id) => buildWdAutomations(sec, id) },
 ];
 function initWdTabs(screen, w) {
   initDetailTabs(screen, WD_TABS.map((t) => ({ ...t, icon: PD_TAB_ICONS[t.key] })), w, {
@@ -9606,6 +9813,7 @@ function buildWdOverview(sec, id) {
   const [upDate, upTime] = w.updatedAt ? String(fmtDate(w.updatedAt)).split(', ') : ['—', ''];
   grid.appendChild(pdStatCard('updated', 'Updated', upDate, [upTime, w.createdAt ? `created ${String(fmtDate(w.createdAt)).split(', ')[0]}` : ''].filter(Boolean).join(' · ')));
   sec.appendChild(grid);
+  void mountWorkspacePrSetting(sec.appendChild(document.createElement('section')), { workspaceId: id });   // Pull requests: the workspace's own pr.open
   // wsDetail is set before the tab builds, so the card can paint at once (and again per status read).
   paintPdBranchCards();
   void refreshSyncChips();
@@ -10041,10 +10249,10 @@ if (el.wsDetail) {
 // The automatic re-scan after a member change (server afterMembersChanged): a Workspace scan run
 // of the new set — graphs, the map and a new description — followed on the Projects card with the
 // wizard's loader look (spinner, status, a stage track) and a link to the run.
-// id -> { runId, state: running|done|failed|stopped|paused|skipped, reason, cleared, seen }
+// id -> { runId, state: running|done|failed|stopped|paused|skipped|pruned, reason, cleared, partial, note, seen }
 // An ended entry the page has shown (seen) is dropped when the page is next opened.
 const wsRescans = new Map();
-const WS_RESCAN_ENDED = new Set(['done', 'failed', 'stopped', 'skipped']);
+const WS_RESCAN_ENDED = new Set(['done', 'failed', 'stopped', 'skipped', 'pruned']);
 const WS_RESCAN_ENDS = {
   description: 'done', 'rescan-failed': 'failed', 'rescan-stopped': 'stopped', 'rescan-paused': 'paused',
 };
@@ -10054,14 +10262,18 @@ function subscribeRescan(runId) {
   if (ws && ws.readyState === 1) { try { ws.send(JSON.stringify({ type: 'subscribe', runId })); } catch { /* ignore */ } }
 }
 
-/** Start (or keep) following a workspace's re-scan: {runId, paused?} or {skipped: reason}. A run
- *  already followed keeps its own state. */
+/** Start (or keep) following a workspace's re-scan: {runId, paused?, partial?|mode, note?}, {skipped: reason}
+ *  or {mode: 'none'} (a removal that kept the pruned map). A run already followed keeps its own state. */
 function trackWsRescan(id, rescan, cleared = null) {
   const cur = wsRescans.get(id);
   if (rescan.runId && cur && cur.runId === rescan.runId) { if (cleared) cur.cleared = cleared; return; }
+  const partial = rescan.mode === 'partial' || rescan.partial === true;
+  const base = { cleared: cleared || [], partial, note: String(rescan.note || '') };
   wsRescans.set(id, rescan.runId
-    ? { runId: rescan.runId, state: rescan.paused ? 'paused' : 'running', reason: '', cleared: cleared || [] }
-    : { runId: null, state: 'skipped', reason: String(rescan.skipped || ''), cleared: cleared || [] });
+    ? { ...base, runId: rescan.runId, state: rescan.paused ? 'paused' : 'running', reason: '' }
+    : rescan.mode === 'none'
+      ? { ...base, runId: null, state: 'pruned', reason: '', partial: false }
+      : { ...base, runId: null, state: 'skipped', reason: String(rescan.skipped || '') });
   if (rescan.runId && !rescan.paused) subscribeRescan(rescan.runId);
 }
 
@@ -10082,6 +10294,7 @@ function resumeWsRescan(id, runId) {
 function endWsRescan(id, how, runId = null) {
   const r = wsRescans.get(id);
   if (!r || (runId && r.runId && r.runId !== runId)) return;
+  if (!r.runId && runId) return;   // a box that follows no run (pruned / skipped) is not ended by some other run's frame
   r.state = how;
   r.seen = false;   // an end the page has not shown yet
   paintWsRescan(id);
@@ -10119,22 +10332,29 @@ function renderWsRescan(r) {
     lead.appendChild(Object.assign(document.createElement('div'), { className: 'spinner wd-rescan-spinner' }));
   } else {
     const mark = Object.assign(document.createElement('span'), { className: 'wd-rescan-mark' });
-    if (r.state === 'done') mark.append(icon(document, 'check', 12)); else mark.textContent = '!';
+    if (r.state === 'done' || r.state === 'pruned') mark.append(icon(document, 'check', 12)); else mark.textContent = '!';
     lead.appendChild(mark);
   }
   const body = document.createElement('div');
   body.className = 'wd-rescan-body';
   const LABEL = {
-    running: 'Members changed: re-scanning the workspace', done: 'Workspace re-scanned', failed: 'Re-scan failed',
-    stopped: 'Re-scan stopped', paused: 'Re-scan paused', skipped: 'Members changed: not re-scanned',
+    running: r.partial ? 'Member removed: partial re-scan' : 'Members changed: re-scanning the workspace',
+    done: r.partial ? 'Partial re-scan done' : 'Workspace re-scanned',
+    failed: 'Re-scan failed', stopped: 'Re-scan stopped', paused: 'Re-scan paused',
+    skipped: 'Members changed: not re-scanned',
+    pruned: 'Member removed: map pruned, not re-scanned',
   };
   const SUB = {
-    running: 'A Workspace scan run rebuilds the graphs, the map and the description.',
-    done: 'The map and the description were refreshed from the new member set.',
+    running: (r.note ? `${r.note} ` : '') + (r.partial
+      ? 'One agent rewrites the overview and coordination notes from the pruned map; no member is scanned again.'
+      : 'A Workspace scan run rebuilds the graphs, the map and the description.'),
+    done: r.partial ? 'The overview and coordination notes were rewritten for the members left. Use Re-scan for a full scan.'
+      : 'The map and the description were refreshed from the new member set.',
     failed: 'Use Re-scan to refresh the map and the description.',
     stopped: 'Use Re-scan to refresh the map and the description.',
     paused: 'Resume it under Running, or use Re-scan.',
     skipped: `${String(r.reason || 'The scan could not start').replace(/\.?$/, '.')} Use Re-scan once that is fixed.`,
+    pruned: (r.note ? `${r.note} ` : '') + 'Its edges and reviews left the map. The overview and notes are as the last scan wrote them — use Re-scan any time.',
   };
   const label = document.createElement('div');
   label.className = 'status-label';
@@ -10218,7 +10438,7 @@ async function postWsMembers(id, body) {
     } else {
       trackWsRescan(id, { skipped: 'choose a scan model to re-scan the workspace' }, cleared);
     }
-  } else if (data.rescan && (data.rescan.runId || data.rescan.skipped)) trackWsRescan(id, data.rescan, cleared);
+  } else if (data.rescan && (data.rescan.runId || data.rescan.skipped || data.rescan.mode === 'none')) trackWsRescan(id, data.rescan, cleared);
   if (wsDetail && wsDetail.id === id) { setWdError(wsDetail.screen, ''); refreshWdOverview(); }
   tpCache.at = 0;
   void paintWsMetricsRows(true);
@@ -10272,20 +10492,47 @@ function openWsAddMembers(id) {
   });
 }
 
-// Remove: confirm (naming a home it clears), then post; an error lands on the page header.
+// Remove: ask worca what the removal invalidates (GET …/members/remove-impact), confirm with its
+// recommended re-scan preselected among none / partial / full (naming a home it clears), then post the
+// choice; an error lands on the page header. A failed lookup still offers the three, full preselected.
+const WS_RESCAN_OPTIONS = [
+  { value: 'none', title: 'No re-scan', hint: 'Keep the pruned map. Instant — no agent runs; the overview and notes stay as the last scan wrote them.' },
+  { value: 'partial', title: 'Partial re-scan', hint: 'One agent rewrites the overview and coordination notes from the pruned map. A few minutes; no member is scanned again.' },
+  { value: 'full', title: 'Full re-scan', hint: 'Scan every member left again: graphs, edges, map and description. The slowest; runs in the background.' },
+];
+
+async function fetchRemoveImpact(id, path) {
+  try {
+    const r = await fetch(`/api/workspaces/${encodeURIComponent(id)}/members/remove-impact?path=${encodeURIComponent(path)}`);
+    const data = await safeJson(r);
+    return r.ok && data && data.recommendation ? { rec: data.recommendation } : { error: (data && data.error) || (r.ok ? 'no answer' : `HTTP ${r.status}`) };
+  } catch (err) { return { error: err.message }; }
+}
+
 async function removeWsMember(id, path) {
   const w = workspaceById(id);
   if (!w || !path) return;
   const proj = state.projects.find((p) => p.path === path);
   const name = (proj && proj.name) || basenameOf(path);
   const homes = [w.metricsProject === path ? 'metrics' : '', w.policyProject === path ? 'policy' : ''].filter(Boolean);
-  const ok = await confirmModal({
+  const { rec, error } = await fetchRemoveImpact(id, path);
+  const recommended = rec ? rec.level : 'full';
+  const res = await confirmModal({
     title: 'Remove project', danger: true, confirmLabel: 'Remove',
     message: `Remove ${name} from "${w.name || w.id}"?\n\nThe project itself is untouched, and runs already started keep their members.`
-      + (homes.length ? `\n\n${name} is the ${homes.join(' and ')} home, so it is cleared.` : ''),
+      + (homes.length ? `\n\n${name} is the ${homes.join(' and ')} home, so it is cleared.` : '')
+      + `\n\n${rec ? rec.reason : `worca could not work out a recommendation (${error}); a full re-scan is preselected.`}`,
+    choices: {
+      name: 'ws-rescan', label: 'Re-scan after the removal', value: recommended,
+      options: WS_RESCAN_OPTIONS.map((o) => ({
+        ...o,
+        title: o.value === recommended && rec ? `${o.title} — recommended` : o.title,
+        disabled: o.value === 'partial' && rec ? !rec.partialAvailable : false,
+      })),
+    },
   });
-  if (!ok) return;
-  const r = await postWsMembers(id, { remove: path });
+  if (!res || !res.ok || !res.choice) return;
+  const r = await postWsMembers(id, { remove: path, rescan: res.choice });
   if (r.error && wsDetail && wsDetail.id === id) setWdError(wsDetail.screen, r.error);
 }
 
@@ -10423,6 +10670,9 @@ async function deleteWorkspaceFromPage(id) {
     if (res.status === 409) { setWdError(screen, data.error || 'Workspace has a live run or scan.'); return; }
     if (!res.ok) { setWdError(screen, data.error || `HTTP ${res.status}`); return; }
     state.workspaces = state.workspaces.filter((x) => !(x && x.id === w.id));
+    // FEAT-7: the server clears workspaceGuideSeen when the last workspace goes (R-po-13);
+    // mirror it now, so a Create pressed before the onboarding refetch lands already sees it.
+    if (!state.workspaces.length && gs.status) gs.status = { ...gs.status, workspaceGuideSeen: false };
     if (state.selectedWorkspaceId === w.id) state.selectedWorkspaceId = '';
     if (localStorage.getItem(LAST_WORKSPACE_KEY) === w.id) localStorage.removeItem(LAST_WORKSPACE_KEY);
     const warnings = Array.isArray(data.warnings) ? data.warnings : [];
@@ -10437,11 +10687,56 @@ async function deleteWorkspaceFromPage(id) {
   }
 }
 
-if (el.wsCreateBtn) el.wsCreateBtn.addEventListener('click', () => { location.hash = 'workspace-create'; });
+// ---- How workspaces work (FEAT-7) -----------------------------------------------------------
+// The walkthrough opens OVER the list, before any route change, so nothing is ever entered or lost
+// behind it; only Finish/Skip from Create workspace routes on to the wizard. The `#workspace-create`
+// hash itself (deep links, Back/Forward) is never gated. "Seen" is the server's
+// onboarding flag (gs.status.workspaceGuideSeen; gs and loadOnboarding are the Getting-started block's,
+// read at click time only), set on every open and cleared by the server when the last workspace is
+// deleted.
+const wsGuide = { handle: null, checking: false };
+function knownWorkspaceGuideSeen() {
+  const v = gs.status && gs.status.workspaceGuideSeen;
+  return typeof v === 'boolean' ? v : null;
+}
+async function readWorkspaceGuideSeen() {
+  if (knownWorkspaceGuideSeen() === null) await loadOnboarding();
+  return knownWorkspaceGuideSeen();
+}
+async function markWorkspaceGuideSeen() {
+  if (gs.status) gs.status = { ...gs.status, workspaceGuideSeen: true };   // this tab knows at once
+  try {
+    const res = await fetch('/api/onboarding', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ workspaceGuideSeen: true }) });
+    const data = await safeJson(res);
+    if (res.ok && data && data.steps) { gs.status = data; paintOnboarding(); }
+  } catch { /* offline: this tab's copy says seen; the server is asked again on the next load */ }
+}
+function openWsGuide(mode) {
+  if (wsGuide.handle) return;
+  wsGuide.handle = openWorkspaceGuide({ doc: document, mode, onClose: (how) => {
+    wsGuide.handle = null;
+    if (mode === 'create' && (how === 'finish' || how === 'skip') && currentView() === 'workspaces') location.hash = 'workspace-create';
+  } });
+  void markWorkspaceGuideSeen();
+}
+async function onCreateWorkspace() {
+  if (wsGuide.handle || wsGuide.checking) return;         // a double click opens one walkthrough
+  wsGuide.checking = true;
+  try {
+    const seen = await readWorkspaceGuideSeen();
+    if (currentView() !== 'workspaces') return;            // the user moved on while we asked
+    if (shouldAutoOpenWorkspaceGuide({ seen, workspaceCount: state.workspaces.length })) openWsGuide('create');
+    else location.hash = 'workspace-create';
+  } finally {
+    wsGuide.checking = false;
+  }
+}
+if (el.wsCreateBtn) el.wsCreateBtn.addEventListener('click', () => { void onCreateWorkspace(); });
+if (el.wsHowtoBtn) el.wsHowtoBtn.addEventListener('click', () => openWsGuide('learn'));
 
 // ---- Workspace scan models (D15–D18): the scan agent (a catalog model + effort) and its project
 // agents (a sub-agent alias + effort). One painter for Create workspace and Settings › General.
-const SCAN_AGENT_ALIASES = [['sonnet', 'Sonnet'], ['opus', 'Opus'], ['fable', 'Fable']];
+const SCAN_AGENT_ALIASES = ['sonnet', 'opus', 'fable'];
 const SCAN_EFFORTS = ['medium', 'high', 'xhigh', 'max'];
 const SCAN_MODELS_FALLBACK = { scanModel: 'claude-sonnet-5', scanEffort: 'medium', agentModel: 'sonnet', agentEffort: 'medium' };
 const WIZ_MODEL_IDS = { scanModel: 'wiz-scan-model', scanEffort: 'wiz-scan-effort', agentModel: 'wiz-agent-model', agentEffort: 'wiz-agent-effort' };
@@ -10450,6 +10745,10 @@ let wizModelCatalog = [];
 // The wizard's Models column paint in flight (enterWizard): Scan awaits it, so a quick click never
 // sends the four still-empty selects (the scan route answers 400 to an empty pick).
 let wizModelsPainted = Promise.resolve();
+// The wizard stores a scan pick on the new workspace only when one is needed: the user changed a picker, or no
+// Everyday tasks role covers the scan (a re-scan would then ask for a model). Otherwise its re-scans follow the role.
+let wizScanTouched = false;
+let wizScanPickNeeded = true;
 let wsScanCatalog = [];
 
 /** The pick a surface starts from: the stored one over the server's default (else Sonnet · medium). */
@@ -10486,7 +10785,7 @@ function paintScanModelPickers(ids, pick, catalog) {
   sm.value = pick.scanModel || '';
   paintScanEffort(ids, pick.scanEffort || '', catalog);
   am.innerHTML = '';
-  for (const [v, label] of SCAN_AGENT_ALIASES) am.appendChild(option(v, label));
+  for (const v of SCAN_AGENT_ALIASES) { const o = option(v, subagentAliasLabel(v)); const t = subagentAliasTitle(v); if (t) o.title = t; am.appendChild(o); }
   am.value = pick.agentModel;
   ae.innerHTML = '';
   for (const e of SCAN_EFFORTS) ae.appendChild(option(e, e));
@@ -10879,6 +11178,8 @@ async function paintWizardModels() {
     wizModelCatalog = catalog;
     if (res.ok) data = await safeJson(res);
   } catch { /* the fallback pick below */ }
+  wizScanTouched = false;
+  wizScanPickNeeded = !data.workspaceScanFromRole;
   let pick = scanModelsFrom(data);
   // A stored scan model that left the catalog is never offered as this scan's pick: the scan
   // route checks a SENT pick strictly (400), so it would refuse every scan. Start from the
@@ -10891,6 +11192,7 @@ async function paintWizardModels() {
   paintScanModelPickers(WIZ_MODEL_IDS, pick, wizModelCatalog);
 }
 if (el.wizScanModel) el.wizScanModel.addEventListener('change', () => paintScanEffort(WIZ_MODEL_IDS, el.wizScanEffort?.value || '', wizModelCatalog));
+for (const id of Object.values(WIZ_MODEL_IDS)) document.getElementById(id)?.addEventListener('change', () => { wizScanTouched = true; });
 
 // Render one checkbox per onboarded project (disabled for !exists). Pre-checks
 // anything already in selectedPaths (re-scan). Enables Start only at 2+.
@@ -11024,7 +11326,7 @@ async function startWizardScan() {
     if (state.wizard !== wiz) return;
     const res = await fetch('/api/workspaces/scan', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ projectPaths: paths, name, models: readScanModelPickers(WIZ_MODEL_IDS) }),
+      body: JSON.stringify({ projectPaths: paths, name, ...(wizScanTouched || wizScanPickNeeded ? { models: readScanModelPickers(WIZ_MODEL_IDS) } : {}) }),
     });
     const data = await safeJson(res);
     if (!res.ok || !data.runId) { if (state.wizard === wiz) setWizStep1Error(data.error || `Scan failed (${res.status})`, data.code); return; }
@@ -11104,6 +11406,8 @@ document.addEventListener('keydown', (e) => {
   if (currentView() !== 'workspace-create') return;
   if (askPanel?.ownsKey(e)) return;
   if (e.target?.closest?.('.term-pane')) return;                     // Escape typed in the terminal (vim, less) is the shell's
+  if (e.target?.closest?.('#ask-side')) return;                      // Ask worca beside the page: an Escape typed in the side column is the chat's
+  if (document.querySelector('.wfv-menu, .group-picker, .label-picker')) return;   // an open menu or picker (in <body>: the side column's Chats list too) closes first
   if (dialogOpen(document)) return;                                    // a pop-up owns Escape
   if (document.querySelector('.viewer-modal:not(.hidden), .guide-layer')) return; // a dialog or the guide owns Escape
   if (el.wizClose) el.wizClose.click();
@@ -12429,7 +12733,14 @@ function buildProjectRow(p) {
   path.className = 'proj-path';
   appendBreakable(path, p.displayPath || p.path);   // a narrow column breaks it after a /, not mid-name
   path.title = p.path;
-  main.append(name, path);
+  // The title line: the name, then the readiness chip (paintReadinessChips fills the slot). A long name pushes
+  // the chip onto the next line instead of cutting the name.
+  const title = document.createElement('div');
+  title.className = 'pl-title';
+  const rdSlot = document.createElement('span');
+  rdSlot.className = 'pl-rd-slot';
+  title.append(name, rdSlot);
+  main.append(title, path);
   row.appendChild(main);
   // #527 / design 2026-10-01: the sync bar's own column (branch | origin status | action). A keyed
   // row's bar is always there; paintSyncChips fills it, and hides it only for a project the
@@ -12857,6 +13168,7 @@ setInterval(() => { if (document.querySelector('.sync-checked:not([hidden])')) p
 // Coalesced: Sync all and the background refresh emit one project-sync-changed per project.
 const SYNC_CHIPS_MS = 300;
 let syncChipsTimer = null;
+const syncChipsWaiters = new Set();   // open run heads waiting for the first status read
 let syncChipsLoaded = false;   // the Branch cards say "checking…" until the first status read lands
 const syncChipsAwait = new Set();   // keys converted by Use git whose new block has not landed yet
 let syncChipsBusy = false;
@@ -12876,6 +13188,8 @@ function refreshSyncChips() {
       syncChipsLoaded = true;
       syncChipsAwait.clear();
       paintSyncChips();
+      for (const repaint of syncChipsWaiters) repaint();
+      syncChipsWaiters.clear();
     } catch { /* the chips keep their last state */ }
     finally {
       syncChipsBusy = false;
@@ -12961,6 +13275,480 @@ if (el.projectsSyncAll) {
   });
 }
 
+// ---- Agent readiness: a chip per project row, its popover, the ignore list and the per-tool setting ----------
+// The row chip paints from the cache-only `readiness` summary on GET /api/projects. A project with no
+// summary yet is evaluated once per page load (warmReadiness) and the summaries are re-read after.
+// The row chip is status only (the whole row opens the project page); the project page header's chip opens the
+// popover with the final report (GET /api/projects/:key/readiness): only the tools the project uses are
+// judged. `readiness-changed` frames refetch it. Every string in a report is server data: textContent only.
+const readinessReports = {};        // projectKey → last full report
+const readinessHeadChips = new Map();   // projectKey → { chip, menu, fly }: the header chip's popover, reused across repaints
+/** The header chip record of one project, or of all projects. */
+const readinessRecs = (key) => (key ? [readinessHeadChips.get(key)] : [...readinessHeadChips.values()]).filter(Boolean);
+const readinessTried = new Set();   // keys the cold-start warm-up already asked for
+let readinessOff = false;           // GET answered {disabled: true}: no chips, no more asking
+
+async function fetchReadinessReport(key, { refresh = false } = {}) {
+  try {
+    const res = await fetch(`/api/projects/${encodeURIComponent(key)}/readiness${refresh ? '?refresh=1' : ''}`);
+    const data = await safeJson(res);
+    if (data && data.disabled) { readinessOff = true; return null; }
+    const report = res.ok && data && data.readiness ? data.readiness : null;
+    if (report) readinessReports[key] = report;
+    return report;
+  } catch {
+    return null;
+  }
+}
+
+// The row summary of a fresh report (the server's summaryOf, report.mjs).
+const summaryOfClient = (r) => ({ level: r.level, failingCount: r.counts.mustFix + r.counts.shouldFix, ...r.counts });
+function applyReadinessReport(key, report) {
+  const p = projectByKey(key);
+  if (!p || !report || !report.counts) return;
+  p.readiness = summaryOfClient(report);
+}
+
+async function syncReadinessSummaries() {
+  try {
+    const data = await safeJson(await fetch('/api/projects'));
+    for (const q of (data && Array.isArray(data.projects)) ? data.projects : []) {
+      const p = q && projectByKey(q.key);
+      if (p) p.readiness = q.readiness || null;
+    }
+  } catch { /* keep the summaries we have */ }
+}
+
+async function warmReadiness() {
+  if (readinessOff) return;
+  const cold = state.projects.filter((p) => p && p.key && p.exists && !p.readiness && !readinessTried.has(p.key));
+  if (!cold.length) return;
+  for (const p of cold) readinessTried.add(p.key);
+  for (const p of cold) {
+    if (readinessOff) break;
+    await fetchReadinessReport(p.key);
+  }
+  if (!readinessOff) await syncReadinessSummaries();
+  if (currentShownView === 'projects') paintReadinessChips();
+}
+
+// Re-read one project's report (`refresh` re-evaluates past the server cache) and repaint what shows it:
+// the row chip, the open flyout and the project settings cards (`cards: false` for the card that asked).
+async function refreshReadiness(key, { refresh = false, cards = true } = {}) {
+  const report = await fetchReadinessReport(key, { refresh });
+  if (!report) return;
+  applyReadinessReport(key, report);
+  if (currentShownView === 'projects') paintReadinessChips();
+  if (projDetail && projDetail.key === key) paintReadinessHeadChip(projDetail.screen, key);
+  for (const rec of readinessRecs(key)) if (rec.fly.isOpen()) { paintReadinessMenu(key, rec); rec.fly.reposition(); }
+  if (cards) for (const card of document.querySelectorAll('.readiness-settings-card')) if (card.dataset.key === key) void fillReadinessCard(card, key);
+}
+
+// Show one project's page with its report open (the add-project toast's action): the header chip opens it once painted.
+let readinessOpenOnPaint = null;
+function openReadinessBreakdown(key) {
+  readinessOpenOnPaint = key;
+  if (location.hash === `#projects/${key}` && projDetail && projDetail.key === key) paintReadinessHeadChip(projDetail.screen, key);
+  else location.hash = `projects/${key}`;
+}
+
+// The row chip is status only, like the row's other chips: the row stays a row and the whole of it opens the page. The
+// row names the chip in aria-describedby, so its state is read with the row.
+function paintReadinessChips() {
+  for (const item of document.querySelectorAll('#projects-list .pl-item[data-key]')) {
+    const key = item.dataset.key;
+    const p = projectByKey(key);
+    const slot = item.querySelector('.pl-rd-slot');
+    if (!slot) continue;
+    const chip = readinessOff ? null : renderReadinessChip(p && p.readiness, { doc: document });
+    if (!chip) { slot.replaceChildren(); continue; }
+    chip.id = `pl-rd-${key.replace(/[^\w-]/g, '_')}`;
+    slot.replaceChildren(chip);
+    item.querySelector('.pl-row')?.setAttribute('aria-describedby', chip.id);
+  }
+}
+
+// The chip is the flyout's trigger (createFlyout toggles it on click); the menu lives on <body> and is
+// filled when it opens. One per project for the page's life — createFlyout's document listeners are never removed.
+function newReadinessChip(key, chip, { closeOn = document.querySelector('.main') } = {}) {
+  chip.setAttribute('role', 'button');
+  chip.tabIndex = 0;
+  chip.setAttribute('aria-haspopup', 'dialog');
+  const menu = document.createElement('div');
+  menu.className = 'activity-pop readiness-pop';
+  menu.setAttribute('role', 'dialog');
+  menu.setAttribute('aria-label', 'Agent readiness');
+  menu.hidden = true;
+  document.body.appendChild(menu);
+  const rec = { chip, menu, fly: null };
+  // 'below': under the chip, left-aligned, height limited to the room below; only .rp-body scrolls.
+  rec.fly = createFlyout({ doc: document, win: window, trigger: chip, menu, mode: 'below', closeOn, onOpen: () => void openReadinessMenu(key, rec) });
+  chip.addEventListener('keydown', (e) => {
+    if (e.key !== 'Enter' && e.key !== ' ' && e.key !== 'Spacebar') return;
+    e.preventDefault();
+    e.stopPropagation();
+    chip.click();   // detail 0: createFlyout reads it as a keyboard open
+  });
+  return rec;
+}
+
+// The project page header's chip, beside the name: the list row's chip and popover, kept in its own record. A page
+// opened straight from a link has no summary yet: read the report once, then paint.
+function paintReadinessHeadChip(screen, key) {
+  const slot = screen && screen.querySelector('.pd-rd-slot');
+  if (!slot || !key) return;
+  const p = projectByKey(key);
+  if (p && !p.readiness && !readinessOff && p.exists && !readinessTried.has(key)) {
+    readinessTried.add(key);
+    void refreshReadiness(key, { cards: false });
+  }
+  const fresh = readinessOff ? null : renderReadinessChip(p && p.readiness, { doc: document });
+  let rec = readinessHeadChips.get(key);
+  if (!fresh) { slot.replaceChildren(); return; }
+  if (rec) {
+    rec.chip.className = fresh.className;
+    rec.chip.title = fresh.title;
+    rec.chip.setAttribute('aria-label', fresh.getAttribute('aria-label'));
+    rec.chip.replaceChildren(...fresh.childNodes);
+  } else {
+    rec = newReadinessChip(key, fresh, { closeOn: screen });
+    readinessHeadChips.set(key, rec);
+  }
+  if (rec.chip.parentNode !== slot) slot.replaceChildren(rec.chip);
+  // The toast's "See what to add": open once this navigation is over (a hashchange closes every popover).
+  if (readinessOpenOnPaint === key) {
+    readinessOpenOnPaint = null;
+    requestAnimationFrame(() => requestAnimationFrame(() => { if (rec.chip.isConnected) rec.fly.open({ focus: true }); }));
+  }
+}
+
+// The Settings card's "View report": the header chip's popover, opened once this click is over (the flyout closes on
+// a click outside it) and after the header is scrolled into view (it closes on a scroll of the page).
+function openReadinessFromCard(key) {
+  const rec = readinessHeadChips.get(key);
+  if (!rec || !rec.chip.isConnected) return;
+  (rec.chip.closest('.pd-header') || rec.chip).scrollIntoView({ block: 'start' });
+  requestAnimationFrame(() => requestAnimationFrame(() => { if (rec.chip.isConnected) rec.fly.open({ focus: true }); }));
+}
+
+async function openReadinessMenu(key, rec) {
+  if (!readinessReports[key]) {
+    rec.menu.replaceChildren(Object.assign(document.createElement('div'), { className: 'rp-head', textContent: 'Checking...' }));
+    rec.fly.reposition();
+    await fetchReadinessReport(key);
+  }
+  if (rec.fly.isOpen()) { paintReadinessMenu(key, rec); rec.fly.reposition(); }
+}
+
+function paintReadinessMenu(key, rec) {
+  const report = readinessReports[key];
+  if (!report) {
+    rec.menu.replaceChildren(Object.assign(document.createElement('div'), { className: 'rp-head', textContent: 'Readiness could not be read.' }));
+    return;
+  }
+  // Keep the reader's place across a repaint (spec 5): which boxes are open and where the body is scrolled.
+  const open = [...rec.menu.querySelectorAll('.rp-more')].map((d) => d.open);
+  const body = rec.menu.querySelector('.rp-body');
+  const top = body ? body.scrollTop : 0;
+  rec.menu.replaceChildren(buildReadinessMenu(key, report));
+  rec.menu.querySelectorAll('.rp-more').forEach((d, i) => { if (open[i]) d.open = true; });
+  const next = rec.menu.querySelector('.rp-body');
+  if (next) next.scrollTop = top;
+}
+
+// The popover (spec 5): head with the level and "N of M checks pass"; the tools this project uses; one line naming
+// the tools that are not judged; failing repository checks; the passed and ignored boxes; a fixed foot.
+// Every string from the report is server data: textContent only.
+function buildReadinessMenu(key, report) {
+  const m = readinessMenuModel(report, { engineLabel });
+  const el = (tag, cls, text) => { const n = document.createElement(tag); if (cls) n.className = cls; if (text !== undefined) n.textContent = text; return n; };
+  const frag = document.createDocumentFragment();
+
+  const head = el('div', 'rp-head');
+  const title = el('div', 'rp-title', 'Agent readiness');
+  const p = projectByKey(key);
+  title.append(el('span', 'rp-sub', p ? p.name : key));
+  head.append(title);
+  const end = el('div', 'rp-head-end');
+  if (LEVEL_WORDS[m.level]) end.append(renderLevelLabel(m.level, { doc: document }));
+  // Closes this popover like Escape: a pointer click lets go of focus, a key press hands it back to the chip.
+  const close = el('button', 'btn btn-sm btn-quiet btn-icon rp-close');
+  close.append(icon(document, 'x', 14));
+  close.type = 'button';
+  close.title = 'Close';
+  close.setAttribute('aria-label', 'Close');
+  close.addEventListener('click', (e) => {
+    const rec = readinessRecs().find((r) => r.menu.contains(close));
+    if (rec) rec.fly.close(e.detail === 0 ? { refocus: true } : { blur: true });
+  });
+  end.append(close);
+  head.append(end);
+  frag.append(head);
+
+  const body = el('div', 'rp-body');
+  const sec = (h, note) => { const s = el('div', 'rp-sec'); s.append(el('h3', '', h)); if (note) s.append(el('span', '', note)); return s; };
+
+  body.append(sec('Tools this project uses'));
+  for (const t of m.tools) {
+    const row = el('div', 'rp-tool');
+    const name = el('span', 'rp-tool-n', t.label);
+    if (t.reason) name.append(' ', el('small', '', `(${t.reason})`));
+    row.append(name);
+    if (LEVEL_WORDS[t.level]) row.append(renderLevelLabel(t.level, { doc: document }));
+    if (t.detail) row.append(el('span', 'rp-tool-d', t.detail));
+    if (t.fix) row.append(el('span', 'rp-tool-f', t.fix));
+    // The run engine is always judged: its "(runs use it)" reason says so, and it gets no button.
+    if (!t.runs) {
+      const btn = el('button', 'btn btn-sm btn-quiet rp-act', 'Not used here');
+      btn.type = 'button';
+      btn.addEventListener('click', async () => {
+        btn.disabled = true;
+        const prev = await setReadinessTool(key, t.name, 'unused');
+        if (prev === null) { btn.disabled = false; notify({ tone: 'err', title: `Could not save. ${t.label} is still judged.` }); return; }
+        await refreshReadiness(key);
+        notify({ tone: 'info', title: `${t.label} marked as not used`, key: `readiness-unused-${key}-${t.name}`,
+          action: { label: 'Undo', run: async () => { if ((await setReadinessTool(key, t.name, prev)) !== null) await refreshReadiness(key); } } });
+      });
+      row.append(btn);
+    }
+    body.append(row);
+  }
+  // Plain text: the foot's Settings link is the one way to change it.
+  if (m.notJudged.length) body.append(el('div', 'rp-notjudged', `Not judged: ${m.notJudged.join(', ')}.`));
+
+  body.append(sec('Repository', 'Applies to every tool'));
+  const GROUP = { blocker: 'Must fix', warn: 'Should fix', info: 'Advice' };
+  for (const sev of ['blocker', 'warn', 'info']) {
+    for (const c of m.failing[sev]) {
+      const row = el('div', 'rp-chk');
+      const dot = el('span', `rp-sevdot ${sev}`);
+      dot.setAttribute('aria-label', GROUP[sev]);
+      const ign = el('button', 'btn btn-sm btn-quiet rp-ign', 'Ignore');
+      ign.type = 'button';
+      ign.addEventListener('click', async () => { if (await setReadinessIgnore(key, c.id, true)) await refreshReadiness(key, { refresh: true }); });
+      row.append(dot, el('span', 'rp-chk-t', c.title), ign);
+      if (c.detail) row.append(el('span', 'rp-chk-d', c.detail));
+      row.append(el('span', 'rp-chk-f', c.fix));
+      body.append(row);
+    }
+  }
+
+  const box = (lead, text) => {
+    const d = el('details', 'rp-more');
+    const s = el('summary');
+    s.append(el('span', lead), el('span', '', text), el('span', 'rp-chev'));
+    d.append(s);
+    return d;
+  };
+  const passedBox = box('rp-tick', `${m.passed.length} checks pass`);
+  const list = el('ul');
+  for (const it of m.passed) { const li = el('li'); li.append(el('b', '', it.title), el('span', '', it.detail)); list.append(li); }
+  passedBox.append(list);
+  body.append(passedBox);
+
+  if (m.ignored.length) {
+    const ignBox = box('rp-gdot', `${m.ignored.length} ignored for this project`);
+    const ul = el('ul');
+    for (const it of m.ignored) {
+      const li = el('li');
+      const back = el('button', 'btn btn-sm btn-quiet rp-ign', 'Stop ignoring');
+      back.type = 'button';
+      back.addEventListener('click', async () => { if (await setReadinessIgnore(key, it.id, false)) await refreshReadiness(key, { refresh: true }); });
+      li.append(el('b', '', it.title), back);
+      ul.append(li);
+    }
+    ignBox.append(ul);
+    body.append(ignBox);
+  }
+  frag.append(body);
+
+  const foot = el('div', 'rp-foot');
+  const when = el('span', '', report.checkedAt ? `Checked ${ago(report.checkedAt)}` : '');
+  const settings = el('a', '', 'Settings');
+  settings.href = `#projects/${key}/settings`;
+  settings.addEventListener('click', (e) => { e.preventDefault(); openReadinessSettings(key); });
+  const recheck = el('button', 'btn btn-sm', 'Recheck');
+  recheck.type = 'button';
+  recheck.addEventListener('click', async () => { recheck.disabled = true; await refreshReadiness(key, { refresh: true }); recheck.disabled = false; });
+  foot.append(when, el('span', 'rp-sp'), settings, recheck);
+  frag.append(foot);
+  return frag;
+}
+
+// The settings PATCH replaces a whole value, so each write reads the list (or map) and writes it back. One chain per
+// project keeps those read-then-write pairs in click order: a second quick click reads what the first one wrote.
+const readinessWrites = new Map();   // projectKey → the tail of its write chain
+function queueReadinessWrite(key, fn) {
+  const next = (readinessWrites.get(key) || Promise.resolve()).then(fn, fn);
+  readinessWrites.set(key, next.catch(() => {}));
+  return next;
+}
+
+// Add (`ignored`) or drop one check id on the project's own `readiness.ignore` list. Resolves true once
+// the PATCH landed; the other ids on the list, known or not, are kept. A failed read writes nothing.
+function setReadinessIgnore(key, checkId, ignored) {
+  const url = `/api/projects/${encodeURIComponent(key)}/settings`;
+  return queueReadinessWrite(key, async () => {
+    try {
+      const got = await fetch(url);
+      if (!got.ok) return false;
+      const data = await safeJson(got);
+      const own = data && data.own && data.own['readiness.ignore'];
+      const cur = Array.isArray(own) ? own : [];
+      const next = ignored ? [...new Set([...cur, checkId])] : cur.filter((id) => id !== checkId);
+      const res = await fetch(url, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ 'readiness.ignore': next.length ? next : null }) });
+      return res.ok;
+    } catch {
+      return false;
+    }
+  });
+}
+
+// Set one tool's readiness choice ('used' | 'unused' | 'detect') on the project's own readiness.tools map.
+// Resolves to the previous choice (for Undo), or null when the read or the PATCH failed.
+function setReadinessTool(key, engine, value) {
+  const url = `/api/projects/${encodeURIComponent(key)}/settings`;
+  return queueReadinessWrite(key, async () => {
+    try {
+      const got = await fetch(url);
+      if (!got.ok) return null;
+      const data = await safeJson(got);
+      const own = data && data.own && data.own['readiness.tools'];
+      const cur = own && typeof own === 'object' && !Array.isArray(own) ? { ...own } : {};
+      const prev = cur[engine] || 'detect';
+      if (value === 'detect') delete cur[engine]; else cur[engine] = value;
+      const res = await fetch(url, { method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ 'readiness.tools': Object.keys(cur).length ? cur : null }) });
+      if (!res.ok) return null;
+      return prev;
+    } catch {
+      return null;
+    }
+  });
+}
+
+// The popovers live on <body>, outside every view: any hash navigation (Back, a link) closes them.
+function closeReadinessPopovers() {
+  for (const rec of readinessRecs()) if (rec.fly.isOpen()) rec.fly.close();
+}
+window.addEventListener('hashchange', closeReadinessPopovers);
+
+// The project's Settings tab, scrolled to the Agent readiness card once that card has filled (fillReadinessCard).
+let readinessScrollTo = null;
+function openReadinessSettings(key) {
+  closeReadinessPopovers();
+  const hash = `projects/${key}/settings`;
+  // Already on that tab (the header chip's popover): no hashchange will refill the card, so go to it now.
+  const card = location.hash === `#${hash}` && [...document.querySelectorAll('.readiness-settings-card')].find((c) => c.dataset.key === key);
+  if (card) { card.scrollIntoView({ block: 'start' }); card.focus({ preventScroll: true }); return; }
+  readinessScrollTo = key;
+  location.hash = hash;
+}
+
+// The project page's Settings tab: a Detect / Used / Not used control per tool, then one switch per check
+// (on = skipped for this project).
+function buildReadinessSettingsCard(key) {
+  const card = document.createElement('section');
+  card.className = 'card readiness-settings-card';
+  card.dataset.key = key;
+  card.tabIndex = -1;   // openReadinessSettings focuses it
+  void fillReadinessCard(card, key);
+  return card;
+}
+
+async function fillReadinessCard(card, key) {
+  const mine = (card.rdSeq = (card.rdSeq || 0) + 1);
+  const head = document.createElement('div');
+  head.className = 'rs-head';
+  const view = Object.assign(document.createElement('button'), { type: 'button', className: 'btn btn-sm btn-quiet rs-view', textContent: 'View report' });
+  view.addEventListener('click', () => openReadinessFromCard(key));
+  head.append(Object.assign(document.createElement('h3'), { textContent: 'Agent readiness' }), view);
+  const hint = Object.assign(document.createElement('small'), { className: 'hint', textContent: 'Which tools this project uses. Detect lets Worca decide from runs and files.' });
+  const msg = Object.assign(document.createElement('small'), { className: 'hint' });
+  card.replaceChildren(head, hint);
+  const [settings, report] = await Promise.all([
+    fetch(`/api/projects/${encodeURIComponent(key)}/settings`).then(safeJson, () => ({})),
+    readinessReports[key] ? Promise.resolve(readinessReports[key]) : fetchReadinessReport(key),
+  ]);
+  if (mine !== card.rdSeq) return;
+  const CHOICES = [['detect', 'Detect'], ['used', 'Used'], ['unused', 'Not used']];
+  for (const [name, e] of Object.entries((report && report.engines) || {})) {
+    if (e.level === 'locked') continue;
+    const runs = (e.reasons || []).some((r) => r.kind === 'run-engine');
+    const row = document.createElement('div');
+    row.className = 'rs-row';
+    row.append(Object.assign(document.createElement('span'), { className: 'rs-name', textContent: engineLabel(name) }));
+    const seg = document.createElement('div');
+    seg.className = 'seg seg-sm';
+    seg.setAttribute('role', 'group');
+    seg.setAttribute('aria-label', engineLabel(name));
+    for (const [v, label] of CHOICES) {
+      const b = Object.assign(document.createElement('button'), { type: 'button', textContent: label });
+      b.setAttribute('aria-pressed', String(e.setting === v));
+      b.classList.toggle('on', e.setting === v);
+      if (runs && v === 'unused') { b.disabled = true; b.title = 'Runs use this tool'; }
+      b.addEventListener('click', async () => {
+        if (b.disabled || e.setting === v) return;
+        msg.textContent = '';
+        const hadFocus = document.activeElement === b;   // before the disable: a browser blurs a disabled button
+        const was = [...seg.children].map((x) => x.disabled);
+        for (const x of seg.children) x.disabled = true;
+        const prev = await setReadinessTool(key, name, v);
+        if (prev === null) {
+          // Nothing changed: keep the card (a refresh would rebuild it and wipe the message) and hand the buttons back.
+          msg.textContent = 'Could not save.';
+          [...seg.children].forEach((x, i) => { x.disabled = was[i]; });
+          if (hadFocus) b.focus();
+          return;
+        }
+        void refreshReadiness(key, { cards: true });
+      });
+      seg.append(b);
+    }
+    row.append(seg);
+    const finds = e.detectedReason ? `Detect finds: ${e.detectedReason}` : 'Detect finds nothing';
+    const judged = e.used ? `Judged: ${LEVEL_WORDS[e.level] || e.level}.` : 'Not judged.';
+    // The run engine's note below already says runs use it: its line says only how it is judged.
+    row.append(Object.assign(document.createElement('span'), { className: 'rs-find', textContent: runs ? judged : `${finds}. ${judged}` }));
+    if (runs) row.append(Object.assign(document.createElement('span'), { className: 'rs-note', textContent: 'Runs use this tool, so it is always judged. To stop, change the Run engine setting.' }));
+    card.append(row);
+  }
+  if (readinessScrollTo === key && card.isConnected) {
+    readinessScrollTo = null;
+    requestAnimationFrame(() => { card.scrollIntoView({ block: 'start' }); card.focus({ preventScroll: true }); });
+  }
+  const own = settings && settings.own && settings.own['readiness.ignore'];
+  const ignored = new Set(Array.isArray(own) ? own : []);
+  const seen = new Set();
+  const checks = ((report && report.checks) || []).filter((c) => !seen.has(c.id) && seen.add(c.id));
+  if (!checks.length) hint.textContent = readinessOff ? 'Agent readiness is switched off.' : 'No readiness report yet.';
+  else card.append(Object.assign(document.createElement('small'), { className: 'hint rs-skip', textContent: 'Switch a check on to skip it for this project.' }));
+  for (const check of checks) {
+    const label = document.createElement('label');
+    label.className = 'qtune-sw';
+    const input = document.createElement('input');
+    input.type = 'checkbox';
+    input.className = 'sw-input';
+    input.checked = ignored.has(check.id);
+    input.setAttribute('aria-label', `Skip ${check.title}`);
+    input.addEventListener('change', async () => {
+      msg.textContent = '';
+      const want = input.checked;
+      if (await setReadinessIgnore(key, check.id, want)) {
+        void refreshReadiness(key, { refresh: true, cards: false });
+      } else {
+        input.checked = !want;
+        msg.textContent = 'Could not save.';
+      }
+    });
+    const knob = Object.assign(document.createElement('span'), { className: 'switch' });
+    const text = Object.assign(document.createElement('span'), { className: 'qtune-sw-t', textContent: check.title });
+    label.append(input, knob, text);
+    card.appendChild(label);
+  }
+  card.appendChild(msg);
+}
+
 function renderProjectsList() {
   const host = el.projectsList;
   if (!host) return;
@@ -13026,6 +13814,8 @@ function renderProjectsList() {
   paintProjectPolicyCells();
   paintSyncChips();
   void refreshSyncChips();
+  paintReadinessChips();
+  void warmReadiness();
 }
 
 // Fills the .pl-tm chips left by buildProjectRow, and the open project page's team-metrics
@@ -13071,7 +13861,7 @@ const capFirst = (t) => (t ? t[0].toUpperCase() + t.slice(1) : t);
 // (Memory tab), "<key>/memory/<enc name>" (that file open) or "<key>/away" (Away mode tab). Keys are `<slug>-<8hex>`
 // (store.mjs#projectKey) and never contain "/", so the first slash splits key from tab. An
 // unknown tab word reads as Overview (the hash is left alone, as History leaves an odd param alone).
-const PROJ_TABS = ['overview', 'team', 'memory', 'settings', 'away', 'mcp', 'actions'];
+const PROJ_TABS = ['overview', 'team', 'memory', 'settings', 'away', 'mcp', 'actions', 'automations'];
 function parseProjParam(param = '') {
   const s = String(param || '');
   if (!s) return null;
@@ -13086,7 +13876,7 @@ function parseProjParam(param = '') {
 }
 // The canonical param for a tab: Overview is plain '<key>', never '<key>/overview'.
 function projParamFor(key, tab = 'overview', sub = '') {
-  if (tab === 'team' || tab === 'settings' || tab === 'mcp' || tab === 'actions') return `${key}/${tab}`;
+  if (tab === 'team' || tab === 'settings' || tab === 'mcp' || tab === 'actions' || tab === 'automations') return `${key}/${tab}`;
   if (tab !== 'memory') return key;
   return sub ? `${key}/memory/${encodeURIComponent(sub)}` : `${key}/memory`;
 }
@@ -13172,19 +13962,9 @@ function paintProjHeader(screen, p) {
   const copy = screen.querySelector('.pd-path-copy');
   if (copy && !copy.dataset.wired) {
     copy.dataset.wired = '1';
-    copy.addEventListener('click', async () => {
-      const text = (projectByKey(projDetail && projDetail.key) || p).path;
-      let ok = true;
-      try {
-        if (navigator.clipboard?.writeText) await navigator.clipboard.writeText(text);
-        else ok = legacyCopy(text);
-      } catch { ok = legacyCopy(text); }
-      copy.classList.toggle('copied', ok);
-      copy.setAttribute('aria-label', ok ? 'Path copied' : 'Copy failed');
-      clearTimeout(copy._t);
-      copy._t = setTimeout(() => { copy.classList.remove('copied'); copy.setAttribute('aria-label', 'Copy path'); }, 1200);
-    });
+    copy.addEventListener('click', () => copyFromButton(copy, (projectByKey(projDetail && projDetail.key) || p).path));
   }
+  paintReadinessHeadChip(screen, p.key);
   const fresh = screen.querySelector('.pd-new');
   fresh.disabled = !p.exists;
   fresh.title = p.exists ? 'Start a pipeline in this project' : 'The folder is missing on disk';
@@ -13328,6 +14108,7 @@ const PD_TAB_ICONS = {
   team: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="9" cy="8" r="3.2"></circle><path d="M3.5 19c.6-3 2.8-4.6 5.5-4.6S13.9 16 14.5 19"></path><circle cx="17.5" cy="9.5" r="2.4"></circle><path d="M15.5 14.6c2.7 0 4.4 1.4 5 4.4"></path></svg>',
   mcp: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 3v5M15 3v5"></path><path d="M6 8h12v3a6 6 0 0 1-12 0z"></path><path d="M12 17v4"></path></svg>',
   actions: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M7 5l11 7-11 7z"></path></svg>',
+  automations: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M13 3 5 14h6l-1 7 8-11h-6l1-7z"></path></svg>',
 };
 // Table-driven, like HD_TABS. `build(sec, key)` takes the KEY (buildArgs), never the project object.
 const PD_TABS = [
@@ -13337,6 +14118,8 @@ const PD_TABS = [
   { key: 'settings', label: 'Settings', level: 'advanced', badge: () => null, visible: () => true, build: (sec, key) => buildPdSettings(sec, key) },
   { key: 'mcp', label: 'Sets', level: 'advanced', badge: () => null, visible: () => true, build: (sec, key) => buildPdMcp(sec, key) },
   { key: 'actions', needsGit: true, label: 'Actions', level: 'advanced', badge: () => null, visible: () => true, build: (sec, key) => buildPdActions(sec, key) },
+  // Git event automations (#711): shown while the gitAutomations flag is on (read when the page opens).
+  { key: 'automations', needsGit: true, label: 'Automations', level: 'advanced', badge: () => null, visible: () => flagOn('gitAutomations'), build: (sec, key) => buildPdAutomations(sec, key) },
 ];
 function initPdTabs(screen, p) {
   initDetailTabs(screen, PD_TABS.map((t) => ({ ...t, icon: PD_TAB_ICONS[t.key] })), p, {
@@ -13571,6 +14354,7 @@ function buildPdSettings(sec, key) {
   const brief = document.createElement('div'); brief.className = 'pd-house-brief'; sec.appendChild(brief);
   mountHouseBrief(brief, { projectKey: p.key });
   sec.appendChild(buildPdNightCard(p));
+  sec.appendChild(buildReadinessSettingsCard(p.key));
 }
 
 // The project's Away mode layer (project_config.extra.nightMode): fields set here beat the
@@ -13717,7 +14501,7 @@ function showProjMemoryView(view) {
 // ---- Reusable confirm / prompt modal ---------------------------------------
 // One shell, two public entry points:
 //   confirmModal(opts) -> Promise<boolean>, or Promise<{ok, checked}> when
-//     opts.checkbox is given. Contract unchanged from before promptModal existed.
+//     opts.checkbox is given, or Promise<{ok, choice}> when opts.choices is given.
 //   promptModal(opts)  -> Promise<object|null> keyed by field id. This is what
 //     replaced window.prompt: it takes an ARRAY of fields, so the two places
 //     that used to fire two blocking prompts back to back (name + domain,
@@ -13735,7 +14519,7 @@ const confirmGuard = el.confirmModal ? guardModal(el.confirmModal) : null;
 let shellDone = null;
 function modalShell({
   title = 'Confirm', message = '', confirmLabel = 'Confirm', cancelLabel = 'Cancel',
-  checkbox = null, danger = false, fields = null, messageTone = null, focus = 'ok',
+  checkbox = null, danger = false, fields = null, messageTone = null, focus = 'ok', choices = null,
 } = {}) {
   return new Promise((resolve) => {
     modalGen += 1;   // the extension pair prompt checks this to detect a confirm opened over it (see promptExtensionPair)
@@ -13806,6 +14590,31 @@ function modalShell({
     }
     syncOk();
 
+    // choices: ONE radio group as .radio-card rows — { name, label, value, options: [{value, title, hint, disabled}] }.
+    // confirmModal then resolves { ok, choice }. Built fresh each time, text only (never innerHTML).
+    const choiceInputs = [];
+    if (choices && Array.isArray(choices.options)) {
+      const group = document.createElement('div');
+      group.className = 'confirm-choices';
+      group.setAttribute('role', 'radiogroup');
+      if (choices.label) group.setAttribute('aria-label', choices.label);
+      for (const o of choices.options) {
+        const row = document.createElement('label');
+        row.className = `radio-card${o.disabled ? ' disabled' : ''}`;
+        const inp = document.createElement('input');
+        inp.type = 'radio'; inp.name = `confirm-choice-${choices.name || 'pick'}`; inp.value = o.value;
+        inp.checked = o.value === choices.value && !o.disabled; inp.disabled = !!o.disabled;
+        const text = document.createElement('span');
+        text.className = 'radio-card-text';
+        text.appendChild(Object.assign(document.createElement('b'), { textContent: o.title }));
+        if (o.hint) text.appendChild(Object.assign(document.createElement('small'), { className: 'hint', textContent: o.hint }));
+        row.append(inp, text);
+        group.appendChild(row);
+        choiceInputs.push(inp);
+      }
+      el.confirmFields.appendChild(group);
+    }
+
     // opt-in checkbox: shown only when requested, always reset to unchecked
     el.confirmCheckboxWrap.classList.toggle('hidden', !checkbox);
     el.confirmCheckbox.checked = false;
@@ -13827,6 +14636,7 @@ function modalShell({
       el.confirmMessage.classList.remove('err');
       el.confirmOk.disabled = false;
       el.confirmMessage.hidden = false;
+      const choice = (choiceInputs.find((i) => i.checked) || {}).value ?? null;
       el.confirmFields.replaceChildren();
       el.confirmModal.classList.add('hidden');
       el.confirmCheckboxWrap.classList.add('hidden');
@@ -13834,6 +14644,7 @@ function modalShell({
       el.confirmCancel.removeEventListener('click', onCancel);
       document.removeEventListener('keydown', onKey);
       if (fields) resolve(val ? values : null);
+      else if (choices) resolve({ ok: val, choice });
       else resolve(checkbox ? { ok: val, checked } : val);
     };
     const onOk = () => { if (!el.confirmOk.disabled) done(true); };
@@ -14045,7 +14856,8 @@ function openProjectAddModal(path, { mode = 'folder', onAdded = null } = {}) {
   void refreshGit().then((on) => { if (!on && projAddMode === 'clone' && !cloneFollow) setProjAddMode('folder'); });
   el.projAddPath.value = path || '';
   el.projAddName.value = path ? basenameOf(path) : '';
-  el.projAddGit.checked = false;
+  el.projAddGit.checked = mode === 'new' && gitOn();
+  projAddAutoName = el.projAddName.value;
   el.projAddDetect.replaceChildren();
   el.projAddDetect.hidden = true;
   projAddAction = null; if (el.projAddRoot) el.projAddRoot.hidden = true;
@@ -14089,19 +14901,27 @@ let projAddRefused = false;  // the live check refused: Create project / Add pro
 let projAddSeq = 0;          // the live check's sequence: a stale answer is dropped
 let projAddTimer = null;
 let projAddProbed = null;    // the folder path the probe last answered for: Folder's Add waits for it
+let projAddAutoName = '';   // the Name the Folder path proposed: a name typed over it is the user's and stays
 let projAddAction = null;   // #693: the Folder pane's Add <root> / Open <name> action, or null
 
 function setProjAddMode(mode) {
   const prev = projAddMode;
   // A clone already running keeps its tab (its progress line) even when git went missing meanwhile.
   projAddMode = mode === 'clone' && el.projAddClonePane && (gitOn() || cloneFollow) ? 'clone' : mode === 'folder' ? 'folder' : 'new';
-  if (projAddMode !== prev) el.projAddGit.checked = false;   // Use git is off on every segment until asked there (U11)
+  // Use git starts on for a new project (runs get branches and PRs); a folder that exists is never turned into a repo unasked.
+  if (projAddMode !== prev) {
+    el.projAddGit.checked = projAddMode === 'new' && gitOn();
+    // The tab's own default is not an edit: an untouched dialog still closes without asking.
+    if (!el.projAddName.value.trim() && !el.projAddPath.value.trim()) projAddGuard?.markClean();
+  }
   if (!el.projAddTabs) return;
   for (const t of el.projAddTabs.querySelectorAll('.md-tab')) t.setAttribute('aria-selected', String(t.dataset.mode === projAddMode));
   const isNew = projAddMode === 'new';
   const isFolder = projAddMode === 'folder';
   const isClone = projAddMode === 'clone';
   el.projAddNameField.hidden = isClone;
+  // Folder asks where first, then proposes the name from it; New names first, which fills Location.
+  if (isFolder) el.projAddFolderPane.after(el.projAddNameField); else el.projAddNewPane.before(el.projAddNameField);
   el.projAddNewPane.hidden = !isNew;
   el.projAddFolderPane.hidden = !isFolder;
   el.projAddClonePane.hidden = !isClone;
@@ -14110,7 +14930,7 @@ function setProjAddMode(mode) {
   setProjAddMsg(isClone && cloneFollow ? `Cloning ${cloneFollow.url} …` : '');
   setProjAddRefused(false);                  // also syncs the controls (a running clone locks the Clone tab)
   projAddProbed = null;                      // the refusal is cleared: Folder's Add waits for the re-check again
-  if (isClone) { if (!cloneFollow) el.projCloneUrl.focus(); } else el.projAddName.focus();
+  if (isClone) { if (!cloneFollow) el.projCloneUrl.focus(); } else if (isFolder && !el.projAddPath.value.trim()) el.projAddPath.focus(); else el.projAddName.focus();
   if (isNew || (isFolder && el.projAddPath.value.trim())) scheduleProjAddCheck(0);
 }
 
@@ -14709,7 +15529,11 @@ if (el.projAddSave) {
   el.projAddName.addEventListener('keydown', (e) => {
     if (e.key === 'Enter' && !e.isComposing) { e.preventDefault(); if (!projAddRefused && !el.projAddSave.disabled) void saveProjectAdd(); }
   });
-  el.projAddPath.addEventListener('input', () => { if (projAddMode === 'folder') scheduleProjAddCheck(); });
+  el.projAddPath.addEventListener('input', () => {
+    if (projAddMode !== 'folder') return;
+    if (el.projAddName.value === projAddAutoName) { projAddAutoName = basenameOf(el.projAddPath.value.trim()) || ''; el.projAddName.value = projAddAutoName; }
+    scheduleProjAddCheck();
+  });
   el.projAddGit.addEventListener('change', () => { if (projAddMode === 'new') scheduleProjAddCheck(0); });
   // git found or lost while New or the Folder pane (with a path) shows: re-check, so the No git chip and Use git follow (S61).
   onGitFlip(() => { if (!el.projectAddModal.classList.contains('hidden') && (projAddMode === 'new' || (projAddMode === 'folder' && el.projAddPath.value.trim()))) scheduleProjAddCheck(0); });
@@ -14997,12 +15821,10 @@ function buildRunBody() {
   const body = {
     title: title || undefined,
     workflowId: state.workflowId || 'wf_default',
-    // Omit-when-default: 'permissive' IS the server default, so the key is
-    // absent on default runs — byte-identical legacy request bodies. (The
-    // server normalizes omitted/''/null to 'permissive'; always-sending would
-    // be equivalent but would change every legacy-shaped request for no gain.)
-    guardrailsId: isDefragRun && state.guardrailsId === 'permissive' ? 'normal'
-      : (state.guardrailsId !== 'permissive' ? state.guardrailsId : undefined),
+    // Always the picked set: the server's default for an omitted key is the
+    // install default, which is not Permissive on a fresh install (G13), so an
+    // explicit Permissive pick must be sent. Absent only when the list never loaded.
+    guardrailsId: isDefragRun && state.guardrailsId === 'permissive' ? 'normal' : (state.guardrailsId || undefined),
     // MCP registry (§6.2): absent unless something is opted out, so default bodies stay byte-identical;
     // a memory-defrag run starts no registry servers (§6.1), so it sends none.
     mcpOptOut: state.mcpOptOut.length && !isDefragRun ? [...state.mcpOptOut] : undefined,
@@ -15016,15 +15838,17 @@ function buildRunBody() {
     memoryScope: isDefragRun ? state.memoryScope : undefined,
     // Night mode per-run opt-in: only when ticked, so every other run body stays byte-identical.
     nightMode: el.nightMode && el.nightMode.checked ? true : undefined,
+    // #943: only when ticked (and never on a defragment run, which IS memory), so every other body stays byte-identical.
+    noMemory: !isDefragRun && el.noMemory && el.noMemory.checked ? true : undefined,
     // Engine: only a non-default one is sent, and the consent only with it and only when
     // ticked, so a Claude run's body stays byte-identical.
     // The engine shown is the engine that runs: Claude goes unsent only when the default is KNOWN
     // to be Claude (a failed or stale defaults read must not let the server pick a Codex default).
     engine: state.engine !== 'claude' ? state.engine : (state.runDefaults?.engine?.value === 'claude' ? undefined : 'claude'),
+    pr: runPrFields().body(),   // only a value the person changed from the setting
     allowUnguardedEngine: state.engine !== 'claude' && el.engineAllowUnguarded && el.engineAllowUnguarded.checked ? true : undefined,
     // Run tags (#718): omitted when empty, so a legacy body stays byte-identical. A slot wins its key.
     tags: (() => {
-      if (!flagOn('runTags')) return undefined;
       const all = normaliseTags([...runTagInput.get(), ...runTagDims.get()]).tags;
       return all.length ? all : undefined;
     })(),
@@ -15223,6 +16047,12 @@ el.form.addEventListener('submit', async (e) => {
         startSubmitInFlight = false;
         showEngineRefusal(data);
         return notStarted(data.overridable ? 'Tick Allow unguarded to run anyway, or pick Claude.' : (data.error || 'The engine cannot run this.'));
+      }
+      // Signed out with nothing else to run on: the sign-in steps, not a paused run.
+      if (res.status === 409 && data && data.code === 'claude-signed-out') {
+        startSubmitInFlight = false;
+        openClaudeSetup();
+        return notStarted(data.error);
       }
       // A preset whose references are gone (#712): the broken card names each one, Start waits for them.
       if (res.status === 409 && data && data.code === 'preset-broken' && state.preset) {
@@ -15456,6 +16286,8 @@ async function fetchAfterCandidates() {
 
 /** #new/after/<pipelineId> | #new/after/t:<ticketId>: pick the predecessor first, then describe the task. */
 const ENDED_BADLY = ['error', 'stopped', 'interrupted'];
+// An interrupted run that can still resume has not ended (scheduler pipelineGate waits for it): no `any` preset.
+const endedBadly = (r) => ENDED_BADLY.includes(r.status) && !(r.status === 'interrupted' && r.resumable === true);
 // A TICKET that ended this way can never be waited for (resolveAfterRef refuses it under either policy —
 // scheduler.mjs BAD_TICKET_REASON, same words); say so here rather than at Start.
 const ENDED_TICKET = { missed: 'was missed', canceled: 'was canceled', failed: 'could not start', skipped: 'was skipped' };
@@ -15494,7 +16326,7 @@ async function openAfterForNew(ref) {
   // (resolveAfterRef refuses it under done) — preset the switch the sheet would need.
   // branchGone: the predecessor finished but its feature branch no longer resolves (an archived
   // or restored run) — syncPreviousBranchOption then leaves "Branch of the run before it" out.
-  setPendingSchedule({ after: { kind: r.kind, id: r.id, title: r.title || null, branchGone: !!r.branchGone }, afterPolicy: ENDED_BADLY.includes(r.status) ? 'any' : 'done' });
+  setPendingSchedule({ after: { kind: r.kind, id: r.id, title: r.title || null, branchGone: !!r.branchGone }, afterPolicy: endedBadly(r) ? 'any' : 'done' });
   try { el.prompt?.focus(); } catch { /* jsdom */ }
 }
 function closeStartMenu() {
@@ -15611,13 +16443,9 @@ function paintAbout(info) {
 let versionStatusSeq = 0;
 // Manual update (#841): the About card's Update row, the version picker / confirm modal and the
 // updating overlay (update-view.mjs). GET /api/app/update says who may update and to what.
-async function copyText(text) {
-  try { if (navigator.clipboard?.writeText) { await navigator.clipboard.writeText(text); return true; } return legacyCopy(text); }
-  catch { return legacyCopy(text); }
-}
 const updateGuards = new Map();
 const updateUi = createUpdateUi({
-  doc: document, fetchImpl: (...a) => fetch(...a), copyText,
+  doc: document, fetchImpl: (...a) => fetch(...a), copyFromButton,
   report: (msg, kind) => reportStatus(null, '', msg, kind),
   guardModal: (modal, opts) => { if (!updateGuards.has(modal)) updateGuards.set(modal, guardModal(modal)); updateGuards.get(modal).opened(opts); },
 });
@@ -15672,12 +16500,12 @@ function setSettingsLoadMsg(text) {
   if (!n) return;
   n.textContent = text ? `Could not load settings: ${text}` : '';
   n.hidden = !text;
-  // The Models page loads the same payload (its Engines card and helper pickers) but sits outside
-  // Settings, so the line above is not on screen there: say it on the page's own line, and take it
-  // back once a load works (only that message: the line also reports imports and deletes).
+  // The Models page loads the same payload but sits outside
+  // Settings, so the line above is not on screen there: say it on the Jobs tab's own line, and take it
+  // back once a load works (only that message: anything else on the line stays).
   if (currentView() !== 'models') return;
-  if (text) setModelsMsg(`Could not load settings: ${text}`, 'err-inline');
-  else if (el.modelsMsg && el.modelsMsg.textContent.startsWith('Could not load settings: ')) setModelsMsg('');
+  if (text) reportStatus(el.modelsJobsMsg, 'form-msg', `Could not load settings: ${text}`, 'err-inline');
+  else if (el.modelsJobsMsg && el.modelsJobsMsg.textContent.startsWith('Could not load settings: ')) reportStatus(el.modelsJobsMsg, 'form-msg', '');
 }
 
 async function loadSettings() {
@@ -15688,6 +16516,7 @@ async function loadSettings() {
     if (!res.ok) { setSettingsLoadMsg(data.error || `HTTP ${res.status}`); return; }
     paintSettings(data);
     paintTheme(data.theme);
+    paintScreensaver(data.screensaver);
     levelCtl.confirm(data.uiLevel);
     paintAbout(data.app);
     if (el.aboutUpdateCheck) el.aboutUpdateCheck.checked = data.updateCheck !== false;
@@ -15699,11 +16528,14 @@ async function loadSettings() {
     paintNightSettings(data);
     paintSyncSettings(data);
     paintNetworkWaitSettings(data);
+    paintRunLimitsSettings(data);
     paintSmartNamingSettings(data);
+    paintMemoryModelLink(data);
     paintActionsSettings(data);
     paintDebugSpawnSettings(data);
+    paintKeepAwakeRow(data.keepAwake !== false);
     paintPrSettings(data);
-    await paintEngineSettings(data);
+    syncRunEngine(data);
     await paintWorkspaceScanModelsSettings(data);
     paintBudgetReadout();
     paintTeamCapsReadout();                 // team policy (design board 7): each home's caps, read-only
@@ -15719,7 +16551,7 @@ async function loadSettings() {
 
 // ── Chat notifications card (chat-connectivity-design.md §4.8) ────────────────
 
-// Settings › My model credentials (credential broker, docs/credential-broker.md): the card
+// Settings › My credentials (credential broker, docs/credential-broker.md): the card
 // stays hidden unless worca runs with a broker. Status only; keys live on the key page.
 async function paintCredentials() {
   const card = document.getElementById('credentials-card');
@@ -15753,11 +16585,8 @@ document.getElementById('extensionInstallHost')?.addEventListener('click', async
   }
   const copy = e.target.closest('[data-copy-path]');
   if (!copy) return;
-  const text = copy.dataset.copyPath;
-  let ok = false;
-  try { if (navigator.clipboard?.writeText) { await navigator.clipboard.writeText(text); ok = true; } else ok = legacyCopy(text); } catch { ok = legacyCopy(text); }
-  if (ok) flashCopyBtn(copy, 'Copied');
-  else reportStatus(null, '', 'Could not copy the path: select it and copy it by hand.', 'err');
+  const ok = await copyFromButton(copy, copy.dataset.copyPath);
+  if (!ok) reportStatus(null, '', 'Could not copy the path: select it and copy it by hand.', 'err');
 });
 
 // Settings → Browser extension (docs/browser-extension.md).
@@ -16276,6 +17105,40 @@ async function chooseTheme(mode) {
   }
   paintTheme(data.theme);
 }
+// Settings › Appearance › Screensaver: the switch and its Start after minutes. Each control saves only its own field
+// (the server merges a partial { screensaver }), with the same optimistic paint and revert as chooseTheme.
+const SCREENSAVER_MINUTES = [5, 10, 15, 20, 25, 30];
+let screensaverSeq = 0;              // out-of-order POST resolutions never repaint a stale answer
+const screensaverNotSaved = (detail) => notify({ tone: 'err', title: 'Screensaver not saved', detail, key: 'screensaver' });
+function paintScreensaver(s) {
+  const enabled = s?.enabled === true;
+  const idleMinutes = SCREENSAVER_MINUTES.includes(s?.idleMinutes) ? s.idleMinutes : 5;
+  screensaverPref = { enabled, idleMinutes };
+  if (el.screensaverOn) el.screensaverOn.checked = enabled;
+  if (el.screensaverAfterRow) el.screensaverAfterRow.hidden = !enabled;
+  if (el.screensaverAfter) el.screensaverAfter.value = String(idleMinutes);
+}
+async function chooseScreensaver(patch) {
+  const mine = ++screensaverSeq;
+  const previous = { ...screensaverPref };
+  paintScreensaver({ ...previous, ...patch });                             // optimistic
+  let res; let data;
+  try {
+    res = await fetch('/api/settings', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ screensaver: patch }) });
+    data = await safeJson(res);
+  } catch (e) { if (mine === screensaverSeq) { paintScreensaver(previous); screensaverNotSaved(e.message || 'network error'); } return; }
+  if (mine !== screensaverSeq) return;                                     // a later change owns the paint now
+  if (!res.ok) {
+    screensaverNotSaved(data.error || `The server answered ${res.status}.`);
+    // Paint what the SERVER holds; a failed re-fetch falls back to the last confirmed value.
+    try { const d2 = await safeJson(await fetch('/api/settings')); if (mine === screensaverSeq) paintScreensaver(d2.screensaver || previous); }
+    catch { if (mine === screensaverSeq) paintScreensaver(previous); }
+    return;
+  }
+  paintScreensaver(data.screensaver);
+}
+el.screensaverOn?.addEventListener('change', () => chooseScreensaver({ enabled: el.screensaverOn.checked }));
+el.screensaverAfter?.addEventListener('change', () => chooseScreensaver({ idleMinutes: Number(el.screensaverAfter.value) }));
 for (const id of ['theme-seg', 'acct-theme']) {
   document.getElementById(id)?.addEventListener('click', (e) => {
     const btn = e.target.closest && e.target.closest('button[data-theme-mode]');
@@ -16593,8 +17456,42 @@ document.getElementById('networkWaitReset')?.addEventListener('click', (e) => po
   { networkWait: null }, { button: e.currentTarget, gate: false, busy: 'Resetting…', done: 'Reset' }));
 settingsCardDirty('networkWaitSave');
 
+// Settings › Runs › Machine load (runLimits: run-slots.mjs, the agents' WORCA_TEST_CONCURRENCY, run-retention.mjs).
+function paintRunLimitsSettings(data) {
+  const d = data && data.runLimits;
+  const sel = { maxConcurrentRuns: 'runLimitsMaxRuns', testWorkers: 'runLimitsTestWorkers', keepRunsDays: 'runLimitsKeepDays' };
+  if (!d || !document.getElementById(sel.maxConcurrentRuns)) return;
+  for (const [k, id] of Object.entries(sel)) {
+    const el = document.getElementById(id);
+    const v = d[k] == null ? '' : String(d[k]);
+    if (![...el.options].some((o) => o.value === v)) {
+      const opt = document.createElement('option');
+      opt.value = v; opt.textContent = k === 'keepRunsDays' ? `${v} days` : v;
+      el.append(opt);
+    }
+    el.value = v;
+  }
+  const auto = document.querySelector('#runLimitsTestWorkers option[value=""]');
+  if (auto && data.testWorkersAuto) auto.textContent = `Half the cores (${data.testWorkersAuto})`;
+  settingsCardPainted('runLimitsSave');
+}
+function postRunLimits(body, opts = {}) {
+  return postSettingsCard(body, { card: document.getElementById('run-limits-settings-card'), paint: paintRunLimitsSettings, dirty: settingsCardDirty('runLimitsSave'), ...opts });
+}
+document.getElementById('runLimitsSave')?.addEventListener('click', (e) => {
+  const num = (id) => { const v = document.getElementById(id).value; return v === '' ? null : Number(v); };
+  postRunLimits({ runLimits: {
+    maxConcurrentRuns: num('runLimitsMaxRuns'),
+    testWorkers: num('runLimitsTestWorkers'),
+    keepRunsDays: num('runLimitsKeepDays'),
+  } }, { button: e.currentTarget });
+});
+document.getElementById('runLimitsReset')?.addEventListener('click', (e) => postRunLimits(
+  { runLimits: null }, { button: e.currentTarget, gate: false, busy: 'Resetting…', done: 'Reset' }));
+settingsCardDirty('runLimitsSave');
+
 // Settings › Runs › Smart run naming (Labs, flag smartRunNaming). The rows stay editable while the flag is off (muted), so a
-// team can prepare them. The master switch is the flag itself (bindFlagSwitch, below the Keep awake one).
+// team can prepare them. The master switch is the flag itself (bindFlagSwitch, below).
 const snCard = () => document.getElementById('smart-naming-settings-card');
 const SN_PREVIEW = { type: 'fix', slug: 'safari-sso-redirect-loop', ticket: 'proj-123' };
 let snTypesOn = [];            // the enabled types, in order
@@ -16656,7 +17553,7 @@ function snPaintTypes() {
     return add;
   })());
 }
-// The model is a helper job (Models › Engines › Helper jobs › Run naming); the card only says which one runs and
+// The model is a helper job (Models › Jobs › Helper jobs › Run naming); the card only says which one runs and
 // what a suggestion costs. /api/naming/config answers 404 while the flag is off, so the cost line waits for it.
 async function snPaintCost(naming) {
   const out = document.getElementById('smartNamingCost');
@@ -16670,6 +17567,23 @@ async function snPaintCost(naming) {
     else if (model) out.textContent = `${model}${base}`;
   }
   settingsCardPainted('smartNamingSave');
+}
+/** Settings › Memory's link to the Defragment model. A defragment run takes its run engine's own "Memory defragment"
+ *  job (orchestrator.mjs defragSlotPair): the line names that harness's Helper jobs when it has the job. A harness
+ *  without it (Cursor, Copilot…) has an empty slot (settings-cascade.mjs utilityModelFor), so its run falls to that
+ *  harness's own role for the job (model-roles.mjs withRole): the line names that harness's Roles, never Claude's job. */
+function paintMemoryModelLink(data) {
+  const line = document.querySelector('.mem-model-link');
+  const a = line?.querySelector('a');
+  if (!a) return;
+  // A name that is no harness (a hand-edited "constructor") reads as the default, Claude Code.
+  const named = data && typeof data.runEngine === 'string' ? data.runEngine : '';
+  const engine = MODEL_ENGINE_NAMES.includes(named) ? named : 'claude';
+  const hasJob = (HELPER_JOBS[engine] || []).some((j) => j.key === 'memoryDefrag');
+  const lead = hasJob ? 'a helper job' : `the ${ROLE_LABELS[roleOf('memoryDefrag')]} role`;
+  a.setAttribute('href', hasJob ? `#models/jobs/helpers/${engine}` : `#models/jobs/roles/${engine}`);
+  a.textContent = hasJob ? 'Models › Jobs › Helper jobs' : 'Models › Jobs › Roles';
+  line.replaceChildren(`The model every Memory defragment run uses is ${lead}: `, a, '.');
 }
 function paintSmartNamingSettings(data) {
   const d = data && data.smartNaming;
@@ -16703,7 +17617,7 @@ document.getElementById('smartNamingSave')?.addEventListener('click', (e) => pos
 document.getElementById('smartNamingReset')?.addEventListener('click', (e) => postSmartNaming(
   { smartNaming: null }, { button: e.currentTarget, gate: false, busy: 'Resetting…', done: 'Reset' }));
 settingsCardDirty('smartNamingSave');
-onFlagChange('smartRunNaming', () => { snPaintMuted(); void snPaintCost(null); void paintHelperModelCards(); });
+onFlagChange('smartRunNaming', () => { snPaintMuted(); void snPaintCost(null); repaintJobs(); });
 // Settings › Network proxy (networkProxy.enabled; Simple level, no flag).
 mountNetworkProxyCard({ onOpenSetup: (step) => openSetup({ entry: 'fix', step }) });
 
@@ -16918,9 +17832,8 @@ document.getElementById('prSettingsSave')?.addEventListener('click', (e) => post
   { card: document.getElementById('pr-settings-card'), paint: paintPrSettings, dirty: settingsCardDirty('prSettingsSave'), button: e.currentTarget }));
 settingsCardDirty('prSettingsSave');
 
-// ---- Helper models: Claude's title, Auto and PR description slots are rows of the Engines card's Helper jobs
-// (engine-settings-view.mjs). What stays here: the project-less catalog every model picker reads, the Claude-only
-// list builder the workspace scan picker uses, and a row's Test.
+// ---- Model pickers outside the Models page: the project-less catalog every model picker reads, the Claude-only
+// list builder the workspace scan picker uses, and a row's Test (Settings › Chat, Project settings, Models › Jobs).
 async function fetchTitleModelCatalog() {
   try {
     const res = await fetch('/api/config');
@@ -16975,7 +17888,7 @@ async function paintWorkspaceScanModelsSettings(data) {
   paintScanModelPickers(WS_SCAN_SETTINGS_IDS, pick, wsScanCatalog);
   // An EMPTY catalog is a failed GET, not an empty catalog: it condemns nothing (the Auto card's rule).
   const stale = !!pick.scanModel && wsScanCatalog.length > 0 && !wsScanCatalog.some((m) => m && m.id === pick.scanModel);
-  keepVisible(document.getElementById('ws-scan-models-card'), !!(data && data.workspaceScan));
+  syncSettingsSubKeep(keepVisible(document.getElementById('ws-scan-models-card'), !!(data && data.workspaceScan)));
   setHintMsg('wsScanModelsNote', stale ? `Model "${pick.scanModel}" is no longer in the catalog. Scans fall back to the default.` : '', stale ? 'warn' : '');
   settingsCardPainted('wsScanModelsSave');
 }
@@ -17178,6 +18091,7 @@ marketplacePage = mountMarketplace({ doc: document, win: window, deps: {
 let marketplaceSyncSig = null;
 const marketplacesSyncSig = (ms) => (ms || []).filter((m) => m && m.lastSync).map((m) => `${m.id}@${m.lastSync.sha}`).sort().join('|');
 marketplacePage.onChange((s) => {
+  setTopnavPlugins(s.plugins, s.marketplaces);    // the search lists what the page just read
   pluginsViewMarketplaces = s.marketplaces;
   const sig = marketplacesSyncSig(s.marketplaces);
   const prev = marketplaceSyncSig;
@@ -17189,10 +18103,23 @@ async function loadPluginsView({ refresh = false } = {}) {
   await marketplacePage.load({ refresh });
   paintPluginsPolicy(false);                     // team policy (design board 10): a trusted home's installs, from the scopes load() just read
 }
-// One entry, one load (CONTRACT §4): a tab hop inside the page only selects the tab.
+// One entry, one load (CONTRACT §4): a tab hop inside the page only selects the tab. A top bar search pick
+// (#marketplace/installed/<name>[/settings], #marketplace/browse/<marketplace>/<name>) also opens that plugin's sheet.
 function enterMarketplace(param, prevView) {
   marketplacePage.setTab(tabFromParam(param));
-  if (prevView !== 'marketplace') void loadPluginsView({ refresh: true });
+  const loading = prevView !== 'marketplace' ? loadPluginsView({ refresh: true }) : null;
+  const target = targetFromParam(param);
+  if (target) void openMarketplaceTarget(target, loading);
+}
+// The sheet needs the page's lists: wait for the entry's own read (never a second one) when nothing is loaded yet.
+async function openMarketplaceTarget(target, loading) {
+  const hash = location.hash;
+  try {
+    if (!marketplacePage.state.loaded) await (loading || marketplacePage.load());
+  } catch { return; }
+  if (location.hash !== hash || !marketplacePage.state.loaded) return;   // moved on, or the read failed (its own message shows)
+  if (target.kind === 'manage') marketplacePage.act('openManage', target.name, target.section ? { section: target.section } : {});
+  else marketplacePage.act('openPlugin', { name: target.name, marketplace: target.marketplace });
 }
 
 // #555 D5: the consent dialog closes before the request, so its result is a keyed toast that
@@ -17639,7 +18566,7 @@ function createMemoryController({ host, msgEl, scopeKey, hostProject = null, nav
   // a frame refresh (a draft is not a baseline), or the next frame reads the editor as clean and
   // refetches over the unsaved text. `flash` carries a success message across the reload a write
   // triggers: load() clears the message as its first act, so say() before it would never be seen.
-  const st = { report: null, selected: '', editor: null, isNew: false, snapshots: [], flash: null };
+  const st = { report: null, selected: '', editor: null, isNew: false, snapshots: [], proposals: [], flash: null };
   // Request token: a frame poke, a save and a route change can all be in flight at once, and the
   // LAST one issued must win however the responses land.
   let seq = 0;
@@ -17662,6 +18589,8 @@ function createMemoryController({ host, msgEl, scopeKey, hostProject = null, nav
     // A live defragment run owns the scope: Save / Delete / Restore resume when it finishes (B23).
     const locked = !!st.report.defragRunId;
     host.appendChild(renderHealthCard(st.report, { host: hostRef() }));
+    const proposals = renderProposals(st.proposals, { runInfo: memoryRunInfo, locked });
+    if (proposals) host.appendChild(proposals);
     host.appendChild(renderFileList(st.report.files, { selected: st.selected, runInfo: memoryRunInfo }));
     const right = document.createElement('div');
     right.className = 'mem-right';
@@ -17701,6 +18630,9 @@ function createMemoryController({ host, msgEl, scopeKey, hostProject = null, nav
     const report = r.data;
     const hist = await memoryApi('GET', `${base}/history`);
     if (my !== seq) return;
+    const props = await memoryApi('GET', '/api/memory/proposals');
+    if (my !== seq) return;
+    st.proposals = props.ok && Array.isArray(props.data.proposals) ? props.data.proposals.filter((p) => p.scope === scopeKey) : [];
     st.report = report;
     st.snapshots = hist.ok && Array.isArray(hist.data.snapshots) ? hist.data.snapshots : [];
     if ((fromFrame || keepDraft) && dirty) {
@@ -17785,6 +18717,19 @@ function createMemoryController({ host, msgEl, scopeKey, hostProject = null, nav
     await load('');
   }
 
+  /** #943: Approve writes a run's proposed note to this scope, Reject drops it. */
+  async function decide(id, action, button) {
+    const r = await withButton(button, async () => {
+      const res = await memoryApi('POST', `/api/memory/proposals/${encodeURIComponent(id)}/${action}`);
+      return res.ok ? res : { ok: false, error: res.data.error || `HTTP ${res.status}` };
+    });
+    if (r.skipped) return;
+    if (!r.ok) { say(r.error, 'err'); return; }
+    const p = st.proposals.find((x) => x.id === id);
+    st.flash = [`${action === 'approve' ? 'Approved' : 'Rejected'}${p ? ` ${p.name}.md` : ''}`, 'ok'];
+    await load(st.selected, { keepDraft: true });
+  }
+
   async function defragment(runId) {
     // ONE control (spec §10): while a run is live the same button opens it instead of starting a second.
     if (runId) { location.hash = `running/${runId}`; return; }
@@ -17813,6 +18758,8 @@ function createMemoryController({ host, msgEl, scopeKey, hostProject = null, nav
     if (hit('mem-delete')) { void remove(); return; }
     if (hit('mem-restore')) { void restore(hit('mem-restore').dataset.id); return; }
     if (hit('mem-defrag')) { void defragment(hit('mem-defrag').dataset.runId || ''); return; }
+    if (hit('mem-prop-approve')) { void decide(hit('mem-prop-approve').dataset.id, 'approve', hit('mem-prop-approve')); return; }
+    if (hit('mem-prop-reject')) { void decide(hit('mem-prop-reject').dataset.id, 'reject', hit('mem-prop-reject')); return; }
     const row = hit('mem-row');
     if (row) open(row.dataset.name);
   };
@@ -18135,13 +19082,15 @@ function rdScopeQuery(run) {
   return qs.toString();
 }
 
-/** Repaint every mounted strip for runId (Overview strip on either page, Ship It "Try it first") from the cache. */
+/** Repaint every mounted strip for runId (Overview strip on either page, Ship It "Try it first") from the cache, and
+ *  the open run heads whose Try it step reads it. */
 function paintActionsStrips(runId) {
   const model = actionsModelCache.get(runId);   // undefined when the model GET failed: the strip stays empty
   // Compare the dataset instead of building a selector: no CSS.escape needed (jsdom tests lack it).
   for (const el of [...document.querySelectorAll('.act-strip[data-run-id]')].filter((x) => x.dataset.runId === runId)) {
     el.replaceChildren(...(model ? [renderOverviewStrip(model, { doc: document, handlers: stripHandlers(el) })].filter(Boolean) : []));
   }
+  repaintTryHeads(runId);
 }
 /** Mount point: stamps the run id and scope, then paints from the cache or fetches the model once. */
 async function paintActionsStrip(strip, runId, scopeQuery) {
@@ -18166,8 +19115,11 @@ async function refreshActionsModel(runId, scopeQuery) {
  * Cached models of unmounted runs are dropped, so a revisit fetches instead of painting a stale state.
  */
 function refreshActionsStrips() {
+  tryModelAsked.clear();                       // a head whose model read failed may ask again on this frame
   const mounted = new Map();
   for (const el of document.querySelectorAll('.act-strip[data-run-id]')) mounted.set(el.dataset.runId, el.__scopeQuery);
+  // An open run head past Check out reads the model too (Start / Open / Stop): keep it cached and refetch it.
+  for (const [runId, scopeQuery] of openTryHeadScopes()) if (!mounted.has(runId)) mounted.set(runId, scopeQuery);
   for (const runId of [...actionsModelCache.keys()]) if (!mounted.has(runId)) actionsModelCache.delete(runId);
   const controlled = new Set([...actionControllers].map((c) => c.runId));
   for (const [runId, scopeQuery] of mounted) {
@@ -18753,137 +19705,342 @@ async function loadGuardrailsView(param = '') {
 // arrive MASKED and are write-only (unchanged masked echoes mean "keep").
 // ---------------------------------------------------------------------------
 const mvState = {
-  data: null, editing: null, openCreate: false, openShare: false, prefill: null,
-  // Model bridge (model-bridge-design.md §8): the Providers card payload, an
+  data: null, editing: null, prefill: null,
+  // Model bridge (model-bridge-design.md §8): the Providers tab payload, an
   // in-flight Copilot sign-in, the import sheet and its list, and Copilot's
   // models list for the editor's datalist (fetched once per view load when
   // connected; empty otherwise).
-  // Importing is a DIALOG now (§8.4): its state lives in `mimp`, not here. copilotModels stays —
+  // Importing is step 2 of Add model (models-menu P5): its state lives in `dlg`, not here. copilotModels stays —
   // it feeds the editor's upstream-id datalist. justImported filters the list to what just landed.
-  providers: null, signIn: null, copilotModels: [], justImported: null, openEditorOnLoad: false,
-  // The catalog's own narrowing (the list runs to several screens with built-ins, plugin and team
-  // models in it): a search box, one chip, and which groups are folded. Built-ins start folded —
-  // 12 rows nobody edits — and a search opens every group that still has a hit.
-  query: '', filter: 'all', collapsed: { builtin: true, plugin: false, policy: false, global: false },
-  // A panel that JUST opened is scrolled to after the repaint: the editor and the import sheets
-  // render under the Providers card, which is taller than the viewport on a laptop, so opening one
-  // otherwise looks like nothing happened. Set by the flows that open a panel; cleared on use.
-  revealPanel: false,
+  // openEditorOnLoad: Add model's options ({ where, engine }) from a picker on another page, opened once the catalog is here.
+  providers: null, signIn: null, copilotModels: [], justImported: null, openEditorOnLoad: null,
+  // The model dialog while it is open (one modal, one screen at a time), else null:
+  // { screen: 'step1'|'list'|'form'|'share', add: { where, provider, engine }, list: { provider, baseUrl, apiKey, ticked: Set,
+  //   filter, payload: { endpoint, data, baseUrl, apiKey } | null } (provider: whose list it is; baseUrl/apiKey: what the
+  //   screen holds, redrawn; payload: the last list that answered, with the address and key it was asked with),
+  //   form: { mode, copyFrom, formEl } | null, from: 'step1'|'list'|null (where the form's Back goes), busy (an import is
+  //   out), formDirty (a form left with changes), seq (late answers of another open, provider or screen are dropped),
+  //   engines (GET /api/engines' rows for the harness tiles; null until it answers) }.
+  dlg: null,
+  // The Providers tab's unfolded rows, by row name: kept through every redraw (a head click, a link, a failure).
+  pvOpen: {},
+  // The Catalogue's view state, kept for the session (catalogue-model.mjs): the search, one chip, the Source select,
+  // which harness groups are folded (Claude Code starts open, the others folded) and the row the side panel shows.
+  // A copy: the default is frozen. `count` is the listed models (the tab's pill; null until the catalogue drew) and
+  // `runEngine` the default harness for new runs (GET /api/settings; null reads as Claude Code).
+  cat: { ...CATALOGUE_VIEW_DEFAULT, fold: { ...CATALOGUE_VIEW_DEFAULT.fold } }, count: null, runEngine: null,
+  // The side panel's Test (PAN-3) by lower-cased id: { busy, text, err }. A repaint while it runs draws the panel anew
+  // and the new one still reads "Testing…" with Test off; a finished answer stays while that model's panel shows.
+  tests: new Map(),
+  // The Jobs tab (models-menu P6), kept for the session: the harness it shows (null until the first load picks the
+  // default; a "Used by" press may set it first), the draft by setting id ({ model?, effort? }, null = cleared), each
+  // card's Show all, the rows an Override pick revealed, the last reads (GET /api/settings, /api/config's catalogue
+  // and steps as { catalog, steps }, GET /api/engines' rows or null), whether a read ever drew the tab and whether a
+  // Save is out (its POST not answered yet).
+  jobs: { engine: null, draft: {}, showAll: { steps: false, helpers: false }, revealed: new Set(), settings: null, config: null, engines: null, loaded: false, saving: false },
 };
 
 function setModelsMsg(text, kind) {
   reportStatus(el.modelsMsg, 'form-msg', text, kind);
 }
 
+/** What the Catalogue's view model reads (catalogue-model.mjs): the GET /api/models body with every list defaulted (a
+ *  partial body still draws), its `providers` (the server's list of names) REPLACED by the GET /api/providers payload
+ *  (null while unknown, so no provider state is claimed), and the page's own facts: the selected project's models, the
+ *  engines (from readyEngines' 60 s cache; null until it answered, so no "Not ready" is claimed), the default harness
+ *  for new runs, the broker's locks and the ids just imported. */
+function catalogueData() {
+  const d = mvState.data || {};
+  const list = (x) => (Array.isArray(x) ? x : []);
+  const obj = (x) => (x && typeof x === 'object' && !Array.isArray(x) ? x : {});
+  const pp = selectedProjectPath();
+  const ready = readyEngines(repaintCatalogue);
+  return {
+    ...d,
+    models: list(d.models), plugin: list(d.plugin), policy: list(d.policy),
+    predefined: list(d.predefined), codex: list(d.codex), copilot: list(d.copilot),
+    uses: obj(d.uses), hiddenBuiltins: obj(d.hiddenBuiltins),
+    providers: mvState.providers ?? null,
+    legacy: pp ? list(state.config?.customModels) : [],
+    projectName: pp ? pp.split('/').pop() : '',
+    engines: ready === null ? null : MODEL_ENGINE_NAMES.map((name) => ({ name, ready: ready.includes(name) })),
+    runEngine: mvState.runEngine,
+    engineLocks: MODEL_ENGINE_NAMES.filter((name) => engineLock(name) !== null).map((name) => ({ name, reason: 'Off while the credential broker is on' })),
+    justImported: mvState.justImported ?? null,
+  };
+}
+
+/** readyEngines' waiter: one function, so the waiters' Set holds it once however often the list draws meanwhile. */
+function repaintCatalogue() { renderModelsViewBody(); }
+
+// The Catalogue's controls a draw makes anew. A repaint nobody asked for (the engines answer, another tab's
+// settings-changed, a window focus) hands the keyboard back to the same control, and the search its caret.
+const CAT_FOCUS_CLASSES = ['mv-search', 'mdl-source', 'filter-chip', 'mdl-show-all', 'mdl-grp-toggle', 'mdl-grp-more', 'mdl-row',
+  'mdl-fix', 'mv-hide-builtin', 'mdl-side-close', 'mdl-act', 'mdl-act-more', 'mdl-copy-id', 'mdl-use'];
+/** What tells a control from its look-alikes: its group's harness and its own data-* keys (dataset compares only). */
+const catFocusSig = (n) => JSON.stringify([n.closest('.mdl-grp[data-engine]')?.dataset.engine || '', n.dataset.id || '',
+  n.dataset.filter || '', n.dataset.engine || '', n.dataset.row || '', n.dataset.act || '']);
+function catFocusTwins(host, cls, sig) {
+  return [...host.querySelectorAll('button, input, select')].filter((n) => n.classList.contains(cls) && catFocusSig(n) === sig);
+}
+/** The focused Catalogue control as { host, cls, sig, nth, caret }, or null when the focus is elsewhere. */
+function catalogueFocus() {
+  const a = document.activeElement;
+  const host = !a || !a.classList ? null : el.modelsList?.contains(a) ? el.modelsList : el.modelPanelHost?.contains(a) ? el.modelPanelHost : null;
+  const cls = host && CAT_FOCUS_CLASSES.find((c) => a.classList.contains(c));
+  if (!cls) return null;
+  const sig = catFocusSig(a);
+  return { host, cls, sig, nth: catFocusTwins(host, cls, sig).indexOf(a), caret: cls === 'mv-search' ? [a.selectionStart, a.selectionEnd] : null };
+}
+function restoreCatalogueFocus(f) {
+  if (!f) return;
+  const twins = catFocusTwins(f.host, f.cls, f.sig);
+  const next = twins[Math.min(Math.max(f.nth, 0), twins.length - 1)];
+  if (!next || document.activeElement === next) return;
+  try { next.focus({ preventScroll: true }); } catch { /* jsdom */ }
+  if (f.caret) { try { next.setSelectionRange(f.caret[0], f.caret[1]); } catch { /* search inputs vary */ } }
+}
+
 function renderModelsViewBody() {
   if (!el.modelsList) return;
-  const d = mvState.data || { models: [], predefined: [], efforts: [] };
-  const pp = selectedProjectPath();
-  const legacy = pp && state.config && Array.isArray(state.config.customModels) ? state.config.customModels : [];
-  const frag = document.createDocumentFragment();
-  // The Providers card is its own tab now (§8.1): at 1000+px it buried the catalog it unlocks,
-  // and importing — the one flow that spanned both — moved here, where its rows land.
-  if (mvState.openShare) {
-    frag.appendChild(renderExportWizard(d.models || []));
-  }
-  frag.appendChild(renderModelsList({
-    query: mvState.query,
-    filter: mvState.filter,
-    collapsed: mvState.collapsed,
-    highlight: mvState.justImported || [],
-    globals: d.models || [],
-    legacy,
-    plugins: d.plugin || [],
-    policy: d.policy || [],
-    predefined: d.predefined || [],
-    codex: d.codex || [],
-    codexEfforts: d.codexEfforts || [],
-    copilot: d.copilot || [],
-    copilotEfforts: d.copilotEfforts || [],
-    gooseEfforts: d.gooseEfforts || [],
-    opencodeEfforts: d.opencodeEfforts || [],
-    efforts: d.efforts || [],
-    hideBuiltin: !!d.hideBuiltinModels,
-    projectName: pp ? pp.split('/').pop() : '',
-  }));
-  el.modelsList.replaceChildren(frag);
-  if (mvState.revealPanel) {
-    mvState.revealPanel = false;
-    revealModelsPanel();
+  const focus = catalogueFocus();
+  const data = catalogueData();
+  const vm = buildCatalogue(data, mvState.cat);
+  // The tab's pill counts the listed models once the catalogue loaded (SH-3); nothing before.
+  mvState.count = mvState.data ? vm.count : null;
+  // Providers is a tab of its own (§8.1): as a card at 1000+px it buried the catalog it unlocks. Importing, the model
+  // form and Share as plugin are screens of the model dialog (models-menu P5): the list holds the Catalogue alone.
+  const { query, filter, source } = mvState.cat;
+  el.modelsList.replaceChildren(renderCatalogue(vm, { doc: document, query, filter, source }));
+  paintModelPanel(data);
+  restoreCatalogueFocus(focus);
+  paintModelsTabs(modelsTabsNav, { active: modelsTabShown || 'catalogue', count: mvState.count });
+}
+
+/** The side panel of the open row into #model-panel-host; an id the loaded catalogue no longer holds closes it. */
+function paintModelPanel(data = catalogueData()) {
+  if (!el.modelPanelHost) return;
+  const panel = mvState.cat.open ? buildModelPanel(data, mvState.cat.open) : null;
+  if (!panel && mvState.data) mvState.cat.open = null;
+  const node = panel ? renderModelPanel(panel, { doc: document }) : null;
+  // A finished Test answer belongs to the panel that shows it: one opened again starts clean.
+  const shown = panel ? String(panel.id).toLowerCase() : '';
+  for (const [lc, t] of mvState.tests) { if (!t.busy && lc !== shown) mvState.tests.delete(lc); }
+  if (node) el.modelPanelHost.replaceChildren(node);
+  else el.modelPanelHost.replaceChildren();
+  if (node) paintModelTest(shown);
+}
+
+// A Test button this page turned off for a running test (and so turns on again), as opposed to one drawn off.
+const heldTestButtons = new WeakSet();
+/** The panel's Test button and result line from `mvState.tests` (PAN-3), when the panel on screen shows `lc`. */
+function paintModelTest(lc) {
+  const open = mvState.cat.open;
+  if (typeof open !== 'string' || open.toLowerCase() !== lc) return;
+  const t = mvState.tests.get(lc);
+  const btn = el.modelPanelHost?.querySelector('.mdl-act[data-act="test"]');
+  const out = el.modelPanelHost?.querySelector('.mdl-test-result');
+  if (btn && t?.busy && !btn.disabled) { btn.disabled = true; heldTestButtons.add(btn); }
+  if (btn && !t?.busy && heldTestButtons.has(btn)) { btn.disabled = false; heldTestButtons.delete(btn); }
+  if (btn && t) paintTestLabel(btn, t);
+  if (out && t) {
+    out.textContent = t.text;
+    out.className = `mdl-test-result hint${t.err ? ' err' : ''}`;
   }
 }
 
-/** Bring an open in-page panel (the share wizard) into view. */
-function revealModelsPanel() {
-  const panel = el.modelsList && el.modelsList.querySelector('.mv-editor');
-  if (!panel) return;
-  try { panel.scrollIntoView({ behavior: 'smooth', block: 'start' }); } catch { /* jsdom */ }
+/** PAN-3: Test reads "Testing…" with the spinner while it runs, then "Works" for BUTTON_DONE_MS, the look withButton
+ *  paints (action-feedback.css keys on data-fb-state). Painted from `mvState.tests`, so a panel drawn anew mid-test
+ *  shows it too; the answer itself stays on the result line. */
+function paintTestLabel(btn, t) {
+  const state = t.busy ? 'busy' : t.done ? 'done' : '';
+  if ((btn.dataset.fbState || '') === state) return;
+  if (state) btn.dataset.fbState = state; else delete btn.dataset.fbState;
+  btn.classList.toggle('is-busy', state === 'busy');
+  btn.classList.toggle('is-done', state === 'done');
+  if (state === 'busy') btn.setAttribute('aria-busy', 'true'); else btn.removeAttribute('aria-busy');
+  const doc = btn.ownerDocument;
+  if (state === 'busy') {
+    const spin = doc.createElement('span');
+    spin.className = 'btn-spin';
+    spin.setAttribute('aria-hidden', 'true');
+    btn.replaceChildren(spin, 'Testing…');
+  } else if (state === 'done') {
+    btn.replaceChildren(feedbackIcon(doc, 'ok', 'btn-ic'), 'Works');
+  } else {
+    btn.replaceChildren('Test');
+  }
 }
 
-// ── Model editor dialog (configurable-models-design.md §4.10) ───────────────
-// The editor is a task: it opens over the catalog, owns Escape and the backdrop, and guards unsaved
-// work on the way out. `mvState.editing` / `openCreate` / `prefill` still say WHAT it edits.
+/** The row of `id` in the drawn list: in `engine`'s group when given, else its first (a dataset compare, ignoring case
+ *  as ids do). */
+function modelRowEl(id, engine = '') {
+  if (!el.modelsList || !id) return null;
+  const lc = String(id).toLowerCase();
+  const rows = [...el.modelsList.querySelectorAll('.mdl-grp[data-engine] .mdl-row[data-id]')].filter((n) => n.dataset.id.toLowerCase() === lc);
+  return rows.find((n) => !engine || n.closest('.mdl-grp')?.dataset.engine === engine) || rows[0] || null;
+}
+
+// ── Model dialog (configurable-models-design.md §4.10; models-menu P5) ──────
+// One modal (#model-editor-modal > #mv-editor-host) shows the screen the flow is on: Add model's step 1 ("Where it
+// runs"), step 2's list (the import) or the model form (add, edit, Duplicate, Edit a copy). Each screen is a
+// section.card a pure module builds; showModelScreen lays it out and mounts it. `mvState.editing` / `prefill` still say
+// WHAT the form edits, `mvState.dlg` where the flow is.
 const mvEditor = { lastFocus: null };
-// A form: a backdrop click never closes it; Escape asks once something changed (an env row added or removed
-// counts). Cancel closes at once — never asks; a successful Save closes it too.
+// Bumped on every open, close and provider change: a list or import answer carrying an older one draws nothing.
+let modelDlgSeq = 0;
+// A Save (withButton) or an import is out: Escape, Cancel, Close and the screens' own steps wait for its answer.
+const modelDialogBusy = () => !!mvState.dlg?.busy || !!el.modelEditorModal?.querySelector('[data-fb-state="busy"]');
+// A form: a backdrop click never closes it; Escape asks once something changed (an env row added or removed counts,
+// and so does a form left by Back with changes). Cancel and Close close at once — never ask; a successful Save (or an
+// export) closes it too. One guard, installed once; each open hands it that open's rules (modelGuardOptions).
 const modelEditorGuard = el.modelEditorModal ? guardModal(el.modelEditorModal, {
   kind: 'form', close: () => closeModelEditorDialog(), discardMessage: 'This model has unsaved changes.',
 }) : null;
 
-/** The open editor, wherever it lives (the dialog today; the page while it is closing). */
-function modelEditorEl() {
-  return (el.modelEditorHost && el.modelEditorHost.querySelector('.mv-editor'))
-    || (el.modelsList && el.modelsList.querySelector('.mv-editor'));
+/** This open's guard rules: `busy` keeps the default check (a withButton Save) beside an import in flight, and the dirty rule
+ *  spans the screens (Next alone never asks, filter typing never does, form text typed before a Back still does). Escape's
+ *  question names a model; Share as plugin's is the dialogs' own (`discardMessage`). */
+function modelGuardOptions(discardMessage = 'This model has unsaved changes.') {
+  return {
+    discardMessage,
+    busy: modelDialogBusy,
+    isDirty: () => modelEditorGuard.changed() || !!mvState.dlg?.formDirty,
+  };
 }
 
+/** Step 2's list state for `provider`: the address and key typed, the ticked ids, the filter and the last listed payload. */
+const freshAddList = (provider, baseUrl = '') => ({ provider, baseUrl: baseUrl || '', apiKey: '', ticked: new Set(), filter: '', payload: null });
+
+/** A fresh flow state for one open of the dialog. */
+function beginModelDialog(add = {}, { baseUrl = '' } = {}) {
+  const first = { where: 'signin', provider: 'copilot', engine: 'claude', ...add };
+  mvState.dlg = {
+    screen: null, add: first, list: freshAddList(first.provider, baseUrl),
+    form: null, from: null, busy: false, formDirty: false, seq: ++modelDlgSeq, engines: null,
+    // "Change where it runs": the edit form's harness while step 1 shows for it (no tiles; Continue returns to the form).
+    fixedEngine: '',
+  };
+  return mvState.dlg;
+}
+
+/** The form, when the dialog shows it (step 2's sheets are .mv-editor too, but carry no data-mode). */
+function modelEditorEl() {
+  return el.modelEditorHost ? el.modelEditorHost.querySelector('.mv-editor[data-mode]') : null;
+}
+
+/** Mount `card` as the dialog's screen: layoutDialog (a no-op on a card laid out before), the screen's title names the
+ *  modal (aria-labelledby), then the modal shows and its guard takes this open's rules; when it already shows, the new
+ *  screen is the guard's clean state (`keep`: a redraw of the same screen keeps it). `focus`: a selector, after a tick;
+ *  `discardMessage`: Escape's question for this open (the model form's when not given). */
+function showModelScreen(card, { head = [], foot = [], focus = '', keep = false, discardMessage } = {}) {
+  if (!el.modelEditorModal || !el.modelEditorHost) return;
+  layoutDialog(card, { head, foot });
+  const title = card.querySelector('.mv-editor-title');
+  if (title) title.id = 'mv-editor-heading';
+  el.modelEditorHost.replaceChildren(card);
+  if (el.modelEditorModal.classList.contains('hidden')) {
+    mvEditor.lastFocus = document.activeElement;
+    el.modelEditorModal.classList.remove('hidden');
+    modelEditorGuard?.opened(modelGuardOptions(discardMessage));
+  } else if (!keep) modelEditorGuard?.markClean();
+  if (!focus) return;
+  setTimeout(() => {
+    if (!card.isConnected) return;
+    try { card.querySelector(focus)?.focus({ preventScroll: true }); } catch { /* jsdom */ }
+  }, 0);
+}
+
+/** renderModelEditor's options from the loaded catalogue: the providers, Copilot's models and every engine's efforts. */
+function modelFormOptions(d = mvState.data || {}) {
+  return { providers: mvState.providers, copilotModels: mvState.copilotModels, ...(d.codexEfforts ? { codexEfforts: d.codexEfforts } : {}), cursorEfforts: d.cursorEfforts || [], copilotEfforts: d.copilotEfforts || [], gooseEfforts: d.gooseEfforts || [], opencodeEfforts: d.opencodeEfforts || [] };
+}
+
+/** Mount a model form as the dialog's screen; its Back (reached through step 1) returns to `from`. */
+function showModelForm(editor, { mode, copyFrom = '', from = null } = {}) {
+  const dlg = mvState.dlg || beginModelDialog();
+  dlg.screen = 'form';
+  dlg.from = from;
+  dlg.form = { mode, copyFrom, formEl: editor };
+  // The shared dialog anatomy: the head (mark, title, Close) stays pinned, the Save/Cancel row too (dialog-layout.mjs).
+  // A fresh form starts empty enough to type into; an edit keeps the caret out of the way.
+  showModelScreen(editor, {
+    head: [editor.querySelector(':scope > .mv-editor-head')],
+    foot: [editor.querySelector(':scope > .mv-editor-msg'), editor.querySelector(':scope > .mv-editor-btns')],
+    focus: mode === 'edit' ? '.mv-editor-btns .btn-primary' : 'input:not([type="checkbox"]):not([disabled]), select, textarea',
+  });
+}
+
+/** The form on its own (Edit, Edit a copy): a new open of the dialog with what mvState.editing / prefill say. Edit a
+ *  copy's form is drawn for where the plugin model runs (its harness, connection and env), and may take that model's
+ *  own id: the global entry it saves shadows the plugin's. */
 function openModelEditorDialog() {
   if (!el.modelEditorModal || !el.modelEditorHost) return;
   const d = mvState.data || { efforts: [] };
-  const editor = renderModelEditor(mvState.editing, d.efforts || [], { providers: mvState.providers, copilotModels: mvState.copilotModels, ...(d.codexEfforts ? { codexEfforts: d.codexEfforts } : {}), cursorEfforts: d.cursorEfforts || [], copilotEfforts: d.copilotEfforts || [], gooseEfforts: d.gooseEfforts || [], opencodeEfforts: d.opencodeEfforts || [] });
-  if (!mvState.editing && mvState.prefill) prefillModelEditor(editor, mvState.prefill);
-  const title = editor.querySelector('.mv-editor-title');
-  if (title) title.id = 'mv-editor-heading';
-  // The shared dialog anatomy: the title stays pinned, the Save/Cancel row too (dialog-layout.mjs).
-  layoutDialog(editor, { head: [title], foot: [editor.querySelector(':scope > .mv-editor-msg'), editor.querySelector(':scope > .mv-editor-btns')] });
-  el.modelEditorHost.replaceChildren(editor);
-  mvEditor.lastFocus = document.activeElement;
-  el.modelEditorModal.classList.remove('hidden');
-  modelEditorGuard?.opened();
-  // A fresh create starts empty enough to type into; an edit keeps the caret out of the way.
-  setTimeout(() => {
-    const first = editor.querySelector(mvState.editing ? '.mv-editor-btns .btn-primary' : 'input:not([type="checkbox"]):not([disabled]), select, textarea');
-    try { first?.focus({ preventScroll: true }); } catch { /* jsdom */ }
-  }, 0);
+  const pre = mvState.editing ? null : mvState.prefill;
+  const copyOpts = pre ? { where: connectionOf({ engine: pre.engine, upstream: pre.upstream, env: pre.env }).kind, takenIds: takenModelIds({ shadowing: pre.id }) } : {};
+  const editor = renderModelEditor(mvState.editing, d.efforts || [], { ...modelFormOptions(d), ...copyOpts });
+  if (pre) {
+    prefillModelEditor(editor, pre);
+    // The prefill writes the id and adds env rows without an input event: Save follows them here.
+    paintEditorSave(editor);
+  }
+  beginModelDialog();
+  showModelForm(editor, { mode: mvState.editing ? 'edit' : pre ? 'copy' : 'add' });
 }
 
 function closeModelEditorDialog() {
   if (!el.modelEditorModal || el.modelEditorModal.classList.contains('hidden')) return;
   el.modelEditorModal.classList.add('hidden');
   el.modelEditorHost?.replaceChildren();
-  mvState.editing = null; mvState.openCreate = false; mvState.prefill = null;
+  mvState.editing = null; mvState.prefill = null;
+  // What is still out for this open (the engines, a list) finds no dialog and draws nothing.
+  mvState.dlg = null;
+  modelDlgSeq += 1;
   try { mvEditor.lastFocus?.focus(); } catch { /* the opener may be gone */ }
 }
 
-// "Hide built-in models" (#422): one settings key, saved on change. Every picker
-// reads the flag off /api/config, so the refresh below repaints them all.
+// "Hide built-in models" per harness (#422; models-menu P4), saved on change: Claude Code's is the `hideBuiltinModels`
+// key (setup, the CLI, Ask and team policy read it), Codex's and Copilot's are `hideBuiltinEngines`. Every picker reads
+// the flags off /api/config, so the refresh below repaints them all. Hiding closes a side panel on a built-in of that
+// harness: its row leaves the list.
+const BUILTIN_LIST_OF = Object.freeze({ claude: 'predefined', codex: 'codex', copilot: 'copilot' });
 async function saveHideBuiltinModels(cb) {
   const wanted = cb.checked;
+  const engine = cb.dataset.engine || 'claude';
+  const name = engineLabel(engine);
+  const hadFocus = document.activeElement === cb;
   cb.disabled = true;
   try {
     const res = await fetch('/api/settings', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ hideBuiltinModels: wanted }),
+      body: JSON.stringify(engine === 'claude' ? { hideBuiltinModels: wanted } : { hideBuiltinEngines: { [engine]: wanted } }),
     });
     const data = await safeJson(res);
     if (!res.ok) { cb.checked = !wanted; return setModelsMsg(data.error || `HTTP ${res.status}`, 'err'); }
-    setModelsMsg(wanted ? 'Built-in models hidden from every picker. Runs that already use one keep working.' : 'Built-in models shown again.', 'ok');
+    setModelsMsg(wanted ? `${name}'s built-in models hidden from every picker. Runs that already use one keep working.` : `${name}'s built-in models shown again.`, 'ok');
+    if (wanted && openBuiltinOf(engine)) closeModelPanel();
     await refreshModelsEverywhere();
   } catch (e) {
     cb.checked = !wanted;
     setModelsMsg(e.message, 'err');
   } finally {
     cb.disabled = false;
+    // The refresh drew the switch anew, and a browser may drop the focus of a control while it is off: the keyboard
+    // goes back to this harness's switch, unless it moved somewhere else meanwhile.
+    if (hadFocus && (!document.activeElement || document.activeElement === document.body)) {
+      const next = [...(el.modelsList?.querySelectorAll('.mv-hide-builtin[data-engine]') || [])].find((n) => n.dataset.engine === engine);
+      try { next?.focus({ preventScroll: true }); } catch { /* jsdom */ }
+    }
   }
+}
+
+/** Does the side panel show a built-in of `engine` (its row comes from that harness's built-in list)? */
+function openBuiltinOf(engine) {
+  const open = mvState.cat.open;
+  if (!open || buildModelPanel(catalogueData(), open)?.source !== 'builtin') return false;
+  const lc = open.toLowerCase();
+  return (mvState.data?.[BUILTIN_LIST_OF[engine]] || []).some((m) => m && String(m.id).toLowerCase() === lc);
 }
 
 // "Edit a copy" prefill (design §9.6): create-mode editor seeded from a plugin
@@ -18897,6 +20054,9 @@ function prefillModelEditor(editor, pre) {
   if (pre.engine) setModelEngine(editor, pre.engine);
   const idInput = editor.querySelector('.mv-id');
   if (idInput) idInput.value = pre.id || '';
+  // The plugin model's id is the copy's on purpose (it shadows the plugin's): the upstream set below must not swap
+  // it for a <provider>-<upstream id> handle (applyConnectionModeIn suggests one only while data-auto is not "off").
+  if (idInput && pre.id) idInput.dataset.auto = 'off';
   const labelInput = editor.querySelector('.mv-label');
   if (labelInput) labelInput.value = pre.label && pre.label !== pre.id ? pre.label : '';
   const efforts = new Set(pre.efforts || []);
@@ -18904,7 +20064,7 @@ function prefillModelEditor(editor, pre) {
     for (const cb of editor.querySelectorAll('.mv-effort-cb')) cb.checked = efforts.has(cb.value);
   }
   setModelCost(editor, pre.cost || null);
-  // A bridged source (Edit a copy of a plugin model, Duplicate): the upstream
+  // A bridged source (Edit a copy of a plugin model): the upstream
   // travels, but a MASKED key echo must not — create mode stores literally.
   if (pre.upstream) {
     const { apiKey, ...rest } = pre.upstream;
@@ -18912,80 +20072,68 @@ function prefillModelEditor(editor, pre) {
   }
   const wrap = editor.querySelector('.mv-env');
   if (!wrap) return;
-  for (const [k, v] of Object.entries(pre.env || {})) {
+  // A form for its own endpoint starts with the two rows it needs (ANTHROPIC_BASE_URL, ANTHROPIC_AUTH_TOKEN): the
+  // plugin's value, or its secret's empty row, takes the empty new row of that name, so no two rows share one.
+  const rowFor = (k) => {
+    const free = [...wrap.querySelectorAll('.mv-env-row:not([data-key])')]
+      .find((r) => r.querySelector('.mv-env-key').value === k && !r.querySelector('.mv-env-val').value);
+    if (free) return free;
     const row = makeEnvRow();
     row.querySelector('.mv-env-key').value = k;
-    row.querySelector('.mv-env-val').value = v;
     wrap.appendChild(row);
-  }
+    return row;
+  };
+  for (const [k, v] of Object.entries(pre.env || {})) rowFor(k).querySelector('.mv-env-val').value = v;
   for (const k of pre.secretKeys || []) {
-    const row = makeEnvRow();
-    row.querySelector('.mv-env-key').value = k;
-    row.querySelector('.mv-env-val').placeholder = 'value required: the plugin secret is not copied';
-    wrap.appendChild(row);
+    rowFor(k).querySelector('.mv-env-val').placeholder = 'value required: the plugin secret is not copied';
   }
   const msg = editor.querySelector('.mv-editor-msg');
   if (msg && (pre.secretKeys || []).length) {
     msg.textContent = `Fill in ${pre.secretKeys.join(', ')}. Secret values never leave the plugin.`;
-  } else if (msg && pre.duplicatedFrom) {
-    msg.textContent = `Copy of ${pre.duplicatedFrom}. Change what should differ, then Add model.`;
   }
 }
 
 /**
- * Duplicate a global entry: a CREATE editor seeded from it, with a free id
- * suggested. Deriving a sibling that differs in one parameter is the common way
- * a catalog grows — same endpoint, a different wire id or effort set or price.
+ * Duplicate a global entry: a copy form drawn from it (renderModelEditor's
+ * `copyFrom`), with a free id suggested. Deriving a sibling that differs in one
+ * parameter is the common way a catalog grows — same endpoint, a different wire
+ * id or effort set or price. The copy keeps the source's harness and connection.
  *
- * The raw env values are fetched first (GET :id/env-value, the same deliberate
- * reveal the editor's "Show values" uses). The card only ever holds MASKED ones,
- * and create-mode values are stored literally — seeding from the masks would
- * write a row of bullets into settings.json as if it were a token.
+ * The page holds only the MASKS GET /api/models lists, never a raw value: the
+ * POST names its source (`copyFrom`) and the server fills each masked echo
+ * (an env value, the provider key) with the source's stored one. "Show values"
+ * and a row's copy read the source's on request (data-copy-from).
  */
-async function duplicateModelFlow(id) {
+function duplicateModelFlow(id) {
   const d = mvState.data || {};
   const src = (d.models || []).find((m) => m.id === id);
-  if (!src) return;
-  let env = {};
-  if (src.env && Object.keys(src.env).length) {
-    try {
-      const res = await fetch(`/api/models/${encodeURIComponent(id)}/env-value`);
-      const data = await safeJson(res);
-      if (!res.ok || !data.env) return setModelsMsg(data.error || `HTTP ${res.status}`, 'err');
-      env = data.env;
-    } catch (e) {
-      return setModelsMsg(e.message, 'err');
-    }
-  }
+  if (!src || !el.modelEditorModal || !el.modelEditorHost) return;
   // Every id the catalog knows — the add is rejected for colliding with ANY of
   // them, so a suggestion has to clear all four layers, not just the global one.
   const taken = [d.models, d.plugin, d.predefined].flatMap((xs) => (xs || []).map((m) => m.id));
-  const newId = suggestDuplicateId(src.id, taken);
   mvState.editing = null;
-  mvState.openCreate = true;
-  mvState.openShare = false;
-  mvState.prefill = {
-    id: newId,
-    // Only suffix a label the user actually chose; an entry that never had one
-    // keeps none, so the copy's label defaults to its own new id.
-    label: src.label && src.label !== src.id ? `${src.label} copy` : '',
-    efforts: src.efforts,
-    env,
-    secretKeys: [],
-    ...(src.cost ? { cost: src.cost } : {}),
-    duplicatedFrom: src.id,
-  };
-  openModelEditorDialog();
+  mvState.prefill = null;
+  const editor = renderModelEditor(src, d.efforts || [], {
+    ...modelFormOptions(d),
+    copyFrom: src.id,
+    id: suggestDuplicateId(src.id, taken),
+    label: suggestDuplicateLabel(src),
+    where: connectionOf(src).kind,
+    takenIds: takenModelIds(),
+  });
+  beginModelDialog();
+  showModelForm(editor, { mode: 'copy', copyFrom: src.id });
 }
 
 async function editPluginCopyFlow(plugin, id) {
+  // The dialog as it was when asked: a screen opened while the plugin answered stays (the form never replaces it).
+  const dlg = mvState.dlg;
   try {
     const res = await fetch(`/api/plugins/${encodeURIComponent(plugin)}/model-env?id=${encodeURIComponent(id)}`);
     const data = await safeJson(res);
     if (!res.ok) return setModelsMsg(data.error || `HTTP ${res.status}`, 'err');
+    if (mvState.dlg !== dlg) return;
     mvState.editing = null;
-    mvState.openCreate = true;
-    mvState.openShare = false;
     mvState.prefill = data;
     openModelEditorDialog();
   } catch (e) {
@@ -18993,8 +20141,28 @@ async function editPluginCopyFlow(plugin, id) {
   }
 }
 
+/** Share as plugin (DESIGN SHR-1): the export wizard over the user's own models, a screen of the model dialog (the
+ *  page head's More menu opens it). Escape asks with the dialogs' own sentence once a box or a field changed. */
+function openShareDialog() {
+  if (!el.modelEditorModal || !el.modelEditorHost) return;
+  mvState.editing = null;
+  mvState.prefill = null;
+  const models = Array.isArray(mvState.data?.models) ? mvState.data.models : [];
+  const card = renderExportWizard(models, { doc: document });
+  beginModelDialog().screen = 'share';
+  showModelScreen(card, {
+    head: [card.querySelector(':scope > .mvx-head')],
+    foot: [card.querySelector(':scope > .mvx-msg'), card.querySelector(':scope > .mv-editor-btns')],
+    focus: '.mvx-model-cb, .mvx-name',
+    discardMessage: DISCARD_MESSAGE,
+  });
+}
+
+/** "Export scaffold" (SHR-2): POST the dialog's wizard; on success the dialog closes and a toast says where the scaffold
+ *  went and what it left out (`omitted`: a literal provider key, a secret-named header). A refusal stays in .mvx-msg. */
 async function exportPluginFlow() {
-  const wiz = el.modelsList && el.modelsList.querySelector('.mvx');
+  const dlg = mvState.dlg;
+  const wiz = dlg?.screen === 'share' ? el.modelEditorHost?.querySelector('.mvx') : null;
   if (!wiz) return;
   const msg = wiz.querySelector('.mvx-msg');
   const say = (text) => { if (msg) { msg.textContent = text; msg.className = 'form-msg mvx-msg err'; } };
@@ -19002,158 +20170,314 @@ async function exportPluginFlow() {
   if (!body.models.length) return say('pick at least one model');
   if (!body.name) return say('plugin name is required');
   if (!body.dest) return say('destination folder is required');
-  try {
+  if (msg) { msg.textContent = ''; msg.className = 'form-msg mvx-msg'; }
+  // withButton holds the guard's busy rule while the request is out: Escape, Cancel and Close wait for the answer.
+  const r = await withButton(wiz.querySelector('.mvx-export'), async () => {
     const res = await fetch('/api/models/export-plugin', {
       method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
     });
     const data = await safeJson(res);
-    if (!res.ok) return say(data.error || `HTTP ${res.status}`);
-    mvState.openShare = false;
-    setModelsMsg(`Plugin scaffold written to ${data.dir}. Run git init + push it, then teammates install it from the Marketplace page.`, 'ok');
-    renderModelsViewBody();
-  } catch (e) {
-    say(e.message);
+    return res.ok ? { ok: true, data } : { ok: false, error: data.error || `HTTP ${res.status}` };
+  }, { busy: 'Exporting…', done: 'Exported' });
+  if (r.skipped) return;
+  // The answer belongs to the open that asked: a screen opened meanwhile (the page's Add model, by keyboard) stays, and a
+  // refusal it can no longer show in .mvx-msg is a toast.
+  const live = mvState.dlg === dlg;
+  if (!r.ok) return live ? say(r.error) : notify({ tone: 'err', title: 'Not exported', detail: r.error });
+  if (live) closeModelEditorDialog();
+  // Its own title and detail, never splitMessage: a short folder would split the title at "Not included: …".
+  const omitted = Array.isArray(r.data?.omitted) ? r.data.omitted : [];
+  notify({
+    tone: 'ok',
+    title: `Plugin scaffold written to ${r.data?.dir}.`,
+    detail: omitted.length ? `Not included: ${omitted.map((o) => `${o.what} (${o.id})`).join(', ')}.` : '',
+  });
+}
+
+/** Every settings read lands here: the Catalogue's "Default" chip and its group menus follow the default harness. */
+function syncRunEngine(data) {
+  const runEngine = (data && data.runEngine) || null;
+  if (runEngine !== mvState.runEngine) {
+    mvState.runEngine = runEngine;
+    if (mvState.data) renderModelsViewBody();
   }
 }
 
-const CODEX_HELPER_JOBS = ['title', 'classifier', 'overview', 'prDescription', 'memoryDefrag', 'workspaceScan'];
-// src/core/model-env.mjs HELPER_ENGINES (the browser cannot load /src/core): the engines with helper slots of their own.
-const HELPER_ENGINES = ['claude', 'codex'];
-// Claude's helper slots at user level are their own settings keys (settings-cascade.mjs CLAUDE_USER): a model id for
-// titles, Auto and PR descriptions (no effort), and the Memory defragment, Agent generation, Run naming and Command
-// summaries pairs. No user-level overview slot. Agent generation, Run naming and Command summaries are Claude's alone
-// (they always run on Claude), so no other tab has their rows; Run naming shows only while smartRunNaming is on, Command
-// summaries only while commandSummaries is on.
-const CLAUDE_USER_HELPER_JOBS = ['title', 'classifier', 'prDescription', 'memoryDefrag', 'agentGen', 'naming', 'commandSummary'];
-const helperPair = (p) => (p && p.model ? { model: p.model, ...(p.effort ? { effort: p.effort } : {}) } : undefined);
-// Run naming shows only while smartRunNaming is on, Command summaries only while commandSummaries is on; the
-// Requirements interview is a user-only slot (settings key requirementsInterview), listed only while its flag is on.
-// All asked at paint time, never a module constant.
-const claudeUserHelperJobs = () => [...CLAUDE_USER_HELPER_JOBS.filter((job) => (job !== 'naming' || flagOn('smartRunNaming'))
-  && (job !== 'commandSummary' || flagOn('commandSummaries'))),
-  ...(flagOn('requirements') ? ['requirementsInterview'] : [])];
-const CLAUDE_USER_HELPER_OWN = (data) => ({
-  title: data.titleModel ? { model: data.titleModel } : undefined,
-  classifier: data.autoWorkflowModel ? { model: data.autoWorkflowModel } : undefined,
-  prDescription: data.prDescriptionModel ? { model: data.prDescriptionModel } : undefined,
-  memoryDefrag: helperPair(data.memoryDefrag),
-  agentGen: helperPair(data.agentGenModel),
-  requirementsInterview: data.requirementsInterview && (data.requirementsInterview.model || data.requirementsInterview.effort)
-    ? { ...(data.requirementsInterview.model ? { model: data.requirementsInterview.model } : {}), ...(data.requirementsInterview.effort ? { effort: data.requirementsInterview.effort } : {}) } : undefined,
-  naming: helperPair(data.namingModel),
-  commandSummary: helperPair(data.commandSummaryModel),
-});
-let lastEngineSettingsData = null;
-// The catalog the Models cards last painted with, and whether it loaded (the Roles card's catalog-failure line).
-let lastModelCatalog = []; let lastModelCatalogOk = true;
-/** The Engines card, then the Roles card (each paints on its own). A repaint that a Save of this card did not ask for
- *  (`force`) keeps a card with unsaved rows as it is: another card's Save or a settings-changed broadcast. */
-async function paintEngineSettings(data, { force = false } = {}) {
-  const root = document.getElementById('engine-settings-root');
+// ---- Models › Jobs (models-menu P6): which model does which job. jobs-model.mjs builds the view model from the last
+// reads and the draft, jobs-view.mjs draws it into #jobs-root, model-picker.mjs is every pick's menu. One draft holds
+// the edits of every harness; Save sends what differs in one POST /api/settings.
+
+/** One GET of the tab: its JSON object ({} when the body is no object), or null when the read failed or threw. */
+async function jobsRead(url) {
+  try {
+    const res = await fetch(url);
+    if (!res.ok) return null;
+    const body = await safeJson(res);
+    return body && typeof body === 'object' && !Array.isArray(body) ? body : {};
+  } catch { return null; }
+}
+
+/** Reads the Jobs tab: GET /api/settings and /api/config (no project) and, with `engines`, GET /api/engines (the
+ *  readiness preflight: on a show only, never from a broadcast), together. The newest call wins: an older one writes
+ *  no settings and draws nothing. A failed settings or config read draws nothing new and leaves `loaded` as it was; a
+ *  body without steps, models or engines reads as empty. The draft is kept: what is saved changes underneath it.
+ *  Never rejects, and never writes #models-jobs-msg (loadSettings' load error lives there). */
+async function loadJobs({ engines = true } = {}) {
+  const seq = ++jobsLoadSeq;
+  const j = mvState.jobs;
+  const [settings, cfg, eng] = await Promise.all([jobsRead('/api/settings'), jobsRead('/api/config'), engines ? jobsRead('/api/engines') : null]);
+  // The readiness rows and the broker's locks are kept from whichever read brought them; a body without the list
+  // keeps both (the locks the boot learned from /api/engine-locks too).
+  const rows = Array.isArray(eng?.engines) ? eng.engines : null;
+  if (rows) {
+    j.engines = rows;
+    setEngineLocks(rows); applyEngineLocks();
+  }
+  if (seq !== jobsLoadSeq) { if (rows) repaintJobs(); return; }
+  if (!settings || !cfg) return;
+  j.settings = settings;
+  j.config = {
+    catalog: Array.isArray(cfg.models) ? cfg.models : [],
+    steps: Array.isArray(cfg.steps) ? cfg.steps.filter((s) => s && typeof s.key === 'string').map((s) => ({ key: s.key, label: s.label })) : [],
+  };
+  // The first read opens the tab on the default harness, unless a "Used by" press already named one.
+  if (j.engine === null) j.engine = (typeof settings.runEngine === 'string' && settings.runEngine) || 'claude';
+  syncRunEngine(settings);
+  j.loaded = true;
+  renderJobsTab();
+}
+
+/** What buildJobs reads: the last reads, the broker's locks, the flags and the ids GET /api/models marks testable. */
+function jobsData() {
+  const j = mvState.jobs;
+  const d = mvState.data || {};
+  const testable = new Set();
+  for (const key of ['predefined', 'codex', 'copilot', 'models', 'plugin', 'policy']) {
+    for (const m of Array.isArray(d[key]) ? d[key] : []) if (m && m.testable === true && typeof m.id === 'string') testable.add(m.id);
+  }
+  return {
+    settings: j.settings || {}, steps: j.config?.steps || [], catalog: j.config?.catalog || [], engines: j.engines, locks: addEngineLocks(),
+    flags: { requirements: flagOn('requirements'), design: flagOn('design'), smartRunNaming: flagOn('smartRunNaming'), commandSummaries: flagOn('commandSummaries') },
+    testable,
+  };
+}
+
+/** The view model and its data. Below Expert the tab shows the default harness; a locked one gives way to Claude Code
+ *  (the harness tiles press the first unlocked tile). */
+function jobsModel() {
+  const j = mvState.jobs;
+  const data = jobsData();
+  const def = (typeof data.settings.runEngine === 'string' && data.settings.runEngine) || 'claude';
+  const want = levelAtLeast('expert') ? (j.engine || def) : def;
+  const engine = data.locks.some((l) => l.name === want) ? 'claude' : want;
+  return { data, vm: buildJobs(data, j.draft, { engine, showAll: j.showAll, revealed: j.revealed }) };
+}
+
+/** A role tile's or a job row's view model by setting id, else null. */
+const jobsRow = (vm, id) => vm.roles.find((r) => r.id === id) || vm.sections.flatMap((s) => s.rows).find((r) => r.id === id) || null;
+
+// The tab's controls a draw makes anew: a repaint hands the keyboard back to the same one, told apart by its row's
+// setting id, its card and its harness.
+const JOBS_FOCUS_CLASSES = ['mdl-hx-t', 'mdl-default-btn', 'mdl-tile', 'mdl-pick', 'mdl-job-test', 'mdl-job-clear', 'mdl-override', 'mdl-show-all', 'mdl-discard', 'mdl-save'];
+const jobsFocusSig = (n) => JSON.stringify([n.closest('[data-setting]')?.dataset.setting || '', n.closest('[data-section]')?.dataset.section || '', n.dataset.engine || '']);
+/** The focused control of the tab as { cls, sig }, or null when the focus is elsewhere. */
+function jobsFocus(root) {
+  const a = document.activeElement;
+  if (!a || !a.classList || !root.contains(a)) return null;
+  const cls = JOBS_FOCUS_CLASSES.find((c) => a.classList.contains(c));
+  return cls ? { cls, sig: jobsFocusSig(a) } : null;
+}
+/** Focus the new twin of `f`; a row's clear or Test that is gone hands it to the row's picker. */
+function restoreJobsFocus(root, f) {
+  if (!f) return;
+  const twin = (cls) => [...root.querySelectorAll(`.${cls}`)].find((n) => jobsFocusSig(n) === f.sig);
+  const next = twin(f.cls) || twin('mdl-pick');
+  if (!next || document.activeElement === next) return;
+  try { next.focus({ preventScroll: true }); } catch { /* detached */ }
+}
+
+/** Draws the tab into #jobs-root from the last reads and the draft. Keeps the scroll, the focused control and the
+ *  flash of the block an address opened (the new block takes it over by id). While a Save is out the Save it draws is
+ *  busy ("Saving…", off), as withButton draws it. Fetches nothing. */
+function renderJobsTab() {
+  const root = el.jobsRoot;
   if (!root) return;
-  let cfg = {}; let cfgOk = true;
-  try { const res = await fetch('/api/config'); cfgOk = res.ok; cfg = await safeJson(res); } catch { cfgOk = false; }
-  const roles = Array.isArray(cfg?.steps) ? cfg.steps : Object.keys(cfg?.config?.steps || {}).map((key) => ({ key, label: key }));
-  const catalog = Array.isArray(cfg?.models) ? cfg.models : [];
-  const fields = { 'run.engine': { own: data.runEngine, inherited: { value: 'claude', source: 'default' } } };
-  for (const engine of ENGINE_NAMES) for (const role of roles) fields[`models.${engine}.steps.${role.key}`] = { own: data.stepModels?.[engine]?.[role.key], inherited: { value: undefined, source: 'default' } };
-  for (const engine of HELPER_ENGINES.filter((e) => e !== 'claude')) {
-    for (const job of CODEX_HELPER_JOBS) fields[utilityId(engine, job)] = { own: data.utilityModels?.[engine]?.[job], inherited: { value: undefined, source: 'default' } };
+  const { data, vm } = jobsModel();
+  const focus = jobsFocus(root);
+  const found = new Set([...root.querySelectorAll('.is-found[id]')].map((n) => n.id));
+  const scrolled = [];
+  for (let n = root.parentElement; n; n = n.parentElement) if (n.scrollTop) scrolled.push([n, n.scrollTop]);
+  root.replaceChildren(renderJobs(vm, { doc: document, engines: data.engines, locks: data.locks }));
+  const save = mvState.jobs.saving ? root.querySelector('.mdl-save') : null;
+  if (save) {
+    const spin = document.createElement('span');
+    spin.className = 'btn-spin';
+    spin.setAttribute('aria-hidden', 'true');
+    save.replaceChildren(spin, document.createTextNode('Saving…'));
+    save.classList.add('is-busy');
+    save.setAttribute('aria-busy', 'true');
+    save.disabled = true;
   }
-  const claudeOwn = CLAUDE_USER_HELPER_OWN(data || {});
-  const claudeJobs = claudeUserHelperJobs();
-  for (const job of claudeJobs) fields[utilityId('claude', job)] = { own: claudeOwn[job], inherited: { value: undefined, source: 'default' } };
-  // The interview's empty choices read "Opus 5.5 (default)" and "medium (default)" (the answer's requirementsInterviewDefault).
-  const interviewDefault = data?.requirementsInterviewDefault;
-  if (interviewDefault?.model && claudeJobs.includes('requirementsInterview')) fields[utilityId('claude', 'requirementsInterview')].inherited = { value: { model: interviewDefault.model, ...(interviewDefault.effort ? { effort: interviewDefault.effort } : {}) }, source: 'default' };
-  // Command summaries: unset runs on the cheapest ready Claude model, so the empty option names it ("Haiku 5.5 (default)").
-  const csAuto = data?.commandSummaryModelEffective;
-  if (fields[utilityId('claude', 'commandSummary')] && csAuto && csAuto.source === 'auto' && csAuto.model) {
-    fields[utilityId('claude', 'commandSummary')].inherited = { value: { model: csAuto.model }, source: 'default' };
-  }
-  lastModelCatalog = catalog; lastModelCatalogOk = cfgOk && catalog.length > 0;
-  const keep = !force && root.querySelector('.inherit-field[data-dirty="1"]');
-  if (!keep) {
-    renderEngineSection(root, { level: 'user', roles, catalog, fields, status: document.getElementById('engineSettingsMsg'), onTest: testModelRow,
-      noEffort: ['title', 'classifier', 'prDescription'].map((job) => utilityId('claude', job)),
-      defaultLabels: { claude: 'the default model' },
-      jobs: { claude: claudeJobs, codex: CODEX_HELPER_JOBS, cursor: [], goose: [], opencode: [] }, modelRoles: data.modelRoles || {} });
-  }
-  lastEngineSettingsData = data;
-  paintModelRoles(data);
-  // Each non-Claude card's readiness line (GET /api/engines). Only on the Models page, where the cards live: a
-  // settings-changed broadcast repaints this from any view, and that must not spawn a preflight.
-  if (currentView() === 'models') void paintEngineCardStatus(root);
+  for (const n of root.querySelectorAll('[id]')) if (found.has(n.id)) n.classList.add('is-found');
+  restoreJobsFocus(root, focus);
+  for (const [n, top] of scrolled) n.scrollTop = top;
 }
-/** Models › Roles: the role rows, then every unset Engines row's "From Everyday coding · …" text from them (AC-1.5). */
-function paintModelRoles(data, { force = false } = {}) {
-  const rolesRoot = document.getElementById('model-roles-root'); const engineRoot = document.getElementById('engine-settings-root');
-  if (!rolesRoot) return;
-  const keep = !force && rolesRoot.querySelector('.inherit-field[data-dirty="1"]');
-  if (!keep) {
-    renderRolesSection(rolesRoot, { roles: data.modelRoles || {}, catalog: lastModelCatalog, engine: data.runEngine || 'claude',
-      status: document.getElementById('modelRolesMsg'), onChange: (roles) => { if (engineRoot) paintRoleFallbacks(engineRoot, roles, lastModelCatalog); } });
-  }
-  if (engineRoot) paintRoleFallbacks(engineRoot, readRolesValues(rolesRoot), lastModelCatalog);
-  // The catalog failure has its own line, so the dirty counter and "Saved." on #modelRolesMsg never hide it.
-  const catalogMsg = document.getElementById('modelRolesCatalogMsg');
-  if (catalogMsg) catalogMsg.hidden = lastModelCatalogOk;
-}
-document.getElementById('modelRolesSave')?.addEventListener('click', async () => {
-  const rolesRoot = document.getElementById('model-roles-root');
-  const body = rolesPatchToSettingsBody(readEngineSection(rolesRoot));
-  if (!body.modelRoles) { setHintMsg('modelRolesMsg', 'Nothing changed.', ''); return; }
-  try {
-    const res = await fetch('/api/settings', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
-    const data = await safeJson(res);
-    if (!res.ok) return setHintMsg('modelRolesMsg', data?.error || `HTTP ${res.status}`, 'err');
-    // Only the Roles card repaints; the Engines rows take the new roles through paintRoleFallbacks.
-    lastEngineSettingsData = data; paintModelRoles(data, { force: true }); setHintMsg('modelRolesMsg', 'Saved.', 'ok');
-  } catch (error) { setHintMsg('modelRolesMsg', error?.message || 'network error', 'err'); }
-});
-/** Fill each engine card's `.engine-card-status` from GET /api/engines: text only (no buttons). An answer
- *  with no `engines` array leaves the lines empty. */
-async function paintEngineCardStatus(root) {
-  let list = null;
-  try { const res = await fetch('/api/engines'); const d = res.ok ? await safeJson(res) : null; list = Array.isArray(d?.engines) ? d.engines : null; } catch { list = null; }
-  for (const line of root.querySelectorAll('.engine-card .engine-card-status')) {
-    const e = list && list.find((x) => x && x.name === line.closest('.engine-card')?.dataset.engine);
-    // Say what was checked: the engine's run-start preflight (its CLI is installed and signed in).
-    line.textContent = !e ? '' : !e.ready ? `${e.label} can't start runs yet: ${String(e.reason || 'its check did not answer').replace(/\.$/, '')}.`
-      : `${e.label} can start runs: its CLI is installed and signed in.${e.reason ? ` Note: ${String(e.reason).replace(/\.$/, '')}.` : ''}`;
-  }
-}
-// The flag flips while the Models page is open: the Engines card gains / loses the interview row. Refetched, since
-// GET /api/settings carries the row's stored pair and its default only while the flag is on.
-onFlagChange('requirements', () => { if (currentView() === 'models' && lastEngineSettingsData) void paintHelperModelCards({ force: true }); });
-document.getElementById('engineSettingsSave')?.addEventListener('click', async () => {
-  const root = document.getElementById('engine-settings-root');
-  const body = enginePatchToSettingsBody(readEngineSection(root));
-  if (!Object.keys(body).length) { setHintMsg('engineSettingsMsg', 'Nothing changed.', ''); return; }
-  try {
-    const res = await fetch('/api/settings', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
-    const data = await safeJson(res);
-    if (!res.ok) return setHintMsg('engineSettingsMsg', data?.error || `HTTP ${res.status}`, 'err');
-    await paintEngineSettings(data, { force: true }); setHintMsg('engineSettingsMsg', 'Saved.', 'ok');
-  } catch (error) { setHintMsg('engineSettingsMsg', error?.message || 'network error', 'err'); }
-});
 
-async function loadModelsView() {
-  if (!el.modelsList) return;
+/** Redraws the tab while it shows (a flag, the interface level). Fetches nothing; off the tab it does nothing. */
+function repaintJobs() {
+  if (mvState.jobs.loaded && currentModelsTab() === 'jobs') renderJobsTab();
+}
+document.addEventListener('worca:level', () => repaintJobs());
+// The requirements flag flips: GET /api/settings carries the interview's stored pair and its default only while it
+// is on, so the tab reads again.
+onFlagChange('requirements', () => { if (mvState.jobs.loaded) void loadJobs({ engines: false }); });
+// The design flag flips: the Design card comes or goes.
+onFlagChange('design', () => repaintJobs());
+
+/** The Jobs block each address word opens: the blocks' own words, and the old card addresses (also under jobs/). */
+const JOBS_PART_OF = Object.freeze({ roles: 'roles', steps: 'steps', helpers: 'helpers', design: 'design',
+  'model-roles-card': 'roles', engine: 'steps', 'engine-settings-card': 'steps', 'title-model': 'helpers' });
+/** Scrolls to and flashes (markFound) the block `rest` names (the part of a '<part>/<harness>' address), its first
+ *  enabled button focused. An unknown word or a block that is not drawn (Design with its flag off) reveals nothing;
+ *  the address stays as typed. The flash ends after 3 s on whichever block holds its id then, as a repaint draws a new one. */
+function revealJobsPart(rest) {
+  const part = Object.hasOwn(JOBS_PART_OF, rest) ? JOBS_PART_OF[rest] : '';
+  const block = part ? document.getElementById(`jobs-${part}`) : null;
+  if (!block || !el.jobsRoot?.contains(block)) return;
+  markFound(block, [...block.querySelectorAll('button')].find((b) => !b.disabled) || null);
+  const id = block.id;
+  clearTimeout(jobsFoundTimers.get(id));
+  jobsFoundTimers.set(id, setTimeout(() => {
+    jobsFoundTimers.delete(id);
+    for (const n of el.jobsRoot?.querySelectorAll('.is-found[id]') || []) if (n.id === id) n.classList.remove('is-found');
+  }, 3000));
+}
+
+/** Opens the picker of a role tile or a job row with that row's value and rules; a pick goes into the draft. */
+function openJobPicker(anchor) {
+  const id = anchor.closest('[data-setting]')?.dataset.setting || '';
+  const { data, vm } = jobsModel();
+  const row = jobsRow(vm, id);
+  if (!row) return;
+  openModelPicker({ doc: document, win: window, anchor, catalog: data.catalog, engine: vm.engine, value: row.value, clearLabel: row.clearLabel,
+    modelOnly: !!row.modelOnly, allowEffortOnly: !!row.allowEffortOnly,
+    onPick: (value) => { mvState.jobs.draft[id] = value; renderJobsTab(); } });
+}
+
+/** "Override a step" / "Override a helper job": a pick shows that row (nothing is stored until its own pick, L27) and
+ *  opens its picker. */
+function openJobsOverride(anchor) {
+  const key = anchor.closest('[data-section]')?.dataset.section || '';
+  const section = jobsModel().vm.sections.find((s) => s.key === key);
+  if (!section) return;
+  openOverrideMenu({ doc: document, win: window, anchor, section, onPick: (id) => {
+    mvState.jobs.revealed.add(id);
+    renderJobsTab();
+    const pick = [...(el.jobsRoot?.querySelectorAll('.mdl-job-row') || [])].find((r) => r.dataset.setting === id)?.querySelector('.mdl-pick');
+    if (pick) openJobPicker(pick);
+  } });
+}
+
+/** Save: what differs from what is saved, in one POST /api/settings; its answer is what is saved now. A refusal keeps
+ *  the draft and says why on the Jobs line. The tab can repaint while the POST is out (a pick, the save's own
+ *  settings-changed): Save stays busy and a press on it sends nothing; a pick made meanwhile stays in the draft, as only
+ *  the ids still holding the value sent leave it, and only the rows revealed before the save fold again. */
+async function saveJobs(btn) {
+  const j = mvState.jobs;
+  if (j.saving) return;
+  const body = jobsSaveBody(j.draft, jobsSaved(j.settings || {}));
+  if (!Object.keys(body).length) return;   // an empty body would mean "nothing"; the bar shows only with changes
+  const sent = { ...j.draft };
+  const shown = new Set(j.revealed);
+  j.saving = true;
+  let r;
+  try {
+    r = await withButton(btn, async () => {
+      try {
+        const res = await fetch('/api/settings', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+        const data = await safeJson(res);
+        return res.ok ? { ok: true, data } : { ok: false, error: data?.error || `HTTP ${res.status}` };
+      } catch (e) { return { ok: false, error: `Worca did not answer (${e.message}).` }; }
+    }, { busy: 'Saving…', done: 'Saved' });
+  } finally { j.saving = false; }
+  if (r.skipped) return;
+  // A refusal redraws too: a Save drawn while the POST was out is busy until then.
+  if (!r.ok) { reportStatus(el.modelsJobsMsg, 'form-msg', r.error, 'err-inline'); renderJobsTab(); return; }
+  if (r.data && typeof r.data === 'object' && !Array.isArray(r.data)) {
+    ++jobsLoadSeq;   // a read sent before this answer is older than it: it draws nothing
+    j.settings = r.data;
+  }
+  const changed = new Set(jobsDirty(j.draft, sent));
+  for (const id of Object.keys(sent)) if (Object.hasOwn(j.draft, id) && !changed.has(id)) delete j.draft[id];
+  for (const id of shown) if (!Object.hasOwn(j.draft, id)) j.revealed.delete(id);
+  syncRunEngine(j.settings);
+  reportStatus(el.modelsJobsMsg, 'form-msg', 'Saved.', 'ok');
+  renderJobsTab();
+}
+
+/** The tab's clicks (one delegate on #jobs-root): the harness tiles, Default for new runs, the role tiles and row
+ *  pickers, a row's Test and clear, Override, Show all, and the save bar. */
+async function onJobsClick(ev) {
+  const t = ev.target.closest('button');
+  const root = el.jobsRoot;
+  if (!t || !root || !root.contains(t) || t.disabled) return;
+  const j = mvState.jobs;
+  const is = (c) => t.classList.contains(c);
+  const id = t.closest('[data-setting]')?.dataset.setting || '';
+  const section = t.closest('[data-section]')?.dataset.section || '';
+  if (is('mdl-hx-t')) {
+    // The tile's own listener already moved aria-pressed; the draft stays.
+    if (t.dataset.engine) { j.engine = t.dataset.engine; renderJobsTab(); }
+  } else if (is('mdl-default-btn')) {
+    const engine = jobsModel().vm.engine;
+    if (await setDefaultRunEngine(engine) === true) { j.settings = { ...(j.settings || {}), runEngine: engine }; renderJobsTab(); }
+  } else if (is('mdl-tile') || is('mdl-pick')) openJobPicker(t);
+  else if (is('mdl-job-clear')) { if (id) { j.draft[id] = null; renderJobsTab(); } }
+  else if (is('mdl-override')) openJobsOverride(t);
+  else if (is('mdl-show-all')) { if (section) { j.showAll[section] = !j.showAll[section]; renderJobsTab(); } }
+  else if (is('mdl-job-test')) { const model = jobsRow(jobsModel().vm, id)?.value?.model; if (model) void testModelRow(model, t); }
+  else if (is('mdl-discard')) {
+    j.draft = {};
+    j.revealed.clear();
+    // A refused Save's line goes with the draft it was about (loadSettings' load error stays).
+    if (!el.modelsJobsMsg?.textContent.startsWith('Could not load settings: ')) reportStatus(el.modelsJobsMsg, 'form-msg', '');
+    renderJobsTab();
+  }
+  else if (is('mdl-save')) await saveJobs(t);
+}
+el.jobsRoot?.addEventListener('click', (ev) => { void onJobsClick(ev); });
+
+/** Reads the catalogue and the providers into mvState and draws the Catalogue. Each call takes a number and the
+ *  newest one wins (an entry, a window focus, refreshModelsEverywhere): an older call writes no payload and no line,
+ *  and resolves false once the newest call has written, so its caller acts on the newest state or not at all.
+ *  Resolves true when this call wrote. An older call therefore settles only when the newest one does. */
+function loadModelsView() {
+  const seq = ++modelsLoadSeq;
+  return (modelsLoadNewest = readModelsView(seq));
+}
+
+async function readModelsView(seq) {
+  if (!el.modelsList) return false;
   setModelsMsg('');
   try {
-    const [res, pres] = await Promise.all([fetch('/api/models'), fetch('/api/providers'), loadCredentials()]);
-    const data = await safeJson(res);
-    if (!res.ok) return setModelsMsg(data.error || `HTTP ${res.status}`, 'err-inline');
-    mvState.data = data;
-    // Providers are best-effort: a failed read paints the card in its
-    // "not connected" state rather than hiding the catalog.
-    const pdata = await safeJson(pres);
+    // A selected project's team policy decides what its pickers hide (hiddenBuiltins): the catalogue asks for it.
+    const pp = selectedProjectPath();
+    const [res, pres] = await Promise.all([fetch(pp ? `/api/models?projectDir=${encodeURIComponent(pp)}` : '/api/models'), fetch('/api/providers'), loadCredentials()]);
+    const [data, pdata] = await Promise.all([safeJson(res), safeJson(pres)]);
+    if (seq !== modelsLoadSeq) return modelsLoadNewest.then(() => false);
+    // The Providers tab's payload first, so a failed catalogue read still lets that tab draw. A failed read
+    // says so on the tab's own line and leaves the payload null (the tab then draws no card).
     mvState.providers = pres.ok ? pdata : null;
+    if (!pres.ok) setProvidersMsg(pdata.error || `HTTP ${pres.status}`, 'err-inline');
+    else setProvidersMsg('');
+    if (!res.ok) { setModelsMsg(data.error || `HTTP ${res.status}`, 'err-inline'); return true; }
+    mvState.data = data;
     renderModelsViewBody();
-    void paintHelperModelCards();
-    // "+ Add model…" from a picker on another page: the dialog opens once the catalog is here.
-    if (mvState.openEditorOnLoad) { mvState.openEditorOnLoad = false; openModelEditorDialog(); }
+    // The Jobs tab's pickers list /api/config and its Test buttons read the catalogue's testable ids: it re-reads (a
+    // window focus re-reads the catalogue there), with no readiness preflight.
+    if (mvState.jobs.loaded && currentModelsTab() === 'jobs') void loadJobs({ engines: false });
+    // "+ Add model…" from a picker on another page: Add model opens once the catalog is here.
+    if (mvState.openEditorOnLoad) { const add = mvState.openEditorOnLoad; mvState.openEditorOnLoad = null; openAddModelDialog(add); }
     // Copilot's models feed the editor's upstream-id datalist; fetched in the
     // background when connected so the view never waits on GitHub.
     if (mvState.providers?.copilot?.connected && !mvState.copilotModels.length) {
@@ -19161,33 +20485,12 @@ async function loadModelsView() {
         if (j && Array.isArray(j.models)) mvState.copilotModels = j.models;
       }).catch(() => {});
     }
+    return true;
   } catch (e) {
+    if (seq !== modelsLoadSeq) return modelsLoadNewest.then(() => false);
     setModelsMsg(e.message, 'err-inline');
-  }
-}
-
-// Models › Engines: its pickers list the catalog, so they repaint whenever it loads — a model added a moment ago is
-// selectable without leaving the page.
-async function paintHelperModelCards({ force = false } = {}) {
-  try {
-    const res = await fetch('/api/settings');
-    if (!res.ok) return;
-    await paintEngineSettings(await safeJson(res), { force });
-  } catch { /* the card keeps its last paint */ }
-}
-
-/** The Providers page: the same card, on a page of its own (§8.1). */
-async function loadProvidersView() {
-  if (!el.providersList) return;
-  setProvidersMsg('');
-  try {
-    const res = await fetch('/api/providers');
-    const data = await safeJson(res);
-    if (!res.ok) return setProvidersMsg(data.error || `HTTP ${res.status}`, 'err-inline');
-    mvState.providers = data;
-    renderProvidersViewBody();
-  } catch (e) {
     setProvidersMsg(e.message, 'err-inline');
+    return true;
   }
 }
 
@@ -19195,33 +20498,130 @@ function setProvidersMsg(text, kind) {
   reportStatus(el.providersMsg, 'form-msg', text, kind);
 }
 
+/** The catalogue's models (your own, plugin and team policy) counted per provider row: the rows' summaries and states. */
+function providerCounts() {
+  const d = mvState.data;
+  return providerModelCounts([...(d?.models || []), ...(d?.plugin || []), ...(d?.policy || [])], mvState.providers);
+}
+
+/** What a draw of the Providers tab shows. Draw and paint compare this one key, so a catalogue change redraws. */
+function providersKey(counts) {
+  return JSON.stringify([mvState.providers, mvState.signIn, counts]);
+}
+
+// Typing survives a redraw (a fold, another row's Save, Refresh usage, a sign-in, a catalogue change). Every drawn field
+// is stamped with what it was drawn with (data-drawn); before the next draw each field whose value differs is read,
+// keyed by its row, its classes and data-provider/-kind/-field, and put back into its twin once drawn. A Save re-stamps
+// its own row (patchProviderFlow), so the row just saved shows the server's values.
+const PV_FIELDS = 'input, select';
+const pvValue = (c) => (c.type === 'checkbox' ? String(c.checked) : c.value);
+const pvFieldKey = (c) => [c.className, c.dataset.provider || '', c.dataset.kind || '', c.dataset.field || ''].join('|');
+/** The image model is one field drawn two ways (the service's list, or a typed id): carried by its field alone. */
+const isImagesModel = (c) => c.matches('.mv-im-model-pick, .mv-im-model');
+
+function stampProviderFields(scope) {
+  for (const c of scope.querySelectorAll(PV_FIELDS)) c.dataset.drawn = pvValue(c);
+}
+
+/** The edited fields on screen, row by row; the image service and the speech engines marked as leads. */
+function providerEdits(root) {
+  const edits = [];
+  for (const item of root.querySelectorAll('.mv-pv-card[data-row]')) {
+    for (const c of item.querySelectorAll(PV_FIELDS)) {
+      if (c.dataset.drawn === pvValue(c)) continue;
+      edits.push({ row: item.dataset.row, key: isImagesModel(c) ? 'model' : pvFieldKey(c), value: pvValue(c), lead: c.matches('.mv-im-service, .mv-sp-engine') });
+    }
+  }
+  return edits;
+}
+
+/** The image model put back the way a pick goes: an id on the service's list is selected, anything else is typed. */
+function restoreImagesModel(item, value) {
+  if (!item.querySelector('.mv-im-model-pick')) item.querySelector('.mv-im-model-list')?.click();   // the list, when the service has one
+  const pick = item.querySelector('.mv-im-model-pick');
+  if (pick && value !== '__other__' && [...pick.options].some((o) => o.value === value)) { pick.value = value; return; }
+  if (pick) { pick.value = '__other__'; pick.dispatchEvent(new window.Event('change', { bubbles: true })); }   // "Other model…"
+  const typed = item.querySelector('.mv-im-model');
+  if (typed) typed.value = value === '__other__' ? '' : value;
+}
+
+/** Put the edits back into the tab just drawn. The image service and the speech engines go first, each announced
+ *  (applyImagesPreset and the engine's own listener set the fields they decide); the rest follow. */
+function restoreProviderEdits(root, edits) {
+  if (!edits.length) return;
+  const focused = document.activeElement;
+  for (const e of [...edits.filter((x) => x.lead), ...edits.filter((x) => !x.lead)]) {
+    const item = [...root.querySelectorAll('.mv-pv-card[data-row]')].find((r) => r.dataset.row === e.row);
+    if (!item) continue;
+    if (e.key === 'model') { restoreImagesModel(item, e.value); continue; }
+    const c = [...item.querySelectorAll(PV_FIELDS)].find((n) => pvFieldKey(n) === e.key);
+    if (!c) continue;
+    if (c.type === 'checkbox') c.checked = e.value === 'true';
+    else c.value = e.value;
+    if (e.lead) c.dispatchEvent(new window.Event('change', { bubbles: true }));
+  }
+  // "Other model…" and "Pick from list" focus the field they draw: a redraw moves no cursor.
+  const now = document.activeElement;
+  if (now !== focused && root.contains(now)) {
+    if (focused && focused !== document.body && focused.isConnected) focused.focus();
+    else now.blur();
+  }
+}
+
+/** The Providers tab, drawn from mvState (loadModelsView reads it), with the open rows and the catalogue's model
+ *  counts; what was typed is carried over. Records what it drew (paintProvidersTab).
+ *  No payload (before the first read, or after a failed one, whose line says why): no card, and a card an earlier
+ *  read drew is taken away, so no flow acts on a payload that is gone (a Save would send a form of defaults). */
 function renderProvidersViewBody() {
   if (!el.providersList) return;
-  el.providersList.replaceChildren(renderProvidersCard(mvState.providers, { signIn: mvState.signIn, split: true }));
-  // OpenRouter's free-model allowance, read afresh each time the card opens.
+  if (!mvState.providers) { providersDrawnKey = ''; el.providersList.replaceChildren(); return; }
+  const counts = providerCounts();
+  const edits = providerEdits(el.providersList);
+  el.providersList.replaceChildren(renderProvidersTab(mvState.providers, { signIn: mvState.signIn, open: mvState.pvOpen, counts }));
+  stampProviderFields(el.providersList);
+  restoreProviderEdits(el.providersList, edits);
+  syncCopilotHostField(el.providersList);   // a restored Account choice shows or hides the GHE.com host
+  providersDrawnKey = providersKey(counts);
+  // OpenRouter's free-model allowance, read afresh each time the card is drawn.
   refreshFreeDaily({ force: true });
 }
 
-/** A page-level message, on whichever of the two pages is showing. */
+/** The Providers tab, drawn only while that tab shows and only when its content changed since the last draw:
+ *  a tab switch keeps a typed key, and a window focus that re-reads the same payload (a broker's) redraws nothing. */
+function paintProvidersTab() {
+  if (currentModelsTab() !== 'providers') return;
+  if (providersKey(providerCounts()) === providersDrawnKey) return;
+  renderProvidersViewBody();
+}
+
+/** A page-level message, on the line of the Models tab that is showing (Providers, else the Catalogue's). */
 function setTabMsg(text, kind) {
-  if (currentView() === 'providers') setProvidersMsg(text, kind);
+  if (currentModelsTab() === 'providers') setProvidersMsg(text, kind);
   else setModelsMsg(text, kind);
 }
 
-/** The providers card lives on its own page now, but its flows still repaint by name. */
+/** The provider rows live on the Providers tab, but their flows still repaint by name. */
 function repaintProviders() {
-  if (currentView() === 'providers') renderProvidersViewBody();
+  if (currentModelsTab() === 'providers') renderProvidersViewBody();
   else if (currentView() === 'models') renderModelsViewBody();
 }
 
 // ── Providers (model-bridge-design.md §8.1/§8.2/§8.4) ──────────────────────
-/** The providers card's home: its own tab's list. */
+/** Where the provider rows render: the Providers tab's list. */
 function providerRoot() { return el.providersList; }
 
-/** A provider card's failure, the house way (#555): a card alert above the card's buttons. null clears it. */
+/** A provider card's failure, the house way (#555): a card alert above the card's buttons. null clears it.
+ *  A failure unfolds its row, so it can be seen; a clear unfolds nothing. */
 function providerAlert(name, title, detail) {
   const row = providerRoot()?.querySelector(`.mv-pv-row[data-provider="${name}"]`);
-  if (row) cardAlert(row.closest('.mv-pv-card') || row, title ? { title, detail } : null);
+  if (!row) return;
+  if (title) { mvState.pvOpen[name] = true; toggleProviderRow(providerRoot(), name, true); }
+  cardAlert(row.closest('.mv-pv-card') || row, title ? { title, detail } : null);
+}
+
+/** Row `name`'s fold item on the Providers tab (section.mv-pv-card[data-row]), or null. */
+function providerItem(name) {
+  return [...(providerRoot()?.querySelectorAll('.mv-pv-card[data-row]') || [])].find((r) => r.dataset.row === name) || null;
 }
 
 /** The card's grey guidance line; an error goes to providerAlert under `title` instead. '' clears both. */
@@ -19233,6 +20633,7 @@ function setProviderMsg(name, text, err, title = 'Something went wrong') {
   if (!row) return;
   row.textContent = text || '';
   row.className = 'hint mv-pv-msg';
+  row.removeAttribute('role');
 }
 
 async function reloadProviders() {
@@ -19243,32 +20644,15 @@ async function reloadProviders() {
   } catch { /* keep what we have */ }
 }
 
-/** The blocking notice (§8.2). Resolves true once acknowledged (now or before). */
-async function ensureCopilotTerms({ force = false } = {}) {
-  if (!force && mvState.providers?.copilot?.termsCurrent) return true;
-  const r = await confirmModal({
-    title: COPILOT_TERMS.title, message: COPILOT_TERMS.body,
-    checkbox: { label: COPILOT_TERMS.checkbox }, confirmLabel: COPILOT_TERMS.confirm, cancelLabel: 'Cancel',
-  });
-  const ok = !!(r && r.ok && r.checked);
-  if (!ok) return false;
-  const res = await fetch('/api/providers/copilot/acknowledge', { method: 'POST' });
-  const data = await safeJson(res);
-  if (!res.ok) { setProviderMsg('copilot', data.error || `HTTP ${res.status}`, true, 'Notice not acknowledged'); return false; }
-  mvState.providers = data;
-  return true;
-}
-
 let copilotPollTimer = null;
 function stopCopilotPoll() { if (copilotPollTimer) { clearTimeout(copilotPollTimer); copilotPollTimer = null; } }
 
 async function copilotSignInFlow() {
-  if (!(await ensureCopilotTerms())) { repaintProviders(); return; }
   try {
     const res = await fetch('/api/providers/copilot/login', { method: 'POST' });
     const flow = await safeJson(res);
     if (!res.ok) return setProviderMsg('copilot', flow.error || `HTTP ${res.status}`, true, 'Sign-in did not start');
-    mvState.signIn = { ...flow, status: 'Waiting for approval on github.com…' };
+    mvState.signIn = { ...flow, status: `Waiting for approval on ${flow.host || 'github.com'}…` };
     repaintProviders();
     const poll = async () => {
       if (!mvState.signIn || mvState.signIn.deviceCode !== flow.deviceCode) return;
@@ -19290,7 +20674,7 @@ async function copilotSignInFlow() {
           return;
         }
         const status = providerRoot()?.querySelector('.mv-cp-status');
-        if (status) status.textContent = 'Waiting for approval on github.com…';
+        if (status) status.textContent = `Waiting for approval on ${flow.host || 'github.com'}…`;
         copilotPollTimer = setTimeout(poll, Math.max(3, Number(j.interval) || flow.interval || 5) * 1000);
       } catch (e) {
         copilotPollTimer = setTimeout(poll, 8000);
@@ -19318,28 +20702,78 @@ async function copilotSignOutFlow() {
   }
 }
 
-// #555: the row's Save button shows busy → "Saved"; the row's line carries only errors. A change
-// on a select (account type, concurrency) has no button, so its success is the new value itself.
-async function patchProviderFlow(name, body, { btn = null } = {}) {
+// #555: the row's Save button shows busy → "Saved"; the row's line carries only errors.
+// `onError(message)`, when given, shows a refused Save in the row's own place instead of the card's alert.
+async function patchProviderFlow(name, body, { btn = null, onError = null } = {}) {
   setProviderMsg(name, '');
+  const wasConnected = name === 'copilot' && !!(mvState.providers && mvState.providers.copilot && mvState.providers.copilot.connected);
   const r = await withButton(btn, async () => {
     const res = await fetch(`/api/providers/${encodeURIComponent(name)}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
     const data = await safeJson(res);
     if (!res.ok) return { ok: false, error: data.error || `HTTP ${res.status}` };
     mvState.providers = data;
+    // The row just saved shows what the server keeps (a typed key gives way to its masked echo): its fields count as
+    // drawn, so neither redraw below carries them over. Other rows keep what was typed in them.
+    const saved = providerItem(name);
+    if (saved) stampProviderFields(saved);
     repaintProviders();
     // Readiness may have changed: the catalog's needs-sign-in state and every picker follow.
     await refreshModelsEverywhere();
     return { ok: true };
   }, { done: 'Saved' });
-  if (r.skipped) return;
-  if (!r.ok) { setProviderMsg(name, r.error, true, 'Not saved'); return; }
+  if (r.skipped) return false;
+  if (!r.ok) {
+    if (onError) onError(r.error);
+    else setProviderMsg(name, r.error, true, 'Not saved');
+    return false;
+  }
+  // A change of the GitHub host signs the Copilot account out (a token belongs to one host): say so.
+  if (wasConnected && !(mvState.providers.copilot && mvState.providers.copilot.connected)) {
+    setProviderMsg('copilot', `Signed out: sign in again on ${copilotHostLabel(mvState.providers.copilot)}.`);
+  }
   // The repaint replaced the clicked button: give its successor the "Saved" state.
   if (btn && !btn.isConnected) {
-    const cls = btn.classList.contains('mv-sp-save') ? 'mv-sp-save' : 'mv-pv-save';
+    const cls = ['mv-sp-save', 'mv-im-save', 'mv-so-save'].find((c) => btn.classList.contains(c)) || 'mv-pv-save';
     const next = providerRoot()?.querySelector(`.mv-pv-row[data-provider="${name}"] .${cls}`);
     if (next) await withButton(next, () => undefined, { done: 'Saved' });
   }
+  return true;
+}
+
+const COPILOT_ACCOUNT_LABELS = { individual: 'Individual', business: 'Business', enterprise: 'Enterprise', 'ghe-com': 'GHE.com tenant' };
+
+/** Where the Copilot sign-in lives, for messages: githubHost is null for a GHE.com tenant setting without a usable host. */
+function copilotHostLabel(c) {
+  return (c && c.githubHost) || (c && c.accountType === 'ghe-com' ? 'your GHE.com tenant' : 'github.com');
+}
+
+/** Ask before a Copilot change that moves the GitHub host while signed in (the sign-in belongs to the old host). */
+function confirmCopilotHostSwitch(c, toLabel) {
+  return confirmModal({
+    title: `Switch to ${toLabel}?`,
+    message: `Switch to ${toLabel}? This signs you out of GitHub Copilot${c.login ? ` (@${c.login})` : ''}, because the sign-in belongs to ${copilotHostLabel(c)}.`,
+    confirmLabel: 'Switch and sign out', danger: true,
+  });
+}
+
+/** The Copilot row's Save: the account, the GHE.com host (with a GHE.com account) and the cap go together. A change that
+ *  moves the GitHub host while signed in asks first: the server signs the account out (a sign-in belongs to one host). */
+async function copilotSaveFlow(btn) {
+  const body = collectProviderRow(providerRoot(), 'copilot');
+  if (!body) return;
+  const c = (mvState.providers && mvState.providers.copilot) || {};
+  // The server's normalization (normalizeGheHost), so an unchanged host typed with https:// or a trailing / asks nothing.
+  const toHost = body.accountType === 'ghe-com'
+    ? String(body.enterpriseHost || '').toLowerCase().replace(/^https:\/\//, '').replace(/\/$/, '')
+    : 'github.com';
+  // Where the sign-in lives now: githubHost, else github.com for the non-GHE.com types. Null (a GHE.com setting
+  // without a usable host) never equals the new host: the save moves the sign-in.
+  const fromHost = c.githubHost || (c.accountType === 'ghe-com' ? null : 'github.com');
+  if (c.connected && toHost !== fromHost) {
+    const label = body.accountType === 'ghe-com' ? (toHost || 'the new host') : (COPILOT_ACCOUNT_LABELS[body.accountType] || body.accountType);
+    if (!(await confirmCopilotHostSwitch(c, label))) return;
+  }
+  await patchProviderFlow('copilot', body, { btn });
 }
 
 /** "Remove speech models": frees the built-in engines' downloads; the next mic use fetches them again. */
@@ -19385,12 +20819,51 @@ async function testSpeechFlow(btn) {
   else setProviderMsg('speech', r.error, true, `${what} test failed`);
 }
 
+/** The Image generation row's Test picture: makes one picture from what is on screen, like testSpeechFlow.
+ *  Testing… → Works on the button; the picture and its time, or the reason it failed, in the row itself. */
+async function testImagesFlow(btn) {
+  const typed = collectImagesRow(providerRoot()) || {};
+  setProviderMsg('images', '');
+  const r = await withButton(btn, async () => {
+    try {
+      const res = await fetch('/api/images/test', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(typed) });
+      const data = (await safeJson(res)) || {};
+      if (data.ok) return data;
+      return { ok: false, message: data.message || data.error || `The server answered ${res.status}.` };
+    } catch (e) { return { ok: false, message: `worca did not answer (${e.message}).` }; }
+  }, { busy: 'Testing…', done: 'Works' });
+  if (r.skipped) return;
+  showImagesTest(providerRoot(), r);
+}
+
+/** The Sound row's Test: lists the voices the key reaches. An unchanged key is not sent, so the saved one is tested.
+ *  Testing… → Works on the button; "Key works · n voices", or the reason it failed, in the row itself. */
+async function testSoundFlow(btn) {
+  const typed = collectSoundRow(providerRoot()) || {};
+  setProviderMsg('sound', '');
+  const r = await withButton(btn, async () => {
+    try {
+      const res = await fetch('/api/providers/sound/test', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(typed) });
+      const data = (await safeJson(res)) || {};
+      if (data.ok) return data;
+      return { ok: false, message: data.message || data.error || `The server answered ${res.status}.` };
+    } catch (e) { return { ok: false, message: `worca did not answer (${e.message}).` }; }
+  }, { busy: 'Testing…', done: 'Works' });
+  if (r.skipped) return;
+  const line = providerRoot()?.querySelector('.mv-pv-row[data-provider="sound"] .mv-so-result');
+  if (!line) return;
+  line.hidden = false;
+  line.className = r.ok ? 'hint mv-so-result' : 'hint err mv-so-result';
+  line.textContent = r.ok ? `Key works · ${r.voices} voices` : (r.message || '');
+}
+
 async function testProviderFlow(btn) {
   const name = btn.dataset.provider;
   // What the user is LOOKING at, not what is stored: an unsaved base URL or key is tested as typed,
   // and a local endpoint therefore answers for itself instead of for api.openai.com.
   const typed = (name === 'copilot' ? null : collectProviderRow(providerRoot(), name)) || {};
-  const label = PROVIDER_LABELS[name] || name;
+  // The OpenRouter row is not an upstream provider, so the shared labels do not name it.
+  const label = name === 'openrouter' ? 'OpenRouter' : PROVIDER_LABELS[name] || name;
   setProviderMsg(name, '');
   // #555: the button shows Testing… → Connected, the toast says what answered; a failure is the card's alert.
   const r = await withButton(btn, async () => {
@@ -19409,7 +20882,7 @@ async function testProviderFlow(btn) {
         return { ok: true, detail };
       }
       const why = data.message || data.error || `The server answered ${res.status}.`;
-      return { ok: false, error: `${where ? `${where}: ` : ''}${why}${providerFixHint(why)}` };
+      return { ok: false, error: `${where ? `${where}: ` : ''}${why}${providerFixHint(why, name)}` };
     } catch (e) { return { ok: false, error: `Worca did not answer (${e.message}).` }; }
   }, { busy: 'Testing…', done: 'Connected' });
   if (r.skipped) return;
@@ -19424,11 +20897,12 @@ function hasUnsavedProviderEdits(name, typed) {
   return !!(typed.baseUrl && typed.baseUrl.replace(/\/+$/, '') !== String(cur.baseUrl || '').replace(/\/+$/, ''));
 }
 
-/** One line of "what to do about it" for the failures that have an obvious answer. */
-function providerFixHint(why) {
+/** One line of "what to do about it" for the failures that have an obvious answer. `name` is the row's: the
+ *  OpenRouter row has no base URL to point at a local server. */
+function providerFixHint(why, name) {
   const w = String(why).toLowerCase();
   if (w.includes('authentication failed')) return '. Check the API key, then Save.';
-  if (w.includes('no api key configured')) return '. Set a key above, or point the base URL at a local server (no key needed).';
+  if (w.includes('no api key configured')) return name === 'openrouter' ? '. Set a key above, then Save.' : '. Set a key above, or point the base URL at a local server (no key needed).';
   if (w.includes('${var} is not set')) return '. Set that variable in the shell that starts Worca, then restart it.';
   if (w.includes('unreachable')) return '. Is the server running, and is the base URL right?';
   if (w.includes('endpoint answered 404')) return '. The base URL usually ends in /v1.';
@@ -19451,79 +20925,199 @@ async function refreshCopilotQuotaFlow(btn) {
 }
 
 
-// ── Import models (model-bridge-design.md §8.4) ─────────────────────────────
-// ONE dialog, two sources: GitHub Copilot's catalog, and any OpenAI-compatible server you run.
-// It belongs to the CATALOG, not to a provider — what it produces is catalog rows, and a flow
-// whose result lands on another tab reads as "nothing happened". The Providers tab links into it.
-const mimp = { source: 'copilot', baseUrl: '', payload: null, lastFocus: null, importing: false };
-// A form: a backdrop click never closes it; Escape asks once a model is ticked or a URL typed since the last
-// list. While "Import selected" is out, Cancel and Escape wait for its answer.
-const importGuard = el.modelImportModal ? guardModal(el.modelImportModal, { kind: 'form', close: () => closeImportDialog(), busy: () => mimp.importing }) : null;
+// ── Add model (models-menu P5, DESIGN ADD-1…ADD-6) ──────────────────────────
+// Step 1 "Where it runs" (models/add-model-dialog.mjs), then the model: picked from the provider's own list (step 2: the
+// import, which was a dialog of its own) or entered in the model form. All of it in the model dialog, over the catalog
+// the import fills; the Providers tab's Import opens step 2 there.
 
-function setImportMsg(text, kind) {
-  if (!el.mimpMsg) return;
-  el.mimpMsg.textContent = text || '';
-  el.mimpMsg.className = `form-msg mimp-msg${kind ? ` ${kind}` : ''}`;
+/** Step 2's screen, while it shows. */
+const addListCard = () => (mvState.dlg?.screen === 'list' && el.modelEditorHost?.querySelector('.mdl-add[data-step="2"]')) || null;
+/** True while the dialog still shows `seq`'s screen `screen` — and, given `card`, that very card: an answer for another
+ *  open, provider or screen is dropped, and so is one for a list left and drawn again meanwhile (Back, then Next). */
+const addLive = (seq, screen, card = null) => !!mvState.dlg && mvState.dlg.seq === seq && mvState.dlg.screen === screen
+  && (!card || addListCard() === card);
+// Step 2 screens with a list request out: Enter, a preset or List models waits for its answer (one request per card).
+const addListing = new WeakSet();
+/** A step screen's pinned regions for layoutDialog. */
+const addScreenParts = (card) => ({ head: [card.querySelector(':scope > .mdl-add-head')], foot: [card.querySelector(':scope > .mdl-add-foot')] });
+
+/** Every id the catalogue lists, lower-cased: a new model may take none of them (FRM-5; the add is refused for colliding
+ *  with ANY layer, as Duplicate's suggestion knows, duplicateModelFlow). `shadowing`: Edit a copy's plugin model, whose
+ *  own plugin row does not count (the global entry the copy saves under its id shadows it). */
+function takenModelIds({ shadowing = '' } = {}) {
+  const d = mvState.data || {};
+  const own = String(shadowing).toLowerCase();
+  const plugin = (d.plugin || []).filter((m) => !own || String(m.id).toLowerCase() !== own);
+  return [d.models, plugin, d.predefined].flatMap((xs) => (xs || []).map((m) => String(m.id).toLowerCase()));
 }
 
-/** Copilot is offered only when signed in; a local endpoint needs nothing but a URL. */
-function importSources() {
-  const connected = !!(mvState.providers && mvState.providers.copilot && mvState.providers.copilot.connected);
-  return [
-    { id: 'copilot', label: connected ? 'GitHub Copilot' : 'GitHub Copilot (sign in first)', disabled: !connected },
-    // The servers are named in the Base URL hint; a 60-character option truncates in the control.
-    { id: 'openai', label: 'OpenAI-compatible', disabled: false },
-  ];
-}
-
-function paintImportSource() {
-  if (!el.mimpSource) return;
-  const opts = importSources();
-  el.mimpSource.replaceChildren(...opts.map((o) => {
-    const node = document.createElement('option');
-    node.value = o.id; node.textContent = o.label; node.disabled = o.disabled;
-    if (o.id === mimp.source) node.selected = true;
-    return node;
-  }));
-  // Copilot has no base URL, and loads by itself; the whole field (with its button) goes away.
-  if (el.mimpBaseField) el.mimpBaseField.classList.toggle('hidden', mimp.source !== 'openai');
-  if (el.mimpKeyField) el.mimpKeyField.classList.toggle('hidden', mimp.source !== 'openai');
-}
+/** The tiles' locks, as the Catalogue builds them (catalogueData): the harnesses the credential broker turns off. */
+const addEngineLocks = () => MODEL_ENGINE_NAMES.filter((name) => engineLock(name) !== null).map((name) => ({ name, reason: 'Off while the credential broker is on' }));
 
 /**
- * @param {{source?:string, baseUrl?:string, goToModels?:boolean}} [o] goToModels comes from the
- *   Providers page's shortcut: the dialog opens over the catalog the import will fill.
+ * Open Add model: step 1, or step 2's list for a provider. The harness tiles draw at once with no engine list
+ * (`engines: null`), then again when this open's one GET /api/engines answers (the app's readyEngines cache keeps only
+ * the ready names; the tiles want each harness's reason too).
  */
-function openImportDialog({ source, baseUrl, goToModels } = {}) {
-  if (goToModels && currentView() !== 'models') showView('models');
-  mimp.lastFocus = document.activeElement;
-  const connected = !!(mvState.providers && mvState.providers.copilot && mvState.providers.copilot.connected);
-  mimp.source = source || (connected ? 'copilot' : 'openai');
-  mimp.baseUrl = baseUrl || (mvState.providers && mvState.providers.openai && mvState.providers.openai.baseUrl) || '';
-  mimp.payload = null;
-  if (el.mimpBase) el.mimpBase.value = mimp.baseUrl;
-  if (el.mimpKey) el.mimpKey.value = '';
-  paintImportSource();
-  if (el.mimpBody) el.mimpBody.replaceChildren();
-  if (el.mimpGo) el.mimpGo.disabled = true;
-  setImportMsg('');
-  el.modelImportModal?.classList.remove('hidden');
-  importGuard?.opened();
-  setTimeout(() => (mimp.source === 'openai' ? el.mimpBase : el.mimpList)?.focus(), 0);
-  // Copilot has one catalog, so it loads at once; an endpoint is listed only when the caller NAMED
-  // one (the Providers shortcut). The provider's stored URL is offered as a default, not queried —
-  // listing api.openai.com without a key would greet the dialog with an error nobody asked for.
-  if (mimp.source === 'copilot' || baseUrl) listImportModels();
+function openAddModelDialog({ step = 1, where = 'signin', provider = 'copilot', engine = 'claude', baseUrl = '' } = {}) {
+  if (!el.modelEditorModal || !el.modelEditorHost) return;
+  mvState.editing = null;
+  mvState.prefill = null;
+  const dlg = beginModelDialog({ where: step === 2 ? 'provider' : where, provider, engine: engine || 'claude' }, { baseUrl });
+  void loadAddEngines(dlg);
+  if (step === 2) showAddList();
+  else showAddStep1();
 }
 
-/** Narrow the LISTED rows (model, id, vendor, detail) — a view filter, never a change to the pick. */
-function applyImportFilter() {
-  const sheet = el.mimpBody && el.mimpBody.querySelector('.mvi');
+/** This open's /api/engines rows for the tiles; step 1 is drawn again while it shows. */
+async function loadAddEngines(dlg) {
+  let rows = null;
+  try {
+    const res = await fetch('/api/engines');
+    const data = res.ok ? await safeJson(res) : null;
+    rows = Array.isArray(data?.engines) ? data.engines : null;
+  } catch { /* the tiles keep saying nothing about readiness */ }
+  if (mvState.dlg !== dlg || !rows) return;   // closed, or another open meanwhile
+  dlg.engines = rows;
+  if (dlg.screen === 'step1') showAddStep1({ redraw: true });
+}
+
+/** Which control of step 1 has the focus, so a redraw hands it back: its class and its data-where / data-engine. */
+function addFocusSig(n) {
+  const cls = ['mdl-opt', 'mdl-hx-t', 'mdl-add-provider', 'mdl-next', 'mv-cancel', 'mdl-close'].find((c) => n?.classList?.contains(c));
+  return cls ? { cls, where: n.dataset.where || '', engine: n.dataset.engine || '' } : null;
+}
+
+/** Step 1 from the flow's state. `redraw` (the engines answered): from what the step on screen holds, focus kept. */
+function showAddStep1({ redraw = false } = {}) {
+  const dlg = mvState.dlg;
+  if (!dlg) return;
+  const old = redraw ? el.modelEditorHost.querySelector('.mdl-add[data-step="1"]') : null;
+  if (redraw && !old) return;
+  if (old) dlg.add = { ...dlg.add, ...collectAddStep1(old) };
+  const sig = old && old.contains(document.activeElement) ? addFocusSig(document.activeElement) : null;
+  dlg.screen = 'step1';
+  // "Change where it runs" is still the edit: its head keeps the waiting form's title ("Edit <name>").
+  const title = dlg.fixedEngine ? dlg.form?.formEl?.querySelector('.mv-editor-title')?.textContent || '' : '';
+  const card = renderAddStep1(dlg.add, { doc: document, providers: mvState.providers, engines: dlg.engines, locks: addEngineLocks(), fixedEngine: dlg.fixedEngine || '', title });
+  showModelScreen(card, { ...addScreenParts(card), focus: redraw ? '' : '.mdl-opt[aria-checked="true"]', keep: redraw });
+  if (!sig) return;
+  const twin = [...card.querySelectorAll(`.${sig.cls}`)].find((n) => (n.dataset.where || '') === sig.where && (n.dataset.engine || '') === sig.engine);
+  try { twin?.focus({ preventScroll: true }); } catch { /* jsdom */ }
+}
+
+/** "Change where it runs" (L26), on an edit form: step 1 on the form's own harness (no tiles; the cards wheresFor refuses
+ *  are off), preset to where it runs now. The form waits, detached, with everything typed into it. */
+function showRewhereStep() {
+  const dlg = mvState.dlg;
+  const form = modelEditorEl();
+  if (!dlg || !form || dlg.form?.formEl !== form) return;
+  dlg.formDirty = dlg.formDirty || !!modelEditorGuard?.changed();
+  dlg.fixedEngine = form.dataset.engine || 'claude';
+  dlg.add = { where: connectionWhere(form), provider: form.querySelector('.mv-conn-provider')?.value || 'copilot', engine: dlg.fixedEngine };
+  showAddStep1();
+}
+
+/** "Change where it runs" › Continue: the same form back, now running where step 1 says; a provider's select follows
+ *  step 1's choice with a bubbling change, so onModelsConnChange applies it (OpenRouter's address, Copilot's pricing). */
+function rewhereContinue(card) {
+  const dlg = mvState.dlg;
+  const form = dlg?.form?.formEl;
+  if (!form) return;
+  const pick = collectAddStep1(card);
+  const was = { where: connectionWhere(form), provider: form.querySelector('.mv-conn-provider')?.value || '' };
+  dlg.fixedEngine = '';
+  showModelForm(form, { mode: dlg.form.mode, copyFrom: dlg.form.copyFrom, from: dlg.from });
+  // setFormWhere, not setConnectionWhere alone: a custom endpoint gains its routing rows (and Save waits for its address),
+  // and a model leaving one loses them, so Save sends the kind picked.
+  setFormWhere(form, pick.where);
+  const sel = pick.where === 'provider' ? form.querySelector('.mv-conn-provider') : null;
+  if (sel) {
+    sel.value = pick.provider;
+    sel.dispatchEvent(new window.Event('change', { bubbles: true }));
+  }
+  // Where it runs is part of what Save sends: a new place is a change, so Escape asks.
+  if (pick.where !== was.where || (sel && pick.provider !== was.provider)) dlg.formDirty = true;
+}
+
+/** Step 1's Next: a provider goes to its list; a sign-in or a custom endpoint to the form (a sign-in with its harness).
+ *  On "Change where it runs" it is Continue: back to the edit form. */
+function addStep1Next(card) {
+  const dlg = mvState.dlg;
+  if (!dlg || !card) return;
+  if (dlg.fixedEngine) { rewhereContinue(card); return; }
+  const pick = collectAddStep1(card);
+  // Another provider than the kept list is for (the list says whose it is; dlg.add may hold a pick a redraw kept): its
+  // ticks, filter and answers go.
+  if (pick.provider !== dlg.list.provider) { dlg.list = freshAddList(pick.provider); dlg.seq = ++modelDlgSeq; }
+  dlg.add = pick;
+  if (pick.where === 'provider') showAddList();
+  else showAddForm({ where: pick.where, engine: pick.engine, from: 'step1' });
+}
+
+/** Step 2 by hand (ADD-6): the model form reached through step 1 or the list, its Back going to `from`. A form this open
+ *  already holds (left by Back) comes back with everything typed into it, moved to the place and provider picked now. */
+function showAddForm({ where, engine = '', provider = '', from }) {
+  const dlg = mvState.dlg;
+  if (!dlg) return;
+  mvState.editing = null;
+  mvState.prefill = null;
+  const kept = dlg.form?.mode === 'add' ? dlg.form.formEl : null;
+  if (kept) {
+    showModelForm(kept, { mode: 'add', from });
+    // Step 1 shows harness tiles for a sign-in only: a provider or a custom endpoint runs on Claude Code, as a new form does.
+    const harness = where === 'signin' ? engine || 'claude' : 'claude';
+    if ((kept.dataset.engine || 'claude') !== harness) setModelEngine(kept, harness);
+    setFormWhere(kept, where);
+    const sel = where === 'provider' && provider ? kept.querySelector('.mv-conn-provider') : null;
+    if (sel && sel.value !== provider) {
+      sel.value = provider;
+      sel.dispatchEvent(new window.Event('change', { bubbles: true }));   // onModelsConnChange: OpenRouter's address, Copilot's pricing
+    }
+    paintEditorSave(kept);
+    // Moving the form is not typing into it: what was typed before Back is dlg.formDirty, the guard starts clean here.
+    modelEditorGuard?.markClean();
+    return;
+  }
+  const d = mvState.data || { efforts: [] };
+  const editor = renderModelEditor(null, d.efforts || [], { ...modelFormOptions(d), where, steps: true, provider, takenIds: takenModelIds() });
+  if (where === 'signin' && engine) setModelEngine(editor, engine);
+  paintEditorSave(editor);
+  showModelForm(editor, { mode: 'add', from });
+}
+
+/** "N selected" and "Add N models" from the ticked rows, which the flow keeps (a list drawn again ticks them again), and
+ *  the head box's ticked / mixed / clear state over what shows (ADD-3). */
+function paintAddTicks(card) {
+  const dlg = mvState.dlg;
+  const sheet = card.querySelector('.mimp-body .mvi');
+  const ids = sheet ? collectImportSheet(sheet) : [];
+  if (dlg) dlg.list.ticked = new Set(ids);
+  paintAddSelection(card, ids.length);
+  paintAddList(card);
+  const go = card.querySelector('.mimp-go');
+  if (go && dlg?.busy) go.disabled = true;
+}
+
+function setAddListMsg(card, text, kind) {
+  const msg = card && card.querySelector('.mimp-msg');
+  if (!msg) return;
+  msg.textContent = text || '';
+  msg.className = `form-msg mimp-msg${kind ? ` ${kind}` : ''}`;
+}
+
+/** Narrow the LISTED rows (model, id, vendor, detail; a hosted list's Free / Tools / Window too): a view, never a change
+ *  to the pick. The filter's text is kept with the list. */
+function applyAddFilter(card) {
+  const field = card.querySelector('.mimp-filter');
+  const raw = field ? field.value : '';
+  if (mvState.dlg) mvState.dlg.list.filter = raw;
+  const sheet = card.querySelector('.mimp-body .mvi');
   if (!sheet) return;
-  const q = (el.mimpFilter?.value || '').trim().toLowerCase();
+  const q = raw.trim().toLowerCase();
   let shown = 0; let total = 0;
   for (const tr of sheet.querySelectorAll('tbody tr')) {
-    const hit = endpointRowMatches(tr, sheet, q);   // text, plus a hosted sheet's Free / Tools / window
+    const hit = endpointRowMatches(tr, sheet, q);
     tr.classList.toggle('is-filtered', !hit);
     total += 1;
     if (hit) shown += 1;
@@ -19535,117 +21129,268 @@ function applyImportFilter() {
       none.className = 'hist-empty mimp-nohits';
       sheet.appendChild(none);
     }
-    none.textContent = q ? `Nothing here matches “${el.mimpFilter.value.trim()}”.` : 'Nothing here matches these filters.';
+    none.textContent = q ? `Nothing here matches “${raw.trim()}”.` : 'Nothing here matches these filters.';
   } else if (none) none.remove();
+  paintAddList(card);                                    // ADD-3: "N of M shown", the head box over what shows
 }
 
-function closeImportDialog() {
-  el.modelImportModal?.classList.add('hidden');
-  mimp.payload = null;
-  if (el.mimpBody) el.mimpBody.replaceChildren();
-  try { mimp.lastFocus?.focus(); } catch { /* the opener may be gone */ }
+/** A provider that cannot list (addStep2Plan `blocked`: its state word and the button that fixes it) or that has no list
+ *  (`nolist`: "No list to pick from", the button enters an id instead). */
+function paintAddBlocked(card, plan) {
+  const box = card.querySelector('.mdl-add-blocked');
+  if (!box) return;
+  const word = box.querySelector('.mdl-st');
+  const fix = box.querySelector('.mdl-add-fix');
+  const blocked = plan.kind === 'blocked';
+  word.className = `mdl-st ${blocked ? providerState(mvState.providers, plan.row, { hasModels: true }).tone : 'need'}`;
+  word.textContent = plan.text;
+  fix.textContent = blocked ? plan.fix : 'Enter an id instead';
+  if (blocked) fix.dataset.row = plan.row;
+  else fix.dataset.manual = '';
+  box.hidden = false;
 }
 
-/** Ask the chosen source what it has, and paint its sheet into the dialog. */
-async function listImportModels() {
-  const endpoint = mimp.source === 'openai';
-  mimp.baseUrl = el.mimpBase ? el.mimpBase.value.trim() : '';
-  mimp.apiKey = el.mimpKey ? el.mimpKey.value.trim() : '';
-  if (endpoint && !mimp.baseUrl) { setImportMsg('Give the endpoint a base URL, e.g. http://127.0.0.1:11434/v1', 'err'); el.mimpBase?.focus(); return; }
-  if (el.mimpList) el.mimpList.disabled = true;
-  if (el.mimpGo) el.mimpGo.disabled = true;
-  setImportMsg(endpoint ? 'Asking the endpoint what it serves…' : 'Loading Copilot models…');
+/** Step 2 for the flow's provider (addStep2Plan): the list kept from before, else asked for when it can be (Copilot, a
+ *  provider with its address); a provider that cannot list says why. */
+function showAddList() {
+  const dlg = mvState.dlg;
+  if (!dlg) return;
+  dlg.screen = 'list';
+  const provider = dlg.add.provider;
+  const card = renderAddStep2({ provider, baseUrl: dlg.list.baseUrl }, { doc: document, providers: mvState.providers });
+  const filter = card.querySelector('.mimp-filter');
+  if (filter) filter.value = dlg.list.filter;
+  const key = card.querySelector('.mimp-key');
+  if (key) key.value = dlg.list.apiKey;
+  const plan = addStep2Plan(provider, mvState.providers, { baseUrl: dlg.list.baseUrl });
+  if (plan.kind !== 'list') paintAddBlocked(card, plan);
+  showModelScreen(card, { ...addScreenParts(card), focus: provider === 'openai' ? '.mimp-base' : '.mimp-filter' });
+  if (plan.kind !== 'list') return;
+  if (dlg.list.payload) mountAddSheet(card, dlg.list.payload);
+  else if (plan.source === 'copilot' || plan.auto) void listAddModels();
+}
+
+/** Draw a listed payload into step 2: the sheet without its own title, note, buttons and message (the screen has them),
+ *  the kept ticks back on, the filter applied, the foot counted. */
+function mountAddSheet(card, { endpoint, data }) {
+  const dlg = mvState.dlg;
+  const sheet = endpoint ? renderEndpointSheet(data, { doc: document }) : renderImportSheet(data.models || [], { doc: document });
+  sheet.querySelector(':scope > h3.mv-editor-title')?.remove();
+  sheet.querySelector(':scope > small.hint:not(.mvi-warn)')?.remove();
+  sheet.querySelector(':scope > .mv-editor-btns')?.remove();
+  sheet.querySelector(':scope > .mvi-msg')?.remove();
+  for (const cb of sheet.querySelectorAll('.mvi-cb')) if (!cb.disabled && dlg?.list.ticked.has(cb.value)) cb.checked = true;
+  card.querySelector('.mimp-body')?.replaceChildren(sheet);
+  applyAddFilter(card);
+  paintAddTicks(card);
+  const rows = sheet.querySelectorAll('.mvi-cb:not([disabled])').length;
+  if (endpoint && Array.isArray(data.models) && !data.models.length) setAddListMsg(card, 'This endpoint lists no models.', 'err');
+  else setAddListMsg(card, rows ? '' : 'Nothing here can be imported.', rows ? '' : 'err');
+}
+
+/** Ask the provider what it has (Copilot's catalog, or an OpenAI-compatible endpoint with the key the screen holds) and
+ *  draw its sheet into step 2. */
+async function listAddModels() {
+  const dlg = mvState.dlg;
+  const card = addListCard();
+  if (!dlg || !card || dlg.busy || addListing.has(card)) return;
+  const typed = dlg.add.provider === 'openai';
+  // The screen's address and key are kept for a redraw; the pair this request asks with travels with its answer
+  // (payload) and only that pair is ever imported with, so a key typed for another address never reaches this one.
+  if (typed) keepAddList(card);
+  const plan = addStep2Plan(dlg.add.provider, mvState.providers, { baseUrl: dlg.list.baseUrl });
+  if (plan.kind !== 'list') return;
+  const endpoint = plan.source === 'endpoint';
+  if (endpoint && !plan.baseUrl) {
+    setAddListMsg(card, 'Give the endpoint a base URL, e.g. http://127.0.0.1:11434/v1', 'err');
+    card.querySelector('.mimp-base')?.focus();
+    return;
+  }
+  const apiKey = typed ? dlg.list.apiKey : '';
+  const seq = dlg.seq;
+  addListing.add(card);
+  const listBtn = card.querySelector('.mimp-list');
+  if (listBtn) listBtn.disabled = true;
+  const go = card.querySelector('.mimp-go');
+  if (go) go.disabled = true;
+  setAddListMsg(card, endpoint ? 'Asking the endpoint what it serves…' : 'Loading Copilot models…');
   try {
-    const url = endpoint ? `/api/providers/openai/models?baseUrl=${encodeURIComponent(mimp.baseUrl)}` : '/api/providers/copilot/models';
+    const url = endpoint ? `/api/providers/openai/models?baseUrl=${encodeURIComponent(plan.baseUrl)}` : '/api/providers/copilot/models';
     // The endpoint's own key rides a header, never the URL (server logs, history).
-    const res = await fetch(url, endpoint && mimp.apiKey ? { headers: { 'X-Worca-Endpoint-Key': mimp.apiKey } } : {});
+    const res = await fetch(url, endpoint && apiKey ? { headers: { 'X-Worca-Endpoint-Key': apiKey } } : {});
     const data = await safeJson(res);
-    if (!res.ok) { setImportMsg(data.error || `HTTP ${res.status}`, 'err'); return; }
-    mimp.payload = data;
-    const sheet = endpoint ? renderEndpointSheet(data) : renderImportSheet(data.models || []);
-    // The sheet's own footer is the dialog's footer here.
-    sheet.querySelector('.mv-editor-btns')?.remove();
-    sheet.querySelector('.mvi-msg')?.remove();
-    el.mimpBody?.replaceChildren(sheet);
-    const rows = sheet.querySelectorAll('.mvi-cb:not([disabled])').length;
-    // Worth a filter only once the list is long enough to hunt through (Copilot lists dozens).
-    if (el.mimpFilter) {
-      el.mimpFilter.classList.toggle('hidden', sheet.querySelectorAll('tbody tr').length < 8);
-      el.mimpFilter.value = '';
-    }
-    applyImportFilter();
-    importGuard?.markClean();   // a fresh list is the new starting point
-    if (el.mimpGo) el.mimpGo.disabled = !rows;
-    setImportMsg(rows ? '' : 'Nothing here can be imported.', rows ? '' : 'err');
-    if (endpoint && Array.isArray(data.models) && !data.models.length) setImportMsg('This endpoint lists no models.', 'err');
+    if (!addLive(seq, 'list', card)) return;
+    if (!res.ok) { setAddListMsg(card, data.error || `HTTP ${res.status}`, 'err'); return; }
+    dlg.list.payload = { endpoint, data, baseUrl: endpoint ? plan.baseUrl : '', apiKey };
+    dlg.list.ticked = new Set();
+    dlg.list.filter = '';
+    const filter = card.querySelector('.mimp-filter');
+    if (filter) filter.value = '';
+    mountAddSheet(card, dlg.list.payload);
+    modelEditorGuard?.markClean();   // a fresh list is the new starting point
   } catch (e) {
-    setImportMsg(e.message, 'err');
+    if (addLive(seq, 'list', card)) setAddListMsg(card, e.message, 'err');
   } finally {
-    if (el.mimpList) el.mimpList.disabled = false;
+    addListing.delete(card);
+    if (listBtn) listBtn.disabled = false;
+    // A refused or failed list keeps the one already shown, with the address and key IT was listed with: its ticks arm
+    // "Add N models" again.
+    if (addLive(seq, 'list', card)) paintAddTicks(card);
   }
 }
 
-/** Import what is ticked; the rows land in the catalog behind the dialog. */
-async function importModelsFlow() {
-  const sheet = el.mimpBody && el.mimpBody.querySelector('.mvi');
-  if (!sheet) return;
+/** Keep what step 2 holds before it is left: the typed address and key, for drawing the screen again (an import sends
+ *  the listed pair, dlg.list.payload, never these). The ticks and the filter are kept as they change. */
+function keepAddList(card) {
+  const dlg = mvState.dlg;
+  if (!dlg || !card || dlg.add.provider !== 'openai') return;
+  dlg.list.baseUrl = (card.querySelector('.mimp-base')?.value || '').trim();
+  dlg.list.apiKey = (card.querySelector('.mimp-key')?.value || '').trim();
+}
+
+/** Step 2's provider changed: a new list, its ticks and filter cleared, an answer still out for the old one dropped. */
+function changeAddProvider(sel) {
+  const dlg = mvState.dlg;
+  if (!dlg) return;
+  // markedSelect painted the picked value's mark on the change: a value put back repaints it.
+  if (dlg.busy) { sel.value = dlg.add.provider; paintMarkedSelect(sel.closest('.mdl-picksel')); return; }
+  dlg.add = { ...dlg.add, where: 'provider', provider: sel.value };
+  dlg.list = freshAddList(sel.value);
+  dlg.seq = ++modelDlgSeq;
+  showAddList();
+}
+
+/** "Enter an id instead": the provider form with the list's provider; its Back returns to the list with its ticks. */
+function addManualForm() {
+  const dlg = mvState.dlg;
+  const card = addListCard();
+  if (!dlg || !card) return;
+  keepAddList(card);
+  showAddForm({ where: 'provider', provider: dlg.add.provider, from: 'list' });
+}
+
+/** Back: from the form to where it was reached from (its typed work counts on the way out), from the list to step 1. */
+function modelDialogBack() {
+  const dlg = mvState.dlg;
+  if (!dlg) return;
+  if (dlg.screen === 'form') {
+    dlg.formDirty = dlg.formDirty || !!modelEditorGuard?.changed();
+    if (dlg.from === 'list') showAddList();
+    else if (dlg.from === 'step1') showAddStep1();
+  } else if (dlg.screen === 'list') {
+    keepAddList(addListCard());
+    showAddStep1();
+  }
+}
+
+/** The blocked box's button: a provider that cannot list is fixed where it is fixed, with the dialog closed — Copilot
+ *  signs in inside the setup assistant (AC-4.5, as the Catalogue's own fix), a key is set on its Providers row; with no
+ *  list at all it enters an id instead. */
+function addFixFlow(btn) {
+  if ('manual' in btn.dataset) { addManualForm(); return; }
+  const row = btn.dataset.row;
+  if (!row) return;
+  closeModelEditorDialog();
+  if (row === 'copilot') openSetup({ entry: 'fix', step: 'access' });
+  else goToProviders(row);
+}
+
+/** A hosted API's preset fills its base URL and the usual ${VAR} for its key (bridge-view.mjs ENDPOINT_PRESETS), then lists. */
+function applyAddPreset(btn) {
+  const card = addListCard();
+  const p = ENDPOINT_PRESETS[btn.dataset.preset];
+  if (!card || !p || addListing.has(card)) return;   // a list is out: the fields stay what it asks
+  const base = card.querySelector('.mimp-base');
+  const key = card.querySelector('.mimp-key');
+  if (base) base.value = p.baseUrl;
+  if (key) key.value = p.keyRef;
+  void listAddModels();
+}
+
+/** While an import is out: no Back, no Close, no second "Add N models" (Escape waits too: modelDialogBusy). */
+function paintAddBusy(card, on) {
+  if (mvState.dlg) mvState.dlg.busy = on;
+  for (const b of card.querySelectorAll('.mv-back, .mdl-close, .mimp-go')) b.disabled = on;
+  if (!on) paintAddTicks(card);
+}
+
+/** "Add N models": today's import request. On success the dialog closes and the Catalogue shows what landed: every
+ *  narrowing cleared, then "Just imported" when something was added or refreshed, Claude Code's group unfolded. */
+async function importAddModelsFlow() {
+  const dlg = mvState.dlg;
+  const card = addListCard();
+  const sheet = card && card.querySelector('.mimp-body .mvi');
+  if (!dlg || !sheet) return;
   const ids = collectImportSheet(sheet);
-  if (!ids.length) return setImportMsg('Pick at least one model.', 'err');
+  if (!ids.length) { setAddListMsg(card, 'Pick at least one model.', 'err'); return; }
   const endpoint = sheet.dataset.source === 'endpoint';
-  if (el.mimpGo) el.mimpGo.disabled = true;
-  mimp.importing = true;
-  if (el.mimpCancel) el.mimpCancel.disabled = true;
-  setImportMsg('Importing…');
+  // The key the shown list was asked with (its payload), never what the key field holds now: a re-list that was
+  // refused, or a key typed before Back, belongs to another address.
+  const apiKey = endpoint ? dlg.list.payload?.apiKey || '' : '';
+  paintAddBusy(card, true);
+  setAddListMsg(card, 'Importing…');
   try {
     const res = endpoint
-      ? await fetch('/api/providers/openai/import-models', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ids, baseUrl: sheet.dataset.baseurl || '', ...(mimp.apiKey ? { apiKey: mimp.apiKey } : {}) }) })
+      ? await fetch('/api/providers/openai/import-models', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ids, baseUrl: sheet.dataset.baseurl || '', ...(apiKey ? { apiKey } : {}) }) })
       : await fetch('/api/providers/copilot/import-models', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ids }) });
     const data = await safeJson(res);
-    if (!res.ok) { setImportMsg(data.error || `HTTP ${res.status}`, 'err'); return; }
+    // The answer belongs to the open that asked: a screen opened meanwhile (the page's Add model, by keyboard) is left as
+    // it is, and a refusal that screen cannot show is a toast.
+    const live = mvState.dlg === dlg;
+    if (!res.ok) {
+      const why = data.error || `HTTP ${res.status}`;
+      if (live) setAddListMsg(card, why, 'err');
+      else notify({ tone: 'err', title: 'Not imported', detail: why });
+      return;
+    }
     const parts = [];
     if (data.created?.length) parts.push(`${data.created.length} added`);
     if (data.updated?.length) parts.push(`${data.updated.length} refreshed`);
     if (data.skipped?.length) parts.push(`${data.skipped.length} skipped`);
     // A local server's rows can be skipped for a reason worth reading (an embedding model, no tools).
     const why = endpoint && Array.isArray(data.skipped) ? data.skipped.filter((s) => s && s.why).map((s) => `${s.id}: ${s.why}`) : [];
-    closeImportDialog();
-    if (currentView() !== 'models') showView('models');
-    setModelsMsg(`Imported from ${endpoint ? (data.serverLabel || 'the endpoint') : 'Copilot'}: ${parts.join(', ') || 'nothing changed'}.${why.length ? ` ${why.join('; ')}` : ''}`, 'ok');
+    dlg.busy = false;
+    if (live) closeModelEditorDialog();
+    showAllModels();
     // Land ON what was imported: the list filters to the new ids until the filter is cleared.
     const fresh = [...(data.created || []), ...(data.updated || [])];
     if (fresh.length) mvState.justImported = fresh;
+    mvState.cat.fold = { ...mvState.cat.fold, claude: false };
+    if (currentModelsTab() !== 'catalogue') showView('models');
     await refreshModelsEverywhere();
+    setModelsMsg(`Imported from ${endpoint ? (data.serverLabel || 'the endpoint') : 'Copilot'}: ${parts.join(', ') || 'nothing changed'}.${why.length ? ` ${why.join('; ')}` : ''}`, 'ok');
   } catch (e) {
-    setImportMsg(e.message, 'err');
+    if (mvState.dlg === dlg) setAddListMsg(card, e.message, 'err');
+    else notify({ tone: 'err', title: 'Not imported', detail: e.message });
   } finally {
-    if (el.mimpGo) el.mimpGo.disabled = false;
-    mimp.importing = false;
-    if (el.mimpCancel) el.mimpCancel.disabled = false;
+    if (mvState.dlg === dlg) paintAddBusy(card, false);
+    else dlg.busy = false;
   }
 }
 
-/** A catalog row's "needs sign-in" now LEAVES for the Providers page and lands on the row. */
-function goToProviders(provider) {
-  if (currentView() !== 'providers') showView('providers');
-  setTimeout(() => focusProviderRow(provider), 0);
+/** A provider row's Import: what it imports lands in the CATALOG, so that shows first (showView syncs #models). */
+function openAddFromProviders(opts) {
+  if (currentModelsTab() !== 'catalogue') showView('models');
+  openAddModelDialog(opts);
 }
 
-function focusProviderRow(provider) {
-  const card = providerRoot() && providerRoot().querySelector('.mv-providers');
-  if (!card) return;
-  try { card.scrollIntoView({ behavior: 'smooth', block: 'start' }); } catch { /* jsdom */ }
-  const row = provider ? card.querySelector(`.mv-pv-row[data-provider="${provider}"]`) : null;
-  const focus = row && (row.querySelector('.mv-cp-signin') || row.querySelector('.mv-pv-key'));
-  if (focus) { try { focus.focus(); } catch { /* ignore */ } }
+/** A catalog row's "needs sign-in" goes to the Providers tab and lands on the row: the route's reveal unfolds it,
+ *  flashes it and focuses its sign-in or key (revealProviderRow). */
+function goToProviders(provider) {
+  location.hash = modelsHash('providers', provider);
 }
 
 // Any catalog mutation must repaint BOTH surfaces: this view and the composer's
 // model dropdowns (state.models comes from /api/config).
 async function refreshModelsEverywhere() {
-  await loadModelsView();
-  // The Providers page shares mvState.providers with the catalog: a sign-in, a key or a cap that
-  // just changed must show on whichever of the two the user is looking at.
-  if (currentView() === 'providers') renderProvidersViewBody();
+  const newest = await loadModelsView();
+  // The Providers tab shares mvState.providers with the catalog: a sign-in, a key or a cap that
+  // just changed must show on whichever of the two the user is looking at. A newer load (a window
+  // focus) that overtook this one wrote the newest state but never draws over a card on screen, so
+  // the card follows it here when what it shows differs (an entry that drew it already keeps it).
+  if (currentModelsTab() === 'providers') { if (newest) renderProvidersViewBody(); else paintProvidersTab(); }
+  // The Jobs tab's pickers list /api/config's catalogue: a model added or removed shows there too.
+  if (mvState.jobs.loaded) void loadJobs({ engines: false });
   try { await loadConfig(selectedProjectPath() || ''); } catch { /* dropdowns refresh best-effort */ }
 }
 
@@ -19656,22 +21401,17 @@ async function refreshModelsEverywhere() {
 async function copyModelEnvValue(btn) {
   const row = btn.closest('.mv-env-row');
   const editor = btn.closest('.mv-editor');
-  const id = editor && editor.dataset.id;
+  // A copy (Duplicate) has no id of its own yet: its stored rows are its source's (data-copy-from).
+  const id = editor && (editor.dataset.id || editor.dataset.copyFrom);
   const key = row && row.dataset.key;
   if (!id || !key) return;
-  const flash = (name) => {
-    const prev = [...btn.childNodes];
-    btn.replaceChildren(icon(document, name, 14));
-    setTimeout(() => { btn.replaceChildren(...prev); }, 1200);
-  };
   try {
     const res = await fetch(`/api/models/${encodeURIComponent(id)}/env-value?key=${encodeURIComponent(key)}`);
     const data = await safeJson(res);
-    if (!res.ok) return flash('x');
-    await navigator.clipboard.writeText(data.value);
-    flash('check');
+    if (!res.ok) return flashCopy(btn, false, 'Could not read the value');
+    await copyFromButton(btn, data.value);
   } catch {
-    flash('x');
+    flashCopy(btn, false);
   }
 }
 
@@ -19682,7 +21422,8 @@ async function copyModelEnvValue(btn) {
 // save just rewrites the same value.
 async function toggleModelEnvReveal(btn) {
   const editor = btn.closest('.mv-editor');
-  const id = editor && editor.dataset.id;
+  // A copy reveals its source's values (data-copy-from): the rows it shows are the source's masks.
+  const id = editor && (editor.dataset.id || editor.dataset.copyFrom);
   if (!id) return;
   const rows = editor.querySelectorAll('.mv-env-row[data-key]');
   if (btn.dataset.on) {
@@ -19723,6 +21464,7 @@ async function toggleModelEnvReveal(btn) {
 async function saveModelEditorFlow() {
   const rootEl = modelEditorEl();
   if (!rootEl) return;
+  const dlg = mvState.dlg;
   rootEl.querySelector('.mv-editor-btns')?.setAttribute('data-card-actions', '');
   clearFieldErrors(rootEl);
   cardAlert(rootEl, null);
@@ -19739,33 +21481,55 @@ async function saveModelEditorFlow() {
     return res.ok ? { ok: true } : { ok: false, error: data.error || `HTTP ${res.status}` };
   }, editing ? {} : { done: 'Added' });
   if (r.skipped) return;
-  if (!r.ok) { cardAlert(rootEl, { title: editing ? 'Not saved' : 'Not added', detail: r.error }); return; }
+  // The answer belongs to the open that asked: a screen opened meanwhile (the page's Add model, by keyboard) stays.
+  const live = mvState.dlg === dlg;
+  if (!r.ok) {
+    // A copy whose source was deleted meanwhile is refused for as long as it echoes a mask (collectModelEditor sends
+    // copyFrom only then): say what gets it saved.
+    const detail = /^unknown model to copy from /.test(r.error) ? 'The model this copies was removed. Type the values it masked, then Add.' : r.error;
+    const title = editing ? 'Not saved' : 'Not added';
+    if (!live) { notify({ tone: 'err', title, detail }); return; }
+    cardAlert(rootEl, { title, detail });
+    // withButton turned Save back on: what the form holds now (an id cleared, a refused row typed meanwhile) decides.
+    paintEditorSave(rootEl);
+    return;
+  }
   // Saved work is no longer unsaved work: the dialog closes without asking.
-  closeModelEditorDialog();
-  setModelsMsg(editing ? 'Model saved.' : 'Model added.', 'ok');
+  if (live) closeModelEditorDialog();
   await refreshModelsEverywhere();
+  // A new model shows where it landed (FRM-7): every narrowing cleared, its group unfolded, its side panel open. After
+  // the reload: the panel is built from the loaded catalogue, which did not hold the id before.
+  if (!editing) openModelFromAddress(body.id);
+  setModelsMsg(editing ? 'Model saved.' : 'Model added.', 'ok');
 }
 
+/** Resolves true once the DELETE went through, else false. The side panel on `id` closes before the reload, so it
+ *  closes even when the reload still lists the id. */
 async function deleteModelFlow(id) {
   let refs = null;
   try {
     const r = await fetch(`/api/models/${encodeURIComponent(id)}/refs`);
-    refs = await safeJson(r);
+    if (r.ok) refs = await safeJson(r);
   } catch { /* preview is best-effort; the confirm still names the model */ }
   const ok = await confirmModal({
     title: refs && refs.predefinedShadow ? 'Remove override' : 'Delete model',
-    message: deleteRefsSummary(id, refs),
+    // A failed preview counts nothing, so it claims no count either way.
+    message: refs ? deleteRefsSummary(id, refs) : `Delete model "${id}"? Jobs that use it will be cleared.`,
     confirmLabel: refs && refs.predefinedShadow ? 'Remove override' : 'Delete',
   });
-  if (!ok) return;
+  if (!ok) return false;
   try {
     const res = await fetch(`/api/models/${encodeURIComponent(id)}`, { method: 'DELETE' });
     const data = await safeJson(res);
-    if (!res.ok) return setModelsMsg(data.error || `HTTP ${res.status}`, 'err');
-    setModelsMsg('Deleted.', 'ok');
+    if (!res.ok) { setModelsMsg(data.error || `HTTP ${res.status}`, 'err'); return false; }
+    // The entry is gone either way; a job clear that failed comes back as `warning`.
+    setModelsMsg(data.warning || 'Deleted.', data.warning ? 'warn' : 'ok');
+    if (typeof mvState.cat.open === 'string' && mvState.cat.open.toLowerCase() === String(id).toLowerCase()) mvState.cat.open = null;
     await refreshModelsEverywhere();
+    return true;
   } catch (e) {
     setModelsMsg(e.message, 'err');
+    return false;
   }
 }
 
@@ -19787,42 +21551,62 @@ async function promoteModelFlow(id) {
 }
 
 // Live connectivity check — explicit user action -> POST /api/models/:id/test
-// (mirrors the chat-test handler). Paints the card's own result line instead
-// of repainting the view, so an open editor survives the round trip.
-async function testModelFlow(btn) {
-  const id = btn.dataset.id;
-  const out = btn.closest('.mv-card')?.querySelector('.mv-test-result');
-  const paint = (text, err) => {
-    if (!out) return;
-    out.textContent = text;
-    out.className = `mv-test-result hint${err ? ' err' : ''}`;
+// (mirrors the chat-test handler). The state lives in `mvState.tests`, so a panel drawn
+// anew meanwhile still shows it; it paints the panel's own Test and result line instead of
+// repainting the view (an open editor survives the round trip), and only while that panel shows `id`.
+async function testModelFlow(id) {
+  const lc = String(id).toLowerCase();
+  if (mvState.tests.get(lc)?.busy) return;                              // one test per model at a time
+  const paint = (text, { busy = false, err = false, done = false } = {}) => {
+    // An answer no panel shows is dropped: a panel of this model opened later starts clean.
+    const open = mvState.cat.open;
+    if (!busy && (typeof open !== 'string' || open.toLowerCase() !== lc)) { mvState.tests.delete(lc); return; }
+    mvState.tests.set(lc, { busy, text, err, done });
+    paintModelTest(lc);
   };
-  btn.disabled = true;
-  paint('Testing…');
+  // "Works" is a beat on the button (PAN-3); the answer stays on the line under it.
+  const settleDone = () => {
+    const t = mvState.tests.get(lc);
+    if (!t?.done) return;
+    mvState.tests.set(lc, { ...t, done: false });
+    paintModelTest(lc);
+  };
+  paint('', { busy: true });
   try {
     const res = await fetch(`/api/models/${encodeURIComponent(id)}/test`, { method: 'POST' });
     const data = await safeJson(res);
-    if (!res.ok) return paint(`${data.error || `HTTP ${res.status}`}`, true);
-    if (data.ok) return paint(`Replied: ${data.text}`);
-    paint(`${data.hint || data.message}`, true);
+    if (!res.ok) return paint(`${data.error || `HTTP ${res.status}`}`, { err: true });
+    if (data.ok) {
+      paint(`Replied: ${data.text}`, { done: true });
+      setTimeout(settleDone, BUTTON_DONE_MS)?.unref?.();
+      return;
+    }
+    paint(`${data.hint || data.message}`, { err: true });
   } catch (e) {
-    paint(`${e.message}`, true);
-  } finally {
-    btn.disabled = false;
+    paint(`${e.message}`, { err: true });
   }
 }
 
-// The Providers page's own delegation (§8.1): the same buttons, on the page that now owns them.
+// The Providers tab's own delegation (§8.1): the same buttons, on the tab that now owns them.
 if (el.providersList) {
   el.providersList.addEventListener('click', (ev) => {
     const t = ev.target.closest('button');
     if (!t) return;
-    if (t.classList.contains('mv-cp-signin')) copilotSignInFlow();
+    // A row's head folds or unfolds it; the open rows are kept through every redraw.
+    if (t.classList.contains('mdl-fold')) {
+      const row = t.closest('.mv-pv-card[data-row]')?.dataset.row;
+      if (row) mvState.pvOpen[row] = toggleProviderRow(providerRoot(), row);
+    } else if (t.classList.contains('mv-cp-signin')) copilotSignInFlow();
     else if (t.classList.contains('mv-cp-cancel')) { stopCopilotPoll(); mvState.signIn = null; renderProvidersViewBody(); }
     else if (t.classList.contains('mv-cp-signout')) copilotSignOutFlow();
-    else if (t.classList.contains('mv-cp-terms')) ensureCopilotTerms({ force: true }).then(() => renderProvidersViewBody());
-    else if (t.classList.contains('mv-cp-fetch-models')) openImportDialog({ source: 'copilot' });
+    // Like OpenRouter's and the OpenAI-compatible row's: the import lands in the CATALOG, so it opens there (step 2).
+    else if (t.classList.contains('mv-cp-fetch-models')) openAddFromProviders({ step: 2, provider: 'copilot' });
     else if (t.classList.contains('mv-cp-quota-refresh')) refreshCopilotQuotaFlow(t);
+    // The OpenRouter row's Save before the generic one, which would send only its key and cap.
+    else if (t.classList.contains('mv-pv-save') && t.dataset.provider === 'openrouter') {
+      const body = collectOpenRouterRow(t.closest('.mv-or-row'));
+      if (body) patchProviderFlow('openrouter', body, { btn: t });
+    } else if (t.classList.contains('mv-pv-save') && t.dataset.provider === 'copilot') copilotSaveFlow(t);
     else if (t.classList.contains('mv-pv-save')) {
       const body = collectProviderRow(providerRoot(), t.dataset.provider);
       if (body) patchProviderFlow(t.dataset.provider, body, { btn: t });
@@ -19831,102 +21615,227 @@ if (el.providersList) {
       const body = collectSpeechRow(providerRoot());
       if (body) patchProviderFlow('speech', body, { btn: t });
     } else if (t.classList.contains('mv-sp-test')) testSpeechFlow(t);
+    else if (t.classList.contains('mv-im-save')) {
+      // A row that cannot be saved is refused here, in the row's words, and sends nothing.
+      const problem = imagesRowProblem(providerRoot());
+      if (problem) showImagesSaveError(providerRoot(), problem);
+      else patchProviderFlow('images', collectImagesRow(providerRoot()), { btn: t, onError: (msg) => showImagesSaveError(providerRoot(), msg) });
+    }
+    else if (t.classList.contains('mv-im-test')) testImagesFlow(t);
+    else if (t.classList.contains('mv-so-save')) patchProviderFlow('sound', collectSoundRow(providerRoot()), { btn: t });
+    else if (t.classList.contains('mv-so-test')) testSoundFlow(t);
     else if (t.classList.contains('mv-sp-clear')) clearSpeechCacheFlow(t);
-    else if (t.classList.contains('mv-pv-preset')) {
-      // Fills the fields only; the row's Test / Save do the rest, exactly as for a typed URL.
-      applyProviderPreset(providerRoot(), t.dataset.provider, t.dataset.preset);
-      setProviderMsg(t.dataset.provider, 'OpenRouter filled in. Set the key (or keep ${OPENROUTER_KEY} and export it where Worca starts), Test connection, then Save.');
-    } else if (t.classList.contains('mv-pv-browse')) {
+    // OpenRouter's catalog, listed with the key its calls carry; the import lands in the CATALOG, like the row below.
+    else if (t.classList.contains('mv-or-browse')) openAddFromProviders({ step: 2, provider: 'openrouter' });
+    else if (t.classList.contains('mv-pv-browse')) {
       // The import lands in the CATALOG, so it opens there — with this row's endpoint filled in.
       const row = t.closest('.mv-pv-row');
       const input = row && row.querySelector('.mv-pv-baseurl');
-      openImportDialog({ source: 'openai', baseUrl: input ? input.value.trim() : '', goToModels: true });
+      openAddFromProviders({ step: 2, provider: 'openai', baseUrl: input ? input.value.trim() : '' });
     }
   });
   el.providersList.addEventListener('change', (ev) => {
     const t = ev.target;
     if (!t || !t.classList) return;
-    if (t.classList.contains('mv-cp-account')) patchProviderFlow('copilot', { accountType: t.value });
-    else if (t.classList.contains('mv-pv-conc') && t.dataset.provider === 'copilot') patchProviderFlow('copilot', { maxConcurrent: Number(t.value) });
+    if (t.classList.contains('mv-cp-account')) syncCopilotHostField(providerRoot());
+    else if (t.classList.contains('mv-im-service')) applyImagesPreset(providerRoot(), t.value);
   });
 }
 
-// The catalog list and the editor dialog share these handlers: the editor moved into an overlay
-// (§4.10), and every branch below already finds its own root from the event target.
+// The catalog list's own changes (the hide switches, the Source); the model dialog has its own below.
 function onModelsListChange(ev) {
   const t = ev.target;
-  if (t && t.classList && t.classList.contains('mv-hide-builtin')) saveHideBuiltinModels(t);
+  if (!t || !t.classList) return;
+  if (t.classList.contains('mv-hide-builtin')) saveHideBuiltinModels(t);
+  else if (t.classList.contains('mdl-source')) {
+    mvState.cat.source = t.value || 'any';
+    redrawCatalogue((root) => root.querySelector('.mdl-source'));
+  }
 }
 
-/** The catalog's toolbar: typing narrows, a chip picks a layer, a header folds its group. */
+/** The Catalogue's search: typing narrows; the redrawn field keeps the focus and the caret (renderModelsViewBody). */
 function onModelsToolbar(ev) {
   const t = ev.target;
   if (!t || !t.classList) return;
   if (t.classList.contains('mv-search')) {
-    mvState.query = t.value;
-    const at = t.selectionStart;
+    mvState.cat.query = t.value;
     renderModelsViewBody();
-    const next = el.modelsList && el.modelsList.querySelector('.mv-search');
-    if (next) { next.focus(); try { next.setSelectionRange(at, at); } catch { /* search inputs vary */ } }
   }
 }
+
+/** Redraw the Catalogue, then focus the control `find(list)` names again (the click's own button was drawn anew). */
+function redrawCatalogue(find) {
+  renderModelsViewBody();
+  const next = el.modelsList && find(el.modelsList);
+  try { next?.focus({ preventScroll: true }); } catch { /* jsdom */ }
+}
+
+/** The Catalogue's own buttons: a chip picks a filter, Show all clears every narrowing, a group head folds or unfolds
+ *  its harness, its More opens the group menu, a sub-group's fix goes where the fix is, a row opens its side panel (the
+ *  same row again closes it). */
 function onModelsToolbarClick(t) {
   if (t.classList.contains('filter-chip') && t.closest('.mv-filters')) {
-    mvState.filter = t.dataset.filter || 'all';
-    renderModelsViewBody();
+    const key = t.dataset.filter || 'all';
+    mvState.cat.filter = key;
+    redrawCatalogue((root) => [...root.querySelectorAll('.mv-filters .filter-chip[data-filter]')].find((n) => n.dataset.filter === key));
     return true;
   }
-  if (t.classList.contains('mv-sec-toggle')) {
-    const key = t.dataset.section;
-    if (key) mvState.collapsed = { ...mvState.collapsed, [key]: !mvState.collapsed[key] };
-    renderModelsViewBody();
+  if (t.classList.contains('mdl-show-all')) {
+    showAllModels();
+    redrawCatalogue((root) => root.querySelector('.mv-search'));
+    return true;
+  }
+  const engine = t.closest('.mdl-grp[data-engine]')?.dataset.engine || '';
+  if (t.classList.contains('mdl-grp-toggle') && engine) {
+    const fold = mvState.cat.fold;
+    mvState.cat.fold = { ...fold, [engine]: !(fold[engine] ?? engine !== 'claude') };
+    redrawCatalogue((root) => [...root.querySelectorAll('.mdl-grp[data-engine]')].find((n) => n.dataset.engine === engine)?.querySelector('.mdl-grp-toggle'));
+    return true;
+  }
+  if (t.classList.contains('mdl-grp-more') && engine) {
+    openGroupMenu(t, engine);
+    return true;
+  }
+  if (t.classList.contains('mdl-fix') && t.dataset.row) {
+    // Copilot signs in inside the setup assistant (AC-4.5); a key is set on its Providers row.
+    if (t.dataset.row === 'copilot') openSetup({ entry: 'fix', step: 'access' });
+    else goToProviders(t.dataset.row);
+    return true;
+  }
+  if (t.classList.contains('mdl-row') && t.dataset.id) {
+    const id = t.dataset.id;
+    const open = mvState.cat.open;
+    mvState.cat.open = typeof open === 'string' && open.toLowerCase() === id.toLowerCase() ? null : id;
+    redrawCatalogue(() => modelRowEl(id, engine));
     return true;
   }
   return false;
 }
-function onModelsClick(ev) {
-    const t = ev.target.closest('button');
-    if (!t) return;
-    if (onModelsToolbarClick(t)) return;
-    if (t.classList.contains('mv-edit')) {
-      mvState.editing = (mvState.data && mvState.data.models || []).find((m) => m.id === t.dataset.id) || null;
-      mvState.openCreate = false;
-      mvState.openShare = false;
+
+/** A harness group's More menu (CAT-4): "Default for new runs", ticked on the default, off while not ready or locked. */
+function openGroupMenu(anchor, engine) {
+  const g = buildCatalogue(catalogueData(), mvState.cat).groups.find((x) => x.engine === engine);
+  if (!g) return;
+  openMenu({ doc: document, anchor, align: 'end', label: `More for ${g.name}`, items: [{
+    label: 'Default for new runs', checked: g.isDefault, disabled: !g.canDefault, hint: g.defaultHint,
+    onSelect: () => { void setDefaultRunEngine(engine); },
+  }] });
+}
+
+/** Make `engine` the default for new runs (the user's own `runEngine`), then say so and mark its group. Resolves true
+ *  once it is saved (the Jobs tab then marks its button), else undefined. */
+async function setDefaultRunEngine(engine) {
+  try {
+    const res = await fetch('/api/settings', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ runEngine: engine }),
+    });
+    const data = await safeJson(res);
+    if (!res.ok) return setModelsMsg(data.error || `HTTP ${res.status}`, 'err');
+    mvState.runEngine = engine;
+    // New run re-reads its defaults only on a project change or a broadcast while it shows: re-read them now, so the
+    // form opened next starts on this engine (an engine the person already picked there stays, as loadRunDefaults keeps).
+    void loadRunDefaults(state.runTarget === 'workspace' ? '' : (state.projectDir || ''));
+    setModelsMsg(`${engineLabel(engine)} is the default for new runs`, 'ok');
+    renderModelsViewBody();
+    return true;
+  } catch (e) {
+    setModelsMsg(e.message, 'err');
+  }
+}
+
+/** Close the side panel: no open row, an empty host, no row marked; `focusRow` puts the focus on the row it showed. */
+function closeModelPanel({ focusRow = false } = {}) {
+  const id = mvState.cat.open;
+  mvState.cat.open = null;
+  el.modelPanelHost?.replaceChildren();
+  renderModelsViewBody();
+  if (focusRow && id) {
+    try { modelRowEl(id)?.focus({ preventScroll: true }); } catch { /* jsdom */ }
+  }
+}
+
+/** The Jobs block a "Used by" row opens, by the use's kind (catalogue-model.mjs panelUses). */
+const USE_JOBS_PART = Object.freeze({ role: 'roles', step: 'steps', helper: 'helpers', design: 'design' });
+
+/** The side panel's buttons (PAN-3, PAN-6). Every action acts on the open row's model, by its own id. */
+function onModelPanelClick(ev) {
+  const t = ev.target.closest('button');
+  if (!t || !el.modelPanelHost.contains(t)) return;
+  if (t.classList.contains('mdl-side-close')) { closeModelPanel({ focusRow: true }); return; }
+  const panel = mvState.cat.open ? buildModelPanel(catalogueData(), mvState.cat.open) : null;
+  if (!panel) return;
+  const id = panel.id;
+  if (t.classList.contains('mdl-copy-id')) void copyFromButton(t, id);
+  else if (t.classList.contains('mdl-use')) {
+    // The use's harness, then its block; a project's step or node pick is no row of the tab: the tab itself.
+    if (t.dataset.engine) mvState.jobs.engine = t.dataset.engine;
+    location.hash = modelsHash('jobs', USE_JOBS_PART[t.dataset.kind] || '');
+  }
+  else if (t.classList.contains('mdl-act-more')) {
+    openMenu({ doc: document, anchor: t, align: 'end', label: 'More', items: [
+      { label: panel.actions.delLabel, danger: true, onSelect: () => { void deleteModelFlow(id); } },
+    ] });
+  } else if (t.classList.contains('mdl-act')) {
+    const act = t.dataset.act;
+    if (act === 'test') void testModelFlow(id);
+    else if (act === 'edit') {
+      mvState.editing = (mvState.data?.models || []).find((m) => m.id === id) || null;
       mvState.prefill = null;
       openModelEditorDialog();
-    } else if (t.classList.contains('mv-delete')) {
-      deleteModelFlow(t.dataset.id);
-    } else if (t.classList.contains('mv-promote')) {
-      promoteModelFlow(t.dataset.id);
-    } else if (t.classList.contains('mv-duplicate')) {
-      duplicateModelFlow(t.dataset.id);
-    } else if (t.classList.contains('mv-copy')) {
-      editPluginCopyFlow(t.dataset.plugin, t.dataset.id);
-    } else if (t.classList.contains('mv-test')) {
-      testModelFlow(t);
-    } else if (t.classList.contains('mv-signin')) {
-      const step = setupStepForSignIn(t);   // a Copilot pill signs in inside the setup assistant (AC-4.5)
-      if (step) openSetup({ entry: 'fix', step }); else goToProviders(t.dataset.provider);
-    } else if (t.classList.contains('mvx-export')) {
-      exportPluginFlow();
-    } else if (t.classList.contains('mvx-cancel')) {
-      mvState.openShare = false;
-      renderModelsViewBody();
-    } else if (t.classList.contains('mv-cancel')) {
-      modelEditorGuard?.cancel();
-    } else if (t.classList.contains('mv-env-add')) {
-      const wrap = modelEditorEl()?.querySelector('.mv-env');
-      if (wrap) wrap.appendChild(makeEnvRow());
-    } else if (t.classList.contains('mv-env-rm')) {
-      const row = t.closest('.mv-env-row');
-      if (row) row.remove();
-    } else if (t.classList.contains('mv-env-copy')) {
-      copyModelEnvValue(t);
-    } else if (t.classList.contains('mv-env-reveal')) {
-      toggleModelEnvReveal(t);
-    } else if (t.classList.contains('mv-save')) {
-      saveModelEditorFlow();
-    }
+    } else if (act === 'duplicate') void duplicateModelFlow(id);
+    else if (act === 'copy') void editPluginCopyFlow(panel.plugin, id);
+    else if (act === 'promote') void promoteModelFlow(id);
+  }
+}
+
+/** The Catalogue's own clicks: its toolbar, rows and fixes (Share as plugin is a screen of the model dialog). */
+function onModelsClick(ev) {
+  const t = ev.target.closest('button');
+  if (t) onModelsToolbarClick(t);
+}
+
+/** The model dialog's buttons, whichever screen shows them (one delegation on the modal). */
+function onModelDialogClick(ev) {
+  const t = ev.target.closest('button');
+  if (!t || !el.modelEditorModal.contains(t)) return;
+  const c = t.classList;
+  if (c.contains('mv-cancel') || c.contains('mvx-cancel') || c.contains('mdl-close')) { modelEditorGuard?.cancel(); return; }
+  // A Save or an import is out: every screen stays as it is (a synthetic click reaches a disabled button too).
+  if (modelDialogBusy()) return;
+  if (c.contains('mdl-next')) addStep1Next(t.closest('.mdl-add'));
+  else if (c.contains('mv-back')) modelDialogBack();
+  else if (c.contains('mv-rewhere')) showRewhereStep();
+  else if (c.contains('mdl-manual')) addManualForm();
+  else if (c.contains('mdl-add-fix')) addFixFlow(t);
+  else if (c.contains('mimp-go')) void importAddModelsFlow();
+  else if (c.contains('mimp-list')) void listAddModels();
+  else if (c.contains('mimp-preset')) applyAddPreset(t);
+  else if (c.contains('mv-env-add')) {
+    const wrap = modelEditorEl()?.querySelector('.mv-env');
+    if (wrap) { wrap.appendChild(makeEnvRow()); paintEditorSave(modelEditorEl()); }
+  } else if (c.contains('mv-env-rm')) {
+    const row = t.closest('.mv-env-row');
+    const editorEl = t.closest('.mv-editor');
+    if (row) { row.remove(); paintEditorSave(editorEl); }
+  } else if (c.contains('mv-env-copy')) copyModelEnvValue(t);
+  else if (c.contains('mv-env-reveal')) toggleModelEnvReveal(t);
+  else if (c.contains('mv-save')) saveModelEditorFlow();
+  else if (c.contains('mvx-export')) void exportPluginFlow();
+}
+
+/** Step 2's own changes: the provider (a new list), a tick or select-all (the foot's count), OpenRouter's filters. */
+function onModelDialogChange(ev) {
+  const t = ev.target;
+  const card = t && t.closest ? t.closest('.mdl-add[data-step="2"]') : null;
+  if (!card) return;
+  if (t.classList.contains('mdl-add-provider')) changeAddProvider(t);
+  else if (t.classList.contains('mvi-all')) {
+    const sheet = t.closest('.mvi');
+    // Select-all means what is ON SCREEN: ticking a row the filter hides would import a surprise.
+    if (sheet) for (const c of sheet.querySelectorAll('tbody tr:not(.is-filtered) .mvi-cb')) { if (!c.disabled) c.checked = t.checked; }
+    paintAddTicks(card);
+  } else if (t.classList.contains('mvi-cb')) paintAddTicks(card);
+  else if (t.closest('.mvi-or-filters')) { applyAddFilter(card); paintAddTicks(card); }
 }
 // Pricing mode. A `change` listener, not the click one above: arrow-key
 // navigation within a radio group changes the selection without a click.
@@ -19947,86 +21856,62 @@ function onModelsEngineChange(ev) {
 }
 function onModelsConnChange(ev) {
     const t = ev.target;
-    if (!t.classList || !t.closest('.mv-conn')) return;
+    // The connection and its folds (the form puts them after Pricing); Pricing is in neither, so a pick there stays.
+    if (!t.classList || !t.closest('.mv-conn, .mv-conn-more')) return;
     const editorEl = t.closest('.mv-editor');
     if (!editorEl) return;
     applyConnectionModeIn(editorEl);
     const conn = editorEl.querySelector('.mv-conn');
-    const mode = conn && conn.querySelector('.mv-conn-mode-rb:checked')?.value;
-    const provider = conn && conn.querySelector('.mv-conn-provider')?.value;
-    if (mode === 'provider' && provider === 'copilot' && (editorEl.querySelector('.mv-cost-mode-rb:checked')?.value || 'cli') === 'cli') {
+    // conn.dataset.provider: the provider it stores (OpenRouter's is openai), '' off a provider.
+    const provider = conn && connectionWhere(conn) === 'provider' ? conn.dataset.provider : '';
+    if (provider === 'copilot' && (editorEl.querySelector('.mv-cost-mode-rb:checked')?.value || 'cli') === 'cli') {
       setModelCost(editorEl, { free: true });
     }
 }
 
 el.modelsList?.addEventListener('input', onModelsToolbar);
-for (const host of [el.modelsList, el.modelEditorModal]) {
-  if (!host) continue;
-  host.addEventListener('change', onModelsListChange);
-  host.addEventListener('click', onModelsClick);
-  host.addEventListener('change', onModelsCostChange);
-  host.addEventListener('change', onModelsConnChange);
-  host.addEventListener('change', onModelsEngineChange);
-}
-
-// ── Import dialog wiring ────────────────────────────────────────────────────
-if (el.modelImportModal) {
-  el.mimpBaseField = el.mimpBase ? el.mimpBase.closest('.mimp-base-field') : null;
-  el.mimpKeyField = el.mimpKey ? el.mimpKey.closest('.mimp-key-field') : null;
-  // A hosted API's preset fills its base URL and the usual ${VAR} for its key (bridge-view.mjs ENDPOINT_PRESETS).
-  for (const b of el.modelImportModal.querySelectorAll('.mimp-preset')) {
-    b.addEventListener('click', () => {
-      const p = ENDPOINT_PRESETS[b.dataset.preset];
-      if (!p) return;
-      if (el.mimpBase) el.mimpBase.value = p.baseUrl;
-      if (el.mimpKey) el.mimpKey.value = p.keyRef;
-      listImportModels();
-    });
-  }
-  el.modelImportBtn?.addEventListener('click', () => openImportDialog({}));
-  el.mimpSource?.addEventListener('change', () => {
-    mimp.source = el.mimpSource.value;
-    mimp.payload = null;
-    el.mimpBody?.replaceChildren();
-    if (el.mimpGo) el.mimpGo.disabled = true;
-    setImportMsg('');
-    paintImportSource();
-    if (mimp.source === 'copilot') listImportModels();
+el.modelPanelHost?.addEventListener('click', onModelPanelClick);
+// SH-5: Escape closes the Catalogue's side panel, last: an open menu stops its own Escape first (this is the bubble
+// phase), an open dialog owns it, and so do Ask beside the page, the terminal and the guide.
+document.addEventListener('keydown', (e) => {
+  if (e.key !== 'Escape' || e.defaultPrevented) return;
+  if (currentModelsTab() !== 'catalogue' || !mvState.cat.open || !el.modelPanelHost?.querySelector('.mdl-side')) return;
+  if (dialogOpen(document)) return;                                    // a pop-up owns Escape
+  if (document.querySelector('.wfv-menu, .group-picker, .label-picker')) return;   // an open menu or picker closes first
+  // Escape typed in a text field (the search) is the field's: the browser clears it (a switch or a button is no field).
+  if (e.target?.matches?.('input:not([type=checkbox]):not([type=radio]), textarea, select')) return;
+  if (e.target?.closest?.('#ask-side')) return;                      // Ask worca beside the page: the chat's Escape
+  if (askPanel?.ownsKey(e)) return;
+  if (e.target?.closest?.('.term-pane')) return;                     // Escape typed in the terminal (vim, less) is the shell's
+  if (document.querySelector('.guide-layer')) return;                // the guide owns Escape
+  e.preventDefault();
+  closeModelPanel({ focusRow: true });
+});
+el.modelsList?.addEventListener('change', onModelsListChange);
+el.modelsList?.addEventListener('click', onModelsClick);
+// The model dialog: every screen's buttons, the form's own changes, step 2's filter and its address's Enter.
+if (el.modelEditorModal) {
+  el.modelEditorModal.addEventListener('click', onModelDialogClick);
+  for (const fn of [onModelDialogChange, onModelsCostChange, onModelsConnChange, onModelsEngineChange]) el.modelEditorModal.addEventListener('change', fn);
+  el.modelEditorModal.addEventListener('input', (ev) => {
+    const card = ev.target?.classList?.contains('mimp-filter') ? ev.target.closest('.mdl-add[data-step="2"]') : null;
+    if (card) applyAddFilter(card);
   });
-  el.mimpList?.addEventListener('click', () => listImportModels());
-  el.mimpBase?.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); listImportModels(); } });
-  el.mimpKey?.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); listImportModels(); } });
-  el.mimpFilter?.addEventListener('input', () => applyImportFilter());
-  el.mimpGo?.addEventListener('click', () => importModelsFlow());
-  el.mimpCancel?.addEventListener('click', () => importGuard?.cancel());
-  // The select-all box lives inside the sheet the dialog hosts.
-  el.modelImportModal.addEventListener('change', (ev) => {
-    const t = ev.target;
-    if (t && t.classList && t.classList.contains('mvi-all')) {
-      const sheet = t.closest('.mvi');
-      // Select-all means what is ON SCREEN: ticking a row the filter hides would import a surprise.
-      if (sheet) for (const c of sheet.querySelectorAll('tbody tr:not(.is-filtered) .mvi-cb')) { if (!c.disabled) c.checked = t.checked; }
-    } else if (t && t.closest && t.closest('.mvi-or-filters')) applyImportFilter();   // Free / Tools / window
+  el.modelEditorModal.addEventListener('keydown', (ev) => {
+    if (ev.key !== 'Enter' || !ev.target?.classList) return;
+    if (!ev.target.classList.contains('mimp-base') && !ev.target.classList.contains('mimp-key')) return;
+    ev.preventDefault();
+    void listAddModels();
   });
 }
 
-if (el.modelCreateBtn) {
-  el.modelCreateBtn.addEventListener('click', () => {
-    mvState.editing = null;
-    mvState.openCreate = true;
-    mvState.openShare = false;
-    mvState.prefill = null;
-    openModelEditorDialog();
-  });
-}
-if (el.modelShareBtn) {
-  el.modelShareBtn.addEventListener('click', () => {
-    mvState.editing = null;
-    mvState.openCreate = false;
-    mvState.prefill = null;
-    mvState.openShare = true;
-    mvState.revealPanel = true;
-    renderModelsViewBody();
+if (el.modelCreateBtn) el.modelCreateBtn.addEventListener('click', () => openAddModelDialog());
+// More: the page's rarer actions in a menu (today Share as plugin, which opens in the model dialog).
+if (el.modelsMoreBtn) {
+  el.modelsMoreBtn.addEventListener('click', () => {
+    openMenu({ doc: document, anchor: el.modelsMoreBtn, align: 'end', label: 'More', items: [
+      { label: 'Share as plugin', onSelect: () => openShareDialog() },
+    ] });
   });
 }
 
@@ -20070,22 +21955,7 @@ const statsOption = (text, value) => Object.assign(document.createElement('optio
 
 const ymd = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
 
-async function paintStatsGroupOptions() {
-  const sel = document.getElementById('stats-group');
-  // /api/tags → { keys: [{ key, count, plain, valued }], values } (run-tags-store.mjs tagVocabulary)
-  const keys = flagOn('runTags') ? ((await fetchTagVocabulary())?.keys || []).map((k) => k.key) : [];
-  // Configured tag dimensions come first, by label ("Group by Cost centre"); none configured = slice 2's list.
-  const dims = flagOn('runTags') ? await loadAllTagDims() : [];
-  const sig = JSON.stringify([keys, dims.map((d) => [d.key, d.label])]);
-  if (sel.dataset.sig === sig) return;
-  sel.dataset.sig = sig;
-  sel.replaceChildren(statsOption('No grouping', ''), statsOption('Group by person', 'person'),
-    ...tagGroupOptions(dims, keys).map((o) => statsOption(o.text, o.value)));
-  sel.value = statsState.groupBy;
-  if (sel.value !== statsState.groupBy) statsState.groupBy = '';   // a key that vanished
-}
-
-/** Flag on: highlight the chosen #stats-view chip → the view to show and the dims (policy dimensions, in their
+/** Highlight the chosen #stats-view chip → the view to show and the dims (policy dimensions, in their
  *  order) the Cost report's picker leads with. Every chip shows: the Cost report's built-in dimensions always exist. */
 async function paintStatsViewChips() {
   const dims = await loadAllTagDims();
@@ -20132,27 +22002,19 @@ async function loadStatsView() {
   if (inverted) return;
   const body = el.statsBody;
   if (body.childElementCount) body.classList.add('is-loading');   // before any await: painted synchronously
-  const chips = flagOn('runTags');
-  document.getElementById('stats-group-wrap').hidden = chips;
-  const { view, dims } = chips
-    ? await paintStatsViewChips().catch(() => ({ view: 'overview', dims: [] }))
-    : { view: null, dims: [] };
-  if (!chips) await paintStatsGroupOptions().catch(() => {});      // a vanished tag key resets groupBy before the query
+  const { view, dims } = await paintStatsViewChips().catch(() => ({ view: 'overview', dims: [] }));
   // Cost has its own filter bar (cost-report.mjs), so the page's cost tag field and Person select step aside.
-  const cost = chips && view === 'cost';
+  const cost = view === 'cost';
   document.getElementById('stats-tags').hidden = cost;
   document.getElementById('stats-person').closest('.select-wrap').hidden = cost;
   // A network-level rejection is not an !res.ok — without this catch it escapes
   // as an unhandled rejection and leaves the body stuck in .is-loading.
   let res, data;
   try {
-    // Flag on: the chip decides groupBy, and Cost asks for the per-run facts (its own chips filter them in the
-    // browser). Flag off: the tag field is hidden, so its chips must not narrow the numbers either.
+    // The chip decides groupBy, and Cost asks for the per-run facts (its own chips filter them in the browser).
     const query = cost
       ? { range: statsState.range, from: statsState.from, to: statsState.to, report: true }
-      : chips
-        ? { ...statsState, groupBy: view === 'person' ? 'person' : '' }
-        : { ...statsState, tags: [] };
+      : { ...statsState, groupBy: view === 'person' ? 'person' : '' };
     res = await fetch(`/api/stats?${statsQuery(query)}`);
     data = await safeJson(res);
   } catch (err) {
@@ -20386,6 +22248,7 @@ async function stopRun(runId, btn, { pipelineId = '' } = {}) {
 // Resolves to the failure's reason (a page that does not show the log says it), or null.
 async function pauseRun(runId, btn) {
   if (btn) btn.disabled = true;
+  showPausePending(runId, true);
   try {
     const res = await fetch('/api/pause', {
       method: 'POST',
@@ -20394,17 +22257,67 @@ async function pauseRun(runId, btn) {
     });
     if (!res.ok) {
       const err = await safeJson(res);
+      // CANNOT_PAUSE because the run is pausing or paused already (another tab, the CLI, chat): not a failure. The
+      // refusal carries the server's status: show it now (no flash of Running, and a run that is paused already says
+      // so even when its frame never reaches this tab). Any other status reverts.
+      // awaitStatus tells the painters nothing is in flight any more, so the next status past pausing re-enables
+      // Pause (C16 would otherwise keep it disabled if that status is 'running' again).
+      if (err && err.code === 'CANNOT_PAUSE' && (err.status === 'pausing' || err.status === 'paused')) {
+        const r0 = runs.get(runId);
+        if (r0) { r0.pausePending = true; applyServerStatus(r0, err.status); repaintPending(r0); }
+        if (btn) btn.dataset.awaitStatus = '1';
+        return null;
+      }
+      showPausePending(runId, false);
       if (btn) btn.disabled = false;
       const r = runs.get(runId);
       if (r) onLog(r, { source: 'ui', level: 'error', text: `pause failed: ${err.error || res.status}`, ts: Date.now() });
       return String(err.error || `HTTP ${res.status}`);
     }
+    // Taken. While the run reads Pausing… nothing is in flight, so the next status past pausing re-arms Pause. The
+    // server's pausing frame follows any stale running one on the socket; should it never arrive, stop holding a later
+    // running back after a while.
+    if (btn && runs.get(runId)?.pausePending) btn.dataset.awaitStatus = '1';
+    endPauseHold(runId);
     return null;
   } catch (e) {
+    showPausePending(runId, false);
     if (btn) btn.disabled = false;
     const r = runs.get(runId);
     if (r) onLog(r, { source: 'ui', level: 'error', text: `pause error: ${e.message}`, ts: Date.now() });
     return e.message;
+  }
+}
+
+// A Pause or Resume click shows at once (Pausing… / Resuming…). Under load the request and the server's state frame can
+// take seconds, and until then the run still read Running / Paused. The server's next state frame takes over.
+function repaintPending(r) {
+  r._decorSeq = (r._decorSeq || 0) + 1;   // the memoised decor and progress line re-read the status
+  renderRunningView();
+  pokeAskRuns(r.runId, 'state');
+}
+function showPausePending(runId, on) {
+  const r = runs.get(runId);
+  if (!r) return;
+  if (on && r.status === 'running') { r.pausePending = true; r._pauseSeq = (r._pauseSeq || 0) + 1; r.status = 'pausing'; repaintPending(r); }
+  else if (!on && r.pausePending) { r.pausePending = false; if (r.status === 'pausing') r.status = 'running'; repaintPending(r); }
+}
+// How long after a taken Pause a 'running' status is still read as sent before the server took it.
+const PAUSE_HOLD_MS = 30000;
+function endPauseHold(runId) {
+  const r = runs.get(runId);
+  if (!r || !r.pausePending) return;
+  const seq = r._pauseSeq;
+  // unref: a no-op in browsers (number); under Node (the jsdom tests) a 30 s hold would keep the process alive.
+  setTimeout(() => { if (r.pausePending && r._pauseSeq === seq) r.pausePending = false; }, PAUSE_HOLD_MS).unref?.();
+}
+/** Every parked copy of the pipeline (a run page and a History resume address it by pipeline id). */
+function showResumePending(pipelineId, on) {
+  for (const r of runs.values()) {
+    if (r.pipelineId !== pipelineId || !!r.resumePending === on) continue;
+    if (on && !isPaused(r) && r.status !== 'interrupted') continue;
+    r.resumePending = on;
+    repaintPending(r);
   }
 }
 
@@ -20540,6 +22453,7 @@ async function resumeRunFromCard(runId, btn, opts = {}) {
   const prevLines = Array.isArray(r.logLines) ? r.logLines.slice() : [];
   const prevBtnHtml = btn ? btn.innerHTML : '';
   if (btn) { btn.disabled = true; btn.textContent = ' Resuming…'; }
+  showResumePending(pipelineId, true);
   try {
     const res = await fetch('/api/resume', {
       method: 'POST',
@@ -20548,6 +22462,7 @@ async function resumeRunFromCard(runId, btn, opts = {}) {
     });
     const data = await safeJson(res);
     if (!res.ok) {
+      showResumePending(pipelineId, false);   // on success the paused copy is dropped below; the new run reads Starting
       // A team cap (team-policy design §7): soft — ask, then resume again with the choice recorded.
       const again = await policyRefusalRetry(data, res.status);
       if (again) { if (btn) { btn.disabled = false; btn.innerHTML = prevBtnHtml; } return resumeRunFromCard(runId, btn, { ...opts, pastTeamCap: true, policyReason: again.reason }); }
@@ -20606,12 +22521,14 @@ async function resumeRunFromCard(runId, btn, opts = {}) {
     // shows only the new card (same pipelineId would otherwise render twice).
     alerts.onResolved(alertRun(r));
     runs.delete(runId);
+    showResumePending(pipelineId, false);   // any other parked copy of it
     if (state.selectedRunId === runId) state.selectedRunId = '';
     updateNavCounts();
     // The continuous live card: the Runs page when `navigate` (P3), and in Chat the run panel follows (P4).
     landOnResumedRun(data.runId, { fromRunId: runId, pipelineId, navigate });
     renderRunningView();
   } catch (err) {
+    showResumePending(pipelineId, false);
     if (btn) { btn.disabled = false; btn.innerHTML = prevBtnHtml; }
     const rr = runs.get(runId);
     if (rr) onLog(rr, { source: 'ui', level: 'error', text: `resume failed: ${err.message}`, ts: Date.now() });
@@ -20766,6 +22683,8 @@ function readLogFilterFrom(root, prevSearch = '') {
   const nodeAxis = stepSel && stepSel.dataset.axis === 'node';
   const stepVal = stepSel ? stepSel.value : '';
   const chip = root.querySelector('.log-f-exec');
+  const sChip = root.querySelector('.log-f-session');
+  const sid = sChip ? (sChip.dataset.sessionId || '') : '';
   return {
     source: root.querySelector('.log-f-source')?.value || '',
     level: root.querySelector('.log-f-level')?.value || '',
@@ -20773,6 +22692,8 @@ function readLogFilterFrom(root, prevSearch = '') {
     node: nodeAxis ? stepVal : '',
     execution: chip ? (chip.dataset.executionId || '') : '',
     cycle: root.querySelector('.log-f-cycle')?.value || '',
+    session: sid,
+    sessionMembers: sid ? (sChip.dataset.members || '').split(' ').filter(Boolean) : [],
     search: searchEl ? searchEl.value : prevSearch,
   };
 }
@@ -20807,7 +22728,6 @@ for (const id of ['stats-from', 'stats-to']) {
   });
 }
 document.getElementById('stats-person')?.addEventListener('change', (e) => { statsState.person = e.target.value; loadStatsView(); });
-document.getElementById('stats-group')?.addEventListener('change', (e) => { statsState.groupBy = e.target.value; loadStatsView(); });
 document.getElementById('stats-view')?.addEventListener('click', (e) => {
   const b = e.target.closest('button[data-stats-view]');
   if (!b || b.hidden) return;
@@ -21428,7 +23348,7 @@ async function paintPolicyLine() {
   const scope = currentRunScopeId();
   const seq = ++policyLineSeq;
   if (!scope) { el.policyLine.hidden = true; el.policyLine.replaceChildren(); return; }
-  const qs = new URLSearchParams({ scope, guardrailsId: state.guardrailsId || 'permissive' });
+  const qs = new URLSearchParams({ scope, guardrailsId: state.guardrailsId || state.guardrailsDefault });
   // What the run will actually pick: the Agents accordion's model selects (per workflow node),
   // falling back to the legacy per-role config when the accordion has not painted yet.
   const models = selectedRunModels();
@@ -21439,7 +23359,8 @@ async function paintPolicyLine() {
   if (seq !== policyLineSeq) return;
   if (!data || !data.policy) { el.policyLine.hidden = true; el.policyLine.replaceChildren(); return; }
   // The team's default guardrail set preselects the picker until the user picks one themselves.
-  if (data.guardrailsDefault && !state.guardrailsTouched && state.guardrailsId === 'permissive' && el.guardrailsSelect
+  if (data.guardrailsDefault && !state.guardrailsTouched && state.guardrailsId === state.guardrailsDefault
+      && data.guardrailsDefault !== state.guardrailsId && el.guardrailsSelect
       && [...el.guardrailsSelect.options].some((o) => o.value === data.guardrailsDefault)) {
     state.guardrailsId = data.guardrailsDefault;
     el.guardrailsSelect.value = data.guardrailsDefault;
@@ -21656,7 +23577,7 @@ async function updateRequiredPlugin(name) {
   // #555 D5: the dialog's own button carries the progress; the result is a toast after it closes.
   if (confirmBtn) confirmBtn.addEventListener('click', async () => {
     const r2 = await withButton(confirmBtn, async () => {
-      const r = await pluginApi('POST', `/api/plugins/${encodeURIComponent(name)}/update`, { confirm: true });
+      const r = await pluginApi('POST', `/api/plugins/${encodeURIComponent(name)}/update`, { confirm: true, candidateSha: data.preview.candidateSha });
       return r.ok ? r : { ...r, ok: false };
     }, { busy: 'Updating…', done: 'Updated' });
     if (r2.skipped) return;
@@ -21881,7 +23802,7 @@ async function loadTeamMetricsView({ refresh = false } = {}) {
   if (!body || !chip || !scopeSel) return;
   const seq = ++tmState.loadSeq;
   // Dimension labels for the tag group-by: repaint as soon as the list arrives, not only on the next render.
-  if (flagOn('runTags')) loadAllTagDims().then((d) => { tmState.dims = d; if (tmState.data && tmState.tab === 'overview') renderTeamMetrics(); });
+  loadAllTagDims().then((d) => { tmState.dims = d; if (tmState.data && tmState.tab === 'overview') renderTeamMetrics(); });
   body.classList.add('is-loading');
   body.setAttribute('aria-busy', 'true');
   setTmChipBusy(true);
@@ -22038,6 +23959,8 @@ function mergePrStatus(a, b) {
     azure: b.azure && b.azure !== 'unused' ? b.azure : (a.azure ?? b.azure),
     azureError: b.azureError ?? a.azureError ?? null,
     azureTruncated: [...new Set([...(a.azureTruncated || []), ...(b.azureTruncated || [])])],
+    bitbucket: b.bitbucket && b.bitbucket !== 'unused' ? b.bitbucket : (a.bitbucket ?? b.bitbucket),
+    bitbucketError: b.bitbucketError ?? a.bitbucketError ?? null,
     actionRepos: [...new Set([...(a.actionRepos || []), ...(b.actionRepos || [])])],
     unsupportedRepos: [...new Set([...(a.unsupportedRepos || []), ...(b.unsupportedRepos || [])])],
   };
@@ -22159,8 +24082,7 @@ function renderTeamMetrics() {
   const data = tmState.data;
   if (!body || !data) return;
   // Run tags: the keys and tags on the loaded records; a group-by or tag filter they no longer carry falls back.
-  const tagsOn = flagOn('runTags');
-  const loadedTags = tagsOn ? [...new Set((data.records || []).flatMap(recordTags))] : [];
+  const loadedTags = [...new Set((data.records || []).flatMap(recordTags))];
   const tagKeys = [...new Set(loadedTags.map((t) => t.split(':')[0]))].sort();
   if (tmState.groupBy.startsWith('tag:') && !tagKeys.includes(tmState.groupBy.slice(4))) tmState.groupBy = 'workflow';
   if (tmState.tag && !loadedTags.includes(tmState.tag)) tmState.tag = '';
@@ -22181,9 +24103,9 @@ function renderTeamMetrics() {
     homeHint.append('Metrics home ', Object.assign(document.createElement('code'), { className: 'mono', textContent: data.scope.home || '—' }),
       ` · records from ${(data.scope.sources || []).length} member repositor${(data.scope.sources || []).length === 1 ? 'y' : 'ies'}, grouped by workspace name`);
   }
-  // View chips (flag on only). Cost is the Cost and value report over the team records in the range; the page's
+  // View chips. Cost is the Cost and value report over the team records in the range; the page's
   // #tm-tag select and #tm-filters chips step aside there (the report has its own filter bar).
-  const view = tagsOn ? tmState.view : null;
+  const view = tmState.view;
   let costEl = null;
   if (view === 'cost') {
     const facts = recordFacts(data.records || [], { range: tmState.range, from: tmState.from || null, to: tmState.to || null, now: Date.now() });
@@ -22199,7 +24121,7 @@ function renderTeamMetrics() {
   body.replaceChildren(renderTeamMetricsBody(agg, { doc: document, now: Date.now(), scopeKind: data.scope?.kind || 'project', sort: tmState.sort, filter: tmState.filter, homeHint, runLimit: tmState.runLimit, tagKeys, tagDims: tmState.dims, view, costEl }));
   tmState.lastAgg = agg;
   // The #tm-tag select, beside the range controls (replaced on every render; hidden with the flag off).
-  const tagSel = renderTagFilterSelect(tagsOn ? data.records || [] : [], tmState.tag, { doc: document });
+  const tagSel = renderTagFilterSelect(data.records || [], tmState.tag, { doc: document });
   if (tmState.tab === 'timeline' || view === 'cost') tagSel.hidden = true;
   const oldTag = document.getElementById('tm-tag');
   oldTag?.replaceWith(tagSel);
@@ -22458,7 +24380,7 @@ async function loadHistoryView({ force = false } = {}) {
   state.historyError = '';
   crp.historySeen = true;   // Chat P4: a run panel id still unknown after this is missing, not pending
   state.ghAvailable = !!data.ghAvailable;
-  state.adoAvailable = !!(data.prHosts && data.prHosts.azure);
+  state.adoAvailable = !!(data.prHosts && (data.prHosts.azure || data.prHosts.bitbucket));
   paintHistory();                                        // fresh skeleton repaint
   rdRepaintOpenGlance();                                 // an open finished run reads its PR from these rows
   pokeAskRuns(null, 'history');                          // Chat P3: a finished run card's Create pull request reads prHostAvailable()
@@ -22521,7 +24443,7 @@ function onHistoryPr(msg) {
 // the fallback escapes the chars that would break `[attr="..."]`.
 function cssEscape(s) {
   s = String(s == null ? '' : s);
-  return (window.CSS && CSS.escape) ? CSS.escape(s) : s.replace(/["\\\]]/g, '\\$&');
+  return (window.CSS && window.CSS.escape) ? window.CSS.escape(s) : s.replace(/["\\\]]/g, '\\$&');
 }
 
 // Apply a batch item's per-member PRs onto a workspace row (by memberKey).
@@ -23351,9 +25273,11 @@ async function loadLiveLogs(panel, logUrl, st = null) {
         hStepSel.value = want;
       }
       paintExecChip(hist, bar);
+      paintSessionChip(hist, bar);
       paint();
     };
     wireExecChip(bar, { read: () => filter, write: (patch) => panel.__setLogFilter(patch) });
+    wireSessionChip(bar, { read: () => filter, write: (patch) => panel.__setLogFilter(patch) });
 
     paint();
 
@@ -23675,7 +25599,7 @@ async function loadHistDetailScreen(screen, record, parsed, ship = null) {
     // an archived row never appears in historyAll, so without this the stub —
     // no projectDir, no title — sticks and the glance head prints "(no project)".
     || (state.historyArchived || []).find(matchRow);
-  if (row) histDetailState.record = row;
+  if (row) { histDetailState.record = row; askPanel?.pageChanged?.(); }   // the side column's Run chip names the run
   // A deep-linked ARCHIVED run on a cold feed: the payload's stamp says the row
   // lives in the archived feed, so fetch that feed now (its lazy load runs
   // refreshHdFromRow at the end, which repairs the stub record and repaints).
@@ -23694,8 +25618,10 @@ async function loadHistDetailScreen(screen, record, parsed, ship = null) {
   // column painter, as a thunk.
   paintGraphFor(flow, st.stepper, isGraphManifest(st.stepper) ? Object.assign(
     decorFromState(st, { live: false, now: 0, subsOf: (id) => subAgentsForNode(st, id), modelLabel: graphModelLabel }),
-    { run: st, runId: parsed.id, mode: 'monitor', record: rec }) : null, st.steps);
-  if (isGraphManifest(st.stepper)) paintQuiescenceBanner(screen.querySelector('.hd-banners'), decorFromState(st, { live: false, now: 0 }));
+    // `logs`: the run saved a log (HD_TABS' Logs tab shows), so a tray header has a log to open; its cards link the same way.
+    { run: st, runId: parsed.id, mode: 'monitor', record: rec, logs: Array.isArray(data.artifacts) && data.artifacts.some((a) => a && a.kind === 'live-log') })
+    : null, st.steps);
+  if (isGraphManifest(st.stepper)) paintRunWarnings(screen.querySelector('.hd-banners'), decorFromState(st, { live: false, now: 0 }));
 
   paintHdHeaderMeta(screen, rec, data);
   setupHdActions(screen, rec, data);
@@ -23762,7 +25688,10 @@ function histStatusMeta(p) {
   const s = String((p && p.status) || '').toLowerCase();
   const family = HIST_STATUS_FAMILY[s]
     || ((p && p.live) || s === 'running' || s === 'starting' ? 'paused' : '');
+  const note = outcomeNote(p);
   const word = s === 'pausing' ? 'Pausing…'
+    : p && p.resumePending ? 'Resuming…'   // a Resume in flight (the browser's flag)
+    : note ? `Done · ${note.text}`          // E2/2.3: the caveat rides the word
     : s ? s.charAt(0).toUpperCase() + s.slice(1) : 'Unknown';
   return { family: family || 'paused', word };
 }
@@ -23855,6 +25784,7 @@ function crossRepoHint(remotes, pushName, baseName, branch, baseBranch) {
   const cross = !!(push && base && push.slug && base.slug && push.slug.toLowerCase() !== base.slug.toLowerCase());
   if (base && base.prSupported === false) return base.prReason || `${base.prHost || 'This host'} pull requests are not available`;
   if (cross && base.forge === 'azure') return `Azure DevOps pull requests between repositories (forks) are not supported yet. Push to ${base.name}.`;
+  if (cross && base.forge === 'bitbucket') return `Bitbucket pull requests between repositories (forks) are not supported yet. Push to ${base.name}.`;
   return cross ? `Cross-repo: ${push.owner}:${branch || ''} → ${base.slug} ${baseBranch}` : '';
 }
 
@@ -24208,7 +26138,7 @@ function openShipItModal(record, data, { link = null, onClose = null } = {}) {
     if (!q('.shipit-base-wrap').hidden) payload.baseBranch = q('.shipit-base-branch').value;
     if (!q('.shipit-remotes').hidden) {
       const baseRemote = (modal._remotes || []).find((r) => r.name === q('.shipit-base-remote').value);
-      if (baseRemote && baseRemote.forge === 'azure') payload.forge = 'azure';
+      if (baseRemote && (baseRemote.forge === 'azure' || baseRemote.forge === 'bitbucket')) payload.forge = baseRemote.forge;
     }
     try {
       const res = await fetch('/api/pr/describe', {
@@ -24346,7 +26276,7 @@ function rdRepaintOpenGlance(pipelineId = null) {
   paintRdGlance(runDetailState.screen, r);
 }
 
-/** Some PR host is reachable (gh, or an Azure DevOps token); the Ship-it modal and the server name the
+/** Some PR host is reachable (gh, or an Azure DevOps or Bitbucket token); the Ship-it modal and the server name the
  *  missing one for the chosen remote (D8). */
 function prHostAvailable() { return gitOn() && !!(state.ghAvailable || state.adoAvailable); }
 
@@ -25023,6 +26953,11 @@ function wsRollupPr(p) {
 // run's Create-PR control) and the pendingShipIt consumer. A workspace run is eligible when at
 // least one MEMBER can still get a PR (histWsShippable) — POST /api/pr's workspace arm
 // takes that member's `memberKey`. A single-project run keeps its three clauses.
+/** A single-project run whose repository has no remote. Unknown until the status read lands, then a PR is simply offered. */
+function recHasNoRemote(p) {
+  const chip = syncChipsLoaded && p.target !== 'workspace' ? state.syncChips[p.projectKey] : null;
+  return !!chip && !chip.remote;
+}
 function histPrEligible(p) {
   if (!(prHostAvailable() && p)) return false;
   // Merged back (or still settling): the work is ON the source (head == base) and ships by Push (paintHdPush).
@@ -25066,6 +27001,19 @@ function paintPushBtn(btn, record, push) {
   setCtaContent(btn, 'arrow-up', pushLabel(push));
   btn.title = pushTip(record.sourceBranch, push);
 }
+/** POST /api/push for a run on its source branch -> { ok, remote, branch }; throws the server's message. The Details
+ *  header's Push (pushSourceFlow) and the chat run card's Push (chatRunControls.pushSource) share it. */
+async function postPushSource(record) {
+  const res = await fetch('/api/push', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    // The ship-it modal's own payload shape (:18052). projectKey/projectDir come from listAllPipelines'
+    // project tag (artifacts.mjs:2108), not rowToHistoryEntry.
+    body: JSON.stringify({ projectKey: record.projectKey, projectDir: record.projectDir || null, id: record.id }),
+  });
+  const dd = await safeJson(res);
+  if (!res.ok) throw new Error((dd && dd.error) || `HTTP ${res.status}`);
+  return dd;
+}
 /** Push (POST /api/push) the run's source branch to its remote; `btn` shows the busy state and the outcome. The Details
  *  header's .hd-push and the card head's Push (slice 3, .hd-g-push) share it, and both show the outcome. */
 async function pushSourceFlow(btn, record) {
@@ -25074,14 +27022,7 @@ async function pushSourceFlow(btn, record) {
   const tip = pushTip(record.sourceBranch);
   for (const b of peers) { b.disabled = true; setCtaContent(b, 'arrow-up', 'Pushing…'); b.title = tip; }
   try {
-    const res = await fetch('/api/push', {
-      method: 'POST', headers: { 'Content-Type': 'application/json' },
-      // The ship-it modal's own payload shape (:18052). projectKey/projectDir come from listAllPipelines'
-      // project tag (artifacts.mjs:2108), not rowToHistoryEntry.
-      body: JSON.stringify({ projectKey: record.projectKey, projectDir: record.projectDir || null, id: record.id }),
-    });
-    const dd = await safeJson(res);
-    if (!res.ok) throw new Error((dd && dd.error) || `HTTP ${res.status}`);
+    const dd = await postPushSource(record);
     for (const b of peers) paintPushBtn(b, record, { state: 'pushed', remote: dd.remote || 'the remote' });
   } catch (err) {
     // A short label; the error (often long) is in the tooltip and a toast, and a click retries.
@@ -25099,7 +27040,7 @@ function hdSyncPr(projectKey, id, row) {
   rdRepaintOpenGlance(id);
   if (!histDetailState || !histDetailState.screen || !histDetailState.data) return;
   if (histDetailState.id !== id || histDetailState.key !== projectKey) return;
-  if (row) histDetailState.record = row;   // a deep link's minimal record upgrades to the real row
+  if (row) { histDetailState.record = row; askPanel?.pageChanged?.(); }   // a deep link's minimal record upgrades to the real row
   paintHdPr(histDetailState.screen, histDetailState.record, histDetailState.data);
   paintHdHeaderMeta(histDetailState.screen, histDetailState.record, histDetailState.data);
   paintHdOvPrs(histDetailState.screen.querySelector('.hd-ov-prs'), histDetailState.record);
@@ -25149,6 +27090,7 @@ function paintHdGlance(screen, record, data) {
   paintGroupLine(glance.querySelector('.rd-kv .rd-group-line'), record.id || '', record.title || '', home);
   paintRunPlace(screen, home);
   paintRunLabels(glance.querySelector('.rd-kv [data-fact="labels"] > .rd-kv-v'), { pipelineId: data.state.id, labels: data.state.labels, onSaved: (l) => { data.state.labels = l; } });
+  void paintRunPrAuto(glance.querySelector('.rd-kv [data-fact="pr-auto"]'), data.state.id, st.status, () => !!histDetailState && histDetailState.data === data);
   syncFacts(glance.querySelector('.rd-kv'));
 
   // Time · Cost · Changes, then the Cost tags row, as on the Running page in every state.
@@ -25190,7 +27132,7 @@ const runSetupKnown = new Map();   // pipeline id -> setup object | null
 async function paintRunSavePreset(btn, run, isCurrent) {
   if (!btn) return;
   const id = run && run.id;
-  if (!id || !flagOn('runPresets')) { btn.hidden = true; btn.onclick = null; return; }
+  if (!id) { btn.hidden = true; btn.onclick = null; return; }
   if (!runSetupKnown.has(id)) {
     btn.hidden = true;
     const r = await mcpApi('GET', `/api/pipelines/${encodeURIComponent(id)}/setup`);
@@ -25375,6 +27317,14 @@ function paintHdActions(screen, record, data) {
   // .hd-resume starts hidden in the template; the split follows it (as .rd-resume-split follows .rd-pause).
   if (split && resumeBtn) split.hidden = resumeBtn.hidden;
 }
+// A live run in this tab has the last word (its frames are newer than any row). A parked one only ends, and a stop from
+// another tab or the CLI reaches only the row, so an ended row wins over it. (A resume mints a new, live run.)
+function hdShownStatus(tabRun, savedStatus) {
+  if (!tabRun) return { status: savedStatus };
+  if (tabRun.resumePending) return { status: tabRun.status, resumePending: true };
+  const ended = RD_TERMINAL.includes(savedStatus) && HD_RESUMABLE.has(tabRun.status);
+  return { status: ended ? savedStatus : tabRun.status };
+}
 function paintHdLive(screen, record, data) {
   // Three exits (the busy return, the not-resumable return, the end): the model has the last word after each.
   try {
@@ -25389,6 +27339,9 @@ function paintHdLive(screen, record, data) {
     // (refreshHdFromRow), so a stop or resume from another tab, the CLI or chat lands here — else
     // the detail loaded with the page (a deep link's minimal record carries no status).
     const savedStatus = String((record && record.status) || (data.state && data.state.status) || '').toLowerCase();
+    // The header's status pip: Pausing… / Resuming… at the click, as the bar does, else whichever of the run in this
+    // tab and the saved row is further along (a stop from another tab or the CLI reaches only the row).
+    paintHistStatusIcon(screen.querySelector('.hd-sic'), hdShownStatus(hdPipelineRun(record), savedStatus));
     // An archived run is a read-only record: no resume, and the stop refuses it (stopPausedRun).
     const archived = !!(data.state && data.state.archivedAt);
     // A paused saved run no run in this tab stands for is stopped through its row (POST /api/stop
@@ -25406,6 +27359,8 @@ function paintHdLive(screen, record, data) {
     const runId = live ? live.runId : '';
     if (pauseBtn.dataset.runId !== runId) { pauseBtn.dataset.runId = runId; pauseBtn.disabled = false; }
     if (live && live.status === 'pausing') pauseBtn.disabled = true;
+    // A refused Pause (pauseRun's CANNOT_PAUSE) has no request in flight: the first status past pausing re-arms it.
+    else if (pauseBtn.dataset.awaitStatus) { delete pauseBtn.dataset.awaitStatus; pauseBtn.disabled = false; }
 
     // "Models": a running or paused run (an interrupted one is resumed as it is), never an archived one,
     // nor one whose lingering paused entry was archived: Restore clears the row's mark, never the entry's.
@@ -25781,8 +27736,8 @@ function paintHdFacts(screen, record, data) {
   const tags = costTagsFact(st.tags, record && record.projectDir, () => { if (screen.isConnected) paintHdGlance(screen, record, data); }, record && record.target);
   paintGlanceFacts(glance, { summary: folder ? null : (s || null), changes: fc, diffHref: `#${hdHash({ projectKey: record.projectKey, id: record.id }, 'details', 'diff')}`, activeMs, cost: engineReportsCost(st.runEngine) ? (st.totalCostUsd || 0) : null,
     costNote: costSummaryText(runCostBreakdown(st.steps, st.totalCostUsd), fmtUsd),
-    // D16: a finished run always has the row while runTags is on, so "Add cost tags" stays reachable.
-    costTags: flagOn('runTags') ? (tags || { tags: [], missing: [] }) : null });
+    // D16: a finished run always has the row, so "Add cost tags" stays reachable.
+    costTags: tags || { tags: [], missing: [] } });
   // Only when the row was rebuilt (its control is gone): re-appending on every glance repaint would move an open
   // editor's input out of the DOM and back, dropping focus and the caret while someone types.
   const row = screen.querySelector('.rd-kv [data-fact="tags"] .rd-cost-row');
@@ -25794,10 +27749,9 @@ function paintHdTags(screen, record, data) {
     row2: screen.querySelector('.hd-row2') };
   const st = data.state;
   // The open editor already in its host is left in place: moving it out and back drops focus and the caret.
-  const held = (where, host) => flagOn('runTags') && hdTagEditor && hdTagEditor.pipelineId === st.id && hdTagEditor.host === where
+  const held = (where, host) => hdTagEditor && hdTagEditor.pipelineId === st.id && hdTagEditor.host === where
     && hdTagEditor.el.parentElement?.parentElement === host;
   for (const [where, host] of Object.entries(hosts)) if (host && !held(where, host)) host.querySelector('.hd-tags')?.remove();
-  if (!flagOn('runTags')) return;
   const repaint = () => { paintHdTags(screen, record, data); paintHdFacts(screen, record, data); };
   for (const [where, host] of Object.entries(hosts)) {
     if (!host || held(where, host)) continue;
@@ -25867,11 +27821,21 @@ function paintHdHeaderMeta(screen, record, data) {
   const costFocus = costTriggerFocused(meta);
   meta.innerHTML = '';
   const { family, word } = histStatusMeta({ status: st.status });
-  const doneWord = st.status === 'done' ? doneStatusWord(hdDoneState(record, data)) : '';
+  const doneWord = st.status !== 'done' ? '' : record.mock ? 'Mock run' : doneStatusWord(hdDoneState(record, data));
   const w = document.createElement('span');
   w.className = `hd-status-word st-${family}`;
   w.textContent = doneWord || word;
   meta.appendChild(w);
+  // E2/2.3: the run's caveat (open issues left by a forced loop, or End not reached) as a chip.
+  const note = outcomeNote(st);
+  if (note) {
+    const chip = document.createElement('span');
+    chip.className = 'hd-outcome-note';
+    chip.textContent = note.text;
+    chip.title = note.title;
+    meta.appendChild(hdDot());
+    meta.appendChild(chip);
+  }
   // The engine that runs the agents (a resume on another engine shows the new one): every run names it.
   const engine = ENGINE_NAMES.includes(st.runEngine) ? st.runEngine : 'claude';
   meta.appendChild(hdDot());
@@ -26012,7 +27976,7 @@ function paintHdHeaderMeta(screen, record, data) {
       // applied to a string instead of a record.
       copyBtn.addEventListener('click', () => {
         const name = screen.querySelector('.hd-branch-name').textContent || '';
-        if (name) copyBranchToClipboard(copyBtn, name);
+        if (name) copyFromButton(copyBtn, name);
       });
     }
   }
@@ -26046,6 +28010,7 @@ async function resumePipeline(p, projectDir, btn, opts = {}) {
   btn.dataset.resumeState = 'busy';
   const label = labelEl.textContent;
   labelEl.textContent = 'Resuming…';
+  showResumePending(p.id, true);
   try {
     const res = await fetch('/api/resume', {
       method: 'POST',
@@ -26054,6 +28019,7 @@ async function resumePipeline(p, projectDir, btn, opts = {}) {
     });
     const data = await safeJson(res);
     if (!res.ok) {
+      showResumePending(p.id, false);
       // A team cap (team-policy design §7): soft — ask, then resume again with the choice recorded.
       const again = await policyRefusalRetry(data, res.status);
       if (again) {
@@ -26112,12 +28078,14 @@ async function resumePipeline(p, projectDir, btn, opts = {}) {
       if (feat) nr.branchFeature = feat;
     }
     if (prior) { alerts.onResolved(alertRun(prior)); runs.delete(prior.runId); }   // drop the superseded paused run (no split/dup)
+    showResumePending(p.id, false);   // any other parked copy of it
     hideViewer();
     updateNavCounts();
     // The continuous live card: the Runs page when `navigate` (P3), and in Chat the run panel follows (P4).
     landOnResumedRun(data.runId, { fromRunId: prior ? prior.runId : '', pipelineId: p.id, navigate });
     renderRunningView();
   } catch (err) {
+    showResumePending(p.id, false);
     // Survives later repaints ON THE DETAIL SCREEN (it is never rebuilt). A LIST
     // card is rebuilt wholesale by renderHistory(), which drops flag, label and
     // title together — status quo, unchanged here.
@@ -26383,7 +28351,7 @@ function runMoreItems(screen, { away = [], extra = [] } = {}) {
   const offered = (sel) => { const b = screen.querySelector(sel); return b && !b.hidden ? b : null; };
   const items = [...away];
   const preset = offered('.hd-save-preset, .rd-save-preset');
-  if (preset && flagOn('runPresets')) items.push({ label: 'Save as preset', title: preset.title, onSelect: () => preset.click() });
+  if (preset) items.push({ label: 'Save as preset', title: preset.title, onSelect: () => preset.click() });
   items.push(...extra);
   // The Chat panel hides the terminal opener on purpose (.crp .term-opener): no Terminal item there either.
   if (screen.dataset.presentation !== 'panel') items.push({ label: 'Terminal', hint: 'Ctrl+`', onSelect: () => terminalPane?.toggle() });
@@ -27004,6 +28972,7 @@ function refreshHdFromRow() {
     : rowNewer(row.baseCheck, st.branch?.baseCheck);
   if (baseChanged && reloadHistDetail()) return;
   histDetailState.record = row;
+  askPanel?.pageChanged?.();
   const { screen, data } = histDetailState;
   paintHdHeaderMeta(screen, row, data);
   const held = paintHdBanners(screen, row, data);       // corrects in BOTH directions
@@ -27059,6 +29028,8 @@ const HD_TAB_ICONS = {
   artifacts: '<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><path d="M3 8l9-4 9 4-9 4-9-4z" stroke-linejoin="round"/><path d="M3 8v8l9 4 9-4V8" stroke-linejoin="round"/><path d="M12 12v8" stroke-linecap="round"/></svg>',
   actions: '<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M7 5l11 7-11 7z"></path></svg>',
   changes: '<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><path d="M6 3h8l4 4v14H6z" stroke-linejoin="round"/><path d="M14 3v4h4" stroke-linejoin="round"/><path d="M12 11v6M9 14h6" stroke-linecap="round"/></svg>',
+  // Sessions (session groups): the tray's own glyph, a terminal prompt in a frame.
+  sessions: '<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><rect x="3" y="4.5" width="18" height="15" rx="2.5"/><path d="M7.5 10l3 2.5-3 2.5M12.5 15.5h4" stroke-linecap="round" stroke-linejoin="round"/></svg>',
 };
 
 // Per-screen tab state, keyed by the SCREEN element. The cells + activate() pair
@@ -27200,7 +29171,7 @@ const HD_TABS = [
   // get there, coarse to fine (Workflow · Q&A · Logs · Agents). "Details ›" opens the first shown tab; the trail
   // opens Workflow.
   { key: 'overview', label: 'Overview', level: 'simple', badge: () => null, visible: () => true, build: (...a) => buildHdOverview(...a) },
-  { key: 'diff', label: 'Diff', level: 'advanced', needsGit: true,
+  { key: 'diff', label: 'Diff', level: 'simple', needsGit: true,
     badge: (d) => { const r = gitOnlyResults(d.results, (d.folderMembers || []).map((m) => m.memberKey)); return r && r.summary ? String((r.summary.filesNew || 0) + (r.summary.filesChanged || 0)) : null; },
     visible: (d) => isGitRun(d.state), build: (...a) => buildHdDiff(...a) },
   // Folder runs (Projects, any way): what the run changed on its copy, in place of Diff and Actions (it made no
@@ -27243,6 +29214,8 @@ const HD_TABS = [
   { key: 'logs', label: 'Logs', level: 'expert', badge: () => null,
     visible: (d) => Array.isArray(d.artifacts) && d.artifacts.some((a) => a && a.kind === 'live-log'),
     build: (...a) => buildHdLogs(...a) },
+  // Session groups (Task 58): only on a run that has a session (its summaries, or a session in its manifest).
+  { key: 'sessions', label: 'Sessions', level: 'advanced', badge: (d) => sessionsBadge(d.state), visible: (d) => sessionsTabVisible(d.state), build: (...a) => buildHdSessions(...a) },
   { key: 'agents', label: 'Agents', level: 'expert',
     badge: (d) => ((Array.isArray(d.state.subAgents) && d.state.subAgents.length) ? String(d.state.subAgents.length) : null),
     visible: () => true, build: (...a) => buildHdAgents(...a) },
@@ -27350,7 +29323,7 @@ function wireHdGraphLogLinks(screen) {
       // A v2 graph card drives the NODE axis (v2 lines carry nodeId, and one
       // agent key may back several nodes). Same park-or-apply contract as the
       // source path below; the drain lives beside __pendingLogSource's.
-      const patch = { node: node.dataset.nodeId };
+      const patch = { node: node.dataset.nodeId, execution: '', session: '', sessionMembers: [] };   // a card is one step: not a session, not one run of it
       if (typeof cell.sec.__setLogFilter === 'function') cell.sec.__setLogFilter(patch);
       else cell.sec.__pendingLogFilter = patch;
       tabs.activate('logs');
@@ -28332,6 +30305,7 @@ function buildHdDiff(sec, record, data) {
     rowsHost.replaceChildren(tree);
     rowsHost.scrollTop = scrolled;
     paintCommentBadges();
+    if (askSide?.shown()) askPanel?.pageChanged?.();   // Ask worca beside the page: the first file opens with no click
     return firstNode;
   }
 
@@ -28726,17 +30700,8 @@ function hdWorktreeRow(word, dir) {
   }
   const segs = String(dir).split('/').filter(Boolean);
   const short = segs.length > 3 ? `…/${segs.slice(-3).join('/')}` : dir;
-  const btn = document.createElement('button');
-  btn.type = 'button';
-  btn.className = 'btn btn-sm btn-quiet mono hd-branch-copy hd-ov-wt-path';
-  btn.title = dir;
-  btn.setAttribute('aria-label', 'Copy worktree path');
-  const name = document.createElement('span'); name.className = 'hd-branch-name'; name.textContent = short;
-  btn.appendChild(name);
-  btn.insertAdjacentHTML('beforeend',
-    '<svg class="ico-copy" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="12" height="12" rx="2.5"></rect><path d="M5 15H4.5A1.5 1.5 0 0 1 3 13.5v-9A1.5 1.5 0 0 1 4.5 3h9A1.5 1.5 0 0 1 15 4.5V5" stroke-linecap="round"></path></svg>'
-    + '<svg class="ico-check" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><path d="M4 12.5l5.5 5.5L20 6.5" stroke-linecap="round" stroke-linejoin="round"></path></svg>');
-  btn.addEventListener('click', () => copyBranchToClipboard(btn, dir, dir));
+  const btn = copyButton(document, { name: 'Copy worktree path', label: short, title: dir, cls: 'hd-branch-copy hd-ov-wt-path' });
+  btn.addEventListener('click', () => copyFromButton(btn, dir));
   row.appendChild(btn);
   return row;
 }
@@ -28854,10 +30819,9 @@ function buildHdOverview(sec, record, data) {
     paintActionsStrip(strip, record.id, runActionQuery(record.projectDir, record).toString());
   }
   if (checks.length) wrap.appendChild(issueList(checks.map((c) => ({ ...c, origin: 'review' }))));
-  if (shapeFirstOn()) {   // spec D7: the same groups as the run page
-    const cl = renderChecklistGroups(document, data.reviews);
-    if (cl) wrap.appendChild(cl);
-  }
+  // spec D7: the same groups as the run page
+  const cl = renderChecklistGroups(document, data.reviews);
+  if (cl) wrap.appendChild(cl);
 
   // 2) Stat cards.
   const grid = document.createElement('div');
@@ -28931,13 +30895,14 @@ function buildHdOverview(sec, record, data) {
         const linked = !!scopeKey && c.kind !== 'del' && c.kind !== 'fail';
         const chip = document.createElement(linked ? 'button' : 'span');
         // `fail` borrows the rejected colour: no new CSS class, no new light-contrast baseline signature.
-        chip.className = `hd-mem-chip hd-mem-${c.kind === 'fail' ? 'rej' : c.kind} mono`;
-        if (c.kind === 'fail') chip.dataset.kind = 'fail';
+        // `prop` (#943, a proposal waiting for approval) borrows the modified colour and opens the scope, where it waits.
+        chip.className = `hd-mem-chip hd-mem-${c.kind === 'fail' ? 'rej' : c.kind === 'prop' ? 'mod' : c.kind} mono`;
+        if (c.kind === 'fail' || c.kind === 'prop') chip.dataset.kind = c.kind;
         chip.textContent = c.text;
         if (c.title) chip.title = c.title;
         if (linked) {
           chip.type = 'button';
-          chip.addEventListener('click', () => { location.hash = memoryRoute(scopeKey, c.name); });
+          chip.addEventListener('click', () => { location.hash = memoryRoute(scopeKey, c.kind === 'prop' ? '' : c.name); });
         }
         line.appendChild(chip);
       }
@@ -29279,7 +31244,7 @@ const RD_TABS = [
     build: (sec, ctx) => buildRdOverview(sec, ctx),
   },
   {
-    key: 'diff', label: 'Diff', icon: HD_TAB_ICONS.diff, level: 'advanced', needsGit: true,
+    key: 'diff', label: 'Diff', icon: HD_TAB_ICONS.diff, level: 'simple', needsGit: true,
     badge: (ctx) => rdDiffBadge(ctx.run),
     visible: (ctx) => isGitRun(ctx.run),
     build: (sec, ctx) => buildRdDiff(sec, ctx),
@@ -29314,6 +31279,11 @@ const RD_TABS = [
     key: 'logs', label: 'Logs', icon: HD_TAB_ICONS.logs, level: 'advanced',
     badge: () => null, visible: () => true,
     build: (sec, ctx) => buildRdLogs(sec, ctx),
+  },
+  {
+    key: 'sessions', label: 'Sessions', icon: HD_TAB_ICONS.sessions, level: 'advanced',
+    badge: (ctx) => sessionsBadge(ctx.run), visible: (ctx) => sessionsTabVisible(ctx.run),
+    build: (sec, ctx) => buildRdSessions(sec, ctx),
   },
   {
     key: 'agents', label: 'Agents', icon: HD_TAB_ICONS.agents, level: 'expert',
@@ -29364,6 +31334,7 @@ function buildRdWorkflow(sec, ctx) {
     if (sec.__drawer && c.run.logDrawer) {
       sec.__drawer.setLive(!RD_TERMINAL.includes(c.run.status));
       markLogTarget(sec, c.run.logDrawer);   // a repaint may have rebuilt the cards
+      paintDrawerSessionLine(sec.__drawer, c.run.steps, c.run.sessionHosts, c.run.logDrawer);   // a member stamped mid-step
     }
   };
 }
@@ -29574,6 +31545,7 @@ function buildRdDiff(sec, ctx) {
       if (!first || key === picked) first = { entry, btn };
     }
     pick(first.entry, first.btn);
+    if (askSide?.shown()) askPanel?.pageChanged?.();   // Ask worca beside the page: the first file opens with no click
     rdPaintTabBadges(runDetailState.screen || sec, rdCtx(r));
   };
   refresh.addEventListener('click', () => { void load(); });
@@ -29777,7 +31749,7 @@ function buildRdQa(sec, ctx) {
 function ensureRdTabs(screen, r) {
   if (!screen || !r) return;
   const mode = workModeOf(r);
-  const sig = `${mode}|${rdFolderMembers(r).map((m) => m.memberKey).join(',')}`;   // P5: Folder members learned later rebuild the tabs
+  const sig = `${mode}|${rdFolderMembers(r).map((m) => m.memberKey).join(',')}${sessionsTabVisible(r) ? '|sessions' : ''}`;   // P5: Folder members learned later rebuild the tabs; so does a session (its manifest can come after the first paint)
   const built = !!screen.querySelector('.rd-tab');
   if (built && screen.dataset.tabsMode === sig) return;
   if (built) {
@@ -29875,9 +31847,6 @@ function rdMaybePaintLogFilters(sec, r, rec) {
 
 // The four control listeners, bound once per section element (see buildRdLogs).
 function rdWireLogControls(sec, r) {
-  // The execution chip on THIS bar (applyRunLogFilter is the setter), bound on the bar so it fires before
-  // the section-level change handler below re-reads the (then consistent) DOM.
-  wireExecChip(sec.querySelector('.log-filters'), { read: () => r.logFilter, write: (patch) => applyRunLogFilter(r, patch) });
   sec.addEventListener('change', (e) => {
     if (!(e.target.closest && e.target.closest('select.log-f'))) return;
     r.logFilter = readLogFilterFrom(sec, r.logFilter.search || '');
@@ -29940,6 +31909,11 @@ function buildRdLogs(sec, ctx) {
   // visible bar matches the filter the hydration below actually applies.
   const searchBox = bar.querySelector('.log-search');
   if (searchBox) searchBox.value = r.logFilter.search || '';
+  // The execution and session chips (applyRunLogFilter is the setter), bound on THIS bar so they fire before the
+  // section-level change handler below re-reads the (then consistent) DOM. The bar is a new element on every build (a
+  // re-activated tab rebuilds it), so they bind here, not once per section with the handlers below.
+  wireExecChip(bar, { read: () => r.logFilter, write: (patch) => applyRunLogFilter(r, patch) });
+  wireSessionChip(bar, { read: () => r.logFilter, write: (patch) => applyRunLogFilter(r, patch) });
   syncAutoscrollSwitch(r, sec);
   rdRepaintLog(sec, r);
   rdPaintLogFilters(sec, r);
@@ -30169,6 +32143,10 @@ function rdStateCopy(r, stepName) {
   if (r.pauseReason === 'cost_total_policy') return 'Paused: team total cap reached.';
   if (r.pauseReason === 'night_guardrail') return r.pauseDetail || 'Paused: Away mode limit reached.';
   if (r.pauseReason === 'drain') return 'Paused while worca was stopping. Resume continues from here. The worktree and progress are kept.';
+  if (r.pauseReason === 'time_limit') {
+    const why = r.pauseDetail ? `: ${r.pauseDetail}` : '';
+    return `Paused at a node time limit${why}. Resume re-runs the step. The worktree and progress are kept.`;
+  }
   if (r.pauseReason === 'error') {
     const why = r.pauseDetail ? `: ${r.pauseDetail}` : '';
     return `Paused after an error${why}. Fix the cause, then Resume. The worktree and progress are kept.`;
@@ -30366,7 +32344,6 @@ function paintRunSkills(host, mount) {
  *  re-fetches when its status or a node's state moves (a review cycle finished); a live run that is not shaping
  *  never fetches for it. */
 function paintRdChecklists(host, run) {
-  if (!shapeFirstOn()) { host.hidden = true; host.replaceChildren(); delete host.dataset.sig; return; }
   const live = !RD_TERMINAL.includes(run.status);
   if (live && !isShapingRun(run)) { host.hidden = true; return; }
   const sig = `${run.status}|${JSON.stringify(run.nodeStatus || {})}`;
@@ -30517,6 +32494,67 @@ function rdAgentsBody(sec, r) {
   hydrateRunArtifacts(r).then((added) => {
     if (added) attachNodeArtifactAffordances(cardsByNode, r.artifacts, r.pipelineId || r.id, sec);
   });
+}
+
+// ── Sessions tab (session groups, Task 58) ───────────────────────────────────
+// One card per session from GET /api/runs/:id/sessions (the pipeline id); a live run refetches after a sessionHost frame
+// (r.sessionSeq counts them), at most every 2 s. `seq` undefined (History, no frames): every open past 2 s asks again.
+const sessionsTabArgs = (st, runId, live, logLevel, seq, trays) => ({ runId, state: st, live, engine: st && st.runEngine, logLevel,
+  seq, trays, labelOf: st && st.stepper ? nodeLabelLookup(st.stepper) : (id) => id });
+
+/** The tab's buttons, delegated once per section: copy an id, a step's log, its sub-agent (the Agents tab). */
+function wireSessionsClicks(sec, ctxOf) {
+  if (sec.__sessionsWired) return;
+  sec.__sessionsWired = true;
+  sec.addEventListener('click', (e) => {
+    const b = e.target.closest && e.target.closest('button[data-copy], button[data-transcript], button[data-log-exec], button[data-subagent]');
+    if (!b || !sec.contains(b)) return;
+    const ctx = ctxOf();
+    if (b.dataset.copy || b.dataset.transcript) {
+      copyFromButton(b, b.dataset.copy || b.dataset.transcript);
+    } else if (b.dataset.logExec) {
+      focusLogExecution(ctx, b.dataset.logExec, b.dataset.nodeId || '');
+    } else if (b.dataset.subagent) {
+      openDetailsTab(ctx, 'agents');
+    }
+  });
+}
+
+/** A Details tab of the open run page (Running, or History when `ctx.record`), if the level shows it: its pill's own
+ *  click (the address follows), then the focus on the pill, as a click on it leaves it. */
+function openDetailsTab(ctx, key) {
+  const r = ctx && ctx.run;
+  if (!r) return;
+  const screen = ctx.record ? (histDetailState && histDetailState.screen) : (runDetailState.runId === r.runId ? runDetailState.screen : null);
+  const tabs = screen ? detailTabsOf(screen) : null;
+  const cell = tabs && tabs.cells.get(key);
+  if (!cell || !levelAtLeast(cell.tab.level || 'simple')) return;
+  cell.btn.click();
+  cell.btn.focus({ preventScroll: true });
+}
+
+function buildRdSessions(sec, ctx) {
+  const paint = (c) => {
+    const r = c.run;
+    // No id before the first state frame. The count is 0 before the first sessionHost frame: only a trace record is news,
+    // so a page that opened after the run's first frames (or a run without a host) does not poll on every frame.
+    // The trays are the run page's own decor (memoised per state frame): a card says what its tray says.
+    if (r && r.pipelineId) paintSessionsTab(sec, sessionsTabArgs(r, r.pipelineId, isLive(r), 'advanced', r.sessionSeq || 0, isGraphRun(r) ? runDecorFor(r).sessions : null));
+  };
+  wireSessionsClicks(sec, () => rdCtx(ctx.run));
+  paint(ctx);
+  sec.__update = paint;
+}
+
+function buildHdSessions(sec, record, data) {
+  wireSessionsClicks(sec, () => ({ run: data.state, record: hdCurrentRecord(record) }));
+  // History's Logs tab is Expert and exists only with a saved log. History gets no live frames: the report is the one
+  // fetched when the tab opened (a run still going shows it as live). A failed load un-stamps the tab (as History's Logs
+  // tab does, after initDetailTabs' stamp), so reopening the tab asks again, as its message says.
+  const logs = Array.isArray(data.artifacts) && data.artifacts.some((a) => a && a.kind === 'live-log');
+  const trays = data.state && isGraphManifest(data.state.stepper) ? decorFromState(data.state, { live: false, now: 0 }).sessions : null;   // History's graph decor
+  paintSessionsTab(sec, sessionsTabArgs(data.state, record.id, !isTerminalStatus(data.state && data.state.status), logs ? 'expert' : null, undefined, trays))
+    .then((report) => { if (!report) sec.dataset.loaded = ''; });
 }
 
 function buildRdAgents(sec, ctx) {
@@ -30723,6 +32761,7 @@ document.addEventListener('keydown', (e) => {
   if (e.key !== 'Escape') return;
   if (askPanel?.ownsKey(e)) return;
   if (e.target?.closest?.('.term-pane')) return;                     // Escape typed in the terminal (vim, less) is the shell's
+  if (e.target?.closest?.('#ask-side')) return;                      // Ask worca beside the page: an Escape typed in the side column is the chat's
   // Any pop-up on screen owns Escape — modal-guard.mjs hands it to the one on top — and the detail screen
   // stays. Capture phase, so this reads the state BEFORE the guard closes that pop-up.
   if (dialogOpen(document)) return;
@@ -30750,6 +32789,7 @@ document.addEventListener('keydown', (e) => {
   if (e.key !== 'Escape') return;
   if (askPanel?.ownsKey(e)) return;
   if (e.target?.closest?.('.term-pane')) return;                     // Escape typed in the terminal (vim, less) is the shell's
+  if (e.target?.closest?.('#ask-side')) return;                      // Ask worca beside the page: an Escape typed in the side column is the chat's
   if (dialogOpen(document)) return;                                    // a pop-up owns Escape (modal-guard.mjs)
   if (currentView() !== 'running') return;
   if (!el.runShell || !el.runShell.classList.contains('detail-open')) return;
@@ -30771,6 +32811,8 @@ document.addEventListener('keydown', (e) => {
   if (e.key !== 'Escape') return;
   if (askPanel?.ownsKey(e)) return;
   if (e.target?.closest?.('.term-pane')) return;                     // Escape typed in the terminal (vim, less) is the shell's
+  if (e.target?.closest?.('#ask-side')) return;                      // Ask worca beside the page: an Escape typed in the side column is the chat's
+  if (document.querySelector('.wfv-menu, .group-picker, .label-picker')) return;   // an open menu or picker (in <body>: the side column's Chats list too) closes first
   if (dialogOpen(document)) return;                                    // a pop-up owns Escape (modal-guard.mjs)
   if (currentView() !== 'projects') return;
   if (!el.projShell || !el.projShell.classList.contains('detail-open')) return;
@@ -30890,14 +32932,8 @@ function closeReportModal() {
 const reportGuard = guardModal(el.reportModal, { kind: 'form', close: () => closeReportModal(), busy: () => reportState.filing });
 
 /** Best-effort clipboard write; returns whether it landed. Mirrors copyLogToClipboard. */
-async function reportCopyText() {
-  const text = el.reportPreview.textContent;
-  try {
-    if (navigator.clipboard?.writeText) { await navigator.clipboard.writeText(text); return true; }
-    return legacyCopy(text);
-  } catch {
-    return legacyCopy(text);
-  }
+function reportCopyText() {
+  return writeClipboard(window, el.reportPreview.textContent);
 }
 
 el.reportClose.addEventListener('click', () => reportGuard.cancel());
@@ -30923,8 +32959,8 @@ el.reportOptins.addEventListener('change', (e) => {
 });
 
 el.reportCopy.addEventListener('click', async (e) => {
-  if (!reportState.payload) return flashCopyBtn(e.currentTarget, 'nothing to copy');
-  flashCopyBtn(e.currentTarget, (await reportCopyText()) ? 'copied' : 'copy failed');
+  if (!reportState.payload) return flashLabel(e.currentTarget, 'Nothing to copy');
+  flashLabel(e.currentTarget, (await reportCopyText()) ? 'Copied' : 'Copy failed');
 });
 
 // D23: the issue body ASKS the reporter to paste the full JSON, so put it on the
@@ -30972,7 +33008,7 @@ function showFiledIssue(url) {
 el.reportCreate.addEventListener('click', async (e) => {
   const btn = e.currentTarget;
   // Same gate as the link's href (D24): never file a payload the preview is not showing.
-  if (!reportState.payload) return flashCopyBtn(btn, 'not ready yet');
+  if (!reportState.payload) return flashLabel(btn, 'Not ready yet');
 
   // Open the tab INSIDE the user gesture. A popup blocker only honours a synchronous
   // window.open, and filing is a network round-trip away; the tab is parked on blank
@@ -30981,7 +33017,7 @@ el.reportCreate.addEventListener('click', async (e) => {
   let tab = null;
   try { tab = window.open('', '_blank'); } catch { tab = null; }
 
-  // dataset.label is flashCopyBtn's convention: read it so a flash still in flight
+  // dataset.label is flashLabel's convention: read it so a flash still in flight
   // cannot become the restored label, and kill its timer so it cannot fire over us.
   const label = btn.dataset.label || btn.textContent;
   btn.dataset.label = label;
@@ -31265,21 +33301,26 @@ function runDecorFor(r, mode = 'monitor') {
   return bag;
 }
 
-/** The amber quiescence banner (spec §8), in .rd-banners / .hd-banners. Idempotent:
- *  one element per host, shown/hidden from the bag's `quiescent`. */
-function paintQuiescenceBanner(host, decor) {
+/** The run's warnings (decor.warnings: a dropped model pick, the scheduler's lines, the quiescence line of spec §8) as
+ *  amber banners in .rd-banners / .hd-banners: one `.run-warn` per distinct text, in order. Idempotent; an empty list
+ *  leaves none. Under them, E9's ONE quiet scope line (decor.scope: run-scope-line.mjs), never a banner per spawn. */
+function paintRunWarnings(host, decor) {
   if (!host) return;
-  const show = !!(decor && decor.quiescent);
-  let el = host.querySelector(':scope > .run-warn');
-  if (!el) {
-    if (!show) return;
-    el = document.createElement('div');
-    el.className = 'run-warn';
-    el.setAttribute('role', 'status');
-    host.appendChild(el);
-  }
-  el.textContent = 'finished at quiescence — End not reached';
-  el.hidden = !show;
+  const texts = [...new Set((decor && Array.isArray(decor.warnings) ? decor.warnings : []).filter(Boolean))];
+  const els = [...host.querySelectorAll(':scope > .run-warn')];
+  texts.forEach((text, i) => {
+    let el = els[i];
+    if (!el) {
+      el = document.createElement('div');
+      el.className = 'run-warn';
+      el.setAttribute('role', 'status');
+      host.insertBefore(el, host.querySelector(':scope > .run-scope'));
+    }
+    el.textContent = text;
+    el.hidden = false;
+  });
+  for (const el of els.slice(texts.length)) el.remove();
+  paintRunScope(host, decor ? decor.scope : null, { doc: document });
 }
 
 /** The P5 line ("Build · task 2 of 4"); supersedes the D15 "3/6 done" counter (spec 2026-10-14 P12). '' on a v1 run. */
@@ -31300,6 +33341,7 @@ function askRunSnapshot(r) {
     title: r.title || '', projectKey: null, workspaceId: r.workspaceId || null, projectDir: r.projectDir || '',
     projectNames: Array.isArray(r.projectNames) ? r.projectNames : null,
     status: r.status, pauseReason: r.pauseReason || null, pendingQuestion: r.pendingQuestion || null,
+    ...(r.resumePending ? { resumePending: true } : {}),
     labels: Array.isArray(r.labels) ? r.labels : [],
     ...(r.shaping ? { shaping: r.shaping } : {}),
     ...(isGitRun(r) ? {} : { workMode: workModeOf(r), changes: null }),
@@ -31402,7 +33444,7 @@ function chatPaintQuestion(ref, host) {
     if (r._answering) setPanelBusy(r, true);   // an answer already in flight (paintRdQuestions' rule)
   }
   return { id: pq.id || null, kind: askKindOf(pq), heading: askHeading(r, pq),
-    step: pq.nodeId ? nodeLabel(r.stepper, pq.nodeId) : '', stepCard: isStepCard(pq, r, shapeFirstOn()) };
+    step: pq.nodeId ? nodeLabel(r.stepper, pq.nodeId) : '', stepCard: isStepCard(pq, r, true) };
 }
 // ---- Runs redesign slice 4: the one model's actions (D5, D6) and a run's group (D7), for the chat card and the pages.
 /** D7: the group a pipeline belongs to, as the list's group row, with its place in it. */
@@ -31461,7 +33503,7 @@ function runAction(ref0, id, btn = null, m = null) {
  *  click (stepSender's busy guard stops a second post). Any other Answer takes the person to the question. */
 function answerOrApprove(btn, ref = {}) {
   const root = (btn && btn.closest('.chat-rc, .gpage, .rd')) || document;
-  const own = root.querySelector('.qpanel:not(.hidden) .plan-actions .btn-primary:not([disabled])');
+  const own = root.querySelector('.qpanel:not(.hidden) .plan-actions:not([hidden]) .btn-primary:not([disabled])');
   if (own && btn && btn.textContent === own.textContent) { own.click(); return undefined; }
   return focusQuestionOf(btn, ref);
 }
@@ -31536,6 +33578,11 @@ const chatRunControls = {
   },
   confirm: (o) => confirmModal(o),
   prHost: () => prHostAvailable(),
+  /** The run card's Push (a run on its source branch): the run page's POST /api/push -> { ok, remote } | { ok:false, error }. */
+  pushSource(ref) {
+    return postPushSource({ projectKey: ref && ref.projectKey, projectDir: ref && ref.projectDir, id: ref && ref.pipelineId })
+      .then((dd) => ({ ok: true, remote: dd.remote || 'the remote' }), (err) => ({ ok: false, error: err && err.message ? err.message : String(err) }));
+  },
   openApply(ref, opener) { const pid = ref && ref.pipelineId; return pid ? folderApplyFlow({ pipelineId: pid, ...(opener ? { opener } : {}) }) : Promise.resolve(null); },
   openShipIt(ref, link) {
     // P2 Task 9: chatDeps.openShipIt = openShipItFor → Promise<{opened, url?, error?}>, settling when the dialog closes.
@@ -31553,7 +33600,7 @@ const chatRunControls = {
     // `shaping` is memory-only: after a reload only withShaper's card knows the feature.
     const fid = (snap && snap.shaper && snap.shaper.card && snap.shaper.card.feature && snap.shaper.card.feature.id)
       || (snap && snap.shaping && snap.shaping.feature && snap.shaping.feature.id) || null;
-    const home = groupHomeOf((ref && ref.pipelineId) || (snap && snap.pipelineId) || '', shapeFirstOn() ? (fid || '') : '');
+    const home = groupHomeOf((ref && ref.pipelineId) || (snap && snap.pipelineId) || '', fid || '');
     return home ? home.row : null;
   },
   memoFor: (key) => (key ? memoFor(key) : null),
@@ -31592,7 +33639,7 @@ function gateWireCopy(r, wireId) {
 // awaiting-input state is surfaced separately by the pulsing '?' end marker, so
 // it no longer hijacks the dot color.
 function runDotClass(r) {
-  if (r.status === 'starting' || r.status === 'pausing') return 'grey-pulse';
+  if (r.status === 'starting' || r.status === 'pausing' || r.resumePending) return 'grey-pulse';
   // Paused: parked + resumable. Static amber (NOT the red "did-not-complete" dot,
   // and NOT a pulse — nothing is running). Checked before the terminal branch
   // because a paused run is _finished.
@@ -31641,6 +33688,7 @@ function paintAutoBadge(el, stepper) {
 // pause is never mislabeled "awaiting answers".
 function statusPill(r) {
   if (r.status === 'pausing') return { family: 'amber', text: 'Pausing…' };
+  if (r.resumePending) return { family: 'amber', text: 'Resuming…' };
   if (r.status === 'paused') {
     // A cost pause names its cause so the pill alone explains why the run parked.
     if (r.pauseReason === 'cost_pipeline') return { family: 'amber', text: 'Paused · cost limit' };
@@ -31650,6 +33698,7 @@ function statusPill(r) {
     if (r.pauseReason === 'cost_total_policy') return { family: 'amber', text: 'Paused · team total' };
     if (r.pauseReason === 'night_guardrail') return { family: 'amber', text: 'Paused · Away mode limit' };
     if (r.pauseReason === 'drain') return { family: 'amber', text: 'Paused · restart' };
+    if (r.pauseReason === 'time_limit') return { family: 'amber', text: 'Paused · time limit' };
     // An error pause is parked and resumable (never dead), so it stays in the amber family.
     if (r.pauseReason === 'error') return { family: 'amber', text: 'Paused · error' };
     if (r.pauseReason === 'recoverable') return { family: 'amber', text: 'Paused · recoverable' };
@@ -31661,7 +33710,11 @@ function statusPill(r) {
   if (r.status === 'interrupted') return { family: 'amber', text: 'Interrupted' };
   if (r.pendingQuestion != null) return { family: 'amber', text: r.pendingQuestion.kind === 'workflow' ? 'Paused · your decision' : 'Paused · awaiting answers' };
   if (r.status === 'starting') return { family: 'peach', text: 'Starting' };
-  if (r.status === 'done') return { family: 'green', text: 'Done' };
+  if (r.status === 'done') {
+    // E2/2.3: forced past open issues, or quiesced before End — not a plain success.
+    const note = outcomeNote(r);
+    return note ? { family: 'amber', text: `Done · ${note.text}` } : { family: 'green', text: 'Done' };
+  }
   if (r.status === 'stopped') return { family: 'red', text: 'Stopped' };
   if (r.status === 'error') return { family: 'red', text: 'Error' };
   // Running: the newest active agent names the pill. A run whose manifest has
@@ -32016,6 +34069,8 @@ function paintGraphFor(host, stepper, decor, legacySteps) {
       onGateClick: () => focusQuestionPanel(slot.ctx),
       onResultClick: (path) => openRunArtifact(slot.ctx, path),
       modelLabel: graphModelLabel,
+      // History without a saved log has nothing to open: its header stays inert like its cards (wireHdGraphLogLinks).
+      onSessionClick: decor.record && !decor.logs ? null : (sid) => openSessionLog(host, slot.ctx, sid),
     });
     GRAPH_MOUNTS.set(host, slot);
   }
@@ -32105,6 +34160,11 @@ function revealLogDrawer(sec) {
 }
 function newLogDrawer(sec, { onClose, onOpenInLogs }) {
   const d = createLogDrawer({ doc: document, win: window, storage: LOG_DRAWER_STORAGE, onClose, onOpenInLogs, tools: cloneLogViewSeg() });
+  // The session line's copy button (Task 59): the sub-agent id.
+  d.el.addEventListener('click', (e) => {
+    const b = e.target.closest && e.target.closest('.wf-log-sub button[data-copy]');
+    if (b) copyFromButton(b, b.dataset.copy);
+  });
   // Follow the tail only while the reader is at the bottom (one geometry read per scroll, not per line).
   d.body.addEventListener('scroll', () => {
     d.body.__pinned = d.body.scrollTop + d.body.clientHeight >= d.body.scrollHeight - 24;
@@ -32119,16 +34179,34 @@ function newLogDrawer(sec, { onClose, onOpenInLogs }) {
 function rdMountLogDrawer(sec, r) {
   newLogDrawer(sec, {
     onClose: () => { r.logDrawer = null; markLogTarget(sec, null); },
-    onOpenInLogs: () => { const t = r.logDrawer; if (t) focusLogExecution(rdCtx(r), t.execution, t.node); },
+    onOpenInLogs: () => {
+      const t = r.logDrawer;
+      if (t && t.session) focusLogSession(rdCtx(r), t);
+      else if (t) focusLogExecution(rdCtx(r), t.execution, t.node);
+    },
   });
   if (r.logDrawer) rdPaintLogDrawer(sec, r);
+}
+/** The drawer's "Inside session …" line (Task 59) for its target's row: the target execution's row, else the node's
+ *  newest. Rebuilt only when its words change, so a frame never takes the focus off its copy button. */
+function paintDrawerSessionLine(d, steps, sessionHosts, t) {
+  if (!d || typeof d.setSub !== 'function') return;
+  const rows = Array.isArray(steps) ? steps : [];
+  const row = !t || !t.node ? null
+    : (t.execution ? rows.find((x) => x && x.executionId === t.execution) : rows.filter((x) => x && x.nodeId === t.node).at(-1)) || null;
+  const line = row ? sessionRowLine(row, sessionHosts) : '';
+  const key = line ? `${line}|${row.session.memberAgentId || ''}` : '';
+  if (d.__subKey === key) return;
+  d.__subKey = key;
+  d.setSub(key ? sessionRowEl(document, row, sessionHosts) : null);
 }
 function rdPaintLogDrawer(sec, r, opener = null) {
   const d = sec.__drawer;
   const t = r.logDrawer;
   if (!d || !t) return;
   sec._drawerCycle = fillLogDrawerBody(d.body, r.logLines, t);
-  d.open({ label: stepLabel(r.stepper, t.node), isLive: !RD_TERMINAL.includes(r.status), opener });
+  d.open({ label: t.session ? t.label || SESSION_DEFAULT_LABEL : stepLabel(r.stepper, t.node), isLive: !RD_TERMINAL.includes(r.status), opener });
+  paintDrawerSessionLine(d, r.steps, r.sessionHosts, t);
   markLogTarget(sec, t);
   if (opener) revealLogDrawer(sec);   // a click, not a rebuild on tab re-activation
 }
@@ -32166,6 +34244,35 @@ function openStepLog(host, ctx, executionId, nodeId) {
   rdPaintLogDrawer(sec, r, logTargetCard(sec, r.logDrawer));
 }
 
+/** A session tray's header (Task 57; Task 60): the drawer filtered to the whole session — its main agent's lines
+ *  (source `session`) and every member's own, each cycle and ×N slice included (05 §6.5). Returns the drawer's target
+ *  `{ session, sessionMembers, label }`, or null when no member ran yet (the header is inert then). History opens it
+ *  under its graph; a page without the drawer opens the Logs tab with the session chip. */
+function openSessionLog(host, ctx, sid) {
+  const s = ctx && ctx.sessions && ctx.sessions[sid];
+  const r = ctx && ctx.run;
+  if (!s || !r) return null;
+  const mine = new Set(s.members);
+  if (!(Array.isArray(r.steps) ? r.steps : []).some((x) => x && x.executionId && mine.has(x.nodeId))) return null;
+  const labelOf = nodeLabelLookup(r.stepper);
+  const t = { session: sid, sessionMembers: [...s.members], label: `${s.label || SESSION_DEFAULT_LABEL} · ${s.members.map((id) => labelOf(id)).join(' + ')}` };
+  const toLogs = () => focusLogSession(ctx, t);
+  if (ctx.record) {
+    const screen = histDetailState && histDetailState.screen;
+    if (screen && host && host.closest('.hd-graph')) openHdStepLog(screen, t, toLogs);
+    else toLogs();
+    return t;
+  }
+  const screen = runDetailState.runId === r.runId ? runDetailState.screen : null;
+  const tabs = screen ? detailTabsOf(screen) : null;
+  const sec = host && host.closest('.rd-sec[data-sec="workflow"]');
+  if (!logsTabShown(tabs)) return t;   // below the Logs tab's level nothing opens, as for a card
+  if (!sec || !sec.__drawer) { toLogs(); return t; }
+  r.logDrawer = t;
+  rdPaintLogDrawer(sec, r, host.querySelector(`.gv-sess-head[data-session-id="${sid}"]`));
+  return t;
+}
+
 // History: the saved NDJSON log, fetched once per screen and shared by every drawer target.
 function hdLogRecs(screen) {
   if (!screen.__logRecs) {
@@ -32200,14 +34307,19 @@ function openHdStepLog(screen, target, openInLogs) {
   const graph = screen.querySelector('.hd-graph');
   const t = { ...target, openInLogs };
   sec.__logTarget = t;
-  d.open({ label: target.label || '', isLive: false, opener: logTargetCard(graph, target) });
+  // A session target has no card: focus returns to its tray header.
+  const opener = logTargetCard(graph, target) || (target.session && graph ? graph.querySelector(`.gv-sess-head[data-session-id="${target.session}"]`) : null);
+  d.open({ label: target.label || '', isLive: false, opener });
+  const st = histDetailState && histDetailState.data ? histDetailState.data.state : null;
+  paintDrawerSessionLine(d, st && st.steps, st && st.sessionHosts, target);
   markLogTarget(graph, target);
   revealLogDrawer(sec);
   d.body.textContent = 'Loading…';
   hdLogRecs(screen).then((recs) => {
     if (sec.__logTarget !== t) return;   // retargeted while the log loaded
     let filter;
-    if (target.node) filter = { node: target.node, execution: target.execution || '' };
+    if (target.session) filter = { session: target.session, sessionMembers: target.sessionMembers || [] };   // a tray header (Task 60)
+    else if (target.node) filter = { node: target.node, execution: target.execution || '' };
     else {
       const seen = new Set(recs.map((x) => x.source));
       filter = { source: target.sources.find((src) => seen.has(src)) || target.sources[0] };
@@ -32220,9 +34332,15 @@ function openHdStepLog(screen, target, openInLogs) {
  *  P6b lands the node/execution axes in log-filter.mjs and the History panel's
  *  `__setLogFilter`; until then the keys are carried, not applied. */
 function focusLogExecution(ctx, executionId, nodeId) {
+  focusLogFilter(ctx, { execution: executionId, node: nodeId, session: '', sessionMembers: [] });   // a step, not a session
+}
+/** A session tray's "Open in Logs" (Task 60): the Logs tab narrowed to the session, its chip shown. */
+function focusLogSession(ctx, t) {
+  focusLogFilter(ctx, { session: t.session, sessionMembers: [...(t.sessionMembers || [])], execution: '', node: '' });
+}
+function focusLogFilter(ctx, patch) {
   const r = ctx && ctx.run;
   if (!r) return;
-  const patch = { execution: executionId, node: nodeId };
   if (ctx.record) {
     // History: the Logs tab is lazily built — hand the patch to the panel when it
     // exists, else park it for the panel's first paint (mirrors __pendingLogSource).
@@ -33015,7 +35133,7 @@ const schedulesView = createSchedulesView({
     workflowLabel: (id) => {
       const opt = el.workflowSelect ? [...el.workflowSelect.options].find((o) => o.value === id) : null;
       if (opt) return opt.textContent.trim();
-      return { wf_default: 'Default', wf_auto: 'Auto', wf_memory_defrag: 'Memory defragment' }[id] || id;
+      return { wf_default: 'Default', wf_lean_build: 'Lean', wf_auto: 'Auto', wf_memory_defrag: 'Memory defragment' }[id] || id;
     },
     onCounts: (c) => paintScheduleCounts(c),
     // Who made / changed a schedule, under the same display rule as runs (shared sign-ins only).
@@ -33048,10 +35166,27 @@ const requirementsView = createRequirementsView({
   subEl: $('#requirements-sub'),
   msgEl: $('#requirements-msg'),
   // who: the signed-in person on a shared deployment (the start-before-Ready dialog's "Recorded as"), else nobody
-  deps: { route: (p) => { location.hash = p ? `#requirements/${p}` : '#requirements'; }, who: () => viewer.name },
+  // openRun: a started run is where the person goes next (the run page, #running/<runId>)
+  // confirm: the model switch asks it (9c board 4), in the shared confirm modal
+  deps: { route: (p) => { location.hash = p ? `#requirements/${p}` : '#requirements'; }, who: () => viewer.name, openRun: (runId) => { location.hash = `#running/${runId}`; },
+    confirm: (o) => confirmModal(o) },
 });
 // Turning the flag off while the page is open leaves it for Chat (a hidden page must not stay up).
 onFlagChange('requirements', (on) => { if (!on && currentView() === 'requirements') showView('chat', ''); });
+
+// Design (behind the design flag): the page module owns #design-host and the nav row's live count; app.js routes and
+// relays the design-* frames and hello's design list.
+const designView = mountDesignView({ doc: document, win: window, host: $('#design-host'), fetch: (...a) => fetch(...a), sendWs: (obj) => { const s = state.ws; if (s && state.wsReady) { try { s.send(JSON.stringify(obj)); } catch { /* ignore */ } } }, route: (p) => { location.hash = p ? `#design/${p}` : '#design'; }, prompt: (o) => promptModal(o),
+  createChat: createDesignChat, confirm: (o) => confirmModal(o),
+  // As the Workflows chat's: once marked loads, the open design chat paints its replies again.
+  renderMarkdown: (text, mount) => {
+    const out = hdMarkdown.render(text);
+    if (out && out.kind === 'md') { mount.classList.add('ask-md'); mount.replaceChildren(out.frag); return; }
+    mount.textContent = text;
+    if (!hdMarkdown.isReady() && !hdMarkdown.isFailed()) void hdMarkdown.ensure().then((ok) => { if (ok) repaintDesignChat(); });
+  },
+});
+onFlagChange('design', (on) => { if (!on && currentView() === 'design') showView('chat', ''); updateNavCounts(); });
 
 /** The workspace read-model, loaded once: a scheduled run card names "Workspace · <name>", not an id. */
 function withWorkspaces() {
@@ -33065,10 +35200,12 @@ const RUNS_COLLAPSED_KEY = 'worca-cc.runs.collapsed';   // project / date sectio
 // skipRestore: bare #runs shows the list, not the remembered run, until another route (goRunsList).
 // groupsToggled: a person's ⌄ per group key for this session (D29); sel / selecting: the ticked rows (D20).
 // rowsByKey: every top-level and member row of the last paint; memos: runProgress / cost memos per run and group.
+// groupsToggled also holds a stack's open state, `rounds:<run id>` (closed by default); roundsAll: the stacks showing every round.
 const runsUi = { view: loadRunsView(localStorage), collapsed: loadIdSet(RUNS_COLLAPSED_KEY), reveal: '', skipRestore: false,
-  groupsToggled: new Map(), recentShown: RECENT_PAGE, selecting: false, anchorKey: null,
+  groupsToggled: new Map(), roundsAll: new Set(), recentShown: RECENT_PAGE, selecting: false, anchorKey: null,
   sel: createRunsSelection(), rowsByKey: new Map(), memos: new Map(), lastModel: null, listCounts: null,
-  pendingSelect: null, focusKey: null };   // pendingSelect: the pipeline ids "Tag N runs" (Statistics › Cost) asked to tick
+  pendingSelect: null, focusKey: null,   // pendingSelect: the pipeline ids "Tag N runs" (Statistics › Cost) asked to tick
+  archivedTotal: null };   // /api/counts' archived rows: the Show › Archived count before its feed loads
 // focusKey: the list's roving Tab stop across repaints, `row:KEY` or `sec:KEY` (list-keys.mjs, issue #948).
 const memoFor = (id) => { if (!runsUi.memos.has(id)) runsUi.memos.set(id, {}); return runsUi.memos.get(id); };
 
@@ -33113,6 +35250,12 @@ function runsStepWord(r) {
   return list.length === 1 ? String(list[0].label || '') : '';
 }
 
+/** A round's marker (pr-fix-rounds-stacking D1) for the list: a live run's state branch, else its History row's
+ *  `roundOf` (rowToHistoryEntry wireRoundOf). null for round 1, a plain run and a malformed marker. */
+function runsRoundOf(r, h = null) {
+  const m = (r && r.branch && typeof r.branch === 'object' && r.branch.roundOf) || (h && h.roundOf) || null;
+  return m && m.pipelineId && Number.isInteger(m.round) && m.round >= 2 ? m : null;
+}
 function runsLiveItem(r) {
   const pq = r.pendingQuestion;
   const g = runsGroupFor({ pipelineId: r.pipelineId || '', projectDir: r.projectDir || '', workspaceId: r.kind === 'workspace-run' ? (r.workspaceId || '') : '', workMode: workModeOf(r) });
@@ -33135,8 +35278,9 @@ function runsLiveItem(r) {
     checks: rec && typeof rec.checks === 'number' ? rec.checks : null,
     ...(folder ? { changes: terminal ? { state: (fch && fch.state) || 'pending' } : null } : {}),
     files: folder ? (ffc ? ffc.total : null) : (rec && typeof rec.files === 'number' ? rec.files : null),
-    tags: flagOn('runTags') ? (r.tags || []) : [],
+    tags: r.tags || [],
     labels: flagOn('runLabels') ? (r.labels || []) : [],
+    roundOf: runsRoundOf(r, r.pipelineId ? histOf(r.pipelineId) : null),   // a round folds into its origin (runs-list buildRunsModel)
     // The run model reads the raw run (runs-list.mjs runModel); its monotonic progress memo is kept per run. A finished
     // run takes its History row's PR (rdModelRun), so it reads In review here as on the run page.
     run: rdModelRun(r), memo: memoFor(r.pipelineId || r.runId),
@@ -33180,7 +35324,7 @@ function memberRun(m) {
   // Runs redesign slice 4 (D24): a member's round / Watch PR facts pass through untouched; the run model words them.
   const facts = { round: m.round || (h && h.round) || null, watch: m.watch || (h && h.watch) || null };
   // A chain member carries its PR as `prUrl` (a shared One PR before History has it), a run-groups member as `pr`.
-  if (h) return { status: h.status, pauseReason: h.pauseReason, pr: runPrFor(h, m.pr || (m.prUrl ? { url: m.prUrl } : null)), ...(h.inBase ? { inBase: h.inBase } : {}), ...facts };
+  if (h) return { status: h.status, pauseReason: h.pauseReason, pr: runPrFor(h, m.pr || (m.prUrl ? { url: m.prUrl } : null)), ...(h.inBase ? { inBase: h.inBase } : {}), ...(memberPrsOf(h).length ? { memberPrs: memberPrsOf(h) } : {}), ...facts };
   if (m.status) return { status: m.status, pr: runPrFor(null, m.pr), ...facts };
   return { status: CHAIN_MEMBER_STATUS[m.state] || 'stopped', pr: runPrFor(null, m.prUrl ? { url: m.prUrl } : null), ...facts };
 }
@@ -33203,7 +35347,9 @@ function runsGroupItem({ id, groupKind, title, members, cost = null, planning = 
     // inBase). The raw live run carries no PR, so a finished member with failing checks read "Ready to ship".
     const run = r ? withChainPr(rdModelRun(r), m) : (m.pipelineId ? memberRun(m)
       : { ticket: { status: m.ticket ? m.ticket.status : 'scheduled', runAt: m.ticket && !m.ticket.after ? m.ticket.runAt : null,
-        after: m.after ? { index: m.after } : null } });
+        // #1096: a chain root that only waits for another run names that run ("starts after <title>").
+        after: m.after ? { index: m.after } : m.waitsFor && m.waitsFor.title ? { title: m.waitsFor.title } : null,
+        held: !!(m.ticket && m.ticket.held) } });
     const pk = m.historyKey || m.projectKey || histPk(m.pipelineId);
     const href = r ? `#running/${r.runId}` : m.pipelineId && pk ? `#history/${pk}/${m.pipelineId}`
       : groupKind === 'feature' ? `#feature/${encodeURIComponent(id)}` : m.ticketId ? '#schedules/once' : '#runs';
@@ -33211,6 +35357,7 @@ function runsGroupItem({ id, groupKind, title, members, cost = null, planning = 
       projectKey: m.projectKey || pk || null,   // one ship flow: the chain dialog's GET /api/pr/remotes
       stacks: m.stacks,                         // one ship flow: a chain run started from the previous run's branch
       ticketId: m.ticketId || null, runId: r ? r.runId : '', kind: r ? 'live' : m.pipelineId ? 'hist' : 'sched', run,
+      roundOf: m.pipelineId ? runsRoundOf(r, h) : null,   // null for an origin: a member's own rounds fold under it
       memo: memoFor(m.pipelineId || m.ticketId || `${id}:${i}`),
       startedAt: (r && r.startedAt) || (h && h.startedAt) || null,       // D12: the group's dispatch time
       // D32: the member's own cost (a chain's total sums these). D5: max(live, History, the group's stored byPipeline):
@@ -33295,7 +35442,7 @@ el.groupDetail?.addEventListener('click', (e) => {
 });
 async function mountGroupPage(host, { route, id, tab, reentered = false }) {
   const fresh = GROUP_PAGE.host !== host || GROUP_PAGE.route !== route || GROUP_PAGE.id !== id;
-  Object.assign(GROUP_PAGE, { host, route, id, tab, reentered, ...(fresh ? { featureId: '', gone: false, failed: false, resolving: false } : {}) });
+  Object.assign(GROUP_PAGE, { host, route, id, tab, reentered, ...(fresh ? { featureId: '', gone: false, failed: false, resolving: false, unmarked: 0 } : {}) });
   if (fresh) {
     groupMessage(host, 'feature-page-loading', 'Loading group…');
     host.__gp = null;
@@ -33309,9 +35456,8 @@ async function mountGroupPage(host, { route, id, tab, reentered = false }) {
         if (GROUP_PAGE.id === id && GROUP_PAGE.route === route) { GROUP_PAGE.resolving = false; paintGroupPageNow(); }
       });
     }
-    if (route === 'feature' && shapeFirstOn()) {
-      // F47: a replaced feature id carries on as the newest one; the route answers the current id, or 404. It needs
-      // the Shaper flag (requireShapeFirst), so with the flag off the id is used as it is.
+    if (route === 'feature') {
+      // F47: a replaced feature id carries on as the newest one; the route answers the current id, or 404.
       GROUP_PAGE.resolving = true;
       const res = await fetch(`/api/shape/features/${encodeURIComponent(id)}`).catch(() => null);
       if (GROUP_PAGE.id !== id || GROUP_PAGE.route !== route) return;
@@ -33319,7 +35465,7 @@ async function mountGroupPage(host, { route, id, tab, reentered = false }) {
       // A network error or a 5xx is not an answer; only a 404 means gone.
       GROUP_PAGE.failed = !res || (!res.ok && res.status !== 404);
       if (res && res.status === 404) GROUP_PAGE.gone = true;
-      else if (res && res.ok) GROUP_PAGE.featureId = ((await res.json().catch(() => ({}))).id) || id;
+      else if (res && res.ok) { const f = await res.json().catch(() => ({})); GROUP_PAGE.featureId = f.id || id; GROUP_PAGE.unmarked = unmarkedOf(f); }
     }
   }
   paintGroupPageNow();
@@ -33370,7 +35516,8 @@ function paintGroupPageNow() {
   // The run page's Logs tab is Expert-only, so the group page offers its Logs (links to those tabs) at Expert too.
   // Run 3 (D15): the group's Labels fact is the read-only union of its members' History labels.
   const labels = [...new Set(row.members.flatMap((mb) => (histOf(mb.pipelineId) || {}).labels || []))].sort();
-  paintGroupPage(host.__gp, { row, project: row.groupName || '', tab, overview: row.groupKind === 'feature' && shapeFirstOn(), logs: levelAtLeast('expert'), labels }, {
+  paintGroupPage(host.__gp, { row, project: row.groupName || '', tab, overview: row.groupKind === 'feature', logs: levelAtLeast('expert'), labels,
+    unmarked: route === 'feature' ? GROUP_PAGE.unmarked : 0 }, {
     onAction: (aid, b) => groupAction(row, aid, b),
     onMore: (anchor) => openGroupMoreMenu(anchor, row),
     // One ship flow (D11): Create PR / View PR ▾ / View PRs ▾ on the status line, for every group kind.
@@ -33395,7 +35542,8 @@ function paintGroupPageNow() {
       const omit = (row.model && Array.isArray(row.model.actions)) ? row.model.actions.slice() : [];
       const changed = String(h.__groupOmit || '') !== String(omit);
       h.__groupOmit = omit;
-      if (h.__shapeWant !== row.groupId || !(h.__shapeOpts && h.__shapeOpts.inGroup)) mountShapeFeature(h, row.groupId, { loading: true, inGroup: true });
+      if (h.__shapeWant !== row.groupId || !(h.__shapeOpts && h.__shapeOpts.inGroup)) mountShapeFeature(h, row.groupId, { loading: true, inGroup: true,
+        focusFallback: () => (host.__gp ? host.__gp.querySelector('.gpage-more') : null) });   // openGroupMoreMenu's anchor
       else if (GROUP_PAGE.reentered || changed) paintShapeFeature(h);   // away: the hidden page skipped frames
       GROUP_PAGE.reentered = false;
     },
@@ -33409,6 +35557,26 @@ function paintGroupPageNow() {
 }
 // Frames arrive in bursts: paint the group page once per microtask. The flag lives on GROUP_PAGE (declared at the
 // top) because History's cached paint can call this during boot, before a `let` down here is initialised.
+/** Shaper requirements s3: a feature's unmarked agreed requirements (0 without a ledger, or with the flag off: the
+ *  route then leaves ship.acceptance out). The page header's Create PR locks on it, as the Ship card does. */
+function unmarkedOf(f) { const a = f && f.ship && f.ship.acceptance; return a && !a.ready ? Math.max(0, (a.total || 0) - (a.marked || 0)) : 0; }
+/** The open feature page's lock from a fetched feature view; a change repaints the page header. */
+function noteGroupFeatureLock(f) {
+  if (GROUP_PAGE.route !== 'feature' || !f || f.id !== GROUP_PAGE.featureId) return;
+  const n = unmarkedOf(f);
+  if (n !== GROUP_PAGE.unmarked) { GROUP_PAGE.unmarked = n; scheduleGroupPagePaint(); }
+}
+/** A shape-feature frame (a mark saved here, in Chat or in another tab): re-read the open feature page's lock. A
+ *  mounted Overview view of the feature refetches it anyway (refreshShapeFeatures) and notes the lock itself. */
+async function refreshGroupFeatureLock(id) {
+  const fid = GROUP_PAGE.featureId;
+  if (GROUP_PAGE.route !== 'feature' || !fid || (id && id !== fid && id !== GROUP_PAGE.id)) return;
+  for (const [host, hid] of SHAPE_FEATURE_HOSTS) {
+    if (host.isConnected && !host.closest('.view.hidden') && (hid === fid || host.__shapeShown === fid)) return;
+  }
+  const res = await fetch(`/api/shape/features/${encodeURIComponent(fid)}`).catch(() => null);
+  noteGroupFeatureLock(res && res.ok ? await res.json().catch(() => null) : null);
+}
 function scheduleGroupPagePaint() {
   if (GROUP_PAGE.paintQueued) return;
   GROUP_PAGE.paintQueued = true;
@@ -33442,8 +35610,8 @@ function groupAction(row, id, btn) {
   switch (id) {
     case 'stop': case 'archive': return runBulkAction(id, [rowTarget(row)]);
     case 'ship': {
-      // One ship flow: a feature (Shaper on), a chain and a user group ship through the group Create PR dialog.
-      if ((row.groupKind === 'feature' && shapeFirstOn()) || row.groupKind === 'chain' || row.groupKind === 'user') {
+      // One ship flow: a feature, a chain and a user group ship through the group Create PR dialog.
+      if (row.groupKind === 'feature' || row.groupKind === 'chain' || row.groupKind === 'user') {
         // The slot's own Create PR passes no button; a head button (a partly shipped group) passes itself.
         const slot = document.querySelector('#group-detail .gpage-card .rd-pr-slot');
         return groupShip(row, slot, btn && btn.dataset && btn.dataset.head === 'ship' ? btn : null);
@@ -33499,7 +35667,8 @@ const histRun = (p, st = null) => ({ status: String((p && p.status) || (st && st
   pauseReason: (p && p.pauseReason) || '', pr: runPrFor(p, storedPrOf(p && p.id)), ...(p && p.inBase ? { inBase: p.inBase } : {}),
   ...(memberPrsOf(p).length ? { memberPrs: memberPrsOf(p) } : {}),
   // D24: passed through for the model; the saved state's branch carries a round marker on a frozen row.
-  round: (p && p.round) || null, branch: (st && st.branch) || null, watch: (p && p.watch) || null,
+  // A round's History row carries its marker as `roundOf` (run-model roundOf reads `.round`).
+  round: (p && (p.round || p.roundOf)) || null, branch: (st && st.branch) || null, watch: (p && p.watch) || null,
   // An interrupted run that can never resume (no resume point, its project gone): the model offers Archive instead.
   ...((p && p.resumable === false) || (st && st.resumable === false) ? { resumable: false } : {}),
   // Projects, any way: a Folder run's changes and a run without a project word the finished line; no git here, no git chrome.
@@ -33518,12 +35687,14 @@ function runsHistItem(p) {
     startedAt: p.startedAt, mtime: p.mtime, groupName: histGroupName(p), groupKind: isNoProjectRun(p) ? 'none' : projectKindForKey(p.projectKey), by: runsPersonKey(p.startedBy),
     pr: glancePrInput(p),
     archived: !!p.archived,
+    roundOf: p.roundOf || null,   // a round folds into its origin (runs-list buildRunsModel, D2)
+    mock: p.mock === true,
     ...(p.resumable === false ? { resumable: false } : {}),   // histRow / rowTarget: the bar's Archive / Delete take it
     checks: typeof p.checks === 'number' ? p.checks : null,
     changes: folder ? { state: (p.changes && p.changes.state) || 'pending' } : null,
     files: folder ? (fc ? fc.total : null) : (typeof p.files === 'number' ? p.files : null),
     base: gitOn() ? baseRowNote(p.baseCheck) : '',
-    tags: flagOn('runTags') ? (p.tags || []) : [],
+    tags: p.tags || [],
     labels: flagOn('runLabels') ? (p.labels || []) : [],
     run: histRun(p),
     cost: engineReportsCost(p.runEngine) ? (p.totalCostUsd ?? null) : null,
@@ -33547,19 +35718,24 @@ function runsSchedItem(t) {
 // pipelineId: a live row painted before its id arrived must repaint once it does (selection
 // and the focus fallbacks below match on it).
 // A group line's fraction is patched in place (paintRunsProgress); its presence is structural (the model's state).
-const runsRowSig = (r) => [r.key, r.pipelineId, r.href, r.title, r.model.state, r.model.symbol || '', r.model.line, r.model.pulse ? 1 : 0, r.count || '',
+// A stack (its line, rounds and open state) repaints when a round arrives, changes or finishes.
+const roundsSig = (r) => (r.rounds && r.rounds.length ? [r.roundsLine || '', r.roundsOwnLine ? 1 : 0, r.rounds.length,
+  runsUi.groupsToggled.get(`rounds:${r.roundsId}`) ? 1 : 0, runsUi.roundsAll.has(`rounds:${r.roundsId}`) ? 1 : 0,
+  r.rounds.map((rd) => [rd.n, rd.status, rd.words || '', rd.time, rd.href])] : 0);
+const runsRowSig = (r) => [r.key, r.pipelineId, r.href, r.title, r.model.state, roundsSig(r), r.model.symbol || '', r.model.line, r.model.pulse ? 1 : 0, r.count || '',
   r.model.pr ? [r.model.pr.id, r.model.pr.word, r.model.pr.title, r.model.pr.icon, r.model.pr.pending ? 1 : 0] : 0, r.model.progress && r.model.progress.mode === 'stages' ? [r.model.progress.stage, r.model.progress.label] : 0,
   r.activityMs || 0, r.groupName, r.cost ?? null, r.costUsd ?? null, r.needs ? 1 : 0,
-  r.kind === 'chain' ? [r.open ? 1 : 0, r.members.map((m) => [m.key, m.model.state, m.model.line, m.title, m.href, m.cost ?? null, m.model.symbol || '',
+  r.kind === 'chain' ? [r.open ? 1 : 0, r.members.map((m) => [m.key, m.model.state, m.model.line, m.title, m.href, m.cost ?? null, m.model.symbol || '', roundsSig(m),
     m.model.pr ? [m.model.pr.id, m.model.pr.word, m.model.pr.title, m.model.pr.icon, m.model.pr.pending ? 1 : 0] : 0])] : 0, (r.labels || []).join('\n')];
 // Where focus goes back to after the list is rebuilt under it. A row can change key in the
 // rebuild: opening a finished run acknowledges it, and the same paint turns live:<runId> into
 // hist:<projectKey>/<pipelineId>. Its pipeline id carries over, then the selected row stands in;
 // a focused ⌄, checkbox, ⋯ or section head is found by its row or section. `near`: the row or head that took a gone
 // row's place (issue #948), ahead of the open run's row.
-function runsFocusTarget(host, { key, pid, section, chain, check, more, near = null }) {
+function runsFocusTarget(host, { key, pid, section, chain, check, more, rounds = '', near = null }) {
   const q = (sel) => host.querySelector(sel);
   const item = (k) => `.runs-item[data-row-key="${cssEscape(k)}"]`;
+  if (rounds) return q(`.runs-rounds-toggle[data-rounds-key="${cssEscape(rounds)}"]`);
   if (chain) return q(`${item(chain)} > .runs-row-tail .runs-expand`);
   if (check) return q(`${item(check)} > .runs-pick .runs-check`);
   if (more) return q(`${item(more)} > .runs-row-tail .runs-more`);
@@ -33584,7 +35760,10 @@ function paintRunsList() {
     labels: flagOn('runLabels') ? runsUi.view.labels : [],
     show: runsUi.view.show, groupBy: runsUi.view.groupBy, collapsed: runsUi.collapsed, toggled: runsUi.groupsToggled,
     recentShown: runsUi.recentShown, archivedCount: state.historyArchived ? state.historyArchived.length : null, now: Date.now(),
+    archivedIds: new Set((state.historyArchived || []).map((p) => p && p.id).filter(Boolean)),   // D4: an archived run's rounds stay out
   });
+  // D4: a stack whose run is not listed may belong to an archived run; the archived feed (loaded once) tells.
+  if (!archivedView && model.orphans && state.historyArchived === null && !state.historyArchivedError) void loadHistoryArchived();
   const note = archivedView
     ? (state.historyArchivedError && !histSource.length ? `Could not load archived runs: ${state.historyArchivedError}` : '')
     : (state.historyError && !(state.historyAll || []).length ? `Could not load finished runs: ${state.historyError}` : '');
@@ -33604,6 +35783,7 @@ function paintRunsList() {
   // Under Show = Archived the history source is the archived feed, so the model's other counts would read 0.
   if (!archivedView) runsUi.listCounts = model.counts;
   const checked = new Set(runsUi.sel.keys());
+  const roundsOpen = new Set([...runsUi.groupsToggled].filter(([k, v]) => k.startsWith('rounds:') && v).map(([k]) => k));
   const sig = JSON.stringify([
     model.sections.map((s) => [s.id, s.title, s.kind || '', s.count, s.more || 0, s.collapsed ? 1 : 0, s.collapsed ? [] : s.rows.map(runsRowSig)]),
     model.shown, model.view, model.spansProjects, note, [...checked], runsUi.selecting, loading, offline,
@@ -33616,7 +35796,8 @@ function paintRunsList() {
       const item = a.closest('.runs-item');
       const of = (cls) => (a.classList.contains(cls) && item ? item.dataset.rowKey : '');
       refocus = { key: a.matches('a.runs-row') ? (a.dataset.rowKey || '') : '', pid: a.dataset.pipelineId || '',
-        section: a.dataset.sectionKey || '', chain: of('runs-expand'), check: of('runs-check'), more: of('runs-more') };
+        section: a.dataset.sectionKey || '', chain: of('runs-expand'), check: of('runs-check'), more: of('runs-more'),
+        rounds: a.dataset.roundsKey || '' };   // a stack's toggle or "+n earlier": focus goes back to its toggle
       // A focused row the repaint drops (E, ⌫, an archive from elsewhere) hands the focus to its next, else previous, neighbour.
       refocus.nearKeys = a.matches('a.runs-row') ? runsRove.around(a) : [];
     }
@@ -33627,7 +35808,7 @@ function paintRunsList() {
       if (k && !lineFrom.has(k) && i.style.width) lineFrom.set(k, i.style.width);
     }
     host.replaceChildren(...renderRunsList(document, model, { checked, selecting: runsUi.selecting, emptyText: 'No runs yet. Start one from New run.', note, lineFrom,
-      loading, offline, retry: !!note }));
+      loading, offline, retry: !!note, roundsOpen, roundsAll: runsUi.roundsAll }));
     if (lineFrom.size) void host.offsetWidth;   // commit the start widths, so the patch below transitions
   }
   paintRunsProgress(host, model);   // P2/P7: the group lines' fraction, in place
@@ -33647,10 +35828,12 @@ function paintRunsList() {
     runsUi.reveal = '';
     if (g && typeof g.scrollIntoView === 'function') g.scrollIntoView({ block: 'start' });
   }
+  paintLanded(host, runsUi);   // Add to group: the moved row keeps its brief fill across repaints (list-dom.mjs)
 }
-/** P2/P7: move every group line to its fraction IN PLACE — a rebuild would restart the glide. Group rows and their open members only: a
- *  top-level single row's four-section stage block is painted whole by paintProgressBar in renderItem. */
+/** P2/P7: move every group line to its fraction IN PLACE — a rebuild would restart the glide. A staged row's four-section block
+ *  is repainted in place too (paintStageBlocks): its fill is not in the row signature, so no rebuild would carry it (#1067). */
 function paintRunsProgress(host, model) {
+  paintStageBlocks(host, model);
   // #955: an open group's live members draw the same 3px line as their group row.
   const rows = model.sections.flatMap((s) => (s.collapsed ? [] : s.rows))
     .flatMap((r) => (r.kind === 'chain' ? [r, ...(r.open ? r.members || [] : [])] : []))
@@ -33688,7 +35871,8 @@ function paintRunsSelection() {
   const sel = runsSelection();
   for (const a of host.querySelectorAll('.runs-row')) {
     const row = { kind: a.dataset.kind, runId: a.dataset.runId || '', pipelineId: a.dataset.pipelineId || '', projectKey: a.dataset.projectKey || '',
-      groupId: a.dataset.groupId || '', memberKeys: new Set((a.dataset.memberKeys || '').split(' ').filter(Boolean)) };
+      groupId: a.dataset.groupId || '', memberKeys: new Set((a.dataset.memberKeys || '').split(' ').filter(Boolean)),
+      ...(a.dataset.roundKeys ? { roundKeys: new Set(a.dataset.roundKeys.split(' ').filter(Boolean)) } : {}) };
     const on = isRowSelected(row, sel);
     // Run 3 (D4): a group whose run is open takes the lighter member-open highlight, and says so to assistive tech.
     const open = !on && isMemberOpen(row, sel);
@@ -33704,6 +35888,16 @@ function paintRunsSelection() {
 // a plain click routes in place. ⌄ opens or closes a group (D29), a project / date head folds, "Show older" pages
 // Recent. The checkbox and the ⋯ button have listeners of their own (below).
 el.runsList?.addEventListener('click', (e) => {
+  // D9: a stack's ▸ k rounds opens or closes it (closed by default); "+n earlier" shows every round.
+  const rt = e.target.closest && e.target.closest('.runs-rounds-toggle, .runs-rounds-more');
+  if (rt) {
+    e.preventDefault();
+    const k = rt.dataset.roundsKey;
+    if (rt.classList.contains('runs-rounds-more')) runsUi.roundsAll.add(k);
+    else { runsUi.groupsToggled.set(k, !runsUi.groupsToggled.get(k)); runsUi.roundsAll.delete(k); }
+    paintRunsList();   // the refocus path puts focus back on the rebuilt toggle
+    return;
+  }
   const exp = e.target.closest && e.target.closest('.runs-expand');
   if (exp) {
     e.preventDefault();
@@ -33747,7 +35941,7 @@ el.runsPane?.addEventListener('click', (e) => {
   goRunsList();
 });
 function toggleRunsGroup(key) {
-  if (runsUi.collapsed.has(key)) runsUi.collapsed.delete(key); else runsUi.collapsed.add(key);
+  setFolded(runsUi.collapsed, key, !isFolded(runsUi.collapsed, key));
   persistIdSet(RUNS_COLLAPSED_KEY, runsUi.collapsed);
   paintRunsList();
 }
@@ -33769,9 +35963,11 @@ function setRunsView(patch) {
 }
 document.getElementById('runs-view-btn')?.addEventListener('click', (e) => {
   const btn = e.currentTarget;
-  openMenu({ doc: document, anchor: btn, align: 'end', label: 'View',
-    items: viewMenuItems(runsUi.view, { ...(runsUi.listCounts || {}), archived: runsUi.lastModel ? runsUi.lastModel.counts.archived : null },
-      { people: viewer.shared ? runsPeople() : [], onPick: setRunsView }) });
+  // Show › Archived: the loaded feed's length, else the server's count (the feed loads only when Archived is picked).
+  const archived = runsUi.lastModel?.counts.archived ?? runsUi.archivedTotal;
+  openMenu({ doc: document, anchor: btn, align: 'end', label: 'View', className: 'wfv-view-menu',
+    items: viewMenuItems(runsUi.view, { ...(runsUi.listCounts || {}), archived },
+      { people: viewer.shared ? runsPeople() : [], onPick: setRunsView, mac: isMac(window) }) });
 });
 function paintRunsChip(model) {
   const chip = document.getElementById('runs-view-chip');
@@ -33782,7 +35978,8 @@ function paintRunsChip(model) {
   chip.querySelector('.runs-view-chip-t').textContent = text;
   paintRunsLabelFilter();
 }
-document.querySelector('#runs-view-chip .runs-view-reset')?.addEventListener('click', () => setRunsView({ show: 'all', groupBy: 'none', person: '', labels: [] }));
+// The × clears what the chip names (the filter); the grouping is not on the chip, so it stays.
+document.querySelector('#runs-view-chip .runs-view-reset')?.addEventListener('click', () => setRunsView({ show: 'all', person: '', labels: [] }));
 
 // ── Run labels (slice 1): the Label filter, the selection bar's Label action ──
 async function sendJson(method, url, body) {
@@ -33891,6 +36088,11 @@ function runsLetterKey(action, item) {
     if (n) runsUi.focusKey = runsNavKey(n);
     focusRunsNav(n || roveRunsList());
   });
+  if (runsUi.sel.size && action === 'add-to-group') {
+    const t = pipelineTargets(selectedTargets());
+    if (t.length) openAddToGroup(runsBulkGroupBtn(), t, [...runsUi.sel.keys()][0]);
+    return;
+  }
   if (runsUi.sel.size && (action === 'stop' || action === 'archive' || action === 'delete')) {
     const act = action === 'archive' && runsUi.view.show === 'archived' ? 'restore' : action;
     const plan = planBulk(act, selectedTargets());
@@ -33905,6 +36107,7 @@ function runsLetterKey(action, item) {
   const out = it.onSelect();
   if (out && typeof out.then === 'function') void out.then(refocus);
 }
+const RUNS_ROW_ONLY_KEYS = new Set(['menu', 'archive', 'stop', 'add-to-group', 'leave-group', 'delete']);
 document.getElementById('runs-list-pane')?.addEventListener('keydown', (e) => {
   const t = e.target;
   const action = listKeyAction({ key: e.key, metaKey: e.metaKey, ctrlKey: e.ctrlKey, altKey: e.altKey, shiftKey: e.shiftKey,
@@ -33912,6 +36115,9 @@ document.getElementById('runs-list-pane')?.addEventListener('keydown', (e) => {
   { size: runsUi.sel.size, list: 'runs', level: currentLevel(document) });
   if (!action || action === 'clear' || action === 'help') return;   // Escape and ? are the document listeners' (below)
   if (action !== 'all' && !el.runsList.contains(t)) return;   // the head's View button and the selection bar keep their keys
+  // A stack's round link, toggle or "+n earlier" sits inside its head's item but names another run: the letter and menu
+  // keys (archive, stop, delete, group, ⋯) would act on the head, so they do nothing there. Arrows still move.
+  if (RUNS_ROW_ONLY_KEYS.has(action) && t.closest?.('.runs-rounds, .runs-rounds-line')) return;
   const item = t.closest?.('.runs-item') || null;
   const nav = t.closest?.(RUNS_NAV) || runsRowLink(item);
   e.preventDefault();
@@ -33933,11 +36139,12 @@ function runsListOwnsEscape() {
 }
 function overlayUp() {
   return [el.confirmModal, el.viewerCard, el.pluginModal, el.reportModal, document.getElementById('stop-modal'), document.getElementById('shipit-modal')]
-    .some((m) => m && !m.classList.contains('hidden')) || !!document.querySelector('.keys-modal');
+    .some((m) => m && !m.classList.contains('hidden')) || !!document.querySelector('.keys-modal, .chat-group-modal');
 }
 document.addEventListener('keydown', (e) => {
   // openMenu (workflows/menu.mjs) and the group picker stop their Escape at the menu, so it never gets here.
   if (e.key !== 'Escape' || e.defaultPrevented || overlayUp() || document.querySelector('.wfv-menu, .group-picker, .label-picker')) return;
+  if (e.target?.closest?.('#ask-side')) return;   // Ask worca beside the page: an Escape typed in the side column is the chat's
   if (!runsUi.sel.size && !runsUi.selecting) return;
   e.preventDefault();
   runsUi.sel.clear();
@@ -33948,6 +36155,7 @@ document.addEventListener('keydown', (e) => {
 // ? anywhere on the Runs page (not while typing, not over a menu or a modal): the one Keyboard shortcuts sheet.
 document.addEventListener('keydown', (e) => {
   if (e.defaultPrevented || document.querySelector('section.view[data-view="runs"]')?.classList.contains('hidden') !== false) return;
+  if (e.target?.closest?.('#ask-side')) return;   // Ask worca beside the page: a ? typed in the side column opens the Chat keys
   const t = e.target;
   if (listKeyAction({ key: e.key, metaKey: e.metaKey, ctrlKey: e.ctrlKey, altKey: e.altKey, shiftKey: e.shiftKey,
     targetIsRow: false, inField: !!t.closest?.(LIST_FIELD) }) !== 'help') return;
@@ -33955,30 +36163,12 @@ document.addEventListener('keydown', (e) => {
   e.preventDefault();
   runsSheet(document.activeElement);
 });
-// Touch: a long-press starts selecting (§3.2); the click that follows is swallowed.
-let runsPress = null;
-let runsPressed = '';
-el.runsList?.addEventListener('pointerdown', (e) => {
-  if (e.pointerType !== 'touch') return;
-  const item = e.target.closest && e.target.closest('.runs-item');
-  if (!item) return;
-  runsPress = setTimeout(() => { runsPressed = item.dataset.rowKey; runsUi.selecting = true; toggleRunsKey(runsPressed); }, 500);
-});
-for (const type of ['pointerup', 'pointercancel', 'pointermove']) el.runsList?.addEventListener(type, () => { clearTimeout(runsPress); runsPress = null; });
-el.runsList?.addEventListener('click', (e) => { if (runsPressed) { e.preventDefault(); e.stopPropagation(); runsPressed = ''; } }, true);
-// A11 (spec §3.2): ⌘/Ctrl-click toggles a row and enters selection; Shift-click adds the range from the anchor. Neither opens the run.
-el.runsList?.addEventListener('click', (e) => {
-  const row = e.target.closest?.('a.runs-row');
-  if (!row || !(e.metaKey || e.ctrlKey || e.shiftKey)) return;
-  const key = row.dataset.rowKey || row.closest('.runs-item')?.dataset.rowKey;
-  if (!key) return;
-  e.preventDefault();
-  e.stopPropagation();
-  runsUi.selecting = true;
-  const range = e.shiftKey && runsUi.anchorKey ? rangeKeys(visibleTopKeys(), runsUi.anchorKey, key) : [];
-  if (range.length) { runsUi.sel.selectAll(range); paintRunsList(); }   // selectAll adds; the range joins the selection
-  else { runsUi.anchorKey = key; toggleRunsKey(key); }                   // toggleRunsKey repaints and leaves selection when empty
-}, true);
+// A11 (spec §3.2): ⌘/Ctrl-click toggles a row and enters selection; Shift-click adds the range from the anchor; a touch
+// long-press starts selecting and swallows its click. None opens the run (list-dom.mjs, shared with the Chats column).
+bindPointerSelect({ list: el.runsList, win: window, visibleKeys: visibleTopKeys,
+  getAnchor: () => runsUi.anchorKey, setAnchor: (k) => { runsUi.anchorKey = k; },
+  toggle: (k) => { runsUi.selecting = true; toggleRunsKey(k); },
+  selectRange: (keys) => { runsUi.selecting = true; runsUi.sel.selectAll(keys); paintRunsList(); } });
 
 const selectedTargets = () => [...runsUi.sel.keys()].map((k) => runsUi.rowsByKey.get(k)).filter(Boolean).map(rowTarget);
 function paintRunsBar() {
@@ -33998,7 +36188,7 @@ function paintRunsBar() {
   }
   if (!on) return;
   const m = barModel(selectedTargets());
-  paintBulkBar(bar, { label: m.label, actions: { stop: m.stop, archive: m.archive, delete: m.delete } });
+  paintBulkBar(bar, { label: m.label, actions: { stop: m.stop, archive: m.archive, delete: m.delete, group: { count: pipelineTargets(selectedTargets()).length } } });
   const labelBtn = bar.querySelector('[data-bulk="label"]');
   if (labelBtn) {
     labelBtn.disabled = !labelTargets(selectedTargets()).length;
@@ -34050,6 +36240,7 @@ document.getElementById('runs-bulk')?.addEventListener('click', (e) => {
   if (!b) return;
   if (b.dataset.bulk === 'cancel') { runsUi.sel.clear(); runsUi.selecting = false; runsUi.anchorKey = null; paintRunsList(); return; }
   if (b.dataset.bulk === 'label') { void openRunsLabelPicker(b); return; }
+  if (b.dataset.bulk === 'group') { openAddToGroup(b, pipelineTargets(selectedTargets()), [...runsUi.sel.keys()][0]); return; }
   runBulkAction(b.dataset.bulk);
 });
 
@@ -34085,6 +36276,7 @@ function runsRowMenuItems(r, more) {
   const prUrl = (r.model.pr && r.model.pr.url) || (r.kind === 'chain' && r.model.current && r.model.current.pr && r.model.current.pr.url) || '';
   // An archived row's E brings it back (D7): the run page's word, the bulk restore action.
   const back = r.archived ? planBulk('restore', [t]) : null;
+  const prs = rowMenuPrs(r);
   return [
     { label: 'Select', key: 'toggle', hint: k('Space'), onSelect: () => { runsUi.selecting = true; runsUi.anchorKey = r.key; toggleRunsKey(r.key); } },
     { label: 'Stop', key: 'stop', hint: k('S'), disabled: !m.stop.count, title: m.stop.title, onSelect: () => runBulkAction('stop', [t]) },
@@ -34092,9 +36284,15 @@ function runsRowMenuItems(r, more) {
       ? { label: 'Restore', key: 'archive', hint: k('E'), disabled: !back.apply.length, title: skipText(back), onSelect: () => runBulkAction('restore', [t]) }
       : { label: 'Archive', key: 'archive', hint: k('E'), disabled: !m.archive.count, title: m.archive.title, onSelect: () => runBulkAction('archive', [t]) },
     ...(adv ? [{ label: 'Delete', key: 'delete', hint: k('Backspace'), disabled: !m.delete.count, title: m.delete.title, onSelect: () => runBulkAction('delete', [t]) }] : []),
-    ...(adv && r.kind !== 'chain' && r.pipelineId && !g ? [{ sep: true }, { label: 'Add to group…', key: 'add-to-group', hint: k('G'), onSelect: () => openAddToGroup(more, r) }] : []),
+    // A run in a user group can move (it leaves its group); a native feature slice never joins another. On a selected
+    // row it adds the whole selection, as the bar's Group N and G do.
+    ...(adv && r.kind !== 'chain' && r.pipelineId && !(g && !adhoc) ? [{ sep: true }, { label: 'Add to group…', key: 'add-to-group', hint: k('G'),
+      onSelect: () => openAddToGroup(more, runsUi.sel.has(r.key) ? pipelineTargets(selectedTargets()) : [{ pipelineId: r.pipelineId, title: r.title }], r.key) }] : []),
     ...(adv && adhoc ? [{ sep: true }, { label: 'Remove from group', key: 'leave-group', hint: k('shift', 'G'), onSelect: () => removeRunFromGroup(r) }] : []),
-    ...(prUrl ? [{ label: VIEW_PR_LABEL, onSelect: () => window.open(prUrl, '_blank', 'noopener') }] : []),
+    // A workspace run with PRs in several repositories opens each one, as the run page's View PRs ▾ does.
+    ...(prs.length ? [{ sep: true },
+      ...prs.map((p) => ({ label: p.repo ? `${viewPrLabel(p.number)} · ${p.repo}` : viewPrLabel(p.number), onSelect: () => window.open(p.url, '_blank', 'noopener') })),
+    ] : prUrl ? [{ label: VIEW_PR_LABEL, onSelect: () => window.open(prUrl, '_blank', 'noopener') }] : []),
     ...(r.groupKind === 'feature' ? [{ label: 'Open feature', onSelect: () => { location.hash = r.href; } }] : []),
   ];
 }
@@ -34102,7 +36300,7 @@ function runsRowMenuItems(r, more) {
  *  group page's header ⋯; the Overview draws no ⋯ of its own (clarify answer 3). Fetched per open: the feature object is
  *  only loaded once Overview is mounted, and the header ⋯ works on every tab. */
 async function groupFeatureMenuItems(anchor, row) {
-  if (row.groupKind !== 'feature' || !shapeFirstOn()) return [];
+  if (row.groupKind !== 'feature') return [];
   const res = await fetch(`/api/shape/features/${encodeURIComponent(row.groupId)}`).catch(() => null);
   const f = res && res.ok ? await res.json().catch(() => null) : null;
   if (!f) { notify({ tone: 'err', title: 'That did not work', detail: "The feature's actions could not be loaded." }); return []; }
@@ -34133,14 +36331,73 @@ async function openGroupMoreMenu(anchor, row) {
   toggleMenu({ doc: document, anchor, align: 'end', label: `More for ${row.title}`,
     items: [...feature, ...(feature.length && items.length ? [{ sep: true }] : []), ...items] });
 }
-function openAddToGroup(anchor, r) {
-  const groups = (state.runGroups || []).map((g) => {
+// Add to group (the shared picker, group-add.mjs, decisions 5 and 6): the picker, New group's dialog, the toast with Undo
+// and the focus on the moved run.
+const runsGroupApi = async (method, url, body, signal) => {
+  try {
+    const res = await fetch(url, { method, headers: body ? { 'content-type': 'application/json' } : {}, body: body ? JSON.stringify(body) : undefined, signal });
+    const out = await res.json().catch(() => ({}));
+    return res.ok ? out : { error: out.error || 'The server did not answer.', status: res.status };
+  } catch (err) { return err && err.name === 'AbortError' ? { aborted: true } : { error: 'The server is not reachable.', status: 0 }; }
+};
+/** A refusal runsGroupApi answered, as the Error actionError words (httpError needs a Response). */
+const httpErrorOf = (out) => Object.assign(new Error(out?.error || 'That did not work.'), { status: out?.status });
+const runsBulkGroupBtn = () => document.querySelector('#runs-bulk [data-bulk="group"]');
+/** An opener worth focusing: still in the page and not inside a hidden bar (after an add the bar hides with the selection). */
+const shownEl = (n) => (n && n.isConnected && !n.closest('[hidden]') ? n : null);
+/** `items`: [{ pipelineId, title }]; `rowKey`: the first item's row (Undo's focus); `anchor` the opener (re-queried). */
+function openAddToGroup(anchor, items, rowKey) {
+  if (!items.length) return;
+  const pids = items.map((x) => x.pipelineId);
+  const own = items.length === 1 ? groupOfRun(pids[0])?.id : '';
+  const groups = (state.runGroups || []).filter((g) => g.id !== own).map((g) => {
     const it = runsGroupItem({ id: g.id, groupKind: g.kind, title: g.title, members: g.members });
     return { id: g.id, title: g.title, model: groupModel({ kind: g.kind === 'feature' ? 'feature' : 'chain', title: g.title, members: it.members.map((x) => x.run) }) };
   });
-  openGroupPicker({ doc: document, anchor, groups,
-    onPick: (g) => groupCall(`/api/run-groups/${encodeURIComponent(g.id)}/members`, 'POST', { pipelineId: r.pipelineId }, `Added to ${g.title}`, 'add the run to the group'),
-    onCreate: (title) => groupCall('/api/run-groups', 'POST', { title, pipelineId: r.pipelineId }, `Added to ${title}`, 'create the group') });
+  const key = anchor.dataset.rowKey;
+  const opener = () => shownEl(key ? el.runsList.querySelector(`.runs-more[data-row-key="${cssEscape(key)}"]`) : null)
+    || shownEl(anchor) || shownEl(runsBulkGroupBtn());
+  const before = { keys: [...runsUi.sel.keys()], selecting: runsUi.selecting, anchorKey: runsUi.anchorKey, rowKey };
+  const done = (out) => afterRunsAdd(out, { items, before, opener });
+  openGroupPicker({ doc: document, anchor: opener, groups, recent: readRecentGroups(localStorage, 'runs'),
+    onPick: async (g) => done(await runsGroupApi('POST', `/api/run-groups/${encodeURIComponent(g.id)}/members`, { pipelineIds: pids })),
+    onCreate: async (title) => done(await runsGroupApi('POST', '/api/run-groups', { title, nameSource: 'user', pipelineIds: pids })),
+    onNew: () => openGroupDialog({ doc: document, mode: 'create', count: items.length, noun: 'run', icon, opener: opener(),
+      fallback: () => roveRunsList(), suggestOn: flagOn('smartRunNaming'),
+      adapter: { suggest: (signal) => runsGroupApi('POST', '/api/run-groups/suggest-name', { pipelineIds: pids }, signal),
+        create: ({ name, nameSource }) => runsGroupApi('POST', '/api/run-groups', { title: name, nameSource, pipelineIds: pids }) },
+      onDone: (_g, out) => done(out) }) });
+}
+async function afterRunsAdd(out, { items, before, opener }) {
+  if (!out || out.error || out.aborted) { notify(actionError('add the runs to the group', httpErrorOf(out))); return; }
+  const gid = (out.group && out.group.id) || out.groupId;
+  noteRecentGroup(localStorage, 'runs', gid);
+  runsUi.sel.clear();
+  runsUi.selecting = false;
+  runsUi.anchorKey = null;
+  runsUi.groupsToggled.set(`chain:${gid}`, true);   // a collapsed target group opens
+  await loadRunGroups();
+  paintRunsList();
+  const sec = collapsedSectionOf(runsUi.lastModel, `chain:${gid}`);
+  if (sec) { setFolded(runsUi.collapsed, sec, false); persistIdSet(RUNS_COLLAPSED_KEY, runsUi.collapsed); paintRunsList(); }
+  const want = new Set(items.map((x) => x.pipelineId));
+  const node = [...el.runsList.querySelectorAll('.runs-item[data-level="member"] > a.runs-row')].find((a) => want.has(a.dataset.pipelineId));
+  landOn({ host: el.runsList, rove: runsRove, state: runsUi, node, fallback: () => opener() || roveRunsList() });
+  const skipped = (out.skipped || []).filter((s) => s.reason === 'feature').length;
+  const added = Array.isArray(out.added) ? items.filter((x) => out.added.includes(x.pipelineId)) : items;
+  notify(addedNotice({ group: (out.group && out.group.title) || '', titles: added.map((x) => x.title), noun: 'run',
+    skipped, skipWhy: 'part of a Shaper feature', undo: out.undo ? () => undoRunsAdd(out.undo, before) : null }));
+}
+async function undoRunsAdd(token, before) {
+  const out = await runsGroupApi('POST', '/api/run-groups/undo', { token });
+  if (out.error) { notify({ tone: 'err', title: 'Could not undo', detail: out.error }); return; }
+  await loadRunGroups();
+  runsUi.sel.clear();
+  if (before.keys.length) runsUi.sel.selectAll(before.keys);
+  runsUi.selecting = before.selecting;
+  runsUi.anchorKey = before.anchorKey;
+  paintRunsList();
+  landOn({ host: el.runsList, rove: runsRove, state: runsUi, node: before.rowKey ? runsRove.find([`row:${before.rowKey}`]) : null, fallback: () => roveRunsList() });
 }
 const removeRunFromGroup = (r) => groupCall(`/api/run-groups/members/${encodeURIComponent(r.pipelineId)}`, 'DELETE', null, 'Removed from the group', 'remove the run from the group');
 async function groupCall(url, method, body, ok, what) {
@@ -34220,7 +36477,7 @@ function applyPendingSelect(answered) {
   const hitKeys = new Set(keys);
   const folded = (runsUi.lastModel?.sections || []).filter((s) => s.collapsed && s.rows.some((r) => hitKeys.has(r.key)));
   if (folded.length) {
-    for (const s of folded) runsUi.collapsed.delete(s.id);
+    for (const s of folded) setFolded(runsUi.collapsed, s.id, false);
     persistIdSet(RUNS_COLLAPSED_KEY, runsUi.collapsed);   // as openRunsForProject does
     queueMicrotask(paintRunsList);
   }
@@ -34604,7 +36861,7 @@ function openRunDetail(runId, { instant = false, host: where = 'page' } = {}) {
     // repaint that rewrites .rd-branch-name (same stale-capture class the History
     // header kills).
     const name = screen.querySelector('.rd-branch-name').textContent || '';
-    if (name) copyBranchToClipboard(screen.querySelector('.rd-branch-copy'), name);
+    if (name) copyFromButton(screen.querySelector('.rd-branch-copy'), name);
   });
   screen.querySelector('.rd-models').addEventListener('click', () => {
     const r = runs.get(runDetailState.runId);
@@ -34867,7 +37124,7 @@ function paintRunDetail(r) {
   ensureRdTabs(screen, r);   // builds the pill row + lazy panels exactly once
   paintRdHeader(screen, r);
   paintRdBanners(screen, r);
-  if (isGraphRun(r)) paintQuiescenceBanner(screen.querySelector('.rd-banners'), runDecorFor(r, 'monitor'));
+  if (isGraphRun(r)) paintRunWarnings(screen.querySelector('.rd-banners'), runDecorFor(r, 'monitor'));
   paintRdGraph(screen, r);
   paintRdQuestions(screen, r);
   paintShaperWait(screen, r);
@@ -35532,7 +37789,13 @@ function crpSyncSheet() {
 function installChatRunPanel() {
   chatPanelRouter = routeChatRunPanel;
   chatPanelContext = chatRunPanelContext;
-  chatDeps.openRunPanel = openChatRunPanel;
+  // Ask worca beside the page (L9): a run card in the side column opens the run's own page (no run panel in 440px);
+  // where the column covers the page it steps aside so that page shows (uncover).
+  chatDeps.openRunPanel = (ref, opts) => {
+    if (askPanel?.host?.() !== 'dock') return openChatRunPanel(ref, opts);
+    askSide?.uncover();
+    return chatOpenRunPage(ref, opts);
+  };
   if (typeof window !== 'undefined') window.__np = Object.assign(window.__np || {}, { routeChatRunPanel, closeChatRunPanel, chatRunPanelContext, openChatRunPanel });
   const [view, param] = parseHash();
   const segs = view === 'chat' && currentShownView === 'chat' ? runPanel.panelSegments(param) : [];
@@ -35628,7 +37891,7 @@ function paintRdStatus(screen, r) {
 /** Run 4 (D2): the bar's Answer names the waiting card's own primary ("Approve 2 runs", "Approve and build"). Read from
  *  the card, so it follows the person's merges and removals; '' (→ "Answer") for a Clarify, gate or form ask. */
 function answerLabelOf(root) {
-  const own = root && root.querySelector('.qpanel:not(.hidden) .plan-actions .btn-primary');
+  const own = root && root.querySelector('.qpanel:not(.hidden) .plan-actions:not([hidden]) .btn-primary');
   return own ? own.textContent : '';
 }
 /** Slice 2: offer and gate the live ⋯'s Report this run, Archive and Save as preset. A finished run only (a live one
@@ -35684,6 +37947,7 @@ function paintRdActions(screen, r, m = rdModel(r)) {
     // The model reads pausing as paused, but chatRunControls.resume does nothing while the run is still live.
     disable: { 'ask-changes': "Ask for changes from the run's chat", ...(st === 'pausing' ? { resume: 'Pausing…' } : {}) },
     labels: { answer: answerLabelOf(screen.querySelector('.rd-questions')) },
+    plain: answerFieldOpen(screen.querySelector('.rd-questions')) ? ['answer'] : [],
     onAction: (id, b) => runAction({ runId: r.runId, pipelineId: r.pipelineId, title: r.title, status: st, workspaceId: r.workspaceId || null }, id, b, m),
   });
   if (split) split.hidden = !!pause && pause.hidden;      // the split wrapper follows its button
@@ -35703,7 +37967,7 @@ function paintGroupLine(el, pipelineId, title, home) {
   el.dataset.sig = 'add';
   const b = Object.assign(document.createElement('button'), { type: 'button', className: 'btn btn-sm btn-quiet rd-group-add', textContent: 'Add to group…' });
   b.prepend(icon(document, 'plus', 12));
-  b.addEventListener('click', () => openAddToGroup(b, { pipelineId, title }));
+  b.addEventListener('click', () => openAddToGroup(b, [{ pipelineId, title }]));
   el.replaceChildren(b);
 }
 /** Run 3 (D6): the breadcrumb, from the run's group, and the facts rows' hidden state. The breadcrumb is the split
@@ -35849,9 +38113,9 @@ function rdSrowValue(text) {
 // previews its content: `values[key]`, else the tab's own badge with a unit.
 const ACTIVITY_GROUPS = [
   ['Results', ['overview', 'diff', 'changes', 'artifacts', 'actions']],
-  ['How it ran', ['workflow', 'qa', 'clarify', 'logs', 'agents']],
+  ['How it ran', ['workflow', 'qa', 'clarify', 'logs', 'sessions', 'agents']],
 ];
-const ACTIVITY_UNITS = { diff: 'file', changes: 'file', qa: 'question', clarify: 'question', agents: 'agent' };
+const ACTIVITY_UNITS = { diff: 'file', changes: 'file', qa: 'question', clarify: 'question', sessions: 'session', agents: 'agent' };
 function rdActivityGroups(screen, values = {}) {
   const tabs = detailTabsOf(screen);
   if (!tabs) return [];
@@ -35981,7 +38245,7 @@ function activityOverviewValue(results) {
 // s2 (D11): the run target's dimensions, fetched once per project dir for the page session.
 const runTagDimsCache = new Map();   // projectDir → dims[] once answered, else { waiting: Set of repaint callbacks }
 function runRequiredKeys(projectDir, onLoad) {
-  if (!projectDir || !flagOn('runTags')) return [];
+  if (!projectDir) return [];
   const got = runTagDimsCache.get(projectDir);
   if (Array.isArray(got)) return got.filter((d) => d.required).map((d) => d.key);
   if (got) { if (onLoad) got.waiting.add(onLoad); return []; }
@@ -35997,7 +38261,6 @@ function runRequiredKeys(projectDir, onLoad) {
 }
 // D8: a workspace run has no single project, so it gets chips but never a missing slot (pass target 'workspace').
 const costTagsFact = (tags, projectDir, onLoad, target = 'project') => {
-  if (!flagOn('runTags')) return null;
   const have = new Set((tags || []).map((t) => parseTag(t).tag?.key));
   const missing = (target === 'workspace' ? [] : runRequiredKeys(projectDir, onLoad)).filter((k) => !have.has(k));
   return (tags || []).length || missing.length ? { tags: tags || [], missing } : null;
@@ -36119,10 +38382,10 @@ const PR_CTA_LOOK = {
   view: { look: 'pr-view', icon: 'pull-request', label: VIEW_PR_LABEL },
   merged: { look: 'pr-merged', icon: 'merge', label: VIEW_PR_LABEL },
 };
-function paintPrCta(slot, { state = 'none', href = '', onClick = null, cls = '', label: own = '', title = '', disabled = false, menu = false, ws = false } = {}) {
+function paintPrCta(slot, { state = 'none', href = '', onClick = null, cls = '', label: own = '', title = '', disabled = false, menu = false, ws = false, quiet = false } = {}) {
   if (!slot) return;
   slot._prClick = onClick;                         // read at click time: a repaint re-binds it
-  const sig = `${state}|${href}|${cls}|${own}|${title}|${disabled}|${menu}|${ws}`;
+  const sig = `${state}|${href}|${cls}|${own}|${title}|${disabled}|${menu}|${ws}|${quiet}`;
   if (slot.dataset.sig === sig) return;
   const from = slot.dataset.state || 'none';
   slot.dataset.sig = sig;
@@ -36199,7 +38462,7 @@ function paintPrCta(slot, { state = 'none', href = '', onClick = null, cls = '',
     ctl.rel = 'noopener';
   }
   if (!menu || state === 'create' || state === 'push') {
-    ctl.className = ['btn', look ? '' : 'btn-primary', look, cls].filter(Boolean).join(' ');
+    ctl.className = ['btn', look || quiet ? '' : 'btn-primary', look, cls].filter(Boolean).join(' ');   // quiet: a locked Create PR
     ctl.setAttribute('data-rd-cta', '');
     if (title) ctl.title = title;
     if (disabled && ctl.tagName === 'BUTTON') ctl.disabled = true;
@@ -36225,7 +38488,9 @@ function paintPrCta(slot, { state = 'none', href = '', onClick = null, cls = '',
  *  a live run has none), `m` the page model, `kept` screen._headKept, `repaint` the page's head painter.
  *  Side effect: it starts the PR status reads it needs (the feed's, and each open workspace member's through
  *  ensurePrStatus); a landed member read calls `repaint`, which then finds it cached, so it cannot loop. */
-function headFactsOf(screen, rec, { m, mode, gitChrome, folder, canTry, kept, repaint, liveSource = '', liveBranch = '', pipelineId = '' }) {
+function headFactsOf(screen, rec, { m, mode, gitChrome, folder, canTry, tryIt = null, kept, repaint, liveSource = '', liveBranch = '', pipelineId = '' }) {
+  // recHasNoRemote reads the status the Projects page loads: a run opened first asks for it, once, and repaints when it lands.
+  if (!syncChipsLoaded && rec && rec.target !== 'workspace' && typeof repaint === 'function') { syncChipsWaiters.add(repaint); refreshSyncChips(); }
   const ws = !!rec && rec.target === 'workspace' && hasWsMembers(rec);
   const own = !ws && rec && rec.pr && typeof rec.pr === 'object' && rec.pr.url ? rec.pr : null;
   const open = !!own && String(own.state || '').toUpperCase() === 'OPEN';
@@ -36244,7 +38509,7 @@ function headFactsOf(screen, rec, { m, mode, gitChrome, folder, canTry, kept, re
   const source = (rec && rec.sourceBranch) || liveSource || '';
   const group = routeGroupOf(groupHomeOf((rec && rec.id) || pipelineId), { sourceBranch: source, histOf });
   return {
-    m, mode, gitChrome, folder, canTry, kept, level: currentLevel(),
+    m, mode, gitChrome, folder, canTry, tryIt, kept, level: currentLevel(),
     workspace: ws ? { members: histWsMembers(rec).map((x) => ({
       key: x.memberKey, name: (names && names[x.memberKey]) || String(x.projectKey || x.memberKey).replace(/-[0-9a-f]{8}$/, ''),
       pr: x.pr && typeof x.pr === 'object' ? x.pr : null,
@@ -36258,7 +38523,9 @@ function headFactsOf(screen, rec, { m, mode, gitChrome, folder, canTry, kept, re
     group,
     groupPending: !group && routeGroupsPending(),   // D2: never guess the landing branch before the groups answer
     pr: own, prInput: glancePrInput(rec), prStatus, watch: (rec && rec.watch) || null,
-    canCreatePr: !!rec && histPrEligible(rec) && !(own && open),
+    mock: !!(rec && rec.mock),
+    canCreatePr: !!rec && histPrEligible(rec) && !(own && open) && !recHasNoRemote(rec),
+    noRemote: !!rec && recHasNoRemote(rec),
     push: !!rec && !!rec.sameAsSource && rec.target !== 'workspace' && rec.mergeBack?.merged === true && !!rec.sourceBranch,
     notMergedBack: !!rec && !!rec.sameAsSource && rec.mergeBack?.merged === false,
     pushState: (rec && rec.push) || null,
@@ -36289,7 +38556,7 @@ function paintRunHead(screen, f, h) {
   renderHeadButtons(screen.querySelector('.rd-head-acts'), head, slot, h);
   if (slot && slot._prMenuOpen) slot._prMenuOpen(f);
   // storage: app.js's guarded localStorage (reading window.localStorage throws with site data blocked).
-  renderRoute(screen.querySelector('.rd-route'), routeModel(f), { ...h, storage: localStorage, onCopy: (btn, name) => copyBranchToClipboard(btn, name, name) });
+  renderRoute(screen.querySelector('.rd-route'), routeModel(f), { ...h, storage: localStorage, onCopy: (btn, name) => copyFromButton(btn, name) });
   return head;
 }
 
@@ -36311,14 +38578,15 @@ function paintHdHead(screen, record, data) {
   const f = headFactsOf(glance, record, {
     m, mode, gitChrome: gitOn() && isGitRun(hdRunOf(record, data)), kept, repaint, pipelineId: record.id,
     folder: bar ? { state: bar.state, total: changesCounts(changes).total, dir: record.projectDir || '' } : null,
-    canTry: hdCanTry(record, st, held.retained, held.provisional) && !hdCheckoutFor(record),
+    canTry: hdCanTry(record, st, held.retained, held.provisional),
+    tryIt: tryFactsOf(rec),                             // past Check out: its setup, then the first service
   });
   paintRunHead(glance, f, headHandlers(glance, () => hdCurrentRecord(record), { kept, ctaCls: 'hd-g-pr', folderTotal: f.folder ? f.folder.total : 0,
-    onCreate: () => { const b = screen.querySelector('.hd-pr'); if (b) b.click(); } }));
+    onCreate: () => { const b = screen.querySelector('.hd-pr'); if (b) b.click(); }, onActions: () => hdGoDetails('actions') }));
 }
 
 /** Slice 3 (D11): the head buttons' and the route's calls. `cur()` re-reads the record at click time. */
-function headHandlers(screen, cur, { onCreate, kept, ctaCls = '', folderTotal = 0 }) {
+function headHandlers(screen, cur, { onCreate, kept, ctaCls = '', folderTotal = 0, onActions = null }) {
   const scopeOf = (memberKey) => { const rec = cur(); return { id: rec.id, projectKey: rec.projectKey, ...(memberKey ? { memberKey } : {}) }; };
   const feed = () => screen.querySelector('.rd-pr-feed');
   return {
@@ -36326,10 +38594,15 @@ function headHandlers(screen, cur, { onCreate, kept, ctaCls = '', folderTotal = 
     onHead: (id, b) => {
       const rec = cur();
       if (id === 'ship') return onCreate();
-      if (id === 'try') return tryItFlow(b, rec);
+      if (id === 'try') return tryItFlow(rec);
+      if (id === 'try-start') return tryStartFlow(rec);
+      if (id === 'try-stop') return tryStopFlow(rec);
+      if (id === 'try-actions') return onActions && onActions();
       if (id === 'push') return pushSourceFlow(b, rec);
       if (id === 'report') return openReportModal(rec.id);
       if (id === 'how-to-merge') return showViewer('How to merge', mergeBackText(rec));
+      if (id === 'merge-local') return showViewer('How to merge', `The work is on ${rec.branch}. To land it without a pull request, run this in the project's folder:\n\ngit switch ${rec.sourceBranch} && git merge ${rec.branch}`);
+      if (id === 'link-remote') return openProjectGitModal(rec.projectKey, 'link', b);
       if (id === 'fix-conflicts') return resolvePrFlow(b, scopeOf(''), feed());
       if (id === 'discard-kept') return kept && kept.onDiscard(b);
       if (id === 'apply-kept') return kept && kept.onApply(b);
@@ -36467,14 +38740,89 @@ async function copyPrLink(url) {
   try { await navigator.clipboard.writeText(url); notify({ tone: 'ok', title: 'PR link copied' }); }
   catch { notify({ tone: 'err', title: 'Could not copy the link' }); }
 }
-/** Try it (D11): today's Check out (stripHandlers().onCheckout); the History broadcast then repaints the head. */
-async function tryItFlow(btn, rec) {
+// Try it (D11) on the run heads: Check out, its setup, then the project's first service (run-head.mjs tryStep). A
+// request in flight is held per run, because every head repaint rebuilds its buttons; Check out's wait ends when
+// History's row shows the checkout (one pipelines-changed after the POST answers), or after TRY_WAIT_MS.
+const TRY_WAIT_MS = 15000;
+const tryBusy = new Map();          // runId -> { step: 'checkout' | 'start' | 'stop', timer }
+const tryModelAsked = new Set();    // runIds whose head asked for the Actions model since the last actions-changed
+function setTryBusy(id, step, wait = 0) {
+  clearTryBusy(id);
+  const timer = wait ? setTimeout(() => { if (tryBusy.get(id)?.timer === timer) { tryBusy.delete(id); repaintTryHeads(id); } }, wait) : null;
+  tryBusy.set(id, { step, timer });
+  repaintTryHeads(id);
+}
+function clearTryBusy(id) {
+  const b = tryBusy.get(id);
+  if (b && b.timer) clearTimeout(b.timer);
+  tryBusy.delete(id);
+}
+/** headModel's `tryIt` fact for `rec` (a History row): its checkout, the Actions model (asked for once while a checkout
+ *  exists) and the request in flight. Seeing the checkout ends Check out's wait. */
+function tryFactsOf(rec) {
+  if (!rec || !rec.id) return null;
+  const checkout = hdCheckoutFor(rec);
+  if (checkout && tryBusy.get(rec.id)?.step === 'checkout') clearTryBusy(rec.id);
+  if (checkout && !actionsModelCache.has(rec.id) && !tryModelAsked.has(rec.id)) {
+    tryModelAsked.add(rec.id);       // a failed read is not retried per paint (the reply repaints the head)
+    void refreshActionsModel(rec.id, runActionQuery(rec.projectDir || null, rec).toString());
+  }
+  return { checkout, actions: actionsModelCache.get(rec.id) || null, busy: tryBusy.get(rec.id)?.step || '' };
+}
+/** The open heads of run `runId` (History detail, run page): repaint them. */
+function repaintTryHeads(runId) {
+  const hd = histDetailState;
+  if (hd && hd.screen && hd.screen.isConnected && hd.data && hd.record && hd.record.id === runId) paintHdHead(hd.screen, hdCurrentRecord(hd.record), hd.data);
+  const r = rdOpenRun();
+  if (r && r.pipelineId === runId && runDetailState.screen && RD_TERMINAL.includes(r.status)) paintRdHead(runDetailState.screen, r);
+}
+/** [runId, scopeQuery] of each open head past Check out (refreshActionsStrips keeps and refetches their model). */
+function openTryHeadScopes() {
+  const out = [];
+  const add = (rec) => { if (rec && rec.id && hdCheckoutFor(rec)) out.push([rec.id, runActionQuery(rec.projectDir || null, rec).toString()]); };
+  if (histDetailState && histDetailState.screen && histDetailState.screen.isConnected && histDetailState.record) {
+    add((state.historyAll || []).find((x) => x && x.id === histDetailState.record.id) || histDetailState.record);
+  }
+  const r = rdOpenRun();
+  if (r && r.pipelineId && RD_TERMINAL.includes(r.status)) add(rdHistoryRecord(r));
+  return out;
+}
+async function tryItFlow(rec) {
   const scope = runActionQuery(rec.projectDir || null, rec).toString();
-  btn.disabled = true;
+  setTryBusy(rec.id, 'checkout', TRY_WAIT_MS);
   const r = await actionsCall('POST', actionsRunUrl(rec.id, '/checkout', scope), {});
-  if (btn.isConnected) btn.disabled = false;
-  if (!r.ok) notify({ tone: 'err', title: 'Could not check out', detail: (r.data && r.data.error) || `HTTP ${r.status}` });
-  await refreshActionsModel(rec.id, scope);
+  if (!r.ok) {
+    clearTryBusy(rec.id);
+    notify({ tone: 'err', title: 'Could not check out', detail: (r.data && r.data.error) || `HTTP ${r.status}` });
+  }
+  tryModelAsked.delete(rec.id);
+  await refreshActionsModel(rec.id, scope);   // repaints the heads (paintActionsStrips)
+}
+/** Start the project's first service (202: it starts after setup, whose row state then shows Setting up…). */
+async function tryStartFlow(rec) {
+  const t = tryServiceOf(hdCheckoutFor(rec), actionsModelCache.get(rec.id));
+  if (!t || !t.action) return;
+  const scope = runActionQuery(rec.projectDir || null, rec).toString();
+  setTryBusy(rec.id, 'start');
+  const r = await actionsCall('POST', actionsRunUrl(rec.id, `/actions/${encodeURIComponent(t.action.id)}/start`, scope), { member: t.member.projectKey });
+  if (!r.ok) notify({ tone: 'err', title: `Could not start ${t.action.label}`, detail: (r.data && r.data.error) || `HTTP ${r.status}` });
+  tryModelAsked.delete(rec.id);
+  await refreshActionsModel(rec.id, scope);   // still busy: the old model's step must not flash back before this lands
+  clearTryBusy(rec.id);
+  repaintTryHeads(rec.id);
+}
+/** Stop the service the head shows Open and Stop for. */
+async function tryStopFlow(rec) {
+  const t = tryServiceOf(hdCheckoutFor(rec), actionsModelCache.get(rec.id));
+  if (!t || !t.live) return;
+  const scope = runActionQuery(rec.projectDir || null, rec).toString();
+  setTryBusy(rec.id, 'stop');
+  const r = await actionsCall('POST', actionsRunUrl(rec.id, `/actions/${encodeURIComponent(t.live.actionId)}/stop`, scope), { member: t.live.member });
+  if (!r.ok) notify({ tone: 'err', title: `Could not stop ${t.live.label || 'the service'}`, detail: (r.data && r.data.error) || `HTTP ${r.status}` });
+  tryModelAsked.delete(rec.id);
+  await refreshActionsModel(rec.id, scope);   // still busy: the old model's step must not flash back before this lands
+  clearTryBusy(rec.id);
+  repaintTryHeads(rec.id);
 }
 
 function rdSheetGroup(title, rows) {
@@ -36847,9 +39195,10 @@ function paintRdHead(screen, r, m = rdModel(r)) {
     liveBranch: (r.branch && typeof r.branch === 'object' && r.branch.feature) || r.branchFeature || '',
     pipelineId: r.pipelineId || '',
     folder: bar ? { state: bar.state, total: changesCounts(changes).total, dir: r.projectDir || '' } : null,
-    canTry: !!(rec && rec.branch) && terminal && !kept && !!r.pipelineId && !hdCheckoutFor(rec),
+    canTry: !!(rec && rec.branch) && terminal && !kept && !!r.pipelineId,
+    tryIt: terminal && r.pipelineId ? tryFactsOf(rec) : null,
   });
-  paintRunHead(screen, f, headHandlers(screen, () => rdNoticeCarrier(r), { kept, ctaCls: 'rd-create-pr', folderTotal: f.folder ? f.folder.total : 0, onCreate: () => {
+  paintRunHead(screen, f, headHandlers(screen, () => rdNoticeCarrier(r), { kept, ctaCls: 'rd-create-pr', folderTotal: f.folder ? f.folder.total : 0, onActions: () => rdGoDetails('actions'), onCreate: () => {
     const key = historyKeyForRun(r);
     pendingShipIt = { id: r.pipelineId, projectKey: key };
     location.hash = `history/${key}/${r.pipelineId}`;
@@ -36900,8 +39249,8 @@ function paintRdResult(screen, r, { glance = 'run', trailCount = 0 } = {}) {
 // replaces the panel's own header row (title + count badge).
 function askHeading(r, pq) {
   const who = pq.nodeId ? nodeLabel(r.stepper, pq.nodeId) : '';
-  // A step card says its title once, in its own head (shaper-cards D16): one wording, the gate on and off.
-  if (isStepCard(pq, r, shapeFirstOn())) return stepTitle(pq, who);
+  // A step card says its title once, in its own head (shaper-cards D16).
+  if (isStepCard(pq, r, true)) return stepTitle(pq, who);
   const n = Array.isArray(pq.questions) ? pq.questions.length : (Array.isArray(pq.issues) ? pq.issues.length : 1);
   switch (pq.kind) {
     case 'workflow': return 'Review the workflow';
@@ -36918,7 +39267,7 @@ function paintShaperWait(screen, r) {
   const glance = screen.querySelector('.rd-glance');
   const host = screen.querySelector('.rd-questions');
   if (!glance || !host) return;
-  const wait = shaperWait(r, shapeFirstOn());
+  const wait = shaperWait(r, true);
   if (wait) glance.dataset.shaperWait = wait;
   else delete glance.dataset.shaperWait;
   // The Chat panel moved .rd-questions into its own head (presentRunScreenInPanel): leave it there.
@@ -36966,7 +39315,7 @@ function paintRdQuestions(screen, r) {
   host.hidden = pq == null;                    // drives the wr-rise entry
   const head = host.querySelector('.rd-ask-head');
   // A step card carries its own head (title + chip): the run page's heading stays empty for it (shaper-cards D16).
-  if (head) head.textContent = pq && !isStepCard(pq, r, shapeFirstOn()) ? askHeading(r, pq) : '';
+  if (head) head.textContent = pq && !isStepCard(pq, r, true) ? askHeading(r, pq) : '';
   if (panel && panel.dataset.qid !== key) {
     renderQpanel(r, host);                     // host contains the .qpanel node
     // Stamp '' rather than deleting: `clearQpanel` already removed the attribute,
@@ -37331,6 +39680,7 @@ function paintRdHeader(screen, r) {
   // Run tags (#718): read-only chips after the person chip, replaced on every paint.
   for (const c of screen.querySelectorAll('.rd-page-meta .tag-chip')) c.remove();   // s2: the chips moved to the Cost tags row
   paintRunLabels(screen.querySelector('.rd-glance .rd-kv [data-fact="labels"] > .rd-kv-v'), { pipelineId: r.pipelineId || '', labels: r.labels, onSaved: (l) => { r.labels = l; } });
+  void paintRunPrAuto(screen.querySelector('.rd-glance .rd-kv [data-fact="pr-auto"]'), r.pipelineId, r.status, () => screen.isConnected && runs.get(r.runId) === r);
   paintRunKindChip(screen.querySelector('.rd-page-meta'), workModeOf(r));
   syncFacts(screen.querySelector('.rd-glance .rd-kv'));
 
@@ -37425,7 +39775,7 @@ function paintRdHeader(screen, r) {
   else if (stopBtn.title === STOP_INTERRUPTED) { stopBtn.disabled = false; stopBtn.title = ''; }
   // Run 3 (D13): every run page's bar is the primary action, Run after, Stop and ⋯ (D31's fold, for every run now; CSS
   // hides Away mode and the terminal, and ⋯ drives them; a shaped run's bar folds Run after too).
-  const shapedBar = shapeFirstOn() && isShapingRun(r);
+  const shapedBar = isShapingRun(r);
   screen.querySelector('.rd-bar')?.toggleAttribute('data-shaped', shapedBar);
   const barMore = screen.querySelector('.rd-bar-more');
   if (barMore) barMore.hidden = false;
@@ -37486,10 +39836,12 @@ function paintRdHeader(screen, r) {
   // Rule: widen freely, narrow only when the control's ACTION flipped (the run
   // really did park or resume, at which point pauseRun's disable is meaningless),
   // when the button is already enabled (nothing is in flight), or when the disable
-  // is this painter's own budget gate (a gated button cannot have been clicked).
+  // is this painter's own budget gate (a gated button cannot have been clicked), or when pauseRun's refusal left it
+  // waiting on the server's status (awaitStatus: nothing in flight).
   const gated = pauseBtn.dataset.gated === '1';
-  if (!busy && (actionChanged || !pauseBtn.disabled || gated)) {
+  if (!busy && (actionChanged || !pauseBtn.disabled || gated || pauseBtn.dataset.awaitStatus)) {
     pauseBtn.disabled = !!totalBlocked || r.status === 'pausing';
+    if (r.status !== 'pausing') delete pauseBtn.dataset.awaitStatus;
   }
   pauseBtn.dataset.gated = totalBlocked ? '1' : '';
   pauseBtn.title = totalBlocked
@@ -37546,13 +39898,18 @@ function renderPipelineTabs() {
 
 // Needs you, counted without building the list (this runs on every WS frame): the same rule
 // as the Runs list's Needs-you group, over the same rows (runs-list.mjs countNeedsYou). The top
-// bar's Activity badge reads the SAME items (activity-model.mjs activityCounts), so its amber
-// number is this one; `active` is every live run: the grey Runs number, Activity's running count.
+// bar's Activity badge reads the SAME items plus the Design builds (activity-model.mjs
+// activityCounts), so its amber number is this one plus the builds that need you, while the Runs
+// badge (countNeedsYou) stays runs only; `active` is every live run: the grey Runs number,
+// Activity's running count. `designs` only while the design flag is on: hello lists the builds
+// either way, and a #design/<id> row would then lead nowhere.
 function runsNeedsInput() {
   return {
-    live: overviewRuns().map((r) => ({ runId: r.runId, pipelineId: r.pipelineId || '', status: r.status, ask: r.pendingQuestion != null, unread: isLingering(r) })),
+    live: overviewRuns().map((r) => ({ runId: r.runId, pipelineId: r.pipelineId || '', status: r.status, ask: r.pendingQuestion != null, unread: isLingering(r),
+      roundOf: runsRoundOf(r) })),   // a live fix round: its run is Working, not Needs you (runs-list needsYouItems, D5)
     history: Array.isArray(state.historyAll) ? state.historyAll : [],
     active: liveRuns().map((r) => ({ runId: r.runId })),
+    designs: flagOn('design') ? designActivity.items() : [],
   };
 }
 function runsNeedsCount() {
@@ -37619,6 +39976,7 @@ async function refreshAllCounts() {
   } catch {
     return;
   }
+  if (Number.isFinite(data.archivedPipelines)) runsUi.archivedTotal = data.archivedPipelines;
   if (data.schedules) paintScheduleCounts(data.schedules);
 }
 
@@ -37653,7 +40011,9 @@ function paintScheduleCounts(c) {
 // and PATH — never written here); this block only paints it and runs guides.
 // A guide is transient state: a reload clears it, the shelf re-summons it.
 // ---------------------------------------------------------------------------
-const gs = { status: null, guide: null, spot: null, seq: 0, navigating: false, welcomeShown: false, setupShown: false, refreshTimer: 0, poll: 0, startedRunId: "" };
+const gs = { status: null, settled: false, guide: null, spot: null, seq: 0, navigating: false, welcomeShown: false, setupShown: false, refreshTimer: 0, poll: 0, startedRunId: "",
+  // Connect Claude Code › Check again: claudeChecking while it asks, claudeChecked the line every press leaves.
+  claudeChecking: false, claudeChecked: '' };
 let gsPillHost = null;
 let gsWelcomeUnbind = null;
 let setupDialog = null;
@@ -37661,12 +40021,14 @@ let setupDialog = null;
 function openSetup({ entry = 'rerun', step = 'check', team = null, teamHash = null } = {}) {
   if (setupDialog) { setupDialog.goTo(step); return; }
   setMobileNavOpen(false);
-  setupDialog = openSetupAssistant({ doc: document, entry, step, team, onClose: (how) => {
+  setupDialog = openSetupAssistant({ doc: document, entry, step, team, onClose: (how, { applied = false } = {}) => {
     setupDialog = null;
-    // A7: a first start always continues to the welcome; a finished re-run ends on the doors; a fix-it
-    // run (entry 'fix') returns to the page it came from (product-1-2).
+    queueMicrotask(worca.maybeDialog);   // after the branch below has shown (or not shown) the first-run welcome
+    // A7: a first start always continues to the welcome; a finished re-run that applied something ends on the
+    // doors, and a Finish with nothing applied goes back to the page; a fix-it run (entry 'fix') returns to
+    // the page it came from (product-1-2).
     if (entry === 'first') showWelcome();
-    else if (entry === 'rerun' && how === 'done') showWelcome({ force: true });
+    else if (entry === 'rerun' && how === 'done' && applied) showWelcome({ force: true });
     // T15: Apply then Continue, or Finish when nothing differs. Set up later / Escape keep the notice.
     else if (entry === 'team' && how === 'done' && team && teamHash) { markTeamSeen(team, teamHash); void paintTeamNotice(); }
   } });
@@ -37707,19 +40069,21 @@ function gsEnsurePillHost() {
   return gsPillHost;
 }
 
+/** Resolves `{ ok: true }`, or `{ ok: false, error }` when the request failed (Check again says why). */
 async function loadOnboarding({ recheck = false } = {}) {
   let data;
   try {
     const res = await fetch(recheck ? '/api/onboarding?recheck=1' : '/api/onboarding');
     data = await safeJson(res);
-    if (!res.ok) return;
-  } catch { return; }
+    if (!res.ok) return { ok: false, error: data?.error || `HTTP ${res.status}` };
+  } catch (e) { return { ok: false, error: e?.message || 'network error' }; }
   // The boot tests stub fetch with one generic payload: anything without a
   // `steps` object is not ours and paints nothing.
-  if (!data || !data.steps || typeof data.steps !== 'object') return;
+  if (!data || !data.steps || typeof data.steps !== 'object') return { ok: true };
   gs.status = data;
   paintOnboarding();
   maybeWelcome();
+  return { ok: true };
 }
 /** Coalesce the change broadcasts (a finished run fires several) into one refetch. */
 function scheduleOnboardingRefresh() {
@@ -37752,6 +40116,7 @@ function paintShelf({ entering = false } = {}) {
     hideLabel: gs.status.hidden ? 'Show in sidebar' : 'Hide from sidebar',
     animate: appearing,
     level: currentLevel(),
+    worcaLevel: worca.state.view,
   });
 }
 
@@ -37804,9 +40169,10 @@ function showWelcome({ force = false } = {}) {
   const modal = document.getElementById('welcome-modal');
   if (!modal || (!force && (gs.welcomeShown || gs.status?.welcomeSeen))) return;
   gs.welcomeShown = true;
+  try { markWhatsNewSeen(localStorage); } catch { /* blocked storage: the note just shows */ }   // nothing is "new" to a new install
   if (gsWelcomeUnbind) { gsWelcomeUnbind(); gsWelcomeUnbind = null; }   // A6: never two sets of door listeners
   setMobileNavOpen(false);   // a phone drawer opened before the onboarding fetch landed must not stay up behind the dialog
-  const close = () => { modal.classList.add('hidden'); if (gsWelcomeUnbind) { gsWelcomeUnbind(); gsWelcomeUnbind = null; } };
+  const close = () => { modal.classList.add('hidden'); if (gsWelcomeUnbind) { gsWelcomeUnbind(); gsWelcomeUnbind = null; } worca.maybeDialog(); };
   gsWelcomeUnbind = bindWelcome(modal, {
     win: window,
     onDoor: (step) => { close(); setOnboardingPrefs({ welcomeSeen: true }); startGuide(step); },
@@ -37835,6 +40201,9 @@ function paintClaudeSetupStatus() {
   if (ok) box.textContent = c.auth === 'signed-in' ? `Found ${bin}, installed and signed in. You're set.` : `Found ${bin}. You're set.`;
   else if (c.auth === 'signed-out') box.textContent = `Found ${bin}, installed but not signed in yet. Run claude in a terminal, type /login, then check again.`;
   else box.textContent = c.hint || `"${bin}" is not on the PATH of the Worca server. Install it, then check again (restart the UI if PATH changed).`;
+  // Signed out: the folder the CLI read. A server with another HOME reads another sign-in than the terminal.
+  if (!ok && c.auth === 'signed-out' && c.configDirectory) box.append(lineEl('ob-claude-where', claudeCheckedWhere(c.configDirectory)));
+  if (gs.claudeChecked) box.append(lineEl('ob-claude-checked', gs.claudeChecked));
   // The wizards' signed-out lines are stale once the CLI checks out.
   if (ok) for (const restore of [...claudeSignedOutHints.values()]) restore();
 }
@@ -37846,13 +40215,25 @@ function openClaudeSetup() {
   claudeSetupGuard?.opened();
   document.getElementById('claude-setup-check')?.focus?.();
   // The page's status may predate a sign-in (or a transient signed-out probe):
-  // ask again on open instead of repeating it.
-  recheckClaudeSetup();
+  // ask again on open instead of repeating it. A fresh open starts with no "Checked just now" line.
+  gs.claudeChecked = '';
+  recheckClaudeSetup({ manual: false });
 }
-async function recheckClaudeSetup() {
+function lineEl(cls, text) { const n = document.createElement('span'); n.className = cls; n.textContent = text; return n; }
+/** Check again: "Checking…" and disabled while it asks; then a line every time (`manual`: the button, not the open). */
+async function recheckClaudeSetup({ manual = true } = {}) {
+  if (gs.claudeChecking) return;
   const btn = document.getElementById('claude-setup-check');
-  if (btn) btn.disabled = true;
-  try { await loadOnboarding({ recheck: true }); } finally { if (btn) btn.disabled = false; }
+  gs.claudeChecking = true;
+  if (btn) { btn.disabled = true; btn.textContent = 'Checking…'; }
+  let r = { ok: false, error: 'network error' };
+  try { r = await loadOnboarding({ recheck: true }); } finally {
+    gs.claudeChecking = false;
+    if (btn) { btn.disabled = false; btn.textContent = 'Check again'; }
+  }
+  const c = gs.status?.claude || {};
+  if (!r.ok) gs.claudeChecked = `Couldn't check just now: ${r.error}`;
+  else if (manual) gs.claudeChecked = gs.status?.steps?.claude ? 'Checked just now: signed in.' : c.auth ? 'Checked just now: still not signed in.' : 'Checked just now: still not found.';
   paintClaudeSetupStatus();
 }
 function closeClaudeSetup() { document.getElementById('claude-setup-modal')?.classList.add('hidden'); }
@@ -37860,7 +40241,7 @@ function closeClaudeSetup() { document.getElementById('claude-setup-modal')?.cla
 const claudeSetupEl = document.getElementById('claude-setup-modal');
 const claudeSetupGuard = claudeSetupEl ? guardModal(claudeSetupEl, { kind: 'viewer', close: () => closeClaudeSetup() }) : null;
 document.getElementById('claude-setup-close')?.addEventListener('click', closeClaudeSetup);
-document.getElementById('claude-setup-check')?.addEventListener('click', recheckClaudeSetup);
+document.getElementById('claude-setup-check')?.addEventListener('click', () => { void recheckClaudeSetup(); });
 
 // ── Guides ──────────────────────────────────────────────────────────────────
 // Each hop is derived from REAL UI state at the moment it is needed (which view
@@ -37948,7 +40329,7 @@ const gsRunPageHops = (first) => {
     asking ? { id: 'ask', info: true, target: on('.rd-questions .rd-ask-head'),
       text: 'A question from the run lands here, below its panel. Answer, then Submit, and it carries on. The status line at the top leads here too.' } : null,
     { id: 'rows', info: true, nextLabel: 'Done', target: on('.rd-result'),
-      text: 'Each row opens a part of the run: its Overview, the Diff of the changes so far, the Workflow, the Logs and more. When it finishes, its row says how it ended.' },
+      text: 'Each row opens a part of the run: its Overview, the Diff of the changes so far, the Workflow and more. When it finishes, its row says how it ended.' },
   ].filter(Boolean);
 };
 // Test hook, added here: the object at the top of the file is built while this const is
@@ -37969,8 +40350,8 @@ function gsRunHops(g, mock) {
     mock ? null : {
       id: 'workflow', target: '#workflowSelect', lift: ['.select-wrap'],
       met: () => !(wf && !wf.hidden && (wf.value || '') === AUTO_WORKFLOW_ID),
-      text: 'Choose a built-in workflow for this run. Default is the loop you saw in Workflows. Auto would pick one for you.',
-      already: 'The workflow for this run is picked here. Default is the loop you saw in Workflows; Auto would pick one for you.',
+      text: 'Choose a built-in workflow for this run. Default plans, builds and reviews in a loop. Auto would pick one for you.',
+      already: 'The workflow for this run is picked here. Default plans, builds and reviews in a loop; Auto would pick one for you.',
     },
     { id: 'prompt', target: '#prompt', met: () => !(prompt && !prompt.hidden && !prompt.value.trim()),
       text: mock
@@ -38123,10 +40504,12 @@ function gsHops(step, g) {
       // Workflows: open the Library, open Default, read the canvas and the chat — then leave the editor
       // and start a run from New run (the pick persists the workflow: that is the derived tick).
       const lib = document.getElementById('wfv-library');
-      // The Library's selector picks Workflows; Default sits in its domain's folder (opened in place) whenever Workflows
-      // holds more than one domain. Once its row shows — there, or in a search's flat list — both hops are done.
-      // gsHops is re-derived on every reconsider, so `defFolder` follows the list as it loads.
-      const defFolder = (wfvLibrary ? wfvLibrary.folderOf('workflow', 'wf_default') : ['workflows']).join('/');
+      // The Library opens on Workflows (#1127); Default sits in its Built-in folder — in its domain's folder when the
+      // built-ins span more than one domain. Every folder on that path still folded is a target, outermost first: the
+      // first one showing is rung, and opening it moves the ring in. Once Default's row shows — there, or in a search's
+      // flat list — the hops are done. gsHops is re-derived on every reconsider, so the path follows the list as it loads.
+      const defPath = wfvLibrary ? wfvLibrary.folderOf('workflow', 'wf_default') : ['workflows'];
+      const defFolders = folderKeys(defPath);
       const defShown = () => !!lib && !!lib.querySelector('.wfl-wf[data-id="wf_default"]');
       const run = Object.fromEntries(gsRunHops(g, false).filter(Boolean).map((h) => [h.id.replace('nav:', ''), h]));
       return [
@@ -38137,13 +40520,13 @@ function gsHops(step, g) {
         { id: 'tab', target: '#wfv-library #wfl-tab-workflows', lift: ['.wfl'],
           met: () => !!lib && (lib.dataset.tab === 'workflows' || defShown()), skipWhenMet: true,
           text: 'Switch the Library to Workflows.' },
-        { id: 'folder', target: [`#wfv-library .wfl-folder[data-folder="${defFolder}"]`, '#wfv-library .wfl-head.is-searching #wfl-close'], lift: ['.wfl'],
-          met: () => !defFolder.includes('/') || defShown(), skipWhenMet: true,
-          text: [`Open “${defFolder.split('/').pop()}”: the built-in Default workflow lives in this folder.`, 'Close the search: the folders are under it.'] },
+        { id: 'folder', target: [...defFolders.map((f) => `#wfv-library .wfl-folder[data-folder="${f}"][aria-expanded="false"]`), '#wfv-library .wfl-head.is-searching #wfl-close'], lift: ['.wfl'],
+          met: () => defShown(), skipWhenMet: true,
+          text: [...defFolders.map((f, i) => `Open “${folderLabel(f.split('/'))}”: ${i === defFolders.length - 1 ? 'the built-in Default workflow lives in this folder.' : 'the workflows Worca ships live here.'}`), 'Close the search: the folders are under it.'] },
         { id: 'open', target: ['#wfv-library .wfl-wf[data-id="wf_default"]', '#wfv-library .wfl-wf'], lift: ['.wfl'],
           met: () => !!(document.getElementById('wfv-name')?.value || '').trim(),
-          text: 'Open Default: the built-in Plan → Refine → Implement → Review loop.',
-          already: 'A workflow is already on the canvas. Open Default to see the built-in Plan → Refine → Implement → Review loop.' },
+          text: 'Click Default: the built-in Plan → Refine → Implement → Review loop opens as a new copy you can change and save as your own.',
+          already: 'A workflow is already on the canvas. Click Default to open a copy of the built-in Plan → Refine → Implement → Review loop.' },
         { id: 'canvas', info: true, target: '#wfv-canvas', lift: ['.wfv-stage'],
           text: 'This is the whole workflow. Each card is an agent or a script; the wires carry plans, code and reviews from one to the next. Drag cards in from the Library, rewire them, or select one to tune it.' },
         { id: 'chat', info: true, target: '#wfc', lift: ['.wfv-float', '.wfv-stage'],
@@ -38350,6 +40733,8 @@ function gsScrollTop() {
 // Declining leaves the mode and the page as they were. (gsRaiseLevelHop stays as the fallback for a
 // mode lowered while a tour runs.)
 async function startGuide(step) {
+  // A real run needs a model: signed out, show the sign-in steps first. Once per page, since an install on routed models has none to do.
+  if (step === 'realRun' && gs.status?.claude?.auth === 'signed-out' && !gs.claudeAsked) { gs.claudeAsked = true; openClaudeSetup(); return; }
   const def = GETTING_STARTED_STEPS.find((s) => s.id === step);
   const need = def && def.level;
   if (need && !levelAtLeast(need)) {
@@ -38419,7 +40804,7 @@ function onboardingViewChanged(name) {
   document.querySelector('.gs-pill')?.classList.toggle('active', name === 'getting-started');
 }
 
-loadOnboarding();
+void loadOnboarding().finally(() => { gs.settled = true; worca.maybeDialog(); });   // the first answer (or its failure) lets the worca dialog know what the first-run welcome will do
 void paintTeamNotice();
 
 const views = $$('.view');
@@ -38428,15 +40813,15 @@ const navLinks = $$('.nav button[data-nav], #acct-settings');
 // workflows took over composer, agents, scripts and agent-create (see MOVED_ROUTES); workspaces + workspace-create are appended.
 // workspace-create is in the array (so deep-links resolve) but has no nav link.
 // guardrails LEFT this array: it is a Settings tab now, reached as #settings/guardrails
-// (old addresses redirect — see MOVED_ROUTES). The four Add-ons pages went the other way:
-// Settings tabs once, pages of their own now.
-const VIEW_NAMES = ['chat', 'new', 'getting-started', 'runs', 'running', 'schedules', 'history', 'stats', 'team-metrics', 'team-policy', 'workflows', 'requirements', 'workspaces', 'workspace-create', 'projects', 'settings', 'marketplace', 'connectors', 'models', 'providers', 'feature', 'group'];
+// (old addresses redirect — see MOVED_ROUTES). The Add-ons pages went the other way:
+// Settings tabs once, pages of their own now (Providers then became a tab of Models).
+const VIEW_NAMES = ['chat', 'design', 'new', 'getting-started', 'runs', 'running', 'schedules', 'history', 'stats', 'team-metrics', 'team-policy', 'workflows', 'requirements', 'workspaces', 'workspace-create', 'projects', 'settings', 'marketplace', 'connectors', 'models', 'profile', 'feature', 'group'];
 // One Runs page, five route names: the bare list (#runs), the two run routes every deep link already uses
 // (#running/<id>…, #history/<projectKey>/<id>…) and the group page's two (#feature/<id>…, #group/<id>…, run 3 D1).
 // All five render the `data-view="runs"` section and light the one Runs nav button.
 const RUNS_VIEWS = new Set(['runs', 'running', 'history', 'feature', 'group']);
 // The Add-ons pages (sidebar group "Add-ons"): Settings tabs once, pages of their own now.
-const ADDON_VIEWS = ['marketplace', 'connectors', 'models', 'providers'];
+const ADDON_VIEWS = ['marketplace', 'connectors', 'models'];
 const viewSection = (name) => (RUNS_VIEWS.has(name) ? 'runs' : name);
 function inRunsView(v = currentView()) { return RUNS_VIEWS.has(v); }
 
@@ -38455,21 +40840,22 @@ const levelCtl = createLevelController({
   },
   // A pick from the account menu's side menu that the server refused: the check went back, say why.
   onError: (error) => notify({ tone: 'err', title: 'Could not save the mode', detail: error, key: 'ui-level-save' }),
+  onClose: () => searchUnlock.modeClosed(),   // the search hand-off forgets a pick when the dialog closes (R-po-21)
 });
 // The lowest mode whose menu lists each page. Pages not named here are simple.
 const VIEW_MIN_LEVEL = Object.freeze({
   stats: 'advanced', workspaces: 'advanced', 'workspace-create': 'advanced',
   'team-metrics': 'expert', 'team-policy': 'expert',
-  schedules: 'advanced', marketplace: 'advanced', connectors: 'advanced', models: 'expert', providers: 'expert',
+  schedules: 'advanced', marketplace: 'advanced', connectors: 'advanced', models: 'expert',
 });
 const SETTINGS_TAB_MIN_LEVEL = Object.freeze({ ask: 'advanced', guardrails: 'advanced', memory: 'advanced', presets: 'advanced' });
 const VIEW_TITLES = Object.freeze({
   chat: 'Chat', stats: 'Statistics', workflows: 'Workflows', workspaces: 'Workspaces', 'workspace-create': 'Workspaces',
   'team-metrics': 'Team metrics', 'team-policy': 'Team policy',
   guardrails: 'Guardrails', memory: 'Memory', ask: 'Chat', tags: 'Labels & cost tags',
-  marketplace: 'Marketplace', connectors: 'Connectors', models: 'Models', providers: 'Providers',
+  marketplace: 'Marketplace', connectors: 'Connectors', models: 'Models',
   schedules: 'Schedules', presets: 'Presets',
-  requirements: 'Requirements',
+  requirements: 'Requirements', design: 'Design',
 });
 function pageMinLevel() {
   if (currentShownView === 'settings') return { key: currentSettingsTab, min: SETTINGS_TAB_MIN_LEVEL[currentSettingsTab] || 'simple' };
@@ -38484,6 +40870,15 @@ function paintLevelBanner() {
     const nav = b.dataset.nav;
     // Schedules is Advanced, but a run scheduled from Ask Worca in Simple keeps its entry (rule 2).
     keepVisible(b, (above && nav === currentShownView) || (nav === 'schedules' && schedulesInUse));
+  }
+  // Settings › Runs is long: type to keep only the cards that mention it.
+  const runsFilter = document.getElementById('settings-runs-filter');
+  if (runsFilter && !runsFilter.dataset.bound) {
+    runsFilter.dataset.bound = '1';
+    runsFilter.addEventListener('input', () => {
+      const q = runsFilter.value.trim().toLowerCase();
+      for (const card of document.querySelectorAll('.settings-pane[data-tab="runs"] .settings-card')) card.classList.toggle('settings-filtered-out', !!q && !card.textContent.toLowerCase().includes(q));
+    });
   }
   if (el.settingsTabs) {
     for (const b of el.settingsTabs.querySelectorAll('button[data-tab]')) {
@@ -38514,9 +40909,9 @@ document.addEventListener('worca:level', () => {
 // The tab is the Settings view's hash param; a guardrail deep link nests its id
 // behind it (#settings/guardrails/<id>). parseHash splits on the FIRST '/' only,
 // so that is view 'settings', param 'guardrails/<id>' — no parseHash change.
-const SETTINGS_TABS = ['general', 'tags', 'presets', 'runs', 'experimental', 'ask', 'guardrails', 'memory'];
+const SETTINGS_TABS = ['general', 'tags', 'presets', 'runs', 'automations', 'experimental', 'ask', 'guardrails', 'memory'];
 // Tabs whose cards are painted from GET /api/settings (loadSettings paints every card, wherever
-// it sits). The Models page loads it too: it holds the Engines card and the Claude helper pickers.
+// it sits). The Models page loads it too: the Catalogue's Default chip and the Jobs tab's load-error line.
 const SETTINGS_FORM_TABS = ['general', 'tags', 'runs', 'ask'];
 const settingsPanes = $$('[data-view="settings"] .settings-pane');
 // Old addresses keep working. The hashchange listener DROPS a view it does not know
@@ -38530,7 +40925,8 @@ const MOVED_ROUTES = Object.freeze({
   'settings/plugins': 'marketplace',      // Settings tabs that became pages of their own
   'settings/mcp': 'connectors',
   'settings/models': 'models',
-  'settings/providers': 'providers',
+  'settings/providers': 'models/providers',
+  providers: 'models/providers',          // the Providers page became the Models page's third tab
   // The Workflows view took over the Workflow Composer, the Agents page, the Scripts page and the
   // agent wizard (2026-10 redesign); their addresses (and Ask's #scripts/<key> links) land inside it.
   composer: 'workflows',
@@ -38544,13 +40940,13 @@ function parseSettingsParam(param = '') {
   const i = param.indexOf('/');
   const tab = i === -1 ? param : param.slice(0, i);
   const sub = i === -1 ? '' : param.slice(i + 1);
-  if (tab === 'tags' && !flagOn('runTags')) return ['general', ''];   // the Tags tab exists only while runTags is on
-  if (tab === 'presets' && !flagOn('runPresets')) return ['general', ''];
+  if (tab === 'automations' && !flagOn('gitAutomations')) return ['general', ''];
   return SETTINGS_TABS.includes(tab) ? [tab, sub] : ['general', ''];
 }
-// The canonical param for a tab: General is plain '#settings', never '#settings/general'.
+// The canonical param for a tab: General is plain '#settings', never '#settings/general'; a link to one of its
+// cards keeps the card ('general/appearance-card', a top bar search pick).
 function settingsParamFor(tab, sub = '') {
-  if (tab === 'general') return '';
+  if (tab === 'general') return sub ? `general/${sub}` : '';
   return sub ? `${tab}/${sub}` : tab;
 }
 // null for a page's own address; otherwise the [view, param] an old one means now.
@@ -38579,6 +40975,8 @@ function fallbackToChat(raw) {
 }
 // Test hook: lets a test call the router the way an in-app caller does.
 if (typeof window !== 'undefined') window.__np = Object.assign(window.__np || {}, { showView });
+// Test hook: redraws the Providers tab the way its flows do (a Save, a sign-in, Refresh usage).
+if (typeof window !== 'undefined') window.__np.repaintProviders = repaintProviders;
 // CDP proofs (D12): flip a flag through the real API; every tab follows through the `flags` frame.
 if (typeof window !== 'undefined') {
   window.__np = Object.assign(window.__np || {}, {
@@ -38590,9 +40988,8 @@ if (typeof window !== 'undefined') {
 let currentSettingsTab = null;
 
 function showView(name, param = '') {
-  // Runs redesign slice 4 (D16): #feature/ID is the group page whatever the Shaper flag (a feature group stays listed,
-  // and linked, after the flag goes off); only Overview and the replaced-id lookup need the flag. Both need an id.
-  if (name === 'feature' && !param) return showView(shapeFirstOn() ? 'chat' : 'runs', '');
+  // Runs redesign slice 4 (D16): #feature/ID is the group page; a bare #feature goes to Chat.
+  if (name === 'feature' && !param) return showView('chat', '');
   if (name === 'group' && !param) return showView('runs', '');
   // A caller that still names a Settings tab that became a page ('settings' + 'providers…')
   // lands on that page: parseSettingsParam would read the unknown tab as General.
@@ -38602,6 +40999,8 @@ function showView(name, param = '') {
   }
   // Requirements is behind its flag (docs/feature-flags.md): a deep link while it is off lands on Chat.
   if (name === 'requirements' && !flagOn('requirements')) return showView('chat', '');
+  // Design too: a deep link while the design flag is off lands on Chat.
+  if (name === 'design' && !flagOn('design')) return showView('chat', '');
   // A bare #running / #history is the Runs list now (both lists merged into it). Replace the
   // entry rather than letting the hash sync below PUSH #runs: Back would land on #history
   // again, normalize again, and never get past it.
@@ -38709,6 +41108,7 @@ function showView(name, param = '') {
   // The schedule sheet and the Start menu are body-level overlays of the view that opened them.
   if (prevView !== name) { closeScheduleSheet(); closeStartMenu(); }
   currentShownView = name;
+  searchUnlock.routed(name, param);
   paintLevelBanner();
   // The guide re-derives its hop on a tick, so it is told here — before a view's
   // own loader runs — and never misses a switch because a loader threw.
@@ -38747,6 +41147,7 @@ function showView(name, param = '') {
   document.body.classList.toggle('view-workspaces', name === 'workspaces');
   document.body.classList.toggle('view-workflows', name === 'workflows');
   document.body.classList.toggle('view-chat', name === 'chat');   // worca Chat: the page fills the column (style.css)
+  document.body.classList.toggle('view-design', name === 'design');   // Design: full-bleed, the stage fills the column
   if (RUNS_VIEWS.has(name)) {
     const entering = !RUNS_VIEWS.has(prevView);
     // The section is visible now (the toggle above): measure before anything opens, so the
@@ -38788,6 +41189,9 @@ function showView(name, param = '') {
   }
   if (name === 'stats') loadStatsView();
   if (name === 'requirements') void requirementsView.show(param);
+  else requirementsView.leave();   // the Feature chat phone sheet and an export dialog make the page inert; leaving the view puts it back
+  if (name === 'design') void designView.show(param);
+  else designView.leave();
   if (name === 'schedules') { schedulesView.showTab(param); void withWorkspaces().then(() => schedulesView.load()); }
   if (name === 'team-metrics') {
     // #team-metrics/timeline opens the Timeline tab. Switching tabs inside the page only repaints:
@@ -38815,18 +41219,50 @@ function showView(name, param = '') {
     if (prevView !== 'projects') void loadProjectsView();   // routes the LIVE hash after its fetch
     else routeProjectDetail(param);
   }
+  syncAskSide(name);
   if (name === 'chat') enterChatView(param, prevView);
   if (name === 'workflows') void enterWorkflowsView(param, prevView);
   if (name === 'settings') showSettingsTab(param);
   if (name === 'marketplace') enterMarketplace(param, prevView);
-  if (name === 'connectors') void mcpTab().show(param);
+  if (name === 'connectors') void showConnectors(param);
   if (name === 'models') {
-    // The Engines card (its Helper jobs rows included) is painted from GET /api/settings, so a link
-    // or a reload straight to the page loads it too; '#models/<card>' scrolls to a card ('#models/engine').
-    void loadSettings().then(() => focusSettingsCard(views.find((v) => v.dataset.view === 'models'), param));
-    loadModelsView();
+    // Three tabs, the first part of the param (parseModelsParam): Catalogue, Jobs, Providers. Entering the page (or
+    // a hop before the catalogue ever loaded) reads the catalogue, the providers and GET /api/settings (the
+    // Catalogue's Default chip, the load error on the Jobs line). A switch to Catalogue or Providers only shows
+    // another panel, so what was typed stays; each Jobs show reads that tab (showModelsTab).
+    const { tab, rest } = parseModelsParam(param);
+    const entry = prevView !== 'models' || !mvState.data;
+    if (prevView !== 'models') {
+      providersDrawnKey = '';   // each entry draws the Providers tab once
+      // No hook runs on leaving the page: an entry starts with the side panel closed, unless the address names a model
+      // (showModelsTab opens it just below).
+      if (!(tab === 'catalogue' && modelParamId(rest))) {
+        mvState.cat.open = null;
+        el.modelPanelHost?.replaceChildren();
+      }
+    }
+    showModelsTab(tab, rest);
+    if (entry) {
+      // The reveals below use the tab and rest of THIS route; revealModelCard and revealProviderRow check the live
+      // address themselves, so a load that lands after the user moved on flashes nothing. A Jobs block's reveal
+      // follows the tab's own read (showModelsTab).
+      void loadSettings();
+      // Runs on the newest read: this entry's, or a window focus' or a refresh's that overtook it. A later entry
+      // paints and reveals instead.
+      const entrySeq = ++modelsEntrySeq;
+      void loadModelsView().then(() => {
+        if (entrySeq !== modelsEntrySeq) return;
+        paintProvidersTab();
+        // A reload or a search pick from another page on '#models/model/<id>' opens the panel once the catalogue is here
+        // (only while the address still names it).
+        const modelId = tab === 'catalogue' ? modelParamId(rest) : '';
+        if (modelId && currentModelsTab() === 'catalogue' && parseHash()[1] === rest) openModelFromAddress(modelId, rest);
+        if (tab === 'providers') revealProviderRow(rest);
+      });
+    }
   }
-  if (name === 'providers') loadProvidersView();
+  if (prevView !== name) worca.onViewShown(name);   // once per navigation, not per repaint: Statistics, Team metrics and Team policy feed the level
+  if (name === 'profile') worca.showProfile(document.getElementById('profile-level-host'), () => currentShownView === 'profile');   // #profile/level
   if (name === 'new') {
     loadTaskSources(); applyBudgetToNewView(); refreshMentionHighlights();
     paintNewRunAwayHint();
@@ -38884,6 +41320,11 @@ function showSettingsTab(param = '') {
       b.setAttribute('aria-pressed', on ? 'true' : 'false');
     }
   }
+  paintSettingsSub(tab);
+  // A narrow screen scrolls the strip sideways: keep the open tab in sight (centred, the page itself does not move).
+  const strip = el.settingsTabs, onTab = strip?.querySelector('button.on');
+  if (onTab && strip.scrollWidth > strip.clientWidth) strip.scrollLeft = onTab.offsetLeft - (strip.clientWidth - onTab.offsetWidth) / 2;
+  markSettingsStrip();
   // Same contract the per-view loaders had: a tab that is never opened costs no
   // request, and re-entry refetches (which is what lets grvExitWizard's
   // '#settings/guardrails/<id>' -> '#settings/guardrails' hop reset the wizard).
@@ -38894,19 +41335,199 @@ function showSettingsTab(param = '') {
   }
   if (tab === 'tags') { void loadTagsTeam(); void loadLabelsSection(); }
   if (tab === 'presets') void loadPresetsView();
+  if (tab === 'automations') void loadAutomationsView();
   if (tab === 'ask') void paintAskMcpBlock(document.getElementById('ask-mcp-host'), { api: mcpApi });
   if (tab === 'guardrails') loadGuardrailsView(sub);
   if (tab === 'memory') loadMemoryTab(sub);
   if (tab === 'experimental') loadFlagsTab(sub);
 }
 
-// A link to one card ('#settings/runs/actions', '#models/engine'): scroll to the
-// `<sub>-settings-card` inside `scope` and focus its first field. Any other sub is ignored.
+// The open tab's cards as links under it, for the two long tabs only (the left column, wide screens). A link is
+// the card's own address and name from settings-index.mjs (what the top bar search shows) and carries the card's
+// mode, Labs and git gates, so the same CSS rules hide it with its card.
+const SETTINGS_LISTS_CARDS = ['general', 'runs'];
+const SETTINGS_CARD_ENTRY = new Map(SETTING_ENTRIES.filter((e) => e.type === 'card').map((e) => [e.id.slice('card:'.length), e]));
+function paintSettingsSub(tab) {
+  if (!el.settingsTabs) return;
+  el.settingsTabs.querySelector('.settings-sub')?.remove();
+  const pane = SETTINGS_LISTS_CARDS.includes(tab) && settingsPanes.find((p) => p.dataset.tab === tab);
+  if (!pane) return;
+  const sub = document.createElement('div');
+  sub.className = 'settings-sub';
+  for (const card of pane.querySelectorAll(':scope > .settings-card')) {
+    const entry = SETTINGS_CARD_ENTRY.get(card.id);
+    if (!entry) continue;
+    const a = document.createElement('a');
+    a.href = entry.href;
+    a.textContent = a.title = entry.title;
+    a.dataset.card = card.id;
+    for (const k of ['minLevel', 'levelKeep', 'flag', 'needsGit']) if (k in card.dataset) a.dataset[k] = card.dataset[k];
+    sub.append(a);
+  }
+  el.settingsTabs.querySelector(`button[data-tab="${tab}"]`).after(sub);
+  markSettingsSub();
+}
+// Which card is on screen. Colour only; nothing scrolls. By position: the last card whose top passed the upper part
+// of the page; at the end of the page the last card, which is too short to get that high. The card in the address
+// wins while all of it is on screen, so a short card near the end is the one marked after its link is picked.
+function markSettingsSub() {
+  const links = [...(el.settingsTabs?.querySelectorAll('.settings-sub a') || [])].filter((a) => a.getClientRects().length);
+  if (!links.length) return;
+  const box = el.settingsTabs.closest('.main');
+  const atEnd = !!box && box.scrollTop > 0 && box.scrollTop >= box.scrollHeight - box.clientHeight - 1;
+  let cur = null;
+  for (const a of links) {
+    const card = document.getElementById(a.dataset.card);
+    if (!card || !card.getClientRects().length) continue;
+    const r = card.getBoundingClientRect();
+    if (a.getAttribute('href') === location.hash && r.top >= 0 && r.bottom <= window.innerHeight) { cur = a; break; }
+    if (!cur || atEnd || r.top < 220) cur = a;
+  }
+  for (const a of el.settingsTabs.querySelectorAll('.settings-sub a')) { if (a === cur) a.setAttribute('aria-current', 'true'); else a.removeAttribute('aria-current'); }
+}
+// Which sides of the narrow strip hide more tabs ('' | 'left' | 'right' | 'left right'): the CSS fades that edge.
+function markSettingsStrip() {
+  const strip = el.settingsTabs;
+  if (!strip) return;
+  const max = strip.scrollWidth - strip.clientWidth;
+  strip.dataset.more = [strip.scrollLeft > 1 ? 'left' : '', strip.scrollLeft < max - 1 ? 'right' : ''].filter(Boolean).join(' ');
+}
+el.settingsTabs?.addEventListener('scroll', markSettingsStrip, { passive: true });
+window.addEventListener('resize', markSettingsStrip);
+// The page's own scroll only (a list scrolling inside a pane measures nothing).
+el.settingsTabs?.closest('.main')?.addEventListener('scroll', () => { if (currentShownView === 'settings') markSettingsSub(); }, { passive: true });
+// A mode, Labs or git change shows or hides tabs and cards by CSS: redo the strip's hints and the card mark.
+for (const ev of ['worca:level', 'worca:flags', 'worca:git']) document.addEventListener(ev, () => { markSettingsStrip(); markSettingsSub(); });
+// A card kept on screen below its mode (keepVisible) keeps its link too: call this after the card's marker changes.
+function syncSettingsSubKeep(card) {
+  const a = card && el.settingsTabs?.querySelector(`.settings-sub a[data-card="${card.id}"]`);
+  if (!a) return;
+  if (card.dataset.levelKeep) a.dataset.levelKeep = card.dataset.levelKeep; else delete a.dataset.levelKeep;
+  markSettingsSub();
+}
+
+// A link to one card ('#settings/runs/actions', a top bar search pick '#settings/general/appearance-card'):
+// scroll to `<sub>-settings-card` (else the card whose id IS `sub`) inside `scope`, focus its first field and
+// highlight it for 3 s (A-7). Any other sub is ignored. The Add-ons pages' own links land the same way:
+// '#models/model/<id>' (a catalogue row), '#models/jobs/<part>' (a Jobs block, revealJobsPart),
+// '#models/providers/<row>' (a provider row), '#connectors/servers/<id>' (a server row).
+const foundTimers = new WeakMap();
+/** Scroll `el` into view, focus `focusEl` (when given) and highlight `el` for 3 s (A-7); a repeat pick restarts it. */
+function markFound(el, focusEl = null) {
+  if (!el) return;
+  el.scrollIntoView({ block: 'start', behavior: 'smooth' });
+  focusEl?.focus({ preventScroll: true });
+  clearTimeout(foundTimers.get(el));
+  el.classList.remove('is-found');
+  void el.offsetWidth;                                    // restart the fade when the same place is picked again
+  el.classList.add('is-found');
+  foundTimers.set(el, setTimeout(() => el.classList.remove('is-found'), 3000));
+}
 function focusSettingsCard(scope, sub) {
-  const card = sub ? document.getElementById(`${sub}-settings-card`) : null;
+  const card = sub ? (document.getElementById(`${sub}-settings-card`) || document.getElementById(sub)) : null;
   if (!card || !scope || !scope.contains(card)) return;
-  card.scrollIntoView({ block: 'start', behavior: 'smooth' });
-  card.querySelector('input, select, textarea')?.focus({ preventScroll: true });
+  markFound(card, card.querySelector('input, select, textarea'));
+}
+// The Models tab the address names ('catalogue' | 'jobs' | 'providers'), or '' off the Models page.
+function currentModelsTab() {
+  return currentView() === 'models' ? parseModelsParam(parseHash()[1]).tab : '';
+}
+// Show one Models tab: its panel, its lit tab, the head actions that belong to it; then the place `rest` names on it
+// (a catalogue row, a Jobs block, a provider row). The Catalogue and Providers draw from what is loaded; a Jobs show
+// reads that tab (settings, /api/config and the readiness preflight), then reveals its block.
+function showModelsTab(tab, rest) {
+  const section = views.find((v) => v.dataset.view === 'models');
+  if (!section) return;
+  for (const panel of section.querySelectorAll('.mdl-panel[data-tab]')) panel.hidden = panel.dataset.tab !== tab;
+  paintModelsTabs(modelsTabsNav, { active: tab, count: mvState.count ?? null });
+  for (const n of section.querySelectorAll('[data-tab-only]')) n.hidden = n.dataset.tabOnly !== tab;
+  // The info-tip bubble lives on <body>: a tip opened on one tab must not float over the next.
+  if (tab !== modelsTabShown) hideInfoTip();
+  modelsTabShown = tab;
+  // Leaving the Catalogue closes the side panel (SH-6): nothing else redraws its host, so it would show again on return.
+  if (tab !== 'catalogue' && (mvState.cat.open || el.modelPanelHost?.childElementCount)) closeModelPanel();
+  if (tab === 'catalogue') {
+    const id = modelParamId(rest);
+    if (!id) return;
+    // A hop to a row inside the open page draws from the loaded catalogue (the narrowing that could hide it cleared).
+    openModelFromAddress(id, rest);
+  } else if (tab === 'jobs') {
+    // '<part>/<harness>' names the harness that owns what a link means (Settings' Run naming is Claude's helper job, its
+    // Memory defragment the run engine's): show it first, as "Used by" does, else the default harness's card opens (P6 review s1).
+    const [part, owner = ''] = rest.split('/');
+    if (MODEL_ENGINE_NAMES.includes(owner)) mvState.jobs.engine = owner;
+    // The block only while the address still names it: the read can land after the user moved on.
+    void loadJobs().then(() => { if (rest && currentModelsTab() === 'jobs' && parseModelsParam(parseHash()[1]).rest === rest) revealJobsPart(part); });
+  } else if (tab === 'providers') {
+    paintProvidersTab();
+    revealProviderRow(rest);
+  }
+}
+// '#models/model/<id>': the catalogue row a top bar search pick names (settings-index.mjs addonEntriesFrom).
+function modelParamId(param) {
+  if (!param.startsWith('model/') || param.length <= 6) return '';
+  try { return decodeURIComponent(param.slice(6)); } catch { return ''; }
+}
+// The catalogue's own narrowing can hide the row a pick names (or "Show all"): clear its search, chip, Source and
+// just-imported filter.
+function showAllModels() {
+  mvState.cat.query = '';
+  mvState.cat.filter = 'all';
+  mvState.cat.source = 'any';
+  mvState.justImported = null;
+}
+// '#models/model/<id>' (a built-in too): every narrowing cleared, the first harness group holding the id unfolded, its
+// side panel open; then the row is scrolled to, focused and highlighted. Built-ins carry no `engine`, so the group
+// comes from the view model, not the model.
+function openModelFromAddress(id, param) {
+  showAllModels();
+  const lc = id.toLowerCase();
+  const g = buildCatalogue(catalogueData(), mvState.cat).groups
+    .find((x) => x.subs.some((s) => s.rows.some((r) => String(r.id).toLowerCase() === lc)));
+  if (g) mvState.cat.fold = { ...mvState.cat.fold, [g.engine]: false };
+  mvState.cat.open = id;
+  if (mvState.data) renderModelsViewBody();
+  revealModelCard(id, param);
+}
+// Still on that address once the catalogue painted: scroll to the row, focus it (the row is the button), highlight it.
+function revealModelCard(id, param) {
+  if (currentView() !== 'models' || parseHash()[1] !== param || !el.modelsList) return;
+  const row = modelRowEl(id);
+  if (row) markFound(row, row);
+}
+// '#models/providers/<copilot|openrouter|openai|anthropic|speech|images|sound>': the provider's row unfolded (never
+// folded) and highlighted, with its sign-in or key field focused, else its first field, else its first button. Only
+// while the address still names that row: a stale reveal unfolds and marks nothing.
+function revealProviderRow(param) {
+  if (!param || currentModelsTab() !== 'providers' || parseModelsParam(parseHash()[1]).rest !== param || !el.providersList) return;
+  const row = [...el.providersList.querySelectorAll('.mv-pv-row[data-provider]')].find((n) => n.dataset.provider === param);
+  if (!row) return;
+  mvState.pvOpen[param] = true;
+  toggleProviderRow(el.providersList, param, true);
+  markFound(row.closest('.mv-pv-card') || row, providerRevealTarget(row));
+}
+// Where a link to a provider row puts the cursor: the Copilot sign-in, else the key, else the first field (an info tip
+// is no field), else the first button. Never a control the row body hides (Advanced, a speech server's fields), nor,
+// under the credential broker, one it hides (keys, the Copilot sign-in, sign-out and usage, Test connection).
+function providerRevealTarget(row) {
+  const broker = !!row.closest('.mv-providers--broker');
+  const usable = (c) => {
+    if (c.classList.contains('info-tip')) return false;
+    const hidden = c.closest('[hidden]');
+    if (hidden && row.contains(hidden)) return false;
+    return !broker || !(c.matches('.mv-cp-signin, .mv-cp-signout, .mv-cp-quota-refresh, .mv-pv-test') || c.closest('.mv-field')?.querySelector('.mv-pv-key'));
+  };
+  const first = (sel) => [...row.querySelectorAll(sel)].find(usable) || null;
+  return first('.mv-cp-signin') || first('.mv-pv-key') || first('input, select, textarea') || first('button');
+}
+// '#connectors/servers/<id>': the Servers view, then that server's row highlighted.
+async function showConnectors(param) {
+  await mcpTab().show(param);
+  const { server } = parseMcpParam(param);
+  if (!server || currentView() !== 'connectors' || parseHash()[1] !== param) return;
+  const host = views.find((v) => v.dataset.view === 'connectors');
+  const row = host && [...host.querySelectorAll('.mcp-server-row[data-server]')].find((n) => n.dataset.server === server);
+  if (row) markFound(row, row.querySelector('button'));
 }
 
 // The Connectors page (mcp-view.mjs): one controller, made on first entry; its sub-route
@@ -38955,7 +41576,7 @@ void mcpApi('GET', '/api/flags').then((r) => {
 });
 // Renderers that branch on the mode. Registered here (after levelListeners exists); every callee
 // is a hoisted function declaration.
-onLevelChange(() => { refreshNewPipelinePickers(); });     // Simple lists Auto + Default only
+onLevelChange(() => { refreshNewPipelinePickers(); });     // Simple lists Auto, Default and chat-saved workflows
 onLevelChange(() => paintHiddenSettings());
 onLevelChange(() => repaintOpenRunGroupLine());               // the Group row's "Add to group…" is Advanced (D18)
 onLevelChange(() => scheduleGroupPagePaint());                // the group page's Logs tab is Expert
@@ -38989,9 +41610,11 @@ $('#topnav-new')?.addEventListener('click', () => {
 
 // Activity (#topnav-activity, activity-menu.mjs): what needs you, what is running and what is
 // scheduled, a list with no actions. Its badge repaints with the Runs badge (updateNavCounts),
-// from the same items; the open popover reads the Runs list's full rows (live: the Runs list's
-// live runs, active: every live run, agent-generation jobs too) and fetches the schedules when it
-// opens. A row routes like any page link: the route hides the Chat page when it is the one showing.
+// from the same items plus the Design builds (designActivity, while the design flag is on), so its
+// amber number includes the builds that need you while the Runs badge stays runs only; the open
+// popover reads the Runs list's full rows (live: the Runs list's live runs, active: every live run,
+// agent-generation jobs too) and the builds, and fetches the schedules when it opens. A row routes
+// like any page link: the route hides the Chat page when it is the one showing.
 activityMenu = $('#topnav-activity') ? createActivityMenu({
   button: $('#topnav-activity'), badge: $('#topnav-activity-n'), pop: $('#activity-pop'),
   getCounts: () => activityCounts(runsNeedsInput()),
@@ -38999,6 +41622,7 @@ activityMenu = $('#topnav-activity') ? createActivityMenu({
     live: overviewRuns().map(runsLiveItem),
     history: (Array.isArray(state.historyAll) ? state.historyAll : []).filter(Boolean).map(runsHistItem),
     active: liveRuns().sort(cmpTabRuns).map(runsLiveItem),
+    designs: flagOn('design') ? designActivity.items() : [],
   }),
   loadSchedules: async () => {
     await withWorkspaces();                              // a workspace's ticket names its workspace
@@ -39010,9 +41634,38 @@ activityMenu = $('#topnav-activity') ? createActivityMenu({
   navigate: (hash) => { location.hash = hash; },
 }) : null;
 
+// The screensaver: the Settings › Appearance switch and its Start after time (screensaverPref), and the runs
+// counted as the Runs list counts them. Chats arrive through onAskFrame; the open chat's unread dot through askPanel.
+awayScreensaver = createAwayScreensaver({
+  doc: document, win: window,
+  getState: () => {
+    const live = liveRuns();
+    const asking = live.filter((r) => r.pendingQuestion != null);
+    const lingered = [...runs.values()].filter(isLingering);
+    return {
+      enabled: screensaverPref.enabled,
+      idleMinutes: screensaverPref.idleMinutes,
+      runs: {
+        running: live.length - asking.length,
+        questions: asking.length,
+        askTitle: asking[0]?.title || '',
+        paused: [...runs.values()].filter((r) => !r._finished && isPaused(r)).length,
+        failed: lingered.filter((r) => r.status === 'error' || r.status === 'failed').length,
+        done: lingered.filter((r) => r.status === 'done').length,
+      },
+      chatUnread: !!askPanel?.unreadThreadId(),
+    };
+  },
+});
+
 // Settings tabs are hash-first, exactly like the nav buttons: the single
 // hashchange listener drives showView, so a click renders once.
 el.settingsTabs?.addEventListener('click', (e) => {
+  // A card link is a plain hash link; picking the same one again fires no hashchange, so land on it by hand.
+  const link = e.target.closest && e.target.closest('.settings-sub a');
+  // A modifier click opens the link elsewhere and leaves this page alone.
+  const plain = !e.button && !e.metaKey && !e.ctrlKey && !e.shiftKey && !e.altKey;
+  if (link && plain && location.hash === link.getAttribute('href')) showView('settings', location.hash.slice('#settings/'.length));
   const btn = e.target.closest && e.target.closest('button[data-tab]');
   if (!btn) return;
   const param = settingsParamFor(btn.dataset.tab);
@@ -39052,6 +41705,7 @@ function rdTickHosts(r) {
 
 function timerTick() {
   try { paintAwayMenuRow(); } catch { /* the row moves with the clock (away hours start and end) */ }
+  try { awayScreensaver?.tick(); } catch { /* an easter egg must never break the tick */ }
   // The Away mode pill counts down while the run WAITS on a question, which the loop below skips.
   try { const open = rdOpenRun(); if (open && runDetailState.screen) paintRdAwayPill(runDetailState.screen, open); } catch { /* a closed test window must not throw from a timer */ }
   for (const r of runs.values()) {
@@ -39151,10 +41805,40 @@ function chatRoute(threadId, { replace = false } = {}) {
   }
   location.hash = target;
 }
+/** Ask worca beside the page: which host the ONE chat page has on this route (showView, after the leave-Chat block and
+ *  before enterChatView). Chat: the page — the column and its button hide, the person's choice kept. Workflows and
+ *  Design: no column (Workflows has no top bar, Design its own chat). Every other page: the button, and the column
+ *  when the person left it open. */
+function syncAskSide(name) {
+  if (!askSide || !askPanel) return;
+  const btn = $('#topnav-ask');
+  if (name === 'chat') {
+    askSide.setAvailable(false);
+    if (btn) btn.hidden = true;
+    const section = $('section.view[data-view="chat"]');
+    if (section && askPanel.root.parentNode !== section) section.appendChild(askPanel.root);
+    askPanel.setHost('page');
+    if (askHistoryOnChat) { askHistoryOnChat = false; askPanel.setHistoryOpen(true, { persist: false }); }
+    return;
+  }
+  askHistoryOnChat = false;
+  const noColumn = name === 'workflows' || name === 'design';
+  if (btn) btn.hidden = noColumn;
+  askSide.setAvailable(!noColumn);
+}
+/** Below 1081px the side column covers the main column: the page behind it is inert while it shows (with the phone drawer's). */
+function paintAskSideCover() {
+  const covers = !!(askSide && askSide.shown()) && sideTier(window.innerWidth || 0) !== 'push';
+  $('.main')?.toggleAttribute('inert', covers || mobileNavOpen);
+}
 /** The Chat row's dot (ask-panel onUnread): a reply in the chat the page shows finished while Chat was not on screen. */
 function paintChatUnread(on) {
   const dot = document.getElementById('nav-chat-unread');
   if (dot) dot.hidden = !on;
+  // Ask worca beside the page (L13): the header toggle mirrors the Chat row's dot.
+  const askDot = document.getElementById('topnav-ask-dot');
+  if (askDot) askDot.hidden = !on;
+  document.getElementById('topnav-ask')?.setAttribute('aria-label', on ? 'Ask worca, new reply' : 'Ask worca');
   const row = document.querySelector('.nav button[data-nav="chat"]');
   if (!row) return;
   if (on) row.setAttribute('aria-label', 'Chat, new reply');
@@ -39169,6 +41853,19 @@ for (const a of document.querySelectorAll('.brand a.logo, .brand a.logo-mark')) 
  *  WITHOUT sending, so several can stack and the user presses send once. */
 function openChat({ text = '', threadId = null, quote = null } = {}) {
   const id = typeof threadId === 'string' && CHAT_THREAD_RE.test(threadId) ? threadId : '';
+  // Ask worca beside the page (L7): a page with the side column opens the chat there — no navigation. Chat and
+  // Workflows have no column (available() is false), so they keep going to the Chat page below.
+  if (askSide && askSide.available()) {
+    closeOpenViewer(document, { restore: false });   // the route to Chat closed an artifact popup: never open the column under one
+    askEntryThread = id || null;
+    try { askSide.show({ focus: true }); } finally { askEntryThread = null; }
+    if (id) askPanel?.open({ threadId: id });
+    if (quote) askPanel?.setQuote(quote);
+    const text1 = String(text ?? '').trim();
+    if (text1) askPanel?.appendToComposer(text1);
+    else document.querySelector('#ask-side [data-chat-page] textarea.ask-input')?.focus();
+    return;
+  }
   // Already on Chat and no chat named: stay put, the address too — a run panel open over the chat must not close.
   if (!(currentShownView === 'chat' && !id)) {
     const target = id ? `chat/${id}` : 'chat';
@@ -39202,7 +41899,8 @@ function chatOpenRunPage(ref = {}, opts = {}) {
 if (typeof window !== 'undefined') {
   window.__np = Object.assign(window.__np || {}, {
     chat: {
-      deps: chatDeps, enterChatView, openChat, getPageContext,
+      deps: chatDeps, enterChatView, openChat, getPageContext, getPageChips, getPageScope, paintChatUnread,
+      get askSide() { return askSide; },
       setPanelRouter(fn) { chatPanelRouter = typeof fn === 'function' ? fn : null; },
       setPanelContext(fn) { chatPanelContext = typeof fn === 'function' ? fn : null; },
     },
@@ -39309,7 +42007,9 @@ function getPageContext() {
   // tools' page-following project resolves to it.
   if (ctx.view === 'projects' && param) {
     const parsed = parseProjParam(param);
-    if (parsed && projectByKey(parsed.key)) { ctx.view = 'project-detail'; ctx.projectKey = parsed.key; return ctx; }
+    // Ask worca beside the page: pageProjectKey names the page on screen even when the chat's scope is elsewhere
+    // (projectKey is a target key the panel replaces with the scope's).
+    if (parsed && projectByKey(parsed.key)) { ctx.view = 'project-detail'; ctx.projectKey = parsed.key; ctx.pageProjectKey = parsed.key; return ctx; }
   }
   if (ctx.view === 'new' && state.runTarget === 'workspace' && state.selectedWorkspaceId) {
     ctx.workspaceId = state.selectedWorkspaceId;
@@ -39324,7 +42024,7 @@ function getPageContext() {
   // A workspace page names its workspace (§9.1), like a project page names its project.
   if (ctx.view === 'workspaces' && param) {
     const ws = parseWsParam(param);
-    if (ws && workspaceById(ws.id)) { ctx.workspaceId = ws.id; return ctx; }
+    if (ws && workspaceById(ws.id)) { ctx.workspaceId = ws.id; ctx.pageWorkspaceId = ws.id; return ctx; }
   }
   // The Team metrics page's selection: scope id, range, group-by and the active filters, so
   // "why did spend jump?" refers to the chart on screen. Ids and enum slugs only — the server
@@ -39347,6 +42047,27 @@ function getPageContext() {
   if (dir) { ctx.projectDir = dir; ctx.projectSource = 'fallback'; }
   return ctx;
 }
+/** Ask worca beside the page: the composer's chips for the page on screen (ask-page-chips.mjs), named with what this
+ *  tab knows — the live run's or the open saved run's title and status, the project's or the workspace's name. */
+function getPageChips() {
+  const ctx = getPageContext();
+  const names = {};
+  if (ctx.runId || ctx.pipelineId) {
+    const live = ctx.runId ? runs.get(ctx.runId) : null;
+    const saved = !live && histDetailState && histDetailState.id === ctx.pipelineId ? histDetailState.record : null;
+    const row = live || saved;
+    if (row && row.title) names.run = row.title;
+    if (row && row.status) names.runStatus = row.status;
+  }
+  if (ctx.pageProjectKey) names.project = projectByKey(ctx.pageProjectKey)?.name || '';
+  if (ctx.pageWorkspaceId) names.workspace = workspaceById(ctx.pageWorkspaceId)?.name || '';
+  return pageChips(ctx, names);
+}
+/** The project or workspace the page on screen is about: a new chat in the side column starts there (pageScopeOf).
+ *  The panel passes the page minus the chips the person left out; no argument = the whole page. */
+function getPageScope(ctx) {
+  return pageScopeOf(ctx && typeof ctx === 'object' ? ctx : getPageContext(), state.projects, state.workspaces);
+}
 
 function openNewPipeline(prefill) {
   newPipelinePrefill = prefill || null;
@@ -39359,8 +42080,10 @@ function openNewPipeline(prefill) {
 }
 
 /** Ask Worca's "Open in composer" and the top-bar search's workflow rows: the Workflows view opens the
- *  saved row by its address (#workflows/<id>); the view asks before discarding an unsaved canvas. */
-async function openWorkflowFromAsk(workflowId) {
+ *  saved row by its address (#workflows/<id>); the view asks before discarding an unsaved canvas.
+ *  `reveal` (a chat card's way in, #1126): the Library then opens on the row's folder and flashes it. */
+async function openWorkflowFromAsk(workflowId, { reveal = false } = {}) {
+  if (reveal) wfvRevealId = String(workflowId);
   location.hash = `workflows/${workflowId}`;
   return true;
 }
@@ -39707,7 +42430,8 @@ async function applyPreset(id) {
       await refreshBranches(selectedProjectPath());
       setSelectValueAdding(el.sourceBranch, s.sourceBranch);
     }
-    if (flagOn('runTags') && Array.isArray(s.tags)) applyRunTagsFromPreset(s.tags);
+    if (Array.isArray(s.tags)) applyRunTagsFromPreset(s.tags);
+    runPrFields().apply(s.pr);
     applyPresetSwitches();
     await renderWorkflowConfig(state.workflowId);
   } finally {
@@ -39734,6 +42458,7 @@ function applyPresetSwitches() {
 
 function leavePresetMode() {
   state.preset = null;
+  runPrFields().apply(null);
   if (el.presetSelect) el.presetSelect.value = '';
   paintPresetChip();
   paintPresetBroken();
@@ -39861,10 +42586,144 @@ async function deletePreset(p) {
 }
 const presetChangeError = (r) => notify({ tone: 'err', title: 'Could not change the preset', detail: (r.data && r.data.error) || `HTTP ${r.status}` });
 
+// Git event automations (automations-view.mjs, docs/git-automations.md). A project page's Automations tab holds the
+// project's switches and rules; Settings › Automations is the overview across projects.
+const automationsFail = (res, title) => { if (!res.ok) notify({ tone: 'err', title, detail: (res.data && res.data.error) || `HTTP ${res.status}` }); };
+const automationsErr = (r) => Object.assign(document.createElement('p'), { className: 'hint err', textContent: (r.data && r.data.error) || `HTTP ${r.status}` });
+/** Approve a waiting plan: the confirm, then the fix run. */
+async function approveAutomation(ev) {
+  if (!(await confirmModal({ title: 'Approve', message: `Start the fix for #${ev.number} with the proposed plan? Worca opens a draft pull request when it is done.`, confirmLabel: 'Start the fix' }))) return;
+  automationsFail(await mcpApi('POST', `/api/automations/events/${encodeURIComponent(ev.id)}/approve`, {}), 'The fix did not start');
+}
+/** A waiting event: start it now past its limits, or take it out of the queue. */
+async function startAutomationNow(ev) {
+  if (!(await confirmModal({ title: 'Start now', message: `Start #${ev.number} now? It skips the line and its rule's limits; it still counts toward today's runs.`, confirmLabel: 'Start now' }))) return;
+  automationsFail(await mcpApi('POST', `/api/automations/events/${encodeURIComponent(ev.id)}/start`, {}), 'It did not start');
+}
+async function removeAutomationQueued(ev) {
+  if (!(await confirmModal({ title: 'Remove from the queue', message: `Remove #${ev.number} from the queue? It will not start; open a run by hand if it still needs one.`, confirmLabel: 'Remove', danger: true }))) return;
+  automationsFail(await mcpApi('POST', `/api/automations/events/${encodeURIComponent(ev.id)}/remove`, {}), 'Could not remove it');
+}
+function openAutomationRun(ev, projectKey) {
+  if (ev.runId && runs.has(ev.runId)) { location.hash = `running/${ev.runId}`; return; }
+  location.hash = `history/${histDetailParam({ id: ev.pipelineId, projectKey })}`;
+}
+
+// Project page › Automations. `sec` is the tab's section; a reload repaints it in place.
+let pdAutomationsSeq = 0;
+async function buildPdAutomations(sec, key) {
+  sec.classList.add('pd-sec-automations');
+  const proj = projectByKey(key);
+  if (!proj || !flagOn('gitAutomations')) return;
+  const seq = ++pdAutomationsSeq;
+  await buildAutomationsTab(sec, { target: { projectDir: proj.path }, where: 'this project', stale: () => seq !== pdAutomationsSeq,
+    reload: () => buildPdAutomations(sec, key), openRun: (ev) => openAutomationRun(ev, key) });
+}
+// Workspace page › Automations: the same tab over every member's repository; an issue starts a workspace run.
+let wdAutomationsSeq = 0;
+async function buildWdAutomations(sec, id) {
+  sec.classList.add('pd-sec-automations');
+  if (!flagOn('gitAutomations')) return;
+  const seq = ++wdAutomationsSeq;
+  await buildAutomationsTab(sec, { target: { workspaceId: id }, where: 'this workspace', stale: () => seq !== wdAutomationsSeq,
+    reload: () => buildWdAutomations(sec, id),
+    // An issue's run is the workspace's; a PR's review ran in its member's project.
+    openRun: (ev, data) => openAutomationRun(ev, (ev.kind === 'pr' && (data.repos || []).find((m) => m.repo && m.repo.toLowerCase() === String(ev.repo || '').toLowerCase())?.projectKey)
+      || `workspaces/${id}`) });
+}
+/** One Automations tab: `target` is { projectDir } or { workspaceId }, the query and every write's body. */
+async function buildAutomationsTab(sec, { target, where, stale, reload, openRun }) {
+  const q = new URLSearchParams(target).toString();
+  const [r, wf] = await Promise.all([mcpApi('GET', `/api/automations?${q}`), mcpApi('GET', '/api/workflows')]);
+  if (stale() || !sec.isConnected) return;
+  if (!r.ok) { sec.replaceChildren(automationsErr(r)); return; }
+  const workflows = (wf.ok && Array.isArray(wf.data?.workflows) ? wf.data.workflows : []).map((w) => ({ id: w.id, name: w.name || w.id }));
+  const workflowNames = Object.fromEntries([['wf_default', 'Default'], ...workflows.map((w) => [w.id, w.name])]);
+  const fail = automationsFail;
+  const lim = r.data.defaultLimits || {};
+  sec.replaceChildren(renderAutomations(document, r.data, {
+    workflowNames,
+    onSwitch: async (key, on) => { const res = await mcpApi('PUT', '/api/automations/auto-handle', { ...target, key, on }); fail(res, 'Could not change Auto-handle'); await reload(); },
+    onCheckNow: async () => { fail(await mcpApi('POST', '/api/automations/poll', {}), 'Could not check GitHub'); await reload(); },
+    onToggleRule: async (rule, on) => { fail(await mcpApi('PATCH', `/api/automations/rules/${encodeURIComponent(rule.id)}`, { enabled: on }), 'Could not change the rule'); await reload(); },
+    onDeleteRule: async (rule) => {
+      if (!(await confirmModal({ title: 'Delete rule', message: 'Delete this rule? Runs it started are not affected.', confirmLabel: 'Delete rule', danger: true }))) return;
+      fail(await mcpApi('DELETE', `/api/automations/rules/${encodeURIComponent(rule.id)}`), 'Could not delete the rule');
+      await reload();
+    },
+    onEditLimits: async (rule) => {
+      const l = rule.limits || lim;
+      const v = await promptModal({ title: 'Edit limits', confirmLabel: 'Save limits', fields: [
+        { id: 'dailyRuns', label: 'Runs per day', value: String(l.dailyRuns), hint: '1 to 200. Past it, new events wait in the queue and start the next day (the count resets at midnight UTC).' },
+        { id: 'maxCostUsd', label: 'Cost cap per run (USD)', value: String(l.maxCostUsd), hint: '0.1 to 1000. A run that passes it is stopped.' },
+        { id: 'maxConcurrent', label: `Runs at a time in ${where}`, value: String(l.maxConcurrent), hint: '1 to 10. Past it, new events wait and start when a run ends.' }] });
+      if (!v) return;
+      fail(await mcpApi('PATCH', `/api/automations/rules/${encodeURIComponent(rule.id)}`,
+        { limits: { dailyRuns: v.dailyRuns, maxCostUsd: v.maxCostUsd, maxConcurrent: v.maxConcurrent } }), 'Could not change the limits');
+      await reload();
+    },
+    onApprove: async (ev) => { await approveAutomation(ev); await reload(); },
+    onStartNow: async (ev) => { await startAutomationNow(ev); await reload(); },
+    onRemoveQueued: async (ev) => { await removeAutomationQueued(ev); await reload(); },
+    onOpenRun: (ev) => openRun(ev, r.data),
+    onAddRule: async () => {
+      const v = await promptModal({ title: 'Add rule', confirmLabel: 'Add rule', fields: [
+        { id: 'when', label: 'When', value: 'issue.opened:propose', options: [
+          { value: 'issue.opened:propose', text: 'An issue is opened → triage, then propose a fix or a plan', group: 'Issues' },
+          { value: 'issue.opened:fix', text: 'An issue is opened → full fix, draft PR', group: 'Issues' },
+          { value: 'issue.opened:run', text: 'An issue is opened → run a workflow', group: 'Issues' },
+          { value: 'pr.opened:review', text: 'A PR is created or ready → review it', group: 'Pull requests' },
+          { value: 'pr.opened:run', text: 'A PR is created or ready → run a workflow', group: 'Pull requests' }] },
+        { id: 'workflowId', label: 'Workflow (for "run a workflow")', value: 'wf_default',
+          options: [{ value: 'wf_default', text: 'Default' }, ...workflows.filter((w) => w.id !== 'wf_default').map((w) => ({ value: w.id, text: w.name }))] },
+        { id: 'labels', label: 'Only with these labels', placeholder: 'bug, regression', hint: 'Comma separated; empty: any.' },
+        { id: 'triggerLabel', label: 'Trigger label', value: 'worca', hint: 'A maintainer adds it to let an outsider\'s issue start. Empty: outsiders never start one.' },
+        { id: 'allowLogins', label: 'Also trust these logins', placeholder: 'octocat' },
+        { id: 'dailyRuns', label: 'Runs per day', value: String(lim.dailyRuns ?? 10) },
+        { id: 'maxCostUsd', label: 'Cost cap per run (USD)', value: String(lim.maxCostUsd ?? 5) },
+        { id: 'maxConcurrent', label: `Runs at a time in ${where}`, value: String(lim.maxConcurrent ?? 1) }] });
+      if (!v) return;
+      const [event, action] = v.when.split(':');
+      const res = await mcpApi('POST', '/api/automations/rules', { ...target, event, action,
+        ...(action === 'run' ? { workflowId: v.workflowId } : {}),
+        filter: { labels: v.labels, triggerLabel: v.triggerLabel, allowLogins: v.allowLogins },
+        limits: { dailyRuns: v.dailyRuns, maxCostUsd: v.maxCostUsd, maxConcurrent: v.maxConcurrent } });
+      fail(res, 'Could not add the rule');
+      await reload();
+    },
+  }));
+}
+
+// Settings › Automations: the overview. Each project row opens that project's Automations tab.
+let automationsOverviewSeq = 0;
+async function loadAutomationsView() {
+  const host = document.getElementById('automations-body');
+  if (!host || !flagOn('gitAutomations')) return;
+  const seq = ++automationsOverviewSeq;
+  if (!(state.projects || []).length) await loadProjects();
+  const r = await mcpApi('GET', '/api/automations');
+  if (seq !== automationsOverviewSeq) return;
+  if (!r.ok) { host.replaceChildren(automationsErr(r)); return; }
+  if (!(state.workspaces || []).length) { try { await loadWorkspaces(); } catch { /* names only */ } }
+  if (seq !== automationsOverviewSeq) return;
+  // A workspace's rules are keyed workspaces/<id>: its row opens the workspace's Automations tab.
+  const owners = [...(state.projects || []).filter((p) => p && p.key),
+    ...(state.workspaces || []).filter((w) => w && w.id).map((w) => ({ key: `workspaces/${w.id}`, name: w.name || w.id }))];
+  host.replaceChildren(renderAutomationsOverview(document, r.data, owners, {
+    onOpenProject: (key) => {
+      location.hash = key.startsWith('workspaces/') ? `workspaces/${wsParamFor(key.slice('workspaces/'.length), 'automations')}` : `projects/${projParamFor(key, 'automations')}`;
+    },
+    onApprove: async (ev) => { await approveAutomation(ev); await loadAutomationsView(); },
+    onStartNow: async (ev) => { await startAutomationNow(ev); await loadAutomationsView(); },
+    onRemoveQueued: async (ev) => { await removeAutomationQueued(ev); await loadAutomationsView(); },
+    onOpenRun: (ev) => openAutomationRun(ev, ev.projectKey),
+  }));
+}
+
 // Settings › Presets (run-presets-view.mjs): Use / Rename / Duplicate / Edit scope / Delete.
 async function loadPresetsView() {
   const host = document.getElementById('presets-list');
-  if (!host || !flagOn('runPresets')) return;
+  if (!host) return;
   if (!(state.projects || []).length) await loadProjects();
   await withWorkspaces();   // Edit scope offers every workspace
   await loadPresets();
@@ -39891,17 +42750,7 @@ async function loadPresetsView() {
   }));
 }
 
-if (flagOn('runPresets')) void loadPresets();
-const offPresetsFlag = onFlagChange('runPresets', (on) => {
-  if (histDetailState?.screen) void paintHdSavePreset(histDetailState.screen, histDetailState.data);
-  if (chatHome && lastChatHomeFlags) chatHome.update({ flags: { ...lastChatHomeFlags, runPresets: on } });
-  if (on) { void loadPresets(); return; }
-  if (state.preset) leavePresetMode();
-  state.presets = [];
-  paintPresetMenu();
-});
-// Test hook: flags.mjs's listener map outlives a jsdom boot, so a suite unsubscribes the previous app first.
-if (typeof window !== 'undefined') window.__np = Object.assign(window.__np || {}, { offPresetsFlag });
+void loadPresets();
 
 // Smart run naming (Labs): built once; every handler checks flagOn('smartRunNaming') itself, so it is inert while off.
 if (el.title && el.featureBranch && el.prompt && el.branchType && el.titleRetry) {
@@ -39927,21 +42776,25 @@ if (el.smartNamingSwitch) {
     api: (method, body) => mcpApi(method, '/api/flags', body), msgEl: $('#smartNamingMsg') });
 }
 
-// The account menu's Keep awake row (UI/UX review F): the keepAwake flag, one source with Settings › Labs.
-// The whole row is the switch; a refused change shows in its tip and as a toast, a lock in its tip.
-const KEEP_AWAKE_TIP = 'Keeps the computer awake while runs are working. The display may still turn off.';
-if (el.acctKeepAwake) {
+// The account menu's Keep awake row (UI/UX review F): the keepAwake setting (default on), painted by
+// loadSettings. The whole row is the switch; a refused change shows as a toast and the row flips back.
+function paintKeepAwakeRow(on) {
   const row = el.acctKeepAwake;
-  window.__np.offKeepAwakeSwitch?.();
-  window.__np.offKeepAwakeSwitch = bindFlagSwitch(row, 'keepAwake', {
-    api: (method, body) => mcpApi(method, '/api/flags', body),
-    onMsg: (text, { error }) => {
-      const tip = text ? `${KEEP_AWAKE_TIP} (${text})` : KEEP_AWAKE_TIP;
-      row.title = tip;
-      row.setAttribute('aria-description', tip);
-      if (error) notify({ tone: 'err', title: 'Could not change Keep awake', detail: text, key: 'keep-awake' });
-    } });
+  if (!row) return;
+  row.classList.toggle('on', on);
+  row.setAttribute('aria-checked', String(on));
 }
+el.acctKeepAwake?.addEventListener('click', async () => {
+  const want = el.acctKeepAwake.getAttribute('aria-checked') !== 'true';
+  paintKeepAwakeRow(want);
+  try {
+    const res = await fetch('/api/settings', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ keepAwake: want }) });
+    if (!res.ok) throw new Error((await safeJson(res)).error || `HTTP ${res.status}`);
+  } catch (err) {
+    paintKeepAwakeRow(!want);
+    notify({ tone: 'err', title: 'Could not change Keep awake', detail: err.message || 'network error', key: 'keep-awake' });
+  }
+});
 
 // ---- Away mode on the run page and New run --------------------------------
 // state.awayMode: the user-level GET /api/away-mode body (Settings card, boot, settings-changed).
@@ -40076,6 +42929,7 @@ function scopeChatTo(project) {
   if (project && project.key) askPanel?.setScope?.({ pinned: true, projectKey: project.key, label: project.name });
 }
 registerScopeSwitchCard();
+registerQuestionCard();   // freeform chat D5: the ask_question card (Open in worca parity)
 // The chat files card (show_files) and its built-in file renderers, registered before the chat mounts too.
 registerFilesCard();
 
@@ -40168,7 +43022,6 @@ function homePinned(id) { return isPinned(homePins || DEFAULT_HOME_PINS, id); }
 
 /** The Chat home's presets (#712 slice 2): the viewer's list, fresh per visit, and New run's current target. */
 async function chatHomePresets() {
-  if (!flagOn('runPresets')) return { presets: [], target: null };
   await loadPresets();
   return { presets: state.presets, target: presetTargetNow(), workflowNames: state.presetWorkflowNames };
 }
@@ -40300,10 +43153,6 @@ async function chatHomeFlags() {
     const data = await safeJson(res);
     if (res.ok && data && Array.isArray(data.sources)) out.tasks = data.sources.some((s) => s && s.type === 'plugin');
   } catch { /* none known */ }
-  // Read after the awaits: a boot's first load, started before the hello, would otherwise keep a stale gate.
-  out['shapeFirst'] = shapeFirstOn();
-  out.runPresets = flagOn('runPresets');
-  lastChatHomeFlags = { ...out };
   return out;
 }
 /** A quick action's prefill: an empty composer takes the text as is (a trailing space kept, the caret at the end);
@@ -40336,8 +43185,9 @@ askPanel = createAskPanel({
   },
   confirm: confirmModal,
   getPageContext,
-  openNewPipeline,
-  openComposer: (id) => { openWorkflowFromAsk(id); },
+  // Ask worca beside the page (R11): Open in New run from the chat is a page it opens, so a covering column steps aside.
+  openNewPipeline: (prefill) => { askSide?.uncover(); openNewPipeline(prefill); },
+  openComposer: (id) => { openWorkflowFromAsk(id, { reveal: true }); },
   composerActions: askComposerActions(),        // Ask's draft and graph cards: the Workflows chat's actions (ask-composer-cards.mjs)
   openClaudeSetup: () => { openClaudeSetup(); },
   loadMarkdown: loadAskMarkdown,
@@ -40353,11 +43203,79 @@ askPanel = createAskPanel({
   onRoute: chatRoute,
   onUnread: paintChatUnread,
   summariseCommands: () => chatSummariesPref,
+  // Ask worca beside the page: the page on screen as chips and as a new side chat's scope, and the column's head buttons.
+  getPageChips,
+  getPageScope,
+  sideActions: {
+    hide: () => askSide?.hide(),
+    // L8: the thread moves to the Chat page; the column stays wanted, so the next page shows it again.
+    // An empty chat goes as chat/new (home): a bare #chat would open another, unread chat instead (enterChatView).
+    openInChat: (id) => { location.hash = id ? `chat/${id}` : 'chat/new'; },
+    openHistoryInChat: () => { askHistoryOnChat = true; location.hash = askPanel.threadId() ? `chat/${askPanel.threadId()}` : 'chat/new'; },
+    // R11: a page the chat opens itself (a topic row, Manage in Connectors, a run card's Open run) shows where the
+    // column covers the page.
+    uncover: () => askSide?.uncover(),
+  },
 });
 ($('section.view[data-view="chat"]') || document.body).appendChild(askPanel.root);
-// Command summaries (#911): read the person's switch once, and follow the flag.
-Promise.resolve().then(() => fetch('/api/settings')).then((r) => safeJson(r)).then((d) => setChatSummariesPref(d && d.chat)).catch(() => { /* keep: on */ });
-onFlagChange('commandSummaries', () => { askPanel?.refreshCommandCards(); void paintHelperModelCards(); });
+// Ask worca beside the page: the header toggle docks this same panel in aside#ask-side on every page but Chat,
+// Workflows and Design (syncAskSide decides per route). Made here, after the panel and before the boot route below.
+if ($('#ask-side') && $('#topnav-ask')) {
+  askSide = createAskSide({
+    doc: document,
+    win: window,
+    storage: localStorage,
+    aside: $('#ask-side'),
+    button: $('#topnav-ask'),
+    getTermW: () => (terminalPane?.isOpen() ? (parseInt(document.body?.style.getPropertyValue('--term-w'), 10) || 460) : 0),
+    onShow: ({ focus, button }) => {
+      const host = $('#ask-side [data-ask-side-host]');
+      if (host && askPanel.root.parentNode !== host) host.appendChild(askPanel.root);
+      askPanel.setHost('dock');
+      // L13: the header button lands where the Chat row does, on the chat whose reply lit the dot; an entry point naming a
+      // chat (openChat({ threadId })) opens that one; a route or any other entry point keeps the chat the column showed.
+      const want = askEntryThread || (button ? askPanel.unreadThreadId() : null);
+      askPanel.open(want ? { threadId: want } : undefined, { focus });
+    },
+    onHide: () => askPanel?.close(),
+    onLayout: () => {
+      const was = document.body.classList.contains('rail-collapsed');
+      applySidebarCollapsed();
+      // A fold the column forces (or gives back) repaints the menu as the rail tier does: Runs' title, the run tiles, the bands.
+      if (document.body.classList.contains('rail-collapsed') !== was) repaintNavMode();
+      paintAskSideCover();
+    },
+  });
+  // L12: the terminal pane narrows the page too — its open, its close and a drag of its width (--term-w on the body)
+  // re-ask the rail question.
+  if (typeof window.MutationObserver === 'function') {
+    const body = document.body;
+    const termSig = () => `${body.classList.contains('term-open')}:${body.style.getPropertyValue('--term-w')}`;
+    let term = termSig();
+    new window.MutationObserver(() => {
+      if (document.body !== body) return;                    // a torn-down page (tests boot one app per window)
+      const now = termSig();
+      if (now !== term) { term = now; askSide.relayout(); }
+    }).observe(document.body, { attributes: true, attributeFilter: ['class', 'style'] });
+  }
+  // A Details tab or a Diff file changes the page context with no hashchange (replaceState, a class): the chips follow.
+  $('.main')?.addEventListener('click', () => { if (askSide.shown()) queueMicrotask(() => askPanel?.pageChanged?.()); });
+  // A page link in the chat (a run, a project it names) opens that page: where the column covers the page it steps
+  // aside so the page shows. A link the chat handles itself, or one opened in a new tab, leaves it be.
+  $('#ask-side').addEventListener('click', (e) => {
+    if (e.defaultPrevented || e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return;
+    if (e.target?.closest?.('a[href^="#"]')) askSide.uncover();
+  });
+}
+// Command summaries (#911), the account menu's Keep awake row, the screensaver and Settings › Memory's model link (a
+// later settings read repaints it, loadSettings): read the person's switches once.
+Promise.resolve().then(() => fetch('/api/settings')).then((r) => safeJson(r)).then((d) => {
+  setChatSummariesPref(d && d.chat);
+  paintKeepAwakeRow(!(d && d.keepAwake === false));
+  paintMemoryModelLink(d);
+  paintScreensaver(d && d.screensaver);
+}).catch(() => { /* keep: on */ });
+onFlagChange('commandSummaries', () => { askPanel?.refreshCommandCards(); repaintJobs(); });
 // One delegated handler for every Summaries / Raw switch (Logs tab, History Logs, both drawers, Chat's run
 // panel): they are cloned on every build, so per-node listeners would be lost on each rebuild.
 document.addEventListener('click', (e) => {
@@ -40386,7 +43304,11 @@ pinpoint.addSurface(askPanel.root, {
 // The Chat home (worca Chat P6) inside the page's [data-chat-home], mounted before the boot route so the first Chat
 // render already has it (the section is still hidden here: the visit starts when the route shows it).
 mountChatHome();
-askRunStore.subscribe((runId, type) => { if (type !== 'log') chatHome?.update(); });   // a log line changes no tile
+askRunStore.subscribe((runId, type) => {
+  if (type === 'log') return;                                // a log line changes no tile
+  chatHome?.update();
+  if (askSide?.shown()) askPanel?.pageChanged?.();           // Ask worca beside the page: a live run's name and status reach its chip
+});
 
 
 // Boot: parse view + optional param so a reload on a deep link (#running/<id>)
@@ -40398,7 +43320,7 @@ else showView(VIEW_NAMES.includes(bootView) ? bootView : 'chat', VIEW_NAMES.incl
 refreshAllCounts();
 refreshBudget();
 startBudgetTick();
-loadWhoami();
+void loadWhoami().then(worca.boot);
 void refreshVersionStatus();   // sidebar "Update available" marker (#841)
 // ...and again when the tab regains focus, so a tab left open for days still sees a new release. A GET
 // only: the server's cache decides whether npm is asked.
@@ -40409,7 +43331,9 @@ window.addEventListener('focus', () => { void refreshVersionStatus(); });
 {
   const repaintPickers = () => {
     if (currentView() === 'new') refreshNewPipelinePickers();
-    if (currentView() === 'models') loadModelsView();
+    // A re-read never redraws a card on screen (what was typed stays); it draws one only into a Providers tab that
+    // a failed read left empty, where nothing is lost.
+    if (currentView() === 'models') void loadModelsView().then(() => { if (!el.providersList?.firstElementChild) paintProvidersTab(); });
   };
   loadCredentials().then((d) => { if (d) repaintPickers(); });
   window.addEventListener('focus', () => { loadCredentials().then((d) => { if (d) repaintPickers(); }); });

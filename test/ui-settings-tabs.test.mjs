@@ -4,20 +4,18 @@
 // left for pages of their own (test/ui-addons-pages.test.mjs).
 import { test, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { JSDOM } from 'jsdom';
 import { useDomRelease } from './helpers/jsdom-release.mjs';
 import { fieldErrorText, edit } from './helpers/feedback.mjs';
 import { checkRows } from './helpers/rows.mjs';
-import { applyFlags } from '../ui/public/flags.mjs';
+import { readIndexHtml } from '../src/core/read-index-html.mjs';
 
 // Release each booted window after its test (see test/helpers/jsdom-release.mjs).
 const trackDom = useDomRelease(afterEach);
 
-const htmlPath = fileURLToPath(new URL('../ui/public/index.html', import.meta.url));
 const appPath = fileURLToPath(new URL('../ui/public/app.js', import.meta.url));
-const html = readFileSync(htmlPath, 'utf8');
+const html = readIndexHtml();
 
 const GSETS = [
   { id: 'permissive', name: 'Permissive', origin: 'builtin',
@@ -349,32 +347,124 @@ test('#555 Away: a server field nightMode.maxDecisions lands on the data-field i
   assert.equal(doc.getElementById('nightModeMsg'), null, 'no grey status line');
 });
 
-test('Settings › Tags: its own tab after General at every level while runTags is on; off, #settings/tags shows General', async () => {
+test('Settings › Tags: its own tab at every level', async () => {
   await checkRows([
-    { name: 'flag on: #settings/tags shows the Tags pane and nothing else', run: async () => {
+    { name: '#settings/tags shows the Tags pane and nothing else', run: async () => {
       const { window } = await boot();
-      applyFlags({ runTags: true }, window.document);
       await go(window, 'settings/tags');
       assert.equal(shown(window, 'tags'), true);
       assert.equal(shown(window, 'general'), false);
       assert.equal(window.document.querySelector('#settings-tabs button[data-tab="tags"]').getAttribute('aria-pressed'), 'true');
     } },
-    { name: 'flag off: #settings/tags falls back to General', run: async () => {
-      const { window } = await boot();
-      applyFlags({ runTags: false }, window.document);
-      await go(window, 'settings/tags');
-      assert.equal(shown(window, 'general'), true);
-      assert.equal(shown(window, 'tags'), false);
-    } },
-    { name: 'the chip is a Simple-level tab gated by the flag; the card carries the flag, the pane does not', run: async () => {
+    { name: 'the chip is a Simple-level tab with no flag gate; neither is the pane', run: async () => {
       const { window } = await boot();
       const chip = window.document.querySelector('#settings-tabs button[data-tab="tags"]');
       assert.equal(chip.dataset.minLevel, 'simple');
-      assert.equal(chip.dataset.flag, 'runTags');
-      assert.equal(chip.previousElementSibling.dataset.tab, 'general');
+      assert.equal(chip.dataset.flag, undefined);
+      assert.equal(chip.previousElementSibling.dataset.tab, 'presets', 'after Runs and Presets, with what shapes a run');
       assert.equal(paneOf(window, 'tags').dataset.flag, undefined);
       assert.equal(window.document.getElementById('tag-dims-settings-card').dataset.minLevel, 'simple');
       assert.equal(paneOf(window, 'runs').querySelector('#tag-dims-settings-card'), null, 'the card left the Runs pane');
+    } },
+  ]);
+});
+
+// ── Settings sidebar: the tab strip stands as a left column (CSS), each tab has an icon, and General and Runs
+// list their cards as links under the open tab. Same tabs, same routes, same mode and Labs gates.
+test('Settings sidebar: tabs keep their order, labels and gates, each with one icon; General and Runs list their cards as links', async () => {
+  const { SETTING_ENTRIES, UNLISTED_CARDS } = await import('../ui/public/settings-index.mjs');
+  const entry = new Map(SETTING_ENTRIES.filter((e) => e.type === 'card').map((e) => [e.id.slice(5), e]));
+  const subLinks = (window) => [...window.document.querySelectorAll('#settings-tabs .settings-sub a')];
+  await checkRows([
+    { name: 'nine tabs ordered by meaning (you, runs, chat and agents, Labs last), the label is the only text, one decorative icon each', run: async () => {
+      const { window } = await boot();
+      const tabs = [...window.document.querySelectorAll('#settings-tabs button[data-tab]')];
+      assert.deepEqual(tabs.map((b) => [b.dataset.tab, b.dataset.minLevel, b.dataset.flag || '']), [
+        ['general', 'simple', ''], ['runs', 'simple', ''], ['presets', 'advanced', ''], ['tags', 'simple', ''],
+        ['automations', 'advanced', 'gitAutomations'], ['ask', 'advanced', ''], ['guardrails', 'advanced', ''],
+        ['memory', 'advanced', ''], ['experimental', 'simple', ''],
+      ]);
+      for (const b of tabs) {
+        const icons = b.querySelectorAll(':scope > svg');
+        assert.equal(icons.length, 1, `${b.dataset.tab} has one icon`);
+        assert.equal(icons[0].getAttribute('aria-hidden'), 'true');
+        assert.equal(icons[0].getAttribute('stroke'), 'currentColor', 'one icon set for both themes');
+      }
+      assert.deepEqual(tabs.filter((b) => b.dataset.tab !== 'automations').map((b) => b.textContent),
+        ['General', 'Runs', 'Presets', 'Labels & cost tags', 'Chat', 'Guardrails', 'Memory', 'Labs']);
+    } },
+    ...['general', 'runs'].map((tab) => ({ name: `${tab}: one link per listed card, in pane order, right under its tab`, run: async () => {
+      const { window } = await boot();
+      await go(window, tab === 'general' ? 'settings' : `settings/${tab}`);
+      const sub = window.document.querySelector('#settings-tabs .settings-sub');
+      assert.equal(sub.previousElementSibling.dataset.tab, tab);
+      const cards = [...paneOf(window, tab).querySelectorAll(':scope > .settings-card')].filter((c) => !UNLISTED_CARDS.includes(c.id));
+      const links = subLinks(window);
+      assert.deepEqual(links.map((a) => a.dataset.card), cards.map((c) => c.id));
+      for (const [i, a] of links.entries()) {
+        const e = entry.get(a.dataset.card);
+        assert.equal(a.getAttribute('href'), e.href, 'the address the top bar search uses');
+        assert.equal(a.textContent, e.title, 'the name the top bar search uses');
+        assert.equal(a.title, e.title);
+        assert.equal(a.dataset.minLevel, cards[i].dataset.minLevel, 'hidden by the same mode rule as its card');
+        assert.equal(a.dataset.flag, cards[i].dataset.flag, 'hidden by the same Labs rule as its card');
+        assert.equal('needsGit' in a.dataset, 'needsGit' in cards[i].dataset, 'hidden without git like its card');
+      }
+    } })),
+    { name: 'a tab with one or two cards lists none; leaving Runs removes its list', run: async () => {
+      const { window } = await boot();
+      await go(window, 'settings/runs');
+      assert.ok(subLinks(window).length > 0);
+      await go(window, 'settings/tags');
+      assert.equal(window.document.querySelector('#settings-tabs .settings-sub'), null);
+      assert.equal(window.document.querySelector('#settings-tabs button[data-tab="runs"]').nextElementSibling.dataset.tab, 'presets');
+    } },
+    { name: 'a narrow strip brings the open tab into view and says which sides hide more tabs', run: async () => {
+      const { window } = await boot();
+      const strip = window.document.getElementById('settings-tabs');
+      const size = (o) => { for (const [k, v] of Object.entries(o)) Object.defineProperty(strip, k, { value: v, configurable: true }); };
+      const memory = strip.querySelector('button[data-tab="memory"]');
+      Object.defineProperty(memory, 'offsetLeft', { value: 600 });
+      Object.defineProperty(memory, 'offsetWidth', { value: 100 });
+      size({ scrollWidth: 800, clientWidth: 400 });
+      await go(window, 'settings/memory');
+      assert.equal(strip.scrollLeft, 450, 'the open tab is centred in the strip');
+      assert.equal(strip.dataset.more, 'left', 'at the right end only the left side hides tabs');
+      strip.scrollLeft = 100;
+      strip.dispatchEvent(new window.Event('scroll'));
+      assert.equal(strip.dataset.more, 'left right');
+      strip.scrollLeft = 0;
+      strip.dispatchEvent(new window.Event('scroll'));
+      assert.equal(strip.dataset.more, 'right');
+      size({ scrollWidth: 400, clientWidth: 400 });
+      window.dispatchEvent(new window.Event('resize'));
+      assert.equal(strip.dataset.more, '', 'everything fits: no hint');
+    } },
+    { name: 'a card link opens its card: the hash, the pane and the highlight', run: async () => {
+      const { window } = await boot();
+      await go(window, 'settings/runs');
+      const a = subLinks(window).find((x) => x.dataset.card === 'pr-settings-card');
+      await go(window, a.getAttribute('href').slice(1));
+      await ticks();
+      assert.equal(shown(window, 'runs'), true);
+      assert.ok(window.document.getElementById('pr-settings-card').classList.contains('is-found'));
+      assert.equal(subLinks(window).length > 0, true, 'the list is still there after the landing');
+    } },
+    { name: 'picking the link that is already open lands on its card again; a modifier click leaves the page alone', run: async () => {
+      const { window } = await boot();
+      await go(window, 'settings/runs/pr-settings-card');
+      await ticks();
+      const card = window.document.getElementById('pr-settings-card');
+      const a = subLinks(window).find((x) => x.dataset.card === 'pr-settings-card');
+      const click = (o = {}) => { a.dispatchEvent(new window.MouseEvent('click', { bubbles: true, cancelable: true, ...o })); return ticks(); };
+      for (const o of [{ metaKey: true }, { ctrlKey: true }, { shiftKey: true }, { altKey: true }, { button: 1 }]) {
+        card.classList.remove('is-found');
+        await click(o);
+        assert.equal(card.classList.contains('is-found'), false, `${JSON.stringify(o)} does not land here`);
+      }
+      await click();
+      assert.equal(card.classList.contains('is-found'), true, 'a plain click lands on the card again');
+      assert.equal(window.location.hash, '#settings/runs/pr-settings-card');
     } },
   ]);
 });

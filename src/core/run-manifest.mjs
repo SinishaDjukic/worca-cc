@@ -14,7 +14,7 @@
 // `retain` record — every read here is deliberately shape-tolerant so a manifest
 // from either phase parses.
 
-import { mkdir, readFile, writeFile, rm, rename, readdir, stat, cp, lstat, realpath } from 'node:fs/promises';
+import { mkdir, readFile, writeFile, rm, rename, readdir, stat, cp, lstat, realpath, readlink, symlink } from 'node:fs/promises';
 import { join, resolve, sep, basename, dirname, relative, isAbsolute } from 'node:path';
 import { existsSync } from 'node:fs';
 
@@ -26,7 +26,20 @@ export const RETAIN_REASONS = Object.freeze({ COMMIT_FAILED: 'commit_failed', CH
 /** Entries worca-cc itself owns at a run root. Anything else there is a STRAY (§8.11).
  *  `.cursor`, `.gemini`: a Cursor or Gemini CLI run's engine config at a workspace run root (engines/project-files.mjs,
  *  run-harness _registerEngineConfig). */
-export const RUN_ROOT_KNOWN_SET = new Set(['CLAUDE.md', 'mcp.json', RUN_MANIFEST_FILE, '.claude', '.cursor', '.gemini', 'repos', 'work']);
+/** A run's own temp folder: agents' throwaway clones and test homes go here, and it never outlives the run. */
+export const RUN_SCRATCH_DIR = '.scratch';   // hidden: an agent's own misplaced `scratch/` stays a rescued stray
+export const RUN_ROOT_KNOWN_SET = new Set(['CLAUDE.md', 'mcp.json', RUN_MANIFEST_FILE, '.claude', '.cursor', '.gemini', 'repos', 'work', RUN_SCRATCH_DIR]);
+
+/** The scratch folder of a detached run, null without a run root. PURE. */
+export function runScratchDir(runRoot) {
+  return typeof runRoot === 'string' && runRoot ? join(runRoot, RUN_SCRATCH_DIR) : null;
+}
+
+/** Removes a run's scratch folder, whatever else keeps the run root. Never throws. */
+export async function removeRunScratch(runRoot) {
+  const dir = runScratchDir(runRoot);
+  if (dir) await rm(dir, { recursive: true, force: true, maxRetries: 2 }).catch(() => {});
+}
 
 // The V3 CLAUDE.md fallback's delimiter-fenced section (§4.1). The begin marker
 // carries the pipelineId so two concurrent runs over the same real dir can never
@@ -129,8 +142,8 @@ export async function rmGuarded(runRoot, { worcaHome, pipelineId } = {}) {
   }
 }
 
-/** All file paths under `p`, relative to it. A plain file yields ['']. [] when absent. */
-async function filesUnder(p) {
+/** All file paths under `p`, relative to it, never inside a directory named in `skip`. A plain file yields ['']. [] when absent. */
+async function filesUnder(p, skip = RESCUE_SKIP_DIRS) {
   let st;
   try { st = await lstat(p); } catch { return []; }
   if (!st.isDirectory()) return [''];
@@ -140,7 +153,7 @@ async function filesUnder(p) {
     try { entries = await readdir(join(p, rel), { withFileTypes: true }); } catch { return; }
     for (const e of entries.sort((a, b) => (a.name < b.name ? -1 : 1))) {
       const child = rel ? join(rel, e.name) : e.name;
-      if (e.isDirectory()) await walk(child);
+      if (e.isDirectory()) { if (!skip.has(e.name)) await walk(child); }
       else out.push(child);
     }
   };
@@ -152,25 +165,38 @@ async function readMaybe(p) {
   try { return await readFile(p); } catch { return null; }
 }
 
+// The modified-mount rescue copies what an agent changed, not the whole mount: a mounted skill can carry a
+// node_modules and compiled binaries (one rescue copied 1.2 GB, perf audit §4.3). Dependency and VCS trees
+// are never compared or copied, nor is a single file over the cap (named in the warning instead).
+const RESCUE_SKIP_DIRS = new Set(['node_modules', '.git']);
+const RESCUE_MAX_FILE_BYTES = 5 * 1024 * 1024;
+
 /**
- * True when the tree at `mounted` differs byte-wise from the tree at `source`
- * (a file added inside the mount counts as a change). A missing mount is NOT a
- * change (nothing to rescue); a missing source IS (we cannot prove it unchanged).
+ * The files of the tree at `mounted` that differ from the tree at `source`: changed or added, relative
+ * paths ('' for a plain file). Sizes first, bytes only when they match. A missing mount yields none
+ * (nothing to rescue); a missing source yields every file (we cannot prove it unchanged).
  */
-async function treeDiffers(mounted, source) {
+async function changedFiles(mounted, source) {
   const mountedFiles = await filesUnder(mounted);
-  if (!mountedFiles.length) return false;                 // mount gone: nothing to rescue
-  const sourceFiles = await filesUnder(source);
-  if (!sourceFiles.length) return true;                   // source gone: cannot prove unchanged
-  if (mountedFiles.length !== sourceFiles.length) return true;
-  const known = new Set(sourceFiles);
+  if (!mountedFiles.length) return [];
+  const known = new Set(await filesUnder(source));
+  const out = [];
   for (const rel of mountedFiles) {
-    if (!known.has(rel)) return true;                     // added file
-    const a = await readMaybe(rel ? join(mounted, rel) : mounted);
-    const b = await readMaybe(rel ? join(source, rel) : source);
-    if (!a || !b || !a.equals(b)) return true;
+    if (!known.has(rel)) { out.push(rel); continue; }   // added file
+    const a = rel ? join(mounted, rel) : mounted;
+    const b = rel ? join(source, rel) : source;
+    const [sa, sb] = await Promise.all([lstat(a).catch(() => null), lstat(b).catch(() => null)]);
+    if (!sa || !sb || sa.isSymbolicLink() !== sb.isSymbolicLink()) { out.push(rel); continue; }
+    if (sa.isSymbolicLink()) {                            // a link is its target text, never what it points at
+      const [la, lb] = await Promise.all([readlink(a).catch(() => null), readlink(b).catch(() => null)]);
+      if (la === null || la !== lb) out.push(rel);
+      continue;
+    }
+    if (sa.size !== sb.size) { out.push(rel); continue; }
+    const [x, y] = await Promise.all([readMaybe(a), readMaybe(b)]);
+    if (!x || !y || !x.equals(y)) out.push(rel);
   }
-  return false;
+  return out;
 }
 
 /** Extract the worca-cc-managed fenced block from `text`, or null when absent. */
@@ -226,8 +252,9 @@ export async function insideCheckout(root, target, { leaf = false, strict = fals
 /**
  * §8.20 modified-mount rescue. Every injected entry of kind `skill` / `claudeMd` /
  * `claudeMdSection` is byte-compared against its recorded `source`; a changed or
- * added file means the agent edited a DISPOSABLE copy, so the whole entry is copied
- * to `<pipelineDir>/stray/<scope>/<path>` and named in a warning. `kind:'link'` (and
+ * added file means the agent edited a DISPOSABLE copy, so the changed and added files
+ * (never node_modules/.git, never one over RESCUE_MAX_FILE_BYTES) are copied to
+ * `<pipelineDir>/stray/<scope>/<path>` and named in a warning. `kind:'link'` (and
  * `mount:'symlink'`) entries are exempt: they are write-through by design.
  *
  * Read-only apart from the rescue copy, so it is safe to run FIRST in teardown and
@@ -269,15 +296,29 @@ export async function rescueModifiedMounts({ baseDir, entries, pipelineDir, scop
         );
         continue;
       }
-      if (!(await treeDiffers(mounted, e.source || ''))) continue;
+      const changed = await changedFiles(mounted, e.source || '');
+      if (!changed.length) continue;
       const dest = pipelineDir ? join(pipelineDir, 'stray', scope || 'runRoot', e.path) : null;
+      const skipped = [];
       if (dest) {
-        await mkdir(dirname(dest), { recursive: true });
-        await cp(mounted, dest, { recursive: true, force: true, dereference: true });
+        for (const rel of changed) {
+          const from = rel ? join(mounted, rel) : mounted;
+          const to = rel ? join(dest, rel) : dest;
+          try {
+            const st = await lstat(from);
+            if (st.size > RESCUE_MAX_FILE_BYTES) { skipped.push(rel || basename(e.path)); continue; }
+            await mkdir(dirname(to), { recursive: true });
+            if (st.isSymbolicLink()) await symlink(await readlink(from), to);   // the link itself, never its target
+            else await cp(from, to, { force: true });
+          } catch { skipped.push(rel || basename(e.path)); }   // one unreadable file never costs the rest
+        }
       }
       const label = kind === 'skill' ? `mounted skill \`${basename(e.path)}\`` : `mounted \`${e.path}\``;
+      const left = skipped.length
+        ? ` (not copied: over ${RESCUE_MAX_FILE_BYTES / 1024 / 1024} MB or unreadable: ${skipped.slice(0, 5).map((f) => `\`${f}\``).join(', ')}${skipped.length > 5 ? ` and ${skipped.length - 5} more` : ''})`
+        : '';
       warnings.push(
-        `agent modified ${label}; the mount is disposable — rescued to \`${dest || '(no pipeline dir)'}\`; ` +
+        `agent modified ${label}; the mount is disposable — rescued the ${changed.length} changed file(s) to \`${dest || '(no pipeline dir)'}\`${left}; ` +
         `apply it to \`${e.source || 'the real dir'}\` manually if intended.`,
       );
     } catch { /* rescue is best-effort per entry */ }

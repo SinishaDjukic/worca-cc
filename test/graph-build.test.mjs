@@ -110,16 +110,16 @@ test('runGraphifyUpdate: overrun is killed and reported as timedOut', POSIX_SHIM
 
 // --- constructor timeout resolution (spec open question: default + configurable) ---
 
-test('graphBuildTimeoutMs: default 120000, option, env, option beats env, invalid env falls back', async () => {
+test('graphBuildTimeoutMs: default 600000, option, env, option beats env, invalid env falls back', async () => {
   const dir = await makeTmpDir();
   const mk = (extra) =>
     createOrchestrator({ projectDir: dir, prompt: 'x', claude: { mock: true }, ...extra });
   const prev = process.env.WORCA_GRAPH_TIMEOUT_MS;
   try {
     await checkRows([
-      { name: 'graphBuildTimeoutMs: defaults to 120000 when neither option nor env is set', run: () => {
+      { name: 'graphBuildTimeoutMs: defaults to 600000 (the build runs in the background) when neither option nor env is set', run: () => {
         delete process.env.WORCA_GRAPH_TIMEOUT_MS;
-        assert.equal(mk({}).graphBuildTimeoutMs, 120000);
+        assert.equal(mk({}).graphBuildTimeoutMs, 600000);
       } },
       { name: 'graphBuildTimeoutMs: option / env / precedence / invalid-env fallback', run: () => {
         // Constructor option wins outright (no env).
@@ -132,7 +132,7 @@ test('graphBuildTimeoutMs: default 120000, option, env, option beats env, invali
         assert.equal(mk({ graphBuildTimeoutMs: 5000 }).graphBuildTimeoutMs, 5000, 'option beats env');
         // Invalid env falls back to the default.
         process.env.WORCA_GRAPH_TIMEOUT_MS = 'not-a-number';
-        assert.equal(mk({}).graphBuildTimeoutMs, 120000, 'invalid env → default');
+        assert.equal(mk({}).graphBuildTimeoutMs, 600000, 'invalid env → default');
       } },
     ]);
   } finally {
@@ -225,6 +225,7 @@ test('_buildWorktreeGraph: build failure clears the instruction and logs a warni
   process.env.PATH = binDir + ':' + prevPath;
   try {
     await orch._buildWorktreeGraph(); // must NOT throw
+    await orch._graphBuild.done;      // the build runs in the background
   } finally {
     process.env.PATH = prevPath;
   }
@@ -249,11 +250,50 @@ test('_buildWorktreeGraph: success builds in the worktree and sets the worktree 
   process.env.PATH = binDir + ':' + prevPath; // keep /usr/bin:/bin so `mkdir` resolves
   try {
     await orch._buildWorktreeGraph();
+    assert.equal(orch.toolInstruction, '', 'returns at once: no instruction until the background build is done');
+    await orch._graphBuild.done;
   } finally {
     process.env.PATH = prevPath;
   }
   assert.equal(orch.toolInstruction, worktreeGraphInstruction());
   assert.ok(existsSync(join(work, 'graphify-out')), 'graph built inside the worktree');
+});
+
+test('_buildWorktreeGraph: the run never waits for the build; a stop kills it and publishes nothing; a finished graph is reused', POSIX_SHIM, async () => {
+  const dir = await makeTmpDir();
+  const work = await makeTmpDir('worca-cc-work-');
+  const binDir = await makeTmpDir('worca-cc-bin-');
+  // Writes the sentinel like the real build would, then takes 30 s.
+  await fakeGraphify(binDir, '#!/bin/sh\nmkdir -p "$2/graphify-out"\nprintf "*\\n" > "$2/graphify-out/.gitignore"\nexec sleep 30\n');
+  const orch = newOrch(dir);
+  orch.workDir = work;
+  orch.state.tools = { kind: 'cli' };
+  orch.pipeline = { dir };
+  const prevPath = process.env.PATH;
+  process.env.PATH = binDir + ':' + prevPath;
+  try {
+    const t0 = Date.now();
+    await orch._buildWorktreeGraph();
+    assert.ok(Date.now() - t0 < 2000, `setup waited ${Date.now() - t0} ms for the build`);
+    assert.equal(orch.toolInstruction, '');
+    await new Promise((r) => setTimeout(r, 200));
+    const t1 = Date.now();
+    await orch._stopGraphBuild();
+    assert.ok(Date.now() - t1 < 5000, 'the stop killed the build');
+    assert.equal(orch.toolInstruction, '', 'a stopped build publishes nothing');
+    assert.equal(existsSync(join(work, 'graphify-out', '.worca-built')), false, 'and leaves no done stamp');
+  } finally {
+    process.env.PATH = prevPath;
+  }
+  // A resume into a checkout whose build finished reuses it without spawning graphify.
+  writeFileSync(join(work, 'graphify-out', '.worca-built'), '');
+  const again = newOrch(dir);
+  again.workDir = work;
+  again.state.tools = { kind: 'cli' };
+  again.pipeline = { dir };
+  await again._buildWorktreeGraph();
+  assert.equal(again._graphBuild, null, 'no build started');
+  assert.equal(again.toolInstruction, worktreeGraphInstruction());
 });
 
 test('_buildWorktreeGraph: success is fail-safe even when the audit write fails', POSIX_SHIM, async () => {
@@ -273,6 +313,7 @@ test('_buildWorktreeGraph: success is fail-safe even when the audit write fails'
   process.env.PATH = binDir + ':' + prevPath;
   try {
     await orch._buildWorktreeGraph(); // must NOT throw despite the failing audit write
+    await orch._graphBuild.done;
   } finally {
     process.env.PATH = prevPath;
   }
@@ -309,6 +350,7 @@ test('a single-project run\'s node ctx still carries worktreeGraphInstruction() 
       process.env.PATH = binDir + ':' + prevPath;
       try {
         await orch._buildWorktreeGraph();       // the single-project path, as run() calls it
+        await orch._graphBuild.done;            // it builds in the background
       } finally {
         process.env.PATH = prevPath;
       }

@@ -7,17 +7,16 @@
 // test closes its modals. Run under `timeout 60` while red.
 import { test, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { JSDOM } from 'jsdom';
 import { useDomRelease } from './helpers/jsdom-release.mjs';
 import { lastToast } from './helpers/feedback.mjs';
+import { readIndexHtml } from '../src/core/read-index-html.mjs';
 
 const trackDom = useDomRelease(afterEach);
 
-const htmlPath = fileURLToPath(new URL('../ui/public/index.html', import.meta.url));
 const appPath = fileURLToPath(new URL('../ui/public/app.js', import.meta.url));
-const html = readFileSync(htmlPath, 'utf8');
+const html = readIndexHtml();
 
 const PAIRED = { id: 'ext_1', name: 'Worca for Chrome', browser: 'chrome', origin: 'chrome-extension://abcdefghijklmnop', createdAt: '2026-10-13T10:00:00Z', lastUsedAt: null };
 const later = () => Date.now() + 120_000;

@@ -5,20 +5,19 @@
 import { test, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
 import { JSDOM } from 'jsdom';
-import { readFileSync } from 'node:fs';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { dirname, join } from 'node:path';
 import { useDomRelease } from './helpers/jsdom-release.mjs';
 import { checkRows } from './helpers/rows.mjs';
+import { readIndexHtml } from '../src/core/read-index-html.mjs';
 
 // Release each booted window after its test (see test/helpers/jsdom-release.mjs).
 const trackDom = useDomRelease(afterEach);
 
 const __dir = dirname(fileURLToPath(import.meta.url));
 const root = join(__dir, '..', 'ui', 'public');
-const htmlPath = join(root, 'index.html');
 const appPath = join(root, 'app.js');
-const html = readFileSync(htmlPath, 'utf8');
+const html = readIndexHtml();
 const PROJECT = '/tmp/proj';
 const KEY = 'worca-cc.sidebar.collapsed';
 const DAY = 86400000;
@@ -190,8 +189,8 @@ test('every collapsed nav button gains a tooltip, and loses it on expand', async
     'expanded rows must not grow redundant tooltips — the label is right there');
   click('#side-toggle');
   for (const [nav, title] of rows()) assert.ok(title, `collapsed ${nav} must carry a tooltip`);
-  assert.match(doc.getElementById('side-acct').title, /^Profile: spend, away mode, interface mode and settings · \$20\.00 of \$50\.00 spent /,
-    'the rail shows the avatar alone: its tooltip says who, what it opens and the spend against the limit');
+  assert.equal(doc.getElementById('side-acct').title, 'Profile: spend, away mode, interface mode and settings',
+    'the rail shows the avatar alone: its tooltip says who and what it opens (spend lives in the spend card, never on the avatar)');
   assert.equal(doc.querySelector('.nav button[data-nav="workflows"]').title, 'Workflows',
     'the tooltip is the label span verbatim — index.html:55');
   assert.equal(doc.querySelector('.nav button[data-nav="stats"]').title, 'Statistics',

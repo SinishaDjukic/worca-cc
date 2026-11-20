@@ -160,6 +160,8 @@ test('the deciding line uses the run page\'s words: waiting on its proposal, par
   tile.update(snap());
   assert.equal(tile.el.querySelector('.chat-run-tile-well').getAttribute('aria-label'), 'Workflow graph', 'decided: the graph again');
   assert.equal(decidingText({ status: 'interrupted' }), 'Paused before deciding');
+  assert.equal(decidingText({ status: 'paused', resumePending: true }), 'Resuming…', 'a Resume in flight');
+  assert.equal(decidingText(null), DECIDING_TEXT, 'no snapshot yet');
   assert.equal(decidingText({ status: 'stopped' }), 'Auto did not decide a workflow');
   assert.equal(decidingText({ status: 'done' }), 'Auto did not decide a workflow');
   assert.equal(decidingText({ status: 'running' }), DECIDING_TEXT);

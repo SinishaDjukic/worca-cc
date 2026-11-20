@@ -255,6 +255,13 @@ test('spawn: a folder in the run store brings its project\'s store folder, so pl
   await runGeminiProcess({ cwd: tmp(), bin: fake.bin, prompt: 'go', addDirs: [memory] });
   const a = fake.args();
   assert.deepEqual(a.filter((x, i) => a[i - 1] === '--include-directories'), [memory, project]);
+  // Workspace store paths widen to store/workspaces/<workspaceKey>, not store/workspaces.
+  const wks = join(worcaHome(), 'store', 'workspaces', 'wks-1a2b3c4d');
+  const wksPlans = join(wks, 'plans');
+  mkdirSync(wksPlans, { recursive: true });
+  await runGeminiProcess({ cwd: tmp(), bin: fake.bin, prompt: 'go', writableDirs: [wksPlans] });
+  const wa = fake.args();
+  assert.deepEqual(wa.filter((x, i) => wa[i - 1] === '--include-directories'), [wksPlans, wks]);
 });
 
 test('a read-only spawn refuses (an Ask spawn is test/gemini-ask-adapter.test.mjs)', async () => {

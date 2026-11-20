@@ -159,8 +159,8 @@ const ALL = [...MODELS, CODEX, BOTH, CURSOR];
 
 test('stageChangeError refuses a model the run engine cannot run, and checks efforts in its vocabulary', () => {
   const cell = { model: 'claude-opus-5-5', effort: '', subagentModel: '', subagentEffort: '' };
-  assert.match(stageChangeError(cell, { model: CODEX.id }, ALL), /runs on Codex, not on Claude/);
-  assert.match(stageChangeError(cell, { model: 'claude-opus-5-5' }, ALL, { engine: 'codex' }), /runs on Claude, not on Codex/);
+  assert.match(stageChangeError(cell, { model: CODEX.id }, ALL), /runs on OpenAI Codex, not on Claude Code/);
+  assert.match(stageChangeError(cell, { model: 'claude-opus-5-5' }, ALL, { engine: 'codex' }), /runs on Claude Code, not on OpenAI Codex/);
   assert.equal(stageChangeError(cell, { model: CODEX.id, effort: 'low' }, ALL, { engine: 'codex' }), '');
   assert.match(stageChangeError(cell, { model: CODEX.id, effort: 'xhigh' }, ALL, { engine: 'codex' }), /unknown effort "xhigh"/);
   // A model on two harnesses runs on both.
@@ -174,9 +174,9 @@ test('stageChangeError refuses a model the run engine cannot run, and checks eff
 
 test('stageChangeError: an effort on a foreign model is refused; sub-agent changes and clearing the effort pass', () => {
   const foreign = { model: 'claude-opus-5-5', effort: '', subagentModel: '', subagentEffort: '' };
-  assert.match(stageChangeError(foreign, { effort: 'low' }, ALL, { engine: 'codex' }), /runs on Claude, not on Codex/);
+  assert.match(stageChangeError(foreign, { effort: 'low' }, ALL, { engine: 'codex' }), /runs on Claude Code, not on OpenAI Codex/);
   assert.equal(stageChangeError(foreign, { effort: '' }, ALL, { engine: 'codex' }), '');
-  assert.match(stageChangeError(foreign, { effort: 'medium' }, ALL, { engine: 'cursor' }), /runs on Claude, not on Cursor/);
+  assert.match(stageChangeError(foreign, { effort: 'medium' }, ALL, { engine: 'cursor' }), /runs on Claude Code, not on Cursor/);
   assert.equal(stageChangeError(foreign, { subagentEffort: 'high' }, ALL, { engine: 'codex' }), '');
   assert.equal(stageChangeError(foreign, { subagentModel: '' }, ALL, { engine: 'codex' }), '');
 });
@@ -189,14 +189,14 @@ test('stageChangeError: a sub-agent value the run engine would drop is refused; 
   assert.equal(stageChangeError(cell, { subagentEffort: 'medium' }, ALL, { engine: 'codex' }), '');
   assert.equal(stageChangeError(cell, { subagentEffort: 'high' }, ALL, { engine: 'codex' }), '');
   for (const e of ['minimal', 'low', 'xhigh', 'max']) {
-    assert.equal(stageChangeError(cell, { subagentEffort: e }, ALL, { engine: 'codex' }), `unknown sub-agent effort "${e}" on Codex`);
+    assert.equal(stageChangeError(cell, { subagentEffort: e }, ALL, { engine: 'codex' }), `unknown sub-agent effort "${e}" on OpenAI Codex`);
   }
   for (const m of ['opus', 'auto', 'inherit']) {
-    assert.equal(stageChangeError(cell, { subagentModel: m }, ALL, { engine: 'codex' }), 'Codex does not take a sub-agent model — leave it on Default');
+    assert.equal(stageChangeError(cell, { subagentModel: m }, ALL, { engine: 'codex' }), 'OpenAI Codex does not take a sub-agent model — leave it on Default');
   }
   // Copilot: its investigator runs on the node's model and effort.
-  assert.equal(stageChangeError(cell, { subagentModel: 'opus' }, ALL, { engine: 'copilot' }), 'Copilot does not take a sub-agent model — leave it on Default');
-  assert.equal(stageChangeError(cell, { subagentEffort: 'high' }, ALL, { engine: 'copilot' }), 'Copilot does not take a sub-agent effort — leave it on Default');
+  assert.equal(stageChangeError(cell, { subagentModel: 'opus' }, ALL, { engine: 'copilot' }), 'GitHub Copilot does not take a sub-agent model — leave it on Default');
+  assert.equal(stageChangeError(cell, { subagentEffort: 'high' }, ALL, { engine: 'copilot' }), 'GitHub Copilot does not take a sub-agent effort — leave it on Default');
   // Clearing always passes; a stored value nobody touched blocks nothing.
   for (const engine of ['claude', 'codex', 'copilot', 'cursor']) {
     assert.equal(stageChangeError(cell, { subagentModel: '', subagentEffort: '' }, ALL, { engine }), '', engine);

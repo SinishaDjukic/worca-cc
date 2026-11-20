@@ -1,13 +1,12 @@
 // test/ui-newpipeline-shape-link.test.mjs — Shape it first (slice 2) in the booted app: the New run form's "Plan it
-// with me in Chat" link (gated by the shapeFirst feature flag, Advanced only) takes the Markdown typed there to the
+// with me in Chat" link (Advanced only) takes the Markdown typed there to the
 // Chat HOME with the `shape` intent armed; the entry is consumed on any Chat entry. A Markdown handoff
-// (openNewPipeline {promptMarkdown}) selects the Markdown source; and the Chat home's gated tile follows a gate that
-// arrives while the home is open, without re-fetching its switches.
-import { test, beforeEach } from 'node:test';
+// (openNewPipeline {promptMarkdown}) selects the Markdown source; and a hello that arrives while the Chat home is open
+// re-pushes its switches without re-fetching them.
+import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { bootApp } from './helpers/run-page-boot.mjs';
 import { _resetChatExtensions } from '../ui/public/chat/extensions.mjs';
-import { setShapeFirst } from './helpers/shape-gate.mjs';
 
 const ok = (body) => Promise.resolve({ ok: true, status: 200, json: async () => body });
 const THREAD_ID = 'ask_000000c1';
@@ -31,16 +30,13 @@ function arms({ settings = { chat: { scriptTools: true } }, sources = [] } = {})
     return null;
   };
 }
-// The gate is the ONE module-level switch app.js and this file share: every test starts with it off.
-beforeEach(() => { setShapeFirst(false); });
-
 async function boot(o = {}) {
   _resetChatExtensions();                       // app.js re-registers every card and add-on per boot
   const ctx = await bootApp({ fetchHandler: arms(o) });
   ctx.wsBox.ws.dispatch('open', {});
   return ctx;
 }
-const hello = (ctx, shapeFirst) => ctx.dispatch({ type: 'hello', flags: { shapeFirst }, runs: [] });
+const hello = (ctx) => ctx.dispatch({ type: 'hello', runs: [] });
 const link = (doc) => doc.getElementById('shapeChatLink');
 const intentLabel = (doc) => {
   const chip = doc.querySelector('[data-chat-page] .chat-intent');
@@ -48,23 +44,21 @@ const intentLabel = (doc) => {
 };
 const composer = (doc) => doc.querySelector('[data-chat-page] .ask-input');
 
-test('the New run link is hidden until a hello turns the gate on, is Advanced only, and hides again on a gate-off hello', async () => {
+test('the New run link always shows (no hello needed) and is Advanced only', async () => {
   const ctx = await boot();
   const doc = ctx.window.document;
   const p = link(doc);
   assert.ok(p, 'the link lives in the Markdown pane');
   assert.ok(p.closest('#markdown-pane'), 'inside #markdown-pane');
   assert.equal(p.dataset.minLevel, 'advanced');
-  assert.equal(p.hidden, true, 'no hello yet');
-  hello(ctx, true);
+  assert.equal(p.hidden, false, 'no hello yet');
+  hello(ctx);
   assert.equal(p.hidden, false);
-  hello(ctx, false);
-  assert.equal(p.hidden, true);
 });
 
 test('the link takes the Markdown to the Chat HOME (not the last chat), in the composer, with the shape intent armed', async () => {
   const ctx = await boot();
-  hello(ctx, true);
+  hello(ctx);
   const doc = ctx.window.document;
   ctx.go(`chat/${THREAD_ID}`);                   // a "last chat" exists
   await ctx.settle(8);
@@ -82,7 +76,7 @@ test('the link takes the Markdown to the Chat HOME (not the last chat), in the c
 
 test('the entry is consumed on any Chat entry: opening an existing chat instead arms nothing, nor does a later home visit', async () => {
   const ctx = await boot();
-  hello(ctx, true);
+  hello(ctx);
   const doc = ctx.window.document;
   ctx.go('new');
   await ctx.settle(6);
@@ -104,7 +98,7 @@ test('the entry is consumed on any Chat entry: opening an existing chat instead 
 
 test('leaving Chat drops an armed intent: link → home, Back to New run, then the Chat row shows no intent', async () => {
   const ctx = await boot();
-  hello(ctx, true);
+  hello(ctx);
   const doc = ctx.window.document;
   ctx.go('new');
   await ctx.settle(6);
@@ -122,7 +116,7 @@ test('leaving Chat drops an armed intent: link → home, Back to New run, then t
 
 test('leaving Chat drops an intent a home tile armed (Runs and back)', async () => {
   const ctx = await boot();
-  hello(ctx, true);
+  hello(ctx);
   const doc = ctx.window.document;
   ctx.go('chat/new');
   await ctx.settle(8);
@@ -155,19 +149,19 @@ test('openNewPipeline {promptMarkdown} selects the Markdown source and fills it;
   assert.equal(doc.getElementById('workflowSelect').value, 'wf_auto');
 });
 
-test('Chat home: the shape tile is hidden with the gate off and appears on a gate-on hello while home is open, without re-fetching the switches', async () => {
+test('Chat home: the shape tile shows at once, and a hello while home is open re-pushes the switches without re-fetching them', async () => {
   const ctx = await boot({ settings: { chat: { scriptTools: false } }, sources: [{ type: 'plugin', plugin: 'jira', sourceId: 'issues' }] });
   ctx.go('chat/new');
   await ctx.settle(8);
   const doc = ctx.window.document;
   const tile = (id) => doc.querySelector(`.chat-home-act[data-intent="${id}"]`);
-  assert.equal(tile('shape'), null, 'gate off');
+  assert.equal(tile('shape').hidden, false, 'Shaper is always on');
   assert.equal(tile('script').hidden, true, 'scriptTools:false');
   const switches = () => ctx.calls.filter((c) => c.url === '/api/settings' || c.url === '/api/sources').length;
   const before = switches();
-  hello(ctx, true);
+  hello(ctx);
   await ctx.settle(6);
-  assert.equal(tile('shape').hidden, false, 'the gate reached the open home');
+  assert.equal(tile('shape').hidden, false, 'still there after the hello');
   assert.equal(switches(), before, 'flags re-pushed, not re-fetched');
   assert.equal(tile('script').hidden, true, 'scripts kept its state');
   doc.querySelector('.chat-home-act.is-more').click();

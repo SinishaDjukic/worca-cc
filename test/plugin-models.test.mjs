@@ -64,7 +64,7 @@ before(async () => {
   process.env.WORCA_HOME = worcaHomeDir;
   process.env.WORCA_TEST_ALLOW_HOME_FALLBACK = '1'; // catalog guard: HOME sandboxed above
   _resetForTests();
-  installFixture('discretestack-models', DS_MANIFEST);
+  installFixture('example-models', DS_MANIFEST);
 });
 after(async () => {
   _resetForTests();
@@ -77,7 +77,7 @@ after(async () => {
 test('allPluginModels: enabled plugins only, manifest order, secrets listed', () => {
   const all = allPluginModels();
   assert.equal(all.length, 2);
-  assert.equal(all[0].plugin, 'discretestack-models');
+  assert.equal(all[0].plugin, 'example-models');
   assert.equal(all[0].id, 'ds-stable');
   assert.deepEqual(all[0].efforts, ['medium', 'high']);
   assert.deepEqual(all[0].secrets, ['ds-token']);
@@ -87,7 +87,7 @@ test('allPluginModels: enabled plugins only, manifest order, secrets listed', ()
 
 test('disabled plugin contributes nothing; re-enable restores', () => {
   const lock = readPluginsLock();
-  writePluginsLock({ ...lock, 'discretestack-models': { ...lock['discretestack-models'], enabled: false } });
+  writePluginsLock({ ...lock, 'example-models': { ...lock['example-models'], enabled: false } });
   assert.deepEqual(allPluginModels(), []);
   writePluginsLock(lock);
   assert.equal(allPluginModels().length, 2);
@@ -98,15 +98,15 @@ test('listPluginModels: cross-plugin id collision — alphabetical plugin wins, 
   const list = listPluginModels();
   const stable = list.filter((m) => m.id.toLowerCase() === 'ds-stable');
   assert.equal(stable.length, 1);
-  assert.equal(stable[0].plugin, 'discretestack-models', 'alphabetical winner');
+  assert.equal(stable[0].plugin, 'example-models', 'alphabetical winner');
   assert.ok(list.some((m) => m.id === 'zz-own'), 'non-colliding entry of the loser survives');
 });
 
 test('modelSecretsSchema + status; flattenPluginModelEnv resolves/drops secrets', () => {
-  const schema = modelSecretsSchema('discretestack-models');
+  const schema = modelSecretsSchema('example-models');
   assert.equal(schema.length, 1);
   assert.equal(schema[0].secret, true);
-  assert.deepEqual(pluginModelSecretStatus('discretestack-models'), [{ key: 'ds-token', label: 'DS token', set: false }]);
+  assert.deepEqual(pluginModelSecretStatus('example-models'), [{ key: 'ds-token', label: 'DS token', set: false }]);
 
   const [stable] = allPluginModels();
   let flat = flattenPluginModelEnv(stable);
@@ -115,8 +115,8 @@ test('modelSecretsSchema + status; flattenPluginModelEnv resolves/drops secrets'
   assert.equal(flat.env.ANTHROPIC_AUTH_TOKEN, undefined);
   assert.match(flat.droppedSecrets[0], /ANTHROPIC_AUTH_TOKEN \(secret "ds-token"\)/);
 
-  writePluginConfig('discretestack-models', schema, { 'ds-token': 'sk-team-1234' });
-  assert.deepEqual(pluginModelSecretStatus('discretestack-models'), [{ key: 'ds-token', label: 'DS token', set: true }]);
+  writePluginConfig('example-models', schema, { 'ds-token': 'sk-team-1234' });
+  assert.deepEqual(pluginModelSecretStatus('example-models'), [{ key: 'ds-token', label: 'DS token', set: true }]);
   flat = flattenPluginModelEnv(stable);
   assert.equal(flat.env.ANTHROPIC_AUTH_TOKEN, 'sk-team-1234');
   assert.deepEqual(flat.droppedSecrets, []);
@@ -126,7 +126,7 @@ test('catalog composition: custom "plugin" + plugin name; global shadows plugin;
   const models = await listModels('');
   const stable = models.find((m) => m.id === 'ds-stable');
   assert.equal(stable.custom, 'plugin');
-  assert.equal(stable.plugin, 'discretestack-models');
+  assert.equal(stable.plugin, 'example-models');
   assert.equal(stable.hasEnv, true);
   assert.equal(models.find((m) => m.id === 'ds-fast').hasEnv, false);
 
@@ -188,36 +188,36 @@ test('resolveModelEnv + modelHasBaseUrlRouting: plugin entries route (secrets, $
 });
 
 test('referencedPluginModels: refs block; global-shadow and other-plugin carve-outs', async () => {
-  assert.deepEqual(referencedPluginModels('discretestack-models'), []);
+  assert.deepEqual(referencedPluginModels('example-models'), []);
   await setNodeModel(proj, 'wf_x', 's1_0', { model: 'ds-stable', effort: 'high' });
 
   // Carve-out: while BOTH plugins ship the id, uninstalling either leaves the
   // other resolving it — neither blocks (zz-other is still installed here).
-  assert.deepEqual(referencedPluginModels('discretestack-models'), []);
+  assert.deepEqual(referencedPluginModels('example-models'), []);
   assert.deepEqual(referencedPluginModels('zz-other'), []);
 
   const lock = readPluginsLock();
   const { 'zz-other': zz, ...rest } = lock;
   writePluginsLock(rest);
-  let refs = referencedPluginModels('discretestack-models');
+  let refs = referencedPluginModels('example-models');
   assert.equal(refs.length, 1, 'sole provider now blocks');
   assert.equal(refs[0].id, 'ds-stable');
   assert.equal(refs[0].nodes.length, 1);
   assert.equal(refs[0].nodes[0].nodeId, 's1_0');
   assert.deepEqual(refs[0].steps, []);
-  assert.deepEqual(pluginReferences('discretestack-models'),
+  assert.deepEqual(pluginReferences('example-models'),
     [{ kind: 'model-selection', contributionKind: 'models', contribution: 'ds-stable', label: 'ds-stable', count: 1, href: '#models' }]);
   await setStep(proj, 'planner', { model: 'ds-stable' });
-  assert.equal(pluginReferences('discretestack-models')[0].count, 2, 'count = step selections + node selections');
+  assert.equal(pluginReferences('example-models')[0].count, 2, 'count = step selections + node selections');
   await setStep(proj, 'planner', { model: '' });
 
   // Carve-out: a user global entry shadows the id — refs keep resolving.
   await addGlobalModel({ id: 'ds-stable', label: 'Mine' });
-  assert.deepEqual(referencedPluginModels('discretestack-models'), []);
+  assert.deepEqual(referencedPluginModels('example-models'), []);
   await removeGlobalModel('ds-stable');
 
   await setNodeModel(proj, 'wf_x', 's1_0', { model: '', effort: '' });
-  assert.deepEqual(referencedPluginModels('discretestack-models'), [], 'cleared selection unblocks');
+  assert.deepEqual(referencedPluginModels('example-models'), [], 'cleared selection unblocks');
   writePluginsLock({ ...readPluginsLock(), 'zz-other': zz });
 });
 

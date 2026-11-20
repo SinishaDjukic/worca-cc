@@ -3,7 +3,7 @@
 // target `document` via opts (defaults to the browser global) and returns DETACHED elements — no
 // fetch, no listeners outside the returned tree (guardrails-view.mjs posture). app.js owns the
 // endpoint calls and the mounting; node:test drives these via jsdom. Interactive elements carry a
-// routing class (mem-new, mem-save, mem-cancel, mem-delete, mem-restore, mem-defrag; the Team view:
+// routing class (mem-new, mem-save, mem-cancel, mem-delete, mem-restore, mem-defrag, mem-prop-approve, mem-prop-reject; the Team view:
 // mem-view, mem-team-load, mem-team-sync, mem-team-seed, mem-team-dismiss, mem-team-undo,
 // mem-team-compare, mem-team-remove; the project Overview's offer: mem-team-turn-on, mem-team-not-now; the seeding dialog: mem-seed-check, mem-seed-all, mem-seed-clash)
 // plus data-name / data-id, so the controller wires ONE delegated listener per host. The namespace is
@@ -171,6 +171,51 @@ export function renderHealthCard(report, { doc = globalThis.document, host = nul
   return card;
 }
 
+/** Proposed notes (#943): what pipeline agents wrote, waiting for a person. One row per proposal with its text (and the
+ *  note it replaces, folded), Approve and Reject (routing classes mem-prop-approve / mem-prop-reject, data-id). null when
+ *  there is none, so a scope without proposals renders exactly as before. */
+export function renderProposals(list, { doc = globalThis.document, runInfo = () => null, locked = false } = {}) {
+  const items = Array.isArray(list) ? list : [];
+  if (!items.length) return null;
+  const wrap = h(doc, 'div', 'card mem-proposals');
+  const head = h(doc, 'div', 'mem-list-head');
+  head.appendChild(h(doc, 'span', 'mem-list-title', `Proposed by runs (${items.length})`));
+  wrap.appendChild(head);
+  wrap.appendChild(h(doc, 'small', 'hint', 'Runs never change memory themselves: each note an agent wrote waits here. Approve writes it (and shares it, when team memory is on); Reject drops it.'));
+  for (const p of items) {
+    const row = h(doc, 'div', 'mem-prop');
+    row.dataset.id = p.id;
+    const top = h(doc, 'div', 'mem-prop-head');
+    const verb = p.kind === 'delete' ? 'Remove' : p.baseHash ? 'Update' : 'Add';
+    top.appendChild(h(doc, 'span', `badge${p.kind === 'delete' ? ' red' : ''}`, verb));
+    top.appendChild(h(doc, 'span', 'mono', ` ${p.name}.md`));
+    const meta = h(doc, 'span', 'mem-row-meta');
+    meta.append(' · ', sourceNode({ kind: 'run', ref: p.runId }, { doc, runInfo }));
+    if (p.agentKey) meta.append(` (${p.agentKey})`);
+    const when = formatWhen(p.at);
+    if (when) meta.append(` · ${when}`);
+    if (p.stale) meta.append(' · the note changed since the run started');
+    top.appendChild(meta);
+    row.appendChild(top);
+    if (p.text) row.appendChild(h(doc, 'pre', 'mem-prop-text', p.text));
+    if (p.current) {
+      const det = h(doc, 'details', 'mem-prop-current');
+      det.appendChild(h(doc, 'summary', '', 'The note now'));
+      det.appendChild(h(doc, 'pre', 'mem-prop-text', p.current));
+      row.appendChild(det);
+    }
+    const actions = h(doc, 'div', 'mem-actions');
+    const ok = h(doc, 'button', 'btn btn-primary btn-sm mem-prop-approve', 'Approve');
+    ok.type = 'button'; ok.dataset.id = p.id; ok.disabled = locked;
+    const no = h(doc, 'button', 'btn btn-sm mem-prop-reject', 'Reject');
+    no.type = 'button'; no.dataset.id = p.id;
+    actions.append(no, ok);
+    row.appendChild(actions);
+    wrap.appendChild(row);
+  }
+  return wrap;
+}
+
 /** The file list: a head with the New button, one row per file. The row's main block is the control
  *  (click, Enter, Space) and holds no interactive descendant; the meta line beside it may hold the
  *  source run's link (D6). */
@@ -317,7 +362,7 @@ export const teamLoadOf = (status) => (!status?.enabled ? 'local' : status.load 
 /** The PATCH value of `memory.team` for a load: null (off), "only" or true. */
 export const teamLoadValue = (load) => (load === 'team' ? 'only' : load === 'both' ? true : null);
 function teamLoadHint(load, status) {
-  if (load === 'team') return `Runs and chats load the team's notes only — your shared notes and teammates', newest ${status?.caps?.teamMaxFiles ?? 50} — not the notes that stay on this machine. Notes written or changed here are shared on the ${status.branch} branch after a secret check.`;
+  if (load === 'team') return `Runs and chats load the team's notes only — your shared notes and teammates' (every note scoped to files, and the newest ${status?.caps?.teamMaxFiles ?? 50} that always load) — not the notes that stay on this machine. Notes written or changed here are shared on the ${status.branch} branch after a secret check.`;
   if (load === 'both') return `Runs and chats load your notes and teammates'. Notes written or changed here are shared on the ${status.branch} branch of this repository after a secret check. Your note wins over the team's of the same name, and changing it replaces the team's version.`;
   return `${status?.available?.branchOnOrigin === true ? `${TEAM_AVAILABLE_TEXT}: its worca-memory branch is on origin. ` : ''}Runs and chats load this machine's notes only. Team or Both shares this project's notes with teammates on a worca-memory branch of its repository, after a secret check; the notes that exist now stay on this machine until you pick which to share.`;
 }

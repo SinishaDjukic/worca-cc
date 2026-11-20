@@ -5,6 +5,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { JSDOM } from 'jsdom';
+import { readIndexHtml } from '../src/core/read-index-html.mjs';
 
 const app = readFileSync(new URL('../ui/public/app.js', import.meta.url), 'utf8');
 // getElementById('x'), and a selector that starts with #x in querySelector(All), $(), $$() or closest().
@@ -13,7 +14,7 @@ const LOOKUP = /getElementById\(\s*['"]([\w-]+)['"]\s*\)|(?:querySelector(?:All)
 // then getElementById(map[key])): the dropped ui-workspace-selectors test pinned four of them.
 const MAPPED = [...app.matchAll(/const [A-Z_]+_IDS = \{([^}]*)\}/g)].flatMap((m) => [...m[1].matchAll(/:\s*'([\w-]+)'/g)].map((x) => x[1]));
 const ids = [...new Set([...[...app.matchAll(LOOKUP)].map((m) => m[1] ?? m[2]), ...MAPPED])].sort();
-const { document } = new JSDOM(readFileSync(new URL('../ui/public/index.html', import.meta.url), 'utf8')).window;
+const { document } = new JSDOM(readIndexHtml()).window;
 const roots = [document, ...[...document.querySelectorAll('template')].map((t) => t.content)];
 const exists = (id) => roots.some((r) => r.querySelector(`[id="${id}"]`));
 // id -> its creator in app.js (the creator's code must still be there).

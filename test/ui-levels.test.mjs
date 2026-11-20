@@ -21,14 +21,16 @@ import {
   minLevelFor, levelCardsHtml, applyLevel, createLevelController,
 } from '../ui/public/ui-level.mjs';
 import { renderIndexHtml } from '../src/core/index-html.mjs';
+import { readIndexHtml } from '../src/core/read-index-html.mjs';
+import { readStyleCss } from '../src/core/read-style-css.mjs';
 import {
   settingsFile, uiLevel, setUiLevel, assertUiLevelInput, defaultUiLevel, SETTINGS_POST_KEYS,
 } from '../src/core/settings.mjs';
 
 const __dir = dirname(fileURLToPath(import.meta.url));
 const pub = join(__dir, '..', 'ui', 'public');
-const html = readFileSync(join(pub, 'index.html'), 'utf8');
-const css = readFileSync(join(pub, 'style.css'), 'utf8');
+const html = readIndexHtml();
+const css = readStyleCss();
 const app = readFileSync(join(pub, 'app.js'), 'utf8');
 
 const shell = () => new JSDOM(html).window.document;
@@ -320,4 +322,58 @@ test('a fresh install starts simple; an install with history keeps the full UI',
   assert.equal(defaultUiLevel({ fresh: true }), 'simple');
   assert.equal(defaultUiLevel({ fresh: false }), 'expert');
   assert.equal(defaultUiLevel(), 'expert', 'unknown ⇒ the safe side: hide nothing');
+});
+
+test('mode dialog: onClose fires once per open → closed, from Done, a backdrop click or close() (the search hand-off forgets on it)', () => {
+  const doc = new JSDOM(html).window.document;
+  let closed = 0;
+  const ctl = createLevelController({ doc, save: async (l) => ({ ok: true, level: l }), onClose: () => { closed += 1; } });
+  ctl.close();
+  assert.equal(closed, 0, 'an already closed dialog reports nothing');
+  ctl.open();
+  ctl.close();
+  ctl.close();
+  assert.equal(closed, 1);
+  ctl.open();
+  doc.getElementById('mode-done').click();
+  assert.equal(closed, 2, 'Done');
+  ctl.open();
+  doc.querySelector('#mode-cards [data-level-choice="advanced"]').click();
+  assert.equal(closed, 2, 'a card applies the mode and leaves the dialog open');
+});
+
+test('mode dialog: a settings read that answers while a pick is saving never undoes the pick (a search pick reloads Settings at once)', async () => {
+  const doc = new JSDOM(html).window.document;
+  let answer = null;
+  const ctl = createLevelController({ doc, save: () => new Promise((r) => { answer = r; }) });
+  ctl.confirm('simple');
+  const saved = ctl.choose('advanced');
+  ctl.confirm('simple');
+  assert.equal(currentLevel(doc), 'advanced', 'the GET read before the save landed is ignored');
+  answer({ ok: true, level: 'advanced' });
+  await saved;
+  assert.equal(currentLevel(doc), 'advanced');
+  ctl.confirm('expert');
+  assert.equal(currentLevel(doc), 'expert', 'once the save answered, a value from elsewhere applies again');
+});
+
+// ── (3) the Worca level elements in the catalogue ─────────────────────────────
+
+test('catalogue lists level elements', async () => {
+  const doc = readFileSync(join(__dir, '..', 'docs', 'ui-levels.md'), 'utf8');
+  const rows = doc.split('\n').filter((l) => l.startsWith('|'));
+  const rowFor = (re) => rows.find((l) => re.test(l));
+  await checkRows([
+    ['the level avatar art in the corner', /level avatar art in the corner/i],
+    ['the level tooltip', /level tooltip/i],
+    ['the account-menu level card', /account-menu level card/i],
+    ['Profile (the level section)', /Profile \(the level section\)/],
+    ['the level welcome and celebration', /level welcome and celebration/i],
+    ['the Getting started level line', /Getting started level line/i],
+  ].map(([name, re]) => ({ name, run: () => {
+    const row = rowFor(re);
+    assert.ok(row, `the catalogue has no row for ${name}`);
+    assert.match(row, /\|\s*all\b[^|]*\|\s*$/, `${name} is not marked all`);
+  } })));
+  assert.match(doc, /Levels are not Interface modes: no level element carries `data-min-level`/);
 });

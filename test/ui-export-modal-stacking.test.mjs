@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
-import { fileURLToPath } from 'node:url';
+import { readIndexHtml } from '../src/core/read-index-html.mjs';
+import { readStyleCss } from '../src/core/read-style-css.mjs';
 
 // The export modal invokes the shared folder browser (Browse…). Both are
 // `.viewer-modal` elements (base z-index 50) and `#export-modal` is declared
@@ -9,9 +9,9 @@ import { fileURLToPath } from 'node:url';
 // paints on top and the picker renders behind it (unusable). The folder
 // browser is a leaf picker always opened FROM another modal, so it must stack
 // above the export modal.
-const css = readFileSync(fileURLToPath(new URL('../ui/public/style.css', import.meta.url)), 'utf8')
+const css = readStyleCss()
   .replace(/\/\*[\s\S]*?\*\//g, ''); // strip comments so their prose is not read as selectors
-const html = readFileSync(fileURLToPath(new URL('../ui/public/index.html', import.meta.url)), 'utf8');
+const html = readIndexHtml();
 
 /** Highest z-index among CSS rules whose selector satisfies `match(selector)`. */
 function maxZIndex(match) {

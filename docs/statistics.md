@@ -21,11 +21,11 @@ equally long period for Custom.
 
 ## Filters
 
-- **Cost tags** (behind the `runTags` feature flag): only runs that carry every tag in the field. A
+- **Cost tags**: only runs that carry every tag in the field. A
   `client:acme` tag matches exactly; a bare `client` matches any client value.
 - **Person**: only runs started by that person.
 
-Every tile, chart and grouped row follows the filters. Chat and Requirements spend are not tied to a run,
+Every tile, chart and grouped row follows the filters. Chat, Requirements and Design spend are not tied to a run,
 so any active filter leaves them out, and the Spent tile drops its budget meter (the limit covers
 the whole account, not the filtered slice).
 
@@ -34,15 +34,14 @@ select are hidden.
 
 ## View
 
-While the `runTags` feature flag is on, three chips replace the Group by select:
+Three chips choose the view:
 
 - **Overview** (default): the tiles and charts.
 - **By person**: the person table on its own (one row per starter, `(unknown person)` for runs with
   no named starter, a `Chat` row, a `Total` footer equal to the Spent tile), with Export CSV.
 - **Cost**: the Cost and value report (below).
 
-The chosen chip is remembered in this browser (a stored By tag choice opens Cost). With `runTags` off,
-the **Group by** select stays: **Group by person** adds the person table under the charts.
+The chosen chip is remembered in this browser (a stored By tag choice opens Cost).
 
 ## Cost
 
@@ -62,7 +61,8 @@ The Cost and value report splits the period's spend and asks what it bought.
 - **Rows**: the top 5 values by spend, then **Other (n)** when 2 or more values are left over (a single
   leftover value shows as itself), then **Unallocated** (runs without the value, only when there are
   any), then **Chat** (chat spend), then **Requirements** (the Requirements page's spend,
-  also after its flag is turned off), each only without filter chips. Shares are of the whole report total
+  also after its flag is turned off), then **Design** (the Design page's spend, also after its flag is turned
+  off), each only without filter chips. Shares are of the whole report total
   at both levels; under one percent reads `<1%`, never `0%`, and no spend reads `—`. The rows add up to
   the Spent tile, and each row's second-level rows add up to it. Expand a row to see its then by values;
   a row of Other expands to the values it folds.
@@ -134,5 +134,29 @@ With `report=1` the response adds `report`:
 - `requirements`: `{ spentUsd, prevSpentUsd, series }` for the Requirements page, `null` while a filter
   is active. With the `requirements` flag off it is there only when this period or the one before has
   Requirements spend, and `totals.requirements` (the Statistics tile's figures) is left out.
+- `design`: `{ spentUsd, prevSpentUsd, series }` for the Design page, `null` while a filter is active.
+  With the `design` flag off it is there only when this period or the one before has Design spend, and
+  `totals.design` is left out.
 
 Without `report=1` there is no `report` key.
+
+### Review quality
+
+Only finished (`done`) runs count, and runs that finished before this endpoint existed have no data: their role reviews
+were never kept.
+
+`GET /api/stats/review-quality?startMs=1740787200000&endMs=1743465600000`
+
+| Parameter | Values |
+| --- | --- |
+| `startMs`, `endMs` | whole milliseconds; optional. The window is runs started in `[startMs, endMs)`, all time by default |
+
+The response is `{ startMs, endMs, runs, roles }`. `runs` is the number of finished runs with role reviews in the window.
+`roles` has one row per reviewed role and target, plan roles first:
+`{ target, role, label, runs, reviews, raised, fixed, disputed, open }`. `target` is `plan` or `diff`, `reviews` is
+how many times the role reviewed, and the four counts are its findings and their answers, summed over the runs. They
+come only from each role's recorded counts, never from the findings' text. At most 200 rows. Archived and deleted runs
+are included, as everywhere in Statistics.
+
+A malformed `startMs` or `endMs`, or an `endMs` not after `startMs`, answers 400 with `{ error }`. A database failure
+answers 500 with `{ error: 'review quality unavailable' }`; the details go to the server log.

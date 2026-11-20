@@ -1,0 +1,62 @@
+/* ---------- History detail: Diff tab ---------- */
+.hd-diff{display:grid;grid-template-columns:minmax(280px,340px) 1fr;gap:18px;align-items:start;}
+.hd-diff .diff-add{color:var(--hd-count-add);}
+.hd-diff .diff-del{color:var(--hd-count-del);}
+@media (max-width:900px){.hd-diff{grid-template-columns:1fr;}}
+.hd-diff-list,.hd-diff-pane{background:var(--panel);border:1px solid var(--line);border-radius:var(--r-card);overflow:hidden;}
+.hd-diff-list-head,.hd-diff-pane-head{display:flex;align-items:center;justify-content:space-between;gap:10px;
+  padding:15px 18px;border-bottom:1px solid var(--line);font-size:var(--fs-body);}
+.hd-diff-rows{padding:6px;max-height:860px;overflow-y:auto;}
+.hd-diff-counts{font-size:var(--fs-caption);white-space:nowrap;}
+/* Binary count chips carry `.hint`, and `.hint` (style.css:283) is
+   `display:block;margin-top:7px` — inside these flex rows it would sit visibly
+   low. Same reset for the pane head. */
+.hd-diff-counts .hint,.hd-diff-pane-head .hint{display:inline;margin-top:0;}
+.hd-diff-pane-head .hd-diff-path{
+  margin:0;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;
+  font-size:12px;font-weight:400;
+}
+/* The patch is the tall thing on this screen, so it scrolls INSIDE its pane
+   rather than pushing the whole detail screen down — same cap and mechanism as
+   `.hd-diff-rows` opposite it, which keeps the two panes the same height.
+   Uncapped, a real patch measured 7479px and owned the screen's whole scroll. */
+.hd-diff-body{
+  --hd-gutter-width:calc(3ch + 16px);
+  padding:12px 0;
+  display:grid;
+  grid-template-columns:var(--hd-gutter-width) var(--hd-gutter-width) minmax(max-content,1fr);
+  max-height:860px;
+  overflow:auto;
+  font:400 12px/1.85 var(--mono);
+  color:var(--ink-2);
+}
+.hd-diff-body.hint{display:block;margin-top:0;padding:18px;color:var(--ink-2);}
+.hd-diff-none{padding:18px;color:var(--ink-2);}
+.hd-dl-row{display:contents;}
+.hd-dl-n{
+  position:sticky;
+  z-index:2;
+  padding:0 8px;
+  text-align:right;
+  color:var(--ink-2);
+  background:var(--panel);
+  user-select:none;
+}
+.hd-dl-n-old{left:0;}
+.hd-dl-n-new{left:var(--hd-gutter-width);}
+.hd-dl-code{min-width:100%;padding:0 18px 0 10px;white-space:pre;}
+.hd-dl-hunk,.hd-diff-note{grid-column:1/-1;padding-inline:18px;}
+/* Placeholder states are display:block bodies that pad 18px themselves. */
+.hd-diff-body.hint .hd-diff-note{padding-inline:0;}
+.hd-dl-hunk{white-space:pre;color:var(--ink-2);background:var(--field);}
+.hd-diff-trunc{padding-top:10px;color:var(--ink-2);}
+/* "N of M lines shown · Show K more lines": a real grid row spanning all three
+   tracks (like the hunk header), never display:contents. */
+.hd-dl-more{grid-column:1/-1;display:flex;align-items:center;gap:12px;padding:8px 18px;user-select:none;
+  border-top:1px solid var(--line);color:var(--ink-2);font:400 12px var(--sans);}
+.hd-dl-more-btn{border:none;background:none;color:var(--blue-ink);font:500 var(--fs-meta) var(--sans);
+  cursor:pointer;padding:0;}
+.hd-dl-more-btn:hover{text-decoration:underline;}
+.hd-dl-more-btn:focus-visible{outline:2px solid var(--ink);outline-offset:2px;border-radius:var(--r-xs);}
+.hd-dl-row.hd-dl-add > *{background:var(--green-bg);}
+.hd-dl-row.hd-dl-del > *{background:var(--red-bg);}

@@ -1,7 +1,7 @@
 // test/run-telemetry-summary.test.mjs — src/core/telemetry/summary.mjs: telemetry.ndjson → per-step figures.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { summarizeTelemetry, parseTelemetry, downsampleMax } from '../src/core/telemetry/summary.mjs';
+import { summarizeTelemetry, parseTelemetry, downsampleMax, unionMs } from '../src/core/telemetry/summary.mjs';
 
 const call = (ts, ctx, extra = {}) => ({ t: 'call', ts, step: 'x:a:1', session: 'S1', sub: null, msg: `m${ts}`, model: 'claude-opus-5-5', in: 1, cr: ctx - 1, cw: 0, out: 10, ctx, gapMs: 100, tools: [], ...extra });
 
@@ -102,4 +102,41 @@ test('downsampleMax keeps the largest value of every bucket, so the peak survive
 
 test('parseTelemetry skips torn and foreign lines', () => {
   assert.deepEqual(parseTelemetry('{"t":"run"}\nnope\n{"x":1}\n\n'), [{ t: 'run' }]);
+});
+
+test('unionMs: parallel intervals count once', () => {
+  assert.equal(unionMs([]), 0);
+  assert.equal(unionMs([[0, 10], [5, 10], [30, 5]]), 20);
+  assert.equal(unionMs([[0, 100], [10, 5]]), 100);
+});
+
+test('sub-agent wait, test time, cost per session, sub-agent series, harness load and GC', () => {
+  const S = 'x:r:1';
+  const tool = (ts, name, ms, extra = {}) => ({ t: 'tool', ts, step: S, sub: null, name, ms, err: false, ...extra });
+  const recs = [
+    { t: 'step', ts: 0, step: S, node: 'r', status: 'start' },
+    call(1000, 10_000, { step: S }),
+    tool(2000, 'Agent', 600),                       // a background launch: no wait
+    tool(3000, 'Agent', 60_000), tool(10_000, 'Agent', 60_000),   // two foreground lanes in parallel: 67 s
+    tool(4000, 'Bash', 20_000, { kind: 'test' }),
+    { ...tool(5000, 'Bash', 30_000, { kind: 'test' }), sub: 'tu1' },   // a sub-agent's suite, overlapping
+    tool(90_000, 'Bash', 1000, { kind: 'test', bg: true }),
+    call(80_000, 12_000, { step: S, sub: 'tu1' }),
+    { t: 'result', ts: 100_000, step: S, session: 'S1', costUsd: 0.4, cumulative: true },
+    { t: 'result', ts: 110_000, step: S, session: 'S1', costUsd: 0.9, cumulative: true },
+    { t: 'result', ts: 120_000, step: S, session: 'S2', costUsd: 0.25 },
+    { t: 'step', ts: 130_000, step: S, node: 'r', status: 'done' },
+    { t: 'harness', ts: 10_000, windowMs: 10_000, persists: 1, load1: 2.5, gcs: 3, gcMs: 12, gcMaxMs: 7 },
+    { t: 'harness', ts: 20_000, windowMs: 10_000, persists: 1, load1: 4.5 },
+  ];
+  const s = summarizeTelemetry(recs);
+  const st = s.steps[S];
+  assert.equal(st.agentWaitMs, 67_000);
+  assert.equal(st.testMs, 31_000, 'the main suite and the sub-agent\'s overlap; the background launch is no test time');
+  assert.equal(st.testRuns, 3);
+  assert.equal(Math.round(st.costUsd * 100) / 100, 1.15, 'S1 cumulative: its last; S2 adds');
+  assert.equal(st.wallMs, 130_000);
+  assert.deepEqual(st.subSeries, [[80_000, 12_000]]);
+  assert.deepEqual({ loadAvg: s.harness.loadAvg, loadMax: s.harness.loadMax, gcs: s.harness.gcs, gcMs: s.harness.gcMs, gcMaxMs: s.harness.gcMaxMs },
+    { loadAvg: 3.5, loadMax: 4.5, gcs: 3, gcMs: 12, gcMaxMs: 7 });
 });

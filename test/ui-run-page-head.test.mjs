@@ -1,7 +1,8 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
 import { JSDOM } from 'jsdom';
+import { readIndexHtml } from '../src/core/read-index-html.mjs';
+import { readStyleCss } from '../src/core/read-style-css.mjs';
 import { groupKindWord, pageModel, runCrumbs, paintCrumbs, buildFacts, syncFacts, setFactText, RUN_FACTS, GROUP_FACTS }
   from '../ui/public/run-page-head.mjs';
 
@@ -50,8 +51,8 @@ test('facts block: one row per fact, hidden while empty', () => {
   assert.deepEqual(RUN_FACTS.map(([k]) => k), ['project', 'branch', 'labels', 'tags', 'group']);
 });
 
-const INDEX = readFileSync(new URL('../ui/public/index.html', import.meta.url), 'utf8');
-const CSS = readFileSync(new URL('../ui/public/style.css', import.meta.url), 'utf8');
+const INDEX = readIndexHtml();
+const CSS = readStyleCss();
 const tpl = (id) => new JSDOM(INDEX).window.document.getElementById(id).content;
 const reEsc = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 const ruleBody = (sel) => {
@@ -73,7 +74,7 @@ test('run head: no kind chip in either template; the h1 stays the focus target',
 test('facts block: Group is the last row in both templates', () => {
   for (const id of ['run-detail-tpl', 'hist-detail-tpl']) {
     const kv = tpl(id).querySelector('dl.rd-kv[aria-label="Run facts"]');
-    assert.deepEqual([...kv.children].map((r) => r.dataset.fact), ['project', 'labels', 'tags', 'group'], id);
+    assert.deepEqual([...kv.children].map((r) => r.dataset.fact), ['project', 'labels', 'tags', 'pr-auto', 'group'], id);
     assert.ok(kv.lastElementChild.querySelector('.rd-group-line'), `${id}: the group line is in the last row`);
   }
 });

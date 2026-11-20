@@ -251,6 +251,10 @@ test('POST resolve-pipeline starts a mock run on the existing branch and marks t
   assert.equal(own.feature, 'feat');
   assert.equal(own.reusedExisting, true);
   assert.deepEqual(own.resolves, { runId: conflict.id, member: conflict.key });
+  // The run knows the ref it was told to merge (the brief's), and the sha it named at setup.
+  assert.equal(own.mergeIn.ref, br.baseCheck.baseRef);
+  assert.equal(own.mergeIn.ref, 'origin/dev');
+  assert.match(String(own.mergeIn.at), /^[0-9a-f]{40}$/);
   assert.deepEqual(readRunTags(entry.orch.state.id), ['client:acme'], 'the resolve run carries the original run\'s tags');
   await stopAndSettle(mod.runs, (e) => e === entry);
   // Stopped, the resolve run's post-run step copied its check onto the original: still conflicting, mark kept.
@@ -259,6 +263,39 @@ test('POST resolve-pipeline starts a mock run on the existing branch and marks t
   assert.equal(after.baseCheck.via.runId, entry.orch.state.id);
   assert.equal(after.baseResolve.runId, runId);
   updateBranchRecords(conflict.id, [conflict.key], (b) => { delete b.baseResolve; });
+});
+
+test('POST /api/run with body.mergeIn records no mergeIn', async () => {
+  const w = makeWorld(root); commitOnFeat(w, 'f.txt', 'feature\n'); teammatePush(w, 'f.txt', 'u\n');
+  const r = await fetch(`${base}/api/run`, { method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ projectDir: w.a, prompt: 'merge origin/dev', mock: true, humanInLoop: false, workflowId: 'wf_pr_fix',
+      sourceBranch: 'dev', featureBranch: 'feat', syncBeforeStart: false, mergeIn: { ref: 'origin/dev' } }) });
+  const j = await r.json();
+  assert.equal(r.status, 200, JSON.stringify(j));
+  const entry = mod.runs.get(j.runId);
+  assert.ok(entry, 'the live entry exists');
+  assert.equal(entry.orch.opts.branch.mergeIn, undefined, 'the HTTP body never sets it');
+  const ownBranch = () => { const id = entry.orch.state.id; const row = id && findPipelineRowById(id); return row?.branch ? JSON.parse(row.branch) : null; };
+  for (let i = 0; i < 200 && !ownBranch()?.worktreeDir; i++) await new Promise((res) => setTimeout(res, 50));
+  const own = ownBranch();
+  assert.equal(own.reusedExisting, true);
+  assert.equal(own.mergeIn, undefined);
+  await stopAndSettle(mod.runs, (e) => e === entry);
+});
+
+test('Watch PR\'s in-process start (invokeStartRun) carries mergeIn onto the run\'s branch record', async () => {
+  const w = makeWorld(root); commitOnFeat(w, 'f.txt', 'feature\n'); teammatePush(w, 'f.txt', 'u\n');
+  const r = await mod._testing.prWatcherDeps.startRun({ projectDir: w.a, prompt: 'merge origin/dev', mock: true, humanInLoop: false,
+    workflowId: 'wf_pr_fix', sourceBranch: 'dev', featureBranch: 'feat', syncBeforeStart: false }, { startedBy: 'pr-watch', mergeIn: { ref: 'origin/dev' } });
+  assert.equal(r.status, 200, JSON.stringify(r.body));
+  const entry = mod.runs.get(r.body.runId);
+  assert.ok(entry, 'the live entry exists');
+  const ownBranch = () => { const id = entry.orch.state.id; const row = id && findPipelineRowById(id); return row?.branch ? JSON.parse(row.branch) : null; };
+  for (let i = 0; i < 200 && !ownBranch()?.worktreeDir; i++) await new Promise((res) => setTimeout(res, 50));
+  const own = ownBranch();
+  assert.equal(own.mergeIn.ref, 'origin/dev');
+  assert.equal(own.mergeIn.at, g(w.a, 'rev-parse', 'origin/dev'));
+  await stopAndSettle(mod.runs, (e) => e === entry);
 });
 
 test('Watch PR merge-first without an agent: a clean base becomes a merge commit on the exact head; conflicts do not', async () => {

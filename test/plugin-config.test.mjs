@@ -11,7 +11,9 @@ import { pluginDataDir } from '../src/core/plugins-lock.mjs';
 import {
   readPluginConfig, writePluginConfig, redactedConfig, readPluginState, writePluginState,
   listProfiles, listProfileIds, createProfile, deleteProfile, isValidProfileId, DEFAULT_PROFILE,
+  readTicketUpdates, writeTicketUpdates,
 } from '../src/core/plugin-config.mjs';
+import { purgePluginData } from '../src/core/plugin-store.mjs';
 
 useTempHome(after);
 
@@ -199,4 +201,53 @@ test('readPluginState defaults to {}; writePluginState shallow-merges atomically
   assert.deepEqual(readPluginState(NAME), { cursor: 'def', etag: 'W/"1"' });
   assert.equal(existsSync(join(pluginDataDir(NAME), 'state.json')), true);
   assert.deepEqual(readdirSync(pluginDataDir(NAME)).filter((f) => f.endsWith('.tmp')), []);
+});
+
+// ── ticket updates (plans/ticket-updates-design.md §4, D3) ─────────────────────
+const TU_REC = { projects: [{ value: 'SHOP', label: 'Shop' }],
+  rules: [{ project: '', moment: 'finished', target: { kind: 'category', value: 'done' } }],
+  savedAt: '2026-10-29T10:42:00.000Z', savedBy: 'local' };
+
+test('ticket updates: null until saved; one record per profile and source, in the profiles/1 envelope', () => {
+  const P = 'tu-plugin';
+  assert.equal(readTicketUpdates(P, 'acme', 'jira'), null, 'nothing saved: legacy');
+  writeTicketUpdates(P, 'acme', 'jira', TU_REC);
+  writeTicketUpdates(P, 'acme', 'other', { ...TU_REC, projects: [] });
+  writeTicketUpdates(P, 'beta', 'jira', { ...TU_REC, savedBy: 'ann' });
+  assert.deepEqual(readTicketUpdates(P, 'acme', 'jira'), TU_REC);
+  assert.deepEqual(readTicketUpdates(P, 'acme', 'other').projects, []);
+  assert.equal(readTicketUpdates(P, 'beta', 'jira').savedBy, 'ann');
+  assert.equal(readTicketUpdates(P, 'beta', 'other'), null);
+  assert.equal(readTicketUpdates(P, undefined, 'jira'), null, 'no profile = the default bucket, empty here');
+  const onDisk = JSON.parse(readFileSync(join(pluginDataDir(P), 'ticket-updates.json'), 'utf8'));
+  assert.equal(onDisk.$format, 'profiles/1');
+  assert.deepEqual(Object.keys(onDisk.profiles).sort(), ['acme', 'beta']);
+  assert.deepEqual(Object.keys(onDisk.profiles.acme).sort(), ['jira', 'other']);
+  assert.deepEqual(readdirSync(pluginDataDir(P)).filter((f) => f.endsWith('.tmp')), [], 'atomic: no temp litter');
+  assert.throws(() => writeTicketUpdates(P, 'acme', '', TU_REC), /task source/);
+  assert.throws(() => writeTicketUpdates(P, '../x', 'jira', TU_REC), /invalid profile id/);
+  assert.throws(() => writeTicketUpdates(P, 'acme', 'jira', null), /must be an object/);
+  assert.equal(readTicketUpdates(P, 'acme', '__proto__'), null, 'own keys only');
+});
+
+test("ticket updates: deleteProfile drops that profile's records and keeps the others", () => {
+  const P = 'tu-del';
+  createProfile(P, 'acme', 'Acme');
+  createProfile(P, 'beta', 'Beta');
+  writeTicketUpdates(P, 'acme', 'jira', TU_REC);
+  writeTicketUpdates(P, 'beta', 'jira', TU_REC);
+  deleteProfile(P, 'acme');
+  assert.equal(readTicketUpdates(P, 'acme', 'jira'), null);
+  assert.deepEqual(readTicketUpdates(P, 'beta', 'jira'), TU_REC);
+  const onDisk = JSON.parse(readFileSync(join(pluginDataDir(P), 'ticket-updates.json'), 'utf8'));
+  assert.deepEqual(Object.keys(onDisk.profiles), ['beta']);
+});
+
+test("ticket updates: purge removes the file with the plugin's data", () => {
+  const P = 'tu-orphan';   // not in the lock: purgePluginData's orphan path
+  writeTicketUpdates(P, 'acme', 'jira', TU_REC);
+  assert.ok(existsSync(join(pluginDataDir(P), 'ticket-updates.json')));
+  purgePluginData(P);
+  assert.equal(existsSync(join(pluginDataDir(P), 'ticket-updates.json')), false);
+  assert.equal(readTicketUpdates(P, 'acme', 'jira'), null);
 });

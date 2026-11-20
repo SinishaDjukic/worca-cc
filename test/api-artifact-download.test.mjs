@@ -39,6 +39,7 @@ before(async () => {
   await writeFile(join(dir, 'Résumé plan.md'), '# résumé\n', 'utf8');
   await mkdir(join(dir, 'notes'), { recursive: true });
   await writeFile(join(dir, 'pic.svg'), '<svg xmlns="http://www.w3.org/2000/svg"/>', 'utf8');
+  await writeFile(join(dir, 'feed.xml'), '<html xmlns="http://www.w3.org/1999/xhtml"><script>1</script></html>', 'utf8');
   await writeFile(join(dir, '.env.example'), 'KEY=\n', 'utf8');
   await writeFile(join(dir, 'notes', '.hidden.md'), '# hidden\n', 'utf8');
   // Past the 25 MB preview ceiling without writing 26 MB: truncate() makes SPARSE files (as api-run-artifact-raw does).
@@ -57,6 +58,7 @@ before(async () => {
   recordArtifact(id, 'deck-asset', 'media/long.wav');
   recordArtifact(id, 'deck-asset', 'media/empty.mp3');
   recordArtifact(id, 'x', 'pic.svg');
+  recordArtifact(id, 'x', 'feed.xml');
   recordArtifact(id, 'x', '.env.example');
   recordArtifact(id, 'x', 'notes/.hidden.md');
   const ws = await seedWorkspacePipeline(proj, WS_KEY, { title: 'ws run', status: 'done' },
@@ -239,10 +241,16 @@ test('a conditional request send refuses is a 412 without the artifact\'s type o
   }
 });
 
-test('the download form keeps an svg\'s sandbox CSP, and serves dot-named files', async () => {
+test('the download form keeps an svg\'s sandbox CSP, an XML file is sandboxed too, and serves dot-named files', async () => {
   const svg = await hit(raw('pic.svg', '?download=1'));
   assert.equal(svg.status, 200);
   assert.equal(svg.headers['content-security-policy'], 'sandbox');
+  for (const q of ['', '?download=1']) {   // XML can carry XHTML <script>: an XML mime is sandboxed like SVG
+    const xml = await hit(raw('feed.xml', q));
+    assert.equal(xml.status, 200, q);
+    assert.equal(xml.headers['content-type'], 'application/xml', q);
+    assert.equal(xml.headers['content-security-policy'], 'sandbox', q);
+  }
   for (const [rel, body] of [['.env.example', 'KEY=\n'], ['notes/.hidden.md', '# hidden\n']]) {
     const r = await hit(raw(rel, '?download=1'));
     assert.equal(r.status, 200, rel);

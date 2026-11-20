@@ -10,7 +10,6 @@ import { featureCardModel, paintFeatureLog } from '../ui/public/shape/feature-ca
 import { groupModel } from '../src/shared/run-model.mjs';
 import { useTempHome } from './helpers/temp-home.mjs';
 import { seedPipelineRow } from './helpers/db-seed.mjs';
-import { setShapeFirst } from './helpers/shape-gate.mjs';
 import { getDb } from '../src/core/db.mjs';
 import { createThread, linkRun } from '../src/core/ask/store.mjs';
 import { shaperCard, liveSliceFrom } from '../src/core/shape/features.mjs';
@@ -122,52 +121,47 @@ test('pre-upgrade feature: the card route\'s data from the rows, with or without
 });
 
 test('pre-upgrade feature: the REST snapshot (no shaping) renders the feature card; run 2\'s ask is painted and answered with run 2\'s ref', async () => {
-  setShapeFirst(true);
   registerAskRenderer('plan', { render() {}, collect: () => ({ decision: 'approve' }) });
-  try {
-    const live = (pid) => (pid === 'bbbb0002' ? liveSliceFrom({ runId: 'run-b2', status: 'running', pendingQuestion: PRE_PQ }) : null);
-    const cardJson = JSON.parse(JSON.stringify(shaperCard('bbbb0001', { live })));
-    const rest = { source: 'rest', terminal: true, status: 'done', pipelineId: 'bbbb0001' };   // rowToState: no shaping
-    const two = { source: 'live', terminal: false, runId: 'run-b2', pipelineId: 'bbbb0002', status: 'running', pendingQuestion: PRE_PQ,
-      stageProgress: { ...prog('plan', 'Plan', 'amber'), stages: [], passes: 0 } };   // runProgress's full shape: the bar reads stages
-    const runStore = { subscribe: () => () => {}, byPipeline: (pid) => (pid === 'bbbb0001' ? rest : pid === 'bbbb0002' ? two : null), get: () => null };
-    const painted = [];
-    const answered = [];
-    const controls = {
-      paintQuestion: (ref, host) => {
-        painted.push(ref.pipelineId);
-        const panel = host.querySelector('.qpanel');
-        if (!panel.querySelector('[data-qpanel-submit]')) { panel.innerHTML = '<button class="btn btn-primary" data-qpanel-submit>Approve</button>'; panel.classList.remove('hidden'); }
-        return { id: PRE_PQ.id, kind: 'plan', heading: 'Plan · run 2', stepCard: false };
-      },
-      releaseQuestion: () => {},
-      answer: (ref, id) => { answered.push([ref.pipelineId, id]); return true; },
-    };
-    const dom = trackDom(new JSDOM('<!doctype html><body></body>'));
-    // The merge (D4): the card's status line and member rows are the feature group's (app.js groupRow); a stub row here.
-    const gm = groupModel({ kind: 'feature', title: 'Charts', planning: { status: 'done', endReached: true },
-      members: [{ status: 'done', endReached: true }, { status: 'running', pendingQuestion: PRE_PQ }, { ticket: { status: 'scheduled', after: { index: 2 } } }] });
-    const titles = ['Store charts', 'Chart in Chat', 'Charts on the run page'];
-    const row = { kind: 'chain', groupKind: 'feature', groupId: 'feat-pre', title: 'Charts', model: gm, count: gm.count.text,
-      planning: { title: 'Planning', href: '#running/r0', model: gm.planning },
-      members: gm.members.map((m, i) => ({ position: i + 1, title: titles[i], href: '#runs', model: m })) };
-    controls.groupOf = () => row;
-    const ctl = createRunCardController({ controls, runStore, tickMs: 0 });
-    const built = ctl.build({ id: 'card_pre', card: { type: PROGRESS_CARD_TYPE, pipelineId: 'bbbb0001', runId: 'run-b1', title: 'Charts' } },
-      { doc: dom.window.document, win: dom.window, shaperCard: () => cardJson });
-    dom.window.document.body.appendChild(built.el);
-    const $ = (sel) => built.el.querySelector(sel);
-    assert.equal($('.run-status').dataset.text, 'Run 2 of 3 · needs you');
-    assert.equal(painted.at(-1), 'bbbb0002');
-    assert.deepEqual([...built.el.querySelectorAll('.run-member-title')].map((n) => n.textContent),
-      ['Planning', 'Store charts', 'Chart in Chat', 'Charts on the run page']);
-    $('.chat-rc-q .qpanel [data-qpanel-submit]').click();
-    await new Promise((r) => setTimeout(r, 0));
-    assert.deepEqual(answered, [['bbbb0002', PRE_PQ.id]]);
-    built.dispose(); ctl.destroy();
-  } finally {
-    setShapeFirst(false);
-  }
+  const live = (pid) => (pid === 'bbbb0002' ? liveSliceFrom({ runId: 'run-b2', status: 'running', pendingQuestion: PRE_PQ }) : null);
+  const cardJson = JSON.parse(JSON.stringify(shaperCard('bbbb0001', { live })));
+  const rest = { source: 'rest', terminal: true, status: 'done', pipelineId: 'bbbb0001' };   // rowToState: no shaping
+  const two = { source: 'live', terminal: false, runId: 'run-b2', pipelineId: 'bbbb0002', status: 'running', pendingQuestion: PRE_PQ,
+    stageProgress: { ...prog('plan', 'Plan', 'amber'), stages: [], passes: 0 } };   // runProgress's full shape: the bar reads stages
+  const runStore = { subscribe: () => () => {}, byPipeline: (pid) => (pid === 'bbbb0001' ? rest : pid === 'bbbb0002' ? two : null), get: () => null };
+  const painted = [];
+  const answered = [];
+  const controls = {
+    paintQuestion: (ref, host) => {
+      painted.push(ref.pipelineId);
+      const panel = host.querySelector('.qpanel');
+      if (!panel.querySelector('[data-qpanel-submit]')) { panel.innerHTML = '<button class="btn btn-primary" data-qpanel-submit>Approve</button>'; panel.classList.remove('hidden'); }
+      return { id: PRE_PQ.id, kind: 'plan', heading: 'Plan · run 2', stepCard: false };
+    },
+    releaseQuestion: () => {},
+    answer: (ref, id) => { answered.push([ref.pipelineId, id]); return true; },
+  };
+  const dom = trackDom(new JSDOM('<!doctype html><body></body>'));
+  // The merge (D4): the card's status line and member rows are the feature group's (app.js groupRow); a stub row here.
+  const gm = groupModel({ kind: 'feature', title: 'Charts', planning: { status: 'done', endReached: true },
+    members: [{ status: 'done', endReached: true }, { status: 'running', pendingQuestion: PRE_PQ }, { ticket: { status: 'scheduled', after: { index: 2 } } }] });
+  const titles = ['Store charts', 'Chart in Chat', 'Charts on the run page'];
+  const row = { kind: 'chain', groupKind: 'feature', groupId: 'feat-pre', title: 'Charts', model: gm, count: gm.count.text,
+    planning: { title: 'Planning', href: '#running/r0', model: gm.planning },
+    members: gm.members.map((m, i) => ({ position: i + 1, title: titles[i], href: '#runs', model: m })) };
+  controls.groupOf = () => row;
+  const ctl = createRunCardController({ controls, runStore, tickMs: 0 });
+  const built = ctl.build({ id: 'card_pre', card: { type: PROGRESS_CARD_TYPE, pipelineId: 'bbbb0001', runId: 'run-b1', title: 'Charts' } },
+    { doc: dom.window.document, win: dom.window, shaperCard: () => cardJson });
+  dom.window.document.body.appendChild(built.el);
+  const $ = (sel) => built.el.querySelector(sel);
+  assert.equal($('.run-status').dataset.text, 'Run 2 of 3 · needs you');
+  assert.equal(painted.at(-1), 'bbbb0002');
+  assert.deepEqual([...built.el.querySelectorAll('.run-member-title')].map((n) => n.textContent),
+    ['Planning', 'Store charts', 'Chart in Chat', 'Charts on the run page']);
+  $('.chat-rc-q .qpanel [data-qpanel-submit]').click();
+  await new Promise((r) => setTimeout(r, 0));
+  assert.deepEqual(answered, [['bbbb0002', PRE_PQ.id]]);
+  built.dispose(); ctl.destroy();
 });
 
 test('controls: the current run is the target; halted names Resume', () => {
@@ -175,8 +169,18 @@ test('controls: the current run is the target; halted names Resume', () => {
     { halted: { index: 2, state: 'error', waiting: [3, 4] }, open: true, approveEach: false, originPipelineId: 'p0' });
   const m = featureCardModel({ own: snap('p0'), card: card(v),
     snapOf: (pid) => (pid === 'p2' ? snap('p2', { status: 'failed', source: 'rest', terminal: true, stageProgress: { label: 'Review', text: 'Review' } }) : null) });
-  assert.deepEqual(m.controls, { featureId: v.id, active: true, halted: true, rest: true, approveEach: false, planPipelineId: 'p0',
+  assert.deepEqual(m.controls, { featureId: v.id, active: true, halted: true, rest: true, approveEach: false, planPipelineId: 'p0', held: null,
     target: { index: 2, runId: 'run-p2', pipelineId: 'p2', status: 'failed', asks: false } });   // snap() defaults runId to `run-${pid}`
+});
+
+test('controls carry held and the held slice is current', () => {
+  const v = VIEW([SL(1, 'done', { pipelineId: 'p1' }), SL(2, 'held'), SL(3, 'planned')], { open: true, held: { index: 2, ticketId: 't2' }, originPipelineId: 'p0' });
+  const m = featureCardModel({ own: snap('p0'), card: card(v) });
+  assert.deepEqual(m.controls.held, { index: 2 });
+  assert.equal(m.controls.target.index, 2);
+  assert.equal(m.controls.rest, true);
+  const plain = VIEW([SL(1, 'done', { pipelineId: 'p1' }), SL(2, 'planned')], { open: true, originPipelineId: 'p0' });
+  assert.equal(featureCardModel({ own: snap('p0'), card: card(plain) }).controls.held, null);
 });
 
 test('controls: a current run that asks (plan approval) is a target that asks, live or from the slice state alone', () => {
@@ -199,4 +203,13 @@ test('re-planning: the re-plan run\'s outline ask is the open step (live snapsho
   assert.equal(live.controls.rest, false);
   const ptr = featureCardModel({ own: snap('p1'), card: card({ ...v, ask: { index: null, runId: 'run-rp1', pipelineId: 'rp1', id: 'q-split', kind: 'outline' } }) });
   assert.equal(ptr.step.kind, 'outline');
+});
+
+test('featureCardModel returns requirementChecks keyed by pipeline or ticket', () => {
+  const check = { items: [{ id: 'R-po-1', label: 'R-po-1 · covered by the diff', pass: true, detail: '' }], passed: 1, total: 1 };
+  const v = VIEW([SL(1, 'done', { pipelineId: 'p1', requirements: { ids: ['R-po-1'], check } }), SL(2, 'planned', { requirements: { ids: ['R-qa-1'], check: null } }),
+    SL(3, 'planned', { requirements: { ids: ['R-ux-1'], check } })]);
+  const m = featureCardModel({ own: snap('p1', { status: 'done', terminal: true }), card: card(v) });
+  assert.deepEqual(m.requirementChecks, { p1: check, t3: check });
+  assert.deepEqual(featureCardModel({ own: snap('p1'), card: card(VIEW([SL(1, 'running', { pipelineId: 'p1' })])) }).requirementChecks, {});
 });

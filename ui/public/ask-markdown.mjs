@@ -7,6 +7,7 @@
 // detached-staging commit rules as hdApplyHighlights (app.js:11235-11260):
 // text must round-trip byte-for-byte and only class-carrying SPANs may appear.
 import { SUPPORTED_LANGUAGE_IDS } from './syntax-highlight.mjs';
+import { copyButton, copyFromButton } from './copy-button.mjs';
 
 const ALLOWED_TAGS = ['p', 'br', 'strong', 'em', 'del', 'code', 'pre', 'ul', 'ol', 'li', 'a',
   'h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'blockquote', 'hr', 'table', 'thead', 'tbody', 'tr', 'th', 'td', 'input'];
@@ -103,6 +104,16 @@ export function createMarkdownRenderer({ doc, load, hljsLoader }) {
     for (const input of [...frag.querySelectorAll('input')]) {
       if ((input.getAttribute('type') || '').toLowerCase() !== 'checkbox') { input.remove(); continue; }
       input.setAttribute('disabled', '');
+    }
+    // Every code block gets the one copy button (copy-button.mjs) in its top-right corner. The block is wrapped so the
+    // button stays put while a long line scrolls the <pre>; it copies the code's text, never the highlight markup.
+    for (const pre of [...frag.querySelectorAll('pre')]) {
+      const box = doc.createElement('div');
+      box.className = 'md-code';
+      const btn = copyButton(doc, { name: 'Copy code', cls: 'md-code-copy' });
+      btn.addEventListener('click', () => { void copyFromButton(btn, pre.textContent); });
+      pre.replaceWith(box);
+      box.append(pre, btn);
     }
     return { kind: 'md', frag };
   }

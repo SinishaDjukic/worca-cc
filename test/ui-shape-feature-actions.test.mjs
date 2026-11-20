@@ -124,6 +124,81 @@ test('focus survives a disabling click: the same control when it is back, else �
   assert.equal(s.doc.activeElement, elsewhere);
 });
 
+// "Ask me before each run": the held row (Needs you · the reason · Start now) on the controls every host paints.
+const HELD = (index = 2, over = {}) => C({ held: { index }, target: { index, runId: null, pipelineId: null, status: null, asks: false }, ...over });
+const count = (host, text) => host.textContent.split(text).length - 1;
+
+test('held: Needs you · Run 2 waits for you to start · Start now, once each; Start now posts start; release clears the row', async () => {
+  const t = setup(HELD());
+  const row = t.host.querySelector('.shape-feature-held');
+  assert.ok(row);
+  assert.equal(count(t.host, 'Needs you'), 1);
+  assert.equal(count(t.host, 'Run 2 waits for you to start'), 1);
+  assert.equal(count(t.host, 'for you to start'), 1);
+  const start = t.host.querySelectorAll('[data-act="feature-start"]');
+  assert.equal(start.length, 1);
+  assert.equal(start[0].textContent, 'Start now');
+  assert.ok(start[0].classList.contains('btn-primary') && start[0].classList.contains('btn-sm'));
+  assert.equal(row.querySelector('.status-dot').dataset.state, 'needs-you');
+  assert.ok(!row.querySelector('.status-dot').classList.contains('has-sym'), 'no "?": Worca is not asking');
+  assert.equal(row.getAttribute('aria-live'), null, 'not a live region');
+  assert.ok(t.host.querySelector('[data-act="feature-more"]'), 'the usual ⋯ stays');
+  start[0].click(); await settle();
+  assert.deepEqual(t.seen.filter((x) => x[0] === 'act').map((x) => x.slice(1, 3)), [['start', null]]);
+  paintFeatureActions(t.doc, t.host, C({ target: { index: 2, runId: 'r2', pipelineId: 'p2', status: 'starting' } }), NOOP);
+  assert.equal(t.host.querySelector('.shape-feature-held'), null);
+  assert.equal(t.host.querySelector('[data-act="feature-start"]'), null);
+  assert.equal(count(t.host, 'Needs you'), 0);
+  // omit (a host footer's keys) never drops Start now; a halted feature shows Resume, not the held row
+  const g = setup(HELD(), {});
+  paintFeatureActions(g.doc, g.host, HELD(3), NOOP, { omit: ['start', 'start-now', 'resume'], menu: false });
+  assert.equal(g.host.querySelectorAll('[data-act="feature-start"]').length, 1);
+  const h = setup(HELD(2, { halted: true }));
+  assert.equal(h.host.querySelector('.shape-feature-held'), null);
+  assert.deepEqual(h.labels().filter(Boolean), ['Resume', 'Re-plan the rest']);
+});
+
+test('focus: after Start now succeeds activeElement is ⋯, after a refusal it is Start now', async () => {
+  const a = setup(HELD());
+  blurOnDisable(a.win);
+  const start = a.host.querySelector('[data-act="feature-start"]');
+  start.focus(); start.click(); await settle();
+  paintFeatureActions(a.doc, a.host, C({ target: { index: 2, runId: 'r2', pipelineId: 'p2', status: 'starting' } }), NOOP);
+  assert.equal(a.doc.activeElement.dataset.act, 'feature-more');
+  const b = setup(HELD(), { act: async () => ({ ok: false, error: '‘Run 1’ is still merging its work back. Try again in a moment' }) });
+  blurOnDisable(b.win);
+  const s2 = b.host.querySelector('[data-act="feature-start"]');
+  s2.focus(); s2.click(); await settle(); await settle();
+  assert.equal(b.doc.activeElement, s2);
+  assert.equal(s2.disabled, false);
+  const err = b.host.querySelector('.shape-feature-err');
+  assert.equal(err.getAttribute('role'), 'alert');
+  assert.match(err.textContent, /still merging its work back/);
+});
+
+test('focus, group page (no ⋯ in the controls): after Start now succeeds activeElement is the passed fallback, never <body>', async () => {
+  const t = setup(HELD());
+  const header = t.doc.body.appendChild(t.doc.createElement('button'));
+  header.className = 'gpage-more';
+  const deps = { ...NOOP, focusFallback: () => header };
+  paintFeatureActions(t.doc, t.host, HELD(), deps, { menu: false });
+  blurOnDisable(t.win);
+  const start = t.host.querySelector('[data-act="feature-start"]');
+  start.focus(); start.click(); await settle();
+  paintFeatureActions(t.doc, t.host, C({ target: { index: 2, runId: 'r2', pipelineId: 'p2', status: 'starting' } }), deps, { menu: false });
+  assert.equal(t.doc.activeElement, header);
+});
+
+test('a held index change repaints the row with the same buttons', () => {
+  const t = setup(HELD(2));
+  const before = t.host.querySelector('.shape-feature-held');
+  paintFeatureActions(t.doc, t.host, HELD(3), NOOP);
+  const after = t.host.querySelector('.shape-feature-held');
+  assert.notEqual(after, before);
+  assert.equal(count(t.host, 'Run 3 waits for you to start'), 1);
+  assert.equal(count(t.host, 'Run 2'), 0);
+});
+
 test('a confirm-backed pick (Re-plan the rest, Cancel the rest) gives the focus back to ⋯ on either answer', async () => {
   // The confirm takes the focus and hides itself when it closes (app.js modalShell adds .hidden). Chromium still reports
   // its hidden button as activeElement when the promise resolves, and drops the focus to <body> only a frame later.

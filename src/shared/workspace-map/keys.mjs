@@ -225,6 +225,7 @@ export function remoteSlug(url) {
   }
   const slash = s.indexOf('/');
   const host0 = s.slice(0, slash).toLowerCase();
+  if (host0 === 'altssh.bitbucket.org') s = `bitbucket.org${s.slice(slash)}`; // Bitbucket's SSH-over-443 host: the same repository
   if (isAzureHost(host0)) {
     const az = parseAzurePath(host0, s.slice(slash + 1).replace(/\/+$/, '').replace(/\.git$/i, '').split('/'));
     if (az) s = ['dev.azure.com', az.org, az.project, az.repo].map((x, i) => (i ? encodeURIComponent(x) : x)).join('/');

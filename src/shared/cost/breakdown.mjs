@@ -1,6 +1,6 @@
 // src/shared/cost/breakdown.mjs — worca's own AI spend inside a run's cost, as every surface shows it.
 // Pure, browser + Node (served at /src/shared; ui/public imports it as '../../src/shared/cost/breakdown.mjs').
-// Booking lives in run-harness _recordCost ({aux}); this only reads steps[].auxCosts and
+// Booking lives in run-harness _recordCost ({aux}; `session` = a session's main agent, its hand-offs); this only reads steps[].auxCosts and
 // steps[].stoppedTurns. Numbers stay raw here; callers format them. Lower bounds (`floorUsd`: a call
 // or an agent turn cut off before its `result`) are NEVER in `total` or `agents` (I4).
 
@@ -8,8 +8,9 @@ export const AUX_KINDS = Object.freeze({
   away: Object.freeze({ label: 'Away mode' }),
   auto: Object.freeze({ label: 'Auto workflow' }),
   title: Object.freeze({ label: 'Run title' }),
+  session: Object.freeze({ label: 'Session hand-offs' }),         // C22: a session's main agent (session groups)
 });
-export const AUX_ORDER = Object.freeze(['away', 'auto', 'title']);
+export const AUX_ORDER = Object.freeze(['away', 'auto', 'title', 'session']);
 const num = (v) => (Number.isFinite(Number(v)) && Number(v) > 0 ? Number(v) : 0);
 /** A stored lower bound: a finite number ≥ 0 (0 = a {free} model), else null (not priced).
  *  Strict on purpose: Number(null) is 0, which would turn "not priced" into "free". */
@@ -79,9 +80,10 @@ export function auxLabelForSubagent(subagentType, kind) {
   return subagentType === 'night-decider' && kind ? `${base} (${kind})` : base;
 }
 
-/** "1 review" / "2 reviews" for Away mode, "1 call" / "n calls" for the others. */
+/** "1 review" / "2 reviews" for Away mode, "1 hand-off" / "n hand-offs" for a session's main agent (C22),
+ *  "1 call" / "n calls" for the others. */
 export function fmtAuxCalls(kind, calls) {
   const n = Math.max(0, Math.floor(Number(calls) || 0));
-  const w = kind === 'away' ? 'review' : 'call';
+  const w = kind === 'away' ? 'review' : kind === 'session' ? 'hand-off' : 'call';
   return `${n} ${w}${n === 1 ? '' : 's'}`;
 }

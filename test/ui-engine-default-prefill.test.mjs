@@ -3,19 +3,18 @@
 // Boot copied from test/ui-engine-picker.test.mjs.
 import { test, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { JSDOM } from 'jsdom';
 import { useDomRelease } from './helpers/jsdom-release.mjs';
+import { readIndexHtml } from '../src/core/read-index-html.mjs';
 
 const trackDom = useDomRelease(afterEach);
-const htmlPath = fileURLToPath(new URL('../ui/public/index.html', import.meta.url));
 const appPath = fileURLToPath(new URL('../ui/public/app.js', import.meta.url));
 const PROJECTS = [{ name: 'web', path: '/a/web', exists: true }, { name: 'api', path: '/a/api', exists: true }];
 const ok = (body, status = 200) => ({ ok: status < 400, status, json: async () => body });
 
 async function boot({ defaults }) {
-  const dom = trackDom(new JSDOM(readFileSync(htmlPath, 'utf8'), { url: 'http://localhost:4317/' }));
+  const dom = trackDom(new JSDOM(readIndexHtml(), { url: 'http://localhost:4317/' }));
   const { window } = dom;
   window.Element.prototype.scrollIntoView = function () {};
   let lastWs = null;
@@ -67,7 +66,7 @@ test('a project default of Codex prefills Codex and says it comes from the proje
   assert.equal(on(ctx.doc), 'codex');
   assert.equal(ctx.doc.getElementById('engine-default-hint').hidden, false);
   assert.equal(ctx.doc.getElementById('engine-default-hint').textContent, 'Default from project');
-  assert.equal(ctx.doc.getElementById('engine-hint').textContent, 'Codex runs this pipeline, including titles and summaries. Its models: Models › Codex');
+  assert.equal(ctx.doc.getElementById('engine-hint').textContent, 'Codex runs this pipeline, including titles and summaries. Its models: Models › Jobs');
   await submit(ctx);
   assert.equal(ctx.posted.at(-1).engine, 'codex');
 });

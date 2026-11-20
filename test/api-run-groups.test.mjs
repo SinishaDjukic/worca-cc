@@ -57,3 +57,38 @@ test('API: group routes answer 201 / 400 / 200 / 409 / 404 and GET lists the gro
   assert.equal((await del(`/api/run-groups/members/${b}`)).status, 404);
   assert.equal((await get('/api/run-groups')).body.groups.find((x) => x.id === g.body.group.id).members.length, 1);
 });
+
+test('API: a new group takes several runs and a name source, moves a grouped run, and Undo puts it back once', async () => {
+  const a = (await seedPipeline(PROJECT, { status: 'done', title: 'A' })).id;
+  const b = (await seedPipeline(PROJECT, { status: 'done', title: 'B' })).id;
+  const one = await post('/api/run-groups', { title: 'One', pipelineId: a });
+  const two = await post('/api/run-groups', { title: 'Two', nameSource: 'suggested', pipelineIds: [b] });
+  assert.equal(two.status, 201);
+  assert.equal(two.body.group.nameSource, 'suggested');
+  const moved = await post(`/api/run-groups/${two.body.group.id}/members`, { pipelineIds: [a] });
+  assert.equal(moved.status, 200);
+  assert.deepEqual(moved.body.added, [a]);
+  assert.equal(moved.body.group.title, 'Two');
+  assert.equal((await get('/api/run-groups')).body.groups.find((g) => g.id === one.body.group.id), undefined, 'One emptied');
+  assert.equal((await post('/api/run-groups/undo', { token: moved.body.undo })).status, 200);
+  assert.deepEqual((await get('/api/run-groups')).body.groups.find((g) => g.id === one.body.group.id).members.map((m) => m.pipelineId), [a]);
+  assert.equal((await post('/api/run-groups/undo', { token: moved.body.undo })).status, 410);
+  assert.equal((await post('/api/run-groups', { title: 'X', pipelineIds: [] })).status, 400);
+});
+
+test('API: run-group suggest-name answers 404 while smartRunNaming is off; on (mock): the fixed name', async () => {
+  const prev = { mock: process.env.WORCA_MOCK, flags: process.env.WORCA_FLAGS };
+  try {
+    process.env.WORCA_MOCK = '1';
+    const a = (await seedPipeline(PROJECT, { status: 'done', title: 'A' })).id;
+    process.env.WORCA_FLAGS = '-smartRunNaming';
+    assert.equal((await post('/api/run-groups/suggest-name', { pipelineIds: [a] })).status, 404);
+    process.env.WORCA_FLAGS = 'smartRunNaming';
+    const r = await post('/api/run-groups/suggest-name', { pipelineIds: [a] });
+    assert.deepEqual([r.status, r.body], [200, { source: 'model', name: 'Mock group' }]);
+    assert.equal((await post('/api/run-groups/suggest-name', { pipelineIds: ['nope'] })).status, 404);
+    assert.equal((await post('/api/run-groups/suggest-name', {})).status, 400);
+  } finally {
+    for (const [k, v] of [['WORCA_MOCK', prev.mock], ['WORCA_FLAGS', prev.flags]]) { if (v === undefined) delete process.env[k]; else process.env[k] = v; }
+  }
+});

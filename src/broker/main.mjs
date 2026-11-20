@@ -28,7 +28,7 @@ export function loadBroker(env = process.env) {
   let slots = [];
   try {
     const extra = config.slotsFile ? JSON.parse(readFileSync(config.slotsFile, 'utf8')) : undefined;
-    slots = mergeSlots(builtinSlots({ localUrl: config.localUrl, github: config.github }), extra);
+    slots = mergeSlots(builtinSlots({ localUrl: config.localUrl, github: config.github, multi: config.mode === 'multi' }), extra);
   } catch (err) {
     errors.push(`slots: ${err.message}`);
   }

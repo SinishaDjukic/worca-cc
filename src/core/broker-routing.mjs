@@ -78,6 +78,8 @@ export function manifestModels(manifest, out = new Set(), depth = 0) {
     // `runOverlay` (orchestrator.mjs) records what a run was ASKED to use; the cells hold what it runs (a defragment
     // pair or an engine switch can override a pick), so a model only that record names is never dispatched.
     if (depth === 0 && k === 'runOverlay') continue;
+    // `wanted` (a node's or a role's) is a pick the run's engine dropped (role-slots pickOrDrop): never dispatched either.
+    if (k === 'wanted') continue;
     if (k === 'model' && typeof v === 'string' && v.trim()) out.add(v.trim());
     else if (v && typeof v === 'object') manifestModels(v, out, depth + 1);
   }

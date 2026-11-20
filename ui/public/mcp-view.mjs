@@ -9,6 +9,7 @@ import { relTime } from './plugins-view.mjs';
 import { compileDefinition, formFromDefinition, blankDefinitionForm, createDefinitionForm } from './mcp-definition-form.mjs';
 import { splitMessage } from './feedback.mjs';
 import { openSkillImport, inspectionSummary, consentNode } from './skill-import.mjs';
+import { openMcpImport } from './mcp-server-import.mjs';
 
 const enc = encodeURIComponent;
 function h(doc, tag, cls, text) {
@@ -31,6 +32,11 @@ const addBtn = (doc, label, data) => { const b = button(doc, 'btn btn-sm', label
 export const MCP_SKILLS_ROUTE = 'connectors/skills';
 export function parseMcpParam(sub = '') {
   if (sub === 'servers') return { view: 'servers', setId: null };
+  if (sub.startsWith('servers/') && sub.length > 8) {
+    let server = sub.slice(8);
+    try { server = decodeURIComponent(server); } catch { /* a malformed %-escape reads as typed: no row matches it */ }
+    return { view: 'servers', setId: null, server };
+  }
   if (sub === 'skills') return { view: 'skills', setId: null };
   if (sub.startsWith('sets/') && sub.length > 5) {
     let setId = sub.slice(5);
@@ -196,7 +202,8 @@ export function createMcpView({ host, api, navigate, confirm, modal, doc = globa
     const primary = st.view === 'sets' ? button(doc, 'btn btn-primary', 'New set', { act: 'new-set' })
       : st.view === 'servers' ? button(doc, 'btn btn-primary', 'Add MCP server', { act: 'add-server' })
         : button(doc, 'btn btn-primary', 'Import skill', { act: 'import-skill' });
-    bar.append(title, seg, primary);
+    const importBtn = button(doc, 'btn', 'Import from other tools', { act: 'import-servers' });
+    bar.append(title, seg, ...(st.view === 'servers' ? [importBtn] : []), primary);
     return bar;
   }
 
@@ -669,6 +676,7 @@ export function createMcpView({ host, api, navigate, confirm, modal, doc = globa
     }
     if (d.act === 'add-server') return openDefinition(null);
     if (d.act === 'import-skill') return importSkill();
+    if (d.act === 'import-servers') return importServers();
     if (d.act === 'rename') {
       const v = await promptName('Rename set', cur.name);
       if (v && await write('PUT', setPath(cur.id), { name: v }, 'Set renamed')) await load();
@@ -840,6 +848,13 @@ export function createMcpView({ host, api, navigate, confirm, modal, doc = globa
     } });
   }
 
+  /** Servers view › Import from other tools (mcp-server-import.mjs): the new Manual servers join no set; the list is read again. */
+  function importServers() {
+    openMcpImport({ api, modal, doc,
+      onDone: async ({ detail }) => { say(detail, 'ok'); st.servers = null; await load(); },
+      onChanged: async () => { st.servers = null; await load(); } });
+  }
+
   /** Skills view › Add to set: General and user sets; a set the skill is in already is disabled (spec §6.3). */
   function addSkillTo(skillId) {
     const e = (st.skills || []).find((x) => x.id === skillId);
@@ -965,7 +980,7 @@ export function createMcpView({ host, api, navigate, confirm, modal, doc = globa
   host.addEventListener('focusout', (e) => { if (e.target.dataset && e.target.dataset.field) void onChange(e); });
 
   return {
-    /** Route entry: '' | 'sets/<id>' | 'servers' | 'skills' (the part after #connectors/). */
+    /** Route entry: '' | 'sets/<id>' | 'servers' | 'servers/<id>' | 'skills' (the part after #connectors/). */
     show(sub = '') {
       const r = parseMcpParam(sub);
       st.view = r.view;

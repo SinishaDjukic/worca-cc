@@ -395,6 +395,7 @@ test('tone and text while waiting, parked or ended', async () => {
       assert.equal(runProgress(S({ ...planning, status: 'paused' })).tone, 'amber');
       assert.equal(runProgress(S({ ...planning, status: 'paused' })).text, 'Plan · paused');
       assert.equal(runProgress(S({ ...planning, status: 'pausing' })).text, 'Plan · pausing');
+      assert.equal(runProgress(S({ ...planning, status: 'paused', resumePending: true })).text, 'Plan · resuming', 'a Resume in flight');
       assert.equal(runProgress(S({ ...planning, status: 'interrupted' })).tone, 'amber');
     } },
     { name: 'stopped and error → red', run: () => {
@@ -414,6 +415,8 @@ test('tone and text while waiting, parked or ended', async () => {
       const st = { stepper: manifest([agent('n_a', 'deckA'), end()]) };
       assert.equal(runProgress(S({ ...st, pendingQuestion: { kind: 'gate' } })).text, 'Needs you · a decision');
       assert.equal(runProgress(S({ ...st, status: 'paused' })).text, 'Paused');
+      assert.equal(runProgress(S({ ...st, status: 'paused', resumePending: true })).text, 'Resuming');
+      assert.equal(runProgress(S({ ...st, status: 'pausing' })).text, 'Pausing');
       assert.equal(runProgress(S({ ...st, status: 'stopped' })).text, 'Stopped');
       assert.equal(runProgress(S({ ...st, status: 'error' })).text, 'Failed');
     } },

@@ -14,7 +14,7 @@ Completed state).
 |---|---|---|---|
 | organization | text | — | the name in `https://dev.azure.com/<organization>` |
 | token | secret text | — | a personal access token with **Work Items: Read & write** and **Project and Team: Read** |
-| closeOnComplete | select yes/no | no | move the work item to its type's Completed state when a run finishes successfully |
+| closeOnComplete | select yes/no | no | the old setting: once **Ticket updates** is saved for this connection (Labs flag `ticketUpdates`), Worca no longer uses it. Until then: move the work item to its type's Completed state when a run finishes successfully |
 
 The token is stored in
 `~/.worca-cc/plugins/azure-boards-source/data/secrets.json` (mode 0600, never in
@@ -85,6 +85,31 @@ links. With `closeOnComplete: yes` and a successful run, it reads the work
 item's type, lists that type's states, and moves the item to the state in the
 **Completed** category (Agile calls it `Closed`, Scrum and Basic `Done`). An
 item already in the Completed or Removed category is left alone.
+
+## Ticket updates
+
+With the Labs flag **Ticket updates** on, Worca decides what a finished run does to its work item (Marketplace › Installed ›
+Azure Boards › Settings › **Ticket updates**: the projects you work on and, per project, Don't move, Any Done status or one
+of that project's states). The plugin answers `capabilities()` with `ticketUpdates: true` and:
+
+- **listStatuses** — every state of the project's work item types once (disabled and hidden types left out), with Worca's
+  category: Proposed is to do, In Progress and Resolved in progress, Completed done, Removed cancelled.
+- **legacyMove** — what **Close work item on completion** means (Yes: Any Done status), so the section starts from it.
+- **reportResult with a move** — the state first, then one comment: the run summary, its links, and a last line saying what
+  happened. **Any Done status** is the item type's first Completed state (Agile `Closed`, Scrum and Basic `Done`), never
+  Removed; a Resolved item is not done yet. A picked state is that state of the item's own type, never another one. Last
+  lines:
+  - `Moved to Closed.` / `Already in Closed.` (an item already Completed or Removed stays where it is)
+  - `Not moved: Shop's Idea type has no Done status.`
+  - `Not moved: Shop's Task type has no status named Resolved.`
+  - `Not moved: Shop has no status named Shipped any more.`
+  - `Not moved: Azure Boards refused the move to Closed: <Azure's message>.` — a 4xx other than 401 and 429;
+    `Azure Boards gave no reason` when Azure sends no message.
+
+  In every case above the comment is still posted. A refused token, a rate limit (429), a server error (5xx), a network
+  error or a timeout fails the write-back, so it can be tried again.
+
+Until Ticket updates is saved for a connection, write-back works exactly as described under Write-back.
 
 ## Pull request link
 

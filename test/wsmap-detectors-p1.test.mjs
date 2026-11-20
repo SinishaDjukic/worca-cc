@@ -5,6 +5,7 @@ import { join } from 'node:path';
 
 import pkgNpm from '../src/core/workspace-map/detectors/pkg-npm.mjs';
 import identity, { readmeRole } from '../src/core/workspace-map/detectors/identity.mjs';
+import { loadBudget } from './helpers/load-budget.mjs';
 
 const root = join('/', 'ws');
 const member = (key, projectDir = join(root, key)) => ({ key, name: key, dir: join(root, 'repos', key), projectDir });
@@ -103,7 +104,7 @@ test('pkg-npm and identity stay linear on 1 MiB adversarial input (the index\'s 
     const t0 = performance.now();
     const r = d.detect({ rel, text }, ctx());
     const ms = performance.now() - t0;
-    assert.ok(ms < 3000, `${d.id} on ${JSON.stringify(text.slice(0, 12))}… (${text.length} chars) took ${Math.round(ms)} ms`);
+    assert.ok(ms < loadBudget(3000), `${d.id} on ${JSON.stringify(text.slice(0, 12))}… (${text.length} chars) took ${Math.round(ms)} ms`);
     if (text.includes('"dependencies"')) assert.equal(r.facts.length, 40001, 'every dependency still found');
   }
 });

@@ -44,8 +44,8 @@ function ctxFor(key, { params = {}, ports: configPorts, cwd = tmp('worca-bi-cwd-
   };
 }
 
-test('the built-in layer is exactly shell, js, py, gitDiff, deckPdf, deckAudio, deckBundle, the three C4 cards, the three promo video cards and the four workspace-map cards — normalized, ordered, and disjoint from the agent keys', () => {
-  assert.deepEqual(Object.keys(REG), ['shell', 'js', 'py', 'gitDiff', 'deckPdf', 'deckAudio', 'deckBundle', 'c4Discover', 'c4Check', 'c4Render', 'promoVoices', 'promoNarrate', 'promoRender', 'workspaceMapExtract', 'workspaceMapCatalog', 'workspaceMapJoin', 'workspaceMapRender']);
+test('the built-in layer is exactly shell, js, py, gitDiff, deckPdf, deckAudio, deckBundle, the three C4 cards, the three promo video cards and the five workspace-map cards — normalized, ordered, and disjoint from the agent keys', () => {
+  assert.deepEqual(Object.keys(REG), ['shell', 'js', 'py', 'gitDiff', 'deckPdf', 'deckAudio', 'deckBundle', 'c4Discover', 'c4Check', 'c4Render', 'promoVoices', 'promoNarrate', 'promoRender', 'workspaceMapExtract', 'workspaceMapCatalog', 'workspaceMapJoin', 'workspaceMapRender', 'workspaceMapResynth']);
   assert.equal(REG.shell.runtime, 'shell');
   assert.equal(REG.shell.ports, 'config');
   assert.deepEqual(REG.shell.params.map((p) => [p.id, p.type, p.required]), [['command', 'command', true]]);

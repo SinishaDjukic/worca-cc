@@ -3,7 +3,7 @@
   "metaVersion": 2,
   "progressStage": "plan",
   "mockRole": "planner-plan",
-  "promptHints": "Write a complete, build-ready implementation plan. It MUST contain concrete code snippets for the features and MUST end with a \"## Clarifications (Q&A)\" section reproducing the questions and the user answers below so the reviewer can see them.",
+  "promptHints": "Write a complete, design-level implementation plan. It MUST name the contracts (files, signatures, data and error shapes), the invariants, the acceptance mapping and the tests, without full code bodies, and MUST end with a \"## Clarifications (Q&A)\" section reproducing the questions and the user answers below so the reviewer can see them.",
   "workspaceFanOut": true,
   "workspaceStrategy": "explore",
   "inputs": [
@@ -15,7 +15,7 @@
   "outputs": [{ "id": "plan", "type": "md", "filename": "{base}{vsuffix}.md", "store": "project" }],
   "domain": "coding",
   "displayName": "Plan",
-  "description": "Explores the codebase and writes the implementation plan. Architecture, task breakdown, concrete code snippets; can ask clarifying questions first.",
+  "description": "Explores the codebase and writes the implementation plan. Contracts, invariants, task breakdown and test list; can ask clarifying questions first.",
   "color": "violet",
   "icon": "<path d=\"M8 6h11M8 12h11M8 18h8\" stroke-linecap=\"round\"/><circle cx=\"4\" cy=\"6\" r=\"1.1\"/><circle cx=\"4\" cy=\"12\" r=\"1.1\"/><circle cx=\"4\" cy=\"18\" r=\"1.1\"/>",
   "agentFile": "worca-cc-planner.md",

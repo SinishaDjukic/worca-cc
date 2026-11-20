@@ -8,13 +8,16 @@ import { JSDOM } from 'jsdom';
 import { renderMarketplaceCard } from '../ui/public/marketplace/marketplaces-view.mjs';
 import { renderAllInstalled } from '../ui/public/marketplace/installed-view.mjs';
 import { renderRemoveDialog } from '../ui/public/marketplace/remove-view.mjs';
-import { renderProvidersCard } from '../ui/public/bridge-view.mjs';
-import { renderModelsList } from '../ui/public/models-view.mjs';
+import { renderProvidersTab } from '../ui/public/models/providers-tab.mjs';
+import { buildCatalogue } from '../ui/public/models/catalogue-model.mjs';
+import { renderCatalogue } from '../ui/public/models/catalogue-view.mjs';
 import { renderPolicySyncChip } from '../ui/public/team-policy-view.mjs';
+import { readIndexHtml } from '../src/core/read-index-html.mjs';
+import { readStyleCss } from '../src/core/read-style-css.mjs';
 
 const read = (p) => readFileSync(new URL(`../${p}`, import.meta.url), 'utf8');
-const CSS = read('ui/public/style.css');
-const html = read('ui/public/index.html');
+const CSS = readStyleCss();
+const html = readIndexHtml();
 const page = new JSDOM(html).window.document;
 const doc = new JSDOM('<!doctype html><body></body>').window.document;
 // Every rule body whose selector list is exactly `sel` (top level and inside @media), so a phone override is not missed.
@@ -63,23 +66,23 @@ test('Marketplace: Installed is one card of divided rows, a marketplace is one c
   assert.equal(page.querySelector('[data-view="marketplace"] .page-intro'), null, 'the tabs are the header (docs/design-system.md › Marketplace exceptions)');
 });
 
-test('Providers: one intro line, four divided rows, shared buttons', () => {
-  const pv = page.querySelector('[data-view="providers"] .page-intro');
-  assert.ok(pv && ONE_SENTENCE(pv.textContent), 'one sentence');
-  assert.equal(page.querySelectorAll('[data-view="providers"] .page-intro').length, 1, 'the two intros are one');
-  const card = renderProvidersCard({}, { doc, split: true });
-  assert.equal(card.querySelector('.mv-providers-hint'), null, 'the in-card intro merged into the page intro');
-  assert.ok(card.classList.contains('drows'));
-  const rows = [...card.querySelectorAll('.mv-pv-card')];
-  assert.equal(rows.length, 4);
+test('Providers: a tab of the Models page, seven divided rows, shared buttons', () => {
+  assert.equal(page.querySelector('[data-view="providers"]'), null, 'no Providers page: it is the Models page\'s third tab');
+  const tab = renderProvidersTab({}, { doc });
+  assert.equal(tab.querySelector('.mv-providers-hint'), null, 'the tab\'s cards carry no intro of their own');
+  const cards = [...tab.querySelectorAll('.mv-providers-split')];
+  assert.equal(cards.length, 2);
+  for (const c of cards) assert.ok(c.classList.contains('card') && c.classList.contains('drows'));
+  const rows = [...tab.querySelectorAll('.mv-pv-card')];
+  assert.equal(rows.length, 7);
   for (const r of rows) assert.ok(r.classList.contains('drow') && r.classList.contains('drow-stack') && !r.classList.contains('card'));
   assert.deepEqual(rules('.mv-pv-card'), [], '.drow.drow-stack sets the gap');
   // The three-column field grid stacks under 560px like every other .drows row.
   assert.match(CSS, /@container drows \(max-width:560px\)\{\s*\.mv-pv-card \.mv-pv-row:not\(\.mv-sp-row\) \.mv-pv-ctl\{grid-template-columns:minmax\(0,1fr\);\}/);
-  const pill = card.querySelector('.mv-cp-terms-pill');
-  assert.ok(pill && pill.tagName === 'BUTTON' && pill.classList.contains('btn') && !pill.classList.contains('badge'));
-  assert.ok(card.querySelector('.mv-pv-preset').classList.contains('btn'));
-  assert.ok(renderProvidersCard({}, { doc }).querySelector('.mv-providers-hint'), 'the old in-Models card keeps its hint');
+  // The state word lives in the fold head, one dot and one word (VIS-2).
+  assert.ok(tab.querySelector('.mv-pv-card[data-row=copilot] .mdl-fold > .mdl-st'));
+  assert.equal(tab.querySelector('.mv-cp-terms'), null);
+  assert.ok(tab.querySelector('.mv-or-browse').classList.contains('btn'), 'OpenRouter\'s Import models… is a shared button');
 });
 
 test('Connectors: one page intro, no mcp-chip, no typed plus, the plus icon on every Add', () => {
@@ -93,19 +96,21 @@ test('Connectors: one page intro, no mcp-chip, no typed plus, the plus icon on e
   assert.deepEqual(rules('.mcp-x'), []);
 });
 
-test('Models: shared filter chip, the group header is a 28px .btn, no centred column, sentence case', () => {
-  const list = renderModelsList({ globals: [{ id: 'a', label: 'A' }] }, { doc });
+test('Models: shared filter chips, one group card per harness with a row-button head and a quiet icon More, no centred column, sentence case', () => {
+  const list = renderCatalogue(buildCatalogue({ models: [{ id: 'a', label: 'A' }] }, {}), { doc });
   const chips = [...list.querySelectorAll('.mv-filters > button')];
-  assert.ok(chips.length >= 7 && chips.every((c) => c.classList.contains('filter-chip') && c.dataset.filter));
+  assert.ok(chips.length >= 3 && chips.every((c) => c.classList.contains('filter-chip') && c.dataset.filter));
   assert.equal(chips.filter((c) => c.getAttribute('aria-pressed') === 'true').length, 1);
-  const t = list.querySelector('.mv-sec-toggle');
-  assert.deepEqual([...t.classList], ['btn', 'btn-quiet', 'btn-sm', 'mv-sec-toggle']);
-  assert.ok(t.querySelector('h3.section-title.mv-section-title'));
+  assert.deepEqual([...list.querySelectorAll('.mdl-grp[data-engine]')].map((g) => g.dataset.engine), ['claude']);
+  const t = list.querySelector('.mdl-grp[data-engine="claude"] .mdl-grp-toggle');
+  assert.deepEqual([...t.classList], ['row-btn', 'mdl-grp-toggle']);
+  assert.equal(t.querySelector('.mdl-grp-title').textContent, 'Claude Code');
+  assert.deepEqual([...list.querySelector('.mdl-grp-more').classList], ['btn', 'btn-quiet', 'btn-sm', 'btn-icon', 'mdl-grp-more']);
   assert.doesNotMatch(CSS, /\[data-view="models"\][^{]*\{[^}]*max-width/);
   assert.doesNotMatch(CSS, /\.mv-[\w-]+[^{]*\{[^}]*text-transform:uppercase/);
   assert.match(CSS, /\.info-tip\{[^}]*width:28px;height:28px;flex:0 0 28px;/);
-  const intro = page.querySelector('[data-view="models"] .page-intro').textContent;
-  assert.ok(ONE_SENTENCE(intro), intro);
+  assert.ok(page.querySelector('[data-view="models"] > .mdl-head #models-tabs-host'), 'the tab strip is the page\'s header');
+  assert.equal(page.querySelector('[data-view="models"] .page-intro'), null, 'no page intro, as on Marketplace');
   assert.deepEqual(rules('.mv-filter'), []);
   assert.deepEqual(rules('.mv-section-title'), [], '.section-title styles the group title');
 });
@@ -138,9 +143,9 @@ test('Team policy: sentence-case labels, a sans sync chip, grey "not installed",
   assert.match(rules('.tp-chip').join(), /padding-block:0;/, 'the 28px × sets the chip height');
 });
 
-// The 20 dialogs in index.html. The model editor's card and the plugin modal's actions are JS-built, so their static
+// The 19 dialogs in index.html. The model editor's card and the plugin modal's actions are JS-built, so their static
 // markup has no footer button; the proof's dialog-sizes state and the source pins below cover them.
-const DIALOGS = ['#model-editor-modal', '#model-import-modal', '#viewer-card', '#folder-browser', '#mode-modal', '#confirm-modal',
+const DIALOGS = ['#model-editor-modal', '#viewer-card', '#folder-browser', '#mode-modal', '#confirm-modal',
   '#report-modal', '#export-modal', '#shipit-modal', '#publish-modal', '#welcome-modal', '#claude-setup-modal', '#stop-modal',
   '#project-add-modal', '#project-git-modal', '#project-bulk-modal', '#plugin-modal', '#scan-model-modal',
   '#update-modal', '#update-overlay'];
@@ -190,11 +195,16 @@ test('Getting started: one intro line, Hide is a quiet .btn, the card heading is
   assert.deepEqual(rules('.gs-hide'), [], 'the underline skin is gone');
 });
 
-test('the theme proof measures the slice-3 pages, intros and dialogs, and runs the stray audit on all six pages', () => {
+test('the theme proof measures the slice-3 pages (the Models tabs too), intros and dialogs, and runs the stray audit on every page and tab', () => {
   const proof = read('tools/verify-theme-cdp.mjs');
-  assert.match(proof, /\['workflows', 'marketplace', 'connectors', 'models', 'providers', 'team-policy', 'getting-started'\]/);
-  for (const s of ['workflows', 'settings-plugins', 'connectors', 'settings-models', 'settings-providers', 'team-policy'])
+  assert.match(proof, /\['workflows', 'marketplace', 'connectors', 'models', 'models\/jobs', 'models\/providers', 'team-policy', 'getting-started'\]/);
+  for (const s of ['workflows', 'settings-plugins', 'connectors', 'settings-models', 'settings-models-jobs', 'settings-providers', 'team-policy'])
     assert.match(proof, new RegExp(`STRAY_ROOTS = \\{[^}]*'?${s}'?:`), `${s} is stray-audited`);
+  // The Jobs and Providers tabs are panels of the Models view: a root that matches nothing audits nothing, silently.
+  assert.match(proof, /'settings-models-jobs': '#models-tab-jobs', 'settings-providers': '#models-tab-providers'/);
+  assert.match(proof, /SIZE_STATES = new Set\([^)]*'settings-models-jobs'/, 'the Jobs cards are size-audited too');
+  assert.match(proof, /\['settings-models-jobs', async \(\) => \{ await go\('models\/jobs'\); \}\]/);
+  assert.match(proof, /\['settings-providers', async \(\) => \{ await go\('models\/providers'\);/);
   assert.match(proof, /'divided rows', 'quiet chip', 'grey badge', 'team policy type', 'page intro', 'dialog'/);
   assert.match(proof, /\['dialog-sizes', async \(\) => \{/);
   // Both Phase B skip lists (the running and the history variants) exclude dialog-sizes, so it adds no audit rows.

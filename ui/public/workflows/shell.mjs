@@ -8,7 +8,11 @@ import { toggleMenu, closeMenus } from './menu.mjs';
 import { modelGroups } from '../../../src/shared/connections.mjs';
 import { DEFAULT_MAX_CYCLES, LIMITS } from '../../../src/shared/graph/constants.mjs';
 import { resolveOrOutType } from '../../../src/shared/graph/ports.mjs';
+import { sessionCandidates, sessionIdOf, SESSION_SHARED_SELECTABLE } from '../../../src/shared/graph/sessions.mjs';
+import { SESSION_ID_RE } from '../../../src/shared/graph/constants.mjs';
+import { sessionSupport } from '../../../src/shared/engine-switch.mjs';
 import { carriesFiles } from '../attach-files.mjs';
+import { flagOn } from '../flags.mjs';
 
 export const DND_TYPE = 'application/x-worca';
 export const FLOW_CARDS = Object.freeze([
@@ -238,6 +242,106 @@ export function createWorkflowsShell({ doc, els, composer, actions }) {
     const aw = btn('awaitAll', 'Await all inputs', { pressed: node.config.awaitAll === true });
     aw.addEventListener('click', () => setCfg(node.id, 'awaitAll', { awaitAll: node.config.awaitAll === true ? null : true }));
     kids.push(aw);
+    if (flagOn('sessionGroups', doc)) kids.push(sessionButton(node));   // the Labs flag off: no creation control (C14)
+    return kids;
+  }
+
+  // ── One session (05 §3.1): the agent toolbar's menu and the session toolbar ─────────────────────────────────
+  const labelOfId = (id) => { const n = nodeOf(id); const m = n && composer.metaOf(n); return (m && m.displayName) || (n && (n.key || n.id)) || id; };
+  const memberSid = (node) => { const sid = node && node.kind === 'agent' ? sessionIdOf(node) : null; return sid && SESSION_ID_RE.test(sid) ? sid : null; };
+  const stepsText = (n) => `${n} step${n === 1 ? '' : 's'}`;
+  function sessionButton(node) {
+    const spec = memberSid(node) ? composer.sessions.byId(memberSid(node)) : null;
+    const b = btn('session', spec ? `Session ${spec.members.indexOf(node.id) + 1} of ${spec.members.length}` : 'One session', { menu: true });
+    b.dataset.flag = 'sessionGroups';
+    b.addEventListener('click', () => sessionMenu(b, node.id));
+    return b;
+  }
+  function sessionMenu(anchor, nodeId) {
+    const node = nodeOf(nodeId);
+    if (!node) return;
+    const sid = memberSid(node);
+    const spec = sid ? composer.sessions.byId(sid) : null;
+    if (spec) {
+      toggleMenu({ doc, anchor, label: 'One session', items: [
+        { header: `${spec.settings.label} · ${spec.members.map(labelOfId).join(', ')}` },
+        { label: 'Select session', onSelect: () => composer.select({ kind: 'session', id: sid }) },
+        { label: 'Leave session', onSelect: () => composer.sessions.leave(nodeId) },
+        { label: 'Ungroup', onSelect: () => composer.sessions.ungroup(sid) },
+      ] });
+      return;
+    }
+    const cands = sessionCandidates(composer.template(), (x) => composer.view.ports(x), { nodeId, labelOf: labelOfId });
+    toggleMenu({ doc, anchor, label: 'One session', items: [
+      { header: 'Run in one session with' },
+      ...(cands.length
+        ? cands.map((c) => ({ label: labelOfId(c.nodeId), hint: c.ok ? c.side : c.reason, disabled: !c.ok,
+          onSelect: () => composer.sessions.join(nodeId, c.nodeId) }))
+        : [{ label: 'No step is wired next to this one', disabled: true }]),
+    ] });
+  }
+  // ⌘G with 0 or 2+ legal next steps opens the menu from the toolbar's button (composer.mjs joinNext).
+  composer.hooks.onSessionMenu = (nodeId) => {
+    const b = tb && tb.querySelector('[data-tb="session"]');
+    if (b) sessionMenu(b, nodeId);
+  };
+  const splitOn = (sid) => (composer.report().errors || []).some((e) => e.code === 'V27' && e.sessionId === sid);
+  function sessionTools(spec) {
+    const { sid, settings } = spec;
+    const kids = [h('span', 'k', `${settings.label} · ${stepsText(spec.members.length)}`), sep()];
+    // No promise of sub-agents unless the Labs flag is on AND the engine's gate is open (C14). The Composer names Claude,
+    // the shipped default, as its view and inspector do, and reads the gate it draws with.
+    const on = flagOn('sessionGroups', doc);
+    const live = on && sessionSupport('claude', { verified: composer.sessionVerified() }).subagents;
+    const isShared = settings.mode === 'shared';
+    const how = btn('sessMode', '', { menu: true });
+    how.prepend(h('span', 'k', 'How'), doc.createTextNode(` ${isShared ? 'One conversation' : live ? 'Sub-agents' : 'Separate sessions'}`));
+    how.addEventListener('click', () => {
+      const toSub = () => composer.sessions.setSetting(sid, 'mode', 'subagents');
+      // The reason names what holds it back: the Labs flag, else the engine's gate. No level gate: nothing inside the
+      // Workflows view is level-gated (docs/ui-levels.md). Selectable once `shared` runs (Task 66 flips the switch).
+      toggleMenu({ doc, anchor: how, label: 'How it runs', items: [
+        live ? { label: 'Sub-agents', checked: !isShared, onSelect: toSub }
+          : { label: 'Separate sessions', hint: on ? 'sub-agents not available yet' : 'off in Settings › Labs', checked: !isShared, onSelect: toSub },
+        { label: 'One conversation', checked: isShared, disabled: !SESSION_SHARED_SELECTABLE,
+          ...(SESSION_SHARED_SELECTABLE ? {} : { hint: 'not available yet' }), onSelect: () => composer.sessions.setSetting(sid, 'mode', 'shared') },
+      ] });
+    });
+    const { models, efforts } = composer.models();
+    const hm = settings.hostModel ? models.find((x) => x.id === settings.hostModel) : null;
+    const host = btn('sessModel', '', { menu: true });
+    host.prepend(h('span', 'k', 'Main agent'), doc.createTextNode(` ${settings.hostModel ? ((hm && hm.label) || settings.hostModel) : 'inherit'}`));
+    host.addEventListener('click', () => {
+      const offered = models.filter((m) => m && (!m.hidden || m.id === settings.hostModel));
+      const items = [{ label: 'inherit', checked: !settings.hostModel, onSelect: () => composer.sessions.setSetting(sid, 'hostModel', '') }];
+      for (const g of modelGroups(offered)) {
+        items.push({ sep: true });
+        if (g.label) items.push({ header: g.label });
+        for (const m of g.models) items.push({ label: m.label || m.id, checked: settings.hostModel === m.id, onSelect: () => composer.sessions.setSetting(sid, 'hostModel', m.id) });
+      }
+      toggleMenu({ doc, anchor: host, label: 'Main agent model', items });
+    });
+    const eff = btn('sessEffort', '', { menu: true });
+    eff.prepend(h('span', 'k', 'Effort'), doc.createTextNode(` ${settings.hostEffort || 'default'}`));
+    eff.addEventListener('click', () => toggleMenu({ doc, anchor: eff, label: 'Main agent effort', items: [
+      { label: 'default', checked: !settings.hostEffort, onSelect: () => composer.sessions.setSetting(sid, 'hostEffort', '') },
+      { sep: true },
+      // The main agent's model decides its efforts, as a step's model does (effortMenu).
+      ...(hm && Array.isArray(hm.efforts) && hm.efforts.length ? hm.efforts : efforts).map((e) => ({ label: e, checked: settings.hostEffort === e, onSelect: () => composer.sessions.setSetting(sid, 'hostEffort', e) })),
+    ] }));
+    kids.push(how, host, eff, sep());
+    if (splitOn(sid)) {
+      const split = btn('sessSplit', 'Split');
+      split.title = 'Keep the longest run of consecutive steps';   // not btn's title: that would replace the name "Split"
+      split.addEventListener('click', () => composer.sessions.split(sid));
+      kids.push(split);
+    }
+    const ungroup = btn('sessUngroup', 'Ungroup');
+    ungroup.addEventListener('click', () => composer.sessions.ungroup(sid));
+    const more = btn('more', '', { iconName: 'more', title: 'More' });
+    more.setAttribute('aria-expanded', 'false');
+    more.addEventListener('click', () => openPopover(more));
+    kids.push(ungroup, more);
     return kids;
   }
 
@@ -345,20 +449,26 @@ export function createWorkflowsShell({ doc, els, composer, actions }) {
     const sel = composer.selection();
     const node = sel && sel.kind === 'node' ? nodeOf(sel.id) : null;
     const wire = sel && sel.kind === 'wire' ? wireOf(sel.id) : null;
-    if (!node && !wire) {
+    const spec = sel && sel.kind === 'session' ? composer.sessions.byId(sel.id) : null;
+    if (!node && !wire && !spec) {
       if (tb) { tb.remove(); tb = null; tbSig = ''; }
       closePopover();
       return;
     }
-    const sig = JSON.stringify([sel, node ? node.config : wire.config, node && node.key, composer.view.isLoopWire(wire ? wire.id : '')]);
+    // A member's button names "Session i of n", and the flag decides whether it shows: both are in the signature.
+    const own = node && memberSid(node) ? composer.sessions.byId(memberSid(node)) : null;
+    const sig = spec ? JSON.stringify([sel, spec.members, spec.settings, splitOn(spec.sid), composer.models().models.length, flagOn('sessionGroups', doc)])
+      : JSON.stringify([sel, node ? node.config : wire.config, node && node.key, composer.view.isLoopWire(wire ? wire.id : ''),
+        own ? own.members : null, node && node.kind === 'agent' ? flagOn('sessionGroups', doc) : null]);
     if (tb && sig === tbSig) { placeToolbar(); return; }
     const keepPop = Boolean(pop) && tbSig && JSON.parse(tbSig)[0].id === sel.id;
     tbSig = sig;
     const next = h('div', 'wfv-tb');
     next.setAttribute('role', 'toolbar');
-    next.setAttribute('aria-label', node ? 'Node settings' : 'Wire settings');
+    next.setAttribute('aria-label', spec ? 'Session settings' : node ? 'Node settings' : 'Wire settings');
     let kids;
-    if (wire) kids = wireTools(wire);
+    if (spec) kids = sessionTools(spec);
+    else if (wire) kids = wireTools(wire);
     else {
       const meta = composer.metaOf(node);
       kids = node.kind === 'agent' ? agentTools(node, meta)
@@ -399,6 +509,7 @@ export function createWorkflowsShell({ doc, els, composer, actions }) {
   composer.hooks.onSelect = () => { closeMenus(); paintToolbar(); };
   composer.hooks.onRender = () => { paintToolbar(); act('afterRender'); };
   composer.hooks.onTransform = () => placeToolbar();
+  composer.hooks.onValidate = () => paintToolbar();
   composer.hooks.onZoom = (z) => paintZoom(z);
   paintZoom(composer.view.getTransform().z);
 

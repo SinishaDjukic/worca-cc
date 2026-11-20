@@ -105,10 +105,10 @@ export function cleanCommandSummary(s, max = ASK_LIMITS.commandSummaryMaxChars) 
  * @param {(threadId:string) => string} [o.threadTitle]
  * @param {number|(() => number|null)|null} [o.serverPort]   a function: the port is known only once the server listens
  * @param {string|(() => string|null)|null} [o.home]   the worca home (protected in commands); a function is read at use
- * @param {string|null} [o.userHome]   what `~` expands to in Ask's shells (default: baseEnv.HOME), for the home-only paths
+ * @param {string|null} [o.userHome]   what `~` expands to in Ask's shells (default: baseEnv.HOME, else USERPROFILE on Windows), for the home-only paths
  */
 export function createAskCommands({ terminals, store, resolveTarget, onFinish, onUpdate = () => {}, onOpen = () => {}, threadTitle = () => '',
-  hostPid = process.pid, serverPort = null, home = null, baseEnv = process.env, userHome = baseEnv.HOME || null, limits = ASK_LIMITS,
+  hostPid = process.pid, serverPort = null, home = null, baseEnv = process.env, userHome = baseEnv.HOME || baseEnv.USERPROFILE || null, limits = ASK_LIMITS,
   setTimer = (fn, ms) => { const t = setTimeout(fn, ms); t.unref?.(); return t; }, clearTimer = clearTimeout, outDirFor = defaultOutDir } = {}) {
   const pools = new Map();     // threadId → Set<sessionId>
   const owner = new Map();     // sessionId → threadId

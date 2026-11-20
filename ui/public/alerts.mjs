@@ -42,6 +42,7 @@ export const PAUSE_TITLES = Object.freeze({
   cost_pipeline_policy: 'Cost cap reached',
   cost_total_policy: 'Cost cap reached',
   night_guardrail: 'Night guardrail reached',
+  time_limit: 'A step hit its time limit',
   terminated: 'Run paused when worca was stopped',
 });
 export const SCHEDULE_TITLE = 'Scheduled run needs attention';
@@ -153,9 +154,10 @@ export function createAlerts({ Notification: N = null, doc, nav = {}, storage = 
   const canNotify = () => settings().notify && permission() === 'granted';
   const looking = () => doc.visibilityState === 'visible' && (typeof doc.hasFocus !== 'function' || doc.hasFocus());
 
+  // The Worca mark beside the text (the favicon), and its one-colour mask for a status bar that shows a badge (Android).
   function show(tag, title, body, target) {
     let n;
-    try { n = new N(title, { body, tag }); } catch { return null; }
+    try { n = new N(title, { body, tag, icon: '/assets/worca-favicon.png', badge: '/assets/worca-mark-mask.png' }); } catch { return null; }
     open.set(tag, n);
     n.onclick = (e) => {
       if (e && typeof e.preventDefault === 'function') e.preventDefault();

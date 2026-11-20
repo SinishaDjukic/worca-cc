@@ -17,8 +17,9 @@ import {
   emptyManifestDelta, manifestVersion,
 } from '../src/core/plugin-repo.mjs';
 import { ADO_GIT_CREDENTIAL_HELPER } from '../src/core/azure-credentials.mjs';
+import { BB_GIT_CREDENTIAL_HELPER } from '../src/core/bitbucket-credentials.mjs';
 import { withEnv } from './helpers/with-env.mjs';
-import { writePluginsLock } from '../src/core/plugins-lock.mjs';
+import { writePluginsLock, pluginsRoot } from '../src/core/plugins-lock.mjs';
 
 const WIN_SYMLINK = { skip: process.platform === 'win32' ? 'creating symlinks needs a privilege (Developer Mode / admin) on Windows' : false };
 
@@ -391,6 +392,15 @@ test('plugin repo git calls carry worca\'s GitHub read env plus the host-scoped 
   assert.equal(Object.values(none).includes(ADO_GIT_CREDENTIAL_HELPER), false);
 });
 
+test('plugin repo git calls carry the host-scoped Bitbucket helper too (a git-backed Bitbucket marketplace, D11)', async () => {
+  const NO_APP = { WORCA_GH_APP_ID: undefined, WORCA_GH_APP_KEY_FILE: undefined, WORCA_GH_APP_KEY_B64: undefined };
+  const env = await withEnv({ ...NO_APP, WORCA_BB_TOKEN: 'bbtok', WORCA_BB_READ_TOKEN: undefined, WORCA_BB_WRITE_TOKEN: undefined,
+    WORCA_BB_EMAIL: undefined }, () => pluginGitEnv());
+  assert.equal(env.WORCA_BB_GIT_TOKEN, 'bbtok');
+  assert.equal(env.WORCA_BB_TOKEN, undefined, 'the raw token variable is stripped');
+  assert.ok(Object.values(env).includes(BB_GIT_CREDENTIAL_HELPER));
+});
+
 test('discoverAtCommit: discovery at a given commit of a checkout — index authoritative, version read from that commit', async () => {
   const root = mkdtempSync(join(scratch, 'disc-'));
   await git(root, 'init', '-q', '-b', 'main');
@@ -446,4 +456,15 @@ test('addPluginRepo reports reading once the commit is fetched (onProgress, G4)'
   const events = [];
   await addPluginRepo(root, { onProgress: (e) => events.push(e) });
   assert.deepEqual(events, [{ phase: 'reading', sha }]);
+});
+
+test('exportVersion refuses a revision whose version dir would leave versions/ (G8)', async () => {
+  const { root, sha } = await makeRepo('traverse', { 'worca-cc-plugin.json': MANIFEST('trav-plugin'), 'index.mjs': 'export default () => ({});\n' });
+  writePluginsLock({ canary: { repo: root, subdir: '', pinnedSha: sha, version: '0.1.0', enabled: true } });
+  const lockFile = join(pluginsRoot(), 'plugins.lock.json');
+  for (const rev of ['../../.', '..', '.', 'a/../..', '-c', '']) {
+    await assert.rejects(exportVersion('trav-plugin', rev, { repoUrl: root }), /invalid revision/, JSON.stringify(rev));
+    assert.equal(existsSync(lockFile), true, `plugins store untouched by ${JSON.stringify(rev)}`);
+  }
+  assert.equal((await exportVersion('trav-plugin', sha, { repoUrl: root })).versionDir, join(pluginsRoot(), 'trav-plugin', 'versions', sha.slice(0, 7)));
 });

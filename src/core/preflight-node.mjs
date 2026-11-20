@@ -1,7 +1,7 @@
 // src/core/preflight-node.mjs  (FINAL)
 // Runtime preflight for the node:sqlite backend. Called once at each entry point
 // (src/cli/worca-cc.mjs, ui/server.mjs) BEFORE any DB is opened. Guarantees the
-// process is on a Node with a FLAGLESS node:sqlite (>= 22.13.0) and that the module
+// process is on a supported Node (>= 22.19.0: a FLAGLESS node:sqlite, and undici 8's floor) and that the module
 // actually imports, then fails fast with an actionable message instead of letting a
 // cryptic error surface deep inside db.mjs.
 //
@@ -15,8 +15,8 @@
 import process from 'node:process';
 import { createRequire } from 'node:module';
 
-/** Minimum Node that ships a flagless node:sqlite (v22 LTS 'Jod' backport / v23.4+). */
-export const MIN_NODE = '22.13.0';
+/** Minimum Node: a flagless node:sqlite (22.13+) and undici 8's engines floor (22.19+, src/core/env-proxy.mjs). */
+export const MIN_NODE = '22.19.0';
 
 const require = createRequire(import.meta.url);
 
@@ -100,8 +100,8 @@ export function preflightNode(io = {}) {
   if (!meetsMinNode(actual)) {
     err(
       `\nworca: Node ${actual} is too old.\n` +
-        `  Worca CC stores its state in SQLite via the built-in node:sqlite module,\n` +
-        `  which is only available (flag-free) on Node >= ${MIN_NODE}.\n` +
+        `  Worca CC needs Node >= ${MIN_NODE}: it stores its state in SQLite via the\n` +
+        `  built-in node:sqlite module, and its proxy support uses undici 8.\n` +
         `  Please upgrade Node (e.g. \`nvm install --lts\` or use the bundled .nvmrc:\n` +
         `  \`nvm use\`), then re-run.\n\n`
     );

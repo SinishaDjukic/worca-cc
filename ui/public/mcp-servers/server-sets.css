@@ -1,0 +1,16 @@
+
+/* Connectors › Sets and Servers (mcp-view.mjs, mcp-definition-form.mjs): layout only; cards, chips, badges,
+   switches and buttons are the shared ones. */
+[data-view="connectors"] .topbar{flex-wrap:wrap;}
+.mcp-sets{display:grid;grid-template-columns:minmax(220px,300px) minmax(0,1fr);gap:18px;align-items:start;}
+.mcp-setlist{padding:var(--pad-tile);display:flex;flex-direction:column;gap:2px;}
+.mcp-setrow{display:flex;flex-direction:column;gap:3px;text-align:left;padding:10px 12px;border:0;border-radius:var(--r-sm);background:none;font:inherit;color:inherit;cursor:pointer;}
+.mcp-setrow.on{background:var(--field);}
+.mcp-setrow.greyed{opacity:.55;}
+.mcp-setrow-head{display:flex;align-items:center;gap:8px;}
+.mcp-dot{width:8px;height:8px;border-radius:50%;background:var(--amber);}
+.mcp-usedby{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin:10px 0;}
+/* The row's inline notes read as labels beside the chips: --ink-2 keeps them at AA on the card. */
+.mcp-usedby .hint{margin-top:0;color:var(--ink-2);}
+.mcp-usedby > .chip{display:inline-flex;align-items:center;gap:6px;}
+.mcp-usedby > .chip:has(> .btn){padding-block:0;}   /* the 28px remove button sets the height */

@@ -12,13 +12,13 @@ import { JSDOM } from 'jsdom';
 import { useDomRelease } from './helpers/jsdom-release.mjs';
 import { paintAboutInto, paintVersionStatusInto, paintUpdateMarkerInto } from '../ui/public/about-links.mjs';
 import { checkRows } from './helpers/rows.mjs';
+import { readIndexHtml } from '../src/core/read-index-html.mjs';
+import { readStyleCss } from '../src/core/read-style-css.mjs';
 
 // Release each booted window after its test (see test/helpers/jsdom-release.mjs).
 const trackDom = useDomRelease(afterEach);
 
-const htmlPath = fileURLToPath(new URL('../ui/public/index.html', import.meta.url));
 const appPath = fileURLToPath(new URL('../ui/public/app.js', import.meta.url));
-const cssPath = fileURLToPath(new URL('../ui/public/style.css', import.meta.url));
 const pkg = JSON.parse(readFileSync(fileURLToPath(new URL('../package.json', import.meta.url)), 'utf8'));
 
 // package.json repository.url in browsable form (same normalisation as ui/server.mjs).
@@ -50,7 +50,7 @@ const okSettings = () => ({
 });
 
 const settingsView = () => {
-  const dom = trackDom(new JSDOM(readFileSync(htmlPath, 'utf8'), { url: 'http://localhost:4317/' }));
+  const dom = trackDom(new JSDOM(readIndexHtml(), { url: 'http://localhost:4317/' }));
   return dom.window.document.querySelector('.view[data-view="settings"]');
 };
 
@@ -71,7 +71,7 @@ const uSource = { ...uEligible, canUpdate: false, reason: 'source', message: 'Ru
 async function boot({ settings = okSettings, version = () => null, update, versions } = {}) {
   const calls = [];
   const json = (b, status = 200) => Promise.resolve({ ok: status < 300, status, json: async () => b });
-  const dom = trackDom(new JSDOM(readFileSync(htmlPath, 'utf8'), { url: 'http://localhost:4317/' }));
+  const dom = trackDom(new JSDOM(readIndexHtml(), { url: 'http://localhost:4317/' }));
   const { window } = dom;
   window.Element.prototype.scrollIntoView = function () {};
   window.WebSocket = class { constructor() { this.readyState = 1; } send() {} close() {} addEventListener() {} };
@@ -252,7 +252,7 @@ test('Check now is a plain small button, and only the Updates row centres its it
   const rows = [...card.querySelectorAll('.about-row')];
   const centred = rows.filter((r) => r.classList.contains('about-row-center'));
   assert.deepEqual(centred, [btn.closest('.about-row')], 'the switch row alone (its label takes its baseline from the text-less pill)');
-  const css = readFileSync(cssPath, 'utf8');
+  const css = readStyleCss();
   assert.match(css, /\.about-row\{display:flex;align-items:baseline;/, 'the other rows stay on baseline');
   assert.match(css, /\.about-row\.about-row-center\{align-items:center;\}/);
   assert.match(css, /\.about-update\[data-state="source"\]\{background:var\(--field\);color:var\(--ink-2\);\}/, 'Source build is neutral');
