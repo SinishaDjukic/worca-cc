@@ -146,7 +146,13 @@ export function registerCriteriaRoutes(app, { runner = null, criteriaJudge = nul
     if (typeof b.right !== 'boolean') throw store.testError('right must be true or false', 'BAD_REQUEST');
     res.json(await checker.answer(roundOf(req, ex), num(b.judgementId, 'card'), b.right, { by: by(req) }));
   });
-  route('POST', `${W}/examples/:ex/checker/:round/reword`, async (req, res) => { const ex = exampleOf(req); res.json(await checker.reword(roundOf(req, ex), { by: by(req) })); });
+  route('POST', `${W}/examples/:ex/checker/:round/reword`, async (req, res) => {
+    const ex = exampleOf(req);
+    const out = await checker.reword(roundOf(req, ex), { by: by(req) });
+    if (out.error === 'limit') throw store.testError(LIMIT_TEXT, 'NOT_READY');
+    if (out.error) throw store.testError('Worca could not suggest clearer words this time. Try again.', 'FAILED');   // no detail reaches the client
+    res.json({ text: out.text });
+  });
   // D102, P4-Q10: board 3's suggestions; the model is the suggested checking model (P4-Q3: no example exists yet).
   route('POST', '/api/workflow-tests/suggest-criteria', async (req, res) => {
     const b = req.body || {};
@@ -157,8 +163,13 @@ export function registerCriteriaRoutes(app, { runner = null, criteriaJudge = nul
     if (!view.suggested) throw store.testError('no AI model can check criteria here', 'NOT_READY');
     // M17: only a past run of this workflow that can become its example is read and sent to the model (as from-run checks it).
     let past = null;
-    if (typeof b.pipelineId === 'string' && b.pipelineId) {
-      try { past = await usablePastRun(workflowId, b.pipelineId); } catch (e) { throw store.testError(e && e.message ? e.message : 'this run cannot be used', 'BAD_REQUEST'); }
+    if (b.pipelineId != null && b.pipelineId !== '' && typeof b.pipelineId !== 'string') throw store.testError('pipelineId must be a run id', 'BAD_REQUEST');
+    if (b.pipelineId) {
+      // Only Worca's own refusals (an error with a code mapped to a status) become a 400; anything else is a real failure and surfaces.
+      try { past = await usablePastRun(workflowId, b.pipelineId); } catch (e) {
+        if (e && STATUS[e.code]) throw store.testError(e.message || 'this run cannot be used', 'BAD_REQUEST');
+        throw e;
+      }
     }
     const mock = (deps.mock || (() => mockEnabled({})))();
     // The total spending limit, refused up front (a mock call pays nothing, so it is never refused).
@@ -170,6 +181,9 @@ export function registerCriteriaRoutes(app, { runner = null, criteriaJudge = nul
     const out = await suggestCriteria({ note, request: past ? past.request : '', result: m.text || '', existing, model, mock,
       book: (usd, costKind) => book({ workflowId, purpose: 'suggest', model, amountUsd: usd, costKind }) },
     { ...(deps.modelCall ? { modelCall: deps.modelCall } : {}), budget: deps.budgetStatus || realBudgetStatus, mock: () => mock });
+    // A failed call is an error, not an empty answer (the cost is already booked); no detail reaches the client.
+    if (out.error === 'failed') throw store.testError('Worca could not get suggestions this time. Try again.', 'FAILED');
+    if (out.error === 'limit') throw store.testError(LIMIT_TEXT, 'NOT_READY');
     res.json({ suggestions: out.suggestions });
   });
   void exampleOf;   // defined here for Task 18 (4a) and Tasks 12-15 (4b), which use it
