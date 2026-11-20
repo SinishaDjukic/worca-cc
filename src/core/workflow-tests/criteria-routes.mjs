@@ -14,7 +14,7 @@ import { judgeModelsView } from './judge-models.mjs';
 import { budgetStatus as realBudgetStatus, recordTestJudgeCost } from '../cost-budget.mjs';
 import { createChecker, LIMIT_TEXT } from './checker.mjs';
 
-const STATUS = Object.freeze({ BAD_REQUEST: 400, NOT_FOUND: 404, BUSY: 409, NOT_READY: 422 });
+const STATUS = Object.freeze({ BAD_REQUEST: 400, NOT_FOUND: 404, BUSY: 409, NOT_READY: 422, FAILED: 500 });
 const W = '/api/workflows/:id/tests';
 /** Every Part 4 route, in registration order: the flag-off test walks it. Later tasks append theirs. */
 export const CRITERIA_ROUTES = Object.freeze([
@@ -150,7 +150,7 @@ export function registerCriteriaRoutes(app, { runner = null, criteriaJudge = nul
     const ex = exampleOf(req);
     const out = await checker.reword(roundOf(req, ex), { by: by(req) });
     if (out.error === 'limit') throw store.testError(LIMIT_TEXT, 'NOT_READY');
-    if (out.error) throw store.testError('Worca could not suggest clearer words this time. Try again.', 'FAILED');   // no detail reaches the client
+    if (out.error) { console.warn(`[workflow-tests] clearer words failed: ${out.detail || out.error}`); throw store.testError('Worca could not suggest clearer words this time. Try again.', 'FAILED'); }   // the detail is logged, never sent
     res.json({ text: out.text });
   });
   // D102, P4-Q10: board 3's suggestions; the model is the suggested checking model (P4-Q3: no example exists yet).
@@ -182,7 +182,7 @@ export function registerCriteriaRoutes(app, { runner = null, criteriaJudge = nul
       book: (usd, costKind) => book({ workflowId, purpose: 'suggest', model, amountUsd: usd, costKind }) },
     { ...(deps.modelCall ? { modelCall: deps.modelCall } : {}), budget: deps.budgetStatus || realBudgetStatus, mock: () => mock });
     // A failed call is an error, not an empty answer (the cost is already booked); no detail reaches the client.
-    if (out.error === 'failed') throw store.testError('Worca could not get suggestions this time. Try again.', 'FAILED');
+    if (out.error === 'failed') { console.warn(`[workflow-tests] suggestions failed: ${out.detail || out.error}`); throw store.testError('Worca could not get suggestions this time. Try again.', 'FAILED'); }
     if (out.error === 'limit') throw store.testError(LIMIT_TEXT, 'NOT_READY');
     res.json({ suggestions: out.suggestions });
   });
