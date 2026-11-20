@@ -11,6 +11,10 @@
 - **Platform egress policy:** in `allow` mode, worca's own proxy adds the configured tenant (`<t>.ghe.com`, `.<t>.ghe.com`), live and logged; `WORCA_EGRESS_DENY` still wins. The Docker egress overlay needs `.<t>.ghe.com` added by hand.
 - **Honest errors when GitHub refuses Copilot after sign-in.** A 401/403 from the token exchange now shows GitHub's own reason and link, including a single-sign-on requirement. During sign-in the card says the sign-in on `<host>` worked but GitHub refused Copilot access, and what to ask your admin, instead of "rejected the stored token — sign in again"; that wording is kept for a token that was stored and later fails. The server log records the status, URL and GitHub's message (never a token), once per ten minutes per distinct refusal. The credential broker's key page does the same.
 
+### Pull a feature from Requirements into a run
+
+- **Pull from Requirements** on New run and **Pull feature** in Chat start a run from a feature you have specified, through the same path as Start in Worca. The run setup takes an optional note for that run (it goes to the end of the task, and wins over the spec for that run), checked against the spec by an advisory contradiction check you can start anyway; a feature that already has a run in progress asks first. See [Requirements](docs/requirements.md#pull-from-requirements).
+
 ### Instance contract for hosting platforms
 
 - New [Instance contract](docs/instance-contract.md) page: what a hosted Worca instance is made of (the `worca`, `broker` and `cloudflared` containers, their start commands, ports and volumes) and everything a management interface sets or expects: every variable per container, the identity token, the heartbeat and what a receiver should do with it, stopping and draining, rotation and versions. For running Worca for others without a hosting platform, or for building a management interface of your own.

@@ -9,9 +9,9 @@ import { isGenericBinary } from '../../shared/artifact-kinds.mjs';
 import { costLimitResetPeriod } from '../settings.mjs';
 import { gitAvailable, GIT_MISSING } from '../git-available.mjs';
 import { actorOf } from '../identity.mjs';
-import { listProjects } from '../projects.mjs';
 import { workspaceTarget } from '../ask/workflow-deps.mjs';
-import { RequirementsError, parseFeatureSeq, SCOPE_TYPES } from './spec.mjs';
+import { RequirementsError, SCOPE_TYPES, parseFeatureSeq } from './spec.mjs';
+import { checkTarget, readinessTarget } from './target.mjs';
 import {
   createFeature, requireFeature, listFeatures, listTurns, getContext, setContext, updateFeature, setEarlyStartReason, listStarts, latestStart,
   getBrief, usableBrief, listBriefs, setBriefSections, deleteBrief, briefUsers, listAttachments, countHelperMessages,
@@ -40,6 +40,8 @@ import {
 } from './edits.mjs';
 import { readiness, displayState, changedSince, unaskedRejections, unaskedFiles } from './ready.mjs';
 import { startFeature, startView, REASON_MAX } from './start.mjs';
+import { searchFeatures, resolveAttachments } from './attach.mjs';
+import { checkNote, NOTE_MAX } from './note-check.mjs';
 import { exportSetupView, exportOptions, saveSetup, previewExport, runExport, forgetLink, exportView } from './export.mjs';
 import { importView, importOptions, searchTickets, previewImport, prepareImport, createImported } from './import.mjs';
 import { warmTrackerProbe } from './trackers.mjs';
@@ -49,7 +51,7 @@ import { saveSpecToCheckout, specFileName } from './save.mjs';
 import { assertBriefSection, parseSectionValue, renderBriefMarkdown, briefFileName, briefMatches } from './brief.mjs';
 import { makeBrief, isBriefBusy, briefTarget, briefEstimate, briefStaleness } from './brief-job.mjs';
 
-const STATUS = Object.freeze({ BAD_REQUEST: 400, NOT_FOUND: 404, BUSY: 409, CONFLICT: 409, BUDGET: 409, NOT_READY: 409, TOO_LARGE: 413, TRACKER: 502, UNAVAILABLE: 503 });
+export const STATUS = Object.freeze({ BAD_REQUEST: 400, NOT_FOUND: 404, BUSY: 409, CONFLICT: 409, BUDGET: 409, NOT_READY: 409, TOO_LARGE: 413, TRACKER: 502, UNAVAILABLE: 503 });
 const P = '/api/requirements';
 
 /** Every requirements route, in registration order: the one list registerRequirementsRoutes registers from
@@ -74,6 +76,8 @@ export const REQUIREMENTS_ROUTES = Object.freeze([
   ['GET', P], ['POST', P],
   // 9c §5: the harness list and the step estimates, before the /:seq routes
   ['GET', `${P}/models`], ['GET', `${P}/estimates`],
+  // FEAT-21: attaching started features to a run or a chat, before the /:seq routes (`search` is not a feature number)
+  ['GET', `${P}/search`], ['POST', `${P}/attach/resolve`],
   ['GET', `${P}/:seq`], ['PATCH', `${P}/:seq`],
   ['POST', `${P}/:seq/answers`], ['POST', `${P}/:seq/finish`], ['POST', `${P}/:seq/retry`], ['POST', `${P}/:seq/look`],
   ['PUT', `${P}/:seq/spec/:section`], ['DELETE', `${P}/:seq/spec/:section/edited`],
@@ -84,7 +88,7 @@ export const REQUIREMENTS_ROUTES = Object.freeze([
   ['POST', `${P}/:seq/archive`],
   ['PUT', `${P}/:seq/model`], ['GET', `${P}/:seq/costs`],
   ['GET', `${P}/:seq/markdown`], ['POST', `${P}/:seq/save`],
-  ['POST', `${P}/:seq/start`], ['PUT', `${P}/:seq/early-start-reason`], ['POST', `${P}/:seq/revert`],
+  ['POST', `${P}/:seq/start`], ['POST', `${P}/:seq/note-check`], ['PUT', `${P}/:seq/early-start-reason`], ['POST', `${P}/:seq/revert`],
   ['POST', `${P}/:seq/export/preview`], ['POST', `${P}/:seq/export`], ['DELETE', `${P}/:seq/export/link`],
   // A3 §5: Feature chat, one chat per feature
   ['GET', `${P}/:seq/helper`], ['DELETE', `${P}/:seq/helper`], ['POST', `${P}/:seq/helper/messages`], ['POST', `${P}/:seq/helper/stop`],
@@ -104,6 +108,14 @@ const needsGit = (_req, res, next) => (gitAvailable() ? next() : res.status(409)
 export const REQUIREMENTS_UPLOAD_ROUTES = Object.freeze([P, `${P}/:seq/attachments`, `${P}/:seq/attachments/:attId/replace`,
   `${P}/brief/:scopeType/:scopeKey/documents`, `${P}/brief/:scopeType/:scopeKey/documents/:attId/replace`]);
 export const REQUIREMENTS_UPLOAD_JSON_LIMIT = Math.ceil(REQ_ATTACH_LIMITS.requestBytes * 4 / 3) + 1024 * 1024;
+
+const SEARCH_LIMIT_MAX = 50;
+/** `limit` of the search query: a whole number clamped to 1..SEARCH_LIMIT_MAX; anything else is the maximum. */
+const searchLimit = (v) => {
+  const n = Number.parseInt(String(v ?? ''), 10);
+  return Number.isFinite(n) ? Math.min(Math.max(n, 1), SEARCH_LIMIT_MAX) : SEARCH_LIMIT_MAX;
+};
+const queryText = (v) => (typeof v === 'string' ? v : '');
 
 const briefPathOf = (scopeType, scopeKey) => `${P}/brief/${scopeType}/${encodeURIComponent(scopeKey)}`;
 
@@ -526,28 +538,8 @@ function madeBrief(scopeType, scopeKey) {
   return b;
 }
 
-async function checkTarget(scopeType, scopeKey) {
-  if (!SCOPE_TYPES.includes(scopeType)) throw new RequirementsError('BAD_REQUEST', 'scopeType must be "project" or "workspace"');
-  if (typeof scopeKey !== 'string' || !scopeKey.trim()) throw new RequirementsError('BAD_REQUEST', 'scopeKey is required');
-  if (scopeType === 'project') {
-    const p = (await listProjects()).find((x) => x.key === scopeKey);
-    if (!p) throw new RequirementsError('BAD_REQUEST', 'unknown project');
-    // A registered project whose folder is gone still passes here (create, context); readiness says so.
-    return p.exists
-      ? { name: p.name, path: p.path, exists: true, ok: true, label: `Project ${p.name} is registered` }
-      : { name: p.name, path: p.path, exists: false, ok: false, hint: `the folder of project ${p.name} is missing` };
-  }
-  const ws = await workspaceTarget(scopeKey);
-  if (!ws) throw new RequirementsError('BAD_REQUEST', 'unknown workspace');
-  return { name: ws.name, ok: true, label: `Workspace ${ws.name} exists` };
-}
-
 /** The feature's target for readiness: never throws; an unknown target is `{ ok: false, hint }`. */
-async function targetFor(f) {
-  try { return await checkTarget(f.scopeType, f.scopeKey); } catch {
-    return { ok: false, hint: f.scopeType === 'workspace' ? 'the workspace no longer exists' : 'the project is not registered' };
-  }
-}
+const targetFor = (f) => readinessTarget(f.scopeType, f.scopeKey);
 
 /** A workspace's member projects (D2: their source bindings decide the default connection when they agree); [] otherwise. */
 async function memberKeysOf(scopeType, scopeKey) {
@@ -824,6 +816,22 @@ export function registerRequirementsRoutes(app, { broadcast, server, deps = {} }
     }),
     [`GET ${P}/models`]: async (_req, res) => res.json(await modelsView(d)),
     [`GET ${P}/estimates`]: async (req, res) => res.json(estimatesView(req.query || {}, d)),
+    [`GET ${P}/search`]: async (req, res) => {
+      const q = req.query || {};
+      res.json(await searchFeatures({
+        scopeType: queryText(q.scopeType), scopeKey: queryText(q.scopeKey), q: queryText(q.q),
+        exclude: queryText(q.exclude).split(',').map((x) => x.trim()).filter(Boolean), limit: searchLimit(q.limit),
+      }));
+    },
+    [`POST ${P}/attach/resolve`]: async (req, res) => {
+      const b = req.body || {};
+      const scope = b.scopeType !== undefined || b.scopeKey !== undefined ? { type: b.scopeType, key: b.scopeKey } : null;
+      if (scope && (!SCOPE_TYPES.includes(scope.type) || typeof scope.key !== 'string' || !scope.key.trim())) {
+        throw new RequirementsError('BAD_REQUEST', 'scopeType must be "project" or "workspace" and scopeKey is required');
+      }
+      const { items } = await resolveAttachments(b.seqs, { scope });
+      res.json({ items: items.map(({ markdown: _markdown, ...rest }) => rest) });
+    },
     [`GET ${P}/:seq`]: async (req, res) => res.json(await featureView(seqOf(req), d)),
     [`PATCH ${P}/:seq`]: async (req, res) => {
       const seq = seqOf(req);
@@ -980,10 +988,20 @@ export function registerRequirementsRoutes(app, { broadcast, server, deps = {} }
       const f = requireFeature(seq);
       if (typeof d.startRun !== 'function') throw new Error('starting runs is not available');
       const b = req.body || {};
-      const r = await startFeature(seq, { reason: b.reason, workflowId: b.workflowId, sourceBranch: b.sourceBranch, reportBack: b.reportBack, overlay: b.overlay },
-        { by: by(req) }, { startRun: d.startRun, target: await targetFor(f) });
+      const r = await startFeature(seq, { reason: b.reason, workflowId: b.workflowId, sourceBranch: b.sourceBranch, reportBack: b.reportBack, overlay: b.overlay,
+        note: b.note, noteOverrides: b.noteOverrides, confirmRunning: b.confirmRunning },
+      { by: by(req) }, { startRun: d.startRun, target: await targetFor(f), runSummary: d.runSummary });
       onChange(seq);
       res.status(201).json({ runId: r.runId, version: r.version, ...await featureView(seq, d) });
+    },
+    // Advisory: a model, budget or parse failure, a busy or an archived feature all answer 200 with `skipped: true`, never a 5xx
+    [`POST ${P}/:seq/note-check`]: async (req, res) => {
+      const seq = seqOf(req);
+      const f = requireFeature(seq);
+      const { note } = req.body || {};
+      if (typeof note !== 'string' || note.trim().length > NOTE_MAX) throw new RequirementsError('BAD_REQUEST', `the note must be text of at most ${NOTE_MAX} characters`);
+      if (f.status === 'archived' && note.trim()) return res.json({ conflict: false, conflicts: [], skipped: true });
+      res.json(await checkNote(seq, note, d));
     },
     [`PUT ${P}/:seq/early-start-reason`]: async (req, res) => {
       const seq = seqOf(req);

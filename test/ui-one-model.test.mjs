@@ -198,8 +198,9 @@ test('§5.3 boot: #running/r1 paints the one status block and the model actions 
     const m = runModel({ ...c.raw, pendingQuestion: c.raw.pendingQuestion || null, pr: null });
     assert.equal(block.dataset.state, m.state);
     assert.equal(block.dataset.line, m.state === 'failed' ? pageLine(m.line) : m.line);
-    // Slice 2: Archive and Report live in the run page's ⋯, never in its bar; slice 3: the head actions in the card head.
-    assert.deepEqual(new Set(shownActions(bar)), new Set(m.actions.filter((id) => !MENU_ACTIONS.includes(id) && !HEAD_ACTIONS.includes(id))), 'the bar shows the model actions');
+    // Slice 2: Archive and Report live in the run page's ⋯, never in its bar; slice 3: the head actions in the card head;
+    // the one-level page draws the waiting question under its header, so no Answer there.
+    assert.deepEqual(new Set(shownActions(bar)), new Set(m.actions.filter((id) => !MENU_ACTIONS.includes(id) && !HEAD_ACTIONS.includes(id) && id !== 'answer')), 'the bar shows the model actions');
     assert.equal(bar.querySelector('[data-model-action="report"]'), null);
     const dot = block.querySelector('.status-dot');
     if (c.symbol) assert.equal(dot.dataset.symbol, c.symbol); else assert.equal(dot.querySelector('svg'), null);
@@ -257,7 +258,7 @@ async function finishedPage({ row, detail, ghAvailable = false, more = () => nul
   await hd.settle(ctx.window, 4);
   await hd.openDetail(ctx, '');
   await hd.settle(ctx.window, 6);
-  return { ctx, end: ctx.window.document.querySelector('#hist-detail .hd-bar .rd-bar-end'), doc: ctx.window.document };
+  return { ctx, end: ctx.window.document.querySelector('#hist-detail .hd-row1 > .rd-bar-end'), doc: ctx.window.document };
 }
 
 test('§5.3 boot: the finished page owns its Resume for a resumable paused row, and makes none for an archived row', async () => {

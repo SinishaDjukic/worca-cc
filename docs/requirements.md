@@ -192,6 +192,10 @@ a call's cost is known only once the model reports it.
 answers you can submit answers, edit the spec, add files or start a round. Only what you accept or submit reaches the
 interview. **Send**, **Accept** and **Clear chat** wait while Worca answers.
 
+**Using a feature in another chat.** The Ask panel's **Pull from Requirements** (see [Pull from Requirements](#pull-from-requirements))
+attaches a started feature's spec to a message, so a chat can use it without leaving the chat. It is not the same as **Feature chat**,
+which talks about a feature and its interview; the attached text is context only.
+
 **Clear chat** (⋯) deletes the feature's chat; changes you accepted stay in the spec. An archived feature's chat can be read,
 not used. Everything here is behind the `requirements` flag.
 
@@ -334,6 +338,57 @@ and the next time you start the feature the box opens with it. A run that starts
 The page's **Runs from this feature** card lists every run started from the feature, with its status and
 cost, and links to the run (its live page, also after a resume, else its page in History). A run that
 waits for you, on a question, a gate or the Auto confirmation, says **Waiting for you**.
+
+## Pull from Requirements
+
+You do not have to leave **New run** or **Chat** to build with a feature you have specified: **attach** it. Attaching sends or starts
+nothing. The features go along when you click **Send** or **Run**.
+
+- **New run**: **Pull from Requirements** (next to the Source switch) opens a picker with a search box, a checkbox on each feature and
+  **Attach N**. It lists the active features of the project or workspace you picked as the Target. With no Target yet, the picker has a
+  project chooser inside it.
+- **Chat**: **Pull from Requirements** (next to the project button in the composer) does the same for the chat's project or workspace.
+  A chat with no project asks for one in the picker.
+- **`#` in the box**: type `#` at the start of a word, or after a space, and a list of the scope's features opens. Keep typing to
+  search by title or `FEAT-7`. The arrows move, **Enter** attaches the highlighted feature (it never sends or starts), **Tab** cycles the
+  project and **Esc** closes. Only the `#` and what you typed after it are removed from your text. A Markdown heading (`# ` followed by a
+  space) is left alone.
+
+Each attached feature shows as a card under the box with its title, ID and number of criteria, and an **x** to remove it. The button
+reads **N features** while some are attached. You can attach up to 10. Features you attach are kept when you leave the page and come
+back, and checked again when you return.
+
+**Context only.** The feature's spec text goes into the message or the run's task. Nothing else travels: no files or brief documents,
+and no run is linked to the feature. Neither entry writes a start, a turn or a ticket comment, so the feature page's **Runs from this
+feature** does not list these runs. **Start in Worca** works as before.
+
+**Which text.** When the feature is Ready at the moment you click Send or Run, its **current spec** is sent, read again at that moment,
+under the heading "FEAT-n (current spec)". When it is not Ready then but was started, the **latest started version** is sent. The draft
+of a feature that is not Ready is never sent. The task text is optional in New run: with features attached, the run's title is the first feature's
+title, or `<title> + N more`.
+
+**Only what this scope holds.** Search and the picker offer only features of the project (or workspace) you picked. A feature that is
+neither Ready nor started is listed as **Not Ready yet** and cannot be attached. If one stops being Ready before Send or Run and was
+never started, it blocks until you remove it. A feature that is archived or deleted, or no longer in this
+project, shows on its card and blocks **Send** and **Run** until you remove it. Changing the project or workspace with features attached
+first asks **Remove features and change** or **Cancel**; Cancel changes nothing.
+
+**Ready means Ready now, or the latest start was Ready.** A feature attached because it is Ready now never pauses the run. A started
+feature that is not Ready now uses its latest start's Ready flag: when it was not Ready at that start, the run pauses before any
+work starts, in every workflow, and shows the Requirements card: each feature with **Agreed** on the Ready ones, and one **Agree and
+plan** for the rest. Away mode and `--yes` never agree for you. Nothing pauses when every attached feature was Ready, and a run
+that resumes does not ask again once you agreed. A Chat message starts no run, so it has no pause.
+
+**A run is already going.** In New run, when an attached feature already has a run that has not ended, Worca says so and asks you to
+confirm before it starts yours.
+
+**In the chat.** A sent message shows each feature as a card. Click it to read the requirements it carried in place; that text is a
+snapshot from the moment you sent, and does not change when the feature does. If the feature has since been archived or deleted, the card
+says *This feature is no longer available.* A chat proposal card started with **Run** or **Shape it first** carries the features of the
+message it answers.
+
+Both entries are behind the `requirements` flag, like the page: with it off the button and `#` are gone, a card says **Requirements
+unavailable**, and nothing is sent.
 
 ## Follow-up rounds
 

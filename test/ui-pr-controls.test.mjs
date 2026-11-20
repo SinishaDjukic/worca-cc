@@ -43,7 +43,10 @@ test('slice 3: the card head holds the head buttons with the one PR slot, then t
     assert.ok(tpl.querySelector('.rd-sheet-head > .rd-now-top.run-status:first-child'), `${id}: the status block opens the head`);
   }
   const live = page.getElementById('run-detail-tpl').content.querySelector('.rd-sheet-head > .rd-head-acts');
-  assert.ok(live.previousElementSibling.matches('.rd-live-row'), 'the head buttons come after the Live view row');
+  assert.ok(live.previousElementSibling.matches('.rd-now-top'), 'the head buttons follow the status block (no Live view row)');
+  const saved = page.getElementById('hist-detail-tpl').content.querySelector('.rd-sheet-head > .rd-head-acts');
+  assert.ok(saved.nextElementSibling.matches('.hd-publish[hidden]'), 'Publish branch sits beside the head buttons');
+  assert.equal(page.querySelectorAll('.hd-header .hd-publish').length, 0, 'never in the Details header');
 });
 
 test('one ship flow: the group page card has the run page head with exactly one PR slot', () => {
@@ -55,7 +58,7 @@ test('one ship flow: the group page card has the run page head with exactly one 
 });
 
 test('the head lays the buttons out after the live row, and under the status in a narrow card', () => {
-  assert.match(decls('.rd-sheet-head'), /grid-template-columns:minmax\(0,1fr\) auto auto/);
+  assert.match(decls('.rd-sheet-head'), /grid-template-columns:minmax\(0,1fr\) auto auto auto/);
   assert.match(decls('.rd-sheet-head > .rd-head-acts'), /grid-area:1 \/ 3/);
   assert.match(css, /@container rd-head \(max-width:420px\)\{[^@]*\.rd-sheet-head > \.rd-head-acts\{grid-area:2 \/ 1 \/ 3 \/ -1;justify-self:start;/);
   assert.match(decls('.rd-pr-slot'), /width:fit-content/);

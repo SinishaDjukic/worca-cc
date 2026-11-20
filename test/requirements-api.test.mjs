@@ -322,3 +322,82 @@ test('the list: lookCostUsd is the median of the current model own looks, never 
   assert.equal(broken.status, 200, 'an unresolvable model still shows the page');
   assert.equal(broken.json.feature.lookCostUsd, null);
 });
+
+// A per-run note: start forwards it, the run-in-progress guard names its code, and POST /:seq/note-check is advisory.
+// A bare express app with fake run deps, over the same temp database as the server above.
+const readyNoteSpec = async () => (await import('../src/core/requirements/spec.mjs')).emptySpec();
+async function noteApp(deps) {
+  const { default: express } = await import('express');
+  const { registerRequirementsRoutes } = await import('../src/core/requirements/routes.mjs');
+  const app = express();
+  app.use(express.json());
+  registerRequirementsRoutes(app, { broadcast: () => {}, deps });
+  const s = app.listen(0, '127.0.0.1');
+  await new Promise((r) => s.once('listening', r));
+  const url = `http://127.0.0.1:${s.address().port}`;
+  const send = async (method, path, body) => {
+    const r = await fetch(`${url}${path}`, { method, headers: { 'content-type': 'application/json' }, ...(body === undefined ? {} : { body: JSON.stringify(body) }) });
+    return { status: r.status, json: await r.json().catch(() => null) };
+  };
+  return { send, close: () => { s.closeAllConnections?.(); return new Promise((r) => s.close(r)); } };
+}
+async function readyNoteFeature(title) {
+  const store = await import('../src/core/requirements/store.mjs');
+  const f = store.createFeature({ scopeType: 'project', scopeKey: projKey, title, description: 'Before it ships' });
+  store.appendTurn(f.seq, { kind: 'round', payload: { questions: [], done: true } });
+  return store.updateFeature(f.seq, { status: 'done', criteriaSeq: 2, assumptionSeq: 1, spec: { ...(await readyNoteSpec()),
+    goal: { text: 'Customers cancel', measure: 'fewer calls' },
+    criteria: [{ id: 'R-po-1', text: 'Cancel while unpaid' }, { id: 'R-po-2', text: 'Refund in 3 days' }],
+    assumptions: [{ id: 'A-1', text: 'Full refund', status: 'confirmed' }] } });
+}
+
+test('POST start: forwards note, noteOverrides and confirmRunning, passes runSummary; the 409 carries RUN_IN_PROGRESS and the run; the view starts carry the note', async () => {
+  const bodies = [];
+  const summaries = [];
+  let live = null;
+  const app = await noteApp({
+    startRun: async (body, opts) => { bodies.push(body); return { status: 200, body: { runId: opts.runId } }; },
+    runSummary: async (q) => { summaries.push(q); return live; },
+  });
+  try {
+    const f = await readyNoteFeature('Note start');
+    const url = `/api/requirements/${f.seq}/start`;
+    const ok = await app.send('POST', url, { note: '  Use the new API  ', noteOverrides: true });
+    assert.equal(ok.status, 201);
+    assert.match(bodies[0].promptMarkdown, /Use the new API/);
+    assert.deepEqual([ok.json.feature.starts[0].note, ok.json.feature.starts[0].noteOverrides], ['Use the new API', true]);
+    assert.ok(summaries.length >= 1, 'the guard asked runSummary');
+    live = { status: 'running' };
+    const refused = await app.send('POST', url, { note: 'again' });
+    assert.equal(refused.status, 409);
+    assert.deepEqual([refused.json.code, refused.json.runId, refused.json.error], ['RUN_IN_PROGRESS', ok.json.runId, 'This feature already has a run in progress.']);
+    assert.equal(bodies.length, 1, 'nothing started');
+    const again = await app.send('POST', url, { note: 'again', confirmRunning: true });
+    assert.equal(again.status, 201);
+    assert.equal(again.json.feature.starts[0].note, 'again');
+    assert.equal(again.json.feature.starts[0].noteOverrides, false);
+    assert.equal((await app.send('POST', url, { note: 'x'.repeat(2001), confirmRunning: true })).status, 400);
+    const got = await app.send('GET', `/api/requirements/${f.seq}`);
+    assert.deepEqual(got.json.feature.starts.map((s) => [s.note, s.noteOverrides]), [['again', false], ['Use the new API', true]]);
+  } finally { await app.close(); }
+});
+
+test('POST note-check: blank and mock replies, a skipped result, 400 on bad notes; never a 5xx', async () => {
+  const app = await noteApp({ startRun: async () => ({ status: 200, body: {} }) });
+  try {
+    const f = await readyNoteFeature('Note check');
+    const url = `/api/requirements/${f.seq}/note-check`;
+    assert.deepEqual((await app.send('POST', url, { note: '   ' })).json, { conflict: false, conflicts: [] });
+    const clean = await app.send('POST', url, { note: 'Use the new API' });
+    assert.deepEqual([clean.status, clean.json], [200, { conflict: false, conflicts: [] }]);
+    const hit = await app.send('POST', url, { note: 'Please [conflict] this' });
+    assert.equal(hit.status, 200);
+    assert.deepEqual([hit.json.conflict, hit.json.conflicts.length, hit.json.conflicts[0].quote], [true, 1, '[conflict]']);
+    assert.equal((await app.send('POST', url, { note: 'x'.repeat(2000) })).status, 200);
+    for (const bad of [7, null, {}, ['a'], 'x'.repeat(2001)]) assert.equal((await app.send('POST', url, { note: bad })).status, 400, String(bad).slice(0, 10));
+    assert.equal((await app.send('POST', url, {})).status, 400);
+    (await import('../src/core/requirements/store.mjs')).updateFeature(f.seq, { status: 'archived' });
+    assert.deepEqual((await app.send('POST', url, { note: 'Please [conflict] this' })).json, { conflict: false, conflicts: [], skipped: true });
+    assert.equal((await app.send('POST', '/api/requirements/999999/note-check', { note: 'x' })).status, 404);
+  } finally { await app.close(); }
+});

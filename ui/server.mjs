@@ -167,7 +167,7 @@ import { askCatalog, validateModelEffort, chatEngine as askChatEngineOf, askEven
 import { buildCatalog as askBuildCatalog } from '../src/core/ask/catalog.mjs';
 import {
   buildSystemPrompt as askBuildSystemPrompt, buildComposerSystemPrompt as askBuildComposerSystemPrompt, buildContextHeader as askBuildContextHeader,
-  buildTurnPrompt as askBuildTurnPrompt, buildRestoredPrompt as askBuildRestoredPrompt, renderChatContextPrompt as askRenderChatContextPrompt,
+  buildTurnPrompt as askBuildTurnPrompt, buildRestoredPrompt as askBuildRestoredPrompt, renderChatContextPrompt as askRenderChatContextPrompt, renderAttachedRequirementsPrompt as askRenderAttachedRequirementsPrompt,
   buildHandoffPrompt as askBuildHandoffPrompt, handoffBudgetChars as askHandoffBudgetChars, needsHandoff as askNeedsHandoff,
   selectInlineAttachments as askSelectInlineAttachments, validateClientContext, buildDesignSystemPrompt,
 } from '../src/core/ask/prompt.mjs';
@@ -353,8 +353,10 @@ import { registryPortsFn } from '../src/core/graph/registry-ports.mjs';
 import { sweepV1Runs, V1_RUN_RETIRED, getDb } from '../src/core/db.mjs';
 import {
   registerRequirementsRoutes, requirementsChangeNotifier, REQUIREMENTS_UPLOAD_ROUTES, REQUIREMENTS_UPLOAD_JSON_LIMIT, requirementsUploadSlots,
+  STATUS as REQUIREMENTS_STATUS,
 } from '../src/core/requirements/routes.mjs';
-import { createRunEventHook } from '../src/core/requirements/start.mjs';
+import { resolveRunAttachments, composeAttachedPrompt } from '../src/core/requirements/attach.mjs';
+import { createRunEventHook, createRunSummary } from '../src/core/requirements/start.mjs';
 import { recoverInterrupted as recoverRequirements, requirementsModel, DEFAULT_INTERVIEW_EFFORT } from '../src/core/requirements/interview.mjs';
 import { recoverBriefs } from '../src/core/requirements/brief-job.mjs';
 import { recoverAttachmentReads, sweepReadFolders, sweepTempBodies, withStagedRunFiles } from '../src/core/requirements/attachment-job.mjs';
@@ -2903,10 +2905,21 @@ const startRunHandler = async (req, res) => {
       }
     }
 
+    // FEAT-21: attached features: only seqs cross the boundary, re-resolved here from the newest start; before the prompt rule.
+    const attach = await resolveRunAttachments(body, { noProject, hasWorkspace, source },
+      { flagEnabled, resolveProjectDir, projectKey, runSummary: requirementsRunSummary, httpStatus: REQUIREMENTS_STATUS });
+    if (attach.refusal) return res.status(attach.refusal.status).json(attach.refusal.body);
+    const attachedRequirements = attach.attached;
+
     // prompt OR promptMarkdown. promptMarkdown is treated as the prompt text.
-    const prompt = typeof body.prompt === 'string' && body.prompt.trim() ? body.prompt : undefined;
-    const promptMarkdown =
+    let prompt = typeof body.prompt === 'string' && body.prompt.trim() ? body.prompt : undefined;
+    let promptMarkdown =
       typeof body.promptMarkdown === 'string' && body.promptMarkdown.trim() ? body.promptMarkdown : undefined;
+    if (attachedRequirements.length) {
+      if (promptMarkdown) promptMarkdown = composeAttachedPrompt(attach.items, promptMarkdown);
+      else if (prompt) prompt = composeAttachedPrompt(attach.items, prompt);
+      else promptMarkdown = composeAttachedPrompt(attach.items, '');
+    }
     const effectivePrompt = prompt || promptMarkdown;
     if (source && effectivePrompt) return badRequest(res, 'provide source OR prompt/promptMarkdown, not both');
     if (!source && !effectivePrompt) return badRequest(res, 'prompt or promptMarkdown is required');
@@ -3173,6 +3186,7 @@ const startRunHandler = async (req, res) => {
         ...(nightMode ? { nightMode: true } : {}),
         tags,
         ...(shape ? { shape } : {}),
+        ...(attachedRequirements.length ? { attachedRequirements } : {}),
       });
       entry = {
         id: runId, orch, projectDir, projectKey: NO_PROJECT_KEY, workMode: 'none', kind: 'run', pipelineId,
@@ -3323,6 +3337,7 @@ const startRunHandler = async (req, res) => {
         tags,
         labels,
         ...(shape ? { shape } : {}),
+        ...(attachedRequirements.length ? { attachedRequirements } : {}),
         ...(runSetup ? { runSetup } : {}),
       });
 
@@ -3500,6 +3515,7 @@ const startRunHandler = async (req, res) => {
         tags,
         labels,
         ...(shape ? { shape } : {}),
+        ...(attachedRequirements.length ? { attachedRequirements } : {}),
         ...(runSetup ? { runSetup } : {}),
       });
 
@@ -3900,27 +3916,7 @@ function releaseAskCard(item) {
   } catch (err) { console.error(`[worca-ui] ask card release failed: ${err && err.message ? err.message : err}`); }
 }
 
-/** A requirements start's run as the feature shows it (A2 D10): the live entry while the server has it,
- *  else the pipeline row on disk (after a restart). null when neither knows the run. A resume gives the run
- *  a new UUID, so the pipeline id finds the live entry first. `href`: the live run's page while the server
- *  has it, else the saved run's History page (#history/<projectKey | workspaces/<key>>/<pipelineId>). */
-function requirementsRunSummary({ runId, pipelineId }) {
-  const live = (pipelineId && liveRunEntry(pipelineId)) || liveRunEntry(runId);
-  const id = pipelineId || (live && live.pipelineId) || null;
-  let state = null;
-  if (id) { try { state = readPipelineStateById(id); } catch { state = null; } }
-  if (!live && !state) return null;
-  const key = state && (state.target === 'workspace' && state.workspaceKey ? `workspaces/${state.workspaceKey}` : state.projectKey);
-  return {
-    status: (live && live.status) || (state && state.status) || null,
-    phase: (state && state.phase) || null,
-    costUsd: state?.totalCostUsd ?? null,
-    pipelineId: id,
-    href: live ? `#running/${live.id}` : key && id ? `#history/${key}/${id}` : null,
-    // waits on a question, a gate or the Auto confirmation: entry.pendingQuestion, as the Running page reads it
-    waiting: !!(live && live.pendingQuestion && !SETTLED_RUN.has(String(live.status || ''))),
-  };
-}
+const requirementsRunSummary = createRunSummary({ liveRunEntry, readPipelineStateById, settled: SETTLED_RUN });
 
 /** A8 D14: a requirements start's staged copies go once createPipeline has copied them into <pipeline>/extras: the run
  *  and its agents read only that copy (run-harness _collectExtras; createPipeline is the one reader of opts.extras, and
@@ -9149,7 +9145,7 @@ function askSignedIn(req) {
   return who.source === 'local' ? null : who.name;
 }
 
-async function startAskTurn({ threadId: id, thread, ctx, model, effort, text, files = [], synthetic = null, signedIn = null, reader = null, mcpOff = undefined, agentMode = undefined, client = null, onUserRow = null, chatContext = null, scopeNote = null }) {
+async function startAskTurn({ threadId: id, thread, ctx, model, effort, text, files = [], synthetic = null, signedIn = null, reader = null, mcpOff = undefined, agentMode = undefined, client = null, onUserRow = null, chatContext = null, scopeNote = null }, { features = [] } = {}) {
   // §6.2.2 ATOMIC re-check + slot reservation. Today every await between the
   // top 409/429 pair and here resolves in microtasks (validateModelEffort ->
   // composeCatalog; askBuildCatalog -> three synchronous better-sqlite3
@@ -9236,7 +9232,10 @@ async function startAskTurn({ threadId: id, thread, ctx, model, effort, text, fi
     // reachable per running thread.
     for (const f of files) f.data = null;
     echoAttachments = attRows.map((a) => ({ id: a.id, name: a.name, bytes: a.bytes, kind: a.kind, mime: a.mime }));
-    if (attRows.length || chatBlock) {
+    // FEAT-21: one frozen `feature` block per attached requirement (A-10): the snapshot the turn prompt reads and the thread keeps.
+    const featureBlocks = features.map((f) => ({ kind: 'feature', seq: f.seq, id: f.id, title: f.title, version: f.version,
+      criteriaCount: f.criteriaCount, ready: f.ready, markdown: f.markdown }));
+    if (attRows.length || chatBlock || featureBlocks.length) {
       // `kind` is the BLOCK kind, so the attachment's own kind rides as attKind
       // (the UI keys image thumbnails off it, #398).
       // P3: keep the synthetic notice in front of the attachment blocks (unreachable today — event turns pass no files — but
@@ -9248,6 +9247,7 @@ async function startAskTurn({ threadId: id, thread, ctx, model, effort, text, fi
         // A chat file keeps where it came from: the platform, which message (its own, the reply, history) and its link.
         ...attRows.map((a, i) => ({ kind: 'attachment', id: a.id, name: a.name, bytes: a.bytes, attKind: a.kind, mime: a.mime,
           ...(files[i].source ? { origin: { platform: chatPlatform, from: files[i].source.from, link: files[i].source.link ?? null } } : {}) })),
+        ...featureBlocks,
       ]);
     }
     broadcast({ type: 'ask-message', threadId: id, message: askGetMessage(userMsg.id) }); // echo for other tabs
@@ -9311,7 +9311,7 @@ async function startAskTurn({ threadId: id, thread, ctx, model, effort, text, fi
     // [design chat] block (the design, its plan, the open build and the pins) rides it the same way.
     const composerBlock = designMode ? await designPromptBlock(askGetThread(id)) : composerMode ? await composerPromptBlock(askGetThread(id)) : '';
     const prompt = askBuildTurnPrompt(composerBlock ? `${header}\n\n${composerBlock}` : header, text, inline,
-      chatBlock ? askRenderChatContextPrompt(chatBlock) : '');
+      chatBlock ? askRenderChatContextPrompt(chatBlock) : '', askRenderAttachedRequirementsPrompt(featureBlocks));
     const prior = askListMessages(id).filter((m) => m.seq < userMsg.seq);
     const restoredPrompt = askBuildRestoredPrompt(prior, prompt);
     // #943: no provider session but replies already — the first turn after an engine switch, or after a failed resume
@@ -10547,7 +10547,7 @@ if (isMain) {
 }
 
 export { app, server, runs };
-export { AGENTS_DIR, APP_INFO, APP_REPO_URL, ASK_DEFERRED_REPLIES_MAX, ASK_SCOPE_BUSY, ASK_TEXT_PREVIEW_MAX, BRANCH_SETTLED, BUGS_SLUG, CLONE_JOBS, HOST, MARKETPLACE_ID_RE, MARKET_JOBS, NO_PR_HOST, PKG_VERSION, PLAN_TEXT_MAX, PLUGIN_NAME_RE, PORT, PROJECT_ROOT, PR_TITLE_MAX, REMOTE_MODE, RUNNING_VERSION, ResumeError, SETTLED_RUN, SETUP_AGENT_TEXT, SETUP_JOBS, SKILLS_DIR, SKILL_FOLDER_IMPORTS, SKILL_MD_UNREACHABLE, STORE_ERROR_CODES, actions, actionsEnabledHere, activeActionSnaps, adoWebhookSecret, afterMembersChanged, afterProjectRegistered, agentErrorStatus, agentMayBeCaller, answerRun, applyProjectSettingsPatch, applySettingsPatch, askBusyReason, askChatActions, askChatEngine, askChatEngineGate, askCommandBridges, askCommands, askCommandsEnabled, askContextTokens, askCredentialGate, askDeferred, askDeferredReplies, askDeleting, askEngineSwitchText, askEventPick, askFilesRunDir, askFilesStoreDir, askFollowers, askGroupFor, askGroupThreads, askIdParam, askInFlight, askLiveRun, askProxyBridges, askRefResolver, askRelays, askRunFromPipelineRow, askRunningCount, askSignedIn, askSwitchTranscript, askThreadVisible, askTrackingCount, askTurnEngine, askValidateScope, askViewer, askWebAccessFor, askWorktreesEnvelope, autoDetectedBuiltins, automationWorkspaceMembers, automations, awayPersonOf, badRequest, bareWorkspaceKey, bearerMatches, broadcast, broadcastFeature, brokerStartRefusal, builtins, busyActionRunIds, channelHost, chatGroupError, chatNotifier, chatRefusals, checkoutRecOf, commentIdParam, commentsCreate, commentsDelete, commentsFail, commentsList, commentsPatch, commentsReply, createRunPr, crosslinkMemberPrs, currentUpdateEligibility, defaultPrRemotes, deleteAskThreadFully, designBuilds, designChatActions, detectSystemProxyImpl, detectTeamMemorySoon, drainServer, effectiveUiLevel, egressNow, emitAskWorktrees, emitChanged, emitMemoryChanged, emitPluginsChanged, ensureSetup, extensionPairing, factDeps, failedEventTurn, featureShipping, findScheduleItem, findShipCardIn, flipCard, followCloneCard, forkPrRefusal, fsAllowedRoots, fsLimitedHere, gitMissing, isFinishingRun, isFreshInstall, isLiveRun, isPlainObject, isPrStoreKey, isTruthy, kickAutomations, kickPrWatch, labelsOn, lastUpdateResult, liveAutoRescan, liveDefragRun, liveDiffOf, livePr, liveProbe, liveRunEntry, liveRunIds, liveSliceOf, marketJobFailure, mcpRunPreview, mcpTargetOf, memberFor, memoryError, modelTestsInFlight, namingBucket, namingCatalog, namingOn, namingPick, noRawCommand, notifReader, openMemberPr, ownsWorkspaceTarget, parseMcpOptOut, pauseRun, pickPrRemotes, pinUiLevel, postAskSystemNotice, postDirection, prTargetFor, prWatchFrame, prWatcher, presetCheckCtx, presetScopeOf, primaryMemberOf, projectAutomationRepo, projectDirForKey, projectSettingsState, proxyHost, pruneMarketJobs, prunedNote, publicCloneJob, readInstalledManifest, refuseAgentCaller, refuseSignedOutClaude, registeredProjectForDir, rejectRawTerminalFields, removeRecommendation, requireActions, requireFsAllowed, requireTerminal, resolvePrPipeline, resolveProjectDir, resolveRunScope, resumeEngineOpts, resumeRun, resumeTargetDirs, runGroupIds, runSourceIssue, scanModelsFor, scanRequest, scheduleVerb, sendArtifactRaw, sendCheckoutError, sendMetricsError, sendPolicyError, sendPresetError, serveAskFile, serverMockMode, settleShipped, setupJobs, setupProbesOverride, shipChainNow, shipCtxOf, shipFeatureNow, skillRunPreview, snapshotFor, sockets, soundCards, stackStates, stackTokens, startAgentGen, startAskTurn, startCloneJob, startMetricsEventTurn, startOrQueue, startRunAs, startRunHandler, startScopeEventTurn, startScriptBench, stopCheckoutServices, stopMemberServices, stopPausedPipeline, stopRun, switchThreadScope, syncMode, syncProjectAction, syncRoute, teamOriginOk, teamWarn, terminalCallerOk, terminalEnabledHere, terminalError, terminalSameOrigin, terminals, tmProject, uiControl, unsyncableBlock, updateChecker, updatePort, updatePreview, validateResumeTarget, versionLister, versionPayload, webhookSecret, withAfter, workspaceMembersBusy };
+export { AGENTS_DIR, APP_INFO, APP_REPO_URL, ASK_DEFERRED_REPLIES_MAX, ASK_SCOPE_BUSY, ASK_TEXT_PREVIEW_MAX, BRANCH_SETTLED, BUGS_SLUG, CLONE_JOBS, HOST, MARKETPLACE_ID_RE, MARKET_JOBS, NO_PR_HOST, PKG_VERSION, PLAN_TEXT_MAX, PLUGIN_NAME_RE, PORT, PROJECT_ROOT, PR_TITLE_MAX, REMOTE_MODE, RUNNING_VERSION, ResumeError, SETTLED_RUN, SETUP_AGENT_TEXT, SETUP_JOBS, SKILLS_DIR, SKILL_FOLDER_IMPORTS, SKILL_MD_UNREACHABLE, STORE_ERROR_CODES, actions, actionsEnabledHere, activeActionSnaps, adoWebhookSecret, afterMembersChanged, afterProjectRegistered, agentErrorStatus, agentMayBeCaller, answerRun, applyProjectSettingsPatch, applySettingsPatch, askBusyReason, askChatActions, askChatEngine, askChatEngineGate, askCommandBridges, askCommands, askCommandsEnabled, askContextTokens, askCredentialGate, askDeferred, askDeferredReplies, askDeleting, askEngineSwitchText, askEventPick, askFilesRunDir, askFilesStoreDir, askFollowers, askGroupFor, askGroupThreads, askIdParam, askInFlight, askLiveRun, askProxyBridges, askRefResolver, askRelays, askRunFromPipelineRow, askRunningCount, askSignedIn, askSwitchTranscript, askThreadVisible, askTrackingCount, askTurnEngine, askValidateScope, askViewer, askWebAccessFor, askWorktreesEnvelope, attachAskFollower, autoDetectedBuiltins, automationWorkspaceMembers, automations, awayPersonOf, badRequest, bareWorkspaceKey, bearerMatches, broadcast, broadcastFeature, brokerStartRefusal, builtins, busyActionRunIds, channelHost, chatGroupError, chatNotifier, chatRefusals, checkoutRecOf, commentIdParam, commentsCreate, commentsDelete, commentsFail, commentsList, commentsPatch, commentsReply, createRunPr, crosslinkMemberPrs, currentUpdateEligibility, defaultPrRemotes, deleteAskThreadFully, designBuilds, designChatActions, detectSystemProxyImpl, detectTeamMemorySoon, drainServer, effectiveUiLevel, egressNow, emitAskWorktrees, emitChanged, emitMemoryChanged, emitPluginsChanged, ensureSetup, extensionPairing, factDeps, failedEventTurn, featureShipping, findScheduleItem, findShipCardIn, flipCard, followCloneCard, forkPrRefusal, fsAllowedRoots, fsLimitedHere, gitMissing, isFinishingRun, isFreshInstall, isLiveRun, isPlainObject, isPrStoreKey, isTruthy, kickAutomations, kickPrWatch, labelsOn, lastUpdateResult, liveAutoRescan, liveDefragRun, liveDiffOf, livePr, liveProbe, liveRunEntry, liveRunIds, liveSliceOf, marketJobFailure, mcpRunPreview, mcpTargetOf, memberFor, memoryError, modelTestsInFlight, namingBucket, namingCatalog, namingOn, namingPick, noRawCommand, notifReader, openMemberPr, ownsWorkspaceTarget, parseMcpOptOut, pauseRun, pickPrRemotes, pinUiLevel, postAskSystemNotice, postDirection, prTargetFor, prWatchFrame, prWatcher, presetCheckCtx, presetScopeOf, primaryMemberOf, projectAutomationRepo, projectDirForKey, projectSettingsState, proxyHost, pruneMarketJobs, prunedNote, publicCloneJob, readInstalledManifest, refuseAgentCaller, refuseSignedOutClaude, registeredProjectForDir, rejectRawTerminalFields, removeRecommendation, requireActions, requireFsAllowed, requireTerminal, resolvePrPipeline, resolveProjectDir, resolveRunScope, resumeEngineOpts, resumeRun, resumeTargetDirs, runGroupIds, runSourceIssue, scanModelsFor, scanRequest, scheduleVerb, sendArtifactRaw, sendCheckoutError, sendMetricsError, sendPolicyError, sendPresetError, serveAskFile, serverMockMode, settleShipped, setupJobs, setupProbesOverride, shipChainNow, shipCtxOf, shipFeatureNow, skillRunPreview, snapshotFor, sockets, soundCards, stackStates, stackTokens, startAgentGen, startAskTurn, startCloneJob, startMetricsEventTurn, startOrQueue, startRunAs, startRunHandler, startScopeEventTurn, startScriptBench, stopCheckoutServices, stopMemberServices, stopPausedPipeline, stopRun, switchThreadScope, syncMode, syncProjectAction, syncRoute, teamOriginOk, teamWarn, terminalCallerOk, terminalEnabledHere, terminalError, terminalSameOrigin, terminals, tmProject, uiControl, unsyncableBlock, updateChecker, updatePort, updatePreview, validateResumeTarget, versionLister, versionPayload, webhookSecret, withAfter, workspaceMembersBusy };
 export const _testing = {
   chatBridge, invokeAskCard, askBus, chatAgentModeFor, chatTurnIdentity,
   updateChecker,

@@ -117,6 +117,7 @@ export function workflowRule({ proposal, budget }) {
 export function planRule(q) {
   const p = q?.plan;
   if (!p || p.error || p.criteria) return null;     // the Requirements hold, or an ask that needs a retry
+  if (p.attached) return null;                      // attached requirements: only a person can agree to them
   if (p.outline) {
     if (p.check?.ok !== true) return null;
     // The check accepts a left-out id that has a reason, and nothing later catches it: a person must hear about it.

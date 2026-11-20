@@ -7,7 +7,7 @@ import { randomUUID } from 'node:crypto';
 import { tx } from '../db.mjs';
 import { RequirementsError } from './spec.mjs';
 import {
-  requireFeature, listTurns, latestStart, createStart, appendTurn, linkPipeline, startByRunId, startByPipelineId, listAttachments,
+  requireFeature, listTurns, listStarts, latestStart, createStart, appendTurn, linkPipeline, startByRunId, startByPipelineId, listAttachments,
   getExportLink, setEarlyStartReason,
 } from './store.mjs';
 import { isBusy } from './interview.mjs';
@@ -15,10 +15,14 @@ import { runFiles, unsendableRunFile, cannotGoWithRun } from './attachment-job.m
 import { markStarting, unmarkStarting, isStarting, isExporting, EXPORTING_MESSAGE } from './starting.mjs';
 import { readiness } from './ready.mjs';
 import { renderTaskMarkdown } from './markdown.mjs';
+import { NOTE_MAX } from './note-check.mjs';
+import { DRAIN_ACTIVE_STATUSES } from '../drain.mjs';
 
 export const REASON_MAX = 500;
 export const DEFAULT_WORKFLOW_ID = 'wf_auto';
 const WORKFLOW_ID = /^wf_[a-z0-9_-]+$/i;
+/** The text of the 409 a second start gets while the feature's run is live (the run setup overlay shows the same words). */
+export const RUN_IN_PROGRESS_MESSAGE = 'This feature already has a run in progress.';
 
 /** A start is between the run handler's call and its stored row (starting.mjs): a second start waits its turn, and so do
  *  archive, a scope change (edits.mjs) and a follow-up round (interview.mjs). */
@@ -49,6 +53,29 @@ function overlayOf(overlay, workflowId) {
   return Object.keys(overlay).length ? overlay : null;
 }
 
+/** The per-run note: absent → '', else trimmed text of at most NOTE_MAX characters (BAD_REQUEST otherwise). */
+function noteOf(note) {
+  if (note === undefined || note === null) return '';
+  if (typeof note !== 'string' || note.trim().length > NOTE_MAX) throw new RequirementsError('BAD_REQUEST', `the note must be at most ${NOTE_MAX} characters`);
+  return note.trim();
+}
+
+function optionalBoolean(value, name) {
+  if (value !== undefined && typeof value !== 'boolean') throw new RequirementsError('BAD_REQUEST', `${name} must be true or false`);
+  return value;
+}
+
+/** The run id of the feature's newest start whose run is live (a summary that throws or is null counts as not live), or null.
+ *  Reads runSummary directly, not startView: asking must not link pipelines. */
+export async function liveRunId(seq, runSummary) {
+  for (const start of listStarts(seq)) {
+    let s = null;
+    try { s = await runSummary({ runId: start.runId, pipelineId: start.pipelineId }); } catch { s = null; }
+    if (s && DRAIN_ACTIVE_STATUSES.has(s.status)) return start.runId;
+  }
+  return null;
+}
+
 /**
  * Start a run from a feature (D5, D6). Refused while busy, archived or without a target, always; when any
  * other check fails, only with a reason (1–500 characters), else NOT_READY with the failing keys. A8 D14: the
@@ -60,24 +87,39 @@ function overlayOf(overlay, workflowId) {
  * @param {number} seq
  * FEAT-9: an `overlay` ({ nodes?, wires? }, a non-Auto workflow only) rides the run body as the run's per-run overlay; every
  * successful start clears the feature's kept early-start reason, inside the same transaction as the start row.
- * @param {{ reason?:string, workflowId?:string, sourceBranch?:string, reportBack?:boolean, overlay?:object|null }} input
+ * A `note` (at most NOTE_MAX characters) goes to the run's prompt after the spec, with a line saying it wins where they conflict, and is
+ * stored on the start row with `noteOverrides` (the person chose to let it override); the stored spec never holds it. A feature that
+ * already has a live run is refused (CONFLICT, data { code: 'RUN_IN_PROGRESS', runId }) unless `confirmRunning` is true. The feature is
+ * read again after that check, so a spec edited or an archive done meanwhile is what the start sees.
+ * @param {{ reason?:string, workflowId?:string, sourceBranch?:string, reportBack?:boolean, overlay?:object|null,
+ *   note?:string, noteOverrides?:boolean, confirmRunning?:boolean }} input
  * @param {{ by?:string|null }} who
  * @param {{ startRun:(body:object, opts:{runId:string, startedBy:string|null,
  *     extrasFiles?:Array<{id:string, name:string, path:string, sha256:string}>, reportTo?:object})=>Promise<{status:number, body:any}>,
  *   target:{ ok:boolean, label?:string, hint?:string, name?:string, path?:string }, newRunId?:()=>string }} deps
  * @returns {Promise<{ runId:string, version:number }>}
  */
-export async function startFeature(seq, { reason, workflowId, sourceBranch, reportBack, overlay } = {}, { by = null } = {}, deps = {}) {
-  const { startRun, target = { ok: false }, newRunId = randomUUID } = deps;
+export async function startFeature(seq, { reason, workflowId, sourceBranch, reportBack, overlay, note, noteOverrides, confirmRunning } = {}, { by = null } = {}, deps = {}) {
+  const { startRun, target = { ok: false }, newRunId = randomUUID, runSummary = () => null } = deps;
   if (typeof startRun !== 'function') throw new Error('starting runs is not available');
-  const f = requireFeature(seq);
-  if (f.status === 'archived') throw new RequirementsError('CONFLICT', 'this feature is archived; restore it first');
-  if (isBusy(f.seq)) throw new RequirementsError('BUSY', 'Worca is still working on this feature. Try again in a moment.');
-  if (isStarting(f.seq)) throw new RequirementsError('BUSY', 'this feature is already starting a run. Try again in a moment.');
-  if (isExporting(f.seq)) throw new RequirementsError('BUSY', EXPORTING_MESSAGE);
+  const f0 = requireFeature(seq);
+  if (f0.status === 'archived') throw new RequirementsError('CONFLICT', 'this feature is archived; restore it first');
+  if (isBusy(f0.seq)) throw new RequirementsError('BUSY', 'Worca is still working on this feature. Try again in a moment.');
+  if (isStarting(f0.seq)) throw new RequirementsError('BUSY', 'this feature is already starting a run. Try again in a moment.');
+  if (isExporting(f0.seq)) throw new RequirementsError('BUSY', EXPORTING_MESSAGE);
   if (reportBack !== undefined && typeof reportBack !== 'boolean') throw new RequirementsError('BAD_REQUEST', 'reportBack must be true or false');
-  markStarting(f.seq);   // before the first await: two starts at once cannot both pass
+  const runNote = noteOf(note);
+  const overrides = optionalBoolean(noteOverrides, 'noteOverrides');
+  const confirmed = optionalBoolean(confirmRunning, 'confirmRunning');
+  markStarting(f0.seq);   // before the first await: two starts at once cannot both pass
   try {
+    if (confirmed !== true) {
+      const liveRun = await liveRunId(f0.seq, runSummary);
+      if (liveRun) throw new RequirementsError('CONFLICT', RUN_IN_PROGRESS_MESSAGE, { code: 'RUN_IN_PROGRESS', runId: liveRun });
+    }
+    // The guard awaited: what the person edited or archived meanwhile is what this start sees
+    const f = requireFeature(seq);
+    if (f.status === 'archived') throw new RequirementsError('CONFLICT', 'this feature is archived; restore it first');
     // A8 D8: a file no round asked about fails "Interview finished" here too (an override, with a reason)
     const r = readiness(f, { turns: listTurns(f.seq), target, files: listAttachments('feature', f.seq) });
     if (!target || !target.ok) throw new RequirementsError('CONFLICT', r.checks.find((c) => c.key === 'target').hint);
@@ -98,7 +140,7 @@ export async function startFeature(seq, { reason, workflowId, sourceBranch, repo
     const version = ((latestStart(f.seq) || {}).version || 0) + 1;
     const spec = structuredClone(f.spec);
     const body = {
-      promptMarkdown: renderTaskMarkdown(f, { spec, targetName: target.name || null, version }),
+      promptMarkdown: renderTaskMarkdown(f, { spec, targetName: target.name || null, version, note: runNote }),
       title: f.title,   // the branch, commit and pull request come from it: FEAT-n stays inside Worca (the start row links the run)
       ...(f.scopeType === 'workspace' ? { workspaceId: f.scopeKey } : { projectDir: target.path }),
       workflowId: wf,
@@ -125,7 +167,8 @@ export async function startFeature(seq, { reason, workflowId, sourceBranch, repo
       tx(() => {
         createStart({ featureSeq: f.seq, version, runId: stored, spec, title: f.title, ready: r.ok, failing,
           reason: failing.length ? why : null, workflowId: body.workflowId, sourceBranch: body.sourceBranch || null,
-          files: sent.map(({ id, name, sha256, from }) => ({ id, name, sha256, from })) }, { by });
+          files: sent.map(({ id, name, sha256, from }) => ({ id, name, sha256, from })),
+          note: runNote || null, noteOverrides: runNote ? overrides === true : false }, { by });
         appendTurn(f.seq, { kind: 'start', payload: { version, runId: stored, override: failing.length > 0 } }, { by });
         setEarlyStartReason(f.seq, null);
       });
@@ -136,7 +179,7 @@ export async function startFeature(seq, { reason, workflowId, sourceBranch, repo
     }
     return { runId: stored, version };
   } finally {
-    unmarkStarting(f.seq);
+    unmarkStarting(f0.seq);
   }
 }
 
@@ -158,6 +201,7 @@ export async function startView(start, runSummary = () => null) {
     version: start.version, runId: start.runId, pipelineId, startedBy: start.startedBy, startedAt: start.startedAt,
     ready: start.ready, failing: start.failing, reason: start.reason, workflowId: start.workflowId, sourceBranch: start.sourceBranch,
     files: start.files || [],   // A8 D14: what the start sent, [{ id, name, sha256, from }]
+    note: start.note ?? null, noteOverrides: start.noteOverrides === true,   // the person's per-run instructions
     run: s ? { status: s.status ?? null, phase: s.phase ?? null, costUsd: s.costUsd ?? null,
       href: (typeof s.href === 'string' && s.href) || `#running/${start.runId}`,
       ...(s.waiting === true ? { waiting: true } : {}) } : null,   // the live run waits for the person
@@ -197,5 +241,29 @@ export function createRunEventHook({ notify }) {
     } catch (err) {
       console.error(`[worca-ui] requirements run link failed: ${err && err.message ? err.message : err}`);
     }
+  };
+}
+
+/** A requirements start's run as the feature shows it (A2 D10): the live entry while the server has it, else the pipeline row on
+ *  disk (after a restart). null when neither knows the run. A resume gives the run a new UUID, so the pipeline id finds the live
+ *  entry first. `href`: the live run's page while the server has it, else the saved run's History page
+ *  (#history/<projectKey | workspaces/<key>>/<pipelineId>). `settled`: the statuses that no longer wait on anyone. */
+export function createRunSummary({ liveRunEntry, readPipelineStateById, settled }) {
+  return ({ runId, pipelineId }) => {
+    const live = (pipelineId && liveRunEntry(pipelineId)) || liveRunEntry(runId);
+    const id = pipelineId || (live && live.pipelineId) || null;
+    let state = null;
+    if (id) { try { state = readPipelineStateById(id); } catch { state = null; } }
+    if (!live && !state) return null;
+    const key = state && (state.target === 'workspace' && state.workspaceKey ? `workspaces/${state.workspaceKey}` : state.projectKey);
+    return {
+      status: (live && live.status) || (state && state.status) || null,
+      phase: (state && state.phase) || null,
+      costUsd: state?.totalCostUsd ?? null,
+      pipelineId: id,
+      href: live ? `#running/${live.id}` : key && id ? `#history/${key}/${id}` : null,
+      // waits on a question, a gate or the Auto confirmation: entry.pendingQuestion, as the Running page reads it
+      waiting: !!(live && live.pendingQuestion && !settled.has(String(live.status || ''))),
+    };
   };
 }

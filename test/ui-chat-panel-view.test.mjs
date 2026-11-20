@@ -8,7 +8,7 @@ import { bootChat, liveRun, hello, openPanel, panelOf, screenOf, click, ROW } fr
 import { readStyleCss } from '../src/core/read-style-css.mjs';
 
 
-test('the facts row sits under the Details header; the glance stays hidden', async () => {
+test('the facts row sits under the Details header; the rest of the run card is the Overview tab', async () => {
   const ctx = await bootChat();
   hello(ctx, [liveRun()]);
   await ctx.settle();
@@ -19,7 +19,8 @@ test('the facts row sits under the Details header; the glance stays hidden', asy
   const facts = head.querySelector('.rd-facts');
   assert.ok(facts, 'the facts row moved out of the glance');
   assert.ok([...facts.querySelectorAll('.rd-stats > div > span')].some((s) => s.textContent === 'time'), 'Time is painted there');
-  assert.equal(screen.querySelector('.rd-glance').hidden, true);
+  assert.ok(screen.querySelector('.rd-sec[data-sec="overview"] > .rd-glance'), 'the card is the Overview tab\'s body (one level)');
+  assert.equal(screen.querySelector('.rd-glance .rd-facts'), null, 'its facts row is the head\'s');
   assert.equal(screen.querySelectorAll('.rd-facts').length, 1);
   assert.equal(screen.querySelector('.rd-bar .rd-stop').title, 'Stop', 'the icon-only Stop keeps its word as a tooltip');
 });
