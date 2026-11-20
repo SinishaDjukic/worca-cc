@@ -70,3 +70,14 @@ test('criteria saved with an example are checked on Try it once now, for free', 
   assert.equal(js[0].model, 'claude-haiku-4-5');
   assert.equal(prepare('SELECT COUNT(*) AS n FROM wf_test_judge_ledger').get().n, 0, 'the mock books nothing');
 });
+
+test('Agree and Disagree on a verdict, and its trust', async () => {
+  const ex = store.listExamples('wf_api_c')[0];
+  const [j] = cs.tryJudgements(store.triesOfRun(store.listTestRuns('wf_api_c')[0].id).map((t) => t.id));
+  const r = await call('POST', `${WF}/judgements/${j.id}/answer`, { agree: false });
+  assert.equal(r.status, 200);
+  assert.deepEqual([r.body.answer, r.body.trust.state, r.body.trust.n], [false, 'confirm', 1]);
+  assert.equal((await call('POST', `${WF}/judgements/${j.id}/answer`, { agree: 'yes' })).status, 400);
+  assert.equal((await call('POST', `/api/workflows/wf_other/tests/judgements/${j.id}/answer`, { agree: true })).status, 404);
+  assert.ok(ex);
+});

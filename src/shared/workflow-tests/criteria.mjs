@@ -46,3 +46,28 @@ export function normaliseJudge(raw) {
   if (!MODEL_RE.test(model)) return { judge: null, error: 'pick the AI model that checks your criteria' };
   return { judge: { model }, error: null };
 }
+
+/** D95: the trust marks. EXACT is an automatic check (always "Can be checked exactly"). */
+export const TRUST = Object.freeze({ CONFIRM: 'confirm', COLLECTING: 'collecting', RELIABLE: 'reliable', UNRELIABLE: 'unreliable', EXACT: 'exact' });
+export const ANSWERS_NEEDED = 10;   // D14
+export const AGREE_MIN = 0.8;       // P4-Q6
+export const SIDE_MIN = 0.7;
+export const SIDE_COUNT_MIN = 3;
+
+/** Agreement over answers `{ judgeMet, agree }`: overall, and on each side (Worca said met / said not met). */
+export function agreementOf(answers) {
+  const list = Array.isArray(answers) ? answers : [];
+  const side = (met) => { const s = list.filter((a) => a.judgeMet === met); return { n: s.length, agree: s.filter((a) => a.agree).length }; };
+  return { n: list.length, agree: list.filter((a) => a.agree).length, saidMet: side(true), saidNot: side(false) };
+}
+
+/** D95, D14, P4-Q6. `roundDone`: a Check the checker round of this criterion and model is done. Only unreliable does not decide. */
+export function trustOf({ roundDone = false, answers = [] } = {}) {
+  const a = agreementOf(answers);
+  if (a.n >= ANSWERS_NEEDED) {
+    const sideOk = (s) => s.n < SIDE_COUNT_MIN || s.agree / s.n >= SIDE_MIN;
+    const ok = a.agree / a.n >= AGREE_MIN && sideOk(a.saidMet) && sideOk(a.saidNot);
+    return { state: ok ? TRUST.RELIABLE : TRUST.UNRELIABLE, n: a.n, agree: a.agree, decides: ok };
+  }
+  return { state: roundDone ? TRUST.COLLECTING : TRUST.CONFIRM, n: a.n, agree: a.agree, decides: true };
+}

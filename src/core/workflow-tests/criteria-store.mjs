@@ -63,3 +63,40 @@ export function needsJudging(tryId, fp, model) {
       ORDER BY id DESC LIMIT 1`).get(Number(tryId), fp, model);
   return !r || RETRY_ERRORS.includes(r.error);
 }
+
+const byKey = (by) => (typeof by === 'string' ? by : '');
+/** D96: the person's answer on one verdict: true = agree (Right), false = disagree (Wrong); a later one replaces it; null removes it. */
+export function setAnswer(judgementId, { agree, by = null }) {
+  getDb();
+  if (agree === null) {
+    prepare('DELETE FROM wf_test_judge_answers WHERE judgement_id = ? AND by_key = ?').run(Number(judgementId), byKey(by));
+    return;
+  }
+  prepare(`INSERT INTO wf_test_judge_answers (judgement_id, by_key, agree, created_at) VALUES (?, ?, ?, ?)
+      ON CONFLICT(judgement_id, by_key) DO UPDATE SET agree = excluded.agree, created_at = excluded.created_at`)
+    .run(Number(judgementId), byKey(by), agree ? 1 : 0, nowIso());
+}
+export function answerOf(judgementId, by = null) {
+  getDb();
+  const r = prepare('SELECT agree FROM wf_test_judge_answers WHERE judgement_id = ? AND by_key = ?').get(Number(judgementId), byKey(by));
+  return r ? r.agree === 1 : null;
+}
+/** I9: anyone's newest answer on one verdict (the trust report's "unless the person said that is right" reads it, whoever views). */
+export function latestAnswerOf(judgementId) {
+  getDb();
+  const r = prepare('SELECT agree FROM wf_test_judge_answers WHERE judgement_id = ? ORDER BY created_at DESC, id DESC LIMIT 1').get(Number(judgementId));
+  return r ? r.agree === 1 : null;
+}
+/** D95: every answer on a criterion key and model in a workflow, as `{ judgeMet, agree }`. Pairs and repeats never count. */
+export function answersFor(workflowId, fp, model) {
+  getDb();
+  return prepare(`SELECT j.met AS met, a.agree AS agree FROM wf_test_judge_answers a JOIN wf_test_judgements j ON j.id = a.judgement_id
+      WHERE j.workflow_id = ? AND j.criterion_fp = ? AND j.model = ? AND j.purpose IN ('try', 'real', 'planted') AND j.met IS NOT NULL`)
+    .all(workflowId, fp, model).map((r) => ({ judgeMet: r.met === 1, agree: r.agree === 1 }));
+}
+/** D95: a Check the checker round of this key and model is done (all four cards answered). */
+export function roundDone(workflowId, fp, model) {
+  getDb();
+  return !!prepare(`SELECT 1 FROM wf_test_checker_rounds WHERE workflow_id = ? AND criterion_fp = ? AND model = ? AND status = 'done' LIMIT 1`)
+    .get(workflowId, fp, model);
+}

@@ -8,6 +8,7 @@ import { getProjectsRoot } from '../../../src/core/settings.mjs';
 import { NO_PROJECT_KEY } from '../../../src/core/store.mjs';
 import { TRY_ANSWERED_BY } from '../../../src/core/workflow-tests/answers.mjs';
 import { pretendCopies } from '../../../src/core/workflow-tests/connectors.mjs';
+import { registerCriteriaRoutes } from '../../../src/core/workflow-tests/criteria-routes.mjs';
 import { registerWorkflowTestRoutes } from '../../../src/core/workflow-tests/routes.mjs';
 import { NO_PROJECT_NAME } from '../../../src/shared/no-project.mjs';
 import { broadcast, invokeStartRun, mcpRunPreview, resolvePending, runs, serverMockMode, stopRun } from '../../server.mjs';
@@ -49,5 +50,6 @@ export const workflowTestDeps = {
 };
 
 export function register(app) {
-  registerWorkflowTestRoutes(app, { broadcast, deps: workflowTestDeps });
+  const { runner, criteriaJudge } = registerWorkflowTestRoutes(app, { broadcast, deps: workflowTestDeps });
+  registerCriteriaRoutes(app, { runner, criteriaJudge, deps: { broadcast } });   // Part 4
 }
