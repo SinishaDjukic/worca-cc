@@ -788,12 +788,33 @@ function fenceFor(text) {
   return '`'.repeat(Math.max(4, max + 1));
 }
 
-export function buildTurnPrompt(header, text, inlined = [], chatContext = '', attachedRequirements = '') {
+// Hands-free voice turns only (per turn, never in the cached system prompt): the model opens its answer with a short
+// version for listening. The turn reducer splits it out (spoken.mjs); it is read aloud, never shown, never stored.
+export const SPOKEN_TURN_RULE = [
+  '[voice reply]',
+  'The person is talking to you hands-free and hears your answer read aloud.',
+  'For this message only, start your answer with a short spoken version between <spoken> and </spoken>: two or three short, plain, conversational sentences that give the answer itself.',
+  'No markdown, code, lists, tables, links or file paths inside it.',
+  'Then write your full reply as usual. It is shown as text and is not read aloud.',
+  'If you use tools first, put the block at the start of the answer you write after them. Write it once.',
+].join('\n');
+
+// A voice merge (docs/speech.md): the person kept talking after a half sentence was sent, and the merged message
+// replaces that turn (hidden in the chat). Per turn only, never in the cached system prompt; the session is kept.
+export const SUPERSEDE_TURN_RULE = [
+  '[replaces previous message]',
+  "The user's previous message was cut off mid-sentence and your reply to it was not wanted.",
+  'This message replaces it: answer only this one, and do not mention the earlier fragment or your earlier reply.',
+].join('\n');
+
+export function buildTurnPrompt(header, text, inlined = [], chatContext = '', attachedRequirements = '', { spoken = false, supersedes = false } = {}) {
   let out = header ? `${header}\n\n${text}` : String(text ?? '');
   // Freeform chat: the quoted context comes AFTER the person's words (renderChatContextPrompt), before their files.
   if (chatContext) out += `\n\n${chatContext}`;
   // Attached requirements (FEAT-21): the started specs follow the person's words, never the 1 KB context header.
   if (attachedRequirements) out += `\n\n${attachedRequirements}`;
+  if (supersedes === true) out += `\n\n${SUPERSEDE_TURN_RULE}`;
+  if (spoken === true) out += `\n\n${SPOKEN_TURN_RULE}`;
   for (const a of inlined) {
     // store.mjs sanitises the name with basename() only, which keeps backticks and
     // newlines — and the name goes in the fence's INFO line. A newline there ends

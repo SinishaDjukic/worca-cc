@@ -21,7 +21,7 @@ async function withSandbox(fn) {
 }
 
 const DEFAULTS = {
-  stt: { engine: 'browser', baseUrl: 'http://127.0.0.1:8080/v1', model: 'whisper-1', language: 'auto', pause: 1.2 },
+  stt: { engine: 'browser', baseUrl: 'http://127.0.0.1:8080/v1', model: 'whisper-1', language: 'auto', pause: 0.7 },
   tts: { engine: 'browser', baseUrl: '', model: 'tts-1', voice: 'af_heart', speed: 1 },
 };
 

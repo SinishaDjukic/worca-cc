@@ -24,6 +24,7 @@
 //    The LAST result wins (two arrive in background mode).
 import { redactAskText } from './redact.mjs';
 import { ASK_LIMITS } from './limits.mjs';
+import { createSpokenSplitter, splitSpoken } from './spoken.mjs';
 import { isNormalized } from '../engines/events.mjs';
 import { createClaudeNormalizer } from '../engines/claude-events.mjs';
 import { parseMcpToolName } from '../../shared/mcp-tool-name.mjs';
@@ -350,11 +351,13 @@ export function createTurnReducer({
   const emit = (type, payload) => { try { onFrame({ type, ...payload }); } catch { /* a UI/WS failure never breaks the stream */ } };
 
   // ── state ──
-  const messages = new Map();      // main-stream message id → { deltas, blocks } (insertion order)
+  const messages = new Map();      // main-stream message id → { deltas, blocks, split, textStarted, memo } (insertion order)
   let currentMainMsg = null;
+  let splitEntry = null;           // the main message whose streamed <spoken> splitter is still open
   const usageByMsg = new Map();    // message id → { usage, final }
   let lastMainUsageMsg = null;     // the LAST main message with usage — its per-call total is the context fill
   let pending = '';
+  let pendingSpoken = '';          // hands-free: the <spoken> block's text, batched like the deltas (ask-spoken)
   let timer = null;
   const blocks = [];               // persisted blocks in insertion order
   const byId = new Map();          // block id → block (tool / agent / card)
@@ -382,8 +385,16 @@ export function createTurnReducer({
   const clipStr = (s, n) => { const t = String(s ?? ''); return t.length > n ? `${t.slice(0, n)}…` : t; };
   const safeJson = (v) => { try { return JSON.stringify(v); } catch { return String(v); } };
   const clipJson = (v, max) => { const s = safeJson(v); return s.length <= max ? v : { _truncated: true, preview: s.slice(0, max) }; };
-  const msgEntry = (id) => { let e = messages.get(id); if (!e) { e = { deltas: '', blocks: [] }; messages.set(id, e); } return e; };
-  const messageText = (e) => (e.blocks.length ? e.blocks.join('') : e.deltas);
+  const msgEntry = (id) => { let e = messages.get(id); if (!e) { e = { deltas: '', blocks: [], split: null, textStarted: false, memo: null }; messages.set(id, e); } return e; };
+  // e.deltas / e.blocks stay RAW; the shown text is the raw minus a leading <spoken> block (spoken.mjs).
+  // Memoised on the raw text: mainText() runs on every textLength() call.
+  const splitOf = (e) => {
+    const raw = e.blocks.length ? e.blocks.join('') : e.deltas;
+    if (!e.memo || e.memo.raw !== raw) e.memo = { raw, ...splitSpoken(raw) };
+    return e.memo;
+  };
+  const messageText = (e) => splitOf(e).text;
+  const messageSpoken = (e) => splitOf(e).spoken;
   const mainText = () => [...messages.values()].map(messageText).filter(Boolean).join('\n\n');
   const usageSum = () => [...usageByMsg.values()].reduce((acc, { usage }) => add(acc, usage), ZERO());
   // A message that never receives a message_delta (killed mid-call) is counted at its message-START usage — an under-count, accepted.
@@ -453,18 +464,51 @@ export function createTurnReducer({
   const emitUsage = () => emit('ask-usage', { usage: currentUsage(), costUsd: currentCost(), estimatedCostUsd: liveEstimate() });
   const flushDeltas = () => {
     if (timer !== null) { clearT(timer); timer = null; }
+    if (pendingSpoken) {
+      const spoken = redact(pendingSpoken);
+      pendingSpoken = '';
+      if (spoken) emit('ask-spoken', { text: spoken });
+    }
     if (!pending) return;
     const text = redact(pending);
     pending = '';
     if (text) emit('ask-delta', { text });
   };
-  const queueDelta = (t) => {
-    pending += t;
-    if (pending.length >= limits.deltaBatchChars) { flushDeltas(); return; }
+  const armBatch = () => {
+    if (pending.length + pendingSpoken.length >= limits.deltaBatchChars) { flushDeltas(); return; }
     if (timer !== null) return;
     const id = setT(flushDeltas, limits.deltaBatchMs);
-    if (pending) timer = id;                                              // a synchronous timer stub already flushed: keep no stale id
+    if (pending || pendingSpoken) timer = id;                             // a synchronous timer stub already flushed: keep no stale id
     else clearT(id);
+  };
+  // Ordered batching: each kind flushes the other first, so ask-spoken and ask-delta frames follow stream order.
+  const queueDelta = (t) => {
+    if (pendingSpoken) flushDeltas();
+    pending += t;
+    armBatch();
+  };
+  const queueSpoken = (t) => {
+    if (pending) flushDeltas();
+    pendingSpoken += t;
+    armBatch();
+  };
+  // One splitter output of a main message. The blank line that joins messages goes before the entry's
+  // FIRST non-empty text piece, so a message holding only a spoken block never announces itself.
+  const queuePieces = (entry, { spoken, text }) => {
+    if (spoken) queueSpoken(spoken);
+    if (!text) return;
+    if (!entry.textStarted) {
+      entry.textStarted = true;
+      if ([...messages.values()].some((x) => x !== entry && messageText(x))) queueDelta('\n\n');
+    }
+    queueDelta(text);
+  };
+  const endSplit = (entry) => {
+    if (!entry || !entry.split) return;
+    const split = entry.split;
+    entry.split = null;
+    if (splitEntry === entry) splitEntry = null;
+    queuePieces(entry, split.end());
   };
   const upsertBlock = (block) => {
     if (block.id !== undefined && block.id !== null) byId.set(block.id, block);
@@ -496,7 +540,13 @@ export function createTurnReducer({
 
   function onUsage(evt, isMain) {
     if (evt.phase === 'start') {
-      if (isMain) { sawAssistant = true; currentMainMsg = evt.messageId; if (evt.messageId) msgEntry(evt.messageId); noteUsage(evt.messageId, evt.usage, false, true); }
+      if (isMain) {
+        sawAssistant = true;
+        currentMainMsg = evt.messageId;
+        if (splitEntry && messages.get(evt.messageId) !== splitEntry) endSplit(splitEntry);   // a new main message: the last one's split ends
+        if (evt.messageId) msgEntry(evt.messageId);
+        noteUsage(evt.messageId, evt.usage, false, true);
+      }
       return;
     }
     if (evt.phase === 'delta') {
@@ -527,22 +577,25 @@ export function createTurnReducer({
     if (evt.delta) {
       const id = currentMainMsg ?? '__main__';
       const entry = msgEntry(id);
-      const first = !entry.deltas && !entry.blocks.length;
-      if (first && [...messages.values()].some((x) => x !== entry && messageText(x))) queueDelta('\n\n');
+      if (splitEntry && splitEntry !== entry) endSplit(splitEntry);
+      if (!entry.split && !entry.deltas && !entry.blocks.length) { entry.split = createSpokenSplitter(); splitEntry = entry; }
       entry.deltas += evt.text;
       if (anyToolRan) label('Writing');
-      queueDelta(evt.text);
+      queuePieces(entry, entry.split ? entry.split.push(evt.text) : { spoken: '', text: evt.text });
       return;
     }
     const entry = mainMessage(evt.messageId);
     if (!entry) return;
+    endSplit(entry);                                                      // the whole blocks follow the message's deltas
     // D15: an engine without text deltas (Codex) delivers each message whole — stream it once, as Claude's deltas are.
     if (emitWholeMessages && !entry.deltas && !entry.blocks.length) {
       const whole = (evt.blocks || []).join('');
       if (whole) {
-        if ([...messages.values()].some((x) => x !== entry && messageText(x))) queueDelta('\n\n');
         if (anyToolRan) label('Writing');
-        queueDelta(whole);
+        const split = createSpokenSplitter();
+        const a = split.push(whole);
+        const b = split.end();
+        queuePieces(entry, { spoken: a.spoken + b.spoken, text: a.text + b.text });
       }
     }
     for (const t of evt.blocks || []) entry.blocks.push(t);
@@ -992,6 +1045,7 @@ export function createTurnReducer({
     },
     finish() {
       if (summary) return summary;
+      for (const e of messages.values()) endSplit(e);
       flushDeltas();
       for (const b of blocks) {
         if ((b.kind === 'tool' || b.kind === 'agent') && b.status === 'running') {
@@ -1022,7 +1076,9 @@ export function createTurnReducer({
       }
       // The result-text fallback only speaks for a REAL answer: an is_error
       // result carries the API's refusal line, never the model's reply.
-      const text = mainText() || (lastResult && !lastResult.isError && typeof lastResult.text === 'string' ? lastResult.text : '');
+      // A hands-free reply that wrote only its <spoken> block is stored as that text, never empty.
+      const text = mainText() || splitSpoken(lastResult && !lastResult.isError && typeof lastResult.text === 'string' ? lastResult.text : '').text
+        || [...messages.values()].map(messageSpoken).filter(Boolean).join('\n\n').trim();
       summary = {
         text: redact(text), blocks: blocks.map(clone), usage: currentUsage(), costUsd: currentCost(), sessionId,
         ...terminal(), sawInit, sawAssistant, sawResult, agents: agents.length, labels: [...labels], reducerErrors,

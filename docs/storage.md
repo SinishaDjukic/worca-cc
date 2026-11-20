@@ -34,6 +34,8 @@ project's working tree, so nothing is ever committed to your repo.
                                         an import made keeps the ticket's issue type and priority) and
                                         req_attachments.fetch_json (the tracker file a row comes from: the
                                         connection, the ticket key and the attachment id; NULL for an upload).
+                                        Voice merge (v97): ask_messages.superseded_by (the user message that
+                                        replaced the row; hidden in the chat, never deleted; NULL = shown).
   backup-<ts>/                          legacy JSON archived on first upgrade (see below)
   store/no-project-00000000/            runs without a project: one store, the History group "No project";
                                         a run's work/ moves into its pipeline folder as work/ when it ends

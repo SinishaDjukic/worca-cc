@@ -38,5 +38,7 @@
   { "file": "ui/server.mjs", "from": 10544, "to": 10573, "commit": "beb686c22",
     "why": "Models P1 Task 2: the /vendor/brand-icons route; measured with grep -c" },
   { "file": "ui/server.mjs", "from": 10573, "to": 10574, "commit": "c2acccaea",
-    "why": "Ticket comments per run event (#1508): the one-line announcePrOpened call after a PR is opened, in createRunPr; the helper itself lives in src/core/sources.mjs; measured with wc -l on this branch merged with dev 2fd95ae5a" }
+    "why": "Ticket comments per run event (#1508): the one-line announcePrOpened call after a PR is opened, in createRunPr; the helper itself lives in src/core/sources.mjs; measured with wc -l on this branch merged with dev 2fd95ae5a" },
+  { "file": "ui/server.mjs", "from": 10574, "to": 10582, "commit": "1442adc27",
+    "why": "hands-free voice (PR #1468, from 1442adc27): the voice merge in startAskTurn (supersedeRefusal / appendSupersedingMessage imports, the askSupersedePrecheck pre-check, the ask-superseded broadcast) and its _testing.setSupersedePrecheck added lines to the residual ui/server.mjs, outside the route regions; measured with wc -l on dev 8b5f77fde with the PR applied" }
 ]
