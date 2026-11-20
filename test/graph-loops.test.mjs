@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { tarjanSccs, classifyLoops } from '../src/shared/graph/loops.mjs';
+import { tarjanSccs, classifyLoops, cycleGroups } from '../src/shared/graph/loops.mjs';
 import { portsFnFor } from '../src/shared/graph/ports.mjs';
 import { checkRows } from './helpers/rows.mjs';
 
@@ -85,4 +85,19 @@ test('classifyLoops never crashes: dangling endpoints, unknown keys, malformed e
       assert.equal(r.sccOf.has(undefined), false, 'an id-less node is never a component member');
     } },
   ]);
+});
+
+test('cycleGroups: SCC members share a group, a self-wire counts, DAG nodes and dangling wires do not', () => {
+  const g = cycleGroups(LOOPY);
+  assert.equal(g.get('n_plan'), g.get('n_rev'));
+  assert.equal(g.has('n_task'), false); assert.equal(g.has('n_end'), false);
+  const self = cycleGroups({ nodes: [n('n_a', 'planner'), n('n_b', 'planner')],
+    wires: [w('w1', 'n_a', 'plan', 'n_a', 'revise'), w('w2', 'n_a', 'plan', 'n_b', 'task')] });
+  assert.deepEqual([...self.keys()], ['n_a']);
+  // Every wire counts: a clean-sourced back edge (not a loop WIRE) still re-fires its target.
+  const clean = cycleGroups({ nodes: [n('n_plan', 'planner'), n('n_rev', 'reviewer')],
+    wires: [w('w1', 'n_plan', 'plan', 'n_rev', 'plan'), w('w2', 'n_rev', 'pass', 'n_plan', 'revise')] });
+  assert.equal(clean.get('n_plan'), clean.get('n_rev'));
+  assert.equal(cycleGroups({ nodes: [n('n_a', 'planner')], wires: [w('w1', 'n_a', 'plan', 'n_gone', 'x')] }).size, 0);
+  assert.equal(cycleGroups(null).size, 0);
 });
