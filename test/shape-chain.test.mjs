@@ -16,7 +16,8 @@ import { getTicket, runDueTickets, requestRunNow } from '../src/core/scheduler.m
 import { createSliceFeature, featureView, resumeFeature, featureHoldsTicket } from '../src/core/shape/features.mjs';
 import { careOfRow, requirementKindsOf } from '../src/shared/shape/feature-record.mjs';
 import { featureFigures } from '../src/core/shape/measure.mjs';
-import { latestFinishedSlice, latestFinishedSource, sliceChainGate, sliceSourceOf, headMissingSlice } from '../src/core/shape/chain.mjs';
+import { latestFinishedSlice, latestFinishedSource, sliceChainGate, sliceSourceOf, headMissingSlice, smallRunsChainGate,
+  sliceFireStart, oneShipCheck, shipHeadRow, shipHeadBase } from '../src/core/shape/chain.mjs';
 
 useTempHome(after, 'worca-shape-chain-');
 
@@ -211,8 +212,133 @@ test('headMissingSlice: a done slice whose tip is not in the head branch; null w
     const a = p('feat/a'); const b = p('feat/b'); const c = p('feat/c'); const gone = p('feat/gone');
     assert.equal(await headMissingSlice(dir, 'feat/b', [{ index: 1, pipelineId: a }, { index: 2, pipelineId: b }]), null);
     assert.deepEqual(await headMissingSlice(dir, 'feat/c', [{ index: 1, pipelineId: a }, { index: 2, pipelineId: b }, { index: 3, pipelineId: c }]), { index: 2 });
-    assert.equal(await headMissingSlice(dir, 'feat/c', [{ index: 1, pipelineId: a }, { index: 4, pipelineId: gone }]), null, 'a branch that does not resolve is skipped');
+    assert.deepEqual(await headMissingSlice(dir, 'feat/c', [{ index: 1, pipelineId: a }, { index: 4, pipelineId: gone }]), { index: 4 }, 'a branch that does not resolve is refused');
   } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
+test('headMissingSlice: a done slice with no branch record is refused', async () => {
+  const id = `c${String(++seq).padStart(7, '0')}`;
+  seedPipelineRow({ id, projectKey: projectKey(root), status: 'done', title: id });
+  assert.deepEqual(await headMissingSlice(root, 'feat/x', [{ index: 3, pipelineId: id }], { isAncestor: async () => true }), { index: 3 });
+  assert.deepEqual(await headMissingSlice(root, 'feat/x', [{ index: 5, pipelineId: null }], { isAncestor: async () => true }), { index: 5 });
+});
+
+test('headMissingSlice: a git failure is refused', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'worca-shape-chain-nogit-'));
+  try {
+    const a = pipe('done', { branch: { source: 'main', feature: 'feat/a' } });
+    assert.deepEqual(await headMissingSlice(dir, 'feat/b', [{ index: 1, pipelineId: a }]), { index: 1 });
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
+test('headMissingSlice: a timeout (isAncestor false) is refused, refs/heads and 10 s passed', async () => {
+  const a = pipe('done', { branch: { source: 'main', feature: 'feat/a' } });
+  const calls = [];
+  const isAncestor = async (...args) => { calls.push(args); return false; };
+  assert.deepEqual(await headMissingSlice('/repo', 'feat/c', [{ index: 1, pipelineId: a }], { isAncestor }), { index: 1 });
+  assert.deepEqual(calls, [['/repo', 'refs/heads/feat/a', 'refs/heads/feat/c', { timeout: 10_000 }]]);
+});
+
+test("headMissingSlice: the head's own branch is skipped; no dir with rows is refused; no rows is null", async () => {
+  const c = pipe('done', { branch: { source: 'main', feature: 'feat/c' } });
+  const a = pipe('done', { branch: { source: 'main', feature: 'feat/a' } });
+  const calls = [];
+  const isAncestor = async (...args) => { calls.push(args); return true; };
+  assert.equal(await headMissingSlice('/repo', 'feat/c', [{ index: 1, pipelineId: a }, { index: 2, pipelineId: c }], { isAncestor }), null);
+  assert.equal(calls.length, 1, 'the head itself is never checked');
+  assert.deepEqual(await headMissingSlice(null, 'feat/c', [{ index: 2, pipelineId: c }], { isAncestor }), { index: 2 });
+  assert.deepEqual(await headMissingSlice('/repo', null, [{ index: 2, pipelineId: c }], { isAncestor }), { index: 2 });
+  assert.equal(await headMissingSlice(null, null, [], { isAncestor }), null);
+  assert.equal(await headMissingSlice('/repo', 'feat/c', [], { isAncestor }), null);
+});
+
+test('smallRunsChainGate: null with the flag off; a gate that passes `live` with it on', async () => {
+  assert.equal(smallRunsChainGate(() => null, OFF), null);
+  assert.equal(await withEnvVars(SMALL_OFF, () => smallRunsChainGate(() => null)), null);
+  const { t } = feature(3);
+  const live = () => null;
+  const st = await withEnvVars(SMALL_ON, () => smallRunsChainGate(live)(getTicket(t[3]), {}));
+  assert.ok(st && typeof st.state === 'string', JSON.stringify(st));
+  assert.equal(typeof smallRunsChainGate(live, ON), 'function');
+});
+
+test('sliceFireStart: flag off gives {own:null, refusal:null} and leaves body untouched', () => {
+  const { t } = feature(3);
+  const body = { prompt: 'x' };
+  assert.deepEqual(sliceFireStart(getTicket(t[3]), body, {}, OFF), { own: null, refusal: null });
+  assert.deepEqual(body, { prompt: 'x' });
+  // Not a slice ticket: dev's path with the flag on too.
+  assert.deepEqual(sliceFireStart({ id: 'no-such-ticket' }, body, {}, ON), { own: null, refusal: null });
+  assert.deepEqual(body, { prompt: 'x' });
+});
+
+test("sliceFireStart: a slice-1 restart (no after) sets body.sourceBranch to the feature's base", () => {
+  quiet();
+  const f = createSliceFeature({ pipelineId: pipe('stopped'), projectDir: root, title: 'Restart', outline: outlineOf(2), perspectives: ['product'], workflowId: 'wf_shape' });
+  const ticket = { ...getTicket(rows(f.id)[1].ticket_id), after: null };   // a restart carries no predecessor
+  const body = { prompt: 'x', sourceBranch: 'elsewhere' };
+  const r = sliceFireStart(ticket, body, {}, ON);
+  assert.deepEqual(r, { own: { pipelineId: null, sourceBranch: 'main' }, refusal: null });
+  assert.equal(body.sourceBranch, 'main');
+  // A ticket with a predecessor keeps the body's source (fireTicket's sourceFromPrevious path reads `own`).
+  const body2 = { prompt: 'x' };
+  sliceFireStart({ ...ticket, after: { pipelineId: 'p' } }, body2, {}, ON);
+  assert.equal(body2.sourceBranch, undefined);
+});
+
+test('sliceFireStart: a slice whose latest finished run still merges back is refused (transient)', () => {
+  const { t } = feature(4);
+  const p3 = pipe('done', { branch: { source: 'main', feature: 'main', sameAsSource: true, worktreeDir: '/tmp/x' } });
+  fire(t[3], p3);
+  getDb().prepare('UPDATE pipelines SET updated_at = ? WHERE id = ?').run(new Date(Date.now() + 5000).toISOString(), p3);
+  const r = sliceFireStart(getTicket(t[4]), {}, {}, ON);
+  assert.deepEqual(r.refusal, { ok: false, error: 'the run before it is still merging its work back', transient: true });
+});
+
+const viewOf = (id, slices) => ({ id, slices });
+const NEVER = () => { throw new Error('ctxOf must not be called'); };
+
+test('oneShipCheck: stacked is a no-op; HAS_SLICE_PR refuses with the flag on and off', async () => {
+  const v = viewOf('f', [{ index: 1, pipelineId: 'p1', state: 'done', pr: { url: 'u', state: 'OPEN', draft: false } }]);
+  assert.deepEqual(await oneShipCheck('f', 'stacked', v, NEVER, ON), { head: null, refusal: null });
+  const refusal = { status: 409, body: { code: 'HAS_SLICE_PR', error: 'a run in this feature already has a PR: create one PR per run' } };
+  for (const deps of [ON, OFF]) assert.deepEqual(await oneShipCheck('f', 'one', v, NEVER, deps), { head: null, refusal });
+  // A closed or draft PR does not count.
+  const closed = viewOf('f', [{ index: 1, pipelineId: 'p1', state: 'done', pr: { url: 'u', state: 'CLOSED' } },
+    { index: 2, pipelineId: 'p2', state: 'done', pr: { url: 'u', state: 'OPEN', draft: true } }]);
+  assert.deepEqual(await oneShipCheck('f', 'one', closed, NEVER, OFF), { head: null, refusal: null });
+});
+
+test('oneShipCheck: flag off never calls ctxOf and gives head null', async () => {
+  const { id } = feature(3);
+  assert.deepEqual(await oneShipCheck(id, 'one', viewOf(id, []), NEVER, OFF), { head: null, refusal: null });
+});
+
+test('oneShipCheck: a ctxOf error refuses 409 HEAD_MISSING_WORK (fail-closed)', async () => {
+  const { id, t } = feature(3);
+  const p2 = getTicket(t[2]).pipelineId;
+  const seen = [];
+  const r = await oneShipCheck(id, 'one', viewOf(id, []), (h) => { seen.push(h); return { error: 'the last slice has no run' }; }, ON);
+  assert.deepEqual(seen, [p2]);
+  assert.deepEqual(r, { head: p2, refusal: { status: 409, body: { code: 'HEAD_MISSING_WORK',
+    error: 'the branch one PR would ship cannot be checked (the last slice has no run): create one PR per run' } } });
+  // The head check passes the done rows and refuses the first one missing from the head.
+  const slices = [{ index: 1, pipelineId: 'x1', state: 'done' }, { index: 2, pipelineId: p2, state: 'done' }, { index: 3, pipelineId: null, state: 'waiting' }];
+  const ctx = () => ({ target: { repoDir: '/repo', feature: `feat/${p2}` } });
+  const miss = await oneShipCheck(id, 'one', viewOf(id, slices), ctx, { ...ON, isAncestor: async () => false });
+  assert.deepEqual(miss.refusal.body, { code: 'HEAD_MISSING_WORK', error: "run 1's work is not in the branch one PR would ship: create one PR per run" });
+});
+
+test('shipHeadRow/shipHeadBase: null without head; the root source with it', () => {
+  const { id, t } = feature(3);
+  const p2 = getTicket(t[2]).pipelineId;
+  const v = viewOf(id, [{ index: 1, pipelineId: 'x' }, { index: 2, pipelineId: p2 }]);
+  assert.equal(shipHeadRow(v, null), null);
+  assert.equal(shipHeadBase(v, null), null);
+  assert.equal(shipHeadRow(v, 'nope'), null);
+  assert.equal(shipHeadBase(v, 'nope'), null);
+  assert.deepEqual(shipHeadRow(v, p2), { index: 2, pipelineId: p2 });
+  assert.equal(shipHeadBase(v, p2), 'main');
 });
 
 test('chain.mjs reads the flag only through shaperSmallRunsOn; features.mjs imports nothing from it', () => {

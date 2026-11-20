@@ -15,7 +15,7 @@ import { setFeaturePrOutcome, setRunPrOutcome } from '../src/core/pr-auto.mjs';
 import { createSliceFeature, setFeatureAcceptance, recordShip, appendFeatureRun } from '../src/core/shape/features.mjs';
 import {
   MEASURE_MIN_FEATURES, NOT_ENOUGH_HISTORY, featureFinished, recordFeatureFigures, recordFiguresAfterRun, featureFigures,
-  figuresByCare, summarizeFigures,
+  figuresByCare, summarizeFigures, recordSettledFigures,
 } from '../src/core/shape/measure.mjs';
 
 useTempHome(after, 'worca-shape-measure-');
@@ -247,6 +247,19 @@ test('flag off: both entry points answer flag-off and write nothing, even for an
   assert.deepEqual(recordFeatureFigures(fid, { deps: { flagEnabled: () => false } }), { recorded: false, reason: 'flag-off' });
   delete process.env.WORCA_FLAGS;
   assert.equal(count(), 0);
+}));
+
+test('recordSettledFigures: records nothing unless done; never throws (unknown id, null state)', () => withSmallRuns(true, () => {
+  clear();
+  const p1 = pipe('done');
+  const fid = feature([p1]);
+  for (const st of [null, undefined, {}, { id: p1, status: 'running' }, { id: p1, status: 'error' }]) recordSettledFigures(st);
+  assert.equal(count(), 0);
+  recordSettledFigures({ id: 'no-such-pipeline', status: 'done' });
+  assert.equal(count(), 0);
+  recordSettledFigures({ id: p1, status: 'done' });
+  assert.ok(rowOf(fid), 'a done run records its feature');
+  clear();
 }));
 
 // 13

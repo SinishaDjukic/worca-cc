@@ -452,12 +452,9 @@ import { savePlanToCheckout } from '../src/core/shape/save.mjs';
 import { featureView, currentFeatureId, featureOfPipeline, featuresOfTickets, cancelRest, resumeFeature,
   rechainWaiting, replanRest, setApproveEach, recordShapePlan, listShapePlans, chainFeature,
   sliceOfPipeline, slicePrPreamble, featureShipSuggestion, recordSliceDraft, recordShip, clearShip, featureShipInput,
-  liveSliceFrom, shaperCard, featureThread, addFeatureNote, appendFeatureRun, liveRoundOf, acceptanceRefusal, featureHoldsTicket,
-  sliceGateState, featureRootSource } from '../src/core/shape/features.mjs';
-import { shaperSmallRunsOn } from '../src/core/shape/small-runs.mjs';
-import { sliceChainGate, sliceSourceOf, latestFinishedSlice, headMissingSlice } from '../src/core/shape/chain.mjs';
+  liveSliceFrom, shaperCard, featureThread, addFeatureNote, appendFeatureRun, liveRoundOf, acceptanceRefusal, featureHoldsTicket } from '../src/core/shape/features.mjs';
+import { smallRunsChainGate, sliceFireStart, oneShipCheck, shipHeadRow, shipHeadBase, recordSettledFigures } from '../src/core/shape/chain.mjs';
 import { roundsOf, roundOrigin, nextRound, setRoundOutcome } from '../src/core/shape/rounds.mjs';
-import { recordFiguresAfterRun } from '../src/core/shape/measure.mjs';
 import { changesCard, applyChanges, applyRoute, landingFacts, landingFactsOfFeature, shapeToolCheck, threadWork, shapeThreadFacts } from '../src/core/shape/changes.mjs';
 import { defaultShapeToolDeps } from '../src/core/ask/shape-tool-deps.mjs';
 import { routeCardVerb, changesCardVerb } from '../src/shared/shape/route.mjs';
@@ -4101,19 +4098,10 @@ async function fireTicket(ticket) {
       return { ok: false, error: err && err.message ? err.message : String(err), transient: TRANSIENT_SOURCE_KINDS.has(err && err.kind) };
     }
   }
-  // Shaper small runs (D6, D7): a slice starts from the feature's latest finished run, picked now; null = dev's path.
-  const own = sliceSourceOf(ticket);
-  if (own && ticket.forced) {
-    const g = sliceGateState(ticket, { isLive: liveProbe, live: liveSliceOf });
-    if (g && g.state === 'waiting') return { ok: false, error: 'the run before it is still going', transient: true };
-    if (g && g.state === 'bad') return { ok: false, error: `the run it builds on ${g.reason}`, transient: false };
-  }
-  if (own && own.pending) return { ok: false, error: 'the run before it is still merging its work back', transient: true };
-  if (own && !ticket.after && own.sourceBranch) body.sourceBranch = own.sourceBranch;   // a slice-1 restart
+  const { own, refusal: sliceRefusal } = sliceFireStart(ticket, body, { isLive: liveProbe, live: liveSliceOf }); if (sliceRefusal) return sliceRefusal;
   if (ticket.after) {
-    const p = predecessorState(ticket.after, { policy: ticket.after.policy, isLive: liveProbe });
+    const p = predecessorState(ticket.after, { policy: ticket.after.policy, isLive: liveProbe }), fromPid = (own && own.pipelineId) || p.pipelineId;
     if (p.state === 'waiting' && !ticket.forced && !own) return { ok: false, error: 'the run before it is still going', transient: true };
-    const fromPid = (own && own.pipelineId) || p.pipelineId;
     // #718: a chained run that names no tags of its own takes the previous run's tags, read at fire
     // time so a retag of the parent before the chain fires is honoured. An explicit [] opts out.
     if (body.tags === undefined && fromPid) {
@@ -4197,11 +4185,7 @@ function afterRunSettled(orch) {
   // Git event automations (#711): a finished event run writes back now, not at the next tick.
   if (automationsOn()) kickAutomations();
   try {
-    const st = orch.getState?.();
-    // Shaper small runs A4: a finished feature records its figures (a round re-records its feature). Never the outcome.
-    if (st?.id && st.status === 'done') {
-      try { recordFiguresAfterRun(st.id); } catch (err) { console.error(`[worca-ui] feature figures failed: ${err?.message || err}`); }
-    }
+    const st = orch.getState?.(); recordSettledFigures(st);
     // The Ship card is offered once the last slice is done (offerShipCard checks).
     if (orch.runShape?.slice && st?.status === 'done' && st.id) {
       card = Promise.resolve().then(() => offerShipCard(st.id))
@@ -4232,9 +4216,7 @@ export async function schedulerTick({ now = Date.now() } = {}) {
       now,
       start: fireTicket,
       isLive: liveProbe,
-      staggerMs: SCHEDULER_STAGGER_MS, hold: featureHoldsTicket, // hold: "Ask me before each run" waits for Start now
-      // Shaper small runs (D3): a slice waits only for what it builds on, one slice of a feature at a time. Off = dev's gate.
-      chainGate: shaperSmallRunsOn() ? (t, o) => sliceChainGate(t, { ...o, live: liveSliceOf }) : null,
+      staggerMs: SCHEDULER_STAGGER_MS, hold: featureHoldsTicket, chainGate: smallRunsChainGate(liveSliceOf), // hold: "Ask me before each run" waits for Start now
     });
     for (const id of [...out.failed, ...out.missed, ...out.skipped]) releaseAskCard(getTicket(id));
     const newlyHeld = out.held.filter((id) => !_schedulerHeld.has(id)); // a held card repaints once, when it becomes held
@@ -5039,18 +5021,15 @@ function broadcastFeaturesOf(lookup) {
 }
 
 // ── D24, D25: Ship as ─────────────────────────────────────────────────────────────────────────────────────────
-/** The last slice's run, its PR target and the feature's base (the chain root), or { error }. Shaper small runs: `head`
- *  names the slice run one PR ships (the latest finished); its base is the feature's root branch, as its own chain may
- *  start from another slice's branch. */
+/** The last slice's run (or the `head` slice's), its PR target and the feature's base (the chain root), or { error }. */
 function shipCtxOf(view, { base: forced = null, head = null } = {}) {
-  const headRow = head ? view.slices.find((s) => s.pipelineId === head) : null;
-  const last = headRow || view.slices[view.slices.length - 1];
+  const last = shipHeadRow(view, head) || view.slices[view.slices.length - 1];
   const state = last && last.pipelineId ? readPipelineStateById(last.pipelineId) : null;
   if (!state) return { error: 'the last slice has no run' };
   const target = prTargetFor(state);
   if (target.error) return { error: target.error };
   if (!target.repoDir || !target.feature) return { error: 'the last slice has no branch to ship' };
-  const base = forced || (headRow ? featureRootSource(view.id) : null) || chainBaseBranchesOf(last.pipelineId)[0] || null;
+  const base = forced || shipHeadBase(view, head) || chainBaseBranchesOf(last.pipelineId)[0] || null;
   if (!base) return { error: 'the feature has no base branch' };
   return { state, target, base };
 }
@@ -5102,18 +5081,7 @@ async function shipFeatureNow(id, mode, { actor = null, release = null, watch = 
     // One makes no slice PRs (shipFeature closes only those that exist, e.g. an in-flight feature's drafts).
     let shown = view;
     // D5: One closes slice drafts only; a ready slice PR (made by a partly finished stacked ship) is never closed.
-    if (mode === 'one' && shown.slices.some((s) => s.pr && s.pr.url && s.pr.state !== 'CLOSED' && !s.pr.draft)) {
-      return { status: 409, body: { code: 'HAS_SLICE_PR', error: 'a run in this feature already has a PR: create one PR per run' } };
-    }
-    // Shaper small runs (D11): one PR ships the latest finished slice's branch, and never one that lacks a finished
-    // slice's work (runs may finish out of index order). Off: dev's last row, no check.
-    const head = mode === 'one' && shaperSmallRunsOn() ? latestFinishedSlice(id)?.pipelineId || null : null;
-    if (head) {
-      const hc = shipCtxOf(view, { base, head });
-      const missing = hc.error ? null : await headMissingSlice(hc.target.repoDir, hc.target.feature,
-        view.slices.filter((s) => s.state === 'done' && s.pipelineId).map((s) => ({ index: s.index, pipelineId: s.pipelineId })));
-      if (missing) return { status: 409, body: { code: 'HEAD_MISSING_WORK', error: `run ${missing.index}'s work is not in the branch one PR would ship: create one PR per run` } };
-    }
+    const { head, refusal: shipRefusal } = await oneShipCheck(id, mode, shown, (h) => shipCtxOf(view, { base, head: h })); if (shipRefusal) return shipRefusal;
     clearShip(id);                                   // a withdrawn ship (its PRs all closed unmerged); no-op otherwise
     // A slice whose PR was closed gets a new one (openMemberPr opens past a CLOSED PR).
     const needsPr = (s) => s.pipelineId && (!s.pr || s.pr.state === 'CLOSED');

@@ -129,6 +129,12 @@ export function recordFiguresAfterRun(pipelineId, opts) {
   return recordFeatureFigures(featureId, opts);
 }
 
+/** afterRunSettled's hook: a run that settled `done` re-records its feature's figures. Never the outcome: never throws. */
+export function recordSettledFigures(state) {
+  if (!(state?.id && state.status === 'done')) return;
+  try { recordFiguresAfterRun(state.id); } catch (err) { console.error(`[worca-ui] feature figures failed: ${err?.message || err}`); }
+}
+
 const parse = (t) => { try { return JSON.parse(t); } catch { return null; } };
 
 /** A feature's recorded figures, or null. Readable with the flag off. */
