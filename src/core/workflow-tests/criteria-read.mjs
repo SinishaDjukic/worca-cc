@@ -240,5 +240,7 @@ export function trustReportOf(workflowId, { checker }) {
   });
   const pairs = cs.pairJudgements(workflowId, liveEx).map((j) => ({ winner: j.winner, swapped: j.variant ? j.variant.swapped : null }));
   const lastAt = rounds.map((r) => r.at).filter(Boolean).sort().at(-1) || null;
-  return trustReportModel({ criteria, rounds, pairs, proofs: cs.tryProofCounts(workflowId, live), lastAt, costUsd: rounds.reduce((s, r) => s + r.cost, 0) });
+  // Task 23: the exact checks made from a criterion count in "Criteria you can trust" as on board 1's card (checkingOf).
+  const exactChecks = examples.reduce((s, e) => s + (e.checks || []).filter((k) => k.said).length, 0);
+  return trustReportModel({ criteria, rounds, pairs, proofs: cs.tryProofCounts(workflowId, live), lastAt, costUsd: rounds.reduce((s, r) => s + r.cost, 0), exactChecks });
 }

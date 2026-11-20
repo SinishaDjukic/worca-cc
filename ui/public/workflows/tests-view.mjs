@@ -9,6 +9,7 @@ import { agoText, countsText } from '../../../src/shared/workflow-tests/compare.
 import { NO_PROJECT_YET_TAIL, WITH_CHANGES_HINT, MOVED_BADGE, behindText, PICK_FIRST_TEXT, CANT_TRY_TEXT, LIST_FOOT_HINT, firstUseNoneText, RUN_IT_ONCE, WRITE_YOURSELF,
   refusedRunsCount }
   from '../../../src/shared/workflow-tests/project-text.mjs';
+import { listTrustSentence } from '../../../src/shared/workflow-tests/criteria-text.mjs';
 
 export const HOW_HIDDEN_KEY = 'worca.workflowTests.howHidden';
 const HOW = Object.freeze({
@@ -52,9 +53,9 @@ function howCard(doc, { first, onHide }) {
   return c;
 }
 
-/** routeWorkflows' tests part (tests-app.mjs route): an example, a test, or Check the checker of an example (Part 4). */
-export const TESTS_ROUTE_RE = /^tests(?:\/(\d+)|\/run\/(\d+)|\/(\d+)\/checker\/(\d+))?$/;
-/** F35: the address of the Tests page that shows: #workflows/<id>/tests[/run/<runId>|/<exampleId>[/checker/<round>]]. No page shown: #workflows. */
+/** routeWorkflows' tests part (tests-app.mjs route): an example, a test, Check the checker of an example, or the trust report (Part 4). */
+export const TESTS_ROUTE_RE = /^tests(?:\/(\d+)|\/run\/(\d+)|\/(\d+)\/checker\/(\d+)|\/(trust))?$/;
+/** F35: the address of the Tests page that shows: #workflows/<id>/tests[/run/<runId>|/<exampleId>[/checker/<round>]|/trust]. No page shown: #workflows. */
 export function testsAddress({ workflowId, shown, view, runId, exampleId, roundId = null }) {
   if (!shown || !workflowId) return '#workflows';
   const base = `#workflows/${workflowId}/tests`;
@@ -62,6 +63,7 @@ export function testsAddress({ workflowId, shown, view, runId, exampleId, roundI
   // Part 4 (Task 22): Check the checker of an example's criterion; with no round yet (P4-M3's no good result, the limit), the example.
   if (view === 'checker' && Number.isInteger(exampleId) && Number.isInteger(roundId)) return `${base}/${exampleId}/checker/${roundId}`;
   if (view === 'checker' && Number.isInteger(exampleId)) return `${base}/${exampleId}`;
+  if (view === 'trust') return `${base}/trust`;   // Task 23: board 13
   return view === 'editor' && Number.isInteger(exampleId) ? `${base}/${exampleId}` : base;
 }
 
@@ -207,6 +209,13 @@ function list(doc, page, o, actions, { root, storage, dateText, now, mock }) {
   }
   if (o.latest) page.append(latestCard(doc, o.latest, actions, now));
   page.append(table(doc, o, actions, dateText));
+  if (o.trust && o.trust.total > 0) {   // board 1 (Task 23): the report's card under the table; Part 5's "Make the tests harder" joins it
+    const cards = el(doc, 'div', 'wft-cards');
+    const card = btn(doc, null, () => actions.openTrust(), 'card wft-trust-card');
+    card.append(el(doc, 'span', 'wft-trust-title', "Can you trust Worca's checking?"), el(doc, 'span', 'hint', listTrustSentence(o.trust)));
+    cards.append(card);
+    page.append(cards);
+  }
   const foot = el(doc, 'p', 'hint wft-foot');
   foot.append(el(doc, 'b', '', 'Why 3 tries?'), doc.createTextNode(' AI can give a different answer each time, so one good try can be luck. A try passes when everything checked is met.'));
   page.append(foot);

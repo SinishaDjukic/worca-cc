@@ -581,3 +581,33 @@ button.badge.wft-confirm:hover{text-decoration:underline;}
 .wft-cc-foot{display:flex;flex-wrap:wrap;justify-content:space-between;align-items:center;gap:12px;}
 .wft-cc-foot .hint{margin:0;flex:1 1 420px;}
 @media (max-width:800px){.wft-cc-cards,.wft-cc-ghosts{grid-template-columns:minmax(0,1fr);}}
+/* Task 23: board 1's trust card, board 13 (How reliable is Worca's checking?) and P4-M4's early states */
+.wft-cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(300px,1fr));gap:14px;}
+.wft-trust-card{display:flex;flex-direction:column;align-items:flex-start;gap:4px;padding:14px 18px;text-align:left;font:inherit;color:var(--ink);cursor:pointer;}
+.wft-trust-card .hint{margin:0;}
+.wft-trust-title{font-weight:600;font-size:var(--fs-body);}
+.wft-tr .subtitle{margin:2px 0 0;max-width:700px;}
+.wft-tile-value.is-none{color:var(--ink-3);}
+.wft-tr-none{padding:20px 22px;display:flex;flex-direction:column;align-items:flex-start;gap:10px;}
+.wft-tr-none h2{margin:0;font-size:var(--fs-section);}
+.wft-tr-none p{margin:0;font-size:var(--fs-body);line-height:1.5;max-width:640px;}
+.wft-tr-info{display:flex;flex-wrap:wrap;gap:12px 20px;align-items:center;padding:16px 20px;border-radius:var(--r-card);background:var(--blue-wash);border:1px solid var(--blue-line);}
+.wft-tr-info > div{flex:1 1 460px;min-width:0;display:flex;flex-direction:column;gap:3px;}
+.wft-tr-info h2{margin:0;font-size:var(--fs-body);}
+.wft-tr-info span{font-size:var(--fs-body);line-height:1.5;}
+.wft-tr-tests{padding:18px 22px;}
+.wft-tr-tests h2{margin:0 0 4px;font-size:var(--fs-section);}
+.wft-tr-tests > .hint{margin:0 0 6px;}
+.wft-tr-tests .hint .code{font-family:var(--mono);}
+.wft-tr-test{display:grid;grid-template-columns:28px minmax(0,1fr) 170px;gap:14px;align-items:start;padding:12px 0;border-bottom:1px solid var(--line);}
+.wft-tr-test:last-child{border-bottom:none;}
+.wft-tr-dot{width:26px;height:26px;border-radius:50%;background:var(--field);color:var(--ink-2);font-size:var(--fs-meta);font-weight:700;display:inline-flex;align-items:center;justify-content:center;}
+.wft-tr-body b{display:block;font-size:var(--fs-body);font-weight:600;margin-bottom:3px;}
+.wft-tr-body p{margin:0;font-size:var(--fs-meta);color:var(--ink-2);line-height:1.45;}
+.wft-tr-out{display:flex;flex-direction:column;gap:4px;align-items:flex-end;text-align:right;font-size:var(--fs-meta);color:var(--ink-2);}
+.wft-tr-todo{padding:18px 22px;display:flex;flex-direction:column;gap:4px;}
+.wft-tr-todo h2{margin:0 0 6px;font-size:var(--fs-section);}
+.wft-tr-todo-row{display:flex;flex-wrap:wrap;gap:10px 16px;align-items:center;justify-content:space-between;padding:10px 0;border-top:1px solid var(--line);font-size:var(--fs-body);}
+.wft-tr-todo h2 + .wft-tr-todo-row{border-top:none;padding-top:0;}
+.wft-tr-todo-row b{font-weight:600;}
+@media (max-width:640px){.wft-tr-test{grid-template-columns:28px minmax(0,1fr);}.wft-tr-out{grid-column:2;align-items:flex-start;text-align:left;}}

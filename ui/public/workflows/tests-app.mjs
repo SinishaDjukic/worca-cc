@@ -16,7 +16,7 @@ import { renderExampleEditor, BLANK_EXAMPLE } from './example-editor.mjs';
 import { openFromRunDialog, openPickRunDialog, canUseAsExample, openTestVersionDialog, defaultPicks } from './test-dialogs.mjs';
 import { renderTestProgress } from './test-progress.mjs';
 import { renderCompare, renderSideBySide, openWholeResult, askMoreTries } from './test-compare.mjs';
-import { renderChecker } from './criteria-pages.mjs';
+import { renderChecker, renderTrustReport } from './criteria-pages.mjs';
 import { SAVE_FIRST_TEXT, CHANGES_NOT_READ_TITLE, NO_DIFF_TEXT, PATCH_CUT_TEXT } from '../../../src/shared/workflow-tests/project-text.mjs';
 import { useLabel as wftUseLabel } from '../../../src/shared/workflow-tests/compare.mjs';
 import { NO_SOURCE_TEXT } from '../../../src/shared/workflow-tests/criteria-text.mjs';
@@ -79,6 +79,7 @@ export function createWorkflowTests(deps) {
     if (wft.view === 'checker') {   // Task 22: no round yet (P4-M3's no good result, the limit) reads nothing
       return wft.roundId ? wftCall('GET', `${wftBase(id)}/examples/${wft.exampleId}/checker/${wft.roundId}`) : Promise.resolve({ ok: true, data: null });
     }
+    if (wft.view === 'trust') return wftCall('GET', `${wftBase(id)}/trust`);   // Task 23: board 13
     const base = `${wftBase(id)}/runs/${wft.runId}`;
     if (wft.view === 'progress') return wftCall('GET', base);
     if (wft.view === 'compare') return wftCompareRead(base);
@@ -100,6 +101,7 @@ export function createWorkflowTests(deps) {
       return;
     }
     if (!wft.data) { renderTestsPage(root, null, wftListActions(), { doc, error: wft.error }); return; }
+    if (wft.view === 'trust') { renderTrustReport(root, wft.data, wftTrustActions(), { doc, dateText: wftDate }); return; }
     if (wft.view === 'progress') { renderTestProgress(root, wft.data, wftProgressActions(), { doc, dateText: wftDate, mock: mock() }); return; }
     if (wft.view === 'compare') { renderCompare(root, wft.data, wftCompareActions(), { doc, mock: mock() }); return; }
     if (wft.view === 'detail') {
@@ -137,7 +139,13 @@ export function createWorkflowTests(deps) {
       },
       // Task 22 (board 12): By criterion's Confirm 4 results and Fix it
       confirmCriterion: (exampleId, c) => wftConfirmCriterion(exampleId, c, { exampleName: c.exampleName }),
+      trust: () => wftShow('trust'),   // Task 23: By criterion's "How Worca tests its own checking"
     };
+  }
+  /** Board 13's "What to do" (Task 23): Fix the criterion and Confirm 4 results both start Check the checker of it (D97, Task 22). */
+  function wftTrustActions() {
+    const open = (exampleId, criterionId, c = {}) => wftConfirmCriterion(exampleId, { id: criterionId, text: c.text || '' }, { exampleName: c.exampleName || null });
+    return { fix: open, confirm: open, back: () => wftShow('list', { overview: null }) };
   }
   /** P4-Q15: while Worca checks an older test's criteria, read again every 2 s; stops when the view moves on. The runner's
    *  workflow-tests-changed frame (wftChanged) also repaints Compare when the check ends. */
@@ -398,6 +406,7 @@ export function createWorkflowTests(deps) {
       ] }),
       openRun: (runId) => wftShow('progress', { runId }),
       openLatest: (runId) => wftShow('compare', { runId }),
+      openTrust: () => wftShow('trust'),   // Task 23: board 1's card
       // → {ok}: the view's Add button stays busy until the post answers (one post per click, withButton).
       addPastRuns: async (pipelineIds) => {
         const id = wftWorkflowId();                                  // the workflow the picks belong to, before any await
@@ -615,7 +624,7 @@ export function createWorkflowTests(deps) {
     wftSyncHash();
     void wftRefresh();
   }
-  /** routeWorkflows, after it opened `head`: #workflows/<id>/tests[/<example>|/run/<test>|/<example>/checker/<round>] (Use as test example, the
+  /** routeWorkflows, after it opened `head`: #workflows/<id>/tests[/<example>|/run/<test>|/<example>/checker/<round>|/trust] (Use as test example, the
    *  results-ready toast). Only when the canvas holds that row itself: a built-in or plugin row opens as an unsaved copy
    *  (#1127), which has no tests. */
   function route(head, sub, opened) {
@@ -625,6 +634,7 @@ export function createWorkflowTests(deps) {
       if (m[1]) void wftOpenExample(Number(m[1]));
       else if (m[2]) wftShow('progress', { runId: Number(m[2]) });
       else if (m[3]) wftShow('checker', { exampleId: Number(m[3]), roundId: Number(m[4]), ...WFT_CHECKER_FRESH });
+      else if (m[5]) wftShow('trust');
     }
   }
   return { refresh: wftRefresh, syncHash: wftSyncHash, enterList, changed: wftChanged, runMenuItems: wftRunMenuItems, route };

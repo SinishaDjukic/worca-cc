@@ -17,3 +17,12 @@ test('the chips: Basics, Automatic, Your criteria (only when there are some)', (
   renderTestsPage(root, overview({ criteria: 0 }), {}, { doc: win.document });
   assert.deepEqual([...root.querySelectorAll('.wft-kind')].map((k) => k.textContent), ['Basics 3', 'Automatic 2']);
 });
+
+test("board 1's card: \"Can you trust Worca's checking?\" with the counts; no card without criteria (Task 23)", () => {
+  const win = dom();
+  const root = win.document.getElementById('r');
+  renderTestsPage(root, { ...overview({ criteria: 3 }), trust: { total: 12, reliable: 10, unreliable: 1, waiting: 1 } }, { openTrust: () => {} }, { doc: win.document });
+  assert.equal(root.querySelector('.wft-trust-card').textContent, "Can you trust Worca's checking?Reliable for 10 of 12 criteria. 1 is unreliable, 1 needs your answers.");
+  renderTestsPage(root, { ...overview({ criteria: 0 }), trust: { total: 0, reliable: 0, unreliable: 0, waiting: 0 } }, {}, { doc: win.document });
+  assert.equal(root.querySelector('.wft-trust-card'), null);
+});

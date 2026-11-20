@@ -513,3 +513,12 @@ test("fix round 1: criteria a test never checked (Worca's spending limit, or the
   }
   assert.equal(asked, 0, 'no paid call when refused');
 });
+
+test("Task 23: the trust report's \"Criteria you can trust\" tile and board 1's card count the same (an exact check made from a criterion is reliable)", async () => {
+  const ex = store.listExamples('wf_api_c')[0];
+  const put = await call('PUT', `${WF}/examples/${ex.id}`, { checks: [...(ex.checks || []), { kind: 'mentions', text: '200', said: 'Mentions that the export stops at 200' }] });
+  assert.equal(put.status, 200);
+  const [o, r] = [await call('GET', WF), await call('GET', `${WF}/trust`)];
+  assert.ok(o.body.trust.total > 0);
+  assert.deepEqual(r.body.tiles.trusted, { n: o.body.trust.reliable, of: o.body.trust.total, unreliable: o.body.trust.unreliable, waiting: o.body.trust.waiting });
+});

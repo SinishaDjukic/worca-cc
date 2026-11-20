@@ -1,12 +1,12 @@
 // ui/public/workflows/criteria-pages.mjs — Part 4's pages (plans/workflow-tests-part4-plan.md Tasks 21–23): Compare by criterion
 // (board 12) and its tabs and line in Compare (board 5); Check the checker (board 11 and P4-M3's states, Task 22); How reliable is
-// Worca's checking (board 13) follows. Pure DOM, text only.
+// Worca's checking (board 13 and P4-M4's early states, Task 23). Pure DOM, text only.
 import { el, btn } from './test-ui.mjs';
 import { icon } from '../icons.mjs';
 import { fmtUsd } from '../../../src/shared/workflow-tests/checks.mjs';
 import { TRUST_BADGE, trustLine, checkingRest, BY_EXAMPLE, BY_CRITERION, SEE_BY_CRITERION, NOT_CHECKED, CRITERIA_CHANGED_TEXT, CHECK_THEM, NOT_EVERY_TRY,
   CHECKING_CRITERIA_TEXT, CHECKED_CRITERIA_TEXT, CAP_CHECKS_TEXT, ADDED_AFTER_TEXT, NO_CHECKED_TRY, COST_UNKNOWN_NOTE, notEveryTryText, unreliableOnlyText,
-  unreliableWhyText, ROUND_NOT_FINISHED_TEXT }
+  unreliableWhyText, ROUND_NOT_FINISHED_TEXT, TRUST_TESTS, trustTestLine, trustTestBadge }
   from '../../../src/shared/workflow-tests/criteria-text.mjs';
 
 const LEGEND = [
@@ -415,4 +415,106 @@ export function renderChecker(root, v, actions, { doc, exampleName, criterion = 
     doc.createTextNode(" Your answers also count toward how far Worca's checking is trusted."));
   foot.append(cost, ccActs(doc, btn(doc, 'Back', () => actions.back(), 'btn'), use));
   page.append(auto, foot);
+}
+
+// ---- Board 13 (Task 23): How reliable is Worca's checking? P4-M4 draws its early states (no criteria, no answers yet). ----
+const TR_SUB = 'Worca uses AI to check your criteria. AI can be wrong, so Worca tests its own checking in six ways. The results show where you can trust it and where you should not.';
+const TR_RERUN = 'They run again whenever the checking model or a criterion changes.';
+const answersOf = (n) => `${n} ${n === 1 ? 'answer' : 'answers'}`;
+function trTile(doc, label, value, sub) {
+  const t = el(doc, 'section', 'card wft-tile');
+  t.append(el(doc, 'div', 'wft-tile-label', label), el(doc, 'div', `wft-tile-value${value === '—' ? ' is-none' : ''}`, value), el(doc, 'small', 'wft-tile-sub', sub));
+  return t;
+}
+function trTiles(doc, { agree, planted, trusted }) {
+  const tiles = el(doc, 'div', 'wft-tiles');
+  const missed = planted.of - planted.caught;
+  const on = new Set(planted.missedOn).size;
+  tiles.append(
+    trTile(doc, 'Agrees with people', agree.n ? `${Math.round((agree.agree / agree.n) * 100)}%` : '—', agree.n ? `of ${answersOf(agree.n)}` : 'no answers yet'),
+    trTile(doc, 'Planted mistakes caught', planted.of ? `${planted.caught} of ${planted.of}` : '—', !planted.of ? 'not tested yet'
+      : missed ? `the ${missed} missed ${missed === 1 ? 'is' : 'are'} on ${on === 1 ? 'one criterion' : `${on} criteria`}` : 'none missed'),
+    trTile(doc, 'Criteria you can trust', `${trusted.n} of ${trusted.of}`,
+      [trusted.unreliable ? `${trusted.unreliable} unreliable (shown, does not decide)` : null,
+        trusted.waiting ? `${trusted.waiting} ${trusted.waiting === 1 ? 'waits' : 'wait'} for your answers` : null].filter(Boolean).join(', ')
+        || (trusted.of && trusted.n === trusted.of ? 'all of them' : '')));
+  return tiles;
+}
+function trTests(doc, m, dateText) {
+  const sec = el(doc, 'section', 'card wft-tr-tests');
+  const h = el(doc, 'h2', '', 'The six tests');
+  h.id = 'wft-tr-tests-h';
+  sec.setAttribute('aria-labelledby', h.id);
+  const hint = el(doc, 'p', 'hint', TR_RERUN);
+  if (m.lastAt) hint.append(doc.createTextNode(` Last run ${dateText(m.lastAt)} · cost `), usdSpan(doc, m.costUsd), doc.createTextNode('.'));
+  else if (m.tests.every((t) => t.state === 'none')) hint.append(doc.createTextNode(' Not run yet.'));   // P4-M4
+  sec.append(h, hint);
+  m.tests.forEach((t, i) => {
+    const row = el(doc, 'div', 'wft-tr-test');
+    const [title, words] = TRUST_TESTS[t.key];
+    const body = el(doc, 'div', 'wft-tr-body');
+    body.append(el(doc, 'b', '', title), el(doc, 'p', '', words));
+    const out = el(doc, 'span', 'wft-tr-out');
+    const [cls, badge] = trustTestBadge(t);   // user decision 4: a problem is counted ("2 missed")
+    out.append(el(doc, 'span', cls, badge));
+    if (t.state !== 'none') out.append(el(doc, 'span', 'wft-tr-line', trustTestLine(t)));   // P4-M4: not run yet is the badge alone
+    const n = el(doc, 'span', 'wft-tr-dot', String(i + 1));
+    n.setAttribute('aria-hidden', 'true');
+    row.append(n, body, out);
+    sec.append(row);
+  });
+  return sec;
+}
+function trTodo(doc, todo, actions) {
+  const sec = el(doc, 'section', 'card wft-tr-todo');
+  const h = el(doc, 'h2', '', 'What to do');
+  h.id = 'wft-tr-todo-h';
+  sec.setAttribute('aria-labelledby', h.id);
+  sec.append(h);
+  for (const x of todo) {
+    const r = el(doc, 'div', 'wft-tr-todo-row');
+    const words = el(doc, 'span', '');
+    words.append(el(doc, 'b', '', `"${x.text}"`), doc.createTextNode(x.kind === 'fix' ? ' is unreliable.' : ' is new. Confirm 4 results so Worca knows it judges it your way.'));
+    const more = { text: x.text, exampleName: x.exampleName || null };   // Check the checker names the criterion before its round reads
+    // Both open Check the checker of the criterion (Task 22); "Confirm 4 results" is the amber badge itself, as on board 12.
+    r.append(words, x.kind === 'fix' ? busyBtn(doc, 'Fix the criterion', () => actions.fix(x.exampleId, x.criterionId, more), 'btn btn-sm wft-tr-fix')
+      : busyBtn(doc, TRUST_BADGE.confirm[1], () => actions.confirm(x.exampleId, x.criterionId, more), `${TRUST_BADGE.confirm[0]} wft-confirm wft-tr-confirm`));
+    sec.append(r);
+  }
+  return sec;
+}
+/**
+ * Board 13 and P4-M4. `m` = GET …/trust (trustReportModel). `actions`: `fix(exampleId, criterionId, { text, exampleName })` and
+ * `confirm(…)` open Check the checker of that criterion; `back()` is the Tests list. Colleagues' reviews come with Part 5 (`m.colleagues`).
+ */
+export function renderTrustReport(root, m, actions, { doc, dateText = (s) => s }) {
+  root.replaceChildren();
+  const page = el(doc, 'div', 'wft-page wft-tr');
+  const head = el(doc, 'div', 'wft-titles');
+  head.append(btn(doc, 'Tests', () => actions.back(), 'wft-crumb'), el(doc, 'h2', 'wft-title', "How reliable is Worca's checking?"), el(doc, 'p', 'subtitle', TR_SUB));
+  page.append(head);
+  root.append(page);
+  if (m.state === 'no-criteria') {   // P4-M4 1: the Tests list shows no card then; this page opens only from its address
+    const box = el(doc, 'section', 'card wft-tr-none');
+    const h = el(doc, 'h2', '', 'No criteria yet');
+    h.id = 'wft-tr-none-h';
+    box.setAttribute('aria-labelledby', h.id);
+    box.append(h, el(doc, 'p', '', 'Worca tests its own checking once an example has criteria. Add one to an example in your own words, for example "names a goal with a number".'),
+      btn(doc, 'Go to the examples', () => actions.back(), 'btn btn-sm wft-tr-go'));
+    page.append(box);
+    return;
+  }
+  const todo = m.todo.length ? [trTodo(doc, m.todo, actions)] : [];
+  if (m.state === 'no-answers') {   // P4-M4 2: the blue box, the tiles, What to do, then the six tests
+    const info = el(doc, 'section', 'wft-tr-info');
+    const h = el(doc, 'h2', '', 'Worca needs your answers first: confirm each new criterion.');
+    h.id = 'wft-tr-info-h';
+    info.setAttribute('aria-labelledby', h.id);
+    const words = el(doc, 'div', '');
+    words.append(h, el(doc, 'span', '', 'Each one takes 4 answers. Until then, the tests below have little to go on.'));
+    info.append(words);
+    page.append(info, trTiles(doc, m.tiles), ...todo, trTests(doc, m, dateText));
+    return;
+  }
+  page.append(trTiles(doc, m.tiles), trTests(doc, m, dateText), ...todo);
 }

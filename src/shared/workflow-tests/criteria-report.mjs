@@ -61,7 +61,7 @@ const pct = (a, n) => (n ? Math.round((a / n) * 100) : 0);
  * P4-M4's early states: `state` is 'no-criteria' (nothing to trust yet), 'no-answers' (criteria, but nobody answered) or 'ready';
  * `colleagues` is false until Part 5 brings their blind reviews, so tile 1's sub-line is "of N answers" (n).
  */
-export function trustReportModel({ criteria = [], rounds = [], pairs = [], proofs = { found: 0, of: 0 }, lastAt = null, costUsd = 0 }) {
+export function trustReportModel({ criteria = [], rounds = [], pairs = [], proofs = { found: 0, of: 0 }, lastAt = null, costUsd = 0, exactChecks = 0 }) {
   // Trust is per criterion words and model, so criteria shared by several examples (same `trustKey`) count their answers once.
   const once = new Map();
   criteria.forEach((c, i) => { if (c.trust) once.set(c.trustKey != null ? c.trustKey : `row${i}`, c.trust); });
@@ -79,7 +79,6 @@ export function trustReportModel({ criteria = [], rounds = [], pairs = [], proof
   const again = sameRounds.filter((r) => r.same.n === r.same.of).length;
   const fooled = padRounds.filter((r) => r.padding.n < r.padding.of).length;
   const pairsSame = pairs.filter((p) => p.winner && p.winner !== 'unsure').length;
-  const count = (s) => criteria.filter((c) => c.trust && c.trust.state === s).length;
   const state = (ok, any) => (!any ? 'none' : ok ? 'good' : 'bad');
   const tests = [
     { key: 'planted', state: state(caught === of, of), caught, of, missedOn },
@@ -87,13 +86,18 @@ export function trustReportModel({ criteria = [], rounds = [], pairs = [], proof
     { key: 'order', state: state(pairsSame === pairs.length, pairs.length), n: pairsSame, of: pairs.length },
     { key: 'longer', state: state(fooled === 0, padRounds.length), fooled },
     { key: 'proof', state: state(proofs.found === proofs.of, proofs.of), n: proofs.found, of: proofs.of },
-    { key: 'people', state: state(n > 0 && agree / n >= AGREE_MIN, n >= ANSWERS_NEEDED), n, agree, pct: pct(agree, n) },
+    // User decision 5: 1 to 9 answers are 'waiting' (the line shows the real numbers and what Worca needs), never good or bad.
+    { key: 'people', state: n > 0 && n < ANSWERS_NEEDED ? 'waiting' : state(n > 0 && agree / n >= AGREE_MIN, n >= ANSWERS_NEEDED), n, agree, pct: pct(agree, n) },
   ];
   const todo = [
-    ...criteria.filter((c) => c.trust && c.trust.state === 'unreliable').map((c) => ({ kind: 'fix', exampleId: c.exampleId, criterionId: c.criterionId, text: c.text })),
-    ...criteria.filter((c) => c.trust && c.trust.state === 'confirm').map((c) => ({ kind: 'confirm', exampleId: c.exampleId, criterionId: c.criterionId, text: c.text })),
+    ...criteria.filter((c) => c.trust && c.trust.state === 'unreliable').map((c) => ({ kind: 'fix', exampleId: c.exampleId, exampleName: c.exampleName, criterionId: c.criterionId, text: c.text })),
+    ...criteria.filter((c) => c.trust && c.trust.state === 'confirm').map((c) => ({ kind: 'confirm', exampleId: c.exampleId, exampleName: c.exampleName, criterionId: c.criterionId, text: c.text })),
   ];
+  // "Criteria you can trust" counts as board 1's card (checkingCounts): each criterion with a model by its trust mark, and each exact
+  // check made from a criterion (`exactChecks`, the `said` checks) as reliable. A criterion an exact check could replace still counts
+  // by its own mark, though its row shows only the violet suggestion (user decision 2): its AI checking is what this page tests.
+  const k = checkingCounts([...criteria.map((c) => c.trust), ...Array.from({ length: exactChecks }, () => ({ state: 'exact' }))]);
   return { state: !criteria.length ? 'no-criteria' : n === 0 ? 'no-answers' : 'ready', colleagues: false,
-    tiles: { agree: { n, agree }, planted: { caught, of, missedOn }, trusted: { n: count('reliable'), of: criteria.length, unreliable: count('unreliable'),
-      waiting: count('confirm') + count('collecting') } }, tests, todo, lastAt, costUsd };
+    tiles: { agree: { n, agree }, planted: { caught, of, missedOn }, trusted: { n: k.reliable, of: k.total, unreliable: k.unreliable, waiting: k.waiting } },
+    tests, todo, lastAt, costUsd };
 }

@@ -2,7 +2,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { byCriterionModel, checkingCounts, trustReportModel } from '../src/shared/workflow-tests/criteria-report.mjs';
-import { TRUST_TESTS, trustTestLine, checkingSentence, listTrustSentence, exactLine } from '../src/shared/workflow-tests/criteria-text.mjs';
+import { TRUST_TESTS, trustTestLine, trustTestBadge, checkingSentence, listTrustSentence, exactLine } from '../src/shared/workflow-tests/criteria-text.mjs';
 import { estimateOf } from '../src/shared/workflow-tests/compare.mjs';
 
 const R = { state: 'reliable', n: 20, agree: 19, decides: true };
@@ -110,7 +110,7 @@ test('trustReportModel: the early states (P4-M4) and the words of each test', ()
   const some = trustReportModel({ criteria: [{ exampleId: 1, exampleName: 'A', criterionId: 'k_1', text: 'T', trust: { state: 'collecting', n: 3, agree: 3, decides: true } }] });
   assert.equal(some.state, 'ready');
   assert.equal(some.colleagues, false);   // Part 5 brings colleagues' data; the tile's sub-line is "of N answers"
-  assert.equal(trustTestLine({ key: 'people', state: 'bad', n: 3, agree: 3, pct: 100 }), '100% · of 3 answers');
+  assert.equal(trustTestLine({ key: 'people', state: 'waiting', n: 3, agree: 3, pct: 100 }), '100% · of 3 answers (Worca needs 10)');   // user decision 5
   assert.equal(trustTestLine({ key: 'planted', state: 'none' }), 'Not run yet');
   assert.equal(trustTestLine({ key: 'planted', state: 'bad', caught: 4, of: 6, missedOn: ['A', 'B'] }), '4 of 6 caught. Missed on "A", "B".');
   assert.equal(TRUST_TESTS.order[0], 'Order swapped');
@@ -121,7 +121,7 @@ test('trustReportModel fix round 1: a shared criterion counts once; below 10 ans
   const row = (id) => ({ exampleId: id, exampleName: `E${id}`, criterionId: `k_${id}`, text: 'Same words', trust: shared, trustKey: 'fp|model' });
   const m = trustReportModel({ criteria: [row(1), row(2)] });
   assert.deepEqual(m.tiles.agree, { n: 6, agree: 6 });   // not 12
-  assert.equal(m.tests.find((t) => t.key === 'people').state, 'none');   // 100% of 6 is waiting, never bad
+  assert.equal(m.tests.find((t) => t.key === 'people').state, 'waiting');   // 100% of 6 is waiting, never bad (user decision 5: its line says so)
   const ten = trustReportModel({ criteria: [{ ...row(1), trust: { state: 'unreliable', n: 10, agree: 7, decides: false } }] });
   assert.equal(ten.tests.find((t) => t.key === 'people').state, 'bad');
   const rounds = [{ criterionText: 'A', cards: [], same: { n: 0, of: 0 }, padding: { n: 0, of: 0 } }];
@@ -134,4 +134,43 @@ test("trustReportModel: the people test compares the true share, so 79.6% is not
   const people = (n, agree) => trustReportModel({ criteria: [{ trustKey: 'k', trust: { n, agree } }] }).tests.find((t) => t.key === 'people');
   assert.notEqual(people(250, 199).state, 'good', '199 of 250 is 79.6%');
   assert.equal(people(250, 200).state, 'good', '200 of 250 is 80%');
+});
+
+// ---- Task 23 (boards 13, 1; P4-M4; user decisions 4 and 5) ----
+test('user decision 5: the people test with 1 to 9 answers shows the real numbers and what Worca needs; none reads Not run yet', () => {
+  const people = (n, agree) => trustReportModel({ criteria: [{ trustKey: 'k', trust: { state: 'collecting', n, agree } }] }).tests.find((t) => t.key === 'people');
+  assert.equal(people(0, 0).state, 'none');
+  assert.equal(people(6, 6).state, 'waiting');
+  assert.equal(trustTestLine(people(6, 6)), '100% · of 6 answers (Worca needs 10)');
+  assert.equal(trustTestLine(people(1, 0)), '0% · of 1 answer (Worca needs 10)');
+  assert.equal(trustTestLine(people(14, 12)), '86% of 14 answers', 'P4-M4: test 6 with 10 or more answers');
+  assert.equal(trustTestLine(people(0, 0)), 'Not run yet');
+});
+
+test("user decision 4: a test that found a problem has a count badge (board 13's \"2 missed\", \"1 changes\"); good is green, nothing yet grey", () => {
+  assert.deepEqual(trustTestBadge({ key: 'planted', state: 'bad', caught: 10, of: 12, missedOn: ['A'] }), ['badge red', '2 missed']);
+  assert.deepEqual(trustTestBadge({ key: 'again', state: 'bad', n: 11, of: 12 }), ['badge red', '1 changes']);
+  assert.deepEqual(trustTestBadge({ key: 'order', state: 'bad', n: 17, of: 18 }), ['badge red', '1 changes']);
+  assert.deepEqual(trustTestBadge({ key: 'longer', state: 'bad', fooled: 2 }), ['badge red', '2 fooled']);
+  assert.deepEqual(trustTestBadge({ key: 'proof', state: 'bad', n: 214, of: 216 }), ['badge red', '2 without proof']);
+  assert.deepEqual(trustTestBadge({ key: 'people', state: 'bad', n: 10, agree: 7, pct: 70 }), ['badge red', '3 disagree']);
+  assert.deepEqual(trustTestBadge({ key: 'proof', state: 'good', n: 4, of: 4 }), ['badge green', 'Good']);
+  assert.deepEqual(trustTestBadge({ key: 'planted', state: 'none' }), ['badge', 'Not run yet']);
+  assert.deepEqual(trustTestBadge({ key: 'people', state: 'waiting', n: 6, agree: 6, pct: 100 }), ['badge', 'Needs your answers']);
+});
+
+test('boards 13 and P4-M4: the planted line says "Both missed on" when two misses share one criterion; the people words quote Check the checker', () => {
+  assert.equal(trustTestLine({ key: 'planted', state: 'bad', caught: 10, of: 12, missedOn: ['Asks which part matters most before writing'] }),
+    '10 of 12 caught. Both missed on "Asks which part matters most before writing".');
+  assert.equal(trustTestLine({ key: 'planted', state: 'bad', caught: 11, of: 12, missedOn: ['A'] }), '11 of 12 caught. Missed on "A".');
+  assert.equal(trustTestLine({ key: 'planted', state: 'bad', caught: 9, of: 12, missedOn: ['A', 'A'] }), '9 of 12 caught. Missed on "A".', 'one criterion named once');
+  assert.equal(TRUST_TESTS.people[1], 'From your Agree and Disagree answers and "Check the checker".');
+});
+
+test("the trusted tile counts as board 1's card does: an exact check made from a criterion counts as reliable; a criterion with no model is left out", () => {
+  const crit = (state) => ({ exampleId: 1, exampleName: 'A', criterionId: `k_${state}`, text: state, trust: state ? { state, n: 0, agree: 0 } : null });
+  const m = trustReportModel({ criteria: [crit('reliable'), crit('unreliable'), crit('confirm'), crit(null)], exactChecks: 2 });
+  assert.deepEqual(m.tiles.trusted, { n: 3, of: 5, unreliable: 1, waiting: 1 });
+  assert.deepEqual(checkingCounts([{ state: 'reliable' }, { state: 'unreliable' }, { state: 'confirm' }, null, { state: 'exact' }, { state: 'exact' }]),
+    { total: 5, reliable: 3, unreliable: 1, waiting: 1 }, 'the same numbers as the card');
 });

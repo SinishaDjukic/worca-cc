@@ -88,16 +88,34 @@ export const TRUST_TESTS = Object.freeze({
   order: ['Order swapped', 'When Worca picks the better of two results, it sees them in both orders. The winner must not depend on which one comes first.'],
   longer: ['Longer is not better', 'Filler text is added to a result. A longer result must not get a better verdict.'],
   proof: ['Proof for every verdict', 'Each verdict must quote the part of the result it is based on. Worca checks that the quote is really there. Verdicts without proof are not counted.'],
-  people: ['Agreement with people', 'From your Agree and Disagree answers and Check the checker.'],
+  people: ['Agreement with people', 'From your Agree and Disagree answers and "Check the checker".'],   // P4-M4's words (no colleagues until Part 5)
 });
+const answersText = (n) => `${n} ${n === 1 ? 'answer' : 'answers'}`;
 export function trustTestLine(t) {
   if (t.state === 'none') return 'Not run yet';
-  if (t.key === 'planted') return t.state === 'good' ? `${t.caught} of ${t.of} caught` : `${t.caught} of ${t.of} caught. Missed on "${t.missedOn.join('", "')}".`;
+  if (t.key === 'planted') {
+    if (t.state === 'good') return `${t.caught} of ${t.of} caught`;
+    const on = [...new Set(t.missedOn)];   // boards 13 and P4-M4: "Both missed on" when the two misses share one criterion
+    return `${t.caught} of ${t.of} caught. ${on.length === 1 && t.of - t.caught === 2 ? 'Both missed' : 'Missed'} on "${on.join('", "')}".`;
+  }
   if (t.key === 'again') return `${t.n} of ${t.of} criteria give the same verdict`;
   if (t.key === 'order') return `Same winner in ${t.n} of ${t.of} pairs`;
   if (t.key === 'longer') return t.fooled ? `${t.fooled} ${t.fooled === 1 ? 'criterion' : 'criteria'} fooled` : 'No criterion fooled';
   if (t.key === 'proof') return `${t.n} of ${t.of} verdicts had proof. ${t.of - t.n} ${t.of - t.n === 1 ? 'was' : 'were'} not counted.`;
-  return `${t.pct}% · of ${t.n} answers`;
+  if (t.state === 'waiting') return `${t.pct}% · of ${answersText(t.n)} (Worca needs 10)`;   // user decision 5: 1 to 9 answers
+  return `${t.pct}% of ${answersText(t.n)}`;   // P4-M4's test 6
+}
+/** User decision 4 (board 13): a test that found a problem counts it ("2 missed", "1 changes"); 1 to 9 answers are grey, as a
+ *  criterion's own "Needs your answers" (P4-C1). Returns [badge class, words]. */
+export function trustTestBadge(t) {
+  if (t.state === 'good') return ['badge green', 'Good'];
+  if (t.state === 'waiting') return ['badge', 'Needs your answers'];
+  if (t.state !== 'bad') return ['badge', 'Not run yet'];
+  if (t.key === 'planted') return ['badge red', `${t.of - t.caught} missed`];
+  if (t.key === 'again' || t.key === 'order') return ['badge red', `${t.of - t.n} changes`];
+  if (t.key === 'longer') return ['badge red', `${t.fooled} fooled`];
+  if (t.key === 'proof') return ['badge red', `${t.of - t.n} without proof`];
+  return ['badge red', `${t.n - t.agree} disagree`];
 }
 
 /** P4-C4: the hint under "What to check" for each Part 4 exact kind (board P4-M1). */
