@@ -501,8 +501,14 @@ test('plugin validate --run-cases streams the script\'s lines, WHOLE, to a reade
   const exited = new Promise((res) => child.on('close', (code) => res(code)));
   // ~210 KB of lines against a 64 KiB pipe: nothing is read until the run is long
   // over, so whatever the CLI had not flushed when it called process.exit is lost.
-  await new Promise((r) => setTimeout(r, 1500));
+  // The lag is a PAUSED stream with its listener already on, never a listener added
+  // late: when the CLI exits first (Linux's pipe plus this side's read buffer can
+  // hold it all), child_process resumes every stdio stream nobody reads, and with no
+  // listener yet that drops the whole output here: "0 of 3000" with nothing cut.
   child.stderr.on('data', (b) => (stderr += b.toString()));
+  child.stderr.pause();
+  await new Promise((r) => setTimeout(r, 1500));
+  child.stderr.resume();
   assert.equal(await exited, 0, stdout);
   const got = stderr.split('\n').filter((l) => /^\[chatty\/sample\] chat \d+ x+$/.test(l)).length;
   assert.equal(got, 3000, `stderr was cut: ${got} of 3000 lines arrived`);
