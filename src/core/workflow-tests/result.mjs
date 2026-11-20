@@ -17,7 +17,8 @@ import { CONNECTOR_CALLS_FILE } from './connectors.mjs';
 import { scratchTryLog, isSettingsIgnoredFile } from './try-guard-env.mjs';
 import { runShellStep, readTrySetup, tryShellEnv, firstLine } from './shell-step.mjs';
 import { DEFAULT_TIMEOUT_MS } from '../../shared/graph/script-meta.mjs';
-import { runCheck, judgeTry, wordCount, checkLabel, TEXT_KINDS, SCOPE_KINDS, commandSummary, testsSummary } from '../../shared/workflow-tests/checks.mjs';
+import { runCheck, judgeTry, wordCount, checkLabel, TEXT_KINDS, SCOPE_KINDS, SOURCE_KINDS, NETWORK_KINDS, commandSummary, testsSummary } from '../../shared/workflow-tests/checks.mjs';
+import { exampleSourcesText } from './sources-text.mjs';
 import { createTestOutputParser } from './test-output.mjs';
 import { beforeAfter, commandMet } from '../../shared/workflow-tests/before-after.mjs';
 
@@ -237,12 +238,13 @@ export async function runCommandCheck(check, { cwd, logFile = null, run = runShe
  *   `beforeOf(check)`: 3b (D75) the command's run on the start commit, or null.
  */
 export async function checkTry(example, outcome, { runScript = runScriptCheck, runCommand = runCommandCheck, readText = readCheckFile,
-  scriptName = (k) => k, onCommand = () => {}, beforeOf = () => null } = {}) {
+  scriptName = (k) => k, onCommand = () => {}, beforeOf = () => null, readSources = (ex) => exampleSourcesText(ex), checkLinks = null } = {}) {
   const checks = example.checks || [];
   const results = new Array(checks.length);
   const later = [];
+  let sources = null;
   for (const [i, check] of checks.entries()) {
-    if (check.kind === 'script' || check.kind === 'command') { later.push(i); continue; }
+    if (check.kind === 'script' || check.kind === 'command' || NETWORK_KINDS.includes(check.kind)) { later.push(i); continue; }
     const label = checkLabel(check);
     let text = outcome.text;
     if (TEXT_KINDS.includes(check.kind) && check.file) {
@@ -263,7 +265,8 @@ export async function checkTry(example, outcome, { runScript = runScriptCheck, r
       }
       changes = { touched: [], total: 0 };
     }
-    const r = runCheck(check, { text, files: outcome.files, changes });
+    if (SOURCE_KINDS.includes(check.kind) && sources === null) sources = readSources(example);
+    const r = runCheck(check, { text, files: outcome.files, changes, sources: sources || '' });
     results[i] = { id: check.id, label, met: r.met, value: r.value, ...scope };
   }
   const cwdDir = outcome.project ? outcome.project.checkoutDir : null;
@@ -272,6 +275,7 @@ export async function checkTry(example, outcome, { runScript = runScriptCheck, r
     const label = checkLabel(check, { scriptName: check.kind === 'script' ? scriptName(check.key) : null });
     const not = (value, extra = {}) => { results[i] = { id: check.id, label, met: false, value, ...extra }; };
     if (outcome.facts.status !== 'done') { not('Not run: the try did not finish'); continue; }
+    if (check.kind === 'links') { not('Not run: link checks come later'); continue; }   // Task 4 replaces this
     // U-T2: Worca lost the copy it made: a Worca problem (worcaProblem), never the workflow's.
     if (outcome.project && !cwdDir) { not('Not run: the copy of the project is gone', { worcaProblem: true }); continue; }
     if (check.kind === 'command') {

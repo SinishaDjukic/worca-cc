@@ -7,7 +7,7 @@ import { makeSwitch } from '../switch.mjs';
 import { icon } from '../icons.mjs';
 import { withButton } from '../feedback.mjs';
 import {
-  CHECK_KINDS, PROJECT_KINDS, CHECK_KIND_LABELS, DEFAULT_BASICS, PROJECT_FILE_KIND_LABEL, COMMAND_TIMEOUTS, checkLabel, normaliseCheck, normaliseBasics, fmtUsd, parseUsd,
+  CHECK_KINDS, PROJECT_KINDS, PART4_KINDS, CHECK_KIND_LABELS, DEFAULT_BASICS, PROJECT_FILE_KIND_LABEL, COMMAND_TIMEOUTS, checkLabel, normaliseCheck, normaliseBasics, fmtUsd, parseUsd,
 } from '../../../src/shared/workflow-tests/checks.mjs';
 import {
   WHERE_TITLE, WHERE_HINT, START_HINT, START_LABEL, PROJECT_LABEL, CHANGE_BUTTON, behindText, LATEST_BUTTON, LATEST_HINT, CHANGES_LABEL,
@@ -104,7 +104,7 @@ export function openCheckDialog({ doc, win, check = null, scripts = [], project 
   const opt = (k, label = CHECK_KIND_LABELS[k]) => { const o = el(doc, 'option', '', label); o.value = k; return o; };
   // An edited script check keeps its kind, also when the Library lists none.
   // The project checks (3a D57, 3b D73) are their own group.
-  const resultKinds = CHECK_KINDS.filter((k) => !PROJECT_KINDS.includes(k) &&
+  const resultKinds = CHECK_KINDS.filter((k) => !PROJECT_KINDS.includes(k) && !PART4_KINDS.includes(k) &&   // P4-M1: shown from Task 19
      !(k === 'script' && !scripts.some(declaresVerdict) && !(check && check.kind === 'script')));   // U-T10 (D9): no verdict script, no kind
   if (project) {
     const g1 = el(doc, 'optgroup'); g1.label = GROUP_RESULT;

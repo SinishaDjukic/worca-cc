@@ -3,9 +3,18 @@
 // the built-in automatic checks (counted exactly, without AI) and the verdict of one try. A Library script check is
 // only validated and labelled here; src/core/workflow-tests/result.mjs runs it on the script bench.
 
-export const CHECK_KINDS = Object.freeze(['words', 'sections', 'mentions', 'not-mentions', 'file', 'script', 'command', 'under', 'unchanged', 'max-files']);
-/** The kinds that read the main result's text (D25). */
-export const TEXT_KINDS = Object.freeze(['words', 'sections', 'mentions', 'not-mentions']);
+import { quotesCheck, numbersCheck, personalCheck } from './exact-checks.mjs';
+
+export const CHECK_KINDS = Object.freeze(['words', 'sections', 'mentions', 'not-mentions', 'file', 'script', 'command', 'under', 'unchanged', 'max-files',
+  'quotes', 'numbers', 'no-personal', 'links']);
+/** The kinds that read the main result's text (D25; Part 4 D93 adds three). */
+export const TEXT_KINDS = Object.freeze(['words', 'sections', 'mentions', 'not-mentions', 'quotes', 'numbers', 'no-personal']);
+/** Part 4 (D93): the kinds that compare the result with the example's files and request. */
+export const SOURCE_KINDS = Object.freeze(['quotes', 'numbers']);
+/** Part 4 (D93): the kind that calls the web; result.mjs runs it with the commands and scripts. */
+export const NETWORK_KINDS = Object.freeze(['links']);
+/** Part 4's exact kinds (P4-M1: the check dialog shows them only from Task 19). */
+export const PART4_KINDS = Object.freeze(['quotes', 'numbers', 'no-personal', 'links']);
 /** 3b (Q10, D73): the pure project checks; they read the try's change list. */
 export const SCOPE_KINDS = Object.freeze(['under', 'unchanged', 'max-files']);
 export const PROJECT_KINDS = Object.freeze(['command', ...SCOPE_KINDS]);   // 3a D57, 3b D73: only on an example with a project
@@ -20,6 +29,10 @@ export const CHECK_KIND_LABELS = Object.freeze({
   under: 'Changes only files under …',
   unchanged: 'Leaves these files unchanged',
   'max-files': 'Changes at most N files',
+  quotes: 'Every quote is in the files',
+  numbers: 'Numbers come from the files',
+  'no-personal': 'No personal data',
+  links: 'Links work',
 });
 /** Board 33: the file check's name in an example with a project (D59: added, changed or renamed, never removed). */
 export const PROJECT_FILE_KIND_LABEL = 'A file with this name is added or changed';
@@ -197,9 +210,12 @@ export function normaliseCheck(raw) {
   const kind = raw.kind;
   if (!CHECK_KINDS.includes(kind)) return { check: null, error: `unknown check kind "${kind}"` };
   const id = typeof raw.id === 'string' && CHECK_ID_RE.test(raw.id) ? raw.id : null;
-  const done = (fields, file = null) => ({ check: { ...(id ? { id } : {}), kind, ...fields, ...(file ? { file } : {}) }, error: null });
+  // D99: a check made from a criterion keeps its words; absent otherwise, so every existing check and fingerprint stays byte for byte.
+  const said = typeof raw.said === 'string' ? raw.said.replace(/\s+/g, ' ').trim().slice(0, 300) : '';
+  const done = (fields, file = null) => ({ check: { ...(id ? { id } : {}), kind, ...fields, ...(file ? { file } : {}), ...(said ? { said } : {}) }, error: null });
   const f = TEXT_KINDS.includes(kind) ? fileOf(raw) : { file: null };
   if (f.error) return { check: null, error: f.error };
+  if (PART4_KINDS.includes(kind)) return done({}, f.file);   // D93: no fields; the text kinds may read a project file (3a Q11)
   if (kind === 'words') {
     const min = int(raw.min);
     const max = int(raw.max);
@@ -306,6 +322,10 @@ export function checkLabel(check, { scriptName = null } = {}) {
   if (c.kind === 'under') return `Changes only files under ${andList(c.dirs)}`;
   if (c.kind === 'unchanged') return `Leaves these files unchanged: ${c.patterns.join(', ')}`;
   if (c.kind === 'max-files') return `Changes at most ${c.max} ${c.max === 1 ? 'file' : 'files'}`;
+  if (c.kind === 'quotes') return inFile('Every quote is in the files');
+  if (c.kind === 'numbers') return inFile('Numbers come from the files');
+  if (c.kind === 'no-personal') return inFile('Has no personal data');
+  if (c.kind === 'links') return 'Every link works';
   return 'Unknown check';
 }
 
@@ -389,8 +409,11 @@ const filesValue = (n) => (n === 0 ? 'No files' : n === 1 ? '1 file' : `${n} fil
  * result folder's paths (`work/…`). A script check is not run here: result.mjs runs it on the bench.
  * @returns {{met: boolean, value: string}}
  */
-export function runCheck(check, { text = null, files = [], changes = null } = {}) {
+export function runCheck(check, { text = null, files = [], changes = null, sources = '' } = {}) {
   if (TEXT_KINDS.includes(check.kind) && (typeof text !== 'string' || !text.trim())) return { met: false, value: 'No result' };
+  if (check.kind === 'quotes') return quotesCheck(text, sources);
+  if (check.kind === 'numbers') return numbersCheck(text, sources);
+  if (check.kind === 'no-personal') return personalCheck(text);
   if (check.kind === 'words') {
     const n = wordCount(text);
     const met = (check.min === null || n >= check.min) && (check.max === null || n <= check.max);
