@@ -164,15 +164,24 @@ export function judgeCallUsd(model, { rates = (m) => ratesFor('claude', m), esti
   const priced = model ? rates(model) : null;
   return priced ? estimate({ input_tokens: 6000, output_tokens: 250 }, priced) : null;
 }
-/** Board 4: the pair question's price (2 calls per example that has criteria, P4-Q8); null when no chosen example has criteria. The
- *  checks themselves are priced per side (sideCheckPlan). */
+/** Board 4: what one pair costs (2 calls, P4-Q8) on `model`: twice the median of its own last 20 'pair' ledger rows; with none yet, twice the
+ *  price of a criterion check (judgeCallUsd), the nearest known price. Any recent 'unknown' pair row makes it not known (null), never $0. */
+export function pairUsd(model) {
+  const rows = prepare(`SELECT amount_usd AS u, cost_kind AS k FROM wf_test_judge_ledger WHERE purpose = 'pair' AND model = ? ORDER BY id DESC LIMIT 20`).all(model);
+  if (rows.some((r) => r.k === 'unknown')) return null;
+  if (rows.length) return 2 * median(rows.map((r) => Number(r.u)));
+  const one = judgeCallUsd(model);
+  return one === null ? null : 2 * one;
+}
+/** Board 4: the pair question's price: one pair per chosen example that has a judge model and criteria or a result you liked (what
+ *  judgePairs asks); null when no chosen example gets one. The checks themselves are priced per side (sideCheckPlan). */
 export function criteriaPlanOf(workflowId, exampleIds = [], { hasA = false, mock = false } = {}) {
-  const exs = store.listExamples(workflowId).filter((e) => (!exampleIds.length || exampleIds.includes(e.id)) && e.criteria.length && e.judge);
+  const exs = store.listExamples(workflowId).filter((e) => (!exampleIds.length || exampleIds.includes(e.id)) && e.judge && (e.criteria.length || cs.readLiked(e.id)));
   if (!exs.length) return null;
   if (mock || !PAIRS_ASKED || !hasA) return { pairsUsd: 0 };   // a mock test checks for free
-  const price = priceMemo();
-  const prices = exs.map((e) => price(e.judge.model));
-  return { pairsUsd: prices.some((u) => u === null) ? null : prices.reduce((sum, u) => sum + 2 * u, 0) };
+  const memo = new Map();
+  const prices = exs.map((e) => { if (!memo.has(e.judge.model)) memo.set(e.judge.model, pairUsd(e.judge.model)); return memo.get(e.judge.model); });
+  return { pairsUsd: prices.some((u) => u === null) ? null : prices.reduce((sum, u) => sum + u, 0) };
 }
 
 /** M9: at most `max` bytes of `text` as UTF-8, cut before a character, never inside one (putLiked refuses broken UTF-8). */

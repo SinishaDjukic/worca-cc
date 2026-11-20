@@ -95,17 +95,19 @@ export async function judgePair({ a, b, liked = null, context = '', model, mock 
     const bb = x.budget();
     if (bb && bb.blocked) return { error: 'limit' };
     const tag = fenceTag();
+    let r;
     try {
-      const r = await modelCall({ model, system: pairSystemPrompt(tag), prompt: pairPrompt({ first, second, liked: L, context: C, tag }), signal }, x);
-      cost += r.costUsd;
-      if (r.costUsd > 0 || r.costKind === 'unknown') book(r.costUsd, r.costKind);   // P4-Q17: an unknown cost books a $0 row
-      return parsePairReply(r.text) || { error: 'unreadable' };
+      r = await modelCall({ model, system: pairSystemPrompt(tag), prompt: pairPrompt({ first, second, liked: L, context: C, tag }), signal }, x);
     } catch (e) {
       const s = Number(e && e.costUsd) || 0;
       cost += s;
       if (s > 0) book(s, (e && e.costKind) || 'billed');
       return { error: 'failed', detail: firstLine(e) };
     }
+    // Outside the try, as in judgeCriterion: a booking that fails after a paid call surfaces, never becomes a 'failed' pair asked (and paid) again.
+    cost += r.costUsd;
+    if (r.costUsd > 0 || r.costKind === 'unknown') book(r.costUsd, r.costKind);   // P4-Q17: an unknown cost books a $0 row
+    return parsePairReply(r.text) || { error: 'unreadable' };
   };
   const one = await ask(A, B);
   if (one.error) return done(one);
@@ -113,5 +115,10 @@ export async function judgePair({ a, b, liked = null, context = '', model, mock 
   if (two.error) return done(two);
   const w1 = one.winner === 'first' ? 'a' : one.winner === 'second' ? 'b' : 'tie';
   const w2 = two.winner === 'first' ? 'b' : two.winner === 'second' ? 'a' : 'tie';
-  return done({ winner: w1 === w2 ? w1 : 'unsure', reason: one.reason, swapped: w2 });
+  // The reason is shown to a person: the asks' own words ("Result 1") name positions, so they become the sides, and a pair
+  // the checker answered differently in the two orders gets a neutral reason instead of one ask's.
+  const winner = w1 === w2 ? w1 : 'unsure';
+  const sides = (text, firstSide) => text.replace(/\bresult\s*([12])\b/gi, (_m, n) => `result ${(n === '1') === (firstSide === 'A') ? 'A' : 'B'}`);
+  const reason = winner === 'unsure' ? 'The checker did not pick the same result both times, so it cannot say which is better.' : sides(one.reason, 'A');
+  return done({ winner, reason, swapped: w2 });
 }

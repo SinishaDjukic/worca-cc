@@ -433,5 +433,43 @@ test('D100: pairOf gives the side by side its pair (winner, reason, question, th
   assert.deepEqual(pairOf(A, B, { by: 'me' }), { judgementId: j.id, winner: 'b', reason: 'B is clearer.', question: 'better', answer: false });
   assert.equal(pairOf(A, B).answer, null);
   assert.deepEqual(cs.answersFor(WF, cs.pairFp(null), 'm'), [], 'a pair answer never counts toward trust');
-  assert.ok(criteriaPlanOf(WF, [ex.id], { hasA: true }).pairsUsd !== 0, 'two calls per example are priced');
+  priceHaiku(0.05);
+  const priced = criteriaPlanOf(WF, [ex.id], { hasA: true }).pairsUsd;
+  assert.ok(typeof priced === 'number' && priced > 0, 'two calls per example are priced');
+});
+
+const likedOnly = () => { const e = example([]); cs.putLiked(e.id, { name: 'good.md', data: 'Good brief.' }); return e; };
+
+test('fix 2: a liked-only example is priced for pairs, and the estimate is never $0 when every try is reused', () => {
+  getDb();
+  priceHaiku(0.05);
+  const ex = likedOnly();
+  const plan = criteriaPlanOf(WF, [ex.id], { hasA: true });
+  assert.ok(plan && typeof plan.pairsUsd === 'number' && plan.pairsUsd > 0, 'pairs apply to a liked-only example');
+  const side = { want: 1, reusable: 1, perTryUsd: 0.5, checkUsd: { fresh: 0, withReuse: 0 } };
+  const e = estimateOf({ a: side, b: side, perTryMs: 1000, criteria: plan }, { reuseA: true, reuseB: true });
+  assert.ok(e.usd > 0, 'every try reused, the pair is still asked');
+  assert.equal(estimateOf({ a: side, b: side, perTryMs: 1000, criteria: { pairsUsd: null } }, { reuseA: true, reuseB: true }).usd, null);
+  assert.equal(criteriaPlanOf(WF, [example([]).id], { hasA: true }), null, 'no criteria and nothing liked: no pairs');
+});
+
+test('fix 3: the pair price comes from pair ledger rows; without any, twice the try price; an unknown pair row makes it unknown', () => {
+  getDb();
+  priceHaiku(0.05);
+  const ex = example([{ text: 'Names a success metric' }]);
+  assert.equal(Math.round(criteriaPlanOf(WF, [ex.id], { hasA: true }).pairsUsd * 1e6) / 1e6, 0.1, 'fallback: 2 x the try price');
+  for (const u of [0.02, 0.03, 0.04]) recordTestJudgeCost({ workflowId: WF, purpose: 'pair', model: 'claude-haiku-4-5', amountUsd: u, costKind: 'billed' });
+  assert.equal(Math.round(criteriaPlanOf(WF, [ex.id], { hasA: true }).pairsUsd * 1e6) / 1e6, 0.06, '2 x the median pair call ($0.03)');
+  recordTestJudgeCost({ workflowId: WF, purpose: 'pair', model: 'claude-haiku-4-5', amountUsd: 0, costKind: 'unknown' });
+  assert.equal(criteriaPlanOf(WF, [ex.id], { hasA: true }).pairsUsd, null);
+});
+
+test('fix 4: pairTriesOf picks the first finished try of each side, as the runner does (try 1 unfinished is skipped)', async () => {
+  const { pairTriesOf } = await import('../src/shared/workflow-tests/criteria-verdicts.mjs');
+  const done = { facts: { status: 'done' } };
+  const t = (id, side, tryNo, status, verdict) => ({ id, exampleId: 7, side, tryNo, status, verdict });
+  const tries = [t(1, 'a', 1, 'error', null), t(2, 'a', 2, 'passed', done), t(3, 'b', 1, 'passed', done), t(4, 'b', 2, 'passed', done), t(5, 'a', 3, 'passed', done)];
+  const { A, B } = pairTriesOf(tries, 7);
+  assert.deepEqual([A.id, B.id], [2, 3]);
+  assert.deepEqual(pairTriesOf(tries, 8), { A: null, B: null });
 });

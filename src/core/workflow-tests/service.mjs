@@ -28,6 +28,7 @@ import { ensureStartCommit, treeBytes, freeDiskBytes, removeTryCheckout, pinStar
   commitDate, copySubject, remoteUrl } from './project-copy.mjs';
 import { parseRemoteUrl, forgeOf as forgeOfRemote, FORGE_LABEL } from '../forge.mjs';
 import { pushRemoteOf } from './guard-calls.mjs';
+import { pairTriesOf } from '../../shared/workflow-tests/criteria-verdicts.mjs';
 import { withCriteriaFor, compareNotes, notCheckedOf, sideCheckPlan, pairOf } from './criteria-read.mjs';
 import { withJudgeModel } from './judge-models.mjs';
 import { leftOutText, folderMissingText, folderProjectText, notRegisteredText, diskRefusalText, diskRefusalOnceText, PAST_RUN_REFUSALS } from '../../shared/workflow-tests/project-text.mjs';
@@ -891,12 +892,13 @@ export async function sideBySide(workflowId, runId, exampleId, { forgeFor = null
       asked: t.verdict && t.verdict.facts && Array.isArray(t.verdict.facts.asked) ? t.verdict.facts.asked : null,
       project: t.startCommit || t.changes ? { changes: t.changes, setup: t.setup ? { cmd: t.setup.cmd, ms: t.setup.ms } : null } : null };
   };
+  const pairTries = pairTriesOf(tries, ex.id);   // the pair the runner asked: the first finished try of each side
   const out = [];
   for (let i = 0; i < Math.max(A.length, B.length); i += 1) out.push({ n: i + 1, a: await view(A[i]), b: await view(B[i]) });
   const labels = { a: run.a != null ? useLabel(run.a, ctx) : null, b: useLabel(run.b, ctx) };
   const m = compareModel({ examples: [{ id: ex.id, name: ex.name }], a: labels.a ? { label: labels.a } : null, b: { label: labels.b }, tries });
   return { run, compareTitle: testTitle(run, ctx, { exampleName: ex.name }), example: { id: ex.id, name: ex.name }, labels, row: m.examples[0],
-    connectors: run.connectors, tries: out, pair: pairOf(A[0], B[0], { by }),
+    connectors: run.connectors, tries: out, pair: pairOf(pairTries.A, pairTries.B, { by }),
     start: ex.project ? { ref: ex.project.startRef, short: ex.project.startSha.slice(0, 7), at: ex.project.startAt, sha: ex.project.startSha, subject: await subjectOfStart({ key: ex.project.key, sha: ex.project.startSha }), setupCmd: ex.project.setupCmd,
       setupMs: store.avgSetupMs(ex.id, ex.project.startCommit) } : null,
     nothingPushed: !!ex.project,

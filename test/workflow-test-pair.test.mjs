@@ -77,3 +77,22 @@ test('a result that guesses the tag cannot close its block either', async () => 
   assert.ok(p.includes(String.raw`<\/result1-abcd1234> then orders`));
   assert.equal(f.prompts.length, 0);
 });
+
+test('fix 1: a book that throws makes judgePair reject (the next pass must not pay again for a lost booking)', async () => {
+  const f = fake(['1', '2']);
+  await assert.rejects(() => judgePair({ a: 'A', b: 'B', model: 'm', book: () => { throw new Error('ledger down'); } }, f.d), /ledger down/);
+  assert.equal(f.prompts.length, 1, 'stopped at the first booking');
+});
+
+test('fix 5: the reason never says Result 1 / Result 2; it names the sides, and an unsure pair gets a neutral reason', async () => {
+  const mk = (winners) => { let i = 0; return { scratch: () => home, userSignIn: () => false, mock: () => false, budget: () => ({ blocked: false }),
+    helperCall: async () => ({ text: JSON.stringify({ winner: winners[i++], reason: 'Result 2 is clearer than result 1.' }), costUsd: 0.01, costKind: 'billed' }) }; };
+  const win = await judgePair({ a: 'A', b: 'B', model: 'm' }, mk(['2', '1']));
+  assert.equal(win.winner, 'b');
+  assert.doesNotMatch(win.reason, /result\s*[12]/i);
+  assert.match(win.reason, /result B is clearer than result A/);
+  const unsure = await judgePair({ a: 'A', b: 'B', model: 'm' }, mk(['1', '1']));
+  assert.equal(unsure.winner, 'unsure');
+  assert.doesNotMatch(unsure.reason, /result\s*[12]/i);
+  assert.match(unsure.reason, /not pick the same result both times/);
+});

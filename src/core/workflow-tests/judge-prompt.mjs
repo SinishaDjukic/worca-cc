@@ -38,8 +38,8 @@ export function clipText(s, max) {
   return { text: nl > max / 2 ? head.slice(0, nl) : head, cut: true };
 }
 
-/** The content with every closing tag of this call's fences made harmless (`</any-<tag>>`; without a tag, the judge's own
- *  three names), so a block cannot close itself or another one. Other markup in the content is left alone. Later prompts
+/** The content with every closing tag of this call's fences made harmless (`</any-<tag>>`; without a tag, the six names: criterion,
+ *  files, result, liked, result1, result2), so a block cannot close itself or another one. Other markup in the content is left alone. Later prompts
  *  that fence untrusted text (planting, the pair question, suggestions, rewording) use this with a fenceTag() too. */
 export const fenced = (name, tag, body) => {
   const closers = tag ? new RegExp(`</([A-Za-z0-9]+)-${tag}>`, 'g') : /<\/(criterion|files|result|liked|result1|result2)>/g;

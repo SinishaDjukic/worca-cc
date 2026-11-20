@@ -280,7 +280,8 @@ export function estimateOf(plan, { reuseA = true, reuseB = false } = {}) {
   const crit = plan.criteria || null;
   // A side without its checking price is not known (never $0); only a side that is not tested costs nothing.
   const sideUsd = (s, reuse) => (!s ? 0 : !s.checkUsd ? null : reuse ? s.checkUsd.withReuse : s.checkUsd.fresh);
-  const pairs = crit && plan.a && toRun.b ? crit.pairsUsd : 0;
+  // Both versions tested: the pair is asked once even when every try is reused (it may already be stored: an upper bound, never $0).
+  const pairs = crit && plan.a && plan.b ? crit.pairsUsd : 0;
   const parts = crit ? [sideUsd(plan.a, reuseA), sideUsd(plan.b, reuseB), pairs] : [0, 0, 0];
   const criteriaUsd = parts.some((u) => u === null || u === undefined) ? null : parts[0] + parts[1] + parts[2];
   // M6: a checking cost that is not known makes the total not known, as the row says (P4-C6); 0 when nothing is checked.

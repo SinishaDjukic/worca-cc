@@ -6,7 +6,7 @@ import { mainResult, readTryPatch } from './result.mjs';
 import { exampleSourcesText } from './sources-text.mjs';
 import { judgeCriterion, judgePair, JUDGE_DEFAULTS } from './judge.mjs';
 import { SUBJECT_MAX, CHANGES_HEADING } from './judge-prompt.mjs';
-import { finishedTry } from '../../shared/workflow-tests/criteria-verdicts.mjs';
+import { finishedTry, pairTriesOf } from '../../shared/workflow-tests/criteria-verdicts.mjs';
 import * as store from './store.mjs';
 import * as cs from './criteria-store.mjs';
 
@@ -72,14 +72,13 @@ export function createCriteriaJudge(deps = {}) {
   /** D100, P4-Q8: one pair per compared example with criteria or a result you liked: the first finished try of each side. */
   async function judgePairs(run, { stopped = () => false, overCap = () => false } = {}) {
     if (run.a == null) return;
-    const tries = store.triesOfRun(run.id).filter((t) => (t.status === 'passed' || t.status === 'failed') && finishedTry(t));
+    const tries = store.triesOfRun(run.id);
     for (const id of run.exampleIds) {
       if (stopped() || overCap()) return;
       const ex = store.readExample(run.workflowId, id);
       const liked = ex ? cs.readLiked(ex.id) : null;
       if (!ex || !ex.judge || (!ex.criteria.length && !liked)) continue;
-      const first = (side) => tries.filter((t) => t.exampleId === id && t.side === side).sort((x, y) => x.tryNo - y.tryNo)[0] || null;
-      const A = first('a'); const B = first('b');
+      const { A, B } = pairTriesOf(tries, id);
       if (!A || !B) continue;
       const fp = cs.pairFp(liked ? cs.likedSha(ex.id) : null);
       const had = cs.pairJudgement(A.id, B.id);

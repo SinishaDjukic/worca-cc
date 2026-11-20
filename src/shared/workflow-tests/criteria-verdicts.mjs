@@ -6,6 +6,13 @@ import { NOT_CHECKED } from './criteria-text.mjs';
 /** D91, P4-Q5: a try whose run finished (its stored verdict says so) and that Worca did not set aside. */
 export const finishedTry = (t) => !!(t && t.verdict && t.verdict.facts && t.verdict.facts.status === 'done' && !t.verdict.worcaProblem);
 
+/** D100: the two tries a pair compares: the first finished try (passed or failed, finishedTry) of each side of one example. The runner asks it and the side by side shows it. */
+export function pairTriesOf(tries, exampleId) {
+  const first = (side) => tries.filter((t) => t.exampleId === exampleId && t.side === side && (t.status === 'passed' || t.status === 'failed') && finishedTry(t))
+    .sort((x, y) => x.tryNo - y.tryNo)[0] || null;
+  return { A: first('a'), B: first('b') };
+}
+
 /**
  * D98: one criterion on one try. `j` = the try's newest judgement of it (criteria-store's shape) or null; `trust` = trustOf's.
  * Only a counted verdict (met or not met, its proof found) decides, and only when its trust decides (D95).
