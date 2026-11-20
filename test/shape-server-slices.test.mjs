@@ -17,7 +17,7 @@ import { getDb } from '../src/core/db.mjs';
 import { projectKey } from '../src/core/store.mjs';
 import { createThread, linkRun as askLinkRun, listMessages } from '../src/core/ask/store.mjs';
 import { createSliceFeature, featureView, recordShapePlan, recordShip, retireFeaturesOf } from '../src/core/shape/features.mjs';
-import { getTicket } from '../src/core/scheduler.mjs';
+import { getTicket, requestRunNow, cancelTicket } from '../src/core/scheduler.mjs';
 import { nightModeToggle } from '../src/core/settings.mjs';
 import { writeStoreMeta } from '../src/core/artifacts.mjs';
 import { featureCardModel } from '../ui/public/shape/feature-card.mjs';
@@ -1182,3 +1182,129 @@ reqShipT('figures: PUT acceptance answers the same with the flag on and off; on,
   assert.deepEqual(figureRows(on.f.id).map((f) => f.requirementsMet), [{ met: 2, total: 2 }]);
   assert.equal(figureRows(off.f.id).length, 0);
 });
+
+// ── Shaper small runs A5: runs start from the latest finished work ───────────────────────────────────────────────────
+const sliceTicket = (fid, k) => getDb().prepare('SELECT ticket_id FROM shape_feature_slices WHERE feature_id = ? AND idx = ?').get(fid, k).ticket_id;
+/** Slice k of a shipWorld has not run yet: its ticket waits again, with no pipeline. */
+const unrun = (fid, k) => getDb().prepare("UPDATE scheduled_runs SET status = 'scheduled', pipeline_id = NULL WHERE id = ?").run(sliceTicket(fid, k));
+/** Only `keep` may fire on the next tick: every other waiting ticket in this file is canceled. */
+const quietBut = (...keep) => getDb().prepare(`UPDATE scheduled_runs SET status = 'canceled' WHERE status = 'scheduled'
+  AND id NOT IN (${keep.map(() => '?').join(', ')})`).run(...keep);
+const branchOf = (pid) => JSON.parse(getDb().prepare('SELECT branch FROM pipelines WHERE id = ?').get(pid)?.branch || 'null');
+const tickUntil = async (pred) => { for (let i = 0; i < 100; i++) { await schedulerTick(); if (pred()) return; await sleep(20); } };
+const isAncestor = (dir, a, b) => spawnSync('git', ['merge-base', '--is-ancestor', a, b], { cwd: dir }).status === 0;
+/** The run a fired ticket became: wait for its worktree, read its head, then stop it. → { pid, branch, head } */
+async function firedRun(ticketId, ms = 60000) {
+  const t0 = Date.now();
+  let pid = null; let branch = null; let head = null;
+  while (Date.now() - t0 < ms) {
+    pid = runs.get(ticketId)?.pipelineId || getTicket(ticketId)?.pipelineId || null;
+    branch = pid ? branchOf(pid) : null;
+    if (branch && branch.worktreeDir) break;
+    await sleep(50);
+  }
+  if (branch && branch.worktreeDir) head = spawnSync('git', ['rev-parse', 'HEAD'], { cwd: branch.worktreeDir, encoding: 'utf8' }).stdout.trim();
+  const e = runs.get(ticketId);
+  if (e && !['done', 'stopped', 'error'].includes(String(e.status))) await post('/api/stop', { runId: ticketId });
+  for (let i = 0; i < 400 && runs.get(ticketId) && !['done', 'stopped', 'error', 'paused', 'interrupted'].includes(String(runs.get(ticketId).status)); i++) await sleep(25);
+  return { pid, branch, head };
+}
+
+test("small runs: schedulerTick starts slice 4 from slice 2's branch while slice 3 is stopped", () => withEnvVars(SMALL_ON, async () => {
+  const w = shipWorld({ slices: 4, prs: false });
+  setPipe(w.pids[2], 'stopped');
+  unrun(w.f.id, 4);
+  const t4 = sliceTicket(w.f.id, 4);
+  quietBut(t4);
+  await tickUntil(() => getTicket(t4).status !== 'scheduled');
+  assert.equal(getTicket(t4).status, 'fired', getTicket(t4).failReason || '');
+  const run = await firedRun(t4);
+  assert.equal(run.branch.source, `feat/${w.pids[1]}`);
+}));
+
+test('small runs, stop 3 of 5: runs 4 and 5 finish, Resume on the feature restarts run 3 from run 5\'s branch', () => withEnvVars(SMALL_ON, async () => {
+  const w = shipWorld({ slices: 5, prs: false });
+  setPipe(w.pids[2], 'stopped');
+  const res = await post(`/api/shape/features/${w.f.id}/resume`, {});
+  const body = await res.json();
+  assert.equal(res.status, 200, JSON.stringify(body));
+  assert.equal(body.action, 'restart');
+  quietBut(body.ticketId);
+  await tickUntil(() => getTicket(body.ticketId).status !== 'scheduled');
+  assert.equal(getTicket(body.ticketId).status, 'fired', getTicket(body.ticketId).failReason || '');
+  const run = await firedRun(body.ticketId);
+  assert.equal(run.branch.source, `feat/${w.pids[4]}`);
+  assert.ok(run.head, 'the restarted run 3 has a checkout');
+  assert.ok(isAncestor(w.dir, `feat/${w.pids[3]}`, run.head), "run 4's commits are in run 3's branch");
+  assert.ok(isAncestor(w.dir, `feat/${w.pids[4]}`, run.head), "run 5's commits are in run 3's branch");
+}));
+
+test('small runs: Run now on a slice whose builds-on is unfinished is refused as still going', () => withEnvVars(SMALL_ON, async () => {
+  const w = shipWorld({ slices: 3, prs: false });
+  const f = getDb().prepare('SELECT outline FROM shape_features WHERE id = ?').get(w.f.id);
+  const outline = JSON.parse(f.outline);
+  outline.slices[2].dependsOn = ['s2'];
+  getDb().prepare('UPDATE shape_features SET outline = ? WHERE id = ?').run(JSON.stringify(outline), w.f.id);
+  setPipe(w.pids[1], 'stopped');
+  unrun(w.f.id, 3);
+  const t3 = sliceTicket(w.f.id, 3);
+  requestRunNow(t3);
+  const out = await testing.fireTicket(getTicket(t3, { withRequest: true }));
+  assert.deepEqual(out, { ok: false, error: 'the run before it is still going', transient: true });
+  cancelTicket(t3);
+}));
+
+/** A one-PR world whose last slice (3) was rebuilt on `from`'s branch as feat/<tag>, finishing last. */
+const rebuildLast = (w, from, tag, k = 3) => {
+  git(w.dir, 'checkout', '-q', '-b', `feat/${tag}`, from);
+  writeFileSync(join(w.dir, `${tag}.txt`), tag); git(w.dir, 'add', '-A'); git(w.dir, 'commit', '-qm', tag);
+  git(w.dir, 'checkout', '-q', 'main');
+  getDb().prepare('UPDATE pipelines SET branch = ?, updated_at = ? WHERE id = ?')
+    .run(JSON.stringify({ source: from, feature: `feat/${tag}` }), '2099-01-01T00:00:00.000Z', w.pids[k - 1]);
+  return `feat/${tag}`;
+};
+
+shipT('small runs: one PR pushes the latest finished slice', () => withEnvVars(SMALL_ON, async () => {
+  const seen = []; stubShip(seen);
+  const w = shipWorld({ slices: 4, prs: false });
+  // Run 3 finished last, started from run 4's branch: it holds every finished run's work.
+  const head = rebuildLast(w, `feat/${w.pids[3]}`, `x${w.pids[2]}`);
+  const r = await ship(w.f.id, 'one');
+  assert.equal(r.status, 200, await r.clone().text());
+  assert.ok(seen.some((a) => a[0] === 'git' && a[1] === 'push' && a.includes(head)), 'the latest finished branch is pushed');
+  assert.ok(!seen.some((a) => a[0] === 'git' && a[1] === 'push' && a.includes(w.last)));
+  assert.match(git(w.dir, 'show', `${head}:CHANGELOG.md`), /### Charts/);
+  assert.equal(argOf(ghCalls(seen, 'create')[0], '--base'), 'main');
+}));
+
+shipT("small runs: one PR is refused 409 HEAD_MISSING_WORK when the head lacks a done slice's tip", () => withEnvVars(SMALL_ON, async () => {
+  const seen = []; stubShip(seen);
+  const w = shipWorld({ slices: 3, prs: false });
+  rebuildLast(w, `feat/${w.pids[0]}`, `y${w.pids[2]}`);   // run 3 lacks run 2's work
+  const r = await ship(w.f.id, 'one');
+  assert.equal(r.status, 409);
+  assert.deepEqual(await r.json(), { code: 'HEAD_MISSING_WORK', error: "run 2's work is not in the branch one PR would ship: create one PR per run" });
+  assert.equal(ghCalls(seen, 'create').length, 0);
+  assert.ok(!seen.some((a) => a[0] === 'git' && a[1] === 'push'));
+  assert.equal((await view(w.f.id)).ship.mode, null, 'nothing recorded');
+}));
+
+shipT('small runs off: the one-PR ship makes no ancestor check and ships the last row', () => withEnvVars(SMALL_OFF, async () => {
+  const seen = []; stubShip(seen);
+  const w = shipWorld({ slices: 3, prs: false });
+  const head = rebuildLast(w, `feat/${w.pids[0]}`, `z${w.pids[2]}`);   // the same head that lacks run 2's work
+  const r = await ship(w.f.id, 'one');
+  assert.equal(r.status, 200, await r.clone().text());
+  assert.ok(seen.some((a) => a[0] === 'git' && a[1] === 'push' && a.includes(head)), "dev's last row ships");
+}));
+
+test('small runs off: the same tick misses slice 4 as dev does', () => withEnvVars(SMALL_OFF, async () => {
+  const w = shipWorld({ slices: 4, prs: false });
+  setPipe(w.pids[2], 'stopped');
+  unrun(w.f.id, 4);
+  const t4 = sliceTicket(w.f.id, 4);
+  quietBut(t4);
+  await tickUntil(() => getTicket(t4).status !== 'scheduled');
+  assert.equal(getTicket(t4).status, 'missed');
+  assert.equal(getTicket(t4).failReason, 'The run before it was stopped.');
+}));

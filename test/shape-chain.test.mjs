@@ -1,0 +1,280 @@
+// test/shape-chain.test.mjs — Shaper small runs A5 (src/core/shape/chain.mjs): runs start from the feature's latest
+// finished work. The slice gate through runDueTickets, one slice at a time, the latest-finished pick, the fire-time
+// source, the one-PR ship check (real git) and the flag on → off round trip. Real DB through useTempHome.
+import { test, after, before } from 'node:test';
+import assert from 'node:assert/strict';
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { spawnSync } from 'node:child_process';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { useTempHome } from './helpers/temp-home.mjs';
+import { seedPipelineRow } from './helpers/db-seed.mjs';
+import { withEnv as withEnvVars } from './helpers/with-env.mjs';
+import { getDb } from '../src/core/db.mjs';
+import { projectKey } from '../src/core/store.mjs';
+import { getTicket, runDueTickets, requestRunNow } from '../src/core/scheduler.mjs';
+import { createSliceFeature, featureView, resumeFeature, featureHoldsTicket } from '../src/core/shape/features.mjs';
+import { careOfRow, requirementKindsOf } from '../src/shared/shape/feature-record.mjs';
+import { featureFigures } from '../src/core/shape/measure.mjs';
+import { latestFinishedSlice, latestFinishedSource, sliceChainGate, sliceSourceOf, headMissingSlice } from '../src/core/shape/chain.mjs';
+
+useTempHome(after, 'worca-shape-chain-');
+
+const root = mkdtempSync(join(tmpdir(), 'worca-shape-chain-proj-'));
+after(() => rmSync(root, { recursive: true, force: true }));
+before(() => { getDb(); });
+
+const SMALL_ON = { WORCA_FLAGS: 'shaperSmallRuns' };
+const SMALL_OFF = { WORCA_FLAGS: undefined };
+const ON = { flagEnabled: () => true };
+const OFF = { flagEnabled: () => false };
+
+const slice = (n, dependsOn = []) => ({ id: `s${n}`, title: `Slice ${n}`, goal: `Goal ${n}`, inScope: [`do ${n}`], outOfScope: [],
+  acceptance: [`ok ${n}`], dependsOn, estimate: 'M' });
+const outlineOf = (n, deps = {}) => ({ why: 'because', slices: Array.from({ length: n }, (_, i) => slice(i + 1, deps[i + 1] || [])) });
+
+let seq = 0;
+const pipe = (status = 'running', { branch = null, steps = [], updatedAt = null } = {}) => {
+  const id = `c${String(++seq).padStart(7, '0')}`;
+  seedPipelineRow({ id, projectKey: projectKey(root), status, title: id, updatedAt, steps,
+    branch: branch || { source: 'main', feature: `feat/${id}` } });
+  return id;
+};
+const rows = (fid) => getDb().prepare('SELECT * FROM shape_feature_slices WHERE feature_id = ? ORDER BY idx').all(fid);
+const fire = (ticketId, pipelineId = null) => getDb().prepare('UPDATE scheduled_runs SET status = ?, pipeline_id = ? WHERE id = ?')
+  .run('fired', pipelineId, ticketId);
+const setTicket = (ticketId, status) => getDb().prepare('UPDATE scheduled_runs SET status = ? WHERE id = ?').run(status, ticketId);
+/** A feature of `n` slices: slice 1 done, slice 2 done unless `two` says otherwise. → { id, t } (t[k] = slice k's ticket id). */
+/** Earlier tests' tickets never fire on a later test's tick. */
+const quiet = () => getDb().prepare("UPDATE scheduled_runs SET status = 'canceled' WHERE status = 'scheduled'").run();
+const feature = (n, { deps = {}, approveEach = false, two = 'done' } = {}) => {
+  quiet();
+  const f = createSliceFeature({ pipelineId: pipe('done'), projectDir: root, title: 'Charts', outline: outlineOf(n, deps),
+    perspectives: ['product'], workflowId: 'wf_shape', approveEach });
+  const t = rows(f.id).map((r) => r.ticket_id);
+  t.unshift(null);
+  if (two === 'done') fire(t[2], pipe('done'));
+  return { id: f.id, t };
+};
+const okStart = async () => ({ ok: true });
+const gate = (t, o) => sliceChainGate(t, o, ON);
+const tick = (opts = {}) => runDueTickets({ start: okStart, chainGate: gate, hold: featureHoldsTicket, ...opts });
+/** slice 3 halted one way or another. */
+const halt3 = (t3, how) => {
+  if (how === 'failed') setTicket(t3, 'failed');
+  else fire(t3, pipe(how));
+};
+
+test('flag off: gate and source answer null', () => withEnvVars(SMALL_OFF, () => {
+  const { t } = feature(3);
+  const tk = getTicket(t[3]);
+  assert.equal(sliceChainGate(tk, {}), null);
+  assert.equal(sliceSourceOf(tk), null);
+  assert.equal(sliceChainGate(tk, {}, OFF), null);
+  assert.equal(sliceSourceOf(tk, OFF), null);
+  // With the flag on, the same ticket gets an answer; a ticket of no feature still gets none.
+  assert.equal(sliceChainGate(tk, {}, ON).state, 'ok');
+  assert.ok(sliceSourceOf(tk, ON).sourceBranch);
+  assert.equal(sliceChainGate({ id: 'nope' }, {}, ON), null);
+  assert.equal(sliceSourceOf({ id: 'nope' }, ON), null);
+}));
+
+test('independent slice fires behind a halted or held slice', async () => {
+  for (const how of ['stopped', 'error', 'failed', 'paused']) {
+    const { t } = feature(4);
+    halt3(t[3], how);
+    const out = await tick();
+    assert.deepEqual(out.fired, [t[4]], how);
+    assert.equal(getTicket(t[4]).status, 'fired');
+  }
+  // Held ("Ask me before each run"): both wait for Start now; Start now on slice 4 starts it while slice 3 stays held.
+  const { t } = feature(4, { approveEach: true });
+  let out = await tick();
+  assert.deepEqual(out.held.sort(), [t[3], t[4]].sort());
+  requestRunNow(t[4]);
+  out = await tick();
+  assert.deepEqual(out.fired, [t[4]]);
+  assert.equal(getTicket(t[3]).status, 'scheduled');
+});
+
+test('dependent slice waits for its unfinished dependency, then fires', async () => {
+  for (const how of ['stopped', 'error', 'paused', 'unrun']) {
+    const { t } = feature(4, { deps: { 4: ['s3'] } });
+    if (how !== 'unrun') halt3(t[3], how);
+    for (let i = 0; i < 3; i++) {
+      const out = await tick();
+      assert.ok(!out.fired.includes(t[4]) && !out.missed.includes(t[4]), `${how}: tick ${i}`);
+      assert.equal(getTicket(t[4]).status, 'scheduled', how);
+    }
+    if (how === 'unrun') { fire(t[3], pipe('done')); } else {
+      getDb().prepare("UPDATE pipelines SET status = 'done' WHERE id = ?").run(getTicket(t[3]).pipelineId);
+    }
+    assert.deepEqual((await tick()).fired, [t[4]], `${how}: fires once slice 3 is done`);
+  }
+});
+
+test('a missed dependency misses its dependent', async () => {
+  for (const [how, reason] of [['missed', 'was missed'], ['canceled', 'was canceled']]) {
+    const { t } = feature(4, { deps: { 4: ['s3'] } });
+    setTicket(t[3], how);
+    const out = await tick();
+    assert.deepEqual(out.missed, [t[4]], how);
+    assert.equal(getTicket(t[4]).failReason, `The run before it ${reason}.`);
+  }
+});
+
+test('a dependency whose ticket failed misses its dependent', async () => {
+  const { t } = feature(4, { deps: { 4: ['s3'] } });
+  setTicket(t[3], 'failed');
+  const out = await tick();
+  assert.deepEqual(out.missed, [t[4]]);
+  assert.equal(getTicket(t[4]).failReason, 'The run before it could not start.');
+});
+
+test('two eligible independent slices on one tick: exactly one fires', async () => {
+  const { t } = feature(5);
+  halt3(t[3], 'stopped');
+  const out = await tick();
+  assert.deepEqual(out.fired, [t[4]], 'the lowest eligible index');
+  assert.deepEqual(out.waiting.sort(), [t[5]].sort());
+  assert.equal(getTicket(t[5]).status, 'scheduled');
+});
+
+test('a slice ticket fired with no pipeline stalls the others only while it may still start', async () => {
+  const { t } = feature(4);
+  fire(t[3]);
+  assert.deepEqual((await tick()).fired, [], 'just fired: it may still start');
+  getDb().prepare('UPDATE scheduled_runs SET updated_at = ? WHERE id = ?').run(new Date(Date.now() - 4 * 60_000).toISOString(), t[3]);
+  assert.deepEqual((await tick()).fired, [t[4]], 'older than 3 minutes with no run: it could not start');
+});
+
+test('a feature created with the flag off follows the gate once it is on', async () => {
+  const { t } = await withEnvVars(SMALL_OFF, () => feature(4));
+  halt3(t[3], 'stopped');
+  // Flag off: dev's linear gate misses slice 4 behind the stopped slice 3.
+  const off = await runDueTickets({ start: okStart, chainGate: (tk, o) => sliceChainGate(tk, o, OFF) });
+  assert.deepEqual(off.missed, [t[4]]);
+  const { t: t2 } = await withEnvVars(SMALL_OFF, () => feature(4));
+  halt3(t2[3], 'stopped');
+  const on = await withEnvVars(SMALL_ON, () => runDueTickets({ start: okStart, chainGate: (tk, o) => sliceChainGate(tk, o) }));
+  assert.ok(on.fired.includes(t2[4]));
+});
+
+test('latestFinishedSlice returns the greatest step finish time, not the highest index', () => {
+  const f = createSliceFeature({ pipelineId: pipe('done', { updatedAt: '2026-01-01T00:00:00Z' }), projectDir: root, title: 'C',
+    outline: outlineOf(4), perspectives: ['product'], workflowId: 'wf_shape' });
+  const t = rows(f.id).map((r) => r.ticket_id);
+  const step = (at) => [{ key: 'n_impl', status: 'done', updatedAt: at }];
+  const p2 = pipe('done', { steps: step('2026-01-05T00:00:00Z') });
+  const p3 = pipe('done', { steps: step('2026-01-03T00:00:00Z'), updatedAt: '2026-01-09T00:00:00Z' });   // a late title change
+  fire(t[1], p2); fire(t[2], p3);
+  assert.deepEqual(latestFinishedSlice(f.id), { index: 2, pipelineId: p2 });
+  assert.deepEqual(latestFinishedSlice(f.id, { exclude: p2 }), { index: 3, pipelineId: p3 });
+  // A tie goes to the higher index; an archived or unfinished run never counts.
+  const p4 = pipe('done', { steps: step('2026-01-05T00:00:00Z') });
+  fire(t[3], p4);
+  assert.deepEqual(latestFinishedSlice(f.id), { index: 4, pipelineId: p4 });
+  getDb().prepare("UPDATE pipelines SET archived_at = '2026-02-01T00:00:00Z' WHERE id = ?").run(p4);
+  getDb().prepare("UPDATE pipelines SET status = 'stopped' WHERE id = ?").run(p2);
+  assert.deepEqual(latestFinishedSlice(f.id), { index: 3, pipelineId: p3 });
+});
+
+test('sliceSourceOf: the latest finished branch, {pending:true} while it merges back, the base when none finished', () => {
+  const { id, t } = feature(4);
+  const p2 = getTicket(t[2]).pipelineId;
+  assert.deepEqual(sliceSourceOf(getTicket(t[4]), ON), { pipelineId: p2, sourceBranch: `feat/${p2}` });
+  // A run on its source branch, done but not merged back yet.
+  const p3 = pipe('done', { branch: { source: 'main', feature: 'main', sameAsSource: true, worktreeDir: '/tmp/x' }, updatedAt: new Date().toISOString() });
+  fire(t[3], p3);
+  getDb().prepare("UPDATE pipelines SET updated_at = ? WHERE id = ?").run(new Date(Date.now() + 1000).toISOString(), p3);
+  assert.deepEqual(latestFinishedSource(id), { pending: true });
+  assert.deepEqual(sliceSourceOf(getTicket(t[4]), ON), { pending: true });
+  // No finished run: the feature's base.
+  const f = createSliceFeature({ pipelineId: pipe('stopped'), projectDir: root, title: 'C', outline: outlineOf(2), perspectives: ['product'], workflowId: 'wf_shape' });
+  assert.deepEqual(sliceSourceOf(getTicket(rows(f.id)[1].ticket_id), ON), { pipelineId: null, sourceBranch: 'main' });
+});
+
+const git = (cwd, ...args) => { const r = spawnSync('git', args, { cwd, encoding: 'utf8' }); if (r.status !== 0) throw new Error(r.stderr); return r.stdout.trim(); };
+test('headMissingSlice: a done slice whose tip is not in the head branch; null when all are', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'worca-shape-chain-git-'));
+  try {
+    git(dir, 'init', '-q', '-b', 'main'); git(dir, 'config', 'user.email', 't@t'); git(dir, 'config', 'user.name', 't');
+    git(dir, 'config', 'commit.gpgsign', 'false');
+    const commitOn = (br, from, file) => {
+      git(dir, 'checkout', '-q', '-b', br, from); writeFileSync(join(dir, file), file); git(dir, 'add', '-A'); git(dir, 'commit', '-qm', file);
+    };
+    writeFileSync(join(dir, 'f.txt'), 'x'); git(dir, 'add', '-A'); git(dir, 'commit', '-qm', 'init');
+    commitOn('feat/a', 'main', 'a.txt');
+    commitOn('feat/b', 'feat/a', 'b.txt');
+    commitOn('feat/c', 'feat/a', 'c.txt');   // started from a, not from b
+    const p = (br) => pipe('done', { branch: { source: 'main', feature: br } });
+    const a = p('feat/a'); const b = p('feat/b'); const c = p('feat/c'); const gone = p('feat/gone');
+    assert.equal(await headMissingSlice(dir, 'feat/b', [{ index: 1, pipelineId: a }, { index: 2, pipelineId: b }]), null);
+    assert.deepEqual(await headMissingSlice(dir, 'feat/c', [{ index: 1, pipelineId: a }, { index: 2, pipelineId: b }, { index: 3, pipelineId: c }]), { index: 2 });
+    assert.equal(await headMissingSlice(dir, 'feat/c', [{ index: 1, pipelineId: a }, { index: 4, pipelineId: gone }]), null, 'a branch that does not resolve is skipped');
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
+test('chain.mjs reads the flag only through shaperSmallRunsOn; features.mjs imports nothing from it', () => {
+  const chain = readFileSync(new URL('../src/core/shape/chain.mjs', import.meta.url), 'utf8');
+  const features = readFileSync(new URL('../src/core/shape/features.mjs', import.meta.url), 'utf8');
+  assert.doesNotMatch(chain, /flags\.mjs|flagEnabled\(/);
+  assert.match(chain, /from '\.\/features\.mjs'/);
+  assert.doesNotMatch(features, /chain\.mjs/);
+});
+
+test('flag on, create, flag off, resume: readable and linear', async () => {
+  const outline = outlineOf(4, { 4: ['s2'] });
+  outline.slices[0].requirements = ['R-po-1'];
+  outline.agreed = [{ id: 'R-po-1', text: 'People see it' }, { id: 'R-sec-1', text: 'It is safe' }];
+  outline.leftOut = [];
+  quiet();
+  const origin = pipe('done');
+  const FIG = { care: 'thorough', runs: 4, costPerStep: { implementer: 1.5 }, cost: { shaping: 1, building: 2, total: 3 },
+    requirementsMet: { met: 1, total: 2 }, gapsAtEnd: 0, reviewFindings: { critical: 0, major: 1, minor: 0, suggestion: 0, total: 1 },
+    firstPassRate: 0.5, fixRounds: 1, changesAfterShip: 0 };
+  const onRead = await withEnvVars(SMALL_ON, () => {
+    const f = createSliceFeature({ pipelineId: origin, projectDir: root, title: 'Round trip', outline, perspectives: ['product'],
+      workflowId: 'wf_shape', care: { position: 'thorough' }, requirementKinds: { 'R-sec-1': { kind: 'confirmed', role: 'Compliance' } } });
+    getDb().prepare('INSERT INTO shape_feature_figures (feature_id, care, figures, recorded_at, updated_at) VALUES (?, ?, ?, ?, ?)')
+      .run(f.id, 'thorough', JSON.stringify(FIG), '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z');
+    // Slice 3 ran ahead of an unrun slice 2 and stopped; Resume restarts it behind slice 2's ticket.
+    const t = rows(f.id).map((r) => r.ticket_id);
+    fire(t[2], pipe('stopped'));
+    const res = resumeFeature(f.id);
+    assert.equal(res.action, 'restart');
+    const v = featureView(f.id);
+    return { id: f.id, care: v.care, kinds: v.requirementKinds, figures: featureFigures(f.id), t, restart: res.ticketId };
+  });
+  await withEnvVars(SMALL_OFF, async () => {
+    const DEV_KEYS = JSON.parse(readFileSync(new URL('./fixtures/shaper/dev-feature-view-keys.json', import.meta.url), 'utf8'));
+    const v = featureView(onRead.id);
+    assert.deepEqual(Object.keys(v), DEV_KEYS.view);
+    const row = getDb().prepare('SELECT * FROM shape_features WHERE id = ?').get(onRead.id);
+    assert.deepEqual(careOfRow(row), onRead.care);
+    assert.deepEqual(careOfRow(row).position, 'thorough');
+    const stored = JSON.parse(row.outline);
+    assert.deepEqual(requirementKindsOf(JSON.parse(row.requirement_kinds), stored), onRead.kinds);
+    assert.notEqual(featureFigures(onRead.id), null);
+    assert.deepEqual(featureFigures(onRead.id), onRead.figures);
+    assert.deepEqual(stored.slices.map((s) => s.dependsOn), [[], [], [], ['s2']]);
+    // Dev's tick: only slice 2 fires; slice 3 (restarted after slice 2's ticket) stays scheduled behind it.
+    const [, t2, , t4] = onRead.t;
+    const out = await runDueTickets({ start: okStart, hold: featureHoldsTicket });
+    assert.deepEqual(out.fired, [t2]);
+    assert.equal(getTicket(onRead.restart).status, 'scheduled');
+    // Slice 2 finishes, slice 3 runs and stops: the next tick misses slice 4 (dev's cascade).
+    fire(t2, pipe('done'));
+    const p2 = getTicket(t2).pipelineId;
+    fire(onRead.restart, pipe('stopped'));
+    const out2 = await runDueTickets({ start: okStart, hold: featureHoldsTicket });
+    assert.deepEqual(out2.missed, [t4]);
+    const res = resumeFeature(onRead.id);
+    assert.equal(res.action, 'restart');
+    const nt = getTicket(res.ticketId);
+    assert.deepEqual(nt.after, { kind: 'pipeline', id: p2, policy: 'done' });
+    assert.equal(nt.sourceFromPrevious, true);
+    assert.deepEqual(getTicket(t4).after, { kind: 'ticket', id: res.ticketId, policy: 'done' });
+    assert.equal(getTicket(t4).status, 'scheduled');
+  });
+});

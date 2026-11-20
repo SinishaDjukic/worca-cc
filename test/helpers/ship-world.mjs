@@ -48,8 +48,9 @@ export function shipKit({ nextId, outlineOf }) {
   const dirs = [];
   /** A real repo (the changelog commit is real git) with slices 1..3 done on stacked branches, each with a draft PR
    *  (an in-flight feature's: the one ship flow opens none per slice). `drafts: false` leaves them ready PRs (as a partly
-   *  finished stacked ship leaves them); `prs: false` gives no slice a PR. */
-  function shipWorld({ prs = true, drafts = true } = {}) {
+   *  finished stacked ship leaves them); `prs: false` gives no slice a PR. `slices` = how many (default 3); each slice
+   *  branch carries one commit of its own (`s<k>.txt`). */
+  function shipWorld({ prs = true, drafts = true, slices = 3 } = {}) {
     const dir = mkdtempSync(join(tmpdir(), 'worca-ship-'));
     dirs.push(dir);
     git(dir, 'init', '-q', '-b', 'main'); git(dir, 'config', 'user.email', 't@t'); git(dir, 'config', 'user.name', 't');
@@ -59,16 +60,18 @@ export function shipKit({ nextId, outlineOf }) {
     writeStoreMeta(key, 'project', { key, name: 'S', path: dir });
     const pids = [];
     let source = 'main';
-    for (let i = 1; i <= 3; i++) {
+    for (let i = 1; i <= slices; i++) {
       const id = nextId();
-      git(dir, 'branch', `feat/${id}`, source);
-      seedPipelineRow({ id, projectKey: key, status: 'done', title: `Charts · ${i}/3: Slice ${i}`, branch: { source, feature: `feat/${id}` } });
+      git(dir, 'checkout', '-q', '-b', `feat/${id}`, source);
+      writeFileSync(join(dir, `s${i}.txt`), `${i}\n`); git(dir, 'add', '-A'); git(dir, 'commit', '-qm', `slice ${i}`);
+      git(dir, 'checkout', '-q', 'main');
+      seedPipelineRow({ id, projectKey: key, status: 'done', title: `Charts · ${i}/${slices}: Slice ${i}`, branch: { source, feature: `feat/${id}` } });
       pids.push(id);
       source = `feat/${id}`;
     }
-    const f = createSliceFeature({ pipelineId: pids[0], projectDir: dir, title: 'Charts', outline: outlineOf(3), perspectives: ['product'],
+    const f = createSliceFeature({ pipelineId: pids[0], projectDir: dir, title: 'Charts', outline: outlineOf(slices), perspectives: ['product'],
       workflowId: 'wf_shape', base: { mock: true } });
-    for (let i = 2; i <= 3; i++) {
+    for (let i = 2; i <= slices; i++) {
       const t = getDb().prepare('SELECT ticket_id FROM shape_feature_slices WHERE feature_id = ? AND idx = ?').get(f.id, i).ticket_id;
       getDb().prepare("UPDATE scheduled_runs SET status = 'fired', pipeline_id = ? WHERE id = ?").run(pids[i - 1], t);
     }
@@ -76,7 +79,7 @@ export function shipKit({ nextId, outlineOf }) {
       pids.forEach((p, i) => getDb().prepare("UPDATE pipelines SET pr_url = ?, pr_number = ?, pr_state = 'OPEN' WHERE id = ?").run(`https://github.com/me/repo/pull/${i + 1}`, i + 1, p));
       if (drafts) pids.forEach((p, i) => recordSliceDraft(p, `https://github.com/me/repo/pull/${i + 1}`));
     }
-    return { dir, f, pids, last: `feat/${pids[2]}` };
+    return { dir, f, pids, last: `feat/${pids[slices - 1]}` };
   }
   return { shipWorld, cleanup: () => { for (const d of dirs.splice(0)) rmSync(d, { recursive: true, force: true }); } };
 }

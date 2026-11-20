@@ -22,7 +22,7 @@ import {
   earlierSliceChanges, cancelRest, resumeFeature, rechainWaiting, replanRest, setApproveEach, featureHoldsTicket, ticketHeld,
   stackedPrBase, recordShapePlan, listShapePlans, featuresOfTickets, featureClarify, chainFeature, sliceOfPipeline, slicePrPreamble,
   recordShip, clearShip, recordSliceDraft, featureShipSuggestion, featureShipInput, ONE_PR_MAX_LINES,
-  liveSliceFrom, shaperCard, featureThread, featureRootSource,
+  liveSliceFrom, shaperCard, featureThread, featureRootSource, sliceOfTicket, busySliceOf, sliceGateState,
   addFeatureNote, featureNotes, appendFeatureRun, featureBase, liveRoundOf, setFeatureAcceptance,
 } from '../src/core/shape/features.mjs';
 
@@ -1275,4 +1275,156 @@ test('small runs on: an appended run and the acceptance marks leave the stored k
   assert.equal(setFeatureAcceptance(id, [{ id: 'R-po-1', mark: 'met' }]), true);
   assert.deepEqual(recordRow(id), stored);
   assert.deepEqual([featureView(id).care, featureView(id).requirementKinds], [LEAN, KINDS]);
+}));
+
+// ── Shaper small runs A5: the slice gate, one slice at a time, resume ─────────
+/** Async twin of withSmallRuns: the flag stays set until `fn`'s promise settles. */
+async function withSmallRunsAsync(on, fn) {
+  const prev = process.env.WORCA_FLAGS;
+  try {
+    if (on) process.env.WORCA_FLAGS = 'shaperSmallRuns'; else delete process.env.WORCA_FLAGS;
+    return await fn();
+  } finally {
+    if (prev === undefined) delete process.env.WORCA_FLAGS; else process.env.WORCA_FLAGS = prev;
+  }
+}
+/** 4 slices: 1 and 2 done; slice 4 builds on `deps4`. → { a, r3, r4 } (slice rows). */
+const gateWorld = ({ deps4 = [], approveEach = false } = {}) => {
+  const outline = outlineOf(4);
+  outline.slices[3].dependsOn = deps4;
+  const a = mk(4, { pipelineId: pipe('done'), outline, approveEach });
+  const [, r2, r3, r4] = tickets(a.id);
+  setTicket(r2.ticket_id, 'fired', { pipelineId: pipe('done') });
+  return { a, r3, r4 };
+};
+const s3As = (r3, how) => {
+  if (how === 'unrun') return;
+  if (how.ticket) { setTicket(r3.ticket_id, how.ticket); return; }
+  const p = pipe(how.pipe);
+  setTicket(r3.ticket_id, 'fired', { pipelineId: p });
+  if (how.archived) getDb().prepare("UPDATE pipelines SET archived_at = '2026-01-01T00:00:00Z' WHERE id = ?").run(p);
+};
+
+test('sliceGateState (D4): builds-on links, one slice at a time, lowest index first', () => {
+  const rows = [
+    // [slice 4 builds on s3?, how slice 3 stands, the gate's answer, reason]
+    [true, 'unrun', 'waiting'],
+    [true, { pipe: 'stopped' }, 'waiting'],
+    [true, { pipe: 'error' }, 'waiting'],
+    [true, { pipe: 'paused' }, 'waiting'],
+    [true, { pipe: 'interrupted' }, 'waiting'],
+    [true, { pipe: 'done' }, 'ok'],
+    [true, { ticket: 'missed' }, 'bad', 'was missed'],
+    [true, { ticket: 'canceled' }, 'bad', 'was canceled'],
+    [true, { ticket: 'failed' }, 'bad', 'could not start'],
+    [true, { pipe: 'done', archived: true }, 'bad', 'was archived'],
+    [false, { pipe: 'stopped' }, 'ok'],
+    [false, { pipe: 'error' }, 'ok'],
+    [false, { ticket: 'failed' }, 'ok'],
+    [false, { pipe: 'paused' }, 'ok'],
+    [false, { pipe: 'running' }, 'waiting'],
+    [false, { pipe: 'starting' }, 'waiting'],
+    [false, 'unrun', 'waiting'],
+  ];
+  for (const [dep, how, want, reason] of rows) {
+    const { r3, r4 } = gateWorld({ deps4: dep ? ['s3'] : [] });
+    s3As(r3, how);
+    const g = sliceGateState(getTicket(r4.ticket_id));
+    assert.equal(g.state, want, `${dep} ${JSON.stringify(how)}`);
+    if (reason) { assert.equal(g.reason, reason); assert.equal(g.title, 'Run 3 · Slice 3'); }
+  }
+  // Asking a person still holds the feature's one slot.
+  const { r3, r4 } = gateWorld();
+  const p3 = pipe('running');
+  setTicket(r3.ticket_id, 'fired', { pipelineId: p3 });
+  const asking = (p) => (p === p3 ? liveSliceFrom({ runId: 'r', status: 'running', pendingQuestion: { kind: 'questions' } }) : null);
+  assert.equal(sliceGateState(getTicket(r4.ticket_id), { live: asking }).state, 'waiting');
+  // A held earlier slice does not hold back a later one.
+  const h = gateWorld({ approveEach: true });
+  assert.equal(sliceGateState(getTicket(h.r4.ticket_id)).state, 'ok');
+  // Not a slice ticket.
+  const plain = createTicket({ projectDir: root, title: 'Plain', request: { projectDir: root, prompt: 'x' }, after: { kind: 'pipeline', id: pipe('done') } });
+  assert.equal(sliceGateState(getTicket(plain.id)), null);
+  assert.equal(sliceGateState(null), null);
+});
+
+test('sliceOfTicket: the feature, index, status and switch of a slice ticket; null otherwise', () => {
+  const a = mk(3, { approveEach: true });
+  const [, , r3] = tickets(a.id);
+  assert.deepEqual(sliceOfTicket(r3.ticket_id), { featureId: a.id, index: 3, status: 'active', approveEach: true });
+  assert.equal(sliceOfTicket('nope'), null);
+  assert.equal(sliceOfTicket(null), null);
+});
+
+test('busySliceOf counts questions and approval as going, paused as not', () => {
+  const a = mk(3, { pipelineId: pipe('done') });
+  const [, r2] = tickets(a.id);
+  const p2 = pipe('running');
+  setTicket(r2.ticket_id, 'fired', { pipelineId: p2 });
+  const liveAs = (l) => (p) => (p === p2 ? { runId: 'r', ...l } : null);
+  assert.deepEqual(busySliceOf(a.id, { live: liveAs({ status: 'running', asking: true }) }), { index: 2 });
+  assert.deepEqual(busySliceOf(a.id, { live: liveAs({ status: 'running', waiting: true }) }), { index: 2 });
+  assert.equal(busySliceOf(a.id, { live: liveAs({ status: 'paused' }) }), null);
+  assert.equal(busySliceOf(a.id, { exclude: 2, live: liveAs({ status: 'running', approved: true }) }), null);
+});
+
+test('ticketHeld with the flag on: a held slice behind a stopped one reads held', () => withSmallRuns(true, () => {
+  const { a, r3, r4 } = gateWorld({ approveEach: true });
+  s3As(r3, { pipe: 'stopped' });
+  const v = featureView(a.id);
+  assert.equal(state(v, 4), 'held');
+  assert.equal(sliceGateState(getTicket(r4.ticket_id)).state, 'ok');
+  assert.equal(ticketHeld(getTicket(r4.ticket_id)), true);
+  // Flag off: dev's linear predecessor (slice 3, stopped) never opens, so it is not held.
+  withSmallRuns(false, () => assert.equal(state(featureView(a.id), 4), 'planned'));
+}));
+
+test("small runs: createSliceFeature stores dev's linear chain", () => {
+  const shape = (id) => tickets(id).slice(1).map((r) => {
+    const t = getTicket(r.ticket_id);
+    return [t.after.kind, t.after.policy, t.sourceFromPrevious];
+  });
+  const on = withSmallRuns(true, () => mk(4, { pipelineId: pipe('done') }));
+  const off = withSmallRuns(false, () => mk(4, { pipelineId: pipe('done') }));
+  assert.deepEqual(shape(on.id), shape(off.id));
+  const r = tickets(on.id);
+  assert.deepEqual(getTicket(r[1].ticket_id).after, { kind: 'pipeline', id: on.pid, policy: 'done' });
+  assert.deepEqual(getTicket(r[2].ticket_id).after, { kind: 'ticket', id: r[1].ticket_id, policy: 'done' });
+  assert.deepEqual(getTicket(r[3].ticket_id).after, { kind: 'ticket', id: r[2].ticket_id, policy: 'done' });
+});
+
+test("small runs: restart of slice 3 behind an unrun slice 2 chains after slice 2's ticket", () => withSmallRuns(true, () => {
+  const a = mk(3, { pipelineId: pipe('done') });
+  const [, r2, r3] = tickets(a.id);
+  setTicket(r3.ticket_id, 'fired', { pipelineId: pipe('stopped') });   // slice 3 ran ahead and stopped; slice 2 never ran
+  const res = resumeFeature(a.id, { by: 'ann' });
+  assert.equal(res.action, 'restart');
+  const nt = getTicket(res.ticketId);
+  assert.deepEqual(nt.after, { kind: 'ticket', id: r2.ticket_id, policy: 'done' });
+  assert.equal(nt.sourceFromPrevious, true);
+  assert.equal(tickets(a.id)[2].ticket_id, res.ticketId);
+}));
+
+test('small runs: resume or restart while another slice is going is refused 409 and changes nothing', () => withSmallRuns(true, () => {
+  // restart: slice 2 stopped, slice 3 running
+  const a = mk(3, { pipelineId: pipe('done') });
+  const [, r2, r3] = tickets(a.id);
+  setTicket(r2.ticket_id, 'fired', { pipelineId: pipe('stopped') });
+  setTicket(r3.ticket_id, 'fired', { pipelineId: pipe('running') });
+  const n = countTickets();
+  const rowsBefore = JSON.stringify(tickets(a.id));
+  const res = resumeFeature(a.id);
+  assert.deepEqual(res, { status: 409, error: 'Slice 3 is still going: resume this one when it finishes' });
+  assert.equal(countTickets(), n);
+  assert.equal(JSON.stringify(tickets(a.id)), rowsBefore);
+  // resume: slice 2 paused, slice 3 waiting for an answer
+  const b = mk(3, { pipelineId: pipe('done') });
+  const [, b2, b3] = tickets(b.id);
+  setTicket(b2.ticket_id, 'fired', { pipelineId: pipe('paused') });
+  const p3 = pipe('running');
+  setTicket(b3.ticket_id, 'fired', { pipelineId: p3 });
+  const live = (p) => (p === p3 ? { runId: 'r', status: 'running', waiting: true } : null);
+  assert.equal(resumeFeature(b.id, { live }).status, 409);
+  // Flag off: the same paused slice resumes.
+  withSmallRuns(false, () => assert.equal(resumeFeature(b.id, { live }).action, 'resume'));
 }));

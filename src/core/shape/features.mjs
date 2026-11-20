@@ -153,17 +153,27 @@ export function featureClarify(featureId) {
 export function featureHoldsTicket(ticket) {
   if (!ticket || !ticket.id) return false;
   try {
-    const r = getDb().prepare(`SELECT f.status, f.approve_each FROM shape_feature_slices s JOIN shape_features f ON f.id = s.feature_id
-      WHERE s.ticket_id = ? LIMIT 1`).get(String(ticket.id));
-    return !!r && r.status === 'active' && r.approve_each === 1;
+    const r = sliceOfTicket(ticket.id);
+    return !!r && r.status === 'active' && r.approveEach;
   } catch { return false; }
 }
 
+/** The slice a ticket fires (the one ticket lookup): its feature, index, the feature's status and its "Ask me before
+ *  each run" switch. null for a ticket no slice row points at. */
+export function sliceOfTicket(ticketId) {
+  if (!ticketId) return null;
+  const r = getDb().prepare(`SELECT s.feature_id, s.idx, f.status, f.approve_each FROM shape_feature_slices s JOIN shape_features f ON f.id = s.feature_id
+    WHERE s.ticket_id = ? LIMIT 1`).get(String(ticketId));
+  return r ? { featureId: r.feature_id, index: r.idx, status: r.status, approveEach: r.approve_each === 1 } : null;
+}
+
 /** D3: the one display rule — a slice ticket the hold keeps from firing now that the run before it finished.
- *  Derived per read; the ticket's stored status stays `scheduled`. */
+ *  Derived per read; the ticket's stored status stays `scheduled`. Shaper small runs: the slice gate decides instead
+ *  of the linear predecessor, so a held slice behind a halted one still reads held. */
 export function ticketHeld(ticket) {
   if (!ticket || ticket.status !== 'scheduled' || ticket.forced || !ticket.after) return false;
   if (!featureHoldsTicket(ticket)) return false;
+  if (shaperSmallRunsOn()) return sliceGateState(ticket)?.state === 'ok';
   try { return predecessorState(ticket.after, { policy: ticket.after.policy }).state === 'ok'; } catch { return false; }
 }
 
@@ -230,8 +240,8 @@ const STUCK = new Set(['missed', 'canceled']);
 
 /** L8. `live(pipelineId)` → {runId, status, waiting:boolean, asking:boolean, approved:boolean} | null — the
  *  server's runs map. `waiting` is a pending `plan` ask; `asking` any other pending ask (Clarify's questions). */
-function sliceState(row, live) {
-  if (!row.pipelineId) return row.ticket ? (ticketHeld(row.ticket) ? 'held' : TICKET_STATE[row.ticket.status] || 'planned') : 'planned';
+function sliceState(row, live, { held = true } = {}) {
+  if (!row.pipelineId) return row.ticket ? (held && ticketHeld(row.ticket) ? 'held' : TICKET_STATE[row.ticket.status] || 'planned') : 'planned';
   const l = live(row.pipelineId);
   if (l) return l.waiting ? 'approval' : l.asking ? 'questions' : l.status === 'paused' ? 'paused' : l.approved ? 'running' : 'shaping';
   const p = getDb().prepare('SELECT status FROM pipelines WHERE id = ?').get(row.pipelineId);
@@ -666,13 +676,20 @@ export function resumeFeature(id, { live = () => null, by = null, now = Date.now
   const view = featureView(id, { live });
   if (!view.halted) return { action: 'none' };
   const h = view.slices[view.halted.index - 1];
+  // Shaper small runs (D10): one slice of a feature is going at a time; a refusal changes nothing.
+  const smallRuns = shaperSmallRunsOn();
+  const busy = smallRuns ? busySliceOf(id, { exclude: h.index, live }) : null;
+  if (busy) return { status: 409, error: `Slice ${busy.index} is still going: resume this one when it finishes` };
   // The route resumes it like /api/resume, in the run's own mock mode, then calls rechainWaiting (F30).
   if (h.state === 'paused') return { action: 'resume', pipelineId: h.pipelineId, index: h.index, mock: f.base.mock === true };
   const rows = sliceRows(id);
   const prev = h.index > 1 ? rows[h.index - 2] : null;
   // F43: createTicket throws on {kind:'pipeline', id:null}. A previous slice with no pipeline has not run (e.g. this
-  // slice was started early with Run now): nothing to chain after.
-  if (prev && !prev.pipelineId) return { status: 409, error: `slice ${prev.index} has not run yet: start it first` };
+  // slice was started early with Run now): nothing to chain after. Small runs: it chains after that slice's ticket
+  // (dev's stored shape; the slice gate decides when it fires).
+  const prevRef = !prev ? null : prev.pipelineId ? { kind: 'pipeline', id: prev.pipelineId }
+    : smallRuns && prev.ticketId ? { kind: 'ticket', id: prev.ticketId } : null;
+  if (prev && !prevRef) return { status: 409, error: `slice ${prev.index} has not run yet: start it first` };
   // s3 (D12): a requirements-first follow-up restarts requirements first; the flag lives only in its old ticket's request.
   const old = rows[h.index - 1]?.ticketId ? getTicket(rows[h.index - 1].ticketId, { withRequest: true }) : null;
   const request = { ...sliceRequest({ feature: { id, title: f.title }, index: h.index, outline: f.outline, perspectives: f.perspectives,
@@ -683,7 +700,7 @@ export function resumeFeature(id, { live = () => null, by = null, now = Date.now
   tx(() => {
     const t = createTicket({
       title: sliceTitle(f.title, h.index, rows.length, f.outline.slices[h.index - 1]), projectDir: f.project_dir, request,
-      ...(prev ? { after: { kind: 'pipeline', id: prev.pipelineId }, afterPolicy: 'done', sourceFromPrevious: true } : { runAtMs: now }),
+      ...(prev ? { after: prevRef, afterPolicy: 'done', sourceFromPrevious: true } : { runAtMs: now }),
       createdBy: by, now,
     });
     ticketId = t.id;
@@ -705,6 +722,64 @@ export function resumeFeature(id, { live = () => null, by = null, now = Date.now
 
 const BUSY = new Set(['starting', 'shaping', 'questions', 'approval', 'running']);
 
+/** A slice row that is going. A ticket fired with no pipeline yet counts only while the scheduler still waits on it
+ *  (predecessorState): one that never got a run ("could not start") must not stall the feature's other slices. */
+function rowGoing(r, live, { now = Date.now(), isLive = null } = {}) {
+  if (!BUSY.has(sliceState(r, live, { held: false }))) return false;
+  if (r.pipelineId || !r.ticketId) return true;
+  return predecessorState({ kind: 'ticket', id: r.ticketId }, { now, isLive }).state === 'waiting';
+}
+
+/** Shaper small runs: the feature's slice that is going (starting, running, or live and waiting for a person's
+ *  answer), other than slice `exclude`; a paused one is not going. → {index} | null */
+export function busySliceOf(featureId, { exclude = null, live = () => null, now = Date.now(), isLive = null } = {}) {
+  const r = sliceRows(featureId).find((x) => x.index !== exclude && rowGoing(x, live, { now, isLive }));
+  return r ? { index: r.index } : null;
+}
+
+// A dependency whose run halted (stopped, error, interrupted) can still be resumed or restarted: its dependent waits.
+const HALTED_PIPELINE = new Set(['stopped', 'error', 'interrupted']);
+/** A slice row's current ref: its ticket (a later slice, or a restarted one), else its pipeline (slice 1 = origin). */
+const rowRef = (r) => (r.ticketId ? { kind: 'ticket', id: r.ticketId } : r.pipelineId ? { kind: 'pipeline', id: r.pipelineId } : null);
+
+/**
+ * Shaper small runs (D4): whether slice ticket `ticket` may start now. Its builds-on links (`dependsOn`) decide, not
+ * the stored linear `after`: an unfinished or halted dependency → waiting; a missed, canceled, could-not-start or
+ * archived one → bad (predecessorState's reason, the dependency's title). Then the feature runs one slice at a time:
+ * another slice going, an earlier slice that is due and not held, or a finished run still merging back → waiting.
+ * → {state:'ok'|'waiting'} | {state:'bad', reason, title} | null (not a slice ticket, or a DB error). Never reads
+ * ticketHeld (sliceState with held:false), so ticketHeld can call it.
+ */
+export function sliceGateState(ticket, { now = Date.now(), isLive = null, live = () => null } = {}) {
+  try {
+    const at = ticket && ticket.id ? sliceOfTicket(ticket.id) : null;
+    if (!at) return null;
+    const f = featureRow(at.featureId);
+    const rows = sliceRows(at.featureId);
+    const bySlice = new Map(rows.map((r) => [r.sliceId, r]));
+    const depsOf = (index) => (f.outline.slices[index - 1]?.dependsOn || []).map((id) => bySlice.get(id)).filter((r) => r && r.index !== index);
+    const depState = (r) => {
+      const ref = rowRef(r);
+      return ref ? predecessorState(ref, { policy: 'done', now, isLive }) : { state: 'gone', reason: 'was removed', title: r.title };
+    };
+    let waiting = false;
+    for (const d of depsOf(at.index)) {
+      const p = depState(d);
+      if (p.state === 'ok') continue;
+      if (p.state === 'waiting' || (p.state === 'bad' && HALTED_PIPELINE.has(p.status))) { waiting = true; continue; }
+      return { state: 'bad', reason: p.reason, title: p.title || d.title };
+    }
+    if (waiting) return { state: 'waiting' };
+    const others = rows.filter((r) => r.index !== at.index);
+    if (others.some((r) => rowGoing(r, live, { now, isLive }))) return { state: 'waiting' };
+    const due = (r) => !r.pipelineId && r.ticket && r.ticket.status === 'scheduled'
+      && depsOf(r.index).every((d) => depState(d).state === 'ok') && !featureHoldsTicket(r.ticket);
+    if (others.some((r) => r.index < at.index && due(r))) return { state: 'waiting' };
+    if (others.some((r) => r.pipelineId && previousBranchesOf(r.pipelineId, { now })?.pending)) return { state: 'waiting' };
+    return { state: 'ok' };
+  } catch { return null; }
+}
+
 /** Re-plan the rest (L9): cancel what waits, then one new shaped run (slicing on) from the last done slice. */
 export function replanRest(id, { live = () => null, by = null, now = Date.now() } = {}) {
   const f = featureRow(id);
@@ -712,7 +787,7 @@ export function replanRest(id, { live = () => null, by = null, now = Date.now() 
   const refused = notActive(f);
   if (refused) return refused;
   const view = featureView(id, { live });
-  const busy = view.slices.find((s) => BUSY.has(s.state));
+  const busy = busySliceOf(id, { live });
   if (busy) return { status: 409, error: `Slice ${busy.index} is still going: stop it first, then re-plan the rest` };
   const lastDone = [...view.slices].reverse().find((s) => s.state === 'done');
   // previousBranchesOf → {sourceBranch} | {pending:true} | null (scheduler.mjs:504): the done slice's work branch.
