@@ -935,3 +935,115 @@ test('agent ctxWindow: each sub-agent gets its own model\'s window at finish; an
   assert.equal(agents.toolu_i.ctxWindow, 1000000, 'no model: it inherits the main model, so the main window');
   assert.equal('ctxWindow' in agents.toolu_s, false, 'an alias that never resolved matches nothing: no guess');
 });
+
+test('hands-free <spoken> block: split out of the stream into ask-spoken; deltas, textLength and finish() stay clean', async () => {
+  const live = (h) => h.frames.filter((f) => f.type === 'ask-delta' || f.type === 'ask-spoken' || f.type === 'ask-block');
+  const deltaText = (h) => h.frames.filter((f) => f.type === 'ask-delta').map((f) => f.text).join('');
+  await checkRows([
+    { name: 'streamed <spoken> across deltas: ask-spoken frames first, then clean ask-delta, in stream order', run: async () => {
+      const h = harness();
+      h.push(mstart('msg_1'), delta('<spo'), delta('ken>Two runs '));
+      h.r.flush();
+      h.push(delta('failed.</spo'), delta('ken>\n\nTwo runs **failed** today.'));
+      h.r.flush();
+      h.push(atext('msg_1', '<spoken>Two runs failed.</spoken>\n\nTwo runs **failed** today.'));
+      const s = h.r.finish();
+      assert.deepEqual(live(h).map((f) => [f.type, f.text]), [['ask-spoken', 'Two runs '], ['ask-spoken', 'failed.'], ['ask-delta', 'Two runs **failed** today.']]);
+      assert.ok(h.frames.every((f) => f.type !== 'ask-delta' || !/<\/?spoken|<spo/.test(f.text)));
+      assert.equal(s.text, 'Two runs **failed** today.');
+      assert.equal(h.r.snapshot().text, 'Two runs **failed** today.');
+    } },
+    { name: 'spoken and text in one batch keep stream order (each kind flushes the other first)', run: async () => {
+      const h = harness();
+      h.push(mstart('msg_1'), delta('<spoken>Yes.</spoken>Full.'));
+      h.r.flush();
+      assert.deepEqual(live(h).map((f) => [f.type, f.text]), [['ask-spoken', 'Yes.'], ['ask-delta', 'Full.']]);
+    } },
+    { name: 'a spoken-only message, a tool, then the answer: no leading blank-line delta; finish() is the answer', run: async () => {
+      const h = harness();
+      h.push(mstart('msg_1'), delta('<spoken>Checking.</spoken>'), atext('msg_1', '<spoken>Checking.</spoken>'),
+        atool('msg_1', 'tu_1', 'mcp__worca__list_runs', {}), uresult('tu_1', '[]'),
+        mstart('msg_2'), delta('The answer.'), atext('msg_2', 'The answer.'));
+      const s = h.r.finish();
+      assert.deepEqual(h.frames.filter((f) => f.type === 'ask-delta').map((f) => f.text), ['The answer.']);
+      assert.equal(s.text, 'The answer.');
+    } },
+    { name: 'pre-tool prose, a tool, then a marker message: the deltas join exactly as finish().text', run: async () => {
+      const h = harness();
+      h.push(mstart('msg_1'), delta("I'll check the runs."), atext('msg_1', "I'll check the runs."),
+        atool('msg_1', 'tu_1', 'mcp__worca__list_runs', {}), uresult('tu_1', '[]'),
+        mstart('msg_2'), delta('<spoken>Two runs.</spoken>\n\n'), delta('There are two runs.'), atext('msg_2', '<spoken>Two runs.</spoken>\n\nThere are two runs.'));
+      const s = h.r.finish();
+      assert.equal(s.text, "I'll check the runs.\n\nThere are two runs.");
+      assert.equal(deltaText(h), s.text);
+      assert.deepEqual(h.frames.filter((f) => f.type === 'ask-spoken').map((f) => f.text), ['Two runs.']);
+    } },
+    { name: 'prose, then a spoken-only message, then the answer: one blank line between them (the deltas join as finish().text)', run: async () => {
+      const h = harness();
+      h.push(mstart('msg_1'), delta("I'll check."), atext('msg_1', "I'll check."), atool('msg_1', 'tu_1', 'mcp__worca__list_runs', {}), uresult('tu_1', '[]'),
+        mstart('msg_2'), delta('<spoken>Looking deeper.</spoken>'), atext('msg_2', '<spoken>Looking deeper.</spoken>'), atool('msg_2', 'tu_2', 'mcp__worca__list_runs', {}), uresult('tu_2', '[]'),
+        mstart('msg_3'), delta('Two failed.'), atext('msg_3', 'Two failed.'));
+      const s = h.r.finish();
+      assert.equal(s.text, "I'll check.\n\nTwo failed.");
+      assert.equal(deltaText(h), s.text);
+    } },
+    { name: 'held marker-prefix text is released: at the whole blocks, when the next message starts, and at finish()', run: async () => {
+      const blocks = harness();
+      blocks.push(mstart('msg_1'), delta('<spoken>Checking <'), atext('msg_1', '<spoken>Checking <'), atool('msg_1', 'tu_1', 'mcp__worca__list_runs', {}));
+      const atBlock = blocks.frames.findIndex((f) => f.type === 'ask-block');
+      assert.equal(blocks.frames.slice(0, atBlock).filter((f) => f.type === 'ask-spoken').map((f) => f.text).join(''), 'Checking <', 'the whole blocks end the split before the tool');
+      const next = harness();
+      next.push(mstart('msg_1'), delta('<spo'), mstart('msg_2'), atool('msg_2', 'tu_1', 'mcp__worca__list_runs', {}));
+      assert.deepEqual(live(next).map((f) => f.type), ['ask-delta', 'ask-block'], 'a new main message ends the last split');
+      assert.equal(next.frames.find((f) => f.type === 'ask-delta').text, '<spo');
+      const stopped = harness();
+      stopped.push(mstart('msg_1'), delta('<spo'));
+      const s = stopped.r.finish();
+      assert.equal(s.text, '<spo');
+      assert.equal(deltaText(stopped), '<spo', 'finish() ends the split: the held text still streams');
+    } },
+    { name: 'textLength() after a spoken block is the clean length (cards get the clean textAt)', run: async () => {
+      const h = harness();
+      h.push(mstart('msg_1'), delta('<spoken>Hi.</spoken>\n\nBody'));
+      assert.equal(h.r.textLength(), 'Body'.length);
+      h.push(atext('msg_1', '<spoken>Hi.</spoken>\n\nBody text'));
+      assert.equal(h.r.textLength(), 'Body text'.length);
+    } },
+    { name: 'emitWholeMessages (Codex): a marker gives one ask-spoken and a clean ask-delta', run: async () => {
+      const h = harness({ emitWholeMessages: true });
+      h.push(atext('msg_1', 'Looking.'), atext('msg_2', '<spoken>All green.</spoken>\n\nAll **green**.'));
+      const s = h.r.finish();
+      assert.deepEqual(live(h).map((f) => [f.type, f.text]), [['ask-delta', 'Looking.'], ['ask-spoken', 'All green.'], ['ask-delta', '\n\nAll **green**.']]);
+      assert.equal(s.text, 'Looking.\n\nAll **green**.');
+    } },
+    { name: 'a reply without a marker: the same frames and text as before (no ask-spoken)', run: async () => {
+      const h = harness();
+      h.push(mstart('msg_1'), delta('\n'), delta("I'll <b>check</b>."), atext('msg_1', "\nI'll <b>check</b>."),
+        atool('msg_1', 'tu_1', 'mcp__worca__list_runs', {}), uresult('tu_1', '[]'),
+        mstart('msg_2'), delta('<'), delta('spo'), delta('rt> is '), delta('fine.'), atext('msg_2', '<sport> is fine.'));
+      const s = h.r.finish();
+      assert.deepEqual(live(h).map((f) => [f.type, f.text ?? f.block.status]), [
+        ['ask-delta', "\nI'll <b>check</b>."], ['ask-block', 'running'], ['ask-block', 'done'], ['ask-delta', '\n\n<sport> is fine.'],
+      ]);
+      assert.equal(s.text, "\nI'll <b>check</b>.\n\n<sport> is fine.");
+      const w = harness({ emitWholeMessages: true });
+      w.push(atext('m1', '  plain'), atext('m2', 'two'));
+      assert.equal(w.r.finish().text, '  plain\n\ntwo');
+      assert.deepEqual(live(w).map((f) => [f.type, f.text]), [['ask-delta', '  plain\n\ntwo']]);
+    } },
+    { name: 'a spoken-only reply is stored as the spoken text, never empty', run: async () => {
+      const h = harness();
+      h.push(mstart('msg_1'), delta('<spoken> Just this. </spoken>'), atext('msg_1', '<spoken> Just this. </spoken>'));
+      assert.equal(h.r.finish().text, 'Just this.');
+      const r = harness();
+      r.push(result({ result: '<spoken>Said.</spoken>\n\nWritten.' }));
+      assert.equal(r.r.finish().text, 'Written.', 'the result-text fallback is split too');
+    } },
+    { name: 'a secret inside the spoken block is redacted in ask-spoken', run: async () => {
+      const h = harness();
+      h.push(mstart('msg_1'), delta('<spoken>key sk-ant-api03-abcdefghijklmnopqrstuvwxyz0123456789 end</spoken>x'));
+      h.r.flush();
+      assert.equal(h.frames.find((f) => f.type === 'ask-spoken').text, 'key sk-ant-<redacted> end');
+    } },
+  ]);
+});

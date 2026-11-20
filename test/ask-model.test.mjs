@@ -537,3 +537,70 @@ test('ask-model: ask-suggestion is kept only for the newest finished reply; ask-
     } },
   ]);
 });
+
+test('ask-model: ask-spoken accumulates in live().spoken with no dirty flag; a duplicate seq is dropped; a rewind resets it', () => {
+  const m = createThreadModel({ threadId: TID });
+  const bare = [
+    { type: 'ask-start', userMessageId: 'u', model: 'm', effort: 'high', startedAt: 't' },
+    { type: 'ask-spoken', text: 'Two runs ' },
+    { type: 'ask-spoken', text: 'failed.' },
+    { type: 'ask-delta', text: 'Full.' },
+  ];
+  const stamped = stampFrames(bare, { threadId: TID, messageId: MID });
+  m.apply(stamped[0]);
+  m.takeDirty();
+  assert.deepEqual(m.apply(stamped[1]), { ok: true });
+  assert.deepEqual(m.apply(stamped[2]), { ok: true });
+  assert.equal(m.live().spoken, 'Two runs failed.');
+  assert.equal(m.live().text, '', 'never shown as answer text');
+  const d = m.takeDirty();
+  assert.equal(d.answer.size, 0, 'no re-render');
+  assert.equal(d.structure, false);
+  assert.equal(d.label, false);
+  assert.equal(d.meters, false);
+  assert.deepEqual(m.apply(stamped[2]), { dropped: 'stale-seq' });
+  assert.equal(m.live().spoken, 'Two runs failed.');
+  m.apply(stamped[3]);
+  assert.equal(m.live().text, 'Full.');
+
+  // adopted mid-turn, then the subscribe replay rewinds: spoken restarts from '' with the text
+  const a = createThreadModel({ threadId: TID });
+  a.load(snapshot({ inFlight: { messageId: MID } }));
+  assert.deepEqual(a.apply({ type: 'ask-spoken', text: 'late', threadId: TID, messageId: MID, seq: 5 }), { ok: true });
+  assert.equal(a.live().spoken, 'late', 'an adopted live starts with spoken');
+  a.apply({ type: 'ask-start', threadId: TID, messageId: MID, seq: 1, startedAt: 't', model: 'm', effort: 'high' });
+  assert.equal(a.live().spoken, '');
+  a.apply({ type: 'ask-spoken', text: 'Hi.', threadId: TID, messageId: MID, seq: 2 });
+  assert.equal(a.live().spoken, 'Hi.');
+});
+
+test('superseded rows (a voice merge replaced them) are hidden from messages(), from the snapshot, a frame or a mark', async () => {
+  const user = (id, seq, text, extra = {}) => ({ id, threadId: TID, seq, role: 'user', text, blocks: null, status: null, createdAt: 't1', ...extra });
+  await checkRows([
+    { name: 'a snapshot row with supersededBy is absent from messages()', run: () => {
+      const m = createThreadModel({ threadId: TID });
+      m.load(snapshot({ messages: [user('askm_u0000001', 1, 'Do you know how', { supersededBy: 'askm_u0000003' }), { ...doneRow('askm_a0000002', 2), supersededBy: 'askm_u0000003' }, user('askm_u0000003', 3, 'Do you know how to bake?', { supersededBy: null })] }));
+      assert.deepEqual(m.messages().map((r) => r.id), ['askm_u0000003']);
+    } },
+    { name: 'an ask-superseded frame hides the rows and dirties them', run: () => {
+      const m = createThreadModel({ threadId: TID });
+      m.load(snapshot({ messages: [user('askm_u0000001', 1, 'Do you know how'), doneRow('askm_a0000002', 2), user('askm_u0000003', 3, 'Do you know how to bake?')] }));
+      m.takeDirty();
+      assert.deepEqual(m.apply({ type: 'ask-superseded', threadId: TID, messageIds: ['askm_u0000001', 'askm_a0000002'], by: 'askm_u0000003' }), { ok: true });
+      assert.deepEqual(m.messages().map((r) => r.id), ['askm_u0000003']);
+      const d = m.takeDirty();
+      assert.ok(d.structure);
+      assert.ok(d.messages.has('askm_u0000001') && d.messages.has('askm_a0000002'));
+      assert.deepEqual(m.apply({ type: 'ask-superseded', threadId: TID, messageIds: 'x', by: 'askm_u0000003' }), { dropped: 'no-live' });
+    } },
+    { name: 'markSuperseded is idempotent; unknown ids are ignored; a later echo without the flag keeps the row hidden', run: () => {
+      const m = createThreadModel({ threadId: TID });
+      m.load(snapshot({ messages: [user('askm_u0000001', 1, 'Do you know how'), doneRow('askm_a0000002', 2)] }));
+      m.markSuperseded(['askm_u0000001', 'askm_nope0000'], 'askm_u0000003');
+      m.markSuperseded(['askm_u0000001'], 'askm_u0000003');
+      assert.deepEqual(m.messages().map((r) => r.id), ['askm_a0000002']);
+      m.apply({ type: 'ask-message', threadId: TID, message: user('askm_u0000001', 1, 'Do you know how') });
+      assert.deepEqual(m.messages().map((r) => r.id), ['askm_a0000002']);
+    } },
+  ]);
+});
