@@ -239,7 +239,7 @@ a.rd-crumb:hover{color:var(--ink);text-decoration:underline;}
    gone and error lines sit under the bar's Back with the run page's gutter. */
 .feature-page{padding:0;}
 .feature-page > :is(.feature-page-loading,.feature-page-gone,.feature-page-error){margin:0;padding:28px 32px;}
-@media (max-width:640px){.main{padding:16px 16px 32px;}.feature-page > :is(.feature-page-loading,.feature-page-gone,.feature-page-error){padding:16px;}}
+@media (max-width:640px){.main{--main-pad-y:16px;--main-pad-x:16px;padding:var(--main-pad-y) var(--main-pad-x) 32px;}.feature-page > :is(.feature-page-loading,.feature-page-gone,.feature-page-error){padding:16px;}}
 .feature-page-gone,.feature-page-loading{color:var(--ink-3);}
 /* §5a.2: the group page could not load (server unreachable): the error and a Try again on one line. */
 .feature-page-error{color:var(--red-ink);}

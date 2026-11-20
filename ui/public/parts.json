@@ -66,6 +66,7 @@
     "chat/chat-connectivity.css",
     "models/models-view.css",
     "models/model-bridge.css",
+    "models/models-page.css",
     "history/detail-header.css",
     "history/history-detail-meta.css",
     "scripts/code-editor.css",

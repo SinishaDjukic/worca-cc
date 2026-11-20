@@ -406,7 +406,8 @@ input.wft-mono[type="text"],textarea.wft-mono{font-family:var(--mono);}
 .wft-dev-card{padding:18px 22px;border-style:dashed;}
 .wft-dev-card h2{margin:0 0 4px;font-size:var(--fs-section);}
 .wft-dev-card > .hint{margin:0 0 10px;}
-.wft-dev-facts{display:flex;flex-wrap:wrap;gap:8px 18px;font-size:var(--fs-body);}
+/* One fact a line, as the "Before the change" lists: side by side, a long fact ran into the next one. */
+.wft-dev-facts{display:flex;flex-direction:column;gap:6px;font-size:var(--fs-body);line-height:1.45;}
 .wft-dev-facts > span{min-width:0;}
 .wft-ex .hint .code,.wft-startbox .code{font-family:var(--mono);overflow-wrap:anywhere;}
 .wft-moved-line{display:flex;flex-wrap:wrap;align-items:center;gap:4px 6px;font-size:var(--fs-meta);color:var(--ink-2);}

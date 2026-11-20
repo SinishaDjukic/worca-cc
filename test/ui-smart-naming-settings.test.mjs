@@ -47,10 +47,10 @@ async function boot({ postStatus = 200, postBody = null } = {}) {
 const $ = (ctx, id) => ctx.doc.getElementById(id);
 const input = (ctx, el, v) => { el.value = v; el.dispatchEvent(new ctx.window.Event('input', { bubbles: true })); };
 
-test('the card follows Away mode and shows the stored values', async () => {
+test('the card follows Budget and shows the stored values', async () => {
   const ctx = await boot();
   const card = $(ctx, 'smart-naming-settings-card');
-  assert.equal($(ctx, 'night-settings-card').nextElementSibling, card);
+  assert.equal($(ctx, 'budget-settings-card').nextElementSibling, card);
   assert.equal($(ctx, 'smartNamingPattern').value, '{type}/{slug}');
   assert.equal($(ctx, 'smartNamingTitle').checked, true);
   assert.equal($(ctx, 'smartNamingRunId').checked, false);
@@ -61,8 +61,8 @@ test('the card follows Away mode and shows the stored values', async () => {
 test('the Model row has no picker: it links to Models › Helper jobs (Expert only) and names the resolved model and cost', async () => {
   const ctx = await boot();
   assert.equal($(ctx, 'smartNamingModel'), null, 'the model is a helper job now');
-  const link = ctx.doc.querySelector('#smartNamingModelRow a[href="#models"]');
-  assert.equal(link.textContent, 'Models › Helper jobs › Run naming');
+  const link = ctx.doc.querySelector('#smartNamingModelRow a[href="#models/jobs/helpers/claude"]');   // Claude's helper job, whatever the default harness
+  assert.equal(link.textContent, 'Models › Jobs › Helper jobs › Run naming');
   assert.ok(link.closest('#smartNamingModelRow [data-min-level="expert"]'), 'the Engines card is Expert-only, so is the link');
   assert.equal($(ctx, 'smartNamingCost').textContent, 'Shown in Statistics as Naming, never billed to the run.');
   applyFlags({ smartRunNaming: true }, ctx.doc);

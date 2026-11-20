@@ -5,6 +5,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { JSDOM } from 'jsdom';
 import { renderSideBySide } from '../ui/public/workflows/test-compare.mjs';
+import { readStyleCss } from '../src/core/read-style-css.mjs';
 
 const click = (el) => el.dispatchEvent(new el.ownerDocument.defaultView.MouseEvent('click', { bubbles: true }));
 const texts = (root, sel) => [...root.querySelectorAll(sel)].map((n) => n.textContent);
@@ -79,6 +80,11 @@ test('board 36: the command check not met, and its output; the For developers fa
   assert.equal(dev.querySelector('.hint').textContent, "Each try worked in Worca's own copy of the project, which was deleted after the checks. The list of changes and the full diff of each try are kept here.");
   assert.deepEqual(texts(dev, '.wft-dev-facts > span'), ['Start point: main at abc1234 · 28 Oct', 'Setup: npm ci · 1 min 50 s',
     'v2: 3 files, 14 lines added, 3 removed', 'v3 draft: 4 files, 22 lines added, 31 removed']);
+  // UI nits #2: one fact a line (at 1440 px they ran together on one line), and a list to a screen reader.
+  const facts = dev.querySelector('.wft-dev-facts');
+  assert.equal(facts.getAttribute('role'), 'list');
+  assert.deepEqual([...facts.children].map((n) => n.getAttribute('role')), ['listitem', 'listitem', 'listitem', 'listitem']);
+  assert.match(readStyleCss(), /\.wft-dev-facts\{display:flex;flex-direction:column;gap:6px;/);
 });
 
 test('board 37: the lock note; what the guard stopped, per version; nothing for the other', () => {

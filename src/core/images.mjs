@@ -1,6 +1,6 @@
 // src/core/images.mjs
 // Design pictures: the one place worca calls an image service (an OpenAI-compatible images
-// endpoint, a preset per service, set up on the Providers page beside Speech). The key and the
+// endpoint, a preset per service, set up on Models › Providers beside Speech). The key and the
 // call stay in the server: an agent never meets either. `generatePicture` answers bytes; the
 // build side saves them. fetch is injectable for tests; mock mode answers a flat PNG and makes
 // no call at all.
@@ -53,7 +53,7 @@ function readyOf(c) {
   return c.apiKey ? !!resolveProviderSecret(c.apiKey) : isLocalBaseUrl(c.baseUrl);
 }
 
-/** GET /api/providers and the Providers page: never a key, only where it comes from. */
+/** GET /api/providers and Models › Providers: never a key, only where it comes from. */
 export function imagesState() {
   const c = imagesConfig();
   const { apiKey, ...rest } = c;

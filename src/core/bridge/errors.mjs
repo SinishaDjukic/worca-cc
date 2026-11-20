@@ -88,7 +88,7 @@ const UNSUPPORTED_API_RE = /not accessible via the \/(chat\/completions|response
 /** The fix that refusal needs, per provider. */
 export function unsupportedApiFix(provider) {
   return provider === 'copilot'
-    ? 'this model needs a different API: re-import it (Models › Import models…) or change its API in the model editor'
+    ? 'this model needs a different API: re-import it (Models › Providers › GitHub Copilot › Import models) or change its API in the model editor'
     : 'this model needs a different API: change its API in the model editor';
 }
 

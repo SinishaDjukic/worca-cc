@@ -1,33 +1,33 @@
 /* ---- Models view (configurable-models-design.md §4.10) ---- */
-.mv-list{display:grid;gap:18px;}
-.mv-section{display:grid;gap:10px;}
-/* Stacked cards keep the house 18px; the built-ins are compact rows, not panels, so they stay tight.
-   (The rows moved into .mv-sec-body when groups became foldable — the section's own gap no longer
-   reaches them.) */
-.mv-sec-body{display:grid;gap:18px;}
-.mv-section[data-section="builtin"] .mv-sec-body{gap:10px;}
-.mv-hide-builtin-row{display:grid;gap:6px;padding:10px 12px;border:1px solid var(--line);border-radius:var(--r-sm);background:var(--panel);}
-.mv-hide-builtin-row .hint{margin:0;}
-.mv-card{padding:var(--pad-card);display:flex;align-items:center;gap:14px;}
-.mv-body{flex:1 1 auto;min-width:0;}
 .mv-head{display:flex;align-items:center;gap:10px;flex-wrap:wrap;}
 .mv-name{font-size:var(--fs-body);font-weight:600;}
-.mv-summary{display:block;margin:6px 0 0;word-break:break-all;}
-.mv-card .btn{flex:0 0 auto;}
 .mv-head-actions{display:flex;gap:8px;flex:0 0 auto;}
-/* Phones: the header buttons and a card's buttons wrap under the text instead of running off the screen. */
+/* The actions show on the Catalogue tab only (app.js hides them elsewhere); the flex above would beat a bare [hidden]. */
+.mv-head-actions[hidden]{display:none;}
+/* Phones: the header buttons (More, Add model) take a line of their own under the tab strip instead of running off the screen. */
 @media (max-width:760px){
-  [data-view="models"] .topbar{flex-wrap:wrap;}
   .mv-head-actions{flex:1 1 100%;flex-wrap:wrap;}
-  .mv-card{flex-wrap:wrap;}
-  .mv-body{flex-basis:100%;}
 }
-.mv-builtin{display:flex;align-items:center;gap:10px;flex-wrap:wrap;padding:8px 12px;border:1px solid var(--line);border-radius:var(--r-sm);background:var(--panel);}
-.mv-builtin .mv-summary{margin:0;flex:1 1 auto;text-align:right;}
 .mv-editor-title{margin:0 0 14px;font-size:15px;}
-.mv-editor-grid{display:grid;gap:14px;}
+/* The model form (models-view.mjs renderModelEditor, DESIGN FRM-1…FRM-7). Its head: the model's mark, the title, the
+   step names and Close on one line (the import dialog's title keeps the rule above). */
+.mv-editor-head{display:flex;align-items:center;gap:12px;min-width:0;}
+.mv-editor-head > .mv-editor-title{flex:1 1 auto;min-width:0;margin:0;overflow-wrap:anywhere;}
+.mv-editor-head > .mdl-steps,.mv-editor-head > .mdl-close{flex:none;}
+/* Two columns: Name | ID, then Harness or Provider | Upstream model id; Env vars, Efforts, Pricing and the connection's
+   folds take the whole width. The connection's wrappers step aside so its two fields sit on this grid. */
+.mv-editor-grid{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:16px;}
+.mv-editor-grid > .mv-wide,.mv-editor-grid > .mv-conn-more{grid-column:1 / -1;}
+.mv-editor .mv-conn,.mv-editor .mv-conn-body,.mv-editor .mv-conn-grid{display:contents;}
+.mv-editor .mv-conn-body[hidden]{display:none;}
+@media (max-width:860px){.mv-editor-grid{grid-template-columns:minmax(0,1fr);}}
 .mv-field{display:grid;gap:6px;}
 .mv-field-label{font-size:12px;font-weight:600;}
+/* A tipped field (bridge-view.mjs tippedField) in the form: as in a Providers row (model-bridge.css), the row restates
+   the label's size and the 28px tip hangs over its line, so a tipped label sits level with an untipped one. */
+.mv-editor .label-row{margin:0;}
+.mv-editor .label-row > .mv-field-label{font-size:12px;font-weight:600;}
+.mv-editor .label-row > .info-tip{margin-block:-6px;}
 .mv-sp-server{display:contents;}
 .mv-sp-server[hidden]{display:none;}
 .mv-efforts{display:flex;gap:14px;flex-wrap:wrap;}
@@ -39,14 +39,18 @@
 .mv-env-row .mv-env-rm{flex:0 0 auto;}
 .mv-env-add{justify-self:start;}
 .mv-editor-btns{display:flex;gap:10px;justify-content:flex-end;margin-top:14px;}
+/* The form's way back (Back after step 1, "Change where it runs" on edit) stands apart, left of Cancel and Save. */
+.mv-editor-btns > .mv-back,.mv-editor-btns > .mv-rewhere{margin-right:auto;}
 .mv-env-row .mv-env-copy{flex:0 0 auto;}
-.mv-env-btns{display:flex;gap:10px;justify-content:flex-start;}
-/* Pricing: the opt-in per-model cost override. Modes read like the effort row;
+/* Beside "Env var": the first refused name (a red state word) or what the rows are for. */
+.mv-env-btns{display:flex;align-items:center;gap:10px;flex-wrap:wrap;justify-content:flex-start;}
+.mv-env-problem[hidden]{display:none;}
+.mv-env-note{font-size:var(--fs-meta);color:var(--ink-2);}
+/* Pricing: the opt-in per-model cost override, a segment over the (hidden) mode radios;
    the rate grid is hidden outside per-Mtok mode (explicit — a reset elsewhere
    must not be able to un-hide it). */
 .mv-cost-edit{display:grid;gap:10px;}
-.mv-cost-modes{display:flex;gap:14px;flex-wrap:wrap;}
-.mv-cost-mode{display:flex;align-items:center;gap:6px;font-size:13px;cursor:pointer;}
+.mv-cost-seg,.mv-conn-api-seg{justify-self:start;max-width:100%;flex-wrap:wrap;}
 .mv-cost-rates{display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:10px 14px;}
 .mv-cost-rates[hidden]{display:none;}
 /* Label on its own row spanning both columns, then input + unit — five rates

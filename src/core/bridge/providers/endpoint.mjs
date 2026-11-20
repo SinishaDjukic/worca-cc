@@ -373,7 +373,8 @@ export async function listEndpointModels(baseUrl, { apiKey = '', fetch: f = glob
  * serves; `maxOutputTokens` is never guessed — no local server reports one. OpenRouter does, and
  * its cap is pinned only while it leaves at least half the window for the prompt: a cap that is
  * most of the window (235929 of 262144) becomes the CLI's max_tokens, and prompt + max_tokens
- * then overflows the window on the first large turn.
+ * then overflows the window on the first large turn. An OpenRouter listing always stores its
+ * `baseUrl`, so a later edit of the OpenAI-compatible row cannot move the entry away.
  * @param {object} m           a row from listEndpointModels
  * @param {{server:string, baseUrl:string, providerBaseUrl?:string}} ctx
  */
@@ -402,7 +403,7 @@ export function catalogEntryForEndpointModel(m, { server = 'openai-compatible', 
     ...(m.reasoning === true ? {} : { efforts: ['medium'] }),
     upstream: {
       provider: 'openai', api: 'openai-chat', model: m.id,
-      ...(own && own !== provider ? { baseUrl: own } : {}),
+      ...(own && (own !== provider || isOpenRouter(own)) ? { baseUrl: own } : {}),
       ...(apiKey ? { apiKey } : {}),
       ...(Object.keys(capabilities).length ? { capabilities } : {}),
     },

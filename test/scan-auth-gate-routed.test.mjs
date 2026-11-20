@@ -137,8 +137,8 @@ test('POST /api/workspaces/scan: signed out with a stored first-party scan pick 
   } finally { await post('/api/settings', { workspaceScan: null }); }
 });
 
-test('POST /api/workspaces/scan: signed out, no scan pick, a routed Everyday coding role → the scan starts', { skip }, async () => {
-  // The scan agent takes the Everyday coding role (it was Quick jobs).
+test('POST /api/workspaces/scan: signed out, no scan pick, a routed Everyday tasks role → the scan starts', { skip }, async () => {
+  // The scan agent takes the Everyday tasks role (it was Quick jobs).
   await post('/api/settings', { modelRoles: { claude: { everyday: { model: 'gw-model' } } } });
   try {
     const r = await post('/api/workspaces/scan', { projectPaths: [await repo('k'), await repo('l')], name: 'Everyday role WS' });

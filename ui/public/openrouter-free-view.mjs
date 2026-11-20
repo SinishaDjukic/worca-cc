@@ -1,7 +1,7 @@
 // ui/public/openrouter-free-view.mjs
 // OpenRouter's daily allowance of `:free` requests (src/core/openrouter-free.mjs), where it
 // comes up: the row in the account menu's spend card, a run's cost pill, the new-run form's
-// warning and the Providers page. Pure helpers; app.js fetches /api/openrouter/free-daily.
+// warning and Models › Providers. Pure helpers; app.js fetches /api/openrouter/free-daily.
 
 /** Below this share of the day's allowance the row turns amber. */
 export const FREE_LOW_AT = 0.1;
@@ -69,7 +69,7 @@ export function newRunFreeWarning(s, { typical = FREE_RUN_DEFAULT, usesFree = fa
   return `${s.remaining} OpenRouter free request${s.remaining === 1 ? '' : 's'} left today${when}; a run here usually needs ~${typical}.`;
 }
 
-/** The Providers card's line about the allowance, '' when unknown. Pure. */
+/** The OpenRouter row's line about the allowance (Models › Providers), '' when unknown. Pure. */
 export function providerFreeLine(s, { now = Date.now() } = {}) {
   if (!s || !s.known) return '';
   const reset = Date.parse(s.resetAt || '');

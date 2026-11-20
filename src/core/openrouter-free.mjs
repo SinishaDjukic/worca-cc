@@ -8,15 +8,16 @@
 // `:free` call the bridge forwards lowers the count, and a 429 for the daily limit sets it to
 // 0; the next reading corrects any drift. A reading is kept for READ_TTL_MS.
 //
-// Whose allowance: without the credential broker, the key on the Providers page (one per
-// install). With the broker, each person's own key, read through the broker with a
-// short-lived token billed to them; the bridge can't tell whose key a call used there, so
-// the count refreshes more often instead of being lowered per call.
+// Whose allowance: without the credential broker, the OpenRouter row's key on Models › Providers
+// (one per install; openRouterAccount, so an older setup's OpenAI-compatible row on openrouter.ai
+// still counts, regional base included). With the broker, each person's own key, read through
+// the broker with a short-lived token billed to them; the bridge can't tell whose key a call
+// used there, so the count refreshes more often instead of being lowered per call.
 import { createHash } from 'node:crypto';
 import { bridgeEvents } from './bridge/telemetry.mjs';
-import { openRouterKeyInfo } from './bridge/provider-ops.mjs';
+import { openRouterAccount, openRouterKeyInfo } from './bridge/provider-ops.mjs';
 import { isOpenRouter } from './bridge/openrouter.mjs';
-import { providerConfig, resolveProviderSecret, listGlobalModels } from './settings.mjs';
+import { providerConfig, listGlobalModels } from './settings.mjs';
 import { listPluginModels } from './plugin-models.mjs';
 import { brokerEnabled, brokerInfo, mintSpawnToken, revokeSpawnToken, slotBaseUrl } from './broker-client.mjs';
 import { isFreeDailyLimit } from './recoverable-error.mjs';
@@ -105,11 +106,9 @@ async function source(person) {
       },
     };
   }
-  const cfg = providerConfig('openai');
-  const base = String(cfg.baseUrl || '').replace(/\/+$/, '');
-  const key = resolveProviderSecret(cfg.apiKey);
-  if (!isOpenRouter(base) || !key) return null;
-  return { account: keyAccount(key), ttl: READ_TTL_MS, read: (f) => openRouterKeyInfo(base, key, { fetch: f }) };
+  const { base, key } = openRouterAccount();
+  if (!key.value) return null;
+  return { account: keyAccount(key.value), ttl: READ_TTL_MS, read: (f) => openRouterKeyInfo(base, key.value, { fetch: f }) };
 }
 
 /**
@@ -146,10 +145,7 @@ export function cachedFreeDailyCounts(person = null) {
   let account = null;
   if (brokerEnabled()) account = person ? `person:${person}` : 'person:local';
   else {
-    try {
-      const cfg = providerConfig('openai');
-      if (isOpenRouter(String(cfg.baseUrl || ''))) account = keyAccount(resolveProviderSecret(cfg.apiKey));
-    } catch { account = null; }
+    try { account = keyAccount(openRouterAccount().key.value); } catch { account = null; }
   }
   const s = account && state.get(account);
   return s && !s.none ? { used: s.used, limit: s.limit } : {};

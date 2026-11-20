@@ -558,8 +558,54 @@ test('Settings › Memory: the defragment model lives in Engines › Helper jobs
   await settle();
   assert.equal(window.document.getElementById('mem-defrag-model-card'), null, 'no card of its own');
   const link = window.document.querySelector('.mem-model-link a');
-  assert.equal(link.getAttribute('href'), '#models');
+  assert.equal(link.getAttribute('href'), '#models/jobs/helpers/claude', 'no run engine set: Claude\'s helper job');
   assert.equal(link.closest('.mem-model-link').dataset.minLevel, 'expert');
+});
+
+// A defragment run takes its run engine's own "Memory defragment" job (orchestrator.mjs defragSlotPair). A harness
+// without that job (Cursor, Copilot) has an empty slot (settings-cascade.mjs utilityModelFor), so its run falls to that
+// harness's own Quick jobs role (model-roles.mjs withRole): the link names that harness's Roles, never Claude's job.
+test('Settings › Memory: the defragment link names the run engine\'s Helper jobs when it has the job, else its Roles', async () => {
+  const HELPER_LINE = 'The model every Memory defragment run uses is a helper job: Models › Jobs › Helper jobs.';
+  const ROLE_LINE = 'The model every Memory defragment run uses is the Quick jobs role: Models › Jobs › Roles.';
+  for (const [runEngine, want, line] of [
+    ['codex', '#models/jobs/helpers/codex', HELPER_LINE],
+    ['cursor', '#models/jobs/roles/cursor', ROLE_LINE],
+    ['copilot', '#models/jobs/roles/copilot', ROLE_LINE],
+    ['claude', '#models/jobs/helpers/claude', HELPER_LINE],
+    // A hand-edited settings.json naming no harness: Claude's job, and nothing throws on the way.
+    ['constructor', '#models/jobs/helpers/claude', HELPER_LINE],
+  ]) {
+    const base = dmHandler([]);
+    const { window } = await boot({ fetchHandler: (u, o) => (u === '/api/settings' && (o.method || 'GET').toUpperCase() === 'GET'
+      ? json({ memoryDefrag: { model: null, effort: null }, memoryDefragDefault: 'claude-sonnet-5', runEngine }) : base(u, o)) });
+    const errors = [];
+    window.addEventListener('error', (e) => errors.push(String(e.error?.message || e.message)));
+    await go(window, 'settings/memory');
+    await settle();
+    const p = window.document.querySelector('.mem-model-link');
+    assert.equal(p.querySelector('a').getAttribute('href'), want, `run engine ${runEngine}`);
+    assert.equal(p.textContent.replace(/\s+/g, ' ').trim(), line, `run engine ${runEngine}: the line names what the run reads`);
+    assert.deepEqual(errors, [], `run engine ${runEngine}: nothing threw`);
+  }
+  // The run engine changed in another tab: the settings-changed frame's re-read repaints the link.
+  let runEngine = 'claude';
+  const base = dmHandler([]);
+  const { window } = await boot({ fetchHandler: (u, o) => (u === '/api/settings' && (o.method || 'GET').toUpperCase() === 'GET'
+    ? json({ memoryDefrag: { model: null, effort: null }, memoryDefragDefault: 'claude-sonnet-5', runEngine }) : base(u, o)) });
+  await go(window, 'settings/memory');
+  await settle();
+  assert.equal(window.document.querySelector('.mem-model-link a').getAttribute('href'), '#models/jobs/helpers/claude');
+  runEngine = 'codex';
+  WSStub.last._message({ type: 'settings-changed' });
+  await settle();
+  assert.equal(window.document.querySelector('.mem-model-link a').getAttribute('href'), '#models/jobs/helpers/codex', 'repainted on the frame');
+  runEngine = 'cursor';
+  WSStub.last._message({ type: 'settings-changed' });
+  await settle();
+  const p = window.document.querySelector('.mem-model-link');
+  assert.equal(p.querySelector('a').getAttribute('href'), '#models/jobs/roles/cursor', 'repainted to Cursor\'s Roles');
+  assert.match(p.textContent, /is the Quick jobs role: Models › Jobs › Roles\.$/, 'and its words with it');
 });
 
 test('Settings › Memory: a settings-changed frame re-reads the card and reloads the scope — keeping a draft, with no conflict warning', async () => {

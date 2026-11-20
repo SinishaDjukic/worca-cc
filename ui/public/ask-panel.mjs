@@ -23,13 +23,13 @@ import { ENGINE_EFFORTS } from './engine-settings-view.mjs';
 import { ENGINE_NAMES, engineLabel, isBetaEngine } from '../../src/shared/engine-switch.mjs';
 import { PR_OPEN, PR_OPEN_LABELS, prSourceText } from '../../src/shared/pr-auto.mjs';
 import { lockEngineOptions } from './engine-locks.mjs';
-import { runsOn, modelGroups } from '../../src/shared/connections.mjs';
+import { runsOn, modelGroups, connectionOf, connectionLabel } from '../../src/shared/connections.mjs';
 import { appendModelGroups, modelOptionText } from './model-options.mjs';
 import { classifyLoops } from '../../src/shared/graph/loops.mjs';
 import { portsFnFor } from '../../src/shared/graph/ports.mjs';
 import { parseMcpToolName } from '../../src/shared/mcp-tool-name.mjs';
 import { mcpSkipView, mcpCopyNote, skillSkipView } from './mcp-run-picker.mjs';
-import { engineOfEntry, chatEngineOf, pickerGroups, ASK_CHAT_ENGINES, isEngineSetupNotice, engineSwitchConfirm, readEnginePicks, rememberEnginePick, engineLead, switchEffort, pickerEngineName } from './ask-engine.mjs';
+import { engineOfEntry, chatEngineOf, pickerGroups, ASK_CHAT_ENGINES, isEngineSetupNotice, engineSwitchConfirm, readEnginePicks, rememberEnginePick, engineLead, switchEffort, pickerEngineName, pickerEngineLabel } from './ask-engine.mjs';
 import { formatQuotedMessage, parseQuotedMessage } from './pinpoint-model.mjs';
 import { ATTACH_MAX_MESSAGE_BYTES, bytesToBase64 as attachBase64, carriesFiles, checkAttachment, createPasteNamer, pastedFiles } from './attach-files.mjs';
 import { notify } from './feedback.mjs';
@@ -2337,7 +2337,10 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     el.modelBtnEngine.textContent = engName;
     el.modelBtnEngine.hidden = !engName;
     const btn = el.modelBtnLabel.parentNode;
-    if (btn) { btn.dataset.engine = eng; btn.title = `${engineLabel(eng)} · ${entry ? entry.label : st.picker.model}`; }
+    // The tooltip names the connection too: the same model can come from the Copilot CLI or from GitHub Copilot
+    // through the bridge (and from a GHE.com tenant).
+    const via = entry && connectionOf(entry).kind === 'provider' ? ` · ${connectionLabel(entry)}` : '';
+    if (btn) { btn.dataset.engine = eng; btn.title = `${pickerEngineLabel(eng)} · ${entry ? entry.label : st.picker.model}${via}`; }
   }
 
   function coerceEffort(entry, effort) {
@@ -2613,7 +2616,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
           `${m.secretsMissing.join(', ')} is not set. Configure it in the ${m.plugin ? `“${m.plugin}” ` : ''}plugin's Model secrets, or this model will fail.`));
       }
       if (m.needsSignIn) {
-        item.appendChild(tag('needs sign-in', 'is-err', m.signInMessage || 'The provider behind this model is not usable yet. See the Providers page.'));
+        item.appendChild(tag('needs sign-in', 'is-err', m.signInMessage || 'The provider behind this model is not usable yet. See Models › Providers.'));
       }
       if (moves && (readEnginePicks(storage)[engine] || {}).model === m.id) item.appendChild(tag('last used', null, 'The model you last used on this engine.'));
       // Credential broker: whether the signed-in person has the key this model spends from.
@@ -2623,11 +2626,12 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
       return item;
     };
     // Inside an engine's section the models group by connection, like every model picker (modelGroups); a sub-heading
-    // only when the section holds more than one connection.
+    // when the section holds more than one connection, or when its one connection is a provider (GitHub Copilot through
+    // the bridge must never pass for the Copilot CLI's own models).
     const appendByConnection = (models, engine) => {
       const groups = modelGroups(models, { engine });
       for (const c of groups) {
-        if (groups.length > 1) panel.appendChild(make('div', 'ask-pop-subgroup', c.label));
+        if (groups.length > 1 || connectionOf(c.models[0]).kind === 'provider') panel.appendChild(make('div', 'ask-pop-subgroup', c.label));
         for (const m of c.models) panel.appendChild(modelItem(m, engine));
       }
     };

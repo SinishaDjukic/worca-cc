@@ -283,7 +283,7 @@ Firefox's manifest declares that the extension collects no data.
   `http://localhost:<port>` under **Worca address** and click **Save**. Only loopback addresses are accepted. Saving
   forgets the token, so pair again.
 - **"No Ask model is available in Worca".** Ask has no model to answer with. Set one up in Worca
-  under Settings → **Models**.
+  on the **Models** page.
 - **"Worca could not load this chat".** Worca answered with an error; the sidebar shows its text.
 - **The page chip says "Click the Worca button…".** The extension has no access to this tab yet,
   or lost it on navigation. Click the toolbar button (see

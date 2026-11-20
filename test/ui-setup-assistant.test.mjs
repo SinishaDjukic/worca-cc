@@ -1051,7 +1051,7 @@ test('Models step: Default model for Chat shows what Chat uses now (Everyday), p
     const sel = () => h.$('.inherit-field[data-setting="models.claude.ask"] .inherit-model');
     assert.ok(sel(), 'the Chat field renders for the saved Chat engine');
     assert.equal(sel().value, '', 'nothing stored: it follows the role');
-    assert.equal(sel().options[0].textContent, 'Same as Everyday coding · Haiku 5.5');
+    assert.equal(sel().options[0].textContent, 'Same as Everyday tasks · Haiku 5.5');
     assert.equal(sel().dataset.saField, 'models.askModels.claude');
     await h.pick(sel(), 'claude-opus-5-5');
     await h.pick(h.$('.inherit-field[data-setting="models.claude.ask"] .inherit-effort'), 'high');
@@ -1073,9 +1073,9 @@ test('Models step: the Chat empty choice tracks the Everyday pick live; a Copilo
     await h.goTo('models');
     await h.flush();
     const chat = () => h.$('.inherit-field[data-setting="models.claude.ask"] .inherit-model');
-    assert.equal(chat().options[0].textContent, 'Same as Everyday coding');
+    assert.equal(chat().options[0].textContent, 'Same as Everyday tasks');
     await h.pick(h.$('.inherit-field[data-setting="models.claude.roles.everyday"] .inherit-model'), 'claude-haiku-5-5');
-    assert.equal(chat().options[0].textContent, 'Same as Everyday coding · Haiku 5.5');
+    assert.equal(chat().options[0].textContent, 'Same as Everyday tasks · Haiku 5.5');
     await h.pick(chat(), 'copilot-claude-opus-5-5');
     await h.goTo('review');
     await h.click('.sa-next');

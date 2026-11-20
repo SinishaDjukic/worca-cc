@@ -3,7 +3,7 @@
 // C10, C19, G2, G3, G9, G15). Pure DOM: app.js reads the server's models (service.compareOf / sideBySide) and owns the
 // actions. A repaint keeps the focus on the same control (data-focus-key), and a button whose action is out stays busy
 // across repaints (BUSY), as the progress page does.
-import { el, btn, startInto, checkWords, mockNote } from './test-ui.mjs';
+import { el, btn, startInto, checkWords, mockNote, pathInto } from './test-ui.mjs';
 import { icon } from '../icons.mjs';
 import { createDialog } from '../marketplace/layers.mjs';
 import { fmtUsd, fmtUsdFine } from '../../../src/shared/workflow-tests/checks.mjs';
@@ -351,7 +351,7 @@ function devCard(doc, s, cur, once, dateText) {
   facts.append(startInto(doc, el(doc, 'span', '', DEV_START_LEAD), s.start, dateText, { dev: true }));   // F26: the commit id lives here
   if (s.start.setupCmd) {
     const su = el(doc, 'span', '', DEV_SETUP_LEAD);
-    su.append(el(doc, 'span', 'code', s.start.setupCmd));
+    su.append(pathInto(doc, el(doc, 'span', 'code'), s.start.setupCmd));
     if (s.start.setupMs) su.append(doc.createTextNode(` · ${fmtDuration(s.start.setupMs)}`));
     facts.append(su);
   }
@@ -361,12 +361,15 @@ function devCard(doc, s, cur, once, dateText) {
   if (withBefore) {
     const f = el(doc, 'span');
     const b = withBefore.before;
-    f.append(doc.createTextNode(DEV_BEFORE_LEAD), el(doc, 'span', 'code', withBefore.cmd), doc.createTextNode(devBeforeRest(b, b.at ? dateText(b.at) : null)));
+    f.append(doc.createTextNode(DEV_BEFORE_LEAD), pathInto(doc, el(doc, 'span', 'code'), withBefore.cmd), doc.createTextNode(devBeforeRest(b, b.at ? dateText(b.at) : null)));
     facts.append(f);
   }
   for (const [label, v] of once ? [[s.labels.b, cur.b]] : [[s.labels.a, cur.a], [s.labels.b, cur.b]]) {
     if (v && v.project && v.project.changes) facts.append(el(doc, 'span', '', changesLine(label, v.project.changes)));
   }
+  // One fact a line (workflow-tests.css .wft-dev-facts), and a list to a screen reader.
+  facts.setAttribute('role', 'list');
+  for (const f of facts.children) f.setAttribute('role', 'listitem');
   c.append(h, el(doc, 'p', 'hint', DEV_SBS_HINT), facts);
   return c;
 }
@@ -578,7 +581,8 @@ export function renderSideBySide(root, s, actions, { doc, tryIndex = 0, renderMa
     if (!it.met) span.classList.add('is-bad');
     const d = el(doc, 'span', `wft-dot ${it.met ? 'ok' : 'no'}`);
     d.setAttribute('aria-hidden', 'true');
-    span.append(d, el(doc, 'span', 'wft-res-v', it.value));   // one piece beside its dot (on a phone it wraps there, not under the label)
+    // One piece beside its dot (on a phone it wraps there, not under the label); a path in it wraps after a "/".
+    span.append(d, pathInto(doc, el(doc, 'span', 'wft-res-v'), it.value));
     // Final review UI 7: met or not met never by colour alone (the dot is hidden, red is colour): hidden words, unless the
     // value says it already ("Met", "Not met").
     if (!/^(not )?met\b/i.test(String(it.value ?? ''))) span.append(el(doc, 'span', 'sr-only', it.met ? ' · met' : ' · not met'));

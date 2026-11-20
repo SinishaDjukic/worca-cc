@@ -8,11 +8,15 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
+import { mkdtemp, mkdir, writeFile, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { JSDOM } from 'jsdom';
 import {
   listEndpointModels, catalogEntryForEndpointModel, importableModel, isOpenRouter, endpointIdPrefix,
 } from '../src/core/bridge/providers/endpoint.mjs';
-import { openRouterKeyInfo, formatOpenRouterKeyInfo } from '../src/core/bridge/provider-ops.mjs';
+import { openRouterKeyInfo, formatOpenRouterKeyInfo, endpointModelsForImport, importEndpointModels } from '../src/core/bridge/provider-ops.mjs';
+import { addGlobalModel, listGlobalModels } from '../src/core/settings.mjs';
 import { renderEndpointSheet, endpointRowMatches } from '../ui/public/bridge-view.mjs';
 
 const json = (body) => new Response(JSON.stringify(body), { status: 200, headers: { 'content-type': 'application/json' } });
@@ -87,6 +91,9 @@ test('OpenRouter: blocked rows, and the catalog entry pins window, output cap, c
   assert.equal(q.efforts, undefined, 'a reasoning model keeps every effort');
   assert.deepEqual(q.upstream, {
     provider: 'openai', api: 'openai-chat', model: 'qwen/qwen3.8-27b:free',
+    // An OpenRouter listing always stores the base it was listed from, even when the OpenAI-compatible row points
+    // there too: a later edit of that row cannot move the entry (bridge-endpoint pins "no baseUrl" for other hosts).
+    baseUrl: OR_BASE,
     // 235929 is most of the window: pinned as the output cap, prompt + max_tokens would overflow
     // the window on the first large turn, so the cap is left to the CLI.
     capabilities: { toolCalls: true, vision: true, reasoning: true, maxPromptTokens: 262144 },
@@ -171,23 +178,71 @@ test('the OpenRouter sheet: price in the detail, per-row filter data, and the Fr
   assert.equal(endpointRowMatches(local.querySelector('tbody tr'), local, 'zzz'), false);
 });
 
-test('the Providers card: an OpenRouter preset on the OpenAI-compatible row fills the URL, and a key only when none is set', async () => {
-  const { renderProvidersCard, applyProviderPreset, collectProviderRow, OPENROUTER_PRESET } = await import('../ui/public/bridge-view.mjs');
+test('the Providers tab: OpenRouter is a row of its own, so the OpenAI-compatible row offers no preset; the UI and the CLI alias name one URL', async () => {
+  const { collectProviderRow, OPENROUTER_PRESET } = await import('../ui/public/bridge-view.mjs');
+  const { renderProvidersTab } = await import('../ui/public/models/providers-tab.mjs');
   const { OPENROUTER_BASE_URL } = await import('../src/core/bridge/provider-ops.mjs');
   assert.equal(OPENROUTER_PRESET.baseUrl, OPENROUTER_BASE_URL, 'the UI preset and the CLI alias point at the same URL');
   const doc = new JSDOM('<!doctype html><body></body>').window.document;
-  const card = renderProvidersCard({ openai: { configured: false, keySet: false, baseUrl: 'https://api.openai.com/v1', maxConcurrent: 8 }, anthropic: {} }, { doc, split: true });
-  doc.body.appendChild(card);
-  const btn = card.querySelector('.mv-pv-row[data-provider="openai"] .mv-pv-preset');
-  assert.ok(btn, 'the OpenAI-compatible row offers it');
-  assert.equal(btn.dataset.preset, 'openrouter');
-  assert.equal(btn.type, 'button');
-  assert.equal(card.querySelector('.mv-pv-row[data-provider="anthropic"] .mv-pv-preset'), null);
-  assert.equal(applyProviderPreset(card, 'openai', 'openrouter'), true);
-  assert.deepEqual(collectProviderRow(card, 'openai'), { baseUrl: OPENROUTER_BASE_URL, apiKey: '${OPENROUTER_KEY}', maxConcurrent: 8 });
-  // A key already there (stored masked, or typed) is never replaced.
-  const card2 = renderProvidersCard({ openai: { configured: true, keyMasked: '••••abcd', baseUrl: 'https://api.openai.com/v1', maxConcurrent: 2 }, anthropic: {} }, { doc, split: true });
-  applyProviderPreset(card2, 'openai', 'openrouter');
-  assert.deepEqual(collectProviderRow(card2, 'openai'), { baseUrl: OPENROUTER_BASE_URL, maxConcurrent: 2 });
-  assert.equal(applyProviderPreset(card2, 'openai', 'nope'), false);
+  const tab = renderProvidersTab({ openai: { configured: false, keySet: false, baseUrl: 'https://api.openai.com/v1', maxConcurrent: 8 }, anthropic: {} }, { doc });
+  doc.body.appendChild(tab);
+  assert.equal(tab.querySelector('.mv-pv-preset'), null);
+  assert.deepEqual(collectProviderRow(tab, 'openai'), { baseUrl: 'https://api.openai.com/v1', maxConcurrent: 8 });
+});
+
+// ── Imports store their address; the listing key is the OpenRouter row's (providers.openrouter) ──
+
+const OR = OR_BASE;
+const LOCAL = 'http://127.0.0.1:8080/v1';
+
+/** A sandboxed HOME holding `settings`, no broker, and OPENROUTER_KEY unset (all restored afterwards). */
+async function withSandbox(settings, fn) {
+  const home = await mkdtemp(join(tmpdir(), 'worca-orimport-'));
+  const keys = ['HOME', 'USERPROFILE', 'WORCA_TEST_ALLOW_HOME_FALLBACK', 'WORCA_BROKER_URL', 'OPENROUTER_KEY'];
+  const prev = Object.fromEntries(keys.map((k) => [k, process.env[k]]));
+  process.env.HOME = home; process.env.USERPROFILE = home; process.env.WORCA_TEST_ALLOW_HOME_FALLBACK = '1';
+  delete process.env.WORCA_BROKER_URL; delete process.env.OPENROUTER_KEY;
+  await mkdir(join(home, '.worca-cc'), { recursive: true });
+  await writeFile(join(home, '.worca-cc', 'settings.json'), JSON.stringify(settings), 'utf8');
+  try { return await fn(home); } finally {
+    for (const k of keys) { if (prev[k] === undefined) delete process.env[k]; else process.env[k] = prev[k]; }
+    await rm(home, { recursive: true, force: true });
+  }
+}
+const authOf = (log) => log.map((l) => (l.init.headers || {}).authorization);
+const QWEN = 'qwen/qwen3.8-27b:free';
+const QWEN_ID = 'openrouter-qwen-qwen3-8-27b-free';
+
+test('re-import: an OpenRouter entry stored without a base URL gains the address, and keeps the label you gave it', async () => {
+  await withSandbox({ providers: { openai: { baseUrl: OR } } }, async () => {
+    await addGlobalModel({ id: QWEN_ID, label: 'Mine', upstream: { provider: 'openai', api: 'openai-chat', model: QWEN } });
+    const r = await importEndpointModels([QWEN], { baseUrl: OR, fetch: stub({ '/api/v1/models': OR_MODELS }) });
+    assert.deepEqual([r.created.length, r.updated.length], [0, 1]);
+    const e = listGlobalModels().find((m) => m.id === QWEN_ID);
+    assert.equal(e.upstream.baseUrl, OR, 'a later edit of the OpenAI-compatible row cannot move it any more');
+    assert.equal(e.label, 'Mine');
+  });
+});
+
+test('listing OpenRouter: the OpenRouter row\'s key, never the local server\'s, and never stored on an entry', async () => {
+  const listed = async (opts = {}) => {
+    const log = [];
+    await endpointModelsForImport({ baseUrl: OR, ...opts, fetch: stub({ '/api/v1/models': OR_MODELS }, log) });
+    return authOf(log);
+  };
+  await withSandbox({ providers: { openai: { baseUrl: LOCAL, apiKey: 'sk-local' }, openrouter: { apiKey: 'sk-or' } } }, async () => {
+    assert.deepEqual(await listed(), ['Bearer sk-or']);
+    const log = [];
+    const r = await importEndpointModels([QWEN], { baseUrl: OR, fetch: stub({ '/api/v1/models': OR_MODELS }, log) });
+    assert.deepEqual(r.created, [QWEN_ID]);
+    assert.deepEqual(authOf(log), ['Bearer sk-or'], 'the import lists through the same chain');
+    const e = listGlobalModels().find((m) => m.id === QWEN_ID);
+    assert.equal(e.upstream.baseUrl, OR);
+    assert.equal(e.upstream.apiKey, undefined, 'the row\'s key stays on the row: the entry carries none of its own');
+  });
+  await withSandbox({ providers: { openai: { baseUrl: LOCAL, apiKey: 'sk-local' } } }, async () => {
+    assert.deepEqual(await listed(), [undefined], 'no OpenRouter key: no Authorization, and never the local server\'s key');
+    // The setup assistant's overlay: the OpenAI-compatible row it is about to point at OpenRouter supplies the key.
+    assert.deepEqual(await listed({ providerBaseUrl: OR, providerApiKey: 'sk-planned' }), ['Bearer sk-planned']);
+  });
 });

@@ -1,47 +1,35 @@
-        <!-- ===== VIEW: MODELS (sidebar › Add-ons; a Settings tab before that) ===== -->
+        <!-- ===== VIEW: MODELS (sidebar › Add-ons; a Settings tab before that) =====
+             Three tabs, the first part of the address (models-menu C1/C2): Catalogue (#models), Jobs (#models/jobs) and
+             Providers (#models/providers/<row>; the sign-ins and keys were a page of their own before). The strip is
+             built at runtime into #models-tabs-host and is the page's header, as on Marketplace: no page intro. -->
         <section class="view hidden" data-view="models">
-            <div class="topbar">
-              <div>
-                <div class="sub page-intro">The model catalogue every project can pick from; sign-ins live on the Providers page.</div>
-              </div>
-              <div class="mv-head-actions">
-                <button type="button" id="model-share-btn" class="btn" style="white-space:nowrap">Share as plugin…</button>
-                <button type="button" id="model-import-btn" class="btn" style="white-space:nowrap">Import models…</button>
+            <div class="mdl-head">
+              <div id="models-tabs-host"></div>
+              <!-- More (its menu: Share as plugin, in the model dialog) wears icons.mjs's `more`, as .mdl-grp-more does. -->
+              <div class="mv-head-actions" data-tab-only="catalogue">
+                <button type="button" id="models-more-btn" class="btn btn-quiet btn-icon" aria-label="More">
+                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><circle cx="6" cy="12" r="1.5" fill="currentColor" stroke="none"></circle><circle cx="12" cy="12" r="1.5" fill="currentColor" stroke="none"></circle><circle cx="18" cy="12" r="1.5" fill="currentColor" stroke="none"></circle></svg>
+                </button>
                 <button type="button" id="model-create-btn" class="btn btn-primary" style="white-space:nowrap">
                   <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M12 5v14M5 12h14"></path></svg>
                   Add model
                 </button>
               </div>
             </div>
-            <!-- Models › Roles (setup-assistant-design.md D1): the model each kind of work falls back to. -->
-            <section class="card" id="model-roles-card" data-min-level="simple">
-              <div class="card-head"><div class="label-row"><h2>Roles</h2></div></div>
-              <small class="hint">Every job without a model of its own uses its role's model.</small>
-              <small class="hint err" id="modelRolesCatalogMsg" hidden>Could not load the model list. Reload the page to try again.</small>
-              <div id="model-roles-root" class="drows"></div>
-              <div class="add-project-actions engine-save-row" style="margin-top:14px"><small class="hint" id="modelRolesMsg"></small><button type="button" id="modelRolesSave" class="btn btn-primary btn-sm">Save</button></div>
-            </section>
-            <section class="card" id="engine-settings-card" data-min-level="expert">
-              <div class="card-head"><div class="label-row"><h2>Engines</h2></div></div>
-              <div id="engine-settings-root" class="drows"></div>
-              <!-- One Save per card, bottom right; the line beside it counts the unsaved changes (or says Saved.). -->
-              <div class="add-project-actions engine-save-row" style="margin-top:14px"><small class="hint" id="engineSettingsMsg"></small><button type="button" id="engineSettingsSave" class="btn btn-primary btn-sm">Save</button></div>
-            </section>
-            <p id="models-msg" class="form-msg" aria-live="polite"></p>
-            <div class="run-list" id="models-list"></div>
+            <div class="mdl-panel" id="models-tab-catalogue" data-tab="catalogue">
+              <p id="models-msg" class="form-msg" aria-live="polite"></p>
+              <div class="run-list" id="models-list"></div>
+              <div id="model-panel-host"></div>
+            </div>
+            <div class="mdl-panel" id="models-tab-jobs" data-tab="jobs" hidden>
+              <p id="models-jobs-msg" class="form-msg" aria-live="polite"></p>
+              <!-- Built at runtime (jobs-view.mjs): the harness tiles, the role tiles #jobs-roles, the cards #jobs-steps,
+                   #jobs-helpers and #jobs-design, and the one save bar. -->
+              <div id="jobs-root"></div>
+            </div>
+            <div class="mdl-panel" id="models-tab-providers" data-tab="providers" hidden>
+              <p id="providers-msg" class="form-msg" aria-live="polite"></p>
+              <div class="run-list" id="providers-list"></div>
+            </div>
         </section>
         <!-- /view models -->
-
-        <!-- ===== VIEW: PROVIDERS (model-bridge-design.md §8.1; sidebar › Add-ons) =====
-             Split out of Models: the card is account-level setup you touch rarely, and at
-             1000+px it buried the catalog it unlocks. Expert only, like Models. -->
-        <section class="view hidden" data-view="providers">
-            <div class="topbar">
-              <div>
-                <div class="sub page-intro">Sign-ins and keys for the models Worca runs through its own bridge; add the models themselves on the Models page.</div>
-              </div>
-            </div>
-            <p id="providers-msg" class="form-msg" aria-live="polite"></p>
-            <div class="run-list" id="providers-list"></div>
-        </section>
-        <!-- /view providers -->

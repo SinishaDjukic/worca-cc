@@ -160,8 +160,8 @@ function savedNetworkPatch(saved) {
 
 /** The engine Chat's new chats start on, as saved (askEngine, D17; unset or unknown = Claude): the Chat field's slot. */
 export function askEngineOf(settings = {}) { return CHAT_ENGINE_NAMES.includes(settings?.askEngine) ? settings.askEngine : 'claude'; }
-/** What an empty Chat field means: the Everyday coding role where roles exist (withRole), else the engine's own default. */
-const chatFallback = (engine) => (ROLE_HARNESSES.includes(engine) ? 'same as Everyday coding' : `${engineLabel(engine)}'s default model`);
+/** What an empty Chat field means: the Everyday tasks role where roles exist (withRole), else the engine's own default. */
+const chatFallback = (engine) => (ROLE_HARNESSES.includes(engine) ? 'same as Everyday tasks' : `${engineLabel(engine)}'s default model`);
 
 /**
  * The modelRoles patch (A10): every harness/role whose answer differs from the saved one, with the answer,
@@ -287,7 +287,7 @@ export function networkAnswered(answers, detect) {
 /** The step that owns an apply 400's `field` ('work.pipelineCostLimitUsd' → 'work'); 'review' when unknown (A20). */
 export function stepOfField(field) { return GROUP_STEP[String(field || '').split('.')[0]] || 'review'; }
 
-/** A Models-page sign-in pill → the assistant step it opens, or null to keep the Providers page (A17). */
+/** A sign-in button (its data-provider) → the assistant step that signs it in, or null when no step does (A17). */
 export function setupStepForSignIn(btn) { return btn?.dataset?.provider === 'copilot' ? 'access' : null; }
 
 const SUBTITLES = Object.freeze({
@@ -703,7 +703,7 @@ export function openSetupAssistant({ doc = globalThis.document, fetchJson = defa
       else {
         box.append(field('Plan', seg(COPILOT_PLANS, a.copilotAccount, (v) => { a.copilotAccount = v; paint(); }, { label: 'Plan' }), null));
         if (a.copilotConnected) {
-          // Use another account: sign out (the Providers page's endpoint), then the device sign-in starts here.
+          // Use another account: sign out (the endpoint Models › Providers uses), then the device sign-in starts here.
           const li = row(badge('green', 'OK'), `Connected as @${a.copilotLogin || 'github'}`);
           if (!S.cpSwitch) li.append(btn('Use another account', 'btn btn-sm btn-quiet sa-cp-switch', () => { S.cpSwitch = true; paint(); }));
           const list = rows('sa-cp', li);
@@ -810,7 +810,7 @@ export function openSetupAssistant({ doc = globalThis.document, fetchJson = defa
       const everyday = ROLE_HARNESSES.includes(chatEngine) && m.modelRoles?.[chatEngine]?.everyday?.model ? m.modelRoles[chatEngine].everyday : undefined;
       const f = renderInheritField(doc, { id: `models.${chatEngine}.ask`, label: 'Default model for Chat', kind: 'model', level: 'user', engine: chatEngine,
         catalog, efforts: ENGINE_EFFORTS[chatEngine], own: m.askModel ?? undefined,
-        inherited: { value: everyday, source: 'role', label: everyday ? 'Same as Everyday coding' : null }, defaultLabel: chatFallback(chatEngine) });
+        inherited: { value: everyday, source: 'role', label: everyday ? 'Same as Everyday tasks' : null }, defaultLabel: chatFallback(chatEngine) });
       f.querySelector('.inherit-model').dataset.saField = `models.askModels.${chatEngine}`;   // an apply 400 marks it (markField)
       chatHost.replaceChildren(f);
     };

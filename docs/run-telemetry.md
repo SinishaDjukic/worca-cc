@@ -71,7 +71,7 @@ With the flag on, each card on the run page's **Agents** tab shows:
 A line above the cards shows Worca's own figures for the run: saves, live updates, event loop delay,
 garbage-collection pauses and the machine's load.
 
-The context window comes from the model catalog (Models page), or 1M for Claude models that have
+The context window comes from the model catalog (Models › Catalogue), or 1M for Claude models that have
 one, else 200k. A 200k window that is only assumed says so on hover.
 
 `GET /api/runs/:id/telemetry` answers the same figures as JSON, and 404 while the flag is off or
