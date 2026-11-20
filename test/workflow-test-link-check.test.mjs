@@ -185,7 +185,10 @@ test('P4-Q9: two minutes is a hard cap per check; a link cut off by it is not ch
 
 test('the default transport is Ask\'s httpsTransport, and its guarded lookup refuses a private address before any socket', async () => {
   assert.equal(linkDefaults.transport, httpsTransport, 'link-check opens links through Ask\'s transport');
-  assert.match(String(httpsTransport), /lookup = guardedLookup/, 'whose default lookup is the guarded one');
+  // Behaviour, not source text: with no lookup passed, localhost (resolved by the OS, never by network DNS, and direct even
+  // behind a proxy) is refused before any socket. If the guard were unwired this would dial 127.0.0.1:443 locally and fail.
+  await assert.rejects(httpsTransport({ url: new URL('https://localhost/'), env: {}, headers: {} }),
+    (e) => e.code === 'EWORCA_BLOCKED', 'whose default lookup is the guarded one');
   const calls = [];
   const spy = async (o) => { calls.push(Object.keys(o).sort()); return { status: 200, headers: {}, destroy: () => {} }; };
   const real = linkDefaults.transport;
