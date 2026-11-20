@@ -11,6 +11,7 @@ import { estimateOf, aboutUsd, agoText, countsText, fmtDuration, pctDelta, durat
 import { serverName } from '../../../src/shared/workflow-tests/connector-name.mjs';
 import { splitPatchSections, parseFileSection } from '../diff-view.mjs';
 import { criteriaGroup } from './criteria-rows.mjs';
+import { compareCriteriaParts } from './criteria-pages.mjs';
 import { changesTitle, changeCountText, FILE_BADGE, READ_ALL_CHANGES, BOTH_STARTED_FROM, DEV_CAPTION, DEV_SBS_HINT, DEV_START_LEAD, DEV_SETUP_LEAD,
   changesLine, notMetFor, COMMAND_ENDED, COMMAND_TIMED_OUT, SEE_COMMAND_OUTPUT, NOTHING_PUSHED_TEXT, REAL_BLOCKED_TEXT, EACH_ANSWERED_TEXT,
   EACH_STOPPED_ANSWERED_TEXT, READING_CHANGES, inSentence,
@@ -225,8 +226,9 @@ export function renderCompare(root, c, actions, { doc, now = Date.now(), mock = 
   page.append(head);
   if (mock) page.append(mockNote(doc));   // F52
 
+  let short = null;
   if (m.inShort.length) {   // C2: the model's sentences; none when nothing compares (D38)
-    const s = el(doc, 'section', 'wft-short');
+    const s = (short = el(doc, 'section', 'wft-short'));
     const box = el(doc, 'div');
     const h = el(doc, 'h2', '', 'In short');
     h.id = 'wft-short-h';
@@ -301,7 +303,10 @@ export function renderCompare(root, c, actions, { doc, now = Date.now(), mock = 
   }
   scroll.append(inner);
   table.append(scroll);
-  by.append(hb, table);
+  // Part 4 (boards 5, 12): with criteria, "By example · By criterion" tabs instead of the heading, and the line "Worca's checking".
+  const crit = c.criteria && c.criteria.counts && c.criteria.counts.total > 0
+    ? compareCriteriaParts(doc, { root, runId, criteria: c.criteria, labels: c.labels, table, onTrust: actions.trust ? () => actions.trust() : null }) : null;
+  if (crit) { by.removeAttribute('aria-labelledby'); by.setAttribute('aria-label', 'Results'); by.append(crit.tabs, table, crit.box); } else by.append(hb, table);
   cols.append(by);
 
   const ch = el(doc, 'section', 'card wft-changes');
@@ -329,8 +334,10 @@ export function renderCompare(root, c, actions, { doc, now = Date.now(), mock = 
     p.append(icon(doc, 'alert', 14), el(doc, 'span', '', f));
     ch.append(p);
   }
+  if (crit) ch.append(crit.line);
   cols.append(ch);
   page.append(cols);
+  if (crit) crit.done([tiles, short, ch]);   // board 12: By criterion takes the page under the tabs
   root.append(page);
   giveFocusBack(root, doc, held);
 }

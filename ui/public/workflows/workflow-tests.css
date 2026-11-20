@@ -490,3 +490,34 @@ button.badge.wft-confirm:hover{text-decoration:underline;}
 .wft-said .wft-linkbtn:hover{text-decoration:underline;}
 .wft-crit-code{display:block;margin-top:4px;padding:6px 10px;border-radius:var(--r-sm);background:var(--panel);font-family:var(--mono);font-size:var(--fs-meta);white-space:pre;overflow-x:auto;color:var(--ink);}
 .wft-crow.is-crit .wft-res.is-none{line-height:1.35;}
+/* Part 4, Task 21 (boards 5, 12): Compare's "By example · By criterion" tabs and the "Worca's checking" line; By criterion's legend
+   and one row per criterion, red or green when it changed and decides; violet = can be checked exactly, without AI. */
+.wft-by-tabs{align-self:flex-start;}
+.wft-by-crit{display:flex;flex-direction:column;gap:14px;min-width:0;}
+.wft-check-line{margin:10px 0 0;}
+.wft-check-line b{font-weight:600;color:var(--ink);}
+.wft-bc-legend{padding:16px 20px;}
+.wft-bc-legend h2{margin:0 0 12px;font-size:var(--fs-section);}
+.wft-bc-legend-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:14px;}
+.wft-bc-legend-grid > div{display:flex;flex-direction:column;align-items:flex-start;gap:6px;font-size:var(--fs-meta);color:var(--ink-2);line-height:1.45;}
+.wft-bc-rows{min-width:680px;}
+.wft-bc-rows.is-one{min-width:560px;}
+.wft-bc-row{display:grid;grid-template-columns:minmax(0,1fr) 80px 80px 230px;align-items:center;gap:14px;padding:12px 18px;border-bottom:1px solid var(--line);font-size:var(--fs-body);}
+.wft-bc-rows.is-one .wft-bc-row{grid-template-columns:minmax(0,1fr) 80px 230px;}
+.wft-bc-row:last-child{border-bottom:none;}
+.wft-bc-row.is-head{padding:10px 18px;font-size:var(--fs-caption);font-weight:600;color:var(--ink-2);}
+.wft-bc-row.is-worse{background:var(--red-bg);}
+.wft-bc-row.is-better{background:var(--green-bg);}
+.wft-bc-name{min-width:0;overflow-wrap:anywhere;}
+.wft-bc-name b{font-weight:500;}
+.wft-bc-row.is-worse .wft-bc-name b,.wft-bc-row.is-better .wft-bc-name b{font-weight:600;}
+.wft-bc-ex{display:block;margin-top:2px;font-size:var(--fs-meta);color:var(--ink-2);}
+.wft-bc-row.is-worse .wft-bc-n.is-b{color:var(--red-ink-strong);font-weight:600;}
+.wft-bc-row.is-better .wft-bc-n.is-b{color:var(--green-ink-strong);font-weight:600;}
+.wft-bc-more{color:var(--ink-2);}
+.wft-bc-trust{display:flex;flex-direction:column;align-items:flex-start;gap:3px;min-width:0;}
+.wft-bc-trust small{font-size:var(--fs-meta);color:var(--ink-2);line-height:1.35;}
+.wft-exact{background:var(--violet-bg);color:var(--violet-ink);font-size:var(--fs-caption);font-weight:600;padding:2px 8px;border-radius:var(--r-xs);}
+.wft-bc-foot{margin:0;}
+.wft-by-crit[hidden],.wft-by .wft-table[hidden],.wft-compare .wft-tiles[hidden],.wft-compare .wft-short[hidden],.wft-compare .wft-changes[hidden]{display:none;}
+@media (max-width:900px){.wft-bc-legend-grid{grid-template-columns:minmax(0,1fr);}}

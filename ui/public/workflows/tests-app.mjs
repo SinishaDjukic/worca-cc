@@ -74,9 +74,14 @@ export function createWorkflowTests(deps) {
   function wftReadView(id) {
     const base = `${wftBase(id)}/runs/${wft.runId}`;
     if (wft.view === 'progress') return wftCall('GET', base);
-    if (wft.view === 'compare') return wftCall('GET', `${base}/compare`);
+    if (wft.view === 'compare') return wftCompareRead(base);
     if (wft.view === 'detail') return wftCall('GET', `${base}/examples/${wft.exampleId}`);
     return Promise.resolve({ ok: false, error: 'This page does not exist.' });
+  }
+  /** Boards 5, 12 (Part 4): the compare read, with its criteria (counts, rows) beside it. A failed criteria read leaves Compare as it was. */
+  async function wftCompareRead(base) {
+    const [r, crit] = await Promise.all([wftCall('GET', `${base}/compare`), wftCall('GET', `${base}/criteria`)]);
+    return r.ok && crit.ok ? { ...r, data: { ...r.data, criteria: crit.data } } : r;
   }
   function wftRenderView(root) {
     if (!wft.data) { renderTestsPage(root, null, wftListActions(), { doc, error: wft.error }); return; }
