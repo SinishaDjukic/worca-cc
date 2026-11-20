@@ -229,3 +229,32 @@ test('the end of the criteria phase notifies, while the test still runs', async 
   assert.ok(at >= 0, 'the phase start notified');
   assert.ok(frames.slice(at + 1).some((f) => f.phase === false && f.status === 'running'), 'a frame after the phase ended, before the test did');
 });
+
+test('I15: Check them on these tries holds the workflow busy, and stops at the test\'s own cost limit', async () => {
+  const h = harness();
+  const ex = example([{ text: 'Names a success metric' }]);
+  const runner = createTestRunner(h.deps);
+  const first = await runner.start({ workflowId: WF, kind: 'once', b: 'draft', exampleIds: [ex.id], tries: 1, capUsd: 0.65 });
+  await waitDone(runner, first.id);   // the try ($0.50) and its check ($0.10)
+  store.updateExample(WF, ex.id, { criteria: [...ex.criteria, { text: 'Explains the legal reasons' }, { text: 'Names the users' }] });
+  const job = runner.checkCriteriaLater(store.readTestRun(first.id));
+  assert.equal(runner.criteriaCheckOf(first.id), true);
+  await assert.rejects(runner.start({ workflowId: WF, kind: 'once', b: 'draft', exampleIds: [ex.id], tries: 1 }), { code: 'BUSY' });
+  assert.throws(() => runner.checkCriteriaLater(store.readTestRun(first.id)), { code: 'BUSY' });
+  await job;
+  assert.equal(runner.criteriaCheckOf(first.id), false);
+  assert.deepEqual(h.calls, ['Names a success metric', 'Explains the legal reasons'], 'at $0.70 the limit of $0.65 is reached: the third is not asked');
+  assert.equal(store.spentOfRun(first.id), 0.7);
+});
+
+test('review (b): board 20\'s "So far" counts the combined status, as Compare does', async () => {
+  const { progressOf } = await import('../src/core/workflow-tests/service.mjs');
+  const h = harness({ judge: { judgeCriterion: async ({ book }) => { book(0.1, 'billed'); return { met: false, reason: 'r', proof: 'Cut tickets by 60%', proofFound: true, error: null, costUsd: 0.1, ms: 1 }; } } });
+  const ex = example([{ text: 'Names a success metric' }]);
+  const runner = createTestRunner(h.deps);
+  const run = await runner.start({ workflowId: WF, kind: 'once', b: 'draft', exampleIds: [ex.id], tries: 1 });
+  await waitDone(runner, run.id);
+  assert.equal(store.triesOfRun(run.id)[0].status, 'passed', 'the checks alone pass it');
+  const row = progressOf(WF, run.id).rows[0];
+  assert.deepEqual([row.dots, row.summary], [['failed'], 'Done · 0 of 1 passed']);
+});

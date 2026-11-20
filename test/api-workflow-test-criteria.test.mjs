@@ -120,3 +120,16 @@ test('GET judge-models lists Claude models with a suggestion', async () => {
   assert.ok(r.body.models.some((m) => m.id === 'claude-opus-5-5'));
   assert.equal(typeof r.body.suggested.id, 'string');
 });
+
+test('by criterion, the overview trust counts and the plan estimate', async () => {
+  const run = store.listTestRuns('wf_api_c')[0];
+  const r = await call('GET', `${WF}/runs/${run.id}/criteria`);
+  assert.equal(r.status, 200);
+  assert.ok(Array.isArray(r.body.rows));
+  assert.equal(r.body.counts.total, 1);
+  assert.equal((await call('GET', WF)).body.trust.total, 1);
+  const plan = await call('GET', `${WF}/plan?b=draft&tries=1`);
+  assert.equal(typeof plan.body.criteria.perTryUsd, 'number', 'M13: Haiku 4.5 has a list price, so the check has one');
+  assert.equal(plan.body.criteria.pairsUsd, 0, 'no version to compare with: no pairs');
+  assert.equal((await call('POST', `${WF}/runs/${run.id}/criteria/check`)).status, 202);
+});

@@ -26,3 +26,24 @@ export function trustLine(t) {
   if (t.state === 'confirm') return 'New criterion. It counts, but you have not confirmed that Worca judges it right.';
   return 'Can be checked exactly, without AI.';
 }
+
+/** Board 5's card. */
+export function checkingSentence(c) {
+  const head = `Worca's checking is reliable for ${c.reliable} of ${c.total} criteria.`;
+  if (!c.unreliable) return head;
+  return c.unreliable === 1 ? `${head} 1 unreliable criterion is shown, but does not decide better or worse.`
+    : `${head} ${c.unreliable} unreliable criteria are shown, but do not decide better or worse.`;
+}
+/** Board 1's card "Can you trust Worca's checking?". */
+export function listTrustSentence(c) {
+  const head = `Reliable for ${c.reliable} of ${c.total} criteria.`;
+  const tail = [c.unreliable ? `${c.unreliable} ${c.unreliable === 1 ? 'is' : 'are'} unreliable` : null,
+    c.waiting ? `${c.waiting} ${c.waiting === 1 ? 'needs' : 'need'} your answers` : null].filter(Boolean);
+  return tail.length ? `${head} ${tail.join(', ')}.` : head;
+}
+/** Board 2: the line under a criterion that an exact check can stand in for (D94). */
+export const exactLine = (alt) => (alt && alt.kind === 'mentions' ? `Can be checked exactly: the result must contain "${alt.text}".` : 'Can be checked exactly, without AI.');
+/** Board 5's title, the tab, the card title. */
+export const BY_CRITERION = 'By criterion';
+export const BY_EXAMPLE = 'By example';
+export const SEE_BY_CRITERION = 'See by criterion';

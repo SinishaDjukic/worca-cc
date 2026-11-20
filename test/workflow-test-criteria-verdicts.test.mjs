@@ -86,3 +86,14 @@ test('N2: a try whose run did not finish has no say in even checking; the criter
   assert.equal(compareModel(input).examples[0].result, 'worse', 'B misses it on all three finished tries');
   assert.deepEqual(notCheckedEverywhere(decorated, input.examples), []);
 });
+
+test('review (a): a criterion with no counted verdict on any finished try is listed as not checked, and a try that did not finish is not counted', () => {
+  const done = { facts: { status: 'done' }, basics: [], checks: [] };
+  const errored = { facts: { status: 'error' }, basics: [], checks: [] };
+  const tries = [{ id: 1, side: 'b', exampleId: 1, status: 'passed', costUsd: 1, verdict: done },
+    { id: 2, side: 'b', exampleId: 1, status: 'passed', costUsd: 1, verdict: done },
+    { id: 3, side: 'b', exampleId: 2, status: 'failed', costUsd: 1, verdict: errored }];
+  const decorated = withCriteria(tries, (t) => [criterionResult(C, t.exampleId === 2 ? null : J(null, { error: 'limit' }), reliable, { finished: t.exampleId !== 2 })]);
+  const examples = [{ id: 1, name: 'Bulk invoice export' }, { id: 2, name: 'Errored one' }];
+  assert.deepEqual(notCheckedEverywhere(decorated, examples), [{ id: 1, name: 'Bulk invoice export', criteria: ['Names a success metric'] }]);
+});

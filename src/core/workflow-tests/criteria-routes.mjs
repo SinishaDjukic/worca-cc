@@ -4,7 +4,7 @@ import { requireFlag } from '../flags.mjs';
 import { actorOf } from '../identity.mjs';
 import * as store from './store.mjs';
 import * as cs from './criteria-store.mjs';
-import { trustFor } from './criteria-read.mjs';
+import { trustFor, byCriterionOf } from './criteria-read.mjs';
 import { judgeModelsView } from './judge-models.mjs';
 
 const STATUS = Object.freeze({ BAD_REQUEST: 400, NOT_FOUND: 404, BUSY: 409, NOT_READY: 422 });
@@ -13,6 +13,8 @@ const W = '/api/workflows/:id/tests';
 export const CRITERIA_ROUTES = Object.freeze([
   ['GET', `${W}/judge-models`],
   ['POST', `${W}/judgements/:j/answer`],
+  ['GET', `${W}/runs/:run/criteria`],
+  ['POST', `${W}/runs/:run/criteria/check`],
 ].map(([method, path]) => Object.freeze({ method, path })));
 
 const num = (v, what) => {
@@ -56,6 +58,25 @@ export function registerCriteriaRoutes(app, { runner = null, criteriaJudge = nul
   });
   // D87, D105: the Claude models that can check criteria, and the suggested one.
   route('GET', `${W}/judge-models`, async (req, res) => res.json(await judgeModelsView(wid(req))));
+  const runOf = (req) => {
+    const run = store.readTestRun(num(req.params.run, 'test'));
+    if (!run || run.workflowId !== wid(req)) throw store.testError(`no test ${req.params.run}`, 'NOT_FOUND');
+    return run;
+  };
+  route('GET', `${W}/runs/:run/criteria`, async (req, res) => {
+    const run = runOf(req);
+    res.json({ ...byCriterionOf(wid(req), run), checking: !!(runner && (runner.criteriaCheckOf(run.id) || runner.criteriaPhaseOf(run.id))) });
+  });
+  // P4-Q15: "Check them on these tries": the criteria an older test's tries miss, in the background; the page polls the read above.
+  // The runner holds it (I15): BUSY beside a test of the workflow or another check, and its checks stop at the test's own cap.
+  route('POST', `${W}/runs/:run/criteria/check`, async (req, res) => {
+    const run = runOf(req);
+    if (run.capUsd !== null && store.spentOfRun(run.id) >= run.capUsd) {
+      throw store.testError('This test reached its cost limit, so Worca checks nothing more on it. Test again to check your criteria.', 'BAD_REQUEST');
+    }
+    void runner.checkCriteriaLater(run);   // throws BUSY synchronously; never rejects afterwards (it logs)
+    res.status(202).json({ checking: true });
+  });
   void exampleOf;   // defined here for Task 18 (4a) and Tasks 12-15 (4b), which use it
   return { runner, criteriaJudge, deps };
 }

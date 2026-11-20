@@ -43,3 +43,53 @@ export function compareNotes(input) {
   const shadow = compareModel({ ...input, tries: input.tries.map((t) => (t.shadowStatus ? { ...t, status: t.shadowStatus } : t)) });
   return { unreliableOnly: unreliableOnly(compareModel(input), shadow), notChecked };
 }
+
+import { byCriterionModel, checkingCounts } from '../../shared/workflow-tests/criteria-report.mjs';
+import { prepare } from '../db.mjs';
+import { ratesFor } from '../helper-call/cost.mjs';
+import { estimateCost } from '../config.mjs';
+
+/** The trust of each criterion of an example (its current model); exact checks made from a criterion count as 'exact'. */
+export function trustOfExample(ex, memo = new Map()) {
+  const model = ex.judge ? ex.judge.model : null;
+  const out = {};
+  for (const c of ex.criteria || []) out[c.id] = model ? trustFor(ex.workflowId, cs.criterionFp(c.text), model, memo) : null;
+  return out;
+}
+/** Boards 1 and 5: the counts over these examples (all of the workflow when `exampleIds` is null). */
+export function checkingOf(workflowId, exampleIds = null) {
+  const memo = new Map();
+  const exs = store.listExamples(workflowId).filter((e) => !exampleIds || exampleIds.includes(e.id));
+  return checkingCounts(exs.flatMap((e) => [...Object.values(trustOfExample(e, memo)), ...(e.checks || []).filter((k) => k.said).map(() => ({ state: 'exact' }))]));
+}
+/** Board 12. `run` = the test (store.readTestRun shape). */
+export function byCriterionOf(workflowId, run) {
+  const memo = new Map();
+  const examples = run.exampleIds.map((id) => store.readExample(workflowId, id)).filter(Boolean)
+    .map((e) => ({ id: e.id, name: e.name, criteria: e.criteria, checks: e.checks, trust: trustOfExample(e, memo) }));
+  const m = byCriterionModel({ examples, hasA: run.a != null, tries: withCriteriaFor(workflowId, store.triesOfRun(run.id)) });
+  return { ...m, counts: checkingOf(workflowId, run.exampleIds) };
+}
+
+const median = (xs) => { const s = [...xs].sort((a, b) => a - b); if (!s.length) return null; const m = s.length >> 1; return s.length % 2 ? s[m] : (s[m - 1] + s[m]) / 2; };
+/** Whether the criteria phase asks the pair question (Task 14 sets it to true when it adds judgePairs). */
+const PAIRS_ASKED = false;
+/** Board 4: what one check of a criterion costs on `model`: its own last 20, else a typical call (6000 tokens in, 250 out) at its price. */
+export function judgeCallUsd(model, { rates = (m) => ratesFor('claude', m), estimate = estimateCost } = {}) {
+  const own = prepare(`SELECT amount_usd AS u FROM wf_test_judge_ledger WHERE purpose = 'try' AND model = ? ORDER BY id DESC LIMIT 20`).all(model).map((r) => Number(r.u));
+  if (own.length) return median(own);
+  const priced = model ? rates(model) : null;
+  return priced ? estimate({ input_tokens: 6000, output_tokens: 250 }, priced) : null;
+}
+/** Board 4 (Task 11): per try, the average cost of checking the chosen examples' criteria; the pairs (2 calls per example that has
+ *  criteria, P4-Q8). null when no chosen example has criteria. */
+export function criteriaPlanOf(workflowId, exampleIds = [], { hasA = false } = {}) {
+  const exs = store.listExamples(workflowId).filter((e) => (!exampleIds.length || exampleIds.includes(e.id)) && e.criteria.length && e.judge);
+  if (!exs.length) return null;
+  const per = exs.map((e) => { const u = judgeCallUsd(e.judge.model); return u === null ? null : u * e.criteria.length; });
+  if (per.some((u) => u === null)) return { perTryUsd: null, pairsUsd: null };
+  const all = store.listExamples(workflowId).filter((e) => !exampleIds.length || exampleIds.includes(e.id));
+  // M6: pairs are asked only from Task 14 (4b); until then this is 0, and Task 14 changes `PAIRS_ASKED` to true.
+  return { perTryUsd: per.reduce((s, u) => s + u, 0) / all.length,
+    pairsUsd: PAIRS_ASKED && hasA ? exs.reduce((s, e) => s + 2 * judgeCallUsd(e.judge.model), 0) : 0 };
+}

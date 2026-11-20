@@ -274,11 +274,16 @@ export function estimateOf(plan, { reuseA = true, reuseB = false } = {}) {
   const cost = (s, n) => (n === 0 ? 0 : s && typeof s.perTryUsd === 'number' && Number.isFinite(s.perTryUsd) ? n * s.perTryUsd : null);
   const ca = cost(plan.a, toRun.a);
   const cb = cost(plan.b, toRun.b);
-  const usd = ca === null || cb === null ? null : ca + cb;
+  // Part 4 (board 4): checking the criteria of the tries to run, and the pair question per example (P4-Q8); null = no price known yet.
+  const crit = plan.criteria || null;
+  const criteriaUsd = !crit ? 0 : crit.perTryUsd === null || crit.perTryUsd === undefined ? null
+    : total * crit.perTryUsd + (plan.a && toRun.b ? Number(crit.pairsUsd || 0) : 0);
+  // M6: a checking cost that is not known makes the total not known, as the row says (P4-C6); 0 when nothing is checked.
+  const usd = ca === null || cb === null || criteriaUsd === null ? null : ca + cb + criteriaUsd;
   const minutes = typeof plan.perTryMs === 'number' && Number.isFinite(plan.perTryMs) && total
     ? Math.max(1, Math.ceil((Math.ceil(total / TRIES_AT_ONCE) * plan.perTryMs) / 60000)) : null;
   const capUsd = usd ? Math.max(5, Math.ceil((usd * 1.5) / 5) * 5) : 10;
-  return { toRun, total, usd, low: usd === null ? null : usd * 0.95, high: usd === null ? null : usd * 1.15, minutes, capUsd };
+  return { toRun, total, usd, criteriaUsd, low: usd === null ? null : usd * 0.95, high: usd === null ? null : usd * 1.15, minutes, capUsd };
 }
 
 /** A time that rounds to nothing (a test done in under half a second). */

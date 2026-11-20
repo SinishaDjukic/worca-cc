@@ -57,7 +57,17 @@ export function notCheckedEverywhere(tries, examples) {
   const out = [];
   for (const ex of examples) {
     const labels = new Set();
-    for (const t of tries) if (t.exampleId === ex.id) for (const c of (t.verdict && t.verdict.criteria) || []) if (c.uneven) labels.add(c.label);
+    const seen = new Map();   // criterion id → [label, counted on some finished try]
+    for (const t of tries) {
+      if (t.exampleId !== ex.id) continue;
+      const finished = (t.status === 'passed' || t.status === 'failed') && finishedTry(t);
+      for (const c of (t.verdict && t.verdict.criteria) || []) {
+        if (c.uneven) labels.add(c.label);
+        if (finished) seen.set(c.id, [c.label, (seen.has(c.id) && seen.get(c.id)[1]) || c.met !== null]);
+      }
+    }
+    // Review (a): a criterion that no finished try has a counted verdict for (the limit or the test's cap left it unchecked on every try).
+    for (const [label, counted] of seen.values()) if (!counted) labels.add(label);
     if (labels.size) out.push({ id: ex.id, name: ex.name, criteria: [...labels] });
   }
   return out;

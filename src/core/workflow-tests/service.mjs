@@ -723,7 +723,8 @@ function shownCost(workflowId, run, usd) {
 export function progressOf(workflowId, runId, { costOf = null, phaseOf = null, beforeNowOf = null, stoppingOf = null } = {}) {
   const run = runOf(workflowId, runId);
   const ctx = labelCtx(workflowId);
-  const tries = store.triesOfRun(run.id);
+  // Review (b): the same combined status as Compare (checks and deciding criteria), so "X of N passed" never disagrees with it.
+  const tries = withCriteriaFor(workflowId, store.triesOfRun(run.id));
   const own = tries.filter((t) => t.runId === run.id);
   const both = run.a != null && own.some((t) => t.side === 'a');
   const sides = both ? ['a', 'b'] : ['b'];

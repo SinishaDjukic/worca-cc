@@ -6,6 +6,7 @@ import { loadScriptRegistry } from '../script-registry.mjs';
 import * as store from './store.mjs';
 import * as service from './service.mjs';
 import { createTestRunner } from './runner.mjs';
+import { checkingOf, criteriaPlanOf } from './criteria-read.mjs';
 import { createCriteriaJudge } from './criteria-runner.mjs';
 import { readTryOutcome, checkTry } from './result.mjs';
 import { useFingerprint } from './uses.mjs';
@@ -91,7 +92,7 @@ export function registerWorkflowTestRoutes(app, { broadcast = () => {}, deps = {
     return ex;
   };
 
-  route('GET', W, async (req, res) => res.json(await service.testsOverview(wid(req))));
+  route('GET', W, async (req, res) => res.json({ ...(await service.testsOverview(wid(req))), trust: checkingOf(wid(req)) }));
   route('POST', `${W}/examples`, async (req, res) => {
     service.workflowRowOf(wid(req));
     res.status(201).json({ example: await service.saveExample(wid(req), null, req.body || {}, { by: by(req) }) });
@@ -151,9 +152,10 @@ export function registerWorkflowTestRoutes(app, { broadcast = () => {}, deps = {
     const tries = q.tries ? num(q.tries, 'tries') : 3;
     // M8: no estimate for a test the start would refuse (runner.start's own limit and sentence).
     if (tries > store.MAX_TRIES) throw store.testError(`tries must be 1 to ${store.MAX_TRIES}`, 'BAD_REQUEST');
-    res.json(await service.testPlan(wid(req), { a: q.a ? store.parseUse(String(q.a)) : null, b: store.parseUse(String(q.b || 'draft')) || 'draft',
+    const plan = await service.testPlan(wid(req), { a: q.a ? store.parseUse(String(q.a)) : null, b: store.parseUse(String(q.b || 'draft')) || 'draft',
       exampleIds: ids, tries, connectors: q.connectors === 'real' ? 'real' : 'pretend' },
-    { mock: !!(deps.mockMode && deps.mockMode()), connectorsPreview: deps.connectorsPreview || null }));
+    { mock: !!(deps.mockMode && deps.mockMode()), connectorsPreview: deps.connectorsPreview || null });
+    res.json({ ...plan, criteria: criteriaPlanOf(wid(req), ids, { hasA: !!q.a }) });
   });
   route('POST', `${W}/runs`, async (req, res) => {
     knownWorkflow(req);
