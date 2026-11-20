@@ -87,6 +87,8 @@ test('fix round 1: heading section numbers and clock times are not numbers', () 
   assert.deepEqual(numbersIn('The call is at 14:00 and ends 9:30, for 140 tickets.').map((x) => x.n), ['140']);
   assert.deepEqual(numbersCheck('## 1.1 Scope\nMeeting at 14:00. Tickets: 140 a month.', FILES), { met: true, value: 'Met' });
   assert.deepEqual(numbersIn('Version 1.1 shipped, 2026 was the year.').map((x) => x.n), ['1.1', '2026'], 'prose numbers and years stay');
+  assert.deepEqual(numbersIn('## 140 tickets a month\n## 2026 roadmap').map((x) => x.n), ['140', '2026'], 'a whole number opening a heading is a number of the text');
+  assert.deepEqual(numbersIn('Logged at 12:30:45 for 140 tickets.').map((x) => x.n), ['140'], 'the seconds of a clock time are not a number');
 });
 
 test('fix round 1: a number past 2 MB of sources is found; the result side stays capped', () => {
