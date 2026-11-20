@@ -1,7 +1,8 @@
 // test/workflow-test-link-check.test.mjs — "Links work" (plans/workflow-tests-part4-plan.md D93, P4-Q9), with a fake transport.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { checkLinks, linkState, LINKS_MAX } from '../src/core/workflow-tests/link-check.mjs';
+import { checkLinks, linkState, linkCarriesData, linkUrlOk, linkDefaults, LINKS_MAX } from '../src/core/workflow-tests/link-check.mjs';
+import { httpsTransport, makeGuardedLookup } from '../src/core/ask/web-fetch.mjs';
 import { checkTry } from '../src/core/workflow-tests/result.mjs';
 import { judgeTry } from '../src/shared/workflow-tests/checks.mjs';
 
@@ -114,4 +115,91 @@ test('I12: a check Worca could not run does not decide the try', async () => {
   assert.deepEqual(v.checks.map((c) => [c.met, c.notChecked]), [[false, true]]);
   const basics = { noError: true, noHelp: false, maxCostUsd: null, maxSentBack: null };
   assert.equal(judgeTry({ basics }, { status: 'done' }, [{ label: 'x', met: false }]).passed, false, 'an ordinary missed check still fails');
+});
+
+test('N9: a host name is a data channel too (the DNS query leaks it before any connection): such a link is never opened', async () => {
+  const hex = (n) => Array.from({ length: n }, (_, i) => '0123456789abcdef'[(i * 7 + 3) % 16]).join('');
+  const s = site({ 'https://docs.github.com/x': { status: 200 } });
+  const repro = `https://${hex(63)}.${hex(63)}.${hex(63)}.attacker.example/`;
+  assert.equal(linkUrlOk(new URL(repro)), true, 'the URL rule alone lets it through');
+  assert.equal(linkCarriesData(new URL(repro)), true, 'over 100 characters, and labels that are hex');
+  assert.equal(await linkState(repro, { transport: s.transport }), 'skipped');
+  for (const host of [`${hex(20)}.attacker.example`, 'mfrggzdfmztwq2lknnwg23tpobyxe43u.attacker.example', 'mzxw6ytboi4dsnzq.attacker.example',
+    'gezdgnbvgy3tqojqgezdgnbvgy.attacker.example', 'a1b2c3d4e5f6g7h8i9.attacker.example', `${'x'.repeat(40)}.${'y'.repeat(40)}.${'z'.repeat(40)}.example`]) {
+    assert.equal(linkCarriesData(new URL(`https://${host}/`)), true, host);
+    assert.equal(await linkState(`https://${host}/`, { transport: s.transport }), 'skipped', host);
+  }
+  assert.deepEqual(s.seen, [], 'never dialled');
+  const hop = site({ 'https://docs.github.com/to-data': { status: 302, location: `https://${hex(32)}.attacker.example/` } });
+  assert.equal(await linkState('https://docs.github.com/to-data', { transport: hop.transport }), 'skipped', 'a redirect to such a host is not followed');
+  assert.deepEqual(hop.seen, ['https://docs.github.com/to-data']);
+  assert.deepEqual(await checkLinks(`See ${repro}`, { transport: s.transport }),
+    { met: false, notChecked: true, value: 'Not checked: Worca does not open links that may carry data' });
+  for (const host of ['docs.github.com', 'en.wikipedia.org', 'my-company-intranet-docs.example.com', 's3.eu-central-1.amazonaws.com',
+    'a1b2.cloudfront.net', 'www.bbc.co.uk', 'mybucket-prod-2024.s3.amazonaws.com', 'international-business-machines.example.com', 'github.com']) {
+    assert.equal(linkCarriesData(new URL(`https://${host}/`)), false, host);
+  }
+  const ok = site({ 'https://docs.github.com/x': { status: 200 }, 'https://en.wikipedia.org/wiki/X': { status: 200 } });
+  assert.deepEqual(await checkLinks('https://docs.github.com/x https://en.wikipedia.org/wiki/X', { transport: ok.transport }), { met: true, value: 'Met' });
+});
+
+test('I12: a TLS failure or a reset on the first hop is not the workflow\'s fault; a real HTTP error still is', async () => {
+  const err = (code) => Object.assign(new Error(code), { code });
+  const net = site({ 'https://a.example/x': err('ECONNRESET'), 'https://b.example/y': err('UNABLE_TO_VERIFY_LEAF_SIGNATURE'),
+    'https://c.example/z': err('ERR_TLS_CERT_ALTNAME_INVALID'), 'https://d.example/w': err('EPROTO') });
+  for (const u of ['https://a.example/x', 'https://b.example/y', 'https://c.example/z', 'https://d.example/w']) {
+    assert.equal(await linkState(u, { transport: net.transport }), 'unreached', u);
+  }
+  assert.deepEqual(await checkLinks('https://a.example/x https://b.example/y https://c.example/z', { transport: net.transport }),
+    { met: false, notChecked: true, value: 'Not checked: Worca could not reach these links' });
+  const blocked = site({ 'https://in.example/': err('EWORCA_BLOCKED') });
+  assert.equal(await linkState('https://in.example/', { transport: blocked.transport }), 'broken', 'a private address stays broken');
+  const http = site({ 'https://g.example/a': { status: 410 }, 'https://g.example/b': { status: 503 }, 'https://g.example/c': { status: 404 } });
+  for (const u of ['https://g.example/a', 'https://g.example/b', 'https://g.example/c']) assert.equal(await linkState(u, { transport: http.transport }), 'broken', u);
+});
+
+test('P4-Q9: two minutes is a hard cap per check; a link cut off by it is not checked, never broken', async () => {
+  const answer = (status, headers = {}) => Promise.resolve({ status, headers, destroy: () => {} });
+  // A host that never answers and ignores the signal: the cap must hold all the same.
+  const hang = (seen) => ({ url }) => {
+    seen.push(url.href);
+    if (url.hostname === 'ok.example') return answer(200);
+    if (url.hostname === 'hop.example' && url.pathname === '/1') return answer(302, { location: '/2' });
+    return new Promise(() => {});
+  };
+  const t0 = Date.now();
+  const seen = [];
+  assert.deepEqual(await checkLinks('https://ok.example/1 https://stuck.example/2 https://ok.example/3', { transport: hang(seen), deadlineMs: 50 }),
+    { met: true, value: 'Met · 1 of 3 checked' }, 'the answered link counts; the cut one and the one never started do not');
+  assert.deepEqual(seen, ['https://ok.example/1', 'https://stuck.example/2']);
+  assert.deepEqual(await checkLinks('https://ok.example/1 https://hop.example/1', { transport: hang([]), deadlineMs: 50 }),
+    { met: true, value: 'Met · 1 of 2 checked' }, 'cut off on a redirect hop, after another link answered: still not broken');
+  assert.deepEqual(await checkLinks('https://stuck.example/2', { transport: hang([]), deadlineMs: 50 }),
+    { met: false, notChecked: true, value: 'Not checked: Worca could not reach these links' });
+  assert.ok(Date.now() - t0 < 5_000, 'far below the 15 s hop timeout: the deadline cut each hop');
+  const ctrl = new AbortController();
+  const p = linkState('https://hop.example/1', { transport: hang([]), signal: ctrl.signal });
+  setTimeout(() => ctrl.abort(), 10);
+  assert.equal(await p, 'unreached', 'linkState: a link cut off by the deadline is unreached, on any hop');
+});
+
+test('the default transport is Ask\'s httpsTransport, and its guarded lookup refuses a private address before any socket', async () => {
+  assert.equal(linkDefaults.transport, httpsTransport, 'link-check opens links through Ask\'s transport');
+  assert.match(String(httpsTransport), /lookup = guardedLookup/, 'whose default lookup is the guarded one');
+  const calls = [];
+  const spy = async (o) => { calls.push(Object.keys(o).sort()); return { status: 200, headers: {}, destroy: () => {} }; };
+  const real = linkDefaults.transport;
+  linkDefaults.transport = spy;
+  try {
+    assert.equal(await linkState('https://localhost/x'), 'works');
+    assert.deepEqual(await checkLinks('https://localhost/y'), { met: true, value: 'Met' });
+  } finally { linkDefaults.transport = real; }
+  assert.deepEqual(calls, [['headers', 'signal', 'url'], ['headers', 'signal', 'url']], 'used by default, and never with a lookup of its own');
+  const asked = [];
+  const lookup = makeGuardedLookup((host, _o, cb) => { asked.push(host); cb(null, [{ address: '10.0.0.5', family: 4 }]); });
+  await assert.rejects(httpsTransport({ url: new URL('https://intranet.example/'), lookup, env: { HTTPS_PROXY: 'http://proxy.example:3128' }, headers: {} }),
+    (e) => e.code === 'EWORCA_BLOCKED', 'behind a proxy: refused before the tunnel is opened');
+  await assert.rejects(httpsTransport({ url: new URL('https://intranet.example/'), lookup, env: {}, headers: {} }),
+    (e) => e.code === 'EWORCA_BLOCKED', 'direct: refused at the lookup, before any connection');
+  assert.deepEqual(asked, ['intranet.example', 'intranet.example']);
 });
