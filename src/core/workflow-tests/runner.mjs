@@ -132,6 +132,17 @@ export function createTestRunner(deps) {
     return usd;
   }
 
+  /** The test's cap is reached (its tries and its checks, D92). */
+  const overCap = (run) => run.capUsd !== null && costOf(run.id) >= run.capUsd;
+  /** D91: a try's criteria, after its automatic checks; never fails the try (a check that did not run shows "Not checked"). */
+  async function checkCriteria(run, st, example, tryId) {
+    if (!deps.judgeCriteria || st.stopping) return;
+    try {
+      await deps.judgeCriteria(example, store.readTry(tryId), { testRunId: run.id, mock: !!store.readTry(tryId).mock,
+        stopped: () => !!st.stopping, overCap: () => overCap(run) });
+    } catch (e) { console.error(`[workflow-tests] could not check the criteria of try ${tryId}: ${msgOf(e)}`); }
+  }
+
   function requestStop(st, reason, detail = null) {
     if (st.stopping) return;
     st.stopping = reason;
@@ -297,6 +308,14 @@ export function createTestRunner(deps) {
       requestStop(st, 'error', msgOf(e));   // its running tries are stopped, never left to run unwatched
     } finally {
       await Promise.allSettled([...inflight]);
+    }
+    // D91: the criteria phase: the reused tries, and any still missing a criterion (a limit or a failed call last time).
+    if (!st.stopping && deps.judgeMissing) {
+      st.criteriaPhase = true;
+      notify(run);
+      try { await deps.judgeMissing(run, { stopped: () => !!st.stopping, overCap: () => overCap(run) }); }
+      catch (e) { console.error(`[workflow-tests] could not check the criteria of test ${run.id}: ${msgOf(e)}`); }
+      finally { st.criteriaPhase = false; }
     }
   }
 
@@ -508,6 +527,7 @@ export function createTestRunner(deps) {
       store.updateTry(t.id, { status: verdict.passed ? 'passed' : 'failed', verdict, costUsd: outcome.facts.costUsd, finishedAt: nowIso(),
         ...facts, ...(diskBytes != null ? { diskBytes } : {}) });
       rec.costStored = true;
+      await checkCriteria(run, st, example, t.id);   // phase stays 'checking' (board 35)
     } catch (e) {
       // Never leave a try 'running' behind: one that never started waits again, one that ran is stopped with its cost.
       if (rec.runKey) {
@@ -735,5 +755,8 @@ export function createTestRunner(deps) {
   /** U-T8 (F19): why a running test is stopping (st.stopping), from the stop until it has stopped; else null. */
   function stoppingOf(runId) { const st = live.get(Number(runId)); return st ? st.stopping : null; }
 
-  return { start, stop, continueRun, recover, idle, costOf, phaseOf, diskOf, beforeNowOf, stoppingOf };
+  /** D91: the test is in its criteria phase (the reused tries and any missing check are being checked). */
+  function criteriaPhaseOf(runId) { const st = live.get(Number(runId)); return !!(st && st.criteriaPhase); }
+
+  return { start, stop, continueRun, recover, idle, costOf, phaseOf, diskOf, beforeNowOf, stoppingOf, criteriaPhaseOf };
 }

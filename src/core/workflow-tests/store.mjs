@@ -420,11 +420,18 @@ export function madeAgainOf(runId) {
     .filter((r) => { const v = parse(r.verdict, null); return !!(v && v.worcaProblem); }).length;
 }
 
-/** What a run's own tries cost, stopped ones included (D27). Reused tries cost this run nothing. */
+/** What a run's own tries cost, stopped ones included (D27), plus its Part 4 model calls (D92). Reused tries cost this run nothing. */
 export function spentOfRun(runId) {
   getDb();
   const r = prepare('SELECT COALESCE(SUM(cost_usd), 0) AS s FROM wf_test_tries WHERE run_id = ?').get(Number(runId));
-  return Math.round(Number(r.s || 0) * 1e6) / 1e6;
+  const j = prepare('SELECT COALESCE(SUM(amount_usd), 0) AS s FROM wf_test_judge_ledger WHERE test_run_id = ?').get(Number(runId));
+  return Math.round((Number(r.s || 0) + Number(j.s || 0)) * 1e6) / 1e6;
+}
+
+/** P4-Q17: whether some of a run's Part 4 calls came back with a cost Worca could not learn ($0 'unknown' rows). */
+export function costUnknownOfRun(runId) {
+  getDb();
+  return !!prepare("SELECT 1 FROM wf_test_judge_ledger WHERE test_run_id = ? AND cost_kind = 'unknown' LIMIT 1").get(Number(runId));
 }
 
 /** D60: the newest measured checkout size of an example on this start, in bytes (null = never measured). */

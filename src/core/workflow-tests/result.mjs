@@ -4,10 +4,10 @@
 // script bench, on a COPY of that folder, one at a time).
 import { existsSync } from 'node:fs';
 import { sep } from 'node:path';
-import { mkdtemp, cp, rm, stat, lstat, readFile, readdir, realpath } from 'node:fs/promises';
+import { mkdtemp, cp, rm, stat, lstat, readFile, readdir, realpath, open } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, basename, extname } from 'node:path';
-import { findPipelineRowById, readPipelineStateById, listRunArtifacts, resolveIndexedArtifactForRow, runDirForRow } from '../artifacts.mjs';
+import { findPipelineRowById, readPipelineStateById, listRunArtifacts, resolveIndexedArtifactForRow, resolveIndexedArtifactFileForRow, runDirForRow } from '../artifacts.mjs';
 import { worcaHome } from '../projects.mjs';
 import { RESULTS_FILE, DIFF_PATCH_FILE } from '../results.mjs';
 import { WORK_ARTIFACT_KIND } from '../no-project-work.mjs';
@@ -324,4 +324,23 @@ export async function checkTry(example, outcome, { runScript = runScriptCheck, r
   }
   return judgeTry(example, outcome.facts, results,
     { name: outcome.name, source: outcome.source, words: typeof outcome.text === 'string' ? wordCount(outcome.text) : null });
+}
+
+/** A try's whole diff (`diff-patch.patch`), at most `maxBytes`, cut at its last whole line (`cut` says so). Null when it has none or it
+ *  cannot be read (a live run rewrote it meanwhile). Board 36's "Read all the changes" and Part 4's judge (D90) read it. */
+export async function readTryPatch(pipelineId, maxBytes) {
+  const row = pipelineId ? findPipelineRowById(pipelineId) : null;
+  const hit = row ? await resolveIndexedArtifactFileForRow(row, DIFF_PATCH_FILE) : null;
+  if (!hit) return null;
+  let fh = null;
+  try {
+    fh = await open(hit.file, 'r');
+    const size = (await fh.stat()).size;
+    const buf = Buffer.alloc(Math.min(size, maxBytes));
+    const { bytesRead } = buf.length ? await fh.read(buf, 0, buf.length, 0) : { bytesRead: 0 };
+    let bytes = buf.subarray(0, bytesRead);
+    const cut = size > maxBytes;
+    if (cut) { const nl = bytes.lastIndexOf(0x0a); if (nl >= 0) bytes = bytes.subarray(0, nl + 1); }   // never half a line or character
+    return { patch: bytes.toString('utf8'), cut };
+  } catch { return null; } finally { if (fh) await fh.close().catch(() => {}); }
 }

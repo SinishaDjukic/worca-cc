@@ -6,6 +6,7 @@ import { loadScriptRegistry } from '../script-registry.mjs';
 import * as store from './store.mjs';
 import * as service from './service.mjs';
 import { createTestRunner } from './runner.mjs';
+import { createCriteriaJudge } from './criteria-runner.mjs';
 import { readTryOutcome, checkTry } from './result.mjs';
 import { useFingerprint } from './uses.mjs';
 import { dirBytes, freeDiskBytes } from './project-copy.mjs';
@@ -43,8 +44,11 @@ const usdOf = (v) => (v === undefined || v === null || v === '' ? null : Number(
 export function registerWorkflowTestRoutes(app, { broadcast = () => {}, deps = {} } = {}) {
   const gate = requireFlag('workflowTests');
   const scriptName = (key) => { try { return (loadScriptRegistry()[key] || {}).displayName || key; } catch { return key; } };
+  const criteriaJudge = deps.criteriaJudge || createCriteriaJudge();
   const runner = createTestRunner({
     ...deps,
+    judgeCriteria: (example, t, o) => criteriaJudge.judgeTry(example, t, o),   // Part 4 (D91)
+    judgeMissing: (run, o) => criteriaJudge.judgeMissing(run, o),
     outcomeOf: (pipelineId, o) => readTryOutcome(pipelineId, o),
     judge: (example, outcome, o = {}) => checkTry(example, outcome, { scriptName, onCommand: o.onCommand, beforeOf: o.beforeOf }),
     // 3b (D75): the command on each project example's start point, before the tries (a test may pass its own).
@@ -198,5 +202,5 @@ export function registerWorkflowTestRoutes(app, { broadcast = () => {}, deps = {
   });
   route('GET', `${W}/runs/:run/tries/:try/changes`, async (req, res) =>
     res.json(await service.tryChanges(wid(req), num(req.params.run, 'test'), num(req.params.try, 'try'))));
-  return { runner };
+  return { runner, criteriaJudge };
 }

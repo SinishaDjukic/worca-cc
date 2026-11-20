@@ -2,7 +2,7 @@
 // The Tests pages' read models (plans/workflow-tests-part2-plan.md Task 9): the overview (boards 1, 19), a past run as an
 // example (board 3, D29), the plan of a test (board 4), its progress (board 20), the compare (board 5) and one example
 // side by side (board 6). Writes go through store.mjs and runner.mjs.
-import { readFile, open } from 'node:fs/promises';
+import { readFile } from 'node:fs/promises';
 import { join, basename } from 'node:path';
 import { getDb, prepare } from '../db.mjs';
 import { isSafeWorkflowId } from '../workflows.mjs';
@@ -10,7 +10,7 @@ import { isReservedWorkflowId } from '../graph/builtin-workflows.mjs';
 import { isVersionableRow, liveVersionNo, latestVersion, listRevisions } from '../workflow-revisions.mjs';
 import { loadAgentRegistry } from '../agent-registry.mjs';
 import { modelLabeler } from '../workflow-versions.mjs';
-import { findPipelineRowById, readStepQuestions, readClarifyRow, runDirForRow, resolveIndexedArtifactFileForRow,
+import { findPipelineRowById, readStepQuestions, readClarifyRow, runDirForRow,
   readStoreMeta } from '../artifacts.mjs';
 import { isNoProjectKey, testCopyDirFor } from '../store.mjs';
 import { listProjects } from '../projects.mjs';
@@ -29,9 +29,8 @@ import { ensureStartCommit, treeBytes, freeDiskBytes, removeTryCheckout, pinStar
 import { parseRemoteUrl, forgeOf as forgeOfRemote, FORGE_LABEL } from '../forge.mjs';
 import { pushRemoteOf } from './guard-calls.mjs';
 import { leftOutText, folderMissingText, folderProjectText, notRegisteredText, diskRefusalText, diskRefusalOnceText, PAST_RUN_REFUSALS } from '../../shared/workflow-tests/project-text.mjs';
-import { mainResult } from './result.mjs';
+import { mainResult, readTryPatch } from './result.mjs';
 import { readBefore, beforeSpecOf, beforeHash } from './before-run.mjs';
-import { DIFF_PATCH_FILE } from '../results.mjs';
 import { connectorNotes, userScopeServerNames, seenClaudeAiServers, wouldHaveSent, stepEngines, scriptSteps, readConnectorCalls } from './connectors.mjs';
 
 /** Why a past run cannot become an example (3a D62 removed Part 2's D20 "needs a project": every workflow can be tested). */
@@ -913,21 +912,7 @@ export async function tryChanges(workflowId, runId, tryId, { maxBytes = TRY_PATC
   const run = runOf(workflowId, runId);
   const t = store.triesOfRun(run.id).find((x) => x.id === Number(tryId));
   if (!t) throw err(`no try ${tryId} in this test`, 'NOT_FOUND');
-  const row = t.pipelineId ? findPipelineRowById(t.pipelineId) : null;
-  const hit = row ? await resolveIndexedArtifactFileForRow(row, DIFF_PATCH_FILE) : null;
-  if (!hit) return { patch: '', cut: false };
-  let fh = null;
-  try {
-    fh = await open(hit.file, 'r');
-    const size = (await fh.stat()).size;
-    const buf = Buffer.alloc(Math.min(size, maxBytes));
-    const { bytesRead } = buf.length ? await fh.read(buf, 0, buf.length, 0) : { bytesRead: 0 };
-    let bytes = buf.subarray(0, bytesRead);
-    const cut = size > maxBytes;
-    if (cut) { const nl = bytes.lastIndexOf(0x0a); if (nl >= 0) bytes = bytes.subarray(0, nl + 1); }   // never half a line or character
-    return { patch: bytes.toString('utf8'), cut };
-  } catch { return { patch: '', cut: false }; }   // a live run rewrote it meanwhile: nothing to show
-  finally { if (fh) await fh.close().catch(() => {}); }
+  return (await readTryPatch(t.pipelineId, maxBytes)) || { patch: '', cut: false };
 }
 
 /** "Read the whole result". */
