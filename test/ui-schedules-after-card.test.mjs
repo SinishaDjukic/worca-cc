@@ -158,8 +158,8 @@ test('Run page: the after button appears once the pipeline id is known, deep-lin
   await open();
   // A WS frame runs onState, then the frame hook repaints the open run page; drive both.
   const state = (msg) => { onState(r, msg); repaintRunDetail(r); };
-  const btn = () => window.document.querySelector('#run-detail .rd-bar .rd-after');
-  assert.ok(btn(), 'the button is in the run page bar (#run-detail-tpl)');
+  const btn = () => window.document.querySelector('#run-detail .rd-row1 > .rd-bar-end .rd-after');
+  assert.ok(btn(), 'the button is in the run page bar controls, which end the header title row (#run-detail-tpl)');
   state({ status: 'running' });
   assert.equal(btn().hidden, true, 'no pipeline id yet: nothing to wait for');
   state({ id: 'p1a2b3c4', status: 'running' });
@@ -202,7 +202,7 @@ test('Run after sits on the bar, not in ⋯: no rule hides it on an unshaped bar
   await tick(); await tick();
   onState(r, { id: 'p2a2b3c4', status: 'running' });
   repaintRunDetail(r);
-  const bar = window.document.querySelector('#run-detail .rd-bar');
+  const bar = window.document.querySelector('#run-detail .rd-row1 > .rd-bar-end');   // the bar controls, in the header title row
   assert.equal(bar.querySelector('.rd-after').hidden, false);
   bar.querySelector('.rd-bar-more').click();
   const labels = [...window.document.querySelectorAll('.wfv-menu .wfv-menu-item .wfv-menu-l')].map((n) => n.textContent);

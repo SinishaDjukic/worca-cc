@@ -250,29 +250,34 @@ test('History Clarify attribution: answered by <name>/you/nobody, and Away mode 
   ]);
 });
 
-test('History run page Away-mode answers: section lists stored answers with check marks, a top note counts the ones to check, absent when none', async () => {
+test('History run page Away-mode answers: no "Answered for you" section; a card note counts the ones to check and opens Q&A, absent when none', async () => {
+  const histFetch = (decisions, detail = detailOf({})) => (u) => {
+    if (u.includes('/api/night-decisions')) return ok({ decisions: u.includes(encodeURIComponent(DETAIL_ROW.id)) ? decisions : [] });
+    if (u.endsWith('/api/history/pr')) return ok({ ok: true });
+    if (u.endsWith('/diff')) return fail(404, { error: 'no diff' });
+    if (u.endsWith('/log')) return fail(404, { error: 'no log' });
+    if (u.endsWith('/api/history')) return ok({ pipelines: [DETAIL_ROW], ghAvailable: false });
+    if (u.endsWith(`/api/history/${KEY}/${DETAIL_ROW.id}`)) return ok(detail);
+    return null;
+  };
   await checkRows([
-    { name: 'History run page: "Answered for you" lists the stored answers', run: async () => {
+    { name: 'History run page: the answers live in the Q&A tab; the note\'s "See the answers" opens it', run: async () => {
       const decisions = [
         { questionId: 'clarify-1', kind: 'clarify', choice: 'pg', strategy: 'weights', flagged: false, rationale: 'q1: the agent recommended this at 80%' },
         { questionId: 'gate-1', kind: 'gate', choice: 'another', strategy: 'rule', flagged: true, rationale: '2 critical issues left, one more fix round' },
       ];
-      const ctx = await boot({ whoami: SOLO, fetchHandler: (u) => {
-        if (u.includes('/api/night-decisions')) return ok({ decisions: u.includes(encodeURIComponent(DETAIL_ROW.id)) ? decisions : [] });
-        if (u.endsWith('/api/history/pr')) return ok({ ok: true });
-        if (u.endsWith('/diff')) return fail(404, { error: 'no diff' });
-        if (u.endsWith('/log')) return fail(404, { error: 'no log' });
-        if (u.endsWith('/api/history')) return ok({ pipelines: [DETAIL_ROW], ghAvailable: false });
-        if (u.endsWith(`/api/history/${KEY}/${DETAIL_ROW.id}`)) return ok(detailOf({}));
-        return null;
-      } });
+      const Q = [{ id: 'q1', question: 'Which DB?', options: ['sqlite', 'pg'] }];
+      const A = [{ id: 'q1', question: 'Which DB?', choice: 'pg' }];
+      const detail = { ...detailOf({}), clarify: { questions: Q, answers: A, answeredBy: 'night-mode' } };
+      const ctx = await boot({ whoami: SOLO, fetchHandler: histFetch(decisions, detail) });
       go(ctx.window, `history/${KEY}/${DETAIL_ROW.id}`);
       await settle(ctx.window, 8);
-      const sec = ctx.doc.querySelector('#hist-detail .rd-night-sec');
-      assert.ok(sec && !sec.hidden, 'the section shows');
-      assert.deepEqual([...sec.querySelectorAll('.rd-na .rd-slabel')].map((e) => e.textContent.split(' · ')[0]), ['Clarifying questions', 'Review loop']);
-      const rows = [...sec.querySelectorAll('.rd-na-row')];
-      assert.deepEqual(rows.map((r) => [r.querySelector('.rd-na-a').textContent, !!r.querySelector('.rd-na-check')]), [['pg', false], ['One more fix round', true]]);
+      assert.equal(ctx.doc.querySelector('#hist-detail .rd-night-sec, #hist-detail .hd-night-sec'), null, 'no "Answered for you" section any more');
+      const note = ctx.doc.querySelector('#hist-detail .rd-sheet .rd-away-note');
+      assert.equal(note.hidden, false);
+      note.querySelector('button').click();
+      await settle(ctx.window, 4);
+      assert.equal(ctx.doc.querySelector('#hist-detail .hd-tab.active').dataset.sec, 'clarify', 'See the answers opens Q&A');
     } },
     { name: 'History run page: a note at the top of the card says how many answers to check', run: async () => {
       const decisions = [
@@ -285,19 +290,12 @@ test('History run page Away-mode answers: section lists stored answers with chec
       assert.equal(note.querySelector('button').textContent, 'See the answers');
       assert.equal((await detailNote([])).hidden, true);
     } },
-    { name: 'History run page: no Away mode answers, no section', run: async () => {
-      const ctx = await boot({ whoami: SOLO, fetchHandler: (u) => {
-        if (u.includes('/api/night-decisions')) return ok({ decisions: [] });
-        if (u.endsWith('/api/history/pr')) return ok({ ok: true });
-        if (u.endsWith('/diff')) return fail(404, { error: 'no diff' });
-        if (u.endsWith('/log')) return fail(404, { error: 'no log' });
-        if (u.endsWith('/api/history')) return ok({ pipelines: [DETAIL_ROW], ghAvailable: false });
-        if (u.endsWith(`/api/history/${KEY}/${DETAIL_ROW.id}`)) return ok(detailOf({}));
-        return null;
-      } });
+    { name: 'History run page: no Away mode answers, no note', run: async () => {
+      const ctx = await boot({ whoami: SOLO, fetchHandler: histFetch([]) });
       go(ctx.window, `history/${KEY}/${DETAIL_ROW.id}`);
       await settle(ctx.window, 8);
-      assert.equal(ctx.doc.querySelector('#hist-detail .rd-night-sec').hidden, true);
+      assert.equal(ctx.doc.querySelector('#hist-detail .rd-sheet .rd-away-note').hidden, true);
+      assert.equal(ctx.doc.querySelector('#hist-detail .rd-night-sec'), null);
     } },
   ]);
 });

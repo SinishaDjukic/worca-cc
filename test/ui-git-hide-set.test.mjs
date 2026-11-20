@@ -158,8 +158,10 @@ test('hide set: JS-built surfaces and requests', async () => {
         /import \{[^}]*\bGIT_MISSING_TEXT\b[^}]*\} from '\.\/git-gate\.mjs';/,
         /if \(!gitOn\(\)\) for \(const k of \['sourceBranch', 'sourceBranchByKey', 'featureBranch', 'featureBranchSuggested', 'featureBranchFallback', 'sameAsSource', 'sourceFromPrevious', 'syncBeforeStart', 'syncOnDiverged'\]\) delete body\[k\];/,
         /gitOn: \(\) => gitOn\(\),/,
-        /const row = rdSheetRow\(\{ label: cell\.tab\.label, value, tab: key, icon: icon \? icon\.cloneNode\(true\) : null \}\);\n\s+if \(cell\.tab\.needsGit\) row\.dataset\.needsGit = '';/,
-        /open\.textContent = 'Open the diff';\n\s+open\.dataset\.needsGit = '';/, /row\.className = 'hd-ov-wt';\n\s+row\.dataset\.needsGit = '';/]) assert.match(appSrc, re);
+        /row\.className = 'hd-ov-wt';\n\s+row\.dataset\.needsGit = '';/]) assert.match(appSrc, re);
+      // One level: the card's tab-opening rows and the Overview "Files changed" box (each git-gated) are gone.
+      assert.doesNotMatch(appSrc, /rdSheetRow\(\{ label: cell\.tab\.label/);
+      assert.doesNotMatch(appSrc, /'Open the diff'/);
       for (const v of ['tab', 'want']) {   // setHdMode / setRdMode (tab) and the two wantTab hand-offs (want): deep links …/details/diff|actions
         const n = (appSrc.match(new RegExp(`levelAtLeast\\(tabs\\.cells\\.get\\(${v}\\)\\.tab\\.level \\|\\| 'simple'\\) && \\(gitOn\\(\\) \\|\\| !tabs\\.cells\\.get\\(${v}\\)\\.tab\\.needsGit\\)\\) tabs\\.activate\\(${v}\\);`, 'g')) || []).length;
         assert.equal(n, 2, `${v} activations gated: ${n}`);

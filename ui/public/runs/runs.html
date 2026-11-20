@@ -58,17 +58,12 @@
 
           <!-- clone target for the live run in the pane (#running/<runId>) -->
           <template id="run-detail-tpl">
-            <!-- Two modes on one screen (docs: Run page glance). `data-mode="glance"` shows the
-                 status line, the trail and the sheet; `data-mode="details"` shows the tabs.
-                 The route picks the mode: #running/<id> vs #running/<id>/details[/<tab>]. -->
-            <div class="rd" data-mode="glance">
+            <!-- One level: the header, then the tabs, the run card being the Overview tab.
+                 #running/<id> opens Overview; #running/<id>/details[/<tab>] opens that tab. -->
+            <div class="rd" data-mode="details">
               <div class="rd-bar">
                 <button type="button" class="rd-back btn btn-sm btn-quiet btn-icon" aria-label="Back to Runs" title="Back to Runs">
                   <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M14.5 6l-6 6 6 6"></path></svg>
-                </button>
-                <button type="button" class="rd-to-run btn" hidden aria-label="Back to the run">
-                  <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><path d="M15 6l-6 6 6 6" stroke-linecap="round" stroke-linejoin="round"></path></svg>
-                  <span class="rd-to-run-label">Run</span>
                 </button>
                 <!-- Run 3 (D6): Runs › the group › Run 2, beside the list only (the slide layout keeps Back). -->
                 <nav class="rd-crumbs" aria-label="Breadcrumb" hidden></nav>
@@ -143,18 +138,13 @@
                   </header>
                 </div>
                 <div class="rd-sheet">
-                  <!-- The card's head: the status line top left; top right the Live view switch while the run is live,
-                       the pull request button once it ended. -->
+                  <!-- The run card is the Overview tab's body (buildRdOverview / buildHdOverview move this glance into it).
+                       Wide panes (run-card.css): the run's details left, the Overview's checks, files and task right. -->
+                  <div class="rd-sheet-main">
                   <div class="rd-sheet-head">
                     <!-- The shared status block (run-status-card.mjs, slice 4 D19): dot or symbol, status line, the run's
                          bar. It keeps the rd-now-top class: the click-to-question handler and the guide tour find it. -->
                     <div class="rd-now-top run-status"></div>
-                    <!-- Live view: the running step(s), centred in a fogged graph beside the card
-                         (below it when the page is narrow). Only while the run is not over. -->
-                    <div class="switch-row rd-live-row" hidden>
-                      <span class="txt">Live view</span>
-                      <div class="switch rd-live-switch" role="switch" tabindex="0" aria-checked="false" aria-label="Live view"></div>
-                    </div>
                     <!-- Slice 3: the head buttons (run-head.mjs renderHeadButtons) around the PR control (paintPrCta keeps its one
                          node), at every level; the hidden feed is the PR status read (paintRdPrStatus) that repaints them. -->
                     <div class="rd-head-acts" hidden><div class="rd-pr-slot" data-needs-git hidden></div></div>
@@ -172,32 +162,21 @@
                     <div class="rd-kv-row" data-fact="group" hidden><dt class="rd-kv-k">Group</dt><dd class="rd-kv-v rd-group-line"></dd></div>
                   </dl>
                   <div class="rd-banners"></div>
-                  <!-- Time · Cost · Changes, in every state (the time ticks while live). -->
-                  <div class="rd-facts"></div>
-                  <!-- Away mode's answers on this run, at the top where they are seen: how many, how many to
-                       check, and a jump to the first one to check (paintAwayAnswers). -->
+                  <!-- Away mode's answers on this run: how many, how many to check, and a hop to the Q&A tab (paintAwayNote). -->
                   <div class="rd-away-note" hidden><span class="rd-away-note-text"></span><button type="button" class="btn btn-sm rd-away-jump">See the answers</button></div>
-                  <div class="rd-nowlist"></div>
-                  <div class="rd-result" hidden></div>
-                </div>
-                <!-- The Live view panel. The clip lets the narrow layout open its height while the
-                     graph host keeps its final size (no fit chasing a growing box). It is `inert`:
-                     the panel is ONE control, so the graph's cards are neither tab stops nor click
-                     targets (a click falls through to the panel). -->
-                <div class="rd-live" role="button" tabindex="0" aria-label="Open the workflow" hidden>
-                  <div class="rd-live-clip" inert>
-                    <div class="run-flow-wrap"><div class="run-flow"></div></div>
+                  </div>
+                  <div class="rd-sheet-nav">
+                    <!-- Time · Cost · Changes, in every state (the time ticks while live): they lead the card's summary column. -->
+                    <div class="rd-facts"></div>
+                    <!-- While the run goes: its workflow framed on the running step(s), fogged at the edges (app.js
+                         paintRdLive). One control, so the graph inside is inert; a click opens the Workflow tab. -->
+                    <div class="rd-live" role="button" tabindex="0" aria-label="Open the workflow" hidden>
+                      <div class="rd-live-clip" inert><div class="run-flow-wrap"><div class="run-flow"></div></div></div>
+                    </div>
+                    <div class="rd-nowlist"></div>
+                    <div class="rd-result" hidden></div>
                   </div>
                 </div>
-                <!-- A waiting question: below the run's panel (which never changes), led by
-                     a heading that says what is asked. -->
-                <div class="rd-questions" hidden>
-                  <h3 class="rd-ask-head"></h3>
-                  <div class="qpanel hidden"></div>
-                </div>
-                <!-- What Away mode answered on this run, under the run card: one group per ask, one row
-                     per answer; a row opens its reason, Check marks the ones worca was not sure of. -->
-                <section class="rd-night-sec" hidden><h3 class="rd-night-h">Answered for you<span class="rd-night-count"></span></h3><div class="rd-night-asks"></div></section>
               </section>
 
               <section class="rd-details" hidden aria-label="Run details">
@@ -219,6 +198,11 @@
                     <span class="rd-spacer"></span>
                   </div>
                 </header>
+                <!-- A waiting question: above the tabs, so it shows on every tab, led by a heading that says what is asked. -->
+                <div class="rd-questions" hidden>
+                  <h3 class="rd-ask-head"></h3>
+                  <div class="qpanel hidden"></div>
+                </div>
                 <div class="rd-body">
                   <!-- The tab engine does `screen.querySelector('.rd-tabs').innerHTML = ''`;
                        both hosts MUST exist or the bar silently paints nothing. -->
@@ -231,16 +215,12 @@
 
           <!-- clone target for a saved run in the pane (#history/<projectKey>/<id>) -->
           <template id="hist-detail-tpl">
-            <div class="hd" data-mode="glance">
-              <!-- Two modes on one screen, as on the Running page: the glance (#history/<key>/<id>)
-                   and Details (#history/<key>/<id>/details[/<tab>]). The bar is shared. -->
+            <div class="hd" data-mode="details">
+              <!-- One level, as on the Running page: #history/<key>/<id> opens Overview (the run card),
+                   #history/<key>/<id>/details[/<tab>] opens that tab. -->
               <div class="hd-bar">
                 <button type="button" class="hd-back btn btn-sm btn-quiet btn-icon" aria-label="Back to Runs" title="Back to Runs">
                   <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M14.5 6l-6 6 6 6"></path></svg>
-                </button>
-                <button type="button" class="hd-to-run btn" hidden aria-label="Back to the run">
-                  <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><path d="M15 6l-6 6 6 6" stroke-linecap="round" stroke-linejoin="round"></path></svg>
-                  Run
                 </button>
                 <nav class="rd-crumbs" aria-label="Breadcrumb" hidden></nav>
                 <span class="rd-bar-mid"><span class="rd-bar-title"></span></span>
@@ -312,11 +292,14 @@
                   </header>
                 </div>
                 <div class="rd-sheet">
+                  <div class="rd-sheet-main">
                   <div class="rd-sheet-head">
                     <div class="rd-now-top run-status"></div>
                     <!-- Slice 3: the head buttons (run-head.mjs renderHeadButtons) around the PR control (paintPrCta keeps its one
                          node), at every level; the hidden feed is the PR status read (paintRdPrStatus) that repaints them. -->
                     <div class="rd-head-acts" hidden><div class="rd-pr-slot" data-needs-git hidden></div></div>
+                    <!-- Publish branch (#618): push a finished run's branch without a PR, beside the PR buttons. Painted by paintHdPublish. -->
+                    <button type="button" class="hd-publish btn" hidden data-min-level="advanced" data-needs-git>Publish branch</button>
                     <span class="rd-pr-feed" hidden></span>
                   </div>
                   <!-- s2: where the work is (run-head.mjs renderRoute): the run's places in order, at every level. -->
@@ -332,15 +315,16 @@
                   </dl>
                   <div class="hd-limit-notice rd-ov-state" hidden><span class="rd-ov-copy"></span></div>
                   <div class="hd-banners"></div>
-                  <div class="rd-facts"></div>
-                  <!-- Away mode's answers on this run, at the top where they are seen: how many, how many to
-                       check, and a jump to the first one to check (paintAwayAnswers). -->
+                  <!-- Away mode's answers on this run: how many, how many to check, and a hop to the Q&A tab (paintAwayNote). -->
                   <div class="rd-away-note" hidden><span class="rd-away-note-text"></span><button type="button" class="btn btn-sm rd-away-jump">See the answers</button></div>
-                  <div class="rd-nowlist"></div>
-                  <div class="rd-result hd-result"></div>
+                  </div>
+                  <div class="rd-sheet-nav">
+                    <!-- Time · Cost · Changes, in every state (the time ticks while live): they lead the card's summary column. -->
+                    <div class="rd-facts"></div>
+                    <div class="rd-nowlist"></div>
+                    <div class="rd-result hd-result"></div>
+                  </div>
                 </div>
-                <!-- What Away mode answered on this run (GET /api/night-decisions), as on the run page. -->
-                <section class="rd-night-sec hd-night-sec" hidden><h3 class="rd-night-h">Answered for you<span class="rd-night-count"></span></h3><div class="rd-night-asks"></div></section>
               </section>
               <section class="rd-details hd-details" hidden aria-label="Run details">
               <header class="hd-header">
@@ -349,8 +333,6 @@
                   <span class="auto-badge" hidden></span>
                   <span class="hist-merge" hidden data-min-level="expert" data-needs-git></span>
                   <button type="button" class="btn btn-primary hd-pr" hidden data-min-level="advanced" data-needs-git>Create PR</button>
-                  <!-- Publish branch (#618): push a finished run's branch without a PR. Painted by paintHdPublish. -->
-                  <button type="button" class="hd-publish btn" hidden data-min-level="advanced" data-needs-git>Publish branch</button>
                   <span class="act-pill-slot"></span>
                   <a class="btn hd-pr-link" hidden data-min-level="advanced" data-needs-git target="_blank" rel="noopener"></a>
                   <button type="button" class="btn btn-primary hd-push" hidden data-min-level="advanced" data-needs-git></button>
