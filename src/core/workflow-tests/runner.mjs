@@ -22,6 +22,8 @@ export const MAX_PARALLEL = 3;   // D36. Library script checks stay one at a tim
 export const COST_POLL_MS = 2000;
 /** D37, G19: the refusal of a second start, and the hint the UI shows on its disabled buttons. */
 export const BUSY_TEXT = 'A test of this workflow is running. Wait for it, or stop it first.';
+/** Part 4 (review): the busy text while "Check them on these tries" runs; no test of the workflow is running then. */
+export const CHECKING_TEXT = 'Worca is checking your criteria on these tries. A test can start when it is done.';
 /** C18: what changed since a test started (a refused "Finish the rest", or a test stopped as `changed`). */
 export { changedText, editedText };
 /** A stored detail (no full stop): the UI says "Stopped: Worca could not save how this test ended." */
@@ -137,8 +139,13 @@ export function createTestRunner(deps) {
   /** P4-Q15 (I15): "Check them on these tries" on an older test, in the background. One per workflow and never beside a test of it,
    *  so no two drives judge (and pay for) the same reused try; its checks stop at the test's own cap (D92). */
   const checkingCriteria = new Map();   // workflowId → test run id
+  /** BUSY while a test of the workflow starts or runs, or a check of its criteria runs (each with its own text). */
+  const busyCheck = (workflowId) => {
+    if (checkingCriteria.has(workflowId)) throw err(CHECKING_TEXT, 'BUSY');
+    if (starting.has(workflowId) || store.runningTestRun(workflowId)) throw err(BUSY_TEXT, 'BUSY');
+  };
   function checkCriteriaLater(run) {
-    if (starting.has(run.workflowId) || store.runningTestRun(run.workflowId) || checkingCriteria.has(run.workflowId)) throw err(BUSY_TEXT, 'BUSY');
+    busyCheck(run.workflowId);
     if (!deps.judgeMissing) throw err('this Worca cannot check criteria', 'BAD_REQUEST');
     checkingCriteria.set(run.workflowId, run.id);
     return Promise.resolve()
@@ -147,6 +154,7 @@ export function createTestRunner(deps) {
       .finally(() => { checkingCriteria.delete(run.workflowId); notify(run); });
   }
   const criteriaCheckOf = (runId) => [...checkingCriteria.values()].includes(Number(runId));
+  const criteriaCheckingOf = (workflowId) => checkingCriteria.has(workflowId);
   /** D91: a try's criteria, after its automatic checks; never fails the try (a check that did not run shows "Not checked"). */
   async function checkCriteria(run, st, example, tryId) {
     if (!deps.judgeCriteria || st.stopping) return;
@@ -183,7 +191,7 @@ export function createTestRunner(deps) {
 
   async function start({ workflowId, kind = 'compare', a = null, b, exampleIds = [], tries, reuseA = true, reuseB = false,
     quickCheck = false, capUsd = null, connectors = 'pretend', by = null }) {
-    if (starting.has(workflowId) || store.runningTestRun(workflowId) || checkingCriteria.has(workflowId)) throw err(BUSY_TEXT, 'BUSY');
+    busyCheck(workflowId);
     starting.add(workflowId);
     try {
       if (kind !== 'compare' && kind !== 'once') throw err('kind must be "compare" or "once"', 'BAD_REQUEST');
@@ -703,7 +711,7 @@ export function createTestRunner(deps) {
     const run = store.readTestRun(runId);
     if (!run) throw err(`no test ${runId}`, 'NOT_FOUND');
     if (run.status !== 'stopped' || live.has(run.id)) throw err('only a stopped test can be finished', 'BAD_REQUEST');
-    if (store.runningTestRun(run.workflowId) || starting.has(run.workflowId) || checkingCriteria.has(run.workflowId)) throw err(BUSY_TEXT, 'BUSY');
+    busyCheck(run.workflowId);
     starting.add(run.workflowId);   // D37: a second "Finish the rest" (or a start) while this one awaits fingerprints
     try {
       const left = leftTries(run);
@@ -772,5 +780,5 @@ export function createTestRunner(deps) {
   /** D91: the test is in its criteria phase (the reused tries and any missing check are being checked). */
   function criteriaPhaseOf(runId) { const st = live.get(Number(runId)); return !!(st && st.criteriaPhase); }
 
-  return { start, stop, continueRun, recover, idle, costOf, phaseOf, diskOf, beforeNowOf, stoppingOf, criteriaPhaseOf, checkCriteriaLater, criteriaCheckOf };
+  return { start, stop, continueRun, recover, idle, costOf, phaseOf, diskOf, beforeNowOf, stoppingOf, criteriaPhaseOf, checkCriteriaLater, criteriaCheckOf, criteriaCheckingOf };
 }

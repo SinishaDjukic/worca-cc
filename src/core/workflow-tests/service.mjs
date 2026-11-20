@@ -28,7 +28,7 @@ import { ensureStartCommit, treeBytes, freeDiskBytes, removeTryCheckout, pinStar
   commitDate, copySubject, remoteUrl } from './project-copy.mjs';
 import { parseRemoteUrl, forgeOf as forgeOfRemote, FORGE_LABEL } from '../forge.mjs';
 import { pushRemoteOf } from './guard-calls.mjs';
-import { withCriteriaFor, compareNotes } from './criteria-read.mjs';
+import { withCriteriaFor, compareNotes, notCheckedOf, needsCriteriaJudging } from './criteria-read.mjs';
 import { withJudgeModel } from './judge-models.mjs';
 import { leftOutText, folderMissingText, folderProjectText, notRegisteredText, diskRefusalText, diskRefusalOnceText, PAST_RUN_REFUSALS } from '../../shared/workflow-tests/project-text.mjs';
 import { mainResult, readTryPatch } from './result.mjs';
@@ -481,6 +481,13 @@ function cellOf(ex, use, fpNow) {
 }
 
 const firstExampleName = (run) => { const ex = store.readExample(run.workflowId, run.exampleIds[0]); return ex ? ex.name : ''; };
+/** The overview's latest test; `notChecked` = how many criteria were not checked on every finished try (the list says so). */
+function lastOf(last, ctx) {
+  const input = modelInput(last, ctx);
+  return { runId: last.id, title: latestTitle(last, ctx), finishedAt: last.finishedAt, examples: last.exampleIds.length,
+    tries: last.tries, costUsd: store.spentOfRun(last.id), counts: compareModel(input).counts, status: last.status,
+    stopReason: last.stopReason, notChecked: notCheckedOf(input).reduce((n, e) => n + e.criteria.length, 0) };
+}
 function modelInput(run, ctx) {
   const examples = run.exampleIds.map((id) => store.readExample(run.workflowId, id)).filter(Boolean).map(({ id, name }) => ({ id, name }));
   return { examples, a: run.a != null ? { label: useLabel(run.a, ctx) } : null, b: { label: useLabel(run.b, ctx) }, tries: withCriteriaFor(run.workflowId, store.triesOfRun(run.id)) };
@@ -538,9 +545,7 @@ export async function testsOverview(workflowId, { registry = loadAgentRegistry()
     running: running ? { runId: running.id, title: testTitle(running, ctx, { mode: 'testing', exampleName: firstExampleName(running) }),
       done: own.filter((t) => FIN.has(t.status)).length, total: own.length,
       exampleIds: running.exampleIds } : null,   // U-T9 (F17): the editor asks before a save that would stop it
-    latest: last ? { runId: last.id, title: latestTitle(last, ctx), finishedAt: last.finishedAt, examples: last.exampleIds.length,
-      tries: last.tries, costUsd: store.spentOfRun(last.id), counts: compareModel(modelInput(last, ctx)).counts, status: last.status,
-      stopReason: last.stopReason } : null,
+    latest: last ? lastOf(last, ctx) : null,
     pastRuns: await recentRuns(workflowId, { projects }),
   };
 }
@@ -643,12 +648,14 @@ export async function testPlan(workflowId, { a = null, b = 'draft', exampleIds =
     let fp = null;
     try { fp = await fingerprintOf(workflowId, use); } catch { fp = null; }
     let reusable = 0;
+    let judgeMissing = 0;
     let at = null;
     if (fp) {
       for (const ex of readyEx) {
         const kept = store.reusableTries({ workflowId, exampleId: ex.id, use, fp, exampleFp: ex.fingerprint, mock, connectors, limit: tries });
         reusable += kept.length;
         for (const t of kept) if (t.finishedAt && (!at || t.finishedAt > at)) at = t.finishedAt;
+        judgeMissing += kept.filter((t) => needsCriteriaJudging(ex, t)).length;   // reused tries the criteria phase still checks (priced by the estimate)
       }
     }
     const perTryUsd = perTryCost(workflowId, use);
@@ -656,7 +663,7 @@ export async function testPlan(workflowId, { a = null, b = 'draft', exampleIds =
     // U-T4: a draft identical to v{n} is not "your changes": it is named as the version picker names it.
     const same = sameAs !== null;
     return { use, sameAs, label: same ? `Your draft (same as v${sameAs})` : useLabel(use, ctx, 'select'),
-      short: same ? `your draft (same as v${sameAs})` : useLabel(use, ctx), want: readyEx.length * tries, reusable,
+      short: same ? `your draft (same as v${sameAs})` : useLabel(use, ctx), want: readyEx.length * tries, reusable, judgeMissing,
       reusableAt: at, perTryUsd, savesUsd: perTryUsd === null ? null : reusable * perTryUsd };
   };
   // Mock browser check, finding 4: a mock test's time comes from the mock tries' own times (U-T8, as progressOf's time left).

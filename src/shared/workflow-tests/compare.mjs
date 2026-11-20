@@ -275,9 +275,13 @@ export function estimateOf(plan, { reuseA = true, reuseB = false } = {}) {
   const ca = cost(plan.a, toRun.a);
   const cb = cost(plan.b, toRun.b);
   // Part 4 (board 4): checking the criteria of the tries to run, and the pair question per example (P4-Q8); null = no price known yet.
+  // Review: the criteria phase also checks the reused tries that still miss a criterion (`judgeMissing` per side, from the plan), so
+  // a test with every try reused still has a price (or none known), never $0 while paid checks will be made.
   const crit = plan.criteria || null;
-  const criteriaUsd = !crit ? 0 : crit.perTryUsd === null || crit.perTryUsd === undefined ? null
-    : total * crit.perTryUsd + (plan.a && toRun.b ? Number(crit.pairsUsd || 0) : 0);
+  const reusedToCheck = (reuseA && plan.a ? Number(plan.a.judgeMissing || 0) : 0) + (reuseB && plan.b ? Number(plan.b.judgeMissing || 0) : 0);
+  const checked = total + reusedToCheck;
+  const pairs = crit && plan.a && toRun.b ? Number(crit.pairsUsd || 0) : 0;
+  const criteriaUsd = !crit || (!checked && !pairs) ? 0 : crit.perTryUsd === null || crit.perTryUsd === undefined ? null : checked * crit.perTryUsd + pairs;
   // M6: a checking cost that is not known makes the total not known, as the row says (P4-C6); 0 when nothing is checked.
   const usd = ca === null || cb === null || criteriaUsd === null ? null : ca + cb + criteriaUsd;
   const minutes = typeof plan.perTryMs === 'number' && Number.isFinite(plan.perTryMs) && total

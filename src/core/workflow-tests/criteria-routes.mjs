@@ -6,6 +6,7 @@ import * as store from './store.mjs';
 import * as cs from './criteria-store.mjs';
 import { trustFor, byCriterionOf } from './criteria-read.mjs';
 import { judgeModelsView } from './judge-models.mjs';
+import { budgetStatus as realBudgetStatus } from '../cost-budget.mjs';
 
 const STATUS = Object.freeze({ BAD_REQUEST: 400, NOT_FOUND: 404, BUSY: 409, NOT_READY: 422 });
 const W = '/api/workflows/:id/tests';
@@ -71,8 +72,13 @@ export function registerCriteriaRoutes(app, { runner = null, criteriaJudge = nul
   // The runner holds it (I15): BUSY beside a test of the workflow or another check, and its checks stop at the test's own cap.
   route('POST', `${W}/runs/:run/criteria/check`, async (req, res) => {
     const run = runOf(req);
+    if (!runner) throw store.testError('this Worca cannot check criteria', 'BAD_REQUEST');
     if (run.capUsd !== null && store.spentOfRun(run.id) >= run.capUsd) {
       throw store.testError('This test reached its cost limit, so Worca checks nothing more on it. Test again to check your criteria.', 'BAD_REQUEST');
+    }
+    // The total spending limit: refused up front, as the chat's refusal words it, so no 'limit' judgement is booked for nothing.
+    if ((deps.budgetStatus || realBudgetStatus)().blocked) {
+      throw store.testError('Total cost limit reached — nothing was sent to the model. Raise the limit in worca Settings.', 'NOT_READY');
     }
     void runner.checkCriteriaLater(run);   // throws BUSY synchronously; never rejects afterwards (it logs)
     res.status(202).json({ checking: true });

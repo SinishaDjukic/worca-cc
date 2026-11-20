@@ -6,7 +6,8 @@ import { EventEmitter } from 'node:events';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { _resetForTests, prepare } from '../src/core/db.mjs';
+import { _resetForTests, prepare, getDb } from '../src/core/db.mjs';
+import { judgeCallUsd } from '../src/core/workflow-tests/criteria-read.mjs';
 import * as store from '../src/core/workflow-tests/store.mjs';
 import * as cs from '../src/core/workflow-tests/criteria-store.mjs';
 import { createTestRunner } from '../src/core/workflow-tests/runner.mjs';
@@ -257,4 +258,38 @@ test('review (b): board 20\'s "So far" counts the combined status, as Compare do
   assert.equal(store.triesOfRun(run.id)[0].status, 'passed', 'the checks alone pass it');
   const row = progressOf(WF, run.id).rows[0];
   assert.deepEqual([row.dots, row.summary], [['failed'], 'Done · 0 of 1 passed']);
+});
+
+test('judgeCallUsd: a $0 unknown-cost row is never a price; if any recent row is unknown the price is not known (M6)', () => {
+  getDb();
+  const row = (amountUsd, costKind) => recordTestJudgeCost({ workflowId: WF, purpose: 'try', model: 'm-priced', amountUsd, costKind });
+  row(0.1, 'billed'); row(0.3, 'billed');
+  assert.equal(Math.round(judgeCallUsd('m-priced') * 1e6) / 1e6, 0.2);
+  row(0, 'unknown'); row(0, 'unknown'); row(0, 'unknown');
+  assert.equal(judgeCallUsd('m-priced'), null, 'the median of [0.1, 0.3, 0, 0, 0] would be $0; it is not known instead');
+  recordTestJudgeCost({ workflowId: WF, purpose: 'try', model: 'm-only-unknown', amountUsd: 0, costKind: 'unknown' });
+  assert.equal(judgeCallUsd('m-only-unknown'), null);
+});
+
+test('the check has its own busy text; start, continueRun and a second press all say it (and the workflow reports checking)', async () => {
+  let release; const gate = new Promise((r) => { release = r; });
+  let holding = false;
+  const h = harness();
+  const real = h.deps.judgeMissing;
+  h.deps.judgeMissing = (run, o) => (holding ? gate : real(run, o));
+  const ex = example([{ text: 'Names a success metric' }]);
+  const runner = createTestRunner(h.deps);
+  const first = await runner.start({ workflowId: WF, kind: 'once', b: 'draft', exampleIds: [ex.id], tries: 1 });
+  await waitDone(runner, first.id);
+  holding = true;
+  const job = runner.checkCriteriaLater(store.readTestRun(first.id));
+  const TEXT_CHECKING = 'Worca is checking your criteria on these tries. A test can start when it is done.';
+  assert.equal(runner.criteriaCheckingOf(WF), true);
+  assert.equal(runner.criteriaCheckingOf('wf_other'), false);
+  await assert.rejects(runner.start({ workflowId: WF, kind: 'once', b: 'draft', exampleIds: [ex.id], tries: 1 }), { code: 'BUSY', message: TEXT_CHECKING });
+  assert.throws(() => runner.checkCriteriaLater(store.readTestRun(first.id)), { code: 'BUSY', message: TEXT_CHECKING });
+  store.updateTestRun(first.id, { status: 'stopped' });
+  await assert.rejects(runner.continueRun(first.id), { code: 'BUSY', message: TEXT_CHECKING });
+  release(); await job;
+  assert.equal(runner.criteriaCheckingOf(WF), false);
 });

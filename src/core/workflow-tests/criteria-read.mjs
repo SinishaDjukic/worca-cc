@@ -4,6 +4,10 @@ import { trustOf } from '../../shared/workflow-tests/criteria.mjs';
 import * as cs from './criteria-store.mjs';
 import * as store from './store.mjs';
 import { compareModel } from '../../shared/workflow-tests/compare.mjs';
+import { byCriterionModel, checkingCounts } from '../../shared/workflow-tests/criteria-report.mjs';
+import { prepare } from '../db.mjs';
+import { ratesFor } from '../helper-call/cost.mjs';
+import { estimateCost } from '../config.mjs';
 import { criterionResult, withCriteria, unreliableOnly, notCheckedEverywhere, finishedTry } from '../../shared/workflow-tests/criteria-verdicts.mjs';
 
 /** D95. `memo` (a Map) keeps one read per key and model inside one page's read. */
@@ -36,18 +40,28 @@ export function withCriteriaFor(workflowId, tries, { withAnswers = false, by = n
   });
 }
 
+/**
+ * P4-M5: the criteria not checked on every finished try, with why. 'new': no try of the run has any judgement of the criterion's
+ * current words (it was added or changed after the test); 'unchecked': otherwise (the limit, the cap or a failed call left it).
+ * An example with both gets one entry for each reason.
+ */
+export function reasonOfCriterion(tryIds) {
+  const asked = new Set(cs.tryJudgements(tryIds).map((j) => j.fp));
+  return (label) => (asked.has(cs.criterionFp(label)) ? 'unchecked' : 'new');
+}
+export function notCheckedOf(input) {
+  const reasonOf = reasonOfCriterion(input.tries.map((t) => t.id));
+  return notCheckedEverywhere(input.tries, input.examples).flatMap((n) => ['new', 'unchecked']
+    .map((reason) => ({ ...n, reason, criteria: n.criteria.filter((l) => reasonOf(l) === reason) })).filter((e) => e.criteria.length));
+}
+
 /** D98, P4-M5: Compare's notes. `input` = compareModel's input whose tries came through withCriteriaFor. */
 export function compareNotes(input) {
-  const notChecked = notCheckedEverywhere(input.tries, input.examples);   // I6
+  const notChecked = notCheckedOf(input);   // I6
   if (!input.a) return { unreliableOnly: [], notChecked };
   const shadow = compareModel({ ...input, tries: input.tries.map((t) => (t.shadowStatus ? { ...t, status: t.shadowStatus } : t)) });
   return { unreliableOnly: unreliableOnly(compareModel(input), shadow), notChecked };
 }
-
-import { byCriterionModel, checkingCounts } from '../../shared/workflow-tests/criteria-report.mjs';
-import { prepare } from '../db.mjs';
-import { ratesFor } from '../helper-call/cost.mjs';
-import { estimateCost } from '../config.mjs';
 
 /** The trust of each criterion of an example (its current model); exact checks made from a criterion count as 'exact'. */
 export function trustOfExample(ex, memo = new Map()) {
@@ -62,13 +76,40 @@ export function checkingOf(workflowId, exampleIds = null) {
   const exs = store.listExamples(workflowId).filter((e) => !exampleIds || exampleIds.includes(e.id));
   return checkingCounts(exs.flatMap((e) => [...Object.values(trustOfExample(e, memo)), ...(e.checks || []).filter((k) => k.said).map(() => ({ state: 'exact' }))]));
 }
-/** Board 12. `run` = the test (store.readTestRun shape). */
+/** Board 12. `run` = the test (store.readTestRun shape). A row not checked everywhere says why (`reason`, as Compare's notes do). */
 export function byCriterionOf(workflowId, run) {
   const memo = new Map();
   const examples = run.exampleIds.map((id) => store.readExample(workflowId, id)).filter(Boolean)
     .map((e) => ({ id: e.id, name: e.name, criteria: e.criteria, checks: e.checks, trust: trustOfExample(e, memo) }));
-  const m = byCriterionModel({ examples, hasA: run.a != null, tries: withCriteriaFor(workflowId, store.triesOfRun(run.id)) });
-  return { ...m, counts: checkingOf(workflowId, run.exampleIds) };
+  const tries = withCriteriaFor(workflowId, store.triesOfRun(run.id));
+  const m = byCriterionModel({ examples, hasA: run.a != null, tries });
+  const reasonOf = reasonOfCriterion(tries.map((t) => t.id));
+  const rows = m.rows.map((r) => (r.uneven ? { ...r, reason: r.exact ? 'unchecked' : reasonOf(r.label) } : r));
+  return { ...m, rows, counts: checkingOf(workflowId, run.exampleIds), checkUsd: checkUsdOf(workflowId, run) };
+}
+
+/** Whether a finished try still misses a criterion of its example (never asked, or the last answer hit the limit or failed). */
+export function needsCriteriaJudging(example, t) {
+  const model = example && example.judge ? example.judge.model : null;
+  if (!model || !finishedTry(t)) return 0;
+  return (example.criteria || []).filter((c) => cs.needsJudging(t.id, cs.criterionFp(c.text), model)).length;
+}
+/** P4-M5, board 4: what "Check them on these tries" would cost: the checks the test's finished tries still miss, at the price of
+ *  one check. 0 only when nothing needs checking; null when something does and its price is not known (never $0). */
+export function checkUsdOf(workflowId, run) {
+  const examples = new Map();
+  let usd = 0;
+  for (const t of store.triesOfRun(run.id)) {
+    if (t.status !== 'passed' && t.status !== 'failed') continue;
+    if (!examples.has(t.exampleId)) examples.set(t.exampleId, store.readExample(workflowId, t.exampleId));
+    const ex = examples.get(t.exampleId);
+    const n = ex ? needsCriteriaJudging(ex, t) : 0;
+    if (!n) continue;
+    const one = judgeCallUsd(ex.judge.model);
+    if (one === null) return null;
+    usd += n * one;
+  }
+  return usd;
 }
 
 const median = (xs) => { const s = [...xs].sort((a, b) => a - b); if (!s.length) return null; const m = s.length >> 1; return s.length % 2 ? s[m] : (s[m - 1] + s[m]) / 2; };
@@ -76,7 +117,12 @@ const median = (xs) => { const s = [...xs].sort((a, b) => a - b); if (!s.length)
 const PAIRS_ASKED = false;
 /** Board 4: what one check of a criterion costs on `model`: its own last 20, else a typical call (6000 tokens in, 250 out) at its price. */
 export function judgeCallUsd(model, { rates = (m) => ratesFor('claude', m), estimate = estimateCost } = {}) {
-  const own = prepare(`SELECT amount_usd AS u FROM wf_test_judge_ledger WHERE purpose = 'try' AND model = ? ORDER BY id DESC LIMIT 20`).all(model).map((r) => Number(r.u));
+  // The ledger has no try or criterion column, so one row is priced as one check (a call the judge repeated books twice and
+  // prices a check a little high, never low). M6: an 'unknown'-cost row is a $0 that is not a price; if any of the recent rows
+  // is one, the price is not known (null), never a median pulled down to $0.
+  const rows = prepare(`SELECT amount_usd AS u, cost_kind AS k FROM wf_test_judge_ledger WHERE purpose = 'try' AND model = ? ORDER BY id DESC LIMIT 20`).all(model);
+  if (rows.some((r) => r.k === 'unknown')) return null;
+  const own = rows.map((r) => Number(r.u));
   if (own.length) return median(own);
   const priced = model ? rates(model) : null;
   return priced ? estimate({ input_tokens: 6000, output_tokens: 250 }, priced) : null;

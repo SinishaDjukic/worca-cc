@@ -54,3 +54,25 @@ test('estimateOf adds checking the criteria (board 4) and says when its price is
   assert.deepEqual(['criteriaUsd', 'usd'].map((k) => estimateOf({ ...plan, criteria: { perTryUsd: null, pairsUsd: null } })[k]), [null, null], 'M6: the total is not known either');
   assert.equal(estimateOf({ ...plan, criteria: null }).criteriaUsd, 0);
 });
+
+test('estimateOf prices the checks of reused tries that still miss a criterion, never as $0 (review)', () => {
+  const plan = { a: { want: 3, reusable: 3, judgeMissing: 3, perTryUsd: 1 }, b: { want: 3, reusable: 3, judgeMissing: 3, perTryUsd: 0.5 }, perTryMs: 60000,
+    criteria: { perTryUsd: 0.1, pairsUsd: 0 } };
+  const all = estimateOf(plan, { reuseA: true, reuseB: true });
+  assert.equal(all.total, 0, 'every try is reused');
+  assert.equal(Math.round(all.criteriaUsd * 100) / 100, 0.6, '6 reused tries × $0.10');
+  assert.equal(Math.round(all.usd * 100) / 100, 0.6);
+  assert.equal(estimateOf({ ...plan, criteria: { perTryUsd: null, pairsUsd: null } }, { reuseA: true, reuseB: true }).usd, null, 'not known, never $0');
+  assert.equal(estimateOf({ ...plan, a: { ...plan.a, judgeMissing: 0 }, b: { ...plan.b, judgeMissing: 0 } }, { reuseA: true, reuseB: true }).usd, 0, 'nothing to check: $0 is true');
+  const some = estimateOf(plan, { reuseA: true, reuseB: false });
+  assert.equal(Math.round(some.criteriaUsd * 100) / 100, 0.6, '3 new tries of B + 3 reused of A');
+});
+
+test('review: an example whose tries all errored is not uneven; a finished try with no counted verdict is (the same finishedTry as Not checked)', () => {
+  const ex = { id: 1, name: 'X', criteria: [{ id: 'k_1', text: 'Names a metric' }], trust: { k_1: R }, checks: [] };
+  const tr = (id, side, status) => ({ id, side, exampleId: 1, status: 'passed', verdict: { facts: { status }, criteria: [c('k_1', null)], checks: [] } });
+  const errored = byCriterionModel({ examples: [ex], hasA: true, tries: [tr(1, 'a', 'error'), tr(2, 'b', 'error')] });
+  assert.deepEqual(errored.rows.map((r) => r.uneven), [false]);
+  const finished = byCriterionModel({ examples: [ex], hasA: true, tries: [tr(1, 'a', 'done'), tr(2, 'b', 'done')] });
+  assert.deepEqual(finished.rows.map((r) => r.uneven), [true]);
+});

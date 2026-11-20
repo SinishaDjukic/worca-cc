@@ -3,6 +3,7 @@
 import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import http from 'node:http';
+import express from 'express';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -30,6 +31,17 @@ async function finished(runId, ms = 240000) {
     if (p.body.run.status !== 'running') return p.body;
     if (Date.now() - t0 > ms) throw new Error(`test ${runId} is still running`);
     await new Promise((r) => setTimeout(r, 200));
+  }
+}
+
+/** Waits for the background check of a test to end (the page's poll). */
+async function checkDone(runId, ms = 60000) {
+  const t0 = Date.now();
+  for (;;) {
+    const r = await call('GET', `${WF}/runs/${runId}/criteria`);
+    if (r.body.checking === false) return r.body;
+    if (Date.now() - t0 > ms) throw new Error('the check is still running');
+    await new Promise((x) => setTimeout(x, 50));
   }
 }
 
@@ -132,4 +144,103 @@ test('by criterion, the overview trust counts and the plan estimate', async () =
   assert.equal(typeof plan.body.criteria.perTryUsd, 'number', 'M13: Haiku 4.5 has a list price, so the check has one');
   assert.equal(plan.body.criteria.pairsUsd, 0, 'no version to compare with: no pairs');
   assert.equal((await call('POST', `${WF}/runs/${run.id}/criteria/check`)).status, 202);
+  await checkDone(run.id);   // the background check ends before the test does
+});
+
+test('review: a criterion added after the test is new, one the limit left unchecked is unchecked; the check has a price; reused tries are priced', async () => {
+  const { estimateOf } = await import('../src/shared/workflow-tests/compare.mjs');
+  const ex = store.listExamples('wf_api_c')[0];
+  const run = store.listTestRuns('wf_api_c')[0];
+  const [t] = store.triesOfRun(run.id);
+  assert.equal((await call('GET', `${WF}/runs/${run.id}/criteria`)).body.checkUsd, 0, 'nothing needs checking: $0 is true');
+  store.updateExample('wf_api_c', ex.id, { criteria: [...ex.criteria, { text: 'Names the users' }, { text: 'Explains the legal reasons' }] });
+  const limited = cs.criterionFp('Explains the legal reasons');
+  cs.insertJudgement({ workflowId: 'wf_api_c', exampleId: ex.id, criterionId: null, fp: limited, model: 'claude-haiku-4-5', purpose: 'try', tryId: t.id, j: { error: 'limit' } });
+  const r = await call('GET', `${WF}/runs/${run.id}/criteria`);
+  const rowOf = (label) => r.body.rows.find((x) => x.label === label);
+  assert.deepEqual([rowOf('Names the users').uneven, rowOf('Names the users').reason], [true, 'new']);
+  assert.deepEqual([rowOf('Explains the legal reasons').uneven, rowOf('Explains the legal reasons').reason], [true, 'unchecked']);
+  assert.ok(typeof r.body.checkUsd === 'number' && r.body.checkUsd > 0, 'two checks are missing, and the button has a price');
+  const compare = await call('GET', `${WF}/runs/${run.id}/compare`);
+  assert.deepEqual(compare.body.notes.notChecked.map((n) => [n.reason, n.criteria]).sort(),
+    [['new', ['Names the users']], ['unchecked', ['Explains the legal reasons']]]);
+  // Test again with every try reused: the plan counts the reused try that still misses criteria, and the estimate prices it.
+  const plan = (await call('GET', `${WF}/plan?b=draft&examples=${ex.id}&tries=1`)).body;
+  assert.deepEqual([plan.b.reusable, plan.b.judgeMissing], [1, 1]);
+  const e = estimateOf(plan, { reuseB: true });
+  assert.equal(e.total, 0);
+  assert.ok(e.usd > 0, 'never $0 while paid checks will be made');
+  assert.equal((await call('POST', `${WF}/runs/${run.id}/criteria/check`)).status, 202);
+  assert.equal((await checkDone(run.id)).checkUsd, 0, 'checked now');
+});
+
+test('review: another workflow\'s test is 404, a test at its cost limit is 400', async () => {
+  const run = store.listTestRuns('wf_api_c')[0];
+  assert.equal((await call('GET', `/api/workflows/wf_other/tests/runs/${run.id}/criteria`)).status, 404);
+  assert.equal((await call('POST', `/api/workflows/wf_other/tests/runs/${run.id}/criteria/check`)).status, 404);
+  store.updateTestRun(run.id, { capUsd: 0.5 });
+  const { recordTestJudgeCost } = await import('../src/core/cost-budget.mjs');
+  recordTestJudgeCost({ workflowId: 'wf_api_c', testRunId: run.id, purpose: 'try', model: 'cap-fixture', amountUsd: 0.6 });
+  try {
+    const r = await call('POST', `${WF}/runs/${run.id}/criteria/check`);
+    assert.equal(r.status, 400);
+    assert.match(r.body.error, /reached its cost limit/);
+  } finally {
+    store.updateTestRun(run.id, { capUsd: null });
+    prepare(`DELETE FROM wf_test_judge_ledger WHERE model = 'cap-fixture'`).run();
+  }
+});
+
+test('review: 409 while a check runs, 422 at the spending limit, 400 without a runner', async () => {
+  const { createTestRunner, CHECKING_TEXT } = await import('../src/core/workflow-tests/runner.mjs');
+  const { registerCriteriaRoutes } = await import('../src/core/workflow-tests/criteria-routes.mjs');
+  const run = store.listTestRuns('wf_api_c')[0];
+  let release; const gate = new Promise((x) => { release = x; });
+  let asked = 0;
+  const runner = createTestRunner({ judgeMissing: async () => { asked += 1; await gate; }, notify() {} });
+  let blocked = false;
+  const mk = async (opts) => {
+    const app = express();
+    registerCriteriaRoutes(app, opts);
+    const server = http.createServer(app);
+    await new Promise((r) => server.listen(0, '127.0.0.1', r));
+    const url = `http://127.0.0.1:${server.address().port}${WF}/runs/${run.id}/criteria`;
+    return { close: () => new Promise((r) => server.close(r)),
+      post: async () => { const x = await fetch(`${url}/check`, { method: 'POST' }); return { status: x.status, body: await x.json() }; },
+      get: async () => (await fetch(url)).json() };
+  };
+  const m = await mk({ runner, deps: { budgetStatus: () => ({ blocked }) } });
+  try {
+    blocked = true;
+    const refused = await m.post();
+    assert.deepEqual([refused.status, asked], [422, 0], 'refused up front: nothing was asked');
+    assert.match(refused.body.error, /Total cost limit reached/);
+    blocked = false;
+    assert.equal((await m.post()).status, 202);
+    assert.equal((await m.get()).checking, true);
+    assert.equal(runner.criteriaCheckingOf('wf_api_c'), true);
+    const busy = await m.post();
+    assert.deepEqual([busy.status, busy.body.error], [409, CHECKING_TEXT]);
+    release();
+    for (let i = 0; i < 200 && (await m.get()).checking; i += 1) await new Promise((x) => setTimeout(x, 20));
+    assert.equal((await m.get()).checking, false);
+  } finally { await m.close(); }
+  const none = await mk({ runner: null });
+  try {
+    const r = await none.post();
+    assert.equal(r.status, 400);
+    assert.equal(typeof r.body.error, 'string');
+  } finally { await none.close(); }
+});
+
+test('review: the overview says whether a check is running, and its latest test counts the criteria not checked', async () => {
+  const o = await call('GET', WF);
+  assert.equal(o.body.checking, false);
+  const run = store.listTestRuns('wf_api_c')[0];
+  prepare(`UPDATE wf_test_runs SET kind = 'compare' WHERE id = ?`).run(run.id);   // the once-test stands in for a compare in the list
+  const ex = store.listExamples('wf_api_c')[0];
+  store.updateExample('wf_api_c', ex.id, { criteria: [...ex.criteria, { text: 'Gives a deadline' }] });
+  const latest = (await call('GET', WF)).body.latest;
+  assert.equal(latest.runId, run.id);
+  assert.ok(latest.notChecked >= 1, 'the new criterion was not checked on the test');
 });

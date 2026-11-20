@@ -1,5 +1,6 @@
 // src/shared/workflow-tests/criteria-report.mjs — Part 4's report models (plans/workflow-tests-part4-plan.md D99; boards 1, 5, 12; Task 16
 // adds board 13). Pure and browser-safe: the server computes, the pages format.
+import { finishedTry } from './criteria-verdicts.mjs';
 
 /** D99: one row per criterion of each example, and per automatic check made from a criterion (`said`), with met counts per side. */
 export function byCriterionModel({ examples = [], hasA = true, tries = [] }) {
@@ -32,7 +33,7 @@ export function byCriterionModel({ examples = [], hasA = true, tries = [] }) {
       // N8: a criterion not checked on every finished try (I6's `uneven`) decides nothing here either, as in Compare; the row says so.
       // Review (a): a criterion no finished try has a counted verdict for (the limit or the cap left it unchecked everywhere) is marked too.
       const uneven = mine.some((t) => { const r = t.verdict ? it.pick(t.verdict) : null; return !!(r && r.uneven); })
-        || (!it.exact && mine.length > 0 && !b.of && !(a && a.of));
+        || (!it.exact && mine.some(finishedTry) && !b.of && !(a && a.of));   // the same finishedTry as notCheckedEverywhere
       const decides = !!(it.trust && it.trust.decides) && !uneven;
       rows.push({ key: `${ex.id}|${it.key}`, label: it.label, exampleName: ex.name, exact: it.exact, trust: it.trust, a, b,
         changed: decides ? diff : null, unreliableChange: !decides && !uneven && !!diff, uneven });
