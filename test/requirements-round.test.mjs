@@ -339,6 +339,8 @@ const A2_ROUND_SYSTEM_LINES = [
   '- When a criterion, an assumption or a question comes from a file in <attachments> or a document in <product_brief>, set its "source" to that file\'s name exactly as written there; otherwise null.',
   '- Turn every gap you cannot close into an assumption the product owner can confirm or reject.',
   '- Acceptance criteria are observable, testable statements of behaviour. Keep the ids of existing criteria and assumptions; give new ones the id null.',
+  // The spec-item limit (requirements-item-length.test.mjs): told to the model, so a long item is split, not cut.
+  '- Keep every item (a step, a rule, a criterion, an assumption, the goal) to one or two sentences, at most 10000 characters, and each list to at most 30 items: split a long item instead.',
   '- Never remove a criterion or an assumption, and never change a section listed in <edited_by_product_owner>.',
   '- Never re-add a criterion the product owner removed, under any id or wording.',
   '- Set "done" to true when nothing important is left to ask; "questions" is then empty.',
