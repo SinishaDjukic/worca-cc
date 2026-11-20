@@ -1,7 +1,7 @@
 // src/core/workflow-tests/judge-prompt.mjs — Part 4 (plans/workflow-tests-part4-plan.md D89, D90, D104): what the checking model is
 // told, how its answer is read, and where its proof is searched. Pure. The prompts are Worca's own words (D104).
 import { randomBytes } from 'node:crypto';
-import { normLoose } from '../../shared/workflow-tests/exact-checks.mjs';
+import { normLoose, proofFound } from '../../shared/workflow-tests/exact-checks.mjs';
 
 export const SUBJECT_MAX = 200_000;
 export const CONTEXT_MAX = 100_000;
@@ -76,22 +76,7 @@ export function parseJudgeReply(text) {
   return { verdict, reason, proof: replyText(o.proof, PROOF_MAX) };
 }
 
-/** D89: whether the proof is in the text (normLoose on both; each part between "…" at least 3 characters and the parts in order; 8 characters at least). */
-export function proofFound(proof, text) {
-  // A fragment quoted as "…passage…" is ordinary: one ellipsis at each end is trimmed before the parts are counted.
-  const p = normLoose(proof).replace(/^["']+|["']+$/g, '').trim().replace(/^(?:\.\.\.)\s*|\s*(?:\.\.\.)$/g, '').replace(/^["']+|["']+$/g, '').trim();
-  if (p.length < 8) return false;
-  const hay = normLoose(text);
-  const parts = p.split(/\s*(?:\.\.\.|…)\s*/).map((x) => x.replace(/^["']+|["']+$/g, '').trim());
-  if (parts.some((x) => x.length < 3)) return false;
-  let from = 0;
-  for (const x of parts) {
-    const i = hay.indexOf(x, from);
-    if (i < 0) return false;
-    from = i + x.length;
-  }
-  return true;
-}
+export { proofFound };
 
 const LONG_WORD_RE = /\p{L}{6,}/gu;
 /** D91: the free stand-in (WORCA_MOCK=1, mock tries): met when the result holds one of the criterion's words of six letters or more.

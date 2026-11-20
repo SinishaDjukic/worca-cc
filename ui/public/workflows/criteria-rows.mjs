@@ -3,11 +3,12 @@
 // that missed it, else B): why, the proof Worca found (a project try's from its changes, in code font), how far its checking is trusted,
 // and Agree / Disagree (D96), which turn into "You agreed." / "You disagreed: Worca notes it." with Undo.
 import { el, btn } from './test-ui.mjs';
+import { notify } from '../feedback.mjs';
 import { icon } from '../icons.mjs';
 import { splitPatchSections } from '../diff-view.mjs';
 import { trustLine } from '../../../src/shared/workflow-tests/criteria-text.mjs';
 import { inSentence } from '../../../src/shared/workflow-tests/project-text.mjs';
-import { normLoose } from '../../../src/shared/workflow-tests/exact-checks.mjs';
+import { proofFound } from '../../../src/shared/workflow-tests/exact-checks.mjs';
 
 export const CRITERIA_GROUP = 'Your criteria · checked by Worca';
 /** Boards 6 and P4-M6 draw this note in the pair question's block (Task 24), not under the criteria rows. */
@@ -18,30 +19,17 @@ const DISAGREED = 'You disagreed: Worca notes it.';
 /** Boards 6, 36: the trust line under the proof. The other states keep P4-C1's line. */
 export function trustSentence(t) {
   if (t && t.state === 'reliable') return `Worca's checking of this criterion is reliable: it agrees with people ${t.agree} of ${t.n} times.`;
-  if (t && t.state === 'collecting') return `Worca's checking of this criterion needs your answers: ${trustLine(t)}.`;
+  if (t && t.state === 'collecting') return `Worca's checking of this criterion needs your answers: Worca has ${t.n} of the 10 answers it needs.`;
   return trustLine(t);
 }
 /** A real verdict (met or not met) that can be answered; a "Not checked" one (met null) never can. */
 const verdictOf = (it) => !!it && (it.met === true || it.met === false);
 
-// Board 36: the changed file whose diff holds the proof (D89's loose match, the parts between "…" in order), or null.
-const FILE_MEMO = new Map();
-function proofFileIn(proof, patch, tryId) {
+// Board 36: the changed file whose diff holds the proof (D89's rule, the same one the server applied: proofFound), or null.
+function proofFileIn(proof, patch) {
   if (typeof patch !== 'string' || !patch || typeof proof !== 'string') return null;
-  const k = `${tryId}|${patch.length}|${proof}`;   // a try's diff, once read, never changes
-  if (FILE_MEMO.has(k)) return FILE_MEMO.get(k);
-  const parts = normLoose(proof).split(/\s*(?:\.\.\.|…)\s*/).map((x) => x.replace(/^["']+|["']+$/g, '').trim()).filter((x) => x.length >= 3);
-  let found = null;
-  if (parts.length) {
-    for (const sec of splitPatchSections(patch)) {
-      const hay = normLoose(sec.raw);
-      let from = 0;
-      if (sec.path && parts.every((x) => { const i = hay.indexOf(x, from); if (i < 0) return false; from = i + x.length; return true; })) { found = sec.path; break; }
-    }
-  }
-  if (FILE_MEMO.size > 200) FILE_MEMO.delete(FILE_MEMO.keys().next().value);
-  FILE_MEMO.set(k, found);
-  return found;
+  const sec = splitPatchSections(patch).find((s) => s.path && proofFound(proof, s.raw));
+  return sec ? sec.path : null;
 }
 
 function cell(doc, it, label) {
@@ -56,7 +44,7 @@ function cell(doc, it, label) {
 }
 
 /** Agree / Disagree, or (after an answer, also one given before a reload: `it.answer`) what was said and Undo (agree: null). */
-function answerArea(doc, it, actions, trustEl) {
+function answerArea(doc, it, actions, trustEl, txt) {
   const area = el(doc, 'div', 'wft-acts wft-crit-acts');
   const keyed = (b, k) => { b.dataset.focusKey = `wft-crit-${it.judgementId}-${k}`; return b; };
   let send;
@@ -82,10 +70,13 @@ function answerArea(doc, it, actions, trustEl) {
     if (bs.some((b) => b.disabled)) return;
     for (const b of bs) b.disabled = true;
     let r;
-    try { r = await actions.answer(it.judgementId, agree); } catch { r = undefined; }
+    try { r = await actions.answer(it.judgementId, agree); } catch (e) {
+      r = undefined;   // the same path as a failed answer: the buttons come back; the person is told
+      notify({ tone: 'err', title: 'Not saved', detail: e && e.message ? e.message : String(e) }, { doc });
+    }
     if (r && typeof r === 'object') {
       it.answer = r.answer === true || r.answer === false ? r.answer : null;
-      if (r.trust) { it.trust = r.trust; trustEl.textContent = trustSentence(r.trust); }
+      if (r.trust) { it.trust = r.trust; trustEl.textContent = trustSentence(r.trust); if (!trustEl.isConnected) txt.append(trustEl); }
     }
     paint(had);
   };
@@ -98,17 +89,19 @@ function whyBlock(doc, it, versionLabel, v, actions, patches) {
   const words = el(doc, 'p', '');
   words.append(el(doc, 'b', '', `Why Worca says ${it.met ? 'yes' : 'no'} for ${inSentence(versionLabel)}: `), doc.createTextNode(`"${it.reason}"`));
   const proof = el(doc, 'p', 'wft-crit-proof');
-  const file = v && v.project && patches ? proofFileIn(it.proof, patches.get(v.tryId), v.tryId) : null;
+  const file = v && v.project && patches ? proofFileIn(it.proof, patches.get(v.tryId)) : null;
   if (file) {   // board 36: quoted from the changes, in code font, under the file it is in
     proof.append(el(doc, 'b', '', 'Proof from the changes: '), el(doc, 'span', 'hint', `${file} · found in the changes`), el(doc, 'span', 'wft-crit-code', it.proof));
   } else {
     proof.append(el(doc, 'b', '', 'Proof from the result: '), doc.createTextNode(`"${it.proof}" `), el(doc, 'span', 'hint', '· found in the result'));
   }
-  const trust = el(doc, 'p', 'hint wft-crit-trust', trustSentence(it.trust));
+  const trustText = trustSentence(it.trust);
+  const trust = el(doc, 'p', 'hint wft-crit-trust', trustText);   // answers can fill it in later, so the element stays
   const txt = el(doc, 'div', 'wft-crit-txt');
-  txt.append(words, proof, trust);
+  txt.append(words, proof);
+  if (trustText) txt.append(trust);
   box.append(txt);
-  if (it.judgementId && actions.answer) box.append(answerArea(doc, it, actions, trust));
+  if (it.judgementId && actions.answer) box.append(answerArea(doc, it, actions, trust, txt));
   return box;
 }
 

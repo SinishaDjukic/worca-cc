@@ -2,7 +2,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { JSDOM } from 'jsdom';
-import { criteriaGroup } from '../ui/public/workflows/criteria-rows.mjs';
+import { criteriaGroup, trustSentence } from '../ui/public/workflows/criteria-rows.mjs';
 import { renderSideBySide } from '../ui/public/workflows/test-compare.mjs';
 
 const R = { state: 'reliable', n: 20, agree: 19, decides: true };
@@ -158,4 +158,28 @@ test('board 36: proof from the changes names the file and shows the line in code
   mount(doc2, criteriaGroup(doc2, cur, { a: 'v2', b: 'v3 draft' }, { actions: {}, patches: new Map() }));
   assert.match(doc2.querySelector('.wft-crit-proof').textContent, /^Proof from the result: "\+ {3}return toCents\(value\) \/ 100;" · found in the result$/,
     'the changes not read yet: the result\'s words');
+});
+
+test('fix round 1: a proof the server rule rejects (short parts, under 8 characters) is not shown as found in the changes', () => {
+  const patch = ['diff --git a/src/a.mjs b/src/a.mjs', '--- a/src/a.mjs', '+++ b/src/a.mjs', '@@ -1,1 +1,1 @@', '-x', '+const ab = 1; const total = 2;', ''].join('\n');
+  const proj = (id, met, proof) => ({ tryId: id, project: { changes: { files: [] } }, ...v(met, { proof, judgementId: id + 100 }) });
+  for (const proof of ['ab … total', 'total']) {
+    const cur = { n: 2, a: proj(1, true, 'Adds a test'), b: proj(2, false, proof) };
+    const doc = dom();
+    mount(doc, criteriaGroup(doc, cur, { a: 'v2', b: 'v3 draft' }, { actions: {}, patches: new Map([[2, patch]]) }));
+    assert.match(doc.querySelector('.wft-crit-proof b').textContent, /^Proof from the result/, proof);
+  }
+});
+
+test('fix round 1: no trust text adds no empty paragraph; the collecting sentence is spelled out; a thrown answer is told and gives the buttons back', async () => {
+  const doc = dom();
+  mount(doc, criteriaGroup(doc, { n: 2, a: v(true), b: v(false, { trust: null }) }, { a: 'v4', b: 'v5 draft' }, {
+    actions: { answer: async () => { throw new Error('offline'); } } }));
+  const why = doc.querySelector('.wft-crit-why');
+  assert.equal(why.querySelector('.wft-crit-trust'), null);
+  assert.equal(trustSentence({ state: 'collecting', n: 4 }), "Worca's checking of this criterion needs your answers: Worca has 4 of the 10 answers it needs.");
+  why.querySelector('button.wft-agree').click();
+  await tick();
+  assert.deepEqual([...why.querySelectorAll('button')].map((b) => [b.textContent, b.disabled]), [['Agree', false], ['Disagree', false]]);
+  assert.match(doc.querySelector('.toast.err').textContent, /offline/);
 });

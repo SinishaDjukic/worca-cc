@@ -11,6 +11,23 @@ export function normLoose(s) {
   return String(s ?? '').normalize('NFKC').replace(/[‘’‚‛`´]/g, "'").replace(/[“”„‟«»]/g, '"').replace(/[‐‑‒–—―]/g, '-')
     .replace(/[*_#>]/g, '').replace(/\s+/g, ' ').trim().toLowerCase();
 }
+/** D89: whether the proof is in the text (normLoose on both; each part between "…" at least 3 characters and the parts in order; 8 characters at least). */
+export function proofFound(proof, text) {
+  // A fragment quoted as "…passage…" is ordinary: one ellipsis at each end is trimmed before the parts are counted.
+  const p = normLoose(proof).replace(/^["']+|["']+$/g, '').trim().replace(/^(?:\.\.\.)\s*|\s*(?:\.\.\.)$/g, '').replace(/^["']+|["']+$/g, '').trim();
+  if (p.length < 8) return false;
+  const hay = normLoose(text);
+  const parts = p.split(/\s*(?:\.\.\.|…)\s*/).map((x) => x.replace(/^["']+|["']+$/g, '').trim());
+  if (parts.some((x) => x.length < 3)) return false;
+  let from = 0;
+  for (const x of parts) {
+    const i = hay.indexOf(x, from);
+    if (i < 0) return false;
+    from = i + x.length;
+  }
+  return true;
+}
+
 const straight = (s) => String(s ?? '').normalize('NFKC').replace(/\r\n?/g, '\n').replace(/[“”„‟«»]/g, '"');
 const words = (s) => s.split(/\s+/).filter((w) => /[\p{L}\p{N}]/u.test(w)).length;
 
