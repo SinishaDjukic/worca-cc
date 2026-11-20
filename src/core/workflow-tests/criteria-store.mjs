@@ -4,6 +4,7 @@
 import { createHash } from 'node:crypto';
 import { getDb, prepare } from '../db.mjs';
 import { criterionKey } from '../../shared/workflow-tests/criteria.mjs';
+import { testError } from './store.mjs';
 
 const parse = (t, f) => { try { const v = JSON.parse(t); return v ?? f; } catch { return f; } };
 export const nowIso = () => new Date().toISOString();
@@ -100,3 +101,26 @@ export function roundDone(workflowId, fp, model) {
   return !!prepare(`SELECT 1 FROM wf_test_checker_rounds WHERE workflow_id = ? AND criterion_fp = ? AND model = ? AND status = 'done' LIMIT 1`)
     .get(workflowId, fp, model);
 }
+
+export const LIKED_MAX = 2 * 1024 * 1024;
+const UTF8 = new TextDecoder('utf-8', { fatal: true });
+/** D101: the example's one result you liked; a new one replaces it. `kind` 'text' | 'changes'. */
+export function putLiked(exampleId, { kind = 'text', name, data, fromPipeline = null }) {
+  const buf = Buffer.isBuffer(data) ? data : Buffer.from(data || []);
+  if (!buf.length) throw testError('the result you liked is empty', 'BAD_REQUEST');
+  if (buf.length > LIKED_MAX) throw testError('the result you liked is larger than 2 MB', 'BAD_REQUEST');
+  try { UTF8.decode(buf); } catch { throw testError('the result you liked must be a text file', 'BAD_REQUEST'); }
+  const clean = typeof name === 'string' ? name.replace(/\s+/g, ' ').trim().slice(0, 200) : '';
+  if (!clean || !['text', 'changes'].includes(kind)) throw testError('give the result you liked a name', 'BAD_REQUEST');
+  getDb();
+  prepare(`INSERT INTO wf_test_liked (example_id, kind, name, data, sha256, size, from_pipeline, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(example_id) DO UPDATE SET kind = excluded.kind, name = excluded.name, data = excluded.data, sha256 = excluded.sha256,
+      size = excluded.size, from_pipeline = excluded.from_pipeline, created_at = excluded.created_at`)
+    .run(Number(exampleId), kind, clean, buf, createHash('sha256').update(buf).digest('hex'), buf.length, fromPipeline, nowIso());
+}
+export function readLiked(exampleId) {
+  getDb();
+  const r = prepare('SELECT kind, name, data, from_pipeline FROM wf_test_liked WHERE example_id = ?').get(Number(exampleId));
+  return r ? { kind: r.kind, name: r.name, text: Buffer.from(r.data).toString('utf8'), fromPipeline: r.from_pipeline ?? null } : null;
+}
+export function deleteLiked(exampleId) { getDb(); prepare('DELETE FROM wf_test_liked WHERE example_id = ?').run(Number(exampleId)); }

@@ -4,7 +4,8 @@ import { requireFlag } from '../flags.mjs';
 import { actorOf } from '../identity.mjs';
 import * as store from './store.mjs';
 import * as cs from './criteria-store.mjs';
-import { trustFor, byCriterionOf } from './criteria-read.mjs';
+import { trustFor, byCriterionOf, likedFromPipeline } from './criteria-read.mjs';
+import { findPipelineRowById } from '../artifacts.mjs';
 import { judgeModelsView } from './judge-models.mjs';
 import { budgetStatus as realBudgetStatus } from '../cost-budget.mjs';
 
@@ -16,6 +17,8 @@ export const CRITERIA_ROUTES = Object.freeze([
   ['POST', `${W}/judgements/:j/answer`],
   ['GET', `${W}/runs/:run/criteria`],
   ['POST', `${W}/runs/:run/criteria/check`],
+  ['PUT', `${W}/examples/:ex/liked`],
+  ['DELETE', `${W}/examples/:ex/liked`],
 ].map(([method, path]) => Object.freeze({ method, path })));
 
 const num = (v, what) => {
@@ -82,6 +85,26 @@ export function registerCriteriaRoutes(app, { runner = null, criteriaJudge = nul
     }
     void runner.checkCriteriaLater(run);   // throws BUSY synchronously; never rejects afterwards (it logs)
     res.status(202).json({ checking: true });
+  });
+  // D101: the result you liked: an uploaded file, a try's result, or a run's result; DELETE takes it back.
+  route('PUT', `${W}/examples/:ex/liked`, async (req, res) => {
+    const ex = exampleOf(req);
+    const b = req.body || {};
+    if (typeof b.dataBase64 === 'string' && b.dataBase64) {
+      cs.putLiked(ex.id, { kind: 'text', name: b.name, data: Buffer.from(b.dataBase64, 'base64') });
+    } else {
+      let pipelineId = typeof b.pipelineId === 'string' ? b.pipelineId : null;
+      if (b.tryId != null) { const t = store.readTry(num(b.tryId, 'try')); pipelineId = t && t.workflowId === wid(req) && t.exampleId === ex.id ? t.pipelineId : null; }
+      const row = pipelineId ? findPipelineRowById(pipelineId) : null;
+      if (!row) throw store.testError('pick a file, a try or a run to keep as the result you liked', 'BAD_REQUEST');
+      await likedFromPipeline(ex, row.id, { at: row.started_at });
+    }
+    res.json({ example: store.readExample(wid(req), ex.id) });
+  });
+  route('DELETE', `${W}/examples/:ex/liked`, async (req, res) => {
+    const ex = exampleOf(req);
+    cs.deleteLiked(ex.id);
+    res.json({ example: store.readExample(wid(req), ex.id) });
   });
   void exampleOf;   // defined here for Task 18 (4a) and Tasks 12-15 (4b), which use it
   return { runner, criteriaJudge, deps };

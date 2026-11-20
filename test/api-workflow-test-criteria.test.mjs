@@ -265,3 +265,12 @@ test('round 3: testPlan prices a real (not mock) side per example from the kept 
   assert.deepEqual(mockPlan.b.checkUsd, { fresh: 0, withReuse: 0 });
   prepare(`DELETE FROM wf_test_judge_ledger WHERE model = 'price-fixture'`).run();
 });
+
+test('PUT and DELETE the result you liked', async () => {
+  const ex = store.listExamples('wf_api_c')[0];
+  const put = await call('PUT', `${WF}/examples/${ex.id}/liked`, { name: 'good.md', dataBase64: Buffer.from('Good brief.').toString('base64') });
+  assert.equal(put.status, 200);
+  assert.deepEqual(put.body.example.liked, { kind: 'text', name: 'good.md', size: 11 });
+  assert.equal((await call('PUT', `${WF}/examples/${ex.id}/liked`, {})).status, 400);
+  assert.equal((await call('DELETE', `${WF}/examples/${ex.id}/liked`)).body.example.liked, null);
+});

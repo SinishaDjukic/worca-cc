@@ -166,6 +166,12 @@ function writePin(exampleId, p) {
       p.changes ? createHash('sha256').update(p.changes).digest('hex') : null, p.setupCmd, nowIso(), p.name);
 }
 
+/** Part 4 (D101): the result you liked, without its bytes. */
+function likedOf(exampleId) {
+  const r = prepare('SELECT kind, name, size FROM wf_test_liked WHERE example_id = ?').get(Number(exampleId));
+  return r ? { kind: r.kind, name: r.name, size: Number(r.size) } : null;
+}
+
 function exampleOf(r) {
   if (!r) return null;
   const ex = {
@@ -174,6 +180,7 @@ function exampleOf(r) {
     basics: normaliseBasics(parse(r.basics, {})).basics || { ...DEFAULT_BASICS },
     checks: parse(r.checks, []), tries: Number(r.tries), note: r.note ?? null,
     criteria: parse(r.criteria, []), judge: parse(r.judge, null),
+    liked: likedOf(Number(r.id)),
     from: r.from_pipeline ? { pipelineId: r.from_pipeline, use: r.from_use ? useOf(r.from_use) : null, verdict: r.from_verdict ?? null } : null,
     project: projectOf(Number(r.id)),
     files: filesOf(Number(r.id)), createdBy: r.created_by ?? null, createdAt: r.created_at, updatedAt: r.updated_at,

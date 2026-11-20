@@ -172,3 +172,26 @@ export function criteriaPlanOf(workflowId, exampleIds = [], { hasA = false, mock
   const prices = exs.map((e) => price(e.judge.model));
   return { pairsUsd: prices.some((u) => u === null) ? null : prices.reduce((sum, u) => sum + 2 * u, 0) };
 }
+
+import { mainResult, readTryPatch } from './result.mjs';
+import { CHANGES_HEADING } from './judge-prompt.mjs';
+/** M9: at most `max` bytes of `text` as UTF-8, cut before a character, never inside one (putLiked refuses broken UTF-8). */
+const utf8Clip = (text, max) => {
+  const b = Buffer.from(text);
+  if (b.length <= max) return b;
+  let end = max;
+  while (end > 0 && (b[end] & 0xc0) === 0x80) end -= 1;
+  return b.subarray(0, end);
+};
+/** D101: a past run's or a try's result as the example's result you liked; a project example keeps the diff too (board 32's name). */
+export async function likedFromPipeline(example, pipelineId, { readMain = mainResult, readPatch = readTryPatch, at = null } = {}) {
+  const m = await readMain(pipelineId);
+  if (typeof m.text !== 'string' || !m.text.trim()) throw store.testError('this run left no result to keep', 'BAD_REQUEST');
+  if (!example.project) { cs.putLiked(example.id, { kind: 'text', name: m.name || 'result.md', data: utf8Clip(m.text, cs.LIKED_MAX), fromPipeline: pipelineId }); return; }
+  const p = await readPatch(pipelineId, cs.LIKED_MAX);
+  const files = p && p.patch ? (p.patch.match(/^diff --git /gm) || []).length : 0;
+  const when = new Date(at || Date.now()).toLocaleDateString('en-GB', { day: 'numeric', month: 'short' });
+  const text = p && p.patch ? `${m.text}\n\n${CHANGES_HEADING}\n${p.patch}` : m.text;
+  cs.putLiked(example.id, { kind: 'changes', name: `Changes from the run on ${when} · ${files} ${files === 1 ? 'file' : 'files'}`,
+    data: utf8Clip(text, cs.LIKED_MAX), fromPipeline: pipelineId });
+}

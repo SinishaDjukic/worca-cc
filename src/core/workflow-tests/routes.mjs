@@ -6,7 +6,8 @@ import { loadScriptRegistry } from '../script-registry.mjs';
 import * as store from './store.mjs';
 import * as service from './service.mjs';
 import { createTestRunner } from './runner.mjs';
-import { checkingOf, criteriaPlanOf } from './criteria-read.mjs';
+import { checkingOf, criteriaPlanOf, likedFromPipeline } from './criteria-read.mjs';
+import { findPipelineRowById } from '../artifacts.mjs';
 import { createCriteriaJudge } from './criteria-runner.mjs';
 import { readTryOutcome, checkTry } from './result.mjs';
 import { useFingerprint } from './uses.mjs';
@@ -100,9 +101,14 @@ export function registerWorkflowTestRoutes(app, { broadcast = () => {}, deps = {
   route('POST', `${W}/examples/from-run`, async (req, res) => {
     service.workflowRowOf(wid(req));
     const b = req.body || {};
-    res.status(201).json(await service.exampleFromRun(wid(req), { pipelineId: String(b.pipelineId || ''), name: b.name,
+    const out = await service.exampleFromRun(wid(req), { pipelineId: String(b.pipelineId || ''), name: b.name,
       keepRequest: b.keepRequest !== false, keepAnswers: b.keepAnswers !== false, verdict: b.verdict ?? null,
-      note: typeof b.note === 'string' ? b.note : null, setupCmd: typeof b.setupCmd === 'string' ? b.setupCmd : null }, { by: by(req) }));
+      note: typeof b.note === 'string' ? b.note : null, setupCmd: typeof b.setupCmd === 'string' ? b.setupCmd : null }, { by: by(req) });
+    if (b.liked === true && out.example) {
+      await likedFromPipeline(out.example, String(b.pipelineId), { at: (findPipelineRowById(String(b.pipelineId)) || {}).started_at });
+      out.example = store.readExample(wid(req), out.example.id);
+    }
+    res.status(201).json(out);
   });
   route('POST', `${W}/examples/from-runs`, async (req, res) => {
     service.workflowRowOf(wid(req));
