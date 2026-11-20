@@ -1,7 +1,7 @@
 // src/core/workflow-tests/judge.mjs — Part 4 (plans/workflow-tests-part4-plan.md D88–D91): one no-tools model call with Worca's own
 // system prompt, through the Requirements helper call (the interview's callModel path: interviewCallOptions 'round'), and the question
 // asked with it: is a criterion met. It uses Worca's normal model routing (the model's env, the credential broker), so the account
-// that pays is the one that pays for that model in a run. Never throws: a failure comes back as an `error` code (NOT_CHECKED).
+// that pays is the one that pays for that model in a run. A failure of the call comes back as an `error` code (NOT_CHECKED); it throws only if reading the spending limit or booking fails.
 import { mkdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { helperCall as realHelperCall } from '../helper-call/index.mjs';
@@ -10,7 +10,7 @@ import { userClaudeSignIn } from '../claude-user-settings.mjs';
 import { mockEnabled } from '../claude-runner.mjs';
 import { budgetStatus } from '../cost-budget.mjs';
 import { worcaHome } from '../projects.mjs';
-import { JUDGE_SYSTEM_PROMPT, SUBJECT_MAX, CONTEXT_MAX, clipText, judgePrompt, parseJudgeReply, proofFound, mockJudgement } from './judge-prompt.mjs';
+import { judgeSystemPrompt, fenceTag, SUBJECT_MAX, CONTEXT_MAX, clipText, judgePrompt, parseJudgeReply, proofFound, mockJudgement } from './judge-prompt.mjs';
 
 export const JUDGE_TIMEOUT_MS = 120_000;
 /** D88: an empty folder of Part 4's own, so no project's settings, skills or CLAUDE.md load into a call. */
@@ -53,14 +53,16 @@ export async function judgeCriterion({ criterion, subject, context = '', model, 
       : done({ reason: m.reason, proof: m.proof, error: 'no-proof' });
   }
   const s = clipText(subject, SUBJECT_MAX);
-  const prompt = judgePrompt({ criterion, result: s.text, context: clipText(context, CONTEXT_MAX).text, cut: s.cut });
+  const tag = fenceTag();
+  const prompt = judgePrompt({ criterion, result: s.text, context: clipText(context, CONTEXT_MAX).text, cut: s.cut, tag });
+  const system = judgeSystemPrompt(tag);
   let last = { error: 'unreadable' };
   for (let attempt = 0; attempt < 2; attempt += 1) {
     const b = x.budget();
     if (b && b.blocked) return done({ error: 'limit' });
     let r;
     try {
-      r = await modelCall({ model, system: JUDGE_SYSTEM_PROMPT, prompt, signal }, x);
+      r = await modelCall({ model, system, prompt, signal }, x);
     } catch (e) {
       const spent = Number(e && e.costUsd) || 0;
       cost += spent;
