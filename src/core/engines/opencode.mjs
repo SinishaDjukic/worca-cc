@@ -118,6 +118,37 @@ export function opencodeVersion(bin = opencodeDefaultBin(), { timeoutMs = 15000 
 
 /** The major an adapter decision branches on: 2 for OpenCode 2, else 1 (a probe that failed runs as 1.x). */
 export const opencodeMajorOf = (version) => (version && Number.isFinite(version.major) && version.major >= 2 ? 2 : 1);
+
+// ── `opencode models` (the catalogue import's source) ───────────────────────
+
+/** A line of `opencode models`: a provider/model id, the shape `-m <id>` takes (also on OpenCode 1.x). */
+const OPENCODE_MODEL_LINE_RE = /^[^/\s]+\/\S+$/;
+
+/** Parse `opencode models` stdout: one provider/model id per line, blanks and anything a version prints besides them
+ *  dropped, order kept. Pure. */
+export function parseOpencodeModels(stdout) {
+  return String(stdout || '').split(/\r?\n/)
+    .map((l) => l.trim())
+    .filter((l) => OPENCODE_MODEL_LINE_RE.test(l));
+}
+
+/** What the installed opencode can run, from `opencode models` — the same ids `opencode run -m` takes. Read fresh per
+ *  call (a sign-in just completed may have widened the list; unlike `opencodeVersion` there is no per-process cache),
+ *  with the autoupdate probe silenced like every other probe. @returns {Promise<string[]>}
+ *  @throws {Error} when the binary cannot be run or the command fails (the Add-model list surfaces the message). */
+export async function opencodeModelIds({ bin = opencodeDefaultBin(), timeoutMs = 30000 } = {}) {
+  return new Promise((resolve, reject) => {
+    execCli(OPENCODE_CLI, bin, ['models'], { timeout: timeoutMs, env: { ...process.env, OPENCODE_DISABLE_AUTOUPDATE: '1' } },
+      (err, stdout) => {
+        if (err) {
+          reject(new Error(cliRefusal({ bin, err, install: 'install OpenCode (opencode.ai), or point WORCA_OPENCODE_BIN at it' })));
+          return;
+        }
+        resolve(parseOpencodeModels(String(stdout)));
+      });
+  });
+}
+
 export const OPENCODE_SESSION_PREFIX = 'opencode:';
 /** The checkout's instruction files a run gives OpenCode: worca names both as `instructions` (instructionFiles below), so
  *  both load, not only OpenCode's own AGENTS.md-else-CLAUDE.md pick (docs.opencode.ai/docs/rules/). */

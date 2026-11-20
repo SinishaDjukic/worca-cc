@@ -1346,3 +1346,55 @@ test('22. step 2 opened from a provider row: its list is that provider\'s, so Ba
   assert.equal(asked(), before, 'the kept list, not a second request');
   assert.equal(doc.querySelector('#mimp-body .mvi-cb[value="gpt-5"]').checked, true, 'with its tick');
 });
+
+test('23. a sign-in on OpenCode: step 1\'s tile leads to ITS list, a tick imports, the model lands in the OpenCode group', async () => {
+  let imported = [];
+  const OPENCODE_LIST = { models: [
+    { id: 'openrouter/z-ai/glm-5.3-prime', provider: 'openrouter', name: 'glm-5.3-prime', inCatalog: false },
+    { id: 'opencode/beam-free', provider: 'opencode', name: 'beam-free', inCatalog: true },
+  ] };
+  const { window, doc } = await boot({ hash: 'models', arms: [
+    ['GET', '/api/providers/opencode/models', () => ok(OPENCODE_LIST)],
+    ['POST', '/api/providers/opencode/import-models', (body) => { imported = body.ids; return ok({ created: body.ids, updated: [], skipped: [] }); }],
+    ['GET', '/api/models', () => ok(modelsBody({ models: [
+      ...data().models,
+      { id: 'openrouter/z-ai/glm-5.3-prime', label: 'glm-5.3-prime (OpenCode)', engine: 'opencode', efforts: [] },
+    ] }))],
+  ] });
+  press(window, doc.getElementById('model-create-btn'));
+  await settle(2);
+  press(window, step1(doc).querySelector('.mdl-hx-t[data-engine="opencode"]'));
+  press(window, step1(doc).querySelector('.mdl-next'));
+  await settle(2);
+  assert.ok(step2(doc), 'an OpenCode sign-in goes to a list, not the bare form');
+  assert.equal(step2(doc).dataset.engine, 'opencode');
+  assert.equal(step2(doc).querySelector('select.mdl-add-provider'), null, 'no provider to pick: the models name their own');
+  assert.equal(step2(doc).querySelector('.mdl-add-source .mdl-add-source-t').textContent, 'OpenCode');
+  const cb = doc.querySelector('#mimp-body .mvi-cb[value="openrouter/z-ai/glm-5.3-prime"]');
+  assert.ok(cb, 'the CLI\'s models are listed');
+  const listed = doc.querySelector('#mimp-body .mvi-cb[value="opencode/beam-free"]');
+  assert.ok(listed, 'an already-catalogued model is still listed');
+  assert.equal(listed.disabled, false);
+  assert.equal(doc.querySelector('#mimp-body tr[data-id="opencode/beam-free"] .mvi-status').textContent, 'In catalogue');
+  edit(window, cb, true);
+  await settle();
+  assert.equal(step2(doc).querySelector('.mimp-go').textContent, 'Add 1 model');
+  // "Enter an id instead" from the OpenCode list keeps the harness: a sign-in's form, not a provider's.
+  press(window, step2(doc).querySelector('.mv-back'));
+  await settle(2);
+  press(window, step1(doc).querySelector('.mdl-next'));
+  await settle(2);
+  press(window, step2(doc).querySelector('.mdl-manual'));
+  await settle(2);
+  assert.ok(form(doc) && form(doc).dataset.where === 'signin', 'the form is a sign-in\'s');
+  assert.equal(form(doc).querySelector('.mv-engine').value, 'opencode');
+  press(window, form(doc).querySelector('.mv-back'));
+  await settle(2);
+  assert.ok(step2(doc), 'back on the OpenCode list');
+  press(window, step2(doc).querySelector('.mimp-go'));
+  await settle(14);
+  assert.deepEqual(imported, ['openrouter/z-ai/glm-5.3-prime']);
+  assert.equal(shown(doc), false, 'the dialog closed');
+  assert.ok(doc.querySelector('#models-list .mdl-grp[data-engine="opencode"] .mdl-row[data-id="openrouter/z-ai/glm-5.3-prime"]'),
+    'the imported model sits in the OpenCode group');
+});

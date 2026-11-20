@@ -221,7 +221,7 @@ import {
   renderExportWizard, collectExportWizard, applyConnectionModeIn, setModelEngine, paintEditorSave, setFormWhere,
 } from './models-view.mjs';
 import {
-  collectProviderRow, collectSpeechRow, formatSpeechBytes, renderImportSheet, renderEndpointSheet, collectImportSheet,
+  collectProviderRow, collectSpeechRow, formatSpeechBytes, renderImportSheet, renderEndpointSheet, renderOpencodeSheet, collectImportSheet,
   collectOpenRouterRow, endpointRowMatches, ENDPOINT_PRESETS,
   setModelUpstream, applyImagesPreset, collectImagesRow, imagesRowProblem, showImagesTest, showImagesSaveError, collectSoundRow,
   connectionWhere, syncCopilotHostField,
@@ -20927,7 +20927,10 @@ function openAddModelDialog({ step = 1, where = 'signin', provider = 'copilot', 
   if (!el.modelEditorModal || !el.modelEditorHost) return;
   mvState.editing = null;
   mvState.prefill = null;
-  const dlg = beginModelDialog({ where: step === 2 ? 'provider' : where, provider, engine: engine || 'claude' }, { baseUrl });
+  // An engine's own list (OpenCode) opens straight at step 2 keeping its sign-in; the provider-based lists stand on
+  // the provider card, whose select names them.
+  const w = step === 2 && engine !== 'opencode' ? 'provider' : where;
+  const dlg = beginModelDialog({ where: w, provider, engine: engine || 'claude' }, { baseUrl });
   void loadAddEngines(dlg);
   if (step === 2) showAddList();
   else showAddStep1();
@@ -21015,7 +21018,9 @@ function addStep1Next(card) {
   // ticks, filter and answers go.
   if (pick.provider !== dlg.list.provider) { dlg.list = freshAddList(pick.provider); dlg.seq = ++modelDlgSeq; }
   dlg.add = pick;
-  if (pick.where === 'provider') showAddList();
+  // An engine that lists its own models (OpenCode's sign-in) goes to that list like a provider does; a custom
+  // endpoint and every other sign-in take the form.
+  if (pick.where === 'provider' || (pick.where === 'signin' && pick.engine === 'opencode')) showAddList();
   else showAddForm({ where: pick.where, engine: pick.engine, from: 'step1' });
 }
 
@@ -21121,24 +21126,26 @@ function showAddList() {
   if (!dlg) return;
   dlg.screen = 'list';
   const provider = dlg.add.provider;
-  const card = renderAddStep2({ provider, baseUrl: dlg.list.baseUrl }, { doc: document, providers: mvState.providers });
+  const card = renderAddStep2({ provider, engine: dlg.add.engine, baseUrl: dlg.list.baseUrl }, { doc: document, providers: mvState.providers });
   const filter = card.querySelector('.mimp-filter');
   if (filter) filter.value = dlg.list.filter;
   const key = card.querySelector('.mimp-key');
   if (key) key.value = dlg.list.apiKey;
-  const plan = addStep2Plan(provider, mvState.providers, { baseUrl: dlg.list.baseUrl });
+  const plan = addStep2Plan(provider, mvState.providers, { baseUrl: dlg.list.baseUrl, engine: dlg.add.engine });
   if (plan.kind !== 'list') paintAddBlocked(card, plan);
   showModelScreen(card, { ...addScreenParts(card), focus: provider === 'openai' ? '.mimp-base' : '.mimp-filter' });
   if (plan.kind !== 'list') return;
   if (dlg.list.payload) mountAddSheet(card, dlg.list.payload);
-  else if (plan.source === 'copilot' || plan.auto) void listAddModels();
+  else if (plan.source === 'copilot' || plan.auto || plan.source === 'opencode') void listAddModels();
 }
 
 /** Draw a listed payload into step 2: the sheet without its own title, note, buttons and message (the screen has them),
  *  the kept ticks back on, the filter applied, the foot counted. */
-function mountAddSheet(card, { endpoint, data }) {
+function mountAddSheet(card, { endpoint, source, data }) {
   const dlg = mvState.dlg;
-  const sheet = endpoint ? renderEndpointSheet(data, { doc: document }) : renderImportSheet(data.models || [], { doc: document });
+  const sheet = endpoint ? renderEndpointSheet(data, { doc: document })
+    : source === 'opencode' ? renderOpencodeSheet(data.models || [], { doc: document })
+      : renderImportSheet(data.models || [], { doc: document });
   sheet.querySelector(':scope > h3.mv-editor-title')?.remove();
   sheet.querySelector(':scope > small.hint:not(.mvi-warn)')?.remove();
   sheet.querySelector(':scope > .mv-editor-btns')?.remove();
@@ -21162,9 +21169,11 @@ async function listAddModels() {
   // The screen's address and key are kept for a redraw; the pair this request asks with travels with its answer
   // (payload) and only that pair is ever imported with, so a key typed for another address never reaches this one.
   if (typed) keepAddList(card);
-  const plan = addStep2Plan(dlg.add.provider, mvState.providers, { baseUrl: dlg.list.baseUrl });
+  const plan = addStep2Plan(dlg.add.provider, mvState.providers, { baseUrl: dlg.list.baseUrl, engine: dlg.add.engine });
   if (plan.kind !== 'list') return;
-  const endpoint = plan.source === 'endpoint';
+  const source = plan.source;
+  const endpoint = source === 'endpoint';
+  const opencode = source === 'opencode';
   if (endpoint && !plan.baseUrl) {
     setAddListMsg(card, 'Give the endpoint a base URL, e.g. http://127.0.0.1:11434/v1', 'err');
     card.querySelector('.mimp-base')?.focus();
@@ -21177,15 +21186,16 @@ async function listAddModels() {
   if (listBtn) listBtn.disabled = true;
   const go = card.querySelector('.mimp-go');
   if (go) go.disabled = true;
-  setAddListMsg(card, endpoint ? 'Asking the endpoint what it serves…' : 'Loading Copilot models…');
+  setAddListMsg(card, endpoint ? 'Asking the endpoint what it serves…' : opencode ? 'Loading OpenCode models…' : 'Loading Copilot models…');
   try {
-    const url = endpoint ? `/api/providers/openai/models?baseUrl=${encodeURIComponent(plan.baseUrl)}` : '/api/providers/copilot/models';
+    const url = endpoint ? `/api/providers/openai/models?baseUrl=${encodeURIComponent(plan.baseUrl)}`
+      : opencode ? '/api/providers/opencode/models' : '/api/providers/copilot/models';
     // The endpoint's own key rides a header, never the URL (server logs, history).
     const res = await fetch(url, endpoint && apiKey ? { headers: { 'X-Worca-Endpoint-Key': apiKey } } : {});
     const data = await safeJson(res);
     if (!addLive(seq, 'list', card)) return;
     if (!res.ok) { setAddListMsg(card, data.error || `HTTP ${res.status}`, 'err'); return; }
-    dlg.list.payload = { endpoint, data, baseUrl: endpoint ? plan.baseUrl : '', apiKey };
+    dlg.list.payload = { endpoint, source, data, baseUrl: endpoint ? plan.baseUrl : '', apiKey };
     dlg.list.ticked = new Set();
     dlg.list.filter = '';
     const filter = card.querySelector('.mimp-filter');
@@ -21224,13 +21234,17 @@ function changeAddProvider(sel) {
   showAddList();
 }
 
-/** "Enter an id instead": the provider form with the list's provider; its Back returns to the list with its ticks. */
+/** "Enter an id instead": the provider form with the list's provider; its Back returns to the list with its ticks.
+ *  The OpenCode list's "Enter an id instead" keeps the engine: a sign-in's form, not a provider's. */
 function addManualForm() {
   const dlg = mvState.dlg;
   const card = addListCard();
   if (!dlg || !card) return;
   keepAddList(card);
-  showAddForm({ where: 'provider', provider: dlg.add.provider, from: 'list' });
+  const plan = addStep2Plan(dlg.add.provider, mvState.providers, { baseUrl: dlg.list.baseUrl, engine: dlg.add.engine });
+  showAddForm(plan.source === 'opencode'
+    ? { where: 'signin', engine: dlg.add.engine, from: 'list' }
+    : { where: 'provider', provider: dlg.add.provider, from: 'list' });
 }
 
 /** Back: from the form to where it was reached from (its typed work counts on the way out), from the list to step 1. */
@@ -21287,7 +21301,9 @@ async function importAddModelsFlow() {
   if (!dlg || !sheet) return;
   const ids = collectImportSheet(sheet);
   if (!ids.length) { setAddListMsg(card, 'Pick at least one model.', 'err'); return; }
-  const endpoint = sheet.dataset.source === 'endpoint';
+  const src = sheet.dataset.source || 'copilot';
+  const endpoint = src === 'endpoint';
+  const opencode = src === 'opencode';
   // The key the shown list was asked with (its payload), never what the key field holds now: a re-list that was
   // refused, or a key typed before Back, belongs to another address.
   const apiKey = endpoint ? dlg.list.payload?.apiKey || '' : '';
@@ -21296,7 +21312,9 @@ async function importAddModelsFlow() {
   try {
     const res = endpoint
       ? await fetch('/api/providers/openai/import-models', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ids, baseUrl: sheet.dataset.baseurl || '', ...(apiKey ? { apiKey } : {}) }) })
-      : await fetch('/api/providers/copilot/import-models', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ids }) });
+      : opencode
+        ? await fetch('/api/providers/opencode/import-models', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ids }) })
+        : await fetch('/api/providers/copilot/import-models', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ids }) });
     const data = await safeJson(res);
     // The answer belongs to the open that asked: a screen opened meanwhile (the page's Add model, by keyboard) is left as
     // it is, and a refusal that screen cannot show is a toast.
@@ -21319,10 +21337,12 @@ async function importAddModelsFlow() {
     // Land ON what was imported: the list filters to the new ids until the filter is cleared.
     const fresh = [...(data.created || []), ...(data.updated || [])];
     if (fresh.length) mvState.justImported = fresh;
-    mvState.cat.fold = { ...mvState.cat.fold, claude: false };
+    // Unfold the harness the import landed on (OpenCode's own group for an OpenCode import, Claude Code's for the
+    // provider-based lists) so what was added is in view.
+    mvState.cat.fold = { ...mvState.cat.fold, [opencode ? 'opencode' : 'claude']: false };
     if (currentModelsTab() !== 'catalogue') showView('models');
     await refreshModelsEverywhere();
-    setModelsMsg(`Imported from ${endpoint ? (data.serverLabel || 'the endpoint') : 'Copilot'}: ${parts.join(', ') || 'nothing changed'}.${why.length ? ` ${why.join('; ')}` : ''}`, 'ok');
+    setModelsMsg(`Imported from ${endpoint ? (data.serverLabel || 'the endpoint') : opencode ? 'OpenCode' : 'Copilot'}: ${parts.join(', ') || 'nothing changed'}.${why.length ? ` ${why.join('; ')}` : ''}`, 'ok');
   } catch (e) {
     if (mvState.dlg === dlg) setAddListMsg(card, e.message, 'err');
     else notify({ tone: 'err', title: 'Not imported', detail: e.message });
@@ -21661,8 +21681,9 @@ function onModelsToolbarClick(t) {
     return true;
   }
   if (t.classList.contains('mdl-empty-add') && t.dataset.engine) {
-    // An always-shown harness with no models: step 1 of Add model opens on that harness's sign-in.
-    openAddModelDialog({ where: 'signin', engine: t.dataset.engine });
+    // An always-shown harness with no models: its Add-model opens straight at that harness's own list (step 2),
+    // so the real, runnable models are one click away.
+    openAddModelDialog({ step: 2, where: 'signin', engine: t.dataset.engine });
     return true;
   }
   if (t.classList.contains('mdl-fix') && t.dataset.row) {
@@ -43067,9 +43088,9 @@ askPanel = createAskPanel({
   openComposer: (id) => { openWorkflowFromAsk(id, { reveal: true }); },
   composerActions: askComposerActions(),        // Ask's draft and graph cards: the Workflows chat's actions (ask-composer-cards.mjs)
   openClaudeSetup: () => { openClaudeSetup(); },
-  // An always-offered chat engine with no models (OpenCode): the row opens the Models view with Add model on its
-  // harness, so the chat can move to it the moment a model exists.
-  openAddModel: (engine) => { askSide?.uncover(); mvState.openEditorOnLoad = { where: 'signin', engine }; showView('models'); },
+  // An always-offered chat engine with no models (OpenCode): the row opens the Models view at Add model's OpenCode
+  // list, so the chat can move to it the moment a model exists (or be added right away).
+  openAddModel: (engine) => { askSide?.uncover(); mvState.openEditorOnLoad = { step: 2, where: 'signin', engine }; showView('models'); },
   loadMarkdown: loadAskMarkdown,
   hljsLoader: diffHljsLoader,
   storage: localStorage,

@@ -698,7 +698,9 @@ test('5c: the hide switch never takes the keyboard back from a control you moved
 });
 
 test('an always-shown harness\'s Add-model call to action opens Add model on it', async () => {
-  const { window, doc } = await boot({ hash: 'models' });
+  const { window, doc } = await boot({ hash: 'models', arms: [
+    ['GET', '/api/providers/opencode/models', () => ok({ models: [] })],
+  ] });
   const oc = group(doc, 'opencode');
   assert.ok(oc, 'the OpenCode group is listed with no OpenCode models');
   assert.equal(oc.querySelector('.mdl-grp-toggle').getAttribute('aria-expanded'), 'false', 'folded like the other harnesses');
@@ -707,10 +709,10 @@ test('an always-shown harness\'s Add-model call to action opens Add model on it'
   assert.ok(add, 'the empty group\'s body holds the Add-model call to action');
   assert.equal(add.textContent, 'Add OpenCode model');
   press(window, add);
-  await settle();
+  await settle(2);
   const modal = doc.querySelector('#model-editor-modal');
   assert.equal(modal.classList.contains('hidden'), false, 'Add model opened');
-  const picked = modal.querySelector('.mdl-hx-t[aria-pressed="true"]');
-  assert.ok(picked, 'a harness is picked');
-  assert.equal(picked.dataset.engine, 'opencode', 'the harness that had no models is the pick');
+  const card = modal.querySelector('.mdl-add[data-step="2"]');
+  assert.ok(card, 'it opens straight on the harness\'s own list (step 2), so the real models are one click away');
+  assert.equal(card.dataset.engine, 'opencode', 'on the harness that had no models');
 });
