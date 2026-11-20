@@ -212,7 +212,8 @@ function paintAvatar(ava, acct, avatar) {
 /** Paint the corner button (#side-acct): the avatar (the level image when `avatar` {src, alt} is given,
  *  else the initials), the short name, the away badge with its walking person (data-presence) and the label.
  *  The usage rings are usage-view.mjs `paintUsageRings`; their texts come in as `usageParts`. With an image the
- *  aria-label also names the level, and the native title carries only a block and the usage parts (none: no title). */
+ *  aria-label also names the level and there is no native title: the level hover card is the corner's tooltip, and a
+ *  native one would draw over it. A block and the usage parts stay in the aria-label. */
 export function paintAccountCorner(btn, acct, { budget = null, away = false, avatar = null, usageParts = [] } = {}) {
   if (!btn) return;
   btn.dataset.account = acct.kind;
@@ -229,10 +230,8 @@ export function paintAccountCorner(btn, acct, { budget = null, away = false, ava
   if (name) name.textContent = acct.short;
   const { label, title } = accountLabel(acct, { away, budget, level: shown ? shown.alt : '', usageParts });
   btn.setAttribute('aria-label', label);
-  if (!shown) { btn.title = title; return; }
-  const tip = [limitPhrase(budget), (usageParts || []).filter(Boolean).join('; ')].filter(Boolean).join(' · ');
-  if (tip) btn.title = tip;
-  else btn.removeAttribute('title');
+  if (shown) btn.removeAttribute('title');
+  else btn.title = title;
 }
 
 /** The identity card (#acct-id): "Signed in as", the full value and how; a shared identity only. */
