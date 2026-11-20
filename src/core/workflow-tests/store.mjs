@@ -496,12 +496,13 @@ export function latestTriesFor({ workflowId, exampleId, use }) {
  * D27: after a restart nothing drives a running test any more. Its running tries are stopped with what their run spent
  * so far (the cap check of "Finish the rest" counts it), and every try's run loses its resume point: resumeRun refuses a
  * try, so a kept point would only pin a plugin workflow (plugin-workflows.mjs) forever. Called by the server's
- * bootMaintenance, after the stale-run reconcile.
+ * bootMaintenance, after the stale-run reconcile. `runIds` = the tests it stopped (Part 4: boot records their unchecked criteria).
  */
 export function recoverInterruptedTestRuns(now = nowIso()) {
   getDb();
-  const out = { runs: 0, tries: [] };
+  const out = { runs: 0, tries: [], runIds: [] };
   tx(() => {
+    out.runIds = prepare("SELECT id FROM wf_test_runs WHERE status = 'running' ORDER BY id").all().map((r) => Number(r.id));
     out.tries = prepare("SELECT id, pipeline_id FROM wf_test_tries WHERE status = 'running' ORDER BY id").all()
       .map((r) => ({ id: Number(r.id), pipelineId: r.pipeline_id ?? null }));
     prepare(`UPDATE wf_test_tries SET status = 'stopped', finished_at = ?,

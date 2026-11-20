@@ -3,6 +3,9 @@
 
 import { NOT_CHECKED } from './criteria-text.mjs';
 
+/** The errors a later pass checks again (criteria-store.mjs RETRY_ERRORS): the cell says "Not checked …" and waits, never a verdict. */
+const PENDING_ERRORS = Object.freeze(['limit', 'cap', 'failed']);
+
 /** D91, P4-Q5: a try whose run finished (its stored verdict says so) and that Worca did not set aside. */
 export const finishedTry = (t) => !!(t && t.verdict && t.verdict.facts && t.verdict.facts.status === 'done' && !t.verdict.worcaProblem);
 
@@ -23,7 +26,7 @@ export function criterionResult(c, j, trust, { finished = true, answer } = {}) {
   if (!j) return { ...base, met: null, value: NOT_CHECKED.pending, decides: false, pending: true };
   if (j.error || j.met === null) {
     return { ...base, met: null, value: NOT_CHECKED[j.error] || NOT_CHECKED.failed, decides: false, judgementId: j.id,
-      ...(j.error === 'limit' || j.error === 'failed' ? { pending: true } : {}) };
+      ...(PENDING_ERRORS.includes(j.error) ? { pending: true } : {}) };
   }
   return { ...base, met: j.met, value: j.met ? 'Met' : 'Not met', reason: j.reason, proof: j.proof, proofFound: j.proofFound,
     judgementId: j.id, decides: !!(trust && trust.decides), shadowDecides: true, ...(answer !== undefined ? { answer } : {}) };

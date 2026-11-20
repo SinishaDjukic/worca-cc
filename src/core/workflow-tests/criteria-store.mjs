@@ -12,8 +12,9 @@ const int = (v) => (v == null ? null : Number(v));
 
 /** D95: what judgements and trust are kept by: the criterion's words, normalised (criterionKey), hashed. */
 export function criterionFp(text) { return createHash('sha256').update(criterionKey(text)).digest('hex').slice(0, 16); }
-/** Errors asked again on the next pass (the limit was reached, the call failed); the others are final for that try. */
-export const RETRY_ERRORS = Object.freeze(['limit', 'failed']);
+/** Errors asked again on the next pass (Worca's spending limit was reached, the test's cost limit was reached (Task 21 fix round 2), the call
+ *  failed); the others are final for that try. */
+export const RETRY_ERRORS = Object.freeze(['limit', 'cap', 'failed']);
 
 const J_COLS = `id, workflow_id, example_id, criterion_id, criterion_fp, model, purpose, try_id, other_try_id, round_id, card, variant, subject,
   met, winner, reason, proof, proof_found, error, cost_usd, ms, created_at`;

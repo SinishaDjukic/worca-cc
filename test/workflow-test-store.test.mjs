@@ -121,6 +121,7 @@ test('deleting an example refuses while a test tries it; a restart stops running
   assert.throws(() => store.deleteExample(WF, ex.id), { code: 'BUSY' });
   const out = store.recoverInterruptedTestRuns();
   assert.deepEqual([out.runs, out.tries], [1, [{ id: t.id, pipelineId: 'abcd1234' }]]);
+  assert.deepEqual(out.runIds, [run.id], 'Task 21 fix round 2: the ids of the tests it stopped (boot records their unchecked criteria)');
   assert.deepEqual([store.readTestRun(run.id).status, store.readTestRun(run.id).stopReason, store.readTry(t.id).status], ['stopped', 'restart', 'stopped']);
   assert.equal(store.readTry(t.id).costUsd, 0.75, 'its cost so far counts in the test (Finish the rest checks the cap with it)');
   assert.equal(getDb().prepare("SELECT resume_point FROM pipelines WHERE id = 'abcd1234'").get().resume_point, null, 'a try never resumes, so nothing pins it');

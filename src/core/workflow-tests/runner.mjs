@@ -269,10 +269,12 @@ export function createTestRunner(deps) {
     st.done = loop(runId, st)
       .catch((e) => { st.stopping = st.stopping || 'error'; st.detail = st.detail || msgOf(e); })
       .finally(() => {
-        // Fix round 1 (P4-M5): what this test never checked is 'unchecked', not 'new' ('limit' when a limit or the cap left it).
+        // Fix rounds 1, 2 (P4-M5): what this test never checked is 'unchecked', not 'new'; its cell says why ('cap', 'limit' or 'failed').
         if (deps.leaveUnchecked) {
-          try { deps.leaveUnchecked(store.readTestRun(runId), { error: st.stopping && st.stopping !== 'cap' ? 'failed' : 'limit' }); }
-          catch (e) { console.error(`[workflow-tests] could not record the criteria test ${runId} left unchecked: ${msgOf(e)}`); }
+          try {
+            const run = store.readTestRun(runId);
+            if (run) deps.leaveUnchecked(run, { overCap: () => overCap(run) });
+          } catch (e) { console.error(`[workflow-tests] could not record the criteria test ${runId} left unchecked: ${msgOf(e)}`); }
         }
         try {
           store.updateTestRun(runId, st.stopping

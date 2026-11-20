@@ -7,13 +7,14 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { _resetForTests, prepare, getDb } from '../src/core/db.mjs';
-import { judgeCallUsd, sideCheckPlan, checkUsdOf, criteriaPlanOf, reasonOfCriterion } from '../src/core/workflow-tests/criteria-read.mjs';
+import { judgeCallUsd, sideCheckPlan, checkUsdOf, criteriaPlanOf, reasonOfCriterion, needsCriteriaJudging } from '../src/core/workflow-tests/criteria-read.mjs';
 import { estimateOf } from '../src/shared/workflow-tests/compare.mjs';
 import * as store from '../src/core/workflow-tests/store.mjs';
 import * as cs from '../src/core/workflow-tests/criteria-store.mjs';
 import { createTestRunner } from '../src/core/workflow-tests/runner.mjs';
 import { createCriteriaJudge, subjectOfTry } from '../src/core/workflow-tests/criteria-runner.mjs';
 import { checkTry } from '../src/core/workflow-tests/result.mjs';
+import { criterionResult } from '../src/shared/workflow-tests/criteria-verdicts.mjs';
 import { recordTestJudgeCost } from '../src/core/cost-budget.mjs';
 
 const homes = [];
@@ -228,8 +229,12 @@ test('the cap of the test holds between the two asks of a judge: an unreadable f
   const { run, t } = seedTry(ex, doneVerdict);
   const out = await judge.judgeTry(ex, t, { testRunId: run.id, overCap: () => capped });
   assert.equal(replies, 1, 'the second attempt was not made');
-  assert.equal(out[0].error, 'limit');
+  assert.equal(out[0].error, 'cap', "fix round 2: the test's own cap, not Worca's spending limit");
+  assert.equal(cellOf(out[0]), 'Not checked: this test reached its cost limit');
 });
+
+/** The words a try's cell shows for a judgement row (P4-C2). */
+const cellOf = (j) => criterionResult({ id: 'k_x', text: 'x' }, j, null).value;
 
 test('the judge spend reaches the cap partway through the criteria of a try: the second is not asked and the test stops as cap', async () => {
   const h = harness();
@@ -241,10 +246,11 @@ test('the judge spend reaches the cap partway through the criteria of a try: the
   const r = store.readTestRun(run.id);
   assert.equal(r.status, 'stopped');
   assert.equal(r.stopReason, 'cap');
-  // Fix round 1: the criterion the cap left gets a 'limit' row (no cost), so it reads 'unchecked', never 'new'.
+  // Fix rounds 1, 2: the criterion the cap left gets a 'cap' row (no cost), so it reads 'unchecked', never 'new', and its cell names the cap.
   const [t] = store.triesOfRun(run.id);
   const left = cs.tryJudgements([t.id]).find((j) => j.fp === cs.criterionFp('Explains the legal reasons'));
-  assert.deepEqual([left && left.error, left && left.met, left && left.costUsd], ['limit', null, 0]);
+  assert.deepEqual([left && left.error, left && left.met, left && left.costUsd], ['cap', null, 0]);
+  assert.equal(cellOf(left), 'Not checked: this test reached its cost limit');
   assert.equal(reasonOfCriterion([t.id])('Explains the legal reasons'), 'unchecked');
   assert.equal(prepare('SELECT COUNT(*) AS n FROM wf_test_judge_ledger WHERE test_run_id = ?').get(run.id).n, 1, 'only the call that was made is booked');
 });
@@ -252,7 +258,7 @@ test('the judge spend reaches the cap partway through the criteria of a try: the
 test("fix round 1: Worca's spending limit refuses every check: no call, no booking, and each criterion reads 'unchecked', never 'new'", async () => {
   const { judgeCriterion } = await import('../src/core/workflow-tests/judge.mjs');
   let asked = 0;
-  const h = harness({ judge: { judgeCriterion: (args, d) => judgeCriterion({ ...args, mock: false }, { ...d, mock: () => false, budget: () => ({ blocked: true }),
+  const h = harness({ judge: { budget: () => ({ blocked: true }), judgeCriterion: (args, d) => judgeCriterion({ ...args, mock: false }, { ...d, mock: () => false,
     helperCall: async () => { asked += 1; throw new Error('no paid call when refused'); } }) } });
   const ex = example([{ text: 'Names a success metric' }, { text: 'Explains the legal reasons' }]);
   const runner = createTestRunner(h.deps);
@@ -262,6 +268,7 @@ test("fix round 1: Worca's spending limit refuses every check: no call, no booki
   const [t] = store.triesOfRun(run.id);
   assert.deepEqual(cs.tryJudgements([t.id]).map((j) => [j.criterionId, j.error, j.met, j.costUsd]).sort(),
     ex.criteria.map((c) => [c.id, 'limit', null, 0]).sort(), 'the first refused, the second never reached: both recorded');
+  assert.deepEqual(cs.tryJudgements([t.id]).map(cellOf), ['Not checked: the spending limit is reached', 'Not checked: the spending limit is reached']);
   assert.equal(asked, 0);
   assert.equal(prepare('SELECT COUNT(*) AS n FROM wf_test_judge_ledger WHERE test_run_id = ?').get(run.id).n, 0);
   const reasonOf = reasonOfCriterion([t.id]);
@@ -285,6 +292,56 @@ test('fix round 1: leaveUnchecked records only what has no row yet, with the rea
     [[ex.criteria[0].id, true, null], [ex.criteria[1].id, null, 'failed']].sort(), 'the checked one is kept; the other recorded once, as the first call said');
   assert.deepEqual(cs.tryJudgements([unfinished.id]), [], 'an unfinished try is not checked, so nothing is recorded');
   assert.deepEqual(calls, []);
+});
+
+test("fix round 2: the cap reached in the criteria phase: the test ends done, and what it left reads 'cap', not the spending limit", async () => {
+  const h = harness();
+  const ex = example([{ text: 'Names a success metric' }]);
+  const runner = createTestRunner(h.deps);
+  const first = await runner.start({ workflowId: WF, kind: 'once', b: 'draft', exampleIds: [ex.id], tries: 1, reuseB: true });
+  await waitDone(runner, first.id);
+  store.updateExample(WF, ex.id, { criteria: [...ex.criteria, { text: 'Explains the legal reasons' }, { text: 'Gives a deadline' }] });
+  const second = await runner.start({ workflowId: WF, kind: 'once', b: 'draft', exampleIds: [ex.id], tries: 1, reuseB: true, capUsd: 0.1 });
+  await waitDone(runner, second.id);
+  assert.deepEqual([store.readTestRun(second.id).status, store.readTestRun(second.id).stopReason], ['done', null], 'the phase stops on overCap; the test ends done');
+  const [t] = store.triesOfRun(second.id);
+  const row = (text) => cs.tryJudgements([t.id]).find((j) => j.fp === cs.criterionFp(text));
+  assert.equal(row('Explains the legal reasons').error, null, 'checked: its $0.10 reaches the $0.10 cap');
+  assert.deepEqual([row('Gives a deadline').error, cellOf(row('Gives a deadline'))], ['cap', 'Not checked: this test reached its cost limit']);
+});
+
+test("fix round 2: a done test whose check threw: what it left reads 'failed' (the check did not run), not the spending limit", async () => {
+  const orig = console.error; console.error = () => {};
+  try {
+    const h = harness({ judge: { budget: () => ({ blocked: false }), judgeCriterion: async () => { throw new Error('boom'); } } });
+    const ex = example([{ text: 'Names a success metric' }]);
+    const runner = createTestRunner(h.deps);
+    const run = await runner.start({ workflowId: WF, kind: 'once', b: 'draft', exampleIds: [ex.id], tries: 1 });
+    await waitDone(runner, run.id);
+    assert.equal(store.readTestRun(run.id).status, 'done');
+    const [t] = store.triesOfRun(run.id);
+    const [j] = cs.tryJudgements([t.id]);
+    assert.deepEqual([j.error, cellOf(j)], ['failed', 'Not checked: the check did not run']);
+  } finally { console.error = orig; }
+});
+
+test("fix round 2: leaveUnchecked's code from the state at the end: the test's cap, else Worca's spending limit, else failed; 'cap' is never a verdict", async () => {
+  let blocked = false;
+  const judge = createCriteriaJudge({ subjectOf: async () => TEXT, contextOf: () => '', book: () => {}, budget: () => ({ blocked }),
+    judgeCriterion: async () => { throw new Error('never asked'); } });
+  const ex = example([{ text: 'Names a success metric' }]);
+  const codeOf = (o) => { const { run, t } = seedTry(ex, doneVerdict); judge.leaveUnchecked(run, o); return [t, cs.tryJudgements([t.id])[0]]; };
+  assert.equal(codeOf({ overCap: () => true })[1].error, 'cap');
+  blocked = true;
+  assert.equal(codeOf({ overCap: () => true })[1].error, 'cap', 'the cap first');
+  assert.equal(codeOf({ overCap: () => false })[1].error, 'limit');
+  blocked = false;
+  assert.equal(codeOf({})[1].error, 'failed');
+  const [t, j] = codeOf({ overCap: () => true });
+  assert.deepEqual([j.met, criterionResult({ id: 'k', text: 'x' }, j, null).pending, criterionResult({ id: 'k', text: 'x' }, j, null).decides], [null, true, false]);
+  assert.ok(cs.RETRY_ERRORS.includes('cap'));
+  assert.equal(cs.needsJudging(t.id, j.fp, 'claude-haiku-4-5'), true, 'a later pass checks it');
+  assert.equal(needsCriteriaJudging(store.readExample(WF, ex.id), t), 1, 'and it is priced as a missing check');
 });
 
 test('a try Worca set aside, or whose run did not finish, is never judged', async () => {

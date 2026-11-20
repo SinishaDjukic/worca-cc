@@ -101,3 +101,20 @@ test('M18: boot fails a round a restart left making and reports how many', async
   try { assert.equal(start.recoverTestsAtBoot({ tmpDir: tmp }).rounds, 1); } finally { rmSync(tmp, { recursive: true, force: true }); }
   assert.equal(cs.readRound(r.id).status, 'failed');
 });
+
+test("Task 21 fix round 2: a test a restart cut short records the criteria its finished tries never had checked, so they read 'unchecked', not 'new'", async () => {
+  const store = await import('../src/core/workflow-tests/store.mjs');
+  const cs = await import('../src/core/workflow-tests/criteria-store.mjs');
+  const { reasonOfCriterion } = await import('../src/core/workflow-tests/criteria-read.mjs');
+  const ex = store.createExample('wf_boot', { name: 'Bulk export', request: 'Write the brief.', tries: 1,
+    criteria: [{ text: 'Names a success metric' }], judge: { model: 'claude-haiku-4-5' } });
+  const run = store.createTestRun({ workflowId: 'wf_boot', kind: 'once', b: 'draft', bFp: 'f', exampleIds: [ex.id], tries: 1 });
+  const t = store.insertTry({ runId: run.id, workflowId: 'wf_boot', exampleId: ex.id, use: 'draft', fp: 'f', exampleFp: ex.fingerprint, tryNo: 1 });
+  store.linkTry(run.id, t.id, 'b');
+  store.updateTry(t.id, { status: 'passed', pipelineId: 'p0000001', verdict: { passed: true, facts: { status: 'done' }, basics: [], checks: [] } });
+  const tmp = mkdtempSync(join(tmpdir(), 'worca-cc-wftstart-tmp-'));
+  try { assert.equal(start.recoverTestsAtBoot({ tmpDir: tmp }).runs, 1); } finally { rmSync(tmp, { recursive: true, force: true }); }
+  assert.equal(store.readTestRun(run.id).stopReason, 'restart');
+  assert.deepEqual(cs.tryJudgements([t.id]).map((j) => [j.error, j.met, j.costUsd]), [['failed', null, 0]]);
+  assert.equal(reasonOfCriterion([t.id])('Names a success metric'), 'unchecked');
+});

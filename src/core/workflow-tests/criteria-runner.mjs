@@ -9,6 +9,7 @@ import { SUBJECT_MAX, CHANGES_HEADING } from './judge-prompt.mjs';
 import { finishedTry, pairTriesOf } from '../../shared/workflow-tests/criteria-verdicts.mjs';
 import * as store from './store.mjs';
 import * as cs from './criteria-store.mjs';
+import { tx } from '../db.mjs';
 
 /** D90: what the checking model reads of a try: its main result, and a project try's diff under a heading. */
 export async function subjectOfTry(t, { readMain = mainResult, readPatch = readTryPatch } = {}) {
@@ -22,7 +23,10 @@ export async function subjectOfTry(t, { readMain = mainResult, readPatch = readT
 }
 
 export function createCriteriaJudge(deps = {}) {
-  const d = { judgeCriterion, judgePair, subjectOf: (t) => subjectOfTry(t), contextOf: (ex) => exampleSourcesText(ex), book: recordTestJudgeCost, ...deps };
+  // `budget`: Worca's spending limit (budgetStatus); the test's own cap is each call's `overCap`.
+  const d = { judgeCriterion, judgePair, subjectOf: (t) => subjectOfTry(t), contextOf: (ex) => exampleSourcesText(ex), book: recordTestJudgeCost,
+    budget: () => JUDGE_DEFAULTS.budget(), ...deps };
+  const blockedNow = () => { try { const b = d.budget(); return !!(b && b.blocked); } catch { return false; } };
 
   /** The criteria of `example` that the finished try `t` still needs checked by the example's model. */
   const missingOf = (example, t) => {
@@ -52,10 +56,13 @@ export function createCriteriaJudge(deps = {}) {
         }
       };
       // The judge may ask twice (an unreadable reply, a missing proof): its own budget check also reports "over" when this test's cap is reached.
-      const budget = () => (overCap() ? { blocked: true } : JUDGE_DEFAULTS.budget());
-      const j = await d.judgeCriterion({ criterion: c.text, subject, context, model, mock: mock || !!t.mock, book }, { budget });
+      // Task 21 fix round 2: a refusal because of the test's cap is recorded as 'cap', not as Worca's spending limit ('limit').
+      let capped = false;
+      const budget = () => { if (overCap()) { capped = true; return { blocked: true }; } return d.budget(); };
+      const said = await d.judgeCriterion({ criterion: c.text, subject, context, model, mock: mock || !!t.mock, book }, { budget });
+      const j = said.error === 'limit' && capped ? { ...said, error: 'cap' } : said;
       out.push(cs.insertJudgement({ workflowId: example.workflowId, exampleId: example.id, criterionId: c.id, fp, model, purpose: 'try', tryId: t.id, j }));
-      if (j.error === 'limit') break;   // the rest wait for the next pass
+      if (j.error === 'limit' || j.error === 'cap') break;   // the rest wait for the next pass
     }
     return out;
   }
@@ -79,16 +86,18 @@ export function createCriteriaJudge(deps = {}) {
   }
 
   /**
-   * Fix round 1 (P4-M5): at the end of a test, each criterion of a finished try that nothing checked (the spending limit or the
-   * test's cap refused it or was reached first, the test was stopped, a call threw) gets a row with `error` ('limit' | 'failed'),
-   * met null and no cost. The criterion existed while the test ran, so Compare calls it 'unchecked', never 'new'
-   * (criteria-read.mjs reasonOfCriterion); a later pass still checks it (cs.RETRY_ERRORS). Never a model call, never a booking.
-   * A try that already has a row for the criterion keeps it.
+   * Fix rounds 1, 2 (P4-M5): at the end of a test, each criterion of a finished try that nothing checked gets a row with met null,
+   * no cost and an error from the state at the end: 'cap' when the test is at its own cost limit (`overCap()`), else 'limit' when
+   * Worca's spending limit blocks checks (`d.budget()`), else 'failed' (a stop, a call that threw). `error` forces one (boot: 'failed').
+   * The criterion existed while the test ran, so Compare calls it 'unchecked', never 'new' (criteria-read.mjs reasonOfCriterion); a
+   * later pass still checks it (cs.RETRY_ERRORS). Never a model call, never a booking. A try that already has a row for it keeps it.
+   * One transaction: nothing else may run one around it (db.mjs tx is not nested).
    */
-  function leaveUnchecked(run, { error = 'limit' } = {}) {
+  function leaveUnchecked(run, { error = null, overCap = () => false } = {}) {
     const tries = store.triesOfRun(run.id).filter((t) => (t.status === 'passed' || t.status === 'failed') && finishedTry(t));
     const had = new Set(cs.tryJudgements(tries.map((t) => t.id)).map((j) => `${j.tryId}|${j.fp}|${j.model}`));
     const examples = new Map();
+    const rows = [];
     for (const t of tries) {
       if (!examples.has(t.exampleId)) examples.set(t.exampleId, store.readExample(run.workflowId, t.exampleId));
       const ex = examples.get(t.exampleId);
@@ -96,10 +105,12 @@ export function createCriteriaJudge(deps = {}) {
       if (!model) continue;
       for (const c of ex.criteria || []) {
         const fp = cs.criterionFp(c.text);
-        if (had.has(`${t.id}|${fp}|${model}`)) continue;
-        cs.insertJudgement({ workflowId: run.workflowId, exampleId: ex.id, criterionId: c.id, fp, model, purpose: 'try', tryId: t.id, j: { met: null, error } });
+        if (!had.has(`${t.id}|${fp}|${model}`)) rows.push({ workflowId: run.workflowId, exampleId: ex.id, criterionId: c.id, fp, model, purpose: 'try', tryId: t.id });
       }
     }
+    if (!rows.length) return;
+    const code = error || (overCap() ? 'cap' : blockedNow() ? 'limit' : 'failed');
+    tx(() => { for (const r of rows) cs.insertJudgement({ ...r, j: { met: null, error: code } }); });
   }
 
   /** D100, P4-Q8: one pair per compared example with criteria or a result you liked: the first finished try of each side. */
@@ -125,7 +136,7 @@ export function createCriteriaJudge(deps = {}) {
         }
       };
       // The pair's own budget check also reports "over" when this test's cap is reached (as for a criterion).
-      const budget = () => (overCap() ? { blocked: true } : JUDGE_DEFAULTS.budget());
+      const budget = () => (overCap() ? { blocked: true } : d.budget());
       const j = await d.judgePair({ a: await d.subjectOf(A), b: await d.subjectOf(B), liked: liked ? liked.text : null, context: d.contextOf(ex),
         model: ex.judge.model, mock: !!(A.mock || B.mock), book }, { budget });
       cs.insertJudgement({ workflowId: run.workflowId, exampleId: id, fp, model: ex.judge.model, purpose: 'pair', tryId: A.id, otherTryId: B.id,

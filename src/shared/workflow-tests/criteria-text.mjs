@@ -6,6 +6,7 @@ export const NOT_CHECKED = Object.freeze({
   pending: 'Not checked yet',
   'not-finished': 'Not checked: the try did not finish',
   limit: 'Not checked: the spending limit is reached',
+  cap: 'Not checked: this test reached its cost limit',   // Task 21 fix round 2: the test's own cap (Compare's band words)
   'no-result': 'Not checked: the try left no result',
   unreadable: "Not checked: Worca's answer could not be read",
   'no-proof': "Not checked: Worca's proof was not in the result",
