@@ -12,7 +12,10 @@ import { SUBJECT_MAX, clipText, fenceTag } from './judge-prompt.mjs';
 import { rewordCriterion } from './suggest.mjs';
 import * as store from './store.mjs';
 import * as cs from './criteria-store.mjs';
-import { NOT_CHECKED, NO_SOURCE_TEXT, LIMIT_TEXT } from '../../shared/workflow-tests/criteria-text.mjs';
+import { NOT_CHECKED, NO_SOURCE_TEXT, LIMIT_TEXT, ROUND_NOT_FINISHED_TEXT } from '../../shared/workflow-tests/criteria-text.mjs';
+import { useLabel } from '../../shared/workflow-tests/compare.mjs';
+import { liveVersionNo, latestVersion } from '../workflow-revisions.mjs';
+import { findPipelineRowById } from '../artifacts.mjs';
 
 /** P4-M3's empty state and the limit refusal: shared words, so the page can tell the two 422s apart. */
 export { NO_SOURCE_TEXT, LIMIT_TEXT };
@@ -97,10 +100,32 @@ export function createChecker(deps = {}) {
         source: { criterionText: criterion.text, kind: good.kind, tryId: good.tryId ?? null, pipelineId: good.pipelineId ?? null, label: good.label, mock: !!good.mock }, by });
     } catch (e) { making.delete(key); throw e; }
     const job = make(round, ex, criterion, good)
-      .catch((e) => { try { cs.updateRound(round.id, { status: 'failed', detail: firstLine(e) }); } catch { /* the round stays making until the next boot */ } })
+      .catch((e) => {   // the error is logged, never shown: the page says board 58's sentence
+        console.warn(`[workflow-tests] check-the-checker round ${round.id} failed: ${firstLine(e)}`);
+        try { cs.updateRound(round.id, { status: 'failed', detail: ROUND_NOT_FINISHED_TEXT }); } catch { /* the round stays making until the next boot */ }
+      })
       .finally(() => making.delete(key));
     if (d.inline) await job;
     return cs.readRound(round.id);
+  }
+
+  /** Board 11, P4-M3: the good result's version (the Tests pages' label) and date, from the try or the run it came from. */
+  function sourceOf(round, ex) {
+    const s = round.source || {};
+    let use = null;
+    let at = null;
+    if (s.kind === 'try' && s.tryId != null) {
+      const t = store.readTry(s.tryId);
+      if (t) { use = t.use; at = t.finishedAt || t.startedAt || null; }
+    } else if (s.kind === 'run' && s.pipelineId) {
+      use = ex && ex.from && ex.from.pipelineId === s.pipelineId ? ex.from.use : null;
+      const row = findPipelineRowById(s.pipelineId);
+      at = row && row.started_at ? row.started_at : null;
+    }
+    if (use == null && !at) return s;
+    const latest = latestVersion(round.workflowId);
+    const ctx = { liveVersionNo: liveVersionNo(round.workflowId), latestVersionNo: latest ? latest.versionNo : null };
+    return { ...s, ...(use != null ? { useLabel: useLabel(use, ctx) } : {}), ...(at ? { at } : {}) };
   }
 
   /** `by`: the viewer's own answers (Check the checker). `anyone`: anyone's newest answer per card (the trust report, I9). */
@@ -119,7 +144,7 @@ export function createChecker(deps = {}) {
     const criterion = ex ? ex.criteria.find((c) => c.id === round.criterionId) : null;
     const ranOn = typeof round.source.criterionText === 'string' ? round.source.criterionText : (criterion ? criterion.text : null);
     const changed = !!criterion && cs.criterionFp(criterion.text) !== round.fp;
-    return { round, exampleName: ex ? ex.name : null, criterion: ranOn, ...(changed ? { textChanged: true } : {}), source: round.source, cards, left,
+    return { round, exampleName: ex ? ex.name : null, criterion: ranOn, ...(changed ? { textChanged: true } : {}), source: sourceOf(round, ex), cards, left,
       auto: { same: { n: same, of: reps.length }, padding: { n: pad, of: pads.length }, proof: { n: main.filter((j) => j.proofFound).length, of: main.length } },
       costUsd: cs.roundSpentUsd(round.id), costUnknown: cs.roundCostUnknown(round.id), canUse: round.status === 'done' };   // P4-Q17
   }
@@ -127,7 +152,7 @@ export function createChecker(deps = {}) {
   /** D96, D97: Right (true) or Wrong (false) on one card; the round is done when all four are answered. */
   async function answer(round, judgementId, right, { by = null } = {}) {
     const j = cs.readJudgement(judgementId);
-    if (round.status === 'failed') throw store.testError('This round did not finish. Start a new round.', 'BUSY');
+    if (round.status === 'failed') throw store.testError(ROUND_NOT_FINISHED_TEXT, 'BUSY');
     if (round.status === 'making') throw store.testError('Worca is not done with this round', 'BUSY');
     if (!j || j.roundId !== round.id || (j.purpose !== 'real' && j.purpose !== 'planted')) throw store.testError(`no card ${judgementId} in this round`, 'NOT_FOUND');
     if (j.met === null) throw store.testError('Worca has no verdict on this card to answer', 'BAD_REQUEST');

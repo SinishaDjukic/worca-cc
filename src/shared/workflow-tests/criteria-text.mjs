@@ -65,6 +65,8 @@ export const COST_UNKNOWN_NOTE = 'the cost of some checks is not known';
 export const NO_SOURCE_TEXT = 'Try this example once first, so Worca has a good result to break.';
 /** The words of Task 11's check route when the total spending limit is already reached. */
 export const LIMIT_TEXT = 'Total cost limit reached — nothing was sent to the model. Raise the limit in worca Settings.';
+/** Board 58: a Check the checker round that did not finish (its answers are refused, and the page says so). */
+export const ROUND_NOT_FINISHED_TEXT = 'This round did not finish. Start a new round.';
 export const CRITERIA_PHASE_TEXT = 'Checking your criteria on earlier tries';
 /** "Not checked on every try, so it does not decide yet: "A", "B" in Example 1; "C" in Example 2." (`entries` = notes.notChecked). */
 export const notEveryTryText = (entries) => `${NOT_EVERY_TRY}: ${entries.map((e) => `"${e.criteria.join('", "')}" in ${e.name}`).join('; ')}.`;

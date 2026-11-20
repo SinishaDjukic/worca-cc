@@ -48,12 +48,12 @@ test("the planting prompt fences the untrusted result with this call's own tags;
 });
 
 /** An example with a passed try whose result is GOOD, and a checker whose calls are fakes. */
-function setup({ judgeMet = (subject) => /60%/.test(subject), plantReply = null, extra = {} } = {}) {
+function setup({ judgeMet = (subject) => /60%/.test(subject), plantReply = null, extra = {}, use = 'draft', finishedAt = null } = {}) {
   const ex = store.createExample('wf', { name: 'Bulk export', request: 'Write the brief.', criteria: [{ text: 'Names a success metric with a number' }],
     judge: { model: 'claude-haiku-4-5' } });
   const run = store.createTestRun({ workflowId: 'wf', kind: 'once', b: 'draft', bFp: 'f', exampleIds: [ex.id], tries: 1 });
-  const t = store.insertTry({ runId: run.id, workflowId: 'wf', exampleId: ex.id, use: 'draft', fp: 'f', exampleFp: ex.fingerprint, tryNo: 1 });
-  store.updateTry(t.id, { status: 'passed', pipelineId: 'p0000001', verdict: { passed: true, facts: { status: 'done' }, basics: [], checks: [] } });
+  const t = store.insertTry({ runId: run.id, workflowId: 'wf', exampleId: ex.id, use, fp: 'f', exampleFp: ex.fingerprint, tryNo: 1 });
+  store.updateTry(t.id, { status: 'passed', pipelineId: 'p0000001', verdict: { passed: true, facts: { status: 'done' }, basics: [], checks: [] }, ...(finishedAt ? { finishedAt } : {}) });
   let calls = 0;
   const checker = createChecker({
     subjectOf: async () => GOOD,
@@ -225,6 +225,7 @@ test('a failed round has its own words when started again', async () => {
   const { ex, checker } = setup({ extra: { judgeCriterion: async () => { throw new Error('x'); } } });
   const round = await checker.start({ workflowId: 'wf', exampleId: ex.id, criterionId: ex.criteria[0].id });
   assert.equal(round.status, 'failed');
+  assert.equal(cs.readRound(round.id).detail, 'This round did not finish. Start a new round.', 'board 58: never the error text itself');
   await assert.rejects(checker.answer(round, 1, true, {}), { message: 'This round did not finish. Start a new round.' });
 });
 
@@ -271,4 +272,16 @@ test('P4-M3, P4-Q17: the view says when the cost of some of the round\'s checks 
   const u = setup({ extra: { modelCall: async () => ({ text: '{}', costUsd: 0, costKind: 'unknown' }) } });
   const r2 = await u.checker.start({ workflowId: 'wf', exampleId: u.ex.id, criterionId: u.ex.criteria[0].id });
   assert.equal(u.checker.view(cs.readRound(r2.id), { by: 'x' }).costUnknown, true);
+});
+
+test('P4-M3 (board 11): the source of the real card names the version and the date of the try it came from', async () => {
+  const { ex, checker } = setup({ use: 4, finishedAt: '2026-10-14T09:30:00.000Z' });
+  const round = await checker.start({ workflowId: 'wf', exampleId: ex.id, criterionId: ex.criteria[0].id });
+  const v = checker.view(cs.readRound(round.id), { by: 'x' });
+  assert.equal(v.source.label, 'From a real result');
+  assert.equal(v.source.useLabel, 'v4');
+  assert.equal(v.source.at, '2026-10-14T09:30:00.000Z');
+  const d = setup();
+  const r2 = await d.checker.start({ workflowId: 'wf', exampleId: d.ex.id, criterionId: d.ex.criteria[0].id });
+  assert.equal(d.checker.view(cs.readRound(r2.id), { by: 'x' }).source.useLabel, 'Your draft', 'the label the Tests pages use (useLabel)');
 });

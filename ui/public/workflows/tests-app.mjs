@@ -24,7 +24,7 @@ import { NO_SOURCE_TEXT } from '../../../src/shared/workflow-tests/criteria-text
 const WFT_EMPTY = Object.freeze({ view: 'list', workflowId: null, overview: null, error: null, example: null, runId: null,
   exampleId: null, tryIndex: 0, data: null, scripts: [], perTryUsd: null, editorToken: 0, roundId: null });
 /** Task 22: what Check the checker keeps besides its round, reset whenever it opens. */
-const WFT_CHECKER_FRESH = Object.freeze({ checkerEmpty: null, checkerCrit: null, checkerName: null, reworded: null });
+const WFT_CHECKER_FRESH = Object.freeze({ checkerEmpty: null, checkerCrit: null, checkerName: null, reworded: null, answering: null, rewording: null });
 const wftBase = (id) => `/api/workflows/${encodeURIComponent(id)}/tests`;
 const wftDate = (iso) => { const d = new Date(iso); return Number.isNaN(d.getTime()) ? '' : d.toLocaleDateString(undefined, { day: 'numeric', month: 'short' }); };
 
@@ -93,7 +93,9 @@ export function createWorkflowTests(deps) {
   function wftRenderView(root) {
     if (wft.view === 'checker' && (wft.data || wft.checkerEmpty)) {
       renderChecker(root, wft.data, wftCheckerActions(), { doc, exampleName: (wft.data && wft.data.exampleName) || wft.checkerName || '',
-        criterion: wft.checkerCrit || null, empty: wft.checkerEmpty || null, reworded: wft.reworded || null });
+        criterion: wft.checkerCrit || null, empty: wft.checkerEmpty || null, reworded: wft.reworded || null, dateText: wftDate,
+        // fix round 1: one answer, and one request for clearer words, at a time per round (`answering` / `rewording` = its round id)
+        busy: wft.roundId != null && (wft.answering === wft.roundId || wft.rewording === wft.roundId), rewording: wft.roundId != null && wft.rewording === wft.roundId });
       wftPollChecker();
       return;
     }
@@ -188,19 +190,30 @@ export function createWorkflowTests(deps) {
     const back = () => { void wftOpenExample(exampleId); };
     /** Task 15: Worca's clearer words are only offered (P4-M3); the reword route saves nothing. */
     const reword = async () => {
-      const r = await wftCall('POST', `${base}/reword`, {});
-      if (!still()) return;
-      wft.reworded = r.ok ? { text: String(r.data.text || '') } : { error: r.error, limit: r.status === 422 };
+      if (wft.rewording === roundId) return;   // fix round 1: one paid request at a time; a second press is ignored
+      wft.rewording = roundId;
+      wft.reworded = null;
       wftRender();
+      try {
+        const r = await wftCall('POST', `${base}/reword`, {});
+        if (!still()) return;
+        wft.reworded = r.ok ? { text: String(r.data.text || '') } : { error: r.error, limit: r.status === 422 };
+      } finally { if (wft.rewording === roundId) wft.rewording = null; }
+      if (still()) wftRender();
     };
     return {
       answer: async (judgementId, right) => {
-        const r = await wftCall('POST', `${base}/answers`, { judgementId, right });
-        if (!r.ok) { notify({ tone: 'err', title: r.error }); return; }
+        if (wft.answering === roundId || wft.rewording === roundId) return;   // fix round 1: one answer at a time (the cards wait)
+        wft.answering = roundId;
+        if (still()) wftRender();
+        let r;
+        try { r = await wftCall('POST', `${base}/answers`, { judgementId, right }); } finally { if (wft.answering === roundId) wft.answering = null; }
+        if (!r.ok) { notify({ tone: 'err', title: r.error }); if (still()) wftRender(); return; }
         if (!still()) return;
-        wft.data = r.data;
+        // A reply that knows of fewer answers than the page already shows is older: it never repaints over a newer one.
+        if (!(wft.data && Number.isInteger(wft.data.left) && r.data.left > wft.data.left)) wft.data = r.data;
+        if (right === false) { await reword(); return; }   // board 11: "If you say "wrong", Worca suggests clearer words …"
         wftRender();
-        if (right === false) await reword();   // board 11: "If you say "wrong", Worca suggests clearer words …"
       },
       reword,
       keepWords: () => { if (still()) { wft.reworded = null; wftRender(); } },
@@ -490,8 +503,9 @@ export function createWorkflowTests(deps) {
       projectView: row ? row.project : null, dateText: wftDate,
       judgeModels: wft.judgeModels, criteriaTrust: wft.criteriaTrust || {},
       // Task 22: Confirm 4 results and Fix it open Check the checker. The editor offers them only on a saved example's saved criteria
-      // (a trust line needs the example's id and the criterion's), so the round is always of the saved criterion.
-      onConfirmCriterion: (c) => { void wftConfirmCriterion(session.exampleId, c, { exampleName: wft.example && wft.example.name }); } });
+      // (a trust line needs the example's id and the criterion's), and saves its changes first (saveQuiet), so the round runs on
+      // the words shown.
+      onConfirmCriterion: (c) => wftConfirmCriterion(session.exampleId, c, { exampleName: wft.example && wft.example.name }) });
   }
   async function wftOpenExample(exampleId) {
     const id = wftWorkflowId();
@@ -543,6 +557,7 @@ export function createWorkflowTests(deps) {
         keep(r.data.example);
         return { ok: true, example: r.data.example };
       },
+      saveQuiet: (value) => wftSaveExample(session, value),   // Task 22: Confirm's save first, staying in the editor
       save: async (value) => {
         const r = await wftSaveExample(session, value);
         if (r.ok) { notify({ tone: 'ok', title: 'Example saved' }); if (wftEditorLive(session)) wftShow('list', { overview: null }); }

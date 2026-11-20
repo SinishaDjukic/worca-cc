@@ -570,3 +570,64 @@ test('Part 4 (P4-M2): a new example says "Not checked yet"; Add an exact check o
   assert.equal(ed.value().checks.at(-1).text, '200 invoices');
   assert.equal(ed.value().criteria.length, 1, 'the criteria stay');
 });
+
+// Task 22 fix round 1 (a): Confirm 4 results / Fix it save the editor's changes first, so the round runs on the words shown.
+const withCrit = () => ({ ...example(), criteria: [{ id: 'k_1', text: 'Names a success metric' }, { id: 'k_2', text: 'Says who may export' }], judge: { model: 'm' } });
+const TRUST = { k_1: { state: 'confirm', n: 0, agree: 0, decides: true }, k_2: { state: 'unreliable', n: 10, agree: 6, decides: false } };
+function bootCrit({ saveQuiet = async (v) => ({ ok: true, example: { ...withCrit(), criteria: v.criteria } }), ctx = {}, testRunning = false } = {}) {
+  const opened = [];
+  const saved = [];
+  const t = boot(withCrit(), { testRunning, over: { saveQuiet: async (v) => { saved.push(v); return saveQuiet(v); } },
+    ctx: { criteriaTrust: TRUST, onConfirmCriterion: async (c) => { opened.push(c); }, ...ctx } });
+  return { ...t, opened, saved };
+}
+
+test('Task 22 fix (a): nothing changed: Confirm 4 results and Fix it open Check the checker at once, without a save', async () => {
+  const { root, opened, saved } = bootCrit();
+  click(root.querySelector('button.wft-confirm'));
+  await tick();
+  click(root.querySelector('button.wft-fix'));
+  await tick();
+  assert.deepEqual(saved, []);
+  assert.deepEqual(opened.map((c) => [c.id, c.text]), [['k_1', 'Names a success metric'], ['k_2', 'Says who may export']]);
+});
+
+test('Task 22 fix (a): with changes, Confirm saves the example first (staying in the editor), then opens the saved criterion', async () => {
+  const { root, opened, saved, calls } = bootCrit();
+  const input = root.querySelectorAll('.wft-crit input')[0];
+  input.value = 'Names a success metric with a number';
+  input.dispatchEvent(new input.ownerDocument.defaultView.Event('input'));
+  click(root.querySelector('button.wft-confirm'));
+  for (let i = 0; i < 5; i += 1) await tick();
+  assert.equal(saved.length, 1);
+  assert.deepEqual(saved[0].criteria[0], { id: 'k_1', text: 'Names a success metric with a number' });
+  assert.deepEqual(calls.filter(([k]) => k === 'save' || k === 'back'), [], 'not the Save button\'s save, which leaves the editor');
+  assert.deepEqual(opened, [{ id: 'k_1', text: 'Names a success metric with a number' }], 'the saved criterion, by its id');
+  click(root.querySelector('button.wft-confirm'));
+  for (let i = 0; i < 5; i += 1) await tick();
+  assert.equal(saved.length, 1, 'saved now: the next Confirm goes straight on');
+  assert.equal(opened.length, 2);
+});
+
+test('Task 22 fix (a): a save that fails opens nothing and says why; a running test asks "Save and stop the test?" first', async () => {
+  const bad = bootCrit({ saveQuiet: async () => ({ ok: false, error: 'name is required' }) });
+  const input = bad.root.querySelectorAll('.wft-crit input')[1];
+  input.value = 'Says who may export, and why';
+  input.dispatchEvent(new input.ownerDocument.defaultView.Event('input'));
+  click(bad.root.querySelector('button.wft-fix'));
+  for (let i = 0; i < 5; i += 1) await tick();
+  assert.deepEqual(bad.opened, []);
+  assert.equal(bad.root.querySelector('.wft-error').textContent, 'Name is required.');
+  const asked = [];
+  for (const answer of [false, true]) {
+    const t = bootCrit({ testRunning: true, ctx: { runningExampleIds: [4], confirm: async (o) => { asked.push(o.title); return answer; } } });
+    const req = t.root.querySelector('#wft-ex-request');
+    req.value = 'Write the brief again.';
+    req.dispatchEvent(new req.ownerDocument.defaultView.Event('input'));
+    click(t.root.querySelector('button.wft-confirm'));
+    for (let i = 0; i < 6; i += 1) await tick();
+    if (!answer) assert.deepEqual([t.saved.length, t.opened.length, t.calls.filter(([k]) => k === 'stopTest').length], [0, 0, 0], 'Cancel: nothing saved or opened');
+    else assert.deepEqual([t.saved.length, t.opened.length, t.calls.filter(([k]) => k === 'stopTest').length], [1, 1, 1], 'Save and stop: the test stops, then the save, then the page');
+  }
+  assert.deepEqual(asked, ['Save and stop the test?', 'Save and stop the test?']);
+});

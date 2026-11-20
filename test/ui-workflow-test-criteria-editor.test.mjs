@@ -88,7 +88,7 @@ test('tests-app.mjs reads the models and the trust when the editor opens, and ha
   const ctl = readFileSync(new URL('../ui/public/workflows/tests-app.mjs', import.meta.url), 'utf8');
   assert.match(ctl, /wftCall\('GET', `\$\{wftBase\(id\)\}\/judge-models`\)/);
   assert.match(ctl, /exampleId != null \? await wftCall\('GET', `\$\{wftBase\(id\)\}\/examples\/\$\{exampleId\}\/criteria`\) : null/);
-  assert.match(ctl, /judgeModels: wft\.judgeModels, criteriaTrust: wft\.criteriaTrust \|\| \{\},[\s\S]{0,400}?onConfirmCriterion: \(c\) => \{ void wftConfirmCriterion\(session\.exampleId, c/);
+  assert.match(ctl, /judgeModels: wft\.judgeModels, criteriaTrust: wft\.criteriaTrust \|\| \{\},[\s\S]{0,600}?onConfirmCriterion: \(c\) => wftConfirmCriterion\(session\.exampleId, c/);
 });
 
 // P4-M2 (approved 2026-11-20, boards 50–52): the states board 2 did not draw.

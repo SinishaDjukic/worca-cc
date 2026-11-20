@@ -321,7 +321,8 @@ function basicRow(doc, id, text, on, extra = null, after = null) {
  *   read); needsProject: the workflow changes a project's code (D62); projectView: the overview's view of the example's
  *   project (its drift, D63); runningExampleIds + confirm (app.js's confirmModal): a save or a file change that changes
  *   an example the running test is trying asks first, and "Save and stop" calls actions.stopTest() → {ok, error?} before
- *   it (U-T9, F17)
+ *   it (U-T9, F17). Part 4 (Task 22): onConfirmCriterion(criterion) opens Check the checker; with changes not saved yet, the
+ *   editor saves first through actions.saveQuiet(value) → {ok, example} (the Save path and its question, but staying here)
  * @returns {{value: () => object}}
  */
 export function renderExampleEditor(root, ex, actions, { doc, win, scripts = [], perTryUsd = null, draftLabel = 'your draft', testRunning = false,
@@ -374,6 +375,7 @@ export function renderExampleEditor(root, ex, actions, { doc, win, scripts = [],
     return JSON.stringify([v.request, v.answers, v.otherwise, v.basics, v.checks.map(({ id: _id, ...c }) => c), v.project]);
   };
   let baseline = null;
+  let savedSig = null;   // Task 22: the whole value as last saved (or as opened), so Confirm knows whether to save first
   let asking = false;
   /** A change to what a try gets: 'go' when no running test tries this example (or nothing such changes), 'stop' when
    *  the person agreed to stop it, 'cancel' otherwise. Cancel is the default button: the answer stops paid work. */
@@ -405,7 +407,7 @@ export function renderExampleEditor(root, ex, actions, { doc, win, scripts = [],
     const problem = limitsProblem();
     if (problem) { error.textContent = problem; return { ok: false }; }
     // U-T9: a save that changes what a running test is trying asks first, and "Save and stop" stops the test, then saves.
-    const how = fn === actions.save ? await askFirst(fingerprintSig() !== baseline) : 'go';
+    const how = fn === actions.save || fn === actions.saveQuiet ? await askFirst(fingerprintSig() !== baseline) : 'go';
     if (how === 'cancel') return { ok: false };
     const r = await busyWhile(() => stopFirst(how, () => fn(value())));
     if (!unsupported(r)) failed(r, 'That did not work. Try again.');
@@ -794,8 +796,20 @@ export function renderExampleEditor(root, ex, actions, { doc, win, scripts = [],
   // Part 4 (boards 2, 32): Your criteria and Checked with, after the automatic checks. Switch (D94) is handled here, where the
   // draft's checks live (review I8): the new check joins draft.checks, and the criterion leaves the section's own list.
   // P4-M2: an example not saved yet has no trust to read ("Not checked yet"); "Add an exact check" adds an automatic check.
+  // Task 22 fix round 1: Confirm 4 results / Fix it run on the saved criterion. Changes not saved yet are saved first, through
+  // Save's own path (its limits check and "Save and stop the test?"), staying in the editor; only a save that worked opens the page.
+  async function confirmSaved(c) {
+    if (busyN) return;
+    if (JSON.stringify(value()) === savedSig) { await onConfirmCriterion(c); return; }
+    const r = await run(actions.saveQuiet);
+    if (!r || !r.ok || !r.example) return;
+    savedSig = JSON.stringify(value());
+    baseline = fingerprintSig();
+    const saved = (r.example.criteria || []).find((x) => x.id === c.id);
+    if (saved) await onConfirmCriterion(saved);
+  }
   crit = renderCriteriaSection(doc, draft, { models: judgeModels, trust: draft.id == null ? null : criteriaTrust, project: !!pick.key,
-    onConfirm: onConfirmCriterion,
+    onConfirm: onConfirmCriterion ? confirmSaved : null,
     onSwitch: (c, alt) => openCheckDialog({ doc, win, scripts: listed, project: !!pick.key, suggest: { criterion: c, alt },
       onSave: (nc) => { addCheck(nc); crit.remove(c); } }),
     onAddExact: () => openCheckDialog({ doc, win, scripts: listed, project: !!pick.key, onSave: addCheck }) });
@@ -845,5 +859,6 @@ export function renderExampleEditor(root, ex, actions, { doc, win, scripts = [],
     };
   }
   baseline = fingerprintSig();
+  savedSig = JSON.stringify(value());
   return { value };
 }

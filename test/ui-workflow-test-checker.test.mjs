@@ -5,6 +5,7 @@ import assert from 'node:assert/strict';
 import { JSDOM } from 'jsdom';
 import { readFileSync } from 'node:fs';
 import { renderChecker, renderByCriterion } from '../ui/public/workflows/criteria-pages.mjs';
+import { renderCriteriaSection } from '../ui/public/workflows/criteria-editor.mjs';
 import { testsAddress, TESTS_ROUTE_RE } from '../ui/public/workflows/tests-view.mjs';
 import { NO_SOURCE_TEXT, LIMIT_TEXT } from '../src/shared/workflow-tests/criteria-text.mjs';
 
@@ -207,7 +208,7 @@ function harness(routes) {
     const body = init.body ? JSON.parse(init.body) : undefined;
     calls.push([method, path, body]);
     const h = routes[`${method} ${path}`];
-    const out = typeof h === 'function' ? h(body) : h || { status: 404, body: { error: 'not here' } };
+    const out = (await (typeof h === 'function' ? h(body) : h)) || { status: 404, body: { error: 'not here' } };
     return { ok: out.status < 400, status: out.status, json: async () => out.body };
   };
   return { doc, win, calls, timers, fetch, root: doc.getElementById('wfv-tests') };
@@ -294,9 +295,117 @@ test('tests-app.mjs: a refused start shows P4-M3\'s states (no good result, the 
 
 test('tests-app.mjs wires the example editor\'s Confirm 4 results and Fix it, and Compare\'s By criterion links, to Check the checker', () => {
   const ctl = readFileSync(new URL('../ui/public/workflows/tests-app.mjs', import.meta.url), 'utf8');
-  assert.match(ctl, /onConfirmCriterion: \(c\) => \{ void wftConfirmCriterion\(session\.exampleId, c/);
+  assert.match(ctl, /onConfirmCriterion: \(c\) => wftConfirmCriterion\(session\.exampleId, c/);
   assert.match(ctl, /confirmCriterion: \(exampleId, c\) => wftConfirmCriterion\(exampleId, c/);
   assert.match(ctl, /const m = TESTS_ROUTE_RE\.exec\(sub\);/);
   const cmp = readFileSync(new URL('../ui/public/workflows/test-compare.mjs', import.meta.url), 'utf8');
   assert.match(cmp, /onConfirm: actions\.confirmCriterion \? \(exampleId, c\) => actions\.confirmCriterion\(exampleId, c\) : null/);
+});
+
+// ---- Fix round 1 ----
+const deferred = () => { let resolve; const p = new Promise((r) => { resolve = r; }); return { p, resolve }; };
+const flush = () => new Promise((r) => setImmediate(r));
+
+test('fix 1 (e): the real card names the version and date it came from; Right / Wrong name their card; a self-test with nothing to count is grey', () => {
+  const { doc, root } = dom();
+  const v = { ...view(), source: { label: 'From a real result', useLabel: 'v4', at: '2026-10-14T09:30:00Z' }, auto: { same: { n: 4, of: 4 }, padding: { n: 0, of: 0 }, proof: { n: 3, of: 4 } } };
+  renderChecker(root, v, NOOP, { doc, exampleName: 'E', dateText: (iso) => (iso.startsWith('2026-10-14') ? '14 Oct' : iso) });
+  const cards = [...root.querySelectorAll('.wft-cc-card')];
+  assert.equal(cards[0].querySelector('.wft-cc-src').textContent, 'From a real result · v4, 14 Oct');
+  assert.deepEqual([...cards[2].querySelectorAll('button')].map((b) => b.getAttribute('aria-label')),
+    ['Right: Broken on purpose: how to measure removed', 'Wrong: Broken on purpose: how to measure removed']);
+  assert.deepEqual([...root.querySelectorAll('.wft-cc-auto .badge')].map((b) => b.className), ['badge green', 'badge', 'badge red']);
+  renderChecker(root, { ...v, source: { label: 'From the result you liked' } }, NOOP, { doc, exampleName: 'E' });
+  assert.equal(root.querySelector('.wft-cc-src').textContent, 'From the result you liked', 'nothing more to name');
+});
+
+test('fix 1 (b): while an answer or the clearer words are out, every Right / Wrong waits; the words being written show where they will go', () => {
+  const { doc, root } = dom();
+  renderChecker(root, view(), NOOP, { doc, exampleName: 'E', busy: true });
+  const all = [...root.querySelectorAll('button.wft-cc-right, button.wft-cc-wrong')];
+  assert.equal(all.length, 4);
+  assert.ok(all.every((b) => b.disabled));
+  renderChecker(root, view([true, true, false, null]), NOOP, { doc, exampleName: 'E', busy: true, rewording: true });
+  assert.equal(root.querySelector('.qpanel'), null);
+  const box = root.querySelector('.wft-cc-state');
+  assert.equal(box.getAttribute('aria-label'), 'After a wrong answer');
+  assert.equal(box.querySelectorAll('.wft-cc-card').length, 1);
+  const wait = box.querySelector('.wft-cc-wait');
+  assert.equal(wait.textContent, 'Worca is writing clearer words…');
+  assert.equal(wait.getAttribute('role'), 'status');
+  assert.ok(wait.querySelector('svg'), 'a spinner icon');
+  assert.equal(box.querySelector('.wft-sugg'), null);
+});
+
+test('fix 1: Try again (failed, limit), Confirm 4 results and Fix it wait while their request is out', async () => {
+  const { doc, root } = dom();
+  let d = deferred();
+  const failed = { ...view(), round: { id: 7, criterionId: 'k_1', status: 'failed', detail: null }, cards: [] };
+  renderChecker(root, failed, { ...NOOP, retry: () => d.p }, { doc, exampleName: 'E' });
+  const again = btnByText(root, 'Try again');
+  again.click();
+  assert.equal(again.disabled, true);
+  d.resolve(); await d.p; await flush();
+  assert.equal(again.disabled, false);
+  d = deferred();
+  renderChecker(root, null, { ...NOOP, retry: () => d.p }, { doc, exampleName: 'E', criterion: { id: 'k_1', text: 'x' }, empty: { kind: 'limit', text: LIMIT_TEXT } });
+  const lim = btnByText(root, 'Try again');
+  lim.click();
+  assert.equal(lim.disabled, true);
+  d.resolve(); await d.p; await flush();
+  assert.equal(lim.disabled, false);
+  // By criterion
+  d = deferred();
+  const data = { rows: [{ key: '4|k:k_1', label: 'Names a metric', exampleName: 'Bulk', exact: false, trust: { state: 'confirm', n: 0, agree: 0, decides: true }, a: { met: 1, of: 1 }, b: { met: 1, of: 1 } }], more: 0 };
+  renderByCriterion(root, data, { doc, labels: { a: 'v3', b: 'v4' }, onConfirm: () => d.p });
+  const link = root.querySelector('button.wft-confirm');
+  link.click();
+  assert.equal(link.disabled, true);
+  d.resolve(); await d.p; await flush();
+  assert.equal(link.disabled, false);
+  // The editor's criteria rows
+  d = deferred();
+  const s = renderCriteriaSection(doc, { criteria: [{ id: 'k_1', text: 'A' }, { id: 'k_2', text: 'B' }], judge: null },
+    { trust: { k_1: { state: 'confirm', n: 0, agree: 0, decides: true }, k_2: { state: 'unreliable', n: 10, agree: 6, decides: false } }, onConfirm: () => d.p });
+  root.replaceChildren(s.el);
+  const conf = root.querySelector('button.wft-confirm');
+  const fix = root.querySelector('button.wft-fix');
+  conf.click();
+  assert.deepEqual([conf.disabled, fix.disabled], [true, true], 'one round at a time from the editor');
+  d.resolve(); await d.p; await flush();
+  assert.deepEqual([conf.disabled, fix.disabled], [false, false]);
+});
+
+test('fix 1 (b): tests-app.mjs sends one answer at a time and one request for clearer words per round, and shows the words being written', async () => {
+  const { createWorkflowTests } = await import('../ui/public/workflows/tests-app.mjs');
+  const B = '/api/workflows/wf_a/tests';
+  const ans = deferred();
+  const words = deferred();
+  const routes = {
+    [`GET ${B}/examples/4/checker/7`]: { status: 200, body: view() },
+    [`POST ${B}/examples/4/checker/7/answers`]: () => ans.p,
+    [`POST ${B}/examples/4/checker/7/reword`]: () => words.p,
+  };
+  const h = harness(routes);
+  const ctl = createWorkflowTests({ doc: h.doc, win: h.win, fetch: h.fetch, safeJson: (r) => r.json(), composer: () => ({ template: () => ({ id: 'wf_a' }) }),
+    api: {}, versions: () => ({ showPage: () => ctl.enterList() }), currentView: () => 'workflows', confirmModal: async () => true, openNewPipeline: () => {},
+    hdMarkdown: {}, mock: () => false, runPageShows: () => false });
+  ctl.route('wf_a', 'tests/4/checker/7', true);
+  await settle();
+  const rw = () => [...h.root.querySelectorAll('button.wft-cc-right, button.wft-cc-wrong')];
+  rw()[1].click();   // Wrong on card 2 (cards 0 and 1 are answered)
+  await settle();
+  assert.ok(rw().every((b) => b.disabled), 'every Right / Wrong waits for the answer');
+  rw()[3].click();   // a press on a disabled button sends nothing
+  ans.resolve({ status: 200, body: view([true, true, false, null]) });
+  await settle();
+  assert.equal(h.root.querySelector('.wft-cc-state .wft-cc-wait').textContent, 'Worca is writing clearer words…');
+  assert.equal(h.calls.filter(([m, p]) => m === 'POST' && p.endsWith('/reword')).length, 1);
+  assert.equal(h.calls.filter(([m, p]) => m === 'POST' && p.endsWith('/answers')).length, 1);
+  words.resolve({ status: 200, body: { text: 'Clearer' } });
+  await settle();
+  assert.equal(h.root.querySelector('.wft-cc-words').textContent, '"Clearer"');
+  btnByText(h.root, 'Keep my words').click();
+  await settle();
+  assert.ok(rw().length === 2 && rw().every((b) => !b.disabled), 'the last card can be answered again');
 });

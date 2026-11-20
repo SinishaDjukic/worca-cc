@@ -26,20 +26,34 @@ export function renderCriteriaSection(doc, draft, { models = { models: [], sugge
   let judge = draft.judge || (models.suggested ? { model: models.suggested.id } : null);
   const sect = el(doc, 'div', 'wft-sect wft-crit-sect');
   const lines = el(doc, 'div', 'wft-lines wft-crit-lines');
+  // Task 22 fix round 1: Confirm 4 results and Fix it wait (all of them) while the one pressed is out: one round at a time.
+  const links = [];
+  const confirmBtn = (label, c, cls) => {
+    const b = btn(doc, label, () => {
+      if (b.disabled) return;
+      for (const x of links) x.disabled = true;
+      let out;
+      try { out = onConfirm(c); } catch { out = null; }
+      void Promise.resolve(out).catch(() => {}).finally(() => { for (const x of links) x.disabled = false; });
+    }, cls);
+    links.push(b);
+    return b;
+  };
   const trustMeta = (c, t) => {
     const meta = el(doc, 'span', 'wft-crit-meta');
     if (t.state === 'confirm') {   // M10 (P4-C1), P4-M2: "Confirm 4 results" is the amber link itself, then why
-      if (onConfirm) meta.append(btn(doc, 'Confirm 4 results', () => onConfirm(c), 'badge amber wft-confirm'), doc.createTextNode(` ${CONFIRM_WHY}`));
+      if (onConfirm) meta.append(confirmBtn('Confirm 4 results', c, 'badge amber wft-confirm'), doc.createTextNode(` ${CONFIRM_WHY}`));
       else meta.append(doc.createTextNode(trustLine(t)));
       return meta;
     }
     const [cls, words] = TRUST_BADGE[t.state] || TRUST_BADGE.collecting;
     meta.append(el(doc, 'span', cls, words), doc.createTextNode(` ${trustLine(t)}`));   // the space: a screen reader reads two phrases
-    if (onConfirm && t.state === 'unreliable') meta.append(doc.createTextNode(' '), btn(doc, 'Fix it', () => onConfirm(c), 'wft-linkbtn wft-fix'));
+    if (onConfirm && t.state === 'unreliable') meta.append(doc.createTextNode(' '), confirmBtn('Fix it', c, 'wft-linkbtn wft-fix'));
     return meta;
   };
   const paint = () => {
     lines.replaceChildren();
+    links.length = 0;
     list.forEach((c, i) => {
       const row = el(doc, 'div', 'wft-crit');
       const box = el(doc, 'div', 'wft-crit-in');

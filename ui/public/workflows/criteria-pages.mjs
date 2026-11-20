@@ -6,7 +6,7 @@ import { icon } from '../icons.mjs';
 import { fmtUsd } from '../../../src/shared/workflow-tests/checks.mjs';
 import { TRUST_BADGE, trustLine, checkingRest, BY_EXAMPLE, BY_CRITERION, SEE_BY_CRITERION, NOT_CHECKED, CRITERIA_CHANGED_TEXT, CHECK_THEM, NOT_EVERY_TRY,
   CHECKING_CRITERIA_TEXT, CHECKED_CRITERIA_TEXT, CAP_CHECKS_TEXT, ADDED_AFTER_TEXT, NO_CHECKED_TRY, COST_UNKNOWN_NOTE, notEveryTryText, unreliableOnlyText,
-  unreliableWhyText }
+  unreliableWhyText, ROUND_NOT_FINISHED_TEXT }
   from '../../../src/shared/workflow-tests/criteria-text.mjs';
 
 const LEGEND = [
@@ -20,6 +20,17 @@ const nOf = (x) => (x && x.of ? `${x.met} of ${x.of}` : '—');
 /** Board 12's line under the badge: the column already says whose checking, so a reliable one reads "Agrees with people …". */
 const rowLine = (t) => (t && t.state === 'reliable' ? `Agrees with people ${t.agree} of ${t.n} times` : trustLine(t));
 const badgeOf = (doc, state) => { const [cls, words] = TRUST_BADGE[state] || TRUST_BADGE.collecting; return el(doc, 'span', cls, words); };
+/** A button that waits (disabled) while the promise its press returns is out: one request per press. */
+function busyBtn(doc, label, fn, cls) {
+  const b = btn(doc, label, () => {
+    if (b.disabled) return;
+    b.disabled = true;
+    let out;
+    try { out = fn(); } catch { out = null; }
+    void Promise.resolve(out).catch(() => {}).finally(() => { b.disabled = false; });
+  }, cls);
+  return b;
+}
 
 /** Board 12's row key `<example>|k:<criterion>` → the criterion Check the checker opens for (null: an exact check's row). */
 const criterionOfRow = (r) => { const m = /^(\d+)\|k:(.+)$/.exec(String(r.key || '')); return m ? { exampleId: Number(m[1]), id: m[2] } : null; };
@@ -30,13 +41,13 @@ function trustCell(doc, r, onConfirm = null) {
   // Task 22 (board 12): "Confirm 4 results" is the amber link itself, and an unreliable row's line ends in "Fix it"; both open Check the checker.
   const crit = onConfirm && !r.exact ? criterionOfRow(r) : null;
   const open = crit ? () => onConfirm(crit.exampleId, { id: crit.id, text: r.label, exampleName: r.exampleName }) : null;
-  c.append(open && state === 'confirm' ? btn(doc, TRUST_BADGE.confirm[1], open, `${TRUST_BADGE.confirm[0]} wft-confirm`) : badgeOf(doc, state));
+  c.append(open && state === 'confirm' ? busyBtn(doc, TRUST_BADGE.confirm[1], open, `${TRUST_BADGE.confirm[0]} wft-confirm`) : badgeOf(doc, state));
   if (r.exact) c.append(el(doc, 'span', 'wft-exact', 'Can be checked exactly'));
   // P4-M5: a criterion not checked on every try decides nothing yet; one added after the test says so instead.
   if (r.uneven) c.append(el(doc, 'small', '', r.reason === 'new' ? ADDED_AFTER_TEXT : NOT_EVERY_TRY));
   else if (!r.exact && r.trust && r.trust.state !== 'confirm') {
     const line = el(doc, 'small', '', rowLine(r.trust));
-    if (open && state === 'unreliable') line.append(doc.createTextNode(' '), btn(doc, 'Fix it', open, 'wft-linkbtn wft-fix'));
+    if (open && state === 'unreliable') line.append(doc.createTextNode(' '), busyBtn(doc, 'Fix it', open, 'wft-linkbtn wft-fix'));
     c.append(line);
   }
   return c;
@@ -216,16 +227,20 @@ const AUTO = [['same', 'Gives the same verdict when asked 3 times'], ['padding',
   ['proof', 'Quotes the part of the result each verdict is based on, and the quote is really there']];
 const CC_CARDS = 4;   // a round's cards: the good result and three broken on purpose (checker.mjs)
 const CC_LEAVE = 'You can leave this page. Worca keeps going and shows the results here.';
-const ROUND_FAILED_TEXT = 'This round did not finish. Start a new round.';   // board 58: a failed round without words of its own
 
-/** A card's head: where the result came from, or how Worca broke it on purpose. */
-const ccSource = (doc, v, c) => (c.planted ? el(doc, 'span', 'wft-cc-planted', `Broken on purpose: ${c.planted}`)
-  : el(doc, 'span', 'wft-cc-src', (v.source && v.source.label) || 'From a real result'));
+/** A card's head: how Worca broke it on purpose, or where the result came from and its version and date ("From a real result · v4, 14 Oct"). */
+function ccHead(v, c, dateText) {
+  if (c.planted) return `Broken on purpose: ${c.planted}`;
+  const s = v.source || {};
+  const when = [s.useLabel, s.at ? dateText(s.at) : null].filter(Boolean).join(', ');
+  return `${s.label || 'From a real result'}${when ? ` · ${when}` : ''}`;
+}
+const ccSource = (doc, v, c, dateText) => el(doc, 'span', c.planted ? 'wft-cc-planted' : 'wft-cc-src', ccHead(v, c, dateText));
 
 /** One result card: its head and excerpt; `verdict` adds Worca's verdict and the person's answer (or Right / Wrong). */
-function ccCard(doc, v, c, { verdict = true, answer = null } = {}) {
+function ccCard(doc, v, c, { verdict = true, answer = null, busy = false, dateText = (s) => s } = {}) {
   const card = el(doc, 'div', 'wft-cc-card');
-  card.append(ccSource(doc, v, c), el(doc, 'div', 'wft-cc-excerpt', c.excerpt || ''));
+  card.append(ccSource(doc, v, c, dateText), el(doc, 'div', 'wft-cc-excerpt', c.excerpt || ''));
   if (!verdict) return card;
   const line = el(doc, 'div', 'wft-cc-verdict');
   const dot = el(doc, 'span', `wft-dot ${c.met ? 'ok' : 'no'}`);
@@ -237,11 +252,18 @@ function ccCard(doc, v, c, { verdict = true, answer = null } = {}) {
   if (c.answer === null && answer) {
     // One answer per press: both buttons wait until it is saved (the page then repaints); a refusal gives them back.
     const press = (right) => {
+      if (r.disabled) return;
       for (const b of [r, w]) b.disabled = true;
       void Promise.resolve(answer(c.judgementId, right)).finally(() => { for (const b of [r, w]) b.disabled = false; });
     };
     const r = btn(doc, 'Right', () => press(true), 'btn btn-sm wft-cc-right');
     const w = btn(doc, 'Wrong', () => press(false), 'btn btn-sm wft-cc-wrong');
+    const head = ccHead(v, c, dateText);
+    r.setAttribute('aria-label', `Right: ${head}`);
+    w.setAttribute('aria-label', `Wrong: ${head}`);
+    // Fix round 1: while any answer or Worca's clearer words are out, no card takes another answer (the controller repaints).
+    r.disabled = busy;
+    w.disabled = busy;
     card.append(ccActs(doc, r, w));
   } else if (c.answer !== null) card.append(el(doc, 'span', `wft-cc-done${c.answer ? '' : ' is-wrong'}`, `You said: ${c.answer ? 'right' : 'wrong'}`));
   return card;
@@ -271,7 +293,7 @@ function ccActs(doc, ...buttons) { const a = el(doc, 'div', 'wft-acts'); a.appen
 const usdSpan = (doc, usd) => el(doc, 'span', 'code', fmtUsd(usd));
 
 /** P4-M3 "while Worca prepares": making the broken results (no card yet), then checking them. */
-function ccPreparing(doc, v) {
+function ccPreparing(doc, v, dateText) {
   const checking = v.cards.length > 0;
   const box = ccBox(doc, { label: checking ? 'Worca is checking' : 'Worca is preparing', live: true });
   const wait = el(doc, 'div', 'wft-cc-wait');
@@ -280,7 +302,7 @@ function ccPreparing(doc, v) {
   box.append(wait);
   if (checking) {
     const grid = el(doc, 'div', 'wft-cc-cards');
-    for (const c of v.cards) grid.append(ccCard(doc, v, c, { verdict: false }));
+    for (const c of v.cards) grid.append(ccCard(doc, v, c, { verdict: false, dateText }));
     box.append(grid);
   } else {
     const ghosts = el(doc, 'div', 'wft-cc-ghosts');
@@ -293,19 +315,23 @@ function ccPreparing(doc, v) {
 }
 
 /** P4-M3 "after a Wrong": the cards you said were wrong, and Worca's clearer words (or why there are none, in the server's words). */
-function ccReworded(doc, v, reworded, actions) {
+function ccReworded(doc, v, reworded, actions, { rewording = false, dateText = (s) => s } = {}) {
   const box = ccBox(doc, { label: 'After a wrong answer' });
-  for (const c of v.cards.filter((x) => x.answer === false)) box.append(ccCard(doc, v, c));
+  for (const c of v.cards.filter((x) => x.answer === false)) box.append(ccCard(doc, v, c, { dateText }));
+  if (rewording) {   // fix round 1: the words are being written (the coordinator's words, in the style of "Worca is reading your note…")
+    const wait = el(doc, 'div', 'wft-cc-wait');
+    wait.setAttribute('role', 'status');
+    wait.append(icon(doc, 'spinner', 20), el(doc, 'span', '', 'Worca is writing clearer words…'));
+    box.append(wait);
+    return box;
+  }
   const keep = btn(doc, 'Keep my words', () => actions.keepWords(), 'btn btn-sm');
   if (reworded.error) {
     box.append(ccStop(doc, reworded.limit ? 'limit' : 'err', reworded.error), ccActs(doc, btn(doc, 'Try again', () => actions.reword(), 'btn btn-sm'), keep));
     return box;
   }
   const sugg = el(doc, 'div', 'wft-sugg wft-cc-reword');
-  const use = btn(doc, 'Use these words and check again', () => {
-    use.disabled = true;
-    void Promise.resolve(actions.useWords(reworded.text)).finally(() => { use.disabled = false; });
-  }, 'btn btn-sm btn-primary');
+  const use = busyBtn(doc, 'Use these words and check again', () => actions.useWords(reworded.text), 'btn btn-sm btn-primary');
   const est = el(doc, 'span', 'hint', `Checking again makes ${CC_CARDS} new results to confirm, about `);
   est.append(usdSpan(doc, v.costUsd), doc.createTextNode('.'));
   sugg.append(el(doc, 'span', 'wft-sugg-tag', 'Worca suggests clearer words'), el(doc, 'span', 'wft-cc-words', `"${reworded.text}"`), ccActs(doc, use, keep), est);
@@ -317,9 +343,12 @@ function ccReworded(doc, v, reworded, actions) {
  * Board 11 (ready and done) and P4-M3's states. `v` = GET …/checker/:round, or null with `empty` = { kind: 'none' | 'limit', text }
  * (no round: no good result yet, or the spending limit; `criterion` = { text } names it then). `reworded` = { text } (Worca's clearer
  * words after a Wrong) or { error, limit } (the reword route's refusal). actions: answer(judgementId, right), reword(), back(), use(),
- * useWords(text), keepWords(), retry() (a new round of the criterion), tryOnce() (Try your draft once now).
+ * useWords(text), keepWords(), retry() (a new round of the criterion), tryOnce() (Try your draft once now). `busy`: an answer or the
+ * clearer words are out, so no Right / Wrong takes a press; `rewording`: Worca is writing the clearer words. `dateText` formats the
+ * good result's date (tests-app.mjs wftDate).
  */
-export function renderChecker(root, v, actions, { doc, exampleName, criterion = null, empty = null, reworded = null }) {
+export function renderChecker(root, v, actions, { doc, exampleName, criterion = null, empty = null, reworded = null, busy = false, rewording = false,
+  dateText = (s) => s }) {
   root.replaceChildren();
   const page = el(doc, 'div', 'wft-page wft-cc');
   const head = el(doc, 'div', 'wft-titles');
@@ -334,26 +363,26 @@ export function renderChecker(root, v, actions, { doc, exampleName, criterion = 
   if (!v) {   // P4-M3: no round, so no cards
     const limit = !!empty && empty.kind === 'limit';
     const box = ccBox(doc, { head: limit ? 'Check the checker did not start' : 'Worca needs a good result first' });
-    if (limit) box.append(ccStop(doc, 'limit', empty.text || ''), ccActs(doc, back(), btn(doc, 'Try again', () => actions.retry(), 'btn btn-sm')));
+    if (limit) box.append(ccStop(doc, 'limit', empty.text || ''), ccActs(doc, back(), busyBtn(doc, 'Try again', () => actions.retry(), 'btn btn-sm')));
     else {
       box.append(el(doc, 'p', 'wft-cc-say', (empty && empty.text) || ''),
-        ccActs(doc, back(), btn(doc, 'Try your draft once now', () => actions.tryOnce(), 'btn btn-sm btn-primary')));
+        ccActs(doc, back(), busyBtn(doc, 'Try your draft once now', () => actions.tryOnce(), 'btn btn-sm btn-primary')));
     }
     page.append(box);
     return;
   }
   const status = v.round && v.round.status;
-  if (status === 'making') { page.append(ccPreparing(doc, v)); return; }
+  if (status === 'making') { page.append(ccPreparing(doc, v, dateText)); return; }
   if (status === 'failed') {
     const box = ccBox(doc, { head: 'Check the checker did not finish' });
     const cost = el(doc, 'p', 'hint', 'Nothing is counted from this round. This round cost ');
     cost.append(usdSpan(doc, v.costUsd), doc.createTextNode('.'));
-    box.append(ccStop(doc, 'err', v.round.detail || ROUND_FAILED_TEXT), cost,
-      ccActs(doc, back(), btn(doc, 'Try again', () => actions.retry(), 'btn btn-sm btn-primary')));
+    box.append(ccStop(doc, 'err', v.round.detail || ROUND_NOT_FINISHED_TEXT), cost,
+      ccActs(doc, back(), busyBtn(doc, 'Try again', () => actions.retry(), 'btn btn-sm btn-primary')));
     page.append(box);
     return;
   }
-  if (reworded) page.append(ccReworded(doc, v, reworded, actions));
+  if (reworded || rewording) page.append(ccReworded(doc, v, reworded || {}, actions, { rewording, dateText }));
   else {
     const panel = el(doc, 'section', 'qpanel wft-cc-panel');
     panel.setAttribute('aria-labelledby', 'wft-cc-q');
@@ -362,7 +391,7 @@ export function renderChecker(root, v, actions, { doc, exampleName, criterion = 
     q.id = 'wft-cc-q';
     ph.append(q, el(doc, 'span', 'qcount', `${v.left} of ${v.cards.length} left`));
     const grid = el(doc, 'div', 'wft-cc-cards');
-    for (const c of v.cards) grid.append(ccCard(doc, v, c, { answer: actions.answer }));
+    for (const c of v.cards) grid.append(ccCard(doc, v, c, { answer: actions.answer, busy, dateText }));
     panel.append(ph, grid, el(doc, 'p', 'hint', 'If you say "wrong", Worca suggests clearer words for the criterion and asks again.'));
     page.append(panel);
   }
@@ -374,7 +403,8 @@ export function renderChecker(root, v, actions, { doc, exampleName, criterion = 
   for (const [k, words] of AUTO) {
     const r = el(doc, 'div', 'wft-cc-auto-row');
     const x = (v.auto && v.auto[k]) || { n: 0, of: 0 };
-    r.append(el(doc, 'span', '', words), el(doc, 'span', x.of && x.n === x.of ? 'badge green' : 'badge red', `${x.n} of ${x.of}`));
+    // Fix round 1: nothing to count yet (0 of 0) is grey, not a failure.
+    r.append(el(doc, 'span', '', words), el(doc, 'span', !x.of ? 'badge' : x.n === x.of ? 'badge green' : 'badge red', `${x.n} of ${x.of}`));
     auto.append(r);
   }
   const foot = el(doc, 'div', 'wft-cc-foot');
