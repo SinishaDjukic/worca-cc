@@ -37,6 +37,10 @@ export function deterministicPlants(text) {
     const vague = 'Things should get better for customers over time.';
     good.push({ how: 'only a vague goal', excerpt: vague, text: p.map((x, i) => (i === content[0] ? vague : x)).join('\n\n') });
   }
+  if (good.filter(usable).length < 3 && content.length >= 1) {   // still short (no numbers, one paragraph): the main point said the other way round
+    const turned = `It is not true that ${p[content[0]].trim().replace(/^[A-Z]/, (c) => c.toLowerCase())}`;
+    good.push({ how: 'the point turned round', excerpt: turned, text: p.map((x, i) => (i === content[0] ? turned : x)).join('\n\n') });
+  }
   return good.filter(usable);
 }
 

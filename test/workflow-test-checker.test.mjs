@@ -228,6 +228,15 @@ test('a failed round has its own words when started again', async () => {
   await assert.rejects(checker.answer(round, 1, true, {}), { message: 'This round did not finish. Start a new round.' });
 });
 
+test('a one-paragraph result with no numbers still gets 3 plants, so a round has its 4 cards', () => {
+  for (const text of ['Customers can export their data to CSV from the settings page.', '## Goal\n\nCustomers can export data.']) {
+    const d = deterministicPlants(text);
+    assert.equal(d.length, 3, `3 plants for: ${text.slice(0, 20)}`);
+    assert.equal(new Set(d.map((x) => x.text)).size, 3, 'three different broken versions');
+    assert.ok(d.every((x) => x.text !== text && /[A-Za-z]/.test(x.text.replace(/^#.*$/gm, ''))));
+  }
+});
+
 test('a one-paragraph good result (with or without a heading) plants without emptying the text, and the mock round is ready', async () => {
   for (const text of ['Cut export tickets by 60% within one quarter, counted by the Export tag.', '## Metric\n\nCut export tickets by 60% within one quarter, counted by the Export tag.']) {
     const d = deterministicPlants(text);
