@@ -4,13 +4,14 @@
 // provider env kept, agent-CLI providers refused; the turn handles a session the CLI no longer knows.
 import { test, after } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { useTempHome } from './helpers/temp-home.mjs';
-import { runOpencodeProcess, createOpencodeNormalizer, opencodeChat, OPENCODE_ASK_LOCKDOWN } from '../src/core/engines/opencode.mjs';
+import { runOpencodeProcess, createOpencodeNormalizer, opencodeChat, opencodeProviderSignInEnv, OPENCODE_ASK_LOCKDOWN } from '../src/core/engines/opencode.mjs';
 import { runGooseProcess, buildGooseArgs, gooseChat, gooseChatModelProblem, GOOSE_ASK_LOCKDOWN } from '../src/core/engines/goose.mjs';
-import { providerEnvPrefixes } from '../src/core/engines/chat-descriptor.mjs';
+import { providerEnvPrefixes, chatSignInEnv } from '../src/core/engines/chat-descriptor.mjs';
+import { buildSpawnEnv } from '../src/core/engines/spawn.mjs';
 import { fakeOpencode } from './helpers/fake-opencode.mjs';
 import { fakeGoose } from './helpers/fake-goose.mjs';
 
@@ -59,6 +60,47 @@ test('OpenCode: a chat\'s per-spawn server name reads as worca\'s own in the str
   const n = createOpencodeNormalizer({ mcpServers: ['worcaab12cd'], serverNames: { worcaab12cd: 'worca' } });
   const ev = n.push({ type: 'tool_use', sessionID: 'ses_x', part: { tool: 'worcaab12cd_list_projects', callID: 'c1', state: { status: 'completed', input: {}, output: 'ok' } } });
   assert.equal(ev.find((e) => e.type === 'tool').calls[0].name, 'mcp__worca__list_projects');
+});
+
+test('OpenCode chat sign-in env: the model\'s provider {env:…} key rides the scrub by exact name — and only its own', () => {
+  const dir = tmp();
+  const cfgDir = join(dir, '.config', 'opencode');
+  mkdirSync(cfgDir, { recursive: true });
+  // A provider reads its key from a var no prefix covers (here: a farm gateway key stored in ANTHROPIC_AUTH_TOKEN).
+  writeFileSync(join(cfgDir, 'opencode.jsonc'), `{
+    // the user's provider blocks; a nested model setting may reference an env var too
+    "provider": { "ignored": true },
+    "providers": {
+      "farm": {
+        "package": "aisdk:@ai-sdk/openai-compatible",
+        "settings": { "baseURL": "https://f/v1", "apiKey": "{env:FARM_KEY}" },
+        "models": { "deepseek": { "settings": { "extra": "{env:FARM_EXTRA}" } } }
+      },
+      "other": { "settings": { "apiKey": "{env:OTHER_PROVIDER_KEY}" } }
+    },
+  }`);
+  const atHome = { ...process.env, HOME: dir };
+  assert.deepEqual(opencodeProviderSignInEnv('farm/deepseek', atHome), ['FARM_EXTRA', 'FARM_KEY'], 'every {env:…} of the provider block, sorted');
+  assert.deepEqual(opencodeProviderSignInEnv('other/m', atHome), ['OTHER_PROVIDER_KEY'], 'a provider reads only its own block');
+  assert.deepEqual(opencodeProviderSignInEnv('missing/m', atHome), [], 'an unknown provider: prefixes only');
+  assert.deepEqual(opencodeProviderSignInEnv('farm/m', { ...process.env, HOME: join(dir, 'nope') }), [], 'no config: no names');
+  const allow = chatSignInEnv(opencodeChat, 'farm/deepseek', { ...atHome, FARM_KEY: 'sk-farm', FARM_EXTRA: 'x', OTHER_PROVIDER_KEY: 'sk-other' });
+  assert.ok(allow.includes('FARM_KEY'), 'the provider key survives the chat allowlist');
+  assert.ok(allow.includes('FARM_EXTRA'));
+  assert.ok(!allow.includes('OTHER_PROVIDER_KEY'), 'never another provider\'s key');
+  assert.ok(!allow.includes('ANTHROPIC_AUTH_TOKEN'), 'a var no provider of this model reads never rides in');
+  // The scrub keeps exactly those names; a --standalone child (2.x) resolves the provider key from its own env.
+  const prevHome = process.env.HOME;
+  process.env.HOME = dir;
+  process.env.FARM_KEY = 'sk-farm';
+  try {
+    const childEnv = buildSpawnEnv(true, [...chatSignInEnv(opencodeChat, 'farm/deepseek', process.env), 'SSH_AUTH_SOCK'], ['OPENCODE_', 'AIFARM_MSP_']);
+    assert.equal(childEnv.FARM_KEY, 'sk-farm', 'the exact-name allowlist reaches the scrubbed child env');
+    assert.equal(childEnv.OTHER_PROVIDER_KEY, undefined);
+  } finally {
+    if (prevHome === undefined) delete process.env.HOME; else process.env.HOME = prevHome;
+    delete process.env.FARM_KEY;
+  }
 });
 
 test('OpenCode chat: a session OpenCode no longer knows is the turn\'s to handle', POSIX, async () => {

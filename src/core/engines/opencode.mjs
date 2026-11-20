@@ -85,6 +85,7 @@ import { strongestClass } from '../recoverable-error.mjs';
 import { envFlag } from '../model-env.mjs';
 import { makeChatDescriptor, providerEnvPrefixes, providerListRates } from './chat-descriptor.mjs';
 import { chatSelfTest } from './chat-selftest.mjs';
+import { parseJsonc } from '../workspace-import.mjs';
 
 /** Read at call time (not import time), so a test or a server child can point it at a fake after import. */
 export const opencodeDefaultBin = () => process.env.WORCA_OPENCODE_BIN || 'opencode';
@@ -915,6 +916,51 @@ export function opencodeConfigFiles(env = process.env) {
     ...(typeof env.OPENCODE_CONFIG === 'string' && env.OPENCODE_CONFIG ? [env.OPENCODE_CONFIG] : [])];
 }
 
+/** The provider blocks of the user's opencode config (the top-level `providers` map): ~/.config/opencode
+ *  opencode.json / opencode.jsonc / config.json, else OPENCODE_CONFIG. Read fresh — the chat self-test already watches
+ *  these files, and a key the model's provider now reads must ride the next turn. Null when none exists or none parses;
+ *  a chat then signs in on env prefixes alone. */
+export function opencodeProvidersConfig(env = process.env) {
+  const home = (typeof env.HOME === 'string' && env.HOME.trim()) || homedir();
+  const dir = join((typeof env.XDG_CONFIG_HOME === 'string' && env.XDG_CONFIG_HOME.trim()) || join(home, '.config'), 'opencode');
+  const files = [join(dir, 'opencode.json'), join(dir, 'opencode.jsonc'), join(dir, 'config.json')];
+  if (typeof env.OPENCODE_CONFIG === 'string' && env.OPENCODE_CONFIG.trim()) files.push(env.OPENCODE_CONFIG.trim());
+  for (const f of files) {
+    let doc = null;
+    try { doc = existsSync(f) ? parseJsonc(readFileSync(f, 'utf8')) : null; } catch { doc = null; }
+    if (doc && typeof doc === 'object' && doc && typeof doc.providers === 'object' && doc.providers && !Array.isArray(doc.providers)) return doc.providers;
+  }
+  return null;
+}
+
+/** The exact env var names a chat on `model`'s provider reads from the user's opencode config: every `{env:NAME}` in any
+ *  string of that provider's block (apiKey, accessToken, options/env settings, …). A 2.x chat spawn runs `--standalone`,
+ *  so the child resolves the provider's `{env:…}` from its OWN process env — an exact name no prefix covers (here a
+ *  `aifarm-msp/…` provider reading ANTHROPIC_AUTH_TOKEN) must survive the chat scrub or the key never reaches the gateway.
+ *  Only the model's own provider block is read, so no other provider's key can ride along. None when the config or the
+ *  provider is missing, or it declares no env ref. */
+export function opencodeProviderSignInEnv(model, env = process.env) {
+  const provider = String(model || '').split('/')[0].trim();
+  if (!provider) return [];
+  const providers = opencodeProvidersConfig(env);
+  if (!providers || typeof providers[provider] !== 'object' || !providers[provider]) return [];
+  const names = new Set();
+  const walk = (v) => {
+    if (typeof v === 'string') {
+      // {env:NAME} — OpenCode expands these from the process env (the header comment above).
+      const re = /\{env:([A-Za-z_][A-Za-z0-9_]*)\}/g;
+      let m = null;
+      while ((m = re.exec(v))) names.add(m[1]);
+    } else if (Array.isArray(v)) {
+      for (const x of v) walk(x);
+    } else if (v && typeof v === 'object') {
+      for (const x of Object.values(v)) walk(x);
+    }
+  };
+  walk(providers[provider]);
+  return [...names].sort();
+}
+
 /** The chat self-test on this opencode (engines/chat-selftest.mjs): an OpenAI-compatible provider at a local endpoint.
  *  `skill` is a meta tool 2.x always offers (its permission is evaluated as a kind of its own), so it is allowed. */
 export function opencodeChatSelfTest({ bin = opencodeDefaultBin(), ...o } = {}) {
@@ -936,7 +982,7 @@ export const opencodeChat = makeChatDescriptor({
   preflight: (_ctx, impl = opencodePreflight) => impl({ defaultModel: false, envScrub: true, envAllowlist: [] }),
   resumeNotFound: (err) => OPENCODE_RESUME_NOT_FOUND_RE.test(String((err && err.message) || err || '')),
   modelProblem: (id) => (ZEN_PROVIDER_RE.test(String(id || '')) ? "OpenCode Zen's free models refuse a request without the shell, and a chat has none" : null),
-  signIn: (model) => ['OPENCODE_', ...providerEnvPrefixes(model)],
+  signIn: (model, env) => ['OPENCODE_', ...providerEnvPrefixes(model), ...opencodeProviderSignInEnv(model, env)],
   listRates: providerListRates,
   prompt: { cli: "OpenCode with OpenCode's own providers" },
 });
