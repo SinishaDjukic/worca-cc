@@ -106,6 +106,8 @@ test('formats of the tiles and the estimate', () => {
   const unknown = estimateOf({ a: { want: 3, reusable: 0, perTryUsd: null }, b: { want: 3, reusable: 0, perTryUsd: 0.5 }, perTryMs: null }, { reuseA: false });
   assert.deepEqual([unknown.total, unknown.usd, unknown.minutes, unknown.capUsd], [6, null, null, 10]);
   assert.equal(TRIES_AT_ONCE, MAX_PARALLEL, 'the estimate uses the runner\'s parallelism');
+  const noPrice = estimateOf({ a: { want: 1, reusable: 0, perTryUsd: 0.5 }, b: null, perTryMs: null, criteria: { pairsUsd: 0 } }, { reuseA: false });
+  assert.equal(noPrice.criteriaUsd, null, 'criteria in the plan but a side without its checking price: not known, never $0');
 });
 
 // Fix 1: the approved rule for sentence 1, partial coverage, luck with uneven tries, and "Look at".

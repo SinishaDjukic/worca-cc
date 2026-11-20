@@ -278,7 +278,8 @@ export function estimateOf(plan, { reuseA = true, reuseB = false } = {}) {
   // The criteria phase checks the tries to run and the reused tries that still miss a criterion. A side's `checkUsd` (testPlan) prices
   // that per example and per missing check ({ fresh, withReuse }); null = not known.
   const crit = plan.criteria || null;
-  const sideUsd = (s, reuse) => (!s || !s.checkUsd ? 0 : reuse ? s.checkUsd.withReuse : s.checkUsd.fresh);
+  // A side without its checking price is not known (never $0); only a side that is not tested costs nothing.
+  const sideUsd = (s, reuse) => (!s ? 0 : !s.checkUsd ? null : reuse ? s.checkUsd.withReuse : s.checkUsd.fresh);
   const pairs = crit && plan.a && toRun.b ? crit.pairsUsd : 0;
   const parts = crit ? [sideUsd(plan.a, reuseA), sideUsd(plan.b, reuseB), pairs] : [0, 0, 0];
   const criteriaUsd = parts.some((u) => u === null || u === undefined) ? null : parts[0] + parts[1] + parts[2];
