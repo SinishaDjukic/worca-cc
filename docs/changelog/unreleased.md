@@ -15,7 +15,7 @@ Read it: [Requirements](../requirements.md)
 
 Pull requests (add each number when it opens):
 
-- Requirements: keep long spec items whole
+- Requirements: keep long spec items whole (#1510)
 
 ## Copilot on your GHE.com tenant
 
