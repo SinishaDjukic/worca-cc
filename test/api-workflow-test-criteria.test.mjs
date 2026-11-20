@@ -274,3 +274,55 @@ test('PUT and DELETE the result you liked', async () => {
   assert.equal((await call('PUT', `${WF}/examples/${ex.id}/liked`, {})).status, 400);
   assert.equal((await call('DELETE', `${WF}/examples/${ex.id}/liked`)).body.example.liked, null);
 });
+
+test('the result you liked comes only from this workflow\'s own runs and tries; from-run with liked is all or nothing', { timeout: 300000 }, async () => {
+  const { runs } = await import('../ui/server.mjs');
+  const settle = async (runId) => { const t0 = Date.now(); for (;;) { const e = runs.get(runId); if (e && e.settled) return; if (Date.now() - t0 > 120000) throw new Error('never settled'); await new Promise((r) => setTimeout(r, 50)); } };
+  const other = { ...graph, id: 'wf_api_c2', name: 'Other writer' };
+  assert.equal((await call('POST', '/api/workflows', other)).status, 201);
+  const mine = await call('POST', '/api/run', { noProject: true, workflowId: 'wf_api_c', prompt: 'Brief for exports', mock: true });
+  const theirs = await call('POST', '/api/run', { noProject: true, workflowId: 'wf_api_c2', prompt: 'Brief for imports', mock: true });
+  await settle(mine.body.runId); await settle(theirs.body.runId);
+  const ex = (await call('POST', `${WF}/examples`, { name: 'Liked', request: 'R' })).body.example;
+  const exB = (await call('POST', `${WF}/examples`, { name: 'Liked B', request: 'R' })).body.example;
+  const put = (b, e = ex) => call('PUT', `${WF}/examples/${e.id}/liked`, b);
+  // IDOR: another workflow's run is refused, and keeps nothing.
+  const bad = await put({ pipelineId: theirs.body.pipelineId });
+  assert.deepEqual([bad.status, bad.body.error], [400, 'this run is of another workflow']);
+  assert.equal(cs.readLiked(ex.id), null);
+  assert.equal((await put({ pipelineId: 'nosuchrun' })).status, 400);
+  // The pipelineId path, for its own workflow's run.
+  const ok = await put({ pipelineId: mine.body.pipelineId });
+  assert.equal(ok.status, 200, JSON.stringify(ok.body));
+  assert.equal(cs.readLiked(ex.id).fromPipeline, mine.body.pipelineId);
+  // The tryId path: a try of this example works; a try of another example or another workflow does not.
+  const runId = store.listTestRuns('wf_api_c')[0].id;
+  const mkTry = (workflowId, exampleId, tryNo, pipelineId) => store.updateTry(store.insertTry({ runId, workflowId, exampleId, use: 'draft', fp: 'f', exampleFp: 'e', tryNo }).id, { pipelineId });
+  const tB = mkTry('wf_api_c', exB.id, 91, mine.body.pipelineId);
+  assert.equal((await put({ tryId: tB.id }, ex)).status, 400, 'a try of another example');
+  assert.equal((await put({ tryId: tB.id }, exB)).status, 200);
+  assert.equal(cs.readLiked(exB.id).fromPipeline, mine.body.pipelineId);
+  const tX = mkTry('wf_api_c2', exB.id, 92, theirs.body.pipelineId);
+  assert.equal((await put({ tryId: tX.id }, exB)).status, 400, 'a try of another workflow');
+  assert.equal(cs.readLiked(exB.id).fromPipeline, mine.body.pipelineId, 'kept the earlier one');
+  assert.equal((await call('PUT', `/api/workflows/wf_api_c2/tests/examples/${exB.id}/liked`, { tryId: tB.id })).status, 404, 'the other workflow does not see this example');
+  // from-run with liked: success keeps the result; a run with no result is refused before an example exists.
+  const before = store.listExamples('wf_api_c').length;
+  const fr = await call('POST', `${WF}/examples/from-run`, { pipelineId: mine.body.pipelineId, name: 'From run', liked: true });
+  assert.equal(fr.status, 201, JSON.stringify(fr.body));
+  assert.ok(fr.body.example.liked);
+  assert.equal(cs.readLiked(fr.body.example.id).fromPipeline, fr.body.example.from.pipelineId);
+  assert.equal(store.listExamples('wf_api_c').length, before + 1);
+  // A run that left no result: refused before any example exists.
+  prepare('CREATE TEMP TABLE IF NOT EXISTS p_copy AS SELECT * FROM pipelines WHERE 0').run();
+  prepare('INSERT INTO p_copy SELECT * FROM pipelines WHERE id = ?').run(mine.body.pipelineId);
+  prepare('UPDATE p_copy SET id = ?').run('f00dc0de');
+  prepare('INSERT INTO pipelines SELECT * FROM p_copy').run();
+  prepare('DROP TABLE p_copy').run();
+  const none = await call('POST', `${WF}/examples/from-run`, { pipelineId: 'f00dc0de', liked: true });
+  assert.deepEqual([none.status, none.body.error], [400, 'this run left no result to keep']);
+  assert.equal(store.listExamples('wf_api_c').length, before + 1, 'nothing was created');
+  const wrong = await call('POST', `${WF}/examples/from-run`, { pipelineId: theirs.body.pipelineId, liked: true });
+  assert.equal(wrong.status, 400);
+  assert.equal(store.listExamples('wf_api_c').length, before + 1);
+});

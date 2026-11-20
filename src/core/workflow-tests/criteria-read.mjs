@@ -2,6 +2,8 @@
 // model; Task 9 adds the tries with their criteria and Compare's notes. No model calls here.
 import { trustOf } from '../../shared/workflow-tests/criteria.mjs';
 import * as cs from './criteria-store.mjs';
+import { mainResult, readTryPatch } from './result.mjs';
+import { CHANGES_HEADING } from './judge-prompt.mjs';
 import * as store from './store.mjs';
 import { compareModel } from '../../shared/workflow-tests/compare.mjs';
 import { byCriterionModel, checkingCounts } from '../../shared/workflow-tests/criteria-report.mjs';
@@ -173,8 +175,6 @@ export function criteriaPlanOf(workflowId, exampleIds = [], { hasA = false, mock
   return { pairsUsd: prices.some((u) => u === null) ? null : prices.reduce((sum, u) => sum + 2 * u, 0) };
 }
 
-import { mainResult, readTryPatch } from './result.mjs';
-import { CHANGES_HEADING } from './judge-prompt.mjs';
 /** M9: at most `max` bytes of `text` as UTF-8, cut before a character, never inside one (putLiked refuses broken UTF-8). */
 const utf8Clip = (text, max) => {
   const b = Buffer.from(text);
@@ -190,8 +190,9 @@ export async function likedFromPipeline(example, pipelineId, { readMain = mainRe
   if (!example.project) { cs.putLiked(example.id, { kind: 'text', name: m.name || 'result.md', data: utf8Clip(m.text, cs.LIKED_MAX), fromPipeline: pipelineId }); return; }
   const p = await readPatch(pipelineId, cs.LIKED_MAX);
   const files = p && p.patch ? (p.patch.match(/^diff --git /gm) || []).length : 0;
-  const when = new Date(at || Date.now()).toLocaleDateString('en-GB', { day: 'numeric', month: 'short' });
+  const date = new Date(at || Date.now());
+  const on = Number.isNaN(date.getTime()) ? '' : ` on ${date.toLocaleDateString('en-GB', { day: 'numeric', month: 'short' })}`;
   const text = p && p.patch ? `${m.text}\n\n${CHANGES_HEADING}\n${p.patch}` : m.text;
-  cs.putLiked(example.id, { kind: 'changes', name: `Changes from the run on ${when} · ${files} ${files === 1 ? 'file' : 'files'}`,
+  cs.putLiked(example.id, { kind: 'changes', name: `Changes from the run${on} · ${files} ${files === 1 ? 'file' : 'files'}`,
     data: utf8Clip(text, cs.LIKED_MAX), fromPipeline: pipelineId });
 }

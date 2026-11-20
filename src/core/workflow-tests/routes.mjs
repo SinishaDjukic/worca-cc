@@ -8,6 +8,7 @@ import * as service from './service.mjs';
 import { createTestRunner } from './runner.mjs';
 import { checkingOf, criteriaPlanOf, likedFromPipeline } from './criteria-read.mjs';
 import { findPipelineRowById } from '../artifacts.mjs';
+import { mainResult } from './result.mjs';
 import { createCriteriaJudge } from './criteria-runner.mjs';
 import { readTryOutcome, checkTry } from './result.mjs';
 import { useFingerprint } from './uses.mjs';
@@ -101,11 +102,18 @@ export function registerWorkflowTestRoutes(app, { broadcast = () => {}, deps = {
   route('POST', `${W}/examples/from-run`, async (req, res) => {
     service.workflowRowOf(wid(req));
     const b = req.body || {};
+    // All or nothing: a run with no result is refused before any example exists.
+    let main = null;
+    if (b.liked === true) {
+      main = await mainResult(String(b.pipelineId || ''));
+      if (typeof main.text !== 'string' || !main.text.trim()) throw store.testError('this run left no result to keep', 'BAD_REQUEST');
+    }
     const out = await service.exampleFromRun(wid(req), { pipelineId: String(b.pipelineId || ''), name: b.name,
       keepRequest: b.keepRequest !== false, keepAnswers: b.keepAnswers !== false, verdict: b.verdict ?? null,
       note: typeof b.note === 'string' ? b.note : null, setupCmd: typeof b.setupCmd === 'string' ? b.setupCmd : null }, { by: by(req) });
     if (b.liked === true && out.example) {
-      await likedFromPipeline(out.example, String(b.pipelineId), { at: (findPipelineRowById(String(b.pipelineId)) || {}).started_at });
+      const pid = out.example.from.pipelineId;
+      await likedFromPipeline(out.example, pid, { readMain: async () => main, at: (findPipelineRowById(pid) || {}).started_at });
       out.example = store.readExample(wid(req), out.example.id);
     }
     res.status(201).json(out);

@@ -111,7 +111,8 @@ export function putLiked(exampleId, { kind = 'text', name, data, fromPipeline = 
   if (buf.length > LIKED_MAX) throw testError('the result you liked is larger than 2 MB', 'BAD_REQUEST');
   try { UTF8.decode(buf); } catch { throw testError('the result you liked must be a text file', 'BAD_REQUEST'); }
   const clean = typeof name === 'string' ? name.replace(/\s+/g, ' ').trim().slice(0, 200) : '';
-  if (!clean || !['text', 'changes'].includes(kind)) throw testError('give the result you liked a name', 'BAD_REQUEST');
+  if (!['text', 'changes'].includes(kind)) throw testError('the result you liked is text or changes', 'BAD_REQUEST');
+  if (!clean) throw testError('give the result you liked a name', 'BAD_REQUEST');
   getDb();
   prepare(`INSERT INTO wf_test_liked (example_id, kind, name, data, sha256, size, from_pipeline, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
       ON CONFLICT(example_id) DO UPDATE SET kind = excluded.kind, name = excluded.name, data = excluded.data, sha256 = excluded.sha256,

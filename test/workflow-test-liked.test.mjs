@@ -39,7 +39,12 @@ test('likedFromPipeline: a run\'s result; a project example also keeps its chang
   assert.match(l.name, /^Changes from the run on .+ · 2 files$/);
   assert.match(l.text, /^Fixed\.\n\n--- The changes this try made/);
   // M9: a result over 2 MB is clipped on a character boundary, never refused.
-  await likedFromPipeline(ex, 'p0000003', { readMain: async () => ({ name: 'big.md', text: 'é'.repeat(cs.LIKED_MAX) }), readPatch: async () => null });
+  await likedFromPipeline(ex, 'p0000003', { readMain: async () => ({ name: 'big.md', text: 'a' + 'é'.repeat(cs.LIKED_MAX) }), readPatch: async () => null });
   const big = cs.readLiked(ex.id);
   assert.ok(Buffer.byteLength(big.text) <= cs.LIKED_MAX && big.text.endsWith('é'));
+  // An invalid start date leaves the date out of the name.
+  const px2 = { ...ex, project: { key: 'p-1a2b3c4d' } };
+  await likedFromPipeline(px2, 'p0000004', { readMain: async () => ({ name: 'r.md', text: 'x' }), readPatch: async () => ({ patch: 'diff --git a/x b/x\n' }), at: 'garbage' });
+  assert.equal(cs.readLiked(ex.id).name, 'Changes from the run · 1 file');
+  assert.throws(() => cs.putLiked(ex.id, { kind: 'zip', name: 'a', data: Buffer.from('x') }), { message: 'the result you liked is text or changes' });
 });
