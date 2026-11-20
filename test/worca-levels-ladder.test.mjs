@@ -17,209 +17,106 @@ const viewNames = [
     .matchAll(/'([^']+)'/g),
 ].map((m) => m[1]);
 
-const allActions = WORCA_LEVELS.flatMap((l) => l.actions);
-const byId = Object.fromEntries(allActions.map((a) => [a.id, a]));
+const leavesOf = (i) => (i.kind === 'pick' ? i.choices : [i]);
+const allItems = WORCA_LEVELS.flatMap((l) => l.items);
+const allLeaves = allItems.flatMap(leavesOf);
+const byId = Object.fromEntries([...allItems, ...allLeaves].map((a) => [a.id, a]));
 
 describe('worca levels ladder', () => {
   it('has 5 levels in order with the agreed keys, names, tints and hues', () => {
     assert.equal(WORCA_LEVEL_COUNT, 5);
     assert.equal(WORCA_LEVELS.length, WORCA_LEVEL_COUNT);
-    assert.deepEqual(
-      WORCA_LEVELS.map((l) => l.index),
-      [1, 2, 3, 4, 5],
-    );
-    assert.deepEqual(
-      WORCA_LEVELS.map((l) => l.key),
-      ['curious', 'runner', 'hooked', 'worcaholic', 'council'],
-    );
-    assert.deepEqual(
-      WORCA_LEVELS.map((l) => l.name),
-      ['Curious', 'Runner', 'Hooked', 'WorcaHolic', "Worca's Council"],
-    );
-    assert.deepEqual(
-      WORCA_LEVELS.map((l) => l.tint),
-      ['blue', 'teal', 'purple', 'orange', 'green'],
-    );
-    assert.deepEqual(
-      WORCA_LEVELS.map((l) => l.hue),
-      [235, 195, 295, 65, 150],
-    );
+    assert.deepEqual(WORCA_LEVELS.map((l) => l.index), [1, 2, 3, 4, 5]);
+    assert.deepEqual(WORCA_LEVELS.map((l) => l.key), ['curious', 'runner', 'hooked', 'worcaholic', 'council']);
+    assert.deepEqual(WORCA_LEVELS.map((l) => l.name), ['Curious', 'Runner', 'Hooked', 'WorcaHolic', "Worca's Council"]);
+    assert.deepEqual(WORCA_LEVELS.map((l) => l.tint), ['blue', 'teal', 'purple', 'orange', 'green']);
+    assert.deepEqual(WORCA_LEVELS.map((l) => l.hue), [235, 195, 295, 65, 150]);
   });
 
-  it('carries the copy fields for every level', () => {
-    assert.deepEqual(
-      WORCA_LEVELS.map((l) => l.tagline),
-      [
-        'new to orchestration',
-        'runs a pipeline end to end',
-        'extends the pipeline',
-        'runs the whole pod',
-        'council member',
-      ],
-    );
-    assert.deepEqual(
-      WORCA_LEVELS.map((l) => l.hat),
-      ['beanie', 'W headband', 'flat cap', 'black W cap', 'graduation cap'],
-    );
-    assert.deepEqual(
-      WORCA_LEVELS.map((l) => l.phrase),
-      [
-        'Curious',
-        'a Runner',
-        'Hooked',
-        'a WorcaHolic',
-        "part of Worca's Council",
-      ],
-    );
-    assert.deepEqual(
-      WORCA_LEVELS.map((l) => l.recap),
-      [
-        null,
-        'finished Getting started, wrote a requirement and ran a feature to the end',
-        'added an add-on, set up a space and a schedule, and opened Statistics',
-        'ran 2 features at once, added 2 add-ons, set up a repeating schedule and saw 10 runs in Team metrics',
-        'finished 2 or more workflows a day for 30 days in a row',
-      ],
-    );
-    assert.deepEqual(
-      WORCA_LEVELS.map((l) => l.description),
-      [
-        'New to orchestration. Everyone begins here, exploring a single agent pipeline.',
-        'Orchestrates one pipeline: Getting started, a first requirement, a feature run to the end.',
-        'Extends orchestration: an add-on, a space, a schedule, Statistics.',
-        'Orchestrates the whole pod: parallel features, several add-ons, repeating schedules, Team metrics.',
-        'Finishes 2 or more workflows a day, 30 days in a row.',
-      ],
-    );
+  it('carries the copy fields for every level, Curious included (no null recap)', () => {
+    for (const l of WORCA_LEVELS) {
+      for (const field of ['tagline', 'description', 'hat', 'phrase', 'recap']) {
+        assert.equal(typeof l[field], 'string', `${l.key}.${field}`);
+        assert.ok(l[field].length > 0, `${l.key}.${field}`);
+      }
+    }
+    assert.deepEqual(WORCA_LEVELS.map((l) => l.hat), ['beanie', 'W headband', 'flat cap', 'black W cap', 'graduation cap']);
+    assert.deepEqual(WORCA_LEVELS.map((l) => l.phrase), ['Curious', 'a Runner', 'Hooked', 'a WorcaHolic', "part of Worca's Council"]);
   });
 
   it('points each level at its avatar asset', () => {
-    for (const l of WORCA_LEVELS) {
-      assert.equal(l.avatar, `/assets/worca-levels/${l.key}.svg`);
+    for (const l of WORCA_LEVELS) assert.equal(l.avatar, `/assets/worca-levels/${l.key}.svg`);
+  });
+
+  it('has no actions key anywhere', () => {
+    for (const l of WORCA_LEVELS) assert.equal('actions' in l, false, l.key);
+  });
+
+  it('lists the agreed item ids per level, with the pick choices', () => {
+    assert.deepEqual(WORCA_LEVELS.map((l) => l.items.map((i) => i.id)), [
+      ['setupFinished', 'providerSignedIn'],
+      ['runnerSteps', 'realRuns'],
+      ['hookedRuns', 'prOpened', 'teamSetUp', 'hookedPick'],
+      ['parallelFeatures', 'prsMerged', 'holicPick'],
+      ['councilDays'],
+    ]);
+    assert.deepEqual(byId.hookedPick.choices.map((c) => c.id), ['scheduledRunDone', 'workspaceRunDone', 'addonInstalled', 'prMerged', 'twoProjects']);
+    assert.deepEqual(byId.holicPick.choices.map((c) => c.id), ['repeatingScheduleRuns', 'addonsAtOnce', 'threeProjects']);
+    assert.deepEqual([byId.hookedPick.need, byId.holicPick.need], [2, 2]);
+    assert.equal(byId.teamSetUp.onlyFor, 'team');
+  });
+
+  it('every level has <=4 display items (R-po-14)', () => {
+    for (const l of WORCA_LEVELS) assert.ok(l.items.length <= 4, l.key);
+  });
+
+  it('every item has the contract fields and every choice is a single item', () => {
+    for (const i of allItems) {
+      assert.ok(['single', 'pick'].includes(i.kind), i.id);
+      for (const f of ['id', 'label', 'hint']) assert.equal(typeof i[f], 'string', `${i.id}.${f}`);
+      assert.ok(i.href === null || typeof i.href === 'string', i.id);
+      assert.ok((i.href === null) === (i.openLabel === null), `${i.id}: href and openLabel go together`);
+      if (i.kind === 'pick') assert.ok(Array.isArray(i.choices) && i.choices.length > i.need, i.id);
     }
+    for (const c of allItems.filter((i) => i.kind === 'pick').flatMap((i) => i.choices)) assert.equal(c.kind, 'single', c.id);
   });
 
-  it('lists the agreed action ids per level', () => {
-    assert.deepEqual(
-      WORCA_LEVELS.map((l) => l.actions.map((a) => a.id)),
-      [
-        [],
-        ['gettingStarted', 'firstRequirement', 'firstFeatureDone'],
-        ['addonInstalled', 'spaceSetUp', 'scheduleCreated', 'statsViewed'],
-        ['parallelFeatures', 'addonsAtOnce', 'repeatingSchedule', 'teamMetrics'],
-        ['councilStreak'],
-      ],
-    );
+  it('every item/choice has a condition', async () => {
+    const { CONDITIONS } = await import('../src/core/worca-levels/conditions.mjs');
+    for (const a of allLeaves) assert.equal(typeof CONDITIONS[a.id], 'function', a.id);
+    const none = CONDITIONS.hookedRuns({});
+    assert.equal(none.met, false);
+    for (const a of allLeaves) assert.doesNotThrow(() => CONDITIONS[a.id]({}), a.id);
   });
 
-  it('keeps the static label, hint, href and openLabel of every action', () => {
-    const view = (a) => [a.label, a.hint, a.href, a.openLabel];
-    assert.deepEqual(view(byId.gettingStarted), [
-      'Finish Getting started',
-      'Nine short steps. Starts with connecting Claude Code.',
-      '#getting-started',
-      'Open Getting started',
-    ]);
-    assert.deepEqual(view(byId.firstRequirement), [
-      'Write your first requirement',
-      'Opens Requirements.',
-      '#requirements',
-      'Open Requirements',
-    ]);
-    assert.deepEqual(view(byId.firstFeatureDone), [
-      'Run a feature to the end',
-      'Start a requirement and let it finish.',
-      '#requirements',
-      'Open Requirements',
-    ]);
-    assert.deepEqual(view(byId.addonInstalled), [
-      'Install an add-on from the Marketplace',
-      'Marketplace, under Add-ons.',
-      '#marketplace',
-      'Open Marketplace',
-    ]);
-    assert.deepEqual(view(byId.spaceSetUp), [
-      'Set up and organise a space',
-      'Workspaces, under Manage.',
-      '#workspaces',
-      'Open Workspaces',
-    ]);
-    assert.deepEqual(view(byId.scheduleCreated), [
-      'Set up a schedule',
-      'Schedules. Not in your sidebar in Simple mode; the button opens it.',
-      '#schedules',
-      'Open Schedules',
-    ]);
-    assert.deepEqual(view(byId.statsViewed), [
-      'Look at Statistics',
-      'Statistics shows how your builds are going.',
-      '#stats',
-      'Open Statistics',
-    ]);
-    assert.deepEqual(view(byId.parallelFeatures), [
-      'Run 2 features at the same time',
-      'Both have to finish successfully.',
-      '#new',
-      'Open New pipeline',
-    ]);
-    assert.deepEqual(view(byId.addonsAtOnce), [
-      'Add 2 or more add-ons',
-      'Have 2 or more installed at the same time.',
-      '#marketplace',
-      'Open Marketplace',
-    ]);
-    assert.deepEqual(view(byId.repeatingSchedule), [
-      'Set up a repeating schedule',
-      'Schedules. Not in your sidebar in Simple mode; the button opens it.',
-      '#schedules',
-      'Open Schedules',
-    ]);
-    assert.deepEqual(view(byId.teamMetrics), [
-      'See 10 of your runs in Team metrics',
-      'Install Team policy (you or anyone on your team), get 10 of your finished runs into Team metrics, then open Team metrics. Part of Expert mode; the button opens it.',
-      '#team-metrics',
-      'Open Team metrics',
-    ]);
-    assert.deepEqual(view(byId.councilStreak), [
-      'Finish 2 workflows a day, 30 days in a row',
-      'Weekends count too. A day with fewer than 2 finished successfully starts the count again.',
-      '#new',
-      'Open New pipeline',
-    ]);
+  it('no non-team item links to #team-* (A-16)', () => {
+    for (const a of [...allItems, ...allLeaves]) {
+      if (a.onlyFor === 'team') continue;
+      assert.doesNotMatch(a.href ?? '', /^#team-/, a.id);
+    }
+    assert.equal(byId.teamSetUp.href, '#team-policy');
   });
 
-  it('exposes the thresholds and ties action thresholds to them', () => {
-    assert.deepEqual(
-      { ...WORCA_THRESHOLDS },
-      {
-        parallelFeatures: 2,
-        addonsAtOnce: 2,
-        teamMetricsRuns: 10,
-        councilDays: 30,
-        councilDailyRuns: 2,
-      },
-    );
+  it('exposes the thresholds', () => {
+    assert.deepEqual({ ...WORCA_THRESHOLDS }, {
+      runnerSteps: 6, runnerRealRuns: 3, hookedRuns: 10, hookedDays: 3, hookedPick: 2, hookedProjects: 2, prsOpened: 1,
+      parallelFeatures: 2, holicMergedPrs: 5, holicPick: 2, repeatingScheduleRuns: 3, addonsAtOnce: 2, holicProjects: 3,
+      councilDays: 20, councilWindow: 30, nudgeAt: 0.75,
+    });
+    assert.equal(byId.hookedRuns.label, '10 real runs on 3 days');
+    assert.equal(byId.realRuns.label, '3 real runs');
+    assert.equal(byId.prsMerged.label, '5 merged pull requests');
+    assert.equal(byId.councilDays.label, 'Any 20 active days in the last 30');
+    assert.equal(byId.parallelFeatures.label, 'Run 2 features at the same time');
+    assert.equal(byId.repeatingScheduleRuns.label, 'A repeating schedule with 3 finished runs');
+    assert.equal(byId.threeProjects.label, 'Real runs on 3 or more projects');
     assert.equal(byId.parallelFeatures.threshold, 2);
-    assert.equal(byId.addonsAtOnce.threshold, 2);
-    assert.equal(byId.teamMetrics.threshold, 10);
-    assert.equal(byId.councilStreak.threshold, 30);
-    for (const id of [
-      'gettingStarted',
-      'firstRequirement',
-      'firstFeatureDone',
-      'addonInstalled',
-      'spaceSetUp',
-      'scheduleCreated',
-      'statsViewed',
-      'repeatingSchedule',
-    ]) {
-      assert.equal(byId[id].threshold, undefined, id);
-    }
+    assert.deepEqual(byId.councilDays.unit, ['active day', 'active days']);
   });
 
   it('every href resolves to a VIEW_NAMES view', () => {
     assert.ok(viewNames.length > 0);
-    for (const a of allActions) {
+    for (const a of allLeaves.filter((x) => x.href)) {
       assert.match(a.href, /^#[a-z-]+$/, a.id);
       assert.ok(viewNames.includes(a.href.slice(1)), `${a.id}: ${a.href}`);
     }
@@ -230,8 +127,14 @@ describe('worca levels ladder', () => {
     assert.ok(Object.isFrozen(WORCA_THRESHOLDS));
     for (const l of WORCA_LEVELS) {
       assert.ok(Object.isFrozen(l), l.key);
-      assert.ok(Object.isFrozen(l.actions), l.key);
-      for (const a of l.actions) assert.ok(Object.isFrozen(a), a.id);
+      assert.ok(Object.isFrozen(l.items), l.key);
+      for (const a of l.items) {
+        assert.ok(Object.isFrozen(a), a.id);
+        if (a.choices) {
+          assert.ok(Object.isFrozen(a.choices), a.id);
+          for (const c of a.choices) assert.ok(Object.isFrozen(c), c.id);
+        }
+      }
     }
   });
 });

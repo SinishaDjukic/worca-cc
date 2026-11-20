@@ -357,6 +357,18 @@ test('mode dialog: a settings read that answers while a pick is saving never und
   assert.equal(currentLevel(doc), 'expert', 'once the save answered, a value from elsewhere applies again');
 });
 
+test('choose resolves true for a saved mode and false for a refused, failed or invalid one (the suggestion acks only on true)', async () => {
+  const doc = new JSDOM(html).window.document;
+  let out = { ok: true, level: 'advanced' };
+  const ctl = createLevelController({ doc, save: async () => out });
+  ctl.confirm('simple');
+  assert.equal(await ctl.choose('advanced'), true);
+  out = { ok: false, error: 'disk full' };
+  assert.equal(await ctl.choose('expert'), false);
+  assert.equal(currentLevel(doc), 'advanced', 'and the refused pick is reverted');
+  assert.equal(await ctl.choose('nonsense'), false);
+});
+
 // ── (3) the Worca level elements in the catalogue ─────────────────────────────
 
 test('catalogue lists level elements', async () => {
@@ -365,7 +377,6 @@ test('catalogue lists level elements', async () => {
   const rowFor = (re) => rows.find((l) => re.test(l));
   await checkRows([
     ['the level avatar art in the corner', /level avatar art in the corner/i],
-    ['the level tooltip', /level tooltip/i],
     ['the account-menu level card', /account-menu level card/i],
     ['Profile (the level section)', /Profile \(the level section\)/],
     ['the level welcome and celebration', /level welcome and celebration/i],

@@ -3,9 +3,11 @@
 // welcome bindings, driven in jsdom with no app.js boot (pure DOM module).
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 import { JSDOM } from 'jsdom';
 import {
   GETTING_STARTED_STEPS, renderGettingStarted, renderGettingStartedPill, bindWelcome, doneCount, allStepsDone,
+  teamStepsVisible, laterSteps, runnerProgress, gsPillText,
 } from '../ui/public/getting-started.mjs';
 import { checkRows } from './helpers/rows.mjs';
 import { backdropClick, dragOut } from './helpers/popups.mjs';
@@ -13,7 +15,7 @@ import { backdropClick, dragOut } from './helpers/popups.mjs';
 const dom = () => new JSDOM('<!doctype html><body><div id="host"></div><div id="pill"></div></body>', { url: 'http://localhost/' });
 const status = (done = [], extra = {}) => ({
   steps: Object.fromEntries(GETTING_STARTED_STEPS.map((s) => [s.id, done.includes(s.id)])),
-  hidden: false, welcomeSeen: false, ...extra,
+  hidden: false, welcomeSeen: false, setupFinished: true, ...extra,
 });
 const click = (win, node) => node.dispatchEvent(new win.Event('click', { bubbles: true, cancelable: true }));
 
@@ -228,4 +230,141 @@ test('welcome bindings: a second bind after an unbind leaves each door with one 
   unbind();
   click(window, modal.querySelector('[data-door="project"]'));
   assert.deepEqual(doors, ['project'], 'unbound doors are silent');
+});
+
+/* ------------------------------------------------- step 0, sections, pill, team visibility */
+const view = (index, realRuns = 0) => ({
+  top: false, level: { index, name: ['', 'Curious', 'Runner', 'Hooked', 'Council', 'Worcaholic'][index] },
+  nextLevel: null, runner: { realRuns, of: 3, stepsDone: 0, stepsOf: 6 },
+});
+const textOf = (n) => n.textContent.replace(/\s+/g, ' ').trim();
+
+test('teamStepsVisible matrix: pre-Runner expert-only; Runner+team all modes; Runner+solo none', () => {
+  for (const mode of ['simple', 'advanced', 'expert']) {
+    for (const levelIndex of [1, null, undefined]) {
+      for (const onTeam of [true, false]) {
+        assert.equal(teamStepsVisible({ levelIndex, mode, onTeam }), mode === 'expert', `pre-Runner ${levelIndex} ${mode}`);
+      }
+    }
+    for (const levelIndex of [2, 3, 5]) {
+      assert.equal(teamStepsVisible({ levelIndex, mode, onTeam: true }), true, `Runner+ team ${mode}`);
+      assert.equal(teamStepsVisible({ levelIndex, mode, onTeam: false }), false, `Runner+ solo ${mode}`);
+    }
+  }
+});
+
+test('laterSteps: the workspace step always; team steps by the matrix, onTeam from either team step', () => {
+  const ids = (st, o) => laterSteps(st, o).map((s) => s.id);
+  assert.deepEqual(ids(status(), { levelIndex: 1, mode: 'simple' }), ['workspace']);
+  assert.deepEqual(ids(status(), { levelIndex: 1, mode: 'expert' }), ['workspace', 'teamMetrics', 'teamPolicy']);
+  assert.deepEqual(ids(status(), { levelIndex: 3, mode: 'expert' }), ['workspace']);
+  assert.deepEqual(ids(status(['teamPolicy']), { levelIndex: 3, mode: 'simple' }), ['workspace', 'teamMetrics', 'teamPolicy']);
+  assert.ok(laterSteps(status(), { levelIndex: 1, mode: 'expert' }).every((s) => s.helps === 'hooked'));
+});
+
+test('GETTING_STARTED_STEPS: entries 7-9 help Hooked, the first label is Connect a model', () => {
+  assert.equal(GETTING_STARTED_STEPS[0].label, 'Connect a model');
+  assert.deepEqual(GETTING_STARTED_STEPS.filter((s) => s.helps === 'hooked').map((s) => s.id), ['workspace', 'teamMetrics', 'teamPolicy']);
+});
+
+test('runnerProgress and the pill text: Runner · 4 of 7, Finish setup first, nothing at Runner+', () => {
+  const four = status(['claude', 'project', 'run', 'ask']);
+  assert.deepEqual(runnerProgress(four, view(1, 0)), { done: 4, of: 7 });
+  assert.deepEqual(runnerProgress(four, view(1, 3)), { done: 5, of: 7 });
+  assert.deepEqual(runnerProgress(status(['workspace', 'teamPolicy']), view(1, 2)), { done: 0, of: 7 }, 'only steps 1-6 count');
+  assert.equal(gsPillText(four, view(1, 0)), 'Runner · 4 of 7');
+  assert.equal(gsPillText(status([], { setupFinished: false }), view(1)), 'Finish setup');
+  assert.equal(gsPillText(status([], { setupFinished: false }), view(3)), 'Finish setup');
+  assert.equal(gsPillText(four, view(2)), null);
+  assert.equal(gsPillText(four, view(4)), null);
+  assert.equal(gsPillText(four, null), null, 'unknown view: the plain pill');
+});
+
+test('the pill paints gsPillText and drops the count badge; without one it stays "Getting started" with its count', () => {
+  const { window } = dom();
+  const pill = window.document.getElementById('pill');
+  renderGettingStartedPill(pill, status(['claude', 'project', 'run', 'ask']), () => {}, view(1));
+  assert.equal(textOf(pill), 'Runner · 4 of 7');
+  assert.match(pill.querySelector('button').getAttribute('aria-label'), /Runner · 4 of 7/);
+  renderGettingStartedPill(pill, status([], { setupFinished: false }), () => {}, view(1));
+  assert.equal(textOf(pill), 'Finish setup');
+  renderGettingStartedPill(pill, status(['claude']), () => {}, view(3));
+  assert.equal(textOf(pill), 'Getting started1/9');
+});
+
+test('step 0 shows only when setup is not finished, first, and calls onStep("setup")', () => {
+  const { window } = dom();
+  const host = window.document.getElementById('host');
+  const stepped = [];
+  renderGettingStarted(host, status([], { setupFinished: false }), { onStep: (id) => stepped.push(id) });
+  const first = host.querySelector('.gs-tiles .gs-setup-tile');
+  assert.ok(first, 'a Finish setup tile');
+  assert.equal(textOf(first.querySelector('.gs-label')), 'Finish setup');
+  const all = [...host.querySelectorAll('.gs-setup-tile, .gs-tile')];
+  assert.equal(all[0], first, 'first in the card');
+  click(window, first);
+  assert.deepEqual(stepped, ['setup']);
+  assert.equal(doneCount(status([], { setupFinished: false })), 0, 'step 0 never counts');
+  renderGettingStarted(host, status([]), {});
+  assert.equal(host.querySelector('.gs-setup-tile'), null);
+});
+
+test('Toward Runner holds steps 1-6 + counter; Later tags Helps Hooked', () => {
+  const { window } = dom();
+  const host = window.document.getElementById('host');
+  renderGettingStarted(host, status(['claude']), { worcaLevel: view(1, 2) });
+  const secs = [...host.querySelectorAll('.gs-section')];
+  assert.deepEqual(secs.map((s) => textOf(s.querySelector('.gs-section-title'))), ['Toward Runner', 'Later']);
+  const toward = secs[0];
+  assert.deepEqual([...toward.querySelectorAll('.gs-tile')].map((t) => t.dataset.step),
+    ['claude', 'project', 'run', 'ask', 'realRun', 'workflows']);
+  assert.equal(textOf(toward.querySelector('.gs-counter')), 'Real runs · 2 of 3');
+  const later = secs[1];
+  assert.deepEqual([...later.querySelectorAll('.gs-tile')].map((t) => t.dataset.step), ['workspace', 'teamMetrics', 'teamPolicy']);
+  for (const t of later.querySelectorAll('.gs-tile')) assert.equal(textOf(t.querySelector('.gs-helps')), 'Helps Hooked');
+  assert.equal(toward.querySelector('.gs-helps'), null);
+  renderGettingStarted(host, status(['claude']), { worcaLevel: null });
+  assert.equal(textOf(host.querySelector('.gs-counter')), '3 real runs');
+});
+
+test('Later hides team steps before Runner outside Expert mode', () => {
+  const { window } = dom();
+  const host = window.document.getElementById('host');
+  renderGettingStarted(host, status(), { worcaLevel: view(1), level: 'simple' });
+  assert.deepEqual([...host.querySelectorAll('.gs-tile')].map((t) => t.dataset.step),
+    ['claude', 'project', 'run', 'ask', 'realRun', 'workflows', 'workspace']);
+});
+
+test('at Runner the shelf folds and lists visible undone Later steps', () => {
+  const { window } = dom();
+  const host = window.document.getElementById('host');
+  const stepped = [];
+  renderGettingStarted(host, status(['claude', 'workspace', 'teamMetrics']), { worcaLevel: view(2, 3), level: 'simple', onStep: (id) => stepped.push(id) });
+  assert.equal(host.querySelector('.gs-section'), null, 'no sections');
+  assert.equal(host.querySelector('.gs-counter'), null);
+  assert.equal(textOf(host.querySelector('.gs-fold')), "You're a Runner. Your level card shows what to try next.");
+  const items = [...host.querySelectorAll('.gs-later-item')];
+  assert.deepEqual(items.map((i) => i.dataset.step), ['teamPolicy'], 'team is on, solo steps done: only the undone visible step');
+  click(window, items[0]);
+  assert.deepEqual(stepped, ['teamPolicy']);
+  renderGettingStarted(host, status(), { worcaLevel: view(2, 3), level: 'simple' });
+  assert.deepEqual([...host.querySelectorAll('.gs-later-item')].map((i) => i.dataset.step), ['workspace'], 'solo: team steps hidden in every mode');
+  renderGettingStarted(host, status(), { worcaLevel: view(3, 3), level: 'expert' });
+  assert.deepEqual([...host.querySelectorAll('.gs-later-item')].map((i) => i.dataset.step), ['workspace']);
+});
+
+test('VIEW_MIN_LEVEL for team pages unchanged (R-po-37)', () => {
+  const src = readFileSync(new URL('../ui/public/app.js', import.meta.url), 'utf8');
+  assert.match(src, /'team-metrics': 'expert', 'team-policy': 'expert'/);
+});
+
+test('app wiring: the shelf opens setup for step 0, and onboarding-changed refreshes the level', () => {
+  const app = readFileSync(new URL('../ui/public/app.js', import.meta.url), 'utf8');
+  assert.match(app, /id === 'setup'\s*\?\s*openSetup\(\{ entry: 'first' \}\)/);
+  const wiring = readFileSync(new URL('../ui/public/worca-level/app-wiring.mjs', import.meta.url), 'utf8');
+  assert.match(wiring, /WORCA_REFRESH_EVENTS = new Set\([\s\S]*'onboarding-changed'/);
+});
+
+test('docs keep "Set up later"', () => {
+  assert.match(readFileSync(new URL('../docs/getting-started.md', import.meta.url), 'utf8'), /Set up later/);
 });

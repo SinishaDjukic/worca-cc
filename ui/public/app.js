@@ -162,7 +162,7 @@ import { layoutDialog, watchDialogEdges } from './dialog-layout.mjs';
 import { setEngineLocks, engineLock, applyEngineLocks } from './engine-locks.mjs';
 import { guardModal, dialogOpen, DISCARD_MESSAGE } from './modal-guard.mjs';
 import { createVoiceController } from './ask-voice.mjs';
-import { renderGettingStarted, renderGettingStartedPill, bindWelcome, doneCount, allStepsDone, GETTING_STARTED_STEPS } from './getting-started.mjs';
+import { renderGettingStarted, renderGettingStartedPill, bindWelcome, doneCount, allStepsDone, gsPillText, GETTING_STARTED_STEPS } from './getting-started.mjs';
 import { createGuideSpot } from './guide-spot.mjs';
 import {
   splitPatchSections, parseFileSection, patchIndex, sectionKey, MAX_FILE_SECTION_CODE_UNITS,
@@ -365,6 +365,9 @@ import { labelStates, applyLabelChange, normaliseLabel } from '../../src/shared/
 import { renderLabelsSection, runCount } from './labels-settings.mjs';
 import { makeSwitch } from './switch.mjs';
 import { createWorcaLevelWiring } from './worca-level/app-wiring.mjs';
+import { ownFinishedRun } from './worca-level/notices.mjs';
+import { fetchWorcaLevel } from './worca-level/model.mjs';
+import { paintModeSuggestion, ackModeSuggestion } from './worca-level/mode-suggestion.mjs';
 
 // With site data blocked, Chrome throws SecurityError on merely reading `localStorage`. Every bare `localStorage` in
 // this module resolves here: the browser's storage, else an in-memory stand-in, so the page boots and forgets on reload.
@@ -1746,7 +1749,7 @@ const acctMenu = document.getElementById('acct-menu');
 // focusChecked: false — a keyboard open lands on the first item (the level card, else the spend card), not on the
 // checked theme icon.
 // The team setup notice repaints each time the menu opens (paintTeamNotice is a hoisted function declaration below).
-const acctFly = createFlyout({ trigger: acctBtn, menu: acctMenu, mode: 'up', focusChecked: false, onOpen: () => { void paintTeamNotice(); } });
+const acctFly = createFlyout({ trigger: acctBtn, menu: acctMenu, mode: 'up', focusChecked: false, onOpen: () => { void paintTeamNotice(); }, onClose: () => worca.maybeDialog() });
 paintAppearanceIcon(document.querySelector('#acct-menu .theme-sect > .mi-ic'));
 // Interface mode's side menu hangs off the menu (side-flyout closes it with the menu, and Escape
 // closes it first); ui-level.mjs fills it, and a pick there is a choose like a dialog card.
@@ -1800,12 +1803,32 @@ function paintUsage() {
   usageFly.reposition();
 }
 // The worca level (worca-level/app-wiring.mjs): the last served view feeds the corner avatar, the shelf and the menu row.
-const worca = createWorcaLevelWiring({ trigger: acctBtn, menu: acctMenu, repaint: () => { paintAccount(); paintShelf(); }, isSettled: () => gs.settled, setupOpen: () => !!setupDialog });
+// The menu's level card opens with the menu (a click or Enter); nothing opens on hover or focus. A person with no level yet
+// gets the initials and a way into setup: 'rerun' at the access step for the sign-in ('fix' would pre-tick Copilot).
+const worca = createWorcaLevelWiring({
+  // repaint: the corner, then the shelf, the pill and the settings row (paintOnboarding), then the mode banner
+  menu: acctMenu, repaint: () => { paintAccount(); if (gs.status) paintOnboarding(); paintModeBanner(); }, isSettled: () => gs.settled, setupOpen: () => !!setupDialog,
+  hashNow: () => location.hash, runStatus: (runId) => runs.get(runId)?.status,   // the route gate: a result route is on screen, a live run is not
+  initials: () => acctState.account.initials || '',
+  onFinishSetup: () => { acctFly.close(); openSetup({ entry: 'first' }); },
+  onSignIn: () => { acctFly.close(); openSetup({ entry: 'rerun', step: 'access' }); },
+});
+/** The interface-mode suggestion: the mode changes only on the accept click (levelCtl.choose), never on its own. */
+function paintModeBanner() {
+  const answer = (mode, what) => ackModeSuggestion(mode, what).then((view) => worca.adoptView(view)).catch((e) => console.warn(`worca level: could not acknowledge the mode suggestion: ${e.message}`));
+  paintModeSuggestion(document, worca.state.view, {
+    currentMode: currentLevel(),
+    onAccept: (mode) => { void levelCtl.choose(mode).then((saved) => (saved ? answer(mode, 'accepted') : undefined)); },   // a refused save records nothing (R-po-15, I-10)
+    onDismiss: (mode) => { void answer(mode, 'dismissed'); },
+  });
+}
 function paintAccount() {
-  const level = worca.state.view && worca.state.view.level;
+  const view = worca.state.view;
+  const level = view && view.level;
   paintAccountCorner(acctBtn, acctState.account, {
     budget: budgetState.budget, away: acctState.away?.state === 'away',
     avatar: level ? { src: level.avatar, alt: level.name } : null,
+    noLevel: !!view && view.level === null,   // no level yet: initials and a dot; an unknown view (null) shows no dot (I-7)
     usageParts: ringParts(currentUsageModel()),
   });
 }
@@ -1848,6 +1871,7 @@ function handleServerMessage(msg) {
   if (!msg || !msg.type) return;
 
   if (msg.type === 'hello') {
+    worca.onServerMessage('hello');   // a reconnect refetches the level (also after a failed load)
     conn.back();
     onHello(msg);
     refreshRunningActions();
@@ -7048,10 +7072,12 @@ function clearQpanel(r) {
 // fields (logLines/el) while keeping the model in the map so a duplicate
 // hello/event won't recreate it fresh.
 // ---------------------------------------------------------------------------
-function finishRun(r, status) {
+function finishRun(r, status, frame) {
   if (r._finished) return;
   r._finished = true;
   r._finishedAs = status;   // onDone re-arms a run that finished as paused (it is stopped later)
+  const finishedRun = ownFinishedRun(r, status, frame, viewer);   // the run-finished message (worca-level/notices.mjs)
+  if (finishedRun) worca.queueRunFinished(finishedRun);
   scheduleOnboardingRefresh();
   r._decorSeq = (r._decorSeq || 0) + 1;   // isLive(r) reads _finished/status/pendingQuestion
   applyServerStatus(r, status);
@@ -7117,7 +7143,7 @@ function onDone(r, msg) {
     r._finished = false;
     alerts.onResolved(alertRun(r));   // the pause no longer waits on anyone
   }
-  finishRun(r, msg.status || 'done');
+  finishRun(r, msg.status || 'done', msg);
   // After finishRun: the alert's body is the run's list-row status line (§5a.5), which reads the paused status.
   if (msg.status === 'paused') alerts.onPaused(alertRun(r), r.pauseReason);
   // Nothing else picks up the FINAL spend delta: a non-cost `done` broadcasts no
@@ -39889,17 +39915,43 @@ const gs = { status: null, settled: false, guide: null, spot: null, seq: 0, navi
 let gsPillHost = null;
 let gsWelcomeUnbind = null;
 let setupDialog = null;
+/** The ready screen's facts, in three calls: Setup is finished, the Claude sign-in is read fresh, then the level view.
+ *  Null when the first or the last call fails; the screen is then a plain one. */
+async function finishSetup() {
+  if (!(await setOnboardingPrefs({ setupFinished: true }))) return null;
+  await loadOnboarding({ recheck: true });
+  let view;
+  try { view = await fetchWorcaLevel(); } catch (e) { console.warn(`setup: could not read your level: ${e.message}`); return null; }
+  if (!view || typeof view !== 'object') return null;
+  const held = view.level?.index ?? 0;
+  const lv = view.celebration?.index === 1 ? view.celebration : null;
+  const next = (Array.isArray(view.ladder) ? view.ladder : []).find((l) => l.index === (lv ? 2 : held + 1));
+  return {
+    earned: !!lv, held,
+    level: lv ? { index: lv.index, name: lv.name, avatar: lv.avatar, hue: lv.hue } : null,
+    missing: Array.isArray(view.setup?.missing) ? view.setup.missing : [],
+    nextName: lv ? (view.nextLevel?.name ?? null) : null,
+    nextNeeds: lv && next ? next.items.filter((i) => !i.done).map((i) => i.label) : [],
+  };
+}
 /** The setup assistant (D18). A second open while one is up moves it to `step` instead. */
 function openSetup({ entry = 'rerun', step = 'check', team = null, teamHash = null } = {}) {
   if (setupDialog) { setupDialog.goTo(step); return; }
   setMobileNavOpen(false);
-  setupDialog = openSetupAssistant({ doc: document, entry, step, team, onClose: (how, { applied = false } = {}) => {
+  const deps = { finishSetup, levelIndex: () => (worca.state.view ? (worca.state.view.level?.index ?? 0) : null) };
+  setupDialog = openSetupAssistant({ doc: document, entry, step, team, deps, onClose: (how, { applied = false, next, readyShown = false, finishing = false } = {}) => {
     setupDialog = null;
+    if (next) location.hash = next;
     queueMicrotask(worca.maybeDialog);   // after the branch below has shown (or not shown) the first-run welcome
     // A7: a first start always continues to the welcome; a finished re-run that applied something ends on the
     // doors, and a Finish with nothing applied goes back to the page; a fix-it run (entry 'fix') returns to
     // the page it came from (product-1-2).
-    if (entry === 'first') showWelcome();
+    // A first start that reached the ready screen (or is finishing) never gets the welcome on top of it, now or on a later
+    // visit to #new: the welcome is marked seen (D-11, R-po-3).
+    if (entry === 'first') {
+      if (readyShown || finishing) { gs.welcomeShown = true; void setOnboardingPrefs({ welcomeSeen: true }); }
+      else showWelcome();
+    }
     else if (entry === 'rerun' && how === 'done' && applied) showWelcome({ force: true });
     // T15: Apply then Continue, or Finish when nothing differs. Set up later / Escape keep the notice.
     else if (entry === 'team' && how === 'done' && team && teamHash) { markTeamSeen(team, teamHash); void paintTeamNotice(); }
@@ -39967,7 +40019,7 @@ function paintOnboarding() {
   paintShelf();
   const pill = gsEnsurePillHost();
   if (pill) {
-    renderGettingStartedPill(pill, gs.status, () => showView('getting-started'));
+    renderGettingStartedPill(pill, gs.status, () => showView('getting-started'), worca.state.view);
     pill.querySelector('.gs-pill')?.classList.toggle('active', currentShownView === 'getting-started');
   }
   paintGsSettings();
@@ -39983,7 +40035,7 @@ function paintShelf({ entering = false } = {}) {
   if (entering) host.replaceChildren();
   const appearing = entering || !host.firstElementChild;
   renderGettingStarted(host, { ...gs.status, hidden: false }, {
-    onStep: startGuide,
+    onStep: (id) => (id === 'setup' ? openSetup({ entry: 'first' }) : startGuide(id)),
     onHide: () => setOnboardingPrefs({ hidden: !gs.status.hidden }),
     hideLabel: gs.status.hidden ? 'Show in sidebar' : 'Hide from sidebar',
     animate: appearing,
@@ -40012,9 +40064,8 @@ function paintGsSettings() {
   if (!btn || !gs.status) return;
   const { done, total } = { done: doneCount(gs.status), total: GETTING_STARTED_STEPS.length };
   btn.textContent = gs.status.hidden ? 'Show again' : 'Open checklist';
-  setGsSettingsMsg(gs.status.hidden
-    ? `Hidden from the sidebar · ${done} of ${total} done`
-    : `In the sidebar · ${done} of ${total} done`);
+  const pillText = gsPillText(gs.status, worca.state.view);
+  setGsSettingsMsg(`${gs.status.hidden ? 'Hidden from the sidebar' : 'In the sidebar'} · ${done} of ${total} done${pillText ? ` · ${pillText}` : ''}`);
 }
 // Settings › General › Setup assistant: Run setup (AC-4.4).
 document.getElementById('setupRunAgain')?.addEventListener('click', () => openSetup({ entry: 'rerun' }));
@@ -40547,6 +40598,7 @@ function endGuide() {
   gs.guide = null;
   clearInterval(gs.poll); gs.poll = 0;
   for (const t of GS_WATCH_EVENTS) document.removeEventListener(t, gsOnPageChange, true);
+  queueMicrotask(worca.maybeDialog);   // a guide that ended frees a waiting level dialog (unless a new guide already lit)
 }
 // A guide's next hop is a pure function of the page and of what this run has passed, so
 // ANY interaction the user makes (typing the prompt, flipping Mock, a nav click) can move
@@ -40773,6 +40825,7 @@ const levelListeners = [];
 function onLevelChange(fn) { levelListeners.push(fn); }
 document.addEventListener('worca:level', () => {
   paintLevelBanner();
+  paintModeBanner();             // a suggestion at or below the new mode is no longer due
   paintSideEdges();              // rows came or went
   for (const fn of levelListeners) { try { fn(currentLevel()); } catch (e) { console.warn('[worca] level repaint failed', e); } }
 });
@@ -41133,6 +41186,7 @@ function showView(name, param = '') {
       });
     }
   }
+  worca.onRouteChange();   // a level dialog waiting for a result route (Runner) or a settled route
   if (prevView !== name) worca.onViewShown(name);   // once per navigation, not per repaint: Statistics, Team metrics and Team policy feed the level
   if (name === 'profile') worca.showProfile(document.getElementById('profile-level-host'), () => currentShownView === 'profile');   // #profile/level
   if (name === 'new') {

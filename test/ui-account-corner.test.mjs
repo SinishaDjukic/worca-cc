@@ -33,7 +33,7 @@ const FREE = { enabled: true, known: true, limit: 50, remaining: 4, resetAt: new
 // width: a viewport (the nav tiers read `(max-width: …)` queries); hover: a mouse (`(hover: hover)` matches);
 // budget: false makes GET /api/budget fail (no snapshot ever arrives). keepAwake: the setting GET /api/settings reports;
 // keepAwakeSave: 'ok', or the { status, error } the server answers a {keepAwake} save with.
-async function boot({ whoami = { name: 'ada.lovelace@acme.dev', source: 'access', shared: true }, free = FREE, width = null, hover = false, budget = true, levelSave = 'ok', keepAwake = true, keepAwakeSave = 'ok', usage = { harnesses: [] } } = {}) {
+async function boot({ whoami = { name: 'ada.lovelace@acme.dev', source: 'access', shared: true }, free = FREE, width = null, hover = false, budget = true, levelSave = 'ok', keepAwake = true, keepAwakeSave = 'ok', usage = { harnesses: [] }, levelView = null } = {}) {
   const dom = trackDom(new JSDOM(readIndexHtml(), { url: 'http://localhost:4317/', pretendToBeVisual: true }));
   const { window } = dom;
   window.Element.prototype.scrollIntoView = function () {};
@@ -69,6 +69,7 @@ async function boot({ whoami = { name: 'ada.lovelace@acme.dev', source: 'access'
     }
     if (url.endsWith('/api/settings')) return ok({ keepAwake, chat: {} });
     if (url.endsWith('/api/whoami')) return ok(whoami);
+    if (levelView && url.includes('/api/worca-level')) return ok(levelView);
     if (url.endsWith('/api/usage-limits')) return ok(usageBox.answer);
     if (url.includes('/api/budget')) return budget ? ok(BUDGET()) : Promise.resolve({ ok: false, status: 500, json: async () => ({ error: 'boom' }) });
     if (url.includes('/api/openrouter/free-daily')) return ok(free || { enabled: false });
@@ -146,6 +147,54 @@ test('stylesheet: the rail keeps the avatar, ring and dot; the popups are fixed;
   assert.match(rule('.mi') || '', /flex:none;/, 'a short window scrolls the menu; its rows never squeeze below 31px');
   assert.match(rule('.mi-lbl') || '', /overflow:hidden;[^}]*line-height:1\.4;/, 'the ellipsis box keeps g, p and y: the row\'s line-height:1 would clip them');
   assert.doesNotMatch(css, /\[data-level[^\]]*\][^{]*\.acct/, 'no interface-mode rule reaches the corner');
+});
+
+const CORNER_LEVEL_VIEW = {
+  level: { index: 2, key: 'runner', name: 'Runner', tagline: 'Runs things', avatar: '/assets/worca-levels/runner.svg' },
+  nextLevel: { name: 'Hooked' }, top: false, progress: { done: 1, total: 4 },
+  next: [{ label: 'Open Runs', hint: 'See runs', href: '#runs', done: false }], welcome: null, celebration: null,
+};
+
+test('resting the pointer on the corner for 2 s opens nothing', async () => {
+  const realSet = globalThis.setTimeout;
+  const { window, doc, $ } = await boot({ hover: true, levelView: CORNER_LEVEL_VIEW });
+  await settle();
+  const timers = [];
+  globalThis.setTimeout = (fn, ms, ...rest) => { timers.push({ fn, ms }); return timers.length; };
+  try {
+    for (const type of ['mouseenter', 'mouseover', 'mousemove']) $('side-acct').dispatchEvent(new window.MouseEvent(type, { bubbles: true }));
+    for (const t of timers.filter((x) => x.ms <= 2000)) t.fn();   // everything a hover could have scheduled for 2 s
+  } finally { globalThis.setTimeout = realSet; }
+  await settle();
+  assert.equal($('acct-menu').hidden, true, 'the menu stays shut');
+  assert.equal(doc.querySelectorAll('[role="group"][aria-label="Your worca level"], .worca-hover-card').length, 0, 'and no card appears');
+});
+
+test('focusing the corner opens nothing', async () => {
+  const { window, doc, $ } = await boot({ levelView: CORNER_LEVEL_VIEW });
+  await settle();
+  $('side-acct').focus();
+  $('side-acct').dispatchEvent(new window.FocusEvent('focus'));
+  await settle(12);
+  assert.equal($('acct-menu').hidden, true);
+  assert.equal(doc.querySelectorAll('.worca-hover-card').length, 0);
+});
+
+test('click opens the menu with the level card first; Enter opens it and focuses the first menuitem; Escape and an outside click close it', async () => {
+  const { doc, $, click, key } = await boot({ levelView: CORNER_LEVEL_VIEW });
+  await settle(12);
+  const first = () => doc.querySelector('#acct-menu')?.firstElementChild;
+  assert.equal(first()?.id, 'acct-level-card', 'the card is the menu\'s first child');
+  click($('side-acct'));
+  assert.equal($('acct-menu').hidden, false, 'a click opens it');
+  click(doc.body);
+  assert.equal($('acct-menu').hidden, true, 'an outside click closes it');
+  click($('side-acct'), 0);   // Enter on a button clicks it with detail 0
+  assert.equal($('acct-menu').hidden, false, 'Enter opens it');
+  assert.equal(doc.activeElement, $('acct-level-card').querySelector('[role="menuitem"]'), 'the first menuitem has focus');
+  key('Escape');
+  assert.equal($('acct-menu').hidden, true, 'Escape closes it');
+  assert.equal(doc.activeElement, $('side-acct'), 'and hands focus back');
 });
 
 test('a mouse passing over the corner does not open the menu: it opens on a click', async () => {
@@ -399,12 +448,12 @@ test('account menu: a hairline only between shown groups, never doubled or orpha
   const GENERIC = '.acct-menu > :not([hidden]) ~ :not([hidden])';
   assert.match(cssRule(`${GENERIC}::before`) || '', /background:var\(--line\);/, 'the generic hairline rule');
   const overrides = [...CORNER_CSS.matchAll(/(?:^|\})\s*([^{}]+?)::before\s*\{content:none;\}/g)].map((m) => m[1].trim());
-  assert.deepEqual(overrides.sort(), ['.acct-menu > .acct-spend:not([hidden]) + .usage-sect:not([hidden])', '.acct-menu > .wl-card + .id-card:not([hidden])'],
+  assert.deepEqual(overrides.sort(), ['.acct-menu > .acct-spend:not([hidden]) + .usage-sect:not([hidden])', '.acct-menu > .wl-menu-card + .id-card:not([hidden])'],
     'card then identity, spend then Usage: the only pairs with no hairline');
   for (const sel of overrides) assert.match(cssRule(sel, CORNER_CSS) || '', /margin-top:(0|6px);/, `${sel}: its own gap`);
   const menu = $('acct-menu');
   const card = doc.createElement('button');
-  card.className = 'wl-card';
+  card.className = 'wl-menu-card';
   card.id = 'acct-level-card';
   const setUp = ({ level, id, spend, usage }) => {
     if (level) menu.prepend(card); else card.remove();
@@ -446,10 +495,7 @@ test('account menu: the spend, identity and level cards have no --field / --surf
   for (const [, sel, body] of cards) {
     for (const [, val] of body.matchAll(/background:([^;]*)/g)) assert.match(val, /^(none|transparent)$/, `${sel.trim()}: no fill`);
   }
-  assert.match(cssRule('.acct-menu > .wl-card') || '', /background:transparent;/, 'the level card is flat in the menu');
-  assert.match(cssRule('.acct-menu > .wl-card') || '', /border:0;/);
-  assert.match(cssRule('.acct-menu > .wl-card') || '', /padding:6px 9px;/);
-  assert.match(cssRule('.acct-menu > .wl-card:hover') || '', /background:var\(--hover\);/, 'it keeps its hover fill');
+  assert.match(cssRule('.wl-menu-card') || '', /padding:6px 9px 8px;/, 'the level card sits in the rows\' 9px icon column');
 });
 
 test('the free row\'s rule is the --line divider on the flat card', () => {

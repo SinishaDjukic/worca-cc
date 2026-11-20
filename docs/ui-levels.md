@@ -148,9 +148,8 @@ be skipped by forgetting it.
 | Schedules | A — kept visible at every level while anything is scheduled, missed, repeating or unread; its grey count and amber unread pill each hide at zero |
 | Team metrics, Team policy | E |
 | The level avatar art in the corner (the round art on the account corner and the spend ring's avatar) | all — a level is shown to everyone, whatever the mode |
-| The level tooltip (hover or focus on the corner avatar: the level, its items, a link to Profile) | all |
-| The account-menu level card (the first item of the account menu) | all |
-| Profile (the level section) | all — it has no sidebar entry; it opens from the menu card, the tooltip and the Getting started level line |
+| The account-menu level card (the first item of the account menu: the level, its progress, up to two next steps and a link to Profile; it opens with the menu on a click or Enter, and nothing opens on hover or focus) | all |
+| Profile (the level section) | all — it has no sidebar entry; it opens from the level card in the account menu and the Getting started level line |
 
 Levels are not Interface modes: no level element carries `data-min-level`; Try next / Open links to higher-mode pages open them with the banner.
 

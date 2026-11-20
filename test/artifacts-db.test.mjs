@@ -264,6 +264,26 @@ test('updatePipelineTitle mutates only the title; blank or unknown id is a no-op
   ]);
 });
 
+test('finished_at is stamped once on done and a later title rename does not move it', async () => {
+  const p = await createPipeline(process.cwd(), { prompt: 'Finish me' });
+  const finishedAt = () => getDb().prepare('SELECT finished_at FROM pipelines WHERE id=?').get(p.id).finished_at;
+  await writeState('/d', fullState({ id: p.id, status: 'running' }));
+  assert.equal(finishedAt(), null, 'not stamped while running');
+  await writeState('/d', fullState({ id: p.id, status: 'done' }));
+  const first = finishedAt();
+  assert.ok(first, 'stamped on the first done write');
+  assert.equal(first, getDb().prepare('SELECT updated_at FROM pipelines WHERE id=?').get(p.id).updated_at);
+  await new Promise((r) => setTimeout(r, 5));
+  updatePipelineTitle(p.id, 'Renamed after finish');
+  assert.equal(finishedAt(), first, 'a title rename leaves finished_at alone');
+  await writeState('/d', fullState({ id: p.id, status: 'done' }));
+  assert.equal(finishedAt(), first, 'a later done write keeps the first stamp');
+  await writeState('/d-bbbb2222', fullState({ id: 'bbbb2222', status: 'done' }));
+  const inserted = getDb().prepare('SELECT finished_at, updated_at FROM pipelines WHERE id=?').get('bbbb2222');
+  assert.ok(inserted.finished_at, 'a row first written as done is stamped on insert');
+  assert.equal(inserted.finished_at, inserted.updated_at);
+});
+
 // ── Task 3.4 — appendAudit -> pipeline_events ──────────────────────────────────
 
 test('appendAudit inserts trimmed, ISO-stamped rows resolved from the dir basename id', async () => {

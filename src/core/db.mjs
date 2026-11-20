@@ -64,7 +64,7 @@ const OPEN_BACKOFF_MS = 15;
 /** Latest schema version. Bump + append a new migration step when the DDL grows.
  *  Exported so migration tests assert "reached the module's current version"
  *  instead of hardcoding the number — a schema bump then touches no test file. */
-export const SCHEMA_VERSION = 95;
+export const SCHEMA_VERSION = 96;
 
 /** store_meta row holding the install's default guardrail set id (JSON string). */
 export const GUARDRAILS_DEFAULT_META_KEY = 'guardrails:default';
@@ -872,7 +872,9 @@ const INCREMENTAL_COLUMNS = {
                             release_at: 'TEXT',       // v66: when the draft release was claimed (set once; never cleared)
                             release_url: 'TEXT',      // v66: the draft release's URL
                             release_error: 'TEXT',    // v66: why creating it failed (not retried)
-                            pr_auto: 'TEXT' },        // v87: the run's PR-when-done decision and its outcome (JSON, src/core/pr-auto.mjs); NULL = before v87 or a CLI start
+                            pr_auto: 'TEXT',          // v87: the run's PR-when-done decision and its outcome (JSON, src/core/pr-auto.mjs); NULL = before v87 or a CLI start
+                            finished_at: 'TEXT',      // v96: when the run first reached done (set once, a rename never moves it); NULL = not done yet or before v96, readers use COALESCE(finished_at, updated_at)
+                            credit_key: 'TEXT' },     // v96: the run's level-credit key, written once credit is booked; NULL = none
   pipeline_steps:         { session_id: 'TEXT', skills: 'TEXT', graphify_count: 'INTEGER',
                             execution_id: 'TEXT', exec_kind: 'TEXT', agent_key: 'TEXT', ended_at: 'TEXT',
                             exec_trigger: 'TEXT', exec_result: 'TEXT', exec_meta: 'TEXT',
@@ -2875,6 +2877,8 @@ export function migrate(db) {
     if (current < 94) db.exec(DESIGN_PICTURES_DDL);
     // v95 Design sound: designs.sound_json (the design's sound choice, D2) — INCREMENTAL_COLUMNS, added by the hoisted
     // repairSchemaGaps (a v92+ DB) or by the v92 DDL above (an older DB). First written as v92.
+    // v96 Levels: pipelines.finished_at and pipelines.credit_key — INCREMENTAL_COLUMNS, added by the hoisted repairSchemaGaps
+    // (comment-only rung, applySchemaV30's shape).
     db.exec(`PRAGMA user_version = ${SCHEMA_VERSION}`);
     db.exec('COMMIT');
   } catch (err) {

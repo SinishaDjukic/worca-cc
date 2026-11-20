@@ -6,6 +6,7 @@ import { createWorcaLevelService, WorcaLevelRequestError, VIEWED_TYPES } from '.
 import { emitChanged, isFreshInstall } from '../../server.mjs';
 
 const BAD_REQUEST = 'WORCA_LEVEL_BAD_REQUEST';
+const BAD_KEY = 'WORCA_LEVEL_BAD_KEY';
 const UNAVAILABLE = 'WORCA_LEVEL_UNAVAILABLE';
 const TYPE_MESSAGE = `type must be ${VIEWED_TYPES.map((t) => `"${t}"`).join(' or ')}`;
 
@@ -20,7 +21,8 @@ const refuse = (res, message) => res.status(400).json({ error: message, code: BA
 
 function fail(res, err) {
   if (err instanceof WorcaLevelRequestError) return refuse(res, err.message);
-  console.error('[worca-levels] request failed:', err?.stack || err);
+  if (err?.code === BAD_KEY) console.warn(`[worca-levels] ${err.message}`);   // a person key the store refuses: the same 500, no stack
+  else console.error('[worca-levels] request failed:', err?.stack || err);
   return res.status(500).json({ error: 'Could not read your level.', code: UNAVAILABLE });
 }
 
@@ -36,8 +38,8 @@ app.get('/api/worca-level', async (req, res) => {
 
 app.post('/api/worca-level/ack', async (req, res) => {
   try {
-    const { what, index, tz } = req.body ?? {};
-    res.json(await worcaLevelService().ack(req, { what, index, tz: tzOf(tz) }));
+    const { what, index, id, mode, answer, tz } = req.body ?? {};
+    res.json(await worcaLevelService().ack(req, { what, index, id, mode, answer, tz: tzOf(tz) }));
   } catch (err) { fail(res, err); }
 });
 
