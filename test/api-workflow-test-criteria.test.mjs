@@ -141,7 +141,7 @@ test('by criterion, the overview trust counts and the plan estimate', async () =
   assert.equal(r.body.counts.total, 1);
   assert.equal((await call('GET', WF)).body.trust.total, 1);
   const plan = await call('GET', `${WF}/plan?b=draft&tries=1`);
-  assert.equal(typeof plan.body.criteria.perTryUsd, 'number', 'M13: Haiku 4.5 has a list price, so the check has one');
+  assert.equal(typeof plan.body.b.checkUsd.fresh, 'number', 'M13: Haiku 4.5 has a list price, so the check has one');
   assert.equal(plan.body.criteria.pairsUsd, 0, 'no version to compare with: no pairs');
   assert.equal((await call('POST', `${WF}/runs/${run.id}/criteria/check`)).status, 202);
   await checkDone(run.id);   // the background check ends before the test does
@@ -166,10 +166,10 @@ test('review: a criterion added after the test is new, one the limit left unchec
     [['new', ['Names the users']], ['unchecked', ['Explains the legal reasons']]]);
   // Test again with every try reused: the plan counts the reused try that still misses criteria, and the estimate prices it.
   const plan = (await call('GET', `${WF}/plan?b=draft&examples=${ex.id}&tries=1`)).body;
-  assert.deepEqual([plan.b.reusable, plan.b.judgeMissing], [1, 2], 'two checks of the reused try are missing');
+  assert.equal(plan.b.reusable, 1);
   const e = estimateOf(plan, { reuseB: true });
   assert.equal(e.total, 0);
-  assert.deepEqual([plan.criteria, plan.b.checkUsd.withReuse], [{ perTryUsd: 0, pairsUsd: 0 }, 0], 'a mock test checks for free (round 2); a real one is priced in the runner test');
+  assert.deepEqual([plan.criteria, plan.b.checkUsd.withReuse], [{ pairsUsd: 0 }, 0], 'a mock test checks for free (round 2); a real one is priced in the runner test');
   assert.equal((await call('POST', `${WF}/runs/${run.id}/criteria/check`)).status, 202);
   assert.equal((await checkDone(run.id)).checkUsd, 0, 'checked now');
 });
@@ -245,4 +245,23 @@ test('review: the overview says whether a check is running, and its latest test 
     assert.equal(latest.runId, run.id);
     assert.ok(latest.notChecked >= 1, 'the new criterion was not checked on the test');
   } finally { prepare(`UPDATE wf_test_runs SET kind = 'once' WHERE id = ?`).run(run.id); }
+});
+
+test('round 3: testPlan prices a real (not mock) side per example from the kept tries (the wiring)', async () => {
+  const { testPlan } = await import('../src/core/workflow-tests/service.mjs');
+  const { recordTestJudgeCost } = await import('../src/core/cost-budget.mjs');
+  const WF = 'wf_api_c';
+  for (let i = 0; i < 3; i += 1) recordTestJudgeCost({ workflowId: WF, purpose: 'try', model: 'price-fixture', amountUsd: 0.05, costKind: 'billed' });
+  const ex = store.createExample(WF, { name: 'Priced', request: 'Write it.', tries: 1, basics: { noError: true, noHelp: false }, judge: { model: 'price-fixture' }, criteria: [{ text: 'Names a success metric' }, { text: 'Explains the legal reasons' }] });
+  const run = store.createTestRun({ workflowId: WF, kind: 'once', b: 'draft', bFp: 'fp-x', exampleIds: [ex.id], tries: 1 });
+  const t = store.insertTry({ runId: run.id, workflowId: WF, exampleId: ex.id, use: 'draft', fp: 'fp-x', exampleFp: ex.fingerprint, tryNo: 1 });
+  store.linkTry(run.id, t.id, 'b');
+  store.updateTry(t.id, { status: 'passed', pipelineId: 'p0000001', verdict: { passed: true, facts: { status: 'done' }, basics: [], checks: [] } });
+  const plan = await testPlan(WF, { b: 'draft', exampleIds: [ex.id], tries: 1 }, { fingerprintOf: async () => 'fp-x', mock: false, connectorsPreview: async () => ({ copies: [], fileServers: [] }) });
+  assert.deepEqual([plan.b.want, plan.b.reusable], [1, 1]);
+  assert.equal(Math.round(plan.b.checkUsd.withReuse * 1e6) / 1e6, 0.1, 'the kept try misses 2 checks at $0.05');
+  assert.equal(Math.round(plan.b.checkUsd.fresh * 1e6) / 1e6, 0.1, '1 new try x 2 criteria x $0.05');
+  const mockPlan = await testPlan(WF, { b: 'draft', exampleIds: [ex.id], tries: 1 }, { fingerprintOf: async () => 'fp-x', mock: true, connectorsPreview: async () => ({ copies: [], fileServers: [] }) });
+  assert.deepEqual(mockPlan.b.checkUsd, { fresh: 0, withReuse: 0 });
+  prepare(`DELETE FROM wf_test_judge_ledger WHERE model = 'price-fixture'`).run();
 });

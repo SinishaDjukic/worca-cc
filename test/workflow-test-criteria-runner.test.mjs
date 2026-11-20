@@ -318,7 +318,7 @@ test('round 2: reused tries are priced per missing check at their own example\'s
   const items = [{ ex: withCriteria, kept: list }, ...bare.map((ex) => ({ ex, kept: [] }))];
   const side = sideCheckPlan(items, 3);
   assert.equal(Math.round(side.withReuse * 1e6) / 1e6, 0.45, '9 missing checks x $0.05');
-  const plan = { b: { want: 12, reusable: 3, perTryUsd: 0.5, checkUsd: side }, perTryMs: 1000, criteria: { perTryUsd: 0.1125, pairsUsd: 0 } };
+  const plan = { b: { want: 12, reusable: 3, perTryUsd: 0.5, checkUsd: side }, perTryMs: 1000, criteria: { pairsUsd: 0 } };
   const e = estimateOf(plan, { reuseB: true });
   assert.equal(Math.round(e.criteriaUsd * 100) / 100, 0.45 + 0, 'the new tries of the examples without criteria add nothing');
   const bareOnly = sideCheckPlan(bare.map((ex) => ({ ex, kept: [] })), 3);
@@ -338,7 +338,23 @@ test('round 2: mock tries and mock plans cost nothing to check', () => {
   assert.equal(checkUsdOf(WF, run), 0, 'mock tries are checked for free');
   assert.equal(sideCheckPlan([{ ex, kept: list }], 2).withReuse, 0, 'kept mock tries miss checks that cost nothing');
   assert.equal(sideCheckPlan([{ ex, kept: [] }], 2, { mock: true }).fresh, 0);
-  assert.deepEqual(criteriaPlanOf(WF, [ex.id], { mock: true }), { perTryUsd: 0, pairsUsd: 0 });
+  assert.deepEqual(criteriaPlanOf(WF, [ex.id], { mock: true }), { pairsUsd: 0 });
   const real = triesOf(ex, 2);
   assert.equal(Math.round(checkUsdOf(WF, real.run) * 1e6) / 1e6, 0.1, 'real tries: 2 x $0.05');
+});
+
+test('round 3: an example unknown price makes its new tries unknown, but not its reused and fully checked ones', () => {
+  getDb();
+  priceHaiku(0.05);
+  const a = example([{ text: 'Names a success metric' }]);
+  const { list } = triesOf(a, 2);
+  for (const t of list) cs.insertJudgement({ workflowId: WF, exampleId: a.id, criterionId: a.criteria[0].id, fp: cs.criterionFp('Names a success metric'),
+    model: 'claude-haiku-4-5', purpose: 'try', tryId: t.id, j: { met: true, reason: 'r', proof: 'p', proofFound: true } });
+  recordTestJudgeCost({ workflowId: WF, purpose: 'try', model: 'claude-haiku-4-5', amountUsd: 0, costKind: 'unknown' });   // the price is no longer known
+  const reused = sideCheckPlan([{ ex: a, kept: list }], 2);
+  assert.deepEqual([reused.fresh, reused.withReuse], [null, 0], 'all reused and fully checked: nothing to pay, so known');
+  const more = sideCheckPlan([{ ex: a, kept: list }], 3);
+  assert.deepEqual([more.fresh, more.withReuse], [null, null], 'a new try needs the unknown price');
+  const fresh = triesOf(example([{ text: 'Explains the legal reasons' }]), 1);   // a kept try that still misses a check
+  assert.equal(sideCheckPlan([{ ex: store.readExample(WF, fresh.list[0].exampleId), kept: fresh.list }], 1).withReuse, null);
 });

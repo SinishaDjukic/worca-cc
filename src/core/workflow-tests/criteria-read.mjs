@@ -133,17 +133,18 @@ export function sideCheckPlan(items, tries, { mock = false } = {}) {
   if (mock) return { fresh: 0, withReuse: 0 };
   const price = priceMemo();
   let fresh = 0;
-  let fromNew = 0;
+  let withReuse = 0;
   for (const { ex, kept } of items) {
     const n = ex.judge ? (ex.criteria || []).length : 0;
     if (!n) continue;
     const one = price(ex.judge.model);
-    if (one === null) return { fresh: null, withReuse: null };
-    fresh += tries * n * one;
-    fromNew += Math.max(0, tries - kept.length) * n * one;
+    const newTries = Math.max(0, tries - kept.length);
+    // An unknown price makes the new tries unknown; tries that are all kept (and fully checked) need no price.
+    fresh = one === null || fresh === null ? null : fresh + tries * n * one;
+    if (newTries) withReuse = one === null || withReuse === null ? null : withReuse + newTries * n * one;
   }
   const missing = missingChecksUsd(items.flatMap(({ ex, kept }) => kept.map((t) => ({ ex, t }))), price);
-  return { fresh, withReuse: missing === null ? null : fromNew + missing };
+  return { fresh, withReuse: withReuse === null || missing === null ? null : withReuse + missing };
 }
 
 const median = (xs) => { const s = [...xs].sort((a, b) => a - b); if (!s.length) return null; const m = s.length >> 1; return s.length % 2 ? s[m] : (s[m - 1] + s[m]) / 2; };
@@ -161,17 +162,13 @@ export function judgeCallUsd(model, { rates = (m) => ratesFor('claude', m), esti
   const priced = model ? rates(model) : null;
   return priced ? estimate({ input_tokens: 6000, output_tokens: 250 }, priced) : null;
 }
-/** Board 4 (Task 11): per try, the average cost of checking the chosen examples' criteria; the pairs (2 calls per example that has
- *  criteria, P4-Q8). null when no chosen example has criteria. */
+/** Board 4: the pair question's price (2 calls per example that has criteria, P4-Q8); null when no chosen example has criteria. The
+ *  checks themselves are priced per side (sideCheckPlan). */
 export function criteriaPlanOf(workflowId, exampleIds = [], { hasA = false, mock = false } = {}) {
   const exs = store.listExamples(workflowId).filter((e) => (!exampleIds.length || exampleIds.includes(e.id)) && e.criteria.length && e.judge);
   if (!exs.length) return null;
-  if (mock) return { perTryUsd: 0, pairsUsd: 0 };   // a mock test checks for free
+  if (mock || !PAIRS_ASKED || !hasA) return { pairsUsd: 0 };   // a mock test checks for free; pairs are asked only from Task 14 (4b)
   const price = priceMemo();
-  const per = exs.map((e) => { const u = price(e.judge.model); return u === null ? null : u * e.criteria.length; });
-  if (per.some((u) => u === null)) return { perTryUsd: null, pairsUsd: null };
-  const all = store.listExamples(workflowId).filter((e) => !exampleIds.length || exampleIds.includes(e.id));
-  // M6: pairs are asked only from Task 14 (4b); until then this is 0, and Task 14 changes `PAIRS_ASKED` to true.
-  return { perTryUsd: per.reduce((s, u) => s + u, 0) / all.length,
-    pairsUsd: PAIRS_ASKED && hasA ? exs.reduce((s, e) => s + 2 * price(e.judge.model), 0) : 0 };
+  const prices = exs.map((e) => price(e.judge.model));
+  return { pairsUsd: prices.some((u) => u === null) ? null : prices.reduce((sum, u) => sum + 2 * u, 0) };
 }

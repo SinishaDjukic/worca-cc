@@ -46,26 +46,27 @@ test('the sentences of boards 1, 2 and 5', () => {
   assert.equal(exactLine({ kind: 'quotes' }), 'Can be checked exactly, without AI.');
 });
 
-test('estimateOf adds checking the criteria (board 4) and says when its price is not known', () => {
-  const plan = { a: { want: 3, reusable: 3, perTryUsd: 1 }, b: { want: 3, reusable: 0, perTryUsd: 0.5 }, perTryMs: 60000, criteria: { perTryUsd: 0.1, pairsUsd: 0.2 } };
+test('estimateOf adds checking the criteria (board 4) from each side checkUsd, and says when its price is not known', () => {
+  const plan = { a: { want: 3, reusable: 3, perTryUsd: 1, checkUsd: { fresh: 0.3, withReuse: 0 } },
+    b: { want: 3, reusable: 0, perTryUsd: 0.5, checkUsd: { fresh: 0.3, withReuse: 0.3 } }, perTryMs: 60000, criteria: { pairsUsd: 0.2 } };
   const e = estimateOf(plan);
-  assert.equal(Math.round(e.criteriaUsd * 100) / 100, 0.5, '3 new tries × $0.10 + the pairs $0.20');
+  assert.equal(Math.round(e.criteriaUsd * 100) / 100, 0.5, 'B has 3 new tries $0.30 + the pairs $0.20; A is reused and fully checked');
   assert.equal(Math.round(e.usd * 100) / 100, 2);
-  assert.deepEqual(['criteriaUsd', 'usd'].map((k) => estimateOf({ ...plan, criteria: { perTryUsd: null, pairsUsd: null } })[k]), [null, null], 'M6: the total is not known either');
+  const unknown = { ...plan, b: { ...plan.b, checkUsd: { fresh: null, withReuse: null } } };
+  assert.deepEqual(['criteriaUsd', 'usd'].map((k) => estimateOf(unknown)[k]), [null, null], 'M6: the total is not known either');
   assert.equal(estimateOf({ ...plan, criteria: null }).criteriaUsd, 0);
 });
 
 test('estimateOf prices the checks of reused tries that still miss a criterion, never as $0 (review)', () => {
-  const plan = { a: { want: 3, reusable: 3, judgeMissing: 3, perTryUsd: 1 }, b: { want: 3, reusable: 3, judgeMissing: 3, perTryUsd: 0.5 }, perTryMs: 60000,
-    criteria: { perTryUsd: 0.1, pairsUsd: 0 } };
+  const plan = { a: { want: 3, reusable: 3, perTryUsd: 1, checkUsd: { fresh: 0.3, withReuse: 0.3 } }, b: { want: 3, reusable: 3, perTryUsd: 0.5, checkUsd: { fresh: 0.3, withReuse: 0.3 } },
+    perTryMs: 60000, criteria: { pairsUsd: 0 } };
   const all = estimateOf(plan, { reuseA: true, reuseB: true });
   assert.equal(all.total, 0, 'every try is reused');
-  assert.equal(Math.round(all.criteriaUsd * 100) / 100, 0.6, '6 reused tries × $0.10');
   assert.equal(Math.round(all.usd * 100) / 100, 0.6);
-  assert.equal(estimateOf({ ...plan, criteria: { perTryUsd: null, pairsUsd: null } }, { reuseA: true, reuseB: true }).usd, null, 'not known, never $0');
-  assert.equal(estimateOf({ ...plan, a: { ...plan.a, judgeMissing: 0 }, b: { ...plan.b, judgeMissing: 0 } }, { reuseA: true, reuseB: true }).usd, 0, 'nothing to check: $0 is true');
-  const some = estimateOf(plan, { reuseA: true, reuseB: false });
-  assert.equal(Math.round(some.criteriaUsd * 100) / 100, 0.6, '3 new tries of B + 3 reused of A');
+  assert.equal(estimateOf({ ...plan, a: { ...plan.a, checkUsd: { fresh: null, withReuse: null } } }, { reuseA: true, reuseB: true }).usd, null, 'not known, never $0');
+  const done = { fresh: 0.3, withReuse: 0 };
+  assert.equal(estimateOf({ ...plan, a: { ...plan.a, checkUsd: done }, b: { ...plan.b, checkUsd: done } }, { reuseA: true, reuseB: true }).usd, 0, 'nothing to check: $0 is true');
+  assert.equal(Math.round(estimateOf(plan, { reuseA: true, reuseB: false }).criteriaUsd * 100) / 100, 0.6, 'B is tried again (fresh $0.30) and A reused ($0.30)');
 });
 
 test('review: an example whose tries all errored is not uneven; a finished try with no counted verdict is (the same finishedTry as Not checked)', () => {

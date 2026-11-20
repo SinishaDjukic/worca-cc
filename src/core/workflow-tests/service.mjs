@@ -28,7 +28,7 @@ import { ensureStartCommit, treeBytes, freeDiskBytes, removeTryCheckout, pinStar
   commitDate, copySubject, remoteUrl } from './project-copy.mjs';
 import { parseRemoteUrl, forgeOf as forgeOfRemote, FORGE_LABEL } from '../forge.mjs';
 import { pushRemoteOf } from './guard-calls.mjs';
-import { withCriteriaFor, compareNotes, notCheckedOf, needsCriteriaJudging, sideCheckPlan } from './criteria-read.mjs';
+import { withCriteriaFor, compareNotes, notCheckedOf, sideCheckPlan } from './criteria-read.mjs';
 import { withJudgeModel } from './judge-models.mjs';
 import { leftOutText, folderMissingText, folderProjectText, notRegisteredText, diskRefusalText, diskRefusalOnceText, PAST_RUN_REFUSALS } from '../../shared/workflow-tests/project-text.mjs';
 import { mainResult, readTryPatch } from './result.mjs';
@@ -648,7 +648,6 @@ export async function testPlan(workflowId, { a = null, b = 'draft', exampleIds =
     let fp = null;
     try { fp = await fingerprintOf(workflowId, use); } catch { fp = null; }
     let reusable = 0;
-    let judgeMissing = 0;   // checks the reused tries still miss
     let at = null;
     const items = [];
     if (fp) {
@@ -656,7 +655,6 @@ export async function testPlan(workflowId, { a = null, b = 'draft', exampleIds =
         const kept = store.reusableTries({ workflowId, exampleId: ex.id, use, fp, exampleFp: ex.fingerprint, mock, connectors, limit: tries });
         reusable += kept.length;
         for (const t of kept) if (t.finishedAt && (!at || t.finishedAt > at)) at = t.finishedAt;
-        judgeMissing += kept.reduce((n, t) => n + needsCriteriaJudging(ex, t), 0);   // the criteria phase checks what the reused tries miss
         items.push({ ex, kept });
       }
     }
@@ -667,7 +665,7 @@ export async function testPlan(workflowId, { a = null, b = 'draft', exampleIds =
     // U-T4: a draft identical to v{n} is not "your changes": it is named as the version picker names it.
     const same = sameAs !== null;
     return { use, sameAs, label: same ? `Your draft (same as v${sameAs})` : useLabel(use, ctx, 'select'),
-      short: same ? `your draft (same as v${sameAs})` : useLabel(use, ctx), want: readyEx.length * tries, reusable, judgeMissing, checkUsd,
+      short: same ? `your draft (same as v${sameAs})` : useLabel(use, ctx), want: readyEx.length * tries, reusable, checkUsd,
       reusableAt: at, perTryUsd, savesUsd: perTryUsd === null ? null : reusable * perTryUsd };
   };
   // Mock browser check, finding 4: a mock test's time comes from the mock tries' own times (U-T8, as progressOf's time left).
