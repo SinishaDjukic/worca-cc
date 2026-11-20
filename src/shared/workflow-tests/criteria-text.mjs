@@ -90,7 +90,7 @@ export const TRUST_TESTS = Object.freeze({
   proof: ['Proof for every verdict', 'Each verdict must quote the part of the result it is based on. Worca checks that the quote is really there. Verdicts without proof are not counted.'],
   people: ['Agreement with people', 'From your Agree and Disagree answers and "Check the checker".'],   // P4-M4's words (no colleagues until Part 5)
 });
-const answersText = (n) => `${n} ${n === 1 ? 'answer' : 'answers'}`;
+export const answersText = (n) => `${n} ${n === 1 ? 'answer' : 'answers'}`;
 export function trustTestLine(t) {
   if (t.state === 'none') return 'Not run yet';
   if (t.key === 'planted') {

@@ -359,8 +359,8 @@ export function createWorkflowTests(deps) {
     if (currentView() !== 'workflows') return;
     const els = wfvEls();
     if (!els.tests || els.tests.hidden || wftWorkflowId() !== msg.workflowId) return;
-    // The list, or the open page of the test that changed (progress, its Compare or one example of it).
-    if (wft.view === 'list' || (['progress', 'compare', 'detail'].includes(wft.view) && wft.runId === msg.testRunId)) void wftRefresh();
+    // The list, the trust report (Task 23: a check or a try changes its counts), or the open page of the test that changed.
+    if (wft.view === 'list' || wft.view === 'trust' || (['progress', 'compare', 'detail'].includes(wft.view) && wft.runId === msg.testRunId)) void wftRefresh();
   }
   /** The toast's Open: the test's page. Its workflow already open on the canvas: only the Tests page changes (no reload,
    *  no discard question); anywhere else the address opens it (routeWorkflows). */

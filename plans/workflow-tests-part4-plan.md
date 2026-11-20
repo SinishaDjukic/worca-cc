@@ -4608,9 +4608,9 @@ export function trustReportModel({ criteria = [], rounds = [], pairs = [], proof
   const tests = [
     { key: 'planted', state: state(caught === of, of), caught, of, missedOn },
     { key: 'again', state: state(again === rounds.length, rounds.length), n: again, of: rounds.length },
-    { key: 'order', state: state(pairsSame === pairs.length, pairs.length), n: pairsSame, of: pairs.length },
+    { key: 'order', state: state(pairsSame >= AGREE_MIN * pairs.length, pairs.length), n: pairsSame, of: pairs.length },   // Task 23 fix round 1: board 13's 17 of 18 is Good
     { key: 'longer', state: state(fooled === 0, rounds.length), fooled },
-    { key: 'proof', state: state(proofs.found === proofs.of, proofs.of), n: proofs.found, of: proofs.of },
+    { key: 'proof', state: state(proofs.found >= AGREE_MIN * proofs.of, proofs.of), n: proofs.found, of: proofs.of },   // board 13's 214 of 216 is Good
     { key: 'people', state: state(n >= 10 && pct(agree, n) >= 80, n), n, agree, pct: pct(agree, n) },
   ];
   const todo = [

@@ -212,7 +212,9 @@ function list(doc, page, o, actions, { root, storage, dateText, now, mock }) {
   if (o.trust && o.trust.total > 0) {   // board 1 (Task 23): the report's card under the table; Part 5's "Make the tests harder" joins it
     const cards = el(doc, 'div', 'wft-cards');
     const card = btn(doc, null, () => actions.openTrust(), 'card wft-trust-card');
-    card.append(el(doc, 'span', 'wft-trust-title', "Can you trust Worca's checking?"), el(doc, 'span', 'hint', listTrustSentence(o.trust)));
+    const title = "Can you trust Worca's checking?";
+    card.append(el(doc, 'span', 'wft-trust-title', title), el(doc, 'span', 'hint', listTrustSentence(o.trust)));
+    card.setAttribute('aria-label', `${title} ${listTrustSentence(o.trust)}`);   // the two spans would read as one run-on word
     cards.append(card);
     page.append(cards);
   }

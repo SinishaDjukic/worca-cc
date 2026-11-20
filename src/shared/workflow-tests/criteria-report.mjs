@@ -58,7 +58,12 @@ export function checkingCounts(trusts) {
 const pct = (a, n) => (n ? Math.round((a / n) * 100) : 0);
 /**
  * Board 13. Agreement: people's answers over every criterion (pairs never count, D96). The board's words are in criteria-text.mjs.
- * P4-M4's early states: `state` is 'no-criteria' (nothing to trust yet), 'no-answers' (criteria, but nobody answered) or 'ready';
+ * Each test is good or bad (or 'none' when it has nothing to count). Planted mistakes, Asked again and Longer is not better are
+ * strict: one miss, one change or one fooled criterion is a problem. Order swapped and Proof for every verdict are shares: good from
+ * AGREE_MIN (80%, the people test's bar), as board 13 draws 17 of 18 pairs and 214 of 216 proofs as Good (verdicts without proof
+ * are not counted anyway), bad below it (Task 23 fix round 1).
+ * P4-M4's early states: `state` is 'no-criteria' (no criteria and no exact check made from one), 'no-answers' (criteria wait for
+ * answers and nobody answered yet) or 'ready';
  * `colleagues` is false until Part 5 brings their blind reviews, so tile 1's sub-line is "of N answers" (n).
  */
 export function trustReportModel({ criteria = [], rounds = [], pairs = [], proofs = { found: 0, of: 0 }, lastAt = null, costUsd = 0, exactChecks = 0 }) {
@@ -83,21 +88,24 @@ export function trustReportModel({ criteria = [], rounds = [], pairs = [], proof
   const tests = [
     { key: 'planted', state: state(caught === of, of), caught, of, missedOn },
     { key: 'again', state: state(again === sameRounds.length, sameRounds.length), n: again, of: sameRounds.length },
-    { key: 'order', state: state(pairsSame === pairs.length, pairs.length), n: pairsSame, of: pairs.length },
+    { key: 'order', state: state(pairsSame >= AGREE_MIN * pairs.length, pairs.length), n: pairsSame, of: pairs.length },
     { key: 'longer', state: state(fooled === 0, padRounds.length), fooled },
-    { key: 'proof', state: state(proofs.found === proofs.of, proofs.of), n: proofs.found, of: proofs.of },
+    { key: 'proof', state: state(proofs.found >= AGREE_MIN * proofs.of, proofs.of), n: proofs.found, of: proofs.of },
     // User decision 5: 1 to 9 answers are 'waiting' (the line shows the real numbers and what Worca needs), never good or bad.
     { key: 'people', state: n > 0 && n < ANSWERS_NEEDED ? 'waiting' : state(n > 0 && agree / n >= AGREE_MIN, n >= ANSWERS_NEEDED), n, agree, pct: pct(agree, n) },
   ];
-  const todo = [
-    ...criteria.filter((c) => c.trust && c.trust.state === 'unreliable').map((c) => ({ kind: 'fix', exampleId: c.exampleId, exampleName: c.exampleName, criterionId: c.criterionId, text: c.text })),
-    ...criteria.filter((c) => c.trust && c.trust.state === 'confirm').map((c) => ({ kind: 'confirm', exampleId: c.exampleId, exampleName: c.exampleName, criterionId: c.criterionId, text: c.text })),
-  ];
+  // A criterion shared by several examples (one trust key) is one thing to do; its first example opens Check the checker.
+  const seen = new Set();
+  const first = criteria.filter((c, i) => { const key = c.trustKey != null ? c.trustKey : `row${i}`; if (seen.has(key)) return false; seen.add(key); return true; });
+  const todoOf = (kind, s) => first.filter((c) => c.trust && c.trust.state === s)
+    .map((c) => ({ kind, exampleId: c.exampleId, exampleName: c.exampleName, criterionId: c.criterionId, text: c.text }));
+  const todo = [...todoOf('fix', 'unreliable'), ...todoOf('confirm', 'confirm')];
   // "Criteria you can trust" counts as board 1's card (checkingCounts): each criterion with a model by its trust mark, and each exact
   // check made from a criterion (`exactChecks`, the `said` checks) as reliable. A criterion an exact check could replace still counts
   // by its own mark, though its row shows only the violet suggestion (user decision 2): its AI checking is what this page tests.
   const k = checkingCounts([...criteria.map((c) => c.trust), ...Array.from({ length: exactChecks }, () => ({ state: 'exact' }))]);
-  return { state: !criteria.length ? 'no-criteria' : n === 0 ? 'no-answers' : 'ready', colleagues: false,
+  // Fix round 1: an exact-only workflow is ready (board 1's card shows for it); the blue box only when criteria wait for answers.
+  return { state: !criteria.length && !exactChecks ? 'no-criteria' : n === 0 && k.waiting ? 'no-answers' : 'ready', colleagues: false,
     tiles: { agree: { n, agree }, planted: { caught, of, missedOn }, trusted: { n: k.reliable, of: k.total, unreliable: k.unreliable, waiting: k.waiting } },
     tests, todo, lastAt, costUsd };
 }

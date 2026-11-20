@@ -33,9 +33,9 @@ test('board 13: tiles, six tests with their states, what to do', () => {
   assert.deepEqual(texts(root, '.wft-tr-dot'), ['1', '2', '3', '4', '5', '6']);
   assert.match(root.textContent, /They run again whenever the checking model or a criterion changes\. Last run 19 Oct · cost \$1\.80\./);
   assert.equal(root.querySelector('.wft-tr-tests .hint .code').textContent, '$1.80');
-  // proof found 214 of 216: user decision 4's count badge; the six tests come before What to do (board 13)
+  // board 13: 214 of 216 verdicts with proof is green Good (fix round 1: from AGREE_MIN); the six tests come before What to do
   const proof = root.querySelectorAll('.wft-tr-test')[4];
-  assert.deepEqual([proof.querySelector('.badge').className, proof.querySelector('.badge').textContent], ['badge red', '2 without proof']);
+  assert.deepEqual([proof.querySelector('.badge').className, proof.querySelector('.badge').textContent], ['badge green', 'Good']);
   assert.equal(proof.querySelector('.wft-tr-line').textContent, '214 of 216 verdicts had proof. 2 were not counted.');
   const people = root.querySelectorAll('.wft-tr-test')[5];
   assert.deepEqual([people.querySelector('.badge').className, people.querySelector('.wft-tr-line').textContent], ['badge green', '80% of 30 answers']);
@@ -68,6 +68,33 @@ test("board 13 / P4-M4 part 3: counted badges (user decision 4), Both missed on 
   assert.equal(rows[5].querySelector('p').textContent, 'From your Agree and Disagree answers and "Check the checker".');
   assert.deepEqual([rows[2].querySelector('.badge').className, rows[2].querySelector('.badge').textContent], ['badge', 'Not run yet']);
   assert.equal(rows[2].querySelector('.wft-tr-line'), null, 'a test not run yet has only its badge');
+});
+
+test('fix round 1: board 13 order swapped at 17 of 18 pairs is Good; below the bar, order and proof are red with their count', () => {
+  const { doc, root } = dom();
+  const pairs = (same, of) => Array.from({ length: of }, (_, i) => ({ winner: i < same ? 'a' : 'unsure' }));
+  const base = { criteria: [crit(1, 'T', { state: 'reliable', n: 10, agree: 9 })] };
+  renderTrustReport(root, trustReportModel({ ...base, pairs: pairs(17, 18) }), NOOP, { doc });
+  let order = root.querySelectorAll('.wft-tr-test')[2];
+  assert.deepEqual([order.querySelector('.badge').className, order.querySelector('.badge').textContent, order.querySelector('.wft-tr-line').textContent],
+    ['badge green', 'Good', 'Same winner in 17 of 18 pairs']);
+  renderTrustReport(root, trustReportModel({ ...base, pairs: pairs(7, 10), proofs: { found: 150, of: 216 } }), NOOP, { doc });
+  order = root.querySelectorAll('.wft-tr-test')[2];
+  const proof = root.querySelectorAll('.wft-tr-test')[4];
+  assert.deepEqual([order.querySelector('.badge').className, order.querySelector('.badge').textContent], ['badge red', '3 changes']);
+  assert.deepEqual([proof.querySelector('.badge').className, proof.querySelector('.badge').textContent], ['badge red', '66 without proof']);
+});
+
+test('fix round 1: an exact-only workflow opens the report the card promised (tiles, the six tests), not "No criteria yet"; criteria without a model read "—"', () => {
+  const { doc, root } = dom();
+  renderTrustReport(root, trustReportModel({ exactChecks: 2 }), NOOP, { doc });
+  assert.equal(root.querySelector('.wft-tr-none'), null);
+  assert.equal(root.querySelector('.wft-tr-info'), null);
+  assert.deepEqual(texts(root, '.wft-tile-value'), ['—', '—', '2 of 2']);
+  assert.equal(root.querySelectorAll('.wft-tr-test').length, 6);
+  renderTrustReport(root, trustReportModel({ criteria: [crit(1, 'T', null)] }), NOOP, { doc });
+  assert.deepEqual(texts(root, '.wft-tile-value'), ['—', '—', '—'], 'never "0 of 0"');
+  assert.ok(root.querySelectorAll('.wft-tile-value')[2].classList.contains('is-none'));
 });
 
 test('P4-M4 state 1: no criteria yet: one card, "Go to the examples" goes back to the list; no tiles, no tests', () => {
@@ -133,6 +160,7 @@ test("board 1: the Tests list's card \"Can you trust Worca's checking?\" opens t
   assert.equal(card.querySelector('.wft-trust-title').textContent, "Can you trust Worca's checking?");
   assert.equal(card.querySelector('.hint').textContent, 'Reliable for 10 of 12 criteria. 1 is unreliable, 1 needs your answers.');
   assert.equal(card.tagName, 'BUTTON');
+  assert.equal(card.getAttribute('aria-label'), "Can you trust Worca's checking? Reliable for 10 of 12 criteria. 1 is unreliable, 1 needs your answers.", 'fix round 1: the two parts read apart');
   card.click();
   assert.equal(opened, 1);
   const kids = [...root.querySelector('.wft-page').children].map((x) => x.className);
@@ -171,13 +199,15 @@ const settle = async () => { for (let i = 0; i < 30; i += 1) await new Promise((
 test('tests-app.mjs: the card opens the report at its address; Fix the criterion starts Check the checker of it; Tests goes back', async () => {
   const { createWorkflowTests } = await import('../ui/public/workflows/tests-app.mjs');
   const B = '/api/workflows/wf_a/tests';
-  const report = trustReportModel({ criteria: [crit(4, 'Proposes a test within 4 weeks', { state: 'unreliable', n: 10, agree: 6 })] });
+  let report = trustReportModel({ criteria: [crit(4, 'Proposes a test within 4 weeks', { state: 'unreliable', n: 10, agree: 6 }),
+    crit(5, 'Explains the legal reason', { state: 'confirm', n: 0, agree: 0 })] });
   const list = { workflowId: 'wf_a', name: 'W', needsProject: false, ctx: {}, draftSameAs: null, columns: [{ use: 'draft', label: 'Your draft' }],
     examples: [{ id: 4, name: 'Bulk', hasRequest: true, files: [], tries: 3, basics: 3, checks: 0, criteria: 1, cells: {}, project: null, ready: true }],
     running: null, latest: null, pastRuns: [], trust: { total: 1, reliable: 0, unreliable: 1, waiting: 0 } };
   const h = harness({
     [`GET ${B}`]: { status: 200, body: list },
-    [`GET ${B}/trust`]: { status: 200, body: report },
+    [`GET ${B}/trust`]: () => ({ status: 200, body: report }),
+    [`POST ${B}/examples/5/checker`]: { status: 409, body: { error: 'Worca is already checking this criterion.' } },
     [`POST ${B}/examples/4/checker`]: { status: 201, body: { round: { id: 9, status: 'making' } } },
     [`GET ${B}/examples/4/checker/9`]: { status: 200, body: { round: { id: 9, criterionId: 'k_4', status: 'making' }, exampleName: 'E4', criterion: 'Proposes a test within 4 weeks',
       cards: [], left: 0, auto: { same: { n: 0, of: 0 }, padding: { n: 0, of: 0 }, proof: { n: 0, of: 0 } }, costUsd: 0, canUse: false } },
@@ -189,6 +219,20 @@ test('tests-app.mjs: the card opens the report at its address; Fix the criterion
   await settle();
   assert.equal(h.win.location.hash, '#workflows/wf_a/tests/trust');
   assert.equal(h.root.querySelector('.wft-title').textContent, "How reliable is Worca's checking?");
+  // fix round 1: the workflow-tests-changed frame repaints the report
+  report = trustReportModel({ criteria: [crit(4, 'Proposes a test within 4 weeks', { state: 'reliable', n: 10, agree: 9 })] });
+  ctl.changed({ workflowId: 'wf_a', testRunId: 3 });
+  await settle();
+  assert.equal(h.root.querySelector('.wft-tr-todo'), null, 'read again: nothing left to do');
+  assert.equal(h.calls.filter(([m, p]) => m === 'GET' && p === `${B}/trust`).length, 2);
+  report = trustReportModel({ criteria: [crit(4, 'Proposes a test within 4 weeks', { state: 'unreliable', n: 10, agree: 6 }),
+    crit(5, 'Explains the legal reason', { state: 'confirm', n: 0, agree: 0 })] });
+  ctl.changed({ workflowId: 'wf_a', testRunId: 3 });
+  await settle();
+  h.root.querySelector('button.wft-tr-confirm').click();   // Confirm 4 results starts Check the checker of that criterion
+  await settle();
+  assert.deepEqual(h.calls.filter(([m]) => m === 'POST').map(([, p, b]) => [p, b]), [[`${B}/examples/5/checker`, { criterionId: 'k_5' }]]);
+  assert.equal(h.win.location.hash, '#workflows/wf_a/tests/trust', 'refused (409): the report stays');
   btnByText(h.root, 'Tests').click();
   await settle();
   assert.equal(h.win.location.hash, '#workflows/wf_a/tests');
@@ -197,7 +241,7 @@ test('tests-app.mjs: the card opens the report at its address; Fix the criterion
   assert.equal(h.win.location.hash, '#workflows/wf_a/tests/trust');
   h.root.querySelector('button.wft-tr-fix').click();
   await settle();
-  assert.deepEqual(h.calls.filter(([m]) => m === 'POST').map(([, p, b]) => [p, b]), [[`${B}/examples/4/checker`, { criterionId: 'k_4' }]]);
+  assert.deepEqual(h.calls.filter(([m]) => m === 'POST').map(([, p, b]) => [p, b]).at(-1), [`${B}/examples/4/checker`, { criterionId: 'k_4' }]);
   assert.equal(h.win.location.hash, '#workflows/wf_a/tests/4/checker/9');
   assert.equal(h.root.querySelector('.wft-cc-crit').textContent, 'Proposes a test within 4 weeks');
 });

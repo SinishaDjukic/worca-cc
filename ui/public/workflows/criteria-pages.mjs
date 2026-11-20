@@ -6,7 +6,7 @@ import { icon } from '../icons.mjs';
 import { fmtUsd } from '../../../src/shared/workflow-tests/checks.mjs';
 import { TRUST_BADGE, trustLine, checkingRest, BY_EXAMPLE, BY_CRITERION, SEE_BY_CRITERION, NOT_CHECKED, CRITERIA_CHANGED_TEXT, CHECK_THEM, NOT_EVERY_TRY,
   CHECKING_CRITERIA_TEXT, CHECKED_CRITERIA_TEXT, CAP_CHECKS_TEXT, ADDED_AFTER_TEXT, NO_CHECKED_TRY, COST_UNKNOWN_NOTE, notEveryTryText, unreliableOnlyText,
-  unreliableWhyText, ROUND_NOT_FINISHED_TEXT, TRUST_TESTS, trustTestLine, trustTestBadge }
+  unreliableWhyText, ROUND_NOT_FINISHED_TEXT, TRUST_TESTS, trustTestLine, trustTestBadge, answersText }
   from '../../../src/shared/workflow-tests/criteria-text.mjs';
 
 const LEGEND = [
@@ -420,21 +420,20 @@ export function renderChecker(root, v, actions, { doc, exampleName, criterion = 
 // ---- Board 13 (Task 23): How reliable is Worca's checking? P4-M4 draws its early states (no criteria, no answers yet). ----
 const TR_SUB = 'Worca uses AI to check your criteria. AI can be wrong, so Worca tests its own checking in six ways. The results show where you can trust it and where you should not.';
 const TR_RERUN = 'They run again whenever the checking model or a criterion changes.';
-const answersOf = (n) => `${n} ${n === 1 ? 'answer' : 'answers'}`;
 function trTile(doc, label, value, sub) {
   const t = el(doc, 'section', 'card wft-tile');
   t.append(el(doc, 'div', 'wft-tile-label', label), el(doc, 'div', `wft-tile-value${value === '—' ? ' is-none' : ''}`, value), el(doc, 'small', 'wft-tile-sub', sub));
   return t;
 }
-function trTiles(doc, { agree, planted, trusted }) {
+function trTiles(doc, { agree, planted, trusted }, people) {
   const tiles = el(doc, 'div', 'wft-tiles');
   const missed = planted.of - planted.caught;
   const on = new Set(planted.missedOn).size;
   tiles.append(
-    trTile(doc, 'Agrees with people', agree.n ? `${Math.round((agree.agree / agree.n) * 100)}%` : '—', agree.n ? `of ${answersOf(agree.n)}` : 'no answers yet'),
+    trTile(doc, 'Agrees with people', agree.n ? `${people.pct}%` : '—', agree.n ? `of ${answersText(agree.n)}` : 'no answers yet'),   // the people test's share
     trTile(doc, 'Planted mistakes caught', planted.of ? `${planted.caught} of ${planted.of}` : '—', !planted.of ? 'not tested yet'
       : missed ? `the ${missed} missed ${missed === 1 ? 'is' : 'are'} on ${on === 1 ? 'one criterion' : `${on} criteria`}` : 'none missed'),
-    trTile(doc, 'Criteria you can trust', `${trusted.n} of ${trusted.of}`,
+    trTile(doc, 'Criteria you can trust', trusted.of ? `${trusted.n} of ${trusted.of}` : '—',   // fix round 1: nothing counted is P4-M4's "—"
       [trusted.unreliable ? `${trusted.unreliable} unreliable (shown, does not decide)` : null,
         trusted.waiting ? `${trusted.waiting} ${trusted.waiting === 1 ? 'waits' : 'wait'} for your answers` : null].filter(Boolean).join(', ')
         || (trusted.of && trusted.n === trusted.of ? 'all of them' : '')));
@@ -505,6 +504,7 @@ export function renderTrustReport(root, m, actions, { doc, dateText = (s) => s }
     return;
   }
   const todo = m.todo.length ? [trTodo(doc, m.todo, actions)] : [];
+  const people = m.tests.find((t) => t.key === 'people');
   if (m.state === 'no-answers') {   // P4-M4 2: the blue box, the tiles, What to do, then the six tests
     const info = el(doc, 'section', 'wft-tr-info');
     const h = el(doc, 'h2', '', 'Worca needs your answers first: confirm each new criterion.');
@@ -513,8 +513,8 @@ export function renderTrustReport(root, m, actions, { doc, dateText = (s) => s }
     const words = el(doc, 'div', '');
     words.append(h, el(doc, 'span', '', 'Each one takes 4 answers. Until then, the tests below have little to go on.'));
     info.append(words);
-    page.append(info, trTiles(doc, m.tiles), ...todo, trTests(doc, m, dateText));
+    page.append(info, trTiles(doc, m.tiles, people), ...todo, trTests(doc, m, dateText));
     return;
   }
-  page.append(trTiles(doc, m.tiles), trTests(doc, m, dateText), ...todo);
+  page.append(trTiles(doc, m.tiles, people), trTests(doc, m, dateText), ...todo);
 }

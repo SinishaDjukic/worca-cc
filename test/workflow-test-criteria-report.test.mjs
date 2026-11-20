@@ -2,7 +2,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { byCriterionModel, checkingCounts, trustReportModel } from '../src/shared/workflow-tests/criteria-report.mjs';
-import { TRUST_TESTS, trustTestLine, trustTestBadge, checkingSentence, listTrustSentence, exactLine } from '../src/shared/workflow-tests/criteria-text.mjs';
+import { TRUST_TESTS, trustTestLine, trustTestBadge, answersText, checkingSentence, listTrustSentence, exactLine } from '../src/shared/workflow-tests/criteria-text.mjs';
 import { estimateOf } from '../src/shared/workflow-tests/compare.mjs';
 
 const R = { state: 'reliable', n: 20, agree: 19, decides: true };
@@ -94,7 +94,8 @@ test("trustReportModel: board 13's tiles, the six tests and what to do", () => {
   assert.deepEqual(m.tiles.agree, { n: 30, agree: 25 });
   assert.deepEqual(m.tiles.planted, { caught: 4, of: 6, missedOn: ['Proposes a test within 4 weeks'] });
   assert.deepEqual(m.tiles.trusted, { n: 1, of: 3, unreliable: 1, waiting: 1 });
-  assert.deepEqual(m.tests.map((t) => [t.key, t.state]), [['planted', 'bad'], ['again', 'bad'], ['order', 'bad'], ['longer', 'good'], ['proof', 'bad'], ['people', 'good']]);
+  // fix round 1: order and proof are good from AGREE_MIN (80%), as board 13 draws 214 of 216 proofs; 1 of 2 pairs (50%) is below it
+  assert.deepEqual(m.tests.map((t) => [t.key, t.state]), [['planted', 'bad'], ['again', 'bad'], ['order', 'bad'], ['longer', 'good'], ['proof', 'good'], ['people', 'good']]);
   assert.deepEqual(m.todo.map((x) => [x.kind, x.text]), [['fix', 'Proposes a test within 4 weeks'], ['confirm', 'Explains the legal reason']]);
   assert.equal(m.state, 'ready');
 });
@@ -150,9 +151,10 @@ test('user decision 5: the people test with 1 to 9 answers shows the real number
 test("user decision 4: a test that found a problem has a count badge (board 13's \"2 missed\", \"1 changes\"); good is green, nothing yet grey", () => {
   assert.deepEqual(trustTestBadge({ key: 'planted', state: 'bad', caught: 10, of: 12, missedOn: ['A'] }), ['badge red', '2 missed']);
   assert.deepEqual(trustTestBadge({ key: 'again', state: 'bad', n: 11, of: 12 }), ['badge red', '1 changes']);
-  assert.deepEqual(trustTestBadge({ key: 'order', state: 'bad', n: 17, of: 18 }), ['badge red', '1 changes']);
+  assert.deepEqual(trustTestBadge({ key: 'order', state: 'bad', n: 13, of: 18 }), ['badge red', '5 changes']);
   assert.deepEqual(trustTestBadge({ key: 'longer', state: 'bad', fooled: 2 }), ['badge red', '2 fooled']);
-  assert.deepEqual(trustTestBadge({ key: 'proof', state: 'bad', n: 214, of: 216 }), ['badge red', '2 without proof']);
+  assert.deepEqual(trustTestBadge({ key: 'proof', state: 'bad', n: 150, of: 216 }), ['badge red', '66 without proof']);
+  assert.deepEqual(trustTestBadge({ key: 'proof', state: 'good', n: 214, of: 216 }), ['badge green', 'Good'], 'the count shows only when the test is bad');
   assert.deepEqual(trustTestBadge({ key: 'people', state: 'bad', n: 10, agree: 7, pct: 70 }), ['badge red', '3 disagree']);
   assert.deepEqual(trustTestBadge({ key: 'proof', state: 'good', n: 4, of: 4 }), ['badge green', 'Good']);
   assert.deepEqual(trustTestBadge({ key: 'planted', state: 'none' }), ['badge', 'Not run yet']);
@@ -173,4 +175,48 @@ test("the trusted tile counts as board 1's card does: an exact check made from a
   assert.deepEqual(m.tiles.trusted, { n: 3, of: 5, unreliable: 1, waiting: 1 });
   assert.deepEqual(checkingCounts([{ state: 'reliable' }, { state: 'unreliable' }, { state: 'confirm' }, null, { state: 'exact' }, { state: 'exact' }]),
     { total: 5, reliable: 3, unreliable: 1, waiting: 1 }, 'the same numbers as the card');
+});
+
+// ---- Task 23 fix round 1 ----
+test('fix round 1: order and proof are good from AGREE_MIN (board 13: 17 of 18 pairs, 214 of 216 proofs) and bad below it; the others stay strict', () => {
+  const pairs = (same, of) => Array.from({ length: of }, (_, i) => ({ winner: i < same ? 'a' : 'unsure' }));
+  const st = (input, key) => trustReportModel(input).tests.find((t) => t.key === key).state;
+  assert.equal(st({ pairs: pairs(17, 18) }, 'order'), 'good');
+  assert.equal(st({ pairs: pairs(8, 10) }, 'order'), 'good', '80% is the bar');
+  assert.equal(st({ pairs: pairs(7, 10) }, 'order'), 'bad');
+  assert.equal(st({ proofs: { found: 214, of: 216 } }, 'proof'), 'good');
+  assert.equal(trustTestLine({ key: 'proof', state: 'good', n: 214, of: 216 }), '214 of 216 verdicts had proof. 2 were not counted.');
+  assert.equal(st({ proofs: { found: 150, of: 216 } }, 'proof'), 'bad');
+  assert.equal(st({ proofs: { found: 0, of: 0 } }, 'proof'), 'none');
+  const round = (miss, same, pad) => ({ criterionText: 'A', cards: [{ planted: 'x', met: miss }, ...Array.from({ length: 9 }, () => ({ planted: 'y', met: false }))],
+    same: { n: same, of: 4 }, padding: { n: pad, of: 4 } });
+  assert.equal(st({ rounds: [round(true, 4, 4)] }, 'planted'), 'bad', 'one miss in 10 is still a problem');
+  assert.equal(st({ rounds: [round(false, 3, 4)] }, 'again'), 'bad');
+  assert.equal(st({ rounds: [round(false, 4, 3)] }, 'longer'), 'bad');
+});
+
+test('fix round 1: a workflow whose criteria all became exact checks is ready (the card shows), not "No criteria yet"; no answers yet needs criteria that wait', () => {
+  const exactOnly = trustReportModel({ exactChecks: 2 });
+  assert.equal(exactOnly.state, 'ready');
+  assert.deepEqual(exactOnly.tiles.trusted, { n: 2, of: 2, unreliable: 0, waiting: 0 });
+  assert.equal(trustReportModel({}).state, 'no-criteria');
+  const noModel = trustReportModel({ criteria: [{ exampleId: 1, exampleName: 'A', criterionId: 'k_1', text: 'T', trust: null }] });
+  assert.equal(noModel.state, 'ready', 'nothing waits for answers: no blue box');
+  assert.equal(trustReportModel({ criteria: [{ exampleId: 1, criterionId: 'k_1', text: 'T', trust: { state: 'confirm', n: 0, agree: 0 } }] }).state, 'no-answers');
+});
+
+test('fix round 1: What to do names a criterion shared by two examples once (its trust key), with the first example', () => {
+  const t = { state: 'unreliable', n: 10, agree: 6 };
+  const m = trustReportModel({ criteria: [
+    { exampleId: 1, exampleName: 'A', criterionId: 'k_1', text: 'Same', trust: t, trustKey: 'fp|m' },
+    { exampleId: 2, exampleName: 'B', criterionId: 'k_9', text: 'Same', trust: t, trustKey: 'fp|m' },
+    { exampleId: 3, exampleName: 'C', criterionId: 'k_3', text: 'Other', trust: { state: 'confirm', n: 0, agree: 0 } },
+    { exampleId: 4, exampleName: 'D', criterionId: 'k_4', text: 'Other', trust: { state: 'confirm', n: 0, agree: 0 } }] });
+  assert.deepEqual(m.todo.map((x) => [x.kind, x.exampleId, x.criterionId]), [['fix', 1, 'k_1'], ['confirm', 3, 'k_3'], ['confirm', 4, 'k_4']],
+    'rows without a trust key (no model read) stay apart');
+});
+
+test('fix round 1: answersText is the one shared "N answer(s)"', () => {
+  assert.equal(answersText(1), '1 answer');
+  assert.equal(answersText(14), '14 answers');
 });
