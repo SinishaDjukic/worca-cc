@@ -22,7 +22,8 @@ const cols = (db, t) => db.prepare(`PRAGMA table_info(${t})`).all().map((c) => c
 const stamp = (db) => db.prepare('PRAGMA user_version').get().user_version;
 const TABLES = {
   wf_test_examples: ['id', 'workflow_id', 'name', 'request', 'answers', 'otherwise', 'basics', 'checks', 'tries', 'note',
-    'from_pipeline', 'from_use', 'from_verdict', 'created_by', 'created_at', 'updated_at'],
+    'from_pipeline', 'from_use', 'from_verdict', 'created_by', 'created_at', 'updated_at',
+    'criteria', 'judge'],   // the last two are v99 (workflow tests Part 4)
   wf_test_example_files: ['example_id', 'name', 'data', 'sha256', 'size'],
   wf_test_runs: ['id', 'workflow_id', 'kind', 'a_use', 'b_use', 'a_fp', 'b_fp', 'example_ids', 'tries', 'quick', 'cap_usd',
     'connectors', 'status', 'stop_reason', 'stop_detail', 'started_by', 'created_at', 'finished_at'],

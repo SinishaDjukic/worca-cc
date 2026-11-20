@@ -24,6 +24,8 @@ import { maybeMigrateFromFs } from './migrate-fs-to-db.mjs';
 import { vcsAtUpgrade } from './project-kind.mjs';
 import { backfillHumanHours } from './human-backfill.mjs';
 import { SEED_TEMPLATES, NODE_ID_MAP, FB_WIRE_MAP } from './graph/seed-templates.mjs';
+import { WORKFLOW_REVISIONS_DDL, WORKFLOW_TESTS_DDL, WORKFLOW_TEST_PROJECTS_DDL, WORKFLOW_TEST_CRITERIA_DDL, WORKFLOW_TEST_TABLES,
+  WORKFLOW_TEST_CRITERIA_COLUMNS } from './workflow-tests/schema.mjs';
 import { AGENT_TUNABLES } from '../shared/graph/validate.mjs';
 import { pickTemplateExtras } from '../shared/graph/template.mjs';
 import { GRAPH_PRESENTATION_WORKFLOW, presentationGraphFingerprint, PRESENTATION_SHIPPED_FINGERPRINTS }
@@ -64,7 +66,7 @@ const OPEN_BACKOFF_MS = 15;
 /** Latest schema version. Bump + append a new migration step when the DDL grows.
  *  Exported so migration tests assert "reached the module's current version"
  *  instead of hardcoding the number — a schema bump then touches no test file. */
-export const SCHEMA_VERSION = 98;
+export const SCHEMA_VERSION = 99;
 
 /** store_meta row holding the install's default guardrail set id (JSON string). */
 export const GUARDRAILS_DEFAULT_META_KEY = 'guardrails:default';
@@ -884,6 +886,7 @@ const INCREMENTAL_COLUMNS = {
                             live_version_no: 'INTEGER' },   // v96: the named version new runs use (NULL = the row itself)
   wf_test_tries:          { start_commit: 'TEXT', disk_bytes: 'INTEGER',   // v98 (workflow tests 3a): a project try's start and checkout size
                             setup: 'TEXT', changes: 'TEXT' },              // v98: its setup run (JSON) and its change list (JSON)
+  ...WORKFLOW_TEST_CRITERIA_COLUMNS,   // v99 (workflow tests Part 4): wf_test_examples.criteria, .judge
   config_workflow_nodes:  { ask_questions: 'INTEGER', subagent_model: 'TEXT',   // v25: sub-agent model policy
                             roles: 'TEXT' },   // v84: JSON { roleKey: { model?, effort? } }, a role-review node's per-role picks; NULL = none
   ask_run_links:          { comment_ids: 'TEXT' },        // v22: JSON array of dc_ ids pending at launch
@@ -1521,26 +1524,6 @@ CREATE INDEX IF NOT EXISTS req_attachments_owner ON req_attachments(owner_type, 
 CREATE UNIQUE INDEX IF NOT EXISTS req_attachments_sha ON req_attachments(owner_type, owner_id, sha256);
 `;
 
-// v96 (plans/workflow-tests-plan.md, #721 workflow part): every save keeps the state it replaced (version_no NULL,
-// the last 50 per workflow) and Save version keeps a numbered state (never pruned). Append-only and FK-free like
-// ask_cost_ledger, so history outlives a deleted workflows row. `graph` = {nodes, wires, canvas?, codeGraph?}.
-const WORKFLOW_REVISIONS_DDL = `
-CREATE TABLE IF NOT EXISTS workflow_revisions (
-  id          INTEGER PRIMARY KEY AUTOINCREMENT,
-  workflow_id TEXT NOT NULL,
-  version_no  INTEGER,
-  note        TEXT,
-  name        TEXT NOT NULL,
-  domain      TEXT,
-  graph       TEXT NOT NULL,
-  fingerprint TEXT NOT NULL,
-  parts       TEXT NOT NULL DEFAULT '[]',
-  source      TEXT NOT NULL,
-  made_by     TEXT,
-  created_at  TEXT NOT NULL
-);
-CREATE INDEX IF NOT EXISTS idx_workflow_revisions_wf ON workflow_revisions (workflow_id, id);
-CREATE UNIQUE INDEX IF NOT EXISTS idx_workflow_revisions_version ON workflow_revisions (workflow_id, version_no) WHERE version_no IS NOT NULL;`;
 // v78 Requirements A3 (plans/requirements-a3-design.md §3, D14): the Feature chat of a feature. A product owner's message
 // row is written before its call, Worca's row (text, drafts, proposals, cost, model, or an error) after it. Reconcile-safe:
 // IF NOT EXISTS + INCREMENTAL_TABLES; req_cost_ledger.helper_message_id lives in INCREMENTAL_COLUMNS.
@@ -1635,106 +1618,6 @@ CREATE TABLE IF NOT EXISTS design_pictures (
 CREATE INDEX IF NOT EXISTS design_pictures_design ON design_pictures(design_id, round, id);
 `;
 
-// v97 (plans/workflow-tests-part2-plan.md D31): workflow tests. Examples (+ their files as BLOBs), test runs, tries and
-// the tries a run shows (its own and the ones it reused). FK-free like workflow_revisions: a deleted workflow keeps its
-// examples, and they come back with a workflow saved again under the same id.
-const WORKFLOW_TESTS_DDL = `
-CREATE TABLE IF NOT EXISTS wf_test_examples (
-  id            INTEGER PRIMARY KEY AUTOINCREMENT,
-  workflow_id   TEXT NOT NULL,
-  name          TEXT NOT NULL,
-  request       TEXT NOT NULL DEFAULT '',
-  answers       TEXT NOT NULL DEFAULT '[]',
-  otherwise     TEXT NOT NULL DEFAULT 'pick',
-  basics        TEXT NOT NULL DEFAULT '{}',
-  checks        TEXT NOT NULL DEFAULT '[]',
-  tries         INTEGER NOT NULL DEFAULT 3,
-  note          TEXT,
-  from_pipeline TEXT,
-  from_use      TEXT,
-  from_verdict  TEXT,
-  created_by    TEXT,
-  created_at    TEXT NOT NULL,
-  updated_at    TEXT NOT NULL
-);
-CREATE INDEX IF NOT EXISTS idx_wf_test_examples_wf ON wf_test_examples (workflow_id, id);
-CREATE TABLE IF NOT EXISTS wf_test_example_files (
-  example_id INTEGER NOT NULL,
-  name       TEXT NOT NULL,
-  data       BLOB NOT NULL,
-  sha256     TEXT NOT NULL,
-  size       INTEGER NOT NULL,
-  PRIMARY KEY (example_id, name)
-);
-CREATE TABLE IF NOT EXISTS wf_test_runs (
-  id          INTEGER PRIMARY KEY AUTOINCREMENT,
-  workflow_id TEXT NOT NULL,
-  kind        TEXT NOT NULL DEFAULT 'compare',
-  a_use       TEXT,
-  b_use       TEXT NOT NULL,
-  a_fp        TEXT,
-  b_fp        TEXT NOT NULL,
-  example_ids TEXT NOT NULL DEFAULT '[]',
-  tries       INTEGER NOT NULL,
-  quick       TEXT,
-  cap_usd     REAL,
-  connectors  TEXT NOT NULL DEFAULT 'pretend',
-  status      TEXT NOT NULL,
-  stop_reason TEXT,
-  stop_detail TEXT,
-  started_by  TEXT,
-  created_at  TEXT NOT NULL,
-  finished_at TEXT
-);
-CREATE INDEX IF NOT EXISTS idx_wf_test_runs_wf ON wf_test_runs (workflow_id, id);
-CREATE TABLE IF NOT EXISTS wf_test_tries (
-  id          INTEGER PRIMARY KEY AUTOINCREMENT,
-  run_id      INTEGER NOT NULL,
-  workflow_id TEXT NOT NULL,
-  example_id  INTEGER NOT NULL,
-  use_ref     TEXT NOT NULL,
-  fp          TEXT NOT NULL,
-  example_fp  TEXT NOT NULL,
-  try_no      INTEGER NOT NULL,
-  mock        INTEGER NOT NULL DEFAULT 0,
-  connectors  TEXT NOT NULL DEFAULT 'pretend',
-  status      TEXT NOT NULL,
-  run_key     TEXT,
-  pipeline_id TEXT,
-  verdict     TEXT,
-  cost_usd    REAL NOT NULL DEFAULT 0,
-  started_at  TEXT,
-  finished_at TEXT
-);
-CREATE INDEX IF NOT EXISTS idx_wf_test_tries_reuse ON wf_test_tries (workflow_id, example_id, use_ref, fp, example_fp);
-CREATE INDEX IF NOT EXISTS idx_wf_test_tries_run ON wf_test_tries (run_id);
-CREATE TABLE IF NOT EXISTS wf_test_run_tries (
-  run_id INTEGER NOT NULL,
-  try_id INTEGER NOT NULL,
-  side   TEXT NOT NULL,
-  PRIMARY KEY (run_id, try_id)
-);`;
-
-// v98 (plans/workflow-tests-part3a-plan.md D41, D53): an example's project and pinned start point. FK-free like the v78
-// tables. `changes` = the person's uncommitted changes at save time, as a binary patch (NULL = none); `start_commit` = the
-// commit tries start from (start_sha itself, or Worca's commit of start_sha + changes in its copy of the project).
-// `project_name` = the project's name when the start was pinned: shown when the project is no longer registered, never the
-// key (3a Task 8 review). Added after the rung (then v81) was first cut, so INCREMENTAL_COLUMNS repairs a table made without it.
-const WORKFLOW_TEST_PROJECTS_DDL = `
-CREATE TABLE IF NOT EXISTS wf_test_example_projects (
-  example_id     INTEGER PRIMARY KEY,
-  project_key    TEXT NOT NULL,
-  start_sha      TEXT NOT NULL,
-  start_ref      TEXT,
-  start_at       TEXT NOT NULL,
-  start_commit   TEXT NOT NULL,
-  changes        BLOB,
-  changes_sha256 TEXT,
-  setup_cmd      TEXT,
-  updated_at     TEXT NOT NULL,
-  project_name   TEXT
-);`;
-
 const INCREMENTAL_TABLES = {
   config_workflow_wires: CONFIG_WORKFLOW_WIRES_DDL,
   step_questions:    STEP_QUESTIONS_DDL,
@@ -1774,13 +1657,7 @@ const INCREMENTAL_TABLES = {
   run_groups:        RUN_GROUPS_DDL,
   run_group_members: RUN_GROUPS_DDL,
   ask_chat_groups:   ASK_CHAT_GROUPS_DDL,      // v76 (#948 s3)
-  workflow_revisions: WORKFLOW_REVISIONS_DDL,  // v96 (workflow tests Part 1, #721)
-  wf_test_examples:      WORKFLOW_TESTS_DDL,   // v97 (workflow tests Part 2)
-  wf_test_example_files: WORKFLOW_TESTS_DDL,
-  wf_test_runs:          WORKFLOW_TESTS_DDL,
-  wf_test_tries:         WORKFLOW_TESTS_DDL,
-  wf_test_run_tries:     WORKFLOW_TESTS_DDL,
-  wf_test_example_projects: WORKFLOW_TEST_PROJECTS_DDL,   // v98 (workflow tests 3a)
+  ...WORKFLOW_TEST_TABLES,   // v96–v99 (workflow tests, src/core/workflow-tests/schema.mjs)
   night_decisions:   NIGHT_DECISIONS_DDL,
   chat_conversations: CHAT_CONVERSATIONS_DDL,
   chat_controls: CHAT_CONVERSATIONS_DDL,
@@ -3051,6 +2928,9 @@ export function migrate(db) {
     // req_export_setups / req_export_links and adds run_groups.name_source and ask_messages.engine, the v82, v85 and v88
     // rungs run, and the v96 / v97 / v98 DDL are IF NOT EXISTS.
     if (current < 98) { db.exec(WORKFLOW_TEST_PROJECTS_DDL); repairSchemaGaps(db, schemaGaps(db)); }
+    // v99 workflow tests Part 4 (your criteria, checked by Worca). IF NOT EXISTS; the repair adds wf_test_examples.criteria and
+    // .judge (INCREMENTAL_COLUMNS) to the v97 table, as v98 did for wf_test_tries.
+    if (current < 99) { db.exec(WORKFLOW_TEST_CRITERIA_DDL); repairSchemaGaps(db, schemaGaps(db)); }
     db.exec(`PRAGMA user_version = ${SCHEMA_VERSION}`);
     db.exec('COMMIT');
   } catch (err) {

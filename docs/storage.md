@@ -343,6 +343,26 @@ Behind the flag `workflowTests`, like v97. FK-free like the v97 tables.
   try in the per-user temp folder; Worca removes it when the try ends, and at the next start it removes any a crash left
   that is older than a day.
 
+### Your criteria (v99)
+
+Behind the flag `workflowTests`, like v97. FK-free. The DDL of every workflow-tests table lives in
+`src/core/workflow-tests/schema.mjs`.
+
+- `wf_test_examples` gains `criteria` (JSON: up to 12 `{ id, text }` sentences a good result makes true) and `judge` (JSON
+  `{ model }`: the AI model that checks them, chosen per example). Neither is part of the example fingerprint: changing them
+  checks the stored tries again and never runs the workflow again.
+- `wf_test_judgements`: one row per answer of the checking model: a try's criterion (`purpose 'try'`), a Check the checker card
+  (`real`, `planted`) and its repeats (`again`, `padded`), or a pair of tries (`pair`, with `winner`). It keeps the criterion's
+  fingerprint (its words, normalised) and the model, met or not (NULL = not counted, with `error`), the reason, the proof quote
+  and whether Worca found it in the result, and what the call cost.
+- `wf_test_judge_answers`: the person's Agree or Disagree on one answer (one per person). They decide how far Worca's checking
+  of a criterion is trusted.
+- `wf_test_checker_rounds`: one Check the checker round: the criterion, the model, the good result it started from, its status.
+- `wf_test_liked`: an example's result you liked (a text, or a project example's changes), at most 2 MB.
+- `wf_test_judge_ledger`: every paid Part 4 call (checking criteria, pairs, Check the checker, suggestions, clearer words).
+  It counts toward the spending limit and toward the test's own cost limit; Statistics does not show it. Deleting an example
+  never deletes these rows.
+
 ### Run groups (v65)
 
 The Runs list's groups (runs redesign §3.3) are the one new named state of the runs redesign:
