@@ -67,12 +67,13 @@ export function createChecker(deps = {}) {
     };
     const mainJs = [];
     for (const [i, c] of cards.entries()) mainJs.push(await ask(c.text, i === 0 ? 'real' : 'planted', i, { how: c.how, excerpt: clip(c.excerpt) }));
+    // A card with no verdict (limit, failed, no proof, unreadable) is not a verdict the person can answer: the round fails now,
+    // before the repeats and filler are asked (no further paid calls); the calls already made stay booked.
+    const bad = mainJs.find((j) => j.met === null);
+    if (bad) { cs.updateRound(round.id, { status: 'failed', detail: NOT_CHECKED[bad.error] || NOT_CHECKED.failed }); return; }
     for (const [i, c] of cards.entries()) { await ask(c.text, 'again', i, null); await ask(c.text, 'again', i, null); }
     for (const [i, c] of cards.entries()) await ask(padded(c.text), 'padded', i, null);
-    // A card with no verdict (limit, failed, no proof, unreadable) is not a verdict the person can answer: the round fails, its calls stay booked.
-    const bad = mainJs.find((j) => j.met === null);
-    if (bad) cs.updateRound(round.id, { status: 'failed', detail: NOT_CHECKED[bad.error] || NOT_CHECKED.failed });
-    else cs.updateRound(round.id, { status: 'ready' });
+    cs.updateRound(round.id, { status: 'ready' });
   }
 
   async function start({ workflowId, exampleId, criterionId, by = null }) {

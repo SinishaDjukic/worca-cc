@@ -59,11 +59,14 @@ export function registerCriteriaRoutes(app, { runner = null, criteriaJudge = nul
     const j = judgement(req);
     const agree = req.body ? req.body.agree : undefined;
     if (agree !== true && agree !== false && agree !== null) throw store.testError('agree must be true, false or null', 'BAD_REQUEST');
-    if (j.roundId != null) {   // a Check the checker card is answered through its round, and only when the round is ready
+    if (j.roundId != null) {   // a Check the checker card goes through its round: same rules, and the round is done the same way
       const r = cs.readRound(j.roundId);
-      if (!r || (r.status !== 'ready' && r.status !== 'done')) throw store.testError('Worca is not done with this round', 'BUSY');
+      if (!r) throw store.testError(`no round ${j.roundId}`, 'NOT_FOUND');
+      if (agree === null) throw store.testError('an answer on a Check the checker card cannot be taken back', 'BAD_REQUEST');
+      await checker.answer(r, j.id, agree, { by: by(req) });
+    } else {
+      cs.setAnswer(j.id, { agree, by: by(req) });
     }
-    cs.setAnswer(j.id, { agree, by: by(req) });
     res.json({ answer: cs.answerOf(j.id, by(req)), trust: j.purpose === 'pair' ? null : trustFor(j.workflowId, j.fp, j.model) });
   });
   // D87, D105: the Claude models that can check criteria, and the suggested one.

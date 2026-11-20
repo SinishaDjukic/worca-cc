@@ -76,17 +76,22 @@ export function holdTryOrch(workflowTest, orch, runKey) {
  * D27, review M4: a test this restart cut short is stopped; its tries keep their cost and their runs lose their resume
  * points. 3b, Task 5 (security review M2): Claude staging folders a killed Worca left in the OS temp folder (they may hold a
  * Pretend try's carried sign-in helpers); only folders older than a day, as another Worca may share the folder.
- * @returns {{runs: number, stagingDirs: number}} what was stopped and removed (0 when a sweep failed)
+ * M18: a Check the checker round a restart left `making` is failed too, so the page stops polling it.
+ * @returns {{runs: number, rounds: number, stagingDirs: number}} what was stopped and removed (0 when a sweep failed)
  */
 export function recoverTestsAtBoot({ tmpDir } = {}) {
   const out = { runs: 0, rounds: 0, stagingDirs: 0 };
   try {
     out.runs = recoverInterruptedTestRuns().runs;
     if (out.runs) console.log(`[worca-ui] workflow tests: ${out.runs} interrupted test(s) stopped`);
+  } catch (err) {
+    console.error(`[worca-ui] workflow tests sweep failed: ${err && err.message ? err.message : err}`);
+  }
+  try {
     out.rounds = recoverRounds();
     if (out.rounds) console.log(`[worca-ui] workflow tests: ${out.rounds} unfinished check-the-checker round(s) stopped`);
   } catch (err) {
-    console.error(`[worca-ui] workflow tests sweep failed: ${err && err.message ? err.message : err}`);
+    console.error(`[worca-ui] check-the-checker round recovery failed: ${err && err.message ? err.message : err}`);
   }
   try {
     out.stagingDirs = sweepStaleStagingDirs({ dir: tmpDir }).length;

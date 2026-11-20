@@ -98,7 +98,7 @@ const LONG_WORD_RE = /\p{L}{6,}/gu;
  *  Its proof is the first sentence with that word, else the result's first sentence, so it is always found in the result. */
 export function mockJudgement(criterion, text) {
   const t = String(text ?? '');
-  const sentences = t.split(/(?<=[.!?])\s+|\n+/).map((s) => s.trim()).filter((s) => s.length >= 8);
+  const sentences = t.split(/(?<=[.!?])\s+|\n+/).map((s) => s.trim()).filter((s) => s.length >= 8 && !s.startsWith('#'));
   const low = t.toLowerCase();
   const word = [...new Set(String(criterion ?? '').toLowerCase().match(LONG_WORD_RE) || [])].find((w) => low.includes(w)) || null;
   const first = sentences[0] || t.trim();

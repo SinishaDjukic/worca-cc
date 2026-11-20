@@ -378,3 +378,26 @@ test('the generic answer route refuses a verdict of a round that is not ready; t
   cs.updateRound(round.id, { status: 'ready' });
   assert.equal((await call('POST', `${WF}/judgements/${j.id}/answer`, { agree: true })).status, 200);
 });
+
+test('the generic answer route sends a round card through the round: no undo, no repeats, no empty verdicts, and the round is done', async () => {
+  const ex = store.listExamples('wf_api_c')[0];
+  const round = cs.createRound({ workflowId: 'wf_api_c', exampleId: ex.id, criterionId: ex.criteria[0].id, fp: 'f', model: 'm', source: {} });
+  cs.updateRound(round.id, { status: 'ready' });
+  const mk = (purpose, met) => cs.insertJudgement({ workflowId: 'wf_api_c', exampleId: ex.id, criterionId: ex.criteria[0].id, fp: 'f', model: 'm', purpose,
+    roundId: round.id, card: 0, j: { met, reason: 'r', proof: 'p', proofFound: met !== null, costUsd: 0, ms: 1 } });
+  const again = mk('again', true);
+  const empty = mk('real', null);
+  assert.notEqual((await call('POST', `${WF}/judgements/${again.id}/answer`, { agree: true })).status, 200);
+  assert.equal((await call('POST', `${WF}/judgements/${empty.id}/answer`, { agree: true })).status, 400);
+  const card = mk('planted', false);
+  assert.equal((await call('POST', `${WF}/judgements/${card.id}/answer`, { agree: null })).status, 400);
+  const ok = await call('POST', `${WF}/judgements/${card.id}/answer`, { agree: true });
+  assert.equal(ok.status, 200);
+  assert.equal(ok.body.answer, true);
+  // a round whose only card is answered is done, the same as through the round route
+  const r2 = cs.createRound({ workflowId: 'wf_api_c', exampleId: ex.id, criterionId: ex.criteria[0].id, fp: 'f2', model: 'm', source: {} });
+  cs.updateRound(r2.id, { status: 'ready' });
+  const only = cs.insertJudgement({ workflowId: 'wf_api_c', exampleId: ex.id, criterionId: ex.criteria[0].id, fp: 'f2', model: 'm', purpose: 'real', roundId: r2.id, card: 0, j: { met: true, reason: 'r', proof: 'p', proofFound: true, costUsd: 0, ms: 1 } });
+  assert.equal((await call('POST', `${WF}/judgements/${only.id}/answer`, { agree: true })).status, 200);
+  assert.equal(cs.readRound(r2.id).status, 'done');
+});

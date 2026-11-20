@@ -227,3 +227,30 @@ test('a failed round has its own words when started again', async () => {
   assert.equal(round.status, 'failed');
   await assert.rejects(checker.answer(round, 1, true, {}), { message: 'This round did not finish. Start a new round.' });
 });
+
+test('a one-paragraph good result (with or without a heading) plants without emptying the text, and the mock round is ready', async () => {
+  for (const text of ['Cut export tickets by 60% within one quarter, counted by the Export tag.', '## Metric\n\nCut export tickets by 60% within one quarter, counted by the Export tag.']) {
+    const d = deterministicPlants(text);
+    assert.ok(d.length >= 3 && d.every((x) => x.text !== text && /[A-Za-z]/.test(x.text.replace(/^#.*$/gm, ''))), `3 usable plants for: ${text.slice(0, 20)}`);
+    const { ex, checker } = setup({ extra: { subjectOf: async () => text, mock: () => true,
+      judgeCriterion: (a) => realJudge(a, { mock: () => true }) } });
+    const round = await checker.start({ workflowId: 'wf', exampleId: ex.id, criterionId: ex.criteria[0].id });
+    assert.equal(cs.readRound(round.id).status, 'ready', cs.readRound(round.id).detail);
+    assert.equal(checker.view(cs.readRound(round.id), { by: 'x' }).cards.length, 4);
+  }
+});
+
+test('a main card with no verdict stops the round before the repeats and filler are asked', async () => {
+  let n = 0;
+  const { ex, checker } = setup({ extra: { judgeCriterion: async ({ book }) => { n += 1; book(0.01, 'billed');
+    return n === 2 ? { met: null, error: 'unreadable', proofFound: false, costUsd: 0.01, ms: 1 } : { met: true, reason: 'r', proof: 'p', proofFound: true, costUsd: 0.01, ms: 1 }; } } });
+  const round = await checker.start({ workflowId: 'wf', exampleId: ex.id, criterionId: ex.criteria[0].id });
+  assert.equal(cs.readRound(round.id).status, 'failed');
+  assert.equal(n, 4, 'only the four main cards were asked');
+});
+
+test('applyPlants compares with the original loosely: case and spacing only does not count as broken', () => {
+  const ex0 = 'Cut export tickets by 60% within one quarter.';
+  const reply = { excerpt: ex0, broken: [{ how: 'a', text: '  CUT export  tickets by 60% within one quarter. ' }, { how: 'b', text: 'x one.' }, { how: 'c', text: 'y two.' }] };
+  assert.equal(applyPlants(GOOD.replace('Cut export tickets by 60% within one quarter, counted by the Export tag.', ex0), reply), null);
+});

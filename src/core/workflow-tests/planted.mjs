@@ -28,9 +28,16 @@ export function deterministicPlants(text) {
   }
   const quote = 'As one customer put it: "I would pay twice as much for this tomorrow."';
   out.push({ how: 'a made-up quote added', excerpt: quote, text: [...p.slice(0, 1), quote, ...p.slice(1)].join('\n\n') });
-  const body = p.findIndex((x) => x.trim() && !/^#/.test(x.trim()));
-  if (body >= 0) out.push({ how: 'a part removed', excerpt: p[body], text: p.filter((_, i) => i !== body).join('\n\n') });
-  return out.filter((x) => x.text !== t);
+  const content = p.map((x, i) => i).filter((i) => p[i].trim() && !/^#/.test(p[i].trim()));
+  // Removing a part needs another content paragraph to stay; a one-paragraph result is never emptied.
+  if (content.length >= 2) out.push({ how: 'a part removed', excerpt: p[content[0]], text: p.filter((_, i) => i !== content[0]).join('\n\n') });
+  const usable = (x) => x.text !== t && /\S/.test(x.text.replace(/^#.*$/gm, ''));
+  const good = out.filter(usable);
+  if (good.length < 3 && content.length >= 1) {   // a plain change that keeps the text: the main point replaced by a vague one
+    const vague = 'Things should get better for customers over time.';
+    good.push({ how: 'only a vague goal', excerpt: vague, text: p.map((x, i) => (i === content[0] ? vague : x)).join('\n\n') });
+  }
+  return good.filter(usable);
 }
 
 /** The system prompt naming this call's exact fence tags (no tag: the plain names). */
@@ -69,7 +76,7 @@ export function applyPlants(result, reply) {
     at = lines.slice(0, i).join('\n').length + (i ? 1 : 0);
     len = lines[i].length;
   }
-  const broken = reply.broken.filter((b) => b.text.trim() !== reply.excerpt.trim());   // a broken passage equal to the original breaks nothing
+  const broken = reply.broken.filter((b) => normLoose(b.text) !== normLoose(reply.excerpt));   // a broken passage equal to the original breaks nothing
   if (broken.length < 3) return null;
   return broken.map((b) => ({ how: b.how, excerpt: b.text, text: `${t.slice(0, at)}${b.text}${t.slice(at + len)}` }));
 }
