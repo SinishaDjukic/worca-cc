@@ -364,7 +364,7 @@ test('Archive is disabled with a tooltip when the list row reports retained work
   const text = doc.getElementById('viewer').textContent;
   assert.match(text, /pre-commit hook failed/, "git's own stderr, verbatim");
   assert.match(text, /git -C '\/tmp\/wt' add -A/, 'the copy-paste recovery block');
-  assert.doesNotMatch(doc.querySelector('#hist-detail .hd-glance .rd-sheet').textContent, /worktree/i);
+  assert.doesNotMatch(doc.querySelector('#hist-detail .hd-glance .rd-sheet-main').textContent, /worktree/i, 'the card says nothing of a worktree (the Overview side column has its own WORKTREE row)');
 });
 
 test('kept work on a stopped or a failed saved run: the head offers Discard and Apply to branch, the route its patch', async () => {
@@ -509,7 +509,7 @@ test('tabs render with badges; Details opens on Overview, and a tab route opens 
 
   assert.deepEqual(
     tabsOf(doc).map((b) => b.dataset.sec),
-    ['overview', 'diff', 'actions', 'workflow', 'clarify', 'logs', 'agents'],   // one order on both run pages: results, then how it ran
+    ['overview', 'task', 'diff', 'actions', 'workflow', 'clarify', 'logs', 'agents'],   // one order on both run pages: results, then how it ran
   );
   // filesNew(1) + filesChanged(13). NEVER + filesDeleted: results.mjs:32 buckets
   // 'D' rows into changedFiles (NEW_STATUS is {A,C}) while :29 ALSO counts them in
@@ -530,7 +530,7 @@ test('tabs render with badges; Details opens on Overview, and a tab route opens 
   const bare = await bootDetail();
   await openDetail(bare, 'details');
   const bareDoc = bare.window.document;
-  assert.deepEqual(tabsOf(bareDoc).map((b) => b.dataset.sec), ['overview', 'diff', 'actions', 'workflow', 'agents']);
+  assert.deepEqual(tabsOf(bareDoc).map((b) => b.dataset.sec), ['overview', 'task', 'diff', 'actions', 'workflow', 'agents']);
   assert.equal(secOf(bareDoc, 'clarify'), null, 'no Q&A -> no Clarify section either');
   assert.equal(secOf(bareDoc, 'logs'), null, 'no live-log artifact -> no Logs section either');
   assert.ok(bareDoc.querySelector('#hist-detail .hd-tab[data-sec="overview"]').classList.contains('active'));
@@ -636,16 +636,19 @@ test('with a saved run open, the popup for that run names the step from its save
 });
 
 // ---------------------------------------------------------------------------
-// The summary card: the checkout's Actions row (Simple: a plain row with Discard / Unlink), the retained notice
+// The summary card: the Local copy row (every level: a plain row with Discard / Unlink), the retained notice
 // ---------------------------------------------------------------------------
 
 // Seeded "now": whenLabel then reads HH:MM (today), even near midnight.
 const checkoutRow = (member = {}) => ({ ...ROW, checkout: { members: [{ projectKey: KEY, worktreeDir: '/tmp/co', branch: ROW.branch,
   at: new Date().toISOString(), policy: 'on-demand', setup: { status: 'ok' }, ...member }] } });
 const glanceOf = (doc) => doc.querySelector('#hist-detail .hd-glance');
+// One level: the card lists no tab rows; its result column holds only the Local copy group.
 const actionsRowOf = (doc) => doc.querySelector('#hist-detail .hd-glance .rd-result .rd-srow[data-rd-tab="actions"]');
-const actionsValueOf = (doc) => { const v = actionsRowOf(doc)?.querySelector('.rd-srow-v'); return v ? v.textContent : ''; };
 const simpleRowOf = (doc) => doc.querySelector('#hist-detail .hd-glance .rd-result .rd-srow-checkout');
+const checkoutTextOf = (doc) => simpleRowOf(doc)?.querySelector('.rd-srow-tx').textContent ?? '';
+// The card's main column: the Overview side column carries its own WORKTREE row.
+const cardMainOf = (doc) => doc.querySelector('#hist-detail .hd-glance .rd-sheet-main');
 const buttonsOf = (el) => [...el.querySelectorAll('button')].map((b) => b.textContent);
 const atSimple = (ctx) => { ctx.window.document.documentElement.dataset.level = 'simple'; };
 const atAdvanced = (ctx) => { ctx.window.document.documentElement.dataset.level = 'advanced'; };
@@ -661,7 +664,7 @@ function blurOnDisable(btn) {
   });
 }
 
-test('checkout: no box on the glance; the Actions row says where the local copy stands; Archive stays blocked', async () => {
+test('checkout: no box on the card; at Advanced too the Local copy row says where it stands; Archive stays blocked', async () => {
   const ctx = await bootDetail({ rows: [checkoutRow()] });
   atAdvanced(ctx);
   await openDetail(ctx, '');
@@ -669,29 +672,31 @@ test('checkout: no box on the glance; the Actions row says where the local copy 
   const doc = ctx.window.document;
   assert.equal(keptShown(doc), false);
   assert.equal(keptBtn(doc, 'apply-kept'), null);
-  assert.match(actionsValueOf(doc), /^Local copy open · since \d{1,2}:\d{2}$/);
-  const v = actionsRowOf(doc).querySelector('.rd-srow-v');
-  assert.equal(actionsRowOf(doc).lastElementChild, v, 'the value is the row\'s last child, before the CSS chevron');
-  assert.equal(simpleRowOf(doc), null, 'the tab row owns it at Advanced');
-  assert.doesNotMatch(glanceOf(doc).textContent, /worktree/i);
+  assert.equal(actionsRowOf(doc), null, 'no Actions tab row on the card');
+  assert.match(checkoutTextOf(doc), /^Local copy open · since \d{1,2}:\d{2}$/);
+  assert.deepEqual(buttonsOf(simpleRowOf(doc)), ['Discard']);
+  assert.doesNotMatch(cardMainOf(doc).textContent, /worktree/i);
+  assert.doesNotMatch(glanceOf(doc).querySelector('.hd-result').textContent, /worktree/i);
   const archive = doc.querySelector('#hist-detail .hd-archive');
   assert.equal(archive.disabled, true);
   assert.equal(archive.title, 'Close the local copy in Actions first');
 });
 
-test('checkout row: before Check out it offers the try; a linked folder reads as yours', async () => {
+test('checkout row: before Check out there is no row (the head offers Try it); a linked folder reads as yours', async () => {
   const ctx = await bootDetail({ rows: [ROW] });
   atAdvanced(ctx);
   await openDetail(ctx, '');
   await settle(ctx.window, 6);
   const doc = ctx.window.document;
-  assert.equal(actionsValueOf(doc), 'Try it on this machine');
+  assert.equal(simpleRowOf(doc), null);
+  assert.ok(headOf(doc, 'try'), 'the head offers Try it');
   await deliverRows(ctx, [checkoutRow({ worktreeDir: '/Users/ada/app', external: true, policy: 'external' })]);
-  assert.match(actionsValueOf(doc), /^Linked to your folder · since \d{1,2}:\d{2}$/);
-  assert.equal(actionsRowOf(doc).querySelectorAll('.rd-srow-v').length, 1, 'patched in place, never stacked');
+  assert.match(checkoutTextOf(doc), /^Linked to your folder · since \d{1,2}:\d{2}$/);
+  assert.deepEqual(buttonsOf(simpleRowOf(doc)), ['Unlink']);
+  assert.equal(doc.querySelectorAll('#hist-detail .hd-glance .rd-result .rd-srow-checkout').length, 1, 'patched in place, never stacked');
 });
 
-test('checkout row: a workspace with two local copies; at Simple one Discard per member', async () => {
+test('checkout row: a workspace with two local copies; one Discard per member at every level', async () => {
   const ws = { ...ROW, target: 'workspace', projectKey: 'workspaces/ws1', projectDir: null,
     members: [{ memberKey: 'app-11111111', name: 'App' }, { memberKey: 'api-22222222', name: 'API' }],
     checkout: { members: [
@@ -705,7 +710,8 @@ test('checkout row: a workspace with two local copies; at Simple one Discard per
   go(ctx.window, `history/workspaces/ws1/${ROW.id}`);
   await settle(ctx.window, 6);
   const doc = ctx.window.document;
-  assert.match(actionsValueOf(doc), /^2 local copies open · since /);
+  assert.match(checkoutTextOf(doc), /^2 local copies open · since /);
+  assert.deepEqual(buttonsOf(simpleRowOf(doc)), ['Discard app', 'Discard api']);
   atSimple(ctx);
   await deliverRows(ctx, [structuredClone(ws)]);
   const row = simpleRowOf(doc);
@@ -718,7 +724,7 @@ test('checkout row: a workspace with two local copies; at Simple one Discard per
   assert.match(css, /\.rd-srow-checkout \.rd-srow-tx\{flex:1 1 \d+em;\}/);
 });
 
-test('checkout row: retained work shows the kept head and no Actions row value', async () => {
+test('checkout row: retained work shows the kept head and no Local copy row', async () => {
   const ctx = await bootDetail({ rows: [retainedRow()] });
   atAdvanced(ctx);
   await openDetail(ctx, '');
@@ -726,8 +732,8 @@ test('checkout row: retained work shows the kept head and no Actions row value',
   const doc = ctx.window.document;
   assert.equal(keptShown(doc), true);
   assert.ok(keptBtn(doc, 'apply-kept'));
-  assert.ok(actionsRowOf(doc), 'the Actions tab row is there');
-  assert.equal(actionsRowOf(doc).querySelector('.rd-srow-v'), null);
+  assert.equal(actionsRowOf(doc), null, 'no Actions tab row on the card');
+  assert.equal(simpleRowOf(doc), null, 'no checkout, no Local copy row');
 });
 
 test('Simple: Discard on the checkout row uses the Actions tab\'s confirm and DELETE, then the row goes', async () => {
@@ -744,11 +750,11 @@ test('Simple: Discard on the checkout row uses the Actions tab\'s confirm and DE
   await openDetail(ctx, '');
   await settle(ctx.window, 6);
   const doc = ctx.window.document;
-  assert.equal(actionsRowOf(doc), null, 'no Actions tab at Simple');
+  assert.equal(actionsRowOf(doc), null, 'no Actions tab row on the card');
   const row = simpleRowOf(doc);
   assert.match(row.textContent, /^Local copy open · since /);
   assert.deepEqual(buttonsOf(row), ['Discard']);
-  assert.doesNotMatch(glanceOf(doc).textContent, /worktree/i);
+  assert.doesNotMatch(cardMainOf(doc).textContent, /worktree/i);
   click(ctx.window, row.querySelector('button'));
   await settle(ctx.window, 2);
   assert.equal(doc.getElementById('confirm-title').textContent, 'Discard the checkout?');
@@ -992,7 +998,7 @@ test('Simple: a linked folder\'s row offers Unlink with its own confirm, and onl
   const row = simpleRowOf(doc);
   assert.match(row.textContent, /^Linked to your folder · since /);
   assert.deepEqual(buttonsOf(row), ['Unlink']);
-  assert.doesNotMatch(glanceOf(doc).textContent, /worktree/i);
+  assert.doesNotMatch(cardMainOf(doc).textContent, /worktree/i);
   click(ctx.window, row.querySelector('button'));
   await settle(ctx.window, 2);
   assert.equal(doc.getElementById('confirm-title').textContent, 'Stop using this folder?');
@@ -1125,7 +1131,7 @@ test('kept work: after a discard, a cache-warm row (no retainedWork key) does no
 });
 
 
-test('F-2: the Actions row, the Overview WORKTREE row and the Actions strip read one checkout', async () => {
+test('F-2: the Local copy row, the Overview WORKTREE row and the Actions tab read one checkout', async () => {
   const actModel = (checkedOut) => ({
     runId: ROW.id, workspace: false, finished: true, enabled: true,
     members: [{ projectKey: KEY, projectName: 'Alpha', branch: ROW.branch, state: checkedOut ? 'checked-out' : 'not-checked-out',
@@ -1149,20 +1155,19 @@ test('F-2: the Actions row, the Overview WORKTREE row and the Actions strip read
   assert.match(wt().textContent, /checked out/);
   assert.doesNotMatch(wt().textContent, /released/);
   assert.match(wt().querySelector('.hd-ov-wt-path').title, /\/tmp\/co/);
-  assert.match(actionsValueOf(doc), /^Local copy open · since /);
-  const strip = () => secOf(doc, 'overview').querySelector('.act-strip');
-  // "Check out" on a single project; a workspace run's strip reads "Check out N changed projects" and
-  // opens the Actions tab instead, so match on the prefix.
-  const offersCheckout = () => [...strip().querySelectorAll('button')].some((b) => b.textContent.startsWith('Check out'));
-  assert.ok(!offersCheckout(), 'no Check out while checked out');
+  assert.match(checkoutTextOf(doc), /^Local copy open · since /);
+  assert.equal(secOf(doc, 'overview').querySelector('.act-strip'), null, 'no Actions strip on the Overview');
+  const offersCheckout = () => [...secOf(doc, 'actions').querySelectorAll('button')].some((b) => b.textContent.startsWith('Check out'));
   // Discarded: the row, then both change events
   model = actModel(false);
   await deliverRows(ctx, [ROW]);
   ctx.wsBox.ws.dispatch('message', { data: JSON.stringify({ type: 'actions-changed', action: 'checkout' }) });
   await settle(ctx.window, 6);
   assert.match(wt().textContent, /released/);
-  assert.equal(actionsValueOf(doc), 'Try it on this machine');
-  assert.ok(offersCheckout());
+  assert.equal(simpleRowOf(doc), null, 'the Local copy row goes with the checkout');
+  click(ctx.window, doc.querySelector('#hist-detail .hd-tab[data-sec="actions"]'));
+  await settle(ctx.window, 6);
+  assert.ok(offersCheckout(), 'the Actions tab offers Check out again');
 });
 
 test('F-11: a finished run with no PR reads Ready to ship; an open PR reads In review', async () => {

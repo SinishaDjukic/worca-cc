@@ -450,7 +450,7 @@ test('headings: section titles and sub-heads use the shared classes, with no siz
   }
 });
 
-const PAGE_CARDS = ['.chart-card', '.sched-feed', '.tp-ov-card', '.rd-sheet', '.hd-ov-card', '.pd-ov-card', '.hd-cl-card', '.hd-ov-task',
+const PAGE_CARDS = ['.chart-card', '.sched-feed', '.tp-ov-card', '.rd-sheet', '.hd-ov-card', '.pd-ov-card', '.hd-cl-card', '.run-task', '.run-setup',
   '.tp-editor .card.tp-group-card', '.tp-editor details.card', '.tm-empty .card', '.mv-providers', '.settings-card'];
 const TILES = ['.stat-tile', '.chat-run-tile', '.mcp-setlist'];
 test('cards: every page card pads --pad-card, every tile --pad-tile', () => {

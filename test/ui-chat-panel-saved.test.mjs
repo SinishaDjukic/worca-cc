@@ -22,7 +22,8 @@ test('a saved run opens in the panel by its pipeline id: the History screen, Det
   assert.ok(screen && screen.classList.contains('hd'), 'the saved run screen is mounted in the panel');
   assert.equal(screen.dataset.presentation, 'panel');
   assert.equal(screen.querySelector('.hd-details').hidden, false);
-  assert.equal(screen.querySelector('.hd-glance').hidden, true);
+  assert.ok(screen.querySelector('.hd-sec[data-sec="overview"] > .hd-glance'), 'the run card is the Overview tab\'s body (one level)');
+  assert.equal(screen.querySelector(':scope > .hd-glance'), null);
   assert.equal(detailLoads(ctx), 1, 'the saved detail was fetched once');
   assert.equal(screen.querySelector('.hd-title').textContent, ROW.title);
   assert.ok(screen.querySelector('.rd-bar-end .crp-close'), 'the panel Close ends the saved bar too');

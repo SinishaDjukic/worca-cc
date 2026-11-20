@@ -85,7 +85,7 @@
     "runs/running-detail-header.css",
     "runs/running-detail-bar.css",
     "runs/running-detail-question.css",
-    "runs/running-detail-live.css",
+    "runs/run-card.css",
     "runs/running-detail-tab.css",
     "shell/collapsible-sidebar.css",
     "shell/responsive-nav.css",

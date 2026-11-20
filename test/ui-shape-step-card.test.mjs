@@ -204,7 +204,7 @@ test('the step head is the only title in every host: the old .qpanel-head is hid
   const { readFile } = await import('node:fs/promises');
   const css = await readStyleCss();
   assert.match(css, /\.chat-rc-q \.qpanel-head\{display:none;\}/);
-  assert.match(css, /\.rd-glance > \.rd-questions \.qpanel-head\{display:none;\}/);
+  assert.match(css, /\.rd-details > \.rd-questions \.qpanel-head\{display:none;\}/);   // the question sits above the tabs
   assert.match(css, /\.shape-feature-ask \.qpanel:has\(\.step-head\) \.qpanel-head\{display:none;\}/);
 });
 

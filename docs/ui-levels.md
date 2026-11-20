@@ -200,12 +200,13 @@ The **Auto** workflow option is available for both targets — a project and a w
 | Runs list: Delete (the action bar and the row ⋯ menu); Add to group… and Remove from group (the row ⋯ menu); their keys ⌫, G and ⇧G | A |
 | Run page: "Add to group…" on the Group row of a run in no group, the same as in the list's row menu | A |
 | Resume menu: Resume at HH:MM (when the limit resets) | A |
-| Run page glance: the run's name as the page title, the status line (state, then the step), time · cost (with its Away mode share) · changes; the Cost tags row under them, the Live view switch and its fogged graph of the running step(s), parallel steps (Now), one row per tab, a waiting question below its own heading, the result actions | S |
+| Run page (one level): the header (the run's name, Run after, Pause/Resume, Stop and ⋯ ending the title row), a waiting question above the tabs on every tab, then the tabs; the run card is the Overview tab's body: the status line (state, then the step), the Cost tags row, the result actions; on a wide pane its right column holds time · cost (with its Away mode share) · changes, the verdict and, while the run goes, its fogged workflow framed on the running step(s) (a click opens the Workflow tab); parallel steps (Now) | S |
+| Task tab (second): the prompt in full as markdown and the Run setup card, which shows each choice at the level the New run form shows it: workflow, Away mode, mock run (S); engine (kept visible when it is not Claude), guardrails, human in the loop, source branch, MCP servers off, code graph, each agent's model and effort (A); each agent's sub-agents and questions, each loop's round budget (E) | S |
 | Run progress: the bar under the status line (Plan · Build · Review · Ready, blue / amber / green), its text ("Build · task 2 of 4") in place of "Step: …", the chain's overall bar ("Run 2 of 3"), the Runs list's group bar and group row with its ⌄ | S |
 | Run progress hover breakdown: stages with their agents and states, review pass count | A |
 | Workflow graph with status colours, gate pip, End result; Workflow, Overview and Q&A tabs | S |
 | Run header cost and its breakdown (agents, Away mode, Auto workflow, run title; stopped reviews and stopped agent turns apart); the Overview cost card's Away mode share | S |
-| "Answered for you": one group per ask (kind · time · model · cost of its review, or "review stopped" and its lower bound), the answers, Check; the heading's answer count and what the Away mode reviews cost | S |
+| The run card's Away mode note ("Away mode: 5 answers while you were away — 2 to check") and its See the answers, which opens the Q&A tab; each answered question there says who answered it | S |
 | Diff tab (live worktree while running, the final patch after) | S |
 | Folder run (a Folder project): Changes tab, the Folder chip, the "<n> files · on a copy" bar with Discard and Apply to folder, the Apply to folder dialog | S |
 | Run without a project (No project): the Artifacts tab, opened first; the No project chip | S |
@@ -213,7 +214,7 @@ The **Auto** workflow option is available for both targets — a project and a w
 | Step log drawer under the Workflow graph (a card or execution-row click; Open in Logs, resize, close), Summaries / Raw switch (flag `commandSummaries`) | A — follows the Logs tab |
 | Branch chip, progress n/m · step on the card, model · effort pill, graph zoom cluster | A |
 | Auto proposal Revise; Artifacts tab | A |
-| Actions tab, Overview actions strip, Create PR 'Try it first' button and strip | A |
+| Actions tab, Create PR 'Try it first' button and strip | A |
 | Running-action pill in the header, sidebar Running actions rows (one tile on the rail) | all — shown only while a service runs |
 | Log filters (source, level, node, cycle) | E |
 | Graph node totals, fan and execution strips, Away mode chips and bands, loop badges | E |
@@ -225,17 +226,16 @@ The **Auto** workflow option is available for both targets — a project and a w
 |---|---|
 | List, project filter, Refresh; Overview (verdict, findings, duration, cost, task); Clarify tab; Resume | S |
 | Header cost and its breakdown (agents, Away mode, Auto workflow, run title; stopped reviews and stopped agent turns apart); the glance and Overview cost's Away mode share | S |
-| "Answered for you", as on the run page | S |
+| The Away mode note and the Q&A tab, as on the run page | S |
 | Save as preset (a run with a stored setup) | S |
 | Run page bar: Back (every layout) and ⋯ (Away mode while live, Save as preset, Terminal, Report this run, Archive / Restore) | S |
 | History: usage-limit notice | S |
-| "Files changed" list on the Overview | S |
 | Folder run: Changes tab, the Folder chip, the Apply bar and dialog, Discard; the Git / Folder chip on a project's group in the Runs list | S |
 | Run without a project: the Artifacts tab, opened first; the No project group and its chip in the Runs list | S |
 | Overview: Perspective checklists, as on the run page (shaped runs) | S |
 | Run page head on a project with no remote: Link remote, How to merge | S |
 | Diff pill, inline comments; Create PR / View PR; "Push <source>" (a run on its source branch, instead of a PR); branch line; Artifacts tab | A |
-| Actions tab, Overview actions strip, Create PR 'Try it first' button and strip | A |
+| Actions tab, Create PR 'Try it first' button and strip | A |
 | Create PR dialog: Draft switch, "Will close owner/repo#N" line | A — ungated inside the modal (no `data-min-level`), so they show wherever the modal opens |
 | Running-action pill in the header, sidebar Running actions rows (one tile on the rail) | all — shown only while a service runs |
 | Mergeability pill; Logs tab; Agents tab; team-metrics status; MEMORY CHANGES; worktree row | E |

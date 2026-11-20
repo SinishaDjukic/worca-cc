@@ -41,21 +41,21 @@ function folderArms({ changes = () => ok(CHANGES), patch = () => text(PATCH), ap
   };
 }
 const boot = (over = {}) => bootDetail({ rows: [FROW()], detail: FDETAIL(), arms: folderArms(), ...over });
-const glanceRows = (doc) => [...doc.querySelectorAll('#hist-detail .hd-result .rd-srow')]
-  .map((r) => [r.dataset.rdTab, (r.querySelector('.rd-srow-v') || { textContent: '' }).textContent]);
+// One level: the card no longer lists tab-opening rows (its .hd-result holds only Local copy).
+const tabRows = (doc) => [...doc.querySelectorAll('#hist-detail .hd-result [data-rd-tab]')];
 
-test('a folder run: Changes in place of Diff and Actions, at Simple level, the file count on its pill and its glance row', async () => {
+test('a folder run: Changes in place of Diff and Actions, at Simple level, the file count on its pill; the card opens no tabs', async () => {
   const ctx = await boot();
   const doc = ctx.window.document;
   doc.documentElement.dataset.level = 'simple';
   await openDetail(ctx, 'details');
-  assert.deepEqual(tabsOf(doc).map((b) => b.dataset.sec), ['overview', 'changes', 'workflow', 'agents']);
+  assert.deepEqual(tabsOf(doc).map((b) => b.dataset.sec), ['overview', 'task', 'changes', 'workflow', 'agents']);
   const pill = doc.querySelector('#hist-detail .hd-tab[data-sec="changes"]');
   assert.equal(pill.dataset.minLevel, 'simple');
   assert.ok(pill.querySelector('svg'), 'the tab carries its icon');
   assert.equal(badgeOf(doc, 'changes'), '14');
   await openDetail(ctx, '');
-  assert.deepEqual(glanceRows(doc), [['overview', ''], ['changes', '14 files'], ['workflow', '']]);
+  assert.deepEqual(tabRows(doc), [], 'the run card lists no tab rows');
 });
 
 test('Changes tab: one row per file the run changed on its copy; a file opens in the diff pane', async () => {
@@ -110,7 +110,7 @@ test('Changes tab empty states: nothing changed, not finished, a load failure', 
     { name: 'a git run keeps Diff and Actions and has no Changes', run: async () => {
       const ctx = await bootDetail();
       await openDetail(ctx, 'details');
-      assert.deepEqual(tabsOf(ctx.window.document).map((b) => b.dataset.sec), ['overview', 'diff', 'actions', 'workflow', 'agents']);
+      assert.deepEqual(tabsOf(ctx.window.document).map((b) => b.dataset.sec), ['overview', 'task', 'diff', 'actions', 'workflow', 'agents']);
     } },
   ]);
 });
@@ -176,15 +176,13 @@ test('a folder run shows no git chrome and asks git or a forge nothing', async (
       }
       assert.ok(!ctx.calls.some((c) => /\/publish|\/base-check|\/api\/pr\//.test(c.url)));
     } },
-    { name: 'Overview: no Actions strip, no worktree row, files listed without Open the diff', run: async () => {
+    { name: 'Overview: no Actions strip, no worktree row, no Files changed box (the Changes tab lists files)', run: async () => {
       const ctx = await boot({ detail: FDETAIL({ results: FRESULTS }) });
       await openDetail(ctx, 'details/overview');
       const sec = secOf(ctx.window.document, 'overview');
       assert.equal(sec.querySelector('.act-strip'), null);
       assert.equal(sec.querySelector('.hd-ov-wt'), null);
-      const box = sec.querySelector('.hd-ov-files');
-      assert.equal(box.querySelector('.hd-ov-label').textContent, 'Files changed · 3');
-      assert.equal(box.querySelector('.link-btn'), null);
+      assert.equal(sec.querySelector('.hd-ov-files'), null);
     } },
     { name: 'a deep link: the saved state names the mode before any row lands', run: async () => {
       const ctx = await boot({ rows: [] });
@@ -193,7 +191,7 @@ test('a folder run shows no git chrome and asks git or a forge nothing', async (
       assert.equal(doc.querySelector('#hist-detail .hd-glance .rd-page-meta .kind-chip').textContent, 'Folder');
       assert.equal(doc.querySelector('#hist-detail .hd-base').hidden, true);
       await openDetail(ctx, 'details');
-      assert.deepEqual(tabsOf(doc).map((b) => b.dataset.sec), ['overview', 'changes', 'workflow', 'agents']);
+      assert.deepEqual(tabsOf(doc).map((b) => b.dataset.sec), ['overview', 'task', 'changes', 'workflow', 'agents']);
       assert.equal(badgeOf(doc, 'changes'), '14', 'the detail payload counts');
     } },
     { name: 'a git run keeps its glance', run: async () => {

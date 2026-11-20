@@ -45,7 +45,7 @@ test('a finished run without a project: its Overview never says it did not compl
   click(ctx.window, doc.querySelector('#hist-detail .hd-tab[data-sec="overview"]'));
   await settle(ctx.window, 4);
   const sec = secOf(doc, 'overview');
-  assert.ok(sec && sec.querySelector('.hd-ov-grid'), 'the Overview painted');
+  assert.ok(sec && sec.querySelector('.rd-sheet') && sec.querySelector('.hd-ov-below'), 'the Overview painted: the run card and the lists below it');
   assert.equal(sec.querySelector('.hd-ov-verdict'), null, 'no results.json: its files are the result, no verdict line');
   assert.doesNotMatch(sec.textContent, /did not complete/);
   assert.equal(doc.querySelector('#hist-detail .rd-sheet .run-status').dataset.text, 'Finished', 'never Ready to ship');
@@ -97,10 +97,14 @@ test('a live run without a project: Artifacts first; its saved data reads the re
   assert.equal(doc.querySelector('#run-detail .rd-after').hidden, true, 'no Run after on the live page either');
   assert.ok(seen.some((u) => u.endsWith(`/api/history/${NP_KEY}/abcd1234`)), seen.join('\n'));
   assert.equal(doc.querySelector('#run-detail .rd-meta .rd-project'), null, 'its work folder is never named as a project (P3-D10)');
+  click(ctx.window, doc.querySelector('#run-detail .rd-tab[data-sec="task"]'));
+  await settle(ctx.window, 6);
+  const tags = [...doc.querySelectorAll('#run-detail .rd-sec[data-sec="task"] .run-task .hd-ov-chips .hd-ov-tag')].map((t) => t.textContent);
+  assert.ok(tags.includes('No project') && !tags.includes('work'), tags.join(' | '));
   click(ctx.window, doc.querySelector('#run-detail .rd-tab[data-sec="overview"]'));
   await settle(ctx.window, 6);
-  const tags = [...doc.querySelectorAll('#run-detail .hd-ov-chips .hd-ov-tag')].map((t) => t.textContent);
-  assert.ok(tags.includes('No project') && !tags.includes('work'), tags.join(' | '));
+  assert.equal(doc.querySelector('#run-detail .rd-sec[data-sec="overview"] .run-task, #run-detail .rd-sec[data-sec="overview"] .hd-ov-tag'), null,
+    'the task chips live in the Task tab only');
 });
 
 test('a live run first seen as a git run, then found to have no project, reopens on Artifacts (the rebuild drops the auto-opened Overview)', async () => {

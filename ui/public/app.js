@@ -102,7 +102,7 @@ import { mountRunsResize } from './runs-resize.mjs';
 import { decorFromState, applyDecor, isGraphManifest, ledgerRows } from './graph/run-decor.mjs';
 import { mountRunGraph } from './graph/run-hosts.mjs';
 import { paintRunScope } from './run-scope-line.mjs';
-import { trailColumns, nowRows, glanceCopy, nodeLabel, preflightOpen, dotState } from './run-glance.mjs';
+import { nowRows, glanceCopy, nodeLabel, preflightOpen, dotState } from './run-glance.mjs';
 import { workModeOf, isGitRun, isFolderRun, isNoProjectRun, NO_PROJECT_KEY, projectKind, kindChip, RUN_KIND_CHIP, folderMembersOf } from './run-kind.mjs';
 import { changesCounts, filesWord, renderCountsNode, applyBarModel, paintApplyBar, runChangesUrl, openApplyDialog, discardChanges, CHANGE_SIGN, CHANGE_WORD } from './folder-changes.mjs';
 import { runProgress, progressWidth } from '../../src/shared/run-progress.mjs';
@@ -176,6 +176,7 @@ import {
 } from './file-tree.mjs';
 import { groupCommentThreads, commentWhen } from './comment-thread.mjs';
 import { createMarkdownRenderer } from './ask-markdown.mjs';
+import { runSetupModel, renderRunSetup } from './run-setup-view.mjs';
 import { exportSlugPreview } from './export-slug.mjs';
 import { fillMarketplaceSelect, marketplaceExportBody, marketplaceNameProblem, marketplacePlanExtras, marketplaceDoneView,
   renderMarketplaceSkipped, marketplaceLoadError, syncMarketplaceButtons, requestTicket, ticketIsCurrent } from './export-marketplace.mjs';
@@ -25359,13 +25360,13 @@ function hdGoDetails(tab = '') {
 // setRdMode, for the History screen). `tab` opens that tab when the level shows it.
 function setHdMode(screen, mode, tab = '', { focus = true } = {}) {
   if (!screen) return;
-  const details = mode === 'details';
-  const changed = screen.dataset.mode !== (details ? 'details' : 'glance');
-  screen.dataset.mode = details ? 'details' : 'glance';
-  screen.querySelector('.hd-glance').hidden = details;
-  screen.querySelector('.hd-details').hidden = !details;
-  screen.querySelector('.hd-back').hidden = details;
-  screen.querySelector('.hd-to-run').hidden = !details;
+  // One level, as on the live page: Details with the run card as its Overview tab.
+  if (mode !== 'details' && !tab) tab = 'overview';
+  const details = true;
+  const changed = screen.dataset.mode !== 'details';
+  screen.dataset.mode = 'details';
+  screen.querySelector('.hd-details').hidden = false;
+  screen.querySelector('.hd-back').hidden = false;
   if (details) {
     const tabs = detailTabsOf(screen);
     if (tabs && tab && tabs.cells.has(tab) && levelAtLeast(tabs.cells.get(tab).tab.level || 'simple') && (gitOn() || !tabs.cells.get(tab).tab.needsGit)) tabs.activate(tab);
@@ -25375,8 +25376,7 @@ function setHdMode(screen, mode, tab = '', { focus = true } = {}) {
   if (changed && focus) {
     // Side by side the glance's way back to the list is hidden (the list is in view), so
     // coming back from Details lands on the glance's title (tabindex="-1") instead.
-    const target = details ? screen.querySelector('.hd-to-run')
-      : runsLayout() === 'split' ? screen.querySelector('.hd-glance .rd-page-title') : screen.querySelector('.hd-back');
+    const target = runsLayout() === 'split' ? screen.querySelector('.hd-title') : screen.querySelector('.hd-back');
     if (target && !target.hidden) target.focus({ preventScroll: true });
   }
 }
@@ -25452,13 +25452,11 @@ function openHistDetail(parsed, { instant = false, host: where = 'page' } = {}) 
   host.appendChild(screen);
   histDetailState.screen = screen;
   // The panel has no glance, so there is no page title to watch.
-  if (panel) presentRunScreenInPanel(screen); else watchPageTitle(screen, 'hd');
+  if (panel) presentRunScreenInPanel(screen); else { barIntoHeader(screen); watchPageTitle(screen, 'hd'); }
 
   screen.querySelector('.hd-back').addEventListener('click', () => backToRunsList());   // slice 2: the list itself, never the D6 restore
   // Glance <-> Details are routes, so the browser's back and forward walk them.
   const toDetails = (tab = '') => { hdGoDetails(tab); };
-  const toRun = () => { if (histDetailState && histDetailState.host !== 'panel') location.hash = hdHash(histDetailState); };
-  screen.querySelector('.hd-to-run').addEventListener('click', toRun);
   // Run 3 (D13): the saved bar is the primary action, Run after, Stop and ⋯; ⋯ drives the controls CSS hides there.
   screen.querySelector('.hd-bar-more')?.addEventListener('click', (e) => {
     toggleMenu({ doc: document, anchor: e.currentTarget, items: runMoreItems(screen), align: 'end', label: 'More for this run' });
@@ -27043,7 +27041,6 @@ function hdSyncPr(projectKey, id, row) {
   if (row) { histDetailState.record = row; askPanel?.pageChanged?.(); }   // a deep link's minimal record upgrades to the real row
   paintHdPr(histDetailState.screen, histDetailState.record, histDetailState.data);
   paintHdHeaderMeta(histDetailState.screen, histDetailState.record, histDetailState.data);
-  paintHdOvPrs(histDetailState.screen.querySelector('.hd-ov-prs'), histDetailState.record);
   paintHdBase(histDetailState.screen, histDetailState.record, histDetailState.data);   // an open PR owns the pipeline Resolve
   paintHdAfter(histDetailState.screen, histDetailState.record, histDetailState.data);
   void paintHdSavePreset(histDetailState.screen, histDetailState.data);
@@ -27059,7 +27056,7 @@ function hdSyncPr(projectKey, id, row) {
 function paintHdGlance(screen, record, data) {
   const glance = screen && screen.querySelector('.hd-glance');
   if (!glance || !data || !data.state) return;
-  void loadHdAwayAnswers(screen, record && record.id, data.state.steps);   // `st` is declared below (TDZ)
+  void loadHdAwayAnswers(screen, record && record.id);
   const st = data.state;
   const run = { status: st.status, steps: st.steps, stepper: st.stepper, pendingQuestion: null, active: st.active };
   const meta = histStatusMeta({ status: st.status });
@@ -27096,20 +27093,14 @@ function paintHdGlance(screen, record, data) {
   // Time · Cost · Changes, then the Cost tags row, as on the Running page in every state.
   paintHdFacts(screen, record, data);
 
-  // The result: every tab, the actions. The things to check live in Overview only.
+  // The local copy's way out; the tabs are the tab bar's.
   const host = glance.querySelector('.hd-result');
   const keptRow = host.querySelector('.rd-srow-checkout');
   const keptFocus = keptRow && keptRow.contains(document.activeElement) ? document.activeElement : null;
-  host.replaceChildren();
-  const trail = trailColumns(run);
+  host.replaceChildren(rdCheckoutGroup());
   const co = hdCheckoutFor(record);
   const held = hdRetainedFor(record, st);
   const canTry = hdCanTry(record, st, held.retained, held.provisional);
-  host.append(...rdActivityGroups(screen, {
-    overview: activityOverviewValue(results),
-    workflow: trail.count ? `${trail.count} step${trail.count === 1 ? '' : 's'}` : '',
-    actions: checkoutRowValue(co, { when: shortWhen, canTry }),
-  }));
   paintActionsRowValue(screen, co, canTry, () => hdCurrentRecord(record), keptRow);
   if (keptFocus && keptFocus.isConnected) keptFocus.focus();   // detaching the row dropped its focus
 
@@ -27476,8 +27467,8 @@ function paintHdPr(screen, record, data) {
   btn.onclick = () => openShipItModal(record, data);
 }
 
-// Watch PR (#619): the PR's status and Watch switch live on the Overview tab (paintHdOvPrs), drawn by paintRdPrStatus;
-// the run page card reads the same answer through its .rd-pr-feed (slice 3). The words are run-head.mjs's
+// Watch PR (#619): the run card reads the PR's status through its .rd-pr-feed (slice 3, paintRdPrStatus); its
+// View PR ▾ menu carries the Watch item. The words are run-head.mjs's
 // (HD_PR_WATCH_ACTIVE, hdPrWatchLabel).
 const hdPrWatchTone = (state) => (state.status === 'needs-person' ? 'bad' : HD_PR_WATCH_ACTIVE.has(state.status) ? 'run' : '');
 const HD_PR_WATCH_TIP = 'Watch: start a fix run when checks fail or reviewers ask for changes';
@@ -29020,6 +29011,7 @@ function reloadHistDetail() {
 // --- section tabs: pill row + lazily-built section bodies -------------------
 
 const HD_TAB_ICONS = {
+  task: '<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><rect x="5" y="4" width="14" height="17" rx="2"/><path d="M9 4.5V3h6v1.5M9 10h6M9 14h6M9 18h3" stroke-linecap="round" stroke-linejoin="round"/></svg>',
   diff: '<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><path d="M6 3h8l4 4v14H6z" stroke-linejoin="round"/><path d="M14 3v4h4" stroke-linejoin="round"/></svg>',
   overview: '<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><circle cx="12" cy="12" r="8"/><path d="M12 8h.01M11 12h1v4h1" stroke-linecap="round" stroke-linejoin="round"/></svg>',
   agents: '<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><circle cx="6" cy="6" r="2.4"/><circle cx="6" cy="18" r="2.4"/><circle cx="18" cy="12" r="2.4"/><path d="M8 6h5a3 3 0 0 1 3 3v0M8 18h5a3 3 0 0 0 3-3v0" stroke-linecap="round"/></svg>',
@@ -29066,6 +29058,10 @@ function initDetailTabs(screen, tabs, ctx, opts) {
   if (!bar || !secs) return;   // a screen whose template lacks the two hosts
   bar.innerHTML = '';
   bar.classList.add('tabs');
+  // The run card lives in the Overview section (adoptRunCard): park it back at the screen's top level, so the
+  // rebuilt Overview adopts it again rather than the reset destroying it.
+  const card = secs.querySelector('.rd-glance');
+  if (card) screen.insertBefore(card, screen.querySelector(':scope > :is(.rd-details,.hd-details)'));
   secs.innerHTML = '';
   const shown = tabs.filter((t) => t.visible(ctx));
   const cells = new Map();
@@ -29167,10 +29163,12 @@ const HD_TABS = [
   // counted in filesDeleted, so adding filesDeleted double-counts every deletion
   // against the rendered file list.
   // ONE order on both run pages (RD_TABS matches), in the order a reader asks: what did
-  // it produce (Overview · Diff · Artifacts), what can I do with it (Actions), then how did it
+  // it produce and what was it asked (Overview · Task · Diff · Artifacts), what can I do with it (Actions), then how did it
   // get there, coarse to fine (Workflow · Q&A · Logs · Agents). "Details ›" opens the first shown tab; the trail
   // opens Workflow.
   { key: 'overview', label: 'Overview', level: 'simple', badge: () => null, visible: () => true, build: (...a) => buildHdOverview(...a) },
+  // The run's prompt, second: what it was asked, right after what it did.
+  { key: 'task', label: 'Task', level: 'simple', badge: () => null, visible: () => true, build: (...a) => buildHdTask(...a) },
   { key: 'diff', label: 'Diff', level: 'simple', needsGit: true,
     badge: (d) => { const r = gitOnlyResults(d.results, (d.folderMembers || []).map((m) => m.memberKey)); return r && r.summary ? String((r.summary.filesNew || 0) + (r.summary.filesChanged || 0)) : null; },
     visible: (d) => isGitRun(d.state), build: (...a) => buildHdDiff(...a) },
@@ -30706,16 +30704,6 @@ function hdWorktreeRow(word, dir) {
   return row;
 }
 
-function hdStatCard(kind, label, value, sub) {
-  const card = document.createElement('div');
-  card.className = `hd-ov-card hd-ov-card-${kind}`;
-  const l = document.createElement('div'); l.className = 'hd-ov-label'; l.textContent = label;
-  const v = document.createElement('div'); v.className = 'hd-ov-value'; v.textContent = value;
-  card.append(l, v);
-  if (sub) { const s = document.createElement('div'); s.className = 'hd-ov-sub'; s.textContent = sub; card.appendChild(s); }
-  return card;
-}
-
 // Workspace results have NO top-level keyThingsToCheck — findings live under
 // perProject[<key>].keyThingsToCheck (the rollup summary only counts them), so a
 // workspace run would otherwise always read "Clean".
@@ -30728,57 +30716,32 @@ function hdChecks(r) {
   return r.keyThingsToCheck || [];
 }
 
-// "What did the run touch?" without the Diff tab (docs/ui-levels.md): Diff is advanced, so the
-// Overview — the one results tab Simple mode has — lists the files in plain words. No hunks, no
-// comments; from advanced up a button hands over to the real diff.
-const HD_FILES_SHOWN = 12;
-function hdFilesChangedBox(sec, results, { diffLink = true } = {}) {
-  if (!results) return null;
-  const rows = hdDiffFileRows(results);
-  if (!rows.length) return null;
-  const box = document.createElement('div');
-  box.className = 'hd-ov-files';
-  const head = document.createElement('div'); head.className = 'hd-ov-files-head';
-  const l = document.createElement('div'); l.className = 'hd-ov-label';
-  l.textContent = rows.length === 1 ? 'Files changed · 1' : `Files changed · ${rows.length}`;
-  const open = tagLevel(document.createElement('button'), 'advanced');
-  open.type = 'button'; open.className = 'link-btn'; open.textContent = 'Open the diff';
-  open.dataset.needsGit = '';
-  open.addEventListener('click', () => {
-    const screen = histDetailState && histDetailState.screen;   // the state is keyed on the cloned template root
-    const tabs = screen && detailTabState.get(screen);
-    if (tabs && tabs.cells.has('diff')) tabs.activate('diff');
-  });
-  head.append(l);
-  if (diffLink) head.append(open);
-  box.appendChild(head);
-  const list = document.createElement('ul'); list.className = 'hd-ov-files-list';
-  for (const { project, f, isNew } of rows.slice(0, HD_FILES_SHOWN)) {
-    const li = document.createElement('li');
-    const kind = document.createElement('span');
-    const word = isNew ? 'new' : (f.status === 'D' ? 'deleted' : (f.status === 'R' ? 'renamed' : 'edited'));
-    kind.className = `hd-ov-file-kind k-${word}`; kind.textContent = word;
-    const name = document.createElement('span'); name.className = 'hd-ov-file-path mono';
-    name.textContent = project ? `${project}/${f.path}` : f.path; name.title = name.textContent;
-    li.append(kind, name);
-    list.appendChild(li);
-  }
-  box.appendChild(list);
-  if (rows.length > HD_FILES_SHOWN) {
-    const more = document.createElement('div'); more.className = 'hint';
-    more.textContent = `and ${rows.length - HD_FILES_SHOWN} more`;
-    box.appendChild(more);
-  }
-  return box;
+// One level (no separate glance): the run card is the Overview tab's body. Moves the screen's card (.rd-glance) into
+// `sec`, puts the Overview's short facts (`side`: the verdict, the run's state) in the card's right column and its long
+// lists (`below`: findings, checklists, skills, memory) under the card, full width. A screen without the card (the Chat run panel
+// takes it out) gets both alone. A rebuild swaps only the Overview's own parts: the card stays attached, so a field
+// being edited in it (Edit cost tags) keeps its focus.
+function adoptRunCard(sec, side, below) {
+  const glance = sec.closest('.rd, .hd')?.querySelector('.rd-glance') || null;
+  for (const c of [...sec.children]) if (c !== glance) c.remove();
+  const nav = glance && glance.querySelector('.rd-sheet-nav');
+  const sheet = glance && glance.querySelector(':scope > .rd-sheet');
+  if (!nav || !sheet) { sec.append(side, below); return; }
+  for (const old of glance.querySelectorAll('.hd-ov')) old.remove();
+  nav.appendChild(side);
+  sheet.after(below);
+  if (glance.parentNode !== sec) sec.appendChild(glance);
 }
 
 function buildHdOverview(sec, record, data) {
-  sec.innerHTML = '';
   const st = data.state;
   const results = data.results;
+  // Short facts beside the card's details; the long lists under the card, full width.
   const wrap = document.createElement('div');
   wrap.className = 'hd-ov';
-  sec.appendChild(wrap);
+  const below = document.createElement('div');
+  below.className = 'hd-ov hd-ov-below';
+  adoptRunCard(sec, wrap, below);
 
   // 1) Verdict banner (+ findings list).
   const verdict = document.createElement('div');
@@ -30805,42 +30768,14 @@ function buildHdOverview(sec, record, data) {
     verdict.append(chip, document.createTextNode(' No review results captured. The run did not complete.'));
   }
   if (verdict.childNodes.length) wrap.appendChild(verdict);
-  // The open pull request(s) as GitHub sees them now, beside the review's verdict from the run.
-  const prs = document.createElement('div');
-  prs.className = 'hd-ov-prs';
-  prs.dataset.needsGit = '';
-  wrap.appendChild(prs);
-  paintHdOvPrs(prs, record);
+  // The pull request is the card head's; the Actions tab has the controls.
   const git = gitOn() && isGitRun(hdRunOf(record, data));
-  if (git && isTerminalStatus(record.status)) {
-    const strip = document.createElement('div'); strip.className = 'act-strip'; tagLevel(strip, 'advanced');
-    strip.dataset.needsGit = '';
-    wrap.appendChild(strip);
-    paintActionsStrip(strip, record.id, runActionQuery(record.projectDir, record).toString());
-  }
-  if (checks.length) wrap.appendChild(issueList(checks.map((c) => ({ ...c, origin: 'review' }))));
+  if (checks.length) below.appendChild(issueList(checks.map((c) => ({ ...c, origin: 'review' }))));
   // spec D7: the same groups as the run page
   const cl = renderChecklistGroups(document, data.reviews);
-  if (cl) wrap.appendChild(cl);
+  if (cl) below.appendChild(cl);
 
-  // 2) Stat cards.
-  const grid = document.createElement('div');
-  grid.className = 'hd-ov-grid';
-  const steps = Array.isArray(st.steps) ? st.steps : [];
-  const maxCycle = steps.reduce((m, s) => Math.max(m, Number(s && s.cycle) || 0), 0) || 1;
-  grid.appendChild(hdStatCard('duration', 'Duration',
-    typeof st.totalActiveMs === 'number' ? fmtDuration(st.totalActiveMs) : '—',
-    isGraphManifest(st.stepper)
-      ? histCountsLine(st)
-      : `${steps.length} step${steps.length === 1 ? '' : 's'} · ${maxCycle} cycle${maxCycle === 1 ? '' : 's'}`));
-  const histCost = runCostText(st, st.totalCostUsd, '—');
-  const costCard = hdStatCard('cost', 'Cost',
-    histCost.text,
-    [`across ${steps.length} step${steps.length === 1 ? '' : 's'}`,
-      costSummaryText(runCostBreakdown(steps, st.totalCostUsd), fmtUsd)].filter(Boolean).join(' · '));
-  if (histCost.title) costCard.querySelector('.hd-ov-value').title = histCost.title;
-  else if (typeof st.totalCostUsd === 'number') costCard.querySelector('.hd-ov-value').title = estTitle(st.totalCostUsd);
-  grid.appendChild(costCard);
+  // Time and cost are the card's tiles. The worktree row (Expert) stays here.
   const wt = st.branch && typeof st.branch === 'object' ? st.branch : {};
   // `worktreeRemoved` is ABSENT on a paused run, `true` after teardown
   // (orchestrator.mjs:1443/1489/1498/1597/1604) and explicitly `false` on the
@@ -30860,7 +30795,6 @@ function buildHdOverview(sec, record, data) {
   // refreshHdFromRow — nothing else ever rebuilds a tab. (Do not "simplify" that
   // call away: the header painters run on every row arrival, but the tab bodies do
   // not, so without it the card would read `released` for the life of the screen.)
-  wrap.appendChild(grid);
   // The row and the notice card read one model (audit F-2): a checkout shows here as well as on the card.
   const ovModel = worktreeNoticeModel({ ...hdRetainedFor(record, st), checkout: hdCheckoutFor(record),
     workspace: record.target === 'workspace', names: memberNamesOf(record) });
@@ -30869,9 +30803,7 @@ function buildHdOverview(sec, record, data) {
   if (git) wrap.appendChild(tagLevel(hdWorktreeRow(wtRowState.word, wtRowState.dir || wt.worktreeDir || ''), 'expert'));
   // Skills registry §6 board 9: the set skills the run got (run.json.skillMount, in the detail payload).
   const skillsCard = renderRunSkills(data.skillMount, { doc: document });
-  if (skillsCard) wrap.appendChild(tagLevel(skillsCard, 'advanced'));
-  const filesBox = hdFilesChangedBox(sec, results, { diffLink: git });
-  if (filesBox) wrap.appendChild(filesBox);
+  if (skillsCard) below.appendChild(tagLevel(skillsCard, 'advanced'));
   // Agent memory (§6): what this run wrote into worca's memory, per execution.
   const memRows = memoryChangesRows(data.memory || (results && results.memory));
   if (memRows.length) {
@@ -30908,7 +30840,7 @@ function buildHdOverview(sec, record, data) {
       }
       box.appendChild(line);
     }
-    wrap.appendChild(box);
+    below.appendChild(box);
   }
   // spec §8: the one-line quiescence note, under the stat grid, v2 runs only.
   if (isGraphManifest(st.stepper) && decorFromState(st, { live: false, now: 0 }).quiescent) {
@@ -30918,44 +30850,85 @@ function buildHdOverview(sec, record, data) {
     note.textContent = 'finished at quiescence — End not reached';
     wrap.appendChild(note);
   }
+}
 
-  // 3) Task card.
-  const task = document.createElement('div');
-  task.className = 'hd-ov-task';
-  const th = document.createElement('div'); th.className = 'hd-ov-task-h'; th.textContent = 'Task';
-  task.appendChild(th);
-  const prompt = String(st.prompt || '').trim();
-  const p = document.createElement('p');
-  const LIMIT = 600;
-  if (prompt.length > LIMIT) {
-    p.textContent = prompt.slice(0, LIMIT) + '…';
-    const more = document.createElement('button');
-    more.type = 'button';
-    more.className = 'hd-ov-more';
-    more.textContent = 'Show more';
-    more.addEventListener('click', () => { p.textContent = prompt; more.remove(); });
-    task.append(p, more);
-  } else {
-    p.textContent = prompt || '(no prompt recorded)';
-    task.appendChild(p);
-  }
-  const chips = document.createElement('div');
-  chips.className = 'hd-ov-chips';
-  // The agents' own sub-agents: worca's AI calls (run title, Auto workflow, Away mode) are on the Agents tab.
-  const subCount = Array.isArray(st.subAgents) ? st.subAgents.filter((s) => !isWorcaSub(s)).length : 0;
-  for (const text of [
-    record.projectName || record.projectKey || '',
-    (st.branch && typeof st.branch === 'object' ? st.branch.source : '') || record.sourceBranch || '',
-    subCount ? `${subCount} sub-agent${subCount === 1 ? '' : 's'}` : '',
-  ]) {
+/** The Task tab: the run's prompt in full, rendered as the markdown it was written in, under the run's place (project,
+ *  source branch, sub-agents). `chips`: those words, empty ones dropped. */
+function runTaskCard(prompt, chips) {
+  const card = document.createElement('div');
+  card.className = 'run-task';
+  const tags = document.createElement('div');
+  tags.className = 'hd-ov-chips';
+  for (const text of chips) {
     if (!text) continue;
     const c = document.createElement('span');
     c.className = 'hd-ov-tag mono';
     c.textContent = text;
-    chips.appendChild(c);
+    tags.appendChild(c);
   }
-  task.appendChild(chips);
-  wrap.appendChild(task);
+  if (tags.childElementCount) card.appendChild(tags);
+  const body = document.createElement('div');
+  body.className = 'run-task-body';
+  const text = String(prompt || '').trim();
+  if (!text) body.textContent = '(no prompt recorded)';
+  else if (!bindMarkdown(body, text)) void bindMarkdownReady().then((ok) => { if (ok && body.isConnected) bindMarkdown(body, text); });
+  card.appendChild(body);
+  return card;
+}
+/** While a graph run goes: its workflow in the card's summary column, framed on the running step(s) (the `focus` host),
+ *  the way into the Workflow tab. Gone once the run ends, and never in the Chat run panel (its column is too narrow). */
+function paintRdLive(screen, r) {
+  const panel = screen.querySelector('.rd-live');
+  if (!panel) return;
+  const on = !RD_TERMINAL.includes(r.status) && isGraphRun(r) && screen.dataset.presentation !== 'panel';
+  if (on) {
+    panel.hidden = false;
+    paintGraphFor(panel.querySelector('.run-flow'), r.stepper, runDecorFor(r, 'focus'), r.steps);
+  } else if (!panel.hidden) {
+    destroyGraphMounts(panel);
+    panel.hidden = true;
+  }
+}
+
+/** The run's setup as it started (GET /api/pipelines/:id/setup), once per run per page load: it never changes. */
+const runSetupCache = new Map();   // pipelineId → Promise<setup | null>
+function loadRunSetup(pipelineId) {
+  if (!pipelineId) return Promise.resolve(null);
+  if (!runSetupCache.has(pipelineId)) {
+    runSetupCache.set(pipelineId, fetch(`/api/pipelines/${encodeURIComponent(pipelineId)}/setup`)
+      .then((r) => (r.ok ? r.json() : null)).then((d) => (d && d.setup) || null)
+      .catch(() => { runSetupCache.delete(pipelineId); return null; }));
+  }
+  return runSetupCache.get(pipelineId);
+}
+/** The Task tab's body: the prompt, and beside it (under it when narrow) the choices the run started with. */
+function paintTaskTab(sec, card, pipelineId, state) {
+  const wrap = document.createElement('div');
+  wrap.className = 'run-task-tab';
+  const side = document.createElement('div');
+  side.className = 'run-task-side';
+  const paint = (setup) => {
+    const el = renderRunSetup(document, runSetupModel(setup, state));
+    side.hidden = !el;
+    side.replaceChildren(...(el ? [el] : []));
+  };
+  paint(null);
+  wrap.append(card, side);
+  sec.replaceChildren(wrap);
+  void loadRunSetup(pipelineId).then((setup) => { if (setup && side.isConnected) paint(setup); });
+}
+// The agents' own sub-agents: worca's AI calls (run title, Auto workflow, Away mode) are on the Agents tab.
+const taskSubWord = (subs) => {
+  const n = Array.isArray(subs) ? subs.filter((s) => !isWorcaSub(s)).length : 0;
+  return n ? `${n} sub-agent${n === 1 ? '' : 's'}` : '';
+};
+function buildHdTask(sec, record, data) {
+  const st = (data && data.state) || {};
+  paintTaskTab(sec, runTaskCard(st.prompt, [
+    record.projectName || record.projectKey || '',
+    (st.branch && typeof st.branch === 'object' ? st.branch.source : '') || record.sourceBranch || '',
+    taskSubWord(st.subAgents),
+  ]), record.id, st);
 }
 
 // One sub-agent's wall time. `durationMs` is authoritative when the orchestrator
@@ -31237,11 +31210,16 @@ const RD_WORKFLOW_ICON = '<svg width="15" height="15" viewBox="0 0 24 24" fill="
 // not here.
 const RD_TABS = [
   // The same order as History's HD_TABS: results first, then the process —
-  // Overview · Diff · Artifacts · Actions · Workflow · Q&A · Logs · Agents.
+  // Overview · Task · Diff · Artifacts · Actions · Workflow · Q&A · Logs · Agents.
   {
     key: 'overview', label: 'Overview', icon: HD_TAB_ICONS.overview, level: 'simple',
     badge: () => null, visible: () => true,
     build: (sec, ctx) => buildRdOverview(sec, ctx),
+  },
+  {
+    key: 'task', label: 'Task', icon: HD_TAB_ICONS.task, level: 'simple',
+    badge: () => null, visible: () => true,
+    build: (sec, ctx) => buildRdTask(sec, ctx),
   },
   {
     key: 'diff', label: 'Diff', icon: HD_TAB_ICONS.diff, level: 'simple', needsGit: true,
@@ -32242,95 +32220,25 @@ function rdOvStateBanner(host, r) {
   ensureLimitTick();
 }
 
-function rdOvStats(host, r) {
-  const prevWt = host.querySelector('.hd-ov-wt');
-  host.innerHTML = '';
-  const { n, m, name } = runStepLabel(r);
-  const stepSub = `step ${n}/${m}${name ? ` · ${name}` : ''}`;
-
-  const elapsed = hdStatCard('elapsed', 'Elapsed',
-    fmtDuration(liveTotalMs(r.steps, Date.now())) || '0s', stepSub);
-  // `.run-time` is the class the 1 s interval writes, so tagging the value node
-  // makes this card tick with the header and the graph — one timer, no second
-  // interval to drift against it (§11).
-  elapsed.querySelector('.hd-ov-value').classList.add('run-time');
-  host.appendChild(elapsed);
-
-  const steps = Array.isArray(r.steps) ? r.steps : [];
-  // The per-pipeline cap comes from the SAME budget record renderCostPauseBanner
-  // consumes (budgetState.budget; the field is budgetStatus()'s
-  // pipelineLimitUsd) — i.e. the value that drives pauseReason 'cost_pipeline'.
-  // null/absent means no cap is configured, and the sub-line falls back to a fact
-  // rather than a fabricated number.
-  const cap = Number(budgetState.budget && budgetState.budget.pipelineLimitUsd);
-  const costSub = [Number.isFinite(cap) && cap > 0
-    ? `cap ${fmtUsd(cap)} per pipeline`
-    : `across ${steps.length} step${steps.length === 1 ? '' : 's'}`,
-  costSummaryText(runCostBreakdown(steps, r.totalCostUsd), fmtUsd)].filter(Boolean).join(' · ');
-  const soFar = runCostText(r, r.totalCostUsd);
-  const cost = hdStatCard('cost', 'Cost so far', soFar.text, costSub);
-  cost.querySelector('.hd-ov-value').title = soFar.title || estTitle(r.totalCostUsd || 0);
-  host.appendChild(cost);
-
-  // No worktree row unless gitOn() && isGitRun(r) (SEAMS S8): a prevWt from a git-mode paint went with the reset above.
-  if (!(gitOn() && isGitRun(r))) return;
-  // Tri-state, exactly like History's card: absent while the run holds the
-  // worktree, true after teardown, explicitly false on the commit-failure path.
-  // `!== true` is the correct test for all three.
-  const held = !!r.worktreeDir && r.worktreeRemoved !== true;
-  // Live frames repaint this grid: keep the row (its hover and "copied" tick) while
-  // nothing about it changed.
-  const wtRec = r.pipelineId ? rdHistoryRecord(r) : null;
-  const wtModel = wtRec ? worktreeNoticeModel({ ...hdRetainedFor(wtRec, null), checkout: RD_TERMINAL.includes(r.status) ? hdCheckoutFor(wtRec) : null,
-    workspace: wtRec.target === 'workspace', names: memberNamesOf(wtRec) }) : null;
-  const wtState = worktreeRowState(wtModel && wtModel.kind === 'checkout' ? wtModel : null,
-    { live: held, dir: r.worktreeDir || '', removed: r.worktreeRemoved });
-  const wtRow = hdWorktreeRow(wtState.word, wtState.dir || r.worktreeDir || '');
-  host.appendChild(prevWt && prevWt.dataset.sig === wtRow.dataset.sig ? prevWt : tagLevel(wtRow, 'expert'));
-}
-
-function rdOvTask(r) {
-  const task = document.createElement('div');
-  task.className = 'hd-ov-task';
-  const h = document.createElement('div');
-  h.className = 'hd-ov-task-h';
-  h.textContent = 'Task';
-  task.appendChild(h);
-  const prompt = String(r.prompt || '').trim();
-  const p = document.createElement('p');
-  const LIMIT = 600;
-  if (prompt.length > LIMIT) {
-    p.textContent = prompt.slice(0, LIMIT) + '…';
-    const more = document.createElement('button');
-    more.type = 'button';
-    more.className = 'hd-ov-more';
-    more.textContent = 'Show more';
-    more.addEventListener('click', () => { p.textContent = prompt; more.remove(); });
-    task.append(p, more);
-  } else {
-    p.textContent = prompt || '(no prompt recorded)';
-    task.appendChild(p);
-  }
-  const chips = document.createElement('div');
-  chips.className = 'hd-ov-chips';
-  // The agents' own sub-agents: worca's AI calls (run title, Auto workflow, Away mode) are on the Agents tab.
-  const subCount = Array.isArray(r.subAgents) ? r.subAgents.filter((s) => !isWorcaSub(s)).length : 0;
-  // A workspace run carries NO projectDir (the New form sends workspaceId
-  // instead) — name it by its member list rather than letting projectName()
-  // print "(no project)".
+function buildRdTask(sec, ctx) {
+  const r = ctx.run;
+  // A workspace run carries NO projectDir (the New form sends workspaceId instead): name it by its member list
+  // rather than letting projectName() print "(no project)".
   const project = isNoProjectRun(r) ? 'No project'   // P3-D10: its work folder is not a project name
-    : r.projectDir
-      ? projectName(r.projectDir)
-      : (Array.isArray(r.projectNames) ? r.projectNames.join(' · ') : '');
-  for (const text of [project, r.branchSource || '', subCount ? `${subCount} sub-agent${subCount === 1 ? '' : 's'}` : '']) {
-    if (!text) continue;
-    const c = document.createElement('span');
-    c.className = 'hd-ov-tag mono';
-    c.textContent = text;
-    chips.appendChild(c);
-  }
-  task.appendChild(chips);
-  return task;
+    : r.projectDir ? projectName(r.projectDir) : (Array.isArray(r.projectNames) ? r.projectNames.join(' · ') : '');
+  const paint = () => paintTaskTab(sec, runTaskCard(r.prompt, [project, r.branchSource || '', taskSubWord(r.subAgents)]), r.pipelineId, r);
+  paint();
+  // The prompt rides state snapshots, and a run parked on a question sends none after the page opens: read it (and
+  // the source branch) from the run's saved state instead.
+  if (String(r.prompt || '').trim()) return;
+  const wrap = sec.firstElementChild;
+  void rdLoadData(r).then((data) => {
+    const st = data && data.state;
+    if (!st || !String(st.prompt || '').trim() || sec.firstElementChild !== wrap) return;
+    r.prompt = st.prompt;
+    if (!r.branchSource && st.branch && typeof st.branch === 'object' && st.branch.source) r.branchSource = st.branch.source;
+    paint();
+  });
 }
 
 /** Skills registry §6 board 9: a run's set-skill card into `host` (hidden without a record). */
@@ -32358,33 +32266,24 @@ function paintRdChecklists(host, run) {
 }
 
 function buildRdOverview(sec, ctx) {
-  sec.innerHTML = '';
   const wrap = document.createElement('div');
   wrap.className = 'hd-ov';
   const banner = document.createElement('div');
   banner.className = 'rd-ov-state';
-  const grid = document.createElement('div');
-  grid.className = 'hd-ov-grid';
   // The Task card is built ONCE and never re-rendered: the prompt cannot change
   // mid-run, and rebuilding it would slam the "Show more" expander shut under the
-  // user on every arriving `state` frame.
-  // Actions strip: terminal runs only, filled once the run has its pipeline id.
-  const strip = document.createElement('div'); strip.className = 'act-strip'; tagLevel(strip, 'advanced');
-  strip.dataset.needsGit = '';
-  strip.hidden = true;
+  // user on every arriving `state` frame. Time and cost are the run card's tiles; the Actions tab has the controls.
   const skills = tagLevel(document.createElement('div'), 'advanced');   // the set skills it got (§6 board 9)
   skills.className = 'hd-ov-skills-host';
   const checklists = document.createElement('div');   // Perspective checklists (spec D7)
   checklists.className = 'rd-checklists';
   checklists.hidden = true;
-  wrap.append(banner, strip, grid, checklists, skills, rdOvTask(ctx.run));
-  sec.appendChild(wrap);
-  const paintStrip = (run) => {
-    const on = gitOn() && isGitRun(run) && isTerminalStatus(run.status) && !!run.pipelineId;
-    strip.hidden = !on;
-    if (on && strip.dataset.runId !== run.pipelineId) paintActionsStrip(strip, run.pipelineId, rdScopeQuery(run));
-  };
-  const paint = (c) => { rdOvStateBanner(banner, c.run); paintStrip(c.run); rdOvStats(grid, c.run); paintRdChecklists(checklists, c.run); paintRunSkills(skills, c.run.skillMount); };
+  const below = document.createElement('div');
+  below.className = 'hd-ov hd-ov-below';
+  wrap.append(banner);
+  below.append(checklists, skills);
+  adoptRunCard(sec, wrap, below);
+  const paint = (c) => { rdOvStateBanner(banner, c.run); paintRdChecklists(checklists, c.run); paintRunSkills(skills, c.run.skillMount); };
   paint(ctx);
   sec.__update = paint;
 }
@@ -32775,10 +32674,7 @@ document.addEventListener('keydown', (e) => {
   // a guard here is the only way to opt a subtree out.
   if (e.target && typeof e.target.closest === 'function' && e.target.closest('.hd-cmt-composer')) return;
   if (closeCostPop({ focusTrigger: true })) return;
-  // Details steps back to the run's glance; the glance steps back to the list, in the
-  // slide only: side by side the list is already there.
-  const hs = histDetailState;
-  if (hs && hs.screen && hs.screen.dataset.mode === 'details') { location.hash = hdHash(hs); return; }
+  // The run page steps back to the list, in the slide only: side by side the list is already there.
   if (runsLayout() === 'slide') location.hash = 'runs';
 }, true);
 
@@ -32797,10 +32693,7 @@ document.addEventListener('keydown', (e) => {
   if (e.target?.closest?.('.wf-log-drawer')) return;                 // the step log drawer owns its Escape (closes itself)
   // The header cost's breakdown owns Escape while it is open (same reason as History's ⋯ menu).
   if (closeCostPop({ focusTrigger: true })) return;
-  // Details steps back to the run's glance; the glance steps back to the list, in the
-  // slide only: side by side the list is already there.
-  const screen = runDetailState.screen;
-  if (screen && screen.dataset.mode === 'details') { location.hash = rdHash(runDetailState.runId); return; }
+  // The run page steps back to the list, in the slide only: side by side the list is already there.
   if (runsLayout() === 'slide') location.hash = 'runs';
 }, true);
 
@@ -36516,7 +36409,7 @@ function setRunsLayout(w) {
   const open = el.runsPane && el.runsPane.dataset.kind;
   if (want !== 'slide' || !inList || !open) return;
   const screen = open === 'live' ? el.runDetail : open === 'group' ? el.groupDetail : el.histDetail;
-  const back = screen && [...screen.querySelectorAll('.rd-back, .hd-back, .rd-to-run, .hd-to-run, .gpage-back')].find((b) => !b.hidden);
+  const back = screen && [...screen.querySelectorAll('.rd-back, .hd-back, .gpage-back')].find((b) => !b.hidden);
   if (back) back.focus({ preventScroll: true });
 }
 // showView calls this as the section becomes visible, before routing opens anything, so the
@@ -36776,13 +36669,13 @@ installInputMode(document);
 
 function setRdMode(screen, mode, tab = '', { focus = true } = {}) {
   if (!screen) return;
-  const details = mode === 'details';
-  const changed = screen.dataset.mode !== (details ? 'details' : 'glance');
-  screen.dataset.mode = details ? 'details' : 'glance';
-  screen.querySelector('.rd-glance').hidden = details;
-  screen.querySelector('.rd-details').hidden = !details;
-  screen.querySelector('.rd-back').hidden = details;
-  screen.querySelector('.rd-to-run').hidden = !details;
+  // One level: the run page IS Details, and the run card is its Overview tab. The glance route opens Overview.
+  if (mode !== 'details' && !tab) tab = 'overview';
+  const details = true;
+  const changed = screen.dataset.mode !== 'details';
+  screen.dataset.mode = 'details';
+  screen.querySelector('.rd-details').hidden = false;
+  screen.querySelector('.rd-back').hidden = false;
   if (details) {
     const tabs = detailTabsOf(screen);
     // P5: a tab the bar has leaves nothing pending, so a later rebuild keeps the person's pick.
@@ -36800,8 +36693,7 @@ function setRdMode(screen, mode, tab = '', { focus = true } = {}) {
   if (changed && focus) {
     // Side by side the glance's way back to the list is hidden (the list is in view), so
     // coming back from Details lands on the glance's title (tabindex="-1") instead.
-    const target = details ? screen.querySelector('.rd-to-run')
-      : runsLayout() === 'split' ? screen.querySelector('.rd-glance .rd-page-title') : screen.querySelector('.rd-back');
+    const target = runsLayout() === 'split' ? screen.querySelector('.rd-title') : screen.querySelector('.rd-back');
     if (target && !target.hidden) target.focus({ preventScroll: true });
   }
 }
@@ -36821,17 +36713,19 @@ function openRunDetail(runId, { instant = false, host: where = 'page' } = {}) {
   host.appendChild(screen);
   runDetailState = { runId, screen, host: panel ? 'panel' : 'page' };
   // The panel has no glance, so there is no page title to watch (the bar never repeats the name there).
-  if (panel) presentRunScreenInPanel(screen); else watchPageTitle(screen, 'rd');
+  if (panel) presentRunScreenInPanel(screen); else { barIntoHeader(screen); watchPageTitle(screen, 'rd'); }
 
   screen.querySelector('.rd-back').addEventListener('click', () => backToRunsList());
   // Glance <-> Details are routes, so the browser's own back and forward walk them.
   const toDetails = (tab = '') => { rdGoDetails(tab); };
-  const toRun = () => { if (runDetailState.host !== 'panel') location.hash = rdHash(runDetailState.runId); };
-  screen.querySelector('.rd-to-run').addEventListener('click', toRun);
   // While a question waits, the status header ("? Waiting for you / Step: …") is a way to it.
   const statusTop = screen.querySelector('.rd-now-top');
   const toQuestions = () => { if (screen.dataset.glance === 'ask') scrollToQuestions(screen); };
   statusTop.addEventListener('click', toQuestions);
+  // The live graph is a way to the Workflow tab.
+  const livePanel = screen.querySelector('.rd-live');
+  livePanel.addEventListener('click', () => rdGoDetails('workflow'));
+  livePanel.addEventListener('keydown', (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); rdGoDetails('workflow'); } });
   statusTop.addEventListener('keydown', (e) => {
     if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); toQuestions(); }
   });
@@ -36840,15 +36734,6 @@ function openRunDetail(runId, { instant = false, host: where = 'page' } = {}) {
     const row = e.target.closest && e.target.closest('[data-rd-tab]');
     if (row) toDetails(row.dataset.rdTab);
   });
-  // Live view: the switch flips the remembered choice; the panel is a way to Workflow.
-  const liveSwitch = screen.querySelector('.rd-live-switch');
-  const livePanel = screen.querySelector('.rd-live');
-  const onKey = (fn) => (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); fn(); } };
-  const flipLive = () => toggleLiveView(screen);
-  liveSwitch.addEventListener('click', flipLive);
-  liveSwitch.addEventListener('keydown', onKey(flipLive));
-  livePanel.addEventListener('click', () => toDetails('workflow'));
-  livePanel.addEventListener('keydown', onKey(() => toDetails('workflow')));
   // Keep the address in step with the open tab without adding a history entry per click.
   screen.querySelector('.rd-tabs').addEventListener('click', (e) => {
     const btn = e.target.closest && e.target.closest('.rd-tab');
@@ -37003,7 +36888,7 @@ function openRunDetail(runId, { instant = false, host: where = 'page' } = {}) {
       away.push({ sep: true });
     }
     // Run after is the bar's own quick button; only a shaped run's bar folds it (D31), so only there does ⋯ carry it.
-    const extra = after && !after.hidden && levelAtLeast('advanced') && screen.querySelector('.rd-bar')?.hasAttribute('data-shaped')
+    const extra = after && !after.hidden && levelAtLeast('advanced') && screen.querySelector('.rd-bar-end')?.hasAttribute('data-shaped')
       ? [{ label: after.querySelector('.rd-btn-label').textContent, title: after.title, onSelect: () => after.click() }] : [];
     toggleMenu({ doc: document, anchor: e.currentTarget, items: runMoreItems(screen, { away, extra }), align: 'end', label: 'More for this run' });
   });
@@ -37146,38 +37031,39 @@ async function loadNightDecisions(r) {
 }
 
 function paintNightDecisions(screen, r) {
-  paintAwayAnswers(screen.querySelector('.rd-night-sec'), r.nightDecisions, rdGlanceRun(r).steps);
+  paintAwayNote(screen.querySelector('.rd-away-note'), r.nightDecisions, () => rdGoDetails('qa'));
 }
 
-/** The History run page's copy of the list: read once per run from the stored answers. */
-async function loadHdAwayAnswers(screen, pipelineId, steps = []) {
-  const sec = screen && screen.querySelector('.hd-night-sec');
-  if (!sec || !pipelineId || sec.dataset.for === pipelineId) return;
-  sec.dataset.for = pipelineId;
-  sec.hidden = true;
+/** The History run page's Away note: the stored answers, read once per run. Q&A lists each one with its reason. */
+async function loadHdAwayAnswers(screen, pipelineId) {
+  const note = screen && screen.querySelector('.rd-away-note');
+  if (!note || !pipelineId || note.dataset.for === pipelineId) return;
+  note.dataset.for = pipelineId;
+  note.hidden = true;
   try {
     const res = await fetch(`/api/night-decisions?pipelineId=${encodeURIComponent(pipelineId)}`);
     const data = res.ok ? await safeJson(res) : null;
-    if (sec.dataset.for !== pipelineId) return;                 // another run was opened meanwhile
-    paintAwayAnswers(sec, data && Array.isArray(data.decisions) ? data.decisions : [], steps);
-  } catch { /* the section stays hidden */ }
+    if (note.dataset.for !== pipelineId) return;                 // another run was opened meanwhile
+    paintAwayNote(note, data && Array.isArray(data.decisions) ? data.decisions : [], () => {
+      const tabs = detailTabsOf(screen);
+      if (!tabs || !tabs.cells.has('clarify')) return;
+      tabs.activate('clarify');
+      try { window.history.replaceState(null, '', `#${hdScreenHash('details', 'clarify')}`); } catch { /* sandboxed */ }
+    });
+  } catch { /* the note stays hidden */ }
 }
 
-/** The note at the top of the run's card (run page and History run page), painted from the same
- *  answers as the list below it, so the two never disagree: how many answers, how many to check,
- *  and a button down to the first one to check. Hidden when Away mode gave no answer. */
-function paintAwayNote(sec, counts) {
-  const note = sec.closest('.rd-glance')?.querySelector('.rd-away-note');
+/** The note at the top of the run card (run page and History run page): how many answers Away mode gave, how many to
+ *  check, and a hop to the Q&A tab, where each answer shows with its reason. Hidden when Away mode gave no answer. */
+function paintAwayNote(note, decisions, toQa) {
   if (!note) return;
-  const line = awayAnswersSummary(counts);
+  const line = awayAnswersSummary(awayAnswerCounts(Array.isArray(decisions) ? decisions : []));
   note.hidden = !line;
   if (!line) return;
-  note.classList.toggle('has-checks', counts.checks > 0);
-  note.querySelector('.rd-away-note-text').textContent = `Away mode: ${line}.`;
-  note.querySelector('.rd-away-jump').onclick = () => {
-    const to = sec.querySelector('.rd-na-row.is-check') || sec;
-    if (!sec.hidden) to.scrollIntoView({ behavior: 'smooth', block: 'center' });
-  };
+  note.classList.toggle('has-checks', awayAnswerCounts(decisions).checks > 0);
+  const text = note.querySelector('.rd-away-note-text');
+  if (text.textContent !== `Away mode: ${line}.`) text.textContent = `Away mode: ${line}.`;
+  note.querySelector('.rd-away-jump').onclick = toQa;
 }
 
 /** "Answered for you" into `sec` (run page and History run page): one group per ask, captioned with
@@ -37198,7 +37084,6 @@ function paintAwayAnswers(sec, decisions, steps = []) {
   sec.querySelector('.rd-night-count').textContent = (counts.answers
     ? ` · ${counts.answers} answer${counts.answers === 1 ? '' : 's'}${counts.checks ? `, ${counts.checks} to check` : ''}` : '')
     + (spent ? ` · ${spent}` : '');
-  paintAwayNote(sec, counts);
   const host = sec.querySelector('.rd-night-asks');
   const open = new Set([...host.querySelectorAll('.rd-na-row.open')].map((li) => li.dataset.key));
   const focused = document.activeElement && host.contains(document.activeElement) ? document.activeElement.closest('.rd-na-row') : null;
@@ -37943,7 +37828,9 @@ function paintRdActions(screen, r, m = rdModel(r)) {
     own: { ...pauseResumeOwn(pause, st), stop },
     pool: [pause, stop],                                  // a "Pause" left from a run that has ended is hidden
     // Slice 2: Archive and Report live in the ⋯ (runMoreItems); slice 3: the head actions in the card head (run-head.mjs).
-    skip: [...MENU_ACTIONS, ...HEAD_ACTIONS],
+    // The full page draws the waiting question right under its header, on every tab: an Answer that only scrolls to it
+    // is noise there. The Chat panel keeps it.
+    skip: [...MENU_ACTIONS, ...HEAD_ACTIONS, ...(screen.dataset.presentation === 'panel' ? [] : ['answer'])],
     // The model reads pausing as paused, but chatRunControls.resume does nothing while the run is still live.
     disable: { 'ask-changes': "Ask for changes from the run's chat", ...(st === 'pausing' ? { resume: 'Pausing…' } : {}) },
     labels: { answer: answerLabelOf(screen.querySelector('.rd-questions')) },
@@ -38056,18 +37943,9 @@ function paintRdGlance(screen, r) {
   paintMemberBars(screen, { pipelineId: live.pipelineId, status: live.status, members: rdFm });
   if ((folder || rdFm.length) && terminal) rdPaintTabBadges(screen, rdCtx(live));   // the saved counts land after the tabs were built (P5: a mixed run's Folder members too)
 
-  const trail = trailColumns(r);
-  paintRdLive(screen, live);
+  paintRdLive(screen, r);
   paintRdNowList(screen, r, copy.state);
-  paintRdResult(screen, r, { glance: copy.state, trailCount: trail.count });
-  // In Details the way back doubles as the cue that a question waits on the glance.
-  const back = screen.querySelector('.rd-to-run');
-  if (back) {
-    const ask = copy.state === 'ask';
-    back.classList.toggle('ask', ask);
-    back.querySelector('.rd-to-run-label').textContent = ask ? 'Answer' : 'Run';
-    back.setAttribute('aria-label', ask ? 'Back to the run to answer' : 'Back to the run');
-  }
+  paintRdResult(screen, r);
 }
 
 function rdSheetRow({ label, detail = '', value = '', tab = '', state = '', icon = null, since = '' }) {
@@ -38107,65 +37985,20 @@ function rdSrowValue(text) {
   return v;
 }
 
-// The glance's way into Details (there is no Details button): EVERY tab the run has and
-// the interface level shows, in the tab bar's order, under two headings — what the run
-// produced, then how it ran. Each row is named like its tab, carries its icon and
-// previews its content: `values[key]`, else the tab's own badge with a unit.
-const ACTIVITY_GROUPS = [
-  ['Results', ['overview', 'diff', 'changes', 'artifacts', 'actions']],
-  ['How it ran', ['workflow', 'qa', 'clarify', 'logs', 'sessions', 'agents']],
-];
-const ACTIVITY_UNITS = { diff: 'file', changes: 'file', qa: 'question', clarify: 'question', sessions: 'session', agents: 'agent' };
-function rdActivityGroups(screen, values = {}) {
-  const tabs = detailTabsOf(screen);
-  if (!tabs) return [];
-  const order = [...tabs.cells.keys()];
-  const out = [];
-  for (const [title, keys] of ACTIVITY_GROUPS) {
-    const rows = [];
-    for (const key of order) {
-      if (!keys.includes(key)) continue;
-      const cell = tabs.cells.get(key);
-      if (!levelAtLeast(cell.tab.level || 'simple')) continue;
-      let value = values[key] || '';
-      if (!value) {
-        const badge = cell.btn.querySelector('.rd-tab-badge, .hd-tab-badge');
-        const n = badge ? badge.textContent.trim() : '';
-        const unit = ACTIVITY_UNITS[key];
-        value = n && unit && /^\d+$/.test(n) ? `${n} ${unit}${n === '1' ? '' : 's'}` : n;
-      }
-      // The tab's own icon, cloned from its pill, so the row and the tab can never differ.
-      const icon = cell.btn.querySelector('svg');
-      const row = rdSheetRow({ label: cell.tab.label, value, tab: key, icon: icon ? icon.cloneNode(true) : null });
-      if (cell.tab.needsGit) row.dataset.needsGit = '';
-      rows.push(row);
-    }
-    if (rows.length) out.push(rdSheetGroup(title, rows));
-  }
-  return out;
-}
+// The run's tabs are the tab bar's: the card lists only the local copy's way out (Discard / Unlink), which
+// paintActionsRowValue fills while a checkout exists. Archive is blocked until it goes, so it is never hidden.
+function rdCheckoutGroup() { return rdSheetGroup('Local copy', []); }
 
-// The Results › Actions row says where the local copy stands. At Advanced it is the Actions tab's row (the tab owns
-// the controls), patched in place: the banner painters rerun on every History row, the activity groups only when
-// they rebuild. At Simple there is no Actions tab, so a plain row carries Discard / Unlink while a checkout exists:
-// Archive is blocked until it goes, so the way out may never be hidden. `carrier()` is the current History record.
-// `kept`: the plain row of a Results list the caller just rebuilt, reused while it still says the same (D14).
+// The Local copy row says where the local copy stands and carries Discard / Unlink while a checkout exists, at every
+// level (the Actions tab owns the rest of the controls). `carrier()` is the current History record. `kept`: the row of a
+// list the caller just rebuilt, reused while it still says the same (D14).
 const shortWhen = (iso) => whenLabel(iso, Date.now(), browserTimeZone());
 function paintActionsRowValue(screen, checkout, canTry, carrier, kept = null) {
-  const list = screen && screen.querySelector('.rd-result .rd-slist');   // the Results group comes first
+  const list = screen && screen.querySelector('.rd-result .rd-slist');
   if (!list) return;
   const text = checkoutRowValue(checkout, { when: shortWhen, canTry });
-  const tabRow = list.querySelector('.rd-srow[data-rd-tab="actions"]');
   let plain = list.querySelector('.rd-srow-checkout');
   if (!plain && kept) { list.appendChild(kept); plain = kept; }
-  if (tabRow) {
-    if (plain) plain.remove();
-    const v = tabRow.querySelector('.rd-srow-v');
-    if (!text) { if (v) v.remove(); return; }
-    if (!v) tabRow.appendChild(rdSrowValue(text));
-    else if (v.textContent !== text) v.textContent = text;
-    return;
-  }
   const members = (checkout && checkout.members) || [];
   if (!members.length) { if (plain) plain.remove(); return; }
   const sig = `${text}|${members.map((m) => `${m.projectKey}:${m.external === true}`).join(',')}`;
@@ -38214,12 +38047,20 @@ function paintRunKindChip(meta, mode) {
   if (chip) meta.appendChild(chip);
 }
 
+// The full page puts no controls above the run's title: the bar's controls (Run after, Pause/Resume, Stop, ⋯) end the
+// header's title row. The bar keeps Back (slide layout) and the breadcrumb. The Chat run panel keeps them in its bar.
+function barIntoHeader(screen) {
+  const end = screen.querySelector(':scope > :is(.rd-bar,.hd-bar) > .rd-bar-end');
+  const row = screen.querySelector('.rd-row1, .hd-row1');
+  if (end && row) row.appendChild(end);
+}
+
 // The bar repeats the run's name only once the page title has scrolled under it
 // (CSS: [data-title-out]). One observer per page kind; a new screen replaces the old.
 const pageTitleWatch = { rd: null, hd: null };
 function watchPageTitle(screen, kind) {
   if (pageTitleWatch[kind]) { pageTitleWatch[kind].disconnect(); pageTitleWatch[kind] = null; }
-  const h = screen && screen.querySelector('.rd-page-title');
+  const h = screen && screen.querySelector('.rd-title, .hd-title');   // the Details header's: the card's own title is hidden
   if (!h || typeof IntersectionObserver !== 'function') return;
   const io = new IntersectionObserver(([e]) => {
     if (!e) return;
@@ -38229,13 +38070,6 @@ function watchPageTitle(screen, kind) {
   }, { rootMargin: '-64px 0px 0px 0px' });
   io.observe(h);
   pageTitleWatch[kind] = io;
-}
-
-// The Overview row's preview: what the review made of the run.
-function activityOverviewValue(results) {
-  if (!results) return '';
-  const n = hdChecks(results).length;
-  return n ? `${n} to check` : 'Nothing flagged';
 }
 
 // The run's facts, each once and each labelled: Time · Cost · Changes. `ticking` hands
@@ -38874,13 +38708,6 @@ function rdHistoryRecord(r) {
   return (state.historyAll || []).find((p) => p && p.id === r.pipelineId) || null;
 }
 
-// The Diff row's preview: read from the run, not the tab's badge (the badge is not
-// repainted when the saved results land after the tabs were built).
-function rdDiffRowValue(r) {
-  const n = rdDiffBadge(r);
-  return n ? `${n} file${n === '1' ? '' : 's'}` : '';
-}
-
 // The headline's file count, from results.json once it has loaded.
 function rdFilesChanged(r) {
   const s = r._rdData && r._rdData.data && r._rdData.data.results && r._rdData.data.results.summary;
@@ -38891,9 +38718,6 @@ function rdFilesChanged(r) {
 // state frame's branch.changes (P1a's folder member record).
 function rdFolderChanges(r) {
   const rec = rdHistoryRecord(r); const d = r._rdData && r._rdData.data; return (rec && rec.changes) || (d && d.state && d.state.changes) || (r.kind !== 'workspace-run' && r.branch && typeof r.branch === 'object' && r.branch.changes) || null;   // P5: a workspace's branch is its first member's mirror
-}
-function rdChangesRowValue(r) {
-  const c = changesCounts(rdFolderChanges(r)); return c && c.total ? filesWord(c.total) : '';
 }
 
 // The open PR's own state under its button (.rd-pr-status): its checks (passed, running,
@@ -39144,38 +38968,13 @@ function refreshRdPrStatus(projectKey, id, memberKey = '') {
     if (host._prLoading) host._prAgain = true;
     else void loadRdPrStatus(host, sc);
   }
-}
-
-/** Overview tab: one row per open pull request under the review verdict (a workspace run: one per
- *  member repo), each drawn by paintRdPrStatus. Rows are rebuilt only when the set of PRs changes. */
-function paintHdOvPrs(box, record) {
-  if (!box || !record) return;
-  const scopes = [];
-  if (record.target === 'workspace' && hasWsMembers(record)) {
-    for (const m of histWsMembers(record)) {
-      if (prLive(m.pr) && prStateOf(m.pr) === 'OPEN') scopes.push({ id: record.id, projectKey: record.projectKey, memberKey: m.memberKey, name: m.name || m.memberKey });
-    }
-  } else if (record.pr && typeof record.pr === 'object' && String(record.pr.state || '').toUpperCase() === 'OPEN' && record.pr.url) {
-    scopes.push({ id: record.id, projectKey: record.projectKey, name: '' });
-  }
-  const sig = JSON.stringify(scopes);
-  if (box.dataset.sig !== sig) {
-    box.dataset.sig = sig;
-    box.replaceChildren(...scopes.map((sc) => {
-      const row = document.createElement('div');
-      row.className = 'hd-ov-pr';
-      const label = document.createElement('span');
-      label.className = 'hd-ov-pr-label';
-      label.textContent = sc.name ? `Pull request · ${sc.name}` : 'Pull request';
-      const host = document.createElement('div');
-      host.className = 'rd-pr-status hd-ov-pr-status';
-      host.hidden = true;
-      row.append(label, host);
-      return row;
-    }));
-  }
-  const hosts = box.querySelectorAll('.hd-ov-pr-status');
-  scopes.forEach(({ name, ...scope }, i) => paintRdPrStatus(hosts[i], scope));
+  // A workspace member's status has no host of its own: the open run page's head reads it (ensurePrStatus from
+  // headFactsOf), so repaint that head and it reads the dropped entry again.
+  if (!memberKey) return;
+  const hd = histDetailState;
+  if (hd && hd.screen && hd.screen.isConnected && hd.data && hd.record && hd.record.id === id) paintHdHead(hd.screen, hdCurrentRecord(hd.record), hd.data);
+  const rd = runDetailState && runDetailState.screen && runDetailState.screen.isConnected ? runs.get(runDetailState.runId) : null;
+  if (rd && rd.pipelineId === id) paintRdHead(runDetailState.screen, rd);
 }
 
 /** Slice 3: the live page's card head (paintRunHead), from History's row once a finished run has one. Create PR hands
@@ -39209,40 +39008,16 @@ function paintRdHead(screen, r, m = rdModel(r)) {
 // Time · Cost · Changes in every state).
 // Numbers come from results.json. Rebuilt only when its content changes (a replaced row
 // loses :hover).
-function paintRdResult(screen, r, { glance = 'run', trailCount = 0 } = {}) {
+function paintRdResult(screen, r) {
   const host = screen.querySelector('.rd-result');
   if (!host) return;
   paintRdMenuCarriers(screen, r);                        // slice 2: the ⋯ Archive's gate reads this row's checkout facts
-  const terminal = RD_TERMINAL.includes(r.status);
-  const steps = trailCount ? `${trailCount} step${trailCount === 1 ? '' : 's'}` : '';
-  if (!terminal) {
-    // Cheap to build, compared by text: the badges (live diff, artifacts, agents) move.
-    const groups = rdActivityGroups(screen, { workflow: steps, diff: rdDiffRowValue(r), changes: rdChangesRowValue(r) });
-    const sig = `live|${currentLevel()}|${groups.map((g) => g.textContent).join('|')}`;
-    if (host.dataset.key === sig) return;
-    host.dataset.key = sig;
-    host.replaceChildren(...groups);
-    host.hidden = !groups.length;
-    return;
-  }
+  if (!RD_TERMINAL.includes(r.status)) { host.hidden = true; return; }   // a live run has no local copy yet
   host.hidden = false;
-  const data = r._rdData && r._rdData.data;
-  const sig = [r.status, glance, data ? 1 : 0, r.totalCostUsd, steps, currentLevel(), rdChangesRowValue(r)].join('|');
-  if (host.dataset.key === sig) return;
-  host.dataset.key = sig;
-  const keptRow = host.querySelector('.rd-srow-checkout');
-  const keptFocus = keptRow && keptRow.contains(document.activeElement) ? document.activeElement : null;
-  host.replaceChildren();
-
-  const results = data && data.results;
+  if (!host.querySelector('.rd-slist')) host.replaceChildren(rdCheckoutGroup());
   const rec = r.pipelineId ? rdHistoryRecord(r) : null;
-  const co = hdCheckoutFor(rec);
   const kept = !(r._retainedDiscarded || r._retainedApplied) && ((rec && rec.retainedWork) || rdRetainedFor(r));
-  const canTry = !!(rec && rec.branch) && !kept;
-  host.append(...rdActivityGroups(screen, { overview: activityOverviewValue(results), workflow: steps, diff: rdDiffRowValue(r), changes: rdChangesRowValue(r),
-    actions: checkoutRowValue(co, { when: shortWhen, canTry }) }));
-  paintActionsRowValue(screen, co, canTry, () => rdNoticeCarrier(r), keptRow);
-  if (keptFocus && keptFocus.isConnected) keptFocus.focus();   // detaching the row dropped its focus
+  paintActionsRowValue(screen, hdCheckoutFor(rec), !!(rec && rec.branch) && !kept, () => rdNoticeCarrier(r));
 }
 
 // The heading over a waiting question on the glance: what is asked, by which step. It
@@ -39270,12 +39045,6 @@ function paintShaperWait(screen, r) {
   const wait = shaperWait(r, true);
   if (wait) glance.dataset.shaperWait = wait;
   else delete glance.dataset.shaperWait;
-  // The Chat panel moved .rd-questions into its own head (presentRunScreenInPanel): leave it there.
-  if (host.parentElement !== glance) return;
-  const now = glance.querySelector(':scope > .rd-now');
-  const night = glance.querySelector(':scope > .rd-night-sec');
-  if (wait && now && host.previousElementSibling !== now) now.after(host);
-  else if (!wait && night && host.nextElementSibling !== night) night.before(host);
 }
 
 function paintRdQuestions(screen, r) {
@@ -39495,103 +39264,6 @@ function paintRdGraph(screen, r) {
   paintGraphFor(host, r.stepper, isGraphRun(r) ? runDecorFor(r, 'monitor') : null, r.steps);
 }
 
-// ---- Live view: the glance's running step(s), centred in a fogged graph beside the card ----
-// (below it on a narrow page). The choice is remembered per browser and offered only while
-// the run is not over. Entering: the left column slides aside (flipGlance), the graph
-// mounts at its final size, then the panel fades in (style.css `.rd-live.is-in`).
-// Leaving runs the other way round, and the graph is dropped only once the panel is gone.
-const LIVE_VIEW_KEY = 'worca-cc.run.liveView';
-/** The exit's fallback when no transitionend comes: past style.css's longest `.rd-live` exit. */
-const LIVE_EXIT_MS = 500;
-const LIVE_EXITS = new WeakMap();   // .rd-live -> { timer, onEnd } while it animates out
-// On unless switched off: a new user (nothing stored) sees it, and '0' keeps it off.
-// Where storage is blocked the choice lives in memory, so the switch still works.
-let liveViewMemo = null;
-function liveViewWanted() {
-  try { return localStorage.getItem(LIVE_VIEW_KEY) !== '0'; } catch { return liveViewMemo !== '0'; }
-}
-function reducedMotion() {
-  try { return typeof window.matchMedia === 'function' && window.matchMedia('(prefers-reduced-motion: reduce)').matches; } catch { return false; }
-}
-function toggleLiveView(screen) {
-  const on = !liveViewWanted();
-  liveViewMemo = on ? '1' : '0';
-  try { localStorage.setItem(LIVE_VIEW_KEY, liveViewMemo); } catch { /* private mode */ }
-  const r = rdOpenRun();
-  if (r) paintRdLive(screen, r);
-}
-
-function paintRdLive(screen, r) {
-  const row = screen.querySelector('.rd-live-row');
-  const panel = screen.querySelector('.rd-live');
-  if (!row || !panel) return;
-  const offered = !RD_TERMINAL.includes(r.status) && isGraphRun(r);
-  const wanted = liveViewWanted();
-  row.hidden = !offered;
-  const sw = row.querySelector('.rd-live-switch');
-  sw.classList.toggle('on', wanted);
-  sw.setAttribute('aria-checked', String(wanted));
-  if (offered && wanted) liveEnter(screen, r); else liveExit(screen);
-}
-
-function liveEnter(screen, r) {
-  const glance = screen.querySelector('.rd-glance');
-  const panel = screen.querySelector('.rd-live');
-  cancelLiveExit(panel);                   // back on mid-exit: the same graph carries on
-  if (panel.hidden) flipGlance(glance, () => { glance.dataset.live = 'on'; panel.hidden = false; });
-  paintGraphFor(panel.querySelector('.run-flow'), r.stepper, runDecorFor(r, 'focus'), r.steps);
-  if (!panel.classList.contains('is-in')) {
-    void panel.offsetWidth;                // commit the out state, so the class change transitions
-    panel.classList.add('is-in');
-  }
-}
-
-function liveExit(screen) {
-  const panel = screen.querySelector('.rd-live');
-  if (!panel || panel.hidden || LIVE_EXITS.has(panel)) return;
-  panel.classList.remove('is-in');
-  if (reducedMotion()) { finishLiveExit(screen); return; }
-  // Opacity is the exit's last transition in both layouts; the card's own ones bubble here too.
-  const onEnd = (e) => { if (e.target === panel && (!e.propertyName || e.propertyName === 'opacity')) finishLiveExit(screen); };
-  panel.addEventListener('transitionend', onEnd);
-  LIVE_EXITS.set(panel, { timer: setTimeout(() => finishLiveExit(screen), LIVE_EXIT_MS), onEnd });
-}
-
-function cancelLiveExit(panel) {
-  const x = LIVE_EXITS.get(panel);
-  if (!x) return;
-  clearTimeout(x.timer);
-  panel.removeEventListener('transitionend', x.onEnd);
-  LIVE_EXITS.delete(panel);
-}
-
-function finishLiveExit(screen) {
-  const glance = screen.querySelector('.rd-glance');
-  const panel = screen.querySelector('.rd-live');
-  cancelLiveExit(panel);
-  destroyGraphMounts(panel);
-  flipGlance(glance, () => { delete glance.dataset.live; panel.hidden = true; });
-}
-
-/** Slide the glance's left column (title + card) to where a layout change puts it: measure,
- *  change, then play each from its old place (FLIP). A slide still running is measured where
- *  it is on screen, so a quick second toggle turns it round without a jump. */
-function flipGlance(glance, change) {
-  const items = [...glance.querySelectorAll(':scope > .rd-now, :scope > .rd-sheet')];
-  const animate = !reducedMotion() && items.every((n) => typeof n.animate === 'function');
-  const before = animate ? items.map((n) => n.getBoundingClientRect()) : null;
-  if (animate) for (const n of items) for (const a of (n.getAnimations ? n.getAnimations() : [])) a.cancel();
-  change();
-  if (!animate) return;
-  items.forEach((n, i) => {
-    const after = n.getBoundingClientRect();
-    const dx = before[i].left - after.left, dy = before[i].top - after.top;
-    if (Math.abs(dx) < 0.5 && Math.abs(dy) < 0.5) return;
-    n.animate([{ transform: `translate(${dx}px, ${dy}px)` }, { transform: 'none' }],
-      { duration: 420, easing: 'cubic-bezier(.2,.7,.3,1)' });
-  });
-}
-
 // A bold-mono '·' separator, the twin of hdDot().
 function rdDot() {
   const s = document.createElement('span');
@@ -39776,7 +39448,7 @@ function paintRdHeader(screen, r) {
   // Run 3 (D13): every run page's bar is the primary action, Run after, Stop and ⋯ (D31's fold, for every run now; CSS
   // hides Away mode and the terminal, and ⋯ drives them; a shaped run's bar folds Run after too).
   const shapedBar = isShapingRun(r);
-  screen.querySelector('.rd-bar')?.toggleAttribute('data-shaped', shapedBar);
+  screen.querySelector('.rd-bar-end')?.toggleAttribute('data-shaped', shapedBar);
   const barMore = screen.querySelector('.rd-bar-more');
   if (barMore) barMore.hidden = false;
   paintRdMenuCarriers(screen, r);
@@ -40310,7 +39982,7 @@ const gsDialogUp = (id) => { const m = document.getElementById(id); return !!(m 
 const gsMenuUp = (id) => { const m = document.getElementById(id); return !!(m && !m.hidden); };
 /** The run just started, on its own page (beginRun opens it): the closing stops of every tour
  *  that starts one — what it is doing, its numbers, a waiting question (only while one waits),
- *  then the rows that open each part of it. `first` is the tour's own line for the first stop.
+ *  then the tabs that open each part of it. `first` is the tour's own line for the first stop.
  *  On the Runs list instead (the user went back), one stop on the run's row. */
 const gsRunPageHops = (first) => {
   // The run Start just began (beginRun notes it) when it is on the list; the first row otherwise.
@@ -40320,16 +39992,16 @@ const gsRunPageHops = (first) => {
     return [{ id: 'card', info: true, nextLabel: 'Done', target: card,
       text: 'This is your run. Open it to follow what it is doing; a question it needs answered shows there too. When it finishes, its row says how it ended.' }];
   }
-  const on = (sel) => [`#run-detail .rd[data-mode="glance"] ${sel}`, ...card];
-  const asking = !!document.querySelector('#run-detail .rd[data-mode="glance"] .rd-questions:not([hidden])');
+  const on = (sel) => [`#run-detail .rd ${sel}`, ...card];
+  const asking = !!document.querySelector('#run-detail .rd .rd-questions:not([hidden])');
   return [
-    { id: 'card', info: true, target: on('.rd-now-top'), text: first },
-    { id: 'facts', info: true, target: on('.rd-facts'),
+    { id: 'card', info: true, target: on('.rd-glance .rd-now-top'), text: first },
+    { id: 'facts', info: true, target: on('.rd-glance .rd-facts'),
       text: 'Time, cost and the files it has changed so far, kept current while it works.' },
     asking ? { id: 'ask', info: true, target: on('.rd-questions .rd-ask-head'),
-      text: 'A question from the run lands here, below its panel. Answer, then Submit, and it carries on. The status line at the top leads here too.' } : null,
-    { id: 'rows', info: true, nextLabel: 'Done', target: on('.rd-result'),
-      text: 'Each row opens a part of the run: its Overview, the Diff of the changes so far, the Workflow and more. When it finishes, its row says how it ended.' },
+      text: 'A question from the run lands here, above its tabs. Answer, then Submit, and it carries on. The status line leads here too.' } : null,
+    { id: 'rows', info: true, nextLabel: 'Done', target: on('.rd-tabs'),
+      text: 'Each tab opens a part of the run: this Overview, the Diff of the changes so far, the Workflow and more. When it finishes, its card says how it ended.' },
   ].filter(Boolean);
 };
 // Test hook, added here: the object at the top of the file is built while this const is
