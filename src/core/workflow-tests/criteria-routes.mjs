@@ -11,6 +11,7 @@ const STATUS = Object.freeze({ BAD_REQUEST: 400, NOT_FOUND: 404, BUSY: 409, NOT_
 const W = '/api/workflows/:id/tests';
 /** Every Part 4 route, in registration order: the flag-off test walks it. Later tasks append theirs. */
 export const CRITERIA_ROUTES = Object.freeze([
+  ['GET', `${W}/judge-models`],
   ['POST', `${W}/judgements/:j/answer`],
 ].map(([method, path]) => Object.freeze({ method, path })));
 

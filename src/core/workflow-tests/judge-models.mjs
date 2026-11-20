@@ -17,36 +17,52 @@ const familyOf = (id) => { const i = FAMILY.findIndex((f) => String(id).toLowerC
 const plainId = (id) => String(id || '').toLowerCase().replace(/\[1m\]$/, '');
 
 const CLOUDS = Object.freeze({ CLAUDE_CODE_USE_VERTEX: 'Google Vertex AI', CLAUDE_CODE_USE_BEDROCK: 'Amazon Bedrock', CLAUDE_CODE_USE_FOUNDRY: 'Microsoft Foundry' });
-const isOn = (v) => !!v && v !== '0' && String(v).toLowerCase() !== 'false';   // the CLI reads '0' and 'false' as off (model-env.mjs)
+// The CLI's own rule (model-env.mjs `cliTruthy`, not exported): only 1, true, yes, on are on.
+const isOn = (v) => typeof v === 'string' && ['1', 'true', 'yes', 'on'].includes(v.trim().toLowerCase());
 const cloudIn = (env) => { for (const k of PROVIDER_MODE_ENV_KEYS) if (env && isOn(env[k])) return CLOUDS[k]; return null; };
-const keyIn = (env) => !!env && ['ANTHROPIC_API_KEY', 'ANTHROPIC_AUTH_TOKEN', 'CLAUDE_CODE_OAUTH_TOKEN'].some((k) => typeof env[k] === 'string' && env[k].trim());
+const has = (env, keys) => !!env && keys.some((k) => typeof env[k] === 'string' && env[k].trim());
+const apiKeyIn = (env) => has(env, ['ANTHROPIC_API_KEY', 'ANTHROPIC_AUTH_TOKEN']);
+const tokenIn = (env) => has(env, ['CLAUDE_CODE_OAUTH_TOKEN']);
+const baseUrlIn = (env) => has(env, ['ANTHROPIC_BASE_URL']);
 const safeModelEnv = (id) => { try { return resolveModelEnv(id); } catch { return undefined; } };
-const userClaudeEnv = () => { try { const u = readUserSignIn(); return (u && u.env) || {}; } catch { return {}; } };
+const userClaude = () => { try { const u = readUserSignIn(); return { env: (u && u.env) || {}, settings: (u && u.settings) || {} }; } catch { return { env: {}, settings: {} }; } };
 
-/** N3 (P4-Q17): who pays for a check with `m`, as far as Worca can see: the broker (it routes every Claude model,
- *  broker-routing.mjs), a cloud in the model's own env, the model's connection (a custom endpoint, a provider), and for a row
- *  that reads as signed in, a cloud or key set where Worca runs or in the person's Claude Code settings. Worca cannot see an
- *  `apiKeyHelper` or managed Claude Code settings; P4-Q17 says so. */
-export function paysFor(m, { modelEnv, processEnv = process.env, userEnv = {} } = {}) {
+/** N3 (P4-Q17): who pays for a check with `m`, as far as Worca can see, in P4-Q17's order: the broker; the model's own
+ *  routing (a cloud, a key, its connection or endpoint); what is set where Worca runs; what is in the person's Claude Code
+ *  settings (env, an `apiKeyHelper`, AWS commands); "Claude sign-in" last. Only key presence is read, never a value. Worca
+ *  cannot see managed Claude Code settings; P4-Q17 says so. */
+export function paysFor(m, { modelEnv, processEnv = process.env, userEnv = {}, userSettings = {} } = {}) {
   if (brokerEnabled(processEnv)) return "Worca's credential broker";
   const own = cloudIn(modelEnv);
   if (own) return own;
+  if (apiKeyIn(modelEnv)) return "An API key in this model's settings";
+  if (tokenIn(modelEnv)) return "A Claude sign-in token in this model's settings";
   const label = connectionLabel(m);
   if (label !== 'Claude sign-in' || (modelEnv && 'ANTHROPIC_BASE_URL' in modelEnv)) return label === 'Claude sign-in' ? 'Custom endpoint' : label;
   const here = cloudIn(processEnv);
   if (here) return `${here}, set where Worca runs`;
+  if (baseUrlIn(processEnv)) return 'Custom endpoint, set where Worca runs';
+  if (apiKeyIn(processEnv)) return 'an API key set where Worca runs';
+  if (tokenIn(processEnv)) return 'A Claude sign-in token set where Worca runs';
   const yours = cloudIn(userEnv);
   if (yours) return `${yours}, set in your Claude Code settings`;
-  if (keyIn(processEnv)) return 'an API key set where Worca runs';
-  if (keyIn(userEnv)) return 'an API key set in your Claude Code settings';
+  if (baseUrlIn(userEnv)) return 'Custom endpoint, set in your Claude Code settings';
+  const st = userSettings || {};
+  if (has(st, ['apiKeyHelper'])) return 'An API key helper in your Claude Code settings';
+  if (has(st, ['awsAuthRefresh', 'awsCredentialExport'])) return 'Amazon Bedrock, set in your Claude Code settings';
+  if (apiKeyIn(userEnv)) return 'an API key set in your Claude Code settings';
+  if (tokenIn(userEnv)) return 'A Claude sign-in token set in your Claude Code settings';
   return 'Claude sign-in';
 }
 
 /** P4-Q2, P4-Q17: the catalog's models that run on Claude Code, whatever their connection, as `{ id, label, pays }` in the
  *  catalog's order. `pays` names who pays for a check with it (`paysFor`). The deps exist for tests. */
-export function claudeModels(catalog, { envOf = safeModelEnv, processEnv = process.env, userEnv = userClaudeEnv() } = {}) {
-  return (Array.isArray(catalog) ? catalog : []).filter((m) => m && typeof m.id === 'string' && runsOn(m, 'claude'))
-    .map((m) => ({ id: m.id, label: m.label || m.id, pays: paysFor(m, { modelEnv: envOf(m.id), processEnv, userEnv }) }));
+export function claudeModels(catalog, { envOf = safeModelEnv, processEnv = process.env, userEnv, userSettings } = {}) {
+  const u = userEnv === undefined || userSettings === undefined ? userClaude() : null;
+  const uEnv = userEnv === undefined ? u.env : userEnv;
+  const uSet = userSettings === undefined ? u.settings : userSettings;
+  return (Array.isArray(catalog) ? catalog : []).filter((m) => m && typeof m.id === 'string' && !m.hidden && runsOn(m, 'claude'))
+    .map((m) => ({ id: m.id, label: m.label || m.id, pays: paysFor(m, { modelEnv: envOf(m.id), processEnv, userEnv: uEnv, userSettings: uSet }) }));
 }
 
 /** D105 (pure): Opus, Fable, Sonnet, Haiku, each newest first; no "(1M)" twin unless there is nothing else; the first not in `writers`. */

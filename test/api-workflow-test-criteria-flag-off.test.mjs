@@ -28,6 +28,7 @@ after(async () => {
 
 test('every Part 4 route is 404 while the flag is off', async () => {
   assert.ok(routes.length >= 1);
+  assert.ok(routes.some((r) => r.method === 'GET' && r.path.endsWith('/judge-models')), 'the judge-models route is listed');
   for (const { method, path } of routes) {
     const url = path.replace(':id', 'wf_x').replace(':ex', '1').replace(':run', '1').replace(':j', '1').replace(':round', '1');
     const r = await fetch(`${base}${url}`, { method, headers: { 'Content-Type': 'application/json' }, ...(method === 'GET' ? {} : { body: '{}' }) });

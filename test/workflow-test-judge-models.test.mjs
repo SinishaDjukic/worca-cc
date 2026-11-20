@@ -36,7 +36,7 @@ test('withJudgeModel: an example with criteria and no model gets the suggestion;
   assert.deepEqual(await withJudgeModel('wf_x', { name: 'E' }, { criteria: [{ id: 'k_1', text: 'Names a metric' }], judge: { model: 'claude-haiku-4-5' } }, { catalog }),
     { name: 'E' }, 'a kept model stays');
   await assert.rejects(checkJudgeModel('gpt-9', { catalog }), { code: 'BAD_REQUEST', message: 'pick one of the AI models in the list to check your criteria' });
-  assert.equal(claudeModels([{ id: 'gpt-5', label: 'GPT-5', harnesses: ['codex'] }, ...CATALOG]).length, 4);
+  assert.equal(claudeModels([{ id: 'gpt-5', label: 'GPT-5', harnesses: ['codex'] }, ...CATALOG], { envOf: () => undefined, processEnv: {}, userEnv: {}, userSettings: {} }).length, 4);
 });
 
 const quiet = { envOf: () => undefined, processEnv: {}, userEnv: {} };   // nothing routes: the runner's own environment never leaks in
@@ -56,4 +56,35 @@ test('N3: a cloud or broker that routes the model is named, never "Claude sign-i
   assert.equal(pays({ processEnv: { WORCA_BROKER_URL: 'http://127.0.0.1:9' } }), "Worca's credential broker");
   assert.equal(pays({ envOf: () => ({ ANTHROPIC_BASE_URL: 'https://gw.example', CLAUDE_CODE_USE_VERTEX: '0' }), processEnv: { CLAUDE_CODE_USE_VERTEX: '1' } }),
     'Custom endpoint', 'the model env sends it to an endpoint and turns the cloud off ("0"), so the ambient Vertex switch does not apply');
+});
+
+const quiet2 = { ...quiet, userSettings: {} };
+const pays2 = (o) => claudeModels([{ id: 'claude-opus-5-5', label: 'Opus 5.5' }], { ...quiet2, ...o })[0].pays;
+
+test('Fix round 1: a key in the model own env is named, never "Claude sign-in"', () => {
+  assert.equal(pays2({ envOf: () => ({ ANTHROPIC_API_KEY: 'k' }) }), "An API key in this model's settings");
+  assert.equal(pays2({ envOf: () => ({ ANTHROPIC_AUTH_TOKEN: 'k' }) }), "An API key in this model's settings");
+});
+
+test('Fix round 1: other routing Worca can see, in P4-Q17 order', () => {
+  assert.equal(pays2({ processEnv: { ANTHROPIC_BASE_URL: 'https://gw.example' } }), 'Custom endpoint, set where Worca runs');
+  assert.equal(pays2({ userEnv: { ANTHROPIC_BASE_URL: 'https://gw.example' } }), 'Custom endpoint, set in your Claude Code settings');
+  assert.equal(pays2({ userSettings: { apiKeyHelper: 'x' } }), 'An API key helper in your Claude Code settings');
+  assert.equal(pays2({ userSettings: { awsAuthRefresh: 'x' } }), 'Amazon Bedrock, set in your Claude Code settings');
+  assert.equal(pays2({ userSettings: { awsCredentialExport: 'x' } }), 'Amazon Bedrock, set in your Claude Code settings');
+  assert.equal(pays2({ processEnv: { CLAUDE_CODE_OAUTH_TOKEN: 't' } }), 'A Claude sign-in token set where Worca runs');
+  assert.equal(pays2({ userEnv: { CLAUDE_CODE_OAUTH_TOKEN: 't' } }), 'A Claude sign-in token set in your Claude Code settings');
+  assert.equal(pays2({ processEnv: { ANTHROPIC_BASE_URL: 'https://gw.example' }, userEnv: { CLAUDE_CODE_USE_VERTEX: '1' } }), 'Custom endpoint, set where Worca runs', 'where Worca runs comes before the settings');
+  assert.equal(pays2({}), 'Claude sign-in');
+});
+
+test('Fix round 1: hidden built-ins are never listed, suggested or stored', async () => {
+  const cat = CATALOG.map((m) => (m.id === 'claude-opus-5-5' ? { ...m, hidden: true } : m));
+  assert.ok(!claudeModels(cat, quiet2).some((m) => m.id === 'claude-opus-5-5'));
+  await assert.rejects(checkJudgeModel('claude-opus-5-5', { catalog: async () => cat }), { code: 'BAD_REQUEST' });
+});
+
+test('Fix round 1: "on" follows the CLI (1, true, yes, on)', () => {
+  assert.equal(pays2({ processEnv: { CLAUDE_CODE_USE_VERTEX: 'yes' } }), 'Google Vertex AI, set where Worca runs');
+  assert.equal(pays2({ processEnv: { CLAUDE_CODE_USE_VERTEX: 'banana' } }), 'Claude sign-in');
 });
