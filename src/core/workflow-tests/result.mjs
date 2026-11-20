@@ -19,6 +19,7 @@ import { runShellStep, readTrySetup, tryShellEnv, firstLine } from './shell-step
 import { DEFAULT_TIMEOUT_MS } from '../../shared/graph/script-meta.mjs';
 import { runCheck, judgeTry, wordCount, checkLabel, TEXT_KINDS, SCOPE_KINDS, SOURCE_KINDS, NETWORK_KINDS, commandSummary, testsSummary } from '../../shared/workflow-tests/checks.mjs';
 import { exampleSourcesText } from './sources-text.mjs';
+import { checkLinks as realCheckLinks } from './link-check.mjs';
 import { createTestOutputParser } from './test-output.mjs';
 import { beforeAfter, commandMet } from '../../shared/workflow-tests/before-after.mjs';
 
@@ -238,7 +239,7 @@ export async function runCommandCheck(check, { cwd, logFile = null, run = runShe
  *   `beforeOf(check)`: 3b (D75) the command's run on the start commit, or null.
  */
 export async function checkTry(example, outcome, { runScript = runScriptCheck, runCommand = runCommandCheck, readText = readCheckFile,
-  scriptName = (k) => k, onCommand = () => {}, beforeOf = () => null, readSources = (ex) => exampleSourcesText(ex), checkLinks = null } = {}) {
+  scriptName = (k) => k, onCommand = () => {}, beforeOf = () => null, readSources = (ex) => exampleSourcesText(ex), checkLinks = realCheckLinks } = {}) {
   const checks = example.checks || [];
   const results = new Array(checks.length);
   const later = [];
@@ -283,7 +284,14 @@ export async function checkTry(example, outcome, { runScript = runScriptCheck, r
     const label = checkLabel(check, { scriptName: check.kind === 'script' ? scriptName(check.key) : null });
     const not = (value, extra = {}) => { results[i] = { id: check.id, label, met: false, value, ...extra }; };
     if (outcome.facts.status !== 'done') { not('Not run: the try did not finish'); continue; }
-    if (check.kind === 'links') { not('Not run: link checks come later'); continue; }   // Task 4 replaces this
+    // Part 4 (D93): links reads only the result, so it needs no copy of the project and runs before that guard (M20).
+    if (check.kind === 'links') {
+      let text = outcome.text;
+      if (check.file) text = await readText(outcome, check.file);
+      const r = typeof text === 'string' && text.trim() ? await checkLinks(text) : { met: false, value: 'No result' };
+      results[i] = { id: check.id, label, met: r.met, value: r.value, ...(r.notChecked ? { notChecked: true } : {}) };
+      continue;
+    }
     // U-T2: Worca lost the copy it made: a Worca problem (worcaProblem), never the workflow's.
     if (outcome.project && !cwdDir) { not('Not run: the copy of the project is gone', { worcaProblem: true }); continue; }
     if (check.kind === 'command') {

@@ -62,7 +62,7 @@ function missCounts(list) {
   const counts = new Map();
   for (const t of list) {
     const v = t.verdict || {};
-    for (const item of [...(v.basics || []), ...(v.checks || [])]) if (item && !item.met) counts.set(item.label, (counts.get(item.label) || 0) + 1);
+    for (const item of [...(v.basics || []), ...(v.checks || [])]) if (item && !item.met && !item.notChecked) counts.set(item.label, (counts.get(item.label) || 0) + 1);
   }
   return counts;
 }

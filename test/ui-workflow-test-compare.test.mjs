@@ -610,3 +610,13 @@ test('final review UI 4: one try on each side that disagree: "Might be luck: onl
     model: compareModel({ examples: [{ id: 1, name: 'X' }], a: { label: 'v4' }, b: { label: 'v5 draft' }, tries: list }) }));
   assert.equal(one.root.querySelector('.wft-why').textContent, 'Might be luck: only 1 try. Try 3 more');
 });
+
+test('Part 4 (I12): a check Worca could not run shows grey words, never a dot', () => {
+  const s = side();
+  s.tries[1].b = { ...s.tries[1].b, verdict: { ...s.tries[1].b.verdict,
+    checks: [{ label: 'Every link works', met: false, notChecked: true, value: 'Not checked: Worca could not reach these links' }] } };
+  const { root } = boot(renderSideBySide, s, { tryIndex: 1 });
+  const cell = [...root.querySelectorAll('.wft-checked .wft-res')].find((c) => c.textContent === 'Not checked: Worca could not reach these links');
+  assert.ok(cell && cell.classList.contains('is-none'));
+  assert.equal(cell.querySelector('.wft-dot'), null);
+});

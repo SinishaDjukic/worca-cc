@@ -578,6 +578,7 @@ export function renderSideBySide(root, s, actions, { doc, tryIndex = 0, renderMa
     const span = el(doc, 'span', 'wft-res');
     span.dataset.label = column;   // H2: on a phone each version's cell is its own line, named (style.css .wft-crow [data-label])
     if (!it) { span.classList.add('is-none'); span.textContent = '—'; return span; }
+    if (it.notChecked) { span.classList.add('is-none'); span.textContent = it.value; return span; }
     if (!it.met) span.classList.add('is-bad');
     const d = el(doc, 'span', `wft-dot ${it.met ? 'ok' : 'no'}`);
     d.setAttribute('aria-hidden', 'true');

@@ -514,7 +514,7 @@ export function judgeTry(example, facts, checkResults = [], result = {}) {
   });
   const checks = (Array.isArray(checkResults) ? checkResults : []).map((c) => ({ ...c }));
   return {
-    passed: basics.every((x) => x.met) && checks.every((c) => c.met),
+    passed: basics.every((x) => x.met) && checks.every((c) => c.met || c.notChecked === true),
     basics,
     checks,
     facts: { status: f.status || null, costUsd: Number(f.costUsd || 0), durationMs: f.durationMs ?? null,
