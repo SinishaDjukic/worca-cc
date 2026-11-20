@@ -294,18 +294,20 @@ export function renderCompare(root, c, actions, { doc, now = Date.now(), mock = 
     pa.dataset.label = `${A} passed`;
     pb.dataset.label = `${B} passed`;
     row.append(act(doc, root, runId, r.name, () => actions.open(r.id), 'wft-ex-open', `wft-cmp-ex-${r.id}`), pa, pb, cell);
+    const onlyWhy = r.luck ? null : cn.whyOf(r.id);
     if (r.luck) {
       const why = el(doc, 'span', 'wft-why');
       const most = Math.max(r.a.total, r.b.total);
       const luck = `Might be luck: only ${most} ${most === 1 ? 'try' : 'tries'}.`;   // final review UI 4: one try each is common
       if (c.run.tries >= MAX_TRIES) why.textContent = luck;   // the most a test tries: the note stays, the button goes
       else {
-        why.append(doc.createTextNode(`${luck} `),
-          act(doc, root, runId, `Try ${Math.min(3, MAX_TRIES - c.run.tries)} more`, () => actions.tryMore(r.id), 'wft-linkbtn', `wft-cmp-more-${r.id}`, { busy: true }));
+        const more = act(doc, root, runId, `Try ${Math.min(3, MAX_TRIES - c.run.tries)} more`, () => actions.tryMore(r.id), 'wft-linkbtn', `wft-cmp-more-${r.id}`, { busy: true });
+        if (cn.checking) more.disabled = true;   // as Test again: no test of the workflow starts while Worca checks (P4-M5)
+        why.append(doc.createTextNode(`${luck} `), more);
       }
       row.append(why);
-    } else if (cn.whyOf(r.id)) {
-      row.append(el(doc, 'span', 'wft-why', cn.whyOf(r.id)));   // P4-M5: a difference only in unreliable criteria
+    } else if (onlyWhy) {
+      row.append(el(doc, 'span', 'wft-why', onlyWhy));   // P4-M5: a difference only in unreliable criteria
     } else if (r.why) {
       row.append(el(doc, 'span', 'wft-why', r.why));
     }

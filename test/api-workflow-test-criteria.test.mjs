@@ -461,3 +461,55 @@ test('GET trust fix round 1: only the newest ready round of the current words an
   const live = new Set([`${ex.id}|${model}`]);
   assert.equal(cs.pairJudgements('wf_api_c', live).length, cs.pairJudgements('wf_api_c').length - 2);
 });
+
+test("fix round 1: criteria a test never checked (Worca's spending limit, or the test's own cap) read 'unchecked', and Compare never says they changed after it", { timeout: 300000 }, async () => {
+  const { registerWorkflowTestRoutes } = await import('../src/core/workflow-tests/routes.mjs');
+  const { createCriteriaJudge } = await import('../src/core/workflow-tests/criteria-runner.mjs');
+  const { judgeCriterion } = await import('../src/core/workflow-tests/judge.mjs');
+  const deps = (await import('../ui/routes/workflows/workflow-tests.mjs')).workflowTestDeps;
+  const { JSDOM } = await import('jsdom');
+  const { renderCompare } = await import('../ui/public/workflows/test-compare.mjs');
+  const LIM = '/api/workflows/wf_api_lim/tests';
+  assert.equal((await call('POST', '/api/workflows', { ...graph, id: 'wf_api_lim', name: 'Limit brief' })).status, 201);
+  let asked = 0;
+  let mode = 'limit';
+  // 'limit': the real judge with Worca's spending limit reached (it refuses before any call); 'cap': the first check costs $1 and
+  // reaches the test's own $0.50 cap, so the second is never asked.
+  const criteriaJudge = createCriteriaJudge({
+    judgeCriterion: async (args, d) => {
+      if (mode === 'limit') {
+        return judgeCriterion({ ...args, mock: false }, { ...d, mock: () => false, budget: () => ({ blocked: true }),
+          helperCall: async () => { asked += 1; throw new Error('no paid call when refused'); } });
+      }
+      args.book(1, 'billed');
+      return { met: true, reason: 'r', proof: null, proofFound: false, error: null, costUsd: 1, ms: 1 };
+    },
+  });
+  const fakeApp = Object.fromEntries(['get', 'post', 'put', 'delete'].map((m) => [m, () => {}]));
+  const { runner } = registerWorkflowTestRoutes(fakeApp, { deps: { ...deps, criteriaJudge } });
+  const made = await call('POST', `${LIM}/examples`, { name: 'Bulk export', request: 'Write the brief for a bulk invoice export.', tries: 1,
+    criteria: [{ text: 'Names a success metric' }, { text: 'Explains the legal reasons' }], judge: { model: 'claude-haiku-4-5' } });
+  assert.equal(made.status, 201);
+  const exId = made.body.example.id;
+  for (const [m, capUsd, unchecked, booked] of [['limit', null, ['Explains the legal reasons', 'Names a success metric'], 0], ['cap', 0.5, ['Explains the legal reasons'], 1]]) {
+    mode = m;
+    const run = await runner.start({ workflowId: 'wf_api_lim', kind: 'once', b: 'draft', exampleIds: [exId], tries: 1, capUsd });
+    await runner.idle(run.id);
+    assert.notEqual(store.readTestRun(run.id).status, 'running');
+    const crit = await call('GET', `${LIM}/runs/${run.id}/criteria`);
+    assert.equal(crit.status, 200);
+    assert.deepEqual(crit.body.rows.filter((r) => r.uneven).map((r) => [r.label, r.reason]).sort(), unchecked.map((l) => [l, 'unchecked']), `${m}: unchecked, never new`);
+    const compare = await call('GET', `${LIM}/runs/${run.id}/compare`);
+    assert.deepEqual(compare.body.notes.notChecked.map((n) => [n.reason, [...n.criteria].sort()]), [['unchecked', unchecked]], m);
+    assert.equal(prepare('SELECT COUNT(*) AS n FROM wf_test_judge_ledger WHERE test_run_id = ?').get(run.id).n, booked, `${m}: only a call made is booked`);
+    // The page as the app paints it (tests-app.mjs wftCompareRead: the compare read with its criteria beside it).
+    const { window } = new JSDOM('<!doctype html><div id="r"></div>');
+    const root = window.document.getElementById('r');
+    renderCompare(root, { ...compare.body, criteria: crit.body }, { back() {}, testAgain() {}, open() {}, tryMore() {}, checkCriteria() {} }, { doc: window.document });
+    assert.doesNotMatch(root.textContent, /changed after this test/, m);
+    assert.match(root.textContent, /Not checked on every try, so it does not decide yet/, m);
+    root.querySelector('#wft-by-cr').dispatchEvent(new window.MouseEvent('click', { bubbles: true }));
+    assert.doesNotMatch(root.querySelector('.wft-by-crit').textContent, /Added after this test/, m);
+  }
+  assert.equal(asked, 0, 'no paid call when refused');
+});

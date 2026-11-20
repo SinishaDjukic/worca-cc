@@ -48,7 +48,9 @@ test('one version (Try it once): no "<A> met" column; one more criterion says "c
   renderByCriterion(root, { ...data, more: 1, rows: [{ ...data.rows[1], a: null }] }, { doc, labels: { a: null, b: 'your draft' } });
   assert.deepEqual([...root.querySelectorAll('.wft-bc-row.is-head > span')].map((x) => x.textContent), ['Criterion', 'your draft met', "Worca's checking"]);
   assert.ok(root.querySelector('.wft-bc-rows').classList.contains('is-one'));
-  assert.equal(root.querySelector('.wft-bc-more').textContent, '1 more criterion, all met in every try by both versions');
+  assert.equal(root.querySelector('.wft-bc-more').textContent, '1 more criterion, all met in every try', 'fix round 1: one version, so no "by both versions"');
+  renderByCriterion(root, { ...data, more: 4, rows: [] }, { doc, labels: { a: null, b: 'your draft' } });
+  assert.equal(root.querySelector('.wft-bc-more').textContent, '4 more criteria, all met in every try');
 });
 
 const v = { passed: true, basics: [], checks: [], facts: { durationMs: 60000, sentBack: 0 } };
@@ -217,6 +219,24 @@ test('P4-M5 progress: after the last try, the line while Worca checks the criter
   assert.deepEqual([line.querySelector('b').textContent, line.querySelector('.hint').textContent], ['Checking your criteria on earlier tries', '7 of 12 tries']);
   renderTestProgress(root, { ...p, criteriaPhase: null }, actions, { doc });
   assert.equal(root.querySelector('.wft-crit-phase'), null);
+  renderTestProgress(root, { ...p, criteriaPhase: { done: 0, of: 0 } }, actions, { doc });
+  assert.equal(root.querySelector('.wft-crit-phase'), null, 'fix round 1: no earlier try to check, no line');
+});
+
+test('fix round 1: while Worca checks, Try 3 more is disabled as Test again is; the green band only once every criterion is checked', () => {
+  const t = (id, side, status) => ({ id, side, exampleId: 1, status, costUsd: 1, verdict: { ...v, passed: status === 'passed' } });
+  const luck = [t(1, 'a', 'passed'), t(2, 'a', 'passed'), t(3, 'a', 'failed'), t(4, 'b', 'passed'), t(5, 'b', 'passed'), t(6, 'b', 'passed')];
+  const model = compareModel({ examples: [{ id: 1, name: 'Bulk invoice export' }], a: { label: 'v4' }, b: { label: 'v5 draft' }, tries: luck });
+  const at = (over) => cmp({ model, run: { ...cmp().run, tries: 3 }, ...over });
+  const { root, again } = bootCmp(at({ notes: notes(), criteria: { ...cmp().criteria, checkUsd: 0.4, checking: true } }));
+  const more = () => [...root.querySelectorAll('.wft-why button')].find((b) => b.textContent === 'Try 3 more');
+  assert.equal(more().disabled, true, 'no test of the workflow starts while Worca checks');
+  again(at({ notes: notes({ notChecked: [UNCHECKED] }), criteria: { ...cmp().criteria, checkUsd: 0.1 } }));
+  assert.equal(more().disabled, false, 'the check is over');
+  assert.equal(root.querySelector('.wft-crit-band'), null, 'a criterion is still not checked on every try: no "Worca checked your criteria"');
+  assert.match(root.querySelector('.wft-changes').textContent, /Not checked on every try, so it does not decide yet/);
+  again(at({ notes: notes({ notChecked: [] }), criteria: { ...cmp().criteria, checkUsd: 0 } }));
+  assert.equal(root.querySelector('.wft-crit-band').textContent, 'Worca checked your criteria on these tries.');
 });
 
 test('tests-app.mjs (P4-Q15): Check them on these tries posts the check, repaints, and reads again every 2 s while Worca checks', async () => {

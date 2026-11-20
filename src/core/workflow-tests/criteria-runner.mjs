@@ -61,19 +61,45 @@ export function createCriteriaJudge(deps = {}) {
   }
 
   /** D91: the criteria phase: every finished try the test shows (its own and the reused ones) that still misses a criterion.
-   *  P4-M5: `onProgress({ done, of })` before the first and after each such try (board 20's "7 of 12 tries"). */
+   *  P4-M5: `onProgress({ done, of })` before the first and after each such try (board 20's "7 of 12 tries"), then
+   *  `onProgress(null)` before the pairs (fix round 1: the line counts earlier tries, never the pair calls). */
   async function judgeMissing(run, { stopped = () => false, overCap = () => false, onProgress = null } = {}) {
     const examples = new Map();
     const exampleOf = (id) => { if (!examples.has(id)) examples.set(id, store.readExample(run.workflowId, id)); return examples.get(id); };
     const todo = store.triesOfRun(run.id).filter((t) => (t.status === 'passed' || t.status === 'failed') && missingOf(exampleOf(t.exampleId), t).length);
-    const say = (done) => { if (onProgress) onProgress({ done, of: todo.length }); };
+    const say = (done) => { if (onProgress) onProgress(done === null ? null : { done, of: todo.length }); };
     say(0);
     for (const [i, t] of todo.entries()) {
       if (stopped() || overCap()) return;
       await judgeTry(exampleOf(t.exampleId), t, { testRunId: run.id, mock: !!t.mock, stopped, overCap });
       say(i + 1);
     }
+    say(null);
     await judgePairs(run, { stopped, overCap });
+  }
+
+  /**
+   * Fix round 1 (P4-M5): at the end of a test, each criterion of a finished try that nothing checked (the spending limit or the
+   * test's cap refused it or was reached first, the test was stopped, a call threw) gets a row with `error` ('limit' | 'failed'),
+   * met null and no cost. The criterion existed while the test ran, so Compare calls it 'unchecked', never 'new'
+   * (criteria-read.mjs reasonOfCriterion); a later pass still checks it (cs.RETRY_ERRORS). Never a model call, never a booking.
+   * A try that already has a row for the criterion keeps it.
+   */
+  function leaveUnchecked(run, { error = 'limit' } = {}) {
+    const tries = store.triesOfRun(run.id).filter((t) => (t.status === 'passed' || t.status === 'failed') && finishedTry(t));
+    const had = new Set(cs.tryJudgements(tries.map((t) => t.id)).map((j) => `${j.tryId}|${j.fp}|${j.model}`));
+    const examples = new Map();
+    for (const t of tries) {
+      if (!examples.has(t.exampleId)) examples.set(t.exampleId, store.readExample(run.workflowId, t.exampleId));
+      const ex = examples.get(t.exampleId);
+      const model = ex && ex.judge ? ex.judge.model : null;
+      if (!model) continue;
+      for (const c of ex.criteria || []) {
+        const fp = cs.criterionFp(c.text);
+        if (had.has(`${t.id}|${fp}|${model}`)) continue;
+        cs.insertJudgement({ workflowId: run.workflowId, exampleId: ex.id, criterionId: c.id, fp, model, purpose: 'try', tryId: t.id, j: { met: null, error } });
+      }
+    }
   }
 
   /** D100, P4-Q8: one pair per compared example with criteria or a result you liked: the first finished try of each side. */
@@ -107,5 +133,5 @@ export function createCriteriaJudge(deps = {}) {
       if (j.error === 'limit') return;   // the rest wait for the next pass
     }
   }
-  return { judgeTry, judgeMissing, judgePairs };
+  return { judgeTry, judgeMissing, judgePairs, leaveUnchecked };
 }

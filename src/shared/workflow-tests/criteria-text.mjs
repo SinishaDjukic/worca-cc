@@ -27,13 +27,15 @@ export function trustLine(t) {
   return 'Can be checked exactly, without AI.';
 }
 
-/** Board 5's card. */
-export function checkingSentence(c) {
-  const head = `Worca's checking is reliable for ${c.reliable} of ${c.total} criteria.`;
+/** Board 5's line: the words after its bold "Worca's checking" (checkingSentence without them). */
+export function checkingRest(c) {
+  const head = ` is reliable for ${c.reliable} of ${c.total} criteria.`;
   if (!c.unreliable) return head;
   return c.unreliable === 1 ? `${head} 1 unreliable criterion is shown, but does not decide better or worse.`
     : `${head} ${c.unreliable} unreliable criteria are shown, but do not decide better or worse.`;
 }
+/** Board 5's card. */
+export const checkingSentence = (c) => `Worca's checking${checkingRest(c)}`;
 /** Board 1's card "Can you trust Worca's checking?". */
 export function listTrustSentence(c) {
   const head = `Reliable for ${c.reliable} of ${c.total} criteria.`;

@@ -44,7 +44,9 @@ export function withCriteriaFor(workflowId, tries, { withAnswers = false, by = n
 
 /**
  * P4-M5: the criteria not checked on every finished try, with why. 'new': no try of the run has any judgement of the criterion's
- * current words (it was added or changed after the test); 'unchecked': otherwise (the limit, the cap or a failed call left it).
+ * current words (it was added or changed after the test); 'unchecked': otherwise (the limit, the cap, a stop or a failed call left it).
+ * Fix round 1: the run records no criteria at its start, so the end of every test writes a no-cost row for each criterion it left
+ * unchecked (criteria-runner.mjs leaveUnchecked): a criterion that existed while the test ran always has a row on its tries.
  * An example with both gets one entry for each reason.
  */
 export function reasonOfCriterion(tryIds) {

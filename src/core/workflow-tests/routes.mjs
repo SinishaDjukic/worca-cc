@@ -52,6 +52,7 @@ export function registerWorkflowTestRoutes(app, { broadcast = () => {}, deps = {
     ...deps,
     judgeCriteria: (example, t, o) => criteriaJudge.judgeTry(example, t, o),   // Part 4 (D91)
     judgeMissing: (run, o) => criteriaJudge.judgeMissing(run, o),
+    leaveUnchecked: (run, o) => criteriaJudge.leaveUnchecked(run, o),   // fix round 1: 'unchecked', never 'new'
     outcomeOf: (pipelineId, o) => readTryOutcome(pipelineId, o),
     judge: (example, outcome, o = {}) => checkTry(example, outcome, { scriptName, onCommand: o.onCommand, beforeOf: o.beforeOf }),
     // 3b (D75): the command on each project example's start point, before the tries (a test may pass its own).

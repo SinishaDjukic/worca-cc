@@ -269,6 +269,11 @@ export function createTestRunner(deps) {
     st.done = loop(runId, st)
       .catch((e) => { st.stopping = st.stopping || 'error'; st.detail = st.detail || msgOf(e); })
       .finally(() => {
+        // Fix round 1 (P4-M5): what this test never checked is 'unchecked', not 'new' ('limit' when a limit or the cap left it).
+        if (deps.leaveUnchecked) {
+          try { deps.leaveUnchecked(store.readTestRun(runId), { error: st.stopping && st.stopping !== 'cap' ? 'failed' : 'limit' }); }
+          catch (e) { console.error(`[workflow-tests] could not record the criteria test ${runId} left unchecked: ${msgOf(e)}`); }
+        }
         try {
           store.updateTestRun(runId, st.stopping
             ? { status: 'stopped', stopReason: st.stopping, stopDetail: st.detail, finishedAt: nowIso() }
@@ -780,8 +785,13 @@ export function createTestRunner(deps) {
 
   /** D91: the test is in its criteria phase (the reused tries and any missing check are being checked). */
   function criteriaPhaseOf(runId) { const st = live.get(Number(runId)); return !!(st && st.criteriaPhase); }
-  /** P4-M5: in the criteria phase, how many earlier tries it checks and how many are done ({ done, of }); else null. */
-  function criteriaProgressOf(runId) { const st = live.get(Number(runId)); return st && st.criteriaPhase ? { ...(st.criteriaProgress || { done: 0, of: 0 }) } : null; }
+  /** P4-M5: in the criteria phase, how many earlier tries it checks and how many are done ({ done, of }); else null. Fix round 1:
+   *  also null when it checks no earlier try (`of` 0) and while it asks the pairs (judgeMissing's onProgress(null)). */
+  function criteriaProgressOf(runId) {
+    const st = live.get(Number(runId));
+    const p = st && st.criteriaPhase ? st.criteriaProgress : null;
+    return p && p.of > 0 ? { ...p } : null;
+  }
 
   return { start, stop, continueRun, recover, idle, costOf, phaseOf, diskOf, beforeNowOf, stoppingOf, criteriaPhaseOf, criteriaProgressOf, checkCriteriaLater, criteriaCheckOf, criteriaCheckingOf };
 }

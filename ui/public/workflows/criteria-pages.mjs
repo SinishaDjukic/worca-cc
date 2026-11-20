@@ -4,7 +4,7 @@
 import { el, btn } from './test-ui.mjs';
 import { icon } from '../icons.mjs';
 import { fmtUsd } from '../../../src/shared/workflow-tests/checks.mjs';
-import { TRUST_BADGE, trustLine, checkingSentence, BY_EXAMPLE, BY_CRITERION, SEE_BY_CRITERION, NOT_CHECKED, CRITERIA_CHANGED_TEXT, CHECK_THEM, NOT_EVERY_TRY,
+import { TRUST_BADGE, trustLine, checkingRest, BY_EXAMPLE, BY_CRITERION, SEE_BY_CRITERION, NOT_CHECKED, CRITERIA_CHANGED_TEXT, CHECK_THEM, NOT_EVERY_TRY,
   CHECKING_CRITERIA_TEXT, CHECKED_CRITERIA_TEXT, CAP_CHECKS_TEXT, ADDED_AFTER_TEXT, NO_CHECKED_TRY, notEveryTryText, unreliableOnlyText, unreliableWhyText }
   from '../../../src/shared/workflow-tests/criteria-text.mjs';
 
@@ -68,7 +68,7 @@ export function renderByCriterion(root, data, { doc, labels, onTrust = null }) {
     const row = el(doc, 'div', 'wft-bc-row is-more');
     const tc = el(doc, 'span', 'wft-bc-trust');
     tc.append(badgeOf(doc, 'reliable'));
-    row.append(el(doc, 'span', 'wft-bc-more', `${data.more} more ${data.more === 1 ? 'criterion' : 'criteria'}, all met in every try by both versions`),
+    row.append(el(doc, 'span', 'wft-bc-more', `${data.more} more ${data.more === 1 ? 'criterion' : 'criteria'}, all met in every try${one ? '' : ' by both versions'}`),
       ...(one ? [] : [el(doc, 'span')]), el(doc, 'span'), tc);
     inner.append(row);
   }
@@ -128,7 +128,7 @@ export function compareCriteriaParts(doc, { root, runId, criteria, labels, table
     t.setAttribute('aria-controls', pid);
   }
   const line = el(doc, 'p', 'hint wft-check-line');
-  line.append(el(doc, 'b', '', CHECKING), doc.createTextNode(`${checkingSentence(criteria.counts).slice(CHECKING.length)} `),
+  line.append(el(doc, 'b', '', CHECKING), doc.createTextNode(`${checkingRest(criteria.counts)} `),
     btn(doc, SEE_BY_CRITERION, () => { show(true); cr.focus(); }, 'wft-linkbtn'));
   return { tabs, box, line, done: (h) => { hide = h.filter(Boolean); show(BY_CRIT.get(root) === runId); } };
 }
@@ -181,7 +181,7 @@ export function compareCriteriaNotes(doc, c, { root, act, testAgain, checkCriter
       else b.replaceChildren(doc.createTextNode(`${CHECK_THEM} (about `), el(doc, 'span', 'code', fmtUsd(usd)), doc.createTextNode(')'));
       top.append(b);
     }
-  } else if (mine.done) top = band('ok', 'check', CHECKED_CRITERIA_TEXT, 'status');
+  } else if (mine.done && !notChecked.length) top = band('ok', 'check', CHECKED_CRITERIA_TEXT, 'status');   // never beside "not checked on every try"
   let fair = null;
   if (unchecked.length) {   // also when the limit or the cap left a criterion unchecked on every try (the run can still end done)
     fair = el(doc, 'p', 'wft-fair');

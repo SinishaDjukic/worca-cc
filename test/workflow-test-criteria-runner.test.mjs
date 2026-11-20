@@ -7,7 +7,7 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { _resetForTests, prepare, getDb } from '../src/core/db.mjs';
-import { judgeCallUsd, sideCheckPlan, checkUsdOf, criteriaPlanOf } from '../src/core/workflow-tests/criteria-read.mjs';
+import { judgeCallUsd, sideCheckPlan, checkUsdOf, criteriaPlanOf, reasonOfCriterion } from '../src/core/workflow-tests/criteria-read.mjs';
 import { estimateOf } from '../src/shared/workflow-tests/compare.mjs';
 import * as store from '../src/core/workflow-tests/store.mjs';
 import * as cs from '../src/core/workflow-tests/criteria-store.mjs';
@@ -56,6 +56,7 @@ function harness(over = {}) {
     judge: (example, outcome) => checkTry(example, outcome),
     judgeCriteria: (ex, t, o) => judge.judgeTry(ex, t, o),
     judgeMissing: (run, o) => judge.judgeMissing(run, o),
+    leaveUnchecked: (run, o) => judge.leaveUnchecked(run, o),
     fingerprintOf: async (_wf, use) => `fp-${store.useRef(use)}`,
     mockMode: () => false,
     pollMs: 5,
@@ -109,14 +110,41 @@ test('P4-M5: the criteria phase says how many earlier tries it checks, and how m
   seen.length = 0;
   const second = await runner.start({ workflowId: WF, kind: 'once', b: 'draft', exampleIds: [ex.id], tries: 1, reuseB: true });
   await waitDone(runner, second.id);
-  assert.deepEqual(seen, [{ done: 0, of: 0 }, { done: 0, of: 1 }, { done: 1, of: 1 }], 'the phase starts (not counted yet); one reused try misses a criterion');
+  assert.deepEqual(seen, [{ done: 0, of: 1 }, { done: 1, of: 1 }], 'one reused try misses a criterion (fix round 1: no line while nothing is counted)');
   assert.equal(runner.criteriaProgressOf(second.id), null, 'none once the phase is over');
   // judgeMissing alone: a try that misses nothing is not counted.
   const judge = createCriteriaJudge({ subjectOf: async () => TEXT, contextOf: () => '', book: () => {},
     judgeCriterion: async () => ({ met: true, reason: 'r', proof: 'Cut tickets by 60%', proofFound: true, error: null, costUsd: 0, ms: 1 }) });
   const steps = [];
   await judge.judgeMissing(store.readTestRun(second.id), { onProgress: (p) => steps.push(p) });
-  assert.deepEqual(steps, [{ done: 0, of: 0 }]);
+  assert.deepEqual(steps, [{ done: 0, of: 0 }, null], 'nothing to check; the progress is cleared before the pairs');
+});
+
+test('fix round 1: a test with criteria and no reused tries shows no criteria phase line, nor while the pairs are asked', async () => {
+  let runner = null;
+  let runId = null;
+  let last;
+  const seen = [];
+  const atPair = [];
+  const h = harness({ deps: { notify: (f) => { const p = runner && runner.criteriaProgressOf(f.testRunId); if (p) seen.push(p); } } });
+  const judge = createCriteriaJudge({ subjectOf: async (t) => `${TEXT} (${t.side})`, contextOf: () => '', book: () => {},
+    judgeCriterion: async () => ({ met: true, reason: 'r', proof: 'Cut tickets by 60%', proofFound: true, error: null, costUsd: 0, ms: 1 }),
+    judgePair: async () => { atPair.push([runner.criteriaProgressOf(runId), last]); return { winner: 'b', reason: 'r', swapped: 'b', costUsd: 0, error: null, ms: 1 }; } });
+  h.deps.judgeCriteria = (e, t, o) => judge.judgeTry(e, t, o);
+  h.deps.judgeMissing = (run, o) => judge.judgeMissing(run, o);
+  const ex = example([{ text: 'Names a success metric' }]);
+  runner = createTestRunner(h.deps);
+  const run = await runner.start({ workflowId: WF, kind: 'compare', a: 1, b: 'draft', exampleIds: [ex.id], tries: 1, reuseA: false });
+  runId = run.id;
+  await waitDone(runner, run.id);
+  assert.deepEqual(seen, [], 'both tries were checked as they ended: no "Checking your criteria on earlier tries"');
+  assert.deepEqual(atPair.map((x) => x[0]), [null], 'no line while the pair is asked');
+  // judgeMissing alone, with an earlier try to check and then a pair: the progress is cleared before the pair.
+  prepare("DELETE FROM wf_test_judgements WHERE purpose = 'pair'").run();
+  store.updateExample(WF, ex.id, { criteria: [...store.readExample(WF, ex.id).criteria, { text: 'Explains the legal reasons' }] });
+  atPair.length = 0;
+  await judge.judgeMissing(store.readTestRun(run.id), { onProgress: (p) => { last = p; } });
+  assert.deepEqual(atPair.map((x) => x[1]), [null]);
 });
 
 test('M13: an unfinished try is never checked, and the criteria phase stops when asked or over the cap', async () => {
@@ -213,6 +241,50 @@ test('the judge spend reaches the cap partway through the criteria of a try: the
   const r = store.readTestRun(run.id);
   assert.equal(r.status, 'stopped');
   assert.equal(r.stopReason, 'cap');
+  // Fix round 1: the criterion the cap left gets a 'limit' row (no cost), so it reads 'unchecked', never 'new'.
+  const [t] = store.triesOfRun(run.id);
+  const left = cs.tryJudgements([t.id]).find((j) => j.fp === cs.criterionFp('Explains the legal reasons'));
+  assert.deepEqual([left && left.error, left && left.met, left && left.costUsd], ['limit', null, 0]);
+  assert.equal(reasonOfCriterion([t.id])('Explains the legal reasons'), 'unchecked');
+  assert.equal(prepare('SELECT COUNT(*) AS n FROM wf_test_judge_ledger WHERE test_run_id = ?').get(run.id).n, 1, 'only the call that was made is booked');
+});
+
+test("fix round 1: Worca's spending limit refuses every check: no call, no booking, and each criterion reads 'unchecked', never 'new'", async () => {
+  const { judgeCriterion } = await import('../src/core/workflow-tests/judge.mjs');
+  let asked = 0;
+  const h = harness({ judge: { judgeCriterion: (args, d) => judgeCriterion({ ...args, mock: false }, { ...d, mock: () => false, budget: () => ({ blocked: true }),
+    helperCall: async () => { asked += 1; throw new Error('no paid call when refused'); } }) } });
+  const ex = example([{ text: 'Names a success metric' }, { text: 'Explains the legal reasons' }]);
+  const runner = createTestRunner(h.deps);
+  const run = await runner.start({ workflowId: WF, kind: 'once', b: 'draft', exampleIds: [ex.id], tries: 1 });
+  await waitDone(runner, run.id);
+  assert.equal(store.readTestRun(run.id).status, 'done');
+  const [t] = store.triesOfRun(run.id);
+  assert.deepEqual(cs.tryJudgements([t.id]).map((j) => [j.criterionId, j.error, j.met, j.costUsd]).sort(),
+    ex.criteria.map((c) => [c.id, 'limit', null, 0]).sort(), 'the first refused, the second never reached: both recorded');
+  assert.equal(asked, 0);
+  assert.equal(prepare('SELECT COUNT(*) AS n FROM wf_test_judge_ledger WHERE test_run_id = ?').get(run.id).n, 0);
+  const reasonOf = reasonOfCriterion([t.id]);
+  assert.deepEqual(ex.criteria.map((c) => reasonOf(c.text)), ['unchecked', 'unchecked']);
+  assert.equal(cs.needsJudging(t.id, cs.criterionFp('Explains the legal reasons'), 'claude-haiku-4-5'), true, 'a later pass still checks it');
+});
+
+test('fix round 1: leaveUnchecked records only what has no row yet, with the reason given; never a call or a booking', async () => {
+  const calls = [];
+  const judge = createCriteriaJudge({ subjectOf: async () => TEXT, contextOf: () => '', book: () => { calls.push('book'); },
+    judgeCriterion: async () => { calls.push('judge'); return { met: true, reason: 'r', proof: 'x', proofFound: true, error: null, costUsd: 0, ms: 1 }; } });
+  const ex = example([{ text: 'Names a success metric' }, { text: 'Explains the legal reasons' }]);
+  const { run, t } = seedTry(ex, doneVerdict);
+  const unfinished = store.insertTry({ runId: run.id, workflowId: WF, exampleId: ex.id, use: 'draft', fp: 'f', exampleFp: ex.fingerprint, tryNo: 2 });
+  store.linkTry(run.id, unfinished.id, 'b');
+  cs.insertJudgement({ workflowId: WF, exampleId: ex.id, criterionId: ex.criteria[0].id, fp: cs.criterionFp(ex.criteria[0].text), model: 'claude-haiku-4-5',
+    purpose: 'try', tryId: t.id, j: { met: true, reason: 'r', proof: 'x', proofFound: true } });
+  judge.leaveUnchecked(store.readTestRun(run.id), { error: 'failed' });
+  judge.leaveUnchecked(store.readTestRun(run.id), { error: 'limit' });
+  assert.deepEqual(cs.tryJudgements([t.id]).map((j) => [j.criterionId, j.met, j.error]).sort(),
+    [[ex.criteria[0].id, true, null], [ex.criteria[1].id, null, 'failed']].sort(), 'the checked one is kept; the other recorded once, as the first call said');
+  assert.deepEqual(cs.tryJudgements([unfinished.id]), [], 'an unfinished try is not checked, so nothing is recorded');
+  assert.deepEqual(calls, []);
 });
 
 test('a try Worca set aside, or whose run did not finish, is never judged', async () => {
