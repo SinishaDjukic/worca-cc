@@ -7,7 +7,7 @@ import { readFileSync } from 'node:fs';
 import { renderChecker, renderByCriterion } from '../ui/public/workflows/criteria-pages.mjs';
 import { renderCriteriaSection } from '../ui/public/workflows/criteria-editor.mjs';
 import { testsAddress, TESTS_ROUTE_RE } from '../ui/public/workflows/tests-view.mjs';
-import { NO_SOURCE_TEXT, LIMIT_TEXT } from '../src/shared/workflow-tests/criteria-text.mjs';
+import { NO_SOURCE_TEXT, NO_PASSED_TRY_TEXT, LIMIT_TEXT } from '../src/shared/workflow-tests/criteria-text.mjs';
 
 const view = (answers = [true, true, null, null]) => ({ round: { id: 7, criterionId: 'k_1', status: answers.every((a) => a !== null) ? 'done' : 'ready' },
   exampleName: 'Bulk invoice export',
@@ -118,6 +118,25 @@ test('P4-M3: no good result yet, and the spending limit reached (no round): the 
   btnByText(lim, 'Try again').click();
   assert.deepEqual(asked, ['try', 'back', 'retry']);
   assert.equal(btnByText(lim, 'Try again').className, 'btn btn-sm');
+});
+
+test('board 59 A: tried, but no try passed: "Worca needs a good result first", its words, Back and "Pick a result you liked"', () => {
+  const { doc, root } = dom();
+  const asked = [];
+  const acts = { ...NOOP, back: () => asked.push('back'), pickLiked: () => asked.push('liked'), tryOnce: () => asked.push('try') };
+  renderChecker(root, null, acts, { doc, exampleName: 'Bulk invoice export', criterion: { id: 'k_1', text: 'Names a metric' },
+    empty: { kind: 'tried', text: NO_PASSED_TRY_TEXT } });
+  const box = root.querySelector('.wft-cc-state');
+  assert.equal(box.querySelector('h2').textContent, 'Worca needs a good result first');
+  assert.equal(box.getAttribute('aria-labelledby'), box.querySelector('h2').id);
+  assert.equal(box.querySelector('.wft-cc-say').textContent,
+    'No try of this example passed yet, so Worca has no good result to break. Pick a result you liked, or fix what fails and try again.');
+  assert.deepEqual([...box.querySelectorAll('button')].map((b) => [b.textContent, b.className]),
+    [['Back', 'btn btn-sm'], ['Pick a result you liked', 'btn btn-sm btn-primary']]);
+  assert.equal(btnByText(box, 'Try your draft once now'), undefined, 'board 53 state 3 is for an example never tried');
+  btnByText(box, 'Pick a result you liked').click();
+  btnByText(box, 'Back').click();
+  assert.deepEqual(asked, ['liked', 'back']);
 });
 
 test('P4-M3: a round that failed (a restart, board 58) says so, what it cost, with Back and Try again', () => {
@@ -304,6 +323,35 @@ test('tests-app.mjs: a refused start shows P4-M3\'s states (no good result, the 
   await settle();
   assert.equal(h.root.querySelector('.wft-cc-state h2').textContent, 'Check the checker did not start');
   assert.equal(h.root.querySelector('.wft-cc-stop').textContent, LIMIT_TEXT);
+});
+
+test('board 59 A: tests-app.mjs tells the two 422s apart; "Pick a result you liked" opens the example with its "A result you liked" dialog', async () => {
+  const { createWorkflowTests } = await import('../ui/public/workflows/tests-app.mjs');
+  const B = '/api/workflows/wf_a/tests';
+  const failed = { ...view(), round: { id: 7, criterionId: 'k_1', status: 'failed', detail: 'Worca restarted before this round was ready. Try again.' }, cards: [] };
+  const routes = {
+    [`GET ${B}/examples/4/checker/7`]: { status: 200, body: failed },
+    [`POST ${B}/examples/4/checker`]: { status: 422, body: { error: NO_PASSED_TRY_TEXT } },
+    [`GET ${B}/examples/4`]: { status: 200, body: { example: { id: 4, name: 'Bulk invoice export', request: 'R', tries: 1, files: [], answers: [], checks: [],
+      basics: { noError: true, noHelp: false }, criteria: [{ id: 'k_1', text: 'Names a metric' }], judge: { model: 'm' }, liked: null } } },
+  };
+  const h = harness(routes);
+  const ctl = createWorkflowTests({ doc: h.doc, win: h.win, fetch: h.fetch, safeJson: (r) => r.json(), composer: () => ({ template: () => ({ id: 'wf_a' }) }),
+    api: {}, versions: () => ({ showPage: () => ctl.enterList() }), currentView: () => 'workflows', confirmModal: async () => true, openNewPipeline: () => {},
+    hdMarkdown: {}, mock: () => false, runPageShows: () => false });
+  ctl.route('wf_a', 'tests/4/checker/7', true);
+  await settle();
+  btnByText(h.root, 'Try again').click();
+  await settle();
+  const box = h.root.querySelector('.wft-cc-state');
+  assert.equal(box.querySelector('h2').textContent, 'Worca needs a good result first');
+  assert.equal(box.querySelector('.wft-cc-say').textContent, NO_PASSED_TRY_TEXT);
+  assert.equal(btnByText(box, 'Try your draft once now'), undefined);
+  btnByText(box, 'Pick a result you liked').click();
+  await settle();
+  assert.ok(h.calls.some(([m, p]) => m === 'GET' && p === `${B}/examples/4`), 'the example is opened');
+  assert.equal(h.root.querySelector('.wft-title').textContent, 'Example: Bulk invoice export');
+  assert.equal(h.doc.querySelector('#mk-dialog-title').textContent, 'A result you liked', 'its dialog is open');
 });
 
 test('tests-app.mjs wires the example editor\'s Confirm 4 results and Fix it, and Compare\'s By criterion links, to Check the checker', () => {

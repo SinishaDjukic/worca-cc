@@ -66,6 +66,8 @@ export const NO_CHECKED_TRY = 'No checked try';
 export const COST_UNKNOWN_NOTE = 'the cost of some checks is not known';
 /** P4-M3: Check the checker's refusals (checker.mjs throws them; the page tells them apart). */
 export const NO_SOURCE_TEXT = 'Try this example once first, so Worca has a good result to break.';
+/** Board 59 A: the example was tried, but no try passed (nothing liked, no good run either). */
+export const NO_PASSED_TRY_TEXT = 'No try of this example passed yet, so Worca has no good result to break. Pick a result you liked, or fix what fails and try again.';
 /** The words of Task 11's check route when the total spending limit is already reached. */
 export const LIMIT_TEXT = 'Total cost limit reached — nothing was sent to the model. Raise the limit in worca Settings.';
 /** Board 58: a Check the checker round that did not finish (its answers are refused, and the page says so). */

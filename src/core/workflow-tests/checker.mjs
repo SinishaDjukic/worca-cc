@@ -12,13 +12,13 @@ import { SUBJECT_MAX, clipText, fenceTag } from './judge-prompt.mjs';
 import { rewordCriterion } from './suggest.mjs';
 import * as store from './store.mjs';
 import * as cs from './criteria-store.mjs';
-import { NOT_CHECKED, NO_SOURCE_TEXT, LIMIT_TEXT, ROUND_NOT_FINISHED_TEXT } from '../../shared/workflow-tests/criteria-text.mjs';
+import { NOT_CHECKED, NO_SOURCE_TEXT, NO_PASSED_TRY_TEXT, LIMIT_TEXT, ROUND_NOT_FINISHED_TEXT } from '../../shared/workflow-tests/criteria-text.mjs';
 import { useLabel } from '../../shared/workflow-tests/compare.mjs';
 import { liveVersionNo, latestVersion } from '../workflow-revisions.mjs';
 import { findPipelineRowById } from '../artifacts.mjs';
 
-/** P4-M3's empty state and the limit refusal: shared words, so the page can tell the two 422s apart. */
-export { NO_SOURCE_TEXT, LIMIT_TEXT };
+/** P4-M3's empty state, board 59 A's (tried, no try passed) and the limit refusal: shared words, so the page can tell the 422s apart. */
+export { NO_SOURCE_TEXT, NO_PASSED_TRY_TEXT, LIMIT_TEXT };
 const EXCERPT_MAX = 400;
 const clip = (s) => { const t = String(s ?? '').trim(); return t.length > EXCERPT_MAX ? `${t.slice(0, EXCERPT_MAX - 1)}…` : t; };
 
@@ -38,6 +38,9 @@ export async function goodResultOf(example, { subjectOf = (t) => subjectOfTry(t)
   }
   return null;
 }
+
+/** Board 59 A: some try of the example finished (passed or failed); a try that did not finish is not one. */
+const triedOnce = (example) => store.triesForExample(example.id).some((t) => t.status === 'passed' || t.status === 'failed');
 
 /** `deps.changed(round)`: called when a round's making ends, ready or failed (the routes send the changed frame). */
 export function createChecker(deps = {}) {
@@ -91,7 +94,7 @@ export function createChecker(deps = {}) {
     const key = `${ex.id}|${criterion.id}`;
     if (making.has(key)) throw store.testError('Worca is already checking this criterion.', 'BUSY');
     const good = await goodResultOf(ex, d);
-    if (!good) throw store.testError(NO_SOURCE_TEXT, 'NOT_READY');
+    if (!good) throw store.testError(triedOnce(ex) ? NO_PASSED_TRY_TEXT : NO_SOURCE_TEXT, 'NOT_READY');
     // The total spending limit, refused up front (a mock round pays nothing, so it is never refused).
     if (!(d.mock() || good.mock === true)) {
       const b = d.budgetStatus();

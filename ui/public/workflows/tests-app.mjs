@@ -19,7 +19,7 @@ import { renderCompare, renderSideBySide, openWholeResult, askMoreTries } from '
 import { renderChecker, renderTrustReport } from './criteria-pages.mjs';
 import { SAVE_FIRST_TEXT, CHANGES_NOT_READ_TITLE, NO_DIFF_TEXT, PATCH_CUT_TEXT } from '../../../src/shared/workflow-tests/project-text.mjs';
 import { useLabel as wftUseLabel } from '../../../src/shared/workflow-tests/compare.mjs';
-import { NO_SOURCE_TEXT } from '../../../src/shared/workflow-tests/criteria-text.mjs';
+import { NO_SOURCE_TEXT, NO_PASSED_TRY_TEXT } from '../../../src/shared/workflow-tests/criteria-text.mjs';
 
 const WFT_EMPTY = Object.freeze({ view: 'list', workflowId: null, overview: null, error: null, example: null, runId: null,
   exampleId: null, tryIndex: 0, data: null, scripts: [], perTryUsd: null, editorToken: 0, roundId: null });
@@ -172,7 +172,8 @@ export function createWorkflowTests(deps) {
     const keep = { ...WFT_CHECKER_FRESH, exampleId, checkerCrit: { id: criterion.id, text: criterion.text || '' }, checkerName: exampleName || null, checkerFrom: from };
     if (r.ok) { wftShow('checker', { ...keep, roundId: r.data.round.id }); return; }
     if (r.status === 422) {
-      wftShow('checker', { ...keep, roundId: null, checkerEmpty: { kind: r.error === NO_SOURCE_TEXT ? 'none' : 'limit', text: r.error } });
+      const kind = r.error === NO_SOURCE_TEXT ? 'none' : r.error === NO_PASSED_TRY_TEXT ? 'tried' : 'limit';   // board 59 A: 'tried'
+      wftShow('checker', { ...keep, roundId: null, checkerEmpty: { kind, text: r.error } });
       return;
     }
     notify({ tone: r.status === 409 ? 'info' : 'err', title: 'Check the checker did not start', detail: r.error });
@@ -244,6 +245,7 @@ export function createWorkflowTests(deps) {
         if (!r.ok) { notify({ tone: 'err', title: 'The test did not start', detail: r.error }); return; }
         if (wft.view === 'checker' && wftWorkflowId() === id) wftShow('progress', { runId: r.data.run.id });
       },
+      pickLiked: () => { void wftOpenExample(exampleId, { liked: true }); },   // board 59 A: the example's "A result you liked"
       back,
       use: back,
       example: toExample,
@@ -515,7 +517,9 @@ export function createWorkflowTests(deps) {
     wft.editorToken = session.token;
     const o = wft.overview;
     const row = o && wft.example && wft.example.id ? o.examples.find((e) => e.id === wft.example.id) : null;
-    renderExampleEditor(root, wft.example, wftEditorActions(session), { doc, win, scripts: wft.scripts, perTryUsd: wft.perTryUsd,
+    const openLiked = !!wft.openLiked;   // board 59 A: once, on the first paint of the editor
+    wft.openLiked = false;
+    renderExampleEditor(root, wft.example, wftEditorActions(session), { doc, win, scripts: wft.scripts, perTryUsd: wft.perTryUsd, openLiked,
       draftLabel: o ? wftUseLabel('draft', o.ctx) : 'your draft', testRunning: !!(o && o.running), runningExampleIds: o && o.running ? o.running.exampleIds || [] : [], confirm: confirmModal,   // G19; F17
       // 3a (boards 32, 39): the projects to pick, whether the workflow needs one, and the overview's drift of this example's pin
       projects: wft.projects || null, needsProject: !!(o && o.needsProject), workflowName: o ? o.name : '',
@@ -528,7 +532,8 @@ export function createWorkflowTests(deps) {
       // Task 24 (P4-M2): the overview's latest finished tries of this example, as "v4 · try 2 · 14 Oct · passed"
       likedTries: (row && row.likedTries ? row.likedTries : []).map((t) => ({ id: t.id, label: [t.use, `try ${t.tryNo}`, t.at ? wftDate(t.at) : null, t.status].filter(Boolean).join(' · ') })) });
   }
-  async function wftOpenExample(exampleId) {
+  /** `liked`: board 59 A, the editor opens with the example's "A result you liked" dialog. */
+  async function wftOpenExample(exampleId, { liked = false } = {}) {
     const id = wftWorkflowId();
     if (!id) return;
     const seq = ++wftOpenSeq;                                         // a later Open wins over this one
@@ -551,7 +556,7 @@ export function createWorkflowTests(deps) {
     if (stale()) return;
     wft = { ...wft, workflowId: id, view: 'editor', example, scripts, ...(o.ok ? { overview: o.data } : {}),
       judgeModels: jm.ok ? jm.data : { models: [], suggested: null }, criteriaTrust: ct && ct.ok ? ct.data.trust : {},
-      perTryUsd: plan.ok && plan.data.b ? plan.data.b.perTryUsd : null, projects: pj.ok ? pj.data.projects : null };
+      perTryUsd: plan.ok && plan.data.b ? plan.data.b.perTryUsd : null, projects: pj.ok ? pj.data.projects : null, openLiked: liked };
     wftSyncHash();
     wftRender();
   }

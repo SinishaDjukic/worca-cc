@@ -154,6 +154,24 @@ test('a liked result is the good result, and is fenced whole in the planting pro
   assert.match(seen, /<result-[0-9a-f]{8}>\n[\s\S]*\n<\/result-[0-9a-f]{8}>$/);
 });
 
+test('board 59 A: tried, but no try passed (and nothing liked, no good run): refused with its own words, still a 422 (NOT_READY)', async () => {
+  const { NO_PASSED_TRY_TEXT } = await import('../src/core/workflow-tests/checker.mjs');
+  assert.equal(NO_PASSED_TRY_TEXT, 'No try of this example passed yet, so Worca has no good result to break. Pick a result you liked, or fix what fails and try again.');
+  const ex = store.createExample('wf', { name: 'E', request: 'R', criteria: [{ text: 'Names a metric' }], judge: { model: 'm' } });
+  const run = store.createTestRun({ workflowId: 'wf', kind: 'once', b: 'draft', bFp: 'f', exampleIds: [ex.id], tries: 1 });
+  const checker = createChecker({ subjectOf: async () => GOOD, modelCall: async () => ({ text: '{}', costUsd: 0 }), judgeCriterion: async () => ({}), mock: () => false });
+  const start = () => checker.start({ workflowId: 'wf', exampleId: ex.id, criterionId: ex.criteria[0].id });
+  const add = (status) => {
+    const t = store.insertTry({ runId: run.id, workflowId: 'wf', exampleId: ex.id, use: 'draft', fp: 'f', exampleFp: ex.fingerprint, tryNo: 1 });
+    store.linkTry(run.id, t.id, 'b');
+    store.updateTry(t.id, { status, pipelineId: 'p0000001', verdict: { passed: status === 'passed', facts: { status: 'done' }, basics: [], checks: [] } });
+  };
+  add('stopped');
+  await assert.rejects(start(), { code: 'NOT_READY', message: NO_SOURCE_TEXT }, 'a try that did not finish is not a try: board 53 state 3 stays');
+  add('failed');
+  await assert.rejects(start(), { code: 'NOT_READY', message: NO_PASSED_TRY_TEXT });
+});
+
 test('no good result: refused with the board sentence; one round at a time per criterion', async () => {
   const ex = store.createExample('wf', { name: 'E', request: 'R', criteria: [{ text: 'Names a metric' }], judge: { model: 'm' } });
   const checker = createChecker({ subjectOf: async () => '', modelCall: async () => ({ text: '{}', costUsd: 0 }), judgeCriterion: async () => ({}), mock: () => false });

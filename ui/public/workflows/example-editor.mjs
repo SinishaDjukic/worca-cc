@@ -323,11 +323,12 @@ function basicRow(doc, id, text, on, extra = null, after = null) {
  *   an example the running test is trying asks first, and "Save and stop" calls actions.stopTest() → {ok, error?} before
  *   it (U-T9, F17). Part 4 (Task 22): onConfirmCriterion(criterion) opens Check the checker; with changes not saved yet, the
  *   editor saves first through actions.saveQuiet(value) → {ok, example} (the Save path and its question, but staying here)
+ *   Board 59 A: openLiked opens a saved example with its "A result you liked" dialog (Check the checker's "Pick a result you liked").
  * @returns {{value: () => object}}
  */
 export function renderExampleEditor(root, ex, actions, { doc, win, scripts = [], perTryUsd = null, draftLabel = 'your draft', testRunning = false,
   runningExampleIds = [], confirm = null, projects = null, needsProject = false, workflowName = '', projectView = null, dateText = (s) => s,
-  judgeModels = { models: [], suggested: null }, criteriaTrust = {}, onConfirmCriterion = null, likedTries = [] }) {
+  judgeModels = { models: [], suggested: null }, criteriaTrust = {}, onConfirmCriterion = null, likedTries = [], openLiked = false }) {
   const listed = scripts;
   const lib = Array.isArray(scripts) ? scripts : [];
   const draft = clone({ ...BLANK_EXAMPLE, ...ex });
@@ -830,11 +831,11 @@ export function renderExampleEditor(root, ex, actions, { doc, win, scripts = [],
     if (r && r.ok && r.example) { draft.liked = r.example.liked || null; paintLiked(focusSel); }
     return r;
   };
+  const likedDialog = () => openLikedDialog({ doc, win, tries: likedTries, onFile: (file) => likedDone(actions.putLiked({ file }), '.wft-liked-replace'),
+    onTry: (tryId) => likedDone(actions.putLiked({ tryId }), '.wft-liked-replace') });
   paintLiked = (focusSel = null) => {
     likedProject = !!pick.key;
-    const row = likedRow(doc, draft.liked || null, { project: likedProject, saved: draft.id != null,
-      onReplace: () => openLikedDialog({ doc, win, tries: likedTries, onFile: (file) => likedDone(actions.putLiked({ file }), '.wft-liked-replace'),
-        onTry: (tryId) => likedDone(actions.putLiked({ tryId }), '.wft-liked-replace') }),
+    const row = likedRow(doc, draft.liked || null, { project: likedProject, saved: draft.id != null, onReplace: likedDialog,
       onRemove: () => likedDone(actions.removeLiked(), '.wft-liked-add') });
     if (likedEl) likedEl.replaceWith(row); else c3.append(row);
     likedEl = row;
@@ -850,6 +851,7 @@ export function renderExampleEditor(root, ex, actions, { doc, win, scripts = [],
   root.append(page);
   paintFiles();
   paintWhere();
+  if (openLiked && draft.id != null) likedDialog();   // board 59 A: Check the checker's "Pick a result you liked"
 
   /** The cost box in dollars (parseUsd): "$1.50", "1,50" → 1.5; empty → null; not a number → NaN. */
   const readMoney = () => parseUsd(cost.value);

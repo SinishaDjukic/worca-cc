@@ -341,10 +341,11 @@ function ccReworded(doc, v, reworded, actions, { rewording = false, dateText = (
 }
 
 /**
- * Board 11 (ready and done) and P4-M3's states. `v` = GET …/checker/:round, or null with `empty` = { kind: 'none' | 'limit', text }
- * (no round: no good result yet, or the spending limit; `criterion` = { text } names it then). `reworded` = { text } (Worca's clearer
+ * Board 11 (ready and done) and P4-M3's states. `v` = GET …/checker/:round, or null with `empty` = { kind: 'none' | 'tried' | 'limit', text }
+ * (no round: no good result yet, board 59 A's tried but no try passed, or the spending limit; `criterion` = { text } names it then). `reworded` = { text } (Worca's clearer
  * words after a Wrong) or { error, limit } (the reword route's refusal). actions: answer(judgementId, right), reword(), back(), use(), example() (the crumb; back() when absent),
- * useWords(text), keepWords(), retry() (a new round of the criterion), tryOnce() (Try your draft once now). `busy`: an answer or the
+ * useWords(text), keepWords(), retry() (a new round of the criterion), tryOnce() (Try your draft once now), pickLiked() (board 59 A: the
+ * example's "A result you liked"). `busy`: an answer or the
  * clearer words are out, so no Right / Wrong takes a press; `rewording`: Worca is writing the clearer words. `dateText` formats the
  * good result's date (tests-app.mjs wftDate).
  */
@@ -365,7 +366,10 @@ export function renderChecker(root, v, actions, { doc, exampleName, criterion = 
     const limit = !!empty && empty.kind === 'limit';
     const box = ccBox(doc, { head: limit ? 'Check the checker did not start' : 'Worca needs a good result first' });
     if (limit) box.append(ccStop(doc, 'limit', empty.text || ''), ccActs(doc, back(), busyBtn(doc, 'Try again', () => actions.retry(), 'btn btn-sm')));
-    else {
+    else if (empty && empty.kind === 'tried') {   // board 59 A: tried, but no try passed
+      box.append(el(doc, 'p', 'wft-cc-say', empty.text || ''),
+        ccActs(doc, back(), btn(doc, 'Pick a result you liked', () => actions.pickLiked(), 'btn btn-sm btn-primary')));
+    } else {
       box.append(el(doc, 'p', 'wft-cc-say', (empty && empty.text) || ''),
         ccActs(doc, back(), busyBtn(doc, 'Try your draft once now', () => actions.tryOnce(), 'btn btn-sm btn-primary')));
     }

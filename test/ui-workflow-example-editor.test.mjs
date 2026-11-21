@@ -631,3 +631,12 @@ test('Task 22 fix (a): a save that fails opens nothing and says why; a running t
   }
   assert.deepEqual(asked, ['Save and stop the test?', 'Save and stop the test?']);
 });
+
+test('board 59 A: openLiked opens a saved example with its "A result you liked" dialog; an example not saved yet waits for its save', () => {
+  const { doc } = boot(example(), { ctx: { openLiked: true, likedTries: [{ id: 41, label: 'v4 · try 2 · 14 Oct · failed' }] } });
+  assert.equal(doc.querySelector('#mk-dialog-title').textContent, 'A result you liked');
+  assert.ok(doc.getElementById('wft-liked-try'), "the example's tries to pick from");
+  const unsaved = boot({ ...example(), id: null }, { ctx: { openLiked: true } });
+  assert.equal(unsaved.doc.querySelector('#mk-dialog-title'), null);
+  assert.equal(boot(example()).doc.querySelector('#mk-dialog-title'), null, 'closed unless asked');
+});
