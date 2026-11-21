@@ -189,6 +189,12 @@ checks every other number of the result, example values and percentages too. It 
 section numbers, single digits, the digits in ids, hashes, links, file paths and code, and the number of a standard's
 name (ISO 8601, RFC 4180, IEEE 754, UTF-8, SHA-256, EN 16931, DIN 5008). The files keep all their numbers.
 
+**Check the checker** plants its mistakes in every place that makes the criterion true. The checking model copies each
+passage of the good result that makes it true (at most 8) and writes three broken versions that change all of them, so
+a criterion stated in several sections is really broken. A card shows the broken passages in order, joined with " … ".
+When a passage is not in the result word for word, passages overlap, or more than 8 make the criterion true, Worca plants
+its own mistakes instead: numbers removed everywhere, a made-up quote added, or a part removed.
+
 **Links work** opens each link through the same guarded web access as Ask: https only, port 443, public addresses only.
 Behind `HTTPS_PROXY`, a host only the proxy can resolve is not checked by Worca (best effort, like Ask), and any host
 name in a result may reach internal services on port 443 behind the proxy.
