@@ -1,7 +1,6 @@
 // src/core/workflow-tests/criteria-routes.mjs — HTTP for Part 4 (plans/workflow-tests-part4-plan.md). Every route is behind the
 // workflowTests flag (D107). Registered by ui/routes/workflows/workflow-tests.mjs after Part 2's routes.
 import { requireFlag, flagEnabled } from '../flags.mjs';
-import { actorOf } from '../identity.mjs';
 import * as store from './store.mjs';
 import * as cs from './criteria-store.mjs';
 import { trustFor, byCriterionOf, likedFromPipeline, trustReportOf, trustOfExample } from './criteria-read.mjs';
@@ -13,8 +12,9 @@ import { mockEnabled } from '../claude-runner.mjs';
 import { judgeModelsView } from './judge-models.mjs';
 import { budgetStatus as realBudgetStatus, recordTestJudgeCost } from '../cost-budget.mjs';
 import { createChecker, LIMIT_TEXT } from './checker.mjs';
+import { statusWith, num, handleWith, routeOn, wid, by, exampleOf } from './route-helpers.mjs';
 
-const STATUS = Object.freeze({ BAD_REQUEST: 400, NOT_VERSIONABLE: 400, NOT_FOUND: 404, BUSY: 409, NOT_READY: 422, FAILED: 500 });   // NOT_VERSIONABLE as Part 2 (N4)
+const STATUS = statusWith({ FAILED: 500 });   // the codes Part 2 answers too (route-helpers.mjs, NOT_VERSIONABLE: N4) and Part 4's own
 const W = '/api/workflows/:id/tests';
 /** Every Part 4 route: the flag-off test walks it (the order here is not the registration order). Later tasks append theirs. */
 export const CRITERIA_ROUTES = Object.freeze([
@@ -33,35 +33,17 @@ export const CRITERIA_ROUTES = Object.freeze([
   ['GET', `${W}/examples/:ex/criteria`],
 ].map(([method, path]) => Object.freeze({ method, path })));
 
-const num = (v, what) => {
-  const n = Number(v);
-  if (!Number.isInteger(n) || n < 1) throw store.testError(`${what} must be a whole number`, 'BAD_REQUEST');
-  return n;
-};
-
-/** The same wrapper as Part 2's (routes.mjs), a deliberate copy: an error's `errors` list reaches the response. Exported for its unit test. */
-export const handle = (fn) => async (req, res) => {
-  try { await fn(req, res); } catch (e) {
-    res.status(STATUS[e && e.code] || 500).json({ error: e && e.message ? e.message : String(e), ...(e && Array.isArray(e.errors) ? { errors: e.errors } : {}) });
-  }
-};
+/** Part 2's wrapper (route-helpers.mjs) with Part 4's codes: an error's `errors` list reaches the response. Exported for its unit test. */
+export const handle = handleWith(STATUS);
 
 export function registerCriteriaRoutes(app, { runner = null, criteriaJudge = null, deps = {} } = {}) {
   const gate = requireFlag('workflowTests');
-  const route = (method, path, fn) => app[method.toLowerCase()](path, gate, handle(fn));
-  const wid = (req) => String(req.params.id || '');
-  const by = (req) => actorOf(req) || null;
+  const route = routeOn(app, gate, handle);
   /** A judgement of this workflow, or 404. */
   const judgement = (req) => {
     const j = cs.readJudgement(num(req.params.j, 'answer'));
     if (!j || j.workflowId !== wid(req)) throw store.testError(`no answer ${req.params.j}`, 'NOT_FOUND');
     return j;
-  };
-  /** The route's example (`:ex`) of this workflow, or 404. Defined here, in 4a, because Task 18 (4a) uses it as well as Tasks 12–15 (4b). */
-  const exampleOf = (req) => {
-    const ex = store.readExample(wid(req), num(req.params.ex, 'example'));
-    if (!ex) throw store.testError(`no example ${req.params.ex}`, 'NOT_FOUND');
-    return ex;
   };
   /** Final review M5: a write here sends the workflow's changed frame, as Part 2's runner does (D33: silent while the flag is off;
    *  `testRunId` when the write belongs to one test's try, never `runId`), so the list, the trust report and that test's pages repaint. */

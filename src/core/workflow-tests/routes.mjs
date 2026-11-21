@@ -1,7 +1,6 @@
 // src/core/workflow-tests/routes.mjs — HTTP for workflow tests (plans/workflow-tests-part2-plan.md Task 9). Every route
 // is behind the workflowTests flag, and so is the `workflow-tests-changed` frame (D33).
 import { requireFlag, flagEnabled } from '../flags.mjs';
-import { actorOf } from '../identity.mjs';
 import { loadScriptRegistry } from '../script-registry.mjs';
 import * as store from './store.mjs';
 import * as service from './service.mjs';
@@ -16,8 +15,9 @@ import { useFingerprint } from './uses.mjs';
 import { dirBytes, freeDiskBytes } from './project-copy.mjs';
 import { listProjects } from '../projects.mjs';
 import { beforeRun, readBefore } from './before-run.mjs';
+import { statusWith, num, handleWith, routeOn, wid, by, exampleOf as example } from './route-helpers.mjs';
 
-const STATUS = Object.freeze({ BAD_REQUEST: 400, NOT_VERSIONABLE: 400, NOT_FOUND: 404, BUSY: 409, NOT_READY: 422, NO_DISK: 422 });
+const STATUS = statusWith({ NO_DISK: 422 });   // the shared codes (route-helpers.mjs) and Part 2's own
 const W = '/api/workflows/:id/tests';
 /** Every route, in registration order: the flag-off test walks it, so no route can skip the gate unnoticed. */
 export const WORKFLOW_TEST_ROUTES = Object.freeze([
@@ -31,11 +31,6 @@ export const WORKFLOW_TEST_ROUTES = Object.freeze([
   ['POST', `${W}/examples/:ex/project/latest`], ['GET', `${W}/runs/:run/tries/:try/changes`],
 ].map(([method, path]) => Object.freeze({ method, path })));
 
-const num = (v, what) => {
-  const n = Number(v);
-  if (!Number.isInteger(n) || n < 1) throw store.testError(`${what} must be a whole number`, 'BAD_REQUEST');
-  return n;
-};
 const usdOf = (v) => (v === undefined || v === null || v === '' ? null : Number(v));
 
 /**
@@ -79,22 +74,10 @@ export function registerWorkflowTestRoutes(app, { broadcast = () => {}, deps = {
   });
   // No recovery here (review M4): this runs at every import of server.mjs. bootMaintenance calls recoverInterruptedTestRuns().
 
-  const handle = (fn) => async (req, res) => {
-    try { await fn(req, res); } catch (e) {
-      res.status(STATUS[e && e.code] || 500).json({ error: e && e.message ? e.message : String(e), ...(e && Array.isArray(e.errors) ? { errors: e.errors } : {}) });
-    }
-  };
-  const route = (method, path, fn) => app[method.toLowerCase()](path, gate, handle(fn));
-  const wid = (req) => String(req.params.id || '');
-  const by = (req) => actorOf(req) || null;
+  const route = routeOn(app, gate, handleWith(STATUS));
   // 3a D62 (replaces D20): every saved user workflow can be tested, so the start routes only check that it is one (404, 400);
   // whether each example can be tried is the runner's (targetOf).
   const knownWorkflow = (req) => { service.workflowRowOf(wid(req)); };
-  const example = (req) => {
-    const ex = store.readExample(wid(req), num(req.params.ex, 'example'));
-    if (!ex) throw store.testError(`no example ${req.params.ex}`, 'NOT_FOUND');
-    return ex;
-  };
 
   route('GET', W, async (req, res) => res.json({ ...(await service.testsOverview(wid(req))), trust: checkingOf(wid(req)), checking: runner.criteriaCheckingOf(wid(req)) }));   // the list disables Test a version while a check runs (tests-view.mjs)
   route('POST', `${W}/examples`, async (req, res) => {
