@@ -98,6 +98,9 @@ export function createChecker(deps = {}) {
       if (b && b.blocked) throw store.testError(LIMIT_TEXT, 'NOT_READY');
     }
     if (making.has(key)) throw store.testError('Worca is already checking this criterion.', 'BUSY');   // goodResultOf awaited
+    // Fix round 2 (N2): a delete during that await found no 'making' row: no round, no call, no row for a gone example. Synchronous
+    // from here to createRound, so a later delete sees the round and is refused (store.deleteExample).
+    if (!store.readExample(workflowId, ex.id)) throw store.testError(`no example ${exampleId}`, 'NOT_FOUND');
     making.add(key);
     let round;
     try {

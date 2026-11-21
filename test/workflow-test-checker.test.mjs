@@ -293,3 +293,14 @@ test('P4-M3 (board 11): the source of the real card names the version and the da
   const r2 = await d.checker.start({ workflowId: 'wf', exampleId: d.ex.id, criterionId: d.ex.criteria[0].id });
   assert.equal(d.checker.view(cs.readRound(r2.id), { by: 'x' }).source.useLabel, 'Your draft', 'the label the Tests pages use (useLabel)');
 });
+
+test('fix round 2 (N2): an example deleted while the round looks for its good result gets no round, no call and no row', async () => {
+  let deleted = false;
+  const s = setup({ extra: { subjectOf: async () => { if (!deleted) { deleted = store.deleteExample('wf', s.ex.id); } return GOOD; } } });
+  prepare("UPDATE wf_test_runs SET status = 'done' WHERE workflow_id = 'wf'").run();   // no test holds the example
+  const rounds = () => prepare('SELECT COUNT(*) AS n FROM wf_test_checker_rounds').get().n;
+  const before = rounds();
+  await assert.rejects(s.checker.start({ workflowId: 'wf', exampleId: s.ex.id, criterionId: s.ex.criteria[0].id }), { code: 'NOT_FOUND' });
+  assert.equal(deleted, true, 'the delete went through during the await');
+  assert.deepEqual([rounds(), s.calls(), prepare('SELECT COUNT(*) AS n FROM wf_test_judgements WHERE example_id = ?').get(s.ex.id).n], [before, 0, 0]);
+});
