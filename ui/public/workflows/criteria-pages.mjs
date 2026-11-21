@@ -6,7 +6,7 @@ import { icon } from '../icons.mjs';
 import { fmtUsd } from '../../../src/shared/workflow-tests/checks.mjs';
 import { plainText } from '../../../src/shared/workflow-tests/plain-text.mjs';
 import { TRUST_BADGE, trustLine, checkingRest, BY_EXAMPLE, BY_CRITERION, SEE_BY_CRITERION, NOT_CHECKED, CRITERIA_CHANGED_TEXT, CHECK_THEM, NOT_EVERY_TRY,
-  CHECKING_CRITERIA_TEXT, CHECKED_CRITERIA_TEXT, CAP_CHECKS_TEXT, ADDED_AFTER_TEXT, NO_CHECKED_TRY, COST_UNKNOWN_NOTE, notEveryTryText, unreliableOnlyText,
+  CHECKING_TEXT, STOP_CHECKING, stoppedCheckText, CHECKED_CRITERIA_TEXT, CAP_CHECKS_TEXT, ADDED_AFTER_TEXT, NO_CHECKED_TRY, COST_UNKNOWN_NOTE, notEveryTryText, unreliableOnlyText,
   unreliableWhyText, ROUND_NOT_FINISHED_TEXT, TRUST_TESTS, trustTestLine, trustTestBadge, answersText }
   from '../../../src/shared/workflow-tests/criteria-text.mjs';
 
@@ -165,9 +165,10 @@ const CHECKED = new WeakMap();
  * P4-M5: Compare's criteria lines. `c` = the compare read with its criteria; `act(label, fn, cls, key, opts)` = test-compare.mjs's
  * button (busy across repaints). Returns the band above In short (checking, checked, at the cost limit, or criteria changed after the
  * test with the price of checking them), the fair-comparison line for criteria not checked on every try, In short's sentence and
- * each example row's line for a change only in unreliable criteria.
+ * each example row's line for a change only in unreliable criteria. Board 59 C: `stopCheck()` = "Stop checking" on the band of a
+ * check of these tries (`criteria.stoppable`); `stopped` = { runId, done, of } after a stop of this test's check, its line.
  */
-export function compareCriteriaNotes(doc, c, { root, act, testAgain, checkCriteria }) {
+export function compareCriteriaNotes(doc, c, { root, act, testAgain, checkCriteria, stopCheck = null, stopped = null }) {
   const crit = c.criteria || null;
   const notes = c.notes || {};
   const checking = !!(crit && crit.checking);
@@ -186,13 +187,19 @@ export function compareCriteriaNotes(doc, c, { root, act, testAgain, checkCriter
     const b = el(doc, 'section', `wft-crit-band is-${tone}`);
     if (role) b.setAttribute('role', role);
     const l = el(doc, 'span', 'wft-crit-band-l');
-    l.append(icon(doc, iconName, 15), el(doc, 'span', '', words));
+    if (iconName) l.append(icon(doc, iconName, 15));
+    l.append(el(doc, 'span', '', words));
     b.append(l);
     return b;
   };
   let top = null;
-  if (checking) top = band('plain', 'spinner', CHECKING_CRITERIA_TEXT, 'status');
-  else if (notChecked.length && atCap) {
+  if (checking) {
+    top = band('plain', 'spinner', CHECKING_TEXT, 'status');
+    if (crit.stoppable && typeof stopCheck === 'function') top.append(act(STOP_CHECKING, () => stopCheck(), 'btn btn-sm', 'wft-crit-stop', { busy: true }));
+  } else if (stopped && stopped.runId === c.run.id && canCheck) {   // board 59 C: until a new check or test starts, or the page is left
+    top = band('plain', null, stoppedCheckText(stopped.done, stopped.of), 'status');
+    top.append(act(CHECK_THEM, () => checkCriteria(), 'btn btn-sm', 'wft-crit-check', { busy: true, busyKey: 'wft-crit-check' }));
+  } else if (notChecked.length && atCap) {
     top = band('amber', 'alert', CAP_CHECKS_TEXT);
     top.setAttribute('aria-label', 'Your criteria were not checked');
     top.append(act('Test again', () => testAgain(), 'btn btn-sm', 'wft-crit-again'));

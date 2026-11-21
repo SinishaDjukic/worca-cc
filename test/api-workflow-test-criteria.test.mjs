@@ -235,12 +235,14 @@ test('review: 409 while a check runs, 422 at the spending limit, 400 without a r
     blocked = false;
     assert.equal((await m.post()).status, 202);
     assert.equal((await m.get()).checking, true);
+    assert.equal((await m.get()).stoppable, true, 'board 59 C: a criteria-only check has "Stop checking"');
     assert.equal(runner.criteriaCheckingOf('wf_api_c'), true);
     const busy = await m.post();
     assert.deepEqual([busy.status, busy.body.error], [409, CHECKING_TEXT]);
     release();
     for (let i = 0; i < 200 && (await m.get()).checking; i += 1) await new Promise((x) => setTimeout(x, 20));
     assert.equal((await m.get()).checking, false);
+    assert.equal((await m.get()).stoppable, false);
   } finally { await m.close(); }
   const none = await mk({ runner: null });
   try {

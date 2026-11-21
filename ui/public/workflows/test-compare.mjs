@@ -208,13 +208,14 @@ function titles(doc, crumb, nameEl, hint) {
  * Board 5. `c` = GET …/runs/:run/compare: { run, title, labels: {a, b}, examples, costUsd, model, changes, fair }.
  * @param {{back:Function, testAgain:Function, open:(exampleId:number)=>void, tryMore:(exampleId:number)=>void|Promise}} actions
  */
-export function renderCompare(root, c, actions, { doc, now = Date.now(), mock = false }) {
+export function renderCompare(root, c, actions, { doc, now = Date.now(), mock = false, checkStopped = null }) {
   const held = heldFocus(root, doc);
   root.replaceChildren();
   const runId = c.run.id;
   // P4-M5: the criteria lines (the band, the fair line, In short's sentence, a row's line).
   const cn = compareCriteriaNotes(doc, c, { root, act: (label, fn, cls, key, o) => act(doc, root, runId, label, fn, cls, key, o),
-    testAgain: () => actions.testAgain(), checkCriteria: actions.checkCriteria ? () => actions.checkCriteria() : null });
+    testAgain: () => actions.testAgain(), checkCriteria: actions.checkCriteria ? () => actions.checkCriteria() : null,
+    stopCheck: actions.stopCheck ? () => actions.stopCheck() : null, stopped: checkStopped });   // board 59 C
   const page = el(doc, 'div', 'wft-page wft-compare');
   const m = c.model;
   const A = c.labels.a || '—';

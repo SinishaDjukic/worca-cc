@@ -78,7 +78,9 @@ export function registerCriteriaRoutes(app, { runner = null, criteriaJudge = nul
   };
   route('GET', `${W}/runs/:run/criteria`, async (req, res) => {
     const run = runOf(req);
-    res.json({ ...byCriterionOf(wid(req), run), checking: !!(runner && (runner.criteriaCheckOf(run.id) || runner.criteriaPhaseOf(run.id))) });
+    // Board 59 C: `stoppable` = the check is "Check them on these tries" (its band has "Stop checking"), not a running test's own phase.
+    const stoppable = !!(runner && runner.criteriaCheckOf(run.id));
+    res.json({ ...byCriterionOf(wid(req), run), checking: stoppable || !!(runner && runner.criteriaPhaseOf(run.id)), stoppable });
   });
   // P4-Q15: "Check them on these tries": the criteria an older test's tries miss, in the background; the page polls the read above.
   // The runner holds it (I15): BUSY beside a test of the workflow or another check, and its checks stop at the test's own cap.

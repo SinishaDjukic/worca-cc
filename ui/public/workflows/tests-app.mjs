@@ -104,7 +104,7 @@ export function createWorkflowTests(deps) {
     if (!wft.data) { renderTestsPage(root, null, wftListActions(), { doc, error: wft.error }); return; }
     if (wft.view === 'trust') { renderTrustReport(root, wft.data, wftTrustActions(), { doc, dateText: wftDate }); return; }
     if (wft.view === 'progress') { renderTestProgress(root, wft.data, wftProgressActions(), { doc, dateText: wftDate, mock: mock() }); return; }
-    if (wft.view === 'compare') { renderCompare(root, wft.data, wftCompareActions(), { doc, mock: mock() }); return; }
+    if (wft.view === 'compare') { renderCompare(root, wft.data, wftCompareActions(), { doc, mock: mock(), checkStopped: wft.checkStopped || null }); return; }
     if (wft.view === 'detail') {
       renderSideBySide(root, wft.data, wftDetailActions(), { doc, tryIndex: wft.tryIndex || 0, renderMarkdown: wftMarkdown,
         patches: wft.patches || (wft.patches = new Map()), picked: wft.picked || {}, dateText: wftDate, mock: mock() });
@@ -136,7 +136,14 @@ export function createWorkflowTests(deps) {
       checkCriteria: async () => {   // P4-Q15, P4-M5: "Check them on these tries"; the page shows the check at once, then polls
         const r = await wftCall('POST', `${wftBase(id)}/runs/${run.id}/criteria/check`, {});
         if (!r.ok) { notify({ tone: 'err', title: 'Worca did not start checking', detail: r.error }); return; }
-        if (still()) { await wftRefresh(); wftPollCriteria(id, run.id); }
+        if (still()) { wft.checkStopped = null; await wftRefresh(); wftPollCriteria(id, run.id); }   // board 59 C: a new check ends the line
+      },
+      // Board 59 C: "Stop checking" (the stop route ends a check of these tries at once); the band then says how many tries it checked.
+      stopCheck: async () => {
+        const r = await wftCall('POST', `${wftBase(id)}/runs/${run.id}/stop`, {});
+        if (!r.ok) { notify({ tone: 'err', title: 'Not stopped', detail: r.error }); return; }
+        const n = r.data && r.data.run ? r.data.run.checked : null;
+        if (still()) { wft.checkStopped = n ? { runId: run.id, done: n.done, of: n.of } : null; await wftRefresh(); }
       },
       // Task 22 (board 12): By criterion's Confirm 4 results and Fix it
       confirmCriterion: (exampleId, c) => wftConfirmCriterion(exampleId, c, { exampleName: c.exampleName }),
@@ -387,7 +394,8 @@ export function createWorkflowTests(deps) {
     renderTestsPage(els.tests, wft.overview, wftListActions(), { doc, storage: wftStorage(), error: wft.error, dateText: wftDate, mock: mock() });
   }
   // Final review M6: the opened diffs (up to 5 MB each) are let go on every move; the side by side reads them again.
-  function wftShow(view, extra = {}) { wftPatchCut.clear(); wft = { ...wft, view, data: null, patches: null, ...extra }; wftSyncHash(); void wftRefresh(); }
+  // Board 59 C: any page change (leaving Compare, a test starting) ends the line after a stopped check (checkStopped).
+  function wftShow(view, extra = {}) { wftPatchCut.clear(); wft = { ...wft, view, data: null, patches: null, checkStopped: null, ...extra }; wftSyncHash(); void wftRefresh(); }
   /** F35: the address names the Tests page that shows, so a reload comes back to it. replaceState: no history entry, Back and Forward keep their meaning.
    *  Shown only while the Workflows view is (els.tests stays unhidden when it is left): a late load never rewrites another view's address. */
   function wftSyncHash() {

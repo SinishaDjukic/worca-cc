@@ -56,9 +56,12 @@ export const SEE_BY_CRITERION = 'See by criterion';
 export const CRITERIA_CHANGED_TEXT = 'Your criteria changed after this test. New criteria show as "Not checked yet" until Worca checks them on these tries.';
 export const CHECK_THEM = 'Check them on these tries';
 export const NOT_EVERY_TRY = 'Not checked on every try, so it does not decide yet';
-export const CHECKING_CRITERIA_TEXT = 'Worca is checking your criteria on these tries… No test of this workflow can start until it is done.';
-/** Board 58 (B · Messages): the refusal of a test while that check runs, and the Tests list's hint on its disabled Test (final review M3). */
+/** Board 58 (B · Messages): the refusal of a test while that check runs, and the Tests list's hint on its disabled Test (final review M3);
+ *  board 59 C: also the band in Compare while it runs. */
 export const CHECKING_TEXT = 'Worca is checking your criteria on these tries. A test can start when it is done.';
+/** Board 59 C: the band's button, and its line after a stop (`done` of `of` tries checked). */
+export const STOP_CHECKING = 'Stop checking';
+export const stoppedCheckText = (done, of) => `You stopped the check. Worca checked ${done} of ${of} tries; the rest read "Not checked yet".`;
 export const CHECKED_CRITERIA_TEXT = 'Worca checked your criteria on these tries.';
 export const CAP_CHECKS_TEXT = 'This test reached its cost limit, so Worca checks nothing more on it. Test again to check your criteria.';
 export const ADDED_AFTER_TEXT = 'Added after this test';

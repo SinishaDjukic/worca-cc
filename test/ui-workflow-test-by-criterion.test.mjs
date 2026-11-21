@@ -170,7 +170,7 @@ test('P4-M5 Compare: while Worca checks, the band says so and nothing starts; wh
   const { root, again } = bootCmp(c);
   const band = root.querySelector('.wft-crit-band');
   assert.equal(band.getAttribute('role'), 'status');
-  assert.equal(band.textContent, 'Worca is checking your criteria on these tries… No test of this workflow can start until it is done.');
+  assert.equal(band.textContent, 'Worca is checking your criteria on these tries. A test can start when it is done.', 'board 59 C: the band words it draws (board 58)');
   assert.equal([...root.querySelectorAll('button')].filter((b) => /Check them/.test(b.textContent)).length, 0, 'no second check');
   assert.equal([...root.querySelectorAll('.wft-acts button')].find((b) => b.textContent === 'Test again').disabled, true);
   again(cmp({ notes: notes({ notChecked: [] }), criteria: { ...cmp().criteria, checkUsd: 0 } }));
