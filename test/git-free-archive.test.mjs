@@ -6,7 +6,8 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { PassThrough, Readable } from 'node:stream';
 import { gzipSync, gunzipSync } from 'node:zlib';
-import { extractTarGz, isSafeRelPath, ARCHIVE_LIMITS } from '../src/core/git-free/archive.mjs';
+import { randomBytes } from 'node:crypto';
+import { extractTarGz, isSafeRelPath, ARCHIVE_LIMITS, tarPending } from '../src/core/git-free/archive.mjs';
 import { tarGz } from './helpers/tar-writer.mjs';
 
 const roots = [];
@@ -186,6 +187,34 @@ test('a crafted first entry cannot make an absolute or .. path the top folder; a
     await assert.rejects(extractTarGz(tarGz([{ path: `${TOP}/sub/`, type: '5' }, { path: `${TOP}/ln`, type: '2', linkpath: 'sub' }, { path: `${TOP}/ln/y.txt`, body: 'y' }]), fresh()),
       { code: 'TAR_SYMLINK_ERROR' });
   }
+});
+
+test('a failed extraction answers only once tar has finished the writes it started: the caller can drop dest', async () => {
+  // tar raised the failure while it was still writing other entries, so a caller removing dest on the error raced
+  // those writes (ENOTEMPTY, or files landing after the removal). Each case: the tree is the same 300 ms later.
+  const rec = (k, v) => { const body = ` ${k}=${v}\n`; const n = body.length + String(body.length + 1).length; return `${n}${body}`; };
+  // random bytes: a repeated character compresses past tar's 1000:1 ratio guard, which aborts before anything is written
+  const big = (k) => ({ path: `${TOP}/big${k}.bin`, body: randomBytes(4 * 1024 * 1024) });
+  const snap = (d) => readdirSync(d).sort().map((f) => `${f}:${statSync(join(d, f)).size}`).join(' ');
+  const cases = [
+    // a name the disk refuses (a pax `path` record carries it, as in GitHub's archives), with big files queued behind it
+    ['refused name', [{ path: 'pax', type: 'x', body: rec('path', `${TOP}/${'n'.repeat(300)}.md`) }, { path: `${TOP}/long.md`, body: 'n\n' }, big(1), big(2), big(3)], {}, 'ENAMETOOLONG'],
+    // a cap's abort while the files before it are still being written
+    ['cap abort', [big(1), big(2), big(3), big(4)], { limits: { ...ARCHIVE_LIMITS, entries: 3 } }, 'TOO_LARGE'],
+  ];
+  for (const [name, entries, opts, code] of cases) {
+    const dest = fresh();
+    const err = await extractTarGz(tarGz(entries), dest, opts).then(() => null, (e) => e);
+    assert.equal(err?.code, code, name);
+    const atError = snap(dest);
+    await new Promise((r) => setTimeout(r, 300));
+    assert.equal(snap(dest), atError, `${name}: nothing is written after the error`);
+  }
+});
+
+test('tarPending reads node-tar\'s count of writes in flight (a tar release that renames it skips the wait: update tarPending)', async () => {
+  const { x } = await import('tar');
+  assert.equal(tarPending(x({ cwd: fresh() })), 0);
 });
 
 test('an archive that stops before tar\'s end-of-archive marker fails the extraction: never a partial tree', async () => {

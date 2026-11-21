@@ -62,6 +62,19 @@ function makeLink(dest, out, linkpath) {
   symlinkSync(linkpath, at);
 }
 
+/** tar's count of entry writes still in flight (node-tar 7's private `pending`; null when a tar release renames it). */
+export const tarPending = (unpack) => {
+  const k = Object.getOwnPropertySymbols(unpack).find((s) => s.description === 'pending');
+  return k && typeof unpack[k] === 'number' ? unpack[k] : null;
+};
+export const SETTLE_MAX_MS = 2000;
+
+/** Wait until tar has finished the writes it started (or `maxMs`: a file cut off mid-download never finishes). */
+async function settled(unpack, maxMs = SETTLE_MAX_MS) {
+  const until = Date.now() + maxMs;
+  while ((tarPending(unpack) ?? 0) > 0 && Date.now() < until) await new Promise((r) => setTimeout(r, 10));
+}
+
 function toReadable(source) {
   if (Buffer.isBuffer(source)) return Readable.from([source]);
   if (source && typeof source.getReader === 'function') return Readable.fromWeb(source);
@@ -131,7 +144,9 @@ export async function extractTarGz(source, dest, { include = () => true, stripPr
   // the two zero blocks that end every archive tell a whole one from a partial tree.
   let marker = false;
   unpack.on('eof', () => { marker = true; });
-  await pipeline(input, counter, unpack);
+  // tar raises a failure (a name the disk refuses, a cap's abort, a bad archive) while it is still writing the entries
+  // before it: a caller dropping `dest` on the error raced those writes (ENOTEMPTY, or files landing after the drop).
+  try { await pipeline(input, counter, unpack); } catch (e) { await settled(unpack); throw e; }
   if (!marker) throw Object.assign(new Error('archive truncated (no end-of-archive marker)'), { code: 'TAR_BAD_ARCHIVE' });
   for (const [out, linkpath] of pending) makeLink(dest, out, linkpath);
   return { files, bytes, skipped };

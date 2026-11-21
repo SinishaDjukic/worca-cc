@@ -34,6 +34,9 @@ before(async () => {
   mod = await import('../ui/server.mjs');
   sync = await import('../src/core/metrics/sync.mjs');
   srv = http.createServer(mod.app);
+  // Never time an idle keep-alive socket out: the git work between requests (clones, a metrics push) can pass the
+  // 5 s default on a loaded machine, and a request sent on a socket the server is closing just then fails ECONNRESET.
+  srv.keepAliveTimeout = 0;
   await new Promise((r) => srv.listen(0, '127.0.0.1', r));
   base = `http://127.0.0.1:${srv.address().port}`;
 });
