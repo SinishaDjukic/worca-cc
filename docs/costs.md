@@ -38,6 +38,16 @@ A total cost limit counts pipeline and Chat spend over a window: weekly from Mon
 the limit is reached, running pipelines pause at their next step, and new runs, resumes and Ask turns are blocked
 until the window resets or you raise the limit.
 
+Workflow tests count too: their tries, and the AI checks of your criteria (Check the checker, suggested criteria and
+clearer words included). Statistics leaves them out.
+
+Each model in "Checked with" names who pays for its checks, as far as Worca can tell: the credential broker; a cloud
+(Vertex, Bedrock, Foundry), an API key or a sign-in token set in the model, where Worca runs or in your Claude Code
+settings (an `apiKeyHelper` there included); a custom endpoint or the model's connection; or your Claude sign-in. Worca
+cannot see managed Claude Code settings or a gateway in your network; with those, a check marked "Claude sign-in" may be
+billed elsewhere. A check whose cost Worca cannot know is counted as $0, and the cost line of the test or of Check the
+checker then adds "the cost of some checks is not known".
+
 Team caps live in [Team policy](team-policy.md).
 
 ![Statistics on a range with several days of data — Spent, Saved, Pipeline spend, Chat, Time worked, Pipelines finished and PRs merged tiles above the Spend per day and Runs per day charts, with the Everyone and grouping filters](screenshots/stats.png)

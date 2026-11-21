@@ -163,6 +163,29 @@ The CLI does the same with `worca workflow list`, `worca workflow export <id> --
 
 ![The Workflows view with the built-in Default pipeline on the full-screen canvas — Task, Clarify, Plan, Refine Plan, Implementation, Review Implementation and End wired port to port, amber loop wires swooping back under the reviewers with ≤3 pills — beside the Library open on its Workflows tab, its architecture, coding, presentation, video and shared folders with coding opened on Default, with the black + and the composer chat pill at the bottom and Auto-layout and the zoom menu bottom right](screenshots/composer.png)
 
+### Tests (Labs)
+
+Behind the flag `workflowTests` (Settings › Labs), a workflow has a **Tests** page. Keep real requests as examples,
+then **Test a version**: Worca tries every example 3 times and Compare shows what got better or worse. See
+[Feature flags](feature-flags.md) and [Costs](costs.md#hard-limits).
+
+**Your criteria.** Write the sentences a good result makes true, in your own words, for example "names a goal with a
+number". On every try, an AI model you pick per example in **Checked with** checks each one (Claude models; the call has
+no tools, and the quote it gives as proof must be found in the result). Side by side shows its answer with Why and
+Proof, and **Agree** and **Disagree**. Some checks need no AI and give the same answer every time: **Every quote is in
+the files**, **Numbers come from the files**, **No personal data** and **Links work**. When a criterion could be one of
+them, **Switch** turns it into one. **Check the checker** breaks a good result on purpose and asks you whether Worca
+judged it right. A criterion is Reliable once you have answered at least 10 times and Worca agreed with at least 80%
+of your answers (and with at least 70% both where it said yes and where it said no). A criterion Worca judges unreliably is shown but never
+decides better or worse. **How reliable is Worca's checking** runs six tests: Agreement with people waits for 10
+answers ("100% · of 6 answers (Worca needs 10)"), and Order swapped and Proof for every verdict are Good from 80% once
+they have at least 10 samples. The AI checks cost money and count in the spending limit; those made for a test also
+count in its own cost limit, and once it is reached a criterion shows "Not checked: this test reached its cost limit".
+
+**Links work** opens each link through the same guarded web access as Ask: https only, port 443, public addresses only.
+Behind `HTTPS_PROXY`, a host only the proxy can resolve is not checked by Worca (best effort, like Ask), and any host
+name in a result may reach internal services on port 443 behind the proxy.
+
 ## Presentations
 
 ### From a brief to a slide deck

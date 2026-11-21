@@ -15,7 +15,7 @@ export const HOW_HIDDEN_KEY = 'worca.workflowTests.howHidden';
 const HOW = Object.freeze({
   collect: 'Real requests this workflow gets. Add one from a past run, or write one.',
   collectFirst: 'Real requests this workflow gets. Start below with past runs.',
-  needs: 'Pick the Basics it must meet and add automatic checks, for example "has the sections Problem and Risks".',   // C1
+  needs: 'In your own words, for example "names a goal with a number".',   // C1 undone (P4-Q16): criteria ship in Part 4
   test: 'Worca tries every example 3 times and shows what got better or worse.',
 });
 const defaultDate = (iso) => {

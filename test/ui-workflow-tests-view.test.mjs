@@ -44,7 +44,7 @@ test('the list: subtitle, the three buttons, How testing works, the latest test'
   assert.deepEqual(texts(root, '.wft-how .wft-step b'), ['Collect examples', 'Say what a good result needs', 'Test a new version']);
   assert.deepEqual(texts(root, '.wft-how .wft-step > div > span'), [
     'Real requests this workflow gets. Add one from a past run, or write one.',
-    'Pick the Basics it must meet and add automatic checks, for example "has the sections Problem and Risks".',
+    'In your own words, for example "names a goal with a number".',
     'Worca tries every example 3 times and shows what got better or worse.',
   ]);
   const latest = root.querySelector('.wft-latest');

@@ -135,6 +135,25 @@ Pull requests (add each number when it opens):
 
 - Workflow tests: plugins off, file checks, before and after (#<PR>)
 
+## Your criteria, checked by Worca (Labs, Part 4)
+
+**Say in your own words what a good result needs, and Worca checks it on every try.**
+
+An example can list your criteria, sentences a good result makes true, and an AI model you pick checks each one on every
+try, with its reason and a quote from the result as proof; new exact checks (Every quote is in the files, Numbers come from
+the files, No personal data, Links work) need no AI. You answer Agree or Disagree, and Check the checker breaks a good
+result on purpose to see whether Worca notices, so How reliable is Worca's checking can show which criteria you can trust;
+a criterion Worca judges unreliably is shown but never decides better or worse. The AI checks count in the spending limit
+(those made for a test also in its own cost limit), and "Checked with" says who pays for them, as far as Worca can tell.
+
+Chips: Your criteria · Check the checker · By criterion · experimental: turn it on in Settings › Labs
+
+Read it: [Workflows › Tests](../workflows.md#tests-labs) · [Costs](../costs.md#hard-limits)
+
+Pull requests (add each number when it opens):
+
+- Workflow tests: your criteria (#<PR>)
+
 ## Choose who interviews, per feature
 
 **Pick the harness, model and effort for a feature's Requirements.**

@@ -2164,6 +2164,8 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
 
 ### Part 4 — Your criteria, checked by Worca (boards 2, 10–13)
 
+The detailed plan is [workflow-tests-part4-plan.md](workflow-tests-part4-plan.md) (it supersedes this outline).
+
 - **Judge:** a helper call shaped like `callModel` (src/core/requirements/interview.mjs:227): no tools, a replaced system prompt, the model chosen per example (D12). It returns yes/no + reason + proof quote; the proof is checked by text search.
 - **Spend:** recorded in a new `test_cost_ledger`, counted in `totalWindowSpendUsd` (cost-budget.mjs:114).
 - **Exact checks:** quotes found in the files, numbers from the files, must or must not mention, no personal data, links. Pure functions, no AI.
