@@ -420,10 +420,13 @@ export async function usablePastRun(workflowId, pipelineId, registry) {
 }
 
 export async function exampleFromRun(workflowId, { pipelineId, name, keepRequest = true, keepAnswers = true, verdict = null, note = null,
-  setupCmd = null } = {}, { by = null, registry } = {}) {
+  setupCmd = null, criteria } = {}, { by = null, registry, catalog } = {}) {
   const past = await usablePastRun(workflowId, pipelineId, registry);
   if (verdict !== null && verdict !== 'good' && verdict !== 'not-good') throw err('verdict must be "good" or "not-good"', 'BAD_REQUEST');
   const clean = exampleName(name, past);
+  // Final review M10: picked criteria (board 3) and their suggested checking model (D87) are worked out before anything is written,
+  // and saved by the one create, so a failure here leaves no example behind.
+  const judged = criteria && criteria.length ? await withJudgeModel(workflowId, { criteria }, null, catalog ? { catalog } : {}) : {};
   // D65: a project run's example starts exactly where the run started, with no changes (runs start from commits).
   let project = null;
   if (past.project) {
@@ -433,7 +436,7 @@ export async function exampleFromRun(workflowId, { pipelineId, name, keepRequest
     // A string is the dialog's field ('' = no setup; the store keeps it as null); null or left out: the project's setup.
     project = { ...pin, setupCmd: typeof setupCmd === 'string' ? setupCmd.trim() : past.project.setupCmd };
   }
-  const example = store.createExample(workflowId, { name: clean, request: keepRequest ? past.request : '', answers: keepAnswers ? past.qa : [], note },
+  const example = store.createExample(workflowId, { name: clean, request: keepRequest ? past.request : '', answers: keepAnswers ? past.qa : [], note, ...judged },
     { by, from: { pipelineId: past.pipelineId, use: past.use, verdict }, project });
   const skipped = [];
   if (keepRequest) {

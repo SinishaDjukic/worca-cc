@@ -117,14 +117,13 @@ export function registerWorkflowTestRoutes(app, { broadcast = () => {}, deps = {
     if (crit.error) throw store.testError(crit.error, 'BAD_REQUEST');
     const out = await service.exampleFromRun(wid(req), { pipelineId: String(b.pipelineId || ''), name: b.name,
       keepRequest: b.keepRequest !== false, keepAnswers: b.keepAnswers !== false, verdict: b.verdict ?? null,
-      note: typeof b.note === 'string' ? b.note : null, setupCmd: typeof b.setupCmd === 'string' ? b.setupCmd : null }, { by: by(req) });
+      note: typeof b.note === 'string' ? b.note : null, setupCmd: typeof b.setupCmd === 'string' ? b.setupCmd : null,
+      criteria: crit.criteria.map(({ text }) => ({ text })) }, { by: by(req) });   // with the suggested checking model (D87), in the one create (M10)
     if (b.liked === true && out.example) {
       const pid = out.example.from.pipelineId;
       await likedFromPipeline(out.example, pid, { readMain: async () => main, at: (findPipelineRowById(pid) || {}).started_at });
       out.example = store.readExample(wid(req), out.example.id);
     }
-    // The save gives them the suggested checking model (D87).
-    if (crit.criteria.length && out.example) out.example = await service.saveExample(wid(req), out.example.id, { criteria: crit.criteria.map(({ text }) => ({ text })) });
     res.status(201).json(out);
   });
   route('POST', `${W}/examples/from-runs`, async (req, res) => {

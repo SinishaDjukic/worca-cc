@@ -358,6 +358,13 @@ test('the result you liked comes only from this workflow\'s own runs and tries; 
   assert.deepEqual(withCrit.body.example.criteria.map((c) => c.text), ['Says how many people use filters today']);
   assert.ok(withCrit.body.example.judge && withCrit.body.example.judge.model, 'the suggested model');
   assert.deepEqual(store.readExample('wf_api_c', withCrit.body.example.id).criteria.map((c) => c.text), ['Says how many people use filters today']);
+  // Final review M10: the criteria and their checking model are part of the one create, so a failure there (reading the model
+  // catalog) leaves no example behind, and a retry does not make a second one.
+  const service = await import('../src/core/workflow-tests/service.mjs');
+  const n1 = store.listExamples('wf_api_c').length;
+  await assert.rejects(service.exampleFromRun('wf_api_c', { pipelineId: mine.body.pipelineId, name: 'Lost', criteria: [{ text: 'Says how many people use filters today' }] },
+    { catalog: () => { throw new Error('catalog down'); } }), /catalog down/);
+  assert.equal(store.listExamples('wf_api_c').length, n1, 'nothing was created');
   // from-run with liked: success keeps the result; a run with no result is refused before an example exists.
   const before = store.listExamples('wf_api_c').length;
   const fr = await call('POST', `${WF}/examples/from-run`, { pipelineId: mine.body.pipelineId, name: 'From run', liked: true });
