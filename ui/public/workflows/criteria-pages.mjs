@@ -342,7 +342,7 @@ function ccReworded(doc, v, reworded, actions, { rewording = false, dateText = (
 /**
  * Board 11 (ready and done) and P4-M3's states. `v` = GET …/checker/:round, or null with `empty` = { kind: 'none' | 'limit', text }
  * (no round: no good result yet, or the spending limit; `criterion` = { text } names it then). `reworded` = { text } (Worca's clearer
- * words after a Wrong) or { error, limit } (the reword route's refusal). actions: answer(judgementId, right), reword(), back(), use(),
+ * words after a Wrong) or { error, limit } (the reword route's refusal). actions: answer(judgementId, right), reword(), back(), use(), example() (the crumb; back() when absent),
  * useWords(text), keepWords(), retry() (a new round of the criterion), tryOnce() (Try your draft once now). `busy`: an answer or the
  * clearer words are out, so no Right / Wrong takes a press; `rewording`: Worca is writing the clearer words. `dateText` formats the
  * good result's date (tests-app.mjs wftDate).
@@ -353,7 +353,7 @@ export function renderChecker(root, v, actions, { doc, exampleName, criterion = 
   const page = el(doc, 'div', 'wft-page wft-cc');
   const head = el(doc, 'div', 'wft-titles');
   const name = exampleName || (v && v.exampleName) || '';
-  head.append(btn(doc, name ? `Example: ${name}` : 'Example', () => actions.back(), 'wft-crumb'), el(doc, 'h2', 'wft-title', 'Check the checker'),
+  head.append(btn(doc, name ? `Example: ${name}` : 'Example', () => (actions.example || actions.back)(), 'wft-crumb'), el(doc, 'h2', 'wft-title', 'Check the checker'),
     el(doc, 'p', 'subtitle', CC_SUB));
   const crit = el(doc, 'section', 'card wft-cc-head');
   crit.append(el(doc, 'span', 'hint', 'Your criterion'), el(doc, 'span', 'wft-cc-crit', (v ? v.criterion : criterion && criterion.text) || ''));

@@ -24,7 +24,8 @@ import { NO_SOURCE_TEXT } from '../../../src/shared/workflow-tests/criteria-text
 const WFT_EMPTY = Object.freeze({ view: 'list', workflowId: null, overview: null, error: null, example: null, runId: null,
   exampleId: null, tryIndex: 0, data: null, scripts: [], perTryUsd: null, editorToken: 0, roundId: null });
 /** Task 22: what Check the checker keeps besides its round, reset whenever it opens. */
-const WFT_CHECKER_FRESH = Object.freeze({ checkerEmpty: null, checkerCrit: null, checkerName: null, reworded: null, answering: null, rewording: null });
+const WFT_CHECKER_FRESH = Object.freeze({ checkerEmpty: null, checkerCrit: null, checkerName: null, reworded: null, answering: null, rewording: null,
+  checkerFrom: null });   // final review M12: the trust report or Compare that opened it ({ view, runId }), else null (the example)
 const wftBase = (id) => `/api/workflows/${encodeURIComponent(id)}/tests`;
 const wftDate = (iso) => { const d = new Date(iso); return Number.isNaN(d.getTime()) ? '' : d.toLocaleDateString(undefined, { day: 'numeric', month: 'short' }); };
 
@@ -167,7 +168,8 @@ export function createWorkflowTests(deps) {
     if (!id || exampleId == null || !criterion || !criterion.id) return;
     const r = await wftCall('POST', `${wftBase(id)}/examples/${exampleId}/checker`, { criterionId: criterion.id });
     if (wftWorkflowId() !== id) return;
-    const keep = { ...WFT_CHECKER_FRESH, exampleId, checkerCrit: { id: criterion.id, text: criterion.text || '' }, checkerName: exampleName || null };
+    const from = wft.view === 'checker' ? wft.checkerFrom : ['trust', 'compare'].includes(wft.view) ? { view: wft.view, runId: wft.runId ?? null } : null;
+    const keep = { ...WFT_CHECKER_FRESH, exampleId, checkerCrit: { id: criterion.id, text: criterion.text || '' }, checkerName: exampleName || null, checkerFrom: from };
     if (r.ok) { wftShow('checker', { ...keep, roundId: r.data.round.id }); return; }
     if (r.status === 422) {
       wftShow('checker', { ...keep, roundId: null, checkerEmpty: { kind: r.error === NO_SOURCE_TEXT ? 'none' : 'limit', text: r.error } });
@@ -195,7 +197,9 @@ export function createWorkflowTests(deps) {
     const still = () => wft.view === 'checker' && wft.roundId === roundId && wft.exampleId === exampleId && wftWorkflowId() === id;
     const crit = { id: v ? v.round.criterionId : wft.checkerCrit && wft.checkerCrit.id, text: v ? v.criterion : wft.checkerCrit && wft.checkerCrit.text };
     const name = (v && v.exampleName) || wft.checkerName || null;
-    const back = () => { void wftOpenExample(exampleId); };
+    const toExample = () => { void wftOpenExample(exampleId); };
+    const from = wft.checkerFrom;   // M12: Back and Use go where Check the checker was opened; the crumb names the example
+    const back = from ? () => wftShow(from.view, from.view === 'compare' ? { runId: from.runId } : {}) : toExample;
     /** Task 15: Worca's clearer words are only offered (P4-M3); the reword route saves nothing. */
     const reword = async () => {
       if (wft.rewording === roundId) return;   // fix round 1: one paid request at a time; a second press is ignored
@@ -242,6 +246,7 @@ export function createWorkflowTests(deps) {
       },
       back,
       use: back,
+      example: toExample,
     };
   }
   /** Board 31's excerpt (M1): a try's result through hdMarkdown (marked + DOMPurify, ask-markdown.mjs); plain text until the

@@ -251,3 +251,31 @@ test("tests-app.mjs wires Compare's By criterion link \"How Worca tests its own 
   assert.match(ctl, /trust: \(\) => wftShow\('trust'\)/);
   assert.match(ctl, /openTrust: \(\) => wftShow\('trust'\)/);
 });
+
+test("final review M12: Check the checker opened from the report goes Back to the report; its crumb still opens the example", async () => {
+  const { createWorkflowTests } = await import('../ui/public/workflows/tests-app.mjs');
+  const { NO_SOURCE_TEXT } = await import('../src/shared/workflow-tests/criteria-text.mjs');
+  const B = '/api/workflows/wf_a/tests';
+  const report = trustReportModel({ criteria: [crit(4, 'Proposes a test within 4 weeks', { state: 'unreliable', n: 10, agree: 6 })] });
+  const h = harness({
+    [`GET ${B}/trust`]: { status: 200, body: report },
+    [`POST ${B}/examples/4/checker`]: { status: 422, body: { error: NO_SOURCE_TEXT } },
+  });
+  const ctl = createWorkflowTests({ doc: h.doc, win: h.win, fetch: h.fetch, safeJson: (r) => r.json(), composer: () => ({ template: () => ({ id: 'wf_a' }) }),
+    api: {}, versions: () => ({ showPage: () => ctl.enterList() }), currentView: () => 'workflows', confirmModal: async () => true, openNewPipeline: () => {},
+    hdMarkdown: {}, mock: () => false, runPageShows: () => false });
+  ctl.route('wf_a', 'tests/trust', true);
+  await settle();
+  h.root.querySelector('button.wft-tr-fix').click();
+  await settle();
+  assert.equal(h.root.querySelector('.wft-cc-state h2').textContent, 'Worca needs a good result first');
+  btnByText(h.root, 'Back').click();
+  await settle();
+  assert.equal(h.win.location.hash, '#workflows/wf_a/tests/trust', 'back where it was opened');
+  assert.equal(h.root.querySelector('.wft-title').textContent, "How reliable is Worca's checking?");
+  h.root.querySelector('button.wft-tr-fix').click();
+  await settle();
+  btnByText(h.root, 'Example: E4').click();
+  await settle();
+  assert.ok(h.calls.some(([m, p]) => m === 'GET' && p === `${B}/examples/4`), 'the crumb names the example and opens it');
+});
