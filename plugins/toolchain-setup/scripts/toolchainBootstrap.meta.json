@@ -1,0 +1,47 @@
+{
+  "metaVersion": 2,
+  "key": "toolchainBootstrap",
+  "displayName": "Toolchain: install mise",
+  "description": "After the user says Install, installs mise (brew when present, else the official mise.run installer into ~/.local/bin; on Windows winget per user, else scoop; never sudo or admin rights) and checks it runs. Skip passes straight through.",
+  "color": "blue",
+  "icon": "",
+  "domain": "toolchains",
+  "order": 99,
+  "runtime": "node",
+  "file": "toolchainBootstrap.mjs",
+  "command": null,
+  "timeoutMs": 900000,
+  "params": [
+    {
+      "id": "timeoutMin",
+      "type": "number",
+      "required": false,
+      "label": "Install timeout (min)",
+      "description": "Stop the mise install after this many minutes (1 to 12).",
+      "default": 10
+    }
+  ],
+  "portSummary": "Reads bootstrap, decision; produces done.",
+  "inputs": [
+    {
+      "id": "bootstrap",
+      "type": "json",
+      "required": true
+    },
+    {
+      "id": "decision",
+      "type": "json",
+      "required": true
+    }
+  ],
+  "outputs": [
+    {
+      "id": "done",
+      "type": "json",
+      "when": "always",
+      "filename": "toolchain-mise-result.json",
+      "store": "run",
+      "artifactKind": "result"
+    }
+  ]
+}

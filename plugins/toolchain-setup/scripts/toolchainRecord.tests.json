@@ -1,0 +1,23 @@
+{
+  "version": 1,
+  "cases": [
+    {
+      "id": "writesLockOutsideRepo",
+      "name": "writes the lock under the toolchain root",
+      "params": {},
+      "ports": null,
+      "inputs": {
+        "verify": {
+          "text": "{\"toolchainRoot\":\"/tmp/worca-toolchains-test\",\"stateDir\":\"/tmp/worca-toolchains-test/projects/demo-0000000000\",\"projectDir\":\"/tmp/demo\",\"removed\":[],\"rows\":[{\"id\":\"r1\",\"tool\":\"node\",\"kind\":\"mise\",\"version\":\"20.10.0\",\"spec\":\"node@20.10.0\",\"status\":\"installable\",\"change\":\"added\",\"install\":\"ok\",\"sources\":[\".nvmrc:1\"],\"verify\":{\"result\":\"pass\",\"detail\":\"v20.10.0\"}},{\"id\":\"r3\",\"tool\":\"docker\",\"kind\":\"capability\",\"status\":\"not-possible-here\",\"reason\":\"no working Docker daemon\",\"change\":\"info\",\"verify\":{\"result\":\"n/a\"}}]}"
+        }
+      },
+      "cwd": {
+        "kind": "scratch"
+      },
+      "timeoutMs": null,
+      "expect": {
+        "verdict": "clean"
+      }
+    }
+  ]
+}
