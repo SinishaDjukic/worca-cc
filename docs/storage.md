@@ -354,7 +354,8 @@ Behind the flag `workflowTests`, like v97. FK-free. The DDL of every workflow-te
 - `wf_test_judgements`: one row per answer of the checking model: a try's criterion (`purpose 'try'`), a Check the checker card
   (`real`, `planted`) and its repeats (`again`, `padded`), or a pair of tries (`pair`, with `winner`). It keeps the criterion's
   fingerprint (its words, normalised) and the model, met or not (NULL = not counted, with `error`), the reason, the proof quote
-  and whether Worca found it in the result, and what the call cost.
+  and whether Worca found it in the result, and what the call cost. `test_run_id` is the test that wrote the row (NULL for Check
+  the checker, and for rows written before this column was added).
 - `wf_test_judge_answers`: the person's Agree or Disagree on one answer (one per person). They decide how far Worca's checking
   of a criterion is trusted.
 - `wf_test_checker_rounds`: one Check the checker round: the criterion, the model, the good result it started from, its status.
