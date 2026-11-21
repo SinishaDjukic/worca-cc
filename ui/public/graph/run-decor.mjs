@@ -8,8 +8,7 @@
 // execution ledger (state.steps[], one row per execution, key === executionId),
 // colours read the manifest node. History renders with the registry absent.
 import { levelAtLeast } from '../ui-level.mjs';
-import { manifestPortsFn, manifestTemplate, isGraphManifest } from '../../../src/shared/graph/manifest.mjs';
-export { isGraphManifest };
+import { manifestPortsFn, manifestTemplate } from '../../../src/shared/graph/manifest.mjs';
 import { BOOKEND_EXECUTION_IDS, DEFAULT_MAX_CYCLES, KEYED_KINDS } from '../../../src/shared/graph/constants.mjs';
 import { fanLines } from '../../../src/shared/graph/geometry.mjs';
 import { stepAux, fmtAuxCalls, floorText } from '../../../src/shared/cost/breakdown.mjs';
@@ -60,6 +59,9 @@ export function fmtUsd(n) {
 
 // ── manifest readers ────────────────────────────────────────────────────────
 
+export function isGraphManifest(stepper) {
+  return !!(stepper && stepper.version === 2 && stepper.graph && Array.isArray(stepper.graph.nodes));
+}
 export function manifestNodes(stepper) {
   return isGraphManifest(stepper) ? stepper.graph.nodes.filter(Boolean) : [];
 }
@@ -148,13 +150,67 @@ export function statusOf(node, rows, ctx) {
   return ctx.resolved ? 'stopped' : 'active';
 }
 
+// ── E9 scope notices ────────────────────────────────────────────────────────
+
+/** The warning text runs before E9's quiet line wrote, one per spawn (exec-manifest.mjs outsideWarning). */
+const LEGACY_SCOPE_RE = /^(\S+) read or wrote (\d+) paths? outside its checkout: (.*?)(?:, …)? \(see executions\.ndjson\)$/;
+
+/** A legacy warning line as a scope notice, or null when the text is something else. */
+function legacyScopeNotice(text) {
+  const m = LEGACY_SCOPE_RE.exec(String(text));
+  if (!m) return null;
+  const notable = m[3].split(', ').filter(Boolean).map((path) => ({ path, tool: null }));
+  return { nodeId: m[1], executionId: null, count: Math.max(Number(m[2]) || 0, notable.length), cross: false, notable };
+}
+
+/**
+ * Every scope notice of the run as ONE fold, or null when there is none: `{steps, files, cross, groups}`, one
+ * group per step (`{nodeId, label, count, paths:[{path, tool, cross?}]}`) in first-seen order. A path two
+ * executions both touched counts once; the paths a notice could not carry (`count` above its list) are added.
+ */
+function foldScope(notices, stepper) {
+  const groups = new Map();
+  const all = new Set();
+  let hidden = 0;
+  let cross = false;
+  for (const n of notices) {
+    if (!n || typeof n !== 'object' || typeof n.nodeId !== 'string') continue;
+    const list = Array.isArray(n.notable) ? n.notable.filter((p) => p && typeof p.path === 'string') : [];
+    let g = groups.get(n.nodeId);
+    if (!g) {
+      const node = nodeById(stepper, n.nodeId);
+      g = { nodeId: n.nodeId, label: (node && (node.label || node.id)) || n.nodeId, seen: new Map(), hidden: 0 };
+      groups.set(n.nodeId, g);
+    }
+    for (const p of list) {
+      if (!g.seen.has(p.path)) g.seen.set(p.path, { path: p.path, tool: p.tool ?? null, ...(p.cross === true ? { cross: true } : {}) });
+      all.add(p.path);
+    }
+    const more = Math.max(0, (Number(n.count) || 0) - list.length);
+    g.hidden += more;
+    hidden += more;
+    if (n.cross === true || list.some((p) => p.cross === true)) cross = true;
+  }
+  if (!groups.size) return null;
+  return {
+    steps: groups.size, files: all.size + hidden, cross,
+    groups: [...groups.values()].map((g) => ({ nodeId: g.nodeId, label: g.label, count: g.seen.size + g.hidden, paths: [...g.seen.values()] })),
+  };
+}
+
+/** The scope line's summary: "3 steps touched 4 files outside the checkout". */
+export function scopeSummaryText(scope) {
+  const s = (n, w) => `${n} ${w}${n === 1 ? '' : 's'}`;
+  return `${s(scope.steps, 'step')} touched ${s(scope.files, 'file')} outside the checkout`;
+}
+
 // ── the reducer ─────────────────────────────────────────────────────────────
 
 /**
  * ONE decor bag from ONE state snapshot. `st` is the SAME shape live
  * (orchestrator `state` events) and frozen (`rowToState` off pipelines +
  * pipeline_steps), so both surfaces call this with no adapter.
- * @param {object} st                 { stepper, status, steps, active, endReached, result, warnings, wireDeliveries, tokens, gate }
+ * @param {object} st                 { stepper, status, steps, active, endReached, result, warnings, scopeNotices, wireDeliveries, tokens, gate }
  * @param {{live?:boolean, now?:number, subsOf?:(nodeId:string)=>Array, lastLines?:Map, modelLabel?:(id:string)=>string, sessionVerified?:object}} opts
  *   `modelLabel` names a model id for the Away mode band (the catalog lives in app.js; default: the raw id).
  *   `sessionVerified`: the sub-agents gate per engine, read only while a session has no summary yet (tests open it).
@@ -216,7 +272,14 @@ export function decorFromState(st, { live = true, now = Date.now(), subsOf = nul
   const endNode = nodes.find((n) => n.kind === 'end') || null;
   const endResult = endReached && state.result && endNode ? buildEndResult(endNode, state.result) : null;
 
-  const warnings = (Array.isArray(state.warnings) ? state.warnings : []).filter(Boolean);
+  // E9: a legacy "… outside its checkout: …" line is a scope notice, never a banner.
+  const legacyScope = [];
+  const warnings = (Array.isArray(state.warnings) ? state.warnings : []).filter(Boolean).filter((w) => {
+    if (!LEGACY_SCOPE_RE.test(String(w))) return true;
+    if (!legacyScope.includes(w)) legacyScope.push(w);
+    return false;
+  });
+  const scope = foldScope([...(Array.isArray(state.scopeNotices) ? state.scopeNotices : []), ...legacyScope.map(legacyScopeNotice)], stepper);
   // The engine's own definition: `finish('done') && !ended`. A paused, stopped or
   // errored run also has endReached:false, and is NOT quiescence.
   const quiescent = runStatus === 'done' && state.endReached === false;
@@ -228,7 +291,7 @@ export function decorFromState(st, { live = true, now = Date.now(), subsOf = nul
   const decor = {
     version: 2, live, resolved, runStatus, status, colors,
     footers: {}, totals: {}, liveWireIds: [], loopBadges: {}, gate: null,
-    endResult, progress, activeNodes, warnings, quiescent,
+    endResult, progress, activeNodes, warnings, quiescent, scope,
     executions: rows.length, loopDeliveries,
     nodeIds: nodes.map((n) => n.id), wireIds: wires.map((w) => w.id), expanded: null, sessions: {},
   };

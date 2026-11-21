@@ -61,7 +61,7 @@ export function scanRunPrompt({ name, projectNames = [], rescan = false, partial
   return lines.join('\n\n');
 }
 
-/** `scan agent claude-sonnet-5 · medium, project agents Everyday coding · medium` */
+/** `scan agent claude-sonnet-5 · medium, project agents Sonnet (everyday tasks) · medium` */
 export function describeScanModels(m) {
   return `scan agent ${m.scanModel}${m.scanEffort ? ` · ${m.scanEffort}` : ''}, project agents ${subagentAliasLabel(m.agentModel)} · ${m.agentEffort}`;
 }
@@ -74,7 +74,7 @@ export function scanSignInMessage(models) {
     return `Workspace scan: ${models?.scanModel || WORKSPACE_SCAN_DEFAULT_MODELS.scanModel} needs Claude Code sign-in and no other scan model is set — pick one in Settings › Runs › Workspaces, ${tail}`;
   }
   const where = models.source === 'explicit' ? "this scan's pick" : models.source === 'workspace' ? "the workspace's scan pick"
-    : models.source === 'role' ? 'your Everyday coding role' : 'Settings › Runs › Workspaces';
+    : models.source === 'role' ? 'your Everyday tasks role' : 'Settings › Runs › Workspaces';
   return `Claude Code isn't signed in, and ${where} names ${models.scanModel}, which needs it — pick a routed model in Settings › Runs › Workspaces, ${tail}`;
 }
 
@@ -115,8 +115,8 @@ export function resolveScanModels({ explicit, stored = null, storedSource = 'set
   let degraded = null;
   for (const [source, label, pick] of [
     ['workspace', 'the workspace\'s create-time scan pick', workspacePick],
-    // `stored` is Settings › Runs › Workspaces, or (storedSource 'role') the Everyday coding role standing in for it.
-    [storedSource, storedSource === 'role' ? 'your Everyday coding role' : 'Settings › Runs › Workspaces', stored],
+    // `stored` is Settings › Runs › Workspaces, or (storedSource 'role') the Everyday tasks role standing in for it.
+    [storedSource, storedSource === 'role' ? 'your Everyday tasks role' : 'Settings › Runs › Workspaces', stored],
   ]) {
     if (!pick) continue;
     try {

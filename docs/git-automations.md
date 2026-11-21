@@ -51,8 +51,8 @@ projects and workspaces automate what, how events arrive, and the latest activit
    `improvement`, `idea` → feature; `question`, `support` → question (`type: bug`, `kind/feature` and the like
    count too).
 2. **Only when there is none**, one cheap model call reads the title, labels and body (as untrusted data) and
-   answers bug, feature, question or unclear. It runs on the Smart run naming model (Models › Helper jobs › Run
-   naming, else the cheapest ready Claude model at its lowest effort), is recorded as utility spend `triage`, and
+   answers bug, feature, question or unclear. It runs on the Smart run naming model (Models › Jobs › Helper jobs ›
+   Run naming, else the cheapest ready Claude model at its lowest effort), is recorded as utility spend `triage`, and
    is never billed to a run. Worca then adds the matching label (`bug`, `enhancement`, `question`,
    `needs-info`; a tag on Azure DevOps) where its credential may. Without an answer (no model, the total budget
    spent) it proposes a root-cause plan, as before triage existed.

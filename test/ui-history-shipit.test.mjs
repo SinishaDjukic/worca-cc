@@ -1640,50 +1640,66 @@ test('s4: Ship it shows the Watch PR help line, named by the switch', async () =
   assert.equal(watchBox(modal).getAttribute('aria-describedby'), 'shipit-watch-help');
 });
 
-// The Overview tab's PR row (paintHdOvPrs -> paintRdPrStatus): GitHub's verdict, what the watch is doing,
-// and the Watch switch. One GET /api/pr/checks answers all three.
+// One level: the Overview has no PR row. The card head reads the PR (its hidden .rd-pr-feed): GitHub's verdict in the
+// status line, the checks and what the watch is doing on the route's pull request row, and the Watch switch in the
+// View PR ▾ menu. One GET /api/pr/checks answers all three.
 const ovHash = `${detailHash}/details/overview`;
 const ovPr = (w) => w.document.querySelector('#hist-detail .hd-ov-pr');
-const ovStatus = (w) => ovPr(w)?.querySelector('.rd-pr-status');
-const ovSwitch = (w) => ovStatus(w)?.querySelector('.rd-prs-watch');
+const prRoute = (w) => w.document.querySelector('#hist-detail .rd-route .rd-route-row.is-review');
+const prMenu = (w) => w.document.querySelector('#hist-detail .rd-pr-menu');
+const openPrMenu = async (ctx) => {
+  if (!prMenu(ctx.window)) click(ctx.window, ctx.window.document.querySelector('#hist-detail .rd-head-acts .rd-pr-split .rd-pr-more'));
+  await settle(ctx.window, 6);
+  return prMenu(ctx.window);
+};
+const menuSwitch = (w) => prMenu(w)?.querySelector('[role="menuitemcheckbox"]');
 const checksGets = (ctx) => ctx.calls.filter((c) => /\/api\/pr\/checks\?/.test(c.url));
 const CHECKS = (over = {}) => ({ checks: { state: 'passing', total: 12, failed: 0, pending: 0, skipped: 0 }, mergeable: 'MERGEABLE',
   status: { tone: 'ok', label: 'Ready to merge', detail: 'All 12 checks passed' }, watch: WATCH(), ...over });
+const bootAdvanced = async (opts) => {
+  const ctx = await bootShip(opts);
+  ctx.window.document.documentElement.dataset.level = 'advanced';
+  return ctx;
+};
 
-test('Overview: an open PR row shows GitHub\'s verdict and the watch, words only while it acts; the header has no switch', async () => {
+test('an open PR: no Overview row; the head words GitHub\'s verdict, the route the watch, the ▾ the switch', async () => {
+  // The route has no switch, so an idle watch still says Watching there; an unwatched PR says nothing.
   for (const [state, label, pressed] of [
-    [WATCH(), '', 'true'],
+    [WATCH(), 'Watching', 'true'],
     [WATCH({ status: 'fixing', activePipelineId: 'f1' }), 'Fixing', 'true'],
     [WATCH({ status: 'fixing', activePipelineId: 'f1', mergingBase: 'dev' }), 'Merging dev in', 'true'],
     [WATCH({ status: 'fixing', activePipelineId: 'f1', resolving: true }), 'Resolving conflicts', 'true'],
     [WATCH({ watching: false, status: 'publishing' }), 'Disabled (finishing)', 'false'],
-    [WATCH({ status: 'needs-person', reason: 'cap' }), 'Needs a person', 'true'],
+    [WATCH({ status: 'needs-person', reason: 'cap' }), 'Watch stopped', 'true'],
     [WATCH({ watching: false, status: null }), '', 'false'],
   ]) {
-    const ctx = await bootShip({ rows: [openRow()], arms: (url) => (/\/api\/pr\/checks\?/.test(url) ? ok(CHECKS({ watch: state })) : null) });
-    await openDetail(ctx, ovHash); await settle(ctx.window);
-    assert.equal(ovStatus(ctx.window).hidden, false);
-    assert.match(ovPr(ctx.window).textContent, /^Pull request/);
-    // Two lines: the headline alone, then its notes with no separator in front.
-    assert.equal(ovStatus(ctx.window).querySelector('.rd-prs-sum > .rd-prs-lead').textContent, 'Ready to merge');
-    assert.equal(ovStatus(ctx.window).querySelector('.rd-prs-sum > .rd-prs-notes').firstElementChild.textContent, 'All 12 checks passed');
-    if (label) assert.ok(ovStatus(ctx.window).textContent.includes(label), label);
-    else assert.doesNotMatch(ovStatus(ctx.window).textContent, /Watching|Fixing|Needs a person|Disabled/);
-    assert.equal(ovSwitch(ctx.window).querySelector('[role="switch"]').getAttribute('aria-checked'), pressed);
-    assert.equal(ovSwitch(ctx.window).dataset.minLevel, 'advanced');
+    const ctx = await bootAdvanced({ rows: [openRow()], arms: (url) => (/\/api\/pr\/checks\?/.test(url) ? ok(CHECKS({ watch: state })) : null) });
+    await openDetail(ctx, ovHash); await settle(ctx.window, 6);
+    assert.equal(ovPr(ctx.window), null, 'no PR row on the Overview');
+    assert.equal(ctx.window.document.querySelector('#hist-detail .rd-sheet .run-status').dataset.line, 'In review · ready to merge');
+    const route = prRoute(ctx.window).querySelector('.rd-route-second').textContent;
+    assert.match(route, /All 12 checks passed/);
+    if (label) assert.ok(route.includes(label), label);
+    else assert.doesNotMatch(route, /Watch|Fixing|Disabled/);
+    await openPrMenu(ctx);
+    assert.equal(menuSwitch(ctx.window).getAttribute('aria-checked'), pressed);
     assert.equal(ctx.window.document.querySelector('#hist-detail .hd-pr-watch'), null, 'the Watch switch left the header');
     const q = new URL(checksGets(ctx)[0].url, 'http://x').searchParams;
     assert.deepEqual([q.get('id'), q.get('projectKey'), q.get('memberKey')], [ROW.id, KEY, null]);
   }
 });
 
-test('Overview: a PR GitHub cannot answer for (another host, older server) shows no row', async () => {
-  const ctx = await bootShip({ rows: [openRow()], arms: (url) => (/\/api\/pr\/checks\?/.test(url) ? fail(400, { error: 'an open github.com pull request is required' }) : null) });
-  await openDetail(ctx, ovHash); await settle(ctx.window);
-  assert.equal(ovStatus(ctx.window).hidden, true);
+test('a PR GitHub cannot answer for (another host, older server): the ▾ says Watch unavailable', async () => {
+  const ctx = await bootAdvanced({ rows: [openRow()], arms: (url) => (/\/api\/pr\/checks\?/.test(url) ? fail(400, { error: 'an open github.com pull request is required' }) : null) });
+  await openDetail(ctx, ovHash); await settle(ctx.window, 6);
+  const menu = await openPrMenu(ctx);
+  assert.equal(menuSwitch(ctx.window), null, 'no Watch switch');
+  const na = [...menu.querySelectorAll('[role^="menuitem"]')].find((b) => /Watch unavailable/.test(b.textContent));
+  assert.ok(na, 'Watch unavailable');
+  assert.equal(na.getAttribute('aria-disabled'), 'true');
 });
 
-test('Overview: the Watch switch POSTs the flip and repaints; a failure keeps the shown state and says why', async () => {
+test('the ▾ Watch switch POSTs the flip and repaints; a failure keeps the shown state and says why', async () => {
   let failPost = false;
   const arms = (url, opts) => {
     if (/\/api\/pr\/checks\?/.test(url)) return ok(CHECKS({ watch: WATCH({ watching: false, status: null }) }));
@@ -1692,22 +1708,23 @@ test('Overview: the Watch switch POSTs the flip and repaints; a failure keeps th
     }
     return null;
   };
-  const ctx = await bootShip({ rows: [openRow()], arms });
-  await openDetail(ctx, ovHash); await settle(ctx.window);
-  click(ctx.window, ovSwitch(ctx.window)); await settle(ctx.window);
+  const ctx = await bootAdvanced({ rows: [openRow()], arms });
+  await openDetail(ctx, ovHash); await settle(ctx.window, 6);
+  await openPrMenu(ctx);
+  click(ctx.window, menuSwitch(ctx.window)); await settle(ctx.window);
   assert.deepEqual(JSON.parse(watchPosts(ctx)[0].opts.body), { id: ROW.id, projectKey: KEY, watch: true });
-  assert.equal(ovSwitch(ctx.window).querySelector('[role="switch"]').getAttribute('aria-checked'), 'true');
+  assert.equal(menuSwitch(ctx.window).getAttribute('aria-checked'), 'true');
   failPost = true;
-  click(ctx.window, ovSwitch(ctx.window)); await settle(ctx.window);
+  click(ctx.window, menuSwitch(ctx.window)); await settle(ctx.window);
   assert.equal(JSON.parse(watchPosts(ctx)[1].opts.body).watch, false);
-  assert.equal(ovSwitch(ctx.window).querySelector('[role="switch"]').getAttribute('aria-checked'), 'true', 'a failed toggle keeps the shown state');
-  assert.match(ovSwitch(ctx.window).title, /Could not change Watch: disk full/);
+  assert.equal(menuSwitch(ctx.window).getAttribute('aria-checked'), 'true', 'a failed toggle keeps the shown state');
+  assert.match(menuSwitch(ctx.window).title, /Could not change Watch: disk full/);
 });
 
-test('Overview: a change announced while a read is in flight reads again, so the older answer never sticks', async () => {
+test('the head: a change announced while a read is in flight reads again, so the older answer never sticks', async () => {
   const pending = [];
   const arms = (url) => (/\/api\/pr\/checks\?/.test(url) ? new Promise((resolve) => pending.push(resolve)) : null);
-  const ctx = await bootShip({ rows: [openRow()], arms });
+  const ctx = await bootAdvanced({ rows: [openRow()], arms });
   await openDetail(ctx, ovHash); await settle(ctx.window);
   assert.equal(pending.length, 1);
   ctx.wsBox.ws.dispatch('message', { data: JSON.stringify({ type: 'pr-watch-changed', projectKey: KEY, pipelineId: ROW.id, memberKey: null }) });
@@ -1717,8 +1734,8 @@ test('Overview: a change announced while a read is in flight reads again, so the
   await settle(ctx.window);
   assert.equal(pending.length, 2, 'the announced change is read once the first answer lands');
   pending[1]({ ok: true, status: 200, json: async () => CHECKS({ watch: WATCH({ status: 'fixing' }) }) });
-  await settle(ctx.window);
-  assert.match(ovStatus(ctx.window).textContent, /Fixing/);
+  await settle(ctx.window, 6);
+  assert.match(prRoute(ctx.window).querySelector('.rd-route-second').textContent, /Fixing/);
 });
 
 test('Overview: pr-watch-changed rereads only the exact PR', async () => {
@@ -1855,3 +1872,4 @@ test('the release row: an invalid typed version posts nothing and leaves OK and 
   assert.equal(modal.querySelector('.shipit-push-remote').disabled, false);
   assert.equal(modal.querySelector('.shipit-base-remote').disabled, false);
 });
+

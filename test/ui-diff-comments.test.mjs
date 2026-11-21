@@ -392,7 +392,7 @@ test('the + button refuses to arm on a row with no number on either side', async
   assert.equal(window.document.querySelector('.hd-cmt-add'), null);
 });
 
-test('Cancel and Esc close the composer without POSTing or leaving Details; Esc with no composer still steps back', async () => {
+test('Cancel and Esc close the composer without POSTing or leaving Details; Esc with no composer still steps back to the list', async () => {
   const ctx = await bootComments();
   const { window } = ctx;
   const doc = window.document;
@@ -425,11 +425,13 @@ test('Cancel and Esc close the composer without POSTing or leaving Details; Esc 
       assert.ok(doc.querySelector('#hist-detail .hd-diff-body'), 'the diff is still rendered');
       assert.equal(ctx.cbox.calls.length, 0, 'Esc never POSTs');
     } },
-    { name: 'Esc with no composer open still steps back out of Details (the guard is scoped)', run: async () => {
+    { name: 'Esc with no composer open still steps back to the list (the guard is scoped)', run: async () => {
+      // One level: there is no glance to step back to; Escape goes to #runs in the slide layout only
+      // (side by side the list is already there). Pin the slide layout so the guard's scope is observable.
+      window.document.getElementById('runs-shell').dataset.layout = 'slide';
       keydown(window, window.document.querySelector('#hist-detail .hd-diff-pane'), 'Escape');
       await settle(window);
-      // Details › Diff → the run's glance (one more Escape would reach the list).
-      assert.equal(window.location.hash.replace(/^#/, ''), `history/${KEY}/${ROW.id}`, 'the existing behaviour is untouched');
+      assert.equal(window.location.hash, '#runs', 'Escape outside the composer still navigates');
     } },
   ]);
 });

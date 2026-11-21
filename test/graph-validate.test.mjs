@@ -1,7 +1,8 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { validateGraph, formatIssue } from '../src/shared/graph/validate.mjs';
+import { validateGraph, formatIssue, shellWarningIssue, CANVAS_WARNING_CODES } from '../src/shared/graph/validate.mjs';
 import { portsFnFor } from '../src/shared/graph/ports.mjs';
+import { loadBudget } from './helpers/load-budget.mjs';
 
 // Inline fixture registry (the REAL sidecars arrive in test/helpers/graph-ports.mjs
 // at Task 10 Step 4 and are exercised by the seed drift guard, Task 13).
@@ -33,6 +34,12 @@ const SCRIPTS = {
   pyCard: { key: 'pyCard', runtime: 'python', params: [],
     inputs: [{ id: 'in', type: 'md', required: false }],
     outputs: [{ id: 'out', type: 'md', when: 'always', filename: 'py-cycle{cycle}.md' }] },
+  twoCmds: { key: 'twoCmds', runtime: 'shell', ports: 'config', defaultPorts: { inputs: [], outputs: [] },
+    params: [{ id: 'a', type: 'command', required: false }, { id: 'b', type: 'command', required: false }] },
+  jsCard: { key: 'jsCard', runtime: 'node', ports: 'config', defaultPorts: { inputs: [], outputs: [] },
+    params: [{ id: 'source', type: 'code', language: 'js', required: false }] },
+  sidecarCmd: { key: 'sidecarCmd', runtime: 'shell', ports: 'config', defaultPorts: { inputs: [], outputs: [] },
+    params: [{ id: 'command', type: 'command', required: false, default: 'echo "unclosed' }] },
   hiddenScript: { key: 'hiddenScript', runtime: 'node', placeable: false, params: [], inputs: [], outputs: [{ id: 'out', type: 'md', when: 'always', filename: 'o.md' }] },
 };
 const portsFn = portsFnFor(REG, SCRIPTS);
@@ -641,4 +648,43 @@ test('V31 role-review spec: a malformed roleReview object fails; true and a vali
   assert.deepEqual(v31({ ...SPEC, roles: [{ key: 'Sec-1', label: 'Security' }] }), ['node \'n_rev\': roleReview.roles[0].key "Sec-1" must be 1–24 lowercase letters']);
   assert.deepEqual(v31({ ...SPEC, checklist: 'x' }), ['node \'n_rev\': roleReview.checklist "x" is unknown (known: perspectives, requirements, coverage)']);
   assert.equal(V(withRole({ ...SPEC, target: 'code' })).ok, false);
+});
+
+test('V33 shell warnings: one warning per script node, counted across its command params, never an error', () => {
+  const withNode = (node) => { const t = ok(); t.nodes.push(node); return t; };
+  const v33 = (node) => V(withNode(node)).warnings.filter((w) => w.code === 'V33');
+  const BAD = 'if true; then\n echo x';
+  assert.deepEqual(v33(S('n_sh', 'shellLike', { params: { command: BAD } })),
+    [{ code: 'V33', message: "script node 'n_sh' has 1 shell warning", nodeId: 'n_sh', count: 1 }]);
+  assert.deepEqual(v33(S('n_sh', 'shellLike', { params: { command: `${BAD}\nfi` } })), [], 'fixed');
+  const two = v33(S('n_t', 'twoCmds', { params: { a: BAD, b: 'echo ok' } }));
+  assert.equal(two.length, 1);
+  assert.equal(two[0].count, 1);
+  const both = v33(S('n_t', 'twoCmds', { params: { a: BAD, b: 'fi\nesac' } }));
+  assert.equal(both.length, 1);
+  assert.equal(both[0].count, 3);
+  assert.match(both[0].message, /has 3 shell warnings$/);
+  assert.deepEqual(v33(S('n_js', 'jsCard', { params: { source: 'echo "x' } })), [], 'a code param is never linted');
+  assert.equal(v33(S('n_sc', 'sidecarCmd', {}))[0].count, 1, 'a sidecar default is counted');
+  assert.deepEqual(v33(S('n_u', 'nope', { params: { command: BAD } })), [], 'an unknown script');
+  const r = V(withNode(S('n_sh', 'shellLike', { params: { command: BAD }, ports: { inputs: [], outputs: [] } })));
+  assert.equal(r.ok, true, 'a warning never fails validation');
+  assert.ok(!r.errors.some((e) => e.code === 'V33'));
+  assert.ok(CANVAS_WARNING_CODES.includes('V33'));
+  assert.equal(shellWarningIssue('n1', 0), null);
+  assert.equal(shellWarningIssue('n1', 1.5), null);
+  assert.deepEqual(shellWarningIssue('n1', 2), { code: 'V33', message: "script node 'n1' has 2 shell warnings", nodeId: 'n1', count: 2 });
+});
+
+test('V33 lints a command text once per validation, however many nodes share it', () => {
+  // A large default copied onto many cards: one lint pass, not one per card (review of #1471).
+  const BIG = 'if [ -f x ]; then\n  echo "hi $(date)"\nfi\n'.repeat(10000) + 'fi\n';
+  const t = ok();
+  for (let i = 0; i < 60; i += 1) t.nodes.push(S(`n_sh${i}`, 'shellLike', { params: { command: BIG } }));
+  const t0 = Date.now();
+  const v33 = V(t).warnings.filter((w) => w.code === 'V33');
+  const ms = Date.now() - t0;
+  assert.equal(v33.length, 60);
+  assert.ok(v33.every((w) => w.count === 1));
+  assert.ok(ms < loadBudget(150), `took ${ms} ms (a lint per card: ~350 ms)`);
 });

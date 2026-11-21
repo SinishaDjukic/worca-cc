@@ -23,21 +23,28 @@ import { ENGINE_EFFORTS } from './engine-settings-view.mjs';
 import { ENGINE_NAMES, engineLabel, isBetaEngine } from '../../src/shared/engine-switch.mjs';
 import { PR_OPEN, PR_OPEN_LABELS, prSourceText } from '../../src/shared/pr-auto.mjs';
 import { lockEngineOptions } from './engine-locks.mjs';
-import { runsOn, modelGroups } from '../../src/shared/connections.mjs';
+import { runsOn, modelGroups, connectionOf, connectionLabel } from '../../src/shared/connections.mjs';
 import { appendModelGroups, modelOptionText } from './model-options.mjs';
 import { classifyLoops } from '../../src/shared/graph/loops.mjs';
 import { portsFnFor } from '../../src/shared/graph/ports.mjs';
 import { parseMcpToolName } from '../../src/shared/mcp-tool-name.mjs';
 import { mcpSkipView, mcpCopyNote, skillSkipView } from './mcp-run-picker.mjs';
-import { engineOfEntry, chatEngineOf, pickerGroups, ASK_CHAT_ENGINES, isEngineSetupNotice, engineSwitchConfirm, readEnginePicks, rememberEnginePick, engineLead, switchEffort, pickerEngineName } from './ask-engine.mjs';
+import { engineOfEntry, chatEngineOf, pickerGroups, ASK_CHAT_ENGINES, isEngineSetupNotice, engineSwitchConfirm, readEnginePicks, rememberEnginePick, engineLead, switchEffort, pickerEngineName, pickerEngineLabel } from './ask-engine.mjs';
 import { formatQuotedMessage, parseQuotedMessage } from './pinpoint-model.mjs';
 import { ATTACH_MAX_MESSAGE_BYTES, bytesToBase64 as attachBase64, carriesFiles, checkAttachment, createPasteNamer, pastedFiles } from './attach-files.mjs';
 import { notify } from './feedback.mjs';
 import { currentLevel, levelShows } from './ui-level.mjs';
 import { chatCardBuilder, composerAddons } from './chat/extensions.mjs';
-import { mountPromptCheckChip } from './prompt-check/chip-host.mjs';
 import { keepFocus } from './chat/keep-focus.mjs';
-import { flagOn } from './flags.mjs';
+import { flagOn, onFlagChange } from './flags.mjs';
+import { createAttachStore } from './requirements-attach/store.mjs';
+import { mountChatAttach, jsonFetcher } from './requirements-attach/entries.mjs';
+import { renderAttachedCards } from './requirements-attach/cards.mjs';
+import { attachHashSearch } from './requirements-attach/hash-search.mjs';
+import { guardScopeChange } from './requirements-attach/scope-guard.mjs';
+import { revalidate } from './requirements-attach/revalidate.mjs';
+import { renderSentFeatureCard } from './requirements-attach/sent-card.mjs';
+import { createDocumentModal } from './feature-pull/modal.mjs';
 import { mountChatsColumn } from './chats-column.mjs';
 import { CHATS_PAGE } from './chats-list.mjs';
 import { chatPageKeyAction, keyHint, isMac, LIST_FIELD } from './list-keys.mjs';
@@ -54,8 +61,6 @@ import { withoutChips } from './ask-page-chips.mjs';
 import { sideSuggestions } from './ask-side-suggest.mjs';
 import { makeSwitch } from './switch.mjs';
 import { shapeCardExtras, shapeWhatHappens, shapeAdvancedSummary } from './shape/proposal.mjs';
-import { button as railButton } from './design-system/components/button.mjs';
-import { toElement } from './design-system/components/html.mjs';
 import { createAskComposerCards, ASK_COMPOSER_CARD_TYPES } from './ask-composer-cards.mjs';
 import { cardKit, scriptApprovalCardView } from './workflows/card-views.mjs';
 import { applyPresetStart } from '../../src/shared/run-presets.mjs';
@@ -208,7 +213,7 @@ const HISTORY_KEY = 'worca-cc.chat.history';
 const HISTORY_OPEN_MIN_W = 1600;
 const HISTORY_OVERLAY_BELOW = 1100;
 
-export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContext, openNewPipeline, openComposer = null, showTerminal = () => {}, openClaudeSetup = null, loadMarkdown, hljsLoader, storage, raf, now, runStore = null, createVoice = null, voiceLongPressMs = 500, chatDeps = null, onRoute = null, onUnread = null, composerActions = null, summariseCommands = () => true, getPageChips = () => [], getPageScope = () => null, sideActions = null, promptCheckTimers = undefined }) {
+export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContext, openNewPipeline, openComposer = null, showTerminal = () => {}, openClaudeSetup = null, loadMarkdown, hljsLoader, storage, raf, now, runStore = null, createVoice = null, voiceLongPressMs = 500, chatDeps = null, onRoute = null, onUnread = null, composerActions = null, summariseCommands = () => true, getPageChips = () => [], getPageScope = () => null, sideActions = null }) {
   const homePick = browserPick();         // hoisted declaration (defined below)
   const st = {
     open: false,
@@ -307,9 +312,16 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     basePlaceholder: INPUT_PLACEHOLDER,   // the add-ons' placeholder (addonCtx.setPlaceholder); a suggestion shows only over the default
     suggestion: null,         // the suggestion on screen ({messageId, text}) — what Tab accepts
     suggestDismissed: null,   // the reply id whose suggestion the user typed over (or accepted): never shown again
+    attachOffs: [],           // unsubscribe functions of the Requirements attach (store, flag, button)
   };
   const el = {}; // element refs, filled by the builders
   const renderer = createMarkdownRenderer({ doc, load: loadMarkdown, hljsLoader });
+  // Requirements attach: ONE store for the whole composer (it mirrors the single `el.input` draft, so text and features
+  // travel together, across newThread too). sessionStorage: a reload keeps it, a new tab does not.
+  const attachStore = createAttachStore({ storage: (() => { try { return win.sessionStorage; } catch { return null; } })(), key: 'worca-cc.attach.chat' });
+  const attachFetch = jsonFetcher((...a) => fetch(...a));
+  /** revalidate() and the sent card hand their body over as a JSON string; the fetcher takes the object. */
+  const resolveFetch = (url, opts = {}) => attachFetch(url, { method: opts.method, body: typeof opts.body === 'string' ? JSON.parse(opts.body) : opts.body });
   // Answer chips (ask-ref-chips.mjs): the PRs, issues, work items, runs and chats an answer names. The run chips follow
   // the run store like the run cards; lookups go out once an answer is done (renderAnswerPiece).
   const refChips = createRefChips({ doc, fetch, runStore, now, root: () => el.transcript || null, visible: () => st.open });
@@ -922,7 +934,6 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     const cur = el.input.value;
     el.input.value = cur && !/\s$/.test(cur) ? `${cur} ${text}` : `${cur}${text}`;
     fitInput();                                   // a programmatic write fires no input event
-    addonsInput();
     if (!autoSend) { focusComposer(); return; }
     // While a reply runs (barge-in included) sendMessage() queues it like a typed send; the queue sends it after.
     voiceSend();
@@ -945,7 +956,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
    */
   async function sendMessage(queued = null) {
     if (st.sending || st.destroyed) return false;
-    const draft = queued || { text: el.input.value.trim(), quote: st.quote, files: st.pendingFiles };
+    const draft = queued || { text: el.input.value.trim(), quote: st.quote, files: st.pendingFiles, requirements: [] };
     let text = draft.text;
     if (!text) return false;
     // Pinpoint (#669): the quote chip rides as a blockquote above the text — for an add-on's direction too.
@@ -970,22 +981,22 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
         if (st.quote === quoted) setQuote(null);
         el.input.value = '';
         fitInput();                                  // a programmatic clear fires no input event
-        addonsInput();
         updateSendStop();
         return true;
       }
     }
-    // The add-ons see the draft as sent once it is taken: queued behind a running reply, or the message accepted (202).
-    // A refused send keeps the draft, and the add-ons keep what they show for it (a new chat made for it included).
-    let told = false;
-    const tellSent = () => { if (!queued && !told && st.addons.length) { told = true; addonsSent(draft.text); } };
-    // A reply is running (or loaded, not yet adopted): the composer's message waits in this chat's queue.
-    if (turnBusy()) {
-      if (queued) return 'busy';
-      const r = enqueueDraft(draft);
-      if (r) tellSent();
-      return r;
+    // Attached Requirements features: a stale one (archived, deleted, not Ready, in another scope) blocks the send until
+    // it is removed. The statuses are read fresh first; a failed read keeps what is known (the server decides at commit).
+    if (!queued && attachStore.get().items.length && requirementsOn()) {
+      st.sending = true;
+      let blocked = null;
+      try { await recheckAttached(); blocked = attachedBlock(); } finally { st.sending = false; }
+      if (st.destroyed) return false;
+      if (blocked) { setComposerMsg(blocked); updateSendStop(); return false; }
     }
+    if (!queued) { draft.requirements = attachedSeqs(); draft.features = requirementsOn() ? attachStore.get().items : []; }
+    // A reply is running (or loaded, not yet adopted): the composer's message waits in this chat's queue.
+    if (turnBusy()) return queued ? 'busy' : enqueueDraft(draft);
     // …or one the user started while an add-on decided (the same check, above the add-ons).
     if (typeof st.wantThread === 'string' && st.wantThread !== st.threadId) return false;
     if (st.addons.length) text = addonsTransform(text);
@@ -1014,7 +1025,6 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
         id = body.thread.id;
         loadGen += 1;                     // a pending loadThread() must not replace this fresh model
         st.threadId = id;
-        madeThread = id;
         st.model = createThreadModel({ threadId: id });
         st.model.load({ thread: body.thread, messages: [], attachments: [], runLinks: [], inFlight: null });
         setContexts(body.thread && body.thread.contexts);
@@ -1034,6 +1044,8 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
         // a refused first message (429/403/400, network) or a PATCH still in flight would leave the stored ones behind.
         mcpOff: sentOff,
         ...(draft.files.length ? { attachments: draft.files.map((f) => ({ name: f.name, dataBase64: f.dataBase64 })) } : {}),
+        // Flag off: no field at all (a queued item that waited past a flag flip drops it too).
+        ...(requirementsOn() && draft.requirements && draft.requirements.length ? { requirements: draft.requirements } : {}),
       };
       const model = st.model;
       let res = null;
@@ -1053,13 +1065,22 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
         // Another turn (an event turn started at settle) got the chat first: the message waits for it.
         if (res && res.status === 409 && body && body.error === 'turn in flight') return queued ? 'busy' : enqueueDraft(draft);
         setComposerMsg(msg);
+        if (payload.requirements) void recheckAttached();   // the person sees which feature the server refused
         return false;
       }
       st.scopeHeld = null;                           // S39: this message carried the held pick (its pinned is authoritative)
       // A toggle made while this POST was out PATCHed a value the route then overwrote with sentOff: re-send the latest.
       if (st.mcp.off !== sentOff) patchMcpOff(id, st.mcp.off);
-      const { userMessageId, attachments: stored, contexts } = await res.json();
+      const { userMessageId, attachments: stored, contexts, scope: switched } = await res.json();
+      // Reading the body yields: the user may have left the chat meanwhile. Its contexts, scope and echo belong to the
+      // chat they left; a `scope` applied here would move another chat's pill (review M2).
+      if (st.destroyed || st.model !== model || st.threadId !== id) return !!queued;
       if (Array.isArray(contexts)) setContexts(contexts);   // an older server omits it: keep what is shown
+      // A link in this message switched the No-project chat (docs/chat-home.md "Scope from a pasted link"): the pill
+      // follows even when the ask-scope frame was missed, so the next send cannot switch the chat back.
+      if (switched && typeof switched === 'object' && switched.pinned === true && typeof switched.projectKey === 'string') {
+        applyServerScope(switched, switched.label);
+      }
       // Prefer the server's rows: they carry the store-minted ids that key the
       // image thumbnail (#398) and the thread's attachment ledger. The pending
       // files are the fallback for a server that predates the field.
@@ -1072,13 +1093,14 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
       // the ask-title frame lands (ask-model marks title dirty, flushExtra repaints).
       // A drained queue item leaves the composer alone: it holds whatever the user is typing now.
       if (!queued) {
-        tellSent();
         el.input.value = '';
         fitInput();                                    // a programmatic clear fires no input event
         st.pendingFiles = [];
         if (st.quote === quoted) st.quote = null;
         renderChips();
         st.hist = { idx: -1, draft: '' };
+        dropAttached(payload.requirements);            // only after the 202: a refusal keeps text and features
+        if (el.hash) el.hash.close();
       }
       subscribe(id);
       st.pinned = true;
@@ -1103,9 +1125,10 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
       return false;
     }
     // Ask worca beside the page: the page it was typed on rides with it — the person may be elsewhere when it sends.
-    const item = { key: `q${++queueSeq}`, text: draft.text, quote: draft.quote || null, files: draft.files.slice(), page: draft.page || pageContext() };
+    const item = { key: `q${++queueSeq}`, text: draft.text, quote: draft.quote || null, files: draft.files.slice(), requirements: (draft.requirements || []).slice(), features: (draft.features || []).map((f) => ({ ...f })), page: draft.page || pageContext() };
     q.items.push(item);
     el.input.value = '';
+    dropAttached(item.requirements);                 // the features travel with the queued text, like the input
     fitInput();                                      // a programmatic clear fires no input event
     st.pendingFiles = [];
     if (st.quote === draft.quote) st.quote = null;
@@ -1138,7 +1161,10 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     if (r === true) {
       removeQueued(id, item, { sent: true });
       if (q.again && id === st.threadId) { q.again = false; drainQueue(); }
-    } else if (r !== 'busy' && q.items.includes(item)) pauseQueue(id);   // the composer line says why
+    } else if (r !== 'busy' && q.items.includes(item)) {
+      pauseQueue(id);                                // the composer line says why
+      if (item.requirements && item.requirements.length) void recheckQueuedFeatures(item);
+    }
     else if (id === st.threadId) renderQueue();
   }
 
@@ -1260,6 +1286,10 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     if (item.files.length) extras.push(`${item.files.length} file${item.files.length === 1 ? '' : 's'}`);
     if (item.quote) extras.push('quote');
     if (extras.length) li.appendChild(make('span', 'ask-queue-meta', extras.join(' · ')));
+    const feats = make('div', 'ask-chips ask-queue-features');
+    feats.setAttribute('data-ask-queue-features', '');
+    feats.hidden = true;
+    li.appendChild(feats);
     // The pencil turns into ✓ (Save) while the card is edited.
     const pen = make('button', 'ask-queue-pen');
     pen.type = 'button';
@@ -1285,6 +1315,12 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     txt.disabled = sending;
     pen.disabled = sending;
     x.disabled = sending;
+    const feats = li.querySelector('.ask-queue-features');
+    if (feats) {
+      const shown = requirementsOn() ? (item.features || []) : [];
+      renderAttachedCards(feats, shown, { onRemove: (seq) => removeQueuedFeature(item, seq), flagOn: requirementsOn });
+      feats.hidden = !shown.length;
+    }
     txt.textContent = queueExcerpt(item.text);
     txt.setAttribute('aria-label', `Queued message ${pos} of ${total}${pos === 1 ? ', sends next' : ''}: ${queueExcerpt(item.text)}. Edit`);
     if (pen.dataset.mode !== (editing ? 'save' : 'edit')) {
@@ -1295,6 +1331,23 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     pen.title = editing ? 'Save' : 'Edit';
     if (editing) st.queueEdit.ta.setAttribute('aria-label', `Edit queued message ${pos}`);
     x.setAttribute('aria-label', `Remove queued message ${pos}`);
+  }
+
+  /** × on a queued message's feature card: the message keeps its text and loses that feature (a refused one can be cleared). */
+  function removeQueuedFeature(item, seq) {
+    item.requirements = (item.requirements || []).filter((r) => r.seq !== seq);
+    item.features = (item.features || []).filter((f) => f.seq !== seq);
+    renderQueue();
+  }
+  /** A queued message the server refused for its features: read their statuses afresh so the cards say why. */
+  async function recheckQueuedFeatures(item) {
+    if (!item.features || !item.features.length) return;
+    const tmp = createAttachStore({ storage: null, key: 'queued' });
+    tmp.add(item.features);
+    await revalidate(tmp, resolveFetch, attachScope(), requirementsOn).catch(() => null);
+    const by = new Map(tmp.get().items.map((i) => [i.seq, i]));
+    item.features = item.features.map((f) => by.get(f.seq) || f);
+    renderQueue();
   }
 
   /** × on a card: the item leaves and focus goes to a neighbour card (or the input), not to the page body. */
@@ -1383,9 +1436,188 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     if (t && typeof t.unref === 'function') t.unref();
   }
 
+  // ---- Requirements attach (the Chat composer): the store, the card strip, the `#` popover, the scope guard ------------
+  const requirementsOn = () => flagOn('requirements', doc);
+  /** Why a status blocks a send (the server's A-7 wording). `unavailable` (flag off) does not: nothing is sent. */
+  const ATTACH_BLOCKS = Object.freeze({ archived: 'archived', missing: 'deleted', not_ready: 'not Ready', wrong_scope: 'not in this target' });
+
+  /** The chat's scope as the attach modules read it: {scopeType, scopeKey}, or null (No project). */
+  function attachScope() {
+    if (!st.scope.pinned) return null;
+    if (st.scope.projectKey) return { scopeType: 'project', scopeKey: st.scope.projectKey };
+    if (st.scope.workspaceId) return { scopeType: 'workspace', scopeKey: st.scope.workspaceId };
+    return null;
+  }
+  const recheckAttached = () => revalidate(attachStore, resolveFetch, attachScope(), requirementsOn).catch(() => ({ ok: false, changed: false }));
+  const attachedSeqs = () => (requirementsOn() ? attachStore.get().items.map((i) => ({ seq: i.seq })) : []);
+  const dropAttached = (reqs) => { for (const r of reqs || []) attachStore.remove(r.seq); };
+
+  /** The A-7 line for the first attached item that cannot go, or null. */
+  function attachedBlock() {
+    if (!requirementsOn()) return null;
+    const bad = attachStore.get().items.find((i) => Object.hasOwn(ATTACH_BLOCKS, i.status));
+    return bad ? `Remove ${bad.id ?? `FEAT-${bad.seq}`} "${bad.title ?? ''}" (${ATTACH_BLOCKS[bad.status]}) to continue.` : null;
+  }
+
+  function paintAttached() {
+    if (!el.attachCards) return;
+    const items = attachStore.get().items;
+    renderAttachedCards(el.attachCards, items, { onRemove: (seq) => attachStore.remove(seq), flagOn: requirementsOn });
+    el.attachCards.hidden = !items.length;
+  }
+
+  /** Features carried into a new chat keep their scope: the chat starts in it and stops following the page. */
+  function carryAttachedScope() {
+    const { items, scope } = attachStore.get();
+    if (!requirementsOn() || !items.length || !scope.pinned) return false;
+    st.scopeFollowsPage = false;
+    setScope({ pinned: true, projectKey: scope.projectKey, workspaceId: scope.workspaceId, label: scope.label || null }, { persist: false, focus: false });
+    if (!scope.label) resolveScopeLabel();
+    return true;
+  }
+
+  /** Attaching a feature pins the chat's scope, so the page can no longer move it under the features (page-follow). */
+  function pinAttachedScope() {
+    if (!st.scope.pinned) return;
+    st.scopeFollowsPage = false;
+    attachStore.setScope({ pinned: true, projectKey: st.scope.projectKey, workspaceId: st.scope.workspaceId, label: st.scope.label || '' });
+    setScope({ ...st.scope, pinned: true }, { focus: false });
+  }
+
+  function mountAttach(row) {
+    el.attachBtn = make('button', 'btn btn-sm btn-quiet ask-pull-btn');
+    el.attachBtn.type = 'button';
+    el.attachBtn.setAttribute('data-ask-pull-btn', '');
+    row.appendChild(el.attachBtn);
+    let count = attachStore.get().items.length;
+    st.attachOffs.push(
+      attachStore.subscribe(() => {
+        paintAttached();
+        const n = attachStore.get().items.length;
+        const grew = n > count;
+        count = n;
+        if (grew) pinAttachedScope();
+        updateSendStop();
+      }),
+      onFlagChange('requirements', () => { paintAttached(); if (!requirementsOn() && el.hash) el.hash.close(); }),
+      mountChatAttach({
+        button: el.attachBtn, store: attachStore, getScope: () => st.scope, doc, flagOn: requirementsOn, fetchJson: attachFetch,
+        setScope: (next) => guardedScope(() => { applyPickedScope(next); if (!next.label) resolveScopeLabel(); }, next),
+      }),
+    );
+    paintAttached();
+  }
+
+  function mountHashSearch() {
+    const searchFn = ({ scopeType, scopeKey, q = '', exclude = [] }) => {
+      const params = new URLSearchParams({ scopeType, scopeKey, q });
+      if (exclude.length) params.set('exclude', exclude.join(','));
+      return attachFetch(`/api/requirements/search?${params}`);
+    };
+    const position = (ta) => {
+      const r = ta.getBoundingClientRect();
+      return { top: chipPickerTop({ top: r.top, bottom: r.bottom, panelH: 210, sheetH: win.innerHeight || 0 }), left: Math.max(0, r.left) };
+    };
+    el.hash = attachHashSearch({
+      textarea: el.input, getScope: () => (requirementsOn() ? attachScope() : null), store: attachStore, searchFn,
+      onProjectCycle: () => { void cycleAttachProject(); }, position, doc,
+    });
+    el.input.addEventListener('blur', () => { if (el.hash) el.hash.close(); });   // the popover never outlives the composer's focus
+  }
+
+  /** A two-choice dialog over the chat (Cancel / one action). Resolves true when the action was picked. */
+  function askTwoChoice({ title, text, action }) {
+    return new Promise((resolve) => {
+      const modal = createDocumentModal({ document: doc });
+      let answer = false;
+      const cancel = make('button', 'btn', 'Cancel');
+      cancel.type = 'button';
+      const go = make('button', 'btn btn-primary', action);
+      go.type = 'button';
+      cancel.addEventListener('click', () => modal.close(true));
+      go.addEventListener('click', () => { answer = true; modal.close(true); });
+      const card = make('div', 'req-dlg');
+      card.setAttribute('role', 'dialog');
+      card.setAttribute('aria-label', title);
+      card.append(
+        make('h3', null, title),
+        make('p', 'hint', text),
+        (() => { const b = make('div', 'req-dlg-btns'); b.append(cancel, go); return b; })(),
+      );
+      modal.open(card, { trigger: el.scopeBtn, first: cancel, onClose: () => resolve(answer) });
+    });
+  }
+  /** The two-choice question a person answers before attached features are dropped by a scope change. */
+  async function askRemoveFeatures() {
+    const remove = await askTwoChoice({
+      title: 'Change the scope?', action: 'Remove features and change',
+      text: 'The attached features belong to the current scope. Changing it removes them from this message.',
+    });
+    return remove ? 'remove' : 'cancel';
+  }
+  /** A person's scope change: asks first when features are attached; nothing is removed before the answer. */
+  function guardedScope(apply, next = null) {
+    return guardScopeChange({ store: scopeGuardStore, apply, revert: () => {}, ask: askRemoveFeatures, skip: () => scopeKeepsFeatures(next) });
+  }
+  /** The features a scope change would move: the composer's and those of the open chat's queued messages. */
+  const scopeGuardStore = {
+    get: () => {
+      const queued = ((queueOf(st.threadId) || { items: [] }).items).flatMap((it) => it.features || []);
+      return { items: [...attachStore.get().items, ...queued] };
+    },
+    clear: () => {
+      attachStore.clear();
+      for (const it of (queueOf(st.threadId) || { items: [] }).items) { it.requirements = []; it.features = []; }
+      renderQueue();
+    },
+  };
+  /** A scope change that cannot move the features out of their scope needs no question: the features' own scope
+   *  again, or the first scope of a chat that has none (a new chat that carried features over). */
+  function scopeKeepsFeatures(next) {
+    if (!next || !next.pinned) return false;
+    if (!st.scope.pinned) return true;
+    const own = attachStore.get().scope;
+    return !!own.pinned && (next.projectKey || null) === (own.projectKey || null) && (next.workspaceId || null) === (own.workspaceId || null);
+  }
+  /** Tab in the `#` popover: the next project, through the same guard. */
+  async function cycleAttachProject() {
+    const opts = await loadCardOptions();
+    const projects = (opts.projects || []).filter((p) => p && p.key);
+    if (!projects.length) return;
+    const at = projects.findIndex((p) => st.scope.pinned && p.key === st.scope.projectKey);
+    const next = projects[(at + 1) % projects.length];
+    if (st.destroyed || (st.scope.pinned && next.key === st.scope.projectKey)) return;
+    await guardedScope(() => applyPickedScope({ pinned: true, projectKey: next.key, label: next.name }), { pinned: true, projectKey: next.key });
+    if (el.hash) el.hash.onInput();
+  }
+
+  /** The seqs of the `feature` blocks of the user message the card's assistant message answers (nearest user row above). */
+  function requirementsForCard(cardId) {
+    if (!st.model || !requirementsOn() || cardId == null) return [];
+    const rows = st.model.messages();
+    const at = rows.findIndex((r) => (r.blocks || []).some((b) => b && b.kind === 'card' && b.id === cardId));
+    for (let i = at - 1; i >= 0; i -= 1) {
+      if (!rows[i] || rows[i].role !== 'user') continue;
+      const seqs = [...new Set((rows[i].blocks || []).filter((b) => b && b.kind === 'feature' && Number.isInteger(b.seq)).map((b) => b.seq))];
+      return seqs.map((seq) => ({ seq }));
+    }
+    return [];
+  }
+
+  /** A sent feature block's read-only panel renders its snapshot with the chat's markdown renderer. */
+  async function renderFeatureMarkdown(text, mount) {
+    await renderer.ensure();
+    const out = renderer.render(text);
+    if (out.kind !== 'md') return text;
+    mount.classList.add('ask-md');
+    return out.frag;
+  }
+
   // ---- composer keys: Enter sends, Tab takes the suggestion, ArrowUp/Down walk this chat's history --------------
   function onComposerKeydown(e) {
     if (e.isComposing) return;
+    // The `#` popover claims Enter, Tab, Esc and the arrows while it is open: Enter there attaches, it never sends.
+    if (el.hash && el.hash.handleKey(e)) return;
     const plain = !e.shiftKey && !e.altKey && !e.ctrlKey && !e.metaKey;
     if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendMessage(); return; }
     // Ghost text: only Tab takes it (Enter on the empty input sends nothing); no suggestion → native focus move.
@@ -1397,11 +1629,11 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
 
   function onComposerInput() {
     fitInput();
+    if (el.hash) { if (requirementsOn()) el.hash.onInput(); else el.hash.close(); }
     // An edit ends a history walk: the edited text is the draft now.
     if (st.hist.idx >= 0) st.hist = { idx: -1, draft: '' };
     // Anything typed after a reply retires that reply's suggestion — also one still being written.
     if (el.input.value) st.suggestDismissed = newestAssistantId();
-    addonsInput();
     updateSendStop();
   }
 
@@ -1439,7 +1671,6 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
   function showHistory(text) {
     el.input.value = text;
     fitInput();                                      // a programmatic write fires no input event
-    addonsInput();
     try { el.input.selectionStart = el.input.selectionEnd = text.length; } catch { /* jsdom */ }
     updateSendStop();
   }
@@ -1531,6 +1762,12 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     el.chips.hidden = true;
     box.appendChild(el.chips);
 
+    // Requirements attach: the attached features' cards, beside the file chips.
+    el.attachCards = make('div', 'ask-chips ask-attach-cards');
+    el.attachCards.setAttribute('data-ask-attach-cards', '');
+    el.attachCards.hidden = true;
+    box.appendChild(el.attachCards);
+
     el.input = doc.createElement('textarea');
     el.input.className = 'ask-input';
     el.input.rows = 1;
@@ -1540,6 +1777,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     el.input.addEventListener('input', onComposerInput);
     el.input.addEventListener('paste', onComposerPaste);
     box.appendChild(el.input);
+    mountHashSearch();
 
     // The suggestion's words for screen readers (aria-describedby while it shows; the placeholder alone is not enough).
     // Outside the box: the browser extension's composer mirrors the box's children one for one.
@@ -1584,6 +1822,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     scopeBtn.addEventListener('click', () => openScopePopover(scopeBtn));
     el.scopeBtn = scopeBtn;
     row.appendChild(scopeBtn);
+    mountAttach(row);        // the Requirements button sits right after the scope pill
     // Never a two-letter stub (run 1): when the label would be cut below 56px, show the icon alone; the label stays in
     // the tooltip and the accessible name. The row's width changes with the level, the engine and the window.
     const fitScope = () => {
@@ -1777,7 +2016,6 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     const cur = el.input.value;
     el.input.value = cur ? `${cur.replace(/\s*$/, '')}\n${add}` : add;
     fitInput();                                    // a programmatic write fires no input event
-    addonsInput();
     focusComposer();
     try { el.input.selectionStart = el.input.selectionEnd = el.input.value.length; } catch { /* jsdom */ }
     return true;
@@ -2348,7 +2586,10 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     el.modelBtnEngine.textContent = engName;
     el.modelBtnEngine.hidden = !engName;
     const btn = el.modelBtnLabel.parentNode;
-    if (btn) { btn.dataset.engine = eng; btn.title = `${engineLabel(eng)} · ${entry ? entry.label : st.picker.model}`; }
+    // The tooltip names the connection too: the same model can come from the Copilot CLI or from GitHub Copilot
+    // through the bridge (and from a GHE.com tenant).
+    const via = entry && connectionOf(entry).kind === 'provider' ? ` · ${connectionLabel(entry)}` : '';
+    if (btn) { btn.dataset.engine = eng; btn.title = `${pickerEngineLabel(eng)} · ${entry ? entry.label : st.picker.model}${via}`; }
   }
 
   function coerceEffort(entry, effort) {
@@ -2624,7 +2865,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
           `${m.secretsMissing.join(', ')} is not set. Configure it in the ${m.plugin ? `“${m.plugin}” ` : ''}plugin's Model secrets, or this model will fail.`));
       }
       if (m.needsSignIn) {
-        item.appendChild(tag('needs sign-in', 'is-err', m.signInMessage || 'The provider behind this model is not usable yet. See the Providers page.'));
+        item.appendChild(tag('needs sign-in', 'is-err', m.signInMessage || 'The provider behind this model is not usable yet. See Models › Providers.'));
       }
       if (moves && (readEnginePicks(storage)[engine] || {}).model === m.id) item.appendChild(tag('last used', null, 'The model you last used on this engine.'));
       // Credential broker: whether the signed-in person has the key this model spends from.
@@ -2634,11 +2875,12 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
       return item;
     };
     // Inside an engine's section the models group by connection, like every model picker (modelGroups); a sub-heading
-    // only when the section holds more than one connection.
+    // when the section holds more than one connection, or when its one connection is a provider (GitHub Copilot through
+    // the bridge must never pass for the Copilot CLI's own models).
     const appendByConnection = (models, engine) => {
       const groups = modelGroups(models, { engine });
       for (const c of groups) {
-        if (groups.length > 1) panel.appendChild(make('div', 'ask-pop-subgroup', c.label));
+        if (groups.length > 1 || connectionOf(c.models[0]).kind === 'provider') panel.appendChild(make('div', 'ask-pop-subgroup', c.label));
         for (const m of c.models) panel.appendChild(modelItem(m, engine));
       }
     };
@@ -3041,6 +3283,12 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
 
   /** A pick in the scope pill is the person's: a new chat stops following the page (Ask worca beside the page, L3). */
   function pickScope(next) {
+    const same = !!next.pinned === st.scope.pinned && (next.projectKey || null) === st.scope.projectKey && (next.workspaceId || null) === st.scope.workspaceId;
+    if (same) { applyPickedScope(next); return; }
+    closePopover({ focusTrigger: false });
+    void guardedScope(() => applyPickedScope(next), next);
+  }
+  function applyPickedScope(next) {
     st.scopeFollowsPage = false;
     setScope(next);
   }
@@ -3055,6 +3303,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     };
     updateScopeButton();
     scheduleMcpRefresh();
+    void recheckAttached();          // the features are read against the new scope: foreign ones become wrong_scope
     if (focus) {
       closePopover({ focusTrigger: false });
       focusComposer();
@@ -3098,6 +3347,16 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     st.scope = { ...scopeFromContext(context), label: null };
     updateScopeButton();          // the raw key shows until the name resolves
     if (st.scope.pinned) resolveScopeLabel();
+    void recheckAttached();
+  }
+
+  /** A scope the server already stored (an ask-scope frame, a send's 202 after a link switched the chat): the pill
+   *  follows with no PATCH, so the next send keeps it. */
+  function applyServerScope(scope, rawLabel) {
+    const label = typeof rawLabel === 'string' && rawLabel ? rawLabel : null;
+    st.scopeHeld = null;                                    // S39: the server's switch wins over a held pick
+    setScope({ ...scopeFromContext(scope), label }, { persist: false, focus: false });
+    if (st.scope.pinned && !label) resolveScopeLabel();
   }
 
   function resolveScopeLabel() {
@@ -3479,7 +3738,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     st.scopeHeld = null;                // S39: a held pick belongs to the chat it was made in
     applyThreadScope(null);             // U5: a brand-new chat starts in No project
     st.scopeFollowsPage = true;         // Ask worca beside the page: in the side column it starts in the page's scope (L3)
-    if (st.host === 'dock') followPageScope();
+    if (!carryAttachedScope() && st.host === 'dock') followPageScope();
     setContexts([]);
     restoreBrowserPick();               // …and on the browser-level pick, not the last chat's
     st.mcp.off = { sets: [], members: [] };   // …and with every MCP server on
@@ -5114,6 +5373,88 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     return { el: rootEl };
   }
 
+  // ---- MCP server card (propose_mcp_change): add, edit or remove a Manual server ------------------------------
+  // Every command, argument, URL, env and header name the card would save is shown word for word (docs/mcp-servers.md
+  // "Chat"). Applying saves a definition only; the user turns it on in a set on Connectors › MCP servers.
+  const MCP_KIND_LABEL = { add: 'Add server', edit: 'Edit definition', remove: 'Remove server', import: 'Import servers' };
+  const MCP_APPLY_LABEL = { add: 'Add', edit: 'Save', remove: 'Remove', import: 'Import' };
+  /** proposed → applied | failed, or declined. */
+  function buildMcpCard(block) {
+    const card = block.card || {};
+    const summary = card.summary || 'MCP server change';
+    if (block.state === 'declined') return { el: make('div', 'ask-card-stub', `Declined: ${summary}`) };
+    const rootEl = make('div', `ask-card ask-mcard ask-acard ask-mcpcard is-${block.state}`);
+    rootEl.setAttribute('data-ask-mcpcard', block.state);
+    const head = make('div', 'ask-mcard-head');
+    head.appendChild(make('span', 'ask-mcard-title', block.state === 'applied' ? 'Applied MCP server change' : block.state === 'failed' ? 'MCP server change failed' : 'Proposed MCP server change'));
+    head.appendChild(make('span', 'ask-mcard-kind', MCP_KIND_LABEL[card.kind] || card.kind || ''));
+    rootEl.appendChild(head);
+    const body = make('div', 'ask-mcard-body');
+    const sum = make('div', 'ask-mcard-summary');
+    if (block.state === 'applied') sum.appendChild(svgIcon(WF_ICO.check, 15, 2.4));
+    sum.appendChild(make('span', null, summary));
+    body.appendChild(sum);
+    if (card.note) body.appendChild(make('div', 'ask-mcard-note', card.note));
+    const ul = make('ul', 'ask-mcard-changes');
+    for (const c of Array.isArray(card.changes) ? card.changes : []) {
+      const li = make('li', 'ask-acard-change');
+      li.setAttribute('data-op', c.op || '');
+      li.appendChild(make('span', 'ask-mcard-change-label', c.label || ''));
+      const val = make('span', 'ask-mcard-change-val');
+      const both = c.before != null && c.after != null;
+      if (c.before != null && (block.state === 'proposed' || !both)) {
+        if (both) val.appendChild(make('span', 'ask-acard-tag', 'Now'));
+        val.appendChild(make('span', 'ask-mcard-before ask-acard-cmd', String(c.before)));
+      }
+      if (c.after != null) {
+        if (both && block.state === 'proposed') val.appendChild(make('span', 'ask-acard-tag', 'New'));
+        val.appendChild(make('span', 'ask-mcard-after ask-acard-cmd', String(c.after)));
+      }
+      li.appendChild(val);
+      ul.appendChild(li);
+    }
+    body.appendChild(ul);
+    if (block.state === 'proposed') {
+      for (const [items, cls] of [[card.warnings, 'ask-mcard-effects ask-wscard-warn'], [card.effects, 'ask-mcard-effects ask-wscard-effects']]) {
+        if (!Array.isArray(items) || !items.length) continue;
+        const list = make('ul', cls);
+        for (const w of items) list.appendChild(make('li', null, w));
+        body.appendChild(list);
+      }
+      // An import card: discovered servers worca already has (same name and command or URL); the card adds none of
+      // them. ask-mcard-present is a test hook only: the list takes the effects styling it rides on.
+      if (Array.isArray(card.alreadyPresent) && card.alreadyPresent.length) {
+        const have = make('ul', 'ask-mcard-effects ask-wscard-effects ask-mcard-present');
+        for (const p of card.alreadyPresent) have.appendChild(make('li', null, `Already in worca: ${p.name || ''} (${p.from || ''})`));
+        body.appendChild(have);
+      }
+    }
+    const result = card.result || null;
+    if (block.state === 'failed') {
+      const failed = make('div', 'ask-mcard-failed', `Could not apply: ${block.error || (result && result.error) || 'unknown error'}`);
+      failed.setAttribute('role', 'alert');
+      body.appendChild(failed);
+    } else if (block.state === 'applied' && result && result.detail) body.appendChild(make('div', 'ask-mcard-detail', result.detail));
+    if (block.state !== 'proposed') {
+      const open = make('a', 'ask-card-sched-link', 'Manage in Connectors › MCP servers');
+      open.href = '#connectors/servers';
+      body.appendChild(open);
+    }
+    rootEl.appendChild(body);
+    rootEl.appendChild(make('div', 'ask-card-err'));
+    if (block.state === 'proposed') {
+      const actions = make('div', 'ask-mcard-actions');
+      const btn = (cls, text, attr) => { const b = make('button', cls, text); b.type = 'button'; b.setAttribute(attr, ''); return b; };
+      const decline = btn('btn btn-sm btn-quiet ask-card-not-now', 'Decline', 'data-ask-mcp-decline');
+      decline.addEventListener('click', () => postCard(block, rootEl, { state: 'declined' }, decline));
+      const apply = btn(`btn btn-sm ${card.kind === 'remove' ? 'btn-danger' : 'btn-primary'}`, MCP_APPLY_LABEL[card.kind] || 'Apply', 'data-ask-mcp-apply');
+      apply.addEventListener('click', () => postCard(block, rootEl, { state: 'applied' }, apply));
+      actions.append(make('span', 'ask-card-actions-spacer'), decline, apply);
+      rootEl.appendChild(actions);
+    }
+    return { el: rootEl };
+  }
+
   /** The model · effort picker (mockup §C): the panel's popover chrome, anchored under the chip. Rows are menuitems (PD28). */
   function openChipPicker(chip, nodeId, card, wf, handle) {
     const node = card.nodes && card.nodes[nodeId];
@@ -5360,18 +5701,6 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     const count = make('span', 'ask-rp-count');
     briefFoot.append(hint, count);
     briefSec.appendChild(briefFoot);
-    // The prompt check chip (docs/prompt-check.md "The chip"): a brief is always a task. A tracker task has no brief.
-    const pcheck = card.source ? null : mountPromptCheckChip({
-      doc, host: briefFoot, before: count,
-      surface: { kind: 'run-card', id: block.id }, ids: { threadId: st.threadId, cardId: block.id },
-      forceTask: true, fetchImpl: (...a) => fetch(...a), timers: promptCheckTimers,
-      field: {   // Improve writes through the brief's own input path (count, height, re-check)
-        read: () => brief.value,
-        write: (text) => { brief.value = text; brief.dispatchEvent(new win.Event('input', { bubbles: true })); },
-        focus: () => brief.focus(),
-      },
-      project: () => st.scope.projectKey,
-    });
     if (card.source) {
       // The task IS a tracker task (propose_run source): the run reads it when it starts, so the
       // card shows the reference — never an editable copy that would silently go stale.
@@ -5411,7 +5740,6 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     };
     brief.addEventListener('input', () => {
       grow();
-      if (pcheck) pcheck.input(brief.value);
       const pos = typeof brief.selectionStart === 'number' ? brief.selectionStart : brief.value.length;
       if (brief.value[pos - 1] === '@') openAtPopover(brief, pos, local, renderPills);
       else if (st.popover && st.popover.trigger === brief) closePopover({ focusTrigger: false });   // typed past the @: the picker never filters, so it goes
@@ -5536,7 +5864,9 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
         if (shapeUi.requirements) {
           // Medium or large: Shape requirements is the one primary, Run as is steps back. Until a
           // lead is picked it stays in the tab order, aria-disabled, described by "You lead as".
-          shapeBtn = toElement(doc, railButton({ label: 'Shape requirements', kind: 'primary', attrs: { 'data-ask-card-shape': '' } }));
+          shapeBtn = make('button', 'btn btn-sm btn-primary', 'Shape requirements');
+          shapeBtn.type = 'button';
+          shapeBtn.setAttribute('data-ask-card-shape', '');
           if (!card.shape) startBtn.classList.replace('btn-primary', 'btn-quiet');
           const syncLead = () => {
             const blocked = shapeUi.blocked();
@@ -5870,11 +6200,10 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
       rootEl.__rp.refreshTagRules = refreshTagRules;
       refreshTagRules();
     }
-    if (pcheck) pcheck.input(brief.value, { silent: true });   // graded once on mount; its first result is not announced
-    return { el: rootEl, dispose: pcheck ? () => pcheck.dispose() : null };
+    return rootEl;
   }
 
-  function collectCardBody(rootEl, local, card) {
+  function collectCardBody(rootEl, local, card, cardId = null) {
     const body = {
       prompt: rootEl.querySelector('.ask-card-brief').value,
       workflowId: rootEl.querySelector('.ask-card-workflow').value,
@@ -5900,6 +6229,11 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
         type: 'plugin', plugin: card.source.plugin, sourceId: card.source.sourceId, taskId: card.source.taskId,
         ...(card.source.profile ? { profile: card.source.profile } : {}), ...(card.source.inputs ? { inputs: card.source.inputs } : {}),
       };
+    }
+    // The features the message this card answers carried: shaping and a plain start both compose them (a tracker task cannot).
+    if (!card.source) {
+      const reqs = requirementsForCard(cardId);
+      if (reqs.length) body.requirements = reqs;
     }
     if (local.target === 'none') { body.noProject = true; return body; }
     const feature = rootEl.querySelector('.ask-card-feature').value.trim();
@@ -5969,7 +6303,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
         if (ov.error) { err.textContent = ov.error; return; }
         if (Object.keys(ov.nodes).length) overlay = { nodes: ov.nodes };
       }
-      const body = { ...collectCardBody(rootEl, local, block.card || {}), askThreadId: st.threadId, askCardId: block.id, ...(schedule || {}) };
+      const body = { ...collectCardBody(rootEl, local, block.card || {}, block.id), askThreadId: st.threadId, askCardId: block.id, ...(schedule || {}) };
       if (local.shapeUi && (shaped || (block.card || {}).shape)) Object.assign(body, local.shapeUi.body());
       if (overlay) body.overlay = overlay;
       // Run chains: "the branch of the run before it" is a flag, and the wire refuses it next to a branch name.
@@ -5991,6 +6325,19 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
           if (!choice) { err.textContent = 'Start cancelled.'; return; }
           try {
             res = await fetch('/api/run', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ...body, syncPolicy: choice }) });
+          } catch { err.textContent = 'network error'; return; }
+          b = null;
+          if (!res.ok) { try { b = await res.json(); } catch { /* keep */ } }
+        }
+        // An attached feature already has a live run: ask once, resend with the person's answer (the server never guesses).
+        if (!res.ok && res.status === 409 && b && b.code === 'RUN_IN_PROGRESS') {
+          const again = await askTwoChoice({
+            title: 'A feature is already running', action: 'Run again',
+            text: b.error || 'An attached feature already has a run in progress. Start another run anyway?',
+          });
+          if (!again) { err.textContent = 'Start cancelled.'; return; }
+          try {
+            res = await fetch('/api/run', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ...body, confirmAttachedRunning: true }) });
           } catch { err.textContent = 'network error'; return; }
           b = null;
           if (!res.ok) { try { b = await res.json(); } catch { /* keep */ } }
@@ -6251,7 +6598,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     if (card.type === PROGRESS_CARD_TYPE) return true;
     if (card.type && chatCardBuilder(card.type)) return false;      // an extension type is never a run card, whatever its state
     if (ASK_COMPOSER_CARD_TYPES.includes(card.type)) return false;   // Ask's draft / graph cards are never run cards
-    if (card.type === COMMAND_CARD_TYPE || card.type === 'workflow' || card.type === 'metrics' || card.type === 'policy' || card.type === 'schedule' || card.type === 'model' || card.type === 'clone' || card.type === 'web' || card.type === 'workspace' || card.type === 'actions' || card.type === 'away' || card.type === 'project' || card.type === 'proxy' || card.type === SCRIPT_APPROVAL_TYPE) return false;
+    if (card.type === COMMAND_CARD_TYPE || card.type === 'workflow' || card.type === 'metrics' || card.type === 'policy' || card.type === 'schedule' || card.type === 'model' || card.type === 'clone' || card.type === 'web' || card.type === 'workspace' || card.type === 'actions' || card.type === 'mcp' || card.type === 'away' || card.type === 'project' || card.type === 'proxy' || card.type === SCRIPT_APPROVAL_TYPE) return false;
     return block.state === 'started' || (block.state === 'failed' && !!block.runId);
   }
   // #958: one build per card per reconcile. renderTranscript asks for a card twice (is it away? then the tail paint);
@@ -6298,6 +6645,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     const isWorkspace = !!(block.card && block.card.type === 'workspace');
     const isWeb = !!(block.card && block.card.type === 'web');
     const isActions = !!(block.card && block.card.type === 'actions');
+    const isMcp = !!(block.card && block.card.type === 'mcp');
     const isAway = !!(block.card && block.card.type === 'away');
     const isProxy = !!(block.card && block.card.type === 'proxy');
     const isCommand = !!(block.card && block.card.type === COMMAND_CARD_TYPE);
@@ -6309,7 +6657,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     // Ask's draft cards also change with the cards AROUND them (a newer draft of the key replaces one): rebuilt when
     // what they show changes, not only their state.
     const view = isComposer ? composerCards().view(block) : '';
-    if (cached && !sumStale && cached.state === block.state && (cached.view || '') === view && (isWorkflow || isMetrics || isSchedule || isModel || isClone || isProject || isWeb || isWorkspace || isActions || isAway || isProxy || isCommand || isComposer || isScriptApproval || isProgress || block.state === 'proposed')) return cached.el;
+    if (cached && !sumStale && cached.state === block.state && (cached.view || '') === view && (isWorkflow || isMetrics || isSchedule || isModel || isClone || isProject || isWeb || isWorkspace || isActions || isMcp || isAway || isProxy || isCommand || isComposer || isScriptApproval || isProgress || block.state === 'proposed')) return cached.el;
     if (cached) disposeCardEntry(cached);
     const built = isWorkflow ? buildWorkflowCard(block, cached)
       : isMetrics ? buildMetricsCard(block)
@@ -6320,6 +6668,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
       : isWeb ? buildWebCard(block)
       : isWorkspace ? buildWorkspaceCard(block)
       : isActions ? buildActionsCard(block)
+      : isMcp ? buildMcpCard(block)
       : isAway ? buildAwayCard(block)
       : isProxy ? buildProxyCard(block)
       : isCommand ? buildCommandCard(block)
@@ -6327,7 +6676,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
       : isScriptApproval ? buildScriptApprovalCard(block)
       : isProgress ? buildProgressCard(block)
         : custom ? { el: make('div', 'ask-card-stub', (block.card && (block.card.summary || block.card.title)) || 'Card unavailable') }
-        : block.state === 'proposed' ? buildCardForm(block) : { el: buildCardTerminal(block) };
+        : { el: block.state === 'proposed' ? buildCardForm(block) : buildCardTerminal(block) };
     st.cardEls.set(block.id, { el: built.el, state: block.state, view, rev, custom: custom || null, handle: built.handle || null, dispose: built.dispose || null, animate: !!built.animate, cancelAnim: null, lastW: -1, sum: summariesOn() });
     return built.el;
   }
@@ -6460,7 +6809,8 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     const card = block.card || {};
     if (card.type === PROGRESS_CARD_TYPE) {
       return { cardId: block.id, pipelineId: card.pipelineId || null, runId: card.runId || null, projectKey: card.projectKey || null,
-        workspaceId: card.workspaceId || null, title: card.title || '', label: card.label || '' };
+        workspaceId: card.workspaceId || null, title: card.title || '', label: card.label || '',
+        ...(card.feature && typeof card.feature === 'object' ? { feature: card.feature } : {}) };
     }
     const none = card.target === 'none';   // P3: a No project proposal — the reserved key and its name until the first frame
     return { cardId: block.id, pipelineId: null, runId: block.runId || null, projectKey: none ? NO_PROJECT_KEY : (card.projectKey || null), workspaceId: card.workspaceId || null,
@@ -6972,6 +7322,13 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
           for (const b of atts) pills.appendChild(buildAttachmentPill(b));
           wrap.appendChild(pills);
         }
+        // Requirements attach: each attached feature as a card; click opens its frozen snapshot in place.
+        const feats = (row.blocks || []).filter((b) => b && b.kind === 'feature' && Number.isInteger(b.seq));
+        if (feats.length) {
+          const cards = make('div', 'ask-user-features');
+          for (const b of feats) cards.appendChild(renderSentFeatureCard(doc, b, { fetchJson: resolveFetch, flagOn: requirementsOn, renderMarkdown: renderFeatureMarkdown }));
+          wrap.appendChild(cards);
+        }
         // Ask worca beside the page: where the message was sent ("on Run · Diff"), from the server's where block.
         const where = (row.blocks || []).find((b) => b && b.kind === 'where' && typeof b.label === 'string' && b.label);
         if (where) {
@@ -7428,10 +7785,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     if (frame.type === 'ask-scope') {                           // Projects, any way P4 (CONTRACT §4): a server-side switch
       // The open chat's pill follows it with no PATCH (the server stored it), so the next send keeps the new scope.
       if (frame.threadId === st.threadId && frame.scope && typeof frame.scope === 'object') {
-        const label = typeof frame.label === 'string' && frame.label ? frame.label : null;
-        st.scopeHeld = null;                                    // S39: the server's switch wins over a held pick
-        setScope({ ...scopeFromContext(frame.scope), label }, { persist: false, focus: false });
-        if (st.scope.pinned && !label) resolveScopeLabel();
+        applyServerScope(frame.scope, frame.label);
       }
       return;
     }
@@ -7663,20 +8017,15 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
       runLinks: [...st.model.runLinks()].map(([runId, l]) => ({ runId, ...l })),
     };
   }
-  let madeThread = null;
   const addonCtx = {
     doc, fetch,
     threadId: () => st.threadId,
-    madeThread: () => madeThread,         // the thread the composer's last first send created (null until one does)
     thread: () => threadSnapshot(),
+    scope: () => ({ pinned: st.scope.pinned, projectKey: st.scope.projectKey, workspaceId: st.scope.workspaceId }),   // the live scope pill
     runStore,
     setPlaceholder: (text) => { st.basePlaceholder = typeof text === 'string' && text ? text : INPUT_PLACEHOLDER; updateSuggestion(); },
     focus: () => focusComposer(),
     announce: (text) => announce(text),
-    // Prompt check Improve (docs/prompt-check.md): the composer's text, a write through its input path, its project.
-    text: () => el.input.value,
-    setText: (text) => { el.input.value = text; fitInput(); addonsInput(); updateSendStop(); },
-    projectKey: () => st.scope.projectKey,
   };
   function mountAddons() {
     for (const addon of composerAddons()) {
@@ -7718,27 +8067,6 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
       } catch (err) { console.warn(`[worca] composer add-on "${a.id}" transformSend failed`, err); }
     }
     return out;
-  }
-  /** The optional input hook (CONTRACT §2): the composer's text after every edit, typed or programmatic. `answering`
-   *  is true while an add-on routes the send elsewhere (holdsSend, e.g. the direction chip). */
-  function addonsInput() {
-    if (!st.addons.length) return;
-    const text = el.input.value;
-    let answering = false;
-    for (const a of st.addons) {
-      try { if (typeof a.handle.holdsSend === 'function' && a.handle.holdsSend()) answering = true; } catch { /* a dead hook counts as not holding */ }
-    }
-    for (const a of st.addons) {
-      if (typeof a.handle.input !== 'function') continue;
-      try { a.handle.input(text, { answering }); } catch (err) { console.warn(`[worca] composer add-on "${a.id}" input failed`, err); }
-    }
-  }
-  /** The optional sent hook: the raw draft (never the transformSend result), once it is taken. */
-  function addonsSent(text) {
-    for (const a of st.addons) {
-      if (typeof a.handle.sent !== 'function') continue;
-      try { a.handle.sent(text); } catch (err) { console.warn(`[worca] composer add-on "${a.id}" sent failed`, err); }
-    }
   }
   function destroyAddons() {
     for (const a of st.addons.splice(0)) {
@@ -7794,6 +8122,8 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     if (st.destroyed) return;
     st.destroyed = true;
     closePopover({ focusTrigger: false });
+    if (el.hash) el.hash.close();
+    for (const off of st.attachOffs.splice(0)) { try { off(); } catch { /* teardown never throws */ } }
     if (st.threadsRefresh) { clearTimeout(st.threadsRefresh); st.threadsRefresh = null; }
     if (st.elapsedTimer) { clearInterval(st.elapsedTimer); st.elapsedTimer = null; }
     orbs.destroy();

@@ -118,6 +118,10 @@ test(`[${engine.id}] resuming a run paused with a pre-fix diff base corrects it 
   assert.ok(start);
   const saved = readPipelineForResume(orch1.state.id);
   saved.resumePoint.checkpointRef = wrong;            // what a run started before the fix carries
+  // ...with a record from then: no startHead / baseRefs (a record that has them is _refreshMergeBases' to correct).
+  const rec = JSON.parse(saved.row.branch);
+  delete rec.startHead; delete rec.baseRefs;
+  saved.row.branch = JSON.stringify(rec);
   const orch2 = engine.create({ projectDir: repo, auto: true, claude: { mock: true }, resume: saved });
   const r2 = await orch2.resume();
   assert.equal(r2.status, 'done', JSON.stringify(r2));

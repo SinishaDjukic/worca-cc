@@ -68,3 +68,36 @@ test('probeNpmGlobal: under npm root -g and writable; pnpm/volta/npx path is not
   const none = await probeNpmGlobal({ packageRoot: pkg, exec: async () => { throw Object.assign(new Error('x'), { code: 'ENOENT' }); }, platform: 'linux' });
   assert.equal(none.root, null);
 });
+
+test('probeNpmGlobal never passes an args array with shell true (Node DEP0190): POSIX runs npm without a shell, win32 runs npm-cli.js with node or one command line', async () => {
+  const NODE = 'C:\\Program Files\\nodejs\\node.exe';
+  const CLI = 'C:\\Program Files\\nodejs\\node_modules\\npm\\bin\\npm-cli.js';
+  const ROOT = 'C:\\Users\\a\\AppData\\Roaming\\npm\\node_modules'; const PREFIX = 'C:\\Users\\a\\AppData\\Roaming\\npm';
+  const run = async (platform, hasCli) => {
+    const calls = [];
+    const exec = async (file, args, opts) => {
+      calls.push([file, args, opts]);
+      return { stdout: `${[file, ...(args || [])].join(' ').includes('root') ? ROOT : PREFIX}\r\n` };
+    };
+    const fsx = { existsSync: () => hasCli, realpathSync: (p) => p, accessSync: () => {}, constants: { W_OK: 2 } };
+    const res = await probeNpmGlobal({ packageRoot: `${ROOT}\\@worca\\app`, exec, platform, fsx, env: {}, execPath: NODE });
+    assert.equal(calls.length, 2, platform);
+    for (const [, args, opts] of calls) {
+      assert.ok(!(Array.isArray(args) && opts.shell), `${platform}: an args array with shell true`);
+      assert.deepEqual([opts.windowsHide, opts.timeout], [true, 15_000], 'the probe keeps its options');
+    }
+    return { calls, res };
+  };
+  const posix = await run('linux', true);
+  assert.deepEqual(posix.calls.map(([f, a, o]) => [f, a, o.shell]), [['npm', ['root', '-g'], false], ['npm', ['prefix', '-g'], false]]);
+  const cli = await run('win32', true);
+  assert.deepEqual(cli.calls.map(([f, a, o]) => [f, a, o.shell]), [[NODE, [CLI, 'root', '-g'], false], [NODE, [CLI, 'prefix', '-g'], false]]);
+  assert.deepEqual(cli.res, { root: ROOT, prefix: PREFIX, underRoot: true, writable: true, unwritable: [] });
+  const shell = await run('win32', false);
+  assert.deepEqual(shell.calls.map(([f, a, o]) => [f, a, o.shell]), [['npm root -g', undefined, true], ['npm prefix -g', undefined, true]]);
+  assert.equal(shell.res.underRoot, true);
+  const seen = [];
+  const ENV_CLI = 'D:\\tools\\npm\\bin\\npm-cli.js';
+  await probeNpmGlobal({ packageRoot: ROOT, exec: async (file, args) => { seen.push(args[0]); return { stdout: '' }; }, platform: 'win32', fsx: { existsSync: () => true }, env: { npm_execpath: ENV_CLI }, execPath: NODE });
+  assert.deepEqual(seen, [ENV_CLI, ENV_CLI], 'the probe hands its env on: npm_execpath wins when it is npm-cli.js');
+});

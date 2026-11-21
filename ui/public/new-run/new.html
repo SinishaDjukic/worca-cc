@@ -150,7 +150,7 @@
 
                   <!-- The engine's hints span the row: a 40% cell would wrap them into a tall column. -->
                   <div class="wf-engine-hints">
-                    <small class="hint" id="engine-hint" hidden>Codex runs this pipeline, including titles and summaries. Its models: Models › Codex</small>
+                    <small class="hint" id="engine-hint" hidden>Codex runs this pipeline, including titles and summaries. Its models: Models › Jobs</small>
                     <small class="hint" id="engine-default-hint" hidden></small>
                     <small class="hint warn" id="engine-mcpjson-hint" hidden></small>
                   </div>
@@ -179,6 +179,13 @@
                   <!-- hidden radios kept as the source of truth read at submit -->
                   <input type="radio" name="source" value="prompt" checked hidden />
                   <input type="radio" name="source" value="markdown" hidden />
+                </div>
+
+                <!-- Attach Requirements features: right after the Task source switch, but outside the advanced-only field so basic level sees it. -->
+                <!-- No data-flag on the wrapper or the strip: with Requirements off, attached cards must stay visible to say "Requirements unavailable". -->
+                <div class="field field-compact" id="pull-field" hidden>
+                  <button type="button" class="btn fp-pull-btn" id="pull-from-requirements" data-flag="requirements" hidden>Pull from Requirements</button>
+                  <div class="ask-chips" id="attach-cards" hidden></div>
                 </div>
 
                 <div class="field">

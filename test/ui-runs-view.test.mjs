@@ -273,7 +273,8 @@ test('a Needs-you question row for the run already open lands the pane on its qu
   window.Element.prototype.scrollIntoView = function () { scrolled += 1; };
   click(window, doc.querySelector('#runs-list .runs-sec[data-section="needs"] a.runs-row[data-run-id="q1"]')); await settle(window);
   assert.equal(window.location.hash, '#running/q1');
-  assert.equal(screen.dataset.mode, 'glance');
+  assert.equal(screen.dataset.mode, 'details', 'one level: the run page is Details');
+  assert.ok(screen.querySelector('.rd-details .rd-questions'), 'the question sits in Details, above the tabs body');
   assert.ok(scrolled > 0, 'scrolled to the question without waiting for a panel rebuild');
 });
 

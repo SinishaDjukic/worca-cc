@@ -28,7 +28,7 @@ import { loadAgentRegistry } from './agent-registry.mjs';
 import { AUTO_WORKFLOW_ID, AUTO_WORKFLOW_NAME, SHAPE_WORKFLOW_ID, SHAPE_UX_WORKFLOW_ID } from './graph/builtin-workflows.mjs';
 import { classifyLoops } from '../shared/graph/loops.mjs';
 import { buildGraphManifest, manifestTemplate, manifestPortsFn } from '../shared/graph/manifest.mjs';
-import { DEFAULT_MAX_CYCLES, FLOW_KINDS, KEYED_KINDS } from '../shared/graph/constants.mjs';
+import { DEFAULT_MAX_CYCLES, KEYED_KINDS } from '../shared/graph/constants.mjs';
 import { pickDropWarnings } from '../shared/graph/role-slots.mjs';
 import { factoryFallbackLines } from './factory-models.mjs';
 import { scriptNodeCtx, pythonMissingSentence } from '../shared/graph/script-meta.mjs';
@@ -37,6 +37,7 @@ import { mediaToolProblems } from './graph/media-preflight.mjs';
 import { mockEnabled, runClaude } from './claude-runner.mjs';
 import { createSessionHosts } from './session-host.mjs';
 import { registryPortsFn } from './graph/registry-ports.mjs';
+import { applyAgreement, pendingAgreement, validateAgreement } from './requirements/attached-gate.mjs';
 import { checkPlan } from './shape/check.mjs';
 import { clarifyCounts, shapeScoreOf } from './shape/stats.mjs';
 import { PLAN_ASK_KIND, validatePlanAnswer, validateOutlineAnswer, renderPlanFeedback, SHAPING_FEEDBACK_PREVIEW } from './shape/run.mjs';
@@ -58,7 +59,7 @@ import { normalizeDecisions, conflictDecisions, validateDecisionPicks, decisionC
 import { createScheduler, sliceExecutionId, QUIESCENCE_WARNING } from './graph/scheduler.mjs';
 import { sigkillGraceMs } from './engines/spawn.mjs';
 import { runExecution, allocateOutputs, allocateVerdict, readDecomposition, decompositionProblems, CHECKLIST_REVIEWER_KEY, SLICE_PLANNER_KEY, SLICE_SCOPE_AGENT_KEYS, _testing as executorTesting } from './graph/executor.mjs';
-import { serialQueue, measureCodeCursor, collectStepEvidence } from './graph/human-evidence.mjs';
+import { serialQueue, measureCodeCursor, collectStepEvidence, withoutMembers } from './graph/human-evidence.mjs';
 import { estimateStepHours, resolveConstants, sumStepHours } from '../shared/human-estimate.mjs';
 import { diffNumstat } from './git-info.mjs';
 import { humanEstimateOverrides } from './settings.mjs';
@@ -167,6 +168,7 @@ export class GraphOrchestrator extends RunHarness {
       openIssues: [],
       result: null,              // {type, path?, value?} | null
       warnings: [],
+      scopeNotices: [],          // E9: [{nodeId, executionId, count, expectedCount, cross, notable:[{path, tool, cross?}]}]
       wireDeliveries: {},        // {[wireId]: n}
       tokens: {},                // {'<node>.<port>': {seq,type,path,firedAt}}
       gate: null,                // {wireId, fromNode, toNode, askId} | null
@@ -287,7 +289,7 @@ export class GraphOrchestrator extends RunHarness {
       ? (await listModels(this.projectDir)).filter((m) => runsOn(m, engine)) : [];
     const r = resolveDefragModel({ explicit, stored, models });
     if (!r.model) return { pair: null, warning: r.warning };
-    this._log('orchestrator', 'info', `Memory defragment model: ${r.model}${r.effort ? ` · ${r.effort}` : ''} (${r.source === 'explicit' ? 'named at start' : (engine === 'claude' ? 'Settings › Memory' : 'Models › Codex')})`);
+    this._log('orchestrator', 'info', `Memory defragment model: ${r.model}${r.effort ? ` · ${r.effort}` : ''} (${r.source === 'explicit' ? 'named at start' : (engine === 'claude' ? 'Settings › Memory' : 'Models › Jobs › Helper jobs')})`);
     return { pair: { model: r.model, effort: r.effort }, warning: r.warning };
   }
 
@@ -976,6 +978,8 @@ export class GraphOrchestrator extends RunHarness {
     // A Memory defragment run appends the scope's health (run-harness.mjs _defragBrief — '' on
     // every other run, so their document stays byte-identical).
     this._taskArtifact = { text: renderPromptArtifact(this.pipeline.promptText, this.extrasFiles) + await this._defragBrief() };
+    // Requirements features attached at start: nothing runs until the person agrees to every one that is not Ready.
+    await this._attachedAgreementGate();
     // Session groups (Task 45): one SessionHost per session the gate resolved; the kill switch builds nothing (C36).
     this._sessions = !this._sessionsDisabled && this._sessionSpecs?.length
       ? createSessionHosts({ specs: this._sessionSpecs, decisions: this._sessionDecisions, port: this._sessionPort(),
@@ -1002,7 +1006,6 @@ export class GraphOrchestrator extends RunHarness {
         // starts next while a gate is held.
         this.state.resumePoint = this._buildResumePoint(snap);
         void this._persist();
-        this._stepRecorded();   // Pause after this step lands only after the finished step is in the point
       },
       // P3 contract: onGate is the state.gate NOTIFIER ({wireId, fromNode, toNode,
       // askId} | null); onAsk is the ONE ask channel (gates today).
@@ -1123,6 +1126,41 @@ export class GraphOrchestrator extends RunHarness {
   }
 
   /**
+   * The agreement gate for attached Requirements features (any workflow): while any is neither Ready nor agreed, ask
+   * once, before the scheduler exists, and wait. The open ask rides the resume point, so a restart raises it again; an
+   * approve stores the agreements and re-stamps the point. A run without attached features returns at once.
+   */
+  async _attachedAgreementGate() {
+    if (!pendingAgreement(this.attachedRequirements).length) return;
+    const stamp = async () => {
+      this.state.resumePoint = this._buildResumePoint(this._graphSnapshot ?? null);
+      await this._persist();
+    };
+    await stamp();
+    const id = 'plan-attached-agreement';
+    const features = this.attachedRequirements.map((f) => ({
+      seq: f.seq, id: f.id, title: f.title, criteriaCount: f.criteriaCount ?? null,
+      markdown: typeof f.markdown === 'string' ? f.markdown : '', agreed: f.ready === true || f.agreed === true,
+    }));
+    const payload = await this._enqueueAsk(() => this._ask({
+      id, kind: PLAN_ASK_KIND,
+      plan: { attached: { features }, revisable: false },
+      validate: (raw) => {
+        const out = validateAgreement(this.attachedRequirements, raw);
+        if (!out.ok) return out;
+        return { ok: true, payload: raw.decision === 'stop' ? { decision: 'stop' } : { decision: 'approve', agreedSeqs: [...raw.agreedSeqs] } };
+      },
+    }));
+    this._checkAbort();
+    const d = payload?.decision;
+    if (d === 'stop') { this.stop(this.answeredBy(id)); this._checkAbort(); return; }
+    if (d === 'approve') this.attachedRequirements = applyAgreement(this.attachedRequirements, payload.agreedSeqs);
+    // Fail closed: the scheduler never starts while a feature is still unagreed, whatever the answer was.
+    if (pendingAgreement(this.attachedRequirements).length) throw new Error('attached requirements were not agreed');
+    await stamp();
+  }
+
+  /**
    * Serialize the run position into a JSON-safe resume-v2 point. The scheduler
    * snapshot IS the position; the manifest freezes the topology (resume never
    * re-reads the workflow row); everything else is the run identity a fresh
@@ -1186,6 +1224,7 @@ export class GraphOrchestrator extends RunHarness {
       memoryScope: this.memoryScope || null,   // agent memory §7.3: a paused defrag resumes with ONE scope (B10)
       ...(this.memoryOff ? { noMemory: true } : {}),   // #943: a run started without memory resumes without it
       ...(this.runShape ? { shape: this.runShape } : {}),
+      ...(this.attachedRequirements.length ? { attachedRequirements: this.attachedRequirements.map((f) => ({ ...f })) } : {}),
       ...(this.state.shaping ? { shaping: jsonClone(this.state.shaping) } : {}),
       checkpointRef: this.checkpointRef || null,
       checkpointRefs: { ...this.checkpointRefs },
@@ -1256,6 +1295,7 @@ export class GraphOrchestrator extends RunHarness {
     if (s.wireDeliveries && typeof s.wireDeliveries === 'object') this.state.wireDeliveries = { ...s.wireDeliveries };
     if (Array.isArray(s.warnings)) this.state.warnings = [...new Set([...(this._pickWarnings || []), ...s.warnings])];
     if (Array.isArray(s.openIssues)) this.state.openIssues = s.openIssues.map((o) => ({ ...o }));
+    if (Array.isArray(s.scopeNotices)) this.state.scopeNotices = s.scopeNotices.map((n) => ({ ...n, notable: Array.isArray(n.notable) ? n.notable.map((p) => ({ ...p })) : [] }));
     if (s.endReached === true) { this.state.endReached = true; if (s.result) this.state.result = { ...s.result }; }
     if (s.tokens) {
       const t = {};
@@ -2154,16 +2194,7 @@ export class GraphOrchestrator extends RunHarness {
         return this._settleUnstarted(nc, node, args, err);
       }
     }
-    // Pause after this step: a node does not start while one is pending and another runs; the last one out pauses.
-    // A flow card runs inline on the scheduler's loop, so it cannot wait there (the running steps' completions would
-    // never be recorded): it settles as paused (non-terminal, re-run on resume) and the last step out converts the pause.
-    if (FLOW_KINDS.includes(node.kind) && this.state.pauseAfterStep && this._inFlight > 0) return { paused: true };
-    await this._awaitStepBoundary();
-    try { return await this._executeNode(args, node, nc); } finally { this._leaveStep(); }
-  }
 
-  /** One ordinary (non-composite) execution of `node`: _execute's body, counted in flight by its caller. */
-  async _executeNode(args, node, nc) {
     let ctx;
     try {
       ctx = this._execCtx(node, nc, args);
@@ -2674,9 +2705,11 @@ export class GraphOrchestrator extends RunHarness {
 
   /** Intent-to-add every member worktree, then measure. A NEW file is invisible to
    *  `git diff <checkpoint>` until `git add -N` has seen it (the harness stages the same
-   *  way before a review); ignoreAbort so the stopped path still measures. Never throws. */
+   *  way before a review); ignoreAbort so the stopped path still measures. A diff base may move to git's own merge or
+   *  rebase first (_refreshMergeBases), so the cursor, results.json and the live diff share one base. Never throws. */
   async _humanMeasure() {
     try {
+      await this._refreshMergeBases();
       return await measureCodeCursor({
         workDirs: this.workDirs, checkpointRefs: this.checkpointRefs,
         excludeFor: (k) => this._excludePathspecs(k), numstat: diffNumstat,
@@ -2693,7 +2726,10 @@ export class GraphOrchestrator extends RunHarness {
     const kind = ctx?.node?.kind;
     if (this._humanCursorReady || (kind !== 'agent' && kind !== 'script')) return Promise.resolve();
     this._humanCursorReady = true;
-    return this._humanRun(async () => { this._humanCursor = await this._humanMeasure(); }).catch(() => {});
+    return this._humanRun(async () => {
+      this._humanCursor = await this._humanMeasure();
+      this._baseMovedSinceCursor = null;                 // the baseline is measured against the current base
+    }).catch(() => {});
   }
 
   /** Evidence → hours for ONE terminal execution, serialized with every other measurement of
@@ -2708,8 +2744,13 @@ export class GraphOrchestrator extends RunHarness {
       const cursorPrev = this._humanCursor;
       const measured = await this._humanMeasure();
       if (measured) this._humanCursor = measured;
+      // D9: a member whose diff base moved since the previous cursor (a base-branch merge or rebase) has a previous
+      // count against another base: credit that member from zero, every other member from its previous count.
+      const moved = this._baseMovedSinceCursor;
+      this._baseMovedSinceCursor = null;
       if (kind !== 'agent') return;
-      const evidence = await collectStepEvidence({ ctx, cursorPrev, cursorNow: measured || cursorPrev });
+      const evidence = await collectStepEvidence({ ctx, cursorPrev: withoutMembers(cursorPrev, moved),
+        cursorNow: measured || cursorPrev });
       const est = estimateStepHours(evidence, resolveConstants(humanEstimateOverrides()));
       ctx.human = { hours: est.hours, signals: { ...est.signals, method: est.method } };
     }).catch(() => { ctx.human = null; });

@@ -3,15 +3,13 @@
 import { budgetStatus } from '../../../src/core/cost-budget.mjs';
 import { isInContainer } from '../../../src/core/remote-access.mjs';
 import { budgetWindowSavings } from '../../../src/core/stats.mjs';
-import { usageLimits } from '../../../src/core/usage-limits.mjs';
+import { listUsageLimitPauses } from '../../../src/core/artifacts.mjs';
+import { usageLimitsAnswer, onUsageLimitsChanged } from '../../../src/core/usage-limits.mjs';
+import { createGeminiQuotaPoller } from '../../../src/core/gemini-quota.mjs';
 import process from 'node:process';
-import { bearerMatches, drainServer } from '../../server.mjs';
+import { bearerMatches, drainServer, emitChanged, serverMockMode, sockets } from '../../server.mjs';
 
 export function register(app) {
-
-// GET /api/usage-limits -> { harnesses: [{ engine, observedAt, windows: [{ kind: 'session'|'week', pct, resetsAt }] }] }:
-// the plan-limit readings the harnesses' CLIs reported (the profile's usage rings, D7). Only real readings; none is [].
-app.get('/api/usage-limits', (_req, res) => { res.json(usageLimits()); });
 
 // POST /api/drain: drain without exiting (a platform about to stop the container asks first, so
 // the stop itself is quick). From inside the container, or with WORCA_HEARTBEAT_TOKEN as Bearer.
@@ -32,5 +30,25 @@ app.get('/api/budget', (_req, res) => {
   let savings = { windowHumanHours: null, windowSavedUsd: null };
   try { savings = budgetWindowSavings(budget); } catch { /* keep the nulls */ }
   res.json({ ...budget, ...savings });
+});
+
+// The usage rings' push and Gemini poller. A changed plan-limit reading makes every open tab refetch
+// /api/usage-limits. Gemini's quota is asked for by one poller, only while a Worca page (not a browser-extension
+// socket) is open, and never in mock mode; ui/server.mjs (size-capped) only emits `page-sockets-changed` on the app
+// when a page socket opens or closes, and `draining` when the server starts to drain.
+onUsageLimitsChanged(() => emitChanged('usage-limits-changed'));
+if (!serverMockMode()) {
+  const gemini = createGeminiQuotaPoller({ log: (line) => console.log(`[worca-ui] ${line}`) });
+  let draining = false;
+  app.on('page-sockets-changed', () => gemini.setPagePresent(!draining && [...sockets].some((ws) => !ws.worcaExtension)));
+  app.on('draining', () => { draining = true; gemini.stop(); });
+}
+
+// The providers' plan-limit readings for the profile's usage rings, with each usage-limit pause's window at 100% until
+// its reset. A failed pause read degrades to the stored readings, never a 500.
+app.get('/api/usage-limits', (_req, res) => {
+  let pauses = [];
+  try { pauses = listUsageLimitPauses(); } catch { /* the stored readings alone */ }
+  res.json(usageLimitsAnswer({ now: Date.now(), pauses }));
 });
 }

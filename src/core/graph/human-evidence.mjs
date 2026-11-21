@@ -31,26 +31,47 @@ export function serialQueue() {
  * staging (`_stageWorkingTree`) — the same staging the reviewer's diff relies on. The exclude
  * pathspecs are the set `_buildResults` / `_commitWork` use, so the cursor and results.json agree.
  * @param {{workDirs: Map<string,string>, checkpointRefs: Record<string,string>, excludeFor:(key:string)=>string[], numstat:Function, stage?:Function}} o
- * @returns {Promise<{files:number, insertions:number, deletions:number}|null>}
+ * `byKey` holds each member's own count, so a member whose diff base moved can be credited from zero alone.
+ * @returns {Promise<{files:number, insertions:number, deletions:number, byKey:Record<string,{files:number, insertions:number, deletions:number}>}|null>}
  */
 export async function measureCodeCursor({ workDirs, checkpointRefs, excludeFor, numstat, stage = null }) {
   if (typeof stage === 'function') { try { await stage(); } catch { /* best-effort: measure what is visible */ } }
   let seen = false;
-  const out = { files: 0, insertions: 0, deletions: 0 };
+  const out = { files: 0, insertions: 0, deletions: 0, byKey: {} };
   for (const [key, dir] of workDirs?.entries?.() || []) {
     const base = checkpointRefs?.[key];
     if (!base) continue;
     seen = true;
     let m;
     try { m = await numstat(dir, base, undefined, excludeFor(key) || []); } catch { continue; }
+    const own = { files: 0, insertions: 0, deletions: 0 };
     for (const row of m.values()) {
       if (row.binary) continue;
-      out.files += 1;
-      out.insertions += row.added | 0;
-      out.deletions += row.removed | 0;
+      own.files += 1;
+      own.insertions += row.added | 0;
+      own.deletions += row.removed | 0;
     }
+    out.byKey[key] = own;
+    out.files += own.files;
+    out.insertions += own.insertions;
+    out.deletions += own.deletions;
   }
   return seen ? out : null;
+}
+
+/** `cursor` without the counts of the members in `keys` (their diff base moved, so their earlier count was against
+ *  another base). A cursor with no `byKey` (a resume point saved before it existed) gives null: from zero. */
+export function withoutMembers(cursor, keys) {
+  if (!cursor || !keys || !keys.size) return cursor;
+  if (!cursor.byKey || typeof cursor.byKey !== 'object') return null;
+  const out = { files: cursor.files | 0, insertions: cursor.insertions | 0, deletions: cursor.deletions | 0, byKey: {} };
+  for (const [k, own] of Object.entries(cursor.byKey)) {
+    if (!keys.has(k)) { out.byKey[k] = own; continue; }
+    out.files -= own?.files | 0;
+    out.insertions -= own?.insertions | 0;
+    out.deletions -= own?.deletions | 0;
+  }
+  return out;
 }
 
 /** now − prev, each component clamped at 0. `prev` null means "from zero". `now` null → null. */

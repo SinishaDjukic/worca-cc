@@ -638,10 +638,14 @@ app.get('/api/plugins/:name/model-env', (req, res) => {
     else secretKeys.push(k);
   }
   // `cost` rides along so "Edit a copy" starts from the plugin's pricing — a
-  // copy that silently dropped it would repay the CLI's by-name figure.
+  // copy that silently dropped it would repay the CLI's by-name figure. So do
+  // the harness (the manifest names none for Claude Code) and the connection
+  // (a plugin `upstream.apiKey` is a ${VAR} ref by validation, never a secret).
   res.json({
     id: model.id, label: model.label, efforts: model.efforts, env, secretKeys,
     ...(model.cost ? { cost: model.cost } : {}),
+    ...(model.engine ? { engine: model.engine } : {}),
+    ...(model.upstream ? { upstream: model.upstream } : {}),
   });
 });
 }

@@ -9,7 +9,7 @@ import { test, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { JSDOM } from 'jsdom';
-import { ringDash, RING_R } from '../ui/public/account-menu.mjs';
+import { ringDash, MINI_R } from '../ui/public/account-menu.mjs';
 import { minLevelFor } from '../ui/public/ui-level.mjs';
 import { useDomRelease } from './helpers/jsdom-release.mjs';
 import { checkRows } from './helpers/rows.mjs';
@@ -133,9 +133,10 @@ async function boot({ budget = okBudget(), tickMs, idleRefetchMs, free = null } 
   return { window, box, counts, statsCalls, wsBox, tick, wait, pushBudgetChanged, showView, stopTimers };
 }
 
-// The corner (#side-acct: data-spend none | ok | warn | over, the ring's arc) and the spend card in the menu.
-const ring = (doc) => { const b = doc.getElementById('side-acct'); return [b.dataset.spend, b.querySelector('.acct-ring .arc').getAttribute('stroke-dasharray')]; };
+// The spend card in the menu (data-spend none | ok | warn | over, its mini ring's arc): spend is never an avatar ring.
 const card = (doc) => doc.querySelector('#acct-spend .spend-card');
+const ring = (doc) => { const c = card(doc); return [c.dataset.spend, c.querySelector('.mini-ring .arc')?.getAttribute('stroke-dasharray') ?? null]; };
+const avatar = (doc) => { const b = doc.getElementById('side-acct'); return { spend: b.dataset.spend, s: b.dataset.usageS, l: b.dataset.usageL, label: b.getAttribute('aria-label'), title: b.getAttribute('title') }; };
 const cardRows = (doc) => [...card(doc).querySelectorAll('.mc-rows dt')].map((dt) => [dt.textContent, dt.nextElementSibling.textContent, dt.nextElementSibling.className]);
 
 test('spend ring and card: boot paints them (warn band), budget-changed repaints, blocked disables Start with a reason and clears again; Details and Raise limit route', async () => {
@@ -144,11 +145,13 @@ test('spend ring and card: boot paints them (warn band), budget-changed repaints
   const doc = window.document;
   await checkRows([
     { name: 'boot paints the ring around the avatar and the spend card in the menu', run: async () => {
-      assert.deepEqual(ring(doc), ['warn', ringDash(41.23 / 50, RING_R)], '82% of the cap is the warn band');
+      assert.deepEqual(ring(doc), ['warn', ringDash(41.23 / 50, MINI_R)], '82% of the cap is the warn band');
       assert.equal(doc.getElementById('acct-spend').hidden, false);
       assert.deepEqual(cardRows(doc), [['Limit', '$50.00', ''], ['Spent', '$41.23', 'warn']]);
       assert.equal(card(doc).querySelector('.mc-btn').textContent, 'Details');
-      assert.match(doc.getElementById('side-acct').getAttribute('aria-label'), /· \$41\.23 of \$50\.00 spent in \w+: spend, away mode, interface mode and settings$/);
+      const a = avatar(doc);
+      assert.deepEqual([a.spend, a.s, a.l], [undefined, 'none', 'none'], 'the avatar draws no spend ring');
+      assert.equal(/\$/.test(a.label), false, 'and names no spend amount');
     } },
     { name: 'budget-changed repaints; blocked: a red full ring, Raise limit and the note; Start disabled with a reason', run: async () => {
       assert.equal(doc.querySelector('#start-btn').disabled, false, 'unblocked boot leaves Start enabled');
@@ -157,7 +160,11 @@ test('spend ring and card: boot paints them (warn band), budget-changed repaints
       ctx.box.budget = blockedBudget();
       await ctx.pushBudgetChanged();
 
-      assert.deepEqual(ring(doc), ['over', ringDash(1, RING_R)]);
+      assert.deepEqual(ring(doc), ['over', ringDash(1, MINI_R)]);
+      const a = avatar(doc);
+      assert.deepEqual([a.spend, a.s, a.l], [undefined, 'none', 'none'], 'budget-changed never draws an avatar ring');
+      assert.match(a.label, /new runs blocked/);
+      assert.match(a.title, /new runs blocked/);
       assert.equal(card(doc).querySelector('.mc-btn').textContent, 'Raise limit');
       assert.match(card(doc).querySelector('.mc-note').textContent, /^New runs are blocked until \w{3} \w{3} \d+, \d\d:\d\d\.$/);
       assert.equal(doc.querySelector('#start-btn').disabled, true);

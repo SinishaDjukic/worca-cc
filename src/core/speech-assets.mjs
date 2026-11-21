@@ -174,7 +174,7 @@ export function createSpeechAssets({ dir, fetch: f = globalThis.fetch, libs = SP
 }
 
 let store = null;
-/** The one store the server and the Providers card share: ~/.worca-cc/speech-cache. */
+/** The one store the server and the Speech row (Models › Providers) share: ~/.worca-cc/speech-cache. */
 export function speechAssetStore() {
   return (store ||= createSpeechAssets({ dir: path.join(worcaHome(), 'speech-cache') }));
 }

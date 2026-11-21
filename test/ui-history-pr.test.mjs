@@ -330,7 +330,9 @@ test('same-branch, not merged back: no Push; Create PR lands the work from its o
   assert.equal(doc.querySelector('#hist-detail .merge-back-banner'), null);
   const glance = doc.querySelector('#hist-detail .hd-glance');
   assert.equal(glance.querySelector('.run-status').dataset.line, 'Needs you · not merged back into main');
-  assert.doesNotMatch(glance.querySelector('.rd-sheet').textContent, /worktree/i);
+  // The card's main column says nothing about a worktree; the Overview's side column
+  // (.rd-sheet-nav) carries the WORKTREE row on its own.
+  assert.doesNotMatch(glance.querySelector('.rd-sheet-main').textContent, /worktree/i);
   glance.querySelector('.rd-head-acts [data-head="how-to-merge"]').click();
   assert.equal(doc.getElementById('viewer-title').textContent, 'How to merge');
   const text = doc.getElementById('viewer').textContent;

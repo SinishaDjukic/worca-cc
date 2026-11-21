@@ -22,7 +22,7 @@ export const TURN_KINDS = Object.freeze(['orientation', 'round', 'answers', 'edi
   'import',   // A6.1: the feature was started from a ticket (one thread line, D14)
   'model']);  // 9c: the feature's harness or model was switched; payload { engine, model, effort, from: { engine, model, effort } }
 export const ASSUMPTION_STATUSES = Object.freeze(['open', 'confirmed', 'rejected']);
-export const LIMITS = Object.freeze({ title: 200, description: 20000, item: 500, items: 30, context: 10000 });
+export const LIMITS = Object.freeze({ title: 200, description: 20000, item: 10000, items: 30, context: 10000 });
 export const MAX_ROUNDS = 6;      // D5
 export const MAX_QUESTIONS = 3;   // D5
 
@@ -45,19 +45,35 @@ export function clip(v, max = LIMITS.item) {
   return typeof v === 'string' ? v.trim().slice(0, max) : '';
 }
 
+/** A spec item, at most LIMITS.item characters: kept whole when it fits; a longer one ends at its last whole word with "…",
+ *  so a cut shows and never falls mid-word. The product owner's own too-long text is refused before it gets here (edits.mjs). */
+export function clipItem(v) {
+  const s = clip(v, Infinity);
+  if (s.length <= LIMITS.item) return s;
+  const head = s.slice(0, LIMITS.item - 1);
+  const space = head.search(/\s\S*$/);
+  return `${(space > LIMITS.item / 2 ? head.slice(0, space) : head).trimEnd()}…`;
+}
+
+/** The first of `texts` longer than LIMITS.item once trimmed, or null: the product owner's text is refused, never cut. */
+export function tooLongItem(texts) {
+  return texts.find((t) => typeof t === 'string' && t.trim().length > LIMITS.item) ?? null;
+}
+export const ITEM_TOO_LONG = `text must be at most ${LIMITS.item} characters`;
+
 /** One section's value, normalized: goal → {text, measure}; a list section → unique non-empty strings
- *  (an array, or one item per line), at most LIMITS.items of LIMITS.item characters. */
+ *  (an array, or one item per line), at most LIMITS.items items of at most LIMITS.item characters each (clipItem). */
 export function normalizeSection(section, value) {
   if (section === 'goal') {
-    if (typeof value === 'string') return { text: clip(value), measure: '' };
-    return { text: clip(value && value.text), measure: clip(value && value.measure) };
+    if (typeof value === 'string') return { text: clipItem(value), measure: '' };
+    return { text: clipItem(value && value.text), measure: clipItem(value && value.measure) };
   }
   if (!LIST_SECTIONS.includes(section)) throw new RequirementsError('BAD_REQUEST', `unknown section "${String(section).slice(0, 40)}"`);
   const raw = typeof value === 'string' ? value.split(/\r?\n/) : (Array.isArray(value) ? value : []);
   const out = [];
   const seen = new Set();
   for (const item of raw) {
-    const s = clip(item);
+    const s = clipItem(item);
     if (!s || seen.has(s.toLowerCase())) continue;
     seen.add(s.toLowerCase());
     out.push(s);

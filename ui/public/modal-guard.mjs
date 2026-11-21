@@ -4,7 +4,9 @@
 //   kind 'form'     holds input or unsaved state (Add project, Ship it, a prompt, the schedule sheet).
 //                   A backdrop click never closes it, changed or not. Escape closes it while untouched
 //                   and asks "Discard changes?" (Keep editing / Discard) once it changed. Its Cancel
-//                   (`cancel()`) closes at once and never asks: a deliberate choice.
+//                   (`cancel()`) closes at once and never asks: a deliberate choice. The exception is a
+//                   form whose answers span steps or views (the setup assistant, the marketplace manage
+//                   sheet's hand-offs): its Cancel asks too once changed, with askDiscard() before cancel().
 //   kind 'decision' buttons only, nothing typed (Stop?, Remove?, a confirm, the sync chooser). A
 //                   backdrop click or Escape is the safe "No": its `close`.
 //   kind 'viewer'   read-only (artifact viewer, workflow preview, Claude setup status). A backdrop click

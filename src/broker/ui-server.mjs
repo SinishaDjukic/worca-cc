@@ -205,7 +205,7 @@ export function createUiHandler({ config, service, store, identity = createIdent
       deviceFlows.delete(key);
       if (r.error) { send(res, 422, { error: `GitHub sign-in failed: ${r.error}` }); return; }
       // A GitHub App user token comes with a refresh token: stored together, renewed by the broker.
-      const saved = await service.saveCredential(email, slotId, slot.auth === 'github-user' ? githubSecretOf(r, now()) : r.token);
+      const saved = await service.saveCredential(email, slotId, slot.auth === 'github-user' ? githubSecretOf(r, now()) : r.token, { via: 'device' });
       if (!saved.ok) { send(res, saved.status || 422, { error: saved.error }); return; }
       send(res, 200, { state: 'set', suffix: saved.suffix, kind: saved.kind });
       return;

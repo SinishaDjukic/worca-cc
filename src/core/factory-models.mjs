@@ -105,7 +105,7 @@ export function factoryFallbackLines(notes, labels) {
 function whereOf(b) {
   if (b.source === 'runModel') return "the run's model";
   if (b.role) {
-    if (b.source === 'slot') return 'Models › Helper jobs › Second-opinion reviewer';
+    if (b.source === 'slot') return 'Models › Jobs › Helper jobs › Second-opinion reviewer';
     if (b.source === 'run') return `this run's pick for ${b.node} · ${b.role}`;
     if (b.source === 'project') return `the project's pick for ${b.node} · ${b.role}`;
     return `the workflow's ${b.node} · ${b.role} step`;
@@ -113,9 +113,9 @@ function whereOf(b) {
   switch (b.source) {
     case 'run': return `this run's pick for ${b.node}`;
     case 'project': return `the project's pick for ${b.node}`;
-    case 'legacy': case 'slot': return `Models › Step models › ${b.node}`;
-    case 'role': return `Models › Model roles › ${ROLE_LABELS[b.modelRole] || b.modelRole}`;
-    case 'pair': return b.pair === 'scan' ? 'the workspace scan model' : 'Models › Helper jobs › Memory defragment';
+    case 'legacy': case 'slot': return `Models › Jobs › Steps › ${b.node}`;
+    case 'role': return `Models › Jobs › Roles › ${ROLE_LABELS[b.modelRole] || b.modelRole}`;
+    case 'pair': return b.pair === 'scan' ? 'the workspace scan model' : 'Models › Jobs › Helper jobs › Memory defragment';
     default: return `the workflow's ${b.node} step`;
   }
 }

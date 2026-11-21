@@ -1,0 +1,380 @@
+/* The Models page (Catalogue, Jobs, Providers): its head and tab strip, the panels, brand marks and state words.
+   The tabs wear the shared .tab skin (settings/info-tooltips.css); the mdl- tab hooks set layout only. */
+.mdl-head{display:flex;align-items:flex-end;justify-content:space-between;gap:16px;margin-bottom:22px;}
+/* The strip is built into the host at runtime, so the host is the flex item (as .mk-tabs on Marketplace). */
+#models-tabs-host{flex:1 1 auto;min-width:0;}
+/* 4px over the 32px tabs = the actions' 4px under them: the row keeps one height with the actions or without. */
+.mdl-tabs{padding-top:4px;}
+.mdl-head > .mv-head-actions{padding-bottom:4px;}
+@media (max-width:760px){.mdl-head{flex-wrap:wrap}}
+.mdl-tab{flex:none;}
+a.tab.mdl-tab{text-decoration:none;}
+.mdl-tab-name{min-width:0;}
+/* The Catalogue count: span.badge.mdl-tab-count; the chip look is the .badge. */
+.mdl-tab-count{flex:none;}
+.mdl-panel{display:flex;flex-direction:column;gap:16px;width:100%;min-width:0;}
+.mdl-panel[hidden]{display:none;}
+/* Each tab's message line (models.html) is empty almost always (reportStatus toasts ok/err and blanks it): empty, it
+   takes no room, so the tab's first block sits under the tab row (the line's 12px + 16px + the panel's gap were 44px). */
+.mdl-panel > .form-msg:empty{display:none;}
+
+/* A select with marks (ADD-2, FRM-1; brand-marks.mjs markedSelect): the native select, the picked value's sm mark
+   inside its left edge as the mock's closed select draws it; the mark never takes the click. */
+.mdl-picksel{position:relative;display:flex;align-items:center;min-width:0;}
+.mdl-picksel > select{flex:1 1 auto;width:100%;min-width:0;}
+.mdl-picksel > .mdl-mark{position:absolute;left:10px;top:50%;transform:translateY(-50%);pointer-events:none;}
+.mdl-picksel.has-mark > select{padding-left:34px;}
+/* The import sheets' Model column: the mark beside the name and id (ADD-3). */
+.mdl-sheet-name{display:flex;align-items:flex-start;gap:10px;min-width:0;}
+.mdl-sheet-name > .mdl-mark{margin-top:1px;}
+.mdl-sheet-name-tx{min-width:0;}
+
+/* Brand marks: the one place brand colour appears, always in a tile that is light in both themes.
+   own = worca's mark (a model you added) or the Marketplace bag (a plugin's model), white on a gradient:
+   your own models wear the blue default; a g-<name> class picks a plugin's colour from its name. */
+.mdl-mark{--ga:var(--mark-g-blue-a);--gb:var(--mark-g-blue-b);width:28px;height:28px;border-radius:var(--r-sm);background:var(--mark-tile);border:1px solid var(--line);display:inline-flex;align-items:center;justify-content:center;flex:none;}
+.mdl-mark img{width:18px;height:18px;display:block;}
+.mdl-mark.sm{width:18px;height:18px;border:0;border-radius:0;background:transparent;}
+.mdl-mark.sm img{width:16px;height:16px;}
+.mdl-mark.lg{width:36px;height:36px;border-radius:var(--r-md);}
+.mdl-mark.lg img{width:22px;height:22px;}
+/* A service with no single vendor (speech, pictures, sound): a neutral glyph. */
+.mdl-mark.blank{background:var(--field);color:var(--ink-2);}
+.mdl-mark.xl{width:48px;height:48px;border-radius:var(--r-md);}
+.mdl-mark.xl img{width:30px;height:30px;}
+.mdl-mark.g-indigo{--ga:var(--mark-g-indigo-a);--gb:var(--mark-g-indigo-b);}
+.mdl-mark.g-teal{--ga:var(--mark-g-teal-a);--gb:var(--mark-g-teal-b);}
+.mdl-mark.g-pink{--ga:var(--mark-g-pink-a);--gb:var(--mark-g-pink-b);}
+.mdl-mark.g-blue{--ga:var(--mark-g-blue-a);--gb:var(--mark-g-blue-b);}
+.mdl-mark.g-lime{--ga:var(--mark-g-lime-a);--gb:var(--mark-g-lime-b);}
+.mdl-mark.g-slate{--ga:var(--mark-g-slate-a);--gb:var(--mark-g-slate-b);}
+.mdl-mark.own{border:0;background:linear-gradient(135deg,var(--ga),var(--gb));color:var(--on-mark);}
+/* worca-mark-mask.png is a white disc holding a black W: inverted, the W turns white and the disc black, and screen
+   drops the black over the gradient, so only the W shows. */
+.mdl-mark.own img{width:20px;height:20px;filter:invert(1);mix-blend-mode:screen;}
+.mdl-mark.lg.own img{width:26px;height:26px;}
+.mdl-mark.sm.own{width:18px;height:18px;border-radius:var(--r-xs);}
+.mdl-mark.sm.own img{width:13px;height:13px;}
+
+/* State: one dot and one word, the only place state colour lives. ok green, need amber, fail red, off a hollow ring. */
+.mdl-st{display:inline-flex;align-items:center;gap:7px;font-size:var(--fs-meta);font-weight:500;color:var(--ink-2);white-space:nowrap;}
+.mdl-st::before{content:'';width:8px;height:8px;border-radius:50%;background:var(--slate);flex:none;}
+.mdl-st.ok::before{background:var(--green);}
+.mdl-st.need{color:var(--ink);}
+.mdl-st.need::before{background:var(--amber);}
+.mdl-st.fail{color:var(--red-ink-strong);}
+.mdl-st.fail::before{background:var(--red);}
+.mdl-st.off::before{color:var(--slate);background:none;box-shadow:inset 0 0 0 2px currentColor;}
+
+/* "Best performance" on a .badge: worca's blue gradient, white text. The solid --best-a after the shorthand (which
+   resets background-color) paints under the gradient: it is what verify:theme measures, as it skips gradients. */
+.mdl-best{background:linear-gradient(135deg,var(--best-a),var(--best-b));background-color:var(--best-a);color:var(--on-mark);}
+/* "Beta" on a harness group head and a harness tile: the shared .badge.blue ink is ~3.6:1 on --blue-bg, the strong one ~5:1. */
+.mdl-grp-toggle > .badge.blue,.mdl-hx-t > .badge.blue{color:var(--blue-ink-strong);}
+
+/* The Providers tab (models/providers-tab.mjs): two headed cards of fold rows. The rows stay .drow dividers, never
+   boxes: inside .mdl-prov a row's vertical padding moves into its head, so the dividers stay even and the head's hover
+   spans the row. The head is a .row-btn (no border, transparent, the --hover fill, an inset ring on keyboard focus). */
+.mdl-prov{display:flex;flex-direction:column;gap:8px;}
+.mdl-sect{margin:8px 0 0;font-size:var(--fs-meta);font-weight:600;line-height:var(--lh-title);color:var(--ink-2);}
+/* One column that may shrink below its content: the implicit auto track took a head's min-content (a long state word)
+   and pushed every row of a narrow card past its edge. */
+.mdl-prov .mv-providers-split{gap:0;grid-template-columns:minmax(0,1fr);}
+.mdl-prov .drow.mv-pv-card{padding-top:0;padding-bottom:0;}
+/* 8px on the right: the head's inset keyboard ring (.row-btn:focus-visible, -2px) sat on the state word's last letters. */
+.mdl-fold{display:flex;align-items:center;gap:12px;min-height:48px;padding:8px 8px 8px 0;}
+.mdl-fold-caret{width:28px;height:28px;flex:none;display:inline-flex;align-items:center;justify-content:center;color:var(--ink-2);}
+/* The chevron turns down on an open row, and on the image row's Advanced disclosure (.mdl-disc). */
+.mdl-fold-caret > .ic,.mdl-disc .ic{transition:transform .12s ease;}
+.mdl-fold[aria-expanded="true"] > .mdl-fold-caret > .ic,.mdl-disc[aria-expanded="true"] .ic{transform:rotate(90deg);}
+@media (prefers-reduced-motion:reduce){.mdl-fold-caret > .ic,.mdl-disc .ic{transition:none;}}
+.mdl-fold-txt{flex:1;min-width:0;}
+.mdl-fold-name{display:block;font-weight:500;color:var(--ink);}
+.mdl-fold-sum{display:block;font-size:var(--fs-meta);color:var(--ink-2);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+.mdl-fold > .mdl-st{flex:none;}
+/* The body sits under the name: caret 28 + gap 12 + mark 36 + gap 12 = 88px. */
+.mdl-fold-body{padding:8px 0 20px 88px;}
+/* Narrow (VIS-4): the state takes a line of its own under the text, wrapping there (a `${VAR}` in it can be wider than
+   the line), and the body (its grids stacked) loses its indent. */
+@container drows (max-width:560px){
+  .mdl-fold{flex-wrap:wrap;row-gap:4px;}
+  .mdl-fold > .mdl-st{flex-basis:100%;padding-left:88px;white-space:normal;overflow-wrap:anywhere;}
+  .mdl-fold-body{padding-left:0;}
+}
+/* Narrow screens (VIS-4, ≤860px, as the mock): every field grid of a row is one column and the body loses its indent.
+   model-bridge.css stacks them only at 720px or in a 560px card; at (0,4,0) and later in parts.json, these win. */
+@media (max-width:860px){
+  .mdl-prov .mv-pv-card .mv-pv-row .mv-pv-ctl,.mdl-prov .mv-im-row .mdl-adv{grid-template-columns:minmax(0,1fr);}
+  .mdl-prov .mv-or-row .mv-or-key{grid-column:auto;}
+  .mdl-fold-body{padding-left:0;}
+}
+
+/* The Catalogue tab (models/catalogue-view.mjs, DESIGN CAT-1…CAT-11): the toolbar, then one card per harness. Only the
+   list scrolls sideways, inside its own box (VIS-4): a viewport query would miss Ask's column narrowing the page. */
+.mdl-cat{display:flex;flex-direction:column;gap:16px;min-width:0;}
+.mdl-toolbar{display:flex;flex-wrap:wrap;align-items:center;gap:8px;}
+.mdl-toolbar .mv-search{flex:1 1 280px;min-width:0;}
+.mdl-toolbar .mdl-source{flex:none;width:auto;}
+.mdl-scroll{overflow-x:auto;min-width:0;}
+.mdl-list{min-width:720px;display:flex;flex-direction:column;gap:12px;}
+/* Model, Used by, Status, the chevron: one grid for the head line and every row. */
+.mdl-cols{display:grid;grid-template-columns:minmax(0,1.25fr) minmax(0,1fr) 200px 28px;align-items:center;column-gap:16px;}
+/* The rows' padding plus the card's 1px border. */
+.mdl-cols-head{padding:0 13px 0 21px;font-size:var(--fs-meta);font-weight:600;color:var(--ink-2);}
+.mdl-cols-head > :nth-child(3){text-align:right;}
+/* The card clips its last row's hover and selected fill to its corners; menus open on <body>, so nothing is cut. */
+.mdl-grp{background:var(--panel);border:1px solid var(--line);border-radius:var(--r-card);overflow:hidden;}
+.mdl-grp-head{display:flex;align-items:center;gap:10px;padding:0 12px 0 10px;}
+.mdl-grp-toggle{flex:1 1 auto;min-width:0;min-height:60px;display:flex;align-items:center;gap:10px;padding:0 8px 0 0;}
+.mdl-grp-caret{width:28px;height:28px;flex:none;display:inline-flex;align-items:center;justify-content:center;color:var(--ink-2);}
+.mdl-grp-caret > .ic{transition:transform .12s ease;}
+.mdl-grp-toggle[aria-expanded="true"] .mdl-grp-caret > .ic{transform:rotate(90deg);}
+@media (prefers-reduced-motion:reduce){.mdl-grp-caret > .ic{transition:none;}}
+.mdl-grp-title{min-width:0;font-size:var(--fs-section);font-weight:600;line-height:var(--lh-title);color:var(--ink);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+.mdl-grp-toggle > .mdl-mark,.mdl-grp-toggle > .badge{flex:none;}
+.mdl-grp-toggle .mdl-grp-custom{color:var(--ink);}
+.mdl-grp-toggle > .mdl-st{margin-left:auto;}
+.mdl-grp-more{flex:none;}
+.mdl-grp-body{border-top:1px solid var(--line);}
+/* A way of reaching models: its name and count on the left; state, fix and the hide switch end on the Status column. */
+.mdl-sub-h{display:flex;align-items:center;gap:8px;min-height:36px;padding:0 56px 0 20px;border-top:1px solid var(--line);font-size:var(--fs-meta);font-weight:600;color:var(--ink-2);}
+.mdl-grp-body > .mdl-sub-h:first-child{border-top:0;}
+.mdl-sub-name{min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+.mdl-sub-h > .badge{flex:none;}
+.mdl-sub-h > .mdl-st{margin-left:auto;font-weight:500;}
+.mdl-sub-h > .mdl-fix{flex:none;margin-left:10px;color:var(--ink);font-weight:500;}
+.mdl-sub-h > .mdl-hide{flex:none;margin-left:auto;gap:10px;font-weight:500;}
+.mdl-sub-h > .mdl-st ~ .mdl-hide{margin-left:10px;}
+.mdl-note{display:flex;align-items:center;min-height:40px;padding:0 12px 0 20px;border-top:1px solid var(--line);font-size:var(--fs-meta);color:var(--ink-2);}
+.mdl-row{min-height:44px;}
+.mdl-grp-body > .mdl-row{padding:0 12px 0 20px;border-top:1px solid var(--line);border-radius:0;}
+.mdl-grp-body > .mdl-row.mdl-sel{background:var(--row-selected);}
+.mdl-row-model{display:flex;align-items:center;gap:10px;min-width:0;}
+.mdl-row-name{min-width:0;color:var(--ink);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+.mdl-row.mdl-used .mdl-row-name{font-weight:600;}
+.mdl-row-model > .badge{flex:none;}
+.mdl-row-used{min-width:0;font-size:var(--fs-meta);color:var(--ink-2);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+.mdl-row-st{display:flex;align-items:center;justify-content:flex-end;gap:10px;min-width:0;}
+.mdl-row-go{justify-self:end;color:var(--ink-3);}
+.mdl-nomatch{display:flex;align-items:center;gap:12px;padding:16px 20px;background:var(--panel);border:1px solid var(--line);border-radius:var(--r-card);color:var(--ink-2);}
+
+/* The model side panel (PAN-1…PAN-6): over the page's right edge, under the 48px top bar, full height. Its containing
+   block is .main-row (shell/top-bar.css); z 30 keeps it under Ask's sheet (40) and the menus it opens (45). */
+.mdl-side{position:absolute;inset:0 0 0 auto;z-index:30;width:min(420px,100%);overflow-y:auto;display:flex;flex-direction:column;gap:20px;padding:20px 24px 24px;background:var(--panel);border-left:1px solid var(--line);box-shadow:var(--shadow-sheet);}
+.mdl-side-head{display:flex;align-items:center;gap:12px;}
+.mdl-side-titles{flex:1 1 auto;min-width:0;display:flex;flex-direction:column;align-items:flex-start;gap:4px;}
+.mdl-side-title{margin:0;font-size:var(--fs-section);font-weight:600;line-height:var(--lh-title);color:var(--ink);overflow-wrap:anywhere;}
+.mdl-side-close{flex:none;}
+.mdl-acts{display:flex;flex-wrap:wrap;align-items:center;gap:8px;}
+.mdl-test-result{font-size:var(--fs-meta);color:var(--ink-2);}
+.mdl-test-result:empty{display:none;}
+.mdl-act-more{margin-left:auto;}
+.mdl-side-sec{display:flex;flex-direction:column;gap:12px;padding-top:20px;border-top:1px solid var(--line);}
+.mdl-side-sec > .mdl-sect{margin:0;}
+.mdl-facts{display:grid;grid-template-columns:112px minmax(0,1fr);row-gap:8px;column-gap:16px;align-items:center;margin:0;}
+.mdl-facts dt{margin:0;font-size:var(--fs-meta);color:var(--ink-2);}
+.mdl-facts dd{margin:0;display:flex;flex-wrap:wrap;align-items:center;gap:8px;min-width:0;min-height:22px;color:var(--ink);}
+.mdl-facts dd.mono,.mdl-secret .mono{font-family:var(--mono);font-size:var(--fs-meta);}
+.mdl-fact-v{min-width:0;overflow-wrap:anywhere;}
+.mdl-secrets{display:flex;flex-direction:column;gap:4px;font-size:var(--fs-meta);color:var(--ink-2);}
+.mdl-secret .mono{color:var(--ink);}
+.mdl-uses{display:flex;flex-direction:column;gap:2px;margin:-4px -8px 0;}
+.mdl-use{display:flex;align-items:center;gap:8px;min-height:30px;padding:0 8px;}
+.mdl-use-label{flex:1 1 auto;min-width:0;color:var(--ink);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+.mdl-use-kind{flex:none;font-size:var(--fs-caption);color:var(--ink-2);}
+.mdl-nouse{margin:0;font-size:var(--fs-meta);color:var(--ink-2);}
+@media (max-width:860px){.mdl-side{width:100%}}
+/* At this width Ask's column is a later flex sibling in .main-row and would paint over the panel (as .toasts,
+   chat/ask-worca-beside.css). */
+@media (min-width:1081px){body.ask-side-open .mdl-side{right:var(--ask-side-w,440px)}}
+
+/* Harness tiles (models/harness-tiles.mjs, DESIGN JOB-1): one tile per harness, picked by sight. The chip sits in the
+   top corner, the picked tile's tick disc in the bottom one; the pick is a 1px ink edge, never an ink fill. */
+.mdl-hx{display:grid;grid-template-columns:repeat(6,minmax(0,1fr));gap:8px;}
+.mdl-hx-t{position:relative;display:flex;flex-direction:column;align-items:flex-start;gap:4px;min-width:0;padding:10px;border:1px solid var(--line);border-radius:var(--r-card);background:var(--panel);color:var(--ink);font:inherit;text-align:left;cursor:pointer;}
+.mdl-hx-t:hover:not(.on):not(:disabled){border-color:var(--hover-outline);}
+.mdl-hx-t:focus-visible{outline:2px solid var(--ink);outline-offset:2px;}
+.mdl-hx-t:disabled{cursor:default;}
+.mdl-hx-t.on{border-color:var(--ink);}
+.mdl-hx-t > .badge{position:absolute;top:10px;right:10px;}
+.mdl-hx-t .mdl-mark{margin-bottom:6px;}
+/* The disc and the tick are one svg, so the tick cannot drift off centre; --on-ink flips with the theme. */
+.mdl-hx-check{position:absolute;right:10px;bottom:10px;width:20px;height:20px;}
+.mdl-hx-check circle{fill:var(--ink);}
+.mdl-hx-check path{fill:none;stroke:var(--on-ink);stroke-width:2.4;stroke-linecap:round;stroke-linejoin:round;}
+/* The picked tile's state line stops short of the disc and wraps there ("Ready · Default for new runs" ran under it). */
+.mdl-hx-t.on .mdl-hx-state{padding-right:26px;white-space:normal;align-items:flex-start;}
+.mdl-hx-t.on .mdl-hx-state.mdl-st::before{margin-top:calc(.5lh - 3px);}
+.mdl-hx-t.best.on .mdl-hx-state{padding-right:32px;}
+.mdl-hx-name{max-width:100%;font-size:var(--fs-meta);font-weight:600;line-height:var(--lh-title);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+/* The state is a .mdl-st word (its dot, green or a hollow ring), at the tile's smaller size. */
+.mdl-hx-state{font-size:var(--fs-caption);}
+.mdl-hx-state.mdl-st{gap:5px;}
+.mdl-hx-state.mdl-st::before{width:6px;height:6px;}
+.mdl-hx-state.mdl-st.off::before{box-shadow:inset 0 0 0 1.5px currentColor;}
+/* Not ready or locked: dimmed, never recoloured, so the mark stays recognisable. */
+.mdl-hx-t.off .mdl-hx-name,.mdl-hx-t:disabled .mdl-hx-name{color:var(--ink-2);font-weight:500;}
+.mdl-hx-t.off .mdl-mark img,.mdl-hx-t:disabled .mdl-mark img{opacity:.5;}
+/* The harness worca runs best on: twice as wide and twice as tall, its mark 72px (markTile's xl is 48). */
+.mdl-hx-t.best{grid-column:span 2;grid-row:span 2;padding:16px;}
+.mdl-hx-t.best > .badge{top:16px;right:16px;}
+.mdl-hx-t.best .mdl-hx-check{right:16px;bottom:16px;width:24px;height:24px;}
+.mdl-hx-t.best .mdl-mark{width:72px;height:72px;}
+.mdl-hx-t.best .mdl-mark img{width:44px;height:44px;}
+.mdl-hx-t.best .mdl-hx-name{margin-top:auto;font-size:var(--fs-section);}
+.mdl-hx-t.best .mdl-hx-state{font-size:var(--fs-meta);}
+/* Narrow (VIS-4): two per row; the big tile keeps the full row but one row's height. */
+@media (max-width:860px){
+  .mdl-hx{grid-template-columns:repeat(2,minmax(0,1fr));}
+  .mdl-hx-t.best{grid-row:auto;}
+}
+
+/* The model picker button (models/model-picker.mjs, DESIGN JOB-3, JOB-8; kit 120–126, 301): mark, span.mdl-pick-text,
+   span.mdl-pick-eff (" · <effort>") and the chevron, one control. A row that follows something (nothing stored) is
+   dashed and grey; the open one has an ink edge. */
+.mdl-pick{display:inline-flex;align-items:center;gap:7px;width:100%;min-width:0;height:32px;padding:0 10px;border:1px solid var(--line-2);border-radius:var(--r-sm);background:var(--panel);color:var(--ink);font:inherit;font-weight:500;text-align:left;white-space:nowrap;cursor:pointer;}
+.mdl-pick:hover:not([aria-expanded="true"]):not(:disabled){border-color:var(--hover-outline);}
+.mdl-pick:focus-visible{outline:2px solid var(--ink);outline-offset:2px;}
+.mdl-pick:disabled{cursor:default;color:var(--ink-3);}
+.mdl-pick[aria-expanded="true"]{border-color:var(--ink);}
+.mdl-pick.inherit{border-style:dashed;color:var(--ink-2);font-weight:400;}
+.mdl-pick .mdl-mark{margin-left:-2px;}
+.mdl-pick-text{min-width:0;overflow:hidden;text-overflow:ellipsis;}
+.mdl-pick-eff{flex:none;color:var(--ink-2);font-weight:500;}
+.mdl-pick > .ic{margin-left:auto;color:var(--ink-2);}
+/* Its menu is the Chat picker's (.ask-pop-model, 292px), appended to body and placed below the button by
+   side-flyout.mjs: fixed, over the page, under #confirm-modal (60). Two classes, because chat/workflow-card.css (later
+   in parts.json) sets .ask-pop{position:absolute} and .ask-pop-model's right and bottom; as design.css .ask-pop.dz-model-pop. */
+.ask-pop.mdl-pick-pop{position:fixed;right:auto;bottom:auto;z-index:58;max-height:min(420px,70vh);}
+
+/* Add model (models/add-model-dialog.mjs, DESIGN ADD-1…ADD-4; kit 250–258): each step is a section.card.mdl-add that
+   app.js lays out (layoutDialog). Its head: the title, the step names and Close on one line; its foot carries
+   .mv-editor-btns (the shared 32px foot buttons). */
+.mdl-add-head{display:flex;align-items:center;gap:12px;min-width:0;}
+.mdl-add-head > .mv-editor-title{flex:1 1 auto;min-width:0;margin:0;overflow-wrap:anywhere;}
+.mdl-add-head > .mdl-steps,.mdl-add-head > .mdl-close{flex:none;}
+.mdl-add-main{display:flex;flex-direction:column;gap:16px;min-width:0;}
+.mdl-add .label-row{margin:0;}
+.mdl-add .label-row > .mv-field-label{font-size:var(--fs-meta);font-weight:600;}
+.mdl-add .label-row > .info-tip{margin-block:-6px;}
+.mdl-add-foot{align-items:center;}
+/* Step 2's foot: "N selected" on the left, Back beside "Add N models" on the right. */
+.mdl-add-foot > .mdl-add-note{margin-right:auto;font-size:var(--fs-meta);color:var(--ink-2);}
+.mdl-add-foot > .mv-back{margin-right:0;}
+/* The step names (the model form's too): the current one in ink, a short rule between them. */
+.mdl-steps{display:flex;align-items:center;gap:8px;margin:0;padding:0;list-style:none;font-size:var(--fs-meta);font-weight:500;color:var(--ink-2);white-space:nowrap;}
+.mdl-steps li{display:flex;align-items:center;gap:8px;}
+.mdl-steps li + li::before{content:'';width:12px;height:1px;background:var(--ink-3);}
+.mdl-steps li[aria-current="step"]{color:var(--ink);font-weight:600;}
+/* Where it runs: one radio card per kind; the checked card is an ink edge on the field tone, never an ink fill. */
+.mdl-opts{display:flex;flex-direction:column;gap:8px;}
+.mdl-opt{display:grid;grid-template-columns:auto minmax(0,1fr);column-gap:14px;row-gap:2px;width:100%;padding:14px 16px;border:1px solid var(--line-2);border-radius:var(--r-md);background:var(--panel);color:var(--ink);font:inherit;text-align:left;cursor:pointer;}
+.mdl-opt:hover:not([aria-checked="true"]):not(:disabled){border-color:var(--hover-outline);}
+.mdl-opt:focus-visible{outline:2px solid var(--ink);outline-offset:2px;}
+.mdl-opt[aria-checked="true"]{border-color:var(--ink);background:var(--field);}
+.mdl-opt:disabled{cursor:default;color:var(--ink-3);}
+.mdl-opt-kind{grid-row:span 2;align-self:center;width:32px;height:32px;border-radius:var(--r-sm);background:var(--field);color:var(--ink-2);display:inline-flex;align-items:center;justify-content:center;}
+.mdl-opt[aria-checked="true"] .mdl-opt-kind{background:var(--panel);color:var(--ink);}
+.mdl-opt-t{align-self:end;font-weight:600;line-height:var(--lh-title);}
+.mdl-opt-d{align-self:start;font-size:var(--fs-meta);color:var(--ink-2);}
+.mdl-opt:disabled .mdl-opt-d{color:var(--ink-3);}
+/* A provider: its select with the provider's state word beside it. */
+.mdl-add-prow{display:flex;align-items:center;gap:12px;flex-wrap:wrap;min-width:0;}
+.mdl-add-prow > .mdl-picksel{flex:0 1 280px;min-width:0;}
+.mdl-add-prow > .mdl-st{flex:none;}
+/* Step 2: the toolbar (provider, filter, "Enter an id instead"), then an OpenAI-compatible endpoint's address and key. */
+.mdl-add-bar{display:flex;align-items:center;gap:8px;flex-wrap:wrap;min-width:0;}
+.mdl-add-bar > .mdl-picksel{flex:0 1 240px;min-width:0;}
+.mdl-add-bar > .mimp-filter{flex:1 1 240px;min-width:0;}
+.mdl-add-bar > .mdl-manual{flex:none;margin-left:auto;}
+.mdl-add-src{display:grid;grid-template-columns:minmax(0,1.4fr) minmax(0,1fr);align-items:start;gap:12px 16px;}
+.mdl-add-src .mv-field{min-width:0;}
+.mdl-add-base{display:grid;gap:6px;min-width:0;}
+.mdl-add .mimp-msg:empty{display:none;}
+/* A provider that cannot list: its need and the button that fixes it (ADD-4). No border: it sits in the dialog's card,
+   which is the one border (B2). */
+.mdl-add-blocked{display:flex;align-items:center;gap:12px;padding:16px 20px;}
+.mdl-add-blocked > .mdl-add-fix{margin-left:auto;}
+.mdl-add-blocked[hidden]{display:none;}
+/* Narrow (VIS-4): the step names hide, the endpoint's fields stack, and the list scrolls sideways in its box. The
+   harness tiles' two per row and the form's one column are their own rules (.mdl-hx above, models-view.css). The
+   box takes its width from the dialog, never from the list (contain), or the list's floor widens the dialog. */
+@media (max-width:860px){
+  .mdl-steps{display:none;}
+  .mdl-add-src{grid-template-columns:minmax(0,1fr);}
+  .mdl-add #mimp-body{overflow-x:auto;contain:inline-size;}
+  .mdl-add #mimp-body .mvi-tbl{min-width:720px;}
+}
+
+/* The Jobs tab (models/jobs-view.mjs, DESIGN JOB-1…JOB-10; kit 79, 147, 203–212, 233–241, 268–270, 301, 330–343): the
+   harness tiles with their line, the three role tiles, then one card per kind of job and the one save bar. The cards
+   are the shared .card, .card-head and .drow (kit 214–221 mapped onto them, not copied); their rows wrap through the
+   shared @container drows rule, so Ask's column narrowing the page wraps them too. */
+.mdl-jobs{display:flex;flex-direction:column;gap:24px;min-width:0;}
+.mdl-jobs .mdl-sect{margin:0 0 8px;}
+/* Under the harness tiles: the harness's readiness sentence and "Default for new runs". The pressed button (this
+   harness is the default) is an ink edge on the field tone, never an ink fill, and does not fade while it is off. */
+.mdl-jobs > .mdl-jobs-line{display:flex;align-items:center;flex-wrap:wrap;gap:8px 12px;min-width:0;margin-top:-12px;}
+.mdl-jobs-reason{flex:1 1 240px;min-width:0;font-size:var(--fs-meta);line-height:var(--lh-body);color:var(--ink-2);}
+.mdl-jobs-reason:empty{display:none;}
+.mdl-default-btn{margin-left:auto;}
+.mdl-default-btn[aria-pressed="true"]{border-color:var(--ink);background:var(--field);}
+.mdl-default-btn[aria-pressed="true"]:disabled{opacity:1;cursor:default;}
+/* Role tiles (DESIGN JOB-2): who does the work, in one glance; a tile is its own picker's button. */
+.mdl-tiles{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px;}
+.mdl-tile{display:flex;flex-direction:column;align-items:stretch;min-width:0;padding:var(--pad-tile);border:1px solid var(--line);border-radius:var(--r-card);background:var(--panel);color:var(--ink);font:inherit;text-align:left;cursor:pointer;}
+.mdl-tile:hover:not([aria-expanded="true"]){border-color:var(--hover-outline);}
+.mdl-tile:focus-visible{outline:2px solid var(--ink);outline-offset:2px;}
+.mdl-tile[aria-expanded="true"]{border-color:var(--ink);}
+.mdl-tile-role{font-weight:600;line-height:var(--lh-title);}
+.mdl-tile-sub{font-size:var(--fs-meta);color:var(--ink-2);}
+.mdl-tile-model{display:flex;align-items:center;gap:10px;min-width:0;margin-top:14px;font-size:var(--fs-section);font-weight:600;line-height:var(--lh-title);}
+.mdl-tile-name{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+.mdl-tile-model > .ic{margin-left:auto;color:var(--ink-2);}
+.mdl-tile-eff{min-height:20px;margin-top:14px;font-size:var(--fs-meta);color:var(--ink-2);}
+.mdl-tile-eff b{font-size:var(--fs-body);font-weight:600;color:var(--ink);}
+/* Narrow (VIS-4): the role tiles stack. */
+@media (max-width:860px){
+  .mdl-tiles{grid-template-columns:minmax(0,1fr);}
+}
+/* A job card's head: the title and its count side by side, the Override button at the end (.card-head spreads its
+   children; .card h2's bottom margin would win over .card-head h2). */
+.mdl-job-card{min-width:0;}
+.card-head.mdl-card-h{justify-content:flex-start;flex-wrap:wrap;gap:8px 10px;min-height:28px;}
+.mdl-card-h h2{margin:0;}
+.mdl-card-h > .badge{padding:0 6px;background:var(--field);color:var(--ink-2);}
+.mdl-card-h > .mdl-override{margin-left:auto;}
+.mdl-job-note{margin:0;font-size:var(--fs-meta);line-height:var(--lh-body);color:var(--ink-2);}
+/* A job row (DESIGN JOB-8): the name and "Instead of …" left; the 260px picker, Test and the clear button right, in
+   fixed columns so every row's picker lines up whether or not it has the other two. */
+.mdl-job-txt{min-width:0;}
+.mdl-job-name{display:block;font-weight:500;}
+.mdl-job-sub{display:block;font-size:var(--fs-meta);color:var(--ink-2);}
+.mdl-job-sub:empty{display:none;}
+.mdl-job-row > .drow-control{display:grid;grid-template-columns:260px 48px 28px;gap:8px;}
+.mdl-job-row .mdl-pick{grid-column:1;}
+.mdl-job-row .mdl-job-test{grid-column:2;}
+.mdl-job-row .mdl-job-clear{grid-column:3;}
+@container drows (max-width:560px){
+  .mdl-job-row > .drow-control{grid-template-columns:minmax(0,1fr) 48px 28px;}
+}
+/* What the rest do, and Show all. No top border: the last row's divider is the hairline above it. */
+.mdl-more-line{display:flex;align-items:center;flex-wrap:wrap;gap:4px 12px;padding-top:12px;font-size:var(--fs-meta);color:var(--ink-2);}
+.mdl-card-h + .mdl-more-line{padding-top:0;}
+/* The override menu (DESIGN JOB-9): a .menu box holding the field and the list, appended to body and placed by
+   side-flyout.mjs: fixed, over the page, under #confirm-modal (60). */
+.mdl-over-pop{position:fixed;z-index:58;width:320px;max-width:calc(100vw - 16px);max-height:min(460px,70vh);overflow:auto;}
+.mdl-over-pop > input{margin:0 0 4px;}
+.mdl-over-pop [role="menu"]{display:flex;flex-direction:column;}
+.mdl-over-pop .menu-h{display:flex;align-items:center;gap:8px;}
+.mdl-over-pop .mdl-over-none{font-weight:400;}
+.mdl-over-n{margin-left:auto;font-size:var(--fs-caption);font-weight:500;}
+.mdl-over-hint{margin-left:auto;font-size:var(--fs-caption);color:var(--ink-2);}
+/* The save bar (DESIGN JOB-10): only with unsaved changes, held at the bottom of the tab; a hairline, no shadow. */
+.mdl-savebar{position:sticky;bottom:0;z-index:2;display:flex;align-items:center;justify-content:flex-end;gap:8px;padding:10px 12px 10px 20px;border:1px solid var(--line);border-radius:var(--r-card);background:var(--panel);}
+.mdl-savebar[hidden]{display:none;}
+.mdl-savebar .note{margin-right:auto;font-size:var(--fs-meta);color:var(--ink-2);}
+/* A block an address reveals (app.js revealJobsPart marks #jobs-roles or #jobs-<card> .is-found): the flash of a found
+   Settings card (settings-cards.css, settingFound), which reaches only `.mdl-panel > .card` and so missed these. */
+#jobs-root :is(#jobs-roles, .mdl-job-card).is-found{animation:settingFound 3s ease-out;}
+@media (prefers-reduced-motion:reduce){#jobs-root :is(#jobs-roles, .mdl-job-card).is-found{animation:none;box-shadow:0 0 0 3px var(--amber-ring);}}

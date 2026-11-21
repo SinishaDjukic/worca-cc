@@ -193,7 +193,7 @@ test('the pickers read the answer and say who picks, as the Chat button reads', 
   assert.equal(readPick({ effort: 'high' }), null);
   assert.equal(shortModel('claude-opus-5-5', OPTS.models), 'Opus 5.5');
   assert.equal(sourceText('lead', 'role', 'Claude'), 'Deep thinking');
-  assert.equal(sourceText('builder', 'role', 'Claude'), 'Everyday coding');
+  assert.equal(sourceText('builder', 'role', 'Claude'), 'Everyday tasks');
   assert.equal(sourceText('lead', 'setting', 'Claude'), 'Models page');
   const lead = pillView('lead', null, OPTS);
   assert.deepEqual([lead.agent, lead.model, lead.effort, lead.isDefault], ['Lead', 'Opus 5.5', 'high', true]);

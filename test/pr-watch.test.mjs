@@ -4,7 +4,7 @@ import { useTempHome } from './helpers/temp-home.mjs';
 import { getDb, tx } from '../src/core/db.mjs';
 import { writeState } from '../src/core/artifacts.mjs';
 import {
-  collectTriggers, countsAsRequest, reserveBatch, setWatch, getWatch, replyBody, buildFixTask, updateWatch,
+  collectTriggers, countsAsRequest, reserveBatch, setWatch, getWatch, replyBody, buildFixTask, conflictRef, updateWatch,
   attachWatchPipeline, createPrWatcher, createPrWatchRunner, MAX_FIX_RUNS, FIX_WORKFLOW_ID, BASE_WAIT_MS, RERUN_SETTLE_MS, _testing,
   fixTrigger, fixOutcome, fixRoundWords, stoppedWatchFact,
 } from '../src/core/pr-watch.mjs';
@@ -617,6 +617,7 @@ test('a merge conflict goes alone, once per PR head and base pair', () => {
   assert.equal(collectTriggers({ ...pr, mergeable: 'MERGEABLE' }, [], { conflictOnly: true }).fire, false);
   const task = buildFixTask({ pr, triggers: { ...t, conflict: { ...t.conflict, remote: 'upstream' } } });
   assert.match(task, /git merge --no-ff upstream\/main/);
+  assert.equal(conflictRef({ ...t.conflict, remote: 'upstream' }), 'upstream/main');
   assert.match(task, /Never rebase, reset, fetch or force-push/);
 });
 
@@ -632,6 +633,8 @@ test('the watcher merges the base on a conflict, checks the merge, then pushes',
   const { body } = io.calls.start[0];
   assert.equal(body.title, 'Resolve PR #1 merge conflicts');
   assert.match(body.prompt, /git merge --no-ff upstream\/main/);
+  // The harness is told, in-process, which ref the agent merges: the same string the brief names.
+  assert.deepEqual(io.calls.start[0].opts.mergeIn, { ref: 'upstream/main' });
   let w = getWatch(URL);
   assert.deepEqual([w.status, w.handled, w.pending.conflict], ['fixing', ['conflict:R1@B1'], { base: 'main', baseSha: 'B1', remote: 'upstream' }]);
   finishRun(io, w, 'M1');
@@ -1005,6 +1008,8 @@ test('merge-first: conflicts fall back to the agent run; leftover markers or a r
   h.deps.git.mergeBase = async () => ({ ok: true, merged: false, status: 'conflicts' });
   await h.watcher.tick();
   assert.equal(h.io.calls.start[0].body.title, 'Merge main into PR #1');
+  assert.deepEqual(h.io.calls.start[0].opts.mergeIn, { ref: 'origin/main' });
+  assert.match(h.io.calls.start[0].body.prompt, /git merge --no-ff origin\/main/);
 
   for (const [setup, reason] of [[(io) => { io.merge = { ok: true, merged: true, markers: ['f.txt:3'] }; }, 'conflict-markers'],
     [(io, deps) => { deps.git.push = async () => ({ ok: false, error: 'rejected' }); }, 'push-refused']]) {
@@ -1039,6 +1044,7 @@ test('s5: a fix run starts with the round options: the PR\'s run, the words and 
   const { io, watcher } = harness({ pr: openPr({ contexts: [failing(11)] }) });
   await watcher.tick();
   assert.deepEqual(io.calls.start[0].opts.roundOf, { pipelineId: origin, request: 'fix failing checks', kinds: ['checks'] });
+  assert.equal('mergeIn' in io.calls.start[0].opts, false, 'a feedback-only fix merges nothing');
 });
 
 test('s5: stoppedWatchFact is the watch\'s stopped reason, and null while it still watches', () => {
@@ -1055,23 +1061,4 @@ test('s2: a fix run carries the origin\'s tags and labels', async () => {
   await watcher.tick();
   const { body } = io.calls.start.at(-1);
   assert.deepEqual([body.tags, body.labels], [['client:acme'], ['hotfix']]);
-});
-
-test('Fix checks (fixChecksOnce): one round for the failing checks with Watch off, never a re-run; NO_FAILING_CHECKS when none fail', async () => {
-  const origin = seedOrigin();
-  setWatch({ prUrl: URL, pipelineId: origin, enabled: false });
-  // An Actions check with a runId: the loop would re-run it first; Fix checks starts the fix at once.
-  const { io, watcher } = harness({ pr: openPr({ contexts: [failing(5, { runId: 77 })], mergeable: 'CONFLICTING', base: 'main', baseSha: 'B1' }) });
-  const r = await watcher.fixChecksOnce(getWatch(URL));
-  assert.equal(r.ok, true);
-  assert.deepEqual([io.calls.start.length, io.calls.rerun], [1, []]);
-  assert.match(io.calls.start[0].body.prompt, /log 5/, 'the failing check, not the conflict');
-  assert.deepEqual(io.calls.start[0].opts.roundOf, { pipelineId: origin, request: 'fix failing checks', kinds: ['checks'] });
-  const w = getWatch(URL);
-  assert.deepEqual([w.enabled, w.status, w.fixRuns, w.pending.once], [false, 'fixing', 1, true]);
-  assert.equal((await watcher.fixChecksOnce(w)).code, 'BUSY');
-  getDb().exec('DELETE FROM pr_watch_runs; DELETE FROM pr_watches');
-  setWatch({ prUrl: URL, pipelineId: origin, enabled: false });
-  io.pr = openPr();
-  assert.equal((await watcher.fixChecksOnce(getWatch(URL))).code, 'NO_FAILING_CHECKS');
 });

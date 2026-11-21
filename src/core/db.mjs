@@ -854,14 +854,14 @@ const INCREMENTAL_COLUMNS = {
   req_turns:              { engine: 'TEXT', notices_json: 'TEXT' },   // v89: the harness a step ran on, its D12 notices (9c)
   req_helper_messages:    { engine: 'TEXT', notices_json: 'TEXT' },   // v89: as req_turns
   req_briefs:             { engine: 'TEXT', made_cost_usd: 'REAL', made_cost_kind: 'TEXT' },   // v89: the harness that made the brief (9c D18); NULL = Claude; the cost of its last make and its kind (billed | estimated | unknown); NULL = not booked (before 9c, a mock make)
-  req_starts:             { files_json: "TEXT NOT NULL DEFAULT '[]'" },   // v77: the files a start sent (A8 D14)
+  req_starts:             { files_json: "TEXT NOT NULL DEFAULT '[]'",   // v77: the files a start sent (A8 D14)
+                            note: 'TEXT', note_overrides: 'INTEGER NOT NULL DEFAULT 0' },   // v96: the run's note (null when empty); 1 when started anyway after a contradiction warning
   run_groups:             { name_source: "TEXT NOT NULL DEFAULT 'user'" },   // v79: 'suggested' | 'user' (Smart naming), as ask_chat_groups
   req_export_links:       { origin: "TEXT NOT NULL DEFAULT 'export'" },   // v88: where the link came from, 'export' | 'import' (A6.1 D11, D13)
   req_attachments:        { fetch_json: 'TEXT', read_engine: 'TEXT' },   // v88: the tracker file a row comes from (A6.1 D10, D13); NULL for an upload; v89: the harness that read the file (9c)
   pipelines:              { resume_point: 'TEXT', owner_pid: 'INTEGER', owner_host: 'TEXT', heartbeat_at: 'TEXT',
                             source_type: "TEXT DEFAULT 'prompt'", source_ref: 'TEXT', guardrails_id: 'TEXT',
                             archived_at: 'TEXT', cost_cap_override: 'INTEGER NOT NULL DEFAULT 0',
-                            cost_cap_usd: 'REAL',   // v91: a cap raised for this run (Stillhet's Raise the cap); NULL = the settings cap
                             pr_url: 'TEXT', pr_number: 'INTEGER', pr_state: 'TEXT', pr_checked_at: 'TEXT',
                             outcome: 'TEXT',
                             scheduled_for: 'TEXT', schedule_id: 'TEXT',   // v31: scheduled-run provenance (NULL = started by hand)
@@ -912,8 +912,7 @@ const INCREMENTAL_COLUMNS = {
                             composer: 'TEXT',        // v54: JSON {sessionId, docToken, graph, selection, dirty, drafts} — the canvas the last message carried
                             archived_at: 'TEXT',     // v75 (#948 s2): when the chat was archived; NULL = not archived
                             pinned_at: 'TEXT',       // v75 (#948 s2): when the chat was pinned; NULL = not pinned
-                            group_id: 'TEXT',        // v76 (#948 s3): the chat's topic group (ask_chat_groups.id); NULL = ungrouped
-                            labels: 'TEXT' },        // v90 (Stillhet chat): JSON [label] (run labels' rules), in the order added; NULL = none
+                            group_id: 'TEXT' },      // v76 (#948 s3): the chat's topic group (ask_chat_groups.id); NULL = ungrouped
   shape_features:         { ship_mode: 'TEXT',        // v58 (D24): 'stacked' | 'one'; NULL = not shipped
                             ship_pr_url: 'TEXT',      // v58: the one PR (mode 'one'); NULL otherwise
                             shipped_at: 'TEXT',       // v58: when Ship as ran
@@ -1484,24 +1483,6 @@ CREATE TABLE IF NOT EXISTS req_briefs (
 );
 `;
 
-// v96 (prompt check s2, docs/prompt-check.md): a person's correction of the prompt check's kind, ids and kinds only —
-// never prompt text. No FK: a row stays after its thread or run is deleted, so deleting one never fails here.
-// Reconcile-safe: IF NOT EXISTS + INCREMENTAL_TABLES.
-const PROMPT_KIND_CORRECTIONS_DDL = `
-CREATE TABLE IF NOT EXISTS prompt_kind_corrections (
-  id            INTEGER PRIMARY KEY,
-  surface       TEXT NOT NULL,
-  thread_id     TEXT,
-  card_id       TEXT,
-  run_id        TEXT,
-  proposed_kind TEXT NOT NULL,
-  chosen_kind   TEXT NOT NULL,
-  at            TEXT NOT NULL
-);
-CREATE INDEX IF NOT EXISTS idx_prompt_kind_corrections_thread ON prompt_kind_corrections (thread_id);
-CREATE INDEX IF NOT EXISTS idx_prompt_kind_corrections_run ON prompt_kind_corrections (run_id);
-`;
-
 // v76 (#948 s3): the Chats column's topic groups. A chat names its group in ask_threads.group_id (one at most); a
 // group is never empty (the store deletes it with its last chat). name_source: 'suggested' | 'user'.
 const ASK_CHAT_GROUPS_DDL = `
@@ -1700,7 +1681,6 @@ const INCREMENTAL_TABLES = {
   design_agents:      DESIGN_DDL,  // v92
   design_cost_ledger: DESIGN_DDL,  // v92
   design_pictures:    DESIGN_PICTURES_DDL,  // v94
-  prompt_kind_corrections: PROMPT_KIND_CORRECTIONS_DDL,  // v96 (prompt check s2)
 };
 
 /**
@@ -2892,8 +2872,7 @@ export function migrate(db) {
     // cost_kind, input_tokens, output_tokens}, req_turns/req_helper_messages.{engine, notices_json}, req_attachments.read_engine
     // (all nullable, INCREMENTAL_COLUMNS, so the whole step is the reconcile).
     if (current < 89) repairSchemaGaps(db, schemaGaps(db));
-    // v90: ask_threads.labels (Stillhet chat labels) — INCREMENTAL_COLUMNS, added by the hoisted repairSchemaGaps
-    // v91: pipelines.cost_cap_usd (Raise the cap) — INCREMENTAL_COLUMNS, added by the hoisted repairSchemaGaps
+    // v90, v91: reserved. Stillhet's ask_threads.labels and pipelines.cost_cap_usd were reverted from dev on 2026-11-14 (branch backup/dev-before-revert); the numbers stay taken, so a DB stamped up to 95 stays valid.
     // v92 Design: library, builds, agents, spend (first written as v87, then v89; PR-when-done #1156 took 87, Requirements A6.1 took 88,
     // Requirements 9c took 89 and Stillhet's chat labels and run cost cap took 90 and 91). IF NOT EXISTS, so a DB an earlier Design
     // numbering stamped 87 to 92 keeps its Design tables and gains dev's columns above.
@@ -2904,7 +2883,8 @@ export function migrate(db) {
     if (current < 94) db.exec(DESIGN_PICTURES_DDL);
     // v95 Design sound: designs.sound_json (the design's sound choice, D2) — INCREMENTAL_COLUMNS, added by the hoisted
     // repairSchemaGaps (a v92+ DB) or by the v92 DDL above (an older DB). First written as v92.
-    if (current < 96) db.exec(PROMPT_KIND_CORRECTIONS_DDL);   // v96 prompt check kind corrections (ids only)
+    // v96 Requirements run note: req_starts.note + req_starts.note_overrides — INCREMENTAL_COLUMNS, added by the hoisted
+    // repairSchemaGaps (a v95 DB); the base DDL does not carry them.
     db.exec(`PRAGMA user_version = ${SCHEMA_VERSION}`);
     db.exec('COMMIT');
   } catch (err) {

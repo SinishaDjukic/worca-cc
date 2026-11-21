@@ -140,16 +140,16 @@ be skipped by forgetting it.
 | Runs counts: the amber Needs-you number (no symbol), else the live count as a grey number | S — each hidden at zero |
 | Chat (the first sidebar row; the app's home) | S |
 | Chat home: Start from a preset chips; "N more…" opens New run below Advanced and Settings › Presets from Advanced | S |
-| The account corner and its menu: Interface mode, Settings, the Away and Keep awake switches, "Signed in as" (a shared identity) | S |
+| The account corner and its menu: the level card, "Signed in as" (a shared identity), the spend card and Usage, the Away and Keep awake switches, Appearance, Interface mode, Settings | S |
 | The spend ring on the avatar and the menu's spend card (with the free-request row) | S — never hidden: a blocked limit turns the ring red and full, and the card and the New pipeline note say until when |
 | Statistics, Workspaces | A |
 | Add-ons: the group label, Marketplace, Connectors | A |
-| Add-ons: Models, Providers | E — like every page, the open one keeps its row at a lower mode while the banner names its level |
+| Add-ons: Models (Providers is its third tab) | E — like every page, the open one keeps its row at a lower mode while the banner names its level |
 | Schedules | A — kept visible at every level while anything is scheduled, missed, repeating or unread; its grey count and amber unread pill each hide at zero |
 | Team metrics, Team policy | E |
 | The level avatar art in the corner (the round art on the account corner and the spend ring's avatar) | all — a level is shown to everyone, whatever the mode |
 | The level tooltip (hover or focus on the corner avatar: the level, its items, a link to Profile) | all |
-| The account-menu level card (above Interface mode) | all |
+| The account-menu level card (the first item of the account menu) | all |
 | Profile (the level section) | all — it has no sidebar entry; it opens from the menu card, the tooltip and the Getting started level line |
 
 Levels are not Interface modes: no level element carries `data-min-level`; Try next / Open links to higher-mode pages open them with the banner.
@@ -200,12 +200,13 @@ The **Auto** workflow option is available for both targets — a project and a w
 | Runs list: Delete (the action bar and the row ⋯ menu); Add to group… and Remove from group (the row ⋯ menu); their keys ⌫, G and ⇧G | A |
 | Run page: "Add to group…" on the Group row of a run in no group, the same as in the list's row menu | A |
 | Resume menu: Resume at HH:MM (when the limit resets) | A |
-| Run page glance: the run's name as the page title, the status line (state, then the step), time · cost (with its Away mode share) · changes; the Cost tags row under them, the Live view switch and its fogged graph of the running step(s), parallel steps (Now), one row per tab, a waiting question below its own heading, the result actions | S |
+| Run page (one level): the header (the run's name, Run after, Pause/Resume, Stop and ⋯ ending the title row), a waiting question above the tabs on every tab, then the tabs; the run card is the Overview tab's body: the status line (state, then the step), the Cost tags row, the result actions; on a wide pane its right column holds time · cost (with its Away mode share) · changes, the verdict and, while the run goes, its fogged workflow framed on the running step(s) (a click opens the Workflow tab); parallel steps (Now) | S |
+| Task tab (second): the prompt in full as markdown and the Run setup card, which shows each choice at the level the New run form shows it: workflow, Away mode, mock run (S); engine (kept visible when it is not Claude), guardrails, human in the loop, source branch, MCP servers off, code graph, each agent's model and effort (A); each agent's sub-agents and questions, each loop's round budget (E) | S |
 | Run progress: the bar under the status line (Plan · Build · Review · Ready, blue / amber / green), its text ("Build · task 2 of 4") in place of "Step: …", the chain's overall bar ("Run 2 of 3"), the Runs list's group bar and group row with its ⌄ | S |
 | Run progress hover breakdown: stages with their agents and states, review pass count | A |
 | Workflow graph with status colours, gate pip, End result; Workflow, Overview and Q&A tabs | S |
 | Run header cost and its breakdown (agents, Away mode, Auto workflow, run title; stopped reviews and stopped agent turns apart); the Overview cost card's Away mode share | S |
-| "Answered for you": one group per ask (kind · time · model · cost of its review, or "review stopped" and its lower bound), the answers, Check; the heading's answer count and what the Away mode reviews cost | S |
+| The run card's Away mode note ("Away mode: 5 answers while you were away — 2 to check") and its See the answers, which opens the Q&A tab; each answered question there says who answered it | S |
 | Diff tab (live worktree while running, the final patch after) | S |
 | Folder run (a Folder project): Changes tab, the Folder chip, the "<n> files · on a copy" bar with Discard and Apply to folder, the Apply to folder dialog | S |
 | Run without a project (No project): the Artifacts tab, opened first; the No project chip | S |
@@ -213,21 +214,11 @@ The **Auto** workflow option is available for both targets — a project and a w
 | Step log drawer under the Workflow graph (a card or execution-row click; Open in Logs, resize, close), Summaries / Raw switch (flag `commandSummaries`) | A — follows the Logs tab |
 | Branch chip, progress n/m · step on the card, model · effort pill, graph zoom cluster | A |
 | Auto proposal Revise; Artifacts tab | A |
-| Actions tab, Overview actions strip, Create PR 'Try it first' button and strip | A |
+| Actions tab, Create PR 'Try it first' button and strip | A |
 | Running-action pill in the header, sidebar Running actions rows (one tile on the rail) | all — shown only while a service runs |
 | Log filters (source, level, node, cycle) | E |
 | Graph node totals, fan and execution strips, Away mode chips and bands, loop badges | E |
 | Agents tab, worktree row, Auto proposal tunables table | E |
-
-### The Rail run page
-
-Rail's run page (`docs/rail/thing-page.md`) has one rule in place of the rows above, in code as `runPartShows`:
-
-| Element | Level |
-|---|---|
-| All four tabs: Overview, Changes, Activity, Decisions | S |
-| Inside them: the Logs, the Workflow graph, Sessions and Actions | A |
-| Inside them: Agents and the log filters | E |
 
 ### History
 
@@ -235,17 +226,16 @@ Rail's run page (`docs/rail/thing-page.md`) has one rule in place of the rows ab
 |---|---|
 | List, project filter, Refresh; Overview (verdict, findings, duration, cost, task); Clarify tab; Resume | S |
 | Header cost and its breakdown (agents, Away mode, Auto workflow, run title; stopped reviews and stopped agent turns apart); the glance and Overview cost's Away mode share | S |
-| "Answered for you", as on the run page | S |
+| The Away mode note and the Q&A tab, as on the run page | S |
 | Save as preset (a run with a stored setup) | S |
 | Run page bar: Back (every layout) and ⋯ (Away mode while live, Save as preset, Terminal, Report this run, Archive / Restore) | S |
 | History: usage-limit notice | S |
-| "Files changed" list on the Overview | S |
 | Folder run: Changes tab, the Folder chip, the Apply bar and dialog, Discard; the Git / Folder chip on a project's group in the Runs list | S |
 | Run without a project: the Artifacts tab, opened first; the No project group and its chip in the Runs list | S |
 | Overview: Perspective checklists, as on the run page (shaped runs) | S |
 | Run page head on a project with no remote: Link remote, How to merge | S |
 | Diff pill, inline comments; Create PR / View PR; "Push <source>" (a run on its source branch, instead of a PR); branch line; Artifacts tab | A |
-| Actions tab, Overview actions strip, Create PR 'Try it first' button and strip | A |
+| Actions tab, Create PR 'Try it first' button and strip | A |
 | Create PR dialog: Draft switch, "Will close owner/repo#N" line | A — ungated inside the modal (no `data-min-level`), so they show wherever the modal opens |
 | Running-action pill in the header, sidebar Running actions rows (one tile on the rail) | all — shown only while a service runs |
 | Mergeability pill; Logs tab; Agents tab; team-metrics status; MEMORY CHANGES; worktree row | E |
@@ -356,21 +346,23 @@ inside the view.
 | General: spawn diagnostics; Memory tab: the line linking to Helper jobs | E |
 | Guardrails create / delete | E |
 
-### Marketplace, Connectors, Models, Providers (the Add-ons pages)
+### Marketplace, Connectors, Models (the Add-ons pages)
 
-Settings tabs once, pages of their own now. The old addresses (`#settings/plugins`, `#settings/mcp/…`,
-`#settings/models/…`, `#settings/providers`, `#plugins`) land on the page they mean, sub-path kept.
+Settings tabs once, pages of their own now. The Models page has three tabs: Catalogue, Jobs and Providers. The old
+addresses (`#settings/plugins`, `#settings/mcp/…`, `#settings/models/…`, `#plugins`) land on the page they mean,
+sub-path kept; `#providers/…` and `#settings/providers` land on Models › Providers.
 
 | Element | Level |
 |---|---|
 | Marketplace page: the Browse, Installed and Marketplaces tabs, install, update, Add marketplace, Health (Check health), leftover data and Purge | A |
 | Marketplace page, behind the `ticketUpdates` flag: the installed plugin sheet's **Ticket updates** section (Projects you work on and its popover, the rules and their move select, Add a project rule, the states), and "Moved to Ticket updates." on the old setting | A — with the Marketplace page |
 | Connectors page: the Sets, Servers and Skills views | A |
-| Models page: the catalog, and the Engines card (Default engine, Models per engine: Step models and Helper jobs tables, including titles, Auto classifier, PR description, Memory defragment, Agent generation and, behind the `requirements` flag, Requirements interview) | E |
-| Models page: the Roles card (Deep thinking, Everyday coding, Quick jobs per harness; its Claude / Codex switch is E). The Models nav entry is E, so below Expert the card opens from the `#models` address until the setup assistant adds a Simple-level way in | S |
-| Models page: the catalog toolbar (search, filter chips, folding groups), the editor dialog's Connection section, the Import-models dialog (Copilot and OpenAI-compatible sources) | E |
-| Providers page: Providers card (Copilot sign-in, account type, concurrency cap, key rows) and its Import-models shortcuts | E |
-| A card's "needs sign-in" pill and button; the New pipeline caption's "needs sign-in" note | all (rule 1 — they block a run) |
+| Models › Catalogue: search, the All / In use / Needs setup / Just imported chips, the Source filter, the harness groups (Hide built-in models, the ⋯ menu's Default for new runs), the model panel, Add model (Where it runs, the provider lists), the model form (its Connection and Capabilities and limits folds) and More › Share as plugin | E |
+| Models › Jobs: the Roles tiles (Deep thinking, Everyday tasks, Quick jobs). The Models nav entry is E, so below Expert they open from the `#models/jobs/roles` address or the top search's Roles row | S |
+| Models › Jobs: the Steps and Helper jobs cards and their Override buttons (Claude Code's helper jobs: Titles, Auto workflow classifier, PR description, Memory defragment, Agent generation, Second-opinion reviewer and, behind their flags, Run naming, Command summaries and Requirements interview), and the Design card behind the `design` flag | A |
+| Models › Jobs: the harness tiles, the harness line's Default for new runs, and each card's Show all. Below Expert the tab shows the default harness | E |
+| Models › Providers: GitHub Copilot (sign-in, Account, Max concurrent requests), OpenRouter, OpenAI-compatible, Anthropic-compatible, Speech, Image generation, Sound, and the rows' Import models | E |
+| Models › Catalogue: a model's "Needs setup" state, and a harness group's "Needs sign-in" or "Needs key" line with its Sign in or Set key button; the New pipeline caption's "needs sign-in" note | all (rule 1 — they block a run) |
 
 ### Requirements (behind the `requirements` flag)
 
@@ -419,7 +411,7 @@ missing (`data-needs-git`), at every level.
 | Statistics page | A |
 | Statistics: the Requirements tile (spend, features, a link to the page; behind the `requirements` flag), the Requirements row in the Group by tables and in the Cost report (money already spent there stays listed while the flag is off) | A — with the page |
 | Team metrics page and every surface of it elsewhere | E |
-| Team policy page and its Policy / Plugins / Catalog tabs | E (in Rail: A to read, E to change) |
+| Team policy page and its Policy / Plugins / Catalog tabs | E |
 | Team-policy notes on New pipeline; the team caps readout under Budget & cost limits | all — a team cap applies in every mode, so the reason it applies is never hidden |
 | The Installed tab's Team policy card and the setup checklist (the Marketplace page) | A — with the page that holds them |
 | Ask: chat, history, attachments, run card (its progress bar and stage text), proposal title / project / workflow / brief / Start | S |

@@ -23,7 +23,7 @@ import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import { readFile, writeFile, copyFile, readdir, mkdir, realpath, rename, stat, rm } from 'node:fs/promises';
 
 import { generateTitle } from './title.mjs';
-import { recordUsageLimit } from './usage-limits.mjs';
+import { recordClaudeLimit } from './usage-limits.mjs';
 import {
   createPipeline, updatePipelineTitle, appendAudit, writeState, artifactPaths, slugify, today,
   recordArtifact, writeClarify, readPipelineExtras, claimPipelineOwnership, touchHeartbeat,
@@ -61,7 +61,7 @@ import { captureProposals } from './memory-proposals.mjs';
 import { createUsageTally, drainMemoryLoads, memoryLoadLogPath, noteOfMemoryRel, recordMemoryUsage, rulesHaveScopedNote } from './memory-usage.mjs';
 import { memoryRoot, listMemory, renderMemoryBlock, bumpScopeState, readScopeState, memoryScopeReport, renderDefragBrief } from './memory-store.mjs';
 import { isTeamMemoryOn, refreshTeamLayerWithin, mountTeamLayer, queueTeamChanges, teamChangesFromSync, teamClientText, memoryLoadPlans, loadFilteredDirs } from './memory-team.mjs';
-import { readCostCapOverride, readRunCostCap, setRunCostCap, totalWindowSpendUsd, costWindowStart, recordCostDelta } from './cost-budget.mjs';
+import { readCostCapOverride, totalWindowSpendUsd, costWindowStart, recordCostDelta } from './cost-budget.mjs';
 import {
   writeRunManifest, readRunManifest, updateRunManifest, rmGuarded, rescueModifiedMounts,
   scanStrayEntries, copyRunManifestTo, removeInjectedPaths, stripClaudeMdFence,
@@ -90,9 +90,11 @@ import { loadAgentRegistry, DEFAULT_AGENTS_DIR } from './agent-registry.mjs';
 import {
   createWorktree, removeWorktree, suggestBranchName, sanitizeBranchName, resolveDefaultBranch,
   isValidSourceRef, snapshotWorktreePatch, listLocalBranches, worktreeHead, deleteBranchIfAt,
-  reusedBranchBase, isAncestor, withoutIgnored,
+  reusedBranchBase, isAncestor, withoutIgnored, commitOf, autoMergeBase, dropDiffBaseRefs,
+  newestBaseIn, diffLineCount, pinDiffBase, defaultBranchRef,
 } from './worktree.mjs';
 import { writeReadinessSnapshot } from './repo-readiness/snapshot.mjs';
+import { serialQueue } from './graph/human-evidence.mjs';
 import { deriveBranchName, uniqueBranch } from './naming.mjs';
 import { flagEnabled } from './flags.mjs';
 import { syncBaseForRun, ensureLocalBranch, fetchRemote, fastForwardTo, isSafeBranchName, runSyncOptions, INTERACTIVE_TIMEOUT_MS, mergeBaseBeforeRun, baseMovedAudit } from './git-sync.mjs';
@@ -274,6 +276,15 @@ function hasPermissionRules(rules) {
 const validResolves = (r) => (r && typeof r === 'object' && typeof r.runId === 'string' && r.runId
   ? { runId: r.runId, member: typeof r.member === 'string' && r.member ? r.member : null } : null);
 
+/** A conflict run's `branch.mergeIn` (the ref its brief tells the agent to merge), or null. Server-only (req._mergeIn),
+ *  never from HTTP. The ref reaches git argv, so it is a plain ref name: no leading '-', no '..'. */
+const validMergeIn = (m) => {
+  const ref = m && typeof m === 'object' ? m.ref : null;
+  if (typeof ref !== 'string' || ref.length < 1 || ref.length > 200) return null;
+  if (!/^[A-Za-z0-9._\/-]+$/.test(ref) || ref.startsWith('-') || ref.includes('..')) return null;
+  return { ref };
+};
+
 /** Shaper s5 (D4, D21): the `branch.roundOf` marker of a round, or null. Server-only (req._roundOf), never from HTTP.
  *  A Watch PR fix round also keeps `by: 'watch'`, its trigger `kinds` and its `outcome`, so a resume keeps them. */
 const ROUND_KINDS = new Set(['checks', 'comments', 'changes', 'conflict', 'behind']);
@@ -281,7 +292,6 @@ const validRoundOf = (r) => {
   if (!(r && typeof r === 'object' && typeof r.pipelineId === 'string' && r.pipelineId && Number.isInteger(r.round) && r.round >= 2)) return null;
   const out = { pipelineId: r.pipelineId, round: r.round, request: typeof r.request === 'string' ? r.request.slice(0, 200) : '' };
   if (r.by === 'watch') { out.by = 'watch'; out.kinds = (Array.isArray(r.kinds) ? r.kinds : []).filter((k) => ROUND_KINDS.has(k)); }
-  else if (r.by === 'restart') out.by = 'restart';   // Restart Build (Stillhet): a round that builds the saved plan again
   const o = cleanOutcome(r.outcome);
   if (o) out.outcome = o;
   return out;
@@ -312,6 +322,11 @@ export function roundUsd(n) {
 
 /** Session records a pause or a crash must find in the row (Task 43; C43: `member_bound` keeps an epoch's first host id). */
 const SESSION_PERSIST_KINDS = new Set(['open', 'degrade', 'member_bound', 'turn_end', 'rotate', 'restart', 'pause', 'close']);
+
+/** The attached-requirements option as a fresh list of plain copies: anything that is not a list of objects is none. */
+function attachedList(raw) {
+  return Array.isArray(raw) ? raw.filter((item) => item && typeof item === 'object').map((item) => ({ ...item })) : [];
+}
 
 /** A usage of either shape (API, the session demux's {in,out,cr,cw}, Ask's) with the API keys config.mjs resolveModelCost
  *  prices, `cache_creation` buckets kept (session groups, Task 42). */
@@ -978,6 +993,8 @@ export class RunHarness extends EventEmitter {
     // option (the CLI, API bodies without one) get the install's default: Normal
     // on a fresh install, Permissive (the empty policy) on one from before v81.
     this.guardrailsId = this.opts.guardrailsId || defaultGuardrailSetId();
+    // POST /api/run's note when a Chat-card start was moved off a Permissive it did not pick: a run line + audit at start.
+    this._guardrailsNote = typeof this.opts.guardrailsNote === 'string' && this.opts.guardrailsNote ? this.opts.guardrailsNote : null;
     // MCP registry (design §6.2, D16): the run's per-membership opt-out ('<setId>|<serverId>'),
     // validated by POST /api/run; rides the resume point, restored beside guardrailsId.
     this.mcpOptOut = Array.isArray(this.opts.mcpOptOut) ? this.opts.mcpOptOut : [];
@@ -995,6 +1012,8 @@ export class RunHarness extends EventEmitter {
       resolves: validResolves(this.opts.branch && this.opts.branch.resolves),
       // Shaper s5 (D4): a round of an earlier run (Ask for changes, a Watch PR fix run). Server-only, never from HTTP.
       roundOf: validRoundOf(this.opts.branch && this.opts.branch.roundOf),
+      // A conflict run (Watch PR, Resolve in a pipeline): the ref it merges. Its diff base moves to git's own merge.
+      mergeIn: validMergeIn(this.opts.branch && this.opts.branch.mergeIn),
       // Smart run naming (flag smartRunNaming): `suggested` = the name came from the form's suggestion, so it is made
       // unique like a derived one; `legacy` = the model was unavailable, so today's exact name applies. Server-set only.
       suggested: !!(this.opts.branch && this.opts.branch.suggested === true),
@@ -1072,10 +1091,6 @@ export class RunHarness extends EventEmitter {
     this._pauseGate = null;                  // gate context snapshot when paused at a gate
     this._resumeNodeSessions = null;         // nodeId -> sessionId map, set by resume() (Task 5)
     this.resumeOpts = this.opts.resume || null; // { row, resumePoint, steps } from readPipelineForResume
-    // Raise the cap (Stillhet): a cap raised for this run, read once here, wins over the settings cap. A resume reads its
-    // row's; a Restart Build carries its origin's (written on its row once it exists). null = the settings cap.
-    this.runCostCapUsd = this.opts.resume?.row?.id ? readRunCostCap(this.opts.resume.row.id)
-      : (Number(this.opts.runCostCapUsd) > 0 ? Number(this.opts.runCostCapUsd) : null);
     // Agent memory (agent-memory-design.md §7.3): the defragment run option. A resumed run reads
     // it back from its resume point — the resume sites pass no run options (B10). The API and the
     // CLI validated already; this throw is the programming-error backstop (never a 400).
@@ -1085,6 +1100,9 @@ export class RunHarness extends EventEmitter {
     // Shape it first (spec D5): { perspectives } for a shaped run, null otherwise. NOT `this.shape` — the
     // orchestrator's Auto path already uses "shape" for the classifier's shape.
     this.runShape = this.opts.shape || this.resumeOpts?.resumePoint?.shape || null;
+    // Requirements features attached at start ([{seq,id,title,version,ready,criteriaCount,agreed}]): the agreement gate
+    // asks before the first node. A resumed run reads the list back from its point, with the agreements already given.
+    this.attachedRequirements = attachedList(this.opts.attachedRequirements ?? this.resumeOpts?.resumePoint?.attachedRequirements);
     // Shaper D28: the recorded half of shapeStats (questions, revises, score); null on an unshaped run.
     // A resumed run reads it back from its row (shape_stats).
     this._shapeRec = this.runShape ? shapeRecordFrom(safeParse(this.resumeOpts?.row?.shape_stats)) : null;
@@ -1147,8 +1165,7 @@ export class RunHarness extends EventEmitter {
       title: this.opts.title || null,
       projectDir: this.projectDir,
       runEngine: this.claude.engine,
-      ...(this.runCostCapUsd != null ? { pipelineCapUsd: this.runCostCapUsd }
-        : this._projectPipelineCap() !== undefined ? { pipelineCapUsd: this._projectPipelineCap() } : {}),
+      ...(this._projectPipelineCap() !== undefined ? { pipelineCapUsd: this._projectPipelineCap() } : {}),
       status: 'idle',
       phase: 'idle',
       cycle: 0,
@@ -1297,67 +1314,6 @@ export class RunHarness extends EventEmitter {
   }
 
   /**
-   * Pause after this step (Stillhet, plans/rail/task-engine-additions.md): set the in-memory flag `pauseAfterStep`
-   * without aborting anything. No new execution starts while it is set (_awaitStepBoundary); once none is in flight,
-   * dev's pause(by) runs once. Never persisted; cleared by that conversion and by any status other than running.
-   * → true, false (not running: dev's CANNOT_PAUSE) or 'already' (a pause after this step is pending).
-   */
-  pauseAfterStep(by = null) {
-    if (this.state.status !== 'running') return false;
-    if (this.state.pauseAfterStep) return 'already';
-    this._pauseAfterStepBy = by;
-    this.state.pauseAfterStep = true;
-    this.state.updatedAt = new Date().toISOString();
-    this._emit('state', this.getState());
-    if (!this._inFlight) this._convertPauseAfterStep();
-    return true;
-  }
-
-  /** The flag became a pause: dev's pause, once. */
-  _convertPauseAfterStep() {
-    const by = this._pauseAfterStepBy ?? null;
-    this._clearPauseAfterStep();
-    this.pause(by);
-  }
-
-  _clearPauseAfterStep() {
-    this._pauseAfterStepBy = null;
-    this._pauseAfterStepDue = false;
-    if (this.state.pauseAfterStep) delete this.state.pauseAfterStep;
-    const waiters = this._stepWaiters || []; this._stepWaiters = [];
-    for (const w of waiters) w();
-  }
-
-  /** An execution about to start waits here while a pause after this step is pending and another one is in flight. */
-  async _awaitStepBoundary() {
-    while (this.state.pauseAfterStep && this._inFlight > 0) {
-      await new Promise((r) => { (this._stepWaiters ||= []).push(r); });
-    }
-    if (this.state.pauseAfterStep) this._convertPauseAfterStep();   // nothing in flight: the pause lands before this one starts
-    this._inFlight = (this._inFlight || 0) + 1;
-  }
-
-  /**
-   * An execution settled: the last one out marks a pending pause after this step as due. It converts only once the
-   * scheduler has recorded that completion in a snapshot (_stepRecorded), so the resume point holds the finished step
-   * and a resume never runs it again.
-   */
-  _leaveStep() {
-    this._inFlight = Math.max(0, (this._inFlight || 0) - 1);
-    if (this._inFlight || !this.state.pauseAfterStep) return;
-    this._pauseAfterStepDue = true;
-    // An execution already waits at the boundary (a fan-out slice that took the freed agent slot). A slice's
-    // completion is never snapshotted on its own, so _stepRecorded may not come while the phase waits on that slice.
-    // Give the scheduler this turn to record the finished step (a top-level node snapshots in its settle), then convert.
-    if (this._stepWaiters?.length) setImmediate(() => this._stepRecorded());
-  }
-
-  /** The scheduler recorded a completion (its snapshot is the resume point): a due pause after this step lands now. */
-  _stepRecorded() {
-    if (this._pauseAfterStepDue && !this._inFlight && this.state.pauseAfterStep) this._convertPauseAfterStep();
-  }
-
-  /**
    * Gracefully pause the run: kill in-flight node children (SIGTERM via the
    * pause-only signal), unwind _dispatch, persist a resume point. The worktree is
    * kept. Returns false unless the run is currently 'running'.
@@ -1441,6 +1397,7 @@ export class RunHarness extends EventEmitter {
     if (pq.kind === 'workflow') line = `Workflow proposal **${d === 'decline' ? 'declined' : d || 'answered'}**`;
     else if (pq.kind === 'gate') line = `Gate **${d || 'answered'}**`;
     else if (pq.kind === 'recovery') line = `Recovery decision **${d || 'answered'}**`;
+    else if (pq.kind === PLAN_ASK_KIND && pq.plan?.attached) line = `Attached requirements **${d === 'approve' ? 'agreed' : d || 'answered'}**`;
     else if (pq.kind === PLAN_ASK_KIND && pq.plan?.outline) line = `Slice outline **${d || 'answered'}** (round ${pq.plan.round || 1})`;
     else if (pq.kind === PLAN_ASK_KIND && pq.concern) line = `Plan concern **${d === 'revise' ? 'accepted' : d === 'approve' ? 'overridden' : d || 'answered'}**`;
     else if (pq.kind === PLAN_ASK_KIND) line = `Plan approval **${d || 'answered'}**`;
@@ -1650,6 +1607,10 @@ export class RunHarness extends EventEmitter {
       await this._brokerPreflight(topology.manifest, stepModels);
       this._remoteExecutorPreflight(topology.manifest, stepModels);
       await this._resolveGuardrails();
+      if (this._guardrailsNote) {
+        this._log('orchestrator', 'warn', this._guardrailsNote);
+        this._pendingAudits.push(`${this._guardrailsNote}.`);
+      }
       await this._resolvePolicy();
       this._noteLocalTagDimensions();
       // The engine's own run-start check (binary, sign-in) and the project deny rules
@@ -1729,14 +1690,6 @@ export class RunHarness extends EventEmitter {
       });
       this.state.id = this.pipeline.id;
       this.state.pipelineDir = this.pipeline.dir;
-      if (this.runCostCapUsd != null) {
-        setRunCostCap(this.pipeline.id, this.runCostCapUsd);   // a Restart Build keeps its origin's cap
-        // The cap set at the start is a decision worth an audit line (D12); it shows with `rail` off too.
-        const by = this.opts.startedBy || null;
-        // a Restart Build or PR-fix round inherits its origin's cap: nobody set it for this round, so it says so
-        const kept = validRoundOf(this.opts.branch && this.opts.branch.roundOf);
-        appendAudit(this.pipeline.dir, kept ? `Pipeline cost limit $${this.runCostCapUsd.toFixed(2)} kept from the first round.` : `Pipeline cost limit set to $${this.runCostCapUsd.toFixed(2)} for this run${byActor(by)}.`, { actor: by }).catch(() => {});
-      }
       // Replace the placeholder the client was shown at start with the task's title.
       if (ticketTitle) this._emit('title', { title: ticketTitle, provisional: false, pipelineId: this.pipeline.id });
       this.logWriter.bind(this.pipeline.dir);                  // start persisting (flushes buffered preflight lines)
@@ -2550,6 +2503,9 @@ export class RunHarness extends EventEmitter {
    * skipped today, and a legacy empty dir inside the project repo would let the ancestor check pass
    * against the user's own checkout. Shared by resume and stop-of-paused. Runs before `_rehydrated`
    * (the 'resume' failure site), so it NEVER throws.
+   * A member whose record carries `startHead` (every checkout set up since base merges are measured) or `mergeIn` is
+   * skipped: its base may be a synthetic auto-merge commit, never an ancestor of HEAD, and `_refreshMergeBases` (run by
+   * the first diff reader) recomputes it from the record.
    */
   async _reconcileDiffBases() {
     const short = (s) => (s ? String(s).slice(0, 10) : 'none');
@@ -2557,6 +2513,7 @@ export class RunHarness extends EventEmitter {
       let changed = false;
       for (const [key, dir] of this.workDirs.entries()) {
         const rec = this.state.branches?.[key];
+        if (rec?.mergeIn || rec?.startHead) continue;     // D8: _refreshMergeBases owns a recorded start's base
         const want = rec && rec.worktreeDir ? (rec.diffBase || rec.baseSha || null) : null;
         const had = this.checkpointRefs[key] || null;
         if (!want || !had || want === had) continue;
@@ -2876,6 +2833,12 @@ export class RunHarness extends EventEmitter {
           // the "this run created the branch" proof _dropUnchangedMemberBranch deletes by.
           const reuseBase = willReuse ? await this._reusedBranchBase(m, source, featureRaw, pending, syncRecord) : null;
           if (reuseBase && this.checkpointRefs[m.projectKey] !== reuseBase.sha) this.checkpointRefs[m.projectKey] = reuseBase.sha;
+          // D1: a conflict run on a REUSED branch records the ref it was told to merge and where it pointed now. A fresh
+          // branch starts from the source, so merging it is a no-op. A replay reads the pending record (no opts.branch).
+          const mergeInRef = willReuse ? (pending?.mergeIn?.ref || this.branchOpts.mergeIn?.ref || null) : null;
+          const mergeIn = mergeInRef
+            ? { ref: mergeInRef, at: pending?.mergeIn?.at ?? await commitOf(resolve(m.projectDir), mergeInRef) }
+            : null;
           // Pending record, persisted with the checkpoint if createWorktree fails pausably (mirrored
           // into state.branch before the throw, below). It has no worktreeDir: that marks it pending.
           // `plannedFeature`, not `feature`: readers treat `feature` as "a branch this run owns".
@@ -2884,6 +2847,7 @@ export class RunHarness extends EventEmitter {
             ...(baseMoved ? { baseMoved: true } : {}),
             ...(reuseBase ? { diffBase: reuseBase.sha, diffBaseFrom: reuseBase.against } : {}),
             ...(syncRecord ? { sync: syncRecord } : {}),
+            ...(mergeIn ? { mergeIn } : {}),
             ...(sameAsSource ? { sameAsSource: true } : {}) };
           const info = await createWorktree({
             projectDir: resolve(m.projectDir),              // the REAL dir: git runs here
@@ -2920,15 +2884,22 @@ export class RunHarness extends EventEmitter {
             : (reuseBase?.sha || await worktreeHead(info.worktreeDir));
           if (diffBase && this.checkpointRefs[m.projectKey] !== diffBase) this.checkpointRefs[m.projectKey] = diffBase;
           const keptStart = startRef && freshStart ? startRef : null;   // a reused branch ignored it
+          // Where the checkout starts and where its base refs point now: _refreshMergeBases measures a later merge of,
+          // or rebase onto, a base ref from these, so base-branch commits picked up during the run never count.
+          const startHead = baseSha || await worktreeHead(info.worktreeDir);
+          const baseRefs = await this._baseRefsNow(m.projectKey, resolve(m.projectDir), { source, sync: syncRecord, mergeIn });
           this.state.branches[m.projectKey] = { source, feature: info.branch,
                                                 worktreeDir: info.worktreeDir,
                                                 reusedExisting: info.reusedExisting,
                                                 ...(baseSha ? { baseSha } : {}),
+                                                ...(startHead ? { startHead } : {}),
+                                                ...(Object.keys(baseRefs).length ? { baseRefs } : {}),
                                                 ...(!freshStart && diffBase ? { diffBase, diffBaseFrom: recreated ? null : (reuseBase?.against || null) } : {}),
                                                 ...(keptStart ? { startRef: keptStart } : {}),
                                                 ...(syncRecord ? { sync: syncRecord } : {}),
                                                 ...(this.branchOpts.resolves ? { resolves: this.branchOpts.resolves } : {}),
                                                 ...(this.branchOpts.roundOf ? { roundOf: this.branchOpts.roundOf } : {}),
+                                                ...(mergeIn ? { mergeIn } : {}),
                                                 ...(sameAsSource ? { sameAsSource: true } : {}) };
           // Shaper s5 (D14): a feature's next run starts from the moved base. Slice k ≥ 2, single project, fresh branch only.
           const sl = this.runShape && this.runShape.slice;
@@ -3430,7 +3401,7 @@ export class RunHarness extends EventEmitter {
     if (caps.cost === false) {
       // The caps _checkCostLimits enforces, read the same way: neither can see this engine's spend.
       const teamFields = this.policyRun?.fields || {};
-      const pipe = effectiveCap({ local: this.runCostCapUsd ?? pipelineCostLimitUsd(this._settingsScope()), team: teamFields['cost.pipelineLimitUsd'] || null });
+      const pipe = effectiveCap({ local: pipelineCostLimitUsd(this._settingsScope()), team: teamFields['cost.pipelineLimitUsd'] || null });
       if (pipe.cap != null) lines.push(`engine ${name}: the pipeline cost limit cannot count ${name}'s spend (cost unknown)`);
       const tot = effectiveCap({ local: totalCostLimitUsd(), team: teamFields['cost.totalLimitUsd'] || null });
       if (tot.cap != null) lines.push(`engine ${name}: the total cost limit cannot count ${name}'s spend (cost unknown)`);
@@ -5372,6 +5343,7 @@ export class RunHarness extends EventEmitter {
     const ec = await this._engineConfigState(info.worktreeDir, { ignoreAbort: true });
     const commit = await this._commitWork(info, this.state.branch,
       { excludePathspecs: this._excludePathspecs(key), forcePaths: ec.forced, unstagePaths: ec.owned });
+    if (key) await this._dropMergeBaseRef(key);
     // The memory mount (the one legacy injected path) was synced at _buildResults; remove it now
     // so it rides neither the retained-work snapshot nor an outlived checkout.
     await removeInjectedPaths(info.worktreeDir, injected);
@@ -5429,6 +5401,7 @@ export class RunHarness extends EventEmitter {
       const ec = await this._engineConfigState(info.worktreeDir, { ignoreAbort: true });
       const commit = await this._commitWork(info, branchRecord,
         { excludePathspecs: this._excludePathspecs(projectKey_), forcePaths: ec.forced, unstagePaths: ec.owned });
+      await this._dropMergeBaseRef(projectKey_);
       await removeInjectedPaths(info.worktreeDir, this._injectedFor(projectKey_, info.worktreeDir));
       const retained = await this._recordCommitFailure(commit, { key: projectKey_, info, branchRecord });
       const merged = await this._mergeBack(projectKey_, info, branchRecord, { retained });
@@ -5598,6 +5571,7 @@ export class RunHarness extends EventEmitter {
       const commit = await this._commitWork(
         info, branchRecord, { excludePathspecs: this._excludePathspecs(key), forcePaths: ec.forced, unstagePaths: ec.owned },
       );
+      await this._dropMergeBaseRef(key);
       const retained = await this._recordCommitFailure(commit, { key, info, branchRecord });
       // (4) remove what worca-cc injected, so nothing can be committed dangling or
       // outlive the run root. An engine config file worca did not write stays (_injectedFor).
@@ -6194,7 +6168,7 @@ export class RunHarness extends EventEmitter {
     // Team policy (design §7): the tighter of the developer's cap and a soft team cap applies;
     // a team default only starts the developer off. `binding` says whose number tripped.
     const teamPipe = teamFields['cost.pipelineLimitUsd'] || null;
-    const pipe = effectiveCap({ local: this.runCostCapUsd ?? pipelineCostLimitUsd(this._settingsScope()), team: teamPipe });
+    const pipe = effectiveCap({ local: pipelineCostLimitUsd(this._settingsScope()), team: teamPipe });
     // The developer's own cap (or a team DEFAULT, which is the same thing): the existing
     // pause + the existing per-pipeline override. A team-bound fold has no "own" cap here.
     const ownCap = pipe.binding === 'team' ? null : pipe.cap;
@@ -6690,6 +6664,7 @@ export class RunHarness extends EventEmitter {
         // An outline ask keeps its marker and round, so _auditDecision can word its answer (F38).
         this.pendingQuestion = { id, kind, resolve: resolveP, reject: rejectP, validate: typeof validate === 'function' ? validate : null,
           ...(plan && plan.outline ? { plan: { outline: true, round: plan.round } } : {}),
+          ...(plan && plan.attached ? { plan: { attached: true } } : {}),
           ...(concern ? { concern: true } : {}) };
         // A throw inside a Promise executor REJECTS the ask (and fails the node): night mode
         // must never break a question the user could still answer.
@@ -7361,6 +7336,7 @@ export class RunHarness extends EventEmitter {
    * @param {{maxUntracked?:number}} [opts]
    */
   async liveDiff({ maxUntracked = 50 } = {}) {
+    await this._refreshMergeBases();
     const members = [];
     const patches = [];
     let untrackedCapped = false;
@@ -7423,6 +7399,7 @@ export class RunHarness extends EventEmitter {
       if (this.workMode === 'folder') return await this._buildFolderResults({ stage });
       if (this.workMode === 'none') return;   // P3: no results.json — the files are the result
       if (stage) await this._stageWorkingTree({ ignoreAbort: true });
+      await this._refreshMergeBases();                     // a conflict run measures from git's own merge (D7)
       const reviews = readPipelineExtras(this.pipeline.id).reviews || [];
       // Unified iteration over workDirs + checkpointRefs — the ref map is filled in
       // BOTH modes (the _ensureGitCheckpoint mirror), so a single-project run reads
@@ -7907,7 +7884,6 @@ export class RunHarness extends EventEmitter {
 
   _setStatus(status) {
     this.state.status = status;
-    if (status !== 'running' && this.state.pauseAfterStep) this._clearPauseAfterStep();   // pause, stop, error, finish drop the flag
     if (status === 'done' || status === 'stopped' || status === 'error' || status === 'paused') {
       this._clockPauseAll();
       this.state.totalActiveMs = sumStepActive(this.state.steps);
@@ -8109,7 +8085,7 @@ export class RunHarness extends EventEmitter {
       case 'toolResult': this._onToolResultEvent(role, e, attr); return;
       case 'retry': this._onRetryEvent(role, e, attr); return;
       case 'usage': this._onUsageEvent(e, attr); return;
-      case 'limit': recordUsageLimit(this.claude?.engine || 'claude', e); return;   // the usage rings' reading (D7)
+      case 'limit': recordClaudeLimit(e); return;   // the usage rings' reading: nothing rendered, nothing logged
       default: return;
     }
   }
@@ -9618,6 +9594,196 @@ export class RunHarness extends EventEmitter {
     await appendAudit(this.pipeline.dir, `Created local \`${name}\` in \`${m.projectKey}\` from \`${remote}/${name}\` (\`${String(c.to).slice(0, 10)}\`).`).catch(() => {});
   }
 
+  /** The branch record a member's diff-base fields ride: `state.branch` on a single-project run (it is what
+   *  persists), else the member's `state.branches[key]`. */
+  _diffBaseRecord(key) {
+    const st = this.state;
+    return this.isWorkspace ? (st?.branches?.[key] || null) : (st?.branch || st?.branches?.[key] || null);
+  }
+
+  /** Set (or clear, `auto` null) `autoMerge` on the member's records IN PLACE: teardown holds these objects. */
+  _setAutoMergeRecord(key, auto) {
+    const recs = new Set([this.state?.branches?.[key], this.isWorkspace ? null : this.state?.branch].filter(Boolean));
+    for (const rec of recs) {
+      if (auto) rec.autoMerge = auto;
+      else if ('autoMerge' in rec) delete rec.autoMerge;
+    }
+  }
+
+  /** The names of the refs that count as a member's base: the ref a conflict run was told to merge, the run's source
+   *  branch, the repository's default branch, and each one's remote-tracking copy. A merge of a commit one of these
+   *  contains, or a rebase onto one, brings in work that is not the run's own. Short names, as `git` resolves them. */
+  async _baseRefNames(key, rec) {
+    const remote = (typeof rec?.sync?.remote === 'string' && rec.sync.remote) || 'origin';
+    if (!this._defaultBranches) this._defaultBranches = new Map();
+    if (!this._defaultBranches.has(key)) {
+      const dir = resolve(this.memberByKey?.get(key)?.projectDir || this.projectDir || '.');
+      this._defaultBranches.set(key, (await defaultBranchRef(dir).catch(() => null))?.branch || null);
+    }
+    const def = this._defaultBranches.get(key);
+    const names = [rec?.mergeIn?.ref, ...Object.keys(rec?.baseRefs || {})];
+    for (const b of [rec?.source, def]) if (typeof b === 'string' && b) names.push(`${remote}/${b}`, b);
+    return [...new Set(names.filter((n) => typeof n === 'string' && n && !n.startsWith('-')))];
+  }
+
+  /** `{name: sha}` of the member's base refs at setup (recorded as `baseRefs`), for _baseTips after a fetch. */
+  async _baseRefsNow(key, dir, rec) {
+    const out = {};
+    for (const ref of await this._baseRefNames(key, rec)) {
+      const sha = await commitOf(dir, ref);
+      if (sha) out[ref] = sha;
+    }
+    return out;
+  }
+
+  /** `{ref, sha}` for every base ref of the member: its sha now and its sha at the run's start (`baseRefs`,
+   *  `mergeIn.at`), so a fetch either side of a merge or rebase never hides it. */
+  async _baseTips(key, dir, rec) {
+    const tips = [];
+    const seen = new Set();
+    const add = (ref, sha) => { if (sha && !seen.has(sha)) { seen.add(sha); tips.push({ ref, sha }); } };
+    for (const ref of await this._baseRefNames(key, rec)) {
+      add(ref, await commitOf(dir, ref));
+      add(ref, rec?.baseRefs?.[ref] || (ref === rec?.mergeIn?.ref ? rec.mergeIn.at : null));
+    }
+    return tips;
+  }
+
+  /** git's own merge of `ours` and `theirs` (autoMergeBase), cached per pair: deterministic, so a cache miss after a
+   *  restart rebuilds the same commit. */
+  async _autoMergeOf(dir, key, ours, theirs) {
+    if (!this._mergeBaseCache) this._mergeBaseCache = new Map();
+    const ck = `${ours}:${theirs}`;
+    let w = this._mergeBaseCache.get(ck) || null;
+    if (!w) {
+      w = await autoMergeBase(dir, { ours, theirs, pipelineId: this.pipeline?.id, key });
+      if (w) this._mergeBaseCache.set(ck, w);
+    }
+    if (!w) {
+      // git < 2.38 or any failure: the caller keeps the current base.
+      if (!this._mergeBaseWarned) this._mergeBaseWarned = new Set();
+      if (!this._mergeBaseWarned.has(ck)) {
+        this._mergeBaseWarned.add(ck);
+        this._log('worktree', 'warn', `${key}: git could not build its own merge of ${String(ours).slice(0, 10)} and ${String(theirs).slice(0, 10)} — keeping diff base ${String(this.checkpointRefs[key] || '').slice(0, 10)}`);
+      }
+    }
+    return w;
+  }
+
+  /**
+   * The diff base a member's checkout should be measured from now, so base-branch commits the branch picked up
+   * during the run never count as its work. The rule is GitHub's (a pull request is measured from the newest base
+   * commit its head contains), kept to the run's own start: `start` is where the checkout stood when the run began
+   * (`startHead`, else a fresh branch's `baseSha`, else the recorded base), `onto` the newest base commit in HEAD's (or
+   * MERGE_HEAD's) history that the start does not have (newestBaseIn over _baseTips). How it got there does not matter.
+   * - No such commit: the recorded start (`diffBase` / `baseSha`): a reused branch keeps its fork point.
+   * - The start is an ancestor of `onto` (a fast-forward, or a merge into a branch cut from that base): `onto`.
+   * - Otherwise git's own merge of the start and `onto`, conflict markers included, so the run's work and its conflict
+   *   resolution count and the base's commits do not. When the start has left HEAD's history (a rebase or reset), the
+   *   base is whichever is closer to HEAD: that merge or `onto` itself (what the start carried and the result dropped
+   *   is not counted as removed).
+   * null = keep the current base (git could not build the merge, or the start left the branch with no base commit).
+   */
+  async _diffBasePlan(key, dir, rec, { head, mergeHead, recordedBase }) {
+    const start = rec.startHead || rec.baseSha || recordedBase;
+    const tips = await this._baseTips(key, dir, rec);
+    const r = await newestBaseIn(dir, { heads: [head, mergeHead].filter(Boolean), start, tips });
+    const inHistory = await isAncestor(dir, start, head);
+    if (!r) {
+      if (inHistory) return { want: recordedBase, base: null };
+      if (!this._mergeBaseWarned) this._mergeBaseWarned = new Set();
+      const wk = `rebase:${head}`;
+      if (!this._mergeBaseWarned.has(wk)) {
+        this._mergeBaseWarned.add(wk);
+        this._log('worktree', 'warn', `${key}: the run's start ${String(start).slice(0, 10)} left the branch and it holds no newer base commit — keeping diff base ${String(this.checkpointRefs[key] || recordedBase).slice(0, 10)}`);
+      }
+      return null;
+    }
+    const base = { onto: r.onto, ref: r.ref, start, rebased: !inHistory, merged: false };
+    if (await isAncestor(dir, start, r.onto)) return { want: r.onto, base };
+    const w = inHistory ? await this._autoMergeOf(dir, key, start, r.onto) : await this._autoMergeOf(dir, key, r.onto, start);
+    if (!w) return null;
+    if (inHistory) return { want: w.sha, base: { ...base, merged: true } };
+    const [a, b] = await Promise.all([diffLineCount(dir, w.sha, head), diffLineCount(dir, r.onto, head)]);
+    return (a != null && (b == null || a <= b)) ? { want: w.sha, base: { ...base, merged: true } } : { want: r.onto, base };
+  }
+
+  /**
+   * Move each git member's diff base (`checkpointRefs[key]`) to what _diffBasePlan says, so the live diff, the step
+   * credit and results.json count only the run's own work when its branch merged or rebased onto a base branch
+   * during the run. `rec.diffBase` / `rec.baseSha` are never overwritten, so the plan is recomputed from the same
+   * record after a restart. Recomputed only when HEAD or MERGE_HEAD changed. Serialized on `_mergeBaseQueue`
+   * (live-diff polls race step-end measurements); one audit line per move. Never throws.
+   * @returns {Promise<Set<string>>} the member keys whose base changed
+   */
+  async _refreshMergeBases() {
+    const todo = [];
+    for (const [key, dir] of this.workDirs.entries()) {
+      const rec = this._diffBaseRecord(key);
+      if (!rec?.worktreeDir || this._memberWorkMode(key) !== 'git' || !(rec.diffBase || rec.baseSha)) continue;
+      if (!(rec.startHead || rec.baseSha || rec.mergeIn?.ref)) continue;   // a reused branch's record from before startHead
+      todo.push([key, dir]);
+    }
+    if (!todo.length) return new Set();
+    if (!this._mergeBaseQueue) this._mergeBaseQueue = serialQueue();
+    return this._mergeBaseQueue(() => this._refreshMergeBasesNow(todo)).catch(() => new Set());
+  }
+
+  async _refreshMergeBasesNow(todo) {
+    const s = (x) => String(x).slice(0, 10);
+    if (!this._diffBaseSeen) this._diffBaseSeen = new Map();     // key → `head:MERGE_HEAD` last planned
+    const changed = new Set();
+    for (const [key, dir] of todo) {
+      try {
+        const rec = this._diffBaseRecord(key);
+        const recordedBase = rec?.diffBase || rec?.baseSha || null;
+        if (!recordedBase) continue;
+        const head = await worktreeHead(dir);
+        if (!head) continue;                                 // the checkout is gone (teardown): the base is frozen
+        const mergeHead = await commitOf(dir, 'MERGE_HEAD');
+        const seenAs = `${head}:${mergeHead || ''}`;
+        if (this._diffBaseSeen.get(key) === seenAs) continue;
+        const plan = await this._diffBasePlan(key, dir, rec, { head, mergeHead, recordedBase });
+        this._diffBaseSeen.set(key, seenAs);
+        if (!plan) continue;
+        const { want, base } = plan;
+        if (base?.merged && !base.rebased) this._setAutoMergeRecord(key, { sha: want, ours: base.start, theirs: base.onto, ref: base.ref });
+        else this._setAutoMergeRecord(key, null);
+        if (want === this.checkpointRefs[key]) continue;
+        const was = this.checkpointRefs[key];
+        this.checkpointRefs[key] = want;
+        this._baseMovedSinceCursor = new Set([...(this._baseMovedSinceCursor || []), key]);
+        changed.add(key);
+        if (want !== recordedBase && this.pipeline?.id) await pinDiffBase(dir, this.pipeline.id, key, want);
+        let line;
+        if (want === recordedBase || !base) {
+          line = `Diff base for \`${key}\` moved back to \`${s(recordedBase)}\`: the branch holds no base-branch commit newer than the run's start.`;
+        } else if (base.merged && !base.rebased) {
+          line = `Diff base for \`${key}\` moved to git's own merge of the run's start \`${s(base.start)}\` and \`${s(base.onto)}\` (\`${base.ref}\`), the newest base commit on the branch: \`${s(want)}\`. Base-branch commits do not count; the conflict resolution and the run's own work do.`;
+        } else {
+          line = `Diff base for \`${key}\` moved to \`${s(want)}\`: the branch ${base.rebased ? 'was rebased or reset' : 'moved'} onto \`${base.ref}\` at \`${s(base.onto)}\`${want === base.onto ? '' : ' (git\'s own replay of the run\'s start onto it)'}. Base-branch commits do not count; the conflict resolution and the run's own work do.`;
+        }
+        if (was && this.pipeline?.dir) await appendAudit(this.pipeline.dir, line).catch(() => {});
+      } catch (err) {
+        this._log('worktree', 'warn', `${key}: diff base refresh failed: ${err?.message || err}`);
+      }
+    }
+    if (changed.size) {
+      const primaryKey = this.members?.[0]?.projectKey;
+      if (primaryKey && this.checkpointRefs[primaryKey]) this.checkpointRef = this.checkpointRefs[primaryKey];
+      this.state.checkpointRef = this.checkpointRef;
+      this.state.checkpointRefs = { ...this.checkpointRefs };
+    }
+    return changed;
+  }
+
+  /** Teardown: drop the gc pin of a member's synthetic diff base (results.json is frozen by now). Best-effort. */
+  async _dropMergeBaseRef(key) {
+    if (!this.pipeline?.id) return;
+    const dir = resolve(this.memberByKey?.get(key)?.projectDir || this.projectDir);
+    await dropDiffBaseRefs(dir, this.pipeline.id, key).catch(() => 0);
+  }
+
   /** Shaper s5 (D14): merge the feature's base into this run's fresh branch when it moved; move the diff base to the
    *  merge commit, so the base's commits never count as this run's changes. */
   async _mergeFeatureBase(m, info, sl) {
@@ -9630,7 +9796,7 @@ export class RunHarness extends EventEmitter {
     if (line) await appendAudit(this.pipeline.dir, line).catch(() => {});
     if (r.merged && r.to) {
       const rec = this.state.branches[m.projectKey];
-      this.state.branches[m.projectKey] = { ...rec, baseSha: r.to, diffBase: r.to, baseMerged: { base, behind: r.behind } };
+      this.state.branches[m.projectKey] = { ...rec, baseSha: r.to, diffBase: r.to, startHead: r.to, baseMerged: { base, behind: r.behind } };
       this.checkpointRefs[m.projectKey] = r.to;     // dev's commits are never this run's changes
     }
   }

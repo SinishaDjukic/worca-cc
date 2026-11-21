@@ -44,7 +44,7 @@ const decls = (body, prop) => [...body.matchAll(new RegExp(`(?:^|;)\\s*(${prop})
 const where = (r, v) => `style.css:${r.line} ${r.sel.slice(0, 80)} → ${v}`;
 const bodyOf = (sel) => ALL.filter((r) => splitTop(r.sel).includes(sel)).map((r) => r.body).join(';');
 const lastCompound = (s) => s.split(/\s*[>+~]\s*|\s+/).at(-1);
-const SKIP = new Set(['node_modules', 'vendor', 'fonts', 'assets', 'stillhet']);   // stillhet: the prototype's code, moved from plans/rail/prototype/ (never read by this scan); it has its own gates (docs/rail/gate.md)
+const SKIP = new Set(['node_modules', 'vendor', 'fonts', 'assets']);
 const walk = (dir, out = []) => { for (const n of readdirSync(dir)) { if (SKIP.has(n)) continue; const f = join(dir, n);
   if (statSync(f).isDirectory()) walk(f, out); else if (/\.(mjs|js)$/.test(n)) out.push(f); } return out; };
 const JS = walk(join(ROOT, 'ui/public'));
@@ -157,8 +157,10 @@ const JS_CHECKBOX_OK = [
   ['requirements-view.mjs', 'ipv-crit-', 'picks the ticket criteria to start from'], ['requirements-view.mjs', 'ipv-com-', 'picks the ticket comments to take'],
   ['requirements-view.mjs', 'ipv-att-', 'picks the ticket attachments to add as files'],
   ['marketplace/remove-view.mjs', 'mk-purge-box', 'opt-in consent in the Remove dialog'],
-  ['design-system/components/checkbox.mjs', 'export function checkbox', 'Rail\'s Checkbox: picking items, an opt-out, a consent'], ['marketplace/update-view.mjs', 'mk-reviewed', 'acknowledges the reviewed changes'], ['marketplace/update-view.mjs', 'mk-include', 'picks updates'],
+  ['marketplace/update-view.mjs', 'mk-reviewed', 'acknowledges the reviewed changes'], ['marketplace/update-view.mjs', 'mk-include', 'picks updates'],
   ['design/export-dialog.mjs', 'dsx-replace', 'consent: replace the listed files'],
+  ['requirements-attach/picker.mjs', 'attach-pick-', 'picks the features to attach to a run or a chat'],
+  ['mcp-server-import.mjs', 'mcp-imp-pick', 'picks servers to import'],
 ].map(([file, token, reason]) => ({ file: `ui/public/${file}`, token, reason }));
 function checkboxEmitters(files) {
   const out = [];
@@ -233,11 +235,11 @@ test('one menu: the five families keep position and size only, no skin of their 
   assert.deepEqual(bad, []);
 });
 
-test('one menu: the 6 role="menu" boxes in index.html are .menu and their menu items are .menu-item', () => {
+test('one menu: the 7 role="menu" boxes in index.html are .menu and their menu items are .menu-item', () => {
   // The run, history and project pages live in <template>s, whose content querySelectorAll does not enter.
   const inTemplates = (root) => [root, ...[...root.querySelectorAll('template')].flatMap((t) => inTemplates(t.content))];
   const menus = inTemplates(index).flatMap((r) => [...r.querySelectorAll('[role="menu"]')]);
-  assert.equal(menus.length, 6);   // 3 .nav-fly, 3 .btn-split-menu
+  assert.equal(menus.length, 7);   // 4 .nav-fly (with the Usage submenu), 3 .btn-split-menu
   assert.deepEqual(menus.filter((m) => !m.classList.contains('menu')).map((m) => m.id || m.className), []);
   // Segmented rows inside the account menu (the theme icons) are not menu rows.
   assert.deepEqual(menus.flatMap((m) => [...m.querySelectorAll('button[role^="menuitem"], [role="menu"] > button')])
@@ -405,11 +407,15 @@ test('badges: Official and policy are slate, "not installed" is never amber', ()
   const src = (p) => code(read(p));
   assert.match(bodyOf('.badge.mk-chip-built'), /background:var\(--slate-bg\)/);   // the Marketplace's Built-in chip
   assert.match(src('ui/public/marketplace/marketplaces-view.mjs'), /chip\(doc, 'built', 'Built-in'\)/);
-  for (const p of ['ui/public/team-policy-view.mjs', 'ui/public/models-view.mjs', 'ui/public/guardrails-view.mjs']) {
+  for (const p of ['ui/public/team-policy-view.mjs', 'ui/public/guardrails-view.mjs']) {
     const lines = src(p).split('\n').filter((l) => /['"`](?:team )?policy['"`]/i.test(l) && /badge/.test(l));
     assert.ok(lines.length, `${p} has a policy badge`);
     for (const l of lines) assert.match(l, /badge slate/, `${p}: ${l.trim().slice(0, 80)}`);
   }
+  // The Catalogue's row chip ("Team" on a team-policy model; "Plugin", "Project", "Overrides built-in") is slate.
+  assert.match(src('ui/public/models/catalogue-model.mjs'), /team: 'Team'/);
+  const chipLines = src('ui/public/models/catalogue-view.mjs').split('\n').filter((l) => /r\.chip\)/.test(l));
+  assert.deepEqual(chipLines.map((l) => l.trim()), ["if (r.chip) model.append(el(doc, 'span', 'badge slate', r.chip));"]);
   const notInstalled = JS.flatMap((f) => code(readFileSync(f, 'utf8')).split('\n').filter((l) => /not installed/i.test(l) && /badge (?:amber|waiting)|'amber'/.test(l)).map((l) => `${rel(f)}: ${l.trim().slice(0, 80)}`));
   assert.deepEqual(notInstalled, []);
 });
@@ -445,8 +451,8 @@ test('headings: section titles and sub-heads use the shared classes, with no siz
   }
 });
 
-const PAGE_CARDS = ['.chart-card', '.sched-feed', '.tp-ov-card', '.rd-sheet', '.hd-ov-card', '.pd-ov-card', '.hd-cl-card', '.hd-ov-task',
-  '.tp-editor .card.tp-group-card', '.tp-editor details.card', '.tm-empty .card', '.mv-card', '.mv-providers', '.settings-card'];
+const PAGE_CARDS = ['.chart-card', '.sched-feed', '.tp-ov-card', '.rd-sheet', '.hd-ov-card', '.pd-ov-card', '.hd-cl-card', '.run-task', '.run-setup',
+  '.tp-editor .card.tp-group-card', '.tp-editor details.card', '.tm-empty .card', '.mv-providers', '.settings-card'];
 const TILES = ['.stat-tile', '.chat-run-tile', '.mcp-setlist'];
 test('cards: every page card pads --pad-card, every tile --pad-tile', () => {
   for (const s of PAGE_CARDS) assert.match(bodyOf(s), /padding:var\(--pad-card\)/, s);

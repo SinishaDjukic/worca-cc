@@ -167,16 +167,19 @@ function toStart(r) {
     ready: !!r.ready, failing: json(r.failing_json, []), reason: r.reason || null,
     workflowId: r.workflow_id || null, sourceBranch: r.source_branch || null,
     startedBy: r.started_by || null, startedAt: r.started_at, files: json(r.files_json, []),
+    note: r.note || null, noteOverrides: !!r.note_overrides,
   };
 }
 
 export function createStart({ featureSeq, version, runId, spec, title, ready, failing = [], reason = null,
-  workflowId = null, sourceBranch = null, files = [] } = {}, { by = null } = {}) {
+  workflowId = null, sourceBranch = null, files = [], note = null, noteOverrides = false } = {}, { by = null } = {}) {
   getDb();
+  const trimmedNote = typeof note === 'string' && note.trim() ? note.trim() : null;
   const r = prepare(`INSERT INTO req_starts (feature_seq, version, run_id, spec_json, title, ready, failing_json,
-      reason, workflow_id, source_branch, started_by, started_at, files_json) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+      reason, workflow_id, source_branch, started_by, started_at, files_json, note, note_overrides) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
     .run(Number(featureSeq), Number(version), runId, JSON.stringify(spec), title, ready ? 1 : 0,
-      JSON.stringify(failing), reason, workflowId, sourceBranch, by, iso(), JSON.stringify(files || []));
+      JSON.stringify(failing), reason, workflowId, sourceBranch, by, iso(), JSON.stringify(files || []),
+      trimmedNote, noteOverrides ? 1 : 0);
   return toStart(prepare('SELECT * FROM req_starts WHERE id = ?').get(Number(r.lastInsertRowid)));
 }
 

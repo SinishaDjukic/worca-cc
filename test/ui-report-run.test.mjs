@@ -344,12 +344,17 @@ test('a done, stopped or error run\'s Running header has no report button; its �
 
       ctx.dispatch({ type: 'state', runId: RUN_ID, status });
       await settle(ctx.window, 8);
+      // The bar controls end the header's title row (barIntoHeader), so the hidden ⋯ carrier sits in the header too:
+      // what counts is that no report control is ever shown there.
       const header = doc.querySelector('#run-detail .rd-header');
-      assert.equal(header.querySelector('.rd-report'), null, 'a finished run has no report button');
-      assert.equal([...header.querySelectorAll('button, a')].some((b) => /Report this run/.test(b.textContent)),
+      const shown = (b) => !b.hidden && !b.closest('[hidden]');
+      assert.ok(doc.querySelector('#run-detail .rd-row1 > .rd-bar-end .run-menu-carriers[hidden] .rd-report'),
+        'the report carrier rides the bar controls in the title row, never shown');
+      assert.deepEqual([...header.querySelectorAll('.rd-report')].filter(shown), [], 'a finished run has no report button');
+      assert.equal([...header.querySelectorAll('button, a')].filter(shown).some((b) => /Report this run/.test(b.textContent)),
         false, 'nothing in the header offers to report the run');
       assert.equal(header.querySelector('.rd-history-link'), null, 'no link to click: the saved run opens on its own');
-      assert.ok(doc.querySelector('#run-detail .rd-bar .rd-report').closest('[hidden]'), 'nor does the shared bar show one');
+      assert.deepEqual([...doc.querySelectorAll('#run-detail .rd-report')].filter(shown), [], 'nor does the page show one anywhere');
       doc.querySelector('#run-detail .rd-bar-more').dispatchEvent(new ctx.window.MouseEvent('click', { bubbles: true }));
       const items = [...doc.querySelectorAll('body > .wfv-menu .menu-item')].map((b) => b.querySelector('.wfv-menu-l').textContent);
       assert.ok(items.includes('Report this run'), 'the ⋯ lists Report this run');

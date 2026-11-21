@@ -3,6 +3,48 @@
 Notes on merged features that have no release page yet. `/worca-changelog` folds
 them into the next page and empties this file.
 
+## Long spec items are kept whole
+
+**A long step, rule or criterion no longer ends mid-word in the spec, the download or the run.**
+
+A spec item (the goal, a main-flow step, a rule, a criterion, an assumption) holds up to 10000 characters instead of 500, and the interviewer is told the limit, so it splits a long item rather than writing past it. Worca used to cut every item at 500 characters when it saved the spec, so Copy, Download, Save to specs/ and the run's task all carried the cut text. If the model still writes past the limit, the item ends at a whole word with "…". Text you type yourself is never cut: past 10000 characters Worca says so and keeps your edit open. Items cut before this fix stay cut; edit them to restore the end.
+
+Chips: 10000 characters per item · the interviewer knows the limit · never mid-word · your text refused, not cut
+
+Read it: [Requirements](../requirements.md)
+
+Pull requests (add each number when it opens):
+
+- Requirements: keep long spec items whole (#1510)
+
+## Copilot on your GHE.com tenant
+
+**Use GitHub Copilot with a GitHub Enterprise Cloud data-residency tenant.**
+
+The Copilot card has a fourth account type, **GHE.com tenant**, and a **GHE.com host** field for `acme.ghe.com`. Sign-in, models, quota and every request then go to your tenant instead of github.com, and the sign-in link shows the tenant's own address. Changing the host signs you out first, after asking, because a sign-in belongs to one GitHub host. The same works from `worca models set copilot accountType=ghe-com enterpriseHost=…` and from Ask Worca. On a hosted instance with an outbound allow policy, worca lets the tenant through for you; the credential broker trusts a Copilot slot's own tenant gateway. When GitHub signs you in but then refuses Copilot access, the card now says so with GitHub's own reason (no more "stored token — sign in again"), and the server log records it.
+
+Chips: GHE.com tenant account type · host field · sign-in on your tenant · signs out on a host change · broker tenant gateway · egress allow added · honest refusal reason
+
+Read it: [Models › Providers](../models.md#providers)
+
+Pull requests (add each number when it opens):
+
+- GitHub Copilot on a GHE.com (data residency) tenant
+
+## Attach Ready features without starting them
+
+**A Ready feature can go into a chat or a run as it is, without Start in Worca.**
+
+**Pull from Requirements** in Chat and New run, and the `#` popover, now offer every feature that is Ready, not only the ones started before. A feature that is Ready when you click Send or Run carries its current spec, read again at that moment, under "FEAT-n (current spec)", and the run does not pause for agreement. A feature that is no longer Ready but was started carries its latest started version, as before. A feature that is neither shows **Not Ready yet** and cannot be attached; attaching still writes no start.
+
+Chips: Ready is enough · current spec at Send or Run · Not Ready yet · no start written
+
+Read it: [Requirements](../requirements.md#pull-from-requirements)
+
+Pull requests (add each number when it opens):
+
+- Requirements: attach Ready features without starting them
+
 ## Choose who interviews, per feature
 
 **Pick the harness, model and effort for a feature's Requirements.**
@@ -55,7 +97,7 @@ Pull requests (add each number when it opens):
 
 **Pick your models in the setup assistant. Everything else follows.**
 
-Your roles now beat Worca's own defaults. Shaper's role reviews use your role, not the built-in Sonnet 5.5. Every engine has roles now, Copilot CLI and the other beta engines included. The setup assistant shows roles for Claude and each engine it finds ready. The workspace scan runs on your Everyday coding role. Create workspace saves no model of its own unless you change one, so its re-scans follow your roles. Old workspaces no longer ask for a model on every re-scan. The sub-agent picker says which Claude model each choice runs: sub-agents do not follow your roles yet.
+Your roles now beat Worca's own defaults. Shaper's role reviews use your role, not the built-in Sonnet 5.5. Every engine has roles now, Copilot CLI and the other beta engines included. The setup assistant shows roles for Claude and each engine it finds ready. The workspace scan runs on your Everyday tasks role. Create workspace saves no model of its own unless you change one, so its re-scans follow your roles. Old workspaces no longer ask for a model on every re-scan. The sub-agent picker says which Claude model each choice runs: sub-agents do not follow your roles yet.
 
 Chips: roles first · every engine · setup assistant · workspace scan · no re-scan prompt · honest sub-agent labels
 
@@ -349,3 +391,17 @@ On Windows with Node 24, a plugin call that made one web request (such as Jira's
 Pull requests (add each number when it opens):
 
 - Plugins: keep a plugin's answer when its process crashes on exit (#1051)
+
+## Attach Requirements features in Chat and New run
+
+**Bring a feature you specified into a message or a run, without opening Requirements.**
+
+**Pull from Requirements** in Chat and New run now attaches features instead of starting a run. Pick them from a list with checkboxes, or type `#` in the box and search by title or `FEAT-7`. Each shows as a card with its title, ID and criteria count, up to 10. Nothing is sent or started until you click Send or Run, and the task text is optional. Only the feature's spec text goes in, from its latest started version, as context: no files, and no run linked to the feature. Features are limited to the project or workspace you picked, a feature never started cannot be attached, and an archived or deleted one blocks Send and Run until you remove it. Changing the project asks before it removes anything. If an attached feature was not Ready when it last started, the run pauses before any work and asks you to agree, in every workflow and in Away mode too. A sent message shows each feature as a card that opens the text it carried. If a feature already has a run going, New run asks you to confirm.
+
+Chips: attach with # or a picker · up to 10 · context only · latest started version · agree before work if not Ready · project scope asks first
+
+Read it: [Requirements](../requirements.md#pull-from-requirements)
+
+Pull requests (add each number when it opens):
+
+- Requirements: attach features in Chat and New run

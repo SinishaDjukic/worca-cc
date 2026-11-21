@@ -44,6 +44,7 @@ import { parseFrontmatter } from './frontmatter.mjs';
 import { agentIdentity } from './agent-user.mjs';
 import { gitAvailable } from './git-available.mjs';
 import { withNoGitPath } from './nogit-stub.mjs';
+import { runNpm } from './npm-command.mjs';
 
 const execFileP = promisify(execFile);
 const defaultExec = (cmd, args, opts = {}) =>
@@ -288,20 +289,19 @@ export function ignoredContributions(name, dir, opts = {}) {
 const setupEnv = () => (gitAvailable() ? {} : { env: withNoGitPath(process.env) });
 
 /** Declared setup FACTS only (spec §4.1): setup.node -> npm ci (lockfile
- *  required, scripts ignored); setup.python 'pyproject' -> uv sync. */
-export async function runSetup(versionDir, manifest, { exec = defaultExec } = {}) {
+ *  required, scripts ignored); setup.python 'pyproject' -> uv sync. `npm` is
+ *  npmCommand's context (platform, env, execPath, exists), for tests. */
+export async function runSetup(versionDir, manifest, { exec = defaultExec, npm } = {}) {
   const commands = [];
   if (manifest?.setup?.node) {
     if (!existsSync(join(versionDir, 'package-lock.json'))) {
       throw new Error(`setup.node declared but ${join(versionDir, 'package-lock.json')} is missing (npm ci requires a lockfile)`);
     }
-    // cwd instead of --prefix so no native path is passed as an argument: on
-    // Windows npm is `npm.cmd`, which needs a shell (bare `npm` -> ENOENT, and
-    // execFile of a `.cmd` -> EINVAL on modern Node), and shell:true does NOT
-    // quote args — a `--prefix C:\…` path would be mangled. With the dir as cwd
-    // the only args left are flag literals, safe through the shell.
-    await exec('npm', ['ci', '--ignore-scripts', '--omit=dev'],
-      { cwd: versionDir, shell: IS_WINDOWS, ...setupEnv() });
+    // On Windows npm is `npm.cmd`, which needs a shell; runNpm starts npm's
+    // npm-cli.js with node there, or one quoted command line through the shell
+    // (npm-command.mjs). The dir is the cwd, not a --prefix argument, to keep
+    // the arguments to flag literals.
+    await runNpm(exec, ['ci', '--ignore-scripts', '--omit=dev'], { cwd: versionDir, ...setupEnv() }, npm);
     commands.push('npm ci');
   }
   if (manifest?.setup?.python === 'pyproject') {

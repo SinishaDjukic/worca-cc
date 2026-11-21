@@ -34,7 +34,7 @@ export const LEVEL_INFO = Object.freeze({
     label: 'Expert',
     who: 'Authoring and team setup',
     desc: 'Everything. Author agents, models and guardrail sets, tune fan-out and loop limits, filter logs by execution and run team metrics.',
-    adds: 'Adds: Team metrics, Team policy, the Models and Providers pages, diagnostics.',
+    adds: 'Adds: Team metrics, Team policy, the Models page with its catalogue, jobs and providers, diagnostics.',
   }),
 });
 

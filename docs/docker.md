@@ -323,6 +323,12 @@ ignores `HTTPS_PROXY` goes direct. Leave `WORCA_EGRESS_MODE` unset with the
 overlay; set on the `egress` service it switches the sidecar to the same mode
 semantics.
 
+GitHub Copilot on a **GHE.com tenant** needs `.<tenant>.ghe.com` in the overlay's
+`WORCA_EGRESS_ALLOW` (in the overlay a leading dot also matches the name itself, so one
+entry covers `<tenant>.ghe.com` too). Add it by hand: the sidecar is started by compose,
+and the box has its own worca settings, so worca cannot add it for you the way it does
+under a platform `allow` policy.
+
 ### Teams
 
 The one chat channel needing an inbound URL. `compose.teams.yml` adds a

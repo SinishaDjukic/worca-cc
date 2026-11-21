@@ -88,7 +88,7 @@ const EXPECTED_ROUND = {
   settingSources: [ 'project' ],
   spawnKind: 'aux',
   strictMcpConfig: true,
-  systemPrompt: 'a4d1e2d87843',
+  systemPrompt: '08ac14664c58',   // the round prompt now states the spec-item limit (requirements-item-length.test.mjs)
   systemPromptMode: 'replace',
   tools: []
 };
@@ -119,7 +119,7 @@ const EXPECTED_BRIEF = {
   modelEnv: undefined,
   noSessionPersistence: true,
   permissionMode: 'acceptEdits',
-  permissionRules: { deny: '49 rules #3090207c559e' },
+  permissionRules: { deny: '48 rules #b594c3bc4b0e' },
   prompt: '<prompt>',
   settingSources: [ 'project' ],
   spawnKind: 'aux',
@@ -137,7 +137,7 @@ const EXPECTED_INLINE_READ = {
   modelEnv: undefined,
   noSessionPersistence: true,
   permissionMode: 'acceptEdits',
-  permissionRules: { deny: '49 rules #3090207c559e' },
+  permissionRules: { deny: '48 rules #b594c3bc4b0e' },
   prompt: '<prompt>',
   settingSources: [ 'project' ],
   spawnKind: 'aux',
@@ -156,7 +156,7 @@ const EXPECTED_GUARDED_READ = {
   modelEnv: undefined,
   noSessionPersistence: true,
   permissionMode: 'acceptEdits',
-  permissionRules: { deny: '49 rules #3090207c559e' },
+  permissionRules: { deny: '48 rules #b594c3bc4b0e' },
   prompt: '<prompt>',
   readGuard: '<path>',
   settingSources: [ 'project' ],

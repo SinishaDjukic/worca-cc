@@ -204,14 +204,15 @@ export function createClaudeNormalizer({ rootParentId = null } = {}) {
       case 'user': return user(raw, parentId, e);
       case 'stream_event': return streamEvent(raw, parentId);
       case 'result': return result(raw, e);
+      // The plan-limit reading (the usage rings' source): main stream only.
       case 'rate_limit_event': return parentId === null ? [limitOf(raw.rate_limit_info)] : otherText();
       default: return otherText();
     }
   };
 }
 
-/** The CLI's plan-limit reading (the usage rings' source, D7): rate_limit_info carries either `unifiedWindows`
- *  ({five_hour: {utilization, resetsAt}, seven_day: …}) or one window (`rateLimitType`, `utilization`, `resetsAt`).
+/** The CLI's plan-limit reading: rate_limit_info carries either `unifiedWindows` ({five_hour: {utilization,
+ *  resetsAt}, seven_day: …}) or only the window currently limiting (`rateLimitType`, `utilization`, `resetsAt`).
  *  resetsAt is in seconds; the event's is in ms. A window without a numeric utilization keeps it null. */
 function limitOf(info) {
   const i = info && typeof info === 'object' ? info : {};

@@ -174,11 +174,14 @@ test('runOnboarded: a run without a project always is; a workspace run needs its
 test('E2/2.3: open issues and End-not-reached survive the row: rowToState and the History list both carry them', async () => {
   const open = [{ nodeId: 'n_review', wireId: 'w', executionId: 'x', count: 2, critical: 1, major: 1, titles: ['a', 'b'] },
     { nodeId: 'n_refine', wireId: 'w2', executionId: 'y', count: 1, critical: 0, major: 1, titles: ['c'] }];
-  const forced = await seedPipeline(projectDir, { title: 'forced', status: 'done', engine: 2, endReached: true, openIssues: open });
+  const scope = [{ nodeId: 'n_impl', executionId: 'x:n_impl:1', count: 1, expectedCount: 3, cross: true, notable: [{ path: '/tmp/claude-501/s/o/a', tool: 'Read', cross: true }] }];
+  const forced = await seedPipeline(projectDir, { title: 'forced', status: 'done', engine: 2, endReached: true, openIssues: open, scopeNotices: scope });
   const quiet = await seedPipeline(projectDir, { title: 'quiet', status: 'done', engine: 2, endReached: false });
   const clean = await seedPipeline(projectDir, { title: 'clean', status: 'done', engine: 2, endReached: true });
   const { state: st } = await readPipelineByKey(key, forced.id);
   assert.deepEqual(st.openIssues, open);
+  assert.deepEqual(st.scopeNotices, scope, 'E9: the scope notices survive the row');
+  assert.deepEqual((await readPipelineByKey(key, quiet.id)).state.scopeNotices, [], 'none recorded: an empty list');
   const list = await listAllPipelines({ lite: true });
   const by = (id) => list.find((r) => r.id === id);
   assert.equal(by(forced.id).openIssueCount, 3);

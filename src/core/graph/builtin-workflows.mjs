@@ -127,7 +127,7 @@ export const GRAPH_MEMORY_DEFRAG_WORKFLOW = deepFreeze({
   updatedAt: '1970-01-01T00:00:00.000Z',
   nodes: [
     { id: 'n_task', kind: 'task', x: 40, y: 200, config: {} },
-    // No model pin: Models › Helper jobs › Memory defragment, else Worca's factory default
+    // No model pin: Models › Jobs › Helper jobs › Memory defragment, else Worca's factory default
     // (factory-models.mjs), which resolveGraph applies at the template's position.
     { id: 'n_defrag', kind: 'agent', key: 'memoryDefragmenter', x: 320, y: 200, config: {} },
     { id: 'n_end', kind: 'end', x: 600, y: 200, config: {} },
@@ -271,7 +271,7 @@ const SHAPE_APPROVE_CONFIG = { approve: { kind: 'plan', port: 'plan' } };
 /** Shaper's plan review is the engine role-review step, configured: the perspectives as roles, the run's picked ones
  *  running, each judged on its own checklist items (the `perspectives` provider), the findings handed to Refine. */
 /** The second opinion: Product (locked, so in every Shaper run) is the role review's `secondOpinion`, so it reviews on
- *  another model than the node's (Models › Helper jobs › Second-opinion reviewer, else Worca's factory
+ *  another model than the node's (Models › Jobs › Helper jobs › Second-opinion reviewer, else Worca's factory
  *  default) and one plan role always judges independently. The node and the role pin no model. */
 export const SHAPE_DIVERSE_ROLE = Object.freeze({ key: 'product' });
 const SHAPE_ROLES_CONFIG = {

@@ -190,3 +190,89 @@ test('applyPortEdit is pure and mints the composer`s ids and filenames', () => {
   assert.deepEqual(applyPortEdit(twice, { remove: 'outputs:9' }).outputs.map((p) => p.id), ['out', 'out2'], 'an unknown index is a no-op');
   assert.deepEqual(applyPortEdit(undefined, { add: 'inputs' }), { inputs: [{ id: 'in', type: 'md', required: false }], outputs: [] });
 });
+
+// ---- gutter, grip, expand and shell lint on the param editors ---------------------
+
+const sleepMs = (ms) => new Promise((r) => setTimeout(r, ms));
+const CMD_META = { key: 'shell', displayName: 'Shell', params: [{ id: 'command', type: 'command', label: 'Command', required: true }] };
+const PY_META = { key: 'py', displayName: 'Python', params: [{ id: 'source', type: 'code', language: 'python', label: 'Source' }] };
+const JS_META = { key: 'js', displayName: 'JavaScript', params: [{ id: 'source', type: 'code', language: 'js', label: 'Source' }] };
+
+test('param editors: a command param gets gutter, grip, expand and a shell lint; its large window is titled by the step', async () => {
+  const editors = [];
+  const lints = [];
+  const editorFor = paramEditorHook({ doc, highlight: async (t) => t, editors, lintDelayMs: 20, onLint: (p) => lints.push(p.id) });
+  const withSubject = (subject) => (p, v) => editorFor(p, v, { doc, subject });
+  await checkRows([
+    { name: 'the editor is expandable, with a gutter and a grip, and lints after the pause', run: async () => {
+      const host = mount(renderParamsForm(CMD_META, { params: { command: 'if true; then' } }, { doc, editorFor }));
+      const ed = editors.at(-1);
+      assert.ok(host.querySelector('.code-editor-expand'));
+      assert.ok(host.querySelector('.code-editor-gutter'));
+      assert.ok(host.querySelector('.code-editor-grip'));
+      assert.match(host.querySelector('.code-editor-warning').textContent, /^Line 1: 'if … then' has no closing 'fi'\.$/);
+      const ta = host.querySelector('textarea');
+      ta.value = 'if true; then\n  echo x\nfi';
+      ta.dispatchEvent(new doc.defaultView.Event('input', { bubbles: true }));
+      await sleepMs(60);
+      assert.deepEqual(ed.getWarnings(), []);
+      assert.deepEqual(lints, ['command'], 'onLint names the param, once, for the changed result');
+    } },
+    { name: 'the large window title is "<subject> — <field>" and its caption is the privileges note', run: () => {
+      const host = mount(renderParamsForm(CMD_META, { params: { command: 'ls' } }, { doc, editorFor, subject: 'Shell · n1' }));
+      doc.body.appendChild(host);
+      host.querySelector('.code-editor-expand').click();
+      const root = doc.querySelector('body > .code-editor-modal');
+      assert.equal(root.querySelector('h2').textContent, 'Shell · n1 — Command');
+      assert.equal(root.querySelector('.code-editor-modal-caption').textContent, PARAMS_CAPTION);
+      editors.at(-1).collapse();
+      host.remove();
+    } },
+    { name: 'with no subject the title is the field label; renderParamsForm defaults the subject to the display name, then the key', run: () => {
+      const seen = [];
+      const spy = (p, v, ctx) => { seen.push(ctx.subject); return null; };
+      renderParamsForm(CMD_META, {}, { doc, editorFor: spy });
+      renderParamsForm({ ...CMD_META, displayName: undefined }, {}, { doc, editorFor: spy });
+      renderParamsForm(CMD_META, {}, { doc, editorFor: spy, subject: 'Mine' });
+      assert.deepEqual(seen, ['Shell', 'shell', 'Mine']);
+      const bare = withSubject('');
+      const host = mount(renderParamsForm(CMD_META, {}, { doc, editorFor: bare }));
+      doc.body.appendChild(host);
+      host.querySelector('.code-editor-expand').click();
+      assert.equal(doc.querySelector('body > .code-editor-modal h2').textContent, 'Command');
+      editors.at(-1).collapse();
+      host.remove();
+    } },
+  ]);
+  editors.forEach((e) => e.destroy());
+});
+
+test('param editors: a js or python code param gets the same window and gutter, but no shell lint and no onLint', async () => {
+  const lints = [];
+  await checkRows([['js', JS_META], ['python', PY_META]].map(([name, meta]) => ({ name, run: async () => {
+    const editors = [];
+    const editorFor = paramEditorHook({ doc, highlight: async (t) => t, editors, lintDelayMs: 20, onLint: (p) => lints.push(p.id) });
+    const host = mount(renderParamsForm(meta, { params: { source: 'echo "x' } }, { doc, editorFor }));
+    assert.ok(host.querySelector('.code-editor-expand'));
+    assert.ok(host.querySelector('.code-editor-gutter'));
+    assert.ok(host.querySelector('.code-editor-grip'));
+    assert.equal(host.querySelector('.code-editor-warnings'), null, 'no warnings list for code');
+    const ta = host.querySelector('textarea');
+    ta.value = 'echo "y';
+    ta.dispatchEvent(new doc.defaultView.Event('input', { bubbles: true }));
+    await sleepMs(50);
+    assert.equal(editors[0].getWarnings().length, 0);
+    assert.deepEqual(lints, []);
+    editors.forEach((e) => e.destroy());
+  } })));
+});
+
+test('required-blank stays as it was: a blank or whitespace Command reads as missing', () => {
+  for (const blank of ['', '  \n\t ']) {
+    const host = mount(renderParamsForm(CMD_META, { params: {} }, { doc }));
+    host.querySelector('textarea').value = blank;
+    assert.deepEqual(collectParams(host, CMD_META), { values: {}, errors: ['Command is required.'] }, JSON.stringify(blank));
+  }
+  const unset = mount(renderParamsForm(CMD_META, {}, { doc }));
+  assert.ok(unset.querySelector('.ins-f').classList.contains('ins-missing'));
+});

@@ -35,7 +35,7 @@ const BANS = [
 ];
 const literals = (src) => src.match(/'[^'\n]*'|"[^"\n]*"|`[^`]*`/g) || [];
 const walkFrom = (root, dir = '') => readdirSync(new URL(`../${root}/${dir}`, import.meta.url), { withFileTypes: true }).flatMap((e) =>
-  e.isDirectory() ? (e.name === 'vendor' || e.name === 'stillhet' ? [] : walkFrom(root, `${dir}${e.name}/`)) : /\.(mjs|js)$/.test(e.name) ? [`${root}/${dir}${e.name}`] : []);
+  e.isDirectory() ? (e.name === 'vendor' ? [] : walkFrom(root, `${dir}${e.name}/`)) : /\.(mjs|js)$/.test(e.name) ? [`${root}/${dir}${e.name}`] : []);
 const readRepo = (p) => readFileSync(new URL(`../${p}`, import.meta.url), 'utf8');
 const banHits = (src) => literals(noComments(src).replace(/\/\*[\s\S]*?\*\//g, ''))
   .flatMap((lit) => BANS.filter(([re]) => re.test(lit)).map(([, why]) => `${lit.slice(0, 80)} (${why})`));
@@ -110,8 +110,8 @@ test('F-22: a zero diff count is neutral ink and the files tile is a link', () =
   assert.match(read('app.js'), /diff-del\$\{f\.removed === 0 \? ' is-zero' : ''\}/);
 });
 
-test('the stat card sub line is sans --ink-2: dropping .mono left the baseline, and --ink-3 is 2.8:1', () => {
-  const css = readStyleCss();
-  assert.match(css, /\.hd-ov-card \.hd-ov-sub\{color:var\(--ink-2\);\}/);
-  assert.match(read('app.js'), /s\.className = 'hd-ov-sub';/);
+test('the one-level run page builds no Overview stat cards (removed with the glance)', () => {
+  const app = noComments(read('app.js'));
+  assert.equal(/function hdStatCard\(/.test(app), false);
+  assert.equal(/'hd-ov-sub'/.test(app), false);
 });

@@ -706,7 +706,7 @@ export function createGraphView(host, {
     if (!pip) { pip = h('div', cls); pip.dataset.nodeId = id; el.appendChild(pip); }
     pip.title = msg;
   }
-  /** Validation pips: red for the node's first error, amber for its first surfaced warning (D15, only
+  /** Validation pips: red for the node's first error, amber for its surfaced warnings (D15, only
    *  where there is no error); `bad` on wires an error names. */
   function applyReport(report) {
     const errBy = new Map();
@@ -725,7 +725,12 @@ export function createGraphView(host, {
       // V19 names only a wire ({wireId}): its pip goes on the wire's TARGET card (D15).
       const wire = !w.nodeId && w.wireId ? current.wires.find((x) => x && x.id === w.wireId) : null;
       const id = w.nodeId || (wire && wire.to ? wire.to.node : null);
-      if (id && !warnBy.has(id)) warnBy.set(id, w.message || w.code);
+      if (!id) continue;
+      // Every canvas warning of the card, one per line: a shell warning must still read when an earlier rule warned too.
+      const text = w.message || w.code;
+      const seen = warnBy.get(id);
+      if (seen === undefined) warnBy.set(id, text);
+      else if (!seen.split('\n').includes(text)) warnBy.set(id, `${seen}\n${text}`);
     }
     for (const [id, el] of nodeEls) {
       setPip(el, id, 'npip', errBy.get(id));

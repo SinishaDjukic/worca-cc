@@ -309,6 +309,10 @@
       "req": {
         "name": "requirements",
         "feature": "requirements"
+      },
+      "fp": {
+        "name": "feature-pull",
+        "feature": "requirements"
       }
     },
     "cssBlocks": [
@@ -571,6 +575,7 @@
           ".rd-graph",
           ".hd-graph",
           ".run-warn",
+          ".run-scope",
           ".rg-hint",
           ".gv-wrap-monitor",
           ".run-strip"
@@ -630,7 +635,9 @@
           ".mcp-def-row",
           ".mcp-def-fill",
           ".mcp-res-",
-          ".mcp-resolution"
+          ".mcp-resolution",
+          "#plugin-modal .card:has(.mcp-imp)",
+          ".mcp-imp"
         ],
         "feature": "mcp-servers",
         "name": "server-fields"
@@ -748,7 +755,16 @@
           ".viewer-modal.req-dlg-wrap",
           ":root:not([data-git=\"off\"]) .req-",
           ".form-msg.req-msg-warn",
-          "a.chip.req-export-chip"
+          "a.chip.req-export-chip",
+          ".fp-",
+          ".feature-pick",
+          ".ask-chip-feature",
+          ".ask-chip-id",
+          ".ask-chip-status",
+          ".mention-item[aria-disabled",
+          ".sent-feature",
+          ".shape-attached-list",
+          ".attached-feature"
         ],
         "feature": "requirements",
         "name": "requirements"
@@ -1326,15 +1342,6 @@
         "^Run rows \\(\\.rc\\-\\*\\)",
         "^Scheduled runs"
       ],
-      "html": []
-    },
-    {
-      "name": "prompt-check",
-      "doc": "docs/prompt-check.md",
-      "routes": [
-        "/api/prompt-check"
-      ],
-      "css": [],
       "html": []
     },
     {

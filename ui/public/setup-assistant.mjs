@@ -4,7 +4,7 @@
 // start), diffs every answer against them, and sends only what changed. Pure DOM; `doc`, `fetchJson` and
 // `timers` are injected for jsdom.
 import { layoutDialog } from './dialog-layout.mjs';
-import { guardModal } from './modal-guard.mjs';
+import { guardModal, askDiscard } from './modal-guard.mjs';
 import { makeSwitch } from './switch.mjs';
 import { renderCopilotSignIn } from './bridge-view.mjs';
 import { renderRolesSection, ENGINE_EFFORTS } from './engine-settings-view.mjs';
@@ -160,8 +160,8 @@ function savedNetworkPatch(saved) {
 
 /** The engine Chat's new chats start on, as saved (askEngine, D17; unset or unknown = Claude): the Chat field's slot. */
 export function askEngineOf(settings = {}) { return CHAT_ENGINE_NAMES.includes(settings?.askEngine) ? settings.askEngine : 'claude'; }
-/** What an empty Chat field means: the Everyday coding role where roles exist (withRole), else the engine's own default. */
-const chatFallback = (engine) => (ROLE_HARNESSES.includes(engine) ? 'same as Everyday coding' : `${engineLabel(engine)}'s default model`);
+/** What an empty Chat field means: the Everyday tasks role where roles exist (withRole), else the engine's own default. */
+const chatFallback = (engine) => (ROLE_HARNESSES.includes(engine) ? 'same as Everyday tasks' : `${engineLabel(engine)}'s default model`);
 
 /**
  * The modelRoles patch (A10): every harness/role whose answer differs from the saved one, with the answer,
@@ -287,7 +287,7 @@ export function networkAnswered(answers, detect) {
 /** The step that owns an apply 400's `field` ('work.pipelineCostLimitUsd' → 'work'); 'review' when unknown (A20). */
 export function stepOfField(field) { return GROUP_STEP[String(field || '').split('.')[0]] || 'review'; }
 
-/** A Models-page sign-in pill → the assistant step it opens, or null to keep the Providers page (A17). */
+/** A sign-in button (its data-provider) → the assistant step that signs it in, or null when no step does (A17). */
 export function setupStepForSignIn(btn) { return btn?.dataset?.provider === 'copilot' ? 'access' : null; }
 
 const SUBTITLES = Object.freeze({
@@ -403,9 +403,14 @@ export function openSetupAssistant({ doc = globalThis.document, fetchJson = defa
     if (opener?.isConnected) opener.focus?.();
     onClose(how, { applied });
   }
-  const guard = guardModal(modal, { kind: 'form', close: () => teardown('later'), busy: () => S.netJob,
-    // Apply (and a login Retry after it) is past the point of discarding: its writes are done (architect-1-2).
-    isDirty: () => S.step !== 'apply' && !S.retryLogin && !!S.answers && !!S.opened && JSON.stringify(S.answers) !== S.opened });
+  // Apply (and a login Retry after it) is past the point of discarding: its writes are done (architect-1-2).
+  const isDirty = () => S.step !== 'apply' && !S.retryLogin && !!S.answers && !!S.opened && JSON.stringify(S.answers) !== S.opened;
+  const guard = guardModal(modal, { kind: 'form', close: () => teardown('later'), busy: () => S.netJob, isDirty });
+  // Cancel / Set up later asks "Discard changes?" once an answer changed, like Escape; untouched it closes at once.
+  async function cancel() {
+    if (isDirty() && !(await askDiscard(doc))) return;      // Keep editing
+    if (!closed) guard.cancel();
+  }
 
   const idx = () => SETUP_STEPS.findIndex((s) => s.id === S.step);
   // First start only: a re-run opened from Settings is there to change things.
@@ -698,7 +703,7 @@ export function openSetupAssistant({ doc = globalThis.document, fetchJson = defa
       else {
         box.append(field('Plan', seg(COPILOT_PLANS, a.copilotAccount, (v) => { a.copilotAccount = v; paint(); }, { label: 'Plan' }), null));
         if (a.copilotConnected) {
-          // Use another account: sign out (the Providers page's endpoint), then the device sign-in starts here.
+          // Use another account: sign out (the endpoint Models › Providers uses), then the device sign-in starts here.
           const li = row(badge('green', 'OK'), `Connected as @${a.copilotLogin || 'github'}`);
           if (!S.cpSwitch) li.append(btn('Use another account', 'btn btn-sm btn-quiet sa-cp-switch', () => { S.cpSwitch = true; paint(); }));
           const list = rows('sa-cp', li);
@@ -805,7 +810,7 @@ export function openSetupAssistant({ doc = globalThis.document, fetchJson = defa
       const everyday = ROLE_HARNESSES.includes(chatEngine) && m.modelRoles?.[chatEngine]?.everyday?.model ? m.modelRoles[chatEngine].everyday : undefined;
       const f = renderInheritField(doc, { id: `models.${chatEngine}.ask`, label: 'Default model for Chat', kind: 'model', level: 'user', engine: chatEngine,
         catalog, efforts: ENGINE_EFFORTS[chatEngine], own: m.askModel ?? undefined,
-        inherited: { value: everyday, source: 'role', label: everyday ? 'Same as Everyday coding' : null }, defaultLabel: chatFallback(chatEngine) });
+        inherited: { value: everyday, source: 'role', label: everyday ? 'Same as Everyday tasks' : null }, defaultLabel: chatFallback(chatEngine) });
       f.querySelector('.inherit-model').dataset.saField = `models.askModels.${chatEngine}`;   // an apply 400 marks it (markField)
       chatHost.replaceChildren(f);
     };
@@ -929,15 +934,18 @@ export function openSetupAssistant({ doc = globalThis.document, fetchJson = defa
       status.className = `hint sa-status${S.error ? ' err' : ''}`; status.textContent = S.error || 'Type the proxy password again to retry';
       return;
     }
-    actions.append(first ? btn(entry === 'first' ? 'Set up later' : 'Cancel', 'btn btn-quiet sa-later', () => guard.cancel())
-      : btn('Back', 'btn sa-back', () => goTo(stepBefore())));
+    // Every step before Apply can leave the dialog, not only the first. Order: Cancel, then Skip / Use saved values,
+    // then Back and Next side by side (the workspace guide's foot), in one group a narrow foot never splits.
+    actions.append(btn(entry === 'first' ? 'Set up later' : 'Cancel', 'btn btn-quiet sa-later', () => { void cancel(); }));
     const gate = S.answers ? nextGate(S.step, S.answers, { saved: S.saved, tested: S.tested, now: now(), detect: S.detect, entry, netSaved: S.netSaved }) : { ok: false, reason: '' };
     const skipLabel = S.answers && idx() >= 1 && idx() <= 4 ? skipLabelFor(gate) : null;
     if (skipLabel) actions.append(btn(skipLabel, 'btn btn-quiet sa-skip', () => { void skip(); }));
+    const nav = el('span', 'sa-nav');
+    if (!first) nav.append(btn('Back', 'btn sa-back', () => goTo(stepBefore())));
     const label = S.step === 'check' ? 'Start' : S.step === 'review' ? (gate.finish ? 'Finish' : 'Apply') : 'Next';
     const onNext = () => (S.step === 'network' ? nextFromNetwork() : S.step !== 'review' ? goTo(stepAfter()) : gate.finish ? teardown('done', { applied: !!S.netSaved }) : startApply(null));
     const next = btn(label, 'btn btn-primary sa-next', onNext);
-    next.disabled = !gate.ok || S.testing; actions.append(next);
+    next.disabled = !gate.ok || S.testing; nav.append(next); actions.append(nav);
     status.className = `hint sa-status${S.error ? ' err' : ''}`; status.textContent = S.error || gate.reason;
   }
 
@@ -968,10 +976,11 @@ export function openSetupAssistant({ doc = globalThis.document, fetchJson = defa
   // network apply those are re-read first: its earlier steps may have saved some of them.
   // The second button on steps 2–5 shows only when it does something Next does not. Both labels run skip(), which
   // puts the step back to its saved values and moves on. Next blocked (an untested proxy, a missing sign-in):
-  // "Skip for now". The step differs from what is saved (the Review step's Changed): "Discard changes". Else none.
+  // "Skip for now". The step differs from what is saved (the Review step's Changed): "Use saved values"
+  // (not "Discard changes", which is Cancel's question and closes the dialog). Else none.
   function skipLabelFor(gate) {
     if (!gate.ok) return 'Skip for now';
-    return diffRows(S.saved, S.answers).some((r) => r.step === S.step && r.changed) ? 'Discard changes' : null;
+    return diffRows(S.saved, S.answers).some((r) => r.step === S.step && r.changed) ? 'Use saved values' : null;
   }
   async function skip() {
     if (S.netRetry && S.step === 'network') {

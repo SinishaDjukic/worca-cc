@@ -59,6 +59,10 @@
 .wl-card{display:flex;flex-direction:column;gap:8px;width:100%;box-sizing:border-box;margin:0;padding:10px;text-align:left;font:inherit;
   background:var(--surface);border:1px solid var(--line);border-radius:var(--r-md);color:var(--ink);cursor:pointer;}
 .wl-card:hover{background:var(--hover);}
+/* In the account menu it is flat on the --panel sheet, its text in the rows' 9px icon column. The :hover
+   rule is repeated: both selectors weigh (0,2,0), so the transparent fill would otherwise win. */
+.acct-menu > .wl-card{padding:6px 9px;background:transparent;border:0;border-radius:var(--r-sm);}
+.acct-menu > .wl-card:hover{background:var(--hover);}
 .wl-card-head{display:flex;align-items:center;gap:8px;}
 .wl-card-ava{flex:none;width:22px;height:22px;border-radius:50%;object-fit:cover;background:var(--line-2);}
 .wl-card-name{flex:1;min-width:0;font-size:var(--fs-body);font-weight:600;}

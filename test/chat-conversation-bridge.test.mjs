@@ -433,6 +433,15 @@ test('live status: posted at turn start with typing; progress edits are throttle
   assert.ok(sid >= 0);
 });
 
+test('live status: a tick that fires a few ms early still shows the step it stands for', async () => {
+  const L = liveBridge();
+  await L.say('<@BOT1> hello there');
+  const id = C.listStatuses(L.conv(L.threads[0]).id)[0].platformMessageId;
+  await flush();
+  await L.tick(4998);   // the interval's own clock ran ahead of the wall clock
+  assert.deepEqual(L.editsOf(id).map((p) => p.message.body[0].value), ['⏳ Working on it… · 5 s']);
+});
+
 test('live status: the reply is edited into the status message; extra parts follow as new posts; nothing twice', async () => {
   const L = liveBridge();
   await L.say('<@BOT1> hello there');

@@ -10,6 +10,7 @@ const tick = () => new Promise((r) => setTimeout(r, 0));
 const settle = async () => { for (let i = 0; i < 6; i++) await tick(); };
 const {
   computeOverlay, presetsFor, openRunSetupOverlay, LOAD_FAILED_TEXT, PRESETS_UNAVAILABLE_TEXT, V1_LOOPS_TEXT, defaultFetchers,
+  NOTE_LABEL, CHECKING_TEXT, CONFLICT_TITLE, RUN_IN_PROGRESS_TEXT,
 } = await import('../ui/public/run-setup-overlay.mjs');
 
 // ---- pure helpers ----
@@ -299,4 +300,176 @@ test('the overlay never writes config or presets: its only requests are reads', 
   assert.ok(seen.includes('GET /api/run-defaults?projectDir=%2Fp%20dir'));
   assert.ok(seen.includes('GET /api/workflows/wf_g'));
   assert.equal(modal.card.querySelectorAll('.req-runsetup-row').length, 3);
+});
+
+// ---- note, checker, Auto mode, copy ----
+const GO = '[data-ui="runsetup-go"]';
+const NOTE = '[data-ui="runsetup-note"]';
+const noteCalls = () => {
+  const confirms = [];
+  return { confirms, onConfirm: async (overlay, opts) => { confirms.push({ overlay, ...opts }); return {}; } };
+};
+
+test('note: a labelled, bounded box, empty on every open, never prefilled or stored; absent without the option', async () => {
+  assert.equal((await open()).q(NOTE), null);
+  const a = await open({}, { note: true });
+  assert.equal(a.q(NOTE).value, '');
+  assert.equal(a.q(NOTE).getAttribute('maxlength'), '2000');
+  assert.equal(a.q('label[for="req-runsetup-note"]').textContent, NOTE_LABEL);
+  a.q(NOTE).value = 'only for this run';
+  const b = await open({}, { note: true });
+  assert.equal(b.q(NOTE).value, '', 'a fresh open never carries the last note');
+  assert.equal(window.localStorage.length + window.sessionStorage.length, 0);
+});
+
+test('a blank note never calls the checker and confirms straight with noteOverrides false', async () => {
+  const c = noteCalls();
+  let checks = 0;
+  const o = await open({}, { note: true, checkNote: async () => { checks += 1; return { conflicts: [] }; }, onConfirm: c.onConfirm });
+  typeInto(o.q(NOTE), '   ');
+  o.q(GO).click(); await settle();
+  assert.equal(checks, 0);
+  assert.deepEqual(c.confirms.map((x) => [x.note, x.noteOverrides]), [['', false]]);
+});
+
+test('a clean, skipped or throwing check starts the run with noteOverrides false', async () => {
+  for (const check of [async () => ({ conflicts: [] }), async () => ({ skipped: true }), async () => { throw new Error('down'); }]) {
+    const c = noteCalls();
+    const o = await open({}, { note: true, checkNote: check, onConfirm: c.onConfirm });
+    typeInto(o.q(NOTE), 'use the blue one');
+    o.q(GO).click(); await settle();
+    assert.deepEqual(c.confirms.map((x) => [x.note, x.noteOverrides]), [['use the blue one', false]]);
+    assert.equal(o.modal.closes.length, 1);
+  }
+});
+
+test('while checking Start shows the checking text and is off; Cancel aborts the check and never confirms', async () => {
+  const c = noteCalls();
+  let signal;
+  const o = await open({}, { note: true, checkNote: (_n, sig) => { signal = sig; return new Promise(() => {}); }, onConfirm: c.onConfirm });
+  typeInto(o.q(NOTE), 'x');
+  o.q(GO).click(); await settle();
+  assert.equal(o.q(GO).textContent, CHECKING_TEXT);
+  assert.equal(o.q(GO).disabled, true);
+  assert.equal(signal.aborted, false);
+  o.q('[data-ui="runsetup-cancel"]').click(); await settle();
+  assert.equal(signal.aborted, true);
+  assert.deepEqual([o.events.cancels, c.confirms.length, o.modal.closes], [1, 0, [true]]);
+});
+
+test('a conflict swaps the footer for an alert naming it; nothing is confirmed until a choice; Edit note keeps text and focus', async () => {
+  const c = noteCalls();
+  const conflicts = [{ quote: 'skip the tests', why: '<b>the spec</b> requires tests' }];
+  const o = await open({}, { note: true, checkNote: async () => ({ conflicts }), onConfirm: c.onConfirm });
+  typeInto(o.q(NOTE), 'skip the tests');
+  o.q(GO).click(); await settle();
+  const panel = o.q('.req-runsetup-conflicts');
+  assert.equal(panel.getAttribute('role'), 'alert');
+  assert.match(panel.textContent, new RegExp(CONFLICT_TITLE));
+  assert.match(panel.textContent, /skip the tests/);
+  assert.equal(panel.querySelector('b'), null, 'text only');
+  assert.match(panel.textContent, /<b>the spec<\/b> requires tests/);
+  assert.equal(c.confirms.length, 0);
+  o.q('[data-ui="runsetup-edit-note"]').click();
+  assert.equal(o.q('.req-runsetup-conflicts'), null);
+  assert.equal(o.q(NOTE).value, 'skip the tests');
+  assert.equal(document.activeElement, o.q(NOTE));
+  assert.equal(o.q(GO).textContent, 'Start run');
+  assert.equal(o.q(GO).disabled, false);
+  assert.equal(c.confirms.length, 0);
+});
+
+test('Start anyway confirms with noteOverrides true; an error then returns to the form with the text', async () => {
+  let n = 0;
+  const seen = [];
+  const o = await open({}, { note: true, checkNote: async () => ({ conflicts: [{ quote: 'q', why: 'w' }] }),
+    onConfirm: async (overlay, opts) => { seen.push(opts); n += 1; return n === 1 ? { error: RUN_IN_PROGRESS_TEXT } : {}; } });
+  typeInto(o.q(NOTE), 'a note');
+  o.q(GO).click(); await settle();
+  o.q('[data-ui="runsetup-anyway"]').click(); await settle();
+  assert.deepEqual(seen, [{ note: 'a note', noteOverrides: true }]);
+  assert.equal(o.q('.req-runsetup-msg').textContent, RUN_IN_PROGRESS_TEXT);
+  assert.equal(o.q('.req-runsetup-conflicts'), null);
+  assert.equal(o.modal.closes.length, 0, 'the overlay stays open');
+  assert.equal(RUN_IN_PROGRESS_TEXT, 'This feature already has a run in progress.');
+});
+
+test('Start anyway twice posts once; Edit note during the POST is ignored and Start stays off', async () => {
+  let release;
+  const seen = [];
+  const o = await open({}, { note: true, checkNote: async () => ({ conflicts: [{ quote: 'q', why: 'w' }] }),
+    onConfirm: (overlay, opts) => { seen.push(opts); return new Promise((r) => { release = r; }); } });
+  typeInto(o.q(NOTE), 'a note');
+  o.q(GO).click(); await settle();
+  const anyway = o.q('[data-ui="runsetup-anyway"]');
+  anyway.click(); anyway.dispatchEvent(new window.Event('click', { bubbles: true })); await settle();
+  assert.equal(seen.length, 1, 'one start');
+  o.q('[data-ui="runsetup-edit-note"]').dispatchEvent(new window.Event('click', { bubbles: true })); await settle();
+  assert.ok(o.q('.req-runsetup-conflicts'), 'Edit note does nothing while the start is in flight');
+  assert.equal(o.q(GO).disabled, true);
+  release({}); await settle();
+  assert.equal(o.modal.closes.length, 1);
+});
+
+test('the note and the setup controls stay locked while the panel is up, so Start anyway sends what was shown; Edit note unlocks them', async () => {
+  const c = noteCalls();
+  const o = await open({}, { note: true, checkNote: async () => ({ conflicts: [{ quote: 'q', why: 'w' }] }), onConfirm: c.onConfirm });
+  typeInto(o.q(NOTE), 'old');
+  o.q(GO).click(); await settle();
+  assert.equal(o.q(NOTE).disabled, true);
+  const controls = [...o.modal.card.querySelectorAll('.req-runsetup-body select, .req-runsetup-body input')];
+  assert.ok(controls.length > 0);
+  assert.ok(controls.every((el) => el.disabled), 'every setup control is locked');
+  o.q('[data-ui="runsetup-anyway"]').click(); await settle();
+  assert.deepEqual(c.confirms.map((x) => [x.note, x.noteOverrides]), [['old', true]]);
+});
+
+test('Edit note re-enables the controls that were enabled before, and a changed note is checked again', async () => {
+  let checks = 0;
+  const c = noteCalls();
+  const o = await open({}, { note: true, checkNote: async () => { checks += 1; return { conflicts: checks === 1 ? [{ quote: 'q', why: 'w' }] : [] }; }, onConfirm: c.onConfirm });
+  const before = [...o.modal.card.querySelectorAll('.req-runsetup-body select, .req-runsetup-body input')].map((el) => el.disabled);
+  typeInto(o.q(NOTE), 'old');
+  o.q(GO).click(); await settle();
+  o.q('[data-ui="runsetup-edit-note"]').click();
+  const after = [...o.modal.card.querySelectorAll('.req-runsetup-body select, .req-runsetup-body input')].map((el) => el.disabled);
+  assert.deepEqual(after, before);
+  assert.equal(o.q(NOTE).disabled, false);
+  typeInto(o.q(NOTE), 'new text');
+  o.q(GO).click(); await settle();
+  assert.equal(checks, 2);
+  assert.deepEqual(c.confirms.map((x) => [x.note, x.noteOverrides]), [['new text', false]]);
+});
+
+test('a retry after an error with the same note does not run the charged check again', async () => {
+  let checks = 0;
+  let n = 0;
+  const o = await open({}, { note: true, checkNote: async () => { checks += 1; return { conflicts: [] }; },
+    onConfirm: async () => { n += 1; return n === 1 ? { error: RUN_IN_PROGRESS_TEXT } : {}; } });
+  typeInto(o.q(NOTE), 'a note');
+  o.q(GO).click(); await settle();
+  assert.equal(o.q(NOTE).disabled, false, 'the form is back after the error');
+  o.q(GO).click(); await settle();
+  assert.equal(checks, 1);
+  assert.equal(n, 2);
+});
+
+test('Auto mode: note and Start only, no loads, Start ready at once, a null overlay is confirmed', async () => {
+  const c = noteCalls();
+  const o = await open({}, { workflowId: 'wf_auto', workflowName: 'Auto', note: true, onConfirm: c.onConfirm });
+  assert.deepEqual(o.calls, [], 'no loads');
+  assert.equal(o.q('h2').textContent, 'Start this run');
+  assert.ok(o.q(NOTE));
+  for (const sel of ['[data-ui="runsetup-preset"]', '.req-runsetup-row', '.req-runsetup-cycles', '.req-runsetup-agents', '.req-runsetup-loops']) assert.equal(o.q(sel), null, sel);
+  assert.equal(o.q(GO).disabled, false);
+  typeInto(o.q(NOTE), 'hi');
+  o.q(GO).click(); await settle();
+  assert.deepEqual(c.confirms, [{ overlay: null, note: 'hi', noteOverrides: false }]);
+});
+
+test('copy overrides the title and the other-workflow line; the defaults stay without it', async () => {
+  const o = await open({}, { copy: { title: 'Start a run', otherWorkflowText: 'Pick another workflow on the card.' } });
+  assert.equal(o.q('h2').textContent, 'Start a run');
+  assert.match(o.modal.card.textContent, /Pick another workflow on the card\./);
+  assert.doesNotMatch(o.modal.card.textContent, /cancel and change it on the card/);
 });

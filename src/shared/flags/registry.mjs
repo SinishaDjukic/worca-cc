@@ -124,18 +124,6 @@ export const FLAGS = Object.freeze([
     docs: 'docs/ticket-updates.md',
   }),
   entry({
-    key: 'rail',
-    title: 'Stillhet',
-    description: 'Stillhet, the calmer Worca: an evolution of the design system, opt-in while it is shaped.',
-    stage: 'experimental',
-    default: false,
-    owner: 'e-angelov',
-    since: '1.19.0-rc.1',
-    added: '2026-11-11',
-    reviewBy: '2027-02-08',
-    docs: 'docs/feature-flags.md',
-  }),
-  entry({
     key: 'design',
     title: 'Design',
     description: 'A Design page: describe a web page, a deck or an HTML video in its own chat and real agents build it in front of you, one cursor per running agent. Its spend counts toward your limits and shows in Statistics. Off: the page is hidden and /api/design answers 404.',

@@ -253,9 +253,11 @@ test('an Escape typed in the side column never steps the page back', async () =>
   ta.dispatchEvent(new ctx.window.KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }));
   await ctx.settle(4);
   assert.equal(ctx.window.location.hash, at, 'still on the run\'s Details');
+  // One level: from the page itself Escape steps back to the list, in the slide layout only.
+  ctx.window.document.getElementById('runs-shell').dataset.layout = 'slide';
   ctx.window.document.querySelector('#hist-detail .hd').dispatchEvent(new ctx.window.KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }));
   await ctx.settle(4);
-  assert.notEqual(ctx.window.location.hash, at, 'from the page itself Escape still steps back');
+  assert.equal(ctx.window.location.hash, '#runs', 'from the page itself Escape still steps back to the list');
 });
 
 test('a Diff file picked on the page (no hashchange) shows as a File chip in the column', async () => {
@@ -444,9 +446,11 @@ test('an Escape typed in the column leaves an open run page and an open project 
   escape(ctx, ta);
   await ctx.settle(4);
   assert.equal(ctx.window.location.hash, runAt, 'the run page stays on its Details');
+  // One level: from the page itself Escape steps back to the list, in the slide layout only.
+  ctx.window.document.getElementById('runs-shell').dataset.layout = 'slide';
   escape(ctx, ctx.window.document.body);
   await ctx.settle(4);
-  assert.notEqual(ctx.window.location.hash, runAt, 'from the page itself Escape still steps back');
+  assert.equal(ctx.window.location.hash, '#runs', 'from the page itself Escape still steps back to the list');
   await nav(ctx, 'projects/worca-cc-551183d0', 10);
   const projAt = ctx.window.location.hash;
   const ta2 = els(ctx).page.querySelector('textarea.ask-input');
