@@ -130,12 +130,13 @@ export function criteriaGroup(doc, cur, labels, { once = false, actions = {}, pa
 }
 
 /** Task 14: the pair's reason names the sides as the checker saw them in its first ask ("result A" first, "result B" second, lowercased
- *  at a sentence start; or "the first / second result"). Here they become the versions: "v4's result". */
+ *  at a sentence start; or "the first / second result"). Here they become the versions: "v4's result", and a possessive ("result A's")
+ *  just "v4's", never "v4's result's". */
 export function pairReasonText(reason, labels) {
-  const of = (k) => `${labels[k]}'s result`;
+  const of = (k, owns) => (owns ? `${labels[k]}'s` : `${labels[k]}'s result`);
   return String(reason || '')
-    .replace(/\b(?:[Tt]he\s+)?[Rr]esult\s+([AB])\b/g, (_m, s) => of(s === 'A' ? 'a' : 'b'))
-    .replace(/\b(?:[Tt]he\s+)?(first|second)\s+result\b/gi, (_m, w) => of(w.toLowerCase() === 'first' ? 'a' : 'b'));
+    .replace(/\b(?:[Tt]he\s+)?[Rr]esult\s+([AB])(['’]s)?\b/g, (_m, s, owns) => of(s === 'A' ? 'a' : 'b', !!owns))
+    .replace(/\b(?:[Tt]he\s+)?(first|second)\s+result(['’]s)?\b/gi, (_m, w, owns) => of(w.toLowerCase() === 'first' ? 'a' : 'b', !!owns));
 }
 
 /** Board 6 and P4-M6 (D100): "Which result is better overall?", or with a result you liked "closer to" it, above the try tabs. Worca

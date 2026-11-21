@@ -162,6 +162,9 @@ test('Task 14: the reason\'s "result A" / "result B" and "the first / second res
   assert.equal(pairReasonText('result A sets a goal; result B does not.', L), "v4's result sets a goal; v5 draft's result does not.");
   assert.equal(pairReasonText('The first result is clearer than the second result.', L), "v4's result is clearer than v5 draft's result.");
   assert.equal(pairReasonText('The result a reader wants is short.', L), 'The result a reader wants is short.', 'only the capital side letters');
+  // Fix round 1: a possessive names the version, never "v4's result's".
+  assert.equal(pairReasonText("result A's goal can be measured; result B's cannot.", L), "v4's goal can be measured; v5 draft's cannot.");
+  assert.equal(pairReasonText("The first result's goal is clearer than the second result's.", L), "v4's goal is clearer than v5 draft's.");
 });
 
 const tv = (id) => ({ tryId: id, status: 'passed', name: 'brief.md', text: 'Brief', truncated: false, connectors: 'pretend', wouldHaveSent: [], answeredReads: [],
@@ -289,6 +292,74 @@ test('P4-M7 and board 58: none found, and a failure in the server\'s words; the 
   click(doc.querySelector('.wft-dlg-ok'));
   await tick();
   assert.equal('criteria' in sent, false, 'nothing picked, nothing sent');
+});
+
+// Fix round 1: Safari and Firefox on macOS do not focus a clicked button, so a blur's relatedTarget is null; pointerdown comes before
+// the blur in every browser.
+const press = (el) => el.dispatchEvent(new el.ownerDocument.defaultView.Event('pointerdown', { bubbles: true }));
+const release = (el) => el.dispatchEvent(new el.ownerDocument.defaultView.Event('pointerup', { bubbles: true }));
+
+test('fix round 1: a press on Cancel or Add example sends no paid call, even when the button takes no focus', async () => {
+  const { doc, win } = dom();
+  const asked = [];
+  openFromRunDialog({ doc, win, past: past(), onSuggest: async (n) => { asked.push(n); return { suggestions: [] }; }, onSubmit: async () => ({ ok: true }) });
+  const note = doc.getElementById('wft-fr-note');
+  note.value = LONG;
+  const cancel = [...doc.querySelectorAll('.mk-dialog-foot button')].find((b) => b.textContent === 'Cancel');
+  press(cancel);
+  blur(note);   // relatedTarget null, as Safari
+  release(cancel);
+  await tick();
+  assert.deepEqual(asked, [], 'leaving the dialog asks nothing');
+  // After the press is over, a plain blur asks again as before.
+  blur(note);
+  await tick();
+  assert.deepEqual(asked, [LONG]);
+});
+
+test('fix round 1: a chip clicked right after the note was edited keeps the pick, and asks nothing new', async () => {
+  const { doc, win } = dom();
+  const asked = [];
+  let sent = null;
+  openFromRunDialog({ doc, win, past: past(), onSuggest: async (n) => { asked.push(n); return { suggestions: ['Uses numbers from usage.csv', 'Says how many people use filters today'] }; },
+    onSubmit: async (b) => { sent = b; return { ok: true }; } });
+  const note = doc.getElementById('wft-fr-note');
+  note.value = LONG;
+  blur(note);
+  await tick();
+  note.value = `${LONG} Also the limit.`;   // edited, then a chip is clicked: pointerdown, the note's blur, then the click
+  const chip = doc.querySelectorAll('button.wft-sugg-chip')[1];
+  press(chip);
+  blur(note);
+  release(chip);
+  click(chip);
+  await tick();
+  assert.equal(asked.length, 1, 'no new paid call');
+  assert.ok(chip.isConnected && chip.classList.contains('is-added'), 'the pick is kept');
+  click(doc.querySelector('.wft-dlg-ok'));
+  await tick();
+  assert.deepEqual(sent.criteria, [{ text: 'Says how many people use filters today' }]);
+});
+
+test('fix round 1: a note changed while Worca read it is asked again once the answer lands, if the person left the box', async () => {
+  const { doc, win } = dom();
+  const asked = [];
+  const answers = [];
+  openFromRunDialog({ doc, win, past: past(), onSuggest: (n) => { asked.push(n); return new Promise((r) => answers.push(r)); }, onSubmit: async () => ({ ok: true }) });
+  const note = doc.getElementById('wft-fr-note');
+  note.value = LONG;
+  blur(note);
+  const changed = `${LONG} And the export limit.`;
+  note.value = changed;
+  blur(note);   // still out: nothing more is sent yet
+  assert.deepEqual(asked, [LONG]);
+  answers[0]({ suggestions: ['Uses numbers from usage.csv'] });
+  await tick();
+  assert.deepEqual(asked, [LONG, changed], 'the new words are asked once the first answer is in');
+  answers[1]({ suggestions: ['Mentions the export limit'] });
+  await tick();
+  assert.deepEqual([...doc.querySelectorAll('button.wft-sugg-chip')].map((b) => b.textContent), ['Mentions the export limit']);
+  assert.equal(asked.length, 2);
 });
 
 test('tests-app.mjs: the liked routes, the suggestions call, the tries to pick, and the side by side\'s answers', () => {

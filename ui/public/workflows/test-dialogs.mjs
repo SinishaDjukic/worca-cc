@@ -147,15 +147,29 @@ function suggestionsBox(doc, note, onSuggest) {
       asked = '';   // board 58: "Try again." — the next time the box loses focus asks again
       show(' is-none', [doc.createTextNode((r && r.error) || 'Worca could not get suggestions this time. Try again.')]);
     }
-    // Changed while it was out, and left since: ask about the new words.
-    if (r && Array.isArray(r.suggestions) && note.value.trim() !== text && doc.activeElement !== note) void ask();
+    // Changed while it was out, and left since (not for a chip or the foot, and never once the dialog closed): ask about the new words.
+    if (r && Array.isArray(r.suggestions) && note.value.trim() !== text && doc.activeElement !== note && !pressing && box.isConnected) void ask();
   };
+  // Fix round 1: a press on a chip or on the dialog's foot (Cancel, Add example) asks nothing. pointerdown comes before the note's blur
+  // in every browser, also where a clicked button takes no focus (Safari, Firefox on macOS: relatedTarget is null); a chip pressed right
+  // after an edit keeps its pick (no spinner over it). The press ends with the next pointerup / pointercancel, after its blur.
+  let pressing = false;
+  const guard = (node) => node.addEventListener('pointerdown', () => {
+    pressing = true;
+    const win = doc.defaultView;
+    const end = () => {
+      win.removeEventListener('pointerup', end, true); win.removeEventListener('pointercancel', end, true);
+      win.setTimeout(() => { pressing = false; }, 0);
+    };
+    win.addEventListener('pointerup', end, true); win.addEventListener('pointercancel', end, true);
+  });
+  guard(box);
   note.addEventListener('blur', (e) => {
     const to = e.relatedTarget;
-    if (to && typeof to.closest === 'function' && to.closest('.mk-dialog-foot')) return;   // leaving the dialog: nothing to offer
+    if (pressing || (to && typeof to.closest === 'function' && to.closest('.mk-dialog-foot'))) return;   // a chip, or leaving the dialog
     void ask();
   });
-  return { box, picked };
+  return { box, picked, guard };
 }
 
 /** Board 3: "Use this run as a test example" (C4: the verdict is the version's result until it is tested, D29). Board 38
@@ -211,7 +225,7 @@ export function openFromRunDialog({ doc, win, past, onSubmit, onSuggest = null, 
     // Final review M9: "Filled in from the project's setup" only when there is one to fill in.
     devBox.append(el(doc, 'span', 'wft-dev-cap', DEV_CAPTION), field(doc, SETUP_LABEL, setup, { id: setup.id, hint: past.project.setupCmd ? SETUP_HINT_PAST : null }));
   }
-  return testDialog({
+  const dlg = testDialog({
     doc, win, title: 'Use this run as a test example', confirmLabel: 'Add example',
     body: [
       el(doc, 'p', 'wft-fr-intro', past.project ? fromRunIntro(past.workflowName)
@@ -229,6 +243,8 @@ export function openFromRunDialog({ doc, win, past, onSubmit, onSuggest = null, 
         ...(liked ? { liked: liked.box.checked } : {}), ...(sugg && sugg.picked.length ? { criteria: sugg.picked.map((text) => ({ text })) } : {}) });
     },
   });
+  if (sugg && dlg.foot) sugg.guard(dlg.foot);   // fix round 1: a press on Cancel or Add example asks nothing
+  return dlg;
 }
 
 // ── Test a version (boards 4, 30) ──
