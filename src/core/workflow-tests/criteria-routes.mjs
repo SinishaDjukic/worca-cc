@@ -6,7 +6,7 @@ import * as store from './store.mjs';
 import * as cs from './criteria-store.mjs';
 import { trustFor, byCriterionOf, likedFromPipeline, trustReportOf, trustOfExample } from './criteria-read.mjs';
 import { findPipelineRowById } from '../artifacts.mjs';
-import { pastRunSummary, usablePastRun, NOT_TESTABLE_REASONS } from './service.mjs';
+import { pastRunSummary, usablePastRun, workflowRowOf, NOT_TESTABLE_REASONS } from './service.mjs';
 import { mainResult } from './result.mjs';
 import { suggestCriteria } from './suggest.mjs';
 import { mockEnabled } from '../claude-runner.mjs';
@@ -167,6 +167,7 @@ export function registerCriteriaRoutes(app, { runner = null, criteriaJudge = nul
     const workflowId = String(b.workflowId || '');
     const note = typeof b.note === 'string' ? b.note.trim().slice(0, 2000) : '';
     if (!workflowId || note.length < 20) throw store.testError('write at least 20 characters about what a good result has', 'BAD_REQUEST');
+    workflowRowOf(workflowId);   // final review M9: never a paid call booked to a workflow that does not exist (404)
     const view = await (deps.judgeModelsView || judgeModelsView)(workflowId);
     if (!view.suggested) throw store.testError('no AI model can check criteria here', 'NOT_READY');
     // M17: only a past run of this workflow that can become its example is read and sent to the model (as from-run checks it).

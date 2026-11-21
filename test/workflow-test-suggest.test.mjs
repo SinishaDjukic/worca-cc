@@ -6,7 +6,7 @@ import express from 'express';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { _resetForTests } from '../src/core/db.mjs';
+import { _resetForTests, prepare as prepareDb } from '../src/core/db.mjs';
 import * as store from '../src/core/workflow-tests/store.mjs';
 import * as cs from '../src/core/workflow-tests/criteria-store.mjs';
 import { parseSuggestions, mockSuggestions, suggestCriteria, rewordCriterion, SUGGEST_SYSTEM_PROMPT, REWORD_SYSTEM_PROMPT } from '../src/core/workflow-tests/suggest.mjs';
@@ -160,6 +160,10 @@ test('checker.reword: only the Wrong cards, booked as reword; refused with the l
 });
 
 async function serve(deps) {
+  // Final review M9: the route books to a workflow that exists, so 'wf1' is a saved (format 2) workflow here.
+  getDb();
+  const now = new Date().toISOString();
+  prepareDb(`INSERT OR IGNORE INTO workflows (id, name, version, steps, feedbacks, graph, created_at, updated_at) VALUES ('wf1', 'W', 2, '[]', '[]', '{}', ?, ?)`).run(now, now);
   const app = express(); app.use(express.json());
   registerCriteriaRoutes(app, { deps });
   const srv = http.createServer(app);
@@ -168,6 +172,17 @@ async function serve(deps) {
   const post = async (p, body) => { const r = await fetch(base + p, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) }); return { status: r.status, body: await r.json() }; };
   return { post, close: () => new Promise((r) => srv.close(r)) };
 }
+
+test('final review M9: suggest-criteria for a workflow that does not exist is 404, with no model call and no booking', async () => {
+  let calls = 0;
+  const rows = [];
+  const s = await serve({ judgeModelsView: async () => ({ suggested: { id: 'm' } }), mock: () => false, budgetStatus: () => ({ blocked: false }), book: (r) => rows.push(r),
+    modelCall: async () => { calls += 1; return { text: '[]', costUsd: 0.01, costKind: 'billed' }; } });
+  try {
+    const r = await s.post('/api/workflow-tests/suggest-criteria', { workflowId: 'wf_nope', note: NOTE });
+    assert.deepEqual([r.status, calls, rows.length], [404, 0, 0]);
+  } finally { await s.close(); }
+});
 
 test('POST suggest-criteria: listed, validated, limit refused up front, booked as suggest', async () => {
   assert.ok(CRITERIA_ROUTES.some((r) => r.method === 'POST' && r.path === '/api/workflow-tests/suggest-criteria'));
