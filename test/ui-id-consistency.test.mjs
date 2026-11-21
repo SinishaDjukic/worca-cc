@@ -20,6 +20,7 @@ const exists = (id) => roots.some((r) => r.querySelector(`[id="${id}"]`));
 // id -> its creator in app.js (the creator's code must still be there).
 const RUNTIME = new Map([
   ['pd-tab-team', /btn\.id = `\$\{idPrefix\}-tab-\$\{t\.key\}`/],   // initDetailTabs, idPrefix 'pd' (initPdTabs) + PD_TABS key 'team'
+  ['runs-new', /b\.id = 'runs-new'/],   // the Runs page head's New run, drawn into #runs-new-slot
 ]);
 
 test('every id app.js looks up by literal exists in index.html or a <template> (or is listed as runtime-created)', () => {

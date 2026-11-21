@@ -38,3 +38,22 @@ export function exportStem(title) {
   const stem = slug.slice(0, STEM_MAX).replace(EDGES, '') || 'file';
   return RESERVED.test(stem) ? `file-${stem}` : stem;
 }
+
+const TITLE_MAX = 60;
+
+/**
+ * A new design's name from its brief, never from a model (L6.13, SPEC L30): the first line, cut at the end of its first
+ * sentence; past 60 characters cut at the last space at or before the 60th, else at 60; no trailing `,;:` or space.
+ * @param {unknown} text
+ * @returns {string}
+ */
+export function titleFromBrief(text) {
+  const line = String(text ?? '').trim().split(/\r?\n/, 1)[0];
+  const end = line.search(/[.!?](\s|$)/);
+  let title = end >= 0 ? line.slice(0, end) : line;
+  if (title.length > TITLE_MAX) {
+    const space = title.lastIndexOf(' ', TITLE_MAX);
+    title = space > 0 ? title.slice(0, space) : title.slice(0, TITLE_MAX);
+  }
+  return title.replace(/[\s,;:]+$/, '');
+}

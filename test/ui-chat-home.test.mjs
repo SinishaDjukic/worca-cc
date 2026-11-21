@@ -3,6 +3,7 @@
 // tiles updated in place and destroyed on leave, routing (following chat, else the run on Q&A / Workflow), lists,
 // promos, switches, and findFollowingThread.
 import { test, afterEach } from 'node:test';
+import { VERB_HOLD_MS, HERO_VERBS } from '../ui/public/chat/home-verbs.mjs';
 import assert from 'node:assert/strict';
 import { JSDOM } from 'jsdom';
 import { useDomRelease } from './helpers/jsdom-release.mjs';
@@ -49,9 +50,10 @@ const SHELL = (view) => `<!doctype html><html><body><section class="view" data-v
     <div class="ask-transcript"></div><div class="chat-dock" data-chat-dock></div></div></div></section></body></html>`;
 
 function setup({ view = 'home', runs = RUNS(), threads = [], workflows = null, flags = null, threadId = null, level = 'expert', holdThreads = false,
-  pins = undefined, savePins = null } = {}) {
+  pins = undefined, savePins = null, reducedMotion = false } = {}) {
   const dom = trackDom(new JSDOM(SHELL(view), { url: 'http://localhost:4317/' }));
   const { window } = dom;
+  if (reducedMotion) window.matchMedia = (q) => ({ matches: /prefers-reduced-motion: reduce/.test(q), addEventListener() {}, removeEventListener() {} });
   const doc = window.document;
   const calls = [];
   let runsNow = runs;
@@ -88,7 +90,7 @@ test('the hero wraps P1\'s hero slot: heading, the slot (composer untouched), th
   const s = setup();
   await settle(s.window);
   assert.deepEqual([...s.host.children].map((c) => c.className), ['chat-home-title', 'chat-hero-slot', 'chat-home-body']);
-  assert.equal(s.host.querySelector('h1.chat-home-title').textContent, 'What should worca do?');
+  assert.equal(s.host.querySelector('h1.chat-home-title').getAttribute('aria-label'), 'What should worca do?');
   assert.equal(s.host.querySelector('.chat-home-aurora, .chat-aurora-orb, [class*="aurora"]'), null, 'a flat page: no aurora behind the hero');
   assert.ok(s.host.querySelector('[data-chat-hero-slot] > .ask-composer'), 'the composer stays where P1 put it');
   const body = s.host.querySelector('.chat-home-body');
@@ -480,12 +482,12 @@ test('timers: the visit\'s tick, coalesce and boot wait run on the injected cloc
     runs: () => RUNS(), threads: async () => [], workflows: async () => ({ list: [], portsFn: null }),
     flags: async () => ({ scripts: true, tasks: false }), threadForRun: async () => null, openThread() {}, openRunPanel() {},
     setIntent() {}, prefill() {}, navigate() {}, level: () => 'expert' } });
-  assert.deepEqual(made, [['timeout', RUNS_WAIT_MS], ['interval', RUNS_TICK_MS]], 'the visit started on the injected clock');
+  assert.deepEqual(made, [['timeout', VERB_HOLD_MS], ['timeout', RUNS_WAIT_MS], ['interval', RUNS_TICK_MS]], 'the visit started on the injected clock (the hero\'s verb too)');
   home.update();
   assert.deepEqual(made.at(-1), ['timeout', RUNS_COALESCE_MS]);
   s.page.dataset.view = 'thread';
   await settle(s.window);
-  assert.deepEqual(cleared.sort(), [1, 2, 3], 'leaving clears every one of them');
+  assert.deepEqual(cleared.sort(), [1, 2, 3, 4], 'leaving clears every one of them');
   home.destroy();
 });
 
@@ -633,4 +635,33 @@ test('update({ workflows }) hands the new list to the row', async () => {
   assert.equal(s.host.querySelector('.chat-home-act[data-pin="wf_pay"]'), null, 'not listed yet');
   s.home.update({ workflows: { list: [{ id: 'wf_pay', name: 'Payroll close', version: 2, nodes: [], wires: [] }], portsFn: null } });
   assert.ok(s.host.querySelector('.chat-home-act[data-pin="wf_pay"]'));
+});
+
+test('the hero: one steady sentence for screen readers; the verb is typed and deleted behind a cursor through create, design, research, fix, analyse, test, in a slot that never changes width; "do" with reduced motion', async () => {
+  const s = setup();
+  await settle(s.window);
+  s.home.destroy();
+  const due = [];
+  const timers = { setInterval: () => 0, clearInterval() {}, setTimeout: (fn) => { due.push(fn); return due.length; }, clearTimeout() {} };
+  const home = createChatHome({ doc: s.doc, host: s.host, heroSlot: s.doc.querySelector('[data-chat-hero-slot]'), timers, deps: {
+    runs: () => RUNS(), threads: async () => [], workflows: async () => ({ list: [], portsFn: null }),
+    flags: async () => ({ scripts: true, tasks: false }), threadForRun: async () => null, openThread() {}, openRunPanel() {},
+    setIntent() {}, prefill() {}, navigate() {}, level: () => 'expert' } });
+  const h1 = s.host.querySelector('h1.chat-home-title');
+  const typed = () => h1.querySelector('.chat-home-verb-typed').textContent;
+  assert.equal(h1.getAttribute('aria-label'), 'What should worca do?');
+  assert.equal(h1.querySelector('.chat-home-verb').getAttribute('aria-hidden'), 'true');
+  assert.equal(h1.querySelector('.chat-home-verb-size').textContent, 'research?', 'the slot is sized by the widest verb: the sentence never moves');
+  assert.equal(h1.querySelector('.chat-home-cursor').hidden, false);
+  const states = [typed()];
+  for (let n = 0; n < 200 && states.filter((t) => t === HERO_VERBS[0]).length < 2; n += 1) { due.shift()(); if (typed() !== states.at(-1)) states.push(typed()); }
+  const whole = states.filter((t) => HERO_VERBS.includes(t));
+  assert.deepEqual([...new Set(whole)], [...HERO_VERBS], 'each verb in turn, then round again');
+  assert.ok(states.includes('cr') && states.includes('desig') && states.includes(''), 'typed a letter at a time, and deleted back to nothing');
+  home.destroy();
+  const r = setup({ reducedMotion: true });
+  await settle(r.window);
+  assert.equal(r.host.querySelector('.chat-home-verb-typed').textContent, 'do', 'reduced motion: the plain sentence');
+  assert.equal(r.host.querySelector('.chat-home-cursor:not(.chat-home-verb-size *)').hidden, true, 'and no cursor');
+  r.home.destroy();
 });

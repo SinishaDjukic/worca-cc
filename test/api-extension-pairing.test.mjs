@@ -268,56 +268,49 @@ test('composer threads are closed to an extension: list, get, patch, messages, s
   ext.ws.close();
 });
 
-test('design threads are closed to an extension: list, get, patch, messages, stop, frames', async () => {
-  // A design owns its titled thread, made in-process (the design page); the extension's token must never reach it.
+// "A design chat is a normal chat": a chat a design points at (designs.thread_id) carries no mode, so the extension
+// sees it as any plain chat; only the composer (Workflows) stays closed (the test above).
+async function chatWithDesign(title) {
   const { createThread } = await import('../src/core/ask/store.mjs');
-  const did = createThread({ mode: 'design', title: 'ShipRadar' }).id;
-  const plain = await call('POST', '/api/ask/threads', { body: { title: 'ACME chat' } });
-  const pid = plain.body.thread.id;
+  const { createDesign, updateDesign } = await import('../src/core/design/store.mjs');
+  const tid = createThread({ title }).id;
+  const d = createDesign({ kind: 'web', title, engine: 'claude' }, { by: 'local' });
+  updateDesign(d.id, { threadId: tid });
+  return tid;
+}
+
+test('a chat with a design is a plain chat to an extension: listed, readable, its frames reach it', async () => {
+  const did = await chatWithDesign('ShipRadar');
   const { token } = await pair(CHROME_B);
   const as = { origin: CHROME_B, token };
 
   const list = await call('GET', '/api/ask/threads?mode=design', as);
   assert.equal(list.status, 200);
-  assert.ok(!list.body.threads.some((t) => t.id === did));
-  const refused = async (method, path, body) => {
-    const r = await call(method, path, { ...as, body });
-    assert.deepEqual([r.status, r.body && r.body.code], [403, 'extension-route'], `${method} ${path}`);
-  };
-  await refused('GET', `/api/ask/threads/${did}`);
-  await refused('PATCH', `/api/ask/threads/${did}`, { title: 'x' });
-  assert.equal((await call('GET', `/api/ask/threads/${did}`)).body.thread.title, 'ShipRadar');
-  await refused('POST', `/api/ask/threads/${did}/messages`, { text: 'hi' });
-  await refused('POST', `/api/ask/threads/${did}/stop`, {});
+  assert.ok(list.body.threads.some((t) => t.id === did), 'an unknown mode reads as the plain list, which has it');
+  const got = await call('GET', `/api/ask/threads/${did}`, as);
+  assert.deepEqual([got.status, got.body.thread.title], [200, 'ShipRadar']);
 
-  // A running turn on each: the hello lists, and a subscribe replays, only the plain chat's (askSocketSees).
   const jobs = mod._testing.askJobs;
-  const job = (threadId, messageId) => ({ status: 'running', messageId, events: [{ type: 'ask-start', threadId, messageId, seq: 1 }] });
-  jobs.set(did, job(did, 'askm_0000000d'));
-  jobs.set(pid, job(pid, 'askm_0000000e'));
+  jobs.set(did, { status: 'running', messageId: 'askm_0000000d', events: [{ type: 'ask-start', threadId: did, messageId: 'askm_0000000d', seq: 1 }] });
   try {
     const ext = await openSocket(as);
     await tick();
-    assert.deepEqual(ext.frames[0].ask.map((a) => a.threadId).filter((t) => t === did || t === pid), [pid]);
-    for (const threadId of [did, pid]) ext.ws.send(JSON.stringify({ type: 'subscribe', threadId }));
-    await tick();
-    assert.deepEqual(ext.frames.filter((f) => f.type === 'ask-start').map((f) => f.threadId), [pid]);
+    assert.ok(ext.frames[0].ask.some((a) => a.threadId === did), 'the hello lists its running turn');
     mod._testing.broadcast({ type: 'ask-delta', threadId: did, text: 'x' });
-    mod._testing.broadcast({ type: 'ask-delta', threadId: pid, text: 'y' });
-    mod._testing.broadcast({ type: 'ask-delta', threadId: did, text: 'x' });   // the second read comes from the mode cache
     await tick();
-    assert.deepEqual(ext.frames.filter((f) => f.type === 'ask-delta').map((f) => f.threadId), [pid]);
+    assert.deepEqual(ext.frames.filter((f) => f.type === 'ask-delta').map((f) => f.threadId), [did]);
     ext.ws.close();
-  } finally { jobs.delete(did); jobs.delete(pid); }
+  } finally { jobs.delete(did); }
 });
 
-test('a design thread is no Chat chat: its ref chip misses and it keeps its engine', async () => {
-  const { createThread } = await import('../src/core/ask/store.mjs');
-  const did = createThread({ mode: 'design', title: 'ShipRadar' }).id;
+test('a chat with a design is a Chat chat: its ref chip resolves and its engine switch has no Design-chat refusal', async () => {
+  const did = await chatWithDesign('ShipRadar');
   const refs = await call('POST', '/api/ask/refs/resolve', { body: { refs: [`chat:${did}`] } });
-  assert.deepEqual([refs.status, refs.body.refs[`chat:${did}`]], [200, { ok: false }]);
-  const sw = await call('POST', `/api/ask/threads/${did}/engine`, { body: { engine: 'codex' } });
-  assert.deepEqual([sw.status, sw.body], [400, { error: 'a Design chat keeps its engine' }]);
+  assert.equal(refs.status, 200);
+  assert.equal(refs.body.refs[`chat:${did}`].ok, true);
+  const sw = await call('POST', `/api/ask/threads/${did}/engine`, { body: { engine: 'codex', dryRun: true } });
+  // It answers as any plain chat with no reply yet would, never the old Design-chat refusal.
+  assert.deepEqual([sw.status, sw.body.code], [409, 'no-engine-yet']);
 });
 
 test('Pinpoint: a token holder gets the web surface whatever it sends (step 8)', async () => {

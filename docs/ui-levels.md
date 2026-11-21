@@ -135,6 +135,7 @@ be skipped by forgetting it.
 | Element | Level |
 |---|---|
 | New pipeline, Getting started, Runs, Projects | S |
+| New run: the Runs page head (#runs-new; the top bar no longer has it) | S — the way to the New run page at every level and width; the guide's New run hop rings it after the Runs row |
 | Build: the group label, Workflows (the full-screen editor; agents and scripts live in its Library) | S |
 | Build: Requirements (behind the requirements flag) | S |
 | Runs counts: the amber Needs-you number (no symbol), else the live count as a grey number | S — each hidden at zero |
@@ -338,6 +339,7 @@ inside the view.
 | Labs tab (feature flags) | S — flags are independent of levels (docs/feature-flags.md) |
 | General: root folders; Runs tab: Scheduled runs defaults, Workspaces (scan models), chat notifications; Chat tab (limits, tools, web access, chat history) | A |
 | Runs tab: Actions (keep policy, port range, editor/terminal, cap) | A |
+| Runs tab › Actions: Preview ports (All local ports / Actions range only; locked to the range on a hosted Worca) | A — with its card |
 | Runs tab: Wait for the network | A |
 | Runs tab: Machine load (runs at once, test workers per run, archive finished runs after) | A |
 | Guardrails tab (list, details); Memory tab (files) | A |
@@ -415,6 +417,8 @@ missing (`data-needs-git`), at every level.
 | Team-policy notes on New pipeline; the team caps readout under Budget & cost limits | all — a team cap applies in every mode, so the reason it applies is never hidden |
 | The Installed tab's Team policy card and the setup checklist (the Marketplace page) | A — with the page that holds them |
 | Ask: chat, history, attachments, run card (its progress bar and stage text), proposal title / project / workflow / brief / Start | S |
+| Tool panel beside the chat and run pages: the icon strip, Overview, Terminal, Browser, Files and Design tabs, Pick element | S — never level-gated; the chat's tab tools ride the `toolPanel` flag |
+| Chat tab: Links in answers (Open chat links in the panel) | S — behind the `toolPanel` flag |
 | Pinpoint (#669): select text in a chat answer, a Markdown artifact or the Diff tab for Copy · Explain · Alternatives · Disagree · Note / Comment · Quote / Send to chat; the composer's quote chip; an artifact's pending-changes tray (sent back to the run as one direction while it still takes directions); the diff's open-comments tray (Propose fix run) | all — follows the surface it is on |
 | Ask: the run card's Pause / Resume / Stop, its answer receipt, its result (verdict, changes, top changed files) and the composer's "→ run" direction chip | S — the run card's controls, as on the Running card |
 | Ask: the run card's question (clarify, form, cycle gate, recovery, Auto proposal) | all (rule 1) — its own controls keep the run page's levels (Auto proposal Revise A, tunables E) |

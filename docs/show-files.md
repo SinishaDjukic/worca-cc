@@ -18,6 +18,9 @@ report, a run artifact. The usual case is a screenshot in agent mode:
 `$WORCA_ASK_OUT` exists only where `run_command` does: in agent mode. Relay mode and agent isolation have no
 `run_command`, so they have no output folder either. `show_files` itself works in every chat that has a thread.
 
+`screenshot_tab` (the tool panel's Browser tabs, see [Terminal](terminal.md#browser-tabs)) answers with a files card
+too: the screenshot is copied into the chat the same way.
+
 Each file is **copied** into the chat when it is shown. The card keeps working after the original file changes or
 is deleted, and it comes back when you reopen the chat.
 
@@ -62,6 +65,7 @@ markdown, a table or HTML.
 | PDF | PDF | a row; the viewer's PDF view | 50 MiB |
 | Video | MP4, WebM | a row; the viewer's player | 100 MiB |
 | Audio | MP3, WAV, Ogg | a row; the viewer's player | 50 MiB |
+| Office | a zip body named `.docx` / `.pptx` / `.xlsx` / `.odt` / `.odp` / `.ods` | a row; the viewer's PDF view when LibreOffice is installed on the server, else a simplified in-browser preview (with Download) | 50 MiB |
 | Markdown | text named `.md` / `.markdown` | a row; rendered Markdown | 1 MiB |
 | Table | text named `.csv` / `.tsv` | a row; a table | 1 MiB |
 | HTML | text named `.html` / `.htm` | a row; highlighted **source**, never a rendered page | 1 MiB |
@@ -94,6 +98,12 @@ screenshot that is `$WORCA_ASK_OUT`, for a project file the project folder, for 
 - Files you uploaded, and attachments Ask showed by id, have no original folder, so they have no button.
 - The folder opens on the machine worca runs on. The button is never shown on a hosted worca, to a caller that may
   be an agent, or where no file manager was found (a container, a Linux machine with no display).
+
+## Open in panel
+
+**Open in panel** on a file of the card opens the chat's stored copy in a Files tab of the chat's tool panel, with the
+same viewer. The tab's head says "Chat copy": it is worca's copy, read through
+`/api/ask/threads/<id>/attachments/<attId>`, not the project file. These tabs are not mirrored to the server.
 
 ## Limits and redaction
 

@@ -149,6 +149,8 @@ One row per selector in `tools/parity/visual-masks.json` (`test/parity-visual.te
 | `history` | `.rd-page-meta` | the run's start day and clock in the page head (real server time) |
 | `history` | `.rd-stats` | the glance tiles: the run's active time, cost and changes |
 | `chat-home` | `.chat-run-tile-stats` | a run tile's agents done, elapsed time and cost of the held run (removed in 3 runs: the elapsed seconds differed) |
+| `chat-home` | `.runs-row-sub` | the chats list's rows (shown by default): a chat's last activity clock (real server time) |
+| `chat-thread` | `.runs-row-sub` | the chats list's rows: a chat's last activity clock (real server time) |
 | `stats` | `.stat-tile:has-text("Time worked") .stat-value` | total worked time across the range, measured in real time |
 
 ## Flaky register

@@ -101,15 +101,23 @@ export function pinsPromptLines(pins, { planIds } = {}) {
   return lines;
 }
 
+/** The block's pictures line: whether the next round can have pictures made (the design's switch and the image
+ *  service), so the chat can pause before a build that needs one (DESIGN_CHAT_RULES D12). */
+export function picturesLine(design, servicesReady) {
+  if (isObj(design) && design.pictures === false) return 'pictures: off for this design (the Pictures switch in the composer\'s gear)';
+  return servicesReady ? 'pictures: on' : 'pictures: not set up (no image service: Providers › Image generation)';
+}
+
 /**
- * The [design chat] block a design chat's turn starts with: the design, its project, the plan's sections, the build
- * that is open, and the message's pins. Every value is cleaned and cut, so the largest legal block stays under
- * 20000 characters and is never clipped.
+ * The [design chat] block a chat with a design starts each turn with: the design, its project, the plan's sections, the
+ * build that is open, whether pictures can be made (`picturesReady`, the image service; omitted: no line) and the
+ * message's pins. Every value is cleaned and cut, so the largest legal block stays under 20000 characters and is never
+ * clipped.
  * @param {{ design: object, plan?: {sections?: object[]}|null, build?: {id:string, status:string, round:number}|null,
- *   pins?: object[] }} input
+ *   pins?: object[], picturesReady?: boolean|null }} input
  * @returns {string}
  */
-export function renderDesignBlock({ design, plan = null, build = null, pins = [] } = {}) {
+export function renderDesignBlock({ design, plan = null, build = null, pins = [], picturesReady = null } = {}) {
   const d = isObj(design) ? design : {};
   const sections = isObj(plan) && Array.isArray(plan.sections) ? plan.sections.filter(isObj).slice(0, MAX_SECTIONS) : [];
   const pinLines = pinsPromptLines(pins, { planIds: sections.map((s) => s.id) });
@@ -120,6 +128,7 @@ export function renderDesignBlock({ design, plan = null, build = null, pins = []
     `project: ${clean(d.projectKey, TITLE_MAX) || 'none'}`,
     sections.length ? `sections: ${sections.map((s) => `${clean(s.id, ID_MAX)} ${quoted(s.job, JOB_MAX)}`).join('; ')}` : 'sections: none yet',
     isObj(build) ? `build: ${clean(build.id, ID_MAX)} ${clean(build.status, ID_MAX)} (round ${roundNo(build.round)})` : 'build: none running',
+    ...(typeof picturesReady === 'boolean' ? [picturesLine(d, picturesReady)] : []),
     ...(pinLines.length ? [PINS_HEADER, ...pinLines] : ['pins: none']),
     DESIGN_BLOCK_END,
   ].join('\n');

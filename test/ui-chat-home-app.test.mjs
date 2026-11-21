@@ -70,7 +70,7 @@ test('the home mounts in [data-chat-home]; the intent add-on is registered once 
   const doc = ctx.window.document;
   const home = doc.querySelector('[data-chat-page] [data-chat-home]');
   assert.ok(home, 'P1 page');
-  assert.equal(home.querySelector('.chat-home-title').textContent, 'What should worca do?');
+  assert.equal(home.querySelector('.chat-home-title').getAttribute('aria-label'), 'What should worca do?');
   assert.equal(home.querySelectorAll('.chat-home-act').length, 9, 'the default Shaper pin is in the row');
   assert.equal(composerAddons().filter((a) => a.id === 'intent').length, 1);
   const lead = doc.querySelector('[data-chat-page] [data-chat-composer-lead]');
