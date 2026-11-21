@@ -7,7 +7,7 @@ import { buildRoleFold } from './role-rows.mjs';
 import { splitBlockers } from '../../../src/shared/shape/slices.mjs';
 
 export const SEND_FAILED = 'Could not send your answer. Try again.';
-const CHIP = { care: 'Start', clarify: 'Clarify', plan: 'Plan', outline: 'Runs', gate: 'Gate', recovery: 'Recovery' };
+const CHIP = { care: 'Start', prototype: 'Prototype', clarify: 'Clarify', plan: 'Plan', outline: 'Runs', gate: 'Gate', recovery: 'Recovery' };
 
 /** 'outline' for a plan ask carrying an outline (the Split card), else the registry kind. */
 export function stepKind(pq) {
@@ -22,7 +22,7 @@ export const isRequirementsAsk = (pq) => !!pq && askKindOf(pq) === 'plan' && !!p
  *  with the gate on. */
 export function isStepCard(pq, run, gateOn) {
   const k = askKindOf(pq);
-  if (k === 'care' || k === 'plan' || k === 'gate' || k === 'recovery') return true;
+  if (k === 'care' || k === 'prototype' || k === 'plan' || k === 'gate' || k === 'recovery') return true;
   return k === 'clarify' && !!gateOn && isShapingRun(run);
 }
 
@@ -34,6 +34,12 @@ export function stepChip(pq, run) {
   if (k === 'plan' && f && Number.isInteger(f.index) && f.index >= 1) return `Plan · run ${f.index}`;
   return CHIP[k] || '';
 }
+
+/** C1: the Prototype step's head per moment (Section 3's table). */
+export const PROTOTYPE_TITLES = Object.freeze({ offered: 'Prototype the screens first?', built: 'Your turn: look, remark, confirm',
+  remark: 'Change the requirement?', failed: 'The prototype did not build', building: "Design's agents are building",
+  reviewing: 'Design and Product check the prototype', matching: 'Reading your remark' });
+export const prototypeTitle = (p) => PROTOTYPE_TITLES[(p && (p.moment || p.state)) || ''] || '';
 
 export const SPLIT_APPROVE_TITLE = 'Your turn: approve the runs';
 export const SPLIT_FIX_TITLE = 'Your turn: fix the split';
@@ -49,6 +55,7 @@ export function stepTitle(pq, who = '') {
   if (isRequirementsAsk(pq)) return 'Your turn: agree the requirements';
   switch (stepKind(pq)) {
     case 'care': return 'Your turn: how much care?';
+    case 'prototype': return prototypeTitle(pq.prototype);
     case 'clarify': return 'A few questions before the plan';
     case 'plan': return 'Your turn: approve the plan';
     case 'outline': return pq.plan.smallRuns === true && splitRefused(pq.plan.outline, pq.plan.care) ? SPLIT_FIX_TITLE : SPLIT_APPROVE_TITLE;
@@ -66,7 +73,7 @@ export const answerFieldOpen = (root) => !!root && !!root.querySelector('.qpanel
 /** The small-runs marker, read from the open ask alone, never from the live flag: the orchestrator stamps
  *  `plan.smallRuns` on a marked run's plan, requirements and split asks, and asks Care only on a marked run. Under it
  *  the step draws its own primary, so a host's bar draws its step button plain (as the chat card's `oneNow`). */
-export const smallRunsAsk = (pq) => !!pq && (pq.kind === 'care' || (!!pq.plan && pq.plan.smallRuns === true));
+export const smallRunsAsk = (pq) => !!pq && (pq.kind === 'care' || pq.kind === 'prototype' || (!!pq.plan && pq.plan.smallRuns === true));
 
 /** Run 4 (D4): the control a waiting question takes the focus on — the card's own primary (Approve 2 runs, Approve and
  *  build) when it has an enabled one in a foot that shows, else its open Ask for changes field, else its first control

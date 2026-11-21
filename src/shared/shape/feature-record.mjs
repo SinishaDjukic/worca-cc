@@ -193,6 +193,16 @@ export function careCell(rowKey, position, names = {}) {
   return text.replace(/\{(everyday|strong|second)\}/g, (_, k) => (typeof n[k] === 'string' && n[k] ? n[k] : ROLE_WORDS[k]));
 }
 
+/** Feature C1 (D3): the Prototype step's offer for `position`, read from the `prototype` row's ranks: its lowest rank
+ *  ("only when asked for") makes skipping Worca's pick, its highest ("reviewed by Design and Product") adds the review.
+ *  An unknown position reads as the default. */
+export function prototypeCare(position) {
+  const r = CARE_TABLE.find((x) => x.key === 'prototype');
+  const pos = CARE_POSITIONS.includes(position) ? position : CARE_DEFAULT.position;
+  const ranks = Object.values(r.rank);
+  return { primary: r.rank[pos] === Math.min(...ranks) ? 'skip' : 'build', review: r.rank[pos] === Math.max(...ranks) };
+}
+
 /** One line on what `position` does: the Requirements, Challenger and Fix cycles rows. */
 export function careDescription(position, names = {}) {
   const req = careCell('requirements', position, names);

@@ -8,6 +8,8 @@ import { clarifyText, planApprovedText, splitText, gateText, NOT_SPLIT_TEXT, REQ
 import { planApprovedLine } from '../log-line.mjs';
 import { isRequirementsAsk } from './step-card.mjs';
 import { careRecordLine } from '../../../src/shared/shape/feature-record.mjs';
+import { remarkUpdatedText } from '../../../src/shared/shape/feature-log.mjs';
+import { skipLine } from '../../../src/shared/shape/prototype.mjs';
 
 /** The receipt of an agreed Requirements step; the chat run card's fallback says the same. One source: feature-log (B1). */
 export { REQUIREMENTS_AGREED };
@@ -16,7 +18,8 @@ const NAMED = new Map();          // `${runId}|${questionId}` → { text, answer
 const NAMED_MAX = 200;
 
 /** The named decision for an answer to `pq`, or null when the kind has no step name (a non-shaping Clarify, a form). */
-export function stepReceipt(pq, payload, { shaping = false } = {}) {
+export function stepReceipt(pq, payload, opts = {}) {
+  const { shaping = false } = opts;
   if (!pq) return null;
   const p = payload || {};
   const d = p.decision;
@@ -27,6 +30,7 @@ export function stepReceipt(pq, payload, { shaping = false } = {}) {
     const pick = pq.care && pq.care.pick ? pq.care.pick.position : null;
     return position ? careRecordLine({ position, worcaPick: pick, chosenBy: position === pick ? 'default' : 'person' }) : null;
   }
+  if (kind === 'prototype') return prototypeReceipt(pq.prototype || {}, p, opts);
   if (kind === 'gate') return gateText(d);
   if (kind === 'recovery') return d === 'retry' ? 'Retried' : d === 'abort' ? 'Aborted' : 'Paused';
   if (kind === 'plan') {
@@ -60,6 +64,22 @@ export function stepReceipt(pq, payload, { shaping = false } = {}) {
     const k = p.answers.filter((a) => a && typeof a.choice === 'string' && a.choice.trim()).length;
     return clarifyText(k);
   }
+  return null;
+}
+
+const plural = (n, one) => `${n} ${n === 1 ? one : `${one}s`}`;
+/** C1: the Prototype step's receipts: the remark that changed a requirement, the confirm and the skip; nothing for the
+ *  other answers (a build, a remark still to match, Keep). `register: 'plain'` names no id. */
+function prototypeReceipt(v, p, { register } = {}) {
+  const d = p.decision;
+  if (d === 'change' && v.remark && v.remark.id) {
+    return register === 'plain' ? `Your remark: “${v.remark.text}” → the requirement is updated` : remarkUpdatedText(v.remark.text, v.remark.id);
+  }
+  if (d === 'confirm') {
+    const n = Array.isArray(v.screens) ? v.screens.length : 0;
+    return ['Prototype confirmed', plural(n, 'screen'), ...(v.remarks > 0 ? [plural(v.remarks, 'remark')] : [])].join(' · ');
+  }
+  if (d === 'skip') return skipLine(v.moment === 'offered' && v.position === 'lean' ? 'lean' : 'person');
   return null;
 }
 

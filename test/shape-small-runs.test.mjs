@@ -13,7 +13,7 @@ import { projectKey } from '../src/core/store.mjs';
 import { getTicket } from '../src/core/scheduler.mjs';
 import { createSliceFeature, featureView } from '../src/core/shape/features.mjs';
 import { checkSlices } from '../src/shared/shape/slices.mjs';
-import { shaperSmallRunsOn, splitRulesOptions, splitRules, smallRunsAtStart, smallRunsOfPipeline, smallRunsOfFeature, careOfPipeline, careOfFeature } from '../src/core/shape/small-runs.mjs';
+import { shaperSmallRunsOn, splitRulesOptions, splitRules, smallRunsAtStart, smallRunsOfPipeline, smallRunsOfFeature, careOfPipeline, careOfFeature, prototypeOfPipeline, prototypeOfFeature } from '../src/core/shape/small-runs.mjs';
 import { buildShapeStats, shapeRecordFrom } from '../src/core/shape/stats.mjs';
 import { resolveShapeRequest } from '../src/core/shape/run.mjs';
 
@@ -230,4 +230,23 @@ test('B2 careOfFeature: the feature row\'s three Care fields; null for an unknow
   getDb().prepare('UPDATE shape_features SET care = ?, care_chosen_by = ?, care_worca_pick = ? WHERE id = ?').run('lean', 'person', 'thorough', f.id);
   assert.deepEqual(careOfFeature(f.id), { position: 'lean', chosenBy: 'person', worcaPick: 'thorough' });
   assert.equal(careOfFeature('feat-unknown'), null);
+});
+
+test('C1 prototypeOfPipeline / prototypeOfFeature: the origin run\'s saved prototype record and its ref; null otherwise', () => {
+  for (const id of [null, '']) {
+    assert.equal(prototypeOfPipeline(id, { getDb: () => { throw new Error('no DB'); } }), null);
+    assert.equal(prototypeOfFeature(id, { getDb: () => { throw new Error('no DB'); } }), null);
+  }
+  const f = mk(2);
+  assert.equal(prototypeOfFeature(f.id), null, 'no stats');
+  const prototype = { v: 1, state: 'confirmed', screenIds: ['R-ux-1'], designId: 'd_1', round: 1, version: 2, screens: [],
+    costUsd: 1, findings: [], reviewRounds: 0, remarks: 0, rebuilt: false,
+    ref: { dir: '/x/prototype-confirmed', version: 2, designId: 'd_1' }, at: '2026-11-21T10:00:00.000Z' };
+  getDb().prepare('UPDATE pipelines SET shape_stats = ? WHERE id = ?')
+    .run(JSON.stringify(buildShapeStats(shapeRecordFrom({ smallRuns: true, prototype }), [])), f.pid);
+  assert.deepEqual(prototypeOfPipeline(f.pid), prototype);
+  assert.deepEqual(prototypeOfFeature(f.id).ref, prototype.ref);
+  getDb().prepare('UPDATE pipelines SET shape_stats = ? WHERE id = ?').run('{bad', f.pid);
+  assert.equal(prototypeOfFeature(f.id), null);
+  assert.equal(prototypeOfFeature('feat-unknown'), null);
 });

@@ -355,6 +355,8 @@ import { decorateShapingQuestions } from './shape/questions.mjs';
 import { isShapingRun, shaperWait } from './shape/plan-text.mjs';
 import { stepChip, stepTitle, isStepCard, renderGateCard, renderRecoveryCard, questionFocusTarget, answerFieldOpen, smallRunsAsk } from './shape/step-card.mjs';
 import { renderCareStart } from './shape/proposal.mjs';
+import { renderPrototypeBody } from './shape/prototype-body.mjs';
+import { pushPrototypeFrame, onPrototypeFrame } from './shape/prototype-build.mjs';
 import { installInputMode } from './input-mode.mjs';
 import { noteAnswer, forgetAnswer } from './shape/step-receipt.mjs';
 import { renderChecklistGroups } from './shape/checklist-view.mjs';
@@ -1881,7 +1883,7 @@ function handleServerMessage(msg) {
 
   // Design frames are tagged by designId + buildId (no runId) and reach every socket: the Design view keeps the
   // nav count and the open stage. Handle them BEFORE the !msg.runId early-return below.
-  if (typeof msg.type === 'string' && msg.type.startsWith('design-')) { pushDesignFrame(msg); if (msg.type === 'design-build' && designActivity.frame(msg)) updateNavCounts(); return; }
+  if (typeof msg.type === 'string' && msg.type.startsWith('design-')) { pushDesignFrame(msg); pushPrototypeFrame(msg); if (msg.type === 'design-build' && designActivity.frame(msg)) updateNavCounts(); return; }
 
   // Ask Worca frames are tagged by threadId (job frames also carry messageId +
   // seq) and ride the same broadcast socket. Handle them BEFORE the
@@ -1997,6 +1999,8 @@ function handleServerMessage(msg) {
     return;
   }
   // Shape it first: a feature's slices changed (an action, a slice's run, the scheduler tick). L11.
+  // Shaper small runs C1: the Prototype step moved; its planning run's card re-reads its saved state.
+  if (msg.type === 'shape-prototype') { refreshShaperCardsOf(msg.pipelineId); return; }
   if (msg.type === 'shape-feature') {
     SLICE_INFO.clear();
     refreshShapeFeatures(msg.id);
@@ -6842,6 +6846,19 @@ registerAskRenderer('care', {
   },
   collect: (panel) => (panel && panel.__care ? panel.__care.collect() : null),
   setErrors: (panel, errors) => { if (panel && panel.__care) panel.__care.setErrors(errors); },
+});
+// Shaper small runs C1: the Prototype step; its build follows the design frames this socket hears.
+registerAskRenderer('prototype', {
+  render: (panel, pq, ctx) => {
+    // The Chat run side panel shows the step but none of its buttons: it is answered on the feature card.
+    const readOnly = !!(panel.closest && panel.closest('[data-presentation="panel"]'));
+    panel.__proto = renderPrototypeBody(panel, pq, { ...stepDeps(ctx, pq), readOnly, confirm: confirmModal, submit: (p) => stepPost(ctx.run, p),
+      reduced: () => !!(window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches),
+      subscribe: (msg, fn) => { if (state.ws && state.wsReady) state.ws.send(JSON.stringify(msg)); return onPrototypeFrame(fn); } });
+    // A repaint (disposeQpanel) ends the live build's frame subscription and its animation.
+    panel.__dispose = () => { if (panel.__proto) panel.__proto.destroy(); panel.__proto = null; };
+  },
+  setErrors: (panel, errors) => { if (panel && panel.__proto) panel.__proto.setErrors(errors); },
 });
 // Shape it first (S4): registered ungated: the only way to answer a run still held when the gate goes off.
 // title/count fill the hidden .qpanel-head (F28); askHeading is what people read. Kept for completeness.
@@ -33247,6 +33264,49 @@ function chatPaintQuestion(ref, host) {
   return { id: pq.id || null, kind: askKindOf(pq), heading: askHeading(r, pq),
     step: pq.nodeId ? nodeLabel(r.stepper, pq.nodeId) : '', stepCard: isStepCard(pq, r, true) };
 }
+/** Shaper small runs C1 (R-ux-2): the Prototype step's working moment (building, reviewing, matching) on the one card,
+ *  from the card's saved state while no ask is open: the same renderer as the step's asks, with nothing to answer.
+ *  Rebuilt only when the moment, round or build changes, so the live rows keep following the design frames. */
+function chatPaintPrototypeWork(ref, host, proto) {
+  const panel = host && host.querySelector('.qpanel');
+  const r = chatLiveRun(ref);
+  if (!panel || !r || r._finished || r.pendingQuestion || !proto) { chatReleaseQuestion(host); return null; }
+  if (panel.dataset.qid !== protoWorkKey(proto) || panel.dataset.qrun !== r.runId) {
+    for (const [runId, old] of CHAT_QPANELS) { old.delete(panel); if (!old.size) CHAT_QPANELS.delete(runId); }
+  }
+  const key = paintPrototypeWork(panel, r, proto);
+  return { id: key, kind: 'prototype', heading: '', step: '', stepCard: true };
+}
+const PROTO_WORKING = new Set(['building', 'reviewing', 'matching']);
+const protoWorkKey = (proto) => `proto-work|${proto.state}|${proto.reviewRounds || 0}|${proto.buildId || ''}`;
+/** C1 (R-ux-2): the one paint of the Prototype step's working moment into a .qpanel, for the Chat card and the run page's
+ *  step area. Rebuilt only when the moment, round or build changes (the key), so the live rows keep following the
+ *  design frames. Returns the key. */
+function paintPrototypeWork(panel, r, proto) {
+  const key = protoWorkKey(proto);
+  if (panel.dataset.qid !== key || panel.dataset.qrun !== r.runId) {
+    disposeQpanel(panel);
+    panel.innerHTML = '';
+    panel.classList.remove('qpanel-workflow', 'hidden');
+    panel.dataset.kind = 'prototype';
+    askRendererFor('prototype').render(panel, { id: key, kind: 'prototype', prototype: { ...proto, moment: proto.state } }, askCtxFor(r, panel));
+    panel.dataset.qid = key;
+    panel.dataset.qrun = r.runId;
+  }
+  return key;
+}
+/** The run page's twin of the Chat card's rule: a live shaping run with no ask open and its saved card in a working
+ *  moment. The card is read once per pipeline (shaperCardFor); its answer repaints the open run page. */
+function rdPrototypeWork(r) {
+  if (!r || r._finished || r.pendingQuestion || !isShapingRun(r) || !r.pipelineId) return null;
+  const card = shaperCardFor(r.pipelineId, rdRepaintOpen);
+  const proto = card && card.prototype;
+  return proto && PROTO_WORKING.has(proto.state) ? proto : null;
+}
+function rdRepaintOpen() {
+  const r = runDetailState.screen ? runs.get(runDetailState.runId) : null;
+  if (r) repaintRunDetail(r);
+}
 // ---- Runs redesign slice 4: the one model's actions (D5, D6) and a run's group (D7), for the chat card and the pages.
 /** D7: the group a pipeline belongs to, as the list's group row, with its place in it. */
 function groupHomeOf(pipelineId, featureId = '') {
@@ -33368,6 +33428,7 @@ const chatRunControls = {
     return postAnswer(r, payload);
   },
   paintQuestion: chatPaintQuestion,
+  paintPrototypeWork: chatPaintPrototypeWork,
   releaseQuestion: chatReleaseQuestion,
   /** Shaper s3: a feature card's Resume / Re-plan the rest / Cancel the rest / Ask before each run. */
   featureAct: async (featureId, action, body) => {
@@ -37725,7 +37786,8 @@ function paintRdActions(screen, r, m = rdModel(r)) {
     // Slice 2: Archive and Report live in the ⋯ (runMoreItems); slice 3: the head actions in the card head (run-head.mjs).
     // The full page draws the waiting question right under its header, on every tab: an Answer that only scrolls to it
     // is noise there. The Chat panel keeps it.
-    skip: [...MENU_ACTIONS, ...HEAD_ACTIONS, ...(screen.dataset.presentation === 'panel' ? [] : ['answer'])],
+    // The Prototype ask is answered on the feature card only: the panel has no Answer for it either.
+    skip: [...MENU_ACTIONS, ...HEAD_ACTIONS, ...(screen.dataset.presentation === 'panel' && !(r.pendingQuestion && r.pendingQuestion.kind === 'prototype') ? [] : ['answer'])],
     // The model reads pausing as paused, but chatRunControls.resume does nothing while the run is still live.
     disable: { 'ask-changes': "Ask for changes from the run's chat", ...(st === 'pausing' ? { resume: 'Pausing…' } : {}) },
     labels: { answer: answerLabelOf(screen.querySelector('.rd-questions')) },
@@ -38977,6 +39039,15 @@ function paintRdQuestions(screen, r) {
   // handle.relayout()). Inside a hidden host clientWidth is 0, so the flow would lay
   // out at the 702 default and the ResizeObserver would re-lay it a frame later — a
   // visible flash on top of the wr-rise entry. The card path already un-hides first.
+  // C1 (R-ux-2): with no ask open, the step area draws the Prototype step's working moment (the Chat card's paint).
+  const proto = pq ? null : rdPrototypeWork(r);
+  if (proto && panel) {
+    host.hidden = false;
+    const h0 = host.querySelector('.rd-ask-head');
+    if (h0) h0.textContent = '';
+    paintPrototypeWork(panel, r, proto);
+    return;
+  }
   host.hidden = pq == null;                    // drives the wr-rise entry
   const head = host.querySelector('.rd-ask-head');
   // A step card carries its own head (title + chip): the run page's heading stays empty for it (shaper-cards D16).

@@ -43,6 +43,8 @@ const LIVE_STATUS = new Set(['starting', 'running', 'pausing']);
 /** A question that goes away under these was answered (here or elsewhere). Not `pausing`: ui/server.mjs pauseRun resolves
  *  the open question (reason 'paused') right AFTER the run's `pausing` frame — that question was not answered. */
 const ANSWERING_STATUS = new Set(['starting', 'running']);
+/** C1: the Prototype step's moments where Worca works and nobody answers (drawn from the card's saved state). */
+const PROTO_WORKING = new Set(['building', 'reviewing', 'matching']);
 /** Statuses whose card keeps its run controls: live, parked (paused), or resumable after a restart (interrupted). */
 const CONTROL_STATUS = new Set(['starting', 'running', 'pausing', 'paused', 'interrupted']);
 /** Over for good: the result region replaces the controls (interrupted is resumable, so it is not here). */
@@ -561,6 +563,19 @@ export function createChatRunCard({ doc, win = null, snapshot = null, ctx = {}, 
     const pointer = !!(fm && fm.step && !fm.step.snap);
     const pq = pointer ? { id: fm.step.id, kind: fm.step.kind }
       : src && src.source === 'live' && !RESULT_STATUS.has(status) ? src.pendingQuestion : null;
+    // C1 (R-ux-2): with no ask open, the one card draws the Prototype step's working moment from its saved state.
+    const proto = !pq && oneNow && oneNow.state === 'SP' && s && s.shaper && s.shaper.card ? s.shaper.card.prototype : null;
+    if (proto && PROTO_WORKING.has(proto.state) && src && src.source === 'live' && !RESULT_STATUS.has(status)
+      && typeof controls.paintPrototypeWork === 'function') {
+      qBody.hidden = false; qSec.hidden = false;
+      if (controls.paintPrototypeWork(stepRef(), qBody, proto)) {
+        // Nothing was answered here: the asked step's note is spent, and no receipt shows.
+        if (painted) forgetAnswer(painted.runId, painted.id);
+        painted = null; sent = null; planSent = null; shownFor = null;
+        qHead.hidden = true; qErr.hidden = true; receipt.hidden = true;
+        return;
+      }
+    }
     // Un-hide BEFORE the run page's renderer builds (paintRdQuestions' rule): a workflow body measures its graph host
     // the moment it attaches. The null path below hides both again.
     if (pq) { qBody.hidden = false; qSec.hidden = false; }

@@ -33,6 +33,7 @@
 // document — including the prompt block that tells a producer where to write the
 // task files and what the manifest looks like.
 import { join, dirname, relative, basename, isAbsolute, resolve as resolvePath } from 'node:path';
+import { prototypeBlock } from '../../shared/shape/prototype.mjs';
 import { readFileSync, writeFileSync, mkdirSync, existsSync } from 'node:fs';
 import { readFile, writeFile, mkdir } from 'node:fs/promises';
 
@@ -621,6 +622,9 @@ export function buildAgentPrompt(ctx) {
   // byte-identical.
   const concernFile = ctx.planConcern?.file || '';
   const concern = planConcernBlock(concernFile) + planConcernOverrideBlock(ctx.planConcernOverride);
+  // Shaper small runs C1 (D14): the confirmed prototype, set by the orchestrator only for a run whose slice owns a screen
+  // requirement; every agent node gets it, and every other prompt stays byte-identical.
+  const prototype = ctx.shapePrototype ? prototypeBlock(ctx.shapePrototype) : '';
   const title = meta.displayName || node?.key || node?.id || 'agent';
   // Spec §3: a role reviewer's prompt carries ITS role brief only (ctx.role is set per composite slice); a provider's
   // brief carries the house brief for the role that wants it.
@@ -642,6 +646,7 @@ export function buildAgentPrompt(ctx) {
     sliceScope +
     slicing +
     concern +
+    prototype +
     modeBlock(selectMode({ ports, bindings, freshPorts: trigger.freshPorts })) +
     fanOutDirective(ctxFanOut(ctx), { omitProjectAgents: relative, subagentModel: ctxSubagentModel(ctx), endpointRouted: routed, investigator: !!ctxSubagentEffort(ctx), engine: node?.engine }) +
     workspaceFanOutDirective(meta.workspaceStrategy, ctx.workspace, { relative, endpointRouted: routed, serial: node?.noSubagents === true }) +

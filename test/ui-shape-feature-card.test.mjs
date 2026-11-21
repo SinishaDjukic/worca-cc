@@ -248,7 +248,7 @@ test('B1 oneCardModel: null without smallRuns: true, so every flag-off path stay
   for (const c of [null, card(null, []), card(v3(['done', 'running', 'planned'])), { ...card(null, []), smallRuns: 'true' }]) {
     assert.equal(oneCardModel({ own: shapingOwn(PQ_CL), card: c }), null);
   }
-  assert.deepEqual(ONE_CARD_STEPS, ['start', 'requirements', 'split', 'build', 'done']);
+  assert.deepEqual(ONE_CARD_STEPS, ['start', 'requirements', 'prototype', 'split', 'build', 'done']);
 });
 
 test('B1 oneCardModel: null for a marked planning run that ended without a feature (never split), so dev\'s card shows its result or failure', () => {
@@ -334,4 +334,33 @@ test('B4: the bar draws no primary while the Split is refused, and Approve again
   assert.equal(stepTitle(ok), 'Your turn: approve the runs');
   assert.equal(answerFieldOpen(root2), false);
   assert.equal(root2.querySelector('.plan-actions .btn-primary').textContent, 'Approve 2 runs');
+});
+
+// ── Shaper small runs C1: SP, the Prototype step (D21) ──
+test('C1 oneCardModel: SP while the Prototype step asks or runs, with its detail per moment; confirmed and skipped show S4', async () => {
+  const { ICON_WORD } = await import('../ui/public/shape/feature-card.mjs');
+  const log = [L('Requirements agreed')];
+  const ask = (prototype) => snap('p1', { pendingQuestion: { id: 'proto-1', kind: 'prototype', prototype } });
+  const SCR = [{ section: 'a', name: 'Editor', ids: ['R-ux-1'] }, { section: 'b', name: 'Prefs', ids: [] }];
+  const cases = [
+    [ask({ moment: 'offered', screenIds: ['R-ux-1', 'R-ux-2', 'R-po-1'] }), null, '3 screen requirements'],
+    [ask({ moment: 'built', screens: SCR, costUsd: 2.8 }), null, 'Prototype built · 2 screens · $2.80'],
+    [ask({ moment: 'built', screens: SCR, costUsd: 3.2, rebuilt: true }), null, 'Prototype rebuilt with your remark · $3.20'],
+    [ask({ moment: 'remark' }), null, 'Your remark changes a requirement'],
+    [ask({ moment: 'failed' }), null, 'The prototype did not build'],
+    [snap('p1'), { state: 'building', screens: [] }, 'Building the prototype'],
+    [snap('p1'), { state: 'building', screens: SCR }, 'Building the prototype · 2 screens'],
+    [snap('p1'), { state: 'reviewing', screens: SCR, reviewRounds: 1 }, 'Round 1 of 3'],
+    [snap('p1'), { state: 'matching', screens: SCR }, ''],
+  ];
+  for (const [own, prototype, detail] of cases) {
+    const m = oneCardModel({ own, card: { ...marked(null, log), ...(prototype ? { prototype } : {}) } });
+    assert.deepEqual([m.state, m.step, m.detail], ['SP', 'prototype', detail], detail);
+  }
+  for (const state of ['confirmed', 'skipped']) {
+    const m = oneCardModel({ own: snap('p1'), card: { ...marked(null, log), prototype: { state, screens: [] } } });
+    assert.equal(m.state, 'S4', state);
+  }
+  assert.equal(ICON_WORD.ask, 'Needs you');
+  assert.equal(ICON_WORD.run, 'Running');
 });

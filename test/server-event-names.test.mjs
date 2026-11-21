@@ -68,6 +68,21 @@ test("wireRun forwards 'stepskills' and 'stepgraphify' verbatim (MCP labels + ov
         runs.delete(entry.id);
       }
     } },
+    { name: "Shaper small runs C1 wireRun: 'shape-prototype' is forwarded with its planning run's pipelineId", run: () => {
+      const entry = makeEntry({ id: 'uuid-PR1' });
+      runs.set(entry.id, entry);
+      try {
+        _testing.wireRun(entry);
+        entry.orch.emit('shape-prototype', { pipelineId: 'p-pb', state: 'reviewing' });
+        const buffered = entry.events.filter((e) => e.type === 'shape-prototype');
+        assert.equal(buffered.length, 1, 'shape-prototype event is buffered/forwarded');
+        assert.equal(buffered[0].pipelineId, 'p-pb', 'app.js re-reads this planning run\'s card');
+        assert.equal(buffered[0].runId, 'uuid-PR1');
+        assert.equal(entry.status, 'running', 'a shape-prototype event must not change run status');
+      } finally {
+        runs.delete(entry.id);
+      }
+    } },
     { name: '§7.1/§7.3 stepskills carries three-part MCP labels and the overflow sentinel verbatim', run: () => {
       const entry = makeEntry({ id: 'uuid-SK2' });
       runs.set(entry.id, entry);

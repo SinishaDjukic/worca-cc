@@ -155,3 +155,21 @@ test('every built-in Shaper workflow declares no session groups (a fill never re
     assert.ok(await readWorkflow(id), id);
   }
 });
+
+test('C1 flag off: the resolved slice-run graphs keep dev\'s node keys and gate wires (no Prototype node, w9 at 3, Clarify in place)', async () => {
+  const prevFlags = process.env.WORCA_FLAGS;
+  delete process.env.WORCA_FLAGS;
+  try {
+    const dir = gitDir('care-proto-off');
+    const end = (x) => x?.node ?? x;
+    const gates = (r) => r.template.wires.filter((w) => w.config?.maxCycles != null).map((w) => [w.id, end(w.from), end(w.to), w.config.maxCycles]);
+    const slice = await resolve('wf_shape_slice_req', {}, dir);
+    assert.deepEqual(slice.template.nodes.map((n) => n.id), ['n_task', 'n_clarify', 'n_plan', 'n_refine', 'n_impl', 'n_review', 'n_end', 'n_roles']);
+    assert.deepEqual(gates(slice), [['w5', 'n_refine', 'n_roles', 2], ['w9', 'n_review', 'n_impl', 3]]);
+    const ux = await resolve('wf_shape_ux_slice_req', {}, dir);
+    assert.deepEqual(ux.template.nodes.map((n) => n.id), ['n_task', 'n_clarify', 'n_plan', 'n_refine', 'n_impl', 'n_review', 'n_check', 'n_webui', 'n_end', 'n_or', 'n_roles']);
+    assert.deepEqual(gates(ux), [['w5', 'n_refine', 'n_roles', 2], ['w9', 'n_review', 'n_or', 3], ['w14', 'n_webui', 'n_or', 3]]);
+  } finally {
+    if (prevFlags === undefined) delete process.env.WORCA_FLAGS; else process.env.WORCA_FLAGS = prevFlags;
+  }
+});

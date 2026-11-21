@@ -87,3 +87,14 @@ test('care (Shaper small runs B2): Worca\'s Care pick, nothing blocks', async ()
   assert.equal(r.record.choice, 'thorough');
   assert.equal(r.record.rationale, 'Worca picks Thorough: it touches payments');
 });
+
+test('prototype (Shaper small runs C1, D19): Worca\'s pick per moment', async () => {
+  const pick = async (prototype) => (await decideAsk({ kind: 'prototype', id: 'p-1', prototype }, { config: cfg }))?.payload;
+  assert.deepEqual(await pick({ moment: 'offered', offer: { primary: 'build' } }), { decision: 'build' });
+  assert.deepEqual(await pick({ moment: 'offered', offer: { primary: 'skip' } }), { decision: 'skip' });
+  assert.deepEqual(await pick({ moment: 'built' }), { decision: 'confirm' });
+  assert.deepEqual(await pick({ moment: 'remark' }), { decision: 'keep' });
+  assert.deepEqual(await pick({ moment: 'failed', attempt: 1 }), { decision: 'build' });
+  assert.deepEqual(await pick({ moment: 'failed', attempt: 2 }), { decision: 'skip' });
+  assert.equal(await decideAsk({ kind: 'prototype', id: 'p-2', prototype: {} }, { config: cfg }), null);
+});

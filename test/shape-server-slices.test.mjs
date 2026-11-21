@@ -1358,6 +1358,8 @@ test('B4: POST /api/answer and /api/runs/:id/answer answer 422 split-not-approva
           if (q.kind === 'care') setImmediate(() => orch.answer(q.id, { care: { position } }));
           else if (q.kind === 'plan' && q.plan?.outline) resolve(q);
           else if (q.kind === 'plan') setImmediate(() => orch.answer(q.id, { decision: 'approve' }));
+          // C1: the server's Design registry is up (design defaults on), so the Prototype step offers itself: skip it.
+          else if (q.kind === 'prototype') setImmediate(() => orch.answer(q.id, { decision: 'skip' }));
           else setImmediate(() => orch.answer(q.id, { answers: [] }));
         }));
         const done = orch.run();

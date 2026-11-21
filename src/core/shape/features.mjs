@@ -8,7 +8,8 @@ import { readPrState, readPipelineExtras, readRunResultsById, readClarifyRow } f
 import { projectKey } from '../store.mjs';
 import { sliceBrief, replanBrief } from '../../shared/shape/slices.mjs';
 import { normalizeCare, normalizeRequirementKinds, careOfRow, requirementKindsOf } from '../../shared/shape/feature-record.mjs';
-import { shaperSmallRunsOn, smallRunsOfFeature, smallRunsOfPipeline, careOfPipeline } from './small-runs.mjs';
+import { shaperSmallRunsOn, smallRunsOfFeature, smallRunsOfPipeline, careOfPipeline, prototypeOfPipeline } from './small-runs.mjs';
+import { prototypeView } from '../../shared/shape/prototype.mjs';
 import { requirementsCheck } from '../../shared/review/requirements-coverage.mjs';
 import { acceptanceGate, ledgerCheck } from '../../shared/shape/acceptance.mjs';
 import { latestChecklist, checklistMarkdown } from '../../shared/shape/review-checklist.mjs';
@@ -353,8 +354,12 @@ export function featureView(id, { live = () => null, oneCard = false } = {}) {
     // Shaper small runs A2: the record's 2 keys, last, only with the flag on or (B2, D20) for a marked feature; an unmarked
     // feature with the flag off is dev's exact shape.
     ...(shaperSmallRunsOn() || smallRunsOfFeature(f.id) ? { care: careOfRow(f), requirementKinds: requirementKindsOf(j(f.requirement_kinds, null), f.outline) } : {}),
+    // C1 (D12): a marked feature's Prototype step, read from its origin run; absent without a record.
+    ...protoKey(smallRunsOfFeature(f.id) ? prototypeOfPipeline(f.origin_pipeline_id) : null),
   };
 }
+
+const protoKey = (rec) => { const v = rec ? prototypeView(rec) : null; return v ? { prototype: v } : {}; };
 
 export const ONE_PR_MAX_LINES = 1500;
 
@@ -534,7 +539,9 @@ export function shaperCard(pipelineId, { live = () => null, shaped = () => false
   const care = marked ? careOfPipeline(feature ? feature.originPipelineId : pid) : null;
   return { pipelineId: pid, feature,
     log: feature ? feature.log : buildDecisionLog({ clarify: clarifyOf(pid), origin: auditTexts(pid), oneCard: marked }),
-    ...(marked ? { smallRuns: true } : {}), ...(care ? { care } : {}) };
+    ...(marked ? { smallRuns: true } : {}), ...(care ? { care } : {}),
+    // C1 (D12): the Prototype step's state, for a marked card with a record.
+    ...protoKey(marked ? prototypeOfPipeline(feature ? feature.originPipelineId : pid) : null) };
 }
 
 /** B1 (D8): whether Chat posts the feature's Ship card. A marked feature ships from its feature page until the one card

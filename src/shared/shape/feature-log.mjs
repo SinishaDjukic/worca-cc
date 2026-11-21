@@ -2,6 +2,7 @@
 // ui/public/shape/step-receipt.mjs (D8). Pure and browser-safe (B2: the Care words come from feature-record.mjs): the server builds the log from durable rows (the run
 // harness's audit lines, the clarify row, the feature row); the browser names a receipt with the same words.
 import { careRecordLine } from './feature-record.mjs';
+import { SKIP_LINES } from './prototype.mjs';
 
 const plural = (n, one) => `${n} ${n === 1 ? one : `${one}s`}`;
 
@@ -22,6 +23,17 @@ export const runsApprovedText = (kept = 0) => (kept > 0 ? `${RUNS_APPROVED} · $
 export const outlineKeptNote = (stub, decision, value) => (decision === 'approve' && value?.openObjections === 'kept' && stub?.open > 0
   ? ` · ${stub.open} objection${stub.open === 1 ? '' : 's'} kept` : '');
 export const outlineKeptStub = (plan) => (plan?.challenge?.open > 0 ? { open: plan.challenge.open } : {});
+/** Shaper small runs C1: the Prototype step's log lines (the audit line is the same words plus a full stop). */
+export const PROTOTYPE_CONFIRMED = 'Prototype confirmed by you';
+export const prototypeBuiltText = (n, costUsd = 0) => `Prototype built by Design's agents · ${plural(n, 'screen')} · $${(Number(costUsd) || 0).toFixed(2)}`;
+export const remarkUpdatedText = (remark, id) => `Your remark: “${remark}” → ${id} updated`;
+const PROTO_RES = [/^Prototype built by Design's agents · \d+ screens? · \$\d+\.\d{2}$/, /^Your remark: “.*” → R-[a-z]{1,8}-\d+ updated$/s];
+/** A Prototype log line (C1), or null. */
+export function parsePrototypeLine(text) {
+  const t = String(text || '').replace(/\.$/, '');
+  if (t === PROTOTYPE_CONFIRMED || Object.values(SKIP_LINES).includes(t) || PROTO_RES.some((re) => re.test(t))) return { kind: 'prototype', text: t };
+  return null;
+}
 const AWAY_KEPT_TEXT = 'Plan kept as written · by Away mode · please check';
 export function replanText(indexes) {
   const xs = [...indexes].sort((a, b) => a - b);
@@ -101,6 +113,8 @@ export function buildDecisionLog({ clarify = null, origin = [], sliced = false, 
     events.forEach((text, n) => {
       const b = run ? parseBaseLine(text) : null;
       if (b) { out.push({ key: `${run}-${n}`, run: null, text: baseMovedText(b.base, run, b.files), detail: [] }); return; }
+      const proto = oneCard ? parsePrototypeLine(text) : null;
+      if (proto) { out.push({ key: `${run || 'p'}-${n}`, run, text: proto.text, detail: [] }); return; }
       const p = parseDecisionLine(text);
       if (!p) return;
       const d = p.kind === 'requirements' && !oneCard ? { ...p, kind: 'plan' } : p;

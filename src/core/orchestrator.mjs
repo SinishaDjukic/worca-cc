@@ -41,7 +41,14 @@ import { clarifyCounts, shapeScoreOf } from './shape/stats.mjs';
 import { PLAN_ASK_KIND, validatePlanAnswer, validateOutlineAnswer, renderPlanFeedback, SHAPING_FEEDBACK_PREVIEW } from './shape/run.mjs';
 import { createSliceFeature, retireFeaturesOf, earlierSliceChanges, featureClarify, featureNotes } from './shape/features.mjs';
 import { fileSha, planOutputOf } from './shape/outline-file.mjs';
-import { splitRules, smallRunsOfFeature, careOfFeature } from './shape/small-runs.mjs';
+import { splitRules, smallRunsOfFeature, careOfFeature, prototypeOfFeature, originPipelineOfFeature } from './shape/small-runs.mjs';
+import { runPrototypeStep, validatePrototypeAnswer, PROTOTYPE_ASK_KIND } from './shape/prototype-step.mjs';
+import { createPrototypeDesign, startPrototypeBuild, awaitBuild as awaitPrototypeBuild, freezePrototype, stagePrototypeForRun,
+  registryOf, prototypeBrief } from './shape/prototype-design.mjs';
+import { normalizePrototype, normalizeReview, prototypeRemarkBlock, prototypeReviewBlock, remarkTarget, rewriteRequirement,
+  screenRequirements, validRemarkProposal, piecesOf } from '../shared/shape/prototype.mjs';
+import { flagEnabled } from './flags.mjs';
+import { distDir as designDistDir, designWorkDir } from './design/paths.mjs';
 import { splitChallengePlan, normalizeChallenge, challengeBlock, runSplitChallenge, skipsPlanAfterSplit, splitRevisable, splitApproveError, keptObjections, splitAskFields, planReviewNode, CHALLENGER_LABEL, CHALLENGE_FILE_MAX_BYTES } from './shape/split-step.mjs';
 import { careStartAsk, careAnswerValidator } from './shape/care-start.mjs';
 import { careAuditLine } from './run-harness.mjs';
@@ -67,7 +74,7 @@ import { serialQueue, measureCodeCursor, collectStepEvidence, withoutMembers } f
 import { estimateStepHours, resolveConstants, sumStepHours } from '../shared/human-estimate.mjs';
 import { diffNumstat } from './git-info.mjs';
 import { humanEstimateOverrides } from './settings.mjs';
-import { renderPromptArtifact } from './phases.mjs';
+import { renderPromptArtifact, mockMarkers } from './phases.mjs';
 import { listModels, modelHasBaseUrlRouting, resolveRunConfig, stepSlotDefaults, slotSourceLines } from './config.mjs';
 import { defragSlotPair, utilityModelFor } from './settings-cascade.mjs';
 import { resolveDefragModel, agentPairText } from './memory-defrag-model.mjs';
@@ -138,6 +145,11 @@ export class GraphOrchestrator extends RunHarness {
     this._graphError = null;     // first genuine execution error (identity preserved)
     this._planVersion = 0;       // {vsuffix} ticks, carried across a resume
     this._planRevise = null;     // {id, path}: a revise answered just before a pause (F19), carried across a resume
+    this._protoAnswer = null;    // C1 (D16): {key, payload} of the last Prototype answer, until the step persisted it
+    this._protoSeq = 0;          // C1: prototype asks raised by this orchestrator
+    this._protoAskId = null;     // C1: the open (or last) prototype ask's id, for who answered a stop
+    this._protoCtx = undefined;  // C1 (D14): this run's staged prototype context, once read
+    this._protoShown = null;     // C1: the last announced moment|round|build of the Prototype step
     this._planConcernAnswer = null; // {id, payload}: a plan concern answered just before a pause (#990 s5), carried across a resume
     this._planAwayApproved = null;  // {id}: a plan ask Away mode approved just before a pause, carried across a resume
     this._planConcernSeen = {};     // {[id]: 'raised' | 'decided'}: audited once per concern across resumes (#990 s5)
@@ -1175,6 +1187,7 @@ export class GraphOrchestrator extends RunHarness {
       })),
       planVersion: this._planVersion,
       ...(this._planRevise ? { planRevise: { ...this._planRevise } } : {}),
+      ...(this._protoAnswer ? { protoAnswer: jsonClone(this._protoAnswer) } : {}),
       ...(this._planConcernAnswer ? { planConcernAnswer: { ...this._planConcernAnswer } } : {}),
       ...(this._planAwayApproved ? { planAwayApproved: { ...this._planAwayApproved } } : {}),
       ...(Object.keys(this._planConcernSeen).length ? { planConcernSeen: { ...this._planConcernSeen } } : {}),
@@ -1566,6 +1579,8 @@ export class GraphOrchestrator extends RunHarness {
     const lead = this.runShape?.lead || null;
     const perspectives = this._shapePerspectives();
     const smallRuns = this._shapeRec?.smallRuns === true;
+    // C1: a resumed marked run whose requirements were agreed (the Prototype step has a record) goes on with the step.
+    if (smallRuns && this._shapeRec?.prototype) return this._afterRequirements(q);
     const ask = async (attempt, failed = null) => {
       const got = failed ? { error: failed } : await this._criteriaLoad(q, spec, conflicts, lead);
       const id = attempt ? `${q.id}-retry${attempt}` : q.id;
@@ -1618,6 +1633,8 @@ export class GraphOrchestrator extends RunHarness {
           this._log('orchestrator', 'info', `approval ${q.id}: revise (${path})`);
           return { decision: 'revise', path };
         }
+        // C1 (D1): a marked run's approval resolves only once the Prototype step ended, so the Split fires after it.
+        if (payload?.decision === 'approve' && smallRuns) return this._afterRequirements(q);
         return payload?.decision === 'approve' ? { decision: 'approve' } : payload;
       },
       (err) => {
@@ -1626,6 +1643,189 @@ export class GraphOrchestrator extends RunHarness {
         return new Promise(() => {});
       },
     );
+  }
+
+  /** C1 (D1): the Prototype step after agreed requirements; resolves the approval, or stops or pauses like the ask. */
+  async _afterRequirements(q) {
+    let r;
+    try {
+      r = await this._prototypeStep(q);
+    } catch (err) {
+      if (isPause(err) || this.pauseRequested) this._scheduler?.pause();
+      else {
+        // A stop ends the round Design is building too (a pause leaves it: the resume awaits it).
+        const p = this._shapeRec?.prototype;
+        if (this.abort.signal.aborted && p?.state === 'building' && p.buildId) {
+          await Promise.resolve(registryOf({ designBuilds: this.opts.designBuilds || null })?.stopBuild(p.buildId)).catch(() => {});
+        }
+        this._graphError ||= err;
+        this._scheduler?.abort();
+      }
+      return new Promise(() => {});
+    }
+    if (r.state === 'stopped') {
+      this._log('orchestrator', 'info', `prototype ${q.id}: stop`);
+      this.stop(this.answeredBy(this._protoAskId));
+      this._scheduler?.abort();
+      return new Promise(() => {});
+    }
+    return { decision: 'approve' };
+  }
+
+  /** C1: the Prototype step's effects (src/core/shape/prototype-step.mjs). Design through the injected registry or the
+   *  server's (D7); the review and the remark match through the plan review node's agent (D8). */
+  async _prototypeStep(q) {
+    const rec = this._shapeRec;
+    const readReqs = async () => { try { return await readFile(q.plan.file, 'utf8'); } catch { return ''; } };
+    const agreed = criteriaList(await readReqs());
+    const deps = { designBuilds: this.opts.designBuilds || null };
+    const by = this._runStarter();
+    const node = planReviewNode(this.resolved?.template);
+    // Each effect first checks for a pause or a stop, so a paused or stopped run never drives the step on.
+    const live = (fn) => async (...a) => { this._protoCheck(); return fn(...a); };
+    return runPrototypeStep({
+      rec, position: rec.care?.position, agreed, designOn: flagEnabled('design') === true, registry: !!registryOf(deps),
+      ask: (moment, view) => this._prototypeAsk(q, moment, view),
+      build: live(async ({ keep }) => {
+        // The design is saved (keep) before the round starts, so a replayed Build never makes a second one.
+        let designId = rec.prototype?.designId;
+        if (!designId) {
+          designId = createPrototypeDesign({ projectKey: this.state.projectKey || null, title: this.state.title || 'Feature', by,
+            models: this.claude?.model ? { model: this.claude.model, effort: this.claude.effort } : null });
+          await keep(designId);
+        }
+        const text = await readReqs();
+        const brief = prototypeBrief({ title: this.state.title, requirements: screenRequirements(criteriaList(text)), examples: criteriaExamples(text),
+          fail: this.claude?.mock === true && process.env.WORCA_MOCK_PROTO_FAIL === '1' });
+        const s = await startPrototypeBuild({ designId, brief, by, deps });
+        return s.refused ? s : { ...s, designId };
+      }),
+      change: live((a) => startPrototypeBuild({ designId: rec.prototype?.designId, instruction: a.instruction, sections: a.sections, needsLead: a.needsLead, by, deps })),
+      // The wait gives way to a pause or a stop at once: the build itself goes on in Design, and a resume awaits it.
+      awaitBuild: live((id) => this._untilPauseOrStop(awaitPrototypeBuild(id, deps))),
+      review: live((r, prior) => this._prototypeReview(node, q, r, prior)),
+      matchRemark: live((said) => this._prototypeRemark(node, q, said)),
+      rewrite: live(async (id, p) => {
+        const out = rewriteRequirement(await readReqs(), id, p);
+        if (!out) return false;
+        await writeFile(q.plan.file, out, 'utf8');
+        return true;
+      }),
+      freeze: live(async (a) => freezePrototype({ designId: rec.prototype?.designId, shownVersion: a.shownVersion, screens: a.screens, pipelineDir: this.pipeline.dir })),
+      // D16: the stashed answer is spent once the step saved what it did with it. A new moment (or review round) is
+      // announced, so the one card re-reads the saved state and draws the working moments live (R-ux-2).
+      persist: async () => {
+        this._protoAnswer = null;
+        const out = await this._persist();
+        const p = rec.prototype || {};
+        const key = `${p.state}|${p.reviewRounds}|${p.buildId || ''}`;
+        if (key !== this._protoShown) { this._protoShown = key; this._emit('shape-prototype', { pipelineId: this.state.id, state: p.state }); }
+        return out;
+      },
+      audit: (text) => appendAudit(this.pipeline.dir, text).catch(() => {}),
+    });
+  }
+
+  /** C1: throws the stop or the pause that landed, so the Prototype step goes no further. */
+  _protoCheck() {
+    if (this.abort.signal.aborted) throw abortError('stopped');
+    if (this.pauseRequested) throw pauseErr();
+  }
+
+  /** C1: `work`, or the stop or the pause, whichever lands first. */
+  _untilPauseOrStop(work) {
+    const sigs = [this.abort.signal, this.pauseAbort.signal];
+    let off = () => {};
+    const halted = new Promise((_, reject) => {
+      const on = () => { try { this._protoCheck(); } catch (err) { reject(err); } };
+      for (const sg of sigs) sg.addEventListener('abort', on, { once: true });
+      off = () => { for (const sg of sigs) sg.removeEventListener('abort', on); };
+    });
+    return Promise.race([work, halted]).finally(off);
+  }
+
+  /** C1 (D15, D16): one `prototype` ask. An answer is stashed before the first await, keyed by the moment, the saved
+   *  record's time and the version shown, so a pause right after it replays it instead of losing it. */
+  async _prototypeAsk(q, moment, view) {
+    const key = `${moment}|${this._shapeRec?.prototype?.at || ''}|${view.version ?? ''}`;
+    if (this._protoAnswer?.key === key) return this._protoAnswer.payload;
+    this._protoAnswer = null;
+    this._protoSeq += 1;
+    // The round and the saved record's time keep the id unique across a resume, which counts from 1 again.
+    const at = String(this._shapeRec?.prototype?.at || '').replace(/\D/g, '');
+    const id = `proto-${q.nodeId}-${this._shapeRec?.prototype?.round ?? 0}-${at}-${this._protoSeq}`;
+    this._protoAskId = id;
+    // D17: each screen's pieces, read here as plain words, so the card never needs the agent's HTML.
+    const screens = await Promise.all((view.screens || []).map(async (sc) => {
+      let html = '';
+      if (view.designId && /^[a-z][a-z0-9-]{0,31}$/.test(sc.section)) { try { html = await readFile(join(designWorkDir(view.designId), 'sections', sc.section, 'index.html'), 'utf8'); } catch { html = ''; } }
+      return { ...sc, pieces: piecesOf(html) };
+    }));
+    const payload = await this._enqueueAsk(() => this._ask({ id, kind: PROTOTYPE_ASK_KIND, nodeId: q.nodeId, executionId: q.executionId,
+      prototype: { moment, ...view, screens }, validate: (raw) => validatePrototypeAnswer(raw, moment) }));
+    this._protoAnswer = { key, payload };
+    return payload;
+  }
+
+  /** The next free ordinal of a slice spawn kind under the run (its execution ids stay unique across a resume). */
+  _nextSliceOrdinal(prefix) {
+    return this.state.steps.filter((s) => typeof s.key === 'string' && s.key.includes(`:${prefix}-`)).length + 1;
+  }
+
+  /** C1 (D8, D9): one Thorough review round of the built prototype by Design and Product. */
+  async _prototypeReview(node, q, r, prior) {
+    if (!node) {
+      await appendAudit(this.pipeline.dir, 'Prototype not reviewed: this workflow has no plan review step.').catch(() => {});
+      return [];
+    }
+    const n = this._nextSliceOrdinal('prototype-review');
+    const out = join(this.pipeline.dir, `prototype-review-${n}.json`);
+    const p = this._shapeRec.prototype || {};
+    const brief = prototypeReviewBlock({ dir: designDistDir(p.designId), requirements: q.plan.file, screens: p.screens || [], out, round: r, prior })
+      + mockMarkers({ MOCK_PROTO_REVIEW: out, MOCK_PROTO_ROUND: r }) + '\n\n';
+    const raw = await this._spawnSliceAgent({ roleNode: node, parentExecutionId: q.executionId, ordinal: n, taskId: `prototype-review-${n}`,
+      brief, out, auditLine: (model) => `Prototype review round ${r}: Design and Product on ${model}.` });
+    return normalizeReview(raw);
+  }
+
+  /** C1 (D10): the one requirement a remark changes, with its proposed text and example, or null. */
+  async _prototypeRemark(node, q, said) {
+    let list = [];
+    try { list = criteriaList(await readFile(q.plan.file, 'utf8')); } catch { list = []; }
+    const ids = list.map((c) => c.id);
+    const target = remarkTarget(said, ids);
+    if (!node || !ids.length) return null;
+    const n = this._nextSliceOrdinal('prototype-remark');
+    const out = join(this.pipeline.dir, `prototype-remark-${n}.json`);
+    const screenIds = this._shapeRec.prototype?.screenIds || [];
+    const brief = prototypeRemarkBlock({ remark: said, requirements: q.plan.file, ids, target, out })
+      + mockMarkers({ MOCK_PROTO_REMARK: out, MOCK_PROTO_IDS: target || [...screenIds, ...ids].join(',') }) + '\n\n';
+    const raw = await this._spawnSliceAgent({ roleNode: node, parentExecutionId: q.executionId, ordinal: n, taskId: `prototype-remark-${n}`,
+      brief, out, auditLine: (model) => `Prototype remark matched on ${model}.` });
+    const p = validRemarkProposal(raw, target ? [target] : ids);
+    return p ? { ...p, was: list.find((c) => c.id === p.id)?.text || '' } : null;
+  }
+
+  /** C1 (D14): the confirmed prototype of a run whose slice owns a screen requirement, staged once into its own folder. */
+  async _shapePrototypeCtx() {
+    if (this._protoCtx !== undefined) return this._protoCtx;
+    const sl = this.runShape?.slice;
+    let out = null;
+    const own = sl?.index === 1 && !!this._shapeRec?.prototype;
+    const rec = own ? normalizePrototype(this._shapeRec.prototype) : prototypeOfFeature(sl?.feature);
+    if (rec?.state === 'confirmed' && rec.ref) {
+      const ids = sliceRequirementIds(sl).filter((id) => rec.screenIds.includes(id));
+      if (ids.length) {
+        // security: the frozen folder must be unchanged since the confirm (its digest) and, for a feature's record, sit in
+        // the feature's origin run.
+        const origin = own ? null : originPipelineOfFeature(sl?.feature);
+        const dir = stagePrototypeForRun({ ref: rec.ref, pipelineDir: this.pipeline.dir, originPipelineId: origin });
+        if (dir) out = { dir, ids };
+        else await appendAudit(this.pipeline.dir, 'The confirmed prototype is gone: this run goes on without it.').catch(() => {});
+      }
+    }
+    this._protoCtx = out;
+    return out;
   }
 
   /** #990 slice 3 (D9): the approved plan keeps the person's conflict picks in its Clarifications (idempotent across a
@@ -2098,26 +2298,35 @@ export class GraphOrchestrator extends RunHarness {
    *  the Planner's execution. Its config loses `roleReview` (no verdict brief) and gains the challenge block as
    *  promptHints; `nc.meta` is never written. The one output is split-challenge-r.json in the pipeline dir. */
   async _challengeSplit(roleNode, ctx, r, plan, prior) {
-    const nc = (this.resolved.nodeCtx || {})[roleNode.id] || { nodeId: roleNode.id, kind: roleNode.kind, key: roleNode.key };
     const out = join(this.pipeline.dir, `split-challenge-${r}.json`);
-    await rm(out, { force: true });
-    const { roleReview: _drop, ...rest } = roleNode.config || {};
     const brief = challengeBlock({ file: ctx.shapeSlicing?.file || join(this.pipeline.dir, OUTLINE_FILE), out,
       requirements: ctx.bindings?.requirements?.path || null, round: r, roles: plan.roles, challenger: plan.challenger, prior });
+    const labels = [...plan.roles.map((k) => perspectiveByKey(k)?.label || k), ...(plan.challenger ? [CHALLENGER_LABEL] : [])];
+    const raw = await this._spawnSliceAgent({ roleNode, parentExecutionId: ctx.executionId, ordinal: r, taskId: `split-challenge-${r}`,
+      brief, out, auditLine: (model) => `Split challenge round ${r}: ${labels.join(', ')} on ${model}.` });
+    return normalizeChallenge(raw, { roles: plan.roles, challenger: plan.challenger });
+  }
+
+  /** B4 (D8), C1 (D8): ONE spawn of `roleNode`'s agent and model as a non-task slice `taskId` under the execution
+   *  `parentExecutionId`, with `brief` as its promptHints and no verdict (its config loses `roleReview`; `nc.meta` is
+   *  never written), so it routes no wire. Its one output is the JSON file `out`, read back (null when missing, too
+   *  big or not JSON). */
+  async _spawnSliceAgent({ roleNode, parentExecutionId, ordinal, taskId, brief, out, auditLine }) {
+    const nc = (this.resolved.nodeCtx || {})[roleNode.id] || { nodeId: roleNode.id, kind: roleNode.kind, key: roleNode.key };
+    await rm(out, { force: true });
+    const { roleReview: _drop, ...rest } = roleNode.config || {};
     const node = { ...roleNode, config: { ...rest, promptHints: brief } };
-    const taskId = `split-challenge-${r}`;
-    const c = this._execCtx(node, nc, { executionId: sliceExecutionId(ctx.executionId, taskId), ordinal: r,
-      slice: { id: taskId }, parentExecutionId: ctx.executionId, bindings: {} });
+    const c = this._execCtx(node, nc, { executionId: sliceExecutionId(parentExecutionId, taskId), ordinal,
+      slice: { id: taskId }, parentExecutionId, bindings: {} });
     c.ports = { ...(c.ports || {}), inputs: [], outputs: [] };
     c.outputs = {};
     c.verdict = null;
-    const labels = [...plan.roles.map((k) => perspectiveByKey(k)?.label || k), ...(plan.challenger ? [CHALLENGER_LABEL] : [])];
-    await appendAudit(this.pipeline.dir, `Split challenge round ${r}: ${labels.join(', ')} on ${c.claudeOpts?.model || 'the default model'}.`).catch(() => {});
+    await appendAudit(this.pipeline.dir, auditLine(c.claudeOpts?.model || 'the default model')).catch(() => {});
     const result = await this._runNodeAttempts(nc, c);
     await this._afterExecution(nc, c, result);
     let raw = null;
     try { if ((await stat(out)).size <= CHALLENGE_FILE_MAX_BYTES) raw = JSON.parse(await readFile(out, 'utf8')); } catch { raw = null; }
-    return normalizeChallenge(raw, { roles: plan.roles, challenger: plan.challenger });
+    return raw;
   }
 
   /** B4: what the Split ask adds under the marker (split-step.mjs splitAskFields); the agreed list is the requirements
@@ -2337,6 +2546,8 @@ export class GraphOrchestrator extends RunHarness {
       if (this.runShape && nc.key === CHECKLIST_REVIEWER_KEY) ctx.checklistItems = await this._reviewChecklistItems(ctx);
       if (this.runShape && SLICE_SCOPE_AGENT_KEYS.has(nc.key)) Object.assign(ctx, await this._shapeSliceCtx(nc, ctx));
       if (this.runShape && SLICE_SCOPE_AGENT_KEYS.has(nc.key)) ctx.shapeAgreedIds = await this._shapeAgreedIds(ctx);
+      // C1 (D14): every agent node of a run whose slice owns a screen requirement reads the confirmed prototype.
+      if (this.runShape?.slice?.outline) { const sp = await this._shapePrototypeCtx(); if (sp) ctx.shapePrototype = sp; }
       ctx.planConcern = this._planConcernCtx(nc, ctx);
       if (ctx.planConcern && this._planConcernOverridden(planConcernAskId(ctx))) {
         ctx.planConcernOverride = this._planConcernHeld.concern;   // paused during the override re-run (D9): resume as it
@@ -3876,6 +4087,8 @@ export class GraphOrchestrator extends RunHarness {
     this._planVersion = Number.isFinite(rp.planVersion) ? rp.planVersion : 0;
     const pr = rp.planRevise;
     this._planRevise = pr && typeof pr.id === 'string' && typeof pr.path === 'string' ? { id: pr.id, path: pr.path } : null;
+    const pa = rp.protoAnswer;
+    this._protoAnswer = pa && typeof pa.key === 'string' && pa.payload && typeof pa.payload === 'object' ? { key: pa.key, payload: { ...pa.payload } } : null;
     const pca = rp.planConcernAnswer;
     this._planConcernAnswer = pca && typeof pca.id === 'string' && pca.payload && typeof pca.payload === 'object'
       ? { id: pca.id, payload: { ...pca.payload } } : null;

@@ -146,3 +146,16 @@ test('the gate card without roleReviews keeps its issue list', async () => {
   assert.equal(panel.querySelectorAll('ul.issues li').length, 1);
   assert.equal(panel.querySelectorAll('.plan-roles').length, 0);
 });
+
+test('C1: the Prototype receipts: the remark that changed a requirement, the confirm, the skip; nothing for the rest', () => {
+  const pq = (prototype) => ({ id: 'proto-1', kind: 'prototype', prototype });
+  const remark = { text: 'R-ux-2 should show dark mode', id: 'R-ux-2', proposed: { text: 'a', example: 'b', was: 'c' } };
+  assert.equal(stepReceipt(pq({ moment: 'remark', remark }), { decision: 'change' }), 'Your remark: “R-ux-2 should show dark mode” → R-ux-2 updated');
+  assert.equal(stepReceipt(pq({ moment: 'remark', remark }), { decision: 'change' }, { register: 'plain' }), 'Your remark: “R-ux-2 should show dark mode” → the requirement is updated');
+  assert.equal(stepReceipt(pq({ moment: 'built', screens: [{}, {}], remarks: 1 }), { decision: 'confirm' }), 'Prototype confirmed · 2 screens · 1 remark');
+  assert.equal(stepReceipt(pq({ moment: 'built', screens: [{}], remarks: 0 }), { decision: 'confirm' }), 'Prototype confirmed · 1 screen');
+  assert.equal(stepReceipt(pq({ moment: 'offered', position: 'lean' }), { decision: 'skip' }), 'Prototype skipped · Lean builds it only when asked');
+  assert.equal(stepReceipt(pq({ moment: 'offered', position: 'balanced' }), { decision: 'skip' }), 'Prototype skipped by you');
+  assert.equal(stepReceipt(pq({ moment: 'failed' }), { decision: 'skip' }), 'Prototype skipped by you');
+  for (const [m, d] of [['offered', 'build'], ['built', 'remark'], ['remark', 'keep'], ['failed', 'build']]) assert.equal(stepReceipt(pq({ moment: m, remark }), { decision: d }), null, `${m} ${d}`);
+});

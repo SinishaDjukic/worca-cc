@@ -676,3 +676,23 @@ test('M3: the receipt\'s baseVersion is the version the round starts from, read 
   const r = await s.a.apply({ kind: 'design-start', brief: 'x' }, { threadId: t.id, by: 'local' });
   assert.equal(r.block.card.baseVersion, 3);
 });
+
+test('C1 (D6): startHeldRound stages the kit, makes the folders, starts the round, and answers refusalNotice\'s words on 409 and 403', async () => {
+  const { startHeldRound, refusalNotice } = await import('../src/core/design/chat-actions.mjs');
+  const d = createDesign({ kind: 'web', title: 'Prototype · Charts' }, { by: 'ann' });
+  const staged = []; const started = [];
+  const designBuilds = (start) => ({ whileStarting: async (id, fn) => fn(), start });
+  const ok = await startHeldRound({ designBuilds: designBuilds(async (o) => { started.push(o); return { buildId: 'b_0123456789ab', round: 1, kind: 'first' }; }),
+    stageKit: async (o) => { staged.push(o); }, design: d, what: 'build', opts: { designId: d.id, brief: 'Build it', by: 'ann' } });
+  assert.deepEqual(ok, { ok: true, started: { buildId: 'b_0123456789ab', round: 1, kind: 'first' }, baseVersion: 0 });
+  assert.deepEqual(staged, [{ kind: 'web', workDir: designWorkDir(d.id) }]);
+  assert.deepEqual(started, [{ designId: d.id, brief: 'Build it', by: 'ann' }]);
+  const busy = new DesignRefusal(409, 'This design already has a build open: continue or stop it first');
+  const cap = new DesignRefusal(403, 'total cost limit reached');
+  for (const err of [busy, cap]) {
+    const r = await startHeldRound({ designBuilds: designBuilds(async () => { throw err; }), stageKit: async () => {}, design: d, what: 'build', opts: {} });
+    assert.deepEqual(r, { ok: false, notice: refusalNotice(err, 'build'), status: err.status });
+  }
+  assert.equal(refusalNotice(cap, 'build'), 'Total cost limit reached: no build started.');
+  assert.equal(refusalNotice(busy, 'build'), 'A build is already open: wait for it, or press Resume or Stop.');
+});

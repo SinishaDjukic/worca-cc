@@ -608,6 +608,12 @@ export async function runMock({ cwd, systemPrompt, prompt, onEvent, signal, resu
     safeEmit(onEvent, { type: 'result', costUsd: 0, raw: { mock: true, type: 'result', total_cost_usd: 0 } });
     return { text, exitCode: 0 };
   }
+  // C1: the Prototype step's review and remark spawns, marked by their output files.
+  if (m.MOCK_PROTO_REVIEW || m.MOCK_PROTO_REMARK) {
+    text = await mockPrototypeFile(m, cycle, onEvent);
+    safeEmit(onEvent, { type: 'result', costUsd: 0, raw: { mock: true, type: 'result', total_cost_usd: 0 } });
+    return { text, exitCode: 0 };
+  }
   switch (role) {
     case MOCK_ROLE_CLARIFY:
       text = await mockClarify(m, cycle, onEvent);
@@ -1047,6 +1053,33 @@ async function mockSplitChallenge(m, cycle, onEvent) {
   await writeFile(m.MOCK_SPLIT_CHALLENGE, JSON.stringify(body, null, 2) + '\n', 'utf8');
   safeEmit(onEvent, { type: 'tool_use', text: `wrote ${m.MOCK_SPLIT_CHALLENGE}`, raw: { mock: true, file: m.MOCK_SPLIT_CHALLENGE } });
   return `[mock] split challenge round ${cycle}: ${list.length || 0} objection(s)`;
+}
+
+/** C1: a Prototype review round (`WORCA_MOCK_PROTO_REVIEW`: a JSON list of findings `{role, text, objection?, sections?}`,
+ *  or a list of such lists, one per round (`MOCK_PROTO_ROUND`); unset = no findings) or a remark match (`WORCA_MOCK_PROTO_REMARK`: `none`
+ *  matches nothing, a JSON object is written as it is; unset proposes a new text for the first id `MOCK_PROTO_IDS` names). */
+async function mockPrototypeFile(m, cycle, onEvent) {
+  let body;
+  let out;
+  if (m.MOCK_PROTO_REVIEW) {
+    out = m.MOCK_PROTO_REVIEW;
+    let table = [];
+    try { table = JSON.parse(process.env.WORCA_MOCK_PROTO_REVIEW || '[]') || []; } catch { table = []; }
+    const round = Number(m.MOCK_PROTO_ROUND) || cycle;
+    const list = Array.isArray(table[0]) ? (table[round - 1] || []) : table;
+    body = { findings: (Array.isArray(list) ? list : []).map((f) => ({ objection: true, sections: [], ...f })) };
+  } else {
+    out = m.MOCK_PROTO_REMARK;
+    const env = process.env.WORCA_MOCK_PROTO_REMARK;
+    const first = String(m.MOCK_PROTO_IDS || '').split(',').map((x) => x.trim()).filter(Boolean)[0] || null;
+    if (env === 'none') body = { id: null };
+    else if (env) { try { body = JSON.parse(env); } catch { body = { id: null }; } }
+    else body = first ? { id: first, text: 'Mock: the screen as the remark asks', example: 'Mock: the remark shown on the screen' } : { id: null };
+  }
+  await ensureDir(out);
+  await writeFile(out, JSON.stringify(body, null, 2) + '\n', 'utf8');
+  safeEmit(onEvent, { type: 'tool_use', text: `wrote ${out}`, raw: { mock: true, file: out } });
+  return `[mock] prototype ${m.MOCK_PROTO_REVIEW ? `review round ${Number(m.MOCK_PROTO_ROUND) || cycle}` : 'remark'} written`;
 }
 
 async function mockPlannerPlan(m, onEvent, prompt = '') {

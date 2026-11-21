@@ -348,3 +348,19 @@ a.rd-crumb:hover{color:var(--ink);text-decoration:underline;}
 .chat-home-plan-feature{margin:0 10px 4px;color:var(--ink-2);font-size:12px;}
 .chat-home-plan-feature>summary{cursor:pointer;}
 .chat-home-plan-feature-body{margin-top:6px;}
+/* Shaper small runs C1: the Prototype step (prototype-body.mjs, prototype-build.mjs). The preview well holds one column
+   per screen (one column at 375px); each piece fades in once, after its --i; reduced motion shows every piece at once. */
+.proto-body .proto-well{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(200px,100%),1fr));gap:8px;padding:10px;border:1px solid var(--line);border-radius:var(--r-ctrl);background:var(--panel);}
+.proto-body .proto-col{display:flex;flex-direction:column;gap:4px;min-width:0;}
+.proto-body .proto-col-head{display:flex;flex-wrap:wrap;gap:0 6px;font-weight:600;overflow-wrap:anywhere;}
+.proto-body .proto-col-ids{color:var(--ink-2);font-weight:400;font-size:var(--fs-meta);}
+.proto-body .proto-piece{padding:2px 6px;border-radius:var(--r-xs);background:var(--hover);color:var(--ink-2);font-size:var(--fs-meta);overflow-wrap:anywhere;animation:proto-piece-in .2s ease-out both;animation-delay:calc(var(--i, 0) * 40ms);}
+@keyframes proto-piece-in{from{opacity:0;}}
+.proto-body .proto-remark{display:flex;flex-wrap:wrap;gap:8px;}
+.proto-body .proto-remark-field{flex:1 1 12em;min-width:0;}
+/* 375px: the remark field takes the whole row, so Send remark wraps under it and the placeholder is not cut. */
+@media (max-width:480px){.proto-body .proto-remark-field{flex-basis:100%;}}
+.proto-body .proto-was{color:var(--ink-3);overflow-wrap:anywhere;}
+.proto-body .proto-quote{margin:0;color:var(--ink-2);overflow-wrap:anywhere;}
+.proto-body .proto-open{align-self:flex-start;}
+@media (prefers-reduced-motion:reduce){.proto-body .proto-piece{animation:none;}}

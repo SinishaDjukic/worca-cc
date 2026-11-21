@@ -7,6 +7,7 @@ import { stepKind, isRequirementsAsk } from './step-card.mjs';
 import { watchStoppedText } from '../chat/pr-watch-words.mjs';
 import { icon } from '../icons.mjs';
 import { FEATURE_KIND } from '../run-status-card.mjs';
+import { prototypeDetail } from './prototype-body.mjs';
 import { REQUIREMENTS_AGREED } from '../../../src/shared/shape/feature-log.mjs';
 
 export const SLICE_STATE_LABELS = Object.freeze({
@@ -84,7 +85,7 @@ export function featureCardModel({ own = null, card = null, snapOf = () => null 
 }
 
 /** Shaper small runs B1: the one card's steps. `start` is B2's; B1 draws none (D11). */
-export const ONE_CARD_STEPS = Object.freeze(['start', 'requirements', 'split', 'build', 'done']);
+export const ONE_CARD_STEPS = Object.freeze(['start', 'requirements', 'prototype', 'split', 'build', 'done']);
 
 /** A run that ended (run-card.mjs RESULT_STATUS; not imported: run-card imports this module). */
 const ENDED = new Set(['done', 'complete', 'completed', 'failed', 'stopped', 'error', 'aborted']);
@@ -99,6 +100,8 @@ const ONE_DETAIL = Object.freeze({
   S2: () => 'The roles write the requirements',
   S3: () => 'Agree the requirements, then the Split',
   S4: () => SPLIT_WORKING,
+  // C1 (D21): the Prototype step's detail per moment, from its open ask or the card's saved state.
+  SP: ({ proto }) => prototypeDetail(proto),
   S5: () => 'Check the plan, then the Planner proposes the runs',       // until B4 removes plan approval
   S6: () => SPLIT_PROPOSED,
   S7: ({ asking }) => (asking ? SPLIT_PROPOSED : SPLIT_WORKING),
@@ -110,7 +113,7 @@ const ONE_DETAIL = Object.freeze({
 const pqOf = (step) => (step && step.snap && step.snap.pendingQuestion) || null;
 
 /** Which state the card is in: the first rule that matches wins (B1, Implementation steps, Step 3). */
-function oneState(view, step, log, card) {
+function oneState(view, step, log, card, ended = false) {
   if (view) {
     const slices = view.slices || [];
     if (slices.length && slices.every((s) => s.state === 'done')) return ['S9', 'done'];
@@ -121,6 +124,10 @@ function oneState(view, step, log, card) {
   if (pq && pq.kind === 'care') return ['S0', 'start'];
   // B2: a marked planning run with no saved Care, no open ask and nothing decided yet is still at the Start step.
   if (!step && !card.care && !log.length) return ['S0', 'start'];
+  // C1 (D21): the Prototype step, while it asks or runs; confirmed and skipped fall through to the Split's line, and so
+  // does the saved state of a run that ended (a stopped run's step is not running).
+  const proto = ended ? null : card.prototype;
+  if ((pq && pq.kind === 'prototype') || (proto && proto.state !== 'confirmed' && proto.state !== 'skipped')) return ['SP', 'prototype'];
   const plan = pq && pq.kind === 'plan' ? pq.plan : null;
   if (plan && plan.outline) return ['S6', 'split'];
   if (plan && !isRequirementsAsk(pq)) return ['S5', 'split'];
@@ -146,10 +153,11 @@ export function oneCardModel({ own = null, card = null, snapOf = () => null } = 
   const rp = view && view.status === 'replanning' && view.replan && view.replan.pipelineId ? snapOf(view.replan.pipelineId) : null;
   if (asks(rp)) base = { ...base, step: stepOf(null, rp) };
   const question = base.step || null;
-  const [state, step] = oneState(view, question, base.log || [], card);
+  const [state, step] = oneState(view, question, base.log || [], card, !!own && ENDED.has(String(own.status || '')));
   const pq = pqOf(question);
   const detail = ONE_DETAIL[state]({
     start: !!pq && pq.kind === 'care',
+    proto: pq && pq.kind === 'prototype' ? pq.prototype : card.prototype || null,
     k: view ? view.done || 0 : 0, n: view ? view.total || 0 : 0,
     q: pq && Array.isArray(pq.questions) ? pq.questions.length : 0,
     asking: !!question && (asks(rp) || (!!view && !!view.ask && view.ask.index == null)),

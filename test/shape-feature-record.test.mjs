@@ -280,3 +280,10 @@ test('exactly one perspective-to-role table exists: the UI and the shared module
     assert.doesNotMatch(src, /architect:\s*'engineering'|architect:\s*'Engineering'/, f);
   }
 });
+
+test('C1 (D3): prototypeCare reads the Prototype row: Lean skips, Thorough reviews, an unknown position is the default', async () => {
+  const { prototypeCare } = await import('../src/shared/shape/feature-record.mjs');
+  assert.deepEqual(CARE_POSITIONS.map((p) => prototypeCare(p)), [
+    { primary: 'skip', review: false }, { primary: 'build', review: false }, { primary: 'build', review: true }]);
+  assert.deepEqual(prototypeCare('nope'), prototypeCare('balanced'));
+});

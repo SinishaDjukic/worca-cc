@@ -608,6 +608,23 @@ test('Chat side panel, the Care ask (only asked on a small-runs run): the bar\'s
   assert.equal(barAnswer(bar).classList.contains('btn-primary'), false);
 });
 
+// C1 web UI review: the Prototype ask is answered on the feature card only; the side panel shows it with no button.
+test('Chat side panel, the Prototype ask: its rows show, but no step button, remark field or bar answer', async () => {
+  const { screen, bar } = await openPanelRun({ id: 'proto-1', kind: 'prototype', prototype: { moment: 'offered',
+    offer: { primary: 'build', menu: 'skip', review: false }, requirements: [{ id: 'R-ux-1', text: 'The editor shows a preview' }] } });
+  assert.equal(screen.dataset.presentation, 'panel');
+  const body = screen.querySelector('.qpanel .proto-body');
+  assert.ok(body, 'the step body is drawn');
+  assert.equal(body.querySelectorAll('button, input').length, 0);
+  assert.equal(barAnswer(bar), null, 'no bar answer');
+});
+
+test('full run page, the Prototype ask keeps its step buttons', async () => {
+  const { screen } = await openPanelRun({ id: 'proto-1', kind: 'prototype', prototype: { moment: 'offered',
+    offer: { primary: 'build', menu: 'skip', review: false }, requirements: [{ id: 'R-ux-1', text: 'The editor shows a preview' }] } }, 'running/run-rr');
+  assert.ok(screen.querySelector('.qpanel .proto-go'));
+});
+
 test('full run page, small-runs Requirements: still no bar answer', async () => {
   const { screen, bar } = await openPanelRun(REQ_ASK({ smallRuns: true }), 'running/run-rr');
   assert.notEqual(screen.dataset.presentation, 'panel');
@@ -853,4 +870,89 @@ test('one ship flow: after a chain ship focus is on the repainted View PR contro
   await ctx.settle(6);
   assert.equal(page.querySelector('.gpage-card .rd-pr-slot').dataset.state, 'view');
   assert.ok(page.querySelector('.gpage-card .rd-pr-slot').contains(doc.activeElement), 'focus survives the late repaint');
+});
+
+// ---- Shaper small runs C1 (R-ux-2): the Prototype step's working moments on the one card ---------------------------
+
+test('C1: the one card draws the building moment from the card\'s saved state (Lead row and the well), follows it to reviewing, and draws nothing once the run ended', async () => {
+  const ctx = await bootApp({ fetchHandler: () => null });
+  ctx.wsBox.ws.dispatch('open', {});
+  const RUN = { runId: 'run-pb', pipelineId: 'p-pb', title: 'Email templates', projectDir: '/tmp/p', status: 'running', kind: 'run',
+    startedAt: '2026-01-01T00:00:00Z', shaping: { perspectives: [], rounds: [], approved: null, savedTo: null } };
+  ctx.dispatch({ type: 'hello', runs: [RUN] });
+  await ctx.settle();
+  const { createChatRunCard } = await import('../ui/public/chat/run-card.mjs');
+  const doc = ctx.window.document;
+  const proto = (state, o = {}) => ({ state, screenIds: ['R-ux-1'], designId: 'd_1', buildId: 'b_1', costUsd: 0, findings: [], remarks: 0, rebuilt: false,
+    reviewRounds: 0, screens: [{ section: 'editor', name: 'Template editor', ids: ['R-ux-1'] }], ...o });
+  const snap = (p) => ({ source: 'live', status: 'running', runId: 'run-pb', pipelineId: 'p-pb', title: 'Email templates', shaping: RUN.shaping,
+    shaper: { card: { pipelineId: 'p-pb', smallRuns: true, care: { position: 'balanced' }, log: [{ key: 'l1', text: 'Requirements agreed' }], prototype: p }, snaps: {} } });
+  const card = createChatRunCard({ doc, win: ctx.window, ctx: {}, controls: ctx.window.__np.chatRunControls, ident: { cardId: 'c-pb', pipelineId: 'p-pb', runId: 'run-pb' },
+    snapshot: snap(proto('building')) });
+  doc.body.appendChild(card.el);
+  await ctx.settle();
+  const q = () => card.el.querySelector('.qpanel');
+  assert.ok(q() && !q().classList.contains('hidden'), 'the step body is drawn on the card');
+  assert.equal(q().querySelector('.ask-mcard-title').textContent, "Design's agents are building");
+  const rows = [...q().querySelectorAll('.proto-rows .plan-check-row')].map((r) => r.textContent);
+  assert.match(rows[0], /Lead/);
+  assert.ok(q().querySelector('.proto-well'), 'the preview well');
+  assert.equal(q().querySelectorAll('button').length, 0, 'nothing to answer while Design builds');
+  card.update(snap(proto('reviewing', { reviewRounds: 1 })));
+  await ctx.settle();
+  assert.equal(q().querySelector('.ask-mcard-title').textContent, 'Design and Product check the prototype');
+  // A stopped run's saved state draws nothing.
+  card.update({ ...snap(proto('building')), status: 'stopped', terminal: true });
+  await ctx.settle();
+  assert.ok(!card.el.querySelector('.qpanel .proto-body'), 'no working moment for an ended run');
+  card.destroy();
+});
+
+test('C1: a shape-prototype frame re-reads its planning run\'s card', async () => {
+  const gets = [];
+  const ctx = await bootApp({ fetchHandler: (url) => (url === '/api/shape/pipelines/p-pb/card' ? (gets.push(url), res(200, { pipelineId: 'p-pb', log: [] })) : null) });
+  ctx.wsBox.ws.dispatch('open', {});
+  ctx.window.__shapeFeature.shaperCard('p-pb');
+  await ctx.settle(5);
+  ctx.dispatch({ type: 'shape-prototype', pipelineId: 'p-pb' });
+  await ctx.settle(5);
+  ctx.dispatch({ type: 'shape-prototype', pipelineId: 'other' });
+  await ctx.settle(5);
+  assert.equal(gets.length, 2);
+});
+
+test('C1: the run page draws the building moment in its step area from the planning run\'s saved card, and drops it once an ask opens', async () => {
+  const card = { pipelineId: 'p-pb', smallRuns: true, care: { position: 'balanced' }, log: [],
+    prototype: { state: 'building', screenIds: ['R-ux-1', 'R-ux-2'], designId: 'd_1', buildId: 'b_1', costUsd: 0, findings: [], remarks: 0, rebuilt: false,
+      reviewRounds: 0, screens: [{ section: 'editor', name: 'Template editor', ids: ['R-ux-1'] }, { section: 'prefs', name: 'Email preferences', ids: ['R-ux-2'] }] } };
+  const ctx = await bootApp({ fetchHandler: (url) => (url === '/api/shape/pipelines/p-pb/card' ? res(200, card) : null) });
+  ctx.wsBox.ws.dispatch('open', {});
+  const RUN = { runId: 'run-pb', pipelineId: 'p-pb', title: 'Email templates', projectDir: '/tmp/p', status: 'running', kind: 'run',
+    startedAt: '2026-01-01T00:00:00Z', shaping: { perspectives: [], rounds: [], approved: null, savedTo: null } };
+  ctx.dispatch({ type: 'hello', runs: [RUN] });
+  ctx.go('running/run-pb');
+  await ctx.settle(6);
+  const host = ctx.window.document.querySelector('#run-detail .rd-questions');
+  assert.equal(host.hidden, false, 'the step area shows');
+  assert.equal(host.querySelector('.qpanel .ask-mcard-title').textContent, "Design's agents are building");
+  const lead = [...host.querySelectorAll('.proto-rows .plan-check-row')].map((r) => r.textContent);
+  assert.equal(lead.length, 1);
+  assert.match(lead[0], /Lead/);
+  // Design's frames reach the run page's rows through the same subscription as the Chat card's.
+  let seq = 0;
+  const fr = (type, over) => ({ type, designId: 'd_1', buildId: 'b_1', seq: ++seq, ts: 0, ...over });
+  ctx.dispatch(fr('design-build', { status: 'building' }));
+  ctx.dispatch(fr('design-plan', { planRev: 1, sections: [{ id: 'editor', job: 'Template editor', status: 'planned', parts: ['html'] },
+    { id: 'prefs', job: 'Email preferences', status: 'planned', parts: ['html'] }] }));
+  await ctx.settle(3);
+  const rows = [...host.querySelectorAll('.proto-rows .plan-check-row')].map((r) => r.textContent);
+  assert.equal(rows.length, 3, rows.join(' | '));
+  assert.match(rows[0], /Lead/);
+  assert.match(rows[1], /Template editor/);
+  assert.match(rows[2], /Email preferences/);
+  assert.equal(host.querySelectorAll('.qpanel button').length, 0, 'nothing to answer while Design builds');
+  ctx.dispatch({ type: 'question', runId: 'run-pb', id: 'proto-2', kind: 'prototype', prototype: { moment: 'built',
+    offer: { primary: 'confirm' }, screens: card.prototype.screens, costUsd: 1, designId: 'd_1', findings: [] } });
+  await ctx.settle(6);
+  assert.ok(host.querySelector('.qpanel .proto-open'), 'the built ask replaces the working moment');
 });

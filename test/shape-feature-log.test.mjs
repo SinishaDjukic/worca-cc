@@ -173,3 +173,19 @@ test('fit-1-2: the outline audit line\'s kept note and the pending stub\'s count
   // parseDecisionLine reads the note back (D20)
   assert.equal(parseDecisionLine(`Slice outline **approve** (round 1${outlineKeptNote(stub, 'approve', { openObjections: 'kept' })}).`).kept, 2);
 });
+
+test('C1: the 4 Prototype log lines parse and show on the one card only', async () => {
+  const { PROTOTYPE_CONFIRMED, prototypeBuiltText, remarkUpdatedText, parsePrototypeLine } = await import('../src/shared/shape/feature-log.mjs');
+  assert.equal(PROTOTYPE_CONFIRMED, 'Prototype confirmed by you');
+  assert.equal(prototypeBuiltText(2, 2.8), "Prototype built by Design's agents · 2 screens · $2.80");
+  assert.equal(prototypeBuiltText(1, 0), "Prototype built by Design's agents · 1 screen · $0.00");
+  assert.equal(remarkUpdatedText('dark please', 'R-ux-2'), 'Your remark: “dark please” → R-ux-2 updated');
+  const lines = ['Prototype skipped · no screen requirements', 'Prototype skipped by you', prototypeBuiltText(2, 2.8),
+    remarkUpdatedText('dark please', 'R-ux-2'), PROTOTYPE_CONFIRMED];
+  for (const l of lines) assert.deepEqual(parsePrototypeLine(`${l}.`), { kind: 'prototype', text: l }, l);
+  assert.equal(parsePrototypeLine('Prototype was nice'), null);
+  const origin = ['Requirements approval **approve**.', `${prototypeBuiltText(2, 2.8)}.`, `${PROTOTYPE_CONFIRMED}.`];
+  assert.deepEqual(buildDecisionLog({ origin, oneCard: true }).map((l) => l.text),
+    ['Requirements agreed', prototypeBuiltText(2, 2.8), PROTOTYPE_CONFIRMED]);
+  assert.deepEqual(buildDecisionLog({ origin }).map((l) => l.text), ['Plan approved'], "not on dev's card");
+});

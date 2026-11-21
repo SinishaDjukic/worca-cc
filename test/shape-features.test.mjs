@@ -1528,3 +1528,32 @@ test('B2: createSliceFeature with smallRuns writes Care with the flag off; small
   const b = mk(2, { care: START_CARE });
   assert.deepEqual(careRow(b.id), { position: 'balanced', chosenBy: 'default', worcaPick: null });
 }));
+
+// ---- Shaper small runs C1: the Prototype step's record on the card ---------------------------------------------------
+const PROTO = { v: 1, state: 'confirmed', screenIds: ['R-ux-1'], designId: 'd_1', buildId: 'b_1', round: 1, version: 2,
+  screens: [{ section: 'editor', name: 'Template editor', ids: ['R-ux-1'] }], costUsd: 2.8, findings: [], reviewRounds: 0,
+  remarks: 1, rebuilt: true, ref: { dir: '/secret/prototype-confirmed', version: 2, designId: 'd_1' }, at: '2026-11-21T10:00:00.000Z' };
+const markWithProto = (pid, extra = { smallRuns: true }) => getDb().prepare('UPDATE pipelines SET shape_stats = ? WHERE id = ?')
+  .run(JSON.stringify({ questions: { asked: 0, skipped: 0 }, revises: [], shapeScore: null, ...extra, prototype: PROTO }), pid);
+
+test('C1: shaperCard returns prototype only for a marked card, with no file path; featureView likewise', () => withSmallRuns(true, () => {
+  const solo = pipe('running');
+  markWithProto(solo);
+  const c = shaperCard(solo, { shaped: () => true });
+  assert.equal(c.prototype.state, 'confirmed');
+  assert.deepEqual(c.prototype.screens, PROTO.screens);
+  assert.equal(c.prototype.version, 2);
+  assert.ok(!JSON.stringify(c).includes('/secret/'), 'no ref.dir');
+  assert.equal('ref' in c.prototype, false);
+  const { id, pid } = mk(2);
+  markWithProto(pid);
+  assert.equal(shaperCard(pid).prototype.state, 'confirmed');
+  assert.equal(featureView(id).prototype.state, 'confirmed');
+  assert.ok(!JSON.stringify(featureView(id)).includes('/secret/'));
+  const plain = pipe('running');
+  markWithProto(plain, {});
+  assert.equal('prototype' in shaperCard(plain, { shaped: () => true }), false, 'unmarked: no prototype key');
+  const bare = pipe('running');
+  mark(bare);
+  assert.equal('prototype' in shaperCard(bare, { shaped: () => true }), false, 'marked, no record');
+}));

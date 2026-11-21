@@ -251,3 +251,12 @@ test('smallRunsAsk: the small-runs marker is read from the open ask alone (Care,
   assert.equal(smallRunsAsk(null), false);
   assert.equal(smallRunsAsk(undefined), false);
 });
+
+test('C1: the prototype chip and titles; a prototype ask is a step card and a small-runs ask', () => {
+  const pq = (moment) => ({ id: 'proto-1', kind: 'prototype', prototype: { moment } });
+  assert.equal(stepChip(pq('offered'), {}), 'Prototype');
+  assert.equal(isStepCard(pq('offered'), {}, false), true);
+  assert.equal(smallRunsAsk(pq('built')), true);
+  assert.deepEqual(['offered', 'built', 'remark', 'failed'].map((m) => stepTitle(pq(m))),
+    ['Prototype the screens first?', 'Your turn: look, remark, confirm', 'Change the requirement?', 'The prototype did not build']);
+});
