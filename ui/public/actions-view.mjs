@@ -1,6 +1,7 @@
 // ui/public/actions-view.mjs — Actions (issue #529): pure renderers + one live controller.
 // Every renderer takes `doc` explicitly and returns detached DOM; no colour literals, no innerHTML with data.
 import { copyButton, copyFromButton } from './copy-button.mjs';
+import { icon } from './icons.mjs';
 
 export const TERMINAL = new Set(['exited', 'failed', 'stopped']);
 const ACTIVE = new Set(['starting', 'running', 'ready']);
@@ -797,10 +798,11 @@ export function renderShipItStrip(model, { doc, handlers = {} } = {}) {
 }
 
 /** The sidebar's Running actions: one row per running service — a green dot, "<run title> · <label :port>"
- *  (a button opening the run's Actions tab while the run still has a saved row) and a square Stop. No header: the
- *  rows are the list. The uptime rides the row's title. `menu: true` marks the buttons as menu items, for the
- *  rail's flyout. Returns null when nothing runs. */
-export function renderRunningActionRows(services, { doc, titleOf = (s) => s.runId, onStop, onOpen, menu = false, now = Date.now() } = {}) {
+ *  (a button opening the run's Actions tab while the run still has a saved row), a globe opening its address in a
+ *  Browser tab of the tool panel (`onBrowse`, issue 1064; only for a safe http(s) address) and a square Stop. No
+ *  header: the rows are the list. The uptime rides the row's title. `menu: true` marks the buttons as menu items, for
+ *  the rail's flyout. Returns null when nothing runs. */
+export function renderRunningActionRows(services, { doc, titleOf = (s) => s.runId, onStop, onOpen, onBrowse, menu = false, now = Date.now() } = {}) {
   const list = (services || []).filter((s) => ACTIVE.has(s.status));
   if (!list.length) return null;
   const box = h(doc, 'div', 'act-rows');
@@ -819,12 +821,23 @@ export function renderRunningActionRows(services, { doc, titleOf = (s) => s.runI
     stop.setAttribute('aria-label', tip);
     stop.append(stopGlyph(doc));
     stop.addEventListener('click', () => onStop?.(s));
+    let browse = null;
+    if (onBrowse && isSafeHref(s.url)) {
+      const label = `Open ${s.label || 'this service'} in a Browser tab`;
+      browse = h(doc, 'button', 'act-srow-open');
+      browse.type = 'button';
+      browse.title = label;
+      browse.setAttribute('aria-label', label);
+      browse.append(icon(doc, 'globe', 13));
+      browse.addEventListener('click', () => onBrowse(s));
+    }
     if (menu) {
       row.setAttribute('role', 'none');
       if (openable) name.setAttribute('role', 'menuitem');
+      browse?.setAttribute('role', 'menuitem');
       stop.setAttribute('role', 'menuitem');
     }
-    row.append(h(doc, 'span', 'pdot'), name, stop);
+    row.append(...[h(doc, 'span', 'pdot'), name, browse, stop].filter(Boolean));
     box.append(row);
   }
   return box;

@@ -11,7 +11,9 @@ import { createFlyout } from '../side-flyout.mjs';
 import { icon } from '../icons.mjs';
 import { makeSwitch } from '../switch.mjs';
 import { bytesToBase64, carriesFiles, checkAttachment, createPasteNamer, pastedFiles } from '../attach-files.mjs';
-import { DESIGN_FAST_DEFAULT, DESIGN_FAST_LABEL, DESIGN_KIND_LABELS, DESIGN_PICTURES_DEFAULT } from '../../../src/shared/design-names.mjs';
+import { DESIGN_FAST_DEFAULT, DESIGN_FAST_LABEL, DESIGN_KIND_LABELS, DESIGN_PICTURES_DEFAULT, titleFromBrief } from '../../../src/shared/design-names.mjs';
+
+export { titleFromBrief };
 import { openEngineGateDialog } from './engine-gate-dialog.mjs';
 import { createModelPills } from './model-pills.mjs';
 import { createComposerSettings, createPicturesRow } from './composer-settings.mjs';
@@ -22,9 +24,8 @@ const LIST_URL = '/api/design';
 /** The server's Build fast caps (P8, M6): `{fast, calm}`. */
 const LIMITS_URL = '/api/design/limits';
 const DAY_MS = 86_400_000;
-const TITLE_MAX = 60;
 /** What a Delete loses, said on every Delete confirm (a re-opened one too). */
-const DELETE_LOSS = 'Its files and chat go. What it cost stays in Statistics.';
+const DELETE_LOSS = 'Its files go; its chat stays. What it cost stays in Statistics.';
 const KINDS = Object.freeze(['web', 'presentation', 'pitch', 'video', 'document']);
 const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 const WEEKDAYS = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
@@ -51,6 +52,36 @@ const KIND_ICONS = Object.freeze({
   video: `${SVG_OPEN}<rect x="3.5" y="5.5" width="17" height="13" rx="2"/><path d="M10.5 9.5v5l4-2.5z"/></svg>`,
   document: `${SVG_OPEN}<path d="M6 3.5h8.5L19 8v11a1.5 1.5 0 0 1-1.5 1.5h-11A1.5 1.5 0 0 1 5 19V5a1.5 1.5 0 0 1 1-1.5z"/><path d="M14.5 3.5V8H19M8.5 12h7M8.5 15h7M8.5 18h4"/></svg>`,
 });
+/** The row of kind buttons (Web page, Presentation, Pitch deck, Video, Document): the Design page's start and a new design
+ *  chat's start draw the same one. `onPick(kind)` on a click; `set(kind)` paints the pressed one. */
+export function createKindRow(doc, { value = KINDS[0], onPick = () => {} } = {}) {
+  const el = doc.createElement('div');
+  el.className = 'dz-kinds';
+  el.setAttribute('role', 'group');
+  el.setAttribute('aria-label', 'Kind');
+  const btns = KINDS.map((k) => {
+    const b = doc.createElement('button');
+    b.className = 'btn btn-lg dz-kind-btn';   // the Chat home's quick-action size (home-actions.mjs)
+    b.type = 'button';
+    b.dataset.kind = k;
+    b.innerHTML = KIND_ICONS[k];
+    b.append(DESIGN_KIND_LABELS[k]);
+    b.addEventListener('click', () => { set(k); onPick(k); });
+    return b;
+  });
+  el.append(...btns);
+  function set(kind) {
+    for (const b of btns) {
+      const on = b.dataset.kind === kind;
+      b.classList.toggle('is-on', on);
+      b.classList.toggle('btn-primary', on);   // the pressed kind is the dark one
+      b.setAttribute('aria-pressed', String(on));
+    }
+  }
+  set(value);
+  return { el, set, buttons: btns };
+}
+
 // The composer's project button, as the mockup draws it (canvas build.mjs:112): a 13px folder and a 12px chevron.
 const SCOPE_FOLDER = '<svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 7.5A1.5 1.5 0 0 1 4.5 6h4l2 2.2H19.5A1.5 1.5 0 0 1 21 9.7v8.3A1.5 1.5 0 0 1 19.5 19.5h-15A1.5 1.5 0 0 1 3 18z"/></svg>';
 const SCOPE_CHEVRON = '<svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 9l6 6 6-6"/></svg>';
@@ -65,23 +96,6 @@ const midnight = (d) => new Date(d.getFullYear(), d.getMonth(), d.getDate()).get
 /** A design kind as people read it: the tile's meta and the studio's kind chip. @param {unknown} kind @returns {string} */
 export function kindWord(kind) {
   return typeof kind === 'string' && Object.hasOwn(DESIGN_KIND_LABELS, kind) ? DESIGN_KIND_LABELS[kind] : 'Design';
-}
-
-/**
- * A new design's name from its brief, never from a model (L6.13, SPEC L30): the first line, cut at the end of its first
- * sentence; past 60 characters cut at the last space at or before the 60th, else at 60; no trailing `,;:` or space.
- * @param {unknown} text
- * @returns {string}
- */
-export function titleFromBrief(text) {
-  const line = String(text ?? '').trim().split(/\r?\n/, 1)[0];
-  const end = line.search(/[.!?](\s|$)/);
-  let title = end >= 0 ? line.slice(0, end) : line;
-  if (title.length > TITLE_MAX) {
-    const space = title.lastIndexOf(' ', TITLE_MAX);
-    title = space > 0 ? title.slice(0, space) : title.slice(0, TITLE_MAX);
-  }
-  return title.replace(/[\s,;:]+$/, '');
 }
 
 /**
@@ -330,6 +344,59 @@ export function createLibrary({ doc, win, host, fetch: fetchFn, navigate, now = 
 let menuSeq = 0;   // ids for the More and project menus on one page
 
 /**
+ * One new design: `POST /api/design` with `body`. The engine gate's 409 (`engine-gated`, `engine-refused`) opens its
+ * dialog (engine-gate-dialog.mjs; `onGate` gets it, null once it closes): Allow unguarded posts again with
+ * `{allowUnguarded: true, engine}` naming the 409's engine, Use Claude with `{engine: 'claude'}` (and without `models`
+ * when that moves the design off `engine()`, the engine its picks were made for). The Library's start and a new design
+ * chat's start (studio.mjs) both make designs here.
+ * @returns {Promise<{ok: true, id: string} | {ok: false, error: string, canceled?: true}>}
+ */
+export async function makeDesign({ doc, fetch: fetchFn, body, engine = () => null, onGate = () => {} }) {
+  const post = async (b) => {
+    try {
+      const res = await fetchFn(LIST_URL, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(b) });
+      let answer = null;
+      try { answer = await res.json(); } catch { answer = null; }
+      return { ok: res.ok, status: res.status, answer };
+    } catch {
+      return { ok: false, status: 0, answer: null };
+    }
+  };
+  const settle = ({ ok, answer }) => {
+    const id = ok && isObject(answer) && isObject(answer.design) && typeof answer.design.id === 'string' && answer.design.id ? answer.design.id : null;
+    return id ? { ok: true, id } : { ok: false, error: errorOf(answer, 'Could not create the design. Nothing changed.') };
+  };
+  const first = await post(body);
+  const { status, answer } = first;
+  if (!(status === 409 && isObject(answer) && GATE_CODES.includes(answer.code) && typeof answer.engine === 'string' && answer.engine)) return settle(first);
+  // The gate's dialog. Its consent binds to the engine the 409 named (L8.25), never one re-read from Settings.
+  return new Promise((resolve) => {
+    const again = async (extra) => {
+      onGate(null);
+      const next = { ...body, ...extra };
+      if (extra.engine && extra.engine !== engine()) delete next.models;
+      resolve(settle(await post(next)));
+    };
+    onGate(openEngineGateDialog({
+      doc,
+      label: typeof answer.label === 'string' && answer.label ? answer.label : answer.engine,
+      overridable: answer.overridable === true,
+      reasons: Array.isArray(answer.reasons) && answer.reasons.length ? answer.reasons : [errorOf(answer, '')],
+      notes: answer.notes,
+      onAllow: () => { void again({ allowUnguarded: true, engine: answer.engine }); },
+      ...(answer.engine !== 'claude' ? { onClaude: () => { void again({ engine: 'claude' }); } } : {}),
+      onCancel: () => { onGate(null); resolve({ ok: false, error: '', canceled: true }); },
+    }));
+  });
+}
+
+/** The models a new design could build with: on the engine of `projectKey`'s project, or the Default engine. */
+export const startModelsUrl = (projectKey) => `${LIST_URL}/models${projectKey ? `?projectKey=${encodeURIComponent(projectKey)}` : ''}`;
+
+/** The message a design was made with, for its chat (takeStart). */
+export function keepStart(id, start) { starts.set(id, start); }
+
+/**
  * The start composer in `hero` (canvas build.mjs:308-323): `h1.chat-home-title`, then `.ask-composer >
  * .ask-composer-box` holding the file chips, `textarea.dz-input` and the row (Attach, the project, Build fast, Send),
  * the refusal line under the box, then the kind chips. Send waits for files still being read, POSTs
@@ -341,7 +408,7 @@ let menuSeq = 0;   // ids for the More and project menus on one page
  * @param {{doc: Document, win: Window, hero: HTMLElement, fetch: Function, navigate?: (hash: string) => void}} deps
  * @returns {{destroy: () => void}}
  */
-function createStart({ doc, win, hero, fetch: fetchFn, navigate }) {
+export function createStart({ doc, win, hero, fetch: fetchFn, navigate }) {
   const make = (tag, cls, text) => {
     const n = doc.createElement(tag);
     if (cls) n.className = cls;
@@ -402,7 +469,7 @@ function createStart({ doc, win, hero, fetch: fetchFn, navigate }) {
   // The models and Build fast sit in one popup behind a gear, so the row keeps to Attach, the project, the gear and Send.
   const settings = createComposerSettings({ doc, win, mode: 'down', onOpen: () => { void loadPics(); } });
   const pills = createModelPills({ doc, win, fetch: fetchFn, mode: 'beside', parent: settings.panel,
-    url: () => `${LIST_URL}/models${project ? `?projectKey=${encodeURIComponent(project.key)}` : ''}` });
+    url: () => startModelsUrl(project ? project.key : null) });
   const row = make('div', 'ask-composer-row');
   settings.fill(pills.el, settings.divider(), sw.row, pics.el);
   row.append(attachBtn, fileInput, scopeBtn, menu, make('span', 'dz-spacer'), settings.el, sendBtn);
@@ -413,18 +480,8 @@ function createStart({ doc, win, hero, fetch: fetchFn, navigate }) {
   errEl.hidden = true;
   const composer = make('div', 'ask-composer');
   composer.append(box, errEl);
-  const kinds = make('div', 'dz-kinds');
-  kinds.setAttribute('role', 'group');
-  kinds.setAttribute('aria-label', 'Kind');
-  const kindBtns = KINDS.map((k) => {
-    const b = make('button', 'dz-kind-btn');
-    b.type = 'button';
-    b.dataset.kind = k;
-    b.innerHTML = KIND_ICONS[k];
-    b.append(DESIGN_KIND_LABELS[k]);
-    return b;
-  });
-  kinds.append(...kindBtns);
+  const kindRow = createKindRow(doc, { onPick: (k) => { kind = k; } });
+  const kinds = kindRow.el;
   hero.append(heading, composer, kinds);
 
   let destroyed = false;
@@ -442,13 +499,7 @@ function createStart({ doc, win, hero, fetch: fetchFn, navigate }) {
     errEl.hidden = !text;
   };
   const paintSend = () => { sendBtn.disabled = busy || !input.value.trim(); };
-  function paintKinds() {
-    for (const b of kindBtns) {
-      const on = b.dataset.kind === kind;
-      b.classList.toggle('is-on', on);
-      b.setAttribute('aria-pressed', String(on));
-    }
-  }
+  function paintKinds() { kindRow.set(kind); }
   function paintFast() {
     sw.input.checked = fast;
     capEl.hidden = !fast;
@@ -585,67 +636,17 @@ function createStart({ doc, win, hero, fetch: fetchFn, navigate }) {
     const models = pills.picks();
     const body = { kind, fast, title: titleFromBrief(text), ...(project ? { projectKey: project.key } : {}),
       ...(Object.keys(models).length ? { models } : {}), ...(pics.ready() ? { pictures: pics.input.checked } : {}) };
-    await create(body, { text, files }, true);
-  }
-  /** One POST /api/design: `{ok, status, answer}`; a request that never got an answer is status 0. */
-  async function post(body) {
-    try {
-      const res = await fetchFn(LIST_URL, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) });
-      let answer = null;
-      try { answer = await res.json(); } catch { answer = null; }
-      return { ok: res.ok, status: res.status, answer };
-    } catch {
-      return { ok: false, status: 0, answer: null };
-    }
-  }
-  /**
-   * Post `body` and settle Send: a 201 hands `start` over and opens the design; the engine gate's 409 opens its dialog
-   * (only when `mayAsk`: the first post), and Send stays busy until the dialog closes; anything else is the line under
-   * the box, with everything kept.
-   */
-  async function create(body, start, mayAsk) {
-    const { ok, status, answer } = await post(body);
+    const r = await makeDesign({ doc, fetch: fetchFn, body, engine: () => pills.engine(), onGate: (g) => { gate = g; } });
+    gate = null;
     if (destroyed) return;
-    if (mayAsk && status === 409 && isObject(answer) && GATE_CODES.includes(answer.code) && typeof answer.engine === 'string' && answer.engine) {
-      askGate(body, start, answer);
-      return;
-    }
     busy = false;
-    const id = ok && isObject(answer) && isObject(answer.design) && typeof answer.design.id === 'string' && answer.design.id ? answer.design.id : null;
-    if (!id) {
-      setErr(errorOf(answer, 'Could not create the design. Nothing changed.'));
-      paintSend();
-      return;
-    }
-    opened(id, start);
-  }
-  /** The gate's dialog. Its consent binds to the engine the 409 named (L8.25), never one re-read from Settings. */
-  function askGate(body, start, answer) {
-    const again = (extra) => {
-      gate = null;
-      const next = { ...body, ...extra };
-      // Use Claude moves the design to another engine: picks made for the first one do not run there.
-      if (extra.engine && extra.engine !== pills.engine()) delete next.models;
-      void create(next, start, false);
-    };
-    gate = openEngineGateDialog({
-      doc,
-      label: typeof answer.label === 'string' && answer.label ? answer.label : answer.engine,
-      overridable: answer.overridable === true,
-      reasons: Array.isArray(answer.reasons) && answer.reasons.length ? answer.reasons : [errorOf(answer, '')],
-      notes: answer.notes,
-      onAllow: () => again({ allowUnguarded: true, engine: answer.engine }),
-      ...(answer.engine !== 'claude' ? { onClaude: () => again({ engine: 'claude' }) } : {}),
-      onCancel: () => {
-        gate = null;
-        busy = false;
-        paintSend();
-      },
-    });
+    if (r.ok) { opened(r.id, { text, files }); return; }
+    if (!r.canceled) setErr(r.error);
+    paintSend();
   }
   /** A design was made: keep the message for its chat (takeStart), reset all but the kind, and open it. */
   function opened(id, { text, files }) {
-    starts.set(id, { text, files });
+    keepStart(id, { text, files });
     input.value = '';
     pendingFiles = [];
     renderFiles();
@@ -661,12 +662,7 @@ function createStart({ doc, win, hero, fetch: fetchFn, navigate }) {
     navigate?.(`#design/${encodeURIComponent(id)}`);
   }
 
-  for (const b of kindBtns) {
-    b.addEventListener('click', () => {
-      kind = b.dataset.kind;
-      paintKinds();
-    });
-  }
+
   sw.input.addEventListener('change', () => {
     fast = sw.input.checked;
     paintFast();
@@ -749,7 +745,7 @@ function createStart({ doc, win, hero, fetch: fetchFn, navigate }) {
  *   navigate?: (hash: string) => void, buildLive?: () => boolean, onRenamed?: (row: object) => void}} deps
  * @returns {{destroy: () => void}}
  */
-export function designMoreMenu({ doc, win, button, getDesign, fetch: fetchFn, confirm, prompt, navigate, buildLive, onRenamed }) {
+export function designMoreMenu({ doc, win, button, getDesign, fetch: fetchFn, confirm, prompt, navigate, buildLive, onRenamed, onDeleted = null, library = false }) {
   const make = (tag, cls, text) => {
     const n = doc.createElement(tag);
     if (cls) n.className = cls;
@@ -771,7 +767,9 @@ export function designMoreMenu({ doc, win, button, getDesign, fetch: fetchFn, co
   menu.hidden = true;
   const renameItem = item('Rename');
   const deleteItem = item('Delete');
-  menu.append(renameItem, deleteItem);
+  // `library`: a design chat's ⋯ also leads to the Library (its one way to every design), first.
+  const libraryItem = library ? item('All designs') : null;
+  menu.append(...[libraryItem, renameItem, deleteItem].filter(Boolean));
   button.setAttribute('aria-haspopup', 'menu');
   button.setAttribute('aria-expanded', 'false');
   button.setAttribute('aria-controls', menu.id);
@@ -866,7 +864,8 @@ export function designMoreMenu({ doc, win, button, getDesign, fetch: fetchFn, co
       const res = await send(designUrl(d), { method: 'DELETE' });
       if (destroyed) return;
       if (res.ok) {
-        navigate?.('#design');
+        // In its chat: the chat stays, without the design (onDeleted); on the Library page, the Library.
+        if (typeof onDeleted === 'function') onDeleted(); else navigate?.('#design');
         return;
       }
       refusal = errorOf(res.body, 'Could not delete the design. Nothing changed.');
@@ -878,6 +877,10 @@ export function designMoreMenu({ doc, win, button, getDesign, fetch: fetchFn, co
   renameItem.addEventListener('click', (e) => {
     closeFrom(e);
     void rename();
+  });
+  libraryItem?.addEventListener('click', (e) => {
+    closeFrom(e);
+    navigate?.('#design');
   });
   deleteItem.addEventListener('click', (e) => {
     if (deleteOff()) return;

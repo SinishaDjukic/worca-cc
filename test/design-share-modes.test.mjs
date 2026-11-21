@@ -43,7 +43,7 @@ async function underShareUmask(fn) {
 /** A design whose chat holds uploads (`brief.md` by default), each made private (0600) as an upload folder can be. */
 function designWithUpload(names = ['brief.md']) {
   const d = createDesign({ kind: 'web', title: 'Share' }, { by: 'local' });
-  const t = createThread({ mode: 'design', title: d.title });
+  const t = createThread({ title: d.title });
   updateDesign(d.id, { threadId: t.id });
   const m = appendMessage(t.id, { role: 'user', text: 'x' });
   for (const name of names) {
