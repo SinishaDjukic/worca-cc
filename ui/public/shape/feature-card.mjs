@@ -93,6 +93,8 @@ const SPLIT_WORKING = 'The Planner proposes the runs';
 const SPLIT_PROPOSED = 'Runs proposed, one after another · check, then approve';
 /** The state line's detail per state (Screens and states). k and n: runs done and runs; q: the open ask's questions. */
 const ONE_DETAIL = Object.freeze({
+  // B2 (D18): the Start step, asking (the Care ask is open) or working (Worca sizes it before the ask opens).
+  S0: ({ start }) => (start ? 'Pick the Care, then the roles write the requirements' : 'Worca sizes the feature'),
   S1: ({ q }) => `${plural(q, 'decision')}, then you agree the requirements`,
   S2: () => 'The roles write the requirements',
   S3: () => 'Agree the requirements, then the Split',
@@ -108,7 +110,7 @@ const ONE_DETAIL = Object.freeze({
 const pqOf = (step) => (step && step.snap && step.snap.pendingQuestion) || null;
 
 /** Which state the card is in: the first rule that matches wins (B1, Implementation steps, Step 3). */
-function oneState(view, step, log) {
+function oneState(view, step, log, card) {
   if (view) {
     const slices = view.slices || [];
     if (slices.length && slices.every((s) => s.state === 'done')) return ['S9', 'done'];
@@ -116,6 +118,9 @@ function oneState(view, step, log) {
     return ['S8', 'build'];
   }
   const pq = pqOf(step);
+  if (pq && pq.kind === 'care') return ['S0', 'start'];
+  // B2: a marked planning run with no saved Care, no open ask and nothing decided yet is still at the Start step.
+  if (!step && !card.care && !log.length) return ['S0', 'start'];
   const plan = pq && pq.kind === 'plan' ? pq.plan : null;
   if (plan && plan.outline) return ['S6', 'split'];
   if (plan && !isRequirementsAsk(pq)) return ['S5', 'split'];
@@ -141,9 +146,10 @@ export function oneCardModel({ own = null, card = null, snapOf = () => null } = 
   const rp = view && view.status === 'replanning' && view.replan && view.replan.pipelineId ? snapOf(view.replan.pipelineId) : null;
   if (asks(rp)) base = { ...base, step: stepOf(null, rp) };
   const question = base.step || null;
-  const [state, step] = oneState(view, question, base.log || []);
+  const [state, step] = oneState(view, question, base.log || [], card);
   const pq = pqOf(question);
   const detail = ONE_DETAIL[state]({
+    start: !!pq && pq.kind === 'care',
     k: view ? view.done || 0 : 0, n: view ? view.total || 0 : 0,
     q: pq && Array.isArray(pq.questions) ? pq.questions.length : 0,
     asking: !!question && (asks(rp) || (!!view && !!view.ask && view.ask.index == null)),

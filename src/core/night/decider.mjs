@@ -81,6 +81,12 @@ export async function decideAsk(q, env) {
       return { payload: r.payload, record: { choice: 'approve', strategy: 'rule', confidence: null, flagged: r.flagged, rationale: r.reason,
         reversible: false, meta: { ask: r.ask } } };
     }
+    case 'care': {
+      // Shaper small runs B2 (D19): Away takes Worca's Care pick; the server re-derives the rest of the record.
+      const pick = q.care?.pick || {};
+      return { payload: { care: { position: pick.position } }, record: { choice: pick.position, strategy: 'rule', confidence: null,
+        flagged: false, rationale: pick.reason || '', reversible: false } };
+    }
     default: return null;
   }
 }

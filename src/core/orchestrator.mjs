@@ -41,7 +41,10 @@ import { clarifyCounts, shapeScoreOf } from './shape/stats.mjs';
 import { PLAN_ASK_KIND, validatePlanAnswer, validateOutlineAnswer, renderPlanFeedback, SHAPING_FEEDBACK_PREVIEW } from './shape/run.mjs';
 import { createSliceFeature, retireFeaturesOf, earlierSliceChanges, featureClarify, featureNotes } from './shape/features.mjs';
 import { fileSha, planOutputOf } from './shape/outline-file.mjs';
-import { splitRulesOptions } from './shape/small-runs.mjs';
+import { splitRulesOptions, smallRunsOfFeature, careOfFeature } from './shape/small-runs.mjs';
+import { careStartAsk, careAnswerValidator } from './shape/care-start.mjs';
+import { careAuditLine } from './run-harness.mjs';
+import { careFactsOf, careModelRoles, CARE_LABELS } from '../shared/shape/feature-record.mjs';
 import { readRunPrAuto } from './pr-auto.mjs';
 import { checkSlices, applyOutlineEdits, normalizeOutline, settleLeftOut, sliceRequirementIds, OUTLINE_FILE, OUTLINE_CHANGE_FILE, OUTLINE_ROUNDS_MAX } from '../shared/shape/slices.mjs';
 import { onlyCriteria } from '../shared/review/requirements-coverage.mjs';
@@ -219,11 +222,15 @@ export class GraphOrchestrator extends RunHarness {
     const hasNodes = Object.keys(overlayNodes).length > 0;
     const hasWires = Object.keys(overlayWires).length > 0;
     const overlay = hasNodes || hasWires ? { ...(hasNodes ? { nodes: overlayNodes } : {}), ...(hasWires ? { wires: overlayWires } : {}) } : null;
+    // Shaper small runs B2 (D13): a later run of a marked feature fills its Default agents' models from the feature's Care.
+    const featureId = this.runShape?.slice?.feature || null;
+    const care = featureId && smallRunsOfFeature(featureId) ? careOfFeature(featureId) : null;
     const resolved = await resolveGraph(this.projectDir, this.workflowId, registry, this.agentsDir, {
-      engine: this.claude.engine || 'claude', runModel: this.claude.model || null, isWorkspace: this.isWorkspace, scripts: this.scriptRegistry, ...(overlay ? { overlay } : {}), ...(defrag && defrag.pair ? { agentPair: defrag.pair } : {}),
-      ...(scan ? { agentPair: scan.agentPair, subagentPin: scan.subagentPin } : {}), claudeAuth: this._resolveClaudeAuth(),
+      ...this._graphResolveOptions({ overlay, defrag, scan }),
+      ...(care ? { roleFill: { source: 'care', roles: careModelRoles(care.position) } } : {}),
     });
     this._adoptResolvedGraph(resolved);
+    if (care) this._logCareFill(care.position, resolved);
     // A model a person set that needs the Claude Code sign-in while it is signed out: the engine gate refuses the start
     // (RunHarness#_engineGate). Fresh starts only: resume never resolves, so this stays null there.
     this._signInBlocked = resolved.signInBlocked
@@ -267,6 +274,23 @@ export class GraphOrchestrator extends RunHarness {
       agentKeys: new Set(this.resolved.agentKeys),
       workflow: { id: this.workflowId, name: this.resolved.template.name || this.workflowId },
     };
+  }
+
+  /** The options every resolveGraph of this run shares: its engine, run model, workspace, scripts and sign-in probe, plus
+   *  the run overlay and the pinned pairs `_resolveTopology` computed (B2: the Care probe and adopt reuse them). */
+  _graphResolveOptions({ overlay = null, defrag = null, scan = null } = {}) {
+    return {
+      engine: this.claude.engine || 'claude', runModel: this.claude.model || null, isWorkspace: this.isWorkspace, scripts: this.scriptRegistry, ...(overlay ? { overlay } : {}), ...(defrag && defrag.pair ? { agentPair: defrag.pair } : {}),
+      ...(scan ? { agentPair: scan.agentPair, subagentPin: scan.subagentPin } : {}), claudeAuth: this._resolveClaudeAuth(),
+    };
+  }
+
+  /** B2: one run-log line per node Care filled (beside the step-slot lines). */
+  _logCareFill(position, resolved) {
+    for (const id of resolved?.fillNotes?.filled || []) {
+      const nc = resolved.nodes?.[id];
+      this._log('orchestrator', 'info', `Care ${CARE_LABELS[position] || position}: ${nc?.meta?.displayName || nc?.key || id} runs on ${nc?.model || 'the default model'}`);
+    }
   }
 
   /**
@@ -967,6 +991,8 @@ export class GraphOrchestrator extends RunHarness {
     // Session groups (C19): a resumed run resolves its sessions here, once its graph is back (the resume site's engine
     // gate runs before the restore); a fresh run did it beside the engine gate. Either way, once.
     if (resuming) for (const line of await this._sessionGate()) await appendAudit(this.pipeline.dir, line);
+    // Shaper small runs B2 (D5, D9): the Start step, before any node runs (a fresh run, or a resume at S0).
+    if (!resume || !this._resumeSnapshot) await this._careStart();
     const { ports, loops } = this.resolved;
     this.extrasFiles = await this._collectExtras();
     // The task document is pre-rendered ONCE: the Task card publishes it and
@@ -1830,6 +1856,8 @@ export class GraphOrchestrator extends RunHarness {
           approveEach: payload.approveEach === true, perspectives: this._shapePerspectives(),
           workflowId: this._shapePerspectives().includes('ux') ? SHAPE_UX_WORKFLOW_ID : SHAPE_WORKFLOW_ID,
           base: this._sliceRequestBase(), replaces: this.runShape?.replaces || null, startedBy: this._runStarter(), pr: this._featurePr(),
+          // B2 (D10, d-3): the marker, not the live flag, decides whether the feature records its Care.
+          care: this._shapeRec?.care || null, smallRuns: this._shapeRec?.smallRuns === true,
         });
       } catch (err) {
         this._log('orchestrator', 'warn', `slices: cannot create the feature: ${err?.message || err}`);
@@ -3595,6 +3623,99 @@ export class GraphOrchestrator extends RunHarness {
       nodes.push({ nodeId: mn.id, key: mn.key, model: mn.model || undefined, tools });
     }
     return nodes;
+  }
+
+  /**
+   * Shaper small runs B2: the Start step of a marked planning run (not a slice, not a re-plan) — the Care ask, asked once
+   * (d-2). A re-plan copies the replaced feature's Care and asks nothing. Care saved but its models not yet adopted (a
+   * stop between the answer and the manifest patch) re-adopts once. Every other run: nothing.
+   */
+  async _careStart() {
+    const rec = this._shapeRec;
+    if (!rec?.smallRuns || this.runShape?.slice) return;
+    const careFill = this.state.stepper?.careFill;
+    if (!rec.care && this.runShape?.replaces) {
+      const kept = careOfFeature(this.runShape.replaces);
+      if (kept) {
+        rec.care = { ...kept, reason: '', facts: careFactsOf({ prompt: this.pipeline?.promptText, size: this.runShape.size }), at: new Date().toISOString() };
+        if (this.pipeline) await appendAudit(this.pipeline.dir, `${careAuditLine(rec.care)}.`).catch(() => {});
+      }
+    }
+    if (!rec.care) await this._careAsk();
+    else if (!careFill?.position) {
+      if (!careFill) await this._careProbe();
+      await this._adoptCareFill(rec.care.position);
+      await this._persist();
+    }
+  }
+
+  /** B2 (D13): the Care probe — a resolve with the run's own options plus a Lean fill — stamps on the frozen manifest
+   *  which nodes Care may fill and which keep a person's model, so a pause at S0 carries it. Returns the fill notes. */
+  async _careProbe() {
+    const manifest = this.state.stepper;
+    let notes = null;
+    try {
+      const probe = await resolveGraph(this.projectDir, this.workflowId, this.registry, this.agentsDir, {
+        ...this._graphResolveOptions({ overlay: manifest?.runOverlay || null }), roleFill: { source: 'care', roles: careModelRoles('lean') },
+      });
+      notes = probe.fillNotes || null;
+    } catch (err) {
+      this._log('orchestrator', 'warn', `Care: cannot read the models Care may fill: ${err?.message || err}`);
+    }
+    if (manifest) manifest.careFill = { fillable: [...(notes?.filled || [])], kept: { run: [...(notes?.kept.run || [])], project: [...(notes?.kept.project || [])], slot: [...(notes?.kept.slot || [])] } };
+    return notes;
+  }
+
+  /** B2 (D5, D7, D9, D19): raise the Care ask and save the answer. Only `position` is read from any answer; the rest of
+   *  the record is the ask's. Care is set on the line after the ask resolves, before any await, so a pause right after
+   *  the answer persists it. */
+  async _careAsk() {
+    const fillNotes = await this._careProbe();
+    const start = await careStartAsk({
+      prompt: this.pipeline?.promptText, size: this.runShape?.size, projectDir: this.projectDir, engine: this.claude.engine || 'claude',
+      fillNotes, deps: { warn: (m) => this._log('orchestrator', 'warn', m) },
+    });
+    const validate = careAnswerValidator(start);
+    const raw = await this._enqueueAsk(() => this._ask({ id: 'care-1', kind: 'care', care: start, validate }));
+    // answer() hands back the validated record; --yes hands back the raw payload, which passes the validator here.
+    const answered = raw && typeof raw === 'object' && typeof raw.position === 'string';
+    const out = answered ? { ok: true, payload: raw } : validate(raw);
+    if (!out.ok) throw Object.assign(new Error('invalid Care answer'), { code: 'INVALID_ANSWER', errors: out.errors });
+    this._shapeRec.care = out.payload;
+    if (!answered && this.pipeline) await appendAudit(this.pipeline.dir, `${careAuditLine(out.payload)}.`).catch(() => {});
+    await this._adoptCareFill(out.payload.position);
+    await this._persist();
+    this._checkAbort();
+    this._checkPause();
+  }
+
+  /** B2 (D13): fill the planning run's Default agents for the chosen Care. Re-resolves with the run overlay and patches
+   *  into the frozen manifest (and the live graph) only the model and effort of the nodes the probe stamped fillable;
+   *  every other cell stays as it started. No node has run, so nothing re-runs. A failing resolve keeps the start graph. */
+  async _adoptCareFill(position) {
+    const manifest = this.state.stepper;
+    if (!manifest) return;
+    const careFill = manifest.careFill || { fillable: [], kept: { run: [], project: [], slot: [] } };
+    try {
+      const fresh = await resolveGraph(this.projectDir, this.workflowId, this.registry, this.agentsDir, {
+        ...this._graphResolveOptions({ overlay: manifest.runOverlay || null }), roleFill: { source: 'care', roles: careModelRoles(position) },
+      });
+      const cells = new Map((manifest.graph?.nodes || []).map((c) => [c.id, c]));
+      for (const id of careFill.fillable) {
+        const nc = fresh.nodes?.[id];
+        const cell = cells.get(id);
+        if (!nc || nc.kind !== 'agent' || !cell) continue;
+        cell.model = nc.model ?? '';
+        cell.effort = nc.effort ?? '';
+        const live = this.resolved?.nodeCtx?.[id];
+        if (live) { live.model = nc.model; live.effort = nc.effort; }
+      }
+      this._logCareFill(position, { ...fresh, fillNotes: { filled: careFill.fillable.filter((id) => fresh.fillNotes?.filled.includes(id)) } });
+    } catch (err) {
+      this._log('orchestrator', 'warn', `Care: cannot fill the models, the run keeps its start models: ${err?.message || err}`);
+    }
+    manifest.careFill = { ...careFill, position };
+    this._emit('state', this.getState());
   }
 
   /**

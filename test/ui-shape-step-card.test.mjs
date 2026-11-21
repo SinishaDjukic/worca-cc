@@ -234,3 +234,11 @@ test('U10: a requirements ask (plan.criteria or plan.error) is titled "Your turn
   assert.equal(stepTitle(PLAN), 'Your turn: approve the plan');
   assert.equal(stepChip(PLAN, SHAPING), 'Plan');
 });
+
+test('B2: the care ask is a step card: chip Start, title "Your turn: how much care?"', () => {
+  const CARE = { id: 'care-1', kind: 'care', care: { pick: { position: 'balanced' } } };
+  assert.equal(isStepCard(CARE, {}, false), true);
+  assert.equal(stepChip(CARE, {}), 'Start');
+  assert.equal(stepTitle(CARE), 'Your turn: how much care?');
+  assert.equal(stepKind(CARE), 'care');
+});

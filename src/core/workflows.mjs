@@ -47,7 +47,7 @@ import {
 } from './graph/builtin-workflows.mjs';
 export { GRAPH_DEFAULT_WORKFLOW, GRAPH_LEAN_WORKFLOW, LEAN_WORKFLOW_ID, AUTO_WORKFLOW_ID, GRAPH_MEMORY_DEFRAG_WORKFLOW, GRAPH_SHAPE_WORKFLOW, MEMORY_DEFRAG_WORKFLOW_ID, WORKSPACE_SCAN_WORKFLOW_ID, GRAPH_WORKSPACE_RESYNTH_WORKFLOW, WORKSPACE_RESYNTH_WORKFLOW_ID, isReservedWorkflowId };
 import { registryPortsFn } from './graph/registry-ports.mjs';
-import { resolveRoleModel, roleOf } from './model-roles.mjs';
+import { resolveRoleModel, roleOf, MODEL_ROLES } from './model-roles.mjs';
 import { parseFrontmatter } from './frontmatter.mjs';
 
 /**
@@ -770,6 +770,12 @@ export async function resolveGraph(projectDir, workflowId, registry, agentsDir =
   };
   const named = (v) => typeof v === 'string' && v.trim() !== '';
   const factoryNotes = [];
+  // A role fill (opts.roleFill = { source, roles }): a node no set layer names a model for takes the install model of the
+  // role `roles` maps its own role to. It ranks below run, project, legacy and slot and above template and factory; it is
+  // nobody's pick, so it never enters signInBlocked, and it never fills under a pinned pair, a run model or Auto.
+  const roleFill = validRoleFill(opts.roleFill);
+  const fillOn = !!roleFill && !ignore && !runModel && !pair;
+  const fillNotes = roleFill ? { source: roleFill.source, filled: [], kept: { run: [], project: [], slot: [] } } : null;
   const sourceOf = {};   // nodeId → { model, modelRole?, factoryRole } — internal, never emitted on the node
 
   const nodes = {};
@@ -823,10 +829,28 @@ export async function resolveGraph(projectDir, workflowId, registry, agentsDir =
     // The factory default at the template's position, when the authored config names neither model nor effort.
     const rr = roleReviewOf(cfg);
     const fac = factoryNodePick(authored, rr);
+    const setModel = !!(selP.model || legacyP.model || team.model) || named(sel.model) || (engine === 'claude' && named(legacy.model))
+      || (!teamSkipped && named(slotDefaults[authored]?.model));
+    let fillP = null;
+    let fillDropped = null;
+    if (fillOn && !setModel) {
+      const nodeRole = roleOf(`steps.${authored}`, { name: meta?.displayName || '' });
+      const hit = Object.hasOwn(roleFill.roles, nodeRole)
+        ? resolveRoleModel(engine, roleFill.roles[nodeRole], projectRoleSet ? { roles: projectRoleSet } : {}) : null;
+      const fillO = hit ? owned(hit) : NO_PICK;
+      // What the node resolves to without the fill: its own role, else the authored or factory model.
+      const without = roleFor(authored, meta).pick.model || (named(cfg.model) ? cfg.model : fac?.pick?.model);
+      if (fillO.pick.model && fillO.pick.model !== without) {
+        if (await signedOutFor(fillO.pick.model)) {
+          fillDropped = { setting: roleFill.source, nodeId: node.id, wanted: cleanPick(hit) };
+          factoryNotes.push(fillDropped);
+        } else fillP = fillO.pick;
+      }
+    }
     let cfgEff = cfg;
     let factoryApplied = false;
     let nodeDefaultWanted = null;
-    if (fac && !named(cfg.model) && !named(cfg.effort)) {
+    if (fac && !fillP && !named(cfg.model) && !named(cfg.effort)) {
       const higher = !!(selP.model || selP.effort || legacyP.model || legacyP.effort || team.model || team.effort);
       // Your role beats Worca's factory default: the default only fills a slot no role covers (the role layer below
       // then applies, as it does on any node no other layer names).
@@ -842,11 +866,12 @@ export async function resolveGraph(projectDir, workflowId, registry, agentsDir =
     }
     const cfgO = owned(cfgEff);
     const cfgP = cfgO.pick;
-    const baseModel = firstDefined(selP.model, legacyP.model, team.model, cfgP.model);
+    const baseModel = firstDefined(selP.model, legacyP.model, team.model, fillP?.model, cfgP.model);
     // An effort only travels with the model that advertises it: an override naming its own model must not
     // inherit a lower layer's effort — the legacy per-role effort included (a per-run overlay or a node pick
     // naming a model on wf_default).
-    const baseEffort = selP.model ? selP.effort : firstDefined(selP.effort, legacyP.effort, team.effort, (legacyP.model || team.model) ? undefined : cfgP.effort);
+    const baseEffort = selP.model ? selP.effort : fillP ? firstDefined(selP.effort, legacyP.effort, team.effort, fillP.effort)
+      : firstDefined(selP.effort, legacyP.effort, team.effort, (legacyP.model || team.model) ? undefined : cfgP.effort);
     const roleO = baseModel === undefined && baseEffort === undefined ? roleFor(authored, meta) : NO_PICK;
     const roleP = roleO.pick;
     // No silent fallbacks: the winning layer's request, when the engine dropped it (only layers that were consulted;
@@ -864,6 +889,7 @@ export async function resolveGraph(projectDir, workflowId, registry, agentsDir =
     const nodeModel = pair ? pair.model : (roleP.model ?? baseModel);
     const nodeEffort = pair ? pair.effort : (roleP.model ? roleP.effort : baseEffort);
     if (nodeDefaultWanted) factoryNotes.at(-1).used = { model: nodeModel ?? runModel, effort: nodeEffort ?? null };
+    if (fillDropped) fillDropped.used = { model: nodeModel ?? runModel, effort: nodeEffort ?? null };
     // A role-review node's per-role picks (run overlay > project > helper job > template); a pinned agentPair runs every
     // role on it. The second-opinion role takes its factory default as its template layer.
     const spec = pair ? null : rr;
@@ -900,10 +926,18 @@ export async function resolveGraph(projectDir, workflowId, registry, agentsDir =
     }
     sourceOf[node.id] = {
       model: pair ? 'pair' : roleP.model ? 'role' : selP.model ? (ownSel?.model ? 'run' : 'project') : legacyP.model ? 'legacy'
-        : team.model ? 'slot' : cfgP.model ? (factoryApplied ? 'factory' : 'template') : null,
+        : team.model ? 'slot' : fillP ? roleFill.source : cfgP.model ? (factoryApplied ? 'factory' : 'template') : null,
       ...(roleP.model ? { modelRole: roleOf(`steps.${authored}`, { name: meta?.displayName || '' }) } : {}),
+      ...(fillP ? { fill: true } : {}),
       factoryRole,
     };
+    if (fillNotes) {
+      const src = sourceOf[node.id].model;
+      if (fillP) fillNotes.filled.push(node.id);
+      else if (runModel || src === 'run') fillNotes.kept.run.push(node.id);
+      else if (src === 'project' || src === 'legacy') fillNotes.kept.project.push(node.id);
+      else if (src === 'slot') fillNotes.kept.slot.push(node.id);
+    }
     nodes[node.id] = {
       nodeId: node.id,
       kind: 'agent',
@@ -975,7 +1009,7 @@ export async function resolveGraph(projectDir, workflowId, registry, agentsDir =
       if (nc.kind !== 'agent') continue;
       const src = sourceOf[nc.nodeId] || {};
       const node = nc.meta?.displayName || nc.key;
-      if (nc.model && src.model !== 'factory' && needsSignIn(nc.model)) {
+      if (nc.model && src.model !== 'factory' && !src.fill && needsSignIn(nc.model)) {
         candidates.push({ nodeId: nc.nodeId, node, model: nc.model, source: src.model, ...(src.modelRole ? { modelRole: src.modelRole } : {}) });
       }
       const spec = nc.roles ? roleReviewOf(nc.config) : null;
@@ -991,5 +1025,17 @@ export async function resolveGraph(projectDir, workflowId, registry, agentsDir =
   return {
     template: tpl, ports: portsFn, loops, nodes, wires, agentsByKey, agentKeys, scriptsByKey, scriptKeys,
     ...(factoryNotes.length ? { factoryNotes } : {}), ...(signInBlocked.length ? { signInBlocked } : {}),
+    ...(fillNotes ? { fillNotes } : {}),
   };
+}
+
+/** A valid `opts.roleFill` (`{ source, roles }`, each `roles` key and value a model role), else null. */
+function validRoleFill(raw) {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return null;
+  const source = typeof raw.source === 'string' ? raw.source.trim() : '';
+  const roles = raw.roles && typeof raw.roles === 'object' && !Array.isArray(raw.roles) ? raw.roles : null;
+  if (!source || !roles) return null;
+  const entries = Object.entries(roles);
+  if (!entries.every(([k, v]) => MODEL_ROLES.includes(k) && MODEL_ROLES.includes(v))) return null;
+  return { source, roles: Object.fromEntries(entries) };
 }

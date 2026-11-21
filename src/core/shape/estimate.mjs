@@ -1,6 +1,8 @@
 // src/core/shape/estimate.mjs — the nudge's two estimates (spec §3.2, S3): per-agent medians of done runs, summed
 // over a workflow's agent nodes. No history, no number.
 import { prepare } from '../db.mjs';
+import { RUN_REQUIREMENTS_MAX } from '../../shared/shape/slices.mjs';
+import { CARE_POSITIONS } from '../../shared/shape/feature-record.mjs';
 
 export const ESTIMATE_MIN_SAMPLES = 3;
 export const ESTIMATE_HISTORY_DAYS = 60;
@@ -73,4 +75,15 @@ export function estimateGraph(wf, history) {
  *  with the same agents give the same figure — shown on both, since each now says what it covers. */
 export function estimateChoices({ asIs, shaped }, { history = stepHistory() } = {}) {
   return { asIs: estimateGraph(asIs, history), shaped: estimateGraph(shaped, history) };
+}
+
+/** Shaper small runs B2 (D15): each Care position's whole-build figure, `runs × perRun`, with
+ *  `runs = ceil(requirements / RUN_REQUIREMENTS_MAX[position])` (one run when the size is unknown). Step history records
+ *  no model and sums cycles, so positions differ by run count only. `perRun` is estimateGraph's figure or null. */
+export function careEstimates({ requirements = null, perRun = null } = {}) {
+  return Object.fromEntries(CARE_POSITIONS.map((p) => {
+    if (!perRun || !Number.isFinite(perRun.costUsd)) return [p, null];
+    const runs = Number.isInteger(requirements) && requirements > 0 ? Math.ceil(requirements / RUN_REQUIREMENTS_MAX[p]) : 1;
+    return [p, { costUsd: cents(runs * perRun.costUsd), minutes: runs * perRun.minutes, perRun: perRun.costUsd }];
+  }));
 }

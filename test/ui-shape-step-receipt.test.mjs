@@ -16,6 +16,7 @@ const REQ_ERROR = { id: 'q2', kind: 'plan', plan: { round: 1, revisable: true, e
 const GATE = { id: 'g1', kind: 'gate', issues: [] };
 const RECOVERY = { id: 'r1', kind: 'recovery', recovery: { cls: 'auth', options: [{ id: 'retry' }, { id: 'pause' }] } };
 const CLARIFY = { id: 'c1', kind: 'questions', questions: [{ id: 'a', question: 'Where?' }, { id: 'b', question: 'Who?' }] };
+const CARE = { id: 'care-1', kind: 'care', care: { pick: { position: 'thorough', reason: 'r' } } };
 const TWO = { answers: [{ id: 'a', question: 'Where?', choice: 'Chat' }, { id: 'b', question: 'Who?', choice: 'Admins' }] };
 
 const ROWS = [
@@ -37,6 +38,8 @@ const ROWS = [
   ['recovery, pause', RECOVERY, { decision: 'pause' }, {}, 'Paused'],
   ['recovery, abort', RECOVERY, { decision: 'abort' }, {}, 'Aborted'],
   ['clarify, shaping, 2 of 2', CLARIFY, TWO, { shaping: true }, 'Clarify · 2 answers'],
+  ['care below the pick (B2)', CARE, { care: { position: 'lean' } }, {}, 'Care: Lean · your choice · Worca recommended Thorough'],
+  ['care at the pick (B2)', CARE, { care: { position: 'thorough' } }, {}, "Care: Thorough · Worca's pick"],
 ];
 
 for (const [name, pq, payload, opts, want] of ROWS) {

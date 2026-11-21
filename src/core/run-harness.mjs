@@ -777,6 +777,12 @@ export function autoChoice(q) {
   return opts[0] || 'auto';
 }
 
+/** Shaper small runs B2 (D18): the audit line of a Care answer (the stored record); null for anything else. */
+export function careAuditLine(care) {
+  if (!care || typeof care !== 'object' || typeof care.position !== 'string') return null;
+  return `Care **${care.position}** · Worca's pick **${care.worcaPick || 'none'}**`;
+}
+
 /**
  * The answer `--yes` would give an ask, as an `answer()`-valid payload. Night mode uses it
  * as the last-resort fallback in a night-owned `--yes` run, which must never hang. Mirrors
@@ -789,6 +795,7 @@ export function autoAnswerPayload(q) {
     case 'form': return { form: q.form, version: q.version, values: q.autoValues || {} };
     case 'recovery': return { decision: 'pause' };
     case 'workflow': return { decision: 'accept', name: q.workflow?.name, nodes: {} };
+    case 'care': return { care: { position: q.care?.pick?.position } };   // Shaper small runs B2 (D19): Worca's pick
     default: return { decision: 'continue' };
   }
 }
@@ -1404,6 +1411,7 @@ export class RunHarness extends EventEmitter {
     // B1 (D6): a marked run's requirements approval names its own step ("Requirements agreed" on the one card).
     else if (pq.kind === PLAN_ASK_KIND && pq.plan?.requirements && this._shapeRec?.smallRuns) line = `Requirements approval **${d || 'answered'}**`;
     else if (pq.kind === PLAN_ASK_KIND) line = `Plan approval **${d || 'answered'}**`;
+    else if (pq.kind === 'care') line = careAuditLine(value);
     if (!line) return;
     appendAudit(this.pipeline.dir, `${line}${byActor(by)}.`, { actor: by }).catch(() => {});
   }
@@ -6535,7 +6543,7 @@ export class RunHarness extends EventEmitter {
    * @returns {Promise<any>} the answer payload
    */
   async _ask({ id, kind, questions, issues, recovery, agent, nodeId, wireId, executionId, deliveryNo, holdNo, workflow, plan,
-    concern, askId, form, version, title, surface, data, layout, answerSchema, fileRefs, files, autoValues, validate, origin }) {
+    concern, care, askId, form, version, title, surface, data, layout, answerSchema, fileRefs, files, autoValues, validate, origin }) {
     this._checkAbort();
     // No interactive prompt may OPEN on a pausing run. pause() rejects only the
     // prompt that is currently open; a queued ask (a parallel sibling's questions
@@ -6569,6 +6577,7 @@ export class RunHarness extends EventEmitter {
       ...(workflow !== undefined ? { workflow } : {}),
       ...(plan !== undefined ? { plan } : {}),
       ...(concern ? { concern } : {}),            // #990 s5: the implementer's plan concern (kind stays 'plan')
+      ...(care ? { care } : {}),                  // Shaper small runs B2: the Start step's Care ask body
       // The ask-form envelope (spec §4, ruling X1) rides the EXISTING 'question'
       // frame — no new transport, no new slot. `id` (already emitted above) is the
       // ANSWER token; `askId` is the route-safe file token and they are never
@@ -6608,6 +6617,11 @@ export class RunHarness extends EventEmitter {
           this._log('orchestrator', 'info', `auto-answering ${kind} ${id}`);
           return { answers: (questions || []).map((q) => ({ id: q.id, choice: autoChoice(q) })) };
         }
+        if (kind === 'care') {
+          // Shaper small runs B2 (D19): --yes takes Worca's Care pick; nothing blocks.
+          this._log('orchestrator', 'info', `auto-answering care ${id} -> ${care?.pick?.position}`);
+          return autoAnswerPayload({ kind, care });
+        }
         this._log('orchestrator', 'info', `auto-answering gate ${id} -> continue`);
         return { decision: 'continue' };
       }
@@ -6617,10 +6631,10 @@ export class RunHarness extends EventEmitter {
         this.pendingQuestion = { id, kind, resolve: resolveP, reject: rejectP, validate: typeof validate === 'function' ? validate : null,
           ...(plan && plan.outline ? { plan: { outline: true, round: plan.round } }
             : plan && (plan.criteria || plan.error) ? { plan: { requirements: true } } : {}),
-          ...(concern ? { concern: true } : {}) };
+          ...(concern ? { concern: true } : {}), ...(care ? { care } : {}) };
         // A throw inside a Promise executor REJECTS the ask (and fails the node): night mode
         // must never break a question the user could still answer.
-        const nq = { id, kind, questions, issues, recovery, wireId, executionId, deliveryNo, holdNo, workflow, plan, concern, form, version, answerSchema, autoValues, nodeId, agent, origin };
+        const nq = { id, kind, questions, issues, recovery, wireId, executionId, deliveryNo, holdNo, workflow, plan, concern, care, form, version, answerSchema, autoValues, nodeId, agent, origin };
         if (kind !== PLAN_ASK_KIND || !this.auto) {
           try { this._nightArm(nq); } catch (err) { this._nightFailed(nq, `Away mode could not get ready for ${kind} ${id}: ${err?.message || err}`); }
         }

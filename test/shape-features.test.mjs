@@ -12,6 +12,7 @@ import { getDb, dbPath, SCHEMA_VERSION, _resetForTests } from '../src/core/db.mj
 import { projectKey } from '../src/core/store.mjs';
 import { shaperSmallRunsOn } from '../src/core/shape/small-runs.mjs';
 import { CRITERION_ID_RE } from '../src/shared/review/coverage.mjs';
+import { careOfRow } from '../src/shared/shape/feature-record.mjs';
 import { writeReview, writeClarify, appendAuditById } from '../src/core/artifacts.mjs';
 import { createThread, linkRun } from '../src/core/ask/store.mjs';
 import { getTicket, runDueTickets, updateTicket, createTicket, requestRunNow } from '../src/core/scheduler.mjs';
@@ -1466,12 +1467,14 @@ test('B1: a re-plan of a marked feature reads marked (its re-plan run inherits t
   assert.equal(shaperCard(a.pid).smallRuns, true);
 }));
 
-test('B1: a marked feature with the flag off (Invariant 2, today\'s mixed state): shaperCard has smallRuns, featureView no care key', () => withSmallRuns(false, () => {
+test('B1/B2 (D20): a marked feature with the flag off: shaperCard has smallRuns, featureView reads the marker for its care key', () => withSmallRuns(false, () => {
   const { id, pid } = mk(2);
   mark(pid);
   assert.equal(shaperCard(pid).smallRuns, true);
-  assert.equal(Object.hasOwn(featureView(id), 'care'), false);
-  assert.deepEqual(Object.keys(featureView(id)), DEV_KEYS.view);
+  assert.deepEqual(featureView(id).care, { position: 'balanced', chosenBy: 'default', worcaPick: null });
+  assert.deepEqual(Object.keys(featureView(id)), [...DEV_KEYS.view, 'care', 'requirementKinds']);
+  const other = mk(2);
+  assert.deepEqual(Object.keys(featureView(other.id)), DEV_KEYS.view, 'an unmarked feature stays dev\'s');
 }));
 
 test('B1: the one card\'s log words the split "Runs approved"; featureView without oneCard keeps dev\'s log', () => withSmallRuns(false, () => {
@@ -1493,4 +1496,35 @@ test('B1: chatShipCardOffered is false for a marked feature, true otherwise', ()
   mark(b.pid);
   assert.equal(chatShipCardOffered(featureView(a.id)), true);
   assert.equal(chatShipCardOffered(featureView(b.id)), false);
+}));
+
+// ---- Shaper small runs B2: the Care saved at the Start step -----------------------------------------------------------
+const START_CARE = { position: 'lean', chosenBy: 'person', worcaPick: 'thorough', reason: 'Worca picks Thorough: it touches payments',
+  facts: { touches: ['payments'], requirements: 3, subsystems: [], screens: false, size: 'small' }, at: '2026-11-21T10:00:00.000Z' };
+const markWithCare = (pid) => getDb().prepare('UPDATE pipelines SET shape_stats = ? WHERE id = ?')
+  .run(JSON.stringify({ questions: { asked: 0, skipped: 0 }, revises: [], shapeScore: null, smallRuns: true, care: START_CARE }), pid);
+
+test('B2: shaperCard returns care for a marked run with saved Care, before and after the split; none for an unmarked run', () => withSmallRuns(true, () => {
+  const solo = pipe('running');
+  markWithCare(solo);
+  const c = shaperCard(solo, { shaped: () => true });
+  assert.deepEqual(c.care, START_CARE);
+  assert.deepEqual(Object.keys(c), ['pipelineId', 'feature', 'log', 'smallRuns', 'care']);
+  const { pid } = mk(2);
+  markWithCare(pid);
+  assert.deepEqual(shaperCard(pid).care, START_CARE);
+  const plain = pipe('running');
+  getDb().prepare('UPDATE pipelines SET shape_stats = ? WHERE id = ?').run(JSON.stringify({ care: START_CARE }), plain);
+  assert.equal('care' in shaperCard(plain, { shaped: () => true }), false, 'unmarked: no care key');
+  const bare = pipe('running');
+  mark(bare);
+  assert.equal('care' in shaperCard(bare, { shaped: () => true }), false, 'marked, no Care yet');
+}));
+
+test('B2: createSliceFeature with smallRuns writes Care with the flag off; smallRuns omitted with the flag off writes none', () => withSmallRuns(false, () => {
+  const careRow = (fid) => careOfRow(getDb().prepare('SELECT care, care_chosen_by, care_worca_pick FROM shape_features WHERE id = ?').get(fid));
+  const a = mk(2, { care: START_CARE, smallRuns: true });
+  assert.deepEqual(careRow(a.id), { position: 'lean', chosenBy: 'person', worcaPick: 'thorough' });
+  const b = mk(2, { care: START_CARE });
+  assert.deepEqual(careRow(b.id), { position: 'balanced', chosenBy: 'default', worcaPick: null });
 }));

@@ -70,6 +70,8 @@ function start(opts = {}, onOutline = () => {}, onPlan = (q, orch) => orch.answe
   };
   orch.on('exec', (e) => execs.push(e));
   orch.on('question', (q) => {
+    // Shaper small runs B2: a marked run's Start step takes Worca's Care pick.
+    if (q.kind === 'care') { setImmediate(() => orch.answer(q.id, { care: { position: q.care.pick.position } })); return; }
     if (isOutline(q)) { outlines.push(q); setImmediate(() => onOutline(q, orch)); return; }
     if (q.kind === 'plan') { plans.push(q); setImmediate(() => onPlan(q, orch)); return; }
     if (q.kind === 'clarify' || q.kind === 'questions') setImmediate(() => orch.answer(q.id, { answers: [] }));

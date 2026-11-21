@@ -8,12 +8,13 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { useTempHome } from './helpers/temp-home.mjs';
 import { seedPipelineRow } from './helpers/db-seed.mjs';
-import { getDb } from '../src/core/db.mjs';
+import { getDb, closeDb } from '../src/core/db.mjs';
 import { projectKey } from '../src/core/store.mjs';
 import { getTicket } from '../src/core/scheduler.mjs';
 import { createSliceFeature, featureView } from '../src/core/shape/features.mjs';
 import { checkSlices } from '../src/shared/shape/slices.mjs';
-import { shaperSmallRunsOn, splitRulesOptions, smallRunsAtStart, smallRunsOfPipeline, smallRunsOfFeature } from '../src/core/shape/small-runs.mjs';
+import { shaperSmallRunsOn, splitRulesOptions, smallRunsAtStart, smallRunsOfPipeline, smallRunsOfFeature, careOfPipeline, careOfFeature } from '../src/core/shape/small-runs.mjs';
+import { buildShapeStats, shapeRecordFrom } from '../src/core/shape/stats.mjs';
 import { resolveShapeRequest } from '../src/core/shape/run.mjs';
 
 useTempHome(after, 'worca-shape-small-runs-');
@@ -190,4 +191,35 @@ test('B1 smallRunsOfPipeline / smallRunsOfFeature: the origin run\'s stamp; unkn
   assert.equal(smallRunsOfPipeline(f.pid), false);
   assert.equal(smallRunsOfPipeline('p-unknown'), false);
   assert.equal(smallRunsOfFeature('feat-unknown'), false);
+});
+
+test('B2 careOfPipeline / careOfFeature: an empty id answers null before any DB access', () => {
+  const getDb = () => { throw new Error('no DB access'); };
+  for (const id of [null, undefined, '']) {
+    assert.equal(careOfPipeline(id, { getDb }), null);
+    assert.equal(careOfFeature(id, { getDb }), null);
+  }
+});
+
+test('B2 careOfPipeline: the saved Care reads back deep-equal after closeDb() and a fresh getDb()', () => {
+  const pid = pipe();
+  assert.equal(careOfPipeline(pid), null, 'no stats');
+  const care = { position: 'lean', chosenBy: 'person', worcaPick: 'thorough', reason: 'Worca picks Thorough: it touches payments',
+    facts: { touches: ['payments'], requirements: 3, subsystems: [], screens: false, size: 'small' }, at: '2026-11-21T10:00:00.000Z' };
+  const stats = buildShapeStats(shapeRecordFrom({ smallRuns: true, care }), []);
+  getDb().prepare('UPDATE pipelines SET shape_stats = ? WHERE id = ?').run(JSON.stringify(stats), pid);
+  closeDb();
+  assert.deepEqual(careOfPipeline(pid), care);
+  getDb().prepare('UPDATE pipelines SET shape_stats = ? WHERE id = ?').run(JSON.stringify({ care: { ...care, position: 'max' } }), pid);
+  assert.equal(careOfPipeline(pid), null, 'an invalid record reads null');
+  getDb().prepare('UPDATE pipelines SET shape_stats = ? WHERE id = ?').run('{bad', pid);
+  assert.equal(careOfPipeline(pid), null);
+  assert.equal(careOfPipeline('p-unknown'), null);
+});
+
+test('B2 careOfFeature: the feature row\'s three Care fields; null for an unknown feature', () => {
+  const f = mk(2);
+  getDb().prepare('UPDATE shape_features SET care = ?, care_chosen_by = ?, care_worca_pick = ? WHERE id = ?').run('lean', 'person', 'thorough', f.id);
+  assert.deepEqual(careOfFeature(f.id), { position: 'lean', chosenBy: 'person', worcaPick: 'thorough' });
+  assert.equal(careOfFeature('feat-unknown'), null);
 });

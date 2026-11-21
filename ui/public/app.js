@@ -354,6 +354,7 @@ import { featureFocusOf, focusFeatureControl, featureMenuItems } from './shape/f
 import { decorateShapingQuestions } from './shape/questions.mjs';
 import { isShapingRun, shaperWait } from './shape/plan-text.mjs';
 import { stepChip, stepTitle, isStepCard, renderGateCard, renderRecoveryCard, questionFocusTarget, answerFieldOpen } from './shape/step-card.mjs';
+import { renderCareStart } from './shape/proposal.mjs';
 import { installInputMode } from './input-mode.mjs';
 import { noteAnswer, forgetAnswer } from './shape/step-receipt.mjs';
 import { renderChecklistGroups } from './shape/checklist-view.mjs';
@@ -6830,6 +6831,17 @@ registerAskRenderer('workflow', {
   title: (pq) => `Auto proposes a workflow · round ${(pq.workflow && pq.workflow.round) || 1}`,
   count: () => 'workflow',
   render: (panel, pq, ctx) => renderWorkflowBody(ctx.run, panel, pq),
+});
+// Shaper small runs B2: the Start step (the Care ask) of a marked planning run; a 422 paints under the dial.
+registerAskRenderer('care', {
+  title: () => 'Your turn: how much care?',
+  render: (panel, pq, ctx) => {
+    const body = renderCareStart(ctx.doc || document, pq, { ...stepDeps(ctx, pq), submit: (p) => stepPost(ctx.run, p) });
+    panel.__care = body;
+    body.render(panel);
+  },
+  collect: (panel) => (panel && panel.__care ? panel.__care.collect() : null),
+  setErrors: (panel, errors) => { if (panel && panel.__care) panel.__care.setErrors(errors); },
 });
 // Shape it first (S4): registered ungated: the only way to answer a run still held when the gate goes off.
 // title/count fill the hidden .qpanel-head (F28); askHeading is what people read. Kept for completeness.

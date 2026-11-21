@@ -2,7 +2,7 @@
 // server reads the flag. Server callers pass its value into browser-safe code, which never reads it itself.
 import { flagEnabled } from '../flags.mjs';
 import { getDb } from '../db.mjs';
-import { CARE_DEFAULT } from '../../shared/shape/feature-record.mjs';
+import { CARE_DEFAULT, careOfRow, normalizeStartCare } from '../../shared/shape/feature-record.mjs';
 
 /** Whether Shaper's small runs are on, read fresh on each call (env plus settings). `deps.flagEnabled` is a test seam. */
 export function shaperSmallRunsOn(deps = {}) {
@@ -42,4 +42,25 @@ export function smallRunsOfFeature(featureId, deps = {}) {
       WHERE f.id = ?`).get(String(featureId));
     return !!row && markedStats(row.shape_stats);
   } catch { return false; }
+}
+
+/** B2 (D8): the Care saved at a planning run's Start step (`pipelines.shape_stats.care`), or null (no id, before any DB
+ *  access; no row; no Care; an invalid record; bad JSON). Never throws. */
+export function careOfPipeline(pipelineId, deps = {}) {
+  if (!pipelineId) return null;
+  try {
+    const row = (deps.getDb || getDb)().prepare('SELECT shape_stats FROM pipelines WHERE id = ?').get(String(pipelineId));
+    const c = row ? normalizeStartCare(JSON.parse(row.shape_stats)?.care) : null;
+    return c?.ok ? c.care : null;
+  } catch { return null; }
+}
+
+/** B2: a feature's Care as its row stores it (`careOfRow`), or null for no id (before any DB access) or an unknown
+ *  feature. Never throws. */
+export function careOfFeature(featureId, deps = {}) {
+  if (!featureId) return null;
+  try {
+    const row = (deps.getDb || getDb)().prepare('SELECT care, care_chosen_by, care_worca_pick FROM shape_features WHERE id = ?').get(String(featureId));
+    return row ? careOfRow(row) : null;
+  } catch { return null; }
 }

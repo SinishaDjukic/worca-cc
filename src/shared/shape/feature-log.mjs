@@ -1,6 +1,8 @@
 // src/shared/shape/feature-log.mjs — Shaper s2: the feature card's step log (D7) and the receipt words it shares with
-// ui/public/shape/step-receipt.mjs (D8). Pure, no imports: the server builds the log from durable rows (the run
+// ui/public/shape/step-receipt.mjs (D8). Pure and browser-safe (B2: the Care words come from feature-record.mjs): the server builds the log from durable rows (the run
 // harness's audit lines, the clarify row, the feature row); the browser names a receipt with the same words.
+import { careRecordLine } from './feature-record.mjs';
+
 const plural = (n, one) => `${n} ${n === 1 ? one : `${one}s`}`;
 
 export const clarifyText = (k) => (k ? `Clarify · ${plural(k, 'answer')}` : 'Clarify · no answers');
@@ -48,8 +50,12 @@ export function parseBaseLine(text) {
 /** run-harness.mjs _auditDecision's lines: "Plan approval **approve** by ann." (the actor part is optional). */
 const LINES = [['plan', /^Plan approval \*\*(\w+)\*\*/], ['requirements', /^Requirements approval \*\*(\w+)\*\*/], ['outline', /^Slice outline \*\*(\w+)\*\*/], ['gate', /^Gate \*\*(\w+)\*\*/],
   ['concern', /^Plan concern \*\*(\w+)\*\*/]];
+const CARE_RE = /^Care \*\*(\w+)\*\* · Worca's pick \*\*(\w+)\*\*/;
 export function parseDecisionLine(text) {
   const t = String(text || '');
+  const c = CARE_RE.exec(t);
+  // Shaper small runs B2 (D18): the Start step's Care line; `decision` is the position, `pick` Worca's.
+  if (c) return { kind: 'care', decision: c[1], pick: c[2], ...(t.endsWith(' by night-mode.') ? { away: true } : {}) };
   for (const [kind, re] of LINES) {
     const m = re.exec(t);
     if (m) return { kind, decision: m[1], ...(t.endsWith(' by night-mode.') ? { away: true } : {}) };
@@ -69,6 +75,7 @@ const byAway = (text, d) => (d.away ? `${text} · by Away mode` : text);
  */
 export function buildDecisionLog({ clarify = null, origin = [], sliced = false, runs = [], slices = [], replan = null, rounds = [], oneCard = false } = {}) {
   const out = [];
+  const front = [];
   const qs = clarify && Array.isArray(clarify.questions) ? clarify.questions : [];
   const as = clarify && Array.isArray(clarify.answers) ? clarify.answers : [];
   if (qs.length && as.length) {
@@ -88,7 +95,11 @@ export function buildDecisionLog({ clarify = null, origin = [], sliced = false, 
       if (!p) return;
       const d = p.kind === 'requirements' && !oneCard ? { ...p, kind: 'plan' } : p;
       const key = `${run || 'p'}-${n}`;
-      if (d.kind === 'outline') {
+      if (d.kind === 'care') {
+        // The Care is the feature's first fact (d-2: fixed after Start), so it leads the log.
+        const care = { position: d.decision, worcaPick: d.pick === 'none' ? null : d.pick, chosenBy: d.decision === d.pick ? 'default' : 'person' };
+        front.push({ key: 'care', run: null, text: byAway(careRecordLine(care), d), detail: [] });
+      } else if (d.kind === 'outline') {
         if (d.decision === 'approve' && sliced) out.push({ key, run: null, text: byAway(oneCard ? RUNS_APPROVED : splitText(slices.length), d), detail: slices.map((s) => `${s.index} · ${s.title}`) });
         else if (d.decision === 'flat') out.push({ key, run: null, text: NOT_SPLIT_TEXT, detail: [] });
       } else if (d.kind === 'plan') {
@@ -111,6 +122,7 @@ export function buildDecisionLog({ clarify = null, origin = [], sliced = false, 
     out.push({ key: `round-${run}-1`, run, text: roundText(1, s ? s.title : ''), detail: [] });
     for (const r of list) out.push({ key: `round-${run}-${r.round}`, run, text: roundText(r.round, r.request, r.status, r.outcome), detail: [] });
   }
+  out.unshift(...front.slice(0, 1));
   if (replan && replan.length) {
     out.push({ key: 'replan', run: null, text: replanText(replan), detail: [...replan].sort((a, b) => a - b).map((i) => { const s = sliceOf(i); return s ? `${i} · ${s.title}` : String(i); }) });
   }

@@ -6,7 +6,7 @@ import { isShapingRun } from './plan-text.mjs';
 import { buildRoleFold } from './role-rows.mjs';
 
 export const SEND_FAILED = 'Could not send your answer. Try again.';
-const CHIP = { clarify: 'Clarify', plan: 'Plan', outline: 'Runs', gate: 'Gate', recovery: 'Recovery' };
+const CHIP = { care: 'Start', clarify: 'Clarify', plan: 'Plan', outline: 'Runs', gate: 'Gate', recovery: 'Recovery' };
 
 /** 'outline' for a plan ask carrying an outline (the Split card), else the registry kind. */
 export function stepKind(pq) {
@@ -17,10 +17,11 @@ export function stepKind(pq) {
 /** The Requirements step's ask: a `plan` kind carrying the criteria check or its load error (the plan ask carries neither). */
 export const isRequirementsAsk = (pq) => !!pq && askKindOf(pq) === 'plan' && !!pq.plan && !!(pq.plan.criteria || pq.plan.error);
 
-/** Which asks draw as step cards: plan, gate and recovery always; Clarify only for a shaping run with the gate on. */
+/** Which asks draw as step cards: care (B2's Start step), plan, gate and recovery always; Clarify only for a shaping run
+ *  with the gate on. */
 export function isStepCard(pq, run, gateOn) {
   const k = askKindOf(pq);
-  if (k === 'plan' || k === 'gate' || k === 'recovery') return true;
+  if (k === 'care' || k === 'plan' || k === 'gate' || k === 'recovery') return true;
   return k === 'clarify' && !!gateOn && isShapingRun(run);
 }
 
@@ -37,6 +38,7 @@ export function stepChip(pq, run) {
 export function stepTitle(pq, who = '') {
   if (isRequirementsAsk(pq)) return 'Your turn: agree the requirements';
   switch (stepKind(pq)) {
+    case 'care': return 'Your turn: how much care?';
     case 'clarify': return 'A few questions before the plan';
     case 'plan': return 'Your turn: approve the plan';
     case 'outline': return 'Your turn: approve the runs';
@@ -92,11 +94,11 @@ export function stepSender(deps, err, { after = () => {} } = {}) {
   };
 }
 
-const errLine = (doc) => {
+export const errLine = (doc) => {
   const err = doc.createElement('div'); err.className = 'plan-err'; err.hidden = true; err.setAttribute('role', 'alert');
   return err;
 };
-const ownButton = (doc, cls, text, onClick) => {
+export const ownButton = (doc, cls, text, onClick) => {
   const b = doc.createElement('button'); b.type = 'button'; b.className = `btn ${cls}`; b.textContent = text;
   b.addEventListener('click', (e) => { e.stopPropagation(); if (!b.disabled) onClick(); });
   return b;

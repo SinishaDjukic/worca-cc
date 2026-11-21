@@ -8,7 +8,7 @@ import { readPrState, readPipelineExtras, readRunResultsById, readClarifyRow } f
 import { projectKey } from '../store.mjs';
 import { sliceBrief, replanBrief } from '../../shared/shape/slices.mjs';
 import { normalizeCare, normalizeRequirementKinds, careOfRow, requirementKindsOf } from '../../shared/shape/feature-record.mjs';
-import { shaperSmallRunsOn, smallRunsOfFeature, smallRunsOfPipeline } from './small-runs.mjs';
+import { shaperSmallRunsOn, smallRunsOfFeature, smallRunsOfPipeline, careOfPipeline } from './small-runs.mjs';
 import { requirementsCheck } from '../../shared/review/requirements-coverage.mjs';
 import { acceptanceGate, ledgerCheck } from '../../shared/shape/acceptance.mjs';
 import { latestChecklist, checklistMarkdown } from '../../shared/shape/review-checklist.mjs';
@@ -74,13 +74,14 @@ function featureRecord({ care, requirementKinds, replaces, outline }) {
 
 /** L5: the feature row, its slice rows and the chained tickets for slices 2..N, in one transaction. Idempotent per
  *  slice-1 pipeline: an earlier active feature of the same run is cancelled and marked replanned (§5.3 note).
- *  `care` and `requirementKinds` (Shaper small runs A2) are read only with the flag on; a refused one throws before the tx. */
+ *  `care` and `requirementKinds` (Shaper small runs A2) are read only when `smallRuns` is true: the live flag by default,
+ *  the origin run's marker when the orchestrator splits (B2 D10, d-3); a refused one throws before the tx. */
 // node:sqlite refuses to bind `undefined`: every bound value has a default.
 export function createSliceFeature({ pipelineId, projectDir, title, outline, proposed = null, merges = 0, removals = 0,
   approveEach = false, perspectives, workflowId, base = {}, replaces = null, startedBy = null, pr = null, care = null,
-  requirementKinds = null, now = Date.now() }) {
+  requirementKinds = null, smallRuns = shaperSmallRunsOn(), now = Date.now() }) {
   const db = getDb();
-  const record = shaperSmallRunsOn() ? featureRecord({ care, requirementKinds, replaces, outline }) : null;
+  const record = smallRuns === true ? featureRecord({ care, requirementKinds, replaces, outline }) : null;
   const id = `feat_${randomUUID().replace(/-/g, '').slice(0, 12)}`;
   const ts = iso(now);
   const total = outline.slices.length;
@@ -349,8 +350,9 @@ export function featureView(id, { live = () => null, oneCard = false } = {}) {
     held: held ? { index: held.index, ticketId: held.ticketId } : null,
     replacedBy: f.replaced_by || null, replan, slices, ship,
     originPipelineId: f.origin_pipeline_id, ask, log: featureLog(f, slices, oneCard), notes: { ideas },
-    // Shaper small runs A2: the record's 2 keys, last, and only with the flag on (off is dev's exact shape).
-    ...(shaperSmallRunsOn() ? { care: careOfRow(f), requirementKinds: requirementKindsOf(j(f.requirement_kinds, null), f.outline) } : {}),
+    // Shaper small runs A2: the record's 2 keys, last, only with the flag on or (B2, D20) for a marked feature; an unmarked
+    // feature with the flag off is dev's exact shape.
+    ...(shaperSmallRunsOn() || smallRunsOfFeature(f.id) ? { care: careOfRow(f), requirementKinds: requirementKindsOf(j(f.requirement_kinds, null), f.outline) } : {}),
   };
 }
 
@@ -528,9 +530,11 @@ export function shaperCard(pipelineId, { live = () => null, shaped = () => false
   const feature = fid ? featureView(fid, { live, oneCard: featureMarked }) : null;
   if (!feature && !shaped(pid)) return null;
   const marked = feature ? featureMarked : smallRunsOfPipeline(pid);
+  // B2 (D18): the Care saved at the Start step, for a marked run; absent until Start is answered.
+  const care = marked ? careOfPipeline(feature ? feature.originPipelineId : pid) : null;
   return { pipelineId: pid, feature,
     log: feature ? feature.log : buildDecisionLog({ clarify: clarifyOf(pid), origin: auditTexts(pid), oneCard: marked }),
-    ...(marked ? { smallRuns: true } : {}) };
+    ...(marked ? { smallRuns: true } : {}), ...(care ? { care } : {}) };
 }
 
 /** B1 (D8): whether Chat posts the feature's Ship card. A marked feature ships from its feature page until the one card

@@ -295,3 +295,18 @@ test('B1 oneCardModel: in S7 the re-plan ask wins over a member\'s ask, in quest
   assert.equal(m.base.step, m.question);
   assert.equal(m.question.pipelineId, 'rp1');
 });
+
+// ── Shaper small runs B2: S0, the Start step (D18) ──
+const PQ_CARE = { id: 'care-1', kind: 'care', care: { pick: { position: 'thorough', reason: 'r' } } };
+test('B2 oneCardModel: S0 needs-you for an open care ask, S0 working for a marked run with no Care and no ask, the Care receipt first after Start', () => {
+  const ask = oneCardModel({ own: shapingOwn(PQ_CARE), card: marked(null, []) });
+  assert.deepEqual([ask.state, ask.step, ask.detail, ask.question.id], ['S0', 'start', 'Pick the Care, then the roles write the requirements', 'care-1']);
+  const working = oneCardModel({ own: shapingOwn(), card: marked(null, []) });
+  assert.deepEqual([working.state, working.step, working.detail, working.question], ['S0', 'start', 'Worca sizes the feature', null]);
+  const CARE_LINE = L('Care: Lean · your choice · Worca recommended Thorough', 'care');
+  const after = oneCardModel({ own: shapingOwn(PQ_CL), card: { ...marked(null, [CARE_LINE]), care: { position: 'lean' } } });
+  assert.equal(after.state, 'S1');
+  assert.equal(after.receipts[0].text, 'Care: Lean · your choice · Worca recommended Thorough');
+  const s2 = oneCardModel({ own: shapingOwn(), card: { ...marked(null, [CARE_LINE]), care: { position: 'lean' } } });
+  assert.equal(s2.state, 'S2', 'after Start, the roles write the requirements');
+});

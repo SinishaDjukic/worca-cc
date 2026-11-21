@@ -139,3 +139,15 @@ test('B1: with oneCard the log names "Requirements agreed" and "Runs approved" (
   // Before the split (no feature) the marked run's own log.
   assert.deepEqual(buildDecisionLog({ origin: ['Requirements approval **approve**.'], oneCard: true }).map((l) => [l.run, l.text]), [[null, 'Requirements agreed']]);
 });
+
+test('B2: parseDecisionLine reads the Care line; the log leads with careRecordLine\'s words', () => {
+  assert.deepEqual(parseDecisionLine("Care **lean** · Worca's pick **thorough** by ann."), { kind: 'care', decision: 'lean', pick: 'thorough' });
+  const src = readFileSync(new URL('../src/core/run-harness.mjs', import.meta.url), 'utf8');
+  assert.ok(src.includes("`Care **${care.position}** · Worca's pick **${"), 'the harness writes the words the log parses');
+  const person = buildDecisionLog({ clarify: CLARIFY, origin: ["Care **lean** · Worca's pick **thorough**.", 'Requirements approval **approve**.'], oneCard: true });
+  assert.deepEqual(person.map((l) => l.text), ['Care: Lean · your choice · Worca recommended Thorough', 'Clarify · 2 answers', 'Requirements agreed']);
+  const pick = buildDecisionLog({ origin: ["Care **thorough** · Worca's pick **thorough**."], oneCard: true });
+  assert.deepEqual(pick.map((l) => l.text), ["Care: Thorough · Worca's pick"]);
+  const sliced = buildDecisionLog({ sliced: true, slices: SLICES, origin: ["Care **balanced** · Worca's pick **balanced**.", 'Slice outline **approve** (round 1).'], oneCard: true });
+  assert.equal(sliced[0].text, "Care: Balanced · Worca's pick");
+});
