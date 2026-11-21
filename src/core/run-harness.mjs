@@ -54,7 +54,7 @@ import {
   pipelineCostLimitUsd, totalCostLimitUsd, costLimitResetPeriod,
   memoryCaps,
 } from './settings.mjs';
-import { hasProjectSetting, utilityModelFor } from './settings-cascade.mjs';
+import { hasProjectSetting, utilityModelFor, resolveSetting } from './settings-cascade.mjs';
 import { withRole, roleModelFor, jobSlot } from './model-roles.mjs';
 import { mountDirs, mountMemory, refreshMount, syncBack, memoryTotals, validateMemoryScope, withStoreLock, memoryRulesPath, memoryWorkPath, MEMORY_RULES_REL, MEMORY_INJECTED_ENTRY, memoryLoadedPath, readFrozenSet, frozenManifest, writeFrozenCopies, renderRoleNotes } from './memory-sync.mjs';
 import { captureProposals } from './memory-proposals.mjs';
@@ -1551,6 +1551,9 @@ export class RunHarness extends EventEmitter {
       //    run before then, and the run page's clock and status line read it.
       this.state.setupStage = 'Checking the setup';   // the bookend's own state emit carries it
       this._bookend('preflight', 'start');
+      // A run on OpenCode without a model names worca's default OpenCode model before the step models and the
+      // run-start check resolve, so every spawn names a model (see _ensureOpencodeDefaultModel).
+      await this._ensureOpencodeDefaultModel();
       const [agentPrompts, tools, stepModels] = await Promise.all([
         this._loadAgentPrompts(),
         detectTools(this.projectDir),
@@ -3638,6 +3641,10 @@ export class RunHarness extends EventEmitter {
   async _engineEarlyRefusal(guardrailsId, gateNodes) {
     const name = this.claude.engine || 'claude';
     if (name === 'claude') return null;
+    // An OpenCode run with no model auto-names worca's default before the refusal reads whether a spawn
+    // names no model, so this gate no longer refuses it (and the same orchestrator runs with the model
+    // _run()'s own call would name; _ensureOpencodeDefaultModel is a no-op when the model is already set).
+    await this._ensureOpencodeDefaultModel();
     let args, mcp;
     try {
       const { id, rules, projectRules } = await this._engineSetRules(guardrailsId, { quiet: true });
@@ -3734,6 +3741,40 @@ export class RunHarness extends EventEmitter {
     } catch {
       return true;
     }
+  }
+
+  /**
+   * A run on OpenCode names no model (no run model, step slot or team role): auto-name it — the person's OpenCode
+   * chat (ask) model, which folds an unset slot into the OpenCode everyday role (`models.modelRoles.opencode.everyday`),
+   * else the first OpenCode-capable catalog model. Named on `this.claude.model`, every spawn rides it and the run-start
+   * check finds no spawn unnamed, so the run never falls to OpenCode's own default (possibly a free OpenCode Zen model,
+   * DEFAULT_MODEL_RISK) and never needs the opt-in. Only when nothing resolves is model left as it was and the refusal
+   * stays. Never throws. */
+  async _ensureOpencodeDefaultModel() {
+    const engine = this.claude.engine;
+    if (engine !== 'opencode' || (typeof this.claude.model === 'string' && this.claude.model.trim())) return null;
+    let model = null;
+    try {
+      const chat = withRole(resolveSetting('models.opencode.ask').value, 'opencode', 'askModels');
+      if (chat && typeof chat.model === 'string' && chat.model.trim()) model = chat.model;
+    } catch { model = null; }
+    if (model && !modelForEngine(model, 'opencode', { projectDir: this.projectDir })) model = null;
+    if (!model) {
+      try {
+        const rows = await listModels(this.projectDir || '');
+        // Never OpenCode Zen (opencode/…): that is exactly the default this gate exists to avoid sending code to
+        // opencode.ai — an auto-picked run model must run on the person's own provider or endpoint.
+        const pick = (Array.isArray(rows) ? rows : []).find((m) => m && typeof m.id === 'string'
+          && Array.isArray(m.harnesses) && m.harnesses.includes('opencode') && !/^opencode\//i.test(m.id));
+        model = pick ? pick.id : null;
+      } catch { model = null; }
+    }
+    if (model) {
+      this.claude.model = model;
+      this._log('orchestrator', 'info',
+        `engine opencode: this run names no model, so it runs on worca's default OpenCode model ${model} — pick a model (or set models.opencode roles) to choose`);
+    }
+    return model;
   }
 
   /** The models this run's spawns on `engine` name, each in the engine's own id: the run's model, each step's and
