@@ -40,6 +40,11 @@
 .run-members.is-table .run-member-title::after{content:"";position:absolute;inset:0;}
 .run-members.is-table .run-member:hover .run-member-title{text-decoration:underline;}
 .run-members.is-table .run-member-line{font-size:12px;}
+/* One-line rows (Shaper's one card): title, then the short state right-aligned on the same line; a Requirements fold wraps under. */
+.run-members.is-one-line .run-member-main{flex-direction:row;flex-wrap:wrap;align-items:baseline;column-gap:8px;}
+.run-members.is-one-line .run-member-title{flex:1 1 0;min-width:0;}
+.run-members.is-one-line .run-member-main > :not(.run-member-title, .run-member-state){flex-basis:100%;}
+.run-member-state{color:var(--ink-2);font-size:var(--fs-meta);white-space:nowrap;}
 .run-members.is-table .run-member-cost{font-variant-numeric:tabular-nums;}
 .run-members.is-table .run-member-go{color:var(--ink-3);opacity:0;}
 .run-members.is-table .run-member:hover .run-member-go{opacity:1;}

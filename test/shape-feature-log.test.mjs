@@ -3,7 +3,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { buildDecisionLog, parseDecisionLine, clarifyText, planApprovedText, splitText, gateText, replanText, NOT_SPLIT_TEXT,
-  roundText, roundOutcomeText }
+  roundText, roundOutcomeText, REQUIREMENTS_AGREED, RUNS_APPROVED }
   from '../src/shared/shape/feature-log.mjs';
 
 const SLICES = [1, 2, 3].map((i) => ({ index: i, title: `Part ${i}`, goal: `Goal ${i}`, acceptance: [`ok ${i}`] }));
@@ -113,4 +113,29 @@ test('s5: a fix round\'s log line ends with its outcome', () => {
   const log = buildDecisionLog({ sliced: true, slices: SLICES,
     rounds: [{ run: 3, round: 2, request: 'fix failing checks', status: 'done', by: 'watch', outcome: { kind: 'pushed', sha: 'a1b2c3d' } }] });
   assert.equal(log.at(-1).text, 'Round 2 · fix failing checks · pushed a1b2c3d');
+});
+
+test('B1: parseDecisionLine reads the marked run\'s requirements line', () => {
+  assert.deepEqual(parseDecisionLine('Requirements approval **approve** by ann.'), { kind: 'requirements', decision: 'approve' });
+  assert.deepEqual(parseDecisionLine('Requirements approval **revise**.'), { kind: 'requirements', decision: 'revise' });
+  const src = readFileSync(new URL('../src/core/run-harness.mjs', import.meta.url), 'utf8');
+  assert.ok(src.includes('`Requirements approval **${'), 'the harness writes the words the log parses');
+});
+
+test('B1: with oneCard the log names "Requirements agreed" and "Runs approved" (no count); without it, dev\'s words', () => {
+  const origin = ['Requirements approval **revise**.', 'Requirements approval **approve**.', 'Plan approval **approve**.', 'Slice outline **approve** (round 1).'];
+  const one = buildDecisionLog({ clarify: CLARIFY, sliced: true, slices: SLICES, origin, oneCard: true });
+  assert.equal(REQUIREMENTS_AGREED, 'Requirements agreed');
+  assert.equal(RUNS_APPROVED, 'Runs approved');
+  assert.deepEqual(one.map((l) => [l.run, l.text]), [[null, 'Clarify · 2 answers'], [1, 'Requirements agreed'], [1, 'Plan approved'], [null, 'Runs approved']]);
+  assert.deepEqual(one[3].detail, ['1 · Part 1', '2 · Part 2', '3 · Part 3']);
+  assert.equal(new Set(one.map((l) => l.key)).size, one.length);
+  // Without oneCard a requirements line reads as the plan approval it was before B1, and the split keeps splitText.
+  const dev = buildDecisionLog({ clarify: CLARIFY, sliced: true, slices: SLICES, origin });
+  assert.deepEqual(dev.map((l) => [l.run, l.text]), [[null, 'Clarify · 2 answers'], [1, 'Plan approved · after 1 round of changes'], [1, 'Plan approved'],
+    [null, 'Split into 3 runs']]);
+  const devPlan = ['Plan approval **revise**.', 'Plan approval **approve**.', 'Plan approval **approve**.', 'Slice outline **approve** (round 1).'];
+  assert.deepEqual(dev, buildDecisionLog({ clarify: CLARIFY, sliced: true, slices: SLICES, origin: devPlan }), 'same lines as dev\'s plan words');
+  // Before the split (no feature) the marked run's own log.
+  assert.deepEqual(buildDecisionLog({ origin: ['Requirements approval **approve**.'], oneCard: true }).map((l) => [l.run, l.text]), [[null, 'Requirements agreed']]);
 });

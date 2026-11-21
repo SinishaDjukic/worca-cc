@@ -2319,3 +2319,212 @@ test('a Changes run of a shipped feature: the requirements hold\'s card first, t
   assert.equal(after.$('.chat-rc-q .qpanel').dataset.qid, 'plan-n_refine-1', 'the plan approval comes after the hold');
   forgetAnswer('run-uuid-1', hold.id);
 });
+
+// ── Shaper small runs B1: the one card per feature (a card whose planning run carries the marker, `smallRuns: true`) ──
+const ONE_PQ = {
+  clarify: { id: 'clarify-b1-1', kind: 'clarify', nodeId: 'n_clarify', questions: [{ id: 'q1', question: 'Where?' }, { id: 'q2', question: 'How?' }] },
+  req: { id: 'plan-n_reqrefine-1', kind: 'plan', nodeId: 'n_reqrefine', plan: { nodeId: 'n_reqrefine', port: 'requirements', round: 1, revisable: true,
+    file: 'requirements.md', check: null, perspectives: ['product'], decisions: [],
+    criteria: { ok: true, passed: 1, total: 1, items: [{ id: 'R-po-1', label: 'R-po-1 · Export the report', pass: true }] } } },
+  plan: { id: 'plan-n_refine-1', kind: 'plan', nodeId: 'n_refine', plan: { nodeId: 'n_refine', port: 'plan', round: 1, revisable: true, file: 'plans/p.md', check: null, perspectives: ['product'] } },
+  outline: { id: 'plan-outline-n_plan-1', kind: 'plan', nodeId: 'n_plan', plan: { round: 1, outline: { why: 'Three parts', slices: ['s1', 's2', 's3'].map(outlineSlice) } } },
+};
+const ONE_L = (text, key = text, detail = []) => ({ key, run: null, text, detail });
+const ONE_CL = ONE_L('Clarify · 2 answers', 'clarify', ['Where? → Redis', 'How? → JSON']);
+const oneCard = (feature, log = feature ? feature.log : []) => ({ pipelineId: 'abcd1234', feature, log, smallRuns: true });
+const oneView = (states, over = {}) => VIEW3(states.map((st, i) => SL(i + 1, st, { pipelineId: ['planned', 'canceled'].includes(st) ? null : (i ? `beef000${i + 1}` : 'abcd1234') })), over);
+const DONE_OWN = [{ status: 'done', terminal: true }, { status: 'done', active: [] }];
+/** S1–S9: the open ask (painted through stepStub), the snapshot, the table's detail and the run count N. */
+const ONE_STATES = {
+  S1: () => ({ pq: ONE_PQ.clarify, snap: shaped(oneCard(null, []), {}, { pendingQuestion: ONE_PQ.clarify }), detail: '2 decisions, then you agree the requirements' }),
+  S2: () => ({ snap: shaped(oneCard(null, [ONE_CL])), detail: 'The roles write the requirements' }),
+  S3: () => ({ pq: ONE_PQ.req, render: renderPlanBody, snap: shaped(oneCard(null, [ONE_CL]), {}, { pendingQuestion: ONE_PQ.req }), detail: 'Agree the requirements, then the Split' }),
+  S4: () => ({ snap: shaped(oneCard(null, [ONE_CL, ONE_L('Requirements agreed')])), detail: 'The Planner proposes the runs' }),
+  S5: () => ({ pq: ONE_PQ.plan, render: renderPlanBody, snap: shaped(oneCard(null, [ONE_CL, ONE_L('Requirements agreed')]), {}, { pendingQuestion: ONE_PQ.plan }),
+    detail: 'Check the plan, then the Planner proposes the runs' }),
+  S6: () => ({ pq: ONE_PQ.outline, render: renderOutlineBody, n: 3,
+    snap: shaped(oneCard(null, [ONE_CL, ONE_L('Requirements agreed'), ONE_L('Plan approved')]), {}, { pendingQuestion: ONE_PQ.outline }),
+    detail: 'Runs proposed, one after another · check, then approve' }),
+  S7: () => {
+    const v = oneView(['done', 'canceled', 'canceled'], { status: 'replanning', replan: { ticketId: 't9', pipelineId: 'rp1', runId: 'run-rp1' },
+      log: [ONE_CL, ONE_L('Runs approved'), ONE_L('Re-planning runs 2–3', 'replan')] });
+    return { pq: ONE_PQ.outline, render: renderOutlineBody, n: 3, row: featureRow([DONE_RUN, { status: 'stopped' }, WAITING]),
+      snap: shaped(oneCard(v), { rp1: { source: 'live', status: 'running', runId: 'run-rp1', pipelineId: 'rp1', pendingQuestion: ONE_PQ.outline } }, ...DONE_OWN),
+      detail: 'Runs proposed, one after another · check, then approve' };
+  },
+  S8: () => {
+    const check = { passed: 1, total: 2, items: [{ id: 'R-po-1', label: 'R-po-1 · covered by the diff', pass: true, detail: 'People see it' },
+      { id: 'R-qa-1', label: 'R-qa-1 · not covered by the diff', pass: false, detail: 'It is tested' }] };
+    const v = oneView(['done', 'running', 'planned'], { log: [ONE_CL, ONE_L('Requirements agreed'), ONE_L('Runs approved', 'p-2', ['1 · Part 1', '2 · Part 2', '3 · Part 3'])] });
+    v.slices[0].requirements = { check };
+    const row = featureRow([DONE_RUN, RUN_STATE_ROWS.find((r) => r.state === 'working').run, WAITING]);
+    row.members[0].pipelineId = 'abcd1234';
+    return { row, n: 3, snap: shaped(oneCard(v), {}, ...DONE_OWN), detail: '1 of 3 runs done' };
+  },
+  S9: () => {
+    const v = oneView(['done', 'done', 'done'], { status: 'done', ship: { ready: true, mode: null }, log: [ONE_CL, ONE_L('Runs approved')] });
+    return { row: featureRow([DONE_RUN, DONE_RUN, DONE_RUN]), n: 3, snap: shaped(oneCard(v), {}, ...DONE_OWN), detail: '3 runs done · ship from the feature page' };
+  },
+};
+const shownIn = (el) => { for (let n = el; n; n = n.parentElement) if (n.hidden || n.classList.contains('hidden')) return false; return true; };
+/** Visible text nodes outside buttons (a button names what it does: "Approve 3 runs" is the action, not the fact). */
+const visibleTexts = (root) => {
+  const out = [];
+  const walk = root.ownerDocument.createTreeWalker(root, 4);
+  for (let t = walk.nextNode(); t; t = walk.nextNode()) if (t.textContent.trim() && shownIn(t.parentElement) && !t.parentElement.closest('button')) out.push(t.textContent);
+  return out;
+};
+const sendOnly = (panel) => { const b = panel.ownerDocument.createElement('button'); b.type = 'button'; b.className = 'btn btn-primary'; b.textContent = 'Send'; panel.appendChild(b); };
+function paintOne(name, over = {}) {
+  const c = ONE_STATES[name]();
+  const stub = c.pq ? stepStub(c.pq, c.render || sendOnly) : { paintQuestion: () => null, releaseQuestion() {} };
+  const f = mk({ controls: { ...stub, memoFor: () => ({}), groupOf: () => (over.noRow ? null : c.row || null), modelOpts: () => ({ now: NOW }) } });
+  f.card.update(c.snap);
+  return { ...f, c, stub };
+}
+
+test('B1 one card: S1–S9 show the kind "Feature", one state line with the table\'s detail, no group bar, result, graph, agents, shaped line or receipt', () => {
+  try {
+    for (const name of Object.keys(ONE_STATES)) {
+      const { $, $$, card, c } = paintOne(name);
+      assert.equal($('.kind-chip').textContent, 'Feature', name);
+      assert.equal($('.kind-chip').hidden, false, name);
+      assert.equal($$('.chat-rc-status').length, 1, name);
+      assert.equal($('.chat-rc-status .run-status-detail').textContent, c.detail, name);
+      assert.equal($('.chat-rc-status .run-status-detail').hidden, false, name);
+      assert.equal($('.run-status-group').hidden, true, `${name}: no group bar`);
+      assert.equal($('.chat-rc-result').hidden, true, `${name}: no result block`);
+      assert.equal($('.chat-rc-well').hidden, true, `${name}: no graph`);
+      assert.equal($('.ask-rc-active').hidden, true, `${name}: no agents`);
+      assert.equal($('.chat-rc-shaped').hidden, true, `${name}: no stages line`);
+      assert.equal($('details.chat-rc-receipt').hidden, true, `${name}: no receipt fold`);
+      assert.doesNotMatch(card.el.textContent, /prototype/i, name);
+      assert.equal($$('.chat-rc-q .qpanel[data-qid]').filter((p) => shownIn(p)).length, c.pq ? 1 : 0, `${name}: the one question`);
+      if (c.n) {
+        const re = new RegExp(`\\b${c.n} runs?\\b`);
+        const hits = visibleTexts(card.el).filter((t) => re.test(t));
+        assert.equal(hits.length, 1, `${name}: the run count once: ${JSON.stringify(hits)}`);
+      }
+    }
+  } finally { for (const pq of Object.values(ONE_PQ)) forgetAnswer('run-uuid-1', pq.id); }
+});
+
+test('B1 one card: in S8, the frame before groupOf knows the feature\'s row reads Working', () => {
+  const { $ } = paintOne('S8', { noRow: true });
+  assert.equal($('.chat-rc-status .run-status-word').textContent, 'Working');
+  assert.equal($('.chat-rc-status .run-status-detail').textContent, '1 of 3 runs done');
+  assert.equal($('.chat-rc-members').hidden, true, 'the members come on the next frame');
+});
+
+test('B1 one card: with two askers paintQuestion runs for the one chosen question id, and one .qpanel is visible', () => {
+  const asked = [];
+  const pqTwo = { id: 'plan-n_refine-2', kind: 'plan', plan: {} };
+  const stub = stepStub(ONE_PQ.plan, renderPlanBody);
+  const { card, $$ } = mk({ controls: { ...stub, paintQuestion: (ref, host) => { asked.push(ref.pipelineId); return stub.paintQuestion(ref, host); } } });
+  const v = oneView(['approval', 'approval', 'planned']);
+  const two = { source: 'live', status: 'running', runId: 'run-2', pipelineId: 'beef0002', pendingQuestion: pqTwo };
+  card.update(shaped(oneCard(v), { beef0002: two }, { pendingQuestion: ONE_PQ.plan }));
+  assert.deepEqual([...new Set(asked)], ['abcd1234'], 'only the chosen question is painted');
+  assert.equal($$('.chat-rc-q .qpanel').filter((p) => shownIn(p) && p.childElementCount).length, 1);
+  forgetAnswer('run-uuid-1', ONE_PQ.plan.id);
+});
+
+test('B1 one card: the log Show and the member Requirements fold are native buttons whose aria-expanded flips', () => {
+  const { $, $$ } = paintOne('S8');
+  const show = $('.chat-rc-log-row[data-key="p-2"] .chat-rc-log-show');
+  const fold = $$('.chat-rc-members .plan-check-line')[0];
+  for (const [b, name] of [[show, 'log Show'], [fold, 'Requirements fold']]) {
+    assert.ok(b, name);
+    assert.equal(b.tagName, 'BUTTON', name);
+    assert.equal(b.getAttribute('type'), 'button', name);
+    assert.notEqual(b.getAttribute('tabindex'), '-1', name);
+    assert.equal(b.getAttribute('aria-expanded'), 'false', name);
+    b.click();
+    assert.equal(b.getAttribute('aria-expanded'), 'true', name);
+  }
+});
+
+test('B1 one card: the log reads "Requirements agreed" and "Runs approved"; the run card adds no live-flag read', () => {
+  const { $$ } = paintOne('S8');
+  assert.deepEqual($$('.chat-rc-log-text').map((n) => n.textContent), ['Clarify · 2 answers', 'Requirements agreed', 'Runs approved']);
+  const src = readFileSync(new URL('../ui/public/chat/run-card.mjs', import.meta.url), 'utf8');
+  assert.equal(/flagOn\('shaperSmallRuns'/.test(src), false, 'the marker, never the live flag, picks the card');
+});
+
+test('B1 one card: a finished marked feature builds no hidden Ask for changes field (it lived in the result block)', () => {
+  const c = ONE_STATES.S9();
+  const { card, $ } = mk({ ctx: { postChanges: () => true }, controls: { memoFor: () => ({}), groupOf: () => c.row, modelOpts: () => ({ now: NOW }) } });
+  card.update(c.snap);
+  assert.equal($('.chat-rc-result').hidden, true);
+  assert.equal(card.el.querySelector('.ask-changes-input'), null, 'no field the footer could point at');
+});
+
+test('B1 one card: a marked planning run that finished without a split is dev\'s card, with its result block and Create pull request', () => {
+  const { card, $ } = mk({ controls: { prHost: () => true, memoFor: () => ({}), groupOf: () => null, modelOpts: () => ({ now: NOW }) } });
+  const extras = { results: { filesChanged: 1, additions: 1, deletions: 0, checks: 0, topFiles: [{ path: 'a.mjs', additions: 1, deletions: 0, status: 'M' }] },
+    artifacts: [], moreArtifacts: false, pr: null };
+  const fin = done(extras, { shaping: { rounds: [] }, shaper: { card: oneCard(null, [ONE_CL, ONE_L('Requirements agreed'), ONE_L('Plan approved')]), snaps: {} } });
+  card.update(fin);
+  assert.doesNotMatch($('.chat-rc-status .run-status-detail').textContent, /Planner proposes/);
+  assert.equal($('.chat-rc-result').hidden, false, 'the result block is back');
+  assert.ok($('.chat-rc-create-pr'), 'Create pull request: there is no feature page to ship from');
+});
+
+test('B1 one card (owner review): the head\'s Open › is a quiet button in S1–S9, never the filled .ask-rc-open; dev\'s card keeps it', () => {
+  try {
+    for (const name of Object.keys(ONE_STATES)) {
+      const { $ } = paintOne(name);
+      const open = $('.ask-rc-head a');
+      assert.equal(open.className, 'btn btn-sm btn-quiet chat-rc-open', name);
+      assert.equal(open.textContent, 'Open ›', name);
+      assert.equal($('.ask-rc-open'), null, `${name}: no filled Open`);
+    }
+  } finally { for (const pq of Object.values(ONE_PQ)) forgetAnswer('run-uuid-1', pq.id); }
+  const { card, $ } = mk({ controls: { memoFor: () => ({}), groupOf: () => null, modelOpts: () => ({ now: NOW }) } });
+  card.update(shaped({ ...oneCard(null, [ONE_CL]), smallRuns: false }));
+  assert.equal($('.ask-rc-head a').className, 'ask-rc-open', 'an unmarked card keeps dev\'s Open');
+});
+
+test('B1 one card (owner review): the runs are one-line rows (mark, number, title, short state, cost), no second line under the title', () => {
+  try {
+    for (const name of ['S7', 'S8', 'S9']) {
+      const { $, $$ } = paintOne(name);
+      assert.ok($('.chat-rc-members .run-members.is-one-line'), name);
+      const rows = $$('.chat-rc-members .run-member');
+      assert.ok(rows.length >= 3, name);
+      for (const li of rows) {
+        assert.equal(li.querySelector('.run-member-line'), null, `${name}: no second line`);
+        const state = li.querySelector('.run-member-state');
+        assert.ok(state && state.textContent, `${name}: a short state`);
+        assert.equal(state.previousElementSibling, li.querySelector('.run-member-title'), `${name}: the state follows the title on its line`);
+      }
+    }
+    const { $ } = paintOne('S8');
+    assert.deepEqual([...$('.chat-rc-members .run-member').children].map((n) => n.className.split(' ')[0]),
+      ['status-dot', 'run-member-num', 'run-member-main', 'run-member-pr', 'run-member-cost', 'run-member-go']);
+  } finally { forgetAnswer('run-uuid-1', ONE_PQ.outline.id); }
+});
+
+test('B1 one card (owner review): no progress bar above the runs in S1–S9, with or without the feature\'s row', () => {
+  try {
+    for (const name of Object.keys(ONE_STATES)) {
+      for (const noRow of [false, true]) {
+        const { $ } = paintOne(name, { noRow });
+        assert.equal($('.chat-rc-status .run-status-bar').hidden, true, `${name}${noRow ? ' (no row yet)' : ''}: no bar`);
+      }
+    }
+  } finally { for (const pq of Object.values(ONE_PQ)) forgetAnswer('run-uuid-1', pq.id); }
+});
+
+test('B1 one card: one primary button per card in S1, S3, S5, S6 (the step card\'s), and S9 offers no Create PR in Chat (D8)', () => {
+  try {
+    for (const name of ['S1', 'S3', 'S5', 'S6', 'S9']) {
+      const { $$ } = paintOne(name);
+      const primaries = $$('.btn-primary, .ask-rc-open').filter((b) => shownIn(b));   // the filled head Open counts too
+      assert.equal(primaries.length, name === 'S9' ? 0 : 1, `${name}: ${primaries.map((b) => b.textContent).join(', ')}`);
+      if (name !== 'S9') assert.ok(primaries[0].closest('.chat-rc-q'), `${name}: the open step card owns it`);
+      assert.equal($$('[data-model-action="ship"]').filter((b) => shownIn(b)).length, 0, `${name}: Ship stays on the feature page`);
+      assert.deepEqual($$('button').filter((b) => shownIn(b) && /pull request|create pr|\bship\b/i.test(b.textContent)).map((b) => b.textContent), [], name);
+    }
+  } finally { for (const pq of Object.values(ONE_PQ)) forgetAnswer('run-uuid-1', pq.id); }
+});

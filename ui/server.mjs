@@ -452,7 +452,7 @@ import { savePlanToCheckout } from '../src/core/shape/save.mjs';
 import { featureView, currentFeatureId, featureOfPipeline, featuresOfTickets, cancelRest, resumeFeature,
   rechainWaiting, replanRest, setApproveEach, recordShapePlan, listShapePlans, chainFeature,
   sliceOfPipeline, slicePrPreamble, featureShipSuggestion, recordSliceDraft, recordShip, clearShip, featureShipInput,
-  liveSliceFrom, shaperCard, featureThread, addFeatureNote, appendFeatureRun, liveRoundOf, acceptanceRefusal, featureHoldsTicket } from '../src/core/shape/features.mjs';
+  liveSliceFrom, shaperCard, featureThread, addFeatureNote, appendFeatureRun, liveRoundOf, acceptanceRefusal, featureHoldsTicket, chatShipCardOffered } from '../src/core/shape/features.mjs';
 import { smallRunsChainGate, sliceFireStart, oneShipCheck, shipHeadRow, shipHeadBase, recordSettledFigures } from '../src/core/shape/chain.mjs';
 import { roundsOf, roundOrigin, nextRound, setRoundOutcome } from '../src/core/shape/rounds.mjs';
 import { changesCard, applyChanges, applyRoute, landingFacts, landingFactsOfFeature, shapeToolCheck, threadWork, shapeThreadFacts } from '../src/core/shape/changes.mjs';
@@ -5248,7 +5248,7 @@ async function offerShipCard(pipelineId) {
   if (!at) return null;
   const fid = currentFeatureId(at.featureId);
   const view = featureView(fid, { live: liveSliceOf });
-  if (!view || !view.ship.ready) return null;
+  if (!view || !view.ship.ready || !chatShipCardOffered(view)) return null;
   const th = featureThread(fid);
   if (!th || !askGetThread(th.threadId) || findShipCardIn(th.threadId, fid)) return null;
   const stats = await featureShipSuggestion(view);

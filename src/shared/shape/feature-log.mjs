@@ -8,6 +8,10 @@ export const planApprovedText = (rounds) => (rounds > 0 ? `Plan approved · afte
 export const splitText = (n) => (n < 2 ? 'Planned as one run' : `Split into ${n} runs`);
 export const gateText = (d) => (d === 'another' ? 'Another cycle started' : 'Accepted as is');
 export const NOT_SPLIT_TEXT = 'Not split · planned as one run';
+/** The receipt of an agreed Requirements step (the step card's and, B1, the one card's log row). */
+export const REQUIREMENTS_AGREED = 'Requirements agreed';
+/** Shaper small runs B1 (D7): the one card's split receipt; the count lives in its state line. */
+export const RUNS_APPROVED = 'Runs approved';
 const AWAY_KEPT_TEXT = 'Plan kept as written · by Away mode · please check';
 export function replanText(indexes) {
   const xs = [...indexes].sort((a, b) => a - b);
@@ -42,7 +46,7 @@ export function parseBaseLine(text) {
 }
 
 /** run-harness.mjs _auditDecision's lines: "Plan approval **approve** by ann." (the actor part is optional). */
-const LINES = [['plan', /^Plan approval \*\*(\w+)\*\*/], ['outline', /^Slice outline \*\*(\w+)\*\*/], ['gate', /^Gate \*\*(\w+)\*\*/],
+const LINES = [['plan', /^Plan approval \*\*(\w+)\*\*/], ['requirements', /^Requirements approval \*\*(\w+)\*\*/], ['outline', /^Slice outline \*\*(\w+)\*\*/], ['gate', /^Gate \*\*(\w+)\*\*/],
   ['concern', /^Plan concern \*\*(\w+)\*\*/]];
 export function parseDecisionLine(text) {
   const t = String(text || '');
@@ -60,8 +64,10 @@ const byAway = (text, d) => (d.away ? `${text} · by Away mode` : text);
  *   runs?: Array<{index: number, events: string[]}>, slices?: Array<{index: number, title: string, goal: string, acceptance: string[]}>,
  *   replan?: number[]|null, rounds?: Array<{run: number, round: number, request: string, status: string, outcome?: object}>}} input
  *   `origin` = the planning run's audit texts (it is run 1 once sliced); `runs` = runs 2..N; `rounds` = the runs' rounds (s5).
+ *   `oneCard` (Shaper small runs B1, D7): the one card's words, "Requirements agreed" and "Runs approved"; without it a
+ *   requirements line reads as the plan approval it was before B1, and the split keeps splitText.
  */
-export function buildDecisionLog({ clarify = null, origin = [], sliced = false, runs = [], slices = [], replan = null, rounds = [] } = {}) {
+export function buildDecisionLog({ clarify = null, origin = [], sliced = false, runs = [], slices = [], replan = null, rounds = [], oneCard = false } = {}) {
   const out = [];
   const qs = clarify && Array.isArray(clarify.questions) ? clarify.questions : [];
   const as = clarify && Array.isArray(clarify.answers) ? clarify.answers : [];
@@ -78,15 +84,18 @@ export function buildDecisionLog({ clarify = null, origin = [], sliced = false, 
     events.forEach((text, n) => {
       const b = run ? parseBaseLine(text) : null;
       if (b) { out.push({ key: `${run}-${n}`, run: null, text: baseMovedText(b.base, run, b.files), detail: [] }); return; }
-      const d = parseDecisionLine(text);
-      if (!d) return;
+      const p = parseDecisionLine(text);
+      if (!p) return;
+      const d = p.kind === 'requirements' && !oneCard ? { ...p, kind: 'plan' } : p;
       const key = `${run || 'p'}-${n}`;
       if (d.kind === 'outline') {
-        if (d.decision === 'approve' && sliced) out.push({ key, run: null, text: byAway(splitText(slices.length), d), detail: slices.map((s) => `${s.index} · ${s.title}`) });
+        if (d.decision === 'approve' && sliced) out.push({ key, run: null, text: byAway(oneCard ? RUNS_APPROVED : splitText(slices.length), d), detail: slices.map((s) => `${s.index} · ${s.title}`) });
         else if (d.decision === 'flat') out.push({ key, run: null, text: NOT_SPLIT_TEXT, detail: [] });
       } else if (d.kind === 'plan') {
         if (d.decision === 'revise') revises += 1;
         else if (d.decision === 'approve') { out.push({ key, run, text: byAway(planApprovedText(revises), d), detail: run ? goalOf(run) : [] }); revises = 0; }
+      } else if (d.kind === 'requirements') {
+        if (d.decision === 'approve') { out.push({ key, run, text: byAway(REQUIREMENTS_AGREED, d), detail: [] }); revises = 0; }
       } else if (d.kind === 'concern') {
         // A person's concern line stays silent. Away's approve is the plan's approval here, and it is one to check.
         if (d.decision === 'overridden' && d.away) { out.push({ key, run, text: AWAY_KEPT_TEXT, detail: [] }); revises = 0; }

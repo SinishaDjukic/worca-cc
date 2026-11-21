@@ -3,9 +3,11 @@
 // open step, the controls, the saved-notes line and a stopped watch. The run model (src/shared/run-model.mjs) owns the
 // head, status line, bars and member rows. Plus the painter for the run card's step log slot. s3: it owns
 // SLICE_STATE_LABELS and the controls feature-actions.mjs paints.
-import { stepKind } from './step-card.mjs';
+import { stepKind, isRequirementsAsk } from './step-card.mjs';
 import { watchStoppedText } from '../chat/pr-watch-words.mjs';
 import { icon } from '../icons.mjs';
+import { FEATURE_KIND } from '../run-status-card.mjs';
+import { REQUIREMENTS_AGREED } from '../../../src/shared/shape/feature-log.mjs';
 
 export const SLICE_STATE_LABELS = Object.freeze({
   planned: 'Planned', starting: 'Starting', shaping: 'Planning', questions: 'Waiting for your answers', approval: 'Waiting for your plan approval',
@@ -79,6 +81,74 @@ export function featureCardModel({ own = null, card = null, snapOf = () => null 
     log: view.log || [], step, controls: controlsOf(view, cur, m), requirementChecks,
     notesLine: ideas ? `${ideas} ${ideas === 1 ? 'idea' : 'ideas'} saved for the next checkpoint` : null,
     watch: wText ? { text: wText, prUrl: watched.watch.prUrl || null } : null };
+}
+
+/** Shaper small runs B1: the one card's steps. `start` is B2's; B1 draws none (D11). */
+export const ONE_CARD_STEPS = Object.freeze(['start', 'requirements', 'split', 'build', 'done']);
+
+/** A run that ended (run-card.mjs RESULT_STATUS; not imported: run-card imports this module). */
+const ENDED = new Set(['done', 'complete', 'completed', 'failed', 'stopped', 'error', 'aborted']);
+const plural = (n, one) => `${n} ${n === 1 ? one : `${one}s`}`;
+const SPLIT_WORKING = 'The Planner proposes the runs';
+const SPLIT_PROPOSED = 'Runs proposed, one after another · check, then approve';
+/** The state line's detail per state (Screens and states). k and n: runs done and runs; q: the open ask's questions. */
+const ONE_DETAIL = Object.freeze({
+  S1: ({ q }) => `${plural(q, 'decision')}, then you agree the requirements`,
+  S2: () => 'The roles write the requirements',
+  S3: () => 'Agree the requirements, then the Split',
+  S4: () => SPLIT_WORKING,
+  S5: () => 'Check the plan, then the Planner proposes the runs',       // until B4 removes plan approval
+  S6: () => SPLIT_PROPOSED,
+  S7: ({ asking }) => (asking ? SPLIT_PROPOSED : SPLIT_WORKING),
+  S8: ({ k, n }) => `${k} of ${plural(n, 'run')} done`,
+  S9: ({ n }) => `${plural(n, 'run')} done · ship from the feature page`,
+});
+
+/** The open ask's question, when this tab holds it (the pointer-only step of a slice has none). */
+const pqOf = (step) => (step && step.snap && step.snap.pendingQuestion) || null;
+
+/** Which state the card is in: the first rule that matches wins (B1, Implementation steps, Step 3). */
+function oneState(view, step, log) {
+  if (view) {
+    const slices = view.slices || [];
+    if (slices.length && slices.every((s) => s.state === 'done')) return ['S9', 'done'];
+    if (view.status === 'replanning') return ['S7', 'split'];
+    return ['S8', 'build'];
+  }
+  const pq = pqOf(step);
+  const plan = pq && pq.kind === 'plan' ? pq.plan : null;
+  if (plan && plan.outline) return ['S6', 'split'];
+  if (plan && !isRequirementsAsk(pq)) return ['S5', 'split'];
+  if (log.some((l) => l && (l.text === REQUIREMENTS_AGREED || String(l.text || '').startsWith('Plan approved')))) return ['S4', 'split'];
+  if (step) return [isRequirementsAsk(pq) ? 'S3' : 'S1', 'requirements'];
+  return ['S2', 'requirements'];
+}
+
+/**
+ * Shaper small runs B1 (D4): the one card per feature, for a card whose planning run was marked when it started
+ * (`card.smallRuns`, never the live flag). null otherwise, so dev's card draws from featureCardModel unchanged.
+ * @param {{own: object|null, card: object|null, snapOf?: (pipelineId: string) => object|null}} input
+ * @returns {null|{state: string, step: string, detail: string, question: object|null, receipts: object[], runs: boolean,
+ *   kindWord: string, base: object}}
+ */
+export function oneCardModel({ own = null, card = null, snapOf = () => null } = {}) {
+  if (!card || card.smallRuns !== true) return null;
+  // A planning run that ended without a split has no feature page: dev's card, with its result and Ship, or its failure.
+  if (!card.feature && own && ENDED.has(String(own.status || ''))) return null;
+  let base = featureCardModel({ own, card, snapOf });
+  const view = card.feature || null;
+  // D9: while re-planning, the re-plan run's ask is the one question, over any member's.
+  const rp = view && view.status === 'replanning' && view.replan && view.replan.pipelineId ? snapOf(view.replan.pipelineId) : null;
+  if (asks(rp)) base = { ...base, step: stepOf(null, rp) };
+  const question = base.step || null;
+  const [state, step] = oneState(view, question, base.log || []);
+  const pq = pqOf(question);
+  const detail = ONE_DETAIL[state]({
+    k: view ? view.done || 0 : 0, n: view ? view.total || 0 : 0,
+    q: pq && Array.isArray(pq.questions) ? pq.questions.length : 0,
+    asking: !!question && (asks(rp) || (!!view && !!view.ask && view.ask.index == null)),
+  });
+  return { state, step, detail, question, receipts: base.log, runs: !!view, kindWord: FEATURE_KIND, base };
 }
 
 const sigOf = (host, list) => { const sig = JSON.stringify(list); if (host.dataset.sig === sig) return false; host.dataset.sig = sig; return true; };

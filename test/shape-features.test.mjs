@@ -23,7 +23,7 @@ import {
   stackedPrBase, recordShapePlan, listShapePlans, featuresOfTickets, featureClarify, chainFeature, sliceOfPipeline, slicePrPreamble,
   recordShip, clearShip, recordSliceDraft, featureShipSuggestion, featureShipInput, ONE_PR_MAX_LINES,
   liveSliceFrom, shaperCard, featureThread, featureRootSource, sliceOfTicket, busySliceOf, sliceGateState,
-  addFeatureNote, featureNotes, appendFeatureRun, featureBase, liveRoundOf, setFeatureAcceptance,
+  addFeatureNote, featureNotes, appendFeatureRun, featureBase, liveRoundOf, setFeatureAcceptance, chatShipCardOffered,
 } from '../src/core/shape/features.mjs';
 
 useTempHome(after, 'worca-shape-features-');
@@ -1427,4 +1427,70 @@ test('small runs: resume or restart while another slice is going is refused 409 
   assert.equal(resumeFeature(b.id, { live }).status, 409);
   // Flag off: the same paused slice resumes.
   withSmallRuns(false, () => assert.equal(resumeFeature(b.id, { live }).action, 'resume'));
+}));
+
+// ---- Shaper small runs B1: the marker saved on the planning run decides the card, never the live flag -------------------
+const mark = (pid) => getDb().prepare('UPDATE pipelines SET shape_stats = ? WHERE id = ?')
+  .run(JSON.stringify({ questions: { asked: 0, skipped: 0 }, revises: [], shapeScore: null, smallRuns: true }), pid);
+
+test('B1: a marked run keeps the one card with the flag off (smallRuns: true, last), before and after the split', () => withSmallRuns(false, () => {
+  const solo = pipe('running');
+  mark(solo);
+  appendAuditById(solo, 'Requirements approval **approve**.');
+  assert.deepEqual(shaperCard(solo, { shaped: (p) => p === solo }),
+    { pipelineId: solo, feature: null, log: [{ key: 'p-0', run: null, text: 'Requirements agreed', detail: [] }], smallRuns: true });
+  const { id, pid } = mk(2);
+  mark(pid);
+  const c = shaperCard(pid);
+  assert.equal(c.feature.id, id);
+  assert.deepEqual(Object.keys(c), ['pipelineId', 'feature', 'log', 'smallRuns']);
+  assert.equal(c.smallRuns, true);
+}));
+
+test('B1: an unmarked run stays dev\'s with the flag on: shaperCard has no smallRuns key', () => withSmallRuns(true, () => {
+  const solo = pipe('running');
+  appendAuditById(solo, 'Plan approval **approve**.');
+  assert.deepEqual(shaperCard(solo, { shaped: () => true }), { pipelineId: solo, feature: null, log: [{ key: 'p-0', run: null, text: 'Plan approved', detail: [] }] });
+  const { pid } = mk(2);
+  assert.deepEqual(Object.keys(shaperCard(pid)), ['pipelineId', 'feature', 'log']);
+}));
+
+test('B1: a re-plan of a marked feature reads marked (its re-plan run inherits the stamp)', () => withSmallRuns(false, () => {
+  const a = mk(2);
+  mark(a.pid);
+  const pidR = pipe('running');
+  mark(pidR);                                         // the harness stamps a re-plan run of a marked feature (replacesMarked)
+  const b = mk(2, { pipelineId: pidR, replaces: a.id });
+  assert.equal(currentFeatureId(a.id), b.id);
+  assert.equal(shaperCard(a.pid).feature.id, b.id);
+  assert.equal(shaperCard(a.pid).smallRuns, true);
+}));
+
+test('B1: a marked feature with the flag off (Invariant 2, today\'s mixed state): shaperCard has smallRuns, featureView no care key', () => withSmallRuns(false, () => {
+  const { id, pid } = mk(2);
+  mark(pid);
+  assert.equal(shaperCard(pid).smallRuns, true);
+  assert.equal(Object.hasOwn(featureView(id), 'care'), false);
+  assert.deepEqual(Object.keys(featureView(id)), DEV_KEYS.view);
+}));
+
+test('B1: the one card\'s log words the split "Runs approved"; featureView without oneCard keeps dev\'s log', () => withSmallRuns(false, () => {
+  const { id, pid } = mk(2);
+  mark(pid);
+  appendAuditById(pid, 'Requirements approval **approve**.');
+  appendAuditById(pid, 'Plan approval **approve**.');
+  appendAuditById(pid, 'Slice outline **approve** (round 1).');
+  assert.deepEqual(featureView(id).log.map((l) => l.text), ['Plan approved', 'Plan approved', 'Split into 2 runs'], 'the feature page: dev\'s words');
+  assert.deepEqual(featureView(id, { oneCard: true }).log.map((l) => l.text), ['Requirements agreed', 'Plan approved', 'Runs approved']);
+  const c = shaperCard(pid);
+  assert.deepEqual(c.log.map((l) => l.text), ['Requirements agreed', 'Plan approved', 'Runs approved']);
+  assert.equal(c.log, c.feature.log);
+}));
+
+test('B1: chatShipCardOffered is false for a marked feature, true otherwise', () => withSmallRuns(true, () => {
+  const a = mk(2);
+  const b = mk(2);
+  mark(b.pid);
+  assert.equal(chatShipCardOffered(featureView(a.id)), true);
+  assert.equal(chatShipCardOffered(featureView(b.id)), false);
 }));

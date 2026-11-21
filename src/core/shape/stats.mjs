@@ -16,6 +16,8 @@ export function shapeRecordFrom(stored) {
     revises: (Array.isArray(s.revises) ? s.revises : [])
       .filter((r) => r && Number.isInteger(r.round) && BY.has(r.by)).map((r) => ({ round: r.round, by: r.by })),
     shapeScore: Number.isFinite(s.shapeScore) ? s.shapeScore : null,
+    // Shaper small runs B1 (D1): the marker stamped when the planning run started; only `true` is kept, never a flag read.
+    ...(s.smallRuns === true ? { smallRuns: true } : {}),
   };
 }
 
@@ -50,5 +52,6 @@ export function buildShapeStats(record, steps) {
     reviewCycles,
     checklist: null,                          // slice 3 (-3-checklists) fills { met, unmet, na }
     cost: { shaping: round4(shaping), building: round4(building) },
+    ...(record.smallRuns === true ? { smallRuns: true } : {}),
   };
 }

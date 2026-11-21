@@ -28,7 +28,7 @@ import { paintRunStatus, statusText, kindLabel, syncActions, pauseResumeOwn, ren
 import { delegateQuestion } from '../question-delegate.mjs';
 import { paintStatusDot } from '../status-dot.mjs';
 import { levelAtLeast } from '../ui-level.mjs';
-import { featureCardModel, paintFeatureLog } from '../shape/feature-card.mjs';
+import { featureCardModel, oneCardModel, paintFeatureLog } from '../shape/feature-card.mjs';
 import { namedAnswer, forgetAnswer, REQUIREMENTS_AGREED } from '../shape/step-receipt.mjs';
 import { isRequirementsAsk, answerFieldOpen } from '../shape/step-card.mjs';
 import { renderChecklistGroups } from '../shape/checklist-view.mjs';
@@ -315,6 +315,7 @@ export function createChatRunCard({ doc, win = null, snapshot = null, ctx = {}, 
   let shownFor = null;   // the question whose receipt shows the "Answered" fallback (its answer may still be in flight)
   let curRow = null;          // the group row while this card shows a group (D11)
   let createPrBtn = null;     // the result's "Create pull request" button while paintResult shows it (D4: it is `ship`)
+  let oneNow = null;          // B1: the one card model of the last paint (null: dev's card)
   let viewPrLink = null;      // the result's View PR link while paintResult shows it (it is `open-pr` while the PR is open)
   let lastM = null;           // the model update() painted last, for the Pause click's repaint
   let fm = null;              // the feature card model of the last paint (null: a plain run, or Shape it first off)
@@ -609,14 +610,15 @@ export function createChatRunCard({ doc, win = null, snapshot = null, ctx = {}, 
     return box;
   }
 
+  function clearResult() {
+    if (!resultSec.hidden || resultSig) { resultSec.hidden = true; resultSec.replaceChildren(); resultSig = ''; }
+    createPrBtn = null;
+    viewPrLink = null;
+  }
+
   function paintResult(s, m) {
     const word = resultWord(s);
-    if (!word) {
-      if (!resultSec.hidden || resultSig) { resultSec.hidden = true; resultSec.replaceChildren(); resultSig = ''; }
-      createPrBtn = null;
-      viewPrLink = null;
-      return;
-    }
+    if (!word) { clearResult(); return; }
     const r = s.results || null;
     const arts = Array.isArray(s.artifacts) ? s.artifacts : [];
     const prUrl = s.pr && isWebUrl(s.pr.url) ? s.pr.url : '';
@@ -814,13 +816,14 @@ export function createChatRunCard({ doc, win = null, snapshot = null, ctx = {}, 
 
   /** Shaper s5 (D5): the Ask for changes field — a finished single-project run, or a feature that is ready to ship or
    *  shipped and not halted. The server mints the card from the ref (a feature's id, else the run's pipeline id). */
-  function paintChanges(s, m, roundLive) {
+  function paintChanges(s, m, roundLive, one = null) {
     const feature = fm && fm.phase === 'feature' ? fm : null;
     // A feature reads the GROUP model's state; until groupOf knows the row, `m` is the planning run's model (done →
     // ready), so the field waits for curRow.
     const finished = feature ? !!curRow && ['ready', 'in-review', 'merged'].includes(m.state)
       : RESULT_STATUS.has(String((s && s.status) || ''));
-    const show = !!s && !roundLive && finished && s.kind !== 'workspace-run' && typeof ctx.postChanges === 'function'
+    // B1: the field lives in the result block, which the one card never shows (D8, D10).
+    const show = !one && !!s && !roundLive && finished && s.kind !== 'workspace-run' && typeof ctx.postChanges === 'function'
       && (feature ? !(feature.controls && feature.controls.halted) : !!s.pipelineId);
     changesSlot.hidden = !show;
     if (!show) { changesSlot.replaceChildren(); changesView = null; return; }
@@ -905,14 +908,16 @@ export function createChatRunCard({ doc, win = null, snapshot = null, ctx = {}, 
     // The same for View PR while the model offers it (an open PR): one View PR on the card, not a second in the footer.
     if (!curRow && viewPrLink && resultSec.contains(viewPrLink) && levelAtLeast('advanced', doc) && ((m && m.actions) || []).includes('open-pr')) own['open-pr'] = viewPrLink;
     else if (viewPrLink) delete viewPrLink.dataset.modelAction;
-    const changesWhy = changesView && !changesSlot.hidden ? '' : 'Ask for changes from the chat that started this run';
+    const changesWhy = changesView && !changesSlot.hidden ? ''
+      : oneNow ? 'Ask for changes from the feature page' : 'Ask for changes from the chat that started this run';
     // A group row goes along, so app.js hands the action to groupAction (D6, D11).
     // A run on its source branch is never given a PR (the server refuses it): when Push does not own `ship` (not merged
     // back yet, or below Advanced where the result's row is hidden) the footer makes no Create PR either.
+    // B1: the one card ships from the feature page (D8), and its open step card's button is its one primary.
     syncActions(footActions, m, {
       own,
-      skip: s && s.sameAsSource && !own.ship ? ['ship'] : [],
-      plain: answerFieldOpen(qBody) ? ['answer'] : [],
+      skip: oneNow || (s && s.sameAsSource && !own.ship) ? ['ship'] : [],
+      plain: answerFieldOpen(qBody) || (oneNow && painted) ? ['answer'] : [],
       disable: { ...(st === 'pausing' ? { resume: 'Pausing…' } : {}), ...(changesWhy ? { 'ask-changes': changesWhy } : {}) },
       onAction: (aid, b) => (aid === 'ask-changes' ? askForChanges() : call(controls.act, target(), aid, b, m, curRow)),
     });
@@ -922,6 +927,16 @@ export function createChatRunCard({ doc, win = null, snapshot = null, ctx = {}, 
     else { fActions.replaceChildren(); fActions.hidden = true; delete fActions.dataset.sig; }
     // A footer with nothing visible stays hidden (a Ready run whose Create PR is the result's own button).
     foot.hidden = ![...footActions.children, ...fActions.children].some((b) => !b.hidden) && footErr.hidden;
+  }
+
+  /** B1 (D10): the one card's state line — the model's word, dot and current run's bar, with the one card's detail and no
+   *  group bar (its "k done" would say the count again). Before groupOf knows the feature's row, a Build card reads Working. */
+  function oneStatus(m, one) {
+    // No bar at all (owner review): the detail already says "k of n runs done", and an empty bar read as 0%.
+    const o = { ...m, line: one.detail, barLine: one.detail, lineSaysState: false, progress: null };
+    if (m.current) o.current = { ...m.current, progress: null };
+    if (one.state === 'S8' && !curRow) o.word = 'Working';
+    return o;
   }
 
   function update(snap) {
@@ -935,7 +950,11 @@ export function createChatRunCard({ doc, win = null, snapshot = null, ctx = {}, 
     el.dataset.runStatus = status;
     const pid = (s && s.pipelineId) || id.pipelineId || '';
     // Shaper's slots (feature model, rounds).
-    fm = s && s.shaper ? featureCardModel({ own: s, card: s.shaper.card, snapOf: (p) => (s.shaper.snaps && s.shaper.snaps[p]) || null }) : null;
+    const shaperIn = s && s.shaper ? { own: s, card: s.shaper.card, snapOf: (p) => (s.shaper.snaps && s.shaper.snaps[p]) || null } : null;
+    // Shaper small runs B1: a card whose planning run carries the marker is the one card (null: dev's card, unchanged).
+    const one = shaperIn ? oneCardModel(shaperIn) : null;
+    oneNow = one;
+    fm = one ? one.base : shaperIn ? featureCardModel(shaperIn) : null;
     const roundSnap = (p) => (s && s.roundSnaps && s.roundSnaps[p]) || null;
     // s5 (D16): a plain run's rounds (the controller fills s.roundSnaps) fill the log; the live one feeds the model (D6).
     const rm = roundsModel(s);
@@ -950,19 +969,20 @@ export function createChatRunCard({ doc, win = null, snapshot = null, ctx = {}, 
     const m = curRow ? curRow.model : runModel(s ? modelInput(s, status, lr) : { status: 'starting' }, opts);
     lastM = s || curRow ? m : { ...m, actions: [] };
     paintStatusDot(headDot, m);
-    paintRunStatus(statusEl, m);
+    paintRunStatus(statusEl, one ? oneStatus(m, one) : m);
     const labels = flagOn('runLabels', doc) && s && Array.isArray(s.labels) ? s.labels : [];   // the card's own document (jsdom tests)
     const sig = labels.join('\n');
     if (sig !== labelsSig) { labelsSig = sig; labelsEl.replaceChildren(...labels.map((l) => labelChip(doc, l))); }
     title.textContent = curRow ? curRow.title : (s && s.title) || id.title || 'Run';
-    const kindWord = kindOf(curRow, s);
+    const kindWord = one ? one.kindWord : kindOf(curRow, s);
     kind.textContent = kindWord;
     kind.hidden = !kindWord;
+    open.className = one ? 'btn btn-sm btn-quiet chat-rc-open' : 'ask-rc-open';   // B1: the open step's button is the card's one primary
     open.setAttribute('href', curRow ? (curRow.groupKind === 'feature' ? `#feature/${encodeURIComponent(curRow.groupId)}` : `#group/${encodeURIComponent(curRow.groupId)}`) : progressRoute(id, s));
-    if (curRow) {
+    if (curRow && (!one || one.runs)) {
       // A Requirements fold the person opened stays open across the repaint (the rows are rebuilt each paint).
       const opened = [...membersEl.querySelectorAll('.run-member')].filter((li) => li.querySelector('.plan-check-line[aria-expanded="true"]')).map((li) => li.dataset.key);
-      membersEl.replaceChildren(renderMemberRows(doc, curRow, { checks: fm && fm.requirementChecks }));
+      membersEl.replaceChildren(renderMemberRows(doc, curRow, { checks: fm && fm.requirementChecks, oneLine: !!one }));
       for (const li of membersEl.querySelectorAll('.run-member')) if (opened.includes(li.dataset.key)) li.querySelector('.plan-check-line')?.click();
       membersEl.hidden = false;
     } else { membersEl.replaceChildren(); membersEl.hidden = true; }
@@ -994,11 +1014,13 @@ export function createChatRunCard({ doc, win = null, snapshot = null, ctx = {}, 
     paintFeatureLog(doc, logEl, fm ? fm.log : rm.log);
     notesEl.textContent = (fm && fm.notesLine) || '';
     notesEl.hidden = !(fm && fm.notesLine);
-    paintAgents(s);
-    paintGraph(s, chip);
+    if (one) { agentsBox.hidden = true; well.hidden = true; }   // B1: the one card draws no graph and no agents
+    else { paintAgents(s); paintGraph(s, chip); }
     paintQuestion(s);       // draws only when ownIsCurrent(), or the feature's open step
-    paintResult(s, m);      // sets createPrBtn; m: the status line it must not repeat
-    paintChanges(s, m, !!lr);
+    // B1: the log row is the one receipt and the state line the one headline; Ship stays on the feature page (D8).
+    if (one) { receipt.hidden = true; qSec.hidden = !painted; clearResult(); }
+    else paintResult(s, m); // sets createPrBtn; m: the status line it must not repeat
+    paintChanges(s, m, !!lr, one);
     paintWatch(m, (fm && fm.watch) || rm.watch);
     paintFoot(s);           // labels and disabled rules only
     paintActions(lastM, s); // last: the model decides what shows

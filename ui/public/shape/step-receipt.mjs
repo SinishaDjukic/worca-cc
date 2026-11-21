@@ -4,12 +4,12 @@
 // postAnswer BEFORE its POST (question-resolved can land before the 200).
 import { applyOutlineEdits } from '../../../src/shared/shape/slices.mjs';
 import { askKindOf } from '../ask/registry.mjs';
-import { clarifyText, planApprovedText, splitText, gateText, NOT_SPLIT_TEXT } from '../../../src/shared/shape/feature-log.mjs';
+import { clarifyText, planApprovedText, splitText, gateText, NOT_SPLIT_TEXT, REQUIREMENTS_AGREED } from '../../../src/shared/shape/feature-log.mjs';
 import { planApprovedLine } from '../log-line.mjs';
 import { isRequirementsAsk } from './step-card.mjs';
 
-/** The receipt of an agreed Requirements step; the chat run card's fallback says the same. */
-export const REQUIREMENTS_AGREED = 'Requirements agreed';
+/** The receipt of an agreed Requirements step; the chat run card's fallback says the same. One source: feature-log (B1). */
+export { REQUIREMENTS_AGREED };
 
 const NAMED = new Map();          // `${runId}|${questionId}` → { text, answers }
 const NAMED_MAX = 200;

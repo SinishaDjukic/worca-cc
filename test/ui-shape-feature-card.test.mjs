@@ -6,7 +6,7 @@ import assert from 'node:assert/strict';
 import { JSDOM } from 'jsdom';
 import { useDomRelease } from './helpers/jsdom-release.mjs';
 import { readFileSync } from 'node:fs';
-import { featureCardModel, paintFeatureLog } from '../ui/public/shape/feature-card.mjs';
+import { featureCardModel, paintFeatureLog, oneCardModel, ONE_CARD_STEPS } from '../ui/public/shape/feature-card.mjs';
 import { groupModel } from '../src/shared/run-model.mjs';
 import { useTempHome } from './helpers/temp-home.mjs';
 import { seedPipelineRow } from './helpers/db-seed.mjs';
@@ -212,4 +212,86 @@ test('featureCardModel returns requirementChecks keyed by pipeline or ticket', (
   const m = featureCardModel({ own: snap('p1', { status: 'done', terminal: true }), card: card(v) });
   assert.deepEqual(m.requirementChecks, { p1: check, t3: check });
   assert.deepEqual(featureCardModel({ own: snap('p1'), card: card(VIEW([SL(1, 'running', { pipelineId: 'p1' })])) }).requirementChecks, {});
+});
+
+// ── Shaper small runs B1: oneCardModel, the one card per feature (D4, D9, D11; Screens and states S1–S9) ──
+const marked = (feature, log = feature ? feature.log : []) => ({ ...card(feature, log), smallRuns: true });
+const PQ_CL = { id: 'clarify-1', kind: 'clarify', questions: [{ id: 'q1' }, { id: 'q2' }] };
+const PQ_REQ = { id: 'plan-n_reqrefine-1', kind: 'plan', plan: { criteria: { ok: true, passed: 1, total: 1, items: [] } } };
+const PQ_PLAN = { id: 'plan-n_refine-1', kind: 'plan', plan: { file: 'p.md' } };
+const PQ_OUT = { id: 'plan-outline-n_plan-1', kind: 'plan', plan: { outline: { why: 'w', slices: [] } } };
+const L = (text, key = text) => ({ key, run: null, text, detail: [] });
+const CL = L('Clarify · 2 answers', 'clarify');
+const shapingOwn = (pq = null) => snap('p1', { shaping: { rounds: [] }, pendingQuestion: pq });
+const v3 = (states, over = {}) => VIEW(states.map((st, i) => SL(i + 1, st, { pipelineId: st === 'planned' || st === 'canceled' ? null : `p${i + 1}` })), over);
+const REPLAN = (over = {}) => v3(['done', 'canceled', 'canceled'], { status: 'replanning', replan: { ticketId: 't9', pipelineId: 'rp1', runId: 'run-rp1' }, ...over });
+const RP_SNAP = snap('rp1', { pendingQuestion: PQ_OUT });
+/** name → [input, state, step, detail, question id | null] */
+const ONE_CASES = {
+  S1: [{ own: shapingOwn(PQ_CL), card: marked(null, []) }, 'S1', 'requirements', '2 decisions, then you agree the requirements', PQ_CL.id],
+  'S1 (one)': [{ own: shapingOwn({ ...PQ_CL, questions: [{ id: 'q1' }] }), card: marked(null, []) }, 'S1', 'requirements', '1 decision, then you agree the requirements', PQ_CL.id],
+  S2: [{ own: shapingOwn(), card: marked(null, [CL]) }, 'S2', 'requirements', 'The roles write the requirements', null],
+  S3: [{ own: shapingOwn(PQ_REQ), card: marked(null, [CL]) }, 'S3', 'requirements', 'Agree the requirements, then the Split', PQ_REQ.id],
+  'S4 (agreed)': [{ own: shapingOwn(), card: marked(null, [CL, L('Requirements agreed')]) }, 'S4', 'split', 'The Planner proposes the runs', null],
+  'S4 (plan)': [{ own: shapingOwn(), card: marked(null, [CL, L('Plan approved · after 1 round of changes')]) }, 'S4', 'split', 'The Planner proposes the runs', null],
+  S5: [{ own: shapingOwn(PQ_PLAN), card: marked(null, [CL, L('Requirements agreed')]) }, 'S5', 'split', 'Check the plan, then the Planner proposes the runs', PQ_PLAN.id],
+  S6: [{ own: shapingOwn(PQ_OUT), card: marked(null, [CL, L('Requirements agreed'), L('Plan approved')]) }, 'S6', 'split', 'Runs proposed, one after another · check, then approve', PQ_OUT.id],
+  'S7 (asking)': [{ own: snap('p1', { status: 'done', terminal: true }), card: marked(REPLAN()), snapOf: (p) => (p === 'rp1' ? RP_SNAP : null) }, 'S7', 'split',
+    'Runs proposed, one after another · check, then approve', PQ_OUT.id],
+  'S7 (working)': [{ own: snap('p1', { status: 'done', terminal: true }), card: marked(REPLAN()) }, 'S7', 'split', 'The Planner proposes the runs', null],
+  S8: [{ own: snap('p1', { status: 'done', terminal: true }), card: marked(v3(['done', 'running', 'planned'])) }, 'S8', 'build', '1 of 3 runs done', null],
+  S9: [{ own: snap('p1', { status: 'done', terminal: true }), card: marked(v3(['done', 'done', 'done'], { status: 'done', ship: { ready: true, mode: null } })) }, 'S9', 'done',
+    '3 runs done · ship from the feature page', null],
+};
+
+test('B1 oneCardModel: null without smallRuns: true, so every flag-off path stays on featureCardModel', () => {
+  for (const c of [null, card(null, []), card(v3(['done', 'running', 'planned'])), { ...card(null, []), smallRuns: 'true' }]) {
+    assert.equal(oneCardModel({ own: shapingOwn(PQ_CL), card: c }), null);
+  }
+  assert.deepEqual(ONE_CARD_STEPS, ['start', 'requirements', 'split', 'build', 'done']);
+});
+
+test('B1 oneCardModel: null for a marked planning run that ended without a feature (never split), so dev\'s card shows its result or failure', () => {
+  const log = [CL, L('Requirements agreed'), L('Plan approved')];
+  for (const status of ['done', 'completed', 'complete', 'failed', 'stopped', 'error', 'aborted']) {
+    assert.equal(oneCardModel({ own: snap('p1', { status, terminal: true }), card: marked(null, log) }), null, status);
+  }
+  assert.equal(oneCardModel({ own: snap('p1', { status: 'running' }), card: marked(null, log) }).state, 'S4', 'a live planning run stays the one card');
+  assert.equal(oneCardModel({ own: snap('p1', { status: 'done', terminal: true }), card: marked(v3(['done', 'done', 'done'])) }).state, 'S9', 'a split feature keeps S9');
+});
+
+test('B1 oneCardModel: the table\'s state, step and detail for S1–S9; at most one question, the open ask\'s', () => {
+  for (const [name, [input, state, step, detail, qid]] of Object.entries(ONE_CASES)) {
+    const m = oneCardModel(input);
+    assert.deepEqual([m.state, m.step, m.detail], [state, step, detail], name);
+    assert.ok(ONE_CARD_STEPS.includes(m.step), name);
+    assert.equal(m.question ? m.question.id : null, qid, `${name}: the one open ask`);
+    assert.equal(m.kindWord, 'Feature', name);
+    assert.equal(m.runs, !!input.card.feature, name);
+    assert.equal(m.receipts, m.base.log, name);
+    assert.equal(m.base.step, m.question, `${name}: the painted step is the question`);
+    assert.doesNotMatch(m.detail, /prototype/i, name);
+  }
+});
+
+test('B1 oneCardModel picks one question when the planning run and a slice both ask', () => {
+  const own = snap('p1', { pendingQuestion: PQ_PLAN });
+  const two = snap('p2', { pendingQuestion: { id: 'plan-n_refine-2', kind: 'plan', plan: {} } });
+  const v = v3(['approval', 'approval', 'planned']);
+  const m = oneCardModel({ own, card: marked(v), snapOf: (p) => (p === 'p2' ? two : null) });
+  assert.equal(m.state, 'S8');
+  assert.equal(typeof m.question, 'object');
+  assert.equal(m.question.id, PQ_PLAN.id, 'the first asking member, one question');
+});
+
+test('B1 oneCardModel: in S7 the re-plan ask wins over a member\'s ask, in question and base.step', () => {
+  const own = snap('p1', { pendingQuestion: { id: 'gate-1', kind: 'gate' } });
+  const m = oneCardModel({ own, card: marked(REPLAN({ slices: [SL(1, 'running', { pipelineId: 'p1' }), SL(2, 'canceled'), SL(3, 'canceled')] })),
+    snapOf: (p) => (p === 'rp1' ? RP_SNAP : null) });
+  assert.equal(featureCardModel({ own, card: marked(REPLAN({ slices: [SL(1, 'running', { pipelineId: 'p1' }), SL(2, 'canceled'), SL(3, 'canceled')] })),
+    snapOf: (p) => (p === 'rp1' ? RP_SNAP : null) }).step.id, 'gate-1', 'featureCardModel unchanged: the member first');
+  assert.equal(m.state, 'S7');
+  assert.equal(m.question.id, PQ_OUT.id);
+  assert.equal(m.base.step, m.question);
+  assert.equal(m.question.pipelineId, 'rp1');
 });

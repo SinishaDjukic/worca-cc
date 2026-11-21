@@ -49,3 +49,21 @@ test('role reviews: n_roles slice rows are shaping cost, and shaping + building 
   const total = withRoles.reduce((n, s) => n + (s.costUsd || 0), 0);
   assert.equal(cost.shaping + cost.building, total);
 });
+
+test('B1 marker: shapeRecordFrom and buildShapeStats keep smallRuns only when it is true, last, and change no other key', () => {
+  const stored = { questions: { asked: 1, skipped: 0 }, revises: [], shapeScore: null, smallRuns: true };
+  const rec = shapeRecordFrom(stored);
+  assert.deepEqual(rec, { questions: { asked: 1, skipped: 0 }, revises: [], shapeScore: null, smallRuns: true });
+  const out = buildShapeStats(rec, []);
+  assert.equal(out.smallRuns, true);
+  assert.equal(Object.keys(out).at(-1), 'smallRuns');
+  for (const v of [false, 'true', 1, null]) {
+    const r = shapeRecordFrom({ ...stored, smallRuns: v });
+    assert.equal('smallRuns' in r, false, `stored ${JSON.stringify(v)}`);
+    assert.equal('smallRuns' in buildShapeStats(r, []), false);
+  }
+  const { smallRuns, ...rest } = out;
+  assert.deepEqual(rest, buildShapeStats(shapeRecordFrom({ ...stored, smallRuns: undefined }), []), 'no other key moves');
+  // A round trip (a resume reads the stored stats back) keeps the stamp.
+  assert.equal(shapeRecordFrom(JSON.parse(JSON.stringify(out))).smallRuns, true);
+});

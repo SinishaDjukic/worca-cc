@@ -13,7 +13,7 @@ import { projectKey } from '../src/core/store.mjs';
 import { getTicket } from '../src/core/scheduler.mjs';
 import { createSliceFeature, featureView } from '../src/core/shape/features.mjs';
 import { checkSlices } from '../src/shared/shape/slices.mjs';
-import { shaperSmallRunsOn, splitRulesOptions } from '../src/core/shape/small-runs.mjs';
+import { shaperSmallRunsOn, splitRulesOptions, smallRunsAtStart, smallRunsOfPipeline, smallRunsOfFeature } from '../src/core/shape/small-runs.mjs';
 import { resolveShapeRequest } from '../src/core/shape/run.mjs';
 
 useTempHome(after, 'worca-shape-small-runs-');
@@ -155,3 +155,39 @@ test('normalizeSliceRef: a 15-run ticket stored with the flag on still resumes w
   assert.equal(off.shape.slice.outline.slices.length, 15);
 });
 
+
+// ── B1: the small-runs marker on the planning run (pipelines.shape_stats.smallRuns) ──
+const setStats = (pid, v) => getDb().prepare('UPDATE pipelines SET shape_stats = ? WHERE id = ?').run(v, pid);
+
+test('B1 smallRunsAtStart: true with the flag on, true with replacesMarked, false otherwise', () => {
+  const on = { flagEnabled: () => true };
+  const off = { flagEnabled: () => false };
+  assert.equal(smallRunsAtStart({ deps: on }), true);
+  assert.equal(smallRunsAtStart({ replacesMarked: true, deps: off }), true);
+  assert.equal(smallRunsAtStart({ deps: off }), false);
+  assert.equal(smallRunsAtStart({ replacesMarked: 'yes', deps: off }), false);
+});
+
+test('B1 smallRunsOfPipeline / smallRunsOfFeature: a null or empty id answers false before any DB access', () => {
+  const getDb = () => { throw new Error('no DB access'); };
+  for (const id of [null, undefined, '']) {
+    assert.equal(smallRunsOfPipeline(id, { getDb }), false);
+    assert.equal(smallRunsOfFeature(id, { getDb }), false);
+  }
+});
+
+test('B1 smallRunsOfPipeline / smallRunsOfFeature: the origin run\'s stamp; unknown rows and bad JSON read false', () => {
+  const f = mk(2);
+  assert.equal(smallRunsOfPipeline(f.pid), false, 'no stats');
+  assert.equal(smallRunsOfFeature(f.id), false);
+  setStats(f.pid, JSON.stringify({ questions: { asked: 0, skipped: 0 }, smallRuns: true }));
+  assert.equal(smallRunsOfPipeline(f.pid), true);
+  assert.equal(smallRunsOfFeature(f.id), true);
+  setStats(f.pid, '{not json');
+  assert.equal(smallRunsOfPipeline(f.pid), false);
+  assert.equal(smallRunsOfFeature(f.id), false);
+  setStats(f.pid, JSON.stringify({ smallRuns: 'true' }));
+  assert.equal(smallRunsOfPipeline(f.pid), false);
+  assert.equal(smallRunsOfPipeline('p-unknown'), false);
+  assert.equal(smallRunsOfFeature('feat-unknown'), false);
+});

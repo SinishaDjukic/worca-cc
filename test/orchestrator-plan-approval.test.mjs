@@ -14,6 +14,9 @@ import { GRAPH_SHAPE_WORKFLOW } from '../src/core/graph/builtin-workflows.mjs';
 import { readPipelineForResume, readPipelineExtras } from '../src/core/artifacts.mjs';
 import { hasBlocking } from '../src/shared/graph/verdict.mjs';
 import { getDb } from '../src/core/db.mjs';
+import { createSliceFeature } from '../src/core/shape/features.mjs';
+import { resolveShapeRequest } from '../src/core/shape/run.mjs';
+import { MOCK_OUTLINE } from '../src/core/engines/mock.mjs';
 
 useTempHome(after);
 
@@ -340,4 +343,124 @@ test('the unshaped copy of wf_shape stores no checklist and results.json has non
   for (const r of rows) assert.equal(Object.hasOwn(r, 'checklist'), false);
   const results = JSON.parse(await readFile(join(h.orch.pipeline.dir, 'results.json'), 'utf8'));
   assert.equal(Object.hasOwn(results, 'checklist'), false);
+});
+
+// ── Shaper small runs B1: the marker stamped on the planning run when it starts (D1), and the requirements line (D6) ──
+/** Runs `fn` with WORCA_FLAGS set to `shaperSmallRuns` (on) or unset (off), restoring it afterwards. */
+async function withSmallRuns(on, fn) {
+  const prev = process.env.WORCA_FLAGS;
+  if (on) process.env.WORCA_FLAGS = 'shaperSmallRuns'; else delete process.env.WORCA_FLAGS;
+  try { return await fn(); } finally { if (prev === undefined) delete process.env.WORCA_FLAGS; else process.env.WORCA_FLAGS = prev; }
+}
+const setFlag = (on) => { if (on) process.env.WORCA_FLAGS = 'shaperSmallRuns'; else delete process.env.WORCA_FLAGS; };
+const statsOf = (pid) => JSON.parse(getDb().prepare('SELECT shape_stats FROM pipelines WHERE id = ?').get(pid)?.shape_stats || 'null');
+const approveAll = (q, orch) => orch.answer(q.id, { decision: 'approve' });
+const auditOf = (pid) => getDb().prepare('SELECT text FROM pipeline_events WHERE pipeline_id = ? ORDER BY id').all(pid).map((r) => r.text);
+/** A finished shaped run, stamped or not, and a feature whose origin it is. */
+async function featureFrom(on) {
+  const dir = gitDir(`b1-origin-${on ? 'on' : 'off'}`);
+  const h = await withSmallRuns(on, async () => { const x = start({ projectDir: dir }, approveAll); await x.done; return x; });
+  const pid = h.orch.getState().id;
+  const f = createSliceFeature({ pipelineId: pid, projectDir: dir, title: 'T', outline: MOCK_OUTLINE, perspectives: SHAPE.perspectives, workflowId: 'wf_shape' });
+  return { pid, f, dir };
+}
+
+test('B1 stamp: a shaped run started with the flag on records smallRuns: true; with it off, no key', async () => {
+  for (const on of [true, false]) {
+    const h = await withSmallRuns(on, async () => { const x = start({ projectDir: gitDir(`b1-stamp-${on}`) }, approveAll); assert.equal((await x.done).status, 'done'); return x; });
+    const stats = statsOf(h.orch.getState().id);
+    if (on) assert.equal(stats.smallRuns, true, 'stamped');
+    else assert.equal(Object.hasOwn(stats, 'smallRuns'), false, 'no key with the flag off');
+  }
+});
+
+test('B1 stamp: a re-plan run of a marked feature is stamped with the flag off; of an unmarked one it is not', async () => {
+  for (const marked of [true, false]) {
+    const { f } = await featureFrom(marked);
+    const h = await withSmallRuns(false, async () => {
+      const x = start({ projectDir: gitDir(`b1-replan-${marked}`), shape: { ...SHAPE, replaces: f.id } }, approveAll); await x.done; return x;
+    });
+    assert.equal(statsOf(h.orch.getState().id).smallRuns === true, marked);
+  }
+});
+
+test('B1 stamp: a re-plan run of an unmarked feature started with the flag ON is not stamped (it inherits only)', async () => {
+  const { f } = await featureFrom(false);
+  const h = await withSmallRuns(true, async () => {
+    const x = start({ projectDir: gitDir('b1-replan-unmarked-on'), shape: { ...SHAPE, replaces: f.id } }, approveAll); await x.done; return x;
+  });
+  assert.equal(Object.hasOwn(statsOf(h.orch.getState().id), 'smallRuns'), false);
+});
+
+test('B1 stamp: a slice run is never stamped, even with the flag on', async () => {
+  const { f, dir } = await featureFrom(true);
+  const shape = { ...SHAPE, slices: 'off', slice: { feature: f.id, index: 2, total: 2, outline: MOCK_OUTLINE } };
+  const h = await withSmallRuns(true, async () => { const x = start({ projectDir: dir, prompt: 'demo', shape }, approveAll); await x.done; return x; });
+  assert.equal(Object.hasOwn(statsOf(h.orch.getState().id), 'smallRuns'), false);
+});
+
+test('B1 stamp: a resume after the flag flips keeps the stamp it started with, and never gains one', async () => {
+  for (const on of [true, false]) {
+    const dir = gitDir(`b1-resume-${on}`);
+    const prev = process.env.WORCA_FLAGS;
+    try {
+      setFlag(on);
+      const h = start({ projectDir: dir });
+      await waitFor(() => h.plans.length === 1);
+      h.orch.pause();
+      assert.equal((await h.done).status, 'paused');
+      setFlag(!on);
+      const saved = readPipelineForResume(h.orch.getState().id);
+      const h2 = start({ projectDir: dir, resume: saved, shape: undefined }, approveAll);
+      assert.equal((await h2.done).status, 'done');
+      assert.equal(statsOf(h2.orch.getState().id).smallRuns === true, on, `started with the flag ${on ? 'on' : 'off'}`);
+    } finally { if (prev === undefined) delete process.env.WORCA_FLAGS; else process.env.WORCA_FLAGS = prev; }
+  }
+});
+
+test('B1 audit: a real requirements ask answered via answer() writes "Requirements approval **approve**" only on a marked run', async () => {
+  const lines = {};
+  for (const on of [true, false]) {
+    const req = resolveShapeRequest({ shape: { size: 'large', lead: 'security' } }, {});
+    assert.equal(req.ok, true, req.error);
+    const asks = [];
+    const res = await withSmallRuns(on, async () => {
+      const orch = createOrchestrator({ projectDir: gitDir(`b1-req-${on}`), workflowId: req.workflowId, prompt: 'demo', claude: { mock: true }, shape: req.shape });
+      orch.on('question', (q) => {
+        asks.push(q);
+        if (q.kind === 'plan') setImmediate(() => orch.answer(q.id, { decision: 'approve' }));
+        else if (q.kind === 'clarify' || q.kind === 'questions') setImmediate(() => orch.answer(q.id, { answers: [] }));
+      });
+      const r = await orch.run();
+      return { r, pid: orch.getState().id };
+    });
+    assert.equal(res.r.status, 'done', res.r.error);
+    assert.ok(asks.some((q) => q.kind === 'plan' && (q.plan?.criteria || q.plan?.error)), 'a real requirements ask was raised');
+    lines[on] = auditOf(res.pid);
+  }
+  const count = (texts, head) => texts.filter((t) => t.startsWith(head)).length;
+  assert.equal(count(lines.true, 'Requirements approval **approve**'), 1, 'marked: the requirements line');
+  assert.equal(count(lines.false, 'Requirements approval'), 0, 'unmarked: dev\'s lines');
+  assert.equal(count(lines.false, 'Plan approval **approve**'), count(lines.true, 'Plan approval **approve**') + 1,
+    'the requirements approval is the one line that changed');
+});
+
+test('B1 audit: an outline ask\'s line is unchanged with the marker', async () => {
+  const lines = {};
+  for (const on of [true, false]) {
+    const res = await withSmallRuns(on, async () => {
+      const orch = createOrchestrator({ projectDir: gitDir(`b1-outline-${on}`), workflowId: 'wf_shape', prompt: 'Plan this in slices: demo', claude: { mock: true }, shape: SHAPE });
+      orch.on('question', (q) => {
+        if (q.kind === 'plan' && q.plan?.outline) setImmediate(() => orch.answer(q.id, { decision: 'stop' }));
+        else if (q.kind === 'plan') setImmediate(() => orch.answer(q.id, { decision: 'approve' }));
+        else if (q.kind === 'clarify' || q.kind === 'questions') setImmediate(() => orch.answer(q.id, { answers: [] }));
+      });
+      const r = await orch.run();
+      return { r, pid: orch.getState().id };
+    });
+    assert.equal(statsOf(res.pid).smallRuns === true, on);
+    lines[on] = auditOf(res.pid).filter((t) => t.startsWith('Slice outline'));
+  }
+  assert.deepEqual(lines.true, ['Slice outline **stop** (round 1).']);
+  assert.deepEqual(lines.true, lines.false);
 });
