@@ -1,6 +1,6 @@
 // src/core/workflow-tests/criteria-routes.mjs — HTTP for Part 4 (plans/workflow-tests-part4-plan.md). Every route is behind the
 // workflowTests flag (D107). Registered by ui/routes/workflows/workflow-tests.mjs after Part 2's routes.
-import { requireFlag } from '../flags.mjs';
+import { requireFlag, flagEnabled } from '../flags.mjs';
 import { actorOf } from '../identity.mjs';
 import * as store from './store.mjs';
 import * as cs from './criteria-store.mjs';
@@ -63,6 +63,12 @@ export function registerCriteriaRoutes(app, { runner = null, criteriaJudge = nul
     if (!ex) throw store.testError(`no example ${req.params.ex}`, 'NOT_FOUND');
     return ex;
   };
+  /** Final review M5: a write here sends the workflow's changed frame, as Part 2's runner does (D33: silent while the flag is off;
+   *  `testRunId` when the write belongs to one test's try, never `runId`), so the list, the trust report and that test's pages repaint. */
+  const changed = (workflowId, testRunId = null) => {
+    if (!flagEnabled('workflowTests')) return;
+    try { (deps.broadcast || (() => {}))({ type: 'workflow-tests-changed', workflowId, ...(testRunId != null ? { testRunId } : {}) }); } catch { /* a frame only */ }
+  };
 
   // D96: Agree / Disagree (and Right / Wrong) on one verdict; null takes it back.
   route('POST', `${W}/judgements/:j/answer`, async (req, res) => {
@@ -77,6 +83,8 @@ export function registerCriteriaRoutes(app, { runner = null, criteriaJudge = nul
     } else {
       cs.setAnswer(j.id, { agree, by: by(req) });
     }
+    const t = j.tryId != null ? store.readTry(j.tryId) : null;
+    changed(j.workflowId, t ? t.runId : null);
     res.json({ answer: cs.answerOf(j.id, by(req)), trust: j.purpose === 'pair' ? null : trustFor(j.workflowId, j.fp, j.model) });
   });
   // D87, D105: the Claude models that can check criteria, and the suggested one.
@@ -128,15 +136,17 @@ export function registerCriteriaRoutes(app, { runner = null, criteriaJudge = nul
       }
       await likedFromPipeline(ex, row.id, { at: row.started_at });
     }
+    changed(wid(req));
     res.json({ example: store.readExample(wid(req), ex.id) });
   });
   route('DELETE', `${W}/examples/:ex/liked`, async (req, res) => {
     const ex = exampleOf(req);
     cs.deleteLiked(ex.id);
+    changed(wid(req));
     res.json({ example: store.readExample(wid(req), ex.id) });
   });
   // D97: Check the checker. The spending limit is refused up front inside checker.start (not for a mock round, which pays nothing).
-  const checker = deps.checker || createChecker({ budgetStatus: deps.budgetStatus || realBudgetStatus });
+  const checker = deps.checker || createChecker({ budgetStatus: deps.budgetStatus || realBudgetStatus, changed: (r) => changed(r.workflowId) });
   const roundOf = (req, ex) => {
     const r = cs.readRound(num(req.params.round, 'round'));
     if (!r || r.workflowId !== wid(req) || r.exampleId !== ex.id) throw store.testError(`no round ${req.params.round}`, 'NOT_FOUND');
@@ -152,7 +162,9 @@ export function registerCriteriaRoutes(app, { runner = null, criteriaJudge = nul
     const ex = exampleOf(req);
     const b = req.body || {};
     if (typeof b.right !== 'boolean') throw store.testError('right must be true or false', 'BAD_REQUEST');
-    res.json(await checker.answer(roundOf(req, ex), num(b.judgementId, 'card'), b.right, { by: by(req) }));
+    const out = await checker.answer(roundOf(req, ex), num(b.judgementId, 'card'), b.right, { by: by(req) });
+    changed(wid(req));   // the last answer makes the round done
+    res.json(out);
   });
   route('POST', `${W}/examples/:ex/checker/:round/reword`, async (req, res) => {
     const ex = exampleOf(req);

@@ -39,6 +39,7 @@ export async function goodResultOf(example, { subjectOf = (t) => subjectOfTry(t)
   return null;
 }
 
+/** `deps.changed(round)`: called when a round's making ends, ready or failed (the routes send the changed frame). */
 export function createChecker(deps = {}) {
   const d = { judgeCriterion: realJudge, modelCall: realModelCall, mock: () => mockEnabled({}), book: recordTestJudgeCost, budgetStatus: realBudgetStatus,
     subjectOf: (t) => subjectOfTry(t), contextOf: (ex) => exampleSourcesText(ex), inline: false, ...deps };
@@ -108,7 +109,10 @@ export function createChecker(deps = {}) {
         console.warn(`[workflow-tests] check-the-checker round ${round.id} failed: ${firstLine(e)}`);
         try { cs.updateRound(round.id, { status: 'failed', detail: ROUND_NOT_FINISHED_TEXT }); } catch { /* the round stays making until the next boot */ }
       })
-      .finally(() => making.delete(key));
+      .finally(() => {
+        making.delete(key);
+        try { if (d.changed) d.changed(round); } catch { /* a frame only */ }   // final review M5: the round ended (ready or failed)
+      });
     if (d.inline) await job;
     return cs.readRound(round.id);
   }
