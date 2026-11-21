@@ -50,13 +50,17 @@ export function createChecker(deps = {}) {
     const mock = d.mock() || good.mock === true;   // D91, I14: a mock try's text is only ever checked by the mock
     let plants = null;
     if (!mock) {
+      let r = null;
       try {
         const tag = fenceTag();
-        const r = await d.modelCall({ model: round.model, system: plantSystemPrompt(tag),
+        r = await d.modelCall({ model: round.model, system: plantSystemPrompt(tag),
           prompt: plantPrompt({ criterion: criterion.text, result: clipText(good.text, SUBJECT_MAX).text, tag }) });
+      } catch (e) { if (Number(e && e.costUsd) > 0 || (e && e.costKind === 'unknown')) book(Number(e.costUsd) || 0, e.costKind || 'billed'); }
+      // Outside the try (final review M1): a booking that fails after a paid call surfaces and fails the round, never goes unnoticed.
+      if (r) {
         if (r.costUsd > 0 || r.costKind === 'unknown') book(r.costUsd, r.costKind);   // P4-Q17: an unknown cost books a $0 row
         plants = applyPlants(good.text, parsePlantReply(r.text));
-      } catch (e) { if (Number(e && e.costUsd) > 0 || (e && e.costKind === 'unknown')) book(Number(e.costUsd) || 0, e.costKind || 'billed'); }
+      }
     }
     plants = (plants || deterministicPlants(good.text)).slice(0, 3);
     const real = { how: null, excerpt: clip(good.text.split(/\n{2,}/).find((p) => p.trim() && !/^#/.test(p.trim())) || good.text), text: good.text };

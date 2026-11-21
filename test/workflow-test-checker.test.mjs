@@ -101,6 +101,14 @@ test('every paid call of a round books a checker row: the planting call, the rea
   const u = setup({ extra: { modelCall: async () => ({ text: '{}', costUsd: 0, costKind: 'unknown' }) } });
   const r2 = await u.checker.start({ workflowId: 'wf', exampleId: u.ex.id, criterionId: u.ex.criteria[0].id });
   assert.equal(prepare("SELECT COUNT(*) AS n FROM wf_test_judge_ledger WHERE round_id = ? AND cost_kind = 'unknown'").get(r2.id).n, 1);
+  // Final review M1: a booking of the planting call that fails surfaces: the round fails and asks nothing more (as every other call site).
+  let booked = 0;
+  const lost = setup({ extra: { book: () => { booked += 1; if (booked === 1) throw new Error('ledger down'); } } });
+  const warn = console.warn; console.warn = () => {};
+  try {
+    const r3 = await lost.checker.start({ workflowId: 'wf', exampleId: lost.ex.id, criterionId: lost.ex.criteria[0].id });
+    assert.deepEqual([cs.readRound(r3.id).status, lost.calls(), booked], ['failed', 1, 1], 'no check was asked after the lost booking');
+  } finally { console.warn = warn; }
 });
 
 test('the spending limit already reached: a paid round is refused up front and nothing is sent; a mock round is not', async () => {
