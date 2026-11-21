@@ -47,6 +47,11 @@ test('every paid pair call books its spend (one book call per ask, an unknown co
   const b2 = [];
   await judgePair({ a: 'A', b: 'B', model: 'm', book: (u, k) => b2.push([u, k]) }, unk);
   assert.deepEqual(b2, [[0, 'unknown'], [0, 'unknown']]);
+  // Final review M2: a failed ask whose cost is unknown books a $0 'unknown' row too.
+  const failed = { ...f.d, helperCall: async () => { throw Object.assign(new Error('no reply'), { costUsd: 0, costKind: 'unknown' }); } };
+  const b3 = [];
+  const r = await judgePair({ a: 'A', b: 'B', model: 'm', book: (u, k) => b3.push([u, k]) }, failed);
+  assert.deepEqual([r.error, b3], ['failed', [[0, 'unknown']]]);
 });
 
 test('a result cannot close its own fence: each call has one random tag, named in the system prompt, and closers are made harmless', async () => {

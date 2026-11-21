@@ -67,7 +67,7 @@ export async function judgeCriterion({ criterion, subject, context = '', model, 
     } catch (e) {
       const spent = Number(e && e.costUsd) || 0;
       cost += spent;
-      if (spent > 0) book(spent, (e && e.costKind) || 'billed');
+      if (spent > 0 || (e && e.costKind === 'unknown')) book(spent, (e && e.costKind) || 'billed');
       return done({ error: 'failed', detail: firstLine(e) });
     }
     cost += r.costUsd;
@@ -101,7 +101,7 @@ export async function judgePair({ a, b, liked = null, context = '', model, mock 
     } catch (e) {
       const s = Number(e && e.costUsd) || 0;
       cost += s;
-      if (s > 0) book(s, (e && e.costKind) || 'billed');
+      if (s > 0 || (e && e.costKind === 'unknown')) book(s, (e && e.costKind) || 'billed');
       return { error: 'failed', detail: firstLine(e) };
     }
     // Outside the try, as in judgeCriterion: a booking that fails after a paid call surfaces, never becomes a 'failed' pair asked (and paid) again.

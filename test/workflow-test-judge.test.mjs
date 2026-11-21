@@ -120,6 +120,11 @@ test('judgeCriterion: met with proof, booked once', async () => {
   const seen = [];
   await judgeCriterion({ criterion: 'Names a success metric with a number', subject: RESULT, model: 'm', book: (u, k) => seen.push([u, k]) }, unknown);
   assert.deepEqual(seen, [[0, 'unknown']]);
+  // Final review M2: a failed call whose cost is unknown books a $0 'unknown' row too.
+  const failed = { ...f.d, helperCall: async () => { throw Object.assign(new Error('no reply'), { costUsd: 0, costKind: 'unknown' }); } };
+  const seen2 = [];
+  const jf = await judgeCriterion({ criterion: 'Names a success metric with a number', subject: RESULT, model: 'm', book: (u, k) => seen2.push([u, k]) }, failed);
+  assert.deepEqual([jf.error, seen2], ['failed', [[0, 'unknown']]]);
 });
 
 test('judgeCriterion: an unreadable reply and a missing proof are asked once more; then not counted', async () => {
