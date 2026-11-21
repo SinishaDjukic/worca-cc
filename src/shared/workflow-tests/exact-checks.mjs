@@ -30,15 +30,43 @@ export function proofFound(proof, text) {
 
 const straight = (s) => String(s ?? '').normalize('NFKC').replace(/\r\n?/g, '\n').replace(/[“”„‟«»]/g, '"');
 const words = (s) => s.split(/\s+/).filter((w) => /[\p{L}\p{N}]/u.test(w)).length;
+const spaces = (m) => m.replace(/[^\n]/g, ' ');
 
-/** Text in double quotation marks of at least four words (shorter ones are names and terms). A quote never spans a blank line. */
-export function quotesIn(text, { minWords = 4 } = {}) {
-  const t = straight(text).slice(0, MAX_SCAN);
+/** Fix round 4: code (fenced blocks and inline backticks) blanked, line breaks and positions kept. An unclosed fence runs to the end. */
+function blankCode(t) {
+  let fence = null;
+  const lines = t.split('\n').map((line) => {
+    const f = /^ {0,3}(`{3,}|~{3,})/.exec(line);
+    if (fence) {
+      if (f && f[1][0] === fence[0] && f[1].length >= fence.length && !line.slice(f[0].length).trim()) fence = null;
+      return spaces(line);
+    }
+    if (f) { fence = f[1]; return spaces(line); }
+    return line;
+  });
+  return lines.join('\n').replace(/``[^`\n]+``|`[^`\n]+`/g, spaces);
+}
+
+/** Fix round 4: a quote counts from this many words; shorter quoted text (a button's label, "Jan 1 to Jan 31") is not checked. */
+export const QUOTE_MIN_WORDS = 5;
+const tableLine = (t, at) => { const start = t.lastIndexOf('\n', at - 1) + 1; return /^\s*\|/.test(t.slice(start, start + 200)); };
+
+/** Text in double quotation marks of at least QUOTE_MIN_WORDS words. A quote never spans a blank line, a table row or a cell border
+ *  ("|" on a table line); a " right after a digit is an inch or second mark (8.5" × 11"), never a quote mark; code is not prose. */
+export function quotesIn(text, { minWords = QUOTE_MIN_WORDS } = {}) {
+  const t = blankCode(straight(text).slice(0, MAX_SCAN));
   const out = [];
   let open = -1;
+  let table = tableLine(t, 0);
   for (let i = 0; i < t.length; i += 1) {
-    if (t[i] === '\n' && t[i + 1] === '\n') { open = -1; continue; }
-    if (t[i] !== '"') continue;
+    const ch = t[i];
+    if (ch === '\n') {
+      if (t[i + 1] === '\n' || table) open = -1;
+      table = tableLine(t, i + 1);
+      continue;
+    }
+    if (ch === '|' && table) { open = -1; continue; }
+    if (ch !== '"' || /\d/.test(t[i - 1] || '')) continue;
     if (open < 0) { open = i; continue; }
     const q = t.slice(open + 1, i).trim();
     open = -1;
@@ -66,14 +94,44 @@ const blankDates = (s) => s.replace(DATE_RE, (m) => ' '.repeat(m.length));
 const HEAD_NUM_RE = /^(\s*#{1,6}\s+)\d+(?:\.\d+)+\.?(?=\s)/;   // "## 1.1 Scope": a section number; "## 140 tickets" stays a number
 const TIME_RE = /\b\d{1,2}:\d{2}(?::\d{2})?\b/g;   // 14:00, 12:30:45
 const LIST_MARK_RE = /^(\s*(?:#{1,6}\s+)?(?:[-*+]\s+)?)\d{1,3}[.)](?=\s)/;
+/** Fix round 4: the number right after a standard's name ("ISO 8601", "RFC 4180", "UTF-8") names the standard, not a quantity. */
+export const STANDARD_NAMES = Object.freeze(['ISO', 'RFC', 'IEEE', 'UTF', 'SHA', 'EN', 'DIN']);
+const STANDARD_RE = new RegExp(`(?<![\\p{L}\\p{N}])(?:${STANDARD_NAMES.join('|')})[ \\u00a0-]?(\\d+(?:[-:.]\\d+)*)`, 'gu');
+const URL_RE = /\b(?:https?:\/\/|www\.)[^\s<>"'`]+/gi;
+const CHAIN_RE = /[\p{L}\p{N}]+(?:[-_.][\p{L}\p{N}]+)*/gu;
+/** A word that mixes letters and digits as an id or hash does (v2, 4ea5, 0862ea97, a 6+ character hex string); a number with its unit
+ *  (10pt, 300ms, 10x) is not one, so its number stays checked. */
+const idWord = (w) => /\p{L}/u.test(w) && /\d/.test(w) && (!/^\d+\p{L}+$/u.test(w) || (w.length >= 6 && /^[0-9a-f]+$/i.test(w)));
+/** A file path: a backslash with letters, a start like C:\ ./ ../ ~/ /, two or more slashes with letters, or a slash and a file extension. */
+const pathToken = (w) => {
+  let a = 0;
+  let b = w.length;   // the marks around it trimmed by hand: a regex anchored at the end could backtrack on a long token
+  while (a < b && '([<"\'*_'.includes(w[a])) a += 1;
+  while (b > a && ')]>"\'*_,;:!?.'.includes(w[b - 1])) b -= 1;
+  const x = w.slice(a, b);
+  if (!/\p{L}/u.test(x)) return false;
+  const slashes = (x.match(/\//g) || []).length;
+  return x.includes('\\') || /^(?:[A-Za-z]:[\\/]|~?\/|\.{1,2}\/)/.test(x) || slashes >= 2 || (slashes === 1 && /\.[A-Za-z][A-Za-z0-9]{0,5}$/.test(x));
+};
+/** Fix round 4: what in a result holds digits that are not numbers of the result, blanked (positions kept): code, links, file paths,
+ *  ids and hashes (a chain such as 8b6bd033-5853-4ea5 when any of its words is one), and a standard's number. */
+function blankNotNumbers(t) {
+  return blankCode(t).replace(URL_RE, spaces)
+    .replace(/\S+/g, (w) => (pathToken(w) ? spaces(w) : w))
+    .replace(CHAIN_RE, (w) => (/\d/.test(w) && w.split(/[-_.]/).some(idWord) ? spaces(w) : w))
+    .replace(STANDARD_RE, (m, n) => `${m.slice(0, m.length - n.length)}${spaces(n)}`);
+}
+
 /** The numbers of a text: "1,200" → 1200, "3.50" → 3.5, "60 %" → 60. A list marker or numbered heading ("1.", "## 2)") and a
- *  single digit without a per cent sign are skipped. `shown` is the number as written. */
-export function numbersIn(text, { cap = true } = {}) {
+ *  single digit without a per cent sign are skipped. `shown` is the number as written. `ofResult` (fix round 4): a result's text also
+ *  skips the digits of code, links, paths, ids and standards' names (blankNotNumbers); the sources keep every number they have. */
+export function numbersIn(text, { cap = true, ofResult = cap } = {}) {
   const out = [];
-  const all = String(text ?? '').normalize('NFKC');
+  const all = String(text ?? '').normalize('NFKC').replace(/\r\n?/g, '\n');
   const blankTo = (m, lead) => `${lead}${' '.repeat(m.length - lead.length)}`;
   // The result side is capped (MAX_SCAN); the sources side is not, so a number past 2 MB is still found (a linear scan, no backtracking).
-  for (const raw of (cap ? all.slice(0, MAX_SCAN) : all).split(/\r?\n/)) {
+  const scan = cap ? all.slice(0, MAX_SCAN) : all;
+  for (const raw of (ofResult ? blankNotNumbers(scan) : scan).split('\n')) {
     const line = blankDates(raw.replace(HEAD_NUM_RE, blankTo).replace(TIME_RE, (m) => ' '.repeat(m.length)).replace(LIST_MARK_RE, blankTo));
     for (const m of line.matchAll(NUM_RE)) {
       const whole = m[1].replace(/[,  ]/g, '');
@@ -88,7 +146,7 @@ export function numbersIn(text, { cap = true } = {}) {
 export function numbersCheck(text, sources) {
   const nums = numbersIn(text);
   if (!nums.length) return { met: true, value: 'No numbers' };
-  const have = new Set(numbersIn(sources, { cap: false }).map((x) => x.n));
+  const have = new Set(numbersIn(sources, { cap: false, ofResult: false }).map((x) => x.n));
   const bad = [...new Set(nums.filter((x) => !have.has(x.n)).map((x) => x.shown))];
   return bad.length ? { met: false, value: `Not in the files: ${bad.slice(0, 3).join(', ')}${more(bad.length - 3)}` } : { met: true, value: 'Met' };
 }

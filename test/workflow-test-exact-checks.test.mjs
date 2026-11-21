@@ -8,7 +8,7 @@ import { exampleSourcesText } from '../src/core/workflow-tests/sources-text.mjs'
 
 const FILES = 'Interview 3: “I export every month and it stops at 200 invoices, which is a pain.” Tickets: 140 a month, up 60 %.';
 
-test('quotes: four words or more, found across spacing, quote marks, case and an ellipsis', () => {
+test('quotes: five words or more, found across spacing, quote marks, case and an ellipsis', () => {
   assert.deepEqual(quotesIn('She said "yes" and “I export every month and it stops” — fine.'), ['I export every month and it stops']);
   assert.deepEqual(quotesCheck('A customer: "i export  every month ... at 200 invoices".', FILES), { met: true, value: 'Met' });
   assert.deepEqual(quotesCheck('Nobody quoted.', FILES), { met: true, value: 'No quotes' });
@@ -128,4 +128,77 @@ test('fix round 1: two phone numbers separated by a space are both found', () =>
   assert.equal(personalData('Tel 030 1234567 030 7654321').phones, 2);
   assert.equal(personalData('Tel 030 1234567').phones, 1);
   assert.equal(personalData('Call +49 30 1234567 or +49 30 7654321').phones, 2);
+});
+
+// Fix round 4 (the paid check on a real product brief): the cases below are excerpts of that result and of its notes.
+const BRIEF_FILES = ['Write a one-page product brief for adding a bulk invoice export (CSV) to our billing app.',
+  '- In Q3, 38% of all support tickets were requests to export invoices.',
+  '- Dana, the finance lead at a customer, said: "I spend two hours every month copying invoices into a spreadsheet."',
+  '- Target: 500 customers use the export within 90 days of launch.',
+  '- The export must be CSV, following RFC 4180: https://www.rfc-editor.org/rfc/rfc4180',
+  '- Invoices must be kept for 10 years under German tax law (GoBD), so customers need a complete, unchanged copy.'].join('\n');
+
+test('fix round 4: a " right after a digit is an inch or second mark, never a quote mark', async () => {
+  const brief = ['- **Check**: ',
+    '  - Total rendered length ≤ 1 page (8.5" × 11" or A4, 1" margins, 10–12pt font)',
+    '',
+    '| Test name | Location / type | Red-first expectation | Passes when |',
+    '|-----------|-----------------|----------------------|-------------|',
+    '| **Page length** | Rendered PDF or print preview | Brief renders to 2+ pages (too long) | Brief fits entirely on 1 page at 10–12pt font, 1" margins |',
+    '| **Dana quote present** | Grep/text search | Exact quote not found in brief | Exact string found: "I spend two hours every month copying invoices into a spreadsheet." |'].join('\n');
+  assert.deepEqual(quotesIn(brief), ['I spend two hours every month copying invoices into a spreadsheet.']);
+  assert.deepEqual(quotesCheck(brief, BRIEF_FILES), { met: true, value: 'Met' });
+  assert.deepEqual(quotesIn('A 30" pause, then she said "I spend two hours every month copying invoices" twice.'),
+    ['I spend two hours every month copying invoices']);
+  assert.deepEqual(quotesIn('A 27″ screen; she said "I spend two hours every month copying invoices" twice.'), ['I spend two hours every month copying invoices']);
+});
+
+test('fix round 4: a quote never spans a table row or a cell border', () => {
+  const rows = '| Rule | Stated as "<n> years with wrong n |\n| Dana | "I spend two hours every month copying invoices into a spreadsheet." |';
+  assert.deepEqual(quotesIn(rows), ['I spend two hours every month copying invoices into a spreadsheet.']);
+  assert.deepEqual(quotesIn('| a "first half of a long | quoted cell text here" |'), [], 'a quote mark in one cell never pairs with one in the next');
+  assert.deepEqual(quotesIn('| "I spend two hours every month copying invoices" | "the export stops at two hundred invoices" |'),
+    ['I spend two hours every month copying invoices', 'the export stops at two hundred invoices']);
+  assert.deepEqual(quotesIn('She said "I spend two hours\nevery month copying invoices" in prose.'), ['I spend two hours\nevery month copying invoices'],
+    'a quote in prose still spans a single line break');
+});
+
+test('fix round 4: quote marks inside code are not quotes', () => {
+  assert.deepEqual(quotesIn('Run `grep -F "the export stops at two hundred invoices" brief.md` first.'), []);
+  assert.deepEqual(quotesIn('Before\n\n```js\nconst msg = "the export stops at two hundred invoices";\n```\n\nAfter "I spend two hours every month copying invoices" ok.'),
+    ['I spend two hours every month copying invoices']);
+  assert.deepEqual(quotesIn('Links:\n  - RFC 4180: `[RFC 4180](https://www.rfc-editor.org/rfc/rfc4180)`\n  - Note: "I spend two hours every month copying invoices" ok'),
+    ['I spend two hours every month copying invoices']);
+});
+
+test('fix round 4: a quote has at least QUOTE_MIN_WORDS (5) words; shorter quoted text is not checked', async () => {
+  const { QUOTE_MIN_WORDS } = await import('../src/shared/workflow-tests/exact-checks.mjs');
+  assert.equal(QUOTE_MIN_WORDS, 5);
+  assert.deepEqual(quotesIn('The button "Export all invoices now" and the hint "Pick the month you need here".'), ['Pick the month you need here']);
+  assert.deepEqual(quotesCheck('The empty state reads "Pick a date range".', BRIEF_FILES), { met: true, value: 'No quotes' });
+  assert.equal(quotesCheck('Dana said "I spend three hours every month".', BRIEF_FILES).met, false, 'a made-up quote of five words is still checked');
+});
+
+test('fix round 4: digits inside ids, hashes, paths, links and code are not numbers of the result', () => {
+  assert.deepEqual(numbersIn(String.raw`Read C:\Users\me\scratchpad\8b6bd033-5853-4ea5-95cc-0862ea97e4f4\notes.md for 140 tickets.`).map((x) => x.n), ['140']);
+  assert.deepEqual(numbersIn('Notes in ./work/2026/brief.md, /tmp/run-5853/out and ~/drafts/750.md; 140 tickets.').map((x) => x.n), ['140']);
+  assert.deepEqual(numbersIn('Commit 0862ea97, id 4ea5, build v2, run 8b6bd033-5853-4ea5, hash 123456789abc; 140 tickets.').map((x) => x.n), ['140']);
+  assert.deepEqual(numbersIn('See https://www.rfc-editor.org/rfc/rfc4180?page=2024 and www.example.com/page/750 for 140 tickets.').map((x) => x.n), ['140']);
+  assert.deepEqual(numbersIn('Use `limit = 500` and\n```\nexport 750 rows\n```\nfor 140 tickets.').map((x) => x.n), ['140']);
+});
+
+test("fix round 4: the number right after a standard's name is not a number of the result", async () => {
+  const { STANDARD_NAMES } = await import('../src/shared/workflow-tests/exact-checks.mjs');
+  for (const n of ['ISO', 'RFC', 'IEEE', 'UTF', 'SHA', 'EN', 'DIN']) assert.ok(STANDARD_NAMES.includes(n), n);
+  assert.deepEqual(numbersIn('Dates in ISO 8601, CSV per RFC 4180, floats in IEEE 754, text in UTF-8, hashes with SHA-256, e-invoices per EN 16931, letters per DIN 5008.'), []);
+  assert.deepEqual(numbersIn('ISO 8601 dates for 140 tickets, 8601 rows.').map((x) => x.n), ['140', '8601'], 'the same number elsewhere is still a number');
+});
+
+test('fix round 4: every other number is still checked: example values, percentages, units, made-up counts', () => {
+  assert.deepEqual(numbersCheck('Amounts like 1234.56 with 19% VAT; 500 customers in 90 days; 500–750 words at 10pt on 8.5 × 11 paper.', BRIEF_FILES),
+    { met: false, value: 'Not in the files: 1234.56, 19%, 750 and 2 more' });
+  assert.deepEqual(numbersCheck('In Q3, 38% of tickets; 500 customers within 90 days; kept for 10 years (a 10-year duty).', BRIEF_FILES), { met: true, value: 'Met' });
+  assert.deepEqual(numbersCheck('A 10x speed-up and 300ms per file.', BRIEF_FILES), { met: false, value: 'Not in the files: 300' },
+    'a number with its unit is a number (10 is in the files)');
+  assert.deepEqual(numbersCheck('COVID-19 and 5/day.', BRIEF_FILES).met, false, 'a number in a name or a rate stays checked');
 });

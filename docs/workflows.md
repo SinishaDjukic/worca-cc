@@ -182,6 +182,13 @@ answers ("100% · of 6 answers (Worca needs 10)"), and Order swapped and Proof f
 they have at least 10 samples. The AI checks cost money and count in the spending limit; those made for a test also
 count in its own cost limit, and once it is reached a criterion shows "Not checked: this test reached its cost limit".
 
+**Every quote is in the files** checks text in double quotation marks of at least five words; shorter quoted text,
+such as a button's label, is not checked. A `"` right after a digit (`8.5" × 11"`) is an inch mark, quote marks in code
+are not quotes, and a quote never runs across a table row, a table cell or a blank line. **Numbers come from the files**
+checks every other number of the result, example values and percentages too. It skips dates, clock times, list and
+section numbers, single digits, the digits in ids, hashes, links, file paths and code, and the number of a standard's
+name (ISO 8601, RFC 4180, IEEE 754, UTF-8, SHA-256, EN 16931, DIN 5008). The files keep all their numbers.
+
 **Links work** opens each link through the same guarded web access as Ask: https only, port 443, public addresses only.
 Behind `HTTPS_PROXY`, a host only the proxy can resolve is not checked by Worca (best effort, like Ask), and any host
 name in a result may reach internal services on port 443 behind the proxy.
