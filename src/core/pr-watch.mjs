@@ -118,11 +118,20 @@ export function updateWatch(prUrl, patch) {
   return getWatch(prUrl);
 }
 
-export function countsAsRequest(item = {}, authorLogin = null) {
+export function countsAsRequest(item = {}, authorLogin = null, trustedLogins = []) {
   const body = String(item.body || '');
   if (body.includes(WATCH_MARKER)) return false;
-  return item.author?.login === authorLogin || item.authorLogin === authorLogin || TRUSTED.has(item.authorAssociation);
+  if (item.author?.login === authorLogin || item.authorLogin === authorLogin) return true;
+  if (TRUSTED.has(item.authorAssociation)) return true;
+  // An extra trusted reviewer (a review bot, usually): its login matches the per-project list. A comment
+  // with no author is never treated as one of them (nor as the PR author, see the `authorLogin` default).
+  const login = item.author?.login || item.authorLogin || null;
+  return typeof login === 'string' && Array.isArray(trustedLogins) && trustedLogins.includes(login);
 }
+
+/** A PR-level comment that starts with "/" is a command to another tool ("/ai-review"), not review feedback:
+ *  it never starts a fix run on its own. Inline thread comments are still free-form review. */
+const isCommand = (body) => /^\s*\//.test(String(body || ''));
 
 // A failure is its check's name at the PR head: a CI re-run gets new job ids, never a new key.
 const keyFor = (c) => c.type === 'status' || c.__typename === 'StatusContext'
@@ -147,9 +156,9 @@ const passing = (c) => c.type === 'status' || c.__typename === 'StatusContext'
  *     batch on the conflict path (`conflict.why: 'behind'`), once per check name;
  *   - anything else is the PR's own and is fixed by hand.
  */
-export function collectTriggers(pr, alreadyHandled = [], { conflictOnly = false, baseWaitOver = false } = {}) {
+export function collectTriggers(pr, alreadyHandled = [], { conflictOnly = false, baseWaitOver = false, trustedLogins = [] } = {}) {
   const seen = new Set(alreadyHandled);
-  const none = { fire: false, checksSettled: false, failures: [], threads: [], reviews: [], reviewOnlyComment: false, conflict: null,
+  const none = { fire: false, checksSettled: false, failures: [], threads: [], comments: [], reviews: [], reviewOnlyComment: false, conflict: null,
     handledKeys: [], skipped: [], waitingOnBase: [], reruns: [] };
   if (pr.mergeable === 'CONFLICTING' && pr.base && pr.baseSha) {
     const key = `conflict:${pr.headSha}@${pr.baseSha}`;
@@ -188,19 +197,24 @@ export function collectTriggers(pr, alreadyHandled = [], { conflictOnly = false,
       conflict: { base: pr.base, baseSha: pr.baseSha, why: 'behind', checks: behind }, handledKeys: behind.map((n) => `behind:${n}`) };
   }
   const threads = [];
+  const trusted = (item) => countsAsRequest(item, pr.author?.login || pr.authorLogin, trustedLogins);
   for (const thread of pr.threads || []) {
     if (thread.resolved || thread.isResolved) continue;
-    const comments = (thread.comments || []).filter((c) => !seen.has(`comment:${c.databaseId}`) && countsAsRequest(c, pr.author?.login || pr.authorLogin));
+    const comments = (thread.comments || []).filter((c) => !seen.has(`comment:${c.databaseId}`) && trusted(c));
     if (comments.length) threads.push({ nodeId: thread.nodeId || thread.id, commentIds: comments.map((c) => c.databaseId), comments });
   }
   const reviews = (pr.reviews || []).filter((r) => String(r.state).toUpperCase() === 'CHANGES_REQUESTED'
-    && !seen.has(`review:${r.databaseId}`) && countsAsRequest(r, pr.author?.login || pr.authorLogin));
+    && !seen.has(`review:${r.databaseId}`) && trusted(r));
+  // PR-level feedback that lands as an issue comment (a reviewer's verdict posted on the PR, not an inline
+  // thread). Slash commands ("/ai-review") are orders to another tool, not feedback: they never start a run.
+  const comments = (pr.comments || []).filter((c) => !seen.has(`comment:${c.databaseId}`) && trusted(c) && !isCommand(c.body));
   const handledKeys = [
     ...failures.map(keyOf),
     ...threads.flatMap((t) => t.commentIds.map((id) => `comment:${id}`)),
+    ...comments.map((c) => `comment:${c.databaseId}`),
     ...reviews.map((r) => `review:${r.databaseId}`),
   ];
-  return { fire: handledKeys.length > 0, checksSettled: settled, failures, threads, reviews,
+  return { fire: handledKeys.length > 0, checksSettled: settled, failures, threads, comments, reviews,
     reviewOnlyComment: reviews.length > 0, conflict: null, handledKeys, skipped, waitingOnBase, reruns };
 }
 
@@ -260,6 +274,7 @@ export function buildFixTask({ pr, triggers, logs = [] }) {
   if (triggers.skipped?.length) out.push(`Also failing on the base branch \`${pr.base || 'base'}\`, not this PR's to fix; leave them alone: ${triggers.skipped.join(', ')}.`);
   out.push(...failedCheckBlocks(triggers.failures, logs).blocks);
   for (const t of triggers.threads || []) for (const c of t.comments || []) out.push(`\nReview comment:\n${quote(c.body)}`);
+  for (const c of triggers.comments || []) out.push(`\nReview comment:\n${quote(c.body)}`);
   for (const r of triggers.reviews || []) out.push(`\nChanges requested:\n${quote(r.body)}`);
   return out.join('\n');
 }
@@ -382,6 +397,12 @@ const LIVE = new Set(['starting', 'running', 'paused']);
 export function createPrWatcher(deps = {}) {
   const now = deps.now || Date.now;
   const newId = deps.newId || randomUUID;
+  /** The extra reviewer logins whose feedback may start a fix on this origin's project (deps.trustedLogins),
+   *  or none when the host does not supply them. */
+  const trustedLoginsOf = (origin) => {
+    try { const list = deps.trustedLogins?.(origin); return Array.isArray(list) ? list.filter((x) => typeof x === 'string') : []; }
+    catch { return []; }
+  };
   const fixRun = (event) => {
     try { deps.onFixRun?.(event); } catch { /* the chat is told best effort; never ownership */ }
   };
@@ -458,7 +479,7 @@ export function createPrWatcher(deps = {}) {
       if (!snap?.ok) return retry(w, 'read', snap);
       w = resetRetry(w, 'read');
       if (snap.pr.state !== 'OPEN') return endWatch(w, snap.pr.state);
-      pr = snap.pr; triggers = collectTriggers(pr, w.handled, { conflictOnly: once, baseWaitOver: baseWaitOver(w) });
+      pr = snap.pr; triggers = collectTriggers(pr, w.handled, { conflictOnly: once, baseWaitOver: baseWaitOver(w), trustedLogins: trustedLoginsOf(origin) });
       if (!triggers.fire || triggers.reruns.length) return w;
       pre = await preflight(w, origin, pr);
     }
@@ -502,7 +523,8 @@ export function createPrWatcher(deps = {}) {
     }
     const runId = newId();
     const pending = { version: 1, handledKeys: triggers.handledKeys, startSha: pre.startSha, expectedRemoteSha: pre.expectedRemoteSha,
-      threads: triggers.threads.map((t) => ({ nodeId: t.nodeId, commentIds: t.commentIds })), reviewComment: triggers.reviewOnlyComment,
+      threads: triggers.threads.map((t) => ({ nodeId: t.nodeId, commentIds: t.commentIds })),
+      reviewComment: triggers.reviewOnlyComment || (triggers.comments?.length > 0),
       ...(triggers.conflict ? { conflict: triggers.conflict } : {}), ...(once ? { once: true } : {}) };
     const reserved = reserveBatch(w.prUrl, { fixRuns: w.fixRuns, handled: w.handled }, pending, runId, { once });
     if (!reserved) return getWatch(w.prUrl);           // someone else changed the watch first
@@ -691,9 +713,9 @@ export function createPrWatcher(deps = {}) {
     if (!snap?.ok) return retry(w, 'read', snap || {});
     w = resetRetry(w, 'read');
     if (snap.pr.state !== 'OPEN') return endWatch(w, snap.pr.state);
-    const first = collectTriggers(snap.pr, w.handled);
+    const first = collectTriggers(snap.pr, w.handled, { trustedLogins: trustedLoginsOf(origin) });
     w = trackBaseWait(w, first.waitingOnBase.length > 0);
-    const triggers = first.waitingOnBase.length && baseWaitOver(w) ? collectTriggers(snap.pr, w.handled, { baseWaitOver: true }) : first;
+    const triggers = first.waitingOnBase.length && baseWaitOver(w) ? collectTriggers(snap.pr, w.handled, { baseWaitOver: true, trustedLogins: trustedLoginsOf(origin) }) : first;
     // A re-run uses no fix run, so it is tried even when the cap is reached.
     if (triggers.reruns.length) return rerunChecks(w, origin, triggers.reruns);
     if (!triggers.fire) return w;
@@ -711,7 +733,7 @@ export function createPrWatcher(deps = {}) {
     const snap = await deps.host.snapshot({ projectDir: origin.projectDir, prUrl: w.prUrl });
     if (!snap?.ok) return { ok: false, code: 'READ_FAILED', error: snap?.error, watch: w };
     if (snap.pr.state !== 'OPEN') return { ok: false, code: 'PR_CLOSED', watch: w };
-    const triggers = collectTriggers(snap.pr, w.handled, { conflictOnly: true });
+    const triggers = collectTriggers(snap.pr, w.handled, { conflictOnly: true, trustedLogins: trustedLoginsOf(origin) });
     if (!triggers.fire) return { ok: false, code: 'NO_CONFLICT', watch: w };
     const next = await prepareAndStart(w, origin, snap.pr, triggers, { once: true });
     if (next?.pushed) return { ok: true, pushed: next.pushed, watch: next };

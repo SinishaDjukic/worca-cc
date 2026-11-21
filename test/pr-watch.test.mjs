@@ -98,6 +98,61 @@ test('review requests fire even while checks are pending and trust is enforced',
   assert.deepEqual(t.failures, []);
   assert.equal(countsAsRequest({ body: '<!-- worca:pr-watch -->', authorAssociation: 'OWNER' }), false);
   assert.equal(countsAsRequest({ body: 'x', author: { login: 'me' }, authorAssociation: 'NONE' }, 'me'), true);
+  assert.equal(countsAsRequest({ body: 'x', author: { login: 'review-bot' }, authorAssociation: 'NONE' }, 'me'), false);
+  assert.equal(countsAsRequest({ body: 'x', author: { login: 'review-bot' }, authorAssociation: 'NONE' }, 'me', ['review-bot']), true);
+});
+
+test('a new PR-level feedback comment starts a fix run; commands and Worca comments never do', () => {
+  const base = { headSha: 'h1', threads: [], reviews: [] };
+  const verdict = { databaseId: 51, body: '## AI Review\nplease fix the null check', author: { login: 'me' }, authorAssociation: 'OWNER' };
+  const t = collectTriggers({ ...base, comments: [verdict] }, []);
+  assert.equal(t.fire, true);
+  assert.deepEqual(t.handledKeys, ['comment:51']);
+  assert.deepEqual(t.comments.map((c) => c.databaseId), [51]);
+  assert.match(buildFixTask({ pr: { url: URL }, triggers: t }), /## AI Review/);
+  assert.match(buildFixTask({ pr: { url: URL }, triggers: t }), /> please fix the null check/);
+  // Once handled it is not collected again; a slash command ("/ai-review") is an order, not feedback.
+  assert.equal(collectTriggers({ ...base, comments: [verdict] }, ['comment:51']).fire, false, 'handled once');
+  assert.equal(collectTriggers({ ...base, comments: [{ ...verdict, body: '/ai-review' }] }, []).fire, false, 'a command comment');
+  assert.equal(collectTriggers({ ...base, comments: [{ ...verdict, body: '<!-- worca:pr-watch --> answer' }] }, []).fire, false, 'worca reply marker');
+  // A comment from an untrusted author (not a collaborator) counts only when allowlisted.
+  const bot = { databaseId: 52, body: 'bots can review too', author: { login: 'review-bot' }, authorAssociation: 'NONE' };
+  assert.equal(collectTriggers({ ...base, comments: [bot] }, []).fire, false, 'untrusted bot');
+  assert.equal(collectTriggers({ ...base, comments: [bot] }, [], { trustedLogins: ['review-bot'] }).fire, true, 'allowlisted bot');
+  assert.deepEqual(collectTriggers({ ...base, comments: [bot] }, [], { trustedLogins: ['review-bot'] }).handledKeys, ['comment:52']);
+  // The allowlist also covers inline thread comments and reviews from a bot.
+  const threaded = { ...base, threads: [{ nodeId: 'T1', isResolved: false, comments: [bot] }] };
+  assert.equal(collectTriggers(threaded, []).fire, false);
+  assert.deepEqual(collectTriggers(threaded, [], { trustedLogins: ['review-bot'] }).handledKeys, ['comment:52']);
+  const asked = { ...base, reviews: [{ databaseId: 61, state: 'CHANGES_REQUESTED', body: 'redo', author: { login: 'review-bot' }, authorAssociation: 'NONE' }] };
+  assert.equal(collectTriggers(asked, []).fire, false);
+  assert.deepEqual(collectTriggers(asked, [], { trustedLogins: ['review-bot'] }).handledKeys, ['review:61']);
+});
+
+test('a PR-level review comment starts one fix run, quotes it, and is answered on the PR after the push', async () => {
+  const origin = seedOrigin();
+  setWatch({ prUrl: URL, pipelineId: origin, enabled: true });
+  const { io, deps } = harness({ pr: openPr({ comments: [{ databaseId: 81, body: '## AI Review\nuse a guard', author: { login: 'me' }, authorAssociation: 'OWNER' }] }) });
+  // The watcher reads the allowlist from deps.trustedLogins (the server maps it to the project setting).
+  deps.trustedLogins = (o) => ['review-bot'];
+  const watcher = createPrWatcher(deps);
+  await watcher.tick();
+  let w = getWatch(URL);
+  assert.equal(w.status, 'fixing'); assert.equal(w.fixRuns, 1);
+  assert.deepEqual(w.handled, ['comment:81']);
+  assert.match(io.calls.start[0].body.prompt, /use a guard/);
+  await watcher.tick();                                    // still running: waits
+  finishRun(io, w);
+  await watcher.tick();                                    // done -> publishing
+  await watcher.tick();                                    // publish: push + one PR comment
+  w = getWatch(URL);
+  assert.deepEqual(io.calls.push, ['C1']);
+  assert.equal(io.calls.comment.length, 1, 'a PR comment trigger is answered with a PR comment');
+  assert.match(io.calls.comment[0], /<!-- worca:pr-watch -->/);
+  assert.deepEqual([w.status, w.activeRunId, w.pending], ['watching', null, null]);
+  // The same comment was marked handled: a re-read starts nothing new.
+  io.pr.comments = []; await watcher.tick();
+  assert.equal(io.calls.start.length, 1);
 });
 
 test('required contexts scope the check set; unknown conclusions fail; checks and statuses dedupe per name and head', () => {

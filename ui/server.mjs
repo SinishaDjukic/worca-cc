@@ -6302,6 +6302,12 @@ function prWatchFrame(pipelineId, memberKey) {
 }
 const prWatcherDeps = {
   originOf: prWatchOrigin,
+  // Watch.trustedReviewers: extra GitHub logins (usually review bots) whose feedback on a watched PR may
+  // start a fix run, as if they were collaborators. Read here, once per tick, from the origin project's settings.
+  trustedLogins: (origin) => {
+    try { const v = resolveSetting('watch.trustedReviewers', { projectKey: origin?.projectKey }).value; return Array.isArray(v) ? v : []; }
+    catch { return []; }
+  },
   host: { snapshot: prWatchSnapshot, jobLog: prWatchJobLog, rerun: prWatchRerun, reply: prWatchReply, comment: prWatchComment },
   git: {
     fetch: ({ projectDir, remote }) => fetchRemote(projectDir, { remote, maxAgeMs: 0 }),
