@@ -176,7 +176,7 @@ Proof, and **Agree** and **Disagree**. Some checks need no AI and give the same 
 the files**, **Numbers come from the files**, **No personal data** and **Links work**. When a criterion could be one of
 them, **Switch** turns it into one. **Check the checker** breaks a good result on purpose and asks you whether Worca
 judged it right. A criterion is Reliable once you have answered at least 10 times and Worca agreed with at least 80%
-of your answers (and with at least 70% both where it said yes and where it said no). A criterion Worca judges unreliably is shown but never
+of your answers (and with at least 70% both where it said yes and where it said no, on each side with at least 3 answers). A criterion Worca judges unreliably is shown but never
 decides better or worse. **How reliable is Worca's checking** runs six tests: Agreement with people waits for 10
 answers ("100% · of 6 answers (Worca needs 10)"), and Order swapped and Proof for every verdict are Good from 80% once
 they have at least 10 samples. The AI checks cost money and count in the spending limit; those made for a test also
