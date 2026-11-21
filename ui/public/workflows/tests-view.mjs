@@ -9,7 +9,7 @@ import { agoText, countsText } from '../../../src/shared/workflow-tests/compare.
 import { NO_PROJECT_YET_TAIL, WITH_CHANGES_HINT, MOVED_BADGE, behindText, PICK_FIRST_TEXT, CANT_TRY_TEXT, LIST_FOOT_HINT, firstUseNoneText, RUN_IT_ONCE, WRITE_YOURSELF,
   refusedRunsCount }
   from '../../../src/shared/workflow-tests/project-text.mjs';
-import { listTrustSentence } from '../../../src/shared/workflow-tests/criteria-text.mjs';
+import { listTrustSentence, CHECKING_TEXT } from '../../../src/shared/workflow-tests/criteria-text.mjs';
 
 export const HOW_HIDDEN_KEY = 'worca.workflowTests.howHidden';
 const HOW = Object.freeze({
@@ -184,10 +184,11 @@ function list(doc, page, o, actions, { root, storage, dateText, now, mock }) {
   fromRun.dataset.focusKey = 'wft-add-from-run';   // the G7 dialog's focusBack finds it after a repaint (layers.mjs refind)
   acts.append(fromRun, btn(doc, 'New example', () => actions.newExample(), 'btn'), testBtn);
   head.append(el(doc, 'p', 'subtitle', 'Test examples show what this workflow must do well. Before you share a change, try it on the examples and see what got better or worse.'), acts);
-  if (o.running) {   // G19, D37: one test per workflow at a time
+  // G19, D37: one test per workflow at a time; final review M3: nor while Worca checks criteria on a test (board 58's words).
+  if (o.running || o.checking) {
     testBtn.disabled = true;
     testBtn.setAttribute('aria-describedby', 'wft-busy');
-    const busy = el(doc, 'p', 'hint wft-busy', BUSY_HINT);
+    const busy = el(doc, 'p', 'hint wft-busy', o.running ? BUSY_HINT : CHECKING_TEXT);
     busy.id = 'wft-busy';
     head.append(busy);
   }

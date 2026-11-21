@@ -359,3 +359,13 @@ test('final review UI 3: a running test of one try says "0 of 1 try done", as th
   const { root } = boot(overview({ running: { runId: 9, title: 'Trying once: Ticket 482', done: 0, total: 1 } }));
   assert.equal(root.querySelector('.wft-running .wft-latest-title').textContent, 'Trying once: Ticket 482 · 0 of 1 try done');
 });
+
+test('final review M3: while Worca checks criteria on a test (overview.checking), Test a version is disabled with board 58\'s words', () => {
+  const { root } = boot(overview({ checking: true }));
+  const testBtn = [...root.querySelectorAll('button')].find((b) => b.textContent === 'Test a version');
+  assert.deepEqual([testBtn.disabled, testBtn.getAttribute('aria-describedby')], [true, 'wft-busy']);
+  assert.equal(root.querySelector('#wft-busy').textContent, 'Worca is checking your criteria on these tries. A test can start when it is done.');
+  const free = boot(overview({ checking: false })).root;
+  assert.equal([...free.querySelectorAll('button')].find((b) => b.textContent === 'Test a version').disabled, false);
+  assert.equal(free.querySelector('#wft-busy'), null);
+});

@@ -96,7 +96,7 @@ export function registerWorkflowTestRoutes(app, { broadcast = () => {}, deps = {
     return ex;
   };
 
-  route('GET', W, async (req, res) => res.json({ ...(await service.testsOverview(wid(req))), trust: checkingOf(wid(req)), checking: runner.criteriaCheckingOf(wid(req)) }));   // the page disables Test while a check runs
+  route('GET', W, async (req, res) => res.json({ ...(await service.testsOverview(wid(req))), trust: checkingOf(wid(req)), checking: runner.criteriaCheckingOf(wid(req)) }));   // the list disables Test a version while a check runs (tests-view.mjs)
   route('POST', `${W}/examples`, async (req, res) => {
     service.workflowRowOf(wid(req));
     res.status(201).json({ example: await service.saveExample(wid(req), null, req.body || {}, { by: by(req) }) });

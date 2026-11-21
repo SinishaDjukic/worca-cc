@@ -17,13 +17,14 @@ import { PLUGINS_OFF_STAGE } from './project-claude-settings.mjs';
 import { WORKTREE_STAGE } from '../setup-stages.mjs';
 import { releaseCopy } from './project-copy.mjs';
 import { beforeSpecOf } from './before-run.mjs';
+import { CHECKING_TEXT } from '../../shared/workflow-tests/criteria-text.mjs';
 
 export const MAX_PARALLEL = 3;   // D36. Library script checks stay one at a time (result.mjs), inside runBenchOnce's limit of 2.
 export const COST_POLL_MS = 2000;
 /** D37, G19: the refusal of a second start, and the hint the UI shows on its disabled buttons. */
 export const BUSY_TEXT = 'A test of this workflow is running. Wait for it, or stop it first.';
-/** Part 4 (review): the busy text while "Check them on these tries" runs; no test of the workflow is running then. */
-export const CHECKING_TEXT = 'Worca is checking your criteria on these tries. A test can start when it is done.';
+/** Part 4 (review): the busy text while "Check them on these tries" runs (shared: the Tests list shows it on its disabled Test). */
+export { CHECKING_TEXT };
 /** C18: what changed since a test started (a refused "Finish the rest", or a test stopped as `changed`). */
 export { changedText, editedText };
 /** A stored detail (no full stop): the UI says "Stopped: Worca could not save how this test ended." */

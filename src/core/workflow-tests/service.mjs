@@ -485,7 +485,8 @@ function cellOf(ex, use, fpNow) {
 }
 
 const firstExampleName = (run) => { const ex = store.readExample(run.workflowId, run.exampleIds[0]); return ex ? ex.name : ''; };
-/** The overview's latest test; `notChecked` = how many criteria were not checked on every finished try (the list says so). */
+/** The overview's latest test; `notChecked` = how many criteria were not checked on every finished try. Sent, not yet shown: no approved
+ *  board words a list line for it (final review M3); Compare says it (P4-M5). */
 function lastOf(last, ctx) {
   const input = modelInput(last, ctx);
   return { runId: last.id, title: latestTitle(last, ctx), finishedAt: last.finishedAt, examples: last.exampleIds.length,
