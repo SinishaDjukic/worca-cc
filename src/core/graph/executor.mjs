@@ -60,7 +60,7 @@ import { planConcernBlock, planConcernOverrideBlock, requirementConcernBlock } f
 import { criterionIds } from '../../shared/review/coverage.mjs';
 import { outlineFileState, planOutputOf } from '../shape/outline-file.mjs';
 import { runScriptExecution } from './script-runner.mjs';
-import { treeBusy, watchSpawns } from '../engines/agent-tree.mjs';
+import { treeBusy, watchSpawns } from '../agent-tree.mjs';
 // Skills registry §4.1: the CLI's refusal of `--plugin-dir` under managed `disableSideloadFlags` (P3's one regex).
 import { SIDELOAD_REFUSAL_RE as SIDELOAD_REFUSED_RE } from '../skills-registry/host.mjs';
 

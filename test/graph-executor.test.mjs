@@ -753,7 +753,7 @@ test('E4: an agent node that runs past its wall-clock or goes silent past its id
 });
 
 test('E4: a silent agent whose process tree is still working gets another idle window; an idle tree is stopped', async () => {
-  const { noteSpawned } = await import('../src/core/engines/agent-tree.mjs');
+  const { noteSpawned } = await import('../src/core/agent-tree.mjs');
   // The spawn reports its pid as superviseSpawn does; it stays silent until aborted or until `doneAfter` ms.
   const silent = (doneAfter) => async (opts) => new Promise((resolve, reject) => {
     noteSpawned(4242);

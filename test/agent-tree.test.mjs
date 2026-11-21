@@ -1,8 +1,8 @@
-// test/agent-tree.test.mjs — the node idle limit's busy check (src/core/engines/agent-tree.mjs): ps CPU time parsing,
+// test/agent-tree.test.mjs — the node idle limit's busy check (src/core/agent-tree.mjs): ps CPU time parsing,
 // the agent's descendants, the CPU they used between two samples, and the spawn-pid context.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { cpuSeconds, descendantCpu, cpuDelta, treeBusy, watchSpawns, noteSpawned } from '../src/core/engines/agent-tree.mjs';
+import { cpuSeconds, descendantCpu, cpuDelta, treeBusy, watchSpawns, noteSpawned } from '../src/core/agent-tree.mjs';
 
 test('cpuSeconds reads macOS and procps time columns', () => {
   assert.equal(cpuSeconds('0:01.25'), 1.25);          // macOS m:ss.cc

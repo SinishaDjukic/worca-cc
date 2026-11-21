@@ -16,7 +16,7 @@ import { currentOwner } from '../billing.mjs';
 import { isReservedModelEnvKey } from '../model-env.mjs';
 import { worcaHome } from '../projects.mjs';
 import { agentGroupsDir, createGroupTracker } from '../agent-groups.mjs';
-import { noteSpawned } from './agent-tree.mjs';
+import { noteSpawned } from '../agent-tree.mjs';
 import { isWithin } from '../fs-scope.mjs';
 import { withNoGitPath } from '../nogit-stub.mjs';
 import { withoutProxyLogin } from '../env-proxy.mjs';

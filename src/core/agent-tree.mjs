@@ -1,4 +1,4 @@
-// src/core/engines/agent-tree.mjs
+// src/core/agent-tree.mjs
 // Is a silent agent still working? The node idle limit (graph/executor.mjs) counts the agent's own output only, so an
 // agent waiting on a long background job it started (a full test suite, a build) looked exactly like a hung one and was
 // stopped at 20 minutes, then re-run from scratch, again and again. Before stopping, the watchdog now asks whether the
