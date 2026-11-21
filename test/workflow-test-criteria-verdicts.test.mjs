@@ -97,3 +97,11 @@ test('review (a): a criterion with no counted verdict on any finished try is lis
   const examples = [{ id: 1, name: 'Bulk invoice export' }, { id: 2, name: 'Errored one' }];
   assert.deepEqual(notCheckedEverywhere(decorated, examples), [{ id: 1, name: 'Bulk invoice export', criteria: ['Names a success metric'] }]);
 });
+
+test('final review M6: the errors a later pass asks again are one list, shared by the store and the cells', async () => {
+  const shared = await import('../src/shared/workflow-tests/criteria-verdicts.mjs');
+  const cs = await import('../src/core/workflow-tests/criteria-store.mjs');
+  assert.deepEqual(shared.RETRY_ERRORS, ['limit', 'cap', 'failed']);
+  assert.equal(cs.RETRY_ERRORS, shared.RETRY_ERRORS, 'the store uses the shared list, not a copy');
+  for (const error of shared.RETRY_ERRORS) assert.equal(criterionResult(C, J(null, { error }), reliable).pending, true, error);
+});

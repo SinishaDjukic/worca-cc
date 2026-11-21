@@ -4,6 +4,7 @@
 import { createHash } from 'node:crypto';
 import { getDb, prepare } from '../db.mjs';
 import { criterionKey } from '../../shared/workflow-tests/criteria.mjs';
+import { RETRY_ERRORS } from '../../shared/workflow-tests/criteria-verdicts.mjs';
 import { testError } from './store.mjs';
 
 const parse = (t, f) => { try { const v = JSON.parse(t); return v ?? f; } catch { return f; } };
@@ -12,9 +13,8 @@ const int = (v) => (v == null ? null : Number(v));
 
 /** D95: what judgements and trust are kept by: the criterion's words, normalised (criterionKey), hashed. */
 export function criterionFp(text) { return createHash('sha256').update(criterionKey(text)).digest('hex').slice(0, 16); }
-/** Errors asked again on the next pass (Worca's spending limit was reached, the test's cost limit was reached (Task 21 fix round 2), the call
- *  failed); the others are final for that try. */
-export const RETRY_ERRORS = Object.freeze(['limit', 'cap', 'failed']);
+/** Errors asked again on the next pass: the one list the cells use too (criteria-verdicts.mjs), final review M6. */
+export { RETRY_ERRORS };
 
 const J_COLS = `id, workflow_id, example_id, criterion_id, criterion_fp, model, purpose, try_id, other_try_id, round_id, card, variant, subject,
   met, winner, reason, proof, proof_found, error, cost_usd, ms, created_at`;
