@@ -4,6 +4,7 @@
 import { el, btn } from './test-ui.mjs';
 import { icon } from '../icons.mjs';
 import { fmtUsd } from '../../../src/shared/workflow-tests/checks.mjs';
+import { plainText } from '../../../src/shared/workflow-tests/plain-text.mjs';
 import { TRUST_BADGE, trustLine, checkingRest, BY_EXAMPLE, BY_CRITERION, SEE_BY_CRITERION, NOT_CHECKED, CRITERIA_CHANGED_TEXT, CHECK_THEM, NOT_EVERY_TRY,
   CHECKING_CRITERIA_TEXT, CHECKED_CRITERIA_TEXT, CAP_CHECKS_TEXT, ADDED_AFTER_TEXT, NO_CHECKED_TRY, COST_UNKNOWN_NOTE, notEveryTryText, unreliableOnlyText,
   unreliableWhyText, ROUND_NOT_FINISHED_TEXT, TRUST_TESTS, trustTestLine, trustTestBadge, answersText }
@@ -240,7 +241,7 @@ const ccSource = (doc, v, c, dateText) => el(doc, 'span', c.planted ? 'wft-cc-pl
 /** One result card: its head and excerpt; `verdict` adds Worca's verdict and the person's answer (or Right / Wrong). */
 function ccCard(doc, v, c, { verdict = true, answer = null, busy = false, dateText = (s) => s } = {}) {
   const card = el(doc, 'div', 'wft-cc-card');
-  card.append(ccSource(doc, v, c, dateText), el(doc, 'div', 'wft-cc-excerpt', c.excerpt || ''));
+  card.append(ccSource(doc, v, c, dateText), el(doc, 'div', 'wft-cc-excerpt', plainText(c.excerpt)));   // board 59 D: plain text
   if (!verdict) return card;
   const line = el(doc, 'div', 'wft-cc-verdict');
   const dot = el(doc, 'span', `wft-dot ${c.met ? 'ok' : 'no'}`);

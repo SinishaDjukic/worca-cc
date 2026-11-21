@@ -55,6 +55,19 @@ test('the checker\'s address, and the route that opens it after a reload', () =>
   assert.equal(TESTS_ROUTE_RE.exec('tests/4/checker/x'), null);
 });
 
+test("board 59 D: every card's excerpt is plain text, line breaks kept (the real card and the planted ones; while preparing too)", () => {
+  const { doc, root } = dom();
+  const md = '**Contract**: Create a content outline\n- **Hook / Problem** (2–3 sentences)';
+  const plain = 'Contract: Create a content outline\nHook / Problem (2–3 sentences)';
+  const v = view();
+  v.cards = v.cards.map((c) => ({ ...c, excerpt: md }));
+  renderChecker(root, v, NOOP, { doc, exampleName: 'E' });
+  assert.deepEqual([...root.querySelectorAll('.wft-cc-excerpt')].map((x) => x.textContent), [plain, plain, plain, plain]);
+  renderChecker(root, { ...v, round: { id: 7, criterionId: 'k_1', status: 'making' } }, NOOP, { doc, exampleName: 'E' });
+  assert.deepEqual([...root.querySelectorAll('.wft-cc-excerpt')].map((x) => x.textContent), [plain, plain, plain, plain]);
+  assert.equal(v.cards[0].excerpt, md, 'display only: the data is unchanged');
+});
+
 test('P4-M3: while Worca prepares (making the broken results, then checking), the box replaces the panel', () => {
   const { doc, root } = dom();
   const making = { ...view(), round: { id: 7, criterionId: 'k_1', status: 'making' }, cards: [], left: 0 };
