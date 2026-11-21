@@ -12,6 +12,10 @@ import { vendorOf, CONNECTION_SUFFIX_RE } from './brand-marks.mjs';
 
 export const CATALOGUE_VIEW_DEFAULT = Object.freeze({ query: '', filter: 'all', source: 'any', fold: Object.freeze({ claude: false }), open: null });
 
+/** The one harness the tab names even with no models: it is a sign-in engine with no built-in list, so the group
+ *  would otherwise only appear once the user adds a model. Its empty group carries an Add-model call to action. */
+const ALWAYS_HARNESS = 'opencode';
+
 /** The built-in lists and the harness each one runs on: the lists carry no `engine`, and untagged every row would
  *  land in Claude Code. */
 const BUILTIN_LISTS = Object.freeze([['predefined', 'claude'], ['codex', 'codex'], ['copilot', 'copilot']]);
@@ -197,6 +201,21 @@ export function buildCatalogue(data, view) {
       hiddenText: hid ? `${built.length} built-in hidden` : '',
       open: finding || !folded,
       subs,
+    });
+  }
+
+  // CAT: OpenCode is shown even with no models. It is a sign-in engine with no built-in list, so its group would
+  // otherwise only appear once the user adds a model — unlike the harnesses that ship built-ins. The group's head
+  // (mark, name, ready state) names it like the others, and its body carries the Add-model call to action. It is left
+  // out while a search or filter narrows the list (CAT-5's "No model matches" must still be reachable) and when the
+  // loop above already pushed it (a model exists; the normal group renders then).
+  if (!groups.some((g) => g.engine === ALWAYS_HARNESS) && !finding) {
+    const engine = ALWAYS_HARNESS;
+    groups.push({
+      engine, name: engineLabel(engine), beta: isBetaEngine(engine), ...harnessFacts(d, engine),
+      nBuilt: 0, customText: '', hiddenText: '',
+      open: !(fold[engine] ?? engine !== 'claude'),
+      subs: [], empty: true, emptyText: `No ${engineLabel(engine)} models yet`,
     });
   }
 

@@ -30,6 +30,7 @@ import { brokerEnabled, brokerInfo, cachedBrokerInfo, mintSpawnToken, revokeSpaw
 import { routeUpstream } from '../broker-routing.mjs';
 import { resolveBillTo } from '../billing.mjs';
 import { harnessesOf } from '../../shared/connections.mjs';
+import { opencodeModelIds } from '../engines/opencode.mjs';
 
 export { copilotCatalogId };
 
@@ -543,6 +544,58 @@ export async function pendingImportIds({ copilot = null, openai = null } = {}, {
     }
   }
   return { pending, unreachable };
+}
+
+// ── OpenCode: what your installed opencode can run, for Add model ───────────
+// Unlike Copilot or an OpenAI-compatible endpoint, there is no server to ask:
+// the models live in the clicking machine's own opencode (its configured
+// providers, its `opencode auth`), so the list is the CLI's, like the local
+// endpoint's. A model is added as `{ id: provider/model, engine: 'opencode' }`
+// — the same id `opencode run -m` takes — with nothing to pin from the CLI, so
+// a re-import of an existing entry is a no-op, never a refresh.
+
+/** The models `opencode models` lists, each with `inCatalog` (the Add-model sheet marks the ones already there). */
+export async function opencodeModelsForImport() {
+  const ids = await opencodeModelIds();
+  const have = new Set(listGlobalModels().map((m) => m.id.toLowerCase()));
+  return ids.map((id) => {
+    const hub = id.indexOf('/');
+    const provider = hub > 0 ? id.slice(0, hub) : '';
+    return { id, provider, name: hub > 0 ? id.slice(hub + 1) : id, catalogId: id, inCatalog: have.has(id.toLowerCase()) };
+  });
+}
+
+/** The catalog entry for an OpenCode model: id `provider/model`, the maker's short name labelled after its harness. */
+function catalogEntryForOpencodeModel(m) {
+  return { id: m.id, label: `${m.name} (OpenCode)`, engine: 'opencode' };
+}
+
+/**
+ * Import OpenCode models into the catalog (§8.4's Copilot import, for the models your opencode runs). A new id is
+ * added as its own sign-in engine's entry (no upstream, no env); an id already in the catalog is skipped — an
+ * OpenCode entry has nothing to refresh, and one under another engine's id is refused.
+ * @param {string[]} ids  `opencode models` ids (provider/model)
+ * @returns {Promise<{created:string[], updated:string[], skipped:Array<{id:string, why:string}>}>}
+ */
+export async function importOpencodeModels(ids) {
+  const wanted = new Set((Array.isArray(ids) ? ids : []).map((s) => String(s).trim()).filter(Boolean));
+  if (!wanted.size) throw new Error('pick at least one model to import');
+  const list = await opencodeModelsForImport();
+  const byId = new Map(list.map((m) => [m.id, m]));
+  const created = []; const skipped = [];
+  for (const id of wanted) {
+    const m = byId.get(id);
+    if (!m) { skipped.push({ id, why: 'your opencode does not list it' }); continue; }
+    const entry = catalogEntryForOpencodeModel(m);
+    const current = m.inCatalog ? listGlobalModels().find((x) => x.id.toLowerCase() === entry.id.toLowerCase()) : null;
+    if (current) {
+      if (current.engine !== 'opencode') skipped.push({ id, why: `"${current.id}" already exists and is not an OpenCode model` });
+      continue;   // an OpenCode entry already in the catalog: nothing to refresh, so no "updated" either
+    }
+    await addGlobalModel(entry);
+    created.push(entry.id);
+  }
+  return { created, updated: [], skipped };
 }
 
 // ── OpenRouter: the key's own limits ────────────────────────────────────────

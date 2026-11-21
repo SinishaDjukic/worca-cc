@@ -157,6 +157,10 @@ a.tab.mdl-tab{text-decoration:none;}
 .mdl-row-st{display:flex;align-items:center;justify-content:flex-end;gap:10px;min-width:0;}
 .mdl-row-go{justify-self:end;color:var(--ink-3);}
 .mdl-nomatch{display:flex;align-items:center;gap:12px;padding:16px 20px;background:var(--panel);border:1px solid var(--line);border-radius:var(--r-card);color:var(--ink-2);}
+/* An always-shown harness with no models: a note and the Add-model call to action (catalogue-view.mjs mdl-empty). */
+.mdl-empty{display:flex;align-items:center;flex-wrap:wrap;gap:12px;padding:14px 20px;border-top:1px solid var(--line);font-size:var(--fs-meta);color:var(--ink-2);}
+.mdl-empty-text{min-width:0;}
+.mdl-empty-add{margin-left:auto;flex:none;}
 
 /* The model side panel (PAN-1…PAN-6): over the page's right edge, under the 48px top bar, full height. Its containing
    block is .main-row (shell/top-bar.css); z 30 keeps it under Ask's sheet (40) and the menus it opens (45). */
@@ -285,6 +289,8 @@ a.tab.mdl-tab{text-decoration:none;}
 /* Step 2: the toolbar (provider, filter, "Enter an id instead"), then an OpenAI-compatible endpoint's address and key. */
 .mdl-add-bar{display:flex;align-items:center;gap:8px;flex-wrap:wrap;min-width:0;}
 .mdl-add-bar > .mdl-picksel{flex:0 1 240px;min-width:0;}
+.mdl-add-bar > .mdl-add-source{flex:0 1 240px;min-width:0;display:flex;align-items:center;gap:8px;font-weight:600;color:var(--fg);}
+.mdl-add-bar > .mdl-add-source .mdl-mark{flex:none;}
 .mdl-add-bar > .mimp-filter{flex:1 1 240px;min-width:0;}
 .mdl-add-bar > .mdl-manual{flex:none;margin-left:auto;}
 .mdl-add-src{display:grid;grid-template-columns:minmax(0,1.4fr) minmax(0,1fr);align-items:start;gap:12px 16px;}

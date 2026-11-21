@@ -4,6 +4,19 @@
 // guardrail rule plan, and the spawn path on the shared supervisor (engines/spawn.mjs). Everything worca configures
 // rides the OPENCODE_CONFIG_CONTENT env var: worca writes nothing into the run checkout.
 //
+// OpenCode 1 and OpenCode 2 share the `opencode` command and the `run --format json` stream; the major version, read
+// once per binary (`opencodeVersion`), decides the few things that differ. `buildOpencodeArgs`, the preflight's
+// credential check, the sub-session export command and the sub-agent lifecycle branch on it; the normalizer, the rule
+// plan and the inline config take both shapes. Checked against opencode 2.3.2 (Homebrew `opencode`, npm
+// `@opencode/cli`): `run` needs `--standalone` (the shared background service does not read the spawn's config env),
+// `--variant` is gone (the variant rides the model as `provider/model#variant`), `--pure` and `--print-logs` are gone,
+// `permission` in the V1 shape is still normalized (bash→shell, task→subagent, write→patch/edit), `providers list` is
+// `auth list --standalone --format json`, `export <id>` is `session export <id>`, error events carry `error.type`
+// (`provider.*`) instead of `name`/`statusCode`, tool parts carry `id` instead of `callID`, the shell tool is `shell`
+// (a `bash` call is aliased to it), the sub-agent tool is `subagent` (it returns at once and the child runs in the
+// background; the parent `run` waits for it before exiting), and a chat's lockdown leaves the `skill` meta tool
+// offered. `-s <unknown>` creates that session instead of failing, so the "session is gone" retry never fires on 2.x.
+//
 // Facts this module builds on, checked against opencode 1.18.23 (test/fixtures/opencode/README.md has the captures):
 // - `opencode run --format json` prints one JSON event per line: `step_start`, `text` (part.text, one per text part),
 //   `tool_use` (part.tool, part.callID, part.state {status: completed|error, input, output|error, metadata}),
@@ -58,6 +71,7 @@
 // - `--pure` keeps the user's plugins out (none ran); OPENCODE_DISABLE_PROJECT_CONFIG the checkout's config. The
 //   user's own MCP servers still start (their tools are denied); their instructions files still reach the prompt.
 // - OpenCode Zen's free models (`opencode/…`) refuse a request without the shell, so a chat never runs on them.
+import { createHash } from 'node:crypto';
 import { mkdirSync, readFileSync, writeFileSync, rmSync, existsSync, realpathSync } from 'node:fs';
 import { execCli, cliRefusal } from './exec-cli.mjs';
 import { OPENCODE_CLI } from './cli-specs.mjs';
@@ -72,9 +86,71 @@ import { strongestClass } from '../recoverable-error.mjs';
 import { envFlag } from '../model-env.mjs';
 import { makeChatDescriptor, providerEnvPrefixes, providerListRates } from './chat-descriptor.mjs';
 import { chatSelfTest } from './chat-selftest.mjs';
+import { parseJsonc } from '../workspace-import.mjs';
 
 /** Read at call time (not import time), so a test or a server child can point it at a fake after import. */
 export const opencodeDefaultBin = () => process.env.WORCA_OPENCODE_BIN || 'opencode';
+
+// ── version ─────────────────────────────────────────────────────────────────
+
+const VERSION_RE = /(\d+)\.(\d+)\.(\d+)/;
+/** bin -> Promise<{major, minor, patch, text}|null>: one `--version` per binary per process. */
+const versions = new Map();
+/** Tests only: forget every probed version. */
+export function resetOpencodeVersions() { versions.clear(); }
+
+/**
+ * What `opencode --version` says, read once per binary: `{major, minor, patch, text}`, or null when the binary cannot
+ * say (the spawn reports that itself). A failed probe is not kept, so a transient failure is retried.
+ * @returns {Promise<{major:number, minor:number, patch:number, text:string}|null>}
+ */
+export function opencodeVersion(bin = opencodeDefaultBin(), { timeoutMs = 15000 } = {}) {
+  const key = String(bin);
+  const hit = versions.get(key);
+  if (hit) return hit;
+  const p = new Promise((resolve) => {
+    execCli(OPENCODE_CLI, bin, ['--version'], { timeout: timeoutMs, env: { ...process.env, OPENCODE_DISABLE_AUTOUPDATE: '1' } }, (err, stdout) => {
+      const m = err ? null : VERSION_RE.exec(String(stdout));
+      resolve(m ? { major: Number(m[1]), minor: Number(m[2]), patch: Number(m[3]), text: String(stdout).trim() } : null);
+    });
+  }).then((v) => { if (!v) versions.delete(key); return v; });
+  versions.set(key, p);
+  return p;
+}
+
+/** The major an adapter decision branches on: 2 for OpenCode 2, else 1 (a probe that failed runs as 1.x). */
+export const opencodeMajorOf = (version) => (version && Number.isFinite(version.major) && version.major >= 2 ? 2 : 1);
+
+// ── `opencode models` (the catalogue import's source) ───────────────────────
+
+/** A line of `opencode models`: a provider/model id, the shape `-m <id>` takes (also on OpenCode 1.x). */
+const OPENCODE_MODEL_LINE_RE = /^[^/\s]+\/\S+$/;
+
+/** Parse `opencode models` stdout: one provider/model id per line, blanks and anything a version prints besides them
+ *  dropped, order kept. Pure. */
+export function parseOpencodeModels(stdout) {
+  return String(stdout || '').split(/\r?\n/)
+    .map((l) => l.trim())
+    .filter((l) => OPENCODE_MODEL_LINE_RE.test(l));
+}
+
+/** What the installed opencode can run, from `opencode models` — the same ids `opencode run -m` takes. Read fresh per
+ *  call (a sign-in just completed may have widened the list; unlike `opencodeVersion` there is no per-process cache),
+ *  with the autoupdate probe silenced like every other probe. @returns {Promise<string[]>}
+ *  @throws {Error} when the binary cannot be run or the command fails (the Add-model list surfaces the message). */
+export async function opencodeModelIds({ bin = opencodeDefaultBin(), timeoutMs = 30000 } = {}) {
+  return new Promise((resolve, reject) => {
+    execCli(OPENCODE_CLI, bin, ['models'], { timeout: timeoutMs, env: { ...process.env, OPENCODE_DISABLE_AUTOUPDATE: '1' } },
+      (err, stdout) => {
+        if (err) {
+          reject(new Error(cliRefusal({ bin, err, install: 'install OpenCode (opencode.ai), or point WORCA_OPENCODE_BIN at it' })));
+          return;
+        }
+        resolve(parseOpencodeModels(String(stdout)));
+      });
+  });
+}
+
 export const OPENCODE_SESSION_PREFIX = 'opencode:';
 /** The checkout's instruction files a run gives OpenCode: worca names both as `instructions` (instructionFiles below), so
  *  both load, not only OpenCode's own AGENTS.md-else-CLAUDE.md pick (docs.opencode.ai/docs/rules/). */
@@ -237,8 +313,18 @@ const envRefNames = (mcp) => [...new Set([...JSON.stringify(mcp).matchAll(/\{env
 
 /** `opencode run --format json --auto --pure --print-logs --log-level ERROR [--agent A] [-m M] [--variant E] [-s S]`;
  *  the prompt goes on stdin. `--pure`: no user-level or npm plugins. Error logs on stderr carry the cause an
- *  `UnknownError` event hides. */
-export function buildOpencodeArgs({ agent, model, effort, sessionId } = {}) {
+ *  `UnknownError` event hides.
+ *  OpenCode 2 (`major >= 2`): `--standalone` (a private server reads this spawn's OPENCODE_CONFIG_CONTENT; the shared
+ *  one does not), no `--pure` (2.x has no switch for the user's plugins), no `--print-logs` (its error event carries
+ *  the message), and the variant rides the model as `provider/model#variant`. */
+export function buildOpencodeArgs({ agent, model, effort, sessionId, major = 1 } = {}) {
+  if (major >= 2) {
+    const args = ['run', '--format', 'json', '--auto', '--standalone'];
+    if (agent) args.push('--agent', String(agent));
+    if (model) args.push('-m', effort ? `${model}#${effort}` : String(model));
+    if (sessionId) args.push('-s', String(sessionId));
+    return args;
+  }
   const args = ['run', '--format', 'json', '--auto', '--pure', '--print-logs', '--log-level', 'ERROR'];
   if (agent) args.push('--agent', String(agent));
   if (model) args.push('-m', String(model));
@@ -251,8 +337,20 @@ export function buildOpencodeArgs({ agent, model, effort, sessionId } = {}) {
 
 const str = (v) => (typeof v === 'string' ? v : '');
 const num = (v) => (Number.isFinite(v) ? v : 0);
-const TOOL_NAMES = Object.freeze({ bash: 'Bash', read: 'Read', write: 'Write', edit: 'Edit', glob: 'Glob', grep: 'Grep', list: 'LS',
+const TOOL_NAMES = Object.freeze({ bash: 'Bash', shell: 'Bash', read: 'Read', write: 'Write', edit: 'Edit', patch: 'Edit', glob: 'Glob', grep: 'Grep', list: 'LS',
   webfetch: 'WebFetch', websearch: 'WebSearch', todowrite: 'TodoWrite', todoread: 'TodoRead', skill: 'Skill' });
+/** A tool part's call id: 1.x `callID`, 2.x `id`. */
+const callIdOf = (part) => str(part.callID) || str(part.id);
+/** A tool part's name: 1.x `tool`, 2.x `name` (2.x also reports `bash` for a call it aliases to `shell`). */
+const toolNameOf = (part) => str(part.tool) || str(part.name);
+/** The tool's own metadata: 1.x `state.metadata`, 2.x `state.metadata.metadata` (2.x wraps it beside `content`). */
+const toolMetaOf = (st) => (st?.metadata && typeof st.metadata === 'object'
+  ? (st.metadata.metadata && typeof st.metadata.metadata === 'object' ? st.metadata.metadata : st.metadata) : {});
+/** A 2.x tool result's text lives in `state.content` (`{type:'text', text}` parts); 1.x keeps `state.output`. */
+const toolOutputOf = (st) => (typeof st?.output === 'string' ? st.output
+  : Array.isArray(st?.content) ? st.content.map((c) => str(c?.text)).join('') : '');
+/** The sub-agent tool: 1.x `task`, 2.x `subagent`. */
+const isSubagentTool = (name) => name === 'task' || name === 'subagent';
 
 /** OpenCode's step tokens as Claude-style usage (`input` excludes the cache; reasoning is output). */
 export function claudeStyleUsage(t) {
@@ -264,31 +362,55 @@ const addUsage = (a, b) => Object.fromEntries(Object.keys(a).map((k) => [k, a[k]
 const ZERO_USAGE = Object.freeze(claudeStyleUsage({}));
 
 /** A tool call in Claude's vocabulary: `filePath` becomes `file_path`, an attached MCP server's `<server>_<tool>`
- *  becomes `mcp__server__tool` (the longest server name wins; a server worca did not attach keeps OpenCode's name). */
+ *  becomes `mcp__server__tool` (the longest server name wins; a server worca did not attach keeps OpenCode's name).
+ *  `serverNames`: a chat's per-spawn alias -> the server's own. A call still made to an OLDER alias of a resumed
+ *  session is relabelled to its server's own too (staleAliasOwn): OpenCode exposes only this spawn's aliases, so that
+ *  call can never run — relabelling keeps a chat's allow-list (`mcp__worca__…`) from tripping on the stale alias as
+ *  a foreign tool. */
 function toolCall(part, mcpServers, serverNames = {}) {
-  const raw = str(part.tool) || 'tool';
+  const raw = toolNameOf(part) || 'tool';
   const input = part.state?.input && typeof part.state.input === 'object' ? { ...part.state.input } : {};
   if ('filePath' in input) { input.file_path = input.filePath; delete input.filePath; }
   const server = TOOL_NAMES[raw] ? null : mcpServers.filter((s) => raw.startsWith(`${s}_`)).sort((a, b) => b.length - a.length)[0];
   // A chat attaches worca's server under a name new per spawn (serverNames: that name -> the server's own).
-  const name = TOOL_NAMES[raw] || (server ? `mcp__${serverNames[server] || server}__${raw.slice(server.length + 1)}` : raw);
-  if (raw === 'bash') return { name, input: { command: str(input.command) }, toolUseId: str(part.callID) };
-  if (raw === 'write') return { name, input: { file_path: input.file_path, content: input.content }, toolUseId: str(part.callID) };
-  return { name, input, toolUseId: str(part.callID) };
+  const name = TOOL_NAMES[raw] || (server ? `mcp__${serverNames[server] || server}__${raw.slice(server.length + 1)}`
+    : (() => { const own = staleAliasOwn(raw, serverNames); return own ? `mcp__${own}__${raw.slice(raw.indexOf('_') + 1)}` : raw; })());
+  const toolUseId = callIdOf(part);
+  if (raw === 'bash' || raw === 'shell') return { name, input: { command: str(input.command) }, toolUseId };
+  if (raw === 'write') return { name, input: { file_path: input.file_path, content: input.content }, toolUseId };
+  return { name, input, toolUseId };
 }
+
+/** The chat server a stale `<alias>_<tool>` call belongs to, or null. A chat's per-spawn alias is always the server's
+ *  own (sanitized) name plus a suffix (serverAliasSeed: the thread id), so a call made to an alias this spawn does not
+ *  hold is recognized by its prefix; OpenCode never exposes that alias, so the call cannot run. Only a chat passes
+ *  serverNames, so a run's (unmapped) foreign tool keeps OpenCode's name. A prefix that is not LONGER than the own name
+ *  (a user server named exactly `worca`) is left alone, not relabelled. */
+const staleAliasOwn = (raw, serverNames) => {
+  const i = raw.indexOf('_');
+  if (i <= 1 || !Object.keys(serverNames).length) return null;
+  const prefix = raw.slice(0, i);
+  return [...new Set(Object.values(serverNames))].find((o) => typeof o === 'string' && o
+    && prefix.length > o.length && prefix.startsWith(o.replace(/[^A-Za-z0-9]/g, ''))) ?? null;
+};
 
 /**
  * `--format json` lines in, normalized events out (src/core/engines/events.mjs). push(line|object) returns the
- * events for that line; finish() returns { text, error, errorName, statusCode, sessionId, costUsd, usage, subSessions,
- * steps } (subSessions: [{sessionId, toolUseId}]; steps: the main agent's `step_start` count).
- * @param {{model?: string|null, mcpServers?: string[], serverNames?: Record<string,string>}} [o]  mcpServers: the server
- *   names worca attached; serverNames: an attached name -> the server's own (a chat's per-spawn names)
+ * events for that line; finish() returns { text, error, errorName, errorType, statusCode, sessionId, costUsd, usage,
+ * subSessions, steps } (subSessions: [{sessionId, toolUseId}]; steps: the main agent's `step_start` count).
+ * Takes 1.x and 2.x lines: the call id (`callID`/`id`), the tool name (`tool`/`name`), a tool's metadata
+ * (`state.metadata`/`state.metadata.metadata`), a result's text (`output`/`content`) and the sub-agent tool
+ * (`task`/`subagent`) are read in either shape.
+ * @param {{model?: string|null, mcpServers?: string[], serverNames?: Record<string,string>, backgroundSubagents?: boolean}} [o]
+ *   mcpServers: the server names worca attached; serverNames: an attached name -> the server's own (a chat's
+ *   per-spawn names); backgroundSubagents: OpenCode 2 returns from `subagent` while the child still runs, so its
+ *   `finish`/`error` row is left to the export (runOpencodeProcess' subSpend), not read off the tool call.
  */
-export function createOpencodeNormalizer({ model = null, mcpServers = [], serverNames = {} } = {}) {
+export function createOpencodeNormalizer({ model = null, mcpServers = [], serverNames = {}, backgroundSubagents = false } = {}) {
   const texts = [];
   const seen = new Set();
   const subSessions = [];   // {sessionId, toolUseId}: a sub-agent's session and the `task` call that ran it
-  let sessionId = null; let error = null; let errorName = null; let statusCode = null;
+  let sessionId = null; let error = null; let errorName = null; let errorType = null; let statusCode = null;
   let costUsd = 0; let priced = false; let usage = { ...ZERO_USAGE }; let steps = 0;
 
   function push(line) {
@@ -317,27 +439,32 @@ export function createOpencodeNormalizer({ model = null, mcpServers = [], server
         break;
       }
       case 'tool_use': {
-        const id = str(part.callID);
+        const id = callIdOf(part);
         if (!id) break;
         const st = part.state && typeof part.state === 'object' ? part.state : {};
         const done = st.status === 'completed' || st.status === 'error';
-        if (part.tool === 'task') {
+        if (isSubagentTool(toolNameOf(part))) {
           const input = st.input && typeof st.input === 'object' ? st.input : {};
           if (!seen.has(id)) {
             seen.add(id);
             const label = str(input.description) || 'OpenCode sub-agent';
+            // 1.x names the sub-agent `subagent_type`; 2.x `agent`.
+            const subagentType = str(input.subagent_type) || str(input.agent);
+            const subModel = toolMetaOf(st).model?.modelID || toolMetaOf(st).model?.id;
             out.push({ type: 'subagent', event: 'spawn', toolUseId: id, label, description: label,
-              ...(str(input.subagent_type) ? { subagentType: input.subagent_type } : {}),
-              ...(str(st.metadata?.model?.modelID) ? { model: st.metadata.model.modelID } : {}) });
+              ...(subagentType ? { subagentType } : {}),
+              ...(str(subModel) ? { model: subModel } : {}) });
           }
-          const sub = str(st.metadata?.sessionId);
+          // 1.x `metadata.sessionId`; 2.x `metadata.metadata.sessionID`.
+          const md = toolMetaOf(st);
+          const sub = str(md.sessionId) || str(md.sessionID);
           if (sub && !subSessions.some((x) => x.sessionId === sub)) subSessions.push({ sessionId: sub, toolUseId: id });
-          if (done) out.push({ type: 'subagent', event: st.status === 'error' ? 'error' : 'finish', toolUseId: id, ...(st.status === 'error' ? { errorText: str(st.error) } : {}) });
+          if (done && !backgroundSubagents) out.push({ type: 'subagent', event: st.status === 'error' ? 'error' : 'finish', toolUseId: id, ...(st.status === 'error' ? { errorText: str(st.error) } : {}) });
           break;
         }
         if (!seen.has(id)) { seen.add(id); out.push({ type: 'tool', parentId: null, calls: [toolCall(part, mcpServers, serverNames)] }); }
         if (done) {
-          const t = st.status === 'error' ? str(st.error) : str(st.output);
+          const t = st.status === 'error' ? str(st.error) : toolOutputOf(st);
           out.push({ type: 'toolResult', parentId: null, meta: null, results: [{ toolUseId: id, isError: st.status === 'error', text: t, content: t }] });
         }
         break;
@@ -351,8 +478,10 @@ export function createOpencodeNormalizer({ model = null, mcpServers = [], server
       }
       case 'error': {
         const e = evt.error && typeof evt.error === 'object' ? evt.error : {};
-        error = str(e.data?.message) || str(e.message) || str(e.name) || 'opencode reported an error';
+        error = str(e.data?.message) || str(e.message) || str(e.name) || str(e.type) || 'opencode reported an error';
         errorName = str(e.name) || null;
+        // 2.x names the class in `type` (`provider.auth`, `provider.rate-limit`, …).
+        errorType = str(e.type) || null;
         statusCode = Number.isFinite(e.data?.statusCode) ? e.data.statusCode : null;
         out.push({ type: 'stderr', stream: 'err', text: `opencode: ${error}` });
         break;
@@ -362,41 +491,94 @@ export function createOpencodeNormalizer({ model = null, mcpServers = [], server
     }
     return out;
   }
-  return { push, finish: () => ({ text: texts.join(''), error, errorName, statusCode, sessionId, costUsd: priced ? costUsd : null, usage, subSessions: [...subSessions], steps }) };
+  return { push, finish: () => ({ text: texts.join(''), error, errorName, errorType, statusCode, sessionId, costUsd: priced ? costUsd : null, usage, subSessions: [...subSessions], steps }) };
 }
 
 /**
- * A sub-session from `opencode export <id>` output, or null: its assistant messages' cost and tokens, and its tool
- * calls and results as worca events under `parentId` (the `task` call), so the audit sees what the sub-agent did.
+ * A sub-session from `opencode export <id>` (1.x) or `opencode session export <id>` (2.x) output, or null: its cost and
+ * tokens, and its tool calls and results as worca events under `parentId` (the sub-agent call), so the audit sees what
+ * the sub-agent did. `settled` is false for a 2.x session that is still running (no `time.idle`, no terminal outcome).
  */
 export function readSubsession(text, { parentId = null, mcpServers = [] } = {}) {
   let doc;
   try { const t = String(text); doc = JSON.parse(t.slice(t.indexOf('{'))); } catch { return null; }
-  if (!doc || !Array.isArray(doc.messages)) return null;
+  if (!doc || typeof doc !== 'object' || !Array.isArray(doc.messages)) return null;
+  // 2.x: { info: {cost, tokens, outcome, time:{idle}}, messages: [{ type:'assistant', content:[{type:'tool', id, name,
+  // state:{status, input, content, error}}], cost, tokens }] }. 1.x: { messages: [{ info:{role, cost, tokens},
+  // parts:[{type:'tool', callID, tool, state:{status, input, output|error}}] }] }. A v2 message has `type`, never
+  // `info`; a v1 message always has `info` (an export with no assistant messages is still v2 when none carry `info`).
+  if (!doc.messages.some((m) => m && Object.hasOwn(m, 'info'))) return readSubsessionV2(doc, { parentId, mcpServers });
   let costUsd = 0; let usage = { ...ZERO_USAGE }; const events = [];
   for (const m of doc.messages) {
     if (m?.info?.role !== 'assistant') continue;
     if (Number.isFinite(m.info.cost)) costUsd += m.info.cost;
     usage = addUsage(usage, claudeStyleUsage(m.info.tokens));
     for (const part of Array.isArray(m.parts) ? m.parts : []) {
-      if (part?.type !== 'tool' || !str(part.callID)) continue;
+      if (part?.type !== 'tool' || !callIdOf(part)) continue;
       const st = part.state && typeof part.state === 'object' ? part.state : {};
       events.push({ type: 'tool', parentId, calls: [toolCall(part, mcpServers)] });
       if (st.status === 'completed' || st.status === 'error') {
-        const t = st.status === 'error' ? str(st.error) : str(st.output);
-        events.push({ type: 'toolResult', parentId, meta: null, results: [{ toolUseId: part.callID, isError: st.status === 'error', text: t, content: t }] });
+        const t = st.status === 'error' ? str(st.error) : toolOutputOf(st);
+        events.push({ type: 'toolResult', parentId, meta: null, results: [{ toolUseId: callIdOf(part), isError: st.status === 'error', text: t, content: t }] });
       }
     }
   }
-  return { costUsd, usage, events };
+  return { costUsd, usage, events, settled: true };
+}
+
+/** The 2.x export (see readSubsession). The session's `info` carries its own totals; messages are summed only when it
+ *  does not. A `subagent` call inside a sub-session names a grandchild, whose spend is not in this document. */
+function readSubsessionV2(doc, { parentId, mcpServers }) {
+  const info = doc.info && typeof doc.info === 'object' ? doc.info : {};
+  let costUsd = 0; let usage = { ...ZERO_USAGE }; const events = [];
+  const totals = Number.isFinite(info.cost) || (info.tokens && typeof info.tokens === 'object');
+  if (Number.isFinite(info.cost)) costUsd = info.cost;
+  if (info.tokens && typeof info.tokens === 'object') usage = claudeStyleUsage(info.tokens);
+  for (const m of doc.messages) {
+    if (m?.type !== 'assistant') continue;
+    if (!totals) {
+      if (Number.isFinite(m.cost)) costUsd += m.cost;
+      usage = addUsage(usage, claudeStyleUsage(m.tokens));
+    }
+    for (const part of Array.isArray(m.content) ? m.content : []) {
+      if (part?.type !== 'tool' || !callIdOf(part)) continue;
+      const st = part.state && typeof part.state === 'object' ? part.state : {};
+      events.push({ type: 'tool', parentId, calls: [toolCall(part, mcpServers)] });
+      if (st.status === 'completed' || st.status === 'error') {
+        const t = st.status === 'error' ? str(st.error) : toolOutputOf(st);
+        events.push({ type: 'toolResult', parentId, meta: null, results: [{ toolUseId: callIdOf(part), isError: st.status === 'error', text: t, content: t }] });
+      }
+    }
+  }
+  const outcome = str(info.outcome);
+  const settled = Boolean(info.time?.idle) || ['succeeded', 'failed', 'cancelled', 'error'].includes(outcome);
+  return { costUsd, usage, events, settled };
 }
 
 // ── errors and preflight ─────────────────────────────────────────────────────
+
+/** OpenCode 2's error `type`s that are worca error classes; the rest (no-route, invalid-request, internal, …) are
+ *  not a credential, limit or network problem. */
+const V2_ERROR_CLASSES = Object.freeze({
+  'provider.auth': 'auth',
+  'provider.rate-limit': 'rate_limit',
+  'provider.quota': 'quota',
+  'provider.budget-limit': 'quota',
+  'provider.model-budget-limit': 'quota',
+  'provider.free-limit': 'usage_limit',
+  'provider.chatgpt-limit': 'usage_limit',
+  'provider.go-limit': 'usage_limit',
+  'provider.transport': 'network',
+  'provider.timeout': 'network',
+});
 
 /** @returns {'auth'|'usage_limit'|'rate_limit'|'quota'|'network'|null} */
 export function classifyOpencodeError(err) {
   if (err && typeof err === 'object' && 'errorClass' in err && err.errorClass !== undefined) return err.errorClass;
   const name = err && typeof err === 'object' ? str(err.name) : '';
+  // 2.x: the class is `type` (`provider.auth`), with no `name` and no statusCode.
+  const type = err && typeof err === 'object' ? str(err.type) || str(err.errorType) : '';
+  if (type && Object.hasOwn(V2_ERROR_CLASSES, type)) return V2_ERROR_CLASSES[type];
   const status = err && typeof err === 'object' && Number.isFinite(err.statusCode) ? err.statusCode : null;
   const msg = String((err && typeof err === 'object' ? err.message : err) || '');
   if (/free tier can only be used/i.test(msg)) return null;   // a request OpenCode Zen refuses (no shell tool), not a sign-in
@@ -420,6 +602,24 @@ export function parseOpencodeProviders(text) {
   return { credentials: cred ? Number(cred[1]) : 0, env: env ? Number(env[1]) : 0 };
 }
 
+/**
+ * `opencode auth list --standalone --format json` (2.x) -> {credentials, env} counts, or null when it is not that
+ * document. A connection of type `env` is a provider key in the environment; any other kind (a saved sign-in) is a
+ * credential. `[]` is a real answer: neither.
+ */
+export function parseOpencodeAuth(text) {
+  let doc;
+  try { doc = JSON.parse(String(text || '')); } catch { return null; }
+  if (!Array.isArray(doc)) return null;
+  let credentials = 0; let env = 0;
+  for (const provider of doc) {
+    for (const connection of Array.isArray(provider?.connections) ? provider.connections : []) {
+      if (connection?.type === 'env') env++; else credentials++;
+    }
+  }
+  return { credentials, env };
+}
+
 export const OPENCODE_SIGNED_OUT_HINT = 'run `opencode auth login`, or set a provider key (for example ANTHROPIC_API_KEY) in worca\'s environment and, when the guardrail set scrubs the env, its allowlist';
 
 /**
@@ -427,7 +627,9 @@ export const OPENCODE_SIGNED_OUT_HINT = 'run `opencode auth login`, or set a pro
  * `defaultModel`: whether some spawn of the run names no model (true), every one names one (false), or unknown
  * (undefined: the readiness check). A spawn without a model refuses without the opt-in. The credential check runs with
  * the env the agent gets (`envScrub`, `envAllowlist`): a key only worca has does not count. With no credential, only
- * OpenCode Zen's free models run: a refusal unless every spawn names its model or the user opted in.
+ * OpenCode Zen's free models run: a refusal unless every spawn names its model or the user opted in. On OpenCode 2 the
+ * credentials come from `auth list --standalone --format json` (the shared service is not needed); 1.x reads
+ * `providers list`.
  */
 export function opencodePreflight({ bin = opencodeDefaultBin(), timeoutMs = 15000, envScrub, envAllowlist, defaultModel } = {}) {
   const allowed = defaultModelAllowed();
@@ -442,11 +644,18 @@ export function opencodePreflight({ bin = opencodeDefaultBin(), timeoutMs = 1500
         ? { refusal: cliRefusal({ bin, err: v.err, install: 'install OpenCode (opencode.ai), or point WORCA_OPENCODE_BIN at it' }) }
         : { warning: `could not check ${bin} (${v.err.message})` };
     }
-    // OpenCode 2 (npm @opencode/cli, Homebrew's opencode) breaks this adapter: `run` attaches to a shared background
-    // service that does not read the spawn's config env, `--variant` is gone, and its events and permissions changed.
-    const major = Number(/(\d+)\.\d+\.\d+/.exec(String(v.stdout))?.[1]);
-    if (major >= 2) return { refusal: `OpenCode 2 is not supported yet (${bin} is ${String(v.stdout).trim()}) — install OpenCode 1.x (npm opencode-ai), or point WORCA_OPENCODE_BIN at one` };
     if (defaultModel === true && !allowed) return { refusal: `a step of this run names no model: ${DEFAULT_MODEL_RISK}` };
+    if (opencodeMajorOf(await opencodeVersion(bin, { timeoutMs })) >= 2) {
+      // 2.x needs `--standalone`: without it `auth list` attaches to the shared service, which may be busy elsewhere.
+      const p = await run(['auth', 'list', '--standalone', '--format', 'json']);
+      const counts = p.err ? null : parseOpencodeAuth(p.stdout);
+      if (!counts) return { warning: `could not tell whether ${bin} has provider credentials (\`${bin} auth list\` said nothing recognizable)` };
+      if (!counts.credentials && !counts.env) {
+        const why = `no provider credentials in the agent's environment — only OpenCode Zen's free models (opencode.ai) will run; ${OPENCODE_SIGNED_OUT_HINT}`;
+        return allowed || defaultModel === false ? { warning: why } : { refusal: `${why}, or set ${OPENCODE_DEFAULT_MODEL_OPT_IN}=1 to allow it` };
+      }
+      return {};
+    }
     const p = await run(['providers', 'list']);
     const counts = p.err ? null : parseOpencodeProviders(`${p.stdout}\n${p.stderr}`);
     if (!counts) return { warning: `could not tell whether ${bin} has provider credentials (\`${bin} providers list\` said nothing recognizable)` };
@@ -481,7 +690,7 @@ export async function runOpencodeProcess({
   cwd = process.cwd(), systemPrompt = '', prompt = '', model, effort, onEvent = () => {}, signal,
   bin = opencodeDefaultBin(), resumeSessionId, sandbox, askLockdown, envScrub, envAllowlist, asAgent,
   mcpConfigPath, spawnEnv: runSpawnEnv, redactValues, maxTurns, permissionRules, allowedTools, appendSubagentSystemPrompt,
-  scratchBase = null, probe = null,
+  scratchBase = null, probe = null, serverAliasSeed = null,
 } = {}) {
   if (signal?.aborted) { const e = new Error('aborted'); e.name = 'AbortError'; throw e; }
   // A chat (askLockdown): OPENCODE_ASK_LOCKDOWN, on a model it names (never OpenCode's default, never OpenCode Zen).
@@ -490,6 +699,10 @@ export async function runOpencodeProcess({
   if (ask && !(typeof model === 'string' && model.trim())) throw new Error(`${bin}: a chat on OpenCode needs a model`);
   if (ask && ZEN_PROVIDER_RE.test(model)) throw new Error(`${bin}: OpenCode Zen's free models refuse a chat (it has no shell) — pick a model of another provider`);
   if (!(typeof model === 'string' && model.trim()) && !defaultModelAllowed()) throw new Error(`${bin}: refusing to start OpenCode without a model: ${DEFAULT_MODEL_RISK}`);
+  // The major decides the argv (--standalone, no --variant/--pure), the normalizer's sub-agent lifecycle and the
+  // sub-session export command; read once per binary per process.
+  const version = await opencodeVersion(bin);
+  const major = opencodeMajorOf(version);
   const secrets = Array.isArray(redactValues) ? redactValues : [];
   const redactor = secrets.length ? createRedactor(secrets) : null;
   const sniffed = { cause: null };
@@ -510,6 +723,12 @@ export async function runOpencodeProcess({
   try { realCwd = realpathSync(cwd); } catch { /* not there: the spawn says so */ }
   const rules = opencodeRulePlan(ask ? null : permissionRules, { cwd: realCwd });
   const rand = () => Math.random().toString(36).slice(2, 8);
+  // A chat's server alias is STABLE per thread (`serverAliasSeed`: the thread id), not random per spawn. OpenCode names
+  // MCP tools `<alias>_<tool>`, and a resumed session keeps calling the aliases it learned; a fresh random alias on
+  // every spawn made those calls stale ("No tool named <oldalias>_<tool>"). The seed is the thread id, which no user
+  // config can know, so a user server still cannot take the name. Absent a seed (the self-test, a run), it stays random.
+  const stableSuffix = typeof serverAliasSeed === 'string' && serverAliasSeed
+    ? createHash('sha256').update(serverAliasSeed).digest('hex').slice(0, 8) : null;
   let mcp = null;
   const serverNames = {};   // a chat's per-spawn server name -> the server's own
   if (mcpConfigPath) {
@@ -518,10 +737,10 @@ export async function runOpencodeProcess({
     let servers = doc && typeof doc.mcpServers === 'object' && doc.mcpServers ? doc.mcpServers : {};
     if (ask) {
       // The chat's MCP child gets the spawn env (the command bridge token, SSH_AUTH_SOCK, the web search key) by
-      // reference; the names no user server can take: a fresh one per spawn (the self-test's is fixed).
+      // reference; the names no user server can take: a stable one per thread (the self-test's is fixed).
       const refNames = [...new Set([...Object.keys(cleanRunEnv(runSpawnEnv) || {}), ...(envAllowlist || []).filter((k) => typeof process.env[k] === 'string' && process.env[k] !== '')])];
       servers = Object.fromEntries(Object.entries(servers).map(([n, srv]) => {
-        const alias = (probe && probe.serverAlias && probe.serverAlias(n)) || `${n.replace(/[^A-Za-z0-9]/g, '') || 'mcp'}${rand()}`;
+        const alias = (probe && probe.serverAlias && probe.serverAlias(n)) || `${n.replace(/[^A-Za-z0-9]/g, '') || 'mcp'}${stableSuffix || rand()}`;
         serverNames[alias] = n;
         const withRefs = srv && typeof srv.command === 'string' && refNames.length
           ? { ...srv, env: { ...Object.fromEntries(refNames.map((k) => [k, `\${${k}}`])), ...(srv.env && typeof srv.env === 'object' ? srv.env : {}) } } : srv;
@@ -589,11 +808,11 @@ export async function runOpencodeProcess({
 
   const turnCap = () => Object.assign(new Error(`${bin}: stopped after ${cap} turns (the turn cap)`), { turnCap: true });
   const attempt = async (sessionId) => {
-    const normalizer = createOpencodeNormalizer({ model: model || null, mcpServers: Object.keys(mcp || {}), serverNames });
+    const normalizer = createOpencodeNormalizer({ model: model || null, mcpServers: Object.keys(mcp || {}), serverNames, backgroundSubagents: major >= 2 });
     const capCtrl = new AbortController();
     let toolCalls = 0; let capped = false; let sawSession = false;
     const spawnSignal = cap ? (signal ? AbortSignal.any([signal, capCtrl.signal]) : capCtrl.signal) : signal;
-    const args = buildOpencodeArgs({ agent: nodeAgent, model, effort, sessionId });
+    const args = buildOpencodeArgs({ agent: nodeAgent, model, effort, sessionId, major });
     const res = await superviseSpawn({
       cli: OPENCODE_CLI,
       file: bin, args, displayBin: bin, cwd, env, stdin: String(prompt ?? ''), signal: spawnSignal, asAgent, stagedDir: asAgent ? scratch : null, onEvent,
@@ -618,7 +837,7 @@ export async function runOpencodeProcess({
       if (err?.name !== 'AbortError') {
         const lead = f.error && /Unexpected server error/i.test(f.error) && sniffed.cause ? sniffed.cause : f.error;
         if (lead && !String(err.message).includes(lead)) err.message = `${bin}: ${lead} — ${err.message}`;
-        if (f.error) err.errorClass = strongestClass(err.errorClass ?? null, classifyOpencodeError({ name: f.errorName, statusCode: f.statusCode, message: f.error }));
+        if (f.error) err.errorClass = strongestClass(err.errorClass ?? null, classifyOpencodeError({ name: f.errorName, type: f.errorType, statusCode: f.statusCode, message: f.error }));
         if (/free tier can only be used/i.test(String(f.error)) && rules.permission.bash === 'deny') err.message += ` (${FREE_TIER_NOTE})`;
       }
       err.sawSession = sawSession;
@@ -627,22 +846,35 @@ export async function runOpencodeProcess({
     const final = normalizer.finish();
     // Past `cap` steps the last one was OpenCode's forced text reply: the agent was stopped, not finished.
     if ((capped || (cap && final.steps > cap)) && !signal?.aborted) throw turnCap();
-    if (final.error) throw Object.assign(new Error(`${bin}: ${final.error}`), { errorClass: classifyOpencodeError({ name: final.errorName, statusCode: final.statusCode, message: final.error }), sawSession });
+    if (final.error) throw Object.assign(new Error(`${bin}: ${final.error}`), { errorClass: classifyOpencodeError({ name: final.errorName, type: final.errorType, statusCode: final.statusCode, message: final.error }), sawSession });
     return { final, exitCode: res.code };
   };
 
-  // A sub-agent's steps are not in the stream: its session's export carries its tool calls (emitted under the `task`
-  // call, for the audit), cost and tokens.
+  // A sub-agent's steps are not in the stream: its session's export carries its tool calls (emitted under the sub-agent
+  // call, for the audit), cost and tokens. 2.x returns from `subagent` while the child still runs, so its export also
+  // closes the sub-agent row the normalizer left open, and is retried until the child settles (the parent `run` waits
+  // for it, so this is a backstop).
+  const delay = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
   const subSpend = async (subs) => {
     let costUsd = 0; let usage = { ...ZERO_USAGE }; const missed = [];
     for (const { sessionId: id, toolUseId } of subs) {
-      const text = await new Promise((resolve) => {
-        execCli(OPENCODE_CLI, bin, ['export', id], { cwd, env, timeout: 20000, maxBuffer: 64 * 1024 * 1024 }, (err, stdout) => resolve(err ? null : stdout));
-      });
-      const s = text == null ? null : readSubsession(text, { parentId: toolUseId, mcpServers: Object.keys(mcp || {}) });
-      if (!s) { missed.push(id); continue; }
-      for (const e of s.events) safeEmit(onEvent, e);
-      costUsd += s.costUsd; usage = addUsage(usage, s.usage);
+      const args = major >= 2 ? ['session', 'export', id] : ['export', id];
+      let parsed = null;
+      for (let n = 0; n < (major >= 2 ? 6 : 1); n++) {
+        const text = await new Promise((resolve) => {
+          execCli(OPENCODE_CLI, bin, args, { cwd, env, timeout: 20000, maxBuffer: 64 * 1024 * 1024 }, (err, stdout) => resolve(err ? null : stdout));
+        });
+        if (text == null) break;
+        parsed = readSubsession(text, { parentId: toolUseId, mcpServers: Object.keys(mcp || {}) });
+        if (parsed?.settled) break;
+        await delay(1000);
+      }
+      if (!parsed) { missed.push(id); continue; }
+      for (const e of parsed.events) safeEmit(onEvent, e);
+      costUsd += parsed.costUsd; usage = addUsage(usage, parsed.usage);
+      // 2.x returned from `subagent` at once, so the stream left the sub-agent row open; close it on the export.
+      if (major >= 2) safeEmit(onEvent, { type: 'subagent', event: parsed.settled ? 'finish' : 'error', toolUseId,
+        ...(parsed.costUsd ? { costUsd: parsed.costUsd } : {}) });
     }
     if (missed.length) safeEmit(onEvent, { type: 'stderr', stream: 'err', text: `[worca] opencode: could not read sub-agent session(s) ${missed.join(', ')} — their tool calls and cost are not counted` });
     return { costUsd, usage };
@@ -677,38 +909,91 @@ export async function runOpencodeProcess({
 
 // ── chat ─────────────────────────────────────────────────────────────────────
 
-/** The oldest OpenCode the chat lockdown was verified on; OpenCode 2 is refused by the preflight. */
+/** The oldest 1.x the chat lockdown was verified on, and the oldest 2.x (both verified against a local model endpoint). */
 export const OPENCODE_ASK_MIN_VERSION = '1.19.4';
+export const OPENCODE_ASK_MIN_V2 = '2.3.2';
 
-/** Can this opencode be locked down for a chat? OpenCode 1.x at least OPENCODE_ASK_MIN_VERSION. Never rejects. */
+/** Can this opencode be locked down for a chat? OpenCode 1.x at least OPENCODE_ASK_MIN_VERSION, or 2.x at least
+ *  OPENCODE_ASK_MIN_V2. Never rejects. */
 export function opencodeAskSupport({ bin = opencodeDefaultBin(), timeoutMs = 15000 } = {}) {
   return new Promise((resolve) => {
     execCli(OPENCODE_CLI, bin, ['--version'], { timeout: timeoutMs, env: { ...process.env, OPENCODE_DISABLE_AUTOUPDATE: '1' } }, (err, stdout) => {
-      if (err) { resolve({ refusal: /^(ENOENT|EACCES|EINVAL)$/.test(String(err.code)) ? cliRefusal({ bin, err, install: 'install OpenCode 1.x (npm i -g opencode-ai), or point WORCA_OPENCODE_BIN at it' }) : `could not ask ${bin} its version (${err.message})` }); return; }
+      if (err) { resolve({ refusal: /^(ENOENT|EACCES|EINVAL)$/.test(String(err.code)) ? cliRefusal({ bin, err, install: 'install OpenCode (opencode.ai), or point WORCA_OPENCODE_BIN at it' }) : `could not ask ${bin} its version (${err.message})` }); return; }
       const v = /(\d+)\.(\d+)\.(\d+)/.exec(String(stdout));
       const n = v ? v.slice(1).map(Number) : null;
-      const min = OPENCODE_ASK_MIN_VERSION.split('.').map(Number);
-      const older = !n || n[0] < min[0] || (n[0] === min[0] && (n[1] < min[1] || (n[1] === min[1] && n[2] < min[2])));
-      resolve(!n || n[0] >= 2 ? { refusal: `a chat needs OpenCode 1.x, ${OPENCODE_ASK_MIN_VERSION} or newer (${bin} is ${String(stdout).trim() || 'of an unknown version'})` }
-        : older ? { refusal: `this ${bin} is ${v[0]}; a chat needs OpenCode ${OPENCODE_ASK_MIN_VERSION} or newer — update it (npm i -g opencode-ai@1)` } : {});
+      if (!n) return resolve({ refusal: `could not tell what ${bin} is (${String(stdout).trim() || '(no version)'}) — a chat needs OpenCode ${OPENCODE_ASK_MIN_VERSION} or newer (1.x) or ${OPENCODE_ASK_MIN_V2} or newer (2.x)` });
+      const is2 = n[0] >= 2;
+      const min = (is2 ? OPENCODE_ASK_MIN_V2 : OPENCODE_ASK_MIN_VERSION).split('.').map(Number);
+      const older = n[0] < min[0] || (n[0] === min[0] && (n[1] < min[1] || (n[1] === min[1] && n[2] < min[2])));
+      resolve(older ? { refusal: `this ${bin} is ${v[0]}; a chat needs OpenCode ${min.join('.')} or newer (${is2 ? '2.x' : '1.x'}) — update it (npm i -g ${is2 ? '@opencode/cli@latest' : 'opencode-ai@1'})` } : {});
     });
   });
 }
 
-/** The user config an OpenCode chat reads (a change re-runs the self-test): ~/.config/opencode (or OPENCODE_CONFIG). */
+/** The user config an OpenCode chat reads (a change re-runs the self-test): ~/.config/opencode (or OPENCODE_CONFIG),
+ *  its file-based definitions (agent(s), command(s), skills, tool(s), plugin(s)) and the 2.x terminal `cli.json`. */
 export function opencodeConfigFiles(env = process.env) {
   const home = (typeof env.HOME === 'string' && env.HOME.trim()) || homedir();
   const dir = join((typeof env.XDG_CONFIG_HOME === 'string' && env.XDG_CONFIG_HOME.trim()) || join(home, '.config'), 'opencode');
-  return [join(dir, 'opencode.json'), join(dir, 'opencode.jsonc'), join(dir, 'config.json'), join(dir, 'tool'), join(dir, 'tools'), join(dir, 'agent'), join(dir, 'agents'),
-    join(dir, 'plugin'), join(dir, 'plugins'), ...(typeof env.OPENCODE_CONFIG === 'string' && env.OPENCODE_CONFIG ? [env.OPENCODE_CONFIG] : [])];
+  return [join(dir, 'opencode.json'), join(dir, 'opencode.jsonc'), join(dir, 'config.json'), join(dir, 'cli.json'),
+    join(dir, 'AGENTS.md'), join(dir, 'CLAUDE.md'), join(dir, 'tool'), join(dir, 'tools'), join(dir, 'agent'), join(dir, 'agents'),
+    join(dir, 'command'), join(dir, 'commands'), join(dir, 'skill'), join(dir, 'skills'), join(dir, 'plugin'), join(dir, 'plugins'),
+    ...(typeof env.OPENCODE_CONFIG === 'string' && env.OPENCODE_CONFIG ? [env.OPENCODE_CONFIG] : [])];
 }
 
-/** The chat self-test on this opencode (engines/chat-selftest.mjs): an OpenAI-compatible provider at a local endpoint. */
+/** The provider blocks of the user's opencode config (the top-level `providers` map): ~/.config/opencode
+ *  opencode.json / opencode.jsonc / config.json, else OPENCODE_CONFIG. Read fresh — the chat self-test already watches
+ *  these files, and a key the model's provider now reads must ride the next turn. Null when none exists or none parses;
+ *  a chat then signs in on env prefixes alone. */
+export function opencodeProvidersConfig(env = process.env) {
+  const home = (typeof env.HOME === 'string' && env.HOME.trim()) || homedir();
+  const dir = join((typeof env.XDG_CONFIG_HOME === 'string' && env.XDG_CONFIG_HOME.trim()) || join(home, '.config'), 'opencode');
+  const files = [join(dir, 'opencode.json'), join(dir, 'opencode.jsonc'), join(dir, 'config.json')];
+  if (typeof env.OPENCODE_CONFIG === 'string' && env.OPENCODE_CONFIG.trim()) files.push(env.OPENCODE_CONFIG.trim());
+  for (const f of files) {
+    let doc = null;
+    try { doc = existsSync(f) ? parseJsonc(readFileSync(f, 'utf8')) : null; } catch { doc = null; }
+    if (doc && typeof doc === 'object' && doc && typeof doc.providers === 'object' && doc.providers && !Array.isArray(doc.providers)) return doc.providers;
+  }
+  return null;
+}
+
+/** The exact env var names a chat on `model`'s provider reads from the user's opencode config: every `{env:NAME}` in any
+ *  string of that provider's block (apiKey, accessToken, options/env settings, …). A 2.x chat spawn runs `--standalone`,
+ *  so the child resolves the provider's `{env:…}` from its OWN process env — an exact name no prefix covers (here a
+ *  `aifarm-msp/…` provider reading ANTHROPIC_AUTH_TOKEN) must survive the chat scrub or the key never reaches the gateway.
+ *  Only the model's own provider block is read, so no other provider's key can ride along. None when the config or the
+ *  provider is missing, or it declares no env ref. */
+export function opencodeProviderSignInEnv(model, env = process.env) {
+  const provider = String(model || '').split('/')[0].trim();
+  if (!provider) return [];
+  const providers = opencodeProvidersConfig(env);
+  if (!providers || typeof providers[provider] !== 'object' || !providers[provider]) return [];
+  const names = new Set();
+  const walk = (v) => {
+    if (typeof v === 'string') {
+      // {env:NAME} — OpenCode expands these from the process env (the header comment above).
+      const re = /\{env:([A-Za-z_][A-Za-z0-9_]*)\}/g;
+      let m = null;
+      while ((m = re.exec(v))) names.add(m[1]);
+    } else if (Array.isArray(v)) {
+      for (const x of v) walk(x);
+    } else if (v && typeof v === 'object') {
+      for (const x of Object.values(v)) walk(x);
+    }
+  };
+  walk(providers[provider]);
+  return [...names].sort();
+}
+
+/** The chat self-test on this opencode (engines/chat-selftest.mjs): an OpenAI-compatible provider at a local endpoint.
+ *  `skill` is a meta tool 2.x always offers (its permission is evaluated as a kind of its own), so it is allowed. */
 export function opencodeChatSelfTest({ bin = opencodeDefaultBin(), ...o } = {}) {
   return chatSelfTest({
     engine: 'opencode', label: 'OpenCode', bin, protocol: 'openai', model: 'worcaselftest/worca-self-test',
     run: (opts) => runOpencodeProcess({ ...opts, probe: { ...opts.probe, serverAlias: (n) => `${n}selftest` } }),
-    probeEnv: () => ({}), wireName: (server, tool) => `${server}selftest_${tool}`, shellTool: 'bash', configFiles: opencodeConfigFiles(), ...o,
+    probeEnv: () => ({}), wireName: (server, tool) => `${server}selftest_${tool}`, shellTool: 'bash',
+    metaTools: ['skill'], configFiles: opencodeConfigFiles(), ...o,
   });
 }
 
@@ -722,7 +1007,7 @@ export const opencodeChat = makeChatDescriptor({
   preflight: (_ctx, impl = opencodePreflight) => impl({ defaultModel: false, envScrub: true, envAllowlist: [] }),
   resumeNotFound: (err) => OPENCODE_RESUME_NOT_FOUND_RE.test(String((err && err.message) || err || '')),
   modelProblem: (id) => (ZEN_PROVIDER_RE.test(String(id || '')) ? "OpenCode Zen's free models refuse a request without the shell, and a chat has none" : null),
-  signIn: (model) => ['OPENCODE_', ...providerEnvPrefixes(model)],
+  signIn: (model, env) => ['OPENCODE_', ...providerEnvPrefixes(model), ...opencodeProviderSignInEnv(model, env)],
   listRates: providerListRates,
   prompt: { cli: "OpenCode with OpenCode's own providers" },
 });

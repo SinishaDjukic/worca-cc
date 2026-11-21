@@ -9,7 +9,8 @@ import { join } from 'node:path';
 import {
   buildOpencodeArgs, createOpencodeNormalizer, classifyOpencodeError, opencodeSessionOf, OPENCODE_SESSION_PREFIX,
   opencodeRulePlan, opencodeCapabilities, opencodePreflight, runOpencodeProcess, OPENCODE_ASK_LOCKDOWN, opencodeMcpServers,
-  parseOpencodeProviders, readSubsession, OPENCODE_EFFORTS, OPENCODE_RESUME_NOT_FOUND_RE,
+  parseOpencodeProviders, parseOpencodeAuth, readSubsession, OPENCODE_EFFORTS, OPENCODE_RESUME_NOT_FOUND_RE,
+  opencodeAskSupport,
 } from '../src/core/engines/opencode.mjs';
 import { EVENT_TYPES, isNormalized } from '../src/core/engines/events.mjs';
 import { CAPABILITY_KEYS } from '../src/core/engines/capabilities.mjs';
@@ -30,6 +31,21 @@ test('argv: run, json events, auto-approve, no external plugins, error logs on s
   assert.deepEqual(buildOpencodeArgs({}), ['run', '--format', 'json', '--auto', '--pure', '--print-logs', '--log-level', 'ERROR']);
   assert.deepEqual(buildOpencodeArgs({ agent: 'worca-node', model: 'anthropic/claude-sonnet-4-5', effort: 'high', sessionId: 'ses_1' }),
     ['run', '--format', 'json', '--auto', '--pure', '--print-logs', '--log-level', 'ERROR', '--agent', 'worca-node', '-m', 'anthropic/claude-sonnet-4-5', '--variant', 'high', '-s', 'ses_1']);
+});
+
+test('argv on OpenCode 2: a private server, no --pure and no --print-logs, the variant rides the model', () => {
+  assert.deepEqual(buildOpencodeArgs({ major: 2 }), ['run', '--format', 'json', '--auto', '--standalone']);
+  assert.deepEqual(buildOpencodeArgs({ agent: 'worca-node', model: 'anthropic/claude-sonnet-4-5', effort: 'high', sessionId: 'ses_1', major: 2 }),
+    ['run', '--format', 'json', '--auto', '--standalone', '--agent', 'worca-node', '-m', 'anthropic/claude-sonnet-4-5#high', '-s', 'ses_1']);
+  assert.deepEqual(buildOpencodeArgs({ model: 'deepseek/deepseek-v4.1', major: 2 }), ['run', '--format', 'json', '--auto', '--standalone', '-m', 'deepseek/deepseek-v4.1']);
+});
+
+test('chat lockdown gate: 1.19.4+ (1.x) and 2.3.2+ (2.x) pass; older and unknown refuse', async () => {
+  assert.deepEqual(await opencodeAskSupport({ bin: fakeOpencode(tmp(), 'x', { version: '1.19.4' }).bin }), {});
+  assert.match((await opencodeAskSupport({ bin: fakeOpencode(tmp(), 'x', { version: '1.19.3' }).bin })).refusal, /1\.19\.4/);
+  assert.deepEqual(await opencodeAskSupport({ bin: fakeOpencode(tmp(), 'x', { version: '2.3.2' }).bin }), {});
+  assert.match((await opencodeAskSupport({ bin: fakeOpencode(tmp(), 'x', { version: '2.0.0' }).bin })).refusal, /2\.3\.2/);
+  assert.match((await opencodeAskSupport({ bin: fakeOpencode(tmp(), 'x', { version: '0.9.0' }).bin })).refusal, /1\.19\.4/);
 });
 
 test('session ids are engine-qualified; another engine\'s id is not an OpenCode session', () => {
@@ -126,6 +142,58 @@ test('error classes', () => {
   assert.ok(OPENCODE_RESUME_NOT_FOUND_RE.test(text('stderr-session-not-found.txt')));
 });
 
+test('normalizer (captured, OpenCode 2): a shell call keyed by part.id, text, per-step usage, cost', () => {
+  const { events, final } = replay('v2-bash-and-text.jsonl', { model: 'probe/m' });
+  for (const e of events) assert.ok(EVENT_TYPES.has(e.type) && isNormalized(e), JSON.stringify(e));
+  const calls = events.filter((e) => e.type === 'tool').flatMap((e) => e.calls);
+  assert.deepEqual(calls.map((c) => [c.name, c.input, c.toolUseId]), [['Bash', { command: 'echo hello-from-opencode-2' }, 'call_wst-1795175965248']]);
+  const results = events.filter((e) => e.type === 'toolResult').flatMap((e) => e.results);
+  assert.deepEqual(results.map((r) => [r.isError, r.toolUseId]), [[false, 'call_wst-1795175965248']]);
+  assert.equal(events.filter((e) => e.type === 'text').map((e) => e.text).join(''), 'DONE');
+  assert.equal(events.filter((e) => e.type === 'usage').length, 2);
+  assert.equal(final.sessionId, 'ses_e072c9ea4ffehflU3w08DSuwbV');
+  assert.equal(final.error, null);
+  assert.equal(final.costUsd, 0);
+  assert.deepEqual(final.usage, { input_tokens: 8, output_tokens: 6, cache_read_input_tokens: 0, cache_creation_input_tokens: 0 });
+});
+
+test('normalizer (captured, OpenCode 2): a subagent call spawns a sub-agent row and keeps its session; the background row never finishes in-stream', () => {
+  const { events, final } = replay('v2-subagent.jsonl', { backgroundSubagents: true });
+  const subs = events.filter((e) => e.type === 'subagent');
+  assert.deepEqual(subs.map((e) => e.event), ['spawn'], '2.x returns at once; the export closes the row (see the spawn test)');
+  assert.equal(subs[0].toolUseId, 'call_wst-1795175966173');
+  assert.equal(subs[0].subagentType, 'general');
+  assert.equal(subs[0].label, 'count files');
+  assert.deepEqual(final.subSessions, [{ sessionId: 'ses_e072c9a15ffeCnhV8RH7HeNFWm', toolUseId: 'call_wst-1795175966173' }]);
+  assert.equal(final.error, null);
+});
+
+test('normalizer (captured, OpenCode 2): an error event carries error.type, and the classes map from it', () => {
+  const { events, final } = replay('v2-error-no-route.jsonl');
+  assert.match(events.at(-1).text, /Model unavailable/);
+  assert.deepEqual([final.error, final.errorType, final.errorName], ['Model unavailable: nosuch/model', 'provider.no-route', null]);
+  assert.equal(classifyOpencodeError({ type: final.errorType, message: final.error }), null, 'a model that does not exist is not a sign-in, limit or network problem');
+  assert.equal(classifyOpencodeError({ type: 'provider.auth', message: 'x' }), 'auth');
+  assert.equal(classifyOpencodeError({ type: 'provider.rate-limit', message: 'x' }), 'rate_limit');
+  assert.equal(classifyOpencodeError({ type: 'provider.quota', message: 'x' }), 'quota');
+  assert.equal(classifyOpencodeError({ type: 'provider.budget-limit', message: 'x' }), 'quota');
+  assert.equal(classifyOpencodeError({ type: 'provider.model-budget-limit', message: 'x' }), 'quota');
+  assert.equal(classifyOpencodeError({ type: 'provider.free-limit', message: 'x' }), 'usage_limit');
+  assert.equal(classifyOpencodeError({ type: 'provider.transport', message: 'x' }), 'network');
+  assert.equal(classifyOpencodeError({ type: 'provider.timeout', message: 'x' }), 'network');
+});
+
+test('sub-session export (OpenCode 2): info totals and content tool parts; settled from outcome/idle', () => {
+  const sub = readSubsession(text('v2-session-export.json'), { parentId: 'call_sub' });
+  assert.equal(sub.costUsd, 0);
+  assert.deepEqual(sub.usage, { input_tokens: 4, output_tokens: 3, cache_read_input_tokens: 0, cache_creation_input_tokens: 0 });
+  assert.equal(sub.settled, true, 'outcome succeeded and time.idle present');
+  assert.deepEqual(sub.events, [], 'this child only answered text');
+  const running = readSubsession(JSON.stringify({ info: { cost: 0, time: { created: 1, busy: 2 } }, messages: [] }), {});
+  assert.equal(running.settled, false, 'a busy session is not settled');
+  assert.equal(readSubsession('not json'), null);
+});
+
 test('capabilities: declared honestly from the spike', () => {
   assert.deepEqual(Object.keys(opencodeCapabilities).sort(), [...CAPABILITY_KEYS].sort());
   assert.deepEqual(CAPABILITY_KEYS.filter((k) => opencodeCapabilities[k] === false), ['allowedTools', 'hookTelemetry']);
@@ -173,6 +241,15 @@ test('providers list: credentials and environment variables counted, colours ign
     { credentials: 0, env: 1 });
   assert.deepEqual(parseOpencodeProviders('└  2 credentials\n'), { credentials: 2, env: 0 });
   assert.equal(parseOpencodeProviders('garbled'), null);
+});
+
+test('2.x auth list: the JSON document\'s connections are credentials and env vars; [] and garbled are answers', () => {
+  assert.deepEqual(parseOpencodeAuth('[{"id":"anthropic","name":"Anthropic","connections":[{"type":"env","name":"ANTHROPIC_API_KEY"}]},'
+    + '{"id":"openai","name":"OpenAI","connections":[{"type":"oauth","name":"saved"},{"type":"key","name":"sk-…"}]}]'),
+    { credentials: 2, env: 1 });
+  assert.deepEqual(parseOpencodeAuth('[]'), { credentials: 0, env: 0 });
+  assert.equal(parseOpencodeAuth('not json'), null);
+  assert.equal(parseOpencodeAuth('{"nope":1}'), null);
 });
 
 /** Run `fn` with worca's env changed by `vars` (undefined deletes), then restore it. */
@@ -230,11 +307,15 @@ test('spawn: no model refuses before anything starts, unless the user opted in',
   await withEnv({ [OPT_IN]: '1' }, async () => assert.equal((await runOpencodeProcess({ cwd: tmp(), bin: fake.bin, prompt: 'x' })).text, 'done'));
 });
 
-test('preflight: OpenCode 2 refuses (its run attaches to a shared service and its flags, events and permissions changed); 1.x passes', POSIX, async () => {
-  for (const version of ['2.0.32', 'opencode 2.1.0']) {
-    assert.match((await opencodePreflight({ bin: fakeOpencode(tmp(), 'x', { version }).bin })).refusal, /OpenCode 2 is not supported yet .*opencode-ai/, version);
-  }
+test('preflight: 1.x reads providers list, 2.x reads auth list; both pass with credentials and warn/refuse without', POSIX, async () => {
+  // 1.x: the providers list decides.
   for (const version of ['1.19.3', '0.0.0-dev-202610130450']) assert.deepEqual(await opencodePreflight({ bin: fakeOpencode(tmp(), 'x', { version }).bin }), {}, version);
+  // 2.x: auth list --standalone --format json decides; an unparseable document warns.
+  assert.deepEqual(await opencodePreflight({ bin: fakeOpencode(tmp(), 'x', { version: '2.3.2', authText: '[{"id":"a","connections":[{"type":"env","name":"ANTHROPIC_API_KEY"}]}]' }).bin }), {});
+  const noCreds = await opencodePreflight({ bin: fakeOpencode(tmp(), 'x', { version: '2.3.2', authText: '[]' }).bin });
+  assert.match(noCreds.refusal, /no provider credentials.*OpenCode Zen/, 'no opt-in: refusal');
+  assert.match((await opencodePreflight({ bin: fakeOpencode(tmp(), 'x', { version: '2.3.2', authText: '[]' }).bin, defaultModel: false })).warning, /no provider credentials/);
+  assert.match((await opencodePreflight({ bin: fakeOpencode(tmp(), 'x', { version: '2.3.2', authText: 'garbled' }).bin })).warning, /could not tell/);
 });
 
 test('spawn: prompt on stdin; system prompt, rules and MCP ride OPENCODE_CONFIG_CONTENT; nothing is written into the checkout', POSIX, async () => {
@@ -302,6 +383,56 @@ test('spawn: an error event rejects with its class; the stderr cause is in the m
   await assert.rejects(runOpencodeProcess({ cwd: tmp(), bin: fake.bin, prompt: 'x', model: 'anthropic/x' }), (err) => err.errorClass === 'auth' && /API key is missing/.test(err.message));
   const unknown = fakeOpencode(tmp(), null, { lines: frames('error-unknown.jsonl'), exit: 1, stderr: text('stderr-model-not-found.txt') });
   await assert.rejects(runOpencodeProcess({ cwd: tmp(), bin: unknown.bin, prompt: 'x', model: 'anthropic/x' }), /Model not found: anthropic\/claude-sonnet-4-5/);
+});
+
+test('spawn on OpenCode 2: a private server, the variant on the model, no --pure; a sub-agent\'s export reads its spend and closes the row', POSIX, async () => {
+  const sid = 'ses_v2main0000000000000000001';
+  const line = (o) => JSON.parse(JSON.stringify({ timestamp: 1, sessionID: sid, part: { sessionID: sid }, ...o }));
+  const lines = [
+    line({ type: 'step_start', part: { id: 'prt_1', sessionID: sid, messageID: 'msg_1', type: 'step-start' } }),
+    line({ type: 'tool_use', part: { id: 'call_main1', partID: 'prt_2', sessionID: sid, messageID: 'msg_2', type: 'tool', tool: 'bash',
+      state: { status: 'completed', input: { command: 'echo one' }, output: 'one\n', metadata: { metadata: { status: 'completed', truncated: false, exit: 0 }, content: [{ type: 'text', text: 'one\n' }] } } } }),
+    line({ type: 'step_finish', part: { id: 'prt_3', sessionID: sid, messageID: 'msg_3', type: 'step-finish', reason: 'tool-calls', cost: 0, tokens: { input: 1, output: 1, reasoning: 0, cache: { read: 0, write: 0 } } } }),
+    line({ type: 'step_start', part: { id: 'prt_4', sessionID: sid, messageID: 'msg_4', type: 'step-start' } }),
+    line({ type: 'tool_use', part: { id: 'call_sub', partID: 'prt_5', sessionID: sid, messageID: 'msg_5', type: 'tool', tool: 'subagent',
+      state: { status: 'completed', input: { agent: 'worca-investigator', description: 'look around', prompt: 'look' }, output: 'working in the background…',
+        metadata: { metadata: { sessionID: 'ses_v2child0000000000000000001', status: 'running', truncated: false }, content: [] } } } }),
+    line({ type: 'step_finish', part: { id: 'prt_6', sessionID: sid, messageID: 'msg_6', type: 'step-finish', reason: 'tool-calls', cost: 0, tokens: { input: 1, output: 1, reasoning: 0, cache: { read: 0, write: 0 } } } }),
+    line({ type: 'step_start', part: { id: 'prt_7', sessionID: sid, messageID: 'msg_7', type: 'step-start' } }),
+    line({ type: 'text', part: { id: 'prt_8', sessionID: sid, messageID: 'msg_8', type: 'text', text: 'DONE' } }),
+    line({ type: 'step_finish', part: { id: 'prt_9', sessionID: sid, messageID: 'msg_9', type: 'step-finish', reason: 'stop', cost: 0, tokens: { input: 1, output: 1, reasoning: 0, cache: { read: 0, write: 0 } } } }),
+  ];
+  const subExport = {
+    info: { id: 'ses_v2child0000000000000000001', parentID: sid, agent: 'worca-investigator', cost: 0.5,
+      tokens: { input: 10, output: 2, reasoning: 0, cache: { read: 0, write: 0 } }, outcome: 'succeeded', time: { created: 1, busy: 1, idle: 2 } },
+    messages: [
+      { id: 'msg_sub1', type: 'user', text: 'look' },
+      { id: 'msg_sub2', type: 'assistant', agent: 'worca-investigator', cost: 0.5,
+        tokens: { input: 10, output: 2, reasoning: 0, cache: { read: 0, write: 0 } },
+        content: [{ type: 'tool', id: 'call_subtool', name: 'bash', state: { status: 'completed', input: { command: 'echo sub' }, content: [{ type: 'text', text: 'sub-out\n' }] } }] },
+    ],
+  };
+  const fake = fakeOpencode(tmp(), null, { version: '2.3.2', authText: '[]', lines, exportDoc: subExport, exportCommand: 'session-export' });
+  const events = [];
+  const r = await runOpencodeProcess({ cwd: tmp(), bin: fake.bin, prompt: 'x', model: 'anthropic/x', effort: 'high',
+    allowedTools: ['Agent'], onEvent: (e) => events.push(e) });
+  const args = fake.args();
+  assert.ok(args.includes('--standalone'), args.join(' '));
+  assert.ok(!args.includes('--pure'));
+  assert.ok(!args.includes('--variant'));
+  assert.equal(args[args.indexOf('-m') + 1], 'anthropic/x#high');
+  assert.deepEqual(fake.exported(), ['ses_v2child0000000000000000001'], '2.x exports through `session export`');
+  const mains = events.filter((e) => e.type === 'tool' && e.parentId === null).flatMap((e) => e.calls);
+  assert.deepEqual(mains.map((c) => [c.name, c.input.command, c.toolUseId]), [['Bash', 'echo one', 'call_main1']], 'the call id comes from part.id');
+  // 2.x returns from `subagent` at once: the stream spawns the row, the export closes it under the same call.
+  const subs = events.filter((e) => e.type === 'subagent');
+  assert.deepEqual(subs.map((e) => [e.event, e.toolUseId, e.subagentType]), [['spawn', 'call_sub', 'worca-investigator'], ['finish', 'call_sub', undefined]]);
+  const under = events.filter((e) => e.parentId === 'call_sub');
+  assert.deepEqual(under.filter((e) => e.type === 'tool').flatMap((e) => e.calls).map((c) => [c.name, c.toolUseId]), [['Bash', 'call_subtool']]);
+  const result = events.find((e) => e.type === 'result');
+  assert.equal(result.costUsd, 0.5, 'the sub-agent\'s export cost joins the result');
+  assert.deepEqual(result.usage, { input_tokens: 3 + 10, output_tokens: 3 + 2, cache_read_input_tokens: 0, cache_creation_input_tokens: 0 });
+  assert.equal(r.text, 'DONE');
 });
 
 test('spawn: the free tier refusing a run without a shell says why', POSIX, async () => {
