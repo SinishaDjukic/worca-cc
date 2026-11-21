@@ -70,3 +70,16 @@ test('deleting an example deletes its judgements, answers, rounds and liked resu
   }
   assert.equal(prepare('SELECT COUNT(*) AS n FROM wf_test_judge_ledger').get().n, 1, 'spend never goes back');
 });
+
+test('final review I2: an example is not deleted while Check the checker is making a round of it, or while its criteria are checked', () => {
+  const ex = store.createExample(WF, { name: 'E2', request: 'R', criteria: [{ text: 'Names a metric' }], judge: { model: 'claude-opus-5-5' } });
+  const r = prepare(`INSERT INTO wf_test_checker_rounds (workflow_id, example_id, criterion_id, criterion_fp, model, source, status, created_at)
+    VALUES (?, ?, 'k_1', 'fp', 'm', '{}', 'making', '2026-11-19T00:00:00Z')`).run(WF, ex.id);
+  const busy = { code: 'BUSY', message: "Worca is checking this example's criteria: delete it when that is done" };
+  assert.throws(() => store.deleteExample(WF, ex.id), busy);
+  assert.ok(store.readExample(WF, ex.id), 'still there');
+  prepare(`UPDATE wf_test_checker_rounds SET status = 'ready' WHERE id = ?`).run(r.lastInsertRowid);
+  assert.throws(() => store.deleteExample(WF, ex.id, { checking: true }), busy, 'a check of a test that covers it');
+  assert.equal(store.deleteExample(WF, ex.id), true, 'a ready round does not hold it');
+  assert.equal(store.readExample(WF, ex.id), null);
+});

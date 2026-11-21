@@ -251,10 +251,15 @@ export function updateExample(workflowId, id, input = {}, { project } = {}) {
   return readExample(workflowId, was.id);
 }
 
-export function deleteExample(workflowId, id) {
+/** Final review I2: `checking` — a check of an older test's criteria covers this example now (the runner knows; the route asks it). */
+export function deleteExample(workflowId, id, { checking = false } = {}) {
   const ex = requireExample(workflowId, id);
   const run = runningTestRun(workflowId);
   if (run && run.exampleIds.includes(ex.id)) throw testError('a test is trying this example: stop it first', 'BUSY');
+  // Its paid checks would go on after it is gone and write rows for it (D106): a Check the checker round being made, or that check.
+  if (checking || prepare("SELECT 1 FROM wf_test_checker_rounds WHERE example_id = ? AND status = 'making' LIMIT 1").get(ex.id)) {
+    throw testError("Worca is checking this example's criteria: delete it when that is done", 'BUSY');
+  }
   tx(() => {
     prepare('DELETE FROM wf_test_example_files WHERE example_id = ?').run(ex.id);
     prepare('DELETE FROM wf_test_example_projects WHERE example_id = ?').run(ex.id);

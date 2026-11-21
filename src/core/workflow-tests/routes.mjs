@@ -141,7 +141,8 @@ export function registerWorkflowTestRoutes(app, { broadcast = () => {}, deps = {
   });
   route('DELETE', `${W}/examples/:ex`, async (req, res) => {
     service.workflowRowOf(wid(req));
-    store.deleteExample(wid(req), num(req.params.ex, 'example'));
+    const id = num(req.params.ex, 'example');
+    store.deleteExample(wid(req), id, { checking: runner.criteriaCheckCovers(wid(req), id) });   // final review I2
     res.json({ ok: true });
   });
   route('POST', `${W}/examples/:ex/files`, async (req, res) => {

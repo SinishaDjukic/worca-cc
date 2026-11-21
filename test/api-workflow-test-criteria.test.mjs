@@ -250,6 +250,29 @@ test('review: 409 while a check runs, 422 at the spending limit, 400 without a r
   } finally { await none.close(); }
 });
 
+test('final review I2: DELETE of an example is 409 while a check of a test that covers it runs, and works after', async () => {
+  const { registerWorkflowTestRoutes } = await import('../src/core/workflow-tests/routes.mjs');
+  let release; const gate = new Promise((x) => { release = x; });
+  const app = express();
+  app.use(express.json());
+  const { runner } = registerWorkflowTestRoutes(app, { deps: { criteriaJudge: { judgeMissing: () => gate, judgeTry: async () => [], leaveUnchecked() {} } } });
+  const server = http.createServer(app);
+  await new Promise((r) => server.listen(0, '127.0.0.1', r));
+  const del = async (id) => { const x = await fetch(`http://127.0.0.1:${server.address().port}${WF}/examples/${id}`, { method: 'DELETE' }); return { status: x.status, body: await x.json() }; };
+  const ex = store.createExample('wf_api_c', { name: 'Covered', request: 'R' });
+  const other = store.createExample('wf_api_c', { name: 'Not covered', request: 'R' });
+  try {
+    const done = runner.checkCriteriaLater({ id: 987654, workflowId: 'wf_api_c', exampleIds: [ex.id] });
+    const busy = await del(ex.id);
+    assert.deepEqual([busy.status, busy.body.error], [409, "Worca is checking this example's criteria: delete it when that is done"]);
+    assert.equal((await del(other.id)).status, 200, 'an example the check does not cover can go');
+    release();
+    await done;
+    assert.equal((await del(ex.id)).status, 200);
+    assert.equal(store.readExample('wf_api_c', ex.id), null);
+  } finally { release(); await new Promise((r) => server.close(r)); }
+});
+
 test('review: the overview says whether a check is running, and its latest test counts the criteria not checked', async () => {
   const o = await call('GET', WF);
   assert.equal(o.body.checking, false);

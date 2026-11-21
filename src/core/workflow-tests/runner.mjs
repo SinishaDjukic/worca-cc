@@ -138,7 +138,7 @@ export function createTestRunner(deps) {
   const overCap = (run) => run.capUsd !== null && costOf(run.id) >= run.capUsd;
   /** P4-Q15 (I15): "Check them on these tries" on an older test, in the background. One per workflow and never beside a test of it,
    *  so no two drives judge (and pay for) the same reused try; its checks stop at the test's own cap (D92). */
-  const checkingCriteria = new Map();   // workflowId → test run id
+  const checkingCriteria = new Map();   // workflowId → { id, exampleIds } of the test run
   /** BUSY while a test of the workflow starts or runs, or a check of its criteria runs (each with its own text). */
   const busyCheck = (workflowId) => {
     if (checkingCriteria.has(workflowId)) throw err(CHECKING_TEXT, 'BUSY');
@@ -147,14 +147,16 @@ export function createTestRunner(deps) {
   function checkCriteriaLater(run) {
     busyCheck(run.workflowId);
     if (!deps.judgeMissing) throw err('this Worca cannot check criteria', 'BAD_REQUEST');
-    checkingCriteria.set(run.workflowId, run.id);
+    checkingCriteria.set(run.workflowId, { id: Number(run.id), exampleIds: (run.exampleIds || []).map(Number) });
     return Promise.resolve()
       .then(() => deps.judgeMissing(run, { stopped: () => false, overCap: () => overCap(run) }))
       .catch((e) => console.error(`[workflow-tests] could not check the criteria of test ${run.id}: ${msgOf(e)}`))
       .finally(() => { checkingCriteria.delete(run.workflowId); notify(run); });
   }
-  const criteriaCheckOf = (runId) => [...checkingCriteria.values()].includes(Number(runId));
+  const criteriaCheckOf = (runId) => [...checkingCriteria.values()].some((c) => c.id === Number(runId));
   const criteriaCheckingOf = (workflowId) => checkingCriteria.has(workflowId);
+  /** Final review I2: a check of a test's criteria is judging this example now (its delete waits). */
+  const criteriaCheckCovers = (workflowId, exampleId) => !!(checkingCriteria.get(workflowId) || { exampleIds: [] }).exampleIds.includes(Number(exampleId));
   /** D91: a try's criteria, after its automatic checks; never fails the try (a check that did not run shows "Not checked"). */
   async function checkCriteria(run, st, example, tryId) {
     if (!deps.judgeCriteria || st.stopping) return;
@@ -795,5 +797,6 @@ export function createTestRunner(deps) {
     return p && p.of > 0 ? { ...p } : null;
   }
 
-  return { start, stop, continueRun, recover, idle, costOf, phaseOf, diskOf, beforeNowOf, stoppingOf, criteriaPhaseOf, criteriaProgressOf, checkCriteriaLater, criteriaCheckOf, criteriaCheckingOf };
+  return { start, stop, continueRun, recover, idle, costOf, phaseOf, diskOf, beforeNowOf, stoppingOf, criteriaPhaseOf, criteriaProgressOf, checkCriteriaLater, criteriaCheckOf, criteriaCheckingOf,
+    criteriaCheckCovers };
 }
