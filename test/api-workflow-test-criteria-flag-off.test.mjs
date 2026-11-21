@@ -26,6 +26,14 @@ after(async () => {
   await rm(homeDir, { recursive: true, force: true, maxRetries: 20, retryDelay: 100 });
 });
 
+test('final review M4: CRITERIA_ROUTES lists every route registerCriteriaRoutes registers', async () => {
+  const { registerCriteriaRoutes } = await import('../src/core/workflow-tests/criteria-routes.mjs');
+  const seen = [];
+  const app = Object.fromEntries(['get', 'post', 'put', 'delete'].map((m) => [m, (path) => seen.push(`${m.toUpperCase()} ${path}`)]));
+  registerCriteriaRoutes(app, {});
+  assert.deepEqual(routes.map((r) => `${r.method} ${r.path}`).sort(), seen.sort());
+});
+
 test('every Part 4 route is 404 while the flag is off', async () => {
   assert.ok(routes.length >= 1);
   assert.ok(routes.some((r) => r.method === 'GET' && r.path.endsWith('/judge-models')), 'the judge-models route is listed');
