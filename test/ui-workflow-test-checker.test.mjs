@@ -180,6 +180,10 @@ test('P4-M3: after a "Wrong", Worca\'s clearer words replace the panel: use them
   btnByText(sugg, 'Use these words and check again').click();
   btnByText(sugg, 'Keep my words').click();
   assert.deepEqual(asked, [['use', 'Names a success metric with a target number, and says where that number is counted.'], ['keep']]);
+  // Fix round 5: the estimate is the round's own calls (its three copy calls and its checks), not the clearer words' call.
+  const again = dom();
+  renderChecker(again.root, { ...v, costUsd: 0.14, againUsd: 0.12 }, NOOP, { doc: again.doc, exampleName: 'E', reworded: { text: 'x' } });
+  assert.equal(again.root.querySelector('.wft-sugg .hint').textContent, 'Checking again makes 4 new results to confirm, about $0.12.');
   assert.ok(root.querySelector('.wft-cc-auto'), 'the self-tests and the cost stay');
   // The reword route's refusals are shown in the server's words, with Try again (reword) and Keep my words.
   renderChecker(root, v, { ...NOOP, reword: () => asked.push(['reword']) },

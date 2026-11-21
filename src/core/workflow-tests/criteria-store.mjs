@@ -149,8 +149,10 @@ export function roundJudgements(roundId) {
   getDb();
   return prepare(`SELECT ${J_COLS} FROM wf_test_judgements WHERE round_id = ? ORDER BY id`).all(Number(roundId)).map(judgementOf);
 }
-export function roundSpentUsd(roundId) {
+/** What a round's calls cost; `purpose` 'checker': only the round's own calls (its copies and checks), not its clearer words. */
+export function roundSpentUsd(roundId, { purpose = null } = {}) {
   getDb();
+  if (purpose) return Number(prepare('SELECT COALESCE(SUM(amount_usd), 0) AS s FROM wf_test_judge_ledger WHERE round_id = ? AND purpose = ?').get(Number(roundId), purpose).s || 0);
   return Number(prepare('SELECT COALESCE(SUM(amount_usd), 0) AS s FROM wf_test_judge_ledger WHERE round_id = ?').get(Number(roundId)).s || 0);
 }
 /** P4-Q17: some call of the round reported no cost (booked as a $0 'unknown' row). */

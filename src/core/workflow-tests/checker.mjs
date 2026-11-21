@@ -7,8 +7,9 @@ import { judgeCriterion as realJudge, modelCall as realModelCall, firstLine } fr
 import { subjectOfTry } from './criteria-runner.mjs';
 import { mainResult } from './result.mjs';
 import { exampleSourcesText } from './sources-text.mjs';
-import { padded, deterministicPlants, plantSystemPrompt, plantPrompt, parsePlantReply, applyPlants } from './planted.mjs';
-import { SUBJECT_MAX, clipText, fenceTag } from './judge-prompt.mjs';
+import { padded, deterministicPlants, copySystemPrompt, copyPrompt, parseCopyReply, copyProblem, changedExcerpt, PLANT_COPIES, PLANT_RESULT_MAX,
+  COPY_TIMEOUT_MS } from './planted.mjs';
+import { SUBJECT_MAX, fenceTag } from './judge-prompt.mjs';
 import { rewordCriterion } from './suggest.mjs';
 import * as store from './store.mjs';
 import * as cs from './criteria-store.mjs';
@@ -39,8 +40,9 @@ export async function goodResultOf(example, { subjectOf = (t) => subjectOfTry(t)
   return null;
 }
 
-/** Board 59 A: some try of the example finished (passed or failed); a try that did not finish is not one. */
-const triedOnce = (example) => store.triesForExample(example.id).some((t) => t.status === 'passed' || t.status === 'failed');
+/** Board 59 A: some try of the example failed and none passed (review M3: a passed try with no text is not "no try passed yet"); a try
+ *  that did not finish is not one. */
+const triedOnce = (example) => { const ts = store.triesForExample(example.id); return !ts.some((t) => t.status === 'passed') && ts.some((t) => t.status === 'failed'); };
 
 /** `deps.changed(round)`: called when a round's making ends, ready or failed (the routes send the changed frame). */
 export function createChecker(deps = {}) {
@@ -48,27 +50,43 @@ export function createChecker(deps = {}) {
     subjectOf: (t) => subjectOfTry(t), contextOf: (ex) => exampleSourcesText(ex), inline: false, ...deps };
   const making = new Set();   // `${exampleId}|${criterionId}` of the rounds being made now
 
-  async function make(round, ex, criterion, good) {
-    // Every paid call of the round books through this one function, with purpose 'checker': the planting call and each check.
-    const book = (usd, costKind) => d.book({ workflowId: round.workflowId, exampleId: ex.id, roundId: round.id, purpose: 'checker', model: round.model, amountUsd: usd, costKind });
-    const mock = d.mock() || good.mock === true;   // D91, I14: a mock try's text is only ever checked by the mock
-    let plants = null;
-    if (!mock) {
+  /** User decision 2026-11-21: the three broken copies, one model call each, every call booked (purpose 'checker') and the spending limit
+   *  read before it. Returns the plants, or the words the round fails with: a copy that fails a check (copyProblem) ends the round, since
+   *  fewer than three good copies cannot make one; no free plants stand in for it. */
+  async function plantCopies(round, criterion, good, book) {
+    if (good.text.length > PLANT_RESULT_MAX) return { fail: ROUND_NOT_FINISHED_TEXT };   // nothing is sent
+    const plants = [];
+    for (let i = 0; i < PLANT_COPIES; i += 1) {
+      const b = d.budgetStatus();
+      if (b && b.blocked) return { fail: NOT_CHECKED.limit };
+      const tag = fenceTag();
       let r = null;
       try {
-        const tag = fenceTag();
-        r = await d.modelCall({ model: round.model, system: plantSystemPrompt(tag),
-          prompt: plantPrompt({ criterion: criterion.text, result: clipText(good.text, SUBJECT_MAX).text, tag }) });
+        r = await d.modelCall({ model: round.model, system: copySystemPrompt(tag),
+          prompt: copyPrompt({ criterion: criterion.text, result: good.text, ways: plants.map((p) => p.how), tag }) }, { timeoutMs: COPY_TIMEOUT_MS });
       } catch (e) { if (Number(e && e.costUsd) > 0 || (e && e.costKind === 'unknown')) book(Number(e.costUsd) || 0, e.costKind || 'billed'); }
       // Outside the try (final review M1): a booking that fails after a paid call surfaces and fails the round, never goes unnoticed.
-      if (r) {
-        if (r.costUsd > 0 || r.costKind === 'unknown') book(r.costUsd, r.costKind);   // P4-Q17: an unknown cost books a $0 row
-        plants = applyPlants(good.text, parsePlantReply(r.text));
+      if (r && (r.costUsd > 0 || r.costKind === 'unknown')) book(r.costUsd, r.costKind);   // P4-Q17: an unknown cost books a $0 row
+      const copy = r ? parseCopyReply(r.text, tag) : null;
+      const why = r ? copyProblem(good.text, copy, plants) : 'failed';
+      if (why) {
+        console.warn(`[workflow-tests] check-the-checker round ${round.id}: broken copy ${i + 1} not used (${why})`);
+        return { fail: ROUND_NOT_FINISHED_TEXT };
       }
+      plants.push({ how: copy.how, text: copy.text, excerpt: changedExcerpt(good.text, copy.text) });
     }
-    plants = (plants || deterministicPlants(good.text)).slice(0, 3);
+    return { plants };
+  }
+
+  async function make(round, ex, criterion, good) {
+    // Every paid call of the round books through this one function, with purpose 'checker': the copy calls and each check.
+    const book = (usd, costKind) => d.book({ workflowId: round.workflowId, exampleId: ex.id, roundId: round.id, purpose: 'checker', model: round.model, amountUsd: usd, costKind });
+    const mock = d.mock() || good.mock === true;   // D91, I14: a mock try's text is only ever checked by the mock
+    // A mock round pays nothing: Worca's own plants. A real round: the checking model's whole copies, never the free plants.
+    const made = mock ? { plants: deterministicPlants(good.text).slice(0, PLANT_COPIES) } : await plantCopies(round, criterion, good, book);
+    if (made.fail) { cs.updateRound(round.id, { status: 'failed', detail: made.fail }); return; }
     const real = { how: null, excerpt: clip(good.text.split(/\n{2,}/).find((p) => p.trim() && !/^#/.test(p.trim())) || good.text), text: good.text };
-    const cards = [real, ...plants];
+    const cards = [real, ...made.plants];
     const context = d.contextOf(ex);
     const ask = async (subject, purpose, card, variant) => {
       const j = await d.judgeCriterion({ criterion: criterion.text, subject, context, model: round.model, mock, book });
@@ -76,7 +94,9 @@ export function createChecker(deps = {}) {
         roundId: round.id, card, variant, subject: purpose === 'real' || purpose === 'planted' ? subject.slice(0, SUBJECT_MAX) : null, j });
     };
     const mainJs = [];
-    for (const [i, c] of cards.entries()) mainJs.push(await ask(c.text, i === 0 ? 'real' : 'planted', i, { how: c.how, excerpt: clip(c.excerpt) }));
+    for (const [i, c] of cards.entries()) {
+      mainJs.push(await ask(c.text, i === 0 ? 'real' : 'planted', i, { how: c.how, excerpt: clip(c.excerpt), ...(c.blind ? { blind: true } : {}) }));
+    }
     // A card with no verdict (limit, failed, no proof, unreadable) is not a verdict the person can answer: the round fails now,
     // before the repeats and filler are asked (no further paid calls); the calls already made stay booked.
     const bad = mainJs.find((j) => j.met === null);
@@ -147,7 +167,7 @@ export function createChecker(deps = {}) {
     const js = cs.roundJudgements(round.id);
     const main = js.filter((j) => j.purpose === 'real' || j.purpose === 'planted');
     const cards = main.map((j) => ({ judgementId: j.id, card: j.card, planted: j.variant && j.variant.how ? j.variant.how : null,
-      excerpt: j.variant ? j.variant.excerpt : null, met: j.met, reason: j.reason, answer: anyone ? cs.latestAnswerOf(j.id) : cs.answerOf(j.id, by) }));
+      excerpt: j.variant ? j.variant.excerpt : null, ...(j.variant && j.variant.blind ? { blind: true } : {}), met: j.met, reason: j.reason, answer: anyone ? cs.latestAnswerOf(j.id) : cs.answerOf(j.id, by) }));
     // An errored repeat or filler check (no verdict) is left out of the totals.
     const reps = main.map((m) => ({ m, r: js.filter((j) => j.purpose === 'again' && j.card === m.card && j.met !== null) })).filter((x) => x.r.length > 0);
     const same = reps.filter((x) => x.r.every((j) => j.met === x.m.met)).length;
@@ -160,7 +180,7 @@ export function createChecker(deps = {}) {
     const changed = !!criterion && cs.criterionFp(criterion.text) !== round.fp;
     return { round, exampleName: ex ? ex.name : null, criterion: ranOn, ...(changed ? { textChanged: true } : {}), source: sourceOf(round, ex), cards, left,
       auto: { same: { n: same, of: reps.length }, padding: { n: pad, of: pads.length }, proof: { n: main.filter((j) => j.proofFound).length, of: main.length } },
-      costUsd: cs.roundSpentUsd(round.id), costUnknown: cs.roundCostUnknown(round.id), canUse: round.status === 'done' };   // P4-Q17
+      costUsd: cs.roundSpentUsd(round.id), againUsd: cs.roundSpentUsd(round.id, { purpose: 'checker' }), costUnknown: cs.roundCostUnknown(round.id), canUse: round.status === 'done' };   // P4-Q17
   }
 
   /** D96, D97: Right (true) or Wrong (false) on one card; the round is done when all four are answered. */

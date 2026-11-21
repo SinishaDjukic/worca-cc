@@ -39,7 +39,9 @@ the limit is reached, running pipelines pause at their next step, and new runs, 
 until the window resets or you raise the limit.
 
 Workflow tests count too: their tries, and the AI checks of your criteria (Check the checker, suggested criteria and
-clearer words included). Statistics leaves them out.
+clearer words included). Statistics leaves them out. A round of Check the checker makes three calls that each write a
+whole copy of the good result, then 16 checks, so a long result costs more to check; "Checking again … about $X" is what
+the round's own calls cost.
 
 Each model in "Checked with" names who pays for its checks, as far as Worca can tell: the credential broker; a cloud
 (Vertex, Bedrock, Foundry), an API key or a sign-in token set in the model, where Worca runs or in your Claude Code

@@ -74,7 +74,8 @@ export function trustReportModel({ criteria = [], rounds = [], pairs = [], proof
   const agree = [...once.values()].reduce((s, t) => s + t.agree, 0);
   let caught = 0; let of = 0; const missedOn = [];
   for (const r of rounds) {
-    const planted = r.cards.filter((c) => c.planted);
+    // Review I1: a mock round's blind plant (it cannot know the criterion) counts only when the person said Worca was wrong on it.
+    const planted = r.cards.filter((c) => c.planted && (!c.blind || c.answer === false));
     const miss = planted.filter((c) => c.met === true && c.answer !== true).length;   // met on a planted mistake, unless the person said that is right
     of += planted.length; caught += planted.length - miss;
     if (miss) missedOn.push(r.criterionText);

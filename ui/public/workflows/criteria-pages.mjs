@@ -341,7 +341,8 @@ function ccReworded(doc, v, reworded, actions, { rewording = false, dateText = (
   const sugg = el(doc, 'div', 'wft-sugg wft-cc-reword');
   const use = busyBtn(doc, 'Use these words and check again', () => actions.useWords(reworded.text), 'btn btn-sm btn-primary');
   const est = el(doc, 'span', 'hint', `Checking again makes ${CC_CARDS} new results to confirm, about `);
-  est.append(usdSpan(doc, v.costUsd), doc.createTextNode('.'));
+  // Fix round 5: the round's own calls (its three whole-copy calls and its checks; checker.mjs againUsd), not the clearer words' call.
+  est.append(usdSpan(doc, typeof v.againUsd === 'number' ? v.againUsd : v.costUsd), doc.createTextNode('.'));
   sugg.append(el(doc, 'span', 'wft-sugg-tag', 'Worca suggests clearer words'), el(doc, 'span', 'wft-cc-words', `"${reworded.text}"`), ccActs(doc, use, keep), est);
   box.append(sugg);
   return box;
