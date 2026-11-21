@@ -2519,6 +2519,9 @@ async function rowToHistoryEntry(row, repoDir = null, opts = {}) {
     pauseDetail: row.pause_detail ?? null,
     limitEngine: row.limit_engine ?? null,
     limitResetAt: row.limit_reset_at ?? null,
+    // #1450: a usage limit's model and scope; the model a 'model_confirm' pause waits on.
+    ...(row.limit_scope ? { limitScope: row.limit_scope, limitModel: row.limit_model ?? null } : {}),
+    ...(row.model_confirm ? { modelConfirm: j(row.model_confirm, null) } : {}),
     runEngine: row.run_engine || 'claude',
     // E2/2.3: the done-run caveat (open issues left by a forced loop, End not reached). Only on a v2 row.
     ...(row.open_issue_count ? { openIssueCount: Number(row.open_issue_count) } : {}),
@@ -2641,6 +2644,9 @@ async function listPipelinesNow(projectDir, opts, workspaceKey) {
            json_extract(CASE WHEN json_valid(resume_point) THEN resume_point END, '$.pauseDetail') AS pause_detail,
            json_extract(CASE WHEN json_valid(resume_point) THEN resume_point END, '$.limitEngine') AS limit_engine,
            json_extract(CASE WHEN json_valid(resume_point) THEN resume_point END, '$.limitResetAt') AS limit_reset_at,
+           json_extract(CASE WHEN json_valid(resume_point) THEN resume_point END, '$.limitScope') AS limit_scope,
+           json_extract(CASE WHEN json_valid(resume_point) THEN resume_point END, '$.limitModel') AS limit_model,
+           json_extract(CASE WHEN json_valid(resume_point) THEN resume_point END, '$.modelConfirm') AS model_confirm,
            resume_point IS NOT NULL AS has_resume_point,
            ${RUN_ENGINE_SQL} AS run_engine,
            ${OUTCOME_NOTE_SQL}
@@ -2689,6 +2695,9 @@ async function listAllPipelinesNow(opts, { batchSize = 16 } = {}) {
            json_extract(CASE WHEN json_valid(resume_point) THEN resume_point END, '$.pauseDetail') AS pause_detail,
            json_extract(CASE WHEN json_valid(resume_point) THEN resume_point END, '$.limitEngine') AS limit_engine,
            json_extract(CASE WHEN json_valid(resume_point) THEN resume_point END, '$.limitResetAt') AS limit_reset_at,
+           json_extract(CASE WHEN json_valid(resume_point) THEN resume_point END, '$.limitScope') AS limit_scope,
+           json_extract(CASE WHEN json_valid(resume_point) THEN resume_point END, '$.limitModel') AS limit_model,
+           json_extract(CASE WHEN json_valid(resume_point) THEN resume_point END, '$.modelConfirm') AS model_confirm,
            resume_point IS NOT NULL AS has_resume_point,
            ${RUN_ENGINE_SQL} AS run_engine,
            ${OUTCOME_NOTE_SQL}
@@ -2982,6 +2991,10 @@ function rowToState(row) {
   state.pauseDetail = typeof rp?.pauseDetail === 'string' ? rp.pauseDetail : null;
   state.limitEngine = typeof rp?.limitEngine === 'string' ? rp.limitEngine : null;
   state.limitResetAt = typeof rp?.limitResetAt === 'string' ? rp.limitResetAt : null;
+  // #1450: the model a confirmation pause waits on, a usage limit's model and scope.
+  state.modelConfirm = rp?.modelConfirm && typeof rp.modelConfirm.model === 'string' ? { ...rp.modelConfirm } : null;
+  state.limitModel = typeof rp?.limitModel === 'string' ? rp.limitModel : null;
+  state.limitScope = rp?.limitScope === 'model' || rp?.limitScope === 'connection' ? rp.limitScope : null;
   state.runEngine = runEngineOfRow(row);
   // Shaper D28: only a shaped run carries shapeStats (run_size is write-only: Statistics reads the column)
   if (row.shape_stats) state.shapeStats = j(row.shape_stats, null);

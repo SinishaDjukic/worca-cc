@@ -40,7 +40,7 @@ const status = (done = [], flags = {}) => ({
   done: done.length, total: 9, claude: { bin: 'claude', hint: null }, hidden: false, welcomeSeen: false, ...flags,
 });
 
-async function boot({ onboarding = status(['claude']), projects = [], level = null, settingsError = null, width = null, holdOnboarding = null } = {}) {
+async function boot({ onboarding = status(['claude']), projects = [], level = null, settingsError = null, width = null, holdOnboarding = null, settings = null } = {}) {
   // `level`: the server-rendered interface mode (docs/ui-levels.md); null = no attribute (gates nothing).
   const shellHtml = level ? html.replace('<html lang="en" data-theme="system">', `<html lang="en" data-theme="system" data-level="${level}">`) : html;
   const dom = trackDom(new JSDOM(shellHtml, { url: 'http://localhost:4317/', pretendToBeVisual: true }));
@@ -71,6 +71,8 @@ async function boot({ onboarding = status(['claude']), projects = [], level = nu
     }
     // settingsError: the error POST /api/settings answers with (a mode switch the server refuses).
     if (settingsError && url.includes('/api/settings') && init.method === 'POST') return Promise.resolve({ ok: false, status: 500, json: async () => ({ error: settingsError }) });
+    // settings: what GET /api/settings answers (#1450's one-time notice reads modelRoles and roleDefaults).
+    if (settings && url.includes('/api/settings') && init.method !== 'POST') return json(settings);
     if (url.includes('/api/projects')) return json({ projects });
     // The setup assistant's load (a fresh boot opens it): minimal answers, so it paints its Check step.
     if (url.includes('/api/setup/detect')) return json({ checks: [{ id: 'claude', label: 'Claude Code', state: 'ok', line: 'Signed in.' }] });
@@ -513,4 +515,32 @@ test('first start: a fresh install opens the setup assistant before the welcome;
       assert.equal(doc.getElementById('welcome-modal').classList.contains('hidden'), false);
     } },
   ]);
+});
+
+// ---- #1450: the one-time notice about Worca's role defaults ----
+const ROLE_DEFAULTS = { claude: { deep: { model: 'claude-opus-5-5' }, everyday: { model: 'claude-sonnet-5-5' }, quick: { model: 'claude-haiku-5-5' } } };
+const noticeOpen = (doc) => !doc.getElementById('confirm-modal').classList.contains('hidden')
+  && /Worca’s default models/.test(doc.getElementById('confirm-title').textContent);
+
+test('#1450 notice: shown once with an empty role (never over the welcome); "Got it" posts the flag; hidden once seen or with every role set', async () => {
+  const seenWelcome = status(['claude'], { welcomeSeen: true });
+  const { doc, window, posts } = await boot({ onboarding: seenWelcome, settings: { modelRoles: {}, roleDefaults: ROLE_DEFAULTS } });
+  await until(() => noticeOpen(doc));
+  assert.equal(noticeOpen(doc), true);
+  assert.match(doc.getElementById('confirm-message').textContent, /^Steps with no model now run on Worca's defaults \(Opus 5\.5 \/ Sonnet 5\.5 \/ Haiku 5\.5\)/);
+  assert.equal(doc.getElementById('confirm-ok').textContent, 'Open Models');
+  click(window, doc.getElementById('confirm-cancel'));
+  await until(() => posts.some((p) => p.roleDefaultsNoticeSeen === true));
+  assert.ok(posts.some((p) => p.roleDefaultsNoticeSeen === true), JSON.stringify(posts));
+
+  const again = await boot({ onboarding: { ...seenWelcome, roleDefaultsNoticeSeen: true }, settings: { modelRoles: {}, roleDefaults: ROLE_DEFAULTS } });
+  await settle(10);
+  assert.equal(noticeOpen(again.doc), false, 'seen: never again');
+  const allSet = { claude: { deep: { model: 'claude-opus-5-5' }, everyday: { cliDecides: true }, quick: { model: 'claude-haiku-5-5' } } };
+  const set = await boot({ onboarding: seenWelcome, settings: { modelRoles: allSet, roleDefaults: { claude: ROLE_DEFAULTS.claude } } });
+  await settle(10);
+  assert.equal(noticeOpen(set.doc), false, 'every role set: nothing to say');
+  const welcome = await boot({ settings: { modelRoles: {}, roleDefaults: ROLE_DEFAULTS } });
+  await settle(10);
+  assert.equal(noticeOpen(welcome.doc), false, 'the welcome is up: no notice over it');
 });

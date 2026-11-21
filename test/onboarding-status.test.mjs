@@ -137,16 +137,24 @@ test('onboarding prefs: booleans only, unknown keys refused, all-false drops the
   assert.throws(() => assertOnboardingPrefsInput({ workspaceGuideSeen: 1 }), /onboarding\.workspaceGuideSeen must be true or false/);
   assert.throws(() => assertOnboardingPrefsInput({ nope: true }), /unknown onboarding key/);
   assert.throws(() => assertOnboardingPrefsInput(null), /object/);
-  assert.deepEqual(await setOnboardingPrefs({ hidden: true }), { hidden: true, welcomeSeen: false, workspaceGuideSeen: false });
-  assert.deepEqual(await setOnboardingPrefs({ welcomeSeen: true }), { hidden: true, welcomeSeen: true, workspaceGuideSeen: false });
-  assert.deepEqual(await setOnboardingPrefs({ hidden: false }), { hidden: false, welcomeSeen: true, workspaceGuideSeen: false }, 'Show again keeps the welcome seen');
-  assert.deepEqual(await setOnboardingPrefs({ welcomeSeen: false }), { hidden: false, welcomeSeen: false, workspaceGuideSeen: false });
-  assert.deepEqual(await setOnboardingPrefs({ workspaceGuideSeen: true }), { hidden: false, welcomeSeen: false, workspaceGuideSeen: true }, 'the walkthrough flag alone keeps the key');
+  assert.deepEqual(await setOnboardingPrefs({ hidden: true }), { hidden: true, welcomeSeen: false, workspaceGuideSeen: false, roleDefaultsNoticeSeen: false });
+  assert.deepEqual(await setOnboardingPrefs({ welcomeSeen: true }), { hidden: true, welcomeSeen: true, workspaceGuideSeen: false, roleDefaultsNoticeSeen: false });
+  assert.deepEqual(await setOnboardingPrefs({ hidden: false }), { hidden: false, welcomeSeen: true, workspaceGuideSeen: false, roleDefaultsNoticeSeen: false }, 'Show again keeps the welcome seen');
+  assert.deepEqual(await setOnboardingPrefs({ welcomeSeen: false }), { hidden: false, welcomeSeen: false, workspaceGuideSeen: false, roleDefaultsNoticeSeen: false });
+  assert.deepEqual(await setOnboardingPrefs({ workspaceGuideSeen: true, roleDefaultsNoticeSeen: false }), { hidden: false, welcomeSeen: false, workspaceGuideSeen: true, roleDefaultsNoticeSeen: false }, 'the walkthrough flag alone keeps the key');
   assert.equal((await onboardingStatus()).workspaceGuideSeen, true, 'GET /api/onboarding carries it');
-  assert.deepEqual(await setOnboardingPrefs({ workspaceGuideSeen: false }), { hidden: false, welcomeSeen: false, workspaceGuideSeen: false });
-  assert.deepEqual(onboardingPrefs(), { hidden: false, welcomeSeen: false, workspaceGuideSeen: false });
+  assert.deepEqual(await setOnboardingPrefs({ workspaceGuideSeen: false, roleDefaultsNoticeSeen: false }), { hidden: false, welcomeSeen: false, workspaceGuideSeen: false, roleDefaultsNoticeSeen: false });
+  assert.deepEqual(onboardingPrefs(), { hidden: false, welcomeSeen: false, workspaceGuideSeen: false, roleDefaultsNoticeSeen: false });
   const s = await onboardingStatus();
   assert.equal(s.hidden, false);
+});
+
+test('#1450: roleDefaultsNoticeSeen is an onboarding flag; an unknown flag is still refused', async () => {
+  assert.deepEqual(await setOnboardingPrefs({ roleDefaultsNoticeSeen: true }), { hidden: false, welcomeSeen: false, workspaceGuideSeen: false, roleDefaultsNoticeSeen: true });
+  assert.equal((await onboardingStatus()).roleDefaultsNoticeSeen, true, 'GET /api/onboarding carries it');
+  assert.throws(() => assertOnboardingPrefsInput({ roleDefaultsNoticeSeen: 'yes' }), /true or false/);
+  assert.throws(() => assertOnboardingPrefsInput({ roleDefaultsNotice: true }), /unknown onboarding key/);
+  await setOnboardingPrefs({ roleDefaultsNoticeSeen: false });
 });
 
 test('resetWorkspaceGuideIfNoWorkspaces: clears the flag only when it is set AND no workspace is left', async () => {

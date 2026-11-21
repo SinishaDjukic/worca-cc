@@ -40,7 +40,8 @@ function gateFor({ engine = 'claude', mode, mock = true, settings = {}, pins = {
 test('mock claude, flag on: sub-agents, with the tool-union and after-the-fact lines; no inherit line without an explicit hostModel', async () => {
   const o = gateFor();
   const lines = await o._sessionGate();
-  assert.deepEqual(o._sessionDecisions.get(SID), { mode: 'subagents', requested: 'subagents', reason: 'ok', firstMemberModel: null });
+  // #1450: with no model anywhere, Implementation runs on Worca's Everyday default, and the main agent with it.
+  assert.deepEqual(o._sessionDecisions.get(SID), { mode: 'subagents', requested: 'subagents', reason: 'ok', firstMemberModel: 'claude-sonnet-5-5' });
   assert.equal(lines[0], `session ${SID}: sub-agents on Claude Code (2 steps: Implementation, Review Implementation; main agent the first step's model)`);
   // v3 — compared to the spike-gated constants Task 53 sets (each side is pinned by the _sessionConstsForTest rows below).
   assert.equal(lines.includes(`session ${SID}: the main agent holds the union of its steps' tool grants`), HOST_TOOLS_MODE === 'union');
@@ -88,14 +89,14 @@ test('v4 — shared before its runtime exists runs separate, on every engine and
     if (over.mock === false) o._claudeCaps = async () => ({ version: '2.1.200', forwardSubagentText: false });
     return { lines: await o._sessionGate(), d: o._sessionDecisions.get(SID) };
   };
-  const off = { mode: 'separate', requested: 'shared', reason: 'one conversation is not available yet', firstMemberModel: null };
+  const off = { mode: 'separate', requested: 'shared', reason: 'one conversation is not available yet', firstMemberModel: 'claude-sonnet-5-5' };
   for (const over of [{}, { mock: false }, { engine: 'gemini' }]) {
     const { lines, d } = await gate(over, { sharedRuntime: false });
-    assert.deepEqual(d, off, JSON.stringify(over));
+    assert.deepEqual(d, over.engine === 'gemini' ? { ...off, firstMemberModel: null } : off, JSON.stringify(over));   // #1450: gemini decides its own model
     assert.deepEqual(lines, [`session ${SID}: separate sessions — one conversation is not available yet`]);
   }
   const on = await gate({}, { sharedRuntime: true });
-  assert.deepEqual(on.d, { mode: 'shared', requested: 'shared', reason: 'chosen in the session settings', firstMemberModel: null });
+  assert.deepEqual(on.d, { mode: 'shared', requested: 'shared', reason: 'chosen in the session settings', firstMemberModel: 'claude-sonnet-5-5' });
   assert.deepEqual(on.lines, [`session ${SID}: one conversation on Claude Code (2 steps: Implementation, Review Implementation)`]);
 });
 

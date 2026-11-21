@@ -25,7 +25,7 @@ import { readFile, writeFile, copyFile, readdir, mkdir, realpath, rename, stat, 
 import { generateTitle } from './title.mjs';
 import { recordClaudeLimit } from './usage-limits.mjs';
 import {
-  createPipeline, updatePipelineTitle, appendAudit, writeState, artifactPaths, slugify, today,
+  createPipeline, updatePipelineTitle, appendAudit, appendAuditById, writeState, artifactPaths, slugify, today,
   recordArtifact, writeClarify, readPipelineExtras, claimPipelineOwnership, touchHeartbeat,
   clearPipelineOwnership, HEARTBEAT_INTERVAL_MS, upsertSubAgent, newestPlanPath, pipelineRowStamp,
   claimPausedForStop, claimForResume, findPipelineRowById, readPipelineForResume,
@@ -55,7 +55,8 @@ import {
   memoryCaps,
 } from './settings.mjs';
 import { hasProjectSetting, utilityModelFor } from './settings-cascade.mjs';
-import { withRole, roleModelFor, jobSlot } from './model-roles.mjs';
+import { withRole, roleModelFor, jobSlot, roleOf, roleAuthState } from './model-roles.mjs';
+import { roleDefaultFor, ROLE_DEFAULT_HARNESSES } from './role-defaults.mjs';
 import { mountDirs, mountMemory, refreshMount, syncBack, memoryTotals, validateMemoryScope, withStoreLock, memoryRulesPath, memoryWorkPath, MEMORY_RULES_REL, MEMORY_INJECTED_ENTRY, memoryLoadedPath, readFrozenSet, frozenManifest, writeFrozenCopies, renderRoleNotes } from './memory-sync.mjs';
 import { captureProposals } from './memory-proposals.mjs';
 import { createUsageTally, drainMemoryLoads, memoryLoadLogPath, noteOfMemoryRel, recordMemoryUsage, rulesHaveScopedNote } from './memory-usage.mjs';
@@ -77,7 +78,7 @@ import {
   probeClaudeCapabilities, explainUnspawnableClaude,
 } from './preflight.mjs';
 import { fanoutCap, mapWithCap } from './fanout.mjs';
-import { resolveStepModels, observeModelCost, resolveModelCost, modelCostConfig, readTeamMetricsPrefs, modelHasBaseUrlRouting, bridgedModelInfo, catalogHasModel, engineOfModel, enginesOfModel, modelRunsOn, modelConnection, foreignRunModel, modelForEngine, listModels, liveCostRates, listCostRates, estimateCost, resolveModelEnv } from './config.mjs';
+import { modelLabelOf, resolveStepModels, observeModelCost, resolveModelCost, modelCostConfig, readTeamMetricsPrefs, modelHasBaseUrlRouting, bridgedModelInfo, catalogHasModel, engineOfModel, enginesOfModel, modelRunsOn, modelConnection, foreignRunModel, modelForEngine, listModels, liveCostRates, listCostRates, estimateCost, resolveModelEnv } from './config.mjs';
 import { getEngine, selectRunEngine, CAPABILITY_FALLBACKS, describeUnattachableMcp } from './engines/index.mjs';
 import { bridgeCallsFor, bridgeCostFor, forgetBridgeTag } from './bridge/telemetry.mjs';
 import { readGuardrailSet, defaultGuardrailSetId } from './guardrail-store.mjs';
@@ -102,7 +103,9 @@ import { featureBase } from './shape/features.mjs';
 import { cleanOutcome } from './shape/rounds.mjs';
 import { SYNC_EXECUTION_ID } from '../shared/graph/constants.mjs';
 import { readPluginsLock, pluginCurrentDir } from './plugins-lock.mjs'; // §9.4 disabled-plugin hint
-import { classifyError, rateLimitHint, brokerHint, freeDailyHint, limitResetAt, untilText } from './recoverable-error.mjs';
+import { classifyError, rateLimitHint, brokerHint, freeDailyHint, limitResetAt, limitScopeOf, untilText } from './recoverable-error.mjs';
+import { isPremiumModel } from './model-tiers.mjs';
+import { preStepVerdict } from './model-guard.mjs';
 import { CODEX_DEFAULT_MODEL, CODEX_COMMAND_RULE_REACH } from './engines/codex.mjs';
 import { ENGINE_PROJECT_FILES, ALL_PROJECT_FILES, worcaOwnsProjectFile, excludeLine } from './engines/project-files.mjs';
 import { helperEngineFor } from './model-env.mjs';
@@ -238,7 +241,8 @@ const PERSIST_FAILURE_PAUSE = 3;
 /** A consumed resume point as a RUNNING row keeps it (E5): the position, minus the pause's own fields. */
 export function runningPoint(rp) {
   if (!rp || typeof rp !== 'object') return null;
-  const { pauseReason, pauseDetail, lastAction, limitEngine, limitResetAt, pausedBy, ...kept } = rp;   // eslint-disable-line no-unused-vars
+  // confirmedModels stays: a confirmation is run-scoped (#1450).
+  const { pauseReason, pauseDetail, lastAction, limitEngine, limitResetAt, pausedBy, modelConfirm, limitModel, limitScope, ...kept } = rp;   // eslint-disable-line no-unused-vars
   return kept;
 }
 
@@ -822,7 +826,7 @@ function mcpStatusWarning(name, status, setName) {
  *  later (a $0 total, an empty step ledger). Skipped: the status and pause bookkeeping the stop
  *  replaces, the identity the constructor owns, and read-side extras that are not run state. */
 const PAUSED_STATE_SKIP = new Set([
-  'id', 'status', 'updatedAt', 'resumePoint', 'pauseReason', 'pauseDetail', 'lastAction',
+  'id', 'status', 'updatedAt', 'resumePoint', 'pauseReason', 'pauseDetail', 'lastAction', 'modelConfirm', 'limitModel', 'limitScope',
   'projectDir', 'projectKey', 'resumable', 'scheduledFor', 'scheduleId', 'active', 'gate', 'changes',
 ]);
 
@@ -1075,6 +1079,12 @@ export class RunHarness extends EventEmitter {
     this._netClock = this.opts.networkClock || { now: () => Date.now(), sleep: sleepAbortable };
     this.limitEngine = null;                 // 'usage_limit' only: the engine whose own limit it is (_pauseFor)
     this.limitResetAt = null;                // ISO: when the usage limit behind this pause resets (D3)
+    // #1450: the model a 'model_confirm' pause waits on ({ nodeId, stepKey, model, requested, at }), the model a usage
+    // limit was spent on and the limit's scope ('model' | 'connection'), and the premium models this run confirmed.
+    this.modelConfirm = null;
+    this.limitModel = null;
+    this.limitScope = null;
+    this._confirmedModels = [];
     this._autoLimitResumes = 0;              // D7: automatic limit resumes in a row (reset by a manual resume or a finished step)
     // Team metrics (§4.4 interventions). Resume runs on a NEW instance, so the counters are
     // stamped into the persisted resume point at every pause and re-seeded in resume().
@@ -1188,6 +1198,9 @@ export class RunHarness extends EventEmitter {
       pauseDetail: null,   // mirrors this.pauseDetail
       limitEngine: null,   // mirrors this.limitEngine: the engine whose usage limit paused the run
       limitResetAt: null,  // mirrors this.limitResetAt: when that usage limit resets (ISO)
+      modelConfirm: null,  // mirrors this.modelConfirm (#1450)
+      limitModel: null,    // mirrors this.limitModel
+      limitScope: null,    // mirrors this.limitScope
       ...(this.runShape ? { shaping: initialShaping(this.runShape, this.resumeOpts?.resumePoint?.shaping) } : {}),
       // Sub-agent lifecycle records (rides the existing `state` snapshot; mirrored to
       // the sub_agents table). Each: { id, label, nodeId, stepIndex, cycle, stepKey,
@@ -1436,6 +1449,8 @@ export class RunHarness extends EventEmitter {
     this.state.pauseDetail = null;
     this.state.limitEngine = null;
     this.state.limitResetAt = null;
+    this.modelConfirm = null; this.limitModel = null; this.limitScope = null;
+    this.state.modelConfirm = null; this.state.limitModel = null; this.state.limitScope = null;
   }
 
   /**
@@ -1454,7 +1469,7 @@ export class RunHarness extends EventEmitter {
    *   nc/ctx: the execution (orchestrator sites); label: the log source otherwise;
    *   cls: the error class behind a RECOVERABLE pause (kept in the log, audit and detail)
    */
-  _pauseFor(reason, err, { nc = null, ctx = null, label = null, detail = null, cls = null } = {}) {
+  _pauseFor(reason, err, { nc = null, ctx = null, label = null, detail = null, cls = null, modelConfirm = null } = {}) {
     const where = label || nc?.key || ctx?.nodeId || 'orchestrator';
     const meta = ctx ? { nodeId: ctx.nodeId, executionId: ctx.executionId, cycle: ctx.ordinal } : {};
     const line = firstLine(err?.message || (err == null ? '' : String(err))) || 'unknown error';
@@ -1489,6 +1504,7 @@ export class RunHarness extends EventEmitter {
     const recorded = this._setPauseReason(reason, limitText, limitEngine,
       resetMs != null ? new Date(resetMs).toISOString() : null);
     if (recorded && reason === REASON.RECOVERABLE && cls) this.pauseClass = cls;
+    if (recorded) this._notePauseModel(reason, err, { ctx, modelConfirm });
     // First writer wins: a sibling's unwind that lost the race logs nothing.
     if (recorded && reason === REASON.USAGE_LIMIT && resetMs == null) {
       this._log(where, 'info', 'usage-limit reset time not recognised', meta);
@@ -1513,6 +1529,61 @@ export class RunHarness extends EventEmitter {
     if (this.pipeline?.dir) appendAudit(this.pipeline.dir, audit).catch(() => {});
     this.pause();
     return true;
+  }
+
+  /** #1450: `_confirmedModels` from the resume point, plus this resume's `confirmModel` (POST /api/resume checked it
+   *  against the pause, model-guard.mjs checkConfirmModel): recorded as the resume's action and audited. Set before
+   *  reattach(), so the re-run step's gate passes. */
+  _confirmModelOnResume(rp) {
+    const prev = Array.isArray(rp?.confirmedModels) ? rp.confirmedModels.filter((m) => typeof m === 'string' && m) : [];
+    const confirm = typeof this.opts.confirmModel === 'string' && this.opts.confirmModel.trim() ? this.opts.confirmModel.trim() : null;
+    this._confirmedModels = [...new Set([...prev, ...(confirm ? [confirm] : [])])];
+    if (!confirm) return;
+    const by = this.opts.resumedBy || null;
+    this._recordAction('confirm-model', by);
+    let label = confirm;
+    try { label = modelLabelOf(confirm, { projectDir: this.projectDir }) || confirm; } catch { label = confirm; }
+    // By id: the dir → id cache is seeded only by the first persist, which comes later in _resume.
+    if (this.pipeline?.id) appendAuditById(this.pipeline.id, `Pipeline **resumed**: continued on ${label} (premium)${byActor(by)}.`, { actor: by });
+  }
+
+  /** #1450: the model facts a pause carries — the model a 'model_confirm' pause waits on (an [init] pause also drops
+   *  the step's session: the resume starts fresh; nothing was billed at init), and the model and scope of a usage
+   *  limit (a "Fable limit" is the model's, not the connection's). */
+  _notePauseModel(reason, err, { ctx = null, modelConfirm = null } = {}) {
+    if (reason === REASON.MODEL_CONFIRM) {
+      const mc = modelConfirm || err?.modelConfirm || null;
+      this.modelConfirm = mc ? { nodeId: mc.nodeId ?? null, stepKey: mc.stepKey ?? null, model: mc.model, requested: mc.requested ?? null, at: mc.at === 'init' ? 'init' : 'pre' } : null;
+      this.state.modelConfirm = this.modelConfirm;
+      if (this.modelConfirm?.at === 'init') {
+        const step = this.state.steps.find((s) => s.key === this.modelConfirm.stepKey);
+        if (step) delete step.sessionId;
+      }
+    } else if (reason === REASON.USAGE_LIMIT) {
+      const key = ctx?.attr?.stepKey ?? ctx?.executionId ?? null;
+      const step = key ? this.state.steps.find((s) => s.key === key) : null;
+      this.limitModel = step?.modelUsed || ctx?.claudeOpts?.model || null;
+      this.limitScope = limitScopeOf(err?.message || this.pauseDetail);
+      this.state.limitModel = this.limitModel;
+      this.state.limitScope = this.limitScope;
+    }
+  }
+
+  /** #1450, the pre-step premium gate (orchestrator _execute, after the cost gate): a step about to run on a premium
+   *  model nobody chose — a Worca or factory default, an Auto pick — pauses BEFORE it spawns, until a person confirms
+   *  the model (POST /api/resume confirmModel) or switches it. The _capReached pattern: pause, then throw. */
+  _premiumGate(nc, ctx) {
+    if (nc?.kind !== 'agent') return;
+    const model = ctx?.claudeOpts?.model;
+    // The spawn pair's own source (the backstop's Worca default, Model for all's run model) beats the manifest's.
+    const source = ctx?.claudeOpts?.source || nc.modelSource;
+    const v = preStepVerdict({ model, source, step: nc.meta?.displayName || nc.key || nc.nodeId, confirmed: this._confirmedModels,
+      premium: (id) => isPremiumModel(id, { costOf: (m) => modelCostConfig(m) }) });
+    if (!v.pause) return;
+    const stepKey = ctx.attr?.stepKey ?? ctx.executionId ?? null;
+    this._pauseFor(REASON.MODEL_CONFIRM, null, { nc, ctx, detail: v.detail,
+      modelConfirm: { nodeId: nc.nodeId, stepKey, model: v.model, requested: model, at: 'pre' } });
+    throw pauseErr();
   }
 
   /**
@@ -2078,6 +2149,8 @@ export class RunHarness extends EventEmitter {
       };
       // The saved point carries the pause that produced it; a resumed run is running.
       this._clearPauseReason();
+      // #1450: the run's premium confirmations, plus the one this resume makes ("Continue on <model>").
+      this._confirmModelOnResume(rp);
       // A network outage keeps its first-failure time across a resume: the max wait counts from it (D6).
       this._net = rp.network && typeof rp.network.since === 'string'
         ? { since: rp.network.since, origin: rp.network.origin ?? null, reachable: null, waiting: false } : null;
@@ -3845,12 +3918,41 @@ export class RunHarness extends EventEmitter {
   _nodeModelPair(nc) {
     if (this._modelForAll) {
       const all = this._engineModel(this.claude.model);
-      if (all) return { model: all, effort: this.claude.effort ? (effortOn(this.claude.effort, this.claude.engine || 'claude') || undefined) : undefined };
+      // #1450 D-f: the run's own model (a resume's "Switch model", `--model`) is a person's choice: `source: 'run'`.
+      if (all) return { model: all, effort: this.claude.effort ? (effortOn(this.claude.effort, this.claude.engine || 'claude') || undefined) : undefined, source: 'run' };
     }
+    // #1450: a Worca default is below every choice a person made, a session's explicit hostModel too (C26): a member
+    // whose only model is the default stays bare, so the main agent's model reaches it.
+    if (nc?.modelSource === 'worca-default' && this._sessionHostModelOf(nc.nodeId)) return { model: undefined, effort: nc.effort };
     const own = this._engineModel(nc?.model);
     // A model on two harnesses keeps its own engine's efforts; this harness takes the nearest one (effortOn).
     if (own) return { model: own, effort: nc.effort ? (effortOn(nc.effort, this.claude.engine || 'claude') || undefined) : nc.effort };
-    return { model: this._engineModel(this.claude.model), effort: nc?.model ? undefined : nc?.effort };
+    const run = this._engineModel(this.claude.model);
+    const effort = nc?.model ? undefined : nc?.effort;
+    if (run || this._modelForAll || !nc) return { model: run, effort };
+    const engine = this.claude.engine || 'claude';
+    // "Let Codex decide": the adapter names no model (it would otherwise name CODEX_DEFAULT_MODEL).
+    if (nc.modelSource === 'cli-decides') return engine === 'codex' ? { model: undefined, effort, cliDefault: true } : { model: undefined, effort };
+    // #1450 D-i, the spawn backstop: a node no one gave a model (a pre-change manifest has no modelSource) or whose pick
+    // the engine dropped runs on Worca's default for its role, never silently on the CLI's own default. `null` is "the
+    // tool decides" (resolveGraph found no default to give).
+    if (nc.modelSource !== null && ROLE_DEFAULT_HARNESSES.includes(engine) && !this._sessionHostModelOf(nc.nodeId)) {
+      const role = roleOf(`steps.${nc.authoredKey || nc.key || ''}`, { name: nc.meta?.displayName || '' });
+      const dflt = roleDefaultFor(engine, role, { claudeAuth: roleAuthState() });
+      const model = dflt ? this._engineModel(dflt.model) : undefined;
+      if (model) return { model, effort, source: 'worca-default' };
+    }
+    return { model: undefined, effort };
+  }
+
+  /** #1450: the explicit hostModel of the hosted session a node belongs to, else null. A session the run decided to
+   *  run as separate sessions (or with sessions disabled) has no main agent, so its hostModel reaches no member. */
+  _sessionHostModelOf(nodeId) {
+    if (!nodeId || this._sessionsDisabled || !this._sessionSpecs?.length) return null;
+    const spec = this._sessionSpecs.find((s) => s.members?.includes(nodeId));
+    if (!spec?.settings?.hostModel) return null;
+    const mode = this._sessionDecisions?.get(spec.sid)?.mode;
+    return mode === 'separate' ? null : spec.settings.hostModel;
   }
 
   /** The pair a role-review slice runs on: "Model for all" wins; else the role's own pick (nc.roles, role-slots.mjs)
@@ -6069,7 +6171,8 @@ export class RunHarness extends EventEmitter {
     const models = manifestModels(manifest);
     for (const m of Object.values(stepModels || {})) if (typeof m === 'string' && m.trim()) models.add(m.trim());
     if (this.claude?.model) models.add(this.claude.model);
-    if (!models.size) models.add('claude-sonnet-5');   // nothing named: the CLI's own default is a Claude model
+    // Nothing named: a model-less Claude step runs on Worca's default (#1450), a Claude model the broker must serve.
+    if (!models.size) models.add(roleDefaultFor('claude', 'everyday').model);
     try { await syncPluginSlots(); } catch { /* the spawn says why */ }
     let status;
     try { status = (await personSlots(person === 'local' || !person ? (process.env.WORCA_BROKER_SYSTEM_BILL_TO || 'local') : person)).slots || []; } catch { return; }
@@ -7097,10 +7200,13 @@ export class RunHarness extends EventEmitter {
     const runModel = engine !== runEngine ? null
       : (engine === 'copilot' ? this._engineModel(this.claude.model || undefined)
         : modelForEngine(this.claude.model || null, engine, { projectDir: this.projectDir })) || null;
+    // Model roles (D3): an unset decider takes the deep role (a stored one beats the run's model). Worca's default for
+    // the role (#1450) is the floor below the run's model, never above it.
+    const stored = config.deciderModel ? null : roleModelFor(engine, 'nightMode.deciderModel', { floor: false });
+    const floorPick = config.deciderModel || stored || runModel ? null : roleModelFor(engine, 'nightMode.deciderModel');
+    const role = stored || floorPick;
     // Named before the effort is checked, so an effort codex's default model does not offer (max, xhigh) drops to medium.
-    const fallback = !runModel && engine === 'codex' ? CODEX_DEFAULT_MODEL : null;
-    // Model roles (D3): an unset decider takes the deep role.
-    const role = config.deciderModel ? null : roleModelFor(engine, 'nightMode.deciderModel');
+    const fallback = !runModel && !floorPick && engine === 'codex' ? CODEX_DEFAULT_MODEL : null;
     const pair = resolveDeciderPair({
       deciderModel: config.deciderModel || role?.model,
       deciderEffort: config.deciderModel ? config.deciderEffort : (role?.effort ?? config.deciderEffort),
@@ -8067,12 +8173,19 @@ export class RunHarness extends EventEmitter {
     const step = key ? this.state.steps.find((s) => s.key === key) : null;
     // The runner reports the session id on its own `session` event; the init
     // event's copy is for Ask Worca, which reads raw captures that lack it.
-    if (!e.init && typeof e.sessionId === 'string' && step && step.sessionId !== e.sessionId) {
+    // #1450: a step the [init] guard stopped keeps no session — its resume starts fresh.
+    const initPaused = this.modelConfirm?.at === 'init' && this.modelConfirm.stepKey === key;
+    if (!e.init && !initPaused && typeof e.sessionId === 'string' && step && step.sessionId !== e.sessionId) {
       step.sessionId = e.sessionId;
       this._persist().catch(() => {});
     }
     if (!e.init) return;
     this._log(role, 'debug', `[init] model=${e.model || '?'}`, attr);
+    // #1450 D-g: "Let Claude Code decide" is consent — a premium pick is said, never paused on.
+    if (typeof e.modelNote === 'string' && e.modelNote) {
+      this._log(role, 'info', e.modelNote, attr);
+      if (this.pipeline?.dir) appendAudit(this.pipeline.dir, e.modelNote).catch(() => {});
+    }
     // §4.7: stamp the session's ACTUAL model on the step (mirrors the
     // sessionId stamp above) so the UI can resolve the "default" caption to
     // a concrete name. Display-only; sub-agent events never carry init.
@@ -9224,6 +9337,16 @@ export class RunHarness extends EventEmitter {
       else delete rp.limitResetAt;
       if (this.pauseReason === REASON.USAGE_LIMIT && this._autoLimitResumes > 0) rp.autoLimitResumes = this._autoLimitResumes;
       else delete rp.autoLimitResumes;
+      // #1450: the model a confirmation pause waits on, and a usage limit's model and scope, ride only their own pause;
+      // the run's confirmations ride every point (run-scoped).
+      if (this.pauseReason === REASON.MODEL_CONFIRM && this.modelConfirm) rp.modelConfirm = { ...this.modelConfirm };
+      else delete rp.modelConfirm;
+      if (this.pauseReason === REASON.USAGE_LIMIT && this.limitModel) rp.limitModel = this.limitModel;
+      else delete rp.limitModel;
+      if (this.pauseReason === REASON.USAGE_LIMIT && this.limitScope) rp.limitScope = this.limitScope;
+      else delete rp.limitScope;
+      if (this._confirmedModels.length) rp.confirmedModels = [...this._confirmedModels];
+      else delete rp.confirmedModels;
       // The token this pause is written with (_persist stamps it into the saved point as `pausedBy`).
       this._pauseToken ||= randomUUID();
     }
@@ -9254,6 +9377,8 @@ export class RunHarness extends EventEmitter {
       detail: this.pauseDetail || null,
       limitEngine: this.limitEngine || null,
       limitResetAt: this.limitResetAt || null,
+      ...(this.modelConfirm ? { modelConfirm: { ...this.modelConfirm } } : {}),
+      ...(this.limitScope ? { limitScope: this.limitScope, limitModel: this.limitModel || null } : {}),
     };
     this._emit('done', payload);
     return { ...payload };

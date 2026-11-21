@@ -347,3 +347,23 @@ test('a run work folder is never a CLI project: --project and the cwd are refuse
   assert.equal(rows(), before, 'no pipelines row');
   assert.equal(existsSync(join(work, '.git')), false, 'no git init in the work folder');
 });
+
+// #1450: `--confirm-model` is "Continue on <model>" from the CLI; it is refused, before anything starts, when the run
+// is not waiting on that model (the same checks as POST /api/resume confirmModel).
+test('resume --confirm-model: refused when nothing is pending, on a mismatch, and together with --model', async () => {
+  const seed = (rp) => seedPipeline(noProjectWorkDir('abcd1234'), { title: 'confirm run', status: 'paused',
+    branch: { workMode: 'none', runRootMode: 'detached' }, resumePoint: graphResumePoint({ pipelineDir: worcaHome(), ...rp }) });
+  const plain = await seed({});
+  const none = await run(['resume', plain.id, '--mock', '--yes', '--confirm-model', 'claude-fable-5-2']);
+  assert.equal(none.code, 1, none.stderr);
+  assert.match(none.stderr, /not waiting for a model confirmation/);
+  const pending = await seed({ pauseReason: 'model_confirm', modelConfirm: { nodeId: 'n_plan', model: 'claude-fable-5-2', at: 'pre' } });
+  const wrong = await run(['resume', pending.id, '--mock', '--yes', '--confirm-model', 'claude-opus-5-5']);
+  assert.equal(wrong.code, 1, wrong.stderr);
+  assert.match(wrong.stderr, /waiting to confirm claude-fable-5-2, not claude-opus-5-5/);
+  const both = await run(['resume', pending.id, '--mock', '--yes', '--confirm-model', 'claude-fable-5-2', '--model', 'claude-opus-5-5']);
+  assert.equal(both.code, 1, both.stderr);
+  assert.match(both.stderr, /Confirm the model or switch it, not both/);
+  const ok = await run(['resume', pending.id, '--mock', '--yes', '--confirm-model', 'claude-fable-5-2']);
+  assert.doesNotMatch(ok.stderr, /confirm/i, 'a matching confirmation passes the check (it stops later, at the missing work folder)');
+});

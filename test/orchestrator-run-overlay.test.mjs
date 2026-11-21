@@ -33,7 +33,7 @@ test('a normal run resolves opts.overlay per node and records it as manifest.run
   const cell = (id) => t.manifest.graph.nodes.find((n) => n.id === id);
   assert.deepEqual([cell('n_plan').model, cell('n_plan').effort], ['claude-haiku-4-5', 'medium']);
   assert.equal(cell('n_review').fanOut, true);
-  assert.equal(cell('n_impl').model, '', 'a node the overlay does not name keeps its own layers');
+  assert.equal(cell('n_impl').model, 'claude-sonnet-5-5', 'a node the overlay does not name keeps its own layers (an empty Everyday role: Worca\'s default, #1450)');
   assert.deepEqual(t.manifest.runOverlay, overlay);
   assert.notEqual(t.manifest.runOverlay.nodes, overlay.nodes, 'a copy, never the caller\'s object');
   const plain = await createOrchestrator({ projectDir: process.cwd(), workflowId: 'wf_default', claude: { mock: true } })._resolveTopology(REG);

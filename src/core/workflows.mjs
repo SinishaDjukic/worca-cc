@@ -47,7 +47,8 @@ import {
 } from './graph/builtin-workflows.mjs';
 export { GRAPH_DEFAULT_WORKFLOW, GRAPH_LEAN_WORKFLOW, LEAN_WORKFLOW_ID, AUTO_WORKFLOW_ID, GRAPH_MEMORY_DEFRAG_WORKFLOW, GRAPH_SHAPE_WORKFLOW, MEMORY_DEFRAG_WORKFLOW_ID, WORKSPACE_SCAN_WORKFLOW_ID, GRAPH_WORKSPACE_RESYNTH_WORKFLOW, WORKSPACE_RESYNTH_WORKFLOW_ID, isReservedWorkflowId };
 import { registryPortsFn } from './graph/registry-ports.mjs';
-import { resolveRoleModel, roleOf } from './model-roles.mjs';
+import { resolveRolePick, roleOf } from './model-roles.mjs';
+import { roleDefaultFor } from './role-defaults.mjs';
 import { parseFrontmatter } from './frontmatter.mjs';
 
 /**
@@ -714,10 +715,22 @@ export async function resolveGraph(projectDir, workflowId, registry, agentsDir =
   const runModel = typeof opts.runModel === 'string' && opts.runModel.trim() ? opts.runModel.trim() : null;
   // D15: the project's team roles join the person's own; a workspace run keeps the person's roles only.
   const { roles: projectRoleSet } = ignore || runModel ? { roles: undefined } : await projectRolesFor(engine, isWorkspace ? null : projectDir);
-  const roleFor = (authored, meta) => {
-    if (ignore || runModel) return NO_PICK;
-    const hit = resolveRoleModel(engine, roleOf(`steps.${authored}`, { name: meta?.displayName || '' }), projectRoleSet ? { roles: projectRoleSet } : {});
-    return hit ? { ...owned(hit), raw: hit } : NO_PICK;
+  // #1450: an empty role resolves to Worca's default (role-defaults.mjs) instead of the tool's own; a stored
+  // "Let <tool> decide" leaves the node with no model. An Auto run skips the person's roles but keeps the Worca default
+  // floor (D-h). Claude's sign-in is read only when the floor is reached, so Codex never probes.
+  const roleFor = async (authored, meta, { floor = true } = {}) => {
+    if (runModel) return NO_PICK;
+    const role = roleOf(`steps.${authored}`, { name: meta?.displayName || '' });
+    const floorAuth = async () => (engine === 'claude' ? authState() : 'unknown');
+    let hit = ignore ? null : resolveRolePick(engine, role, { ...(projectRoleSet ? { roles: projectRoleSet } : {}), floor: false });
+    if (hit?.kind === 'cli-decides') return { ...NO_PICK, kind: 'cli-decides' };
+    if (hit) return { ...owned(hit), raw: hit, kind: 'role' };
+    if (!floor) return NO_PICK;
+    hit = ignore ? roleDefaultFor(engine, role, { claudeAuth: await floorAuth() })
+      : resolveRolePick(engine, role, { ...(projectRoleSet ? { roles: projectRoleSet } : {}), claudeAuth: await floorAuth() });
+    if (!hit) return NO_PICK;
+    const o = owned(hit);
+    return o.pick.model ? { ...o, kind: 'worca-default' } : NO_PICK;
   };
   // Memory defragment (Settings › Memory, memory-defrag-model.mjs): the run's model/effort PAIR —
   // named at start, else the global setting. The one layer that beats even the project's own node
@@ -770,7 +783,7 @@ export async function resolveGraph(projectDir, workflowId, registry, agentsDir =
   };
   const named = (v) => typeof v === 'string' && v.trim() !== '';
   const factoryNotes = [];
-  const sourceOf = {};   // nodeId → { model, modelRole?, factoryRole } — internal, never emitted on the node
+  const sourceOf = {};   // nodeId → { model, modelRole?, factoryRole }; `model` is emitted as the node's modelSource (#1450)
 
   const nodes = {};
   const agentsByKey = {};
@@ -829,8 +842,10 @@ export async function resolveGraph(projectDir, workflowId, registry, agentsDir =
     if (fac && !named(cfg.model) && !named(cfg.effort)) {
       const higher = !!(selP.model || selP.effort || legacyP.model || legacyP.effort || team.model || team.effort);
       // Your role beats Worca's factory default: the default only fills a slot no role covers (the role layer below
-      // then applies, as it does on any node no other layer names).
-      if (!pair && !higher && roleFor(authored, meta).pick.model) {
+      // then applies, as it does on any node no other layer names). A Worca role default is nobody's role: the factory
+      // default wins over it; a stored "Let <tool> decide" is a role.
+      const mine = !pair && !higher ? await roleFor(authored, meta, { floor: false }) : NO_PICK;
+      if (mine.kind === 'cli-decides' || (mine.kind === 'role' && mine.pick.model)) {
         // nothing: the role applies
       } else if (!pair && !higher && await signedOutFor(fac.pick.model)) {
         nodeDefaultWanted = cleanPick(fac.pick);
@@ -847,7 +862,9 @@ export async function resolveGraph(projectDir, workflowId, registry, agentsDir =
     // inherit a lower layer's effort — the legacy per-role effort included (a per-run overlay or a node pick
     // naming a model on wf_default).
     const baseEffort = selP.model ? selP.effort : firstDefined(selP.effort, legacyP.effort, team.effort, (legacyP.model || team.model) ? undefined : cfgP.effort);
-    const roleO = baseModel === undefined && baseEffort === undefined ? roleFor(authored, meta) : NO_PICK;
+    // #1450: a layer that names only an effort still takes its model from the role (or Worca's default), at that
+    // layer's effort: a node with no model would run on the tool's own default.
+    const roleO = baseModel === undefined ? await roleFor(authored, meta) : NO_PICK;
     const roleP = roleO.pick;
     // No silent fallbacks: the winning layer's request, when the engine dropped it (only layers that were consulted;
     // the merged `sel` is the run overlay where it names the field itself, else the project). A pinned pair bypasses.
@@ -862,7 +879,9 @@ export async function resolveGraph(projectDir, workflowId, registry, agentsDir =
     // A dropped factory default is recorded as wanted when nothing else was.
     const wanted = layerWanted || (!pair && nodeDefaultWanted ? { ...nodeDefaultWanted, source: 'default' } : null);
     const nodeModel = pair ? pair.model : (roleP.model ?? baseModel);
-    const nodeEffort = pair ? pair.effort : (roleP.model ? roleP.effort : baseEffort);
+    // An effort-only layer's effort rides the role's model when that model offers it, else the role's own effort.
+    const layerEffortOnRole = roleP.model && baseEffort !== undefined ? owned({ model: roleP.model, effort: baseEffort }).pick.effort : undefined;
+    const nodeEffort = pair ? pair.effort : (roleP.model ? (layerEffortOnRole ?? roleP.effort) : baseEffort);
     if (nodeDefaultWanted) factoryNotes.at(-1).used = { model: nodeModel ?? runModel, effort: nodeEffort ?? null };
     // A role-review node's per-role picks (run overlay > project > helper job > template); a pinned agentPair runs every
     // role on it. The second-opinion role takes its factory default as its template layer.
@@ -899,9 +918,11 @@ export async function resolveGraph(projectDir, workflowId, registry, agentsDir =
       factoryNotes.push({ setting: fr.setting, nodeId: node.id, role: fr.roleKey, wanted: fr.pick, used: { model: nodeModel ?? runModel, effort: eff } });
     }
     sourceOf[node.id] = {
-      model: pair ? 'pair' : roleP.model ? 'role' : selP.model ? (ownSel?.model ? 'run' : 'project') : legacyP.model ? 'legacy'
-        : team.model ? 'slot' : cfgP.model ? (factoryApplied ? 'factory' : 'template') : null,
-      ...(roleP.model ? { modelRole: roleOf(`steps.${authored}`, { name: meta?.displayName || '' }) } : {}),
+      model: pair ? 'pair' : roleP.model ? (roleO.kind === 'worca-default' ? 'worca-default' : 'role')
+        : selP.model ? (ownSel?.model ? (ignore ? 'auto' : 'run') : 'project') : legacyP.model ? 'legacy'
+          : team.model ? 'slot' : cfgP.model ? (factoryApplied ? 'factory' : 'template')
+            : roleO.kind === 'cli-decides' ? 'cli-decides' : runModel ? 'run-model' : null,
+      ...(roleP.model && roleO.kind === 'role' ? { modelRole: roleOf(`steps.${authored}`, { name: meta?.displayName || '' }) } : {}),
       factoryRole,
     };
     nodes[node.id] = {
@@ -918,6 +939,8 @@ export async function resolveGraph(projectDir, workflowId, registry, agentsDir =
       config: { ...cfg },
       model: nodeModel,
       effort: nodeEffort,
+      // #1450: who chose the model — the premium guard's "nobody chose" (model-guard.mjs) and the UI's captions.
+      modelSource: sourceOf[node.id].model,
       // workspaceFanOut forces fan-out on a workspace run (the generic
       // replacement for the v1 FANOUT_ELIGIBLE key list).
       fanOut: isWorkspace && meta.workspaceFanOut
@@ -988,8 +1011,11 @@ export async function resolveGraph(projectDir, workflowId, registry, agentsDir =
     if (runModel && needsSignIn(runModel)) candidates.push({ model: runModel, source: 'runModel' });
     if (candidates.length && (await authState()) === 'signed-out') signInBlocked.push(...candidates);
   }
+  // #1450: Claude Code's sign-in when this resolve read a definite one ('signed-in' | 'signed-out'); absent otherwise.
+  const authSeen = authP ? await authP : 'unknown';
   return {
     template: tpl, ports: portsFn, loops, nodes, wires, agentsByKey, agentKeys, scriptsByKey, scriptKeys,
     ...(factoryNotes.length ? { factoryNotes } : {}), ...(signInBlocked.length ? { signInBlocked } : {}),
+    ...(authSeen === 'unknown' ? {} : { claudeAuth: authSeen }),
   };
 }

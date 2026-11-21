@@ -241,7 +241,8 @@ export function investigatorAgents(ctx) {
  * THE OUTPUT rather than on apparent difficulty (the agent is sizing a sub-task
  * before anything has been read, and that estimate runs optimistic), and its
  * tiers describe READ-ONLY investigation — the enclosing fan-out block forbids
- * writing children. Pure + exported for testing.
+ * writing children. The premium `fable` is not on the auto menu (#1450): it runs only when a node pins it
+ * (subagentModel 'fable'). Pure + exported for testing.
  */
 export function subagentModelDirective(subagentModel) {
   if (subagentModel === SUBAGENT_AUTO) {
@@ -251,7 +252,7 @@ export function subagentModelDirective(subagentModel) {
       'EVERY Task/Agent call — this instruction is that request (the tool\'s usual "only when ' +
       'explicitly asked" caveat is satisfied here). Never omit the parameter: an agent definition ' +
       'may pin its own default, so an omitted `model` lands wherever that definition says, not ' +
-      'where you intend. Legal values: `sonnet`, `opus`, `fable`.\n\n' +
+      'where you intend. Legal values: `sonnet`, `opus`.\n\n' +
       'Choose on WHO CHECKS THE OUTPUT, never on how small or cheap the sub-task looks:\n' +
       '- `sonnet`: mechanical, bounded investigation whose findings the report itself lets you ' +
       'verify — grep-and-summarize a known pattern, enumerate usages or call sites, extract or ' +
@@ -260,9 +261,7 @@ export function subagentModelDirective(subagentModel) {
       '- `opus`: investigation needing real codebase judgment you will build on — trace why ' +
       'something fails, map how a subsystem hangs together, weigh where a change belongs — and ' +
       'analysis whose VERDICT the run depends on and nothing downstream re-checks: a severity call, ' +
-      'a design or plan judgement, an accept/reject recommendation.\n' +
-      '- `fable`: never on your own judgement — only when the operator names it (it lists at about ' +
-      '2.5× the price of `opus` for the same work).\n\n' +
+      'a design or plan judgement, an accept/reject recommendation.\n\n' +
       'When unsure between two tiers, take the lower one only if you will verify the result ' +
       'yourself.\n\n'
     );
@@ -950,6 +949,8 @@ export function runOpts(ctx, { role, prompt, systemPrompt, allowedTools }) {
     // adapter adds each one as a writable root.
     writableDirs: nodeWritableDirs(ctx),
     model: c.model,
+    // #1450: "Let Codex decide" — the codex adapter then names no model of its own (_nodeModelPair).
+    ...(c.cliDefault === true ? { cliDefault: true } : {}),
     effort: c.effort,          // per-role effort from the orchestrator
     // Per-model routing env (design §4.4), resolved HERE — the one funnel every
     // dispatched node/role passes through — so every caller inherits it

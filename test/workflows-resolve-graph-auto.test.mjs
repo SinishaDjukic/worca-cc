@@ -56,7 +56,9 @@ test('ignoreProjectOverrides skips the per-project layers; overlay is the only o
   assert.equal(auto.nodes.n_plan.model, 'claude-sonnet-5');
   assert.equal(auto.nodes.n_plan.effort, 'medium');
   assert.equal(auto.nodes.n_plan.fanOut, true);
-  assert.equal(auto.nodes.n_impl.model, undefined, 'a node absent from the overlay falls through to the template');
+  assert.equal(auto.nodes.n_impl.model, 'claude-sonnet-5-5', 'a node absent from the overlay falls through to the template, then Worca\'s default (#1450 D-h)');
+  assert.equal(auto.nodes.n_impl.modelSource, 'worca-default');
+  assert.equal(auto.nodes.n_plan.modelSource, 'auto', 'a classifier pick is nobody\'s choice: the premium guard applies');
   assert.deepEqual(auto.wires, { w5: { maxCycles: 4 } }, 'the per-project wire budget is ignored; the authored one stands');
   assert.deepEqual(auto.template.nodes.find((n) => n.id === 'n_plan').config, { model: 'tpl-model', effort: 'high' }, 'the template is never mutated');
 });

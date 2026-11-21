@@ -752,6 +752,38 @@ test('E4: an agent node that runs past its wall-clock or goes silent past its id
   } finally { _testing.runClaude = null; }
 });
 
+test('#1450 init guard: a premium [init] model nobody chose stops the spawn with model_confirm; no modelGuard → no guard', async () => {
+  const seenEvents = [];
+  const initThenHang = (model) => async (opts) => new Promise((resolve, reject) => {
+    opts.onEvent({ type: 'session', sessionId: 's-1', model, init: true });
+    if (opts.signal.aborted) { reject(Object.assign(new Error('aborted'), { name: 'AbortError' })); return; }
+    const t = setTimeout(() => resolve({ text: 'done' }), 50);
+    opts.signal.addEventListener('abort', () => { clearTimeout(t); reject(Object.assign(new Error('aborted'), { name: 'AbortError' })); }, { once: true });
+  });
+  const guard = (over = {}) => ({ requested: undefined, source: null, step: 'Plan', nodeId: 'n_c', stepKey: 'custom', confirmed: [],
+    premium: (id) => id === 'claude-fable-5-2', routed: () => false, ...over });
+  const run = async (claudeOpts, model) => {
+    const c = ctx8({ node: { id: 'n_c', kind: 'agent', key: 'custom', config: {}, agentPrompt: 'x', tools: [] }, signal: new AbortController().signal,
+      claudeOpts: { mock: true, ...claudeOpts }, onEvent: (e) => seenEvents.push(e) });
+    _testing.runClaude = initThenHang(model);
+    try { return await runAgentExecution(c).then(() => null, (e) => e); } finally { _testing.runClaude = null; }
+  };
+  const err = await run({ modelGuard: guard() }, 'claude-fable-5-2');
+  assert.equal(err?.errorClass, 'model_confirm');
+  assert.deepEqual(err.modelConfirm, { nodeId: 'n_c', stepKey: 'custom', model: 'claude-fable-5-2', requested: null, at: 'init' });
+  assert.match(err.message, /Claude Code started Plan on claude-fable-5-2, a premium model nobody chose\./);
+  // No guard: the same init runs on (whatever the outputs check then says, it is never model_confirm).
+  const none = await run({}, 'claude-fable-5-2');
+  assert.notEqual(none?.errorClass, 'model_confirm');
+  // Confirmed in this run: no pause.
+  const ok = await run({ modelGuard: guard({ confirmed: ['claude-fable-5-2'] }) }, 'claude-fable-5-2');
+  assert.notEqual(ok?.errorClass, 'model_confirm');
+  // cli-decides premium: the session event carries the note for the harness.
+  seenEvents.length = 0;
+  await run({ modelGuard: guard({ source: 'cli-decides' }) }, 'claude-fable-5-2');
+  assert.equal(seenEvents.find((e) => e.type === 'session')?.modelNote, 'Claude Code picked claude-fable-5-2 (premium).');
+});
+
 test('E9/E10: each spawn appends a manifest line (prompt hashes, model, effort, settings, memory) and names paths outside the checkout', async () => {
   const { createHash } = await import('node:crypto');
   const { mkdirSync, existsSync } = await import('node:fs');

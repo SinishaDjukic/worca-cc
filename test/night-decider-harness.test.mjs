@@ -10,7 +10,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createOrchestrator } from '../src/core/orchestrator.mjs';
 import { useTempHome } from './helpers/temp-home.mjs';
-import { setNightMode, setNightModeToggle, addGlobalModel } from '../src/core/settings.mjs';
+import { setNightMode, setNightModeToggle, addGlobalModel, setModelRoles } from '../src/core/settings.mjs';
 import { createPipeline } from '../src/core/artifacts.mjs';
 import { prepare } from '../src/core/db.mjs';
 import { readNightDecisions } from '../src/core/night/store.mjs';
@@ -87,10 +87,10 @@ test('a configured Decided by model runs the review: its model, effort and env, 
   assert.deepEqual(deciderRows(orch).map((s) => [s.runModel, s.effort, s.costUsd]), [['onprem', 'high', 0]]);
 });
 
-test('unset → the run\'s model at medium, priced as the CLI says; no run model → the CLI default (null)', async () => {
+test('unset → the run\'s model at medium, priced as the CLI says; no run model → Worca\'s Deep default (#1450)', async () => {
   await setNightMode({ enabled: true, strategy: 'analysis', graceMinutes: 1 });
   await setNightModeToggle('on');
-  for (const [claude, want] of [[{ model: 'claude-sonnet-5-5' }, 'claude-sonnet-5-5'], [undefined, null]]) {
+  for (const [claude, want] of [[{ model: 'claude-sonnet-5-5' }, 'claude-sonnet-5-5'], [undefined, 'claude-opus-5-5']]) {
     const clock = fakeClock();
     const { run, seen } = recordingRun();
     const orch = createOrchestrator({ projectDir: '/tmp/night-dm2', nightClock: clock, nightRunClaude: run, ...(claude ? { claude } : {}) });
@@ -190,7 +190,7 @@ test('a Codex run: a Claude Decided by pick reads as stale, and the run\'s Codex
   assert.equal(seen[0].engine, 'codex');
 });
 
-test('a Codex run with no model: an effort codex\'s default model does not offer drops to medium, said once', async () => {
+test('a Codex run with no model: the decider runs on Worca\'s Deep default (#1450); an effort it does not offer drops to medium, said once', async () => {
   await setNightMode({ enabled: true, strategy: 'analysis', graceMinutes: 1, deciderEffort: 'max' });
   await setNightModeToggle('on');
   const clock = fakeClock();
@@ -199,7 +199,7 @@ test('a Codex run with no model: an effort codex\'s default model does not offer
   const logged = [];
   orch._log = (source, level, text) => logged.push({ source, level, text });
   await answerOne(orch, clock, 'cx3');
-  assert.equal(seen[0].model, 'gpt-6.1-sol');
+  assert.equal(seen[0].model, 'gpt-5.6-sol');
   assert.equal(seen[0].effort, 'medium');
   assert.equal(logged.filter((l) => /does not offer effort "max"/.test(l.text)).length, 1, JSON.stringify(logged));
 });
@@ -422,25 +422,28 @@ test('a decider model with no list price: the stopped review is counted, not pri
 
 test('no model configured (the CLI\'s default): the lower bound is priced at the model the review\'s own messages named', async () => {
   await setNightMode({ enabled: true, strategy: 'analysis', graceMinutes: 1 });
-  await setNightModeToggle('on');
-  const stopAfter = (model) => async (o) => {                    // one streamed message, then the timeout
-    o.onEvent({ type: 'assistant', raw: { type: 'assistant', message: { id: 'm1', ...(model ? { model } : {}), usage: U1200 } } });
-    throw Object.assign(new Error('aborted'), { name: 'AbortError' });
-  };
-  const floorFor = async (run, claude, qid) => {
-    const clock = fakeClock();
-    const orch = createOrchestrator({ projectDir: join(tmpdir(), `night-aux-${qid}`), nightClock: clock, nightRunClaude: run, claude });
-    const { floors } = spyBooking(orch);
-    const p = orch._ask({ id: qid, kind: 'clarify', questions: QA, executionId: 'n_impl:1' });
-    await settle(clock, () => !orch.pendingQuestion); await p;
-    return [floors.map((f) => f[2]), orch.nightDecision(qid).floorUsd];
-  };
-  const named = await floorFor(stopAfter('claude-sonnet-5-5'), {}, 'c11');      // no decider model, no run model
-  assert.ok(Math.abs(named[0][0] - 0.004) < 1e-9, `priced at the streamed message.model: ${named[0][0]}`);
-  assert.ok(Math.abs(named[1] - 0.004) < 1e-9, `the record carries it: ${named[1]}`);
-  assert.deepEqual(await floorFor(stopAfter(null), {}, 'c12'), [[null], null], 'no model anywhere: counted, not priced');
-  const configured = await floorFor(stopAfter('claude-opus-5-5'), { model: 'claude-sonnet-5-5' }, 'c13');
-  assert.ok(Math.abs(configured[0][0] - 0.004) < 1e-9, `the configured model wins over the streamed one (opus: 0.008): ${configured[0][0]}`);
+  await setModelRoles({ claude: { deep: { cliDecides: true } } });   // #1450: only "Let Claude Code decide" leaves the decider model-less
+  try {
+    await setNightModeToggle('on');
+    const stopAfter = (model) => async (o) => {                    // one streamed message, then the timeout
+      o.onEvent({ type: 'assistant', raw: { type: 'assistant', message: { id: 'm1', ...(model ? { model } : {}), usage: U1200 } } });
+      throw Object.assign(new Error('aborted'), { name: 'AbortError' });
+    };
+    const floorFor = async (run, claude, qid) => {
+      const clock = fakeClock();
+      const orch = createOrchestrator({ projectDir: join(tmpdir(), `night-aux-${qid}`), nightClock: clock, nightRunClaude: run, claude });
+      const { floors } = spyBooking(orch);
+      const p = orch._ask({ id: qid, kind: 'clarify', questions: QA, executionId: 'n_impl:1' });
+      await settle(clock, () => !orch.pendingQuestion); await p;
+      return [floors.map((f) => f[2]), orch.nightDecision(qid).floorUsd];
+    };
+    const named = await floorFor(stopAfter('claude-sonnet-5-5'), {}, 'c11');      // no decider model, no run model
+    assert.ok(Math.abs(named[0][0] - 0.004) < 1e-9, `priced at the streamed message.model: ${named[0][0]}`);
+    assert.ok(Math.abs(named[1] - 0.004) < 1e-9, `the record carries it: ${named[1]}`);
+    assert.deepEqual(await floorFor(stopAfter(null), {}, 'c12'), [[null], null], 'no model anywhere: counted, not priced');
+    const configured = await floorFor(stopAfter('claude-opus-5-5'), { model: 'claude-sonnet-5-5' }, 'c13');
+    assert.ok(Math.abs(configured[0][0] - 0.004) < 1e-9, `the configured model wins over the streamed one (opus: 0.008): ${configured[0][0]}`);
+  } finally { await setModelRoles({ claude: { deep: null } }); }
 });
 
 test('a clarifier ask names only its node: the review books on that node\'s open row, not on a later sibling', async () => {

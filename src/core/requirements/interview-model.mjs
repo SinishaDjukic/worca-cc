@@ -6,8 +6,8 @@ import { withRole } from '../model-roles.mjs';
 
 const DEFAULTS = Object.freeze({
   listModels,
-  // Model roles (D3): an unset interview slot takes the everyday role.
-  interviewSlot: () => withRole(utilityModelFor('claude', 'requirementsInterview'), 'claude', 'requirementsInterview'),
+  // Model roles (D3): an unset interview slot takes the everyday role; with none stored, D8's Opus (never a Worca default, #1450).
+  interviewSlot: () => withRole(utilityModelFor('claude', 'requirementsInterview'), 'claude', 'requirementsInterview', { floor: false }),
 });
 
 /** D8: the first plain (not [1m]) Opus in the catalog, which lists the newest first. */
