@@ -139,15 +139,18 @@ export function createCriteriaJudge(deps = {}) {
           throw e;
         }
       };
-      // The pair's own budget check also reports "over" when this test's cap is reached (as for a criterion).
-      const budget = () => (overCap() ? { blocked: true } : d.budget());
+      // The pair's own budget check also reports "over" when this test's cap is reached (as for a criterion). Fix round 4 (leftover 3):
+      // a refusal because of the test's cap is recorded as 'cap', not as Worca's spending limit ('limit'), as judgeTry does.
+      let capped = false;
+      const budget = () => { if (overCap()) { capped = true; return { blocked: true }; } return d.budget(); };
       // Fix round 3 (final review M8): the first order's answer a cut-short pass kept on its row (same question and model) is not asked again.
       const first = had && had.fp === fp && had.model === ex.judge.model && had.variant && had.variant.first ? had.variant.first : null;
-      const j = await d.judgePair({ a: await d.subjectOf(A), b: await d.subjectOf(B), liked: liked ? liked.text : null, context: d.contextOf(ex),
+      const said = await d.judgePair({ a: await d.subjectOf(A), b: await d.subjectOf(B), liked: liked ? liked.text : null, context: d.contextOf(ex),
         model: ex.judge.model, mock: !!(A.mock || B.mock), signal, book, ...(first ? { first } : {}) }, { budget });
+      const j = said.error === 'limit' && capped ? { ...said, error: 'cap' } : said;
       cs.insertJudgement({ workflowId: run.workflowId, exampleId: id, fp, model: ex.judge.model, purpose: 'pair', tryId: A.id, otherTryId: B.id, testRunId: run.id,
         variant: { question: liked ? 'liked' : 'better', swapped: j.swapped, ...(j.first ? { first: j.first } : {}) }, j });
-      if (j.error === 'limit') return;   // the rest wait for the next pass
+      if (j.error === 'limit' || j.error === 'cap') return;   // the rest wait for the next pass
     }
   }
   return { judgeTry, judgeMissing, judgePairs, leaveUnchecked };
