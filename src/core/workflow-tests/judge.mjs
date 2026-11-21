@@ -111,6 +111,8 @@ export async function judgePair({ a, b, liked = null, context = '', model, mock 
   };
   const one = await ask(A, B);
   if (one.error) return done(one);
+  // Final review M8 (known, small): when the limit refuses the second ask, the first one stays booked but is not kept, so the next
+  // pass asks (and pays for) both orders again. Keeping it would need its answer stored on the 'limit' row.
   const two = await ask(B, A);
   if (two.error) return done(two);
   const w1 = one.winner === 'first' ? 'a' : one.winner === 'second' ? 'b' : 'tie';

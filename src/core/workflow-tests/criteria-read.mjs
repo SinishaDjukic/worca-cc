@@ -49,6 +49,11 @@ export function withCriteriaFor(workflowId, tries, { withAnswers = false, by = n
  * row for each criterion it left unchecked (criteria-runner.mjs leaveUnchecked). That sweep reads the criteria as they are at the
  * END of the test, and rows belong to tries, not tests: a criterion added during a test, or added between two tests that reuse a
  * try, reads 'unchecked' here, not 'new'. An exact rule needs a snapshot of the criteria on the run (a schema rung; not now).
+ * Final review M7, the same cause: the row's code ('cap', 'limit', 'failed') is the state at the end of the test that wrote it. A
+ * newer test that reuses an older test's try writes its own end state on that try, so the older test can show "Not checked: this
+ * test reached its cost limit" when only the newer one did; and boot writes 'failed' for every test a restart cut short, also one
+ * that had reached its cap. Wording by the owning test needs the run id on the row (the same schema rung). The band above Compare
+ * uses the viewed test's own cost, so only a cell's reason can be off, never a verdict or a decision.
  * An example with both gets one entry for each reason.
  */
 export function reasonOfCriterion(tryIds) {
