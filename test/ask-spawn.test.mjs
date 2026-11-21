@@ -449,3 +449,11 @@ test('without commands the sub-agent note and the mcp env are unchanged (#574)',
   const o = buildAskSpawnOptions({ thread: { id: 'ask_0000aaaa' }, turn: {}, limits: {}, mcpConfigPath: '/m.json', scratchDir: '/t' });
   assert.equal(o.spawnEnv, undefined);
 });
+
+test('a locked-down chat (opencode) keeps its server alias stable per thread: serverAliasSeed = the thread id', () => {
+  const base = { thread: { id: 'ask_0000aaaa', sessionId: null }, turn: { prompt: 'p', systemPrompt: 'S', model: 'aifarm-msp/DeepSeek-V4-Flash-0731' }, limits: {}, mcpConfigPath: '/m.json', scratchDir: '/t' };
+  const o = buildAskSpawnOptions({ ...base, engine: 'opencode' });
+  assert.equal(o.serverAliasSeed, 'ask_0000aaaa', 'every spawn of the same thread seeds the same opencode server alias, so a resumed session\'s names stay callable');
+  // Claude's own chat handover does not name it (the Claude adapter does not use a server alias).
+  assert.equal(buildAskSpawnOptions(base).serverAliasSeed, undefined);
+});

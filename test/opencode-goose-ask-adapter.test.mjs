@@ -9,6 +9,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { useTempHome } from './helpers/temp-home.mjs';
 import { runOpencodeProcess, createOpencodeNormalizer, opencodeChat, opencodeProviderSignInEnv, OPENCODE_ASK_LOCKDOWN } from '../src/core/engines/opencode.mjs';
+import { runClaude } from '../src/core/claude-runner.mjs';
 import { runGooseProcess, buildGooseArgs, gooseChat, gooseChatModelProblem, GOOSE_ASK_LOCKDOWN } from '../src/core/engines/goose.mjs';
 import { providerEnvPrefixes, chatSignInEnv } from '../src/core/engines/chat-descriptor.mjs';
 import { buildSpawnEnv } from '../src/core/engines/spawn.mjs';
@@ -60,6 +61,57 @@ test('OpenCode: a chat\'s per-spawn server name reads as worca\'s own in the str
   const n = createOpencodeNormalizer({ mcpServers: ['worcaab12cd'], serverNames: { worcaab12cd: 'worca' } });
   const ev = n.push({ type: 'tool_use', sessionID: 'ses_x', part: { tool: 'worcaab12cd_list_projects', callID: 'c1', state: { status: 'completed', input: {}, output: 'ok' } } });
   assert.equal(ev.find((e) => e.type === 'tool').calls[0].name, 'mcp__worca__list_projects');
+});
+
+test('OpenCode chat: a server alias is stable per thread (a resumed session\'s learned names stay callable), random only without a seed', POSIX, async () => {
+  const spawn = async (seed) => {
+    const dir = tmp();
+    const fake = fakeOpencode(dir, 'hi', { version: '1.19.4' });
+    process.env.ANTHROPIC_API_KEY = 'sk-ant-test';
+    try {
+      await runOpencodeProcess({ cwd: dir, bin: fake.bin, prompt: 'p', model: 'anthropic/claude-sonnet-5-5', askLockdown: true, sandbox: 'read-only',
+        mcpConfigPath: mcpFile(dir), envScrub: true, envAllowlist: [], scratchBase: tmp(), serverAliasSeed: seed });
+    } finally { delete process.env.ANTHROPIC_API_KEY; }
+    return Object.keys(fake.config().mcp)[0];
+  };
+  const a1 = await spawn('ask_2867fe2b');
+  const a2 = await spawn('ask_2867fe2b');
+  assert.equal(a2, a1, 'the same thread names its server the same on every spawn (a resume keeps the learned alias)');
+  assert.match(a1, /^worca[a-f0-9]{8}$/, 'still a name no user server can take, seeded by the thread id');
+  const b = await spawn('ask_00000002');
+  assert.notEqual(b, a1, 'a different thread gets a different alias');
+  // Without a seed (the pre-thread-seed path) it stays a fresh random alias per spawn.
+  const c1 = await spawn(null);
+  const c2 = await spawn(null);
+  assert.notEqual(c2, c1, 'no seed: random per spawn, as before');
+  assert.match(c1, /^worca[a-z0-9]{6}$/);
+});
+
+test('runClaude forwards the thread\'s serverAliasSeed to an opencode chat spawn (drop-at-the-gate guard)', POSIX, async () => {
+  const viaRunClaude = async () => {
+    const dir = tmp();
+    const fake = fakeOpencode(dir, 'hi', { version: '2.3.2' });
+    process.env.ANTHROPIC_API_KEY = 'sk-ant-test';
+    try {
+      await runClaude({ cwd: dir, bin: fake.bin, prompt: 'p', model: 'aifarm-msp/DeepSeek-V4-Flash-0731', askLockdown: true, sandbox: 'read-only',
+        engine: 'opencode', mcpConfigPath: mcpFile(dir), envScrub: true, envAllowlist: [], scratchBase: tmp(), serverAliasSeed: 'ask_2867fe2b' });
+    } finally { delete process.env.ANTHROPIC_API_KEY; }
+    return Object.keys(fake.config().mcp)[0];
+  };
+  const a = await viaRunClaude();
+  assert.match(a, /^worca[a-f0-9]{8}$/, 'the seed survived runClaude to the opencode spawn');
+  assert.equal(await viaRunClaude(), a, 'twice through the gate, the same thread seeds the same alias');
+});
+
+test('OpenCode chat: a call still made to an OLDER alias of a resumed session is relabelled to worca\'s own, never tripped as foreign', () => {
+  const n = createOpencodeNormalizer({ mcpServers: ['worca1a2b3c4d'], serverNames: { worca1a2b3c4d: 'worca' } });
+  const raw = n.push({ type: 'tool_use', sessionID: 'ses_x', part: { tool: 'worcam93krx_propose_run', callID: 'c1', state: { status: 'error', input: {}, error: 'No tool named "worcam93krx_propose_run" is currently available' } } });
+  assert.equal(raw.find((e) => e.type === 'tool').calls[0].name, 'mcp__worca__propose_run', 'a stale alias reads as worca\'s own tool, so the turn\'s allow-list holds');
+  // A run (no serverNames) keeps an unmapped name as OpenCode's; a user server named exactly `worca` (no suffix) is not relabelled.
+  const run = createOpencodeNormalizer({ mcpServers: [] });
+  assert.equal(run.push({ type: 'tool_use', sessionID: 'ses_x', part: { tool: 'spike_magic_number', callID: 'c1', state: { status: 'completed', input: {} } } }).find((e) => e.type === 'tool').calls[0].name, 'spike_magic_number');
+  const exact = createOpencodeNormalizer({ mcpServers: [], serverNames: {} });
+  assert.equal(exact.push({ type: 'tool_use', sessionID: 'ses_x', part: { tool: 'worca_release', callID: 'c1', state: { status: 'completed', input: {} } } }).find((e) => e.type === 'tool').calls[0].name, 'worca_release');
 });
 
 test('OpenCode chat sign-in env: the model\'s provider {env:…} key rides the scrub by exact name — and only its own', () => {
