@@ -100,7 +100,8 @@ export function cleanRunEnv(env) {
  * scrubbed env (undefined when scrub is off -> process.env), the run-level env
  * (cleanRunEnv) over it, the adapter's overlay (the model env) merged LAST so it
  * survives scrub and wins collisions, WORCA_HOST_PID after that, no GitHub
- * or Azure DevOps credential in any tier (host-credentials.mjs), never the credential broker's own secret, and no
+ * or Azure DevOps credential in any tier (host-credentials.mjs), never the credential broker's own secret nor the
+ * host's WORCA_HOME, and no
  * proxy URL that carries a login (env-proxy.mjs withoutProxyLogin: the corporate proxy is off then, so the child
  * goes direct rather than get the password), and WORCA_TEST_CONCURRENCY (testWorkerCap) unless set. With
  * no run env and no overlay the env is otherwise identical to the scrub result.
@@ -115,6 +116,9 @@ export function composeSpawnEnv({ envScrub, envAllowlist, prefixes, runEnv, over
   env = stripHostCredentials(env ?? process.env);
   delete env.WORCA_BROKER_SECRET;
   delete env.WORCA_BROKER_SECRET_FILE;
+  // Never the host's store: a test or `worca` command the agent runs would otherwise write into the live
+  // database (a run's own `node --test` file restored this home in teardown and left runs in it).
+  delete env.WORCA_HOME;
   env = withNoGitPath(withoutProxyLogin(env));
   // The per-run test-worker cap (Settings › Runs › Machine load): a test runner that reads it (this repo's
   // tools/test-run.mjs) leaves cores for the run's other work and for other runs. A value already set wins.

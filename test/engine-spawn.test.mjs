@@ -157,6 +157,14 @@ test('composeSpawnEnv: overlay wins, host pid added last, GitHub credentials str
   } finally { delete process.env.GH_TOKEN; }
 });
 
+test('composeSpawnEnv: the host WORCA_HOME never reaches the child, scrubbed or not, even when allowlisted', () => {
+  // process.env.WORCA_HOME is the suite's sandbox home (npm test); the child must not see it either way.
+  assert.ok(process.env.WORCA_HOME, 'precondition: the test runner sets WORCA_HOME');
+  for (const envScrub of [false, true]) {
+    assert.equal(composeSpawnEnv({ envScrub, envAllowlist: ['WORCA_HOME'] }).env.WORCA_HOME, undefined, `scrub ${envScrub}`);
+  }
+});
+
 test('composeSpawnEnv: a proxy URL with a login never reaches the child; NO_PROXY and a login-free URL do', () => {
   const saved = Object.fromEntries(['HTTPS_PROXY', 'HTTP_PROXY', 'https_proxy', 'http_proxy', 'NO_PROXY'].map((k) => [k, process.env[k]]));
   const restore = () => { for (const [k, v] of Object.entries(saved)) { if (v === undefined) delete process.env[k]; else process.env[k] = v; } };

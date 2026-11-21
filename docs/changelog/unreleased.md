@@ -3,6 +3,20 @@
 Notes on merged features that have no release page yet. `/worca-changelog` folds
 them into the next page and empties this file.
 
+## A run's tests stay out of your runs list
+
+**A run that builds worca no longer leaves mock "again" runs in the worca that started it.**
+
+Agents no longer receive the server's `WORCA_HOME`, so a test or `worca` command an agent runs cannot reach the live store. The test helper that gives each test file its own home now parks late writes in a throwaway folder when the file ends, instead of handing them back to whatever `WORCA_HOME` the shell had. Before, a run started from `WORCA_HOME=… worca ui` that ran a test file directly could add that test's mock runs to your runs list.
+
+Chips: agents never get WORCA_HOME · late test writes go to a throwaway folder
+
+Read it: [Runs](../runs.md)
+
+Pull requests (add each number when it opens):
+
+- Agents and tests never write to the live store
+
 ## Long spec items are kept whole
 
 **A long step, rule or criterion no longer ends mid-word in the spec, the download or the run.**
