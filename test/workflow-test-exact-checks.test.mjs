@@ -40,6 +40,17 @@ test('links: markdown and bare, de-duplicated, closing marks dropped', () => {
     ['https://a.example/x', 'http://b.example/y']);
 });
 
+test('links: a ")" that closes a "(" inside the link stays, an outer one goes', () => {
+  const wiki = 'https://en.wikipedia.org/wiki/Mercury_(planet)';
+  assert.deepEqual(linksIn(`See ${wiki} for more`), [wiki]);
+  assert.deepEqual(linksIn(`See [x](${wiki}) for more`), [wiki]);
+  assert.deepEqual(linksIn(`(see ${wiki})`), [wiki]);
+  assert.deepEqual(linksIn('(see https://example.com/a)'), ['https://example.com/a']);
+  assert.deepEqual(linksIn('A list (https://example.com/a), then (https://example.com/b).'), ['https://example.com/a', 'https://example.com/b']);
+  assert.deepEqual(linksIn(`On Mercury (${wiki}).`), [wiki]);
+  assert.deepEqual(linksIn(`Two: ${wiki}, and ${wiki}).`), [wiki]);
+});
+
 test('exactAlternative: board 2 and board 10 examples', () => {
   assert.deepEqual(exactAlternative('Quotes customers from the interviews, and makes up no quotes'), { kind: 'quotes' });
   assert.deepEqual(exactAlternative("Mentions that today's export stops at 200 invoices"), { kind: 'mentions', text: '200' });
