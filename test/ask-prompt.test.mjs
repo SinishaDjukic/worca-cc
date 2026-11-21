@@ -5,7 +5,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   ASK_SYSTEM_RULES, ASK_HOSTING_RULE, buildSystemPrompt, validateClientContext, buildContextHeader,
-  selectInlineAttachments, buildTurnPrompt, buildRestoredPrompt,
+  selectInlineAttachments, buildTurnPrompt, buildRestoredPrompt, SPOKEN_TURN_RULE, SUPERSEDE_TURN_RULE,
   renderScriptsSection, SCRIPTS_SECTION_MAX_BYTES, renderWebSection, renderCommandsSection, renderChatChannelSection,
 } from '../src/core/ask/prompt.mjs';
 import { SANDBOX_NOTE } from '../src/core/ask/spawn.mjs';
@@ -439,6 +439,39 @@ test('buildTurnPrompt: header, text, fenced attachments with a fence longer than
   assert.equal(buildTurnPrompt('', 'hi'), 'hi');
   assert.ok(buildTurnPrompt('[worca context]\nview: x\n[/worca context]', '', [{ id: 'att_1', name: 'a.md', text: 'only an attachment' }]).startsWith('[worca context]'),
     'an attachments-only turn keeps the context header');
+});
+
+test('buildTurnPrompt: a hands-free turn appends SPOKEN_TURN_RULE after the text and chat context, before the attachments', () => {
+  const h = '[worca context]\nview: x\n[/worca context]';
+  const att = [{ id: 'att_1', name: 'notes.md', text: 'plain' }];
+  const p = buildTurnPrompt(h, 'What failed?', att, 'CHAT-CTX', '', { spoken: true });
+  const rule = p.indexOf(SPOKEN_TURN_RULE);
+  assert.ok(rule > p.indexOf('What failed?') && rule > p.indexOf('CHAT-CTX'), 'after the text and the chat context');
+  assert.ok(rule < p.indexOf('```` attachment att_1'), 'before the first attachment fence');
+  assert.equal(p, buildTurnPrompt(h, 'What failed?', [], 'CHAT-CTX') + `\n\n${SPOKEN_TURN_RULE}` + buildTurnPrompt('', '', att));
+  assert.ok(buildTurnPrompt(h, 'q', [], '', '', { spoken: true }).endsWith(`q\n\n${SPOKEN_TURN_RULE}`));
+  for (const args of [[h, 'q', att, 'C'], [h, 'q', [], ''], ['', 'hi', [], '']]) {
+    assert.equal(buildTurnPrompt(...args, '', undefined), buildTurnPrompt(...args));
+    assert.equal(buildTurnPrompt(...args, '', { spoken: false }), buildTurnPrompt(...args), 'off: byte-identical');
+  }
+  assert.ok(SPOKEN_TURN_RULE.startsWith('[voice reply]'));
+  for (const key of ['<spoken>', '</spoken>', 'two or three', 'after them']) assert.ok(SPOKEN_TURN_RULE.includes(key), key);
+  assert.doesNotMatch(buildSystemPrompt(CATALOG), /<spoken>/, 'the cached system prompt never carries it');
+});
+
+test('buildTurnPrompt: a merged voice message appends SUPERSEDE_TURN_RULE after the chat context and before the spoken rule', () => {
+  const h = '[worca context]\nview: x\n[/worca context]';
+  const att = [{ id: 'att_1', name: 'notes.md', text: 'plain' }];
+  assert.ok(SUPERSEDE_TURN_RULE.startsWith('[replaces previous message]'));
+  assert.match(SUPERSEDE_TURN_RULE, /replaces it: answer only this one/);
+  const one = buildTurnPrompt(h, 'Do you know how to bake?', [], 'CHAT-CTX', '', { supersedes: true });
+  assert.equal(one, `${buildTurnPrompt(h, 'Do you know how to bake?', [], 'CHAT-CTX')}\n\n${SUPERSEDE_TURN_RULE}`);
+  const both = buildTurnPrompt(h, 'q', att, 'CHAT-CTX', '', { spoken: true, supersedes: true });
+  assert.equal(both, buildTurnPrompt(h, 'q', [], 'CHAT-CTX') + `\n\n${SUPERSEDE_TURN_RULE}\n\n${SPOKEN_TURN_RULE}` + buildTurnPrompt('', '', att));
+  assert.ok(!buildTurnPrompt(h, 'q', att, 'C').includes(SUPERSEDE_TURN_RULE), 'no flags: neither block');
+  assert.ok(!buildTurnPrompt(h, 'q', att, 'C').includes(SPOKEN_TURN_RULE));
+  assert.equal(buildTurnPrompt(h, 'q', att, 'C', '', { supersedes: 'yes' }), buildTurnPrompt(h, 'q', att, 'C'), 'only true counts');
+  assert.ok(!buildSystemPrompt(CATALOG).includes('[replaces previous message]'), 'never in the cached system prompt');
 });
 
 test('buildTurnPrompt: the attachment NAME cannot close the fence', () => {

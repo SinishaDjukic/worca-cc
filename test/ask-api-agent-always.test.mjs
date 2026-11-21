@@ -71,3 +71,47 @@ test('the Workflows chat (composer mode) is never in agent mode, even where the 
   assert.doesNotMatch(turn.systemPrompt, /## Commands \(agent mode\)/);
   await idle();
 });
+
+test('hands-free voice: handsFree:true adds the spoken-reply rule to this turn\'s prompt; no flag adds nothing; a non-boolean is refused and stores nothing', async () => {
+  const { SPOKEN_TURN_RULE } = await import('../src/core/ask/prompt.mjs');
+  const { listMessages } = await import('../src/core/ask/store.mjs');
+  await idle();
+  const { thread } = await (await post('/api/ask/threads', {})).json();
+  const r1 = await post(`/api/ask/threads/${thread.id}/messages`, { text: 'what failed?', ...MODEL, handsFree: true, context: { view: 'chat', pinned: false } });
+  assert.equal(r1.status, 202, await r1.text());
+  const t1 = await turnOf(thread.id);
+  assert.ok(t1.prompt.includes(SPOKEN_TURN_RULE), 'the hands-free turn asks for the spoken version');
+  assert.ok(!t1.systemPrompt.includes('<spoken>'), 'never in the cached system prompt');
+  await idle();
+  const users = listMessages(thread.id).filter((m) => m.role === 'user');
+  assert.equal(users.at(-1).text, 'what failed?', 'the stored user row is the sent text, without the rule');
+
+  const r2 = await post(`/api/ask/threads/${thread.id}/messages`, { text: 'and now?', ...MODEL, context: { view: 'chat', pinned: false } });
+  assert.equal(r2.status, 202, await r2.text());
+  const t2 = await turnOf(thread.id);
+  assert.notEqual(t2, t1);
+  assert.ok(!t2.prompt.includes('<spoken>'), 'no flag: no rule');
+  await idle();
+
+  const before = listMessages(thread.id).length;
+  const r3 = await post(`/api/ask/threads/${thread.id}/messages`, { text: 'again', ...MODEL, handsFree: 'yes', context: { view: 'chat', pinned: false } });
+  assert.equal(r3.status, 400);
+  assert.equal((await r3.json()).error, 'handsFree must be true or false');
+  assert.equal(listMessages(thread.id).length, before, 'a refused flag stores nothing');
+});
+
+test('hands-free voice: a synthetic (event) turn never carries the spoken-reply rule', async () => {
+  const { SPOKEN_TURN_RULE } = await import('../src/core/ask/prompt.mjs');
+  const { getThread } = await import('../src/core/ask/store.mjs');
+  await idle();
+  const { thread } = await (await post('/api/ask/threads', {})).json();
+  const r = await mod._testing.startAskTurn({ threadId: thread.id, thread: getThread(thread.id), ctx: {}, ...MODEL, text: '[worca event] run finished', synthetic: { notice: 'Run finished' }, handsFree: true });
+  assert.equal(r.ok, true, JSON.stringify(r));
+  const turn = await turnOf(thread.id);
+  assert.ok(!turn.prompt.includes(SPOKEN_TURN_RULE));
+  await idle();
+  const r2 = await mod._testing.startAskTurn({ threadId: thread.id, thread: getThread(thread.id), ctx: {}, ...MODEL, text: 'typed', handsFree: true });
+  assert.equal(r2.ok, true, JSON.stringify(r2));
+  assert.ok(mod._testing.askJobs.get(thread.id).turn.prompt.includes(SPOKEN_TURN_RULE), 'the same call without synthetic does carry it');
+  await idle();
+});

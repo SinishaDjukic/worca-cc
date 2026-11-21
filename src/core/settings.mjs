@@ -2790,8 +2790,8 @@ export async function updateProvider(name, patch = {}, { dryRun = false, expectC
 // the catalog or /api/models. Keys are literal or a whole-value ${VAR}, resolved at
 // use time by resolveProviderSecret like every provider key.
 const SPEECH_DEFAULTS = Object.freeze({
-  // pause: seconds of silence that end an utterance (the voice detector's wait), any engine.
-  stt: Object.freeze({ engine: 'browser', baseUrl: 'http://127.0.0.1:8080/v1', model: 'whisper-1', language: 'auto', pause: 1.2 }),
+  // pause: pause after a finished sentence; unfinished sentences wait 2.5× (browser STT).
+  stt: Object.freeze({ engine: 'browser', baseUrl: 'http://127.0.0.1:8080/v1', model: 'whisper-1', language: 'auto', pause: 0.7 }),
   tts: Object.freeze({ engine: 'browser', baseUrl: '', model: 'tts-1', voice: 'af_heart', speed: 1 }),
 });
 const SPEECH_FIELDS = Object.freeze({

@@ -250,8 +250,8 @@ export function renderSpeechRow(providers, { doc = globalThis.document } = {}) {
     }
     if (kind === 'stt') {
       box.appendChild(speechInput(doc, kind, 'language', 'Language', 'auto, or an ISO code such as bg', s));
-      // How long a silence ends what you are saying — raise it if you get cut off mid-sentence.
-      box.appendChild(speechInput(doc, kind, 'pause', 'Pause before sending (seconds)', '1.2 (raise it if you get cut off)', s));
+      // The silence that sends a finished sentence; unfinished ones wait 2.5× as long (browser speech-to-text).
+      box.appendChild(speechInput(doc, kind, 'pause', 'Pause before sending (seconds)', '0.7 (after a finished sentence; unfinished ones wait longer)', s));
     }
     for (const [field, label, placeholder] of SPEECH_FIELDS[kind]) server.appendChild(speechInput(doc, kind, field, label, placeholder, s));
     const btns = h(doc, 'div', 'mv-pv-btns');

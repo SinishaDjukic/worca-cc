@@ -289,6 +289,10 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     firstOpenDone: false,
     destroyed: false,
     voice: null,              // the voice controller (ask-voice.mjs), made on first mic use — docs/speech.md
+    // A voice merge (docs/speech.md): the last voice send the server took ({threadId, userMessageId}), and the one-shot
+    // fields the next draft takes: voiceDraft (the send came from voice), voiceSupersedes (the message it replaces),
+    // voiceSendId (the controller's id for it: its 202 tells the controller which server turn answers it).
+    voiceSent: null, voiceDraft: false, voiceSupersedes: null, voiceSendId: null,
     voiceLongPress: null,     // the mic's long-press timer
     voiceSwallowClick: false, // the click that ends a long-press must not also start dictation
     lastAnswerRender: 0,
@@ -308,6 +312,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     queues: new Map(),        // threadId → {items:[{key,text,quote,files}], paused, draining}: messages sent while a reply ran
     queueEdit: null,          // {id, item, li, ta}: the queued card whose text is being edited in place (one at a time)
     stopBy: null,             // who asked the live turn to stop: 'button' pauses the queue, 'voice' (barge-in) lets it send
+    stopAfterSend: false,     // voice asked to stop while the send POST was out: stop that turn as soon as the 202 lands
     hist: { idx: -1, draft: '' },   // ArrowUp history walk: idx into historyEntries(), -1 = not walking; the draft it replaced
     basePlaceholder: INPUT_PLACEHOLDER,   // the add-ons' placeholder (addonCtx.setPlaceholder); a suggestion shows only over the default
     suggestion: null,         // the suggestion on screen ({messageId, text}) — what Tab accepts
@@ -882,7 +887,11 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
       st.voice = createVoice({
         onState: paintVoice,
         onTranscript: voiceTranscript,
-        onBargeIn: () => { if (st.model && st.model.live()) { st.stopBy = 'voice'; stopTurn(); } },
+        // Barge-in, or a continuation merging into the message just sent: stop that turn — live, loaded
+        // but not adopted yet, or (the POST still out) the one the server is about to start.
+        onBargeIn: () => {
+          if (turnBusy()) { st.stopBy = 'voice'; stopTurn(); } else if (st.sending) { st.stopBy = 'voice'; st.stopAfterSend = true; }
+        },
         onNotice: (msg) => setComposerMsg(msg),
       });
     }
@@ -913,6 +922,9 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
   }
   function toggleHandsFree() { const v = voice(); if (v.active() && v.mode() === 'handsfree') stopVoice(); else startVoice('handsfree'); }
   function stopVoice() { if (st.voice && st.voice.active()) st.voice.stop(); }
+  function handsFreeSpeaking() {
+    return !!(st.voice && st.voice.active() && st.voice.mode() === 'handsfree' && st.voice.speaks && st.voice.speaks());
+  }
 
   function paintVoice(state, { mode, detail } = {}) {
     if (!el.mic) return;
@@ -930,33 +942,65 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     if (state === 'listening' && !voiceUsedBefore()) { try { storage.setItem(VOICE_USED_KEY, '1'); } catch { /* preload is a nicety */ } }
   }
 
-  function voiceTranscript(text, { autoSend } = {}) {
+  /** The newest user row the chat shows (hidden rows are already out of messages()). */
+  function newestUserMessageId() {
+    const rows = st.model ? st.model.messages() : [];
+    for (let i = rows.length - 1; i >= 0; i -= 1) if (rows[i] && rows[i].role === 'user') return rows[i].id;
+    return null;
+  }
+
+  /**
+   * supersede: the text is a voice merge that replaces the message just sent. It asks the server to hide that turn only
+   * when the composer held nothing typed and that message is still this chat's newest; otherwise it is a plain send.
+   * sendId: the controller's id for an auto-send, handed back to it with the server's ids once the POST is taken.
+   */
+  function voiceTranscript(text, { autoSend, supersede } = {}, { sendId } = {}) {
     const cur = el.input.value;
+    const wasEmpty = !cur.trim();
     el.input.value = cur && !/\s$/.test(cur) ? `${cur} ${text}` : `${cur}${text}`;
     fitInput();                                   // a programmatic write fires no input event
     if (!autoSend) { focusComposer(); return; }
+    const sent = st.voiceSent;
+    st.voiceDraft = true;
+    st.voiceSendId = typeof sendId === 'string' ? sendId : null;
+    st.voiceSupersedes = supersede && wasEmpty && sent && sent.threadId === st.threadId && newestUserMessageId() === sent.userMessageId
+      ? sent.userMessageId : null;
     // While a reply runs (barge-in included) sendMessage() queues it like a typed send; the queue sends it after.
     voiceSend();
   }
 
   function voiceSend() {
     Promise.resolve()
-      .then(() => sendMessage())
+      // Another send is out (the queue draining at the turn's end that a merge stopped): the words wait behind it.
+      .then(() => (st.sending && el.input.value.trim()
+        ? enqueueDraft({ text: el.input.value.trim(), quote: st.quote, files: st.pendingFiles, ...takeVoiceFields() })
+        : sendMessage()))
       .catch(() => false)                          // sendMessage can throw on a malformed response body
       .then((ok) => {
         if (!ok && st.voice && st.voice.active()) st.voice.fail(el.composerMsg.hidden ? 'the message was not sent' : el.composerMsg.textContent);
       });
   }
 
+  /** The one-shot voice fields for the draft being built: { voice: true, supersedes?, voiceSendId? } or {} for a typed send. */
+  function takeVoiceFields() {
+    const out = st.voiceDraft
+      ? { voice: true, ...(st.voiceSupersedes ? { supersedes: st.voiceSupersedes } : {}), ...(st.voiceSendId ? { voiceSendId: st.voiceSendId } : {}) }
+      : {};
+    st.voiceDraft = false;
+    st.voiceSupersedes = null;
+    st.voiceSendId = null;
+    return out;
+  }
+
   /**
-   * Send the composer's message — or `queued`, an item the queue drains ({text, quote, files, page}). While a reply runs the
+   * Send the composer's message — or `queued`, an item the queue drains ({text, quote, files, page, voice?, supersedes?}). While a reply runs the
    * composer's message joins this chat's queue instead ('queued'); a queued item that meets a running turn answers
    * 'busy' and stays first. true = sent, false = not sent (the reason is on the composer line).
    * @returns {Promise<boolean|'queued'|'busy'>}
    */
   async function sendMessage(queued = null) {
     if (st.sending || st.destroyed) return false;
-    const draft = queued || { text: el.input.value.trim(), quote: st.quote, files: st.pendingFiles, requirements: [] };
+    const draft = queued || { text: el.input.value.trim(), quote: st.quote, files: st.pendingFiles, requirements: [], ...takeVoiceFields() };
     let text = draft.text;
     if (!text) return false;
     // Pinpoint (#669): the quote chip rides as a blockquote above the text — for an add-on's direction too.
@@ -1043,14 +1087,29 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
         // MCP registry §9.4: every message carries the picker's choices, so each turn runs what the picker shows —
         // a refused first message (429/403/400, network) or a PATCH still in flight would leave the stored ones behind.
         mcpOff: sentOff,
+        // Hands-free voice: ask for a short spoken version first, only while hands-free really speaks (read at POST time).
+        ...(handsFreeSpeaking() ? { handsFree: true } : {}),
+        // A voice merge: the message it replaces (the server hides that turn, or refuses and the resend below goes plain).
+        ...(draft.supersedes ? { supersedes: draft.supersedes } : {}),
         ...(draft.files.length ? { attachments: draft.files.map((f) => ({ name: f.name, dataBase64: f.dataBase64 })) } : {}),
         // Flag off: no field at all (a queued item that waited past a flag flip drops it too).
         ...(requirementsOn() && draft.requirements && draft.requirements.length ? { requirements: draft.requirements } : {}),
       };
       const model = st.model;
       let res = null;
+      let refusedBody = null;
       try {
         res = await fetch(`/api/ask/threads/${id}/messages`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
+        if (res && res.status === 409 && payload.supersedes) {
+          // The earlier turn cannot be hidden (it changed something, or another message came): send it once more as a
+          // plain message, so both turns stay visible and nothing is lost.
+          try { refusedBody = await res.json(); } catch { refusedBody = null; }
+          if (refusedBody && refusedBody.code === 'supersede-refused') {
+            delete payload.supersedes;
+            refusedBody = null;
+            res = await fetch(`/api/ask/threads/${id}/messages`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
+          }
+        }
       } catch { setComposerMsg('network error: the message was not sent'); return false; }
       const accepted = !!res && res.status === 202;
       // The user may have clicked New chat or switched threads during the POST: the
@@ -1060,8 +1119,9 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
       if (st.destroyed || st.model !== model || st.threadId !== id) return !!queued && accepted;
       if (!accepted) {
         let msg = `request failed (${res ? res.status : 'network'})`;
-        let body = null;
-        try { body = await res.json(); if (body && body.error) msg = body.error; } catch { /* keep the fallback */ }
+        let body = refusedBody;
+        if (body && body.error) msg = body.error;
+        else try { body = await res.json(); if (body && body.error) msg = body.error; } catch { /* keep the fallback */ }
         // Another turn (an event turn started at settle) got the chat first: the message waits for it.
         if (res && res.status === 409 && body && body.error === 'turn in flight') return queued ? 'busy' : enqueueDraft(draft);
         setComposerMsg(msg);
@@ -1071,7 +1131,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
       st.scopeHeld = null;                           // S39: this message carried the held pick (its pinned is authoritative)
       // A toggle made while this POST was out PATCHed a value the route then overwrote with sentOff: re-send the latest.
       if (st.mcp.off !== sentOff) patchMcpOff(id, st.mcp.off);
-      const { userMessageId, attachments: stored, contexts, scope: switched } = await res.json();
+      const { userMessageId, assistantMessageId, attachments: stored, contexts, superseded, scope: switched } = await res.json();
       // Reading the body yields: the user may have left the chat meanwhile. Its contexts, scope and echo belong to the
       // chat they left; a `scope` applied here would move another chat's pill (review M2).
       if (st.destroyed || st.model !== model || st.threadId !== id) return !!queued;
@@ -1088,6 +1148,13 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
         ? stored.map((a) => ({ id: a.id, name: a.name, bytes: a.bytes, attKind: a.kind ?? 'text', mime: a.mime ?? null }))
         : draft.files.map((f) => ({ name: f.name, bytes: f.bytes, attKind: f.attKind, mime: f.mime }));
       st.model.noteLocalUserMessage({ id: userMessageId, text, attachments: echoAtts });
+      // The server took a voice send: its reply is this turn, whatever else runs in the chat (an event, another tab).
+      if (draft.voiceSendId && st.voice && st.voice.active() && st.voice.noteSent) st.voice.noteSent({ sendId: draft.voiceSendId, userMessageId, assistantMessageId });
+      // A voice merge replaced the turn just sent: its bubble and its reply leave the chat (kept on the server, hidden).
+      if (Array.isArray(superseded) && superseded.length) { st.model.markSuperseded(superseded, userMessageId); renderTranscript(); }
+      // A typed send ends what a merge may replace; so does a voice send that carried files or a quote (never hidden).
+      st.voiceSent = draft.voice && !quoted && !(draft.files && draft.files.length) ? { threadId: id, userMessageId } : null;
+      if (st.stopAfterSend) stopTurn();
       st.askedIn.add(id);                            // its replies may light the Chat row's dot, even after a switch
       // No provisional title from the prompt: the header keeps "New chat" until
       // the ask-title frame lands (ask-model marks title dirty, flushExtra repaints).
@@ -1108,6 +1175,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
       return true;
     } finally {
       st.sending = false;
+      st.stopAfterSend = false;
       updateSendStop();
     }
   }
@@ -1125,7 +1193,9 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
       return false;
     }
     // Ask worca beside the page: the page it was typed on rides with it — the person may be elsewhere when it sends.
-    const item = { key: `q${++queueSeq}`, text: draft.text, quote: draft.quote || null, files: draft.files.slice(), requirements: (draft.requirements || []).slice(), features: (draft.features || []).map((f) => ({ ...f })), page: draft.page || pageContext() };
+    const item = { key: `q${++queueSeq}`, text: draft.text, quote: draft.quote || null, files: draft.files.slice(), requirements: (draft.requirements || []).slice(), features: (draft.features || []).map((f) => ({ ...f })), page: draft.page || pageContext(),
+      ...(draft.voice ? { voice: true } : {}), ...(draft.supersedes ? { supersedes: draft.supersedes } : {}),
+      ...(draft.voiceSendId ? { voiceSendId: draft.voiceSendId } : {}) };
     q.items.push(item);
     el.input.value = '';
     dropAttached(item.requirements);                 // the features travel with the queued text, like the input
@@ -3725,6 +3795,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
    *  takes the focus for that. */
   function newThread({ focus = true } = {}) {
     stopVoice();
+    st.voiceSent = null;                // a merge never replaces a message of another chat
     loadGen += 1;                       // a load still in flight must not resurrect the old thread
     st.threadId = null;
     st.wantThread = null;               // home: a new chat
@@ -7581,7 +7652,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     // its new rows, and one never shown rises in whole. A resync or a reconnect re-loads the SAME thread and keeps it
     // too: those repaint rows the user is already reading, mid-turn.
     const switched = st.threadId !== id;
-    if (switched) stopVoice();
+    if (switched) { stopVoice(); st.voiceSent = null; }
     st.threadId = id;
     if (st.open && st.unread && st.unreadThread === id) setUnread(false);   // the dot's chat is on screen now
     // #943: the engine this tab last knew. activeEngine, not thread.engine: a chat begun in this tab was loaded from
@@ -7810,7 +7881,8 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     if (!r || !r.ok) return;
     if (st.voice && st.voice.active() && frame.messageId) {
       const live = st.model && st.model.live();
-      st.voice.onFrame(frame, live && live.messageId === frame.messageId ? live.text : null);
+      const same = live && live.messageId === frame.messageId;
+      st.voice.onFrame(frame, same ? live.text : null, same ? live.spoken : null);
     }
     afterFrame(frame);
     scheduleFlush();

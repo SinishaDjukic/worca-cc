@@ -64,7 +64,7 @@ const OPEN_BACKOFF_MS = 15;
 /** Latest schema version. Bump + append a new migration step when the DDL grows.
  *  Exported so migration tests assert "reached the module's current version"
  *  instead of hardcoding the number — a schema bump then touches no test file. */
-export const SCHEMA_VERSION = 96;
+export const SCHEMA_VERSION = 97;
 
 /** store_meta row holding the install's default guardrail set id (JSON string). */
 export const GUARDRAILS_DEFAULT_META_KEY = 'guardrails:default';
@@ -891,7 +891,8 @@ const INCREMENTAL_COLUMNS = {
                             // v70: where a copy found under a run's or project's folder came from, for Show in folder's
                             // fallback once a run's worktree is gone; NULL = out folder, worktree or an older row
                             source_run_id: 'TEXT', source_project_key: 'TEXT', source_rel: 'TEXT' },
-  ask_messages:           { engine: 'TEXT' },        // v83 (#943): the engine a reply ran on; NULL = a user/system row or before v83
+  ask_messages:           { engine: 'TEXT', superseded_by: 'TEXT' },        // v83 (#943): the engine a reply ran on; NULL = a user/system row or before v83
+                                                // v97: the user message id that replaced this row (a voice merge); NULL = shown
   chat_conversations:     { header_new_off: 'INTEGER NOT NULL DEFAULT 0' },   // v86: 1 = a scope pick retired the header's New conversation for good
   project_config:         { human_in_loop: 'INTEGER NOT NULL DEFAULT 1' },   // v28: the Auto entry's human-in-the-loop switch
   diff_comments:          { parent_id: 'TEXT REFERENCES diff_comments(id) ON DELETE CASCADE',  // v29: reply threads; NULL = thread root
@@ -2878,6 +2879,9 @@ export function migrate(db) {
     // repairSchemaGaps (a v92+ DB) or by the v92 DDL above (an older DB). First written as v92.
     // v96 Requirements run note: req_starts.note + req_starts.note_overrides — INCREMENTAL_COLUMNS, added by the hoisted
     // repairSchemaGaps (a v95 DB); the base DDL does not carry them.
+    // v97: ask_messages.superseded_by (a voice merge hides the turn it replaces) — INCREMENTAL_COLUMNS, added by the hoisted
+    // repairSchemaGaps. First written as v89, then v96, then v97 (Requirements 9c took 89; Stillhet and Design took 90–95;
+    // the Requirements run note took 96).
     db.exec(`PRAGMA user_version = ${SCHEMA_VERSION}`);
     db.exec('COMMIT');
   } catch (err) {
