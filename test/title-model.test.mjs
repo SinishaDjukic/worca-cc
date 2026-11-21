@@ -170,23 +170,23 @@ test('generateTitle: no model anywhere and Haiku not ready → ONE call with no 
   assert.equal(errors.length, 0);
 });
 
-test('generateTitle: the built-in Haiku fails → retried ONCE with no model, the title still comes out', async () => {
+test('generateTitle: the built-in Haiku fails → retried ONCE on Worca\'s Quick jobs default (Haiku 5.5), never an empty model (#1450)', async () => {
   const { run, models } = seam({ fails: (m) => m === DEFAULT_TITLE_MODEL });
   const errors = [];
   const t = await generateTitle('some task', { ...offline, run, onError: (i) => errors.push(i) }, deps());
   assert.equal(t, 'Fallback Title');
-  assert.deepEqual(models, [DEFAULT_TITLE_MODEL, undefined]);
+  assert.deepEqual(models, [DEFAULT_TITLE_MODEL, 'claude-haiku-5-5']);
   assert.equal(errors.length, 0, 'a fallback that titled reports nothing');
 });
 
-test('generateTitle: the built-in Haiku AND the no-model retry fail → onError ONCE, "" (never throws)', async () => {
+test('generateTitle: the built-in Haiku AND the Haiku 5.5 retry fail → onError ONCE, "" (never throws)', async () => {
   const { run, models } = seam({ fails: () => true });
   const errors = [];
   const t = await generateTitle('some task', { ...offline, run, onError: (i) => errors.push(i) }, deps());
   assert.equal(t, '');
-  assert.deepEqual(models, [DEFAULT_TITLE_MODEL, undefined], 'one retry, not more');
+  assert.deepEqual(models, [DEFAULT_TITLE_MODEL, 'claude-haiku-5-5'], 'one retry, not more');
   assert.equal(errors.length, 1);
-  assert.equal(errors[0].model, null, 'the last attempt ran on the CLI default');
+  assert.equal(errors[0].model, 'claude-haiku-5-5', 'the last attempt ran on the Worca default');
   assert.ok(errors[0].error instanceof Error);
 });
 
@@ -213,7 +213,7 @@ test('generateTitle: onCost fires once per PRICED attempt, each booked as the mo
   const seen = [];
   const t = await generateTitle('some task', { ...offline, run, onCost: (c) => seen.push(c) }, deps());
   assert.equal(t, 'Fallback Title');
-  assert.deepEqual(seen.map((c) => [c.costUsd, c.model]), [[0.0021, DEFAULT_TITLE_MODEL], [0.0021, null]]);
+  assert.deepEqual(seen.map((c) => [c.costUsd, c.model]), [[0.0021, DEFAULT_TITLE_MODEL], [0.0021, 'claude-haiku-5-5']]);
   assert.equal(seen[1].usage.input_tokens, 90);
 });
 

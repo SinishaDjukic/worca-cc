@@ -56,7 +56,8 @@ test('a Codex run skips a Claude node pick and uses the Codex slot (Review Focus
   await setNodeModel(projectDir, 'wf_slot1', 'n_plan', { model: 'claude-opus-5-5', effort: 'max' });
   const codex = await resolveGraph(projectDir, 'wf_slot1', REG(), undefined, { engine: 'codex' });
   assert.deepEqual(pair(codex.nodes.n_plan), { model: 'gpt-5.5', effort: 'low' });
-  assert.deepEqual(pair(codex.nodes.n_rev), { model: undefined, effort: undefined }, 'no slot, no node pick: Codex\'s own default');
+  assert.deepEqual(pair(codex.nodes.n_rev), { model: 'gpt-5.6-sol', effort: undefined }, 'no slot, no node pick: Worca\'s Deep thinking default for Codex (#1450)');
+  assert.equal(codex.nodes.n_rev.modelSource, 'worca-default');
   const claude = await resolveGraph(projectDir, 'wf_slot1', REG());
   assert.deepEqual(pair(claude.nodes.n_plan), { model: 'claude-opus-5-5', effort: 'max' }, 'on Claude the project\'s node pick wins');
 });
@@ -82,7 +83,7 @@ test('Codex: the project slot beats yours; a workspace run skips it; nothing cha
   assert.equal((await resolveGraph(projectDir, 'wf_slot3', REG(), undefined, { engine: 'codex' })).nodes.n_plan.model, 'gpt-5.6-sol');
   const steps = await resolveStepModels(projectDir, 'claude-opus-5', 'codex');
   assert.deepEqual(steps.planner, { model: 'gpt-5.6-sol', effort: 'high' });
-  assert.deepEqual(steps.reviewer, { model: undefined, effort: undefined }, 'a Claude --model is not a Codex fallback');
+  assert.deepEqual(steps.reviewer, { model: 'gpt-5.6-sol', effort: undefined }, 'a Claude --model is not a Codex fallback: Worca\'s Codex default (#1450)');
   writeUser({});
   writeProjectSettings({ projectDir }, { 'models.codex.steps.planner': null });
   assert.deepEqual(stepSlotDefaults('claude', { projectDir }), {}, 'no slot set: Claude resolves exactly as before');
@@ -120,7 +121,7 @@ function pausingRunners(getOrch, seen) {
     },
   };
 }
-const PLAN_DROP = "Plan: claude-opus-5-5 is not on OpenAI Codex, runs OpenAI Codex's default model";
+const PLAN_DROP = 'Plan: claude-opus-5-5 is not on OpenAI Codex, runs gpt-5.6-sol';   // Worca's Deep thinking default for Codex (#1450)
 const auditOf = (id) => getDb().prepare('SELECT text FROM pipeline_events WHERE pipeline_id = ?').all(id).map((r) => r.text);
 const warnLines = (logs, line) => logs.filter((l) => l.level === 'warn' && String(l.text || l.message || '').includes(line)).length;
 

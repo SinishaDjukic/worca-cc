@@ -68,3 +68,8 @@ test('a reset just past still waits out the remainder of the margin', () => {
   assert.equal(d.schedule, true);
   assert.equal(d.at, NOW - 60_000 + LIMIT_RESUME_MARGIN_MS);
 });
+
+test('a model_confirm pause is never resumed automatically (#1450): a person confirms or switches the model', () => {
+  const rp = { pauseReason: 'model_confirm', modelConfirm: { model: 'claude-fable-5-2' }, limitResetAt: new Date(Date.now() + 60_000).toISOString() };
+  assert.deepEqual(limitResumeDecision({ enabled: true, rp }), { skip: true, why: 'not a usage-limit pause' });
+});

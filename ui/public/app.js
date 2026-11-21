@@ -83,7 +83,7 @@ const state = {
 const GROUP_PAGE = { host: null, route: '', id: '', tab: 'runs', featureId: '', gone: false, failed: false, resolving: false, reentered: false, paintQueued: false, unmarked: 0 };
 
 import { icon } from './icons.mjs';
-import { subagentAliasLabel, subagentAliasTitle, roleOf, ROLE_LABELS } from '../../src/shared/model-roles.mjs';
+import { subagentAliasLabel, subagentAliasTitle, roleOf, ROLE_LABELS, toolDecidesText } from '../../src/shared/model-roles.mjs';
 import { HELPER_JOBS } from '../../src/shared/model-jobs.mjs';
 import { paintMarkedSelect } from './models/brand-marks.mjs';
 import { telemetrySlotHtml, paintTelemetry } from './run-telemetry-view.mjs';
@@ -2378,6 +2378,10 @@ function onHello(msg) {
       pauseDetail: r0.pauseDetail || null,
       limitEngine: r0.limitEngine || null,
       limitResetAt: r0.limitResetAt || null,
+      // #1450: the model a confirmation pause waits on, a usage limit's scope and model (reset when absent).
+      modelConfirm: r0.modelConfirm || null,
+      limitScope: r0.limitScope || null,
+      limitModel: r0.limitModel || null,
       runEngine: r0.runEngine || undefined,
       startedBy: r0.startedBy || undefined,
       lastAction: r0.lastAction || undefined,
@@ -2542,7 +2546,7 @@ function nowHMS() {
 function makeRun({
   runId, title, projectDir, status = 'running', startedAt, local = false,
   pendingQuestion = null, kind = 'run', pipelineId = null, pauseReason = null,
-  pauseDetail = null, limitEngine = null, limitResetAt = null, runEngine = undefined, startedBy = null, lastAction = null,
+  pauseDetail = null, limitEngine = null, limitResetAt = null, modelConfirm = null, limitScope = null, limitModel = null, runEngine = undefined, startedBy = null, lastAction = null,
   workspaceId = undefined, workspaceName = undefined, projectNames = null, night = undefined, tags = [], labels = [],
   shaping = null, networkWait = null, workMode = undefined,
 }) {
@@ -2561,6 +2565,9 @@ function makeRun({
     pauseDetail,          // the human-readable cause behind an 'error' pause, or null
     limitEngine,          // 'usage_limit': the engine whose own limit it is, or null (engine-switch.mjs)
     limitResetAt,         // 'usage_limit': ISO when the limit resets, or null
+    modelConfirm,         // 'model_confirm' (#1450): { model, at, … } the run waits to confirm, or null
+    limitScope,           // 'usage_limit': 'model' (a Fable limit) | 'connection', or null
+    limitModel,           // 'usage_limit': the model the limit was spent on, or null
     runEngine,            // the engine the run runs on (state frames carry it too); undefined = not known yet
     startedBy,            // who started it (identity.mjs), or null; 'local' is never shown
     lastAction,           // who last stopped / paused / resumed it: { kind, by, at } or null
@@ -4086,6 +4093,25 @@ function buildNodeConfigRows(workflow, registry, runConfig, opts = {}) {
 // nothing deviates from the CLI/registry baseline; otherwise model · effort and
 // any active flag. Mirrors nodeModelLine's vocabulary so the New-Pipeline row and
 // the run-graph node read the same.
+/** #1450: what a step with no model of its own runs, from GET /api/run-defaults effectiveRoles for the run's engine:
+ *  { kind: 'worca-default'|'role'|'cli-decides'|'tool-decides', role, label } — null while the payload is not there. */
+function emptyStepRole(row) {
+  const engine = state.engine || 'claude';
+  const role = roleOf(`steps.${row.key || ''}`, { name: row.label || '' });
+  const eff = state.runDefaults?.effectiveRoles?.[engine]?.[role];
+  if (!eff || !role) return null;
+  const m = eff.model ? modelById(eff.model) : null;
+  return { kind: eff.source, role: ROLE_LABELS[role], label: m ? m.label : (eff.model || ''), tool: engine === 'codex' ? 'Codex' : engineLabel(engine) };
+}
+/** The sentence a model-less step reads as on the run card (#1450): never the silent "CLI default". */
+function emptyStepText(row) {
+  const e = emptyStepRole(row);
+  if (!e) return null;
+  if (e.kind === 'worca-default') return `No model set: runs on ${e.label} (Worca’s default for ${e.role})`;
+  if (e.kind === 'role') return `No model set: runs on your ${e.role} role (${e.label})`;
+  if (e.kind === 'cli-decides') return `No model set: ${e.tool} decides (your ${e.role} role)`;
+  return toolDecidesText(e.tool === 'Codex' ? engineLabel('codex') : e.tool);
+}
 function agentSummaryText(row) {
   const parts = [];
   if (row.model) {
@@ -4101,8 +4127,11 @@ function agentSummaryText(row) {
     parts.push(`subs: ${subagentAliasLabel(row.subagentModel)}`);
   }
   if (row.askQuestions) parts.push('questions');
-  if (!parts.length) return 'default';
-  if (!row.model) parts.unshift('default');
+  // #1450: "default" names what it resolves to — the role's model, or who decides.
+  const e = row.model ? null : emptyStepRole(row);
+  const dflt = !e ? 'default' : e.kind === 'worca-default' || e.kind === 'role' ? `default: ${e.label}` : `default: ${e.tool} decides`;
+  if (!parts.length) return dflt;
+  if (!row.model) parts.unshift(dflt);
   return parts.join(' · ');
 }
 
@@ -4928,7 +4957,7 @@ function lockPinnedPair(modelSel, effortSel) {
 // One line naming what this row falls back to once its override is gone — the
 // answer to "what does 'default' actually mean here", without opening a doc.
 function defaultOriginText(row) {
-  if (!row.def.model) return 'No model set for this workflow. It falls back to the CLI’s own default.';
+  if (!row.def.model) { const t = emptyStepText(row); return t ? `${t}.` : 'No model set for this workflow. It falls back to the CLI’s own default.'; }
   const m = modelById(row.def.model);
   const label = m ? m.label : row.def.model;
   return `This workflow’s default: ${label}${row.def.effort ? ` · ${row.def.effort}` : ''}.`;
@@ -5082,15 +5111,19 @@ function paintSessionNotes(next) {
 onFlagChange('sessionGroups', () => paintSessionNotes());
 function paintEngineHints() {
   if (el.engineHint) {
-    el.engineHint.hidden = state.engine === 'claude';
+    // #1450: an engine whose every role is "the tool decides" (another harness, Claude Code signed out) warns here.
+    const eff = state.runDefaults?.effectiveRoles?.[state.engine];
+    const toolDecides = !!eff && Object.values(eff).length > 0 && Object.values(eff).every((r) => r?.source === 'tool-decides');
+    const decidesLine = toolDecides ? ` Steps with no model: ${toolDecidesText(engineLabel(state.engine))}.` : '';
+    el.engineHint.hidden = state.engine === 'claude' && !toolDecides;
     const project = Object.values(state.runDefaults?.steps?.[state.engine] || {}).some((s) => s?.source === 'project');
-    el.engineHint.textContent = state.engine === 'copilot'
+    el.engineHint.textContent = (state.engine === 'claude' ? 'Claude Code isn’t signed in.' : state.engine === 'copilot'
       ? `GitHub Copilot CLI runs this pipeline, including titles and summaries (on its default model). Step models: ${project ? 'project Settings' : 'Models › Jobs'}. Sign in once with copilot login.`
       : state.engine === 'cursor'
       ? `Cursor runs this pipeline. Helper jobs (titles, summaries) run on Claude. Step models: ${project ? 'project Settings' : 'Models › Jobs'}.`
       : SIGN_IN_ENGINE_NAMES.includes(state.engine)
       ? `${engineLabel(state.engine)} runs this pipeline. Helper jobs (titles, summaries) run on Claude. Step models: ${project ? 'project Settings' : 'Models › Jobs'}.`
-      : `Codex runs this pipeline, including titles and summaries. Its models: ${project ? 'project Settings' : 'Models › Jobs'}`;
+      : `Codex runs this pipeline, including titles and summaries. Its models: ${project ? 'project Settings' : 'Models › Jobs'}`) + decidesLine;
   }
   if (el.engineDefaultHint) {
     const source = state.runDefaults?.engine?.value === state.engine ? state.runDefaults.engine.source : null;
@@ -7119,6 +7152,9 @@ function onDone(r, msg) {
   r.pauseDetail = msg.detail || null;
   r.limitEngine = msg.limitEngine || null;
   r.limitResetAt = msg.limitResetAt || null;
+  r.modelConfirm = msg.modelConfirm || null;
+  r.limitScope = msg.limitScope || null;
+  r.limitModel = msg.limitModel || null;
   // A paused run already finished once, as paused. Its stop (or a settle from elsewhere) sends a
   // terminal done on the same runId: finish it again, for real. Never on an `error` frame: onError
   // stays guarded, so a stray error after the pause cannot turn the parked run red.
@@ -20414,7 +20450,7 @@ function openJobPicker(anchor) {
   const row = jobsRow(vm, id);
   if (!row) return;
   openModelPicker({ doc: document, win: window, anchor, catalog: data.catalog, engine: vm.engine, value: row.value, clearLabel: row.clearLabel,
-    modelOnly: !!row.modelOnly, allowEffortOnly: !!row.allowEffortOnly,
+    decideLabel: row.decideLabel || '', modelOnly: !!row.modelOnly, allowEffortOnly: !!row.allowEffortOnly,
     onPick: (value) => { mvState.jobs.draft[id] = value; renderJobsTab(); } });
 }
 
@@ -22432,7 +22468,7 @@ async function confirmCostOverride(runId, btn) {
 }
 
 /** POST /api/resume's body: every option a resume carries, resent as-is after each question. */
-function resumeBody(pipelineId, { ignoreCostCap = false, pastTeamCap = false, policyReason = null, baseAck = false, engine = null, allowUnguardedEngine = false, model = null } = {}) {
+function resumeBody(pipelineId, { ignoreCostCap = false, pastTeamCap = false, policyReason = null, baseAck = false, engine = null, allowUnguardedEngine = false, model = null, confirmModel = null } = {}) {
   return {
     pipelineId, baseCheck: true,
     ...(baseAck ? { baseAck: true } : {}),
@@ -22441,6 +22477,7 @@ function resumeBody(pipelineId, { ignoreCostCap = false, pastTeamCap = false, po
     ...(engine ? { engine } : {}),
     ...(allowUnguardedEngine ? { allowUnguardedEngine: true } : {}),
     ...(model ? { model } : {}),
+    ...(confirmModel ? { confirmModel } : {}),   // #1450 "Continue on <model>"
   };
 }
 
@@ -23430,13 +23467,27 @@ function paintResumeEngineItems(menu, runEngine, pause) {
   if (!menu) return;
   const saved = runEngine || 'claude';
   const offers = usageLimitSwitches(pause || {});
-  const sig = `${saved}|${offers.join(',')}|${pause?.reason || ''}`;
+  const confirm = pause?.reason === 'model_confirm' && pause.modelConfirm?.model ? pause.modelConfirm.model : '';
+  const sig = `${saved}|${offers.join(',')}|${pause?.reason || ''}|${confirm}|${pause?.limitScope || ''}`;
   if (menu.dataset.engineSig === sig) return;
   menu.dataset.engineSig = sig;
-  // Any usage limit — the sign-in's or a provider's: a model on another connection has its own allowance.
+  // Any usage limit — the sign-in's or a provider's: a model on another connection has its own allowance. A
+  // model_confirm pause (#1450) switches too: "Switch model and continue…".
   const withModel = menu.querySelector('.resume-with-model');
-  if (withModel) withModel.hidden = pause?.reason !== 'usage_limit';
+  if (withModel) withModel.hidden = pause?.reason !== 'usage_limit' && pause?.reason !== 'model_confirm';
+  // A model-scoped limit (a "Fable limit"): another model on the same sign-in still runs, so switching leads.
+  if (withModel && pause?.reason === 'usage_limit' && pause.limitScope === 'model' && menu.firstElementChild !== withModel) menu.prepend(withModel);
+  // "Continue on <model>": confirms the premium model the run paused on (POST /api/resume confirmModel).
+  const confirmItem = menu.querySelector('.resume-confirm-model');
+  if (confirmItem) {
+    confirmItem.hidden = !confirm;
+    if (confirm) { confirmItem.dataset.model = confirm; confirmItem.querySelector('b').textContent = `Continue on ${modelById(confirm)?.label || confirm}`; }
+    else delete confirmItem.dataset.model;
+  }
   menu.dataset.limitEngine = pause?.limitEngine || '';   // read by the item's click (pickResumeModel)
+  menu.dataset.pauseReason = pause?.reason || '';
+  menu.dataset.limitScope = pause?.limitScope || '';
+  menu.dataset.limitModel = pause?.limitModel || '';
   const savedItem = menu.querySelector('.resume-on-saved');
   if (savedItem) savedItem.querySelector('b').textContent = `Resume on ${engineLabel(saved)}`;
   const tpl = menu.querySelector('.resume-on-other[data-template]') || menu.querySelector('.resume-on-other');
@@ -23452,22 +23503,40 @@ function paintResumeEngineItems(menu, runEngine, pause) {
   }
 }
 
-/** "Resume with another model…" (a usage limit): the model every remaining step runs on, picked from the ones the
- *  run's harness can run on another connection (src/shared/connections.mjs), grouped by provider. null = cancelled. */
+/** The model family a usage limit can be scoped to ("You've hit your Fable limit"), from an id; '' for none. */
+const modelFamilyOf = (id) => (/(fable|opus|sonnet|haiku)/i.exec(String(id || ''))?.[1] || '').toLowerCase();
+/** A Resume menu's pause, as its items read it at click time (paintResumeEngineItems wrote the dataset). */
+const menuPause = (menu) => ({ reason: menu.dataset.pauseReason || 'usage_limit', limitEngine: menu.dataset.limitEngine || null,
+  limitScope: menu.dataset.limitScope || null, limitModel: menu.dataset.limitModel || null });
+
+/** "Switch model and continue…" (a usage limit, or a model_confirm pause): the model every remaining step runs on.
+ *  A usage limit offers the models the run's harness can run on another connection (src/shared/connections.mjs),
+ *  grouped by provider — or, when the limit is one model family's (limitScope 'model'), the other families on the same
+ *  sign-in too, non-premium first. A model_confirm pause offers every runnable non-premium model. null = cancelled. */
 async function pickResumeModel(engine, pause) {
   let rows = [];
-  try { rows = (await safeJson(await fetch('/api/config'))).models || []; } catch { rows = []; }
+  let premium = new Set();
+  try { const data = await safeJson(await fetch('/api/config')); rows = data.models || []; premium = new Set(data.premiumModels || []); } catch { rows = []; }
   // A sign-in's limit is spent for every model on that sign-in; a provider's names itself in the pause detail.
   const spent = pause && pause.limitEngine ? `signin:${pause.limitEngine}` : null;
-  const offered = rows.filter((m) => m && runsOn(m, engine) && !m.needsSignIn && !m.hidden && m.custom !== 'project' && connectionKey(m) !== spent);
+  const runnable = (m) => m && runsOn(m, engine) && !m.needsSignIn && !m.hidden && m.custom !== 'project';
+  const family = pause?.limitScope === 'model' ? modelFamilyOf(pause.limitModel) : '';
+  let offered;
+  if (pause?.reason === 'model_confirm') offered = rows.filter((m) => runnable(m) && !premium.has(m.id));
+  else if (family) {
+    offered = rows.filter((m) => runnable(m) && modelFamilyOf(m.id) !== family);
+    offered = [...offered.filter((m) => !premium.has(m.id)), ...offered.filter((m) => premium.has(m.id))];
+  } else offered = rows.filter((m) => runnable(m) && connectionKey(m) !== spent);
   if (!offered.length) {
     await confirmModal({ title: 'No other model to resume with', message: `No model ${engineLabel(engine)} can run is set up on another connection. Add one on the Models page.`, confirmLabel: 'OK', cancelLabel: 'Close' });
     return null;
   }
   const options = modelGroups(offered, { engine }).flatMap((g) => g.models.map((m) => ({ value: m.id, text: modelOptionText(m), group: g.label })));
   const v = await promptModal({
-    title: 'Resume with another model',
-    message: 'Every remaining step of this run runs on the model you pick. A model on another provider has its own allowance.',
+    title: 'Switch model and continue',
+    message: pause?.reason === 'model_confirm' ? 'Every remaining step of this run runs on the model you pick.'
+      : family ? `Your ${family[0].toUpperCase()}${family.slice(1)} limit is spent; other models on the same sign-in still run. Every remaining step runs on the model you pick.`
+        : 'Every remaining step of this run runs on the model you pick. A model on another provider has its own allowance.',
     confirmLabel: 'Resume',
     fields: [{ id: 'model', label: 'Model', options, value: options[0].value, required: true }],
   });
@@ -27253,16 +27322,26 @@ function gateHdResume(btn, { reason, detail }) {
 function hdPauseOf(live, screen, data, record) {
   const st = data?.state || {};
   return live
-    ? { reason: live.pauseReason, limitEngine: live.limitEngine, limitResetAt: live.limitResetAt }
+    ? { reason: live.pauseReason, limitEngine: live.limitEngine, limitResetAt: live.limitResetAt,
+      modelConfirm: live.modelConfirm || null, limitScope: live.limitScope || null, limitModel: live.limitModel || null }
     : { reason: screen.dataset.pauseReason || st.pauseReason, limitEngine: st.limitEngine ?? record.limitEngine,
-        limitResetAt: st.limitResetAt ?? record.limitResetAt ?? null };
+        limitResetAt: st.limitResetAt ?? record.limitResetAt ?? null,
+        modelConfirm: st.modelConfirm ?? record.modelConfirm ?? null, limitScope: st.limitScope ?? record.limitScope ?? null,
+        limitModel: st.limitModel ?? record.limitModel ?? null };
 }
 /** A usage limit the run's own engine hit offers "Resume on <engine>" in the Resume split's menu
  *  (paintResumeEngineItems), never as buttons of its own. The caret is Advanced and up; while the menu holds
  *  such an offer it shows at every mode, so Simple can switch too. `ready`: the ready engines, null = all. */
 function paintHdResumeSwitch(screen, record, data, live, resumable, ready = null) {
-  const offers = resumable ? usageLimitSwitches(hdPauseOf(live, screen, data, record), ready) : [];
-  keepVisible(screen.querySelector('.hd-resume-more'), offers.length > 0);
+  const pause = hdPauseOf(live, screen, data, record);
+  const offers = resumable ? usageLimitSwitches(pause, ready) : [];
+  keepVisible(screen.querySelector('.hd-resume-more'), offers.length > 0 || (resumable && pauseNeedsModelMenu(pause)));
+}
+/** #1450: a pause whose way on lives in the Resume menu only ("Continue on <model>", "Switch model and continue…"):
+ *  a model_confirm pause, or a usage limit spent on one model family. A plain Resume would pause again, so the caret
+ *  shows at every mode. */
+function pauseNeedsModelMenu(pause) {
+  return pause?.reason === 'model_confirm' || (pause?.reason === 'usage_limit' && pause?.limitScope === 'model');
 }
 
 /** The engine a saved run resumes on by default: its live run's, else the saved state's. */
@@ -28625,15 +28704,16 @@ function setupHdActions(screen, record, data) {
     // The engine items (paintResumeEngineItems), read at CLICK time like Resume itself. Their clones are
     // painted after setup, so one delegated listener on the menu.
     resumeMenu.addEventListener('click', (e) => {
-      const item = e.target.closest('.resume-on-saved, .resume-on-other:not([data-template]), .resume-with-model');
+      const item = e.target.closest('.resume-on-saved, .resume-on-other:not([data-template]), .resume-with-model, .resume-confirm-model');
       if (!item || !resumeMenu.contains(item)) return;
       e.stopPropagation();
       closeResumeMenu();
       if (resumeBtn.disabled || resumeBtn.dataset.resumeState === 'busy') return;
       const r = hdCurrentRecord(record);
       const saved = hdRunEngine(r, data);
+      if (item.classList.contains('resume-confirm-model')) { resumePipeline(r, r.projectDir || null, resumeBtn, { confirmModel: item.dataset.model }); return; }
       if (item.classList.contains('resume-with-model')) {
-        pickResumeModel(saved, { reason: 'usage_limit', limitEngine: resumeMenu.dataset.limitEngine || null })
+        pickResumeModel(saved, menuPause(resumeMenu))
           .then((model) => { if (model) resumePipeline(r, r.projectDir || null, resumeBtn, { model }); });
         return;
       }
@@ -30949,7 +31029,7 @@ function buildHdAgents(sec, record, data) {
   const skillsByGroup = stepSkillsFromSteps(st.steps);
   const graphifyByGroup = stepGraphifyFromSteps(st.steps);
   const statusOf = stepStatusByKey(st.steps, st.stepper);
-  const modelByNode = stepModelByNode(st.stepper, st.runEngine || 'claude');
+  const modelByNode = stepModelByNode(st.stepper, st.runEngine || 'claude', st.steps);
 
   for (const key of keys) {
     const list = Array.isArray(groups[key]) ? groups[key] : [];
@@ -32106,6 +32186,12 @@ function rdStateCopy(r, stepName) {
   if (r.pauseReason === 'cost_pipeline_policy') return 'Paused: team cost cap reached.';
   if (r.pauseReason === 'cost_total_policy') return 'Paused: team total cap reached.';
   if (r.pauseReason === 'night_guardrail') return r.pauseDetail || 'Paused: Away mode limit reached.';
+  if (r.pauseReason === 'model_confirm') {
+    // #1450: a premium model nobody chose — never resumed by itself; the person continues on it or switches.
+    const id = r.modelConfirm?.model || '';
+    const label = id ? (modelById(id)?.label || id) : 'a premium model';
+    return `Paused before ${step}: it would run on ${label}, a premium model nobody chose. Continue on it, or switch model.`;
+  }
   if (r.pauseReason === 'drain') return 'Paused while worca was stopping. Resume continues from here. The worktree and progress are kept.';
   if (r.pauseReason === 'time_limit') {
     const why = r.pauseDetail ? `: ${r.pauseDetail}` : '';
@@ -32304,7 +32390,7 @@ function rdAgentsBody(sec, r) {
   const skillsByGroup = stepSkillsFromSteps(r.steps);
   const graphifyByGroup = stepGraphifyFromSteps(r.steps);
   const statusOf = stepStatusByKey(r.steps, r.stepper);
-  const modelByNode = stepModelByNode(r.stepper, r.runEngine || 'claude');
+  const modelByNode = stepModelByNode(r.stepper, r.runEngine || 'claude', r.steps);
   const cardsByNode = new Map();   // nodeId -> first group card, for the per-node artifact affordance
 
   for (const key of keys) {
@@ -33636,6 +33722,7 @@ function statusPill(r) {
     if (r.pauseReason === 'night_guardrail') return { family: 'amber', text: 'Paused · Away mode limit' };
     if (r.pauseReason === 'drain') return { family: 'amber', text: 'Paused · restart' };
     if (r.pauseReason === 'time_limit') return { family: 'amber', text: 'Paused · time limit' };
+    if (r.pauseReason === 'model_confirm') return { family: 'amber', text: 'Paused · confirm model' };
     // An error pause is parked and resumable (never dead), so it stays in the amber family.
     if (r.pauseReason === 'error') return { family: 'amber', text: 'Paused · error' };
     if (r.pauseReason === 'recoverable') return { family: 'amber', text: 'Paused · recoverable' };
@@ -33805,11 +33892,21 @@ function subModelPillHtml(model) {
 // at run time (§4.2), so it gets no pill, like '' (inherit the CLI/global default, which the
 // client cannot resolve): no entry, never a guess. An id the catalog does not know is kept, as
 // the run keeps it. v2 graph manifests only (frozen v1 snapshots recorded none).
-function stepModelByNode(stepper, runEngine = 'claude') {
+function stepModelByNode(stepper, runEngine = 'claude', steps = null) {
   const out = {};
   if (!isGraphManifest(stepper)) return out;
+  // #1450: the model each node's session actually started ([init], step.modelUsed), and who picks when no one did.
+  const used = modelUsedByNode(steps);
+  const tool = engineLabel(runEngine || 'claude');
   for (const n of stepper.graph.nodes) {
-    if (!n || n.kind !== 'agent' || !n.id || typeof n.model !== 'string' || !n.model) continue;
+    if (!n || n.kind !== 'agent' || !n.id) continue;
+    if (typeof n.model !== 'string' || !n.model) {
+      // No model in the manifest: the tool picked. Show what ran once [init] said so, else who decides.
+      // A pre-#1450 manifest (no modelSource) shows nothing new until a model is observed.
+      if (used[n.id]) out[n.id] = { model: used[n.id], effort: '', observed: true, tool };
+      else if (Object.hasOwn(n, 'modelSource')) out[n.id] = { model: '', effort: '', decides: true, tool };
+      continue;
+    }
     const entry = modelById(n.model);
     if (entry && !runsOn(entry, runEngine)) continue;
     // A node that ran the model the run's own overlay set (the Ask run card's per-agent picks, manifest.runOverlay) says
@@ -33818,9 +33915,16 @@ function stepModelByNode(stepper, runEngine = 'claude') {
     const ov = stepper.runOverlay && stepper.runOverlay.nodes && typeof stepper.runOverlay.nodes === 'object' && Object.hasOwn(stepper.runOverlay.nodes, n.id)
       ? stepper.runOverlay.nodes[n.id] : null;
     const perRun = !!(ov && typeof ov.model === 'string' && ov.model && typeof n.model === 'string' && ov.model.toLowerCase() === n.model.toLowerCase());
-    out[n.id] = { model: n.model, effort: typeof n.effort === 'string' ? n.effort : '', ...(perRun ? { perRun: true } : {}) };
+    const ran = used[n.id] && sameModelId(used[n.id], n.model) ? null : used[n.id] || null;
+    out[n.id] = { model: n.model, effort: typeof n.effort === 'string' ? n.effort : '', ...(perRun ? { perRun: true } : {}),
+      ...(n.modelSource === 'worca-default' ? { worcaDefault: true } : {}), ...(ran ? { ranOn: ran } : {}) };
   }
   return out;
+}
+/** Two ids name one model: case, a vendor prefix, `[1m]`, a dated snapshot and dots vs dashes aside (model-roles upstreamKey). */
+function sameModelId(a, b) {
+  const k = (id) => String(id ?? '').trim().toLowerCase().replace(/^[a-z0-9._-]+\//, '').replace(/\[1m\]$/, '').replace(/-\d{8}$/, '').replace(/\./g, '-');
+  return k(a) === k(b);
 }
 
 // The Agents-tab group header's model pill: the catalog label when the id is
@@ -33828,14 +33932,19 @@ function stepModelByNode(stepper, runEngine = 'claude') {
 // "· effort" only when one was set. Same quiet outline as the sub-agent rows'
 // run-model pill — it is configuration, not status.
 function stepModelPillHtml(sel) {
+  if (sel && sel.decides) return `<span class="sub-model-pill">${escapeHtml(`Default · ${sel.tool || 'Claude Code'} decides`)}</span>`;
   if (!sel || !sel.model) return '';
   const m = modelById(sel.model);
   // "· bridged" (model-bridge-design.md §8.6): the node ran through worca's own
   // bridge — the catalog knows, the manifest does not.
   // " · this run": the model came from the run's own per-run picks (manifest.runOverlay) — said in the text, like
   // " · bridged", because a title is hover-only (touch, keyboard and screen-reader users never get it).
-  const text = (m ? m.label : sel.model) + (sel.effort ? ` · ${sel.effort}` : '') + (m && m.bridged ? ' · bridged' : '') + (sel.perRun ? ' · this run' : '');
-  return `<span class="sub-model-pill"${sel.perRun ? ' title="Picked for this run only"' : ''}>${escapeHtml(text)}</span>`;
+  const text = (m ? m.label : sel.model) + (sel.effort ? ` · ${sel.effort}` : '') + (m && m.bridged ? ' · bridged' : '') + (sel.perRun ? ' · this run' : '')
+    + (sel.observed ? ` · ${sel.tool || 'Claude Code'}'s pick` : '') + (sel.worcaDefault ? ' · Worca default' : '');
+  // #1450: the session started another model than the one asked for.
+  const ran = sel.ranOn ? (modelById(sel.ranOn)?.label || sel.ranOn) : '';
+  const title = ran ? `Asked for ${m ? m.label : sel.model}, ran on ${ran}` : sel.perRun ? 'Picked for this run only' : '';
+  return `<span class="sub-model-pill"${title ? ` title="${escapeHtml(title)}"` : ''}>${escapeHtml(text)}</span>`;
 }
 
 // Neutral count badge for how many times an agent / sub-agent invoked the graphify
@@ -36824,15 +36933,16 @@ function openRunDetail(runId, { instant = false, host: where = 'page' } = {}) {
   // CLICK time; the toggle carries the busy state, as for a plain Resume. Clones are painted after
   // setup, so one delegated listener on the menu.
   rdResumeMenu.addEventListener('click', (e) => {
-    const item = e.target.closest('.resume-on-saved, .resume-on-other:not([data-template]), .resume-with-model');
+    const item = e.target.closest('.resume-on-saved, .resume-on-other:not([data-template]), .resume-with-model, .resume-confirm-model');
     if (!item || !rdResumeMenu.contains(item)) return;
     e.stopPropagation();
     closeRdResumeMenu();
     const r = runs.get(runDetailState.runId);
     const pauseBtn = screen.querySelector('.rd-pause');
     if (!r || !pauseBtn || pauseBtn.disabled) return;
+    if (item.classList.contains('resume-confirm-model')) { resumeRunFromCard(r.runId, pauseBtn, { confirmModel: item.dataset.model }); return; }
     if (item.classList.contains('resume-with-model')) {
-      pickResumeModel(r.runEngine || 'claude', { reason: r.pauseReason, limitEngine: r.limitEngine })
+      pickResumeModel(r.runEngine || 'claude', { reason: r.pauseReason, limitEngine: r.limitEngine, limitScope: r.limitScope, limitModel: r.limitModel })
         .then((model) => { if (model) resumeRunFromCard(r.runId, pauseBtn, { model }); });
       return;
     }
@@ -39546,6 +39656,7 @@ function paintRdHeader(screen, r) {
   const resumeAt = screen.querySelector('.rd-resume-at');
   if (resumeMore) {
     resumeMore.hidden = terminal || !paused || !r.pipelineId;
+    keepVisible(resumeMore, !resumeMore.hidden && pauseNeedsModelMenu({ reason: r.pauseReason, limitScope: r.limitScope }));
     if (resumeMore.hidden) {
       const menu = screen.querySelector('.rd-resume-menu');
       if (menu) menu.hidden = true;
@@ -39557,7 +39668,8 @@ function paintRdHeader(screen, r) {
     resumeAt.disabled = refused;
     resumeAt.title = refused ? 'This run paused on a cost cap. Continuing past it is a live decision and cannot be scheduled.' : '';
   }
-  paintResumeEngineItems(screen.querySelector('.rd-resume-menu'), r.runEngine, { reason: r.pauseReason, limitEngine: r.limitEngine });
+  paintResumeEngineItems(screen.querySelector('.rd-resume-menu'), r.runEngine, { reason: r.pauseReason, limitEngine: r.limitEngine,
+    modelConfirm: r.modelConfirm, limitScope: r.limitScope, limitModel: r.limitModel });
   paintRdLimitItem(screen, r);
 
   // Away mode switch: any run that is not over (a paused run stores it in its resume point).
@@ -39775,7 +39887,33 @@ async function loadOnboarding({ recheck = false } = {}) {
   gs.status = data;
   paintOnboarding();
   maybeWelcome();
+  void maybeRoleDefaultsNotice();
   return { ok: true };
+}
+
+/** #1450, shown once: an existing install with an empty Claude Code (or Codex) role learns that its steps now run on
+ *  Worca's defaults instead of the CLI's own. Never over the welcome or the setup assistant, never on a fresh install
+ *  (the assistant preselects the defaults there). Either button records roleDefaultsNoticeSeen. */
+const ROLE_DEFAULTS_NOTICE = "Steps with no model now run on Worca's defaults (Opus 5.5 / Sonnet 5.5 / Haiku 5.5) instead of Claude Code's own default. Pick your own on the Models page, or choose 'Let Claude Code decide'.";
+async function maybeRoleDefaultsNotice() {
+  const s = gs.status;
+  if (!s || s.roleDefaultsNoticeSeen === true || s.fresh === true || gs.roleNoticeShown || setupDialog) return;
+  const welcome = document.getElementById('welcome-modal');
+  if (welcome && !welcome.classList.contains('hidden')) return;
+  let settings = null;
+  try { const res = await fetch('/api/settings'); settings = res.ok ? await safeJson(res) : null; } catch { settings = null; }
+  const defaults = settings && settings.roleDefaults && typeof settings.roleDefaults === 'object' ? settings.roleDefaults : null;
+  if (!defaults || gs.roleNoticeShown) return;
+  const roles = settings.modelRoles && typeof settings.modelRoles === 'object' ? settings.modelRoles : {};
+  const empty = ['claude', 'codex'].some((e) => defaults[e] && Object.keys(defaults[e]).some((r) => {
+    const pick = roles[e]?.[r];
+    return !(pick && (pick.model || pick.cliDecides === true));
+  }));
+  if (!empty) return;
+  gs.roleNoticeShown = true;
+  const ok = await confirmModal({ title: 'Steps now run on Worca’s default models', message: ROLE_DEFAULTS_NOTICE, confirmLabel: 'Open Models', cancelLabel: 'Got it' });
+  void setOnboardingPrefs({ roleDefaultsNoticeSeen: true });
+  if (ok) { location.hash = 'models/jobs'; }
 }
 /** Coalesce the change broadcasts (a finished run fires several) into one refetch. */
 function scheduleOnboardingRefresh() {

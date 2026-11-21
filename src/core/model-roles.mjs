@@ -3,7 +3,8 @@
 import { modelRolesSetting } from './settings.mjs';
 import { MODEL_ENGINES } from './model-env.mjs';
 import { effortOn } from '../shared/connections.mjs';
-import { MODEL_ROLES, ROLE_LABELS, SLOT_ROLES, roleOf, roleOfJob, jobSlot } from '../shared/model-roles.mjs';
+import { MODEL_ROLES, ROLE_LABELS, SLOT_ROLES, roleOf, roleOfJob, jobSlot, isCliDecides } from '../shared/model-roles.mjs';
+import { roleDefaultFor } from './role-defaults.mjs';
 
 export { MODEL_ROLES, ROLE_LABELS, SLOT_ROLES, roleOf, roleOfJob, jobSlot };
 
@@ -14,6 +15,13 @@ const isObj = (v) => !!v && typeof v === 'object' && !Array.isArray(v);
 // async), so a role costs what a slot pick already costs. Not imported here: config.mjs imports this module.
 let roleOwnerReader = null;
 export function setRoleModelOwnerReader(fn) { roleOwnerReader = typeof fn === 'function' ? fn : null; }
+// Claude Code's sign-in state, read synchronously (config.mjs registers its memo: usually cold, so 'unknown', which
+// keeps the Worca default — a signed-out user then gets the existing sign-in message, #1450 D-n).
+let authReader = null;
+export function setRoleAuthReader(fn) { authReader = typeof fn === 'function' ? fn : null; }
+const readAuth = () => { try { return authReader?.() ?? 'unknown'; } catch { return 'unknown'; } };
+/** Claude Code's sign-in state as the registered sync reader has it ('unknown' when cold). */
+export const roleAuthState = () => readAuth();
 
 /** `engine`'s pick for `role`, effort mapped to the nearest one the harness takes, or null when unset (D5: a harness
  *  without roles keeps today's fallbacks) or when its model is not in the catalog / not runnable on `engine` (a failed
@@ -35,13 +43,43 @@ export function resolveRoleModel(engine, role, { roles = modelRolesSetting(), ow
   return { model, effort, role, source: 'role' };
 }
 
-/** The role pick for a slot key (A6: call sites name slots, only roleOf names roles). */
-export function roleModelFor(engine, slot, deps = {}) {
-  const role = roleOf(slot);
-  return role ? resolveRoleModel(engine, role, deps) : null;
+/**
+ * #1450: what `role` on `engine` runs, stored or not.
+ * - `kind:'role'` — the stored pick (as resolveRoleModel);
+ * - `kind:'cli-decides'` — the stored "Let <tool> decide": no model flag;
+ * - `kind:'worca-default'` — the role is empty or invalid and `floor` is on: Worca's default (role-defaults.mjs),
+ *   when the catalog runs it on `engine` (`owners: null` skips that check);
+ * - null — the tool decides (a harness with no Worca default, Claude Code signed out).
+ */
+export function resolveRolePick(engine, role, { roles = modelRolesSetting(), owners = roleOwnerReader, claudeAuth, floor = true } = {}) {
+  if (!MODEL_ENGINES.includes(engine) || !MODEL_ROLES.includes(role)) return null;
+  const forEngine = isObj(roles) ? roles[engine] : null;
+  if (isCliDecides(isObj(forEngine) ? forEngine[role] : null)) return { kind: 'cli-decides', role, source: 'cli-decides' };
+  const hit = resolveRoleModel(engine, role, { roles, owners });
+  if (hit) return { kind: 'role', ...hit };
+  if (!floor) return null;
+  const dflt = roleDefaultFor(engine, role, { claudeAuth: claudeAuth ?? readAuth() });
+  if (!dflt) return null;
+  if (owners) {
+    let harnesses = null;
+    try { harnesses = owners(dflt.model); } catch { harnesses = null; }
+    if (!Array.isArray(harnesses) || !harnesses.includes(engine)) return null;
+  }
+  return { kind: 'worca-default', ...dflt };
 }
 
-/** `pair` when it names a model (the slot's own setting wins, D3), else the role of `slot` on `engine`, else `pair`.
+/** The role pick for a slot key (A6: call sites name slots, only roleOf names roles): the stored role, else Worca's
+ *  default; null under "Let <tool> decide" or when the tool decides. */
+export function roleModelFor(engine, slot, deps = {}) {
+  const role = roleOf(slot);
+  const pick = role ? resolveRolePick(engine, role, deps) : null;
+  if (!pick || pick.kind === 'cli-decides') return null;
+  const { kind, ...pair } = pick;
+  return pair;
+}
+
+/** `pair` when it names a model (the slot's own setting wins, D3), else the role of `slot` on `engine` (or Worca's
+ *  default for it), else `pair`.
  *  @param {{model?:string|null, effort?:string|null}|null|undefined} pair @param {string} engine @param {string} slot */
 export function withRole(pair, engine, slot, deps = {}) {
   if (pair && typeof pair.model === 'string' && pair.model.trim()) return pair;
@@ -52,7 +90,8 @@ export function withRole(pair, engine, slot, deps = {}) {
  *  The sub-agent alias (agentModel/agentEffort) keeps its default. */
 export function withScanRole(stored, defaults, deps = {}) {
   if (stored) return stored;
-  const role = roleModelFor('claude', 'workspaceScan', deps);
+  const r = roleOf('workspaceScan');
+  const role = r ? resolveRoleModel('claude', r, deps) : null;   // the factory scan model beats any Worca default
   return role ? { ...defaults, scanModel: role.model, ...(role.effort ? { scanEffort: role.effort } : {}) } : null;
 }
 
@@ -125,7 +164,8 @@ export function projectRoles(engine, { user = {}, team = null, catalog = [], cla
   for (const role of MODEL_ROLES) {
     const pick = theirs[role];
     if (!isObj(pick) || typeof pick.model !== 'string') continue;
-    if (team.kind !== 'soft' && isObj(mine[role]) && typeof mine[role].model === 'string' && mine[role].model.trim()) continue;
+    const mineSet = isObj(mine[role]) && (isCliDecides(mine[role]) || (typeof mine[role].model === 'string' && !!mine[role].model.trim()));
+    if (team.kind !== 'soft' && mineSet) continue;
     const hit = mapUpstreamModel(pick.model, engine, { catalog, claudeAuth });
     if (!hit.id) { unmapped.push({ role, upstream: pick.model, line: hit.line }); continue; }
     out[role] = { model: hit.id, ...(pick.effort ? { effort: pick.effort } : {}) };

@@ -137,7 +137,7 @@ export function designModelPick(role, { engine = 'claude', design = null, settin
 
 /**
  * The model and effort a lead or a builder of `design` runs on (designModelPick without its source). Unset everywhere
- * gives `model: null`, the CLI default.
+ * gives Worca's role default (#1450); `model: null` (the CLI default) only where the tool decides.
  */
 export function resolveDesignModel(role, { engine = 'claude', design = null } = {}) {
   const { model, effort } = designModelPick(role, { engine, design });

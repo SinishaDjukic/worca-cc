@@ -1,5 +1,8 @@
 import { runsOn, effortsOn } from '../../src/shared/connections.mjs';
 import { appendModelGroups } from './model-options.mjs';
+import { isCliDecides } from '../../src/shared/model-roles.mjs';
+/** The model select's value for "Let <tool> decide" (#1450): read back as { cliDecides: true }, never a catalog id. */
+export const CLI_DECIDES_VALUE = '__cli__';
 export const INHERIT_HEAD = Object.freeze({ user: 'Same as my settings', team: 'Team default', default: 'Worca default' });
 // The value comes first, where it comes from second — "Claude (default)", "Opus 5.5 · high (team default)" (night-mode-form's SOURCE_TAG).
 export const INHERIT_TAIL = Object.freeze({ user: 'your setting', team: 'team default', default: 'default' });
@@ -50,7 +53,7 @@ export function renderInheritField(doc, spec) {
   else { const model = node(doc, 'select', 'select inherit-model'); model.setAttribute('aria-label', `${spec.label} model`);
     // Nothing inherited: the empty choice is the fallback phrase itself ("The workflow's model"), not a value with a source.
     const fallback = !(inherited.value && (inherited.value.model || inherited.value.effort)) && shown;
-    model.append(option(doc, '', fallback ? shown.charAt(0).toUpperCase() + shown.slice(1) : inheritText(inherited.source, shown, inherited.label))); const catalog = (spec.catalog || []).filter((item) => runsOn(item, spec.engine || 'claude')); appendModelGroups(model, catalog, { engine: spec.engine || 'claude' }); const ownModel = spec.own?.model || ''; if (ownModel && !catalog.some((item) => item.id === ownModel)) model.append(option(doc, ownModel, `${ownModel} (not in the catalog)`)); model.value = ownModel; const effort = node(doc, 'select', 'select inherit-effort'); effort.setAttribute('aria-label', `${spec.label} effort`); efforts(doc, effort, spec, ownModel, spec.own?.effort); model.addEventListener('change', () => efforts(doc, effort, spec, model.value, effort.value)); controls = [model, effort]; }
+    model.append(option(doc, '', fallback ? shown.charAt(0).toUpperCase() + shown.slice(1) : inheritText(inherited.source, shown, inherited.label))); const catalog = (spec.catalog || []).filter((item) => runsOn(item, spec.engine || 'claude')); if (spec.decideLabel || isCliDecides(spec.own)) model.append(option(doc, CLI_DECIDES_VALUE, spec.decideLabel || 'Let the tool decide')); appendModelGroups(model, catalog, { engine: spec.engine || 'claude' }); const ownModel = isCliDecides(spec.own) ? CLI_DECIDES_VALUE : spec.own?.model || ''; if (ownModel && ownModel !== CLI_DECIDES_VALUE && !catalog.some((item) => item.id === ownModel)) model.append(option(doc, ownModel, `${ownModel} (not in the catalog)`)); model.value = ownModel; const effort = node(doc, 'select', 'select inherit-effort'); effort.setAttribute('aria-label', `${spec.label} effort`); efforts(doc, effort, spec, ownModel, spec.own?.effort); model.addEventListener('change', () => efforts(doc, effort, spec, model.value, effort.value)); controls = [model, effort]; }
   const line = node(doc, 'div', 'drow-control away-input-row inherit-row');
   if (spec.kind === 'model') {   // one row, Model wider than Effort, each named by a caption (the Ask run card's pattern)
     line.classList.add('inherit-pair'); wrap.classList.add('drow-wide');
@@ -67,6 +70,8 @@ export function readInheritField(wrap) {
   if (spec.kind === 'number') { const value = wrap.querySelector('.inherit-input').value.trim(); return value === '' ? null : Number(value); }
   if (spec.kind === 'text') { const value = wrap.querySelector('.inherit-input').value.trim(); return value === '' ? null : spec.toValue ? spec.toValue(value) : value; }
   if (spec.kind === 'select') { const value = wrap.querySelector('.inherit-input').value; return value === '' ? null : spec.toValue ? spec.toValue(value) : value; }
-  const model = wrap.querySelector('.inherit-model').value; const effort = wrap.querySelector('.inherit-effort').value; return !model && !effort ? null : { ...(model ? { model } : {}), ...(effort ? { effort } : {}) };
+  const model = wrap.querySelector('.inherit-model').value; const effort = wrap.querySelector('.inherit-effort').value;
+  if (model === CLI_DECIDES_VALUE) return { cliDecides: true };
+  return !model && !effort ? null : { ...(model ? { model } : {}), ...(effort ? { effort } : {}) };
 }
 export function readDirtyFields(root) { const out = {}; for (const field of root.querySelectorAll('.inherit-field[data-dirty="1"]')) out[field.dataset.setting] = readInheritField(field); return out; }

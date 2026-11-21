@@ -191,3 +191,21 @@ test('secondOpinionModel: GET carries it and the factory defaults; POST saves, c
   assert.deepEqual(cx.body.utilityModels.codex.secondOpinion, { model: 'gpt-5.5', effort: 'low' });
   await post('/api/settings', { utilityModels: { codex: { secondOpinion: null } } });
 });
+
+test('#1450: GET /api/settings exposes roleDefaults and claudeAuth; GET /api/run-defaults says what an empty role runs', async () => {
+  const { roleDefaultsPayload } = await import('../src/core/role-defaults.mjs');
+  const s = (await get('/api/settings')).body;
+  assert.deepEqual(s.roleDefaults, roleDefaultsPayload());
+  assert.ok(['signed-in', 'signed-out', 'unknown'].includes(s.claudeAuth), s.claudeAuth);
+  const q = `/api/run-defaults?projectDir=${encodeURIComponent(projectDir)}`;
+  let d = (await get(q)).body;
+  assert.deepEqual(d.effectiveRoles.claude.deep, { model: 'claude-opus-5-5', source: 'worca-default' });
+  assert.deepEqual(d.effectiveRoles.codex.everyday, { model: 'gpt-6.1-sol', source: 'worca-default' });
+  assert.deepEqual(d.effectiveRoles.copilot.deep, { source: 'tool-decides' });
+  const r = await post('/api/settings', { modelRoles: { claude: { deep: { cliDecides: true }, quick: { model: 'claude-haiku-4-5' } } } });
+  assert.equal(r.status, 200, JSON.stringify(r.body));
+  d = (await get(q)).body;
+  assert.deepEqual(d.effectiveRoles.claude.deep, { source: 'cli-decides' });
+  assert.deepEqual(d.effectiveRoles.claude.quick, { model: 'claude-haiku-4-5', source: 'role' });
+  await post('/api/settings', { modelRoles: { claude: { deep: null, quick: null } } });
+});

@@ -63,10 +63,12 @@ import { estimateStepHours, resolveConstants, sumStepHours } from '../shared/hum
 import { diffNumstat } from './git-info.mjs';
 import { humanEstimateOverrides } from './settings.mjs';
 import { renderPromptArtifact } from './phases.mjs';
-import { listModels, modelHasBaseUrlRouting, resolveRunConfig, stepSlotDefaults, slotSourceLines } from './config.mjs';
+import { listModels, modelHasBaseUrlRouting, resolveRunConfig, stepSlotDefaults, slotSourceLines, modelCostConfig, bridgedModelInfo } from './config.mjs';
+import { isPremiumModel } from './model-tiers.mjs';
+import { noModelLines } from './role-defaults.mjs';
 import { defragSlotPair, utilityModelFor } from './settings-cascade.mjs';
 import { resolveDefragModel, agentPairText } from './memory-defrag-model.mjs';
-import { withRole } from './model-roles.mjs';
+import { withRole, roleOf } from './model-roles.mjs';
 import { describeScanModels } from './workspace-scan-run.mjs';
 import { assembleShape, normalizeShape, ShapeError } from '../shared/graph/assemble.mjs';
 import { blockingIssues } from '../shared/graph/verdict.mjs';
@@ -236,6 +238,18 @@ export class GraphOrchestrator extends RunHarness {
       this._log('orchestrator', 'info', line);
       this._pendingAudits.push(`${line}.`);
     }
+    // #1450: say which steps run on a Worca default, which ones the tool picks for ("Let Claude Code decide"), and warn
+    // where Worca cannot know the model at all (another harness, or Claude Code signed out: no default was given).
+    const agentNodes = Object.values(this.resolved.nodeCtx || {}).filter((nc) => nc.kind === 'agent');
+    const signedOut = engineNow === 'claude' && resolved.claudeAuth === 'signed-out' && agentNodes.some((nc) => !nc.model && nc.modelSource === null);
+    const noModel = noModelLines(engineNow, this.resolved.nodeCtx, {
+      claudeAuth: signedOut ? 'signed-out' : 'unknown', labelOf: ((labels) => (id) => labels?.[id] || id)(await this._modelLabels()),
+      roleOf: (nc) => roleOf(`steps.${nc.authoredKey || nc.key}`, { name: nc.meta?.displayName || '' }),
+    });
+    for (const line of noModel) {
+      this._log('orchestrator', signedOut || !['claude', 'codex'].includes(engineNow) ? 'warn' : 'info', line);
+      this._pendingAudits.push(line);
+    }
     // No silent fallbacks: name each pick the engine dropped (run log + audit, once, at start).
     for (const line of this._notePickDrops()) {
       this._log('orchestrator', 'warn', line);
@@ -281,8 +295,9 @@ export class GraphOrchestrator extends RunHarness {
   async _defragAgentPair() {
     const engine = this.claude.engine || 'claude';
     const explicit = { model: this.claude.model, effort: this.claude.effort };
-    // Model roles (D3): an unset defragment slot takes the quick role.
-    const stored = withRole(defragSlotPair(engine, this._settingsScope()), engine, 'memoryDefrag');
+    // Model roles (D3): an unset defragment slot takes the quick role. Not Worca's role default (#1450): the factory
+    // default (resolveGraph) fills the node instead, and its sign-in drop rule applies.
+    const stored = withRole(defragSlotPair(engine, this._settingsScope()), engine, 'memoryDefrag', { floor: false });
     // The catalog read only when the setting is the one that decides.
     const models = !(typeof explicit.model === 'string' && explicit.model.trim()) && stored.model
       ? (await listModels(this.projectDir)).filter((m) => runsOn(m, engine)) : [];
@@ -380,6 +395,8 @@ export class GraphOrchestrator extends RunHarness {
     if (helper === 'claude') {
       // On a Claude run: the run's own sign-in. On a Cursor run: the helper's Claude (the seam probes with no bin).
       try { helperAuth = (await this._claudeAuth())?.state || 'unknown'; } catch { /* unknown narrows nothing */ }
+      // #1450: Auto's resolve reads the sign-in for the Worca-default floor; on a Claude run it reuses this probe.
+      if (engine === 'claude') this._autoAuthState = helperAuth;
     }
     const catalog = (await listModels(this.projectDir)).filter((m) => runsOn(m, engine));
     const runnable = autoModelsFor(catalog, { auth: engine === 'claude' ? helperAuth : 'unknown', routed: modelHasBaseUrlRouting });
@@ -651,7 +668,7 @@ export class GraphOrchestrator extends RunHarness {
     for (const [nodeId, sel] of Object.entries(answer.nodes || {})) overlayNodes[nodeId] = { ...(overlayNodes[nodeId] || {}), ...sel };
     const resolved = await resolveGraph(this.projectDir, workflowId, registry, this.agentsDir, {
       engine: this.claude.engine || 'claude', runModel: this.claude.model || null, isWorkspace: this.isWorkspace, overlay: { nodes: overlayNodes }, ignoreProjectOverrides: true, scripts: this.scriptRegistry,
-      claudeAuth: this._resolveClaudeAuth(),
+      claudeAuth: this._autoAuthState && this._resolveClaudeAuth() ? async () => ({ state: this._autoAuthState }) : this._resolveClaudeAuth(),
     });
     if (!this.humanInLoop) {
       // spec D3: no agent may stop the run to ask (generic — every agent node).
@@ -1235,6 +1252,11 @@ export class GraphOrchestrator extends RunHarness {
       ...(this._net ? { network: { ...this._net } } : {}),
       ...(this.auto ? { runAuto: true } : {}),
       ...(this.limitEngine ? { limitEngine: this.limitEngine } : {}),
+      // #1450: the model a 'model_confirm' pause waits on, a usage limit's model and scope, and the run's confirmations.
+      ...(this.modelConfirm ? { modelConfirm: { ...this.modelConfirm } } : {}),
+      ...(this.limitModel ? { limitModel: this.limitModel } : {}),
+      ...(this.limitScope ? { limitScope: this.limitScope } : {}),
+      ...(this._confirmedModels?.length ? { confirmedModels: [...this._confirmedModels] } : {}),
       // The EFFECTIVE instruction at dispatch time (post in-worktree graph
       // build), not the detect-time tools.instruction.
       toolInstruction: this.toolInstruction ?? '',
@@ -2231,6 +2253,7 @@ export class GraphOrchestrator extends RunHarness {
       // P5: a mixed workspace (a git run) checks its Folder members' copies too — fan-out agents work in them.
       if ((this.workMode === 'folder' || this.isWorkspace) && !(await this._folderCopyIntact())) throw new Error(`the run's copy is not the run's own folder: ${(this.isWorkspace && this._badFolderCopy) || this.runCwd}`);
       this._checkCostLimits();                  // budget gate at EVERY spawn (throws pauseErr)
+      this._premiumGate(nc, ctx);               // #1450: a premium model nobody chose pauses before the spawn
       if (node.kind === 'script') {
         // A child process through the NODE site: every runner error carries
         // errorClass:null (D9), so _recover lands on the '*' row — pause as
@@ -2528,6 +2551,7 @@ export class GraphOrchestrator extends RunHarness {
         engine: this.claude.engine,
         permissionMode: this.claude.permissionMode,
         ...(modelPair || this._nodeModelPair(nc)),
+        ...this._modelGuardOpts(nc, node, executionId, modelPair, slice),
         permissionRules: this._spawnPermissionRules(),
         envScrub: this.guardrails?.envScrub || undefined,
         // §5.5.1: a scrubbed spawn with a registry stdio copy keeps the launcher's keep-list.
@@ -2537,6 +2561,22 @@ export class GraphOrchestrator extends RunHarness {
         mock: this.claude.mock,
       },
     };
+  }
+
+  /** #1450 D-m: the [init] model guard (graph/executor.mjs) for a Claude agent node that does not run on a session host
+   *  (a member's synthetic init carries its definition's model and would false-pause). `confirmed` is the run's live list. */
+  _modelGuardOpts(nc, node, executionId, modelPair, slice = null) {
+    if (nc.kind !== 'agent' || (this.claude.engine || 'claude') !== 'claude') return {};
+    if (this._sessions?.hostFor(node.id, { slice, role: slice?.role ?? null })) return {};
+    const pair = modelPair || this._nodeModelPair(nc);
+    return { modelGuard: {
+      requested: pair.model || undefined,
+      source: pair.source || nc.modelSource,
+      step: nc.meta?.displayName || nc.key || node.id, nodeId: node.id, stepKey: executionId,
+      confirmed: this._confirmedModels,
+      premium: (id) => isPremiumModel(id, { costOf: (m) => modelCostConfig(m) }),
+      routed: (id) => modelHasBaseUrlRouting(id) || !!bridgedModelInfo(id),
+    } };
   }
 
   /** Session groups (Task 45): a member's host and its mode for `_execCtx`, on a run that has sessions only (an ungrouped
@@ -3777,6 +3817,8 @@ export function resolvedFromManifest(manifest, registry, scripts = {}) {
       awaitAll: !!mn.awaitAll,
       ...(mn.roles && typeof mn.roles === 'object' && Object.keys(mn.roles).length ? { roles: mn.roles } : {}),
       ...(mn.wanted && typeof mn.wanted === 'object' ? { wanted: mn.wanted } : {}),
+      // #1450 D-i: only when the cell has it — a pre-change manifest leaves nc.modelSource undefined (the spawn backstop).
+      ...('modelSource' in mn ? { modelSource: mn.modelSource } : {}),
       duplicateKey: false,
     };
   }

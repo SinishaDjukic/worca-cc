@@ -14,7 +14,7 @@ import {
 } from '../settings.mjs';
 import { RUN_ENGINES, MODEL_ENGINES, ASK_ENGINES, EFFORTS, SUBAGENT_MODELS, effortsForEngine } from '../model-env.mjs';
 import { engineLabel } from '../../shared/engine-switch.mjs';
-import { MODEL_ROLES, ROLE_LABELS, ROLE_HARNESSES } from '../../shared/model-roles.mjs';
+import { MODEL_ROLES, ROLE_LABELS, ROLE_HARNESSES, isCliDecides } from '../../shared/model-roles.mjs';
 import { receiptCard } from './receipt.mjs';
 import { WORKSPACE_SCAN_DEFAULT_MODELS } from '../factory-models.mjs';
 
@@ -100,7 +100,7 @@ const pairCheck = (engine) => async (v, ctx) => {
 /** A model role: the model must exist and run on the harness; its effort is any reasoning level, mapped when used (A7). */
 const roleCheck = (engine) => async (v, ctx) => {
   const pair = normalizeRolePair(v, ctx.def.id);
-  if (pair) await ctx.slot([{ id: ctx.def.id, engine, value: { model: pair.model } }]);
+  if (pair && !isCliDecides(pair)) await ctx.slot([{ id: ctx.def.id, engine, value: { model: pair.model } }]);   // #1450: no catalog check
   return pair;
 };
 
