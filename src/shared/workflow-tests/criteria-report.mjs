@@ -85,12 +85,14 @@ export function trustReportModel({ criteria = [], rounds = [], pairs = [], proof
   const fooled = padRounds.filter((r) => r.padding.n < r.padding.of).length;
   const pairsSame = pairs.filter((p) => p.winner && p.winner !== 'unsure').length;
   const state = (ok, any) => (!any ? 'none' : ok ? 'good' : 'bad');
+  // Order and proof pass from AGREE_MIN (board 13) only from ANSWERS_NEEDED samples, as the people test; with fewer, every miss counts.
+  const share = (ok, of) => ok === of || (of >= ANSWERS_NEEDED && ok >= AGREE_MIN * of);
   const tests = [
     { key: 'planted', state: state(caught === of, of), caught, of, missedOn },
     { key: 'again', state: state(again === sameRounds.length, sameRounds.length), n: again, of: sameRounds.length },
-    { key: 'order', state: state(pairsSame >= AGREE_MIN * pairs.length, pairs.length), n: pairsSame, of: pairs.length },
+    { key: 'order', state: state(share(pairsSame, pairs.length), pairs.length), n: pairsSame, of: pairs.length },
     { key: 'longer', state: state(fooled === 0, padRounds.length), fooled },
-    { key: 'proof', state: state(proofs.found >= AGREE_MIN * proofs.of, proofs.of), n: proofs.found, of: proofs.of },
+    { key: 'proof', state: state(share(proofs.found, proofs.of), proofs.of), n: proofs.found, of: proofs.of },
     // User decision 5: 1 to 9 answers are 'waiting' (the line shows the real numbers and what Worca needs), never good or bad.
     { key: 'people', state: n > 0 && n < ANSWERS_NEEDED ? 'waiting' : state(n > 0 && agree / n >= AGREE_MIN, n >= ANSWERS_NEEDED), n, agree, pct: pct(agree, n) },
   ];

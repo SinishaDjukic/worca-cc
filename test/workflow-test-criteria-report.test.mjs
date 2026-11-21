@@ -220,3 +220,13 @@ test('fix round 1: answersText is the one shared "N answer(s)"', () => {
   assert.equal(answersText(1), '1 answer');
   assert.equal(answersText(14), '14 answers');
 });
+
+test('order and proof use the 80% bar only from 10 samples (as the people test); with fewer, every miss is a problem', () => {
+  const pairs = (same, of) => Array.from({ length: of }, (_, i) => ({ winner: i < same ? 'a' : 'unsure' }));
+  const st = (input, key) => trustReportModel(input).tests.find((t) => t.key === key).state;
+  assert.equal(st({ pairs: pairs(4, 5) }, 'order'), 'bad', '1 pair in 5 flipped with the order');
+  assert.equal(st({ pairs: pairs(5, 5) }, 'order'), 'good');
+  assert.equal(st({ pairs: pairs(9, 10) }, 'order'), 'good');
+  assert.equal(st({ proofs: { found: 8, of: 9 } }, 'proof'), 'bad');
+  assert.equal(st({ proofs: { found: 9, of: 9 } }, 'proof'), 'good');
+});
