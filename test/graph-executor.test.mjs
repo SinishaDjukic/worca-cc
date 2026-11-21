@@ -752,6 +752,33 @@ test('E4: an agent node that runs past its wall-clock or goes silent past its id
   } finally { _testing.runClaude = null; }
 });
 
+test('E4: a silent agent whose process tree is still working gets another idle window; an idle tree is stopped', async () => {
+  const { noteSpawned } = await import('../src/core/engines/agent-tree.mjs');
+  // The spawn reports its pid as superviseSpawn does; it stays silent until aborted or until `doneAfter` ms.
+  const silent = (doneAfter) => async (opts) => new Promise((resolve, reject) => {
+    noteSpawned(4242);
+    const keep = setInterval(() => {}, 1000);
+    const done = doneAfter ? setTimeout(() => { clearInterval(keep); resolve({ text: 'ok' }); }, doneAfter) : null;
+    opts.signal.addEventListener('abort', () => { clearInterval(keep); clearTimeout(done); reject(Object.assign(new Error('aborted'), { name: 'AbortError' })); }, { once: true });
+  });
+  const run = async (spawn, busy) => {
+    const c = ctx8({ node: { id: 'n_c', kind: 'agent', key: 'custom', config: { idleLimitMinutes: 0.0005, timeLimitMinutes: 1 }, agentPrompt: 'x', tools: [] }, signal: new AbortController().signal });
+    const probed = [];
+    _testing.runClaude = spawn;
+    _testing.treeBusy = async (pid) => { probed.push(pid); return busy(); };
+    try { return { err: await runAgentExecution(c).then(() => null, (e) => e), probed }; } finally { _testing.runClaude = null; _testing.treeBusy = null; }
+  };
+  // Busy for the whole spawn: never an idle stop (the outputs check after it is not the point).
+  const kept = await run(silent(200), () => true);
+  assert.notEqual(kept.err?.code, 'NODE_IDLE_LIMIT');
+  assert.ok(kept.probed.length >= 2, 'the idle timer re-armed and probed again');
+  assert.ok(kept.probed.every((p) => p === 4242), 'the probe asks about the spawned agent');
+  // An idle tree: stopped as before.
+  const stopped = await run(silent(0), () => false);
+  assert.equal(stopped.err?.code, 'NODE_IDLE_LIMIT');
+  assert.equal(stopped.probed[0], 4242);
+});
+
 test('E9/E10: each spawn appends a manifest line (prompt hashes, model, effort, settings, memory) and names paths outside the checkout', async () => {
   const { createHash } = await import('node:crypto');
   const { mkdirSync, existsSync } = await import('node:fs');
