@@ -4,9 +4,9 @@
 import { NOT_CHECKED } from './criteria-text.mjs';
 
 /** Errors asked again on the next pass (Worca's spending limit was reached, the test's cost limit was reached (Task 21 fix round 2), the
- *  call failed); the others are final for that try. The cell says "Not checked …" and waits, never a verdict. One list (final review M6):
- *  criteria-store.mjs re-exports it. */
-export const RETRY_ERRORS = Object.freeze(['limit', 'cap', 'failed']);
+ *  call failed, a person's Stop cut the check short or never reached it (board 59 B: 'stopped', 'pending')); the others are final for that
+ *  try. The cell says "Not checked …" and waits, never a verdict. One list (final review M6): criteria-store.mjs re-exports it. */
+export const RETRY_ERRORS = Object.freeze(['limit', 'cap', 'failed', 'stopped', 'pending']);
 
 /** D91, P4-Q5: a try whose run finished (its stored verdict says so) and that Worca did not set aside. */
 export const finishedTry = (t) => !!(t && t.verdict && t.verdict.facts && t.verdict.facts.status === 'done' && !t.verdict.worcaProblem);

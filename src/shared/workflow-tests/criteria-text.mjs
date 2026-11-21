@@ -11,6 +11,7 @@ export const NOT_CHECKED = Object.freeze({
   unreadable: "Not checked: Worca's answer could not be read",
   'no-proof': "Not checked: Worca's proof was not in the result",
   failed: 'Not checked: the check did not run',
+  stopped: 'Not checked: you stopped the check',   // board 59 B: a check a person's Stop cut short
 });
 
 /** P4-C1, boards 2, 12, 32: a trust mark's badge class and words. */

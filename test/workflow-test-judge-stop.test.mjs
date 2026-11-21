@@ -1,6 +1,7 @@
 // test/workflow-test-judge-stop.test.mjs — fix round 3, item B: Stop cuts checking short. The test's stop, and a stop of a
 // criteria-only check ("Check them on these tries"), abort the checking model's call in flight; what it reported is booked (else a
-// $0 row), and the criteria it did not finish are left unchecked as 'failed' ("Not checked: the check did not run"). Fakes only.
+// $0 row). Board 59 B: the call cut short is 'stopped' ("Not checked: you stopped the check"), and what the stop never reached reads
+// "Not checked yet" ('pending' at the end of a test, no row after a criteria-only check). Fakes only.
 import { test, after, beforeEach } from 'node:test';
 import assert from 'node:assert/strict';
 import { EventEmitter } from 'node:events';
@@ -122,7 +123,7 @@ const example = (criteria) => store.createExample(WF, { name: 'Bulk invoice expo
 const ledger = () => prepare('SELECT amount_usd AS u, cost_kind AS k FROM wf_test_judge_ledger ORDER BY id').all().map((r) => [Number(r.u), r.k]);
 const shown = (j) => criterionResult({ id: 'c', text: 'c' }, j, null).value;
 
-test("Stop testing cuts a try's check short: stop ends at once, every criterion is left 'failed', the stopped call is a $0 row", async () => {
+test("Stop testing cuts a try's check short: stop ends at once, the cut call is 'stopped', the rest 'pending', the stopped call is a $0 row", async () => {
   const helper = waitingHelper();
   const ex = example([{ text: 'Names a success metric' }, { text: 'Explains the legal reasons' }]);
   const runner = createTestRunner(harness(helper).deps);
@@ -135,8 +136,10 @@ test("Stop testing cuts a try's check short: stop ends at once, every criterion 
   assert.equal(helper.calls, 1, 'the second criterion is never asked');
   const [t] = store.triesOfRun(run.id);
   const js = cs.tryJudgements([t.id]);
-  assert.deepEqual(js.map((j) => [j.met, j.error]), [[null, 'failed'], [null, 'failed']]);
-  assert.deepEqual(js.map(shown), ['Not checked: the check did not run', 'Not checked: the check did not run']);
+  const byCriterion = (j) => ex.criteria.findIndex((c) => c.id === j.criterionId);
+  js.sort((x, y) => byCriterion(x) - byCriterion(y));
+  assert.deepEqual(js.map((j) => [j.met, j.error]), [[null, 'stopped'], [null, 'pending']], 'the first was out when Stop came; the second never asked');
+  assert.deepEqual(js.map(shown), ['Not checked: you stopped the check', 'Not checked yet']);
   assert.deepEqual(ledger(), [[0, 'unknown']]);
 });
 
@@ -154,12 +157,13 @@ test('Stop on a criteria-only check ("Check them on these tries") aborts its cal
   await quick.started;
   assert.equal(runner.criteriaCheckOf(run.id), true);
   const t0 = Date.now();
-  await runner.stop(run.id);
+  const back = await runner.stop(run.id);
   assert.ok(Date.now() - t0 < 2000, `Stop waited ${Date.now() - t0} ms for the model call`);
   assert.equal(runner.criteriaCheckOf(run.id), false, 'the workflow is free again');
+  assert.deepEqual(back.checked, { done: 0, of: 1 }, 'board 59 C: the one try was cut short, so none of 1 was checked');
   await done;
   const [t] = store.triesOfRun(run.id);
-  assert.deepEqual(cs.tryJudgements([t.id]).map((j) => j.error), ['failed']);
+  assert.deepEqual(cs.tryJudgements([t.id]).map((j) => [j.error, shown(j)]), [['stopped', 'Not checked: you stopped the check']]);
   assert.equal(store.readTestRun(run.id).status, 'done', 'the test itself stays as it ended');
   assert.deepEqual(ledger(), [[0, 'unknown']]);
 });

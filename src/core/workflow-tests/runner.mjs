@@ -139,7 +139,9 @@ export function createTestRunner(deps) {
   const overCap = (run) => run.capUsd !== null && costOf(run.id) >= run.capUsd;
   /** P4-Q15 (I15): "Check them on these tries" on an older test, in the background. One per workflow and never beside a test of it,
    *  so no two drives judge (and pay for) the same reused try; its checks stop at the test's own cap (D92). */
-  const checkingCriteria = new Map();   // workflowId → { id, exampleIds, abort, done } of the test run (fix round 3: Stop aborts it)
+  // workflowId → { id, exampleIds, abort, done, reason, progress } of the test run (fix round 3: Stop aborts it; board 59 C: `reason` = why,
+  // `progress` = the last { done, of } of its tries)
+  const checkingCriteria = new Map();
   /** BUSY while a test of the workflow starts or runs, or a check of its criteria runs (each with its own text). */
   const busyCheck = (workflowId) => {
     if (checkingCriteria.has(workflowId)) throw err(CHECKING_TEXT, 'BUSY');
@@ -149,11 +151,13 @@ export function createTestRunner(deps) {
     busyCheck(run.workflowId);
     if (!deps.judgeMissing) throw err('this Worca cannot check criteria', 'BAD_REQUEST');
     const abort = new AbortController();
-    const c = { id: Number(run.id), exampleIds: (run.exampleIds || []).map(Number), abort, done: null };
+    const c = { id: Number(run.id), exampleIds: (run.exampleIds || []).map(Number), abort, done: null, reason: null, progress: null };
     checkingCriteria.set(run.workflowId, c);
     notify(run);   // fix round 2 (N5): another tab's list disables Test a version now (overview.checking), not at the next frame
+    const stopped = () => (abort.signal.aborted ? c.reason || 'person' : null);   // board 59 B: the stop's reason, as a test's st.stopping
+    const onProgress = (p) => { if (p) c.progress = { ...p }; };
     c.done = Promise.resolve()
-      .then(() => deps.judgeMissing(run, { stopped: () => abort.signal.aborted, overCap: () => overCap(run), signal: abort.signal }))
+      .then(() => deps.judgeMissing(run, { stopped, overCap: () => overCap(run), signal: abort.signal, onProgress }))
       .catch((e) => console.error(`[workflow-tests] could not check the criteria of test ${run.id}: ${msgOf(e)}`))
       .finally(() => { if (checkingCriteria.get(run.workflowId) === c) checkingCriteria.delete(run.workflowId); notify(run); });
     return c.done;
@@ -167,8 +171,9 @@ export function createTestRunner(deps) {
     if (!deps.judgeCriteria || st.stopping) return;
     try {
       const t = store.readTry(tryId);
+      // Board 59 B: `stopped()` gives the stop's reason ('person', 'cap', …), so a check a Stop cut short says why.
       await deps.judgeCriteria(example, t, { testRunId: run.id, mock: !!t.mock,
-        stopped: () => !!st.stopping, overCap: () => overCap(run), signal: st.judgeAbort.signal });
+        stopped: () => st.stopping, overCap: () => overCap(run), signal: st.judgeAbort.signal });
     } catch (e) { console.error(`[workflow-tests] could not check the criteria of try ${tryId}: ${msgOf(e)}`); }
   }
 
@@ -282,7 +287,7 @@ export function createTestRunner(deps) {
         if (deps.leaveUnchecked) {
           try {
             const run = store.readTestRun(runId);
-            if (run) deps.leaveUnchecked(run, { overCap: () => overCap(run) });
+            if (run) deps.leaveUnchecked(run, { overCap: () => overCap(run), stopReason: st.stopping });
           } catch (e) { console.error(`[workflow-tests] could not record the criteria test ${runId} left unchecked: ${msgOf(e)}`); }
         }
         try {
@@ -352,7 +357,7 @@ export function createTestRunner(deps) {
       st.criteriaPhase = true;
       notify(run);
       const onProgress = (p) => { st.criteriaProgress = p; notify(run); };   // P4-M5: board 20's "7 of 12 tries"
-      try { await deps.judgeMissing(run, { stopped: () => !!st.stopping, overCap: () => overCap(run), onProgress, signal: st.judgeAbort.signal }); }
+      try { await deps.judgeMissing(run, { stopped: () => st.stopping, overCap: () => overCap(run), onProgress, signal: st.judgeAbort.signal }); }
       catch (e) { console.error(`[workflow-tests] could not check the criteria of test ${run.id}: ${msgOf(e)}`); }
       finally { st.criteriaPhase = false; st.criteriaProgress = null; notify(run); }
     }
@@ -708,11 +713,13 @@ export function createTestRunner(deps) {
     if (!run) throw err(`no test ${runId}`, 'NOT_FOUND');
     const st = live.get(run.id);
     // Fix round 3 (B): Stop on a test whose criteria are being checked on its tries ("Check them on these tries") ends that check.
+    // Board 59 C: the run comes back with `checked` = how many of the tries it checked ({ done, of }; null before it counted any).
     const checking = [...checkingCriteria.values()].find((c) => c.id === run.id);
     if (!st && checking) {
+      checking.reason = checking.reason || reason;
       checking.abort.abort();
       await checking.done;
-      return store.readTestRun(run.id);
+      return { ...store.readTestRun(run.id), checked: checking.progress ? { ...checking.progress } : null };
     }
     if (!st) {
       // M4: still running in the store but nothing drives it (its close failed): end it now, or the workflow stays BUSY.

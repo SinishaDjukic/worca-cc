@@ -21,8 +21,9 @@ export function trustFor(workflowId, fp, model, memo = null) {
   return t;
 }
 
-/** Fix round 3 (final review M7): the codes that name the test that wrote the row ("this test reached its cost limit"). */
-const OWN_TEST_ERRORS = Object.freeze(['cap', 'limit']);
+/** Fix round 3 (final review M7): the codes that name the test that wrote the row ("this test reached its cost limit"; board 59 B:
+ *  "you stopped the check"). */
+const OWN_TEST_ERRORS = Object.freeze(['cap', 'limit', 'stopped']);
 /**
  * D98: tries as the pages read them: with their criteria (the example's current ones, checked by its current model). `runId` = the
  * test the page shows: a 'cap' or 'limit' row another test wrote (a newer test that reused this try) reads as not checked yet there.
