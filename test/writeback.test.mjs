@@ -14,7 +14,7 @@ import { createOrchestrator } from '../src/core/orchestrator.mjs';
 import { setMockSourceResponses, callSource, PluginOpError } from '../src/core/plugin-shim.mjs';
 import { writePluginsLock, pluginCurrentDir } from '../src/core/plugins-lock.mjs';
 import { createProfile, readPluginState, writeTicketUpdates } from '../src/core/plugin-config.mjs';
-import { retryWriteback, reportResultForPipeline, pluginTextLine, reportedAuditLine } from '../src/core/sources.mjs';
+import { retryWriteback, reportResultForPipeline, reportRunEvent, pluginTextLine, reportedAuditLine } from '../src/core/sources.mjs';
 
 useTempHome(after);
 process.env.WORCA_MOCK = '1';
@@ -289,10 +289,12 @@ test("e2e: a forced pause (auto-mode auth) reports 'needs-human' to the task sou
 
   assert.equal(res.status, 'paused');
   assert.ok(orch.pauseReason, 'precondition: an auto-mode auth pause records a reason');
-  assert.equal(calls.length, 1, 'the forced pause reported exactly once');
-  assert.equal(calls[0].id, 'T-2', 'opaque task id round-trips from source_ref');
-  assert.equal(calls[0].status, 'needs-human', "row status 'paused' maps to 'needs-human'");
-  assert.match(calls[0].summary, /— paused/, 'thin status-only summary (no results bundle exists at a pause)');
+  assert.equal(calls[0].status, 'started', 'the started comment comes first');
+  const pauses = calls.filter((c) => c.status !== 'started');
+  assert.equal(pauses.length, 1, 'the forced pause reported exactly once');
+  assert.equal(pauses[0].id, 'T-2', 'opaque task id round-trips from source_ref');
+  assert.equal(pauses[0].status, 'needs-human', "row status 'paused' maps to 'needs-human'");
+  assert.match(pauses[0].summary, /— paused/, 'thin status-only summary (no results bundle exists at a pause)');
 });
 
 test('e2e: a MANUAL pause never writes back — the user is driving', async () => {
@@ -318,7 +320,7 @@ test('e2e: a MANUAL pause never writes back — the user is driving', async () =
 
   assert.equal(res.status, 'paused');
   assert.equal(orch.pauseReason, null, 'precondition: a manual pause records no reason');
-  assert.equal(calls.length, 0, 'no reportResult for a manual pause');
+  assert.deepEqual(calls.map((c) => c.status), ['started'], 'no pause reportResult for a manual pause (only the start)');
 });
 
 test("e2e: a SIGTERM pause (pauseForSignal) reports 'needs-human': a stopped CLI run has nobody to resume it", async () => {
@@ -346,9 +348,11 @@ test("e2e: a SIGTERM pause (pauseForSignal) reports 'needs-human': a stopped CLI
   assert.equal(res.status, 'paused');
   assert.equal(res.reason, 'terminated');
   assert.equal(res.detail, 'the process received SIGTERM');
-  assert.equal(calls.length, 1, 'the SIGTERM pause reported exactly once');
-  assert.equal(calls[0].id, 'T-5');
-  assert.equal(calls[0].status, 'needs-human');
+  assert.equal(calls[0].status, 'started', 'the started comment comes first');
+  const pauses = calls.filter((c) => c.status !== 'started');
+  assert.equal(pauses.length, 1, 'the SIGTERM pause reported exactly once');
+  assert.equal(pauses[0].id, 'T-5');
+  assert.equal(pauses[0].status, 'needs-human');
   const row = getDb().prepare('SELECT status, resume_point FROM pipelines WHERE id = ?').get(orch.getState().id);
   assert.equal(row.status, 'paused');
   const rp = JSON.parse(row.resume_point);
@@ -394,7 +398,7 @@ test('e2e: a SIGTERM while a resume still sets up (idle) pauses it as soon as it
   assert.equal(produced, 0, 'no node ran: the pause landed as the resume started running');
   assert.equal(getDb().prepare('SELECT status FROM pipelines WHERE id = ?').get(id).status, 'paused');
   assert.ok(JSON.parse(getDb().prepare('SELECT resume_point FROM pipelines WHERE id = ?').get(id).resume_point), 'still resumable');
-  assert.deepEqual(calls.map((c) => c.status), ['needs-human', 'needs-human']);
+  assert.deepEqual(calls.map((c) => c.status), ['started', 'needs-human', 'needs-human'], 'a resume posts no second started');
 });
 
 // ── Ticket updates (plans/ticket-updates-design.md D6, D7, D11) ─────────────────
@@ -535,4 +539,168 @@ test("e2e (D6, D11): the task's meta.project picks the rule; the audit line ends
     assert.ok(lines.includes('Result reported back to the task source: “Moved to Resolved.”'), lines.join(' | '));
   });
   setMockSourceResponses(null);
+});
+
+// ── a comment per run event (#1456): started, paused, failed, completed, PR opened ──
+const rowOf = (id) => getDb().prepare('SELECT * FROM pipelines WHERE id = ?').get(id);
+const PR = 'https://github.com/octo/hello/pull/7';
+
+test('run events: started and pr-opened carry their own status, summary and an empty move, even with a completed rule', async () => {
+  const calls = [];
+  setMockSourceResponses({ reportResult: (args) => { calls.push(args); return { ok: true }; } });   // capabilities: the mock's, ticketUpdates true
+  writeTicketUpdates('tu-gh', 'default', 'issues', TU_RULES);
+  await withFlag(true, async () => {
+    const p = await seedDonePluginPipeline(tuMeta('SHOP'));
+    assert.deepEqual(await reportResultForPipeline(rowOf(p.id), { results: null, branch: null, prUrl: null }, { event: 'started' }), { ok: true });
+    assert.equal(calls.at(-1).status, 'started');
+    assert.match(calls.at(-1).summary, new RegExp(`^### Worca CC run \`${p.id}\` — started\n`));
+    assert.match(calls.at(-1).summary, /\*\*Fix login\*\*/);
+    assert.match(calls.at(-1).summary, /Worca CC started working on this ticket\./);
+    assert.doesNotMatch(calls.at(-1).summary, /Diffstat|Branch/);
+    assert.deepEqual(calls.at(-1).move, { none: true }, 'a start never moves the ticket');
+
+    const out = await reportResultForPipeline(rowOf(p.id),
+      { results: RESULTS, branch: 'worca/fix', prUrl: PR, draft: true, memberName: 'api`<x>' }, { event: 'pr-opened' });
+    assert.deepEqual(out, { ok: true });
+    const c = calls.at(-1);
+    assert.equal(c.status, 'pr-opened');
+    assert.match(c.summary, /— PR opened\n/);
+    assert.ok(c.summary.includes(`Pull request opened: ${PR} (draft) in \`api'‹x›\``), c.summary);
+    assert.ok(c.summary.includes('- Branch: `worca/fix`'));
+    assert.doesNotMatch(c.summary, /Diffstat/);
+    assert.deepEqual(c.links, [{ title: 'Pull request', url: PR }]);
+    assert.deepEqual(c.move, { none: true }, 'a PR comment never moves the ticket');
+  });
+  await withFlag(false, async () => {
+    const p = await seedDonePluginPipeline(tuMeta('SHOP'));
+    await reportResultForPipeline(rowOf(p.id), { results: null, branch: null, prUrl: null }, { event: 'started' });
+    assert.deepEqual(calls.at(-1).move, { none: true }, 'flag off: started still says do not move');
+    await reportResultForPipeline(rowOf(p.id), { results: null, branch: null, prUrl: PR }, { event: 'pr-opened' });
+    assert.deepEqual(calls.at(-1).move, { none: true }, 'flag off: pr-opened still says do not move');
+    await reportResultForPipeline(rowOf(p.id), { results: null, branch: null, prUrl: null });
+    assert.equal(calls.at(-1).status, 'completed');
+    assert.equal('move' in calls.at(-1), false, 'flag off: completed passes no move (unchanged)');
+  });
+});
+
+test('run events: the completion comment states the PR status', async () => {
+  const calls = [];
+  setMockSourceResponses({ reportResult: (args) => { calls.push(args); return { ok: true }; } });
+  const p = await seedDonePluginPipeline();
+  await reportResultForPipeline(rowOf(p.id), { results: RESULTS, branch: null, prUrl: null });
+  assert.match(calls[0].summary, new RegExp(`^### Worca CC run \`${p.id}\` — completed\n`));
+  assert.ok(calls[0].summary.includes('**Completed — no PR opened yet.**'));
+  assert.doesNotMatch(calls[0].summary, /— done/);
+  assert.match(calls[0].summary, /3 changed, 2 new/, 'the diffstat stays');
+
+  await reportResultForPipeline(rowOf(p.id), { results: RESULTS, branch: 'worca/fix', prUrl: PR });
+  assert.ok(calls[1].summary.includes(`**Completed — PR opened:** ${PR}`));
+  assert.doesNotMatch(calls[1].summary, /no PR opened yet/);
+  assert.deepEqual(calls[1].links, [{ title: 'Pull request', url: PR }]);
+});
+
+test('run events: the writeBack opt-out silences started and pr-opened', async () => {
+  const calls = [];
+  setMockSourceResponses({ capabilities: { writeBack: false }, reportResult: (args) => { calls.push(args); return { ok: true }; } });
+  const p = await seedDonePluginPipeline();
+  for (const event of ['started', 'pr-opened']) {
+    assert.deepEqual(await reportResultForPipeline(rowOf(p.id), { results: null, branch: null, prUrl: PR }, { event }), { ok: true, skipped: true });
+  }
+  setMockSourceResponses({
+    capabilities: (args) => ({ writeBack: args.inputs?.writeBack === 'yes' }),
+    reportResult: (args) => { calls.push(args); return { ok: true }; },
+  });
+  const optedOut = await seedDonePluginPipeline({ ...META, inputs: { writeBack: 'no' } });
+  assert.deepEqual(await reportRunEvent(optedOut.id, 'started'), { ok: true, skipped: true });
+  assert.deepEqual(await reportRunEvent(optedOut.id, 'pr-opened', { prUrl: PR }), { ok: true, skipped: true });
+  assert.equal(calls.length, 0);
+});
+
+test('run events: the audit line names the event', () => {
+  assert.equal(reportedAuditLine({ ok: true }, 'started'), 'Run start reported to the task source.');
+  assert.equal(reportedAuditLine({ ok: true, note: 'Commented.' }, 'pr-opened'), 'Pull request reported to the task source: “Commented.”');
+  assert.equal(reportedAuditLine({ ok: true }, undefined), 'Result reported back to the task source.');
+  assert.equal(reportedAuditLine({ ok: true }, 'completed'), 'Result reported back to the task source.');
+});
+
+test('run events: reportRunEvent loads the row and builds the bundle per event; prompt rows skip; unknown id errors', async () => {
+  const calls = [];
+  setMockSourceResponses({ reportResult: (args) => { calls.push(args); return { ok: true }; } });
+  const prompt = await createPipeline(await mkdtemp(join(tmpdir(), 'worca-cc-wb-')), { prompt: 'plain' });
+  assert.deepEqual(await reportRunEvent(prompt.id, 'started'), { ok: true, skipped: true });
+  assert.equal(calls.length, 0);
+  const unknown = await reportRunEvent('deadbeef', 'started');
+  assert.equal(unknown.ok, false);
+  assert.match(unknown.error, /unknown pipeline "deadbeef"/);
+
+  const p = await seedDonePluginPipeline();
+  getDb().prepare('UPDATE pipelines SET branch = ? WHERE id = ?').run(JSON.stringify({ feature: 'worca/fix' }), p.id);
+  assert.deepEqual(await reportRunEvent(p.id, 'started'), { ok: true });
+  assert.equal(calls.at(-1).status, 'started');
+  assert.doesNotMatch(calls.at(-1).summary, /Branch|Diffstat/, 'started has no results, no branch');
+  assert.deepEqual(await reportRunEvent(p.id, 'pr-opened', { prUrl: PR, draft: false, memberName: 'web' }), { ok: true });
+  assert.ok(calls.at(-1).summary.includes(`Pull request opened: ${PR} in \`web\``));
+  assert.doesNotMatch(calls.at(-1).summary, /\(draft\)/);
+  assert.ok(calls.at(-1).summary.includes('- Branch: `worca/fix`'), 'the row\'s feature branch');
+  assert.deepEqual(await reportRunEvent(p.id, 'completed'), { ok: true });
+  assert.equal(calls.at(-1).status, 'completed');
+  assert.match(calls.at(-1).summary, /3 changed, 2 new/, 'completed reads results.json like retryWriteback');
+});
+
+const GET_TASK = (id) => ({ id, title: 'Events', url: `https://x.test/${id}`, state: 'open', updatedAt: '2026-07-12T00:00:00Z', body: 'demo body', meta: {} });
+const delay = (ms) => new Promise((r) => setTimeout(r, ms));
+
+test('e2e run events: a run posts started then completed, once each; the terminal report waits for a slow start', async () => {
+  const calls = [];
+  setMockSourceResponses({
+    getTask: GET_TASK('T-20'),
+    reportResult: async (args) => { if (args.status === 'started') await delay(50); calls.push(args); return { ok: true }; },
+  });
+  const orch = createOrchestrator({ projectDir: await mkdtemp(join(tmpdir(), 'worca-cc-wb-ev-')), auto: true, claude: { mock: true },
+    source: { type: 'plugin', plugin: 'gh', sourceId: 'issues', taskId: 'T-20' } });
+  const res = await orch.run();
+  assert.equal(res.status, 'done');
+  assert.deepEqual(calls.map((c) => c.status), ['started', 'completed']);
+  assert.match(calls[0].summary, /— started/);
+  assert.match(calls[1].summary, /Completed — no PR opened yet\./);
+  const lines = getDb().prepare('SELECT text FROM pipeline_events WHERE pipeline_id = ? ORDER BY id').all(orch.getState().id).map((r) => r.text);
+  assert.ok(lines.includes('Run start reported to the task source.'), lines.join(' | '));
+  assert.ok(lines.includes('Result reported back to the task source.'), lines.join(' | '));
+});
+
+test('e2e run events: a manual pause still settles run() only after a slow started report', async () => {
+  const calls = [];
+  setMockSourceResponses({
+    getTask: GET_TASK('T-21'),
+    reportResult: async (args) => { if (args.status === 'started') await delay(80); calls.push(args); return { ok: true }; },
+  });
+  let orch;
+  orch = createOrchestrator({ projectDir: await mkdtemp(join(tmpdir(), 'worca-cc-wb-ev-')), auto: true, claude: { mock: true },
+    source: { type: 'plugin', plugin: 'gh', sourceId: 'issues', taskId: 'T-21' },
+    runners: {
+      producer: async () => { orch.pause(); return { status: 'ok', summary: 'done' }; },
+      verifier: async () => ({ status: 'ok', issues: [], review: { issues: [] }, summary: '' }),
+    } });
+  const res = await orch.run();
+  assert.equal(res.status, 'paused');
+  assert.deepEqual(calls.map((c) => c.status), ['started'], 'run() drained the in-flight started report');
+});
+
+test('e2e run events: a failing started comment warns, never fails the run, and completed still reports', async () => {
+  const calls = [];
+  setMockSourceResponses({
+    getTask: GET_TASK('T-22'),
+    reportResult: (args) => { if (args.status === 'started') throw new Error('tracker asleep'); calls.push(args); return { ok: true }; },
+  });
+  const orch = createOrchestrator({ projectDir: await mkdtemp(join(tmpdir(), 'worca-cc-wb-ev-')), auto: true, claude: { mock: true },
+    source: { type: 'plugin', plugin: 'gh', sourceId: 'issues', taskId: 'T-22' } });
+  const logs = [];
+  orch.on('log', (e) => logs.push(e));
+  const res = await orch.run();
+  assert.equal(res.status, 'done');
+  const warn = logs.find((l) => l.source === 'writeback' && l.level === 'warn' && /start comment failed/.test(l.text));
+  assert.ok(warn, logs.filter((l) => l.source === 'writeback').map((l) => l.text).join(' | '));
+  assert.match(warn.text, /tracker asleep/);
+  assert.doesNotMatch(warn.text, /Report result/, 'the retry button cannot re-post a start');
+  assert.deepEqual(calls.map((c) => c.status), ['completed']);
 });

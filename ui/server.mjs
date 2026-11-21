@@ -537,7 +537,7 @@ import { TokenBucket } from '../src/core/chat/rate-limiter.mjs';
 import { renderTest } from '../src/core/chat/renderers.mjs';
 import { readPluginsLock, pluginCurrentDir } from '../src/core/plugins-lock.mjs';
 import { normalizeManifest, validatePluginDir, PLUGIN_NAME_RE as MANIFEST_PLUGIN_NAME_RE } from '../src/core/plugin-manifest.mjs';
-import { listTaskSources, retryWriteback, resolveTaskInput, sourcePlaceholderTitle } from '../src/core/sources.mjs';
+import { announcePrOpened, listTaskSources, retryWriteback, resolveTaskInput, sourcePlaceholderTitle } from '../src/core/sources.mjs';
 import {
   createTicket, getTicket, listTickets, updateTicket, cancelTicket, requestRunNow, setTicketPipeline,
   createSchedule, getSchedule, listSchedules, updateSchedule, pauseSchedule, resumeSchedule, skipNext,
@@ -7032,6 +7032,7 @@ async function createRunPr({ id, state, target, base, memberKey = null, remotes:
     // Who shipped it (the footer names who STARTED the run). No actor: worca opened it (a slice's draft).
     const where = memberKey ? ` in \`${target.memberName}\`` : '';
     appendAuditById(pipelineIdForPr, `PR ${pr.existed ? 'linked' : (newDraft ? 'created (draft)' : 'created')}${where}${byActor(actor)}: ${pr.url}`, { actor });
+    if (!pr.existed) announcePrOpened(pipelineIdForPr, { prUrl: pr.url, draft: newDraft, memberName: memberKey ? target.memberName : null });
   }
   return { ok: true, pr, newDraft, remotes, pushRemote, baseRemote, repo, headOwner, baseR, pipelineIdForPr, closes: !!closing || !!workItemId };
 }

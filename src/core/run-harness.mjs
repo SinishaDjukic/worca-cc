@@ -37,7 +37,7 @@ import {
   assembleResults, persistResults, persistDiffPatch, buildPerProject, rollupSummary,
   retainedWorkPatchName, sizeOfChange,
 } from './results.mjs';
-import { reportedAuditLine, resolveTaskInput, retryWriteback, sourcePlaceholderTitle, ticketRunTitle } from './sources.mjs';
+import { reportedAuditLine, reportRunEvent, resolveTaskInput, retryWriteback, sourcePlaceholderTitle, ticketRunTitle } from './sources.mjs';
 import { projectKey, projectStorePath, workspaceStorePath, noProjectWorkDir, isNoProjectWorkDir } from './store.mjs';
 import { NO_PROJECT_KEY, NO_PROJECT_NAME, NO_PROJECT_ERRORS, WORK_DIR_NAME, isNoProjectKey } from '../shared/no-project.mjs';
 import { harvestWork, ownWorkDir, WORK_ARTIFACT_KIND } from './no-project-work.mjs';
@@ -1523,7 +1523,11 @@ export class RunHarness extends EventEmitter {
    * credential broker): the whole loop runs inside that async context.
    */
   run() {
-    return withBillTo(this.opts.startedBy || currentBillTo(), () => this._run());
+    // The started comment (#1456) is posted without blocking the work; run() never settles with it still in flight — a manual
+    // or DRAIN pause skips _reportToSource, so nothing else would wait for it.
+    return withBillTo(this.opts.startedBy || currentBillTo(), async () => {
+      try { return await this._run(); } finally { await this._startedReport; }
+    });
   }
 
   async _run() {
@@ -1731,6 +1735,9 @@ export class RunHarness extends EventEmitter {
 
       // 2b) The run queue (Settings › Runs › Machine load): wait for a free slot before any heavy work.
       await this._takeRunSlot();
+      // The ticket's "started" comment (#1456): fresh runs only (a resume never gets here), not awaited so a slow tracker
+      // never delays the work; every later report waits for it, so it stays the first comment.
+      this._startedReport = this._reportToSource('started');
 
       // 3) Ensure a git repo + checkpoint commit (per member on a workspace run).
       if (this.isWorkspace) await this._ensureGitCheckpointAll();
@@ -1927,7 +1934,7 @@ export class RunHarness extends EventEmitter {
         // existed. The terminal `done` event is emitted AFTER it so the History row never
         // paints as "no diff captured" for the tick before the artifact lands.
         await this._buildResults({ stage: true });
-        await this._reportToSource(); // statusToResult('error') -> 'failed' (design PR12: no longer success-only)
+        await this._reportToSource(); // eventForStatus('error') -> 'failed' (design PR12: no longer success-only)
       }
       await this._recordRunMetrics('error', err);
       this._emit('done', {
@@ -2258,7 +2265,7 @@ export class RunHarness extends EventEmitter {
         // existed. The terminal `done` event is emitted AFTER it so the History row never
         // paints as "no diff captured" for the tick before the artifact lands.
         await this._buildResults({ stage: true });
-        await this._reportToSource(); // statusToResult('error') -> 'failed' (design PR12: no longer success-only)
+        await this._reportToSource(); // eventForStatus('error') -> 'failed' (design PR12: no longer success-only)
       }
       await this._recordRunMetrics('error', err);
       this._emit('done', { status: 'error', pipelineDir: this.pipeline?.dir || null });
@@ -7409,7 +7416,7 @@ export class RunHarness extends EventEmitter {
   /**
    * Task-source write-back (spec §7.5): report the finished run to the plugin
    * source that produced it. Runs on EVERY terminal path and ALWAYS after
-   * _buildResults() — done (statusToResult -> 'completed'), stopped/launch-error
+   * _buildResults() — done (eventForStatus -> 'completed'), stopped/launch-error
    * (-> 'failed'; chat-connectivity design PR12 closed the old success-only gap),
    * and error-pauses (-> 'needs-human', from _completePaused).
    * So the payload is the same SHAPE on all three: retryWriteback reads
@@ -7422,19 +7429,28 @@ export class RunHarness extends EventEmitter {
    * button). Prompt/markdown
    * runs skip inside retryWriteback before any work — feature-off runs pay
    * nothing here. Bounded by the shim's per-op timeout.
+   *
+   * `event` (#1456): 'started' posts the run's start comment (no "Report result" retry exists for it, so its warning offers
+   * none). Every other report first waits for an in-flight start comment (it never rejects), so the start stays first.
+   * @param {'started'} [event]  omitted: the terminal or pause result the row's status stands for
    */
-  async _reportToSource() {
+  async _reportToSource(event = undefined) {
     if (!this.pipeline) return;
+    if (event !== 'started') await this._startedReport;
     try {
-      const outcome = await retryWriteback(this.pipeline.id);
+      const outcome = event === undefined ? await retryWriteback(this.pipeline.id) : await reportRunEvent(this.pipeline.id, event);
       if (outcome?.ok === false) {
-        this._log('writeback', 'warn', `task-source write-back failed: ${outcome.error} — use "Report result" in the results view to retry`);
+        this._log('writeback', 'warn', event === 'started'
+          ? `task-source start comment failed: ${outcome.error}`
+          : `task-source write-back failed: ${outcome.error} — use "Report result" in the results view to retry`);
       } else if (outcome?.ok && !outcome.skipped) {
         // Ticket updates (D11): the plugin's outcome line ends the audit line, quoted as data ("…: “Moved to Resolved.”")
-        await appendAudit(this.pipeline.dir, reportedAuditLine(outcome)).catch(() => {});
+        await appendAudit(this.pipeline.dir, reportedAuditLine(outcome, event)).catch(() => {});
       }
     } catch (err) {
-      this._log('writeback', 'warn', `task-source write-back failed: ${err?.message || err}`);
+      this._log('writeback', 'warn', event === 'started'
+        ? `task-source start comment failed: ${err?.message || err}`
+        : `task-source write-back failed: ${err?.message || err}`);
     }
   }
 
@@ -7463,7 +7479,7 @@ export class RunHarness extends EventEmitter {
       // existed. The terminal `done` event is emitted AFTER it so the History row never
       // paints as "no diff captured" for the tick before the artifact lands.
       await this._buildResults({ stage: true });
-      await this._reportToSource(); // statusToResult('stopped') -> 'failed' (design PR12: no longer success-only)
+      await this._reportToSource(); // eventForStatus('stopped') -> 'failed' (design PR12: no longer success-only)
     }
     await this._recordRunMetrics('stopped');
     this._emit('done', { status: 'stopped', pipelineDir: this.pipeline?.dir || null });
@@ -9161,7 +9177,7 @@ export class RunHarness extends EventEmitter {
 
   /** Terminal bookkeeping for a pause: persist the resume point + paused status.
    *  An ERROR-pause additionally keeps what the retired error path produced — the
-   *  diff artifact and the task-source write-back (statusToResult('paused') ->
+   *  diff artifact and the task-source write-back (eventForStatus('paused') ->
    *  'needs-human'; retryWriteback re-reads the ROW, so this runs AFTER the persist).
    *  Safe here and only here: the checkout and the checkpoint refs are live, and the
    *  finally never tears a paused run down. Both helpers are no-ops with an empty
@@ -9222,7 +9238,7 @@ export class RunHarness extends EventEmitter {
     if (!this.pauseReason) await this._auditAction('pause', 'Pipeline **paused**').catch(() => {});
     // A FORCED pause (pauseReason set: usage limit, cost cap, auto-mode
     // auth/quota, exhausted recoverable retries, an error) parks the run with
-    // nobody attached, so the task source must hear it NOW — statusToResult
+    // nobody attached, so the task source must hear it NOW — eventForStatus
     // ('paused') -> 'needs-human' — or the external task stays claimed "in
     // progress" until a human stumbles on it. A manual pause skips this: the
     // user is present and resuming shortly, and the resumed run's terminal path
