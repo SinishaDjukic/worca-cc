@@ -130,6 +130,7 @@ app.get('/api/runs/:id/sessions/:sid/trace', async (req, res) => {
 // touched. Refused (409) while the run is live in this process.
 // ---------------------------------------------------------------------------
 // ---------------------------------------------------------------- Runs list: groups and bulk actions (runs redesign §3.2, §3.3)
+const FINISHING = 'the run is still finishing. Try again in a moment';
 function bulkResolve(t) {
   const entry = t.runId ? runs.get(t.runId) : t.pipelineId ? liveRunEntry(t.pipelineId) : null;
   const pid = t.pipelineId || entry?.pipelineId || null;
@@ -180,6 +181,7 @@ app.post('/api/runs/bulk', async (req, res) => {
     // ({alreadyArchived}, {alreadyActive}, {alreadyDeleted}), which writes no audit line.
     const removedRunIds = [];
     const audited = (fn) => async (t) => {
+      if (action !== 'restore' && isFinishingRun(t.pipelineId)) throw new Error(FINISHING);   // as the single Archive
       const r = await fn(rowScope(t));
       if (!r) throw new Error('run not found');
       if (action !== 'restore') removedRunIds.push(...dropParkedEntries(t.pipelineId));
@@ -238,6 +240,9 @@ app.delete('/api/runs/:id', async (req, res) => {
     (r.pipelineId === id || r.id === id) &&
     ['running', 'starting', 'created', 'pausing'].includes(String(r.status || '').toLowerCase()));
   if (liveActive) return res.status(409).json({ error: 'cannot delete a running pipeline' });
+  // Its entry reads stopped / done before the harness's teardown ends, and that teardown still writes into the run
+  // folder (the run.json ledger copy, the last live-log flush): archiving now races it (ENOTEMPTY, or files recreated).
+  if (isFinishingRun(id)) return res.status(409).json({ error: FINISHING });
 
   try {
     const archBy = actorOf(req);
