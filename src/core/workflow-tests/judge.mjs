@@ -87,7 +87,7 @@ export async function judgeCriterion({ criterion, subject, context = '', model, 
 }
 
 /** D100: which of two results is better (or closer to `liked`), asked in both orders, blind. Each ask is fenced with its own tag. */
-export async function judgePair({ a, b, liked = null, context = '', model, mock = false, signal = null, book = () => {} }, d = {}) {
+export async function judgePair({ a, b, liked = null, context = '', model, mock = false, signal = null, first = null, book = () => {} }, d = {}) {
   const x = { ...JUDGE_DEFAULTS, ...d };
   const t0 = Date.now();
   let cost = 0;
@@ -116,12 +116,13 @@ export async function judgePair({ a, b, liked = null, context = '', model, mock 
     if (r.costUsd > 0 || r.costKind === 'unknown') book(r.costUsd, r.costKind);   // P4-Q17: an unknown cost books a $0 row
     return parsePairReply(r.text) || { error: 'unreadable' };
   };
-  const one = await ask(A, B);
+  // Fix round 3 (final review M8): `first` = the first order's answer a pass the limit (or a stop) cut short kept on its row; it is
+  // used, never asked (and paid for) again. A second ask that fails returns the first answer with its error, for the row to keep.
+  const kept = first && ['first', 'second', 'same'].includes(first.winner) && typeof first.reason === 'string' ? { winner: first.winner, reason: first.reason } : null;
+  const one = kept || await ask(A, B);
   if (one.error) return done(one);
-  // Final review M8 (known, small): when the limit refuses the second ask, the first one stays booked but is not kept, so the next
-  // pass asks (and pays for) both orders again. Keeping it would need its answer stored on the 'limit' row.
   const two = await ask(B, A);
-  if (two.error) return done(two);
+  if (two.error) return done({ ...two, first: { winner: one.winner, reason: one.reason } });
   const w1 = one.winner === 'first' ? 'a' : one.winner === 'second' ? 'b' : 'tie';
   const w2 = two.winner === 'first' ? 'b' : two.winner === 'second' ? 'a' : 'tie';
   // The reason is shown to a person: the asks' own words ("Result 1") name positions, so they become the sides, and a pair
