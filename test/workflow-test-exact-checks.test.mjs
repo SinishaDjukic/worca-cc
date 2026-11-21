@@ -8,11 +8,11 @@ import { exampleSourcesText } from '../src/core/workflow-tests/sources-text.mjs'
 
 const FILES = 'Interview 3: “I export every month and it stops at 200 invoices, which is a pain.” Tickets: 140 a month, up 60 %.';
 
-test('quotes: five words or more, found across spacing, quote marks, case and an ellipsis', () => {
+test('quotes: named (3+ words) or long (8+ words), found across spacing, quote marks, case and an ellipsis', () => {
   assert.deepEqual(quotesIn('She said "yes" and “I export every month and it stops” — fine.'), ['I export every month and it stops']);
-  assert.deepEqual(quotesCheck('A customer: "i export  every month ... at 200 invoices".', FILES), { met: true, value: 'Met' });
+  assert.deepEqual(quotesCheck('Dana said: "i export  every month ... at 200 invoices".', FILES), { met: true, value: 'Met' });
   assert.deepEqual(quotesCheck('Nobody quoted.', FILES), { met: true, value: 'No quotes' });
-  assert.deepEqual(quotesCheck('“I would pay twice for this tomorrow.” and «exports are slow for all of us»', FILES),
+  assert.deepEqual(quotesCheck('Dana said “I would pay twice for this tomorrow.” and «exports are slow for all of us, said Dana»', FILES),
     { met: false, value: 'Not in the files: "I would pay twice for this tomorrow." and 1 more' });
 });
 
@@ -83,7 +83,7 @@ test('the four kinds as checks: normalised, labelled, run; said is kept and only
   assert.equal(checkLabel({ kind: 'numbers', file: 'brief.md' }), 'Numbers come from the files in brief.md');
   assert.equal(checkLabel({ kind: 'no-personal' }), 'Has no personal data');
   assert.equal(checkLabel({ kind: 'links' }), 'Every link works');
-  assert.deepEqual(runCheck({ kind: 'quotes' }, { text: '"I would pay twice for this"', sources: FILES }).met, false);
+  assert.deepEqual(runCheck({ kind: 'quotes' }, { text: 'Dana said: "I would pay twice for this"', sources: FILES }).met, false);
   assert.deepEqual(runCheck({ kind: 'no-personal' }, { text: 'Clean text.' }), { met: true, value: 'Met' });
   assert.deepEqual(runCheck({ kind: 'numbers' }, { text: '', sources: FILES }), { met: false, value: 'No result' });
 });
@@ -101,10 +101,10 @@ test('fix round 1: a quote after a CRLF blank line is still found, and a quote n
 });
 
 test('fix round 1: bracketed ellipses split a quote like a bare one', () => {
-  assert.deepEqual(quotesCheck('A customer: "I export every month [...] at 200 invoices".', FILES), { met: true, value: 'Met' });
-  assert.deepEqual(quotesCheck('A customer: "I export every month (…) at 200 invoices".', FILES), { met: true, value: 'Met' });
-  assert.deepEqual(quotesCheck('A customer: "I export every month […] at 200 invoices".', FILES), { met: true, value: 'Met' });
-  assert.equal(quotesCheck('A customer: "I would pay twice [...] for this tomorrow".', FILES).met, false);
+  assert.deepEqual(quotesCheck('Dana said: "I export every month [...] at 200 invoices".', FILES), { met: true, value: 'Met' });
+  assert.deepEqual(quotesCheck('Dana said: "I export every month (…) at 200 invoices".', FILES), { met: true, value: 'Met' });
+  assert.deepEqual(quotesCheck('Dana said: "I export every month […] at 200 invoices".', FILES), { met: true, value: 'Met' });
+  assert.equal(quotesCheck('Dana said: "I would pay twice [...] for this tomorrow".', FILES).met, false);
 });
 
 test('fix round 1: heading section numbers and clock times are not numbers', () => {
@@ -157,8 +157,8 @@ test('fix round 4: a quote never spans a table row or a cell border', () => {
   const rows = '| Rule | Stated as "<n> years with wrong n |\n| Dana | "I spend two hours every month copying invoices into a spreadsheet." |';
   assert.deepEqual(quotesIn(rows), ['I spend two hours every month copying invoices into a spreadsheet.']);
   assert.deepEqual(quotesIn('| a "first half of a long | quoted cell text here" |'), [], 'a quote mark in one cell never pairs with one in the next');
-  assert.deepEqual(quotesIn('| "I spend two hours every month copying invoices" | "the export stops at two hundred invoices" |'),
-    ['I spend two hours every month copying invoices', 'the export stops at two hundred invoices']);
+  assert.deepEqual(quotesIn('| "I spend two hours every month copying invoices" | "the export stops at two hundred invoices every month" |'),
+    ['I spend two hours every month copying invoices', 'the export stops at two hundred invoices every month']);
   assert.deepEqual(quotesIn('She said "I spend two hours\nevery month copying invoices" in prose.'), ['I spend two hours\nevery month copying invoices'],
     'a quote in prose still spans a single line break');
 });
@@ -171,12 +171,12 @@ test('fix round 4: quote marks inside code are not quotes', () => {
     ['I spend two hours every month copying invoices']);
 });
 
-test('fix round 4: a quote has at least QUOTE_MIN_WORDS (5) words; shorter quoted text is not checked', async () => {
-  const { QUOTE_MIN_WORDS } = await import('../src/shared/workflow-tests/exact-checks.mjs');
-  assert.equal(QUOTE_MIN_WORDS, 5);
-  assert.deepEqual(quotesIn('The button "Export all invoices now" and the hint "Pick the month you need here".'), ['Pick the month you need here']);
+test('fix round 4 (quote rule, 2026-11-21): the 5-word rule is replaced; short unnamed quoted text is not checked', async () => {
+  const mod = await import('../src/shared/workflow-tests/exact-checks.mjs');
+  assert.equal(mod.QUOTE_MIN_WORDS, undefined, 'the 5-word constant is gone');
+  assert.deepEqual(quotesIn('The button "Export all invoices now" and the hint "Pick the month you need here".'), []);
   assert.deepEqual(quotesCheck('The empty state reads "Pick a date range".', BRIEF_FILES), { met: true, value: 'No quotes' });
-  assert.equal(quotesCheck('Dana said "I spend three hours every month".', BRIEF_FILES).met, false, 'a made-up quote of five words is still checked');
+  assert.equal(quotesCheck('Dana said "I spend three hours every month".', BRIEF_FILES).met, false, 'a made-up named quote is still checked');
 });
 
 test('fix round 4: digits inside ids, hashes, paths, links and code are not numbers of the result', () => {
@@ -201,4 +201,41 @@ test('fix round 4: every other number is still checked: example values, percenta
   assert.deepEqual(numbersCheck('A 10x speed-up and 300ms per file.', BRIEF_FILES), { met: false, value: 'Not in the files: 300' },
     'a number with its unit is a number (10 is in the files)');
   assert.deepEqual(numbersCheck('COVID-19 and 5/day.', BRIEF_FILES).met, false, 'a number in a name or a rate stays checked');
+});
+
+test('quote rule: checked only when a person is named next to it (3+ words) or when it is long (8+ words with a letter)', async () => {
+  const { QUOTE_MIN_NAMED_WORDS, QUOTE_MIN_LONG_WORDS, SPEECH_VERBS } = await import('../src/shared/workflow-tests/exact-checks.mjs');
+  assert.deepEqual([QUOTE_MIN_NAMED_WORDS, QUOTE_MIN_LONG_WORDS], [3, 8]);
+  assert.ok(SPEECH_VERBS.includes('said') && SPEECH_VERBS.includes('put it'));
+  // short and nobody named: not checked (real cases from a paid run)
+  for (const s of ['"Choose a start and end date."', 'The hint: "Start date must be before end date"', 'It shows "Jan 1 to Jan 31" below.']) {
+    assert.deepEqual(quotesIn(s), [], s);
+    assert.deepEqual(quotesCheck(s, BRIEF_FILES), { met: true, value: 'No quotes' }, s);
+  }
+  // digits alone no longer make a long quote
+  assert.deepEqual(quotesIn('Totals "2026 2027 2028 2029 2030 2031 2032 2033" listed.'), []);
+  // named before the quote
+  const dana = 'Dana, the finance lead at a customer, said: "I spend two hours every month copying invoices into a spreadsheet."';
+  assert.deepEqual(quotesCheck(dana, BRIEF_FILES), { met: true, value: 'Met' });
+  assert.equal(quotesCheck(dana.replace('two hours', 'nine hours'), BRIEF_FILES).met, false);
+  assert.deepEqual(quotesIn('Dana (finance lead): "Exports take forever."'), ['Exports take forever.']);
+  assert.deepEqual(quotesIn('Customer quote (Dana, finance lead at a customer): "Exports take forever."'), ['Exports take forever.']);
+  // Worca's own planted made-up quote must still be caught
+  const planted = 'As one customer put it: "I would pay twice as much for this tomorrow."';
+  assert.equal(quotesCheck(planted, BRIEF_FILES).met, false);
+  assert.equal(quotesCheck(planted, FILES).met, false);
+  // short named quote is checked
+  assert.deepEqual(quotesIn('Dana said: "Exports take forever."'), ['Exports take forever.']);
+  assert.equal(quotesCheck('Dana said: "Exports take forever."', BRIEF_FILES).met, false);
+  assert.deepEqual(quotesIn('Dana wrote "Exports take forever" today.'), ['Exports take forever']);
+  // named after the quote
+  for (const s of ['"Exports take forever," Dana said.', '"Exports take forever" said Dana.', '"Exports take forever" — Dana', '"Exports take forever", says the finance lead.']) {
+    assert.deepEqual(quotesIn(s).length, 1, s);
+  }
+  // two words are never enough, named or not
+  assert.deepEqual(quotesIn('Dana said: "Exports slow."'), []);
+  // unnamed but long: 8+ words with a letter
+  assert.deepEqual(quotesIn('The page shows "one two three four five six seven eight" somewhere.').length, 1);
+  assert.deepEqual(quotesIn('The page shows "one two three four five six seven" somewhere.'), []);
+  assert.equal(quotesCheck('The page reads "Pick the month you need to export here".', BRIEF_FILES).met, false);
 });

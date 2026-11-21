@@ -47,13 +47,28 @@ function blankCode(t) {
   return lines.join('\n').replace(/``[^`\n]+``|`[^`\n]+`/g, spaces);
 }
 
-/** Fix round 4: a quote counts from this many words; shorter quoted text (a button's label, "Jan 1 to Jan 31") is not checked. */
-export const QUOTE_MIN_WORDS = 5;
+/** A quote is checked when a person is named next to it and it has QUOTE_MIN_NAMED_WORDS words, or when it is long: QUOTE_MIN_LONG_WORDS
+ *  words that contain a letter (digits alone do not count). Shorter unnamed text (a button's label, "Jan 1 to Jan 31") is not checked. */
+export const QUOTE_MIN_NAMED_WORDS = 3;
+export const QUOTE_MIN_LONG_WORDS = 8;
+/** The verbs that name who is speaking: `Dana said: "…"`, `"…", says the finance lead`. */
+export const SPEECH_VERBS = Object.freeze(['said', 'says', 'wrote', 'writes', 'asked', 'told', 'explained', 'put it']);
+const VERBS = SPEECH_VERBS.join('|');
+const SPOKEN_BEFORE = new RegExp(String.raw`\S\s+(?:${VERBS})\s*[:,]?\s*$`, 'iu');   // "Dana said: ", "As one customer put it: "
+const LABEL_BEFORE = /(?:\p{Lu}[\p{L}'-]*|\))\s*:\s*$/u;   // "Dana: ", "Dana (finance lead): ": a capitalised name, or a bracket, then ":"
+const NAMED_AFTER = new RegExp(String.raw`^\s*[,.]?\s*(?:[—–-]+\s*\p{L}|(?:${VERBS})\s+\S|[\p{L}'-]+(?:\s+[\p{L}'-]+){0,4}\s+(?:${VERBS})\b)`, 'iu');   // ", Dana said", " said Dana", " — Dana"
+const letterWords = (s) => s.split(/\s+/).filter((w) => /\p{L}/u.test(w)).length;
 const tableLine = (t, at) => { const start = t.lastIndexOf('\n', at - 1) + 1; return /^\s*\|/.test(t.slice(start, start + 200)); };
+const isNamed = (t, open, close) => {
+  const lineStart = Math.max(t.lastIndexOf('\n', open) + 1, open - 120);
+  const lineEnd = t.indexOf('\n', close);
+  const before = t.slice(lineStart, open);
+  return SPOKEN_BEFORE.test(before) || LABEL_BEFORE.test(before) || NAMED_AFTER.test(t.slice(close + 1, Math.min(close + 80, lineEnd < 0 ? t.length : lineEnd)));
+};
 
-/** Text in double quotation marks of at least QUOTE_MIN_WORDS words. A quote never spans a blank line, a table row or a cell border
+/** Quoted text in double quotation marks that the rule above says to check. A quote never spans a blank line, a table row or a cell border
  *  ("|" on a table line); a " right after a digit is an inch or second mark (8.5" × 11"), never a quote mark; code is not prose. */
-export function quotesIn(text, { minWords = QUOTE_MIN_WORDS } = {}) {
+export function quotesIn(text) {
   const t = blankCode(straight(text).slice(0, MAX_SCAN));
   const out = [];
   let open = -1;
@@ -69,8 +84,9 @@ export function quotesIn(text, { minWords = QUOTE_MIN_WORDS } = {}) {
     if (ch !== '"' || /\d/.test(t[i - 1] || '')) continue;
     if (open < 0) { open = i; continue; }
     const q = t.slice(open + 1, i).trim();
+    const from = open;
     open = -1;
-    if (words(q) >= minWords) out.push(q);
+    if (letterWords(q) >= QUOTE_MIN_LONG_WORDS || (words(q) >= QUOTE_MIN_NAMED_WORDS && isNamed(t, from, i))) out.push(q);
   }
   return out;
 }
