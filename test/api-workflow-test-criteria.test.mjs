@@ -273,6 +273,26 @@ test('final review I2: DELETE of an example is 409 while a check of a test that 
   } finally { release(); await new Promise((r) => server.close(r)); }
 });
 
+test('fix round 2 (N5): a criteria check sends the changed frame when it starts (and when it ends); none while the flag is off', async () => {
+  const { registerWorkflowTestRoutes } = await import('../src/core/workflow-tests/routes.mjs');
+  const frames = [];
+  let release = () => {};
+  const { runner } = registerWorkflowTestRoutes(express(), { broadcast: (f) => frames.push(f),
+    deps: { criteriaJudge: { judgeMissing: () => new Promise((x) => { release = x; }), judgeTry: async () => [], leaveUnchecked() {} } } });
+  const run = { id: 987655, workflowId: 'wf_api_c', exampleIds: [] };
+  const done = runner.checkCriteriaLater(run);
+  assert.deepEqual(frames, [{ type: 'workflow-tests-changed', workflowId: 'wf_api_c', testRunId: run.id }], 'at the start: other tabs disable Test');
+  await new Promise((x) => setImmediate(x)); release(); await done;
+  assert.equal(frames.length, 2, 'and at the end');
+  const flags = process.env.WORCA_FLAGS;
+  delete process.env.WORCA_FLAGS;
+  try {
+    const quiet = runner.checkCriteriaLater(run);
+    await new Promise((x) => setImmediate(x)); release(); await quiet;
+    assert.equal(frames.length, 2, 'silent while the flag is off');
+  } finally { process.env.WORCA_FLAGS = flags; }
+});
+
 test('review: the overview says whether a check is running, and its latest test counts the criteria not checked', async () => {
   const o = await call('GET', WF);
   assert.equal(o.body.checking, false);

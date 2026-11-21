@@ -149,6 +149,7 @@ export function createTestRunner(deps) {
     busyCheck(run.workflowId);
     if (!deps.judgeMissing) throw err('this Worca cannot check criteria', 'BAD_REQUEST');
     checkingCriteria.set(run.workflowId, { id: Number(run.id), exampleIds: (run.exampleIds || []).map(Number) });
+    notify(run);   // fix round 2 (N5): another tab's list disables Test a version now (overview.checking), not at the next frame
     return Promise.resolve()
       .then(() => deps.judgeMissing(run, { stopped: () => false, overCap: () => overCap(run) }))
       .catch((e) => console.error(`[workflow-tests] could not check the criteria of test ${run.id}: ${msgOf(e)}`))
