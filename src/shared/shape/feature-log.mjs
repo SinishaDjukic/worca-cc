@@ -14,6 +14,14 @@ export const NOT_SPLIT_TEXT = 'Not split · planned as one run';
 export const REQUIREMENTS_AGREED = 'Requirements agreed';
 /** Shaper small runs B1 (D7): the one card's split receipt; the count lives in its state line. */
 export const RUNS_APPROVED = 'Runs approved';
+const KEPT_RE = / · (\d+) objections? kept\)/;
+/** Small runs B4 (D20): the approved Split's words, with the open objections a person kept. */
+export const runsApprovedText = (kept = 0) => (kept > 0 ? `${RUNS_APPROVED} · ${kept} objection${kept === 1 ? '' : 's'} kept` : RUNS_APPROVED);
+/** Small runs B4 (D20): what an outline ask's audit line adds after its round (" · 2 objections kept", parsed back by
+ *  KEPT_RE), and the count the pending-question stub keeps for it. '' and {} for every other ask. */
+export const outlineKeptNote = (stub, decision, value) => (decision === 'approve' && value?.openObjections === 'kept' && stub?.open > 0
+  ? ` · ${stub.open} objection${stub.open === 1 ? '' : 's'} kept` : '');
+export const outlineKeptStub = (plan) => (plan?.challenge?.open > 0 ? { open: plan.challenge.open } : {});
 const AWAY_KEPT_TEXT = 'Plan kept as written · by Away mode · please check';
 export function replanText(indexes) {
   const xs = [...indexes].sort((a, b) => a - b);
@@ -58,7 +66,9 @@ export function parseDecisionLine(text) {
   if (c) return { kind: 'care', decision: c[1], pick: c[2], ...(t.endsWith(' by night-mode.') ? { away: true } : {}) };
   for (const [kind, re] of LINES) {
     const m = re.exec(t);
-    if (m) return { kind, decision: m[1], ...(t.endsWith(' by night-mode.') ? { away: true } : {}) };
+    // Small runs B4 (D20): an approved Split names the objections it kept ("(round 1 · 2 objections kept)").
+    const kept = kind === 'outline' ? KEPT_RE.exec(t) : null;
+    if (m) return { kind, decision: m[1], ...(kept ? { kept: Number(kept[1]) } : {}), ...(t.endsWith(' by night-mode.') ? { away: true } : {}) };
   }
   return null;
 }
@@ -100,7 +110,7 @@ export function buildDecisionLog({ clarify = null, origin = [], sliced = false, 
         const care = { position: d.decision, worcaPick: d.pick === 'none' ? null : d.pick, chosenBy: d.decision === d.pick ? 'default' : 'person' };
         front.push({ key: 'care', run: null, text: byAway(careRecordLine(care), d), detail: [] });
       } else if (d.kind === 'outline') {
-        if (d.decision === 'approve' && sliced) out.push({ key, run: null, text: byAway(oneCard ? RUNS_APPROVED : splitText(slices.length), d), detail: slices.map((s) => `${s.index} · ${s.title}`) });
+        if (d.decision === 'approve' && sliced) out.push({ key, run: null, text: byAway(oneCard ? runsApprovedText(d.kept) : splitText(slices.length), d), detail: slices.map((s) => `${s.index} · ${s.title}`) });
         else if (d.decision === 'flat') out.push({ key, run: null, text: NOT_SPLIT_TEXT, detail: [] });
       } else if (d.kind === 'plan') {
         if (d.decision === 'revise') revises += 1;

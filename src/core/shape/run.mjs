@@ -12,6 +12,7 @@ import { normalizePicks } from '../../shared/review/findings.mjs';
 import { validateDecisionPicks } from '../../shared/review/decisions.mjs';
 import { splitRulesOptions, shaperSmallRunsOn } from './small-runs.mjs';
 import { answererProfileFor } from '../settings.mjs';
+import { splitApprovable, splitRefusedMessage } from './split-step.mjs';
 
 export const PLAN_ASK_KIND = 'plan';
 export const PLAN_FEEDBACK_MAX = 8000;
@@ -172,9 +173,13 @@ export function validatePlanAnswer(raw, { revisable = false, perspectives = null
   return { ok: true, payload: withPicks(payload) };
 }
 
-/** The outline ask's validator (L4). `outline` is the one asked about; edits are re-applied to it, never trusted. */
-export function validateOutlineAnswer(raw, { outline, revisable = false } = {}) {
+/** The outline ask's validator (L4). `outline` is the one asked about; edits are re-applied to it, never trusted.
+ *  Small runs B4: `rules` are the run's split rules (`splitRules`). With `rules.smallRuns` the `confirm` edit is
+ *  accepted, an approve is refused when a `waivable: false` row fails on the server's outline plus the edits (D12),
+ *  `approveEach` is forced false (D15), and `openObjections: 'kept'` is taken only when `open` objections remain (D14). */
+export function validateOutlineAnswer(raw, { outline, revisable = false, rules = {}, open = 0 } = {}) {
   const bad = (path, message) => ({ ok: false, errors: [{ path, code: 'invalid', message }] });
+  const smallRuns = rules?.smallRuns === true;
   const d = raw && typeof raw === 'object' ? raw.decision : undefined;
   if (d === 'flat' || d === 'stop') return { ok: true, payload: { decision: d } };
   if (d === 'revise') {
@@ -185,13 +190,25 @@ export function validateOutlineAnswer(raw, { outline, revisable = false } = {}) 
     return { ok: true, payload: { decision: 'revise', feedback } };
   }
   if (d !== 'approve') return bad('decision', 'decision must be approve, flat, revise or stop');
-  const e = normalizeEdits(raw.edits);
+  const e = normalizeEdits(raw.edits, { confirm: smallRuns });
   if (!e.ok) return bad('edits', e.error);
   const applied = applyOutlineEdits(outline, e.edits);
   if (!applied.ok) return bad('edits', applied.error);
   if (raw.approveEach !== undefined && typeof raw.approveEach !== 'boolean') return bad('approveEach', 'approveEach must be true or false');
-  return { ok: true, payload: { decision: 'approve', ...(e.edits.length ? { edits: e.edits } : {}), approveEach: raw.approveEach === true } };
+  if (raw.openObjections !== undefined && (raw.openObjections !== 'kept' || !smallRuns || !(open > 0))) {
+    return bad('openObjections', 'openObjections can only be "kept", and only while objections are open');
+  }
+  if (smallRuns) {
+    const gate = splitApprovable(outline, e.edits, rules);
+    if (!gate.ok) return { ok: false, errors: [{ path: 'decision', code: SPLIT_REFUSED_CODE, message: splitRefusedMessage(gate.failing) }] };
+  }
+  return { ok: true, payload: { decision: 'approve', ...(e.edits.length ? { edits: e.edits } : {}), approveEach: !smallRuns && raw.approveEach === true,
+    ...(raw.openObjections === 'kept' ? { openObjections: 'kept' } : {}) } };
 }
+
+export const SPLIT_REFUSED_CODE = 'split-not-approvable';
+
+export { splitRefusedMessage };
 
 /** state.shaping of a shaped run; `saved` is the resume point's copy (a resumed run keeps its versions). */
 export function initialShaping(shape, saved = null) {

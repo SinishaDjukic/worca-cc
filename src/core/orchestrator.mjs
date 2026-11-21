@@ -41,14 +41,16 @@ import { clarifyCounts, shapeScoreOf } from './shape/stats.mjs';
 import { PLAN_ASK_KIND, validatePlanAnswer, validateOutlineAnswer, renderPlanFeedback, SHAPING_FEEDBACK_PREVIEW } from './shape/run.mjs';
 import { createSliceFeature, retireFeaturesOf, earlierSliceChanges, featureClarify, featureNotes } from './shape/features.mjs';
 import { fileSha, planOutputOf } from './shape/outline-file.mjs';
-import { splitRulesOptions, smallRunsOfFeature, careOfFeature } from './shape/small-runs.mjs';
+import { splitRules, smallRunsOfFeature, careOfFeature } from './shape/small-runs.mjs';
+import { splitChallengePlan, normalizeChallenge, challengeBlock, runSplitChallenge, skipsPlanAfterSplit, splitRevisable, splitApproveError, keptObjections, splitAskFields, planReviewNode, CHALLENGER_LABEL, CHALLENGE_FILE_MAX_BYTES } from './shape/split-step.mjs';
 import { careStartAsk, careAnswerValidator } from './shape/care-start.mjs';
 import { careAuditLine } from './run-harness.mjs';
 import { careFactsOf, careModelRoles, CARE_LABELS } from '../shared/shape/feature-record.mjs';
 import { readRunPrAuto } from './pr-auto.mjs';
-import { checkSlices, applyOutlineEdits, normalizeOutline, settleLeftOut, sliceRequirementIds, OUTLINE_FILE, OUTLINE_CHANGE_FILE, OUTLINE_ROUNDS_MAX } from '../shared/shape/slices.mjs';
+import { checkSlices, applyOutlineEdits, normalizeOutline, settleLeftOut, sliceRequirementIds, OUTLINE_FILE, OUTLINE_CHANGE_FILE } from '../shared/shape/slices.mjs';
 import { onlyCriteria } from '../shared/review/requirements-coverage.mjs';
-import { DEFAULT_PERSPECTIVES } from '../shared/shape/perspectives.mjs';
+import { DEFAULT_PERSPECTIVES, perspectiveByKey } from '../shared/shape/perspectives.mjs';
+import { criterionPerspective } from '../shared/shape/requirements.mjs';
 import { normalizePlanConcern, planConcernFileName, concernFeedbackSection, requirementConcernOf, requirementConcernFeedbackSection } from '../shared/review/plan-concern.mjs';
 import { ensureHouseBrief } from './house-brief.mjs';
 import { extractChecklist } from '../shared/shape/checklist.mjs';
@@ -56,7 +58,7 @@ import { applyChecklist, checklistFindingsMarkdown, mergeReportedChecklists, nor
 import { REFINER_SINK, roleReviewOf, roleChecklistOf, runningRoles, rolesForRound, roleTaskId, roleRecord, findingsMarkdown, refinerVerdict, roleTargetOf, roleRoutingVerdict } from '../shared/graph/role-review-step.mjs';
 import { DISPOSITIONS_MAX_BYTES, applyDispositions, withCounts, normalizeConflicts, dispositionsPathFor, conflictClarifications, withClarifications } from '../shared/review/findings.mjs';
 import { currentPass } from '../shared/shape/role-review.mjs';
-import { criteriaCheck, criteriaList, criterionIds, coverageOf } from '../shared/review/coverage.mjs';
+import { criteriaCheck, criteriaList, criterionIds, coverageOf, criteriaExamples } from '../shared/review/coverage.mjs';
 import { normalizeDecisions, conflictDecisions, validateDecisionPicks, decisionClarifications } from '../shared/review/decisions.mjs';
 import { createScheduler, sliceExecutionId, QUIESCENCE_WARNING } from './graph/scheduler.mjs';
 import { sigkillGraceMs } from './engines/spawn.mjs';
@@ -1430,7 +1432,9 @@ export class GraphOrchestrator extends RunHarness {
       const outlineChange = await this._outlineChangeText();
       // Shaper s5 (D12): notes from the chat force the stop, like outlineChange.
       const notes = (await this._shapeSliceScope())?.notes || [];
-      if (sl && sl.index > 1) {
+      // B4 (D1): a marked run's slice 1 follows the slice-k rule once its Split was approved.
+      if (sl && (sl.index > 1 || skipsPlanAfterSplit({ smallRuns: this._shapeRec?.smallRuns === true, slice: sl,
+        outlineDecided: this.state.shaping?.outline?.decided }))) {
         // D19: plan once, confirm later: the plan stops only when its check fails or the planner says the slice
         // cannot be built as outlined. A missing check (null: it errored) stops too.
         if (check?.ok === true && !outlineChange && !notes.length && !concern) {
@@ -1714,9 +1718,17 @@ export class GraphOrchestrator extends RunHarness {
       const resuming = Boolean(ctx.resumeSessionId);
       // A file left from an earlier spawn must not be read as this Planner's outline. Keep it once a round was
       // asked (the loop re-asks that outline after a pause, F25) or when the paused session resumes.
-      if (!rounds.length && !resuming) await rm(file, { force: true });
+      // B4: an outline the Split's challenge already looked at is kept too.
+      const challenged = Boolean(this.state.shaping?.outline?.challenge?.rounds?.length);
+      if (!rounds.length && !resuming && !challenged) await rm(file, { force: true });
       out.shapeSlicing = { file, size: this.runShape?.size || null, ...(ctx.bindings?.requirements?.path ? { requirements: true } : {}),
-        ...splitRulesOptions() };
+        ...splitRules(this._shapeRec) };
+      // B4 (D9): a pause during an internal refine: this spawn is that refine, with the objections as its revise note.
+      const refining = this.state.shaping?.outline?.challenge?.refining;
+      if (refining && !rounds.length) {
+        out.shapeOutlineNote = { decision: 'revise', feedback: refining };
+        out.splitRefineRestored = true;
+      }
       // A pause during a revise spawn: put the person's feedback back, and the asked round's baseline (D11).
       const last = rounds[rounds.length - 1];
       if (last?.decision === 'revise') out.shapeSlicing.baseline = this._outlineBaseline();
@@ -1777,6 +1789,12 @@ export class GraphOrchestrator extends RunHarness {
     // A3: the split rules the Planner's prompt named (read once per spawn, into ctx.shapeSlicing), so they never disagree.
     const rules = ctx.shapeSlicing.smallRuns ? { smallRuns: true, care: ctx.shapeSlicing.care } : {};
     let classified = null;                                  // the spawn result whose outlineState was acted on
+    // B4 (D9): this execution's first spawn re-ran an internal refine a pause cut short: that refine is done.
+    if (ctx.splitRefineRestored && this.state.shaping?.outline?.challenge) {
+      this.state.shaping.outline.challenge.refining = null;
+      ctx.splitRefineRestored = false;
+      await this._persist();
+    }
     for (;;) {
       this._checkAbort();
       // D10: the executor classified the outline file after the spawn (outline-file.mjs); a feature-creation retry
@@ -1811,11 +1829,19 @@ export class GraphOrchestrator extends RunHarness {
       // An undecided last round is re-asked under its own number: after a pause (F25), or after a failed
       // feature creation (then with the -e<retry> suffix). Only a decided round moves the count on.
       const rounds = this.state.shaping?.outline?.rounds || [];
+      // B4 (D10): the roles challenge the split once per run, before the first Split ask. A refine may change the
+      // outline or plan it as one: the loop classifies its result again.
+      if (rules.smallRuns && !rounds.length && this.state.shaping && !this.state.shaping.outline?.challenge?.done) {
+        const ch = await this._splitChallenge(nc, ctx, file);
+        if (ch.result) result = ch.result;
+        continue;
+      }
       const last = rounds[rounds.length - 1];
       const reasked = Boolean(last && last.decision == null);
       const round = reasked ? last.round : rounds.length + 1;
-      const revisable = round < OUTLINE_ROUNDS_MAX;
       const check = checkSlices(outline, rules);
+      const revisable = splitRevisable(round, outline, rules);       // B4 (D19): a refused split stays revisable longer
+      const split = rules.smallRuns ? await this._splitAskFields(ctx) : null;
       const id = `plan-outline-${ctx.nodeId}-${round}${retry ? `-e${retry}` : ''}`;
       // D9: what was asked, so a revise spawn can tell an edited outline from an untouched one and a fresh plan from a stale one.
       this._shapingOutlineRound({ round, outline, check, sha: await fileSha(file), planSha: await fileSha(planOutputOf(ctx.outputs)) });
@@ -1824,8 +1850,9 @@ export class GraphOrchestrator extends RunHarness {
         id, kind: PLAN_ASK_KIND, nodeId: ctx.nodeId, executionId: ctx.executionId,
         plan: { nodeId: ctx.nodeId, port: 'outline', file, round, revisable, check,
           perspectives: this._shapePerspectives(), outline, ...(error ? { error } : {}), ...(carried ? { edits: carried } : {}),
-          ...(carriedEach === true ? { approveEach: true } : {}) },          // the card's switch as it was (D19: off by default)
-        validate: (r) => validateOutlineAnswer(r, { outline, revisable }),
+          ...(carriedEach === true ? { approveEach: true } : {}),          // the card's switch as it was (D19: off by default)
+          ...(split || {}) },
+        validate: (r) => validateOutlineAnswer(r, { outline, revisable, rules, open: split?.challenge.open || 0 }),
       }));
       this._checkAbort();
       const by = this.answeredBy(id);
@@ -1852,6 +1879,9 @@ export class GraphOrchestrator extends RunHarness {
         this._shapingOutlineDecision(round, { decision: 'flat' });
         return this._resumeOutline(nc, ctx, { decision: 'flat' });
       }
+      // B4 (D12): defence in depth: the validator already refused a split that fails a non-waivable rule.
+      const refusal = splitApproveError(outline, payload.edits, rules);
+      if (refusal) { error = refusal; carried = payload.edits?.length ? payload.edits : null; retry += 1; continue; }
       let feature;
       try {
         feature = createSliceFeature({
@@ -1877,6 +1907,8 @@ export class GraphOrchestrator extends RunHarness {
       await writeFile(file, JSON.stringify(applied.outline, null, 2) + '\n', 'utf8')
         .catch((err) => this._log('orchestrator', 'warn', `slices: cannot write the approved outline: ${err?.message || err}`));
       this._shapingOutlineDecision(round, payload);
+      const kept = keptObjections(payload, split);                    // B4 (D20): the decision round's kept count
+      if (kept) { const row = this.state.shaping?.outline?.rounds?.find((r) => r.round === round); if (row) row.openObjections = kept; }
       this.runShape = { ...this.runShape, slice: { feature: feature.id, index: 1, total: feature.total, outline: applied.outline } };
       if (this.state.shaping) this.state.shaping.feature = { id: feature.id, index: 1, total: feature.total };
       this._sliceScopeCache = null;
@@ -2023,16 +2055,79 @@ export class GraphOrchestrator extends RunHarness {
   }
 
   /** Resume the Planner's session with the decision (F2: the prompt is rebuilt from ctx on every spawn). */
-  async _resumeOutline(nc, ctx, payload) {
+  async _resumeOutline(nc, ctx, payload, { baseline } = {}) {
     const d = payload?.decision;
     // D9: the outline file stays for the Planner to edit; the asked round's shas tell an edit from an untouched file.
-    if (d === 'revise') ctx.shapeSlicing.baseline = this._outlineBaseline();
+    // B4: an internal refine (no person round yet) passes the shas it was asked about.
+    if (d === 'revise') ctx.shapeSlicing.baseline = baseline !== undefined ? baseline : this._outlineBaseline();
     else { ctx.shapeSlicing = null; this._slicingDone = true; this._outlineRevise = null; }
     ctx.shapeOutlineNote = d === 'flat' ? { decision: 'flat' } : d === 'revise' ? { decision: 'revise', feedback: payload.feedback } : null;
     if (d === 'approve') ctx.shapeSliceScope = await this._shapeSliceScope();
     const step = this.state.steps.find((s) => s.key === ctx.executionId);
     if (step?.sessionId) ctx.resumeSessionId = step.sessionId;
     return this._runNodeAttempts(nc, ctx);
+  }
+
+  /** B4 (D10): the Split's challenge loop, its state in `state.shaping.outline.challenge`, persisted after each step.
+   *  No plan role-review node in the workflow: the loop is skipped and audited. Returns the last refine's result. */
+  async _splitChallenge(nc, ctx, file) {
+    const o = this.state.shaping.outline || (this.state.shaping.outline = { rounds: [], decided: null });
+    const challenge = o.challenge || (o.challenge = { rounds: [], refining: null, done: false });
+    const node = planReviewNode(this.resolved?.template);
+    if (!node) {
+      challenge.done = true;
+      await appendAudit(this.pipeline.dir, 'Split not challenged: this workflow has no plan review step.').catch(() => {});
+      await this._persist();
+      return { flat: false, result: null };
+    }
+    const plan = splitChallengePlan(this._shapeRec?.care?.position, { picked: this._runPickedRoles() || [], lead: this.runShape?.lead || null });
+    return runSplitChallenge({
+      plan, challenge,
+      spawn: (r, prior) => this._challengeSplit(node, ctx, r, plan, prior),
+      resume: async (feedback) => {
+        const baseline = { sha: await fileSha(file), planSha: await fileSha(planOutputOf(ctx.outputs)) };
+        const result = await this._resumeOutline(nc, ctx, { decision: 'revise', feedback }, { baseline });
+        return { flat: result?.outlineState === 'flat', result };
+      },
+      persist: () => this._persist(),
+      audit: (text) => appendAudit(this.pipeline.dir, text).catch(() => {}),
+    });
+  }
+
+  /** B4 (D8): one challenge round: ONE spawn of the plan role-review node's agent and model, as a non-task slice under
+   *  the Planner's execution. Its config loses `roleReview` (no verdict brief) and gains the challenge block as
+   *  promptHints; `nc.meta` is never written. The one output is split-challenge-r.json in the pipeline dir. */
+  async _challengeSplit(roleNode, ctx, r, plan, prior) {
+    const nc = (this.resolved.nodeCtx || {})[roleNode.id] || { nodeId: roleNode.id, kind: roleNode.kind, key: roleNode.key };
+    const out = join(this.pipeline.dir, `split-challenge-${r}.json`);
+    await rm(out, { force: true });
+    const { roleReview: _drop, ...rest } = roleNode.config || {};
+    const brief = challengeBlock({ file: ctx.shapeSlicing?.file || join(this.pipeline.dir, OUTLINE_FILE), out,
+      requirements: ctx.bindings?.requirements?.path || null, round: r, roles: plan.roles, challenger: plan.challenger, prior });
+    const node = { ...roleNode, config: { ...rest, promptHints: brief } };
+    const taskId = `split-challenge-${r}`;
+    const c = this._execCtx(node, nc, { executionId: sliceExecutionId(ctx.executionId, taskId), ordinal: r,
+      slice: { id: taskId }, parentExecutionId: ctx.executionId, bindings: {} });
+    c.ports = { ...(c.ports || {}), inputs: [], outputs: [] };
+    c.outputs = {};
+    c.verdict = null;
+    const labels = [...plan.roles.map((k) => perspectiveByKey(k)?.label || k), ...(plan.challenger ? [CHALLENGER_LABEL] : [])];
+    await appendAudit(this.pipeline.dir, `Split challenge round ${r}: ${labels.join(', ')} on ${c.claudeOpts?.model || 'the default model'}.`).catch(() => {});
+    const result = await this._runNodeAttempts(nc, c);
+    await this._afterExecution(nc, c, result);
+    let raw = null;
+    try { if ((await stat(out)).size <= CHALLENGE_FILE_MAX_BYTES) raw = JSON.parse(await readFile(out, 'utf8')); } catch { raw = null; }
+    return normalizeChallenge(raw, { roles: plan.roles, challenger: plan.challenger });
+  }
+
+  /** B4: what the Split ask adds under the marker (split-step.mjs splitAskFields); the agreed list is the requirements
+   *  input's. */
+  async _splitAskFields(ctx) {
+    const path = ctx.bindings?.requirements?.path;
+    const text = path ? await readFile(path, 'utf8').catch(() => '') : '';
+    return splitAskFields({ position: this._shapeRec?.care?.position, picked: this._runPickedRoles() || [], lead: this.runShape?.lead || null,
+      agreed: criteriaList(text), examples: criteriaExamples(text), challenge: this.state.shaping?.outline?.challenge,
+      roleOf: (id) => perspectiveByKey(criterionPerspective(id, { smallRuns: true }))?.label || null });
   }
 
   /** L6: what a slice ticket's request copies from this run (F11). `sliceRequest` moves `model` into

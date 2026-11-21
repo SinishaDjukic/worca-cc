@@ -4,8 +4,7 @@
 // submit of their own: the plan card's Approve carries the picks. Small runs B3: the Requirements card's one fold per
 // role (buildRequirementRoleFolds).
 import { roleSummaries, reviewedLine, currentPass } from '../../../src/shared/shape/role-review.mjs';
-import { fold, buildCheckFold, buildCheckRows } from './check-row.mjs';
-import { icon } from '../icons.mjs';
+import { fold, buildCheckFold, buildCheckRows, checkMark } from './check-row.mjs';
 import { perspectiveByKey } from '../../../src/shared/shape/perspectives.mjs';
 
 const el = (doc, tag, cls, text) => { const e = doc.createElement(tag); if (cls) e.className = cls; if (text != null) e.textContent = text; return e; };
@@ -124,7 +123,7 @@ export function buildConflictCards(doc, roleReviews, { labelOf = (k) => k } = {}
  * @returns {{ el: HTMLElement, folds: Array<{ key: string, line: HTMLElement, rows: HTMLElement, setLead(on: boolean): void }>, setPlain(on: boolean): void }}
  */
 export function buildRequirementRoleFolds(doc, groups) {
-  const box = el(doc, 'div', 'shape-role-folds');
+  const box = el(doc, 'div', 'shape-role-folds srows');   // the shared row layout (shape-it.css .srows)
   const folds = (Array.isArray(groups) ? groups : []).map((g) => {
     const state = Object.hasOwn(FOLD_MARK_WORDS, g.state) ? g.state : 'clean';
     const findings = Array.isArray(g.findings) ? g.findings : [];
@@ -137,8 +136,7 @@ export function buildRequirementRoleFolds(doc, groups) {
       },
       open: state !== 'clean',
     });
-    const mark = el(doc, 'span', `plan-check-mark${state === 'clean' ? ' ok' : ''}`);
-    if (state === 'clean') mark.appendChild(icon(doc, 'check', 12)); else mark.textContent = '?';
+    const mark = checkMark(doc, state === 'clean' ? 'check' : '?', state === 'clean' ? ' ok' : '');
     mark.setAttribute('aria-hidden', 'true');
     const name = el(doc, 'span', 'shape-role-fold-name');
     const nameText = el(doc, 'span', '', g.label);

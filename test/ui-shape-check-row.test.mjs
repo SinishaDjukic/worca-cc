@@ -182,3 +182,13 @@ test('buildCheckRows note: shown on a passing row; .sr-only is the id only; with
   const [q] = buildCheckRows(doc, { items: [{ id: 'R-sec-1', label: 'x', pass: true, note: 'in question: the decision above', mark: '?' }] });
   assert.equal(q.querySelector('.plan-check-mark').textContent, '?');
 });
+
+test('a row item with an `action` ends with that button; a row without one is unchanged', () => {
+  const action = doc.createElement('button');
+  action.textContent = 'Ask the role to confirm';
+  const [withAction, plain] = buildCheckRows(doc, { items: [{ ...item('a', false, 'why'), action }, item('b', false, 'why')] });
+  assert.equal(withAction.lastElementChild, action);
+  const [ref] = buildCheckRows(doc, { items: [item('b', false, 'why')] });
+  assert.equal(plain.outerHTML, ref.outerHTML);
+  assert.equal(plain.querySelector('button'), null);
+});

@@ -310,3 +310,28 @@ test('B2 oneCardModel: S0 needs-you for an open care ask, S0 working for a marke
   const s2 = oneCardModel({ own: shapingOwn(), card: { ...marked(null, [CARE_LINE]), care: { position: 'lean' } } });
   assert.equal(s2.state, 'S2', 'after Start, the roles write the requirements');
 });
+
+// Small runs B4 (D12): the host's bar reads the card's foot; a refused Split gives it no primary to mirror.
+test('B4: the bar draws no primary while the Split is refused, and Approve again once it passes', async () => {
+  const { renderOutlineBody } = await import('../ui/public/shape/outline-body.mjs');
+  const { answerFieldOpen, stepTitle } = await import('../ui/public/shape/step-card.mjs');
+  const d = new JSDOM('<!doctype html><body></body>').window.document;
+  const sl = (id, requirements) => ({ id, title: `Run ${id}`, goal: 'g', inScope: [], outOfScope: [], acceptance: ['GET /x returns 200'], dependsOn: [], estimate: 'medium', requirements });
+  const agreed = ['R-po-1', 'R-qa-1'].map((id) => ({ id, text: id }));
+  const outline = { why: 'w', slices: [sl('s1', ['R-po-1']), sl('s2', ['R-po-1'])], agreed, leftOut: [] };
+  const pq = { id: 'plan-outline-n_plan-1', kind: 'plan', plan: { round: 1, revisable: true, outline, smallRuns: true, care: 'balanced',
+    challenge: { roles: [], challenger: true, rounds: 0, open: 0 } } };
+  const root = d.createElement('div');
+  const panel = d.createElement('div'); panel.className = 'qpanel'; root.appendChild(panel);
+  renderOutlineBody(panel, pq, { doc: d, title: stepTitle(pq), chip: 'Runs', submit: async () => true, confirm: async () => true });
+  assert.equal(stepTitle(pq), 'Your turn: fix the split');
+  assert.equal(answerFieldOpen(root), true, 'refused: the bar keeps Answer plain');
+  assert.equal(root.querySelector('.plan-actions .btn-primary'), null);
+  const ok = { ...pq, plan: { ...pq.plan, outline: { ...outline, slices: [sl('s1', ['R-po-1']), sl('s2', ['R-qa-1'])] } } };
+  const root2 = d.createElement('div');
+  const panel2 = d.createElement('div'); panel2.className = 'qpanel'; root2.appendChild(panel2);
+  renderOutlineBody(panel2, ok, { doc: d, title: stepTitle(ok), chip: 'Runs', submit: async () => true, confirm: async () => true });
+  assert.equal(stepTitle(ok), 'Your turn: approve the runs');
+  assert.equal(answerFieldOpen(root2), false);
+  assert.equal(root2.querySelector('.plan-actions .btn-primary').textContent, 'Approve 2 runs');
+});

@@ -1342,3 +1342,42 @@ shipT('B1: a marked feature\'s thread holds one card block; no Ship card is post
   assert.equal(currentFeatureId(w.f.id), succ.id);
   assert.equal(cardBlocks(succ.id).length, 1, 'after a re-plan');
 });
+
+// Small runs B4 (D12): both answer routes refuse an approve of a split failing a non-waivable rule, through the real
+// validator of a real mock run held at the Split (WORCA_MOCK_SPLIT_OUTLINE picks the broken rule).
+test('B4: POST /api/answer and /api/runs/:id/answer answer 422 split-not-approvable per Care × rule; the Split stays open, no feature', async () => {
+  const { createOrchestrator } = await import('../src/core/orchestrator.mjs');
+  const { resolveShapeRequest } = await import('../src/core/shape/run.mjs');
+  for (const position of ['lean', 'balanced', 'thorough']) {
+    for (const outline of ['coverage', 'ownership', 'confirmRole']) {
+      await withEnvVars({ WORCA_FLAGS: 'shaperSmallRuns', WORCA_MOCK_SPLIT_OUTLINE: outline }, async () => {
+        const req = resolveShapeRequest({ shape: { size: 'large', lead: 'security' } }, { smallRuns: true });
+        const orch = createOrchestrator({ projectDir: gitDir('b4-server'), workflowId: req.workflowId, prompt: 'Plan this in slices: demo',
+          claude: { mock: true }, shape: req.shape });
+        const held = new Promise((resolve) => orch.on('question', (q) => {
+          if (q.kind === 'care') setImmediate(() => orch.answer(q.id, { care: { position } }));
+          else if (q.kind === 'plan' && q.plan?.outline) resolve(q);
+          else if (q.kind === 'plan') setImmediate(() => orch.answer(q.id, { decision: 'approve' }));
+          else setImmediate(() => orch.answer(q.id, { answers: [] }));
+        }));
+        const done = orch.run();
+        const q = await held;
+        const runId = `b4-${position}-${outline}`;
+        runs.set(runId, { id: runId, kind: 'run', status: 'running', events: [], orch, pendingQuestion: q });
+        try {
+          for (const r of [await post('/api/answer', { runId, id: q.id, payload: { decision: 'approve' } }),
+            await post(`/api/runs/${runId}/answer`, { id: q.id, decision: 'approve' })]) {
+            assert.equal(r.status, 422, `${position} ${outline}`);
+            const body = await r.json();
+            assert.equal(body.errors[0].code, 'split-not-approvable', `${position} ${outline}`);
+            assert.match(body.errors[0].message, new RegExp(`${outline} R-`));
+          }
+          assert.equal(orch.pendingQuestion?.id, q.id, 'the Split stays open');
+          assert.equal(getDb().prepare('SELECT id FROM shape_features WHERE origin_pipeline_id = ?').get(orch.getState().id), undefined);
+          orch.answer(q.id, { decision: 'stop' });
+          assert.equal((await done).status, 'stopped');
+        } finally { runs.delete(runId); }
+      });
+    }
+  }
+});

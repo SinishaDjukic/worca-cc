@@ -172,6 +172,35 @@ None of the checks blocks approval. On the card:
   does so for the failing checks. The outline is revised at most 3 times.
 - **Stop**, in ⋯, ends the run.
 
+**The Split step, with small runs on.** A run started with the `shaperSmallRuns` flag asks three times before it
+builds: Start (Care), Requirements, and the Split. Before the Split is shown, the roles challenge the cut once per run:
+the run's roles and, at Balanced and Thorough, the **Challenger** (the Devil's advocate perspective). Each round is
+one spawn of the plan review step's agent. The objections go back to the Planner's own session, which refines the
+outline once per round that raised any. Care sets the rounds and the run size:
+
+| Care | Challenge rounds | Challenger | Requirements per run |
+| --- | --- | --- | --- |
+| Lean | 1 | no | 1 to 3 |
+| Balanced | 1 | yes | 1 to 3 |
+| Thorough | up to 3, stopping on a round with no objection | yes | 1 to 2 |
+
+A workflow with no plan review step is not challenged, and the card says `Not challenged: no review step in this
+workflow`. The card shows each run as one fold row: its title and requirement ids, then **Owns**, **Starts from** and
+**Checked by** when unfolded. The checks fold and one challenge fold follow (`Challenged by 3 roles and the Challenger ·
+1 change`), then the Care chosen at the start. There is no "Ask me before each run" switch: runs follow one after
+another. Objections still open after the last round are one question, **Keep the split** or **Ask for changes**, and
+approving over them is recorded as `Runs approved · 2 objections kept`.
+
+Three rules cannot be waived: every requirement owned by one run only (ownership), owned or confirmed by a person
+(coverage), and every confirmation naming an allowed role (confirmRole). When one fails, the card reads `Your turn: fix
+the split`, the failing rows (one per rule and requirement) lead the open checks fold, and there is no Approve, on the
+card or in the bar. A confirmRole row offers **Ask the role to confirm**, a menu of the roles that confirm at Ship.
+Coverage and ownership clear only through **Ask for changes**. The server refuses such an approve too, from the card,
+Away mode or the API: `422` with `errors[0].code` `split-not-approvable` and a message naming the rules and ids. A
+refused split stays revisable for 5 rounds; after that the card says `Too many rounds: plan it as one or stop`. Away mode
+waits while objections are open. Once the Split is approved, run 1 continues with no plan approval unless its plan
+check fails, the chat added notes, or a reviewer raised a requirement concern.
+
 **One run, branch and PR per slice.** Approving the outline creates the feature and
 one scheduled run for each later slice. Each slice runs the same shaped workflow on
 its own: plan, your approval, build, review. Slice k starts from slice k-1's branch

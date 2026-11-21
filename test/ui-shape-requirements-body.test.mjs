@@ -606,13 +606,14 @@ test('owner direction (R-id column): the column follows the lead once loadAnswer
 test('owner direction (detail alignment): a fixed id column; label and detail each stay whole, the detail wraps under the label', () => {
   const css = readFileSync(new URL('../ui/public/shape/shape-it.css', import.meta.url), 'utf8').replace(/\/\*[\s\S]*?\*\//g, '');
   const rule = (sel) => (css.match(new RegExp(`${sel.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\{([^}]*)\\}`)) || [])[1] || '';
-  assert.match(rule('.shape-role-fold .plan-check-id'), /flex:none/);
-  assert.match(rule('.shape-role-fold .plan-check-id'), /min-width:5\.4em/);
-  const text = rule('.shape-role-fold .plan-check-text');
+  // Owner direction d5c0afe48: the one shared row layout (.srows) draws the role folds' rows.
+  assert.match(rule('.srows .plan-check-id'), /flex:none/);
+  assert.match(rule('.srows .plan-check-id'), /width:var\(--row-id\)/);
+  const text = rule('.srows .plan-check-text');
   assert.match(text, /display:flex/);
   assert.match(text, /flex-wrap:wrap/);
   // Neither grows nor shrinks, and neither is wider than the line: the detail sits beside the label only when both fit.
-  const parts = rule('.shape-role-fold .plan-check-text>:is(.plan-check-label,.plan-check-detail)');
+  const parts = rule('.srows .plan-check-text > :is(.plan-check-label,.plan-check-detail)');
   assert.match(parts, /flex:0 0 auto/);
   assert.match(parts, /max-width:100%/);
 });

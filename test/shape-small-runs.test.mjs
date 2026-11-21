@@ -13,7 +13,7 @@ import { projectKey } from '../src/core/store.mjs';
 import { getTicket } from '../src/core/scheduler.mjs';
 import { createSliceFeature, featureView } from '../src/core/shape/features.mjs';
 import { checkSlices } from '../src/shared/shape/slices.mjs';
-import { shaperSmallRunsOn, splitRulesOptions, smallRunsAtStart, smallRunsOfPipeline, smallRunsOfFeature, careOfPipeline, careOfFeature } from '../src/core/shape/small-runs.mjs';
+import { shaperSmallRunsOn, splitRulesOptions, splitRules, smallRunsAtStart, smallRunsOfPipeline, smallRunsOfFeature, careOfPipeline, careOfFeature } from '../src/core/shape/small-runs.mjs';
 import { buildShapeStats, shapeRecordFrom } from '../src/core/shape/stats.mjs';
 import { resolveShapeRequest } from '../src/core/shape/run.mjs';
 
@@ -118,6 +118,14 @@ test('the shared slices module never reads a flag', () => {
   const src = readFileSync(new URL('../src/shared/shape/slices.mjs', import.meta.url), 'utf8');
   assert.ok(!src.includes('flagEnabled'));
   assert.ok(!/flags\.mjs/.test(src));
+});
+
+test('splitRules (B4 D3): {} without the marker; the raw Care position with it', () => {
+  assert.deepEqual(splitRules(null), {});
+  assert.deepEqual(splitRules({ smallRuns: false, care: { position: 'thorough' } }), {});
+  assert.deepEqual(splitRules({ smallRuns: true, care: { position: 'thorough' } }), { smallRuns: true, care: 'thorough' });
+  assert.deepEqual(splitRules({ smallRuns: true, care: { position: 'bogus' } }), { smallRuns: true, care: 'bogus' });
+  assert.deepEqual(splitRules({ smallRuns: true }), { smallRuns: true, care: undefined });
 });
 
 test('splitRulesOptions: {} by default, {smallRuns:true, care:\'balanced\'} with the injected reader on', () => {

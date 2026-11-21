@@ -48,7 +48,7 @@ const isOutline = (q) => q.kind === 'plan' && q.plan?.outline;
 
 /** Start a mock run in slicing mode. Outline asks go to `onOutline(q, orch)`, other plan asks to `onPlan`. */
 function start(opts = {}, onOutline = () => {}, onPlan = (q, orch) => orch.answer(q.id, { decision: 'approve' })) {
-  const { afterSpawn, beforeSpawn, ...rest } = opts;
+  const { afterSpawn, beforeSpawn, position, ...rest } = opts;
   opts = rest;
   const dir = opts.projectDir || gitDir('slices');
   const orch = createOrchestrator({ projectDir: dir, workflowId: 'wf_shape', prompt: PROMPT, claude: { mock: true }, shape: SHAPE, ...opts });
@@ -71,7 +71,7 @@ function start(opts = {}, onOutline = () => {}, onPlan = (q, orch) => orch.answe
   orch.on('exec', (e) => execs.push(e));
   orch.on('question', (q) => {
     // Shaper small runs B2: a marked run's Start step takes Worca's Care pick.
-    if (q.kind === 'care') { setImmediate(() => orch.answer(q.id, { care: { position: q.care.pick.position } })); return; }
+    if (q.kind === 'care') { setImmediate(() => orch.answer(q.id, { care: { position: position || q.care.pick.position } })); return; }
     if (isOutline(q)) { outlines.push(q); setImmediate(() => onOutline(q, orch)); return; }
     if (q.kind === 'plan') { plans.push(q); setImmediate(() => onPlan(q, orch)); return; }
     if (q.kind === 'clarify' || q.kind === 'questions') setImmediate(() => orch.answer(q.id, { answers: [] }));
@@ -663,3 +663,40 @@ test('A3 flag off: the same outline fails count, and ctx.shapeSlicing keys are d
   assert.deepEqual(keys, ['file', 'size']);
 });
 
+
+// Small runs B4 (D3): the split rules follow the run's marker and Care, never the live flag.
+test('B4: ctx.shapeSlicing.care is the run\'s Care and the Planner prompt names its cap (3, 3, 2)', async () => {
+  const { _testing } = await import('../src/core/graph/executor.mjs');
+  const { runClaude } = await import('../src/core/claude-runner.mjs');
+  const prev = process.env.WORCA_FLAGS;
+  process.env.WORCA_FLAGS = 'shaperSmallRuns';
+  try {
+    for (const [position, cap] of [['lean', 3], ['balanced', 3], ['thorough', 2]]) {
+      const prompts = [];
+      _testing.runClaude = (o) => { prompts.push(o.prompt); return runClaude(o); };
+      let care = null;
+      const h = start({ position, beforeSpawn: (nc, ctx) => { if (ctx.shapeSlicing && care === null) care = ctx.shapeSlicing.care; } },
+        (q, orch) => orch.answer(q.id, { decision: 'stop' }));
+      assert.equal((await h.done).status, 'stopped');
+      assert.equal(care, position);
+      assert.ok(prompts.some((p) => p.includes(`each owns 1 to ${cap} agreed requirements`)), position);
+    }
+  } finally {
+    _testing.runClaude = null;
+    if (prev === undefined) delete process.env.WORCA_FLAGS; else process.env.WORCA_FLAGS = prev;
+  }
+});
+
+test('B4: a run started with the flag off keeps dev\'s rules when the flag turns on mid-run', async () => {
+  const prev = process.env.WORCA_FLAGS;
+  delete process.env.WORCA_FLAGS;
+  try {
+    const h = start({ beforeSpawn: (nc) => { if (nc.key === 'planner') process.env.WORCA_FLAGS = 'shaperSmallRuns'; } },
+      (q, orch) => orch.answer(q.id, { decision: 'stop' }));
+    assert.equal((await h.done).status, 'stopped');
+    assert.deepEqual(h.spawns.find((x) => x.slicing).slicingKeys, ['file', 'size']);
+    assert.equal(h.outlines[0].plan.check.items.some((i) => i.id === 'count'), true, 'dev\'s check');
+  } finally {
+    if (prev === undefined) delete process.env.WORCA_FLAGS; else process.env.WORCA_FLAGS = prev;
+  }
+});

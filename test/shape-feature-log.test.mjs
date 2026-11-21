@@ -3,7 +3,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { buildDecisionLog, parseDecisionLine, clarifyText, planApprovedText, splitText, gateText, replanText, NOT_SPLIT_TEXT,
-  roundText, roundOutcomeText, REQUIREMENTS_AGREED, RUNS_APPROVED }
+  roundText, roundOutcomeText, REQUIREMENTS_AGREED, RUNS_APPROVED, outlineKeptNote, outlineKeptStub }
   from '../src/shared/shape/feature-log.mjs';
 
 const SLICES = [1, 2, 3].map((i) => ({ index: i, title: `Part ${i}`, goal: `Goal ${i}`, acceptance: [`ok ${i}`] }));
@@ -150,4 +150,26 @@ test('B2: parseDecisionLine reads the Care line; the log leads with careRecordLi
   assert.deepEqual(pick.map((l) => l.text), ["Care: Thorough · Worca's pick"]);
   const sliced = buildDecisionLog({ sliced: true, slices: SLICES, origin: ["Care **balanced** · Worca's pick **balanced**.", 'Slice outline **approve** (round 1).'], oneCard: true });
   assert.equal(sliced[0].text, "Care: Balanced · Worca's pick");
+});
+
+test('B4 (D20): the one card reads "Runs approved · 2 objections kept" for a Split approved over 2 open objections', () => {
+  const origin = ['Requirements approval **approve**.', 'Slice outline **approve** (round 1 · 2 objections kept).'];
+  const one = buildDecisionLog({ sliced: true, slices: SLICES, origin, oneCard: true });
+  assert.equal(one.at(-1).text, 'Runs approved · 2 objections kept');
+  const single = buildDecisionLog({ sliced: true, slices: SLICES, origin: ['Slice outline **approve** (round 2 · 1 objection kept).'], oneCard: true });
+  assert.equal(single.at(-1).text, 'Runs approved · 1 objection kept');
+  assert.equal(buildDecisionLog({ sliced: true, slices: SLICES, origin: [origin[1]] }).at(-1).text, 'Split into 3 runs', 'dev keeps splitText');
+});
+
+test('fit-1-2: the outline audit line\'s kept note and the pending stub\'s count come from the Shaper module', () => {
+  const stub = { outline: true, round: 1, ...outlineKeptStub({ challenge: { open: 2 } }) };
+  assert.equal(stub.open, 2);
+  assert.deepEqual(outlineKeptStub({ challenge: { open: 0 } }), {});
+  assert.deepEqual(outlineKeptStub({}), {});
+  assert.equal(outlineKeptNote(stub, 'approve', { openObjections: 'kept' }), ' · 2 objections kept');
+  assert.equal(outlineKeptNote({ open: 1 }, 'approve', { openObjections: 'kept' }), ' · 1 objection kept');
+  assert.equal(outlineKeptNote(stub, 'approve', {}), '');
+  assert.equal(outlineKeptNote(stub, 'revise', { openObjections: 'kept' }), '');
+  // parseDecisionLine reads the note back (D20)
+  assert.equal(parseDecisionLine(`Slice outline **approve** (round 1${outlineKeptNote(stub, 'approve', { openObjections: 'kept' })}).`).kept, 2);
 });

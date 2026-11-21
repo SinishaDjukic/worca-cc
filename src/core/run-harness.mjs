@@ -166,6 +166,7 @@ import { nightState, decideDelayMs, nightAnchorMs, runAllowed } from './night/ac
 import { decideAsk } from './night/decider.mjs';
 import { planRule } from './night/strategies.mjs';
 import { PLAN_ASK_KIND, initialShaping } from './shape/run.mjs';
+import { outlineKeptNote, outlineKeptStub } from '../shared/shape/feature-log.mjs';
 import { runNightAnalysis, readMemoryText } from './night/analysis.mjs';
 import { resolveDeciderPair } from './night/decider-model.mjs';
 import { writeNightDecision, countNightDecisions, nightCounts, nightGateCycles, nightSpendSinceUsd } from './night/store.mjs';
@@ -1406,7 +1407,7 @@ export class RunHarness extends EventEmitter {
     if (pq.kind === 'workflow') line = `Workflow proposal **${d === 'decline' ? 'declined' : d || 'answered'}**`;
     else if (pq.kind === 'gate') line = `Gate **${d || 'answered'}**`;
     else if (pq.kind === 'recovery') line = `Recovery decision **${d || 'answered'}**`;
-    else if (pq.kind === PLAN_ASK_KIND && pq.plan?.outline) line = `Slice outline **${d || 'answered'}** (round ${pq.plan.round || 1})`;
+    else if (pq.kind === PLAN_ASK_KIND && pq.plan?.outline) line = `Slice outline **${d || 'answered'}** (round ${pq.plan.round || 1}${outlineKeptNote(pq.plan, d, value)})`;
     else if (pq.kind === PLAN_ASK_KIND && pq.concern) line = `Plan concern **${d === 'revise' ? 'accepted' : d === 'approve' ? 'overridden' : d || 'answered'}**`;
     // B1 (D6): a marked run's requirements approval names its own step ("Requirements agreed" on the one card).
     else if (pq.kind === PLAN_ASK_KIND && pq.plan?.requirements && this._shapeRec?.smallRuns) line = `Requirements approval **${d || 'answered'}**`;
@@ -6629,7 +6630,7 @@ export class RunHarness extends EventEmitter {
         // An outline ask keeps its marker and round, so _auditDecision can word its answer (F38); a requirements ask its
         // marker (B1, D6: isRequirementsAsk's predicate).
         this.pendingQuestion = { id, kind, resolve: resolveP, reject: rejectP, validate: typeof validate === 'function' ? validate : null,
-          ...(plan && plan.outline ? { plan: { outline: true, round: plan.round } }
+          ...(plan && plan.outline ? { plan: { outline: true, round: plan.round, ...outlineKeptStub(plan) } }
             : plan && (plan.criteria || plan.error) ? { plan: { requirements: true } } : {}),
           ...(concern ? { concern: true } : {}), ...(care ? { care } : {}) };
         // A throw inside a Promise executor REJECTS the ask (and fails the node): night mode

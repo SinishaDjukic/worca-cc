@@ -192,6 +192,7 @@ The **Auto** workflow option is available for both targets — a project and a w
 | Plan approval: Open in New run | A |
 | Split approval (Plan in runs): one step card — head (title + Runs chip), the runs, the outline check, Ask for changes / Approve N runs / ⋯ (Fix all, Don't split, Stop) | all (rule 1) |
 | Split extras: per-run ⋯ (Merge with next, Remove), Undo edits, "Ask me before each run" | S |
+| Split with small runs: one fold row per run (Owns, Starts from, Checked by), the challenge fold, the open-objections question, the Care row, "Ask the role to confirm" on a refused split; no "Ask me before each run" | all (rule 1) |
 | Run page Overview: Perspective checklists (Shaper, gated): the latest review cycle as one summary line, unmet items open with their evidence, met items behind "Show N met items", earlier cycles behind "Earlier cycles" | S |
 | Run page: usage-limit notice (reset time, Resume at HH:MM, Cancel) | S |
 | Runs list / glance: "resets HH:MM" / "resumes HH:MM" | S |

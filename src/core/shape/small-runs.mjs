@@ -16,6 +16,13 @@ export function splitRulesOptions(deps = {}) {
   return shaperSmallRunsOn(deps) ? { smallRuns: true, care: CARE_DEFAULT.position } : {};
 }
 
+/** B4 (D3): the split rules of a run, from its small-runs marker and the Care saved at Start (`shapeRec`, the
+ *  orchestrator's `_shapeRec`): `{ smallRuns: true, care }` with the marker (the raw position: checkSlices and
+ *  slicingBlock normalise it), `{}` without. Never reads the live flag. */
+export function splitRules(shapeRec) {
+  return shapeRec?.smallRuns === true ? { smallRuns: true, care: shapeRec.care?.position } : {};
+}
+
 /** Shaper small runs B1 (D1): whether a new shaped planning run is stamped. The live flag at start, or the stamp of the
  *  feature a re-plan run replaces (a marked feature stays marked whatever the flag says now). */
 export function smallRunsAtStart({ replacesMarked = false, deps = {} } = {}) {

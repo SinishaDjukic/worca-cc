@@ -602,6 +602,12 @@ export async function runMock({ cwd, systemPrompt, prompt, onEvent, signal, resu
   }
 
   let text = `[mock] role ${role} complete`;
+  // B4 (D17): a Split challenge round is marked by its output file, whatever agent runs it.
+  if (m.MOCK_SPLIT_CHALLENGE) {
+    text = await mockSplitChallenge(m, cycle, onEvent);
+    safeEmit(onEvent, { type: 'result', costUsd: 0, raw: { mock: true, type: 'result', total_cost_usd: 0 } });
+    return { text, exitCode: 0 };
+  }
   switch (role) {
     case MOCK_ROLE_CLARIFY:
       text = await mockClarify(m, cycle, onEvent);
@@ -1008,6 +1014,41 @@ function mockOutlineRequirements(outline, requirementsText) {
   return { ...outline, slices, leftOut: [{ id: ids.at(-1), reason: 'Moved to a later feature' }] };
 }
 
+/** Shaper small runs B4 (D17): `WORCA_MOCK_SPLIT_OUTLINE=pass|ownership|coverage|confirmRole` shapes the small-runs
+ *  outline: one run per agreed id but the last (within every Care's cap), and the last id confirmed by Security.
+ *  `ownership` also gives run 2 the first id, `coverage` drops the confirmation, `confirmRole` names Legal. */
+function mockSplitOutline(mode, requirementsText) {
+  const ids = criteriaList(requirementsText).map((c) => c.id);
+  if (ids.length < 3) return null;
+  const owned = ids.slice(0, -1);
+  const slices = owned.map((id, i) => ({
+    id: `s${i + 1}`, title: `Deliver ${id}`, goal: `People get what ${id} asks for.`, inScope: [id], outOfScope: [],
+    acceptance: [`GET /api/x/${i + 1} returns 200`], dependsOn: i ? [`s${i}`] : [], estimate: 'medium',
+    requirements: mode === 'ownership' && i === 1 ? [id, owned[0]] : [id],
+  }));
+  const confirmed = mode === 'coverage' ? [] : [{ id: ids.at(-1), role: mode === 'confirmRole' ? 'Legal' : 'Security' }];
+  return { why: 'One requirement per run, each building on the last.', slices, leftOut: [], confirmed };
+}
+
+/** B4 (D17): one Split challenge round. `WORCA_MOCK_SPLIT_CHALLENGE` is a JSON list of objections `{role, fix, severity?,
+ *  status?, ids?}` raised every round, or a list of such lists, one per round; unset = no objections. */
+async function mockSplitChallenge(m, cycle, onEvent) {
+  let table = [];
+  try { table = JSON.parse(process.env.WORCA_MOCK_SPLIT_CHALLENGE || '[]') || []; } catch { table = []; }
+  const list = Array.isArray(table[0]) ? (table[cycle - 1] || []) : table;
+  const roles = new Map();
+  (Array.isArray(list) ? list : []).forEach((o, i) => {
+    if (!o || typeof o.role !== 'string') return;
+    roles.set(o.role, [...(roles.get(o.role) || []), { id: o.id || `c${cycle}-${i + 1}`, severity: o.severity || 'major',
+      fix: o.fix || 'Merge the first two runs', status: o.status || 'open', ...(o.reason ? { reason: o.reason } : {}), ids: o.ids || [] }]);
+  });
+  const body = { roles: [...roles].map(([key, findings]) => ({ key, findings })) };
+  await ensureDir(m.MOCK_SPLIT_CHALLENGE);
+  await writeFile(m.MOCK_SPLIT_CHALLENGE, JSON.stringify(body, null, 2) + '\n', 'utf8');
+  safeEmit(onEvent, { type: 'tool_use', text: `wrote ${m.MOCK_SPLIT_CHALLENGE}`, raw: { mock: true, file: m.MOCK_SPLIT_CHALLENGE } });
+  return `[mock] split challenge round ${cycle}: ${list.length || 0} objection(s)`;
+}
+
 async function mockPlannerPlan(m, onEvent, prompt = '') {
   const out = m.MOCK_OUT;
   const base = m.MOCK_BASE || 'feature';
@@ -1025,7 +1066,10 @@ async function mockPlannerPlan(m, onEvent, prompt = '') {
       return `[mock] planner-plan: outline edited at ${m.MOCK_SLICES}`;
     }
     const fixed = /\bplan this in 3 slices\b/i.test(prompt) ? MOCK_OUTLINE_3 : MOCK_OUTLINE;
-    const outline = m.MOCK_REQUIREMENTS ? mockOutlineRequirements(fixed, await readFile(m.MOCK_REQUIREMENTS, 'utf8').catch(() => '')) : fixed;
+    const reqText = m.MOCK_REQUIREMENTS ? await readFile(m.MOCK_REQUIREMENTS, 'utf8').catch(() => '') : '';
+    const splitMode = process.env.WORCA_MOCK_SPLIT_OUTLINE;
+    const split = m.MOCK_REQUIREMENTS && ['pass', 'ownership', 'coverage', 'confirmRole'].includes(splitMode) ? mockSplitOutline(splitMode, reqText) : null;
+    const outline = split || (m.MOCK_REQUIREMENTS ? mockOutlineRequirements(fixed, reqText) : fixed);
     await ensureDir(m.MOCK_SLICES);
     await writeFile(m.MOCK_SLICES, JSON.stringify(outline, null, 2) + '\n', 'utf8');
     safeEmit(onEvent, { type: 'tool_use', text: `wrote ${m.MOCK_SLICES}`, raw: { mock: true, file: m.MOCK_SLICES } });

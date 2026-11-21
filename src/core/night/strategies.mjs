@@ -118,7 +118,8 @@ export function planRule(q) {
   const p = q?.plan;
   if (!p || p.error || p.criteria) return null;     // the Requirements hold, or an ask that needs a retry
   if (p.outline) {
-    if (p.check?.ok !== true) return null;
+    // Small runs B4 (D18): open objections after the Split's challenge are a person's call.
+    if (p.check?.ok !== true || p.challenge?.open > 0) return null;
     // The check accepts a left-out id that has a reason, and nothing later catches it: a person must hear about it.
     const left = (p.outline.leftOut || []).map((e) => e.id);
     return { payload: { decision: 'approve', approveEach: p.approveEach === true }, flagged: left.length > 0,
