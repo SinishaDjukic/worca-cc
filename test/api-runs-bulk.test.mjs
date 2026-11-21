@@ -105,7 +105,7 @@ test('API: an interrupted run archives and deletes, resume point or not; Stop st
   const st = await post('/api/runs/bulk', { action: 'stop', targets: [{ pipelineId: parked }] });
   assert.deepEqual(st.body.skipped.map((s) => [s.title, s.reason]), [['Parked run', 'interrupted — resume it first']]);
   // A parked lineage the server drove is still in the runs Map: archiving the run drops it, so no hello replays a ghost.
-  runs.set('r-parked', { id: 'r-parked', pipelineId: parked, projectDir: PROJECT, status: 'interrupted', title: 'Parked run' });
+  runs.set('r-parked', { id: 'r-parked', pipelineId: parked, projectDir: PROJECT, status: 'interrupted', title: 'Parked run', settled: true });
   const tab = listen();
   const r = await post('/api/runs/bulk', { action: 'archive', targets: [{ pipelineId: dead }, { pipelineId: parked }] });
   tab.close();
@@ -126,7 +126,7 @@ test('API: an interrupted run archives and deletes, resume point or not; Stop st
 
 test('API: the run\'s own Archive (DELETE /api/runs/:id) takes an interrupted run that could still resume', async () => {
   const id = (await seedPipeline(PROJECT, { status: 'interrupted', title: 'Parked one', resumePoint: { v: 2, nodeId: 'n1' } })).id;
-  runs.set('r-one', { id: 'r-one', pipelineId: id, projectDir: PROJECT, status: 'interrupted', title: 'Parked one' });
+  runs.set('r-one', { id: 'r-one', pipelineId: id, projectDir: PROJECT, status: 'interrupted', title: 'Parked one', settled: true });
   const tab = listen();
   const one = await fetch(`${base}/api/runs/${id}?projectKey=${projectKey(PROJECT)}`, { method: 'DELETE' });
   tab.close();
