@@ -64,7 +64,7 @@ export function createCriteriaJudge(deps = {}) {
       const budget = () => { if (overCap()) { capped = true; return { blocked: true }; } return d.budget(); };
       const said = await d.judgeCriterion({ criterion: c.text, subject, context, model, mock: mock || !!t.mock, signal, book }, { budget });
       const j = said.error === 'limit' && capped ? { ...said, error: 'cap' } : said;
-      out.push(cs.insertJudgement({ workflowId: example.workflowId, exampleId: example.id, criterionId: c.id, fp, model, purpose: 'try', tryId: t.id, j }));
+      out.push(cs.insertJudgement({ workflowId: example.workflowId, exampleId: example.id, criterionId: c.id, fp, model, purpose: 'try', tryId: t.id, testRunId, j }));
       if (j.error === 'limit' || j.error === 'cap') break;   // the rest wait for the next pass
     }
     return out;
@@ -109,7 +109,7 @@ export function createCriteriaJudge(deps = {}) {
       if (!model) continue;
       for (const c of ex.criteria || []) {
         const fp = cs.criterionFp(c.text);
-        if (!had.has(`${t.id}|${fp}|${model}`)) rows.push({ workflowId: run.workflowId, exampleId: ex.id, criterionId: c.id, fp, model, purpose: 'try', tryId: t.id });
+        if (!had.has(`${t.id}|${fp}|${model}`)) rows.push({ workflowId: run.workflowId, exampleId: ex.id, criterionId: c.id, fp, model, purpose: 'try', tryId: t.id, testRunId: run.id });
       }
     }
     if (!rows.length) return;
@@ -143,7 +143,7 @@ export function createCriteriaJudge(deps = {}) {
       const budget = () => (overCap() ? { blocked: true } : d.budget());
       const j = await d.judgePair({ a: await d.subjectOf(A), b: await d.subjectOf(B), liked: liked ? liked.text : null, context: d.contextOf(ex),
         model: ex.judge.model, mock: !!(A.mock || B.mock), signal, book }, { budget });
-      cs.insertJudgement({ workflowId: run.workflowId, exampleId: id, fp, model: ex.judge.model, purpose: 'pair', tryId: A.id, otherTryId: B.id,
+      cs.insertJudgement({ workflowId: run.workflowId, exampleId: id, fp, model: ex.judge.model, purpose: 'pair', tryId: A.id, otherTryId: B.id, testRunId: run.id,
         variant: { question: liked ? 'liked' : 'better', swapped: j.swapped }, j });
       if (j.error === 'limit') return;   // the rest wait for the next pass
     }

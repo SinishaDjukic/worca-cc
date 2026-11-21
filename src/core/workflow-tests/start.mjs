@@ -4,7 +4,7 @@
 // maintenance calls the two recoveries below. The words a try is refused with live in src/shared/workflow-tests/project-text.mjs.
 import { PROJECT_KEY_RE, testCopyKeyOf } from '../store.mjs';
 import { sweepStaleStagingDirs } from './try-spawn.mjs';
-import { CONNECTOR_MODES, recoverInterruptedTestRuns, readTestRun } from './store.mjs';
+import { CONNECTOR_MODES, recoverInterruptedTestRuns, readTestRun, spentOfRun } from './store.mjs';
 import { createCriteriaJudge } from './criteria-runner.mjs';
 import { sweepTestCopies } from './project-copy.mjs';
 import { recoverRounds } from './criteria-store.mjs';
@@ -79,7 +79,7 @@ export function holdTryOrch(workflowTest, orch, runKey) {
  * Pretend try's carried sign-in helpers); only folders older than a day, as another Worca may share the folder.
  * M18: a Check the checker round a restart left `making` is failed too, so the page stops polling it.
  * Part 4 (Task 21 fix round 2): each stopped test records the criteria its finished tries never had checked ('failed'), so they
- * read 'unchecked', never 'new' (criteria-runner.mjs leaveUnchecked; synchronous store work).
+ * read 'unchecked', never 'new' (criteria-runner.mjs leaveUnchecked; synchronous store work); 'cap' for one at its own cost limit.
  * @returns {{runs: number, rounds: number, stagingDirs: number}} what was stopped and removed (0 when a sweep failed)
  */
 export function recoverTestsAtBoot({ tmpDir } = {}) {
@@ -95,7 +95,8 @@ export function recoverTestsAtBoot({ tmpDir } = {}) {
   for (const id of runIds) {
     try {
       const run = readTestRun(id);
-      if (run) judge.leaveUnchecked(run, { error: 'failed' });
+      // Fix round 3 (M7): a test that had reached its own cost limit says so ('cap'); any other one a restart cut short is 'failed'.
+      if (run) judge.leaveUnchecked(run, { error: run.capUsd !== null && spentOfRun(run.id) >= run.capUsd ? 'cap' : 'failed' });
     } catch (err) {
       console.error(`[worca-ui] workflow tests: could not record the unchecked criteria of test ${id}: ${err && err.message ? err.message : err}`);
     }

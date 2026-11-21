@@ -495,7 +495,7 @@ function lastOf(last, ctx) {
 }
 function modelInput(run, ctx) {
   const examples = run.exampleIds.map((id) => store.readExample(run.workflowId, id)).filter(Boolean).map(({ id, name }) => ({ id, name }));
-  return { examples, a: run.a != null ? { label: useLabel(run.a, ctx) } : null, b: { label: useLabel(run.b, ctx) }, tries: withCriteriaFor(run.workflowId, store.triesOfRun(run.id)) };
+  return { examples, a: run.a != null ? { label: useLabel(run.a, ctx) } : null, b: { label: useLabel(run.b, ctx) }, tries: withCriteriaFor(run.workflowId, store.triesOfRun(run.id), { runId: run.id }) };
 }
 
 /** U-T7 (F13, D7): the newest saved version whose useFingerprint equals the draft's, or null (a fingerprint that cannot be
@@ -741,7 +741,7 @@ export function progressOf(workflowId, runId, { costOf = null, phaseOf = null, b
   const run = runOf(workflowId, runId);
   const ctx = labelCtx(workflowId);
   // Review (b): the same combined status as Compare (checks and deciding criteria), so "X of N passed" never disagrees with it.
-  const tries = withCriteriaFor(workflowId, store.triesOfRun(run.id));
+  const tries = withCriteriaFor(workflowId, store.triesOfRun(run.id), { runId: run.id });
   const own = tries.filter((t) => t.runId === run.id);
   const both = run.a != null && own.some((t) => t.side === 'a');
   const sides = both ? ['a', 'b'] : ['b'];
@@ -876,7 +876,7 @@ export async function sideBySide(workflowId, runId, exampleId, { forgeFor = null
   const ex = store.readExample(workflowId, exampleId);
   if (!ex || !run.exampleIds.includes(ex.id)) throw err(`no example ${exampleId} in this test`, 'NOT_FOUND');
   const ctx = labelCtx(workflowId);
-  const tries = withCriteriaFor(workflowId, store.triesOfRun(run.id), { withAnswers: true, by }).filter((t) => t.exampleId === ex.id && FIN.has(t.status));
+  const tries = withCriteriaFor(workflowId, store.triesOfRun(run.id), { withAnswers: true, by, runId: run.id }).filter((t) => t.exampleId === ex.id && FIN.has(t.status));
   const list = (side) => tries.filter((t) => t.side === side).sort((x, y) => x.tryNo - y.tryNo || x.id - y.id);
   const A = run.a != null ? list('a') : [];
   const B = list('b');

@@ -31,7 +31,7 @@ test('fresh DB: the Part 4 tables and the example columns exist', () => {
   assert.equal(SCHEMA_VERSION, 99);
   assert.deepEqual(cols(db, 'wf_test_judgements'), ['id', 'workflow_id', 'example_id', 'criterion_id', 'criterion_fp', 'model', 'purpose',
     'try_id', 'other_try_id', 'round_id', 'card', 'variant', 'subject', 'met', 'winner', 'reason', 'proof', 'proof_found', 'error',
-    'cost_usd', 'ms', 'created_at']);
+    'cost_usd', 'ms', 'created_at', 'test_run_id']);   // test_run_id: fix round 3 (INCREMENTAL_COLUMNS, added after the table)
   assert.deepEqual(cols(db, 'wf_test_judge_answers'), ['id', 'judgement_id', 'by_key', 'agree', 'created_at']);
   assert.deepEqual(cols(db, 'wf_test_checker_rounds'), ['id', 'workflow_id', 'example_id', 'criterion_id', 'criterion_fp', 'model',
     'source', 'status', 'detail', 'created_by', 'created_at', 'finished_at']);
@@ -78,4 +78,16 @@ test('a DB already stamped 99 but missing a v99 table and a column (a divergent 
   assert.equal(stamp(db), SCHEMA_VERSION);
   migrate(db);   // db.mjs migrate(): user_version >= SCHEMA_VERSION → reconcileSchema only
   assert.deepEqual(shape(db), FRESH);
+});
+
+test('fix round 3: a DB this branch stamped 99 before wf_test_judgements.test_run_id gains the column on the fast path, rows kept', () => {
+  const db = new DatabaseSync(':memory:');
+  migrate(db);
+  db.exec(`ALTER TABLE wf_test_judgements DROP COLUMN test_run_id;
+    INSERT INTO wf_test_judgements (workflow_id, example_id, criterion_fp, model, purpose, try_id, error, created_at)
+    VALUES ('wf_a', 1, 'fp', 'm', 'try', 7, 'cap', '2026-11-20T00:00:00Z')`);
+  assert.equal(stamp(db), SCHEMA_VERSION);
+  migrate(db);   // reconcileSchema adds the INCREMENTAL_COLUMNS gap whatever the stamp
+  assert.deepEqual(shape(db), FRESH);
+  assert.deepEqual({ ...db.prepare('SELECT try_id, error, test_run_id FROM wf_test_judgements').get() }, { try_id: 7, error: 'cap', test_run_id: null });
 });

@@ -17,7 +17,7 @@ export function criterionFp(text) { return createHash('sha256').update(criterion
 export { RETRY_ERRORS };
 
 const J_COLS = `id, workflow_id, example_id, criterion_id, criterion_fp, model, purpose, try_id, other_try_id, round_id, card, variant, subject,
-  met, winner, reason, proof, proof_found, error, cost_usd, ms, created_at`;
+  met, winner, reason, proof, proof_found, error, cost_usd, ms, created_at, test_run_id`;
 export function judgementOf(r) {
   if (!r) return null;
   return {
@@ -25,20 +25,21 @@ export function judgementOf(r) {
     model: r.model, purpose: r.purpose, tryId: int(r.try_id), otherTryId: int(r.other_try_id), roundId: int(r.round_id), card: int(r.card),
     variant: parse(r.variant, null), subject: r.subject ?? null, met: r.met == null ? null : r.met === 1, winner: r.winner ?? null,
     reason: r.reason ?? null, proof: r.proof ?? null, proofFound: r.proof_found === 1, error: r.error ?? null,
-    costUsd: Number(r.cost_usd || 0), ms: int(r.ms), createdAt: r.created_at,
+    costUsd: Number(r.cost_usd || 0), ms: int(r.ms), createdAt: r.created_at, testRunId: int(r.test_run_id),
   };
 }
 
-/** One answer of the checking model. `j` = judgeCriterion's (or Task 14's judgePair's) result. */
+/** One answer of the checking model. `j` = judgeCriterion's (or Task 14's judgePair's) result. `testRunId`: the test that wrote it (fix
+ *  round 3, M7: a 'cap' or 'limit' row is worded only on that test). */
 export function insertJudgement({ workflowId, exampleId, criterionId = null, fp, model, purpose, tryId = null, otherTryId = null, roundId = null,
-  card = null, variant = null, subject = null, j }) {
+  card = null, variant = null, subject = null, testRunId = null, j }) {
   getDb();
   const info = prepare(`INSERT INTO wf_test_judgements (workflow_id, example_id, criterion_id, criterion_fp, model, purpose, try_id, other_try_id,
-      round_id, card, variant, subject, met, winner, reason, proof, proof_found, error, cost_usd, ms, created_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+      round_id, card, variant, subject, met, winner, reason, proof, proof_found, error, cost_usd, ms, created_at, test_run_id)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
     .run(workflowId, Number(exampleId), criterionId, fp, model, purpose, tryId, otherTryId, roundId, card, variant ? JSON.stringify(variant) : null,
       subject, j.met == null ? null : (j.met ? 1 : 0), j.winner ?? null, j.reason ?? null, j.proof ?? null, j.proofFound ? 1 : 0, j.error ?? null,
-      Number(j.costUsd || 0), Number.isFinite(j.ms) ? Math.round(j.ms) : null, nowIso());
+      Number(j.costUsd || 0), Number.isFinite(j.ms) ? Math.round(j.ms) : null, nowIso(), testRunId == null ? null : Number(testRunId));
   return readJudgement(Number(info.lastInsertRowid));
 }
 

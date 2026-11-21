@@ -21,8 +21,13 @@ export function trustFor(workflowId, fp, model, memo = null) {
   return t;
 }
 
-/** D98: tries as the pages read them: with their criteria (the example's current ones, checked by its current model). */
-export function withCriteriaFor(workflowId, tries, { withAnswers = false, by = null } = {}) {
+/** Fix round 3 (final review M7): the codes that name the test that wrote the row ("this test reached its cost limit"). */
+const OWN_TEST_ERRORS = Object.freeze(['cap', 'limit']);
+/**
+ * D98: tries as the pages read them: with their criteria (the example's current ones, checked by its current model). `runId` = the
+ * test the page shows: a 'cap' or 'limit' row another test wrote (a newer test that reused this try) reads as not checked yet there.
+ */
+export function withCriteriaFor(workflowId, tries, { withAnswers = false, by = null, runId = null } = {}) {
   if (!tries.length) return tries;
   const examples = new Map();
   const exOf = (id) => { if (!examples.has(id)) examples.set(id, store.readExample(workflowId, id)); return examples.get(id); };
@@ -34,7 +39,8 @@ export function withCriteriaFor(workflowId, tries, { withAnswers = false, by = n
     if (!ex || !model || !ex.criteria.length) return null;
     return ex.criteria.map((c) => {
       const fp = cs.criterionFp(c.text);
-      const j = js.get(`${t.id}|${fp}|${model}`) || null;
+      const row = js.get(`${t.id}|${fp}|${model}`) || null;
+      const j = row && OWN_TEST_ERRORS.includes(row.error) && (runId == null || row.testRunId !== Number(runId)) ? null : row;
       // I9: the side by side shows the viewer's earlier Agree / Disagree (by = actorOf(req); '' without identities).
       return criterionResult(c, j, trustFor(workflowId, fp, model, memo), { finished: finishedTry(t),
         ...(withAnswers && j ? { answer: cs.answerOf(j.id, by) } : {}) });
@@ -52,8 +58,8 @@ export function withCriteriaFor(workflowId, tries, { withAnswers = false, by = n
  * Final review M7, the same cause: the row's code ('cap', 'limit', 'failed') is the state at the end of the test that wrote it. A
  * newer test that reuses an older test's try writes its own end state on that try, so the older test can show "Not checked: this
  * test reached its cost limit" when only the newer one did; and boot writes 'failed' for every test a restart cut short, also one
- * that had reached its cap. Wording by the owning test needs the run id on the row (the same schema rung). The band above Compare
- * uses the viewed test's own cost, so only a cell's reason can be off, never a verdict or a decision.
+ * that had reached its cap. Fix round 3: rows record their test (test_run_id); withCriteriaFor words 'cap' and 'limit' only on that
+ * test, and boot records 'cap' for a test at its own cost limit. The band above Compare uses the viewed test's own cost.
  * An example with both gets one entry for each reason.
  */
 export function reasonOfCriterion(tryIds) {
@@ -92,7 +98,7 @@ export function byCriterionOf(workflowId, run) {
   const memo = new Map();
   const examples = run.exampleIds.map((id) => store.readExample(workflowId, id)).filter(Boolean)
     .map((e) => ({ id: e.id, name: e.name, criteria: e.criteria, checks: e.checks, trust: trustOfExample(e, memo) }));
-  const tries = withCriteriaFor(workflowId, store.triesOfRun(run.id));
+  const tries = withCriteriaFor(workflowId, store.triesOfRun(run.id), { runId: run.id });
   const m = byCriterionModel({ examples, hasA: run.a != null, tries });
   const reasonOf = reasonOfCriterion(tries.map((t) => t.id));
   const rows = m.rows.map((r) => (r.uneven ? { ...r, reason: r.exact ? 'unchecked' : reasonOf(r.label) } : r));

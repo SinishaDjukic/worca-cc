@@ -222,7 +222,10 @@ export const WORKFLOW_TEST_TABLES = Object.freeze({
   wf_test_judge_ledger: WORKFLOW_TEST_CRITERIA_DDL,
 });
 
-/** v99: the example's criteria (JSON list, D86) and checking model (JSON { model }, D87), for db.mjs INCREMENTAL_COLUMNS. */
+/** v99: the example's criteria (JSON list, D86) and checking model (JSON { model }, D87), for db.mjs INCREMENTAL_COLUMNS. Fix round 3
+ *  (final review M7): wf_test_judgements.test_run_id, the test that wrote a row (NULL = no test: Check the checker, an older row);
+ *  no rung of its own: v99 is not released, so the v99 rung's repair adds it to a new table and reconcileSchema to a DB already at 99. */
 export const WORKFLOW_TEST_CRITERIA_COLUMNS = Object.freeze({
   wf_test_examples: Object.freeze({ criteria: "TEXT NOT NULL DEFAULT '[]'", judge: 'TEXT' }),
+  wf_test_judgements: Object.freeze({ test_run_id: 'INTEGER' }),
 });
