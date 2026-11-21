@@ -32,18 +32,26 @@ const straight = (s) => String(s ?? '').normalize('NFKC').replace(/\r\n?/g, '\n'
 const words = (s) => s.split(/\s+/).filter((w) => /[\p{L}\p{N}]/u.test(w)).length;
 const spaces = (m) => m.replace(/[^\n]/g, ' ');
 
-/** Fix round 4: code (fenced blocks and inline backticks) blanked, line breaks and positions kept. An unclosed fence runs to the end. */
+/** Fix round 5 (I5): a fence whose info string says it holds prose (```markdown, ```md, ```text, ```txt) is read as prose. */
+const PROSE_FENCE = /^(?:markdown|md|text|txt)$/i;
+/** Fix round 4: code (fenced blocks and inline backticks) blanked, line breaks and positions kept. Fix round 5 (I5): a prose fence keeps
+ *  its text (only its fence lines are blanked), and a fence never closed is prose to the end (an answer wrapped in a fence that was cut). */
 function blankCode(t) {
-  let fence = null;
-  const lines = t.split('\n').map((line) => {
-    const f = /^ {0,3}(`{3,}|~{3,})/.exec(line);
-    if (fence) {
-      if (f && f[1][0] === fence[0] && f[1].length >= fence.length && !line.slice(f[0].length).trim()) fence = null;
-      return spaces(line);
+  const lines = t.split('\n');
+  let open = -1;
+  let fence = '';
+  let prose = false;
+  for (let i = 0; i < lines.length; i += 1) {
+    const f = /^ {0,3}(`{3,}|~{3,})/.exec(lines[i]);
+    if (open < 0) {
+      if (f) { open = i; fence = f[1]; prose = PROSE_FENCE.test(lines[i].slice(f[0].length).trim().split(/\s+/)[0]); }
+      continue;
     }
-    if (f) { fence = f[1]; return spaces(line); }
-    return line;
-  });
+    if (!f || f[1][0] !== fence[0] || f[1].length < fence.length || lines[i].slice(f[0].length).trim()) continue;
+    for (let k = open; k <= i; k += 1) if (!prose || k === open || k === i) lines[k] = spaces(lines[k]);
+    open = -1;
+  }
+  if (open >= 0) lines[open] = spaces(lines[open]);
   return lines.join('\n').replace(/``[^`\n]+``|`[^`\n]+`/g, spaces);
 }
 
@@ -53,21 +61,58 @@ export const QUOTE_MIN_NAMED_WORDS = 3;
 export const QUOTE_MIN_LONG_WORDS = 8;
 /** The verbs that name who is speaking: `Dana said: "…"`, `"…", says the finance lead`. */
 export const SPEECH_VERBS = Object.freeze(['said', 'says', 'wrote', 'writes', 'asked', 'told', 'explained', 'put it']);
+/** Fix round 5 (I7): words of a screen, not people. Before a colon (`Error: "…"`) or as the one speaking (`The error says "…"`) they name nobody. */
+export const UI_LABELS = Object.freeze(['Error', 'Hint', 'Title', 'Note', 'Warning', 'Label', 'Button', 'Message', 'Example', 'Tip', 'Status',
+  'Placeholder', 'Tooltip', 'Text', 'Page', 'Screen', 'Dialog', 'Field', 'Banner', 'Heading', 'Caption', 'Prompt', 'Alert', 'Toast', 'Menu', 'Link']);
+/** Fix round 5 (I4): a person named by role, lowercase too (`A customer: "…"`, `"…" — the finance lead`). */
+export const PERSON_NOUNS = Object.freeze(['customer', 'user', 'client', 'interviewee', 'participant', 'respondent', 'buyer', 'owner', 'founder',
+  'lead', 'manager', 'engineer', 'developer', 'designer', 'admin', 'accountant', 'analyst', 'director', 'colleague', 'partner', 'merchant',
+  'employee', 'tester', 'reviewer', 'member']);
 const VERBS = SPEECH_VERBS.join('|');
-const SPOKEN_BEFORE = new RegExp(String.raw`\S\s+(?:${VERBS})\s*[:,]?\s*$`, 'iu');   // "Dana said: ", "As one customer put it: "
-const LABEL_BEFORE = /(?:\p{Lu}[\p{L}'-]*|\))\s*:\s*$/u;   // "Dana: ", "Dana (finance lead): ": a capitalised name, or a bracket, then ":"
-const NAMED_AFTER = new RegExp(String.raw`^\s*[,.]?\s*(?:[—–-]+\s*\p{L}|(?:${VERBS})\s+\S|[\p{L}'-]+(?:\s+[\p{L}'-]+){0,4}\s+(?:${VERBS})\b)`, 'iu');   // ", Dana said", " said Dana", " — Dana"
+const UI_WORD = new Set(UI_LABELS.map((w) => w.toLowerCase()));
+const PERSON = `(?:${PERSON_NOUNS.join('|')})s?`;
+const person = (w) => !!w && !UI_WORD.has(w.toLowerCase());
+// "Dana said: ", "As one customer put it: ", "One customer told us: " (up to two words after the verb); the word before the verb speaks.
+const SPOKEN_BEFORE = new RegExp(String.raw`([\p{L}\p{N}'-]+)[,)]?\s+(?:${VERBS})(?:\s+[\p{L}'-]+){0,2}\s*[:,]?\s*$`, 'iu');
+const LABEL_BEFORE = /(\p{Lu}[\p{L}'-]*|\))\s*:\s*$/u;   // "Dana: ", "Dana (finance lead): ": a capitalised name, or a bracket, then ":"
+const ROLE_BEFORE = new RegExp(String.raw`(?<!\p{L})${PERSON}\s*:\s*$`, 'iu');   // "A customer: "
+// " — Dana", " — the finance lead": a capitalised word or a person's role right after the dash (" — shown below" names nobody).
+const DASH_AFTER = new RegExp(String.raw`^\s*[,.]?\s*[—–-]+\s*(?:\p{Lu}|(?:[Tt]he|[Aa]n?|[Oo]ne|[Oo]ur)\s+(?:[\p{L}'-]+\s+)?${PERSON}(?!\p{L}))`, 'u');
+// ", Dana said", " said Dana", ", says the finance lead"; the word before the verb speaks.
+const VERB_AFTER = new RegExp(String.raw`^\s*[,.]?\s*(?:(?:${VERBS})\s+\S|(?:[\p{L}'-]+\s+){0,4}([\p{L}'-]+)\s+(?:${VERBS})(?!\p{L}))`, 'iu');
+const unmark = (s) => s.replace(/[*_]/g, '');
+const spokenBefore = (s) => { const m = SPOKEN_BEFORE.exec(s); return !!m && person(m[1]); };
+const namedBefore = (s) => { const m = LABEL_BEFORE.exec(s); return spokenBefore(s) || ROLE_BEFORE.test(s) || (!!m && (m[1] === ')' || person(m[1]))); };
+const namedAfter = (s) => { const m = VERB_AFTER.exec(s); return DASH_AFTER.test(s) || (!!m && (!m[1] || person(m[1]))); };
 const letterWords = (s) => s.split(/\s+/).filter((w) => /\p{L}/u.test(w)).length;
 const tableLine = (t, at) => { const start = t.lastIndexOf('\n', at - 1) + 1; return /^\s*\|/.test(t.slice(start, start + 200)); };
+/** The line just before the line that starts at `start` (its last 120 characters), or '' for the first line. */
+const lineBefore = (t, start) => (start > 0 ? t.slice(Math.max(t.lastIndexOf('\n', start - 2) + 1, start - 121), start - 1) : '');
 const isNamed = (t, open, close) => {
-  const lineStart = Math.max(t.lastIndexOf('\n', open) + 1, open - 120);
-  const lineEnd = t.indexOf('\n', close);
-  const before = t.slice(lineStart, open);
-  return SPOKEN_BEFORE.test(before) || LABEL_BEFORE.test(before) || NAMED_AFTER.test(t.slice(close + 1, Math.min(close + 80, lineEnd < 0 ? t.length : lineEnd)));
+  const lineStart = t.lastIndexOf('\n', open) + 1;
+  const end = t.indexOf('\n', close);
+  const before = unmark(t.slice(Math.max(lineStart, open - 120), open));
+  const after = unmark(t.slice(close + 1, Math.min(close + 80, end < 0 ? t.length : end)));
+  if (namedBefore(before) || namedAfter(after)) return true;
+  // Fix round 5 (I4): the quote opens its line (after "> " or a list mark): the line just before names the speaker and ends with ":".
+  if (/^[\s>*+-]*$/.test(before)) {
+    const prev = unmark(lineBefore(t, lineStart)).replace(/^[\s>]+/, '');
+    if (/:\s*$/.test(prev) && (spokenBefore(prev) || ROLE_BEFORE.test(prev))) return true;
+  }
+  // It closes its line: the line just after names the speaker with a dash ("> — Dana, finance lead").
+  if (/^[\s.,;!?]*$/.test(after) && end >= 0) {
+    const nl = t.indexOf('\n', end + 1);
+    return DASH_AFTER.test(unmark(t.slice(end + 1, Math.min(end + 81, nl < 0 ? t.length : nl))).replace(/^[\s>]+/, ''));
+  }
+  return false;
 };
+/** Fix round 5 (M1): outside a quote, a " right after a digit is an inch or second mark. Inside one it closes the quote, unless an inch
+ *  mark goes on (8.5" × 11", 1"2) or a letter follows it. */
+const inchMark = (t, i, open) => /\d/.test(t[i - 1] || '')
+  && (open < 0 || /^(?: ?[×x] ?\d| ?×|\d)/.test(t.slice(i + 1, i + 4)) || /^[^\s\p{P}]/u.test(t[i + 1] || ' '));
 
 /** Quoted text in double quotation marks that the rule above says to check. A quote never spans a blank line, a table row or a cell border
- *  ("|" on a table line); a " right after a digit is an inch or second mark (8.5" × 11"), never a quote mark; code is not prose. */
+ *  ("|" on a table line); a " right after a digit is an inch or second mark (8.5" × 11") unless it closes a quote; code is not prose. */
 export function quotesIn(text) {
   const t = blankCode(straight(text).slice(0, MAX_SCAN));
   const out = [];
@@ -81,7 +126,7 @@ export function quotesIn(text) {
       continue;
     }
     if (ch === '|' && table) { open = -1; continue; }
-    if (ch !== '"' || /\d/.test(t[i - 1] || '')) continue;
+    if (ch !== '"' || inchMark(t, i, open)) continue;
     if (open < 0) { open = i; continue; }
     const q = t.slice(open + 1, i).trim();
     const from = open;
@@ -106,7 +151,14 @@ export function quotesCheck(text, sources) {
 const NUM_RE = /(?<![\p{L}\p{N}_.,])(\d{1,3}(?:[,  ]\d{3})+|\d+)(?:[.,](\d+))?(\s?%)?/gu;
 /** M7, M8: a date (2026-11-19, 19.11.2026, 01/02/2026), with a time after it (12:30), is neither a number of the result nor a phone number. */
 const DATE_RE = /(?<![\d.\/-])(?:\d{4}-\d{1,2}-\d{1,2}|\d{1,2}[./]\d{1,2}[./]\d{2,4})(?:,?\s+\d{1,2}:\d{2})?(?![\d.\/-]?\d)/g;
-const blankDates = (s) => s.replace(DATE_RE, (m) => ' '.repeat(m.length));
+/** Fix round 5 (I6): a date has a day and a month that can be one (30/60/90 is three numbers, not a date). */
+const dateLike = (m) => { const [a, b, c] = m.match(/\d+/g).map(Number); return /^\d{4}-/.test(m) ? b <= 12 && c <= 31 : a <= 31 && b <= 31 && (a <= 12 || b <= 12); };
+const blankDates = (s) => s.replace(DATE_RE, (m) => (dateLike(m) ? ' '.repeat(m.length) : m));
+/** Fix round 5 (I6): an amount written with its currency code (USD5000, EUR1200) is a number, not an id: the code is blanked. */
+export const CURRENCY_CODES = Object.freeze(['USD', 'EUR', 'GBP', 'CHF', 'JPY', 'CNY', 'INR', 'CAD', 'AUD', 'NZD', 'SEK', 'NOK', 'DKK', 'PLN', 'CZK', 'HUF',
+  'RSD', 'BRL', 'MXN', 'ZAR', 'SGD', 'HKD', 'KRW', 'TRY']);
+const CURRENCY_RE = new RegExp(`(?<![\\p{L}\\p{N}])(?:${CURRENCY_CODES.join('|')})(?=\\d)`, 'gu');
+const blankCurrency = (s) => s.replace(CURRENCY_RE, spaces);
 const HEAD_NUM_RE = /^(\s*#{1,6}\s+)\d+(?:\.\d+)+\.?(?=\s)/;   // "## 1.1 Scope": a section number; "## 140 tickets" stays a number
 const TIME_RE = /\b\d{1,2}:\d{2}(?::\d{2})?\b/g;   // 14:00, 12:30:45
 const LIST_MARK_RE = /^(\s*(?:#{1,6}\s+)?(?:[-*+]\s+)?)\d{1,3}[.)](?=\s)/;
@@ -127,7 +179,10 @@ const pathToken = (w) => {
   const x = w.slice(a, b);
   if (!/\p{L}/u.test(x)) return false;
   const slashes = (x.match(/\//g) || []).length;
-  return x.includes('\\') || /^(?:[A-Za-z]:[\\/]|~?\/|\.{1,2}\/)/.test(x) || slashes >= 2 || (slashes === 1 && /\.[A-Za-z][A-Za-z0-9]{0,5}$/.test(x));
+  // Fix round 5 (I6): two slashes after a number or an amount are a rate or a list of numbers ($12/user/month, 30/60/90-day), unless a file
+  // extension ends it (2026/11/notes.md).
+  const ext = /\.[A-Za-z][A-Za-z0-9]{0,5}$/.test(x);
+  return x.includes('\\') || /^(?:[A-Za-z]:[\\/]|~?\/|\.{1,2}\/)/.test(x) || (slashes >= 2 && (!/^[$€£¥]?\d/.test(x) || ext)) || (slashes === 1 && ext);
 };
 /** Fix round 4: what in a result holds digits that are not numbers of the result, blanked (positions kept): code, links, file paths,
  *  ids and hashes (a chain such as 8b6bd033-5853-4ea5 when any of its words is one), and a standard's number. */
@@ -146,7 +201,7 @@ export function numbersIn(text, { cap = true, ofResult = cap } = {}) {
   const all = String(text ?? '').normalize('NFKC').replace(/\r\n?/g, '\n');
   const blankTo = (m, lead) => `${lead}${' '.repeat(m.length - lead.length)}`;
   // The result side is capped (MAX_SCAN); the sources side is not, so a number past 2 MB is still found (a linear scan, no backtracking).
-  const scan = cap ? all.slice(0, MAX_SCAN) : all;
+  const scan = blankCurrency(cap ? all.slice(0, MAX_SCAN) : all);
   for (const raw of (ofResult ? blankNotNumbers(scan) : scan).split('\n')) {
     const line = blankDates(raw.replace(HEAD_NUM_RE, blankTo).replace(TIME_RE, (m) => ' '.repeat(m.length)).replace(LIST_MARK_RE, blankTo));
     for (const m of line.matchAll(NUM_RE)) {

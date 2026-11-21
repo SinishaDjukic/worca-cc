@@ -9,7 +9,7 @@ import { exampleSourcesText } from '../src/core/workflow-tests/sources-text.mjs'
 const FILES = 'Interview 3: “I export every month and it stops at 200 invoices, which is a pain.” Tickets: 140 a month, up 60 %.';
 
 test('quotes: named (3+ words) or long (8+ words), found across spacing, quote marks, case and an ellipsis', () => {
-  assert.deepEqual(quotesIn('She said "yes" and “I export every month and it stops” — fine.'), ['I export every month and it stops']);
+  assert.deepEqual(quotesIn('She said "yes" and “I export every month and it stops” — Dana.'), ['I export every month and it stops'], 'fix round 5 (I7): a capitalised word after the dash, not any word');
   assert.deepEqual(quotesCheck('Dana said: "i export  every month ... at 200 invoices".', FILES), { met: true, value: 'Met' });
   assert.deepEqual(quotesCheck('Nobody quoted.', FILES), { met: true, value: 'No quotes' });
   assert.deepEqual(quotesCheck('Dana said “I would pay twice for this tomorrow.” and «exports are slow for all of us, said Dana»', FILES),
@@ -238,4 +238,72 @@ test('quote rule: checked only when a person is named next to it (3+ words) or w
   assert.deepEqual(quotesIn('The page shows "one two three four five six seven eight" somewhere.').length, 1);
   assert.deepEqual(quotesIn('The page shows "one two three four five six seven" somewhere.'), []);
   assert.equal(quotesCheck('The page reads "Pick the month you need to export here".', BRIEF_FILES).met, false);
+});
+
+// Fix round 5 (review of board 59, I4–I7 and M1). The cases are the review's own (r4rev\q.mjs, q2.mjs) and the paid brief's lines.
+const DANA_FILES = 'Dana, the finance lead, said: "I spend two hours every month copying invoices into a spreadsheet." Target: 500 customers within 90 days. Tickets 140.';
+
+test('fix round 5 (I4): a person named in markdown marks, after a short verb phrase, as a lowercase person or on the line next to it', () => {
+  for (const s of ['**Dana:** "Exports take forever, honestly."', '**Dana (finance lead):** "Exports take forever, honestly."',
+    '"Exports take forever, honestly." — **Dana**', '*"Exports take forever, honestly."* — Dana', '_"Exports take forever, honestly."_ — Dana',
+    'One customer told us: "Exports take forever, honestly."', 'A customer: "Exports take forever, honestly."', 'Our users: "Exports take forever, honestly."',
+    '> "Exports take forever, honestly."\n> — Dana, finance lead', '"Exports take forever, honestly."\n— the finance lead',
+    'Dana said:\n"Exports take forever, honestly."', 'One customer told us:\n> "Exports take forever, honestly."']) {
+    assert.deepEqual(quotesIn(s), ['Exports take forever, honestly.'], s);
+    assert.equal(quotesCheck(s, DANA_FILES).met, false, `a made-up named quote is caught: ${s}`);
+  }
+  // The line next to it names nobody: still not checked.
+  for (const s of ['Steps:\n"Exports take forever, honestly."', 'Shown first:\n"Exports take forever, honestly."', '"Exports take forever, honestly."\nThen the list.',
+    '"Exports take forever, honestly."\n\n— Dana']) assert.deepEqual(quotesIn(s), [], s);
+  assert.deepEqual(quotesCheck('**Dana:** "I spend two hours every month copying invoices"', DANA_FILES), { met: true, value: 'Met' });
+});
+
+test('fix round 5 (I7): a UI label before a colon, as the subject of a verb, or a lowercase word after a dash is not a person', async () => {
+  const { UI_LABELS } = await import('../src/shared/workflow-tests/exact-checks.mjs');
+  for (const w of ['Error', 'Hint', 'Title', 'Note', 'Warning', 'Label', 'Button', 'Message', 'Example', 'Tip', 'Status', 'Placeholder', 'Tooltip'])
+    assert.ok(UI_LABELS.includes(w), w);
+  for (const s of ['Error: "Start date must be before end date"', 'Hint: "Pick the month you need"', 'Tooltip: "Exports all invoices of the month"',
+    'Title: "Export your invoices"', '**Error:** "Start date must be before end date"', 'Warning: "This cannot be undone"',
+    'The error says "Start date must be before end date"', 'The button says: "Export all invoices now"', 'The tooltip reads "Exports all invoices of the month"',
+    '"Choose a start and end date" — shown below the picker', 'Placeholder: "Search invoices by number"', 'Error Message: "Start date must be before end date"']) {
+    assert.deepEqual(quotesIn(s), [], s);
+    assert.deepEqual(quotesCheck(s, DANA_FILES), { met: true, value: 'No quotes' }, s);
+  }
+  // Real names keep working.
+  for (const s of ['Dana: "Exports take forever, honestly."', 'Noah said: "Exports take forever, honestly."', '"Exports take forever, honestly." — Dana Ortiz',
+    'Tim (support): "Exports take forever, honestly."']) assert.deepEqual(quotesIn(s), ['Exports take forever, honestly.'], s);
+});
+
+test('fix round 5 (I5): a result wrapped in a markdown, md or text fence (or one never closed) is prose; a code fence is not', () => {
+  const inner = '# Brief\nDana said: "Exports take forever, honestly."\nWe will reach 9999 customers.';
+  for (const info of ['markdown', 'md', 'text', 'txt', 'Markdown']) {
+    const s = `\`\`\`${info}\n${inner}\n\`\`\``;
+    assert.deepEqual(quotesIn(s), ['Exports take forever, honestly.'], info);
+    assert.deepEqual(numbersIn(s).map((x) => x.n), ['9999'], info);
+  }
+  assert.deepEqual(numbersIn(`\`\`\`\n${inner}`).map((x) => x.n), ['9999'], 'a fence never closed runs to the end as prose');
+  assert.deepEqual(quotesIn(`Intro.\n\n\`\`\`\n${inner}`), ['Exports take forever, honestly.']);
+  assert.deepEqual(numbersIn('```js\nconst limit = 750;\n```\nfor 140 tickets.').map((x) => x.n), ['140'], 'a closed code fence is still code');
+  assert.deepEqual(numbersIn('~~~markdown\nWe will reach 9999 customers in 45 days.\n~~~').map((x) => x.n), ['9999', '45']);
+});
+
+test('fix round 5 (I6): prices and rates are numbers of the result, not paths or ids', () => {
+  assert.deepEqual(numbersIn('Pricing: $12/user/month for 140 seats.').map((x) => x.n), ['12', '140']);
+  assert.deepEqual(numbersIn('A 30/60/90-day plan.').map((x) => x.n), ['30', '60', '90']);
+  assert.deepEqual(numbersIn('Budget USD5000 and EUR1200, or €9.99 and £4.50 a month.').map((x) => x.n), ['5000', '1200', '9.99', '4.5']);
+  assert.deepEqual(numbersCheck('Pricing: $12/user/month, a 30/60/90-day plan, USD5000.', DANA_FILES), { met: false, value: 'Not in the files: 12, 30, 60 and 1 more' });
+  // Paths, ids and dates stay skipped.
+  assert.deepEqual(numbersIn('Notes in ./work/2026/brief.md, 2026/11/notes.md, ticket ABC123 and build v2; shipped 01/02/2026; 140 tickets.').map((x) => x.n), ['140']);
+});
+
+test('fix round 5 (M1): a quote ending in a digit closes, so it is checked and the next quote is read on its own', () => {
+  const files = 'Lee said: "Exports take forever, honestly." Dana said: "We will switch vendors in 2026"';
+  assert.deepEqual(quotesIn('Dana said: "We will switch vendors in 2027"'), ['We will switch vendors in 2027']);
+  assert.equal(quotesCheck('Dana said: "We will switch vendors in 2027"', files).met, false);
+  assert.deepEqual(quotesIn('Dana said: "We will switch vendors in 2026". Lee said: "I would pay double for this."'),
+    ['We will switch vendors in 2026', 'I would pay double for this.']);
+  assert.deepEqual(quotesIn('Dana said: "Our export stops at 200"'), ['Our export stops at 200']);
+  // Inch marks stay inch marks: no quote open, or followed by "×", "x" or a digit.
+  assert.deepEqual(quotesIn('She said "it prints on 8.5" × 11 paper, every page of it" and left.'), ['it prints on 8.5" × 11 paper, every page of it']);
+  assert.deepEqual(quotesIn('Paper 8.5" × 11", 1" margins; Dana said: "Exports take forever, honestly."'), ['Exports take forever, honestly.']);
 });
