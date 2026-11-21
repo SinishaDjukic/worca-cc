@@ -152,3 +152,14 @@ test('board 59 C: tests-app.mjs: Stop checking calls the stop route, then the li
   await settle();
   assert.notEqual(h.root.querySelector('.wft-crit-band-l').textContent, line, 'back on the page: the line is gone');
 });
+
+test('review M6: after Stop checking, focus moves to "Check them on these tries", never to the page body', () => {
+  const { root, again } = bootCmp(cmp({ criteria: crit({ checking: true, stoppable: true }) }), { stopCheck: () => {} });
+  const stop = btnByText(root, 'Stop checking');
+  stop.focus();
+  assert.equal(root.ownerDocument.activeElement, stop);
+  again(cmp(), { checkStopped: { runId: 7, done: 1, of: 4 } });
+  const check = btnByText(root.querySelector('.wft-crit-band'), 'Check them on these tries');
+  assert.equal(root.ownerDocument.activeElement, check);
+  assert.equal(check.dataset.busyKey, 'wft-crit-check', 'still busy as every "Check them on these tries"');
+});

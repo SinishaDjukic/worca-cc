@@ -35,3 +35,12 @@ test('D: an excerpt cut in the middle of a bold mark loses the stray stars; anyt
   assert.equal(plainText(undefined), '');
   assert.equal(plainText('Line one\r\nLine two'), 'Line one\nLine two');
 });
+
+test('review M7: a mark that is part of what the line says stays: "> 500" (more than), "- 5%" (minus), a year before a full stop', () => {
+  assert.equal(plainText('> 500 customers within 90 days'), '> 500 customers within 90 days');
+  assert.equal(plainText('- 5% churn after launch'), '- 5% churn after launch');
+  assert.equal(plainText('* 3 more seats'), '* 3 more seats');
+  assert.equal(plainText('2024. Revenue grew'), '2024. Revenue grew');
+  assert.equal(plainText('> Most of us\n> > said yes'), 'Most of us\nsaid yes', 'a quote mark before words still goes');
+  assert.equal(plainText('- one\n100. hundred\n1000. stays'), 'one\nhundred\n1000. stays', 'a list number has 1 to 3 digits');
+});

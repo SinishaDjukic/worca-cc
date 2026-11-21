@@ -20,9 +20,11 @@ export function plainText(text) {
   for (let line of text.split(/\r?\n/)) {
     if (/^\s*(```|~~~)/.test(line)) continue;                 // a code fence: its code stays
     if (/^\s*([-*_])(?:\s*\1){2,}\s*$/.test(line)) continue;   // a rule
-    line = line.replace(/^(\s*)(?:>\s?)+/, '$1')
+    // Review M7: a ">", "-", "*" or "+" before a number is what the line says ("> 500", "- 5%"), and a list number has 1 to 3 digits
+    // ("2024. Revenue grew" keeps its year): only marks before words go.
+    line = line.replace(/^(\s*)(?:>(?:\s*(?=>)|\s(?=[^\d\s])))+/, '$1')
       .replace(/^(\s*)#{1,6}\s+/, '$1')
-      .replace(/^(\s*)(?:[-*+]|\d{1,9}[.)])\s+/, '$1');
+      .replace(/^(\s*)(?:[-*+]\s+(?=[^\d\s])|\d{1,3}[.)]\s+)/, '$1');
     out.push(inline(line));
   }
   return out.join('\n');

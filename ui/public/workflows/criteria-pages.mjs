@@ -198,7 +198,8 @@ export function compareCriteriaNotes(doc, c, { root, act, testAgain, checkCriter
     if (crit.stoppable && typeof stopCheck === 'function') top.append(act(STOP_CHECKING, () => stopCheck(), 'btn btn-sm', 'wft-crit-stop', { busy: true }));
   } else if (stopped && stopped.runId === c.run.id && canCheck) {   // board 59 C: until a new check or test starts, or the page is left
     top = band('plain', null, stoppedCheckText(stopped.done, stopped.of), 'status');
-    top.append(act(CHECK_THEM, () => checkCriteria(), 'btn btn-sm', 'wft-crit-check', { busy: true, busyKey: 'wft-crit-check' }));
+    // Review M6: it takes the Stop button's focus key, so a keyboard user's focus moves here after the stop, not to the page body.
+    top.append(act(CHECK_THEM, () => checkCriteria(), 'btn btn-sm', 'wft-crit-stop', { busy: true, busyKey: 'wft-crit-check' }));
   } else if (notChecked.length && atCap) {
     top = band('amber', 'alert', CAP_CHECKS_TEXT);
     top.setAttribute('aria-label', 'Your criteria were not checked');
