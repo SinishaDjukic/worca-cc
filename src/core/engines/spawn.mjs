@@ -16,6 +16,7 @@ import { currentOwner } from '../billing.mjs';
 import { isReservedModelEnvKey } from '../model-env.mjs';
 import { worcaHome } from '../projects.mjs';
 import { agentGroupsDir, createGroupTracker } from '../agent-groups.mjs';
+import { noteSpawned } from './agent-tree.mjs';
 import { isWithin } from '../fs-scope.mjs';
 import { withNoGitPath } from '../nogit-stub.mjs';
 import { withoutProxyLogin } from '../env-proxy.mjs';
@@ -250,6 +251,7 @@ export function superviseSpawn(o) {
         windowsHide: true,
       });
       if (ownGroup && typeof child.pid === 'number') trackGroup(child.pid, displayBin);
+      noteSpawned(child.pid);   // the node idle limit's busy check (agent-tree.mjs)
     } catch (err) {
       cleanup();
       rejectP(spawnError(withShimHint(err), `Failed to spawn ${displayBin}`));
