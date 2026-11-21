@@ -255,6 +255,27 @@ test('the judge spend reaches the cap partway through the criteria of a try: the
   assert.equal(prepare('SELECT COUNT(*) AS n FROM wf_test_judge_ledger WHERE test_run_id = ?').get(run.id).n, 1, 'only the call that was made is booked');
 });
 
+test("fix round 4: Finish the rest after a cost-cap stop checks the criteria the cap left, and only those; no try is made again", async () => {
+  const h = harness();
+  const ex = example([{ text: 'Names a success metric' }, { text: 'Explains the legal reasons' }]);
+  const runner = createTestRunner(h.deps);
+  const run = await runner.start({ workflowId: WF, kind: 'once', b: 'draft', exampleIds: [ex.id], tries: 1, capUsd: 0.55 });
+  await waitDone(runner, run.id);
+  assert.deepEqual([store.readTestRun(run.id).stopReason, h.calls.length, h.started()], ['cap', 1, 1]);
+  const [t] = store.triesOfRun(run.id);
+  const legal = () => cs.tryJudgements([t.id]).find((j) => j.fp === cs.criterionFp('Explains the legal reasons'));
+  assert.equal(legal().error, 'cap');
+  await runner.continueRun(run.id, { capUsd: 2 });
+  await waitDone(runner, run.id);
+  const r = store.readTestRun(run.id);
+  assert.deepEqual([r.status, r.stopReason], ['done', null]);
+  assert.equal(h.started(), 1, 'the finished try is not made again');
+  assert.deepEqual(h.calls, ['Names a success metric', 'Explains the legal reasons'], 'only the criterion the cap left was asked');
+  assert.deepEqual([legal().met, legal().error, legal().testRunId], [false, null, run.id]);
+  assert.equal(cellOf(legal()), 'Not met');
+  assert.equal(store.spentOfRun(run.id), 0.7, 'the try and the two checks, each paid once');
+});
+
 test("fix round 1: Worca's spending limit refuses every check: no call, no booking, and each criterion reads 'unchecked', never 'new'", async () => {
   const { judgeCriterion } = await import('../src/core/workflow-tests/judge.mjs');
   let asked = 0;
