@@ -76,6 +76,8 @@ const ENDED = new Set(['done', 'stopped', 'error']);
 const PARKED = new Set(['paused', 'pausing', 'interrupted']);
 const LIVE = new Set(['starting', 'working', 'needs-you', 'paused']);
 const FINISHED = new Set(['ready', 'in-review', 'merged']);
+/** A run model state that means the run finished its work (ready to ship, in review or merged). */
+export const isFinishedState = (state) => FINISHED.has(state);
 const TICKET_STATE = Object.freeze({ scheduled: 'waiting', missed: 'waiting', firing: 'starting', fired: 'starting',
   failed: 'failed', canceled: 'stopped', skipped: 'stopped' });
 

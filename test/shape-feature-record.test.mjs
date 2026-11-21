@@ -139,7 +139,7 @@ test('the shared module never reads the flag and imports nothing from core', () 
   const src = readFileSync(new URL('../src/shared/shape/feature-record.mjs', import.meta.url), 'utf8');
   assert.ok(!src.includes('flagEnabled'));
   assert.ok(!/core\//.test(src));
-  assert.deepEqual([...src.matchAll(/^import .* from '(.*)';$/gm)].map((m) => m[1]), ['../review/coverage.mjs']);
+  assert.deepEqual([...src.matchAll(/^import .* from '(.*)';$/gm)].map((m) => m[1]), ['../review/coverage.mjs', './perspectives.mjs']);
 });
 
 test('A3: roleKey and roleNames are exported for the split check', () => {

@@ -69,7 +69,9 @@ function agreedList(raw) {
     const id = typeof a?.id === 'string' ? a.id.trim() : '';
     if (!CRITERION_ID_RE.test(id) || seen.has(id)) continue;
     seen.add(id);
-    out.push({ id, text: typeof a.text === 'string' ? a.text.trim().slice(0, AGREED_TEXT_MAX) : '' });
+    // One line under its criterion in the brief: its line breaks collapse to spaces.
+    const example = typeof a.example === 'string' ? a.example.replace(/\s+/g, ' ').trim().slice(0, AGREED_TEXT_MAX) : '';
+    out.push({ id, text: typeof a.text === 'string' ? a.text.trim().slice(0, AGREED_TEXT_MAX) : '', ...(example ? { example } : {}) });
     if (out.length >= AGREED_MAX) break;
   }
   return out;
@@ -466,19 +468,26 @@ export function sliceScopeBlock({ index, total, outline, earlier = [], refiner =
 }
 
 /** The slice's agreed criteria: the Satisfies line, then one criterion line per id (what the slice run checks). */
-function satisfiesBlock(ids, agreed = []) {
-  const text = new Map((agreed || []).map((a) => [a.id, a.text]));
-  return `${satisfies(ids)}\n${ids.map((id) => `- **${id}** ${text.get(id) || ''}`.trimEnd()).join('\n')}\n\n`;
+function satisfiesBlock(ids, agreed = [], { testsFirst = false } = {}) {
+  const byId = new Map((agreed || []).map((a) => [a.id, a]));
+  // Small runs C2 (D11): an agreed example prints under its criterion; a Care plan without a Test writer adds one line.
+  const line = (id) => {
+    const a = byId.get(id);
+    const item = `- **${id}** ${a?.text || ''}`.trimEnd();
+    return a?.example ? `${item}\n  Example: ${a.example}` : item;
+  };
+  const lean = testsFirst === true && ids.some((id) => byId.get(id)?.example) ? 'Write the tests for these examples first, then the code.\n' : '';
+  return `${satisfies(ids)}\n${ids.map(line).join('\n')}\n${lean}\n`;
 }
 
 /** The task of a slice run (k ≥ 2, or a restarted slice): what its Clarify, Planner and title start from. */
-export function sliceBrief({ featureTitle, outline, index }) {
+export function sliceBrief({ featureTitle, outline, index, testsFirst = false }) {
   const s = outline.slices[index - 1];
   return `# ${featureTitle}: slice ${index} of ${outline.slices.length} — ${s.title}\n\n`
     + (s.goal ? `${s.goal}\n\n` : '')
     + (s.inScope.length ? `In scope:\n${s.inScope.map((x) => `- ${x}`).join('\n')}\n\n` : '')
     + (s.acceptance.length ? `Acceptance:\n${s.acceptance.map((x) => `- ${x}`).join('\n')}\n\n` : '')
-    + (s.requirements?.length ? satisfiesBlock(s.requirements, outline.agreed) : '')
+    + (s.requirements?.length ? satisfiesBlock(s.requirements, outline.agreed, { testsFirst }) : '')
     + (s.outOfScope.length ? `Out of scope:\n${s.outOfScope.map((x) => `- ${x}`).join('\n')}\n\n` : '')
     + `This is one slice of an approved outline:\n\n${outlineMarkdown(outline, { current: index })}\n`;
 }

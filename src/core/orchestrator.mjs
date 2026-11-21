@@ -24,7 +24,8 @@ import {
 import { resolveGraph, loadAgentFile, GRAPH_DEFAULT_WORKFLOW, writeGraphWorkflow, readWorkflow, isReservedWorkflowId } from './workflows.mjs';
 import { loadScriptRegistry } from './script-registry.mjs';
 import { loadAgentRegistry } from './agent-registry.mjs';
-import { AUTO_WORKFLOW_ID, AUTO_WORKFLOW_NAME, SHAPE_WORKFLOW_ID, SHAPE_UX_WORKFLOW_ID } from './graph/builtin-workflows.mjs';
+import { AUTO_WORKFLOW_ID, AUTO_WORKFLOW_NAME, SHAPE_WORKFLOW_ID, SHAPE_UX_WORKFLOW_ID, SHAPE_SLICE_REQ_WORKFLOW_IDS } from './graph/builtin-workflows.mjs';
+import { careRunGraph } from './shape/care-run.mjs';
 import { classifyLoops } from '../shared/graph/loops.mjs';
 import { buildGraphManifest, manifestTemplate, manifestPortsFn } from '../shared/graph/manifest.mjs';
 import { DEFAULT_MAX_CYCLES, KEYED_KINDS } from '../shared/graph/constants.mjs';
@@ -52,12 +53,12 @@ import { distDir as designDistDir, designWorkDir } from './design/paths.mjs';
 import { splitChallengePlan, normalizeChallenge, challengeBlock, runSplitChallenge, skipsPlanAfterSplit, splitRevisable, splitApproveError, keptObjections, splitAskFields, planReviewNode, CHALLENGER_LABEL, CHALLENGE_FILE_MAX_BYTES } from './shape/split-step.mjs';
 import { careStartAsk, careAnswerValidator } from './shape/care-start.mjs';
 import { careAuditLine } from './run-harness.mjs';
-import { careFactsOf, careModelRoles, CARE_LABELS } from '../shared/shape/feature-record.mjs';
+import { careFactsOf, careModelRoles, careRunPlan, CARE_LABELS } from '../shared/shape/feature-record.mjs';
 import { readRunPrAuto } from './pr-auto.mjs';
 import { checkSlices, applyOutlineEdits, normalizeOutline, settleLeftOut, sliceRequirementIds, OUTLINE_FILE, OUTLINE_CHANGE_FILE } from '../shared/shape/slices.mjs';
 import { onlyCriteria } from '../shared/review/requirements-coverage.mjs';
-import { DEFAULT_PERSPECTIVES, perspectiveByKey } from '../shared/shape/perspectives.mjs';
-import { criterionPerspective } from '../shared/shape/requirements.mjs';
+import { DEFAULT_PERSPECTIVES, perspectiveByKey, roleLabelOf } from '../shared/shape/perspectives.mjs';
+import { criterionPerspective, runRolesOf } from '../shared/shape/requirements.mjs';
 import { normalizePlanConcern, planConcernFileName, concernFeedbackSection, requirementConcernOf, requirementConcernFeedbackSection } from '../shared/review/plan-concern.mjs';
 import { ensureHouseBrief } from './house-brief.mjs';
 import { extractChecklist } from '../shared/shape/checklist.mjs';
@@ -69,7 +70,7 @@ import { criteriaCheck, criteriaList, criterionIds, coverageOf, criteriaExamples
 import { normalizeDecisions, conflictDecisions, validateDecisionPicks, decisionClarifications } from '../shared/review/decisions.mjs';
 import { createScheduler, sliceExecutionId, QUIESCENCE_WARNING } from './graph/scheduler.mjs';
 import { sigkillGraceMs } from './engines/spawn.mjs';
-import { runExecution, allocateOutputs, allocateVerdict, readDecomposition, decompositionProblems, CHECKLIST_REVIEWER_KEY, SLICE_PLANNER_KEY, SLICE_SCOPE_AGENT_KEYS, _testing as executorTesting } from './graph/executor.mjs';
+import { runExecution, allocateOutputs, allocateVerdict, readDecomposition, decompositionProblems, CHECKLIST_REVIEWER_KEY, SLICE_PLANNER_KEY, SLICE_SCOPE_AGENT_KEYS, TEST_WRITER_AGENT_KEY, _testing as executorTesting } from './graph/executor.mjs';
 import { serialQueue, measureCodeCursor, collectStepEvidence, withoutMembers } from './graph/human-evidence.mjs';
 import { estimateStepHours, resolveConstants, sumStepHours } from '../shared/human-estimate.mjs';
 import { diffNumstat } from './git-info.mjs';
@@ -239,12 +240,23 @@ export class GraphOrchestrator extends RunHarness {
     // Shaper small runs B2 (D13): a later run of a marked feature fills its Default agents' models from the feature's Care.
     const featureId = this.runShape?.slice?.feature || null;
     const care = featureId && smallRunsOfFeature(featureId) ? careOfFeature(featureId) : null;
+    // Small runs C2 (D7): a slice run of a marked feature with owned requirement ids also takes its Care plan's graph
+    // (Test writer, fix cycles, second opinion), fixed here at start in `manifest.careRun`.
+    const ownedIds = this.runShape?.slice ? sliceRequirementIds(this.runShape.slice) : [];
+    const careRun = care?.position && SHAPE_SLICE_REQ_WORKFLOW_IDS.includes(this.workflowId) && ownedIds.length
+      ? careRunPlan(care.position, { runRoles: runRolesOf(ownedIds), lead: this.runShape?.lead || null }) : null;
     const resolved = await resolveGraph(this.projectDir, this.workflowId, registry, this.agentsDir, {
       ...this._graphResolveOptions({ overlay, defrag, scan }),
       ...(care ? { roleFill: { source: 'care', roles: careModelRoles(care.position) } } : {}),
+      ...(careRun ? { transform: (t) => this._careRunGraph(t, careRun) } : {}),
     });
     this._adoptResolvedGraph(resolved);
     if (care) this._logCareFill(care.position, resolved);
+    if (careRun) {
+      const line = this._careRunLine(careRun, overlay);
+      this._log('orchestrator', 'info', line);
+      this._pendingAudits.push(`${line}.`);
+    }
     // A model a person set that needs the Claude Code sign-in while it is signed out: the engine gate refuses the start
     // (RunHarness#_engineGate). Fresh starts only: resume never resolves, so this stays null there.
     this._signInBlocked = resolved.signInBlocked
@@ -283,11 +295,50 @@ export class GraphOrchestrator extends RunHarness {
     // What THIS run was told to use over the project's settings, beside the cells it resolved to (the run page marks
     // those pills "this run only"; resume reads the cells, never this).
     if (overlay) manifest.runOverlay = structuredClone(overlay);
+    if (careRun) manifest.careRun = structuredClone(careRun);
     return {
       manifest,
       agentKeys: new Set(this.resolved.agentKeys),
       workflow: { id: this.workflowId, name: this.resolved.template.name || this.workflowId },
     };
+  }
+
+  /** Small runs C2 (D6): the Care graph of a slice run (a seam the tests stub with a refused transform). */
+  _careRunGraph(template, plan) {
+    return careRunGraph(template, plan);
+  }
+
+  /** Small runs C2 (run 1): the origin planning run builds slice 1 itself. Its Care graph (Test writer, fix cycles, second
+   *  opinion) was applied at the Start step (`_careOriginGraph`); once its Split is approved and slice 1's ids are known,
+   *  it stamps slice 1's Care plan on the live manifest, so the plan review runs Care's reviewers (`_careRoles`).
+   *  Idempotent; a run without Care, owned ids or a manifest is left as dev's. */
+  async _careOriginRun() {
+    const rec = this._shapeRec;
+    const manifest = this.state.stepper;
+    const sl = this.runShape?.slice;
+    if (!rec?.smallRuns || !rec.care?.position || !manifest?.graph || manifest.careRun || sl?.index !== 1) return;
+    const ownedIds = sliceRequirementIds(sl);
+    if (!ownedIds.length) return;
+    const plan = careRunPlan(rec.care.position, { runRoles: runRolesOf(ownedIds), lead: this.runShape?.lead || null });
+    // What the run actually builds with: a graph the Care transform could not shape keeps the Implementer writing tests.
+    plan.testWriter = plan.testWriter && manifest.graph.nodes.some((n) => n.key === TEST_WRITER_AGENT_KEY);
+    manifest.careRun = structuredClone(plan);
+    const line = this._careRunLine(plan, manifest.runOverlay || null);
+    this._log('orchestrator', 'info', line);
+    if (this.pipeline) await appendAudit(this.pipeline.dir, `${line}.`).catch(() => {});
+    await this._persist();
+  }
+
+  /** Small runs C2: the run's one Care line, its fix-cycle limit read from the resolved code review loop (a project or
+   *  run budget wins over Care's, and the line says so). */
+  _careRunLine(plan, overlay) {
+    const limit = this.resolved?.wires?.w9?.maxCycles ?? plan.fixCycles;
+    const by = overlay?.wires?.w9 ? 'this run' : 'the project';
+    const cycles = limit === plan.fixCycles ? `fix cycles ${limit}` : `fix cycles ${limit}, set by ${by}`;
+    const tests = plan.testWriter ? 'tests first, by a separate Test writer' : 'tests first, by the Implementer';
+    const reviewers = plan.planReviewers.length === 1 ? `${roleLabelOf(plan.planReviewers[0])} only, the run owns no other role`
+      : plan.planReviewers.map(roleLabelOf).join(', ');
+    return `Care ${CARE_LABELS[plan.position]}: ${tests}, ${cycles}, plan reviewers ${reviewers}`;
   }
 
   /** The options every resolveGraph of this run shares: its engine, run model, workspace, scripts and sign-in probe, plus
@@ -1538,7 +1589,26 @@ export class GraphOrchestrator extends RunHarness {
   _sliceCriteria(text) {
     const sl = this.runShape?.slice;
     // s3 (D13): a requirements-first Changes run reworks every agreed requirement, so its text is not narrowed.
-    return sl?.outline?.agreed?.length && this.runShape.requirementsFirst !== true ? onlyCriteria(text, sliceRequirementIds(sl)) : text;
+    // Small runs C2 (D11): a run with a Care plan keeps the requirements' Example lines for its reviewers.
+    const examples = !!this.state.stepper?.careRun;
+    return sl?.outline?.agreed?.length && this.runShape.requirementsFirst !== true
+      ? onlyCriteria(text, sliceRequirementIds(sl), examples ? { examples: true } : undefined) : text;
+  }
+
+  /** Small runs C2 (run 1): rebind the Test writer's `requirements` input to a copy narrowed to the slice's own ids, with
+   *  their Example lines (`_sliceCriteria`). The execution's own bindings stay as the scheduler gave them. */
+  async _sliceTestRequirements(ctx) {
+    const token = ctx.bindings.requirements;
+    try {
+      const text = await readFile(token.path, 'utf8');
+      const narrowed = this._sliceCriteria(text);
+      if (narrowed === text) return;
+      const path = join(this.pipeline.dir, `slice-requirements-${String(ctx.executionId).replace(/[^\w.-]+/g, '_')}.md`);
+      await writeFile(path, narrowed, 'utf8');
+      ctx.bindings = { ...ctx.bindings, requirements: { ...token, path } };
+    } catch (err) {
+      this._log('orchestrator', 'warn', `Test writer: cannot narrow the requirements to this slice: ${err?.message || err}`);
+    }
   }
 
   /** The held criteria document and its decisions: the criteria check (agreed ids must survive), the sink's decisions
@@ -2112,6 +2182,7 @@ export class GraphOrchestrator extends RunHarness {
       this.runShape = { ...this.runShape, slice: { feature: feature.id, index: 1, total: feature.total, outline: applied.outline } };
       if (this.state.shaping) this.state.shaping.feature = { id: feature.id, index: 1, total: feature.total };
       this._sliceScopeCache = null;
+      await this._careOriginRun();
       this._emit('state', this.getState());
       this._emit('shape-feature', { id: feature.id });
       // F47: hosts still pointed at the re-planned feature now follow replaced_by to this one: repaint them too.
@@ -2132,7 +2203,14 @@ export class GraphOrchestrator extends RunHarness {
   async _outlineAgreed(ctx) {
     const path = ctx.bindings?.requirements?.path;
     if (!path) return [];
-    try { return criteriaList(await readFile(path, 'utf8')); } catch (err) {
+    try {
+      const text = await readFile(path, 'utf8');
+      const list = criteriaList(text);
+      // Small runs C2 (D11): a marked run's outline keeps each requirement's example, so its slice briefs carry it.
+      if (!this._shapeRec?.smallRuns) return list;
+      const examples = criteriaExamples(text);
+      return list.map((c) => (examples.get(c.id) ? { ...c, example: examples.get(c.id) } : c));
+    } catch (err) {
       this._log('orchestrator', 'warn', `slices: cannot read the agreed requirements: ${err?.message || err}`);
       return [];
     }
@@ -2502,6 +2580,8 @@ export class GraphOrchestrator extends RunHarness {
     }
     // E10: the CLI version the execution manifest records (Claude's probe, already run at start; null elsewhere).
     if (nc.kind === 'agent' && this._capsProbe) ctx.cliVersion = (await Promise.resolve(this._capsProbe).catch(() => null))?.version ?? null;
+    // Small runs C2 (run 1): the Test writer is bound to every agreed requirement; it writes tests for this slice's only.
+    if (nc.key === TEST_WRITER_AGENT_KEY && this.runShape && ctx.bindings?.requirements?.path) await this._sliceTestRequirements(ctx);
     // A role slice's brief lists the plan's own items for its role: read the plan this round reviews.
     if (ctx.role) {
       ctx.roleSpec = roleReviewOf(node.config);
@@ -3706,6 +3786,25 @@ export class GraphOrchestrator extends RunHarness {
   /** Small runs B3 (D10): the requirements review of a marked run runs only the roles its Care plan names (Lean: the
    *  lead and Product). Every other node, and every unmarked run, keeps `roles`. */
   _careRoles(spec, roles) {
+    // Small runs C2 (D8): a slice run's plan review runs the Care plan's reviewers, read from the roles the node declares
+    // (so the Challenger joins under Thorough even when nobody picked it). The code review keeps its declared roles.
+    const careRun = this.state.stepper?.careRun;
+    if (careRun && Array.isArray(careRun.planReviewers) && spec?.target && roleTargetOf(spec).reviewsPlan) {
+      // A planned role the node does not declare (Compliance) joins as the provider names it, as runningRoles does.
+      const declared = Array.isArray(spec.roles) ? spec.roles : [];
+      const keep = declared.filter((r) => careRun.planReviewers.includes(r.key));
+      const missing = [];
+      for (const k of careRun.planReviewers) {
+        if (declared.some((r) => r.key === k)) continue;
+        const role = roleChecklistOf(spec)?.pickedRole?.(k);
+        if (role) keep.push(role); else missing.push(k);
+      }
+      if (missing.length && !this._careRolesMissingNoted && this.pipeline) {
+        this._careRolesMissingNoted = true;
+        appendAudit(this.pipeline.dir, `Care ${CARE_LABELS[careRun.position] || careRun.position}: the plan review has no ${missing.map(roleLabelOf).join(', ')} role; reviewing without it.`).catch(() => {});
+      }
+      return keep.length ? keep : roles;
+    }
     const plan = this._requirementRoundPlan(spec);
     if (!plan) return roles;
     const keep = roles.filter((r) => plan.roles.includes(r.key));
@@ -3997,7 +4096,39 @@ export class GraphOrchestrator extends RunHarness {
       await this._adoptCareFill(rec.care.position);
       await this._persist();
     }
+    await this._careOriginGraph(rec.care.position);
     await this._careRequirementBudget();
+  }
+
+  /** Small runs C2 (run 1): the origin run builds slice 1, so it takes Care's run graph like runs 2..N (careRunGraph: the
+   *  Test writer under Balanced and Thorough, the fix-cycle budgets, the second opinion). Applied here, before the
+   *  scheduler is created, so the scheduler builds its wire budgets from it. Re-resolves with the run overlay (a run or
+   *  project budget still wins) and replaces the frozen manifest's topology; every node the start graph had keeps the
+   *  model and effort it started with (Care's fill included). Once per run (`careGraph`); a failing resolve keeps the
+   *  start graph. */
+  async _careOriginGraph(position) {
+    const manifest = this.state.stepper;
+    if (!manifest?.graph || manifest.careGraph || !this.resolved) return;
+    const plan = careRunPlan(position);
+    try {
+      const fresh = await resolveGraph(this.projectDir, this.workflowId, this.registry, this.agentsDir, {
+        ...this._graphResolveOptions({ overlay: manifest.runOverlay || null }), roleFill: { source: 'care', roles: careModelRoles(position) },
+        transform: (t) => this._careRunGraph(t, plan),
+      });
+      const nodes = { ...fresh.nodes };
+      for (const [id, old] of Object.entries(this.resolved.nodeCtx || {})) {
+        if (!nodes[id] || old.kind !== 'agent') continue;
+        nodes[id] = { ...nodes[id], model: old.model, effort: old.effort };
+      }
+      const next = buildGraphManifest(fresh.template, fresh.agentsByKey, { overlays: { nodes, wires: fresh.wires }, scripts: fresh.scriptsByKey });
+      Object.assign(manifest, next);
+      this._adoptResolvedGraph({ ...fresh, nodes });
+    } catch (err) {
+      this._log('orchestrator', 'warn', `Care: cannot shape the run's graph, it keeps its start graph: ${err?.message || err}`);
+    }
+    manifest.careGraph = plan.position;
+    await this._persist();
+    this._emit('state', this.getState());
   }
 
   /** B2 (D13): the Care probe — a resolve with the run's own options plus a Lean fill — stamps on the frozen manifest

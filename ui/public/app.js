@@ -343,7 +343,8 @@ import { needsYouItems as chatNeedsYouItems } from './runs-list.mjs';
 import { createActivityMenu } from './activity-menu.mjs';
 import { createAwayScreensaver } from './away-screensaver.mjs';
 import { registerAskRenderer, askRendererFor, askKindOf } from './ask/registry.mjs';
-import { activeAgents } from './ask-run-card.mjs';
+import { activeAgents, snapshotFromState } from './ask-run-card.mjs';
+import { mountRunAgents } from './shape/run-agents.mjs';
 import { registerChatRunCard } from './chat/run-card.mjs';
 import { registerDirectionAddon } from './chat/direction.mjs';
 import { renderPlanBody } from './shape/plan-body.mjs';
@@ -32204,12 +32205,19 @@ function buildRdOverview(sec, ctx) {
   const checklists = document.createElement('div');   // Perspective checklists (spec D7)
   checklists.className = 'rd-checklists';
   checklists.hidden = true;
+  // Small runs C2 (D14): the Care roles of a marked slice run and their step word; empty (no section) for every other run.
+  const agents = document.createElement('div');
+  agents.className = 'rd-run-agents';
   const below = document.createElement('div');
   below.className = 'hd-ov hd-ov-below';
   wrap.append(banner);
-  below.append(checklists, skills);
+  below.append(agents, checklists, skills);
   adoptRunCard(sec, wrap, below);
-  const paint = (c) => { rdOvStateBanner(banner, c.run); paintRdChecklists(checklists, c.run); paintRunSkills(skills, c.run.skillMount); };
+  const paintAgents = (run) => {
+    const snap = run && run.stepper && run.stepper.careRun ? snapshotFromState(run) : null;
+    mountRunAgents(agents, snap ? { ...snap, pendingQuestion: run.pendingQuestion || null } : null);
+  };
+  const paint = (c) => { rdOvStateBanner(banner, c.run); paintAgents(c.run); paintRdChecklists(checklists, c.run); paintRunSkills(skills, c.run.skillMount); };
   paint(ctx);
   sec.__update = paint;
 }

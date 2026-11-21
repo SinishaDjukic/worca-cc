@@ -7,8 +7,8 @@ import { createTicket, getTicket, cancelTicket, updateTicket, previousBranchesOf
 import { readPrState, readPipelineExtras, readRunResultsById, readClarifyRow } from '../artifacts.mjs';
 import { projectKey } from '../store.mjs';
 import { sliceBrief, replanBrief } from '../../shared/shape/slices.mjs';
-import { normalizeCare, normalizeRequirementKinds, careOfRow, requirementKindsOf } from '../../shared/shape/feature-record.mjs';
-import { shaperSmallRunsOn, smallRunsOfFeature, smallRunsOfPipeline, careOfPipeline, prototypeOfPipeline } from './small-runs.mjs';
+import { normalizeCare, normalizeRequirementKinds, careOfRow, requirementKindsOf, careRunPlan } from '../../shared/shape/feature-record.mjs';
+import { shaperSmallRunsOn, smallRunsOfFeature, smallRunsOfPipeline, careOfPipeline, careOfFeature, prototypeOfPipeline } from './small-runs.mjs';
 import { prototypeView } from '../../shared/shape/prototype.mjs';
 import { requirementsCheck } from '../../shared/review/requirements-coverage.mjs';
 import { acceptanceGate, ledgerCheck } from '../../shared/shape/acceptance.mjs';
@@ -40,6 +40,13 @@ function requestOptions(base = {}, startedBy = null) {
   return { top, internal: { ...(startedBy ? { startedBy } : {}), ...(model ? { model } : {}) } };
 }
 
+/** Small runs C2: a marked feature whose Care has no separate Test writer (Lean) asks its runs for the tests first. */
+function testsFirstOf(featureId) {
+  if (!featureId || !smallRunsOfFeature(featureId)) return false;
+  const care = careOfFeature(featureId);
+  return !!care && careRunPlan(care.position).testWriter === false;
+}
+
 /** A slice ticket's stored request (L6): what POST /api/run would take, plus `internal`. */
 export function sliceRequest({ feature, index, outline, perspectives, workflowId, base = {}, projectDir, startedBy = null, sourceBranch = null,
   requirementsFirst = false }) {
@@ -47,7 +54,7 @@ export function sliceRequest({ feature, index, outline, perspectives, workflowId
   const { top, internal } = requestOptions(base, startedBy);
   return {
     projectDir,
-    prompt: sliceBrief({ featureTitle: feature.title, outline, index }),
+    prompt: sliceBrief({ featureTitle: feature.title, outline, index, testsFirst: testsFirstOf(feature.id) }),
     title: sliceTitle(feature.title, index, total, outline.slices[index - 1]),
     workflowId,
     ...top,

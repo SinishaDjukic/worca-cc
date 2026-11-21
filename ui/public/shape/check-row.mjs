@@ -3,6 +3,7 @@
 import { checkLine } from './plan-text.mjs';
 import { icon } from '../icons.mjs';
 import { paintStatusDot } from '../status-dot.mjs';
+import { RUN_STATES } from '../../../src/shared/run-model.mjs';
 
 /** A control that shows/hides `region` (folded by default). */
 export function fold(b, region, onOpen) {
@@ -26,16 +27,19 @@ export function swapOpen(b, region, cancel, onOpen, onClose) {
 }
 
 /** The ONE state mark of a row (owner direction d5c0afe48): `.plan-check-mark` holding an icon (`check`, `x`, `none`), the
- *  `wait` mark (dev's waiting status dot, the grey ring, wrapped because paintStatusDot owns its className), or a glyph
+ *  `wait` mark (dev's waiting status dot, the grey ring, wrapped because paintStatusDot owns its className), the `live`
+ *  and `paused` marks (the working and paused dots of RUN_STATES), or a glyph
  *  (`?`). Inside a `.srows` list it is a fixed 16px box centred on the row's first text line, so a glyph, an icon and
  *  the dot share one centre. `cls` adds classes (e.g. ' ok'). */
 export function checkMark(doc, kind, cls = '') {
   const mark = doc.createElement('span');
   mark.className = `plan-check-mark${cls}`;
-  if (kind === 'wait') {
-    mark.classList.add('is-wait');
+  if (kind === 'wait' || kind === 'live' || kind === 'paused') {
+    // Small runs C2 (D14): `live` is the working dot (the agent at work), `paused` the paused dot (a held run).
+    mark.classList.add(`is-${kind}`);
     const dot = doc.createElement('span');
-    paintStatusDot(dot, { state: 'waiting', dot: 'grey-ring' });
+    const state = kind === 'wait' ? 'waiting' : kind === 'live' ? 'working' : 'paused';
+    paintStatusDot(dot, { state, ...RUN_STATES[state] });
     mark.append(dot);
   }
   else if (kind === 'check' || kind === 'x' || kind === 'none') mark.append(icon(doc, kind, 12));
@@ -50,7 +54,8 @@ export function checkMark(doc, kind, cls = '') {
  *  only the id before the label, so the note is read once. `mark` replaces the ✓ / ✕ with its text (`?`). `idCol`
  *  (small runs B3) draws the id in its own `.plan-check-id` column, read in place of the sr-only id, and wraps the label
  *  and its detail in one `.plan-check-text`, so the detail sits beside the label only when both fit on the line (an empty
- *  id keeps the column, so a list's texts share one x). */
+ *  id keeps the column, so a list's texts share one x). `textWrap` (small runs C2) wraps them the same way with no id
+ *  column. */
 export function buildCheckRows(doc, check) {
   const h = (tag, cls, text) => { const e = doc.createElement(tag); e.className = cls; if (text != null) e.textContent = text; return e; };
   return (check && Array.isArray(check.items) ? check.items : []).map((it) => {
@@ -63,7 +68,7 @@ export function buildCheckRows(doc, check) {
     const idCol = !!it.idCol && typeof it.id === 'string';   // '' keeps the column, empty, so the text lines up
     if (it.tip) { row.title = it.tip; if (!idCol) row.appendChild(h('span', 'sr-only', noted && it.id ? it.id : it.tip)); }
     if (idCol) row.appendChild(h('span', 'plan-check-id', it.id));
-    const text = idCol ? row.appendChild(h('span', 'plan-check-text')) : row;
+    const text = idCol || it.textWrap ? row.appendChild(h('span', 'plan-check-text')) : row;
     text.appendChild(h('span', 'plan-check-label', it.label));
     if (noted) text.appendChild(h('span', 'plan-check-detail', it.note));
     else if (!it.pass && it.detail) text.appendChild(h('span', 'plan-check-detail', it.detail));

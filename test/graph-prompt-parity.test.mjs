@@ -195,6 +195,8 @@ const MOCK_ROLES = {
   promoCapture: 'generic-producer', promoMascot: 'generic-producer', promoScenes: 'generic-producer', promoReview: 'generic-verifier',
   // Shaper's requirements stage is post-v1: its own three writers.
   requirementsDrafter: 'requirements-draft', requirementsReviewer: 'requirements-review', requirementsRefiner: 'requirements-refine',
+  // Shaper small runs' Test writer is post-v1: the generic writer.
+  testWriter: 'generic-producer',
 };
 
 test('every builtin pins its v1 MOCK_ROLE and names its allocated outputs absolutely', () => {

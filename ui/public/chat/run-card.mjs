@@ -23,10 +23,11 @@ import { isGitRun, isNoProjectRun, kindChip, workModeOf } from '../run-kind.mjs'
 import { gitOn } from '../git-gate.mjs';
 import { formatBytes } from '../artifacts/common.mjs';
 import { fixOutcomeText } from './pr-watch-words.mjs';
-import { runModel } from '../../../src/shared/run-model.mjs';
+import { runModel, isFinishedState } from '../../../src/shared/run-model.mjs';
 import { paintRunStatus, statusText, kindLabel, syncActions, pauseResumeOwn, renderMemberRows } from '../run-status-card.mjs';
 import { delegateQuestion } from '../question-delegate.mjs';
 import { paintStatusDot } from '../status-dot.mjs';
+import { runShortWord } from '../../../src/shared/shape/run-agents.mjs';
 import { levelAtLeast } from '../ui-level.mjs';
 import { featureCardModel, oneCardModel, paintFeatureLog } from '../shape/feature-card.mjs';
 import { namedAnswer, forgetAnswer, REQUIREMENTS_AGREED } from '../shape/step-receipt.mjs';
@@ -38,6 +39,12 @@ import { renderAskChanges } from './ask-changes.mjs';
 import { roundsModel, liveRound } from './rounds.mjs';
 import { flagOn } from '../flags.mjs';
 import { labelChip } from '../label-picker.mjs';
+
+/** Small runs C2: a member run that finished (done, or its model's ready, in-review or merged state). */
+const isFinishedMember = (mb) => mb.state === 'done' || isFinishedState(mb.model && mb.model.state);
+/** Small runs C2 (D13): a marked card's run row word. A finished run reads `done` when it has a Care plan, or no snapshot
+ *  is loaded; a run without `careRun` (null from runShortWord) keeps dev's memberStatusText. */
+const cardShortWord = (mb, snap) => (isFinishedMember(mb) && (!snap || (snap.stepper && snap.stepper.careRun)) ? 'done' : runShortWord(snap));
 
 const LIVE_STATUS = new Set(['starting', 'running', 'pausing']);
 /** A question that goes away under these was answered (here or elsewhere). Not `pausing`: ui/server.mjs pauseRun resolves
@@ -835,7 +842,7 @@ export function createChatRunCard({ doc, win = null, snapshot = null, ctx = {}, 
     const feature = fm && fm.phase === 'feature' ? fm : null;
     // A feature reads the GROUP model's state; until groupOf knows the row, `m` is the planning run's model (done →
     // ready), so the field waits for curRow.
-    const finished = feature ? !!curRow && ['ready', 'in-review', 'merged'].includes(m.state)
+    const finished = feature ? !!curRow && isFinishedState(m.state)
       : RESULT_STATUS.has(String((s && s.status) || ''));
     // B1: the field lives in the result block, which the one card never shows (D8, D10).
     const show = !one && !!s && !roundLive && finished && s.kind !== 'workspace-run' && typeof ctx.postChanges === 'function'
@@ -997,7 +1004,9 @@ export function createChatRunCard({ doc, win = null, snapshot = null, ctx = {}, 
     if (curRow && (!one || one.runs)) {
       // A Requirements fold the person opened stays open across the repaint (the rows are rebuilt each paint).
       const opened = [...membersEl.querySelectorAll('.run-member')].filter((li) => li.querySelector('.plan-check-line[aria-expanded="true"]')).map((li) => li.dataset.key);
-      membersEl.replaceChildren(renderMemberRows(doc, curRow, { checks: fm && fm.requirementChecks, oneLine: !!one }));
+      // Small runs C2 (D13): a marked card's run rows say one short word (cardShortWord).
+      const shortState = one ? (mb) => cardShortWord(mb, shaperIn.snapOf(mb.pipelineId)) : null;
+      membersEl.replaceChildren(renderMemberRows(doc, curRow, { checks: fm && fm.requirementChecks, oneLine: !!one, ...(shortState ? { shortState } : {}) }));
       for (const li of membersEl.querySelectorAll('.run-member')) if (opened.includes(li.dataset.key)) li.querySelector('.plan-check-line')?.click();
       membersEl.hidden = false;
     } else { membersEl.replaceChildren(); membersEl.hidden = true; }

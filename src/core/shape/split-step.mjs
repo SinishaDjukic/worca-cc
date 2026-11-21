@@ -4,16 +4,15 @@
 import { OUTLINE_ROUNDS_MAX, RUN_REQUIREMENTS_MAX, splitBlockers, objectionFeedback } from '../../shared/shape/slices.mjs';
 import { requirementRoundPlan } from '../../shared/shape/requirements.mjs';
 import { CARE_TABLE, CARE_POSITIONS, CARE_DEFAULT } from '../../shared/shape/feature-record.mjs';
-import { perspectiveByKey } from '../../shared/shape/perspectives.mjs';
+import { perspectiveByKey, CHALLENGER_KEY, CHALLENGER_LABEL } from '../../shared/shape/perspectives.mjs';
 import { CRITERION_ID_RE } from '../../shared/review/coverage.mjs';
 import { mockMarkers } from '../phases.mjs';
 import { roleReviewOf } from '../../shared/graph/role-review-step.mjs';
 
 /** D19: person rounds a refused Split stays revisable for (dev's OUTLINE_ROUNDS_MAX still bounds a passing split). */
 export const SPLIT_REFUSED_ROUNDS_MAX = 5;
-/** D6: the Challenger is the existing devil's-advocate perspective. */
-const CHALLENGER_KEY = 'devil';
-export const CHALLENGER_LABEL = 'Challenger';
+/** D6: the Challenger is the existing devil's-advocate perspective (its key and label live in perspectives.mjs). */
+export { CHALLENGER_KEY, CHALLENGER_LABEL };
 const FINDINGS_MAX = 20;
 const FIX_MAX = 300;
 const SEVERITIES = new Set(['critical', 'major', 'minor', 'suggestion']);

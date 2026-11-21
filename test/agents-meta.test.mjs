@@ -84,7 +84,7 @@ test('every shipped sidecar: required fields, runnable runnerType, v2 typed port
         clarify: 'plan', planner: 'plan', refiner: 'plan', planReviewer: 'plan',
         requirementsDrafter: 'plan', requirementsReviewer: 'plan', requirementsRefiner: 'plan',
         architect: 'plan', architectSetup: 'plan',
-        decomposer: 'build', implementer: 'build',
+        decomposer: 'build', implementer: 'build', testWriter: 'build',
         reviewer: 'review', workspaceReviewer: 'review',
         manualTestsChecklist: 'review', manualWebUiTesting: 'review',
       };

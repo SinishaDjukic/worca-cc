@@ -151,14 +151,28 @@
 .chat-rc-members .run-members.is-one-line .run-member-title{flex:1 1 0;min-width:0;}
 .chat-rc-members .run-members.is-one-line .run-member-main > :not(.run-member-title, .run-member-state){flex-basis:100%;}
 .chat-rc-members .run-member-state{color:var(--ink-2);font-size:var(--fs-meta);white-space:nowrap;}
-/* A narrow row with no PR chip and no cost keeps one grid row: the stacked ". . pr cost" row and its gap would add 9px. */
+/* A narrow row with no PR chip and no cost keeps one grid row: the stacked ". . pr cost" row and its gap would add 9px.
+   C2: every narrow one-line row stays one 32px line, as the prototype's #build rows. A PR chip takes the last column
+   (the chevron's; the whole-row link opens the run); the cost is dropped, as dev drops it in a narrow chat card, and
+   stays on the run page. */
 @media (max-width:600px){
   .chat-rc-members .run-members.is-table.is-one-line{grid-template-columns:16px 20px minmax(0,1fr) max-content;}
   .chat-rc-members .run-members.is-table.is-one-line > .run-member:has(> .run-member-pr:empty):has(> .run-member-cost:empty){grid-template-areas:"dot num main go";}
+  .chat-rc-members .run-members.is-table.is-one-line > .run-member{grid-template-areas:"dot num main pr";}
+  .chat-rc-members .run-members.is-table.is-one-line > .run-member:has(> .run-member-pr:empty){grid-template-areas:"dot num main go";}
+  .chat-rc-members .run-members.is-table.is-one-line > .run-member:not(:has(> .run-member-pr:empty)) > .run-member-go,
+  .chat-rc-members .run-members.is-table.is-one-line > .run-member > :is(.run-member-pr:empty, .run-member-cost){display:none;}
 }
 @container chat-rc-members (width <= 360px){
   .chat-rc-members .run-members.is-table.is-one-line{grid-template-columns:16px 20px minmax(0,1fr) max-content;}
   .chat-rc-members .run-members.is-table.is-one-line > .run-member:has(> .run-member-pr:empty):has(> .run-member-cost:empty){grid-template-areas:"dot num main main";}
+  .chat-rc-members .run-members.is-table.is-one-line > .run-member{grid-template-areas:"dot num main pr";}
+  .chat-rc-members .run-members.is-table.is-one-line > .run-member:has(> .run-member-pr:empty){grid-template-areas:"dot num main main";}
+  .chat-rc-members .run-members.is-table.is-one-line > .run-member > .status-dot{grid-area:dot;}
+  .chat-rc-members .run-members.is-table.is-one-line > .run-member > .run-member-num{grid-area:num;}
+  .chat-rc-members .run-members.is-table.is-one-line > .run-member > .run-member-main{grid-area:main;}
+  .chat-rc-members .run-members.is-table.is-one-line > .run-member > .run-member-pr{grid-area:pr;}
+  .chat-rc-members .run-members.is-table.is-one-line > .run-member > :is(.run-member-go, .run-member-pr:empty, .run-member-cost){display:none;}
 }
 .chat-rc-members .run-members.is-table.is-one-line > .run-member:has(> .run-member-pr:empty):has(> .run-member-cost:empty) > :is(.run-member-pr, .run-member-cost){display:none;}
 /* Too narrow for a failing row's words side by side: its detail goes under its label. */
@@ -254,6 +268,8 @@ a.rd-crumb:hover{color:var(--ink);text-decoration:underline;}
    (.flag-chip: 18px, violet for Labs). Never truncated. */
 .chat-home-act-badge{flex:none;box-sizing:border-box;display:inline-flex;align-items:center;height:18px;padding:0 6px;border-radius:var(--r-xs);background:var(--slate-bg);color:var(--slate-ink);font-size:var(--fs-caption);font-weight:500;line-height:1;white-space:nowrap;}
 .shape-checklists{margin:12px 0;display:flex;flex-direction:column;gap:6px;}
+/* Small runs C2: the Overview's Agents section (.srows rows) sits like the Perspective checklists above. */
+.run-agents{margin:12px 0;gap:6px;padding-top:0;}
 .shape-cl-title{font-size:13px;margin:0;color:var(--ink-2);}
 .shape-cl-cycle{border:1px solid var(--line);border-radius:var(--r-ctrl);padding:6px 10px;background:var(--panel);
   display:flex;flex-direction:column;align-items:flex-start;gap:6px;}

@@ -710,6 +710,14 @@ test('B1 one-line run rows are 32px: scoped under the chat member host, they out
   assert.match(css, new RegExp(String.raw`@media \(max-width:600px\)\{[^}]*\}\s*${empty}\{grid-template-areas:"dot num main go";\}`));
   assert.match(css, new RegExp(String.raw`@container chat-rc-members \(width <= 360px\)\{[^}]*\}\s*${empty}\{grid-template-areas:"dot num main main";\}`));
   assert.match(css, new RegExp(String.raw`${empty} > :is\(\.run-member-pr, \.run-member-cost\)\{display:none;\}`));
+  // C2: a narrow row WITH a PR chip or a cost stays one line too (the prototype's #build rows): the chip takes the last
+  // column, the cost is dropped, at the phone width and in the narrow container alike.
+  for (const at of [String.raw`@media \(max-width:600px\)`, String.raw`@container chat-rc-members \(width <= 360px\)`]) {
+    const block = css.match(new RegExp(String.raw`${at}\{[^]*?\n\}`, 'g')).find((b) => b.includes('"dot num main pr"'));
+    assert.ok(block, at);
+    assert.match(block, new RegExp(String.raw`${table} > \.run-member\{grid-template-areas:"dot num main pr";\}`));
+    assert.match(block, /\.run-member-cost\)\{display:none;\}/);
+  }
   // No selector starts with .run-member (the split tool would hand it to runs/group-page), and the group table is dev's.
   assert.deepEqual(css.split('\n').filter((l) => /^\s*\.run-member/.test(l)), []);
   const groupCss = await readFile(new URL('../ui/public/runs/group-page.css', import.meta.url), 'utf8');

@@ -2,6 +2,7 @@
 // (its Care position) and what kind each agreed requirement is (owned by a run, or confirmed by a role). The words, the
 // write validators (they refuse, with a code) and the readers (they fall back, and never throw). Pure and browser-safe.
 import { CRITERION_ID_RE } from '../review/coverage.mjs';
+import { CHALLENGER_KEY } from './perspectives.mjs';
 
 export const CARE_POSITIONS = Object.freeze(['lean', 'balanced', 'thorough']);
 export const CARE_LABELS = Object.freeze({ lean: 'Lean', balanced: 'Balanced', thorough: 'Thorough' });
@@ -241,6 +242,39 @@ export function careGivesUpSentence(picked, pick) {
  *  everyday role's model; Balanced and Thorough keep each node's own role. */
 export function careModelRoles(position) {
   return position === 'lean' ? { deep: 'everyday', everyday: 'everyday', quick: 'quick' } : { deep: 'deep', everyday: 'everyday', quick: 'quick' };
+}
+
+/** Small runs C2 (D1): what a Care position asks of one slice run, read from CARE_TABLE's rows the way prototypeCare
+ *  reads them. `testWriter`: the Build approach row above its lowest rank; `challenger` and `secondOpinion`: the
+ *  Challenger and Models rows at their highest rank; `fixCycles`: the Fix cycles cell. The plan reviewers come from the
+ *  run's own roles (`runRoles`, Product first): Lean takes Product plus the lead when it is one of them, else the first
+ *  other role; Balanced takes them all; Thorough adds the Challenger. Never empty. An unknown position reads as the
+ *  default. Pure; never throws. */
+export function careRunPlan(position, opts = {}) {
+  const { runRoles = ['product'], lead = null } = isObject(opts) ? opts : {};
+  const pos = CARE_POSITIONS.includes(position) ? position : CARE_DEFAULT.position;
+  const rankOf = (key) => {
+    const r = CARE_TABLE.find((x) => x.key === key);
+    const ranks = Object.values(r.rank);
+    return { above: r.rank[pos] > Math.min(...ranks), top: r.rank[pos] === Math.max(...ranks) };
+  };
+  const challenger = rankOf('challenger').top;
+  const roles = [...new Set(['product', ...(Array.isArray(runRoles) ? runRoles : []).filter((k) => typeof k === 'string' && k && k !== CHALLENGER_KEY)])];
+  let planReviewers = roles;
+  if (pos === 'lean') {
+    const others = roles.filter((k) => k !== 'product');
+    const second = others.includes(lead) ? lead : others[0];
+    planReviewers = second ? ['product', second] : ['product'];
+  }
+  return {
+    position: pos,
+    testWriter: rankOf('build').above,
+    planReviewers: challenger ? [...planReviewers, CHALLENGER_KEY] : planReviewers,
+    challenger,
+    secondOpinion: rankOf('models').top ? 'product' : null,
+    fixCycles: Number(careCell('fixCycles', pos)),
+    modelRoles: careModelRoles(pos),
+  };
 }
 
 /** The fixed fact a feature's Care reads as after Start. */

@@ -364,3 +364,70 @@ test('C1 oneCardModel: SP while the Prototype step asks or runs, with its detail
   assert.equal(ICON_WORD.ask, 'Needs you');
   assert.equal(ICON_WORD.run, 'Running');
 });
+
+// ── Small runs C2 (Step 7): a marked card's run rows say one short word ──
+import { memberStatusText } from '../ui/public/run-status-card.mjs';
+import { careRunPlan } from '../src/shared/shape/feature-record.mjs';
+import { snapshotFromState } from '../ui/public/ask-run-card.mjs';
+
+const C2_CARE = careRunPlan('balanced', { runRoles: ['product', 'architect'] });
+const c2Agent = (id, key) => ({ id, kind: 'agent', key, x: 0, y: 0, label: key, ports: { inputs: [], outputs: [] } });
+const c2Manifest = (careRun) => ({ version: 2, template: { id: 'wf_shape_slice_req' }, graph: { nodes: [['n_plan', 'planner'], ['n_refine', 'refiner'],
+  ['n_roles', 'planReviewer'], ['n_tests', 'testWriter'], ['n_impl', 'implementer'], ['n_review', 'reviewer']].map(([id, key]) => c2Agent(id, key)), wires: [] },
+  ...(careRun ? { careRun } : {}) });
+const c2Row = (nodeId, status = 'done') => ({ key: `x:${nodeId}:1`, executionId: `x:${nodeId}:1`, nodeId, ordinal: 1, cycle: 1, status, startedAt: '2026-11-21T10:00:00Z' });
+/** A member run's store snapshot: `at` active, the nodes before it done. */
+const c2Snap = (pid, { careRun = C2_CARE, at = 'n_tests', status = 'running' } = {}) => {
+  const before = ['n_plan', 'n_roles', 'n_refine', 'n_tests', 'n_impl', 'n_review'];
+  const done = before.slice(0, before.indexOf(at));
+  const live = status === 'running';
+  return { ...snapshotFromState({ id: pid, status, stepper: c2Manifest(careRun),
+    steps: [...done.map((id) => c2Row(id)), c2Row(at, live ? 'start' : 'paused')], active: live ? [{ nodeId: at, executionId: `x:${at}:1` }] : [] }),
+  source: 'live', runId: `run-${pid}` };
+};
+/** Paints a feature card (marked or not) whose member rows come from `members` (groupModel inputs) and `snaps`. */
+function c2Card({ marked = true, members, pids, snaps }) {
+  const dom = trackDom(new JSDOM('<!doctype html><body></body>'));
+  const v = VIEW(pids.map((pid, i) => SL(i + 1, members[i].status === 'done' ? 'done' : 'running', { pipelineId: pid, runId: `run-${pid}` })),
+    { originPipelineId: 'p0' });
+  const cardJson = { pipelineId: 'p0', feature: v, log: [], ...(marked ? { smallRuns: true } : {}) };
+  const rest = { source: 'rest', terminal: true, status: 'done', pipelineId: 'p0' };
+  const runStore = { subscribe: () => () => {}, byPipeline: (pid) => (pid === 'p0' ? rest : snaps[pid] || null), get: () => null };
+  const gm = groupModel({ kind: 'feature', title: 'Charts', planning: { status: 'done', endReached: true }, members });
+  const row = { kind: 'chain', groupKind: 'feature', groupId: 'feat-1', title: 'Charts', model: gm, count: gm.count.text,
+    planning: { title: 'Planning', href: '#running/r0', model: gm.planning },
+    members: gm.members.map((m, i) => ({ position: i + 1, title: `Part ${i + 1}`, href: '#runs', model: m, pipelineId: pids[i] })) };
+  const controls = { paintQuestion: () => null, releaseQuestion() {}, groupOf: () => row, memoFor: () => ({}) };
+  const ctl = createRunCardController({ controls, runStore, tickMs: 0 });
+  const built = ctl.build({ id: 'card_c2', card: { type: PROGRESS_CARD_TYPE, pipelineId: 'p0', runId: 'run-p0', title: 'Charts' } },
+    { doc: dom.window.document, win: dom.window, shaperCard: () => cardJson });
+  dom.window.document.body.appendChild(built.el);
+  const states = () => [...built.el.querySelectorAll('.run-member:not([data-key="planning"]) .run-member-state, .run-member:not([data-key="planning"]) .run-member-line')].map((n) => n.textContent);
+  return { built, ctl, row, states };
+}
+
+test('C2 one card: run rows show the short word (Care words lowercase, dev fallback as is, held and no-careRun runs keep memberStatusText, done reads done)', () => {
+  const members = [{ status: 'done', endReached: true }, { status: 'running' }, { status: 'paused' }, { status: 'running' }];
+  const pids = ['p1', 'p2', 'p3', 'p4'];
+  const snaps = { p2: c2Snap('p2'), p3: c2Snap('p3', { status: 'paused', at: 'n_impl' }), p4: c2Snap('p4', { careRun: null }) };
+  const { built, ctl, row, states } = c2Card({ members, pids, snaps });
+  const dev = row.members.map((mb) => memberStatusText(mb.model));
+  assert.deepEqual(states(), ['done', 'writing tests', dev[2], dev[3]]);
+  assert.notEqual(dev[2], 'paused');
+  built.dispose(); ctl.destroy();
+});
+
+test('C2 marked card, run without careRun: the row text equals memberStatusText; an unmarked card\'s done member keeps it too', () => {
+  const members = [{ status: 'done', endReached: true }, { status: 'running' }];
+  const marked = c2Card({ members, pids: ['p1', 'p2'], snaps: { p2: c2Snap('p2', { careRun: null }) } });
+  assert.equal(marked.states()[1], memberStatusText(marked.row.members[1].model));
+  marked.built.dispose(); marked.ctl.destroy();
+  // A finished run whose snapshot has no careRun (resumed from before C2) keeps dev's words too, not `done`.
+  const old = c2Card({ members, pids: ['p1', 'p2'], snaps: { p1: c2Snap('p1', { careRun: null }) } });
+  assert.equal(old.states()[0], memberStatusText(old.row.members[0].model));
+  assert.notEqual(old.states()[0], 'done');
+  old.built.dispose(); old.ctl.destroy();
+  const plain = c2Card({ marked: false, members, pids: ['p1', 'p2'], snaps: { p2: c2Snap('p2') } });
+  assert.deepEqual(plain.states(), plain.row.members.map((mb) => memberStatusText(mb.model)));
+  plain.built.dispose(); plain.ctl.destroy();
+});

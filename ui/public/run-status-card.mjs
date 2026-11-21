@@ -223,7 +223,7 @@ export function memberStatusText(m) {
  *  over the row. `checks` (the chat card's feature) maps a member's key to its Requirements check: that row gets the
  *  check's fold under its status line. `oneLine` (Shaper's one card): the status sits right of the title on the same
  *  line, as a short state (`.run-member-state`), with no second line under the title. */
-export function renderMemberRows(doc, row, { checks, oneLine = false } = {}) {
+export function renderMemberRows(doc, row, { checks, oneLine = false, shortState = null } = {}) {
   const ol = doc.createElement('ol');
   ol.className = oneLine ? 'run-members is-table is-one-line' : 'run-members is-table';
   const items = [...(row.planning && row.planning.model ? [{ ...row.planning, isPlanning: true }] : []), ...(row.members || [])];
@@ -240,7 +240,9 @@ export function renderMemberRows(doc, row, { checks, oneLine = false } = {}) {
     const title = textEl(doc, 'a', 'run-member-title', name);
     title.setAttribute('href', mb.href || '#runs');
     title.title = name;
-    const line = textEl(doc, 'span', oneLine ? 'run-member-state' : 'run-member-line', memberStatusText(m));
+    // Small runs C2 (D13): a marked card's `shortState(mb)` names a member's state in one short word; null keeps dev's.
+    const said = typeof shortState === 'function' && !mb.isPlanning ? shortState(mb) : null;
+    const line = textEl(doc, 'span', oneLine ? 'run-member-state' : 'run-member-line', typeof said === 'string' ? said : memberStatusText(m));
     const pr = textEl(doc, 'span', 'run-member-pr', '');
     if (mb.adhoc) pr.append(textEl(doc, 'span', 'runs-indep', 'Independent'));
     if (m.pr && !m.pr.pending) pr.append(prChip(doc, m.pr, { link: true }));

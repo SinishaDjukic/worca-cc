@@ -401,6 +401,34 @@ test('no agreed list: today\'s output, no new keys', () => {
   assert.deepEqual(applyOutlineEdits(r.outline, [{ op: 'remove', id: 's2' }]).outline, { why: r.outline.why, slices: [r.outline.slices[0]] });
 });
 
+test('C2: brief of a marked feature carries Example lines, and the Lean tests-first line', () => {
+  const agreed = AGREED.map((a) => (a.id === 'R-po-2' ? { ...a, example: `  Ana has 3 runs; Export gives 3 rows.  ${'x'.repeat(400)}` } : a));
+  const o = normalizeOutline(reqOutline(['R-po-1'], ['R-po-2', 'R-ux-1', 'R-qa-1', 'R-ops-1']), { agreed }).outline;
+  const ex = o.agreed.find((a) => a.id === 'R-po-2').example;
+  assert.ok(ex.startsWith('Ana has 3 runs; Export gives 3 rows.'), 'trimmed');
+  assert.equal(ex.length, 300, 'capped like text');
+  assert.equal('example' in o.agreed.find((a) => a.id === 'R-ux-1'), false, 'no example, no key');
+  const brief = sliceBrief({ featureTitle: 'Charts', outline: o, index: 2 });
+  assert.ok(brief.includes(`Satisfies: R-po-2, R-ux-1, R-qa-1, R-ops-1\n- **R-po-2** text of R-po-2\n  Example: ${ex}\n- **R-ux-1** text of R-ux-1\n`), brief);
+  assert.deepEqual(criterionIds(brief), ['R-po-2', 'R-ux-1', 'R-qa-1', 'R-ops-1']);
+  assert.ok(!brief.includes('Write the tests for these examples first'));
+  const lean = sliceBrief({ featureTitle: 'Charts', outline: o, index: 2, testsFirst: true });
+  assert.ok(lean.includes('- **R-ops-1** text of R-ops-1\nWrite the tests for these examples first, then the code.\n\n'), lean);
+  // A slice whose ids have no example gets no tests-first line, even under Lean.
+  assert.ok(!sliceBrief({ featureTitle: 'Charts', outline: o, index: 1, testsFirst: true }).includes('Write the tests for these examples first'));
+  // An example's line breaks collapse, so it stays one indented line under its criterion.
+  const multi = normalizeOutline(reqOutline(['R-po-1'], ['R-po-2', 'R-ux-1', 'R-qa-1', 'R-ops-1']),
+    { agreed: AGREED.map((a) => (a.id === 'R-po-2' ? { ...a, example: 'Ana exports.\n# Not a heading\n  3 rows.' } : a)) }).outline;
+  assert.equal(multi.agreed.find((a) => a.id === 'R-po-2').example, 'Ana exports. # Not a heading 3 rows.');
+});
+
+test('C2: an agreed list without examples renders byte-identical', () => {
+  const o = normalizeOutline(reqOutline(['R-po-1'], ['R-po-2', 'R-ux-1', 'R-qa-1', 'R-ops-1']), { agreed: AGREED }).outline;
+  assert.deepEqual(o.agreed, AGREED);
+  const brief = sliceBrief({ featureTitle: 'Charts', outline: o, index: 2 });
+  assert.ok(brief.includes('Satisfies: R-po-2, R-ux-1, R-qa-1, R-ops-1\n- **R-po-2** text of R-po-2\n- **R-ux-1** text of R-ux-1\n- **R-qa-1** text of R-qa-1\n- **R-ops-1** text of R-ops-1\n\n'), brief);
+});
+
 test('sliceBrief lists `Satisfies:` and only its slice\'s criterion lines (`criteriaList` returns 4 ids)', () => {
   const o = normalizeOutline(reqOutline(['R-po-1'], ['R-po-2', 'R-ux-1', 'R-qa-1', 'R-ops-1']), { agreed: AGREED }).outline;
   const brief = sliceBrief({ featureTitle: 'Charts', outline: o, index: 2 });

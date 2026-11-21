@@ -33,6 +33,7 @@ import { classifyLoops } from '../shared/graph/loops.mjs';
 import { KEYED_KINDS } from '../shared/graph/constants.mjs';
 import { pickOrDrop, cleanPick, resolveRolePicks } from '../shared/graph/role-slots.mjs';
 import { roleReviewOf } from '../shared/graph/role-review-step.mjs';
+import { selfReviewViolations } from '../shared/graph/self-review.mjs';
 import { pickTemplateExtras } from '../shared/graph/template.mjs';
 import { scriptNodeCtx } from '../shared/graph/script-meta.mjs';
 import {
@@ -670,6 +671,23 @@ export async function workflowNeedsRepo(workflowId, { registry = loadAgentRegist
   return graphNeedsRepo(await readWorkflow(workflowId), registry);
 }
 
+/** Small runs C2 (D5): a per-run topology change, `transform(template) => template`, run on the private copy before
+ *  any layer resolves. The result keeps the workflow's id and version (per-workflow picks and wire budgets keyed by it
+ *  still apply), validates, and has no node reviewing its own output; anything else refuses the run with
+ *  `code: 'GRAPH_TRANSFORM_INVALID'`. */
+function transformedTemplate(copy, transform, reg, scripts) {
+  const refuse = (why, extra = {}) => Object.assign(new Error(`the run's graph change is refused: ${why}`), { code: 'GRAPH_TRANSFORM_INVALID', ...extra });
+  let out;
+  try { out = transform(copy); } catch (err) { throw refuse(err?.message || String(err)); }
+  if (!out || typeof out !== 'object' || !Array.isArray(out.nodes) || !Array.isArray(out.wires)) throw refuse('it returned no graph');
+  if (out.id !== copy.id || out.version !== copy.version) throw refuse('it changed the workflow id or version');
+  const { ok, errors } = validateGraph(out, registryPortsFn(reg, scripts), { allowUnplaceable: isReservedWorkflowId(out.id) });
+  if (!ok) throw refuse(errors.map(formatIssue).join('; '), { issues: errors });
+  const self = selfReviewViolations(out, (n) => reg[n.key]);
+  if (self.length) throw refuse(self.map((v) => `${v.reviewer} reviews its own output (${v.output})`).join('; '), { violations: self });
+  return out;
+}
+
 export async function resolveGraph(projectDir, workflowId, registry, agentsDir = DEFAULT_AGENTS_DIR, opts = {}) {
   if (workflowId === AUTO_WORKFLOW_ID) {
     throw new Error('the Auto workflow is decided per run — resolveGraph needs the adopted workflow id');
@@ -679,9 +697,11 @@ export async function resolveGraph(projectDir, workflowId, registry, agentsDir =
   if (stored.version !== 2) throw new Error('template is not a graph — runs on the v1 engine');
   // The RESOLVED template: a private deep copy (the alias row spreads a deep-frozen
   // constant) whose agent nodes carry the RESOLVED key after workspace substitution.
-  const tpl = structuredClone(stored);
   const reg = registry && typeof registry === 'object' ? registry : {};
   const scripts = opts.scripts && typeof opts.scripts === 'object' ? opts.scripts : loadScriptRegistry({ agentKeys: Object.keys(reg) });
+  const tpl = typeof opts.transform === 'function'
+    ? transformedTemplate(structuredClone(stored), opts.transform, reg, scripts)
+    : structuredClone(stored);
   const isWorkspace = !!opts.isWorkspace;
   const variants = isWorkspace ? workspaceVariants(reg) : {};
   // Per-project overlays. An Auto run owns its tuning (spec D7/D9): with

@@ -435,6 +435,29 @@ export function sliceRequirementsVariant(graph, id) {
   });
 }
 
+/** Shaper small runs C2 (D4): a slice graph with a Test writer between Refine and the Implementer. `n_tests` takes the
+ *  approved plan (wt1) and the slice's task (run 1: the agreed requirements) as its own optional `requirements` input
+ *  (wt2), and hands its `tests` note to the Implementer through an extra `tests` input (wt3), so the Implementer's first
+ *  run waits for the tests. The
+ *  frozen slice templates are never changed: this runs at resolve time on a private copy. Pure. */
+export function withTestWriter(graph) {
+  const impl = graph.nodes.find((n) => n.id === 'n_impl');
+  const tests = { id: 'n_tests', kind: 'agent', key: 'testWriter', x: impl.x, y: impl.y + 180, config: {} };
+  // A planning run with the requirements stage (run 1 of a feature) hands over the agreed requirements, not the prompt.
+  const reqFrom = graph.nodes.some((n) => n.id === 'n_reqrefine') ? { node: 'n_reqrefine', port: 'requirements' } : { node: 'n_task', port: 'task' };
+  const nodes = graph.nodes.map((n) => (n.id === 'n_impl'
+    ? { ...n, config: { ...structuredClone(n.config || {}), extraInputs: [...(n.config?.extraInputs || []).map((e) => ({ ...e })), { id: 'tests', type: 'md' }] } }
+    : structuredClone(n)));
+  return {
+    ...structuredClone(graph),
+    nodes: [...nodes, tests],
+    wires: [...graph.wires.map(copyWire),
+      { id: 'wt1', from: { node: 'n_refine', port: 'plan' }, to: { node: 'n_tests', port: 'plan' } },
+      { id: 'wt2', from: reqFrom, to: { node: 'n_tests', port: 'requirements' } },
+      { id: 'wt3', from: { node: 'n_tests', port: 'tests' }, to: { node: 'n_impl', port: 'tests' } }],
+  };
+}
+
 export const GRAPH_SHAPE_REQ_WORKFLOW = requirementsVariant(GRAPH_SHAPE_WORKFLOW, SHAPE_REQ_WORKFLOW_ID);
 export const GRAPH_SHAPE_UX_REQ_WORKFLOW = requirementsVariant(GRAPH_SHAPE_UX_WORKFLOW, SHAPE_UX_REQ_WORKFLOW_ID);
 /** Reserved apart from RESERVED_WORKFLOW_IDS (whose members are pinned): never listed, never saved over, never deleted. */

@@ -502,6 +502,8 @@ const PERSPECTIVE_AGENT_KEYS = new Set(['planner', 'refiner']);
 /** Spec §3.8: the agent that may write the slice outline, and the agents that get the slice scope (F15). */
 export const SLICE_PLANNER_KEY = 'planner';
 export const SLICE_SCOPE_AGENT_KEYS = PERSPECTIVE_AGENT_KEYS;
+/** Shaper small runs C2: the Test writer's agent key (builtin-workflows.mjs `withTestWriter` places it as `n_tests`). */
+export const TEST_WRITER_AGENT_KEY = 'testWriter';
 
 /** The Planner's slicing text: the rules plus a revise note while the outline is open, the flat note after
  *  Don't slice, '' otherwise. Driven by ctx fields the orchestrator sets, never by ctx.shape alone. */
