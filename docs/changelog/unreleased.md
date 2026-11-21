@@ -3,6 +3,22 @@
 Notes on merged features that have no release page yet. `/worca-changelog` folds
 them into the next page and empties this file.
 
+## Remotes through an SSH Host alias
+
+**A pull request from a fork cloned through a `~/.ssh/config` alias no longer fails with "Head ref must be a branch".**
+
+A remote such as `git@github-work:me/repo.git`, where `github-work` is a Host alias for github.com, now counts as github.com: Worca asks `ssh -G` for the alias's real host (it reads your ssh config and connects nowhere). Ship-it then opens the pull request from your fork to `upstream` as it does for a plain github.com remote, and an Azure DevOps alias gets its organization and project. git keeps using the URL as written. If ssh is missing or slow the remote keeps its alias host, and Worca asks again next time.
+
+Upgrading: with a fork cloned through an alias as `origin`, Automations now watch the fork instead of `upstream`, as they already did for a fork cloned without an alias.
+
+Chips: ~/.ssh/config Host aliases · ssh -G · fork pull requests · Azure DevOps aliases
+
+Read it: [Git automations](../git-automations.md)
+
+Pull requests (add each number when it opens):
+
+- Resolve ~/.ssh/config Host aliases in remote URLs (#1476)
+
 ## Long spec items are kept whole
 
 **A long step, rule or criterion no longer ends mid-word in the spec, the download or the run.**

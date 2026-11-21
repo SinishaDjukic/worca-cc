@@ -117,8 +117,8 @@ export function sshUrlHost(url) {
   if (!m) {
     if (/^[a-z][a-z0-9+.-]*:\/\//i.test(s)) return null;
     m = /^((?:[^@/\s]+@)?)([^:/\s]+)(:.+)$/.exec(s);
-    // Without a user@ prefix a leading `/` is a Windows drive path (C:/repos/x), as in parseRemoteUrl.
-    if (!m || (!m[1] && m[3].startsWith(':/'))) return null;
+    // Without a user@ prefix a leading `/` or `\` is a Windows drive path (C:/repos/x, C:\repos\x).
+    if (!m || (!m[1] && /^:[\\/]/.test(m[3]))) return null;
   }
   const [, head, host, tail] = m;
   return { host, withHost: (h) => `${head}${h}${tail}` };

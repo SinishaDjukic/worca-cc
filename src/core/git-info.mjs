@@ -900,6 +900,7 @@ export async function listRemotes(projectDir) {
 }
 
 // ~/.ssh/config Host aliases (`git@github-work:me/repo.git` → HostName github.com): alias → Promise<real host | null>.
+// Only ssh's answers stay (null = not an alias); a failed or timed-out lookup is dropped, so the next call asks again.
 const sshAliasCache = new Map();
 const SSH_ALIAS_TIMEOUT_MS = 3_000;
 // A plain host name. Anything else (a leading `-` would be an ssh option) is never passed to ssh, nor accepted from it.
@@ -909,7 +910,7 @@ const HOST_NAME_RE = /^[A-Za-z0-9_][A-Za-z0-9._-]*$/;
  * `parsed` as the real host names it when `url` is an ssh URL whose host is no known forge: `ssh -G` prints the
  * configuration ssh would use (reading ~/.ssh/config, no connection), and its `hostname` line is the real host. The
  * URL is re-parsed with that host, so an Azure DevOps alias gets its org/project. Only identity changes: git keeps
- * using the URL as written. ssh missing, failing or slow → `parsed` as is. Never throws.
+ * using the URL as written. ssh missing, failing or slow → `parsed` as is (and asked again next time). Never throws.
  */
 async function resolveSshAlias(url, parsed) {
   if (!parsed || forgeOf(parsed)) return parsed;
@@ -917,10 +918,15 @@ async function resolveSshAlias(url, parsed) {
   if (!ssh || !HOST_NAME_RE.test(ssh.host)) return parsed;
   const key = ssh.host.toLowerCase();
   if (!sshAliasCache.has(key)) {
-    sshAliasCache.set(key, _run('ssh', ['-G', '--', ssh.host], { timeout: SSH_ALIAS_TIMEOUT_MS }).then((r) => {
-      const real = r.ok ? (/^hostname\s+(\S+)\s*$/im.exec(r.stdout || '') || [])[1] : null;
+    const lookup = _run('ssh', ['-G', '--', ssh.host], { timeout: SSH_ALIAS_TIMEOUT_MS }).then((r) => {
+      if (!r.ok) throw new Error('ssh -G failed');
+      const real = (/^hostname\s+(\S+)\s*$/im.exec(r.stdout || '') || [])[1];
       return real && HOST_NAME_RE.test(real) && real.toLowerCase() !== key ? real : null;
-    }, () => null));
+    }).catch(() => {
+      if (sshAliasCache.get(key) === lookup) sshAliasCache.delete(key);
+      return null;
+    });
+    sshAliasCache.set(key, lookup);
   }
   const real = await sshAliasCache.get(key);
   return (real && parseRemoteUrl(ssh.withHost(real))) || parsed;
