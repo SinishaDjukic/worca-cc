@@ -497,3 +497,40 @@ test('B2 renderCareStart: a 422 shows in .plan-err role=alert, keeps the selecti
   assert.equal(d.activeElement, go);
   assert.deepEqual(r.collect(), { care: { position: 'lean' } });
 });
+
+// Small runs B3 (D21, D22): the flag adds Compliance to the chips and the lead menu; the lead is asked once, then kept.
+test('small runs flag: off, the chips and the lead menu list 0 Compliance; on, 1 each', async () => {
+  for (const [flags, n] of [['', 0], ['shaperSmallRuns', 1]]) {
+    stubAnswerer({ lead: 'architect' });
+    _resetAnswerer();
+    const d = flagDoc(flags);
+    const small = shapeCardExtras(d, { nudge: nudge({ size: 'small', perspectives: ['architect'] }) });
+    d.body.appendChild(small.el);
+    const more = small.el.querySelector('.shape-chip-more');
+    if (more) more.click();
+    assert.equal([...small.el.querySelectorAll('.shape-chip')].filter((c) => c.dataset.perspective === 'compliance').length, n, `chips, flags "${flags}"`);
+    const { d: d2, triggers } = await reqCard({}, { flags });
+    triggers()[0].click();
+    assert.equal(menuItems(d2).filter((i) => i.querySelector('.wfv-menu-l').textContent === 'Compliance').length, n, `lead menu, flags "${flags}"`);
+  }
+});
+
+test('small runs flag: the lead is asked once (pick a role, 1 PUT), then the saved lead is preset and nothing is sent', async () => {
+  const first = await reqCard({}, { lead: null, flags: 'shaperSmallRuns' });
+  const [lead] = first.triggers();
+  assert.equal(lead.textContent, 'pick a role');
+  assert.equal(first.ui.blocked(), true);
+  lead.click();
+  menuItems(first.d).find((i) => i.querySelector('.wfv-menu-l').textContent === 'Compliance').click();
+  assert.equal(first.ui.blocked(), false);
+  first.ui.commit();
+  await tick();
+  assert.deepEqual(puts, [{ lead: 'compliance' }]);
+  const next = await reqCard({}, { lead: 'compliance', flags: 'shaperSmallRuns' });
+  assert.equal(next.triggers()[0].textContent, 'Compliance');
+  assert.equal(next.ui.blocked(), false);
+  next.ui.commit();
+  await tick();
+  assert.deepEqual(puts, [], 'the next card sends 0 PUTs');
+  assert.equal(next.ui.body().shape.lead, 'compliance');
+});

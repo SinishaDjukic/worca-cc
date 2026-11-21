@@ -14,6 +14,7 @@ import { PROXY_AGENT_TEXT } from '../../../src/core/proxy-host.mjs';
 import { isInContainer } from '../../../src/core/remote-access.mjs';
 import { answererProfileFor, chatHomePinsFor, setAnswererProfileFor, setChatHomePinsFor } from '../../../src/core/settings.mjs';
 import { featureOfPipeline } from '../../../src/core/shape/features.mjs';
+import { shaperSmallRunsOn } from '../../../src/core/shape/small-runs.mjs';
 import { roundsOf } from '../../../src/core/shape/rounds.mjs';
 import { isNoProjectKey } from '../../../src/core/store.mjs';
 import { REFS_MAX } from '../../../src/shared/chip-refs.mjs';
@@ -69,11 +70,11 @@ app.put('/api/chat-home/pins', async (req, res) => {
 });
 // The answerer profile (src/shared/answerer.mjs): the lead perspective this person shapes as, keyed like the pins.
 app.get('/api/answerer', (req, res) => {
-  res.json(answererProfileFor(askViewer(req)));
+  res.json(answererProfileFor(askViewer(req), { smallRuns: shaperSmallRunsOn() }));
 });
 app.put('/api/answerer', async (req, res) => {
   try {
-    res.json(await setAnswererProfileFor(askViewer(req), { lead: (req.body || {}).lead }));
+    res.json(await setAnswererProfileFor(askViewer(req), { lead: (req.body || {}).lead }, { smallRuns: shaperSmallRunsOn() }));
   } catch (err) {
     if (err && err.code === 'BAD_LEAD') return res.status(400).json({ error: { code: 'BAD_LEAD', message: err.message } });
     res.status(500).json({ error: String((err && err.message) || err) });

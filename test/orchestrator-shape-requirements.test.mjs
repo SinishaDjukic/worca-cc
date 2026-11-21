@@ -532,3 +532,187 @@ test('a requirements-first follow-up keeps shape.requirementsFirst across a paus
   const plan = h2.asks.find((q) => q.id === 'plan-n_refine-1');
   assert.equal(plan.plan.coverage.total, 8, 'every drafted criterion, not only the slice\'s');
 });
+
+// ── Small runs B3: the Requirements step under the shaperSmallRuns snapshot ───────────────────────────────────────
+/** Runs `fn` with WORCA_FLAGS set to `shaperSmallRuns` (on) or unset (off), restoring it afterwards. */
+async function withSmallRuns(on, fn) {
+  const prev = process.env.WORCA_FLAGS;
+  if (on) process.env.WORCA_FLAGS = 'shaperSmallRuns'; else delete process.env.WORCA_FLAGS;
+  try { return await fn(); } finally { if (prev === undefined) delete process.env.WORCA_FLAGS; else process.env.WORCA_FLAGS = prev; }
+}
+/** Runs `fn` with the mock knobs `env` set, restoring them afterwards. */
+async function withEnv(env, fn) {
+  const prev = Object.fromEntries(Object.keys(env).map((k) => [k, process.env[k]]));
+  for (const [k, v] of Object.entries(env)) process.env[k] = v;
+  try { return await fn(); } finally { for (const [k, v] of Object.entries(prev)) { if (v === undefined) delete process.env[k]; else process.env[k] = v; } }
+}
+/** A small-runs mock run: Care answered with `position` (unless the run asks none), plan asks to `onAsk`. */
+function startSR({ position = 'balanced', smallRuns = true, ...opts } = {}, onAsk = approve) {
+  const req = resolveShapeRequest({ shape: opts.shape ?? { size: 'large', lead: 'security' } }, { internal: !!opts.internal, smallRuns });
+  assert.equal(req.ok, true, req.error);
+  const dir = opts.projectDir || gitDir('shapereq-b3');
+  const orch = createOrchestrator({ projectDir: dir, workflowId: opts.workflowId || req.workflowId, prompt: opts.prompt || 'demo',
+    claude: { mock: true }, shape: req.shape, ...(opts.resume ? { resume: opts.resume } : {}), ...(opts.overlay ? { overlay: opts.overlay } : {}) });
+  const asks = []; const execs = [];
+  orch.on('exec', (e) => execs.push(e));
+  orch.on('question', (q) => {
+    asks.push(q);
+    if (q.kind === 'care') setImmediate(() => orch.answer(q.id, { care: { position } }));
+    else if (q.kind === 'plan') setImmediate(() => onAsk(q, orch));
+    else if (q.kind === 'clarify' || q.kind === 'questions') setImmediate(() => orch.answer(q.id, { answers: [] }));
+  });
+  const done = opts.resume ? orch.resume() : orch.run();
+  return { orch, asks, execs, done, dir, workflowId: req.workflowId };
+}
+const reqRounds = (orch) => (orch.state.roleReviews?.rounds || []).filter((r) => r.node === 'n_reqroles');
+// Product and QA review requirements and plans, never code, so their majors cannot hold the code review loop.
+const EVERY = { 1: 'major', 2: 'major', 3: 'major', 4: 'major' };
+const MAJOR_EVERY_ROUND = JSON.stringify({ product: EVERY, qa: EVERY });
+const reqAskOf = (h) => h.asks.find((q) => isReqAsk(q));
+
+test('small runs: Lean runs 1 requirement round (lead + Product), Balanced 1 with every picked role, Thorough exactly 3', () => withEnv({ WORCA_MOCK_ROLE_REVIEW: MAJOR_EVERY_ROUND }, () => withSmallRuns(true, async () => {
+  const roles = {};
+  for (const position of ['lean', 'balanced', 'thorough']) {
+    const h = startSR({ position });
+    const res = await h.done;
+    assert.equal(res.status, 'done', res.error);
+    const rounds = reqRounds(h.orch);
+    assert.equal(rounds.length, position === 'thorough' ? 3 : 1, position);
+    roles[position] = rounds[0].roles.map((r) => r.key);
+    if (position === 'thorough') {
+      // The server attaches the role pass to the ask it sends (attachRoleReviews); do the same here.
+      const { attachRoleReviews } = await import('../src/shared/shape/role-review.mjs');
+      const ask = attachRoleReviews(structuredClone(reqAskOf(h)), h.orch.state.roleReviews);
+      assert.equal(ask.plan.smallRuns, true);
+      assert.equal(ask.plan.roleNode, 'n_reqroles');
+      const qa = ask.plan.roleReviews.rounds.at(-1).roles.find((r) => r.key === 'qa');
+      assert.ok(qa.findings.some((f) => f.severity === 'major'), 'the hold lists the objection raised at the bound');
+      assert.equal(ask.plan.roleReviews.rounds.length, 3);
+    }
+  }
+  assert.deepEqual(roles.lean, ['product', 'security']);
+  assert.deepEqual(roles.balanced, ['product', 'architect', 'qa', 'security']);
+})));
+
+test('small runs: Thorough with a clean round 2 stops after 2; with the flag off the requirement review runs 2 rounds', () => withEnv({ WORCA_MOCK_ROLE_REVIEW: JSON.stringify({ qa: { 1: 'major', 2: 'minor' } }) }, async () => {
+  const on = await withSmallRuns(true, async () => { const h = startSR({ position: 'thorough' }); assert.equal((await h.done).status, 'done'); return reqRounds(h.orch).length; });
+  assert.equal(on, 2);
+  await withEnv({ WORCA_MOCK_ROLE_REVIEW: MAJOR_EVERY_ROUND }, () => withSmallRuns(false, async () => {
+    const h = start({});
+    assert.equal((await h.done).status, 'done');
+    assert.equal(reqRounds(h.orch).length, 2, 'flag off: today\'s 2 rounds');
+    assert.equal(h.asks.some((q) => q.kind === 'care'), false);
+    assert.equal(reqAskOf(h).plan.smallRuns, undefined);
+  }));
+}));
+
+test('small runs: a resume keeps the Care budget in the manifest wire (Thorough 3, Lean 1)', () => withEnv({ WORCA_MOCK_ROLE_REVIEW: MAJOR_EVERY_ROUND }, () => withSmallRuns(true, async () => {
+  for (const [position, want] of [['thorough', 3], ['lean', 1]]) {
+    const dir = gitDir(`shapereq-b3-resume-${position}`);
+    let paused = false;
+    const h = startSR({ position, projectDir: dir }, approve);
+    h.orch.on('exec', (e) => { if (!paused && e.nodeId === 'n_reqrefine' && e.status === 'start') { paused = true; h.orch.pause(); } });
+    assert.equal((await h.done).status, 'paused');
+    const saved = readPipelineForResume(h.orch.getState().id);
+    const wire = saved.resumePoint.manifest.graph.wires.find((w) => w.loop && w.to.node === 'n_reqroles');
+    assert.equal(wire.maxCycles, want, `${position}: the manifest wire carries the Care budget`);
+    const h2 = startSR({ position, projectDir: dir, resume: saved, workflowId: 'wf_shape_req' });
+    assert.equal((await h2.done).status, 'done');
+    assert.equal(reqRounds(h2.orch).length, want, position);
+  }
+})));
+
+test('small runs: a run overlay or a project per-workflow budget for the requirements loop wins over Care', () => withEnv({ WORCA_MOCK_ROLE_REVIEW: MAJOR_EVERY_ROUND }, () => withSmallRuns(true, async () => {
+  const over = startSR({ position: 'thorough', overlay: { wires: { wr6: { maxCycles: 2 } } } });
+  assert.equal((await over.done).status, 'done');
+  assert.equal(reqRounds(over.orch).length, 2, 'the run overlay wins');
+  const { setWireCycles } = await import('../src/core/config.mjs');
+  const dir = gitDir('shapereq-b3-project');
+  await setWireCycles(dir, 'wf_shape_req', 'wr6', 2);
+  const proj = startSR({ position: 'thorough', projectDir: dir });
+  assert.equal((await proj.done).status, 'done');
+  assert.equal(reqRounds(proj.orch).length, 2, 'the project layer wins');
+})));
+
+test('small runs: no example: approve refused with the no-example message, the hold stays open and nothing is written', () => withEnv({ WORCA_MOCK_NO_EXAMPLE: 'R-po-1' }, () => withSmallRuns(true, async () => {
+  let refused = null;
+  let bytes = null;
+  const h = startSR({ position: 'lean' }, async (q, orch) => {
+    if (!isReqAsk(q) || refused) { if (refused || !isReqAsk(q)) return orch.answer(q.id, q.id === refused?.id ? { decision: 'stop' } : { decision: 'approve' }); }
+    bytes = await readFile(q.plan.file, 'utf8');
+    assert.ok(q.plan.criteria.items.some((i) => i.code === 'no-example' && i.id === 'R-po-1'));
+    const err = await Promise.resolve().then(() => orch.answer(q.id, { decision: 'approve' })).then(() => null, (e) => e);
+    refused = { id: q.id, err };
+    assert.equal(orch.getState().pendingQuestion?.id ?? orch.pendingQuestion?.id, q.id, 'the hold stays open under the same id');
+    assert.equal(await readFile(q.plan.file, 'utf8'), bytes, 'nothing written');
+    orch.answer(q.id, { decision: 'stop' });
+  });
+  await h.done;
+  assert.ok(refused, 'the requirements hold was raised');
+  const errors = refused.err?.errors || refused.err?.payload?.errors;
+  assert.deepEqual(errors, [{ path: 'decision', code: 'invalid', message: '1 requirement has no example yet: ask for changes' }]);
+})));
+
+test('small runs: an example removed from the file during the hold is caught on approve', () => withSmallRuns(true, async () => {
+  const ids = [];
+  const h = startSR({ position: 'lean' }, async (q, orch) => {
+    if (!isReqAsk(q)) return approve(q, orch);
+    ids.push(q.id);
+    if (ids.length === 1) {
+      const text = await readFile(q.plan.file, 'utf8');
+      await writeFile(q.plan.file, text.replace(/\n {2}Example: [^\n]*(?=\n- \*\*R-po-2\*\*)/, ''), 'utf8');
+      return approve(q, orch);
+    }
+    assert.ok(q.plan.criteria.items.some((i) => i.code === 'no-example' && i.id === 'R-po-1'), 'the re-ask shows the missing example');
+    orch.answer(q.id, { decision: 'stop' });
+  });
+  await h.done;
+  assert.equal(ids.length, 2, 'asked again after the stale approve');
+  assert.ok(auditOf(h.orch).some((t) => /requirements changed during the hold/.test(t)));
+}));
+
+const SEC_DESIGN = (round) => JSON.stringify([
+  { round, findings: [`security-${round}-1`, `ux-${round}-1`], question: 'Mask secrets?', options: ['Mask', 'Drop'] },
+  { round, findings: [`security-${round}-2`, `ux-${round}-2`], question: 'Warn first?', options: ['Warn', 'Skip'] },
+]);
+
+test('small runs: two Security–Design conflicts in the last round give the hold 1 decision with from on, 2 off', async () => {
+  const counts = {};
+  for (const on of [true, false]) {
+    const shape = { size: 'large', lead: 'security', perspectives: ['ux', 'security'] };
+    // Two findings per role, on the same criterion, so both pairs are real conflicts.
+    const review = JSON.stringify({ security: { 1: { severity: 'minor', findings: 2 } }, ux: { 1: { severity: 'minor', findings: 2 } } });
+    await withEnv({ WORCA_MOCK_ROLE_REVIEW: review, WORCA_MOCK_CONFLICTS: SEC_DESIGN(1) }, () => withSmallRuns(on, async () => {
+      // Balanced: every picked role reviews (Lean would run only the lead and Product).
+      const h = startSR({ position: 'balanced', shape }, (q, orch) => (isReqAsk(q) ? orch.answer(q.id, { decision: 'stop' }) : approve(q, orch)));
+      await h.done;
+      counts[on] = (reqAskOf(h).plan.decisions || []).filter((d) => d.from).length;
+    }));
+  }
+  assert.deepEqual(counts, { true: 1, false: 2 });
+});
+
+test('small runs: Compliance picked spawns a role-compliance reviewer whose brief names R-comp; flag off with default picks none', async () => {
+  const prompts = capturePrompts();
+  await withSmallRuns(true, async () => {
+    const h = startSR({ position: 'balanced', shape: { size: 'large', lead: 'security', perspectives: ['compliance'] } });
+    assert.equal((await h.done).status, 'done');
+    assert.ok(h.execs.some((e) => e.taskId === 'role-compliance' || /role-compliance/.test(String(e.nodeId || ''))), 'a role-compliance row');
+    assert.ok(prompts.some((p) => /## Your role: Compliance/.test(p) && /R-comp/.test(p)));
+  });
+  const before = prompts.length;
+  await withSmallRuns(false, async () => {
+    const h = start({});
+    assert.equal((await h.done).status, 'done');
+    assert.equal(h.execs.some((e) => e.taskId === 'role-compliance' || /role-compliance/.test(String(e.nodeId || ''))), false);
+    assert.equal(prompts.slice(before).some((p) => /## Your role: Compliance/.test(p)), false);
+  });
+});
+
+test('small runs: the snapshot wins over a live flag flip: the flag deleted after round 1 keeps Thorough\'s 3 rounds', () => withEnv({ WORCA_MOCK_ROLE_REVIEW: MAJOR_EVERY_ROUND }, () => withSmallRuns(true, async () => {
+  const h = startSR({ position: 'thorough' });
+  h.orch.on('exec', (e) => { if (e.nodeId === 'n_reqrefine' && e.status === 'start') delete process.env.WORCA_FLAGS; });
+  assert.equal((await h.done).status, 'done');
+  assert.equal(reqRounds(h.orch).length, 3);
+  assert.equal(reqAskOf(h).plan.smallRuns, true);
+})));

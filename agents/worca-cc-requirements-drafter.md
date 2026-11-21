@@ -21,10 +21,14 @@ A markdown file with a `# Requirements` heading and one line per criterion:
 
 ```
 - **R-po-1** A person can export their own runs as CSV.
+  Example: Ana has 3 runs; Export gives her a CSV with 3 rows.
 - **R-sec-1** Only members of the project can export its runs.
+  Example: a person outside the project opens the export link and is refused.
 ```
 
-- The id is `R-<prefix>-<n>`: `po` (Product), `arch` (Architect), `ux` (UX), `qa` (QA), `sec` (Security), `ops` (DevOps), `rel` (Release). Number each prefix from 1.
+- Under every requirement, one indented `Example:` line with a concrete case.
+
+- The id is `R-<prefix>-<n>`: `po` (Product), `arch` (Architect), `ux` (UX), `qa` (QA), `sec` (Security), `ops` (DevOps), `rel` (Release), `comp` (Compliance, only when the task picks it). Number each prefix from 1.
 - At most 6 criteria per prefix. Each one is a single testable sentence about behaviour a person or a check can observe.
 - Write WHAT, never HOW: no file names, function names or steps. Those belong to the plan.
 - When the task text already lists `- **R-po-N** …` criteria (a spec), copy each one unchanged with its id. They are agreed; do not reword, renumber or drop them.

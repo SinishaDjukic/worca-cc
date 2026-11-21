@@ -16,6 +16,16 @@ export const CONFIRM_ROLES = Object.freeze([
 ].map((r) => Object.freeze(r)));
 export const REQUIREMENT_KINDS = Object.freeze(['owned', 'confirmed']);
 
+/** THE one mapping between the Shaper perspective keys and the CONFIRM_ROLES keys (small runs B3). */
+export const ROLE_OF_PERSPECTIVE = Object.freeze({
+  product: 'product', architect: 'engineering', ux: 'design', qa: 'qa', security: 'security', devops: 'devops', compliance: 'compliance',
+});
+const PERSPECTIVE_OF_ROLE = Object.freeze(Object.fromEntries(Object.entries(ROLE_OF_PERSPECTIVE).map(([p, r]) => [r, p])));
+/** The CONFIRM_ROLES key of a perspective (`architect` is `engineering`); null for one with no role (`release`, `fit`). */
+export const roleOfPerspective = (key) => (typeof key === 'string' && Object.hasOwn(ROLE_OF_PERSPECTIVE, key) ? ROLE_OF_PERSPECTIVE[key] : null);
+/** The perspective key of a CONFIRM_ROLES key (`design` is `ux`); null for an unknown role. */
+export const perspectiveOfRole = (role) => (typeof role === 'string' && Object.hasOwn(PERSPECTIVE_OF_ROLE, role) ? PERSPECTIVE_OF_ROLE[role] : null);
+
 const ROLE_ECHO_MAX = 60;
 const isObject = (v) => !!v && typeof v === 'object' && !Array.isArray(v);
 const refuse = (code, error) => ({ ok: false, code, error });

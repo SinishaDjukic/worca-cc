@@ -256,3 +256,27 @@ test('B2 normalizeStartCare: the stored Start Care; bad position and bad facts a
   assert.equal(normalizeStartCare({ ...raw, at: 'soon' }).code, 'CARE_FACTS_INVALID');
   assert.equal(normalizeStartCare({ ...raw, reason: 'x'.repeat(201) }).code, 'CARE_FACTS_INVALID');
 });
+
+// Small runs B3: the ONE mapping between the perspective keys and the confirming roles.
+test('ROLE_OF_PERSPECTIVE: every value is a CONFIRM_ROLES key, it round-trips for all 7, and release or fit has no role', async () => {
+  const { ROLE_OF_PERSPECTIVE, roleOfPerspective, perspectiveOfRole } = await import('../src/shared/shape/feature-record.mjs');
+  const keys = Object.keys(ROLE_OF_PERSPECTIVE);
+  assert.equal(keys.length, 7);
+  for (const k of keys) {
+    assert.ok(CONFIRM_ROLES.some((r) => r.key === ROLE_OF_PERSPECTIVE[k]), k);
+    assert.equal(perspectiveOfRole(roleOfPerspective(k)), k);
+  }
+  assert.equal(roleOfPerspective('architect'), 'engineering');
+  assert.equal(roleOfPerspective('ux'), 'design');
+  assert.equal(roleOfPerspective('fit'), null);
+  assert.equal(roleOfPerspective('release'), null);
+  assert.equal(perspectiveOfRole('release'), null);
+  assert.equal(perspectiveOfRole('fit'), null);
+});
+
+test('exactly one perspective-to-role table exists: the UI and the shared modules hold no second one', () => {
+  for (const f of ['ui/public/answerer.mjs', 'ui/public/shape/requirements-body.mjs', 'ui/public/shape/role-rows.mjs']) {
+    const src = readFileSync(new URL(`../${f}`, import.meta.url), 'utf8');
+    assert.doesNotMatch(src, /architect:\s*'engineering'|architect:\s*'Engineering'/, f);
+  }
+});

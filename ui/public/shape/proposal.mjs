@@ -2,9 +2,10 @@
 // the nudge (open decisions, both choices with estimates) on a nudged one; the facts line and the
 // lead sentence on either. null when the card has neither.
 import { buildPerspectiveChips } from './chips.mjs';
-import { chipsHiddenFor, PERSPECTIVES } from '../../../src/shared/shape/perspectives.mjs';
+import { chipsHiddenFor, perspectivesFor } from '../../../src/shared/shape/perspectives.mjs';
 import { shapeRequirementsEligible } from '../../../src/shared/shape/requirements.mjs';
-import { ANSWERER_LEAD_KEYS } from '../../../src/shared/answerer.mjs';
+import { answererLeadKeys } from '../../../src/shared/answerer.mjs';
+import { flagOn } from '../flags.mjs';
 import { loadAnswerer, saveAnswerer, leadLabel } from '../answerer.mjs';
 import { notify } from '../feedback.mjs';
 import { toggleMenu } from '../workflows/menu.mjs';
@@ -40,13 +41,15 @@ function requirementsCard(doc, card, h, fetchFn) {
   el.appendChild(h('div', 'shape-nudge-head shape-facts', factsLine(n)));
   const picked = n.perspectives;
   const hidden = chipsHiddenFor(picked);
+  // Small runs B3 (D21, D22): the live flag offers Compliance as a chip and as a lead (no run exists yet).
+  const smallRuns = flagOn('shaperSmallRuns', doc);
   if (!shapeRequirementsEligible(n)) {
-    const chips = buildPerspectiveChips(doc, { picked, hidden, collapsed: true });
+    const chips = buildPerspectiveChips(doc, { picked, hidden, collapsed: true, smallRuns });
     el.appendChild(chips.el);
     return { el, chipsEl: chips.el, requirements: false, blocked: () => false, commit: noop, body: () => bodyOf(card, chips.value()) };
   }
 
-  const offered = PERSPECTIVES.filter((p) => !hidden.includes(p.key)).map((p) => p.key);
+  const offered = perspectivesFor({ smallRuns }).filter((p) => !hidden.includes(p.key)).map((p) => p.key);
   const supporters = new Set(picked.filter((k) => k !== 'product' && offered.includes(k)));
   let lead = null;          // the pick
   let saved = null;         // the profile's lead
@@ -77,7 +80,7 @@ function requirementsCard(doc, card, h, fetchFn) {
   function paintSentence() {
     leadBtn = picker('shape-lead', 'pick a role', 'The role that leads the requirements');
     suppBtn = picker('shape-supporters', 'no one else', 'The roles that support the lead');
-    leadBtn.addEventListener('click', () => toggleMenu({ doc, anchor: leadBtn, label: 'You lead as', items: ANSWERER_LEAD_KEYS.map((k) => ({
+    leadBtn.addEventListener('click', () => toggleMenu({ doc, anchor: leadBtn, label: 'You lead as', items: answererLeadKeys({ smallRuns }).map((k) => ({
       label: leadLabel(k), checked: k === lead, ...(k === saved ? { hint: 'you, last time' } : {}),
       onSelect: () => { lead = k; paint(); emit(); },
     })) }));

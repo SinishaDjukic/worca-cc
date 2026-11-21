@@ -82,6 +82,21 @@
 .shape-reqs-agreed dt{padding:3px 0;font-size:var(--fs-meta);color:var(--ink-2);}
 .shape-reqs-agreed dd{container:shape-reqs-rows / inline-size;margin:0;}
 .shape-reqs-agreed :is(.plan-check-label,.plan-check-detail){overflow-wrap:anywhere;}
+/* Small runs B3: one fold per role. Head: mark · name · summary, the chevron at the far right; on a phone the summary
+   wraps under the name while the mark keeps the left column. */
+.shape-role-fold .plan-check-line{display:flex;flex-wrap:wrap;align-items:baseline;gap:0 8px;width:100%;}
+.shape-role-fold .plan-check-mark.ok{color:var(--green-ink);}
+.shape-role-fold .plan-chev{margin-left:auto;}
+@media (max-width:480px){.shape-role-fold .plan-fold-text{order:1;flex:1 0 100%;padding-left:calc(1em + 8px);}}
+/* Owner direction: the role name is the fold's title (ink, 600) after the role's perspective icon. */
+.shape-role-fold-ic{display:inline-flex;align-items:center;justify-content:center;flex:none;width:16px;height:16px;align-self:center;border:1px solid var(--line);border-radius:var(--r-xs);font:600 11px/1 var(--sans);color:var(--ink-2);}
+.shape-role-fold-name{color:var(--ink);font-weight:600;}
+.shape-role-fold-lead{font-weight:400;color:var(--ink-2);}
+/* Requirement rows: mark · the id in one fixed column · the label, with its detail beside it only when both fit whole on
+   the line, else on its own line under the label. */
+.shape-role-fold .plan-check-id{flex:none;min-width:5.4em;color:var(--ink-2);font-variant-numeric:tabular-nums;white-space:nowrap;}
+.shape-role-fold .plan-check-text{flex:1 1 0;min-width:0;display:flex;flex-wrap:wrap;align-items:baseline;gap:0 8px;}
+.shape-role-fold .plan-check-text>:is(.plan-check-label,.plan-check-detail){flex:0 0 auto;max-width:100%;min-width:0;overflow-wrap:anywhere;}
 /* Too narrow for a failing row's words side by side: its detail goes under its label. */
 @container shape-reqs-rows (max-width:320px){
   .shape-reqs .plan-check-row:has(.plan-check-detail){display:grid;grid-template-columns:1em minmax(0,1fr);}

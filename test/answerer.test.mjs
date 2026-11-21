@@ -89,3 +89,16 @@ test('wordsFor: Option n only when nothing is left', () => {
   assert.equal(wordsFor({ label: 'Owner' }, 'label', lead, { strip: true, n: 2 }), 'Owner');
   assert.equal(wordsFor({ label: 'Use `--force`' }, 'label', lead, { strip: true, n: 2 }), 'Use');
 });
+
+// Small runs B3 (D7): Compliance is a lead only under the flag, worded plainly.
+test('answererLeadKeys: off deep-equals ANSWERER_LEAD_KEYS; on adds compliance; wordsFor with lead compliance is the plain twin', async () => {
+  const { answererLeadKeys, ANSWERER_LEAD_KEYS } = await import('../src/shared/answerer.mjs');
+  assert.deepEqual(answererLeadKeys(), [...ANSWERER_LEAD_KEYS]);
+  assert.deepEqual(answererLeadKeys({ smallRuns: true }), [...ANSWERER_LEAD_KEYS, 'compliance']);
+  assert.deepEqual(ANSWERER_LEADS, { product: 'plain', architect: 'technical', ux: 'plain', qa: 'technical', security: 'technical', devops: 'technical' });
+  assert.equal(isAnswererLead('compliance'), false);
+  assert.equal(isAnswererLead('compliance', { smallRuns: true }), true);
+  assert.equal(isAnswererLead('release', { smallRuns: true }), false);
+  const entry = { text: 'Use `audit_log` rows', plain: 'Keep a record of who did what' };
+  assert.equal(wordsFor(entry, 'text', 'compliance'), 'Keep a record of who did what');
+});

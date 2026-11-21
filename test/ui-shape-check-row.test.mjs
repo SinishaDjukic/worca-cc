@@ -168,3 +168,17 @@ test('buildCheckRows: state dropped draws the none icon with aria-label dropped;
   assert.equal(rows[3].querySelector('.plan-check-detail').textContent, 'covered by the diff');
   assert.equal(buildCheckFold(doc, ledger, 'Requirements').line.textContent.replace('›', ''), 'Requirements 3/4 · 1 to fix');
 });
+
+// Small runs B3 (D19): a row's `note` (its example) shows on a passing row too; the screen reader then hears the id only.
+test('buildCheckRows note: shown on a passing row; .sr-only is the id only; without note the rows are unchanged', () => {
+  const [row] = buildCheckRows(doc, { items: [{ id: 'R-po-1', label: 'Export runs', pass: true, note: 'e.g. Ana exports 3 runs', tip: 'R-po-1 · e.g. Ana exports 3 runs' }] });
+  assert.equal(row.querySelector('.plan-check-detail').textContent, 'e.g. Ana exports 3 runs');
+  assert.equal(row.querySelector('.sr-only').textContent, 'R-po-1');
+  assert.equal(row.title, 'R-po-1 · e.g. Ana exports 3 runs');
+  const plain = { id: 'R-po-1', label: 'Export runs', pass: true, detail: 'ignored on a pass', tip: 'R-po-1' };
+  const [a] = buildCheckRows(doc, { items: [plain] });
+  assert.equal(a.querySelector('.plan-check-detail'), null);
+  assert.equal(a.querySelector('.sr-only').textContent, 'R-po-1');
+  const [q] = buildCheckRows(doc, { items: [{ id: 'R-sec-1', label: 'x', pass: true, note: 'in question: the decision above', mark: '?' }] });
+  assert.equal(q.querySelector('.plan-check-mark').textContent, '?');
+});

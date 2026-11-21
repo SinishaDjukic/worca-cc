@@ -506,6 +506,18 @@ Shaper's Requirements step is a hold, like the plan approval, and it has its own
   becomes the primary, and **Agree and plan** is a plain, blocked button. If the requirements cannot be changed any more,
   there is no primary and the foot says `1 to fix`. Agree and plan is also off, with the reason beside it, when no
   requirement was written. If the requirements could not be loaded the card says so and **Try again** is the primary.
+
+  With small runs on (the `shaperSmallRuns` flag, decided when the run starts), the card differs. One fold per role
+  replaces the single fold, in a fixed order: Product, Engineering, Design, DevOps, Security, Compliance, QA, then
+  Release when it wrote requirements. Each fold head reads ✓ or `?`, the role (`(you ask as)` on your lead), what the
+  role did (`wrote 4`, `added 2 · 1 fixed`, `nothing added`), and the chevron. A clean role is closed; a role with a
+  question, an open objection or a requirement with no example is open. Every requirement has an example, shown as
+  `e.g. …`; one without reads `no example yet`, **Agree requirements** is blocked with `1 requirement has no example
+  yet: ask for changes`, and the server refuses the approval too. A disagreement between two roles is one question,
+  and the requirements it is about read `in question: the decision above`. Care sets the review rounds: Lean one round
+  by your lead's role and Product, Balanced one round by every picked role, Thorough up to 3 rounds, stopping early on a
+  clean round. Compliance can be picked as a perspective and as your lead. A run started without a lead (the API or
+  the CLI) leads as your saved lead, else Product.
 - **The plan card.** A **Requirements 7/8 · 1 to fix** fold sits above **Shape** and opens when a requirement has no
   step that delivers it; the row reads `R-ops-1 · <the requirement>` and `not covered by any step`. While any row fails,
   **Fix all** is the primary and **Approve and build** is a plain button; when everything is covered, **Approve and

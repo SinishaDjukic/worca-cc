@@ -1448,8 +1448,8 @@ export class GraphOrchestrator extends RunHarness {
         id: q.id, kind: PLAN_ASK_KIND, nodeId: q.nodeId, executionId: q.executionId, ...(concern ? { concern } : {}),
         // coverage: null = it could not be read, which is not "no coverage configured"; Away waits on it (planRule).
         plan: { ...q.plan, nodeId: q.nodeId, check, perspectives, ...(spec?.coverage ? { coverage } : {}), ...(outlineChange ? { outlineChange } : {}), ...(notes.length ? { notes } : {}),
-          ...(conflicts.length ? { openConflicts: conflicts.length } : {}) },
-        validate: (raw) => validatePlanAnswer(raw, { revisable: q.plan?.revisable === true, perspectives, conflicts }),
+          ...(conflicts.length ? { openConflicts: conflicts.length } : {}), ...(this._shapeRec?.smallRuns === true ? { smallRuns: true } : {}) },
+        validate: (raw) => validatePlanAnswer(raw, { revisable: q.plan?.revisable === true, perspectives, conflicts, smallRuns: this._shapeRec?.smallRuns === true }),
       }));
     })();
     return asked.then(
@@ -1542,8 +1542,10 @@ export class GraphOrchestrator extends RunHarness {
         if (!norm.decisions.length && norm.errors.length) throw new Error(norm.errors[0]);   // every entry rejected
         decisions = norm.decisions;
       }
-      decisions = [...decisions, ...conflictDecisions(conflicts, { lead, after: decisions.length })];
-      return { criteria: criteriaCheck(held, { agreed }), decisions, agreed };
+      // Small runs B3 (D12, D14): every requirement needs an example; one disagreement between two roles is one question.
+      const smallRuns = this._shapeRec?.smallRuns === true;
+      decisions = [...decisions, ...conflictDecisions(conflicts, { lead, after: decisions.length, onePerPair: smallRuns })];
+      return { criteria: criteriaCheck(held, { agreed, requireExamples: smallRuns }), decisions, agreed };
     } catch (err) {
       return { error: { message: String(err?.code === 'ENOENT' ? 'a file is missing' : err?.message || err) } };
     }
@@ -1559,14 +1561,16 @@ export class GraphOrchestrator extends RunHarness {
     const conflicts = (roleNode ? currentPass(this.state.roleReviews, { node: roleNode }) : null)?.rounds.at(-1)?.conflicts || [];
     const lead = this.runShape?.lead || null;
     const perspectives = this._shapePerspectives();
+    const smallRuns = this._shapeRec?.smallRuns === true;
     const ask = async (attempt, failed = null) => {
       const got = failed ? { error: failed } : await this._criteriaLoad(q, spec, conflicts, lead);
       const id = attempt ? `${q.id}-retry${attempt}` : q.id;
+      // Small runs B3 (D15): the card reads the requirements review node's pass (attachRoleReviews, `plan.roleNode`).
       const plan = { ...q.plan, nodeId: q.nodeId, ...(got.error ? { error: got.error } : { criteria: got.criteria, decisions: got.decisions }),
-        ...(lead ? { lead } : {}) };
+        ...(lead ? { lead } : {}), ...(smallRuns ? { smallRuns: true, ...(roleNode ? { roleNode } : {}) } : {}) };
       const payload = await this._enqueueAsk(() => this._ask({
         id, kind: PLAN_ASK_KIND, nodeId: q.nodeId, executionId: q.executionId, plan,
-        validate: (raw) => validatePlanAnswer(raw, { revisable: q.plan?.revisable === true, perspectives,
+        validate: (raw) => validatePlanAnswer(raw, { revisable: q.plan?.revisable === true, perspectives, smallRuns,
           ...(got.error ? { error: true } : { decisions: got.decisions, criteria: got.criteria }) }),
       }));
       if (payload?.decision === 'retry') return ask(attempt + 1);
@@ -1577,7 +1581,7 @@ export class GraphOrchestrator extends RunHarness {
         let stale = false;
         try {
           const text = await readFile(q.plan.file, 'utf8');
-          stale = !criteriaCheck(text, { agreed: got.agreed }).ok;
+          stale = !criteriaCheck(text, { agreed: got.agreed, requireExamples: smallRuns }).ok;
           if (!stale && decisions.length) await writeFile(q.plan.file, withClarifications(text, decisionClarifications(decisions, picks)), 'utf8');
         } catch (err) {
           await appendAudit(this.pipeline.dir, `Approval ${id}: the decisions could not be written (${err.message}); nothing approved.`).catch(() => {});
@@ -1978,7 +1982,7 @@ export class GraphOrchestrator extends RunHarness {
       payload = await this._enqueueAsk(() => this._ask({
         id, kind: PLAN_ASK_KIND, nodeId: ctx.nodeId, executionId: ctx.executionId, concern,
         plan: { nodeId: pc.approvalNodeId, port: 'plan', file: planFile, round, revisable: true, perspectives },
-        validate: (raw) => validatePlanAnswer(raw, { revisable: true, perspectives }),
+        validate: (raw) => validatePlanAnswer(raw, { revisable: true, perspectives, smallRuns: this._shapeRec?.smallRuns === true }),
       }));
       this._planConcernAnswer = { id, payload };     // before any await: the pause window (graph-ask-kind-traps)
     }
@@ -3390,7 +3394,47 @@ export class GraphOrchestrator extends RunHarness {
     if (spec.source === 'picked' && !roleChecklistOf(spec) && !spec.roles.some((r) => (picked || []).includes(r.key))) {
       await appendAudit(this.pipeline.dir, `${node.id}: no picked role matches its roles; reviewing as ${roles[0]?.label}.`).catch(() => {});
     }
-    return roles;
+    return this._careRoles(spec, roles);
+  }
+
+  /** Small runs B3 (D10): the requirements review of a marked run runs only the roles its Care plan names (Lean: the
+   *  lead and Product). Every other node, and every unmarked run, keeps `roles`. */
+  _careRoles(spec, roles) {
+    const plan = this._requirementRoundPlan(spec);
+    if (!plan) return roles;
+    const keep = roles.filter((r) => plan.roles.includes(r.key));
+    return keep.length ? keep : roles.slice(0, 1);
+  }
+
+  /** Small runs B3 (D8): the round plan of a role review whose checklist provider takes a Care plan (`roundPlan`), in a
+   *  marked planning run with Care; else null. */
+  _requirementRoundPlan(spec) {
+    const roundPlan = roleChecklistOf(spec)?.roundPlan;
+    const rec = this._shapeRec;
+    if (!roundPlan || !rec?.smallRuns || !rec.care?.position || this.runShape?.slice) return null;
+    return roundPlan(rec.care.position, { picked: this._runPickedRoles() || [], lead: this.runShape?.lead || null });
+  }
+
+  /** Small runs B3 (D9): Care bounds the requirement review loop through the engine's own per-run wire budget, the
+   *  `maxCycles` of the loop wire that feeds the requirements review node, written to the live wires and the frozen
+   *  manifest (a resume rebuilds the live wires from it). A budget the run overlay or the project's per-workflow layer
+   *  names wins. Idempotent; persists only when it changed the manifest. */
+  async _careRequirementBudget() {
+    const manifest = this.state.stepper;
+    if (!manifest?.graph) return;
+    const node = (this.resolved?.template?.nodes || []).find((n) => roleChecklistOf(roleReviewOf(n.config))?.roundPlan);
+    const plan = node ? this._requirementRoundPlan(roleReviewOf(node.config)) : null;
+    const wire = plan ? (manifest.graph.wires || []).find((w) => w.loop && w.to?.node === node.id) : null;
+    if (!wire) return;
+    if (manifest.runOverlay?.wires?.[wire.id]) return;
+    try {
+      if ((await resolveRunConfig(this.projectDir, this.workflowId)).wires?.[wire.id]?.maxCycles !== undefined) return;
+    } catch { /* unreadable project layer: Care decides */ }
+    if (this.resolved?.wires) this.resolved.wires[wire.id] = { maxCycles: plan.rounds };
+    if (wire.maxCycles === plan.rounds) return;
+    wire.maxCycles = plan.rounds;
+    if (this.pipeline) await appendAudit(this.pipeline.dir, `Care ${CARE_LABELS[this._shapeRec.care.position]}: requirements reviewed in at most ${plan.rounds} round${plan.rounds === 1 ? '' : 's'}.`).catch(() => {});
+    await this._persist();
   }
 
   /** One phase, one task per running role; round 2+ drops the clean roles (no agent call). */
@@ -3432,7 +3476,7 @@ export class GraphOrchestrator extends RunHarness {
     // Spec D7: the plan's items belong to the Review step as a whole, as they did for one reviewer.
     const items = routes && this.runShape && nc.key === CHECKLIST_REVIEWER_KEY ? await this._reviewChecklistItems({ bindings: args.bindings }) : [];
     const reported = [];
-    const running = runningRoles(spec, this._runPickedRoles());
+    const running = this._careRoles(spec, runningRoles(spec, this._runPickedRoles()));
     // Only a step with a role kept out of the merge records each role's own plan report: a round that re-runs only
     // that role then still has the others' reports. Other steps skip and merge as before.
     const ownReports = items.length > 0 && running.some((r) => provider?.feedsPlanChecklist?.(r.key) === false);
@@ -3647,6 +3691,7 @@ export class GraphOrchestrator extends RunHarness {
       await this._adoptCareFill(rec.care.position);
       await this._persist();
     }
+    await this._careRequirementBudget();
   }
 
   /** B2 (D13): the Care probe — a resolve with the run's own options plus a Lean fill — stamps on the frozen manifest
