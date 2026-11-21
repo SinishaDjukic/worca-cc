@@ -12,7 +12,7 @@
           <label class="switch-row update-older"><input type="checkbox" id="updateShowOlder" class="sw-input" role="switch" /><span class="switch" aria-hidden="true"></span><span class="switch-label">Show older versions (roll back)</span></label>
           <p class="update-callout" id="updatePickNote" hidden></p>
           <div class="confirm-actions update-actions">
-            <a class="update-notes-link" href="https://docs.worca.dev/changelog/" target="_blank" rel="noopener noreferrer">Release notes</a>
+            <a class="update-notes-link about-link" href="https://docs.worca.dev/changelog/" target="_blank" rel="noopener noreferrer">Release notes</a>
             <button type="button" class="btn" id="updatePickCancel">Cancel</button>
             <button type="button" class="btn btn-primary" id="updatePickGo" disabled>Pick a version</button>
           </div>
@@ -20,6 +20,8 @@
         <div data-pane="confirm" hidden>
           <div class="card-head"><h2 id="updateConfirmTitle">Update Worca?</h2></div>
           <p class="confirm-message" id="updateConfirmMsg"></p>
+          <!-- The fast-pace note and "What changes for you" (update-view.mjs paintChanges), from GET /api/app/update/changes. -->
+          <div id="updateConfirmChanges" hidden></div>
           <p class="update-callout" id="updateConfirmRuns"></p>
           <p class="update-callout" id="updateConfirmSched" hidden></p>
           <div class="update-callout" id="updateConfirmManual" data-tone="warn" hidden>
@@ -28,7 +30,7 @@
               <button type="button" class="btn btn-sm btn-quiet btn-icon copy-btn" id="updateConfirmCopy" title="Copy command" aria-label="Copy command"><span class="ic ico-copy" aria-hidden="true" style="width:14px;height:14px"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><rect x="9" y="9" width="11" height="11" rx="2"></rect><path d="M5 15V6a2 2 0 0 1 2-2h8"></path></svg></span><span class="ic ico-check" aria-hidden="true" style="width:14px;height:14px"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="M5 12.5l4.5 4.5L19 7.5"></path></svg></span><span class="ic ico-x" aria-hidden="true" style="width:14px;height:14px"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="M7 7l10 10M17 7 7 17"></path></svg></span></button></div>
           </div>
           <div class="confirm-actions update-actions">
-            <a class="update-notes-link" href="https://docs.worca.dev/changelog/" target="_blank" rel="noopener noreferrer">Release notes</a>
+            <a class="update-notes-link about-link" href="https://docs.worca.dev/changelog/" target="_blank" rel="noopener noreferrer">Release notes</a>
             <button type="button" class="btn" id="updateConfirmBack">Cancel</button>
             <button type="button" class="btn btn-primary" id="updateConfirmGo" disabled>Update &amp; restart</button>
           </div>

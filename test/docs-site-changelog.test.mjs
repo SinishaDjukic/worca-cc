@@ -9,7 +9,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-import { readEntries, buildChangelog } from '../docs-site/changelog.mjs';
+import { readEntries, buildChangelog, pageSummary } from '../docs-site/changelog.mjs';
 
 const REPO = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 
@@ -76,4 +76,24 @@ test('the repo\'s real changelog builds: every page, every image, every release 
     }
     assert.ok(list.includes(`href="/changelog/${version}/"`), `${version}: in the release list`);
   }
+
+  // The feed the app's update dialog reads (GET /api/app/update/preview → changes).
+  const feed = JSON.parse(fs.readFileSync(path.join(dist, 'changelog/index.json'), 'utf8'));
+  assert.deepEqual(feed.releases.map((r) => r.version), entries.map((e) => e.version), 'one record per entry, newest first');
+  for (const r of feed.releases) {
+    assert.equal(r.url, `https://docs.worca.dev/changelog/${r.version}/`);
+    assert.match(r.date, /^\d{4}-\d{2}-\d{2}$/);
+    assert.ok(r.sections.length > 0, `${r.version}: has sections`);
+    assert.ok(r.sections.every((s) => typeof s.title === 'string' && s.title && typeof s.kicker === 'string'), `${r.version}: sections are kicker + title`);
+    assert.deepEqual(Object.keys(r).sort(), ['date', 'sections', 'sub', 'url', 'version']);
+  }
+});
+
+test('pageSummary: each section carries its kicker (empty when the page has none)', () => {
+  const html = '<section class="sec" id="s1"><span class="kicker"><span class="dot" style="background:var(--info)"></span>Chat &amp; runs</span><h2>Find the <b>run</b>.</h2></section>'
+    + '<section class="sec" id="s2"><h2>No kicker.</h2></section>';
+  assert.deepEqual(pageSummary(html).sections, [
+    { id: 's1', kicker: 'Chat & runs', title: 'Find the run.' },
+    { id: 's2', kicker: '', title: 'No kicker.' },
+  ]);
 });

@@ -58,13 +58,98 @@ export function updateRowModel({ vs, info, chosen = null }) {
     const target = chosen || offer;
     // With no version to offer (up to date, nothing picked) the message must not end on "Update from a terminal:".
     const note = target ? info.message : String(info.message || '').replace(/\s*Update from a terminal:\s*$/, '');
-    return { hidden: false, primary: null, choose: true, note, command: target ? manualCommand(target) : null };
+    return { hidden: false, primary: null, choose: true, note, command: target ? manualCommand(target) : null, commandVersion: target || null };
   }
   let note = '';
   if (offer) note = 'Latest stable. Worca restarts; running runs pause and continue after the restart.';
   else if (vs.status === 'up-to-date') note = `You run the latest stable.${info.rcNewer && info.distTags?.rc ? ` A release candidate is out: ${info.distTags.rc}.` : ''}`;
   else if (vs.status === 'ahead') note = `You run ${vs.current}, newer than the latest stable (${latest}).`;
   return { hidden: false, primary: offer ? { label: `Update to ${offer}`, version: offer, disabled: false } : null, choose: true, note, command: null };
+}
+
+// "What changes for you": shown before an update, so nobody restarts into a screen they did not
+// expect. `changes` is the server's answer (GET /api/app/update/changes): the docs site's releases
+// after the running version, up to the target. It is text from another host: shown as text only,
+// and a release links out only to the changelog.
+export const FAST_PACE_NOTE = 'Worca is developed at a fast pace. Screens, labels and where things sit can change between versions.';
+export const CHANGES_UNAVAILABLE = 'The list of changes could not be loaded. Read the release notes before you update.';
+export const CHANGES_OFF = 'Worca does not check for updates here, so the list of changes is not loaded. Read the release notes before you update.';
+export const CHANGES_LOADING = 'Loading the list of changes…';
+const CHANGELOG_PREFIX = 'https://docs.worca.dev/changelog/';
+const CHANGES_MAX_LINES = 8;
+const CHANGES_HEADING = 'What changes for you';
+
+/** The box while the answer is on its way: the same parts the answer fills, so nothing moves when it lands. */
+export function changesLoading() {
+  return { note: FAST_PACE_NOTE, heading: CHANGES_HEADING, releases: [], message: CHANGES_LOADING };
+}
+
+// { note, heading, releases, message }: `message` is the one line inside the list box (could not load,
+// not fetched here, the target is not in the list), null when the list says it all.
+export function changesModel(changes) {
+  const c = changes && typeof changes === 'object' ? changes : {};
+  if (c.rollback === true) return { note: null, heading: null, releases: [], message: null };
+  const heading = typeof c.from === 'string' && typeof c.to === 'string' ? `${CHANGES_HEADING} · ${c.from} → ${c.to}` : CHANGES_HEADING;
+  const base = { note: FAST_PACE_NOTE, heading, releases: [], message: null };
+  if (c.state === 'off') return { ...base, message: CHANGES_OFF };
+  const rows = (c.state === 'ok' || c.state === 'none') && Array.isArray(c.releases) ? c.releases.filter((r) => r && typeof r.version === 'string') : null;
+  // The docs site has no page for the target: it trails a release, or it is a release candidate (rarely
+  // given one). Neither promises the page will come.
+  const missing = c.targetListed === false && typeof c.to === 'string'
+    ? (c.prerelease === true ? `Release candidates such as ${c.to} are not in this list. Read the release notes before you update.`
+      : `${c.to} is not in this list. Read the release notes before you update.`)
+    : null;
+  if (!rows || (!rows.length && !missing)) return { ...base, message: CHANGES_UNAVAILABLE };
+  return {
+    ...base,
+    message: missing,
+    releases: rows.map((r) => {
+      const lines = (Array.isArray(r.sections) ? r.sections : []).filter((x) => x && typeof x.title === 'string' && x.title)
+        .map((x) => ({ kicker: typeof x.kicker === 'string' ? x.kicker : '', title: x.title }));
+      return { version: r.version, date: typeof r.date === 'string' ? r.date : '',
+        url: typeof r.url === 'string' && r.url.startsWith(CHANGELOG_PREFIX) ? r.url : null,
+        lines: lines.slice(0, CHANGES_MAX_LINES), more: Math.max(0, lines.length - CHANGES_MAX_LINES) };
+    }),
+  };
+}
+
+/**
+ * Fills the changes box from a changesModel, with components Worca already uses: the dialog's info
+ * callout (.update-callout), the version picker's scroll box (.update-versions) holding divided rows
+ * (.drow.drow-stack), the picker's date line (.update-vd), the About card's link (.about-link), and the
+ * shared grey line (.hint) for the heading and the message row. The list box is always there while the
+ * note is, with the message (loading, could not load, …) as its first row: in the confirm pane it has
+ * one fixed height (about-update.css), so the buttons below do not move when the answer lands. Only
+ * the parts that have something to say are added (.hint is display:block, which beats [hidden]).
+ * data-part names the pieces for tests. Text nodes only; the box hides when there is nothing to say.
+ */
+export function paintChanges(doc, host, m) {
+  if (!host) return;
+  const el = (tag, cls, part, text) => {
+    const n = doc.createElement(tag); if (cls) n.className = cls; n.dataset.part = part; if (text != null) n.textContent = text; return n;
+  };
+  const parts = [];
+  if (m.note) { const note = el('p', 'update-callout', 'note', m.note); note.dataset.tone = 'info'; parts.push(note); }
+  if (m.heading) parts.push(el('p', 'hint', 'head', m.heading));
+  const list = el('div', 'update-versions drows', 'list');
+  list.tabIndex = 0; list.setAttribute('role', 'group'); list.setAttribute('aria-label', 'Changes per release');
+  if (m.message) { const row = el('div', 'drow', 'message'); row.append(el('p', 'hint', 'off', m.message)); list.append(row); }
+  for (const r of m.releases) {
+    const row = el('section', 'drow drow-stack', 'release');
+    const top = el('div', null, 'top');
+    const v = el(r.url ? 'a' : 'span', r.url ? 'about-link' : 'update-vn', 'version', r.version);
+    if (r.url) { v.href = r.url; v.target = '_blank'; v.rel = 'noopener noreferrer'; }
+    top.append(v);
+    const day = r.date ? new Date(`${r.date}T00:00:00`) : null;
+    if (day && !Number.isNaN(day.getTime())) top.append(el('span', 'update-vd', 'date', day.toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' })));
+    row.append(top);
+    for (const l of r.lines) row.append(el('div', null, 'line', l.kicker ? `${l.kicker} · ${l.title}` : l.title));
+    if (r.more) row.append(el('div', 'about-note', 'line', `and ${r.more} more`));
+    list.append(row);
+  }
+  if (m.note) parts.push(list);
+  host.replaceChildren(...parts);
+  host.hidden = !m.note;
 }
 
 /** Polls /api/health until a different server boot answers (startedAt changed). */
@@ -88,7 +173,8 @@ export function createUpdateUi({ doc, fetchImpl, copyFromButton, report = () => 
   const $ = (id) => doc.getElementById(id);
   let vs = null; let info = null; let chosen = null;
   let pick = { channel: 'stable', showOlder: false, selected: null, versions: [], distTags: {} };
-  let infoSeq = 0;
+  let infoSeq = 0; let confirmSeq = 0;
+  let cardChanges = { version: null };   // the About card's box, for installs that show the command
 
   async function refresh() {
     const mine = ++infoSeq;
@@ -113,7 +199,28 @@ export function createUpdateUi({ doc, fetchImpl, copyFromButton, report = () => 
     $('aboutUpdateNote').hidden = !m.note;
     $('aboutUpdateCmdRow').hidden = !m.command;
     $('aboutUpdateCmd').textContent = m.command || '';
+    paintCardChanges(m.command ? (chosen || m.commandVersion) : null);
     paintResult(info?.lastResult || null);
+  }
+
+  async function fetchJson(url) {
+    try { const r = await fetchImpl(url); if (r.ok) return await r.json(); } catch { /* shown as unknown */ }
+    return null;
+  }
+  const fetchPreview = (version) => fetchJson(`/api/app/update/preview?version=${encodeURIComponent(version)}`);
+  const fetchChanges = (version) => fetchJson(`/api/app/update/changes?version=${encodeURIComponent(version)}`);
+
+  // Where Worca cannot update itself there is no confirm pane, only the command: the note and the
+  // list sit under it. One read per version, not one per repaint.
+  function paintCardChanges(version) {
+    const host = $('aboutUpdateChanges'); if (!host) return;
+    if (!version) { cardChanges = { version: null }; host.hidden = true; host.replaceChildren(); return; }
+    if (cardChanges.version === version) return;      // painted or on its way: a repaint keeps the list (scroll, focus)
+    cardChanges = { version };
+    paintChanges(doc, host, changesLoading());
+    fetchChanges(version).then((c) => {
+      if (cardChanges.version === version) paintChanges(doc, $('aboutUpdateChanges'), changesModel(c));
+    });
   }
 
   function paintResult(r) {
@@ -195,8 +302,14 @@ export function createUpdateUi({ doc, fetchImpl, copyFromButton, report = () => 
     $('updateConfirmTitle').textContent = `${version && pick.versions.find((v) => v.version === version)?.relation === 'older' ? 'Roll back' : 'Update'} to ${version} and restart Worca?`;
     $('updateConfirmGo').dataset.version = version;
     $('updateConfirmGo').disabled = true;
-    let p = null;
-    try { const r = await fetchImpl(`/api/app/update/preview?version=${encodeURIComponent(version)}`); if (r.ok) p = await r.json(); } catch { /* shown as unknown */ }
+    // Laid out at once at its final size (a rollback shows none), so the answer moves nothing.
+    const box = $('updateConfirmChanges');
+    if (box) { if (pick.versions.find((v) => v.version === version)?.relation === 'older') { box.hidden = true; box.replaceChildren(); } else paintChanges(doc, box, changesLoading()); }
+    const mine = ++confirmSeq;
+    // Its own request, never awaited here: the button below must not wait for the docs site.
+    fetchChanges(version).then((c) => { if (mine === confirmSeq) paintChanges(doc, $('updateConfirmChanges'), changesModel(c)); });
+    const p = await fetchPreview(version);
+    if (mine !== confirmSeq) return;            // a later pick's answers own the pane
     const auto = p ? p.autoRestart : true;
     $('updateConfirmMsg').textContent = auto
       ? `Worca stops, installs @worca/app@${version} and starts again. This page reconnects by itself.`

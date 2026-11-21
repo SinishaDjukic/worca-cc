@@ -3,7 +3,7 @@
 // the action per pick, and the Update row per status and eligibility. Pure: no jsdom.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { pickerRows, defaultSelection, pickAction, updateRowModel, manualCommand } from '../ui/public/update-view.mjs';
+import { pickerRows, defaultSelection, pickAction, updateRowModel, manualCommand, changesModel, changesLoading, FAST_PACE_NOTE, CHANGES_UNAVAILABLE, CHANGES_OFF, CHANGES_LOADING } from '../ui/public/update-view.mjs';
 
 const distTags = { latest: '1.14.0', rc: '1.15.0-rc.2' };
 const V = [
@@ -74,4 +74,66 @@ test('updateRowModel: outdated eligible / up to date + rc / ahead / shared / can
   const src = updateRowModel({ vs: { status: 'source', current: '1.14.0' }, info: { ...info, canUpdate: false, reason: 'source', message: 'git pull' } });
   assert.deepEqual([src.choose, src.command], [false, null]);
   assert.equal(updateRowModel({ vs: null, info }).hidden, true);
+});
+
+// "What changes for you" in the update confirm (GET /api/app/update/preview → changes).
+const feedRel = (version, n) => ({ version, date: '2026-11-05', sub: '', url: `https://docs.worca.dev/changelog/${version}/`,
+  sections: Array.from({ length: n }, (_, i) => ({ kicker: 'Chat', title: `Change ${i + 1}` })) });
+
+test('the fixed texts', () => {
+  assert.equal(FAST_PACE_NOTE, 'Worca is developed at a fast pace. Screens, labels and where things sit can change between versions.');
+  assert.equal(CHANGES_UNAVAILABLE, 'The list of changes could not be loaded. Read the release notes before you update.');
+  assert.equal(CHANGES_OFF, 'Worca does not check for updates here, so the list of changes is not loaded. Read the release notes before you update.');
+  assert.equal(CHANGES_LOADING, 'Loading the list of changes…');
+});
+
+test('changesModel: ok → the note, the heading and at most 8 lines per release', () => {
+  const m = changesModel({ state: 'ok', from: '1.16.0', to: '1.18.0', rollback: false, targetListed: true, releases: [feedRel('1.18.0', 11), feedRel('1.17.0', 2)] });
+  assert.equal(m.note, FAST_PACE_NOTE);
+  assert.equal(m.heading, 'What changes for you · 1.16.0 → 1.18.0');
+  assert.equal(m.message, null);
+  assert.deepEqual(m.releases.map((r) => [r.version, r.lines.length, r.more]), [['1.18.0', 8, 3], ['1.17.0', 2, 0]]);
+  assert.deepEqual(m.releases[1].lines[0], { kicker: 'Chat', title: 'Change 1' });
+  assert.equal(m.releases[0].url, 'https://docs.worca.dev/changelog/1.18.0/');
+  assert.equal(m.releases[0].date, '2026-11-05');
+});
+
+test('changesModel: unavailable, missing or garbled → the note, the heading and the could-not-load text', () => {
+  for (const c of [{ state: 'unavailable', rollback: false, releases: [] }, null, undefined, 'x', { state: 'ok', releases: 'x' }, { state: 'ok', releases: [] }]) {
+    assert.deepEqual(changesModel(c), { note: FAST_PACE_NOTE, heading: 'What changes for you', releases: [], message: CHANGES_UNAVAILABLE });
+  }
+});
+
+test('changesModel: update checks off (or mock) → says nothing was tried, not that it failed', () => {
+  assert.deepEqual(changesModel({ state: 'off', from: '1.16.0', to: '1.18.0', rollback: false, releases: [] }),
+    { note: FAST_PACE_NOTE, heading: 'What changes for you · 1.16.0 → 1.18.0', releases: [], message: CHANGES_OFF });
+});
+
+test('changesLoading: the same parts the answer fills, so nothing moves when it lands', () => {
+  assert.deepEqual(changesLoading(), { note: FAST_PACE_NOTE, heading: 'What changes for you', releases: [], message: CHANGES_LOADING });
+});
+
+test('changesModel: a rollback shows nothing', () => {
+  assert.deepEqual(changesModel({ state: 'none', rollback: true, releases: [] }), { note: null, heading: null, releases: [], message: null });
+});
+
+test('changesModel: a stable target the feed does not list says so, without promising it will come', () => {
+  const MISSING = '1.19.0 is not in this list. Read the release notes before you update.';
+  assert.deepEqual(changesModel({ state: 'none', from: '1.18.0', to: '1.19.0', rollback: false, targetListed: false, releases: [] }),
+    { note: FAST_PACE_NOTE, heading: 'What changes for you · 1.18.0 → 1.19.0', releases: [], message: MISSING });
+  const m = changesModel({ state: 'ok', from: '1.17.0', to: '1.19.0', rollback: false, targetListed: false, releases: [feedRel('1.18.0', 1)] });
+  assert.equal(m.message, MISSING);
+  assert.deepEqual(m.releases.map((r) => r.version), ['1.18.0']);
+});
+
+test('changesModel: a release-candidate target names it as one', () => {
+  const m = changesModel({ state: 'ok', from: '1.17.0', to: '1.19.0-rc.2', rollback: false, prerelease: true, targetListed: false, releases: [feedRel('1.18.0', 1)] });
+  assert.equal(m.message, 'Release candidates such as 1.19.0-rc.2 are not in this list. Read the release notes before you update.');
+  assert.doesNotMatch(m.message, /yet/);
+});
+
+test('changesModel: a release without a changelog link gets none; junk sections are dropped', () => {
+  const m = changesModel({ state: 'ok', from: '1.0.0', to: '1.1.0', releases: [{ version: '1.1.0', url: 'javascript:alert(1)', sections: [null, { title: 5 }, { kicker: 7, title: 'Kept' }] }] });
+  assert.equal(m.releases[0].url, null);
+  assert.deepEqual(m.releases[0].lines, [{ kicker: '', title: 'Kept' }]);
 });

@@ -62,7 +62,7 @@ export async function readEntries(changelogDir, srcNames) {
 
 /**
  * What the release list shows for a page: its title, the hero's sub line, and one
- * headline per feature section (the hero and the receipts are left out).
+ * headline per feature section, with its kicker (the hero and the receipts are left out).
  */
 export function pageSummary(html) {
   const title = /<title>([\s\S]*?)<\/title>/i.exec(html)?.[1].trim() ?? '';
@@ -71,7 +71,8 @@ export function pageSummary(html) {
   const re = /<section class="sec" id="(s\d+)">([\s\S]*?)<\/section>/g;
   for (const m of html.matchAll(re)) {
     const h2 = /<h2[^>]*>([\s\S]*?)<\/h2>/.exec(m[2]);
-    if (h2) sections.push({ id: m[1], title: inlineText(h2[1]) });
+    const kicker = /<span class="kicker">(?:\s*<span[^>]*><\/span>)?([^<]*)<\/span>/.exec(m[2]);
+    if (h2) sections.push({ id: m[1], kicker: kicker ? inlineText(kicker[1]) : '', title: inlineText(h2[1]) });
   }
   return { title: inlineText(title), sub: inlineText(sub), sections };
 }
@@ -200,7 +201,27 @@ export async function buildChangelog({ repoRoot, dist, template, vars = {} }) {
     await writeFile(path.join(out, 'index.html'), page);
   }
   await writeFile(path.join(dist, 'changelog', 'index.html'), renderIndex(template, pages, vars));
+  await writeFile(path.join(dist, 'changelog', 'index.json'), `${JSON.stringify(changelogFeed(pages))}\n`);
   return entries;
+}
+
+// The address the app reads the feed from and links to (src/core/update-check.mjs CHANGELOG_URL).
+const SITE_URL = 'https://docs.worca.dev';
+
+/**
+ * The machine-readable release list (changelog/index.json), newest first. The app's update dialog
+ * reads it to list what changes between the running version and the one being installed.
+ */
+export function changelogFeed(pages, siteUrl = SITE_URL) {
+  return {
+    releases: pages.map(({ entry, summary }) => ({
+      version: entry.version,
+      date: entry.date,
+      sub: listSub(summary.sub),
+      url: `${siteUrl}/changelog/${entry.version}/`,
+      sections: summary.sections.map(({ kicker, title }) => ({ kicker, title })),
+    })),
+  };
 }
 
 // --- helpers ----------------------------------------------------------------

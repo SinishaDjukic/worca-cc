@@ -38,6 +38,7 @@ export const DEFAULT_ALLOW = Object.freeze([
   'api.anthropic.com',
   'github.com', '.github.com', '.githubusercontent.com',
   'registry.npmjs.org',
+  'docs.worca.dev',                 // the release feed the update dialog reads (update-check.mjs)
 ]);
 
 export const EGRESS_MODES = Object.freeze(['open', 'block', 'allow']);

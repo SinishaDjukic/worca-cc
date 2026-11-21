@@ -41,7 +41,7 @@ function eligibleRig() {
   process.env.WORCA_UI_SUPERVISOR = String(process.ppid);   // what a real `worca ui` parent would pass
 }
 afterEach(() => {
-  T.setUpdateDeployment(null); T.setVersionsFetcher(null); T.setNpmProbe(null); T.setUpdateMockOverride(null);
+  T.setUpdateDeployment(null); T.setVersionsFetcher(null); T.setChangelogFetcher(null); T.setNpmProbe(null); T.setUpdateMockOverride(null);
   T.setSourceBuild(null);
   T.resetUpdateRequest();
   T.uiControl.token = null; T.uiControl.onShutdown = null;
@@ -134,6 +134,107 @@ test('GET /api/app/update/preview lists active runs and starts due soon; flags a
       (m) => { m.resume(); m.on('end', () => res(m.statusCode)); }).on('error', rej);
   });
   assert.equal(cross, 403, 'run titles never answer another origin');
+});
+
+// "What changes for you": the preview carries the docs site's release records between the running
+// version and the target. The feed fetcher is swapped here; by default it refuses under tests.
+const feedRel = (version) => ({ version, date: '2026-11-05', sub: '', url: `https://docs.worca.dev/changelog/${version}/`, sections: [{ kicker: 'Chat', title: `New in ${version}` }] });
+const FEED = ['9.2.0', '9.1.0', '9.0.0', '0.0.1'].map(feedRel);
+const changesOf = async (v) => { const r = await fetch(`${base}/api/app/update/changes?version=${v}`); const body = await r.json(); return { status: r.status, body: { changes: body } }; };
+const preview = changesOf;
+
+test('changes: lists every release between the running version and the target', async () => {
+  eligibleRig();
+  T.setChangelogFetcher(async () => FEED);
+  const { body } = await preview('9.1.0');
+  assert.equal(body.changes.state, 'ok');
+  assert.deepEqual(body.changes.releases.map((r) => r.version), ['9.1.0', '9.0.0']);
+  assert.equal(body.changes.to, '9.1.0');
+  assert.equal(body.changes.rollback, false);
+  assert.deepEqual(body.changes.releases[0].sections, [{ kicker: 'Chat', title: 'New in 9.1.0' }]);
+});
+
+test('changes: the feed is down → unavailable, 200', async () => {
+  eligibleRig();
+  T.setChangelogFetcher(async () => { throw new Error('down'); });
+  const { status, body } = await preview('9.1.0');
+  assert.equal(status, 200);
+  assert.equal(body.changes.state, 'unavailable');
+  assert.deepEqual(body.changes.releases, []);
+});
+
+test('changes: a feed that answers 200 with a web page (captive portal) → unavailable', async () => {
+  eligibleRig();
+  const { fetchChangelogFeed } = await import('../src/core/update-check.mjs');
+  T.setChangelogFetcher(() => fetchChangelogFeed({ fetchImpl: async () => ({ ok: true, json: async () => { throw new SyntaxError('Unexpected token <'); } }) }));
+  const { status, body } = await changesOf('9.1.0');
+  assert.equal(status, 200);
+  assert.equal(body.changes.state, 'unavailable');
+});
+
+test('the preview never waits for the feed: it answers while the feed hangs, and carries no changes', async () => {
+  eligibleRig();
+  let asked = 0;
+  T.setChangelogFetcher(() => { asked++; return new Promise(() => {}); });
+  const r = await fetch(`${base}/api/app/update/preview?version=9.1.0`);
+  const j = await r.json();
+  assert.equal(r.status, 200);
+  assert.equal(j.autoRestart, true);
+  assert.equal('changes' in j, false);
+  assert.equal(asked, 0);
+});
+
+test('changes: a target the cached feed does not list → one fresh read, then flagged if still missing', async () => {
+  eligibleRig();
+  let reads = 0;
+  T.setChangelogFetcher(async () => { reads++; return reads === 1 ? FEED.filter((r) => r.version !== '9.2.0') : FEED; });
+  assert.deepEqual((await changesOf('9.1.0')).body.changes.releases.map((r) => r.version), ['9.1.0', '9.0.0']);
+  assert.equal(reads, 1);
+  const fresh = (await changesOf('9.2.0')).body.changes;      // published after the feed was cached
+  assert.equal(reads, 2);
+  assert.deepEqual({ versions: fresh.releases.map((r) => r.version), targetListed: fresh.targetListed }, { versions: ['9.2.0', '9.1.0', '9.0.0'], targetListed: true });
+  const missing = (await changesOf('9.3.0')).body.changes;    // the docs site lags the registry
+  assert.equal(missing.targetListed, false);
+  assert.equal(missing.state, 'ok');
+  assert.equal(reads, 2, 'at most one forced read per few minutes');
+});
+
+test('changes: a bad version → 400', async () => {
+  eligibleRig();
+  assert.equal((await fetch(`${base}/api/app/update/changes?version=nope`)).status, 400);
+});
+
+test('changes: without a swapped fetcher nothing is fetched under tests or mock (off, not "could not be loaded")', async () => {
+  eligibleRig();
+  assert.equal((await preview('9.1.0')).body.changes.state, 'off');
+});
+
+test('changes: a release-candidate target the feed does not list → no forced read (rc pages rarely come)', async () => {
+  eligibleRig();
+  let reads = 0;
+  T.setChangelogFetcher(async () => { reads++; return FEED; });
+  const c = (await changesOf('9.3.0-rc.1')).body.changes;
+  assert.equal(reads, 1);
+  assert.deepEqual({ targetListed: c.targetListed, prerelease: c.prerelease }, { targetListed: false, prerelease: true });
+});
+
+test('changes: an older target is a rollback with nothing to list', async () => {
+  eligibleRig();
+  T.setChangelogFetcher(async () => FEED);
+  const { body } = await preview('0.0.1');
+  assert.deepEqual({ state: body.changes.state, rollback: body.changes.rollback, releases: body.changes.releases }, { state: 'none', rollback: true, releases: [] });
+});
+
+test('changes: update checks switched off → no feed request', async () => {
+  eligibleRig();
+  let calls = 0;
+  T.setChangelogFetcher(async () => { calls++; return FEED; });
+  const set = (on) => fetch(`${base}/api/settings`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ updateCheck: on }) });
+  try {
+    assert.equal((await set(false)).status, 200);
+    assert.equal((await preview('9.1.0')).body.changes.state, 'off');
+    assert.equal(calls, 0);
+  } finally { await set(true); }
 });
 
 test('GET /api/app/update/versions annotates; 502 when the registry cannot be reached', async () => {

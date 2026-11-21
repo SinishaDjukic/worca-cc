@@ -6,7 +6,7 @@ import { AUTO_RESTART_MIN, annotateVersions, canAutoRestart, canonicalVersion, c
 import fs from 'node:fs';
 import fsp from 'node:fs/promises';
 import path from 'node:path';
-import { AGENTS_DIR, PKG_VERSION, PROJECT_ROOT, RUNNING_VERSION, SKILLS_DIR, agentMayBeCaller, badRequest, currentUpdateEligibility, lastUpdateResult, requireFsAllowed, resolveProjectDir, terminalSameOrigin, updateChecker, updatePort, updatePreview, versionLister, versionPayload } from '../../server.mjs';
+import { AGENTS_DIR, PKG_VERSION, PROJECT_ROOT, RUNNING_VERSION, SKILLS_DIR, agentMayBeCaller, badRequest, changelogChanges, currentUpdateEligibility, lastUpdateResult, requireFsAllowed, resolveProjectDir, terminalSameOrigin, updateChecker, updatePort, updatePreview, versionLister, versionPayload } from '../../server.mjs';
 
 export function register(app) {
 
@@ -60,6 +60,15 @@ app.get('/api/app/update/preview', async (req, res) => {
   const target = canonicalVersion(req.query.version);
   if (!target) return res.status(400).json({ error: 'Pick a version from the list.', code: 'UPDATE_BAD_VERSION' });
   res.set('Cache-Control', 'no-store').json({ target, autoRestart: canAutoRestart(target), startCommand: startCommand(updatePort()), ...updatePreview() });
+});
+// What changes for you (the update confirm): the docs site's releases after the running version, up
+// to the target. Its own request, so the confirm pane and its button never wait for another host.
+// States: ok, none, unavailable (the feed could not be read), off (not fetched here). The reading and
+// the one fresh read for a target the cache does not list live in server.mjs changelogChanges.
+app.get('/api/app/update/changes', async (req, res) => {
+  const target = canonicalVersion(req.query.version);
+  if (!target) return res.status(400).json({ error: 'Pick a version from the list.', code: 'UPDATE_BAD_VERSION' });
+  res.set('Cache-Control', 'no-store').json(await changelogChanges(target));
 });
 app.post('/api/app/update/dismiss', (req, res) => {
   if (!terminalSameOrigin(req) || agentMayBeCaller(req)) return res.status(403).json({ error: 'Not from here.', code: 'UPDATE_CROSS_ORIGIN' });
