@@ -167,3 +167,42 @@ test('Stop on a criteria-only check ("Check them on these tries") aborts its cal
   assert.equal(store.readTestRun(run.id).status, 'done', 'the test itself stays as it ended');
   assert.deepEqual(ledger(), [[0, 'unknown']]);
 });
+
+/** A finished test whose criteria-only check reports `progress` and then waits for its stop. */
+function waitingCheck(progress) {
+  const ex = example([]);
+  const run = store.createTestRun({ workflowId: WF, kind: 'once', b: 'draft', bFp: 'f', exampleIds: [ex.id], tries: 1 });
+  prepare("UPDATE wf_test_runs SET status = 'done' WHERE id = ?").run(run.id);
+  let began;
+  const started = new Promise((r) => { began = r; });
+  const runner = createTestRunner({ ...harness(waitingHelper()).deps,
+    judgeMissing: (_r, o) => { o.onProgress(progress); began();
+      return new Promise((r) => { if (o.signal.aborted) r(); else o.signal.addEventListener('abort', r, { once: true }); }); } });
+  const done = runner.checkCriteriaLater(store.readTestRun(run.id));
+  return { run, runner, done, started };
+}
+
+test('review M4: the line after a stop is never untrue: no count once every try was checked (a stop in the pairs), or with none to check', async () => {
+  for (const progress of [{ done: 1, of: 1 }, { done: 0, of: 0 }, { done: 2, of: 2 }]) {
+    const { run, runner, done, started } = waitingCheck(progress);
+    await started;
+    const back = await runner.stop(run.id, { only: 'criteria' });
+    assert.equal(back.checked, null, `${progress.done} of ${progress.of}: the page shows its usual band`);
+    await done;
+  }
+  const { run, runner, done, started } = waitingCheck({ done: 1, of: 3 });
+  await started;
+  assert.deepEqual((await runner.stop(run.id, { only: 'criteria' })).checked, { done: 1, of: 3 }, 'a real count stays');
+  await done;
+});
+
+test('review M5: a stop sent by "Stop checking" ends only a criteria-only check, never the test itself', async () => {
+  const ex = example([]);
+  const run = store.createTestRun({ workflowId: WF, kind: 'once', b: 'draft', bFp: 'f', exampleIds: [ex.id], tries: 1 });
+  assert.equal(store.readTestRun(run.id).status, 'running');
+  const runner = createTestRunner(harness(waitingHelper()).deps);
+  const back = await runner.stop(run.id, { only: 'criteria' });
+  assert.equal(back.status, 'running', 'no criteria check runs: the run comes back unchanged');
+  assert.equal(back.checked, undefined);
+  assert.equal(store.readTestRun(run.id).status, 'running', 'the test was not closed');
+});

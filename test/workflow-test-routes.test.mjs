@@ -149,3 +149,25 @@ test('board 39: POST …/examples/:ex/try-once refused for disk answers 422 with
     code: 'NO_DISK', disk: { needBytes: 0.4 * GB, freeBytes: 0.2 * GB } });
   assert.deepEqual(store.listTestRuns('wf_rt'), [], 'nothing was started');
 });
+
+test('review M5: POST …/runs/:run/stop with { only: "criteria" } (Stop checking) never stops a running test', async () => {
+  const ex = await workflowWithExample();
+  let release;
+  const latch = new Promise((r) => { release = r; });
+  let started;
+  const tryStarted = new Promise((r) => { started = r; });
+  let ended = false;
+  const { runner, handlers } = boot({
+    startRun: async () => { started(); return { status: 200, body: { runId: 'k_try', pipelineId: null } }; },
+    liveRun: () => ({ orch: { state: { totalCostUsd: 0 } }, status: ended ? 'stopped' : 'running', launch: latch, pipelineId: null }),
+    stopRun: async () => { ended = true; release(); },
+  });
+  const run = await runner.start({ workflowId: 'wf_rt', kind: 'once', b: 'draft', exampleIds: [ex.id], tries: 1 });
+  await tryStarted;
+  const stop = handlers.get('POST /api/workflows/:id/tests/runs/:run/stop');
+  const r = await invoke(stop, { params: { id: 'wf_rt', run: String(run.id) }, body: { only: 'criteria' } });
+  assert.deepEqual([r.status, r.body.run.status, ended], [200, 'running', false]);
+  assert.deepEqual(store.triesOfRun(run.id).map((t) => t.status), ['running']);
+  const s = await invoke(stop, { params: { id: 'wf_rt', run: String(run.id) } });   // the test's own Stop still stops it
+  assert.equal(s.body.run.status, 'stopped');
+});

@@ -140,7 +140,7 @@ export function createWorkflowTests(deps) {
       },
       // Board 59 C: "Stop checking" (the stop route ends a check of these tries at once); the band then says how many tries it checked.
       stopCheck: async () => {
-        const r = await wftCall('POST', `${wftBase(id)}/runs/${run.id}/stop`, {});
+        const r = await wftCall('POST', `${wftBase(id)}/runs/${run.id}/stop`, { only: 'criteria' });   // review M5: never the test itself
         if (!r.ok) { notify({ tone: 'err', title: 'Not stopped', detail: r.error }); return; }
         const n = r.data && r.data.run ? r.data.run.checked : null;
         if (still()) { wft.checkStopped = n ? { runId: run.id, done: n.done, of: n.of } : null; await wftRefresh(); }

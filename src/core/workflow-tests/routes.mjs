@@ -184,7 +184,8 @@ export function registerWorkflowTestRoutes(app, { broadcast = () => {}, deps = {
   });
   route('POST', `${W}/runs/:run/stop`, async (req, res) => {
     const run = service.runOf(wid(req), num(req.params.run, 'test'));
-    res.json({ run: await runner.stop(run.id) });
+    // Review M5: "Stop checking" sends { only: 'criteria' }, so a band out of date never stops a test the run was continued into.
+    res.json({ run: await runner.stop(run.id, { only: req.body && req.body.only === 'criteria' ? 'criteria' : null }) });
   });
   route('POST', `${W}/runs/:run/continue`, async (req, res) => {
     knownWorkflow(req);   // as the start routes: the workflow may be gone

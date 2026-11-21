@@ -708,19 +708,23 @@ export function createTestRunner(deps) {
   }
 
   /** Resolves once the loop has stopped every running try and the run row says why (D27). */
-  async function stop(runId, { reason = 'person' } = {}) {
+  async function stop(runId, { reason = 'person', only = null } = {}) {
     const run = store.readTestRun(runId);
     if (!run) throw err(`no test ${runId}`, 'NOT_FOUND');
     const st = live.get(run.id);
     // Fix round 3 (B): Stop on a test whose criteria are being checked on its tries ("Check them on these tries") ends that check.
-    // Board 59 C: the run comes back with `checked` = how many of the tries it checked ({ done, of }; null before it counted any).
+    // Board 59 C: the run comes back with `checked` = how many of the tries it checked ({ done, of }); review M4: only while some try
+    // was left unchecked (null after a stop in the pairs, or with no try to check), so the line after a stop is never untrue.
     const checking = [...checkingCriteria.values()].find((c) => c.id === run.id);
     if (!st && checking) {
       checking.reason = checking.reason || reason;
       checking.abort.abort();
       await checking.done;
-      return { ...store.readTestRun(run.id), checked: checking.progress ? { ...checking.progress } : null };
+      const p = checking.progress;
+      return { ...store.readTestRun(run.id), checked: p && p.done < p.of ? { ...p } : null };
     }
+    // Review M5: "Stop checking" (`only` 'criteria') stops only a criteria-only check: with none running, the run comes back unchanged.
+    if (only === 'criteria') return run;
     if (!st) {
       // M4: still running in the store but nothing drives it (its close failed): end it now, or the workflow stays BUSY.
       if (run.status !== 'running') return run;

@@ -93,7 +93,7 @@ function harness(routes) {
     setTimeout: (fn) => { timers.push(fn); return timers.length; }, clearTimeout: () => {} };
   const fetch = async (path, init = {}) => {
     const method = init.method || 'GET';
-    calls.push([method, path]);
+    calls.push([method, path, init.body]);
     const h = routes[`${method} ${path}`];
     const out = (await (typeof h === 'function' ? h() : h)) || { status: 404, body: { error: 'not here' } };
     return { ok: out.status < 400, status: out.status, json: async () => out.body };
@@ -132,6 +132,8 @@ test('board 59 C: tests-app.mjs: Stop checking calls the stop route, then the li
   click(btnByText(h.root, 'Stop checking'));
   await settle();
   assert.ok(h.calls.some(([m, p]) => m === 'POST' && p === `${B}/runs/7/stop`), 'the existing stop route');
+  const sent = h.calls.find(([m, p]) => m === 'POST' && p === `${B}/runs/7/stop`)[2];
+  assert.deepEqual(JSON.parse(sent), { only: 'criteria' }, 'review M5: it stops only the check of the criteria');
   const line = 'You stopped the check. Worca checked 2 of 5 tries; the rest read "Not checked yet".';
   assert.equal(h.root.querySelector('.wft-crit-band-l').textContent, line);
   ctl.changed({ type: 'workflow-tests-changed', workflowId: 'wf_a', testRunId: 7 });
