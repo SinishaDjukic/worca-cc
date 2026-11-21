@@ -184,6 +184,19 @@ test('final review M9: suggest-criteria for a workflow that does not exist is 40
   } finally { await s.close(); }
 });
 
+test('fix round 2 (N4): suggest-criteria for a plugin workflow is 400 (as Part 2 answers NOT_VERSIONABLE), with no model call', async () => {
+  let calls = 0;
+  const s = await serve({ judgeModelsView: async () => ({ suggested: { id: 'm' } }), mock: () => false, budgetStatus: () => ({ blocked: false }), book: () => {},
+    modelCall: async () => { calls += 1; return { text: '[]', costUsd: 0.01, costKind: 'billed' }; } });
+  const now = new Date().toISOString();
+  prepareDb(`INSERT OR IGNORE INTO workflows (id, name, version, origin, steps, feedbacks, graph, created_at, updated_at) VALUES ('wf_plug', 'P', 2, 'plugin:x', '[]', '[]', '{}', ?, ?)`).run(now, now);
+  try {
+    const r = await s.post('/api/workflow-tests/suggest-criteria', { workflowId: 'wf_plug', note: NOTE });
+    assert.deepEqual([r.status, calls], [400, 0]);
+    assert.match(r.body.error, /cannot have tests/);
+  } finally { await s.close(); }
+});
+
 test('POST suggest-criteria: listed, validated, limit refused up front, booked as suggest', async () => {
   assert.ok(CRITERIA_ROUTES.some((r) => r.method === 'POST' && r.path === '/api/workflow-tests/suggest-criteria'));
   assert.ok(CRITERIA_ROUTES.some((r) => r.method === 'POST' && r.path.endsWith('/checker/:round/reword')));

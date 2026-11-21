@@ -14,7 +14,7 @@ import { judgeModelsView } from './judge-models.mjs';
 import { budgetStatus as realBudgetStatus, recordTestJudgeCost } from '../cost-budget.mjs';
 import { createChecker, LIMIT_TEXT } from './checker.mjs';
 
-const STATUS = Object.freeze({ BAD_REQUEST: 400, NOT_FOUND: 404, BUSY: 409, NOT_READY: 422, FAILED: 500 });
+const STATUS = Object.freeze({ BAD_REQUEST: 400, NOT_VERSIONABLE: 400, NOT_FOUND: 404, BUSY: 409, NOT_READY: 422, FAILED: 500 });   // NOT_VERSIONABLE as Part 2 (N4)
 const W = '/api/workflows/:id/tests';
 /** Every Part 4 route: the flag-off test walks it (the order here is not the registration order). Later tasks append theirs. */
 export const CRITERIA_ROUTES = Object.freeze([
