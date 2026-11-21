@@ -35,7 +35,10 @@ export function createCriteriaJudge(deps = {}) {
     return ((example && example.criteria) || []).filter((c) => cs.needsJudging(t.id, cs.criterionFp(c.text), model));
   };
   /** D91: each criterion of `example` that `t` still needs, with the example's model. Returns the new judgements. */
-  async function judgeTry(example, t, { testRunId = null, mock = false, stopped = () => false, overCap = () => false } = {}) {
+  // Fix round 3 (B): `signal` (the test's stop, or a stop of a criteria-only check) aborts the call in flight; the criteria not
+  // finished are left as a stop leaves them ('failed' from the cut call, then leaveUnchecked's sweep at the end of a test).
+  async function judgeTry(example, t, { testRunId = null, mock = false, stopped = () => false, overCap = () => false, signal = null } = {}) {
+    const halted = () => stopped() || !!(signal && signal.aborted);
     const model = example && example.judge ? example.judge.model : null;
     const todo = missingOf(example, t);
     if (!todo.length) return [];
@@ -43,7 +46,7 @@ export function createCriteriaJudge(deps = {}) {
     const context = d.contextOf(example);
     const out = [];
     for (const c of todo) {
-      if (stopped() || overCap()) break;
+      if (halted() || overCap()) break;
       const fp = cs.criterionFp(c.text);
       // Every real call books its spend (D92): judgeCriterion calls book(usd, costKind) as the model answers.
       const book = (usd, costKind) => {
@@ -59,7 +62,7 @@ export function createCriteriaJudge(deps = {}) {
       // Task 21 fix round 2: a refusal because of the test's cap is recorded as 'cap', not as Worca's spending limit ('limit').
       let capped = false;
       const budget = () => { if (overCap()) { capped = true; return { blocked: true }; } return d.budget(); };
-      const said = await d.judgeCriterion({ criterion: c.text, subject, context, model, mock: mock || !!t.mock, book }, { budget });
+      const said = await d.judgeCriterion({ criterion: c.text, subject, context, model, mock: mock || !!t.mock, signal, book }, { budget });
       const j = said.error === 'limit' && capped ? { ...said, error: 'cap' } : said;
       out.push(cs.insertJudgement({ workflowId: example.workflowId, exampleId: example.id, criterionId: c.id, fp, model, purpose: 'try', tryId: t.id, j }));
       if (j.error === 'limit' || j.error === 'cap') break;   // the rest wait for the next pass
@@ -70,19 +73,20 @@ export function createCriteriaJudge(deps = {}) {
   /** D91: the criteria phase: every finished try the test shows (its own and the reused ones) that still misses a criterion.
    *  P4-M5: `onProgress({ done, of })` before the first and after each such try (board 20's "7 of 12 tries"), then
    *  `onProgress(null)` before the pairs (fix round 1: the line counts earlier tries, never the pair calls). */
-  async function judgeMissing(run, { stopped = () => false, overCap = () => false, onProgress = null } = {}) {
+  async function judgeMissing(run, { stopped = () => false, overCap = () => false, onProgress = null, signal = null } = {}) {
+    const halted = () => stopped() || !!(signal && signal.aborted);
     const examples = new Map();
     const exampleOf = (id) => { if (!examples.has(id)) examples.set(id, store.readExample(run.workflowId, id)); return examples.get(id); };
     const todo = store.triesOfRun(run.id).filter((t) => (t.status === 'passed' || t.status === 'failed') && missingOf(exampleOf(t.exampleId), t).length);
     const say = (done) => { if (onProgress) onProgress(done === null ? null : { done, of: todo.length }); };
     say(0);
     for (const [i, t] of todo.entries()) {
-      if (stopped() || overCap()) return;
-      await judgeTry(exampleOf(t.exampleId), t, { testRunId: run.id, mock: !!t.mock, stopped, overCap });
+      if (halted() || overCap()) return;
+      await judgeTry(exampleOf(t.exampleId), t, { testRunId: run.id, mock: !!t.mock, stopped, overCap, signal });
       say(i + 1);
     }
     say(null);
-    await judgePairs(run, { stopped, overCap });
+    await judgePairs(run, { stopped: halted, overCap, signal });
   }
 
   /**
@@ -114,11 +118,11 @@ export function createCriteriaJudge(deps = {}) {
   }
 
   /** D100, P4-Q8: one pair per compared example with criteria or a result you liked: the first finished try of each side. */
-  async function judgePairs(run, { stopped = () => false, overCap = () => false } = {}) {
+  async function judgePairs(run, { stopped = () => false, overCap = () => false, signal = null } = {}) {
     if (run.a == null) return;
     const tries = store.triesOfRun(run.id);
     for (const id of run.exampleIds) {
-      if (stopped() || overCap()) return;
+      if (stopped() || (signal && signal.aborted) || overCap()) return;
       const ex = store.readExample(run.workflowId, id);
       const liked = ex ? cs.readLiked(ex.id) : null;
       if (!ex || !ex.judge || (!ex.criteria.length && !liked)) continue;
@@ -138,7 +142,7 @@ export function createCriteriaJudge(deps = {}) {
       // The pair's own budget check also reports "over" when this test's cap is reached (as for a criterion).
       const budget = () => (overCap() ? { blocked: true } : d.budget());
       const j = await d.judgePair({ a: await d.subjectOf(A), b: await d.subjectOf(B), liked: liked ? liked.text : null, context: d.contextOf(ex),
-        model: ex.judge.model, mock: !!(A.mock || B.mock), book }, { budget });
+        model: ex.judge.model, mock: !!(A.mock || B.mock), signal, book }, { budget });
       cs.insertJudgement({ workflowId: run.workflowId, exampleId: id, fp, model: ex.judge.model, purpose: 'pair', tryId: A.id, otherTryId: B.id,
         variant: { question: liked ? 'liked' : 'better', swapped: j.swapped }, j });
       if (j.error === 'limit') return;   // the rest wait for the next pass

@@ -21,6 +21,11 @@ export function judgeScratch() {
   return d;
 }
 export const firstLine = (e) => String((e && e.message) || e).split(/\r?\n/)[0].slice(0, 300);
+/** Fix round 3 (B): a stop before a call makes none (nothing spent, nothing booked); the criterion is left 'failed' as any stop leaves it. */
+const STOPPED = Object.freeze({ error: 'failed', detail: 'stopped' });
+const aborted = (signal) => !!(signal && signal.aborted);
+/** What a failed call books: the cost the CLI reported, else a $0 'unknown' row for a call a stop cut short (helperCall's own rule). */
+const failedCost = (e, signal) => ({ usd: Number(e && e.costUsd) || 0, kind: (e && e.costKind) || (aborted(signal) ? 'unknown' : 'billed') });
 
 export const JUDGE_DEFAULTS = Object.freeze({
   helperCall: (args) => realHelperCall(args),
@@ -59,15 +64,16 @@ export async function judgeCriterion({ criterion, subject, context = '', model, 
   const system = judgeSystemPrompt(tag);
   let last = { error: 'unreadable' };
   for (let attempt = 0; attempt < 2; attempt += 1) {
+    if (aborted(signal)) return done(STOPPED);
     const b = x.budget();
     if (b && b.blocked) return done({ error: 'limit' });
     let r;
     try {
       r = await modelCall({ model, system, prompt, signal }, x);
     } catch (e) {
-      const spent = Number(e && e.costUsd) || 0;
-      cost += spent;
-      if (spent > 0 || (e && e.costKind === 'unknown')) book(spent, (e && e.costKind) || 'billed');
+      const f = failedCost(e, signal);
+      cost += f.usd;
+      if (f.usd > 0 || f.kind === 'unknown') book(f.usd, f.kind);
       return done({ error: 'failed', detail: firstLine(e) });
     }
     cost += r.costUsd;
@@ -92,6 +98,7 @@ export async function judgePair({ a, b, liked = null, context = '', model, mock 
   const A = clipText(a, half).text; const B = clipText(b, half).text;
   const L = liked ? clipText(liked, half).text : null; const C = clipText(context, CONTEXT_MAX).text;
   const ask = async (first, second) => {
+    if (aborted(signal)) return { ...STOPPED };
     const bb = x.budget();
     if (bb && bb.blocked) return { error: 'limit' };
     const tag = fenceTag();
@@ -99,9 +106,9 @@ export async function judgePair({ a, b, liked = null, context = '', model, mock 
     try {
       r = await modelCall({ model, system: pairSystemPrompt(tag), prompt: pairPrompt({ first, second, liked: L, context: C, tag }), signal }, x);
     } catch (e) {
-      const s = Number(e && e.costUsd) || 0;
-      cost += s;
-      if (s > 0 || (e && e.costKind === 'unknown')) book(s, (e && e.costKind) || 'billed');
+      const f = failedCost(e, signal);
+      cost += f.usd;
+      if (f.usd > 0 || f.kind === 'unknown') book(f.usd, f.kind);
       return { error: 'failed', detail: firstLine(e) };
     }
     // Outside the try, as in judgeCriterion: a booking that fails after a paid call surfaces, never becomes a 'failed' pair asked (and paid) again.

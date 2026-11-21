@@ -529,7 +529,7 @@ test('D100: one pair per compared example, blind (texts only), stored once; a se
   const A = tries.find((t) => t.side === 'a'); const B = tries.find((t) => t.side === 'b');
   const pairs = () => prepare("SELECT try_id, other_try_id, winner FROM wf_test_judgements WHERE purpose = 'pair'").all().map((r) => ({ ...r }));
   assert.deepEqual(pairs(), [{ try_id: A.id, other_try_id: B.id, winner: 'b' }]);
-  assert.deepEqual(Object.keys(seen[0]).sort(), ['a', 'b', 'book', 'context', 'liked', 'mock', 'model'], 'blind: no version label reaches the question');
+  assert.deepEqual(Object.keys(seen[0]).sort(), ['a', 'b', 'book', 'context', 'liked', 'mock', 'model', 'signal'], 'blind: no version label reaches the question (signal: fix round 3, Stop)');
   assert.deepEqual([seen[0].a, seen[0].b], [`${TEXT} (a)`, `${TEXT} (b)`]);
   await judge.judgeMissing(store.readTestRun(run.id));
   assert.equal(seen.length, 1, 'asked once');

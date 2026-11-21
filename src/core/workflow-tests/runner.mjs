@@ -139,7 +139,7 @@ export function createTestRunner(deps) {
   const overCap = (run) => run.capUsd !== null && costOf(run.id) >= run.capUsd;
   /** P4-Q15 (I15): "Check them on these tries" on an older test, in the background. One per workflow and never beside a test of it,
    *  so no two drives judge (and pay for) the same reused try; its checks stop at the test's own cap (D92). */
-  const checkingCriteria = new Map();   // workflowId → { id, exampleIds } of the test run
+  const checkingCriteria = new Map();   // workflowId → { id, exampleIds, abort, done } of the test run (fix round 3: Stop aborts it)
   /** BUSY while a test of the workflow starts or runs, or a check of its criteria runs (each with its own text). */
   const busyCheck = (workflowId) => {
     if (checkingCriteria.has(workflowId)) throw err(CHECKING_TEXT, 'BUSY');
@@ -148,12 +148,15 @@ export function createTestRunner(deps) {
   function checkCriteriaLater(run) {
     busyCheck(run.workflowId);
     if (!deps.judgeMissing) throw err('this Worca cannot check criteria', 'BAD_REQUEST');
-    checkingCriteria.set(run.workflowId, { id: Number(run.id), exampleIds: (run.exampleIds || []).map(Number) });
+    const abort = new AbortController();
+    const c = { id: Number(run.id), exampleIds: (run.exampleIds || []).map(Number), abort, done: null };
+    checkingCriteria.set(run.workflowId, c);
     notify(run);   // fix round 2 (N5): another tab's list disables Test a version now (overview.checking), not at the next frame
-    return Promise.resolve()
-      .then(() => deps.judgeMissing(run, { stopped: () => false, overCap: () => overCap(run) }))
+    c.done = Promise.resolve()
+      .then(() => deps.judgeMissing(run, { stopped: () => abort.signal.aborted, overCap: () => overCap(run), signal: abort.signal }))
       .catch((e) => console.error(`[workflow-tests] could not check the criteria of test ${run.id}: ${msgOf(e)}`))
-      .finally(() => { checkingCriteria.delete(run.workflowId); notify(run); });
+      .finally(() => { if (checkingCriteria.get(run.workflowId) === c) checkingCriteria.delete(run.workflowId); notify(run); });
+    return c.done;
   }
   const criteriaCheckOf = (runId) => [...checkingCriteria.values()].some((c) => c.id === Number(runId));
   const criteriaCheckingOf = (workflowId) => checkingCriteria.has(workflowId);
@@ -165,7 +168,7 @@ export function createTestRunner(deps) {
     try {
       const t = store.readTry(tryId);
       await deps.judgeCriteria(example, t, { testRunId: run.id, mock: !!t.mock,
-        stopped: () => !!st.stopping, overCap: () => overCap(run) });
+        stopped: () => !!st.stopping, overCap: () => overCap(run), signal: st.judgeAbort.signal });
     } catch (e) { console.error(`[workflow-tests] could not check the criteria of try ${tryId}: ${msgOf(e)}`); }
   }
 
@@ -174,6 +177,7 @@ export function createTestRunner(deps) {
     st.stopping = reason;
     st.detail = detail;
     if (st.beforeAbort) st.beforeAbort.abort();   // 3b (D75): a before run stops with the test
+    st.judgeAbort.abort();   // fix round 3 (B): a check in flight ends now, not when its model call does
     for (const rec of st.running.values()) if (rec.runKey) stopQuietly(rec.runKey);
   }
 
@@ -266,7 +270,8 @@ export function createTestRunner(deps) {
   function drive(runId) {
     // madeAgain: the slots (example, side, try number) this drive made again after a Worca problem (U-T2: once each).
     // 3b (D75): before = the before runs' results (judge's beforeOf); beforeNow = what the before phase does now (beforeNowOf).
-    const st = { stopping: null, detail: null, running: new Map(), done: null, madeAgain: new Set(), before: null, beforeNow: null, beforeAbort: null };
+    const st = { stopping: null, detail: null, running: new Map(), done: null, madeAgain: new Set(), before: null, beforeNow: null, beforeAbort: null,
+      judgeAbort: new AbortController() };
     live.set(runId, st);
     st.freeAtStart = null;   // D60, board 35's "Disk in use": free disk now minus free disk later
     if (deps.freeDisk) Promise.resolve().then(() => deps.freeDisk()).then((n) => { st.freeAtStart = n; }, () => {});
@@ -347,7 +352,7 @@ export function createTestRunner(deps) {
       st.criteriaPhase = true;
       notify(run);
       const onProgress = (p) => { st.criteriaProgress = p; notify(run); };   // P4-M5: board 20's "7 of 12 tries"
-      try { await deps.judgeMissing(run, { stopped: () => !!st.stopping, overCap: () => overCap(run), onProgress }); }
+      try { await deps.judgeMissing(run, { stopped: () => !!st.stopping, overCap: () => overCap(run), onProgress, signal: st.judgeAbort.signal }); }
       catch (e) { console.error(`[workflow-tests] could not check the criteria of test ${run.id}: ${msgOf(e)}`); }
       finally { st.criteriaPhase = false; st.criteriaProgress = null; notify(run); }
     }
@@ -702,6 +707,13 @@ export function createTestRunner(deps) {
     const run = store.readTestRun(runId);
     if (!run) throw err(`no test ${runId}`, 'NOT_FOUND');
     const st = live.get(run.id);
+    // Fix round 3 (B): Stop on a test whose criteria are being checked on its tries ("Check them on these tries") ends that check.
+    const checking = [...checkingCriteria.values()].find((c) => c.id === run.id);
+    if (!st && checking) {
+      checking.abort.abort();
+      await checking.done;
+      return store.readTestRun(run.id);
+    }
     if (!st) {
       // M4: still running in the store but nothing drives it (its close failed): end it now, or the workflow stays BUSY.
       if (run.status !== 'running') return run;
