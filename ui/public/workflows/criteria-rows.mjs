@@ -128,3 +128,37 @@ export function criteriaGroup(doc, cur, labels, { once = false, actions = {}, pa
   }
   return out;
 }
+
+/** Task 14: the pair's reason names the sides as the checker saw them in its first ask ("result A" first, "result B" second, lowercased
+ *  at a sentence start; or "the first / second result"). Here they become the versions: "v4's result". */
+export function pairReasonText(reason, labels) {
+  const of = (k) => `${labels[k]}'s result`;
+  return String(reason || '')
+    .replace(/\b(?:[Tt]he\s+)?[Rr]esult\s+([AB])\b/g, (_m, s) => of(s === 'A' ? 'a' : 'b'))
+    .replace(/\b(?:[Tt]he\s+)?(first|second)\s+result\b/gi, (_m, w) => of(w.toLowerCase() === 'first' ? 'a' : 'b'));
+}
+
+/** Board 6 and P4-M6 (D100): "Which result is better overall?", or with a result you liked "closer to" it, above the try tabs. Worca
+ *  never decides by it. A decided pair takes Agree / Disagree (the criteria rows' answers), with the note on disagreeing; "Worca could
+ *  not decide" takes none. `labels` = { a, b } version labels. */
+export function pairBlock(doc, pair, labels, { onAnswer = null } = {}) {
+  const box = el(doc, 'section', 'card wft-pair');
+  const txt = el(doc, 'div', 'wft-pair-txt');
+  const h = el(doc, 'h2', '', pair.question === 'liked' ? 'Which result is closer to the one you liked?' : 'Which result is better overall?');
+  h.id = `wft-pair-${pair.judgementId}`;
+  box.setAttribute('aria-labelledby', h.id);
+  const said = el(doc, 'p', 'wft-pair-said');
+  const decided = pair.winner === 'a' || pair.winner === 'b' || pair.winner === 'tie';
+  if (decided) {
+    said.append(el(doc, 'b', '', pair.winner === 'tie' ? 'They are about the same.' : `${labels[pair.winner]}'s result.`));
+    const why = pairReasonText(pair.reason, labels).trim();
+    if (why) said.append(doc.createTextNode(` ${why}`));
+  } else said.textContent = 'Worca could not decide: it answered differently when the order changed.';
+  txt.append(h, el(doc, 'p', 'hint', 'Worca read both without knowing which version wrote which. It compared the first try of each version.'), said);
+  box.append(txt);
+  if (decided && pair.judgementId && onAnswer) {
+    box.append(answerArea(doc, pair, { answer: onAnswer }, el(doc, 'p', 'hint wft-crit-trust'), txt),
+      el(doc, 'p', 'hint wft-pair-note', DISAGREE_NOTE));
+  }
+  return box;
+}

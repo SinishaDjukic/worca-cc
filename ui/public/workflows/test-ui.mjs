@@ -184,7 +184,9 @@ export function testDialog({ doc, win, title, body, confirmLabel, onConfirm, onR
 export const NOTE_LABEL = 'What a good result has';
 export const NOTE_OPT = 'in your own words';
 export const NOTE_HINT = 'A note for people. Worca does not check it.';
+/** P4-M7 (user decision 3): the Use-as-example dialog's hint when Worca can suggest criteria from the note. */
+export const NOTE_HINT_SUGGEST = 'Worca can turn your note into criteria. You choose which to keep.';
 /** The note's textarea in its field (the editor's card and the Use-as-example dialog share the words). */
-export function noteField(doc, textarea) {
-  return field(doc, NOTE_LABEL, textarea, { id: textarea.id, hint: NOTE_HINT, opt: NOTE_OPT });
+export function noteField(doc, textarea, { hint = NOTE_HINT } = {}) {
+  return field(doc, NOTE_LABEL, textarea, { id: textarea.id, hint, opt: NOTE_OPT });
 }

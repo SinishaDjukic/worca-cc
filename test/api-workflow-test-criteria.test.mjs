@@ -81,6 +81,10 @@ test('criteria saved with an example are checked on Try it once now, for free', 
   assert.equal(js.length, 1);
   assert.equal(js[0].model, 'claude-haiku-4-5');
   assert.equal(prepare('SELECT COUNT(*) AS n FROM wf_test_judge_ledger').get().n, 0, 'the mock books nothing');
+  // Task 24 (P4-M2): the overview offers the finished try, to keep its result as the result you liked.
+  const row = (await call('GET', WF)).body.examples.find((e) => e.id === exId);
+  assert.deepEqual(row.likedTries.map((x) => [x.id, x.tryNo, x.status]), [[t.id, t.tryNo, t.status]]);
+  assert.equal(typeof row.likedTries[0].use, 'string');
 });
 
 test('Agree and Disagree on a verdict, and its trust', async () => {
@@ -319,6 +323,18 @@ test('the result you liked comes only from this workflow\'s own runs and tries; 
   assert.equal((await put({ tryId: tX.id }, exB)).status, 400, 'a try of another workflow');
   assert.equal(cs.readLiked(exB.id).fromPipeline, mine.body.pipelineId, 'kept the earlier one');
   assert.equal((await call('PUT', `/api/workflows/wf_api_c2/tests/examples/${exB.id}/liked`, { tryId: tB.id })).status, 404, 'the other workflow does not see this example');
+  // Task 24 (board 3): the past run says it left a result; criteria picked from the suggestions go to the new example, with the
+  // suggested checking model (D87); a wrong one is refused before any example exists.
+  assert.equal((await call('GET', `/api/workflow-tests/past-run/${mine.body.pipelineId}`)).body.hasResult, true);
+  const n0 = store.listExamples('wf_api_c').length;
+  const badCrit = await call('POST', `${WF}/examples/from-run`, { pipelineId: mine.body.pipelineId, name: 'Bad', criteria: [{ text: 'x' }] });
+  assert.deepEqual([badCrit.status, badCrit.body.error], [400, 'each criterion must be 3 to 300 characters']);
+  assert.equal(store.listExamples('wf_api_c').length, n0, 'nothing was created');
+  const withCrit = await call('POST', `${WF}/examples/from-run`, { pipelineId: mine.body.pipelineId, name: 'With criteria', criteria: [{ text: 'Says how many people use filters today' }] });
+  assert.equal(withCrit.status, 201, JSON.stringify(withCrit.body));
+  assert.deepEqual(withCrit.body.example.criteria.map((c) => c.text), ['Says how many people use filters today']);
+  assert.ok(withCrit.body.example.judge && withCrit.body.example.judge.model, 'the suggested model');
+  assert.deepEqual(store.readExample('wf_api_c', withCrit.body.example.id).criteria.map((c) => c.text), ['Says how many people use filters today']);
   // from-run with liked: success keeps the result; a run with no result is refused before an example exists.
   const before = store.listExamples('wf_api_c').length;
   const fr = await call('POST', `${WF}/examples/from-run`, { pipelineId: mine.body.pipelineId, name: 'From run', liked: true });

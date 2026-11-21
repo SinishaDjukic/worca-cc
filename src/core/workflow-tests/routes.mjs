@@ -9,6 +9,7 @@ import { createTestRunner } from './runner.mjs';
 import { checkingOf, criteriaPlanOf, likedFromPipeline } from './criteria-read.mjs';
 import { findPipelineRowById } from '../artifacts.mjs';
 import { mainResult } from './result.mjs';
+import { normaliseCriteria } from '../../shared/workflow-tests/criteria.mjs';
 import { createCriteriaJudge } from './criteria-runner.mjs';
 import { readTryOutcome, checkTry } from './result.mjs';
 import { useFingerprint } from './uses.mjs';
@@ -111,6 +112,9 @@ export function registerWorkflowTestRoutes(app, { broadcast = () => {}, deps = {
       main = await mainResult(String(b.pipelineId || ''));
       if (typeof main.text !== 'string' || !main.text.trim()) throw store.testError('this run left no result to keep', 'BAD_REQUEST');
     }
+    // Task 24 (board 3, P4-M7): the suggested criteria the person picked; checked before any example exists.
+    const crit = b.criteria === undefined ? { criteria: [] } : normaliseCriteria(b.criteria, () => 'k_0');
+    if (crit.error) throw store.testError(crit.error, 'BAD_REQUEST');
     const out = await service.exampleFromRun(wid(req), { pipelineId: String(b.pipelineId || ''), name: b.name,
       keepRequest: b.keepRequest !== false, keepAnswers: b.keepAnswers !== false, verdict: b.verdict ?? null,
       note: typeof b.note === 'string' ? b.note : null, setupCmd: typeof b.setupCmd === 'string' ? b.setupCmd : null }, { by: by(req) });
@@ -119,6 +123,8 @@ export function registerWorkflowTestRoutes(app, { broadcast = () => {}, deps = {
       await likedFromPipeline(out.example, pid, { readMain: async () => main, at: (findPipelineRowById(pid) || {}).started_at });
       out.example = store.readExample(wid(req), out.example.id);
     }
+    // The save gives them the suggested checking model (D87).
+    if (crit.criteria.length && out.example) out.example = await service.saveExample(wid(req), out.example.id, { criteria: crit.criteria.map(({ text }) => ({ text })) });
     res.status(201).json(out);
   });
   route('POST', `${W}/examples/from-runs`, async (req, res) => {

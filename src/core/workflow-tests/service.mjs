@@ -404,7 +404,7 @@ export async function pastRunSummary(pipelineId, { registry = loadAgentRegistry(
     title: row.title || '', at: row.started_at || null, request: row.prompt || '', files: extrasOf(row.id).map((p) => basename(p)), qa: pastAnswers(row.id),
     use, useLabel: use === 'draft' ? 'your draft' : useLabel(use, ctx), testable: !reason, reason,
     reasonText: reason ? NOT_TESTABLE_REASONS[reason] : null,
-    project,
+    project, hasResult: !reason && !!String((await mainResult(row.id)).text || '').trim(),   // Part 4 (board 3): "as a result you liked"
   };
 }
 
@@ -530,6 +530,9 @@ export async function testsOverview(workflowId, { registry = loadAgentRegistry()
       fromAt: from ? from.started_at || null : null, note: ex.note, tries: ex.tries,
       basics: basicsList(ex.basics).length, checks: ex.checks.length, criteria: ex.criteria.length,
       cells: Object.fromEntries(uses.map((use) => [store.useRef(use), cellOf(ex, use, fpNow[store.useRef(use)])])),
+      // Task 24 (P4-M2): the latest finished tries of each column, newest first, to keep one as the result you liked
+      likedTries: uses.flatMap((use) => store.latestTriesFor({ workflowId, exampleId: ex.id, use }).filter((t) => t.pipelineId).reverse()
+        .map((t) => ({ id: t.id, use: useLabel(use, ctx), tryNo: t.tryNo, at: t.finishedAt, status: t.status }))),
       project, ready: ready.ready, reason: ready.reason,
       readyText: ready.ready ? null : readinessText(ex, ready.reason, { reg: project ? projects.find((p) => p.key === project.key) || null : null }),
     });

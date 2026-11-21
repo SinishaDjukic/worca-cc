@@ -611,3 +611,31 @@ button.badge.wft-confirm:hover{text-decoration:underline;}
 .wft-tr-todo h2 + .wft-tr-todo-row{border-top:none;padding-top:0;}
 .wft-tr-todo-row b{font-weight:600;}
 @media (max-width:640px){.wft-tr-test{grid-template-columns:28px minmax(0,1fr);}.wft-tr-out{grid-column:2;align-items:flex-start;text-align:left;}}
+/* Task 24 (P4-M2): a result you liked under the criteria, its file (code font) or changes (plain words), Replace and Remove. */
+.wft-grp .wft-opt{font-weight:500;color:var(--ink-2);}
+.wft-liked > .wft-liked-add{align-self:flex-start;}
+.wft-liked > .hint{margin:0;}
+.wft-liked-line{display:flex;flex-wrap:wrap;gap:8px;align-items:center;min-width:0;}
+.wft-liked-file{border-radius:var(--r-sm);padding:6px 12px;max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+.wft-liked-file.is-plain{font-family:inherit;}
+/* Task 24 (P4-M7): the criteria Worca read in the note (the violet box and its chips, as board 2's suggestion), loading, none found. */
+.wft-sugg-box{gap:4px;padding:12px 14px;}
+.wft-sugg-box[hidden]{display:none;}
+.wft-sugg-box.is-none{background:var(--field);border-color:var(--line-2);font-size:var(--fs-body);line-height:1.45;}
+.wft-sugg-title{font-size:var(--fs-body);font-weight:600;}
+.wft-sugg-box .hint{margin:0;}
+.wft-sugg-row{display:flex;flex-wrap:wrap;gap:8px;margin-top:6px;}
+.wft-sugg-chip{display:inline-flex;align-items:center;gap:6px;align-self:auto;border:0;border-radius:var(--r-sm);padding:6px 12px;font-family:inherit;font-weight:600;text-align:left;cursor:pointer;}
+.wft-sugg-chip.is-added{background:var(--panel);color:var(--green-ink-strong);border:1px solid var(--line-2);cursor:default;}
+.wft-sugg-chip.is-added:disabled{opacity:1;}
+.wft-sugg-added{color:var(--ink-2);font-weight:500;}
+.wft-sugg-wait{display:flex;align-items:center;gap:10px;font-size:var(--fs-body);font-weight:600;}
+/* Task 24 (P4-M6): the pair question above the try tabs; Agree / Disagree as under a criterion; the note on disagreeing. */
+.wft-pair{display:flex;flex-wrap:wrap;gap:12px 24px;align-items:center;padding:18px 22px;}
+.wft-pair-txt{flex:1 1 420px;min-width:0;display:flex;flex-direction:column;gap:4px;}
+.wft-pair h2{margin:0;font-size:var(--fs-section);}
+.wft-pair .hint{margin:0;}
+.wft-pair-said{margin:4px 0 0;font-size:var(--fs-body);line-height:1.5;overflow-wrap:anywhere;}
+.wft-pair-said b{font-weight:600;}
+.wft-pair-note{flex:1 1 100%;}
+.wft-detail > .wft-sbs-tabs{align-self:flex-start;}

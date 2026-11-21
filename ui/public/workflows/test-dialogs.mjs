@@ -1,6 +1,6 @@
 // ui/public/workflows/test-dialogs.mjs — the workflow tests dialogs (plans/workflow-tests-part2-plan.md Tasks 12–13):
 // pick a past run (G7), use this run as a test example (board 3), and test a version with its connectors (boards 4, 30). Pure DOM.
-import { el, btn, seg, field, testDialog, runStatusBadge, refusedRun, startInto, noteField } from './test-ui.mjs';
+import { el, btn, seg, field, testDialog, runStatusBadge, refusedRun, startInto, noteField, NOTE_HINT_SUGGEST } from './test-ui.mjs';
 import { icon } from '../icons.mjs';
 import { fmtUsd, andList, parseUsd } from '../../../src/shared/workflow-tests/checks.mjs';
 import { estimateOf, fmtUsdRange, aboutUsd } from '../../../src/shared/workflow-tests/compare.mjs';
@@ -92,9 +92,76 @@ export function defaultExampleName(title, { when = null } = {}) {
   return /[\p{L}\p{N}]/u.test(t) ? t : `Example from ${when || 'a past run'}`;   // no letter or digit: no words left
 }
 
+/** P4-M7 (Task 15, D102): under the note, the criteria Worca reads in it, asked when the note box loses focus with at least 20
+ *  characters. A paid call: one at a time, never twice for the same words (a failure can be asked again), and not when the focus goes
+ *  to Cancel or Add example. Only offered: `picked` goes to the new example as its criteria; nothing is saved before Add example.
+ *  `onSuggest(note)` → { suggestions } | { error } (the server's words, board 58). */
+function suggestionsBox(doc, note, onSuggest) {
+  const box = el(doc, 'div', 'wft-sugg wft-sugg-box');
+  box.hidden = true;
+  box.setAttribute('aria-live', 'polite');
+  const picked = [];
+  let asked = '';
+  let out = false;
+  const show = (cls, nodes) => { box.className = `wft-sugg wft-sugg-box${cls}`; box.replaceChildren(...nodes); box.hidden = false; };
+  const added = (b, text) => {
+    b.disabled = true;
+    b.classList.add('is-added');
+    b.replaceChildren(icon(doc, 'check', 13), doc.createTextNode(text), el(doc, 'span', 'wft-sugg-added', '· Added'));
+  };
+  const paint = (list) => {
+    const fresh = list.filter((t) => !picked.includes(t));
+    if (!fresh.length && !picked.length) {
+      show(' is-none', [doc.createTextNode('Worca found no criteria in your note. You can write your own in the example after you add it.')]);
+      return;
+    }
+    const row = el(doc, 'div', 'wft-sugg-row');
+    for (const t of picked) { const b = btn(doc, '', null, 'wft-sugg-tag wft-sugg-chip'); added(b, t); row.append(b); }
+    for (const t of fresh) {
+      const b = btn(doc, null, () => {
+        if (b.disabled) return;
+        picked.push(t);
+        added(b, t);
+        const open = [...row.querySelectorAll('button')].filter((x) => x === b || !x.disabled);
+        const next = open[open.indexOf(b) + 1] || open.find((x) => x !== b);   // the focus never falls to the page
+        (next || note).focus();
+      }, 'wft-sugg-tag wft-sugg-chip');
+      b.append(icon(doc, 'plus', 13), doc.createTextNode(t));   // the board's "+", from icons.mjs (no typed glyph)
+      row.append(b);
+    }
+    show('', [el(doc, 'b', 'wft-sugg-title', 'Worca turned your note into criteria'), el(doc, 'span', 'hint', 'Click one to add it. You can change the words later.'), row]);
+  };
+  const ask = async () => {
+    const text = note.value.trim();
+    if (out || text.length < 20 || text === asked) return;
+    asked = text;
+    out = true;
+    const wait = el(doc, 'span', 'wft-sugg-wait');
+    wait.append(icon(doc, 'spinner', 16), doc.createTextNode('Worca is reading your note…'));
+    show('', [wait]);
+    let r;
+    try { r = await onSuggest(text); } catch (e) { r = { error: e && e.message ? e.message : String(e) }; }
+    out = false;
+    if (r && Array.isArray(r.suggestions)) paint(r.suggestions);
+    else {
+      asked = '';   // board 58: "Try again." — the next time the box loses focus asks again
+      show(' is-none', [doc.createTextNode((r && r.error) || 'Worca could not get suggestions this time. Try again.')]);
+    }
+    // Changed while it was out, and left since: ask about the new words.
+    if (r && Array.isArray(r.suggestions) && note.value.trim() !== text && doc.activeElement !== note) void ask();
+  };
+  note.addEventListener('blur', (e) => {
+    const to = e.relatedTarget;
+    if (to && typeof to.closest === 'function' && to.closest('.mk-dialog-foot')) return;   // leaving the dialog: nothing to offer
+    void ask();
+  });
+  return { box, picked };
+}
+
 /** Board 3: "Use this run as a test example" (C4: the verdict is the version's result until it is tested, D29). Board 38
- *  (D65): a project run's example starts where the run started, and its setup is filled in from the project's. */
-export function openFromRunDialog({ doc, win, past, onSubmit, dateText = (s) => s }) {
+ *  (D65): a project run's example starts where the run started, and its setup is filled in from the project's. Part 4 (Task 24):
+ *  "This result, as a result you liked" when the run left one (`past.hasResult`), and, with `onSuggest`, P4-M7's suggested criteria. */
+export function openFromRunDialog({ doc, win, past, onSubmit, onSuggest = null, dateText = (s) => s }) {
   const name = el(doc, 'input');
   name.type = 'text'; name.id = 'wft-fr-name'; name.maxLength = 120; name.value = defaultExampleName(past.title, { when: past.at ? dateText(past.at) : null });
   const nf = past.files.length;
@@ -112,6 +179,8 @@ export function openFromRunDialog({ doc, win, past, onSubmit, dateText = (s) => 
     ? 'The question Worca asked and your answer, so the test can run without you'
     : `The ${nq} questions Worca asked and your answers, so the test can run without you`) : null;
   if (ans) keep.append(ans.row);
+  const liked = past.hasResult ? keepRow(doc, 'wft-fr-liked', 'This result, as a result you liked') : null;   // board 3, off at first
+  if (liked) { liked.box.checked = false; keep.append(liked.row); }
   let verdict = null;
   const hint = el(doc, 'p', 'hint wft-fr-hint');
   hint.hidden = true;
@@ -126,6 +195,7 @@ export function openFromRunDialog({ doc, win, past, onSubmit, dateText = (s) => 
   const how = seg(doc, 'How was this result', [['good', 'Good: keep it like this'], ['not-good', 'Not good enough']], null, (v) => { verdict = v; paintHint(); });
   const note = el(doc, 'textarea');
   note.id = 'wft-fr-note'; note.rows = 3; note.maxLength = 2000;
+  const sugg = onSuggest ? suggestionsBox(doc, note, onSuggest) : null;
   let startBox = null;
   let setup = null;
   let devBox = null;
@@ -148,13 +218,15 @@ export function openFromRunDialog({ doc, win, past, onSubmit, dateText = (s) => 
         : `Worca keeps the request and files, so every new version of ${past.workflowName} can be tried on exactly the same thing.`),
       field(doc, 'Name of the example', name, { id: name.id }), ...(startBox ? [startBox] : []), keep, ...(devBox ? [devBox] : []),
       field(doc, 'How was this result?', how),
-      noteField(doc, note),
+      noteField(doc, note, sugg ? { hint: NOTE_HINT_SUGGEST } : {}),   // P4-M7, user decision 3
+      ...(sugg ? [sugg.box] : []),
       hint,
     ],
     onConfirm: () => {
       if (!name.value.trim()) return { ok: false, error: 'Give the example a name.' };
       return onSubmit({ name: name.value.trim(), keepRequest: req.box.checked, keepAnswers: ans ? ans.box.checked : false, verdict,
-        note: note.value.trim() || null, ...(setup ? { setupCmd: setup.value.trim() } : {}) });
+        note: note.value.trim() || null, ...(setup ? { setupCmd: setup.value.trim() } : {}),
+        ...(liked ? { liked: liked.box.checked } : {}), ...(sugg && sugg.picked.length ? { criteria: sugg.picked.map((text) => ({ text })) } : {}) });
     },
   });
 }

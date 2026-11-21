@@ -6,7 +6,7 @@ import { el, btn, iconBtn, seg, field, card, testDialog, sentence, BUSY_HINT, st
 import { makeSwitch } from '../switch.mjs';
 import { icon } from '../icons.mjs';
 import { withButton } from '../feedback.mjs';
-import { renderCriteriaSection } from './criteria-editor.mjs';
+import { renderCriteriaSection, likedRow, openLikedDialog } from './criteria-editor.mjs';
 import { EXACT_KIND_HINTS } from '../../../src/shared/workflow-tests/criteria-text.mjs';
 import {
   CHECK_KINDS, PROJECT_KINDS, PART4_KINDS, CHECK_KIND_LABELS, DEFAULT_BASICS, PROJECT_FILE_KIND_LABEL, COMMAND_TIMEOUTS, checkLabel, normaliseCheck, normaliseBasics, fmtUsd, parseUsd,
@@ -327,7 +327,7 @@ function basicRow(doc, id, text, on, extra = null, after = null) {
  */
 export function renderExampleEditor(root, ex, actions, { doc, win, scripts = [], perTryUsd = null, draftLabel = 'your draft', testRunning = false,
   runningExampleIds = [], confirm = null, projects = null, needsProject = false, workflowName = '', projectView = null, dateText = (s) => s,
-  judgeModels = { models: [], suggested: null }, criteriaTrust = {}, onConfirmCriterion = null }) {
+  judgeModels = { models: [], suggested: null }, criteriaTrust = {}, onConfirmCriterion = null, likedTries = [] }) {
   const listed = scripts;
   const lib = Array.isArray(scripts) ? scripts : [];
   const draft = clone({ ...BLANK_EXAMPLE, ...ex });
@@ -460,7 +460,12 @@ export function renderExampleEditor(root, ex, actions, { doc, win, scripts = [],
   const picker = el(doc, 'input');
   picker.type = 'file'; picker.multiple = true; picker.hidden = true; picker.id = 'wft-ex-file';
   let addFileBtn = null;
-  const showFiles = (r) => { if (r && r.example) { draft.id = r.example.id ?? draft.id; draft.files = r.example.files; paintFiles(); } };
+  const showFiles = (r) => {
+    if (!r || !r.example) return;
+    const was = draft.id;
+    draft.id = r.example.id ?? draft.id; draft.files = r.example.files; paintFiles();
+    if (was == null && draft.id != null && paintLiked) paintLiked();   // G17's first save: a result you liked can be added now
+  };
   const paintFiles = () => {
     files.replaceChildren();
     for (const f of draft.files) {
@@ -513,6 +518,7 @@ export function renderExampleEditor(root, ex, actions, { doc, win, scripts = [],
   const c1Hint = c1.querySelector(':scope > .hint');
   let checksHint = null;   // card 3's Automatic checks hint (below)
   let crit = null;   // Part 4: Your criteria (below); its hint follows the project too
+  let paintLiked = null;   // Task 24: a result you liked (below); its hint follows the project too
 
   // ── 1b. Where it starts (board 32; board 39's states; D41, D63, P2–P4) ──
   const reg = (key) => (Array.isArray(projects) ? projects.find((p) => p.key === key) : null) || null;
@@ -654,6 +660,7 @@ export function renderExampleEditor(root, ex, actions, { doc, win, scripts = [],
     c1Hint.textContent = pick.key ? CARD1_HINT_PROJECT : P2_CARD1_HINT;
     if (checksHint) checksHint.textContent = pick.key ? CHECKS_HINT_PROJECT : P2_CHECKS_HINT;
     if (crit) crit.setProject(!!pick.key);
+    if (paintLiked && likedProject !== !!pick.key) paintLiked();
     paintBusy();
   };
   /** A start button's load: disabled by paintBusy (busyWhile), and aria-busy while it runs. */
@@ -814,6 +821,26 @@ export function renderExampleEditor(root, ex, actions, { doc, win, scripts = [],
       onSave: (nc) => { addCheck(nc); crit.remove(c); } }),
     onAddExact: () => openCheckDialog({ doc, win, scripts: listed, project: !!pick.key, onSave: addCheck }) });
   c3.append(crit.el);
+  // Task 24 (boards 2, 32; P4-M2): a result you liked. Its own route keeps it at once (never through Save), so only this row repaints;
+  // an example not saved yet waits for its first save. `likedTries` = the example's finished tries to pick from ([{ id, label }]).
+  let likedEl = null;
+  let likedProject = !!pick.key;
+  const likedDone = async (p, focusSel) => {
+    const r = await p;
+    if (r && r.ok && r.example) { draft.liked = r.example.liked || null; paintLiked(focusSel); }
+    return r;
+  };
+  paintLiked = (focusSel = null) => {
+    likedProject = !!pick.key;
+    const row = likedRow(doc, draft.liked || null, { project: likedProject, saved: draft.id != null,
+      onReplace: () => openLikedDialog({ doc, win, tries: likedTries, onFile: (file) => likedDone(actions.putLiked({ file }), '.wft-liked-replace'),
+        onTry: (tryId) => likedDone(actions.putLiked({ tryId }), '.wft-liked-replace') }),
+      onRemove: () => likedDone(actions.removeLiked(), '.wft-liked-add') });
+    if (likedEl) likedEl.replaceWith(row); else c3.append(row);
+    likedEl = row;
+    if (focusSel && row.querySelector(focusSel)) row.querySelector(focusSel).focus();
+  };
+  paintLiked();
 
   const cols = el(doc, 'div', 'wft-cols');
   const left = el(doc, 'div', 'wft-col');

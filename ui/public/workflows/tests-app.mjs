@@ -439,7 +439,12 @@ export function createWorkflowTests(deps) {
     if (!r.ok) { notify({ tone: 'err', title: 'Could not read the run', detail: r.error }); return; }
     const past = r.data;
     if (!past.testable) { notify({ tone: 'err', title: 'This run cannot become a test example', detail: past.reasonText || '' }); return; }
-    openFromRunDialog({ doc, win, past, dateText: wftDate, onSubmit: async (body) => {
+    // Task 24 (P4-M7, D102): the criteria Worca reads in the note, a paid call the dialog sends one at a time; only offered.
+    const onSuggest = async (note) => {
+      const s = await wftCall('POST', '/api/workflow-tests/suggest-criteria', { workflowId: past.workflowId, pipelineId: past.pipelineId, note });
+      return s.ok ? { suggestions: Array.isArray(s.data.suggestions) ? s.data.suggestions : [] } : { error: s.error };
+    };
+    openFromRunDialog({ doc, win, past, dateText: wftDate, onSuggest, onSubmit: async (body) => {
       const s = await wftCall('POST', `${wftBase(past.workflowId)}/examples/from-run`, { pipelineId: past.pipelineId, ...body });
       if (!s.ok) return s;
       if (s.data.skipped.length) notify({ tone: 'info', title: 'Some files were left out', detail: `${s.data.skipped.join(', ')}: larger than 5 MB, or more than 8 files.` });
@@ -514,7 +519,9 @@ export function createWorkflowTests(deps) {
       // Task 22: Confirm 4 results and Fix it open Check the checker. The editor offers them only on a saved example's saved criteria
       // (a trust line needs the example's id and the criterion's), and saves its changes first (saveQuiet), so the round runs on
       // the words shown.
-      onConfirmCriterion: (c) => wftConfirmCriterion(session.exampleId, c, { exampleName: wft.example && wft.example.name }) });
+      onConfirmCriterion: (c) => wftConfirmCriterion(session.exampleId, c, { exampleName: wft.example && wft.example.name }),
+      // Task 24 (P4-M2): the overview's latest finished tries of this example, as "v4 · try 2 · 14 Oct · passed"
+      likedTries: (row && row.likedTries ? row.likedTries : []).map((t) => ({ id: t.id, label: [t.use, `try ${t.tryNo}`, t.at ? wftDate(t.at) : null, t.status].filter(Boolean).join(' · ') })) });
   }
   async function wftOpenExample(exampleId) {
     const id = wftWorkflowId();
@@ -601,6 +608,21 @@ export function createWorkflowTests(deps) {
       removeFile: async (name) => {
         const r = await wftCall('DELETE', `${base}/examples/${session.exampleId}/files/${encodeURIComponent(name)}`);
         if (!r.ok) return r;
+        keep(r.data.example);
+        return { ok: true, example: r.data.example };
+      },
+      // Task 24 (P4-M2, Task 12's route): a result you liked, kept at once ({ file } uploaded, or { tryId }); the server's words on a refusal.
+      putLiked: async ({ file = null, tryId = null } = {}) => {
+        if (!session.exampleId) return { ok: false, error: SAVE_FIRST_TEXT };
+        const body = file ? { name: file.name, dataBase64: bytesToBase64(new Uint8Array(await file.arrayBuffer())) } : { tryId };
+        const r = await wftCall('PUT', `${base}/examples/${session.exampleId}/liked`, body);
+        if (!r.ok) return r;
+        keep(r.data.example);
+        return { ok: true, example: r.data.example };
+      },
+      removeLiked: async () => {
+        const r = await wftCall('DELETE', `${base}/examples/${session.exampleId}/liked`);
+        if (!r.ok) { notify({ tone: 'err', title: 'Not removed', detail: r.error }); return r; }
         keep(r.data.example);
         return { ok: true, example: r.data.example };
       },

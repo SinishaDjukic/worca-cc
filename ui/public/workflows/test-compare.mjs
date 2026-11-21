@@ -10,7 +10,7 @@ import { fmtUsd, fmtUsdFine } from '../../../src/shared/workflow-tests/checks.mj
 import { estimateOf, aboutUsd, agoText, countsText, fmtDuration, pctDelta, durationDelta, countDelta, fmtTimes } from '../../../src/shared/workflow-tests/compare.mjs';
 import { serverName } from '../../../src/shared/workflow-tests/connector-name.mjs';
 import { splitPatchSections, parseFileSection } from '../diff-view.mjs';
-import { criteriaGroup } from './criteria-rows.mjs';
+import { criteriaGroup, pairBlock } from './criteria-rows.mjs';
 import { compareCriteriaParts, compareCriteriaNotes } from './criteria-pages.mjs';
 import { COST_UNKNOWN_NOTE } from '../../../src/shared/workflow-tests/criteria-text.mjs';
 import { changesTitle, changeCountText, FILE_BADGE, READ_ALL_CHANGES, BOTH_STARTED_FROM, DEV_CAPTION, DEV_SBS_HINT, DEV_START_LEAD, DEV_SETUP_LEAD,
@@ -428,8 +428,11 @@ export function renderSideBySide(root, s, actions, { doc, tryIndex = 0, renderMa
   if (s.start) startInto(doc, (countsEl.append(doc.createTextNode(once ? STARTED_FROM : BOTH_STARTED_FROM)), countsEl), s.start, dateText);   // board 36
   head.append(titles(doc, act(doc, root, runId, once ? 'Tests' : s.compareTitle, () => actions.back(), 'wft-crumb', 'wft-sbs-back'),
     name, countsEl));
+  // P4-M6 (D100): the pair question stands above the try tabs, after the notes; without one the tabs stay in the heading.
+  const pair = s.pair && !once ? pairBlock(doc, s.pair, s.labels, { onAnswer: actions.answer ? (id, agree) => actions.answer(id, agree) : null }) : null;
+  let tabs = null;
   if (s.tries.length > 1) {
-    const tabs = el(doc, 'div', 'seg wft-sbs-tabs');
+    tabs = el(doc, 'div', 'seg wft-sbs-tabs');
     tabs.setAttribute('role', 'tablist');
     tabs.setAttribute('aria-label', 'Which try');
     const last = s.tries.length - 1;
@@ -450,7 +453,7 @@ export function renderSideBySide(root, s, actions, { doc, tryIndex = 0, renderMa
       });
       tabs.append(b);
     });
-    head.append(tabs);
+    if (!pair) head.append(tabs);
   }
   page.append(head);
   if (mock) page.append(mockNote(doc));   // F52
@@ -467,6 +470,7 @@ export function renderSideBySide(root, s, actions, { doc, tryIndex = 0, renderMa
     notes.append(p);
     page.append(notes);
   }
+  if (pair) page.append(pair, ...(tabs ? [tabs] : []));
   if (!cur) {   // board 29
     page.append(el(doc, 'p', 'hint wft-empty-sbs', 'No finished try of this example in this test.'));
     root.append(page, live);

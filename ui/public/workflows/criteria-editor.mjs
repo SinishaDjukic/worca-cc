@@ -1,7 +1,7 @@
 // ui/public/workflows/criteria-editor.mjs — the example editor's "Your criteria" and "Checked with" (plans/workflow-tests-part4-plan.md
 // Task 18; canvas boards 2 and 32, and P4-M2's states). The rows are sentence boxes with their trust line under them; Switch offers
 // an exact check (D94).
-import { el, btn, iconBtn, field } from './test-ui.mjs';
+import { el, btn, iconBtn, field, testDialog } from './test-ui.mjs';
 import { exactAlternative } from '../../../src/shared/workflow-tests/exact-checks.mjs';
 import { TRUST_BADGE, NOT_CHECKED, trustLine, exactLine } from '../../../src/shared/workflow-tests/criteria-text.mjs';
 
@@ -119,4 +119,58 @@ export function renderCriteriaSection(doc, draft, { models = { models: [], sugge
   /** Board 32: a project example's hint ("what changed"); the editor calls it when the Project select changes. */
   const setProject = (on) => { hint.textContent = on ? HINT_PROJECT : HINT; };
   return { el: sect, remove, setProject, read: () => ({ criteria: list.map(({ id, text }) => ({ ...(id ? { id } : {}), text: text || '' })), judge }) };
+}
+
+// Task 24 (boards 2, 32; P4-M2): "A result you liked", under the criteria. Its own route saves it at once (D101).
+const LIKED_HINT = 'When two versions are compared, Worca also says which result is closer to this one.';
+const LIKED_HINT_PROJECT = 'When two versions are compared, Worca also says which changes are closer to these.';
+const LIKED_MAX = 2 * 1024 * 1024;
+
+/** `liked` = the example's `liked` ({ kind, name, size }, Task 12); null: P4-M2's empty row. `saved` false: an example not saved yet,
+ *  whose "Add a result you liked" waits for its first save. */
+export function likedRow(doc, liked, { project = false, saved = true, onReplace, onRemove }) {
+  const sect = el(doc, 'div', 'wft-sect wft-liked');
+  const g = el(doc, 'p', 'wft-grp', 'A result you liked ');
+  g.append(el(doc, 'span', 'wft-opt', '· optional'));
+  sect.append(g, el(doc, 'p', 'wft-grp-hint', project ? LIKED_HINT_PROJECT : LIKED_HINT));
+  // The dialog gives the focus back by this key, to whichever button the repainted row has.
+  const opener = (label, cls) => { const b = btn(doc, label, () => onReplace(), cls); b.dataset.focusKey = 'wft-liked-open'; return b; };
+  if (!liked) {
+    const add = opener('Add a result you liked', 'btn btn-sm wft-liked-add');
+    add.disabled = !saved;
+    sect.append(add);
+    if (!saved) sect.append(el(doc, 'span', 'hint', 'Save the example first.'));
+    return sect;
+  }
+  const line = el(doc, 'div', 'wft-liked-line');
+  const rm = iconBtn(doc, 'trash', project || liked.kind === 'changes' ? 'Remove the changes you liked' : 'Remove the result you liked', async () => {
+    if (rm.disabled) return;   // one removal at a time
+    rm.disabled = true;
+    try { await onRemove(); } finally { rm.disabled = false; }
+  }, 'btn btn-sm btn-quiet btn-icon wft-liked-rm', 15);
+  line.append(el(doc, 'span', `wft-file wft-liked-file${liked.kind === 'changes' ? ' is-plain' : ''}`, liked.name),
+    opener('Replace', 'btn btn-sm wft-liked-replace'), rm);
+  sect.append(line);
+  return sect;
+}
+
+/** P4-M2's dialog: upload a text file (`onFile(file)`), or keep a try's result (`onTry(tryId)`); each resolves { ok } or { ok: false, error }
+ *  in the server's words, which stay in the dialog. `tries` = [{ id, label }], newest first. */
+export function openLikedDialog({ doc, win, tries = [], onFile, onTry }) {
+  const file = el(doc, 'input');
+  file.type = 'file'; file.id = 'wft-liked-file'; file.accept = '.md,.txt,.csv,.json,.html';
+  const pick = el(doc, 'select');
+  pick.id = 'wft-liked-try';
+  for (const t of tries) { const o = el(doc, 'option', '', t.label); o.value = String(t.id); pick.append(o); }
+  const wrap = el(doc, 'div', 'select-wrap');
+  wrap.append(pick);
+  return testDialog({ doc, win, title: 'A result you liked', confirmLabel: 'Keep it',
+    body: [field(doc, 'Upload a file', file, { id: file.id, hint: 'A text file, at most 2 MB.' }),
+      ...(tries.length ? [field(doc, "Or use a try's result", wrap, { id: pick.id })] : [])],
+    onConfirm: async () => {
+      const f = file.files && file.files[0];
+      if (f) return f.size > LIKED_MAX ? { ok: false, error: 'Pick a file of at most 2 MB.' } : onFile(f);
+      if (tries.length) return onTry(Number(pick.value));
+      return { ok: false, error: 'Pick a file first.' };
+    } });
 }

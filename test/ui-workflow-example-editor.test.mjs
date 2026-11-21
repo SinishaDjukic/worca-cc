@@ -533,7 +533,7 @@ test('Part 4 (Task 18): Your criteria and Checked with after the automatic check
     judge: { model: 'claude-haiku-4-5' } };
   const { root, doc, ed } = boot(ex, { ctx: { judgeModels, criteriaTrust: { k_1: { state: 'collecting', n: 4, agree: 4, decides: true } } } });
   const grps = [...root.querySelectorAll('.wft-c3 .wft-grp')].map((g) => g.textContent);
-  assert.deepEqual(grps, ['Basics', 'Automatic checks', 'Your criteria']);
+  assert.deepEqual(grps, ['Basics', 'Automatic checks', 'Your criteria', 'A result you liked · optional']);   // Task 24 (board 2)
   assert.match(root.querySelectorAll('.wft-crit')[0].textContent, /Worca has 4 of the 10 answers it needs/);
   assert.equal(doc.getElementById('wft-judge').value, 'claude-haiku-4-5');
   assert.deepEqual([ed.value().criteria, ed.value().judge], [ex.criteria, { model: 'claude-haiku-4-5' }]);
