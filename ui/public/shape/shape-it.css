@@ -83,8 +83,8 @@
 .shape-reqs-agreed dd{container:shape-reqs-rows / inline-size;margin:0;}
 .shape-reqs-agreed :is(.plan-check-label,.plan-check-detail){overflow-wrap:anywhere;}
 /* Owner direction d5c0afe48: ONE row layout for every list on the small-runs card, never per-list rules: the role folds
-   and their requirement rows (B3), the Split's run, check and challenge rows (B4) and the run rows (B1, via
-   --member-mark in runs/group-page.css). A row: the mark in a fixed 16px box centred on the first text line (a `?`
+   and their requirement rows (B3), the Split's run, check and challenge rows (B4) and the run rows (B1, their 16px
+   column restated below under .chat-rc-members). A row: the mark in a fixed 16px box centred on the first text line (a `?`
    glyph and an SVG check share one centre), gap 8, [the role icon in an 18px box, gap 8,] the id in one fixed tabular
    column, gap 8, the text, then the chevron or action in its own column at the far right. One-line rows are 32px, with
    no margin between siblings; a longer row grows from the top and its mark stays on the first line. */
@@ -94,7 +94,6 @@
 .srows .plan-checks{gap:0;padding-left:0;}
 .srows .plan-check-mark{flex:none;display:inline-flex;align-items:center;justify-content:center;width:var(--row-mark);height:var(--row-line);line-height:1;}
 .srows .plan-check-mark > svg{display:block;}
-.srows .plan-check-mark.is-wait::before{content:'';box-sizing:border-box;width:10px;height:10px;border:1.5px solid currentColor;border-radius:50%;}
 .srows .plan-check-id{flex:none;width:var(--row-id);color:var(--ink-2);font-variant-numeric:tabular-nums;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
 .srows .plan-check-text{flex:1 1 0;min-width:0;display:flex;flex-wrap:wrap;align-items:baseline;gap:0 var(--row-gap);}
 .srows .plan-check-text > :is(.plan-check-label,.plan-check-detail){flex:0 0 auto;max-width:100%;min-width:0;overflow-wrap:anywhere;}
@@ -135,20 +134,33 @@
   .srows .outline-run-fold{flex-wrap:wrap;}
   .srows .outline-run-ids{order:3;flex:1 0 100%;margin-left:0;padding-left:calc(var(--row-id) + var(--row-gap));white-space:normal;}
 }
-/* The run rows (B1): the same 16px mark column and 8px gap; a row grows from the top. */
-.run-members.is-one-line{--member-mark:16px;--member-gap:8px;}
-/* (0,4,0): group-page.css loads after this file and its `.run-members.is-table > .run-member` padding (8px) would win
-   a tie. 1px top border + 5 + 20 + 6 = 32px; the text starts 6px below the border-box top, as in the other rows. */
-.run-members.is-table.is-one-line > .run-member{align-items:start;min-height:32px;box-sizing:border-box;padding:5px 0 6px;line-height:20px;}
-.run-members.is-one-line > .run-member > .status-dot{justify-self:center;margin-top:6px;}
+/* The run rows (B1): the same 16px mark column and 8px gap. Every rule is scoped under the chat card's member host, the
+   only place one-line rows are drawn, so it outranks the runs/group-page.css rule it replaces whatever the file order,
+   and that file stays dev's. The columns restate dev's list per width (base, the 480px chat container, the 600px phone,
+   the 360px chat container) with 16px for dev's 12px. The chat container queries are range forms (`width > 480px` after
+   the base, `width <= 360px`): the design-language gates read group-page.css's first max-width blocks by their text. */
+.chat-rc-members .run-members.is-table.is-one-line{grid-template-columns:16px 20px minmax(0,1fr) max-content 16px;column-gap:8px;}
+@container chat-rc-members (width > 480px){
+  .chat-rc-members .run-members.is-table.is-one-line{grid-template-columns:16px 20px minmax(0,1fr) max-content 64px 16px;}
+}
+/* 1px top border + 5 + 20 + 6 = 32px; the text starts 6px below the border-box top, as in the other rows. */
+.chat-rc-members .run-members.is-table.is-one-line > .run-member{align-items:start;min-height:32px;box-sizing:border-box;padding:5px 0 6px;line-height:20px;}
+.chat-rc-members .run-members.is-one-line > .run-member > .status-dot{justify-self:center;margin-top:6px;}
+/* Title, then the short state right-aligned on the same line; a Requirements fold wraps under. */
+.chat-rc-members .run-members.is-one-line .run-member-main{flex-direction:row;flex-wrap:wrap;align-items:center;column-gap:8px;}
+.chat-rc-members .run-members.is-one-line .run-member-title{flex:1 1 0;min-width:0;}
+.chat-rc-members .run-members.is-one-line .run-member-main > :not(.run-member-title, .run-member-state){flex-basis:100%;}
+.chat-rc-members .run-member-state{color:var(--ink-2);font-size:var(--fs-meta);white-space:nowrap;}
 /* A narrow row with no PR chip and no cost keeps one grid row: the stacked ". . pr cost" row and its gap would add 9px. */
 @media (max-width:600px){
-  .run-members.is-table.is-one-line > .run-member:has(> .run-member-pr:empty):has(> .run-member-cost:empty){grid-template-areas:"dot num main go";}
+  .chat-rc-members .run-members.is-table.is-one-line{grid-template-columns:16px 20px minmax(0,1fr) max-content;}
+  .chat-rc-members .run-members.is-table.is-one-line > .run-member:has(> .run-member-pr:empty):has(> .run-member-cost:empty){grid-template-areas:"dot num main go";}
 }
-@container chat-rc-members (max-width:360px){
-  .run-members.is-table.is-one-line > .run-member:has(> .run-member-pr:empty):has(> .run-member-cost:empty){grid-template-areas:"dot num main main";}
+@container chat-rc-members (width <= 360px){
+  .chat-rc-members .run-members.is-table.is-one-line{grid-template-columns:16px 20px minmax(0,1fr) max-content;}
+  .chat-rc-members .run-members.is-table.is-one-line > .run-member:has(> .run-member-pr:empty):has(> .run-member-cost:empty){grid-template-areas:"dot num main main";}
 }
-.run-members.is-table.is-one-line > .run-member:has(> .run-member-pr:empty):has(> .run-member-cost:empty) > :is(.run-member-pr, .run-member-cost){display:none;}
+.chat-rc-members .run-members.is-table.is-one-line > .run-member:has(> .run-member-pr:empty):has(> .run-member-cost:empty) > :is(.run-member-pr, .run-member-cost){display:none;}
 /* Too narrow for a failing row's words side by side: its detail goes under its label. */
 @container shape-reqs-rows (max-width:320px){
   .shape-reqs .plan-check-row:has(.plan-check-detail){display:grid;grid-template-columns:1em minmax(0,1fr);}

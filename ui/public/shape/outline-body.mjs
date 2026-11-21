@@ -363,10 +363,10 @@ function renderSplitBody(panel, pq, deps) {
       } else failing.push({ ...it, id: '' });
     }
     const picked = edits.filter((e) => e.op === 'confirm').map((e) => ({ id: e.id, label: `${e.role} will confirm`, pass: true }));
-    // The id column only in a list whose rows carry an id (owner d3ef1cb79 #1); then every row keeps it, so the texts line up.
+    // The id column only on a row that carries an id (owner d3ef1cb79 #1, owner walk finding 7): id rows keep its fixed
+    // width, so their texts line up; a rule row without one puts its label right after the mark.
     const all = [...failing, ...picked, ...passing];
-    const idCol = all.some((it) => it.id);
-    return buildCheckRows(d, { items: all.map((it) => ({ ...it, idCol })) });
+    return buildCheckRows(d, { items: all.map((it) => ({ ...it, idCol: !!it.id })) });
   }
 
   function confirmButton(id) {

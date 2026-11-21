@@ -192,3 +192,13 @@ test('a row item with an `action` ends with that button; a row without one is un
   assert.equal(plain.outerHTML, ref.outerHTML);
   assert.equal(plain.querySelector('button'), null);
 });
+
+test('checkMark wait: the box holds one wrapped dev status dot (the grey waiting ring), no own ring and no text', async () => {
+  const { checkMark } = await import('../ui/public/shape/check-row.mjs');
+  const mark = checkMark(doc, 'wait');
+  assert.ok(mark.matches('.plan-check-mark.is-wait'));
+  assert.equal(mark.children.length, 1);
+  assert.ok(mark.firstElementChild.matches('span.status-dot.is-grey-ring'));
+  assert.equal(mark.firstElementChild.dataset.state, 'waiting');
+  assert.equal(mark.textContent, '');
+});

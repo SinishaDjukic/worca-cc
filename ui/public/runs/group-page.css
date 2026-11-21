@@ -32,7 +32,7 @@
 .run-members{list-style:none;margin:0;padding:0;}
 .run-member{display:grid;grid-template-columns:16px 12px minmax(0,1fr) minmax(0,1.4fr) max-content;align-items:center;gap:8px;
   padding:6px 0;border-top:1px solid var(--line);}
-.run-members.is-table{display:grid;grid-template-columns:var(--member-mark,12px) 20px minmax(0,1fr) max-content 64px 16px;column-gap:var(--member-gap,10px);}
+.run-members.is-table{display:grid;grid-template-columns:12px 20px minmax(0,1fr) max-content 64px 16px;column-gap:10px;}
 .run-members.is-table > .run-member{position:relative;grid-column:1 / -1;grid-template-columns:subgrid;padding:8px 0;}
 /* A13: title over its status line; the title link stretches over the row, so the whole row opens the run. */
 .run-members.is-table .run-member-main{display:flex;flex-direction:column;gap:2px;min-width:0;}
@@ -40,11 +40,6 @@
 .run-members.is-table .run-member-title::after{content:"";position:absolute;inset:0;}
 .run-members.is-table .run-member:hover .run-member-title{text-decoration:underline;}
 .run-members.is-table .run-member-line{font-size:12px;}
-/* One-line rows (Shaper's one card): title, then the short state right-aligned on the same line; a Requirements fold wraps under. */
-.run-members.is-one-line .run-member-main{flex-direction:row;flex-wrap:wrap;align-items:center;column-gap:8px;}
-.run-members.is-one-line .run-member-title{flex:1 1 0;min-width:0;}
-.run-members.is-one-line .run-member-main > :not(.run-member-title, .run-member-state){flex-basis:100%;}
-.run-member-state{color:var(--ink-2);font-size:var(--fs-meta);white-space:nowrap;}
 .run-members.is-table .run-member-cost{font-variant-numeric:tabular-nums;}
 .run-members.is-table .run-member-go{color:var(--ink-3);opacity:0;}
 .run-members.is-table .run-member:hover .run-member-go{opacity:1;}
@@ -76,11 +71,11 @@
 .gpage-ship[hidden],.gpage-panel[hidden],.gpage-question[hidden]{display:none;}
 /* Before the phone block: same specificity, so on a ≤600px viewport its two-line areas win; cost stays hidden there. */
 @container chat-rc-members (max-width:480px){
-  .run-members.is-table{grid-template-columns:var(--member-mark,12px) 20px minmax(0,1fr) max-content 16px;}
+  .run-members.is-table{grid-template-columns:12px 20px minmax(0,1fr) max-content 16px;}
   .run-members.is-table .run-member-cost{display:none;}
 }
 @media (max-width:600px){
-  .run-members.is-table{grid-template-columns:var(--member-mark,12px) 20px minmax(0,1fr) max-content;}
+  .run-members.is-table{grid-template-columns:12px 20px minmax(0,1fr) max-content;}
   .run-members.is-table > .run-member{grid-template-columns:subgrid;grid-template-areas:"dot num main go" ". . pr cost";}
   .run-members.is-table .run-member-num{grid-area:num}
   .run-members.is-table .run-member > .status-dot{grid-area:dot}
@@ -94,7 +89,7 @@
    the hover-only chevron steps aside (the title link already opens the run). */
 .gpage-runs{container:gpage-runs / inline-size;}
 @container gpage-runs (max-width:480px){
-  .run-members.is-table{grid-template-columns:var(--member-mark,12px) 20px minmax(0,1fr) max-content;column-gap:8px;}
+  .run-members.is-table{grid-template-columns:12px 20px minmax(0,1fr) max-content;column-gap:8px;}
   .run-members.is-table > .run-member{grid-template-columns:subgrid;grid-template-areas:"dot num main main" ". . pr cost";}
   .run-members.is-table .run-member-num{grid-area:num}
   .run-members.is-table .run-member > .status-dot{grid-area:dot}
@@ -108,7 +103,7 @@
 /* Bundle QA 2: a chat card in a ~290px side pane stacks the same way. Its 480px block drops the cost from the one-line
    row (§8); on two lines there is room, so the cost comes back beside the chip. */
 @container chat-rc-members (max-width:360px){
-  .run-members.is-table{grid-template-columns:var(--member-mark,12px) 20px minmax(0,1fr) max-content;column-gap:8px;}
+  .run-members.is-table{grid-template-columns:12px 20px minmax(0,1fr) max-content;column-gap:8px;}
   .run-members.is-table > .run-member{grid-template-columns:subgrid;grid-template-areas:"dot num main main" ". . pr cost";}
   .run-members.is-table .run-member-num{grid-area:num}
   .run-members.is-table .run-member > .status-dot{grid-area:dot}

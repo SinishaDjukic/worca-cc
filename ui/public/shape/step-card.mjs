@@ -63,6 +63,11 @@ export function stepTitle(pq, who = '') {
  *  primary at all and marks its foot `data-no-primary`: the bar draws none either. */
 export const answerFieldOpen = (root) => !!root && !!root.querySelector('.qpanel:not(.hidden) .plan-actions[hidden], .qpanel:not(.hidden) .plan-actions[data-no-primary]');
 
+/** The small-runs marker, read from the open ask alone, never from the live flag: the orchestrator stamps
+ *  `plan.smallRuns` on a marked run's plan, requirements and split asks, and asks Care only on a marked run. Under it
+ *  the step draws its own primary, so a host's bar draws its step button plain (as the chat card's `oneNow`). */
+export const smallRunsAsk = (pq) => !!pq && (pq.kind === 'care' || (!!pq.plan && pq.plan.smallRuns === true));
+
 /** Run 4 (D4): the control a waiting question takes the focus on — the card's own primary (Approve 2 runs, Approve and
  *  build) when it has an enabled one in a foot that shows, else its open Ask for changes field, else its first control
  *  that is not a menu trigger (a run row's ⋯). */

@@ -4,7 +4,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { JSDOM } from 'jsdom';
 import { readStyleCss } from '../src/core/read-style-css.mjs';
-import { SEND_FAILED, stepChip, stepTitle, stepKind, isStepCard, isRequirementsAsk, stepSender, stepHead, renderGateCard, renderRecoveryCard, questionFocusTarget }
+import { SEND_FAILED, smallRunsAsk, stepChip, stepTitle, stepKind, isStepCard, isRequirementsAsk, stepSender, stepHead, renderGateCard, renderRecoveryCard, questionFocusTarget }
   from '../ui/public/shape/step-card.mjs';
 
 const doc = new JSDOM('<!doctype html><body></body>').window.document;
@@ -241,4 +241,13 @@ test('B2: the care ask is a step card: chip Start, title "Your turn: how much ca
   assert.equal(stepChip(CARE, {}), 'Start');
   assert.equal(stepTitle(CARE), 'Your turn: how much care?');
   assert.equal(stepKind(CARE), 'care');
+});
+
+test('smallRunsAsk: the small-runs marker is read from the open ask alone (Care, or a plan stamped smallRuns)', () => {
+  assert.equal(smallRunsAsk({ kind: 'care' }), true);
+  assert.equal(smallRunsAsk({ kind: 'plan', plan: { smallRuns: true } }), true);
+  assert.equal(smallRunsAsk({ kind: 'plan', plan: {} }), false);
+  assert.equal(smallRunsAsk({ kind: 'clarify', questions: [] }), false);
+  assert.equal(smallRunsAsk(null), false);
+  assert.equal(smallRunsAsk(undefined), false);
 });

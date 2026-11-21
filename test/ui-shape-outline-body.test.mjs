@@ -575,12 +575,18 @@ test('B4 after a send-back: the round-2 question says the objections were raised
 test('owner direction d5c0afe48: every Split list draws in the one shared row layout', () => {
   const { $, $$ } = setup({ pq: srAsk(SR_BROKEN) });
   assert.ok($('.split-body').classList.contains('srows'));
-  // check rows: the 16px mark box first and the id column (empty for a rule-wide row), so the texts line up
-  for (const row of $('.split-body > .plan-check-line:not(.split-challenge-line) + .plan-checks').querySelectorAll('.plan-check-row')) {
-    assert.ok(row.firstElementChild.classList.contains('plan-check-mark'), row.textContent);
-    assert.ok(row.querySelector(':scope > .plan-check-id'), row.textContent);
-    assert.ok(row.querySelector(':scope > .plan-check-text'), row.textContent);
+  // check rows: the 16px mark box first; the id column only on a row with an id (its texts line up with the other id
+  // rows), a rule row without one puts its label right after the mark (owner walk, finding 7)
+  const checkRows = [...$('.split-body > .plan-check-line:not(.split-challenge-line) + .plan-checks').querySelectorAll('.plan-check-row')];
+  const withId = checkRows.filter((row) => row.querySelector(':scope > .plan-check-id'));
+  const withoutId = checkRows.filter((row) => !row.querySelector(':scope > .plan-check-id'));
+  assert.ok(withId.length > 0 && withoutId.length > 0, 'the fixture mixes id rows and rule rows');
+  for (const row of checkRows) assert.ok(row.firstElementChild.classList.contains('plan-check-mark'), row.textContent);
+  for (const row of withId) {
+    assert.ok(row.querySelector(':scope > .plan-check-id + .plan-check-text'), row.textContent);
+    assert.notEqual(row.querySelector(':scope > .plan-check-id').textContent, '', row.textContent);
   }
+  for (const row of withoutId) assert.ok(row.firstElementChild.nextElementSibling.classList.contains('plan-check-label'), row.textContent);
   // run rows: the wait mark, then the fold button holding the id column and the text, the ⋯ beside it
   for (const row of $$('.outline-run-row')) {
     assert.ok(row.firstElementChild.classList.contains('plan-check-mark'));
@@ -681,20 +687,33 @@ test('B4 refused: the open objections stay on the card as rows (the ? mark, the 
   assert.equal(visibleKeep.length, 0);
 });
 
-test('B1 one-line run rows are 32px: their padding outranks group-page.css .is-table (it loads later, same specificity)', async () => {
+test('B1 one-line run rows are 32px: scoped under the chat member host, they outrank group-page.css and leave it dev\'s', async () => {
   const { readFile } = await import('node:fs/promises');
   const css = await readFile(new URL('../ui/public/shape/shape-it.css', import.meta.url), 'utf8');
-  // (0,4,0) beats `.run-members.is-table > .run-member{…padding:8px 0}` (0,3,0); 1px top border + 5 + 20 + 6 = 32.
-  assert.match(css, /\.run-members\.is-table\.is-one-line > \.run-member\{[^}]*min-height:32px[^}]*padding:5px 0 6px[^}]*line-height:20px/);
+  const host = String.raw`\.chat-rc-members \.run-members`;
+  // (0,5,0) beats `.run-members.is-table > .run-member{…padding:8px 0}` (0,3,0); 1px top border + 5 + 20 + 6 = 32.
+  assert.match(css, new RegExp(String.raw`${host}\.is-table\.is-one-line > \.run-member\{[^}]*min-height:32px[^}]*padding:5px 0 6px[^}]*line-height:20px`));
   // 1280: the short state shares the title's 20px line box (a baseline row made it 21px, the row 33px).
-  const groupCss = await readFile(new URL('../ui/public/runs/group-page.css', import.meta.url), 'utf8');
-  assert.match(groupCss, /\.run-members\.is-one-line \.run-member-main\{[^}]*align-items:center/);
+  assert.match(css, new RegExp(String.raw`${host}\.is-one-line \.run-member-main\{[^}]*align-items:center`));
+  // The 16px mark column and 8px gap, restated with dev's column list per width, in cascade order.
+  const table = String.raw`${host}\.is-table\.is-one-line`;
+  const cols = [
+    String.raw`\n${table}\{grid-template-columns:16px 20px minmax\(0,1fr\) max-content 16px;column-gap:8px;\}`,
+    String.raw`@container chat-rc-members \(width > 480px\)\{\s*${table}\{grid-template-columns:16px 20px minmax\(0,1fr\) max-content 64px 16px;\}`,
+    String.raw`@media \(max-width:600px\)\{\s*${table}\{grid-template-columns:16px 20px minmax\(0,1fr\) max-content;\}`,
+    String.raw`@container chat-rc-members \(width <= 360px\)\{\s*${table}\{grid-template-columns:16px 20px minmax\(0,1fr\) max-content;\}`,
+  ].map((re) => { const m = css.match(new RegExp(re)); assert.ok(m, re); return m.index; });
+  assert.deepEqual(cols, [...cols].sort((a, b) => a - b));
   // 375: a row with no PR chip and no cost keeps one grid row (the empty ". . pr cost" row plus its gap made it 41px),
   // at the phone width and in the chat card's narrow container alike.
-  const empty = String.raw`\.run-members\.is-table\.is-one-line > \.run-member:has\(> \.run-member-pr:empty\):has\(> \.run-member-cost:empty\)`;
-  assert.match(css, new RegExp(String.raw`@media \(max-width:600px\)\{\s*${empty}\{grid-template-areas:"dot num main go";\}`));
-  assert.match(css, new RegExp(String.raw`@container chat-rc-members \(max-width:360px\)\{\s*${empty}\{grid-template-areas:"dot num main main";\}`));
+  const empty = String.raw`${table} > \.run-member:has\(> \.run-member-pr:empty\):has\(> \.run-member-cost:empty\)`;
+  assert.match(css, new RegExp(String.raw`@media \(max-width:600px\)\{[^}]*\}\s*${empty}\{grid-template-areas:"dot num main go";\}`));
+  assert.match(css, new RegExp(String.raw`@container chat-rc-members \(width <= 360px\)\{[^}]*\}\s*${empty}\{grid-template-areas:"dot num main main";\}`));
   assert.match(css, new RegExp(String.raw`${empty} > :is\(\.run-member-pr, \.run-member-cost\)\{display:none;\}`));
+  // No selector starts with .run-member (the split tool would hand it to runs/group-page), and the group table is dev's.
+  assert.deepEqual(css.split('\n').filter((l) => /^\s*\.run-member/.test(l)), []);
+  const groupCss = await readFile(new URL('../ui/public/runs/group-page.css', import.meta.url), 'utf8');
+  for (const text of ['is-one-line', '--member-', '.run-member-state']) assert.ok(!groupCss.includes(text), text);
 });
 
 test('B4 phone width: the Split\'s fold lines wrap inside the card (the challenge line overflowed at 375px)', async () => {
