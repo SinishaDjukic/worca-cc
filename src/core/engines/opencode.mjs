@@ -71,6 +71,7 @@
 // - `--pure` keeps the user's plugins out (none ran); OPENCODE_DISABLE_PROJECT_CONFIG the checkout's config. The
 //   user's own MCP servers still start (their tools are denied); their instructions files still reach the prompt.
 // - OpenCode Zen's free models (`opencode/…`) refuse a request without the shell, so a chat never runs on them.
+import { createHash } from 'node:crypto';
 import { mkdirSync, readFileSync, writeFileSync, rmSync, existsSync, realpathSync } from 'node:fs';
 import { execCli, cliRefusal } from './exec-cli.mjs';
 import { OPENCODE_CLI } from './cli-specs.mjs';
@@ -361,19 +362,37 @@ const addUsage = (a, b) => Object.fromEntries(Object.keys(a).map((k) => [k, a[k]
 const ZERO_USAGE = Object.freeze(claudeStyleUsage({}));
 
 /** A tool call in Claude's vocabulary: `filePath` becomes `file_path`, an attached MCP server's `<server>_<tool>`
- *  becomes `mcp__server__tool` (the longest server name wins; a server worca did not attach keeps OpenCode's name). */
+ *  becomes `mcp__server__tool` (the longest server name wins; a server worca did not attach keeps OpenCode's name).
+ *  `serverNames`: a chat's per-spawn alias -> the server's own. A call still made to an OLDER alias of a resumed
+ *  session is relabelled to its server's own too (staleAliasOwn): OpenCode exposes only this spawn's aliases, so that
+ *  call can never run — relabelling keeps a chat's allow-list (`mcp__worca__…`) from tripping on the stale alias as
+ *  a foreign tool. */
 function toolCall(part, mcpServers, serverNames = {}) {
   const raw = toolNameOf(part) || 'tool';
   const input = part.state?.input && typeof part.state.input === 'object' ? { ...part.state.input } : {};
   if ('filePath' in input) { input.file_path = input.filePath; delete input.filePath; }
   const server = TOOL_NAMES[raw] ? null : mcpServers.filter((s) => raw.startsWith(`${s}_`)).sort((a, b) => b.length - a.length)[0];
   // A chat attaches worca's server under a name new per spawn (serverNames: that name -> the server's own).
-  const name = TOOL_NAMES[raw] || (server ? `mcp__${serverNames[server] || server}__${raw.slice(server.length + 1)}` : raw);
+  const name = TOOL_NAMES[raw] || (server ? `mcp__${serverNames[server] || server}__${raw.slice(server.length + 1)}`
+    : (() => { const own = staleAliasOwn(raw, serverNames); return own ? `mcp__${own}__${raw.slice(raw.indexOf('_') + 1)}` : raw; })());
   const toolUseId = callIdOf(part);
   if (raw === 'bash' || raw === 'shell') return { name, input: { command: str(input.command) }, toolUseId };
   if (raw === 'write') return { name, input: { file_path: input.file_path, content: input.content }, toolUseId };
   return { name, input, toolUseId };
 }
+
+/** The chat server a stale `<alias>_<tool>` call belongs to, or null. A chat's per-spawn alias is always the server's
+ *  own (sanitized) name plus a suffix (serverAliasSeed: the thread id), so a call made to an alias this spawn does not
+ *  hold is recognized by its prefix; OpenCode never exposes that alias, so the call cannot run. Only a chat passes
+ *  serverNames, so a run's (unmapped) foreign tool keeps OpenCode's name. A prefix that is not LONGER than the own name
+ *  (a user server named exactly `worca`) is left alone, not relabelled. */
+const staleAliasOwn = (raw, serverNames) => {
+  const i = raw.indexOf('_');
+  if (i <= 1 || !Object.keys(serverNames).length) return null;
+  const prefix = raw.slice(0, i);
+  return [...new Set(Object.values(serverNames))].find((o) => typeof o === 'string' && o
+    && prefix.length > o.length && prefix.startsWith(o.replace(/[^A-Za-z0-9]/g, ''))) ?? null;
+};
 
 /**
  * `--format json` lines in, normalized events out (src/core/engines/events.mjs). push(line|object) returns the
@@ -671,7 +690,7 @@ export async function runOpencodeProcess({
   cwd = process.cwd(), systemPrompt = '', prompt = '', model, effort, onEvent = () => {}, signal,
   bin = opencodeDefaultBin(), resumeSessionId, sandbox, askLockdown, envScrub, envAllowlist, asAgent,
   mcpConfigPath, spawnEnv: runSpawnEnv, redactValues, maxTurns, permissionRules, allowedTools, appendSubagentSystemPrompt,
-  scratchBase = null, probe = null,
+  scratchBase = null, probe = null, serverAliasSeed = null,
 } = {}) {
   if (signal?.aborted) { const e = new Error('aborted'); e.name = 'AbortError'; throw e; }
   // A chat (askLockdown): OPENCODE_ASK_LOCKDOWN, on a model it names (never OpenCode's default, never OpenCode Zen).
@@ -704,6 +723,12 @@ export async function runOpencodeProcess({
   try { realCwd = realpathSync(cwd); } catch { /* not there: the spawn says so */ }
   const rules = opencodeRulePlan(ask ? null : permissionRules, { cwd: realCwd });
   const rand = () => Math.random().toString(36).slice(2, 8);
+  // A chat's server alias is STABLE per thread (`serverAliasSeed`: the thread id), not random per spawn. OpenCode names
+  // MCP tools `<alias>_<tool>`, and a resumed session keeps calling the aliases it learned; a fresh random alias on
+  // every spawn made those calls stale ("No tool named <oldalias>_<tool>"). The seed is the thread id, which no user
+  // config can know, so a user server still cannot take the name. Absent a seed (the self-test, a run), it stays random.
+  const stableSuffix = typeof serverAliasSeed === 'string' && serverAliasSeed
+    ? createHash('sha256').update(serverAliasSeed).digest('hex').slice(0, 8) : null;
   let mcp = null;
   const serverNames = {};   // a chat's per-spawn server name -> the server's own
   if (mcpConfigPath) {
@@ -712,10 +737,10 @@ export async function runOpencodeProcess({
     let servers = doc && typeof doc.mcpServers === 'object' && doc.mcpServers ? doc.mcpServers : {};
     if (ask) {
       // The chat's MCP child gets the spawn env (the command bridge token, SSH_AUTH_SOCK, the web search key) by
-      // reference; the names no user server can take: a fresh one per spawn (the self-test's is fixed).
+      // reference; the names no user server can take: a stable one per thread (the self-test's is fixed).
       const refNames = [...new Set([...Object.keys(cleanRunEnv(runSpawnEnv) || {}), ...(envAllowlist || []).filter((k) => typeof process.env[k] === 'string' && process.env[k] !== '')])];
       servers = Object.fromEntries(Object.entries(servers).map(([n, srv]) => {
-        const alias = (probe && probe.serverAlias && probe.serverAlias(n)) || `${n.replace(/[^A-Za-z0-9]/g, '') || 'mcp'}${rand()}`;
+        const alias = (probe && probe.serverAlias && probe.serverAlias(n)) || `${n.replace(/[^A-Za-z0-9]/g, '') || 'mcp'}${stableSuffix || rand()}`;
         serverNames[alias] = n;
         const withRefs = srv && typeof srv.command === 'string' && refNames.length
           ? { ...srv, env: { ...Object.fromEntries(refNames.map((k) => [k, `\${${k}}`])), ...(srv.env && typeof srv.env === 'object' ? srv.env : {}) } } : srv;
