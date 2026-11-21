@@ -141,14 +141,15 @@ export function personalCheck(text) {
   return found.length ? { met: false, value: `Found ${found.join(', ')}` } : { met: true, value: 'Met' };
 }
 
-const count = (s, ch) => s.split(ch).length - 1;
-/** Drops closing punctuation, and a ")" that closes no "(" inside the link ("…/Mercury_(planet)" keeps its own). */
+/** The link ends at the first ")" that closes no "(" opened inside it (markdown's, a parenthesis around it), whatever follows
+ *  ("**[a](url)**", "[a](u1)[b](u2)"); "…/Mercury_(planet)" keeps its own. Then closing punctuation is dropped. */
 function trimLink(u) {
-  for (;;) {
-    const t = u.replace(/[.,;:!?]+$/, '');
-    if (t.endsWith(')') && count(t, ')') > count(t, '(')) u = t.slice(0, -1);
-    else return t;
+  let depth = 0;
+  for (let i = 0; i < u.length; i += 1) {
+    if (u[i] === '(') depth += 1;
+    else if (u[i] === ')') { if (depth === 0) { u = u.slice(0, i); break; } depth -= 1; }
   }
+  return u.replace(/[.,;:!?]+$/, '');
 }
 /** The http(s) links of a text, markdown or bare, in order, once each; closing punctuation is not part of a link. */
 export function linksIn(text) {

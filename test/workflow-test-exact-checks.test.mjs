@@ -51,6 +51,20 @@ test('links: a ")" that closes a "(" inside the link stays, an outer one goes', 
   assert.deepEqual(linksIn(`Two: ${wiki}, and ${wiki}).`), [wiki]);
 });
 
+test('fix round 2 (N1): a link ends at the first ")" that closes no "(" inside it, whatever follows', () => {
+  const a = 'https://example.com/a';
+  const wiki = 'https://en.wikipedia.org/wiki/Mercury_(planet)';
+  assert.deepEqual(linksIn(`**[Source](${a})**`), [a], 'bold');
+  assert.deepEqual(linksIn(`*[S](${a})*`), [a], 'italic');
+  assert.deepEqual(linksIn(`_[S](${a})_`), [a], 'underscore emphasis');
+  assert.deepEqual(linksIn('| [a](https://x.com/a)| [b](https://y.com/b) |'), ['https://x.com/a', 'https://y.com/b'], 'table pipe');
+  assert.deepEqual(linksIn('[a](https://x.com/a)[b](https://y.com/b)'), ['https://x.com/a', 'https://y.com/b'], 'two adjacent links');
+  assert.deepEqual(linksIn('(https://x.com/a)—more'), ['https://x.com/a'], 'a dash after the parenthesis');
+  assert.deepEqual(linksIn('[a](https://x.com/a).Next'), ['https://x.com/a']);
+  assert.deepEqual(linksIn(`**[Mercury](${wiki})**`), [wiki], 'a Wikipedia link in bold markdown');
+  assert.deepEqual(linksIn('See (https://x.com/a_(b)_c(d)).'), ['https://x.com/a_(b)_c(d)'], 'balanced parentheses, then ").');
+});
+
 test('exactAlternative: board 2 and board 10 examples', () => {
   assert.deepEqual(exactAlternative('Quotes customers from the interviews, and makes up no quotes'), { kind: 'quotes' });
   assert.deepEqual(exactAlternative("Mentions that today's export stops at 200 invoices"), { kind: 'mentions', text: '200' });
