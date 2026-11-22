@@ -271,6 +271,8 @@ CREATE TABLE pipelines (
   updated_at      TEXT,
   total_cost_usd  REAL NOT NULL DEFAULT 0,
   total_active_ms INTEGER NOT NULL DEFAULT 0,
+  elapsed_ms      INTEGER NOT NULL DEFAULT 0,  -- the run clock, folded ms; 0 with a NULL elapsed_since = no figure (an old run)
+  elapsed_since   INTEGER,                     -- epoch ms the run clock has been running since; NULL = parked or no figure
   prompt          TEXT,
   branch          TEXT,  -- JSON: { source, feature, worktreeDir, reusedExisting, ... }
   workspace_meta  TEXT,  -- JSON: { workspaceId, workspaceName, projectKeys, projects[], checkpointRefs, branches, workspaceDescription }
@@ -865,6 +867,9 @@ const INCREMENTAL_COLUMNS = {
                             shape_stats: 'TEXT',  // JSON: the shaped run's measurements; NULL = not a shaped run
                             run_size: 'TEXT',     // small|medium|large from the run's changed lines/files; NULL = unknown
                             review_stats: 'TEXT', // #990 s6, no version of its own: JSON RunSummary of src/shared/review/quality.mjs; NULL = no role reviews
+                            // The run clock, no version of their own; reconcileSchema adds them
+                            elapsed_ms: 'INTEGER NOT NULL DEFAULT 0',   // folded elapsed ms; 0 with a NULL elapsed_since = no figure (an old run)
+                            elapsed_since: 'INTEGER',                   // epoch ms the clock has been running since; NULL = parked or no figure
                             run_setup: 'TEXT',  // v62 (#712): the run's normalized setup (src/shared/run-presets.mjs keys, full picks); NULL = before v62, a CLI start or a scan
                             deleted_at: 'TEXT',   // v65: Delete (runs redesign §3.2) keeps an anonymised row for Statistics
                             pr_verdict: 'TEXT',   // v65: the PR chip's CI verdict (JSON), runs redesign §2.1a

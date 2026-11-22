@@ -110,6 +110,13 @@ test('done{done|stopped}: one finish message with status, and duration/cost only
       assert.equal(fin.href, '#running/run-uuid-1');
       assert.equal(patches.at(-1).status, 'done');
     } },
+    { name: 'the finish line prints the elapsed run time when the state has it, the summed time otherwise', run: () => {
+      const { orch, posts } = harness();
+      orch.state = { title: 'Fix login', elapsedMs: 75000, elapsedSince: null, totalActiveMs: 192000, totalCostUsd: 0.42 };
+      orch.emit('state', { id: 'a1b2c3d4', status: 'running', title: 'Fix login' });
+      orch.emit('done', { status: 'done', pipelineDir: '/x' });
+      assert.equal(posts.find((p) => p.kind === 'done').text, 'Run finished — "Fix login" · done · 1m15s · $0.42');
+    } },
     { name: 'done{stopped} wording omits absent duration/cost', run: () => {
       const { orch, posts } = harness();
       orch.emit('done', { status: 'stopped', pipelineDir: '/x' });

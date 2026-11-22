@@ -72,6 +72,7 @@ export function createNotifier({ channelHost, getPrefs, chatContext, logger = ()
         totalCostUsd: orch?.state?.totalCostUsd,
         runEngine: orch?.state?.runEngine,
         totalActiveMs: orch?.state?.totalActiveMs,
+        elapsedMs: orch?.state?.elapsedMs,
         // renderDone reports directions the run never applied. Omitting this made
         // that warning unreachable from chat — which is the one surface where
         // /direct is used, so the user who posted a direction was the one user who
