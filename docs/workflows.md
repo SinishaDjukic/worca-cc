@@ -193,14 +193,19 @@ count in its own cost limit, and once it is reached a criterion shows "Not check
   3. The quote, then an em or en dash and the speaker, starting with a capital letter, on the same line or the next. Markdown
      emphasis and a role are allowed: `— Dana`, `— **Dana**`, `— Product manager at Acme`, `— Dana, finance lead`.
 
-A speaker that has a word of a screen in it names nobody (`The button says: "..."`, `"..." — Button label`; also Error, Hint,
-Title, Tooltip, Email, Page, CTA and the like). Nothing else names a speaker: no bare colon (`Dana: "..."`), no brackets
-(`"..." (Dana)`), no other verb or tense (`The button should say: "..."`, `Copy to add: "..."`, `Dana noted: "..."`). The known
-gaps of this rule:
+A speaker that is a word of a screen names nobody (`The button says: "..."`, `"..." — Button label`, `"..." — Invoices page`;
+also Error, Hint, Title, Tooltip, Email, Page, CTA and the like): after a leading "the", "this", "that", "a" or "an", all its words
+are such words, or its last word is one in lower case. A name or role that only holds one is still a speaker and is checked
+(`— Larry Page`, `— Field sales lead`), and so are speakers such as `It says:` and `The tagline says:`. In form 2, "which", "as"
+and "and" are not speakers (`"...", as the brief says.`). Nothing else names a speaker: no bare colon (`Dana: "..."`), no
+brackets (`"..." (Dana)`), no other verb or tense (`The button should say: "..."`, `Copy to add: "..."`, `Dana noted: "..."`).
+The known gaps of this rule:
 
 - A short quote introduced any other way is not checked, even when a person is named: `Dana said "..."` without the colon,
   `"..." said Dana`, `According to Dana, "..."`, `Users say: "..."`, `"..." (Dana, finance lead)`, `"..." - Dana` with a hyphen,
   or `— the finance lead` in lower case.
+- A speaker with a role in brackets is not checked in forms 1 and 2: `Dana (finance lead) said: "..."`,
+  `"...," Dana (finance lead) said.` Form 3 accepts it (`— Dana (finance lead)`).
 - A short quote with an em dash and a capitalised note that is not a person is checked as if it named one (`"..." — Mobile`,
   `"..." — Shown in the toolbar`).
 
@@ -209,7 +214,7 @@ follows and the quote's real closing mark comes later in the paragraph (`"We pri
 in code are not quotes, and a quote never runs across a table row, a table cell or a blank line. **Numbers come from the files**
 checks every other number of the result, example values, percentages and prices too (`$12/user/month`, `12/user/month`,
 `30/60/90-day`, `USD5000`, `USD750-EUR800`, `€9.99`). It skips dates, clock times, list and section numbers, single digits, the
-digits in ids, hashes, links, file paths and code (`2026/11/drafts`, `EUR2024-INV-0042`), and the number of a standard's name
+digits in ids, hashes, links, file paths and code (`2026/11/drafts`, `2026/reports/final`, `EUR2024-INV-0042`), and the number of a standard's name
 (ISO 8601, RFC 4180, IEEE 754, UTF-8, SHA-256, EN 16931, DIN 5008). A result wrapped in a ` ```markdown `, ` ```md ` or
 ` ```text ` fence, or in a fence that is never closed, is checked as prose; a code block inside such a fence stays code. The
 files keep all their numbers.

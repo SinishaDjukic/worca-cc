@@ -351,3 +351,26 @@ test('round 6 review M1: a rate without a currency sign is a number; a range of 
   assert.deepEqual(numbersIn('Notes in 2026/11/drafts and Invoice EUR2024-INV-0042 for 140 tickets.').map((x) => x.n), ['140'], 'round 6 M4 holds');
   assert.deepEqual(numbersIn('Pricing: $12/user/month, €19/seat/mo, a 30/60/90-day plan, USD5000.').map((x) => x.n), ['12', '19', '30', '60', '90', '5000']);
 });
+
+test('round 7 review M4: a screen word stops a speaker only when the speaker is one; a name or role that holds one is checked', () => {
+  for (const s of [`${Q} — Larry Page`, `${Q} — Sally Field`, `${Q} — Field sales lead, Acme`, `${Q} — Field sales lead`, `${Q} — Email marketing lead`,
+    `Our field team says: ${Q}`, `It says: ${Q}`, `The tagline says: ${Q}`]) {
+    assert.deepEqual(said(s), ['Exports take forever, honestly'], s);
+    assert.equal(quotesCheck(s, DANA_FILES).met, false, s);
+  }
+  for (const s of [`The button says: ${Q}`, `This button says: ${Q}`, `A banner says: ${Q}`, `The Button says: ${Q}`, `${Q} — Button label`,
+    `${Q} — Button`, `${Q} — Error`, `${Q}, the button says.`, `The confirmation email says: ${Q}`, `${Q} — Invoices page, empty`]) assert.deepEqual(quotesIn(s), [], s);
+});
+
+test('round 7 review M5: in form (b), "which", "as" and "and" are not speakers', () => {
+  for (const s of ['The banner reads "Invoices now export to CSV", which says it all.', 'Label the button "Export all invoices", as the brief says.',
+    'The button reads "Export all invoices now", and the design says the same.']) assert.deepEqual(quotesIn(s), [], s);
+  assert.deepEqual(said('"Exports take forever, honestly," Asa said.'), ['Exports take forever, honestly'], 'a name that starts like one is still a speaker');
+});
+
+test('round 7 review M6: a year-first path is not a rate; rates and number lists stay checked', () => {
+  assert.deepEqual(numbersIn('Saved to 2026/reports/final for 140 tickets.').map((x) => x.n), ['140']);
+  assert.deepEqual(numbersIn('See 2024/invoices/archive and 2025/exports/eu for 140 tickets.').map((x) => x.n), ['140']);
+  assert.deepEqual(numbersIn('Pricing: $12/user/month, 12/user/month, €19/seat/mo, a 30/60/90-day plan.').map((x) => x.n), ['12', '12', '19', '30', '60', '90']);
+  assert.deepEqual(numbersIn('Notes in 2026/11/drafts for 140 tickets.').map((x) => x.n), ['140']);
+});

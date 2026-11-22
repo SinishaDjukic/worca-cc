@@ -72,13 +72,16 @@ function blankCode(t) {
  *  (b) saidAfter: the quote, then `, <speaker> said` (`"…," Dana said.`), the comma inside or after the closing mark.
  *  (c) dashAfter: the quote, then an em or en dash and the speaker, capitalised, then the end, a role after a comma, a full stop or a
  *      bracket (`— Dana`, `— **Dana**`, `— Product manager at Acme`, `— Dana, finance lead`); also on the next line.
- *  Markdown emphasis is ignored. A speaker with a screen word (UI_LABELS: `The button says:`, `— Button label`) names nobody. Nothing
- *  else names a speaker: no bare colon (`Dana: "…"`), no brackets, no other verb or tense (`should say`, `to add`, `notes`), no "said Dana". */
+ *  Markdown emphasis is ignored. A speaker that is a screen word (UI_LABELS) names nobody: after a leading the, this, that, a or an, all its
+ *  words are screen words (`The button says:`, `— Button label`, `— Error`) or its last word is one in lower case (`The confirmation email
+ *  says:`, `— Invoices page`). A name or role that only holds one is a speaker (`— Larry Page`, `— Field sales lead`, review M4). In (b),
+ *  which, as and and are no speaker (`"…", as the brief says.`, review M5). Nothing else names a speaker: no bare colon (`Dana: "…"`), no
+ *  brackets, no other verb or tense (`should say`, `to add`, `notes`), no "said Dana". */
 export const QUOTE_MIN_NAMED_WORDS = 3;
 export const QUOTE_MIN_LONG_WORDS = 8;
 export const SPEAKER_MAX_WORDS = 4;
 export const SPEECH_VERBS = Object.freeze(['said', 'says', 'wrote', 'writes', 'told us']);
-/** Words of a screen, not people: a speaker that has one names nobody. */
+/** Words of a screen, not people: a speaker that is one names nobody (see `screenWord`). */
 export const UI_LABELS = Object.freeze(['Error', 'Hint', 'Title', 'Note', 'Warning', 'Label', 'Button', 'Message', 'Example', 'Tip', 'Status',
   'Placeholder', 'Tooltip', 'Text', 'Page', 'Screen', 'Dialog', 'Field', 'Banner', 'Heading', 'Caption', 'Prompt', 'Alert', 'Toast', 'Menu', 'Link',
   'State', 'Modal', 'Email', 'Subject', 'Subtitle', 'CTA', 'Tab', 'Badge', 'Card', 'Panel', 'Section', 'Notification', 'Header', 'Footer', 'Column',
@@ -88,12 +91,20 @@ const VERB = SPEECH_VERBS.map((v) => v.replace(' ', String.raw`\s+`)).join('|');
 const SPEAKER = String.raw`(${WORD}(?:\s+${WORD}){0,${SPEAKER_MAX_WORDS - 1}})`;
 export const QUOTE_FORMS = Object.freeze({
   saidBefore: new RegExp(String.raw`(?:^|[^\p{L}\p{N}'’&\s-])\s*(?:(?:>|[*+-]|\d{1,3}[.)])\s+)*${SPEAKER}\s*,?\s+(?:${VERB})\s*:\s*$`, 'iu'),
-  saidAfter: new RegExp(String.raw`^\s*,?\s*${SPEAKER}\s+(?:${VERB})(?!\p{L})`, 'iu'),
+  saidAfter: new RegExp(String.raw`^\s*,?\s*(?!(?:which|as|and)\s)${SPEAKER}\s+(?:${VERB})(?!\p{L})`, 'iu'),
   dashAfter: new RegExp(String.raw`^\s*[,.]?\s*[—–]\s*(\p{Lu}[\p{L}\p{N}'’&-]*(?:\s+${WORD}){0,${SPEAKER_MAX_WORDS - 1}})\s*(?:$|[.,;(])`, 'u'),
 });
 const UI_WORD = new Set(UI_LABELS.map((w) => w.toLowerCase()));
-/** The speaker a form found in `s`, unless it has a screen word. */
-const speaks = (re, s) => { const m = re.exec(s); return !!m && !m[1].split(/\s+/).some((w) => UI_WORD.has(w.toLowerCase())); };
+/** Review M4: whether a speaker is a screen word: after a leading article, all its words are screen words, or its last word is one in lower
+ *  case. `Larry Page` and `Field sales lead` are people. */
+const screenWord = (speaker) => {
+  const ws = speaker.split(/\s+/).filter(Boolean);
+  if (ws.length > 1 && /^(?:the|this|that|an?)$/i.test(ws[0])) ws.shift();
+  const ui = (w) => UI_WORD.has(w.toLowerCase());
+  return ws.every(ui) || (ui(ws.at(-1)) && /^\p{Ll}/u.test(ws.at(-1)));
+};
+/** The speaker a form found in `s`, unless it is a screen word. */
+const speaks = (re, s) => { const m = re.exec(s); return !!m && !screenWord(m[1]); };
 const unmark = (s) => s.replace(/[*_]/g, '');
 const letterWords = (s) => s.split(/\s+/).filter((w) => /\p{L}/u.test(w)).length;
 const tableLine = (t, at) => { const start = t.lastIndexOf('\n', at - 1) + 1; return /^\s*\|/.test(t.slice(start, start + 200)); };
@@ -203,7 +214,8 @@ const pathToken = (w) => {
   // (2026/11/notes.md). Fix round 6 (M4): only in those shapes (an amount, then words; numbers, then "-word"): 2026/11/drafts is a path,
   // since its second part is a number. Fix round 7 (review M1): the amount's sign is optional (12/user/month).
   const ext = /\.[A-Za-z][A-Za-z0-9]{0,5}$/.test(x);
-  const rate = /^[$€£¥]?\d[\d.,]*(?:\/\p{L}+)+$/u.test(x) || /^\d+(?:\/\d+)+-\p{L}+$/u.test(x);
+  // Review M6 (round 7): without a sign, a year first is a folder (2026/reports/final), not an amount.
+  const rate = /^(?:[$€£¥]|(?!(?:19|20)\d\d\/))\d[\d.,]*(?:\/\p{L}+)+$/u.test(x) || /^\d+(?:\/\d+)+-\p{L}+$/u.test(x);
   return x.includes('\\') || /^(?:[A-Za-z]:[\\/]|~?\/|\.{1,2}\/)/.test(x) || (slashes >= 2 && (!rate || ext)) || (slashes === 1 && ext);
 };
 /** Fix round 4: what in a result holds digits that are not numbers of the result, blanked (positions kept): code, links, file paths,
