@@ -317,7 +317,7 @@ import {
 import { gitActionFor, GIT_DIALOG, gitDoneMessage } from './project-git.mjs';
 import { baseCheckModel, baseRowNote, newerBaseCheck } from './base-check.mjs';
 import { describeRule } from '../../src/shared/schedule/recurrence.mjs';
-import { statusActions, RUN_SWITCH_OPTIONS, RUN_SWITCH_TIP, kindShort, awayAnswerRows, awayAnswerCounts, checksFirst, awayAnswersSummary, decidedByText, awayAskCaption } from '../../src/shared/away-mode/labels.mjs';
+import { statusActions, RUN_SWITCH_OPTIONS, RUN_SWITCH_TIP, askShort, awayAnswerRows, awayAnswerCounts, checksFirst, awayAnswersSummary, decidedByText, awayAskCaption } from '../../src/shared/away-mode/labels.mjs';
 import { parseWindow } from '../../src/shared/away-mode/activation.mjs';
 import { runCostBreakdown, floorText, auxLabelForSubagent } from '../../src/shared/cost/breakdown.mjs';
 import { costBreakdownEl, costSummaryText, awayTotalText } from './cost-breakdown.mjs';
@@ -37324,7 +37324,7 @@ function paintAwayAnswers(sec, decisions, steps = []) {
     cap.className = 'rd-slabel';
     const at = d.at ? startedLabel(d.at).slice(0, 5) : '';
     // One review answers the whole ask, so its model and cost are the group's, never a row's.
-    cap.textContent = [kindShort(d.kind), at, ...awayAskCaption(d, {
+    cap.textContent = [askShort(d), at, ...awayAskCaption(d, {
       fmtUsd, modelLabel: (id) => modelById(id)?.label || id, fmtFloor: (v) => floorText(v, fmtUsd),
     })].filter(Boolean).join(' · ');
     const ul = document.createElement('ul');

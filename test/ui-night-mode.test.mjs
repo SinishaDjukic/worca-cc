@@ -675,8 +675,10 @@ test("Q&A tab: Away's Shaper stops are listed under Answered for you; a graph Cl
   const away = sec.querySelector('.hd-cl-away-sec');
   assert.ok(away, 'Answered for you');
   assert.equal(away.querySelector('.rd-night-h').textContent, 'Answered for you · 2 answers, 1 to check');
-  const rows = [...away.querySelectorAll('.rd-na-row')].map((li) => [li.querySelector('.rd-na-q')?.textContent, li.querySelector('.rd-na-a').textContent, li.classList.contains('is-check')]);
-  assert.deepEqual(rows.sort(), [['Plan', 'Asked for changes', true], ['Slice outline', 'Approved', false]], 'the Clarify answer stays on its card');
+  // One group per answer: the caption names the stop once, the row says what Away did on one line.
+  const groups = [...away.querySelectorAll('.rd-na')].map((g) => [g.querySelector('.rd-slabel').textContent.split(' · ')[0],
+    [...g.querySelectorAll('.rd-na-row')].map((li) => [li.querySelector('.rd-na-q') ? 'two lines' : 'one line', li.querySelector('.rd-na-a').textContent, li.classList.contains('is-check')])]);
+  assert.deepEqual(groups, [['Slice outline', [['one line', 'Approved', false]]], ['Plan approval', [['one line', 'Asked for changes', true]]]], 'the Clarify answer stays on its card');
 });
 
 test('"Decided by"/"Effort" offer the catalog grouped by connection and read back; at project level empty is "… (your setting)" and sent as __unset', async () => {

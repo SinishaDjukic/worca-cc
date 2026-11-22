@@ -25,6 +25,12 @@ export const KIND_SHORT = Object.freeze({
   plan: 'Plan approval',
 });
 export const kindShort = (k) => KIND_SHORT[k] || String(k);
+// Which Shaper stop a plan answer was (the record's meta.ask, strategies.mjs planRule): its caption in the answers list.
+const PLAN_ASKS = Object.freeze({
+  requirements: 'Requirements', attached: 'Attached requirements', outline: 'Slice outline', plan: 'Plan approval', concern: 'Plan concern',
+});
+/** The answers list's caption for one stored answer: the Shaper stop it answered, else its kind (kindShort). */
+export const askShort = (d) => (d && d.kind === 'plan' && PLAN_ASKS[d.meta?.ask]) || kindShort(d && d.kind);
 
 // What a rule-based answer did, in words (the stored choice is the payload's value).
 const OUTCOMES = Object.freeze({
@@ -33,10 +39,6 @@ const OUTCOMES = Object.freeze({
   recovery: { retry: 'Retried', pause: 'Stopped retrying' },
   'cost-cap': { continue: 'Continued past the cap' },
   plan: { approve: 'Approved', revise: 'Asked for changes', retry: 'Tried again' },
-});
-// Which Shaper stop a plan answer was (the record's meta.ask, strategies.mjs planRule).
-const PLAN_ASKS = Object.freeze({
-  requirements: 'Requirements', attached: 'Attached requirements', outline: 'Slice outline', plan: 'Plan', concern: 'Concern',
 });
 const LIMITS = Object.freeze({ maxDecisions: 'Paused: answer limit reached', spendCap: 'Paused: spending cap reached' });
 const sentence = (s) => {
@@ -67,8 +69,9 @@ export function awayAnswerRows(d) {
   if (rec.choice == null) return [{ q: null, a: LIMITS[rec.guardrail] || 'Paused', why: sentence(rec.rationale), check: false }];
   const qs = Array.isArray(rec.questions) ? rec.questions.filter((x) => x && typeof x === 'object') : [];
   if (rec.kind === 'plan') {
-    // A Shaper stop: one row naming the stop and what Away did, then a row per decision it took (a Requirements hold).
-    const head = { q: PLAN_ASKS[rec.meta?.ask] || null, a: OUTCOMES.plan[rec.choice] || String(rec.choice), why: sentence(rec.rationale), check: rec.flagged === true };
+    // A Shaper stop: one row saying what Away did (the caption names the stop, askShort), then a row per decision it
+    // took (a Requirements hold).
+    const head = { q: null, a: OUTCOMES.plan[rec.choice] || String(rec.choice), why: sentence(rec.rationale), check: rec.flagged === true };
     return [head, ...qs.map((x) => ({ q: typeof x.question === 'string' && x.question.trim() ? x.question.trim() : fromId(x.id),
       a: x.choice == null || x.choice === '' ? 'No answer' : String(x.choice), why: sentence(x.rationale), check: x.flagged === true }))];
   }
