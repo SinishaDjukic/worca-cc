@@ -78,6 +78,20 @@ test('version: read again once it is stale, and by every run-start check — an 
   resetOpencodeVersions();
 });
 
+test('argv: OpenCode Zen free models (`opencode/*`) take no variant — an effort never reaches the spawn, on 1.x and 2.x', () => {
+  // OpenCode 2.3.1+ refuses a variant these models do not offer (`Variant unavailable for opencode/big-pickle: low`);
+  // 1.x ignored it. Both must drop the effort entirely so the model runs at its default.
+  assert.deepEqual(buildOpencodeArgs({ model: 'opencode/big-pickle', effort: 'low', major: 2 }),
+    ['run', '--format', 'json', '--auto', '--standalone', '-m', 'opencode/big-pickle']);
+  assert.deepEqual(buildOpencodeArgs({ agent: 'worca-node', model: 'opencode/big-pickle', effort: 'high', sessionId: 'ses_1', major: 2 }),
+    ['run', '--format', 'json', '--auto', '--standalone', '--agent', 'worca-node', '-m', 'opencode/big-pickle', '-s', 'ses_1']);
+  assert.deepEqual(buildOpencodeArgs({ model: 'opencode/big-pickle', effort: 'low' }),
+    ['run', '--format', 'json', '--auto', '--pure', '--print-logs', '--log-level', 'ERROR', '-m', 'opencode/big-pickle']);
+  // A model of another provider keeps its variant.
+  assert.deepEqual(buildOpencodeArgs({ model: 'openrouter/x/free', effort: 'low', major: 2 }),
+    ['run', '--format', 'json', '--auto', '--standalone', '-m', 'openrouter/x/free#low']);
+});
+
 test('chat lockdown gate: 1.19.4+ (1.x) and 2.3.2+ (2.x) pass; older and unknown refuse', async () => {
   assert.deepEqual(await opencodeAskSupport({ bin: fakeOpencode(tmp(), 'x', { version: '1.19.4' }).bin }), {});
   assert.match((await opencodeAskSupport({ bin: fakeOpencode(tmp(), 'x', { version: '1.19.3' }).bin })).refusal, /1\.19\.4/);

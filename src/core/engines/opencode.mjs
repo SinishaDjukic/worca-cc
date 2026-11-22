@@ -83,7 +83,7 @@ import { CAPABILITY_KEYS } from './capabilities.mjs';
 import { superviseSpawn, composeSpawnEnv, cleanRunEnv, safeEmit } from './spawn.mjs';
 import { createRedactor } from '../redact.mjs';
 import { strongestClass } from '../recoverable-error.mjs';
-import { envFlag } from '../model-env.mjs';
+import { envFlag, OPENCODE_ZEN_RE } from '../model-env.mjs';
 import { makeChatDescriptor, providerEnvPrefixes, providerListRates } from './chat-descriptor.mjs';
 import { chatSelfTest } from './chat-selftest.mjs';
 import { parseJsonc } from '../workspace-import.mjs';
@@ -189,7 +189,8 @@ export const opencodeCapabilities = Object.freeze(Object.fromEntries(CAPABILITY_
 
 /** The `--variant` values worca offers (model-env.mjs, the zero-import leaf settings validate against): the union of
  *  the providers' reasoning variants (OpenAI minimal…high, Anthropic high/max, Google low/high). A variant the model
- *  lacks is ignored by OpenCode. */
+ *  lacks fails the spawn on OpenCode 2.3.1+ (Zen's `opencode/…` models take none at all), so buildOpencodeArgs
+ *  attaches one only for a model that can take it. */
 export { OPENCODE_EFFORTS } from '../model-env.mjs';
 
 /** Chat on OpenCode (see the chat notes above): a chat agent of its own whose permission denies every tool and allows
@@ -199,7 +200,7 @@ export const OPENCODE_ASK_LOCKDOWN = Object.freeze({
   allow: (servers) => Object.freeze({ '*': 'deny', ...Object.fromEntries(servers.map((s) => [`${s}_*`, 'allow'])) }),
 });
 /** OpenCode Zen's provider: its free models refuse a request without the shell. */
-const ZEN_PROVIDER_RE = /^opencode\//i;
+const ZEN_PROVIDER_RE = OPENCODE_ZEN_RE;
 
 /** The config agents every spawn runs as (its prompt is the system prompt), and the investigator a fan-out node
  *  dispatches through the `task` tool. */
@@ -332,19 +333,24 @@ const envRefNames = (mcp) => [...new Set([...JSON.stringify(mcp).matchAll(/\{env
  *  OpenCode 2 (`major >= 2`): `--standalone` (a private server reads this spawn's OPENCODE_CONFIG_CONTENT; the shared
  *  one does not), no `--pure` (2.x has no switch for the user's plugins), no `--print-logs` (its error event carries
  *  the message), and the variant rides the model as `provider/model#variant`: an effort replaces a variant the id
- *  already names, and has nothing to ride on without a model (runOpencodeProcess says so). */
+ *  already names, and has nothing to ride on without a model (runOpencodeProcess says so). A variant is attached
+ *  only when the model can take one: OpenCode Zen's free models (`opencode/…`) take none — OpenCode 2.3.1+ refuses
+ *  a `#variant` outright (`Variant unavailable for opencode/big-pickle: low`) where 1.x ignored it, so a Zen model
+ *  always spawns without a variant. */
 export function buildOpencodeArgs({ agent, model, effort, sessionId, major = 1 } = {}) {
+  // A Zen free model accepts no variant; the effort it carries ('' or a pick) would fail the spawn on OpenCode 2.
+  const variant = model && ZEN_PROVIDER_RE.test(model) ? undefined : effort;
   if (major >= 2) {
     const args = ['run', '--format', 'json', '--auto', '--standalone'];
     if (agent) args.push('--agent', String(agent));
-    if (model) args.push('-m', effort ? `${String(model).split('#')[0]}#${effort}` : String(model));
+    if (model) args.push('-m', variant ? `${String(model).split('#')[0]}#${variant}` : String(model));
     if (sessionId) args.push('-s', String(sessionId));
     return args;
   }
   const args = ['run', '--format', 'json', '--auto', '--pure', '--print-logs', '--log-level', 'ERROR'];
   if (agent) args.push('--agent', String(agent));
   if (model) args.push('-m', String(model));
-  if (effort) args.push('--variant', String(effort));
+  if (variant) args.push('--variant', String(variant));
   if (sessionId) args.push('-s', String(sessionId));
   return args;
 }
