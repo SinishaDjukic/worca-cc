@@ -12,6 +12,7 @@ import {
   askWorktreeAllowRules, webMcpEnv, webKeyVar, SANDBOX_NOTE_WEB,
 } from '../src/core/ask/spawn.mjs';
 import { buildClaudeArgs, runClaude, buildSpawnEnv } from '../src/core/claude-runner.mjs';
+import { agentHome } from '../src/core/engines/spawn.mjs';
 
 const POSIX_SHIM = { skip: process.platform === 'win32' ? 'fake claude shim is a POSIX shell script (no .exe stand-in on Windows)' : false };
 
@@ -199,9 +200,12 @@ test('fake bin: the recipe (with a memoryDir) reaches the spawned argv and env �
     { name: 'fake bin env dump: the sandbox var reaches the SPAWNED env and every WORCA_* var is scrubbed (probe F1)', run: () => {
       assert.ok(env.includes('CLAUDE_CODE_DISABLE_BACKGROUND_TASKS=1'), 'survives buildSpawnEnv + prepareModelEnv and wins over a caller value');
       assert.ok(env.includes('ANTHROPIC_BASE_URL=http://proxy'), 'caller routing env still merged');
-      // Two deliberate WORCA_ vars: the host-guard PID and the test-worker cap (Settings › Runs › Machine load).
-      const worcaLeaks = env.filter((l) => l.startsWith('WORCA_') && !l.startsWith('WORCA_HOST_PID=') && !l.startsWith('WORCA_TEST_CONCURRENCY='));
+      // Three deliberate WORCA_ vars: the host-guard PID, the test-worker cap (Settings › Runs › Machine load) and the
+      // throwaway home that replaces the host's (agentHome).
+      const worcaLeaks = env.filter((l) => l.startsWith('WORCA_') && !l.startsWith('WORCA_HOST_PID=') && !l.startsWith('WORCA_TEST_CONCURRENCY=')
+        && l !== `WORCA_HOME=${agentHome()}`);
       assert.equal(worcaLeaks.length, 0, `WORCA_* scrubbed (host-guard PID excepted): ${worcaLeaks}`);
+      assert.ok(!env.includes('WORCA_HOME=/tmp/must-not-leak'), 'the host home never reaches the child');
       assert.ok(env.includes(`WORCA_HOST_PID=${process.pid}`), 'the host-guard PID deliberately rides scrubbed spawns (host-guard.mjs)');
       assert.ok(env.some((l) => l.startsWith('PATH=')) && env.some((l) => l.startsWith('HOME=')), 'base vars kept');
     } },

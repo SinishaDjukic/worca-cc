@@ -4,7 +4,7 @@ import assert from 'node:assert/strict';
 import { mkdtempSync, writeFileSync, chmodSync, rmSync, existsSync, mkdirSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { superviseSpawn, buildSpawnEnv, composeSpawnEnv } from '../src/core/engines/spawn.mjs';
+import { superviseSpawn, buildSpawnEnv, composeSpawnEnv, agentHome } from '../src/core/engines/spawn.mjs';
 import { GENERIC_CLI } from '../src/core/cli-resolve.mjs';
 
 const POSIX = process.platform === 'win32' ? { skip: 'POSIX shell fixtures' } : {};
@@ -158,10 +158,21 @@ test('composeSpawnEnv: overlay wins, host pid added last, GitHub credentials str
 });
 
 test('composeSpawnEnv: the host WORCA_HOME never reaches the child, scrubbed or not, even when allowlisted', () => {
-  // process.env.WORCA_HOME is the suite's sandbox home (npm test); the child must not see it either way.
-  assert.ok(process.env.WORCA_HOME, 'precondition: the test runner sets WORCA_HOME');
-  for (const envScrub of [false, true]) {
-    assert.equal(composeSpawnEnv({ envScrub, envAllowlist: ['WORCA_HOME'] }).env.WORCA_HOME, undefined, `scrub ${envScrub}`);
+  // Set here: an agent running this file directly has no WORCA_HOME of its own.
+  const saved = process.env.WORCA_HOME;
+  process.env.WORCA_HOME = '/live/store';
+  try {
+    for (const envScrub of [false, true]) {
+      const home = composeSpawnEnv({ envScrub, envAllowlist: ['WORCA_HOME'] }).env.WORCA_HOME;
+      // A throwaway home, not none: without one a `worca` command the agent runs falls back to ~/.worca-cc.
+      assert.equal(home, agentHome(), `scrub ${envScrub}`);
+      assert.ok(home.startsWith(tmpdir()), home);
+    }
+    // A value set on purpose (an Ask chat's codex MCP server through the run env, a model overlay) still wins.
+    assert.equal(composeSpawnEnv({ envScrub: false, runEnv: { WORCA_HOME: '/chat/home' } }).env.WORCA_HOME, '/chat/home');
+    assert.equal(composeSpawnEnv({ envScrub: true, overlay: { WORCA_HOME: '/chat/home' } }).env.WORCA_HOME, '/chat/home');
+  } finally {
+    if (saved === undefined) delete process.env.WORCA_HOME; else process.env.WORCA_HOME = saved;
   }
 });
 

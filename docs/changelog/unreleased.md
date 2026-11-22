@@ -7,9 +7,9 @@ them into the next page and empties this file.
 
 **A run that builds worca no longer leaves mock "again" runs in the worca that started it.**
 
-Agents no longer receive the server's `WORCA_HOME`, so a test or `worca` command an agent runs cannot reach the live store. The test helper that gives each test file its own home now parks late writes in a throwaway folder when the file ends, instead of handing them back to whatever `WORCA_HOME` the shell had. Before, a run started from `WORCA_HOME=… worca ui` that ran a test file directly could add that test's mock runs to your runs list.
+Agents no longer receive the server's `WORCA_HOME`: each agent gets a throwaway home under the system temp folder instead, removed when the server stops, so a test or `worca` command an agent runs writes there, not into your runs. This holds whether the server uses a custom `WORCA_HOME` or the default `~/.worca-cc`. The test helper that gives each test file its own home now parks late writes in a throwaway folder when the file ends, instead of handing them back to whatever `WORCA_HOME` the shell had; that folder belongs to the test process and is removed when it exits. Before, a run started from `WORCA_HOME=… worca ui` that ran a test file directly could add that test's mock runs to your runs list.
 
-Chips: agents never get WORCA_HOME · late test writes go to a throwaway folder
+Chips: agents get a throwaway WORCA_HOME · late test writes go to a throwaway folder
 
 Read it: [Runs](../runs.md)
 

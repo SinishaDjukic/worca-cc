@@ -15,6 +15,18 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { _resetForTests } from '../../src/core/db.mjs';
 
+let quarantine = null;
+/** Where late writes land once a file's home is gone: one folder per test process, removed when the process exits,
+ *  so it never grows across runs. */
+function quarantineHome() {
+  if (!quarantine) {
+    quarantine = join(tmpdir(), `worca-cc-test-quarantine-${process.pid}`);
+    const dir = quarantine;
+    process.once('exit', () => { try { rmSync(dir, { recursive: true, force: true }); } catch { /* best effort */ } });
+  }
+  return quarantine;
+}
+
 /**
  * Isolate WORCA_HOME for the current test file.
  *
@@ -47,7 +59,7 @@ export function useTempHome(after, prefix = 'worca-cc-home-') {
     // Never restore `prev` — a direct `node --test file.mjs` inherits the
     // shell's WORCA_HOME, which may be a live store (an agent run under
     // `WORCA_HOME=… worca ui` left its mock runs in that store's database).
-    process.env.WORCA_HOME = join(tmpdir(), 'worca-cc-test-quarantine');
+    process.env.WORCA_HOME = quarantineHome();
     _resetForTests(); // next getDb() reopens against the restored home
     // Throwaway tmp: on Windows a lingering handle (Defender, a just-closed
     // sqlite file) EPERMs the delete — retry, and never fail the file over it.

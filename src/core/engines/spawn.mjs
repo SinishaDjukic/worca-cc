@@ -6,7 +6,8 @@
 import { spawn, spawnSync } from 'node:child_process';
 import { resolveCliCommand, explainUnspawnableCli, GENERIC_CLI } from '../cli-resolve.mjs';
 import { createInterface } from 'node:readline';
-import { realpathSync } from 'node:fs';
+import { realpathSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import { join, resolve, dirname, basename } from 'node:path';
 import { strongestClass } from '../recoverable-error.mjs';
 import { stripHostCredentials } from '../host-credentials.mjs';
@@ -95,13 +96,26 @@ export function cleanRunEnv(env) {
   return Object.keys(out).length ? out : null;
 }
 
+let agentHomeDir = null;
+/** The WORCA_HOME every agent gets: one throwaway folder per server process under tmpdir, never created here (a
+ *  `worca` command the agent runs makes it) and removed when the server exits. Deleting the variable instead would
+ *  send such a command to the default ~/.worca-cc. */
+export function agentHome() {
+  if (!agentHomeDir) {
+    agentHomeDir = join(tmpdir(), `worca-cc-agent-home-${process.pid}`);
+    const dir = agentHomeDir;
+    process.once('exit', () => { try { rmSync(dir, { recursive: true, force: true }); } catch { /* best effort */ } });
+  }
+  return agentHomeDir;
+}
+
 /**
  * The final child env, in the order the claude runner always applied it: the
  * scrubbed env (undefined when scrub is off -> process.env), the run-level env
  * (cleanRunEnv) over it, the adapter's overlay (the model env) merged LAST so it
  * survives scrub and wins collisions, WORCA_HOST_PID after that, no GitHub
- * or Azure DevOps credential in any tier (host-credentials.mjs), never the credential broker's own secret nor the
- * host's WORCA_HOME, and no
+ * or Azure DevOps credential in any tier (host-credentials.mjs), never the credential broker's own secret, the
+ * host's WORCA_HOME replaced by a throwaway one (agentHome; a run env or overlay that sets it on purpose wins), and no
  * proxy URL that carries a login (env-proxy.mjs withoutProxyLogin: the corporate proxy is off then, so the child
  * goes direct rather than get the password), and WORCA_TEST_CONCURRENCY (testWorkerCap) unless set. With
  * no run env and no overlay the env is otherwise identical to the scrub result.
@@ -109,16 +123,16 @@ export function cleanRunEnv(env) {
  */
 export function composeSpawnEnv({ envScrub, envAllowlist, prefixes, runEnv, overlay, hostPid } = {}) {
   const scrubbedEnv = buildSpawnEnv(envScrub, envAllowlist, prefixes);
-  let env = scrubbedEnv;
-  if (runEnv) env = { ...(env ?? process.env), ...runEnv };
-  if (overlay) env = { ...(env ?? process.env), ...overlay };
-  if (hostPid != null) env = { ...(env ?? process.env), WORCA_HOST_PID: String(hostPid) };
-  env = stripHostCredentials(env ?? process.env);
+  // Never the host's store: a test or `worca` command the agent runs would otherwise write into the live database
+  // (a run's own `node --test` file restored this home in teardown and left runs in it). Replaced before the run env
+  // and the overlay, so a value set on purpose (an Ask chat's codex MCP server) survives.
+  let env = { ...(scrubbedEnv ?? process.env), WORCA_HOME: agentHome() };
+  if (runEnv) env = { ...env, ...runEnv };
+  if (overlay) env = { ...env, ...overlay };
+  if (hostPid != null) env = { ...env, WORCA_HOST_PID: String(hostPid) };
+  env = stripHostCredentials(env);
   delete env.WORCA_BROKER_SECRET;
   delete env.WORCA_BROKER_SECRET_FILE;
-  // Never the host's store: a test or `worca` command the agent runs would otherwise write into the live
-  // database (a run's own `node --test` file restored this home in teardown and left runs in it).
-  delete env.WORCA_HOME;
   env = withNoGitPath(withoutProxyLogin(env));
   // The per-run test-worker cap (Settings › Runs › Machine load): a test runner that reads it (this repo's
   // tools/test-run.mjs) leaves cores for the run's other work and for other runs. A value already set wins.
