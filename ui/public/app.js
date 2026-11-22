@@ -13596,16 +13596,17 @@ function buildReadinessMenu(key, report) {
   if (m.notJudged.length) body.append(el('div', 'rp-notjudged', `Not judged: ${m.notJudged.join(', ')}.`));
 
   body.append(sec('Repository', 'Applies to every tool'));
+  // The shared severity chip (.issue-sev), its tone from the row's .sev-* class.
   const GROUP = { blocker: 'Must fix', warn: 'Should fix', info: 'Advice' };
+  const SEV = { blocker: 'sev-critical', warn: 'sev-minor', info: 'sev-suggestion' };
   for (const sev of ['blocker', 'warn', 'info']) {
     for (const c of m.failing[sev]) {
-      const row = el('div', 'rp-chk');
-      const dot = el('span', `rp-sevdot ${sev}`);
-      dot.setAttribute('aria-label', GROUP[sev]);
+      const row = el('div', `rp-chk ${SEV[sev]}`);
+      const chip = el('span', 'issue-sev', GROUP[sev]);
       const ign = el('button', 'btn btn-sm btn-quiet rp-ign', 'Ignore');
       ign.type = 'button';
       ign.addEventListener('click', async () => { if (await setReadinessIgnore(key, c.id, true)) await refreshReadiness(key, { refresh: true }); });
-      row.append(dot, el('span', 'rp-chk-t', c.title), ign);
+      row.append(chip, el('span', 'rp-chk-t', c.title), ign);
       if (c.detail) row.append(el('span', 'rp-chk-d', c.detail));
       row.append(el('span', 'rp-chk-f', c.fix));
       body.append(row);
@@ -13613,20 +13614,20 @@ function buildReadinessMenu(key, report) {
   }
 
   const box = (lead, text) => {
-    const d = el('details', 'rp-more');
+    const d = el('details', 'rp-more disclosure');
     const s = el('summary');
-    s.append(el('span', lead), el('span', '', text), el('span', 'rp-chev'));
+    s.append(icon(document, lead, 14, `ic rp-lead is-${lead}`), el('span', '', text));
     d.append(s);
     return d;
   };
-  const passedBox = box('rp-tick', `${m.passed.length} checks pass`);
+  const passedBox = box('check', `${m.passed.length} checks pass`);
   const list = el('ul');
   for (const it of m.passed) { const li = el('li'); li.append(el('b', '', it.title), el('span', '', it.detail)); list.append(li); }
   passedBox.append(list);
   body.append(passedBox);
 
   if (m.ignored.length) {
-    const ignBox = box('rp-gdot', `${m.ignored.length} ignored for this project`);
+    const ignBox = box('none', `${m.ignored.length} ignored for this project`);
     const ul = el('ul');
     for (const it of m.ignored) {
       const li = el('li');
