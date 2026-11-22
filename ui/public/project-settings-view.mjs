@@ -23,7 +23,7 @@ const PR_FIELDS = [
   { id: 'watch.trustedReviewers', label: 'Reviewers that may trigger a fix', kind: 'text', mono: true,
     toValue: (text) => String(text).split(/[\s,]+/).map((s) => s.trim()).filter(Boolean),
     format: (v) => Array.isArray(v) ? v.join(', ') : v == null ? null : String(v),
-    hint: 'Watch PR starts a fix run when review feedback lands on the PR from one of these GitHub logins, besides collaborators and the PR author. Comma or space separated; you usually only need this for review bots.' },
+    hint: 'Watch PR also starts a fix run on review feedback from these GitHub logins, usually review bots. On GitHub their PR-level comments count too; other people\'s PR comments never do. Comma or space separated.' },
 ];
 export const PROJECT_CARDS = Object.freeze([
   { key: 'cost', title: 'Cost', fields: [{ id: 'pipelineCostLimitUsd', label: 'Per-pipeline cap (USD)', kind: 'number', min: .01, step: .01, format: usd }, { id: 'humanRateUsdPerHour', label: 'Developer rate (USD/h)', kind: 'number', min: .01, step: .01, format: usd }] },

@@ -190,11 +190,14 @@ To push the branch without a PR, use **Publish branch** (Advanced).
 ### Watch PR and conflicts
 
 With **Watch PR** on, Worca reads the open PR about once a minute. A failing check, a merge conflict or requested
-change starts a fix run on the PR's branch, which pushes the fix. Review feedback is any unresolved inline thread,
-a review that requests changes, or a PR-level comment that reads as feedback: Worca quotes it in the fix run and
-replies with the result on the PR. Slash-commands like `/ai-review` are treated as orders to other tooling, not
-feedback, and never start a run by themselves. A reviewer that is a bot (not a collaborator) can also trigger a
-fix run if its login is listed in the project's Settings under **Pull requests › Reviewers that may trigger a fix**.
+change starts a fix run on the PR's branch, which pushes the fix. Review feedback is any unresolved inline thread
+or a review that requests changes from the PR author or a collaborator. A reviewer that is not a collaborator (a
+review bot, usually) counts too once its login is listed in the project's Settings under **Pull requests ›
+Reviewers that may trigger a fix**.
+
+On GitHub, a PR-level comment from a listed reviewer also counts, if it was posted after Watch PR was turned on:
+Worca quotes it in the fix run and replies with the result on the PR. PR-level comments from anyone else are
+discussion and never start a run, and neither do slash-commands like `/ai-review`.
 
 After a run, Worca also checks whether the branch still merges into its base. If it does, you get **Update
 branch**. If it conflicts, you get **Resolve in a pipeline** or **Resolve in a terminal**.

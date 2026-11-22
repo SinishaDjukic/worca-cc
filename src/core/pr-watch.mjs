@@ -123,15 +123,27 @@ export function countsAsRequest(item = {}, authorLogin = null, trustedLogins = [
   if (body.includes(WATCH_MARKER)) return false;
   if (item.author?.login === authorLogin || item.authorLogin === authorLogin) return true;
   if (TRUSTED.has(item.authorAssociation)) return true;
-  // An extra trusted reviewer (a review bot, usually): its login matches the per-project list. A comment
-  // with no author is never treated as one of them (nor as the PR author, see the `authorLogin` default).
+  return isListedLogin(item, trustedLogins);
+}
+
+/** GitHub logins compare case-insensitively, and a bot shows as "name[bot]" in the web page and REST but
+ *  as "name" in GraphQL: both spellings name the same reviewer. */
+const normLogin = (login) => String(login).trim().toLowerCase().replace(/\[bot\]$/, '');
+/** The item's author is on the per-project list of extra reviewers (a review bot, usually). A comment with
+ *  no author is never one of them (nor the PR author, see the `authorLogin` default). */
+function isListedLogin(item, trustedLogins) {
   const login = item.author?.login || item.authorLogin || null;
-  return typeof login === 'string' && Array.isArray(trustedLogins) && trustedLogins.includes(login);
+  if (typeof login !== 'string' || !Array.isArray(trustedLogins)) return false;
+  const want = normLogin(login);
+  return trustedLogins.some((x) => typeof x === 'string' && normLogin(x) === want);
 }
 
 /** A PR-level comment that starts with "/" is a command to another tool ("/ai-review"), not review feedback:
  *  it never starts a fix run on its own. Inline thread comments are still free-form review. */
 const isCommand = (body) => /^\s*\//.test(String(body || ''));
+/** A PR-level comment counts only when it was posted after the watch began (`since`): issue comments are never
+ *  resolved, so older ones (already discussed, or from before Watch was turned on) would all fire at once. */
+const postedSince = (c, since) => since == null || Date.parse(c.createdAt) >= Date.parse(since);
 
 // A failure is its check's name at the PR head: a CI re-run gets new job ids, never a new key.
 const keyFor = (c) => c.type === 'status' || c.__typename === 'StatusContext'
@@ -156,7 +168,7 @@ const passing = (c) => c.type === 'status' || c.__typename === 'StatusContext'
  *     batch on the conflict path (`conflict.why: 'behind'`), once per check name;
  *   - anything else is the PR's own and is fixed by hand.
  */
-export function collectTriggers(pr, alreadyHandled = [], { conflictOnly = false, baseWaitOver = false, trustedLogins = [] } = {}) {
+export function collectTriggers(pr, alreadyHandled = [], { conflictOnly = false, baseWaitOver = false, trustedLogins = [], commentsSince = null } = {}) {
   const seen = new Set(alreadyHandled);
   const none = { fire: false, checksSettled: false, failures: [], threads: [], comments: [], reviews: [], reviewOnlyComment: false, conflict: null,
     handledKeys: [], skipped: [], waitingOnBase: [], reruns: [] };
@@ -206,12 +218,16 @@ export function collectTriggers(pr, alreadyHandled = [], { conflictOnly = false,
   const reviews = (pr.reviews || []).filter((r) => String(r.state).toUpperCase() === 'CHANGES_REQUESTED'
     && !seen.has(`review:${r.databaseId}`) && trusted(r));
   // PR-level feedback that lands as an issue comment (a reviewer's verdict posted on the PR, not an inline
-  // thread). Slash commands ("/ai-review") are orders to another tool, not feedback: they never start a run.
-  const comments = (pr.comments || []).filter((c) => !seen.has(`comment:${c.databaseId}`) && trusted(c) && !isCommand(c.body));
+  // thread). Only the listed reviewer logins count: the PR author's and collaborators' PR comments are
+  // discussion, and starting a run on every "LGTM" costs money. Slash commands ("/ai-review") are orders to
+  // another tool, not feedback. Issue comments have their own id space, hence their own key.
+  const comments = (pr.comments || []).filter((c) => !seen.has(`issue-comment:${c.databaseId}`)
+    && !String(c.body || '').includes(WATCH_MARKER) && isListedLogin(c, trustedLogins) && !isCommand(c.body)
+    && postedSince(c, commentsSince));
   const handledKeys = [
     ...failures.map(keyOf),
     ...threads.flatMap((t) => t.commentIds.map((id) => `comment:${id}`)),
-    ...comments.map((c) => `comment:${c.databaseId}`),
+    ...comments.map((c) => `issue-comment:${c.databaseId}`),
     ...reviews.map((r) => `review:${r.databaseId}`),
   ];
   return { fire: handledKeys.length > 0, checksSettled: settled, failures, threads, comments, reviews,
@@ -403,6 +419,9 @@ export function createPrWatcher(deps = {}) {
     try { const list = deps.trustedLogins?.(origin); return Array.isArray(list) ? list.filter((x) => typeof x === 'string') : []; }
     catch { return []; }
   };
+  /** The options every watch-loop collectTriggers call shares: the reviewer list (read once per call site)
+   *  and when the watch began taking PR-level comments. */
+  const triggerOpts = (w, origin, extra = {}) => ({ trustedLogins: trustedLoginsOf(origin), commentsSince: w.retryState?.commentsSince ?? null, ...extra });
   const fixRun = (event) => {
     try { deps.onFixRun?.(event); } catch { /* the chat is told best effort; never ownership */ }
   };
@@ -479,7 +498,7 @@ export function createPrWatcher(deps = {}) {
       if (!snap?.ok) return retry(w, 'read', snap);
       w = resetRetry(w, 'read');
       if (snap.pr.state !== 'OPEN') return endWatch(w, snap.pr.state);
-      pr = snap.pr; triggers = collectTriggers(pr, w.handled, { conflictOnly: once, baseWaitOver: baseWaitOver(w), trustedLogins: trustedLoginsOf(origin) });
+      pr = snap.pr; triggers = collectTriggers(pr, w.handled, triggerOpts(w, origin, { conflictOnly: once, baseWaitOver: baseWaitOver(w) }));
       if (!triggers.fire || triggers.reruns.length) return w;
       pre = await preflight(w, origin, pr);
     }
@@ -713,9 +732,13 @@ export function createPrWatcher(deps = {}) {
     if (!snap?.ok) return retry(w, 'read', snap || {});
     w = resetRetry(w, 'read');
     if (snap.pr.state !== 'OPEN') return endWatch(w, snap.pr.state);
-    const first = collectTriggers(snap.pr, w.handled, { trustedLogins: trustedLoginsOf(origin) });
+    // The first read of a new (or re-enabled, or pre-upgrade) watch marks when it began taking PR-level
+    // comments; the ones already on the PR are history, never triggers.
+    if (!w.retryState?.commentsSince) w = transition(w, { retryState: { ...w.retryState, commentsSince: new Date(now()).toISOString() } });
+    const opts = triggerOpts(w, origin);
+    const first = collectTriggers(snap.pr, w.handled, opts);
     w = trackBaseWait(w, first.waitingOnBase.length > 0);
-    const triggers = first.waitingOnBase.length && baseWaitOver(w) ? collectTriggers(snap.pr, w.handled, { baseWaitOver: true, trustedLogins: trustedLoginsOf(origin) }) : first;
+    const triggers = first.waitingOnBase.length && baseWaitOver(w) ? collectTriggers(snap.pr, w.handled, { ...opts, baseWaitOver: true }) : first;
     // A re-run uses no fix run, so it is tried even when the cap is reached.
     if (triggers.reruns.length) return rerunChecks(w, origin, triggers.reruns);
     if (!triggers.fire) return w;
@@ -733,7 +756,7 @@ export function createPrWatcher(deps = {}) {
     const snap = await deps.host.snapshot({ projectDir: origin.projectDir, prUrl: w.prUrl });
     if (!snap?.ok) return { ok: false, code: 'READ_FAILED', error: snap?.error, watch: w };
     if (snap.pr.state !== 'OPEN') return { ok: false, code: 'PR_CLOSED', watch: w };
-    const triggers = collectTriggers(snap.pr, w.handled, { conflictOnly: true, trustedLogins: trustedLoginsOf(origin) });
+    const triggers = collectTriggers(snap.pr, w.handled, { conflictOnly: true });
     if (!triggers.fire) return { ok: false, code: 'NO_CONFLICT', watch: w };
     const next = await prepareAndStart(w, origin, snap.pr, triggers, { once: true });
     if (next?.pushed) return { ok: true, pushed: next.pushed, watch: next };
