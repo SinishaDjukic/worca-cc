@@ -310,7 +310,7 @@ test('setHost: the side column marks the root, shows its own head, closes the Hi
   const page = ctx.panel.root;
   assert.equal(ctx.panel.host(), 'page');
   assert.equal(page.dataset.host, 'page');
-  assert.equal(page.dataset.history, 'open', 'from 1600px the Chat page opens its History column');
+  assert.equal(page.dataset.history, 'open', 'the Chat page opens its History column by default');
   ctx.panel.setHost('dock');
   assert.equal(ctx.panel.host(), 'dock');
   assert.equal(page.dataset.host, 'dock');

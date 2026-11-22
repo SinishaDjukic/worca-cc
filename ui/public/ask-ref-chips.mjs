@@ -30,8 +30,32 @@ const GLYPHS = {
 const PROVIDER = { gh: 'GitHub', adopr: 'Azure DevOps', adowi: 'Azure DevOps' };
 /** The short ref a chip shows: `owner/repo#7`, `api!7`, `AB#123`, `#<run id>`; a chat shows its title only. */
 const labelOf = (ref) => ref.label || (ref.kind === 'run' ? `#${ref.id.slice(0, 8)}` : '');
-const ITEM_PILL = { open: ['green', 'Open'], draft: ['slate', 'Draft'], merged: ['slate', 'Merged'], closed: ['red', 'Closed'] };
+/** A PR's state → [pill tone, pill text] (the chips; the tool panel Overview's Pull requests). */
+export const ITEM_PILL = Object.freeze({ open: ['green', 'Open'], draft: ['slate', 'Draft'], merged: ['slate', 'Merged'], closed: ['red', 'Closed'] });
 const RESULT_KINDS = { gh: ['pr', 'issue'], adopr: ['pr'], adowi: ['workitem'], run: ['run'], chat: ['chat'] };
+
+/**
+ * The chip lookup for a list of ref keys outside a transcript (the tool panel Overview): the same
+ * POST /api/ask/refs/resolve body createRefChips sends, at most REFS_MAX keys per call (the server caches the answers).
+ * → { [key]: { state, title } } for the keys it resolved; a failed call adds nothing.
+ */
+export async function resolveRefKeys({ fetch, keys }) {
+  const list = [...new Set((Array.isArray(keys) ? keys : []).filter((k) => typeof k === 'string' && k))];
+  const out = {};
+  for (let i = 0; i < list.length; i += REFS_MAX) {
+    const slice = list.slice(i, i + REFS_MAX);
+    try {
+      const res = await fetch('/api/ask/refs/resolve', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ refs: slice }) });
+      const body = res && res.ok ? await res.json() : null;
+      const refs = body && body.refs && typeof body.refs === 'object' ? body.refs : {};
+      for (const k of slice) {
+        const r = Object.prototype.hasOwnProperty.call(refs, k) ? refs[k] : null;
+        if (r && r.ok === true) out[k] = { state: typeof r.state === 'string' ? r.state : null, title: typeof r.title === 'string' ? r.title : null };
+      }
+    } catch { /* offline: the stored states stay */ }
+  }
+  return out;
+}
 
 /** A work item's state (any process: Agile, Scrum, Basic, CMMI, custom) → a pill tone; unknown states stay neutral. */
 export function workItemTone(state) {

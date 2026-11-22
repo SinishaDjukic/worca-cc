@@ -666,6 +666,8 @@
               <div class="field drow act-port-range"><label class="drow-label" for="act-port-low">Ports for automatic port variables</label>
                 <div class="drow-control"><input id="act-port-low" data-setting="actions.portLow actions.portRange" class="input" type="number" min="1024" max="65535" placeholder="4400" aria-label="Low port"> –
                 <input id="act-port-high" data-setting="actions.portHigh actions.portRange" class="input" type="number" min="1024" max="65535" placeholder="4499" aria-label="High port"></div></div>
+              <div class="field drow"><label class="drow-label" for="act-preview-ports">Preview ports</label><small class="hint drow-help" id="act-preview-ports-note"></small><div class="drow-control"><div class="select-wrap"><select id="act-preview-ports" data-setting="actions.previewPorts" class="select">
+                <option value="all">All local ports</option><option value="range">Actions range only</option></select></div></div></div>
               <div class="field drow drow-wide act-launcher" data-launcher="editor">
                 <div class="label-row drow-label"><label for="act-editor">Editor</label>
                   <button type="button" class="info-tip" aria-label="About the editor command">i<span class="tip-content hidden" id="act-editor-tip">
@@ -881,6 +883,18 @@
               <div id="ask-engine-root" class="drows"></div>
               <!-- One Save per card, bottom right; the line beside it counts the unsaved changes (or says Saved.). -->
               <div class="add-project-actions engine-save-row" style="margin-top:14px"><small class="hint" id="askEngineMsg"></small><button type="button" id="askEngineSave" class="btn btn-primary btn-sm">Save</button></div>
+            </section>
+
+            <!-- The switch is the library's Switch (app.js paintChatLinksSettings): it saves at once, so the card has no Save. -->
+            <section class="card settings-card" id="chat-links-card" data-min-level="simple" data-flag="toolPanel" data-flag-chip>
+              <div class="card-head"><div class="label-row"><h2>Links in answers</h2></div></div>
+              <div class="drows">
+              <div class="field drow switch-drow">
+                <span class="drow-label" id="chatLinksInPanelLabel">Open chat links in the panel</span>
+                <small class="hint drow-help">File paths and web links in the chat's answers open in a tab of the tool panel beside the chat. Off: web links open a new browser tab and file paths stay text.</small>
+                <span class="drow-control" id="chatLinksInPanelHost"></span>
+              </div>
+              </div>
             </section>
             <!-- Ask Worca (ask-worca-design §6.9): per-turn guards for the
                  assistant chat. Read fresh on every turn (D12); a stored null

@@ -83,6 +83,8 @@ export function makePanel(overrides = {}) {
     storage,
     raf: (fn) => { rafQueue.push(fn); lastRaf = fn; return rafQueue.length; },
     now: overrides.now || (() => 1_000_000),
+    // `chatDeps`: app.js's chat dependencies (the Overview's openOverview, linksInPanel); none by default.
+    ...(overrides.chatDeps ? { chatDeps: overrides.chatDeps } : {}),
     ...(overrides.deps || {}),
   };
   // `innerWidth: n` fixes window.innerWidth before the panel is built (jsdom's is 1024): the History column opens

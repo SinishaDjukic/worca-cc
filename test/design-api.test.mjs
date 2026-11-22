@@ -536,8 +536,8 @@ test('P5: a restore holds the design: a second restore, a Continue and a Delete 
 test('P5: a chat hand-off holds the design against a Delete (409); a Delete before the hold leaves no folder, kit or upload copy behind', async () => {
   const dropped = []; const threads = [];
   const del = await mkApp({ designBuilds, dropGrants: (id) => { dropped.push(id); }, deleteThread: async (t) => { threads.push(t); } });
-  const withChat = () => {   // the route's deleteThread is a fake: the upload stays readable, as while the real one awaits
-    const d = newDesign(); const t = createThread({ mode: 'design', title: d.title });
+  const withChat = () => {   // a Delete keeps the chat (a stale deleteThread fake is never called): the upload stays readable
+    const d = newDesign(); const t = createThread({ title: d.title });
     updateDesign(d.id, { threadId: t.id });
     addAttachment(t.id, appendMessage(t.id, { role: 'user', text: 'x' }).id, { name: 'logo.png', kind: 'image', mime: 'image/png', data: Buffer.from('private upload') });
     return { d, t };
@@ -575,7 +575,7 @@ test('P5: a chat hand-off holds the design against a Delete (409); a Delete befo
   assert.equal(existsSync(designDir(b.d.id)), false, 'no folder recreated: no kit and no copy of the deleted upload');
 });
 
-test('M10: delete answers 409 on CONFLICT under an open build; after a stop it removes the folder and rows, keeps the ledger', async () => {
+test('M10: delete answers 409 on CONFLICT under an open build; after a stop it removes the folder and rows, keeps the ledger and the chat', async () => {
   const dropped = []; const threads = [];
   const del = await mkApp({ designBuilds, dropGrants: (id) => { dropped.push(id); }, deleteThread: async (t) => { threads.push(t); } });
   const d = await make();
@@ -593,10 +593,11 @@ test('M10: delete answers 409 on CONFLICT under an open build; after a stop it r
   assert.equal(getDesign(d.id), null);
   assert.equal(getBuild(buildId), null);
   assert.ok(prepare('SELECT COUNT(*) n FROM design_cost_ledger WHERE design_id = ?').get(d.id).n > 0);
-  assert.deepEqual([dropped, threads], [[d.id], ['t_x']]);
+  // The chat stays (docs/design.md "Deleting"): a stale deleteThread dep is never called.
+  assert.deepEqual([dropped, threads], [[d.id], []], 'deleting a design keeps its chat');
   const plain = newDesign();
   assert.equal((await del('DELETE', `/api/design/${plain.id}`)).status, 200);
-  assert.deepEqual([dropped, threads], [[d.id, plain.id], ['t_x']], 'a design with no thread never calls deleteThread');
+  assert.deepEqual([dropped, threads], [[d.id, plain.id], []]);
 });
 
 test('GET /:id: build.costKnown is a boolean, false after a MOCK_NO_COST build', async () => {

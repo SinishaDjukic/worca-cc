@@ -4,7 +4,8 @@
     "history": "History has no docs page yet",
     "settings": "Settings has no docs page yet",
     "new-run": "the New run page has no docs page yet",
-    "projects": "the Projects page has no docs page yet"
+    "projects": "the Projects page has no docs page yet",
+    "tool-panel": "the tool panel has no docs page of its own yet (docs/terminal.md covers its Terminal tab)"
   },
   "naming": {
     "minLines": 40,
@@ -1125,7 +1126,8 @@
       "css": [
         "^Saved\\-markdown viewer",
         "^typed artifact viewer",
-        "^per\\-step artifacts"
+        "^per\\-step artifacts",
+        "^simplified Office preview"
       ],
       "html": [
         "<!-- ===== Saved-markdown viewer"
@@ -1463,6 +1465,16 @@
       "doc": "docs/git-automations.md",
       "routes": [
         "/api/automations"
+      ],
+      "css": [],
+      "html": []
+    },
+    {
+      "name": "tool-panel",
+      "doc": null,
+      "routes": [
+        "/api/tools",
+        "/api/preview"
       ],
       "css": [],
       "html": []

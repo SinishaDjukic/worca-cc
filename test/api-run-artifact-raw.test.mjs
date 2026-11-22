@@ -46,6 +46,9 @@ before(async () => {
   recordArtifact(id, 'deck-shot', 'shots/s01.png');
   recordArtifact(id, 'pdf', 'big.pdf');
   recordArtifact(id, 'evil', '../outside.html');
+  await mkdir(join(dir, 'out'), { recursive: true });
+  await writeFile(join(dir, 'out', 'report.docx'), Buffer.concat([Buffer.from([0x50, 0x4b, 0x03, 0x04]), Buffer.from(' report')]));
+  recordArtifact(id, 'result', 'out/report.docx');
   const { app } = await import('../ui/server.mjs');
   srv = http.createServer(app);
   await new Promise((r) => srv.listen(0, '127.0.0.1', r));
@@ -161,4 +164,38 @@ test('V16: artifact JS is not served to a script load from the worca origin itse
   const bare = await rawWith(url, {});
   assert.deepEqual([bare.status, bare.type], [200, 'text/plain; charset=utf-8'], 'no fetch metadata: never a script');
   assert.equal((await rawWith(`${url}?download=1`, { 'sec-fetch-site': 'same-origin' })).status, 200);
+});
+
+test('an Office file: the preview form downloads it; ?as=pdf is 501 without LibreOffice, a PDF with it (HEAD and GET)', async () => {
+  const plain = await raw(`/api/runs/${id}/artifact-raw/out/report.docx`);
+  assert.equal(plain.status, 200);
+  assert.match(plain.headers['content-disposition'], /^attachment;/, 'never inline on the worca origin');
+  const savedPath = process.env.PATH;
+  process.env.PATH = '/nonexistent-worca-bin';                       // no soffice anywhere (Linux CI; on a Mac the app path may exist → skip that row)
+  try {
+    if (!(await import('../src/core/office-preview.mjs')).sofficeBin()) {
+      const none = await raw(`/api/runs/${id}/artifact-raw/out/report.docx?as=pdf`);
+      assert.equal(none.status, 501);
+      assert.deepEqual(JSON.parse(none.text), { error: 'Install LibreOffice to preview Office files.', code: 'NO_CONVERTER' });
+    }
+  } finally { process.env.PATH = savedPath; }
+  if (process.platform === 'win32') return;
+  const { makeFakeSoffice } = await import('./helpers/fake-soffice.mjs');
+  const fake = makeFakeSoffice();
+  process.env.PATH = `${fake.dir}:${savedPath}`;
+  try {
+    const head = await fetch(`${base}/api/runs/${id}/artifact-raw/out/report.docx?as=pdf`, { method: 'HEAD' });
+    await head.arrayBuffer();
+    assert.equal(head.status, 200);
+    assert.equal(head.headers.get('content-type'), 'application/pdf');
+    const got = await raw(`/api/runs/${id}/artifact-raw/out/report.docx?as=pdf`);
+    assert.equal(got.status, 200);
+    assert.match(got.headers['content-disposition'], /^inline; filename="report\.pdf"/);
+    assert.equal(got.headers['x-content-type-options'], 'nosniff');
+    assert.match(got.text, /^%PDF-1\.4/);
+    assert.equal(fake.calls(), 1, 'HEAD converted, GET read the cache');
+    const notOffice = await raw(`/api/runs/${id}/artifact-raw/shots/s01.png?as=pdf`);
+    assert.equal(notOffice.status, 415);
+    assert.equal(JSON.parse(notOffice.text).code, 'NOT_OFFICE');
+  } finally { process.env.PATH = savedPath; fake.cleanup(); }
 });

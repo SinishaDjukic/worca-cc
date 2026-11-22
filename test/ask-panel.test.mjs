@@ -35,7 +35,7 @@ test('ask-panel: shell — the Chat page, open/close as show/hide, ⌘K/Ctrl+K l
       assert.ok(newBtn, 'New chat sits in the head');
       assert.equal(newBtn.type, 'button');
       assert.equal(newBtn.previousElementSibling, head.querySelector('[data-ask-threads-btn]'), 'the + right after the list toggle');
-      assert.match(newBtn.getAttribute('aria-label'), /^New chat /, 'an icon button named New chat, with its key');
+      assert.match(newBtn.getAttribute('aria-label'), /^New chat /, 'named New chat, with its key');
       assert.equal(newBtn.querySelector('svg').getAttribute('aria-hidden'), 'true', 'the plus glyph is decoration');
       assert.ok(newBtn.classList.contains('chat-head-btn') && newBtn.classList.contains('chat-new-plus'));
       assert.ok(page.querySelector('[data-chat-home] > [data-chat-hero-slot] > .ask-composer > .ask-composer-box > [data-chat-composer-lead]:first-child'));
@@ -253,4 +253,24 @@ test('ask-panel: New chat clicked while a send is in flight neither throws nor t
   } finally {
     process.off('unhandledRejection', onRej);
   }
+});
+
+test('ask-panel: a new chat\'s first message tells the tool panel its new id (onToolScope({ created }))', async () => {
+  const hints = [];
+  const fetchHandler = (url, opts) => {
+    if (url === '/api/ask/threads' && opts.method === 'POST') {
+      return { ok: true, status: 201, json: async () => ({ thread: { id: 'ask_0000000a', title: null, createdAt: 't', updatedAt: 't', model: null, effort: null, sessionId: null, context: null, totals: {} } }) };
+    }
+    if (url.startsWith('/api/ask/threads/ask_0000000a/messages')) return { ok: true, status: 202, json: async () => ({ userMessageId: 'askm_u000000a', assistantMessageId: 'askm_0000000a' }) };
+    if (url.startsWith('/api/ask/threads')) return { ok: true, status: 200, json: async () => ({ threads: [] }) };
+    return { ok: true, status: 200, json: async () => ({}) };
+  };
+  const ctx = makePanel({ fetchHandler, deps: { onToolScope: (h) => hints.push(h ?? null) } });
+  ctx.panel.open();
+  await ctx.tick();
+  hints.length = 0;
+  ctx.doc.querySelector('textarea.ask-input').value = 'hello';
+  ctx.doc.querySelector('[data-ask-send]').click();
+  for (let i = 0; i < 6; i++) await ctx.tick();
+  assert.deepEqual(hints.filter(Boolean), [{ created: 'ask_0000000a' }]);
 });

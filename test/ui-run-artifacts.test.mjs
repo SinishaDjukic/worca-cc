@@ -25,8 +25,8 @@ const PROJECT = '/tmp/proj';
 
 const ok = (body) => Promise.resolve({ ok: true, status: 200, json: async () => body });
 
-async function boot({ fetchHandler } = {}) {
-  const dom = trackDom(new JSDOM(readIndexHtml(), { url: 'http://localhost:4317/' }));
+async function boot({ fetchHandler, jsdom = null } = {}) {
+  const dom = trackDom(new JSDOM(readIndexHtml(), { url: 'http://localhost:4317/', ...(jsdom || {}) }));
   const { window } = dom;
   window.Element.prototype.scrollIntoView = function () {};
 
@@ -1344,4 +1344,81 @@ test('the Chat opens an artifact in the same popup viewer (chatDeps.openArtifact
     { kind: 'plan', relPath: 'plans/plan.md', nodeId: 'plan', cycle: 1, bytes: 2048 });
   await settle(ctx.window, 10);
   assert.equal(ctx.window.document.querySelector('.apv .apv-meta').textContent, 'Planner · cycle 1 · 2.0 KB');
+});
+
+test('in the real app: an Office artifact in the run popup probes the raw route\'s ?as=pdf and frames the PDF; a 501 says to install LibreOffice', async () => {
+  const PDF = '/api/runs/p1/artifact-raw/reports/q3.docx?as=pdf';
+  await checkRows([
+    { name: 'HEAD 200: the converted PDF in an <embed>', run: async () => {
+      const ctx = await boot({ fetchHandler: (url) => (url.includes('/artifact-raw/') ? Promise.resolve({ ok: true, status: 200, json: async () => ({}) }) : null) });
+      let hooked = 0;
+      ctx.window.__worcaTestHooks = { officeImport: async () => { hooked += 1; } };
+      await ctx.window.__np.openRunArtifactPopup({ pipelineId: 'p1' }, { kind: null, relPath: 'reports/q3.docx' });
+      await settle(ctx.window, 8);
+      assert.ok(ctx.calls.some((c) => c.url === PDF && c.opts.method === 'HEAD'), 'the probe asks for the PDF form');
+      assert.equal(ctx.window.document.querySelector('.apv embed[type="application/pdf"]')?.getAttribute('src'), PDF);
+      assert.equal(hooked, 0, 'LibreOffice first: no vendor import');
+      assert.equal(ctx.window.document.querySelector('.olp'), null);
+    } },
+    { name: 'HEAD 501, the vendor import fails: "Install LibreOffice" with Download (the graceful degrade)', run: async () => {
+      const ctx = await boot({ fetchHandler: (url) => (url === PDF ? Promise.resolve({ ok: false, status: 501, json: async () => ({}) }) : null) });
+      ctx.window.__worcaTestHooks = { officeImport: () => Promise.reject(new Error('404')) };
+      await ctx.window.__np.openRunArtifactPopup({ pipelineId: 'p1' }, { kind: null, relPath: 'reports/q3.docx' });
+      await settle(ctx.window, 8);
+      const root = ctx.window.document.querySelector('.apv');
+      assert.equal(root.querySelector('.apv-info-note').textContent, 'Install LibreOffice to preview Office files');
+      assert.ok(root.querySelector('.apv-info-dl'));
+    } },
+  ]);
+});
+
+// ── the simplified Office preview (no LibreOffice on the server): the app's artifactViewerDeps load it on a 501 ────────
+const OUTSIDE = { runScripts: 'outside-only', pretendToBeVisual: true };
+async function untilIn(window, fn, tries = 300) { for (let i = 0; i < tries; i++) { if (fn()) return true; await new Promise((r) => setTimeout(r, 2)); } return false; }
+
+test('T-R2 in the real app: HEAD 501 on a run\'s .xlsx renders the simplified preview in the pop-up from the download form', async () => {
+  const { officeVendor } = await import('./helpers/office-vendor.mjs');
+  const { fixture, respond } = await import('./helpers/office-lite-fixtures.mjs');
+  const PDF = '/api/runs/p1/artifact-raw/reports/q3.xlsx?as=pdf';
+  const DL = '/api/runs/p1/artifact-raw/reports/q3.xlsx?download=1';
+  const ctx = await boot({ jsdom: OUTSIDE, fetchHandler: (url, opts) => (url === PDF ? Promise.resolve({ ok: false, status: 501, json: async () => ({}) })
+    : url === DL && (opts.method || 'GET') === 'GET' ? Promise.resolve(respond(fixture('budget.xlsx'))) : null) });
+  const vendor = officeVendor(ctx.window);
+  ctx.window.__worcaTestHooks = { officeImport: vendor.importer };
+  await ctx.window.__np.openRunArtifactPopup({ pipelineId: 'p1' }, { kind: null, relPath: 'reports/q3.xlsx' });
+  const doc = ctx.window.document;
+  assert.ok(await untilIn(ctx.window, () => doc.querySelector('.apv .olp[data-office-path="sheet"]')), doc.querySelector('.apv')?.textContent.slice(0, 300));
+  assert.equal(doc.querySelector('.apv .olp-note').textContent, 'Simplified preview \u2014 install LibreOffice for full fidelity');
+  assert.ok([...doc.querySelectorAll('.apv table.olp-table td')].some((td) => td.textContent === '1,234'));
+  assert.deepEqual(vendor.calls, ['/vendor/jszip/jszip.min.js']);
+  assert.ok(!ctx.calls.some((c) => c.url.includes('/vendor/')), 'vendor code never goes through fetch');
+});
+
+test('T-R4 in the real app: no vendor import until an Office file opens with a 501', async () => {
+  const { officeVendor } = await import('./helpers/office-vendor.mjs');
+  const { fixture, respond } = await import('./helpers/office-lite-fixtures.mjs');
+  const heads = { '/api/runs/p1/artifact-raw/a/ok.docx?as=pdf': 200, '/api/runs/p1/artifact-raw/a/no.docx?as=pdf': 501 };
+  const ctx = await boot({ jsdom: OUTSIDE, fetchHandler: (url, opts) => {
+    if (opts.method === 'HEAD' && heads[url]) return Promise.resolve({ ok: heads[url] === 200, status: heads[url], json: async () => ({}) });
+    if (url === '/api/runs/p1/artifact-raw/a/no.docx?download=1') return Promise.resolve(respond(fixture('memo.docx')));
+    if (url.includes('/artifact?rel=')) return ok({ text: '# Plan\n' });
+    return null;
+  } });
+  const vendor = officeVendor(ctx.window);
+  let count = 0;
+  ctx.window.__worcaTestHooks = { officeImport: (u) => { count += 1; return vendor.importer(u); }, askMarkdown: async () => ({ marked: (await import('marked')).marked, createDOMPurify: (await import('dompurify')).default }) };
+  const doc = ctx.window.document;
+  const close = async () => { doc.querySelector('.apv .apv-close')?.click(); await settle(ctx.window, 4); };
+  await ctx.window.__np.openRunArtifactPopup({ pipelineId: 'p1' }, { kind: 'plan', relPath: 'plans/plan.md', bytes: 7 });
+  await settle(ctx.window, 8);
+  await close();
+  await ctx.window.__np.openRunArtifactPopup({ pipelineId: 'p1' }, { kind: null, relPath: 'a/ok.docx' });
+  await settle(ctx.window, 8);
+  assert.ok(doc.querySelector('.apv embed[type="application/pdf"]'));
+  assert.equal(count, 0);
+  assert.ok(!ctx.calls.some((c) => c.url.includes('/vendor/')));
+  await close();
+  await ctx.window.__np.openRunArtifactPopup({ pipelineId: 'p1' }, { kind: null, relPath: 'a/no.docx' });
+  assert.ok(await untilIn(ctx.window, () => doc.querySelector('.apv .olp[data-office-path="docx"] .docx-wrapper')), doc.querySelector('.apv')?.textContent.slice(0, 300));
+  assert.ok(count >= 1);
 });

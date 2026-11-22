@@ -1524,6 +1524,7 @@ export function selectPlanRows(state) {
   return {
     count,
     noun: `${own(KIND_NOUN, state.kind) ?? 'section'}${count === 1 ? '' : 's'}`,
+    one: own(KIND_NOUN, state.kind) ?? 'section',   // a row's count says it too: "5 sections", "1 slide"
     rows,
     stopped: secs.filter(([, s]) => s.status === 'stopped').map(([id]) => ({ id, name: jobOf(state, id) })),
     failed: secs.filter(([, s]) => s.status === 'failed').map(([id, s]) => ({

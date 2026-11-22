@@ -1,5 +1,6 @@
-// Design P5 Task 5: a design chat turn hands its tool results to the parent (onDesignAction), never acts from a
-// sub-agent or an Ask turn, and runs with no Task, no sign-in probe, no title and no suggestion (surfaceLocked).
+// Design P5 Task 5: the turn of a chat with a design hands its design tool results to the parent (onDesignAction),
+// never acts from a sub-agent or a turn with no design, and is otherwise a plain chat's turn: Task, the sign-in probe,
+// the title, the suggestion and Ask's card hooks all as any chat (only the Workflows chat is surfaceLocked).
 import { test, after } from 'node:test';
 import assert from 'node:assert/strict';
 
@@ -50,20 +51,28 @@ const res = (on, id, text, { isError = false, parent = null } = {}) => push(on, 
 const START = JSON.stringify({ ok: true, requested: { kind: 'design-start', brief: 'x' }, note: 'n' });
 const run = (s, script, deps = {}, over = {}) => makeTurn(s, { design: true, ...over }, { runClaudeImpl: async (o) => { script(o); push(o.onEvent, RESULT()); return { text: '', exitCode: 0 }; }, ...deps });
 
-test('a design turn spawns once, with no Task, no sign-in probe, no title and no suggestion', async () => {
-  let spawns = 0; let opts = null; let titled = 0; let suggested = 0; let authed = 0;
-  const { turn } = makeTurn(seed(), { design: true, suggest: true, firstTurn: false }, {
-    runClaudeImpl: async (o) => { spawns += 1; opts = o; push(o.onEvent, RESULT()); return { text: '', exitCode: 0 }; },
-    generateTitle: async () => { titled += 1; return ''; },
-    generateSuggestion: async () => { suggested += 1; return ''; },
-    suggestionModel: () => 'claude-haiku-4-5', suggestionsEnabled: () => true,
-    claudeAuthState: async () => { authed += 1; return 'unknown'; },
-    budgetStatus: () => ({ blocked: false }),   // as ask-turn.test.mjs:2179: never the real settings
-  });
-  await turn.run();
-  await turn.suggestionPromise;
-  assert.deepEqual([spawns, titled, suggested, authed], [1, 0, 0, 0]);
-  assert.equal(opts.tools.includes('Task'), false);
+test('a design turn spawns as a plain chat\'s turn: Task, the sign-in probe, the title and the suggestion as any chat', async () => {
+  const once = async (design) => {
+    let spawns = 0; let opts = null; let titled = 0; let suggested = 0; let authed = 0;
+    const { turn } = makeTurn(seed(), { design, suggest: true, firstTurn: true }, {
+      runClaudeImpl: async (o) => { spawns += 1; opts = o; push(o.onEvent, RESULT()); return { text: '', exitCode: 0 }; },
+      generateTitle: async () => { titled += 1; return ''; },
+      generateSuggestion: async () => { suggested += 1; return ''; },
+      suggestionModel: () => 'claude-haiku-4-5', suggestionsEnabled: () => true,
+      claudeAuthState: async () => { authed += 1; return 'unknown'; },
+      budgetStatus: () => ({ blocked: false }),   // as ask-turn.test.mjs:2179: never the real settings
+    });
+    assert.equal(turn.surfaceLocked, false, 'only the Workflows chat is surface-locked');
+    await turn.run();
+    await turn.suggestionPromise;
+    return { counts: [spawns, titled, suggested, authed], task: opts.tools.includes('Task'), composer: opts.composer === true };
+  };
+  const design = await once(true);
+  assert.deepEqual(design, await once(false), 'the same spawn, title, suggestion and probe as a chat with no design');
+  assert.deepEqual(design.counts.slice(0, 3), [1, 1, 1], 'one spawn, a title call and a suggestion');
+  assert.ok(design.counts[3] >= 1, 'the sign-in probe ran');
+  assert.equal(design.task, true, 'Task is offered');
+  assert.equal(design.composer, false, 'no composer lockdown');
 });
 test('start_design_build result: the parent acts, its card lands on the reply, posted(true) runs after the store write', async () => {
   const s = seed(); const seen = []; let storedAtPost = null;
@@ -111,28 +120,33 @@ test('store: a design card takes a sub-patch', () => {
 // Guard rows (mutation check): each one fails when one guard of the slice is removed.
 const rest = (s) => getMessage(s.asst.id).blocks.filter((b) => b.kind !== 'tool');
 
-test('a design turn: Ask\'s card hooks stand down, and only the three design tools reach the parent', async () => {
-  const s = seed(); const calls = { validate: 0, track: 0, away: 0, chat: 0, scope: 0, design: 0 };
-  const req = JSON.stringify({ ok: true, requested: { kind: 'global', toggle: 'g' } });
-  const { turn } = run(s, (o) => {
-    call(o.onEvent, 'tu1', 'mcp__worca__propose_run', { projectKey: 'x', prompt: 'p' }); res(o.onEvent, 'tu1', '{"ok":true}');
-    call(o.onEvent, 'tu2', 'mcp__worca__propose_workflow', { task: 'build it' }); res(o.onEvent, 'tu2', '{"ok":true}');
-    call(o.onEvent, 'tu3', 'mcp__worca__track_run', { id: 'abcd1234' }); res(o.onEvent, 'tu3', '{"ok":true}');
-    call(o.onEvent, 'tu4', 'mcp__worca__set_away_now', { mode: 'away' }); res(o.onEvent, 'tu4', req);
-    call(o.onEvent, 'tu5', 'mcp__worca__change_setting', {}); res(o.onEvent, 'tu5', req);
-    call(o.onEvent, 'tu6', 'mcp__worca__propose_scope_switch', { candidates: ['x'] }); res(o.onEvent, 'tu6', '{"ok":true}');
-    call(o.onEvent, 'tu7', 'mcp__worca__ask_question', { answer: 'text', question: 'Which tone?' }); res(o.onEvent, 'tu7', '{"ok":true}');
-  }, {
-    validateProposal: async () => { calls.validate += 1; return { ok: false, errors: ['no'] }; },
-    trackRun: async () => { calls.track += 1; return { ok: true, card: { type: 'progress' } }; },
-    awaySwitch: async () => { calls.away += 1; return { ok: true, line: 'Right now you count as away.' }; },
-    chatAction: async () => { calls.chat += 1; return { ok: false, notice: 'x' }; },
-    validateScopeSwitch: async () => { calls.scope += 1; return { ok: false }; },
-    designAction: async () => { calls.design += 1; return { ok: false, notice: 'x' }; },
-  });
-  await turn.run();
-  assert.deepEqual(rest(s).map((b) => [b.kind, b.text || (b.card && b.card.type) || '']), [], 'no card, no notice');
-  assert.deepEqual(calls, { validate: 0, track: 0, away: 0, chat: 0, scope: 0, design: 0 });
+test('a design turn: Ask\'s card hooks act as in any chat, and an Ask tool never reaches the design parent', async () => {
+  const hooks = async (design) => {
+    const s = seed(); const calls = { validate: 0, track: 0, away: 0, chat: 0, scope: 0, design: 0 };
+    const req = JSON.stringify({ ok: true, requested: { kind: 'global', toggle: 'g' } });
+    const { turn } = run(s, (o) => {
+      call(o.onEvent, 'tu1', 'mcp__worca__propose_run', { projectKey: 'x', prompt: 'p' }); res(o.onEvent, 'tu1', '{"ok":true}');
+      call(o.onEvent, 'tu2', 'mcp__worca__propose_workflow', { task: 'build it' }); res(o.onEvent, 'tu2', '{"ok":true}');
+      call(o.onEvent, 'tu3', 'mcp__worca__track_run', { id: 'abcd1234' }); res(o.onEvent, 'tu3', '{"ok":true}');
+      call(o.onEvent, 'tu4', 'mcp__worca__set_away_now', { mode: 'away' }); res(o.onEvent, 'tu4', req);
+      call(o.onEvent, 'tu5', 'mcp__worca__change_setting', {}); res(o.onEvent, 'tu5', req);
+      call(o.onEvent, 'tu6', 'mcp__worca__propose_scope_switch', { candidates: ['x'] }); res(o.onEvent, 'tu6', '{"ok":true}');
+      call(o.onEvent, 'tu7', 'mcp__worca__ask_question', { answer: 'text', question: 'Which tone?' }); res(o.onEvent, 'tu7', '{"ok":true}');
+    }, {
+      validateProposal: async () => { calls.validate += 1; return { ok: false, errors: ['no'] }; },
+      trackRun: async () => { calls.track += 1; return { ok: true, card: { type: 'progress' } }; },
+      awaySwitch: async () => { calls.away += 1; return { ok: true, line: 'Right now you count as away.' }; },
+      chatAction: async () => { calls.chat += 1; return { ok: false, notice: 'x' }; },
+      validateScopeSwitch: async () => { calls.scope += 1; return { ok: false }; },
+      designAction: async () => { calls.design += 1; return { ok: false, notice: 'x' }; },
+    }, { design });
+    await turn.run();
+    return { calls, rows: rest(s).map((b) => [b.kind, b.text || (b.card && b.card.type) || '']) };
+  };
+  const withDesign = await hooks(true);
+  assert.deepEqual(withDesign, await hooks(false), 'the same cards, notices and hook calls as a chat with no design');
+  assert.equal(withDesign.calls.design, 0, 'only the design tools reach the design parent');
+  assert.ok(Object.entries(withDesign.calls).some(([k, n]) => k !== 'design' && n > 0), 'the Ask card hooks ran');
 });
 test('the parent is asked only for an ok main-stream result naming a request, and a failure always leaves a notice', async () => {
   let calls = 0; const s1 = seed();

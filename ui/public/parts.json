@@ -110,6 +110,7 @@
     "workflows/save-dialog.css",
     "runs/run-graph.css",
     "artifacts/per-step.css",
+    "artifacts/office-lite.css",
     "runs/report-modal.css",
     "team-policy/team-policy.css",
     "mcp-servers/server-sets.css",

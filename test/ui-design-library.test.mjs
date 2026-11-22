@@ -390,7 +390,7 @@ test('More: the prompt and the confirm say what the plan says; Rename hands the 
   items()[1].click();
   assert.equal(menu.hidden, true, 'Delete closed the menu before its confirm');
   await tick();
-  assert.deepEqual(confirms, [{ title: 'Delete this design?', message: 'Its files and chat go. What it cost stays in Statistics.', confirmLabel: 'Delete', danger: true }]);
+  assert.deepEqual(confirms, [{ title: 'Delete this design?', message: 'Its files go; its chat stays. What it cost stays in Statistics.', confirmLabel: 'Delete', danger: true }]);
 });
 test('More: a cancelled prompt or confirm sends nothing', async () => {
   const { button, items, calls, navs, renamed, tick } = rigMore({ answers: [false], prompts: [null] });
@@ -431,7 +431,7 @@ test('More: Delete follows the build at each open', async () => {
 });
 test('More: a 409 re-opens the confirm with the server\'s text in red, still saying what is lost; a second refusal too; a cancel then leaves', async () => {
   const refused = 'the design has a build that is still running or paused';
-  const loss = 'Its files and chat go. What it cost stays in Statistics.';
+  const loss = 'Its files go; its chat stays. What it cost stays in Statistics.';
   const { button, items, calls, confirms, navs, tick } = rigMore({ answers: [true, true, false], deleteAnswers: [[409, { error: refused }], [409, { error: 'A restore is running.' }]] });
   button.click(); items()[1].click(); await tick(); await tick();
   assert.equal(confirms.length, 3);
@@ -497,10 +497,11 @@ test('composer matches the mockup', async () => {
   assert.equal(host.querySelector('.ask-send').tagName, 'BUTTON');
   assert.equal(host.querySelector('.ask-send').disabled, true, 'empty');
 });
-test('the kind chips wrap on a narrow screen: a centred row that spills cuts its first chip off out of reach', () => {
+test('the kind buttons are equal grid columns that wrap on a narrow screen: a centred row that spills cuts its first one off out of reach', () => {
   // The p6t1 browser pass at 390 px: four chips in one centred row overflowed both sides of the Library.
   const rules = cssRules(readStyleCss()).filter((r) => r.sel === '.dz-kinds' && !r.media);
-  assert.ok(rules.some((r) => /(^|;)flex-wrap:wrap(;|$)/.test(r.body)), rules.map((r) => r.body).join(' | '));
+  // Equal grid columns (auto-fit) wrap into rows of equal buttons: one size whatever the word, never spilling.
+  assert.ok(rules.some((r) => /(^|;)display:grid(;|$)/.test(r.body) && /grid-template-columns:repeat\(auto-fit,minmax\(140px,1fr\)\)/.test(r.body)), rules.map((r) => r.body).join(' | '));
 });
 test('send: creates the design with its choices, hands the message over, opens it, with no AI title', async () => {
   const { lib, host, tick, posts, navs, setText, pick } = rig({ rows: [], projects: [{ key: 'p1', name: 'One', exists: true }], created: { design: { id: 'd_000000000009' }, threadId: 'ask_00000001' } });

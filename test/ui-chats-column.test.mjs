@@ -68,9 +68,10 @@ const key = (doc, target, init) => target.dispatchEvent(new doc.defaultView.Keyb
 const toastTitles = (doc) => [...doc.querySelectorAll('.toast .tt')].map((n) => n.textContent);
 const listGets = (rec) => rec.calls.filter((c) => c.startsWith('GET /api/ask/threads?'));
 
-test('head is Chats + View; Pinned, then the Runs day sections; no search, labelled New chat or trash', async () => {
+test('head is Chats, New chat, View (as Runs, New run, View); Pinned, then the Runs day sections; no search or trash', async () => {
   const { col } = await bootOn();
-  assert.deepEqual([...col.querySelector('.runs-head').children].map((n) => n.textContent.trim()), ['Chats', 'View']);
+  assert.deepEqual([...col.querySelector('.runs-head').children].map((n) => n.textContent.trim()), ['Chats', 'New chat', 'View']);
+  assert.ok(col.querySelector('.runs-head > [data-ask-new-btn]'), 'the list\'s New chat starts a chat as the head\'s did');
   assert.deepEqual([...col.querySelectorAll('.runs-sec-head .runs-sec-title')].map((n) => n.textContent),
     ['Pinned', 'Today', 'Yesterday', 'Previous 7 days', 'Previous 30 days', 'Older']);
   assert.deepEqual(['today', 'yesterday', 'week', 'month'].map((id) => col.querySelectorAll(`[data-section="${id}"] .runs-item`).length), [2, 1, 6, 3]);
@@ -177,7 +178,7 @@ test('E on an idle row archives with Undo; Undo restores; the focus lands on the
   assert.deepEqual(rec.patches.at(-1), [`/api/ask/threads/${gone}`, { archived: false }]);
 });
 
-test('the + after the list toggle carries data-ask-new-btn and starts a new chat; the labelled one is gone', async () => {
+test('New chat after the list toggle carries data-ask-new-btn and starts a new chat; it says New chat, like the Runs page\'s New run', async () => {
   const { ctx, doc } = await bootOn();
   const head = doc.querySelector('.chat-head');
   const plus = head.querySelector('[data-ask-new-btn]');
@@ -186,7 +187,8 @@ test('the + after the list toggle carries data-ask-new-btn and starts a new chat
   assert.equal(head.querySelectorAll('[data-ask-new-btn]').length, 2);
   assert.equal(plus.previousElementSibling, head.querySelector('[data-ask-threads-btn]'));
   assert.match(plus.getAttribute('aria-label'), /^New chat /);
-  assert.equal(head.querySelector('.chat-new-btn span'), null, 'no labelled New chat');
+  assert.equal(plus.textContent.trim(), 'New chat', 'its words beside the plus');
+  assert.ok(plus.classList.contains('btn-primary') && plus.classList.contains('btn-sm'), 'a small primary button, as New run');
   ctx.panel.open({ threadId: 'ask_00000002' });
   await ticks(ctx);
   assert.equal(ctx.panel.root.dataset.view, 'thread', 'a real chat is open before the click');
@@ -316,7 +318,8 @@ test('an ask-command frame with a new status refetches the list once; the same s
 
 test('ask-history-cleared: a full clear empties the column at once; a scoped clear drops the named rows and refetches', async () => {
   const list = [...LIST];
-  const { ctx, rec, col } = await bootOn({ list });
+  const closed = [];
+  const { ctx, rec, col } = await bootOn({ list, deps: { onChatsClosed: (ids) => closed.push(ids) } });
   const wait = async () => { await new Promise((r) => setTimeout(r, 300)); await ticks(ctx); };
   assert.ok(rowLink(col, 'ask_00000002'));
   // Scoped: only the named chat goes, before the refetch answers.
@@ -332,6 +335,7 @@ test('ask-history-cleared: a full clear empties the column at once; a scoped cle
   list.length = 0;
   ctx.panel.pushServerFrame({ type: 'ask-history-cleared' });
   ctx.flush();
+  assert.deepEqual(closed, [['ask_00000002'], null], 'the tool panel closes the cleared chats\' tabs (null: every chat)');
   assert.equal(col.querySelectorAll('a.runs-row').length, 0);
   assert.match(col.textContent, /No chats yet\./);
 });
@@ -463,6 +467,24 @@ test('Delete group… confirms the server total (archived included), not the loa
   [...doc.querySelectorAll('.wfv-menu [role="menuitem"]')].find((b) => b.querySelector('.wfv-menu-l').textContent === 'Delete group…').click();
   await new Promise((r) => setTimeout(r, 0));
   assert.equal(asked.message, '“Release prep” and its 3 chats (1 archived) are removed. This cannot be undone.');
+});
+
+test('Archive group and Delete group… tell the tool panel (issue 1064): onChatsClosed gets the ids the server changed', async () => {
+  const closed = [];
+  const groupMenu = (col, doc, label) => {
+    col.querySelector(`.runs-item[data-row-key="cgroup:${GID}"] .runs-more`).click();
+    [...doc.querySelectorAll('.wfv-menu [role="menuitem"]')].find((b) => b.querySelector('.wfv-menu-l').textContent === label).click();
+  };
+  const a = await bootOn({ list: GROUPED, groups: [{ id: GID, name: 'Release prep', count: 2, total: 2 }], deps: { onChatsClosed: (ids) => closed.push(ids) },
+    onGroupCall: (m, url) => (m === 'POST' && url.endsWith('/archive') ? { threadIds: ['ask_00000003'] } : undefined) });
+  groupMenu(a.col, a.doc, 'Archive group');
+  await ticks(a.ctx, 8);
+  assert.deepEqual(closed, [['ask_00000003']]);
+  const d = await bootOn({ list: GROUPED, groups: [{ id: GID, name: 'Release prep', count: 2, total: 2 }], deps: { onChatsClosed: (ids) => closed.push(ids) },
+    confirm: async () => true, onGroupCall: (m) => (m === 'DELETE' ? { threadIds: ['ask_00000004'] } : undefined) });
+  groupMenu(d.col, d.doc, 'Delete group…');
+  await ticks(d.ctx, 8);
+  assert.deepEqual(closed, [['ask_00000003'], ['ask_00000004']]);
 });
 
 test('a group opened because a chat needed you stays open after the chat stops needing you', async () => {
@@ -616,4 +638,32 @@ test('G with a selection opens the picker for the selection, anchored at the bar
   pickerKey(doc, 'Enter');
   await ticks(ctx, 8);
   assert.deepEqual(rec.groupCalls.at(-1)[2].threadIds, ['ask_00000002', 'ask_10000000']);
+});
+
+test('archiving a chat tells the tool panel (issue 1064): onChatsClosed gets the archived ids, never on Undo', async () => {
+  const closed = [];
+  const list = LIST.filter((t) => t.id !== 'ask_00000001');
+  const { doc, col, ctx } = await bootOn({ list, deps: { onChatsClosed: (ids) => closed.push(ids) } });
+  const row = [...col.querySelectorAll('[data-section="week"] a.runs-row')][1];
+  const gone = row.dataset.rowKey.slice('chat:'.length);
+  row.focus();
+  list.splice(list.findIndex((t) => t.id === gone), 1);
+  key(doc, row, { key: 'e' });
+  await ticks(ctx, 6);
+  assert.deepEqual(closed, [[gone]]);
+  doc.querySelector('.toast .toast-act').click();
+  await ticks(ctx);
+  assert.deepEqual(closed, [[gone]], 'Undo (unarchive) closes nothing');
+});
+
+test('the head\'s New chat hides while the list is open; both hide on a new chat (it is what New chat would make)', async () => {
+  const { ctx, doc } = await bootOn();
+  const page = doc.querySelector('[data-chat-page]');
+  const css = (await import('node:fs')).readFileSync('ui/public/chat/chat-shell.css', 'utf8');
+  assert.match(css, /\.chat-page:is\(\[data-history="open"\],\[data-fresh="yes"\]\) \.chat-head > \.chat-new-plus\{display:none;\}/);
+  assert.match(css, /\.chat-page\[data-fresh="yes"\] \.runs-head > \.chat-list-new\{display:none;\}/, 'the list\'s New chat hides on a new chat too');
+  assert.equal(page.dataset.fresh, 'yes', 'a new chat');
+  ctx.panel.open({ threadId: 'ask_00000002' });
+  await ticks(ctx);
+  assert.equal(page.dataset.fresh, 'no', 'a chat with its messages');
 });

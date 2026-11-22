@@ -29,6 +29,7 @@ export const SETTING_EXCLUSIONS = Object.freeze([
   { match: ['policy', 'metrics'], what: 'Team policy and team metrics', why: 'they publish to the team' },
   { match: ['memory.team'], what: 'Team memory sharing', why: 'it publishes to the team' },
   { match: ['guardrails'], what: 'Guardrail sets', why: 'editing a set can loosen it' },
+  { match: ['chatLinksInPanel'], what: 'Open chat links in the panel', why: 'how this person reads the chat — the Settings page sets it' },
   { match: ['hideBuiltinModels'], what: 'Hide built-in models', why: 'once set it overrides the team default, and a Revert could not bring that back — Models › Catalogue sets it' },
   { match: ['hideBuiltinEngines'], what: 'Hide built-in models (Codex, Copilot)', why: 'Models › Catalogue sets it, one switch per harness' },
 ]);

@@ -21,7 +21,7 @@ const ENV_KEYS = ['WORCA_HOME', 'HOME', 'USERPROFILE', 'WORCA_MOCK', 'WORCA_ALLO
   'WORCA_CF_ACCESS_AUD', 'WORCA_TERMINAL_REMOTE', 'WORCA_TERMINAL_PTY', 'SHELL', 'WORCA_AGENT_USER', 'WORCA_AGENT_HOME'];
 const prev = Object.fromEntries(ENV_KEYS.map((k) => [k, process.env[k]]));
 const git = (cwd, args) => spawnSync('git', args, { cwd, encoding: 'utf8' });
-let homeDir, repo, wt, srv, port, key;
+let homeDir, repo, wt, srv, port, key, chatId;
 
 /** A request through the public Host with a valid Access token (a signed-in person). */
 function remote(method, path, body) {
@@ -67,6 +67,9 @@ before(async () => {
   key = projectKey(repo);
   wt = await realpath(await mkdtemp(join(tmpdir(), 'worca-cc-apiterm-remote-wt-')));
   seedPipelineRow({ id: 'run-live', projectKey: key, status: 'paused', branch: { feature: 'worca/f', worktreeDir: wt } });
+  const askStore = await import('../src/core/ask/store.mjs');
+  chatId = askStore.createThread({ title: 'hosted chat' }).id;
+  askStore.updateThread(chatId, { context: { pinned: true, projectKey: key } });
   const mod = await import('../ui/server.mjs');
   srv = mod.server;
   await new Promise((r) => srv.listen(0, '127.0.0.1', r));
@@ -97,6 +100,9 @@ test('hosted without WORCA_TERMINAL_REMOTE: open refused, nothing listed', async
   const p = await remote('POST', `/api/projects/${key}/terminal`, {});
   assert.equal(p.status, 403, 'nor in the project\'s own folder');
   assert.equal(p.body.code, 'TERMINAL_DISABLED');
+  const c = await remote('POST', `/api/ask/threads/${chatId}/terminal`, {});
+  assert.equal(c.status, 403, 'nor in a chat\'s folder (the tool panel\'s chat terminal)');
+  assert.equal(c.body.code, 'TERMINAL_DISABLED');
 });
 
 test('WORCA_TERMINAL_REMOTE=1 lets a signed-in person open one', async () => {

@@ -12,6 +12,8 @@ const cases = [
   ['actions: the low port must not be above the high port', 'actions', 'actions.portRange', 'The low port can’t be higher than the high port.'],
   ['actions.portLow must be a whole number from 1024 to 65535', 'actions', 'actions.portLow', '“Low port” must be a whole number from 1024 to 65535.'],
   ['actions.maxCheckouts must be a whole number from 1 to 100', 'actions', 'actions.maxCheckouts', '“Keep at most” must be a whole number from 1 to 100.'],
+  ['actions.previewPorts must be one of all | range', 'actions', 'actions.previewPorts', '“Preview ports” must be one of all, range.'],
+  ['actions.previewPorts stays "Actions range only" on a hosted Worca', 'actions', 'actions.previewPorts', 'Preview ports stays "Actions range only" on a hosted Worca.'],
   ['The editor command must be text of at most 2000 characters', 'actions', 'actions.editor', 'The editor command must be at most 2000 characters.'],
   ['runLimits.maxConcurrentRuns must be a whole number from 1 to 20', 'runLimits', 'runLimits.maxConcurrentRuns', '“Runs at once” must be a whole number from 1 to 20.'],
   ['askMaxTurns must be an integer between 1 and 500', 'askMaxTurns', 'askMaxTurns', '“Turn limit” must be an integer between 1 and 500.'],
@@ -53,4 +55,8 @@ test('settingsErrorReply: table of validator messages → {error, field}; no-ctx
       assert.match(settingsErrorReply(new Error('sync.remote must be a remote NAME (e.g. origin), never a URL'), 'sync').error, /e\.g\. origin/);
     } },
   ]);
+});
+
+test('the chatLinksInPanel label (issue 1064)', () => {
+  assert.equal(SETTINGS_FIELD_LABELS.chatLinksInPanel, 'Open chat links in the panel');
 });
