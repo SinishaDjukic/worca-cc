@@ -474,3 +474,54 @@ test('fix 1 (b): tests-app.mjs sends one answer at a time and one request for cl
   await settle();
   assert.ok(rw().length === 2 && rw().every((b) => !b.disabled), 'the last card can be answered again');
 });
+
+// Fix round 6: user decision 2026-11-22 (review I4) and review M1.
+const TOO_LONG = 'This result is too long for Worca to break on purpose. Check the checker works on results up to about 40,000 characters.';
+
+test('user decision 2026-11-22: a result too long to break: "Check the checker did not start", its words, and only Back', () => {
+  const { doc, root } = dom();
+  const asked = [];
+  renderChecker(root, null, { ...NOOP, back: () => asked.push('back'), retry: () => asked.push('retry') },
+    { doc, exampleName: 'Bulk invoice export', criterion: { id: 'k_1', text: 'Names a metric' }, empty: { kind: 'long', text: TOO_LONG } });
+  const box = root.querySelector('.wft-cc-state');
+  assert.equal(box.querySelector('h2').textContent, 'Check the checker did not start');
+  assert.equal(box.querySelector('.wft-cc-say').textContent, TOO_LONG);
+  assert.deepEqual([...box.querySelectorAll('button')].map((b) => [b.textContent, b.className]), [['Back', 'btn btn-sm']], 'no Try again that can never work');
+  btnByText(box, 'Back').click();
+  assert.deepEqual(asked, ['back']);
+});
+
+test('user decision 2026-11-22: tests-app.mjs tells the too-long refusal from the other 422s', async () => {
+  const { TOO_LONG_TEXT } = await import('../src/shared/workflow-tests/criteria-text.mjs');
+  assert.equal(TOO_LONG_TEXT, TOO_LONG);
+  const { createWorkflowTests } = await import('../ui/public/workflows/tests-app.mjs');
+  const B = '/api/workflows/wf_a/tests';
+  const failed = { ...view(), round: { id: 7, criterionId: 'k_1', status: 'failed', detail: 'This round did not finish. Start a new round.' }, cards: [] };
+  const routes = {
+    [`GET ${B}/examples/4/checker/7`]: { status: 200, body: failed },
+    [`POST ${B}/examples/4/checker`]: { status: 422, body: { error: TOO_LONG } },
+  };
+  const h = harness(routes);
+  const ctl = createWorkflowTests({ doc: h.doc, win: h.win, fetch: h.fetch, safeJson: (r) => r.json(), composer: () => ({ template: () => ({ id: 'wf_a' }) }),
+    api: {}, versions: () => ({ showPage: () => ctl.enterList() }), currentView: () => 'workflows', confirmModal: async () => true, openNewPipeline: () => {},
+    hdMarkdown: {}, mock: () => false, runPageShows: () => false });
+  ctl.route('wf_a', 'tests/4/checker/7', true);
+  await settle();
+  btnByText(h.root, 'Try again').click();
+  await settle();
+  const box = h.root.querySelector('.wft-cc-state');
+  assert.equal(box.querySelector('h2').textContent, 'Check the checker did not start');
+  assert.equal(box.querySelector('.wft-cc-say').textContent, TOO_LONG);
+  assert.equal(btnByText(box, 'Try again'), undefined);
+  assert.equal(box.querySelector('.wft-cc-stop'), null, 'not the amber limit line');
+});
+
+test('review M1: a planted card whose excerpt is empty (a copy that only removed lines) draws no excerpt box', () => {
+  const { doc, root } = dom();
+  const v = view();
+  v.cards[2] = { ...v.cards[2], excerpt: '' };
+  renderChecker(root, v, NOOP, { doc, exampleName: 'E' });
+  const cards = [...root.querySelectorAll('.wft-cc-card')];
+  assert.deepEqual(cards.map((c) => c.querySelectorAll('.wft-cc-excerpt').length), [1, 1, 0, 1]);
+  assert.equal(cards[2].querySelector('.wft-cc-planted').textContent, 'Broken on purpose: how to measure removed');
+});

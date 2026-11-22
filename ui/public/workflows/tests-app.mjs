@@ -19,7 +19,7 @@ import { renderCompare, renderSideBySide, openWholeResult, askMoreTries } from '
 import { renderChecker, renderTrustReport } from './criteria-pages.mjs';
 import { SAVE_FIRST_TEXT, CHANGES_NOT_READ_TITLE, NO_DIFF_TEXT, PATCH_CUT_TEXT } from '../../../src/shared/workflow-tests/project-text.mjs';
 import { useLabel as wftUseLabel } from '../../../src/shared/workflow-tests/compare.mjs';
-import { NO_SOURCE_TEXT, NO_PASSED_TRY_TEXT } from '../../../src/shared/workflow-tests/criteria-text.mjs';
+import { NO_SOURCE_TEXT, NO_PASSED_TRY_TEXT, TOO_LONG_TEXT } from '../../../src/shared/workflow-tests/criteria-text.mjs';
 
 const WFT_EMPTY = Object.freeze({ view: 'list', workflowId: null, overview: null, error: null, example: null, runId: null,
   exampleId: null, tryIndex: 0, data: null, scripts: [], perTryUsd: null, editorToken: 0, roundId: null });
@@ -143,7 +143,8 @@ export function createWorkflowTests(deps) {
         const r = await wftCall('POST', `${wftBase(id)}/runs/${run.id}/stop`, { only: 'criteria' });   // review M5: never the test itself
         if (!r.ok) { notify({ tone: 'err', title: 'Not stopped', detail: r.error }); return; }
         const n = r.data && r.data.run ? r.data.run.checked : null;
-        if (still()) { wft.checkStopped = n ? { runId: run.id, done: n.done, of: n.of } : null; await wftRefresh(); }
+        // Round 5 review M6: a stop with no count is kept too (no line), so the band that follows takes the Stop button's focus.
+        if (still()) { wft.checkStopped = n ? { runId: run.id, done: n.done, of: n.of } : { runId: run.id }; await wftRefresh(); }
       },
       // Task 22 (board 12): By criterion's Confirm 4 results and Fix it
       confirmCriterion: (exampleId, c) => wftConfirmCriterion(exampleId, c, { exampleName: c.exampleName }),
@@ -168,7 +169,7 @@ export function createWorkflowTests(deps) {
     };
     win.setTimeout(tick, 2000);
   }
-  /** D97 (Task 22): Check the checker of one saved criterion. A 422 is P4-M3's no good result or the spending limit (the page, no
+  /** D97 (Task 22): Check the checker of one saved criterion. A 422 is P4-M3's no good result, the spending limit or a result too long to break (the page, no
    *  round); a 409 (a round of it runs), and every other refusal, a toast in the server's words. */
   async function wftConfirmCriterion(exampleId, criterion, { exampleName = null } = {}) {
     const id = wftWorkflowId();
@@ -179,7 +180,8 @@ export function createWorkflowTests(deps) {
     const keep = { ...WFT_CHECKER_FRESH, exampleId, checkerCrit: { id: criterion.id, text: criterion.text || '' }, checkerName: exampleName || null, checkerFrom: from };
     if (r.ok) { wftShow('checker', { ...keep, roundId: r.data.round.id }); return; }
     if (r.status === 422) {
-      const kind = r.error === NO_SOURCE_TEXT ? 'none' : r.error === NO_PASSED_TRY_TEXT ? 'tried' : 'limit';   // board 59 A: 'tried'
+      // Board 59 A: 'tried'; user decision 2026-11-22: 'long', a result too long to break on purpose.
+      const kind = r.error === NO_SOURCE_TEXT ? 'none' : r.error === NO_PASSED_TRY_TEXT ? 'tried' : r.error === TOO_LONG_TEXT ? 'long' : 'limit';
       wftShow('checker', { ...keep, roundId: null, checkerEmpty: { kind, text: r.error } });
       return;
     }

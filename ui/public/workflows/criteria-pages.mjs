@@ -193,10 +193,12 @@ export function compareCriteriaNotes(doc, c, { root, act, testAgain, checkCriter
     return b;
   };
   let top = null;
+  const stoppedHere = !!stopped && stopped.runId === c.run.id;
+  const counted = stoppedHere && Number.isFinite(stopped.done) && Number.isFinite(stopped.of);   // runner.stop's `checked`, else none
   if (checking) {
     top = band('plain', 'spinner', CHECKING_TEXT, 'status');
     if (crit.stoppable && typeof stopCheck === 'function') top.append(act(STOP_CHECKING, () => stopCheck(), 'btn btn-sm', 'wft-crit-stop', { busy: true }));
-  } else if (stopped && stopped.runId === c.run.id && canCheck) {   // board 59 C: until a new check or test starts, or the page is left
+  } else if (stoppedHere && counted && canCheck) {   // board 59 C: until a new check or test starts, or the page is left
     top = band('plain', null, stoppedCheckText(stopped.done, stopped.of), 'status');
     // Review M6: it takes the Stop button's focus key, so a keyboard user's focus moves here after the stop, not to the page body.
     top.append(act(CHECK_THEM, () => checkCriteria(), 'btn btn-sm', 'wft-crit-stop', { busy: true, busyKey: 'wft-crit-check' }));
@@ -221,6 +223,15 @@ export function compareCriteriaNotes(doc, c, { root, act, testAgain, checkCriter
     const words = el(doc, 'span', '', notEveryTryText(unchecked));
     if (canCheck) words.append(doc.createTextNode(' '), act(CHECK_THEM, () => checkCriteria(), 'wft-linkbtn', 'wft-crit-check-line', { busy: true, busyKey: 'wft-crit-check' }));
     fair.append(icon(doc, 'alert', 14), words);
+  }
+  // Round 5 review M6: a stop with no count draws the usual band; it takes the Stop button's focus key (its first button, else the band
+  // itself, else the fair line's button), so a keyboard user's focus moves there, never to the page body.
+  if (stoppedHere && !checking && !(counted && canCheck)) {
+    const to = (top && top.querySelector('button')) || top || (fair && fair.querySelector('button'));
+    if (to) {
+      to.dataset.focusKey = 'wft-crit-stop';
+      if (to === top) top.setAttribute('tabindex', '-1');
+    }
   }
   const only = Array.isArray(notes.unreliableOnly) ? notes.unreliableOnly : [];
   const short = only.length && c.labels.a ? unreliableOnlyText(c.labels.a, c.labels.b, only.map((x) => x.name)) : null;
@@ -249,7 +260,9 @@ const ccSource = (doc, v, c, dateText) => el(doc, 'span', c.planted ? 'wft-cc-pl
 /** One result card: its head and excerpt; `verdict` adds Worca's verdict and the person's answer (or Right / Wrong). */
 function ccCard(doc, v, c, { verdict = true, answer = null, busy = false, dateText = (s) => s } = {}) {
   const card = el(doc, 'div', 'wft-cc-card');
-  card.append(ccSource(doc, v, c, dateText), el(doc, 'div', 'wft-cc-excerpt', plainText(c.excerpt)));   // board 59 D: plain text
+  card.append(ccSource(doc, v, c, dateText));
+  // Board 59 D: plain text. Fix round 6 (review M1): a copy that only removed lines changed none of its own, so no empty box is drawn.
+  if (String(c.excerpt ?? '').trim()) card.append(el(doc, 'div', 'wft-cc-excerpt', plainText(c.excerpt)));
   if (!verdict) return card;
   const line = el(doc, 'div', 'wft-cc-verdict');
   const dot = el(doc, 'span', `wft-dot ${c.met ? 'ok' : 'no'}`);
@@ -350,7 +363,7 @@ function ccReworded(doc, v, reworded, actions, { rewording = false, dateText = (
 }
 
 /**
- * Board 11 (ready and done) and P4-M3's states. `v` = GET …/checker/:round, or null with `empty` = { kind: 'none' | 'tried' | 'limit', text }
+ * Board 11 (ready and done) and P4-M3's states. `v` = GET …/checker/:round, or null with `empty` = { kind: 'none' | 'tried' | 'limit' | 'long', text }
  * (no round: no good result yet, board 59 A's tried but no try passed, or the spending limit; `criterion` = { text } names it then). `reworded` = { text } (Worca's clearer
  * words after a Wrong) or { error, limit } (the reword route's refusal). actions: answer(judgementId, right), reword(), back(), use(), example() (the crumb; back() when absent),
  * useWords(text), keepWords(), retry() (a new round of the criterion), tryOnce() (Try your draft once now), pickLiked() (board 59 A: the
@@ -373,8 +386,11 @@ export function renderChecker(root, v, actions, { doc, exampleName, criterion = 
   const back = () => btn(doc, 'Back', () => actions.back(), 'btn btn-sm');
   if (!v) {   // P4-M3: no round, so no cards
     const limit = !!empty && empty.kind === 'limit';
-    const box = ccBox(doc, { head: limit ? 'Check the checker did not start' : 'Worca needs a good result first' });
+    const long = !!empty && empty.kind === 'long';
+    const box = ccBox(doc, { head: limit || long ? 'Check the checker did not start' : 'Worca needs a good result first' });
     if (limit) box.append(ccStop(doc, 'limit', empty.text || ''), ccActs(doc, back(), busyBtn(doc, 'Try again', () => actions.retry(), 'btn btn-sm')));
+    // User decision 2026-11-22: a result too long to break on purpose. Back only: a new try of the same result can never work.
+    else if (long) box.append(el(doc, 'p', 'wft-cc-say', empty.text || ''), ccActs(doc, back()));
     else if (empty && empty.kind === 'tried') {   // board 59 A: tried, but no try passed
       box.append(el(doc, 'p', 'wft-cc-say', empty.text || ''),
         ccActs(doc, back(), btn(doc, 'Pick a result you liked', () => actions.pickLiked(), 'btn btn-sm btn-primary')));

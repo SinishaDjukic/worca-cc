@@ -163,3 +163,51 @@ test('review M6: after Stop checking, focus moves to "Check them on these tries"
   assert.equal(root.ownerDocument.activeElement, check);
   assert.equal(check.dataset.busyKey, 'wft-crit-check', 'still busy as every "Check them on these tries"');
 });
+
+test('round 5 review M6: after a stop with no count, focus moves to the band that follows (its first button, else the band), never the body', () => {
+  // The criteria changed after the test: the usual band and its "Check them on these tries".
+  const a = bootCmp(cmp({ criteria: crit({ checking: true, stoppable: true }) }), { stopCheck: () => {} });
+  btnByText(a.root, 'Stop checking').focus();
+  a.again(cmp(), { checkStopped: { runId: 7 } });
+  const band = a.root.querySelector('.wft-crit-band');
+  assert.notEqual(band.querySelector('.wft-crit-band-l').textContent.slice(0, 16), 'You stopped the ', 'no count: the usual band, no new words');
+  assert.equal(a.root.ownerDocument.activeElement, band.querySelector('button'));
+  assert.equal(band.querySelector('button').dataset.busyKey, 'wft-crit-check', 'still busy as every "Check them on these tries"');
+  // Every criterion checked: the band has no button, so the band itself takes the focus.
+  const b = bootCmp(cmp({ criteria: crit({ checking: true, stoppable: true }) }), { stopCheck: () => {} });
+  btnByText(b.root, 'Stop checking').focus();
+  b.again(cmp({ notes: { unreliableOnly: [], notChecked: [] } }), { checkStopped: { runId: 7 } });
+  const ok = b.root.querySelector('.wft-crit-band');
+  assert.equal(ok.querySelector('.wft-crit-band-l').textContent, 'Worca checked your criteria on these tries.');
+  assert.equal(b.root.ownerDocument.activeElement, ok);
+  assert.equal(ok.getAttribute('tabindex'), '-1');
+});
+
+test('round 5 review M6: tests-app.mjs keeps a stop with no count, so the focus moves to the band that follows', async () => {
+  const { createWorkflowTests } = await import('../ui/public/workflows/tests-app.mjs');
+  const B = '/api/workflows/wf_a/tests';
+  let checking = true;
+  const compare = cmp();
+  delete compare.criteria;
+  const routes = {
+    [`GET ${B}`]: { status: 200, body: overview },
+    [`GET ${B}/runs/7/compare`]: () => ({ status: 200, body: compare }),
+    [`GET ${B}/runs/7/criteria`]: () => ({ status: 200, body: crit({ checking, stoppable: checking }) }),
+    [`POST ${B}/runs/7/stop`]: () => { checking = false; return { status: 200, body: { run: { ...compare.run, checked: null } } }; },
+  };
+  const h = harness(routes);
+  const ctl = createWorkflowTests({ doc: h.doc, win: h.win, fetch: h.fetch, safeJson: (r) => r.json(), composer: () => ({ template: () => ({ id: 'wf_a' }) }),
+    api: {}, versions: () => ({ showPage: () => ctl.enterList() }), currentView: () => 'workflows', confirmModal: async () => true, openNewPipeline: () => {},
+    hdMarkdown: {}, mock: () => false, runPageShows: () => false });
+  ctl.enterList();
+  await settle();
+  click(h.root.querySelector('.wft-latest'));
+  await settle();
+  const stop = btnByText(h.root, 'Stop checking');
+  stop.focus();
+  click(stop);
+  await settle();
+  const band = h.root.querySelector('.wft-crit-band');
+  assert.notEqual(band.querySelector('.wft-crit-band-l').textContent.slice(0, 16), 'You stopped the ');
+  assert.equal(h.doc.activeElement, band.querySelector('button'), 'never the page body');
+});
