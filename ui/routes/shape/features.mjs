@@ -9,7 +9,7 @@ import { recordFeatureFigures } from '../../../src/core/shape/measure.mjs';
 import { prAutoFinisher } from '../../../src/core/pr-auto-finish.mjs';
 import { engineRefusalFor } from '../../../src/shared/engine-switch.mjs';
 import { parseReleaseChoice } from '../../../src/shared/release-version.mjs';
-import { ResumeError, badRequest, broadcastFeature, emitChanged, featureShipping, findShipCardIn, flipCard, liveRunEntry, liveSliceOf, resumeRun, scheduleVerb, schedulerTick, shipCtxOf, shipFeatureNow } from '../../server.mjs';
+import { ResumeError, badRequest, broadcastFeature, emitChanged, featureShipping, findShipCardIn, flipCard, isFinishingRun, liveRunEntry, liveSliceOf, resumeRun, scheduleVerb, schedulerTick, shipCtxOf, shipFeatureNow } from '../../server.mjs';
 
 export function register(app) {
 /** F29: an async handler never lets a throw escape (Express 4, no unhandledRejection handler). /api/resume's mapping. */
@@ -31,7 +31,7 @@ app.get('/api/shape/features/:id', async (req, res) => {
   try {
     // F47: a re-planned feature answers with the feature that carries on; `replanOf` names the one asked for.
     const cur = currentFeatureId(req.params.id);
-    const view = featureView(cur, { live: liveSliceOf });
+    const view = featureView(cur, { live: liveSliceOf, finishing: isFinishingRun });
     if (!view) return res.status(404).json({ error: 'unknown feature' });
     // P17: the Ship as default, once every slice is done (async: it reads each slice's results.json).
     // s4: and the release row's version hint (the repo's last tag / package.json).
@@ -60,7 +60,7 @@ app.get('/api/shape/pipelines/:pid/slice', async (req, res) => {
 app.get('/api/shape/pipelines/:pid/card', (req, res) => {
   try {
     // shaped: the entry's in-memory shaping (state.shaping is never persisted). A settled entry still carries it.
-    const out = shaperCard(req.params.pid, { live: liveSliceOf, shaped: (pid) => !!liveRunEntry(pid)?.orch?.state?.shaping });
+    const out = shaperCard(req.params.pid, { live: liveSliceOf, finishing: isFinishingRun, shaped: (pid) => !!liveRunEntry(pid)?.orch?.state?.shaping });
     if (!out) return res.status(404).json({ error: 'not a shaped run' });
     res.json(out);
   } catch (err) { shapeRouteError(res, err); }
@@ -72,14 +72,14 @@ app.post('/api/shape/features/:id/cancel', (req, res) => {
     if (shapeRefused(res, out)) return;
     emitChanged('schedules-changed', 'canceled');
     broadcastFeature(req.params.id);
-    res.json({ ok: true, ...out, feature: featureView(req.params.id, { live: liveSliceOf }) });
+    res.json({ ok: true, ...out, feature: featureView(req.params.id, { live: liveSliceOf, finishing: isFinishingRun }) });
   } catch (err) { shapeRouteError(res, err); }
 });
 
 app.post('/api/shape/features/:id/resume', async (req, res) => {
   try {
     const by = actorOf(req);
-    const out = resumeFeature(req.params.id, { live: liveSliceOf, by });
+    const out = resumeFeature(req.params.id, { live: liveSliceOf, finishing: isFinishingRun, by });
     if (shapeRefused(res, out)) return;
     if (out.action === 'none') return res.status(409).json({ error: 'no slice is stopped' });
     let runId = null;
@@ -252,7 +252,7 @@ app.get('/api/shape/plans', (req, res) => {
       // liveSliceOf keeps a `paused` entry (F26): show it as paused, not as shaping.
       const state = live ? (live.status === 'paused' ? 'paused' : live.waiting ? 'waiting' : live.approved ? 'running' : 'shaping')
         : PLAN_STATE[p.pipelineStatus || p.linkStatus] || 'shaping';
-      return { ...p, state, feature: p.featureId ? featureView(currentFeatureId(p.featureId), { live: liveSliceOf }) : null };
+      return { ...p, state, feature: p.featureId ? featureView(currentFeatureId(p.featureId), { live: liveSliceOf, finishing: isFinishingRun }) : null };
     });
     res.json({ plans: rows });
   } catch (err) { shapeRouteError(res, err); }

@@ -364,7 +364,7 @@ function sliceRequirements(f, r) {
   return { ids, check: last ? requirementsCheck(ids, texts, last.issues) : null };
 }
 
-export function featureView(id, { live = () => null, oneCard = false } = {}) {
+export function featureView(id, { live = () => null, finishing = () => false, oneCard = false } = {}) {
   const f = featureRow(id);
   if (!f) return null;
   let ask = null;
@@ -391,14 +391,15 @@ export function featureView(id, { live = () => null, oneCard = false } = {}) {
   const done = slices.filter((s) => s.state === 'done').length;
   const h = slices.find((s, i) => HALTS.has(s.state) || (i > 0 && STUCK.has(s.state) && slices[i - 1].state === 'done'));
   const waiting = h ? slices.filter((s) => s.index > h.index && (s.state === 'planned' || s.state === 'missed')).map((s) => s.index) : [];
-  const status = f.status === 'active' && done === slices.length ? 'done' : f.status;
   // D3: the run that waits for the owner's Start now ("Ask me before each run"); never persisted.
   const held = slices.find((s) => s.state === 'held') || null;
   // D24: Ship as once every slice is done, on a feature that is still active and not shipped. The suggestion is
   // async (featureShipSuggestion); the GET route merges it.
   const lastPrUrl = slices.length ? (slices[slices.length - 1].pr?.url || null) : null;
   // Small runs C5 (D11): a feature with a Verifier check ships only once the latest check is clean or accepted.
-  const verify = verifyView(f, live);
+  const verify = verifyView(f, live, slices, finishing);
+  // With the flag on, a halted Verifier waits for Resume, so its feature is not done: the card's controls are for an active one.
+  const status = f.status === 'active' && done === slices.length && !(verify && verify.state === 'halted' && shaperSmallRunsOn()) ? 'done' : f.status;
   const verified = !verify || verify.state === 'clean' || verify.state === 'accepted';
   // A ship whose PRs were all closed unmerged is withdrawn: the feature ships again (the ship route clears the record).
   const shipPrs = slices.map((s) => s.pr).filter((p) => p && p.url);
@@ -721,13 +722,13 @@ export function featureRootSource(featureId) {
  *  orch.state.shaping), the run's own decision log. null for an unknown run and for a plain one.
  *  Shaper small runs B1 (D1, D3): `smallRuns: true`, last, when the marker saved on the feature's origin run (before the
  *  split, on the run itself) is set, with the one card's log words; without it the answer is dev's exact shape. */
-export function shaperCard(pipelineId, { live = () => null, shaped = () => false } = {}) {
+export function shaperCard(pipelineId, { live = () => null, finishing = () => false, shaped = () => false } = {}) {
   const pid = String(pipelineId);
   if (!getDb().prepare('SELECT 1 FROM pipelines WHERE id = ?').get(pid)) return null;
   const at = featureOfPipeline(pid);
   const fid = at ? currentFeatureId(at.featureId) : null;
   const featureMarked = !!fid && smallRunsOfFeature(fid);
-  const feature = fid ? featureView(fid, { live, oneCard: featureMarked }) : null;
+  const feature = fid ? featureView(fid, { live, finishing, oneCard: featureMarked }) : null;
   if (!feature && !shaped(pid)) return null;
   const marked = feature ? featureMarked : smallRunsOfPipeline(pid);
   // B2 (D18): the Care saved at the Start step, for a marked run; absent until Start is answered.
@@ -948,15 +949,16 @@ export function rechainWaiting(id, index, { by = null, now = Date.now() } = {}) 
  *  Stopped/error/failed, or missed/canceled behind a done slice (F43) → a new ticket for slice k, re-chained so the
  *  waiting slices follow it.
  *  @returns {null|{error, status}|{action:'resume', pipelineId, index}|{action:'restart', ticketId}|{action:'none'}} */
-export function resumeFeature(id, { live = () => null, by = null, now = Date.now() } = {}) {
+export function resumeFeature(id, { live = () => null, finishing = () => false, by = null, now = Date.now() } = {}) {
   const f = featureRow(id);
   if (!f) return null;
   const refused = notActive(f);
   if (refused) return refused;
-  const view = featureView(id, { live });
-  // Small runs C5: every run done and the Verifier halted (failed or stopped) → a fresh check for the same head.
+  const view = featureView(id, { live, finishing });
+  // Small runs C5: every run done and the Verifier halted (failed, stopped, or settled with the flag off) → a fresh check,
+  // with the flag on only (startVerifyCheck starts none without it).
   if (!view.halted && view.verify && view.verify.state === 'halted') {
-    const v = startVerifyCheck(id, { by, now });
+    const v = startVerifyCheck(id, { by, now, finishing });
     return v ? { action: 'restart', ticketId: v.ticketId } : { action: 'none' };
   }
   if (!view.halted) return { action: 'none' };

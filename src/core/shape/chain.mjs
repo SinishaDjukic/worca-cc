@@ -16,7 +16,7 @@ export { createHeldStops } from './held-stops.mjs';
 /**
  * afterRunSettled's hook (D17): the Verifier first (small runs C5: a check may start, or a Verifier run's result is
  * recorded), then the feature's figures. Returns the Verifier's Ship-card promise, which the PR finish chains after, or
- * undefined. deps = { tick, offerShip, broadcastFeature, flagEnabled? }. Never throws.
+ * undefined. deps = { tick, offerShip, broadcastFeature, finishing?, flagEnabled? }. Never throws.
  */
 export function recordSettledFigures(state, deps = {}) {
   const card = verifyAfterSettled(state, deps);

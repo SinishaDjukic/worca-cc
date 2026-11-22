@@ -8,7 +8,7 @@
 import { readFileSync, statSync } from 'node:fs';
 import { join } from 'node:path';
 import { getDb, tx } from '../db.mjs';
-import { createTicket, getTicket } from '../scheduler.mjs';
+import { MERGE_BACK_WAIT_MS, createTicket, getTicket } from '../scheduler.mjs';
 import { featureView, featureOfPipeline, changeAgreedRequirementsIn } from './features.mjs';
 import { latestFinishedSlice } from './chain.mjs';
 import { recordFeatureFigures } from './measure.mjs';
@@ -54,22 +54,28 @@ const fixCyclesOf = (featureId) => careRunPlan(careOfFeature(featureId)?.positio
 const allRunsDone = (view) => view.slices.length > 0
   && view.slices.every((s) => s.state === 'done' && (s.rounds || []).every((r) => !LIVE_ROUND.has(r.status) && r.status === 'done'));
 
+/** A run reads done before its commit and teardown. `finishing(pipelineId)` (the server's isFinishingRun) says this process
+ *  is still inside one: whether any run or round of the feature is. */
+const stillFinishing = (slices, finishing) => (slices || []).some((s) => [s, ...(s.rounds || [])].some((r) => r.pipelineId && finishing(r.pipelineId)));
+
 /**
  * D7: start the next check when every run and round is done, no check is verifying and the head moved since the latest
  * check. Round: after `gaps` the series goes on (round + 1, same extra); otherwise a new series starts at round 1. A
- * halted latest check is replaced by a fresh one for the same round, whatever the head.
+ * halted latest check is replaced by a fresh one for the same round, whatever the head. Nothing starts with the flag off
+ * (its result would not be recorded), nor while a run is still `finishing` (its own settle starts the check).
  * One tx. → {round, ticketId} | null
  */
-export function startVerifyCheck(featureId, { by = null, now = Date.now() } = {}) {
+export function startVerifyCheck(featureId, { by = null, now = Date.now(), finishing = () => false, deps = {} } = {}) {
+  if (!shaperSmallRunsOn(deps)) return null;
   let out = null;
   tx(() => {
     const f = rowOf(featureId);
     if (!f || f.status !== 'active') return;
     const view = featureView(f.id);
-    if (!view || !allRunsDone(view)) return;
+    if (!view || !allRunsDone(view) || stillFinishing(view.slices, finishing)) return;
     const all = checksOf(f.outline);
     // A halted check (its Verifier run failed or stopped) is dropped and run again: same round, same extra, any head.
-    const retry = all.length && checkHalted(all.at(-1)) ? all.at(-1) : null;
+    const retry = all.length && checkHalted(all.at(-1), finishing) ? all.at(-1) : null;
     const checks = retry ? all.slice(0, -1) : all;
     if (checks.some((c) => c.state === 'verifying')) return;
     const head = latestFinishedSlice(f.id);
@@ -184,15 +190,17 @@ function readResultFile(dir) {
  * afterRunSettled's hook, before the figures, the Ship card and the PR finish. A Verifier run settled `done` records its
  * result, starts its gap runs (D6), re-records the figures, repaints the card and, on a clean or accepted check, returns
  * `deps.offerShip(last slice's pipeline id)` (caught). A slice or round settled `done` may start the next check. A
- * failed or stopped Verifier run writes nothing: its check reads halted, and
- * the feature's Resume (or the next settle) starts a fresh one. Never throws. → Promise | undefined
+ * failed or stopped Verifier run writes nothing and repaints the card: its check reads halted. A settle with the flag off
+ * writes nothing: its check reads halted once the flag is on (MERGE_BACK_WAIT_MS after the run's last write). The feature's
+ * Resume (or the next settle) starts a fresh one. `deps.finishing` = the server's isFinishingRun. Never throws. → Promise | undefined
  */
 export function verifyAfterSettled(state, deps = {}) {
   try {
-    if (!shaperSmallRunsOn(deps) || !state || !state.id || state.status !== 'done') return undefined;
+    if (!shaperSmallRunsOn(deps) || !state || !state.id || !(state.status === 'done' || HALTED_RUN.has(state.status))) return undefined;
     const tick = () => { try { if (deps.tick) deps.tick(); } catch { /* a hint only */ } };
     const paint = (fid) => { try { if (deps.broadcastFeature) deps.broadcastFeature(fid); } catch { /* a hint only */ } };
     const vc = verifyCheckOfPipeline(state.id);
+    if (state.status !== 'done') { if (vc) paint(vc.featureId); return undefined; }
     if (vc) {
       if (!smallRunsOfFeature(vc.featureId)) return undefined;
       const file = readResultFile(state.pipelineDir);
@@ -210,7 +218,7 @@ export function verifyAfterSettled(state, deps = {}) {
     }
     const at = featureOfPipeline(roundOrigin(state.id));
     if (!at || !at.featureId || !smallRunsOfFeature(at.featureId)) return undefined;
-    if (startVerifyCheck(at.featureId)) { paint(at.featureId); tick(); }
+    if (startVerifyCheck(at.featureId, { finishing: deps.finishing, deps })) { paint(at.featureId); tick(); }
     return undefined;
   } catch (err) {
     console.error(`[worca-ui] verifier failed: ${err?.message || err}`);
@@ -220,40 +228,62 @@ export function verifyAfterSettled(state, deps = {}) {
 
 const pipelineOfCheck = (c) => c.pipelineId || (c.ticketId ? getTicket(c.ticketId)?.pipelineId : null) || null;
 
-/** A verifying check's stored rows only: 'halted' (its Verifier run failed or stopped, or its ticket never ran),
- *  'paused' (paused or interrupted: dev's resume finishes it), else 'verifying'. */
-function storedRunState(c, pipelineId) {
+const pipelineRow = (id) => getDb().prepare('SELECT status, updated_at FROM pipelines WHERE id = ?').get(id);
+/** A done run whose settle has come and gone. This process is asked first (`finishing`); the clock is only for a run no
+ *  process holds: the scheduler's merge-back wait after its row's last write. */
+const settledBefore = (id, p, finishing) => p.status === 'done' && !finishing(id) && !(Date.now() - Date.parse(p.updated_at) < MERGE_BACK_WAIT_MS);
+
+/** A verifying check's stored rows only: 'halted' (its Verifier run failed or stopped, its ticket never ran, or, with the
+ *  flag on, its run is done and settled without a result on record: the flag was off then), 'paused' (paused or
+ *  interrupted: dev's resume finishes it), else 'verifying'. With the flag on, a run still `finishing` is never halted. */
+function storedRunState(c, pipelineId, finishing) {
   if (pipelineId) {
-    const p = getDb().prepare('SELECT status FROM pipelines WHERE id = ?').get(pipelineId);
-    if (p && HALTED_RUN.has(p.status)) return 'halted';
+    const p = pipelineRow(pipelineId);
+    if (p && HALTED_RUN.has(p.status)) return shaperSmallRunsOn() && finishing(pipelineId) ? 'verifying' : 'halted';
     if (p && PAUSED_RUN.has(p.status)) return 'paused';
+    if (p && settledBefore(pipelineId, p, finishing) && shaperSmallRunsOn()) return 'halted';
     return 'verifying';
   }
   const t = c.ticketId ? getTicket(c.ticketId) : null;
   return t && HALTED_TICKET.has(t.status) ? 'halted' : 'verifying';
 }
 
-/** A verifying check whose Verifier halted: it holds neither its head nor the series (a fresh check replaces it). */
-const checkHalted = (c) => !!c && c.state === 'verifying' && storedRunState(c, pipelineOfCheck(c)) === 'halted';
+/** The re-check after `gaps` that never started: every run is done, the head moved since the check, and the head settled
+ *  while the flag was off. Only with the flag on: no check starts with it off. */
+function recheckMissed(f, c, slices, finishing) {
+  if (!slices || f.status !== 'active' || !allRunsDone({ slices }) || stillFinishing(slices, finishing)) return false;
+  const head = latestFinishedSlice(f.id);
+  if (!head || (c.head && c.head.pipelineId === head.pipelineId)) return false;
+  const p = pipelineRow(head.pipelineId);
+  return !!p && settledBefore(head.pipelineId, p, finishing) && shaperSmallRunsOn();
+}
 
-/** The state the card reads from the latest check: a verifying check's live Verifier run can be asking, paused or halted. */
-function viewState(c, pipelineId, live) {
+/** A verifying check whose Verifier halted: it holds neither its head nor the series (a fresh check replaces it). */
+const checkHalted = (c, finishing) => !!c && c.state === 'verifying' && storedRunState(c, pipelineOfCheck(c), finishing) === 'halted';
+
+/** The state the card reads from the latest check: a verifying check's live Verifier run can be asking, paused or halted;
+ *  a `gaps` check whose re-check never started is halted too. */
+function viewState(f, c, pipelineId, live, slices, finishing) {
+  if (c.state === 'gaps' && recheckMissed(f, c, slices, finishing)) return 'halted';
   if (c.state !== 'verifying') return c.state;
   const l = pipelineId ? live(pipelineId) : null;
   if (l) return l.stop ? 'asking' : l.status === 'paused' ? 'paused' : 'verifying';
-  return storedRunState(c, pipelineId);
+  const s = storedRunState(c, pipelineId, finishing);
+  // Every run done and one still finishing: its settle starts the fresh check itself, so there is nothing to resume yet.
+  return s === 'halted' && shaperSmallRunsOn() && slices && allRunsDone({ slices }) && stillFinishing(slices, finishing) ? 'verifying' : s;
 }
 
 /**
  * featureView's `verify` key: the latest check as the card reads it, or null (no check: the key stays absent).
- * `f` is the feature row with its parsed outline; `live` the server's runs overlay (liveSliceOf).
+ * `f` is the feature row with its parsed outline; `live` the server's runs overlay (liveSliceOf); `slices` featureView's;
+ * `finishing` the server's isFinishingRun.
  */
-export function verifyView(f, live = () => null) {
+export function verifyView(f, live = () => null, slices = null, finishing = () => false) {
   const checks = checksOf(f && f.outline);
   if (!checks.length) return null;
   const c = checks.at(-1);
   const pipelineId = pipelineOfCheck(c);
-  const state = viewState(c, pipelineId, live);
+  const state = viewState(f, c, pipelineId, live, slices, finishing);
   const l = state === 'asking' && pipelineId ? live(pipelineId) : null;
   const gaps = c.result && Array.isArray(c.result.gaps) ? c.result.gaps : [];
   return {

@@ -12,7 +12,7 @@ import { useTempHome } from './helpers/temp-home.mjs';
 import { seedPipelineRow } from './helpers/db-seed.mjs';
 import { getDb } from '../src/core/db.mjs';
 import { projectKey } from '../src/core/store.mjs';
-import { getTicket } from '../src/core/scheduler.mjs';
+import { MERGE_BACK_WAIT_MS, getTicket } from '../src/core/scheduler.mjs';
 import { createSliceFeature, featureView, liveSliceFrom, resumeFeature } from '../src/core/shape/features.mjs';
 import { startVerifyCheck, recordVerifyResult, verifyAfterSettled, verifyCheckOfPipeline } from '../src/core/shape/verifier.mjs';
 import { recordSettledFigures, featureOfAnyPipeline } from '../src/core/shape/chain.mjs';
@@ -56,6 +56,8 @@ const doneBranch = (pid) => { git(root, 'branch', '-f', `feat/${pid}`, 'main'); 
 function world({ states = ['done', 'done', 'done', 'done'], position = 'balanced', approveEach = false } = {}) {
   getDb().prepare("UPDATE scheduled_runs SET status = 'canceled' WHERE status = 'scheduled'").run();
   const runs = new Map();
+  const tearingDown = new Set();   // the pipelines the server's isFinishingRun answers true for
+  const finishing = (pid) => tearingDown.has(pid);
   const calls = { offer: [], ticks: 0, repaints: [] };
   const origin = pipe(states[0]);
   getDb().prepare('UPDATE pipelines SET shape_stats = ? WHERE id = ?').run(JSON.stringify({ smallRuns: true }), origin);
@@ -83,11 +85,11 @@ function world({ states = ['done', 'done', 'done', 'done'], position = 'balanced
     return liveSliceFrom({ runId: e.id, status: e.status, pendingQuestion: e.pendingQuestion, approved: true });
   };
   const deps = { tick: () => { calls.ticks += 1; }, broadcastFeature: (id) => calls.repaints.push(id),
-    offerShip: (pid) => { calls.offer.push(pid); return Promise.resolve(pid); } };
+    offerShip: (pid) => { calls.offer.push(pid); return Promise.resolve(pid); }, finishing };
   const settle = (pid, status = 'done', extra = {}) => verifyAfterSettled({ id: pid, status, ...extra }, deps);
   const outline = () => JSON.parse(getDb().prepare('SELECT outline FROM shape_features WHERE id = ?').get(f.id).outline);
   const checks = () => (outline().verify || { checks: [] }).checks;
-  const view = () => featureView(f.id, { live: liveSliceOf });
+  const view = () => featureView(f.id, { live: liveSliceOf, finishing });
   const slicesCount = () => getDb().prepare('SELECT COUNT(*) AS n FROM shape_feature_slices WHERE feature_id = ?').get(f.id).n;
   /** The latest check's Verifier run settles with `file` ({result, headSha, decision}) in its run dir. */
   const verifierSettles = (file, status = 'done') => {
@@ -102,7 +104,8 @@ function world({ states = ['done', 'done', 'done', 'done'], position = 'balanced
     const rows = getDb().prepare("SELECT idx, ticket_id FROM shape_feature_slices WHERE feature_id = ? AND kind = 'change' AND pipeline_id IS NULL ORDER BY idx").all(f.id);
     return rows.map((r) => { const pid = fire(r.ticket_id, 'done', r.idx); settle(pid); return pid; });
   };
-  return { f, pids, runs, calls, deps, settle, outline, checks, view, slicesCount, verifierSettles, gapRunsSettle, fire, ticketOf };
+  const resume = () => resumeFeature(f.id, { live: liveSliceOf, finishing });
+  return { f, pids, runs, tearingDown, finishing, resume, calls, deps, settle, outline, checks, view, slicesCount, verifierSettles, gapRunsSettle, fire, ticketOf };
 }
 
 const result = (gaps) => ({ held: OWNED.filter((id) => !gaps.includes(id)),
@@ -394,6 +397,9 @@ test('resumeFeature on a halted Verifier restarts the check (the card\'s Resume)
   w.settle(w.pids[3]);
   const old = w.checks()[0].ticketId;
   w.verifierSettles(null, 'error');
+  const halted = w.view();
+  assert.equal(halted.status, 'active', 'a halted Verifier is not done');
+  assert.equal(oneCardModel({ own: null, card: { feature: halted, smallRuns: true } }).base.controls.halted, true, 'the card offers Resume');
   const out = resumeFeature(w.f.id, { live: () => null });
   assert.equal(out.action, 'restart');
   assert.notEqual(out.ticketId, old);
@@ -423,4 +429,159 @@ test('a failed Verifier run records nothing; flag off starts no Verifier', () =>
     assert.equal(w3.checks().length, 0);
     assert.equal('verify' in w3.view(), false);
   } finally { process.env.WORCA_FLAGS = 'shaperSmallRuns'; }
+});
+
+// A settle while the flag was off starts no check and records no result. With the flag on again, the check reads halted
+// (the card's Resume) instead of keeping Ship at NOT_READY for good. A run reads done before its commit and teardown: the
+// server's `finishing` probe answers for a run it holds, and the clock (MERGE_BACK_WAIT_MS) only for a run no process holds.
+const aged = (pid, ms) => getDb().prepare('UPDATE pipelines SET updated_at = ? WHERE id = ?').run(new Date(Date.now() - ms).toISOString(), pid);
+const flagOff = (fn) => { process.env.WORCA_FLAGS = ''; try { return fn(); } finally { process.env.WORCA_FLAGS = 'shaperSmallRuns'; } };
+const OLD = MERGE_BACK_WAIT_MS + 1000;
+
+test('a Verifier run that settled with the flag off reads halted once the flag is on again; Resume starts a fresh check, then Ready to ship', async () => {
+  const w = world();
+  w.settle(w.pids[3]);
+  const old = w.checks()[0];
+  const { pid } = flagOff(() => w.verifierSettles({ result: result([]), headSha: 'abc', decision: null }));
+  assert.equal(w.checks()[0].result, null, 'the flag was off: nothing recorded');
+  aged(pid, 0);
+  assert.equal(w.view().verify.state, 'verifying', 'just done: its settle may still come');
+  assert.equal(startVerifyCheck(w.f.id), null);
+  assert.deepEqual(resumeFeature(w.f.id), { action: 'none' });
+  aged(pid, OLD);
+  assert.equal(flagOff(() => w.view().verify.state), 'verifying', 'flag off: a fresh check could not be recorded either');
+  assert.deepEqual(flagOff(() => resumeFeature(w.f.id)), { action: 'none' });
+  const v = w.view();
+  assert.equal(v.verify.state, 'halted');
+  assert.equal(v.ship.ready, false);
+  const one = oneCardModel({ own: null, card: { feature: v, smallRuns: true } });
+  assert.equal(one.word, 'Stopped');
+  assert.equal(one.base.controls.halted, true, 'the card offers Resume');
+  const out = resumeFeature(w.f.id);
+  assert.equal(out.action, 'restart');
+  assert.deepEqual(w.checks().map((c) => [c.round, c.ticketId, c.state]), [[1, out.ticketId, 'verifying']], 'the lost check is replaced');
+  assert.notEqual(out.ticketId, old.ticketId);
+  await w.verifierSettles({ result: result([]), headSha: 'def', decision: null }).out;
+  assert.equal(w.view().ship.ready, true);
+});
+
+test('a gap run that settled with the flag off reads halted once the flag is on again; Resume starts round 2, then Ready to ship', async () => {
+  const w = world();
+  w.settle(w.pids[3]);
+  w.verifierSettles({ result: result(['R-po-2']), headSha: 'abc', decision: null });
+  const [gapPid] = flagOff(() => w.gapRunsSettle());
+  assert.equal(w.checks().length, 1, 'the flag was off: no re-check');
+  aged(gapPid, 0);
+  assert.equal(w.view().verify.state, 'gaps', 'just done: its settle may still come');
+  assert.deepEqual(resumeFeature(w.f.id), { action: 'none' });
+  aged(gapPid, OLD);
+  assert.equal(flagOff(() => w.view().verify.state), 'gaps');
+  assert.deepEqual(flagOff(() => resumeFeature(w.f.id)), { action: 'none' });
+  const v = w.view();
+  assert.equal(v.verify.state, 'halted');
+  assert.equal(v.ship.ready, false);
+  const out = resumeFeature(w.f.id);
+  assert.equal(out.action, 'restart');
+  assert.deepEqual(w.checks().map((c) => [c.round, c.state]), [[1, 'gaps'], [2, 'verifying']], 'the series goes on and the gaps stay on record');
+  assert.deepEqual(resumeFeature(w.f.id), { action: 'none' }, 'a second Resume starts nothing');
+  await w.verifierSettles({ result: result([]), headSha: 'def', decision: null }).out;
+  assert.equal(w.view().verify.state, 'clean');
+  assert.equal(w.view().ship.ready, true);
+});
+
+test('gaps with the gap run still to build or running never read halted', () => {
+  const w = world();
+  w.settle(w.pids[3]);
+  const { pid } = w.verifierSettles({ result: result(['R-po-2']), headSha: 'abc', decision: null });
+  for (const p of [...w.pids, pid]) aged(p, OLD);
+  assert.equal(w.view().verify.state, 'gaps', 'the gap run is still to build');
+  const { idx, ticket_id: t } = getDb().prepare("SELECT idx, ticket_id FROM shape_feature_slices WHERE feature_id = ? AND kind = 'change'").get(w.f.id);
+  const live = w.fire(t, 'running', idx);
+  aged(live, OLD);
+  assert.equal(w.view().verify.state, 'gaps', 'the gap run is running');
+});
+
+const controlsHalted = (view) => oneCardModel({ own: null, card: { feature: view, smallRuns: true } }).base.controls.halted;
+const ticketCount = () => getDb().prepare('SELECT COUNT(*) AS n FROM scheduled_runs').get().n;
+
+test('a Verifier run still finishing is never halted, however old its row; once it is not, the clock decides', () => {
+  const w = world();
+  w.settle(w.pids[3]);
+  const { pid } = flagOff(() => w.verifierSettles({ result: result([]), headSha: 'abc', decision: null }));
+  aged(pid, OLD);
+  w.tearingDown.add(pid);
+  const tickets = ticketCount();
+  assert.equal(w.view().verify.state, 'verifying');
+  assert.equal(controlsHalted(w.view()), false);
+  assert.deepEqual(w.resume(), { action: 'none' });
+  w.settle(w.pids[0]);   // another run's late settle starts nothing over it either
+  assert.equal(startVerifyCheck(w.f.id, { finishing: w.finishing }), null);
+  assert.equal(ticketCount(), tickets);
+  w.tearingDown.clear();
+  aged(pid, MERGE_BACK_WAIT_MS - 60_000);
+  assert.equal(w.view().verify.state, 'verifying', 'no process holds it: not before the merge-back wait');
+  aged(pid, OLD);
+  assert.equal(w.view().verify.state, 'halted');
+  assert.equal(w.resume().action, 'restart');
+});
+
+test('a head still finishing starts no check and offers no Resume; its own settle starts the re-check', () => {
+  const w = world();
+  w.settle(w.pids[3]);
+  w.verifierSettles({ result: result(['R-po-2']), headSha: 'abc', decision: null });
+  const { idx, ticket_id: t } = getDb().prepare("SELECT idx, ticket_id FROM shape_feature_slices WHERE feature_id = ? AND kind = 'change'").get(w.f.id);
+  const gap = w.fire(t, 'done', idx);
+  aged(gap, OLD);
+  w.tearingDown.add(gap);
+  assert.equal(w.view().verify.state, 'gaps');
+  assert.deepEqual(w.resume(), { action: 'none' });
+  w.settle(w.pids[0]);
+  assert.equal(w.checks().length, 1, 'no check on a head that has not committed');
+  w.tearingDown.clear();
+  assert.equal(w.view().verify.state, 'halted', 'not finishing and past the wait');
+  w.settle(gap);
+  assert.deepEqual(w.checks().map((c) => [c.round, c.state, c.head.pipelineId]), [[1, 'gaps', w.pids[3]], [2, 'verifying', gap]]);
+});
+
+test('a failed Verifier run still finishing reads verifying; its settle repaints the card, which then offers Resume', () => {
+  const w = world();
+  w.settle(w.pids[3]);
+  const pid = w.fire(w.checks()[0].ticketId, 'error');
+  w.tearingDown.add(pid);
+  assert.equal(w.view().verify.state, 'verifying');
+  assert.deepEqual(w.resume(), { action: 'none' });
+  w.tearingDown.clear();
+  const before = w.calls.repaints.length;
+  w.settle(pid, 'error');
+  assert.deepEqual(w.calls.repaints.slice(before), [w.f.id]);
+  assert.equal(w.view().verify.state, 'halted');
+  assert.equal(w.resume().action, 'restart');
+  // A failed check with a head that is still committing waits for it: that settle starts the fresh check.
+  const w2 = world();
+  w2.settle(w2.pids[3]);
+  w2.verifierSettles(null, 'error');
+  w2.tearingDown.add(w2.pids[3]);
+  assert.equal(w2.view().verify.state, 'verifying');
+  assert.deepEqual(w2.resume(), { action: 'none' });
+});
+
+test('flag off: a failed Verifier offers no Resume and starts no run; flag on again, Resume works and the check is recorded', async () => {
+  const w = world();
+  w.settle(w.pids[3]);
+  w.verifierSettles(null, 'error');
+  const tickets = ticketCount();
+  flagOff(() => {
+    const v = w.view();
+    assert.equal(v.status, 'done');
+    assert.equal(controlsHalted(v), false);
+    assert.deepEqual(w.resume(), { action: 'none' });
+    assert.equal(startVerifyCheck(w.f.id), null);
+  });
+  assert.equal(ticketCount(), tickets, 'no Verifier run was made');
+  assert.equal(controlsHalted(w.view()), true);
+  const out = w.resume();
+  assert.equal(out.action, 'restart');
+  await w.verifierSettles({ result: result([]), headSha: 'def', decision: null }).out;
+  assert.deepEqual(w.checks().map((c) => [c.ticketId, c.state]), [[out.ticketId, 'clean']]);
+  assert.equal(w.view().ship.ready, true);
 });

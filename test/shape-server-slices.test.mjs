@@ -1582,3 +1582,37 @@ test('D3: /slice owns[].word equals the feature\'s shown.word for the same id; f
     assert.ok(v.ship.smallRuns.owned.every((o) => !('shown' in o)));
   });
 });
+
+// ── The Verifier's settle: the routes ask isFinishingRun ───────────────────────────────────────────────────────────────
+test('a Verifier run this server is still finishing: view and card read verifying and Resume is 409; settled, it reads halted; flag off, Resume is 409 and starts nothing', () => withEnvVars(SMALL_ON, async () => {
+  const outline = outlineOf(2);
+  outline.slices[0].requirements = ['R-po-1'];
+  outline.slices[1].requirements = ['R-po-2'];
+  outline.agreed = [{ id: 'R-po-1', text: 'People see it' }, { id: 'R-po-2', text: 'People export it' }];
+  outline.leftOut = [];
+  const f = mk(2, 'done', { outline });
+  const db = getDb();
+  db.prepare('UPDATE pipelines SET shape_stats = ? WHERE id = ?').run(JSON.stringify({ smallRuns: true }), f.pid);
+  const p2 = pipe('done');
+  db.prepare('UPDATE shape_feature_slices SET pipeline_id = ? WHERE feature_id = ? AND idx = 2').run(p2, f.id);
+  db.prepare("UPDATE scheduled_runs SET status = 'fired', pipeline_id = ? WHERE id = (SELECT ticket_id FROM shape_feature_slices WHERE feature_id = ? AND idx = 2)").run(p2, f.id);
+  const v = pipe('done');
+  db.prepare("UPDATE pipelines SET updated_at = '2026-01-01T00:00:00.000Z' WHERE id = ?").run(v);
+  const row = JSON.parse(db.prepare('SELECT outline FROM shape_features WHERE id = ?').get(f.id).outline);
+  row.verify = { checks: [{ round: 1, ticketId: null, pipelineId: v, head: { index: 2, pipelineId: p2 }, headSha: null, state: 'verifying', result: null, gapRuns: [], extra: 0, fixCycles: 1, at: '2026-01-01T00:00:00.000Z' }] };
+  db.prepare('UPDATE shape_features SET outline = ? WHERE id = ?').run(JSON.stringify(row), f.id);
+  const e = liveEntry(v, { status: 'done' });   // the row and the frame read done; the run's promise is still open
+  const card = async () => (await (await get(`/api/shape/pipelines/${f.pid}/card`)).json()).feature;
+  try {
+    assert.equal((await view(f.id)).verify.state, 'verifying');
+    assert.equal((await card()).verify.state, 'verifying');
+    assert.equal((await post(`/api/shape/features/${f.id}/resume`, {})).status, 409);
+    e.settled = true;
+    assert.deepEqual([(await view(f.id)).verify.state, (await view(f.id)).status, (await card()).verify.state], ['halted', 'active', 'halted']);
+  } finally { dropEntry(e); }
+  await withEnvVars(SMALL_OFF, async () => {
+    const n = db.prepare('SELECT COUNT(*) AS n FROM scheduled_runs').get().n;
+    assert.equal((await post(`/api/shape/features/${f.id}/resume`, {})).status, 409);
+    assert.equal(db.prepare('SELECT COUNT(*) AS n FROM scheduled_runs').get().n, n, 'flag off: no Verifier run');
+  });
+}));
