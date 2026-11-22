@@ -27,10 +27,11 @@ test('yaml and smol-toml are exact-pinned runtime dependencies, locked with inte
     // gsap + playwright-core: the promo video kit (assets/promo-kit: the film runtime, real-UI plate capture on a system Chrome).
     // diff: Folder runs' changes.patch (src/core/folder-copy.mjs, jsdiff createTwoFilesPatch).
     // tar: GitHub's .tar.gz archives read without git (src/core/git-free/archive.mjs).
+    // docx-preview + jszip: the browser-side Office preview fallback (ui/public/artifacts/office-lite.mjs), served from node_modules.
     // morphdom: the Design preview bridge's in-place section merge (src/core/design/preview/bridge.js, build doc only).
     // fflate: Design's zip export (src/core/design/export.mjs, L25).
     // @lobehub/icons-static-svg: the Models page's brand marks, served one file at a time at /vendor/brand-icons (ui/server.mjs).
-    assert.deepEqual(Object.keys(pkg.dependencies).sort(), ['@highlightjs/cdn-assets', '@lobehub/icons-static-svg', '@modelcontextprotocol/sdk', '@ricky0123/vad-web', '@xterm/addon-fit', '@xterm/xterm', 'diff', 'dompurify', 'express', 'fflate', 'gsap', 'htmlparser2', 'marked', 'morphdom', 'onnxruntime-web', 'playwright-core', 'smol-toml', 'tar', 'undici', 'ws', 'yaml']);
+    assert.deepEqual(Object.keys(pkg.dependencies).sort(), ['@highlightjs/cdn-assets', '@lobehub/icons-static-svg', '@modelcontextprotocol/sdk', '@ricky0123/vad-web', '@xterm/addon-fit', '@xterm/xterm', 'diff', 'docx-preview', 'dompurify', 'express', 'fflate', 'gsap', 'htmlparser2', 'jszip', 'marked', 'morphdom', 'onnxruntime-web', 'playwright-core', 'smol-toml', 'tar', 'undici', 'ws', 'yaml']);
   }
 });
 

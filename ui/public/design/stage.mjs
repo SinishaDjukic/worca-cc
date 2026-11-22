@@ -108,7 +108,9 @@ export function detailToFrames(detail, now = Date.now()) {
 export function createStage({ doc, win, host, design, fetch: fetchFn, sendWs, onPicked, onExport, onPlan, onFrameLost, pictures = null }) {
   const designId = design.id;
   const kind = design.kind;
-  const reduced = win.matchMedia?.(REDUCED_QUERY)?.matches === true;
+  // Followed live: a stage kept open (a design chat's Design tab) sees the setting change too.
+  const reducedMq = win.matchMedia?.(REDUCED_QUERY) || null;
+  let reduced = reducedMq?.matches === true;
   // The reducers read the monotonic clock; a preview token's `expiresAt` is epoch ms, so the token clock is the wall.
   const clock = () => win.performance.now();
   const wallNow = () => (win.performance.timeOrigin || 0) + win.performance.now();
@@ -461,10 +463,18 @@ export function createStage({ doc, win, host, design, fetch: fetchFn, sendWs, on
   }
   function cancelPaint() {
     if (paintId === null) return;
-    if (reduced) win.clearTimeout(paintId);
-    else win.cancelAnimationFrame(paintId);
+    win.clearTimeout(paintId);                    // either kind: reduced motion may have changed since it was set
+    win.cancelAnimationFrame(paintId);
     paintId = null;
   }
+  const onReducedChange = () => {
+    if (destroyed || reduced === (reducedMq.matches === true)) return;
+    reduced = reducedMq.matches === true;
+    state = { ...state, reduced };
+    cancelPaint();
+    schedulePaint();
+  };
+  reducedMq?.addEventListener?.('change', onReducedChange);
 
   function paint() {
     paintId = null;
@@ -603,6 +613,7 @@ export function createStage({ doc, win, host, design, fetch: fetchFn, sendWs, on
       unsubscribe();
       cancelPaint();
       cancelSettle();
+      reducedMq?.removeEventListener?.('change', onReducedChange);
       wrap.removeEventListener('wheel', onWheel, { passive: false });
       wrap.removeEventListener('keydown', onWellKey);
       if (ro) ro.disconnect();

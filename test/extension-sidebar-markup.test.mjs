@@ -61,7 +61,7 @@ test('the quote chip has the Ask panel quote chip skeleton', async () => {
   assert.deepEqual(skeleton(buildQuoteChip(h.doc, { text: 'token bucket', src: 'docs.example.com' }, () => {})), skeleton(ref));
 });
 
-test('the head\'s New chat button is the Chat head\'s + (ask-panel.mjs newChatPlus): classes, glyph; named New chat', async () => {
+test('the head\'s New chat button draws the Chat head\'s plus (ask-panel.mjs newChatPlus), icon only in the sidebar; named New chat', async () => {
   const h = await loaded();
   const ref = h.doc.querySelector('.chat-head [data-ask-new-btn]');
   assert.ok(ref, 'the Ask panel rendered its New chat button');
@@ -70,10 +70,13 @@ test('the head\'s New chat button is the Chat head\'s + (ask-panel.mjs newChatPl
   assert.equal(mine.title, 'New chat');
   assert.equal(mine.getAttribute('aria-label'), 'New chat');
   assert.match(ref.title, /^New chat /);
-  const attrs = (b) => ({ cls: b.className, type: b.type, skel: skeleton(b), text: b.textContent,
-    attrs: [...b.attributes].map((a) => a.name).sort(),
-    svg: [...b.querySelector('svg').attributes].map((a) => `${a.name}=${a.value}`).sort(), d: [...b.querySelectorAll('path')].map((p) => p.getAttribute('d')) });
-  assert.deepEqual(attrs(mine), attrs(ref));
+  // The Chat page's button carries its words (a small primary button, as New run); the narrow sidebar keeps the icon form.
+  // Both draw the same plus.
+  assert.equal(ref.textContent.trim(), 'New chat');
+  assert.equal(mine.textContent, '');
+  assert.equal(mine.type, ref.type);
+  const d = (b) => [...b.querySelectorAll('path')].map((p) => p.getAttribute('d'));
+  assert.deepEqual(d(mine), d(ref));
   assert.equal(/\bplus: '([^']+)'/.exec(readFileSync('ui/public/ask-panel.mjs', 'utf8'))[1], NEW_CHAT_ICON_PATH);
 });
 
@@ -98,7 +101,7 @@ test('the shared icons are ask-panel.mjs ICONS, path for path', () => {
 test('the composer row keeps Ask\'s order and controls, minus voice, Sets and the feature attach button, plus the capture button', async () => {
   const h = await loaded();
   const key = (c) => (c.tagName === 'INPUT' ? `input[${c.type}]` : [...c.classList].sort().join(' '));
-  const ref = [...h.doc.querySelector('.ask-composer-row').children].filter((c) => !c.matches('.ask-sets-btn, .ask-voice, .ask-pull-btn')).map(key);
+  const ref = [...h.doc.querySelector('.ask-composer-row').children].filter((c) => !c.matches('.ask-sets-btn, .ask-voice, .ask-composer-ext, .ask-pull-btn')).map(key);   // a view's extension slot (Design's pills) is Ask's only
   const mine = buildComposer(h.doc, { placeholder: 'x', onInput() {}, onSend() {}, onStop() {} });
   const row = mine.el.querySelector('.ask-composer-row');
   assert.deepEqual([...row.children].filter((c) => !c.matches('[data-wx-capture-btn]')).map(key), ref);

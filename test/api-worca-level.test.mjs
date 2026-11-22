@@ -5,7 +5,7 @@
 // policy, ten ledgers, a level-up) are driven through createWorcaLevelService with injected facts.
 import { test, before, after, beforeEach } from 'node:test';
 import assert from 'node:assert/strict';
-import http from 'node:http';
+import { appServer } from './helpers/app-server.mjs';
 import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { useTempHome } from './helpers/temp-home.mjs';
@@ -38,7 +38,7 @@ before(async () => {
   ({ getDb } = await import('../src/core/db.mjs'));
   store = await import('../src/core/worca-levels/store.mjs');
   ({ createWorcaLevelService, ACK_TARGETS: svcAckTargets } = await import('../src/core/worca-levels/service.mjs'));
-  srv = http.createServer(app);
+  srv = appServer(app);
   await new Promise((r) => srv.listen(0, '127.0.0.1', r));
   base = `http://127.0.0.1:${srv.address().port}`;
 });

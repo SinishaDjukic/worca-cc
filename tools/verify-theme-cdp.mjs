@@ -591,8 +591,9 @@ const states = [
           return { doc: [d.scrollWidth, d.clientWidth], main: [main.scrollWidth, main.clientWidth] }; })()`);
         designChecks.push({ what: `no sideways scroll: #${page} at ${width}px`,
           ok: m.doc[0] === m.doc[1] && m.main[0] <= m.main[1], got: m });
-        // The Models page has no intro on any tab (models.html): its tab strip leads the page.
-        if (width === 1440 && page !== 'workflows' && view !== 'models' && !['settings', 'projects', 'schedules', 'stats', 'team-metrics', 'marketplace'].includes(page)) {
+        // The Models page has no intro on any tab (models.html): its tab strip leads the page. Connectors follows
+        // Marketplace's frame (tabs first, no intro), so it skips the check too.
+        if (width === 1440 && page !== 'workflows' && view !== 'models' && !['settings', 'projects', 'schedules', 'stats', 'team-metrics', 'marketplace', 'connectors'].includes(page)) {
           const pi = await ev(`(() => { const v = document.querySelector('[data-view=${JSON.stringify(view)}]');
             const ps = [...v.querySelectorAll('.page-intro')].filter((e) => e.offsetParent); const t = ps[0] ? ps[0].textContent.trim() : '';
             return { n: ps.length, len: t.length, one: !/[.!?]\\s+\\S/.test(t.replace(/[.!?]$/, '')), t }; })()`);

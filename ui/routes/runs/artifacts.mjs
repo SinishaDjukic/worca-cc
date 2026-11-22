@@ -15,7 +15,7 @@ import { TELEMETRY_FILE } from '../../../src/core/telemetry/recorder.mjs';
 import { summarizeTelemetry } from '../../../src/core/telemetry/summary.mjs';
 import fsp from 'node:fs/promises';
 import path from 'node:path';
-import { askFilesRunDir, badRequest, liveDiffOf, liveRunEntry, resolveProjectDir, resolveRunScope, sendArtifactRaw, serveAskFile } from '../../server.mjs';
+import { askFilesRunDir, badRequest, liveDiffOf, liveRunEntry, rawOpts, resolveProjectDir, resolveRunScope, sendArtifactRaw, serveAskFile } from '../../server.mjs';
 
 export function register(app) {
 
@@ -104,7 +104,7 @@ app.get('/api/runs/:id/artifact-raw/*splat', async (req, res) => {
   try {
     const row = findPipelineRowById(req.params.id);
     if (!row) return res.status(404).json({ error: 'pipeline not found' });
-    await sendArtifactRaw(res, row, req.params.splat.join('/'), { download: req.query.download === '1' });
+    await sendArtifactRaw(res, row, req.params.splat.join('/'), rawOpts(req));
   } catch (err) { res.status(500).json({ error: err && err.message ? err.message : String(err) }); }
 });
 app.get('/api/runs/:id/live-diff', async (req, res) => {

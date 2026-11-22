@@ -338,8 +338,11 @@ test('a replay walks every stop again: a control whose state is already right is
   const target = () => doc.querySelector('.guide-layer')?.dataset.target;
   const text = () => doc.querySelector('.guide-layer .guide-text')?.textContent || '';
   const next = () => doc.querySelector('.guide-layer .guide-next');
-  assert.equal(target(), '#topnav-new', 'always from the first hop: New run, in the top bar');
-  click(window, doc.getElementById('topnav-new'));
+  assert.equal(target(), '.nav button[data-nav="runs"]', 'always from the first hop: the Runs row');
+  click(window, doc.querySelector('.nav button[data-nav="runs"]'));
+  await until(() => target() === '#runs-new');
+  assert.equal(target(), '#runs-new', 'then New run, in the Runs page head');
+  click(window, doc.getElementById('runs-new'));
   await settle();
   // The project picker is a stop either way: unpicked it asks for a pick, picked it offers Next.
   assert.equal(target(), '#projectSelect');
@@ -379,7 +382,9 @@ test('a replay walks every stop again: a control whose state is already right is
   await settle();
   click(window, doc.querySelector('.gs-tile[data-step="run"]'));
   await settle();
-  click(window, doc.getElementById('topnav-new'));
+  click(window, doc.querySelector('.nav button[data-nav="runs"]'));
+  await until(() => target() === '#runs-new');
+  click(window, doc.getElementById('runs-new'));
   await until(() => target() === '#projectSelect');
   assert.equal(target(), '#projectSelect', 'a fresh walk: nothing passed earlier carries over');
   if (next()) click(window, next());

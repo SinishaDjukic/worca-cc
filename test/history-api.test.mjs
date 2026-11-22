@@ -7,7 +7,7 @@
 // key/id (kept in module vars), not the legacy literal labels.
 import { test, before, after, beforeEach } from 'node:test';
 import assert from 'node:assert/strict';
-import http from 'node:http';
+import { appServer } from './helpers/app-server.mjs';
 import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -38,7 +38,7 @@ before(async () => {
   alphaId = seeded.id; alphaKey = seeded.key; alphaDir = seeded.dir;
   writeStoreMeta(alphaKey, 'project', { key: alphaKey, name: 'Alpha', path: proj });
   const { app } = await import('../ui/server.mjs');
-  srv = http.createServer(app);
+  srv = appServer(app);
   await new Promise((r) => srv.listen(0, '127.0.0.1', r));
   base = `http://127.0.0.1:${srv.address().port}`;
 });

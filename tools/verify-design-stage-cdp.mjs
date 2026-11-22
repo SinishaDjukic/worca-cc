@@ -304,6 +304,10 @@ try {
   const page = await ctx.newPage();
   const pageErrors = [];
   page.on('pageerror', (e) => pageErrors.push(String(e && e.message).split('\n')[0]));
+  // A design opens in its chat, the stage in the tool panel's Design tab beside it (docs/design.md, "In the chat"). The
+  // plan's numbers are for a wide stage beside a chat column: the panel at its widest (60% of the window). The old
+  // terminal width seeds the panel's first boot only, so this sets the width once and later loads keep it.
+  await ctx.addInitScript(() => { try { if (!localStorage.getItem('worca-cc.tools')) localStorage.setItem('worca-cc.terminal.width', '9999'); } catch { /* no storage */ } });
   await page.goto(`http://localhost:${port}/#design/${ids.stage}`, { waitUntil: 'load', timeout: 60000 });
   console.log(`# browser=${NAME} version=${browser.version()} os=${process.platform} page=http://localhost:<port>/#design/<id>`);
   // The page's own listeners: every `ready` it sees, with its origin and whether its source is a stage frame; and, per
@@ -811,8 +815,14 @@ try {
         + `(${r1(worstMs * (R7_SPEED / 1000) * s)} px), median ${r1(median(lags))} ms; marks hidden while scrolling in ${hidden}` });
   };
   // Scale 1: a stage exactly as wide as the page (fit 1), zoomed in to it.
+  // The Design tab keeps its width when the window grows, so the window and the tab both grow by the shortfall.
   const wide = await look();
-  await page.setViewportSize({ width: VIEW_W + (PAGE_W - wide.wrap.width), height: viewH });
+  const grow = Math.round(PAGE_W - wide.wrap.width);
+  await page.setViewportSize({ width: VIEW_W + grow, height: viewH });
+  await page.evaluate((g) => {
+    const w = parseInt(getComputedStyle(document.body).getPropertyValue('--term-w'), 10);
+    document.body.style.setProperty('--term-w', `${w + g}px`);
+  }, grow);
   await until((w) => document.querySelector('.dz-wrap').clientWidth === w, PAGE_W, 5000);
   await settleCamera();
   const zp = await framePoint();

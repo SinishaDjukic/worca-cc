@@ -1,7 +1,9 @@
 // src/core/requirements/edits.mjs
 // The product owner's edits (plans/requirements-design.md D6): ground truth the model may ask about but
 // never undo. Every edit is a turn, so the next round sees it in the thread.
-import { RequirementsError, SECTIONS, SCOPE_TYPES, ASSUMPTION_STATUSES, LIMITS, clip, normalizeSection, nextIdNumber } from './spec.mjs';
+import {
+  RequirementsError, SECTIONS, SCOPE_TYPES, ASSUMPTION_STATUSES, LIMITS, ITEM_TOO_LONG, clip, tooLongItem, normalizeSection, nextIdNumber,
+} from './spec.mjs';
 import {
   requireFeature, updateFeature, appendTurn, listTurns, listStarts, latestStart, usableBrief, setBriefSections, listAttachments, updateAttachment,
 } from './store.mjs';
@@ -17,10 +19,18 @@ export function editable(seq) {
   if (f.status === 'archived') throw new RequirementsError('CONFLICT', 'this feature is archived; restore it first');
   return f;
 }
+// The product owner's own text is refused when it is too long, never cut: a silent cut lost the end of a step (500 then).
+const refuseTooLong = (texts) => { if (tooLongItem(texts) !== null) throw new RequirementsError('BAD_REQUEST', ITEM_TOO_LONG); };
 const itemText = (v) => {
+  if (typeof v === 'string') refuseTooLong([v]);
   const s = clip(v, LIMITS.item);
   if (!s) throw new RequirementsError('BAD_REQUEST', 'text is required');
   return s;
+};
+/** The texts of a section value as the product owner sent it: the goal's two, or a list's items (one per line). */
+const sectionTexts = (section, value) => {
+  if (section === 'goal') return typeof value === 'string' ? [value] : [value && value.text, value && value.measure];
+  return typeof value === 'string' ? value.split(/\r?\n/) : (Array.isArray(value) ? value : []);
 };
 
 /** A3 D10: `alsoInTx(feature)` runs inside the edit's own transaction with the feature just written (tx() cannot nest), so a
@@ -68,6 +78,7 @@ export function updateHeader(seq, { title, description, scopeType, scopeKey } = 
 export function setSection(seq, section, value, { by = null, alsoInTx = null } = {}) {
   const f = editable(seq);
   if (!SECTIONS.includes(section)) throw new RequirementsError('BAD_REQUEST', `unknown section "${String(section).slice(0, 40)}"`);
+  refuseTooLong(sectionTexts(section, value));
   const spec = { ...f.spec, [section]: normalizeSection(section, value), edited: { ...f.spec.edited, [section]: true } };
   return tx(() => {
     appendTurn(seq, { kind: 'edit', payload: { section } }, { by });

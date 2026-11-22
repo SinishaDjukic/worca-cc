@@ -200,14 +200,14 @@ test('reconcile persists the Team record of a home that requires only skills (it
 });
 
 // ---- "Yours", the scopes payload and the routes (Task 4) -----------------------------------------
-import http from 'node:http';
+import { appServer } from './helpers/app-server.mjs';
 import { skillRequirements, withMcpLocal } from '../src/core/policy/local.mjs';
 
 let srv = null; let base = '';
 async function server() {
   if (srv) return base;
   const { app } = await import('../ui/server.mjs');
-  srv = http.createServer(app);
+  srv = appServer(app);
   await new Promise((r) => srv.listen(0, '127.0.0.1', r));
   base = `http://127.0.0.1:${srv.address().port}`;
   return base;

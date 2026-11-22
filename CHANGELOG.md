@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+### Remotes through an SSH Host alias (#1476)
+
+- A remote through a `~/.ssh/config` Host alias (`git@github-work:me/repo.git`) now counts as the host the alias names: Worca asks `ssh -G` (no connection) and re-parses the URL with the real host, so a pull request from a fork cloned that way goes to `upstream` instead of failing with "Head ref must be a branch", and an Azure DevOps alias gets its org and project. git keeps the URL as written. ssh missing, failing or slow keeps the alias host, and the next lookup asks again; real answers are cached per process.
+- Behaviour change: with a fork cloned through an alias as `origin`, Automations watch the fork instead of `upstream` (the same as a fork cloned without an alias). See [Git automations](docs/git-automations.md).
+
 ### GitHub Copilot on a GHE.com tenant (data residency)
 
 - **A fourth Copilot account type, GHE.com tenant** (`accountType: ghe-com`), with a required **GHE.com host** (`acme.ghe.com`) on the Providers page, in `worca models set copilot accountType=ghe-com enterpriseHost=acme.ghe.com` and in Ask Worca's provider card. The host is validated (a bare `<tenant>.ghe.com`, no path, port or credentials) and stored normalized.

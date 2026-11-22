@@ -136,3 +136,11 @@ test('ask-panel-drop: mixed pastes — image+text lets the text through, text+no
     } },
   ]);
 });
+
+test('ask-panel-drop: addFiles on the panel API (Pick element, issue 1064 slice 3) attaches chips the "+" way', async () => {
+  const ctx = makePanel();
+  ctx.panel.open();
+  await ctx.panel.addFiles([mkFile(ctx, 'picked-element-1.md', 'x')]);
+  await ctx.tick();
+  assert.deepEqual([...ctx.doc.querySelectorAll('.ask-chip-name')].map((n) => n.textContent), ['picked-element-1.md']);
+});

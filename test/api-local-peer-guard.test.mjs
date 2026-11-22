@@ -18,13 +18,32 @@ import { WebSocket } from 'ws';
 const SERVER = join(dirname(fileURLToPath(import.meta.url)), '..', 'ui', 'server.mjs');
 const LAN = Object.values(os.networkInterfaces()).flat()
   .find((i) => i && i.family === 'IPv4' && !i.internal)?.address;
-const skip = LAN ? false : 'no non-loopback IPv4 interface on this machine';
+
+/** Can this machine reach a server of its own through `addr`? Endpoint security (Microsoft Defender's network
+ *  extension, for one) resets such connections, and then no network caller can be modelled here at all. */
+const reachesItself = (addr) => new Promise((resolve) => {
+  const srv = net.createServer((s) => { s.on('error', () => {}); s.end('ok'); }).listen(0, '0.0.0.0', () => {
+    let over = false;
+    const done = (ok) => { if (over) return; over = true; sock.destroy(); srv.close(); resolve(ok); };
+    let got = '';
+    const sock = net.connect(srv.address().port, addr);
+    sock.setTimeout(3000, () => done(false));
+    sock.on('data', (c) => { got += c; });
+    sock.on('end', () => done(got === 'ok'));
+    sock.on('error', () => done(false));
+  });
+});
+const noLan = LAN ? false : 'no non-loopback IPv4 interface on this machine';
+// The network-caller tests also need the LAN path to answer; the boot and loopback ones do not.
+const skip = noLan || (!(await reachesItself(LAN)) && `this machine refuses its own connections through ${LAN} (endpoint security?)`);
+// CI runners do reach themselves: there a failed probe is a failure, never three security tests skipped unseen.
+if (process.env.CI && skip && !noLan) throw new Error(skip);
 
 const freePort = () => new Promise((r) => { const s = net.createServer().listen(0, '127.0.0.1', () => { const { port: p } = s.address(); s.close(() => r(p)); }); });
 
 let child, port, home, out = '';
 before(async () => {
-  if (skip) return;
+  if (noLan) return;
   port = await freePort();
   home = mkdtempSync(join(os.tmpdir(), 'worca-peer-guard-'));
   const base = Object.fromEntries(Object.entries(process.env)
@@ -60,11 +79,11 @@ const wsStatus = (addr) => new Promise((resolve) => {
   ws.on('error', () => resolve('error'));
 });
 
-test('boot warning says a non-loopback bind answers loopback callers only', { skip }, () => {
+test('boot warning says a non-loopback bind answers loopback callers only', { skip: noLan }, () => {
   assert.match(out, /listening on 0\.0\.0\.0 but WORCA_ALLOWED_HOSTS is empty: only connections from this machine/);
 });
 
-test('a loopback caller still gets the API', { skip }, async () => {
+test('a loopback caller still gets the API', { skip: noLan }, async () => {
   const r = await get('127.0.0.1', '/api/settings', { host: `localhost:${port}` });
   assert.equal(r.status, 200);
 });

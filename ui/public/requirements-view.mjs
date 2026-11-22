@@ -92,6 +92,7 @@ const AUTO_WORKFLOW = 'wf_auto';
 const NOT_FOR_BUILDS = ['wf_auto', 'wf_memory_defrag'];
 const REASON_MAX = 500;
 const NOTES_MAX = 10000;   // Your notes for Worca (store.mjs LIMITS.context)
+const ITEM_MAX = 10000;    // one spec item: the goal, the measure, a criterion (spec.mjs LIMITS.item); a list line past it is refused
 /** An inline SVG icon; decorative (aria-hidden) unless `label` names it (role=img). */
 function icon(shapes, { size = 16, label = null, width = 2, fill = 'none', stroke = 'currentColor' } = {}) {
   const set = (el, attrs) => { for (const [k, v] of Object.entries(attrs)) el.setAttribute(k, String(v)); return el; };
@@ -2124,8 +2125,8 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
     let body;
     if (editing === key && !ro) {
       const isGoal = key === 'goal';
-      const a = isGoal ? h('input', { type: 'text', value: s.goal.text, 'aria-label': 'Goal', 'data-ui': 'edit-a' }) : h('textarea', { rows: '5', 'aria-label': title, 'data-ui': 'edit-a' }, (s[key] || []).join('\n'));
-      const b = isGoal ? h('input', { type: 'text', value: s.goal.measure, placeholder: 'Success measure', 'aria-label': 'Success measure', 'data-ui': 'edit-b' }) : null;
+      const a = isGoal ? h('input', { type: 'text', value: s.goal.text, maxlength: String(ITEM_MAX), 'aria-label': 'Goal', 'data-ui': 'edit-a' }) : h('textarea', { rows: '5', 'aria-label': title, 'data-ui': 'edit-a' }, (s[key] || []).join('\n'));
+      const b = isGoal ? h('input', { type: 'text', value: s.goal.measure, maxlength: String(ITEM_MAX), placeholder: 'Success measure', 'aria-label': 'Success measure', 'data-ui': 'edit-b' }) : null;
       if (ui.editVals && ui.editVals.key === key) { a.value = ui.editVals.a; if (b) b.value = ui.editVals.b; }
       body = h('div', { class: 'req-edit' }, a, b,
         h('div', { class: 'req-actions' },
@@ -2157,7 +2158,7 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
     let input = null;
     let addBtn = null;
     if (adding) {
-      input = h('input', { type: 'text', placeholder: 'Add a criterion: what a tester can check', 'aria-label': 'New acceptance criterion', 'data-ui': 'new-criterion' });
+      input = h('input', { type: 'text', maxlength: String(ITEM_MAX), placeholder: 'Add a criterion: what a tester can check', 'aria-label': 'New acceptance criterion', 'data-ui': 'new-criterion' });
       input.value = ui.crit;
       input.addEventListener('keydown', (e) => {
         if (e.key === 'Enter') { e.preventDefault(); addBtn.click(); }

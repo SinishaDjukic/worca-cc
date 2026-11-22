@@ -1,16 +1,58 @@
 
 /* Connectors › Sets and Servers (mcp-view.mjs, mcp-definition-form.mjs): layout only; cards, chips, badges,
    switches and buttons are the shared ones. */
-[data-view="connectors"] .topbar{flex-wrap:wrap;}
-.mcp-sets{display:grid;grid-template-columns:minmax(220px,300px) minmax(0,1fr);gap:18px;align-items:start;}
-.mcp-setlist{padding:var(--pad-tile);display:flex;flex-direction:column;gap:2px;}
-.mcp-setrow{display:flex;flex-direction:column;gap:3px;text-align:left;padding:10px 12px;border:0;border-radius:var(--r-sm);background:none;font:inherit;color:inherit;cursor:pointer;}
-.mcp-setrow.on{background:var(--field);}
-.mcp-setrow.greyed{opacity:.55;}
-.mcp-setrow-head{display:flex;align-items:center;gap:8px;}
-.mcp-dot{width:8px;height:8px;border-radius:50%;background:var(--amber);}
+/* The page frame is Marketplace's (.mk-head, .mk-tabs, .mk-browse, .mk-rail) and Models' (.mdl-toolbar): this file only
+   places the Connectors parts. Row, state and chip colours come from .drow, .mdl-st and .mk-chip-*. */
+.cx-sets-page{flex-wrap:nowrap;}
+.cx-sets-page > .cx-rail{flex:0 0 232px;max-width:232px;}
+.cx-sets-page > .cx-detail{flex:1 1 0;min-width:0;display:flex;flex-direction:column;gap:18px;}
+.cx-facet-text{display:flex;flex-direction:column;gap:2px;min-width:0;flex:1 1 auto;}
+.cx-rail .mk-facet{align-items:center;}
+.cx-greyed{opacity:.55;}
+.cx-dot-warn{background:var(--amber);}
+.cx-set-head{display:flex;flex-wrap:wrap;align-items:center;gap:8px 16px;}
+.cx-set-head > .cx-main{flex:1 1 260px;}
+.cx-set-head > .cx-acts{display:flex;align-items:center;gap:8px;}
+.cx-set-head > .cx-wide{flex:1 1 100%;margin:0;}
+.cx-section{display:flex;flex-direction:column;gap:8px;}
+.cx-sec-head{display:flex;flex-wrap:wrap;align-items:center;gap:6px 12px;}
+.cx-sec-head .subsection-title{margin:0;}
+.cx-sec-head > .btn{margin-left:auto;}
+.cx-list > .cx-row{display:flex;flex-wrap:wrap;align-items:center;gap:8px 12px;}
+.cx-main{flex:1 1 220px;min-width:0;display:flex;flex-direction:column;gap:2px;}
+.cx-line{display:flex;flex-wrap:wrap;align-items:center;gap:6px 8px;min-width:0;}
+.cx-title{font-weight:500;overflow-wrap:anywhere;}
+.cx-sets{flex:0 1 260px;display:flex;flex-wrap:wrap;align-items:center;gap:6px;min-width:0;}
+.cx-tools{flex:0 0 72px;text-align:right;font-variant-numeric:tabular-nums;}
+.cx-acts{margin-left:auto;flex-wrap:wrap;justify-content:flex-end;}
+.cx-warn{color:var(--ink-2);}
+.cx-fold{flex:1 1 100%;padding:4px 0 4px 44px;}
+.cx-fold[hidden]{display:none;}
+.cx-kv{display:grid;grid-template-columns:150px minmax(0,1fr);align-items:center;gap:8px 12px;margin:0;}
+.cx-kv dt{color:var(--ink-2);font-size:var(--fs-meta);}
+.cx-kv dd{margin:0;min-width:0;}
+.cx-acts [data-fold] .ic{transition:transform .15s ease;}
+.cx-acts [data-fold][aria-expanded="true"] .ic{transform:rotate(180deg);}
+@media (prefers-reduced-motion:reduce){.cx-acts [data-fold] .ic{transition:none;}}
+.cx-toolbar{margin-bottom:12px;}
+.cx-lose{list-style:none;margin:8px 0;padding:0;display:flex;flex-direction:column;gap:4px;}
+.cx-lose li{display:flex;align-items:center;gap:8px;color:var(--ink-2);}
+.cx-md{max-height:60vh;overflow:auto;}
+@container drows (max-width:560px){
+  .cx-list > .cx-row > .cx-acts{margin-left:0;flex:1 1 100%;justify-content:flex-start;}
+  .cx-fold{padding-left:0;}
+  .cx-kv{grid-template-columns:minmax(0,1fr);}
+}
+@media (max-width:760px){.cx-sets-page{flex-wrap:wrap;}.cx-sets-page > .cx-rail{flex-basis:100%;max-width:none;}}
 .mcp-usedby{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin:10px 0;}
 /* The row's inline notes read as labels beside the chips: --ink-2 keeps them at AA on the card. */
 .mcp-usedby .hint{margin-top:0;color:var(--ink-2);}
 .mcp-usedby > .chip{display:inline-flex;align-items:center;gap:6px;}
 .mcp-usedby > .chip:has(> .btn){padding-block:0;}   /* the 28px remove button sets the height */
+/* The rail keeps a set's name and its Built-in chip on one line; a fold's Status line wraps long errors. */
+.cx-rail .mk-facet-name{flex-direction:row;align-items:center;flex-wrap:wrap;gap:4px 8px;}
+.cx-sec-head .mk-count{margin-right:4px;}
+/* Errors and warnings stay one line on the Connectors page: an ellipsis, the full text in the tooltip (clipped()). */
+.cx-clip{display:block;min-width:0;max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+.cx-row > .mdl-st{min-width:0;max-width:min(280px,40%);}
+.cx-kv dd > .cx-clip{margin:0;}

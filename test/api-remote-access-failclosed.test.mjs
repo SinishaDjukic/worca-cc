@@ -6,6 +6,7 @@
 import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import http from 'node:http';
+import { appServer } from './helpers/app-server.mjs';
 import { spawn } from 'node:child_process';
 import net from 'node:net';
 import { mkdtempSync, rmSync } from 'node:fs';
@@ -90,7 +91,7 @@ before(async () => {
     ? Promise.resolve(new Response('bad gateway', { status: 502 }))
     : realFetch(url, opts));
   const { app } = await import('../ui/server.mjs');
-  srv = http.createServer(app);
+  srv = appServer(app);
   await new Promise((r) => srv.listen(0, '127.0.0.1', r));
   port = srv.address().port;
 });

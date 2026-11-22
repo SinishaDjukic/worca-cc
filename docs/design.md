@@ -7,10 +7,11 @@ an HTML and JavaScript video in its own chat, and real agents build it in front 
 
 ## How it works
 
-1. **Design** in the sidebar opens the Library (`#design`): the start composer, and every design you have made as a
-   tile. A tile shows a picture of the page (see [Thumbnails](#thumbnails)), its title, its kind, when it last
-   changed or what it is doing (**Building**, **Paused**, **Stopped**, **Failed**, **Interrupted**), and what it
-   cost.
+1. **Design** in the sidebar starts a new design chat (`#chat/new/design`): the Chat page asks *What should we
+   design?* over the chat's own composer, with a **Kind** pill beside the project. **All designs** under it opens the
+   Library (`#design`): a start composer of its own, and every design you have made as a tile. A tile shows a picture of the page (see [Thumbnails](#thumbnails)), its title,
+   its kind, when it last changed or what it is doing (**Building**, **Paused**, **Stopped**, **Failed**,
+   **Interrupted**), and what it cost. A tile opens that design's chat.
 2. **Describe it** in the composer (*What should we design?*) and pick a kind: **Web page** (the default),
    **Presentation**, **Pitch deck**, **Video** or **Document**.
 3. **Pick a project, if you like.** The lead agent reads the project's brand and code and passes the brand on to
@@ -22,9 +23,61 @@ an HTML and JavaScript video in its own chat, and real agents build it in front 
    [Documents](#documents).
 4. **Attach files** with the button, by pasting or by dropping them: pictures, a logo, notes. A file worca does not
    take is named under the composer.
-5. **Send.** The design opens in its own chat. Its title is the first line of what you wrote (the first sentence,
-   at most 60 characters); no model names it. **Rename** and **Delete** are in the **⋯** menu of the chat head.
-   Delete is off while a build runs; it removes the design's files and chat, and what it cost stays in Statistics.
+5. **Send.** The design opens in a chat of its own, on the Chat page (see [In the chat](#in-the-chat)). Its title is
+   the first line of what you wrote (the first sentence, at most 60 characters); no model names it. **Rename** and
+   **Delete** are in the **⋯** menu over the chat. Delete is off while a build runs; it removes the design's files,
+   keeps its chat, and what it cost stays in Statistics.
+
+## In the chat
+
+A chat with a design is a chat like any other. The sidebar's **Design** is the one way in made for designing; once
+the design has started there is no difference: the chat is in the Chat lists and their search with the Design mark
+before its title, `#chat/<id>` opens it, and it can do everything a chat does (runs, schedules, settings, MCP
+servers, skills, commands, its own title and suggestions, any engine). What the design adds:
+
+- **Its cards are the chat's.** The design's questions, the sound card and each round's row with **Back to before
+  this** (and, once the round ended, its pictures) are cards in the chat, among its other messages. Between the
+  messages and the composer, the design shows its plan, the questions its agents ask during a build and what the
+  build is doing right now.
+- **The chat's head stays one row:** beside the title, the design's kind and **⋯** (**All designs**, the Library;
+  Rename; Delete).
+- **The composer gains the design's own parts:** its pinned parts above the input, **Point at the page** and the gear
+  (the Lead and Builders models, Build fast, Pictures, Sound) in the row. Send stays the chat's own: the message goes
+  to the chat with the pins on screen, and the chat's agent works on the design with the design tools.
+- **The Design tab of the tool panel shows the design**, beside the chat: the preview, the HUD with its agents,
+  the deck rail or the film bar, and **Export**. It opens when the chat opens or when the chat starts a design. Its
+  icon shows on a chat with a design only, first after the Overview, and it needs no project (a design with No
+  project has one too). With no project, Terminal, Files and Browser work in the design's own folder (its sections,
+  tokens and shell). Design is a tab like the others: it shows in the tab row with its icon, and Shift-click on its
+  icon or the + opens another (each shows the same stage). Closed, the preview is gone until it opens again;
+  **Point at the page** opens it.
+- **A new design starts from the sidebar's Design.** It opens "What should we design?" over the chat's composer: the
+  project pill picks the design's project, the kind buttons under it pick a web page, a presentation, a pitch deck, a
+  video or a document, and the gear holds the models, Build fast and Pictures. Send makes the design and opens its
+  chat, where the message is the first one.
+- **Pictures before a build that needs them.** When you ask for something that needs a picture made (a drawing, an
+  illustration, a character) and no image service is set up, or the design's Pictures switch is off, the chat asks
+  first: set it up (**Providers › Image generation**, the same link as the gear's **Set up**), or draw it without
+  one. Choose to set it up and the request waits: say when it is done and the chat builds what you first asked for,
+  with pictures. A chat with no design yet asks the same before it starts one.
+- **One design per chat.** A chat that has a design changes that design; for another one, press **Design** in the
+  sidebar.
+- **Deleting.** Deleting the design keeps its chat (its design cards then read as plain lines). Deleting the chat
+  keeps the design in the Library, and `#design/<id>` (an Activity row, a tile opened in a new tab) gives it a new,
+  empty chat; its files and rounds stay. A rename renames the chat too while the chat still has the design's name.
+- Design chats made before this change became chats with a design on the first start after it.
+
+### From any chat
+
+Asked to draw or design something (a page, a poster, an illustration, slides, a video), a chat with no design yet
+starts one **in that chat**: its `start_design` tool makes the design the way the sidebar's **Design** does, names it
+from the brief, attaches it to the chat and starts its first build on the brief. The Design tab opens beside the
+chat, and from the next message on the chat has the design's tools. No second chat is made and no link is given.
+
+- The engine gate still applies. When the design's engine needs the person's OK, the chat says so and points to the
+  sidebar's **Design**, where they can allow it; the chat cannot allow it for them.
+- Only chats with no design have it, and only with the `design` flag on: not the Workflows chat or a chat bound to
+  a chat app.
 
 Then the build:
 

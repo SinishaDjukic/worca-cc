@@ -3,6 +3,8 @@
 // chat). Brand marks are Simple Icons paths (CC0 1.0: simpleicons.org; Slack and Microsoft Teams from simple-icons
 // 10.x, before their removal), filled with currentColor so they follow the theme; any other platform gets a plug.
 // The markup is built from this module's own literals, never from data.
+import { icon } from './icons.mjs';
+
 const SVG_NS = 'http://www.w3.org/2000/svg';
 
 export const ORIGIN_MARKS = Object.freeze({
@@ -51,5 +53,21 @@ export function originMark(doc, origin, size = 13) {
     svg.appendChild(p);
   }
   span.appendChild(svg);
+  return span;
+}
+
+/** The mark before a chat's title in the Chat lists: its chat integration's (originMark), else a chat with a design's
+ *  (span.chat-origin[data-platform="design"], "Design chat": docs/design.md, "In the chat"), else null. `t` is a thread
+ *  row ({ origin, designId }). */
+export function chatMark(doc, t, size = 13) {
+  const origin = originMark(doc, t && t.origin, size);
+  if (origin || !t || typeof t.designId !== 'string' || !t.designId) return origin;
+  const span = doc.createElement('span');
+  span.className = 'chat-origin';
+  span.dataset.platform = 'design';
+  span.setAttribute('role', 'img');
+  span.setAttribute('aria-label', 'Design chat');
+  span.title = 'Design chat';
+  span.appendChild(icon(doc, 'design', size));
   return span;
 }
