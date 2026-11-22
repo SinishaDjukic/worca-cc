@@ -44,6 +44,7 @@ import {
   SHAPE_WORKFLOW_ID, SHAPE_UX_WORKFLOW_ID, SHAPE_WORKFLOW_NAME, GRAPH_SHAPE_WORKFLOW, GRAPH_SHAPE_UX_WORKFLOW,
   SHAPE_REQ_WORKFLOW_ID, SHAPE_UX_REQ_WORKFLOW_ID, GRAPH_SHAPE_REQ_WORKFLOW, GRAPH_SHAPE_UX_REQ_WORKFLOW, SHAPE_REQ_WORKFLOW_IDS,
   SHAPE_SLICE_REQ_WORKFLOW_ID, SHAPE_UX_SLICE_REQ_WORKFLOW_ID, GRAPH_SHAPE_SLICE_REQ_WORKFLOW, GRAPH_SHAPE_UX_SLICE_REQ_WORKFLOW, SHAPE_SLICE_REQ_WORKFLOW_IDS,
+  SHAPE_VERIFY_WORKFLOW_ID, GRAPH_SHAPE_VERIFY_WORKFLOW, SHAPE_VERIFY_WORKFLOW_IDS,
   GRAPH_WORKSPACE_RESYNTH_WORKFLOW, WORKSPACE_RESYNTH_WORKFLOW_ID,
 } from './graph/builtin-workflows.mjs';
 export { GRAPH_DEFAULT_WORKFLOW, GRAPH_LEAN_WORKFLOW, LEAN_WORKFLOW_ID, AUTO_WORKFLOW_ID, GRAPH_MEMORY_DEFRAG_WORKFLOW, GRAPH_SHAPE_WORKFLOW, MEMORY_DEFRAG_WORKFLOW_ID, WORKSPACE_SCAN_WORKFLOW_ID, GRAPH_WORKSPACE_RESYNTH_WORKFLOW, WORKSPACE_RESYNTH_WORKFLOW_ID, isReservedWorkflowId };
@@ -331,7 +332,7 @@ export async function writeGraphWorkflow(tpl, opts = {}) {
   if (reserved(id)) {
     const which = id === AUTO_WORKFLOW_ID ? AUTO_WORKFLOW_NAME
       : id === MEMORY_DEFRAG_WORKFLOW_ID ? MEMORY_DEFRAG_WORKFLOW_NAME
-      : id === SHAPE_WORKFLOW_ID || SHAPE_REQ_WORKFLOW_IDS.includes(id) || SHAPE_SLICE_REQ_WORKFLOW_IDS.includes(id) ? SHAPE_WORKFLOW_NAME
+      : id === SHAPE_WORKFLOW_ID || SHAPE_REQ_WORKFLOW_IDS.includes(id) || SHAPE_SLICE_REQ_WORKFLOW_IDS.includes(id) || SHAPE_VERIFY_WORKFLOW_IDS.includes(id) ? SHAPE_WORKFLOW_NAME
       : GRAPH_DEFAULT_WORKFLOW.name;
     throw Object.assign(
       new Error(`the name "${which}" is reserved — choose another name`),
@@ -399,6 +400,7 @@ export async function readWorkflow(id, opts = {}) {
   if (id === SHAPE_UX_REQ_WORKFLOW_ID) return GRAPH_SHAPE_UX_REQ_WORKFLOW;
   if (id === SHAPE_SLICE_REQ_WORKFLOW_ID) return GRAPH_SHAPE_SLICE_REQ_WORKFLOW;
   if (id === SHAPE_UX_SLICE_REQ_WORKFLOW_ID) return GRAPH_SHAPE_UX_SLICE_REQ_WORKFLOW;
+  if (id === SHAPE_VERIFY_WORKFLOW_ID) return GRAPH_SHAPE_VERIFY_WORKFLOW;   // small runs C5: the Verifier's run
   return readRaw(id, opts);
 }
 
@@ -568,7 +570,7 @@ export async function deleteWorkflow(id) {
   if (id === LEAN_WORKFLOW_ID) return false;    // a constant, never a row
   if (id === MEMORY_DEFRAG_WORKFLOW_ID) return false; // a constant, never a row
   if (id === PR_FIX_WORKFLOW_ID) return false;  // a constant, never a row
-  if (id === SHAPE_WORKFLOW_ID || id === SHAPE_UX_WORKFLOW_ID || SHAPE_REQ_WORKFLOW_IDS.includes(id) || SHAPE_SLICE_REQ_WORKFLOW_IDS.includes(id)) return false; // constants, never rows
+  if (id === SHAPE_WORKFLOW_ID || id === SHAPE_UX_WORKFLOW_ID || SHAPE_REQ_WORKFLOW_IDS.includes(id) || SHAPE_SLICE_REQ_WORKFLOW_IDS.includes(id) || SHAPE_VERIFY_WORKFLOW_IDS.includes(id)) return false; // constants, never rows
   if (!isSafeWorkflowId(id)) return false;      // SECURITY: reject unsafe ids
   getDb();
   let changed = 0;

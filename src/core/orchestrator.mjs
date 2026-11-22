@@ -68,6 +68,8 @@ import { REFINER_SINK, roleReviewOf, roleChecklistOf, runningRoles, rolesForRoun
 import { DISPOSITIONS_MAX_BYTES, applyDispositions, withCounts, normalizeConflicts, dispositionsPathFor, conflictClarifications, withClarifications } from '../shared/review/findings.mjs';
 import { currentPass } from '../shared/shape/role-review.mjs';
 import { gateStop, planStop, concernStop, stopDoneText, stopOptionOf, settledLine, SETTLED_CONCERN_FEEDBACK } from '../shared/shape/run-stops.mjs';
+import { verifyResult, verifyRoundPlan, verifyStop } from '../shared/shape/verifier.mjs';
+import { VERIFY_RESULT_FILE } from './shape/verifier.mjs';
 import { criteriaCheck, criteriaList, criterionIds, coverageOf, criteriaExamples } from '../shared/review/coverage.mjs';
 import { normalizeDecisions, conflictDecisions, validateDecisionPicks, decisionClarifications } from '../shared/review/decisions.mjs';
 import { createScheduler, sliceExecutionId, QUIESCENCE_WARNING } from './graph/scheduler.mjs';
@@ -1107,7 +1109,8 @@ export class GraphOrchestrator extends RunHarness {
       // The scheduler's log is ONE-ARG (`log(QUIESCENCE_WARNING)`, scheduler.mjs:936).
       log: (line, attrs = null) => this._log('orchestrator', 'warn', String(line), attrs),
       // Shape it first (spec D2/D12): node approval stops are armed only for a run that carries `shape`.
-      approvalStops: Boolean(this.runShape),
+      // Small runs C5 (D15): the Verifier's run has no plan to approve.
+      approvalStops: Boolean(this.runShape) && !this.runShape.verify,
       // 4.1: a failure or stop waits for siblings to take their SIGTERM→SIGKILL before teardown.
       settleGraceMs: sigkillGraceMs() + 2000,
     });
@@ -1513,6 +1516,43 @@ export class GraphOrchestrator extends RunHarness {
     if (this.pipeline) await appendAudit(this.pipeline.dir, stopDoneText(stop, payload), { actor: this.answeredBy(id) }).catch(() => {});
     if (stopOptionOf(stop, payload)?.value === 'change') return;
     await this._takeInLatestFinished({ smallRuns: this._smallRunsMarked, onAnswer: true });
+  }
+
+  /**
+   * Small runs C5 (D9, D14): after n_verify, read the Verifier's file (bounded), judge it against the owned ids, and
+   * past Care's bound ask C3's `check` stop on this run. Writes verify-result.json {result, headSha, decision} into the
+   * run dir for the settle hook (src/core/shape/verifier.mjs). An unparseable, mis-shaped or oversized file fails the run
+   * (an absent one never gets here: the executor's missing-output path pauses it first).
+   */
+  async _afterVerify(ctx) {
+    const v = this.runShape.verify;
+    const out = ctx.outputs?.verify?.path || null;
+    let raw = null;
+    try { if (out && (await stat(out)).size <= CHALLENGE_FILE_MAX_BYTES) raw = JSON.parse(await readFile(out, 'utf8')); } catch { raw = null; }
+    let result;
+    try { result = verifyResult(raw, { owned: v.owned }); }
+    catch (err) {
+      if (err?.code !== 'VERIFY_RESULT_MISSING') throw err;
+      throw markTerminal(Object.assign(new Error('The Verifier wrote no result'), { code: 'VERIFY_RESULT_MISSING', errorClass: null }));
+    }
+    const ref = await this._git(['rev-parse', 'HEAD'], { cwd: ctx.projectDir });
+    const headSha = ref.ok ? ref.stdout.trim() : null;
+    let decision = null;
+    if (verifyRoundPlan({ round: v.round, fixCycles: v.fixCycles, extra: v.extra, gaps: result.gaps }) === 'stop') {
+      const id = `verify-${v.round}-${ctx.executionId}`;
+      if (this._stopAnswer?.id === id) decision = gateAnswer(this._stopAnswer.payload)?.decision ?? null;   // replay after a pause
+      else {
+        this._stopAnswer = null;
+        const stop = verifyStop({ gaps: result.gaps, round: v.round, fixCycles: v.fixCycles });
+        const payload = await this._enqueueAsk(() => this._ask({ id, kind: 'gate', nodeId: ctx.nodeId, executionId: ctx.executionId,
+          issues: [], stop, validate: gateAnswer }));
+        this._stopAnswer = { id, payload };
+        const o = stopOptionOf(stop, payload);
+        if (this.pipeline) await appendAudit(this.pipeline.dir, `Verifier: ${o ? o.short : 'answered'} · decided by you`, { actor: this.answeredBy(id) }).catch(() => {});
+        decision = gateAnswer(payload)?.decision ?? null;
+      }
+    }
+    await writeFile(join(this.pipeline.dir, VERIFY_RESULT_FILE), `${JSON.stringify({ result, headSha, decision }, null, 2)}\n`, 'utf8');
   }
 
   _planAsk(q) {
@@ -2766,6 +2806,8 @@ export class GraphOrchestrator extends RunHarness {
       if (!ctx.role) result = await this._applyReviewChecklist(ctx, result);
       result = await this._applyRoleReviewVerdict(ctx, result);
       result = await this._planConcernLoop(nc, ctx, result);
+      // Small runs C5 (D9, D14): the Verifier's result, its bound stop and verify-result.json, before the node settles.
+      if (this.runShape?.verify && nc.nodeId === 'n_verify') await this._afterVerify(ctx);
       // C5: the verdict the routing reads, as counts, on the execution's latest host dispatch (none when it ran plain).
       this._sessions?.noteVerdict(ctx.executionId, verdictSummary(result?.verdict));
       await this._afterExecution(nc, ctx, result);

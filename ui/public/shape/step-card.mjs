@@ -1,6 +1,7 @@
 // ui/public/shape/step-card.mjs — one chrome for every Shaper step card (shaper-cards spec §2.2): head = title + kind
 // chip (.ask-mcard-*), body, one action row. Every button here binds its own click and stops propagation, so no host
 // delegate is needed (the feature page has none) and none double-posts.
+import { verifyGapItems } from '../../../src/shared/shape/verifier.mjs';
 import { askKindOf } from '../ask/registry.mjs';
 import { isShapingRun } from './plan-text.mjs';
 import { buildRoleFold } from './role-rows.mjs';
@@ -34,6 +35,8 @@ export function isStepCard(pq, run, gateOn) {
 /** D15: `Plan · run k` once the run belongs to a split feature (index is 1-based), else the kind's chip. */
 export function stepChip(pq, run) {
   // Small runs C3 (D11): a stop's chip names its kind only; the run number is in its head.
+  // Small runs C5: the Verifier's stop names itself in its head ("Verifier · 1 gap still open"): no chip repeats it.
+  if (pq && pq.stop && pq.stop.node === 'n_verify') return '';
   if (pq && pq.stop) return pq.stop.reason === 'objection' ? CHIP.gate : CHIP.plan;
   if (isRequirementsAsk(pq)) return 'Requirements';
   const k = stepKind(pq);
@@ -98,7 +101,7 @@ export function stepHead(doc, title, chip) {
   head.className = 'ask-mcard-head step-head';
   const t = doc.createElement('b'); t.className = 'ask-mcard-title'; t.textContent = title;
   const c = doc.createElement('span'); c.className = 'ask-mcard-kind'; c.textContent = chip;
-  head.append(t, c);
+  head.append(t, ...(chip ? [c] : []));
   return head;
 }
 
@@ -293,6 +296,13 @@ function renderStopCard(panel, pq, deps) {
     texts.append(...buildCheckRows(doc, { items: stop.change.map((c) => ({ id: c.id, idCol: true, label: `“${c.to}”`, pass: true, mark: 'none', ariaLabel: 'new text' })) }));
     const rule = renderChangeRule(doc, stop.landsAs || 'none');
     for (const el of [texts, rule]) { if (foot) foot.before(el); else q.el.appendChild(el); }
+  }
+  // Small runs C5 (D12): the Verifier's bound stop lists its open gaps (the card's own gap list is not drawn meanwhile).
+  if (stop.reason === 'check' && Array.isArray(stop.gaps) && stop.gaps.length) {
+    const gaps = doc.createElement('div');
+    gaps.className = 'plan-checks srows verify-gaps';
+    gaps.append(...buildCheckRows(doc, { items: verifyGapItems(stop.gaps) }));
+    if (foot) foot.before(gaps); else q.el.appendChild(gaps);
   }
   panel.appendChild(q.el);
 }

@@ -449,3 +449,42 @@ test('C3 one card: open stop and held rows, a dependent waits for its builds-on 
   const css = readFileSync(new URL('../ui/public/shape/shape-it.css', import.meta.url), 'utf8');
   assert.match(css, /\.chat-rc-members \.run-members\.is-one-line \.run-member-title\{[^}]*white-space:nowrap;overflow:hidden;text-overflow:ellipsis;display:block;\}/);
 });
+
+// ---- Small runs C5 (D12): the Verifier's readings on the one card ----
+{
+  const { oneCardModel: one } = await import('../ui/public/shape/feature-card.mjs');
+  const { VERIFY_WORDS } = await import('../src/shared/shape/verifier.mjs');
+  const DONE4 = [1, 2, 3, 4].map((i) => ({ index: i, state: 'done', pipelineId: `p${i}`, rounds: [] }));
+  const vw = (state, slices = DONE4) => ({ id: 'f1', title: 'Sign-up', status: 'done', slices, done: slices.filter((s) => s.state === 'done').length,
+    total: slices.length, ship: { ready: state === 'clean' || state === 'accepted', mode: null }, log: [],
+    verify: { state, round: 1, fixCycles: 2, held: 3, owned: 4, gaps: [], gapsFound: 0, pipelineId: 'pv', ticketId: 'tv' } });
+  const m = (view) => one({ own: null, card: { feature: view, smallRuns: true } });
+  test('C5: SV reads Verifying with the walk line; SR reads Ready to ship for clean and accepted', () => {
+    const sv = m(vw('verifying'));
+    assert.deepEqual([sv.state, sv.step, sv.word, sv.detail], ['SV', 'build', 'Verifying', 'the Verifier walks the main flow · 4 of 4 runs done']);
+    for (const st of ['clean', 'accepted']) {
+      const sr = m(vw(st));
+      assert.deepEqual([sr.state, sr.step, sr.word, sr.detail], ['SR', 'done', 'Ready to ship', 'ship from the feature page']);
+    }
+  });
+  test('C5: asking and paused keep S8 with their word; halted reads Stopped with its own line', () => {
+    for (const st of ['asking', 'paused']) {
+      const x = m(vw(st));
+      assert.deepEqual([x.state, x.word, x.detail], ['S8', VERIFY_WORDS[st], '4 of 4 runs done']);
+    }
+    const h = m(vw('halted'));
+    assert.deepEqual([h.state, h.word, h.detail], ['S8', 'Stopped', 'The Verifier stopped · resume it from its run']);
+    const gaps = m(vw('gaps', [...DONE4, { index: 5, state: 'planned', pipelineId: null, rounds: [], kind: 'change' }]));
+    assert.deepEqual([gaps.state, gaps.word, gaps.detail], ['S8', 'Working', '4 of 5 runs done']);
+  });
+  test('C5: S9 unchanged without verify; a clean check then a new change run is plain S8 (no word)', () => {
+    const plain = vw('clean'); delete plain.verify;
+    const s9 = m(plain);
+    assert.equal(s9.state, 'S9');
+    assert.equal('word' in s9, false);
+    assert.equal('verify' in s9, false);
+    const later = m(vw('clean', [...DONE4, { index: 5, state: 'running', pipelineId: 'p5', rounds: [], kind: 'change' }]));
+    assert.equal(later.state, 'S8');
+    assert.equal('word' in later, false);
+  });
+}

@@ -1,14 +1,32 @@
 // src/core/shape/chain.mjs — Shaper small runs (flag shaperSmallRuns): a feature's runs start from its latest finished
 // work, not from the run numbered before it. The latest-finished pick, the scheduler's gate wrapper, the fire-time
-// source and the one-PR ship check. Imports features.mjs one way; features.mjs never imports this module.
+// source and the one-PR ship check. Imports features.mjs one way; features.mjs never imports this module (verifier.mjs,
+// which features.mjs imports, calls back into latestFinishedSlice at runtime only).
 import { getDb } from '../db.mjs';
 import { previousBranchesOf } from '../scheduler.mjs';
 import { isAncestor } from '../worktree.mjs';
 import { shaperSmallRunsOn } from './small-runs.mjs';
-import { sliceOfTicket, sliceGateState, featureBase, featureRootSource, busySliceOf } from './features.mjs';
+import { sliceOfTicket, sliceGateState, featureBase, featureRootSource, busySliceOf, featureOfPipeline } from './features.mjs';
 
-export { recordSettledFigures } from './measure.mjs';
+import { recordSettledFigures as recordFigures } from './measure.mjs';
+import { verifyAfterSettled, verifyCheckOfPipeline } from './verifier.mjs';
 export { createHeldStops } from './held-stops.mjs';
+
+/**
+ * afterRunSettled's hook (D17): the Verifier first (small runs C5: a check may start, or a Verifier run's result is
+ * recorded), then the feature's figures. Returns the Verifier's Ship-card promise, which the PR finish chains after, or
+ * undefined. deps = { tick, offerShip, broadcastFeature, flagEnabled? }. Never throws.
+ */
+export function recordSettledFigures(state, deps = {}) {
+  const card = verifyAfterSettled(state, deps);
+  recordFigures(state);
+  return card;
+}
+
+/** The feature a pipeline belongs to: a slice's (featureOfPipeline), else the Verifier run's (small runs C5). */
+export function featureOfAnyPipeline(pipelineId) {
+  return featureOfPipeline(pipelineId) || verifyCheckOfPipeline(pipelineId);
+}
 
 /**
  * Small runs C3 (D9): whether stopped run `index` of the feature may go on now. Another slice going holds it (one slice

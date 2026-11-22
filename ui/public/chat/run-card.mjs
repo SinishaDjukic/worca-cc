@@ -23,13 +23,15 @@ import { isGitRun, isNoProjectRun, kindChip, workModeOf } from '../run-kind.mjs'
 import { gitOn } from '../git-gate.mjs';
 import { formatBytes } from '../artifacts/common.mjs';
 import { fixOutcomeText } from './pr-watch-words.mjs';
-import { runModel, isFinishedState } from '../../../src/shared/run-model.mjs';
+import { runModel, isFinishedState, RUN_STATES } from '../../../src/shared/run-model.mjs';
 import { paintRunStatus, statusText, kindLabel, syncActions, pauseResumeOwn, renderMemberRows } from '../run-status-card.mjs';
 import { delegateQuestion } from '../question-delegate.mjs';
 import { paintStatusDot } from '../status-dot.mjs';
 import { runShortWord } from '../../../src/shared/shape/run-agents.mjs';
 import { levelAtLeast } from '../ui-level.mjs';
 import { featureCardModel, oneCardModel, paintFeatureLog } from '../shape/feature-card.mjs';
+import { buildCheckRows } from '../shape/check-row.mjs';
+import { verifyGapItems } from '../../../src/shared/shape/verifier.mjs';
 import { paintReqChange } from '../shape/req-change.mjs';
 import { namedAnswer, forgetAnswer, REQUIREMENTS_AGREED } from '../shape/step-receipt.mjs';
 import { isRequirementsAsk, answerFieldOpen } from '../shape/step-card.mjs';
@@ -314,6 +316,8 @@ export function createChatRunCard({ doc, win = null, snapshot = null, ctx = {}, 
   // ---- Small runs C4: a requirement change's notice on the Build step (req-change.mjs); told, not asked. Mounted
   // before the log only once a change shows, so every other card keeps dev's markup.
   const changeEl = h('div', 'chat-rc-req-change');
+  // Small runs C5 (D12): the Verifier's open gaps, one `.srows` list, mounted only while gap runs build (flag-off golden).
+  const gapsEl = h('div', 'plan-checks srows verify-gaps');
   changeEl.hidden = true;
   // ---- Shaper s5: the ideas saved for the next checkpoint (D11) and a watch that gave up on the run's PR (D23)
   const notesEl = h('div', 'chat-rc-notes');
@@ -967,7 +971,36 @@ export function createChatRunCard({ doc, win = null, snapshot = null, ctx = {}, 
     const o = { ...m, line: one.detail, barLine: one.detail, lineSaysState: false, progress: null };
     if (m.current) o.current = { ...m.current, progress: null };
     if (one.state === 'S8' && !curRow) o.word = 'Working';
+    if (one.word) o.word = one.word;   // C5: the Verifier's word (Verifying, Needs you, Paused, Stopped, Ready to ship)
     return o;
+  }
+
+  /** C5: the Verifier's run row (a paused or halted Verifier): dot, "Verifier" and its short state, opening its run. */
+  function verifierRow(v, snap) {
+    const halted = v.state === 'halted';
+    const ol = h('ol', 'run-members is-table is-one-line');
+    const li = h('li', 'run-member rc-member');
+    li.dataset.state = halted ? 'stopped' : 'paused';
+    li.dataset.key = 'verifier';
+    const dot = h('span', '');
+    paintStatusDot(dot, { state: li.dataset.state, ...RUN_STATES[li.dataset.state] });
+    const open = button('run-member-title');
+    open.textContent = 'Verifier';
+    open.addEventListener('click', () => call(ctx.openRunPanel, { ...ref(), pipelineId: v.pipelineId, runId: (snap && snap.runId) || null, title: 'Verifier' }, {}));
+    const main = h('span', 'run-member-main');
+    main.append(open, h('span', 'run-member-state', halted ? 'stopped' : 'paused'));
+    li.append(dot, h('span', 'run-member-num', ''), main);
+    ol.append(li);
+    return ol;
+  }
+
+  /** C5 (D12): while gap runs build, the open gaps as one list; none while a question is up (it lists them itself). */
+  function paintVerifyGaps(one) {
+    const v = one && one.verify;
+    const gaps = v && v.state === 'gaps' && !painted ? v.gaps : [];
+    if (!gaps.length) { if (gapsEl.isConnected) gapsEl.remove(); return; }
+    if (!gapsEl.isConnected) logEl.after(gapsEl);
+    gapsEl.replaceChildren(...buildCheckRows(doc, { items: verifyGapItems(gaps) }));
   }
 
   function update(snap) {
@@ -1019,6 +1052,9 @@ export function createChatRunCard({ doc, win = null, snapshot = null, ctx = {}, 
       for (const li of membersEl.querySelectorAll('.run-member')) if (opened.includes(li.dataset.key)) li.querySelector('.plan-check-line')?.click();
       membersEl.hidden = false;
     } else { membersEl.replaceChildren(); membersEl.hidden = true; }
+    // C5 (D12): a paused or stopped Verifier is one run row; its click opens the run, where dev's Resume lives.
+    const vstate = one && one.verify ? one.verify.state : null;
+    if (vstate === 'paused' || vstate === 'halted') { membersEl.append(verifierRow(one.verify, shaperIn.snapOf(one.verify.pipelineId))); membersEl.hidden = false; }
     // Run 4 (D20): no id in visible text — the run id is the sub line's tooltip.
     if (isNoProjectRun(s)) where.replaceChildren(kindChip(doc, 'none'));
     else where.textContent = projectLabel(id, s);
@@ -1055,6 +1091,7 @@ export function createChatRunCard({ doc, win = null, snapshot = null, ctx = {}, 
     // B1: the log row is the one receipt and the state line the one headline; Ship stays on the feature page (D8).
     if (one) { receipt.hidden = true; qSec.hidden = !painted; clearResult(); }
     else paintResult(s, m); // sets createPrBtn; m: the status line it must not repeat
+    paintVerifyGaps(one);
     paintChanges(s, m, !!lr, one);
     paintWatch(m, (fm && fm.watch) || rm.watch);
     paintFoot(s);           // labels and disabled rules only
@@ -1189,7 +1226,9 @@ export function createRunCardController({ controls = {}, runStore = null, now = 
     // s5 (D16): each slice's rounds too — a live round is what the feature card is doing now.
     const slices = (card.feature && card.feature.slices) || [];
     const roundPids = slices.flatMap((s) => (s.rounds || []).map((r) => r && r.pipelineId));
-    for (const p of [...slices.map((s) => s.pipelineId), ...roundPids, rpPid]) {
+    // Small runs C5: the Verifier run's too (its bound stop is the card's open step; its paused or stopped state, a row).
+    const vfPid = card.feature && card.feature.verify ? card.feature.verify.pipelineId : null;
+    for (const p of [...slices.map((s) => s.pipelineId), ...roundPids, rpPid, vfPid]) {
       if (!p || p === pid) continue;
       const m = store && typeof store.byPipeline === 'function' ? store.byPipeline(p) : null;
       if (m) snaps[p] = m;

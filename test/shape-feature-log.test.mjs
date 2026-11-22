@@ -208,3 +208,19 @@ test('C4 (D17): buildDecisionLog({changes}) lists one row per change it is given
   assert.equal(new Set(log.map((r) => r.key)).size, log.length);
   assert.deepEqual(buildDecisionLog({ origin: [] }), buildDecisionLog({ origin: [], changes: [] }));
 });
+
+test('C5 (D13): buildDecisionLog({verify}) adds one receipt per check with a result; without it the log is the same', () => {
+  const held = (n) => Array.from({ length: n }, (_, i) => `R-h-${i}`);
+  const verify = { checks: [
+    { round: 1, state: 'gaps', result: { held: held(15), gaps: [{ id: 'R-po-2', why: 'x', title: 'y' }] }, gapRuns: [11] },
+    { round: 2, state: 'clean', result: { held: held(16), gaps: [] }, gapRuns: [] },
+    { round: 1, state: 'verifying', result: null, gapRuns: [] },
+  ] };
+  const log = buildDecisionLog({ origin: [], sliced: true, verify });
+  assert.deepEqual(log.map((r) => [r.run, r.text]), [
+    [null, 'Verifier: 15 of 16 hold in the main flow · 1 gap between runs · run 11 added: a small run for the gap'],
+    [null, 'Verified: the 16 requirements owned by runs hold in the main flow'],
+  ]);
+  assert.equal(new Set(log.map((r) => r.key)).size, log.length);
+  assert.deepEqual(buildDecisionLog({ origin: [] }), buildDecisionLog({ origin: [], verify: null }));
+});

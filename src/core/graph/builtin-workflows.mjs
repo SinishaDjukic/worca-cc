@@ -469,6 +469,29 @@ export const GRAPH_SHAPE_UX_SLICE_REQ_WORKFLOW = sliceRequirementsVariant(GRAPH_
 /** Reserved and hidden like SHAPE_REQ_WORKFLOW_IDS: a slice ticket picks one when it fires (never listed, never a row). */
 export const SHAPE_SLICE_REQ_WORKFLOW_IDS = Object.freeze([SHAPE_SLICE_REQ_WORKFLOW_ID, SHAPE_UX_SLICE_REQ_WORKFLOW_ID]);
 
+/** Shaper small runs C5: the Verifier's run, chained after a feature's last finished run (src/core/shape/verifier.mjs).
+ *  One agent between the task and End, no loop: the check loop re-checks with a new run. Reserved and hidden like
+ *  SHAPE_SLICE_REQ_WORKFLOW_IDS: never listed, never a row, never deleted. */
+export const SHAPE_VERIFY_WORKFLOW_ID = 'wf_shape_verify';
+export const GRAPH_SHAPE_VERIFY_WORKFLOW = deepFreeze({
+  id: SHAPE_VERIFY_WORKFLOW_ID,
+  name: 'Shaper Verifier',
+  version: 2,
+  domain: 'coding',
+  createdAt: '1970-01-01T00:00:00.000Z',
+  updatedAt: '1970-01-01T00:00:00.000Z',
+  nodes: [
+    { id: 'n_task', kind: 'task', x: 40, y: 200, config: {} },
+    { id: 'n_verify', kind: 'agent', key: 'featureVerifier', x: 320, y: 200, config: {} },
+    { id: 'n_end', kind: 'end', x: 600, y: 200, config: {} },
+  ],
+  wires: [
+    { id: 'w1', from: { node: 'n_task', port: 'task' }, to: { node: 'n_verify', port: 'task' } },
+    { id: 'w2', from: { node: 'n_verify', port: 'verify' }, to: { node: 'n_end', port: 'result' } },
+  ],
+});
+export const SHAPE_VERIFY_WORKFLOW_IDS = Object.freeze([SHAPE_VERIFY_WORKFLOW_ID]);
+
 /** The ids no saved row may claim: writeGraphWorkflow re-mints them, listWorkflows hides them,
  *  DELETE refuses them. wf_workspace_scan and wf_pr_fix are reserved but never listed anywhere;
  *  wf_shape is listed only while the Shape it first gate is on, and wf_shape_ux is never listed. Order is NOT
@@ -477,4 +500,4 @@ export const SHAPE_SLICE_REQ_WORKFLOW_IDS = Object.freeze([SHAPE_SLICE_REQ_WORKF
  *  NOTE: `ui/public/graph/composer.mjs` keeps a twin of this list as a `Set` (`.has`), not an
  *  Array (`.includes`) — the two are not interchangeable. */
 export const RESERVED_WORKFLOW_IDS = Object.freeze([GRAPH_DEFAULT_WORKFLOW.id, LEAN_WORKFLOW_ID, AUTO_WORKFLOW_ID, MEMORY_DEFRAG_WORKFLOW_ID, WORKSPACE_SCAN_WORKFLOW_ID, PR_FIX_WORKFLOW_ID, SHAPE_WORKFLOW_ID, SHAPE_UX_WORKFLOW_ID, WORKSPACE_RESYNTH_WORKFLOW_ID]);
-export function isReservedWorkflowId(id) { return RESERVED_WORKFLOW_IDS.includes(id) || SHAPE_REQ_WORKFLOW_IDS.includes(id) || SHAPE_SLICE_REQ_WORKFLOW_IDS.includes(id); }
+export function isReservedWorkflowId(id) { return RESERVED_WORKFLOW_IDS.includes(id) || SHAPE_REQ_WORKFLOW_IDS.includes(id) || SHAPE_SLICE_REQ_WORKFLOW_IDS.includes(id) || SHAPE_VERIFY_WORKFLOW_IDS.includes(id); }

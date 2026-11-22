@@ -373,6 +373,12 @@ export function applyRequirementChange(featureId, changes, source, deps) {
     ...(stopFailed ? { stopFailed: true } : {}) } };
 }
 
+/** C4's run-now rule (D6): an appended slice ticket the "Ask me before each run" hold would keep is forced, so it fires
+ *  without asking. Small runs C5 starts its gap runs through it too. */
+export function runNow(id, by) {
+  return featureHoldsTicket(getTicket(id)) && requestRunNow(id, { by: by || undefined });
+}
+
 /**
  * The server's change path (D15): `apply` for the chat card, `applyStop` for createHeldStops' Change answer. deps =
  * { runs, stopRun(runId, by), stopPausedPipeline(pipelineId, by), schedulerTick(), broadcastFeature(id), liveSliceOf(id) }.
@@ -389,7 +395,7 @@ export function createRequirementChanges({ runs, stopRun, stopPausedPipeline, sc
       return 'stopped';
     },
     stopPaused: (pid, by) => stopPausedPipeline(pid, by || 'local'),
-    runNow: (id, by) => featureHoldsTicket(getTicket(id)) && requestRunNow(id, { by: by || undefined }),
+    runNow,
     tick: () => { void Promise.resolve(schedulerTick()).catch(() => {}); },
     broadcast: (fid) => broadcastFeature(fid),
     smallRuns: (fid) => smallRunsOfFeature(fid),

@@ -9,6 +9,7 @@ import { icon } from '../icons.mjs';
 import { FEATURE_KIND } from '../run-status-card.mjs';
 import { prototypeDetail } from './prototype-body.mjs';
 import { REQUIREMENTS_AGREED } from '../../../src/shared/shape/feature-log.mjs';
+import { VERIFY_WORDS } from '../../../src/shared/shape/verifier.mjs';
 
 export const SLICE_STATE_LABELS = Object.freeze({
   planned: 'Planned', starting: 'Starting', shaping: 'Planning', questions: 'Waiting for your answers', approval: 'Waiting for your plan approval',
@@ -66,9 +67,12 @@ export function featureCardModel({ own = null, card = null, snapOf = () => null 
   // D11: the open step is the asking member this tab follows, else the server's pointer (chatPaintQuestion resolves it).
   // s3 (D16): while re-planning, the Re-plan the rest run's Split ask is this card's open step.
   const rp = view.status === 'replanning' && view.replan && view.replan.pipelineId ? snapOf(view.replan.pipelineId) : null;
+  // Small runs C5: the Verifier run's bound stop is the card's open step once every run is done.
+  const vf = view.verify && view.verify.pipelineId ? snapOf(view.verify.pipelineId) : null;
   const liveAsk = slices.find((s) => asks(snap(s)));
   const step = liveAsk ? stepOf(liveAsk.index, snap(liveAsk))
     : asks(rp) ? stepOf(null, rp)
+    : asks(vf) ? stepOf(null, vf)
     : view.ask ? { index: view.ask.index, runId: view.ask.runId || null, pipelineId: view.ask.pipelineId || null, kind: view.ask.kind, id: view.ask.id || null, snap: null } : null;
   // s5: ideas saved from the chat (D11), and a watch that gave up on a run's PR (D23)
   const ideas = (view.notes && view.notes.ideas) || 0;
@@ -107,7 +111,12 @@ const ONE_DETAIL = Object.freeze({
   S7: ({ asking }) => (asking ? SPLIT_PROPOSED : SPLIT_WORKING),
   S8: ({ k, n }) => `${k} of ${plural(n, 'run')} done`,
   S9: ({ n }) => `${plural(n, 'run')} done · ship from the feature page`,
+  // Small runs C5 (D12): the Verifier checks the whole feature (SV); once it is through, Ready to ship is the word (SR).
+  SV: ({ k, n }) => `the Verifier walks the main flow · ${k} of ${plural(n, 'run')} done`,
+  SR: () => 'ship from the feature page',
 });
+/** C5: a stopped or failed Verifier run's line (its run row opens the run, where dev's Resume lives). */
+const VERIFY_HALTED = 'The Verifier stopped · resume it from its run';
 
 /** The open ask's question, when this tab holds it (the pointer-only step of a slice has none). */
 const pqOf = (step) => (step && step.snap && step.snap.pendingQuestion) || null;
@@ -116,7 +125,13 @@ const pqOf = (step) => (step && step.snap && step.snap.pendingQuestion) || null;
 function oneState(view, step, log, card, ended = false) {
   if (view) {
     const slices = view.slices || [];
-    if (slices.length && slices.every((s) => s.state === 'done')) return ['S9', 'done'];
+    const allDone = slices.length && slices.every((s) => s.state === 'done');
+    // C5: with a Verifier check, every run done reads by the check: verifying, through, or S8 (gaps, its stop, paused, halted).
+    const v = view.verify && view.verify.state;
+    if (allDone && (v === 'clean' || v === 'accepted')) return ['SR', 'done'];
+    if (allDone && v === 'verifying') return ['SV', 'build'];
+    if (allDone && v) return ['S8', 'build'];
+    if (allDone) return ['S9', 'done'];
     if (view.status === 'replanning') return ['S7', 'split'];
     return ['S8', 'build'];
   }
@@ -162,8 +177,13 @@ export function oneCardModel({ own = null, card = null, snapOf = () => null } = 
     q: pq && Array.isArray(pq.questions) ? pq.questions.length : 0,
     asking: !!question && (asks(rp) || (!!view && !!view.ask && view.ask.index == null)),
   });
+  // C5 (D12): the Verifier's word, and the halted line in place of S8's; only with a check (no key otherwise).
+  const vs = view && view.verify ? view.verify.state : null;
+  const verify = state === 'SV' || state === 'SR' || (state === 'S8' && vs && !['clean', 'accepted', 'verifying'].includes(vs)) ? view.verify : null;
+  const vx = verify ? { verify, word: VERIFY_WORDS[verify.state] || null } : {};
+  const line = verify && verify.state === 'halted' && state === 'S8' ? VERIFY_HALTED : detail;
   // Small runs C4 (D17): the requirement change the Build step's notice shows, while its landing run is not done.
-  return { state, step, detail, question, receipts: base.log, runs: !!view, kindWord: FEATURE_KIND, base, change: (view && view.change) || null };
+  return { state, step, detail: line, question, receipts: base.log, runs: !!view, kindWord: FEATURE_KIND, base, change: (view && view.change) || null, ...vx };
 }
 
 const sigOf = (host, list) => { const sig = JSON.stringify(list); if (host.dataset.sig === sig) return false; host.dataset.sig = sig; return true; };

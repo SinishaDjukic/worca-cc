@@ -1115,8 +1115,8 @@ export class RunHarness extends EventEmitter {
     this._shapeRec = this.runShape ? shapeRecordFrom(safeParse(this.resumeOpts?.row?.shape_stats)) : null;
     // Shaper small runs B1 (D1): a new planning run is stamped when it starts (the flag, or the marked feature a re-plan
     // replaces, and only that: an unmarked feature's re-plan keeps dev's card whatever the flag says now); a resume reads
-    // the stamp back from its row above and never re-reads the flag. Slice runs never are.
-    if (this._shapeRec && !this.resumeOpts?.row && !this.runShape.slice
+    // the stamp back from its row above and never re-reads the flag. Slice runs never are, nor is a Verifier run (C5).
+    if (this._shapeRec && !this.resumeOpts?.row && !this.runShape.slice && !this.runShape.verify
       && (this.runShape.replaces ? smallRunsOfFeature(this.runShape.replaces) : smallRunsAtStart())) this._shapeRec.smallRuns = true;
     {
       const wf = this.resumeOpts?.resumePoint?.workflowId || this.workflowId;

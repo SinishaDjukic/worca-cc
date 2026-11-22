@@ -29,9 +29,11 @@ const earliest = (...xs) => { const ok = xs.filter((x) => x != null); return ok.
 const openedAt = (outcome) => (outcome && outcome.status === 'opened' ? ms(outcome.at) : null);
 const safe = (fn, fallback) => { try { return fn(); } catch { return fallback; } };
 
-/** Every slice done (featureView's status) and every round of every slice done. Pure. */
+/** Every slice done (featureView's status) and every round of every slice done; with a Verifier check (C5, D10), the
+ *  latest one clean or accepted. Pure. */
 export function featureFinished(view) {
   if (view?.status !== 'done' || !(view.total > 0)) return false;
+  if (view.verify && view.verify.state !== 'clean' && view.verify.state !== 'accepted') return false;
   return (view.slices || []).every((s) => (s.rounds || []).every((r) => r.status === 'done'));
 }
 
@@ -74,8 +76,16 @@ function changesAfterShip(featureId, view) {
   return n;
 }
 
+/** C5 (D10): the feature's Verifier runs, which add to its cost and never to its runs. */
+function verifierRunsOf(featureId) {
+  const o = parse(getDb().prepare('SELECT outline FROM shape_features WHERE id = ?').get(String(featureId))?.outline || 'null');
+  const checks = o && o.verify && Array.isArray(o.verify.checks) ? o.verify.checks : [];
+  return checks.map((c) => c.pipelineId || (c.ticketId ? safe(() => getTicket(c.ticketId), null)?.pipelineId : null)).filter(Boolean);
+}
+
 function computeFigures(featureId, view) {
-  const pids = runsOf(view);
+  const runIds = runsOf(view);
+  const pids = [...new Set([...runIds, ...verifierRunsOf(featureId)])];
   const costPerStep = {};
   for (const [agent, h] of stepHistory({ pipelineIds: pids })) costPerStep[agent] = usd4(h.cost.reduce((a, b) => a + b, 0));
   const reviewFindings = { ...Object.fromEntries(SEVERITIES.map((k) => [k, 0])), total: 0 };
@@ -95,10 +105,10 @@ function computeFigures(featureId, view) {
   const position = view.care?.position;
   return {
     // Care is the feature's position at record time; without one it is the A2 default, Balanced (careOfRow).
-    care: CARE_POSITIONS.includes(position) ? position : 'balanced', runs: pids.length,
+    care: CARE_POSITIONS.includes(position) ? position : 'balanced', runs: runIds.length,
     costPerStep, cost: { shaping: usd4(shaping), building: usd4(building), total: usd4(shaping + building) },
     requirementsMet: { met: items.filter((i) => i.pass && !i.state).length, total: items.length },
-    gapsAtEnd: 0,   // until the Verifier (Feature C5) exists
+    gapsAtEnd: view.verify ? view.verify.gapsFound : 0,
     reviewFindings,
     firstPassRate: reviewed ? rate3(passes / reviewed) : null,
     fixRounds,

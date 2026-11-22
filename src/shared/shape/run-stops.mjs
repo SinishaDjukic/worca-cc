@@ -10,6 +10,8 @@ import { BLOCKING, normalizeSeverity } from '../graph/verdict.mjs';
 import { requirementChangedFeedback, oneLineText } from './req-change.mjs';
 
 export const STOP_REASONS = Object.freeze(['check', 'objection', 'requirement']);
+// Small runs C5: the Verifier's bound stop is a `check` stop of the same shape.
+export { verifyStop } from './verifier.mjs';
 
 const plural = (n, one) => `${n} ${n === 1 ? one : `${one}s`}`;
 const joinNames = (xs) => (xs.length < 2 ? xs.join('') : `${xs.slice(0, -1).join(', ')} and ${xs.at(-1)}`);

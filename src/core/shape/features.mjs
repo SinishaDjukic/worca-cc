@@ -18,6 +18,7 @@ import { stopOptionOf } from '../../shared/shape/run-stops.mjs';
 import { CHANGES_MAX } from '../../shared/shape/req-change.mjs';
 import { PLAN_ASK_KIND } from './run.mjs';
 import { roundsOf } from './rounds.mjs';
+import { verifyView } from './verifier.mjs';
 import { getWatch, stoppedWatchFact } from '../pr-watch.mjs';
 import { clipTitle } from '../title.mjs';
 import { readRunTags } from '../run-tags-store.mjs';
@@ -280,7 +281,7 @@ function clarifyOf(pid) {
 /** D7: the feature card's step log, from the origin run's clarify row and audit lines, each later run's audit lines,
  *  and (while re-planning) every run after the last done one: replanBrief re-plans the halted run with the canceled.
  *  `oneCard` (B1, D7): the one card's receipt words; the feature page keeps dev's. */
-function featureLog(f, slices, oneCard = false, changes = []) {
+function featureLog(f, slices, oneCard = false, changes = [], verify = null) {
   const lastDone = Math.max(0, ...slices.filter((s) => s.state === 'done').map((s) => s.index));
   const replan = f.status === 'replanning' || f.status === 'replanned'
     ? slices.filter((s) => s.index > lastDone).map((s) => s.index) : null;
@@ -294,6 +295,8 @@ function featureLog(f, slices, oneCard = false, changes = []) {
     replan,
     rounds: slices.flatMap((s) => (s.rounds || []).map((r) => ({ run: s.index, ...r }))),
     oneCard, changes,
+    // Small runs C5 (D13): the Verifier's receipts, after the changes.
+    ...(verify ? { verify } : {}),
   });
 }
 
@@ -338,11 +341,14 @@ export function featureView(id, { live = () => null, oneCard = false } = {}) {
   // D24: Ship as once every slice is done, on a feature that is still active and not shipped. The suggestion is
   // async (featureShipSuggestion); the GET route merges it.
   const lastPrUrl = slices.length ? (slices[slices.length - 1].pr?.url || null) : null;
+  // Small runs C5 (D11): a feature with a Verifier check ships only once the latest check is clean or accepted.
+  const verify = verifyView(f, live);
+  const verified = !verify || verify.state === 'clean' || verify.state === 'accepted';
   // A ship whose PRs were all closed unmerged is withdrawn: the feature ships again (the ship route clears the record).
   const shipPrs = slices.map((s) => s.pr).filter((p) => p && p.url);
   const shipped = !!f.ship_mode && !(shipPrs.length && shipPrs.every((p) => p.state === 'CLOSED'));
   const release = shipped && f.release_version ? { version: f.release_version, url: f.release_url || null, error: f.release_error || null } : null;
-  const ship = { ready: slices.length > 0 && done === slices.length && f.status === 'active' && !shipped && !roundLive,
+  const ship = { ready: slices.length > 0 && done === slices.length && f.status === 'active' && !shipped && !roundLive && verified,
     mode: shipped ? f.ship_mode : null, prUrl: shipped ? f.ship_pr_url || null : null, lastPrUrl, suggested: null, linesAdded: null,
     linesRemoved: null, files: null, release,
     // s4: what the applied Ship card shows, wherever it renders (chat, group page, Plans).
@@ -357,6 +363,11 @@ export function featureView(id, { live = () => null, oneCard = false } = {}) {
     const l = live(replan.pipelineId);
     if (l && l.ask) ask = { index: null, runId: l.runId || null, pipelineId: replan.pipelineId, id: l.ask.id, kind: l.ask.kind };
   }
+  // Small runs C5: the live Verifier run's question (its bound stop) is the card's open step, like the Re-plan ask.
+  if (!ask && verify && verify.pipelineId) {
+    const l = live(verify.pipelineId);
+    if (l && l.ask) ask = { index: null, runId: l.runId || null, pipelineId: verify.pipelineId, id: l.ask.id, kind: l.ask.kind };
+  }
   const ch = changeKeys(f, slices);
   return {
     id: f.id, title: f.title, projectKey: projectKey(f.project_dir),   // a History link needs it (F28)
@@ -365,7 +376,7 @@ export function featureView(id, { live = () => null, oneCard = false } = {}) {
     open: slices.some((s) => ['planned', 'missed', 'held'].includes(s.state)),
     held: held ? { index: held.index, ticketId: held.ticketId } : null,
     replacedBy: f.replaced_by || null, replan, slices, ship,
-    originPipelineId: f.origin_pipeline_id, ask, log: featureLog(f, slices, oneCard, ch.logged), notes: { ideas },
+    originPipelineId: f.origin_pipeline_id, ask, log: featureLog(f, slices, oneCard, ch.logged, f.outline.verify || null), notes: { ideas },
     // Shaper small runs A2: the record's 2 keys, last, only with the flag on or (B2, D20) for a marked feature; an unmarked
     // feature with the flag off is dev's exact shape.
     ...(shaperSmallRunsOn() || smallRunsOfFeature(f.id) ? { care: careOfRow(f), requirementKinds: requirementKindsOf(j(f.requirement_kinds, null), f.outline) } : {}),
@@ -373,6 +384,8 @@ export function featureView(id, { live = () => null, oneCard = false } = {}) {
     ...protoKey(smallRunsOfFeature(f.id) ? prototypeOfPipeline(f.origin_pipeline_id) : null),
     // Small runs C4 (D17): the change on the notice and every change entry; absent before the first change.
     ...(ch.changes.length ? { change: ch.change, changes: ch.changes } : {}),
+    // Small runs C5 (D12): the latest Verifier check as the card reads it; absent before the first check.
+    ...(verify ? { verify } : {}),
   };
 }
 
@@ -510,46 +523,50 @@ const STALE_ERROR = (id) => Object.assign(new Error(`${id} changed since: read i
  * for each `appendFor`, (5) every open `after` ref to a replaced ticket re-chained, (6) the old tickets cancelled last.
  * `entries` are written as given (the caller fills `added`). → {entries, added:[{ownerIndex, index, ticketId}], restarted:[{index, ticketId}]}
  */
-export function changeAgreedRequirements(featureId, { changes, entries = [], restart = [], appendFor = [], by = null, now = Date.now() }) {
-  const db = getDb();
+export function changeAgreedRequirements(featureId, opts) {
   let out = null;
-  tx(() => {
-    const f0 = featureRow(featureId);
-    const agreed = (f0.outline.agreed || []).map((a) => ({ ...a }));
-    for (const c of changes) {
-      const a = agreed.find((x) => x.id === c.id);
-      if (!a || a.text !== c.from) throw STALE_ERROR(c.id);
-      a.text = c.to;
-    }
-    const kept = [...(Array.isArray(f0.outline.changes) ? f0.outline.changes : []), ...entries].slice(-CHANGES_MAX);
-    db.prepare('UPDATE shape_features SET outline = ?, updated_at = ? WHERE id = ?')
-      .run(JSON.stringify({ ...f0.outline, agreed, changes: kept }), iso(now), f0.id);
-    let f = featureRow(featureId);
-    const replaced = new Map();
-    for (const r of sliceRows(featureId)) {
-      if (r.pipelineId || !r.ticket || !['scheduled', 'missed'].includes(r.ticket.status)) continue;
-      replaced.set(r.ticketId, reissueTicket(f, r, f.outline, { by, now }));
-    }
-    const restarted = [];
-    for (const index of restart) {
-      const r = restartRows(f, sliceRows(featureId), { index }, { by, now });
-      if (r.error) throw Object.assign(new Error(r.error), { code: 'CANNOT_RESTART', status: r.status });
-      restarted.push({ index, ticketId: r.ticketId });
-    }
-    const added = [];
-    for (const a of appendFor) {
-      const r = appendRunRows(f, sliceRows(featureId), { title: a.title, goal: a.goal, kind: 'change', requirements: a.ids, by, now });
-      added.push({ ownerIndex: a.ownerIndex, index: r.index, ticketId: r.ticketId });
-      f = featureRow(featureId);
-    }
-    for (const [oldId, newId] of replaced) {
-      const refs = db.prepare("SELECT id FROM scheduled_runs WHERE after_kind = 'ticket' AND after_id = ? AND status IN ('scheduled', 'missed')").all(oldId);
-      for (const { id } of refs) if (!replaced.has(id)) updateTicket(id, { after: { kind: 'ticket', id: newId } }, { now, by });
-    }
-    for (const oldId of replaced.keys()) cancelTicket(oldId, { by, now });
-    out = { entries, added, restarted };
-  });
+  tx(() => { out = changeAgreedRequirementsIn(featureId, opts); });
   return out;
+}
+
+/** Small runs C5 (D5): changeAgreedRequirements' body with no tx of its own, for a caller that already holds one (the
+ *  Verifier's check record and its gap runs commit together). tx() refuses nesting. */
+export function changeAgreedRequirementsIn(featureId, { changes, entries = [], restart = [], appendFor = [], by = null, now = Date.now() }) {
+  const db = getDb();
+  const f0 = featureRow(featureId);
+  const agreed = (f0.outline.agreed || []).map((a) => ({ ...a }));
+  for (const c of changes) {
+    const a = agreed.find((x) => x.id === c.id);
+    if (!a || a.text !== c.from) throw STALE_ERROR(c.id);
+    a.text = c.to;
+  }
+  const kept = [...(Array.isArray(f0.outline.changes) ? f0.outline.changes : []), ...entries].slice(-CHANGES_MAX);
+  db.prepare('UPDATE shape_features SET outline = ?, updated_at = ? WHERE id = ?')
+    .run(JSON.stringify({ ...f0.outline, agreed, changes: kept }), iso(now), f0.id);
+  let f = featureRow(featureId);
+  const replaced = new Map();
+  for (const r of sliceRows(featureId)) {
+    if (r.pipelineId || !r.ticket || !['scheduled', 'missed'].includes(r.ticket.status)) continue;
+    replaced.set(r.ticketId, reissueTicket(f, r, f.outline, { by, now }));
+  }
+  const restarted = [];
+  for (const index of restart) {
+    const r = restartRows(f, sliceRows(featureId), { index }, { by, now });
+    if (r.error) throw Object.assign(new Error(r.error), { code: 'CANNOT_RESTART', status: r.status });
+    restarted.push({ index, ticketId: r.ticketId });
+  }
+  const added = [];
+  for (const a of appendFor) {
+    const r = appendRunRows(f, sliceRows(featureId), { title: a.title, goal: a.goal, kind: 'change', requirements: a.ids, by, now });
+    added.push({ ownerIndex: a.ownerIndex, index: r.index, ticketId: r.ticketId });
+    f = featureRow(featureId);
+  }
+  for (const [oldId, newId] of replaced) {
+    const refs = db.prepare("SELECT id FROM scheduled_runs WHERE after_kind = 'ticket' AND after_id = ? AND status IN ('scheduled', 'missed')").all(oldId);
+    for (const { id } of refs) if (!replaced.has(id)) updateTicket(id, { after: { kind: 'ticket', id: newId } }, { now, by });
+  }
+  for (const oldId of replaced.keys()) cancelTicket(oldId, { by, now });
+  return { entries, added, restarted };
 }
 
 /** D24: a slice's draft PR (in-flight features from before the one ship flow), so the page can say "draft" (pipelines.pr_state stays OPEN, P18). */

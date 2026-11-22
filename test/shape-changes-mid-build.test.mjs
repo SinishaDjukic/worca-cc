@@ -411,10 +411,10 @@ test('only writer: the UPDATE shape_features SET outline sites in src/ are the p
   const src = fileURLToPath(new URL('../src/', import.meta.url));
   const walk = (d) => readdirSync(d).flatMap((n) => { const p = join(d, n); return statSync(p).isDirectory() ? walk(p) : p.endsWith('.mjs') ? [p] : []; });
   const sites = walk(src).flatMap((p) => (readFileSync(p, 'utf8').match(/UPDATE shape_features SET outline/g) || []).map(() => relative(src, p)));
-  assert.deepEqual(sites, ['core/shape/features.mjs', 'core/shape/features.mjs', 'core/shape/features.mjs'],
-    'setFeatureAcceptance (acceptance), appendRunRows (slices) and changeAgreedRequirements (agreed text)');
+  assert.deepEqual(sites, ['core/shape/features.mjs', 'core/shape/features.mjs', 'core/shape/features.mjs', 'core/shape/verifier.mjs'],
+    'setFeatureAcceptance (acceptance), appendRunRows (slices), changeAgreedRequirements (agreed text) and C5 writeChecks (outline.verify only)');
   const body = readFileSync(join(src, 'core/shape/features.mjs'), 'utf8');
-  const fn = body.slice(body.indexOf('export function changeAgreedRequirements'));
+  const fn = body.slice(body.indexOf('export function changeAgreedRequirementsIn'));   // C5 (D5): the tx-free body
   assert.match(fn.slice(0, fn.indexOf('\n}\n')), /UPDATE shape_features SET outline/);
   const changes = readFileSync(join(src, 'core/shape/changes.mjs'), 'utf8');
   assert.match(changes, /write: \(fid, plan\) => changeAgreedRequirements\(fid, plan\)/);

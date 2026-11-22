@@ -1,6 +1,7 @@
 // src/shared/shape/feature-log.mjs — Shaper s2: the feature card's step log (D7) and the receipt words it shares with
 // ui/public/shape/step-receipt.mjs (D8). Pure and browser-safe (B2: the Care words come from feature-record.mjs): the server builds the log from durable rows (the run
 // harness's audit lines, the clarify row, the feature row); the browser names a receipt with the same words.
+import { verifyLines } from './verifier.mjs';
 import { careRecordLine } from './feature-record.mjs';
 import { SKIP_LINES } from './prototype.mjs';
 import { STOP_DONE_RE } from './run-stops.mjs';
@@ -97,7 +98,7 @@ const byAway = (text, d) => (d.away ? `${text} · by Away mode` : text);
  *   `oneCard` (Shaper small runs B1, D7): the one card's words, "Requirements agreed" and "Runs approved"; without it a
  *   requirements line reads as the plan approval it was before B1, and the split keeps splitText.
  */
-export function buildDecisionLog({ clarify = null, origin = [], sliced = false, runs = [], slices = [], replan = null, rounds = [], oneCard = false, changes = [] } = {}) {
+export function buildDecisionLog({ clarify = null, origin = [], sliced = false, runs = [], slices = [], replan = null, rounds = [], oneCard = false, changes = [], verify = null } = {}) {
   const out = [];
   const front = [];
   const qs = clarify && Array.isArray(clarify.questions) ? clarify.questions : [];
@@ -153,6 +154,8 @@ export function buildDecisionLog({ clarify = null, origin = [], sliced = false, 
   }
   // Small runs C4 (D17): a requirement change not on the feature card's notice (landed, superseded or `none`), oldest first.
   (Array.isArray(changes) ? changes : []).forEach((e) => { out.push({ key: `change-${e.at}-${e.id}`, run: null, text: reqChangeLogText(e), detail: [] }); });
+  // Small runs C5 (D13): one receipt per Verifier check with a result (`verify` = the feature's outline.verify).
+  verifyLines(verify).forEach((text, i) => { out.push({ key: `verify-${i}`, run: null, text, detail: [] }); });
   out.unshift(...front.slice(0, 1));
   if (replan && replan.length) {
     out.push({ key: 'replan', run: null, text: replanText(replan), detail: [...replan].sort((a, b) => a - b).map((i) => { const s = sliceOf(i); return s ? `${i} · ${s.title}` : String(i); }) });

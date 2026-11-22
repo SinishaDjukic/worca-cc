@@ -109,7 +109,7 @@ export const MOCK_WRITER_ROLES = new Set([
   'workspace-scan', 'agent-gen', 'workspace-reviewer', 'manual-tests-checklist', 'manual-web-ui-testing', 'memory-defrag',
   'generic-producer', 'generic-verifier', 'deck-builder', 'deck-audit', 'deck-export',
   'workspace-usage', 'workspace-synth', 'c4-architect',
-  'requirements-draft', 'requirements-review', 'requirements-refine',
+  'requirements-draft', 'requirements-review', 'requirements-refine', 'feature-verifier',
 ]);
 
 /** Named so the executor's mock-role chain and the switch cannot drift apart. */
@@ -668,6 +668,9 @@ export async function runMock({ cwd, systemPrompt, prompt, onEvent, signal, resu
     case 'generic-producer':
       text = await mockGenericProducer(m, onEvent);
       break;
+    case 'feature-verifier':
+      text = await mockFeatureVerifier(m, prompt, onEvent);
+      break;
     case 'generic-verifier':
       // Reuses the reviewer mock: writes MOCK_OUT md + MOCK_JSON verdict with the
       // standard cycle-decreasing severity, so generic loops terminate offline.
@@ -781,6 +784,31 @@ async function mockClarify(m, cycle, onEvent) {
 /** Generic producer mock: deterministic content to MOCK_OUT (json if the path
  *  ends .json, else markdown). Lets user-defined agents run offline with no
  *  bespoke mock branch. */
+/**
+ * Small runs C5: the Verifier's result file. The owned ids are the first field of each line of the prompt's fenced
+ * `text` block; the round comes from the prompt's "Verifier check, round N" line. Env WORCA_MOCK_VERIFY is a JSON array
+ * with one list of gap ids per round (`[["R-po-2"], []]`); a round with no list (the default) finds every id holding.
+ */
+async function mockFeatureVerifier(m, prompt, onEvent) {
+  const out = m.MOCK_OUT;
+  if (!out) return '[mock] feature-verifier: no MOCK_OUT given';
+  const text = String(prompt || '');
+  const block = text.match(/```text\n([\s\S]*?)\n```/);
+  const ids = block ? block[1].split('\n').map((l) => l.split(' · ')[0].trim()).filter(Boolean) : [];
+  const round = Number(text.match(/Verifier check, round (\d+)/)?.[1]) || 1;
+  let table = [];
+  try { table = JSON.parse(process.env.WORCA_MOCK_VERIFY || '[]'); } catch { table = []; }
+  const gaps = new Set(Array.isArray(table) && Array.isArray(table[round - 1]) ? table[round - 1] : []);
+  const checks = ids.map((id) => (gaps.has(id)
+    ? { id, holds: false, why: `the mock Verifier found ${id} missing between runs`, title: `Close the gap: ${id}` }
+    : { id, holds: true, why: 'holds in the main flow' }));
+  await emitLog(onEvent, `[mock] feature verifier: round ${round}, ${gaps.size} gap(s)`);
+  await ensureDir(out);
+  await writeFile(out, `${JSON.stringify({ checks }, null, 2)}\n`, 'utf8');
+  safeEmit(onEvent, { type: 'tool_use', text: `wrote ${out}`, raw: { mock: true, file: out } });
+  return `[mock] verify result written to ${out}`;
+}
+
 async function mockGenericProducer(m, onEvent) {
   const out = m.MOCK_OUT;
   await emitLog(onEvent, '[mock] generic producer writing output artifact');

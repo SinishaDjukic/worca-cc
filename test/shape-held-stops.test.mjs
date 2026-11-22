@@ -180,3 +180,19 @@ test('C4: a refused change rethrows code and status, holds nothing and answers n
   held.answer(e2, 'plan-n_refine-2', { ...KEEP }, 'ann');
   assert.equal(n, 1, 'Keep it never applies a change');
 });
+
+test('C5: answering a Verifier-run stop (no slice, no other run going) delivers at once', async () => {
+  const { verifyStop } = await import('../src/shared/shape/verifier.mjs');
+  const runs = new Map();
+  const answers = [];
+  const stop = verifyStop({ gaps: [{ id: 'R-po-2', why: 'x' }], round: 3, fixCycles: 2 });
+  const e = { id: 'rv', pipelineId: pipe('running'), status: 'running', heldStop: null,
+    pendingQuestion: { id: 'verify-3-x', kind: 'gate', stop },
+    orch: { runShape: { verify: { featureId: 'feat_x', round: 3 } }, answer: (id, payload, by) => answers.push({ id, payload, by }) } };
+  runs.set(e.id, e);
+  const held = createHeldStops({ runs, liveSliceOf: () => null, broadcastFeature: () => {}, resolvePending: () => true, now: Date.now });
+  assert.equal(held.answer(e, 'verify-3-x', { decision: 'another' }, 'ann'), undefined);
+  assert.deepEqual(answers, [{ id: 'verify-3-x', payload: { decision: 'another' }, by: 'ann' }]);
+  assert.equal(e.heldStop, null);
+  assert.throws(() => held.answer(e, 'verify-3-x', { decision: 'revise' }, 'ann'), (err) => err.code === 'INVALID_ANSWER');
+});
