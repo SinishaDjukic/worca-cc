@@ -195,9 +195,10 @@ count in its own cost limit, and once it is reached a criterion shows "Not check
 
 A speaker that is a word of a screen names nobody (`The button says: "..."`, `"..." — Button label`, `"..." — Invoices page`;
 also Error, Hint, Title, Tooltip, Email, Page, CTA and the like): after a leading "the", "this", "that", "a" or "an", all its words
-are such words, or its last word is one in lower case. A name or role that only holds one is still a speaker and is checked
-(`— Larry Page`, `— Field sales lead`), and so are speakers such as `It says:` and `The tagline says:`. In form 2, "which", "as"
-and "and" are not speakers (`"...", as the brief says.`). Nothing else names a speaker: no bare colon (`Dana: "..."`), no
+are such words, or its last word is one in lower case or in capitals (`The main CTA says:`), or it follows "the", "primary" and the like
+in Title Case (`— Primary Button`). A name or role that only holds one is still a speaker and is checked
+(`— Larry Page`, `— Field sales lead`). In form 2, "which", "as" and "and" are not speakers when a lower-case word follows
+(`"...", as the brief says.`; `"...," as Dana said.` is checked). Nothing else names a speaker: no bare colon (`Dana: "..."`), no
 brackets (`"..." (Dana)`), no other verb or tense (`The button should say: "..."`, `Copy to add: "..."`, `Dana noted: "..."`).
 The known gaps of this rule:
 
@@ -207,7 +208,7 @@ The known gaps of this rule:
 - A speaker with a role in brackets is not checked in forms 1 and 2: `Dana (finance lead) said: "..."`,
   `"...," Dana (finance lead) said.` Form 3 accepts it (`— Dana (finance lead)`).
 - A short quote with an em dash and a capitalised note that is not a person is checked as if it named one (`"..." — Mobile`,
-  `"..." — Shown in the toolbar`).
+  `"..." — Shown in the toolbar`), and so is a screen part that is not on the list (`It says:`, `The tagline says:`).
 
 Outside a quote, a `"` right after a digit (`8.5" × 11"`) is an inch mark; inside one it ends the quote, unless a word
 follows and the quote's real closing mark comes later in the paragraph (`"We print on 8.5" paper and file it."`). Quote marks
@@ -233,9 +234,8 @@ loosely). A copy that still holds it is asked for once more, and that call is gi
 still holds it, or a copy fails another of these checks, the round does not finish ("This round did not finish. Start a new
 round."), and the calls it made are still counted. Copies are not checked for a passage when nothing proved the criterion on the
 good result, when the proof is shorter than 12 characters (counting its parts, not the "…" between them), or when it is only a
-heading, a line wholly in bold (`**Success metric:**`), a table's header row or a line of marks, which a correct copy keeps.
-A good result whose written text is longer than 40,000 characters is not
-broken: Check the checker does not start, says "This result is too long for Worca to break on purpose. Check the checker works
+heading, a short label wholly in bold (`**Success metric:**`: at most 4 words, or ending with a colon), a table's header row or a
+line of marks, which a correct copy keeps. A good result whose written text is longer than 40,000 characters is not broken: Check the checker does not start, says "This result is too long for Worca to break on purpose. Check the checker works
 on results up to about 40,000 characters.", sends nothing and costs nothing.
 
 A card shows lines of its copy that changed in meaning, never the good result's own lines; a line the model only tidied (a dash,
