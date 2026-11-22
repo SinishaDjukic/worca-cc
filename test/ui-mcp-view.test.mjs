@@ -92,6 +92,13 @@ function mount({ assignments = {}, over = {}, answer = async () => true, notify 
 const click = (el) => el.dispatchEvent(new doc.defaultView.Event('click', { bubbles: true }));
 const change = (el) => el.dispatchEvent(new doc.defaultView.Event('change', { bubbles: true }));
 const settle = async () => { for (let i = 0; i < 6; i++) await tick(); };
+/** A row's ⋯ (Remove and Delete live there): open it, then pick the item by its label. */
+const pickMore = (scope, label) => {
+  click(scope.querySelector('.cx-more'));
+  const item = [...doc.querySelectorAll('[role="menuitem"]')].find((b) => b.textContent.trim() === label);
+  assert.ok(item, `the ⋯ menu offers ${label}`);
+  click(item);
+};
 
 test('set list: General first, user sets, Team sets; the warning dot; Used by lines; a greyed Team set', async () => {
   const { host, ctl } = mount();
@@ -112,10 +119,10 @@ test('a user set: fields, secrets as set-ness with OAuth age, the problem line; 
   const { host, ctl, writes } = mount();
   await ctl.show('sets/billing');
   const [sentry, jira] = host.querySelectorAll('.cx-row[data-server]');
-  assert.match(sentry.textContent, /sentry_billing.*acme-tools.*http/);
+  assert.match(sentry.textContent, /^sentry.*acme-tools.*http.*Name in runssentry_billing/, 'the plain name heads the row; the name in runs is in the fold');
   assert.equal(sentry.querySelector('.mk-chip-warn:not(:first-child)').textContent, 'set · updated 2026-08-29', 'an OAuth token ≥30 days old is amber');
   assert.equal(sentry.querySelector('.mdl-st').textContent, '18 tools · tested 3d ago');
-  assert.equal(jira.querySelector('.mdl-st').textContent, 'API token not set · skipped until set');
+  assert.deepEqual([jira.querySelector('.mdl-st').textContent, jira.querySelector('.mdl-st').title], ['Needs token', 'API token not set · skipped until set'], 'one short word, the sentence in its tooltip');
   assert.ok(jira.querySelector('.mdl-st').classList.contains('fail'));
   const inp = sentry.querySelector('[data-field="org"]');
   inp.value = 'acme-eu';
@@ -128,7 +135,7 @@ test('a user set: fields, secrets as set-ness with OAuth age, the problem line; 
     ['PUT', '/api/mcp/sets/billing/members/plugin%3Aacme-tools%2Fsentry', { values: { org: 'acme-eu' } }],
     ['PUT', '/api/mcp/sets/billing/members/plugin%3Aacme-tools%2Fsentry', { enabled: false }],
   ]);
-  assert.ok(host.querySelector('[data-act="rename"]') && host.querySelector('[data-act="delete"]') && host.querySelector('[data-remove]'));
+  assert.ok(host.querySelector('[data-act="rename"]') && host.querySelector('.cx-set-head .cx-more') && host.querySelector('.cx-row[data-server] .cx-more'), 'Delete set and Remove live in ⋯');
 });
 
 test('Used by ×: on a user set it removes the set from that project; on General it turns Include General off', async () => {
@@ -156,6 +163,7 @@ test('Team sets are read-only (no rename/delete/add/remove, disabled never-conse
       for (const sel of ['[data-act="rename"]', '[data-act="delete"]', '[data-act="add-project"]', '[data-act="add-member"]', '[data-remove]']) {
         assert.equal(host.querySelector(sel), null, sel);
       }
+      assert.equal(host.querySelector('.cx-more'), null, 'no ⋯: nothing to delete or remove');
       assert.ok(host.querySelector('[data-act="duplicate"]'), 'a Team set can be duplicated into a user set');
       const [gh, sentry] = host.querySelectorAll('.cx-row[data-server]');
       assert.equal(sentry.querySelector('[data-toggle]').disabled, true);
@@ -209,7 +217,7 @@ test('Delete: the confirm lists the projects using the set and flags those left 
     'mobile-3c4d5e6f': { sets: [{ id: 'billing', name: 'Billing' }], includeGeneral: false, team: { home: 'acme/platform' } } };
   const { host, ctl, confirms, writes } = mount({ assignments });
   await ctl.show('sets/billing');
-  click(host.querySelector('[data-act="delete"]'));
+  pickMore(host.querySelector('.cx-set-head'), 'Delete set');
   await settle();
   assert.match(confirms[0].message, /Used by billing, mobile\./);
   assert.match(confirms[0].message, /billing will have no MCP servers in runs\./);
@@ -221,7 +229,7 @@ test('Test runs the membership and repaints; Add server disables members already
     'POST /api/mcp/sets/billing/members/plugin%3Aacme-tools%2Fjira/test': { ok: false, status: 409, data: { error: 'plugin disabled' } } } });
   await ctl.show('sets/billing');
   click(host.querySelector('[data-test="plugin:acme-tools/jira"]'));
-  assert.equal(host.querySelector('[data-server="plugin:acme-tools/jira"] .mdl-st').textContent, 'testing…');
+  assert.equal(host.querySelector('[data-server="plugin:acme-tools/jira"] .mdl-st').textContent, 'Testing…');
   const at = calls.length;
   await settle();
   assert.ok(calls.some(([m, p]) => m === 'POST' && p === '/api/mcp/sets/billing/members/plugin%3Aacme-tools%2Fjira/test'));
@@ -295,7 +303,7 @@ test('a prompt or confirm answered after Back/Forward moved the page to another 
   const m = mount({ answer: () => new Promise((r) => { answer = r; }),
     over: { 'GET /api/mcp/projects/billing-1a2b3c4d': new Promise((r) => { assignment = r; }) } });
   await m.ctl.show('sets/billing');
-  click(m.host.querySelector('[data-remove="plugin:acme-tools/sentry"]'));
+  pickMore(m.host.querySelector('.cx-row[data-server="plugin:acme-tools/sentry"]'), 'Remove from set');
   await settle();
   await m.ctl.show('');                                  // General paints while the confirm is up
   answer(true);
@@ -372,10 +380,10 @@ test('focus survives a repaint on a rail facet, a filter chip and a row button',
   test.focus();
   await m.ctl.show('sets/billing');
   assert.equal(doc.activeElement, m.host.querySelector('[data-test="plugin:acme-tools/jira"]'));
-  const rm = m.host.querySelector('[data-remove="plugin:acme-tools/jira"]');
-  rm.focus();
+  const more = () => m.host.querySelector('.cx-row[data-server="plugin:acme-tools/jira"] .cx-more');
+  more().focus();
   await m.ctl.show('sets/billing');
-  assert.equal(doc.activeElement, m.host.querySelector('[data-remove="plugin:acme-tools/jira"]'));
+  assert.equal(doc.activeElement, more());
   await m.ctl.show('servers');
   const chipBtn = m.host.querySelector('[data-cx-chip="no-set"]');
   chipBtn.focus();
@@ -399,8 +407,8 @@ test('Servers view is read-only with badges/In sets/Add to set; Remove on a manu
       await ctl.show('servers');
       assert.equal(host.querySelector('.cx-servers input:not([type=search]), .cx-servers [data-test]'), null, 'no switches, values or Test');
       const rows = [...host.querySelectorAll('.cx-servers .cx-row')];
-      const acts = rows.map((r) => [...r.querySelectorAll('.cx-acts button')].map((b) => b.textContent));
-      assert.deepEqual(acts, [['Add to set', 'Edit definition', 'Remove'], ['Add to set'], ['Add to set', 'Remove']]);
+      const acts = rows.map((r) => [...r.querySelectorAll('.cx-acts button')].map((b) => (b.classList.contains('cx-more') ? '⋯' : b.textContent)));
+      assert.deepEqual(acts, [['Add to set', 'Edit', '⋯'], ['Add to set'], ['Add to set', '⋯']]);
       assert.match(rows[0].textContent, /Also in your Claude Code config/);
       assert.match(rows[1].textContent, /name provisional.*plugin disabled/);
       assert.match(rows[2].textContent, /No longer required by acme\/platform/);
@@ -411,7 +419,7 @@ test('Servers view is read-only with badges/In sets/Add to set; Remove on a manu
     { name: 'Remove on a manual server names the sets it leaves', run: async () => {
       const { host, ctl, confirms, writes } = mount();
       await ctl.show('servers');
-      click(host.querySelector('[data-remove-server="manual:postgres-ro"]'));
+      pickMore(host.querySelector('.cx-row[data-server="manual:postgres-ro"]'), 'Remove server');
       await settle();
       assert.match(confirms[0].message, /It leaves Billing\./);
       assert.deepEqual(writes(), [['DELETE', '/api/mcp/servers/manual%3Apostgres-ro', undefined]]);
@@ -673,4 +681,35 @@ test('An Import that fails after it may have written (a 500) keeps the dialog op
   assert.equal(m.modal.opened.body.querySelector('.form-msg').textContent, 'Added files, then could not add docs-2: disk full');
   assert.deepEqual(toasts, []);
   assert.equal(m.calls.filter(([meth, p]) => meth === 'GET' && p === '/api/mcp/servers').length, reads + 1, 'the Servers list is read again');
+});
+
+test('Add project with nothing to pick says why: no projects at all links to Projects; every project already uses the set', async () => {
+  const none = mount({ over: { 'GET /api/projects': { ok: true, status: 200, data: { projects: [] } } } });
+  await none.ctl.show('sets/billing');
+  click(none.host.querySelector('[data-act="add-project"]'));
+  await settle();
+  assert.equal(none.modal.opened.title, 'Use Billing in a project');
+  assert.equal(none.modal.opened.body.textContent, 'No projects defined. Add some first at: Projects');
+  assert.equal(none.modal.opened.body.querySelector('a').getAttribute('href'), '#projects');
+  click(none.modal.opened.body.querySelector('a'));
+  assert.equal(none.modal.opened, null, 'following the link closes the dialog');
+  const used = mount({ over: { 'GET /api/projects': { ok: true, status: 200, data: { projects: [{ key: 'billing-1a2b3c4d', name: 'billing' }] } } } });
+  await used.ctl.show('sets/billing');
+  click(used.host.querySelector('[data-act="add-project"]'));
+  await settle();
+  assert.equal(used.modal.opened.body.textContent, 'Every project already uses Billing.');
+});
+
+test('a long test error is one short word in the row; the fold names it in full, clipped with the sentence as its tooltip', async () => {
+  const error = `MCP error -32000: Connection closed — npm error A complete log of this run can be found in: ${'/very/long/path'.repeat(20)}`;
+  const view = structuredClone(SET_VIEWS.billing);
+  view.members[0] = { ...view.members[0], test: { ok: false, error }, problem: null, reason: null };
+  const failed = mount({ over: { 'GET /api/mcp/sets/billing': { ok: true, status: 200, data: view } } });
+  await failed.ctl.show('sets/billing');
+  const row = failed.host.querySelector(`.cx-row[data-server="${view.members[0].serverId}"]`);
+  const st = row.querySelector('.mdl-st');
+  assert.deepEqual([st.textContent, st.title], ['Test failed', `test failed: ${error}`]);
+  const status = [...row.querySelectorAll('.cx-kv dt')].find((d) => d.textContent === 'Status').nextElementSibling.firstChild;
+  assert.ok(status.classList.contains('cx-clip'), 'one line with an ellipsis');
+  assert.equal(status.title, `test failed: ${error}`);
 });

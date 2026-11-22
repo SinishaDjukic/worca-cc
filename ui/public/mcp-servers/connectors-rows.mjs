@@ -27,6 +27,61 @@ export function stateWord(doc, { text, tone }) {
   return h(doc, 'span', `mdl-st ${text === 'testing…' ? 'need' : TONE[tone] || 'off'}`, text);
 }
 
+/** A member's state as one short word (the mock's "Token rejected", "Needs token"); the full sentence rides the
+ *  word's title and the row's fold. `full` is memberStateText's { text, tone }. */
+export function memberStateWord(m, full) {
+  const t = full.text;
+  if (t === 'testing…') return 'Testing…';
+  if (m.problem && String(m.reason || '').startsWith('missing:')) {
+    const f = (m.fields || []).find((x) => `missing:${x.key}` === m.reason);
+    return f && f.secret ? 'Needs token' : 'Needs a value';
+  }
+  if (m.problem) return 'Problem';
+  if (t === 'off') return 'Off';
+  if (t === 'not tested') return 'Not tested';
+  if (t === 'token rejected') return 'Token rejected';
+  if (t.startsWith('test failed')) return 'Test failed';
+  if (t.startsWith('stale')) return 'Test again';
+  if (t.startsWith('tool too long')) return 'Tool name too long';
+  return t;   // "N tools · tested 2m ago" is already short
+}
+/** A set skill's state as one short word; the full sentence rides its title. */
+export function skillStateWord(m, full) {
+  const t = full.text;
+  if (m.reason === 'missing-skill') return 'Missing';
+  if (t === 'plugin disabled') return 'Plugin disabled';
+  if (t.startsWith('invalid')) return 'Invalid';
+  if (t.startsWith('turn on in the team')) return 'Needs your consent';
+  if (t === 'off') return 'Off';
+  if (t.startsWith('in runs · ')) return 'May not work';
+  if (t === 'in runs') return 'In runs';
+  return full.tone === 'err' ? 'Problem' : t;
+}
+/** One line of text that never grows its row: an ellipsis past its width, the full text as its tooltip. */
+export function clipped(doc, tag, cls, text) {
+  const el = h(doc, tag, `${cls ? `${cls} ` : ''}cx-clip`, text);
+  el.title = text;
+  return el;
+}
+function shortState(doc, full, word) {
+  const el = stateWord(doc, { text: '', tone: full.tone });
+  if (full.text === 'testing…') el.className = 'mdl-st need';
+  el.appendChild(h(doc, 'span', 'cx-clip', word));
+  el.title = full.text;
+  return el;
+}
+/** The row's ⋯ button. `items` are [label, dataset, danger?]; the controller opens them as a menu (workflows/menu.mjs). */
+export function moreButton(doc, label, items, key) {
+  const b = button(doc, 'btn btn-sm btn-quiet btn-icon cx-more', null);
+  b.append(icon(doc, 'more', 16));
+  b.setAttribute('aria-label', label);
+  b.setAttribute('aria-haspopup', 'menu');
+  b.setAttribute('aria-expanded', 'false');
+  b.dataset.more = JSON.stringify(items);
+  b.dataset.focusKey = `${key}:more`;
+  return b;
+}
+
 /** Every button of a row gets the key a repaint (and a layer's focus return) finds it by. */
 function keyButtons(root, prefix) {
   for (const b of root.querySelectorAll('button')) {
@@ -108,7 +163,7 @@ export function renderSetHead(doc, ctx, view) {
   const acts = h(doc, 'div', 'cx-acts');
   if (user) acts.appendChild(button(doc, 'btn btn-sm', 'Rename', { act: 'rename' }));
   if (!set.greyed) acts.appendChild(button(doc, 'btn btn-sm', 'Duplicate', { act: 'duplicate' }));
-  if (user) acts.appendChild(button(doc, 'btn btn-sm', 'Delete', { act: 'delete' }));
+  if (user) acts.appendChild(moreButton(doc, `More for ${set.name}`, [['Delete set', { act: 'delete' }, true]], `head:${set.id}`));
   if (set.greyed) acts.appendChild(button(doc, 'btn btn-sm', 'Forget', { act: 'forget' }));
   card.append(main, acts);
   if (set.greyed) {
@@ -196,19 +251,19 @@ export function renderMemberRow(doc, ctx, set, m) {
   if (locked) sw.appendChild(h(doc, 'span', 'switch-why', 'Allow it in Connectors first'));
   const main = h(doc, 'div', 'cx-main');
   const line = h(doc, 'div', 'cx-line');
-  line.appendChild(h(doc, 'span', 'cx-title mono', m.copy));
+  line.appendChild(h(doc, 'span', 'cx-title mono', m.base || m.copy));
   if (m.provisional) line.appendChild(chip(doc, 'warn', 'name provisional'));
   line.appendChild(chip(doc, 'n', m.sourceLabel));
   main.append(line, h(doc, 'p', 'mk-meta', [m.sourceLabel, m.type, m.description].filter(Boolean).join(' · ')));
   if (locked) main.appendChild(h(doc, 'p', 'mk-meta', 'Turn on in the team checklist'));
-  const state = locked ? h(doc, 'span', 'mdl-st need', 'Needs your consent')
-    : stateWord(doc, ctx.stateText({ ...m, testing: ctx.st.testing.has(`${set.id}|${m.serverId}`) }, ctx.now()));
+  const full = locked ? null : ctx.stateText({ ...m, testing: ctx.st.testing.has(`${set.id}|${m.serverId}`) }, ctx.now());
+  const state = locked ? h(doc, 'span', 'mdl-st need', 'Needs your consent') : shortState(doc, full, memberStateWord(m, full));
   const acts = h(doc, 'div', 'drow-control cx-acts');
   const test = button(doc, 'btn btn-sm', 'Test', { test: m.serverId });
   test.disabled = locked;
   acts.appendChild(test);
   if (m.fields.some((f) => f.secret && !f.state.set)) acts.appendChild(button(doc, 'btn btn-sm', 'Set token', { secret: m.fields.find((f) => f.secret && !f.state.set).key, server: m.serverId }));
-  if (!team) acts.appendChild(button(doc, 'btn btn-sm', 'Remove', { remove: m.serverId }));
+  if (!team) acts.appendChild(moreButton(doc, `More for ${m.base || m.copy}`, [['Remove from set', { remove: m.serverId }, true]], `${set.id}:${m.serverId}`));
   const foldKey = `${set.id}|${m.serverId}`;
   const open = ctx.st.open.has(foldKey) ? ctx.st.open.get(foldKey) : !!m.problem;
   const id = `cx-fold-${++foldSeq}`;
@@ -216,13 +271,14 @@ export function renderMemberRow(doc, ctx, set, m) {
   toggle.append(icon(doc, 'chevron-down', 16));
   toggle.setAttribute('aria-expanded', String(open));
   toggle.setAttribute('aria-controls', id);
-  toggle.setAttribute('aria-label', `Show ${m.copy} values`);
+  toggle.setAttribute('aria-label', `Show ${m.base || m.copy} values`);
   acts.appendChild(toggle);
   const fold = h(doc, 'div', 'cx-fold');
   fold.id = id;
   fold.hidden = !open;
   const dl = h(doc, 'dl', 'cx-kv');
   dl.appendChild(kv(doc, 'Name in runs', h(doc, 'code', 'mono', m.copy)));
+  if (full && memberStateWord(m, full).toLowerCase() !== full.text.toLowerCase()) dl.appendChild(kv(doc, 'Status', clipped(doc, 'span', full.tone === 'err' ? 'hint err cx-status' : 'cx-status', full.text)));
   fieldEntries(doc, ctx, set, m, dl);
   fold.appendChild(dl);
   row.append(sw, glyphTile(doc, 'plug', 'mcp', { size: 'sm' }), main, state, acts, fold);
@@ -253,17 +309,18 @@ export function renderSkillMemberRow(doc, ctx, set, m) {
   if (!missing && team && !consented) sw.appendChild(h(doc, 'span', 'switch-why', 'Allow it in Connectors first'));
   const main = h(doc, 'div', 'cx-main');
   const line = h(doc, 'div', 'cx-line');
-  line.append(h(doc, 'span', 'cx-title mono', m.qualifiedName));
+  line.append(h(doc, 'span', 'cx-title mono', m.name || m.qualifiedName));
   if (m.hooks) line.appendChild(chip(doc, 'bad', 'Declares hooks'));
   if (!missing && ctx.hasShellScripts(m)) line.appendChild(chip(doc, 'warn', 'Shell scripts (may not run on Windows)'));
   line.appendChild(sourceChip(doc, m));
   main.appendChild(line);
   main.appendChild(h(doc, 'p', 'mk-meta', [m.description, missing ? '' : ctx.skillCountsText(m)].filter(Boolean).join(' · ')));
-  if (m.hooks) main.appendChild(h(doc, 'p', 'mk-meta cx-warn', ctx.hooksText.replace(/^declares hooks — /, 'It declares hooks — ')));
+  if (m.hooks) main.appendChild(clipped(doc, 'p', 'mk-meta cx-warn', ctx.hooksText.replace(/^declares hooks — /, 'It declares hooks — ')));
   const acts = h(doc, 'div', 'drow-control cx-acts');
   if (!missing) acts.appendChild(button(doc, 'btn btn-sm', 'View SKILL.md', { skillMd: m.skillId }));
-  if (!team) acts.appendChild(button(doc, 'btn btn-sm', 'Remove', { skillRemove: m.skillId }));
-  row.append(sw, glyphTile(doc, 'skill', 'skill', { size: 'sm' }), main, stateWord(doc, ctx.skillStateText(m)), acts);
+  if (!team) acts.appendChild(moreButton(doc, `More for ${m.name || m.qualifiedName}`, [['Remove from set', { skillRemove: m.skillId }, true]], `${set.id}:${m.skillId}`));
+  const sfull = ctx.skillStateText(m);
+  row.append(sw, glyphTile(doc, 'skill', 'skill', { size: 'sm' }), main, shortState(doc, sfull, skillStateWord(m, sfull)), acts);
   keyButtons(row, `${set.id}:${m.skillId}`);
   return row;
 }
@@ -273,6 +330,7 @@ export function renderSection(doc, { title, hint, add, rows, empty, label }) {
   const sec = h(doc, 'section', 'cx-section');
   const head = h(doc, 'div', 'cx-sec-head');
   head.appendChild(h(doc, 'h3', 'subsection-title', title));
+  head.appendChild(h(doc, 'span', 'mk-count', String(rows.length)));
   if (hint) head.appendChild(h(doc, 'span', 'mk-meta', hint));
   if (add) head.appendChild(add);
   sec.appendChild(head);
@@ -315,8 +373,8 @@ export function renderServerRow(doc, ctx, s) {
   const tools = h(doc, 'span', 'mk-meta cx-tools', s.tools == null ? '— tools' : plural(s.tools, 'tool'));
   const acts = h(doc, 'div', 'drow-control cx-acts');
   acts.appendChild(button(doc, 'btn btn-sm', 'Add to set', { addTo: s.id }));
-  if (s.source === 'manual') acts.appendChild(button(doc, 'btn btn-sm', 'Edit definition', { edit: s.id }));
-  if (s.source === 'manual' || s.retired) acts.appendChild(button(doc, 'btn btn-sm', 'Remove', { removeServer: s.id }));
+  if (s.source === 'manual') acts.appendChild(button(doc, 'btn btn-sm', 'Edit', { edit: s.id }));
+  if (s.source === 'manual' || s.retired) acts.appendChild(moreButton(doc, `More for ${s.base}`, [['Remove server', { removeServer: s.id }, true]], `server:${s.id}`));
   const cells = [glyphTile(doc, 'plug', 'mcp', { size: 'sm' }), main, setLinks(doc, ctx, s.inSets)];
   if (s.needsSetup) cells.push(h(doc, 'span', 'mdl-st need', 'Needs setup'));
   row.append(...cells, tools, acts);
@@ -350,9 +408,9 @@ export function renderSkillRow(doc, ctx, e) {
   }
   line.appendChild(sourceChip(doc, e));
   main.append(line, h(doc, 'p', 'mk-meta', [originText(e), e.description, ctx.skillCountsText(e)].filter(Boolean).join(' · ')));
-  if (e.valid === false) main.appendChild(h(doc, 'p', 'mk-meta cx-warn', `invalid: ${(e.problems || []).join('; ')} · never mounted`));
-  if (pluginRoot) main.appendChild(h(doc, 'p', 'mk-meta cx-warn', 'references its plugin’s other files, so it may not work from a set'));
-  if (hooks) main.appendChild(h(doc, 'p', 'mk-meta cx-warn', ctx.hooksText));
+  if (e.valid === false) main.appendChild(clipped(doc, 'p', 'mk-meta cx-warn', `invalid: ${(e.problems || []).join('; ')} · never mounted`));
+  if (pluginRoot) main.appendChild(clipped(doc, 'p', 'mk-meta cx-warn', 'references its plugin’s other files, so it may not work from a set'));
+  if (hooks) main.appendChild(clipped(doc, 'p', 'mk-meta cx-warn', ctx.hooksText));
   const acts = h(doc, 'div', 'drow-control cx-acts');
   const add = button(doc, 'btn btn-sm', 'Add to set', { skillAddTo: e.id });
   add.disabled = e.valid === false;
@@ -362,7 +420,7 @@ export function renderSkillRow(doc, ctx, e) {
       : button(doc, 'btn btn-sm', 'Check for updates', { skillUpdate: e.id }));
   }
   acts.appendChild(button(doc, 'btn btn-sm', 'View SKILL.md', { skillMd: e.id }));
-  if (e.source === 'library') acts.appendChild(button(doc, 'btn btn-sm', 'Remove', { skillDelete: e.id }));
+  if (e.source === 'library') acts.appendChild(moreButton(doc, `More for ${e.name}`, [['Remove skill', { skillDelete: e.id }, true]], `skill:${e.id}`));
   row.append(glyphTile(doc, 'skill', 'skill', { size: 'sm' }), main, setLinks(doc, ctx, e.inSets || []), acts);
   keyButtons(row, `skill:${e.id}`);
   return row;

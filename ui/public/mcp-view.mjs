@@ -11,6 +11,7 @@ import { splitMessage } from './feedback.mjs';
 import { openSkillImport, inspectionSummary, consentNode } from './skill-import.mjs';
 import { openMcpImport } from './mcp-server-import.mjs';
 import { chip } from './marketplace/kinds.mjs';
+import { openMenu } from './workflows/menu.mjs';
 import { renderTabs, renderHead, renderToolbar, renderLoadError, renderEmpty, emptyLine, moveInList, sourceOptions,
   filterServers, serverChipCounts, serverSource, filterSkills, skillChipCounts, skillSource } from './mcp-servers/connectors-shell.mjs';
 import { addBtn, renderSetRail, renderSetHead, renderMemberRow, renderSkillMemberRow, renderSection, renderServerRow, renderSkillRow,
@@ -438,7 +439,20 @@ export function createMcpView({ host, api, navigate, confirm, modal, sheet = nul
     }
     const b = e.target.closest && e.target.closest('button');
     if (!b || !host.contains(b)) return;
-    const d = b.dataset;
+    if (b.dataset.more) { openMore(b); return; }
+    return onAction(b.dataset, b);
+  }
+
+  /** The row's ⋯: each item carries the dataset its old button had, so it runs through onAction unchanged. */
+  function openMore(b) {
+    let items = [];
+    try { items = JSON.parse(b.dataset.more); } catch { return; }
+    b.setAttribute('aria-expanded', 'true');
+    openMenu({ doc, anchor: b, align: 'end', label: b.getAttribute('aria-label') || 'More',
+      items: items.map(([label, data, danger]) => ({ label, danger: !!danger, onSelect: () => { void onAction({ ...data }, b); } })) });
+  }
+
+  async function onAction(d, b) {
     // The set these cards were painted from, read before any await: Back/Forward while a prompt, a confirm or a
     // fetch is pending paints another set, and the answer must still act on this one.
     const cur = st.set ? st.set.set : null;
@@ -590,7 +604,20 @@ export function createMcpView({ host, api, navigate, confirm, modal, sheet = nul
     const { id: setId, group, name, usedBy } = st.set.set;   // before the await (see onClick's `cur`)
     const r = await api('GET', '/api/projects');
     const used = new Set(usedBy.map((p) => p.key));
-    const projects = (r.ok ? r.data.projects : []).filter((p) => !used.has(p.key));
+    const all = r.ok ? r.data.projects : [];
+    const projects = all.filter((p) => !used.has(p.key));
+    if (!projects.length) {
+      const note = h(doc, 'p', 'hint');
+      if (all.length) note.textContent = `Every project already uses ${name}.`;
+      else {
+        const a = h(doc, 'a', '', 'Projects');
+        a.href = '#projects';
+        a.addEventListener('click', () => modal.close());
+        note.append('No projects defined. Add some first at: ', a);
+      }
+      modal.open(`Use ${name} in a project`, note, [['Close', 'btn btn-sm', () => modal.close()]]);
+      return;
+    }
     pickModal(`Use ${name} in a project`, 'Project', projects.map((p) => ({ value: p.key, label: p.name })), {
       label: 'Add', fn: async (key, _slot, msg) => {
         const a = await assignment(key);

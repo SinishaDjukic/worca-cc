@@ -12,6 +12,7 @@
 .cx-dot-warn{background:var(--amber);}
 .cx-set-head{display:flex;flex-wrap:wrap;align-items:center;gap:8px 16px;}
 .cx-set-head > .cx-main{flex:1 1 260px;}
+.cx-set-head > .cx-acts{display:flex;align-items:center;gap:8px;}
 .cx-set-head > .cx-wide{flex:1 1 100%;margin:0;}
 .cx-section{display:flex;flex-direction:column;gap:8px;}
 .cx-sec-head{display:flex;flex-wrap:wrap;align-items:center;gap:6px 12px;}
@@ -48,3 +49,10 @@
 .mcp-usedby .hint{margin-top:0;color:var(--ink-2);}
 .mcp-usedby > .chip{display:inline-flex;align-items:center;gap:6px;}
 .mcp-usedby > .chip:has(> .btn){padding-block:0;}   /* the 28px remove button sets the height */
+/* The rail keeps a set's name and its Built-in chip on one line; a fold's Status line wraps long errors. */
+.cx-rail .mk-facet-name{flex-direction:row;align-items:center;flex-wrap:wrap;gap:4px 8px;}
+.cx-sec-head .mk-count{margin-right:4px;}
+/* Errors and warnings stay one line on the Connectors page: an ellipsis, the full text in the tooltip (clipped()). */
+.cx-clip{display:block;min-width:0;max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+.cx-row > .mdl-st{min-width:0;max-width:min(280px,40%);}
+.cx-kv dd > .cx-clip{margin:0;}

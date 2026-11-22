@@ -21,6 +21,13 @@ const tick = () => new Promise((r) => setTimeout(r, 0));
 const settle = async () => { for (let i = 0; i < 6; i++) await tick(); };
 const click = (el) => el.dispatchEvent(new doc.defaultView.Event('click', { bubbles: true }));
 const change = (el) => el.dispatchEvent(new doc.defaultView.Event('change', { bubbles: true }));
+/** A row's ⋯ (Remove and Delete live there): open it, then pick the item by its label. */
+const pickMore = (scope, label) => {
+  click(scope.querySelector('.cx-more'));
+  const item = [...doc.querySelectorAll('[role="menuitem"]')].find((b) => b.textContent.trim() === label);
+  assert.ok(item, `the ⋯ menu offers ${label}`);
+  click(item);
+};
 
 const SETS = [
   { id: 'general', name: 'General', group: 'general', greyed: false, home: null, serverCount: 1, skillCount: 1, problem: false,
@@ -80,7 +87,7 @@ function mount({ sets = SETS, setViews = {}, skills = SKILLS, over = {}, answer 
 }
 const action = (modal, label) => modal.opened.actions.find(([l]) => l === label)[2];
 const rowOf = (host, id) => host.querySelector(`.cx-skills .cx-row[data-skill="${id}"]`);
-const acts = (row) => [...row.querySelectorAll('.cx-acts button')].map((b) => b.textContent);
+const acts = (row) => [...row.querySelectorAll('.cx-acts button')].map((b) => (b.classList.contains('cx-more') ? '⋯' : b.textContent));
 
 test('routes and labels: #connectors/skills, the title "Connectors", three segments, one primary button per view', async () => {
   await checkRows([
@@ -125,20 +132,20 @@ test('the Skills catalog: source and origin, badges, the counts line, In sets li
       const row = rowOf(host, 'skill:library:db-migrations');
       assert.deepEqual(badges(row), ['warn:shell scripts (may not run on Windows)', 'n:Imported']);
       assert.equal(row.querySelector('.mk-meta').textContent, 'folder · Write, review and apply SQL migrations · 7 files · 2 scripts · 1 shell block');
-      assert.deepEqual(acts(row), ['Add to set', 'Check for updates', 'View SKILL.md', 'Remove']);
+      assert.deepEqual(acts(row), ['Add to set', 'Check for updates', 'View SKILL.md', '⋯']);
       assert.deepEqual([...row.querySelectorAll('.cx-sets a.badge')].map((a) => [a.textContent, a.getAttribute('href')]), [['Billing', '#connectors/sets/billing']]);
     } },
     { name: 'a pasted skill has no origin: no update action', run: () => {
       const row = rowOf(host, 'skill:library:frontend-design');
       assert.match(row.querySelector('.mk-meta').textContent, /^pasted/);
-      assert.deepEqual(acts(row), ['Add to set', 'View SKILL.md', 'Remove']);
+      assert.deepEqual(acts(row), ['Add to set', 'View SKILL.md', '⋯']);
       assert.match(row.querySelector('.cx-sets').textContent, /Not in a set/);
     } },
     { name: 'a git import with an update: the badge and a primary Update…', run: () => {
       const row = rowOf(host, 'skill:library:release-notes');
       assert.match(row.querySelector('.mk-meta').textContent, /^git · main/);
       assert.deepEqual(badges(row), ['upd:Update available', 'warn:shell scripts (may not run on Windows)', 'n:Imported']);
-      assert.deepEqual(acts(row), ['Add to set', 'Review update', 'View SKILL.md', 'Remove']);
+      assert.deepEqual(acts(row), ['Add to set', 'Review update', 'View SKILL.md', '⋯']);
       assert.ok(row.querySelector('[data-skill-update]').classList.contains('btn-primary'));
       assert.deepEqual([...row.querySelectorAll('.cx-sets a.badge')].map((a) => a.getAttribute('href')), ['#connectors/sets/billing', '#connectors']);
     } },
@@ -439,14 +446,14 @@ test('Check for updates → what changed → Update applies the stage; nothing n
 test('Remove (library): the confirm names the sets it leaves; DELETE /api/skills/:id; a declined confirm writes nothing', async () => {
   const m = mount();
   await m.ctl.show('skills');
-  click(rowOf(m.host, 'skill:library:release-notes').querySelector('[data-skill-delete]'));
+  pickMore(rowOf(m.host, 'skill:library:release-notes'), 'Remove skill');
   await settle();
   assert.equal(m.confirms[0].message, 'Remove release-notes from worca? It leaves Billing, General. Its files go from the library.');
   assert.equal(m.confirms[0].danger, true);
   assert.deepEqual(m.writes(), [['DELETE', '/api/skills/skill%3Alibrary%3Arelease-notes', undefined]]);
   const n = mount({ answer: async () => false });
   await n.ctl.show('skills');
-  click(rowOf(n.host, 'skill:library:frontend-design').querySelector('[data-skill-delete]'));
+  pickMore(rowOf(n.host, 'skill:library:frontend-design'), 'Remove skill');
   await settle();
   assert.equal(n.confirms[0].message, 'Remove frontend-design from worca? Its files go from the library.');
   assert.deepEqual(n.writes(), []);
@@ -543,14 +550,14 @@ test('a user set: the prefix hint, skill cards (qualified name, source, counts, 
   assert.equal(sec.querySelector('.cx-sec-head .mk-meta').textContent, 'agents call /billing:<name> · no values, no secrets, no Test');
   assert.ok(sec.querySelector('[data-act="add-skill"]'));
   const cards = [...m.host.querySelectorAll('.cx-row[data-skill]')].map((c) => [c.querySelector('.cx-title').textContent, c.querySelector('.cx-line .badge:last-child').textContent,
-    c.querySelector('.mdl-st').textContent, c.querySelector('.mdl-st').className]);
+    c.querySelector('.mdl-st').textContent, c.querySelector('.mdl-st').className, c.querySelector('.mdl-st').title]);
   assert.deepEqual(cards, [
-    ['billing:release-notes', 'Imported', 'in runs', 'mdl-st ok'],
-    ['billing:db-migrations', 'Imported', 'off', 'mdl-st off'],
-    ['billing:graphify', 'graphify', 'plugin disabled', 'mdl-st need'],
-    ['billing:broken', 'acme', 'invalid: SKILL.md has no frontmatter', 'mdl-st fail'],
-    ['billing:pdf-tools', 'office', 'in runs · references its plugin’s other files, so it may not work from a set', 'mdl-st need'],
-    ['billing:gone', 'Imported', 'the skill is no longer installed', 'mdl-st fail'],
+    ['release-notes', 'Imported', 'In runs', 'mdl-st ok', 'in runs'],
+    ['db-migrations', 'Imported', 'Off', 'mdl-st off', 'off'],
+    ['graphify', 'graphify', 'Plugin disabled', 'mdl-st need', 'plugin disabled'],
+    ['broken', 'acme', 'Invalid', 'mdl-st fail', 'invalid: SKILL.md has no frontmatter'],
+    ['pdf-tools', 'office', 'May not work', 'mdl-st need', 'in runs · references its plugin’s other files, so it may not work from a set'],
+    ['gone', 'Imported', 'Missing', 'mdl-st fail', 'the skill is no longer installed'],
   ]);
   const gone = cardOf(m.host, 'skill:library:gone');
   assert.deepEqual([gone.querySelector('[data-skill-md]'), gone.querySelector('.mk-meta').textContent], [null, ''], 'nothing to count or read');
@@ -563,13 +570,13 @@ test('a user set: the prefix hint, skill cards (qualified name, source, counts, 
   assert.equal(cardOf(m.host, id).querySelector('.mk-meta').textContent, 'Draft release notes · 4 files · 1 script · 2 shell blocks');
   assert.equal(cardOf(m.host, id).querySelector('.mk-chip-warn').textContent, 'Shell scripts (may not run on Windows)');
   assert.equal(cardOf(m.host, 'skill:library:db-migrations').querySelector('.mk-meta').textContent, '7 files · 2 scripts · 1 shell block');
-  assert.deepEqual([...cardOf(m.host, id).querySelectorAll('.cx-acts button')].map((b) => b.textContent), ['View SKILL.md', 'Remove']);
+  assert.deepEqual([...cardOf(m.host, id).querySelectorAll('.cx-acts button')].map((b) => (b.classList.contains('cx-more') ? '⋯' : b.textContent)), ['View SKILL.md', '⋯']);
   const sw = cardOf(m.host, id).querySelector('[data-skill-toggle]');
   assert.equal(sw.getAttribute('aria-label'), 'Use billing:release-notes in Billing');
   sw.checked = false;
   change(sw);
   await settle();
-  click(cardOf(m.host, 'skill:library:db-migrations').querySelector('[data-skill-remove]'));
+  pickMore(cardOf(m.host, 'skill:library:db-migrations'), 'Remove from set');
   await settle();
   assert.equal(m.confirms[0].message, 'Remove billing:db-migrations from Billing? Runs and chats that use Billing stop getting it.');
   assert.deepEqual(m.writes(), [['PUT', path, { enabled: false }],
@@ -593,12 +600,12 @@ test('a renamed prefix badge; an empty set; a Team set (no Add, no Remove, the n
   assert.equal(skillsSection().querySelector('p.empty-line').textContent, 'No skills in this set yet.');
   await m.ctl.show('sets/team-acme-platform-9333');
   assert.equal(m.host.querySelector('[data-act="add-skill"]'), null);
-  assert.equal(m.host.querySelector('[data-skill-remove]'), null);
+  assert.equal(m.host.querySelector('.cx-row[data-skill] .cx-more'), null);
   const off = cardOf(m.host, 'skill:plugin:acme/deploy-checklist');
   assert.equal(off.querySelector('[data-skill-toggle]').disabled, true);
-  assert.equal(off.querySelector('.mdl-st').textContent, 'turn on in the team checklist');
+  assert.deepEqual([off.querySelector('.mdl-st').textContent, off.querySelector('.mdl-st').title], ['Needs your consent', 'turn on in the team checklist']);
   assert.equal(cardOf(m.host, 'skill:plugin:acme/release-check').querySelector('[data-skill-toggle]').disabled, false);
-  assert.equal(cardOf(m.host, 'skill:plugin:acme/lint-rules').querySelector('.mdl-st').textContent, 'plugin disabled',
+  assert.equal(cardOf(m.host, 'skill:plugin:acme/lint-rules').querySelector('.mdl-st').textContent, 'Plugin disabled',
     'the reason that keeps it out of runs first, as in the Skills in runs table');
   assert.equal(m.host.querySelector('.cx-set-head .mk-meta').textContent, 'Skills load as team-platfor:');
   await m.ctl.show('sets/team-acme-other-5095');
