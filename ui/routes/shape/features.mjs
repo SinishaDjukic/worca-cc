@@ -4,6 +4,7 @@ import { releaseVersionHint } from '../../../src/core/draft-release.mjs';
 import { actorOf } from '../../../src/core/identity.mjs';
 import { cancelRest, currentFeatureId, featureShipSuggestion, featureThread, featureView, listShapePlans, rechainWaiting, replanRest, resumeFeature, setApproveEach, setFeatureAcceptance, shaperCard, sliceOfPipeline } from '../../../src/core/shape/features.mjs';
 import { normalizeAcceptance } from '../../../src/shared/shape/acceptance.mjs';
+import { CONFIRM_REASON_MAX, MARK_WORDS, confirmMarkOf, reasonLine } from '../../../src/shared/shape/ship-ledger.mjs';
 import { recordFeatureFigures } from '../../../src/core/shape/measure.mjs';
 import { prAutoFinisher } from '../../../src/core/pr-auto-finish.mjs';
 import { engineRefusalFor } from '../../../src/shared/engine-switch.mjs';
@@ -155,10 +156,14 @@ app.put('/api/shape/features/:id/acceptance', (req, res) => {
     if (view.ship.mode) return res.status(409).json({ error: 'the feature already shipped' });
     if (featureShipping(id)) return res.status(409).json({ error: 'this feature is already shipping' });
     const agreed = (view.ship.acceptance?.items || []).map((i) => ({ id: i.id }));
-    const r = normalizeAcceptance((req.body || {}).entries, agreed);
+    const raw = (req.body || {}).entries;
+    // Feature D1 (D9): on a marked feature a run-owned id is never marked by hand, and a confirmed one only as met.
+    const refused = view.ship.smallRuns && Array.isArray(raw) ? smallRunsMarkRefusal(view, raw) : null;
+    if (refused) return res.status(refused.status).json(refused.body);
+    const r = normalizeAcceptance(raw, agreed);
     if (!r.ok) return res.status(400).json({ error: r.error, code: 'ACCEPTANCE_INVALID' });
-    const sent = new Map(r.entries.map((e) => [e.id, e]));
     const kept = new Map((view.ship.acceptance?.entries || []).map((e) => [e.id, e]));
+    const sent = new Map(r.entries.map((e) => [e.id, view.ship.smallRuns ? confirmedMark(view, e.id, kept.get(e.id), req) : e]));
     setFeatureAcceptance(id, agreed.map(({ id: rid }) => sent.get(rid) || kept.get(rid)).filter(Boolean));
     // Shaper small runs A4: a finished feature's requirements met follow the marks. Best effort: never the response.
     try { recordFeatureFigures(id); } catch (err) { console.error(`[worca-ui] feature figures failed: ${err?.message || err}`); }
@@ -169,6 +174,68 @@ app.put('/api/shape/features/:id/acceptance', (req, res) => {
     broadcastFeature(id);
     void prAutoFinisher()?.onAcceptanceChanged(id);   // a feature whose one PR waited for the last mark opens it now
     res.json({ acceptance });
+  } catch (err) { shapeRouteError(res, err); }
+});
+
+/** Feature D1 (D9): what a requirement is on a marked feature: {kind:'owned', run} | {kind:'confirmed', role} | null. */
+const kindOf = (view, rid) => (view.requirementKinds || []).find((k) => k.id === rid) || null;
+const runOwned = (rid, k) => ({ status: 409, body: { code: 'RUN_OWNED', error: `${rid} is owned by ${k.run ? `run ${k.run}` : 'a run'}: its run and the Verifier check it` } });
+/** A marked PUT's first refusal, or null: an owned id (409 RUN_OWNED), a confirmed id marked other than met (400). */
+function smallRunsMarkRefusal(view, raw) {
+  for (const e of raw) {
+    const rid = String(e?.id ?? '');
+    const k = kindOf(view, rid);
+    if (k && k.kind === 'owned') return runOwned(rid, k);
+    if (k && e.mark !== 'met') return { status: 400, body: { code: 'ACCEPTANCE_INVALID', error: `${rid}: a requirement a person confirms is marked met` } };
+  }
+  return null;
+}
+/** A confirmed requirement's stored mark: the server's role (requirement_kinds), the person and the time; an id already
+ *  confirmed keeps its first mark. A body `role`, `by` or `at` is never read. */
+function confirmedMark(view, rid, had, req) {
+  if (had && had.mark === 'met' && had.at) return had;
+  return { id: rid, mark: 'met', role: kindOf(view, rid).role, by: actorOf(req), at: new Date().toISOString() };
+}
+
+/** Owner direction da6198d8d: a confirm body's mark and reason → {entry fields} | {status, body} (a refusal). The mark is
+ *  met (the default), not-met (`not_met` too) or dropped; the last two need a one-line reason of at most 300 characters. */
+function confirmBody(rid, body) {
+  const mark = confirmMarkOf(body.mark === undefined ? 'met' : body.mark);
+  const bad = (error) => ({ status: 400, body: { code: 'ACCEPTANCE_INVALID', error } });
+  if (!mark) return bad(`${rid}: the mark must be met, not met or dropped`);
+  if (mark === 'met') return { mark };
+  const reason = reasonLine(body.reason);
+  if (!reason) return bad(`${rid}: ${MARK_WORDS[mark].toLowerCase()} needs a reason`);
+  if (reason.length > CONFIRM_REASON_MAX) return bad(`${rid}: the reason is longer than ${CONFIRM_REASON_MAX} characters`);
+  return { mark, reason };
+}
+
+// Feature D1 (D9): Met / Not met / Dropped on a marked feature's Ship (owner direction da6198d8d). A mark can change
+// until Ship is done; the same mark again keeps its first entry. Synchronous; a refusal stores nothing.
+app.post('/api/shape/features/:id/confirm', (req, res) => {
+  try {
+    const id = String(req.params.id);
+    const view = featureView(id, { live: liveSliceOf });
+    if (!view) return res.status(404).json({ error: 'unknown feature' });
+    if (!view.ship.smallRuns) return res.status(409).json({ code: 'NOT_SMALL_RUNS', error: 'this feature has no confirmed requirements' });
+    if (view.ship.mode) return res.status(409).json({ error: 'the feature already shipped' });
+    if (featureShipping(id)) return res.status(409).json({ error: 'this feature is already shipping' });
+    const rid = String((req.body || {}).id ?? '');
+    const k = kindOf(view, rid);
+    if (!k) return res.status(400).json({ code: 'ACCEPTANCE_INVALID', error: `${rid} is not an agreed requirement` });
+    if (k.kind === 'owned') { const o = runOwned(rid, k); return res.status(o.status).json(o.body); }
+    const want = confirmBody(rid, req.body || {});
+    if (want.status) return res.status(want.status).json(want.body);
+    const stored = view.ship.acceptance?.entries || [];
+    const kept = new Map(stored.map((e) => [e.id, e]));
+    const had = kept.get(rid);
+    const same = had && had.at && confirmMarkOf(had.mark) === want.mark && (want.mark === 'met' || reasonLine(had.reason) === want.reason);
+    const mark = same ? had : { id: rid, ...want, role: k.role, by: actorOf(req), at: new Date().toISOString() };
+    setFeatureAcceptance(id, (view.requirementKinds || []).map((x) => (x.id === rid ? mark : kept.get(x.id))).filter(Boolean));
+    try { recordFeatureFigures(id); } catch (err) { console.error(`[worca-ui] feature figures failed: ${err?.message || err}`); }
+    broadcastFeature(id);
+    const after = featureView(id, { live: liveSliceOf });
+    res.json({ acceptance: after.ship.acceptance || null, smallRuns: after.ship.smallRuns });
   } catch (err) { shapeRouteError(res, err); }
 });
 

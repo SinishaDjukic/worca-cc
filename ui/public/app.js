@@ -26676,7 +26676,7 @@ async function openFeatureShip(featureId, { opener = null, card = null } = {}) {
   if (!res.ok || !f || !Array.isArray(f.slices) || !f.slices.length) throw new Error((f && f.error) || `HTTP ${res.status}`);
   const base = await groupShipBase(f.slices[f.slices.length - 1].pipelineId, f.projectKey);
   openShipItGroupModal({ kind: 'feature', id: f.id, title: f.title, projectKey: f.projectKey, base,
-    members: f.slices.map((s) => ({ position: s.index, pr: s.pr || null })), suggested: f.ship && f.ship.suggested,
+    members: f.slices.map((s) => ({ position: s.index, pr: s.pr || null })), suggested: f.ship && f.ship.suggested, smallRuns: !!(f.ship && f.ship.smallRuns),
     hint: shipReason(f.ship && f.ship.suggested, f.ship && f.ship.linesAdded), release: (f.ship && f.ship.hint) || null },
     { opener, refocus: card ? shipCardRefocus(f.id, card) : focusGroupHead });
 }

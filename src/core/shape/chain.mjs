@@ -5,8 +5,9 @@
 import { getDb } from '../db.mjs';
 import { previousBranchesOf } from '../scheduler.mjs';
 import { isAncestor } from '../worktree.mjs';
-import { shaperSmallRunsOn } from './small-runs.mjs';
-import { sliceOfTicket, sliceGateState, featureBase, featureRootSource, busySliceOf, featureOfPipeline } from './features.mjs';
+import { shaperSmallRunsOn, smallRunsOfFeature } from './small-runs.mjs';
+import { SMALL_RUNS_SHIP } from '../../shared/shape/ship-ledger.mjs';
+import { sliceOfTicket, sliceGateState, featureBase, featureRootSource, busySliceOf, featureOfPipeline, finishedSlices } from './features.mjs';
 
 import { recordSettledFigures as recordFigures } from './measure.mjs';
 import { verifyAfterSettled, verifyCheckOfPipeline } from './verifier.mjs';
@@ -40,19 +41,13 @@ export function heldStopTurn(featureId, index, { live = () => null, now = Date.n
 }
 
 /**
- * The feature's latest finished run (D5): among its slices whose pipeline is `done` and not archived, the one whose
- * last step finished last (MAX(pipeline_steps.updated_at), else pipelines.updated_at); a tie goes to the higher index.
- * `exclude` = a pipeline id left out. → {index, pipelineId} | null
+ * The feature's latest finished run (D5): the last of finishedSlices (features.mjs), so both read one ordering: among
+ * its slices whose pipeline is `done` and not archived, the one whose last step finished last; a tie goes to the higher
+ * index. `exclude` = a pipeline id left out. → {index, pipelineId} | null
  */
 export function latestFinishedSlice(featureId, { exclude = null } = {}) {
-  const r = getDb().prepare(`SELECT x.idx AS idx, p.id AS pid,
-      COALESCE((SELECT MAX(st.updated_at) FROM pipeline_steps st WHERE st.pipeline_id = p.id), p.updated_at) AS finished
-    FROM (SELECT s.idx AS idx, COALESCE(s.pipeline_id, t.pipeline_id) AS pid FROM shape_feature_slices s
-      LEFT JOIN scheduled_runs t ON t.id = s.ticket_id WHERE s.feature_id = ?) x
-    JOIN pipelines p ON p.id = x.pid
-    WHERE p.status = 'done' AND p.archived_at IS NULL AND p.id IS NOT ?
-    ORDER BY finished DESC, x.idx DESC LIMIT 1`).get(String(featureId), exclude == null ? null : String(exclude));
-  return r ? { index: r.idx, pipelineId: r.pid } : null;
+  const r = finishedSlices(featureId, { exclude }).at(-1);
+  return r ? { index: r.index, pipelineId: r.pipelineId } : null;
 }
 
 /** The branch the latest finished run's work is on. {pending:true} while it merges back; null when no run finished
@@ -139,11 +134,17 @@ export async function headMissingSlice(dir, headBranch, rows, deps = {}) {
 }
 
 /**
- * shipFeatureNow's one-PR refusals, in order: a slice that already has a PR (dev's HAS_SLICE_PR, flag on or off), then
+ * shipFeatureNow's one-PR refusals, in order (a marked feature: STACKED_ONLY for one, the latest finished head for stacked): a slice that already has a PR (dev's HAS_SLICE_PR, flag on or off), then
  * (flag on) the latest finished slice's branch must hold every done slice's work. `ctxOf(head)` = shipCtxOf for that
  * head; its error refuses too (fail-closed). Read-only. → {head, refusal: {status, body} | null}
  */
 export async function oneShipCheck(featureId, mode, view, ctxOf, deps = {}) {
+  // Feature D1 (D5): a marked feature (its marker, whatever the flag says) ships stacked only, from its latest finished
+  // run's branch: the changelog and the push land there.
+  if (smallRunsOfFeature(featureId)) {
+    return mode === 'one' ? { head: null, refusal: { status: 409, body: { code: 'STACKED_ONLY', error: SMALL_RUNS_SHIP } } }
+      : { head: latestFinishedSlice(featureId)?.pipelineId || null, refusal: null };
+  }
   if (mode !== 'one') return { head: null, refusal: null };
   if (view.slices.some((s) => s.pr && s.pr.url && s.pr.state !== 'CLOSED' && !s.pr.draft)) {
     return { head: null, refusal: { status: 409, body: { code: 'HAS_SLICE_PR', error: 'a run in this feature already has a PR: create one PR per run' } } };

@@ -80,7 +80,7 @@ const { server, runs, reqChanges } = await imp('../ui/server.mjs');
 const { getDb } = await imp('../src/core/db.mjs');
 const { projectKey } = await imp('../src/core/store.mjs');
 const { writeStoreMeta } = await imp('../src/core/artifacts.mjs');
-const { createSliceFeature, recordShapePlan, changeAgreedRequirements } = await imp('../src/core/shape/features.mjs');
+const { createSliceFeature, recordShapePlan, changeAgreedRequirements, setFeatureAcceptance, recordShip } = await imp('../src/core/shape/features.mjs');
 const askStore = await imp('../src/core/ask/store.mjs');
 const { normalizeOutline } = await imp('../src/shared/shape/slices.mjs');
 const { gateStop } = await imp('../src/shared/shape/run-stops.mjs');
@@ -152,10 +152,11 @@ function thread(title, pid) {
   return th.id;
 }
 /** A marked 4-run feature (`states[k-1]`: done, running or planned) with its Chat thread. → {f, pid(k), threadId} */
-function seedFeature(tag, title, states) {
+function seedFeature(tag, title, states, { withOutline = outline, requirementKinds = null } = {}) {
   const pid = (k) => `c5${tag}00000${k}`;
   pipeline(pid(1), states[0], title, { smallRuns: true, care: careRec });
-  const f = createSliceFeature({ pipelineId: pid(1), projectDir: proj, title, outline, perspectives: ['product', 'architect'], workflowId: 'wf_shape', smallRuns: true, care });
+  const f = createSliceFeature({ pipelineId: pid(1), projectDir: proj, title, outline: withOutline, perspectives: ['product', 'architect'], workflowId: 'wf_shape',
+    smallRuns: true, care, requirementKinds });
   states.forEach((st, i) => {
     const k = i + 1;
     if (k > 1 && st !== 'planned') fire(f, k, pid(k), st, `Run ${k} · ${TITLES[i]}`);
@@ -237,6 +238,23 @@ for (const [i, [, moment, rec]] of PROTO_MOMENTS.entries()) {
   liveRun(pid, `Sign-up · ${moment}`, { at: 'n_refine', pendingQuestion: pq, runShape: { perspectives: ['product', 'ux'] } });
   PROTO[moment] = { pid, threadId: thread(`Sign-up ${moment}`, pid) };
 }
+// D1 Ship: every run done, no Verifier check (state S9: the ship step), R-comp-4 for Compliance to confirm.
+const SHIP_OUTLINE = { ...outline, agreed: [...outline.agreed, { id: 'R-comp-4', text: 'The sign-up data stays in the EU', example: 'rows live in eu-west' }] };
+const shipFeature = (tag, title) => seedFeature(tag, title, ['done', 'done', 'done', 'done'],
+  { withOutline: SHIP_OUTLINE, requirementKinds: { 'R-comp-4': { kind: 'confirmed', role: 'compliance' } } });
+const COMP_MET = { id: 'R-comp-4', mark: 'met', role: 'compliance', by: 'proof', at: now };
+const SB = shipFeature('sb', 'Ship blocked');
+const SR = shipFeature('sr', 'Ship ready');
+setFeatureAcceptance(SR.f.id, [COMP_MET]);
+const SD = shipFeature('sd', 'Ship done');
+setFeatureAcceptance(SD.f.id, [COMP_MET]);
+[1, 2, 3, 4].forEach((k) => getDb().prepare("UPDATE pipelines SET pr_url = ?, pr_number = ?, pr_state = 'OPEN' WHERE id = ?")
+  .run(`https://github.com/proof/repo/pull/${1430 + k}`, 1430 + k, SD.pid(k)));
+recordShip(SD.f.id, { mode: 'stacked' });
+const SK = shipFeature('sk', 'Ship keyboard');
+// Owner direction da6198d8d: R-comp-4 marked Not met with a reason: Ship open, the reason on its own line.
+const SN = shipFeature('sn', 'Ship not met');
+setFeatureAcceptance(SN.f.id, [{ id: 'R-comp-4', mark: 'not-met', reason: 'Legal has not signed the EU clause yet', role: 'compliance', by: 'proof', at: now }]);
 log(`server ${base} · seeded`);
 
 // ---- chrome + cdp
@@ -341,9 +359,9 @@ const MEASURE = (rootSel, rowSel, markSel, textSel) => `(() => {
 })()`;
 /** Judges one list: `oneLine` lists (run rows) want every row one 32px line; others (the gap list, whose why may wrap,
  *  the folds) every row at least 32px with its mark on the first text line. */
-function judge(list, theme, m, { oneLine = true } = {}) {
-  results.lists.push({ list, theme, ...m });
-  const where = `${list}, ${theme}, ${WIDTH}px`;
+function judge(list, theme, m, { oneLine = true, width = WIDTH } = {}) {
+  results.lists.push({ list, theme, width, ...m });
+  const where = `${list}, ${theme}, ${width}px`;
   if (!m.found) { check(false, `${where}: the list is on screen`); return; }
   const off = oneLine ? m.rows.filter((r) => !r.oneLine || r.textLines > 1 || Math.abs(r.height - 32) > 0.5) : m.rows.filter((r) => r.height < 31.5);
   check(m.rows.length > 0 && off.length === 0, `${where}: ${oneLine ? 'every row is one 32px line' : 'every row is at least 32px'} (${m.rows.length} rows${off.length ? `; off: ${JSON.stringify(off.map((r) => [r.text, r.height, r.textLines]))}` : ''})`);
@@ -388,7 +406,8 @@ const PROTO_URL = pathToFileURL(PROTOTYPE).href;
 /** A prototype screen, the moment's segment clicked (`seg` = a selector), then the capture. */
 async function prototypeShot(screen, seg, name, theme) {
   await open(`${PROTO_URL}?${name}-${theme}#${screen}`); await setTheme(theme); await sleep(300);
-  if (seg) { await ev(`(() => { const b = document.querySelector(${JSON.stringify(seg)}); if (b) b.click(); return !!b; })()`); await sleep(300); }
+  // `seg` is one selector or (D1 Ship's moments) a list clicked in order.
+  for (const sel of [].concat(seg || [])) { await ev(`(() => { const b = document.querySelector(${JSON.stringify(sel)}); if (b) b.click(); return !!b; })()`); await sleep(300); }
   await shot(`prototype-${name}-${theme}`);
 }
 /** Opens a Chat thread's feature card. → true when its state line is up */
@@ -421,7 +440,83 @@ async function runViews(runId, pid, name, theme) {
   await shot(`app-${name}-side-panel-${theme}`);
 }
 
+// ---- D1 Ship: blocked, ready and done in the one card's ship step, beside the prototype's #ship moments.
+const SHIP = '.chat-rc .chat-rc-ship .ask-shipcard';
+const SHIP_ROWS = (list) => [`${SHIP} ${list}`, '.plan-check-row', '.plan-check-mark', '.plan-check-text'];
+const SHIP_FACTS = `(() => { const r = [...document.querySelectorAll(${JSON.stringify(SHIP)})].find((x) => x.offsetParent); if (!r) return null;
+  const c = r.querySelector('[data-act="ship-create"]'); const why = r.querySelector('.ask-shipcard-why');
+  const vis = (els) => [...els].filter((b) => b.offsetParent);
+  return { phase: r.dataset.shipCard, why: why ? why.textContent : null, create: c ? c.textContent : null, disabled: c ? c.disabled : null,
+    primary: c ? c.classList.contains('btn-primary') : null, described: !!why && !!c && c.getAttribute('aria-describedby') === why.id,
+    marks: vis(r.querySelectorAll('.ask-shipcard-mark .seg')).map((b) => b.getAttribute('aria-label')),
+    pressed: vis(r.querySelectorAll('.ask-shipcard-mark [aria-pressed="true"]')).map((b) => b.textContent),
+    note: (r.querySelector('.ask-shipcard-confirmed .plan-check-detail') || {}).textContent || null,
+    reasonLine: (r.querySelector('.ask-shipcard-reason') || {}).textContent || null,
+    stateDetail: (() => { const c = r.closest('.chat-rc'); const d = c && c.querySelector('.chat-rc-status .run-status-detail'); return d && !d.hidden ? d.textContent : null; })(),
+    prsOpen: (() => { const c = r.closest('.chat-rc'); return c ? (c.innerText.match(/PRs open/g) || []).length : 0; })(),
+    views: (() => { const c = r.closest('.chat-rc'); return c ? vis(c.querySelectorAll('a, button')).filter((b) => /^View PRs?$/.test(b.textContent.trim())).map((b) => b.textContent.trim()) : []; })(),
+    care: vis(r.querySelectorAll('[data-fact="care"]')).length,
+    waiting: (r.querySelector('.ask-mcard-body').textContent.match(/waiting for compliance/gi) || []).length,
+    prs: vis(r.querySelectorAll('.ask-shipcard-prs .plan-check-row')).map((x) => [x.querySelector('.plan-check-id').textContent, x.querySelector('.plan-check-detail').textContent]),
+    done: (r.querySelector('.ask-shipcard-done') || {}).textContent || null,
+    careAbove: (() => { const k = r.querySelector('[data-fact="care"]'); const p = r.querySelector('.ask-shipcard-prs'); return !p || !!(k && (k.compareDocumentPosition(p) & 4)); })() };
+})()`;
+const SHIP_READY = (what, theme) => waitFor(`!!document.querySelector(${JSON.stringify(SHIP)})`, `${what} (${theme})`);
+/** At 375px a Ship row's detail drops under its title (the .srows rule): rows there are judged at least 32px with the mark
+ *  on the first text line; at 1280px every row is one 32px line. */
+async function shipCells(theme, width) {
+  const at = `${theme}, ${width}px`;
+  if (await card(SB.threadId, `sb${width}`, 'the Ship blocked card', theme) && await SHIP_READY('the Ship blocked card', theme)) {
+    await reveal(SHIP);
+    const f = await ev(SHIP_FACTS);
+    check(f && f.why === 'Waiting for Compliance to confirm R-comp-4' && f.waiting === 1 && !f.stateDetail, `ship blocked, ${at}: the reason once, no waiting step detail (${JSON.stringify(f)})`);
+    check(f && f.create === 'Create 4 PRs' && f.disabled && !f.primary && f.described, `ship blocked, ${at}: Create 4 PRs disabled, not primary, described by the reason`);
+    check(f && f.marks.length === 1 && f.marks[0] === 'Mark R-comp-4 as Compliance: The sign-up data stays in the EU' && f.pressed.length === 0 && f.care === 1,
+      `ship blocked, ${at}: one unmarked Met / Not met / Dropped picker, one Care row`);
+    const c = await ev(COUNTS('.chat-rc'));
+    check(c && c.primaries.length === 0 && c.answer === 0 && c.rawLinks === 0, `ship blocked, ${at}: no primary, no Answer, no raw link (${JSON.stringify(c)})`);
+    judge('ship blocked confirmed rows', theme, await ev(MEASURE(...SHIP_ROWS('.ask-shipcard-confirmed'))), { oneLine: false, width });
+    await shot(`app-ship-blocked-${theme}-${width}`);
+  }
+  await prototypeShot('ship', null, `ship-blocked-${width}`, theme);
+  if (await card(SR.threadId, `sr${width}`, 'the Ship ready card', theme) && await SHIP_READY('the Ship ready card', theme)) {
+    await reveal(SHIP);
+    const f = await ev(SHIP_FACTS);
+    check(f && f.why === null && f.pressed.join() === 'Met' && f.create === 'Create 4 PRs' && !f.disabled && f.primary && f.care === 1, `ship ready, ${at}: Met marked, no reason, Create 4 PRs primary (${JSON.stringify(f)})`);
+    const c = await ev(COUNTS('.chat-rc'));
+    check(c && c.primaries.length === 1 && c.primaries[0] === 'Create 4 PRs' && c.answer === 0, `ship ready, ${at}: exactly one primary, no Answer (${JSON.stringify(c)})`);
+    judge('ship ready confirmed rows', theme, await ev(MEASURE(...SHIP_ROWS('.ask-shipcard-confirmed'))), { oneLine: width > WIDTH, width });
+    await shot(`app-ship-ready-${theme}-${width}`);
+  }
+  await prototypeShot('ship', ['[data-act="compok"]', '[data-mark="R-po-3:Met"]', '[data-mark="R-ux-2:Met"]'], `ship-ready-${width}`, theme);
+  if (await card(SN.threadId, `sn${width}`, 'the Ship not-met card', theme) && await SHIP_READY('the Ship not-met card', theme)) {
+    await reveal(SHIP);
+    const f = await ev(SHIP_FACTS);
+    check(f && f.pressed.join() === 'Not met' && /^Marked Not met by you/.test(f.note || '') && f.reasonLine === 'Legal has not signed the EU clause yet'
+      && f.why === null && !f.disabled && f.primary, `ship not met, ${at}: the mark, the reason on its own line, Ship open (${JSON.stringify(f)})`);
+    await shot(`app-ship-not-met-${theme}-${width}`);
+  }
+  if (await card(SD.threadId, `sd${width}`, 'the Ship done card', theme) && await SHIP_READY('the Ship done card', theme)) {
+    await reveal(SHIP);
+    const f = await ev(SHIP_FACTS);
+    check(f && f.done === null && f.stateDetail === '4 PRs open' && f.prsOpen === 1 && f.care === 1 && f.careAbove,
+      `ship done, ${at}: 4 PRs open once (the state line), the Care row once above the PRs (${JSON.stringify(f)})`);
+    check(f && f.views.join() === 'View PRs', `ship done, ${at}: one view action, View PRs (${JSON.stringify(f && f.views)})`);
+    check(f && f.prs.length === 4 && f.prs[0][1] === 'into main' && new Set(f.prs.map((x) => x[0])).size === 4, `ship done, ${at}: one row per PR, run 1 first into main`);
+    const c = await ev(COUNTS('.chat-rc'));
+    check(c && c.rawLinks === 0 && c.primaries.length === 0, `ship done, ${at}: no raw link, View PRs quiet (${JSON.stringify(c)})`);
+    judge('ship done PR rows', theme, await ev(MEASURE(...SHIP_ROWS('.ask-shipcard-prs'))), { oneLine: width > WIDTH, width });
+    await shot(`app-ship-done-${theme}-${width}`);
+  }
+  await prototypeShot('ship', ['[data-act="prdlg"]', '[data-act="prok"]'], `ship-done-${width}`, theme);
+}
+
 for (const theme of THEMES) {
+  for (const width of [1280, WIDTH]) {
+    await cdp('Emulation.setDeviceMetricsOverride', { width, height: 900, deviceScaleFactor: 1, mobile: false });
+    await shipCells(theme, width);
+  }
+  await cdp('Emulation.setDeviceMetricsOverride', { width: WIDTH, height: 900, deviceScaleFactor: 1, mobile: false });
   // ---- C5: verifying, gap found, the bound stop, no gap; the Verifier's and a gap run's run page and side panel.
   if (await card(VW.threadId, 'vw', 'the verifying card', theme)) {
     const s = await ev(STATUS);
@@ -462,7 +557,7 @@ for (const theme of THEMES) {
   }
   if (await card(VC.threadId, 'vc', 'the no-gap card', theme)) {
     const s = await ev(STATUS);
-    check(s && s.word === 'Ready to ship' && s.detail === 'ship from the feature page', `no gap, ${theme}: Ready to ship (${JSON.stringify(s)})`);
+    check(s && s.word === 'Ready to ship' && !s.detail, `no gap, ${theme}: Ready to ship, said once (${JSON.stringify(s)})`);
     const logs = await ev(LOGS);
     check(logs.includes('Verified: the 4 requirements owned by runs hold in the main flow'), `no gap, ${theme}: the clean receipt (${JSON.stringify(logs)})`);
     await reveal('.chat-rc .chat-rc-log-verify'); await judgeVerifyLine('no gap', theme);
@@ -521,6 +616,35 @@ for (const theme of THEMES) {
     }
   }
   await prototypeShot('req-change', null, 'req-change', theme);
+}
+
+// ---- D1 Ship keyboard (light, 375px): Tab reaches Met, its group's computed name names R-comp-4, Enter marks it (the
+// real confirm verb), and the focus stays on Met through the confirm route's repaint.
+const key1 = (key, code, vk, text) => cdp('Input.dispatchKeyEvent', { type: 'keyDown', key, code, windowsVirtualKeyCode: vk, ...(text ? { text } : {}) })
+  .then(() => cdp('Input.dispatchKeyEvent', { type: 'keyUp', key, code, windowsVirtualKeyCode: vk }));
+if (await card(SK.threadId, 'sk', 'the Ship keyboard card', 'light') && await SHIP_READY('the Ship keyboard card', 'light')) {
+  await reveal(SHIP);
+  const BTN = `${SHIP} [data-act="ship-mark-R-comp-4-met"]`;
+  const GROUP = `${SHIP} .ask-shipcard-mark .seg`;
+  // Focus the control just before Met in tab order, then one real Tab.
+  await ev(`(() => { const all = [...document.querySelectorAll('a[href], button, input, select, textarea, [tabindex]')]
+    .filter((e) => e.offsetParent && !e.disabled && e.tabIndex >= 0); const b = document.querySelector(${JSON.stringify(BTN)});
+    const i = all.indexOf(b); if (i > 0) all[i - 1].focus(); return i; })()`);
+  await key1('Tab', 'Tab', 9);
+  const reached = await ev(`document.activeElement === document.querySelector(${JSON.stringify(BTN)})`);
+  check(reached, 'ship keyboard: Tab reaches Met');
+  const { root } = await cdp('DOM.getDocument', { depth: 0 });
+  const { nodeId } = await cdp('DOM.querySelector', { nodeId: root.nodeId, selector: GROUP });
+  const ax = nodeId ? await cdp('Accessibility.getPartialAXTree', { nodeId, fetchRelatives: false }) : null;
+  const name = ax && ax.nodes && ax.nodes[0] && ax.nodes[0].name ? ax.nodes[0].name.value : '';
+  check(/R-comp-4/.test(name), `ship keyboard: the computed name names R-comp-4 (${JSON.stringify(name)})`);
+  await key1('Enter', 'Enter', 13, '\r');
+  await waitFor(`document.querySelector(${JSON.stringify(BTN)})?.getAttribute('aria-pressed') === 'true'`, 'the Met row to read confirmed');
+  await sleep(400);
+  const focus = await ev(`(() => { const a = document.activeElement; return { act: a.dataset ? a.dataset.act : null, pressed: a.getAttribute('aria-pressed'),
+    note: (document.querySelector(${JSON.stringify(`${SHIP} .ask-shipcard-confirmed .plan-check-detail`)}) || {}).textContent }; })()`);
+  check(focus && focus.act === 'ship-mark-R-comp-4-met' && focus.pressed === 'true' && /^confirmed by Compliance/.test(focus.note || ''), `ship keyboard: the focus stays on Met (${JSON.stringify(focus)})`);
+  await shot('app-ship-keyboard-confirmed-light');
 }
 
 // ---- one reduced-motion capture of Prototype building.

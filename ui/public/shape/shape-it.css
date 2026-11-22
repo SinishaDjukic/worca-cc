@@ -391,3 +391,12 @@ a.rd-crumb:hover{color:var(--ink);text-decoration:underline;}
 .proto-body .proto-quote{margin:0;color:var(--ink-2);overflow-wrap:anywhere;}
 .proto-body .proto-open{align-self:flex-start;}
 @media (prefers-reduced-motion:reduce){.proto-body .proto-piece{animation:none;}}
+/* Shape it first · small runs Ship (Feature D1, ship-card.mjs): the Ship step's parts are dev's .srows rows, the check fold
+   and the .rd-kv Care row; a part with nothing to show (no confirmed requirement, no reason) takes no gap. */
+.ask-shipcard.is-small-runs .ask-mcard-body > div:empty{display:none;}
+/* In the one card's ship step the run card is the frame: one divider, no box in a box (as on the feature page, D14). */
+.chat-rc-ship > .ask-shipcard.is-small-runs{padding:16px 0 0;border:0;border-top:1px solid var(--line);border-radius:0;background:none;}
+/* The PR list's id column holds "#1431", not an R-id. */
+.ask-shipcard.is-small-runs .ask-shipcard-prs{--row-id:4em;}
+/* A person's Not met / Dropped reason (owner direction da6198d8d): its own line above the row's mark picker. */
+.ask-shipcard.is-small-runs .ask-shipcard-reason{flex:1 1 100%;font-size:12px;color:var(--ink-2);overflow-wrap:anywhere;}

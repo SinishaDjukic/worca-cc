@@ -452,7 +452,7 @@ import { savePlanToCheckout } from '../src/core/shape/save.mjs';
 import { featureView, currentFeatureId, featureOfPipeline, featuresOfTickets, cancelRest, resumeFeature,
   rechainWaiting, replanRest, setApproveEach, recordShapePlan, listShapePlans, chainFeature,
   sliceOfPipeline, slicePrPreamble, featureShipSuggestion, recordSliceDraft, recordShip, clearShip, featureShipInput,
-  liveSliceFrom, shaperCard, featureThread, addFeatureNote, appendFeatureRun, liveRoundOf, acceptanceRefusal, featureHoldsTicket, chatShipCardOffered } from '../src/core/shape/features.mjs';
+  liveSliceFrom, shaperCard, featureThread, addFeatureNote, appendFeatureRun, liveRoundOf, acceptanceRefusal, featureHoldsTicket, chatShipCardOffered, stackedPrBase, shipOrder, isSlicePreambleLine } from '../src/core/shape/features.mjs';
 import { smallRunsChainGate, sliceFireStart, oneShipCheck, shipHeadRow, shipHeadBase, recordSettledFigures, createHeldStops, featureOfAnyPipeline } from '../src/core/shape/chain.mjs';
 import { roundsOf, roundOrigin, nextRound, setRoundOutcome } from '../src/core/shape/rounds.mjs';
 import { changesCard, applyChanges, applyRoute, landingFacts, landingFactsOfFeature, shapeToolCheck, threadWork, shapeThreadFacts, createRequirementChanges } from '../src/core/shape/changes.mjs';
@@ -543,7 +543,7 @@ import {
   runScheduleNow, deleteSchedule, cancelForTarget, dependentsOfWorkflow, runDueTickets, recordOutcome,
   recoverScheduler, purgeScheduler, scheduleCounts, scheduleStageDir, scheduleSignature,
   resolveAfterRef, resumeWaitError, predecessorState, previousBranchesOf, dependentsOfRun, AFTER_POLICIES, afterRefOf,
-  chainBaseBranchesOf, stackedPrBaseOf, resumeTicketsFor, cancelResumeTicketsFor, inheritedTagsAtCreation, runChains,
+  chainBaseBranchesOf, resumeTicketsFor, cancelResumeTicketsFor, inheritedTagsAtCreation, runChains,
 } from '../src/core/scheduler.mjs';
 import {
   addNotification, onNotification, listNotifications, unreadCount, latestNotificationId, markRead, markAllRead, purgeNotifications,
@@ -5041,7 +5041,7 @@ async function refreshSliceBody(prUrl, pid, repoDir) {
   if (!cur.ok || !cur.body.startsWith('Part of ')) return null;
   // The preamble: the "Part of" line, a blank line, the "- Slice" list; it ends at the first blank line after the list.
   const lines = cur.body.split('\n');
-  let end = lines[1]?.startsWith('Satisfies: ') ? 2 : 1;   // the slice's agreed ids, under the "Part of" line
+  let end = 1; while (isSlicePreambleLine(lines[end])) end += 1;   // the agreed ids, the Care and Not met / Dropped lines (D1)
   while (end < lines.length && lines[end] === '') end += 1;
   while (end < lines.length && lines[end].startsWith('- Slice ')) end += 1;
   const fresh = slicePrPreamble(pid);
@@ -5087,7 +5087,7 @@ async function shipFeatureNow(id, mode, { actor = null, release = null, watch = 
     const needsPr = (s) => s.pipelineId && (!s.pr || s.pr.state === 'CLOSED');
     if (mode === 'stacked' && shown.slices.some(needsPr)) {
       const made = [];
-      for (const s of shown.slices) {
+      for (const s of shipOrder(shown)) {   // Feature D1: a marked feature's runs in finish order
         if (!needsPr(s)) continue;
         const r = await openMemberPr(s.pipelineId, { actor });
         if (!r.ok) return { status: r.status || 500, body: { error: `could not create run ${s.index}'s PR: ${r.error}. Create PR again to continue.`, prs: made } };
@@ -6920,7 +6920,7 @@ function chainRootFor(pipelineId, target) { return chainOf(pipelineId, target)[0
 /** A chained run's own PR base: stacked on the previous run's branch until that run's PR merges; the root otherwise. */
 function stackedBaseFor(pipelineId, target) {
   const chain = chainOf(pipelineId, target);
-  try { return stackedPrBaseOf(pipelineId, chain) || chain[0] || null; } catch { return chain[0] || null; }
+  try { return stackedPrBase(pipelineId, chain) || chain[0] || null; } catch { return chain[0] || null; }
 }
 /** One ship flow: a member's own PR, ready for review, on its stacked base (feature slices and chain runs). */
 async function openMemberPr(pipelineId, { actor = null, draft = false, onDraftFallback = null } = {}) {

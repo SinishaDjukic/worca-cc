@@ -91,8 +91,8 @@ export function featureCardModel({ own = null, card = null, snapOf = () => null 
     watch: wText ? { text: wText, prUrl: watched.watch.prUrl || null } : null };
 }
 
-/** Shaper small runs B1: the one card's steps. `start` is B2's; B1 draws none (D11). */
-export const ONE_CARD_STEPS = Object.freeze(['start', 'requirements', 'prototype', 'split', 'build', 'done']);
+/** Shaper small runs B1: the one card's steps. `start` is B2's; B1 draws none (D11). Feature D1: the last is `ship`. */
+export const ONE_CARD_STEPS = Object.freeze(['start', 'requirements', 'prototype', 'split', 'build', 'ship']);
 
 /** A run that ended (run-card.mjs RESULT_STATUS; not imported: run-card imports this module). */
 const ENDED = new Set(['done', 'complete', 'completed', 'failed', 'stopped', 'error', 'aborted']);
@@ -113,11 +113,25 @@ const ONE_DETAIL = Object.freeze({
   S6: () => SPLIT_PROPOSED,
   S7: ({ asking }) => (asking ? SPLIT_PROPOSED : SPLIT_WORKING),
   S8: ({ k, n }) => `${k} of ${plural(n, 'run')} done`,
-  S9: ({ n }) => `${plural(n, 'run')} done · ship from the feature page`,
+  // Feature D1 (D16): S9 (no Verifier check) and SR ship from the one card: the prototype's words.
+  S9: ({ view }) => shipDetail(view),
   // Small runs C5 (D12): the Verifier checks the whole feature (SV); once it is through, Ready to ship is the word (SR).
   SV: ({ k, n }) => `the Verifier walks the main flow · ${k} of ${plural(n, 'run')} done`,
-  SR: () => 'ship from the feature page',
+  SR: ({ view }) => shipDetail(view),
 });
+/** Feature D1 (D16): the ship step's detail: `waiting for Compliance` while a confirmed requirement waits (role labels
+ *  joined by "and"), the Ship card mounted or not (the owner's call: the state detail says who it waits for);
+ *  `N PRs open` once shipped, else `Ready to ship`. */
+function shipDetail(view) {
+  const ship = (view && view.ship) || {};
+  const sr = ship.smallRuns || null;
+  if (ship.mode) return plural(sr ? sr.order.filter((o) => o.pr).length : (view.slices || []).filter((s) => s.pr && s.pr.url).length, 'PR') + ' open';
+  if (sr && sr.blocked) {
+    const labels = [...new Set(sr.confirmed.filter((c) => c.state === 'waiting').map((c) => c.roleLabel))];
+    return `waiting for ${labels.join(' and ')}`;
+  }
+  return 'Ready to ship';
+}
 /** C5: a stopped or failed Verifier run's line: the card's Resume starts a fresh check (resumeFeature). */
 const VERIFY_HALTED = 'The Verifier stopped · Resume checks again';
 
@@ -131,10 +145,10 @@ function oneState(view, step, log, card, ended = false) {
     const allDone = slices.length && slices.every((s) => s.state === 'done');
     // C5: with a Verifier check, every run done reads by the check: verifying, through, or S8 (gaps, its stop, paused, halted).
     const v = view.verify && view.verify.state;
-    if (allDone && (v === 'clean' || v === 'accepted')) return ['SR', 'done'];
+    if (allDone && (v === 'clean' || v === 'accepted')) return ['SR', 'ship'];
     if (allDone && v === 'verifying') return ['SV', 'build'];
     if (allDone && v) return ['S8', 'build'];
-    if (allDone) return ['S9', 'done'];
+    if (allDone) return ['S9', 'ship'];
     if (view.status === 'replanning') return ['S7', 'split'];
     return ['S8', 'build'];
   }
@@ -176,7 +190,7 @@ export function oneCardModel({ own = null, card = null, snapOf = () => null } = 
   const detail = ONE_DETAIL[state]({
     start: !!pq && pq.kind === 'care',
     proto: pq && pq.kind === 'prototype' ? pq.prototype : card.prototype || null,
-    k: view ? view.done || 0 : 0, n: view ? view.total || 0 : 0,
+    k: view ? view.done || 0 : 0, n: view ? view.total || 0 : 0, view,
     q: pq && Array.isArray(pq.questions) ? pq.questions.length : 0,
     asking: !!question && (asks(rp) || (!!view && !!view.ask && view.ask.index == null)),
   });

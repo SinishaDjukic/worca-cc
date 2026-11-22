@@ -277,12 +277,17 @@ export function careRunPlan(position, opts = {}) {
   };
 }
 
-/** The fixed fact a feature's Care reads as after Start. */
-export function careRecordLine(care) {
+/** The Care choice in words: "Balanced · Worca's pick", or "Careful · your choice · Worca recommended Balanced". */
+export function careChoiceText(care) {
   const c = isObject(care) ? care : {};
   const label = CARE_LABELS[c.position] || CARE_LABELS[CARE_DEFAULT.position];
-  if (c.chosenBy === 'person') return `Care: ${label} · your choice${CARE_LABELS[c.worcaPick] ? ` · Worca recommended ${CARE_LABELS[c.worcaPick]}` : ''}`;
-  return `Care: ${label} · Worca's pick`;
+  if (c.chosenBy === 'person') return `${label} · your choice${CARE_LABELS[c.worcaPick] ? ` · Worca recommended ${CARE_LABELS[c.worcaPick]}` : ''}`;
+  return `${label} · Worca's pick`;
+}
+
+/** The fixed fact a feature's Care reads as after Start. */
+export function careRecordLine(care) {
+  return `Care: ${careChoiceText(care)}`;
 }
 
 const REASON_MAX = 200;

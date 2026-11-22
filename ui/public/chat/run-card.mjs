@@ -34,6 +34,7 @@ import { featureCardModel, oneCardModel, paintFeatureLog } from '../shape/featur
 import { buildCheckRows } from '../shape/check-row.mjs';
 import { verifyGapItems } from '../../../src/shared/shape/verifier.mjs';
 import { paintReqChange } from '../shape/req-change.mjs';
+import { renderShipCard, confirmRequirement } from '../shape/ship-card.mjs';
 import { namedAnswer, forgetAnswer, REQUIREMENTS_AGREED } from '../shape/step-receipt.mjs';
 import { isRequirementsAsk, answerFieldOpen } from '../shape/step-card.mjs';
 import { renderChecklistGroups } from '../shape/checklist-view.mjs';
@@ -328,6 +329,8 @@ export function createChatRunCard({ doc, win = null, snapshot = null, ctx = {}, 
   const changeEl = h('div', 'chat-rc-req-change');
   // Small runs C5 (D12): the Verifier's open gaps, one `.srows` list, mounted only while gap runs build (flag-off golden).
   const gapsEl = h('div', 'plan-checks srows verify-gaps');
+  // Feature D1 (D14): the Ship step's card (ship-card.mjs, the feature page's too), mounted only on the `ship` step.
+  const shipEl = h('div', 'chat-rc-ship');
   changeEl.hidden = true;
   // ---- Shaper s5: the ideas saved for the next checkpoint (D11) and a watch that gave up on the run's PR (D23)
   const notesEl = h('div', 'chat-rc-notes');
@@ -962,11 +965,14 @@ export function createChatRunCard({ doc, win = null, snapshot = null, ctx = {}, 
     // A group row goes along, so app.js hands the action to groupAction (D6, D11).
     // A run on its source branch is never given a PR (the server refuses it): when Push does not own `ship` (not merged
     // back yet, or below Advanced where the result's row is hidden) the footer makes no Create PR either.
-    // B1: the one card ships from the feature page (D8), and its open step card's button is its one primary.
+    // B1: the model's ship action never shows on the one card: Feature D1's Ship step card holds Create N PRs, and the open
+    // step card's button is its one primary.
     const fc = fm && fm.phase === 'feature' ? fm.controls : null;
     const stopOpen = !!(painted && painted.stop);
     const disable = { ...(st === 'pausing' ? { resume: 'Pausing…' } : {}), ...(changesWhy ? { 'ask-changes': changesWhy } : {}) };
-    const baseSkip = [...(oneNow || (s && s.sameAsSource && !own.ship) ? ['ship'] : []), ...(stopOpen ? ['answer'] : [])];
+    // Feature D1 (R-ux-2): a shipped marked feature's Ship step holds the one view action (View PRs): no View PR here.
+    const shipDone = !!oneNow && !!shipEl.parentNode && shipEl.dataset.phase === 'applied';
+    const baseSkip = [...(oneNow || (s && s.sameAsSource && !own.ship) ? ['ship'] : []), ...(stopOpen ? ['answer'] : []), ...(shipDone ? ['open-pr'] : [])];
     // Item 10: while a stop is open its question's primary is the card's one primary. The foot keeps only Stop; every
     // other action it would draw moves into the feature ⋯ (only where there is one: a feature's controls).
     const moved = stopOpen && fc ? ((m && m.actions) || []).filter((id) => id !== 'stop' && !baseSkip.includes(id)) : [];
@@ -1020,6 +1026,31 @@ export function createChatRunCard({ doc, win = null, snapshot = null, ctx = {}, 
     if (!gaps.length) { if (gapsEl.isConnected) gapsEl.remove(); return; }
     if (!gapsEl.isConnected) logEl.after(gapsEl);
     gapsEl.replaceChildren(...buildCheckRows(doc, { items: verifyGapItems(gaps) }));
+  }
+
+  /** D1: the one card's `ship` step mounts the Ship card from the feature view's `ship.smallRuns`; rebuilt only when
+   *  what it shows changes, keeping the focus on the same control. */
+  function paintShipStep(one, feature) {
+    const ship = one && one.step === 'ship' && feature && feature.ship && feature.ship.smallRuns ? feature.ship : null;
+    const phase = ship ? (ship.mode ? 'applied' : ship.ready ? 'ready' : null) : null;
+    if (!phase) { if (shipEl.parentNode) { shipEl.remove(); delete shipEl.dataset.sig; delete shipEl.dataset.phase; } return; }
+    shipEl.dataset.phase = phase;
+    if (!shipEl.parentNode) logEl.after(shipEl);   // parentNode: a card being built is not in the document yet
+    const sig = JSON.stringify([phase, feature.title, ship.smallRuns]);
+    if (shipEl.dataset.sig === sig) return;
+    shipEl.dataset.sig = sig;
+    // The focused control, else the one a mark in flight noted (Chromium blurs its disabled button to <body>).
+    const a = doc.activeElement;
+    const noted = shipEl.querySelector('[data-focus]');
+    const act = a && shipEl.contains(a) && a.dataset.act ? a.dataset.act : (!a || a === doc.body) && noted ? noted.dataset.focus : null;
+    const had = act ? `[data-act="${act}"]` : null;
+    // R-ux-2: the card's state line already says "N PRs open" (countShown), and the foot draws no View PR (paintFoot).
+    const card = renderShipCard(doc, { phase, featureId: feature.id, title: feature.title, runs: feature.total, result: ship.result || null,
+      smallRuns: ship.smallRuns }, { countShown: true, onConfirm: (id, mark, reason) => confirmRequirement(feature.id, id, mark, reason) });
+    card.dataset.needsGit = '';   // shipping opens pull requests: hidden while git is missing (git-gate.mjs)
+    shipEl.replaceChildren(card);
+    const back = had ? shipEl.querySelector(had) : null;
+    if (back && !back.disabled) back.focus();
   }
 
   function update(snap) {
@@ -1117,6 +1148,7 @@ export function createChatRunCard({ doc, win = null, snapshot = null, ctx = {}, 
     if (one) { receipt.hidden = true; qSec.hidden = !painted && !working; clearResult(); }
     else paintResult(s, m); // sets createPrBtn; m: the status line it must not repeat
     paintVerifyGaps(one);
+    paintShipStep(one, shaperIn && shaperIn.card ? shaperIn.card.feature : null);
     paintChanges(s, m, !!lr, one);
     paintWatch(m, (fm && fm.watch) || rm.watch);
     paintFoot(s);           // labels and disabled rules only

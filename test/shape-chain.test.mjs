@@ -13,7 +13,8 @@ import { withEnv as withEnvVars } from './helpers/with-env.mjs';
 import { getDb } from '../src/core/db.mjs';
 import { projectKey } from '../src/core/store.mjs';
 import { getTicket, runDueTickets, requestRunNow } from '../src/core/scheduler.mjs';
-import { createSliceFeature, featureView, resumeFeature, featureHoldsTicket, liveSliceFrom, sliceGateState, appendFeatureRun } from '../src/core/shape/features.mjs';
+import { createSliceFeature, featureView, resumeFeature, featureHoldsTicket, liveSliceFrom, sliceGateState, appendFeatureRun,
+  finishedSlices, smallRunsPrBase, stackedPrBase, shipOrder } from '../src/core/shape/features.mjs';
 import { careOfRow, requirementKindsOf } from '../src/shared/shape/feature-record.mjs';
 import { featureFigures } from '../src/core/shape/measure.mjs';
 import { latestFinishedSlice, latestFinishedSource, sliceChainGate, sliceSourceOf, headMissingSlice, smallRunsChainGate,
@@ -482,4 +483,76 @@ test('C4 (D7): a due change run takes the next turn before an earlier due run; i
   const c2 = appendFeatureRun(id2, { title: 'Change: R-po-1', goal: 'g', kind: 'change', requirements: ['R-po-1'] });
   fire(t2[3], pipe('running'));
   assert.equal(g(c2.ticketId), 'waiting', 'a change run waits while another run is going');
+});
+
+// ---- Feature D1 (Ship): finish order, the small-runs PR base, the ship order and the marked one-PR check ----
+
+const markFeature = (fid) => {
+  const origin = getDb().prepare('SELECT origin_pipeline_id FROM shape_features WHERE id = ?').get(fid).origin_pipeline_id;
+  getDb().prepare('UPDATE pipelines SET shape_stats = ? WHERE id = ?').run(JSON.stringify({ smallRuns: true }), origin);
+};
+const stepAt = (at) => [{ key: 'n_impl', status: 'done', updatedAt: at }];
+/** A 3-run feature whose runs finish 1, 3, 2 (run 1 is the origin). → { id, p } (p[k] = run k's pipeline id) */
+const finishing132 = ({ marked = true } = {}) => {
+  quiet();
+  const p1 = pipe('done', { steps: stepAt('2026-03-01T00:00:00Z') });
+  const f = createSliceFeature({ pipelineId: p1, projectDir: root, title: 'Ship', outline: outlineOf(3), perspectives: ['product'], workflowId: 'wf_shape' });
+  const t = rows(f.id).map((r) => r.ticket_id);
+  const p2 = pipe('done', { steps: stepAt('2026-03-05T00:00:00Z') });
+  const p3 = pipe('done', { steps: stepAt('2026-03-03T00:00:00Z') });
+  fire(t[1], p2); fire(t[2], p3);
+  if (marked) markFeature(f.id);
+  return { id: f.id, p: [null, p1, p2, p3] };
+};
+
+test('D1 finishedSlices: ascending finish order [1, 3, 2]; latestFinishedSlice is its last element', () => {
+  const { id, p } = finishing132();
+  assert.deepEqual(finishedSlices(id).map((s) => s.index), [1, 3, 2]);
+  assert.deepEqual(finishedSlices(id, { exclude: p[2] }).map((s) => s.index), [1, 3]);
+  assert.ok(finishedSlices(id).every((s) => typeof s.finishedAt === 'string'));
+  assert.deepEqual(latestFinishedSlice(id), { index: 2, pipelineId: p[2] });
+});
+
+test('D1 smallRunsPrBase: first → root, later → the previous finished run\'s branch; merged or pending predecessor → root', () => {
+  const { id, p } = finishing132();
+  assert.equal(smallRunsPrBase(p[1]), 'main');
+  assert.equal(smallRunsPrBase(p[3]), `feat/${p[1]}`, "run 3's base is run 1's branch");
+  assert.equal(smallRunsPrBase(p[2]), `feat/${p[3]}`, "run 2's base is run 3's branch");
+  assert.equal(stackedPrBase(p[2], ['main', 'x']), `feat/${p[3]}`);
+  // A merged predecessor: the root.
+  getDb().prepare("UPDATE pipelines SET pr_url = 'https://github.com/me/repo/pull/3', pr_state = 'MERGED' WHERE id = ?").run(p[3]);
+  assert.equal(smallRunsPrBase(p[2]), 'main');
+  getDb().prepare("UPDATE pipelines SET pr_state = 'OPEN' WHERE id = ?").run(p[3]);
+  // A predecessor still merging its work back: the root.
+  getDb().prepare('UPDATE pipelines SET branch = ?, updated_at = ? WHERE id = ?')
+    .run(JSON.stringify({ source: 'main', feature: 'main', sameAsSource: true, worktreeDir: '/tmp/x' }), new Date().toISOString(), p[3]);
+  assert.equal(smallRunsPrBase(p[2]), 'main');
+  assert.equal(featureView(id).id, id);
+});
+
+test('D1 smallRunsPrBase: null for every run of an unmarked feature, so stackedPrBase is stackedPrBaseOf', () => {
+  const { p } = finishing132({ marked: false });
+  for (const k of [1, 2, 3]) assert.equal(smallRunsPrBase(p[k]), null);
+  assert.equal(stackedPrBase(p[1], ['main']), null);
+  assert.equal(smallRunsPrBase('nope'), null);
+});
+
+test('D1 shipOrder: marked → finish order, an archived run last; unmarked → view.slices itself', () => {
+  const { id, p } = finishing132();
+  assert.deepEqual(shipOrder(featureView(id)).map((s) => s.index), [1, 3, 2]);
+  getDb().prepare("UPDATE pipelines SET archived_at = '2026-04-01T00:00:00Z' WHERE id = ?").run(p[3]);
+  assert.deepEqual(shipOrder(featureView(id)).map((s) => s.index), [1, 2, 3]);
+  const u = finishing132({ marked: false });
+  const v = featureView(u.id);
+  assert.equal(shipOrder(v), v.slices);
+});
+
+test('D1 oneShipCheck, marked: one → 409 STACKED_ONLY first; stacked → head is the latest finished run', async () => {
+  const { id, p } = finishing132();
+  const v = viewOf(id, [{ index: 1, pipelineId: p[1], state: 'done', pr: { url: 'u', state: 'OPEN' } }]);
+  for (const deps of [ON, OFF]) {
+    assert.deepEqual(await oneShipCheck(id, 'one', v, NEVER, deps),
+      { head: null, refusal: { status: 409, body: { code: 'STACKED_ONLY', error: 'small runs ship a PR per run' } } });
+    assert.deepEqual(await oneShipCheck(id, 'stacked', v, NEVER, deps), { head: p[2], refusal: null });
+  }
 });

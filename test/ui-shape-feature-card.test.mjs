@@ -258,15 +258,15 @@ const ONE_CASES = {
     'Runs proposed, one after another · check, then approve', PQ_OUT.id],
   'S7 (working)': [{ own: snap('p1', { status: 'done', terminal: true }), card: marked(REPLAN()) }, 'S7', 'split', 'The Planner proposes the runs', null],
   S8: [{ own: snap('p1', { status: 'done', terminal: true }), card: marked(v3(['done', 'running', 'planned'])) }, 'S8', 'build', '1 of 3 runs done', null],
-  S9: [{ own: snap('p1', { status: 'done', terminal: true }), card: marked(v3(['done', 'done', 'done'], { status: 'done', ship: { ready: true, mode: null } })) }, 'S9', 'done',
-    '3 runs done · ship from the feature page', null],
+  S9: [{ own: snap('p1', { status: 'done', terminal: true }), card: marked(v3(['done', 'done', 'done'], { status: 'done', ship: { ready: true, mode: null } })) }, 'S9', 'ship',
+    'Ready to ship', null],
 };
 
 test('B1 oneCardModel: null without smallRuns: true, so every flag-off path stays on featureCardModel', () => {
   for (const c of [null, card(null, []), card(v3(['done', 'running', 'planned'])), { ...card(null, []), smallRuns: 'true' }]) {
     assert.equal(oneCardModel({ own: shapingOwn(PQ_CL), card: c }), null);
   }
-  assert.deepEqual(ONE_CARD_STEPS, ['start', 'requirements', 'prototype', 'split', 'build', 'done']);
+  assert.deepEqual(ONE_CARD_STEPS, ['start', 'requirements', 'prototype', 'split', 'build', 'ship']);
 });
 
 test('B1 oneCardModel: null for a marked planning run that ended without a feature (never split), so dev\'s card shows its result or failure', () => {
@@ -404,10 +404,10 @@ const c2Snap = (pid, { careRun = C2_CARE, at = 'n_tests', status = 'running' } =
   source: 'live', runId: `run-${pid}` };
 };
 /** Paints a feature card (marked or not) whose member rows come from `members` (groupModel inputs) and `snaps`. */
-function c2Card({ marked = true, members, pids, snaps, slices = {} }) {
+function c2Card({ marked = true, members, pids, snaps, slices = {}, view = {} }) {
   const dom = trackDom(new JSDOM('<!doctype html><body></body>'));
   const v = VIEW(pids.map((pid, i) => SL(i + 1, members[i].status === 'done' ? 'done' : 'running', { pipelineId: pid, runId: `run-${pid}`, ...(slices[i + 1] || {}) })),
-    { originPipelineId: 'p0' });
+    { originPipelineId: 'p0', ...view });
   const cardJson = { pipelineId: 'p0', feature: v, log: [], ...(marked ? { smallRuns: true } : {}) };
   const rest = { source: 'rest', terminal: true, status: 'done', pipelineId: 'p0' };
   const runStore = { subscribe: () => () => {}, byPipeline: (pid) => (pid === 'p0' ? rest : snaps[pid] || null), get: () => null };
@@ -495,7 +495,7 @@ test('C3: a not-started chain run with no stop reads \'waits for run 2\' on the 
     assert.deepEqual([sv.state, sv.step, sv.word, sv.detail], ['SV', 'build', 'Verifying', 'the Verifier walks the main flow · 4 of 4 runs done']);
     for (const st of ['clean', 'accepted']) {
       const sr = m(vw(st));
-      assert.deepEqual([sr.state, sr.step, sr.word, sr.detail], ['SR', 'done', 'Ready to ship', 'ship from the feature page']);
+      assert.deepEqual([sr.state, sr.step, sr.word, sr.detail], ['SR', 'ship', 'Ready to ship', 'Ready to ship']);
     }
   });
   test('C5: asking and paused keep S8 with their word; halted reads Stopped with its own line', () => {
@@ -522,4 +522,61 @@ test('C3: a not-started chain run with no stop reads \'waits for run 2\' on the 
     assert.equal(later.state, 'S8');
     assert.equal('word' in later, false);
   });
+  test('D1: the ship step says who it waits for (Ship card mounted or not), reads Ready to ship, then N PRs open', () => {
+    const sr = (over) => ({ confirmed: [], owned: [], waiting: [], blocked: false, reason: null, order: [], ...over });
+    const w = (smallRuns, mode = null) => ({ ...vw('clean'), ship: { ready: !mode, mode, smallRuns } });
+    const wait = (id, role, roleLabel) => ({ id, text: '', role, roleLabel, state: 'waiting', at: null });
+    const blocked = m(w(sr({ confirmed: [wait('R-comp-4', 'compliance', 'Compliance'), wait('R-sec-1', 'security', 'Security')],
+      waiting: ['R-comp-4', 'R-sec-1'], blocked: true, reason: 'x' })));
+    // The owner's call: the state detail says who the ready Ship card waits for.
+    assert.deepEqual([blocked.state, blocked.step, blocked.detail], ['SR', 'ship', 'waiting for Compliance and Security']);
+    const notReady = m({ ...w(sr({ confirmed: [wait('R-comp-4', 'compliance', 'Compliance'), wait('R-sec-1', 'security', 'Security')],
+      waiting: ['R-comp-4', 'R-sec-1'], blocked: true, reason: 'x' })), ship: { ready: false, mode: null, smallRuns: sr({ blocked: true,
+      confirmed: [wait('R-comp-4', 'compliance', 'Compliance'), wait('R-sec-1', 'security', 'Security')] }) } });
+    assert.equal(notReady.detail, 'waiting for Compliance and Security');
+    assert.equal(m(w(sr({}))).detail, 'Ready to ship');
+    const pr = (n) => ({ index: n, pr: { number: n, url: `u${n}` }, onto: null });
+    const done = m(w(sr({ order: [pr(1), pr(2), pr(3), pr(4)] }), 'stacked'));
+    assert.deepEqual([done.step, done.detail], ['ship', '4 PRs open']);
+    const s9 = vw('clean'); delete s9.verify;
+    assert.deepEqual([m(s9).state, m(s9).step], ['S9', 'ship']);
+  });
 }
+
+// ---- Feature D1: the one card's ship step mounts the Ship card (ship-card.mjs) ----
+test('D1 one card: the ship step mounts the Ship card once: Met unpressed while blocked, one primary when ready, no Answer', () => {
+  const members = [{ status: 'done', endReached: true }, { status: 'done', endReached: true }];
+  const row = (state) => ({ id: 'R-comp-4', text: 'EU only', role: 'compliance', roleLabel: 'Compliance', state, mark: state === 'confirmed' ? 'met' : null,
+    reason: null, at: state === 'confirmed' ? '2026-11-22T16:55:00Z' : null });
+  const sr = (blocked) => ({ confirmed: [row(blocked ? 'waiting' : 'confirmed')], owned: [], waiting: blocked ? ['R-comp-4'] : [], blocked,
+    reason: blocked ? 'Waiting for Compliance to confirm R-comp-4' : null, met: { met: 0, total: 1 },
+    care: { choice: "Balanced · Worca's pick", outcome: null, line: '' }, base: 'main',
+    order: [{ index: 1, pipelineId: 'p1', title: 'A', pr: null, onto: null }, { index: 2, pipelineId: 'p2', title: 'B', pr: null, onto: null }] });
+  for (const blocked of [true, false]) {
+    const { built, ctl } = c2Card({ members, pids: ['p1', 'p2'], snaps: {}, view: { status: 'done', ship: { ready: true, mode: null, smallRuns: sr(blocked) } } });
+    const cards = built.el.querySelectorAll('.chat-rc-ship .ask-shipcard.is-small-runs');
+    assert.equal(cards.length, 1);
+    assert.equal(built.el.querySelector('[data-act="ship-mark-R-comp-4-met"]').getAttribute('aria-pressed'), String(!blocked));
+    assert.equal(built.el.querySelectorAll('.btn-primary').length, blocked ? 0 : 1);
+    assert.equal(built.el.querySelector('[data-act="ship-create"]').textContent, 'Create 2 PRs');
+    assert.equal([...built.el.querySelectorAll('button')].filter((b) => !b.hidden && /^Answer$/.test(b.textContent.trim())).length, 0);
+    built.dispose(); ctl.destroy();
+  }
+  // R-ux-2: shipped, "N PRs open" shows once (the state line), and one view action (the card's View PRs).
+  const shipped = { ...sr(false), order: [{ index: 1, pipelineId: 'p1', title: 'A', pr: { number: 11, url: 'https://x/pull/11' }, onto: null },
+    { index: 2, pipelineId: 'p2', title: 'B', pr: { number: 12, url: 'https://x/pull/12' }, onto: 11 }] };
+  const withPrs = members.map((mb, i) => ({ ...mb, pr: { url: `https://x/pull/${11 + i}`, number: 11 + i, state: 'OPEN' } }));
+  const done = c2Card({ members: withPrs, pids: ['p1', 'p2'], snaps: {}, view: { status: 'done', ship: { ready: false, mode: 'stacked', smallRuns: shipped } } });
+  assert.ok(done.row.model.actions.includes('open-pr'), 'the model offers View PR: the step card must hold the one view action');
+  assert.ok(done.built.el.querySelector('.chat-rc-ship [data-ship-card="applied"]'));
+  const shown = (el) => { for (let n = el; n; n = n.parentElement) if (n.hidden) return false; return true; };
+  const texts = [...done.built.el.querySelectorAll('*')].filter((e) => shown(e) && [...e.childNodes].some((n) => n.nodeType === 3 && /PRs open/.test(n.textContent)));
+  assert.equal(texts.length, 1, texts.map((e) => e.className).join());
+  const views = [...done.built.el.querySelectorAll('a, button')].filter((b) => shown(b) && /^View PRs?$/.test(b.textContent.trim()));
+  assert.deepEqual(views.map((b) => b.textContent.trim()), ['View PRs']);
+  done.built.dispose(); done.ctl.destroy();
+  // A step before ship mounts nothing.
+  const { built, ctl } = c2Card({ members: [{ status: 'done', endReached: true }, { status: 'running' }], pids: ['p1', 'p2'], snaps: {} });
+  assert.equal(built.el.querySelector('.chat-rc-ship'), null);
+  built.dispose(); ctl.destroy();
+});

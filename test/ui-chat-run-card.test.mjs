@@ -2395,7 +2395,7 @@ const ONE_STATES = {
   },
   S9: () => {
     const v = oneView(['done', 'done', 'done'], { status: 'done', ship: { ready: true, mode: null }, log: [ONE_CL, ONE_L('Runs approved')] });
-    return { row: featureRow([DONE_RUN, DONE_RUN, DONE_RUN]), n: 3, snap: shaped(oneCard(v), {}, ...DONE_OWN), detail: '3 runs done · ship from the feature page' };
+    return { row: featureRow([DONE_RUN, DONE_RUN, DONE_RUN]), snap: shaped(oneCard(v), {}, ...DONE_OWN), detail: '' };   // Feature D1: "Ready to ship" is the word; the detail does not repeat it
   },
 };
 const shownIn = (el) => { for (let n = el; n; n = n.parentElement) if (n.hidden || n.classList.contains('hidden')) return false; return true; };
@@ -2423,7 +2423,7 @@ test('B1 one card: S1–S9 show the kind "Feature", one state line with the tabl
       assert.equal($('.kind-chip').hidden, false, name);
       assert.equal($$('.chat-rc-status').length, 1, name);
       assert.equal($('.chat-rc-status .run-status-detail').textContent, c.detail, name);
-      assert.equal($('.chat-rc-status .run-status-detail').hidden, false, name);
+      assert.equal($('.chat-rc-status .run-status-detail').hidden, !c.detail, name);   // D1: an empty detail (it repeated the word) is hidden
       assert.equal($('.run-status-group').hidden, true, `${name}: no group bar`);
       assert.equal($('.chat-rc-result').hidden, true, `${name}: no result block`);
       assert.equal($('.chat-rc-well').hidden, true, `${name}: no graph`);
@@ -2599,7 +2599,7 @@ function vfCard(state, { gaps = state === 'gaps' ? VF_GAPS : [], ask = null } = 
   return shaped(oneCard(v), lv ? { [VF_PID]: lv } : {}, ...DONE_OWN);
 }
 ONE_STATES.SV = () => ({ row: featureRow([DONE_RUN, DONE_RUN, DONE_RUN]), n: 3, snap: vfCard('verifying'), detail: 'the Verifier walks the main flow · 3 of 3 runs done' });
-ONE_STATES.SR = () => ({ row: featureRow([DONE_RUN, DONE_RUN, DONE_RUN]), snap: vfCard('clean'), detail: 'ship from the feature page' });
+ONE_STATES.SR = () => ({ row: featureRow([DONE_RUN, DONE_RUN, DONE_RUN]), snap: vfCard('clean'), detail: '' });
 function paintVf(state, opts = {}, stub = { paintQuestion: () => null, releaseQuestion() {} }, members = null) {
   const row = featureRow(members || (state === 'gaps' ? [DONE_RUN, DONE_RUN, DONE_RUN, WAITING, WAITING] : [DONE_RUN, DONE_RUN, DONE_RUN]));
   const f = mk({ controls: { ...stub, memoFor: () => ({}), groupOf: () => row, modelOpts: () => ({ now: NOW }) } });
@@ -2661,7 +2661,7 @@ test('C5 one card: a gap run\'s own question leaves the gap list up; only the Ve
 
 test('C5 one card: each Verifier view state reads its word and detail', () => {
   const detail = { verifying: 'the Verifier walks the main flow · 3 of 3 runs done', paused: '3 of 3 runs done', halted: 'The Verifier stopped · Resume checks again',
-    clean: 'ship from the feature page', accepted: 'ship from the feature page' };
+    clean: '', accepted: '' };
   for (const [state, line] of Object.entries(detail)) {
     const f = paintVf(state);
     assert.equal(f.$('.chat-rc-status .run-status-word').textContent, VF_WORDS[state], state);

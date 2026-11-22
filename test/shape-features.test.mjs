@@ -25,7 +25,7 @@ import {
   recordShip, clearShip, recordSliceDraft, featureShipSuggestion, featureShipInput, ONE_PR_MAX_LINES,
   liveSliceFrom, shaperCard, featureThread, featureRootSource, sliceOfTicket, busySliceOf, sliceGateState,
   addFeatureNote, featureNotes, appendFeatureRun, featureBase, liveRoundOf, setFeatureAcceptance, chatShipCardOffered,
-  changeAgreedRequirements,
+  changeAgreedRequirements, acceptanceRefusal,
 } from '../src/core/shape/features.mjs';
 
 useTempHome(after, 'worca-shape-features-');
@@ -1734,3 +1734,30 @@ test('C4 (D17): featureView.change is the newest entry whose landing run is not 
   assert.equal(w.change, null);
   assert.ok(w.log.map((l) => l.text).includes('R-po-2 changed · run 2 plans from the new text'));
 });
+
+// ---- Feature D1 (Ship): a marked feature's gate counts only the requirements a person confirms ----
+
+test('D1: a marked gate counts only confirmed ids while ship.acceptance keeps every agreed id; unmarked keeps its keys', () => withSmallRuns(false, () => {
+  const pid = pipe('done');
+  const { id } = withSmallRuns(true, () => mk(2, { pipelineId: pid, outline: kindsOutline(), requirementKinds: COMPLIANCE }));
+  const t2 = tickets(id)[1].ticket_id;
+  setTicket(t2, 'fired', { pipelineId: pipe('done') });
+  const before = featureView(id);
+  assert.equal(before.ship.smallRuns, undefined, 'unmarked: no smallRuns key');
+  assert.deepEqual(Object.keys(before.ship), DEV_KEYS.shipWithAgreed);
+  assert.match(acceptanceRefusal(before).error, /mark every requirement/);
+  mark(pid);
+  const v = featureView(id);
+  assert.deepEqual(v.ship.acceptance.items.map((i) => i.id), ['R-po-1', 'R-sec-1', 'R-qa-1']);
+  assert.deepEqual(v.ship.smallRuns.waiting, ['R-sec-1']);
+  assert.deepEqual(acceptanceRefusal(v), { error: 'Waiting for Compliance to confirm R-sec-1', code: 'ACCEPTANCE_INCOMPLETE', missing: ['R-sec-1'], role: 'compliance' });
+  assert.deepEqual(v.ship.smallRuns.order.map((o) => [o.index, o.onto]), [[1, null], [2, null]]);
+  assert.equal(v.ship.smallRuns.base, 'main');
+  assert.equal(v.ship.smallRuns.care.line, "Care: Balanced · Worca's pick");
+  assert.equal(chatShipCardOffered(v), false);
+  setFeatureAcceptance(id, [{ id: 'R-sec-1', mark: 'met', role: 'compliance', by: 'ann', at: '2026-11-22T16:55:00.000Z' }]);
+  const after = featureView(id);
+  assert.equal(acceptanceRefusal(after), null, 'owned ids need no mark');
+  assert.equal(after.ship.acceptance.ready, false, 'the classic ledger is untouched');
+  assert.equal(after.ship.smallRuns.confirmed[0].at, '2026-11-22T16:55:00.000Z');
+}));

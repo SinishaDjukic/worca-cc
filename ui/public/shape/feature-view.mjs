@@ -4,7 +4,7 @@
 // (feature-actions.mjs). featureHeadline stays for the Plans row's summary line.
 import { featureCardModel, paintFeatureLog } from './feature-card.mjs';
 import { paintFeatureActions } from './feature-actions.mjs';
-import { renderShipCard, saveAcceptance } from './ship-card.mjs';
+import { renderShipCard, saveAcceptance, confirmRequirement } from './ship-card.mjs';
 
 const range = (xs) => (xs.length === 1 ? `slice ${xs[0]}` : `slices ${xs[0]}–${xs[xs.length - 1]}`);
 
@@ -31,9 +31,13 @@ function shipBlock(doc, f) {
   if (!phase) return doc.createDocumentFragment();
   // One ship flow: the ready card's Create PR opens the shared dialog (setShipDialogOpener); nothing is posted here.
   // Shaper requirements s3: the ledger's marks save through the one helper the chat card uses (R-arch-7).
+  // Feature D1 (D14): a marked feature's Ship is the small-runs card, the one card's ship step's; Mark confirmed posts
+  // through the one helper both use.
+  const sr = s.smallRuns && phase !== 'waiting' ? s.smallRuns : null;
   const card = renderShipCard(doc, { phase, featureId: f.id, title: f.title, runs: f.total, files: s.files, added: s.linesAdded,
-    deleted: s.linesRemoved, suggested: s.suggested, result: s.result || null, ...(s.acceptance ? { acceptance: s.acceptance } : {}) },
-  s.acceptance ? { onMark: (entries) => saveAcceptance(f.id, entries) } : {});
+    deleted: s.linesRemoved, suggested: s.suggested, result: s.result || null, ...(s.acceptance ? { acceptance: s.acceptance } : {}),
+    ...(sr ? { smallRuns: sr } : {}) },
+  sr ? { onConfirm: (id, mark, reason) => confirmRequirement(f.id, id, mark, reason) } : s.acceptance ? { onMark: (entries) => saveAcceptance(f.id, entries) } : {});
   card.dataset.needsGit = '';   // shipping opens pull requests: hidden while git is missing (git-gate.mjs)
   return card;
 }

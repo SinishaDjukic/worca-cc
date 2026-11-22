@@ -346,3 +346,17 @@ test('C5 (D10): a feature with a Verifier check is finished only once the latest
   for (const state of ['verifying', 'gaps', 'asking', 'paused', 'halted']) assert.equal(featureFinished(v(state)), false, state);
   for (const state of ['clean', 'accepted']) assert.equal(featureFinished(v(state)), true, state);
 });
+
+on('D1: a marked feature records requirementsMet as owned holds plus confirmed marks', async () => {
+  const p1 = pipe('done');
+  const fid = feature([p1, pipe('done')]);
+  const o = JSON.parse(db().prepare('SELECT outline FROM shape_features WHERE id = ?').get(fid).outline);
+  o.agreed = [...AGREED, { id: 'R-comp-4', text: 'EU only' }];
+  o.slices[0].requirements = ['R-po-1']; o.slices[1].requirements = ['R-ops-1'];
+  db().prepare('UPDATE shape_features SET outline = ?, requirement_kinds = ? WHERE id = ?')
+    .run(JSON.stringify(o), JSON.stringify({ 'R-comp-4': { kind: 'confirmed', role: 'compliance' } }), fid);
+  db().prepare('UPDATE pipelines SET shape_stats = ? WHERE id = ?').run(JSON.stringify({ smallRuns: true }), p1);
+  assert.deepEqual(recordFeatureFigures(fid).figures.requirementsMet, { met: 2, total: 3 });
+  setFeatureAcceptance(fid, [{ id: 'R-comp-4', mark: 'met' }]);
+  assert.deepEqual(recordFeatureFigures(fid).figures.requirementsMet, { met: 3, total: 3 });
+});

@@ -44,7 +44,7 @@ test('the run page and the side panel of the Verifier run and of one gap run', (
 
 test('the Verifier strings, the gap list and the measurements', () => {
   const s = src();
-  for (const needle of ["'Verifying'", "'the Verifier walks the main flow · 4 of 4 runs done'", "'Ready to ship'", "'ship from the feature page'",
+  for (const needle of ["'Verifying'", "'the Verifier walks the main flow · 4 of 4 runs done'", "'Ready to ship'",
     "'Verifier: 3 of 4 hold · 1 gap · run 5 added for it'",
     "'Verified: the 4 requirements owned by runs hold in the main flow'", "'Add a run for the gap'", "'Needs you'"]) assert.ok(s.includes(needle), needle);
   assert.match(s, /judge\('verifier gap list'/);
@@ -71,4 +71,20 @@ test('both themes at 375px, the Welcome Skip, the 30-minute cap, reduced motion 
   assert.doesNotMatch(s, /process\.env\.PORT\b/);
   assert.match(s, /'--remote-debugging-port=0'/);
   assert.match(s, /process\.env\.HOME = home/);
+});
+
+test('D1 Ship: blocked, ready, not met and done beside the prototype\'s #ship at 1280px and 375px; rows measured; keyboard and focus', () => {
+  const s = src();
+  for (const needle of ["shipFeature('sb'", "shipFeature('sr'", "shipFeature('sd'", "shipFeature('sk'", "'R-comp-4': { kind: 'confirmed', role: 'compliance' }",
+    "recordShip(SD.f.id", "for (const width of [1280, WIDTH])", "'Waiting for Compliance to confirm R-comp-4'",
+    "'Mark R-comp-4 as Compliance: The sign-up data stays in the EU'", "shipFeature('sn'", "mark: 'not-met', reason: 'Legal has not signed the EU clause yet'",
+    "app-ship-not-met-", "f.prsOpen === 1", "f.views.join() === 'View PRs'",
+    "'Create 4 PRs'", "'4 PRs open'", "'into main'", "judge('ship blocked confirmed rows'", "judge('ship ready confirmed rows'", "judge('ship done PR rows'",
+    "Input.dispatchKeyEvent", "Accessibility.getPartialAXTree", "key1('Tab'", "key1('Enter'", "the focus stays on Met"]) {
+    assert.ok(s.includes(needle), needle);
+  }
+  assert.match(s, /prototypeShot\('ship', null, `ship-blocked-\$\{width\}`/);
+  assert.match(s, /prototypeShot\('ship', \['\[data-act="compok"\]'/);
+  assert.match(s, /prototypeShot\('ship', \['\[data-act="prdlg"\]', '\[data-act="prok"\]'\]/);
+  assert.doesNotMatch(s, /'ship from the feature page'/);
 });

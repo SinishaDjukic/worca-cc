@@ -2,6 +2,8 @@
 // the feature card's view and its actions. Engine side, ungated (D12): only reached for runs that carry `shape`;
 // every route that reaches it is gated (ui/server.mjs).
 import { randomUUID } from 'node:crypto';
+import { execFileSync } from 'node:child_process';
+import { guardedGitEnvSync } from '../git-guard.mjs';
 import { getDb, tx } from '../db.mjs';                  // node:sqlite: tx(fn), never db.transaction (F23)
 import { createTicket, getTicket, cancelTicket, updateTicket, previousBranchesOf, stackedPrBaseOf, predecessorState, requestRunNow } from '../scheduler.mjs';
 import { readPrState, readPipelineExtras, readRunResultsById, readClarifyRow } from '../artifacts.mjs';
@@ -12,6 +14,7 @@ import { shaperSmallRunsOn, smallRunsOfFeature, smallRunsOfPipeline, careOfPipel
 import { prototypeView } from '../../shared/shape/prototype.mjs';
 import { requirementsCheck } from '../../shared/review/requirements-coverage.mjs';
 import { acceptanceGate, ledgerCheck } from '../../shared/shape/acceptance.mjs';
+import { shipLedger, careOutcome, unmetLines } from '../../shared/shape/ship-ledger.mjs';
 import { latestChecklist, checklistMarkdown } from '../../shared/shape/review-checklist.mjs';
 import { buildDecisionLog } from '../../shared/shape/feature-log.mjs';
 import { stopOptionOf } from '../../shared/shape/run-stops.mjs';
@@ -211,12 +214,60 @@ function shipAcceptance(f, slices) {
   return { items, ready, marked, total, agreed, entries: Array.isArray(f.outline.acceptance) ? f.outline.acceptance : [], covered };
 }
 
-/** The ship gate's refusal body (D8) while an agreed requirement is unmarked, else null. */
+/** The ship gate's refusal body (D8) while an agreed requirement is unmarked, else null. Feature D1 (D7): a marked
+ *  feature's gate reads `ship.smallRuns`: only the requirements a person confirms must be marked. */
 export function acceptanceRefusal(view) {
+  const sr = view?.ship?.smallRuns;
+  if (sr) {
+    if (!sr.blocked) return null;
+    return { error: sr.reason, code: 'ACCEPTANCE_INCOMPLETE', missing: [...sr.waiting], role: sr.confirmed.find((c) => c.state === 'waiting')?.role || null };
+  }
   const ledger = view?.ship?.acceptance;
   if (!ledger || ledger.ready) return null;
   const missing = ledger.items.filter((i) => !i.pass).map((i) => i.id);
   return { error: `mark every requirement before you create the PR (${missing.length} left)`, code: 'ACCEPTANCE_INCOMPLETE', missing };
+}
+
+/** Feature D1 (D10, D11): a marked feature's Ship: the requirement rows, the block reason and the Care outcome
+ *  (ship-ledger.mjs), the root source's name and the runs in finish order with their PR and what each stacks on. */
+function smallRunsShip(f, slices, verify) {
+  const ledger = ledgerOf(f, verify);
+  const root = featureRootSource(f.id);
+  const list = orderOf(f.id, slices);
+  const order = list.map((s, i) => {
+    const base = i > 0 && s.pipelineId ? smallRunsPrBase(s.pipelineId) : null;
+    const prev = list[i - 1];
+    return { index: s.index, pipelineId: s.pipelineId, title: s.title,
+      pr: s.pr && s.pr.url ? { number: s.pr.number ?? null, url: s.pr.url } : null,
+      onto: base && base !== root && prev && prev.pr && prev.pr.url ? (prev.pr.number ?? null) : null };
+  });
+  return { ...ledger, care: careOutcome(careOfRow(f), featureFigures(f.id), ledger.met), base: baseName(f.project_dir, root), order };
+}
+
+/** The root source as the PR names it: `origin/dev` reads `dev` when `origin` is one of the project's remotes (git-info.mjs
+ *  prBaseBranch maps it so for the PR). The remote names are read once per project and kept for a minute. */
+const REMOTES = new Map();
+function baseName(projectDir, root) {
+  if (!projectDir || typeof root !== 'string' || !root.includes('/')) return root;
+  let hit = REMOTES.get(projectDir);
+  if (!hit || Date.now() - hit.at > 60_000) {
+    let names = [];
+    try { names = execFileSync('git', ['remote'], { cwd: projectDir, env: guardedGitEnvSync(projectDir), encoding: 'utf8', timeout: 2000, stdio: ['ignore', 'pipe', 'ignore'] }).split(/\r?\n/).map((x) => x.trim()).filter(Boolean); } catch { names = []; }
+    REMOTES.set(projectDir, (hit = { at: Date.now(), names }));
+  }
+  const remote = [...hit.names].sort((a, b) => b.length - a.length).find((n) => root.startsWith(`${n}/`) && root.length > n.length + 1);
+  return remote ? root.slice(remote.length + 1) : root;
+}
+
+/** The ship ledger of feature row `f` (ship-ledger.mjs), with `verify` the Verifier's view or null. */
+const ledgerOf = (f, verify) => shipLedger({ agreed: f.outline.agreed || [], kinds: requirementKindsOf(j(f.requirement_kinds, null), f.outline),
+  acceptance: f.outline.acceptance, verify });
+
+/** A feature's recorded figures (shape_feature_figures, one row), or null. Readable with the flag off; measure.mjs
+ *  re-exports it. */
+export function featureFigures(featureId) {
+  const row = getDb().prepare('SELECT figures FROM shape_feature_figures WHERE feature_id = ?').get(String(featureId));
+  return row ? j(row.figures, null) : null;
 }
 
 /** s2: what a Shaper run started without a predecessor carries from the feature's origin run: its cost tags and labels. */
@@ -354,7 +405,9 @@ export function featureView(id, { live = () => null, oneCard = false } = {}) {
     // s4: what the applied Ship card shows, wherever it renders (chat, group page, Plans).
     result: shipped ? { mode: f.ship_mode, prUrl: f.ship_pr_url || lastPrUrl,
       closed: f.ship_mode === 'one' ? (f.ship_closed ?? slices.filter((s) => s.pr && s.pr.state === 'CLOSED').length) : 0, release } : null,
-    ...(f.outline.agreed?.length ? { acceptance: shipAcceptance(f, slices) } : {}) };
+    ...(f.outline.agreed?.length ? { acceptance: shipAcceptance(f, slices) } : {}),
+    // Feature D1 (D10): a marked feature's Ship model, last; an unmarked feature keeps dev's keys.
+    ...(smallRunsOfFeature(f.id) ? { smallRuns: smallRunsShip(f, slices, verify) } : {}) };
   // The Re-plan the rest run (replanning/replanned): its ticket id is the run id it fires as (ui/server.mjs:2188).
   const rt = f.replan_ticket_id ? getTicket(f.replan_ticket_id) : null;
   const replan = rt ? { ticketId: rt.id, pipelineId: rt.pipelineId || null, runId: rt.pipelineId ? (live(rt.pipelineId)?.runId || null) : null } : null;
@@ -616,7 +669,7 @@ export async function featureShipSuggestion(view) {
  *  it) and its checklist markdown. */
 export async function featureShipInput(view) {
   const slices = [];
-  for (const s of view.slices) {
+  for (const s of shipOrder(view)) {
     const reviews = s.pipelineId ? readPipelineExtras(s.pipelineId).reviews : [];
     const last = reviews.filter((v) => v.kind === 'impl' && v.summary).sort((a, b) => a.cycle - b.cycle).at(-1);
     const cl = latestChecklist(reviews);
@@ -749,19 +802,37 @@ export function sliceOfPipeline(pipelineId, { live = () => null } = {}) {
     state: s ? s.state : null, next: n ? { index: n.index, title: n.title, state: n.state } : null, ...(s && s.stop ? { stop: s.stop } : {}) };
 }
 
-/** D22: the first lines of a slice's PR body: which feature, which slice, and the other slices' PRs. */
+/** One line: a title in a PR body is data, so its line breaks and runs of whitespace collapse to one space. */
+const oneLine = (t) => String(t ?? '').replace(/\s+/g, ' ').trim();
+
+/** D22: the first lines of a slice's PR body: which feature, which slice, and the other slices' PRs. Feature D1 (D13): a
+ *  marked feature's adds its Care line under `Satisfies:` and puts every title on one line. */
 export function slicePrPreamble(pipelineId) {
   const at = featureOfPipeline(pipelineId);
   if (!at) return '';
   const f = featureRow(at.featureId);
   if (!f) return '';
+  const marked = smallRunsOfFeature(f.id);
+  const t = marked ? oneLine : (x) => x;
   const rows = sliceRows(f.id);
   const others = rows.filter((r) => r.index !== at.idx).map((r) => {
     const pr = r.pipelineId ? readPrState(r.pipelineId) : null;
-    return `- Slice ${r.index}, ${r.title}: ${pr?.url || 'not opened yet'}`;
+    return `- Slice ${r.index}, ${t(r.title)}: ${pr?.url || 'not opened yet'}`;
   });
   const ids = f.outline?.slices?.[at.idx - 1]?.requirements || [];
-  return `Part of ${f.title}: slice ${at.idx} of ${rows.length}\n${ids.length ? `Satisfies: ${ids.join(', ')}\n` : ''}\n${others.join('\n')}`;
+  const care = marked ? `${carePrLines(f)}\n` : '';
+  return `Part of ${t(f.title)}: slice ${at.idx} of ${rows.length}\n${ids.length ? `Satisfies: ${ids.join(', ')}\n` : ''}${care}\n${others.join('\n')}`;
+}
+
+/** A line of a slice PR's preamble that sits under "Part of" (the agreed ids, the Care line and the Not met / Dropped
+ *  lines carePrLines adds): refreshSliceBody skips these before it swaps in the fresh preamble. */
+export const isSlicePreambleLine = (line) => /^(Satisfies|Care|Not met|Dropped): /.test(String(line || ''));
+
+/** A marked feature's `Care: …` PR line, from the live ledger and the recorded figures (careOutcome), then one line per
+ *  requirement marked Not met or Dropped, with its reason (owner direction da6198d8d). */
+function carePrLines(f) {
+  const ledger = ledgerOf(f, verifyView(f));
+  return [careOutcome(careOfRow(f), featureFigures(f.id), ledger.met).line, ...unmetLines(ledger).map(oneLine)].join('\n');
 }
 
 /** L6, D14: each done earlier slice's last review summary and changed files (results.json), oldest first. */
@@ -1006,9 +1077,62 @@ export function replanRest(id, { live = () => null, by = null, now = Date.now() 
   return { ticketId };
 }
 
-/** L10: a slice's PR base — the generic stacked base (scheduler.mjs stackedPrBaseOf); a slice is one chained run. */
+/**
+ * Feature D1 (D1): the feature's finished runs in the order they finished, ascending. A run counts when its pipeline is
+ * `done` and not archived; it finished at its last step's finish (MAX(pipeline_steps.updated_at), else
+ * pipelines.updated_at), a tie putting the higher index later. `exclude` = a pipeline id left out.
+ * → Array<{index, pipelineId, finishedAt}>
+ */
+export function finishedSlices(featureId, { exclude = null } = {}) {
+  return getDb().prepare(`SELECT x.idx AS idx, p.id AS pid,
+      COALESCE((SELECT MAX(st.updated_at) FROM pipeline_steps st WHERE st.pipeline_id = p.id), p.updated_at) AS finished
+    FROM (SELECT s.idx AS idx, COALESCE(s.pipeline_id, t.pipeline_id) AS pid FROM shape_feature_slices s
+      LEFT JOIN scheduled_runs t ON t.id = s.ticket_id WHERE s.feature_id = ?) x
+    JOIN pipelines p ON p.id = x.pid
+    WHERE p.status = 'done' AND p.archived_at IS NULL AND p.id IS NOT ?
+    ORDER BY finished ASC, x.idx ASC`).all(String(featureId), exclude == null ? null : String(exclude))
+    .map((r) => ({ index: r.idx, pipelineId: r.pid, finishedAt: r.finished }));
+}
+
+/**
+ * Feature D1 (D2): a marked feature's run PR base. The first run in finish order, or one whose predecessor's PR is
+ * MERGED, goes into the feature's root source; any other stacks on the run that finished before it (its work branch),
+ * or the root while that branch is pending or unknown. null for a run that is not a finished slice of a marked feature;
+ * never throws (a DB error is null).
+ */
+export function smallRunsPrBase(pipelineId) {
+  try {
+    const at = pipelineId ? featureOfPipeline(pipelineId) : null;
+    if (!at || !smallRunsOfFeature(at.featureId)) return null;
+    const order = finishedSlices(at.featureId);
+    const i = order.findIndex((s) => s.pipelineId === String(pipelineId));
+    if (i < 0) return null;
+    const root = featureRootSource(at.featureId);
+    if (i === 0) return root;
+    const pred = order[i - 1].pipelineId;
+    if (readPrState(pred)?.state === 'MERGED') return root;
+    const prev = previousBranchesOf(pred);
+    return (prev && !prev.pending && prev.sourceBranch) || root;
+  } catch { return null; }
+}
+
+/** L10: a slice's PR base — a marked feature's (smallRunsPrBase), else the generic stacked base (scheduler.mjs
+ *  stackedPrBaseOf); a slice is one chained run. */
 export function stackedPrBase(pipelineId, chain) {
-  return stackedPrBaseOf(pipelineId, chain);
+  return smallRunsPrBase(pipelineId) ?? stackedPrBaseOf(pipelineId, chain);
+}
+
+/** Feature D1 (D4): the order a feature's PRs are opened and marked ready: a marked feature's finished runs in finish
+ *  order, then any others in index order; otherwise `view.slices` itself. */
+export function shipOrder(view) {
+  if (!view || !smallRunsOfFeature(view.id)) return view ? view.slices : [];
+  return orderOf(view.id, view.slices);
+}
+
+function orderOf(featureId, slices) {
+  const pos = new Map(finishedSlices(featureId).map((s, i) => [s.pipelineId, i]));
+  const done = (s) => !!s.pipelineId && pos.has(s.pipelineId);
+  return [...slices.filter(done).sort((a, b) => pos.get(a.pipelineId) - pos.get(b.pipelineId)), ...slices.filter((s) => !done(s))];
 }
 
 /** L12: a shaped run started from a Chat card (Plans tab). */

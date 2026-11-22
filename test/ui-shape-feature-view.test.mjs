@@ -7,6 +7,7 @@ import { readFileSync } from 'node:fs';
 import { JSDOM } from 'jsdom';
 import { featureHeadline, renderFeature } from '../ui/public/shape/feature-view.mjs';
 import { setShipDialogOpener } from '../ui/public/shape/ship-card.mjs';
+import { featureFocusOf, focusFeatureControl } from '../ui/public/shape/feature-actions.mjs';
 import { closeMenus } from '../ui/public/workflows/menu.mjs';
 
 const doc = new JSDOM('<!doctype html><body></body>').window.document;
@@ -222,4 +223,81 @@ test('run 4 D17: on the group page the view has no merge-order line and no ⋯; 
   const plans = renderFeature(doc, f, d);
   assert.ok(plans.querySelector('.shape-feature-order'));
   assert.ok(plans.querySelector('[data-act="feature-more"]'));
+});
+
+const SR_WAIT = () => ({ confirmed: [{ id: 'R-comp-4', text: 'EU only', role: 'compliance', roleLabel: 'Compliance', state: 'waiting', mark: null, reason: null, at: null }], owned: [],
+  waiting: ['R-comp-4'], blocked: true, reason: 'Waiting for Compliance to confirm R-comp-4', met: { met: 0, total: 1 }, unmet: [],
+  care: { choice: "Balanced · Worca's pick", outcome: null, line: '' }, base: 'main', order: [{ index: 1, pipelineId: 'p1', title: 'A', pr: null, onto: null }] });
+
+test('D1: a marked feature\'s shipBlock renders the small-runs card and Met posts the confirm verb; unmarked unchanged', async () => {
+  const sr = { confirmed: [{ id: 'R-comp-4', text: 'EU only', role: 'compliance', roleLabel: 'Compliance', state: 'waiting', mark: null, reason: null, at: null }], owned: [],
+    waiting: ['R-comp-4'], blocked: true, reason: 'Waiting for Compliance to confirm R-comp-4', met: { met: 0, total: 1 },
+    care: { choice: "Balanced · Worca's pick", outcome: null, line: '' }, base: 'main', order: [{ index: 1, pipelineId: 'p1', title: 'A', pr: null, onto: null }] };
+  const ready = { ready: true, mode: null, smallRuns: sr };
+  const { el } = mount(feature({ status: 'done', done: 3, ship: ready }));
+  assert.ok(q(el, '[data-ship-card="ready"].is-small-runs'));
+  const sent = [];
+  const real = globalThis.fetch;
+  globalThis.fetch = async (url, init) => { sent.push([url, JSON.parse(init.body)]); return { ok: true, json: async () => ({ smallRuns: { ...sr, blocked: false, waiting: [], reason: null } }) }; };
+  try {
+    q(el, '[data-act="ship-mark-R-comp-4-met"]').click();
+    await flush(); await flush();
+  } finally { globalThis.fetch = real; }
+  assert.deepEqual(sent, [['/api/shape/features/f1/confirm', { id: 'R-comp-4', mark: 'met' }]]);
+  const plain = mount(feature({ status: 'done', done: 3, ship: { ready: true, mode: null } })).el;
+  assert.equal(q(plain, '.is-small-runs'), null);
+  assert.ok(q(plain, '[data-ship-card="ready"]'));
+  const waiting = mount(feature({ ship: { ready: false, mode: null, smallRuns: sr } })).el;
+  assert.ok(q(waiting, '[data-ship-card="waiting"]'), 'a marked feature still waits for its runs');
+});
+
+test('D1: on the feature page, Not met with a typed reason and Enter posts the mark and the reason', async () => {
+  const sr = SR_WAIT();
+  const { el } = mount(feature({ status: 'done', done: 3, ship: { ready: true, mode: null, smallRuns: sr } }));
+  const sent = [];
+  const real = globalThis.fetch;
+  globalThis.fetch = async (url, init) => { sent.push([url, JSON.parse(init.body)]); return { ok: true, json: async () => ({ smallRuns: { ...sr, blocked: false, waiting: [], reason: null } }) }; };
+  try {
+    q(el, '[data-act="ship-mark-R-comp-4-not-met"]').click();
+    const input = q(doc.body, '[data-act="ship-mark-R-comp-4-text"]');
+    input.value = 'Legal has not signed';
+    input.dispatchEvent(new doc.defaultView.Event('input'));
+    input.dispatchEvent(new doc.defaultView.KeyboardEvent('keydown', { key: 'Enter' }));
+    await flush(); await flush();
+  } finally { globalThis.fetch = real; }
+  assert.deepEqual(sent, [['/api/shape/features/f1/confirm', { id: 'R-comp-4', mark: 'not-met', reason: 'Legal has not signed' }]]);
+});
+
+test('D1 (R-fit-4): a page repaint while a mark is in flight gives the focus back to the mark (featureFocusOf, blur on disable)', async () => {
+  const win = doc.defaultView;
+  const proto = win.HTMLButtonElement.prototype;
+  const desc = Object.getOwnPropertyDescriptor(proto, 'disabled');
+  Object.defineProperty(proto, 'disabled', { configurable: true, get() { return desc.get.call(this); }, set(v) { if (v) this.blur(); desc.set.call(this, v); } });
+  const real = globalThis.fetch;
+  let release;
+  globalThis.fetch = () => new Promise((r) => { release = r; });
+  const host = doc.createElement('div');
+  doc.body.replaceChildren(host);
+  const f = (sr) => feature({ id: 'f_focus', status: 'done', done: 3, ship: { ready: true, mode: null, smallRuns: sr } });
+  try {
+    host.replaceChildren(renderFeature(doc, f(SR_WAIT()), deps()));
+    const met = q(host, '[data-act="ship-mark-R-comp-4-met"]');
+    met.focus(); met.click();
+    assert.equal(doc.activeElement, doc.body, 'Chromium blurred the disabled button');
+    // The confirm route broadcasts before it answers: app.js paintShapeFeature rebuilds the page.
+    const after = { ...SR_WAIT(), blocked: false, waiting: [], reason: null,
+      confirmed: [{ ...SR_WAIT().confirmed[0], state: 'confirmed', mark: 'met', at: '2026-11-22T16:55:00.000Z' }] };
+    const act = featureFocusOf(doc, host);
+    host.replaceChildren(renderFeature(doc, f(after), deps()));
+    focusFeatureControl(host, act);
+    const fresh = q(host, '[data-act="ship-mark-R-comp-4-met"]');
+    assert.notEqual(fresh, met);
+    assert.equal(doc.activeElement, fresh);
+    release({ ok: true, json: async () => ({ smallRuns: after }) });
+    await flush(); await flush();
+    assert.equal(doc.activeElement, fresh, 'the late answer keeps it there');
+  } finally {
+    globalThis.fetch = real;
+    Object.defineProperty(proto, 'disabled', desc);
+  }
 });
