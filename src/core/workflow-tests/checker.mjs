@@ -53,14 +53,14 @@ export function createChecker(deps = {}) {
 
   /** One copy call: the spending limit read before it, its cost booked. `{ copy, why }` (copyProblem's reason, 'failed' for a call that
    *  threw), or `{ fail }` at the limit. */
-  async function copyCall(round, criterion, text, plants, proof, book) {
+  async function copyCall(round, criterion, text, plants, proof, book, still = null) {
     const b = d.budgetStatus();
     if (b && b.blocked) return { fail: NOT_CHECKED.limit };
     const tag = fenceTag();
     let r = null;
     try {
-      r = await d.modelCall({ model: round.model, system: copySystemPrompt(tag),
-        prompt: copyPrompt({ criterion: criterion.text, result: text, ways: plants.map((p) => p.how), tag }) }, { timeoutMs: COPY_TIMEOUT_MS });
+      r = await d.modelCall({ model: round.model, system: copySystemPrompt(tag, { still: !!still }),
+        prompt: copyPrompt({ criterion: criterion.text, result: text, ways: plants.map((p) => p.how), tag, still }) }, { timeoutMs: COPY_TIMEOUT_MS });
     } catch (e) { if (Number(e && e.costUsd) > 0 || (e && e.costKind === 'unknown')) book(Number(e.costUsd) || 0, e.costKind || 'billed'); }
     // Outside the try (final review M1): a booking that fails after a paid call surfaces and fails the round, never goes unnoticed.
     if (r && (r.costUsd > 0 || r.costKind === 'unknown')) book(r.costUsd, r.costKind);   // P4-Q17: an unknown cost books a $0 row
@@ -70,8 +70,9 @@ export function createChecker(deps = {}) {
 
   /** User decision 2026-11-21: the three broken copies, one model call each, every call booked (purpose 'checker') and the spending limit
    *  read before it. User decision 2026-11-22: only the written text is sent and broken (`split.text`); each plant is the broken text plus
-   *  the unchanged changes (`split.changes`). A weak copy (it still holds `proof`) is asked for once more; weak again, or any other
-   *  problem (copyProblem), ends the round, since fewer than three good copies cannot make one; no free plants stand in for it. */
+   *  the unchanged changes (`split.changes`). A weak copy (it still holds `proof`) is asked for once more, and that call gets the proof
+   *  (fix round 7, review I3); weak again, or any other problem (copyProblem), ends the round, since fewer than three good copies cannot
+   *  make one; no free plants stand in for it. */
   async function plantCopies(round, criterion, split, book, proof) {
     if (split.text.length > PLANT_RESULT_MAX) return { fail: ROUND_NOT_FINISHED_TEXT };   // start() refuses it first (TOO_LONG_TEXT)
     const plants = [];   // { how, text }: the copies of the written text
@@ -79,7 +80,7 @@ export function createChecker(deps = {}) {
       let got = await copyCall(round, criterion, split.text, plants, proof, book);
       if (got.why === 'weak') {
         console.warn(`[workflow-tests] check-the-checker round ${round.id}: broken copy ${i + 1} still holds the proof, asked once more`);
-        got = await copyCall(round, criterion, split.text, plants, proof, book);
+        got = await copyCall(round, criterion, split.text, plants, proof, book, proof);
       }
       if (got.fail) return got;
       if (got.why) {

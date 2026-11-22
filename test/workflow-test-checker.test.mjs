@@ -247,7 +247,11 @@ test('a weak copy, then a good one: the call is made once more, both are booked,
     const round = await startOf(s);
     assert.equal(cs.readRound(round.id).status, 'ready');
     assert.equal(s.plants.length, 4, 'three copies and one asked again');
-    assert.deepEqual(s.plants.map(ways), ['none', 'none', 'number removed', 'number removed\nmetric made vague'], 'the call asked again is the same call');
+    assert.deepEqual(s.plants.map(ways), ['none', 'none', 'number removed', 'number removed\nmetric made vague'], 'the call asked again has the same ways');
+    // Fix round 7 (review I3): the call asked again carries the passage that still made the weak copy meet the criterion, and names it.
+    const stillOf = (p) => { const m = /<still-([0-9a-f]+)>\n([\s\S]*?)\n<\/still-\1>/.exec(p.prompt); return m ? m[2] : null; };
+    assert.deepEqual(s.plants.map(stillOf), [null, 'Cut export tickets by 60% within one quarter, counted by the Export tag.', null, null]);
+    assert.ok(s.plants[1].system.includes(`<still-${tagOf(s.plants[1].system)}>`) && !s.plants[0].system.includes('<still-'));
     const v = s.checker.view(cs.readRound(round.id), { by: 'x' });
     assert.deepEqual(v.cards.map((c) => c.planted), [null, 'number removed', 'metric made vague', 'measure removed']);
     assert.equal(ledger(round.id).length, 4 + 16);
@@ -275,6 +279,10 @@ test('no proof to check against (the good result not met, or a proof under 12 ch
   const short = setup({ copies, proofOf: () => 'by 60%' });
   assert.equal(cs.readRound((await startOf(short)).id).status, 'ready');
   assert.equal(short.plants.length, 3);
+  // Fix round 7 (review I3): a heading every correct copy keeps is no proof to check against.
+  const heading = setup({ proofOf: () => '## Success metric' });
+  assert.equal(cs.readRound((await startOf(heading)).id).status, 'ready');
+  assert.equal(heading.plants.length, 3, 'no call asked again');
 });
 
 test("the good result's own earlier verdict gives the proof when it has one; else the real card's", async () => {
