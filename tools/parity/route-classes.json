@@ -151,6 +151,8 @@
   "GET /api/openrouter/free-daily": {"class": "skip", "reason": "freeDailyStatus calls the OpenRouter API when a key exists (11735)"},
   "GET /api/pipelines/:id/pr-auto": {"class": "probe", "reason": "local read; 404 for an unknown run"},
   "GET /api/pipelines/:id/setup": {"class": "probe", "reason": "local read; 404 for an unknown run"},
+  "GET /api/pipelines/:id/rerun": {"class": "probe", "reason": "local read; 404 for an unknown run"},
+  "POST /api/pipelines/:id/rerun/check": {"class": "probe", "reason": "local read; 404 for an unknown run"},
   "GET /api/plugins": {"class": "probe", "reason": "local installed list, no network"},
   "GET /api/plugins/:name": {"class": "probe", "reason": "requirePlugin answers 404; zero network"},
   "GET /api/plugins/:name/config": {"class": "probe", "reason": "requirePlugin answers 404 for the placeholder"},

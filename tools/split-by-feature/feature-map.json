@@ -94,6 +94,7 @@
         "stacks": "checkout-and-actions",
         "builtins": "checkout-and-actions",
         "preset": "checkout-and-actions",
+        "rerun": "rerun",
         "publish": "publish",
         "base-check": "publish",
         "update-branch": "publish",

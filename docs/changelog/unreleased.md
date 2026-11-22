@@ -37,6 +37,20 @@ Pull requests (add each number when it opens):
 
 - Apply the protected-file rules to Windows drive paths (#1526)
 
+## Rerun a finished run
+
+**Start a run again from its page, with everything it had.**
+
+**⋯ › Rerun** on a done, stopped or failed run opens New run filled in from it: task, title, target, workflow, agent picks, guardrails, Away mark and attached files. Change what you like, then start it. A setting that no longer exists is named and holds Start until you reset it, and a file that is gone is listed without stopping the run. The new run links back with **Rerun of …**.
+
+Chips: ⋯ › Rerun · prefilled New run · nothing created until Start · files copied · gone settings named · Rerun of … link
+
+Read it: [Runs › Rerun a finished run](../runs.md#rerun-a-finished-run)
+
+Pull requests (add each number when it opens):
+
+- Rerun a finished run from its ⋯ menu (#1519)
+
 ## Remotes through an SSH Host alias
 
 **A pull request from a fork cloned through a `~/.ssh/config` alias no longer fails with "Head ref must be a branch".**
