@@ -6,6 +6,7 @@ import { cancelRest, currentFeatureId, featureShipSuggestion, featureThread, fea
 import { normalizeAcceptance } from '../../../src/shared/shape/acceptance.mjs';
 import { CONFIRM_REASON_MAX, MARK_WORDS, confirmMarkOf, reasonLine } from '../../../src/shared/shape/ship-ledger.mjs';
 import { recordFeatureFigures } from '../../../src/core/shape/measure.mjs';
+import { SHIP_LOCK, shipLocked } from '../../../src/core/shape/ship-lock.mjs';
 import { prAutoFinisher } from '../../../src/core/pr-auto-finish.mjs';
 import { engineRefusalFor } from '../../../src/shared/engine-switch.mjs';
 import { parseReleaseChoice } from '../../../src/shared/release-version.mjs';
@@ -78,12 +79,13 @@ app.post('/api/shape/features/:id/cancel', (req, res) => {
 
 app.post('/api/shape/features/:id/resume', async (req, res) => {
   try {
+    if (shipLocked(req.params.id)) return res.status(409).json(SHIP_LOCK);
     const by = actorOf(req);
     const out = resumeFeature(req.params.id, { live: liveSliceOf, finishing: isFinishingRun, by });
     if (shapeRefused(res, out)) return;
     if (out.action === 'none') {
       const verify = featureView(req.params.id, { live: liveSliceOf, finishing: isFinishingRun }).verify;
-      return res.status(409).json(verify ? { code: 'NOTHING_TO_RESUME', error: 'nothing to resume now: a run is still finishing, or Shaper small runs is off' } : { error: 'no slice is stopped' });
+      return res.status(409).json(verify ? { code: 'NOTHING_TO_RESUME', error: 'nothing to resume now: the Verifier is not stopped, a run or round is not over, or Shaper small runs is off' } : { error: 'no slice is stopped' });
     }
     let runId = null;
     if (out.action === 'resume') {
@@ -102,6 +104,7 @@ app.post('/api/shape/features/:id/resume', async (req, res) => {
 
 app.post('/api/shape/features/:id/replan', async (req, res) => {
   try {
+    if (shipLocked(req.params.id)) return res.status(409).json(SHIP_LOCK);
     const out = replanRest(req.params.id, { live: liveSliceOf, by: actorOf(req) });
     if (shapeRefused(res, out)) return;
     emitChanged('schedules-changed', 'created');

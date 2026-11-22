@@ -16,7 +16,7 @@ import { changeCaseOf, normalizeChange, CHANGE_TEXT_MAX } from '../../shared/sha
 const MAX = 4000;
 const clip = (t) => String(t || '').trim().slice(0, MAX);
 const firstLine = (t) => clip(t).split('\n')[0].slice(0, 80);
-const startError = (r) => ({ ok: false, status: r.status, error: (r.body && r.body.error) || 'could not start' });
+const startError = (r) => ({ ok: false, status: r.status, error: (r.body && r.body.error) || 'could not start', ...(r.body && r.body.code === 'SHIPPING' ? { code: 'SHIPPING' } : {}) });
 const NO_NEXT = 'no run is left to plan: add it as an extra run';
 /** A plan note for the next run. The card's "next run" can be stale (it started since): no run left → 409, nothing stored. */
 const planNote = (featureId, text, deps) => {
@@ -354,6 +354,7 @@ export function applyRequirementChange(featureId, changes, source, deps) {
   try { written = deps.write(view.id, plan); }
   catch (err) {
     if (err && err.code === 'STALE') return refusal(409, 'STALE', err.message);
+    if (err && err.code === 'SHIPPING') return refusal(409, 'SHIPPING', err.message);   // the Ship lock
     if (err && err.code === 'CANNOT_RESTART') return refusal(err.status || 409, 'CANNOT_RESTART', err.message);
     throw err;
   }

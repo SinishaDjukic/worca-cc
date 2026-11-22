@@ -813,6 +813,7 @@ test("Ship's own changelog commit keeps the check; a changelog commit on anythin
   assert.equal(w.view().ship.ready, true, 'a ship that failed half way can go on');
   w.commit(4, 'round');
   w.commit(4, 'Changelog');
-  recordShipCommit(w.f.id, { ok: true, sha: w.headSha(), via: 'commit-tree' });
+  const moved = recordShipCommit(w.f.id, { ok: true, sha: w.headSha(), via: 'commit-tree' });
+  assert.deepEqual([moved.ok, moved.kind], [false, 'moved']);
   assert.equal(w.view().ship.ready, false, 'a commit slipped in before it');
 });

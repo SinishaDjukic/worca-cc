@@ -23,6 +23,7 @@ import { stopOptionOf } from '../../shared/shape/run-stops.mjs';
 import { CHANGES_MAX } from '../../shared/shape/req-change.mjs';
 import { PLAN_ASK_KIND } from './run.mjs';
 import { roundsOf } from './rounds.mjs';
+import { refuseWhileShipping } from './ship-lock.mjs';
 import { verifyView, startVerifyCheck, stillFinishing, roundOpen, shipRuleOn } from './verifier.mjs';
 import { getWatch, stoppedWatchFact } from '../pr-watch.mjs';
 import { clipTitle } from '../title.mjs';
@@ -519,13 +520,13 @@ export function liveRoundOf(featureId) {
 const APPEND_KINDS = new Set(['extra', 'follow-up', 'change']);
 
 /** Shaper s5 (D13): run N+1 of the feature. 'extra' chains after the last run; 'follow-up' fires now from the base.
- *  Small runs C4 (D6): 'change' chains like 'extra' and owns the changed `requirements`. */
+ *  Small runs C4 (D6): 'change' chains like 'extra' and owns the changed `requirements`. Throws SHIPPING while the Ship lock holds. */
 export function appendFeatureRun(featureId, { title, goal, kind, by = null, requirementsFirst = false, requirements = null, now = Date.now() }) {
   if (!APPEND_KINDS.has(kind)) throw new TypeError('kind must be extra, follow-up or change');
   const f = featureRow(featureId);
   if (!f) return null;
   let out = null;
-  tx(() => { out = appendRunRows(f, sliceRows(featureId), { title, goal, kind, by, requirementsFirst, requirements, now }); });
+  tx(() => { refuseWhileShipping(f.id); out = appendRunRows(f, sliceRows(featureId), { title, goal, kind, by, requirementsFirst, requirements, now }); });
   return out;
 }
 
@@ -588,7 +589,7 @@ const STALE_ERROR = (id) => Object.assign(new Error(`${id} changed since: read i
  */
 export function changeAgreedRequirements(featureId, opts) {
   let out = null;
-  tx(() => { out = changeAgreedRequirementsIn(featureId, opts); });
+  tx(() => { refuseWhileShipping(featureId); out = changeAgreedRequirementsIn(featureId, opts); });
   return out;
 }
 
@@ -1097,7 +1098,8 @@ export function sliceGateState(ticket, { now = Date.now(), isLive = null, live =
   } catch { return null; }
 }
 
-/** Re-plan the rest (L9): cancel what waits, then one new shaped run (slicing on) from the last done slice. */
+/** Re-plan the rest (L9): cancel what waits, then one new shaped run (slicing on) from the last done slice.
+ *  Throws SHIPPING while the Ship lock holds. */
 export function replanRest(id, { live = () => null, by = null, now = Date.now() } = {}) {
   const f = featureRow(id);
   if (!f) return null;
@@ -1122,6 +1124,7 @@ export function replanRest(id, { live = () => null, by = null, now = Date.now() 
   };
   let ticketId = null;
   tx(() => {
+    refuseWhileShipping(id);
     cancelOpenTickets(id, { by, now });
     ticketId = createTicket({ title: request.title, projectDir: f.project_dir, request, runAtMs: now, createdBy: by, now }).id;
     getDb().prepare("UPDATE shape_features SET status = 'replanning', replan_ticket_id = ?, updated_at = ? WHERE id = ?").run(ticketId, iso(now), id);

@@ -17,6 +17,7 @@ import { recordFeatureFigures } from './measure.mjs';
 import { runNow } from './changes.mjs';
 import { roundOrigin } from './rounds.mjs';
 import { shaperSmallRunsOn, smallRunsOfFeature, careOfFeature } from './small-runs.mjs';
+import { shipLocked } from './ship-lock.mjs';
 import { requirementKindsOf, careRunPlan } from '../../shared/shape/feature-record.mjs';
 import { verifyPrompt, verifyRoundPlan, gapsFoundOf, fenceSafe } from '../../shared/shape/verifier.mjs';
 import { oneLineText } from '../../shared/shape/req-change.mjs';
@@ -89,7 +90,9 @@ const movedSince = (c, tips) => !!c.tips && Object.entries(tips).some(([pid, sha
  * interrupted or pending. The head is the commit of the latest finished run's branch: it must be the one the Verifier read
  * (`headSha`), or Ship's own changelog commit on top of it (`shipSha`). The other runs' branches ship too, so none may have
  * moved since the check started (`tips`). No check on record, or a commit git cannot read, is never verified.
- * This is the half about the check; featureView's ship.ready adds the other, and Ship asks it again when it ships.
+ * This is the half about the check; featureView's ship.ready adds the other. Ship asks both when it starts, and again
+ * before each pull request, after its changelog commit and just before it records the feature as shipped (shipStopped);
+ * nothing of the feature starts meanwhile (ship-lock.mjs).
  */
 function checkedHead(f, c) {
   const finished = finishedSlices(f.id);
@@ -100,22 +103,47 @@ function checkedHead(f, c) {
   return !c.tips || finished.every(({ pipelineId: p }) => p === head || !tips[p] || tips[p] === c.tips[p]);
 }
 
-/** Ship's changelog commit `r` ({ok, sha, via}) moved the head: it keeps the check, when it sits right on the checked
- *  commit. Returns `r`; never throws. */
+/** Ship's changelog commit `r` ({ok, sha, via}) moved the head: it keeps the check when it sits right on the checked
+ *  commit. Returns `r`, or {ok:false, kind:'moved'} when its parent is another commit. Never throws. */
 export function recordShipCommit(featureId, r) {
   try {
-    if (!r || !r.ok || r.via === 'unchanged' || !shaperSmallRunsOn()) return r;
+    if (!r || !r.ok || r.via === 'unchanged') return r;
     const f = rowOf(featureId);
-    const base = f && smallRunsOfFeature(f.id) ? gitOut(f.project_dir, ['rev-parse', '--verify', '--quiet', `${r.sha}^`]).trim() : '';
-    if (!base) return r;
+    if (!f || !shipRuleOn(f)) return r;
+    const base = gitOut(f.project_dir, ['rev-parse', '--verify', '--quiet', `${r.sha}^`]).trim();
+    let kept = false;
     tx(() => {
       const cur = rowOf(featureId);
       const checks = checksOf(cur.outline);
       const c = checks.at(-1);
-      if (c && ENDED.has(c.state) && [c.headSha, c.shipSha].includes(base)) writeChecks(cur, [...checks.slice(0, -1), { ...c, shipSha: r.sha }], Date.now());
+      kept = !!base && !!c && ENDED.has(c.state) && [c.headSha, c.shipSha].includes(base);
+      if (kept) writeChecks(cur, [...checks.slice(0, -1), { ...c, shipSha: r.sha }], Date.now());
     });
-  } catch (err) { console.error(`[worca-ui] verifier failed: ${err?.message || err}`); }
-  return r;
+    return kept ? r : { ok: false, kind: 'moved', error: 'the branch moved while it was shipping' };
+  } catch (err) {
+    console.error(`[worca-ui] verifier failed: ${err?.message || err}`);
+    return { ok: false, kind: 'failed', error: 'the changelog commit could not be checked' };
+  }
+}
+
+/** What a Ship that starts now covers: the commit of each finished run's branch. null when the rule does not hold for the
+ *  feature (no marker, or the flag off): shipStopped then never stops it. */
+export function shipCover(featureId) {
+  const f = rowOf(featureId);
+  return f && shipRuleOn(f) ? tipsOf(f) : null;
+}
+
+/** THE RULE again, while Ship is under way: null while the feature is ready and each branch is still at the commit `cover`
+ *  holds (or at Ship's own changelog commit); else the refusal, with `prs` = the pull requests made so far. `probes` =
+ *  featureView's {live, finishing}; `failed` = the error of the step that failed, kept in the message. → null | {status, body} */
+export function shipStopped(featureId, cover, probes, prs, failed = null) {
+  const f = cover ? rowOf(featureId) : null;
+  if (!f || !shipRuleOn(f)) return null;
+  const own = checksOf(f.outline).at(-1)?.shipSha;
+  const same = Object.entries(tipsOf(f)).every(([pid, sha]) => !sha || sha === cover[pid] || sha === own);
+  if (same && featureView(f.id, probes)?.ship.ready) return null;
+  return { status: 409, body: { code: 'NOT_READY', prs,
+    error: `the work changed while it was shipping, so Ship stopped${failed ? ` (${failed})` : ''}. Ship again once the Verifier has checked it, or Resume, if the card reads Stopped.` } };
 }
 
 /**
@@ -123,7 +151,8 @@ export function recordShipCommit(featureId, r) {
  * for this head (checkedHead). Round: after `gaps` the series goes on (round + 1, same extra); otherwise a new series
  * starts at round 1. With every requirement confirmed by a person the check still runs: without one, nothing ships. A
  * halted latest check is replaced by a fresh one for the same round, whatever the head. Nothing starts with the flag off
- * (its result would not be recorded), nor while a run is still `finishing` (its own settle starts the check).
+ * (its result would not be recorded), while a run is still `finishing` (its own settle starts the check), or while the
+ * feature is shipping.
  * One tx. → {round, ticketId} | null
  */
 export function startVerifyCheck(featureId, { by = null, now = Date.now(), finishing = () => false, deps = {} } = {}) {
@@ -131,7 +160,7 @@ export function startVerifyCheck(featureId, { by = null, now = Date.now(), finis
   let out = null;
   tx(() => {
     const f = rowOf(featureId);
-    if (!f || f.status !== 'active') return;
+    if (!f || f.status !== 'active' || shipLocked(f.id)) return;
     const view = featureView(f.id);
     if (!view || !allRunsDone(view) || stillFinishing(view.slices, finishing)) return;
     const all = checksOf(f.outline);

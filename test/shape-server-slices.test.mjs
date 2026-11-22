@@ -1608,7 +1608,7 @@ test('a Verifier run this server is still finishing: view and card read verifyin
     assert.equal((await card()).verify.state, 'verifying');
     const refused = await post(`/api/shape/features/${f.id}/resume`, {});
     assert.equal(refused.status, 409);
-    assert.deepEqual(await refused.json(), { code: 'NOTHING_TO_RESUME', error: 'nothing to resume now: a run is still finishing, or Shaper small runs is off' });
+    assert.deepEqual(await refused.json(), { code: 'NOTHING_TO_RESUME', error: 'nothing to resume now: the Verifier is not stopped, a run or round is not over, or Shaper small runs is off' });
     e.settled = true;
     assert.deepEqual([(await view(f.id)).verify.state, (await view(f.id)).status, (await card()).verify.state], ['halted', 'active', 'halted']);
   } finally { dropEntry(e); }
@@ -1683,6 +1683,129 @@ shipT('POST /ship of a marked feature, flag on: 409 NOT_READY with no push and n
   assert.equal(r.status, 200, await r.clone().text());
   assert.ok(seen.some((a) => a[0] === 'git' && a[1] === 'push'));
 }));
+
+// ── The Ship lock and the rule asked again while Ship is under way ─────────────────────────────────────────────────────
+/** A marked three-run feature with no PR yet and a clean check for its head; `marked: false` leaves the marker out. */
+function shippingWorld({ marked = true } = {}) {
+  const w = shipWorld({ prs: false });
+  const db = getDb();
+  const tip = (pid) => git(w.dir, 'rev-parse', `feat/${pid}`);
+  if (marked) {
+    db.prepare('UPDATE pipelines SET shape_stats = ? WHERE id = ?').run(JSON.stringify({ smallRuns: true }), w.pids[0]);
+    const o = JSON.parse(db.prepare('SELECT outline FROM shape_features WHERE id = ?').get(w.f.id).outline);
+    const check = { round: 1, ticketId: null, pipelineId: null, head: { index: 3, pipelineId: w.pids[2] }, headSha: tip(w.pids[2]), tips: Object.fromEntries(w.pids.map((p) => [p, tip(p)])),
+      state: 'clean', result: { held: [], gaps: [] }, gapRuns: [], extra: 0, fixCycles: 1, at: '2026-01-01T00:00:00.000Z' };
+    db.prepare('UPDATE shape_features SET outline = ? WHERE id = ?').run(JSON.stringify({ ...o, verify: { checks: [check] } }), w.f.id);
+  }
+  const seen = [];
+  return { ...w, seen, commit: (pid) => { git(w.dir, 'checkout', '-q', `feat/${pid}`); writeFileSync(join(w.dir, `late-${nextId()}.txt`), 'x'); git(w.dir, 'add', '-A');
+    git(w.dir, 'commit', '-qm', 'late'); git(w.dir, 'checkout', '-q', 'main'); },
+  round: () => seedPipelineRow({ id: nextId(), projectKey: projectKey(w.dir), status: 'running', branch: { source: w.last, sameAsSource: true, roundOf: { pipelineId: w.pids[2], round: 2, request: 'blue' } } }),
+  /** Ships with `during(n)` run inside the n-th `gh pr create`; `stubs` = more of stubShip's answers. */
+  shipWith: async (during, stubs = {}) => {
+    let n = 0;
+    stubShip(seen, { create: async () => { n += 1; await during(n); return okRun(`https://github.com/me/repo/pull/${n}\n`); }, ...stubs });
+    const r = await ship(w.f.id, 'stacked');
+    return { status: r.status, body: await r.json() };
+  },
+  pushes: (pid) => seen.filter((a) => a[0] === 'git' && a[1] === 'push' && a.includes(`feat/${pid}`)).length };
+}
+const shipMode = (id) => getDb().prepare('SELECT ship_mode FROM shape_features WHERE id = ?').get(id).ship_mode;
+
+for (const [what, act] of [['a commit on the head branch', (w) => w.commit(w.pids[2])], ['a round row', (w) => w.round()]]) {
+  shipT(`${what} during the first create stops Ship: 409 NOT_READY with the PR made so far, and the later runs are not pushed`, () => withEnvVars(SMALL_ON, async () => {
+    const w = shippingWorld();
+    assert.equal((await view(w.f.id)).ship.ready, true);
+    const r = await w.shipWith((n) => { if (n === 1) act(w); });
+    assert.deepEqual([r.status, r.body.code, r.body.prs], [409, 'NOT_READY', ['https://github.com/me/repo/pull/1']]);
+    assert.deepEqual(w.pids.map(w.pushes), [1, 0, 0]);
+    assert.equal(shipMode(w.f.id), null);
+  }));
+}
+
+for (const k of [0, 2]) {
+  shipT(`a commit on run ${k + 1}'s branch during the last create: 409 NOT_READY with all three PRs, and nothing is pushed after the changelog`, () => withEnvVars(SMALL_ON, async () => {
+    const w = shippingWorld();
+    const r = await w.shipWith((n) => { if (n === 3) w.commit(w.pids[k]); });
+    assert.deepEqual([r.status, r.body.code, r.body.prs.length], [409, 'NOT_READY', 3]);
+    assert.deepEqual(w.pids.map(w.pushes), [1, 1, 1]);
+    assert.equal(shipMode(w.f.id), null);
+  }));
+}
+
+shipT('a commit made inside the second push of the head branch: 409 NOT_READY, and the feature is not recorded as shipped', () => withEnvVars(SMALL_ON, async () => {
+  const w = shippingWorld();
+  const r = await w.shipWith(() => {}, { push: (args) => {
+    if (args.includes(`feat/${w.pids[2]}`) && w.pushes(w.pids[2]) === 2) w.commit(w.pids[2]);
+    return okRun('');
+  } });
+  assert.deepEqual([r.status, r.body.code, r.body.prs?.length], [409, 'NOT_READY', 3], JSON.stringify(r.body));
+  assert.match(r.body.error, /or Resume, if the card reads Stopped/);
+  assert.equal(w.pushes(w.pids[2]), 2);
+  assert.equal(shipMode(w.f.id), null);
+}));
+
+shipT('a step that failed after the work changed keeps its own error in the stop message', () => withEnvVars(SMALL_ON, async () => {
+  const w = shippingWorld();
+  const r = await w.shipWith(() => {}, { ready: () => { w.commit(w.pids[2]); return failRun('nope'); } });
+  assert.deepEqual([r.status, r.body.code], [409, 'NOT_READY']);
+  assert.match(r.body.error, /could not mark slice 1's PR ready: .*nope/);
+}));
+
+shipT('while a small-runs feature ships, a round, an appended run, a change, Resume and Re-plan are refused with SHIPPING and write nothing', () => withEnvVars(SMALL_ON, async () => {
+  const w = shippingWorld();
+  const db = getDb();
+  const thread = createThread({ title: 'lock' });
+  const card = (landing, extra = {}) => ({ id: `card_${nextId().slice(-8)}`, kind: 'card', state: 'proposed', card: { type: 'changes', text: 'blue bars', landing, featureId: w.f.id, pipelineId: w.pids[2], ...extra } });
+  const round = card({ kind: 'round', title: 'Changes to Run 3', target: { roundOf: w.pids[2], round: 2, sourceBranch: w.last, featureId: w.f.id } },
+    { run: { prompt: 'blue bars', projectDir: w.dir, sourceBranch: w.last, sameAsSource: true, syncBeforeStart: false, mock: true } });
+  const extraRun = card({ kind: 'extra-run', title: 'Changes', target: { featureId: w.f.id } });
+  askAppendMessage(thread.id, { role: 'assistant', text: '', blocks: [round, extraRun] });
+  const rows = () => ['scheduled_runs', 'shape_feature_slices', 'pipelines'].map((t) => db.prepare(`SELECT COUNT(*) AS n FROM ${t}`).get().n);
+  const { reqChanges } = await import('../ui/server.mjs');
+  const { changeAgreedRequirements, replanRest } = await import('../src/core/shape/features.mjs');
+  const before = rows();
+  const got = [];
+  const r = await w.shipWith(async (n) => {
+    if (n !== 1) return;
+    for (const c of [round, extraRun]) {
+      const a = await post(`/api/ask/threads/${thread.id}/cards/${c.id}`, { verb: 'start' });
+      got.push([a.status, (await a.json()).code]);
+    }
+    const out = JSON.parse(db.prepare('SELECT outline FROM shape_features WHERE id = ?').get(w.f.id).outline);
+    db.prepare('UPDATE shape_features SET outline = ? WHERE id = ?').run(JSON.stringify({ ...out, agreed: [{ id: 'R-po-1', text: 'People see it' }] }), w.f.id);
+    const c = reqChanges.apply(w.f.id, [{ id: 'R-po-1', from: 'People see it', to: 'People export it' }], { kind: 'chat' });
+    got.push([c.status, c.code]);
+    assert.throws(() => changeAgreedRequirements(w.f.id, { changes: [] }), { code: 'SHIPPING', status: 409 });
+    db.prepare('UPDATE shape_features SET outline = ? WHERE id = ?').run(JSON.stringify(out), w.f.id);
+    for (const verb of ['resume', 'replan']) {
+      const a = await post(`/api/shape/features/${w.f.id}/${verb}`, {});
+      got.push([a.status, (await a.json()).code]);
+    }
+    assert.throws(() => replanRest(w.f.id), { code: 'SHIPPING', status: 409 });
+  });
+  assert.deepEqual(got, Array(5).fill([409, 'SHIPPING']));
+  assert.deepEqual([r.status, shipMode(w.f.id), rows()], [200, 'stacked', before], JSON.stringify(r.body));
+}));
+
+shipT('a round started just before Ship, with no row yet, holds Ship', () => withEnvVars(SMALL_ON, async () => {
+  const w = shippingWorld();
+  const e = { id: `live-${nextId()}`, kind: 'run', pipelineId: null, status: 'starting', events: [], pendingQuestion: null, orch: { state: {}, branchOpts: { roundOf: { pipelineId: w.pids[2], round: 2 } } } };
+  runs.set(e.id, e);
+  try {
+    const r = await w.shipWith(() => {});
+    assert.deepEqual([r.status, r.body.code, w.seen.filter((a) => a[0] === 'gh' || a[1] === 'push')], [409, 'NOT_READY', []]);
+  } finally { dropEntry(e); }
+}));
+
+for (const [what, env, marked] of [['an unmarked feature', SMALL_ON, false], ['the flag off', SMALL_OFF, true]]) {
+  shipT(`${what}: no lock and no re-check, Ship goes on as on dev`, () => withEnvVars(env, async () => {
+    const w = shippingWorld({ marked });
+    const { roundWhileShipping } = await import('../src/core/shape/chain.mjs');
+    const r = await w.shipWith((n) => { if (n !== 1) return; w.commit(w.pids[2]); assert.equal(roundWhileShipping(w.pids[2]), null); });
+    assert.deepEqual([r.status, shipMode(w.f.id)], [200, 'stacked'], JSON.stringify(r.body));
+  }));
+}
 
 // A paused round that is stopped settles in no run of its own: the stop starts the check it was holding.
 test('a stopped paused round lets the first check start', () => withEnvVars(SMALL_ON, async () => {

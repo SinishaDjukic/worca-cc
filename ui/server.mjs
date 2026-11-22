@@ -453,7 +453,7 @@ import { featureView, currentFeatureId, featureOfPipeline, featuresOfTickets, ca
   rechainWaiting, replanRest, setApproveEach, recordShapePlan, listShapePlans, chainFeature,
   sliceOfPipeline, slicePrPreamble, featureShipSuggestion, recordSliceDraft, recordShip, clearShip, featureShipInput,
   liveSliceFrom, shaperCard, featureThread, addFeatureNote, appendFeatureRun, liveRoundOf, acceptanceRefusal, featureHoldsTicket, chatShipCardOffered, stackedPrBase, shipOrder, isSlicePreambleLine } from '../src/core/shape/features.mjs';
-import { smallRunsChainGate, sliceFireStart, oneShipCheck, shipHeadRow, shipHeadBase, recordSettledFigures, recordShipCommit, createHeldStops, featureOfAnyPipeline } from '../src/core/shape/chain.mjs';
+import { smallRunsChainGate, sliceFireStart, oneShipCheck, shipHeadRow, shipHeadBase, recordSettledFigures, recordShipCommit, shipCover, shipStopped, SHIPPING, featureShipping, roundWhileShipping, createHeldStops, featureOfAnyPipeline } from '../src/core/shape/chain.mjs';
 import { roundsOf, roundOrigin, nextRound, setRoundOutcome } from '../src/core/shape/rounds.mjs';
 import { changesCard, applyChanges, applyRoute, landingFacts, landingFactsOfFeature, shapeToolCheck, threadWork, shapeThreadFacts, createRequirementChanges } from '../src/core/shape/changes.mjs';
 import { defaultShapeToolDeps } from '../src/core/ask/shape-tool-deps.mjs';
@@ -3102,7 +3102,7 @@ const startRunHandler = async (req, res) => {
     const resolveOf = req._resolveOf && typeof req._resolveOf === 'object' && typeof req._resolveOf.runId === 'string' ? req._resolveOf : null;
     // Shaper s5 (D4): a round of an earlier run (Ask for changes → Start round n, or a Watch PR fix run). Set in-process
     // by startRunAs / invokeStartRun only, never from HTTP.
-    const roundOf = req._roundOf && typeof req._roundOf === 'object' && typeof req._roundOf.pipelineId === 'string' ? req._roundOf : null;
+    const roundOf = req._roundOf && typeof req._roundOf === 'object' && typeof req._roundOf.pipelineId === 'string' ? req._roundOf : null; if (roundWhileShipping(roundOf?.pipelineId)) return res.status(409).json(roundWhileShipping(roundOf.pipelineId));   // the Ship lock
     // A6 D15: a requirements start's ticket (Report back). Set in-process by invokeStartRun only, never from HTTP, like _roundOf.
     const reportTo = req._reportTo && typeof req._reportTo === 'object' && typeof req._reportTo.plugin === 'string'
       && typeof req._reportTo.taskId === 'string' ? req._reportTo : null;
@@ -3533,8 +3533,8 @@ const startRunHandler = async (req, res) => {
       entry.scheduleId = internal.ticket.scheduleId || null;
       entry.scheduledFor = internal.ticket.runAt;
     }
-    runs.set(runId, entry);
-    wireRun(entry);
+    const shipping = roundWhileShipping(roundOf?.pipelineId); if (shipping) return res.status(409).json(shipping);   // asked again, right before Ship can see the round (shipBusy) and its row is written
+    runs.set(runId, entry); wireRun(entry);
     if (askLink) {
       // Card-state TOCTOU: awaits (source-ref check, budget) sit between Hunk
       // B's `proposed` check and here — a concurrent Start may have flipped
@@ -5048,8 +5048,8 @@ async function refreshSliceBody(prUrl, pid, repoDir) {
   if (!fresh) return null;
   return editPrBody({ projectDir: repoDir, prUrl, body: [fresh, ...lines.slice(end)].join('\n') });
 }
-const SHIPPING = new Set();     // feature ids with a Ship as in flight (ship_mode is written only at the end)
-const featureShipping = (id) => SHIPPING.has(String(id));   // s3 (D9): the acceptance PUT refuses while one is in flight
+/** Ship's `finishing` probe: a run still finishing, or one with a round that started and may have no row yet. */
+const shipBusy = (pid) => isFinishingRun(pid) || [...runs.values()].some((e) => !e.settled && e.orch?.branchOpts?.roundOf?.pipelineId === pid);
 /** One ship flow: a PR a ship opened or marked ready is stored as an open, ready PR at once, so the group page and its
  *  Runs row stop reading Draft (or Ready to ship) before the next PR lookup. persistPrState keeps an old verdict
  *  unless it is given one; a different PR (a closed draft's row taking the one PR) starts from a fresh verdict. */
@@ -5063,7 +5063,7 @@ function storeReadyPr(pid, pr) {
 async function shipFeatureNow(id, mode, { actor = null, release = null, watch = false, draft = false, base = null, onDraftFallback = null } = {}) {
   if (!SHIP_MODES.includes(mode)) return { status: 400, body: { error: 'mode must be stacked or one' } };
   if (SHIPPING.has(id)) return { status: 409, body: { code: 'SHIPPING', error: 'this feature is already shipping' } };
-  const view = featureView(id, { live: liveSliceOf, finishing: isFinishingRun });
+  const probes = { live: liveSliceOf, finishing: shipBusy }, view = featureView(id, probes);
   if (!view) return { status: 404, body: { error: 'unknown feature' } };
   if (view.ship.mode) return { status: 409, body: { code: 'ALREADY_SHIPPED', error: `this feature was already shipped as ${view.ship.mode === 'one' ? 'one PR' : 'stacked PRs'}` } };
   const round = liveRoundOf(id);                    // Shaper s5 (D16): a live round holds Ship back
@@ -5075,7 +5075,7 @@ async function shipFeatureNow(id, mode, { actor = null, release = null, watch = 
   // Shaper requirements s3 (D8): every agreed requirement is marked before any PR, changelog, push or forge call.
   const unmarked = acceptanceRefusal(view);
   if (unmarked) return { status: 409, body: unmarked };
-  SHIPPING.add(id);
+  const made = [], cover = shipCover(id), stopped = (failed) => shipStopped(id, cover, probes, made, failed); SHIPPING.add(id);   // stopped: the rule, asked again
   try {
     // One ship flow: stacked gives each slice without a PR its own, ready, on its stacked base, in merge order;
     // One makes no slice PRs (shipFeature closes only those that exist, e.g. an in-flight feature's drafts).
@@ -5086,9 +5086,9 @@ async function shipFeatureNow(id, mode, { actor = null, release = null, watch = 
     // A slice whose PR was closed gets a new one (openMemberPr opens past a CLOSED PR).
     const needsPr = (s) => s.pipelineId && (!s.pr || s.pr.state === 'CLOSED');
     if (mode === 'stacked' && shown.slices.some(needsPr)) {
-      const made = [];
       for (const s of shipOrder(shown)) {   // Feature D1: a marked feature's runs in finish order
         if (!needsPr(s)) continue;
+        const stop = stopped(); if (stop) return stop;
         const r = await openMemberPr(s.pipelineId, { actor });
         if (!r.ok) return { status: r.status || 500, body: { error: `could not create run ${s.index}'s PR: ${r.error}. Create PR again to continue.`, prs: made } };
         made.push(r.pr.url);
@@ -5105,7 +5105,7 @@ async function shipFeatureNow(id, mode, { actor = null, release = null, watch = 
       push: async () => {
         const picked = await pickPrRemotes({}, ctx.target.repoDir);
         if (picked.error) return { ok: false, error: picked.error };
-        const p = await pushBranch(ctx.target.repoDir, ctx.target.feature, picked.pushRemote);
+        const p = stopped() ? { ok: false, stderr: 'the work changed' } : await pushBranch(ctx.target.repoDir, ctx.target.feature, picked.pushRemote);
         return p.ok ? { ok: true } : { ok: false, error: p.stderr };
       },
       openOnePr: async ({ pipelineId, title, body }) => {
@@ -5133,7 +5133,7 @@ async function shipFeatureNow(id, mode, { actor = null, release = null, watch = 
       },
       refreshBody: (prUrl, pid) => refreshSliceBody(prUrl, pid, ctx.target.repoDir),
     });
-    if (!out.ok) return { status: out.status, body: { error: out.error } };
+    const late = stopped(out.error); if (late || !out.ok) return late || { status: out.status, body: { error: out.error } };
     // The one PR is every slice's PR, as a chain shipped as One records it on every run: the group reads In review.
     if (out.mode === 'one' && out.prUrl) {
       for (const s of shown.slices) if (s.pipelineId) storeReadyPr(s.pipelineId, { url: out.prUrl, number: onePr && onePr.url === out.prUrl ? onePr.number : null, draft: !!onePr?.newDraft });

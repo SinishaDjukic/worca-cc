@@ -648,6 +648,11 @@ with the gap counts as clean. What follows from it:
   not see a round on an earlier run's branch until that work is in the head. For a commit made outside Worca the card
   reads "Stopped" and **Resume** starts the check.
 - The changelog commit Ship itself makes keeps the check, so a Ship that failed part-way can go on.
+- While the feature is shipping, nothing of it starts: a round, an appended run, a requirement change, a re-plan and
+  **Resume** are refused with `SHIPPING`. The rule is asked again before each pull request Ship opens and after the
+  changelog commit, and once more when the feature would be recorded as shipped. If it no longer holds, Ship stops with
+  `NOT_READY`, names the pull requests made so far and pushes nothing more. Ship again once the Verifier has checked the
+  work, or **Resume**, if the card reads "Stopped".
 
 Each PR body has exactly one `Care: …` line, then one line per requirement marked Not met or Dropped
 (`Not met: R-comp-4 · the reason`).

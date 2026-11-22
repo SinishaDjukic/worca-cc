@@ -401,9 +401,9 @@ async function askCardHandler(req, res) {
           addNote: (fid, n) => addFeatureNote(currentFeatureId(fid), { ...n, by }),
           appendRun: (fid, o) => appendFeatureRun(currentFeatureId(fid), { ...o, by }), tick: () => { void schedulerTick(); } };
         r = c.type === 'changes' ? await applyChanges(c, deps) : await applyRoute(c, v, deps);
-      } catch (err) { r = { ok: false, status: 500, error: err && err.message ? err.message : String(err) }; }
+      } catch (err) { r = { ok: false, status: 500, ...(err?.code === 'SHIPPING' ? { status: 409, code: 'SHIPPING' } : {}), error: err && err.message ? err.message : String(err) }; }
       finally { askCardBusy.delete(cardId); }
-      if (!r.ok) return res.status(r.status || 500).json({ error: r.error });
+      if (!r.ok) return res.status(r.status || 500).json({ error: r.error, ...(r.code ? { code: r.code } : {}) });
       if (c.featureId) broadcastFeature(currentFeatureId(c.featureId));
       if (c.type === 'changes' && c.landing.kind === 'round') broadcast({ type: 'round-changed', origin: c.landing.target.roundOf });
       const block = flipCard(id, cardId, { state: 'applied', card: { result: { ...r.result, verb: v.verb, where: v.where || null } } });

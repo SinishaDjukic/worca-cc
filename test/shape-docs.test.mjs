@@ -47,7 +47,7 @@ test('shape-it-first\'s new section states Care is fixed after Start, the three 
     'Care is fixed after Start', 'pausing and resuming keep it',
     'Met, Not met or Dropped', 'Not met and Dropped need a one-line reason of at most 300 characters', 'Only Met counts as met',
     'Ship is stacked only', 'STACKED_ONLY', 'run 1 (the planning run) included', 'in the order the runs finished',
-    'ACCEPTANCE_INCOMPLETE', 'NOT_READY', 'on record for the exact head it would ship', 'nothing of the feature is live, finishing, interrupted or pending', 'It is checked again when you press Ship', 'With no check on record, Ship is not ready', 'a new series, round 1', 'its chip reads "Runs"', 'The Requirements page is not changed',
+    'ACCEPTANCE_INCOMPLETE', 'NOT_READY', 'on record for the exact head it would ship', 'nothing of the feature is live, finishing, interrupted or pending', 'It is checked again when you press Ship', 'before each pull request Ship opens and after the changelog commit', 'a re-plan and **Resume** are refused with `SHIPPING`', 'once more when the feature would be recorded as shipped', 'With no check on record, Ship is not ready', 'a new series, round 1', 'its chip reads "Runs"', 'The Requirements page is not changed',
     'Start', 'Requirements', 'Prototype', 'Ship', '**Build**', '**Verifier**',
     'Worca does not check that the person marking holds it', 'ship with the gap']);
   assert.deepEqual(gone.map((t) => `shape-it-first.md: ${t}`), []);

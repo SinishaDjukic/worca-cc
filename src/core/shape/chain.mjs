@@ -6,13 +6,16 @@ import { getDb } from '../db.mjs';
 import { previousBranchesOf } from '../scheduler.mjs';
 import { isAncestor } from '../worktree.mjs';
 import { shaperSmallRunsOn, smallRunsOfFeature } from './small-runs.mjs';
+import { SHIP_LOCK, shipLocked } from './ship-lock.mjs';
+import { roundOrigin } from './rounds.mjs';
 import { SMALL_RUNS_SHIP } from '../../shared/shape/ship-ledger.mjs';
-import { sliceOfTicket, sliceGateState, featureBase, featureRootSource, busySliceOf, featureOfPipeline, finishedSlices } from './features.mjs';
+import { sliceOfTicket, sliceGateState, featureBase, featureRootSource, busySliceOf, featureOfPipeline, currentFeatureId, finishedSlices } from './features.mjs';
 
 import { recordSettledFigures as recordFigures } from './measure.mjs';
 import { verifyAfterSettled, verifyCheckOfPipeline } from './verifier.mjs';
 export { createHeldStops } from './held-stops.mjs';
-export { recordShipCommit } from './verifier.mjs';
+export { recordShipCommit, shipCover, shipStopped } from './verifier.mjs';
+export { SHIPPING, featureShipping } from './ship-lock.mjs';
 
 /**
  * afterRunSettled's hook (D17): the Verifier first (small runs C5: a check may start, or a Verifier run's result is
@@ -28,6 +31,12 @@ export function recordSettledFigures(state, deps = {}) {
 /** The feature a pipeline belongs to: a slice's (featureOfPipeline), else the Verifier run's (small runs C5). */
 export function featureOfAnyPipeline(pipelineId) {
   return featureOfPipeline(pipelineId) || verifyCheckOfPipeline(pipelineId);
+}
+
+/** The refusal of a round of `pipelineId` while its feature is shipping (the Ship lock), or null. */
+export function roundWhileShipping(pipelineId) {
+  const at = pipelineId ? featureOfPipeline(roundOrigin(pipelineId)) : null;
+  return at && shipLocked(currentFeatureId(at.featureId)) ? SHIP_LOCK : null;
 }
 
 /**
