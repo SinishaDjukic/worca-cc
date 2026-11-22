@@ -7,7 +7,7 @@
 // Local mode, app imported (no port bind), loopback fetch, temp HOME.
 import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
-import http from 'node:http';
+import { appServer } from './helpers/app-server.mjs';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
@@ -54,7 +54,7 @@ before(async () => {
   const mod = await import('../ui/server.mjs');
   testing = mod._testing;
   token = testing.uiToken();
-  srv = http.createServer(mod.app);
+  srv = appServer(mod.app);
   srv.on('connection', (sock) => {
     const real = sock.remoteAddress;
     Object.defineProperty(sock, 'remoteAddress', { configurable: true, get: () => PEER ?? real });

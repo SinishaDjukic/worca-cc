@@ -5,7 +5,7 @@
 // keeps the model's address, key and routing; only its queue and that queue's cap moved (P2, by design).
 import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
-import http from 'node:http';
+import { appServer } from './helpers/app-server.mjs';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -41,7 +41,7 @@ before(async () => {
   written = JSON.stringify(OLD, null, 2);
   writeFileSync(settingsFile(), written);
   const { app } = await import('../ui/server.mjs'); // imported => does not bind a port
-  srv = http.createServer(app);
+  srv = appServer(app);
   await new Promise((r) => srv.listen(0, '127.0.0.1', r));
   base = `http://127.0.0.1:${srv.address().port}`;
 });

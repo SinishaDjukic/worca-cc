@@ -8,7 +8,7 @@
 // home is sufficient isolation (no late-write hazard).
 import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
-import http from 'node:http';
+import { appServer } from './helpers/app-server.mjs';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises';
@@ -93,7 +93,7 @@ before(async () => {
   process.env.WORCA_MOCK = '1';
   ({ dir: repoDir, sha: repoSha } = await makeFixtureRepo());
   const { app } = await import('../ui/server.mjs'); // imported => no port bind
-  srv = http.createServer(app);
+  srv = appServer(app);
   await new Promise((r) => srv.listen(0, '127.0.0.1', r));
   base = `http://127.0.0.1:${srv.address().port}`;
 });

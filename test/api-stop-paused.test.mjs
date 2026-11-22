@@ -5,7 +5,7 @@
 // run never both succeed.
 import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
-import http from 'node:http';
+import { appServer } from './helpers/app-server.mjs';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -35,10 +35,7 @@ before(async () => {
   const mod = await import('../ui/server.mjs');
   ({ runs, _testing } = mod);
   ({ getDb } = await import('../src/core/db.mjs'));
-  srv = http.createServer(mod.app);
-  // Never time an idle keep-alive socket out: these tests wait seconds between requests (a run pausing,
-  // a stop tearing down), and a request sent on a socket the server is closing just then fails ECONNRESET.
-  srv.keepAliveTimeout = 0;
+  srv = appServer(mod.app);
   await new Promise((r) => srv.listen(0, '127.0.0.1', r));
   base = `http://127.0.0.1:${srv.address().port}`;
   dir = gitDir('stop-paused-api');

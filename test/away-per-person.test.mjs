@@ -3,7 +3,7 @@
 // run follows its owner's (who last started or resumed it). Unset = the one instance-wide switch.
 import { test, before, after, beforeEach } from 'node:test';
 import assert from 'node:assert/strict';
-import http from 'node:http';
+import { appServer } from './helpers/app-server.mjs';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -101,7 +101,7 @@ test('API: the toggle reads and writes the signed-in person\'s own switch only w
   process.env.WORCA_IDENTITY_HEADER = 'x-test-user';   // a per-person sign-in (identity.mjs 'header')
   process.env.WORCA_IDENTITY_TRUSTED_PROXIES = '127.0.0.1,::1';   // X1: the in-process server's callers are loopback
   const mod = await import('../ui/server.mjs');
-  const srv = http.createServer(mod.app);
+  const srv = appServer(mod.app);
   await new Promise((r) => srv.listen(0, '127.0.0.1', r));
   const base = `http://127.0.0.1:${srv.address().port}`;
   const api = async (method, path, who, body) => {

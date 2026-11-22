@@ -4,7 +4,7 @@
 // leak into the CRUD cases of test/api-mcp.test.mjs.
 import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
-import http from 'node:http';
+import { appServer } from './helpers/app-server.mjs';
 import { mkdtempSync, mkdirSync, writeFileSync, rmSync, realpathSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
@@ -60,7 +60,7 @@ const manualIds = async () => (await call('GET', '/api/mcp/servers')).body.serve
 
 before(async () => {
   mod = await import('../ui/server.mjs');
-  srv = http.createServer(mod.app);
+  srv = appServer(mod.app);
   await new Promise((r) => srv.listen(0, '127.0.0.1', r));
   base = `http://127.0.0.1:${srv.address().port}`;
   const { addProject } = await import('../src/core/projects.mjs');
