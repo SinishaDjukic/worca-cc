@@ -5,11 +5,11 @@ import { mockEnabled } from '../claude-runner.mjs';
 import { recordTestJudgeCost, budgetStatus as realBudgetStatus } from '../cost-budget.mjs';
 import { judgeCriterion as realJudge, modelCall as realModelCall, firstLine } from './judge.mjs';
 import { subjectOfTry } from './criteria-runner.mjs';
-import { mainResult } from './result.mjs';
+import { mainResult, readTryPatch } from './result.mjs';
 import { exampleSourcesText } from './sources-text.mjs';
 import { padded, deterministicPlants, copySystemPrompt, copyPrompt, parseCopyReply, copyProblem, changedExcerpt, splitChanges, usableProof, PLANT_COPIES,
   PLANT_RESULT_MAX, COPY_TIMEOUT_MS, CARD_EXCERPT_MAX } from './planted.mjs';
-import { SUBJECT_MAX, fenceTag } from './judge-prompt.mjs';
+import { SUBJECT_MAX, CHANGES_HEADING, fenceTag } from './judge-prompt.mjs';
 import { rewordCriterion } from './suggest.mjs';
 import * as store from './store.mjs';
 import * as cs from './criteria-store.mjs';
@@ -26,7 +26,7 @@ const clip = (s) => { const t = String(s ?? '').trim(); return t.length > EXCERP
 
 /** D97: the result you liked, else the newest passed try of the example (a real one before a mock one), else the run it came from when
  *  the person called it good. `mock`: the text came from a mock try (I14: the round then runs on the mock, never paid). */
-export async function goodResultOf(example, { subjectOf = (t) => subjectOfTry(t), readMain = mainResult } = {}) {
+export async function goodResultOf(example, { subjectOf = (t) => subjectOfTry(t), readMain = mainResult, readPatch = readTryPatch } = {}) {
   const liked = cs.readLiked(example.id);
   if (liked && liked.text.trim()) {
     return { kind: 'liked', text: liked.text, label: 'From the result you liked', mock: !!liked.fromPipeline && store.mockPipeline(liked.fromPipeline) };
@@ -36,7 +36,10 @@ export async function goodResultOf(example, { subjectOf = (t) => subjectOfTry(t)
   if (best) { const text = await subjectOf(best); if (text.trim()) return { kind: 'try', tryId: best.id, text, label: 'From a real result', mock: !!best.mock }; }
   if (example.from && example.from.verdict === 'good') {
     const m = await readMain(example.from.pipelineId);
-    if (m.text && m.text.trim()) return { kind: 'run', pipelineId: example.from.pipelineId, text: m.text, label: 'From a real result', mock: store.mockPipeline(example.from.pipelineId) };
+    // Fix round 7 (review M4): a project example's run is checked with its diff under CHANGES_HEADING, as its tries are (subjectOfTry).
+    const p = m.text && m.text.trim() && example.project ? await readPatch(example.from.pipelineId, SUBJECT_MAX) : null;
+    const text = p && p.patch ? `${m.text}\n\n${CHANGES_HEADING}\n${p.patch}` : m.text;
+    if (m.text && m.text.trim()) return { kind: 'run', pipelineId: example.from.pipelineId, text, label: 'From a real result', mock: store.mockPipeline(example.from.pipelineId) };
   }
   return null;
 }

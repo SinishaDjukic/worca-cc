@@ -555,3 +555,17 @@ test("mock rounds: Worca's own plants break numbers everywhere; their cards neve
   const wrong = v.cards.map((c) => (c.card === 2 ? { ...c, answer: false } : c));
   assert.deepEqual([planted(wrong).caught, planted(wrong).of], [0, 2], 'unless the person said Worca was wrong on it');
 });
+
+test("round 6 review M4: a project example's good run is checked with its changes, as a try of it is; a text example's is not", async () => {
+  const { goodResultOf } = await import('../src/core/workflow-tests/checker.mjs');
+  const { CHANGES_HEADING } = await import('../src/core/workflow-tests/judge-prompt.mjs');
+  const readMain = async () => ({ text: '## Done\nAdded the parser test.' });
+  const readPatch = async (pipelineId) => ({ patch: `diff --git a/t.js b/t.js\n+test('parser') // ${pipelineId}` });
+  const from = { pipelineId: 'p0000042', verdict: 'good', use: 'draft' };
+  const project = await goodResultOf({ id: 990001, project: { path: 'x' }, from }, { readMain, readPatch });
+  assert.equal(project.text, `## Done\nAdded the parser test.\n\n${CHANGES_HEADING}\ndiff --git a/t.js b/t.js\n+test('parser') // p0000042`);
+  const text = await goodResultOf({ id: 990002, project: null, from }, { readMain, readPatch });
+  assert.equal(text.text, '## Done\nAdded the parser test.');
+  const none = await goodResultOf({ id: 990003, project: { path: 'x' }, from }, { readMain, readPatch: async () => null });
+  assert.equal(none.text, '## Done\nAdded the parser test.', 'no diff kept: the text alone');
+});
