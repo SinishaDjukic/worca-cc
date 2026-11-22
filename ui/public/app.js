@@ -146,6 +146,7 @@ import {
 import { createScriptsController, nextCopyKey } from './scripts-view.mjs';
 import { renderRunPill, renderOverviewStrip, renderShipItStrip, shipItTryState, renderRunningActionRows, historyActionBadges, createActionsController, releaseCheckout } from './actions-view.mjs';
 import { editorFieldEl, renderProjectActionsEditor, renderStackEditor } from './actions-config-view.mjs';
+import { createConnectorLayers } from './mcp-servers/connectors-layers.mjs';
 import { createMcpView, mountProjectMcp, paintMcpResolution, paintAskMcpBlock, setMcpStripRenderer, parseMcpParam } from './mcp-view.mjs';
 import { createAskPanel } from './ask-panel.mjs';
 import { pageChips, pageScopeOf } from './ask-page-chips.mjs';
@@ -40759,8 +40760,9 @@ function showView(name, param = '') {
   // bubble lives on <body>, so nothing hides it with the page.
   if (ADDON_VIEWS.includes(currentShownView) && name !== currentShownView) {
     hideInfoTip();
-    // Connectors' pickers and forms open in #plugin-modal, which lives outside the page.
-    if (currentShownView === 'connectors') closePluginModal();
+    // Connectors' pickers, forms and confirms open in the shared Marketplace layers, which live outside the page.
+    if (currentShownView === 'connectors') closePluginModal();   // the requirements strip opens #plugin-modal from this page
+    if (currentShownView === 'connectors' && connectorLayers) { connectorLayers.modal.close(); connectorLayers.sheet.close(); }
   }
   // Moving between the three Runs routes swaps the pane at once; going back to the bare
   // list (#runs) slides the detail away in the narrow layout and hands focus back to its
@@ -41219,7 +41221,7 @@ async function showConnectors(param) {
   const { server } = parseMcpParam(param);
   if (!server || currentView() !== 'connectors' || parseHash()[1] !== param) return;
   const host = views.find((v) => v.dataset.view === 'connectors');
-  const row = host && [...host.querySelectorAll('.mcp-server-row[data-server]')].find((n) => n.dataset.server === server);
+  const row = host && [...host.querySelectorAll('.cx-row[data-server]')].find((n) => n.dataset.server === server);
   if (row) markFound(row, row.querySelector('button'));
 }
 
@@ -41235,19 +41237,21 @@ async function mcpApi(method, path, body) {
   }
 }
 let mcpViewCtl = null;
+let connectorLayers = null;
 function mcpTab() {
   if (!mcpViewCtl) {
+    // The page's pickers, forms and confirms are the Marketplace layers (connectors-layers.mjs), not #plugin-modal:
+    // `shows(node)`: is this node still in the open dialog? A flow whose answer lands after the dialog's own Close, a
+    // tab switch or another dialog opens nothing (skill-import.mjs). `afterClose(fn)`: the dialog's own Close (or
+    // Escape) runs fn once, as the open step's Cancel (an Import preview's or an Update's staged copy is discarded).
+    connectorLayers = createConnectorLayers({ doc: document, win: window });
     mcpViewCtl = createMcpView({
       host: document.querySelector('[data-view="connectors"]'),
       api: mcpApi,
       navigate: (hash) => { if (location.hash.slice(1) !== hash) location.hash = hash; },
-      confirm: confirmModal,
-      // `shows(node)`: is this node still in the open dialog? A flow whose answer lands after the dialog's own Close, a
-      // tab switch or another dialog opens nothing (skill-import.mjs). `afterClose(fn)`: the dialog's own Close (or
-      // Escape) runs fn once, as the open step's Cancel (an Import preview's or an Update's staged copy is discarded).
-      modal: { open: pluginModal, close: closePluginModal, onClose: onPluginModalDismiss,
-        shows: (node) => !el.pluginModal.classList.contains('hidden') && el.pluginModalBody.contains(node),
-        afterClose: (fn) => { pluginModalAfterClose = fn; } },
+      confirm: connectorLayers.confirm,
+      modal: connectorLayers.modal,
+      sheet: connectorLayers.sheet,
       notify: (o) => notify(o),
     });
   }

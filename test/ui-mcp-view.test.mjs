@@ -96,25 +96,27 @@ const settle = async () => { for (let i = 0; i < 6; i++) await tick(); };
 test('set list: General first, user sets, Team sets; the warning dot; Used by lines; a greyed Team set', async () => {
   const { host, ctl } = mount();
   await ctl.show('');
-  const rows = [...host.querySelectorAll('.mcp-setrow')];
+  const rows = [...host.querySelectorAll('.cx-rail .mk-facet[data-set]')];
   assert.deepEqual(rows.map((r) => r.dataset.set), SETS.map((s) => s.id));
-  assert.deepEqual(rows.map((r) => !!r.querySelector('.mcp-dot')), [false, true, false, false, false]);
-  assert.match(rows[0].textContent, /Built in.*2 servers · Chat · 1 project/);
+  assert.deepEqual(rows.map((r) => !!r.querySelector('.mk-facet-dot')), [false, true, false, false, false]);
+  assert.match(rows[0].textContent, /Built-in.*2 servers · Chat · 1 project/);
   assert.match(rows[1].textContent, /2 servers · billing/);
   assert.match(rows[4].textContent, /no project here follows old\/home/);
-  assert.ok(rows[4].classList.contains('greyed'));
-  assert.ok(rows[0].classList.contains('on'));
+  assert.ok(rows[4].classList.contains('cx-greyed'));
+  assert.deepEqual(rows.map((r) => r.getAttribute('aria-pressed')), ['true', 'false', 'false', 'false', 'false']);
+  assert.match(host.querySelector('.cx-rail .mk-rail-sep + .mk-rail-label').textContent, /Team sets/);
+  assert.equal(host.querySelector('.cx-rail .mk-rail-sep').nextElementSibling.nextElementSibling, rows[3], 'Team sets follow the separator');
 });
 
 test('a user set: fields, secrets as set-ness with OAuth age, the problem line; edits PUT the membership', async () => {
   const { host, ctl, writes } = mount();
   await ctl.show('sets/billing');
-  const [sentry, jira] = host.querySelectorAll('.mcp-member');
+  const [sentry, jira] = host.querySelectorAll('.cx-row[data-server]');
   assert.match(sentry.textContent, /sentry_billing.*acme-tools.*http/);
-  assert.equal(sentry.querySelector('.badge.amber').textContent, 'set · updated 2026-08-29', 'an OAuth token ≥30 days old is amber');
-  assert.equal(sentry.querySelector('.mcp-state').textContent, '18 tools · tested 3d ago');
-  assert.equal(jira.querySelector('.mcp-state').textContent, 'API token not set · skipped until set');
-  assert.ok(jira.querySelector('.mcp-state').classList.contains('err'));
+  assert.equal(sentry.querySelector('.mk-chip-warn:not(:first-child)').textContent, 'set · updated 2026-08-29', 'an OAuth token ≥30 days old is amber');
+  assert.equal(sentry.querySelector('.mdl-st').textContent, '18 tools · tested 3d ago');
+  assert.equal(jira.querySelector('.mdl-st').textContent, 'API token not set · skipped until set');
+  assert.ok(jira.querySelector('.mdl-st').classList.contains('fail'));
   const inp = sentry.querySelector('[data-field="org"]');
   inp.value = 'acme-eu';
   change(inp);
@@ -155,13 +157,13 @@ test('Team sets are read-only (no rename/delete/add/remove, disabled never-conse
         assert.equal(host.querySelector(sel), null, sel);
       }
       assert.ok(host.querySelector('[data-act="duplicate"]'), 'a Team set can be duplicated into a user set');
-      const [gh, sentry] = host.querySelectorAll('.mcp-member');
+      const [gh, sentry] = host.querySelectorAll('.cx-row[data-server]');
       assert.equal(sentry.querySelector('[data-toggle]').disabled, true);
       assert.equal(sentry.querySelector('[data-test]').disabled, true, 'nothing runs before consent, not even Test');
       assert.match(sentry.textContent, /Turn on in the team checklist/);
       assert.equal(gh.querySelector('[data-toggle]').disabled, false);
       assert.match(gh.querySelector('.mcp-secret').textContent, /^\$MCP_GH/, 'an $env secret shows its variable');
-      assert.equal(gh.querySelector('.mcp-secret .badge.amber'), null, 'a secret updated a day ago is not amber');
+      assert.equal(gh.querySelector('.mcp-secret .mk-chip-warn'), null, 'a secret updated a day ago is not amber');
       assert.match(gh.querySelector('.mcp-suggest').textContent, /Team suggests github\.acme\.io · Use team value/);
       click(gh.querySelector('[data-use-team="host"]'));
       await settle();
@@ -177,7 +179,7 @@ test('Team sets are read-only (no rename/delete/add/remove, disabled never-conse
     { name: 'a greyed Team set offers only Forget, which calls the team forget route', run: async () => {
       const { host, ctl, writes, nav } = mount();
       await ctl.show('sets/team-old-home-1234');
-      assert.deepEqual([...host.querySelectorAll('.mcp-set [data-act]')].map((b) => b.dataset.act), ['forget']);
+      assert.deepEqual([...host.querySelectorAll('.cx-set-head [data-act]')].map((b) => b.dataset.act), ['forget']);
       click(host.querySelector('[data-act="forget"]'));
       await settle();
       assert.deepEqual(writes(), [['POST', '/api/mcp/teams/old%2Fhome/forget', {}]]);
@@ -219,7 +221,7 @@ test('Test runs the membership and repaints; Add server disables members already
     'POST /api/mcp/sets/billing/members/plugin%3Aacme-tools%2Fjira/test': { ok: false, status: 409, data: { error: 'plugin disabled' } } } });
   await ctl.show('sets/billing');
   click(host.querySelector('[data-test="plugin:acme-tools/jira"]'));
-  assert.equal(host.querySelector('[data-server="plugin:acme-tools/jira"] .mcp-state').textContent, 'testing…');
+  assert.equal(host.querySelector('[data-server="plugin:acme-tools/jira"] .mdl-st').textContent, 'testing…');
   const at = calls.length;
   await settle();
   assert.ok(calls.some(([m, p]) => m === 'POST' && p === '/api/mcp/sets/billing/members/plugin%3Aacme-tools%2Fjira/test'));
@@ -277,14 +279,14 @@ test('switching sets: the cards on screen write to their own set until the next 
   release(shop);
   await next;
   await settle();
-  assert.equal(m.host.querySelector('.mcp-set h2').textContent, 'Shop');
+  assert.equal(m.host.querySelector('.cx-set-head h2').textContent, 'Shop');
   let late;
   const n = mount({ over: { 'GET /api/mcp/sets/billing': new Promise((r) => { late = r; }) } });
   const first = n.ctl.show('sets/billing');
   await n.ctl.show('');
   late({ ok: true, status: 200, data: SET_VIEWS.billing });
   await first;
-  assert.equal(n.host.querySelector('.mcp-set h2').textContent, 'General');
+  assert.equal(n.host.querySelector('.cx-set-head h2').textContent, 'General');
 });
 
 test('a prompt or confirm answered after Back/Forward moved the page to another set still acts on the set it was opened on', async () => {
@@ -321,6 +323,7 @@ test('a prompt or confirm answered after Back/Forward moved the page to another 
 test('a save repaints under the user: the input being typed in keeps its text, caret and focus', async () => {
   const { host, ctl } = mount();
   await ctl.show('sets/billing');
+  click(host.querySelector('[data-fold="billing|plugin:acme-tools/sentry"]'));   // a user types only in a fold they opened
   const org = host.querySelector('[data-field="org"]');
   org.focus();
   org.value = 'acme-eu';
@@ -331,6 +334,54 @@ test('a save repaints under the user: the input being typed in keeps its text, c
   assert.notEqual(now, org, 'the pane was repainted');
   assert.equal(doc.activeElement, now);
   assert.equal(now.value, 'acme-eu-2');
+});
+
+test('fold: a server row\'s values fold inside the row; a missing required value opens it; the fold survives a save repaint', async () => {
+  const { host, ctl } = mount();
+  await ctl.show('sets/billing');
+  const [sentry, jira] = host.querySelectorAll('.cx-row[data-server]');
+  const toggle = (row) => row.querySelector('[data-fold]');
+  assert.equal(toggle(sentry).getAttribute('aria-expanded'), 'false');
+  assert.equal(sentry.querySelector('.cx-fold').hidden, true);
+  assert.equal(toggle(jira).getAttribute('aria-expanded'), 'true', 'a missing required value opens its fold');
+  assert.equal(jira.querySelector('.cx-fold').hidden, false);
+  assert.equal(toggle(sentry).getAttribute('aria-controls'), sentry.querySelector('.cx-fold').id);
+  assert.match(sentry.querySelector('.cx-fold dt').textContent, /Name in runs/);
+  assert.equal(sentry.querySelector('.cx-fold code').textContent, 'sentry_billing');
+  toggle(sentry).focus();
+  click(toggle(sentry));
+  const again = host.querySelector('.cx-row[data-server="plugin:acme-tools/sentry"]');
+  assert.equal(again.querySelector('[data-fold]').getAttribute('aria-expanded'), 'true');
+  assert.equal(again.querySelector('.cx-fold').hidden, false);
+  assert.equal(doc.activeElement, again.querySelector('[data-fold]'), 'the fold toggle keeps focus through the repaint');
+  const sw = again.querySelector('[data-toggle]');
+  sw.checked = false;
+  change(sw);
+  await settle();
+  assert.equal(host.querySelector('.cx-row[data-server="plugin:acme-tools/sentry"] .cx-fold').hidden, false, 'a save repaint keeps the fold open');
+});
+
+test('focus survives a repaint on a rail facet, a filter chip and a row button', async () => {
+  const m = mount();
+  await m.ctl.show('sets/billing');
+  const facet = m.host.querySelector('.mk-facet[data-set="shop"]');
+  facet.focus();
+  await m.ctl.show('sets/billing');
+  assert.equal(doc.activeElement, m.host.querySelector('.mk-facet[data-set="shop"]'));
+  const test = m.host.querySelector('[data-test="plugin:acme-tools/jira"]');
+  test.focus();
+  await m.ctl.show('sets/billing');
+  assert.equal(doc.activeElement, m.host.querySelector('[data-test="plugin:acme-tools/jira"]'));
+  const rm = m.host.querySelector('[data-remove="plugin:acme-tools/jira"]');
+  rm.focus();
+  await m.ctl.show('sets/billing');
+  assert.equal(doc.activeElement, m.host.querySelector('[data-remove="plugin:acme-tools/jira"]'));
+  await m.ctl.show('servers');
+  const chipBtn = m.host.querySelector('[data-cx-chip="no-set"]');
+  chipBtn.focus();
+  click(chipBtn);
+  assert.equal(doc.activeElement, m.host.querySelector('[data-cx-chip="no-set"]'));
+  assert.equal(m.host.querySelector('[data-cx-chip="no-set"]').getAttribute('aria-pressed'), 'true');
 });
 
 test('secret inputs: an empty value keeps the stored secret; an MCP_ variable wins over a typed value', () => {
@@ -346,14 +397,14 @@ test('Servers view is read-only with badges/In sets/Add to set; Remove on a manu
     { name: 'the Servers view is read-only: badges, In sets links, Add to set everywhere, Edit/Remove on manual rows, Remove on retired ones', run: async () => {
       const { host, ctl } = mount();
       await ctl.show('servers');
-      assert.equal(host.querySelector('.mcp-servers input, .mcp-servers [data-test]'), null, 'no switches, values or Test');
-      const rows = [...host.querySelectorAll('.mcp-server-row')];
-      const acts = rows.map((r) => [...r.querySelectorAll('.pl-actions button')].map((b) => b.textContent));
+      assert.equal(host.querySelector('.cx-servers input:not([type=search]), .cx-servers [data-test]'), null, 'no switches, values or Test');
+      const rows = [...host.querySelectorAll('.cx-servers .cx-row')];
+      const acts = rows.map((r) => [...r.querySelectorAll('.cx-acts button')].map((b) => b.textContent));
       assert.deepEqual(acts, [['Add to set', 'Edit definition', 'Remove'], ['Add to set'], ['Add to set', 'Remove']]);
-      assert.match(rows[0].textContent, /also in your Claude Code config/);
+      assert.match(rows[0].textContent, /Also in your Claude Code config/);
       assert.match(rows[1].textContent, /name provisional.*plugin disabled/);
-      assert.match(rows[2].textContent, /no longer required by acme\/platform/);
-      assert.deepEqual([...rows[1].querySelectorAll('a.chip')].map((a) => a.getAttribute('href')),
+      assert.match(rows[2].textContent, /No longer required by acme\/platform/);
+      assert.deepEqual([...rows[1].querySelectorAll('.cx-sets a.badge')].map((a) => a.getAttribute('href')),
         ['#connectors/sets/billing', '#connectors/sets/team-acme-platform-9333']);
       assert.equal(host.querySelector('[data-act="add-server"]').textContent, 'Add MCP server');
     } },
@@ -397,7 +448,7 @@ test('Replace and Add project write from their modal: a refusal shows there; Add
     'PUT /api/mcp/sets/billing/members/plugin%3Aacme-tools%2Fsentry': refused, 'PUT /api/mcp/projects/shop-2b3c4d5e': refused,
     'GET /api/projects': { ok: true, status: 200, data: { projects: [{ key: 'billing-1a2b3c4d', name: 'billing' }, { key: 'shop-2b3c4d5e', name: 'shop' }] } } } });
   await m.ctl.show('sets/billing');
-  click(m.host.querySelector('.mcp-member [data-secret="token"][data-server="plugin:acme-tools/sentry"]'));
+  click(m.host.querySelector('.cx-row [data-secret="token"][data-server="plugin:acme-tools/sentry"]'));
   m.modal.opened.body.querySelector('[data-input="token"]').value = 'tok-12345678';
   await m.modal.opened.actions.find(([label]) => label === 'Save')[2]();
   assert.equal(m.modal.opened.body.querySelector('.form-msg.err').textContent, 'refused here');
@@ -427,6 +478,7 @@ test('parseMcpParam: servers/<id> is the Servers view naming one server (a top b
 test('a value a repaint restored still saves when the user leaves the field; a change and its focusout save once', async () => {
   const { host, ctl, writes } = mount();
   await ctl.show('sets/billing');
+  click(host.querySelector('[data-fold="billing|plugin:acme-tools/sentry"]'));   // a user types only in a fold they opened
   const org = host.querySelector('[data-field="org"]');
   org.dispatchEvent(new doc.defaultView.FocusEvent('focusout', { bubbles: true }));
   await settle();
@@ -506,16 +558,17 @@ test('the Connectors page: its hashes (#connectors General, /sets/<id>, /servers
       assert.equal(window.document.querySelector('.view[data-view="settings"]').classList.contains('hidden'), true);
       assert.ok(calls.includes('GET /api/mcp/sets/billing'));
       assert.equal(window.location.hash, '#connectors/sets/billing');
-      assert.ok(page.querySelector('.mcp-setrow[data-set="billing"].on'));
+      assert.ok(page.querySelector('.mk-facet[data-set="billing"][aria-pressed="true"]'));
       assert.equal(page.querySelector('.topbar h1'), null, 'the top bar names the page');
       assert.equal(window.document.getElementById('topnav-title').textContent, 'Connectors');
-      assert.deepEqual([...page.querySelectorAll('.topbar .seg button')].map((b) => b.textContent), ['Sets', 'Servers', 'Skills']);
+      assert.deepEqual([...page.querySelectorAll('nav.mk-tabs a.mk-tab')].map((b) => b.firstChild.textContent.trim()), ['Sets', 'Servers', 'Skills']);
       assert.equal(window.document.querySelector('#settings-tabs button[data-tab="mcp"]'), null, 'Settings has no Sets tab');
       await go(window, 'connectors/servers');
       assert.ok(calls.includes('GET /api/mcp/servers'));
-      assert.equal(page.querySelectorAll('.mcp-server-row').length, 3);
+      assert.equal(page.querySelectorAll('.cx-row').length, 3);
       assert.equal(page.querySelector('.topbar h1'), null, 'a repaint brings no title back');
-      assert.ok(page.querySelector('.topbar .sub') && page.querySelector('.topbar .seg'), 'and no empty bar: the sub line and the segments stay');
+      assert.equal(page.querySelector('.topbar .sub'), null, 'no page intro line');
+      assert.ok(page.querySelector('nav.mk-tabs'), 'the tab strip stays');
     } },
     { name: 'an old #settings/mcp/sets/<id> link opens that set on the Connectors page, replacing the entry', run: async () => {
       const { window, calls } = await boot('http://localhost:4319/');
@@ -524,17 +577,16 @@ test('the Connectors page: its hashes (#connectors General, /sets/<id>, /servers
       assert.equal(window.location.hash, '#connectors/sets/billing');
       assert.equal(window.history.length, entries + 1);
       assert.ok(calls.includes('GET /api/mcp/sets/billing'));
-      assert.ok(window.document.querySelector('.view[data-view="connectors"] .mcp-setrow[data-set="billing"].on'));
+      assert.ok(window.document.querySelector('.view[data-view="connectors"] .mk-facet[data-set="billing"][aria-pressed="true"]'));
     } },
-    { name: 'leaving Connectors closes a dialog it opened (#plugin-modal lives outside the page)', run: async () => {
+    { name: 'leaving Connectors closes a dialog it opened (the shared layers live outside the page)', run: async () => {
       const { window } = await boot('http://localhost:4319/');
       await go(window, 'connectors');
       window.document.querySelector('.view[data-view="connectors"] [data-act="new-set"]').click();
       await settle();
-      const modal = window.document.getElementById('plugin-modal');
-      assert.equal(modal.classList.contains('hidden'), false, 'New set opened its dialog');
+      assert.ok(window.document.getElementById('mk-dialog'), 'New set opened its dialog');
       await go(window, 'runs');
-      assert.equal(modal.classList.contains('hidden'), true);
+      assert.equal(window.document.getElementById('mk-dialog'), null);
     } },
   ]);
 });
@@ -552,9 +604,9 @@ const IMPORT_OVER = {
 test('Servers topbar has Import from other tools beside Add MCP server; Sets and Skills do not', async () => {
   const { host, ctl } = mount({ over: { 'GET /api/skills': { ok: true, status: 200, data: { skills: [] } } } });
   await ctl.show('servers');
-  const imp = host.querySelector('.topbar [data-act="import-servers"]');
+  const imp = host.querySelector('.mk-head-actions [data-act="import-servers"]');
   assert.equal(imp.textContent, 'Import from other tools');
-  assert.equal(imp.nextElementSibling, host.querySelector('.topbar [data-act="add-server"]'), 'just before the primary Add MCP server');
+  assert.equal(imp.nextElementSibling, host.querySelector('.mk-head-actions [data-act="add-server"]'), 'just before the primary Add MCP server');
   await ctl.show('');
   assert.equal(host.querySelector('[data-act="import-servers"]'), null);
   await ctl.show('skills');
@@ -579,8 +631,27 @@ test('Import from other tools opens the modal after GET /api/mcp/discover; a fin
   assert.equal(m.modal.opened, null);
   assert.equal(toasts.length, 1);
   assert.equal(toasts[0].tone, 'ok');
-  assert.match(`${toasts[0].title} ${toasts[0].detail || ''}`, /Added files/);
+  assert.match(`${toasts[0].title} ${toasts[0].detail || ''}`, /Imported files into General/);
+  assert.deepEqual(m.writes().filter(([meth, p]) => meth === 'PUT').map(([, p, b]) => [p, b]),
+    [['/api/mcp/sets/general/members/manual%3Afiles', { enabled: true, values: {}, secrets: {} }]], 'the picked set takes the new server');
   assert.equal(m.calls.filter(([meth, p]) => meth === 'GET' && p === '/api/mcp/servers').length, reads + 1, 'the Servers list is read again');
+});
+
+test('An Into-set refusal after a good import is an error toast naming what was not added', async () => {
+  const toasts = [];
+  const m = mount({ over: { ...IMPORT_OVER, 'PUT /api/mcp/sets/general/members/manual%3Afiles': { ok: false, status: 404, data: { error: 'no such set' } } }, notify: (t) => toasts.push(t) });
+  await m.ctl.show('servers');
+  click(m.host.querySelector('[data-act="import-servers"]'));
+  await settle();
+  const cb = m.modal.opened.body.querySelector('.mcp-imp-row[data-id="cursor:user:files"] .mcp-imp-pick');
+  cb.checked = true; change(cb);
+  await m.modal.opened.actions.find(([l]) => l === 'Review')[2]();
+  await settle();
+  await m.modal.opened.actions.find(([l]) => l === 'Import')[2]();
+  await settle();
+  assert.equal(toasts.length, 1);
+  assert.equal(toasts[0].tone, 'err');
+  assert.match(`${toasts[0].title} ${toasts[0].detail || ''}`, /could not add files to General.*no such set/);
 });
 
 test('An Import that fails after it may have written (a 500) keeps the dialog open and reads the servers again', async () => {

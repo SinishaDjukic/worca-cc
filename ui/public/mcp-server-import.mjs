@@ -4,7 +4,7 @@
 // registered project), pick up to 10 servers and give each a worca name, review the import card the server builds
 // (POST /api/mcp/import, nothing written), then Import (the same body with apply and the review's digest). Every value
 // arrives masked; secrets become empty secret fields. The imported servers join no set.
-// `modal` is the Connectors page's #plugin-modal shell (`afterClose`: its header Close runs the step's Cancel; the shell
+// `modal` is the Connectors page's centred dialog (connectors-layers.mjs) (`afterClose`: its header Close runs the step's Cancel; the shell
 // clears that hook on every open). Text goes in with textContent only.
 
 export const IMPORT_MAX = 10;
@@ -31,10 +31,13 @@ export function targetText(row) {
   return row.url || '';
 }
 
-/** Open the Import from other tools modal. `onDone({ detail, names })` runs after a successful Import (the modal is
- *  closed); `onChanged()` after an Import that may have written part of the list (status ≥ 500, or "Added …"). */
-export function openMcpImport({ api, modal, doc = globalThis.document, onDone = () => {}, onChanged = () => {} }) {
-  const st = { projects: [], key: '', data: null, picks: new Set(), names: new Map(), body: null, review: null, digest: '' };
+/** Open the Import from other tools modal. `onDone({ detail, names, set })` runs after a successful Import (the modal is
+ *  closed); `onChanged()` after an Import that may have written part of the list (status ≥ 500, or "Added …").
+ *  `sets` ([{ id, name }]) adds the "Into set" picker, `initialSet` its first choice (General); `set` in onDone is the
+ *  picked set id (null without a picker): the import API adds definitions only, so the caller turns them on there. */
+export function openMcpImport({ api, modal, doc = globalThis.document, onDone = () => {}, onChanged = () => {}, sets = null, initialSet = 'general' }) {
+  const st = { projects: [], key: '', data: null, picks: new Set(), names: new Map(), body: null, review: null, digest: '',
+    set: sets && sets.length ? (sets.some((x) => x.id === initialSet) ? initialSet : sets[0].id) : null };
   let busy = false;      // a review or an Import in flight: one request at a time
   let scanSeq = 0;       // only the latest project's scan paints
   // #plugin-modal is one shared dialog: an answer that lands after Cancel, Close, Back or a project change paints nothing.
@@ -44,7 +47,7 @@ export function openMcpImport({ api, modal, doc = globalThis.document, onDone = 
   const cancel = () => close();
   const onScreen = (node) => !closed && node === shownMsg && (typeof modal.shows !== 'function' || modal.shows(node));
   const open = (title, body, actions) => {
-    modal.open(title, body, actions);
+    modal.open(title, body, actions, { width: 'lg' });
     if (modal.afterClose) modal.afterClose(cancel);   // after EVERY open: the shell clears the hook on each one
   };
   const msgLine = () => {
@@ -83,6 +86,15 @@ export function openMcpImport({ api, modal, doc = globalThis.document, onDone = 
   function serverRow(row) {
     const el = h(doc, 'div', 'mcp-imp-row');
     el.dataset.id = row.id;
+    if (row.inWorca) {   // already there: a greyed line with no pick box and no name to type
+      el.classList.add('cx-greyed');
+      el.setAttribute('aria-disabled', 'true');
+      const head = h(doc, 'div', 'mcp-imp-head');
+      head.append(h(doc, 'b', 'mono', row.name), h(doc, 'span', 'hint', `${row.tool} · ${row.source}`),
+        h(doc, 'span', 'badge', `Already in worca as ${row.worcaName}`));
+      el.append(head, h(doc, 'p', 'mk-meta', 'Already in worca'));
+      return el;
+    }
     const cb = h(doc, 'input', 'mcp-imp-pick');
     cb.type = 'checkbox';
     cb.setAttribute('aria-label', `Import ${row.name}`);
@@ -101,7 +113,6 @@ export function openMcpImport({ api, modal, doc = globalThis.document, onDone = 
     head.append(cb, h(doc, 'b', 'mono', row.name),
       h(doc, 'span', 'hint', `${row.tool} · ${row.source}${row.scope === 'local' ? ` (local to ${row.project})` : ''}`),
       h(doc, 'span', 'badge', row.transport));
-    if (row.inWorca) head.appendChild(h(doc, 'span', 'badge', `Already in worca as ${row.worcaName}`));
     if (row.hasSecrets) head.appendChild(h(doc, 'span', 'badge amber', 'has secrets'));
     if (row.nameTaken) head.appendChild(h(doc, 'span', 'badge amber', 'name taken'));
     el.append(head, h(doc, 'code', 'mono mcp-imp-target', targetText(row)));
@@ -175,6 +186,19 @@ export function openMcpImport({ api, modal, doc = globalThis.document, onDone = 
     return { sel, fill };
   }
 
+  function setField() {
+    const wrap = h(doc, 'div', 'mcp-imp-set-field');
+    const label = h(doc, 'span', 'hint', 'Into set');
+    label.id = 'mcp-imp-set-label';
+    const sel = h(doc, 'select', 'select mcp-imp-set');
+    sel.setAttribute('aria-labelledby', 'mcp-imp-set-label');
+    for (const x of sets) sel.appendChild(Object.assign(h(doc, 'option', '', x.name), { value: x.id }));
+    sel.value = st.set;
+    sel.addEventListener('change', () => { st.set = sel.value; });
+    wrap.append(label, sel);
+    return wrap;
+  }
+
   /** `note`: a message to show at once (a refused review that came back here). */
   function listStep(note = '') {
     const body = h(doc, 'div', 'mcp-imp');
@@ -185,7 +209,9 @@ export function openMcpImport({ api, modal, doc = globalThis.document, onDone = 
     field.append(h(doc, 'span', 'hint', 'Also scan a project'), sel);
     resultsBox = h(doc, 'div');
     resultsBox.appendChild(results());
-    body.append(h(doc, 'p', 'hint', INTRO), field, resultsBox, msg);
+    body.append(h(doc, 'p', 'hint', INTRO));
+    if (st.set) body.appendChild(setField());
+    body.append(field, resultsBox, msg);
     shownMsg = msg;
     open('Import from other tools', body, [
       ['Cancel', 'btn btn-sm', cancel],
@@ -284,7 +310,7 @@ export function openMcpImport({ api, modal, doc = globalThis.document, onDone = 
     }
     if (r.ok) {
       close();
-      await onDone({ detail: r.data.detail, names: r.data.names || [] });
+      await onDone({ detail: r.data.detail, names: r.data.names || [], set: st.set });
       return;
     }
     if (r.status === 409 && r.data?.code === 'IMPORT_CHANGED') return reviewStep(error, true);
