@@ -380,3 +380,19 @@ test('round 7 review M2: a known gap (docs/workflows.md): a speaker with a role 
     assert.deepEqual(quotesIn(s), [], s);
   assert.deepEqual(said(`${Q} — Dana (finance lead)`), ['Exports take forever, honestly'], 'form (c) accepts it');
 });
+
+test('round 8 review M1: a screen word as an acronym, or in Title Case after an article or a modifier, names nobody; a personal name is checked', () => {
+  for (const s of [`The main CTA says: ${Q}`, `${Q} — Primary CTA`, `The Primary Button says: ${Q}`, `${Q} — Primary Button`]) assert.deepEqual(quotesIn(s), [], s);
+  assert.deepEqual(said(`${Q} — Larry Page`), ['Exports take forever, honestly']);
+});
+
+test('round 8 review M3: in form (b), "as" and "and" before a name are a speaker; before a lower-case word they are not', () => {
+  for (const s of ['"Exports take forever, honestly," as Dana said.', '"Exports take forever, honestly," and Dana said.'])
+    assert.deepEqual(said(s), ['Exports take forever, honestly'], s);
+  assert.deepEqual(quotesIn('Label the button "Export all invoices", as the brief says.'), []);
+});
+
+test('round 8 review M5: a sign-less price starting with a year-like amount is a number; a year folder is not', () => {
+  assert.deepEqual(numbersIn('Price 2000/user/year for 140 tickets.').map((x) => x.n), ['2000', '140']);
+  assert.deepEqual(numbersIn('Saved to 2026/reports/final for 140 tickets.').map((x) => x.n), ['140']);
+});
