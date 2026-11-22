@@ -34,6 +34,13 @@ project's working tree, so nothing is ever committed to your repo.
                                         an import made keeps the ticket's issue type and priority) and
                                         req_attachments.fetch_json (the tracker file a row comes from: the
                                         connection, the ticket key and the attachment id; NULL for an upload).
+                                        The tool panel's tab mirror (v97): tool_tabs (one row per chat or
+                                        project tab the page mirrors, and the tabs the assistant opened with
+                                        open_tab, undelivered until a page takes them in; never run tabs);
+                                        tool_tabs.target holds a Files tab's file or folder and line (JSON).
+                                        v98: designs.origin_thread_id (the chat that asked for the design).
+                                        v99: a design chat from before (ask_threads.mode 'design') becomes a
+                                        plain chat; its design still points at it (designs.thread_id)
   backup-<ts>/                          legacy JSON archived on first upgrade (see below)
   store/no-project-00000000/            runs without a project: one store, the History group "No project";
                                         a run's work/ moves into its pipeline folder as work/ when it ends
@@ -195,7 +202,7 @@ Everything that used to be a per-run `.json`/`.md` control file —
 plan/review **markdown**, `prompt.md`, and `extras/` remain on disk (their
 existence is indexed in the database).
 
-### Workflow history and versions (v96)
+### Workflow history and versions (v101)
 
 Behind the experimental flag `workflowTests`; the data is kept either way.
 
@@ -222,7 +229,7 @@ Behind the experimental flag `workflowTests`; the data is kept either way.
   Never a path, a display name, a colour, an icon or the order.
 - A loop's limit is part of the graph: the stored wire keeps it in `config.maxCycles` (with `config.onExhausted`).
 
-### Workflow tests (v97)
+### Workflow tests (v102)
 
 Behind the experimental flag `workflowTests`; the data is kept either way. No foreign keys, like `workflow_revisions`:
 a deleted workflow keeps its examples, and they come back with a workflow saved again under the same id.
@@ -264,9 +271,9 @@ a deleted workflow keeps its examples, and they come back with a workflow saved 
 - `workflow-tests/seen-connectors.json` (worcaHome): the claude.ai connector names Worca saw when a run started, so
   Test a version can name the ones a pretend try switches off.
 
-### Workflow tests on a project (v98)
+### Workflow tests on a project (v103)
 
-Behind the flag `workflowTests`, like v97. FK-free like the v97 tables.
+Behind the flag `workflowTests`, like v102. FK-free like the v102 tables.
 
 - `wf_test_example_projects`: one row per example that works on a project:
   - the project's key and its name when the start was pinned (`project_name`: shown when the project is no longer
@@ -322,7 +329,7 @@ Behind the flag `workflowTests`, like v97. FK-free like the v97 tables.
   `<worcaHome>/workflow-tests/no-auth/{gh,glab,az}`: empty config folders, so those CLIs have no sign-in in a try.
   `<worcaHome>/workflow-tests/no-hooks`: the empty `core.hooksPath` of Worca's own git in a try's copy.
 
-**Part 3b (no schema change: the schema stays at v98).**
+**Part 3b (no schema change: the schema stays at v103).**
 
 - `<worcaHome>/workflow-tests/before/`: "The command passes" run once on an example's start point, before the workflow
   changed anything.
@@ -343,9 +350,9 @@ Behind the flag `workflowTests`, like v97. FK-free like the v97 tables.
   try in the per-user temp folder; Worca removes it when the try ends, and at the next start it removes any a crash left
   that is older than a day.
 
-### Your criteria (v99)
+### Your criteria (v104)
 
-Behind the flag `workflowTests`, like v97. FK-free. The DDL of every workflow-tests table lives in
+Behind the flag `workflowTests`, like v102. FK-free. The DDL of every workflow-tests table lives in
 `src/core/workflow-tests/schema.mjs`.
 
 - `wf_test_examples` gains `criteria` (JSON: up to 12 `{ id, text }` sentences a good result makes true) and `judge` (JSON

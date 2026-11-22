@@ -189,11 +189,31 @@ Copilot cannot list its models) opens it on Model access with Copilot switched o
 page it came from.
 
 **Apply and Retry.** The first unfinished row shows a spinner. Each finished row shows Done, Failed, Skipped or
-Refused and its line. **Continue** closes the dialog. On a first start or a re-run, the welcome's three doors
-come next. A failed step that names a retry shows **Retry**, which resends the same answers from that step. The
+Refused and its line. When the Apply finishes OK the dialog shows the **ready screen** (below); its button closes
+the dialog. A failed step that names a retry shows **Retry**, which resends the same answers from that step. The
 dialog keeps no secret after the 202. The network group normally runs from Next on Network; when an Apply still
 carries it (a fix-it run that went straight to Review), a retry at `proxy-swap` or `proxy-login` reopens Network
 and asks for the proxy password again. A failed job without a retry, or a job Worca lost track of, shows **Back to review**.
+
+**The level line.** Under the progress bar, on every step before Apply, **Finish to earn your first level.** shows
+while the person holds no level (on a first start it also shows while the level view has not loaded). Someone who
+holds a level never sees it.
+
+**The ready screen.** The last screen, after an Apply that finished OK or a **Finish** with nothing to apply. The
+dialog first asks the app's `finishSetup()`, which posts `{ setupFinished: true }` to `/api/onboarding`, reads
+`/api/onboarding?recheck=1` (a fresh Claude sign-in) and then `/api/worca-level`, and answers
+`{ earned, held, level, missing, nextName, nextNeeds }`, or `null` when a call fails.
+
+- **Earned** (finishing earned level 1): the Curious avatar, "Level 1 of 5" and "Runner needs: Getting started
+  steps 1 to 6 and 3 real runs", with one primary button, **Start your first run**, which closes the dialog and
+  goes to `#new`. Painting the screen acknowledges the Curious celebration (`POST /api/worca-level/ack`) and sets
+  the session key `worca-level:shown-in-session`, so no way out leaves a celebration queued. **Share as team
+  setup** is not offered on a first start's earned screen.
+- **No provider** (`missing` has `provider`): "Sign in to a model provider to earn your first level." and **Continue**.
+- **Anything else** (a re-run by someone who holds a level, or a `null` answer): no level line and **Continue**.
+
+`onClose(how, { applied, next, readyShown })` carries the hash to open (`next`) and whether a ready screen painted.
+A first start shows the welcome only when none did.
 
 ## Team setup
 

@@ -3,7 +3,7 @@
 // Boots the real express app (imported ⇒ no port bind) against a sandboxed WORCA_HOME.
 import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
-import http from 'node:http';
+import { appServer } from './helpers/app-server.mjs';
 import { mkdtemp, mkdir, writeFile, readFile, realpath } from 'node:fs/promises';
 import { execFileSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
@@ -21,7 +21,7 @@ const call = async (method, p, b) => {
 
 before(async () => {
   const { app } = await import('../ui/server.mjs');
-  srv = http.createServer(app);
+  srv = appServer(app);
   await new Promise((r) => srv.listen(0, '127.0.0.1', r));
   base = `http://127.0.0.1:${srv.address().port}`;
   repo = await realpath(await mkdtemp(join(tmpdir(), 'worca-api-mcpjson-')));

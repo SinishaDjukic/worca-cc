@@ -64,13 +64,13 @@ and pinned routes). See [split-by-feature.md](split-by-feature.md).
 | `ui/public/chat/run-progress.css` | 173 |
 | `ui/public/chat/run-proposal.css` | 125 |
 | `ui/public/chat/workflow-card.css` | 253 |
-| `ui/routes/chat/ask.mjs` | 258 |
-| `ui/routes/chat/groups.mjs` | 134 |
+| `ui/routes/chat/ask.mjs` | 270 |
+| `ui/routes/chat/groups.mjs` | 136 |
 | `ui/routes/chat/pinpoint.mjs` | 118 |
 | `ui/routes/chat/status.mjs` | 51 |
-| `ui/routes/chat/thread-cards.mjs` | 729 |
+| `ui/routes/chat/thread-cards.mjs` | 794 |
 | `ui/routes/chat/thread-turns.mjs` | 363 |
-| `ui/routes/chat/threads.mjs` | 348 |
+| `ui/routes/chat/threads.mjs` | 384 |
 
 ## new-run
 
@@ -112,7 +112,7 @@ and pinned routes). See [split-by-feature.md](split-by-feature.md).
 | `ui/public/runs/running-detail-question.css` | 63 |
 | `ui/public/runs/running-detail-tab.css` | 145 |
 | `ui/public/runs/running-redesign.css` | 193 |
-| `ui/public/runs/runs.html` | 395 |
+| `ui/public/runs/runs.html` | 391 |
 | `ui/public/runs/smart-naming.css` | 19 |
 | `ui/public/runs/step-log-drawer.css` | 42 |
 | `ui/public/runs/tags-and-labels.css` | 68 |
@@ -120,7 +120,7 @@ and pinned routes). See [split-by-feature.md](split-by-feature.md).
 | `ui/public/runs/workflow-question.css` | 70 |
 | `ui/routes/runs/artifacts.mjs` | 184 |
 | `ui/routes/runs/checkout-and-actions.mjs` | 581 |
-| `ui/routes/runs/control.mjs` | 226 |
+| `ui/routes/runs/control.mjs` | 229 |
 | `ui/routes/runs/drain-and-budget.mjs` | 31 |
 | `ui/routes/runs/folder-apply.mjs` | 90 |
 | `ui/routes/runs/labels-and-tags.mjs` | 148 |
@@ -128,7 +128,7 @@ and pinned routes). See [split-by-feature.md](split-by-feature.md).
 | `ui/routes/runs/publish.mjs` | 117 |
 | `ui/routes/runs/report.mjs` | 95 |
 | `ui/routes/runs/run-groups.mjs` | 185 |
-| `ui/routes/runs/runs.mjs` | 397 |
+| `ui/routes/runs/runs.mjs` | 403 |
 
 ## history
 
@@ -159,18 +159,19 @@ and pinned routes). See [split-by-feature.md](split-by-feature.md).
 | `ui/public/settings/budget-readout.css` | 8 |
 | `ui/public/settings/info-tooltips.css` | 180 |
 | `ui/public/settings/settings-cards.css` | 36 |
-| `ui/public/settings/settings.html` | 967 |
+| `ui/public/settings/settings.html` | 984 |
 | `ui/public/settings/update.html` | 50 |
 | `ui/routes/settings/config.mjs` | 194 |
 | `ui/routes/settings/memory.mjs` | 141 |
 | `ui/routes/settings/notifications-and-onboarding.mjs` | 94 |
-| `ui/routes/settings/settings.mjs` | 247 |
+| `ui/routes/settings/settings.mjs` | 252 |
 
 ## artifacts
 
 | File | Lines |
 |---|---|
 | `ui/public/artifacts/markdown-body.css` | 13 |
+| `ui/public/artifacts/office-lite.css` | 35 |
 | `ui/public/artifacts/per-step.css` | 66 |
 | `ui/public/artifacts/saved-markdown-viewer.html` | 18 |
 | `ui/public/artifacts/saved-markdown.css` | 20 |
@@ -395,14 +396,14 @@ and pinned routes). See [split-by-feature.md](split-by-feature.md).
 
 | File | Lines |
 |---|---|
-| `ui/public/terminal/terminal-pane.css` | 63 |
+| `ui/public/terminal/terminal-pane.css` | 163 |
 | `ui/routes/terminal/terminal.mjs` | 57 |
 
 ## actions ([actions.md](actions.md))
 
 | File | Lines |
 |---|---|
-| `ui/public/actions/actions-run.css` | 121 |
+| `ui/public/actions/actions-run.css` | 124 |
 | `ui/public/actions/actions-workspace.css` | 63 |
 | `ui/routes/actions/launchers.mjs` | 72 |
 
@@ -426,3 +427,9 @@ and pinned routes). See [split-by-feature.md](split-by-feature.md).
 |---|---|
 | `ui/public/git-automations/automation-settings.css` | 8 |
 | `ui/routes/git-automations/automations.mjs` | 162 |
+
+## tool-panel
+
+| File | Lines |
+|---|---|
+| `ui/routes/tool-panel/files.mjs` | 224 |

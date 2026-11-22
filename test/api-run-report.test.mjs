@@ -6,7 +6,7 @@
 // port), an ephemeral http server and real fetch.
 import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
-import http from 'node:http';
+import { appServer } from './helpers/app-server.mjs';
 import { join } from 'node:path';
 import { seedPipeline } from './helpers/db-seed.mjs';
 import { useTempHome } from './helpers/temp-home.mjs';
@@ -27,7 +27,7 @@ before(async () => {
     totalCostUsd: 2.5, totalActiveMs: 300000,
   }));
   const { app } = await import('../ui/server.mjs');  // imported => no port bind
-  srv = http.createServer(app);
+  srv = appServer(app);
   await new Promise((r) => srv.listen(0, '127.0.0.1', r));
   base = `http://127.0.0.1:${srv.address().port}`;
 });

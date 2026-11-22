@@ -273,7 +273,8 @@ test('a Needs-you question row for the run already open lands the pane on its qu
   window.Element.prototype.scrollIntoView = function () { scrolled += 1; };
   click(window, doc.querySelector('#runs-list .runs-sec[data-section="needs"] a.runs-row[data-run-id="q1"]')); await settle(window);
   assert.equal(window.location.hash, '#running/q1');
-  assert.equal(screen.dataset.mode, 'glance');
+  assert.equal(screen.dataset.mode, 'details', 'one level: the run page is Details');
+  assert.ok(screen.querySelector('.rd-details .rd-questions'), 'the question sits in Details, above the tabs body');
   assert.ok(scrolled > 0, 'scrolled to the question without waiting for a panel rebuild');
 });
 
@@ -810,7 +811,10 @@ test('group Stop: one confirm that says it cannot be undone; the body names the 
 });
 
 test('Archive skips a live run and names it; Undo restores the archived ones', async () => {
-  const { window, doc, recv, posts } = await boot({ bulk: (body) => (body.action === 'archive'
+  // The tool panel's tabs (issue 1064): the archived run's go, the skipped live run's stay.
+  const tools = { v: 1, tabs: [{ id: 'tab_arch1', kind: 'files', scope: { type: 'run', id: 'aaaa0001' }, state: {}, at: 1 },
+    { id: 'tab_live1', kind: 'files', scope: { type: 'run', id: 'r1' }, state: {}, at: 2 }], active: {}, prefs: { open: false, width: 460 } };
+  const { window, doc, recv, posts } = await boot({ storage: { 'worca-cc.tools': JSON.stringify(tools) }, bulk: (body) => (body.action === 'archive'
     ? { ok: true, action: 'archive', done: [{ id: 'aaaa0001', title: 'Merged thing' }], cancelled: [], skipped: [{ id: 'r1', title: 'r1', reason: 'still running' }] }
     : { ok: true, action: 'restore', done: [{ id: 'aaaa0001' }], cancelled: [], skipped: [] }) });
   recv({ type: 'hello', runs: [live('r1')] });
@@ -827,6 +831,7 @@ test('Archive skips a live run and names it; Undo restores the archived ones', a
   const toast = doc.querySelector('#toasts .toast');
   assert.equal(toast.querySelector('.tt').textContent, 'Archived 1 run');
   assert.match(toast.querySelector('.td').textContent, /r1 \(still running\)/);
+  assert.deepEqual(JSON.parse(window.localStorage.getItem('worca-cc.tools')).tabs.map((t) => t.id), ['tab_live1'], 'the archived run\'s tool tabs closed');
   click(window, toast.querySelector('.toast-act'));
   await settle(window, 8);
   assert.deepEqual(posts.at(-1), { action: 'restore', targets: [{ pipelineId: 'aaaa0001' }], groups: [] });

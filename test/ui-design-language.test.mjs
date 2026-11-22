@@ -302,9 +302,9 @@ test('tabs: one underline .tab at 32px; no boxed or per-view tab skin (A3)', () 
 // role="tablist" names .tabs, within the few lines that build it. Allowed, each with its reason:
 const TABLIST_OK = [
   /class="(?:rd|hd|pd|tp)-tabs"/,   // initDetailTabs hosts: `bar.classList.add('tabs')` when the screen renders
-  /make\('div', 'term-tabs'\)/,       // terminal-pane.mjs: the terminal strip is a browser-style tab row, not the underline
+  /make\('div', 'tool-tabs'\)/,       // tool-panel.mjs: the tool strip is a browser-style tab row, not the underline
 ];
-const TAB_OK = [/button\(text, 'term-tab'/];   // the terminal's own tabs, same reason
+const TAB_OK = [/make\('button', 'tool-tab'\)/];   // the tool panel's own tabs, same reason
 const ROLE_TAB = /role(?:'\s*,\s*'|=")(tab|tablist)['"]/;
 const classTok = (w) => new RegExp(`['"\`][^'"\`\\n]*(?<![\\w-])(?:${w})(?![\\w-])[^'"\`\\n]*['"\`]`);
 function tabEmitterHits(files) {

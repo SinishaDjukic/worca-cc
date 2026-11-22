@@ -22,18 +22,12 @@ function ruleBody(selector) {
 }
 
 describe('readiness CSS', () => {
-  it('defines the chip and its three tone classes', () => {
-    for (const sel of ['.pl-rd', '.rd-ready', '.rd-partial', '.rd-not-ready']) {
-      assert.ok(bare.includes(sel), `${sel} missing`);
-    }
-  });
-
-  it('.pl-rd is an inline-flex pill', () => {
+  it('the chips are the shared chip: no size, shape or font of their own', () => {
     const body = ruleBody('.pl-rd');
     assert.ok(body, '.pl-rd rule missing');
-    assert.match(body, /display:inline-flex/);
-    assert.match(body, /align-items:center/);
-    assert.match(body, /border-radius:/);
+    assert.doesNotMatch(body, /height:|border-radius:|font:|padding:/, 'design-system.css\'s one chip rule sets these');
+    assert.equal(ruleBody('.rd-lbl'), null, 'the level label has no rule of its own');
+    assert.doesNotMatch(listPart, /\.rd-(ready|partial|not-ready|unused)\b/, 'the tones are .badge green / amber / red / grey');
     assert.doesNotMatch(body, /cursor:pointer/, 'the row chip is status only');
     assert.match(ruleBody('.pd-rd-slot .pl-rd') ?? '', /cursor:pointer/, 'the header chip opens the report');
   });
@@ -43,7 +37,7 @@ describe('readiness CSS', () => {
     assert.match(body, /display:flex/);
     assert.match(body, /flex-wrap:wrap/);
     assert.match(body, /align-items:center/);
-    assert.match(ruleBody('.pl-rd') ?? '', /height:20px/, 'smaller than the name line, so it does not grow the row');
+    assert.match(css, /:is\(\.badge,[^)]*\)\{[^}]*height:18px/, 'the shared 18px chip: smaller than the name line, so it does not grow the row');
   });
 
   it('going to the Settings card lands its head below the pinned project tabs (74px)', () => {
@@ -51,19 +45,28 @@ describe('readiness CSS', () => {
     assert.ok(m && Number(m[1]) >= 84, 'scroll-margin-top clears the sticky .pd-tabs');
   });
 
-  it('ready uses green tokens, partial amber, not-ready red, unused grey', () => {
-    assert.match(ruleBody('.rd-ready') ?? '', /var\(--green-bg\)/);
-    assert.match(ruleBody('.rd-ready') ?? '', /var\(--green-ink\)/);
-    assert.match(ruleBody('.rd-partial') ?? '', /var\(--amber-bg\)/);
-    assert.match(ruleBody('.rd-partial') ?? '', /var\(--amber-ink-strong\)/);
-    assert.match(ruleBody('.rd-not-ready') ?? '', /var\(--red-bg\)/);
-    assert.match(ruleBody('.rd-not-ready') ?? '', /var\(--red-ink-strong\)/, 'the AA red text shade on --red-bg');
-    assert.match(ruleBody('.rd-not-ready .rd-n') ?? '', /var\(--red-ink-strong\)/);
-    assert.match(ruleBody('.rd-unused') ?? '', /var\(--field\)/);
+  it('amber and red chips take the AA -ink-strong text shade; the count disc matches', () => {
+    assert.match(ruleBody('.rd-lbl.amber') ?? '', /color:var\(--amber-ink-strong\)/);
+    assert.match(ruleBody('.rd-lbl.red') ?? '', /color:var\(--red-ink-strong\)/, 'the AA red text shade on --red-bg');
+    assert.match(listPart, /\.pl-rd\.amber,\.rd-lbl\.amber\{/, 'the row chip and the label share the rule');
+    assert.match(listPart, /\.pl-rd\.red,\.rd-lbl\.red\{/);
+    assert.match(ruleBody('.pl-rd.amber .rd-n') ?? '', /var\(--amber-ink-strong\)/);
+    assert.match(ruleBody('.pl-rd.red .rd-n') ?? '', /var\(--red-ink-strong\)/);
+  });
+
+  it('a failing check\'s .issue-sev chip takes the AA text shade of its tone', () => {
+    assert.match(ruleBody('.rp-chk.sev-critical .issue-sev') ?? '', /color:var\(--red-ink-strong\)/);
+    assert.match(ruleBody('.rp-chk.sev-minor .issue-sev') ?? '', /color:var\(--amber-ink-strong\)/);
+    assert.match(ruleBody('.rp-chk.sev-suggestion .issue-sev') ?? '', /color:var\(--blue-ink-strong\)/);
+  });
+
+  it('the boxes use the shared .disclosure: no hand-drawn chevron, tick or dot', () => {
+    assert.doesNotMatch(listPart, /\.rp-(chev|tick|gdot|sevdot)\b/);
+    assert.doesNotMatch(listPart, /-webkit-details-marker|list-style:none;[^}]*cursor:pointer/, '.disclosure hides the marker');
   });
 
   it('labels have no border, ring or dot', () => {
-    for (const sel of ['.pl-rd', '.pl-rd:hover', '.rd-lbl']) {
+    for (const sel of ['.pl-rd', '.pl-rd:hover']) {
       const body = ruleBody(sel) || '';
       assert.doesNotMatch(body, /box-shadow|border:/, `${sel} has no ring or border`);
     }
@@ -111,7 +114,7 @@ describe('readiness CSS', () => {
     for (const block of readinessBlocks) {
       for (const [, sel, body] of block.matchAll(/([^{}]+)\{([^}]*)\}/g)) {
         if (!body.includes('--ink-3')) continue;
-        assert.ok(['.rp-sevdot.info', '.rp-gdot'].includes(sel.trim()), `${sel.trim()} uses --ink-3`);
+        assert.ok(['.rp-lead.is-none'].includes(sel.trim()), `${sel.trim()} uses --ink-3`);
       }
     }
   });

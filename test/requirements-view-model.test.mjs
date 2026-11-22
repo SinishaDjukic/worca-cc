@@ -395,12 +395,12 @@ const BRIEF_EST = (usdv, rec) => ({ brief: usdv && typeof usdv === 'object' ? us
 const FILES = [{ name: 'notes.txt', kind: 'text', bytes: 900 }, { name: 'spec.pdf', kind: 'pdf', bytes: 90000 },
   { name: 'mockup.png', kind: 'image', bytes: 5000 }, { name: 'big.txt', kind: 'text', bytes: 60000 }];
 
-test('modelChip: a button.chip with aria-haspopup=dialog, the label and a chevron', () => {
+test('modelChip: a .btn .btn-sm with aria-haspopup=dialog, the label and a chevron', () => {
   let opened = 0;
   const b = modelChip(document, { modelLabel: 'GPT-5.6 Sol on OpenAI Codex' }, () => { opened += 1; });
   assert.equal(b.tagName, 'BUTTON');
   assert.equal(b.type, 'button');
-  assert.ok(b.classList.contains('chip'));
+  assert.ok(b.classList.contains('btn') && b.classList.contains('btn-sm') && !b.classList.contains('chip'), 'the shared small button, not a chip');
   assert.equal(b.getAttribute('aria-haspopup'), 'dialog');
   assert.equal(text(b), 'GPT-5.6 Sol on OpenAI Codex');
   assert.equal(b.querySelector('svg').getAttribute('aria-hidden'), 'true');
@@ -537,7 +537,7 @@ const openFeature = async ({ f = F9(), confirm, extra = {}, turns = [] } = {}) =
 };
 const dialogEl = () => document.querySelector('[role="dialog"][aria-labelledby]');
 const putCalls = (calls) => calls.filter((c) => c.method === 'PUT');
-const chipsOf = (host) => [...host.querySelectorAll('.req-chips > .chip')];
+const chipsOf = (host) => [...host.querySelectorAll('.req-chips > *')];   // the chips and the cost and model buttons, in row order
 
 test('feature page: the model chip follows the cost chip, names the model and harness; the cost chip says ≈ when estimated', async () => {
   const { host } = await openFeature();

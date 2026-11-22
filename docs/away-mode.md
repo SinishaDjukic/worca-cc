@@ -9,8 +9,10 @@ Away mode is on during your away hours, or once you turn on **Away** in the acco
 the sidebar). While it's on, Worca answers what a run would otherwise wait on: clarifying questions, mid-step
 questions, input forms, review-loop gates, proposed workflows and retries of failed steps.
 
-On a Shaper run you still answer what to build: Clarify, Requirements, and any plan whose check did not pass.
-Worca approves the outline and the plans whose checks passed, and flags concerns *please check*.
+On a Shaper run Worca answers every stop too: Clarify, Requirements, the slice outline and each plan. A passing check
+is approved; a failing one goes back once with the check's findings, then is approved as written. Every answer that
+decides what to build is flagged *please check*. Two stops still wait for you: **Ask me before each run**, because you
+set it yourself, and Requirements whose check still fails, because they cannot be approved.
 
 When the agent is sure enough of its own recommendation, Worca trusts it. Otherwise a read-only review, on the
 run's engine, scores each option. It can only read files. It weighs each option against your Worca memory, how
@@ -50,9 +52,10 @@ Your own cost caps always hold. Worca goes past the team's soft cap only if you 
 
 ## Every answer on record
 
-The run page lists *Answered for you*, one group per ask: the question, the answer, the reason and the model that
-decided. Answers to check are marked and listed first. A note above the list reads like "5 answers while you were
-away — 2 to check".
+The run card carries a note like "Away mode: 5 answers while you were away — 2 to check". Its **See the answers**
+opens the Q&A tab, where each answered question says who answered it. Its **Answered for you** list holds every other
+answer: review-loop gates, proposed workflows, retries and each Shaper stop, with what Worca did and why, the ones to
+check marked. The run's cost breakdown counts what the Away mode reviews cost.
 
 A short notice tells you when away hours start and end, and a violet dot sits on your avatar while you're away.
 Turning **Away** off in the account menu ends it.

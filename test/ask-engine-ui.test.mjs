@@ -1,7 +1,7 @@
 // test/ask-engine-ui.test.mjs — the panel's engine helpers (cascading-settings-design.md §6 Ask, D12, D16).
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { engineOfEntry, chatEngineOf, pickerGroups, attachRefusal, engineSwitchConfirm, readEnginePicks, rememberEnginePick, engineLead, switchEffort, pickerEngineName, pickerEngineLabel } from '../ui/public/ask-engine.mjs';
+import { engineOfEntry, chatEngineOf, chatSpawnsAgents, pickerGroups, attachRefusal, engineSwitchConfirm, readEnginePicks, rememberEnginePick, engineLead, switchEffort, pickerEngineName, pickerEngineLabel } from '../ui/public/ask-engine.mjs';
 import { chatSwitchChanges } from '../src/shared/engine-switch.mjs';
 
 const CAT = { models: [{ id: 'claude-opus-5-5', label: 'Opus 5.5' }, { id: 'gpt-5.5', label: 'GPT-5.5', engine: 'codex' }] };
@@ -104,6 +104,13 @@ test('engineLead: a hidden model or one that needs a sign-in never leads; the de
   assert.equal(engineLead([{ id: 'gpt-5.5' }, { id: 'gpt-5.4', hidden: true }], { model: 'gpt-5.4' }, def).id, 'gpt-5.5');
   assert.equal(engineLead([{ id: 'gpt-5.5' }, { id: 'gpt-5.4', needsSignIn: true }], { model: 'gpt-5.4' }, def).id, 'gpt-5.5');
   assert.equal(engineLead([{ id: 'gpt-5.5', hidden: true }], null, def), null);
+});
+
+test('chatSpawnsAgents: a plain chat on Claude only (a chat with a design is one); the Workflows chat and every other engine start none', () => {
+  assert.equal(chatSpawnsAgents(null, 'claude'), true);
+  assert.equal(chatSpawnsAgents(undefined, 'claude'), true);
+  assert.equal(chatSpawnsAgents('composer', 'claude'), false, 'the Workflows chat');
+  for (const engine of ['codex', 'copilot', 'cursor', 'gemini', 'qwen', 'opencode', 'goose', null]) assert.equal(chatSpawnsAgents(null, engine), false, String(engine));
 });
 
 test('pickerEngineLabel: the Copilot engine is named as the Copilot CLI, so it never reads like the GitHub Copilot provider', () => {

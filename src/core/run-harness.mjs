@@ -37,7 +37,7 @@ import {
   assembleResults, persistResults, persistDiffPatch, buildPerProject, rollupSummary,
   retainedWorkPatchName, sizeOfChange,
 } from './results.mjs';
-import { reportedAuditLine, resolveTaskInput, retryWriteback, sourcePlaceholderTitle, ticketRunTitle } from './sources.mjs';
+import { reportedAuditLine, reportRunEvent, resolveTaskInput, retryWriteback, sourcePlaceholderTitle, ticketRunTitle } from './sources.mjs';
 import { projectKey, projectStorePath, workspaceStorePath, noProjectWorkDir, isNoProjectWorkDir } from './store.mjs';
 import { NO_PROJECT_KEY, NO_PROJECT_NAME, NO_PROJECT_ERRORS, WORK_DIR_NAME, isNoProjectKey } from '../shared/no-project.mjs';
 import { harvestWork, ownWorkDir, WORK_ARTIFACT_KIND } from './no-project-work.mjs';
@@ -331,6 +331,11 @@ export function roundUsd(n) {
 /** Session records a pause or a crash must find in the row (Task 43; C43: `member_bound` keeps an epoch's first host id). */
 const SESSION_PERSIST_KINDS = new Set(['open', 'degrade', 'member_bound', 'turn_end', 'rotate', 'restart', 'pause', 'close']);
 
+/** The attached-requirements option as a fresh list of plain copies: anything that is not a list of objects is none. */
+function attachedList(raw) {
+  return Array.isArray(raw) ? raw.filter((item) => item && typeof item === 'object').map((item) => ({ ...item })) : [];
+}
+
 /** A usage of either shape (API, the session demux's {in,out,cr,cw}, Ask's) with the API keys config.mjs resolveModelCost
  *  prices, `cache_creation` buckets kept (session groups, Task 42). */
 function apiUsage(u) {
@@ -368,6 +373,20 @@ export function sumStepActive(steps) {
     if (Number.isFinite(s?.activeMs)) sum += s.activeMs;
   }
   return sum;
+}
+
+/**
+ * The run clock a resumed run continues from. A row with no figure (a run saved before the
+ * clock existed) continues from its summed step time, so its headline does not restart near 0.
+ * Otherwise the folded figure plus the tail a crash never folded: work up to `anchor` (the last
+ * heartbeat, or the pause stamp), never past `now`; the rest of the gap was parked.
+ * @param {{elapsedMs?:number, elapsedSince?:number|null, anchor:number, now:number, stepSum:number}} p
+ * @returns {number}
+ */
+export function resumedElapsedMs({ elapsedMs, elapsedSince, anchor, now, stepSum }) {
+  if (!(elapsedMs > 0) && elapsedSince == null) return stepSum;
+  const tail = elapsedSince != null && Number.isFinite(anchor) ? Math.max(0, Math.min(anchor, now) - elapsedSince) : 0;
+  return (elapsedMs || 0) + tail;
 }
 
 export function isAbort(err) {
@@ -1103,6 +1122,9 @@ export class RunHarness extends EventEmitter {
     // Shape it first (spec D5): { perspectives } for a shaped run, null otherwise. NOT `this.shape` — the
     // orchestrator's Auto path already uses "shape" for the classifier's shape.
     this.runShape = this.opts.shape || this.resumeOpts?.resumePoint?.shape || null;
+    // Requirements features attached at start ([{seq,id,title,version,ready,criteriaCount,agreed}]): the agreement gate
+    // asks before the first node. A resumed run reads the list back from its point, with the agreements already given.
+    this.attachedRequirements = attachedList(this.opts.attachedRequirements ?? this.resumeOpts?.resumePoint?.attachedRequirements);
     // Shaper D28: the recorded half of shapeStats (questions, revises, score); null on an unshaped run.
     // A resumed run reads it back from its row (shape_stats).
     this._shapeRec = this.runShape ? shapeRecordFrom(safeParse(this.resumeOpts?.row?.shape_stats)) : null;
@@ -1112,6 +1134,7 @@ export class RunHarness extends EventEmitter {
       if (reason) throw new Error(reason);
     }
     this.pendingQuestion = null; // { id, resolve, reject, kind }
+    this._asksWaiting = 0;       // asks parked on a person right now; the run clock stands while it is > 0
     this._recovery = null;      // class -> in-flight Promise<'retry'|'pause'> (same-class dedupe)
     this._askTail = null;       // serializes _ask: ONE prompt open at a time (recovery + step questions)
     this._recoverySeq = 0;      // monotonic id source for recovery prompts (determinism-safe)
@@ -1179,6 +1202,8 @@ export class RunHarness extends EventEmitter {
       pipelineDir: null,
       totalCostUsd: 0,  // cumulative actual spend (sum of steps[].costUsd)
       totalActiveMs: 0, // cumulative active processing time (sum of steps[].activeMs)
+      elapsedMs: 0,       // the run clock, folded: 1 s per real second while the run works, parallel work counted once
+      elapsedSince: null, // epoch ms the run clock has been running since; null while parked (question, pause, ended)
       branch: this.workMode !== 'git' ? { workMode: this.workMode, runRootMode: 'detached' } : null,     // { source, feature, worktreeDir, reusedExisting } after _setupRunRoot
       // Per-member maps, initialized HERE (not lazily) so getState()'s snapshot
       // shape is stable across modes and targets. Without this a single-project
@@ -1398,6 +1423,7 @@ export class RunHarness extends EventEmitter {
     if (pq.kind === 'workflow') line = `Workflow proposal **${d === 'decline' ? 'declined' : d || 'answered'}**`;
     else if (pq.kind === 'gate') line = `Gate **${d || 'answered'}**`;
     else if (pq.kind === 'recovery') line = `Recovery decision **${d || 'answered'}**`;
+    else if (pq.kind === PLAN_ASK_KIND && pq.plan?.attached) line = `Attached requirements **${d === 'approve' ? 'agreed' : d || 'answered'}**`;
     else if (pq.kind === PLAN_ASK_KIND && pq.plan?.outline) line = `Slice outline **${d || 'answered'}** (round ${pq.plan.round || 1})`;
     else if (pq.kind === PLAN_ASK_KIND && pq.concern) line = `Plan concern **${d === 'revise' ? 'accepted' : d === 'approve' ? 'overridden' : d || 'answered'}**`;
     else if (pq.kind === PLAN_ASK_KIND) line = `Plan approval **${d || 'answered'}**`;
@@ -1526,7 +1552,11 @@ export class RunHarness extends EventEmitter {
    * credential broker): the whole loop runs inside that async context.
    */
   run() {
-    return withBillTo(this.opts.startedBy || currentBillTo(), () => this._run());
+    // The started comment (#1456) is posted without blocking the work; run() never settles with it still in flight — a manual
+    // or DRAIN pause skips _reportToSource, so nothing else would wait for it.
+    return withBillTo(this.opts.startedBy || currentBillTo(), async () => {
+      try { return await this._run(); } finally { await this._startedReport; }
+    });
   }
 
   async _run() {
@@ -1735,6 +1765,9 @@ export class RunHarness extends EventEmitter {
 
       // 2b) The run queue (Settings › Runs › Machine load): wait for a free slot before any heavy work.
       await this._takeRunSlot();
+      // The ticket's "started" comment (#1456): fresh runs only (a resume never gets here), not awaited so a slow tracker
+      // never delays the work; every later report waits for it, so it stays the first comment.
+      this._startedReport = this._reportToSource('started');
 
       // 3) Ensure a git repo + checkpoint commit (per member on a workspace run).
       if (this.isWorkspace) await this._ensureGitCheckpointAll();
@@ -1936,7 +1969,7 @@ export class RunHarness extends EventEmitter {
         // existed. The terminal `done` event is emitted AFTER it so the History row never
         // paints as "no diff captured" for the tick before the artifact lands.
         await this._buildResults({ stage: true });
-        await this._reportToSource(); // statusToResult('error') -> 'failed' (design PR12: no longer success-only)
+        await this._reportToSource(); // eventForStatus('error') -> 'failed' (design PR12: no longer success-only)
       }
       await this._recordRunMetrics('error', err);
       this._emit('done', {
@@ -2041,6 +2074,10 @@ export class RunHarness extends EventEmitter {
         return { ...s, activeMs: (s.activeMs || 0) + Math.max(0, Math.min(anchor, now) - s.runningSince), runningSince: null };
       });
       this.state.totalActiveMs = sumStepActive(this.state.steps);
+      // The run clock continues from the saved figure (the same anchor credits a crashed tail);
+      // it stays parked here, and the _setStatus('running') below starts it.
+      this.state.elapsedMs = resumedElapsedMs({ elapsedMs: row.elapsed_ms, elapsedSince: row.elapsed_since, anchor, now, stepSum: this.state.totalActiveMs });
+      this.state.elapsedSince = null;
       // The total is Σ steps (I2): rehydrate it with them, or the first persist of a resumed run writes
       // $0 and a resumed run that books nothing new finishes at $0 while its ledger keeps the spend.
       this.state.totalCostUsd = sumStepCosts(this.state.steps);
@@ -2267,7 +2304,7 @@ export class RunHarness extends EventEmitter {
         // existed. The terminal `done` event is emitted AFTER it so the History row never
         // paints as "no diff captured" for the tick before the artifact lands.
         await this._buildResults({ stage: true });
-        await this._reportToSource(); // statusToResult('error') -> 'failed' (design PR12: no longer success-only)
+        await this._reportToSource(); // eventForStatus('error') -> 'failed' (design PR12: no longer success-only)
       }
       await this._recordRunMetrics('error', err);
       this._emit('done', { status: 'error', pipelineDir: this.pipeline?.dir || null });
@@ -6763,6 +6800,7 @@ export class RunHarness extends EventEmitter {
     });
     this._metricsIv.questions += 1;
 
+    let parked = false;   // this ask stopped the run clock (a person must answer); released in the finally
     try {
       // A night-eligible --yes run hands the ask to night mode: it is answered through the
       // same pendingQuestion + answer() path below (delay 0), so it is attributed and audited.
@@ -6797,7 +6835,14 @@ export class RunHarness extends EventEmitter {
         // An outline ask keeps its marker and round, so _auditDecision can word its answer (F38).
         this.pendingQuestion = { id, kind, resolve: resolveP, reject: rejectP, validate: typeof validate === 'function' ? validate : null,
           ...(plan && plan.outline ? { plan: { outline: true, round: plan.round } } : {}),
+          ...(plan && plan.attached ? { plan: { attached: true } } : {}),
           ...(concern ? { concern: true } : {}) };
+        // A person must answer: the run clock stands until the last waiting ask is released.
+        parked = true;
+        this._asksWaiting += 1;
+        this._runClockPause();
+        this._emit('state', this.getState());
+        this._persist().catch(() => {});
         // A throw inside a Promise executor REJECTS the ask (and fails the node): night mode
         // must never break a question the user could still answer.
         const nq = { id, kind, questions, issues, recovery, wireId, executionId, deliveryNo, holdNo, workflow, plan, concern, form, version, answerSchema, autoValues, nodeId, agent, origin };
@@ -6822,8 +6867,15 @@ export class RunHarness extends EventEmitter {
       const stillRunning = ['stopped', 'error', 'pausing', 'paused'].includes(this.state.status)
         ? []
         : frozen.filter((key) => this.state.steps.find((s) => s.key === key)?.status === 'start');
-      if (stillRunning.length) {
-        for (const key of stillRunning) this._clockResume(key);
+      // The run clock restarts with the LAST waiting ask, and only on a run that still runs
+      // (a stop or pause already folded it); before the step clocks, so no step runs without it.
+      let restarted = false;
+      if (parked) {
+        this._asksWaiting -= 1;
+        if (this._asksWaiting === 0 && this.state.status === 'running') { this._runClockResume(); restarted = true; }
+      }
+      for (const key of stillRunning) this._clockResume(key);
+      if (restarted || stillRunning.length) {
         this._emit('state', this.getState());
         this._persist().catch(() => {});
       }
@@ -6856,13 +6908,13 @@ export class RunHarness extends EventEmitter {
     } catch { return false; }
   }
 
-  /** A person answers what to build, Away handles how: the plan asks planRule declines, and Clarify on a shaped run.
+  /** The plan asks planRule declines: on a Shaper run only a Requirements hold whose check still fails; elsewhere the
+   *  ones it always declined.
    *  Decided at arm time, so such an ask never counts down, never starts the away stretch and cannot hit a limit's pause.
    *  Never under --yes: that run's asks go the way they always did. */
   _nightLeavesToPerson(q) {
     if (this.auto) return false;
-    if (q.kind === PLAN_ASK_KIND) return planRule(q) === null;
-    return Boolean(this.runShape) && (q.kind === 'clarify' || (q.kind === 'form' && q.origin === 'clarify'));
+    return q.kind === PLAN_ASK_KIND && planRule(q, { shaped: Boolean(this.runShape) }) === null;
   }
 
   /** Schedule (or re-schedule) the decision for the open question. `q` = a newly opened ask. */
@@ -6989,6 +7041,7 @@ export class RunHarness extends EventEmitter {
       config,
       analyze: (qs) => this._nightAnalyze(qs, q, analysis),
       gateCyclesUsed: (wireId) => (this.pipeline?.id ? nightGateCycles(this.pipeline.id, wireId) : 0),
+      shaped: Boolean(this.runShape),
       budget: config.spendCapUsd != null ? { spent: this._nightSpentUsd(config), cap: config.spendCapUsd } : null,
       // sleepAbortable RESOLVES early on a pause; pause() has then nulled pendingQuestion, so
       // the check below drops the decision.
@@ -7608,7 +7661,7 @@ export class RunHarness extends EventEmitter {
   /**
    * Task-source write-back (spec §7.5): report the finished run to the plugin
    * source that produced it. Runs on EVERY terminal path and ALWAYS after
-   * _buildResults() — done (statusToResult -> 'completed'), stopped/launch-error
+   * _buildResults() — done (eventForStatus -> 'completed'), stopped/launch-error
    * (-> 'failed'; chat-connectivity design PR12 closed the old success-only gap),
    * and error-pauses (-> 'needs-human', from _completePaused).
    * So the payload is the same SHAPE on all three: retryWriteback reads
@@ -7621,19 +7674,28 @@ export class RunHarness extends EventEmitter {
    * button). Prompt/markdown
    * runs skip inside retryWriteback before any work — feature-off runs pay
    * nothing here. Bounded by the shim's per-op timeout.
+   *
+   * `event` (#1456): 'started' posts the run's start comment (no "Report result" retry exists for it, so its warning offers
+   * none). Every other report first waits for an in-flight start comment (it never rejects), so the start stays first.
+   * @param {'started'} [event]  omitted: the terminal or pause result the row's status stands for
    */
-  async _reportToSource() {
+  async _reportToSource(event = undefined) {
     if (!this.pipeline) return;
+    if (event !== 'started') await this._startedReport;
     try {
-      const outcome = await retryWriteback(this.pipeline.id);
+      const outcome = event === undefined ? await retryWriteback(this.pipeline.id) : await reportRunEvent(this.pipeline.id, event);
       if (outcome?.ok === false) {
-        this._log('writeback', 'warn', `task-source write-back failed: ${outcome.error} — use "Report result" in the results view to retry`);
+        this._log('writeback', 'warn', event === 'started'
+          ? `task-source start comment failed: ${outcome.error}`
+          : `task-source write-back failed: ${outcome.error} — use "Report result" in the results view to retry`);
       } else if (outcome?.ok && !outcome.skipped) {
         // Ticket updates (D11): the plugin's outcome line ends the audit line, quoted as data ("…: “Moved to Resolved.”")
-        await appendAudit(this.pipeline.dir, reportedAuditLine(outcome)).catch(() => {});
+        await appendAudit(this.pipeline.dir, reportedAuditLine(outcome, event)).catch(() => {});
       }
     } catch (err) {
-      this._log('writeback', 'warn', `task-source write-back failed: ${err?.message || err}`);
+      this._log('writeback', 'warn', event === 'started'
+        ? `task-source start comment failed: ${err?.message || err}`
+        : `task-source write-back failed: ${err?.message || err}`);
     }
   }
 
@@ -7662,7 +7724,7 @@ export class RunHarness extends EventEmitter {
       // existed. The terminal `done` event is emitted AFTER it so the History row never
       // paints as "no diff captured" for the tick before the artifact lands.
       await this._buildResults({ stage: true });
-      await this._reportToSource(); // statusToResult('stopped') -> 'failed' (design PR12: no longer success-only)
+      await this._reportToSource(); // eventForStatus('stopped') -> 'failed' (design PR12: no longer success-only)
     }
     await this._recordRunMetrics('stopped');
     this._emit('done', { status: 'stopped', pipelineDir: this.pipeline?.dir || null });
@@ -7847,7 +7909,7 @@ export class RunHarness extends EventEmitter {
     return this._tryGitEnvOf.env;
   }
 
-  async _git(args, { cwd, ignoreAbort = false, timeoutMs = HARNESS_GIT_TIMEOUT_MS, hooks = false } = {}) {
+  async _git(args, { cwd, ignoreAbort = false, timeoutMs = HARNESS_GIT_TIMEOUT_MS, hooks = false, env: extraEnv = null } = {}) {
     if (!gitAvailable()) return gitMissingResult();
     const tryEnv = this._tryGitEnv();   // final review I2: a try's git runs none of the copy's hooks, under the guard
     // Security G2 (dev): the repository's config commands never run; the guard lists config over the try's env when there
@@ -7857,6 +7919,7 @@ export class RunHarness extends EventEmitter {
     try {
       env = await guardedGitEnv(cwd || this.projectDir, hooks ? { hooks, env: stripHostCredentials(base) } : (tryEnv ? { env: tryEnv } : {}));
     } catch (err) { return { ok: false, code: -1, stdout: '', stderr: err.message }; }
+    if (extraEnv) env = { ...env, ...extraEnv };   // e.g. GIT_INDEX_FILE for a throwaway index (slice-worktree.mjs)
     return new Promise((resolveP) => {
       let child;
       try {
@@ -8036,11 +8099,32 @@ export class RunHarness extends EventEmitter {
     return sum;
   }
 
+  /** Start (resume) the run clock, idempotently. */
+  _runClockResume() {
+    if (this.state.elapsedSince == null) this.state.elapsedSince = Date.now();
+  }
+
+  /** Park the run clock, folding the stretch it ran into elapsedMs. No-op when parked. */
+  _runClockPause() {
+    if (this.state.elapsedSince == null) return;
+    this.state.elapsedMs += Math.max(0, Date.now() - this.state.elapsedSince);
+    this.state.elapsedSince = null;
+  }
+
+  /** Live elapsed = folded elapsedMs + the running tail. Test/diagnostic, twin of liveActiveMs. */
+  liveElapsedMs() {
+    const since = this.state.elapsedSince;
+    return this.state.elapsedMs + (since != null ? Math.max(0, Date.now() - since) : 0);
+  }
+
   _setStatus(status) {
     this.state.status = status;
     if (status === 'done' || status === 'stopped' || status === 'error' || status === 'paused') {
       this._clockPauseAll();
       this.state.totalActiveMs = sumStepActive(this.state.steps);
+      this._runClockPause();
+    } else if (status === 'running' && this._asksWaiting === 0) {
+      this._runClockResume();
     }
     this.state.updatedAt = new Date().toISOString();
     this._emit('state', this.getState());
@@ -9398,7 +9482,7 @@ export class RunHarness extends EventEmitter {
 
   /** Terminal bookkeeping for a pause: persist the resume point + paused status.
    *  An ERROR-pause additionally keeps what the retired error path produced — the
-   *  diff artifact and the task-source write-back (statusToResult('paused') ->
+   *  diff artifact and the task-source write-back (eventForStatus('paused') ->
    *  'needs-human'; retryWriteback re-reads the ROW, so this runs AFTER the persist).
    *  Safe here and only here: the checkout and the checkpoint refs are live, and the
    *  finally never tears a paused run down. Both helpers are no-ops with an empty
@@ -9459,7 +9543,7 @@ export class RunHarness extends EventEmitter {
     if (!this.pauseReason) await this._auditAction('pause', 'Pipeline **paused**').catch(() => {});
     // A FORCED pause (pauseReason set: usage limit, cost cap, auto-mode
     // auth/quota, exhausted recoverable retries, an error) parks the run with
-    // nobody attached, so the task source must hear it NOW — statusToResult
+    // nobody attached, so the task source must hear it NOW — eventForStatus
     // ('paused') -> 'needs-human' — or the external task stays claimed "in
     // progress" until a human stumbles on it. A manual pause skips this: the
     // user is present and resuming shortly, and the resumed run's terminal path

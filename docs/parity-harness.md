@@ -135,7 +135,7 @@ One row per selector in `tools/parity/visual-masks.json` (`test/parity-visual.te
 | `live-run` | `.runs-row-sub` | the side list's run rows: the held run's live status or step line |
 | `live-run` | `.runs-row-prog` | the side list's progress bars, filling with the held run's live progress |
 | `live-run` | `.rd-page-meta` | the run's start day and clock in the page head (real server time) |
-| `live-run` | `.rd-stats` | the glance tiles: the live run's active time, ticking cost and changes |
+| `live-run` | `.rd-stats` | the glance tiles: the live run's elapsed time, agent time when parallel, ticking cost and changes |
 | `live-run` | `.nrun .dur` | a running graph node's elapsed duration |
 | `live-run` | `.nrun .cost` | a running graph node's accumulating cost |
 | `history` | `.runs-row-sub` | the side list's run rows: the held run's live status or step line |
@@ -147,8 +147,10 @@ One row per selector in `tools/parity/visual-masks.json` (`test/parity-visual.te
 | `history` | `.hd-cmt-time` | a comment's timestamp (real time of the seeded comment) |
 | `history` | `.rd-cost-row` | the Cost-tags row, whose chips carry the run's cost and dates |
 | `history` | `.rd-page-meta` | the run's start day and clock in the page head (real server time) |
-| `history` | `.rd-stats` | the glance tiles: the run's active time, cost and changes |
+| `history` | `.rd-stats` | the glance tiles: the run's elapsed time, agent time when parallel, cost and changes |
 | `chat-home` | `.chat-run-tile-stats` | a run tile's agents done, elapsed time and cost of the held run (removed in 3 runs: the elapsed seconds differed) |
+| `chat-home` | `.runs-row-sub` | the chats list's rows (shown by default): a chat's last activity clock (real server time) |
+| `chat-thread` | `.runs-row-sub` | the chats list's rows: a chat's last activity clock (real server time) |
 | `stats` | `.stat-tile:has-text("Time worked") .stat-value` | total worked time across the range, measured in real time |
 
 ## Flaky register

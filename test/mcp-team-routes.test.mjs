@@ -3,7 +3,7 @@
 // Team state removed only by a Team action on a present doc that no longer lists the entry; Forget.
 import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
-import http from 'node:http';
+import { appServer } from './helpers/app-server.mjs';
 import { execFileSync } from 'node:child_process';
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -45,7 +45,7 @@ const act = (action, id, body) => post(`/api/mcp/teams/${enc(HOME)}/members/${en
 
 before(async () => {
   const mod = await import('../ui/server.mjs');
-  srv = http.createServer(mod.app);
+  srv = appServer(mod.app);
   await new Promise((r) => srv.listen(0, '127.0.0.1', r));
   base = `http://127.0.0.1:${srv.address().port}`;
 });

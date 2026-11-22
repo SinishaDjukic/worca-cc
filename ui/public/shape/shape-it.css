@@ -107,26 +107,26 @@
 .plan-actions .plan-more{margin-left:auto;}
 .plan-unmet{color:var(--ink-2);font-size:12px;}
 /* D31: a shaped run's bar — the three controls live in the ⋯ menu */
-.rd-bar[data-shaped] .rd-bar-end > :is(.rd-night-wrap,.rd-after,.term-opener){display:none;}
+.rd-bar-end[data-shaped] > :is(.rd-night-wrap,.rd-after,.term-opener){display:none;}
 .rd-bar-more{flex:none;}   /* ⋯ is .btn .btn-quiet .btn-icon in markup */
 /* Run 3 (D13): the bar is the primary action, Run after, Stop and ⋯ on every run page; ⋯ drives the controls hidden here.
    Run after stays a quick button beside the Resume split and Stop (folded only on a shaped run's bar, above). */
-.rd-bar .rd-bar-end > :is(.rd-night-wrap,.term-opener){display:none;}
-.hd-bar .rd-bar-end > :is(.hd-save-preset,.term-opener){display:none;}
+.rd .rd-bar-end > :is(.rd-night-wrap,.term-opener){display:none;}
+.hd .rd-bar-end > :is(.hd-save-preset,.term-opener){display:none;}
 /* At 290px the bar shrinks by rule: the primary label ellipsizes, Stop and the icon buttons keep their size. */
 .rd-bar-end,.gpage-actions{min-width:0;flex:0 1 auto;}
 :is(.rd-actions,.gpage-actions) .btn-primary{min-width:0;max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
-.rd-bar :is(.btn-danger,.btn-icon){flex:none;}
+.rd-bar-end :is(.btn-danger,.btn-icon){flex:none;}
 /* One control size on both bars: the model's made .btn-sm actions (syncActions; the chat run card keeps them small)
-   and the Resume split come up to .btn's 32px and body size; the primary keeps its 600 weight, as everywhere (the
+   the Resume split and the tool panel's icons come up to .btn's 32px and body size; the primary keeps its 600 weight, as everywhere (the
    button audit's rule). Child selectors only: the chat panel's Open full page / Close (.crp-bar-btns) keep their square. */
-:is(.rd-bar,.hd-bar) .rd-bar-end > .btn,
-:is(.rd-bar,.hd-bar) .rd-bar-end > :is(.rd-actions,.btn-split) > .btn{height:32px;padding:0 12px;gap:6px;font-size:var(--fs-body);}
-:is(.rd-bar,.hd-bar) .rd-bar-end > .btn.btn-icon,
-:is(.rd-bar,.hd-bar) .rd-bar-end > :is(.rd-actions,.btn-split) > .btn.btn-icon{width:32px;padding:0;}
+:is(.rd,.hd) .rd-bar-end > .btn,
+:is(.rd,.hd) .rd-bar-end > :is(.rd-actions,.btn-split,.tool-icons) > .btn{height:32px;padding:0 12px;gap:6px;font-size:var(--fs-body);}
+:is(.rd,.hd) .rd-bar-end > .btn.btn-icon,
+:is(.rd,.hd) .rd-bar-end > :is(.rd-actions,.btn-split,.tool-icons) > .btn.btn-icon{width:32px;padding:0;}
 /* ⋯ is .btn-quiet in markup; on the bar it wears its neighbours' border and fill. */
-:is(.rd-bar,.hd-bar) .rd-bar-end > :is(.rd-bar-more,.hd-bar-more){background:var(--panel);border-color:var(--line-2);color:var(--ink);}
-:is(.rd-bar,.hd-bar) .rd-bar-end > :is(.rd-bar-more,.hd-bar-more):hover:not(:disabled){background-color:var(--btn-hover);}
+:is(.rd,.hd) .rd-bar-end > :is(.rd-bar-more,.hd-bar-more){background:var(--panel);border-color:var(--line-2);color:var(--ink);}
+:is(.rd,.hd) .rd-bar-end > :is(.rd-bar-more,.hd-bar-more):hover:not(:disabled){background-color:var(--btn-hover);}
 /* Run 3 (D6): the breadcrumb at the bar's left (split layout only). */
 .rd-crumbs{display:flex;align-items:center;gap:4px;min-width:0;font-size:var(--fs-meta);color:var(--ink-2);}
 .rd-crumbs[hidden]{display:none;}
@@ -150,7 +150,7 @@ a.rd-crumb:hover{color:var(--ink);text-decoration:underline;}
 /* D30, run 4 D1: while a shaped run waits on the person (Clarify or the plan), the question card is the page: the status
    card (status block, facts, labels, Results) and the graph hide until it is answered. Keyed on the glance, not on
    .rd-questions, because the Chat panel moves the question out of the glance. */
-.rd-glance[data-shaper-wait] > :is(.rd-sheet,.rd-live){display:none;}
+.rd-glance[data-shaper-wait] > .rd-sheet{display:none;}
 .chat-rc-shaped{display:flex;flex-wrap:wrap;align-items:center;gap:6px 10px;margin-top:8px;font-size:12px;color:var(--ink-2);}
 .chat-rc-shaped:empty{display:none;}
 .chat-rc-shaped-stages{color:var(--green-ink);font-weight:500;}

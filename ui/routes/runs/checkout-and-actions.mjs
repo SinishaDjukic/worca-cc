@@ -18,7 +18,6 @@ import { FIX_WORKFLOW_ID, getWatch, watchActive } from '../../../src/core/pr-wat
 import { createPresetFromRun, readRunSetup } from '../../../src/core/run-presets-store.mjs';
 import { readRunTags } from '../../../src/core/run-tags-store.mjs';
 import { actionsSettings } from '../../../src/core/settings.mjs';
-import { projectKey } from '../../../src/core/store.mjs';
 import { terminalTargets } from '../../../src/core/terminal/context.mjs';
 import { readWorkspaceStacks } from '../../../src/core/workspaces.mjs';
 import { sanitizeBranchName, worktreePathForBranch } from '../../../src/core/worktree.mjs';
@@ -28,18 +27,9 @@ import { spawn } from 'node:child_process';
 import fsp from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
-import { actions, actionsEnabledHere, activeActionSnaps, askViewer, badRequest, bareWorkspaceKey, builtins, busyActionRunIds, checkoutRecOf, emitChanged, ensureSetup, isFinishingRun, isLiveRun, memberFor, noRawCommand, presetScopeOf, projectDirForKey, rejectRawTerminalFields, requireActions, requireTerminal, resolveRunScope, runs, sendCheckoutError, sendPresetError, setupJobs, stackStates, stackTokens, startOrQueue, startRunAs, stopCheckoutServices, terminalError, terminals } from '../../server.mjs';
+import { actions, actionsEnabledHere, activeActionSnaps, askViewer, badRequest, bareWorkspaceKey, builtins, busyActionRunIds, checkoutRecOf, emitChanged, ensureSetup, isFinishingRun, isLiveRun, liveActionsOf, memberFor, noRawCommand, presetScopeOf, projectDirForKey, rejectRawTerminalFields, requireActions, requireTerminal, runRowForScope, runs, sendCheckoutError, sendPresetError, setupJobs, setupLate, stackStates, stackTokens, startOrQueue, startRunAs, stopCheckoutServices, terminalError, terminals } from '../../server.mjs';
 
 export function register(app) {
-
-function runRowForScope(req, res) {
-  const scope = resolveRunScope(req, res);          // query params; answers 400/404 itself
-  if (!scope) return null;
-  const row = findPipelineRowById(req.params.id);
-  const matches = row && (scope.workspaceId ? bareWorkspaceKey(row) === scope.workspaceId : (row.project_key === (scope.projectKey || projectKey(scope.projectDir))));
-  if (!matches || row.archived_at) { res.status(404).json({ error: 'pipeline not found' }); return null; }
-  return row;
-}
 
 app.get('/api/runs/:id/terminal', (req, res) => {
   if (!requireTerminal(req, res)) return;
@@ -188,7 +178,7 @@ app.post('/api/runs/:id/setup', async (req, res) => {
   if (!m) return badRequest(res, 'member is required for a workspace run');
   if (!checkoutRecOf(row.id, m.projectKey)) return res.status(409).json({ error: 'Check out the run first.', code: 'NOT_CHECKED_OUT' });
   // Re-running `npm ci` under a live dev server would pull node_modules out from under it.
-  if (actions.listFor(row.id).some((s) => s.member === m.projectKey && s.actionId !== SETUP_ACTION_ID && ['starting', 'running', 'ready'].includes(s.status))) {
+  if (liveActionsOf(row.id, m.projectKey)) {
     return res.status(409).json({ error: 'Stop the running actions of this project before running setup again.', code: 'SERVICES_RUNNING' });
   }
   // rerun covers failed, interrupted and skipped (actions were off at checkout, D25), and a manual "Run setup again".
@@ -260,8 +250,9 @@ app.post('/api/runs/:id/stacks/:stackId/start', async (req, res) => {
     }
     const setup = rec.setup?.status;
     if (setup === 'failed') return { action, worktreeDir: null, error: `the setup command of ${nameOf[st.member]} failed; run setup again` };
-    if (!['ok', 'none', 'skipped'].includes(setup) || setupJobs.has(`${row.id}:${st.member}`)) {
-      const ok = await ensureSetup(row.id, st.member, { enabled: true, rerun: setup === 'interrupted' });   // requireActions passed
+    const late = setupLate(rec, row.id, st.member);
+    if (late || !['ok', 'none', 'skipped'].includes(setup) || setupJobs.has(`${row.id}:${st.member}`)) {
+      const ok = await ensureSetup(row.id, st.member, { enabled: true, rerun: setup === 'interrupted' || late });   // requireActions passed
       if (!ok) return { action, worktreeDir: null, error: `the setup command of ${nameOf[st.member]} did not finish successfully` };
       rec = checkoutRecOf(row.id, st.member);
     }

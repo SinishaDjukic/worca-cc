@@ -120,6 +120,10 @@ export function createScheduler(opts) {
     maxParallel = defaultMaxParallel(),
     maxParallelScripts = defaultMaxParallelScripts(),
     log = () => {},
+    // A resumed fan-out skipped a decomposition task that had already finished: ({ nodeId, taskId, title, executionId }).
+    onSliceSkip = () => {},
+    // Whether a finished decomposition task's work is still in the working tree (its restored row): false runs it again.
+    sliceWorkKept = async () => true,
     approvalStops = false,
     // 4.1: how long a failure or a stop waits for still-running executions to settle before the
     // run resolves (the harness tears the worktree down right after). The spawn's SIGTERM→SIGKILL
@@ -444,7 +448,7 @@ export function createScheduler(opts) {
 
     // A halted run returns WITHOUT `finish`: nothing is staged and no phase is falsely
     // marked done. A PAUSE answers `{ paused: true }` so the shell row stays
-    // non-terminal and the resume re-runs the whole fan-out; any other halt (End,
+    // non-terminal and the resume re-runs the fan-out (finished tasks skipped); any other halt (End,
     // abort, failure) answers `{ skipped: true }` — the base spec's Completion
     // paragraph puts "anything cut off by the End drain" in `skipped`. The old
     // `{ outputs: {} }` was read as a SUCCESSFUL completion: the ledger row said
@@ -510,8 +514,8 @@ export function createScheduler(opts) {
       );
     }
     const paused = results.some((r) => r.status === 'fulfilled' && r.value?.paused === true);
-    // A halted or paused run leaves the phase RUNNING: the resume re-runs the whole
-    // composite, and a phase that never finished must not read as done.
+    // A halted or paused run leaves the phase RUNNING: the resume re-runs the composite
+    // (its finished tasks skipped), and a phase that never finished must not read as done.
     if (paused || halted()) return { paused };
     await execute({ ...h.args, composite: 'phase', phase: ph.ordinal, phaseStatus: 'done' });
     return { paused: false };
@@ -527,6 +531,18 @@ export function createScheduler(opts) {
    */
   async function runSlice(h, portId, ph, task, index, phaseAbort) {
     const { node, entry } = h;
+    const executionId = sliceExecutionId(entry.executionId, task.id);
+    // A resume re-runs the fan-out, but a decomposition task that finished in the earlier attempt
+    // (before a pause, a failure or a crash) is not run again: its row came back `done` from the
+    // snapshot and its work is in the working tree. Only when its task file is unchanged (the digest
+    // the adapter stamped on expand): a re-written decomposition re-runs it. A row without a digest
+    // predates the check and re-runs too. And only while its work is still there (sliceWorkKept): a
+    // `git checkout .` during the pause takes unstaged edits away, and then the task runs again.
+    const prior = execs.get(executionId);
+    if (portId && prior?.status === 'done' && task.digest && prior.digest === task.digest && await sliceWorkKept(prior)) {
+      onSliceSkip({ nodeId: node.id, taskId: task.id, title: task.title ?? null, executionId });
+      return {};
+    }
     const signal = AbortSignal.any([controller.signal, phaseAbort.signal]);
     await takeSlot('agent');
     // A slot handed over AFTER the phase (or the run) aborted: never launch. The slice
@@ -534,7 +550,7 @@ export function createScheduler(opts) {
     // is not counted as the phase's failure.
     if (signal.aborted) { freeSlot('agent'); throw signal.reason; }
     const sub = {
-      executionId: sliceExecutionId(entry.executionId, task.id),
+      executionId,
       nodeId: node.id,
       kind: 'task',
       ordinal: entry.ordinal,
@@ -546,6 +562,7 @@ export function createScheduler(opts) {
       parentExecutionId: entry.executionId,
       taskIndex: index + 1,                                   // 1-based within its phase (the CLI's "task 3/7")
       taskTotal: (Array.isArray(ph.tasks) ? ph.tasks : []).length,
+      digest: task.digest ?? null,                            // the task file's content at expand (the resume skip)
       bindings: portId
         ? { ...entry.bindings, [portId]: { seq: entry.bindings[portId]?.seq, type: 'md', path: task.path ?? null } }
         : { ...entry.bindings },
@@ -578,7 +595,13 @@ export function createScheduler(opts) {
       if (res?.error) throw (res.error instanceof Error ? res.error : new Error(String(res.error)));
       sub.status = res?.paused === true ? 'paused' : 'done';
       if (res?.sessionId) sub.sessionId = res.sessionId;
+      // What the task changed in the working tree (the adapter's record, read back by sliceWorkKept on resume).
+      if (sub.status === 'done' && res && 'worktree' in res) sub.worktree = res.worktree;
       emitExec(node, sub, sub.status);
+      // A finished slice is a clean completion: snapshot it, so the point a later pause (or a crash)
+      // keeps already says `done` for it and the resume skips it. A pause freezes the point at the
+      // last clean snapshot (orchestrator onSnapshot), and without this one that was before the fan-out.
+      if (sub.status === 'done') snap();
       return res;
     } catch (err) {
       sub.status = 'error';
@@ -1126,8 +1149,9 @@ export function createScheduler(opts) {
    * re-run. Call BEFORE `run()`.
    *
    * A composite's slices are re-invoked BY their shell, not from here: the shell
-   * re-runs the whole fan-out (v1 resumed the decomposed stage whole) and re-mints
-   * the same ids, so those stale rows are overwritten in place.
+   * re-runs the fan-out and re-mints the same ids, so those stale rows are overwritten
+   * in place — except a decomposition slice that finished with an unchanged task file,
+   * which runSlice skips.
    */
   function reattach(snapshot) {
     restore(snapshot);

@@ -98,6 +98,8 @@
 
 /* The bar (sticky, z-index 5, BEFORE the tabs in the DOM) while its Resume split menu is open. */
 .rd-bar:has(.btn-split-menu:not([hidden])),.hd-bar:has(.btn-split-menu:not([hidden])){z-index:7;}
+/* The header (the full page's bar controls end its title row) while a menu of theirs is open: over the pinned tabs. */
+:is(.rd-header,.hd-header):has(.btn-split-menu:not([hidden]),.menu:not([hidden])){position:relative;z-index:6;}
 /* Slice 2: the ⋯'s hidden carriers (index.html .run-menu-carriers); same guard as its siblings
    (.hd-archive[hidden], .hd-report[hidden]). */
 .hd-restore[hidden]{display:none;}

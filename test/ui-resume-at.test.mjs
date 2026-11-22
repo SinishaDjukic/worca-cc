@@ -233,14 +233,14 @@ const histFetch = (pauseReason = null) => (url) => {
 };
 
 test('History detail: the bar carries the Resume split (no card Resume); "Resume at…" opens the sheet and posts the pipeline id', async () => {
-  // One boot at advanced level: the detail opens in glance mode with the split in its bar;
+  // One boot at advanced level: the run route opens Details (one level, Overview tab) with the split in its bar;
   // each step's state is recorded as it happens, and the rows read the records.
   const ctx = await boot({ level: 'advanced', fetchHandler: histFetch() });
   ctx.go(`history/${KEY}/fcec04e8`);
   await ctx.settle(8);
   const mode = ctx.doc.querySelector('#hist-detail .hd').dataset.mode;
   const split = ctx.doc.querySelector('.hd-resume-split');
-  const barSplit = ctx.doc.querySelector('#hist-detail .hd-bar .rd-bar-end .hd-resume-split');
+  const barSplit = ctx.doc.querySelector('#hist-detail .hd-row1 > .rd-bar-end .hd-resume-split');
   const shown = { splitHidden: split?.hidden, barSplitHidden: barSplit?.hidden,
     resumeHidden: barSplit?.querySelector('.hd-resume').hidden,
     cardResume: ctx.doc.querySelector('#hist-detail [class*="hd-g-resume"]') };
@@ -264,9 +264,9 @@ test('History detail: the bar carries the Resume split (no card Resume); "Resume
       assert.equal(posts.length, 1);
       assert.equal(JSON.parse(posts[0].opts.body).pipelineId, 'fcec04e8');
     } },
-    { name: 'History glance: the bar carries the Resume split, whose "Resume at…" posts', run: () => {
-      assert.equal(mode, 'glance');
-      assert.ok(barSplit, 'the Resume split sits in the bar, shared by both modes');
+    { name: 'History run page: the bar carries the Resume split, whose "Resume at…" posts', run: () => {
+      assert.equal(mode, 'details', 'one level: the run route opens Details');
+      assert.ok(barSplit, 'the Resume split sits in the bar controls, in the header title row');
       assert.equal(shown.barSplitHidden, false);
       assert.equal(shown.resumeHidden, false, 'Resume is its left half');
       assert.equal(shown.cardResume, null, 'the card carries no Resume of its own');

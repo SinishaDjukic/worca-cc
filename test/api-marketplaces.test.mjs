@@ -6,7 +6,7 @@
 // doctor really loads the fixture connector, whose validateConfig returns ok.
 import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
-import http from 'node:http';
+import { appServer } from './helpers/app-server.mjs';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { mkdtemp, mkdir, writeFile } from 'node:fs/promises';
@@ -29,7 +29,7 @@ const del = (p, b) => fetch(`${base}${p}`, {
 
 before(async () => {
   const { app } = await import('../ui/server.mjs'); // imported => no port bind
-  srv = http.createServer(app);
+  srv = appServer(app);
   await new Promise((r) => srv.listen(0, '127.0.0.1', r));
   base = `http://127.0.0.1:${srv.address().port}`;
 });

@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+### Remotes through an SSH Host alias (#1476)
+
+- A remote through a `~/.ssh/config` Host alias (`git@github-work:me/repo.git`) now counts as the host the alias names: Worca asks `ssh -G` (no connection) and re-parses the URL with the real host, so a pull request from a fork cloned that way goes to `upstream` instead of failing with "Head ref must be a branch", and an Azure DevOps alias gets its org and project. git keeps the URL as written. ssh missing, failing or slow keeps the alias host, and the next lookup asks again; real answers are cached per process.
+- Behaviour change: with a fork cloned through an alias as `origin`, Automations watch the fork instead of `upstream` (the same as a fork cloned without an alias). See [Git automations](docs/git-automations.md).
+
 ### GitHub Copilot on a GHE.com tenant (data residency)
 
 - **A fourth Copilot account type, GHE.com tenant** (`accountType: ghe-com`), with a required **GHE.com host** (`acme.ghe.com`) on the Providers page, in `worca models set copilot accountType=ghe-com enterpriseHost=acme.ghe.com` and in Ask Worca's provider card. The host is validated (a bare `<tenant>.ghe.com`, no path, port or credentials) and stored normalized.
@@ -10,6 +15,10 @@
 - **Credential broker:** a Copilot slot whose `exchangeUrl` / `deviceBaseUrl` name a tenant trusts that tenant's gateway (`https://*.<tenant>.ghe.com`) as well as `*.githubcopilot.com`; slots naming two different tenants are refused. See [Credential broker](docs/credential-broker.md).
 - **Platform egress policy:** in `allow` mode, worca's own proxy adds the configured tenant (`<t>.ghe.com`, `.<t>.ghe.com`), live and logged; `WORCA_EGRESS_DENY` still wins. The Docker egress overlay needs `.<t>.ghe.com` added by hand.
 - **Honest errors when GitHub refuses Copilot after sign-in.** A 401/403 from the token exchange now shows GitHub's own reason and link, including a single-sign-on requirement. During sign-in the card says the sign-in on `<host>` worked but GitHub refused Copilot access, and what to ask your admin, instead of "rejected the stored token — sign in again"; that wording is kept for a token that was stored and later fails. The server log records the status, URL and GitHub's message (never a token), once per ten minutes per distinct refusal. The credential broker's key page does the same.
+
+### Pull a feature from Requirements into a run
+
+- **Pull from Requirements** on New run and **Pull feature** in Chat start a run from a feature you have specified, through the same path as Start in Worca. The run setup takes an optional note for that run (it goes to the end of the task, and wins over the spec for that run), checked against the spec by an advisory contradiction check you can start anyway; a feature that already has a run in progress asks first. See [Requirements](docs/requirements.md#pull-from-requirements).
 
 ### Instance contract for hosting platforms
 

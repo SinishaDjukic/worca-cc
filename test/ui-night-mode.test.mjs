@@ -120,57 +120,34 @@ test('run view: the switch paints r.night.override and posts /api/run/night on c
   assert.equal(screen.querySelector('.rd-night-wrap').hidden, true, 'hidden on a finished run');
 });
 
-test('run view: stored answers load on open; a night-decision frame appends a group; flagged rows carry Check and lead their ask', async () => {
+test('run view: stored answers load on open; a night-decision frame updates the card\'s away note; "See the answers" opens Q&A', async () => {
   const ctx = await boot({ decisions: [{ questionId: 'clarify-a-1', kind: 'clarify', at: '2026-01-01T13:12:00', choice: 'Redis | Live', strategy: 'weights', confidence: 80, flagged: true,
     rationale: 'store: r1\ndelivery: r2', questions: [
       { id: 'store', question: 'Which store?', choice: 'Redis', flagged: false, rationale: 'r1' },
       { id: 'delivery', choice: 'Live', flagged: true, rationale: 'the agent was not sure enough; took the option easiest to undo' }] }] });
   const screen = await openDetail(ctx);
   await settle();
-  const sec = screen.querySelector('.rd-night-sec');
-  assert.equal(sec.hidden, false);
-  assert.equal(sec.querySelector('h3').textContent, 'Answered for you · 2 answers, 1 to check');
+  // One level: the "Answered for you" list is gone; each answer and its reason live in the Q&A tab.
+  assert.equal(screen.querySelector('.rd-night-sec'), null, 'no "Answered for you" section on the run page');
   const note = screen.querySelector('.rd-sheet .rd-away-note');
   assert.equal(note.hidden, false, 'the note shows on a live run, at the top of its card');
   assert.equal(note.querySelector('.rd-away-note-text').textContent, 'Away mode: 2 answers while you were away — 1 to check.');
+  assert.ok(note.classList.contains('has-checks'));
   ctx.dispatch({ type: 'night-decision', runId: RUN.runId, seq: 9, id: 'gate-w-2', kind: 'gate',
     record: { questionId: 'gate-w-2', kind: 'gate', at: '2026-01-01T13:40:00', choice: 'continue', strategy: 'rule', confidence: null, flagged: true, rationale: 'critical remain' } });
   await settle();
-  const groups = [...sec.querySelectorAll('.rd-na')];
-  assert.deepEqual(groups.map((g) => g.querySelector('.rd-slabel').textContent),
-    ["Clarifying questions · 13:12 · agent's pick · $0.00", 'Review loop · 13:40 · rule · $0.00'], 'no review ran: how, and that it cost nothing');
-  const rows = [...sec.querySelectorAll('.rd-na-row')];
-  assert.deepEqual(rows.map((r) => [r.querySelector('.rd-na-q')?.textContent ?? null, r.querySelector('.rd-na-a').textContent, !!r.querySelector('.rd-na-check')]),
-    [['Delivery', 'Live', true], ['Which store?', 'Redis', false], [null, 'Continued', true]]);
-  assert.equal(rows[0].querySelector('.rd-na-check').textContent, 'Check');
-  assert.equal(sec.querySelector('h3').textContent, 'Answered for you · 3 answers, 2 to check');
   assert.equal(note.querySelector('.rd-away-note-text').textContent, 'Away mode: 3 answers while you were away — 2 to check.');
-  // The reason is one click away: closed by default, a click opens it, another closes it.
-  const btn = rows[0].querySelector('button.rd-na-btn');
-  const why = rows[0].querySelector('.rd-na-why');
-  assert.equal(why.hidden, true);
-  assert.equal(btn.getAttribute('aria-expanded'), 'false');
-  btn.click();
-  assert.equal(why.hidden, false);
-  assert.equal(btn.getAttribute('aria-expanded'), 'true');
-  assert.equal(why.textContent, 'The agent was not sure enough; took the option easiest to undo.');
-  // A repaint with the same answers leaves the open row (and its focus) alone.
-  btn.focus();
-  ctx.dispatch({ type: 'state', runId: RUN.runId, seq: 10, status: 'running', night: { optIn: true, override: 'auto', decisions: 2, flagged: 2 } });
-  await settle();
-  assert.equal(sec.querySelectorAll('.rd-na-row')[0].querySelector('.rd-na-why').hidden, false, 'still open');
-  assert.equal(ctx.window.document.activeElement, btn, 'still focused');
-  // A limit row: no Check, its own words; an open row stays open when the list grows.
+  // A limit row is not an answer.
   ctx.dispatch({ type: 'night-decision', runId: RUN.runId, seq: 11, id: 'clarify-g-3', kind: 'clarify',
     record: { questionId: 'clarify-g-3', kind: 'clarify', choice: null, strategy: 'guardrail', guardrail: 'maxDecisions', confidence: null, flagged: true, rationale: 'Paused: worca answered 1 times on this run, the limit you set.' } });
   await settle();
-  const after = [...sec.querySelectorAll('.rd-na-row')];
-  assert.equal(after.length, 4);
-  assert.equal(after[3].querySelector('.rd-na-a').textContent, 'Paused: answer limit reached');
-  assert.equal(after[3].querySelector('.rd-na-check'), null);
-  assert.equal(after[0].querySelector('.rd-na-why').hidden, false, 'the open row survived the rebuild');
-  assert.equal(ctx.window.document.activeElement, after[0].querySelector('button.rd-na-btn'), 'focus follows the rebuilt row');
-  assert.equal(sec.querySelector('h3').textContent, 'Answered for you · 3 answers, 2 to check', 'a pause is not an answer');
+  assert.equal(note.querySelector('.rd-away-note-text').textContent, 'Away mode: 3 answers while you were away — 2 to check.', 'a pause is not an answer');
+  // "See the answers" opens the Q&A tab.
+  note.querySelector('.rd-away-jump').click();
+  ctx.window.dispatchEvent(new ctx.window.Event('hashchange'));
+  await settle();
+  assert.match(ctx.window.location.hash, /\/details\/qa$/);
+  assert.equal(screen.querySelector('.rd-tab.active').dataset.sec, 'qa');
 });
 
 test('start form: nightMode is sent only when the checkbox is ticked', async () => {
@@ -640,13 +617,7 @@ const DM_MODELS = [
 ];
 const optionsOf = (sel) => [...sel.options].map((o) => [o.value, o.textContent, o.disabled]);
 
-// One review answers every question of its ask: the group caption names its model and cost; the heading
-// sums every booked review from the steps (a review booked after the user answered first included).
-const AWAY_STEPS = () => ([
-  { key: 'n_plan:1', executionId: 'n_plan:1', nodeId: 'n_plan', status: 'done', costUsd: 0.67, auxCosts: { away: { usd: 0.05, calls: 1 } } },
-  { key: 'n_impl:1', executionId: 'n_impl:1', nodeId: 'n_impl', status: 'start', costUsd: 1.94,
-    auxCosts: { away: { usd: 0.1, calls: 2, floorUsd: 0.0234, stopped: 1 } } },   // 0.07 answered + 0.03 booked after the user answered
-]);
+// Five asks of every kind: a review that answered, a stopped one, one stored before costs were kept, a rule.
 const AWAY_DECISIONS = () => ([
   { questionId: 'c-old', kind: 'clarify', at: '2026-01-01T13:00:00', choice: 'S', strategy: 'analysis', model: 'claude-opus-5-5', flagged: false, rationale: 'r',
     questions: [{ id: 'size', question: 'Which size?', choice: 'S', strategy: 'analysis', confidence: 75, flagged: false, rationale: 'small' }] },
@@ -663,57 +634,51 @@ const AWAY_DECISIONS = () => ([
   { questionId: 'gate-w-2', kind: 'gate', at: '2026-01-01T14:52:00', choice: 'continue', strategy: 'rule', confidence: null, flagged: false, rationale: 'no issues' },
 ]);
 
-test('answers card: each ask names the model that answered it and what that review cost; the heading adds every review\'s cost', async () => {
+// One level: the run page lists no answers (no "Answered for you", so no per-ask model or review cost and no
+// summed heading); the card's away note keeps the counts and the Q&A tab lists each answer with its reason.
+test('away note: counts every answer of every ask, the checks apart; the run page lists none of them', async () => {
   const ctx = await boot({ models: DM_MODELS, decisions: AWAY_DECISIONS() });
   const screen = await openDetail(ctx);
-  ctx.dispatch({ type: 'state', runId: RUN.runId, seq: 3, status: 'running', steps: AWAY_STEPS(), totalCostUsd: 2.61, night: RUN.night });
   await settle();
-  const sec = screen.querySelector('.rd-night-sec');
-  assert.deepEqual([...sec.querySelectorAll('.rd-na .rd-slabel')].map((c) => c.textContent), [
-    'Clarifying questions · 13:00',                                   // stored before the cost was kept: nothing invented
-    'Clarifying questions · 14:02 · Opus 5.5 · $0.05',
-    'Questions mid-step · 14:30 · the default model · $0.07',
-    'Questions mid-step · 14:40 · Opus 5.5 · review stopped · ≥$0.02 · not in total',   // a lower bound, never shown as spent
-    'Review loop · 14:52 · rule · $0.00',
-  ]);
-  // From the steps, not the records: $0.05 + $0.07 answered, + $0.03 booked for an ask the user answered first.
-  assert.equal(sec.querySelector('h3').textContent, 'Answered for you · 6 answers, 2 to check · $0.15');
-  assert.ok(![...sec.querySelectorAll('.rd-na-row')].some((li) => /\$/.test(li.textContent)), 'a review\'s cost is the ask\'s, never a row\'s');
-  // A new review booked: the heading repaints (the answers did not change).
-  const more = AWAY_STEPS(); more[1].auxCosts.away = { usd: 0.14, calls: 3, floorUsd: 0.0234, stopped: 1 };
-  ctx.dispatch({ type: 'state', runId: RUN.runId, seq: 4, status: 'running', steps: more, night: RUN.night });
-  await settle();
-  assert.equal(sec.querySelector('h3').textContent, 'Answered for you · 6 answers, 2 to check · $0.19');
+  assert.equal(screen.querySelector('.rd-night-sec'), null);
+  assert.equal(screen.querySelector('.rd-na'), null);
+  const note = screen.querySelector('.rd-sheet .rd-away-note');
+  assert.equal(note.hidden, false);
+  assert.equal(note.querySelector('.rd-away-note-text').textContent, 'Away mode: 6 answers while you were away — 2 to check.');
+  assert.doesNotMatch(note.textContent, /\$|NaN|undefined/, 'the note names no cost');
 });
 
-test('answers card: an old run (no shares on its steps) keeps the plain heading; only a stopped review shows its lower bound, apart', async () => {
-  const ctx = await boot({ decisions: [{ questionId: 'gate-w-2', kind: 'gate', at: '2026-01-01T13:40:00', choice: 'continue', strategy: 'rule', flagged: false, rationale: 'r' }] });
+test("Q&A tab: Away's Shaper stops are listed under Answered for you; a graph Clarify round is listed once", async () => {
+  const clarifyQ = [{ id: 'size', question: 'Which size?' }];
+  const runData = {
+    clarify: { questions: clarifyQ, answers: [{ id: 'size', question: 'Which size?', choice: 'S' }], answeredBy: 'night-mode',
+      night: { flagged: false, questions: [{ id: 'size', rationale: 'small', flagged: false }] } },
+    // The graph Clarify node's own round: the same questions as the run's Clarify.
+    stepQuestions: [{ stepKey: 'x:n_clarify:1', round: 1, nodeId: 'n_clarify', agentKey: 'clarify', questions: clarifyQ, answers: [{ id: 'size', choice: 'S' }] }],
+    reviews: [],
+    awayAnswers: [
+      { questionId: 'c-1', kind: 'clarify', choice: 'S', strategy: 'weights', flagged: false, rationale: 'r', questions: [{ id: 'size', question: 'Which size?', choice: 'S' }] },
+      { questionId: 'plan-outline-n_plan-1', kind: 'plan', at: '2026-01-01T14:00:00', choice: 'approve', strategy: 'rule', flagged: false, meta: { ask: 'outline' },
+        rationale: "the slice outline's check passed" },
+      { questionId: 'plan-n_refine-1', kind: 'plan', at: '2026-01-01T14:05:00', choice: 'revise', strategy: 'rule', flagged: true, meta: { ask: 'plan' },
+        rationale: "the plan's shape check did not pass; asked the planner for changes" },
+    ],
+  };
+  const ctx = await boot({ runData });
   const screen = await openDetail(ctx);
-  ctx.dispatch({ type: 'state', runId: RUN.runId, seq: 3, status: 'running', steps: [{ key: 'n_plan:1', executionId: 'n_plan:1', costUsd: 1 }], night: RUN.night });
-  await settle();
-  const h = screen.querySelector('.rd-night-sec h3');
-  assert.equal(h.textContent, 'Answered for you · 1 answer');
-  ctx.dispatch({ type: 'state', runId: RUN.runId, seq: 4, status: 'running', night: RUN.night,
-    steps: [{ key: 'n_plan:1', executionId: 'n_plan:1', costUsd: 1, auxCosts: { away: { usd: 0, calls: 0, floorUsd: 0.0234, stopped: 1 } } }] });
-  await settle();
-  assert.equal(h.textContent, 'Answered for you · 1 answer · ≥$0.02 · not in total');
-  ctx.dispatch({ type: 'state', runId: RUN.runId, seq: 5, status: 'running', night: RUN.night,
-    steps: [{ key: 'n_plan:1', executionId: 'n_plan:1', costUsd: 1, auxCosts: { away: { usd: 0, calls: 0, stopped: 1 } } }] });
-  await settle();
-  assert.equal(h.textContent, 'Answered for you · 1 answer', 'not priced: no figure, never "$0.00"');
-  assert.doesNotMatch(screen.querySelector('.rd-night-sec').textContent, /NaN|undefined/);
-});
-
-test('answers card: a run seen only through hello after it ended reads its reviews\' cost from the saved steps once they land', async () => {
-  const steps = [{ key: 'n_plan:1', executionId: 'n_plan:1', costUsd: 0.67, auxCosts: { away: { usd: 0.05, calls: 1 } } }];
-  const ctx = await boot({ models: DM_MODELS, decisions: [AWAY_DECISIONS()[1]], runData: { state: { status: 'done', steps, totalCostUsd: 0.67 }, results: null } });
-  ctx.dispatch({ type: 'hello', runs: [{ ...RUN, status: 'done' }] });   // hello carries no steps (ui/server.mjs summarizeRuns)
-  ctx.window.location.hash = `running/${RUN.runId}`;
+  ctx.window.location.hash = `running/${RUN.runId}/details/qa`;
   ctx.window.dispatchEvent(new ctx.window.Event('hashchange'));
   await settle(12);
-  const sec = ctx.window.document.querySelector('#run-detail .rd-night-sec');
-  assert.deepEqual([...sec.querySelectorAll('.rd-na .rd-slabel')].map((c) => c.textContent), ['Clarifying questions · 14:02 · Opus 5.5 · $0.05']);
-  assert.equal(sec.querySelector('h3').textContent, 'Answered for you · 1 answer · $0.05', 'repainted when the saved steps landed');
+  const sec = screen.querySelector('.hd-cl');
+  assert.ok(sec, 'the Q&A tab rendered');
+  assert.equal(sec.querySelectorAll('.hd-cl-card').length, 1, 'the Clarify question once, not again as a step round');
+  const away = sec.querySelector('.hd-cl-away-sec');
+  assert.ok(away, 'Answered for you');
+  assert.equal(away.querySelector('.rd-night-h').textContent, 'Answered for you · 2 answers, 1 to check');
+  // One group per answer: the caption names the stop once, the row says what Away did on one line.
+  const groups = [...away.querySelectorAll('.rd-na')].map((g) => [g.querySelector('.rd-slabel').textContent.split(' · ')[0],
+    [...g.querySelectorAll('.rd-na-row')].map((li) => [li.querySelector('.rd-na-q') ? 'two lines' : 'one line', li.querySelector('.rd-na-a').textContent, li.classList.contains('is-check')])]);
+  assert.deepEqual(groups, [['Slice outline', [['one line', 'Approved', false]]], ['Plan approval', [['one line', 'Asked for changes', true]]]], 'the Clarify answer stays on its card');
 });
 
 test('"Decided by"/"Effort" offer the catalog grouped by connection and read back; at project level empty is "… (your setting)" and sent as __unset', async () => {

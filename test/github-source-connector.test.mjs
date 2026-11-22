@@ -237,6 +237,19 @@ test('reportResult: posts a comment with summary+links; PATCH-closes only when c
   assert.ok(!fetchNo.calls.some((c) => c.init.method === 'PATCH'), 'closeOnComplete=no must never close');
 });
 
+test('reportResult: a run event (started, pr-opened; #1456) is comment only, even with closeOnComplete=yes', async () => {
+  for (const status of ['started', 'pr-opened']) {
+    const fetch = fakeFetch([
+      { match: /\/issues\/7\/comments$/, method: 'POST', reply: res(201, {}) },
+      { match: /\/issues\/7$/, method: 'PATCH', reply: res(200, {}) },
+    ]);
+    await createTaskSource(makeCtx({ token: 'tok', closeOnComplete: 'yes' }), { fetch })
+      .reportResult('acme/api#7', { status, summary: 'Event', links: [] });
+    assert.deepEqual(fetch.calls.map((c) => c.init.method || 'GET'), ['POST'], status);
+    assert.match(fetch.calls[0].url, /\/issues\/7\/comments$/, status);
+  }
+});
+
 // ── error kinds ────────────────────────────────────────────────────────────────
 test('error kinds: 401 -> auth, 403+ratelimit-0 -> rate-limit, fetch rejection -> network', async () => {
   const auth = createTaskSource(makeCtx(), { fetch: fakeFetch([{ match: /./, reply: res(401, {}) }]) });

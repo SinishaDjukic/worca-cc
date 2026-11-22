@@ -164,6 +164,7 @@ const JS_CHECKBOX_OK = [
   ['workflows/test-dialogs.mjs', 'wft-tv-optin', 'opt-ins next to the estimate: reuse earlier results, the free quick check'],
   ['workflows/example-editor.mjs', 'wft-changes-box', 'opts in to keeping the uncommitted changes with the example, next to its start point (board 32)'],
   ['design/export-dialog.mjs', 'dsx-replace', 'consent: replace the listed files'],
+  ['requirements-attach/picker.mjs', 'attach-pick-', 'picks the features to attach to a run or a chat'],
   ['mcp-server-import.mjs', 'mcp-imp-pick', 'picks servers to import'],
 ].map(([file, token, reason]) => ({ file: `ui/public/${file}`, token, reason }));
 function checkboxEmitters(files) {
@@ -455,9 +456,9 @@ test('headings: section titles and sub-heads use the shared classes, with no siz
   }
 });
 
-const PAGE_CARDS = ['.chart-card', '.sched-feed', '.tp-ov-card', '.rd-sheet', '.hd-ov-card', '.pd-ov-card', '.hd-cl-card', '.hd-ov-task',
+const PAGE_CARDS = ['.chart-card', '.sched-feed', '.tp-ov-card', '.rd-sheet', '.hd-ov-card', '.pd-ov-card', '.hd-cl-card', '.run-task', '.run-setup',
   '.tp-editor .card.tp-group-card', '.tp-editor details.card', '.tm-empty .card', '.mv-providers', '.settings-card'];
-const TILES = ['.stat-tile', '.chat-run-tile', '.mcp-setlist'];
+const TILES = ['.stat-tile', '.chat-run-tile'];
 test('cards: every page card pads --pad-card, every tile --pad-tile', () => {
   for (const s of PAGE_CARDS) assert.match(bodyOf(s), /padding:var\(--pad-card\)/, s);
   for (const s of TILES) assert.match(bodyOf(s), /padding:var\(--pad-tile\)/, s);

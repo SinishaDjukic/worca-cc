@@ -6,6 +6,7 @@
 import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import http from 'node:http';
+import { appServer } from './helpers/app-server.mjs';
 import { readdirSync, readFileSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -26,7 +27,7 @@ let base;
 
 before(async () => {
   const mod = await import('../ui/server.mjs');
-  srv = http.createServer(mod.app);
+  srv = appServer(mod.app);
   await new Promise((resolve, reject) => {
     srv.once('error', reject);
     srv.listen(0, '127.0.0.1', () => { srv.off('error', reject); resolve(); });

@@ -230,41 +230,33 @@ test('resizing across 1080px and 760px: the tiers never touch the stored prefere
 
 // ---- New run ----
 
-test('New run: the one primary button in the bar\'s right slot, shown at every level, never a nav row', () => {
+test('New run: no button in the top bar; the Runs page head holds its slot, which app.js fills with the library Button', () => {
   const doc = new JSDOM(html).window.document;
-  const btn = doc.getElementById('topnav-new');
+  assert.equal(doc.getElementById('topnav-new'), null, 'the top bar has no New run');
+  const slot = doc.getElementById('runs-new-slot');
+  assert.equal(slot.parentElement.className, 'runs-head');
+  assert.equal(slot.previousElementSibling.className, 'runs-head-title', 'after the Runs title');
+  assert.equal(ruleBody('.topnav-new'), null, 'no rule left for the old button');
+});
+
+test('New run (the Runs page head) opens #new, and is never marked current', async () => {
+  const { window, $, click, go } = await boot();
+  await go('runs');
+  const btn = $('#runs-new');
   assert.equal(btn.tagName, 'BUTTON');
-  assert.equal(btn.type, 'button');
-  assert.equal(btn.parentElement.className, 'topnav-r');
-  assert.ok(btn.classList.contains('topnav-new'));
+  assert.deepEqual([...btn.classList].sort(), ['btn', 'btn-primary', 'btn-sm', 'runs-new'], 'the library Button, primary');
   assert.equal(btn.dataset.minLevel, 'simple', 'visible at every interface mode');
   assert.equal(btn.hasAttribute('data-nav'), false, 'the router never lights it as the open page');
-  assert.equal(btn.querySelector('.topnav-new-label').textContent, 'New run');
-  assert.equal(btn.querySelector('svg path').getAttribute('d'), 'M6 4.5v15a1 1 0 0 0 1.5.9l12-7.5a1 1 0 0 0 0-1.8l-12-7.5A1 1 0 0 0 6 4.5Z', 'the play icon');
-  assert.deepEqual([...btn.classList], ['btn', 'btn-primary', 'topnav-new'], 'the skin is the one button, medium primary');
-  assert.equal(ruleBody('.topnav-new'), 'flex:none;white-space:nowrap;', 'the hook keeps layout only');
-  assert.equal(ruleBody('.topnav-new:focus-visible'), null, '.btn draws the focus ring');
+  assert.equal(btn.textContent.trim(), 'New run');
+  click('#runs-new');
+  await settle();
+  assert.equal(window.location.hash, '#new');
+  assert.equal($('[data-view="new"]').classList.contains('hidden'), false, 'the New run page shows');
+  assert.equal($('#topnav-title').textContent, 'New run');
+  assert.equal($('#runs-new').classList.contains('active'), false);
 });
 
-test('New run opens #new from any page, a started run\'s page included, and is never marked current', async () => {
-  const { window, $, click, go, recv } = await boot();
-  recv({ type: 'hello', runs: [live('r1')] });
-  await checkRows([
-    ['stats', 'Statistics'], ['running/r1', 'Runs'], ['new', 'New run'],
-  ].map(([from, fromTitle]) => ({ name: `from #${from}`, run: async () => {
-    await go(from);
-    assert.equal($('#topnav-title').textContent, fromTitle, 'precondition');
-    click('#topnav-new');
-    await settle();
-    assert.equal(window.location.hash, '#new');
-    assert.equal($('[data-view="new"]').classList.contains('hidden'), false, 'the New run page shows');
-    assert.equal($('#topnav-title').textContent, 'New run');
-    assert.equal($('#topnav-new').hasAttribute('aria-current'), false);
-    assert.equal($('#topnav-new').classList.contains('active'), false);
-  } })));
-});
-
-test('the sidebar has no New run row: 14 pages, Chat first; New run is the top bar\'s button', () => {
+test('the sidebar has no New run row: 14 pages, Chat first; New run is the Runs page\'s button', () => {
   const doc = new JSDOM(html).window.document;
   assert.equal(doc.querySelector('.nav [data-nav="new"]'), null);
   assert.equal(doc.querySelectorAll('.nav button[data-nav]').length, 14);
@@ -273,7 +265,7 @@ test('the sidebar has no New run row: 14 pages, Chat first; New run is the top b
 
 // ---- phones (<=760px) ----
 
-test('phones: no #mbar; the hamburger (with its needs-you dot) is the top bar\'s first control; New run turns icon-only', () => {
+test('phones: no #mbar; the hamburger (with its needs-you dot) is the top bar\'s first control', () => {
   const doc = new JSDOM(html).window.document;
   for (const sel of ['#mbar', '#mbar-title', '.mbar', '.mbar-mark']) assert.equal(doc.querySelector(sel), null, `${sel} is gone`);
   const menu = doc.getElementById('mbar-menu');
@@ -281,15 +273,12 @@ test('phones: no #mbar; the hamburger (with its needs-you dot) is the top bar\'s
   assert.equal(menu.parentElement.firstElementChild, menu, 'first in the left slot, where the collapse toggle sits on desktop');
   assert.equal(menu.getAttribute('aria-controls'), 'side-rail');
   assert.equal(doc.getElementById('mbar-rollup').parentElement, menu);
-  assert.equal(doc.getElementById('topnav-new').getAttribute('aria-label'), 'New run', 'its name when the label is hidden');
   for (const sel of ['.mbar', '.mbar-mark', '.mbar-title']) assert.equal(ruleBody(sel), null, `${sel} has no rule left`);
   assert.match(css, /\n\.mbar-menu,\.nav-scrim,\.side-close\{display:none;\}/, 'the hamburger is hidden above 760px');
   const phone = css.slice(css.indexOf('.mbar-menu,.nav-scrim,.side-close{display:none;}'));
   const block = phone.slice(phone.indexOf('@media (max-width:760px){'), phone.indexOf('\n}\n', phone.indexOf('@media (max-width:760px){')));
   assert.match(block, /\n {2}\.mbar-menu\{position:relative;display:flex;/);
   assert.match(block, /\n {2}\.topnav\{grid-template-columns:minmax\(0,1fr\) auto auto;gap:8px;\}/);
-  assert.match(block, /\n {2}#topnav-new\{width:32px;padding:0;\}/);
-  assert.match(block, /\n {2}\.topnav-new-label\{display:none;\}/);
   assert.doesNotMatch(block, /\n {2}\.(app|main)\{/, 'the column, not a phone override, stacks the bar over the page');
 });
 

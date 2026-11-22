@@ -8,7 +8,7 @@ import { bootChat, liveRun, hello, openPanel, panelOf, screenOf, click, ROW } fr
 import { readStyleCss } from '../src/core/read-style-css.mjs';
 
 
-test('the facts row sits under the Details header; the glance stays hidden', async () => {
+test('the facts row sits under the Details header; the rest of the run card is the Overview tab', async () => {
   const ctx = await bootChat();
   hello(ctx, [liveRun()]);
   await ctx.settle();
@@ -19,7 +19,8 @@ test('the facts row sits under the Details header; the glance stays hidden', asy
   const facts = head.querySelector('.rd-facts');
   assert.ok(facts, 'the facts row moved out of the glance');
   assert.ok([...facts.querySelectorAll('.rd-stats > div > span')].some((s) => s.textContent === 'time'), 'Time is painted there');
-  assert.equal(screen.querySelector('.rd-glance').hidden, true);
+  assert.ok(screen.querySelector('.rd-sec[data-sec="overview"] > .rd-glance'), 'the card is the Overview tab\'s body (one level)');
+  assert.equal(screen.querySelector('.rd-glance .rd-facts'), null, 'its facts row is the head\'s');
   assert.equal(screen.querySelectorAll('.rd-facts').length, 1);
   assert.equal(screen.querySelector('.rd-bar .rd-stop').title, 'Stop', 'the icon-only Stop keeps its word as a tooltip');
 });
@@ -87,7 +88,7 @@ test('style.css "Chat P4: run panel": width, 900px sheet, pinned tabs, scrolling
   assert.match(sec, /\.crp \.rd-bar-end\{[^}]*flex-wrap:nowrap;/, 'the bar never wraps, paused (Resume split) included');
   assert.match(sec, /\.crp \.rd-bar-end > \.rd-night-wrap\{flex:0 1 auto;min-width:72px;\}/, 'the Away select gives way first');
   assert.match(sec, /\.crp \.rd-bar \.rd-night\{[^}]*min-width:0;/);
-  assert.match(sec, /\.chat-page\[data-panel="open"\] \.chat-convo\{container:chat-convo \/ inline-size;\}/, 'the squeezed conversation is a container');
+  assert.match(sec, /\.chat-page \.chat-convo\{container:chat-convo \/ inline-size;\}/, 'the conversation is a container whatever squeezes it (the run panel, the tool panel with the chats list)');
   assert.match(sec, /@container chat-convo \(max-width:520px\)\{\s*\.chat-page \.ask-meter-cost,\.chat-page \.ask-voice-caret,\.chat-page \.ask-model-btn-effort\{display:none;\}/, 'its composer drops what a phone drops');
   assert.match(sec, /@container chat-convo \(max-width:420px\)\{[^}]*\}\s*\.chat-page \.ask-composer-row > \.ask-meter\{display:none;\}/);
   assert.match(sec, /@container crp \(max-width:560px\)\{[^@]*\.crp :is\(\.rd-tab,\.hd-tab\) > svg\{display:none;\}/, 'two tab rows, not three, in a narrow panel');

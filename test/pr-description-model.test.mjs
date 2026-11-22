@@ -4,7 +4,7 @@
 // catalog-validated, cleared by an empty value, reported with its effective model.
 import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
-import http from 'node:http';
+import { appServer } from './helpers/app-server.mjs';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -17,7 +17,7 @@ before(async () => {
   process.env.HOME = home; process.env.USERPROFILE = home; delete process.env.WORCA_HOME;
   process.env.WORCA_TEST_ALLOW_HOME_FALLBACK = '1';
   const { app } = await import('../ui/server.mjs');
-  srv = http.createServer(app);
+  srv = appServer(app);
   await new Promise((r) => srv.listen(0, '127.0.0.1', r));
   base = `http://127.0.0.1:${srv.address().port}`;
 });

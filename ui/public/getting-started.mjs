@@ -12,16 +12,25 @@ import { WORCA_LEVEL_COUNT } from '../../src/shared/worca-levels.mjs';
 /** Shelf order = the arc: prerequisite → first object → see the loop → talk to
  *  it → know the workflows → real work → scale. Labels are outcomes, never settings. */
 export const GETTING_STARTED_STEPS = Object.freeze([
-  { id: 'claude',      label: 'Connect Claude Code',             vig: 'claude' },
+  { id: 'claude',      label: 'Connect a model',                 vig: 'claude' },
   { id: 'project',     label: 'Add your first project',          vig: 'project' },
   { id: 'run',         label: 'Watch a run end to end',          vig: 'run' },
   { id: 'ask',         label: 'Ask about a run in Chat',         vig: 'ask' },
   { id: 'realRun',     label: 'Run a real pipeline',             vig: 'realRun' },
   { id: 'workflows',   label: 'Explore the built-in workflows',  vig: 'workflow' },
-  { id: 'workspace',   label: 'Group projects into a workspace', vig: 'workspace',   level: 'advanced' },
-  { id: 'teamMetrics', label: 'Turn on team metrics',            vig: 'teamMetrics', level: 'expert' },
-  { id: 'teamPolicy',  label: 'Set a team policy',               vig: 'teamPolicy',  level: 'expert' },
+  { id: 'workspace',   label: 'Group projects into a workspace', vig: 'workspace',   level: 'advanced', helps: 'hooked' },
+  { id: 'teamMetrics', label: 'Turn on team metrics',            vig: 'teamMetrics', level: 'expert',   helps: 'hooked' },
+  { id: 'teamPolicy',  label: 'Set a team policy',               vig: 'teamPolicy',  level: 'expert',   helps: 'hooked' },
 ]);
+
+/** The step that opens the setup assistant. Not one of the nine: it never counts and is shown only while setup is unfinished. */
+const SETUP_STEP = Object.freeze({ id: 'setup', label: 'Finish setup', vig: 'project' });
+const TEAM_STEP_IDS = new Set(['teamMetrics', 'teamPolicy']);
+const RUNNER_LEVEL = 2;
+const RUNNER_REAL_RUNS = 3;
+const RUNNER_STEP_COUNT = 6;
+const TOWARD_RUNNER = GETTING_STARTED_STEPS.slice(0, RUNNER_STEP_COUNT);
+const HELPS_LABEL = { hooked: 'Helps Hooked' };
 
 // `level` (docs/ui-levels.md) is the interface mode a step's controls live in; absent = simple.
 // Every tile shows at every mode — the count stays "n of 9" — but a step above the current mode
@@ -37,6 +46,40 @@ const DONE_HOLD = 0.1;
 
 export const doneCount = (status) => GETTING_STARTED_STEPS.filter((s) => !!status?.steps?.[s.id]).length;
 export const allStepsDone = (status) => doneCount(status) === GETTING_STARTED_STEPS.length;
+
+/** Whether the team steps (metrics, policy) are listed (D-18). Before Runner only Expert mode lists them; from Runner on
+ *  every mode lists them for a person on a team and none for a solo one. An unknown level view takes the pre-Runner rule. */
+export function teamStepsVisible({ levelIndex, mode, onTeam } = {}) {
+  if (!Number.isInteger(levelIndex) || levelIndex < RUNNER_LEVEL) return mode === 'expert';
+  return !!onTeam;
+}
+
+/** The "Later" steps (7 to 9) this person should see, done or not. */
+export function laterSteps(status, { levelIndex, mode } = {}) {
+  const steps = status?.steps || {};
+  const onTeam = !!(steps.teamMetrics || steps.teamPolicy);
+  const teamShown = teamStepsVisible({ levelIndex, mode, onTeam });
+  return GETTING_STARTED_STEPS.filter((s) => s.helps && (!TEAM_STEP_IDS.has(s.id) || teamShown));
+}
+
+/** The held level; 0 for a served view with no level yet, null while no view is known. */
+const levelIndexOf = (view) => (Number.isInteger(view?.level?.index) ? view.level.index : (view && view.level === null ? 0 : null));
+
+/** Progress toward Runner: steps 1 to 6, plus one for three real runs. */
+export function runnerProgress(status, worcaLevel) {
+  const stepsDone = TOWARD_RUNNER.filter((s) => !!status?.steps?.[s.id]).length;
+  const realRuns = Number(worcaLevel?.runner?.realRuns) || 0;
+  return { done: stepsDone + (realRuns >= RUNNER_REAL_RUNS ? 1 : 0), of: RUNNER_STEP_COUNT + 1 };
+}
+
+/** The sidebar pill's wording: "Finish setup" until setup is done, then the Runner count; null once Runner (or unknown). */
+export function gsPillText(status, worcaLevel) {
+  if (status && !status.setupFinished) return 'Finish setup';
+  const index = levelIndexOf(worcaLevel);
+  if (index === null || index >= RUNNER_LEVEL) return null;
+  const { done, of } = runnerProgress(status, worcaLevel);
+  return `Runner · ${done} of ${of}`;
+}
 
 /* ---------------------------------------------------------------- artwork */
 // Each vignette is the app's own vocabulary — hollow nodes, wires, one accent
@@ -237,46 +280,118 @@ export function renderGettingStarted(host, status, { onStep, onHide, animate = t
   const worcaLine = levelLine(doc, worcaLevel);
   if (worcaLine) card.appendChild(worcaLine);
 
-  const tiles = doc.createElement('div');
-  tiles.className = 'gs-tiles';
+  const levelIndex = levelIndexOf(worcaLevel);
   // Tiles arrive one at a time IN ORDER, so a new user reads one idea at a
   // time instead of nine at once. A finished tile takes its turn but arrives
   // already drawn and still, so it holds the sequence only briefly.
-  let at = 0;
-  for (const s of GETTING_STARTED_STEPS) {
-    const isDone = !!status.steps[s.id];
-    const delay = at;
-    at += isDone ? DONE_HOLD : TILE_HOLD;
-    const tile = doc.createElement('button');
-    tile.type = 'button';
-    tile.className = `gs-tile${animate ? ' reveal' : ''}${isDone ? ' done' : ''}`;
-    tile.dataset.step = s.id;
-    tile.style.setProperty('--tile-delay', `${animate ? delay : 0}s`);
-    tile.setAttribute('aria-label', `${s.label}: ${isDone ? 'done' : 'not done yet'}`);
-    const mark = doc.createElement('span');
-    mark.className = 'gs-mark';
-    mark.setAttribute('aria-hidden', 'true');
-    mark.append(icon(doc, 'check', 12));
-    const vig = doc.createElement('span');
-    vig.className = 'gs-vig';
-    vig.appendChild(vignette(doc, s.vig, { animate: animate && !isDone, delay }));
-    const label = doc.createElement('span');
-    label.className = 'gs-label';
-    label.textContent = s.label;
-    tile.append(mark, vig, label);
-    if (s.level && LEVEL_ORDER.indexOf(s.level) > LEVEL_ORDER.indexOf(level)) {
-      const lv = doc.createElement('span');
-      lv.className = 'lv-pill gs-level';
-      lv.dataset.lv = s.level;
-      lv.textContent = LEVEL_LABEL[s.level];
-      tile.appendChild(lv);
-      tile.setAttribute('aria-label', `${tile.getAttribute('aria-label')}, part of ${LEVEL_LABEL[s.level]} mode`);
-    }
-    tile.addEventListener('click', () => onStep && onStep(s.id));
-    tiles.appendChild(tile);
+  const seq = { at: 0 };
+  const tile = (s, isDone) => stepTile(doc, s, { isDone, animate, level, onStep, seq });
+  const later = laterSteps(status, { levelIndex, mode: level });
+
+  const tiles = doc.createElement('div');
+  tiles.className = 'gs-tiles';
+  if (!status.setupFinished) tiles.appendChild(tile(SETUP_STEP, false)).classList.add('gs-setup-tile');
+  if (levelIndex !== null && levelIndex >= RUNNER_LEVEL) {
+    card.appendChild(tiles);
+    card.appendChild(foldedShelf(doc, status, later, { onStep }));
+  } else {
+    card.appendChild(tiles);
+    card.appendChild(section(doc, 'Toward Runner', [
+      ...TOWARD_RUNNER.map((s) => tile(s, !!status.steps[s.id])),
+      realRunsCounter(doc, worcaLevel),
+    ]));
+    if (later.length) card.appendChild(section(doc, 'Later', later.map((s) => tile(s, !!status.steps[s.id]))));
   }
-  card.appendChild(tiles);
   host.appendChild(card);
+}
+
+/** One checklist tile (also step 0). Advances `seq.at` so the next tile arrives after it. */
+function stepTile(doc, s, { isDone, animate, level, onStep, seq }) {
+  const delay = seq.at;
+  seq.at += isDone ? DONE_HOLD : TILE_HOLD;
+  const tile = doc.createElement('button');
+  tile.type = 'button';
+  tile.className = `gs-tile${animate ? ' reveal' : ''}${isDone ? ' done' : ''}`;
+  tile.dataset.step = s.id;
+  tile.style.setProperty('--tile-delay', `${animate ? delay : 0}s`);
+  tile.setAttribute('aria-label', `${s.label}: ${isDone ? 'done' : 'not done yet'}`);
+  const mark = doc.createElement('span');
+  mark.className = 'gs-mark';
+  mark.setAttribute('aria-hidden', 'true');
+  mark.append(icon(doc, 'check', 12));
+  const vig = doc.createElement('span');
+  vig.className = 'gs-vig';
+  vig.appendChild(vignette(doc, s.vig, { animate: animate && !isDone, delay }));
+  const label = doc.createElement('span');
+  label.className = 'gs-label';
+  label.textContent = s.label;
+  tile.append(mark, vig, label);
+  if (s.helps) {
+    const helps = doc.createElement('span');
+    helps.className = 'gs-helps';
+    helps.textContent = HELPS_LABEL[s.helps];
+    tile.appendChild(helps);
+  }
+  if (s.level && LEVEL_ORDER.indexOf(s.level) > LEVEL_ORDER.indexOf(level)) {
+    const lv = doc.createElement('span');
+    lv.className = 'lv-pill gs-level';
+    lv.dataset.lv = s.level;
+    lv.textContent = LEVEL_LABEL[s.level];
+    tile.appendChild(lv);
+    tile.setAttribute('aria-label', `${tile.getAttribute('aria-label')}, part of ${LEVEL_LABEL[s.level]} mode`);
+  }
+  tile.addEventListener('click', () => onStep && onStep(s.id));
+  return tile;
+}
+
+function section(doc, title, children) {
+  const sec = doc.createElement('section');
+  sec.className = 'gs-section';
+  const h3 = doc.createElement('h3');
+  h3.className = 'gs-section-title';
+  h3.textContent = title;
+  const grid = doc.createElement('div');
+  grid.className = 'gs-tiles';
+  grid.append(...children);
+  sec.append(h3, grid);
+  return sec;
+}
+
+/** The counter beside the Toward Runner steps; no number when the level view is unknown. */
+function realRunsCounter(doc, worcaLevel) {
+  const counter = doc.createElement('div');
+  counter.className = 'gs-counter';
+  const runs = worcaLevel?.runner?.realRuns;
+  counter.textContent = Number.isInteger(runs) ? `Real runs · ${Math.min(runs, RUNNER_REAL_RUNS)} of ${RUNNER_REAL_RUNS}` : `${RUNNER_REAL_RUNS} real runs`;
+  return counter;
+}
+
+/** From Runner up: one line, then a compact list of the visible Later steps still to do. */
+function foldedShelf(doc, status, later, { onStep }) {
+  const wrap = doc.createElement('div');
+  wrap.className = 'gs-folded';
+  const fold = doc.createElement('p');
+  fold.className = 'gs-fold';
+  fold.textContent = "You're a Runner. Your level card shows what to try next.";
+  wrap.appendChild(fold);
+  const undone = later.filter((s) => !status.steps[s.id]);
+  if (undone.length) {
+    const list = doc.createElement('ul');
+    list.className = 'gs-later-list';
+    for (const s of undone) {
+      const li = doc.createElement('li');
+      const btn = doc.createElement('button');
+      btn.type = 'button';
+      btn.className = 'btn btn-sm btn-quiet gs-later-item';
+      btn.dataset.step = s.id;
+      btn.textContent = s.label;
+      btn.addEventListener('click', () => onStep && onStep(s.id));
+      li.appendChild(btn);
+      list.appendChild(li);
+    }
+    wrap.appendChild(list);
+  }
+  return wrap;
 }
 
 /* ------------------------------------------------------------------- pill */
@@ -288,8 +403,9 @@ export function renderGettingStarted(host, status, { onStep, onHide, animate = t
  * @param {Element} host
  * @param {object|null} status
  * @param {() => void} onOpen
+ * @param {object|null} [worcaLevel]  the served WorcaLevelView; with it the pill reads gsPillText instead of the count
  */
-export function renderGettingStartedPill(host, status, onOpen) {
+export function renderGettingStartedPill(host, status, onOpen, worcaLevel = null) {
   if (!host) return;
   const doc = host.ownerDocument;
   host.replaceChildren();
@@ -297,18 +413,22 @@ export function renderGettingStartedPill(host, status, onOpen) {
   host.hidden = false;
   const done = doneCount(status);
   const total = GETTING_STARTED_STEPS.length;
+  const pillText = gsPillText(status, worcaLevel);
   const btn = doc.createElement('button');
   btn.type = 'button';
   btn.className = 'gs-pill';
-  btn.setAttribute('aria-label', `Getting started: ${done} of ${total} done`);
+  btn.setAttribute('aria-label', pillText ? `Getting started: ${pillText}` : `Getting started: ${done} of ${total} done`);
   btn.title = 'Getting started';
   btn.innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 12.5l4.5 4.5L20 6"></path></svg>';
   const text = doc.createElement('span');
-  text.textContent = 'Getting started';
-  const count = doc.createElement('span');
-  count.className = 'nav-count n-grey gs-pill-count';
-  count.textContent = `${done}/${total}`;
-  btn.append(text, count);
+  text.textContent = pillText || 'Getting started';
+  btn.appendChild(text);
+  if (!pillText) {
+    const count = doc.createElement('span');
+    count.className = 'nav-count n-grey gs-pill-count';
+    count.textContent = `${done}/${total}`;
+    btn.appendChild(count);
+  }
   btn.addEventListener('click', () => onOpen && onOpen());
   host.appendChild(btn);
 }

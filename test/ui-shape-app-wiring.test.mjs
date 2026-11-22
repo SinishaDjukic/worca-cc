@@ -552,7 +552,7 @@ const reqRun = (pendingQuestion) => rrRun({ pendingQuestion });
 const barAnswer = (root) => root.querySelector('[data-model-action="answer"]');
 const barReads = (b) => [b.textContent, b.classList.contains('btn-primary')];
 
-test('run page, Ask for changes open: the bar drops Agree and plan, is not a primary, and its click posts nothing; Cancel restores it', async () => {
+test('one-level run page: the Requirements card is answered on the card; the header never repeats its primary, open or closed', async () => {
   const posts = [];
   const ctx = await bootApp({ fetchHandler: recordAnswers('run-rr', posts) });
   ctx.wsBox.ws.dispatch('open', {});
@@ -561,39 +561,16 @@ test('run page, Ask for changes open: the bar drops Agree and plan, is not a pri
   await ctx.settle();
   const panel = runPanel(ctx);
   const bar = panel.closest('.rd').querySelector('.rd-actions');
-  assert.deepEqual(barReads(barAnswer(bar)), ['Agree and plan', true]);
+  assert.equal(barAnswer(bar), null);
   click(ctx, panel.querySelector('.plan-ask-changes'));
   await ctx.settle();
-  assert.deepEqual(barReads(barAnswer(bar)), ['Answer', false]);
-  panel.querySelector('.plan-feedback').value = 'Also cover XLSX';
-  click(ctx, barAnswer(bar));
-  await ctx.settle();
-  assert.deepEqual(posts, [], 'the typed words are not dropped by an approve');
-  assert.equal(ctx.window.document.activeElement, panel.querySelector('.plan-feedback'));
-  assert.equal(panel.querySelector('.plan-feedback').value, 'Also cover XLSX');
+  assert.equal(barAnswer(bar), null, 'Ask for changes open: still none');
   click(ctx, panel.querySelector('.plan-typed-cancel'));
   await ctx.settle();
-  assert.deepEqual(barReads(barAnswer(bar)), ['Agree and plan', true]);
-  click(ctx, barAnswer(bar));
+  assert.equal(barAnswer(bar), null);
+  click(ctx, panel.querySelector('.plan-actions .btn-primary'));
   await ctx.settle();
-  assert.deepEqual(posts.map((p) => p.decision), ['approve'], 'closed again, the bar is the card\'s primary');
-});
-
-test('run page, a failing requirement: the bar is Ask for changes until the field opens, then a plain Answer', async () => {
-  const posts = [];
-  const ctx = await bootApp({ fetchHandler: recordAnswers('run-rr', posts) });
-  ctx.wsBox.ws.dispatch('open', {});
-  ctx.dispatch({ type: 'hello', runs: [reqRun(REQ_ASK({ criteria: FAILING_CHECK }))] });
-  ctx.go('running/run-rr');
-  await ctx.settle();
-  const panel = runPanel(ctx);
-  const bar = panel.closest('.rd').querySelector('.rd-actions');
-  assert.deepEqual(barReads(barAnswer(bar)), ['Ask for changes', true]);
-  click(ctx, barAnswer(bar));
-  await ctx.settle();
-  assert.equal(panel.querySelector('.plan-typed').hidden, false, 'the bar\'s click is the card\'s click');
-  assert.deepEqual(barReads(barAnswer(bar)), ['Answer', false]);
-  assert.deepEqual(posts, []);
+  assert.deepEqual(posts.map((p) => p.decision), ['approve'], 'the card\'s primary approves');
 });
 
 test('Chat run card, Ask for changes open: Answer is not a primary and its click reaches the field; Cancel restores it', async () => {

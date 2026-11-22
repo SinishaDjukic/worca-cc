@@ -1210,11 +1210,14 @@ export async function setPythonPath(input) {
 
 // ── Actions (issue #529) ─────────────────────────────────────────────────────
 // One nested key `actions`: the keep policy for finished-run checkouts, the
-// `auto` port range, the editor/terminal overrides of the built-ins, and the
-// checkout cap. editor/terminal are command paths the built-ins route spawns as
+// `auto` port range, the editor/terminal overrides of the built-ins, the
+// checkout cap, and the Browser tab's preview-port mode. editor/terminal are command paths the built-ins route spawns as
 // the server user, so POST /api/settings refuses an `actions` key from agent callers.
 export const ACTIONS_KEEP = ['never', 'on-success', 'until-pr'];
-export const DEFAULT_ACTIONS_SETTINGS = Object.freeze({ keep: 'never', portLow: 4400, portHigh: 4499, editor: '', terminal: '', maxCheckouts: null });
+/** Settings › Runs › Actions › Preview ports: every loopback port, or the Actions range and running Actions only.
+ *  The server forces 'range' on a hosted Worca whatever is stored here (ui/server.mjs previewPortMode). */
+export const PREVIEW_PORT_MODES = ['all', 'range'];
+export const DEFAULT_ACTIONS_SETTINGS = Object.freeze({ keep: 'never', portLow: 4400, portHigh: 4499, editor: '', terminal: '', maxCheckouts: null, previewPorts: 'all' });
 const isPort = (v) => Number.isSafeInteger(v) && v >= 1024 && v <= 65535;
 const isCap = (v) => Number.isSafeInteger(v) && v >= 1 && v <= 100;
 
@@ -1229,6 +1232,7 @@ export function actionsSettings() {
     editor: typeof s.editor === 'string' ? s.editor.trim() : '',
     terminal: typeof s.terminal === 'string' ? s.terminal.trim() : '',
     maxCheckouts: isCap(s.maxCheckouts) ? s.maxCheckouts : null,
+    previewPorts: PREVIEW_PORT_MODES.includes(s.previewPorts) ? s.previewPorts : DEFAULT_ACTIONS_SETTINGS.previewPorts,
   };
 }
 
@@ -1238,6 +1242,9 @@ export function assertActionsInput(patch) {
   const has = (k) => Object.hasOwn(patch, k);
   const clear = (v) => v === '' || v === null || v === undefined;
   if (has('keep') && !clear(patch.keep) && !ACTIONS_KEEP.includes(patch.keep)) throw new Error(`actions.keep must be one of ${ACTIONS_KEEP.join(' | ')}`);
+  if (has('previewPorts') && !clear(patch.previewPorts) && !PREVIEW_PORT_MODES.includes(patch.previewPorts)) {
+    throw new Error(`actions.previewPorts must be one of ${PREVIEW_PORT_MODES.join(' | ')}`);
+  }
   for (const k of ['portLow', 'portHigh']) if (has(k) && !clear(patch[k]) && !isPort(patch[k])) throw new Error(`actions.${k} must be a whole number from 1024 to 65535`);
   const cur = actionsSettings();
   const low = has('portLow') && !clear(patch.portLow) ? patch.portLow : cur.portLow;
@@ -1275,6 +1282,7 @@ export const SETTINGS_POST_KEYS = Object.freeze([
   'smartNaming',                             // Smart run naming { suggestTitle, suggestBranch, pattern, types, trigger, addRunId }
   'debugSpawnEnabled',
   'keepAwake',                               // the account menu's Keep awake switch (default on)
+  'chatLinksInPanel',                        // Settings › Chat: open chat links in the panel (default on, issue 1064)
   'resumeAfterUsageLimit',
   'updateCheck',                             // Settings › About: check npm for a newer stable Worca (#841)
   'titleModel', 'hideBuiltinModels',
@@ -1298,7 +1306,7 @@ export const SETTINGS_POST_KEYS = Object.freeze([
   'sync',                                    // sync before run (#527) { beforeRun, remote, refreshMinutes, onDiverged }
   'networkWait',                             // Settings › Runs › Wait for the network {enabled, maxWaitMin}
   'runLimits',                               // Settings › Runs › Machine load { maxConcurrentRuns, testWorkers, keepRunsDays }
-  'actions',                                 // Settings › Runs › Actions { keep, portLow, portHigh, editor, terminal, maxCheckouts }
+  'actions',                                 // Settings › Runs › Actions { keep, portLow, portHigh, editor, terminal, maxCheckouts, previewPorts }
   'runEngine', 'stepModels', 'utilityModels',
   'modelRoles',                              // Models › Jobs › Roles: { <engine>: { deep|everyday|quick: { model, effort } } }
   'requirementsInterview',                  // Models › Jobs › Helper jobs: the requirements interview { model, effort }
@@ -2120,6 +2128,25 @@ export async function migrateKeepAwakeFlag() {
   const r = migrateLegacyKeepAwakeFlag(readSettings());
   if (!r.changed) return false;
   try { await persistSettings(r.settings); return true; } catch { return false; }   // keepAwakeEnabled still reads the flag
+}
+
+// ── Open chat links in the panel (issue 1064 §4) ──────────────────────────────
+// File paths and web links in the chat's answers open in tabs of the tool panel. Default ON; only `false` is stored.
+export const DEFAULT_CHAT_LINKS_IN_PANEL = true;
+export function assertChatLinksInPanelInput(input) {
+  if (!isBool(input)) throw new Error('chatLinksInPanel must be true or false');
+}
+export function chatLinksInPanel(settings = readSettings()) {
+  const s = settings && typeof settings === 'object' ? settings : {};
+  return isBool(s.chatLinksInPanel) ? s.chatLinksInPanel : DEFAULT_CHAT_LINKS_IN_PANEL;
+}
+export async function setChatLinksInPanel(input) {
+  assertChatLinksInPanelInput(input);
+  const settings = readSettings();
+  if (input === DEFAULT_CHAT_LINKS_IN_PANEL) delete settings.chatLinksInPanel;
+  else settings.chatLinksInPanel = input;
+  await persistSettings(settings);
+  return { chatLinksInPanel: chatLinksInPanel() };
 }
 
 // ── Resume after a usage limit (opt-in) ──────────────────────────────────────
@@ -3222,13 +3249,15 @@ export async function writeStoredFlags(map) {
 }
 
 // ── Getting started (onboarding) ─────────────────────────────────────────────
-// Three machine-wide flags, nothing more: which steps are DONE is derived from
+// Five machine-wide flags, nothing more: which steps are DONE is derived from
 // product state by src/core/onboarding.mjs and never stored. `hidden` is the
 // checklist's Hide (Settings › General › Getting started shows it again);
 // `welcomeSeen` is the one-time welcome dialog; `workspaceGuideSeen` is the
 // "How workspaces work" walkthrough (FEAT-7) — set on every open, cleared when
-// the last workspace is deleted. All absent = all false.
-const ONBOARDING_FLAGS = Object.freeze(['hidden', 'welcomeSeen', 'workspaceGuideSeen']);
+// the last workspace is deleted. `setupFinished` records that the Setup Assistant was completed
+// (install-wide, like the setup); `setupChecked` is the boot marker that credits an install that
+// predates it exactly once (onboarding.mjs#ensureSetupMarker). All absent = all false.
+const ONBOARDING_FLAGS = Object.freeze(['hidden', 'welcomeSeen', 'workspaceGuideSeen', 'setupFinished', 'setupChecked']);
 
 export function onboardingPrefs() {
   const o = readSettings().onboarding;

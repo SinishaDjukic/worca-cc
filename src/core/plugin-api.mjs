@@ -25,6 +25,8 @@
 // 'unimplemented' and simply cannot export, so the API stays 5.
 // Ticket updates adds optional ones too (capabilities().ticketUpdates, listStatuses, legacyMove, reportResult's `move` and its
 // { moved, note } answer, listProjects' `name`, getTask's meta.project): a connector without them keeps its old behaviour.
+// reportResult's `status` gains 'started' and 'pr-opened' (one comment per run event, #1456): a connector that closes or
+// transitions only on 'completed' and comments on anything else needs no change, so the API stays 5.
 // Requirements A6.1 adds optional import ops (capabilities().import, importOptions, searchTickets, importTicket, downloadAttachment).
 // Additive in the same way: a connector without them simply cannot import, so the API stays 5.
 // importOptions may answer the same projects as exportOptions({}); it is a separate op because a source may import

@@ -24,6 +24,7 @@ import {
   askWindowedSpendUsd, requirementsWindowedSpendUsd, designWindowedSpendUsd, testJudgeWindowedSpendUsd, utilityTotals,
   REAL_RUN_HOURS,
 } from './cost-budget.mjs';
+import { REAL_RUN_SQL } from './real-run.mjs';
 import { savedUsd } from '../shared/human-estimate.mjs';
 import { effectiveHumanRateUsd } from './human-rate.mjs';
 import { aggregateReviewQuality, REVIEW_STATS_VERSION } from '../shared/review/quality.mjs';
@@ -109,7 +110,8 @@ const TOTALS_COLUMNS = `COUNT(*) AS runs,
       COALESCE(SUM(pr_state = 'MERGED'), 0)                                  AS prsMerged,
       COALESCE(SUM(CASE WHEN p.total_cost_usd  > 0 THEN p.total_cost_usd  ELSE COALESCE(s.sc, 0) END), 0) AS spend,
       COALESCE(SUM(CASE WHEN p.total_active_ms > 0 THEN p.total_active_ms ELSE COALESCE(s.sa, 0) END), 0) AS active,
-      COALESCE(SUM(${REAL_RUN_HOURS}), 0) AS humanHours`;
+      COALESCE(SUM(${REAL_RUN_HOURS}), 0) AS humanHours,
+      COALESCE(SUM(${REAL_RUN_SQL('p')}), 0) AS realRuns`;
 const TOTALS_FROM = `
     FROM pipelines p
     LEFT JOIN (SELECT pipeline_id, SUM(cost_usd) sc, SUM(active_ms) sa
@@ -193,6 +195,7 @@ function shapeTotals(row) {
     workedMs: Number(row.active || 0),
     cohortSpendUsd: roundUsd(row.spend || 0),
     humanHours: Math.round(Number(row.humanHours || 0) * 100) / 100,
+    realRuns: Number(row.realRuns || 0),
   };
 }
 
@@ -585,7 +588,7 @@ export function getStats({ range = 'month', now = new Date(), from = null, to = 
       workedMs: c.workedMs,
       runs: c.runs, finished: c.finished, stopped: c.stopped, failed: c.failed,
       paused: c.paused, running: c.running,
-      prsOpened: c.prsOpened, prsMerged: c.prsMerged,
+      prsOpened: c.prsOpened, prsMerged: c.prsMerged, realRuns: c.realRuns,
     };
   };
 
@@ -605,7 +608,7 @@ export function getStats({ range = 'month', now = new Date(), from = null, to = 
       workedMs: at.activeMs,
       runs: c.runs, finished: c.finished, stopped: c.stopped, failed: c.failed,
       paused: c.paused, running: c.running,
-      prsOpened: c.prsOpened, prsMerged: c.prsMerged,
+      prsOpened: c.prsOpened, prsMerged: c.prsMerged, realRuns: c.realRuns,
     };
   } else {
     totals = shapeWindow(windowStart.getTime(), windowEnd.getTime());
