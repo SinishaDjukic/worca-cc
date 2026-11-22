@@ -368,7 +368,7 @@ and pinned routes). See [split-by-feature.md](split-by-feature.md).
 | File | Lines |
 |---|---|
 | `ui/public/shape/feature.html` | 2 |
-| `ui/public/shape/shape-it.css` | 235 |
+| `ui/public/shape/shape-it.css` | 441 |
 | `ui/routes/shape/features.mjs` | 143 |
 
 ## mcp-servers ([mcp-servers.md](mcp-servers.md))

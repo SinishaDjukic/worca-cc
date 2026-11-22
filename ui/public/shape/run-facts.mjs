@@ -18,7 +18,8 @@ function startsValue(doc, s) {
 /** An Owns row: ✓ met, ✕ unmet, the waiting dot before a review; the id in its column, the text on one line, the full
  *  text in the row's tooltip. */
 const ownRow = (o) => ({ id: o.id, idCol: true, label: o.text, pass: o.pass === true, tip: `${o.id} · ${o.text}`,
-  ...(o.pass == null ? { mark: 'wait', ariaLabel: 'waiting' } : {}) });
+  // Small runs D3 (D4): the feature's one status word (src/shared/shape/req-status.mjs, via /slice `owns[].word`).
+  ...(o.word ? { note: o.word, mark: o.mark, ariaLabel: o.word } : o.pass == null ? { mark: 'wait', ariaLabel: 'waiting' } : {}) });
 
 /**
  * Paints `host`'s facts box from `info` (the `/slice` answer). Idempotent: a repaint updates the same box. Info null,

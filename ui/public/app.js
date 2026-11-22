@@ -80,7 +80,7 @@ const state = {
 };
 // The group page host (runs redesign slice 4, D16). Up here, next to `state`: the boot's synchronous showView runs
 // mountGroupPage on a #feature/… reload, and a `const` declared below that call would still be in its TDZ.
-const GROUP_PAGE = { host: null, route: '', id: '', tab: 'runs', featureId: '', gone: false, failed: false, resolving: false, reentered: false, paintQueued: false, unmarked: 0, stackedOnly: false };
+const GROUP_PAGE = { host: null, route: '', id: '', tab: 'runs', featureId: '', gone: false, failed: false, resolving: false, reentered: false, paintQueued: false, unmarked: 0, stackedOnly: false, feature: null, requirements: false, featureSeq: 0, featureApplied: 0, memberKey: '', memberPending: '', memberFailed: '' };
 
 import { icon } from './icons.mjs';
 import { subagentAliasLabel, subagentAliasTitle, roleOf, ROLE_LABELS } from '../../src/shared/model-roles.mjs';
@@ -351,7 +351,7 @@ import { registerChatRunCard } from './chat/run-card.mjs';
 import { registerDirectionAddon } from './chat/direction.mjs';
 import { renderPlanBody } from './shape/plan-body.mjs';
 import { renderOutlineBody } from './shape/outline-body.mjs';
-import { renderFeature, featureModelOf } from './shape/feature-view.mjs';
+import { renderFeature, featureModelOf, renderFeatureRequirements, paintFeatureDecisions } from './shape/feature-view.mjs';
 import { renderReleaseRow } from './shape/release-row.mjs';
 import { featureFocusOf, focusFeatureControl, featureMenuItems } from './shape/feature-actions.mjs';
 import { decorateShapingQuestions } from './shape/questions.mjs';
@@ -530,6 +530,7 @@ async function paintShapeFeature(host) {
   if (opts.loading && host.dataset.painted !== id) {
     host.replaceChildren(Object.assign(document.createElement('p'), { className: 'feature-page-loading', textContent: 'Loading feature…' }));
   }
+  const ticket = groupFeatureTicket();
   const r = await fetch(`/api/shape/features/${encodeURIComponent(id)}`).catch(() => null);
   const f = r && r.ok ? await r.json().catch(() => null) : null;
   if (seq !== host.__shapeSeq || SHAPE_FEATURE_HOSTS.get(host) !== id) return;
@@ -547,7 +548,7 @@ async function paintShapeFeature(host) {
   // F47: the route follows replaced_by, so f.id can be a newer feature than the host's id. Frames name f.id, and the
   // actions must reach it.
   host.__shapeShown = f.id;
-  noteGroupFeatureLock(f);                                   // Shaper requirements s3: the page header's Create PR lock
+  noteGroupFeatureLock(f, ticket);                           // Shaper requirements s3: the page header's Create PR lock
   // A rebuild drops the focus (rule: app-js-repaint-drops-focus): give it back to the same control. An action names
   // its control itself (F39: in Chromium the disabled button has already lost the focus); a WS repaint reads it.
   const act = host.__shapeFocus || featureFocusOf(document, host);
@@ -35488,7 +35489,7 @@ el.groupDetail?.addEventListener('click', (e) => {
 });
 async function mountGroupPage(host, { route, id, tab, reentered = false }) {
   const fresh = GROUP_PAGE.host !== host || GROUP_PAGE.route !== route || GROUP_PAGE.id !== id;
-  Object.assign(GROUP_PAGE, { host, route, id, tab, reentered, ...(fresh ? { featureId: '', gone: false, failed: false, resolving: false, unmarked: 0, stackedOnly: false } : {}) });
+  Object.assign(GROUP_PAGE, { host, route, id, tab, reentered, ...(fresh ? { featureId: '', gone: false, failed: false, resolving: false, unmarked: 0, stackedOnly: false, feature: null, requirements: false, memberKey: '', memberPending: '', memberFailed: '' } : {}) });
   if (fresh) {
     groupMessage(host, 'feature-page-loading', 'Loading group…');
     host.__gp = null;
@@ -35505,13 +35506,14 @@ async function mountGroupPage(host, { route, id, tab, reentered = false }) {
     if (route === 'feature') {
       // F47: a replaced feature id carries on as the newest one; the route answers the current id, or 404.
       GROUP_PAGE.resolving = true;
+      const ticket = groupFeatureTicket();
       const res = await fetch(`/api/shape/features/${encodeURIComponent(id)}`).catch(() => null);
       if (GROUP_PAGE.id !== id || GROUP_PAGE.route !== route) return;
       GROUP_PAGE.resolving = false;
       // A network error or a 5xx is not an answer; only a 404 means gone.
       GROUP_PAGE.failed = !res || (!res.ok && res.status !== 404);
       if (res && res.status === 404) GROUP_PAGE.gone = true;
-      else if (res && res.ok) { const f = await res.json().catch(() => ({})); GROUP_PAGE.featureId = f.id || id; GROUP_PAGE.unmarked = unmarkedOf(f); GROUP_PAGE.stackedOnly = smallRunsOf(f); }
+      else if (res && res.ok) { const f = await res.json().catch(() => ({})); GROUP_PAGE.featureId = f.id || id; GROUP_PAGE.unmarked = unmarkedOf(f); GROUP_PAGE.stackedOnly = smallRunsOf(f); if (ticket >= GROUP_PAGE.featureApplied) { GROUP_PAGE.featureApplied = ticket; storeGroupFeature(f); } }
     }
   }
   paintGroupPageNow();
@@ -35519,6 +35521,8 @@ async function mountGroupPage(host, { route, id, tab, reentered = false }) {
 function paintGroupPageNow() {
   const { host, route, id, tab } = GROUP_PAGE;
   if (!host || !host.isConnected || host.closest('.view.hidden') || !(el.groupShell && el.groupShell.classList.contains('detail-open'))) return;
+  // Small runs D3: a Requirements deep link keeps "Loading group…" while its feature is fetched (no Runs flash).
+  if (route === 'feature' && tab === 'requirements' && GROUP_PAGE.resolving && !host.__gp) return;
   const gid = GROUP_PAGE.featureId || id;
   const it = !GROUP_PAGE.gone && state.runGroupsLoaded ? runsGroupItems().find((g) => g.id === gid) : null;
   if (!it && !GROUP_PAGE.gone && (state.runGroupsFailed || GROUP_PAGE.failed)) {
@@ -35563,7 +35567,8 @@ function paintGroupPageNow() {
   // Run 3 (D15): the group's Labels fact is the read-only union of its members' History labels.
   const labels = [...new Set(row.members.flatMap((mb) => (histOf(mb.pipelineId) || {}).labels || []))].sort();
   paintGroupPage(host.__gp, { row, project: row.groupName || '', tab, overview: row.groupKind === 'feature', logs: levelAtLeast('expert'), labels,
-    unmarked: route === 'feature' ? GROUP_PAGE.unmarked : 0, stackedOnly: route === 'feature' && GROUP_PAGE.stackedOnly }, {
+    unmarked: route === 'feature' ? GROUP_PAGE.unmarked : 0, stackedOnly: route === 'feature' && GROUP_PAGE.stackedOnly,
+    requirements: route === 'feature' && GROUP_PAGE.requirements }, {
     onAction: (aid, b) => groupAction(row, aid, b),
     onMore: (anchor) => openGroupMoreMenu(anchor, row),
     // One ship flow (D11): Create PR / View PR ▾ / View PRs ▾ on the status line, for every group kind.
@@ -35593,7 +35598,23 @@ function paintGroupPageNow() {
       else if (GROUP_PAGE.reentered || changed) paintShapeFeature(h);   // away: the hidden page skipped frames
       GROUP_PAGE.reentered = false;
     },
-    mountDecisions: (h, r) => { void paintGroupDecisions(h, r); },
+    // Small runs D3 (D8): a marked feature's Decisions is its decision log; the per-run receipts stay on each run's page.
+    // Deleting the receipts' signature makes an in-flight paintGroupDecisions bail at its own check.
+    mountDecisions: (h, r) => {
+      if (route === 'feature' && GROUP_PAGE.requirements) { delete h.dataset.sig; paintFeatureDecisions(document, h, GROUP_PAGE.feature); refetchGroupFeature(r); return; }
+      h.classList.remove('plan-body', 'srows', 'shape-feature-decisions');
+      void paintGroupDecisions(h, r);
+    },
+    mountRequirements: (h, r) => {
+      refetchGroupFeature(r);
+      // Link only a run with its own page: a waiting ticket's href is the feature page (or Schedules), so it stays text.
+      return renderFeatureRequirements(document, GROUP_PAGE.feature, { runHref: (n) => {
+        const mb = r.members.find((x) => x.position === n);
+        if (!mb) return null;
+        if (mb.runId) return `#running/${mb.runId}`;
+        return mb.href && mb.href.startsWith('#history/') ? mb.href : null;
+      } });
+    },
     // A member with no run page yet (a waiting ticket) links its row's own href.
     logsHref: (mb) => {
       const page = mb.runId ? `#running/${mb.runId}` : mb.href || '#runs';
@@ -35614,12 +35635,55 @@ function unmarkedOf(f) {
 }
 /** Feature D1: a small-runs feature ships a PR per run, so its page never offers One. */
 function smallRunsOf(f) { return !!(f && f.ship && f.ship.smallRuns); }
-/** The open feature page's lock from a fetched feature view; a change repaints the page header. */
-function noteGroupFeatureLock(f) {
+/** Small runs D3 (D11): the open feature page's feature view. Its Requirements tab exists only for a marked feature with
+ *  the flag on (the route sends ship.smallRuns for a marked feature with the flag off too). */
+function storeGroupFeature(f) {
+  GROUP_PAGE.feature = f;
+  GROUP_PAGE.requirements = flagOn('shaperSmallRuns') && smallRunsOf(f);
+}
+/** What the Requirements and Decisions tabs paint from: every row's status text, the Care line and the log. */
+function groupFeatureSig(f) {
+  const sr = f && f.ship && f.ship.smallRuns;
+  return JSON.stringify([sr ? [...(sr.owned || []), ...(sr.confirmed || [])].map((e) => [e.id, e.shown ? e.shown.text : '']) : null,
+    sr && sr.care ? sr.care.line : '', (f && f.log) || []]);
+}
+/** Every feature fetch that may reach GROUP_PAGE takes a rising ticket before it is sent; noteGroupFeatureLock drops an
+ *  answer older than the last one applied, so a slow fetch never paints a stale feature over a newer one. */
+function groupFeatureTicket() { return ++GROUP_PAGE.featureSeq; }
+/** The open feature page's lock from a fetched feature view; a change repaints the page header. D3: the view is kept,
+ *  and a change of what the Requirements or Decisions tab shows repaints the page too. */
+function noteGroupFeatureLock(f, ticket) {
   if (GROUP_PAGE.route !== 'feature' || !f || f.id !== GROUP_PAGE.featureId) return;
+  if (ticket < GROUP_PAGE.featureApplied) return;
+  GROUP_PAGE.featureApplied = ticket;
   const n = unmarkedOf(f);
   const so = smallRunsOf(f);
-  if (n !== GROUP_PAGE.unmarked || so !== GROUP_PAGE.stackedOnly) { GROUP_PAGE.unmarked = n; GROUP_PAGE.stackedOnly = so; scheduleGroupPagePaint(); }
+  const was = [groupFeatureSig(GROUP_PAGE.feature), GROUP_PAGE.requirements];
+  storeGroupFeature(f);
+  const moved = was[0] !== groupFeatureSig(f) || was[1] !== GROUP_PAGE.requirements;
+  if (n !== GROUP_PAGE.unmarked || so !== GROUP_PAGE.stackedOnly || moved) { GROUP_PAGE.unmarked = n; GROUP_PAGE.stackedOnly = so; scheduleGroupPagePaint(); }
+}
+/** D3 (D11): while Requirements or Decisions shows a marked feature, a member that moves on (its model state) refetches
+ *  the feature once per change, as paintGroupDecisions keys on it. The key lives in GROUP_PAGE (one for both tabs),
+ *  never in the DOM; the first key after the page's own fetch is seeded without a refetch. A failed refetch keeps the
+ *  painted rows and stores no key: the next change retries. */
+function refetchGroupFeature(row) {
+  const key = [...(row.planning ? [row.planning] : []), ...row.members]
+    .map((mb) => `${mb.pipelineId || mb.ticketId || ''}:${mb.model ? mb.model.state : ''}`).join(',');
+  const gp = GROUP_PAGE;
+  if (!gp.memberKey && gp.feature) { gp.memberKey = key; return; }
+  if (gp.memberKey === key || gp.memberPending === key || gp.memberFailed === key) return;
+  const fid = gp.featureId;
+  gp.memberPending = key;
+  const ticket = groupFeatureTicket();
+  void fetch(`/api/shape/features/${encodeURIComponent(fid)}`).then((r) => (r && r.ok ? r.json() : null)).catch(() => null).then((f) => {
+    if (gp.featureId !== fid) return;
+    if (gp.memberPending === key) gp.memberPending = '';
+    if (!f) { gp.memberFailed = key; return; }
+    gp.memberKey = key;
+    gp.memberFailed = '';
+    noteGroupFeatureLock(f, ticket);
+  });
 }
 /** A shape-feature frame (a mark saved here, in Chat or in another tab): re-read the open feature page's lock. A
  *  mounted Overview view of the feature refetches it anyway (refreshShapeFeatures) and notes the lock itself. */
@@ -35629,8 +35693,9 @@ async function refreshGroupFeatureLock(id) {
   for (const [host, hid] of SHAPE_FEATURE_HOSTS) {
     if (host.isConnected && !host.closest('.view.hidden') && (hid === fid || host.__shapeShown === fid)) return;
   }
+  const ticket = groupFeatureTicket();
   const res = await fetch(`/api/shape/features/${encodeURIComponent(fid)}`).catch(() => null);
-  noteGroupFeatureLock(res && res.ok ? await res.json().catch(() => null) : null);
+  noteGroupFeatureLock(res && res.ok ? await res.json().catch(() => null) : null, ticket);
 }
 function scheduleGroupPagePaint() {
   if (GROUP_PAGE.paintQueued) return;

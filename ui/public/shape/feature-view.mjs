@@ -5,6 +5,10 @@
 import { featureCardModel, paintFeatureLog } from './feature-card.mjs';
 import { paintFeatureActions } from './feature-actions.mjs';
 import { renderShipCard, saveAcceptance, confirmRequirement } from './ship-card.mjs';
+import { buildRequirementRoleFolds } from './role-rows.mjs';
+import { reasonLine } from '../../../src/shared/shape/ship-ledger.mjs';
+import { CONFIRM_ROLES, roleOfPerspective, perspectiveOfRole } from '../../../src/shared/shape/feature-record.mjs';
+import { criterionPerspective } from '../../../src/shared/shape/requirements.mjs';
 
 const range = (xs) => (xs.length === 1 ? `slice ${xs[0]}` : `slices ${xs[0]}–${xs[xs.length - 1]}`);
 
@@ -71,4 +75,89 @@ export function renderFeature(doc, f, deps) {
   el.appendChild(foot);
   paintFeatureActions(doc, foot, m.controls, deps, { omit: deps.omit || [], menu: !deps.inGroup });
   return el;
+}
+
+// ---- Shaper small runs D3: the feature page's Requirements and Decisions (ui/public/group-page.mjs tabs) ----
+
+const plural = (n, word) => `${n} ${word}${n === 1 ? '' : 's'}`;
+const pad2 = (n) => String(n).padStart(2, '0');
+const clockOf = (at) => { const d = at ? new Date(at) : null; return d && !Number.isNaN(d.getTime()) ? `${pad2(d.getHours())}:${pad2(d.getMinutes())}` : ''; };
+/** A row's mark name for screen readers: the state alone, since the note already says the word. */
+const MARK_NAMES = Object.freeze({ check: 'met', live: 'in progress', wait: 'waiting', '?': 'needs you', paused: 'paused', x: 'not met', none: 'dropped' });
+const RELEASE = Object.freeze({ key: 'release', label: 'Release' });
+
+/** The ship ledger's entries in agreed order (`f.requirementKinds`), each with its role key (a confirmed one's own role,
+ *  an owned one's by its id prefix; none is Release). Only entries the server gave a status (`shown`). */
+function ledgerEntries(f) {
+  const sr = f.ship.smallRuns;
+  const byId = new Map([...(sr.owned || []).map((e) => [e.id, { e, owned: true }]), ...(sr.confirmed || []).map((e) => [e.id, { e, owned: false }])]);
+  const order = Array.isArray(f.requirementKinds) && f.requirementKinds.length ? f.requirementKinds.map((k) => k.id) : [...byId.keys()];
+  return order.map((id) => byId.get(id)).filter((x) => x && x.e.shown).map(({ e, owned }) => ({ e, owned,
+    role: owned ? roleOfPerspective(criterionPerspective(e.id, { smallRuns: true })) || RELEASE.key : e.role }));
+}
+
+/**
+ * The Requirements tab (owner direction db793abc0): the caption, then one role fold per role (role-rows.mjs
+ * buildRequirementRoleFolds, the Requirements step's) in CONFIRM_ROLES order, each with its count and how many are met
+ * or open. A role whose requirements are all met starts closed, any other open. Each row: the state mark, the id, the
+ * text on one line, the server's status `shown.text` (`run N` a link to that run's page when `runHref(N)` names one).
+ * Null without a small-runs ledger. No listeners on the rows: a repaint (group-page.mjs keepUnchanged) may replace them.
+ */
+export function renderFeatureRequirements(doc, f, { runHref = () => null } = {}) {
+  if (!f || !f.ship || !f.ship.smallRuns) return null;
+  const h = (tag, cls, text) => { const e = doc.createElement(tag); if (cls) e.className = cls; if (text != null) e.textContent = text; return e; };
+  const all = ledgerEntries(f);
+  const box = h('div', 'plan-body srows shape-feature-reqs');
+  const owned = all.filter((x) => x.owned).length;
+  box.appendChild(h('p', 'cap shape-feature-reqs-cap', all.length
+    ? `${plural(all.length, 'requirement')} · ${owned} owned by a run · ${all.length - owned} confirmed by a person` : '0 requirements'));
+  if (!all.length) return box;
+  const roles = [...CONFIRM_ROLES, RELEASE];
+  const groups = roles.map((role) => ({ role, rows: all.filter((x) => x.role === role.key) })).filter((g) => g.rows.length).map(({ role, rows }) => {
+    const met = rows.filter((x) => x.e.shown.mark === 'check').length;
+    const open = rows.length - met;
+    return { key: role.key, perspective: role.key === RELEASE.key ? null : perspectiveOfRole(role.key), label: role.label, lead: false,
+      summary: `${rows.length} · ${met} met${open ? ` · ${open} open` : ''}`, state: open ? 'open' : 'clean', mark: 'wait', markWord: 'not all met',
+      findings: [], entries: rows,
+      rows: rows.map(({ e }) => {
+        const label = reasonLine(e.text);
+        const at = clockOf(e.at);
+        return { id: e.id, idCol: true, label, pass: e.shown.mark === 'check', mark: e.shown.mark, ariaLabel: e.shown.word === 'gap accepted' ? 'gap accepted' : MARK_NAMES[e.shown.mark] || 'waiting',
+          note: e.shown.text, tip: `${e.id} · ${label} · ${e.shown.text}${at ? ` · ${at}` : ''}` };
+      }) };
+  });
+  const { el, folds } = buildRequirementRoleFolds(doc, groups);
+  folds.forEach((fold, i) => {
+    [...fold.rows.querySelectorAll(':scope > .plan-check-row')].forEach((row, k) => {
+      const { e, owned } = groups[i].entries[k];
+      row.dataset.key = e.id;
+      row.dataset.owner = e.shown.owner;
+      if (e.shown.role) row.dataset.role = e.shown.role;
+      const href = owned && Number.isInteger(e.run) ? runHref(e.run) : null;
+      if (!href) return;
+      const a = h('a', 'rd-fact-link', e.shown.owner);
+      a.setAttribute('href', href);
+      row.querySelector('.plan-check-detail').replaceChildren(a, ` · ${e.shown.word}`);
+    });
+  });
+  box.appendChild(el);
+  return box;
+}
+
+/**
+ * The Decisions tab of a small-runs feature: the Care row first, exactly once (`ship.smallRuns.care.line`, in place of
+ * the log's own Care line), then every decision log line (`f.log`), each a .srows row (paintFeatureLog `srows`).
+ * Paints nothing without a small-runs ledger.
+ */
+export function paintFeatureDecisions(doc, host, f) {
+  const sr = f && f.ship && f.ship.smallRuns;
+  if (!sr) return;
+  host.classList.add('plan-body', 'srows', 'shape-feature-decisions');
+  let list = host.querySelector(':scope > ul.plan-checks');
+  if (!list) { list = doc.createElement('ul'); list.className = 'plan-checks'; host.replaceChildren(list); }
+  const lines = [{ key: 'care', run: null, text: sr.care.line, detail: [] },
+    ...(Array.isArray(f.log) ? f.log : []).filter((l) => l && l.key !== 'care')].map((l) => ({ ...l, text: reasonLine(l.text) }));
+  paintFeatureLog(doc, list, lines, { srows: true });
+  const care = list.querySelector(':scope > li[data-key="care"]');
+  if (care) care.dataset.fact = 'care';
 }

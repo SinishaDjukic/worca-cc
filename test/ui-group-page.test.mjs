@@ -6,7 +6,7 @@ import assert from 'node:assert/strict';
 import { JSDOM } from 'jsdom';
 import { useDomRelease } from './helpers/jsdom-release.mjs';
 import { groupModel } from '../src/shared/run-model.mjs';
-import { buildGroupPage, paintGroupPage, GROUP_TABS, runReceipts, groupPrList } from '../ui/public/group-page.mjs';
+import { buildGroupPage, paintGroupPage, GROUP_TABS, runReceipts, groupPrList, syncRequirementsTab } from '../ui/public/group-page.mjs';
 import { ACTION_LABEL } from '../src/shared/run-model.mjs';
 import { RUN_STATE_ROWS, NOW, REPLAY_FRAMES } from './helpers/run-states.mjs';
 
@@ -336,4 +336,48 @@ test('slice 3: a focused member link keeps focus when ANOTHER row changes and th
   const next = root.querySelector('.gpage-runs .run-members');
   assert.notEqual(next, ol, 'the table was replaced');
   assert.equal(doc.activeElement, next.querySelector('.run-member-title'), 'focus moved to the new row 1 link');
+});
+
+test('D3: syncRequirementsTab inserts a role=tab button after Runs and a role=tabpanel panel, and removes them; a repaint keeps one Requirements tab and the focused link; requirements falls back to runs when off', () => {
+  const doc = trackDom(new JSDOM('<!doctype html><body></body>')).window.document;
+  const root = buildGroupPage(doc);
+  doc.body.appendChild(root);
+  syncRequirementsTab(root, true);
+  syncRequirementsTab(root, true);
+  const tabs = () => [...root.querySelectorAll('.gpage-tabs .rd-tab')].map((t) => t.dataset.tab);
+  assert.deepEqual(tabs(), ['runs', 'requirements', 'overview', 'decisions', 'logs'], 'once, after Runs');
+  const tab = root.querySelector('.rd-tab[data-tab="requirements"]');
+  assert.ok(tab.matches('button.rd-tab.tab[type="button"][role="tab"]'));
+  assert.equal(tab.textContent, 'Requirements');
+  const panel = root.querySelector('.gpage-panel[data-tab="requirements"]');
+  assert.ok(panel.matches('div.gpage-panel[role="tabpanel"]'));
+  assert.equal(panel.previousElementSibling.dataset.tab, 'runs');
+  assert.ok(panel.querySelector(':scope > div.gpage-requirements'));
+  syncRequirementsTab(root, false);
+  assert.deepEqual(tabs(), GROUP_TABS.map(([id]) => id), 'removed from the DOM, not hidden');
+  assert.equal(root.querySelector('.gpage-panel[data-tab="requirements"]'), null);
+
+  let n = 0;
+  const node = (key) => { const d = doc.createElement('div'); d.className = 'shape-feature-reqs'; d.innerHTML = `<div class="plan-check-row" data-key="R-po-1"><span class="plan-check-detail"><a class="rd-fact-link" href="#running/r2">run 2</a> · ${key}</span></div>`; return d; };
+  let word = 'being built';
+  const deps = { ...NOOP, mountRequirements: () => { n += 1; return node(word); } };
+  paintGroupPage(root, { row: row(), project: '', tab: 'requirements', overview: true, requirements: true }, deps);
+  assert.equal(root.querySelector('.rd-tab[aria-selected="true"]').dataset.tab, 'requirements');
+  assert.equal(root.querySelector('.gpage-panel[data-tab="requirements"]').hidden, false);
+  assert.equal(root.querySelectorAll('.rd-tab[data-tab="requirements"]').length, 1);
+  const link = root.querySelector('.gpage-requirements a.rd-fact-link');
+  link.focus();
+  paintGroupPage(root, { row: row(), project: '', tab: 'requirements', overview: true, requirements: true }, deps);
+  assert.equal(root.querySelector('.gpage-requirements a.rd-fact-link'), link, 'an unchanged repaint keeps the node');
+  word = 'met';
+  paintGroupPage(root, { row: row(), project: '', tab: 'requirements', overview: true, requirements: true }, deps);
+  const fresh = root.querySelector('.gpage-requirements a.rd-fact-link');
+  assert.notEqual(fresh, link);
+  assert.equal(doc.activeElement, fresh, 'the focus moves to the same row\'s link');
+  assert.equal(root.querySelectorAll('.rd-tab[data-tab="requirements"]').length, 1);
+  assert.equal(n, 3);
+  paintGroupPage(root, { row: row(), project: '', tab: 'requirements', overview: true, requirements: false }, deps);
+  assert.equal(root.querySelector('.rd-tab[aria-selected="true"]').dataset.tab, 'runs', 'off: requirements falls back to Runs');
+  assert.equal(root.querySelector('.rd-tab[data-tab="requirements"]'), null);
+  assert.equal(n, 3, 'nothing mounted while off');
 });

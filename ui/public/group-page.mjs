@@ -92,6 +92,26 @@ export function buildGroupPage(doc) {
   return root;
 }
 
+/** Shaper small runs D3 (D7): the Requirements tab, after Runs, only while it applies. It is created and removed in the
+ *  DOM (never only hidden), so a page without it keeps dev's four tabs. GROUP_TABS stays dev's. */
+export function syncRequirementsTab(root, on) {
+  const tab = root.querySelector('.gpage-tabs .rd-tab[data-tab="requirements"]');
+  const panel = root.querySelector('.gpage-panel[data-tab="requirements"]');
+  if (!on) { tab?.remove(); panel?.remove(); return; }
+  if (tab && panel) return;
+  const doc = root.ownerDocument;
+  const t = el(doc, 'button', 'rd-tab tab', 'Requirements');
+  t.type = 'button';
+  t.setAttribute('role', 'tab');
+  t.dataset.tab = 'requirements';
+  root.querySelector('.gpage-tabs .rd-tab[data-tab="runs"]').after(t);
+  const p = el(doc, 'div', 'gpage-panel');
+  p.dataset.tab = 'requirements';
+  p.setAttribute('role', 'tabpanel');
+  p.append(el(doc, 'div', 'gpage-requirements'));
+  root.querySelector('.gpage-panel[data-tab="runs"]').after(p);
+}
+
 /** One ship flow (D11): a group's Create PR and View PR(s) live on the status line (docs/design-system.md
  *  "Placement"), never in the bar, for features, chains and user groups alike. */
 export function headerActions(m) {
@@ -122,9 +142,10 @@ export function groupPrList(row) {
 /**
  * Paint (idempotent). `view`: { row (groupRow output), project, tab, overview:boolean, logs:boolean, labels: [] (the
  * members' labels), unmarked?: number (a feature's unmarked requirements: its Create PR is locked), stackedOnly?: boolean (a small-runs
- * feature: the ship line never offers One) }.
+ * feature: the ship line never offers One), requirements?: boolean (D3: a marked feature with the flag on) }.
  * `deps`: { onAction(id, btn), onTab(tab), onMore(anchor), mountQuestion(slot, member|null), answerLabel?(), mountOverview(host),
- * mountDecisions(host, row), logsHref(member), labelChip(doc, label), paintHead?(acts, slot, head) } — paintHead paints
+ * mountDecisions(host, row), mountRequirements?(host, row) → Node|null (D3, while `view.requirements`), logsHref(member),
+ * labelChip(doc, label), paintHead?(acts, slot, head) } — paintHead paints
  * groupHead's head (Create PR, View PR ▾, View PRs ▾) into the card head; without it the slot stays hidden.
  */
 export function paintGroupPage(root, view, deps) {
@@ -171,8 +192,10 @@ export function paintGroupPage(root, view, deps) {
     deps.paintHead(root.querySelector('.gpage-card .rd-head-acts'), root.querySelector('.gpage-card .rd-pr-slot'),
       groupHead({ state: m.state, prs: groupPrList(row), unmarked: view.unmarked || 0 }));
   }
-  const offered = (id) => (id !== 'overview' || !!view.overview) && (id !== 'logs' || !!view.logs);
-  const tab = GROUP_TABS.some(([id]) => id === view.tab) && offered(view.tab) ? view.tab : 'runs';
+  // Small runs D3 (D7): the Requirements tab exists only while `view.requirements` (a marked feature, flag on).
+  syncRequirementsTab(root, !!view.requirements);
+  const offered = (id) => (id !== 'overview' || !!view.overview) && (id !== 'logs' || !!view.logs) && (id !== 'requirements' || !!view.requirements);
+  const tab = (GROUP_TABS.some(([id]) => id === view.tab) || view.tab === 'requirements') && offered(view.tab) ? view.tab : 'runs';
   for (const t of root.querySelectorAll('.gpage-tabs .rd-tab')) {
     t.hidden = !offered(t.dataset.tab);
     t.setAttribute('aria-selected', String(t.dataset.tab === tab));
@@ -185,6 +208,12 @@ export function paintGroupPage(root, view, deps) {
   const ship = root.querySelector('.gpage-ship');
   ship.textContent = line;
   ship.hidden = !line;
+  // D12: the rows carry no listeners, so keepUnchanged may keep or replace them (a focused run link moves to its successor).
+  if (tab === 'requirements') {
+    const host = root.querySelector('.gpage-requirements');
+    const node = deps.mountRequirements(host, row);
+    if (node) keepUnchanged(host, [node]);
+  }
   if (tab === 'overview') deps.mountOverview(root.querySelector('.gpage-overview'));
   if (tab === 'decisions') deps.mountDecisions(root.querySelector('.gpage-decisions'), row);
   const numbered = (mb) => !mb.isPlanning && !mb.adhoc && row.groupKind !== 'user';

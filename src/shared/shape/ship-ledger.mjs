@@ -3,6 +3,9 @@
 // block reason while a confirmed one waits, the Not met / Dropped lines and the Care outcome line. Pure; the server computes it and every surface
 // reads the result.
 import { CONFIRM_ROLES, careChoiceText } from './feature-record.mjs';
+import { MARK_WORDS, requirementStatus } from './req-status.mjs';
+
+export { MARK_WORDS };
 
 /** Why a marked feature never ships as one PR (chain.mjs oneShipCheck, the PR auto-finisher). */
 export const SMALL_RUNS_SHIP = 'small runs ship a PR per run';
@@ -16,7 +19,6 @@ const roleLabel = (role) => CONFIRM_ROLES.find((r) => r.key === role)?.label || 
  *  (acceptance.mjs ACCEPTANCE_MARKS). Not met and Dropped carry a one-line reason. */
 export const CONFIRM_MARKS = Object.freeze(['met', 'not-met', 'dropped']);
 export const CONFIRM_REASON_MAX = 300;
-export const MARK_WORDS = Object.freeze({ met: 'Met', 'not-met': 'Not met', dropped: 'Dropped' });
 /** The block reason once every confirmed requirement is marked but one not met or dropped has no reason (an unmarked
  *  one reads the waiting-for-role line). */
 export const REASON_FIRST = 'Give a reason for each one not met or dropped';
@@ -34,9 +36,12 @@ export const reasonLine = (v) => (typeof v === 'string' ? v.replace(/\s+/g, ' ')
  * (outline.acceptance); `verify` = verifyView's answer or null.
  * A confirmed row's `state`: 'waiting' (unmarked), 'needs-reason' (Not met or Dropped with no reason) or 'confirmed'
  * (marked, with a reason where one is needed); `mark` and `reason` are the stored ones. Only Met counts as met.
+ * Small runs D3 (D2): with `runs` (an array, [{index, state, stop}] from the view's slices) and `reruns`
+ * (req-status.mjs rerunsOf), every owned and confirmed entry gains `shown`, its status (requirementStatus), computed
+ * here once. Without `runs` the output is D1's, key for key.
  * → {confirmed, owned, waiting, blocked, reason, met: {met, total}, unmet: [{id, text, mark, reason}]}
  */
-export function shipLedger({ agreed = [], kinds = [], acceptance = [], verify = null } = {}) {
+export function shipLedger({ agreed = [], kinds = [], acceptance = [], verify = null, runs = null, reruns = [] } = {}) {
   const texts = new Map(list(agreed).map((a) => [a.id, a.text || '']));
   const marks = new Map(list(acceptance).filter((e) => e && confirmMarkOf(e.mark)).map((e) => [String(e.id), e]));
   const gaps = verify && verify.state === 'accepted' ? new Set(list(verify.gaps).map((g) => g.id)) : new Set();
@@ -64,6 +69,7 @@ export function shipLedger({ agreed = [], kinds = [], acceptance = [], verify = 
     : needs.length ? REASON_FIRST : null;
   const met = owned.filter((o) => o.status === 'holds').length + confirmed.filter((c) => c.state === 'confirmed' && c.mark === 'met').length;
   const unmet = confirmed.filter((c) => c.state === 'confirmed' && c.mark !== 'met').map((c) => ({ id: c.id, text: c.text, mark: c.mark, reason: c.reason }));
+  if (Array.isArray(runs)) for (const e of [...owned, ...confirmed]) e.shown = requirementStatus(e, { runs, reruns });
   return { confirmed, owned, waiting, blocked: open.length + needs.length > 0, reason, met: { met, total: owned.length + confirmed.length }, unmet };
 }
 

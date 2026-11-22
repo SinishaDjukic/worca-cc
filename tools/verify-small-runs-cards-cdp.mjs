@@ -9,8 +9,10 @@
 //   C1 `#prototype` offered, building, built, remark proposed, confirmed ([data-proto] 0, .5, 1, 2, 3);
 //   C2 `#build` rows and `#run-panel` Agents; C3 `#run-stops` question, answered fold and waiting row;
 //   C4 `#req-change` notice and its "How a change lands" fold;
-// D2 (last; D2_ONLY=1 runs it alone): the cases runs-list, run-facts, agents-place and card-members of a marked 10-run
+// D2 (D2_ONLY=1 runs it alone): the cases runs-list, run-facts, agents-place and card-members of a marked 10-run
 //   feature, in light and dark at 375px and 1280px at Expert, and the flag-off control's Agents places per page;
+// D3 (last; D3_ONLY=1 runs it alone): the feature page's Requirements (one fold per role) and Decisions tabs of a marked
+//   feature before and after Ship, light and dark at 1280px and 375px, beside the prototype's `#feature` tabs;
 // and one reduced-motion capture of Prototype building. A live phase then follows a REAL paced mock Design build
 // (WORCA_MOCK_DESIGN_MS=400) on the Chat card: the Lead row, a row per screen and pieces assembling, captured mid-build
 // and with reduced motion (chat-prototype-building-mid-light, chat-prototype-building-reduced-motion-light). Every list (the Verifier's gap `.srows` included) is measured:
@@ -81,7 +83,7 @@ const imp = (rel) => import(new URL(rel, import.meta.url).href);
 const { server, runs, reqChanges } = await imp('../ui/server.mjs');
 const { getDb } = await imp('../src/core/db.mjs');
 const { projectKey } = await imp('../src/core/store.mjs');
-const { writeStoreMeta, recordArtifact } = await imp('../src/core/artifacts.mjs');
+const { writeStoreMeta, recordArtifact, appendAuditById } = await imp('../src/core/artifacts.mjs');
 const { createSliceFeature, recordShapePlan, changeAgreedRequirements, setFeatureAcceptance, recordShip } = await imp('../src/core/shape/features.mjs');
 const askStore = await imp('../src/core/ask/store.mjs');
 const { normalizeOutline } = await imp('../src/shared/shape/slices.mjs');
@@ -486,7 +488,8 @@ async function shipCells(theme, width) {
   if (await card(SB.threadId, `sb${width}`, 'the Ship blocked card', theme) && await SHIP_READY('the Ship blocked card', theme)) {
     await reveal(SHIP);
     const f = await ev(SHIP_FACTS);
-    check(f && f.why === 'Waiting for Compliance to confirm R-comp-4' && f.waiting === 1 && !f.stateDetail, `ship blocked, ${at}: the reason once, no waiting step detail (${JSON.stringify(f)})`);
+    check(f && f.why === 'Waiting for Compliance to confirm R-comp-4' && f.waiting === 1 && f.stateDetail === 'waiting for Compliance',
+      `ship blocked, ${at}: the reason once in the card; the step detail names who it waits for (D1 shipDetail, the owner's call) (${JSON.stringify(f)})`);
     check(f && f.create === 'Create 4 PRs' && f.disabled && !f.primary && f.described, `ship blocked, ${at}: Create 4 PRs disabled, not primary, described by the reason`);
     check(f && f.marks.length === 1 && f.marks[0] === 'Mark R-comp-4 as Compliance: The sign-up data stays in the EU' && f.pressed.length === 0 && f.care === 1,
       `ship blocked, ${at}: one unmarked Met / Not met / Dropped picker, one Care row`);
@@ -527,7 +530,8 @@ async function shipCells(theme, width) {
       `ship done, ${at}: 4 PRs open once (the state line), the Care row once above the PRs (${JSON.stringify(f)})`);
     check(f && /^Balanced · Worca's pick · \d of 5 built requirements met · 1 gap found at the end · 0 changes after ship so far$/.test(f.careText || '') && !f.titled,
       `ship done, ${at}: the Care outcome from the recorded figures (${JSON.stringify(f && f.careText)})`);
-    check(f && f.unmetBelow && f.unmet.length === 1 && f.unmet[0][0] === 'R-comp-4' && f.unmet[0][1] === 'Not met · Legal has not signed the EU clause yet',
+    // D3 (D5): with the flag on, the row reads the one shared status (its confirmed entry's shown.text).
+    check(f && f.unmetBelow && f.unmet.length === 1 && f.unmet[0][0] === 'R-comp-4' && f.unmet[0][1] === 'Marked Not met by you · Legal has not signed the EU clause yet',
       `ship done, ${at}: the Not met row under the PR rows (${JSON.stringify(f && f.unmet)})`);
     check(f && f.views.join() === 'View PRs', `ship done, ${at}: one view action, View PRs (${JSON.stringify(f && f.views)})`);
     check(f && f.prs.length === 4 && f.prs[0][1] === 'into main' && new Set(f.prs.map((x) => x[0])).size === 4, `ship done, ${at}: one row per PR, run 1 first into main`);
@@ -616,6 +620,7 @@ const FACTS = (scope, runN) => `(() => {
   return { found: true, boxes: [...root.querySelectorAll('.run-facts')].filter((x) => x.offsetParent).length, starts: (text.match(/Starts from/g) || []).length,
     ids: [...box.querySelectorAll('.plan-check-id')].map((e) => [e.textContent, [...root.querySelectorAll('.plan-check-id')].filter((x) => x.textContent === e.textContent && x.offsetParent).length]),
     idsWhole: whole(box.querySelectorAll('.plan-check-id')), labelsWhole: whole(box.querySelectorAll('.plan-check-label')),
+    wordsWhole: whole(box.querySelectorAll('.plan-check-detail')), words: [...box.querySelectorAll('.plan-check-detail')].map((e) => e.textContent),
     repeats: box.textContent.includes('Member admin') || new RegExp('\\\\bRun ${runN}\\\\b').test(box.textContent),
     overflow: document.documentElement.scrollWidth > document.documentElement.clientWidth };
 })()`;
@@ -641,7 +646,10 @@ async function d2Page(url, scope, name, theme, width, { runN = null, flagOff = f
     const f = await ev(FACTS(scope, runN));
     check(f.found && f.boxes === 1 && f.starts === 1 && f.ids.length >= 1 && f.ids.every(([, n]) => n === 1) && !f.repeats,
       `run-facts: ${name}, ${theme}, ${width}px: one box, "Starts from" once, each owned id once, no title or own run number (${JSON.stringify(f)})`);
-    check(f.idsWhole && f.labelsWhole && !f.overflow, `run-facts: ${name}, ${theme}, ${width}px: every id and Owns label whole, no overflow`);
+    // D3 (D4): an Owns row carries its status word; at 375px the text shrinks first and the word stays whole (the row's
+    // tooltip holds the text), so labels are judged whole at 1280px.
+    check(f.idsWhole && f.wordsWhole && f.words.length > 0 && (width === WIDTH || f.labelsWhole) && !f.overflow,
+      `run-facts: ${name}, ${theme}, ${width}px: every id and status word whole${width === WIDTH ? '' : ', every Owns label whole'}, no overflow (${JSON.stringify(f.words)})`);
     if (width === WIDTH) judge(`run-facts ${name} Owns`, theme, await ev(MEASURE(`${scope} .run-facts`, '.plan-check-row', '.plan-check-mark', '.plan-check-text')), { width });
   }
   if (width === WIDTH && await ev(`!!document.querySelector(${JSON.stringify(`${scope} .run-agents .plan-check-row`)})`)) {
@@ -735,8 +743,152 @@ async function finish() {
   log(`${results.shots.length} PNGs and ${logFile} in ${results.minutes} min; ${verdict}`);
   await shutdown(failed ? 1 : 0);
 }
-// D2_ONLY=1 runs the D2 cases alone (each command stays under 10 minutes); unset, every case runs, D2 last.
+
+// ---- Shaper small runs D3: the feature page's Requirements and Decisions tabs. A marked feature: the planning run
+// (run 1) and 4 runs, each owning one requirement, R-po-1's text changed after its run finished (a change run, run 6),
+// R-comp-1 confirmed by Compliance. Before Ship: run 2 done, run 3 building, runs 4–6 not started, R-comp-1 waiting.
+// After Ship: R-comp-1 marked Not met through POST /confirm with a short reason, every run done, the ship applied.
+const D3_TITLES = ['Plan the member export', 'Export members as CSV', 'Email the export link', 'Keep a download log', 'Show the export button'];
+const D3_AGREED = [...D3_TITLES.slice(1).map((t, i) => ({ id: `R-po-${i + 1}`, text: t, example: `example ${i + 1}` })),
+  { id: 'R-comp-1', text: 'A signed copy of each export is kept', example: 'a PDF per export' }];
+const d3Outline = normalizeOutline({ why: 'proof', leftOut: [], slices: D3_TITLES.map((title, i) => ({ id: `s${i + 1}`, title, goal: `Goal ${i + 1}`,
+  inScope: [], outOfScope: [], acceptance: [`ok ${i + 1}`], dependsOn: [], estimate: 'small', requirements: i ? [`R-po-${i}`] : [] })) }, { agreed: D3_AGREED }).outline;
+const D3 = seedFeature('d3', 'Member export', ['done', 'done', 'running', 'planned', 'planned'],
+  { withOutline: d3Outline, titles: D3_TITLES, requirementKinds: { 'R-comp-1': { kind: 'confirmed', role: 'compliance' } } });
+// The decision log's lines (featureLog reads the runs' audit lines): the planning run's agreed requirements and Split,
+// run 2's approved plan.
+appendAuditById(D3.pid(1), 'Requirements approval **approve** by proof.');
+appendAuditById(D3.pid(1), 'Slice outline **approve** by proof.');
+appendAuditById(D3.pid(2), 'Plan approval **approve** by proof.');
+{ const r = reqChanges.apply(D3.f.id, [{ id: 'R-po-1', from: D3_AGREED[0].text, to: 'Export members as CSV with a header row' }], { kind: 'chat', by: 'proof' });
+  check(r.ok && r.result.changes[0].case === 'finished', `seed: the D3 change lands on a change run (${JSON.stringify(r)})`); }
+const D3_BEFORE = { 'R-po-1': 'run 2 · changed · run 6 builds it', 'R-po-2': 'run 3 · being built', 'R-po-3': 'run 4 · to do', 'R-po-4': 'run 5 · to do',
+  'R-comp-1': 'confirmed by a person · Compliance' };
+const D3_REASON = 'unsigned';
+const D3_AFTER = { 'R-po-1': 'run 2 · met · changed by run 6', 'R-po-2': 'run 3 · met', 'R-po-3': 'run 4 · met', 'R-po-4': 'run 5 · met',
+  'R-comp-1': `Marked Not met by you · ${D3_REASON}` };
+const D3_REQS = '.gpage-requirements .shape-feature-reqs';
+const D3_DECS = '.gpage-decisions.shape-feature-decisions';
+/** The Requirements tab's facts: every row's note, whether an id spans two lines or a note is cut, each label's visible
+ *  width, the run link's colour against the note's. Every role fold is opened first (an all-met role starts closed). */
+const D3_REQ_FACTS = `(() => {
+  const root = document.querySelector(${JSON.stringify(D3_REQS)});
+  if (!root) return null;
+  for (const h of root.querySelectorAll('.shape-role-fold-head[aria-expanded="false"]')) h.click();
+  const lines = (el) => Math.round(el.getBoundingClientRect().height / (parseFloat(getComputedStyle(el).lineHeight) || 20));
+  const rows = [...root.querySelectorAll('.plan-check-row')].filter((r) => r.offsetParent).map((r) => {
+    const id = r.querySelector('.plan-check-id'); const d = r.querySelector('.plan-check-detail'); const l = r.querySelector('.plan-check-label');
+    return { id: r.dataset.key, note: d.textContent, idLines: lines(id), noteCut: d.scrollWidth > d.clientWidth + 0.5, labelW: Math.round(l.getBoundingClientRect().width) };
+  });
+  const a = root.querySelector('a.rd-fact-link'); const d = a && a.closest('.plan-check-detail');
+  return { tab: (document.querySelector('.gpage .rd-tab[aria-selected="true"]') || {}).dataset?.tab || null, hash: location.hash,
+    cap: (root.querySelector('.shape-feature-reqs-cap') || {}).textContent || null, roles: [...root.querySelectorAll('.shape-role-fold-head')].map((h) => h.dataset.role),
+    rows, link: a ? { href: a.getAttribute('href'), color: getComputedStyle(a).color, noteColor: getComputedStyle(d).color } : null,
+    overflow: root.scrollWidth > root.clientWidth || document.documentElement.scrollWidth > document.documentElement.clientWidth,
+    widths: [root.scrollWidth, root.clientWidth, document.documentElement.scrollWidth, document.documentElement.clientWidth],
+    spill: [...root.querySelectorAll('*')].filter((e) => { const b = e.getBoundingClientRect(); return b.width > 0 && b.right + (parseFloat(getComputedStyle(e).marginRight) || 0) > root.getBoundingClientRect().right + 0.5; })
+      .slice(0, 4).map((e) => [String(e.className && e.className.baseVal != null ? e.className.baseVal : e.className), e.tagName, Math.round(e.getBoundingClientRect().right - root.getBoundingClientRect().right), getComputedStyle(e).marginRight])
+      .concat((() => { const out = []; const w = document.createTreeWalker(root, NodeFilter.SHOW_TEXT); const rr = root.getBoundingClientRect().right;
+        for (let t = w.nextNode(); t && out.length < 4; t = w.nextNode()) { const r = document.createRange(); r.selectNodeContents(t);
+          const b = [...r.getClientRects()].reduce((m, x) => Math.max(m, x.right), 0); if (b > rr + 0.5) out.push(['text', t.parentElement.className, t.textContent.slice(0, 30), Math.round(b - rr)]); }
+        return out; })()) };
+})()`;
+/** The Decisions tab's facts: the Care row (once, first, its label whole), the other rows' labels, every Show fold closed. */
+const D3_DEC_FACTS = `(() => {
+  const root = document.querySelector(${JSON.stringify(D3_DECS)});
+  if (!root) return null;
+  const items = [...root.querySelectorAll(':scope > ul > li')];
+  const care = root.querySelectorAll('[data-fact="care"]');
+  const label = care[0] && care[0].querySelector('.plan-check-label');
+  return { care: care.length, first: items[0] === care[0], careText: label ? label.textContent : null, careCut: label ? label.scrollWidth > label.clientWidth + 0.5 : null,
+    lines: items.slice(1).map((li) => li.querySelector('.plan-check-label').textContent),
+    decided: items.every((li) => li.querySelector('.plan-check-mark').getAttribute('aria-label') === 'decided'),
+    folded: [...root.querySelectorAll('.chat-rc-log-detail')].every((x) => x.hidden),
+    idLines: [...root.querySelectorAll('.plan-check-id')].filter((x) => x.textContent).map((x) => Math.round(x.getBoundingClientRect().height / (parseFloat(getComputedStyle(x).lineHeight) || 20))),
+    overflow: root.scrollWidth > root.clientWidth || document.documentElement.scrollWidth > document.documentElement.clientWidth };
+})()`;
+
+async function d3Cells(phase, theme, width, want) {
+  const at = `${phase}, ${theme}, ${width}px`;
+  await open(`${base}/?d3r-${phase}-${theme}-${width}#feature/${D3.f.id}/requirements`);
+  await skipWelcome(); await setTheme(theme);
+  if (await waitFor(`!!document.querySelector(${JSON.stringify(`${D3_REQS} .plan-check-row`)})`, `the D3 Requirements tab (${at})`)) {
+    await sleep(500);
+    const f = await ev(D3_REQ_FACTS);
+    results.lists.push({ list: `d3 requirements facts ${phase}`, theme, width, ...f });
+    check(f && f.tab === 'requirements' && f.hash === `#feature/${D3.f.id}/requirements`, `requirements, ${at}: the deep link selects Requirements (${JSON.stringify(f && [f.tab, f.hash])})`);
+    check(f && f.cap === '5 requirements · 4 owned by a run · 1 confirmed by a person' && f.roles.join() === 'product,compliance',
+      `requirements, ${at}: the caption and one fold per role, Product then Compliance (${JSON.stringify(f && [f.cap, f.roles])})`);
+    const notes = f ? Object.fromEntries(f.rows.map((r) => [r.id, r.note])) : {};
+    check(f && f.rows.length === 5 && Object.keys(want).every((k) => notes[k] === want[k]),
+      `requirements, ${at}: every row's status (${JSON.stringify(notes)})`);
+    check(f && f.rows.every((r) => r.idLines <= 1), `requirements, ${at}: no id spans two lines`);
+    check(f && f.rows.every((r) => !r.noteCut) && !f.overflow, `requirements, ${at}: no status note is cut, no overflow (${JSON.stringify(f && [f.rows.map((r) => [r.id, r.noteCut]), f.widths, f.spill])})`);
+    check(f && f.link && f.link.href.startsWith('#') && f.link.color !== f.link.noteColor, `requirements, ${at}: the run link wears the link colour (${JSON.stringify(f && f.link)})`);
+    if (width === WIDTH) results.lists.push({ list: `d3 requirements label widths ${phase}`, theme, width, labels: f ? f.rows.map((r) => [r.id, r.labelW]) : null });
+    if (width === WIDTH) log(`d3 requirements ${at}: visible label widths ${JSON.stringify(f ? f.rows.map((r) => [r.id, r.labelW]) : null)}`);
+    judge(`d3 requirements ${phase}`, theme, await ev(MEASURE(D3_REQS, '.plan-check-row', '.plan-check-mark', '.plan-check-text')), { width, oneLine: true });
+    await reveal(D3_REQS);
+    await shot(`app-d3-requirements-${phase}-${theme}-${width}`);
+  }
+  await open(`${base}/?d3d-${phase}-${theme}-${width}#feature/${D3.f.id}/decisions`);
+  await skipWelcome(); await setTheme(theme);
+  if (await waitFor(`!!document.querySelector(${JSON.stringify(`${D3_DECS} [data-fact="care"]`)})`, `the D3 Decisions tab (${at})`)) {
+    await sleep(500);
+    const f = await ev(D3_DEC_FACTS);
+    results.lists.push({ list: `d3 decisions facts ${phase}`, theme, width, ...f });
+    check(f && f.care === 1 && f.first && /^Care: Balanced/.test(f.careText || '') && !f.careCut, `decisions, ${at}: one Care row, first, its label whole (${JSON.stringify(f && [f.care, f.careText, f.careCut])})`);
+    check(f && f.lines.length > 0 && f.decided && f.folded && f.idLines.every((n) => n <= 1) && !f.overflow,
+      `decisions, ${at}: the log lines, each named decided, folds closed, ids on one line, no overflow (${JSON.stringify(f && f.lines)})`);
+    judge(`d3 decisions ${phase}`, theme, await ev(MEASURE(D3_DECS, 'li:not([data-fact="care"]) > .plan-check-row', '.plan-check-mark', '.plan-check-text')), { width, oneLine: true });
+    await shot(`app-d3-decisions-${phase}-${theme}-${width}`);
+  }
+}
+/** The prototype's #feature after Ship: #ship at moment rs, Compliance confirmed, then a hash change in the same page. */
+async function prototypeFeatureAfter(tab, name, theme) {
+  await open(`${PROTO_URL}?${name}-${theme}#ship`); await setTheme(theme); await sleep(300);
+  await ev(`(() => { const b = document.querySelector('[data-act="compok"]'); if (b) b.click(); return !!b; })()`); await sleep(300);
+  await ev("(() => { location.hash = '#feature'; return 0; })()"); await sleep(500);
+  for (const sel of ['[data-moment="rs"]', `[data-tab="${tab}"]`]) { await ev(`(() => { const b = document.querySelector(${JSON.stringify(sel)}); if (b) b.click(); return !!b; })()`); await sleep(300); }
+  await shot(`prototype-${name}-${theme}`);
+}
+
+async function d3Phase() {
+  const t0 = Date.now();
+  { const r = await post('/api/settings', { uiLevel: 'expert' }); check(r.ok, `D3: the Expert level is set (${r.status})`); }
+  for (const theme of THEMES) {
+    for (const width of [1280, WIDTH]) {
+      await cdp('Emulation.setDeviceMetricsOverride', { width, height: 900, deviceScaleFactor: 1, mobile: false });
+      await d3Cells('before', theme, width, D3_BEFORE);
+    }
+    await prototypeShot('feature', ['[data-moment="vf"]', '[data-tab="Requirements"]'], 'feature-requirements-before', theme);
+    await prototypeShot('feature', ['[data-moment="vf"]', '[data-tab="Decisions"]'], 'feature-decisions-before', theme);
+  }
+  // Ship: R-comp-1 marked through the route, every run done, the ship applied (as the Ship done case seeds it).
+  const r = await post(`/api/shape/features/${D3.f.id}/confirm`, { id: 'R-comp-1', mark: 'not-met', reason: D3_REASON });
+  check(r.ok, `D3: POST /confirm marks R-comp-1 Not met (${r.status})`);
+  getDb().prepare("UPDATE pipelines SET status = 'done' WHERE id = ?").run(D3.pid(3));
+  for (const k of [4, 5, 6]) fire(D3.f, k, D3.pid(k), 'done', `Run ${k}`);
+  [1, 2, 3, 4, 5, 6].forEach((k) => getDb().prepare("UPDATE pipelines SET pr_url = ?, pr_number = ?, pr_state = 'OPEN' WHERE id = ?")
+    .run(`https://github.com/proof/repo/pull/${1530 + k}`, 1530 + k, D3.pid(k)));
+  recordShip(D3.f.id, { mode: 'stacked' });
+  for (const theme of THEMES) {
+    for (const width of [1280, WIDTH]) {
+      await cdp('Emulation.setDeviceMetricsOverride', { width, height: 900, deviceScaleFactor: 1, mobile: false });
+      await d3Cells('after', theme, width, D3_AFTER);
+    }
+    await prototypeFeatureAfter('Requirements', 'feature-requirements-after', theme);
+    await prototypeFeatureAfter('Decisions', 'feature-decisions-after', theme);
+  }
+  await cdp('Emulation.setDeviceMetricsOverride', { width: WIDTH, height: 900, deviceScaleFactor: 1, mobile: false });
+  results.d3Minutes = Math.round((Date.now() - t0) / 600) / 100;
+  log(`D3: ${results.d3Minutes} min`);
+}
+
+// D2_ONLY=1 runs the D2 cases alone, D3_ONLY=1 the D3 cases (each command stays under 10 minutes); unset, every case
+// runs, D2 before D3, D3 last.
 if (process.env.D2_ONLY === '1') { await d2Phase(); await finish(); }
+if (process.env.D3_ONLY === '1') { await d3Phase(); await finish(); }
 
 for (const theme of THEMES) {
   for (const width of [1280, WIDTH]) {
@@ -922,4 +1074,5 @@ const LIVE_ROWS = "[...document.querySelectorAll('.chat-rc .proto-rows .plan-che
 }
 
 await d2Phase();
+await d3Phase();
 await finish();

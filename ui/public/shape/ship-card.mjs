@@ -328,9 +328,11 @@ function smallRunsShip(doc, h, m, handlers) {
     body.appendChild(list('ask-shipcard-prs', prs.map((o) => ({ id: `#${o.pr.number ?? ''}`, idCol: true, pass: true,
       label: `run ${o.index} · ${o.title}`, note: o.onto ? `onto #${o.onto}` : `into ${sr.base || ''}`.trim(), ariaLabel: 'open' }))));
     // The Not met / Dropped requirements, as rows under the PRs (the PR descriptions carry the same lines: unmetLines).
+    // Small runs D3 (D5): with the server's `shown` (on the confirmed entry of the same id), its text is the note.
     const unmet = Array.isArray(sr.unmet) ? sr.unmet : [];
+    const shownOf = (id) => (sr.confirmed || []).find((c) => c.id === id)?.shown || null;
     if (unmet.length) body.appendChild(list('ask-shipcard-unmet', unmet.map((u) => ({ id: u.id, idCol: true, label: u.text, pass: true, state: u.mark,
-      ariaLabel: MARK_WORDS[u.mark].toLowerCase(), note: `${MARK_WORDS[u.mark]} · ${u.reason}` }))));
+      ariaLabel: MARK_WORDS[u.mark].toLowerCase(), note: shownOf(u.id) ? shownOf(u.id).text : `${MARK_WORDS[u.mark]} · ${u.reason}` }))));
     const actions = h('div', 'ask-mcard-actions');
     actions.appendChild(h('span', 'ask-card-actions-spacer'));
     const view = h('button', 'btn btn-sm btn-quiet', VIEW_PRS_LABEL); view.type = 'button'; view.dataset.act = 'ship-view-prs';
@@ -359,6 +361,8 @@ function smallRunsShip(doc, h, m, handlers) {
   let opening = false;
   const noteOf = (c) => {
     const at = clock(c.at) ? ` · ${clock(c.at)}` : '';
+    // Small runs D3 (D5): the server's one status: a waiting row its text, a marked one its word and the time.
+    if (c.shown) return c.state === 'waiting' ? c.shown.text : `${c.shown.word}${at}`;
     if (c.state === 'waiting') return `confirmed by a person · ${c.roleLabel}`;
     if (c.mark === 'met') return `confirmed by ${c.roleLabel}${at}`;
     return `Marked ${MARK_WORDS[c.mark]} by you${at}`;
@@ -398,7 +402,7 @@ function smallRunsShip(doc, h, m, handlers) {
   };
   const paint = () => {
     const rows = buildCheckRows(doc, { items: sr.confirmed.map((c) => ({ id: c.id, idCol: true, label: c.text,
-      pass: c.state === 'confirmed', ...(c.state === 'confirmed' && c.mark !== 'met' ? { state: c.mark } : {}),
+      pass: c.state === 'confirmed', ...(c.state === 'confirmed' && c.mark !== 'met' ? { state: c.mark } : {}), ...(c.shown ? { mark: c.shown.mark } : {}),
       ariaLabel: c.state === 'waiting' ? 'waiting' : c.mark === 'met' ? 'confirmed' : MARK_WORDS[c.mark].toLowerCase(), note: noteOf(c) })) });
     const out = [];
     sr.confirmed.forEach((c, i) => {
@@ -408,8 +412,11 @@ function smallRunsShip(doc, h, m, handlers) {
     const l = h('div', 'plan-checks srows ask-shipcard-confirmed'); l.append(...out);
     confirmedEl.replaceChildren(...(rows.length ? [l] : []));
     if (!ownedEl.firstChild && sr.owned.length) {
-      const items = sr.owned.map((o) => ({ id: o.id, idCol: true, label: o.text, pass: true,
-        note: `${o.run ? `run ${o.run}` : 'a run'} · ${o.status === 'gap-accepted' ? 'gap accepted' : 'holds'}` }));
+      const items = sr.owned.map((o) => (o.shown
+        ? { id: o.id, idCol: true, label: o.text, pass: o.shown.mark === 'check', mark: o.shown.mark, ariaLabel: o.shown.word, note: o.shown.text,
+          tip: `${o.id} · ${o.text} · ${o.shown.text}` }
+        : { id: o.id, idCol: true, label: o.text, pass: true,
+          note: `${o.run ? `run ${o.run}` : 'a run'} · ${o.status === 'gap-accepted' ? 'gap accepted' : 'holds'}` }));
       const fold = buildCheckFold(doc, { items }, 'Requirements', { text: () => `${items.length} checked by the runs' reviews and the Verifier` });
       ownedEl.append(fold.line, fold.rows);
     }

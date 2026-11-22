@@ -34,6 +34,16 @@ test('one Starts-from fact (an .rd-kv row, data-fact="starts") and one Owns row 
   assert.equal(box.textContent.match(/Owns/g).length, 1);
 });
 
+test('an Owns row shows the word and no run number', () => {
+  const info = { ...INFO, owns: [{ id: 'R-po-1', text: 'Export the report', pass: null, word: 'being built', mark: 'live' },
+    { id: 'R-qa-2', text: 'It is tested', pass: true, word: 'met', mark: 'check' }] };
+  const rows = [...mountRunFacts(hostOf(), info).querySelectorAll('.plan-check-row')];
+  assert.deepEqual(rows.map((r) => r.querySelector('.plan-check-detail').textContent), ['being built', 'met']);
+  assert.deepEqual(rows.map((r) => r.querySelector('.plan-check-mark').getAttribute('aria-label')), ['being built', 'met']);
+  assert.ok(rows[0].querySelector('.plan-check-mark').classList.contains('is-live'));
+  assert.ok(rows.every((r) => !/\brun \d/i.test(r.textContent)), 'the head\'s kind chip says the run number');
+});
+
 test('the box names neither the feature title nor the run\'s own "Run N"', () => {
   const box = mountRunFacts(hostOf(), INFO);
   assert.doesNotMatch(box.textContent, /Charts everywhere/);

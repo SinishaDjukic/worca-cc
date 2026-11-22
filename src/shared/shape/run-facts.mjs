@@ -31,13 +31,15 @@ const oneLine = (t) => String(t ?? '').replace(/\s+/g, ' ').trim();
 
 /**
  * A run's Owns rows: one per id, its agreed text on one line, `pass` from the last code review's check by id (null
- * before a review, or for an id the check does not name).
- * @returns {Array<{ id: string, text: string, pass: boolean|null }>}
+ * before a review, or for an id the check does not name). Small runs D3 (D4): `shown` (a Map id → the ship ledger's
+ * `shown`) adds that id's status `word` and `mark`; an id it does not hold keeps D2's row.
+ * @returns {Array<{ id: string, text: string, pass: boolean|null, word?: string, mark?: string }>}
  */
-export function ownsOf({ ids, texts = {}, check = null } = {}) {
+export function ownsOf({ ids, texts = {}, check = null, shown = null } = {}) {
   const items = check && Array.isArray(check.items) ? check.items : [];
   return (Array.isArray(ids) ? ids : []).map((id) => {
     const it = items.find((x) => x && x.id === id);
-    return { id, text: oneLine(texts && texts[id]), pass: it ? !!it.pass : null };
+    const s = shown && shown.get(id);
+    return { id, text: oneLine(texts && texts[id]), pass: it ? !!it.pass : null, ...(s ? { word: s.word, mark: s.mark } : {}) };
   });
 }

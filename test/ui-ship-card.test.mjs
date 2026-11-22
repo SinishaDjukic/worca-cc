@@ -449,6 +449,34 @@ test('D1 done: N PRs open, no step head, the Care row once above one .srows row 
   assert.equal(el.querySelectorAll('a[href]').length, 0, 'no raw links');
 });
 
+// ---- Small runs D3 (D5): the rows read the server's one `shown` status when it is there ----
+const SHOWN = (owner, word, mark, role = null, text = `${owner} · ${word}`) => ({ owner, role, word, text, mark });
+test('small-runs rows with shown: owned note shown.text, a marked confirmed note keeps D1\'s text, a waiting one still reads `confirmed by a person · Compliance`; without shown D1\'s notes stay', () => {
+  const waiting = SR({ confirmed: [{ ...SR_ROW('waiting'), shown: SHOWN('confirmed by a person', 'Compliance', 'wait', 'Compliance', 'confirmed by a person · Compliance') }],
+    owned: [{ id: 'R-po-1', text: 'People see it', run: 1, status: 'holds', shown: SHOWN('run 1', 'met', 'check') },
+      { id: 'R-po-2', text: 'People pin it', run: 2, status: 'holds', shown: SHOWN('run 2', 'being built', 'live') }] });
+  const { el } = srCard(waiting);
+  const owned = [...el.querySelectorAll('.ask-shipcard-owned .plan-check-row')];
+  assert.deepEqual(owned.map((r) => r.querySelector('.plan-check-detail').textContent), ['run 1 · met', 'run 2 · being built']);
+  assert.deepEqual(owned.map((r) => r.querySelector('.plan-check-mark').getAttribute('aria-label')), ['met', 'being built']);
+  assert.ok(owned[1].querySelector('.plan-check-mark').classList.contains('is-live'), 'the mark is shown.mark');
+  assert.equal(owned[1].title, 'R-po-2 · People pin it · run 2 · being built');
+  assert.equal(el.querySelector('.ask-shipcard-confirmed .plan-check-detail').textContent, 'confirmed by a person · Compliance');
+  const at = '2026-11-22T16:55:00.000Z';
+  const marked = SR({ ...READY_SR, confirmed: [{ ...SR_ROW('confirmed', at), shown: SHOWN('confirmed by a person', 'confirmed by Compliance', 'check', 'Compliance', 'confirmed by Compliance') }] });
+  const d = new Date(at);
+  const time = `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
+  assert.equal(srCard(marked).el.querySelector('.ask-shipcard-confirmed .plan-check-detail').textContent, `confirmed by Compliance · ${time}`);
+  const notMet = SR({ ...READY_SR, confirmed: [{ ...SR_ROW('confirmed', at, 'not-met', 'no copy'),
+    shown: SHOWN('confirmed by a person', 'Marked Not met by you', 'x', 'Compliance', 'Marked Not met by you · no copy') }] });
+  assert.equal(srCard(notMet).el.querySelector('.ask-shipcard-confirmed .plan-check-detail').textContent, `Marked Not met by you · ${time}`);
+  const done = SR({ ...DONE_SR, confirmed: notMet.confirmed, unmet: [{ id: 'R-comp-4', text: 'The data stays in the EU', mark: 'not-met', reason: 'no copy' }] });
+  assert.equal(srCard(done, { phase: 'applied' }).el.querySelector('.ask-shipcard-unmet .plan-check-detail').textContent, 'Marked Not met by you · no copy',
+    'an applied unmet row reads its confirmed entry\'s shown.text');
+  const bare = srCard(SR()).el;
+  assert.deepEqual([...bare.querySelectorAll('.ask-shipcard-owned .plan-check-detail')].map((x) => x.textContent), ['run 1 · holds', 'run 2 · gap accepted'], 'no shown: D1');
+});
+
 test('D1 done: "1 PR open"; the Not met / Dropped rows under the PRs; countShown leaves the count to the host state line', () => {
   const one = SR({ ...DONE_SR, order: DONE_SR.order.slice(0, 1), unmet: [{ id: 'R-comp-4', text: 'The data stays in the EU', mark: 'dropped', reason: 'Out of scope' },
     { id: 'R-sec-1', text: 'Owners only', mark: 'not-met', reason: 'Legal has not signed' }] });

@@ -287,3 +287,214 @@ test('slice 3: a failed /api/run-groups reload keeps the page (same .gpage node,
     assert.equal(pageOf(ctx).querySelector('.feature-page-error'), null, 'no "could not load" swap');
   }
 });
+
+// ── Shaper small runs D3: the Requirements and Decisions tabs of a marked feature ─────────────────────────────────────
+const shown = (owner, word, mark) => ({ owner, role: null, word, text: `${owner} · ${word}`, mark });
+const D3_SR = (w2 = 'being built') => ({
+  owned: [{ id: 'R-po-1', text: 'People see it', run: 1, status: 'holds', shown: shown('run 1', 'met', 'check') },
+    { id: 'R-po-2', text: 'People export it', run: 2, status: 'holds', shown: shown('run 2', w2, w2 === 'met' ? 'check' : 'live') }],
+  confirmed: [{ id: 'R-comp-1', text: 'A signed copy is kept', role: 'compliance', roleLabel: 'Compliance', state: 'waiting', mark: null, reason: null, at: null,
+    shown: { owner: 'confirmed by a person', role: 'Compliance', word: 'Compliance', text: 'confirmed by a person · Compliance', mark: 'wait' } }],
+  waiting: ['R-comp-1'], blocked: true, reason: 'Waiting for Compliance to confirm R-comp-1', met: { met: 2, total: 3 }, unmet: [],
+  care: { choice: "Balanced · Worca's pick", outcome: null, line: "Care: Balanced · Worca's pick" }, base: 'main', order: [],
+});
+const D3_FEATURE = (w2, log = [{ key: 'outline', run: null, text: 'Split into 2 runs', detail: [] }, { key: 'r2', run: 2, text: 'Plan approved', detail: [] }]) => ({
+  ...FEATURE, ready: false, log, requirementKinds: [{ id: 'R-po-1', kind: 'owned', run: 1 }, { id: 'R-po-2', kind: 'owned', run: 2 }, { id: 'R-comp-1', kind: 'confirmed', role: 'compliance' }],
+  slices: [{ index: 1, pipelineId: 'p1', pr: null }, { index: 2, pipelineId: 'p2', pr: null }], ship: { ...FEATURE.ship, ready: false, smallRuns: D3_SR(w2) } });
+// The members carry a project key, so a run with a pipeline has its own #history/ page.
+const d3Member = (i) => ({ ...member(i), projectKey: 'acme' });
+const D3_GROUPS = (extra = []) => ({ groups: [{ ...GROUPS.groups[0], members: [d3Member(1), d3Member(2), ...extra] }, GROUPS.groups[1]] });
+async function d3Boot({ flag = true, feature = () => D3_FEATURE('being built'), extra = () => null, groups = D3_GROUPS() } = {}) {
+  const calls = { feature: 0 };
+  const ctx = await boot((url, o) => {
+    const x = extra(url, o);
+    if (x) return x;
+    if (url.startsWith('/api/run-groups')) return json(groups);
+    if (url.startsWith('/api/shape/features/feat_1')) { calls.feature += 1; return feature(calls.feature); }
+    return handler(url, o);
+  });
+  const { applyFlags } = await import('../ui/public/flags.mjs');
+  applyFlags({ shaperSmallRuns: flag }, ctx.window.document);
+  return { ctx, calls };
+}
+const reqNote = (ctx, id) => pageOf(ctx).querySelector(`.gpage-requirements [data-key="${id}"] .plan-check-detail`)?.textContent;
+const liveP2 = (ctx, status) => {
+  ctx.dispatch({ type: 'hello', runs: [{ runId: 'r2', pipelineId: 'p2', title: 'Slice 2', projectDir: '/tmp/p', status, kind: 'run', startedAt: '2026-01-01T00:00:00Z' }] });
+  ctx.dispatch({ type: 'state', runId: 'r2', id: 'p2', status, steps: [], active: [] });
+};
+
+test('D3: a marked feature with the flag on shows Runs, Requirements, Overview, Decisions; #feature/ID/requirements selects Requirements (aria-selected=true); Decisions paints the feature log; Runs lists the planning run as run 1', async () => {
+  const { ctx } = await d3Boot({ feature: () => json(D3_FEATURE('being built')) });
+  ctx.go('feature/feat_1/requirements');
+  await ctx.settle(10);
+  const gp = pageOf(ctx).querySelector('.gpage');
+  assert.deepEqual([...gp.querySelectorAll('.gpage-tabs .rd-tab')].map((t) => t.textContent), ['Runs', 'Requirements', 'Overview', 'Decisions', 'Logs']);
+  assert.equal(gp.querySelector('.rd-tab[aria-selected="true"]').dataset.tab, 'requirements');
+  assert.equal(ctx.window.location.hash, '#feature/feat_1/requirements');
+  assert.equal(reqNote(ctx, 'R-po-2'), 'run 2 · being built');
+  const link = gp.querySelector('.gpage-requirements [data-key="R-po-1"] a.rd-fact-link');
+  assert.equal(link.getAttribute('href'), '#history/acme/p1');
+  assert.equal(link.getAttribute('href'), gp.querySelector('.run-member[data-key="p1"] .run-member-title').getAttribute('href'), 'run 1\'s own page, as its Runs row links it');
+  ctx.go('feature/feat_1/decisions');
+  await ctx.settle(10);
+  const dec = gp.querySelector('.gpage-decisions');
+  assert.ok(dec.classList.contains('shape-feature-decisions'));
+  assert.deepEqual([...dec.querySelectorAll(':scope > ul > li .plan-check-label')].map((x) => x.textContent), ["Care: Balanced · Worca's pick", 'Split into 2 runs', 'Plan approved']);
+  assert.equal(dec.querySelector('.gpage-decision'), null, 'not the per-run receipts');
+  ctx.go('feature/feat_1');
+  await ctx.settle(6);
+  assert.equal(gp.querySelector('.run-member .run-member-title').textContent.includes('Slice 1'), true, 'run 1 first');
+});
+
+test('D3: a planned run with no page yet (a waiting ticket) reads its run N as plain text, not a link back to the feature', async () => {
+  const groups = D3_GROUPS([{ ...d3Member(3), pipelineId: null, ticketId: 't3', status: 'scheduled' }]);
+  const f = D3_FEATURE('being built');
+  f.ship.smallRuns.owned.push({ id: 'R-po-3', text: 'People share it', run: 3, status: 'holds', shown: shown('run 3', 'to do', 'wait') });
+  f.requirementKinds.push({ id: 'R-po-3', kind: 'owned', run: 3 });
+  const { ctx } = await d3Boot({ feature: () => json(f), groups });
+  ctx.go('feature/feat_1/requirements');
+  await ctx.settle(10);
+  const row = pageOf(ctx).querySelector('.gpage-requirements [data-key="R-po-3"]');
+  assert.ok(row, 'R-po-3 rendered');
+  assert.equal(row.querySelector('a'), null, 'no link for a run with no page');
+  assert.equal(reqNote(ctx, 'R-po-3'), 'run 3 · to do');
+  assert.ok(pageOf(ctx).querySelector('.gpage-requirements [data-key="R-po-1"] a.rd-fact-link'), 'a run with a page still links');
+});
+
+test('D3: a member state frame refetches the feature and flips R-po-2 from being built to met; a shape-feature frame changing one word repaints the open tab', async () => {
+  let w2 = 'being built';
+  const { ctx, calls } = await d3Boot({ feature: () => json(D3_FEATURE(w2)) });
+  liveP2(ctx, 'running');
+  await ctx.settle(6);
+  ctx.go('feature/feat_1/requirements');
+  await ctx.settle(10);
+  assert.equal(reqNote(ctx, 'R-po-2'), 'run 2 · being built');
+  const before = calls.feature;
+  w2 = 'met';
+  ctx.dispatch({ type: 'state', runId: 'r2', id: 'p2', status: 'done', steps: [], active: [] });
+  await ctx.settle(10);
+  assert.ok(calls.feature > before, 'the member key change refetched the feature');
+  assert.equal(reqNote(ctx, 'R-po-2'), 'run 2 · met');
+  const settled = calls.feature;
+  ctx.dispatch({ type: 'state', runId: 'r2', id: 'p2', status: 'done', steps: [], active: [] });
+  await ctx.settle(6);
+  assert.equal(calls.feature, settled, 'the same key fetches nothing');
+  w2 = 'paused';
+  ctx.dispatch({ type: 'shape-feature', id: 'feat_1' });
+  await ctx.settle(10);
+  assert.equal(reqNote(ctx, 'R-po-2'), 'run 2 · paused');
+});
+
+test('D3: a failed refetch keeps the last rows and the next member key change retries', async () => {
+  let w2 = 'being built';
+  let down = false;
+  const { ctx, calls } = await d3Boot({ feature: () => (down ? json({ error: 'busy' }, 503) : json(D3_FEATURE(w2))) });
+  liveP2(ctx, 'running');
+  await ctx.settle(6);
+  ctx.go('feature/feat_1/requirements');
+  await ctx.settle(10);
+  down = true;
+  w2 = 'met';
+  ctx.dispatch({ type: 'state', runId: 'r2', id: 'p2', status: 'paused', steps: [], active: [] });
+  await ctx.settle(10);
+  const failed = calls.feature;
+  assert.equal(reqNote(ctx, 'R-po-2'), 'run 2 · being built', 'the last rows stay');
+  ctx.dispatch({ type: 'state', runId: 'r2', id: 'p2', status: 'paused', steps: [], active: [] });
+  await ctx.settle(6);
+  assert.equal(calls.feature, failed, 'the same key does not retry on every frame');
+  down = false;
+  ctx.dispatch({ type: 'state', runId: 'r2', id: 'p2', status: 'done', steps: [], active: [] });
+  await ctx.settle(10);
+  assert.ok(calls.feature > failed);
+  assert.equal(reqNote(ctx, 'R-po-2'), 'run 2 · met');
+});
+
+test('D3: an older feature fetch that answers last never overwrites a newer one (member refetch vs shape-feature frame)', async () => {
+  let w2 = 'being built';
+  let hold = null;
+  const { ctx, calls } = await d3Boot({ feature: () => {
+    const body = D3_FEATURE(w2);
+    if (!hold) return json(body);
+    const h = hold; hold = null;
+    return new Promise((r) => { h.release = () => r(json(body)); });
+  } });
+  liveP2(ctx, 'running');
+  await ctx.settle(6);
+  ctx.go('feature/feat_1/requirements');
+  await ctx.settle(10);
+  const before = calls.feature;
+  const slow = {};
+  hold = slow;                                       // the member refetch reads 'being built' and answers late
+  ctx.dispatch({ type: 'state', runId: 'r2', id: 'p2', status: 'paused', steps: [], active: [] });
+  await ctx.settle(6);
+  assert.ok(calls.feature > before && slow.release, 'the member refetch is in flight');
+  w2 = 'met';
+  ctx.dispatch({ type: 'shape-feature', id: 'feat_1' });
+  await ctx.settle(10);
+  assert.equal(reqNote(ctx, 'R-po-2'), 'run 2 · met');
+  slow.release();
+  await ctx.settle(10);
+  assert.equal(reqNote(ctx, 'R-po-2'), 'run 2 · met', 'the stale answer is dropped');
+});
+
+test('D3: opening Requirements fetches the feature once (the mount\'s fetch seeds the member key)', async () => {
+  const { ctx, calls } = await d3Boot({ feature: () => json(D3_FEATURE('being built')) });
+  liveP2(ctx, 'running');
+  await ctx.settle(6);
+  ctx.go('feature/feat_1/requirements');
+  await ctx.settle(10);
+  assert.equal(calls.feature, 1);
+  ctx.go('feature/feat_1/decisions');
+  await ctx.settle(10);
+  assert.equal(calls.feature, 1, 'one member key for both tabs');
+});
+
+test('D3: a marked feature with the flag off has no Requirements tab', async () => {
+  const { ctx } = await d3Boot({ flag: false, feature: () => json(D3_FEATURE('being built')) });
+  ctx.go('feature/feat_1/requirements');
+  await ctx.settle(10);
+  const gp = pageOf(ctx).querySelector('.gpage');
+  assert.equal(gp.querySelector('.rd-tab[data-tab="requirements"]'), null);
+  assert.equal(gp.querySelector('.rd-tab[aria-selected="true"]').dataset.tab, 'runs');
+  ctx.go('feature/feat_1/decisions');
+  await ctx.settle(10);
+  assert.equal(gp.querySelector('.gpage-decisions').classList.contains('shape-feature-decisions'), false, 'dev\'s Decisions');
+});
+
+test('D3: a Decisions deep link whose receipts resolve after the feature keeps the feature log', async () => {
+  let releaseFeature; let releaseDecisions;
+  const { ctx } = await d3Boot({
+    feature: () => new Promise((r) => { releaseFeature = () => r(new Response(JSON.stringify(D3_FEATURE('being built')), { status: 200, headers: { 'content-type': 'application/json' } })); }),
+    extra: (url) => (url.startsWith('/api/night-decisions')
+      ? new Promise((r) => { releaseDecisions = () => r(new Response(JSON.stringify({ decisions: [{ id: 'd1', pipelineId: 'p1', kind: 'clarify', question: 'Which DB?', answer: 'Postgres', decidedBy: 'away', at: '2026-10-18T10:00:00Z' }] }), { status: 200, headers: { 'content-type': 'application/json' } })); })
+      : null),
+  });
+  ctx.go('feature/feat_1/decisions');
+  await ctx.settle(4);
+  ctx.dispatch({ type: 'run-groups-changed' });     // a repaint while the feature is still in flight: the receipts start
+  await ctx.settle(8);
+  assert.ok(releaseDecisions, 'paintGroupDecisions started');
+  releaseFeature();
+  await ctx.settle(10);
+  const dec = pageOf(ctx).querySelector('.gpage-decisions');
+  assert.ok(dec.querySelector('[data-fact="care"]'), 'the feature log');
+  releaseDecisions();
+  await ctx.settle(10);
+  assert.ok(dec.querySelector('[data-fact="care"]'), 'the late receipts did not paint over it');
+  assert.equal(dec.querySelector('.gpage-decision'), null);
+});
+
+test('D3: a requirements deep link shows Loading group… until the feature resolves', async () => {
+  let release;
+  const { ctx } = await d3Boot({ feature: () => new Promise((r) => { release = () => r(new Response(JSON.stringify(D3_FEATURE('being built')), { status: 200, headers: { 'content-type': 'application/json' } })); }) });
+  ctx.go('feature/feat_1/requirements');
+  await ctx.settle(4);
+  ctx.dispatch({ type: 'run-groups-changed' });
+  await ctx.settle(8);
+  assert.equal(pageOf(ctx).querySelector('.gpage'), null, 'no Runs flash');
+  assert.equal(pageOf(ctx).querySelector('.feature-page-loading').textContent, 'Loading group…');
+  release();
+  await ctx.settle(10);
+  assert.equal(pageOf(ctx).querySelector('.rd-tab[aria-selected="true"]').dataset.tab, 'requirements');
+  assert.equal(ctx.window.location.hash, '#feature/feat_1/requirements');
+});

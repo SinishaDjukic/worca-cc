@@ -1762,6 +1762,18 @@ test('D1: a marked gate counts only confirmed ids while ship.acceptance keeps ev
   assert.equal(after.ship.smallRuns.confirmed[0].at, '2026-11-22T16:55:00.000Z');
 }));
 
+test('D3: flag on, marked: every ship.smallRuns entry has shown; flag off: none', () => {
+  const pid = pipe('done');
+  const { id } = withSmallRuns(true, () => mk(2, { pipelineId: pid, outline: kindsOutline(), requirementKinds: COMPLIANCE }));
+  mark(pid);
+  const on = withSmallRuns(true, () => featureView(id).ship.smallRuns);
+  assert.deepEqual(on.owned.map((o) => [o.id, o.shown.text, o.shown.mark]), [['R-po-1', 'run 1 · met', 'check'], ['R-qa-1', 'run 2 · to do', 'wait']]);
+  assert.deepEqual(on.confirmed.map((c) => [c.id, c.shown.text]), [['R-sec-1', 'confirmed by a person · Compliance']]);
+  const off = withSmallRuns(false, () => featureView(id).ship.smallRuns);
+  assert.ok([...off.owned, ...off.confirmed].every((e) => !('shown' in e)), 'flag off: D1\'s entries');
+  assert.deepEqual(off.met, on.met);
+});
+
 // ---- Shaper small runs D2 (D7, D8, D14): a run's Owns, Starts from and stored agent facts -----------------------------
 
 const SLICE_DEV_KEYS = ['featureId', 'title', 'index', 'total', 'sliceTitle', 'state', 'next'];
@@ -1790,7 +1802,7 @@ test('D2 (D8): a marked feature with the flag on: all 10 runs (run 1 included) a
       const s = sliceOfPipeline(pid);
       assert.equal(s.index, i + 1);
       assert.deepEqual(Object.keys(s).slice(0, SLICE_DEV_KEYS.length), SLICE_DEV_KEYS);
-      assert.deepEqual(s.owns, [{ id: `R-po-${i + 1}`, text: `Requirement ${i + 1}`, pass: null }]);
+      assert.deepEqual(s.owns, [{ id: `R-po-${i + 1}`, text: `Requirement ${i + 1}`, pass: null, word: 'met', mark: 'check' }], 'D3: the word of a done run');
       assert.ok(s.startsFrom, `run ${i + 1} has a startsFrom`);
       if (i === 0) assert.deepEqual(s.startsFrom, { kind: 'feature', branch: 'main', text: 'the feature branch: nothing is finished yet' });
       else assert.deepEqual(s.startsFrom, { kind: 'run', run: i, branch: `feat/run-${i}`, text: `the latest finished run (run ${i})` });

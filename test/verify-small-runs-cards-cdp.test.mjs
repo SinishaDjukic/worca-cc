@@ -101,5 +101,22 @@ test('D2: runs-list, run-facts, agents-place and card-members at Expert, the 10 
   // The truncation proof (fit-1-1, requirements-1-2): a long-title member; the line's natural width; the title ellipsizes.
   for (const needle of ['const D2_LONG = 4;', 'Math.abs(r.subW - r.subScroll) > 1 || r.subScroll > r.subClient', 'long.titleEllipsis && long.titleCut',
     "words.length === 8 && words.every((w) => w === 'done')"]) assert.ok(s.includes(needle), needle);
-  assert.match(s, /await d2Phase\(\);\nawait finish\(\);\n$/, 'D2 runs last, before the verdict');
+  assert.match(s, /await d2Phase\(\);\nawait d3Phase\(\);\nawait finish\(\);\n$/, 'D2 before D3, D3 last, before the verdict');
+});
+
+test('d3Phase seeds, measures both lists with the width, pairs with the prototype feature screen, and runs last', () => {
+  const s = src();
+  for (const needle of ["seedFeature('d3'", "'R-comp-1': { kind: 'confirmed', role: 'compliance' }", "reqChanges.apply(D3.f.id",
+    "post(`/api/shape/features/${D3.f.id}/confirm`", "recordShip(D3.f.id", '#feature/${D3.f.id}/requirements', '#feature/${D3.f.id}/decisions',
+    "MEASURE(D3_REQS, '.plan-check-row', '.plan-check-mark', '.plan-check-text')", "'li:not([data-fact=\"care\"]) > .plan-check-row'",
+    '{ width, oneLine: true }', "'run 2 · changed · run 6 builds it'", "'run 3 · being built'", "'confirmed by a person · Compliance'",
+    "'run 2 · met · changed by run 6'", 'Marked Not met by you · ${D3_REASON}', 'r.idLines <= 1', '!r.noteCut', '!f.careCut', 'f.link.color !== f.link.noteColor',
+    'visible label widths', 'results.d3Minutes', 'for (const width of [1280, WIDTH])', "process.env.D3_ONLY === '1'", 'await skipWelcome(); await setTheme(theme);']) {
+    assert.ok(s.includes(needle), needle);
+  }
+  assert.match(s, /prototypeShot\('feature', \['\[data-moment="vf"\]', '\[data-tab="Requirements"\]'\]/);
+  assert.match(s, /prototypeShot\('feature', \['\[data-moment="vf"\]', '\[data-tab="Decisions"\]'\]/);
+  assert.match(s, /#ship`\); await setTheme\(theme\)[\s\S]*compok[\s\S]*location\.hash = '#feature'[\s\S]*\[data-moment="rs"\]/, 'the after pair: #ship, confirm, then #feature in the same page');
+  assert.match(s, /prototypeFeatureAfter\('Requirements'/);
+  assert.match(s, /prototypeFeatureAfter\('Decisions'/);
 });

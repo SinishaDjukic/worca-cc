@@ -357,6 +357,21 @@ a.rd-crumb:hover{color:var(--ink);text-decoration:underline;}
 /* In Chat › Plans the row is the frame: the feature view draws no border, so its Ship card keeps the one border (D16). */
 .chat-home-plan .shape-feature{border:0;}
 .shape-feature-order{color:var(--ink-3);font-size:12px;}
+/* Small runs D3 (D13): the feature page's Requirements (role folds) and Decisions: one 32px line per row. The text
+   shrinks first (ellipsis), the status note keeps its natural width, the id never wraps; the full words are in the
+   row's tooltip. Only the Care row ([data-fact="care"]) wraps, so its outcome is never cut. */
+.shape-feature-reqs-cap{margin:0 0 4px;font-size:var(--fs-meta);color:var(--ink-2);}
+.srows.shape-feature-decisions > .plan-checks{margin:0;list-style:none;}
+/* The rows share the fold heads' mark column (the prototype's one column), so a 375px row keeps its whole status note.
+   The head keeps the turned chevron's room, as .shape-reqs does. */
+.srows.shape-feature-reqs .shape-role-fold > .plan-checks{padding-left:0;}
+.srows.shape-feature-reqs .shape-role-fold-head{padding-right:8px;}
+.srows.shape-feature-reqs .plan-check-text,
+.srows.shape-feature-decisions .shape-feature-decision:not([data-fact="care"]) .plan-check-text{flex-wrap:nowrap;}
+.srows.shape-feature-reqs .plan-check-text > .plan-check-label,
+.srows.shape-feature-decisions .shape-feature-decision:not([data-fact="care"]) .plan-check-text > .plan-check-label{flex:1 1 0;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;overflow-wrap:normal;}
+.srows.shape-feature-reqs .plan-check-text > .plan-check-detail{flex:0 1 auto;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;overflow-wrap:normal;color:var(--ink-2);font-size:var(--fs-meta);}
+.srows.shape-feature-decisions .chat-rc-log-detail{margin:0 0 4px;padding-left:calc(var(--row-mark) + var(--row-id) + 2 * var(--row-gap));}
 /* D19: why a later slice's plan stopped. */
 .shape-plan-outline-change{padding:8px 10px;border-radius:var(--r-ctrl);background:var(--amber-wash);border:1px solid var(--amber-line);}
 .shape-plan-outline-change-head{font-weight:600;color:var(--amber-ink);}
@@ -420,4 +435,7 @@ a.rd-crumb:hover{color:var(--ink);text-decoration:underline;}
 .srows.run-facts{--row-id:6.4em;}
 .srows.run-facts .plan-check-text{flex-wrap:nowrap;}
 .srows.run-facts .plan-check-label{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0;}
+/* D3 (D4): an Owns row with its status word: the text shrinks first, the word stays whole. */
+.srows.run-facts .plan-check-text > .plan-check-label{flex:0 1 auto;}
+.srows.run-facts .plan-check-text > .plan-check-detail{flex:none;white-space:nowrap;}
 .srows.run-agents .plan-check-text{max-height:var(--row-line);overflow:hidden;}

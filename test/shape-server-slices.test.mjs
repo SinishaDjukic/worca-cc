@@ -1558,3 +1558,27 @@ test('D2 (D8): GET /slice: marked + flag on adds owns, startsFrom and stored (al
   const plain = mk(2, 'done');
   await withEnvVars(SMALL_ON, async () => assert.deepEqual(Object.keys((await slice(plain.pid)).body), DEV, 'unmarked: dev\'s keys'));
 });
+
+// ── Shaper small runs D3 (D4): the run page's Owns word is the feature's own `shown`, computed once ───────────────────
+test('D3: /slice owns[].word equals the feature\'s shown.word for the same id; flag off: no word', async () => {
+  const outline = outlineOf(2);
+  outline.slices[0].requirements = ['R-po-1'];
+  outline.slices[1].requirements = ['R-po-2'];
+  outline.agreed = [{ id: 'R-po-1', text: 'People see it' }, { id: 'R-po-2', text: 'People export it' }];
+  outline.leftOut = [];
+  const f = await withEnvVars(SMALL_ON, async () => mk(2, 'done', { outline }));
+  getDb().prepare('UPDATE pipelines SET shape_stats = ? WHERE id = ?').run(JSON.stringify({ smallRuns: true }), f.pid);
+  const slice = async (pid) => (await get(`/api/shape/pipelines/${pid}/slice`)).json();
+  await withEnvVars(SMALL_ON, async () => {
+    const v = await view(f.id);
+    const shown = new Map(v.ship.smallRuns.owned.map((o) => [o.id, o.shown]));
+    const owns = (await slice(f.pid)).owns;
+    assert.deepEqual(owns.map((o) => [o.id, o.word, o.mark]), [['R-po-1', shown.get('R-po-1').word, shown.get('R-po-1').mark]]);
+    assert.equal(owns[0].word, 'met');
+  });
+  await withEnvVars(SMALL_OFF, async () => {
+    assert.equal('owns' in (await slice(f.pid)), false, 'flag off: no owns at all');
+    const v = await view(f.id);
+    assert.ok(v.ship.smallRuns.owned.every((o) => !('shown' in o)));
+  });
+});

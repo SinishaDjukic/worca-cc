@@ -16,6 +16,7 @@ import { planVersionOf, startsFromOf, ownsOf } from '../../shared/shape/run-fact
 import { requirementsCheck } from '../../shared/review/requirements-coverage.mjs';
 import { acceptanceGate, ledgerCheck } from '../../shared/shape/acceptance.mjs';
 import { shipLedger, careOutcome, unmetLines } from '../../shared/shape/ship-ledger.mjs';
+import { rerunsOf } from '../../shared/shape/req-status.mjs';
 import { latestChecklist, checklistMarkdown } from '../../shared/shape/review-checklist.mjs';
 import { buildDecisionLog } from '../../shared/shape/feature-log.mjs';
 import { stopOptionOf } from '../../shared/shape/run-stops.mjs';
@@ -232,7 +233,10 @@ export function acceptanceRefusal(view) {
 /** Feature D1 (D10, D11): a marked feature's Ship: the requirement rows, the block reason and the Care outcome
  *  (ship-ledger.mjs), the root source's name and the runs in finish order with their PR and what each stacks on. */
 function smallRunsShip(f, slices, verify) {
-  const ledger = ledgerOf(f, verify);
+  // Small runs D3 (D3): with the flag on, every row carries its status (`shown`), computed here once from the runs' states
+  // and the runs that build an id again; with the flag off the ledger is D1's, byte for byte.
+  const ledger = ledgerOf(f, verify, shaperSmallRunsOn()
+    ? { runs: slices.map((s) => ({ index: s.index, state: s.state, stop: s.stop || null })), reruns: rerunsOf(f.outline) } : {});
   const root = featureRootSource(f.id);
   const list = orderOf(f.id, slices);
   const order = list.map((s, i) => {
@@ -261,8 +265,8 @@ function baseName(projectDir, root) {
 }
 
 /** The ship ledger of feature row `f` (ship-ledger.mjs), with `verify` the Verifier's view or null. */
-const ledgerOf = (f, verify) => shipLedger({ agreed: f.outline.agreed || [], kinds: requirementKindsOf(j(f.requirement_kinds, null), f.outline),
-  acceptance: f.outline.acceptance, verify });
+const ledgerOf = (f, verify, status = {}) => shipLedger({ agreed: f.outline.agreed || [], kinds: requirementKindsOf(j(f.requirement_kinds, null), f.outline),
+  acceptance: f.outline.acceptance, verify, ...status });
 
 /** A feature's recorded figures (shape_feature_figures, one row), or null. Readable with the flag off; measure.mjs
  *  re-exports it. */
@@ -815,7 +819,10 @@ function runFacts(v, index, s) {
   const texts = Object.fromEntries((Array.isArray(agreed) ? agreed : []).map((a) => [a.id, a.text]));
   const runs = v.slices.filter((x) => x.index < index && x.pipelineId).map((x) => ({ index: x.index, feature: branchOf(x.pipelineId)?.feature || null }));
   const source = s && s.pipelineId ? branchOf(s.pipelineId)?.source || null : null;
-  return { owns: ownsOf({ ids: req.ids, texts, check: req.check }), startsFrom: startsFromOf({ index, source, base: featureBase(v.id), runs }) };
+  // D3 (D4): the Owns rows' words are the feature's own `shown` (computed once in shipLedger), never a second ledger.
+  const sr = v.ship && v.ship.smallRuns;
+  const shown = new Map((sr ? [...sr.owned, ...sr.confirmed] : []).filter((e) => e.shown).map((e) => [e.id, e.shown]));
+  return { owns: ownsOf({ ids: req.ids, texts, check: req.check, shown }), startsFrom: startsFromOf({ index, source, base: featureBase(v.id), runs }) };
 }
 
 const AGENT_TEST_NODES = Object.freeze(['n_impl', 'n_check']);

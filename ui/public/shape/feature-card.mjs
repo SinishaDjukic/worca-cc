@@ -222,31 +222,53 @@ function verifyRow(doc, li, text) {
   return li;
 }
 
-/** The step log (D17): a check, the run tag, the named decision; Show unfolds what was answered, in place. */
-export function paintFeatureLog(doc, host, lines) {
+/** Small runs D3 (D10): a log line as the shared .srows row (buildCheckRows, as verifyRow): the `Run N` tag in the id
+ *  column (empty, the column kept, for a feature line), ✓ named `decided`, the text. */
+function srowsLine(doc, li, line) {
+  const [row] = buildCheckRows(doc, { items: [{ id: line.run ? `Run ${line.run}` : '', idCol: true, label: line.text, pass: true, mark: 'check', ariaLabel: 'decided' }] });
+  li.appendChild(row);
+  return row;
+}
+
+/** The step log (D17): a check, the run tag, the named decision; Show unfolds what was answered, in place.
+ *  `opts.srows` (small runs D3, the feature page's Decisions): each line is a .srows row (srowsLine) with Show at its
+ *  end; without it the log is the chat card's and Overview's, unchanged. */
+export function paintFeatureLog(doc, host, lines, opts = {}) {
   const list = Array.isArray(lines) ? lines : [];
   if (!sigOf(host, list)) return;
   const open = host.__open || (host.__open = new Set());
+  /** Show unfolds a line's detail in place: `{ show, body }`, or null for a line without one. */
+  const detailFold = (line, cls) => {
+    if (!Array.isArray(line.detail) || !line.detail.length) return null;
+    const body = doc.createElement('ul'); body.className = 'chat-rc-log-detail';
+    for (const d of line.detail) { const x = doc.createElement('li'); x.textContent = d; body.appendChild(x); }
+    const show = doc.createElement('button'); show.type = 'button'; show.className = cls;
+    const set = (on) => { body.hidden = !on; show.textContent = on ? 'Hide' : 'Show'; show.setAttribute('aria-expanded', String(on)); if (on) open.add(line.key); else open.delete(line.key); };
+    show.addEventListener('click', () => set(body.hidden));
+    set(open.has(line.key));
+    return { show, body };
+  };
   keepFocus(doc, host, '.chat-rc-log-show', () => {
     host.replaceChildren();
     host.hidden = !list.length;
     for (const line of list) {
       const li = doc.createElement('li'); li.className = 'chat-rc-log-row'; li.dataset.key = line.key;
+      if (opts.srows) {
+        li.className = 'shape-feature-decision';
+        const row = srowsLine(doc, li, line);
+        const d = detailFold(line, 'btn btn-sm btn-quiet chat-rc-log-show');
+        if (d) { row.appendChild(d.show); li.appendChild(d.body); }
+        host.appendChild(li);
+        continue;
+      }
       if (line.kind === 'verify') { host.appendChild(verifyRow(doc, li, line.text)); continue; }
       const ic = doc.createElement('span'); ic.className = 'chat-rc-log-check'; ic.appendChild(icon(doc, 'check', 12));
       li.appendChild(ic);
       if (line.run) { const r = doc.createElement('span'); r.className = 'chat-rc-log-run'; r.textContent = `Run ${line.run}`; li.appendChild(r); }
       const t = doc.createElement('span'); t.className = 'chat-rc-log-text'; t.textContent = line.text;
       li.appendChild(t);
-      if (Array.isArray(line.detail) && line.detail.length) {
-        const body = doc.createElement('ul'); body.className = 'chat-rc-log-detail';
-        for (const d of line.detail) { const x = doc.createElement('li'); x.textContent = d; body.appendChild(x); }
-        const show = doc.createElement('button'); show.type = 'button'; show.className = 'chat-rc-log-show';
-        const set = (on) => { body.hidden = !on; show.textContent = on ? 'Hide' : 'Show'; show.setAttribute('aria-expanded', String(on)); if (on) open.add(line.key); else open.delete(line.key); };
-        show.addEventListener('click', () => set(body.hidden));
-        set(open.has(line.key));
-        li.append(show, body);
-      }
+      const d = detailFold(line, 'chat-rc-log-show');
+      if (d) li.append(d.show, d.body);
       host.appendChild(li);
     }
   });

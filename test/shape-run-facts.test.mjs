@@ -50,6 +50,15 @@ test('ownsOf: one row per id, the text on one line, pass from the check by id, n
   assert.equal(ownsOf({ ids: ['R-po-1'], texts: { 'R-po-1': 'a\n  b' } })[0].text, 'a b');
 });
 
+test('ownsOf adds word and mark from shown and leaves them out without it', () => {
+  const shown = new Map([['R-po-1', { owner: 'run 2', role: null, word: 'being built', text: 'run 2 · being built', mark: 'live' }]]);
+  assert.deepEqual(ownsOf({ ids: ['R-po-1', 'R-qa-2'], texts: { 'R-po-1': 'Export', 'R-qa-2': 'Tested' }, shown }), [
+    { id: 'R-po-1', text: 'Export', pass: null, word: 'being built', mark: 'live' },
+    { id: 'R-qa-2', text: 'Tested', pass: null },
+  ]);
+  assert.deepEqual(Object.keys(ownsOf({ ids: ['R-po-1'], texts: {} })[0]), ['id', 'text', 'pass'], 'no shown: D2\'s row');
+});
+
 test('run-facts.mjs is pure: no import from src/core or ui/', () => {
   const src = readFileSync(new URL('../src/shared/shape/run-facts.mjs', import.meta.url), 'utf8');
   for (const m of src.matchAll(/^\s*import\b[^'"]*['"]([^'"]+)['"]/gm)) assert.doesNotMatch(m[1], /(^|\/)(core|ui)\//, m[1]);

@@ -4,6 +4,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { shipLedger, careOutcome, unmetLines, confirmMarkOf, REASON_FIRST, SMALL_RUNS_SHIP } from '../src/shared/shape/ship-ledger.mjs';
 import { careChoiceText, careRecordLine } from '../src/shared/shape/feature-record.mjs';
+import { requirementStatus } from '../src/shared/shape/req-status.mjs';
 
 const AGREED = [
   { id: 'R-po-1', text: 'People see it' }, { id: 'R-po-2', text: 'People pin it' },
@@ -57,6 +58,30 @@ test('shipLedger: blocked until marked; blocked without a reason; open after Not
   assert.equal(shipLedger({ agreed: AGREED, kinds: two, acceptance: [{ id: 'R-comp-4', mark: 'dropped' }] }).reason, 'Waiting for Security to confirm R-sec-1');
   // An unknown mark is no mark.
   assert.equal(one({ id: 'R-comp-4', mark: 'maybe' }).confirmed[0].state, 'waiting');
+});
+
+// Small runs D3 (D2): the status is computed once, here, when the caller passes the runs.
+test('shipLedger: with runs every owned and confirmed entry has shown', () => {
+  const runs = [{ index: 1, state: 'done' }, { index: 2, state: 'running' }];
+  const reruns = [{ id: 'R-po-1', run: 3, why: 'change', at: '2026-11-20T10:00:00Z' }];
+  const l = shipLedger({ agreed: AGREED, kinds: KINDS, acceptance: [], verify: null, runs, reruns });
+  for (const e of [...l.owned, ...l.confirmed]) {
+    const { shown, ...bare } = e;
+    assert.deepEqual(shown, requirementStatus(bare, { runs, reruns }), e.id);
+  }
+  assert.deepEqual(l.owned.map((o) => o.shown.text), ['run 1 · changed · run 3 builds it', 'run 2 · being built', 'a run · to do']);
+  assert.equal(l.confirmed[0].shown.text, 'confirmed by a person · Compliance');
+  assert.deepEqual(l.met, { met: 3, total: 4 }, 'the counts do not move');
+});
+
+test('shipLedger: without runs the ledger deep-equals the D1 output', () => {
+  const acceptance = [{ id: 'R-comp-4', mark: 'not-met', reason: 'no copy', at: '2026-11-22T16:55:00.000Z' }];
+  const bare = shipLedger({ agreed: AGREED, kinds: KINDS, acceptance, verify: null });
+  assert.deepEqual(shipLedger({ agreed: AGREED, kinds: KINDS, acceptance, verify: null, runs: null, reruns: [] }), bare);
+  assert.ok([...bare.owned, ...bare.confirmed].every((e) => !('shown' in e)));
+  const withRuns = shipLedger({ agreed: AGREED, kinds: KINDS, acceptance, verify: null, runs: [] });
+  const strip = (l) => ({ ...l, owned: l.owned.map(({ shown, ...e }) => e), confirmed: l.confirmed.map(({ shown, ...e }) => e) });
+  assert.deepEqual(strip(withRuns), bare, 'shown is the only key runs add');
 });
 
 test('unmetLines: one line each, Not met and Dropped; confirmMarkOf reads not_met', () => {
