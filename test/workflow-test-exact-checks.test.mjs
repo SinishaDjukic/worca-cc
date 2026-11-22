@@ -12,7 +12,7 @@ test('quotes: named (3+ words) or long (8+ words), found across spacing, quote m
   assert.deepEqual(quotesIn('She said "yes" and “I export every month and it stops” — Dana.'), ['I export every month and it stops'], 'fix round 5 (I7): a capitalised word after the dash, not any word');
   assert.deepEqual(quotesCheck('Dana said: "i export  every month ... at 200 invoices".', FILES), { met: true, value: 'Met' });
   assert.deepEqual(quotesCheck('Nobody quoted.', FILES), { met: true, value: 'No quotes' });
-  assert.deepEqual(quotesCheck('Dana said “I would pay twice for this tomorrow.” and «exports are slow for all of us, said Dana»', FILES),
+  assert.deepEqual(quotesCheck('Dana said: “I would pay twice for this tomorrow.” and «exports are slow for all of us, said Dana»', FILES),
     { met: false, value: 'Not in the files: "I would pay twice for this tomorrow." and 1 more' });
 });
 
@@ -96,8 +96,8 @@ test('exampleSourcesText: the request, the answers and the UTF-8 files; binary f
 });
 
 test('fix round 1: a quote after a CRLF blank line is still found, and a quote never spans one', () => {
-  assert.deepEqual(quotesIn('The 27" monitor.\r\n\r\nShe said "I export every month and it stops" ok'), ['I export every month and it stops']);
-  assert.deepEqual(quotesIn('An open " mark.\r\n\r\nShe said "I export every month and it stops" ok'), ['I export every month and it stops']);
+  assert.deepEqual(quotesIn('The 27" monitor.\r\n\r\nShe said: "I export every month and it stops" ok'), ['I export every month and it stops']);
+  assert.deepEqual(quotesIn('An open " mark.\r\n\r\nShe said: "I export every month and it stops" ok'), ['I export every month and it stops']);
 });
 
 test('fix round 1: bracketed ellipses split a quote like a bare one', () => {
@@ -176,7 +176,7 @@ test('fix round 4 (quote rule, 2026-11-21): the 5-word rule is replaced; short u
   assert.equal(mod.QUOTE_MIN_WORDS, undefined, 'the 5-word constant is gone');
   assert.deepEqual(quotesIn('The button "Export all invoices now" and the hint "Pick the month you need here".'), []);
   assert.deepEqual(quotesCheck('The empty state reads "Pick a date range".', BRIEF_FILES), { met: true, value: 'No quotes' });
-  assert.equal(quotesCheck('Dana said "I spend three hours every month".', BRIEF_FILES).met, false, 'a made-up named quote is still checked');
+  assert.equal(quotesCheck('Dana said: "I spend three hours every month".', BRIEF_FILES).met, false, 'a made-up named quote is still checked');
 });
 
 test('fix round 4: digits inside ids, hashes, paths, links and code are not numbers of the result', () => {
@@ -203,76 +203,8 @@ test('fix round 4: every other number is still checked: example values, percenta
   assert.deepEqual(numbersCheck('COVID-19 and 5/day.', BRIEF_FILES).met, false, 'a number in a name or a rate stays checked');
 });
 
-test('quote rule: checked only when a person is named next to it (3+ words) or when it is long (8+ words with a letter)', async () => {
-  const { QUOTE_MIN_NAMED_WORDS, QUOTE_MIN_LONG_WORDS, SPEECH_VERBS } = await import('../src/shared/workflow-tests/exact-checks.mjs');
-  assert.deepEqual([QUOTE_MIN_NAMED_WORDS, QUOTE_MIN_LONG_WORDS], [3, 8]);
-  assert.ok(SPEECH_VERBS.includes('said') && SPEECH_VERBS.includes('put it'));
-  // short and nobody named: not checked (real cases from a paid run)
-  for (const s of ['"Choose a start and end date."', 'The hint: "Start date must be before end date"', 'It shows "Jan 1 to Jan 31" below.']) {
-    assert.deepEqual(quotesIn(s), [], s);
-    assert.deepEqual(quotesCheck(s, BRIEF_FILES), { met: true, value: 'No quotes' }, s);
-  }
-  // digits alone no longer make a long quote
-  assert.deepEqual(quotesIn('Totals "2026 2027 2028 2029 2030 2031 2032 2033" listed.'), []);
-  // named before the quote
-  const dana = 'Dana, the finance lead at a customer, said: "I spend two hours every month copying invoices into a spreadsheet."';
-  assert.deepEqual(quotesCheck(dana, BRIEF_FILES), { met: true, value: 'Met' });
-  assert.equal(quotesCheck(dana.replace('two hours', 'nine hours'), BRIEF_FILES).met, false);
-  assert.deepEqual(quotesIn('Dana (finance lead): "Exports take forever."'), ['Exports take forever.']);
-  assert.deepEqual(quotesIn('Customer quote (Dana, finance lead at a customer): "Exports take forever."'), ['Exports take forever.']);
-  // Worca's own planted made-up quote must still be caught
-  const planted = 'As one customer put it: "I would pay twice as much for this tomorrow."';
-  assert.equal(quotesCheck(planted, BRIEF_FILES).met, false);
-  assert.equal(quotesCheck(planted, FILES).met, false);
-  // short named quote is checked
-  assert.deepEqual(quotesIn('Dana said: "Exports take forever."'), ['Exports take forever.']);
-  assert.equal(quotesCheck('Dana said: "Exports take forever."', BRIEF_FILES).met, false);
-  assert.deepEqual(quotesIn('Dana wrote "Exports take forever" today.'), ['Exports take forever']);
-  // named after the quote
-  for (const s of ['"Exports take forever," Dana said.', '"Exports take forever" said Dana.', '"Exports take forever" — Dana', '"Exports take forever", says the finance lead.']) {
-    assert.deepEqual(quotesIn(s).length, 1, s);
-  }
-  // two words are never enough, named or not
-  assert.deepEqual(quotesIn('Dana said: "Exports slow."'), []);
-  // unnamed but long: 8+ words with a letter
-  assert.deepEqual(quotesIn('The page shows "one two three four five six seven eight" somewhere.').length, 1);
-  assert.deepEqual(quotesIn('The page shows "one two three four five six seven" somewhere.'), []);
-  assert.equal(quotesCheck('The page reads "Pick the month you need to export here".', BRIEF_FILES).met, false);
-});
-
 // Fix round 5 (review of board 59, I4–I7 and M1). The cases are the review's own (r4rev\q.mjs, q2.mjs) and the paid brief's lines.
 const DANA_FILES = 'Dana, the finance lead, said: "I spend two hours every month copying invoices into a spreadsheet." Target: 500 customers within 90 days. Tickets 140.';
-
-test('fix round 5 (I4): a person named in markdown marks, after a short verb phrase, as a lowercase person or on the line next to it', () => {
-  for (const s of ['**Dana:** "Exports take forever, honestly."', '**Dana (finance lead):** "Exports take forever, honestly."',
-    '"Exports take forever, honestly." — **Dana**', '*"Exports take forever, honestly."* — Dana', '_"Exports take forever, honestly."_ — Dana',
-    'One customer told us: "Exports take forever, honestly."', 'A customer: "Exports take forever, honestly."', 'Our users: "Exports take forever, honestly."',
-    '> "Exports take forever, honestly."\n> — Dana, finance lead', '"Exports take forever, honestly."\n— the finance lead',
-    'Dana said:\n"Exports take forever, honestly."', 'One customer told us:\n> "Exports take forever, honestly."']) {
-    assert.deepEqual(quotesIn(s), ['Exports take forever, honestly.'], s);
-    assert.equal(quotesCheck(s, DANA_FILES).met, false, `a made-up named quote is caught: ${s}`);
-  }
-  // The line next to it names nobody: still not checked.
-  for (const s of ['Steps:\n"Exports take forever, honestly."', 'Shown first:\n"Exports take forever, honestly."', '"Exports take forever, honestly."\nThen the list.',
-    '"Exports take forever, honestly."\n\n— Dana']) assert.deepEqual(quotesIn(s), [], s);
-  assert.deepEqual(quotesCheck('**Dana:** "I spend two hours every month copying invoices"', DANA_FILES), { met: true, value: 'Met' });
-});
-
-test('fix round 5 (I7): a UI label before a colon, as the subject of a verb, or a lowercase word after a dash is not a person', async () => {
-  const { UI_LABELS } = await import('../src/shared/workflow-tests/exact-checks.mjs');
-  for (const w of ['Error', 'Hint', 'Title', 'Note', 'Warning', 'Label', 'Button', 'Message', 'Example', 'Tip', 'Status', 'Placeholder', 'Tooltip'])
-    assert.ok(UI_LABELS.includes(w), w);
-  for (const s of ['Error: "Start date must be before end date"', 'Hint: "Pick the month you need"', 'Tooltip: "Exports all invoices of the month"',
-    'Title: "Export your invoices"', '**Error:** "Start date must be before end date"', 'Warning: "This cannot be undone"',
-    'The error says "Start date must be before end date"', 'The button says: "Export all invoices now"', 'The tooltip reads "Exports all invoices of the month"',
-    '"Choose a start and end date" — shown below the picker', 'Placeholder: "Search invoices by number"', 'Error Message: "Start date must be before end date"']) {
-    assert.deepEqual(quotesIn(s), [], s);
-    assert.deepEqual(quotesCheck(s, DANA_FILES), { met: true, value: 'No quotes' }, s);
-  }
-  // Real names keep working.
-  for (const s of ['Dana: "Exports take forever, honestly."', 'Noah said: "Exports take forever, honestly."', '"Exports take forever, honestly." — Dana Ortiz',
-    'Tim (support): "Exports take forever, honestly."']) assert.deepEqual(quotesIn(s), ['Exports take forever, honestly.'], s);
-});
 
 test('fix round 5 (I5): a result wrapped in a markdown, md or text fence (or one never closed) is prose; a code fence is not', () => {
   const inner = '# Brief\nDana said: "Exports take forever, honestly."\nWe will reach 9999 customers.';
@@ -309,51 +241,12 @@ test('fix round 5 (M1): a quote ending in a digit closes, so it is checked and t
 });
 
 // Fix round 6 (round 5 review I1, I2, M2, M3, M4). The cases are the review's own (r5rev\q.mjs, q2.mjs).
-test('fix round 6 (I1): a list bullet or a screen label after a dash is not a speaker; a real name after a dash still is', async () => {
-  const { UI_LABELS } = await import('../src/shared/workflow-tests/exact-checks.mjs');
-  for (const w of ['State', 'Modal', 'Email', 'Subject', 'Subtitle', 'CTA', 'Tab', 'Badge', 'Card', 'Panel', 'Section', 'Notification', 'Header',
-    'Footer', 'Column', 'Row', 'Option', 'Input']) assert.ok(UI_LABELS.includes(w), w);
-  for (const s of ['- Empty state: "No invoices for this month yet"\n- Error: "Start date must be before end date"',
-    '- Button: "Export all invoices"\n- Tooltip: "Exports every invoice of the month"', '- "Export all invoices now"\n- Shown in the toolbar',
-    'The empty state says:\n"No invoices for this month yet"', '"Export all invoices now" — Button label', '"Export all invoices now" - Primary CTA on the invoices page',
-    '"Start date must be before end date" — Error shown under the picker', 'The empty state says "No invoices for this month yet"',
-    'The confirmation email says: "Your export is ready to download"', 'The modal says "Are you sure you want this"', 'The button then says "Export all invoices now"',
-    'The CTA reads "Export all invoices now" and the subtitle says "Pick a month first"', 'Subtitle: "Pick a month first please"',
-    '"Export all invoices now" — Shown in the toolbar']) {
-    assert.deepEqual(quotesIn(s), [], s);
-  }
-  for (const s of ['"Exports take forever, honestly." — Dana', '"Exports take forever, honestly." — **Dana**', '"Exports take forever, honestly." - Dana',
-    '"Exports take forever, honestly." — Dana Ortiz, finance lead', '"Exports take forever, honestly."\n— Dana', '"Exports take forever, honestly."\n-- Dana',
-    '> "Exports take forever, honestly."\n> — **Dana**, finance lead']) assert.deepEqual(quotesIn(s), ['Exports take forever, honestly.'], s);
-});
-
-test('fix round 6 (I2): "According to Dana,", "Dana notes:", "(Dana, finance lead)" and "Dana noted." name a person', async () => {
-  const { SPEECH_VERBS } = await import('../src/shared/workflow-tests/exact-checks.mjs');
-  for (const v of ['note', 'notes', 'noted', 'state', 'states', 'stated', 'add', 'adds', 'added', 'explain', 'explains', 'explained', 'mention', 'mentions',
-    'mentioned', 'share', 'shares', 'shared', 'report', 'reports', 'reported', 'comment', 'comments', 'commented', 'complain', 'complains', 'complained',
-    'recall', 'recalls', 'recalled', 'ask', 'asks', 'asked', 'tell', 'tells', 'told', 'write', 'writes', 'wrote', 'say', 'says', 'said', 'put it']) {
-    assert.ok(SPEECH_VERBS.includes(v), v);
-  }
-  for (const s of ['According to Dana, "Exports take forever, honestly."', "In Dana's words: \"Exports take forever, honestly.\"",
-    'Dana notes: "Exports take forever, honestly."', 'Dana stated: "Exports take forever, honestly."', 'Dana adds: "Exports take forever, honestly."',
-    'Dana explains: "Exports take forever, honestly."', '"Exports take forever, honestly." (Dana, finance lead)', '"Exports take forever, honestly." (Dana)',
-    '"Exports take forever, honestly." (the finance lead)', '"Exports take forever, honestly," Dana noted.', '"Exports take forever, honestly," notes Dana.',
-    'Dana said:\n1. "Exports take forever, honestly."', 'According to the finance lead, "Exports take forever, honestly."']) {
-    assert.deepEqual(quotesIn(s).map((q) => q.replace(/[,.]$/, '')), ['Exports take forever, honestly'], s);
-    assert.equal(quotesCheck(s, DANA_FILES).met, false, `a made-up named quote is caught: ${s}`);
-  }
-  // Not people: a screen word after "According to" or in brackets, a bracket that is no name, labels that only look like a verb.
-  for (const s of ['According to the error message, "Start date must be before end date"', '"Export all invoices now" (Button label)',
-    '"Export all invoices now" (Shown in the toolbar)', '"Export all invoices now" (Primary CTA)', 'Release notes: "Exports now run in the background"',
-    'Meeting notes: "Exports now run in the background"', 'It states: "Exports now run in the background"']) assert.deepEqual(quotesIn(s), [], s);
-});
-
 test('fix round 6 (M2): an inch mark inside a quote does not close it when the real closing mark follows', () => {
   const s = 'Dana said: "We print every invoice on 8.5" paper and file it by hand." Then Lee said: "Exports are slow for us."';
   assert.deepEqual(quotesIn(s), ['We print every invoice on 8.5" paper and file it by hand.', 'Exports are slow for us.']);
   assert.deepEqual(quotesIn('Dana said: "We will switch vendors in 2026". Lee said: "I would pay double for this."'),
     ['We will switch vendors in 2026', 'I would pay double for this.'], 'round 5 M1 holds');
-  assert.deepEqual(quotesIn('Dana said: "Our target is 500" and Lee said "Exports are slow for us."'), ['Our target is 500', 'Exports are slow for us.']);
+  assert.deepEqual(quotesIn('Dana said: "Our target is 500" and Lee said: "Exports are slow for us."'), ['Our target is 500', 'Exports are slow for us.']);
 });
 
 test('fix round 6 (M3): code inside a markdown-wrapped answer stays code; the wrapper still reads as prose', () => {
@@ -366,4 +259,95 @@ test('fix round 6 (M4): a path that starts with a year, and an id that starts wi
   assert.deepEqual(numbersIn('Notes in 2026/11/drafts for 140 tickets.').map((x) => x.n), ['140']);
   assert.deepEqual(numbersIn('Invoice EUR2024-INV-0042 for 140 tickets.').map((x) => x.n), ['140']);
   assert.deepEqual(numbersIn('Pricing: $12/user/month, a 30/60/90-day plan, USD5000.').map((x) => x.n), ['12', '30', '60', '90', '5000'], 'round 5 I6 holds');
+});
+
+// User decision 2026-11-22: a fixed, short, documented quote rule (docs/workflows.md). The cases are round 6's review (r6rev\q.mjs, q2.mjs).
+const Q = '"Exports take forever, honestly."';
+const said = (s) => quotesIn(s).map((q) => q.replace(/[,.]$/, ''));
+
+test('quote rule 2026-11-22: the constants are one fixed list: three words named, eight long, five verbs, a speaker of 1 to 4 words', async () => {
+  const mod = await import('../src/shared/workflow-tests/exact-checks.mjs');
+  assert.deepEqual([mod.QUOTE_MIN_NAMED_WORDS, mod.QUOTE_MIN_LONG_WORDS, mod.SPEAKER_MAX_WORDS], [3, 8, 4]);
+  assert.deepEqual([...mod.SPEECH_VERBS], ['said', 'says', 'wrote', 'writes', 'told us']);
+  assert.deepEqual(Object.keys(mod.QUOTE_FORMS), ['saidBefore', 'saidAfter', 'dashAfter']);
+  for (const gone of ['PERSON_NOUNS', 'NOT_SPEAKERS']) assert.equal(mod[gone], undefined, `${gone} is gone`);
+});
+
+test('quote rule 2026-11-22, form (a): "<speaker> said:" (said, says, wrote, writes, told us), then the quote, also on the next line', () => {
+  for (const s of [`Dana said: ${Q}`, `Dana says: ${Q}`, `Dana wrote: ${Q}`, `Dana writes: ${Q}`, `One customer told us: ${Q}`, `The CFO told us: ${Q}`,
+    `Our team says: ${Q}`, `The product team said: ${Q}`, `**Dana** said: ${Q}`, `In March, the finance lead said: ${Q}`, `Dana, the finance lead, said: ${Q}`,
+    `- Dana said: ${Q}`, `Dana said:\n${Q}`, `One customer told us:\n> ${Q}`, `Dana said:\n1. ${Q}`, `Intro. Then Dana said: ${Q}`]) {
+    assert.deepEqual(said(s), ['Exports take forever, honestly'], s);
+    assert.equal(quotesCheck(s, DANA_FILES).met, false, `a made-up named quote is caught: ${s}`);
+  }
+  assert.deepEqual(quotesCheck('Dana said: "I spend two hours every month copying invoices"', DANA_FILES), { met: true, value: 'Met' });
+  assert.deepEqual(quotesIn('Dana said: "Exports slow."'), [], 'two words are never enough');
+  assert.deepEqual(quotesIn(`In the long call with the whole finance team Dana said: ${Q}`), [], 'a speaker of more than four words from its clause start');
+});
+
+test('quote rule 2026-11-22, form (b): the quote, then ", <speaker> said" (or says, wrote, writes, told us)', () => {
+  for (const s of ['"Exports take forever, honestly," Dana said.', '"Exports take forever, honestly", Dana says.', '"Exports take forever, honestly," the finance lead wrote.',
+    '"Exports take forever, honestly," one customer told us.', '*"Exports take forever, honestly,"* Dana writes.']) {
+    assert.deepEqual(said(s), ['Exports take forever, honestly'], s);
+    assert.equal(quotesCheck(s, DANA_FILES).met, false, s);
+  }
+});
+
+test('quote rule 2026-11-22, form (c): the quote, then an em or en dash and a speaker, with marks or a role; also on the next line', () => {
+  for (const s of [`${Q} — Dana`, `${Q} – Dana`, `${Q} — **Dana**`, `${Q} — Dana.`, `${Q} — Product manager at Acme`, `${Q} — Dana, finance lead`,
+    `${Q} — Finance lead`, `${Q} — Small business owner`, `${Q} — Operations lead, Acme`, `${Q} — Dana Ortiz, finance lead at Acme`, `${Q} — Finance team`,
+    `*${Q}* — Dana`, `${Q}\n— Dana`, `> ${Q}\n> — **Dana**, finance lead`]) {
+    assert.deepEqual(said(s), ['Exports take forever, honestly'], s);
+    assert.equal(quotesCheck(s, DANA_FILES).met, false, `a made-up testimonial is caught: ${s}`);
+  }
+  assert.deepEqual(quotesIn('She said "yes" and “I export every month and it stops” — Dana.'), ['I export every month and it stops']);
+});
+
+test("quote rule 2026-11-22: the review's false fails are not checked: no modal + verb, no infinitive, no label, no bracket", () => {
+  for (const s of ['The button should say: "Export all invoices now"', 'The button must say: "Export all invoices now"', 'It should say: "Export all invoices now"',
+    'Screen 2 should say: "Export all invoices now"', 'The confirmation email should state: "Your export is ready to download"',
+    'Banner copy to add: "Invoices now export to CSV"', 'Copy to add: "Invoices now export to CSV"', 'Microcopy to add:\n"No invoices for this month yet"',
+    'Things to note: "Exports run every night at two"', 'Points to mention: "Exports run every night at two"', 'Copy to share: "Invoices now export to CSV files"',
+    'Headline options to share:\n1. "Invoices, done in minutes"', 'We will add: "Export all invoices now"', '"Export all invoices now" is the label we add to the toolbar.',
+    'Success states: "Your invoice was sent to the client"', 'Validation states: "Start date must be before end date"', '"Export all invoices now" (Toolbar)',
+    '"Export all invoices now" (Optional)', '"No invoices for this month yet" (Desktop, toolbar)', '"Export all invoices now" (Figma, frame 12)',
+    'Release notes: "Invoices now export to CSV"', 'Field reports: "Exports fail on Mondays sometimes"', 'Error: "Start date must be before end date"',
+    '- "Export all invoices now"\n- Shown in the toolbar', '"Export all invoices now" - Primary CTA on the invoices page']) {
+    assert.deepEqual(quotesIn(s), [], s);
+    assert.deepEqual(quotesCheck(s, DANA_FILES), { met: true, value: 'No quotes' }, s);
+  }
+});
+
+test('quote rule 2026-11-22: a screen word as the speaker names nobody (The button says:, — Button label)', async () => {
+  const { UI_LABELS } = await import('../src/shared/workflow-tests/exact-checks.mjs');
+  for (const w of ['Button', 'Error', 'Email', 'Label', 'Tooltip', 'Page']) assert.ok(UI_LABELS.includes(w), w);
+  for (const s of ['The button says: "Export all invoices now"', 'The confirmation email says: "Your export is ready to download"',
+    '"Export all invoices now" — Button label', '"Start date must be before end date" — Error shown under the picker', '"Export all invoices now," the button says.',
+    '"No invoices for this month yet" — Invoices page, empty']) assert.deepEqual(quotesIn(s), [], s);
+});
+
+test('quote rule 2026-11-22: the known gaps (docs/workflows.md): a short quote introduced any other way is not checked', () => {
+  for (const s of [`Dana: ${Q}`, `**Dana:** ${Q}`, `A customer: ${Q}`, `${Q} (Dana, finance lead)`, `According to Dana, ${Q}`, `Users say: ${Q}`,
+    `Dana noted: ${Q}`, `${Q} said Dana.`, `Dana said ${Q}`, `${Q} - Dana`, `${Q}\n— the finance lead`, `${Q}\n\n— Dana`]) assert.deepEqual(quotesIn(s), [], s);
+});
+
+test("quote rule 2026-11-22: a long quote is checked however it is introduced; Worca's planted made-up quote is caught by its length", () => {
+  const planted = 'As one customer put it: "I would pay twice as much for this tomorrow."';
+  assert.deepEqual(quotesIn(planted), ['I would pay twice as much for this tomorrow.']);
+  assert.equal(quotesCheck(planted, DANA_FILES).met, false);
+  assert.equal(quotesCheck(planted, BRIEF_FILES).met, false);
+  assert.deepEqual(quotesIn('The page shows "one two three four five six seven eight" somewhere.').length, 1);
+  assert.deepEqual(quotesIn('The page shows "one two three four five six seven" somewhere.'), []);
+  assert.deepEqual(quotesIn('Totals "2026 2027 2028 2029 2030 2031 2032 2033" listed.'), [], 'digits alone do not make a long quote');
+  const dana = 'Dana, the finance lead at a customer, said: "I spend two hours every month copying invoices into a spreadsheet."';
+  assert.deepEqual(quotesCheck(dana, BRIEF_FILES), { met: true, value: 'Met' });
+  assert.equal(quotesCheck(dana.replace('two hours', 'nine hours'), BRIEF_FILES).met, false);
+});
+
+test('round 6 review M1: a rate without a currency sign is a number; a range of two coded amounts keeps both', () => {
+  assert.deepEqual(numbersIn('Price 12/user/month for 140 tickets.').map((x) => x.n), ['12', '140']);
+  assert.equal(numbersCheck('Price 12/user/month for 140 tickets.', DANA_FILES).met, false);
+  assert.deepEqual(numbersIn('Budget USD750-EUR800 for 140').map((x) => x.n), ['750', '800', '140']);
+  assert.deepEqual(numbersIn('Notes in 2026/11/drafts and Invoice EUR2024-INV-0042 for 140 tickets.').map((x) => x.n), ['140'], 'round 6 M4 holds');
+  assert.deepEqual(numbersIn('Pricing: $12/user/month, €19/seat/mo, a 30/60/90-day plan, USD5000.').map((x) => x.n), ['12', '19', '30', '60', '90', '5000']);
 });

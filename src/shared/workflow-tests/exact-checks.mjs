@@ -64,77 +64,37 @@ function blankCode(t) {
   return lines.join('\n').replace(/``[^`\n]+``|`[^`\n]+`/g, spaces);
 }
 
-/** A quote is checked when a person is named next to it and it has QUOTE_MIN_NAMED_WORDS words, or when it is long: QUOTE_MIN_LONG_WORDS
- *  words that contain a letter (digits alone do not count). Shorter unnamed text (a button's label, "Jan 1 to Jan 31") is not checked. */
+/** User decision 2026-11-22: the quote rule is a fixed, short list (docs/workflows.md lists it with its known gaps). A quote is checked
+ *  when it is long, QUOTE_MIN_LONG_WORDS words that contain a letter (digits alone do not count), however it is introduced; or when it
+ *  has QUOTE_MIN_NAMED_WORDS words and is in one of QUOTE_FORMS, where the speaker is 1 to SPEAKER_MAX_WORDS words:
+ *  (a) saidBefore: `<speaker> said:` (a SPEECH_VERBS verb, then a colon), then the quote; also on the next line (`Dana said:\n> "…"`).
+ *      The speaker counts from its clause's start: the line's start (after "> " or a list mark) or a mark (`In March, the lead said:`).
+ *  (b) saidAfter: the quote, then `, <speaker> said` (`"…," Dana said.`), the comma inside or after the closing mark.
+ *  (c) dashAfter: the quote, then an em or en dash and the speaker, capitalised, then the end, a role after a comma, a full stop or a
+ *      bracket (`— Dana`, `— **Dana**`, `— Product manager at Acme`, `— Dana, finance lead`); also on the next line.
+ *  Markdown emphasis is ignored. A speaker with a screen word (UI_LABELS: `The button says:`, `— Button label`) names nobody. Nothing
+ *  else names a speaker: no bare colon (`Dana: "…"`), no brackets, no other verb or tense (`should say`, `to add`, `notes`), no "said Dana". */
 export const QUOTE_MIN_NAMED_WORDS = 3;
 export const QUOTE_MIN_LONG_WORDS = 8;
-/** The verbs that name who is speaking: `Dana said: "…"`, `"…", says the finance lead`. Fix round 6 (I2): the common speech verbs, present
- *  and past. */
-export const SPEECH_VERBS = Object.freeze(['said', 'says', 'say', 'wrote', 'writes', 'write', 'asked', 'asks', 'ask', 'told', 'tells', 'tell',
-  'explained', 'explains', 'explain', 'noted', 'notes', 'note', 'stated', 'states', 'state', 'added', 'adds', 'add', 'mentioned', 'mentions', 'mention',
-  'shared', 'shares', 'share', 'reported', 'reports', 'report', 'commented', 'comments', 'comment', 'complained', 'complains', 'complain',
-  'recalled', 'recalls', 'recall', 'put it']);
-/** Fix round 5 (I7), round 6 (I1): words of a screen, not people. Before a colon (`Error: "…"`), as the one speaking (`The error says "…"`),
- *  after a dash (`"…" — Button label`) or in brackets after the quote they name nobody. */
+export const SPEAKER_MAX_WORDS = 4;
+export const SPEECH_VERBS = Object.freeze(['said', 'says', 'wrote', 'writes', 'told us']);
+/** Words of a screen, not people: a speaker that has one names nobody. */
 export const UI_LABELS = Object.freeze(['Error', 'Hint', 'Title', 'Note', 'Warning', 'Label', 'Button', 'Message', 'Example', 'Tip', 'Status',
   'Placeholder', 'Tooltip', 'Text', 'Page', 'Screen', 'Dialog', 'Field', 'Banner', 'Heading', 'Caption', 'Prompt', 'Alert', 'Toast', 'Menu', 'Link',
   'State', 'Modal', 'Email', 'Subject', 'Subtitle', 'CTA', 'Tab', 'Badge', 'Card', 'Panel', 'Section', 'Notification', 'Header', 'Footer', 'Column',
   'Row', 'Option', 'Input']);
-/** Fix round 6 (I2): words before a speech verb that are no speaker: a pronoun or an adverb (`It states:`, `The button then says`), or a noun that
- *  makes a label with a verb's plural form (`Release notes:`, `Bug reports:`). */
-const NOT_SPEAKERS = new Set(['it', 'this', 'that', 'which', 'what', 'there', 'then', 'also', 'now', 'still', 'just', 'only', 'often', 'always', 'never',
-  'release', 'meeting', 'field', 'interview', 'design', 'product', 'session', 'call', 'research', 'patch', 'version', 'bug', 'crash', 'code', 'test',
-  'review', 'status', 'weekly', 'monthly', 'daily', 'quarterly', 'annual', 'team', 'empty', 'loading']);
-/** Fix round 5 (I4): a person named by role, lowercase too (`A customer: "…"`, `"…" — the finance lead`). */
-export const PERSON_NOUNS = Object.freeze(['customer', 'user', 'client', 'interviewee', 'participant', 'respondent', 'buyer', 'owner', 'founder',
-  'lead', 'manager', 'engineer', 'developer', 'designer', 'admin', 'accountant', 'analyst', 'director', 'colleague', 'partner', 'merchant',
-  'employee', 'tester', 'reviewer', 'member']);
-const VERBS = SPEECH_VERBS.join('|');
+const WORD = String.raw`[\p{L}\p{N}'’&-]+`;
+const VERB = SPEECH_VERBS.map((v) => v.replace(' ', String.raw`\s+`)).join('|');
+const SPEAKER = String.raw`(${WORD}(?:\s+${WORD}){0,${SPEAKER_MAX_WORDS - 1}})`;
+export const QUOTE_FORMS = Object.freeze({
+  saidBefore: new RegExp(String.raw`(?:^|[^\p{L}\p{N}'’&\s-])\s*(?:(?:>|[*+-]|\d{1,3}[.)])\s+)*${SPEAKER}\s*,?\s+(?:${VERB})\s*:\s*$`, 'iu'),
+  saidAfter: new RegExp(String.raw`^\s*,?\s*${SPEAKER}\s+(?:${VERB})(?!\p{L})`, 'iu'),
+  dashAfter: new RegExp(String.raw`^\s*[,.]?\s*[—–]\s*(\p{Lu}[\p{L}\p{N}'’&-]*(?:\s+${WORD}){0,${SPEAKER_MAX_WORDS - 1}})\s*(?:$|[.,;(])`, 'u'),
+});
 const UI_WORD = new Set(UI_LABELS.map((w) => w.toLowerCase()));
-const PERSON = `(?:${PERSON_NOUNS.join('|')})s?`;
-const person = (w) => !!w && !UI_WORD.has(w.toLowerCase()) && !NOT_SPEAKERS.has(w.toLowerCase());
-// "Dana said: ", "As one customer put it: ", "One customer told us: " (up to two words after the verb); the word before the verb speaks.
-const SPOKEN_BEFORE = new RegExp(String.raw`([\p{L}\p{N}'-]+)[,)]?\s+(?:${VERBS})(?:\s+[\p{L}'-]+){0,2}\s*[:,]?\s*$`, 'iu');
-const LABEL_BEFORE = /(\p{Lu}[\p{L}'-]*|\))\s*:\s*$/u;   // "Dana: ", "Dana (finance lead): ": a capitalised name, or a bracket, then ":"
-const ROLE_BEFORE = new RegExp(String.raw`(?<!\p{L})${PERSON}\s*:\s*$`, 'iu');   // "A customer: "
-// Fix round 6 (I2): "According to Dana, ", "According to the finance lead: ", "In Dana's words: ".
-const ACCORDING_BEFORE = /(?:\baccording to\s+(?:(?:the|a|an|one|our)\s+)?([\p{L}'-]+)(?:\s+[\p{L}'-]+){0,2}|\bin\s+([\p{L}-]+)['’]s\s+(?:own\s+)?words)\s*[:,]?\s*$/iu;
-// " — the finance lead", "(the finance lead)": a person's role after an article.
-const ROLE_AFTER = new RegExp(String.raw`^(?:[Tt]he|[Aa]n?|[Oo]ne|[Oo]ur)\s+(?:[\p{L}'-]+\s+)?${PERSON}(?!\p{L})`, 'u');
-// ", Dana said", " said Dana", ", says the finance lead"; the word before the verb speaks.
-const VERB_AFTER = new RegExp(String.raw`^\s*[,.]?\s*(?:(?:${VERBS})\s+\S|(?:[\p{L}'-]+\s+){0,4}([\p{L}'-]+)\s+(?:${VERBS})(?!\p{L}))`, 'iu');
+/** The speaker a form found in `s`, unless it has a screen word. */
+const speaks = (re, s) => { const m = re.exec(s); return !!m && !m[1].split(/\s+/).some((w) => UI_WORD.has(w.toLowerCase())); };
 const unmark = (s) => s.replace(/[*_]/g, '');
-/** Fix round 6 (I1): a name right at the start of `s`: up to three capitalised words, none a screen word, the first a person, then the end, a
- *  comma, a full stop, a bracket or "from" / "at" / "of" ("Dana Ortiz, finance lead"; never "Button label" or "Shown in the toolbar"). */
-const nameAt = (s) => {
-  const m = /^(\p{Lu}[\p{L}'’-]*(?:\s+\p{Lu}[\p{L}'’-]*){0,2})(?=\s*(?:$|[,.;)(])|\s+(?:from|at|of)\s)/u.exec(s);
-  if (!m) return false;
-  const ws = m[1].split(/\s+/);
-  return person(ws[0]) && ws.every((w) => !UI_WORD.has(w.toLowerCase()));
-};
-/** " — Dana", " - Dana", " — the finance lead": a dash, then a name or a role. `next`: on the line after the quote only "—", "–" or "--"
- *  counts (a single "-" there starts a list item). */
-const dashAfter = (s, { next = false } = {}) => {
-  const m = (next ? /^\s*(?:[—–]+|--+)\s*/ : /^\s*[,.]?\s*[—–-]+\s*/).exec(s);
-  if (!m) return false;
-  const rest = s.slice(m[0].length);
-  return nameAt(rest) || ROLE_AFTER.test(rest);
-};
-/** Fix round 6 (I2): "(Dana, finance lead)", "(Dana)", "(the finance lead)" right after the quote. */
-const bracketAfter = (s) => {
-  const m = /^\s*[,.]?\s*\(\s*/.exec(s);
-  return !!m && (nameAt(s.slice(m[0].length)) || ROLE_AFTER.test(s.slice(m[0].length)));
-};
-const spokenBefore = (s) => { const m = SPOKEN_BEFORE.exec(s); return !!m && person(m[1]); };
-const accordingBefore = (s) => { const m = ACCORDING_BEFORE.exec(s); return !!m && person(m[1] || m[2]); };
-const namedBefore = (s) => {
-  const m = LABEL_BEFORE.exec(s);
-  return spokenBefore(s) || accordingBefore(s) || ROLE_BEFORE.test(s) || (!!m && (m[1] === ')' || person(m[1])));
-};
-const namedAfter = (s) => {
-  const m = VERB_AFTER.exec(s);
-  return dashAfter(s) || bracketAfter(s) || (!!m && (!m[1] || person(m[1])));
-};
 const letterWords = (s) => s.split(/\s+/).filter((w) => /\p{L}/u.test(w)).length;
 const tableLine = (t, at) => { const start = t.lastIndexOf('\n', at - 1) + 1; return /^\s*\|/.test(t.slice(start, start + 200)); };
 /** The line just before the line that starts at `start` (its last 120 characters), or '' for the first line. */
@@ -144,17 +104,14 @@ const isNamed = (t, open, close) => {
   const end = t.indexOf('\n', close);
   const before = unmark(t.slice(Math.max(lineStart, open - 120), open));
   const after = unmark(t.slice(close + 1, Math.min(close + 80, end < 0 ? t.length : end)));
-  if (namedBefore(before) || namedAfter(after)) return true;
-  // Fix round 5 (I4): the quote opens its line (after "> ", a list mark or, fix round 6, a list number): the line just before names the
-  // speaker and ends with ":".
-  if (/^[\s>]*(?:[*+-]|\d{1,3}[.)])?\s*$/.test(before)) {
-    const prev = unmark(lineBefore(t, lineStart)).replace(/^[\s>]+/, '');
-    if (/:\s*$/.test(prev) && (spokenBefore(prev) || accordingBefore(prev) || ROLE_BEFORE.test(prev))) return true;
-  }
-  // It closes its line: the line just after names the speaker with a dash ("> — Dana, finance lead"); fix round 6 (I1): never a "- " list item.
+  const comma = /,\s*$/.test(unmark(t.slice(open + 1, close))) || /^\s*,/.test(after);
+  if (speaks(QUOTE_FORMS.saidBefore, before) || (comma && speaks(QUOTE_FORMS.saidAfter, after)) || speaks(QUOTE_FORMS.dashAfter, after)) return true;
+  // (a) on the line before: the quote opens its line (after "> ", a list mark or a list number).
+  if (/^[\s>]*(?:[*+-]|\d{1,3}[.)])?\s*$/.test(before) && speaks(QUOTE_FORMS.saidBefore, unmark(lineBefore(t, lineStart)).replace(/^[\s>]+/, ''))) return true;
+  // (c) on the line after: the quote closes its line, and the next line starts with the dash ("> — Dana, finance lead").
   if (/^[\s.,;!?]*$/.test(after) && end >= 0) {
     const nl = t.indexOf('\n', end + 1);
-    return dashAfter(unmark(t.slice(end + 1, Math.min(end + 81, nl < 0 ? t.length : nl))).replace(/^[\s>]+/, ''), { next: true });
+    return speaks(QUOTE_FORMS.dashAfter, unmark(t.slice(end + 1, Math.min(end + 81, nl < 0 ? t.length : nl))).replace(/^[\s>]+/, ''));
   }
   return false;
 };
@@ -217,8 +174,10 @@ const blankDates = (s) => s.replace(DATE_RE, (m) => (dateLike(m) ? ' '.repeat(m.
 /** Fix round 5 (I6): an amount written with its currency code (USD5000, EUR1200) is a number, not an id: the code is blanked. */
 export const CURRENCY_CODES = Object.freeze(['USD', 'EUR', 'GBP', 'CHF', 'JPY', 'CNY', 'INR', 'CAD', 'AUD', 'NZD', 'SEK', 'NOK', 'DKK', 'PLN', 'CZK', 'HUF',
   'RSD', 'BRL', 'MXN', 'ZAR', 'SGD', 'HKD', 'KRW', 'TRY']);
-// Fix round 6 (M4): only before an amount; EUR2024-INV-0042 (digits, then "-" and a letter) is an id and keeps its code.
-const CURRENCY_RE = new RegExp(`(?<![\\p{L}\\p{N}])(?:${CURRENCY_CODES.join('|')})(?=\\d[\\d.,]*(?![\\d.,\\p{L}]|-\\p{L}))`, 'gu');
+// Fix round 6 (M4): only before an amount; EUR2024-INV-0042 (digits, then "-" and a letter) is an id and keeps its code. Fix round 7
+// (review M1): a "-" before another coded amount is a range (USD750-EUR800): both codes go.
+const CODES = CURRENCY_CODES.join('|');
+const CURRENCY_RE = new RegExp(`(?<![\\p{L}\\p{N}])(?:${CODES})(?=\\d[\\d.,]*(?![\\d.,\\p{L}]|-(?!(?:${CODES})\\d)\\p{L}))`, 'gu');
 const blankCurrency = (s) => s.replace(CURRENCY_RE, spaces);
 const HEAD_NUM_RE = /^(\s*#{1,6}\s+)\d+(?:\.\d+)+\.?(?=\s)/;   // "## 1.1 Scope": a section number; "## 140 tickets" stays a number
 const TIME_RE = /\b\d{1,2}:\d{2}(?::\d{2})?\b/g;   // 14:00, 12:30:45
@@ -241,9 +200,10 @@ const pathToken = (w) => {
   if (!/\p{L}/u.test(x)) return false;
   const slashes = (x.match(/\//g) || []).length;
   // Fix round 5 (I6): two slashes in a rate or a list of numbers ($12/user/month, 30/60/90-day) are no path, unless a file extension ends it
-  // (2026/11/notes.md). Fix round 6 (M4): only in those shapes (an amount with its sign, then words; numbers, then "-word"): 2026/11/drafts is a path.
+  // (2026/11/notes.md). Fix round 6 (M4): only in those shapes (an amount, then words; numbers, then "-word"): 2026/11/drafts is a path,
+  // since its second part is a number. Fix round 7 (review M1): the amount's sign is optional (12/user/month).
   const ext = /\.[A-Za-z][A-Za-z0-9]{0,5}$/.test(x);
-  const rate = /^[$€£¥]\d[\d.,]*(?:\/\p{L}+)+$/u.test(x) || /^\d+(?:\/\d+)+-\p{L}+$/u.test(x);
+  const rate = /^[$€£¥]?\d[\d.,]*(?:\/\p{L}+)+$/u.test(x) || /^\d+(?:\/\d+)+-\p{L}+$/u.test(x);
   return x.includes('\\') || /^(?:[A-Za-z]:[\\/]|~?\/|\.{1,2}\/)/.test(x) || (slashes >= 2 && (!rate || ext)) || (slashes === 1 && ext);
 };
 /** Fix round 4: what in a result holds digits that are not numbers of the result, blanked (positions kept): code, links, file paths,
