@@ -68,12 +68,14 @@ test("board 59 E: the card shows the copy's changed lines joined by \" … \", n
     .replace('500-customer target', 'customer target');
   const ex = changedExcerpt(PAID, broken);
   assert.ok(!/500 customers|500-customer/.test(ex), `no original line in the excerpt: ${ex}`);
-  const lines = ex.split(' … ');
+  const lines = ex.replace(/ …$/, '').split(' … ');
   assert.equal(lines.length, 4, ex);
   ['7. States launch target: many customers soon', '- **Impact & launch** (1–2 sentences): customer target', '| **90-day target** | Text search |']
     .forEach((p, i) => assert.ok(lines[i].startsWith(p), `line ${i} in order, trimmed: ${lines[i]}`));
-  // Fix round 6 (I3): the long last line is cut around its change, so all four fit on the card.
-  assert.ok(lines[3].startsWith('…') && lines[3].includes('launch target (many customers soon)') && ex.length <= 400, lines[3]);
+  // Fix round 6 (I3): the long last line is cut around its change, so all four fit on the card; fix round 7: cut between words, and the
+  // "…" of its cut end is the card's last mark, never one beside " … ".
+  assert.ok(lines[3].includes('launch target (many customers soon)') && ex.endsWith(' …') && !ex.includes('… …') && ex.length <= 400, ex);
+  assert.ok(broken.includes(lines[3]), 'a whole run of words of the copy');
   assert.equal(changedExcerpt('a\nb\nc', 'a\nc'), '', 'a copy that only removes lines changes no line of its own');
   assert.equal(changedExcerpt('x\nx\ny', 'x\nx\nx\ny'), 'x', 'a line added again counts once more');
   assert.equal(changedExcerpt('a\n\nb', 'a\n\n\n\nb  '), '', 'blank lines and spacing at the ends are no change');
@@ -193,4 +195,61 @@ test('review M2: the proof minimum counts the characters of its parts, not the "
   assert.equal(planted.usableProof('Q3 2026 … 25%', good), null, '10 characters of content');
   assert.equal(planted.usableProof('Q3 2026 ... 25%', good), null);
   assert.ok(planted.usableProof('Q3 2026 we want … 25% fewer', good), 'enough content in its parts');
+});
+
+// Fix round 7: round 6 review I4 (pair changed lines by a real line diff) and the choppy card of the last paid round.
+// The paid copy ("Converted numbers to words") showed `…ment, approximately several hundred words … … and fits on a standard printed format
+// w… … …ticket data: significant proportion of s…`. This small original and copy give the same fragments with round 6's cutting.
+const CHOPPY = [
+  '# Bulk invoice export: product brief',
+  '- **Length:** a one-page brief for the billing team, the document, approximately 500 words in total, plain language throughout',
+  '- **Format:** the brief is written for a reader in a hurry and fits on one A4 page with 2 cm margins and 11pt type',
+  '- **Problem:** grounded in the support ticket data: 38% of support tickets in Q3 asked for a way to export invoices',
+  '- **Target:** 500 customers use the export within 90 days of the launch, measured by the export event in the product',
+  '- **Interview:** Dana, the finance lead, spends 2 hours every month copying invoices into a spreadsheet by hand',
+  '- **Retention:** invoices are kept for 10 years under German tax law, so every export must be a complete copy',
+  '- **Scope:** the first release exports up to 200 invoices per file and splits a larger month into 2 or more files',
+  '- **Timeline:** the work takes 3 sprints of 2 weeks each, with the beta for 20 customers in the second sprint',
+  '- **Cost:** the team estimates 120 hours of work, and support expects 40 fewer tickets each month after the launch',
+].join('\n');
+const CHOPPY_COPY = CHOPPY.replace('approximately 500 words', 'approximately several hundred words')
+  .replace('fits on one A4 page with 2 cm margins and 11pt type', 'fits on a standard printed format with narrow margins and small type')
+  .replace('ticket data: 38% of support tickets', 'ticket data: significant proportion of support tickets')
+  .replace('500 customers use the export within 90 days', 'many customers use the export within a few months')
+  .replace('spends 2 hours every month', 'spends a couple of hours every month').replace('kept for 10 years', 'kept for a decade')
+  .replace('up to 200 invoices per file and splits a larger month into 2 or more files', 'up to a few hundred invoices per file and splits a larger month into several files')
+  .replace('takes 3 sprints of 2 weeks each, with the beta for 20 customers', 'takes three sprints of two weeks each, with the beta for twenty customers')
+  .replace('estimates 120 hours of work, and support expects 40 fewer tickets', 'estimates over a hundred hours of work, and support expects fewer tickets');
+/** Every word on the card is a whole word of the copy: no line is cut inside a word. */
+const wholeWords = (ex, copy) => { const have = new Set(copy.split(/\s+/)); return ex.split(/\s+/).filter((w) => w && w !== '…' && !have.has(w)); };
+
+test('the paid round\'s choppy card: whole words only, no empty "… …", within the card, the lines that changed most first', () => {
+  const ex = changedExcerpt(CHOPPY, CHOPPY_COPY, 400);
+  assert.ok(ex.length <= 400, `${ex.length}`);
+  assert.ok(!ex.includes('… …'), `no empty fragment: ${ex}`);
+  assert.deepEqual(wholeWords(ex, CHOPPY_COPY), [], `no word cut: ${ex}`);
+  const parts = ex.replace(/^… | …$/g, '').split(' … ');
+  assert.ok(parts.every((p) => /[\p{L}\p{N}]/u.test(p)), 'no fragment without a word');
+  assert.ok(parts.length >= 4 && ex.length >= 300, `the card is filled: ${parts.length} parts, ${ex.length} characters`);
+  for (const p of ['standard printed format with narrow margins and small', 'a few hundred invoices per file']) assert.ok(ex.includes(p), `a line that changed most: ${p}`);
+  assert.ok(!/\b(?:500|38%|120)\b/.test(ex), 'never the unbroken text');
+  // The lines shown keep the copy's order.
+  const at = (p) => CHOPPY_COPY.indexOf(p.slice(0, 20));
+  assert.deepEqual(parts.map(at), [...parts.map(at)].sort((a, b) => a - b));
+});
+
+test('review I4: changed lines are paired by a line diff, so a copy that also removes or adds a line still shows its breaks', () => {
+  const filler = (w) => Array.from({ length: 30 }, () => w).join(' ');
+  const A = `Intro paragraph about the rollout plan that is long enough: ${filler('alpha')}`;
+  const B = `Metric: ${filler('beta')} and the target is 25% fewer tickets by the end of Q3 2026 for every customer segment`;
+  const C = `Owner: ${filler('gamma')} and Dana owns it with 40 hours budgeted for the quarter`;
+  const orig = [A, B, C].join('\n');
+  const removed = [B.replace('25% fewer tickets by the end of Q3 2026', 'fewer tickets eventually'), C.replace('with 40 hours budgeted', 'with no budget')].join('\n');
+  const e1 = changedExcerpt(orig, removed, 400);
+  assert.ok(e1.includes('fewer tickets eventually') && e1.includes('with no budget') && e1.length <= 400, e1);
+  assert.deepEqual(wholeWords(e1, removed), [], e1);
+  const added = [A, 'A new line the copy added, which says something else entirely.', B.replace('25% fewer tickets by the end of Q3 2026', 'fewer tickets eventually'), C].join('\n');
+  const e2 = changedExcerpt(orig, added, 400);
+  assert.ok(e2.includes('fewer tickets eventually') && e2.includes('A new line the copy added'), e2);
+  assert.ok(!/25%|Q3 2026/.test(e1 + e2), 'never the unbroken text');
 });

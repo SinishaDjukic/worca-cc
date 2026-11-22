@@ -132,41 +132,109 @@ export function copyProblem(original, copy, earlier = [], { proof = null } = {})
 }
 
 const SEP = ' … ';
-const LINE_MIN = 40;   // the least a changed line gets on a full card
-/** `size` characters of a changed line around the first place it differs from the line it replaced (a third before it), "…" where cut. */
-function around(line, was, size) {
-  if (line.length <= size) return line;
-  let d = 0;
-  while (d < line.length && d < was.length && line[d] === was[d]) d += 1;
-  const start = Math.max(0, Math.min(d - Math.floor(size / 3), line.length - size));
-  let s = line.slice(start, start + size);
-  if (start > 0) s = `…${s.slice(1)}`;
-  if (start + size < line.length) s = `${s.slice(0, -1)}…`;
-  return s;
+const LINE_MIN = 60;   // the least a changed line gets on a full card (fix round 7: fragments long enough to read)
+const DIFF_MAX_CELLS = 4_000_000;   // a line diff larger than this pairs the middle lines without the table
+const wordsAt = (l) => [...l.matchAll(/\S+/g)].map((m) => ({ w: normLoose(m[0]), at: m.index, end: m.index + m[0].length }));
+
+/** The original's and the copy's lines in order, as hunks of a line diff (an LCS on normLoose keys, after the common start and end are
+ *  trimmed): `{ was: [line], now: [{ line, i }] }`, `i` the line's place in the copy. */
+function hunksOf(o, c) {
+  const ok = o.map(normLoose);
+  const ck = c.map(normLoose);
+  let a = 0;
+  while (a < o.length && a < c.length && ok[a] === ck[a]) a += 1;
+  let z = 0;
+  while (z < o.length - a && z < c.length - a && ok[o.length - 1 - z] === ck[c.length - 1 - z]) z += 1;
+  const n = o.length - a - z;
+  const m = c.length - a - z;
+  const hunks = [];
+  let h = null;
+  const push = (kind, k) => {
+    if (kind === 'same') { h = null; return; }
+    if (!h) { h = { was: [], now: [] }; hunks.push(h); }
+    if (kind === 'was') h.was.push(o[k]); else h.now.push({ line: c[k], i: k });
+  };
+  if (n * m > DIFF_MAX_CELLS) {
+    for (let k = 0; k < n; k += 1) push('was', a + k);
+    for (let k = 0; k < m; k += 1) push('now', a + k);
+    return hunks;
+  }
+  const t = new Uint32Array((n + 1) * (m + 1));   // t[x][y]: the LCS of o[a+x..] and c[a+y..]
+  for (let x = n - 1; x >= 0; x -= 1) {
+    for (let y = m - 1; y >= 0; y -= 1) {
+      t[x * (m + 1) + y] = ok[a + x] === ck[a + y] ? t[(x + 1) * (m + 1) + y + 1] + 1 : Math.max(t[(x + 1) * (m + 1) + y], t[x * (m + 1) + y + 1]);
+    }
+  }
+  let x = 0;
+  let y = 0;
+  while (x < n || y < m) {
+    if (x < n && y < m && ok[a + x] === ck[a + y]) { push('same'); x += 1; y += 1; } else if (y < m && (x >= n || t[x * (m + 1) + y + 1] >= t[(x + 1) * (m + 1) + y])) { push('now', a + y); y += 1; } else { push('was', a + x); x += 1; }
+  }
+  return hunks;
 }
 
-/** Board 59 E: what a planted card shows. A line diff: the copy's lines (trimmed, blank ones left out) that the original does not have as
- *  often, in the copy's order, joined by " … ". Never an original line, so never the unbroken text (review I2). Fix round 6 (review I3): lines
- *  are compared loosely (normLoose), so a line the model only tidied (a dash, case, marks) is no change and only lines that changed in meaning
- *  show; and the excerpt fits in `max`: short lines whole, longer ones cut around their change, so every broken place stays on the card. */
+/** A changed line of the copy against the original line it replaced (`was`, or null for a line added): where its change is (the words
+ *  between their common first and last words) and how much changed (the changed words on both sides). */
+function changeOf(line, was) {
+  const cw = wordsAt(line);
+  if (!was) return { from: 0, to: line.length, size: cw.length };
+  const ow = wordsAt(was);
+  let p = 0;
+  while (p < cw.length && p < ow.length && cw[p].w === ow[p].w) p += 1;
+  let s = 0;
+  while (s < cw.length - p && s < ow.length - p && cw[cw.length - 1 - s].w === ow[ow.length - 1 - s].w) s += 1;
+  const last = cw.length - 1 - s;
+  const from = p < cw.length ? cw[p].at : line.length;
+  return { from, to: last >= p ? cw[last].end : from, size: (last - p + 1) + (ow.length - s - p) };
+}
+
+/** Up to `size` characters of `line` around its change, cut only between words: `{ text, cutStart, cutEnd }`. */
+function clipAt(line, { from, to }, size) {
+  if (line.length <= size) return { text: line, cutStart: false, cutEnd: false };
+  const room = size - Math.min(size, to - from);
+  let start = Math.max(0, Math.min(from - Math.floor(room / 3), line.length - size));
+  let end = Math.min(line.length, start + size);
+  if (start > 0 && !/\s/.test(line[start - 1])) { const sp = line.slice(start).search(/\s\S/); start = sp < 0 || start + sp + 1 > from ? from : start + sp + 1; }
+  if (end < line.length && !/\s/.test(line[end])) { const sp = line.slice(start, end).search(/\s\S*$/); if (sp > 0) end = start + sp; }
+  return { text: line.slice(start, end).trim(), cutStart: start > 0, cutEnd: end < line.length };
+}
+
+/** Board 59 E: what a planted card shows: the copy's changed lines, never an original line, so never the unbroken text (review I2). Lines are
+ *  compared loosely (normLoose), so a line the model only tidied (a dash, case, marks) is no change (round 6, review I3). Fix round 7:
+ *  - a real line diff (an LCS) pairs each changed line with the original line it replaced (the one sharing the most words in its hunk),
+ *    so a copy that also adds or removes a line keeps its breaks (review I4);
+ *  - all of them in the copy's order when they fit in `max`; else the lines that changed most first, as many as fit with at least
+ *    LINE_MIN characters each, short ones whole and longer ones cut between words around their change;
+ *  - joined by " … ", with "…" only at an outer end that was cut, so the card never shows an empty "… …" or half a word. */
 export function changedExcerpt(original, copy, max = CARD_EXCERPT_MAX) {
   const linesOf = (t) => String(t ?? '').split('\n').map((l) => l.trim()).filter((l) => normLoose(l));
-  const o = linesOf(original);
-  const c = linesOf(copy);
-  const left = (ls, other) => {
-    const have = new Map();
-    for (const l of other) { const k = normLoose(l); have.set(k, (have.get(k) || 0) + 1); }
-    return ls.filter((l) => { const k = normLoose(l); if (have.get(k) > 0) { have.set(k, have.get(k) - 1); return false; } return true; });
-  };
-  const all = left(c, o);
-  if (all.join(SEP).length <= max) return all.join(SEP);
-  const was = left(o, c);   // the original's lines they replaced, in order: where each changed line differs
-  const out = all.slice(0, Math.max(1, Math.floor((max + SEP.length) / (LINE_MIN + SEP.length))));
-  let room = max - SEP.length * (out.length - 1);
-  const size = [];
-  const byLength = out.map((_, i) => i).sort((a, b) => out[a].length - out[b].length);
-  byLength.forEach((i, k) => { size[i] = Math.min(out[i].length, Math.floor(room / (out.length - k))); room -= size[i]; });
-  return out.map((l, i) => around(l, was[i] || '', size[i])).join(SEP);
+  const items = [];
+  for (const h of hunksOf(linesOf(original), linesOf(copy))) {
+    const left = h.was.map((line) => ({ line, words: wordsAt(line).map((x) => x.w) }));
+    for (const { line, i } of h.now) {
+      const words = new Set(wordsAt(line).map((x) => x.w));
+      let best = -1;
+      let most = 0;
+      left.forEach((w, k) => { const n = w.words.filter((x) => words.has(x)).length; if (n > most) { most = n; best = k; } });
+      const was = best < 0 ? null : left.splice(best, 1)[0].line;
+      if (/[\p{L}\p{N}]/u.test(line)) items.push({ line, i, ...changeOf(line, was) });
+    }
+  }
+  if (items.map((x) => x.line).join(SEP).length <= max) return items.map((x) => x.line).join(SEP);
+  const chosen = [];
+  let need = -SEP.length;
+  for (const x of [...items].sort((p, q) => q.size - p.size || p.i - q.i)) {
+    const least = Math.min(x.line.length, LINE_MIN) + SEP.length;
+    if (need + least + 4 <= max) { chosen.push(x); need += least; }   // 4: the "… " and " …" an outer cut may take
+  }
+  let room = max - SEP.length * (chosen.length - 1) - 4;
+  const size = new Map();
+  [...chosen].sort((p, q) => p.line.length - q.line.length).forEach((x, k, all) => {
+    size.set(x, Math.min(x.line.length, Math.floor(room / (all.length - k)))); room -= size.get(x);
+  });
+  const parts = chosen.sort((p, q) => p.i - q.i).map((x) => clipAt(x.line, x, size.get(x))).filter((p) => /[\p{L}\p{N}]/u.test(p.text));
+  if (!parts.length) return '';
+  return `${parts[0].cutStart ? '… ' : ''}${parts.map((p) => p.text).join(SEP)}${parts.at(-1).cutEnd ? ' …' : ''}`;
 }
 /** A line without its numbers: its indent kept, a list number dropped, one space where a number stood between words, no space doubled. */
 function withoutNumbers(line) {
