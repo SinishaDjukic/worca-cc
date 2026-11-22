@@ -7,7 +7,7 @@ import { join } from 'node:path';
 import { PassThrough, Readable } from 'node:stream';
 import { gzipSync, gunzipSync } from 'node:zlib';
 import { randomBytes } from 'node:crypto';
-import { extractTarGz, isSafeRelPath, ARCHIVE_LIMITS, tarPending } from '../src/core/git-free/archive.mjs';
+import { extractTarGz, isSafeRelPath, ARCHIVE_LIMITS, tarPending, SETTLE_MAX_MS } from '../src/core/git-free/archive.mjs';
 import { tarGz } from './helpers/tar-writer.mjs';
 
 const roots = [];
@@ -210,6 +210,21 @@ test('a failed extraction answers only once tar has finished the writes it start
     await new Promise((r) => setTimeout(r, 300));
     assert.equal(snap(dest), atError, `${name}: nothing is written after the error`);
   }
+});
+
+test('a download that fails part-way through a file answers without the settle wait: tar is not left waiting for the rest', async () => {
+  const whole = tarGz([{ path: `${TOP}/a.md`, body: 'a' }, { path: `${TOP}/big.bin`, body: randomBytes(4 * 1024 * 1024) }]);
+  const reset = Object.assign(new Error('socket hang up'), { code: 'ECONNRESET' });
+  const source = new Readable({ read() { this.push(whole.subarray(0, whole.length >> 1)); this.destroy(reset); } });
+  const dest = fresh();
+  const t0 = Date.now();
+  const err = await extractTarGz(source, dest).then(() => null, (e) => e);
+  assert.equal(err?.code, 'ECONNRESET');
+  assert.ok(Date.now() - t0 < SETTLE_MAX_MS / 2, `answered after ${Date.now() - t0} ms`);
+  const atError = readdirSync(dest).sort().map((f) => `${f}:${statSync(join(dest, f)).size}`).join(' ');
+  await new Promise((r) => setTimeout(r, 300));
+  assert.equal(readdirSync(dest).sort().map((f) => `${f}:${statSync(join(dest, f)).size}`).join(' '), atError, 'nothing is written after the error');
+  rmSync(dest, { recursive: true });   // the cut file is closed: the tree can go
 });
 
 test('tarPending reads node-tar\'s count of writes in flight (a tar release that renames it skips the wait: update tarPending)', async () => {

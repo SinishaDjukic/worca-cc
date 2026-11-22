@@ -161,10 +161,12 @@ const collect = (child) => new Promise((res) => {
   child.stderr.on('data', (b) => (text += b.toString()));
   child.on('exit', (code) => res({ code: code ?? 0, text }));
 });
-/** Resolve once the child has printed a line matching `re` (a fixed sleep races a slow CI runner's startup). */
-const printed = (child, re) => new Promise((res) => {
+/** Resolve once the child has printed a line matching `re` (a fixed sleep races a slow CI runner's startup). A line
+ *  that never comes fails with what was printed and ends the child: a follow left running keeps this file's process alive. */
+const printed = (child, re, ms = 6000) => new Promise((res, rej) => {
   let text = '';
-  const on = (b) => { text += b.toString(); if (re.test(text)) res(); };
+  const timer = setTimeout(() => { child.kill('SIGKILL'); rej(new Error(`nothing matching ${re} within ${ms} ms; printed:\n${text}`)); }, ms);
+  const on = (b) => { text += b.toString(); if (re.test(text)) { clearTimeout(timer); res(); } };
   child.stdout.on('data', on); child.stderr.on('data', on);
 });
 

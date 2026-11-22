@@ -36,6 +36,8 @@ const reachesItself = (addr) => new Promise((resolve) => {
 const noLan = LAN ? false : 'no non-loopback IPv4 interface on this machine';
 // The network-caller tests also need the LAN path to answer; the boot and loopback ones do not.
 const skip = noLan || (!(await reachesItself(LAN)) && `this machine refuses its own connections through ${LAN} (endpoint security?)`);
+// CI runners do reach themselves: there a failed probe is a failure, never three security tests skipped unseen.
+if (process.env.CI && skip && !noLan) throw new Error(skip);
 
 const freePort = () => new Promise((r) => { const s = net.createServer().listen(0, '127.0.0.1', () => { const { port: p } = s.address(); s.close(() => r(p)); }); });
 
