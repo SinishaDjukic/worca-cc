@@ -53,14 +53,19 @@ test('treeBusy: a working tree is busy, an idle one or an empty one is not, an a
   const seq = (...samples) => { let i = 0; return async () => samples[Math.min(i++, samples.length - 1)]; };
   const idle = [[10, 1, 10, 9, 'claude'], [11, 10, 10, 1, 'bash']];
   const working = [[10, 1, 10, 9, 'claude'], [11, 10, 10, 4, 'bash'], [12, 11, 10, 2, 'node']];
-  assert.equal(await treeBusy(10, { probeMs: 1, rows: seq(idle, working) }), process.platform !== 'win32');
-  assert.equal(await treeBusy(10, { probeMs: 1, rows: seq(idle, idle) }), false);
-  assert.equal(await treeBusy(10, { probeMs: 1, rows: seq(idle.slice(0, 1), working) }), false, 'no descendants: nothing to wait on');
-  assert.equal(await treeBusy(null, { probeMs: 1, rows: seq(idle, working) }), false);
-  const ac = new AbortController();
-  const p = treeBusy(10, { probeMs: 60_000, signal: ac.signal, rows: seq(idle, working) });
-  setTimeout(() => ac.abort(), 5);
-  assert.equal(await p, false);
+  // The probe's timer is unref'd (it never holds a CLI open); in a run the agent's child keeps the loop alive, here
+  // this interval does, or node:test can see an empty loop while a probe is still pending.
+  const alive = setInterval(() => {}, 1000);
+  try {
+    assert.equal(await treeBusy(10, { probeMs: 1, rows: seq(idle, working) }), process.platform !== 'win32');
+    assert.equal(await treeBusy(10, { probeMs: 1, rows: seq(idle, idle) }), false);
+    assert.equal(await treeBusy(10, { probeMs: 1, rows: seq(idle.slice(0, 1), working) }), false, 'no descendants: nothing to wait on');
+    assert.equal(await treeBusy(null, { probeMs: 1, rows: seq(idle, working) }), false);
+    const ac = new AbortController();
+    const p = treeBusy(10, { probeMs: 60_000, signal: ac.signal, rows: seq(idle, working) });
+    setTimeout(() => ac.abort(), 5);
+    assert.equal(await p, false);
+  } finally { clearInterval(alive); }
 });
 
 test('noteSpawned reaches the context that started the spawn, and only that one', async () => {
