@@ -3,8 +3,10 @@
 // text going into a model prompt, so it is fenced with the call's own tags (judge-prompt.mjs `fenced`), and the system prompt names them.
 // User decision 2026-11-21: whole broken copies. The checking model writes each broken version as a complete copy of the good result,
 // the criterion broken everywhere it is met and everything else kept; one call per copy. Worca's own plants are for mock rounds only.
-import { fenced } from './judge-prompt.mjs';
-import { normLoose } from '../../shared/workflow-tests/exact-checks.mjs';
+// User decision 2026-11-22: only a result's written text is broken; a project result's changes (the diff after CHANGES_HEADING) are kept
+// as they are, and a copy that still holds the passage proving the criterion on the good result is weak (checker.mjs asks once more).
+import { fenced, CHANGES_HEADING } from './judge-prompt.mjs';
+import { normLoose, proofFound } from '../../shared/workflow-tests/exact-checks.mjs';
 
 /** Board 11's filler test: a paragraph that adds no facts. */
 export const FILLER = 'This part repeats the background above for readers who start here. It adds no new facts and changes nothing in the result.';
@@ -20,15 +22,32 @@ export function padded(text) {
 
 /** A round's broken copies: one model call each. */
 export const PLANT_COPIES = 3;
-/** The largest good result Worca breaks (characters). A longer one is not planted: the round does not start (checker.mjs). */
+/** The largest written text Worca breaks (characters; a project result's diff not counted). A longer one is not planted: the round does
+ *  not start (checker.mjs TOO_LONG_TEXT). */
 export const PLANT_RESULT_MAX = 40_000;
+/** A proof shorter than this (in its loose form) says too little to tell a weak copy: no check is made. */
+export const PROOF_MIN = 12;
+/** What a planted card shows at most (characters); the checker's own card limit. */
+export const CARD_EXCERPT_MAX = 400;
 /** A copy's length must stay within this band of the good result's: shorter is a summary or a cut copy, longer is not a copy. */
 export const COPY_MIN_RATIO = 0.5;
 export const COPY_MAX_RATIO = 1.5;
 /** A whole copy is a long reply: one copy call may take this long (a check takes judge.mjs JUDGE_TIMEOUT_MS). */
 export const COPY_TIMEOUT_MS = 600_000;
-const HOW_WORDS = 5;
 const HOW_MAX = 40;
+
+/** User decision 2026-11-22: `{ text, changes }` of a good result. `changes` = a project result's CHANGES_HEADING and diff, with the blank
+ *  lines before it (criteria-runner.mjs subjectOfTry, criteria-read.mjs likedFromPipeline); `text + changes` is the result again. A diff line
+ *  starts with "+", "-" or " ", so only a heading at a line start counts. A result with no written text is planted whole. */
+export function splitChanges(result) {
+  const s = String(result ?? '');
+  const h = `${CHANGES_HEADING}\n`;
+  let at = s.lastIndexOf(h);
+  while (at > 0 && s[at - 1] !== '\n') at = s.lastIndexOf(h, at - 1);
+  if (at < 0) return { text: s, changes: '' };
+  const text = s.slice(0, at).replace(/\n+$/, '');
+  return text.trim() ? { text, changes: s.slice(text.length) } : { text: s, changes: '' };
+}
 
 const open = (name, tag) => (tag ? `<${name}-${tag}>` : `<${name}>`);
 const close = (name, tag) => (tag ? `</${name}-${tag}>` : `</${name}>`);
@@ -50,7 +69,7 @@ export const copyPrompt = ({ criterion, result, ways = [], tag = '' }) => [fence
   fenced('ways', tag, ways.length ? ways.join('\n') : 'none')].join('\n\n');
 
 /** `{ how, text }` of one copy reply, or null: no copy tags of this call, no closing copy tag (the reply was cut off), or no way named.
- *  The way is cut to five words. */
+ *  Fix round 6 (M7): the way is kept whole up to HOW_MAX characters and cut only between words (a first word longer than that: null). */
 export function parseCopyReply(reply, tag = '') {
   const s = String(reply ?? '');
   const [co, cc] = [open('copy', tag), close('copy', tag)];
@@ -62,39 +81,81 @@ export function parseCopyReply(reply, tag = '') {
   const h = around.indexOf(ho);
   const e = h < 0 ? -1 : around.indexOf(hc, h + ho.length);
   if (e < 0) return null;
-  const how = around.slice(h + ho.length, e).trim().split(/\s+/).slice(0, HOW_WORDS).join(' ').slice(0, HOW_MAX).trim();
+  let how = '';
+  for (const w of around.slice(h + ho.length, e).trim().split(/\s+/).filter(Boolean)) {
+    const next = how ? `${how} ${w}` : w;
+    if (next.length > HOW_MAX) break;
+    how = next;
+  }
   if (!how) return null;
   return { how, text: s.slice(a + co.length, b).replace(/^\r?\n/, '').replace(/\r?\n$/, '') };
 }
 
+/** Fix round 6 (review M5): a placeholder that stands for parts left out: "[rest unchanged]", "(sections 3–5 unchanged)", "…(unchanged)…",
+ *  "<!-- rest of the plan as before -->", a line "... rest of the document unchanged ...". Bounded, so it cannot backtrack badly. */
+const GAP_RE = /[[(<][^\])>\n]{0,80}?\b(?:unchanged|omitted|truncated|as before|as above|same as (?:the )?(?:original|above|before)|rest of the|remaining (?:sections?|parts?|text|content|lines))\b[^\])>\n]{0,80}[\])>]|^[ \t]*(?:\.\.\.|…)[^\n]{0,80}?\b(?:unchanged|omitted|as before)\b/gim;
+/** Whether `copy` has a placeholder the good result does not have itself. */
+const hasGaps = (original, copy) => { const have = normLoose(original); return (copy.match(GAP_RE) || []).some((m) => !have.includes(normLoose(m))); };
+const proofCore = (p) => normLoose(p).replace(/^["']+|["']+$/g, '').replace(/^(?:\.\.\.|…)\s*|\s*(?:\.\.\.|…)$/g, '').trim();
+/** User decision 2026-11-22: the passage that proved the criterion on the good result, when a copy can be checked against it: it is at least
+ *  PROOF_MIN characters in its loose form and is in the good result's written text (a proof quoted from a project's diff is not, since the
+ *  diff is never broken). Else null: no check. */
+export const usableProof = (proof, original) => (typeof proof === 'string' && proofCore(proof).length >= PROOF_MIN && proofFound(proof, original) ? proof : null);
+
 /** Why a copy cannot be used, or null: 'unreadable' (no reply read), 'length' (outside COPY_MIN_RATIO–COPY_MAX_RATIO of the good
- *  result), 'same' (the good result, loosely: case, spacing and marks only) or 'repeat' (the same as an earlier copy, loosely). */
-export function copyProblem(original, copy, earlier = []) {
+ *  result), 'gaps' (a placeholder for parts left out, review M5), 'same' (the good result, loosely: case, spacing and marks only),
+ *  'repeat' (the same as an earlier copy, loosely) or 'weak' (it still holds `proof`, loosely: user decision 2026-11-22, usableProof). */
+export function copyProblem(original, copy, earlier = [], { proof = null } = {}) {
   if (!copy || typeof copy.text !== 'string') return 'unreadable';
   const o = String(original ?? '').length;
   const n = copy.text.length;
   if (!copy.text.trim() || n < o * COPY_MIN_RATIO || n > o * COPY_MAX_RATIO) return 'length';
+  if (hasGaps(original, copy.text)) return 'gaps';
   const loose = normLoose(copy.text);
   if (loose === normLoose(original)) return 'same';
   if (earlier.some((x) => normLoose(x.text) === loose)) return 'repeat';
+  const p = usableProof(proof, original);
+  if (p && proofFound(p, copy.text)) return 'weak';
   return null;
 }
 
-/** Board 59 E: what a planted card shows. A simple line diff: the copy's lines (trimmed, blank ones left out) that the original does not
- *  have as often, in the copy's order, joined by " … ". Never an original line, so never the unbroken text (review I2). */
-export function changedExcerpt(original, copy) {
-  const have = new Map();
-  for (const l of String(original ?? '').split('\n')) { const k = l.trim(); if (k) have.set(k, (have.get(k) || 0) + 1); }
-  const out = [];
-  for (const l of String(copy ?? '').split('\n')) {
-    const k = l.trim();
-    if (!k) continue;
-    if (have.get(k) > 0) have.set(k, have.get(k) - 1);
-    else out.push(k);
-  }
-  return out.join(' … ');
+const SEP = ' … ';
+const LINE_MIN = 40;   // the least a changed line gets on a full card
+/** `size` characters of a changed line around the first place it differs from the line it replaced (a third before it), "…" where cut. */
+function around(line, was, size) {
+  if (line.length <= size) return line;
+  let d = 0;
+  while (d < line.length && d < was.length && line[d] === was[d]) d += 1;
+  const start = Math.max(0, Math.min(d - Math.floor(size / 3), line.length - size));
+  let s = line.slice(start, start + size);
+  if (start > 0) s = `…${s.slice(1)}`;
+  if (start + size < line.length) s = `${s.slice(0, -1)}…`;
+  return s;
 }
 
+/** Board 59 E: what a planted card shows. A line diff: the copy's lines (trimmed, blank ones left out) that the original does not have as
+ *  often, in the copy's order, joined by " … ". Never an original line, so never the unbroken text (review I2). Fix round 6 (review I3): lines
+ *  are compared loosely (normLoose), so a line the model only tidied (a dash, case, marks) is no change and only lines that changed in meaning
+ *  show; and the excerpt fits in `max`: short lines whole, longer ones cut around their change, so every broken place stays on the card. */
+export function changedExcerpt(original, copy, max = CARD_EXCERPT_MAX) {
+  const linesOf = (t) => String(t ?? '').split('\n').map((l) => l.trim()).filter((l) => normLoose(l));
+  const o = linesOf(original);
+  const c = linesOf(copy);
+  const left = (ls, other) => {
+    const have = new Map();
+    for (const l of other) { const k = normLoose(l); have.set(k, (have.get(k) || 0) + 1); }
+    return ls.filter((l) => { const k = normLoose(l); if (have.get(k) > 0) { have.set(k, have.get(k) - 1); return false; } return true; });
+  };
+  const all = left(c, o);
+  if (all.join(SEP).length <= max) return all.join(SEP);
+  const was = left(o, c);   // the original's lines they replaced, in order: where each changed line differs
+  const out = all.slice(0, Math.max(1, Math.floor((max + SEP.length) / (LINE_MIN + SEP.length))));
+  let room = max - SEP.length * (out.length - 1);
+  const size = [];
+  const byLength = out.map((_, i) => i).sort((a, b) => out[a].length - out[b].length);
+  byLength.forEach((i, k) => { size[i] = Math.min(out[i].length, Math.floor(room / (out.length - k))); room -= size[i]; });
+  return out.map((l, i) => around(l, was[i] || '', size[i])).join(SEP);
+}
 /** A line without its numbers: its indent kept, a list number dropped, one space where a number stood between words, no space doubled. */
 function withoutNumbers(line) {
   const lead = /^\s*/.exec(line)[0];

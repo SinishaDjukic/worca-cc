@@ -36,10 +36,10 @@ test("one copy's prompt: the criterion, the result and the ways already used are
   assert.ok(copyPrompt({ criterion: 'c', result: 'r', ways: [], tag: 't' }).includes('<ways-t>\nnone\n</ways-t>'));
 });
 
-test('a copy reply is read whole: its way (five words at most) and the text between its own tags; a cut-off or tagless reply is not', () => {
+test('a copy reply is read whole: its way (up to 40 characters, whole words) and the text between its own tags; a cut-off or tagless reply is not', () => {
   assert.deepEqual(parseCopyReply(reply('ab12', 'Number removed', '## Goal\n\nMany customers.'), 'ab12'), { how: 'Number removed', text: '## Goal\n\nMany customers.' });
   assert.deepEqual(parseCopyReply(`Sure.\n${reply('ab12', '  the target made into only a vague hope  ', 'x')}\nDone.`, 'ab12'),
-    { how: 'the target made into only', text: 'x' });
+    { how: 'the target made into only a vague hope', text: 'x' });
   assert.equal(parseCopyReply(reply('ab12', 'n', 'x').replace('</copy-ab12>', ''), 'ab12'), null, 'cut off: no closing tag');
   assert.equal(parseCopyReply('<how-ab12>n</how-ab12>\n<copy-ab12>\n## Goal\n\nMany cust', 'ab12'), null, 'cut off mid-copy');
   assert.equal(parseCopyReply(reply('ab12', '', 'x'), 'ab12'), null, 'no way named');
@@ -70,8 +70,10 @@ test("board 59 E: the card shows the copy's changed lines joined by \" … \", n
   assert.ok(!/500 customers|500-customer/.test(ex), `no original line in the excerpt: ${ex}`);
   const lines = ex.split(' … ');
   assert.equal(lines.length, 4, ex);
-  ['7. States launch target: many customers soon', '- **Impact & launch** (1–2 sentences): customer target', '| **90-day target** | Text search |',
-    'This plan describes how to create'].forEach((p, i) => assert.ok(lines[i].startsWith(p), `line ${i} in order, trimmed: ${lines[i]}`));
+  ['7. States launch target: many customers soon', '- **Impact & launch** (1–2 sentences): customer target', '| **90-day target** | Text search |']
+    .forEach((p, i) => assert.ok(lines[i].startsWith(p), `line ${i} in order, trimmed: ${lines[i]}`));
+  // Fix round 6 (I3): the long last line is cut around its change, so all four fit on the card.
+  assert.ok(lines[3].startsWith('…') && lines[3].includes('launch target (many customers soon)') && ex.length <= 400, lines[3]);
   assert.equal(changedExcerpt('a\nb\nc', 'a\nc'), '', 'a copy that only removes lines changes no line of its own');
   assert.equal(changedExcerpt('x\nx\ny', 'x\nx\nx\ny'), 'x', 'a line added again counts once more');
   assert.equal(changedExcerpt('a\n\nb', 'a\n\n\n\nb  '), '', 'blank lines and spacing at the ends are no change');
@@ -85,4 +87,74 @@ test("mock rounds only: Worca's own plants; the numbers card shows the lines wit
   assert.ok(!/\d/.test(d[0].excerpt), 'never the lines as they were');
   assert.deepEqual(d.map((x) => !!x.blind), [false, true, true], 'a plant that cannot know the criterion is blind');
   assert.equal(d[1].excerpt, 'As one customer put it: "I would pay twice as much for this tomorrow."');
+});
+
+// Fix round 6: round 5 review I3, M1, M5, M7, and the user's decisions of 2026-11-22 (the text is broken and the diff kept; a weak copy).
+const tidy = (s) => s.replaceAll('–', '-');
+const BROKEN4 = PAID.replaceAll('500 customers within 90 days', 'many customers soon').replace('500 customers / 90 days', 'many customers soon')
+  .replace('500-customer target', 'customer target');
+
+test('review I3: lines a copy only tidied (a dash, case, marks) are no change; the card shows exactly the four broken lines', () => {
+  assert.ok(PAID.includes('–'), 'the fixture has en dashes to tidy');
+  const ex = changedExcerpt(PAID, tidy(BROKEN4));
+  assert.equal(ex.split(' … ').length, 4, ex);
+  assert.ok(ex.includes('many customers soon') && ex.includes('customer target'), ex);
+  assert.equal(changedExcerpt('## Goal\n**Cut** tickets – fast', 'Goal\nCut tickets - fast'), '', 'marks and a dash only');
+});
+
+test('review I3: a long excerpt keeps every broken place within the card, each line cut around its change', () => {
+  const long = (i) => `Section ${i} background ${'that runs on for a while and says nothing new '.repeat(6)}and the target is 500 customers in section ${i}.`;
+  const orig = [1, 2, 3, 4].map(long).join('\n\n');
+  const copy = orig.replaceAll('500 customers', 'more customers');
+  const ex = changedExcerpt(orig, copy, 400);
+  assert.ok(ex.length <= 400, `${ex.length}`);
+  assert.equal((ex.match(/more customers/g) || []).length, 4, ex);
+  assert.ok(!ex.includes('500'), 'never the unbroken text');
+});
+
+test('review M1: a copy that only removes lines has an empty excerpt (the card then draws no box)', () => {
+  const removed = PAID.split('\n').filter((l) => !/500 customers|500-customer/.test(l)).join('\n');
+  assert.equal(changedExcerpt(PAID, removed), '');
+  const d = deterministicPlants('## Goal\nCut tickets by 60%.\n\n## Risks\nLarge accounts.\n\n## Notes\nNone.');
+  assert.equal(d.find((x) => x.how === 'a part removed').excerpt, '');
+});
+
+test('review M5: a copy that leaves out parts behind a placeholder is refused', () => {
+  const paras = BROKEN4.split('\n\n');
+  for (const gap of ['[rest unchanged]', '(sections 3–5 unchanged)', '…(unchanged)…', '[Remaining sections omitted for brevity]', '<!-- rest of the plan as before -->',
+    '... rest of the document unchanged ...']) {
+    const copy = [...paras.slice(0, -3), gap, ...paras.slice(-3)].join('\n\n');
+    assert.equal(copyProblem(PAID, { how: 'n', text: copy }), 'gaps', gap);
+  }
+  assert.equal(copyProblem(`${PAID}\n\nStatus (unchanged) since May.`, { how: 'n', text: `${BROKEN4}\n\nStatus (unchanged) since May.` }), null,
+    'a placeholder-like phrase the good result has itself is no gap');
+});
+
+test('review M7: the way is kept whole up to 40 characters and cut only between words', () => {
+  assert.equal(parseCopyReply(reply('ab12', 'the target made into only a vague hope', 'x'), 'ab12').how, 'the target made into only a vague hope');
+  assert.equal(parseCopyReply(reply('ab12', 'the target made into only a very vague hope now', 'x'), 'ab12').how, 'the target made into only a very vague');
+  assert.equal(parseCopyReply(reply('ab12', 'x'.repeat(41), 'x'), 'ab12'), null, 'one word longer than the card allows: no way to show');
+});
+
+test('user decision 2026-11-22: a project result is split into its written text and its changes (the diff), which are never broken', () => {
+  const { splitChanges } = planted;
+  const H = '--- The changes this try made to the project (a git diff) ---';
+  const diff = `diff --git a/x b/x\n+--- The changes this try made to the project (a git diff) ---\n+line`;
+  assert.deepEqual(splitChanges(`## Brief\nText.\n\n${H}\n${diff}`), { text: '## Brief\nText.', changes: `\n\n${H}\n${diff}` });
+  assert.deepEqual(splitChanges('## Brief\nText.'), { text: '## Brief\nText.', changes: '' });
+  assert.deepEqual(splitChanges(`\n\n${H}\n${diff}`), { text: `\n\n${H}\n${diff}`, changes: '' }, 'no written text: the whole result is planted');
+  const s = `A.\n\n${H}\n${diff}`;
+  const { text, changes } = splitChanges(s);
+  assert.equal(text + changes, s, 'rebuilt exactly');
+});
+
+test('user decision 2026-11-22: a copy that still holds the proof of the good result is weak; a short or missing proof is not used', () => {
+  assert.equal(planted.PROOF_MIN, 12);
+  const proof = '7. States launch target: 500 customers within 90 days';
+  assert.equal(copyProblem(PAID, { how: 'n', text: BROKEN4 }, [], { proof }), null);
+  const half = PAID.replace('500 customers / 90 days', 'many customers soon').replace('500-customer target', 'customer target');
+  assert.equal(copyProblem(PAID, { how: 'n', text: tidy(half) }, [], { proof }), 'weak', 'still there, loosely (a dash tidied)');
+  assert.equal(copyProblem(PAID, { how: 'n', text: half }, [], { proof: 'within 90' }), null, 'a proof under 12 characters is not used');
+  assert.equal(copyProblem(PAID, { how: 'n', text: half }, [], { proof: 'Nothing like this is in the result' }), null, 'a proof not in the good result');
+  assert.equal(copyProblem(PAID, { how: 'n', text: half }, [], { proof: null }), null);
 });
