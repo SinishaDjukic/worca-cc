@@ -6,6 +6,8 @@
 // guarded like an ssh key: 0600 on POSIX (refused when group/other can read it) and an
 // owner-only ACL through icacls on Windows, set on the tmp file before the rename.
 // `rejected` is the lockout breaker's memory across processes and restarts.
+// With the secretVault flag on, `ntHash` holds a Worca vault reference (owner `login.ntHash`) instead of the hex hash,
+// resolved when the login is read; saveProxyLogin and clearProxyLogin are async for that.
 import { readFileSync, lstatSync, openSync, fstatSync, closeSync, rmSync, statSync, constants as fsc } from 'node:fs';
 import { execFileSync } from 'node:child_process';
 import { join } from 'node:path';
@@ -15,6 +17,8 @@ import { writeJsonAtomic } from './json-atomic.mjs';
 import { worcaHome } from './projects.mjs';
 import { ntHash } from './ntlm.mjs';
 import { resolveUpstream, upstreamLabel, AUTH_LABELS } from './upstream-proxy.mjs';
+import { VAULT_MESSAGES, isVaultRef, vaultActionLine } from './secrets/refs.mjs';
+import { resolveVaultRefSync, settingsVaultState } from './secrets/settings-resolver.mjs';
 
 export const PROXY_LOGIN_FILE = 'proxy-login.json';
 /** Same value as egress-policy.mjs EGRESS_PROXY_VAR (that module imports this one; a test pins it). */
@@ -29,6 +33,18 @@ const CONTROL = /[\u0000-\u001f\u007f]/;
 
 export class ProxyLoginError extends Error {
   constructor(field, message) { super(message); this.field = field; }
+}
+
+/** The vault owner field of the saved login's NT hash. */
+export const NT_HASH_FIELD = 'login.ntHash';
+
+// The store-vault module while the vault is in use (flag on, or a vault file a migration left), else null (nothing but
+// flag.mjs loads). `sealing` is the flag itself: with it off a vault left in use still releases, but new values stay plain.
+async function storeVault(env = process.env) {
+  const { secretVaultEnabled, vaultInUse } = await import('./secrets/flag.mjs');
+  if (!vaultInUse()) return null;
+  const m = await import('./secrets/store-vault.mjs');
+  return { ...m, sealing: secretVaultEnabled() };
 }
 
 let reads = 0;
@@ -93,15 +109,33 @@ export function savedLoginRefusal(auth) {
 }
 
 /**
- * Hash `password` and save the login. Returns the public view (never the hash).
- * @throws {ProxyLoginError} on a bad field; any fs/icacls error as is (no file left behind)
+ * Hash `password` and save the login under a new `id`. Returns the public view (never the hash). With the secretVault
+ * flag on the NT hash is sealed into a fresh vault entry first, and the previous login's entry is released after the
+ * write. `newId` makes the id (tests compare bytes across runs).
+ * @throws {ProxyLoginError} on a bad field; SettingsVaultError when the vault refused; any fs/icacls error as is (no
+ *   file left behind)
  */
-export function saveProxyLogin({ domain = '', user, password }, {
+export async function saveProxyLogin({ domain = '', user, password }, {
   home = defaultHome(), platform = process.platform, exec = execFileSync, env = process.env, now = Date.now, upstream,
+  newId = () => randomBytes(8).toString('hex'),
 } = {}) {
   refuseInBox(env);
   const account = assertProxyLoginInput({ domain, user, password });
-  return writeLogin({ ...account, ntHash: ntHash(password).toString('hex') }, { home, platform, exec, env, now, upstream });
+  return writeLoginVaulted({ ...account, ntHash: ntHash(password).toString('hex') }, { home, platform, exec, env, now, upstream, newId });
+}
+
+/**
+ * saveProxyLogin without the vault, synchronous: the egress sidecar's own store (src/egress/api.mjs). In every container
+ * setup the sidecar holds the login and the vault stays out of it entirely (docs/secrets.md, "With the other setups"),
+ * so this never loads the vault. @throws {ProxyLoginError}
+ */
+export function saveProxyLoginPlain({ domain = '', user, password }, {
+  home = defaultHome(), platform = process.platform, exec = execFileSync, env = process.env, now = Date.now, upstream,
+  newId = () => randomBytes(8).toString('hex'),
+} = {}) {
+  refuseInBox(env);
+  const account = assertProxyLoginInput({ domain, user, password });
+  return writeLogin({ ...account, ntHash: ntHash(password).toString('hex') }, { home, platform, exec, env, now, upstream, newId });
 }
 
 /** The box of a container setup with an egress sidecar (WORCA_EGRESS_API_URL): the login lives there, never here. */
@@ -111,12 +145,41 @@ function refuseInBox(env) {
   if (env && typeof env.WORCA_EGRESS_API_URL === 'string' && env.WORCA_EGRESS_API_URL.trim()) throw new ProxyLoginError('sidecar', SIDECAR_LOGIN_TEXT);
 }
 
-function writeLogin(fields, { home, platform, exec, env, now, upstream }) {
+const newRecord = (fields, hash, { now, upstream, newId }) => ({ v: 1, id: newId(), domain: fields.domain, user: fields.user,
+  ntHash: hash, savedAt: new Date(now()).toISOString(), rejected: null, ...(upstream ? { upstream: String(upstream) } : {}) });
+
+/** Write a plain login (hex NT hash). Never loads the vault. */
+function writeLogin(fields, { home, platform, exec, env, now, upstream, newId = () => randomBytes(8).toString('hex') }) {
   const file = proxyLoginFile(home);
   if (!file) throw new ProxyLoginError('home', 'Worca has no home folder to save the login in');
-  const record = { v: 1, id: randomBytes(8).toString('hex'), domain: fields.domain, user: fields.user,
-    ntHash: fields.ntHash, savedAt: new Date(now()).toISOString(), rejected: null, ...(upstream ? { upstream: String(upstream) } : {}) };
+  const record = newRecord(fields, fields.ntHash, { now, upstream, newId });
   writeRecord(file, record, { platform, exec, env });
+  return loginView(record);
+}
+
+/** writeLogin through the vault: with the secretVault flag on (native install only) the NT hash is sealed into a fresh
+ *  vault entry first, and the previous login's entry is released after the write. */
+async function writeLoginVaulted(fields, { home, platform, exec, env, now, upstream, newId }) {
+  const file = proxyLoginFile(home);
+  if (!file) throw new ProxyLoginError('home', 'Worca has no home folder to save the login in');
+  let hash = fields.ntHash;
+  const vault = await storeVault(env);
+  let recheck = () => {};
+  if (vault?.sealing) {
+    const r = await vault.sealStoreSecrets('proxy', [{ field: NT_HASH_FIELD, value: hash, current: undefined }],
+      { home, nothingVaulted: () => !storedRef(home), subject: 'The login' });
+    hash = r.values[0];
+    recheck = r.recheck;
+  }
+  // From here to the write: one sync section.
+  recheck();
+  const previous = vault ? storedRef(home) : null;
+  const record = newRecord(fields, hash, { now, upstream, newId });
+  writeRecord(file, record, { platform, exec, env });
+  if (previous && previous !== hash) {
+    await vault.releaseStoreRefs('proxy', [{ ref: previous, field: NT_HASH_FIELD }],
+      { home, stillReferenced: (ref) => storedRef(home) === ref, graceMs: vault.LOCKLESS_GRACE_MS, scope: () => true });
+  }
   return loginView(record);
 }
 
@@ -146,10 +209,10 @@ export function parseLoginRecord(text) {
 }
 
 /**
- * The saved login: null (none, or no home), { error } (unusable), or
- * { id, domain, user, ntHash: Buffer, savedAt, rejected }.
+ * The login file's raw parsed record: null (none, or no home), { error } (not a plain owner-only file, unreadable or
+ * not JSON), or { record }. Opened once, checked and read through the same fd. Never resolves the vault.
  */
-export function readProxyLogin({ home = defaultHome(), platform = process.platform, uid = process.getuid?.() } = {}) {
+function readLoginRecord({ home = defaultHome(), platform = process.platform, uid = process.getuid?.() } = {}) {
   const file = proxyLoginFile(home);
   if (!file) return null;
   reads += 1;
@@ -183,16 +246,75 @@ export function readProxyLogin({ home = defaultHome(), platform = process.platfo
   }
   let r;
   try { r = JSON.parse(text); } catch { return { error: `${PROXY_LOGIN_FILE} is not valid JSON; run worca proxy login again` }; }
-  if (!r || r.v !== 1 || typeof r.user !== 'string' || !r.user || typeof r.ntHash !== 'string' || !/^[0-9a-f]{32}$/.test(r.ntHash)) {
+  if (!r || r.v !== 1 || typeof r.user !== 'string' || !r.user || typeof r.ntHash !== 'string') {
+    return { error: `${PROXY_LOGIN_FILE} is not a Worca proxy login; run worca proxy login again` };
+  }
+  return { record: r };
+}
+
+/**
+ * The vault reference the login file holds, or null: the release decision only, so a file that fails the owner-only
+ * check still names its entry (it is never used as a credential here). A link or anything but a plain file is none.
+ */
+export function storedRef(home = defaultHome()) {
+  const file = proxyLoginFile(home);
+  try {
+    if (!file || !lstatSync(file).isFile()) return null;
+    const ref = JSON.parse(readFileSync(file, 'utf8'))?.ntHash;
+    return isVaultRef(ref) ? ref : null;
+  } catch { return null; }
+}
+
+/**
+ * The saved login: null (none, or no home), { error } (unusable), or
+ * { id, domain, user, ntHash: Buffer, savedAt, rejected }.
+ */
+export function readProxyLogin({ home = defaultHome(), platform = process.platform, uid = process.getuid?.() } = {}) {
+  const raw = readLoginRecord({ home, platform, uid });
+  if (!raw || raw.error) return raw;
+  const r = raw.record;
+  let hash = r.ntHash;
+  if (isVaultRef(hash)) {
+    // A vaulted NT hash resolves here, at the point of use. One that does not resolve is an error: the egress
+    // connector keeps its current login on it (egress-policy.mjs reloadLogin).
+    const got = resolveVaultRefSync(hash, { store: 'proxy', field: NT_HASH_FIELD });
+    if (got.code) {
+      const code = got.code === 'locked' ? 'store-locked' : got.code;
+      return { error: `The saved login cannot be read: ${VAULT_MESSAGES[code] ?? VAULT_MESSAGES['unknown-ref']}.${vaultActionLine(code)}` };
+    }
+    hash = got.value;
+  }
+  if (!/^[0-9a-f]{32}$/.test(hash)) {
     return { error: `${PROXY_LOGIN_FILE} is not a Worca proxy login; run worca proxy login again` };
   }
   const rejected = r.rejected && typeof r.rejected === 'object' ? { at: String(r.rejected.at || ''), upstream: String(r.rejected.upstream || '') } : null;
-  return { id: String(r.id || ''), domain: String(r.domain || ''), user: r.user, ntHash: Buffer.from(r.ntHash, 'hex'),
-    savedAt: String(r.savedAt || ''), rejected, ...(typeof r.upstream === 'string' && r.upstream ? { upstream: r.upstream } : {}) };
+  return { id: String(r.id || ''), domain: String(r.domain || ''), user: r.user, ntHash: Buffer.from(hash, 'hex'),
+    savedAt: String(r.savedAt || ''), rejected, ...keptUpstream(r) };
 }
 
-/** Delete the saved login. @returns {boolean} true when one was there */
-export function clearProxyLogin({ home = defaultHome() } = {}) {
+/** The proxy a login was saved for (the egress sidecar binds its logins to one), kept on every rewrite. */
+function keptUpstream(r) {
+  return typeof r?.upstream === 'string' && r.upstream ? { upstream: r.upstream } : {};
+}
+
+/** Delete the saved login, then (secretVault on) the vault entry it held. @returns {Promise<boolean>} true when one was there */
+export async function clearProxyLogin({ home = defaultHome(), env = process.env } = {}) {
+  const file = proxyLoginFile(home);
+  if (!file) return false;
+  const vault = await storeVault(env);
+  try { lstatSync(file); } catch { return false; }
+  const ref = vault ? storedRef(home) : null;
+  rmSync(file, { force: true });
+  if (ref) {
+    await vault.releaseStoreRefs('proxy', [{ ref, field: NT_HASH_FIELD }],
+      { home, stillReferenced: (r) => storedRef(home) === r, graceMs: vault.LOCKLESS_GRACE_MS, scope: () => true });
+  }
+  return true;
+}
+
+/** Delete the saved login file only, synchronously: the egress sidecar and a container's box, where the vault never
+ *  holds the login. @returns {boolean} true when one was there */
+export function clearProxyLoginPlain({ home = defaultHome() } = {}) {
   const file = proxyLoginFile(home);
   if (!file) return false;
   try { lstatSync(file); } catch { return false; }
@@ -210,12 +332,81 @@ const STALE = Symbol('stale login');
  */
 export function markLoginRejected(id, { upstream = '', home = defaultHome(), platform = process.platform, exec = execFileSync,
   env = process.env, now = Date.now } = {}) {
-  const cur = readProxyLogin({ home, platform });
-  if (!cur || cur.error || !id || cur.id !== id || cur.rejected) return false;
-  const stillOurs = () => { const again = readProxyLogin({ home, platform }); if (!again || again.error || again.id !== id) throw STALE; };
+  // Raw records (D4): the stored ntHash (hex or vault reference) is copied as is, never a resolved value.
+  const raw = readLoginRecord({ home, platform });
+  const cur = raw?.record;
+  if (!cur || !id || String(cur.id || '') !== id || (cur.rejected && typeof cur.rejected === 'object')) return false;
+  const stillOurs = () => { const again = readLoginRecord({ home, platform }); if (!again?.record || String(again.record.id || '') !== id) throw STALE; };
   try {
-    writeRecord(proxyLoginFile(home), { v: 1, id: cur.id, domain: cur.domain, user: cur.user, ntHash: cur.ntHash.toString('hex'),
-      savedAt: cur.savedAt, rejected: { at: new Date(now()).toISOString(), upstream }, ...(cur.upstream ? { upstream: cur.upstream } : {}) },
+    writeRecord(proxyLoginFile(home), { v: 1, id: String(cur.id), domain: String(cur.domain || ''), user: cur.user, ntHash: cur.ntHash,
+      savedAt: String(cur.savedAt || ''), rejected: { at: new Date(now()).toISOString(), upstream }, ...keptUpstream(cur) },
+    { platform, exec, env, beforeRename: stillOurs });
+  } catch (err) {
+    if (err === STALE) return false;
+    throw err;
+  }
+  return true;
+}
+
+/**
+ * The saved login's file-stored NT hash, for the one-time move into the vault (secrets/migrate.mjs): `{ id, value }`,
+ * `{ insecure: true }` when readLoginRecord refuses the file (it is not used either way), or null (no login, or the
+ * hash is already a vault reference).
+ */
+export function proxyLoginLiteral({ home = defaultHome(), platform = process.platform, uid = process.getuid?.() } = {}) {
+  const raw = readLoginRecord({ home, platform, uid });
+  if (!raw) return null;
+  if (raw.error) return { insecure: true };
+  const hash = raw.record.ntHash;
+  return hash && !isVaultRef(hash) ? { id: String(raw.record.id || ''), value: hash } : null;
+}
+
+/**
+ * Export's restore (secrets/export.mjs): put the literal NT hash `value` back where reference `ref` is, only while the
+ * file still holds login `id` with `ref` (checked on the read and again right before the rename). `id`, `savedAt` and
+ * `rejected` are kept; 0600 (and the owner-only ACL on Windows); nothing is released. True when the file now holds
+ * `value`.
+ */
+export function restoreProxyLoginRef({ home = defaultHome(), id, ref, value }, { platform = process.platform, exec = execFileSync,
+  env = process.env } = {}) {
+  const same = (r) => !!r && String(r.id || '') === id && r.ntHash === ref;
+  const cur = readLoginRecord({ home, platform })?.record;
+  if (!same(cur)) return false;
+  const stillOurs = () => { if (!same(readLoginRecord({ home, platform })?.record)) throw STALE; };
+  try {
+    writeRecord(proxyLoginFile(home), { v: 1, id: String(cur.id), domain: String(cur.domain || ''), user: cur.user, ntHash: value,
+      savedAt: String(cur.savedAt || ''), rejected: cur.rejected && typeof cur.rejected === 'object' ? cur.rejected : null,
+      ...keptUpstream(cur) },
+    { platform, exec, env, beforeRename: stillOurs });
+  } catch (err) {
+    if (err === STALE) return false;
+    throw err;
+  }
+  return true;
+}
+
+/** The saved login's id and raw stored NT hash (hex or a vault reference), or null; never resolves the vault. */
+export function storedLogin({ home = defaultHome(), platform = process.platform } = {}) {
+  const r = readLoginRecord({ home, platform })?.record;
+  return r ? { id: String(r.id || ''), ntHash: r.ntHash } : null;
+}
+
+/**
+ * Swap the moved NT hash for its reference (the markLoginRejected pattern): only while the file still holds login `id`
+ * with hash `value`, checked on the read and again right before the rename. `id`, `savedAt` and `rejected` are kept.
+ * `beforeWrite()` runs right before the write. True when the file now holds `ref`.
+ */
+export function swapProxyLoginLiteral({ home = defaultHome(), id, value, ref }, { beforeWrite = () => {}, platform = process.platform,
+  exec = execFileSync, env = process.env } = {}) {
+  const same = (r) => !!r && String(r.id || '') === id && r.ntHash === value;
+  const cur = readLoginRecord({ home, platform })?.record;
+  if (!same(cur)) return false;
+  const stillOurs = () => { if (!same(readLoginRecord({ home, platform })?.record)) throw STALE; };
+  beforeWrite();
+  try {
+    writeRecord(proxyLoginFile(home), { v: 1, id: String(cur.id), domain: String(cur.domain || ''), user: cur.user, ntHash: ref,
+      savedAt: String(cur.savedAt || ''), rejected: cur.rejected && typeof cur.rejected === 'object' ? cur.rejected : null,
+      ...keptUpstream(cur) },
     { platform, exec, env, beforeRename: stillOurs });
   } catch (err) {
     if (err === STALE) return false;
@@ -236,8 +427,11 @@ export function watchProxyLogin(onChange, { home = defaultHome(), intervalMs = 1
   if (!file) return () => {};
   // Our own poll with the baseline taken here, not fs.watchFile: its baseline is its first stat,
   // done later on the thread pool, so a save landing before that stat ran was never reported.
+  // The vault reader's `loaded` joins the key (D14): a vaulted login read as locked before the vault key arrived is
+  // read again once it does, with no file change.
   const sig = () => {
-    try { const st = statSync(file); return `${st.ino}|${st.mtimeMs}|${st.ctimeMs}|${st.size}`; } catch (err) { return err && err.code ? err.code : 'error'; }
+    const vault = settingsVaultState().loaded ? 'v' : '-';
+    try { const st = statSync(file); return `${st.ino}|${st.mtimeMs}|${st.ctimeMs}|${st.size}|${vault}`; } catch (err) { return `${err && err.code ? err.code : 'error'}|${vault}`; }
   };
   let last = sig();
   const timer = setInterval(() => {

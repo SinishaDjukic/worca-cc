@@ -622,7 +622,7 @@ async function savedLoginRig(t, { fakeOpts = {}, networkProxy = {}, password = '
   const home = mkdtempSync(join(tmpdir(), 'worca-egress-login-'));
   const o = await origin();
   const fake = await startFakeUpstream({ scheme: 'ntlm', domain: 'ACME', user: 'jdoe', password: 'S3cret!', originPort: o.port, ...fakeOpts });
-  const saved = password ? saveProxyLogin({ ...ACME, password }, { home }) : null;
+  const saved = password ? await saveProxyLogin({ ...ACME, password }, { home }) : null;
   if (saved && marked) markLoginRejected(saved.id, { home, upstream: `127.0.0.1:${fake.port}` });
   const logs = [];
   const env = {};
@@ -655,7 +655,7 @@ test('saved login: the boot line names it, and reloadLogin picks up a new save',
   const n = egressNotice(fresh.r);
   assert.equal(n.level, 'info');
   assert.match(n.text, /^Corporate proxy: via 127\.0\.0\.1:\d+ \(NTLMv2\), logged in as ACME\\jdoe, local proxy/);
-  saveProxyLogin(ACME, { home });
+  await saveProxyLogin(ACME, { home });
   assert.equal(r.reloadLogin(), true);
   assert.equal(r.connector.status().state, 'unverified');
   assert.equal(r.reloadLogin(), false, 'nothing changed since');
@@ -676,7 +676,7 @@ test('saved login: a 407 to a handshake begun before a new login leaves the new 
   const { r, home, fake, port } = await savedLoginRig(t, { password: 'wrong', fakeOpts: { holdType3: true } });
   const pending = rawRequest(port, CONNECT_GH);
   await untilTrue(() => fake.stats.type3 === 1);
-  saveProxyLogin(ACME, { home });
+  await saveProxyLogin(ACME, { home });
   assert.equal(r.reloadLogin(), true);
   fake.release();
   assert.match(await pending, /^HTTP\/1\.1 407/);
@@ -697,7 +697,7 @@ test('saved login: the default watcher swaps a new login in without a restart', 
     rmSync(home, { recursive: true, force: true });
   });
   assert.equal(r.connector.status().state, 'none', 'no login at boot');
-  saveProxyLogin(ACME);   // the default home: WORCA_HOME/.worca-cc
+  await saveProxyLogin(ACME);   // the default home: WORCA_HOME/.worca-cc
   await untilTrue(() => r.connector.status().state === 'unverified', 3000, 25);
   assert.equal(r.connector.status().auth, 'auto');
 });
@@ -721,7 +721,7 @@ test('saved login: an explicit auth none never sends it, and the watcher leaves 
   assert.equal(r.connector.status().auth, 'none');
   assert.ok(watcher, 'the watcher runs whenever the proxy is on (a swap may bring a login-taking upstream)');
   await rawRequest(port, CONNECT_GH);
-  saveProxyLogin(ACME, { home });
+  await saveProxyLogin(ACME, { home });
   watcher();
   r.reloadLogin();
   assert.equal(r.connector.status().auth, 'none');
@@ -1345,4 +1345,40 @@ test('toE2bAllow: .x is x and *.x; names, IPs and CIDRs pass through once', asyn
   const { toE2bAllow } = await sandboxPolicy();
   assert.deepEqual(toE2bAllow(['.x.com', 'x.com', 'a.b', '1.2.3.4', '10.0.0.0/8', '.x.com']), ['x.com', '*.x.com', 'a.b', '1.2.3.4', '10.0.0.0/8']);
   assert.deepEqual(toE2bAllow([]), []);
+});
+
+test('secretVault on: the connector gets the vaulted NT hash through the real readers, and a new save swaps in within a poll', async (t) => {
+  const { fakeVault } = await import('./helpers/vault-on.mjs');
+  const { watchProxyLogin } = await import('../src/core/proxy-credentials.mjs');
+  const { isVaultRef } = await import('../src/core/secrets/refs.mjs');
+  const { worcaHome } = await import('../src/core/projects.mjs');
+  // The default Worca home, as in production: startEgressPolicy primes the vault of worcaHome().
+  const dir = mkdtempSync(join(tmpdir(), 'worca-egress-vault-'));
+  const prev = process.env.WORCA_HOME;
+  process.env.WORCA_HOME = dir;
+  const home = worcaHome();
+  const { vaultOn } = fakeVault(dir);
+  const o = await origin();
+  const fake = await startFakeUpstream({ scheme: 'ntlm', domain: 'ACME', user: 'jdoe', password: 'S3cret!', originPort: o.port });
+  let r;
+  t.after(async () => {
+    await r?.close(); await fake.close(); o.server.close();
+    if (prev === undefined) delete process.env.WORCA_HOME; else process.env.WORCA_HOME = prev;
+    rmSync(dir, { recursive: true, force: true });
+  });
+  await vaultOn(async () => {
+    await saveProxyLogin(ACME, { home });
+    assert.ok(isVaultRef(JSON.parse(readFileSync(join(home, PROXY_LOGIN_FILE), 'utf8')).ntHash));
+    r = await startEgressPolicy({
+      env: {}, proxyOn: FLAG_ON, loginPollMs: 50,
+      settings: () => ({ networkProxy: { upstream: fake.url() } }),
+      login: () => readProxyLogin({ home }),
+      watchLogin: (fn) => watchProxyLogin(fn, { home, intervalMs: 50 }),
+    });
+    const port = Number(new URL(r.url).port);
+    assert.match(await rawRequest(port, CONNECT_GH), /origin saw \/t/, 'the upstream accepted the vaulted NT hash');
+    const next = await saveProxyLogin(ACME, { home });
+    await untilTrue(() => r.connector.status().loginId === next.id, 1000, 10);
+    assert.match(await rawRequest(port, CONNECT_GH), /origin saw \/t/);
+  });
 });

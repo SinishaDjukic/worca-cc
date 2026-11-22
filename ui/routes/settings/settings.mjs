@@ -7,6 +7,7 @@ import { modelSlot } from '../../../src/core/broker-routing.mjs';
 import { listModels, modelCostConfig } from '../../../src/core/config.mjs';
 import { factoryModelsPayload } from '../../../src/core/factory-models.mjs';
 import { allFlags, flagEnabled } from '../../../src/core/flags.mjs';
+import { refreshSecretsStatus } from './secrets.mjs';
 import { currentGitState } from '../../../src/core/git-available.mjs';
 import { asPersonMode } from '../../../src/core/github-credentials.mjs';
 import { WORKSPACE_SCAN_DEFAULT_MODELS } from '../../../src/core/graph/builtin-workflows.mjs';
@@ -258,6 +259,7 @@ app.post('/api/settings', async (req, res) => {
     has('projectsRoot') ? normalizeProjectPath(body.projectsRoot) : null]))) return;
   try {
     const { actionsWarnings } = await applySettingsPatch(body, { person: awayPersonOf(req) });
+    refreshSecretsStatus(); // a save may have turned the secretVault flag on; fire and forget
     res.json({ ...settingsState(), ...(await autoModelState()), ...(await prDescriptionModelState()), ...(await agentGenModelState()), ...(await namingModelState()), ...(await commandSummaryModelState()), ...(await requirementsInterviewState()), chat: chatPrefs(),
       ...(actionsWarnings ? { actionsWarnings } : {}) });
   } catch (err) {

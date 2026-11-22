@@ -5,6 +5,7 @@
 import { isAbsolute, relative, resolve, win32 } from 'node:path';
 import { evaluateKillCommand } from '../host-guard.mjs';
 import { SPAWN_ENV_BASE } from '../claude-runner.mjs';
+import { PROXY_LOGIN_BASENAME, VAULT_NAME_PREFIX } from '../secrets/files.mjs';
 
 export const COMMAND_MAX_CHARS = 4000;
 
@@ -16,6 +17,7 @@ const PROTECTED = [
   /\.worca-cc\b/, /\bworca(?:-cc)?\.db/, /\bsecrets\.json\b/, /(?:^|[\s/'"=<>])\.env[\w.-]*/,
   /(?:^|[\s/'"=<>~])\.ssh\b/, /(?:^|[\s/'"=<>~])\.aws\b/, /(?:^|[\s/'"=<>~])\.gnupg\b/,
   /(?:^|[\s/'"=<>~])\.netrc\b/, /\.config\/gh\b/, /(?:^|[\s'"=<>])\/proc\//,
+  new RegExp(`\\b${reEsc(PROXY_LOGIN_BASENAME)}`), new RegExp(`\\b${reEsc(VAULT_NAME_PREFIX)}[.-][\\w.-]`),   // Worca's secret files (secrets/files.mjs)
 ];
 // ASK_DENY_RULES anchors these at ~/ only: a project's own .claude/, .docker/, .kube/ and .npmrc are
 // ordinary files (every worca worktree has .claude/rules). Refused only under the user's home.
@@ -26,7 +28,48 @@ const PROTECTED_WIN = [
   /\.worca-cc\b/i, /\bworca(?:-cc)?\.db/i, /\bsecrets\.json\b/i, /(?:^|[\s/\\'"=<>])\.env[\w.-]*/i,
   /(?:^|[\s/\\'"=<>~])\.ssh\b/i, /(?:^|[\s/\\'"=<>~])\.aws\b/i, /(?:^|[\s/\\'"=<>~])\.gnupg\b/i,
   /(?:^|[\s/\\'"=<>~])\.netrc\b/i, /\.config[\\/]+gh\b/i, /(?:^|[\s'"=<>])\/proc\//,
+  new RegExp(`\\b${reEsc(PROXY_LOGIN_BASENAME)}`, 'i'), new RegExp(`\\b${reEsc(VAULT_NAME_PREFIX)}[.-][\\w.-]`, 'i'),
 ];
+
+// Reads of the OS keychain (macOS security, libsecret's secret-tool, Windows Credential Manager and DPAPI), matched on
+// the raw text anywhere, option tokens allowed in between (the `gh auth status` style).
+const KEYCHAIN_READ = [
+  /\bsecurity\b[^;&|]*\b(?:find-(?:generic|internet)-password|find-key|dump-keychain)\b/i,
+  // `security … export` anywhere (behind VAR=x, env, nice, timeout or any other wrapper too), with only options between
+  // the two words: `grep -r security docs | grep export` passes, since `export` there follows a pipe.
+  /\bsecurity\s+(?:-\S+\s+)*export\b/i,
+  /\bsecret-tool\b[^;&|]*\b(?:lookup|search)\b/i,
+  /\bGet-StoredCredential\b/i, /\bCred(?:Read|Enumerate)[AW]?\b/i, /\bPasswordVault\b/i, /\bProtectedData\b[^;&|]*\bUnprotect\b/i,
+  // The keyring module Worca ships, and the vault's own OS item name, from any language.
+  /@napi-rs[\\/]keyring\b/i, /\bvault-key-[0-9a-f]{16}\b/i,
+];
+// `worca secrets export|reset|ack` and `worca secrets status --check` in every spelling: the bin, the CLI file, the npm
+// package (also version-pinned, `@worca/app@1.2.3`), through npx or npm exec, each word bare or quoted, or both words in
+// one quoted argument (`worca "secrets export"`). `status` counts only with `--check` later in the same command.
+const SECRETS_VERB_RE = /(?:^|[\s/'"=(`])(?:worca|worca-cc|worca-cc\.mjs|@worca\/app)(?:@[\w.^~-]+)?\s+(?:--\s+)?['"]?secrets['"]?\s+['"]?(export|reset|ack|status)(?![\w-])/gi;
+// Empty quote pairs and backslashes are dropped first, as the shell does: `worca sec""rets ack`, `worca s\ecrets ack`;
+// then every quote too (`worca 'secrets' 'ack'`).
+// The raw text is checked too, so a Windows path (`C:\worca\src\cli\worca-cc.mjs secrets ack`) keeps its separators.
+function secretsVerb(raw) {
+  for (const text of [raw, raw.replace(/''|""|\\/g, ''), raw.replace(/['"\\]/g, '')]) {
+    for (const m of text.matchAll(SECRETS_VERB_RE)) {
+      const verb = m[1].toLowerCase();
+      if (verb !== 'status') return verb;
+      if (/^[^;&|]*\s--check(?![\w-])/.test(text.slice(m.index + m[0].length))) return 'check';
+    }
+  }
+  return null;
+}
+// WORCA_HOST_PID is how the secrets CLI tells an agent from the person (src/cli/secrets.mjs); a command that names it
+// (`env -u WORCA_HOST_PID …`, `unset WORCA_HOST_PID; …`) could lift that refusal.
+const HOST_PID_RE = /\bWORCA_HOST_PID\b/;
+const HOST_PID_REFUSAL = 'That command touches WORCA_HOST_PID, which keeps Worca\'s secrets commands away from agents. Ask the user to run it in the terminal.';
+const SECRETS_REFUSALS = Object.freeze({
+  export: "That command moves Worca's secrets out of the vault. Ask the user to run it in the terminal.",
+  reset: 'That command moves the Worca vault aside. Ask the user to run it in the terminal.',
+  ack: 'That command dismisses the message about the keys moved into the Worca vault. Ask the user to run it in the terminal.',
+  check: "That command tests the OS key store that holds Worca's vault key. Ask the user to run it in the terminal.",
+});
 
 const DRIVE_PATH = /^[A-Za-z]:[\\/]/;
 /** Rooted without a drive (/tmp, \x): Git's own MSYS root, never the session folder; `//server` (UNC) is not one. */
@@ -234,6 +277,11 @@ export function checkAskCommand(command, { cwd, home = null, userHome = null, ho
   if (/\bgh\s+auth\s+(?:token\b|status\b[^;&|]*\s(?:-t|--show-token)\b)/.test(raw)) {
     return 'That command prints a GitHub credential (gh auth token). Ask cannot read credentials.';
   }
+  const unquoted = raw.replace(/['"\\]/g, ''); // `'security' export`, `secu""rity export`
+  if (KEYCHAIN_READ.some((re) => re.test(raw) || re.test(unquoted))) return 'That command reads the OS keychain. Ask cannot read credentials.';
+  const secrets = secretsVerb(raw);
+  if (secrets) return SECRETS_REFUSALS[secrets];
+  if (HOST_PID_RE.test(raw)) return HOST_PID_REFUSAL;
   if (serverPort && new RegExp(`(?:localhost|127\\.0\\.0\\.1|0\\.0\\.0\\.0|\\[::1\\]):${serverPort}\\b`).test(raw)) {
     return "That command calls Worca's own API. Ask uses its tools for Worca, never the HTTP API.";
   }

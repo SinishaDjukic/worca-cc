@@ -83,7 +83,7 @@ import { modelLabelOf, resolveStepModels, observeModelCost, resolveModelCost, mo
 import { getEngine, selectRunEngine, CAPABILITY_FALLBACKS, describeUnattachableMcp } from './engines/index.mjs';
 import { bridgeCallsFor, bridgeCostFor, forgetBridgeTag } from './bridge/telemetry.mjs';
 import { readGuardrailSet, defaultGuardrailSetId } from './guardrail-store.mjs';
-import { unionGuardrails, guardrailsToPermissionRules, mergePermissionRules } from './guardrails.mjs';
+import { unionGuardrails, guardrailsToPermissionRules, mergePermissionRules, gateRules } from './guardrails.mjs';
 import { collectRequiredSkills, validateSkills, injectSkills, pluginSkillDirs, pluginAssetDirs } from './skills.mjs';
 import { isBrowsableKind, BULK_ARTIFACT_THRESHOLD } from '../shared/artifact-kinds.mjs';
 import { RUN_SWITCH_OPTIONS, awayAnswerCounts } from '../shared/away-mode/labels.mjs';
@@ -3638,7 +3638,9 @@ export class RunHarness extends EventEmitter {
       return [];
     }
     const projectRules = this._engineProjectRules ?? null;
-    const why = this._engineRefusal({ rules: this.guardrailPermissionRules, guardrailsId: this.guardrailsId, projectRules, nodes });
+    // The gate weighs the guardrail rules without the secret-file floor (gateRules); the spawn still carries it.
+    const gRules = gateRules(this.guardrailPermissionRules);
+    const why = this._engineRefusal({ rules: gRules, guardrailsId: this.guardrailsId, projectRules, nodes });
     if (why) throw engineRefusal(name, why);
     const caps = getEngine(name).capabilities;
     const lines = Object.entries(caps).filter(([, v]) => v === false)
@@ -3651,7 +3653,7 @@ export class RunHarness extends EventEmitter {
       const tot = effectiveCap({ local: totalCostLimitUsd(), team: teamFields['cost.totalLimitUsd'] || null });
       if (tot.cap != null) lines.push(`engine ${name}: the total cost limit cannot count ${name}'s spend (cost unknown)`);
     }
-    if (caps.permissionRules === false && hasPermissionRules(this.guardrailPermissionRules)) {
+    if (caps.permissionRules === false && hasPermissionRules(gRules)) {
       lines.push(`engine ${name}: guardrail set "${this.guardrailsId}": permission rules NOT enforced on ${name} (--allow-unguarded-engine)`);
     }
     if (caps.permissionRules === false && hasPermissionRules(projectRules)) {
@@ -3660,12 +3662,12 @@ export class RunHarness extends EventEmitter {
     if (caps.permissionRules !== false) {
       // An engine that holds part of the rules: say which it holds, which it holds only in part and which it does
       // not (those two passed the gate only with --allow-unguarded-engine).
-      const both = (f) => [...new Set([...f(this.guardrailPermissionRules), ...f(projectRules)])];
+      const both = (f) => [...new Set([...f(gRules), ...f(projectRules)])];
       const partial = both((r) => this._enginePartial(r));
       const enforced = both((r) => (Array.isArray(r?.deny) ? r.deny : []).filter((x) => !this._engineUnenforced(r).includes(x) && !this._enginePartial(r).includes(x)));
       if (enforced.length) lines.push(`engine ${name}: deny rules enforced on ${name}: ${ruleNames(enforced)}`);
       if (partial.length) lines.push(`engine ${name}: deny rules held on ${name} only in part, as ${this._enginePartialKind()} — ${this._engineRuleReach()} (--allow-unguarded-engine): ${ruleNames(partial)}`);
-      const gSkip = this._engineUnenforced(this.guardrailPermissionRules);
+      const gSkip = this._engineUnenforced(gRules);
       if (gSkip.length) lines.push(`engine ${name}: guardrail set "${this.guardrailsId}": rules NOT enforced on ${name} (--allow-unguarded-engine): ${ruleNames(gSkip)}`);
       const pSkip = this._engineUnenforced(projectRules);
       if (pSkip.length) lines.push(`engine ${name}: the project's .claude/settings.json deny rules NOT enforced on ${name} (--allow-unguarded-engine): ${ruleNames(pSkip)}`);
@@ -3772,7 +3774,8 @@ export class RunHarness extends EventEmitter {
    * deny rules of the members' own `.claude/settings.json` (Claude Code reads that file
    * itself, another engine does not), from _engineChecks.
    */
-  _engineRefusal({ rules, guardrailsId, projectRules = null, nodes, allowed = this._allowUnguardedEngine }) {
+  _engineRefusal({ rules: allRules, guardrailsId, projectRules = null, nodes, allowed = this._allowUnguardedEngine }) {
+    const rules = gateRules(allRules);   // the secret-file floor never refuses a run (guardrails.mjs gateRules)
     const name = this.claude.engine || 'claude';
     const caps = getEngine(name).capabilities;
     // The credential broker's promise is that worca holds no model credential; this engine

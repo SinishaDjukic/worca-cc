@@ -189,22 +189,34 @@ export function createProxyHost({ egress, apply = () => null, io = {} } = {}) {
   }
 
   /** POST /api/proxy/login: hash and save, then the running connector swaps the login. @returns {{status, body}} */
-  function login(body = {}) {
+  // With the secretVault flag on (native install) the save and the delete go through the vault, so both are async.
+  // A refused vault save answers 400 (a pasted reference) or 503 (the vault is unusable) with its code (D12).
+  const vaultRefusal = (err) => (err?.name === 'SettingsVaultError'
+    ? { status: err.code === 'VAULT_REF_REFUSED' ? 400 : 503, body: { error: err.message, code: err.code } } : null);
+  async function login(body = {}) {
     const refusal = savedLoginRefusal(settings().auth);
     // The code keeps its slice-2 name on purpose: it now covers Digest too (tests and the card pin it).
     if (refusal) return { status: 409, body: { error: refusal, field: 'auth', code: 'BASIC_NO_SAVED_LOGIN' } };
     const account = body.domain ? { domain: body.domain, user: body.user } : parseAccount(body.user);
     try {
-      (io.saveLogin ?? saveProxyLogin)({ ...account, password: typeof body.password === 'string' ? body.password : '' });
+      await (io.saveLogin ?? saveProxyLogin)({ ...account, password: typeof body.password === 'string' ? body.password : '' });
     } catch (err) {
       if (err instanceof ProxyLoginError) return { status: 400, body: { error: err.message, field: err.field } };
-      return { status: 500, body: { error: `the login could not be saved (${err && err.code ? err.code : 'error'})` } };
+      const v = vaultRefusal(err);
+      if (v) return v;
+      return { status: 500, body: { error: `the login could not be saved (${err && typeof err.code === 'string' ? err.code : 'error'})` } };
     }
     E()?.reloadLogin?.();
     return { status: 200, body: status() };
   }
-  function logout() {
-    (io.clearLogin ?? clearProxyLogin)();
+  async function logout() {
+    try {
+      await (io.clearLogin ?? clearProxyLogin)();
+    } catch (err) {
+      const v = vaultRefusal(err);
+      if (v) return v;
+      return { status: 500, body: { error: `the login could not be deleted (${err && typeof err.code === 'string' ? err.code : 'error'})` } };
+    }
     E()?.reloadLogin?.();
     return { status: 200, body: status() };
   }

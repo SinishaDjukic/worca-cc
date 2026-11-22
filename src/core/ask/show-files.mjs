@@ -11,6 +11,7 @@ import { realpath, stat, readFile } from 'node:fs/promises';
 import { basename, join, relative, sep } from 'node:path';
 import { refusePathShape, isInside, sniffMime, decodePlainText } from '../ask-files.mjs';
 import { isSecretPath } from '../secret-paths.mjs';
+import { SECRET_FILE_GLOBS } from '../secrets/files.mjs';
 import { GUARDRAIL_PRESETS } from '../guardrails.mjs';
 import { OFFICE_EXTENSIONS, mimeForPath } from '../../shared/artifact-kinds.mjs';
 
@@ -106,6 +107,7 @@ const CREDENTIAL_NAMES = Object.freeze([
   ...GUARDRAIL_PRESETS.secure.protectedPaths,
   '.git-credentials', '.pgpass', '.pypirc',
   'secrets.json', 'credentials', 'credentials.json', '*.kdbx', 'worca-cc.db*', 'worca.db*',
+  ...SECRET_FILE_GLOBS,   // isSecretPath skips the presets' `//**/` forms, so the bare globs go here
 ]);
 /** A folder that holds credentials (or worca's own state) anywhere BELOW the root the file was found in. */
 const CREDENTIAL_DIRS = new Set(['.ssh', '.aws', '.gnupg', '.kube', '.docker', '.azure', '.git', '.worca-cc']);

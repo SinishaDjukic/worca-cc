@@ -6,7 +6,7 @@ import {
   readSettings, writeSettingsKeys, assertCostLimitInputs, assertModelRolesInput, assertAskModelsInput, assertTestSettingsAccess,
   nextUsdCap, nextCostLimitResetPeriod, nextUiLevel, nextAutoGeneratePrDescription, nextSmartNaming, nextRunEngine,
   nextModelRoles, nextAskModels, nextNetworkProxy, nextProviders,
-  nextSyncSettings, nextNetworkWait, assertHideBuiltinModelsInput, DEFAULT_HIDE_BUILTIN_MODELS, assertExecEnvInput,
+  nextSyncSettings, nextNetworkWait, assertHideBuiltinModelsInput, DEFAULT_HIDE_BUILTIN_MODELS, assertExecEnvInput, sealSecrets,
 } from '../settings.mjs';
 import { settingsErrorReply, userLine, INTERNAL_KEY } from '../settings-errors.mjs';
 import { assertProxyLoginInput, savedLoginRefusal, saveProxyLogin, ProxyLoginError } from '../proxy-credentials.mjs';
@@ -96,9 +96,30 @@ function importIds(name, v) {
 const isMaskedEcho = (v) => typeof v === 'string' && v.startsWith('••');
 
 /**
- * Phase 1: validate every group and compute what would be stored. Writes nothing, spawns nothing.
+ * Seal a provider patch's key in place (settings.mjs sealSecrets: with the secretVault flag on it becomes a vault
+ * reference; a reference that is not the stored one, in the key or the base URL, is refused). A refusal is the key
+ * field's error. Returns the seal's plain-fallback recheck, run on the fresh read in commitSetupPlan.
+ */
+async function sealProviderKey(name, patch, current) {
+  const stored = isObj(current.providers) && isObj(current.providers[name]) ? current.providers[name] : {};
+  const keys = Object.keys(patch).filter((k) => typeof patch[k] === 'string');
+  const items = keys.map((k) => ({ value: patch[k], current: stored[k], field: k === 'apiKey' ? `providers.${name}.apiKey` : null, vaulted: k === 'apiKey', allowRef: false }));
+  let values;
+  let recheck;
+  try { ({ values, recheck } = await sealSecrets(items)); } catch (err) {
+    if (err?.name === 'SettingsVaultError') throw new SetupFieldError(`access.${name}.apiKey`, err.message);
+    throw err;
+  }
+  keys.forEach((k, i) => { patch[k] = values[i]; });
+  return { name, recheck };
+}
+
+/**
+ * Phase 1: validate every group and compute what would be stored. Writes no settings and spawns nothing; with the
+ * secretVault flag on, a provider key is sealed into the vault here (an entry stays orphaned when a later field
+ * fails or the commit conflicts). `rechecks` carries each seal's plain-fallback recheck for commitSetupPlan.
  * @throws {SetupFieldError} the first invalid field, as { field, message, code? }
- * @returns {Promise<{values:Record<string,any>, written:string[], before:Record<string,any>, steps:object[], refused:object[], fromStep:string|null}>}
+ * @returns {Promise<{values:Record<string,any>, written:string[], before:Record<string,any>, steps:object[], refused:object[], fromStep:string|null, rechecks:{name:string, recheck:(settings:object)=>void}[]}>}
  */
 export async function planSetupApply(body, deps = {}) {
   // checkProxy has no default on purpose: a caller that forgets it must not skip the UNTESTED gate (fail closed).
@@ -113,6 +134,7 @@ export async function planSetupApply(body, deps = {}) {
     for (const k of Object.keys(body[g])) if (!keys.includes(k)) throw new SetupFieldError(`${g}.${k}`, `Worca has no setup field “${g}.${k}”.`);
   }
   const current = d.readSettings();
+  const rechecks = [];
   const next = {};            // top-level key -> value to store (undefined = delete)
   const refused = [];
   const steps = [];
@@ -197,6 +219,8 @@ export async function planSetupApply(body, deps = {}) {
     if (own(a, 'importModels')) imports[name] = importIds(name, a.importModels);
     if (Object.keys(patch).length) {
       assertTestSettingsAccess();
+      try { nextProviders(providers, name, patch); } catch (err) { throw providerFieldError(name, err); }   // validate before sealing
+      rechecks.push(await sealProviderKey(name, patch, current));
       try { providers = nextProviders(providers, name, patch); } catch (err) { throw providerFieldError(name, err); }
     }
   }
@@ -263,7 +287,7 @@ export async function planSetupApply(body, deps = {}) {
     }
   }
   if (fromStep !== null && !steps.some((s) => s.id === fromStep)) throw new SetupFieldError('fromStep', 'That step is not part of this setup, so there is nothing to retry there.');
-  return { values, written, before, steps, refused, fromStep };
+  return { values, written, before, steps, refused, fromStep, rechecks };
 }
 
 /**
@@ -276,6 +300,13 @@ export async function commitSetupPlan(plan, deps = {}) {
   const fresh = (deps.readSettings || readSettings)();
   const moved = plan.written.filter((k) => !sameValue(fresh[k], plan.before[k]));
   if (moved.length) throw new SetupConflictError(moved);
+  // After a plain fallback in Plan, a vault or a reference that appeared since refuses the plain write (D9).
+  for (const { name, recheck } of plan.rechecks || []) {
+    try { recheck(fresh); } catch (err) {
+      if (err?.name === 'SettingsVaultError') throw new SetupFieldError(`access.${name}.apiKey`, err.message);
+      throw err;
+    }
+  }
   return (deps.writeSettingsKeys || writeSettingsKeys)(plan.values);
 }
 

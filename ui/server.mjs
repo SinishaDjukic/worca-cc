@@ -109,7 +109,7 @@ import {
   syncDefaults, setSyncDefaults, assertSyncSettingsInput, DEFAULT_SYNC_SETTINGS,
   networkWaitSettings, assertNetworkWaitInput, setNetworkWait, effectiveNetworkWait,
   runLimits, assertRunLimitsInput, setRunLimits, autoTestWorkers,
-  networkProxySettings, networkProxyEnabled, migrateCorporateProxyFlag,
+  networkProxySettings, networkProxyEnabled, migrateCorporateProxyFlag, tightenSettingsFileMode, primeSettingsVaultIfEnabled,
   keepAwakeEnabled, setKeepAwake, assertKeepAwakeInput, migrateKeepAwakeFlag,
   chatLinksInPanel, setChatLinksInPanel, assertChatLinksInPanelInput, assertChatSourceBranchInput,
   runEngineSetting, assertRunEngineInput, setRunEngineSetting,
@@ -1350,7 +1350,16 @@ policyEvents.on('changed', (e) => emitChanged('team-policy-changed', e && e.acti
 projectSyncEvents.on('changed', (e) => emitChanged('project-sync-changed', e && e.projectKey ? e.projectKey : null));
 watchReadiness({ projectSyncEvents, policyEvents, emitChanged, broadcast });
 // D6: every open tab rewrites <html data-flags> and #flag-gates, without a reload.
-flagEvents.on('changed', (flags) => broadcast({ type: 'flags', flags }));
+// Vault in use (flag on, or a vault file left): prime the key (single-flight); only the off-to-on edge then migrates.
+let vaultWasOn = flagEnabled('secretVault');
+flagEvents.on('changed', (flags) => {
+  broadcast({ type: 'flags', flags });
+  const turnedOn = !!flags.secretVault && !vaultWasOn;
+  vaultWasOn = !!flags.secretVault;
+  if (!flags.secretVault && !vaultInUse()) return;
+  const primed = primeSettingsVaultIfEnabled().catch(() => {});
+  if (turnedOn) primed.then(() => migrateSecretsIfEnabled({ reason: 'flag-on', deployment: DEPLOYMENT })).then(noteStoreCheck).catch(() => {});
+});
 
 // Every comment mutation in THIS process (the REST routes below) pokes the open
 // Diff tabs. A poke carries ids only — no payload, so it is idempotent and has no
@@ -3675,6 +3684,8 @@ import * as runSkillHost from '../src/core/skills-registry/host.mjs';
 import * as runSkillTexts from '../src/core/skills-registry/texts.mjs';
 import * as runSkillPolicy from '../src/core/policy/effective.mjs';
 import { ROUTE_SEGMENTS } from './routes/index.mjs';
+import { noteStoreCheck, startSecretsProbe } from './routes/settings/secrets.mjs';
+import { migrateSecretsIfEnabled, vaultInUse } from '../src/core/secrets/flag.mjs';
 import { askCardRoute, askDesignHandoff } from './routes/chat/thread-cards.mjs';
 import { isPublicPart, publicRelPath } from '../src/core/public-assets.mjs';
 import { readIndexHtml } from '../src/core/read-index-html.mjs';
@@ -10649,8 +10660,10 @@ if (isMain) {
   // else runs, so every child and worca's own fetch() (useEnvProxy, next) go through it. It fails
   // closed: without the proxy, agents would have no restriction at all.
   // D6: the old Labs flag becomes networkProxy.enabled, once, before the proxy reads it.
-  await migrateCorporateProxyFlag();
+  tightenSettingsFileMode(); await migrateCorporateProxyFlag(); primeSettingsVaultIfEnabled().catch(() => {});   // settings.json 0600 first, never fatal; the vault key's prime starts here (with the flag on the start waits a bounded time for it below)
   await migrateKeepAwakeFlag();   // the graduated flag becomes the keepAwake setting
+  if (vaultInUse()) await primeSettingsVaultIfEnabled({ settle: true });   // the proxy login, channels, the notifier, plugin models and the proxy host read vaulted secrets once at start: they wait for the settle (at most the store time limit + 250 ms)
+  noteStoreCheck(await migrateSecretsIfEnabled({ reason: 'start', deployment: DEPLOYMENT }));   // flag on, local install: file-stored secrets saved before the vault move into it (never rejects; the Settings line shows a failed OS-store check)
   let fetchProxy = null;
   try {
     EGRESS_LIVE = await startLiveEgress({
@@ -10814,6 +10827,7 @@ if (isMain) {
     }
     try { for (const c of listActiveConversations()) { watchChatThread(c.askThreadId); enqueueChatWork(`${c.platform}:${c.chatId}`, () => chatBridge.reconcile(c)); } }
     catch (err) { console.error(`[worca-ui] chat reconcile at boot failed: ${err && err.message ? err.message : err}`); }
+    try { startSecretsProbe({ log: (m) => console.log(m) }); } catch { /* never awaited; a hung OS key store cannot hold up the start */ }
     try { startTeamMetricsBackground({ log: (m) => console.warn(m) }); }
     catch (err) { console.warn(`[worca-ui] team metrics background: ${err?.message || err}`); }
     try {
