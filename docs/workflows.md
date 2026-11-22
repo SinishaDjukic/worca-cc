@@ -182,42 +182,75 @@ answers ("100% · of 6 answers (Worca needs 10)"), and Order swapped and Proof f
 they have at least 10 samples. The AI checks cost money and count in the spending limit; those made for a test also
 count in its own cost limit, and once it is reached a criterion shows "Not checked: this test reached its cost limit".
 
-**Every quote is in the files** checks text in double quotation marks when a person is named next to it (`Dana said: "..."`,
-`**Dana:** "..."`, `One customer told us: "..."`, `A customer: "..."`, `According to Dana, "..."`, `In Dana's words: "..."`,
-`"..." said Dana`, `"...," Dana noted.`, `"..." — **Dana**`, `"..." (Dana, finance lead)`, or a `Dana said:` or `— Dana` on the line
-just before or after) and it has at least three words, or when it is long (at least eight words with a letter); other short quoted
-text, such as a button's label, is not checked. The common speech verbs count (says, notes, states, adds, explains, mentions,
-shares, reports, comments, complains, recalls, asks, tells, writes, in the present and the past). A label of a screen names nobody:
-before a colon, as the one speaking, after a dash or in brackets (`Error: "..."`, `The error says "..."`, `"..." — Button label`,
-also Hint, Title, Tooltip, Empty state, Modal, Email, Subtitle, CTA and the like), and neither does a `- ` list item on the next
-line. Outside a quote, a `"` right after a digit (`8.5" × 11"`) is an inch mark; inside one it ends the quote, unless a word
+**Every quote is in the files** checks text in double quotation marks by a fixed, short rule. A quote is checked when:
+
+- it is long: at least eight words with a letter, however it is introduced; or
+- it has at least three words and its speaker (one to four words) is named in one of three forms:
+  1. `<speaker> said:` and then the quote, on the same line or the next (`Dana said: "..."`, `One customer told us:` with the
+     quote on the next line). The verbs are said, says, wrote, writes and told us, each followed by a colon, and no others. The
+     speaker counts from the start of its line or clause (`In March, the finance lead said: "..."`).
+  2. The quote, then `, <speaker> said` (or says, wrote, writes, told us): `"...," Dana said.`
+  3. The quote, then an em or en dash and the speaker, starting with a capital letter, on the same line or the next. Markdown
+     emphasis and a role are allowed: `— Dana`, `— **Dana**`, `— Product manager at Acme`, `— Dana, finance lead`.
+
+A speaker that has a word of a screen in it names nobody (`The button says: "..."`, `"..." — Button label`; also Error, Hint,
+Title, Tooltip, Email, Page, CTA and the like). Nothing else names a speaker: no bare colon (`Dana: "..."`), no brackets
+(`"..." (Dana)`), no other verb or tense (`The button should say: "..."`, `Copy to add: "..."`, `Dana noted: "..."`). The known
+gaps of this rule:
+
+- A short quote introduced any other way is not checked, even when a person is named: `Dana said "..."` without the colon,
+  `"..." said Dana`, `According to Dana, "..."`, `Users say: "..."`, `"..." (Dana, finance lead)`, `"..." - Dana` with a hyphen,
+  or `— the finance lead` in lower case.
+- A short quote with an em dash and a capitalised note that is not a person is checked as if it named one (`"..." — Mobile`,
+  `"..." — Shown in the toolbar`).
+
+Outside a quote, a `"` right after a digit (`8.5" × 11"`) is an inch mark; inside one it ends the quote, unless a word
 follows and the quote's real closing mark comes later in the paragraph (`"We print on 8.5" paper and file it."`). Quote marks
 in code are not quotes, and a quote never runs across a table row, a table cell or a blank line. **Numbers come from the files**
-checks every other number of the result, example values, percentages and prices too (`$12/user/month`, `30/60/90-day`,
-`USD5000`, `€9.99`). It skips dates, clock times, list and section numbers, single digits, the digits in ids, hashes, links,
-file paths and code (`2026/11/drafts`, `EUR2024-INV-0042`), and the number of a standard's name (ISO 8601, RFC 4180, IEEE 754,
-UTF-8, SHA-256, EN 16931, DIN 5008). A result wrapped in a ` ```markdown `, ` ```md ` or ` ```text ` fence, or in a fence that is
-never closed, is checked as prose; a code block inside such a fence stays code. The files keep all their numbers.
+checks every other number of the result, example values, percentages and prices too (`$12/user/month`, `12/user/month`,
+`30/60/90-day`, `USD5000`, `USD750-EUR800`, `€9.99`). It skips dates, clock times, list and section numbers, single digits, the
+digits in ids, hashes, links, file paths and code (`2026/11/drafts`, `EUR2024-INV-0042`), and the number of a standard's name
+(ISO 8601, RFC 4180, IEEE 754, UTF-8, SHA-256, EN 16931, DIN 5008). A result wrapped in a ` ```markdown `, ` ```md ` or
+` ```text ` fence, or in a fence that is never closed, is checked as prose; a code block inside such a fence stays code. The
+files keep all their numbers.
 
 **Check the checker** plants its mistakes in every place that makes the criterion true. The checking model writes three
 broken copies of the good result's written text, one call each: a whole copy with the criterion broken everywhere it is met,
-everything else kept, each broken in a different way named in a few words. So a criterion stated in several sections is really
-broken. A project result's changes (its diff) are never sent to these calls and never broken: each broken copy is checked with
-the diff as it was. Worca checks the good result first, and uses a copy only when it differs from the good result, is between
-half and one and a half times as long, came back whole, leaves nothing out behind a placeholder such as "[rest unchanged]", and
-no longer holds the passage that proved the criterion on the good result (the proof of an earlier check of that result, else
-of the first check of this round; compared loosely, and only when the proof is at least 12 characters). A copy that still holds
-it is asked for once more; when it still does, or a copy fails another of these checks, the round does not finish ("This round
-did not finish. Start a new round."), and the calls it made are still counted. When nothing proved the criterion on the good
-result, or the proof is shorter, copies are not checked for it. A good result whose written text is longer than 40,000
-characters is not broken: Check the checker does not start, says "This result is too long for Worca to break on purpose.
-Check the checker works on results up to about 40,000 characters.", sends nothing and costs nothing. A card shows the lines
-of its copy that changed in meaning, joined with " … ", never the good result's own lines; a line the model only tidied (a
-dash, case or marks) does not count, and a long line is cut around its change so that every broken place fits on the card.
-A criterion about formatting alone (headings, bold, case) cannot be broken in a way Worca accepts, since copies are compared
-without case and marks, so its rounds do not finish. Worca's own free mistakes (numbers removed, a made-up quote added, a
-part removed) are used only when the checking is a mock, which costs nothing; a "met" on one that cannot know the criterion
-is not counted as missed unless you said Worca was wrong.
+everything else kept, each broken in a different way named in a few words. The call is told that the copy must make the
+criterion false: rewording, writing numbers as words, reformatting or moving text is not a break, and every place must change.
+So a criterion stated in several sections is really broken. A project result's changes (its diff) are never sent to these calls
+and never broken: each broken copy is checked with the diff as it was (a good run of a project example is checked with its diff
+too, as its tries are). A result with no written text at all is broken whole, its diff included. Worca checks the good result
+first, and uses a copy only when it differs from the good result, is between half and one and a half times as long, came back
+whole, leaves nothing out behind a placeholder such as "[rest unchanged]", and no longer holds the passage that proved the
+criterion on the good result (the proof of an earlier check of that result, else of the first check of this round; compared
+loosely). A copy that still holds it is asked for once more, and that call is given the passage to break too; when the copy
+still holds it, or a copy fails another of these checks, the round does not finish ("This round did not finish. Start a new
+round."), and the calls it made are still counted. Copies are not checked for a passage when nothing proved the criterion on the
+good result, when the proof is shorter than 12 characters (counting its parts, not the "…" between them), or when it is only a
+heading or a line of marks, which a correct copy keeps. A good result whose written text is longer than 40,000 characters is not
+broken: Check the checker does not start, says "This result is too long for Worca to break on purpose. Check the checker works
+on results up to about 40,000 characters.", sends nothing and costs nothing.
+
+A card shows lines of its copy that changed in meaning, never the good result's own lines; a line the model only tidied (a dash,
+case or marks) does not count. Changed lines are found by a line diff, so a copy that also adds or removes a line still shows
+its breaks. When they all fit, the card shows every changed line, joined with " … ". When they do not, it shows the lines that
+changed most first, as many as fit, each cut between words around its change, so it may not show every broken place.
+
+Some criteria are not a good fit for Check the checker, since only the written text is broken:
+
+- A criterion about the changes themselves on a project example ("Adds a test for the parser", "Changes no file outside
+  src/") cannot be broken: every copy keeps the diff, so the planted cards still meet it.
+- A criterion about formatting alone ("Uses H2 headings", bold, case) cannot be broken in a way Worca accepts, since copies are
+  compared without case and marks; its rounds do not finish.
+
+An exact check fits these better: **Has these sections**, **The command passes**, or the checks of which files may change
+(**Changes only files under …**, **Changes at most N files**). When Worca sees that a criterion could be an exact check, it
+offers **Switch to an exact check**; any example can also **Add an exact check**.
+
+Worca's own free mistakes (numbers removed, a made-up quote added, a part removed) are used only when the checking is a mock,
+which costs nothing; a "met" on one that cannot know the criterion is not counted as missed unless you said Worca was wrong. A
+planted card that Worca judged met is not counted as missed when you answered Right on it.
 
 **Links work** opens each link through the same guarded web access as Ask: https only, port 443, public addresses only.
 Behind `HTTPS_PROXY`, a host only the proxy can resolve is not checked by Worca (best effort, like Ask), and any host

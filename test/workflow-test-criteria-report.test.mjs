@@ -230,3 +230,12 @@ test('order and proof use the 80% bar only from 10 samples (as the people test);
   assert.equal(st({ proofs: { found: 8, of: 9 } }, 'proof'), 'bad');
   assert.equal(st({ proofs: { found: 9, of: 9 } }, 'proof'), 'good');
 });
+
+test('user decision 2026-11-22: a planted card that still meets the criterion is not missed when the person answered Right on it', () => {
+  const round = (answer) => ({ criterionText: 'Names a success metric with a number', same: { n: 4, of: 4 }, padding: { n: 4, of: 4 },
+    cards: [{ planted: null, met: true, answer: true }, { planted: 'numbers written as words', met: true, answer }, { planted: 'x', met: false, answer: true },
+      { planted: 'y', met: false, answer: true }] });
+  assert.deepEqual(trustReportModel({ rounds: [round(true)] }).tiles.planted, { caught: 3, of: 3, missedOn: [] }, 'Right: Worca was right that it still meets it');
+  assert.deepEqual(trustReportModel({ rounds: [round(false)] }).tiles.planted, { caught: 2, of: 3, missedOn: ['Names a success metric with a number'] });
+  assert.deepEqual(trustReportModel({ rounds: [round(null)] }).tiles.planted, { caught: 2, of: 3, missedOn: ['Names a success metric with a number'] }, 'not answered yet');
+});
