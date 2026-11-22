@@ -253,3 +253,44 @@ test('review I4: changed lines are paired by a line diff, so a copy that also re
   assert.ok(e2.includes('fewer tickets eventually') && e2.includes('A new line the copy added'), e2);
   assert.ok(!/25%|Q3 2026/.test(e1 + e2), 'never the unbroken text');
 });
+
+test('round 7 review M1: the fallback pairing never shows unbroken lines and takes about a second at most', () => {
+  const o = Array.from({ length: 5000 }, (_, i) => `k${String(i).padStart(5, '0')}x`).join('\n');
+  const c = o.split('\n');
+  c[0] = 'changed first';
+  c[c.length - 1] = 'changed last';
+  assert.equal(changedExcerpt(o, c.join('\n')), 'changed first … changed last', 'only the two changed lines, past the table limit too');
+  const letters = 'abcdefghijklmnopqrstuvwxyz';
+  const one = Array.from({ length: 20000 }, (_, i) => letters[i % 26]);
+  const cases = [
+    [one.join('\n'), ['changed first', ...one.slice(1, -1), 'changed last'].join('\n')],
+    [one.join('\n'), one.map((l, i) => letters[(i + 1) % 26] + l).join('\n')],
+  ];
+  for (const [orig, copy] of cases) {
+    const t0 = performance.now();
+    const e = changedExcerpt(orig, copy);
+    const ms = performance.now() - t0;
+    assert.ok(ms < 2500, `${Math.round(ms)} ms`);
+    assert.ok(e.length <= planted.CARD_EXCERPT_MAX, e);
+  }
+  assert.equal(changedExcerpt(cases[0][0], cases[0][1]), 'changed first … changed last');
+});
+
+test('round 7 review M7: a line the copy only moved is not shown as a break', () => {
+  const letters = 'abcdefghijklmnopqrstuvwxyz';
+  const base = Array.from({ length: 12 }, (_, i) => `Paragraph ${i} explains part ${letters[i]} of the plan in plain words for the reader.`);
+  const moved = [...base];
+  const [m] = moved.splice(10, 1);
+  moved.splice(1, 0, m);
+  moved[5] = moved[5].replace('plain words', 'vague words');
+  assert.equal(changedExcerpt(base.join('\n'), moved.join('\n')), 'Paragraph 4 explains part e of the plan in vague words for the reader.');
+});
+
+test('round 7 review M9: a proof that is only a bold label or a table header row is not used', () => {
+  const good = '**Success metric**\nReduce invoice export time from 2 hours to 10 minutes by Q3.\n\n| Metric | Target |\n| --- | --- |\n| Export time | 10 minutes |\n\n__Owner:__\nDana Ortiz, finance lead, owns the rollout.';
+  for (const proof of ['**Success metric**', '**Success metric:**', '**Success metric**:', '__Owner:__', '| Metric | Target |', '| Metric | Target |\n| --- | --- |'])
+    assert.equal(planted.usableProof(proof, good), null, JSON.stringify(proof));
+  assert.ok(planted.usableProof('| Export time | 10 minutes |', good), 'a table row of content is a passage');
+  assert.ok(planted.usableProof('**Success metric**\nReduce invoice export time from 2 hours', good), 'a bold label with its text is a passage');
+  assert.ok(planted.usableProof('**Reduce invoice export time** from 2 hours', '**Reduce invoice export time** from 2 hours to 10 minutes.'), 'bold inside a sentence is text');
+});

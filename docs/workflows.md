@@ -214,8 +214,8 @@ follows and the quote's real closing mark comes later in the paragraph (`"We pri
 in code are not quotes, and a quote never runs across a table row, a table cell or a blank line. **Numbers come from the files**
 checks every other number of the result, example values, percentages and prices too (`$12/user/month`, `12/user/month`,
 `30/60/90-day`, `USD5000`, `USD750-EUR800`, `€9.99`). It skips dates, clock times, list and section numbers, single digits, the
-digits in ids, hashes, links, file paths and code (`2026/11/drafts`, `2026/reports/final`, `EUR2024-INV-0042`), and the number of a standard's name
-(ISO 8601, RFC 4180, IEEE 754, UTF-8, SHA-256, EN 16931, DIN 5008). A result wrapped in a ` ```markdown `, ` ```md ` or
+digits in ids, hashes, links, file paths and code (`2026/11/drafts`, `2026/reports/final`, `EUR2024-INV-0042`), and the number of a
+standard's name (ISO 8601, RFC 4180, IEEE 754, UTF-8, SHA-256, EN 16931, DIN 5008). A result wrapped in a ` ```markdown `, ` ```md ` or
 ` ```text ` fence, or in a fence that is never closed, is checked as prose; a code block inside such a fence stays code. The
 files keep all their numbers.
 
@@ -233,14 +233,16 @@ loosely). A copy that still holds it is asked for once more, and that call is gi
 still holds it, or a copy fails another of these checks, the round does not finish ("This round did not finish. Start a new
 round."), and the calls it made are still counted. Copies are not checked for a passage when nothing proved the criterion on the
 good result, when the proof is shorter than 12 characters (counting its parts, not the "…" between them), or when it is only a
-heading or a line of marks, which a correct copy keeps. A good result whose written text is longer than 40,000 characters is not
+heading, a line wholly in bold (`**Success metric:**`), a table's header row or a line of marks, which a correct copy keeps.
+A good result whose written text is longer than 40,000 characters is not
 broken: Check the checker does not start, says "This result is too long for Worca to break on purpose. Check the checker works
 on results up to about 40,000 characters.", sends nothing and costs nothing.
 
 A card shows lines of its copy that changed in meaning, never the good result's own lines; a line the model only tidied (a dash,
-case or marks) does not count. Changed lines are found by a line diff, so a copy that also adds or removes a line still shows
-its breaks. When they all fit, the card shows every changed line, joined with " … ". When they do not, it shows the lines that
-changed most first, as many as fit, each cut between words around its change, so it may not show every broken place.
+case or marks) or only moved does not count. Changed lines are found by a line diff, so a copy that also adds or removes a line
+still shows its breaks. When they all fit, the card shows every changed line, joined with " … ". When they do not, it picks the
+lines that changed most, as many as fit, and shows them in the copy's order, each cut between words around its change, so it
+may not show every broken place.
 
 Some criteria are not a good fit for Check the checker, since only the written text is broken:
 

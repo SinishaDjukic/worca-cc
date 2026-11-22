@@ -105,13 +105,24 @@ const proofCore = (p) => normLoose(p).replace(/^["']+|["']+$/g, '').replace(/^(?
 /** Fix round 7 (review M2): the characters of the proof's parts, the "…" between them not counted. */
 const proofChars = (p) => proofCore(p).split(/\s*(?:\.\.\.|…)\s*/).reduce((n, x) => n + x.length, 0);
 /** Fix round 7 (review I3): a proof whose every line is a markdown heading or only marks (`## Success metric`, `| --- |`): a correct copy
- *  keeps it, so it cannot tell a weak copy. */
-const headingOnly = (p) => p.trim().replace(/^["'“”]+|["'“”]+$/g, '').split('\n').filter((l) => l.trim())
-  .every((l) => /^\s*#{1,6}\s/.test(l) || !/[\p{L}\p{N}]/u.test(l));
+ *  keeps it, so it cannot tell a weak copy. Round 7 review M9: so is a line wholly in bold (`**Success metric:**`) and a table's header row
+ *  (`| Metric | Target |`, a `| --- |` border after it in the proof or in the good result). */
+const BORDER_RE = /^\s*\|?\s*:?-{3,}:?\s*(?:\|\s*:?-{3,}:?\s*)*\|?\s*$/;
+const headerRow = (l, next, original) => {
+  if (!/^\s*\|.*\|\s*$/.test(l)) return false;
+  if (next !== undefined) return BORDER_RE.test(next);
+  const lines = String(original ?? '').replace(/\r\n?/g, '\n').split('\n');
+  return lines.some((x, k) => x.trim() === l.trim() && BORDER_RE.test(lines[k + 1] || ''));
+};
+const headingOnly = (p, original) => {
+  const lines = p.trim().replace(/^["'“”]+|["'“”]+$/g, '').split('\n').filter((l) => l.trim());
+  return lines.every((l, k) => /^\s*#{1,6}\s/.test(l) || !/[\p{L}\p{N}]/u.test(l) || /^\s*(\*\*|__)[^*_\n]+\1:?\s*$/.test(l)
+    || headerRow(l, lines[k + 1], original));
+};
 /** User decision 2026-11-22: the passage that proved the criterion on the good result, when a copy can be checked against it: it is at least
- *  PROOF_MIN characters in its loose form (its parts only), is not only a heading, and is in the good result's written text (a proof quoted
+ *  PROOF_MIN characters in its loose form (its parts only), is not only a heading or a label (headingOnly), and is in the good result's written text (a proof quoted
  *  from a project's diff is not, since the diff is never broken). Else null: no check. */
-export const usableProof = (proof, original) => (typeof proof === 'string' && !headingOnly(proof) && proofChars(proof) >= PROOF_MIN
+export const usableProof = (proof, original) => (typeof proof === 'string' && !headingOnly(proof, original) && proofChars(proof) >= PROOF_MIN
   && proofFound(proof, original) ? proof : null);
 
 /** Why a copy cannot be used, or null: 'unreadable' (no reply read), 'length' (outside COPY_MIN_RATIO–COPY_MAX_RATIO of the good
@@ -134,6 +145,7 @@ export function copyProblem(original, copy, earlier = [], { proof = null } = {})
 const SEP = ' … ';
 const LINE_MIN = 60;   // the least a changed line gets on a full card (fix round 7: fragments long enough to read)
 const DIFF_MAX_CELLS = 4_000_000;   // a line diff larger than this pairs the middle lines without the table
+const PAIR_MAX = 200;   // review M1 (round 7): a changed line is paired with one of at most this many lines of its hunk, so pairing stays linear
 const wordsAt = (l) => [...l.matchAll(/\S+/g)].map((m) => ({ w: normLoose(m[0]), at: m.index, end: m.index + m[0].length }));
 
 /** The original's and the copy's lines in order, as hunks of a line diff (an LCS on normLoose keys, after the common start and end are
@@ -208,14 +220,27 @@ function clipAt(line, { from, to }, size) {
  *  - joined by " … ", with "…" only at an outer end that was cut, so the card never shows an empty "… …" or half a word. */
 export function changedExcerpt(original, copy, max = CARD_EXCERPT_MAX) {
   const linesOf = (t) => String(t ?? '').split('\n').map((l) => l.trim()).filter((l) => normLoose(l));
+  const hunks = hunksOf(linesOf(original), linesOf(copy));
+  // Review M1, M7 (round 7): a line on both sides of the changes, loosely (one the copy only moved, or an unchanged line of the fallback's one
+  // big hunk), is no change: it is taken out of both sides before the pairing.
+  const spare = new Map();
+  for (const h of hunks) for (const line of h.was) { const k = normLoose(line); spare.set(k, (spare.get(k) || 0) + 1); }
+  const kept = new Map();
+  const moved = (k) => { if (!(spare.get(k) > 0)) return false; spare.set(k, spare.get(k) - 1); kept.set(k, (kept.get(k) || 0) + 1); return true; };
+  for (const h of hunks) h.now = h.now.filter((x) => !moved(normLoose(x.line)));
+  const takeOut = (k) => { if (!(kept.get(k) > 0)) return false; kept.set(k, kept.get(k) - 1); return true; };
+  for (const h of hunks) h.was = h.was.filter((line) => !takeOut(normLoose(line)));
   const items = [];
-  for (const h of hunksOf(linesOf(original), linesOf(copy))) {
-    const left = h.was.map((line) => ({ line, words: wordsAt(line).map((x) => x.w) }));
+  for (const h of hunks) {
+    const left = h.was.map((line) => ({ line, words: wordsAt(line).map((x) => x.w) })).reverse();   // reversed: a pair is spliced near the end
     for (const { line, i } of h.now) {
       const words = new Set(wordsAt(line).map((x) => x.w));
       let best = -1;
       let most = 0;
-      left.forEach((w, k) => { const n = w.words.filter((x) => words.has(x)).length; if (n > most) { most = n; best = k; } });
+      for (let k = left.length - 1; k >= Math.max(0, left.length - PAIR_MAX); k -= 1) {
+        const n = left[k].words.filter((x) => words.has(x)).length;
+        if (n > most) { most = n; best = k; }
+      }
       const was = best < 0 ? null : left.splice(best, 1)[0].line;
       if (/[\p{L}\p{N}]/u.test(line)) items.push({ line, i, ...changeOf(line, was) });
     }
