@@ -60,7 +60,7 @@ import { planConcernBlock, planConcernOverrideBlock, requirementConcernBlock } f
 import { criterionIds } from '../../shared/review/coverage.mjs';
 import { outlineFileState, planOutputOf } from '../shape/outline-file.mjs';
 import { runScriptExecution } from './script-runner.mjs';
-import { treeBusy, watchSpawns } from '../agent-tree.mjs';
+import { BUSY_PROBE_MS, treeBusy, watchSpawns } from '../agent-tree.mjs';
 // Skills registry §4.1: the CLI's refusal of `--plugin-dir` under managed `disableSideloadFlags` (P3's one regex).
 import { SIDELOAD_REFUSAL_RE as SIDELOAD_REFUSED_RE } from '../skills-registry/host.mjs';
 
@@ -856,23 +856,27 @@ function timeLimitGuard({ wallMs, idleMs }, outer, nodeId) {
   let idle = null;
   let stopped = false;
   let pid = null;
-  let armed = 0;   // bumped by every touch: output during the busy probe wins over its answer
-  const idleHit = async () => {
-    const at = armed;
-    if (pid != null) {
-      let busy = false;
-      try { busy = await (_testing.treeBusy || treeBusy)(pid, { signal: guard.signal }); } catch { /* not busy */ }
-      if (stopped || at !== armed) return;
-      if (busy) { guard.touch(); return; }
-    }
-    hit('NODE_IDLE_LIMIT', `no output for ${fmtMinutes(idleMs)} (idle limit)`);
-  };
-  guard.touch = () => {
+  let armed = 0;   // bumped by every arm: output during the busy probe wins over its answer
+  let lastOutput = Date.now();
+  // The probe takes a quarter of a short idle limit, at most a minute: a 1 min limit is not stretched to 2.
+  const probeMs = Math.min(BUSY_PROBE_MS, Math.max(1000, Math.round(idleMs / 4)));
+  const arm = () => {
     if (stopped) return;   // an event after the spawn ended re-arms nothing
     armed++;
     if (idle) clearTimeout(idle);
     idle = setTimeout(() => void idleHit(), idleMs).unref();
   };
+  const idleHit = async () => {
+    const at = armed;
+    if (pid != null) {
+      let busy = false;
+      try { busy = await (_testing.treeBusy || treeBusy)(pid, { signal: guard.signal, probeMs }); } catch { /* not busy */ }
+      if (stopped || at !== armed) return;
+      if (busy) { arm(); return; }
+    }
+    hit('NODE_IDLE_LIMIT', `no output for ${fmtMinutes(Date.now() - lastOutput)} (idle limit ${fmtMinutes(idleMs)})`);
+  };
+  guard.touch = () => { if (!stopped) lastOutput = Date.now(); arm(); };
   guard.watch = (p) => { pid = p; };
   guard.touch();
   guard.stop = () => { stopped = true; clearTimeout(wall); if (idle) clearTimeout(idle); };
