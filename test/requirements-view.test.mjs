@@ -3030,7 +3030,7 @@ test('a staleness that cannot be told heads the notice "Worca cannot check this 
 
 test('style: the phone menus open inside the screen, the faint ink is not used for text, the small-screen wraps', () => {
   const css = readStyleCss();
-  assert.match(css, /\.req-head-tools\{[^}]*justify-self:end/);   // the tools end on the right column's edge, on the header's grid
+  assert.match(css, /\.req-head-tools\{[^}]*margin-left:auto/);
   for (const sel of ['.req-group-head .req-group-brief', '.req-id', '.req-round-n', '.req-del']) {
     const esc = sel.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
     const rules = [...css.matchAll(new RegExp(`(?:^|[}\\s,])${esc}\\{([^}]*)\\}`, 'gm'))];

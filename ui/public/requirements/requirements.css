@@ -46,17 +46,13 @@
    conversation left and Ready + the spec right. */
 .req-page{display:flex;flex-direction:column;gap:18px;max-width:1180px}
 .req-page > .req-back{margin:0}
-/* The header shares the columns below it (.req-cols): the title and chips stay inside the left column's edge, the tools
-   end on the right column's. */
-.req-head{display:grid;grid-template-columns:minmax(0,1.15fr) minmax(0,1fr);gap:16px 22px;align-items:start}
-.req-page:has(> .req-cols.with-helper) > .req-head{grid-template-columns:minmax(0,1fr) 420px}
-@media (max-width:900px){.req-head,.req-page:has(> .req-cols.with-helper) > .req-head{grid-template-columns:1fr}}
+.req-head{display:flex;flex-wrap:wrap;align-items:flex-start;justify-content:space-between;gap:16px}
 .req-head-main{display:flex;flex-direction:column;gap:8px;min-width:0}
 .req-head-title{display:flex;flex-wrap:wrap;align-items:center;gap:10px;min-width:0}
 .req-head-title .req-id{font-size:15px}
 .req-head h2{margin:0;font-size:22px;font-weight:700;letter-spacing:-.015em;overflow-wrap:anywhere}
 .req-chips{display:flex;flex-wrap:wrap;gap:8px}
-.req-head-tools{display:flex;align-items:center;gap:8px;justify-self:end}
+.req-head-tools{display:flex;align-items:center;gap:8px;margin-left:auto}
 /* A small borderless icon button: the pencils, add / remove, the header's ⋯. */
 .req-ico{display:inline-grid;place-items:center;flex:none;width:28px;height:28px;padding:0;border:0;border-radius:var(--r-md);background:transparent;color:var(--ink-3);cursor:pointer}
 .req-ico:hover:not(:disabled),.req-ico[aria-expanded="true"]{background:var(--hover);color:var(--ink)}
