@@ -623,6 +623,29 @@ test('a session OpenCode no longer knows starts fresh once', POSIX, async () => 
   assert.ok(events.some((e) => e.type === 'stderr' && /is gone/.test(e.text)));
 });
 
+test('a variant a model does not offer is retried without it once (OpenCode 2.3.1+ refuses a phantom #variant)', POSIX, async () => {
+  // ernie (a free openrouter model) advertises the full effort vocabulary but only `high` works; `medium`/`low` come
+  // back as provider.no-route "Variant unavailable …". The catalog cannot know a model's real variants ahead of time,
+  // so the spawn retries ONCE without the variant — the model runs at its own default. `variant` is falsy after the
+  // retry, so a second refusal (a genuinely bad model) is a real error, never a loop.
+  const dir = tmp();
+  const fake = fakeOpencode(dir, 'ok', { version: '2.3.2' });
+  const spawns = join(dir, 'spawns.txt');
+  // Record every argv (including the --version probe), then fail the call that carries `#medium` — the retry must drop it.
+  const wrapper = join(dir, 'opencode-wrap');
+  writeFileSync(wrapper, `#!/bin/sh\nprintf '%s\\n' "$*" >> ${JSON.stringify(spawns)}\n` +
+    `case " $* " in *"#medium"*) printf 'Error: Variant unavailable for openrouter/baidu/ernie-5.5-flash-preview:free: medium\\n' >&2; exit 1;; esac\n` +
+    `exec ${JSON.stringify(fake.bin)} "$@"\n`, { mode: 0o755 });
+  const events = [];
+  const r = await runOpencodeProcess({ cwd: tmp(), bin: wrapper, prompt: 'x', model: 'openrouter/baidu/ernie-5.5-flash-preview:free', effort: 'medium', onEvent: (e) => events.push(e) });
+  assert.equal(r.text, 'ok');
+  const runs = readFileSync(spawns, 'utf8').split('\n').filter((l) => l.includes('-m'));
+  assert.equal(runs.length, 2, 'the variant attempt and the variant-less retry both spawn');
+  assert.ok(runs[0].includes('#medium'), 'the first spawn carries the effort');
+  assert.ok(!runs[1].includes('#medium'), 'the retry drops the variant');
+  assert.ok(events.some((e) => e.type === 'stderr' && /takes no "medium" variant/.test(e.text)), 'the drop is said out loud');
+});
+
 test('the turn cap: the agent gets maxTurns tool steps plus the text-only one OpenCode forces at its step limit', POSIX, async () => {
   const fake = fakeOpencode(tmp(), 'done');
   await runOpencodeProcess({ cwd: tmp(), bin: fake.bin, prompt: 'x', model: 'anthropic/x', maxTurns: 3 });
