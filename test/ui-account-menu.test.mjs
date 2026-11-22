@@ -8,7 +8,7 @@ import { JSDOM } from 'jsdom';
 import { BUDGET_WARN_AT } from '../ui/public/stats-view.mjs';
 import {
   spendRing, ringDash, spendPeriod, renderSpendCard, RING_R, MINI_R, INNER_R, ringSvg,
-  personInitials, describeAccount, accountLabel, paintAccountCorner, paintIdentityCard, paintAwayRow, paintAppearanceIcon, renderLevelCard,
+  personInitials, describeAccount, accountLabel, paintAccountCorner, paintIdentityCard, paintAwayRow, paintAppearanceIcon, renderLevelCard, renderNoLevelCard,
 } from '../ui/public/account-menu.mjs';
 import { describeAwayRow } from '../src/shared/away-mode/describe.mjs';
 import { createLevelController, levelMenuHtml, LEVEL_SHORT, LEVEL_INFO, UI_LEVELS } from '../ui/public/ui-level.mjs';
@@ -469,53 +469,84 @@ const RUNNER_VIEW = {
 };
 const TOP_VIEW = { level: { index: 5, name: 'Worcaholic', avatar: '/assets/worca-levels/worcaholic.svg' }, top: true, progress: null };
 
-test('renderLevelCard: a menuitem button routed to #profile/level, ungated (R-po-1, R-po 16)', () => {
-  const card = renderLevelCard(RUNNER_VIEW, { doc });
-  assert.equal(card.tagName, 'BUTTON');
-  assert.equal(card.getAttribute('type'), 'button');
-  assert.equal(card.id, 'acct-level-card');
-  assert.ok(card.classList.contains('wl-card'));
-  assert.equal(card.getAttribute('role'), 'menuitem');
-  assert.equal(card.dataset.nav, 'profile');
-  assert.equal(card.dataset.hash, 'profile/level');
-  assert.equal(card.hasAttribute('data-min-level'), false, 'no role gate: Simple mode reaches it');
-});
+const RICH_VIEW = {
+  ...RUNNER_VIEW,
+  level: { ...RUNNER_VIEW.level, tagline: 'Runs things' },
+  next: [
+    { label: 'Open Runs', hint: 'See your runs', href: '#runs', done: false },
+    { label: 'Done already', hint: 'x', href: '#chat', done: true },
+    { label: 'Elsewhere', hint: 'off-site', href: 'https://example.com', done: false },
+    { label: 'Try chat', hint: 'Ask once', href: '#chat', done: false },
+    { label: 'Third', hint: 'z', href: '#stats', done: false },
+  ],
+};
+const textOf = (el) => el.textContent.replace(/\s+/g, ' ').trim();
 
-test('renderLevelCard: avatar, name and "View level", then "To <Next>" with "d of t", then small segments', () => {
-  const card = renderLevelCard(RUNNER_VIEW, { doc });
-  const img = card.querySelector('img');
-  assert.deepEqual([img.getAttribute('src'), img.getAttribute('width'), img.getAttribute('height'), img.getAttribute('alt')], ['/assets/worca-levels/runner.svg', '22', '22', '']);
+test('level card is the compact button: avatar, name, "View level", then "To <Next>" with the count and a small bar', () => {
+  const card = renderLevelCard(doc, RICH_VIEW);
+  assert.equal(card.tagName, 'BUTTON');
+  assert.equal(card.id, 'acct-level-card');
+  assert.equal(card.getAttribute('role'), 'menuitem');
+  assert.ok(card.classList.contains('wl-card'));
+  assert.deepEqual([card.dataset.nav, card.dataset.hash], ['profile', 'profile/level'], 'one click goes to the Profile level page');
+  const img = card.querySelector('.wl-card-head img.wl-card-ava');
+  assert.deepEqual([img.getAttribute('src'), img.getAttribute('alt'), img.getAttribute('width')], ['/assets/worca-levels/runner.svg', '', '22']);
   assert.equal(card.querySelector('.wl-card-name').textContent, 'Runner');
   assert.equal(card.querySelector('.wl-card-go').textContent, 'View level');
   assert.equal(card.querySelector('.wl-card-next').textContent, 'To Hooked');
-  assert.equal(card.querySelector('.wl-card-prog').textContent, '1 of 4');
+  assert.equal(card.querySelector('b.wl-card-prog').textContent, '1 of 4');
   const seg = card.querySelector('.wl-seg');
-  assert.equal(seg.getAttribute('data-size'), 'sm');
-  assert.equal(seg.querySelectorAll('.wl-seg-i[data-done]').length, 1);
-  assert.equal(seg.getAttribute('aria-hidden'), 'true', 'the progress is in the button name, not announced twice');
-  assert.equal(card.lastElementChild, seg);
+  assert.equal(seg.dataset.size, 'sm');
+  assert.equal(seg.getAttribute('aria-hidden'), 'true');
+  assert.equal(card.querySelectorAll('.wl-seg-i[data-done]').length, 1);
+  assert.equal(card.getAttribute('aria-label'), 'Runner, to Hooked, 1 of 4 done. View level');
+  assert.equal(card.querySelector('a, [role="menuitem"]'), null, 'no links or inner items: the card is the one item');
+  assert.doesNotMatch(textOf(card), /Next:|Level 2 of 5|Runs things|Open Runs|See your level in Profile|Try next|first steps/);
 });
 
-test('renderLevelCard: the accessible name carries the level, the next level and the progress', () => {
-  const card = renderLevelCard(RUNNER_VIEW, { doc });
-  assert.match(card.getAttribute('aria-label'), /^Runner, to Hooked, 1 of 4 done\. View level$/);
-  const days = renderLevelCard({ ...RUNNER_VIEW, progress: { done: 12, total: 30, unit: 'days' } }, { doc });
-  assert.equal(days.querySelector('.wl-card-prog').textContent, '12 of 30 days');
-  assert.equal(days.getAttribute('aria-label'), 'Runner, to Hooked, 12 of 30 days. View level');
+test('level card: a days unit shows "12 of 30 days"; the top level shows the top note with no row or bar', () => {
+  const days = renderLevelCard(doc, { ...RUNNER_VIEW, progress: { done: 12, total: 30, unit: 'days' } });
+  assert.match(days.querySelector('.wl-card-prog').textContent, /^12 of 30 days$/);
+  const top = renderLevelCard(doc, TOP_VIEW);
+  assert.equal(top.querySelector('.wl-card-top').textContent, "You've reached the top level.");
+  assert.equal(top.querySelector('.wl-card-row'), null);
+  assert.equal(top.querySelector('.wl-seg'), null);
+  assert.equal(top.getAttribute('aria-label'), "Worcaholic, you've reached the top level. View level");
+  assert.equal(top.dataset.hash, 'profile/level');
 });
 
-test('renderLevelCard: the top level says so and has no row 2 and no segments', () => {
-  const card = renderLevelCard(TOP_VIEW, { doc });
-  assert.equal(card.querySelector('.wl-card-name').textContent, 'Worcaholic');
-  assert.match(card.textContent, /You've reached the top level\./);
-  assert.equal(card.querySelector('.wl-seg'), null);
-  assert.equal(card.querySelector('.wl-card-next'), null);
-  assert.equal(card.getAttribute('aria-label'), "Worcaholic, you've reached the top level. View level");
+test('level card: nothing to show without a level view', () => {
+  assert.equal(renderLevelCard(doc, null), null);
+  assert.equal(renderLevelCard(doc, {}), null);
+  assert.equal(renderLevelCard(doc, { level: null }), null);
 });
 
-test('renderLevelCard: nothing to show without a level view', () => {
-  assert.equal(renderLevelCard(null, { doc }), null);
-  assert.equal(renderLevelCard({}, { doc }), null);
+test('no-level card shows initials and the finish-setup prompt (R-po-27)', () => {
+  let finished = 0;
+  const card = renderNoLevelCard(doc, { initials: 'AL', missing: ['setup'], onFinishSetup: () => { finished += 1; } });
+  assert.equal(card.id, 'acct-level-card');
+  assert.equal(card.getAttribute('role'), 'none');
+  assert.ok(card.classList.contains('wl-card'));
+  assert.equal(card.querySelector('.wl-card-head .wl-menu-ava').textContent, 'AL');
+  assert.equal(card.querySelector('.wl-hc-head, .wl-hc-ava'), null, 'the compact look, not the big header');
+  assert.match(textOf(card), /Finish setup to earn your first level\./);
+  const items = [...card.querySelectorAll('[role="menuitem"]')];
+  assert.deepEqual(items.map((b) => b.textContent), ['Finish setup']);
+  items[0].click();
+  assert.equal(finished, 1);
+});
+
+test('provider-missing variant names the missing sign-in (R-po-25)', () => {
+  const calls = [];
+  const card = renderNoLevelCard(doc, { initials: 'AL', missing: ['provider'], onFinishSetup: () => calls.push('finish'), onSignIn: () => calls.push('sign-in') });
+  assert.match(textOf(card), /Sign in to a model provider to earn your first level\./);
+  assert.doesNotMatch(textOf(card), /Finish setup/);
+  const items = [...card.querySelectorAll('[role="menuitem"]')];
+  assert.deepEqual(items.map((b) => b.textContent), ['Sign in to a model']);
+  items[0].click();
+  assert.deepEqual(calls, ['sign-in']);
+  const both = renderNoLevelCard(doc, { initials: 'AL', missing: ['setup', 'provider'], onFinishSetup() {}, onSignIn() {} });
+  assert.match(textOf(both), /Finish setup to earn your first level\./, 'more than the provider missing: the setup prompt');
 });
 
 test('the level card is the account menu\'s first item and never joins the mode pickers (R-po-1)', async () => {
@@ -577,7 +608,7 @@ test('showView("profile") hands the level host to the wiring, which fetches once
   assert.ok(arm, 'showView has a profile arm');
   assert.match(arm[0], /worca\.showProfile\(/);
   assert.match(arm[0], /profile-level-host/);
-  assert.equal(APP_JS.split('fetchWorcaLevel(').length - 1, 0, 'app.js never fetches the level itself');
+  assert.doesNotMatch(arm[0], /fetchWorcaLevel\(/, 'the profile route never fetches the level itself');
   const wiring = readFileSync(new URL('../ui/public/worca-level/app-wiring.mjs', import.meta.url), 'utf8');
-  assert.match(wiring, /renderProfileLevel\(host, view\)/);
+  assert.match(wiring, /renderProfileLevel\(host, view, \{ initials: initials\(\) \}\)/);
 });

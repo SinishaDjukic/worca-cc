@@ -13,6 +13,15 @@
 @media (forced-colors:active){.setup-card .sa-progress-seg{background:Canvas;border:1px solid CanvasText;}
   .setup-card .sa-progress-seg[data-state="done"],.setup-card .sa-progress-seg[data-state="current"]{background:CanvasText;}}
 .setup-card .sa-sub{margin:0;color:var(--ink-2);}
+/* The line under the progress bar for someone with no level yet (hidden by its own attribute otherwise). */
+.setup-card .sa-level-hint{margin:0;color:var(--ink-2);}
+.setup-card .sa-level-hint[hidden]{display:none;}
+/* The ready screen: the level just earned (avatar, name, what the next level needs), or the one missing line. */
+.setup-card .sa-ready{display:flex;align-items:center;gap:16px;min-width:0;}
+.setup-card .sa-ready-avatar{flex:none;width:56px;height:56px;border-radius:50%;background:oklch(0.92 0.04 var(--wl-hue,235));}
+.setup-card .sa-ready-text{display:flex;flex-direction:column;gap:4px;min-width:0;}
+.setup-card .sa-ready-level{font-weight:600;}
+.setup-card .sa-ready-next,.setup-card .sa-ready-missing{margin:0;color:var(--ink-2);}
 .setup-card .sa-step{display:flex;flex-direction:column;gap:16px;min-width:0;}
 /* The step's 16px gap spaces its children; .field's own 18px bottom margin on top of it doubled the space between fields. */
 .setup-card .sa-step > .field{margin-bottom:0;}

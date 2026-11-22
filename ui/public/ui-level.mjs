@@ -213,9 +213,10 @@ export function createLevelController({ doc, save, onError = null, onClose = nul
   // A decision (each card applies at once — nothing is pending): a backdrop click or Escape closes it.
   const guard = modal ? guardModal(modal, { kind: 'decision', close: () => close() }) : null;
 
-  /** `report: false`: the caller shows why a save failed itself (a tour's start opens the dialog), so no onError. */
+  /** `report: false`: the caller shows why a save failed itself (a tour's start opens the dialog), so no onError.
+   *  Resolves true when the mode was saved, false when it was refused, failed or a later pick took over. */
   async function choose(level, { report = true } = {}) {
-    if (!isUiLevel(level)) return;
+    if (!isUiLevel(level)) return false;
     const mine = ++seq;
     const previous = confirmed;
     paint(level);                                  // optimistic: the app re-lays out behind the dialog
@@ -224,7 +225,7 @@ export function createLevelController({ doc, save, onError = null, onClose = nul
     saving += 1;
     try { out = await save(level); } catch (e) { out = { ok: false, error: (e && e.message) || 'network error' }; }
     saving -= 1;
-    if (mine !== seq) return;                     // a later click owns the paint now
+    if (mine !== seq) return false;               // a later click owns the paint now
     if (!out || !out.ok) {
       paint(previous);
       const error = (out && out.error) || 'unknown error';
@@ -232,10 +233,11 @@ export function createLevelController({ doc, save, onError = null, onClose = nul
       // The dialog shows that line. A pick from the account menu's side menu has no line of its
       // own, so the app is told (it toasts); never both.
       if (report && onError && (!modal || modal.classList.contains('hidden'))) onError(error);
-      return;
+      return false;
     }
     confirmed = normalizeLevel(out.level || level);
     paint(confirmed);
+    return true;
   }
 
   d.addEventListener('click', (e) => {

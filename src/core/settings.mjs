@@ -3249,13 +3249,15 @@ export async function writeStoredFlags(map) {
 }
 
 // ── Getting started (onboarding) ─────────────────────────────────────────────
-// Three machine-wide flags, nothing more: which steps are DONE is derived from
+// Five machine-wide flags, nothing more: which steps are DONE is derived from
 // product state by src/core/onboarding.mjs and never stored. `hidden` is the
 // checklist's Hide (Settings › General › Getting started shows it again);
 // `welcomeSeen` is the one-time welcome dialog; `workspaceGuideSeen` is the
 // "How workspaces work" walkthrough (FEAT-7) — set on every open, cleared when
-// the last workspace is deleted. All absent = all false.
-const ONBOARDING_FLAGS = Object.freeze(['hidden', 'welcomeSeen', 'workspaceGuideSeen']);
+// the last workspace is deleted. `setupFinished` records that the Setup Assistant was completed
+// (install-wide, like the setup); `setupChecked` is the boot marker that credits an install that
+// predates it exactly once (onboarding.mjs#ensureSetupMarker). All absent = all false.
+const ONBOARDING_FLAGS = Object.freeze(['hidden', 'welcomeSeen', 'workspaceGuideSeen', 'setupFinished', 'setupChecked']);
 
 export function onboardingPrefs() {
   const o = readSettings().onboarding;
