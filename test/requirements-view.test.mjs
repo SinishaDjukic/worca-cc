@@ -711,7 +711,7 @@ test('header: back link, FEAT code, title, state badge or run pill, chips', asyn
   back.click();
   assert.deepEqual(routed, ['']);
   const head = () => host.querySelector('.req-head');
-  const chips = () => [...head().querySelectorAll('.chip')].map((c) => c.textContent);
+  const chips = () => [...head().querySelectorAll('.req-chips > *')].map((c) => c.textContent);   // the chips and the cost button, in row order
   assert.equal(head().querySelector('code').textContent, 'FEAT-4');
   assert.equal(head().querySelector('h2').textContent, 'Cancel order');
   assert.equal(head().querySelector('.badge').textContent, 'Your turn');
@@ -3030,7 +3030,7 @@ test('a staleness that cannot be told heads the notice "Worca cannot check this 
 
 test('style: the phone menus open inside the screen, the faint ink is not used for text, the small-screen wraps', () => {
   const css = readStyleCss();
-  assert.match(css, /\.req-head-tools\{[^}]*margin-left:auto/);
+  assert.match(css, /\.req-head-tools\{[^}]*justify-self:end/);   // the tools end on the right column's edge, on the header's grid
   for (const sel of ['.req-group-head .req-group-brief', '.req-id', '.req-round-n', '.req-del']) {
     const esc = sel.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
     const rules = [...css.matchAll(new RegExp(`(?:^|[}\\s,])${esc}\\{([^}]*)\\}`, 'gm'))];
