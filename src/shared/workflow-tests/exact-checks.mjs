@@ -91,7 +91,9 @@ const VERB = SPEECH_VERBS.map((v) => v.replace(' ', String.raw`\s+`)).join('|');
 const SPEAKER = String.raw`(${WORD}(?:\s+${WORD}){0,${SPEAKER_MAX_WORDS - 1}})`;
 export const QUOTE_FORMS = Object.freeze({
   saidBefore: new RegExp(String.raw`(?:^|[^\p{L}\p{N}'’&\s-])\s*(?:(?:>|[*+-]|\d{1,3}[.)])\s+)*${SPEAKER}\s*,?\s+(?:${VERB})\s*:\s*$`, 'iu'),
-  saidAfter: new RegExp(String.raw`^\s*,?\s*(?!(?:which|as|and)\s+(?-i:\p{Ll}))${SPEAKER}\s+(?:${VERB})(?!\p{L})`, 'iu'),
+  // No 'i' flag: the speaker classes match either case, and the verbs and "which/as/and" follow a quote in lower case. (A case-sensitive
+  // group `(?-i:…)` would need RegExp modifiers, which Node 22, the oldest supported Node, cannot parse.)
+  saidAfter: new RegExp(String.raw`^\s*,?\s*(?!(?:which|as|and)\s+\p{Ll})${SPEAKER}\s+(?:${VERB})(?!\p{L})`, 'u'),
   dashAfter: new RegExp(String.raw`^\s*[,.]?\s*[—–]\s*(\p{Lu}[\p{L}\p{N}'’&-]*(?:\s+${WORD}){0,${SPEAKER_MAX_WORDS - 1}})\s*(?:$|[.,;(])`, 'u'),
 });
 const UI_WORD = new Set(UI_LABELS.map((w) => w.toLowerCase()));
