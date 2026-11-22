@@ -4,7 +4,8 @@
 // `active[].nodeId`, `decor.status` and `status`.
 import { roleLabelOf } from './perspectives.mjs';
 import { SHAPE_CODE_ROLES, COVERAGE_ROLE } from '../review/requirements-coverage.mjs';
-import { runStopWord, reviewerStopWord } from './run-stops.mjs';
+import { runStopWord, reviewerStopWord, waitsForRunWord } from './run-stops.mjs';
+import { isFinishedState } from '../run-model.mjs';
 
 /** The word each agent node of a slice graph shows while it works. */
 const WORD_OF = Object.freeze({
@@ -46,6 +47,25 @@ export function runShortWord(snap, slice = null) {
   let word = 'planning';
   for (const id of FLOW) if (!active.has(id) && statusOf(snap, id) === 'done') word = WORD_OF[id];
   return word;
+}
+
+/** Small runs C2: a member run that finished (done, or its model's ready, in-review or merged state). */
+const isFinishedMember = (mb) => mb.state === 'done' || isFinishedState(mb.model && mb.model.state);
+/** Item 9: a run that has not started and waits on its chain predecessor (no stop): the predecessor index dev's
+ *  "starts after run N" reads (the member's ticket), as the short word. A held ticket keeps dev's word. */
+const chainWaitWord = (mb) => {
+  const t = mb.model && mb.model.state === 'waiting' && mb.run && mb.run.ticket;
+  return t && !t.held && t.after && Number.isInteger(t.after.index) ? waitsForRunWord(t.after.index) : null;
+};
+/**
+ * Small runs C2 (D13): a marked feature's member word, read by the Chat card's run rows and (D2) the Runs list's member
+ * rows. A finished run reads `done` when it has a Care plan, or no snapshot is loaded; otherwise runShortWord, then the
+ * chain wait word. Null (a run without `careRun`, held): the caller keeps dev's own words.
+ * @param {{state?: string, model?: {state?: string}, run?: object}} mb
+ */
+export function cardShortWord(mb, snap, slice = null) {
+  return isFinishedMember(mb) && (!snap || (snap.stepper && snap.stepper.careRun)) ? 'done'
+    : runShortWord(snap, slice) || chainWaitWord(mb);
 }
 
 /**
@@ -92,4 +112,26 @@ export function runAgentRows(snap) {
     if (own.some((id) => statusOf(snap, id) === 'done')) return { key, name, word: 'done', mark: 'check' };
     return { key, name, word: 'waits', mark: 'wait' };
   });
+}
+
+/**
+ * Shaper small runs D2 (D13): a done Agents row's detail, from stored records only (`stored` is the `/slice` answer's
+ * `{ planVersion, planReviewed, tests }`, core/shape/features.mjs storedAgentFacts). The Planner: `plan vN`, plus
+ * ` · after the plan review` from v2 once a plan review finished. The Implementer only (never the "Tests · the
+ * Implementer" row, so the count shows once): `T of T tests pass` when every stored test passed. Null otherwise: a row
+ * not done, any other row, or no stored data.
+ * @returns {string|null}
+ */
+export function agentDetail(row, stored) {
+  if (!row || row.word !== 'done' || !stored || typeof stored !== 'object') return null;
+  if (row.key === 'planner') {
+    const n = stored.planVersion;
+    if (!Number.isSafeInteger(n) || n < 1) return null;
+    return `plan v${n}${n >= 2 && stored.planReviewed === true ? ' · after the plan review' : ''}`;
+  }
+  if (row.key === 'implementer') {
+    const t = stored.tests;
+    return t && Number.isSafeInteger(t.total) && t.total >= 1 && t.passed === t.total ? `${t.total} of ${t.total} tests pass` : null;
+  }
+  return null;
 }

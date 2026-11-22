@@ -6,12 +6,13 @@ import { execFileSync } from 'node:child_process';
 import { guardedGitEnvSync } from '../git-guard.mjs';
 import { getDb, tx } from '../db.mjs';                  // node:sqlite: tx(fn), never db.transaction (F23)
 import { createTicket, getTicket, cancelTicket, updateTicket, previousBranchesOf, stackedPrBaseOf, predecessorState, requestRunNow } from '../scheduler.mjs';
-import { readPrState, readPipelineExtras, readRunResultsById, readClarifyRow } from '../artifacts.mjs';
+import { readPrState, readPipelineExtras, readRunResultsById, readClarifyRow, listRunArtifacts } from '../artifacts.mjs';
 import { projectKey } from '../store.mjs';
 import { sliceBrief, replanBrief } from '../../shared/shape/slices.mjs';
 import { normalizeCare, normalizeRequirementKinds, careOfRow, requirementKindsOf, careRunPlan } from '../../shared/shape/feature-record.mjs';
 import { shaperSmallRunsOn, smallRunsOfFeature, smallRunsOfPipeline, careOfPipeline, careOfFeature, prototypeOfPipeline } from './small-runs.mjs';
 import { prototypeView } from '../../shared/shape/prototype.mjs';
+import { planVersionOf, startsFromOf, ownsOf } from '../../shared/shape/run-facts.mjs';
 import { requirementsCheck } from '../../shared/review/requirements-coverage.mjs';
 import { acceptanceGate, ledgerCheck } from '../../shared/shape/acceptance.mjs';
 import { shipLedger, careOutcome, unmetLines } from '../../shared/shape/ship-ledger.mjs';
@@ -790,7 +791,8 @@ export function chainFeature(members) {
     slices: sliceRows(f.id).map((r) => ({ index: r.index, title: r.title, ticketId: r.ticketId, pipelineId: r.pipelineId })) };
 }
 
-/** D16, D22: where a run sits in its feature, or null. */
+/** D16, D22: where a run sits in its feature, or null. Shaper small runs D2 (D8): a marked feature with the flag on adds
+ *  `owns` (always an array) and `startsFrom` (null when the run's row stores no source); otherwise dev's exact keys. */
 export function sliceOfPipeline(pipelineId, { live = () => null } = {}) {
   const at = featureOfPipeline(pipelineId);
   if (!at) return null;
@@ -799,7 +801,44 @@ export function sliceOfPipeline(pipelineId, { live = () => null } = {}) {
   const s = v.slices[at.idx - 1];
   const n = v.slices[at.idx] || null;
   return { featureId: v.id, title: v.title, index: at.idx, total: v.total, sliceTitle: s ? s.title : '',
-    state: s ? s.state : null, next: n ? { index: n.index, title: n.title, state: n.state } : null, ...(s && s.stop ? { stop: s.stop } : {}) };
+    state: s ? s.state : null, next: n ? { index: n.index, title: n.title, state: n.state } : null, ...(s && s.stop ? { stop: s.stop } : {}),
+    ...(shaperSmallRunsOn() && smallRunsOfFeature(v.id) ? runFacts(v, at.idx, s) : {}) };
+}
+
+const branchOf = (pid) => (pid ? j(getDb().prepare('SELECT branch FROM pipelines WHERE id = ?').get(String(pid))?.branch, null) : null);
+
+/** D2 (D7, D8): a run's Owns rows (from the `requirements` featureView already put on the slice, with the agreed texts)
+ *  and where it starts from (its stored `branch.source` against the feature base and the earlier runs' branches). */
+function runFacts(v, index, s) {
+  const req = (s && s.requirements) || { ids: [], check: null };
+  const agreed = featureRow(v.id)?.outline?.agreed;
+  const texts = Object.fromEntries((Array.isArray(agreed) ? agreed : []).map((a) => [a.id, a.text]));
+  const runs = v.slices.filter((x) => x.index < index && x.pipelineId).map((x) => ({ index: x.index, feature: branchOf(x.pipelineId)?.feature || null }));
+  const source = s && s.pipelineId ? branchOf(s.pipelineId)?.source || null : null;
+  return { owns: ownsOf({ ids: req.ids, texts, check: req.check }), startsFrom: startsFromOf({ index, source, base: featureBase(v.id), runs }) };
+}
+
+const AGENT_TEST_NODES = Object.freeze(['n_impl', 'n_check']);
+const isCount = (x) => Number.isSafeInteger(x) && x >= 0;
+const testsOf = (meta) => {
+  const t = meta && typeof meta === 'object' ? meta.tests : null;
+  return t && typeof t === 'object' && isCount(t.passed) && isCount(t.total) && t.total >= 1 && t.passed <= t.total
+    ? { passed: t.passed, total: t.total } : null;
+};
+
+/** D2 (D14): what the Agents rows' detail reads, from existing records only (it writes nothing): the highest plan
+ *  version among the run's plan artifacts, whether a plan review (n_roles) finished, and the last valid stored test
+ *  count (`exec_meta.tests`) of an n_impl or n_check step. Each part null/false when absent. */
+export async function storedAgentFacts(pipelineId) {
+  const plans = await listRunArtifacts(pipelineId, { kind: 'plan' });
+  const planVersion = plans.length ? Math.max(...plans.map((a) => planVersionOf(a.relPath))) : null;
+  const db = getDb();
+  const planReviewed = !!db.prepare("SELECT 1 FROM pipeline_steps WHERE pipeline_id = ? AND node_id = 'n_roles' AND status = 'done' LIMIT 1")
+    .get(String(pipelineId));
+  const rows = db.prepare(`SELECT exec_meta FROM pipeline_steps WHERE pipeline_id = ? AND node_id IN (${AGENT_TEST_NODES.map(() => '?').join(', ')})
+    AND exec_meta IS NOT NULL ORDER BY rowid`).all(String(pipelineId), ...AGENT_TEST_NODES);
+  const tests = rows.map((r) => testsOf(j(r.exec_meta, null))).filter(Boolean).at(-1) || null;
+  return { planVersion, planReviewed, tests };
 }
 
 /** One line: a title in a PR body is data, so its line breaks and runs of whitespace collapse to one space. */

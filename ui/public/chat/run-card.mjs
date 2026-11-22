@@ -27,8 +27,7 @@ import { runModel, isFinishedState, RUN_STATES } from '../../../src/shared/run-m
 import { paintRunStatus, statusText, kindLabel, syncActions, pauseResumeOwn, renderMemberRows } from '../run-status-card.mjs';
 import { delegateQuestion } from '../question-delegate.mjs';
 import { paintStatusDot } from '../status-dot.mjs';
-import { runShortWord } from '../../../src/shared/shape/run-agents.mjs';
-import { waitsForRunWord } from '../../../src/shared/shape/run-stops.mjs';
+import { cardShortWord } from '../../../src/shared/shape/run-agents.mjs';
 import { levelAtLeast } from '../ui-level.mjs';
 import { featureCardModel, oneCardModel, paintFeatureLog } from '../shape/feature-card.mjs';
 import { buildCheckRows } from '../shape/check-row.mjs';
@@ -45,18 +44,6 @@ import { roundsModel, liveRound } from './rounds.mjs';
 import { flagOn } from '../flags.mjs';
 import { labelChip } from '../label-picker.mjs';
 
-/** Small runs C2: a member run that finished (done, or its model's ready, in-review or merged state). */
-const isFinishedMember = (mb) => mb.state === 'done' || isFinishedState(mb.model && mb.model.state);
-/** Small runs C2 (D13): a marked card's run row word. A finished run reads `done` when it has a Care plan, or no snapshot
- *  is loaded; a run without `careRun` (null from runShortWord) keeps dev's memberStatusText. */
-const cardShortWord = (mb, snap, slice = null) => (isFinishedMember(mb) && (!snap || (snap.stepper && snap.stepper.careRun)) ? 'done'
-  : runShortWord(snap, slice) || chainWaitWord(mb));
-/** Item 9: a run that has not started and waits on its chain predecessor (no stop): the predecessor index dev's
- *  "starts after run N" reads (the member's ticket), as the short word. A held ticket keeps dev's word. */
-const chainWaitWord = (mb) => {
-  const t = mb.model && mb.model.state === 'waiting' && mb.run && mb.run.ticket;
-  return t && !t.held && t.after && Number.isInteger(t.after.index) ? waitsForRunWord(t.after.index) : null;
-};
 /** Small runs C3 (D15): a member's slice in the feature view (its `stop` and `waitsFor`), by pipeline or ticket. */
 const sliceOfMember = (card, mb) => ((card && card.feature && card.feature.slices) || [])
   .find((x) => (mb.pipelineId && x.pipelineId === mb.pipelineId) || (mb.ticketId && x.ticketId === mb.ticketId)) || null;

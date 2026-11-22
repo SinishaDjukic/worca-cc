@@ -2,7 +2,7 @@
 // the body of register() was moved verbatim from ui/server.mjs. Edit it here from now on.
 import { releaseVersionHint } from '../../../src/core/draft-release.mjs';
 import { actorOf } from '../../../src/core/identity.mjs';
-import { cancelRest, currentFeatureId, featureShipSuggestion, featureThread, featureView, listShapePlans, rechainWaiting, replanRest, resumeFeature, setApproveEach, setFeatureAcceptance, shaperCard, sliceOfPipeline } from '../../../src/core/shape/features.mjs';
+import { cancelRest, currentFeatureId, featureShipSuggestion, featureThread, featureView, listShapePlans, rechainWaiting, replanRest, resumeFeature, setApproveEach, setFeatureAcceptance, shaperCard, sliceOfPipeline, storedAgentFacts } from '../../../src/core/shape/features.mjs';
 import { normalizeAcceptance } from '../../../src/shared/shape/acceptance.mjs';
 import { CONFIRM_REASON_MAX, MARK_WORDS, confirmMarkOf, reasonLine } from '../../../src/shared/shape/ship-ledger.mjs';
 import { recordFeatureFigures } from '../../../src/core/shape/measure.mjs';
@@ -45,12 +45,14 @@ app.get('/api/shape/features/:id', async (req, res) => {
 });
 
 // D16, D22: where a run sits in its feature, for the run page line, the Chat home card and Ship it (P11).
-app.get('/api/shape/pipelines/:pid/slice', (req, res) => {
+// Shaper small runs D2 (D8): a marked feature's answer (flag on: it carries `owns`) adds the Agents rows' `stored` facts.
+app.get('/api/shape/pipelines/:pid/slice', async (req, res) => {
   try {
     const out = sliceOfPipeline(req.params.pid, { live: liveSliceOf });
     if (!out) return res.status(404).json({ error: 'not a slice' });
-    res.json({ ...out, threadId: featureThread(out.featureId)?.threadId || null });   // s2 D14: the thread that started the feature
-  } catch (err) { shapeRouteError(res, err); }
+    const stored = 'owns' in out ? { stored: await storedAgentFacts(req.params.pid) } : {};
+    res.json({ ...out, threadId: featureThread(out.featureId)?.threadId || null, ...stored });   // s2 D14: the thread that started the feature
+  } catch (err) { if (!res.headersSent) shapeRouteError(res, err); }
 });
 
 // Shaper s2 (D10): the Chat feature card — the planning run's decision log, and once split the feature view with its

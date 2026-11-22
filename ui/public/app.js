@@ -345,6 +345,8 @@ import { createAwayScreensaver } from './away-screensaver.mjs';
 import { registerAskRenderer, askRendererFor, askKindOf } from './ask/registry.mjs';
 import { activeAgents, snapshotFromState } from './ask-run-card.mjs';
 import { mountRunAgents } from './shape/run-agents.mjs';
+import { mountRunFacts } from './shape/run-facts.mjs';
+import { runAgentRows, cardShortWord } from '../../src/shared/shape/run-agents.mjs';
 import { registerChatRunCard } from './chat/run-card.mjs';
 import { registerDirectionAddon } from './chat/direction.mjs';
 import { renderPlanBody } from './shape/plan-body.mjs';
@@ -29209,7 +29211,8 @@ const HD_TABS = [
   { key: 'sessions', label: 'Sessions', level: 'advanced', badge: (d) => sessionsBadge(d.state), visible: (d) => sessionsTabVisible(d.state), build: (...a) => buildHdSessions(...a) },
   { key: 'agents', label: 'Agents', level: 'expert',
     badge: (d) => ((Array.isArray(d.state.subAgents) && d.state.subAgents.length) ? String(d.state.subAgents.length) : null),
-    visible: () => true, build: (...a) => buildHdAgents(...a) },
+    // Shaper small runs D2 (D11): with the flag on, a Care run's Agents live in the Overview's one Agents place.
+    visible: (d) => !hdAgentsMerged(d.state), build: (...a) => buildHdAgents(...a) },
 ];
 
 function initHdTabs(screen, record, data) {
@@ -30761,6 +30764,7 @@ function buildHdOverview(sec, record, data) {
     verdict.append(chip, document.createTextNode(' No review results captured. The run did not complete.'));
   }
   if (verdict.childNodes.length) wrap.appendChild(verdict);
+  hdRunPlaces(wrap, record, data);
   // The pull request is the card head's; the Actions tab has the controls.
   const git = gitOn() && isGitRun(hdRunOf(record, data));
   if (checks.length) below.appendChild(issueList(checks.map((c) => ({ ...c, origin: 'review' }))));
@@ -30843,6 +30847,50 @@ function buildHdOverview(sec, record, data) {
     note.textContent = 'finished at quiescence — End not reached';
     wrap.appendChild(note);
   }
+}
+
+/** Shaper small runs D2 (D12, D16): the saved Overview's run facts and its one Agents place. With the flag on, a Care run
+ *  gets C2's `.rd-run-agents` box (dev's saved page has none) holding dev's sub-agent body at Expert, in place of the
+ *  Agents tab (HD_TABS); the facts host is made only once a /slice answer carries `owns`. Flag off: nothing. */
+function hdRunPlaces(wrap, record, data) {
+  if (!flagOn('shaperSmallRuns')) return;
+  const st = data.state || {};
+  let agents = null;
+  if (hdAgentsMerged(st)) {
+    agents = document.createElement('div');
+    agents.className = 'rd-run-agents';
+    wrap.appendChild(agents);
+  }
+  const paintAgents = (info) => {
+    if (!agents) return;
+    agents.hidden = !mountRunAgents(agents, snapshotFromState(st), { stored: info && info.stored });
+    let sub = agents.querySelector(':scope > .rd-run-subagents');
+    if (!sub) {
+      sub = tagLevel(document.createElement('div'), 'expert');
+      sub.className = 'rd-run-subagents';
+      buildHdAgents(sub, record, data);
+    }
+    agents.append(sub);   // under the rows
+  };
+  let facts = null;
+  const paintFacts = (info) => {
+    if (info && 'owns' in info) {
+      if (!facts) {
+        facts = document.createElement('div');
+        facts.className = 'rd-run-facts';
+        if (agents) agents.before(facts); else wrap.appendChild(facts);
+      }
+      mountRunFacts(facts, info);
+    }
+    paintAgents(info);
+  };
+  const pid = (record && record.id) || st.id || '';
+  paintFacts(pid ? sliceInfoFor(pid, paintFacts) : null);
+}
+
+/** D11: with the flag on, a saved Care run's one Agents place is the Overview's `.rd-run-agents`. */
+function hdAgentsMerged(st) {
+  return flagOn('shaperSmallRuns') && !!(st && st.stepper && typeof st.stepper === 'object' && st.stepper.careRun);
 }
 
 /** The Task tab: the run's prompt in full, rendered as the markdown it was written in, under the run's place (project,
@@ -31735,6 +31783,7 @@ function ensureRdTabs(screen, r) {
     const tabs = detailTabsOf(screen);
     if (tabs && tabs.cells.has(want) && levelAtLeast(tabs.cells.get(want).tab.level || 'simple') && (gitOn() || !tabs.cells.get(want).tab.needsGit)) tabs.activate(want);
   }
+  rdSyncAgentsPlace(screen, rdCtx(r));   // D2 (D11): a rebuilt bar keeps the one Agents place
 }
 
 // ── Live log tab ────────────────────────────────────────────────────────────
@@ -32280,13 +32329,69 @@ function buildRdOverview(sec, ctx) {
   wrap.append(banner, agents);
   below.append(checklists, skills);
   adoptRunCard(sec, wrap, below);
-  const paintAgents = (run) => {
-    const snap = run && run.stepper && run.stepper.careRun ? snapshotFromState(run) : null;
-    agents.hidden = !mountRunAgents(agents, snap ? { ...snap, pendingQuestion: run.pendingQuestion || null } : null);
+  // Shaper small runs D2 (D16): the run's facts host is made only once a /slice answer carries `owns` (a marked feature,
+  // flag on), so every other Overview keeps dev's DOM. The facts and the Agents rows' detail paint from the same answer.
+  let facts = null;
+  const ensureFactsHost = () => {
+    if (!facts) { facts = document.createElement('div'); facts.className = 'rd-run-facts'; agents.before(facts); }
+    return facts;
   };
-  const paint = (c) => { rdOvStateBanner(banner, c.run); paintAgents(c.run); paintRdChecklists(checklists, c.run); paintRunSkills(skills, c.run.skillMount); };
+  let last = ctx;
+  let doneSig = null;
+  let subSig = null;
+  const repaint = () => { if (sec.isConnected) paint(last); };
+  const paintAgents = (run, info) => {
+    const snap = run && run.stepper && run.stepper.careRun ? snapshotFromState(run) : null;
+    const full = snap ? { ...snap, pendingQuestion: run.pendingQuestion || null } : null;
+    agents.hidden = !mountRunAgents(agents, full, { stored: info && info.stored });
+    // D16: a finished agent changes what the stored facts say: drop the cached answer and ask again, once per change.
+    // The emptied entry is momentary, as the shape-feature frame's SLICE_INFO.clear() already makes it.
+    const sig = full ? runAgentRows(full).filter((r) => r.word === 'done').map((r) => r.key).join(',') : null;
+    if (info && 'owns' in info && doneSig !== null && sig !== doneSig && run.pipelineId) {
+      SLICE_INFO.delete(run.pipelineId);
+      sliceInfoFor(run.pipelineId, repaint);
+    }
+    doneSig = sig;
+    // D11: the one Agents place holds dev's sub-agent groups at Expert, repainted only when they change.
+    let sub = agents.querySelector(':scope > .rd-run-subagents');
+    if (!rdAgentsMerged(run) || agents.hidden) { if (sub) sub.remove(); subSig = null; return; }
+    if (!sub) { sub = tagLevel(document.createElement('div'), 'expert'); sub.className = 'rd-run-subagents'; subSig = null; }
+    agents.append(sub);   // after the rows
+    const sig2 = (Array.isArray(run.subAgents) ? run.subAgents : []).map((a) => `${a && a.id}:${a && a.status}`).join(',');
+    if (sig2 !== subSig) { subSig = sig2; rdAgentsBody(sub, run); }
+  };
+  const paint = (c) => {
+    last = c;
+    rdOvStateBanner(banner, c.run);
+    const info = flagOn('shaperSmallRuns') && c.run.pipelineId ? sliceInfoFor(c.run.pipelineId, repaint) : null;
+    if (info && 'owns' in info) mountRunFacts(ensureFactsHost(), info);
+    else if (facts && info) mountRunFacts(facts, null);
+    paintAgents(c.run, info);
+    paintRdChecklists(checklists, c.run);
+    paintRunSkills(skills, c.run.skillMount);
+  };
   paint(ctx);
   sec.__update = paint;
+}
+
+/** Shaper small runs D2 (D11): with the flag on, a Care run's one Agents place is the Overview's `.rd-run-agents`. */
+function rdAgentsMerged(run) {
+  return flagOn('shaperSmallRuns') && !!(run && run.stepper && typeof run.stepper === 'object' && run.stepper.careRun);
+}
+
+/** D11: initDetailTabs filters `visible` once, at build, and `careRun` can arrive later: each frame hides the Agents tab
+ *  and its section once the condition holds. An open Agents tab gives way to Overview, and its focus with it. */
+function rdSyncAgentsPlace(screen, ctx) {
+  if (!screen || !rdAgentsMerged(ctx && ctx.run)) return;
+  const btn = screen.querySelector('.rd-tab[data-sec="agents"]');
+  if (!btn) return;
+  const ov = screen.querySelector('.rd-tab[data-sec="overview"]');
+  const hadFocus = document.activeElement === btn;
+  if (btn.classList.contains('active') && ov) ov.click();
+  btn.hidden = true;
+  const sec = screen.querySelector('.rd-sec[data-sec="agents"]');
+  if (sec) sec.hidden = true;
+  if (hadFocus && ov) ov.focus();
 }
 
 // ── Agents tab ──────────────────────────────────────────────────────────────
@@ -32521,6 +32626,7 @@ function rdUpdateSections(r) {
     if (typeof sec.__update === 'function') sec.__update(ctx);
   }
   rdPaintTabBadges(screen, ctx);
+  rdSyncAgentsPlace(screen, ctx);
   paintActionsHeaders();   // the pill needs the run's pipeline id, which arrives with state frames
 }
 
@@ -35269,7 +35375,7 @@ const withChainPr = (x, m) => (x && !x.pr && m.prUrl && isTerminalStatus(x.statu
 
 /** A group (a Run-after chain from schedulesView, or a feature / user group from /api/run-groups) as the list's group
  *  item: members carry their raw run from this tab's live map, else memberRun, else their ticket. */
-function runsGroupItem({ id, groupKind, title, members, cost = null, planning = null }) {
+function runsGroupItem({ id, groupKind, title, members, cost = null, planning = null, smallRuns = false }) {
   // /api/run-groups members carry no projectKey / historyKey (src/core/run-groups.mjs member()), so a finished member's
   // href would fall back to the group page itself: the History row knows the project.
   const histPk = (pid) => (pid ? (((state.historyAll || []).find((p) => p && p.id === pid)) || {}).projectKey || '' : '');
@@ -35295,6 +35401,9 @@ function runsGroupItem({ id, groupKind, title, members, cost = null, planning = 
       ticketId: m.ticketId || null, runId: r ? r.runId : '', kind: r ? 'live' : m.pipelineId ? 'hist' : 'sched', run,
       roundOf: m.pipelineId ? runsRoundOf(r, h) : null,   // null for an origin: a member's own rounds fold under it
       memo: memoFor(m.pipelineId || m.ticketId || `${id}:${i}`),
+      // D2: a small-runs member's row says the card's short word (runs-list.mjs cardShortWord), read from its live snapshot.
+      // Its pending question rides along, as the run page's Agents panel attaches it, so a waiting member reads so.
+      ...(smallRuns && r && r.stepper && r.stepper.careRun ? { snap: { ...snapshotFromState(r), pendingQuestion: r.pendingQuestion || null } } : {}),
       startedAt: (r && r.startedAt) || (h && h.startedAt) || null,       // D12: the group's dispatch time
       // D32: the member's own cost (a chain's total sums these). D5: max(live, History, the group's stored byPipeline):
       // a finished run in the live map at 0 never wins.
@@ -35322,11 +35431,12 @@ function runsGroupItem({ id, groupKind, title, members, cost = null, planning = 
   const liveCost = Object.fromEntries(items.filter((x) => x.kind === 'live' && x.run && typeof x.run.totalCostUsd === 'number')
     .map((x) => [x.pipelineId, x.run.totalCostUsd]));
   return { id, groupKind, title, members: items, planning: planningItem, groupKey: g.key, groupName: g.name, memo: memoFor(`group:${id}:${sig}`),
-    cost, liveCost, costMemo: memoFor(`cost:${id}:${sig}`) };
+    cost, liveCost, costMemo: memoFor(`cost:${id}:${sig}`), ...(smallRuns ? { smallRuns: true } : {}) };   // D2 (D1)
 }
 function runsGroupItems() {
   const owned = new Set((state.runGroups || []).flatMap((g) => g.members.flatMap((m) => [m.pipelineId && `p:${m.pipelineId}`, m.ticketId && `t:${m.ticketId}`])).filter(Boolean));
-  const own = (state.runGroups || []).map((g) => runsGroupItem({ id: g.id, groupKind: g.kind, title: g.title, members: g.members, cost: g.cost || null, planning: g.planning || null }));
+  const own = (state.runGroups || []).map((g) => runsGroupItem({ id: g.id, groupKind: g.kind, title: g.title, members: g.members, cost: g.cost || null, planning: g.planning || null,
+    smallRuns: g.smallRuns === true }));
   // A run group stands for any chain that shares a member with it (a feature's Run-after chain).
   const chains = schedulesView.chains()
     .filter((c) => !c.members.some((m) => owned.has(`p:${m.pipelineId}`) || owned.has(`t:${m.ticketId}`)))
@@ -35671,6 +35781,7 @@ const runsRowSig = (r) => [r.key, r.pipelineId, r.href, r.title, r.model.state, 
   r.model.pr ? [r.model.pr.id, r.model.pr.word, r.model.pr.title, r.model.pr.icon, r.model.pr.pending ? 1 : 0] : 0, r.model.progress && r.model.progress.mode === 'stages' ? [r.model.progress.stage, r.model.progress.label] : 0,
   r.activityMs || 0, r.groupName, r.cost ?? null, r.costUsd ?? null, r.needs ? 1 : 0,
   r.kind === 'chain' ? [r.open ? 1 : 0, r.members.map((m) => [m.key, m.model.state, m.model.line, m.title, m.href, m.cost ?? null, m.model.symbol || '', roundsSig(m),
+    r.smallRuns ? cardShortWord({ model: m.model, run: m.run }, m.snap || null) || '' : '',   // D2: the member's short word
     m.model.pr ? [m.model.pr.id, m.model.pr.word, m.model.pr.title, m.model.pr.icon, m.model.pr.pending ? 1 : 0] : 0])] : 0, (r.labels || []).join('\n')];
 // Where focus goes back to after the list is rebuilt under it. A row can change key in the
 // rebuild: opening a finished run acknowledges it, and the same paint turns live:<runId> into
@@ -36739,6 +36850,7 @@ function setRdMode(screen, mode, tab = '', { focus = true } = {}) {
     // The graph laid out while its section sat in a hidden subtree measured 0px wide;
     // repaint it now that it is visible.
     const r = rdOpenRun();
+    if (r) rdSyncAgentsPlace(screen, rdCtx(r));   // D2 (D11): a deep link to the merged Agents tab lands on Overview
     if (r && changed) paintRdGraph(screen, r);
   }
   if (changed && el.runDetail) el.runDetail.scrollTop = 0;

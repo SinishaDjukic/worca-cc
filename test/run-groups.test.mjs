@@ -193,3 +193,45 @@ test('a new group of only feature slices is refused; runNameInputs reads title a
   assert.deepEqual(runNameInputs(['p-q']), [{ title: 'Fix login', firstMessage: 'Safari loops after SSO' }]);
   assert.equal(runNameInputs(['p-q', 'missing']), null);
 });
+
+/** D2 · a 10-slice feature whose origin carries the small-runs marker (`shape_stats.smallRuns`) or not. */
+function tenSliceFeature({ marked = true } = {}) {
+  n += 1;
+  const origin = `p-ten-${n}`;
+  seedPipelineRow({ id: origin, title: 'Shape it', status: 'done' });
+  if (marked) getDb().prepare('UPDATE pipelines SET shape_stats = ? WHERE id = ?').run('{"smallRuns":true}', origin);
+  const outline = { why: 'w', slices: Array.from({ length: 10 }, (_, i) => ({ id: `s${i + 1}`, title: `Slice ${i + 1}`, goal: 'g',
+    inScope: [], outOfScope: [], acceptance: [], dependsOn: [], estimate: 'small' })) };
+  const { id } = createSliceFeature({ pipelineId: origin, projectDir: PROJECT, title: 'Ten runs', outline, perspectives: [], workflowId: 'wf_shape' });
+  return { id, origin };
+}
+const withSmallRuns = (on, fn) => {
+  const prev = process.env.WORCA_FLAGS;
+  try {
+    if (on) process.env.WORCA_FLAGS = 'shaperSmallRuns'; else delete process.env.WORCA_FLAGS;
+    return fn();
+  } finally {
+    if (prev === undefined) delete process.env.WORCA_FLAGS; else process.env.WORCA_FLAGS = prev;
+  }
+};
+
+test('D2 (D1): a marked 10-run feature is 1 group of 10, run 1 is the planning run, smallRuns: true with the flag on', () => {
+  const f = tenSliceFeature();
+  const groups = withSmallRuns(true, () => listRunGroups().filter((x) => x.id === f.id));
+  assert.equal(groups.length, 1);
+  const [g] = groups;
+  assert.equal(g.members.length, 10);
+  assert.equal(g.members[0].pipelineId, f.origin, 'run 1 is the planning run');
+  assert.deepEqual(g.members.map((m) => m.position), [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]);
+  assert.equal(g.smallRuns, true);
+});
+
+test('D2 (D1): flag off, or an unmarked feature: the group keeps dev\'s keys (no smallRuns key at all)', () => {
+  const marked = tenSliceFeature();
+  const plain = tenSliceFeature({ marked: false });
+  const off = withSmallRuns(false, () => listRunGroups());
+  const on = withSmallRuns(true, () => listRunGroups());
+  assert.equal('smallRuns' in off.find((x) => x.id === marked.id), false);
+  assert.equal('smallRuns' in on.find((x) => x.id === plain.id), false);
+  for (const g of on.filter((x) => x.kind === 'user')) assert.equal('smallRuns' in g, false);
+});

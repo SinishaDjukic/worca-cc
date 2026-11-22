@@ -92,3 +92,25 @@ test('a live Care run\'s Agents section is inside the card\'s .rd-sheet-nav, not
   assert.equal(dev.window.document.querySelector('#run-detail .run-agents'), null);
   assert.ok(!host || host.hidden, 'a dev run shows no Agents host');
 });
+
+test('D2 (D13): a done row shows its stored detail in place of "done"; without stored data it reads done; the count is on one row', () => {
+  const lean = careRunPlan('lean', { runRoles: ['product'] });
+  assert.equal(lean.testWriter, false);
+  const doneSnap = (careRun) => snapshotFromState({ id: 'p2', status: 'done', stepper: manifest(careRun),
+    steps: ['n_clarify', 'n_plan', 'n_roles', 'n_refine', 'n_impl', 'n_review'].map((id) => row(id)), active: [] });
+  const stored = { planVersion: 2, planReviewed: true, tests: { passed: 12, total: 12 } };
+  const detailOf = (host, label) => [...host.querySelectorAll('.plan-check-row')]
+    .find((r) => r.querySelector('.plan-check-label').textContent === label).querySelector('.plan-check-detail').textContent;
+  const host = doc.createElement('div');
+  mountRunAgents(host, doneSnap(CARE), { stored });
+  assert.equal(detailOf(host, 'Planner'), 'plan v2 · after the plan review');
+  const plain = doc.createElement('div');
+  mountRunAgents(plain, doneSnap(CARE));
+  assert.equal(detailOf(plain, 'Planner'), 'done');
+  const noWriter = doc.createElement('div');
+  mountRunAgents(noWriter, doneSnap(lean), { stored });
+  const counts = [...noWriter.querySelectorAll('.plan-check-detail')].filter((d) => d.textContent === '12 of 12 tests pass');
+  assert.equal(counts.length, 1);
+  assert.equal(counts[0].closest('.plan-check-row').querySelector('.plan-check-label').textContent, 'Implementer');
+  assert.equal(detailOf(noWriter, 'Tests · the Implementer'), 'done');
+});

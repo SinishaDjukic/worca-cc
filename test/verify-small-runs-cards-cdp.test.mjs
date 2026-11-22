@@ -88,3 +88,18 @@ test('D1 Ship: blocked, ready, not met and done beside the prototype\'s #ship at
   assert.match(s, /prototypeShot\('ship', \['\[data-act="prdlg"\]', '\[data-act="prok"\]'\]/);
   assert.doesNotMatch(s, /'ship from the feature page'/);
 });
+
+test('D2: runs-list, run-facts, agents-place and card-members at Expert, the 10 members, one Agents place, and the flag-off control', () => {
+  const s = src();
+  for (const name of ['runs-list', 'run-facts', 'agents-place', 'card-members']) assert.ok(s.includes(`\`${name}`), name);
+  for (const needle of ['.srows.runs-members > .runs-item', '.runs-stage', "uiLevel: 'expert'", 'm.rows.length === 10', 'm.rows[0].pid === D2.pid(1)',
+    "places === 1", "live === 2 && panel === 2 && saved === 1", 'PATCH /api/flags', "method: 'PATCH'", 'delete process.env.WORCA_FLAGS',
+    '#history/', '#running/${D2_RUN}', '#chat/new/run/${D2_LIVE}/overview', 'stageInside', 'scrollWidth <= e.clientWidth',
+    "'plan v2 · after the plan review'", 'for (const width of [WIDTH, 1280])']) assert.ok(s.includes(needle), needle);
+  assert.match(s, /Math\.abs\(r\.height - 32\) > 1/, 'the 32px (±1px) member rows');
+  assert.match(s, /m\.spreadX <= 1/);
+  // The truncation proof (fit-1-1, requirements-1-2): a long-title member; the line's natural width; the title ellipsizes.
+  for (const needle of ['const D2_LONG = 4;', 'Math.abs(r.subW - r.subScroll) > 1 || r.subScroll > r.subClient', 'long.titleEllipsis && long.titleCut',
+    "words.length === 8 && words.every((w) => w === 'done')"]) assert.ok(s.includes(needle), needle);
+  assert.match(s, /await d2Phase\(\);\nawait finish\(\);\n$/, 'D2 runs last, before the verdict');
+});

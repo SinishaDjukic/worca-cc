@@ -279,8 +279,9 @@ a.rd-crumb:hover{color:var(--ink);text-decoration:underline;}
    (.flag-chip: 18px, violet for Labs). Never truncated. */
 .chat-home-act-badge{flex:none;box-sizing:border-box;display:inline-flex;align-items:center;height:18px;padding:0 6px;border-radius:var(--r-xs);background:var(--slate-bg);color:var(--slate-ink);font-size:var(--fs-caption);font-weight:500;line-height:1;white-space:nowrap;}
 .shape-checklists{margin:12px 0;display:flex;flex-direction:column;gap:6px;}
-/* Small runs C2: the Overview's Agents section (.srows rows) sits like the Perspective checklists above. */
-.run-agents{margin:12px 0;gap:6px;padding-top:0;}
+/* Small runs C2: the Overview's Agents section (.srows rows) sits like the Perspective checklists above. D2: so does the
+   run's facts box (Starts from, Owns) above it. */
+.run-agents,.run-facts{margin:12px 0;gap:6px;padding-top:0;}
 .shape-cl-title{font-size:13px;margin:0;color:var(--ink-2);}
 .shape-cl-cycle{border:1px solid var(--line);border-radius:var(--r-ctrl);padding:6px 10px;background:var(--panel);
   display:flex;flex-direction:column;align-items:flex-start;gap:6px;}
@@ -401,3 +402,22 @@ a.rd-crumb:hover{color:var(--ink);text-decoration:underline;}
 /* A person's Not met / Dropped reason (owner direction da6198d8d): its own line above the row's mark picker. */
 .ask-shipcard.is-small-runs .ask-shipcard-reason{flex:1 1 100%;font-size:12px;color:var(--ink-2);overflow-wrap:anywhere;}
 .ask-shipcard.is-small-runs .ask-shipcard-id{white-space:nowrap;}
+/* Shaper small runs D2 (D4): a marked feature's expanded Runs-list members are .srows rows: one line, at least 32px on a
+   fine pointer (a floor, never a cap). A staged live member keeps dev's whole in-anchor stage block, and coarse pointers
+   keep dev's 40px member rows (runs/running-redesign.css). */
+@media (pointer: fine){
+  .srows.runs-members > .runs-item > a.runs-row:not(:has(> .runs-stage)){min-height:calc(var(--row-line) + 12px);}
+  /* The dot and the ⋯ columns take the same floor, so the dot stays centred on the title's line. */
+  .srows.runs-members > .runs-item:not(:has(> a.runs-row > .runs-stage)) > :is(.runs-pick, .runs-row-tail){height:calc(var(--row-line) + 12px);}
+}
+/* D4's truncation order: the title ellipsizes first (dev's member status gives way first, running-redesign.css), the line's
+   short word keeps its width; the right column stays dev's shrinkable one, so a long line plus a PR chip never overflows. */
+.srows.runs-members .runs-row-title{min-width:0;}
+.srows.runs-members .runs-row-sub{flex:none;}
+.srows.runs-members .runs-row-right{flex:0 1 auto;min-width:0;}
+/* D2 (D10): the Owns rows are one line: the id column fits R-arch-10 whole, the requirement text ellipsizes (the row's
+   tooltip holds it all). The Agents rows keep 32px: a done row's detail that would wrap under its name is clipped. */
+.srows.run-facts{--row-id:6.4em;}
+.srows.run-facts .plan-check-text{flex-wrap:nowrap;}
+.srows.run-facts .plan-check-label{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0;}
+.srows.run-agents .plan-check-text{max-height:var(--row-line);overflow:hidden;}

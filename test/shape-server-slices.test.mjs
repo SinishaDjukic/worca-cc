@@ -1528,3 +1528,33 @@ test('C5: a Verifier run is PR-exempt as verify', () => withEnvVars({ WORCA_FLAG
   for (let i = 0; i < 200 && e && !['done', 'stopped', 'error', 'paused'].includes(String(e.status)); i++) await sleep(50);
   if (e && e.orch && !['done', 'stopped', 'error'].includes(String(e.status))) await e.orch.stop?.();
 }));
+
+// ── Shaper small runs D2 (D8): /slice of a marked feature with the flag on adds owns, startsFrom and stored ───────────
+test('D2 (D8): GET /slice: marked + flag on adds owns, startsFrom and stored (also with startsFrom null); flag off dev\'s keys; 404 plain', async () => {
+  const DEV = ['featureId', 'title', 'index', 'total', 'sliceTitle', 'state', 'next', 'threadId'];
+  const f = mk(3, 'done');
+  getDb().prepare('UPDATE pipelines SET shape_stats = ? WHERE id = ?').run(JSON.stringify({ smallRuns: true }), f.pid);
+  const p2 = pipe('done');
+  getDb().prepare('UPDATE pipelines SET branch = ? WHERE id = ?').run(JSON.stringify({ feature: `feat/${p2}` }), p2);   // an old row: no source
+  getDb().prepare('UPDATE shape_feature_slices SET pipeline_id = ? WHERE feature_id = ? AND idx = 2').run(p2, f.id);
+  const slice = async (pid) => { const r = await get(`/api/shape/pipelines/${pid}/slice`); return { status: r.status, body: await r.json() }; };
+  await withEnvVars(SMALL_ON, async () => {
+    const one = await slice(f.pid);
+    assert.equal(one.status, 200);
+    assert.deepEqual(Object.keys(one.body), [...DEV.slice(0, 7), 'owns', 'startsFrom', 'threadId', 'stored']);
+    assert.deepEqual(one.body.owns, []);
+    assert.equal(one.body.startsFrom.kind, 'feature');
+    assert.deepEqual(one.body.stored, { planVersion: null, planReviewed: false, tests: null });
+    const two = await slice(p2);
+    assert.equal(two.body.startsFrom, null);
+    assert.deepEqual(two.body.owns, []);
+    assert.deepEqual(two.body.stored, { planVersion: null, planReviewed: false, tests: null });
+    assert.equal((await slice('p-plain-d2')).status, 404);
+  });
+  await withEnvVars(SMALL_OFF, async () => {
+    assert.deepEqual(Object.keys((await slice(f.pid)).body), DEV);
+    assert.deepEqual(Object.keys((await slice(p2)).body), DEV);
+  });
+  const plain = mk(2, 'done');
+  await withEnvVars(SMALL_ON, async () => assert.deepEqual(Object.keys((await slice(plain.pid)).body), DEV, 'unmarked: dev\'s keys'));
+});

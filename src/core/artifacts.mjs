@@ -36,6 +36,7 @@ import { attachWatchPipeline, getWatch, watchActive } from './pr-watch.mjs';
 import { insertRunTags, readRunTags, readTagsFor } from './run-tags-store.mjs';
 import { insertRunLabels, readLabelsFor, readRunLabels } from './run-labels-store.mjs';
 import { workInBase } from './in-base.mjs';
+import { planVersionOf } from '../shared/shape/run-facts.mjs';
 
 // ── DB row <-> state object mapping (Phase 3) ──────────────────────────────────
 // JSON columns are TEXT; (de)serialize at THIS boundary only. Reads are fail-safe:
@@ -401,9 +402,8 @@ export async function listRunArtifacts(pipelineId, filter = {}) {
  */
 export async function newestPlanPath(pipelineId, storeRoot) {
   if (!pipelineId || !storeRoot) return null;
-  const ver = (rel) => Number(/-v(\d+)\.md$/.exec(rel)?.[1] || 1);
   const plans = (await listRunArtifacts(pipelineId, { kind: 'plan' }))
-    .sort((a, b) => String(b.createdAt || '').localeCompare(String(a.createdAt || '')) || ver(b.relPath) - ver(a.relPath));
+    .sort((a, b) => String(b.createdAt || '').localeCompare(String(a.createdAt || '')) || planVersionOf(b.relPath) - planVersionOf(a.relPath));
   for (const a of plans) {
     const f = join(storeRoot, a.relPath);
     try { if (lstatSync(f).isFile()) return f; } catch { /* gone: try the next one */ }

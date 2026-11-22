@@ -13,7 +13,7 @@ import { projectKey } from '../src/core/store.mjs';
 import { shaperSmallRunsOn } from '../src/core/shape/small-runs.mjs';
 import { CRITERION_ID_RE } from '../src/shared/review/coverage.mjs';
 import { careOfRow } from '../src/shared/shape/feature-record.mjs';
-import { writeReview, writeClarify, appendAuditById } from '../src/core/artifacts.mjs';
+import { writeReview, writeClarify, appendAuditById, recordArtifact } from '../src/core/artifacts.mjs';
 import { createThread, linkRun } from '../src/core/ask/store.mjs';
 import { getTicket, runDueTickets, updateTicket, createTicket, requestRunNow } from '../src/core/scheduler.mjs';
 import { insertRunTags } from '../src/core/run-tags-store.mjs';
@@ -25,7 +25,7 @@ import {
   recordShip, clearShip, recordSliceDraft, featureShipSuggestion, featureShipInput, ONE_PR_MAX_LINES,
   liveSliceFrom, shaperCard, featureThread, featureRootSource, sliceOfTicket, busySliceOf, sliceGateState,
   addFeatureNote, featureNotes, appendFeatureRun, featureBase, liveRoundOf, setFeatureAcceptance, chatShipCardOffered,
-  changeAgreedRequirements, acceptanceRefusal,
+  changeAgreedRequirements, acceptanceRefusal, storedAgentFacts,
 } from '../src/core/shape/features.mjs';
 
 useTempHome(after, 'worca-shape-features-');
@@ -1761,3 +1761,89 @@ test('D1: a marked gate counts only confirmed ids while ship.acceptance keeps ev
   assert.equal(after.ship.acceptance.ready, false, 'the classic ledger is untouched');
   assert.equal(after.ship.smallRuns.confirmed[0].at, '2026-11-22T16:55:00.000Z');
 }));
+
+// ---- Shaper small runs D2 (D7, D8, D14): a run's Owns, Starts from and stored agent facts -----------------------------
+
+const SLICE_DEV_KEYS = ['featureId', 'title', 'index', 'total', 'sliceTitle', 'state', 'next'];
+/** A 10-run feature: run k owns R-po-k; each later run's stored source is the previous run's branch (run 1's the base). */
+function tenRunFeature({ marked = true, sources = true } = {}) {
+  const origin = pipe('done', { branch: { source: 'main', feature: 'feat/run-1' } });
+  if (marked) getDb().prepare('UPDATE pipelines SET shape_stats = ? WHERE id = ?').run('{"smallRuns":true}', origin);
+  const o = outlineOf(10);
+  o.slices.forEach((s, i) => { s.requirements = [`R-po-${i + 1}`]; });
+  o.agreed = o.slices.map((s, i) => ({ id: `R-po-${i + 1}`, text: `Requirement\n   ${i + 1}` }));
+  o.leftOut = [];
+  const { id } = mk(10, { pipelineId: origin, outline: o });
+  const pids = [origin];
+  for (let k = 2; k <= 10; k++) {
+    const p = pipe('done', { branch: sources ? { source: `feat/run-${k - 1}`, feature: `feat/run-${k}` } : { feature: `feat/run-${k}`, source: null } });
+    getDb().prepare('UPDATE shape_feature_slices SET pipeline_id = ? WHERE feature_id = ? AND idx = ?').run(p, id, k);
+    pids.push(p);
+  }
+  return { id, pids };
+}
+
+test('D2 (D8): a marked feature with the flag on: all 10 runs (run 1 included) answer owns and a non-null startsFrom', () => {
+  const { pids } = tenRunFeature();
+  withSmallRuns(true, () => {
+    pids.forEach((pid, i) => {
+      const s = sliceOfPipeline(pid);
+      assert.equal(s.index, i + 1);
+      assert.deepEqual(Object.keys(s).slice(0, SLICE_DEV_KEYS.length), SLICE_DEV_KEYS);
+      assert.deepEqual(s.owns, [{ id: `R-po-${i + 1}`, text: `Requirement ${i + 1}`, pass: null }]);
+      assert.ok(s.startsFrom, `run ${i + 1} has a startsFrom`);
+      if (i === 0) assert.deepEqual(s.startsFrom, { kind: 'feature', branch: 'main', text: 'the feature branch: nothing is finished yet' });
+      else assert.deepEqual(s.startsFrom, { kind: 'run', run: i, branch: `feat/run-${i}`, text: `the latest finished run (run ${i})` });
+    });
+  });
+});
+
+test('D2 (D8): a marked run whose row stores no source answers startsFrom: null and still its owns', () => {
+  const { pids } = tenRunFeature({ sources: false });
+  withSmallRuns(true, () => {
+    const s = sliceOfPipeline(pids[4]);
+    assert.equal(s.startsFrom, null);
+    assert.ok('startsFrom' in s);
+    assert.deepEqual(s.owns.map((r) => r.id), ['R-po-5']);
+  });
+});
+
+test('D2 (D8): flag off, or an unmarked feature: sliceOfPipeline keeps dev\'s keys (no owns, no startsFrom)', () => {
+  const marked = tenRunFeature();
+  const plain = tenRunFeature({ marked: false });
+  withSmallRuns(false, () => assert.deepEqual(Object.keys(sliceOfPipeline(marked.pids[2])), SLICE_DEV_KEYS));
+  withSmallRuns(true, () => assert.deepEqual(Object.keys(sliceOfPipeline(plain.pids[2])), SLICE_DEV_KEYS));
+});
+
+test('D2 (D14): storedAgentFacts reads plan versions, a done plan review and a stored test count; it writes nothing', async () => {
+  const changes = () => getDb().prepare('SELECT total_changes() AS n').get().n;
+  const step = (pid, key, nodeId, status, meta) => getDb().prepare(`INSERT INTO pipeline_steps (pipeline_id, key, node_id, status, exec_meta)
+    VALUES (?, ?, ?, ?, ?)`).run(pid, key, nodeId, status, meta == null ? null : JSON.stringify(meta));
+  const none = pipe('done');
+  let before = changes();
+  assert.deepEqual(await storedAgentFacts(none), { planVersion: null, planReviewed: false, tests: null });
+  assert.equal(changes(), before);
+
+  const both = pipe('done');
+  recordArtifact(both, 'plan', 'plans/x.md');
+  recordArtifact(both, 'plan', 'plans/x-v2.md');
+  step(both, '3:n_roles', 'n_roles', 'done');
+  step(both, '6:n_check', 'n_check', 'done', { tests: { passed: 12, total: 12 } });
+  before = changes();
+  assert.deepEqual(await storedAgentFacts(both), { planVersion: 2, planReviewed: true, tests: { passed: 12, total: 12 } });
+  assert.equal(changes(), before, 'total_changes() unchanged: no write');
+
+  const noReview = pipe('done');
+  recordArtifact(noReview, 'plan', 'plans/y-v2.md');
+  step(noReview, '3:n_roles', 'n_roles', 'start');
+  assert.deepEqual(await storedAgentFacts(noReview), { planVersion: 2, planReviewed: false, tests: null });
+
+  for (const bad of [{ passed: 13, total: 12 }, { passed: 1.5, total: 2 }, { passed: 0, total: 0 }, { passed: -1, total: 2 }, { passed: '3', total: 3 }, 'x']) {
+    const p = pipe('done');
+    step(p, '5:n_impl', 'n_impl', 'done', { tests: bad });
+    assert.equal((await storedAgentFacts(p)).tests, null, JSON.stringify(bad));
+  }
+  const impl = pipe('done');
+  step(impl, '5:n_impl', 'n_impl', 'done', { tests: { passed: 3, total: 4 } });
+  assert.deepEqual((await storedAgentFacts(impl)).tests, { passed: 3, total: 4 });
+});

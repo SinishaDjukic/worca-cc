@@ -9,6 +9,8 @@
 //   C1 `#prototype` offered, building, built, remark proposed, confirmed ([data-proto] 0, .5, 1, 2, 3);
 //   C2 `#build` rows and `#run-panel` Agents; C3 `#run-stops` question, answered fold and waiting row;
 //   C4 `#req-change` notice and its "How a change lands" fold;
+// D2 (last; D2_ONLY=1 runs it alone): the cases runs-list, run-facts, agents-place and card-members of a marked 10-run
+//   feature, in light and dark at 375px and 1280px at Expert, and the flag-off control's Agents places per page;
 // and one reduced-motion capture of Prototype building. A live phase then follows a REAL paced mock Design build
 // (WORCA_MOCK_DESIGN_MS=400) on the Chat card: the Lead row, a row per screen and pieces assembling, captured mid-build
 // and with reduced motion (chat-prototype-building-mid-light, chat-prototype-building-reduced-motion-light). Every list (the Verifier's gap `.srows` included) is measured:
@@ -79,7 +81,7 @@ const imp = (rel) => import(new URL(rel, import.meta.url).href);
 const { server, runs, reqChanges } = await imp('../ui/server.mjs');
 const { getDb } = await imp('../src/core/db.mjs');
 const { projectKey } = await imp('../src/core/store.mjs');
-const { writeStoreMeta } = await imp('../src/core/artifacts.mjs');
+const { writeStoreMeta, recordArtifact } = await imp('../src/core/artifacts.mjs');
 const { createSliceFeature, recordShapePlan, changeAgreedRequirements, setFeatureAcceptance, recordShip } = await imp('../src/core/shape/features.mjs');
 const askStore = await imp('../src/core/ask/store.mjs');
 const { normalizeOutline } = await imp('../src/shared/shape/slices.mjs');
@@ -152,14 +154,14 @@ function thread(title, pid) {
   return th.id;
 }
 /** A marked 4-run feature (`states[k-1]`: done, running or planned) with its Chat thread. → {f, pid(k), threadId} */
-function seedFeature(tag, title, states, { withOutline = outline, requirementKinds = null } = {}) {
+function seedFeature(tag, title, states, { withOutline = outline, requirementKinds = null, titles = TITLES } = {}) {
   const pid = (k) => `c5${tag}00000${k}`;
   pipeline(pid(1), states[0], title, { smallRuns: true, care: careRec });
   const f = createSliceFeature({ pipelineId: pid(1), projectDir: proj, title, outline: withOutline, perspectives: ['product', 'architect'], workflowId: 'wf_shape',
     smallRuns: true, care, requirementKinds });
   states.forEach((st, i) => {
     const k = i + 1;
-    if (k > 1 && st !== 'planned') fire(f, k, pid(k), st, `Run ${k} · ${TITLES[i]}`);
+    if (k > 1 && st !== 'planned') fire(f, k, pid(k), st, `Run ${k} · ${titles[i]}`);
   });
   return { f, pid, threadId: thread(title, pid(1)) };
 }
@@ -537,6 +539,205 @@ async function shipCells(theme, width) {
   await prototypeShot('ship', ['[data-act="prdlg"]', '[data-act="prok"]'], `ship-done-${width}`, theme);
 }
 
+// ---- Shaper small runs D2: the Runs-list group row and its one-line members, the run's facts (Starts from, Owns) and
+// the one Agents place on the live page, the saved page and the panel, and the chat card's members. A marked 10-run
+// feature: run 1 (the planning run) and runs 2–9 done, run 10 live with stages, run 3 with a fix round. Cases:
+// runs-list, run-facts, agents-place, card-members; light and dark, 375px and 1280px, Expert. The flag-off control
+// flips the flag on the same server and seed (D18), counts the Agents places per page, then turns it back on.
+// Run 4's title is long on purpose: the D4 truncation proof (the title ellipsizes, the short word keeps its natural width).
+const D2_LONG = 4;
+const D2_TITLES = ['Store sign-ups', 'Welcome email', 'Show the sign-up form',
+  'List new members with their sign-up source, their referral code, their chosen plan and the date they joined', 'Export the member list',
+  'Filter members by date', 'Sort the member list', 'Page through members', 'Search members by name', 'Show a member count'];
+const D2_AGREED = D2_TITLES.map((t, i) => ({ id: i === 9 ? 'R-arch-10' : `R-po-${i + 1}`, text: t, example: `example ${i + 1}` }));
+const d2Outline = normalizeOutline({ why: 'proof', leftOut: [], slices: D2_TITLES.map((title, i) => ({ id: `s${i + 1}`, title, goal: `Goal ${i + 1}`,
+  inScope: [], outOfScope: [], acceptance: [`ok ${i + 1}`], dependsOn: [], estimate: 'small', requirements: [D2_AGREED[i].id] })) }, { agreed: D2_AGREED }).outline;
+const D2 = seedFeature('d2', 'Member admin', [...Array(9).fill('done'), 'running'], { withOutline: d2Outline, titles: D2_TITLES });
+const D2_LIVE = D2.pid(10);
+const D2_SAVED = D2.pid(2);
+// Each run starts from the run before it (run 1 from the feature base): its stored branch source.
+for (let k = 2; k <= 10; k++) getDb().prepare('UPDATE pipelines SET branch = ? WHERE id = ?').run(JSON.stringify({ source: `feat/${D2.pid(k - 1)}`, feature: `feat/${D2.pid(k)}` }), D2.pid(k));
+// The done runs carry their Care graph, done steps and plan v1 + v2 (the saved page's Agents rows and the Planner detail).
+for (let k = 1; k <= 9; k++) {
+  const pid = D2.pid(k);
+  getDb().prepare('UPDATE pipelines SET stepper = ?, total_cost_usd = ? WHERE id = ?').run(JSON.stringify(stepper), 0.41, pid);
+  for (const n of ['n_clarify', 'n_plan', 'n_roles', 'n_refine', 'n_tests', 'n_impl', 'n_review']) {
+    getDb().prepare('INSERT INTO pipeline_steps (pipeline_id, key, node_id, cycle, status, started_at, execution_id) VALUES (?, ?, ?, ?, ?, ?, ?)')
+      .run(pid, `x:${n}:1`, n, 1, 'done', now, `x:${n}:1`);
+  }
+  recordArtifact(pid, 'plan', `plans/d2-run-${k}.md`);
+  recordArtifact(pid, 'plan', `plans/d2-run-${k}-v2.md`);
+}
+// Run 3's fix round (a done Watch round): the member keeps dev's rounds line under its row.
+pipeline('c5d2r00003', 'done', 'Fix round 2 of run 3');
+getDb().prepare('UPDATE pipelines SET branch = ? WHERE id = ?').run(JSON.stringify({ source: 'main', feature: 'feat/c5d2r00003',
+  roundOf: { pipelineId: D2.pid(3), round: 2, request: 'merge dev in', by: 'watch' } }), 'c5d2r00003');
+const D2_RUN = liveRun(D2_LIVE, `Run 10 · ${D2_TITLES[9]}`, { at: 'n_impl', runShape: { slice: { feature: D2.f.id, index: 10 } } });
+const D2_SAVED_URL = `#history/${key}/${D2_SAVED}/details/overview`;
+
+/** The Runs-list members of the D2 group: each one-line row (an anchor without a stage block) at 32px, its dot in one
+ *  mark column; the staged live member's stage block whole inside its anchor. */
+const D2_MEMBERS = `(() => {
+  const g = document.querySelector('.runs-item[data-row-key="chain:${D2.f.id}"]');
+  if (!g) return { found: false };
+  const items = [...g.querySelectorAll('.srows.runs-members > .runs-item')];
+  const rows = items.map((it) => {
+    const a = it.querySelector(':scope > a.runs-row'); const dot = it.querySelector(':scope > .runs-pick .status-dot');
+    const t = a.querySelector('.runs-row-title'); const ab = a.getBoundingClientRect(); const db = dot.getBoundingClientRect(); const tb = t.getBoundingClientRect();
+    const stage = a.querySelector(':scope > .runs-stage');
+    // The D4 truncation proof: the line keeps its natural width (never clipped), the title is what ellipsizes.
+    const sub = a.querySelector(':scope > .runs-row-sub'); const sb = sub ? sub.getBoundingClientRect() : null;
+    return { text: t.textContent, pid: a.dataset.pipelineId || '', height: Math.round(ab.height * 10) / 10, staged: !!stage,
+      sub: sub ? sub.textContent : null, subW: sb ? Math.round(sb.width * 10) / 10 : null, subScroll: sub ? sub.scrollWidth : null, subClient: sub ? sub.clientWidth : null,
+      titleCut: t.scrollWidth > t.clientWidth, titleEllipsis: getComputedStyle(t).textOverflow === 'ellipsis', anchorFits: a.scrollWidth <= a.clientWidth + 1,
+      stageInside: stage ? stage.getBoundingClientRect().bottom <= ab.bottom + 0.5 : null, rounds: !!it.querySelector(':scope > .runs-rounds-line'),
+      markX: db.left + db.width / 2, markY: db.top + db.height / 2, textY: tb.top + tb.height / 2,
+      textLines: Math.round(tb.height / (parseFloat(getComputedStyle(t).lineHeight) || 20)) };
+  });
+  const one = rows.filter((r) => !r.staged);
+  const xs = one.map((r) => r.markX);
+  return { found: true, groups: document.querySelectorAll('.runs-item[data-row-key="chain:${D2.f.id}"]').length, rows,
+    spreadX: xs.length ? Math.max(...xs) - Math.min(...xs) : 0, maxDy: Math.max(0, ...one.map((r) => Math.abs(r.markY - r.textY))),
+    shown: !!g.offsetParent && !!g.querySelector(':scope > a.runs-row').getClientRects().length,
+    cost: [...g.querySelectorAll(':scope > a.runs-row .runs-cost')].filter((c) => c.offsetParent).length, costTitle: g.querySelector(':scope > a.runs-row').getAttribute('title'),
+    overflow: document.documentElement.scrollWidth > document.documentElement.clientWidth, scrollWidth: document.documentElement.scrollWidth };
+})()`;
+/** Visible Agents places under `scope`: the `.rd-run-agents` box plus the Agents tab buttons. */
+const AGENT_PLACES = (scope) => `(() => [...document.querySelectorAll(${JSON.stringify(`${scope} .rd-run-agents`)})].filter((x) => x.offsetParent && !x.hidden).length
+  + [...document.querySelectorAll(${JSON.stringify(`${scope} :is(.rd-tab, .hd-tab)[data-sec="agents"]`)})].filter((x) => x.offsetParent && !x.hidden).length)()`;
+/** The facts box: one "Starts from", each owned id once, every id and Owns label whole, and the box names neither the
+ *  feature title nor the run's own "Run N". */
+const FACTS = (scope, runN) => `(() => {
+  const root = document.querySelector(${JSON.stringify(scope)});
+  const box = root && [...root.querySelectorAll('.run-facts')].find((x) => x.offsetParent);
+  if (!box) return { found: false };
+  const whole = (els) => [...els].filter((e) => e.offsetParent).every((e) => e.scrollWidth <= e.clientWidth);
+  const text = root.textContent;
+  return { found: true, boxes: [...root.querySelectorAll('.run-facts')].filter((x) => x.offsetParent).length, starts: (text.match(/Starts from/g) || []).length,
+    ids: [...box.querySelectorAll('.plan-check-id')].map((e) => [e.textContent, [...root.querySelectorAll('.plan-check-id')].filter((x) => x.textContent === e.textContent && x.offsetParent).length]),
+    idsWhole: whole(box.querySelectorAll('.plan-check-id')), labelsWhole: whole(box.querySelectorAll('.plan-check-label')),
+    repeats: box.textContent.includes('Member admin') || new RegExp('\\\\bRun ${runN}\\\\b').test(box.textContent),
+    overflow: document.documentElement.scrollWidth > document.documentElement.clientWidth };
+})()`;
+/** The done Planner row: 32px, and whether its detail ("plan v2 · after the plan review") is visible on the row's line. */
+const PLANNER = (scope) => `(() => {
+  const row = [...document.querySelectorAll(${JSON.stringify(`${scope} .run-agents .plan-check-row`)})].find((r) => r.offsetParent && r.querySelector('.plan-check-label').textContent === 'Planner');
+  if (!row) return null;
+  const d = row.querySelector('.plan-check-detail'); const t = row.querySelector('.plan-check-text');
+  const db = d.getBoundingClientRect(); const tb = t.getBoundingClientRect();
+  return { height: Math.round(row.getBoundingClientRect().height * 10) / 10, detail: d.textContent, shown: db.top < tb.bottom && db.bottom <= tb.bottom + 0.5 };
+})()`;
+
+async function d2Page(url, scope, name, theme, width, { runN = null, flagOff = false } = {}) {
+  await open(url);
+  await skipWelcome(); await setTheme(theme);
+  const ok = await waitFor(`!!document.querySelector(${JSON.stringify(`${scope} .rd-run-agents`)}) || !!document.querySelector(${JSON.stringify(`${scope} :is(.rd-tab, .hd-tab)[data-sec="agents"]`)})`, `the D2 ${name} (${theme}, ${width}px)`);
+  if (!ok) return null;
+  await sleep(900);
+  const places = await ev(AGENT_PLACES(scope));
+  if (flagOff) return places;
+  check(places === 1, `agents-place: ${name}, ${theme}, ${width}px: exactly 1 visible Agents place (${places})`);
+  if (runN != null && await waitFor(`!!document.querySelector(${JSON.stringify(`${scope} .run-facts`)})`, `the D2 ${name} facts (${theme}, ${width}px)`)) {
+    const f = await ev(FACTS(scope, runN));
+    check(f.found && f.boxes === 1 && f.starts === 1 && f.ids.length >= 1 && f.ids.every(([, n]) => n === 1) && !f.repeats,
+      `run-facts: ${name}, ${theme}, ${width}px: one box, "Starts from" once, each owned id once, no title or own run number (${JSON.stringify(f)})`);
+    check(f.idsWhole && f.labelsWhole && !f.overflow, `run-facts: ${name}, ${theme}, ${width}px: every id and Owns label whole, no overflow`);
+    if (width === WIDTH) judge(`run-facts ${name} Owns`, theme, await ev(MEASURE(`${scope} .run-facts`, '.plan-check-row', '.plan-check-mark', '.plan-check-text')), { width });
+  }
+  if (width === WIDTH && await ev(`!!document.querySelector(${JSON.stringify(`${scope} .run-agents .plan-check-row`)})`)) {
+    judge(`agents-place ${name} Agents`, theme, await ev(MEASURE(...AGENT_ROWS(scope))), { width });
+  }
+  await reveal(`${scope} :is(.run-facts, .run-agents)`);
+  await sleep(200);
+  return places;
+}
+
+async function d2Phase() {
+  { const r = await post('/api/settings', { uiLevel: 'expert' }); check(r.ok, `D2: the Expert level is set (${r.status})`); }
+  for (const theme of THEMES) {
+    for (const width of [WIDTH, 1280]) {
+      await cdp('Emulation.setDeviceMetricsOverride', { width, height: 900, deviceScaleFactor: 1, mobile: false });
+      // ---- runs-list: 1 group row, 10 members, member 1 = the planning run; one-line members 32px, one mark column.
+      // #runs reopens the last run opened (the earlier cases' pages): forget it, so the list itself is on screen.
+      await ev("(() => { try { localStorage.removeItem('worca-cc.runs.last'); } catch {} return 0; })()");
+      await open(`${base}/?d2l-${theme}-${width}#runs`);
+      await skipWelcome(); await setTheme(theme);
+      if (await waitFor(`!!document.querySelector('.runs-item[data-row-key="chain:${D2.f.id}"]')`, `the D2 group row (${theme}, ${width}px)`)) {
+        await ev(`(() => { const b = document.querySelector('.runs-item[data-row-key="chain:${D2.f.id}"] > .runs-row-tail .runs-expand'); if (b && b.getAttribute('aria-expanded') !== 'true') b.click(); return 1; })()`);
+        await waitFor(`document.querySelectorAll('.runs-item[data-row-key="chain:${D2.f.id}"] .srows.runs-members > .runs-item').length === 10`, `the D2 group's 10 members (${theme}, ${width}px)`);
+        await sleep(500);
+        const m = await ev(D2_MEMBERS);
+        results.lists.push({ list: 'runs-list D2 members', theme, width, ...m });
+        check(m.found && m.shown && m.groups === 1 && m.rows.length === 10 && m.rows[0].pid === D2.pid(1) && m.rows[0].text.startsWith('1 · '),
+          `runs-list, ${theme}, ${width}px: 1 group row, 10 members, member 1 is the planning run ${D2.pid(1)} (${JSON.stringify(m.found ? m.rows.map((r) => r.pid) : m)})`);
+        check(m.cost === 1 && !m.costTitle, `runs-list, ${theme}, ${width}px: the cost is visible once and the anchor has no cost title`);
+        const off = m.rows.filter((r) => !r.staged && (Math.abs(r.height - 32) > 1 || r.textLines > 1));
+        check(!off.length, `runs-list, ${theme}, ${width}px: every one-line member is 32px (±1px) (${JSON.stringify(off.map((r) => [r.text, r.height]))})`);
+        check(m.spreadX <= 1 && m.maxDy <= 1, `runs-list, ${theme}, ${width}px: one mark column (spread ${m.spreadX.toFixed(2)}px, max dy ${m.maxDy.toFixed(2)}px)`);
+        check(m.rows.some((r) => r.staged) && m.rows.filter((r) => r.staged).every((r) => r.stageInside), `runs-list, ${theme}, ${width}px: the staged live member's .runs-stage bottom is inside its anchor`);
+        check(m.rows.some((r) => r.rounds), `runs-list, ${theme}, ${width}px: the member with a fix round keeps its rounds line`);
+        // Owner direction db0a5c6c7: a member says the card's short word; runs 1–9 finished, so each reads 'done' (run 3's
+        // line is its fix round's, the rounds line below it: D6).
+        const words = m.rows.slice(0, 9).filter((r) => !r.rounds).map((r) => r.sub);
+        check(words.length === 8 && words.every((w) => w === 'done'), `runs-list, ${theme}, ${width}px: the finished members read the card's short word 'done' (${JSON.stringify(words)})`);
+        // D4 truncation, measured: every member's line at its natural width (rect width = scrollWidth ±1px, never clipped).
+        const clipped = m.rows.filter((r) => r.sub && (Math.abs(r.subW - r.subScroll) > 1 || r.subScroll > r.subClient));
+        check(!clipped.length, `runs-list, ${theme}, ${width}px: every member's .runs-row-sub keeps its natural width (${JSON.stringify(m.rows.map((r) => [r.sub, r.subW, r.subScroll, r.subClient]))})`);
+        const long = m.rows[D2_LONG - 1];
+        check(long && long.titleEllipsis && long.titleCut && Math.abs(long.height - 32) <= 1 && long.anchorFits,
+          `runs-list, ${theme}, ${width}px: the long-title member's title is what ellipsizes, its row stays 32px and nothing spills (${JSON.stringify(long)})`);
+        check(!m.overflow && m.scrollWidth <= width, `runs-list, ${theme}, ${width}px: no horizontal overflow (scrollWidth ${m.scrollWidth})`);
+        await reveal(`.runs-item[data-row-key="chain:${D2.f.id}"]`);
+        await shot(`app-d2-runs-list-${theme}-${width}`);
+      }
+      // ---- run-facts and agents-place: the live page, the saved page, the panel.
+      await d2Page(`${base}/?d2r-${theme}-${width}#running/${D2_RUN}`, '#run-detail', 'live run page', theme, width, { runN: 10 });
+      await shot(`app-d2-run-page-${theme}-${width}`);
+      await d2Page(`${base}/?d2h-${theme}-${width}${D2_SAVED_URL}`, '#hist-detail', 'saved run page', theme, width, { runN: 2 });
+      const p = await ev(PLANNER('#hist-detail'));
+      check(p && Math.abs(p.height - 32) <= 1 && p.detail === 'plan v2 · after the plan review' && (width === WIDTH || p.shown),
+        `agents-place: the done Planner row with its long detail is 32px at ${width}px, the detail ${width === WIDTH ? 'never wraps' : 'shown'} (${JSON.stringify(p)})`);
+      if (p) results.lists.push({ list: 'saved Planner row', theme, width, ...p });
+      await shot(`app-d2-saved-page-${theme}-${width}`);
+      await d2Page(`${base}/?d2p-${theme}-${width}#chat/new/run/${D2_LIVE}/overview`, PANEL, 'side panel', theme, width, { runN: 10 });
+      await shot(`app-d2-side-panel-${theme}-${width}`);
+      // ---- card-members: the chat card's one-line members, the Requirements fold collapsed.
+      if (await card(D2.threadId, `d2c-${width}`, 'the D2 card', theme)) {
+        await reveal('.chat-rc-members');
+        check(await ev("!!document.querySelector('.chat-rc-members ol.run-members.is-one-line')"), `card-members, ${theme}, ${width}px: ol.run-members.is-one-line`);
+        if (width === WIDTH) judge('card-members D2 run rows', theme, await ev(MEASURE(...RUN_ROWS)), { width });
+        await shot(`app-d2-card-members-${theme}-${width}`);
+      }
+    }
+  }
+  await cdp('Emulation.setDeviceMetricsOverride', { width: WIDTH, height: 900, deviceScaleFactor: 1, mobile: false });
+  // ---- the flag-off control (D18): the same server and seed, the flag off (env cleared, PATCH /api/flags), dev's places.
+  delete process.env.WORCA_FLAGS;
+  const offRes = await fetch(`${base}/api/flags`, { method: 'PATCH', headers: { 'content-type': 'application/json', origin: base }, body: JSON.stringify({ shaperSmallRuns: false }) });
+  check(offRes.ok, `flag-off control: PATCH /api/flags turns shaperSmallRuns off (${offRes.status})`);
+  const live = await d2Page(`${base}/?d2off-r#running/${D2_RUN}`, '#run-detail', 'live run page (flag off)', 'light', WIDTH, { flagOff: true });
+  const panel = await d2Page(`${base}/?d2off-p#chat/new/run/${D2_LIVE}/overview`, PANEL, 'side panel (flag off)', 'light', WIDTH, { flagOff: true });
+  const saved = await d2Page(`${base}/?d2off-h${D2_SAVED_URL}`, '#hist-detail', 'saved run page (flag off)', 'light', WIDTH, { flagOff: true });
+  results.flagOff = { live, panel, saved };
+  check(live === 2 && panel === 2 && saved === 1, `flag-off control: dev's Agents places, live 2, panel 2, saved 1 (${JSON.stringify(results.flagOff)})`);
+  check(await ev("!document.querySelector('.run-facts')"), 'flag-off control: no .run-facts node');
+  const onRes = await fetch(`${base}/api/flags`, { method: 'PATCH', headers: { 'content-type': 'application/json', origin: base }, body: JSON.stringify({ shaperSmallRuns: true }) });
+  process.env.WORCA_FLAGS = 'shaperSmallRuns';
+  check(onRes.ok, `flag-off control: the flag is back on (${onRes.status})`);
+}
+/** The closing lines: page errors, the verdict, the log. */
+async function finish() {
+  check(errors.length === 0, `no page errors${errors.length ? ` — ${errors.slice(0, 3).join(' | ')}` : ''}`);
+  results.minutes = Math.round((Date.now() - T0) / 600) / 100;
+  results.failed = failed;
+  const verdict = failed ? `${failed} FAILED` : 'all passed';
+  writeLog(verdict);
+  log(`${results.shots.length} PNGs and ${logFile} in ${results.minutes} min; ${verdict}`);
+  await shutdown(failed ? 1 : 0);
+}
+// D2_ONLY=1 runs the D2 cases alone (each command stays under 10 minutes); unset, every case runs, D2 last.
+if (process.env.D2_ONLY === '1') { await d2Phase(); await finish(); }
+
 for (const theme of THEMES) {
   for (const width of [1280, WIDTH]) {
     await cdp('Emulation.setDeviceMetricsOverride', { width, height: 900, deviceScaleFactor: 1, mobile: false });
@@ -720,10 +921,5 @@ const LIVE_ROWS = "[...document.querySelectorAll('.chat-rc .proto-rows .plan-che
   await cdp('Emulation.setEmulatedMedia', { features: [] });
 }
 
-check(errors.length === 0, `no page errors${errors.length ? ` — ${errors.slice(0, 3).join(' | ')}` : ''}`);
-results.minutes = Math.round((Date.now() - T0) / 600) / 100;
-results.failed = failed;
-const verdict = failed ? `${failed} FAILED` : 'all passed';
-writeLog(verdict);
-log(`${results.shots.length} PNGs and ${logFile} in ${results.minutes} min; ${verdict}`);
-await shutdown(failed ? 1 : 0);
+await d2Phase();
+await finish();

@@ -2730,3 +2730,26 @@ test('one card in SP with the Prototype step building: Lead row, a row per scree
   assert.ok(card.el.querySelectorAll('.proto-col .proto-piece').length > 0, 'pieces assemble in the preview');
   card.destroy();
 });
+
+test('D2 (D6): a marked card\'s members are ol.run-members.is-one-line, one dot and one number per row, the working run\'s dot pulsing; unmarked: no is-one-line', () => {
+  try {
+    const { $$ } = paintOne('S8');
+    const lists = $$('.chat-rc-members ol.run-members');
+    assert.equal(lists.length, 1);
+    assert.ok(lists[0].classList.contains('is-one-line'));
+    const rows = $$('.chat-rc-members ol.run-members > .run-member');
+    assert.ok(rows.length >= 3);
+    for (const li of rows) {
+      assert.equal(li.querySelectorAll(':scope > .status-dot').length, 1);
+      assert.equal(li.querySelectorAll(':scope > .run-member-num').length, 1);
+    }
+    const pulsing = rows.filter((li) => li.querySelector(':scope > .status-dot').classList.contains('is-pulse'));
+    assert.equal(pulsing.length, 1, 'only the working run pulses (dev\'s live dot)');
+    const c = ONE_STATES.S8();
+    const plain = mk({ controls: { memoFor: () => ({}), groupOf: () => c.row, modelOpts: () => ({ now: NOW }) } });
+    plain.card.update({ ...c.snap, shaper: { ...c.snap.shaper, card: { ...c.snap.shaper.card, smallRuns: false } } });
+    const pl = plain.$$('ol.run-members');
+    assert.ok(pl.length >= 1, 'the unmarked feature card still lists its runs');
+    for (const l of pl) assert.equal(l.classList.contains('is-one-line'), false, 'an unmarked card keeps dev\'s rows');
+  } finally { forgetAnswer('run-uuid-1', ONE_PQ.outline.id); }
+});
