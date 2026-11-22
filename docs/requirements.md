@@ -192,8 +192,8 @@ a call's cost is known only once the model reports it.
 answers you can submit answers, edit the spec, add files or start a round. Only what you accept or submit reaches the
 interview. **Send**, **Accept** and **Clear chat** wait while Worca answers.
 
-**Using a feature in another chat.** The Ask panel's **Pull from Requirements** (see [Pull from Requirements](#pull-from-requirements))
-attaches a started feature's spec to a message, so a chat can use it without leaving the chat. It is not the same as **Feature chat**,
+**Using a feature in another chat.** The Ask panel's Requirements icon button (its tooltip reads **Pull from Requirements**; see
+[Pull from Requirements](#pull-from-requirements)) attaches a started feature's spec to a message, so a chat can use it without leaving the chat. It is not the same as **Feature chat**,
 which talks about a feature and its interview; the attached text is context only.
 
 **Clear chat** (⋯) deletes the feature's chat; changes you accepted stay in the spec. An archived feature's chat can be read,
@@ -347,15 +347,16 @@ nothing. The features go along when you click **Send** or **Run**.
 - **New run**: **Pull from Requirements** (next to the Source switch) opens a picker with a search box, a checkbox on each feature and
   **Attach N**. It lists the active features of the project or workspace you picked as the Target. With no Target yet, the picker has a
   project chooser inside it.
-- **Chat**: **Pull from Requirements** (next to the project button in the composer) does the same for the chat's project or workspace.
+- **Chat**: the Requirements icon button (its tooltip reads **Pull from Requirements**; next to the project button in the composer)
+  does the same for the chat's project or workspace.
   A chat with no project asks for one in the picker.
 - **`#` in the box**: type `#` at the start of a word, or after a space, and a list of the scope's features opens. Keep typing to
   search by title or `FEAT-7`. The arrows move, **Enter** attaches the highlighted feature (it never sends or starts), **Tab** cycles the
   project and **Esc** closes. Only the `#` and what you typed after it are removed from your text. A Markdown heading (`# ` followed by a
   space) is left alone.
 
-Each attached feature shows as a card under the box with its title, ID and number of criteria, and an **x** to remove it. The button
-reads **N features** while some are attached. You can attach up to 10. Features you attach are kept when you leave the page and come
+Each attached feature shows as a card under the box with its title, ID and number of criteria, and an **x** to remove it. On New
+run the button reads **N features** while some are attached; in Chat the icon shows the count. You can attach up to 10. Features you attach are kept when you leave the page and come
 back, and checked again when you return.
 
 **Context only.** The feature's spec text goes into the message or the run's task. Nothing else travels: no files or brief documents,

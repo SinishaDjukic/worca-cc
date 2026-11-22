@@ -41,8 +41,8 @@ servers, skills, commands, its own title and suggestions, any engine). What the 
   build is doing right now.
 - **The chat's head stays one row:** beside the title, the design's kind and **⋯** (**All designs**, the Library;
   Rename; Delete).
-- **The composer gains the design's own parts:** its pinned parts above the input, **Point at the page** and the gear
-  (the Lead and Builders models, Build fast, Pictures, Sound) in the row. Send stays the chat's own: the message goes
+- **The composer gains the design's own parts:** its pinned parts above the input, **Point at the page** at the left of
+  the row, and the gear (the Lead and Builders models, Build fast, Pictures, Sound) between the model and the mic. Send stays the chat's own: the message goes
   to the chat with the pins on screen, and the chat's agent works on the design with the design tools.
 - **The Design tab of the tool panel shows the design**, beside the chat: the preview, the HUD with its agents,
   the deck rail or the film bar, and **Export**. It opens when the chat opens or when the chat starts a design. Its
@@ -52,7 +52,7 @@ servers, skills, commands, its own title and suggestions, any engine). What the 
   icon or the + opens another (each shows the same stage). Closed, the preview is gone until it opens again;
   **Point at the page** opens it.
 - **A new design starts from the sidebar's Design.** It opens "What should we design?" over the chat's composer: the
-  project pill picks the design's project, the kind buttons under it pick a web page, a presentation, a pitch deck, a
+  project button picks the design's project, the kind buttons under it pick a web page, a presentation, a pitch deck, a
   video or a document, and the gear holds the models, Build fast and Pictures. Send makes the design and opens its
   chat, where the message is the first one.
 - **Pictures before a build that needs them.** When you ask for something that needs a picture made (a drawing, an

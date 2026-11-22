@@ -3,6 +3,20 @@
 Notes on merged features that have no release page yet. `/worca-changelog` folds
 them into the next page and empties this file.
 
+## Chat composer bar, compact
+
+**A compact bottom bar.**
+
+Icons for project, Requirements and Sets; the harness mark on the model button; the Design gear beside the model; one voice control.
+
+Chips: Chat · Design · Voice
+
+Read it: [Chat](../chat.md)
+
+Pull requests (add each number when it opens):
+
+- Chat: the compact composer bar
+
 ## Remotes through an SSH Host alias
 
 **A pull request from a fork cloned through a `~/.ssh/config` alias no longer fails with "Head ref must be a branch".**

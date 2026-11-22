@@ -315,6 +315,13 @@ share one centre. The dock is opaque from its top edge down after a 32px fade ba
 sits in that band, right above the dock, and the transcript's bottom clearance includes it, so nothing reads under
 the composer. A row rises in (`data-ask-enter`) only the first time the page shows it, in any chat; the card inside it
 never rises on its own. No part of a chat card is a pill; inner corners stay at or under the card's 8px.
+### Composer bar
+The chat composer's row is compact (`.ask-composer-row[data-bar="compact"]`): project, Requirements and Sets are
+icon buttons, and each icon button names itself in a styled tooltip. The words sit in the button's `data-tip` (the
+button keeps its `aria-label` and has no `title`, so the browser's own tooltip never doubles it); the tip is drawn
+above the button on hover or keyboard focus after .3s, and never while a menu of the row is open. Only the
+composer row draws it (the rule is scoped to that row). A tip is `display:none` at rest, never a box laid out at
+opacity 0.
 ### Table
 `.table-wrap` > `.table`: 12px / 600 `--ink-2` headers, 13px cells, 8px 12px 8px 0 cell padding, one `--line` under
 each row, no outer box. Under 560px it stacks one block per row using each cell's `data-label`; it never scrolls sideways.

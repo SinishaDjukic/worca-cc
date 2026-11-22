@@ -26,7 +26,8 @@ widen it.
 
 ## One scope per chat
 
-The composer's scope pill sets **No project**, a project or a workspace, at every interface level. Changes act only
+The composer's project button (a folder icon; its tooltip names the scope) sets **No project**, a project or a
+workspace, at every interface level. Changes act only
 there.
 
 When a No-project message is clearly about one of your projects, Ask asks with a card: **Switch to <name>** or

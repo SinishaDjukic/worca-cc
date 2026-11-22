@@ -30,8 +30,9 @@ Worca never uses the browser's own Web Speech API (Chrome sends that audio to Go
   are not cut off mid-sentence; lower it for snappier turns.
 - While worca is thinking or running tools, speech is ignored.
 - Only prose is read: code blocks, tables, links and cards are skipped.
-- The chip beside the mic shows the state: *Listening…*, *Transcribing…*,
-  *Thinking…*, *Speaking…* or *Voice error*.
+- While the input is empty, its placeholder shows the state: *Starting mic…*,
+  *Listening…*, *Transcribing…*, *Thinking…* or *Speaking…*; an error shows in red
+  under the input. The mic and its arrow are one control.
 - Voice turns off when you close the panel, switch or start a chat, or on an error.
 - The page must be a secure context: `https://…` or `http://localhost`. Over plain
   http on a LAN IP the browser refuses the microphone and worca says so.
@@ -41,14 +42,15 @@ Worca never uses the browser's own Web Speech API (Chrome sends that audio to Go
 ## Built in: Whisper and Kokoro in the browser (the default)
 
 Nothing to install. The first time you use the mic, worca downloads the speech
-engine and models once (about 500 MB with WebGPU, 200 MB without) — the chip shows
-*Downloading speech model… NN MB* — into `~/.worca-cc/speech-cache`. That is the only
+engine and models once (about 500 MB with WebGPU, 200 MB without) — the input's
+placeholder shows *Downloading speech model… NN MB* — into `~/.worca-cc/speech-cache`. That is the only
 copy: the browser keeps none, and later sessions load from worca in a few seconds.
 
 - **Memory.** Loaded models take several hundred MB in the browser tab. They stay
   loaded between voice sessions and are released after 30 minutes with voice off
   (or when the page closes). Loading them again from disk takes a few seconds —
-  the chip says *Starting voice…* (only a real first download says *Downloading*).
+  the input's placeholder says *Starting voice…* (only a real first download says
+  *Downloading*).
   Once you have used voice, opening the Ask panel preloads them in the background,
   so the mic is usually ready when you click it.
 - **Disk.** Models › Providers › Speech shows how much is downloaded and has
