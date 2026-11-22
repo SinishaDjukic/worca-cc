@@ -2648,7 +2648,7 @@ test('U-T9 (U-T4 review): opening New run again while on New ends the Run it onc
   await tick(12);
   const sel = doc.getElementById('workflowSelect');
   assert.equal(sel.value, 'wf_g');
-  clickEl(w, doc.getElementById('topnav-new'));   // already on #new: showView('new') runs again, with no hand-off
+  clickEl(w, doc.getElementById('runs-new'));   // New run (the Runs page head since dev's #1458); already on #new: showView('new') runs again, with no hand-off
   await tick(6);
   const project = doc.getElementById('projectSelect');
   project.selectedIndex = 2;
