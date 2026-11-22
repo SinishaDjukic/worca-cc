@@ -141,21 +141,21 @@ test('a PR-level comment counts only from a listed reviewer, posted after the wa
 
 test('a listed reviewer\'s PR-level comment starts one fix run, quotes it, and is answered on the PR after the push', async () => {
   const origin = seedOrigin();
-  setWatch({ prUrl: URL, pipelineId: origin, enabled: true });
-  const clock = { t: Date.parse('2026-11-21T10:00:00Z') };
-  const old = { databaseId: 80, body: '## AI Review\nan old verdict', createdAt: '2026-11-20T10:00:00Z', author: { login: 'review-bot' }, authorAssociation: 'NONE' };
-  const { io, deps } = harness({ clock, pr: openPr({ comments: [old] }) });
+  const on = setWatch({ prUrl: URL, pipelineId: origin, enabled: true });
+  // Turning Watch on marks the start: a verdict from before is history, one posted before the first read counts.
+  const since = Date.parse(on.retryState.commentsSince);
+  assert.ok(Number.isFinite(since), 'setWatch records when the watch began');
+  const at = (ms) => new Date(since + ms).toISOString();
+  const old = { databaseId: 80, body: '## AI Review\nan old verdict', createdAt: at(-60_000), author: { login: 'review-bot' }, authorAssociation: 'NONE' };
+  const verdict = { databaseId: 81, body: '## AI Review\nuse a guard', createdAt: at(30_000), author: { login: 'review-bot' }, authorAssociation: 'NONE' };
+  const clock = { t: since + 60_000 };                     // the first read comes a minute after Watch went on
+  const { io, deps } = harness({ clock, pr: openPr({ comments: [old, verdict] }) });
   // The watcher reads the list from deps.trustedLogins (the server maps it to the project setting).
   deps.trustedLogins = () => ['review-bot'];
   const watcher = createPrWatcher(deps);
-  await watcher.tick();                                    // first read: the old verdict is history
-  let w = getWatch(URL);
-  assert.equal(w.status, 'watching'); assert.equal(w.fixRuns, 0);
-  assert.equal(w.retryState.commentsSince, '2026-11-21T10:00:00.000Z');
-  clock.t += 60_000;
-  io.pr.comments = [old, { databaseId: 81, body: '## AI Review\nuse a guard', createdAt: '2026-11-21T10:00:30Z', author: { login: 'review-bot' }, authorAssociation: 'NONE' }];
   await watcher.tick();
-  w = getWatch(URL);
+  let w = getWatch(URL);
+  assert.equal(w.retryState.commentsSince, on.retryState.commentsSince, 'the first read keeps the start');
   assert.equal(w.status, 'fixing'); assert.equal(w.fixRuns, 1);
   assert.deepEqual(w.handled, ['issue-comment:81']);
   assert.match(io.calls.start[0].body.prompt, /use a guard/);
@@ -172,6 +172,28 @@ test('a listed reviewer\'s PR-level comment starts one fix run, quotes it, and i
   // The same comment was marked handled: a re-read starts nothing new.
   await watcher.tick();
   assert.equal(io.calls.start.length, 1);
+});
+
+test('a watch from before commentsSince existed is marked at its first read; re-enabling resets the start', async () => {
+  const origin = seedOrigin();
+  setWatch({ prUrl: URL, pipelineId: origin, enabled: true });
+  updateWatch(URL, { retryState: {} });                    // as a watch saved before the upgrade
+  const clock = { t: Date.parse('2026-11-21T10:00:00Z') };
+  const old = { databaseId: 90, body: 'an old verdict', createdAt: '2026-11-20T10:00:00Z', author: { login: 'review-bot' }, authorAssociation: 'NONE' };
+  const { io, deps } = harness({ clock, pr: openPr({ comments: [old] }) });
+  deps.trustedLogins = () => ['review-bot'];
+  const watcher = createPrWatcher(deps);
+  await watcher.tick();
+  let w = getWatch(URL);
+  assert.deepEqual([w.status, w.fixRuns, w.retryState.commentsSince], ['watching', 0, '2026-11-21T10:00:00.000Z']);
+  setWatch({ prUrl: URL, pipelineId: origin, enabled: false });
+  w = setWatch({ prUrl: URL, pipelineId: origin, enabled: true });
+  assert.notEqual(w.retryState.commentsSince, '2026-11-21T10:00:00.000Z', 'turning Watch back on starts again');
+  assert.equal(io.calls.start.length, 0);
+});
+
+test('a run started by PR-level comments is named for review comments', () => {
+  assert.deepEqual(fixTrigger({ handledKeys: ['issue-comment:81'] }), { kinds: ['comments'], label: 'Review comments' });
 });
 
 test('required contexts scope the check set; unknown conclusions fail; checks and statuses dedupe per name and head', () => {

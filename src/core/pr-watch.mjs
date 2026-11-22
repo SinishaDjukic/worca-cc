@@ -37,19 +37,21 @@ export function listLifecycleWatches() {
 
 export function setWatch({ prUrl, pipelineId, memberKey = '', pushRemote = 'origin', enabled, enabledBy = null }) {
   const now = new Date().toISOString();
+  // A watch takes PR-level comments posted from the moment it is turned on (see collectTriggers' commentsSince).
+  const fresh = JSON.stringify({ commentsSince: now });
   return tx(() => {
     const cur = getDb().prepare('SELECT * FROM pr_watches WHERE pr_url=?').get(prUrl);
     if (!cur) {
       getDb().prepare(`INSERT INTO pr_watches
-        (pr_url,pipeline_id,member_key,push_remote,enabled,status,reason,enabled_by,updated_at)
-        VALUES(?,?,?,?,?,'watching',NULL,?,?)`).run(prUrl, pipelineId, memberKey, pushRemote, enabled ? 1 : 0, enabledBy, now);
+        (pr_url,pipeline_id,member_key,push_remote,enabled,status,reason,retry_state,enabled_by,updated_at)
+        VALUES(?,?,?,?,?,'watching',NULL,?,?,?)`).run(prUrl, pipelineId, memberKey, pushRemote, enabled ? 1 : 0, fresh, enabledBy, now);
     } else if (!enabled || ACTIVE.has(cur.status)) {
       getDb().prepare('UPDATE pr_watches SET enabled=?, updated_at=? WHERE pr_url=?').run(enabled ? 1 : 0, now, prUrl);
     } else {
       getDb().prepare(`UPDATE pr_watches SET pipeline_id=?,member_key=?,push_remote=?,enabled=1,status='watching',
         reason=NULL,fix_runs=0,active_run_id=NULL,active_pipeline_id=NULL,handled='[]',pending=NULL,
-        retry_state='{}',enabled_by=?,updated_at=? WHERE pr_url=?`)
-        .run(pipelineId, memberKey, pushRemote, enabledBy, now, prUrl);
+        retry_state=?,enabled_by=?,updated_at=? WHERE pr_url=?`)
+        .run(pipelineId, memberKey, pushRemote, fresh, enabledBy, now, prUrl);
     }
     return getWatch(prUrl);
   });
@@ -297,7 +299,7 @@ export function buildFixTask({ pr, triggers, logs = [] }) {
 
 const TRIGGER_WORDS = [
   ['checks', ['check:', 'status:'], 'failing checks'],
-  ['comments', ['comment:'], 'review comments'],
+  ['comments', ['comment:', 'issue-comment:'], 'review comments'],
   ['changes', ['review:'], 'changes requested'],
 ];
 /** What a fix run was started for, from its reserved `pending` (the conflict, else its handled keys): the chat's
@@ -732,8 +734,8 @@ export function createPrWatcher(deps = {}) {
     if (!snap?.ok) return retry(w, 'read', snap || {});
     w = resetRetry(w, 'read');
     if (snap.pr.state !== 'OPEN') return endWatch(w, snap.pr.state);
-    // The first read of a new (or re-enabled, or pre-upgrade) watch marks when it began taking PR-level
-    // comments; the ones already on the PR are history, never triggers.
+    // setWatch marks when a watch began taking PR-level comments; a watch from before that (an upgrade) is
+    // marked at its first read instead. Comments already on the PR are history, never triggers.
     if (!w.retryState?.commentsSince) w = transition(w, { retryState: { ...w.retryState, commentsSince: new Date(now()).toISOString() } });
     const opts = triggerOpts(w, origin);
     const first = collectTriggers(snap.pr, w.handled, opts);
