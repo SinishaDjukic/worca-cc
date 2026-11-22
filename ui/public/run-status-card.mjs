@@ -261,8 +261,9 @@ export function renderMemberRows(doc, row, { checks, oneLine = false, shortState
   return ol;
 }
 
-/** D17: the group page's one ship line (a feature, or a chain in the one ship flow). */
-export function groupShipLine(row) {
+/** D17: the group page's one ship line (a feature, or a chain in the one ship flow). `stackedOnly`: a small-runs
+ *  feature ships a PR per run (One answers 409 STACKED_ONLY), so the line never offers One. */
+export function groupShipLine(row, { stackedOnly = false } = {}) {
   if (!row || !['feature', 'chain', 'user'].includes(row.groupKind) || !row.model) return '';
   const { done, total } = row.model.count;
   const native = (row.members || []).filter((mb) => !mb.adhoc);
@@ -274,7 +275,7 @@ export function groupShipLine(row) {
   }
   // A run that already has its own PR disables One in the dialog (groupShipChoice), so the line stops offering it.
   // A feature's legacy slice draft is not such a PR.
-  const owned = (row.members || []).some((mb) => { const pr = mb.model && mb.model.pr;
+  const owned = stackedOnly || (row.members || []).some((mb) => { const pr = mb.model && mb.model.pr;
     return !!(pr && pr.url && pr.id !== 'closed' && !(row.groupKind === 'feature' && pr.id === 'draft')); });
   // Slice 3: a user group's runs are independent (every member is ad hoc): any merge order; One only when they combine.
   if (row.groupKind === 'user') {

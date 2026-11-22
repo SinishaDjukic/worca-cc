@@ -1045,8 +1045,9 @@ export function createChatRunCard({ doc, win = null, snapshot = null, ctx = {}, 
     const act = a && shipEl.contains(a) && a.dataset.act ? a.dataset.act : (!a || a === doc.body) && noted ? noted.dataset.focus : null;
     const had = act ? `[data-act="${act}"]` : null;
     // R-ux-2: the card's state line already says "N PRs open" (countShown), and the foot draws no View PR (paintFoot).
+    // The one card's head already shows the feature title (titleShown): the Ship card names only its step.
     const card = renderShipCard(doc, { phase, featureId: feature.id, title: feature.title, runs: feature.total, result: ship.result || null,
-      smallRuns: ship.smallRuns }, { countShown: true, onConfirm: (id, mark, reason) => confirmRequirement(feature.id, id, mark, reason) });
+      smallRuns: ship.smallRuns }, { countShown: true, titleShown: true, onConfirm: (id, mark, reason) => confirmRequirement(feature.id, id, mark, reason) });
     card.dataset.needsGit = '';   // shipping opens pull requests: hidden while git is missing (git-gate.mjs)
     shipEl.replaceChildren(card);
     const back = had ? shipEl.querySelector(had) : null;

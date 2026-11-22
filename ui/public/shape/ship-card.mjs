@@ -6,7 +6,7 @@ import { renderAskChanges } from '../chat/ask-changes.mjs';
 import { buildCheckFold, buildCheckRows, checkMark } from './check-row.mjs';
 import { checkLine } from './plan-text.mjs';
 import { ledgerCheck } from '../../../src/shared/shape/acceptance.mjs';
-import { CONFIRM_REASON_MAX, MARK_WORDS, unmetLines } from '../../../src/shared/shape/ship-ledger.mjs';
+import { CONFIRM_REASON_MAX, MARK_WORDS } from '../../../src/shared/shape/ship-ledger.mjs';
 
 const MINUS = '\u2212';
 const count = (n, one, many) => `${n} ${n === 1 ? one : many}`;
@@ -179,7 +179,8 @@ function buildLedger(doc, h, a, { editing, onMark, err, root, changed }) {
  *          smallRuns? (Feature D1: featureView's ship.smallRuns; the small-runs Ship, phases ready and applied)
  * handlers: { onNotNow?() → Promise, onAskChanges?(text), onMark?(entries: the changed row's entry) → Promise<{ok, error?, acceptance?}>,
  *             onConfirm?(id, mark, reason) → Promise<{ok, error?, smallRuns?}> (Feature D1: a confirmed requirement's mark),
- *             countShown? (Feature D1: the host's state line already says "N PRs open": the done card does not repeat it) }
+ *             countShown? (Feature D1: the host's state line already says "N PRs open": the done card does not repeat it),
+ *             titleShown? (Feature D1: the host's head already shows the feature title: the small-runs card names only the step) }
  * (no onNotNow → no Not now button). The ready card's Create PR opens the dialog setShipDialogOpener registered, with
  * the button and the card (D20: focus after it closes).
  */
@@ -307,8 +308,8 @@ function smallRunsShip(doc, h, m, handlers) {
   root.setAttribute('aria-label', `Ship: ${m.title || ''}`);
   if (m.featureId) root.dataset.shipFeature = m.featureId;
   const head = h('div', 'ask-mcard-head');
-  const title = h('span', 'ask-mcard-title', m.title || ''); title.title = m.title || '';
-  head.append(h('span', 'ask-mcard-kind', applied ? 'Shipped' : 'Ship'), title);
+  head.appendChild(h('span', 'ask-mcard-kind', applied ? 'Shipped' : 'Ship'));
+  if (!handlers.titleShown) { const title = h('span', 'ask-mcard-title', m.title || ''); title.title = m.title || ''; head.appendChild(title); }
   const body = h('div', 'ask-mcard-body');
   root.append(head, body);
   const careRow = () => {
@@ -324,10 +325,12 @@ function smallRunsShip(doc, h, m, handlers) {
     if (!handlers.countShown) body.appendChild(h('div', 'ask-shipcard-done', `${count(prs.length, 'PR', 'PRs')} open`));
     body.appendChild(h('div', 'ask-shipcard-stats', 'a PR per run, stacked in the order runs finished'));
     body.appendChild(careRow());
-    const unmet = unmetLines(sr);
-    if (unmet.length) { const u = h('div', 'ask-shipcard-unmet'); for (const t of unmet) u.appendChild(h('div', 'ask-shipcard-why', t)); body.appendChild(u); }
     body.appendChild(list('ask-shipcard-prs', prs.map((o) => ({ id: `#${o.pr.number ?? ''}`, idCol: true, pass: true,
       label: `run ${o.index} · ${o.title}`, note: o.onto ? `onto #${o.onto}` : `into ${sr.base || ''}`.trim(), ariaLabel: 'open' }))));
+    // The Not met / Dropped requirements, as rows under the PRs (the PR descriptions carry the same lines: unmetLines).
+    const unmet = Array.isArray(sr.unmet) ? sr.unmet : [];
+    if (unmet.length) body.appendChild(list('ask-shipcard-unmet', unmet.map((u) => ({ id: u.id, idCol: true, label: u.text, pass: true, state: u.mark,
+      ariaLabel: MARK_WORDS[u.mark].toLowerCase(), note: `${MARK_WORDS[u.mark]} · ${u.reason}` }))));
     const actions = h('div', 'ask-mcard-actions');
     actions.appendChild(h('span', 'ask-card-actions-spacer'));
     const view = h('button', 'btn btn-sm btn-quiet', VIEW_PRS_LABEL); view.type = 'button'; view.dataset.act = 'ship-view-prs';
@@ -336,7 +339,8 @@ function smallRunsShip(doc, h, m, handlers) {
     root.appendChild(actions);
     return { root, ledger: null };
   }
-  body.appendChild(h('div', 'ask-shipcard-stats', 'Your turn: mark what only a person can'));
+  const stats = h('div', 'ask-shipcard-stats');
+  body.appendChild(stats);
   const err = h('div', 'ask-card-err'); err.setAttribute('aria-live', 'polite');
   const whyId = `ask-shipcard-why-${++srSeq}`;
   let confirming = null;                                  // the id whose mark is being sent
@@ -384,7 +388,9 @@ function smallRunsShip(doc, h, m, handlers) {
       input.addEventListener('input', () => { const cur = drafts.get(c.id); if (cur) cur.text = input.value; });
       input.disabled = !!confirming;
       input.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); commit(c, due, input); } });
-      input.addEventListener('blur', () => commit(c, due, input));
+      // Chromium blurs a focused node a repaint removes, while it is still connected: only a blur that leaves the
+      // field in the document commits (the repaint's card keeps the draft through REASON_DRAFTS).
+      input.addEventListener('blur', () => { queueMicrotask(() => commit(c, due, input)); });
       wrap.appendChild(input);
     }
     if (confirming === c.id) wrap.setAttribute('aria-busy', 'true');
@@ -408,8 +414,14 @@ function smallRunsShip(doc, h, m, handlers) {
       ownedEl.append(fold.line, fold.rows);
     }
     careEl.replaceChildren(careRow());
+    stats.textContent = sr.blocked ? 'Your turn: mark what only a person can' : 'Ready to ship';
     if (sr.blocked && sr.reason) {
-      const why = h('div', 'ask-shipcard-why', sr.reason); why.id = whyId;
+      const why = h('div', 'ask-shipcard-why'); why.id = whyId;
+      // R-comp-4 never breaks at its hyphens on a narrow screen: each requirement id is one unbreakable span.
+      for (const part of sr.reason.split(/(\bR-[A-Za-z0-9]+-\d+\b)/)) {
+        if (/^R-[A-Za-z0-9]+-\d+$/.test(part)) why.appendChild(h('span', 'ask-shipcard-id', part));
+        else if (part) why.appendChild(doc.createTextNode(part));
+      }
       whyEl.replaceChildren(why);
       create.setAttribute('aria-describedby', whyId);
     } else { whyEl.replaceChildren(); create.removeAttribute('aria-describedby'); }

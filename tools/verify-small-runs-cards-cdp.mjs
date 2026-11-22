@@ -244,10 +244,18 @@ const shipFeature = (tag, title) => seedFeature(tag, title, ['done', 'done', 'do
   { withOutline: SHIP_OUTLINE, requirementKinds: { 'R-comp-4': { kind: 'confirmed', role: 'compliance' } } });
 const COMP_MET = { id: 'R-comp-4', mark: 'met', role: 'compliance', by: 'proof', at: now };
 const SB = shipFeature('sb', 'Ship blocked');
+// The Care outcome needs the feature's recorded figures (measure.mjs writes them when a feature finishes): ready and done
+// carry them, blocked has none (its Care row is the choice alone).
+const FIGURES = { requirementsMet: { met: 4, total: 5 }, gapsAtEnd: 1, changesAfterShip: 0 };
+const figures = (fid) => getDb().prepare(`INSERT INTO shape_feature_figures (feature_id, care, figures, recorded_at, updated_at) VALUES (?, ?, ?, ?, ?)`)
+  .run(fid, 'balanced', JSON.stringify(FIGURES), now, now);
 const SR = shipFeature('sr', 'Ship ready');
 setFeatureAcceptance(SR.f.id, [COMP_MET]);
+figures(SR.f.id);
 const SD = shipFeature('sd', 'Ship done');
-setFeatureAcceptance(SD.f.id, [COMP_MET]);
+// Done with R-comp-4 Not met: its row sits under the PR rows.
+setFeatureAcceptance(SD.f.id, [{ ...COMP_MET, mark: 'not-met', reason: 'Legal has not signed the EU clause yet' }]);
+figures(SD.f.id);
 [1, 2, 3, 4].forEach((k) => getDb().prepare("UPDATE pipelines SET pr_url = ?, pr_number = ?, pr_state = 'OPEN' WHERE id = ?")
   .run(`https://github.com/proof/repo/pull/${1430 + k}`, 1430 + k, SD.pid(k)));
 recordShip(SD.f.id, { mode: 'stacked' });
@@ -456,6 +464,13 @@ const SHIP_FACTS = `(() => { const r = [...document.querySelectorAll(${JSON.stri
     prsOpen: (() => { const c = r.closest('.chat-rc'); return c ? (c.innerText.match(/PRs open/g) || []).length : 0; })(),
     views: (() => { const c = r.closest('.chat-rc'); return c ? vis(c.querySelectorAll('a, button')).filter((b) => /^View PRs?$/.test(b.textContent.trim())).map((b) => b.textContent.trim()) : []; })(),
     care: vis(r.querySelectorAll('[data-fact="care"]')).length,
+    careText: (r.querySelector('[data-fact="care"] .rd-kv-v') || {}).textContent || null,
+    stats: (r.querySelector('.ask-shipcard-stats') || {}).textContent || null,
+    titled: !!r.querySelector('.ask-mcard-title'),
+    whyIds: why ? [...why.querySelectorAll('.ask-shipcard-id')].map((x) => [x.textContent, x.getBoundingClientRect().height]) : [],
+    whyLine: why ? parseFloat(getComputedStyle(why).lineHeight) || 0 : 0,
+    unmet: vis(r.querySelectorAll('.ask-shipcard-unmet .plan-check-row')).map((x) => [x.querySelector('.plan-check-id').textContent, x.querySelector('.plan-check-detail').textContent]),
+    unmetBelow: (() => { const p = r.querySelector('.ask-shipcard-prs'); const u = r.querySelector('.ask-shipcard-unmet'); return !!(p && u && (p.compareDocumentPosition(u) & 4)); })(),
     waiting: (r.querySelector('.ask-mcard-body').textContent.match(/waiting for compliance/gi) || []).length,
     prs: vis(r.querySelectorAll('.ask-shipcard-prs .plan-check-row')).map((x) => [x.querySelector('.plan-check-id').textContent, x.querySelector('.plan-check-detail').textContent]),
     done: (r.querySelector('.ask-shipcard-done') || {}).textContent || null,
@@ -473,6 +488,10 @@ async function shipCells(theme, width) {
     check(f && f.create === 'Create 4 PRs' && f.disabled && !f.primary && f.described, `ship blocked, ${at}: Create 4 PRs disabled, not primary, described by the reason`);
     check(f && f.marks.length === 1 && f.marks[0] === 'Mark R-comp-4 as Compliance: The sign-up data stays in the EU' && f.pressed.length === 0 && f.care === 1,
       `ship blocked, ${at}: one unmarked Met / Not met / Dropped picker, one Care row`);
+    check(f && f.careText === "Balanced · Worca's pick" && f.stats === 'Your turn: mark what only a person can' && !f.titled,
+      `ship blocked, ${at}: Care kept as Worca's pick with no outcome (no figures), the step named once with no feature title (${JSON.stringify(f)})`);
+    check(f && f.whyIds.length === 1 && f.whyIds[0][0] === 'R-comp-4' && f.whyIds[0][1] <= f.whyLine * 1.5,
+      `ship blocked, ${at}: R-comp-4 in the reason stays on one line (${JSON.stringify(f && f.whyIds)})`);
     const c = await ev(COUNTS('.chat-rc'));
     check(c && c.primaries.length === 0 && c.answer === 0 && c.rawLinks === 0, `ship blocked, ${at}: no primary, no Answer, no raw link (${JSON.stringify(c)})`);
     judge('ship blocked confirmed rows', theme, await ev(MEASURE(...SHIP_ROWS('.ask-shipcard-confirmed'))), { oneLine: false, width });
@@ -483,6 +502,9 @@ async function shipCells(theme, width) {
     await reveal(SHIP);
     const f = await ev(SHIP_FACTS);
     check(f && f.why === null && f.pressed.join() === 'Met' && f.create === 'Create 4 PRs' && !f.disabled && f.primary && f.care === 1, `ship ready, ${at}: Met marked, no reason, Create 4 PRs primary (${JSON.stringify(f)})`);
+    check(f && f.stats === 'Ready to ship' && !f.titled
+      && /^Balanced · Worca's pick · \d of 5 built requirements met · 1 gap found at the end · 0 changes after ship so far$/.test(f.careText || ''),
+    `ship ready, ${at}: Ready to ship, the Care outcome from the recorded figures (${JSON.stringify(f && [f.stats, f.careText])})`);
     const c = await ev(COUNTS('.chat-rc'));
     check(c && c.primaries.length === 1 && c.primaries[0] === 'Create 4 PRs' && c.answer === 0, `ship ready, ${at}: exactly one primary, no Answer (${JSON.stringify(c)})`);
     judge('ship ready confirmed rows', theme, await ev(MEASURE(...SHIP_ROWS('.ask-shipcard-confirmed'))), { oneLine: width > WIDTH, width });
@@ -501,6 +523,10 @@ async function shipCells(theme, width) {
     const f = await ev(SHIP_FACTS);
     check(f && f.done === null && f.stateDetail === '4 PRs open' && f.prsOpen === 1 && f.care === 1 && f.careAbove,
       `ship done, ${at}: 4 PRs open once (the state line), the Care row once above the PRs (${JSON.stringify(f)})`);
+    check(f && /^Balanced · Worca's pick · \d of 5 built requirements met · 1 gap found at the end · 0 changes after ship so far$/.test(f.careText || '') && !f.titled,
+      `ship done, ${at}: the Care outcome from the recorded figures (${JSON.stringify(f && f.careText)})`);
+    check(f && f.unmetBelow && f.unmet.length === 1 && f.unmet[0][0] === 'R-comp-4' && f.unmet[0][1] === 'Not met · Legal has not signed the EU clause yet',
+      `ship done, ${at}: the Not met row under the PR rows (${JSON.stringify(f && f.unmet)})`);
     check(f && f.views.join() === 'View PRs', `ship done, ${at}: one view action, View PRs (${JSON.stringify(f && f.views)})`);
     check(f && f.prs.length === 4 && f.prs[0][1] === 'into main' && new Set(f.prs.map((x) => x[0])).size === 4, `ship done, ${at}: one row per PR, run 1 first into main`);
     const c = await ev(COUNTS('.chat-rc'));

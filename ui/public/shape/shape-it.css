@@ -400,3 +400,4 @@ a.rd-crumb:hover{color:var(--ink);text-decoration:underline;}
 .ask-shipcard.is-small-runs .ask-shipcard-prs{--row-id:4em;}
 /* A person's Not met / Dropped reason (owner direction da6198d8d): its own line above the row's mark picker. */
 .ask-shipcard.is-small-runs .ask-shipcard-reason{flex:1 1 100%;font-size:12px;color:var(--ink-2);overflow-wrap:anywhere;}
+.ask-shipcard.is-small-runs .ask-shipcard-id{white-space:nowrap;}

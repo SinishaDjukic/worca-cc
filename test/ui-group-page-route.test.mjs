@@ -74,6 +74,33 @@ test('Shaper requirements s3: the header Create PR follows the ledger lock; a sh
   assert.equal(cta().title, 'Mark every requirement before you create the PR · 1 left');
 });
 
+test('D1: a small-runs feature\'s header follows the small-runs ledger (run-owned ids never lock it) and offers no One', async () => {
+  // acceptance counts every agreed id, run-owned ones included: only the confirmed ids a person marks may lock the head.
+  const acceptance = { items: [], agreed: [{ id: 'R-po-1' }, { id: 'R-po-2' }, { id: 'R-comp-4' }], entries: [], covered: [], ready: false, marked: 0, total: 3 };
+  const sr = (blocked) => ({ confirmed: [], owned: [], waiting: blocked ? ['R-comp-4'] : [], blocked, reason: blocked ? 'Waiting for Compliance to confirm R-comp-4' : null,
+    met: { met: 2, total: 3 }, care: null, base: 'main', order: [] });
+  let smallRuns = sr(true);
+  const ctx = await boot((url) => (url.startsWith('/api/pr/remotes') ? json({ ok: true, chain: ['main'], remotes: [], defaults: {} })
+    : url.startsWith('/api/shape/features/feat_1') ? json({ ...FEATURE, slices: [{ index: 1, pipelineId: 'p1', pr: null }, { index: 2, pipelineId: 'p2', pr: null }],
+      ship: { ...FEATURE.ship, acceptance, smallRuns } }) : handler(url)));
+  ctx.go('feature/feat_1');
+  await ctx.settle(6);
+  const cta = () => pageOf(ctx).querySelector('.gpage-card .rd-pr-slot [data-rd-cta]');
+  assert.equal(cta().disabled, true, 'locked while a confirmed requirement waits');
+  assert.equal(cta().title, 'Mark every requirement before you create the PR · 1 left', 'only the person-marked id counts');
+  assert.equal(pageOf(ctx).querySelector('.gpage-ship').textContent, 'Merge in order 1 → 2', 'One is refused for small runs (STACKED_ONLY)');
+  smallRuns = sr(false);
+  ctx.dispatch({ type: 'shape-feature', id: 'feat_1' });
+  await ctx.settle(6);
+  assert.equal(cta().disabled, false, 'every confirmed requirement marked: enabled though the owned ids stay unmarked');
+  assert.equal(cta().classList.contains('btn-primary'), true);
+  cta().click();
+  await ctx.settle(10);
+  const modal = ctx.window.document.getElementById('shipit-modal');
+  assert.equal(modal.querySelector('.shipit-prs input[value="one"]').disabled, true, 'One is off');
+  assert.doesNotMatch(modal.querySelector('.shipit-prs-hint').textContent, /one PR is easier/, 'the hint never suggests the disabled One');
+});
+
 test('#feature/:id for an unknown id says so; #group/:id renders a user group without Overview', async () => {
   const ctx = await boot();
   ctx.go('feature/feat_gone');

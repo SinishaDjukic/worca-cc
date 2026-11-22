@@ -258,10 +258,10 @@ const DONE_SR = SR({ ...READY_SR, order: [
   { index: 3, pipelineId: 'p3', title: 'Share', pr: { number: 12, url: 'https://x/pull/12' }, onto: 11 },
   { index: 2, pipelineId: 'p2', title: 'Search', pr: { number: 13, url: 'https://x/pull/13' }, onto: null }] });
 let srFeature = 0;
-const srCard = (sr, { phase = 'ready', onConfirm = async () => ({ ok: true }), countShown = false, featureId = `feat_sr${++srFeature}` } = {}) => {
+const srCard = (sr, { phase = 'ready', onConfirm = async () => ({ ok: true }), countShown = false, titleShown = false, featureId = `feat_sr${++srFeature}` } = {}) => {
   const doc = docOf();
   const el = renderShipCard(doc, { phase, featureId, title: 'Charts', runs: 3, smallRuns: sr, result: phase === 'applied' ? { mode: 'stacked' } : null },
-    { onConfirm, countShown });
+    { onConfirm, countShown, titleShown });
   doc.body.appendChild(el);
   return { el, doc };
 };
@@ -279,6 +279,8 @@ test('D1 blocked: the reason names the role and id once, a Met / Not met / Dropp
   assert.ok(el.classList.contains('is-small-runs'));
   const why = el.querySelector('.ask-shipcard-why');
   assert.equal(why.textContent, 'Waiting for Compliance to confirm R-comp-4');
+  assert.deepEqual([...why.querySelectorAll('.ask-shipcard-id')].map((x) => x.textContent), ['R-comp-4'], 'the id is one unbreakable span (375px)');
+  assert.equal(el.querySelector('.ask-shipcard-stats').textContent, 'Your turn: mark what only a person can');
   assert.equal((el.querySelector('.ask-mcard-body').textContent.match(/waiting for compliance/gi) || []).length, 1);
   const seg = markBtn(el).closest('.seg.seg-sm');
   assert.equal(seg.getAttribute('aria-label'), 'Mark R-comp-4 as Compliance: The data stays in the EU');
@@ -304,6 +306,12 @@ test('D1 blocked: the reason names the role and id once, a Met / Not met / Dropp
 
 test('D1 ready: one primary (Create 3 PRs), no Answer, a Met row reads "confirmed by Compliance · time" with Met pressed, no reason', () => {
   const { el } = srCard(READY_SR);
+  assert.equal(el.querySelector('.ask-shipcard-stats').textContent, 'Ready to ship');
+  assert.equal(el.querySelector('.ask-mcard-title').textContent, 'Charts', 'the feature page has no title of its own above the card');
+  const chat = srCard(READY_SR, { titleShown: true }).el;
+  assert.deepEqual([chat.querySelector('.ask-mcard-title'), chat.querySelector('.ask-mcard-kind').textContent], [null, 'Ship'],
+    "titleShown: the Chat card's head names the feature, the Ship card only its step");
+  assert.equal((chat.textContent.match(/Charts/g) || []).length, 0);
   assert.equal(el.querySelectorAll('.btn-primary').length, 1);
   assert.equal(el.querySelector('.btn-primary').dataset.act, 'ship-create');
   assert.equal(el.querySelector('[data-act="ship-create"]').disabled, false);
@@ -376,6 +384,33 @@ test('D1 a half-typed reason survives a rebuild of the card (a page repaint)', (
   assert.equal(markBtn(again.el, 'dropped').getAttribute('aria-pressed'), 'true');
 });
 
+test('D1 a repaint that removes the focused reason field saves nothing (Chromium blurs the removed node first)', async () => {
+  const sent = [];
+  const { el, doc } = srCard(SR(), { featureId: 'feat_blur', onConfirm: async (...a) => { sent.push(a); return { ok: true }; } });
+  markBtn(el, 'dropped').click();
+  const input = reasonIn(el);
+  input.value = 'half a reas';
+  input.dispatchEvent(new doc.defaultView.Event('input'));
+  // Chromium's order on replaceChildren: blur on the still-connected node, then the removal.
+  input.dispatchEvent(new doc.defaultView.FocusEvent('blur'));
+  doc.body.replaceChildren();
+  await tick(); await tick();
+  assert.deepEqual(sent, [], 'the half-typed reason is not saved');
+  const again = srCard(SR(), { featureId: 'feat_blur' });
+  assert.equal(reasonIn(again.el).value, 'half a reas', 'the draft is still there');
+});
+
+test('D1 a real blur on the reason field still saves it', async () => {
+  const sent = [];
+  const { el, doc } = srCard(SR(), { onConfirm: async (...a) => { sent.push(a); return { ok: true }; } });
+  markBtn(el, 'dropped').click();
+  const input = reasonIn(el);
+  input.value = 'Out of scope';
+  input.dispatchEvent(new doc.defaultView.FocusEvent('blur'));
+  await tick(); await tick();
+  assert.deepEqual(sent, [['R-comp-4', 'dropped', 'Out of scope']]);
+});
+
 test('D1 mark failed: the picker stays, the error line shows the message and focus returns to Met', async () => {
   const { el, doc } = srCard(SR(), { onConfirm: async () => ({ ok: false, error: 'R-comp-4 is owned by run 2: its run and the Verifier check it' }) });
   markBtn(el).focus();
@@ -414,11 +449,18 @@ test('D1 done: N PRs open, no step head, the Care row once above one .srows row 
   assert.equal(el.querySelectorAll('a[href]').length, 0, 'no raw links');
 });
 
-test('D1 done: "1 PR open"; the Not met / Dropped lines; countShown leaves the count to the host state line', () => {
-  const one = SR({ ...DONE_SR, order: DONE_SR.order.slice(0, 1), unmet: [{ id: 'R-comp-4', text: 'x', mark: 'dropped', reason: 'Out of scope' }] });
+test('D1 done: "1 PR open"; the Not met / Dropped rows under the PRs; countShown leaves the count to the host state line', () => {
+  const one = SR({ ...DONE_SR, order: DONE_SR.order.slice(0, 1), unmet: [{ id: 'R-comp-4', text: 'The data stays in the EU', mark: 'dropped', reason: 'Out of scope' },
+    { id: 'R-sec-1', text: 'Owners only', mark: 'not-met', reason: 'Legal has not signed' }] });
   const { el } = srCard(one, { phase: 'applied' });
   assert.equal(el.querySelector('.ask-shipcard-done').textContent, '1 PR open');
-  assert.deepEqual([...el.querySelectorAll('.ask-shipcard-unmet > div')].map((d) => d.textContent), ['Dropped: R-comp-4 · Out of scope']);
+  const unmet = el.querySelector('.ask-shipcard-unmet');
+  assert.ok(unmet.classList.contains('srows'));
+  assert.ok(el.querySelector('.ask-shipcard-prs').compareDocumentPosition(unmet) & 4, 'under the PR rows');
+  assert.deepEqual([...unmet.querySelectorAll('.plan-check-row')].map((r) => [r.querySelector('.plan-check-id').textContent,
+    r.querySelector('.plan-check-label').textContent, r.querySelector('.plan-check-detail').textContent, r.querySelector('.plan-check-mark').getAttribute('aria-label')]),
+  [['R-comp-4', 'The data stays in the EU', 'Dropped · Out of scope', 'dropped'], ['R-sec-1', 'Owners only', 'Not met · Legal has not signed', 'not met']]);
+  assert.equal(srCard(DONE_SR, { phase: 'applied' }).el.querySelector('.ask-shipcard-unmet'), null, 'no rows when every requirement is met');
   const shown = srCard(DONE_SR, { phase: 'applied', countShown: true }).el;
   assert.equal(shown.querySelector('.ask-shipcard-done'), null);
   assert.doesNotMatch(shown.textContent, /PRs open/);

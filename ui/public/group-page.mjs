@@ -121,7 +121,8 @@ export function groupPrList(row) {
 
 /**
  * Paint (idempotent). `view`: { row (groupRow output), project, tab, overview:boolean, logs:boolean, labels: [] (the
- * members' labels), unmarked?: number (a feature's unmarked requirements: its Create PR is locked) }.
+ * members' labels), unmarked?: number (a feature's unmarked requirements: its Create PR is locked), stackedOnly?: boolean (a small-runs
+ * feature: the ship line never offers One) }.
  * `deps`: { onAction(id, btn), onTab(tab), onMore(anchor), mountQuestion(slot, member|null), answerLabel?(), mountOverview(host),
  * mountDecisions(host, row), logsHref(member), labelChip(doc, label), paintHead?(acts, slot, head) } — paintHead paints
  * groupHead's head (Create PR, View PR ▾, View PRs ▾) into the card head; without it the slot stays hidden.
@@ -180,7 +181,7 @@ export function paintGroupPage(root, view, deps) {
   for (const p of root.querySelectorAll('.gpage-panel')) p.hidden = p.dataset.tab !== tab;
   // Slice 3: a frame that changes nothing in the table keeps its nodes (a focused row, the scroll anchor).
   keepUnchanged(root.querySelector('.gpage-runs'), [renderMemberRows(doc, row)]);
-  const line = groupShipLine(row);
+  const line = groupShipLine(row, { stackedOnly: !!view.stackedOnly });
   const ship = root.querySelector('.gpage-ship');
   ship.textContent = line;
   ship.hidden = !line;

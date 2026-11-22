@@ -80,7 +80,7 @@ const state = {
 };
 // The group page host (runs redesign slice 4, D16). Up here, next to `state`: the boot's synchronous showView runs
 // mountGroupPage on a #feature/… reload, and a `const` declared below that call would still be in its TDZ.
-const GROUP_PAGE = { host: null, route: '', id: '', tab: 'runs', featureId: '', gone: false, failed: false, resolving: false, reentered: false, paintQueued: false, unmarked: 0 };
+const GROUP_PAGE = { host: null, route: '', id: '', tab: 'runs', featureId: '', gone: false, failed: false, resolving: false, reentered: false, paintQueued: false, unmarked: 0, stackedOnly: false };
 
 import { icon } from './icons.mjs';
 import { subagentAliasLabel, subagentAliasTitle, roleOf, ROLE_LABELS } from '../../src/shared/model-roles.mjs';
@@ -26677,7 +26677,8 @@ async function openFeatureShip(featureId, { opener = null, card = null } = {}) {
   const base = await groupShipBase(f.slices[f.slices.length - 1].pipelineId, f.projectKey);
   openShipItGroupModal({ kind: 'feature', id: f.id, title: f.title, projectKey: f.projectKey, base,
     members: f.slices.map((s) => ({ position: s.index, pr: s.pr || null })), suggested: f.ship && f.ship.suggested, smallRuns: !!(f.ship && f.ship.smallRuns),
-    hint: shipReason(f.ship && f.ship.suggested, f.ship && f.ship.linesAdded), release: (f.ship && f.ship.hint) || null },
+    // Feature D1: One is off for small runs, so the size hint (which may suggest One) is left out.
+    hint: f.ship && f.ship.smallRuns ? '' : shipReason(f.ship && f.ship.suggested, f.ship && f.ship.linesAdded), release: (f.ship && f.ship.hint) || null },
     { opener, refocus: card ? shipCardRefocus(f.id, card) : focusGroupHead });
 }
 const shipMemberOf = (mb) => { const pr = mb.model && mb.model.pr;
@@ -35377,7 +35378,7 @@ el.groupDetail?.addEventListener('click', (e) => {
 });
 async function mountGroupPage(host, { route, id, tab, reentered = false }) {
   const fresh = GROUP_PAGE.host !== host || GROUP_PAGE.route !== route || GROUP_PAGE.id !== id;
-  Object.assign(GROUP_PAGE, { host, route, id, tab, reentered, ...(fresh ? { featureId: '', gone: false, failed: false, resolving: false, unmarked: 0 } : {}) });
+  Object.assign(GROUP_PAGE, { host, route, id, tab, reentered, ...(fresh ? { featureId: '', gone: false, failed: false, resolving: false, unmarked: 0, stackedOnly: false } : {}) });
   if (fresh) {
     groupMessage(host, 'feature-page-loading', 'Loading group…');
     host.__gp = null;
@@ -35400,7 +35401,7 @@ async function mountGroupPage(host, { route, id, tab, reentered = false }) {
       // A network error or a 5xx is not an answer; only a 404 means gone.
       GROUP_PAGE.failed = !res || (!res.ok && res.status !== 404);
       if (res && res.status === 404) GROUP_PAGE.gone = true;
-      else if (res && res.ok) { const f = await res.json().catch(() => ({})); GROUP_PAGE.featureId = f.id || id; GROUP_PAGE.unmarked = unmarkedOf(f); }
+      else if (res && res.ok) { const f = await res.json().catch(() => ({})); GROUP_PAGE.featureId = f.id || id; GROUP_PAGE.unmarked = unmarkedOf(f); GROUP_PAGE.stackedOnly = smallRunsOf(f); }
     }
   }
   paintGroupPageNow();
@@ -35452,7 +35453,7 @@ function paintGroupPageNow() {
   // Run 3 (D15): the group's Labels fact is the read-only union of its members' History labels.
   const labels = [...new Set(row.members.flatMap((mb) => (histOf(mb.pipelineId) || {}).labels || []))].sort();
   paintGroupPage(host.__gp, { row, project: row.groupName || '', tab, overview: row.groupKind === 'feature', logs: levelAtLeast('expert'), labels,
-    unmarked: route === 'feature' ? GROUP_PAGE.unmarked : 0 }, {
+    unmarked: route === 'feature' ? GROUP_PAGE.unmarked : 0, stackedOnly: route === 'feature' && GROUP_PAGE.stackedOnly }, {
     onAction: (aid, b) => groupAction(row, aid, b),
     onMore: (anchor) => openGroupMoreMenu(anchor, row),
     // One ship flow (D11): Create PR / View PR ▾ / View PRs ▾ on the status line, for every group kind.
@@ -35494,12 +35495,21 @@ function paintGroupPageNow() {
 // top) because History's cached paint can call this during boot, before a `let` down here is initialised.
 /** Shaper requirements s3: a feature's unmarked agreed requirements (0 without a ledger, or with the flag off: the
  *  route then leaves ship.acceptance out). The page header's Create PR locks on it, as the Ship card does. */
-function unmarkedOf(f) { const a = f && f.ship && f.ship.acceptance; return a && !a.ready ? Math.max(0, (a.total || 0) - (a.marked || 0)) : 0; }
+function unmarkedOf(f) {
+  // Feature D1: a small-runs feature's lock is its ledger's waiting ids. Its acceptance also counts the run-owned ids,
+  // which a person can never mark (RUN_OWNED).
+  const sr = f && f.ship && f.ship.smallRuns;
+  if (sr) return sr.blocked && Array.isArray(sr.waiting) ? sr.waiting.length : 0;
+  const a = f && f.ship && f.ship.acceptance; return a && !a.ready ? Math.max(0, (a.total || 0) - (a.marked || 0)) : 0;
+}
+/** Feature D1: a small-runs feature ships a PR per run, so its page never offers One. */
+function smallRunsOf(f) { return !!(f && f.ship && f.ship.smallRuns); }
 /** The open feature page's lock from a fetched feature view; a change repaints the page header. */
 function noteGroupFeatureLock(f) {
   if (GROUP_PAGE.route !== 'feature' || !f || f.id !== GROUP_PAGE.featureId) return;
   const n = unmarkedOf(f);
-  if (n !== GROUP_PAGE.unmarked) { GROUP_PAGE.unmarked = n; scheduleGroupPagePaint(); }
+  const so = smallRunsOf(f);
+  if (n !== GROUP_PAGE.unmarked || so !== GROUP_PAGE.stackedOnly) { GROUP_PAGE.unmarked = n; GROUP_PAGE.stackedOnly = so; scheduleGroupPagePaint(); }
 }
 /** A shape-feature frame (a mark saved here, in Chat or in another tab): re-read the open feature page's lock. A
  *  mounted Overview view of the feature refetches it anyway (refreshShapeFeatures) and notes the lock itself. */

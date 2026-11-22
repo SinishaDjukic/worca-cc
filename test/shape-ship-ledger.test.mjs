@@ -105,5 +105,7 @@ test('careChoiceText: careRecordLine is "Care: " plus it, as before', () => {
   assert.equal(careChoiceText(p), 'Lean · your choice · Worca recommended Thorough');
   assert.equal(careRecordLine(p), 'Care: Lean · your choice · Worca recommended Thorough');
   assert.equal(careRecordLine({}), "Care: Balanced · Worca's pick");
+  assert.equal(careChoiceText({ position: 'balanced', chosenBy: 'person', worcaPick: 'balanced' }), "Balanced · Worca's pick",
+    "a person who kept Worca's pick reads as Worca's pick, never 'your choice · Worca recommended Balanced'");
   assert.equal(SMALL_RUNS_SHIP, 'small runs ship a PR per run');
 });

@@ -277,11 +277,12 @@ export function careRunPlan(position, opts = {}) {
   };
 }
 
-/** The Care choice in words: "Balanced · Worca's pick", or "Careful · your choice · Worca recommended Balanced". */
+/** The Care choice in words: "Balanced · Worca's pick", or "Careful · your choice · Worca recommended Balanced". A
+ *  person who kept Worca's pick reads as Worca's pick (the position is the recommendation, whoever chose it). */
 export function careChoiceText(care) {
   const c = isObject(care) ? care : {};
   const label = CARE_LABELS[c.position] || CARE_LABELS[CARE_DEFAULT.position];
-  if (c.chosenBy === 'person') return `${label} · your choice${CARE_LABELS[c.worcaPick] ? ` · Worca recommended ${CARE_LABELS[c.worcaPick]}` : ''}`;
+  if (c.chosenBy === 'person' && c.position !== c.worcaPick) return `${label} · your choice${CARE_LABELS[c.worcaPick] ? ` · Worca recommended ${CARE_LABELS[c.worcaPick]}` : ''}`;
   return `${label} · Worca's pick`;
 }
 
