@@ -30,7 +30,7 @@ import { classifyLoops } from '../../src/shared/graph/loops.mjs';
 import { portsFnFor } from '../../src/shared/graph/ports.mjs';
 import { parseMcpToolName } from '../../src/shared/mcp-tool-name.mjs';
 import { mcpSkipView, mcpCopyNote, skillSkipView } from './mcp-run-picker.mjs';
-import { engineOfEntry, chatEngineOf, chatSpawnsAgents, pickerGroups, ASK_CHAT_ENGINES, isEngineSetupNotice, engineSwitchConfirm, readEnginePicks, rememberEnginePick, engineLead, switchEffort, pickerEngineName, pickerEngineLabel } from './ask-engine.mjs';
+import { engineOfEntry, chatEngineOf, chatSpawnsAgents, pickerGroups, moreHarnesses, ASK_CHAT_ENGINES, isEngineSetupNotice, engineSwitchConfirm, readEnginePicks, rememberEnginePick, engineLead, switchEffort, pickerEngineName, pickerEngineLabel } from './ask-engine.mjs';
 import { formatQuotedMessage, parseQuotedMessage } from './pinpoint-model.mjs';
 import { ATTACH_MAX_MESSAGE_BYTES, bytesToBase64 as attachBase64, carriesFiles, checkAttachment, createPasteNamer, pastedFiles } from './attach-files.mjs';
 import { notify } from './feedback.mjs';
@@ -3228,21 +3228,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
       const lead = active && g.engine !== active ? engineLead(g.models, readEnginePicks(storage)[g.engine], ((st.catalog && st.catalog.defaults) || {})[g.engine]) : null;
       return splitCatalog(lead ? [lead, ...g.models.filter((x) => x !== lead)] : g.models);
     };
-    // The engine whose section is always offered, models or not (unlike the others OpenCode ships no built-ins, so
-    // it would otherwise be missing until a model is added). Its empty section's row points at Add model.
-    const ALWAYS_CHAT_ENGINE = 'opencode';
-    const sectionsNow = () => {
-      const sections = pickerGroups(st.catalog ? st.catalog.models : [], { active: activeEngine() });
-      if (!sections.some((x) => x.engine === ALWAYS_CHAT_ENGINE)) {
-        const name = pickerEngineLabel(ALWAYS_CHAT_ENGINE, { beta: true });
-        sections.push({
-          engine: ALWAYS_CHAT_ENGINE,
-          label: activeEngine() === ALWAYS_CHAT_ENGINE ? `${name} · this chat` : name,
-          models: [], empty: true,
-        });
-      }
-      return sections;
-    };
+    const sectionsNow = () => pickerGroups(st.catalog ? st.catalog.models : [], { active: activeEngine() });
     // The engine the main pane lists: the chat's, else the picked model's, else the first with models.
     const shownEngine = () => {
       const sections = sectionsNow();
@@ -3256,15 +3242,9 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
       moreRow.appendChild(make('span', 'ask-pop-row-chev', '›'));
       return moreRow;
     };
-    // An engine with no models (OpenCode's always-offered section): one row that opens Add model on that harness,
-    // so a chat can move to it the moment its first model exists.
-    const addEngineModelRow = (engine) => {
-      const row = menuItem('ask-engine-empty', () => { if (typeof openAddModel === 'function') openAddModel(engine); });
-      row.appendChild(make('span', 'ask-model-name', `Add ${engineLabel(engine)} model`));
-      row.appendChild(make('span', 'ask-pop-row-chev', '›'));
-      row.disabled = typeof openAddModel !== 'function';
-      return row;
-    };
+    // The chat engines with no model yet sit behind one row, so the menu grows by one line however many there are.
+    // Without a host that can open Add model (the extension, a bare panel) there is nowhere to lead, so no row.
+    const harnessesNow = () => (typeof openAddModel === 'function' ? moreHarnesses(st.catalog ? st.catalog.models : []) : []);
     let shownPane = 'main';
     let effortPaneKey = '';   // the model + effort list the effort pane was painted from
     const effortKeyNow = () => { const e = catalogEntry(st.picker.model); return `${st.picker.model}:${e && Array.isArray(e.efforts) ? e.efforts.join() : ''}`; };
@@ -3285,6 +3265,21 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
           if (eff === st.picker.effort) item.appendChild(checkMark());
           panel.appendChild(item);
         }
+      } else if (pane === 'harnesses') {
+        // Each row leaves the chat for Models › Add model with that harness picked; a chat moves there once it has a model.
+        const back = menuItem('ask-pane-back', () => renderPane('main'));
+        back.setAttribute('data-ask-pane-back', '');
+        back.appendChild(make('span', null, '‹ More harnesses'));
+        panel.appendChild(back);
+        panel.appendChild(make('div', 'ask-pop-divider'));
+        for (const h of harnessesNow()) {
+          const row = menuItem('ask-harness-row', () => { closePopover(); openAddModel(h.engine); });
+          row.setAttribute('data-ask-harness', h.engine);
+          row.title = `Set up ${h.label} in Models`;
+          row.appendChild(make('span', null, h.label));
+          row.appendChild(make('span', 'ask-pop-row-chev', '›'));
+          panel.appendChild(row);
+        }
       } else if (pane.startsWith('more:') || pane.startsWith('engine:')) {
         // 'engine:<name>': another engine's main list, led by the model last used there (else its default), so a pick
         // moves the chat after a confirm; 'more:<name>': that engine's more models, back to the list it came from.
@@ -3298,15 +3293,11 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
         panel.appendChild(back);
         panel.appendChild(make('div', 'ask-pop-divider'));
         if (g) {
-          if (g.empty) {
-            panel.appendChild(addEngineModelRow(g.engine));
-          } else {
-            const split = sectionSplit(g, activeEngine());
-            appendByConnection(more ? split.rest : split.primary, g.engine);
-            if (!more && split.rest.length) {
-              panel.appendChild(make('div', 'ask-pop-divider'));
-              panel.appendChild(moreModelsRow(engine));
-            }
+          const split = sectionSplit(g, activeEngine());
+          appendByConnection(more ? split.rest : split.primary, g.engine);
+          if (!more && split.rest.length) {
+            panel.appendChild(make('div', 'ask-pop-divider'));
+            panel.appendChild(moreModelsRow(engine));
           }
         }
       } else {
@@ -3318,21 +3309,25 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
         let hasMore = false;
         if (g) {
           if (sections.length > 1) panel.appendChild(make('div', 'ask-pop-group', g.label));
-          if (g.empty) panel.appendChild(addEngineModelRow(g.engine));
-          else {
-            const split = sectionSplit(g, activeEngine());
-            appendByConnection(split.primary, g.engine);
-            hasMore = split.rest.length > 0;
-          }
+          const split = sectionSplit(g, activeEngine());
+          appendByConnection(split.primary, g.engine);
+          hasMore = split.rest.length > 0;
         }
         const others = sections.filter((x) => x !== g);
-        if (others.length) panel.appendChild(make('div', 'ask-pop-divider'));
+        if (others.length || harnessesNow().length) panel.appendChild(make('div', 'ask-pop-divider'));
         for (const o of others) {
           const engineRow = menuItem('ask-engine-row', () => renderPane(`engine:${o.engine}`));
           engineRow.setAttribute('data-ask-engine-group', o.engine);
           engineRow.appendChild(make('span', null, o.label));
           engineRow.appendChild(make('span', 'ask-pop-row-chev', '›'));
           panel.appendChild(engineRow);
+        }
+        if (harnessesNow().length) {
+          const harnessRow = menuItem('ask-more-harnesses', () => renderPane('harnesses'));
+          harnessRow.setAttribute('data-ask-more-harnesses', '');
+          harnessRow.appendChild(make('span', null, 'More harnesses'));
+          harnessRow.appendChild(make('span', 'ask-pop-row-chev', '›'));
+          panel.appendChild(harnessRow);
         }
         panel.appendChild(make('div', 'ask-pop-divider'));
         const noEffort = !!catalogEntry(st.picker.model)?.noEffort;
@@ -3358,7 +3353,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     loadCatalog({ fresh: true }).then((c) => {
       if (c === had || !st.popover || st.popover.panel !== panel) return;
       // The effort pane repaints only when the refresh changed what it lists (a dropped model fell back): a repaint moves focus.
-      if (shownPane === 'main' || (shownPane === 'effort' && effortKeyNow() !== effortPaneKey)) renderPane(shownPane);
+      if (shownPane === 'main' || shownPane === 'harnesses' || (shownPane === 'effort' && effortKeyNow() !== effortPaneKey)) renderPane(shownPane);
     });
     renderPane('main');
   }

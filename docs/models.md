@@ -1371,7 +1371,8 @@ click Apply.
 
 A chat is not tied to the engine it started on. The model picker lists the models of the chat's engine, marked
 *this chat*, and one row for each other engine that has models. Open an engine's row to see its models, and pick one to
-move the chat there:
+move the chat there. The engines with no model yet are listed under **More harnesses**; a row there opens `Add model`
+with that harness picked:
 
 - worca first shows what changes: the tools the new engine has, images or PDFs it cannot view, whether it reports a
   cost, both models' context windows, the MCP servers from your sets it cannot start, the attachments it gets only by

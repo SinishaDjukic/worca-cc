@@ -5,9 +5,9 @@ card you confirm. To drive runs from Telegram, Slack, Discord or Teams, see [Plu
 
 ## Which engine answers
 
-A chat runs on the model you pick. The composer's model button lists each engine that has models; **OpenCode** is
-always offered there, so you can switch a chat to it (or jump to `Add model` on it) even before you have added an
-OpenCode model — see [Models > Catalogue](models.md#the-catalogue-tab).
+A chat runs on the model you pick. The composer's model button lists each engine that has models. An engine with
+none yet (Gemini CLI, Goose, OpenCode, Qwen Code) sits under **More harnesses**: pick one to open `Add model` on it in
+[Models > Catalogue](models.md#the-catalogue-tab). Once it has a model it gets its own row and a chat can move to it.
 
 ## A chat that is the home page
 

@@ -34,7 +34,7 @@ test('a new chat lists its engine\'s models; every other engine is one row that 
   ctx.doc.querySelector('[data-ask-model-btn]').click(); await ctx.tick();
   assert.deepEqual(groups(ctx), ['Claude Code']);
   assert.deepEqual(names(ctx), ['Opus 5.5']);
-  assert.deepEqual(engineRows(ctx), ['OpenAI Codex (beta)', 'OpenCode (beta)']);
+  assert.deepEqual(engineRows(ctx), ['OpenAI Codex (beta)']);
   await openEngine(ctx, 'codex');
   assert.equal(ctx.doc.querySelector('.ask-pop-model [data-ask-pane-back]').textContent, '‹ OpenAI Codex (beta)');
   assert.deepEqual(names(ctx), ['GPT-5.5']);
@@ -271,7 +271,7 @@ test('each engine\'s list holds the newest of each family; its More models the r
   ctx.doc.querySelector('[data-ask-model-btn]').click(); await ctx.tick();
   assert.deepEqual(groups(ctx), ['Claude Code']);
   assert.deepEqual(names(ctx), ['Opus 5.5']);
-  assert.deepEqual(engineRows(ctx), ['OpenAI Codex (beta)', 'GitHub Copilot CLI (beta)', 'OpenCode (beta)']);
+  assert.deepEqual(engineRows(ctx), ['OpenAI Codex (beta)', 'GitHub Copilot CLI (beta)']);
   ctx.doc.querySelector('[data-ask-more-models]').click(); await ctx.tick();
   assert.deepEqual(names(ctx), ['Opus 5'], 'only the shown engine\'s more models');
   ctx.doc.querySelector('.ask-pop-model [data-ask-pane-back]').click(); await ctx.tick();
@@ -327,7 +327,7 @@ test('inside a Codex chat the picker lists every engine and marks the chat\'s ow
   modelBtn(ctx).click(); await ctx.tick();
   assert.deepEqual(groups(ctx), ['OpenAI Codex (beta) · this chat']);
   assert.deepEqual(names(ctx), ['GPT-5.5']);
-  assert.deepEqual(engineRows(ctx), ['Claude Code', 'OpenCode (beta)']);
+  assert.deepEqual(engineRows(ctx), ['Claude Code']);
   await openEngine(ctx, 'claude');
   assert.deepEqual(names(ctx), ['Opus 5.5']);
 });
@@ -604,26 +604,34 @@ test('a refused switch offers the next step: a new preview when more turns now d
   assert.deepEqual(opened, [['https://docs.example.test/claude', '_blank', 'noopener']]);
 });
 
-test('OpenCode is always offered with no models: its section holds an Add-model row that opens Add model on it', async () => {
+const harnessRows = (ctx) => [...ctx.doc.querySelectorAll('.ask-pop-model [data-ask-harness]')].map((n) => n.textContent.replace(/›$/, ''));
+
+test('More harnesses: one row lists the chat engines with no models; each opens Add model on that harness', async () => {
   const added = [];
   const ctx = makePanel({ fetchHandler: handler(), deps: { openAddModel: (engine) => added.push(engine) } });
   ctx.panel.open(); await ctx.tick(); await ctx.tick();
   ctx.doc.querySelector('[data-ask-model-btn]').click(); await ctx.tick();
-  const ocRow = ctx.doc.querySelector('.ask-pop-model [data-ask-engine-group="opencode"]');
-  assert.ok(ocRow, 'OpenCode\'s row is offered with no OpenCode models');
-  assert.ok(ocRow.textContent.includes('OpenCode (beta)'));
-  ocRow.click(); await ctx.tick();
-  assert.deepEqual(names(ctx), ['Add OpenCode model'], 'an engine with no models lists only its Add-model row');
-  const add = ctx.doc.querySelector('.ask-pop-model .ask-engine-empty');
-  assert.ok(add, 'the section\'s empty row is the Add-model call to action');
-  assert.equal(add.textContent.replace(/›$/, '').trim(), 'Add OpenCode model');
-  add.click();
+  assert.equal(ctx.doc.querySelector('.ask-pop-model [data-ask-engine-group="opencode"]'), null, 'an engine with no models has no section of its own');
+  const more = ctx.doc.querySelector('.ask-pop-model [data-ask-more-harnesses]');
+  assert.equal(more.textContent.replace(/›$/, ''), 'More harnesses');
+  more.click(); await ctx.tick();
+  assert.equal(ctx.doc.querySelector('.ask-pop-model [data-ask-pane-back]').textContent, '‹ More harnesses');
+  assert.deepEqual(harnessRows(ctx), ['Gemini CLI (beta)', 'Goose (beta)', 'OpenCode (beta)', 'Qwen Code (beta)']);
+  assert.deepEqual(names(ctx), [], 'the pane lists harnesses, never a model');
+  ctx.doc.querySelector('.ask-pop-model [data-ask-harness="opencode"]').click(); await ctx.tick();
   assert.deepEqual(added, ['opencode'], 'the row opens Add model on the harness');
-  // Add model is not wired (a bare host): the row still shows, disabled.
+  assert.equal(ctx.doc.querySelector('.ask-pop-model'), null, 'the menu closes on the way to Models');
+});
+
+test('More harnesses: back returns to the models; the row is left out when Add model is not wired', async () => {
+  const ctx = makePanel({ fetchHandler: handler(), deps: { openAddModel: () => {} } });
+  ctx.panel.open(); await ctx.tick(); await ctx.tick();
+  ctx.doc.querySelector('[data-ask-model-btn]').click(); await ctx.tick();
+  ctx.doc.querySelector('.ask-pop-model [data-ask-more-harnesses]').click(); await ctx.tick();
+  ctx.doc.querySelector('.ask-pop-model [data-ask-pane-back]').click(); await ctx.tick();
+  assert.deepEqual(names(ctx), ['Opus 5.5']);
   const bare = makePanel({ fetchHandler: handler() });
   bare.panel.open(); await bare.tick(); await bare.tick();
   bare.doc.querySelector('[data-ask-model-btn]').click(); await bare.tick();
-  bare.doc.querySelector('.ask-pop-model [data-ask-engine-group="opencode"]').click(); await bare.tick();
-  const inert = bare.doc.querySelector('.ask-pop-model .ask-engine-empty');
-  assert.equal(inert.disabled, true);
+  assert.equal(bare.doc.querySelector('.ask-pop-model [data-ask-more-harnesses]'), null);
 });

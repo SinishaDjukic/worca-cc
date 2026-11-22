@@ -43277,9 +43277,9 @@ askPanel = createAskPanel({
   openComposer: (id) => { openWorkflowFromAsk(id, { reveal: true }); },
   composerActions: askComposerActions(),        // Ask's draft and graph cards: the Workflows chat's actions (ask-composer-cards.mjs)
   openClaudeSetup: () => { openClaudeSetup(); },
-  // An always-offered chat engine with no models (OpenCode): the row opens the Models view at Add model's OpenCode
-  // list, so the chat can move to it the moment a model exists (or be added right away).
-  openAddModel: (engine) => { askSide?.uncover(); mvState.openEditorOnLoad = { step: 2, where: 'signin', engine }; showView('models'); },
+  // The picker's "More harnesses": the Models view with Add model on that harness. OpenCode lists its own models, so
+  // it opens at that list; every other sign-in opens at step 1 with the harness picked.
+  openAddModel: (engine) => { askSide?.uncover(); mvState.openEditorOnLoad = engine === 'opencode' ? { step: 2, where: 'signin', engine } : { where: 'signin', engine }; showView('models'); },
   loadMarkdown: loadAskMarkdown,
   hljsLoader: diffHljsLoader,
   storage: localStorage,
