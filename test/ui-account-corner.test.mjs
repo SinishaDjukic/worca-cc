@@ -191,7 +191,7 @@ test('click opens the menu with the level card first; Enter opens it and focuses
   assert.equal($('acct-menu').hidden, true, 'an outside click closes it');
   click($('side-acct'), 0);   // Enter on a button clicks it with detail 0
   assert.equal($('acct-menu').hidden, false, 'Enter opens it');
-  assert.equal(doc.activeElement, $('acct-level-card').querySelector('[role="menuitem"]'), 'the first menuitem has focus');
+  assert.equal(doc.activeElement, $('acct-level-card'), 'the level card, the first menuitem, has focus');
   key('Escape');
   assert.equal($('acct-menu').hidden, true, 'Escape closes it');
   assert.equal(doc.activeElement, $('side-acct'), 'and hands focus back');
@@ -448,12 +448,12 @@ test('account menu: a hairline only between shown groups, never doubled or orpha
   const GENERIC = '.acct-menu > :not([hidden]) ~ :not([hidden])';
   assert.match(cssRule(`${GENERIC}::before`) || '', /background:var\(--line\);/, 'the generic hairline rule');
   const overrides = [...CORNER_CSS.matchAll(/(?:^|\})\s*([^{}]+?)::before\s*\{content:none;\}/g)].map((m) => m[1].trim());
-  assert.deepEqual(overrides.sort(), ['.acct-menu > .acct-spend:not([hidden]) + .usage-sect:not([hidden])', '.acct-menu > .wl-menu-card + .id-card:not([hidden])'],
+  assert.deepEqual(overrides.sort(), ['.acct-menu > .acct-spend:not([hidden]) + .usage-sect:not([hidden])', '.acct-menu > .wl-card + .id-card:not([hidden])'],
     'card then identity, spend then Usage: the only pairs with no hairline');
   for (const sel of overrides) assert.match(cssRule(sel, CORNER_CSS) || '', /margin-top:(0|6px);/, `${sel}: its own gap`);
   const menu = $('acct-menu');
   const card = doc.createElement('button');
-  card.className = 'wl-menu-card';
+  card.className = 'wl-card';
   card.id = 'acct-level-card';
   const setUp = ({ level, id, spend, usage }) => {
     if (level) menu.prepend(card); else card.remove();
@@ -495,7 +495,11 @@ test('account menu: the spend, identity and level cards have no --field / --surf
   for (const [, sel, body] of cards) {
     for (const [, val] of body.matchAll(/background:([^;]*)/g)) assert.match(val, /^(none|transparent)$/, `${sel.trim()}: no fill`);
   }
-  assert.match(cssRule('.wl-menu-card') || '', /padding:6px 9px 8px;/, 'the level card sits in the rows\' 9px icon column');
+  const wl = readFileSync(new URL('../ui/public/worca-level/worca-level.css', import.meta.url), 'utf8');
+  assert.match(cssRule('.acct-menu > .wl-card', wl) || '', /background:transparent;/, 'the level card is flat in the menu');
+  assert.match(cssRule('.acct-menu > .wl-card', wl) || '', /border:0;/);
+  assert.match(cssRule('.acct-menu > .wl-card', wl) || '', /padding:6px 9px;/);
+  assert.match(cssRule('.acct-menu > .wl-card:hover', wl) || '', /background:var\(--hover\);/, 'it keeps its hover fill');
 });
 
 test('the free row\'s rule is the --line divider on the flat card', () => {

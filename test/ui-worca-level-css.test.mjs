@@ -84,7 +84,7 @@ test('each level key tints with a hue number', () => {
 });
 
 test('the segment row, menu card, hero, reach list and dialog all have rules', () => {
-  for (const sel of ['.wl-seg', '.wl-seg-i', '.wl-menu-card', '.wl-hero', '.wl-reach', '.wl-level', '.wl-dot', '.worca-dlg', '.gs-level-line']) {
+  for (const sel of ['.wl-seg', '.wl-seg-i', '.wl-card', '.wl-hero', '.wl-reach', '.wl-level', '.wl-dot', '.worca-dlg', '.gs-level-line']) {
     assert.ok(ALL.some((r) => r.sel.split(',').some((s) => s.trim().startsWith(sel))), `${sel} has a rule`);
   }
 });

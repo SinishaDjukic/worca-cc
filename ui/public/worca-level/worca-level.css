@@ -12,7 +12,7 @@
 [data-worca-level=council]{--wl-hue:150;}
 
 /* Aliases, one place: done is ink, to-do is the quiet line, a link is the strong blue ink. */
-.wl-seg,.wl-dot,.wl-chip,.wl-menu-card,.wl-hero,.wl-reach,.wl-levels,.worca-dlg,.gs-level-line{
+.wl-seg,.wl-dot,.wl-chip,.wl-card,.wl-hero,.wl-reach,.wl-levels,.worca-dlg,.gs-level-line{
   --wl-seg-done:var(--ink);--wl-dot-done:var(--ink);
   --wl-seg-todo:var(--line-2);--wl-dot-todo:var(--ink-3);
   --wl-link:var(--blue-ink-strong);--wl-chip-next-ink:var(--blue-ink-strong);--wl-chip-next-bg:var(--blue-bg);
@@ -29,32 +29,30 @@
 .wl-seg[data-size="lg"] .wl-seg-i{height:6px;}
 .wl-seg-i[data-done]{background:var(--wl-seg-done);}
 
-/* The account-menu level card: the menu's first group (level-card.mjs). It is a plain block in the menu, not a
-   popover; its links and buttons are the menu items. */
-.wl-menu-card{display:flex;flex-direction:column;gap:10px;box-sizing:border-box;margin:0;padding:6px 9px 8px;
-  color:var(--ink);font-size:var(--fs-meta);line-height:1.4;}
-.wl-hc-head{display:flex;align-items:center;gap:10px;}
-.wl-hc-ava{flex:none;width:40px;height:40px;border-radius:50%;object-fit:cover;background:var(--line-2);}
+/* The account-menu level card (level-card.mjs): avatar, name and "View level", then the way to the next level. */
+.wl-card{display:flex;flex-direction:column;gap:8px;width:100%;box-sizing:border-box;margin:0;padding:10px;text-align:left;font:inherit;
+  background:var(--surface);border:1px solid var(--line);border-radius:var(--r-md);color:var(--ink);cursor:pointer;}
+.wl-card:hover{background:var(--hover);}
+.wl-card:focus-visible,.wl-menu-act:focus-visible,.worca-dlg-link:focus-visible{outline:2px solid var(--ink);outline-offset:2px;}
+/* In the account menu it is flat on the --panel sheet, its text in the rows' 9px icon column. The :hover
+   rule is repeated: both selectors weigh (0,2,0), so the transparent fill would otherwise win. */
+.acct-menu > .wl-card{padding:6px 9px;background:transparent;border:0;border-radius:var(--r-sm);}
+.acct-menu > .wl-card:hover{background:var(--hover);}
+.wl-card-head{display:flex;align-items:center;gap:8px;}
+.wl-card-ava{flex:none;width:22px;height:22px;border-radius:50%;object-fit:cover;background:var(--line-2);}
+.wl-card-name{flex:1;min-width:0;font-size:var(--fs-body);font-weight:600;}
+.wl-card-go{font-size:var(--fs-meta);color:var(--wl-link);}
+.wl-card-next{min-width:0;}
+.wl-card-top{font-size:var(--fs-meta);color:var(--ink-2);}
+.wl-card-row{display:flex;align-items:baseline;justify-content:space-between;gap:8px;font-size:var(--fs-meta);color:var(--ink-2);}
+.wl-card-prog{font-weight:600;color:var(--ink);font-variant-numeric:tabular-nums;}
+/* The no-level variant: a div, not a button. A small initials circle and the prompt, then one action. */
+.wl-card-none{cursor:default;gap:4px;}
+.acct-menu > .wl-card.wl-card-none:hover{background:transparent;}
+.wl-card-none .wl-menu-ava{width:22px;height:22px;font-size:var(--fs-caption);}
 .wl-menu-ava{flex:none;display:grid;place-items:center;width:40px;height:40px;border-radius:50%;background:var(--line-2);
   color:var(--ink);font-size:var(--fs-body);font-weight:600;}
-.wl-hc-who{display:flex;flex-direction:column;gap:2px;min-width:0;}
-.wl-hc-name{font-size:var(--fs-body);font-weight:600;color:var(--ink);}
-.wl-hc-level{font-size:var(--fs-caption);color:var(--ink-2);}
-.wl-hc-next{color:var(--ink-2);}
-.wl-hc-next strong{font-weight:600;color:var(--ink);}
-.wl-hc-prog{font-weight:600;color:var(--ink);font-variant-numeric:tabular-nums;}
 .wl-top{margin:0;color:var(--ink-2);}
-.wl-hc-tries{display:flex;flex-direction:column;gap:2px;padding-top:10px;border-top:1px solid var(--line-2);}
-.wl-hc-k{margin-bottom:4px;font-size:var(--fs-caption);font-weight:500;color:var(--ink-2);}
-.wl-try{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:2px 8px;margin:0 -8px;padding:7px 8px;border-radius:var(--r-sm);
-  color:var(--ink);text-decoration:none;}
-.wl-try:hover{background:var(--hover);}
-.wl-try:focus-visible,.wl-profile-link:focus-visible,.wl-menu-act:focus-visible,.worca-dlg-link:focus-visible{outline:2px solid var(--ink);outline-offset:2px;}
-.wl-try-t{font-size:var(--fs-meta);font-weight:500;}
-.wl-try-go{color:var(--wl-link);}
-.wl-try-h{grid-column:1 / -1;font-size:var(--fs-caption);line-height:1.4;color:var(--ink-2);}
-.wl-profile-link{font-size:var(--fs-meta);font-weight:500;color:var(--wl-link);text-decoration:none;}
-.wl-profile-link:hover{text-decoration:underline;}
 .wl-menu-act{align-self:flex-start;margin:0;padding:4px 0;border:0;background:transparent;font:inherit;font-size:var(--fs-meta);
   font-weight:500;color:var(--wl-link);cursor:pointer;}
 .wl-menu-act:hover{text-decoration:underline;}
