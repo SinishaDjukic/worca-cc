@@ -108,6 +108,7 @@ export function chatRow(t, { scopeName = () => '', now = Date.now() } = {}) {
     activityMs, createdMs: timeMs(t.createdAt, now), cost, groupKey, groupName, projectKey: (scope && scope.projectKey) || '',
     labels: [], model: { ...chatDot(state, chatKind(t)), line },
     origin: t.origin || null,   // the chat integration that opened it (drawn as its platform's mark), null = an app chat
+    ...(t.designId ? { designId: t.designId } : {}),   // a chat with a design (drawn with Design's mark)
   };
 }
 

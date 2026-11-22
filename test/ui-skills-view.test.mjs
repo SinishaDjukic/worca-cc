@@ -21,6 +21,13 @@ const tick = () => new Promise((r) => setTimeout(r, 0));
 const settle = async () => { for (let i = 0; i < 6; i++) await tick(); };
 const click = (el) => el.dispatchEvent(new doc.defaultView.Event('click', { bubbles: true }));
 const change = (el) => el.dispatchEvent(new doc.defaultView.Event('change', { bubbles: true }));
+/** A row's ⋯ (Remove and Delete live there): open it, then pick the item by its label. */
+const pickMore = (scope, label) => {
+  click(scope.querySelector('.cx-more'));
+  const item = [...doc.querySelectorAll('[role="menuitem"]')].find((b) => b.textContent.trim() === label);
+  assert.ok(item, `the ⋯ menu offers ${label}`);
+  click(item);
+};
 
 const SETS = [
   { id: 'general', name: 'General', group: 'general', greyed: false, home: null, serverCount: 1, skillCount: 1, problem: false,
@@ -57,6 +64,8 @@ function mount({ sets = SETS, setViews = {}, skills = SKILLS, over = {}, answer 
   const nav = [];
   const confirms = [];
   const modal = { opened: null, open(title, body, actions) { this.opened = { title, body, actions }; }, close() { this.opened = null; } };
+  const sheet = { opened: null, open(title, body, actions, opts) { this.opened = { title, body, actions, opts }; }, close() { this.opened = null; },
+    shows(n) { return !!this.opened && this.opened.body.contains(n); } };
   const api = async (method, path, body) => {
     calls.push([method, path, body]);
     const key = `${method} ${path}`;
@@ -73,12 +82,12 @@ function mount({ sets = SETS, setViews = {}, skills = SKILLS, over = {}, answer 
   };
   const host = doc.createElement('section');
   doc.body.replaceChildren(host);
-  const ctl = createMcpView({ host, api, navigate: (h) => nav.push(h), confirm: async (o) => { confirms.push(o); return answer(o); }, modal, doc });
-  return { host, ctl, calls, nav, confirms, modal, writes: () => calls.filter(([m]) => m !== 'GET') };
+  const ctl = createMcpView({ host, api, navigate: (h) => nav.push(h), confirm: async (o) => { confirms.push(o); return answer(o); }, modal, sheet, doc });
+  return { host, ctl, calls, nav, confirms, modal, sheet, writes: () => calls.filter(([m]) => m !== 'GET') };
 }
 const action = (modal, label) => modal.opened.actions.find(([l]) => l === label)[2];
-const rowOf = (host, id) => host.querySelector(`.sk-row[data-skill="${id}"]`);
-const acts = (row) => [...row.querySelectorAll('.pl-actions button')].map((b) => b.textContent);
+const rowOf = (host, id) => host.querySelector(`.cx-skills .cx-row[data-skill="${id}"]`);
+const acts = (row) => [...row.querySelectorAll('.cx-acts button')].map((b) => (b.classList.contains('cx-more') ? '⋯' : b.textContent));
 
 test('routes and labels: #connectors/skills, the title "Connectors", three segments, one primary button per view', async () => {
   await checkRows([
@@ -91,23 +100,22 @@ test('routes and labels: #connectors/skills, the title "Connectors", three segme
     { name: 'the Skills view: title, sub, segments, Import skill, GET /api/skills', run: async () => {
       const { host, ctl, calls } = mount();
       await ctl.show('skills');
-      assert.equal(host.querySelector('.topbar h1'), null, 'the top bar names the page');
-      assert.equal(host.querySelector('.topbar .sub').textContent, 'MCP servers and skills worca’s agents and Chat get, grouped in sets attached to projects');
-      const seg = [...host.querySelectorAll('.topbar .seg button')];
-      assert.deepEqual(seg.map((b) => [b.textContent, b.getAttribute('aria-pressed')]), [['Sets', 'false'], ['Servers', 'false'], ['Skills', 'true']]);
-      assert.equal(host.querySelector('.topbar .btn-primary').textContent, 'Import skill');
-      assert.equal(host.querySelector('.topbar .btn-primary').dataset.act, 'import-skill');
+      assert.equal(host.querySelector('.topbar'), null, 'no top bar, no page intro');
+      const tabs = [...host.querySelectorAll('nav.mk-tabs a.mk-tab')];
+      assert.deepEqual(tabs.map((b) => [b.firstChild.textContent.trim(), b.getAttribute('aria-current')]), [['Sets', null], ['Servers', null], ['Skills', 'page']]);
+      assert.equal(host.querySelector('.mk-head-actions .btn-primary').textContent, 'Import skill');
+      assert.equal(host.querySelector('.mk-head-actions .btn-primary').dataset.act, 'import-skill');
       assert.ok(calls.some(([m, p]) => m === 'GET' && p === '/api/skills'));
     } },
     { name: 'the segments navigate: Servers, Skills, back to the last set', run: async () => {
       const { host, ctl, nav } = mount({ setViews: { billing: { set: { id: 'billing', name: 'Billing', group: 'set', greyed: false, home: null, usedBy: [] }, members: [] } } });
       await ctl.show('sets/billing');
-      assert.equal(host.querySelector('.topbar .btn-primary').textContent, 'New set');
+      assert.equal(host.querySelector('.mk-head-actions .btn-primary').textContent, 'New set');
       click(host.querySelector('[data-mcp-view="skills"]'));
       await ctl.show('skills');
       click(host.querySelector('[data-mcp-view="servers"]'));
       await ctl.show('servers');
-      assert.equal(host.querySelector('.topbar .btn-primary').textContent, 'Add MCP server');
+      assert.equal(host.querySelector('.mk-head-actions .btn-primary').textContent, 'Add MCP server');
       click(host.querySelector('[data-mcp-view="sets"]'));
       assert.deepEqual(nav, [MCP_SKILLS_ROUTE, 'connectors/servers', 'connectors/sets/billing']);
     } },
@@ -117,56 +125,56 @@ test('routes and labels: #connectors/skills, the title "Connectors", three segme
 test('the Skills catalog: source and origin, badges, the counts line, In sets links, actions per source, invalid rows', async () => {
   const { host, ctl } = mount();
   await ctl.show('skills');
-  assert.deepEqual([...host.querySelectorAll('.sk-row')].map((r) => r.dataset.skill), SKILLS.map((s) => s.id));
-  const badges = (row) => [...row.querySelectorAll('.pl-head .badge')].map((b) => `${b.className.replace('badge', '').trim() || '-'}:${b.textContent}`);
+  assert.deepEqual([...host.querySelectorAll('.cx-skills .cx-row')].map((r) => r.dataset.skill), SKILLS.map((s) => s.id));
+  const badges = (row) => [...row.querySelectorAll('.cx-line .badge')].map((b) => `${b.className.replace('badge mk-chip', '').replace('mk-chip-', '').trim()}:${b.textContent}`);
   await checkRows([
     { name: 'a folder import: Imported, folder, Windows badge for a .sh script, Check for updates, Remove', run: () => {
       const row = rowOf(host, 'skill:library:db-migrations');
-      assert.deepEqual(badges(row), ['-:Imported', 'amber:shell scripts (may not run on Windows)']);
-      assert.equal(row.querySelector('.pl-head .mono.hint').textContent, 'folder');
-      assert.equal(row.querySelector('small.hint').textContent, 'Write, review and apply SQL migrations · 7 files · 2 scripts · 1 shell block');
-      assert.deepEqual(acts(row), ['Add to set', 'Check for updates', 'Remove', 'View SKILL.md']);
-      assert.deepEqual([...row.querySelectorAll('a.chip')].map((a) => [a.textContent, a.getAttribute('href')]), [['Billing', '#connectors/sets/billing']]);
+      assert.deepEqual(badges(row), ['warn:shell scripts (may not run on Windows)', 'n:Imported']);
+      assert.equal(row.querySelector('.mk-meta').textContent, 'folder · Write, review and apply SQL migrations · 7 files · 2 scripts · 1 shell block');
+      assert.deepEqual(acts(row), ['Add to set', 'Check for updates', 'View SKILL.md', '⋯']);
+      assert.deepEqual([...row.querySelectorAll('.cx-sets a.badge')].map((a) => [a.textContent, a.getAttribute('href')]), [['Billing', '#connectors/sets/billing']]);
     } },
     { name: 'a pasted skill has no origin: no update action', run: () => {
       const row = rowOf(host, 'skill:library:frontend-design');
-      assert.equal(row.querySelector('.pl-head .mono.hint').textContent, 'pasted');
-      assert.deepEqual(acts(row), ['Add to set', 'Remove', 'View SKILL.md']);
-      assert.match(row.querySelector('.mcp-usedby').textContent, /not in a set/);
+      assert.match(row.querySelector('.mk-meta').textContent, /^pasted/);
+      assert.deepEqual(acts(row), ['Add to set', 'View SKILL.md', '⋯']);
+      assert.match(row.querySelector('.cx-sets').textContent, /Not in a set/);
     } },
     { name: 'a git import with an update: the badge and a primary Update…', run: () => {
       const row = rowOf(host, 'skill:library:release-notes');
-      assert.equal(row.querySelector('.pl-head .mono.hint').textContent, 'git · main');
-      assert.deepEqual(badges(row), ['-:Imported', 'amber:update available', 'amber:shell scripts (may not run on Windows)']);
-      assert.deepEqual(acts(row), ['Add to set', 'Update…', 'Remove', 'View SKILL.md']);
+      assert.match(row.querySelector('.mk-meta').textContent, /^git · main/);
+      assert.deepEqual(badges(row), ['upd:Update available', 'warn:shell scripts (may not run on Windows)', 'n:Imported']);
+      assert.deepEqual(acts(row), ['Add to set', 'Review update', 'View SKILL.md', '⋯']);
       assert.ok(row.querySelector('[data-skill-update]').classList.contains('btn-primary'));
-      assert.deepEqual([...row.querySelectorAll('a.chip')].map((a) => a.getAttribute('href')), ['#connectors/sets/billing', '#connectors']);
+      assert.deepEqual([...row.querySelectorAll('.cx-sets a.badge')].map((a) => a.getAttribute('href')), ['#connectors/sets/billing', '#connectors']);
     } },
     { name: 'an invalid plugin skill: red badge, the problem, never mounted, Add to set disabled', run: () => {
       const row = rowOf(host, 'skill:plugin:acme/broken');
-      assert.deepEqual(badges(row), ['slate:acme', 'red:invalid']);
-      assert.equal(row.querySelector('small.hint.err').textContent, 'invalid: SKILL.md has no frontmatter · never mounted');
+      assert.deepEqual(badges(row), ['bad:Invalid', 'n:acme']);
+      assert.equal(row.querySelector('.cx-warn').textContent, 'invalid: SKILL.md has no frontmatter · never mounted');
       assert.equal(row.querySelector('[data-skill-add-to]').disabled, true);
       assert.deepEqual(acts(row), ['Add to set', 'View SKILL.md'], 'a plugin skill is neither updated nor removed here');
     } },
     { name: 'a plugin skill: slate plugin badge, pinned sha; one that declares hooks says what they do', run: () => {
       const row = rowOf(host, 'skill:plugin:acme/deploy-checklist');
-      assert.deepEqual(badges(row), ['slate:acme', 'red:declares hooks']);
-      assert.equal(row.querySelector('small.hint.err').textContent,
+      assert.deepEqual(badges(row), ['bad:Declares hooks', 'n:acme']);
+      assert.equal(row.querySelector('.cx-warn').textContent,
         "declares hooks — they run shell commands outside Worca's guardrails when the skill is used");
-      assert.equal(row.querySelector('.pl-head .mono.hint').textContent, '@ 3f9a1c2');
+      assert.match(row.querySelector('.mk-meta').textContent, /^@ 3f9a1c2/);
       assert.equal(row.querySelector('[data-skill-add-to]').disabled, false);
     } },
     { name: 'a linked, disabled plugin with plugin-root refs', run: () => {
       const row = rowOf(host, 'skill:plugin:graphify/graphify');
-      assert.equal(row.querySelector('.pl-head .mono.hint').textContent, 'linked');
-      assert.deepEqual(badges(row), ['slate:graphify', 'amber:plugin disabled', 'amber:plugin-root refs']);
-      assert.equal(row.querySelector('small.hint.warn').textContent, 'references its plugin’s other files, so it may not work from a set');
+      assert.match(row.querySelector('.mk-meta').textContent, /^linked/);
+      assert.deepEqual(badges(row), ['warn:plugin disabled', 'warn:plugin-root refs', 'n:graphify']);
+      assert.equal(row.querySelector('.cx-warn').textContent, 'references its plugin’s other files, so it may not work from a set');
     } },
   ]);
   const { host: empty, ctl: c2 } = mount({ skills: [] });
   await c2.show('skills');
-  assert.equal(empty.querySelector('.hist-empty').textContent, 'No skills yet. Install a plugin that ships some, or Import skill.');
+  assert.equal(empty.querySelector('.mk-empty .mk-empty-title').textContent, 'No skills yet');
+  assert.ok(empty.querySelector('.mk-empty [data-act="import-skill"]'));
   // A newer or damaged library.json reads as empty (P1): the view says why no imported skill is listed.
   for (const [library, text] of [
     [{ newer: false, damaged: true }, 'The skill library file skills/library.json is damaged (fix it or remove it): imported skills are not listed'],
@@ -175,39 +183,40 @@ test('the Skills catalog: source and origin, badges, the counts line, In sets li
     const v = mount({ over: { 'GET /api/skills': { ok: true, status: 200, data: { newer: false, library, skills: plugins } } } });
     await v.ctl.show('skills');
     assert.equal(v.host.querySelector('.form-msg.err').textContent, text);
-    assert.equal(v.host.querySelectorAll('.sk-row').length, plugins.length);
+    assert.equal(v.host.querySelectorAll('.cx-skills .cx-row').length, plugins.length);
   }
   assert.equal(host.querySelector('.form-msg.err'), null, 'a readable library says nothing');
 });
 
-test('View SKILL.md opens a read-only drawer (fetched once per entry), Hide closes it; show() starts closed', async () => {
-  const { host, ctl, calls } = mount();
+test('View SKILL.md opens a read-only sheet (fetched once per entry); a failed read says so and offers Try again', async () => {
+  const { host, ctl, calls, sheet } = mount();
   await ctl.show('skills');
   const id = 'skill:library:release-notes';
   const reads = () => calls.filter(([m, p]) => m === 'GET' && p === `/api/skills/${encodeURIComponent(id)}/skill-md`).length;
   click(rowOf(host, id).querySelector('[data-skill-md]'));
   await settle();
-  const btn = rowOf(host, id).querySelector('[data-skill-md]');
-  assert.deepEqual([btn.textContent, btn.getAttribute('aria-expanded')], ['Hide SKILL.md', 'true']);
-  assert.equal(rowOf(host, id).querySelector('.sk-drawer pre').textContent, MD);
-  assert.match(rowOf(host, id).querySelector('.sk-drawer-head').textContent, /read-only · edit the folder and import it again/);
-  click(btn);
-  await settle();
-  assert.equal(rowOf(host, id).querySelector('.sk-drawer'), null);
+  assert.match(sheet.opened.title, /release-notes/);
+  assert.equal(sheet.opened.body.querySelector('pre.cx-md').textContent, MD);
+  assert.match(sheet.opened.body.textContent, /git · main · read-only/);
+  assert.deepEqual(sheet.opened.actions.map(([l]) => l), ['Add to set', 'Check for updates', 'Remove', 'Close']);
+  sheet.close();
   click(rowOf(host, id).querySelector('[data-skill-md]'));
   await settle();
   assert.equal(reads(), 1, 'the text is kept while the page is open');
+  sheet.close();
   const plugin = 'skill:plugin:acme/deploy-checklist';
   click(rowOf(host, plugin).querySelector('[data-skill-md]'));
   await settle();
-  assert.match(rowOf(host, plugin).querySelector('.sk-drawer-head').textContent, /read-only · ships with acme/);
-  await ctl.show('skills');
-  assert.equal(host.querySelector('.sk-drawer'), null, 'a new entry starts with every drawer closed');
+  assert.match(sheet.opened.body.textContent, /read-only/);
+  assert.deepEqual(sheet.opened.actions.map(([l]) => l), ['Add to set', 'Close'], 'a plugin skill is read-only here');
+  sheet.close();
   const failed = mount({ over: { [`GET /api/skills/${encodeURIComponent(id)}/skill-md`]: { ok: false, status: 404, data: { error: 'SKILL.md not found' } } } });
   await failed.ctl.show('skills');
   click(rowOf(failed.host, id).querySelector('[data-skill-md]'));
   await settle();
-  assert.equal(rowOf(failed.host, id).querySelector('.sk-drawer .hint.err').textContent, 'SKILL.md not found');
+  const err = failed.sheet.opened.body.querySelector('.empty-line.is-err');
+  assert.match(err.textContent, /Could not load SKILL\.md.*SKILL\.md not found.*Nothing changed\./);
+  assert.ok(err.querySelector('[data-act="retry-md"]'));
 });
 
 test('the hooks words are the library\'s (P1 SKILL_HOOKS_TEXT): one wording on every surface', () => {
@@ -225,7 +234,7 @@ test('the sk- CSS is layout on theme tokens: no left-edge accent line, no litera
   const start = css.indexOf('/* Connectors › Skills');
   assert.ok(start > 0, 'the sk- block is in style.css');
   const block = css.slice(start, css.indexOf('\n\n', start));
-  assert.match(block, /\.sk-row\{/);
+  assert.match(block, /\.sk-tree-row,\.sk-delta\{/);
   // A preview row with several flags wraps instead of squeezing its path to nothing, and long file and skill lists scroll
   // inside the dialog, so Import, Back, Cancel and Add stay near (real Chrome: 258 files put them 11 000 px down).
   assert.match(block, /\.sk-tree-row,\.sk-delta\{[^}]*flex-wrap:wrap/);
@@ -269,7 +278,7 @@ test('the booted app: Settings has no Sets tab, and #connectors/skills lands on 
   const pane = window.document.querySelector('.view[data-view="connectors"]');
   assert.equal(pane.classList.contains('hidden'), false);
   assert.ok(calls.includes('GET /api/skills'));
-  assert.equal(pane.querySelectorAll('.sk-row').length, SKILLS.length);
+  assert.equal(pane.querySelectorAll('.cx-skills .cx-row').length, SKILLS.length);
   assert.equal(window.location.hash, '#connectors/skills');
 });
 
@@ -303,38 +312,39 @@ test('the booted app: a preview that lands after the modal\'s own Close opens no
   window.dispatchEvent(new window.Event('hashchange'));
   await settle();
   const d = window.document;
-  const modal = d.getElementById('plugin-modal');
+  const shown = () => !!d.getElementById('mk-dialog');
   d.querySelector('.view[data-view="connectors"] [data-act="import-skill"]').click();
   await settle();
-  assert.equal(modal.classList.contains('hidden'), false);
-  const path = d.querySelector('#plugin-modal-body [data-imp="path"]');
+  assert.equal(shown(), true);
+  const path = d.querySelector('#mk-dialog [data-imp="path"]');
   path.value = '/src/alpha';
   path.dispatchEvent(new window.Event('input', { bubbles: true }));
-  [...d.querySelectorAll('#plugin-modal-actions button')].find((b) => b.textContent === 'Preview').click();
+  [...d.querySelectorAll('#mk-dialog .mk-dialog-foot button')].find((b) => b.textContent === 'Preview').click();
   await settle();
   assert.ok(land, 'the preview is in flight');
-  d.getElementById('plugin-modal-close').click();
-  assert.equal(modal.classList.contains('hidden'), true);
+  d.querySelector('#mk-dialog .mk-dlg-close').click();
+  await settle();
+  assert.equal(shown(), false);
   land();
   await settle();
-  assert.equal(modal.classList.contains('hidden'), true, 'the late answer reopens nothing');
+  assert.equal(shown(), false, 'the late answer reopens nothing');
   assert.ok(calls.includes('DELETE /api/skills/import/0123456789abcdef'), 'and its stage is dropped');
   // A preview on screen: the dialog's own Close is its Cancel (app.js `afterClose`), so the staged copy goes at once.
   const drops = () => calls.filter((c) => c === 'DELETE /api/skills/import/0123456789abcdef').length;
   const dropped = drops();
   d.querySelector('.view[data-view="connectors"] [data-act="import-skill"]').click();
   await settle();
-  const again = d.querySelector('#plugin-modal-body [data-imp="path"]');
+  const again = d.querySelector('#mk-dialog [data-imp="path"]');
   again.value = '/src/alpha';
   again.dispatchEvent(new window.Event('input', { bubbles: true }));
-  [...d.querySelectorAll('#plugin-modal-actions button')].find((b) => b.textContent === 'Preview').click();
+  [...d.querySelectorAll('#mk-dialog .mk-dialog-foot button')].find((b) => b.textContent === 'Preview').click();
   await settle();
   land();
   await settle();
-  assert.equal(d.getElementById('plugin-modal-title').textContent, 'Import skill · alpha');
-  d.getElementById('plugin-modal-close').click();
+  assert.equal(d.getElementById('mk-dialog-title').textContent, 'Import skill · alpha');
+  d.querySelector('#mk-dialog .mk-dlg-close').click();
   await settle();
-  assert.equal(modal.classList.contains('hidden'), true);
+  assert.equal(shown(), false);
   assert.equal(drops(), dropped + 1, 'the Close of a preview on screen discards its stage');
 });
 
@@ -436,14 +446,14 @@ test('Check for updates → what changed → Update applies the stage; nothing n
 test('Remove (library): the confirm names the sets it leaves; DELETE /api/skills/:id; a declined confirm writes nothing', async () => {
   const m = mount();
   await m.ctl.show('skills');
-  click(rowOf(m.host, 'skill:library:release-notes').querySelector('[data-skill-delete]'));
+  pickMore(rowOf(m.host, 'skill:library:release-notes'), 'Remove skill');
   await settle();
   assert.equal(m.confirms[0].message, 'Remove release-notes from worca? It leaves Billing, General. Its files go from the library.');
   assert.equal(m.confirms[0].danger, true);
   assert.deepEqual(m.writes(), [['DELETE', '/api/skills/skill%3Alibrary%3Arelease-notes', undefined]]);
   const n = mount({ answer: async () => false });
   await n.ctl.show('skills');
-  click(rowOf(n.host, 'skill:library:frontend-design').querySelector('[data-skill-delete]'));
+  pickMore(rowOf(n.host, 'skill:library:frontend-design'), 'Remove skill');
   await settle();
   assert.equal(n.confirms[0].message, 'Remove frontend-design from worca? Its files go from the library.');
   assert.deepEqual(n.writes(), []);
@@ -458,8 +468,6 @@ test('Check for updates: one check per skill at a time, said on the page; leavin
   let land;
   const m = mount({ over: { [`POST ${P}/preview`]: new Promise((r) => { land = () => r(diff); }) } });
   await m.ctl.show('skills');
-  click(rowOf(m.host, id).querySelector('[data-skill-md]'));
-  await settle();
   click(rowOf(m.host, id).querySelector('[data-skill-update]'));
   click(rowOf(m.host, id).querySelector('[data-skill-update]'));
   await settle();
@@ -473,8 +481,9 @@ test('Check for updates: one check per skill at a time, said on the page; leavin
   await Promise.all([update(), update()]);
   await settle();
   assert.equal(m.writes().filter(([, p]) => p === P).length, 1, 'Update posts the stage once');
-  assert.equal(m.calls.filter(([meth, p]) => meth === 'GET' && p === MDP).length, 2, 'the open drawer reads the updated SKILL.md');
-  assert.equal(rowOf(m.host, id).querySelector('.sk-drawer pre').textContent, MD);
+  click(rowOf(m.host, id).querySelector('[data-skill-md]'));
+  await settle();
+  assert.equal(m.calls.filter(([meth, p]) => meth === 'GET' && p === MDP).length, 1, 'an update drops the cached text; the next view reads it again');
   let late;
   const left = mount({ over: { [`POST ${P}/preview`]: new Promise((r) => { late = () => r(diff); }) } });
   await left.ctl.show('skills');
@@ -522,12 +531,12 @@ const SET_VIEWS = {
     usedBy: [], pluginName: 'team-other', renamedPlugin: false }, members: [], skills: [] },
   legacy: { set: { id: 'legacy', name: 'Legacy', group: 'set', greyed: false, home: null, usedBy: [] }, members: [] },
 };
-const cardOf = (host, id) => host.querySelector(`.sk-member[data-skill="${id}"]`);
+const cardOf = (host, id) => host.querySelector(`.cx-row[data-skill="${id}"]`);
 
 test('the set list counts skills beside servers (nothing when a set has none)', async () => {
   const { host, ctl } = mount({ setViews: SET_VIEWS });
   await ctl.show('sets/billing');
-  assert.deepEqual([...host.querySelectorAll('.mcp-setrow small')].map((s) => s.textContent), [
+  assert.deepEqual([...host.querySelectorAll('.cx-rail .mk-facet .mk-meta')].map((s) => s.textContent), [
     '1 server · 1 skill · Chat · 1 project', '0 servers · 2 skills · billing', '2 servers · no projects', '0 servers · 1 skill · billing']);
 });
 
@@ -536,35 +545,38 @@ test('a user set: the prefix hint, skill cards (qualified name, source, counts, 
   const path = `/api/sets/billing/skills/${encodeURIComponent(id)}`;
   const m = mount({ setViews: SET_VIEWS });
   await m.ctl.show('sets/billing');
-  assert.equal(m.host.querySelector('.mcp-set .sk-prefix').textContent, 'skills load as billing:');
-  assert.equal(m.host.querySelector('.sk-head .hint').textContent, 'agents call /billing:<name> · no values, no secrets, no Test');
-  assert.ok(m.host.querySelector('.sk-head [data-act="add-skill"]'));
-  const cards = [...m.host.querySelectorAll('.sk-member')].map((c) => [c.querySelector('b.mono').textContent, c.querySelector('.pl-head .badge').textContent,
-    c.querySelector('.mcp-state').textContent, c.querySelector('.mcp-state').className]);
+  assert.equal(m.host.querySelector('.cx-set-head .mk-meta').textContent, 'Skills load as billing:');
+  const sec = [...m.host.querySelectorAll('.cx-section')].find((x) => x.querySelector('.subsection-title').textContent === 'Skills');
+  assert.equal(sec.querySelector('.cx-sec-head .mk-meta').textContent, 'agents call /billing:<name> · no values, no secrets, no Test');
+  assert.ok(sec.querySelector('[data-act="add-skill"]'));
+  const cards = [...m.host.querySelectorAll('.cx-row[data-skill]')].map((c) => [c.querySelector('.cx-title').textContent, c.querySelector('.cx-line .badge:last-child').textContent,
+    c.querySelector('.mdl-st').textContent, c.querySelector('.mdl-st').className, c.querySelector('.mdl-st').title]);
   assert.deepEqual(cards, [
-    ['billing:release-notes', 'Imported', 'in runs', 'mcp-state hint ok'],
-    ['billing:db-migrations', 'Imported', 'off', 'mcp-state hint'],
-    ['billing:graphify', 'graphify', 'plugin disabled', 'mcp-state hint warn'],
-    ['billing:broken', 'acme', 'invalid: SKILL.md has no frontmatter', 'mcp-state hint err'],
-    ['billing:pdf-tools', 'office', 'in runs · references its plugin’s other files, so it may not work from a set', 'mcp-state hint warn'],
-    ['billing:gone', 'Imported', 'the skill is no longer installed', 'mcp-state hint err'],
+    ['release-notes', 'Imported', 'In runs', 'mdl-st ok', 'in runs'],
+    ['db-migrations', 'Imported', 'Off', 'mdl-st off', 'off'],
+    ['graphify', 'graphify', 'Plugin disabled', 'mdl-st need', 'plugin disabled'],
+    ['broken', 'acme', 'Invalid', 'mdl-st fail', 'invalid: SKILL.md has no frontmatter'],
+    ['pdf-tools', 'office', 'May not work', 'mdl-st need', 'in runs · references its plugin’s other files, so it may not work from a set'],
+    ['gone', 'Imported', 'Missing', 'mdl-st fail', 'the skill is no longer installed'],
   ]);
   const gone = cardOf(m.host, 'skill:library:gone');
-  assert.deepEqual([gone.querySelector('[data-skill-md]'), gone.querySelector('.sk-facts')], [null, null], 'nothing to count or read');
+  assert.deepEqual([gone.querySelector('[data-skill-md]'), gone.querySelector('.mk-meta').textContent], [null, ''], 'nothing to count or read');
   assert.equal(gone.querySelector('[data-skill-toggle]').disabled, true, 'a skill no longer installed cannot be switched (P2 answers 404), only removed');
-  assert.ok(cardOf(m.host, 'skill:plugin:graphify/graphify').querySelector('.badge.slate'), 'a plugin skill wears the slate plugin badge');
-  assert.equal(cardOf(m.host, 'skill:plugin:office/pdf-tools').querySelector('.sk-hooks').textContent,
-    "declares hooks they run shell commands outside Worca's guardrails when the skill is used", 'the badge, then the rest of SKILL_HOOKS_TEXT');
-  assert.equal(cardOf(m.host, id).querySelector('.sk-hooks'), null);
-  assert.equal(cardOf(m.host, id).querySelector('.sk-facts').textContent, '4 files · 1 script · 2 shell blocksshell scripts (may not run on Windows)');
-  assert.equal(cardOf(m.host, 'skill:library:db-migrations').querySelector('.sk-facts').textContent, '7 files · 2 scripts · 1 shell block');
-  assert.deepEqual([...cardOf(m.host, id).querySelectorAll('.pl-head button')].map((b) => b.textContent), ['View SKILL.md', 'Remove']);
+  assert.ok(cardOf(m.host, 'skill:plugin:graphify/graphify').querySelector('.mk-chip-n'), 'a plugin skill wears the plugin chip');
+  const hooks = cardOf(m.host, 'skill:plugin:office/pdf-tools');
+  assert.equal(hooks.querySelector('.mk-chip-bad').textContent, 'Declares hooks');
+  assert.match(hooks.querySelector('.cx-warn').textContent, /they run shell commands outside Worca's guardrails when the skill is used/);
+  assert.equal(cardOf(m.host, id).querySelector('.cx-warn'), null);
+  assert.equal(cardOf(m.host, id).querySelector('.mk-meta').textContent, 'Draft release notes · 4 files · 1 script · 2 shell blocks');
+  assert.equal(cardOf(m.host, id).querySelector('.mk-chip-warn').textContent, 'Shell scripts (may not run on Windows)');
+  assert.equal(cardOf(m.host, 'skill:library:db-migrations').querySelector('.mk-meta').textContent, '7 files · 2 scripts · 1 shell block');
+  assert.deepEqual([...cardOf(m.host, id).querySelectorAll('.cx-acts button')].map((b) => (b.classList.contains('cx-more') ? '⋯' : b.textContent)), ['View SKILL.md', '⋯']);
   const sw = cardOf(m.host, id).querySelector('[data-skill-toggle]');
   assert.equal(sw.getAttribute('aria-label'), 'Use billing:release-notes in Billing');
   sw.checked = false;
   change(sw);
   await settle();
-  click(cardOf(m.host, 'skill:library:db-migrations').querySelector('[data-skill-remove]'));
+  pickMore(cardOf(m.host, 'skill:library:db-migrations'), 'Remove from set');
   await settle();
   assert.equal(m.confirms[0].message, 'Remove billing:db-migrations from Billing? Runs and chats that use Billing stop getting it.');
   assert.deepEqual(m.writes(), [['PUT', path, { enabled: false }],
@@ -582,30 +594,31 @@ test('a user set: the prefix hint, skill cards (qualified name, source, counts, 
 test('a renamed prefix badge; an empty set; a Team set (no Add, no Remove, the never-consented switch off with the checklist line); no skills key, no section', async () => {
   const m = mount({ setViews: SET_VIEWS });
   await m.ctl.show('sets/shop');
-  assert.equal(m.host.querySelector('.sk-prefix .badge.amber').textContent, 'loads as shop-set:');
-  assert.equal(m.host.querySelector('.sk-prefix .hint').textContent, 'because a Claude Code plugin named shop is installed');
-  assert.equal(m.host.querySelector('.sk-head + .hist-empty').textContent, 'No skills in this set yet.');
+  const skillsSection = () => [...m.host.querySelectorAll('.cx-section')].find((x) => x.querySelector('.subsection-title').textContent === 'Skills');
+  assert.equal(m.host.querySelector('.cx-set-head .mk-chip-warn').textContent, 'loads as shop-set:');
+  assert.match(m.host.querySelector('.cx-set-head .mk-meta').textContent, /because a Claude Code plugin named shop is installed/);
+  assert.equal(skillsSection().querySelector('p.empty-line').textContent, 'No skills in this set yet.');
   await m.ctl.show('sets/team-acme-platform-9333');
   assert.equal(m.host.querySelector('[data-act="add-skill"]'), null);
-  assert.equal(m.host.querySelector('[data-skill-remove]'), null);
+  assert.equal(m.host.querySelector('.cx-row[data-skill] .cx-more'), null);
   const off = cardOf(m.host, 'skill:plugin:acme/deploy-checklist');
   assert.equal(off.querySelector('[data-skill-toggle]').disabled, true);
-  assert.equal(off.querySelector('.mcp-state').textContent, 'turn on in the team checklist');
+  assert.deepEqual([off.querySelector('.mdl-st').textContent, off.querySelector('.mdl-st').title], ['Needs your consent', 'turn on in the team checklist']);
   assert.equal(cardOf(m.host, 'skill:plugin:acme/release-check').querySelector('[data-skill-toggle]').disabled, false);
-  assert.equal(cardOf(m.host, 'skill:plugin:acme/lint-rules').querySelector('.mcp-state').textContent, 'plugin disabled',
+  assert.equal(cardOf(m.host, 'skill:plugin:acme/lint-rules').querySelector('.mdl-st').textContent, 'Plugin disabled',
     'the reason that keeps it out of runs first, as in the Skills in runs table');
-  assert.equal(m.host.querySelector('.mcp-set .sk-prefix').textContent, 'skills load as team-platfor:');
+  assert.equal(m.host.querySelector('.cx-set-head .mk-meta').textContent, 'Skills load as team-platfor:');
   await m.ctl.show('sets/team-acme-other-5095');
-  assert.equal(m.host.querySelector('.sk-head + .hist-empty').textContent,
+  assert.equal(skillsSection().querySelector('p.empty-line').textContent,
     'No skill this team policy requires is installed here. Its setup checklist lists what it requires.',
     'a required plugin not installed yet brings no skill: the policy may still require some');
   await m.ctl.show('sets/legacy');
-  assert.equal(m.host.querySelector('.sk-head'), null);
-  assert.equal(m.host.querySelector('.sk-prefix'), null);
+  assert.equal(skillsSection(), undefined);
+  assert.equal(m.host.querySelector('.cx-set-head .mk-meta'), null);
 });
 
-test('a skill switch and View SKILL.md keep their focus through the repaints they cause', async () => {
-  const { host, ctl } = mount({ setViews: SET_VIEWS });
+test('a skill switch keeps its focus through its repaint; View SKILL.md opens the sheet and leaves the page focus alone', async () => {
+  const { host, ctl, sheet } = mount({ setViews: SET_VIEWS });
   await ctl.show('sets/billing');
   const sw = cardOf(host, 'skill:library:release-notes').querySelector('[data-skill-toggle]');
   sw.focus();
@@ -619,9 +632,9 @@ test('a skill switch and View SKILL.md keep their focus through the repaints the
   md.focus();
   click(md);
   await settle();
-  const shown = cardOf(host, 'skill:library:release-notes').querySelector('[data-skill-md]');
-  assert.notEqual(shown, md, 'the pane was repainted');
-  assert.deepEqual([shown.textContent, doc.activeElement === shown], ['Hide SKILL.md', true]);
+  assert.ok(sheet.opened, 'View SKILL.md opens the sheet over the page');
+  assert.match(sheet.opened.title, /release-notes/);
+  assert.equal(doc.activeElement, md, 'the page keeps its focus: the sheet gives it back on close');
 });
 
 // ── Task 6: + Add skill ──────────────────────────────────────────────────────

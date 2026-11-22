@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { awayAnswersSummary, KIND_LABELS, METHOD_OPTIONS, CRITERIA_LABELS, FIELD_LABELS, RUN_SWITCH_OPTIONS, STATUS_ACTIONS, statusActions, GRACE_NO_HOURS, kindLabel, pillText, KIND_SHORT, kindShort, awayAnswerRows, awayAnswerCounts, checksFirst, DECIDER_WORDS, awayAskCaption } from '../src/shared/away-mode/labels.mjs';
+import { awayAnswersSummary, KIND_LABELS, METHOD_OPTIONS, CRITERIA_LABELS, FIELD_LABELS, RUN_SWITCH_OPTIONS, STATUS_ACTIONS, statusActions, GRACE_NO_HOURS, kindLabel, pillText, KIND_SHORT, kindShort, askShort, awayAnswerRows, awayAnswerCounts, checksFirst, DECIDER_WORDS, awayAskCaption } from '../src/shared/away-mode/labels.mjs';
 import { floorText } from '../src/shared/cost/breakdown.mjs';
 import { NIGHT_KINDS, NIGHT_STRATEGIES, NIGHT_CRITERIA, NIGHT_FIELDS } from '../src/core/night/config.mjs';
 import { checkRows } from './helpers/rows.mjs';
@@ -30,6 +30,27 @@ test('a plan record reads Approved under Plan approval', () => {
   assert.deepEqual(awayAnswerRows(d), [{ q: null, a: 'Approved', why: 'A reviewer raised a concern on an agreed requirement: X; the requirement stays as agreed.', check: true }]);
   assert.deepEqual(awayAskCaption(d, { fmtUsd: (n) => `$${n.toFixed(2)}` }), ['rule', '$0.00']);
   assert.deepEqual(awayAnswerCounts([d]), { answers: 1, checks: 1 });
+});
+
+test('a Shaper stop names itself in Q&A, says what Away did, and lists each decision it took', () => {
+  const req = { kind: 'plan', choice: 'approve', strategy: 'rule', flagged: true, meta: { ask: 'requirements' },
+    rationale: 'agreed to the requirements as written; 1 decision took the recommended option',
+    questions: [{ id: 'd-1', question: 'Which store?', choice: 'SQLite', flagged: true, rationale: 'the recommended option' }] };
+  assert.deepEqual(awayAnswerRows(req), [
+    { q: null, a: 'Approved', why: 'Agreed to the requirements as written; 1 decision took the recommended option.', check: true },
+    { q: 'Which store?', a: 'SQLite', why: 'The recommended option.', check: true },
+  ]);
+  assert.deepEqual(awayAnswerCounts([req]), { answers: 2, checks: 2 });
+  // The caption names the stop once; the row says what Away did, on one line.
+  const rec = (choice, ask) => ({ kind: 'plan', choice, flagged: true, meta: { ask }, rationale: 'x' });
+  assert.deepEqual([askShort(rec('revise', 'outline')), awayAnswerRows(rec('revise', 'outline'))[0].a], ['Slice outline', 'Asked for changes']);
+  assert.deepEqual([askShort(rec('retry', 'requirements')), awayAnswerRows(rec('retry', 'requirements'))[0].a], ['Requirements', 'Tried again']);
+  assert.equal(askShort(rec('approve', 'attached')), 'Attached requirements');
+  assert.equal(askShort(rec('approve', 'plan')), 'Plan approval');
+  assert.equal(askShort(rec('approve', 'concern')), 'Plan concern');
+  assert.equal(askShort({ kind: 'plan', choice: 'approve' }), 'Plan approval', 'a record from before the stop was kept');
+  assert.equal(askShort({ kind: 'gate', choice: 'continue' }), 'Review loop');
+  assert.equal(awayAnswerRows(rec('approve', 'plan'))[0].q, null);
 });
 
 test('awayAskCaption: a review names its model and cost, a stopped one its lower bound; no review → how, $0.00; a pause or an old review → nothing', () => {

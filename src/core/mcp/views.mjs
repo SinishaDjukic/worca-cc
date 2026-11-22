@@ -281,6 +281,9 @@ export function buildSkillCatalogView(ctx) {
 export function buildCatalogView(ctx) {
   const { snapshot, catalog, claudeNames } = ctx;
   const rows = setRows(ctx);
+  // The set list's warning-dot predicate (buildSetsView), per server: it feeds the Servers tab's "Needs setup" filter.
+  const trouble = new Map(rows.map((s) => [s.id, new Set(memberViews(ctx, s)
+    .filter((m) => m.problem || (m.test && !m.test.ok)).map((m) => m.serverId))]));
   return {
     newer: snapshot.newer,
     servers: catalog.map((e) => {
@@ -293,6 +296,7 @@ export function buildCatalogView(ctx) {
       return {
         id: e.id, base: e.base, provisional: !!e.provisional, source: e.source, sourceLabel: sourceLabel(e),
         type: e.def.type, description: e.def.description, fields: e.def.fields, inSets,
+        needsSetup: inSets.some((x) => trouble.get(x.id).has(e.id)),
         tools: last ? (Array.isArray(last.tools) ? last.tools.length : 0) : null,
         pluginDisabled: !e.pluginEnabled, inClaudeConfig: claudeNames.includes(e.base),
         retired: e.retired === true ? e.home : null,

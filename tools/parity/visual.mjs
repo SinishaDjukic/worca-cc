@@ -39,12 +39,16 @@ export const idMasks = (page, seed) => SEED_ID_KEYS.filter((k) => seed[k]).map((
  *  box, the Profile avatar, the "Getting started" pill): focus or hover state caught mid-transition. */
 export const PIN_STYLE = '*,*::before,*::after{transition:none!important;animation:none!important;caret-color:transparent!important}';
 
-/** Settle a page for its shot: the pin style, no focus, no hover, then two frames so the result is painted. */
+/** Settle a page for its shot: the pin style, no focus, no hover, then two frames so the result is painted. Two frames
+ *  first, too: Chrome runs a pending `autofocus` at its next rendering update, which on a loaded machine came after the
+ *  blur and focused the field again. */
 export async function steady(page) {
+  const twoFrames = () => page.evaluate(() => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r))));
   await page.addStyleTag({ content: PIN_STYLE });
+  await twoFrames();
   await page.evaluate(() => document.activeElement?.blur?.());
   await page.mouse.move(0, 0);
-  await page.evaluate(() => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r))));
+  await twoFrames();
 }
 
 /** 9 pages × 2 themes; theme set through the app's setting (D16). Runs before the flows, on the clean seed. */

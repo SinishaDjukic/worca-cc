@@ -12,10 +12,11 @@ import { getDesign, latestBuild, OPEN_BUILD_STATUSES } from '../design/store.mjs
 import { designWorkDir } from '../design/paths.mjs';
 import { validatePlan } from '../design/plan.mjs';
 import { listProjects } from '../projects.mjs';
+import { imagesReady } from '../images.mjs';
 import { renderDesignBlock, validateDesignQuestions, validateDesignRequest, DESIGN_BLOCK_END } from './design-payload.mjs';
 
-/** What the model may say after the parent acts on its call (rule 7 of DESIGN_SYSTEM_RULES). */
-const NOTE_ACT = 'worca starts it right after this call and puts a receipt in the chat (for a new video it may first show the user a card about sound, and starts when they answer), or a notice says why not: never say it started or finished. Your reply after this call is at most TWO short sentences, 40 words in all (rule 7).';
+/** What the model may say after the parent acts on its call (rule D7 of DESIGN_CHAT_RULES). */
+const NOTE_ACT = 'worca starts it right after this call and puts a receipt in the chat (for a new video it may first show the user a card about sound, and starts when they answer), or a notice says why not: never say it started or finished. Your reply after this call is at most TWO short sentences, 40 words in all (rule D7).';
 const NOTE_ASK = 'The user sees these as a card. END YOUR TURN: the answers arrive as a [worca event] message.';
 const NO_DESIGN = 'this chat has no design';
 
@@ -37,6 +38,7 @@ const DEFAULT_IO = {
   latestBuild,
   workDir: designWorkDir,
   readPlan: readPlanFile,
+  picturesReady: imagesReady,
   projectPath: async (key) => (await listProjects()).find((p) => p.key === key)?.path ?? null,
 };
 
@@ -102,23 +104,31 @@ function designKit({ io, threadId }) {
 }
 
 /**
- * The design tools for a design thread, else nothing: an Ask, composer or unreadable thread gets `{}` (composer-deps.mjs
- * already fails an unreadable row closed to the Workflows allowlist, which holds no design tool).
+ * The design tools for a chat with a design (designs.thread_id), else nothing: a chat with none, a composer or an
+ * unreadable thread gets `{}` (composer-deps.mjs already fails an unreadable row closed to the Workflows allowlist).
  * @param {{ threadId?: string|null, io?: object }} [opts]
  * @returns {{ design: object } | {}}
  */
 export function defaultDesignDeps({ threadId, io = DEFAULT_IO } = {}) {
   let thread = null;
   try { thread = threadId ? io.getThread(threadId) : null; } catch { return {}; }
-  if (!thread || thread.mode !== 'design') return {};
+  if (!thread || thread.mode || !io.designIdForThread(threadId)) return {};
   return { design: designKit({ io, threadId }) };
 }
 
-/** The [design chat] block for a design thread (the server puts it in the turn prompt): the design as it is now, its
+/** Whether a design's crew can have pictures made now (the image service is set up): the hand-off prompt reads it. */
+export function designPicturesReady() {
+  try { return imagesReady(); } catch { return false; }
+}
+
+/** The [design chat] block for a chat with a design (the server puts it in the turn prompt): the design as it is now, its
  *  plan's sections, the open build and the message's pins (the messages route stores them on the thread's composer). */
 export async function designPromptBlock(thread, io = DEFAULT_IO) {
   const id = thread && typeof thread.id === 'string' ? io.designIdForThread(thread.id) : null;
   const design = id ? io.getDesign(id) : null;
   if (!design) return `[design chat]\n(${NO_DESIGN})\n${DESIGN_BLOCK_END}`;
-  return renderDesignBlock({ design, plan: io.readPlan(design), build: openBuild(io.latestBuild(design.id)), pins: thread.composer?.pins || [] });
+  let ready = null;
+  try { ready = typeof io.picturesReady === 'function' ? !!io.picturesReady() : null; } catch { ready = null; }
+  return renderDesignBlock({ design, plan: io.readPlan(design), build: openBuild(io.latestBuild(design.id)), pins: thread.composer?.pins || [],
+    picturesReady: ready });
 }

@@ -279,7 +279,7 @@ test('POST sound/ask: a video only, then available, then a chat; the card or the
   assert.deepEqual(await call('POST', `/api/design/${video.id}/sound/ask`, {}), { status: 409, json: { error: 'This design has no chat' } });
   assert.deepEqual(soundCards.opened, [], 'nothing opened on a refusal');
 
-  const t = createThread({ mode: 'design', title: video.title });
+  const t = createThread({ title: video.title });
   updateDesign(video.id, { threadId: t.id });
   assert.deepEqual(await call('POST', `/api/design/${video.id}/sound/ask`, {}), { status: 201, json: { cardId: 'c1' } });
   assert.deepEqual(soundCards.opened, [{ design: getDesign(video.id), threadId: t.id }]);

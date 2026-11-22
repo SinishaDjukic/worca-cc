@@ -337,14 +337,33 @@ function lostSession(sessionId, emit, signal) {
 
 /** What a builder writes: 5 layers, one root carrying `data-section`; a slide's root is a labelled `<section>`, a
  *  scene's a `<div data-scene>` (the board lint's `rootFault`); a document's heading has the id its contents list
- *  links to. */
+ *  links to. Under `WORCA_MOCK_DESIGN_DEMO` a web page's section is a believable one (WEB_SECTIONS, a small café's site),
+ *  so a mock build previews like a real page; its `Mock <id>.` tag stays, the line a change round edits. */
 function sectionHtml(id, job, kind = 'web') {
   if (isDocKind(kind)) return `<section data-section="${id}"><h2 id="${id}-title" class="t">${job}</h2><p>Mock ${id}.</p><div class="grid"><div></div></div></section>`;
   const inner = `<h2 class="t">${job}</h2><p>Mock ${id}.</p><div class="grid"><div></div></div>`;
   if (isFilmKind(kind)) return `<div data-section="${id}" data-scene>${inner}</div>`;
   if (isDeckKind(kind)) return `<section data-section="${id}" data-label="${job}">${inner}</section>`;
-  return `<section data-section="${id}">${inner}</section>`;
+  if (!demoLook()) return `<section data-section="${id}">${inner}</section>`;
+  return `<section data-section="${id}"><div class="mk">${(WEB_SECTIONS[id] || webGeneric)(job)}<small class="mk-tag">Mock ${id}.</small></div></section>`;
 }
+/** `WORCA_MOCK_DESIGN_DEMO=1`: a web page builds as a believable site, for a demo or a try-out; the tests keep the plain
+ *  sections, whose size and layers they count. */
+const demoLook = () => /^(1|true|yes)$/i.test(process.env.WORCA_MOCK_DESIGN_DEMO || '');
+
+const cards = (rows) => rows.map(([h, p]) => `<div class="mk-card"><h3>${h}</h3><p>${p}</p></div>`).join('');
+const webGeneric = (job) => `<div class="mk-in"><p class="mk-eyebrow">${job}</p><h2 class="t">${job}, done properly</h2><p class="mk-lead">A short paragraph that says what this part of the page is for, in plain words.</p><div class="grid mk-3">${cards([['First', 'One clear point, one sentence.'], ['Second', 'Another point, just as short.'], ['Third', 'The last one, and why it matters.']])}</div></div>`;
+/** A small café's page, one part per mock section id. */
+const WEB_SECTIONS = {
+  hero: () => `<div class="mk-in mk-hero"><div><p class="mk-eyebrow">Ember &amp; Oak · Coffee roasters</p><h1 class="t">Slow coffee for a fast city.</h1><p class="mk-lead">Beans roasted on Thursdays, poured by people who remember your name. Open from seven, every day.</p><p class="mk-row"><a class="mk-btn" href="#menu">See the menu</a><a class="mk-btn mk-ghost" href="#visit">Find us</a></p></div><div class="mk-cup" aria-hidden="true"><span></span></div></div>`,
+  features: () => `<div class="mk-in"><p class="mk-eyebrow">Why people stay</p><h2 class="t">Small batches, no shortcuts</h2><div class="grid mk-3">${cards([['Roasted here', 'Every bag is roasted in the back room, never more than a week before it reaches you.'], ['Seasonal menu', 'Four single origins at a time, picked with the farms we buy from directly.'], ['Room to sit', 'Big tables, real chairs, plugs at every seat and no rush to leave.']])}</div></div>`,
+  pricing: () => `<div class="mk-in" id="menu"><p class="mk-eyebrow">The menu</p><h2 class="t">Simple prices</h2><div class="grid mk-3"><div class="mk-card mk-price"><h3>Espresso</h3><p class="mk-num">€2.40</p><p>Single origin, pulled short.</p></div><div class="mk-card mk-price mk-pick"><h3>Flat white</h3><p class="mk-num">€3.60</p><p>Our most ordered cup, by far.</p></div><div class="mk-card mk-price"><h3>Filter</h3><p class="mk-num">€3.10</p><p>Brewed by hand, refills half price.</p></div></div></div>`,
+  faq: () => `<div class="mk-in mk-narrow"><p class="mk-eyebrow">Questions</p><h2 class="t">Good to know</h2><details open><summary>Do you have oat milk?</summary><p>Yes, and soy. Both at no extra cost.</p></details><details><summary>Can I bring my laptop?</summary><p>Of course. The Wi-Fi password is on every table.</p></details><details><summary>Do you sell beans?</summary><p>Every roast we serve, in 250 g bags, ground for you if you like.</p></details></div>`,
+  team: () => `<div class="mk-in"><p class="mk-eyebrow">The people</p><h2 class="t">Behind the counter</h2><div class="grid mk-3">${cards([['Mara', 'Roaster. Keeps the notebook of every batch since 2019.'], ['Jonas', 'Head barista. Will talk you into trying the filter.'], ['Ilse', 'Baker. The cardamom buns sell out by ten.']])}</div></div>`,
+  contact: () => `<div class="mk-in mk-split" id="visit"><div><p class="mk-eyebrow">Visit</p><h2 class="t">Come by</h2><p class="mk-lead">Kanaalstraat 14, by the bridge. Mon–Fri 7–18, Sat–Sun 8–17.</p></div><form class="mk-card mk-form"><label>Your email<input type="email" placeholder="you@example.com"></label><button class="mk-btn" type="submit">Get the weekly roast</button></form></div>`,
+  cta: () => `<div class="mk-in mk-band"><h2 class="t">First cup is on us.</h2><p class="mk-lead">Show this page at the counter, any day this month.</p><a class="mk-btn" href="#visit">Plan your visit</a></div>`,
+  footer: () => `<div class="mk-in mk-foot"><p><strong>Ember &amp; Oak</strong> · Kanaalstraat 14</p><p>© Ember &amp; Oak Coffee</p></div>`,
+};
 
 const sectionCss = (id) => `[data-section="${id}"] .t{font-weight:600}\n`;
 /** A scene's script: seekable, on the film's timeline only (no clock, no `from`). */
@@ -370,6 +389,32 @@ function kindCanvas(kind) {
 
 const TOKENS_CSS = ':root{--ink:#111;--paper:#fff;--accent:#2563eb}\n';
 const GLOBAL_CSS = 'body{margin:0;color:var(--ink);background:var(--paper);font-family:system-ui,sans-serif}.grid{display:grid;gap:16px}\n';
+/** A web page's look: the café's (WEB_SECTIONS), in global.css after the shared rules. */
+const WEB_CSS = [
+  ':root{--roast:#3b2a20;--crema:#f6efe6;--foam:#fffaf3;--line:#e6d9c8;--mute:#7a6a5c;--accent:#c8682c}',
+  'body{background:var(--foam);color:var(--roast);font:16px/1.6 ui-sans-serif,system-ui,-apple-system,"Segoe UI",sans-serif}',
+  '.mk{position:relative;padding:88px 24px}section:nth-of-type(even)>.mk{background:var(--crema)}',
+  '.mk-in{max-width:1080px;margin:0 auto}.mk-narrow{max-width:720px}',
+  '.mk .t{font-family:ui-serif,Georgia,serif;font-weight:600;letter-spacing:-.01em;margin:0 0 16px;font-size:clamp(28px,4vw,44px);line-height:1.15}',
+  '.mk h1.t{font-size:clamp(40px,6vw,68px)}.mk h3{margin:0 0 6px;font-size:18px}',
+  '.mk-eyebrow{margin:0 0 10px;text-transform:uppercase;letter-spacing:.14em;font-size:12px;font-weight:600;color:var(--accent)}',
+  '.mk-lead{font-size:19px;color:var(--mute);max-width:56ch;margin:0 0 28px}',
+  '.mk-3{grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:20px}',
+  '.mk-card{background:#fff;border:1px solid var(--line);border-radius:16px;padding:24px;box-shadow:0 1px 2px rgba(59,42,32,.06)}.mk-card p{margin:0;color:var(--mute)}',
+  '.mk-row{display:flex;gap:12px;flex-wrap:wrap}',
+  '.mk-btn{display:inline-block;padding:12px 22px;border-radius:999px;background:var(--roast);color:var(--foam);text-decoration:none;font-weight:600;border:0;font:inherit;cursor:pointer}',
+  '.mk-ghost{background:transparent;color:var(--roast);box-shadow:inset 0 0 0 1.5px var(--roast)}',
+  '.mk-hero{display:grid;grid-template-columns:1.3fr 1fr;gap:48px;align-items:center}',
+  '.mk-cup{aspect-ratio:1;border-radius:50%;background:radial-gradient(circle at 50% 45%,#8a5a3c 0 34%,#5b3a28 35% 44%,var(--crema) 45% 58%,#fff 59% 100%);box-shadow:0 30px 60px rgba(59,42,32,.18)}',
+  '.mk-price .mk-num{font-size:34px;font-weight:700;color:var(--roast);margin:4px 0 8px}.mk-pick{border-color:var(--accent);box-shadow:0 0 0 2px var(--accent)}',
+  'details{border-bottom:1px solid var(--line);padding:16px 0}summary{cursor:pointer;font-weight:600;font-size:18px}details p{color:var(--mute);margin:8px 0 0}',
+  '.mk-split{display:grid;grid-template-columns:1fr 1fr;gap:48px;align-items:center}',
+  '.mk-form{display:grid;gap:14px}.mk-form label{display:grid;gap:6px;font-weight:600;font-size:14px}.mk-form input{padding:12px 14px;border:1px solid var(--line);border-radius:10px;font:inherit}',
+  '.mk-band{text-align:center}.mk-band .mk-lead{margin-left:auto;margin-right:auto}',
+  '.mk-foot{display:flex;justify-content:space-between;flex-wrap:wrap;gap:12px;color:var(--mute);font-size:14px}.mk-foot p{margin:0}',
+  '.mk-tag{position:absolute;top:10px;right:12px;font-size:11px;color:var(--mute);opacity:.6}',
+  '@media (max-width:760px){.mk{padding:56px 20px}.mk-hero,.mk-split{grid-template-columns:1fr}.mk-cup{max-width:260px}}',
+].join('\n') + '\n';
 /** A document's tokens: worca's look loads its font from assets/worca/, where worca stages it. */
 const TOKENS_DOC_CSS = "@font-face{font-family:'Poppins';font-weight:400;src:url(assets/worca/poppins-latin-400-normal.woff2) format('woff2')}\n:root{--ink:#111;--paper:#fff;--accent:#2563eb}\nbody{font-family:'Poppins',system-ui,sans-serif}\n";
 
@@ -528,7 +573,7 @@ async function runLead({ cwd, prompt, sessionId, session, emit, signal }) {
     const slots = has(text, 'MOCK_SHELL_SLOTS') && !isBoardKind(memo.kind) ? plan.sections.map((s) => s.id) : [];
     const doc = isDocKind(memo.kind);
     await proc.write(resolve(cwd, 'tokens.css'), doc ? TOKENS_DOC_CSS : TOKENS_CSS);
-    await proc.write(resolve(cwd, 'global.css'), GLOBAL_CSS);
+    await proc.write(resolve(cwd, 'global.css'), doc || isBoardKind(memo.kind) || isFilmKind(memo.kind) || !demoLook() ? GLOBAL_CSS : GLOBAL_CSS + WEB_CSS);
     await proc.write(resolve(cwd, 'shell.html'), shellHtml(slots));
     if (doc) {
       const badBrand = has(text, 'MOCK_BAD_BRAND_ALWAYS') || (has(text, 'MOCK_BAD_BRAND') && firstTime(cwd, 'MOCK_BAD_BRAND'));

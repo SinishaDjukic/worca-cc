@@ -4,7 +4,7 @@
 // in clone-project.test.mjs and verified against GitHub on a deployment.
 import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
-import http from 'node:http';
+import { appServer } from './helpers/app-server.mjs';
 import { spawnSync } from 'node:child_process';
 import { mkdtemp, rm, mkdir } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
@@ -27,7 +27,7 @@ before(async () => {
   process.env.WORCA_HOME = homeDir;
   process.env.WORCA_PROJECTS_ROOT = rootDir;
   const mod = await import('../ui/server.mjs');
-  srv = http.createServer(mod.app);
+  srv = appServer(mod.app);
   await new Promise((r) => srv.listen(0, '127.0.0.1', r));
   base = `http://127.0.0.1:${srv.address().port}`;
 });

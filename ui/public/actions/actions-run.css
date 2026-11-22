@@ -97,6 +97,9 @@
 button.act-srow-name{cursor:pointer}
 .act-stop{display:grid;place-items:center;flex:none;width:22px;height:22px;padding:0;border:0;border-radius:var(--r-sm);background:transparent;color:var(--ink-2);cursor:pointer}
 .act-stop:hover{background:var(--red-bg);color:var(--red-ink)}
+.act-srow-open{display:grid;place-items:center;flex:none;width:22px;height:22px;padding:0;border:0;border-radius:var(--r-sm);background:transparent;color:var(--ink-2);cursor:pointer}
+.act-srow-open:hover{background:var(--hover);color:var(--ink)}
+.act-srow .act-srow-open:focus-visible{outline:2px solid var(--ink);outline-offset:-2px}
 .act-stop:focus-visible,.act-srow-name:focus-visible,.act-tile:focus-visible{outline:2px solid var(--ink);outline-offset:2px}
 /* Inside a row the ring is drawn inside the control: the rows' scroll box (and the flyout card's)
    would clip a ring drawn outside it. */

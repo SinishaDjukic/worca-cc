@@ -2,7 +2,7 @@
 // Design P5 Task 14: a web page end to end on the mock engine. A design's chat starts its first build with no
 // confirm card, the engine's stage frames flow and dist/index.html lands, and no AI turn runs after the build. A
 // second build cannot open while one is open, a pinned change round runs only that section's builder, "Back to
-// before this" restores an earlier version without a turn, and the design thread stays off Chat's list. One
+// before this" restores an earlier version without a turn, and the design's chat is a plain chat in Chat's list. One
 // in-process server on the mock engine (test/helpers/design-chat-boot.mjs).
 import { test, after } from 'node:test';
 import assert from 'node:assert/strict';
@@ -42,7 +42,8 @@ test('first build: chat → engine → page, with no AI after it', async () => {
   await new Promise((res) => setTimeout(res, 200));
   const after2 = await call('GET', `/api/ask/threads/${d.threadId}`);
   assert.equal(after2.body.messages.length, rows, 'no AI turn after the build');
-  assert.equal(frames.some((f) => f.threadId === d.threadId && (f.type === 'ask-title' || f.type === 'ask-suggestion')), false);
+  // Titled from the design at creation, so no title call; a suggestion follows the setting as in any chat (off here).
+  assert.equal(frames.some((f) => f.threadId === d.threadId && f.type === 'ask-title'), false);
   ws.close();
 });
 test('a chat turn cannot start a second build', async () => {
@@ -75,9 +76,10 @@ test('Back to before this restores the earlier page without a turn', async () =>
   assert.deepEqual([r.status, r.body.restoredFrom, r.body.version], [200, 1, before + 1]);
   assert.equal((await call('GET', `/api/ask/threads/${d.threadId}`)).body.inFlight, null);
 });
-test('the mode stays off Chat', async () => {
+test('the design\'s chat is a plain chat in the Chat list, naming its design (docs/design.md, "In the chat")', async () => {
   const list = await call('GET', '/api/ask/threads');
-  assert.equal(list.body.threads.some((t) => t.id === d.threadId), false);
+  const row = list.body.threads.find((t) => t.id === d.threadId);
+  assert.deepEqual([row.mode ?? null, row.designId], [null, d.design.id]);
 });
 
 // Design sound P3 Task C1: a video's first start asks about sound with worca's own card. Answering it starts no chat

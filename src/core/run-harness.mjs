@@ -364,6 +364,20 @@ export function sumStepActive(steps) {
   return sum;
 }
 
+/**
+ * The run clock a resumed run continues from. A row with no figure (a run saved before the
+ * clock existed) continues from its summed step time, so its headline does not restart near 0.
+ * Otherwise the folded figure plus the tail a crash never folded: work up to `anchor` (the last
+ * heartbeat, or the pause stamp), never past `now`; the rest of the gap was parked.
+ * @param {{elapsedMs?:number, elapsedSince?:number|null, anchor:number, now:number, stepSum:number}} p
+ * @returns {number}
+ */
+export function resumedElapsedMs({ elapsedMs, elapsedSince, anchor, now, stepSum }) {
+  if (!(elapsedMs > 0) && elapsedSince == null) return stepSum;
+  const tail = elapsedSince != null && Number.isFinite(anchor) ? Math.max(0, Math.min(anchor, now) - elapsedSince) : 0;
+  return (elapsedMs || 0) + tail;
+}
+
 export function isAbort(err) {
   // NAME only. Every abort/stop throw in this codebase stamps name='AbortError'
   // (see stop()/_checkAbort/claude-runner); sniffing the message here also
@@ -1109,6 +1123,7 @@ export class RunHarness extends EventEmitter {
       if (reason) throw new Error(reason);
     }
     this.pendingQuestion = null; // { id, resolve, reject, kind }
+    this._asksWaiting = 0;       // asks parked on a person right now; the run clock stands while it is > 0
     this._recovery = null;      // class -> in-flight Promise<'retry'|'pause'> (same-class dedupe)
     this._askTail = null;       // serializes _ask: ONE prompt open at a time (recovery + step questions)
     this._recoverySeq = 0;      // monotonic id source for recovery prompts (determinism-safe)
@@ -1176,6 +1191,8 @@ export class RunHarness extends EventEmitter {
       pipelineDir: null,
       totalCostUsd: 0,  // cumulative actual spend (sum of steps[].costUsd)
       totalActiveMs: 0, // cumulative active processing time (sum of steps[].activeMs)
+      elapsedMs: 0,       // the run clock, folded: 1 s per real second while the run works, parallel work counted once
+      elapsedSince: null, // epoch ms the run clock has been running since; null while parked (question, pause, ended)
       branch: this.workMode !== 'git' ? { workMode: this.workMode, runRootMode: 'detached' } : null,     // { source, feature, worktreeDir, reusedExisting } after _setupRunRoot
       // Per-member maps, initialized HERE (not lazily) so getState()'s snapshot
       // shape is stable across modes and targets. Without this a single-project
@@ -2039,6 +2056,10 @@ export class RunHarness extends EventEmitter {
         return { ...s, activeMs: (s.activeMs || 0) + Math.max(0, Math.min(anchor, now) - s.runningSince), runningSince: null };
       });
       this.state.totalActiveMs = sumStepActive(this.state.steps);
+      // The run clock continues from the saved figure (the same anchor credits a crashed tail);
+      // it stays parked here, and the _setStatus('running') below starts it.
+      this.state.elapsedMs = resumedElapsedMs({ elapsedMs: row.elapsed_ms, elapsedSince: row.elapsed_since, anchor, now, stepSum: this.state.totalActiveMs });
+      this.state.elapsedSince = null;
       // The total is Σ steps (I2): rehydrate it with them, or the first persist of a resumed run writes
       // $0 and a resumed run that books nothing new finishes at $0 while its ledger keeps the spend.
       this.state.totalCostUsd = sumStepCosts(this.state.steps);
@@ -6572,6 +6593,7 @@ export class RunHarness extends EventEmitter {
     });
     this._metricsIv.questions += 1;
 
+    let parked = false;   // this ask stopped the run clock (a person must answer); released in the finally
     try {
       // A night-eligible --yes run hands the ask to night mode: it is answered through the
       // same pendingQuestion + answer() path below (delay 0), so it is attributed and audited.
@@ -6608,6 +6630,12 @@ export class RunHarness extends EventEmitter {
           ...(plan && plan.outline ? { plan: { outline: true, round: plan.round } } : {}),
           ...(plan && plan.attached ? { plan: { attached: true } } : {}),
           ...(concern ? { concern: true } : {}) };
+        // A person must answer: the run clock stands until the last waiting ask is released.
+        parked = true;
+        this._asksWaiting += 1;
+        this._runClockPause();
+        this._emit('state', this.getState());
+        this._persist().catch(() => {});
         // A throw inside a Promise executor REJECTS the ask (and fails the node): night mode
         // must never break a question the user could still answer.
         const nq = { id, kind, questions, issues, recovery, wireId, executionId, deliveryNo, holdNo, workflow, plan, concern, form, version, answerSchema, autoValues, nodeId, agent, origin };
@@ -6632,8 +6660,15 @@ export class RunHarness extends EventEmitter {
       const stillRunning = ['stopped', 'error', 'pausing', 'paused'].includes(this.state.status)
         ? []
         : frozen.filter((key) => this.state.steps.find((s) => s.key === key)?.status === 'start');
-      if (stillRunning.length) {
-        for (const key of stillRunning) this._clockResume(key);
+      // The run clock restarts with the LAST waiting ask, and only on a run that still runs
+      // (a stop or pause already folded it); before the step clocks, so no step runs without it.
+      let restarted = false;
+      if (parked) {
+        this._asksWaiting -= 1;
+        if (this._asksWaiting === 0 && this.state.status === 'running') { this._runClockResume(); restarted = true; }
+      }
+      for (const key of stillRunning) this._clockResume(key);
+      if (restarted || stillRunning.length) {
         this._emit('state', this.getState());
         this._persist().catch(() => {});
       }
@@ -6666,13 +6701,13 @@ export class RunHarness extends EventEmitter {
     } catch { return false; }
   }
 
-  /** A person answers what to build, Away handles how: the plan asks planRule declines, and Clarify on a shaped run.
+  /** The plan asks planRule declines: on a Shaper run only a Requirements hold whose check still fails; elsewhere the
+   *  ones it always declined.
    *  Decided at arm time, so such an ask never counts down, never starts the away stretch and cannot hit a limit's pause.
    *  Never under --yes: that run's asks go the way they always did. */
   _nightLeavesToPerson(q) {
     if (this.auto) return false;
-    if (q.kind === PLAN_ASK_KIND) return planRule(q) === null;
-    return Boolean(this.runShape) && (q.kind === 'clarify' || (q.kind === 'form' && q.origin === 'clarify'));
+    return q.kind === PLAN_ASK_KIND && planRule(q, { shaped: Boolean(this.runShape) }) === null;
   }
 
   /** Schedule (or re-schedule) the decision for the open question. `q` = a newly opened ask. */
@@ -6799,6 +6834,7 @@ export class RunHarness extends EventEmitter {
       config,
       analyze: (qs) => this._nightAnalyze(qs, q, analysis),
       gateCyclesUsed: (wireId) => (this.pipeline?.id ? nightGateCycles(this.pipeline.id, wireId) : 0),
+      shaped: Boolean(this.runShape),
       budget: config.spendCapUsd != null ? { spent: this._nightSpentUsd(config), cap: config.spendCapUsd } : null,
       // sleepAbortable RESOLVES early on a pause; pause() has then nulled pendingQuestion, so
       // the check below drops the decision.
@@ -7833,11 +7869,32 @@ export class RunHarness extends EventEmitter {
     return sum;
   }
 
+  /** Start (resume) the run clock, idempotently. */
+  _runClockResume() {
+    if (this.state.elapsedSince == null) this.state.elapsedSince = Date.now();
+  }
+
+  /** Park the run clock, folding the stretch it ran into elapsedMs. No-op when parked. */
+  _runClockPause() {
+    if (this.state.elapsedSince == null) return;
+    this.state.elapsedMs += Math.max(0, Date.now() - this.state.elapsedSince);
+    this.state.elapsedSince = null;
+  }
+
+  /** Live elapsed = folded elapsedMs + the running tail. Test/diagnostic, twin of liveActiveMs. */
+  liveElapsedMs() {
+    const since = this.state.elapsedSince;
+    return this.state.elapsedMs + (since != null ? Math.max(0, Date.now() - since) : 0);
+  }
+
   _setStatus(status) {
     this.state.status = status;
     if (status === 'done' || status === 'stopped' || status === 'error' || status === 'paused') {
       this._clockPauseAll();
       this.state.totalActiveMs = sumStepActive(this.state.steps);
+      this._runClockPause();
+    } else if (status === 'running' && this._asksWaiting === 0) {
+      this._runClockResume();
     }
     this.state.updatedAt = new Date().toISOString();
     this._emit('state', this.getState());

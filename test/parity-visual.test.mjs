@@ -72,13 +72,14 @@ function fakePage() {
   };
   return page;
 }
-const SETTLE = [/^style /, /^evaluate .*activeElement.*blur/, /^mouse 0,0$/, /^evaluate .*requestAnimationFrame.*requestAnimationFrame/s];
+const FRAMES = /^evaluate .*requestAnimationFrame.*requestAnimationFrame/s;
+const SETTLE = [/^style /, FRAMES, /^evaluate .*activeElement.*blur/, /^mouse 0,0$/, FRAMES];
 
-test('steady: pin style, then blur, then the mouse to (0,0), then two animation frames', async () => {
+test('steady: pin style, two frames (a pending autofocus runs), then blur, the mouse to (0,0), and two more frames', async () => {
   assert.equal(PIN_STYLE, '*,*::before,*::after{transition:none!important;animation:none!important;caret-color:transparent!important}');
   const page = fakePage();
   await steady(page);
-  assert.equal(page.calls.length, 4);
+  assert.equal(page.calls.length, SETTLE.length);
   assert.equal(page.calls[0], `style ${PIN_STYLE}`);
   SETTLE.forEach((re, i) => assert.match(page.calls[i], re, page.calls[i]));
 });
@@ -93,7 +94,7 @@ test('capture: every one of the 18 shots is taken right after steady', async (t)
   assert.equal(shots.length, 18);
   const at = page.calls.flatMap((c, i) => (c.startsWith('shot ') ? [i] : []));
   assert.equal(at.length, 18);
-  for (const i of at) SETTLE.forEach((re, k) => assert.match(page.calls[i - 4 + k], re, `before ${page.calls[i]}`));
+  for (const i of at) SETTLE.forEach((re, k) => assert.match(page.calls[i - SETTLE.length + k], re, `before ${page.calls[i]}`));
 });
 
 test('steady in Chrome: transitions are off and the focused field is blurred', async (t) => {
