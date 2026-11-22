@@ -41,16 +41,25 @@ function blankCode(t) {
   let open = -1;
   let fence = '';
   let prose = false;
+  let innerFence = '';
+  let inner = -1;   // fix round 6 (M3): a code block inside a prose fence (```js in ```markdown); its closing fence closes only it
+  const closes = (f, i, by) => !!f && f[1][0] === by[0] && f[1].length >= by.length && !lines[i].slice(f[0].length).trim();
   for (let i = 0; i < lines.length; i += 1) {
     const f = /^ {0,3}(`{3,}|~{3,})/.exec(lines[i]);
     if (open < 0) {
       if (f) { open = i; fence = f[1]; prose = PROSE_FENCE.test(lines[i].slice(f[0].length).trim().split(/\s+/)[0]); }
       continue;
     }
-    if (!f || f[1][0] !== fence[0] || f[1].length < fence.length || lines[i].slice(f[0].length).trim()) continue;
+    if (inner >= 0) {
+      if (closes(f, i, innerFence)) { for (let k = inner; k <= i; k += 1) lines[k] = spaces(lines[k]); inner = -1; }
+      continue;
+    }
+    if (prose && f && lines[i].slice(f[0].length).trim()) { inner = i; innerFence = f[1]; continue; }
+    if (!closes(f, i, fence)) continue;
     for (let k = open; k <= i; k += 1) if (!prose || k === open || k === i) lines[k] = spaces(lines[k]);
     open = -1;
   }
+  if (inner >= 0) for (let k = inner; k < lines.length; k += 1) lines[k] = spaces(lines[k]);   // a code block cut off: code to the end
   if (open >= 0) lines[open] = spaces(lines[open]);
   return lines.join('\n').replace(/``[^`\n]+``|`[^`\n]+`/g, spaces);
 }
@@ -59,11 +68,23 @@ function blankCode(t) {
  *  words that contain a letter (digits alone do not count). Shorter unnamed text (a button's label, "Jan 1 to Jan 31") is not checked. */
 export const QUOTE_MIN_NAMED_WORDS = 3;
 export const QUOTE_MIN_LONG_WORDS = 8;
-/** The verbs that name who is speaking: `Dana said: "…"`, `"…", says the finance lead`. */
-export const SPEECH_VERBS = Object.freeze(['said', 'says', 'wrote', 'writes', 'asked', 'told', 'explained', 'put it']);
-/** Fix round 5 (I7): words of a screen, not people. Before a colon (`Error: "…"`) or as the one speaking (`The error says "…"`) they name nobody. */
+/** The verbs that name who is speaking: `Dana said: "…"`, `"…", says the finance lead`. Fix round 6 (I2): the common speech verbs, present
+ *  and past. */
+export const SPEECH_VERBS = Object.freeze(['said', 'says', 'say', 'wrote', 'writes', 'write', 'asked', 'asks', 'ask', 'told', 'tells', 'tell',
+  'explained', 'explains', 'explain', 'noted', 'notes', 'note', 'stated', 'states', 'state', 'added', 'adds', 'add', 'mentioned', 'mentions', 'mention',
+  'shared', 'shares', 'share', 'reported', 'reports', 'report', 'commented', 'comments', 'comment', 'complained', 'complains', 'complain',
+  'recalled', 'recalls', 'recall', 'put it']);
+/** Fix round 5 (I7), round 6 (I1): words of a screen, not people. Before a colon (`Error: "…"`), as the one speaking (`The error says "…"`),
+ *  after a dash (`"…" — Button label`) or in brackets after the quote they name nobody. */
 export const UI_LABELS = Object.freeze(['Error', 'Hint', 'Title', 'Note', 'Warning', 'Label', 'Button', 'Message', 'Example', 'Tip', 'Status',
-  'Placeholder', 'Tooltip', 'Text', 'Page', 'Screen', 'Dialog', 'Field', 'Banner', 'Heading', 'Caption', 'Prompt', 'Alert', 'Toast', 'Menu', 'Link']);
+  'Placeholder', 'Tooltip', 'Text', 'Page', 'Screen', 'Dialog', 'Field', 'Banner', 'Heading', 'Caption', 'Prompt', 'Alert', 'Toast', 'Menu', 'Link',
+  'State', 'Modal', 'Email', 'Subject', 'Subtitle', 'CTA', 'Tab', 'Badge', 'Card', 'Panel', 'Section', 'Notification', 'Header', 'Footer', 'Column',
+  'Row', 'Option', 'Input']);
+/** Fix round 6 (I2): words before a speech verb that are no speaker: a pronoun or an adverb (`It states:`, `The button then says`), or a noun that
+ *  makes a label with a verb's plural form (`Release notes:`, `Bug reports:`). */
+const NOT_SPEAKERS = new Set(['it', 'this', 'that', 'which', 'what', 'there', 'then', 'also', 'now', 'still', 'just', 'only', 'often', 'always', 'never',
+  'release', 'meeting', 'field', 'interview', 'design', 'product', 'session', 'call', 'research', 'patch', 'version', 'bug', 'crash', 'code', 'test',
+  'review', 'status', 'weekly', 'monthly', 'daily', 'quarterly', 'annual', 'team', 'empty', 'loading']);
 /** Fix round 5 (I4): a person named by role, lowercase too (`A customer: "…"`, `"…" — the finance lead`). */
 export const PERSON_NOUNS = Object.freeze(['customer', 'user', 'client', 'interviewee', 'participant', 'respondent', 'buyer', 'owner', 'founder',
   'lead', 'manager', 'engineer', 'developer', 'designer', 'admin', 'accountant', 'analyst', 'director', 'colleague', 'partner', 'merchant',
@@ -71,19 +92,49 @@ export const PERSON_NOUNS = Object.freeze(['customer', 'user', 'client', 'interv
 const VERBS = SPEECH_VERBS.join('|');
 const UI_WORD = new Set(UI_LABELS.map((w) => w.toLowerCase()));
 const PERSON = `(?:${PERSON_NOUNS.join('|')})s?`;
-const person = (w) => !!w && !UI_WORD.has(w.toLowerCase());
+const person = (w) => !!w && !UI_WORD.has(w.toLowerCase()) && !NOT_SPEAKERS.has(w.toLowerCase());
 // "Dana said: ", "As one customer put it: ", "One customer told us: " (up to two words after the verb); the word before the verb speaks.
 const SPOKEN_BEFORE = new RegExp(String.raw`([\p{L}\p{N}'-]+)[,)]?\s+(?:${VERBS})(?:\s+[\p{L}'-]+){0,2}\s*[:,]?\s*$`, 'iu');
 const LABEL_BEFORE = /(\p{Lu}[\p{L}'-]*|\))\s*:\s*$/u;   // "Dana: ", "Dana (finance lead): ": a capitalised name, or a bracket, then ":"
 const ROLE_BEFORE = new RegExp(String.raw`(?<!\p{L})${PERSON}\s*:\s*$`, 'iu');   // "A customer: "
-// " — Dana", " — the finance lead": a capitalised word or a person's role right after the dash (" — shown below" names nobody).
-const DASH_AFTER = new RegExp(String.raw`^\s*[,.]?\s*[—–-]+\s*(?:\p{Lu}|(?:[Tt]he|[Aa]n?|[Oo]ne|[Oo]ur)\s+(?:[\p{L}'-]+\s+)?${PERSON}(?!\p{L}))`, 'u');
+// Fix round 6 (I2): "According to Dana, ", "According to the finance lead: ", "In Dana's words: ".
+const ACCORDING_BEFORE = /(?:\baccording to\s+(?:(?:the|a|an|one|our)\s+)?([\p{L}'-]+)(?:\s+[\p{L}'-]+){0,2}|\bin\s+([\p{L}-]+)['’]s\s+(?:own\s+)?words)\s*[:,]?\s*$/iu;
+// " — the finance lead", "(the finance lead)": a person's role after an article.
+const ROLE_AFTER = new RegExp(String.raw`^(?:[Tt]he|[Aa]n?|[Oo]ne|[Oo]ur)\s+(?:[\p{L}'-]+\s+)?${PERSON}(?!\p{L})`, 'u');
 // ", Dana said", " said Dana", ", says the finance lead"; the word before the verb speaks.
 const VERB_AFTER = new RegExp(String.raw`^\s*[,.]?\s*(?:(?:${VERBS})\s+\S|(?:[\p{L}'-]+\s+){0,4}([\p{L}'-]+)\s+(?:${VERBS})(?!\p{L}))`, 'iu');
 const unmark = (s) => s.replace(/[*_]/g, '');
+/** Fix round 6 (I1): a name right at the start of `s`: up to three capitalised words, none a screen word, the first a person, then the end, a
+ *  comma, a full stop, a bracket or "from" / "at" / "of" ("Dana Ortiz, finance lead"; never "Button label" or "Shown in the toolbar"). */
+const nameAt = (s) => {
+  const m = /^(\p{Lu}[\p{L}'’-]*(?:\s+\p{Lu}[\p{L}'’-]*){0,2})(?=\s*(?:$|[,.;)(])|\s+(?:from|at|of)\s)/u.exec(s);
+  if (!m) return false;
+  const ws = m[1].split(/\s+/);
+  return person(ws[0]) && ws.every((w) => !UI_WORD.has(w.toLowerCase()));
+};
+/** " — Dana", " - Dana", " — the finance lead": a dash, then a name or a role. `next`: on the line after the quote only "—", "–" or "--"
+ *  counts (a single "-" there starts a list item). */
+const dashAfter = (s, { next = false } = {}) => {
+  const m = (next ? /^\s*(?:[—–]+|--+)\s*/ : /^\s*[,.]?\s*[—–-]+\s*/).exec(s);
+  if (!m) return false;
+  const rest = s.slice(m[0].length);
+  return nameAt(rest) || ROLE_AFTER.test(rest);
+};
+/** Fix round 6 (I2): "(Dana, finance lead)", "(Dana)", "(the finance lead)" right after the quote. */
+const bracketAfter = (s) => {
+  const m = /^\s*[,.]?\s*\(\s*/.exec(s);
+  return !!m && (nameAt(s.slice(m[0].length)) || ROLE_AFTER.test(s.slice(m[0].length)));
+};
 const spokenBefore = (s) => { const m = SPOKEN_BEFORE.exec(s); return !!m && person(m[1]); };
-const namedBefore = (s) => { const m = LABEL_BEFORE.exec(s); return spokenBefore(s) || ROLE_BEFORE.test(s) || (!!m && (m[1] === ')' || person(m[1]))); };
-const namedAfter = (s) => { const m = VERB_AFTER.exec(s); return DASH_AFTER.test(s) || (!!m && (!m[1] || person(m[1]))); };
+const accordingBefore = (s) => { const m = ACCORDING_BEFORE.exec(s); return !!m && person(m[1] || m[2]); };
+const namedBefore = (s) => {
+  const m = LABEL_BEFORE.exec(s);
+  return spokenBefore(s) || accordingBefore(s) || ROLE_BEFORE.test(s) || (!!m && (m[1] === ')' || person(m[1])));
+};
+const namedAfter = (s) => {
+  const m = VERB_AFTER.exec(s);
+  return dashAfter(s) || bracketAfter(s) || (!!m && (!m[1] || person(m[1])));
+};
 const letterWords = (s) => s.split(/\s+/).filter((w) => /\p{L}/u.test(w)).length;
 const tableLine = (t, at) => { const start = t.lastIndexOf('\n', at - 1) + 1; return /^\s*\|/.test(t.slice(start, start + 200)); };
 /** The line just before the line that starts at `start` (its last 120 characters), or '' for the first line. */
@@ -94,22 +145,31 @@ const isNamed = (t, open, close) => {
   const before = unmark(t.slice(Math.max(lineStart, open - 120), open));
   const after = unmark(t.slice(close + 1, Math.min(close + 80, end < 0 ? t.length : end)));
   if (namedBefore(before) || namedAfter(after)) return true;
-  // Fix round 5 (I4): the quote opens its line (after "> " or a list mark): the line just before names the speaker and ends with ":".
-  if (/^[\s>*+-]*$/.test(before)) {
+  // Fix round 5 (I4): the quote opens its line (after "> ", a list mark or, fix round 6, a list number): the line just before names the
+  // speaker and ends with ":".
+  if (/^[\s>]*(?:[*+-]|\d{1,3}[.)])?\s*$/.test(before)) {
     const prev = unmark(lineBefore(t, lineStart)).replace(/^[\s>]+/, '');
-    if (/:\s*$/.test(prev) && (spokenBefore(prev) || ROLE_BEFORE.test(prev))) return true;
+    if (/:\s*$/.test(prev) && (spokenBefore(prev) || accordingBefore(prev) || ROLE_BEFORE.test(prev))) return true;
   }
-  // It closes its line: the line just after names the speaker with a dash ("> — Dana, finance lead").
+  // It closes its line: the line just after names the speaker with a dash ("> — Dana, finance lead"); fix round 6 (I1): never a "- " list item.
   if (/^[\s.,;!?]*$/.test(after) && end >= 0) {
     const nl = t.indexOf('\n', end + 1);
-    return DASH_AFTER.test(unmark(t.slice(end + 1, Math.min(end + 81, nl < 0 ? t.length : nl))).replace(/^[\s>]+/, ''));
+    return dashAfter(unmark(t.slice(end + 1, Math.min(end + 81, nl < 0 ? t.length : nl))).replace(/^[\s>]+/, ''), { next: true });
   }
   return false;
 };
 /** Fix round 5 (M1): outside a quote, a " right after a digit is an inch or second mark. Inside one it closes the quote, unless an inch
  *  mark goes on (8.5" × 11", 1"2) or a letter follows it. */
 const inchMark = (t, i, open) => /\d/.test(t[i - 1] || '')
-  && (open < 0 || /^(?: ?[×x] ?\d| ?×|\d)/.test(t.slice(i + 1, i + 4)) || /^[^\s\p{P}]/u.test(t[i + 1] || ' '));
+  && (open < 0 || /^(?: ?[×x] ?\d| ?×|\d)/.test(t.slice(i + 1, i + 4)) || /^[^\s\p{P}]/u.test(t[i + 1] || ' ') || closesLater(t, i));
+/** Fix round 6 (M2): inside a quote, `8.5" paper` is an inch mark when a word follows it and the next " of the paragraph is a closing one
+ *  (followed by a space, a mark or the end): `"We print on 8.5" paper and file it by hand." Then Lee said: "…"`. */
+function closesLater(t, i) {
+  if (!/^\s+\p{L}/u.test(t.slice(i + 1, i + 3))) return false;
+  const para = t.indexOf('\n\n', i);
+  const next = t.indexOf('"', i + 1);
+  return next > 0 && (para < 0 || next < para) && /^(?:$|[\s\p{P}])/u.test(t.slice(next + 1, next + 2));
+}
 
 /** Quoted text in double quotation marks that the rule above says to check. A quote never spans a blank line, a table row or a cell border
  *  ("|" on a table line); a " right after a digit is an inch or second mark (8.5" × 11") unless it closes a quote; code is not prose. */
@@ -157,7 +217,8 @@ const blankDates = (s) => s.replace(DATE_RE, (m) => (dateLike(m) ? ' '.repeat(m.
 /** Fix round 5 (I6): an amount written with its currency code (USD5000, EUR1200) is a number, not an id: the code is blanked. */
 export const CURRENCY_CODES = Object.freeze(['USD', 'EUR', 'GBP', 'CHF', 'JPY', 'CNY', 'INR', 'CAD', 'AUD', 'NZD', 'SEK', 'NOK', 'DKK', 'PLN', 'CZK', 'HUF',
   'RSD', 'BRL', 'MXN', 'ZAR', 'SGD', 'HKD', 'KRW', 'TRY']);
-const CURRENCY_RE = new RegExp(`(?<![\\p{L}\\p{N}])(?:${CURRENCY_CODES.join('|')})(?=\\d)`, 'gu');
+// Fix round 6 (M4): only before an amount; EUR2024-INV-0042 (digits, then "-" and a letter) is an id and keeps its code.
+const CURRENCY_RE = new RegExp(`(?<![\\p{L}\\p{N}])(?:${CURRENCY_CODES.join('|')})(?=\\d[\\d.,]*(?![\\d.,\\p{L}]|-\\p{L}))`, 'gu');
 const blankCurrency = (s) => s.replace(CURRENCY_RE, spaces);
 const HEAD_NUM_RE = /^(\s*#{1,6}\s+)\d+(?:\.\d+)+\.?(?=\s)/;   // "## 1.1 Scope": a section number; "## 140 tickets" stays a number
 const TIME_RE = /\b\d{1,2}:\d{2}(?::\d{2})?\b/g;   // 14:00, 12:30:45
@@ -179,10 +240,11 @@ const pathToken = (w) => {
   const x = w.slice(a, b);
   if (!/\p{L}/u.test(x)) return false;
   const slashes = (x.match(/\//g) || []).length;
-  // Fix round 5 (I6): two slashes after a number or an amount are a rate or a list of numbers ($12/user/month, 30/60/90-day), unless a file
-  // extension ends it (2026/11/notes.md).
+  // Fix round 5 (I6): two slashes in a rate or a list of numbers ($12/user/month, 30/60/90-day) are no path, unless a file extension ends it
+  // (2026/11/notes.md). Fix round 6 (M4): only in those shapes (an amount with its sign, then words; numbers, then "-word"): 2026/11/drafts is a path.
   const ext = /\.[A-Za-z][A-Za-z0-9]{0,5}$/.test(x);
-  return x.includes('\\') || /^(?:[A-Za-z]:[\\/]|~?\/|\.{1,2}\/)/.test(x) || (slashes >= 2 && (!/^[$€£¥]?\d/.test(x) || ext)) || (slashes === 1 && ext);
+  const rate = /^[$€£¥]\d[\d.,]*(?:\/\p{L}+)+$/u.test(x) || /^\d+(?:\/\d+)+-\p{L}+$/u.test(x);
+  return x.includes('\\') || /^(?:[A-Za-z]:[\\/]|~?\/|\.{1,2}\/)/.test(x) || (slashes >= 2 && (!rate || ext)) || (slashes === 1 && ext);
 };
 /** Fix round 4: what in a result holds digits that are not numbers of the result, blanked (positions kept): code, links, file paths,
  *  ids and hashes (a chain such as 8b6bd033-5853-4ea5 when any of its words is one), and a standard's number. */

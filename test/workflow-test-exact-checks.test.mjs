@@ -307,3 +307,63 @@ test('fix round 5 (M1): a quote ending in a digit closes, so it is checked and t
   assert.deepEqual(quotesIn('She said "it prints on 8.5" × 11 paper, every page of it" and left.'), ['it prints on 8.5" × 11 paper, every page of it']);
   assert.deepEqual(quotesIn('Paper 8.5" × 11", 1" margins; Dana said: "Exports take forever, honestly."'), ['Exports take forever, honestly.']);
 });
+
+// Fix round 6 (round 5 review I1, I2, M2, M3, M4). The cases are the review's own (r5rev\q.mjs, q2.mjs).
+test('fix round 6 (I1): a list bullet or a screen label after a dash is not a speaker; a real name after a dash still is', async () => {
+  const { UI_LABELS } = await import('../src/shared/workflow-tests/exact-checks.mjs');
+  for (const w of ['State', 'Modal', 'Email', 'Subject', 'Subtitle', 'CTA', 'Tab', 'Badge', 'Card', 'Panel', 'Section', 'Notification', 'Header',
+    'Footer', 'Column', 'Row', 'Option', 'Input']) assert.ok(UI_LABELS.includes(w), w);
+  for (const s of ['- Empty state: "No invoices for this month yet"\n- Error: "Start date must be before end date"',
+    '- Button: "Export all invoices"\n- Tooltip: "Exports every invoice of the month"', '- "Export all invoices now"\n- Shown in the toolbar',
+    'The empty state says:\n"No invoices for this month yet"', '"Export all invoices now" — Button label', '"Export all invoices now" - Primary CTA on the invoices page',
+    '"Start date must be before end date" — Error shown under the picker', 'The empty state says "No invoices for this month yet"',
+    'The confirmation email says: "Your export is ready to download"', 'The modal says "Are you sure you want this"', 'The button then says "Export all invoices now"',
+    'The CTA reads "Export all invoices now" and the subtitle says "Pick a month first"', 'Subtitle: "Pick a month first please"',
+    '"Export all invoices now" — Shown in the toolbar']) {
+    assert.deepEqual(quotesIn(s), [], s);
+  }
+  for (const s of ['"Exports take forever, honestly." — Dana', '"Exports take forever, honestly." — **Dana**', '"Exports take forever, honestly." - Dana',
+    '"Exports take forever, honestly." — Dana Ortiz, finance lead', '"Exports take forever, honestly."\n— Dana', '"Exports take forever, honestly."\n-- Dana',
+    '> "Exports take forever, honestly."\n> — **Dana**, finance lead']) assert.deepEqual(quotesIn(s), ['Exports take forever, honestly.'], s);
+});
+
+test('fix round 6 (I2): "According to Dana,", "Dana notes:", "(Dana, finance lead)" and "Dana noted." name a person', async () => {
+  const { SPEECH_VERBS } = await import('../src/shared/workflow-tests/exact-checks.mjs');
+  for (const v of ['note', 'notes', 'noted', 'state', 'states', 'stated', 'add', 'adds', 'added', 'explain', 'explains', 'explained', 'mention', 'mentions',
+    'mentioned', 'share', 'shares', 'shared', 'report', 'reports', 'reported', 'comment', 'comments', 'commented', 'complain', 'complains', 'complained',
+    'recall', 'recalls', 'recalled', 'ask', 'asks', 'asked', 'tell', 'tells', 'told', 'write', 'writes', 'wrote', 'say', 'says', 'said', 'put it']) {
+    assert.ok(SPEECH_VERBS.includes(v), v);
+  }
+  for (const s of ['According to Dana, "Exports take forever, honestly."', "In Dana's words: \"Exports take forever, honestly.\"",
+    'Dana notes: "Exports take forever, honestly."', 'Dana stated: "Exports take forever, honestly."', 'Dana adds: "Exports take forever, honestly."',
+    'Dana explains: "Exports take forever, honestly."', '"Exports take forever, honestly." (Dana, finance lead)', '"Exports take forever, honestly." (Dana)',
+    '"Exports take forever, honestly." (the finance lead)', '"Exports take forever, honestly," Dana noted.', '"Exports take forever, honestly," notes Dana.',
+    'Dana said:\n1. "Exports take forever, honestly."', 'According to the finance lead, "Exports take forever, honestly."']) {
+    assert.deepEqual(quotesIn(s).map((q) => q.replace(/[,.]$/, '')), ['Exports take forever, honestly'], s);
+    assert.equal(quotesCheck(s, DANA_FILES).met, false, `a made-up named quote is caught: ${s}`);
+  }
+  // Not people: a screen word after "According to" or in brackets, a bracket that is no name, labels that only look like a verb.
+  for (const s of ['According to the error message, "Start date must be before end date"', '"Export all invoices now" (Button label)',
+    '"Export all invoices now" (Shown in the toolbar)', '"Export all invoices now" (Primary CTA)', 'Release notes: "Exports now run in the background"',
+    'Meeting notes: "Exports now run in the background"', 'It states: "Exports now run in the background"']) assert.deepEqual(quotesIn(s), [], s);
+});
+
+test('fix round 6 (M2): an inch mark inside a quote does not close it when the real closing mark follows', () => {
+  const s = 'Dana said: "We print every invoice on 8.5" paper and file it by hand." Then Lee said: "Exports are slow for us."';
+  assert.deepEqual(quotesIn(s), ['We print every invoice on 8.5" paper and file it by hand.', 'Exports are slow for us.']);
+  assert.deepEqual(quotesIn('Dana said: "We will switch vendors in 2026". Lee said: "I would pay double for this."'),
+    ['We will switch vendors in 2026', 'I would pay double for this.'], 'round 5 M1 holds');
+  assert.deepEqual(quotesIn('Dana said: "Our target is 500" and Lee said "Exports are slow for us."'), ['Our target is 500', 'Exports are slow for us.']);
+});
+
+test('fix round 6 (M3): code inside a markdown-wrapped answer stays code; the wrapper still reads as prose', () => {
+  const s = '```markdown\n# Brief\nWe reach 9999 customers.\n```js\nconst limit = 750; const retries = 25;\n```\nDana said: "Exports take forever, honestly."\n```';
+  assert.deepEqual(numbersIn(s).map((x) => x.n), ['9999']);
+  assert.deepEqual(quotesIn(s), ['Exports take forever, honestly.']);
+});
+
+test('fix round 6 (M4): a path that starts with a year, and an id that starts with a currency code, are not numbers', () => {
+  assert.deepEqual(numbersIn('Notes in 2026/11/drafts for 140 tickets.').map((x) => x.n), ['140']);
+  assert.deepEqual(numbersIn('Invoice EUR2024-INV-0042 for 140 tickets.').map((x) => x.n), ['140']);
+  assert.deepEqual(numbersIn('Pricing: $12/user/month, a 30/60/90-day plan, USD5000.').map((x) => x.n), ['12', '30', '60', '90', '5000'], 'round 5 I6 holds');
+});
