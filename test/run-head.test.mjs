@@ -439,6 +439,16 @@ test('route: every mocked case returns its rows, states, status lines, fold and 
   for (const [name, [f, want]] of Object.entries(ROUTE_CASES)) assert.deepEqual(shape(routeModel(f)), want, name);
 });
 
+test('route: a Verifier run (PR-exempt as verify) promises no pull request, live or finished, and lands nowhere', () => {
+  const why = 'The Verifier checks the feature; it opens no PR of its own';
+  const live = shape(routeModel(F({ m: M('working'), branch: 'feat/verify', prExempt: 'verify' })));
+  assert.deepEqual(live.rows, [['branch', 'working', 'feat/verify', "This run's branch · the agents are working here"], ['pr', 'future', 'Pull request', why]]);
+  const done = shape(routeModel(F({ m: M('ready'), branch: 'feat/verify', prExempt: 'verify', canCreatePr: false })));
+  assert.deepEqual(done.rows.map((r) => r[3]), ["This run's branch · changes done", why]);
+  // Another exemption keeps today's route.
+  assert.equal(shape(routeModel(F({ m: M('working'), branch: 'feat/x', prExempt: 'round' }))).rows.length, 3);
+});
+
 test('route: edge rows — a live workspace, a discarded folder, a failed folder run, a stacked PR with no previous run', () => {
   const live = routeModel(WS([WM('a', 'api'), WM('w', 'web', { branch: '' })], M('working')));
   assert.deepEqual(shape(live).rows.map((r) => r.slice(1)), [['working', 'api feat/checkout-v2', 'The agents are working here'],

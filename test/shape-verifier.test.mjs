@@ -97,13 +97,16 @@ test("verifyLines: the prototype's words for 1 gap, 2 gaps, clean and accepted",
   const held = (n) => Array.from({ length: n }, (_, i) => `R-h-${i + 1}`);
   const gap = (id) => ({ id, why: 'x', title: 'y' });
   assert.deepEqual(verifyLines({ checks: [{ round: 1, state: 'gaps', result: { held: held(15), gaps: [gap('R-a')] }, gapRuns: [11] }] }, { owned: 16 }),
-    ['Verifier: 15 of 16 hold in the main flow · 1 gap between runs · run 11 added: a small run for the gap']);
+    ['Verifier: 15 of 16 hold · 1 gap · run 11 added for it']);
   assert.deepEqual(verifyLines({ checks: [{ round: 1, state: 'gaps', result: { held: held(14), gaps: [gap('R-a'), gap('R-b')] }, gapRuns: [11, 12] }] }, { owned: 16 }),
-    ['Verifier: 14 of 16 hold in the main flow · 2 gaps between runs · runs 11 and 12 added: a small run for each gap']);
+    ['Verifier: 14 of 16 hold · 2 gaps · runs 11 and 12 added for them']);
   assert.deepEqual(verifyLines({ checks: [{ round: 2, state: 'clean', result: { held: held(16), gaps: [] }, gapRuns: [] }] }, { owned: 16 }),
     ['Verified: the 16 requirements owned by runs hold in the main flow']);
   assert.deepEqual(verifyLines({ checks: [{ round: 3, state: 'accepted', result: { held: held(15), gaps: [gap('R-a')] }, gapRuns: [] }] }, { owned: 16 }),
     ['Verifier: 1 gap left open · you chose to ship with it']);
+  // The bound stop's record: gaps, no gap run added (owner direction d86d13181: each fact once).
+  assert.deepEqual(verifyLines({ checks: [{ round: 3, state: 'gaps', result: { held: held(3), gaps: [gap('R-a')] }, gapRuns: [] }] }, { owned: 4 }),
+    ['Verifier: 3 of 4 hold · 1 gap']);
   assert.deepEqual(verifyLines({ checks: [{ round: 1, state: 'verifying', result: null, gapRuns: [] }] }, { owned: 16 }), []);
   assert.deepEqual(verifyLines(null), []);
 });

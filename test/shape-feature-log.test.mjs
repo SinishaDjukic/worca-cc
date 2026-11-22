@@ -218,9 +218,10 @@ test('C5 (D13): buildDecisionLog({verify}) adds one receipt per check with a res
   ] };
   const log = buildDecisionLog({ origin: [], sliced: true, verify });
   assert.deepEqual(log.map((r) => [r.run, r.text]), [
-    [null, 'Verifier: 15 of 16 hold in the main flow · 1 gap between runs · run 11 added: a small run for the gap'],
+    [null, 'Verifier: 15 of 16 hold · 1 gap · run 11 added for it'],
     [null, 'Verified: the 16 requirements owned by runs hold in the main flow'],
   ]);
   assert.equal(new Set(log.map((r) => r.key)).size, log.length);
+  assert.deepEqual(log.map((r) => r.kind), ['verify', 'verify'], 'drawn as .srows rows (paintFeatureLog)');
   assert.deepEqual(buildDecisionLog({ origin: [] }), buildDecisionLog({ origin: [], verify: null }));
 });

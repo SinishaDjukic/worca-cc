@@ -268,6 +268,9 @@ a.rd-crumb:hover{color:var(--ink);text-decoration:underline;}
 .chat-rc-log-run{color:var(--ink-3);}
 .chat-rc-log-run::after{content:" \00B7";}
 .chat-rc-log-show{margin-left:auto;background:none;border:0;padding:0 2px;color:var(--ink-2);font:inherit;cursor:pointer;text-decoration:underline;}
+/* C5 (owner direction d86d13181): a Verifier receipt is one .srows row: no wrap point between the mark and the text, and
+   the gap list's .plan-checks inset and type, so its mark and text share the gap rows' columns. */
+.chat-rc-log-row.chat-rc-log-verify{display:block;padding:0 0 0 4px;font-size:inherit;color:inherit;}
 .chat-rc-log-detail{flex-basis:100%;list-style:none;margin:2px 0 0 22px;padding:0;color:var(--ink-3);}
 .chat-rc-member-open{display:flex;width:100%;gap:4px;background:none;border:0;padding:0;font:inherit;color:inherit;text-align:left;cursor:pointer;}
 .chat-rc-member-open:disabled{cursor:default;opacity:.7;}

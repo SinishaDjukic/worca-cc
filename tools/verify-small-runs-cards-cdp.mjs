@@ -326,11 +326,12 @@ const MEASURE = (rootSel, rowSel, markSel, textSel) => `(() => {
     const tops = [...row.children].filter((c) => c.getBoundingClientRect().height > 0).map((c) => c.getBoundingClientRect().top);
     const mb = mark ? mark.getBoundingClientRect() : null; const tb = text ? firstLine(text) : null;
     return { text: (text && text.textContent || '').trim(), height: Math.round(rb.height * 10) / 10,
-      markX: mb ? mb.left + mb.width / 2 : null, markY: mb ? mb.top + mb.height / 2 : null, textY: tb ? tb.top + tb.height / 2 : null,
+      markX: mb ? mb.left + mb.width / 2 : null, textX: tb ? tb.left : null, markY: mb ? mb.top + mb.height / 2 : null, textY: tb ? tb.top + tb.height / 2 : null,
       textLines: text ? lines(text) : 0, oneLine: !tops.length || Math.max(...tops) - Math.min(...tops) <= 8 };
   });
   const xs = rows.map((r) => r.markX).filter((x) => x != null);
-  return { found: true, rows, spreadX: xs.length ? Math.max(...xs) - Math.min(...xs) : 0,
+  const txs = rows.map((r) => r.textX).filter((x) => x != null);
+  return { found: true, rows, spreadX: xs.length ? Math.max(...xs) - Math.min(...xs) : 0, textSpreadX: txs.length ? Math.max(...txs) - Math.min(...txs) : 0,
     maxDy: Math.max(0, ...rows.filter((r) => r.markY != null && r.textY != null).map((r) => Math.abs(r.markY - r.textY))),
     overflow: root.scrollWidth > root.clientWidth || document.documentElement.scrollWidth > document.documentElement.clientWidth };
 })()`;
@@ -347,6 +348,17 @@ function judge(list, theme, m, { oneLine = true } = {}) {
   check(!m.overflow, `${where}: no horizontal overflow`);
 }
 const RUN_ROWS = ['.chat-rc-members', '.run-member', '.status-dot', '.run-member-title'];
+/** Owner direction d86d13181: the Verifier receipt row and the gap rows, measured as one list (one mark column, one text start). */
+const VERIFY_ROWS = ['.chat-rc', ':is(.chat-rc-log-verify, .verify-gaps) > .plan-check-row', '.plan-check-mark', '.plan-check-text'];
+/** The Verifier receipt row and, when up, the gap rows: the mark on the first text line, one mark x, one text x. */
+async function judgeVerifyLine(where, theme) {
+  const m = await ev(MEASURE(...VERIFY_ROWS));
+  results.lists.push({ list: `${where} Verifier line`, theme, ...m });
+  const at = `${where} Verifier line, ${theme}, ${WIDTH}px`;
+  if (!m.found || !m.rows.length) { check(false, `${at}: the Verifier row is on screen`); return; }
+  check(m.maxDy <= 1, `${at}: the mark sits on the first text line (max dy ${m.maxDy.toFixed(2)}px; ${JSON.stringify(m.rows.map((r) => [r.markX, r.textX]))})`);
+  check(m.spreadX <= 1 && m.textSpreadX <= 1, `${at}: one mark column and one text start with the gap rows (mark spread ${m.spreadX.toFixed(2)}px, text spread ${m.textSpreadX.toFixed(2)}px)`);
+}
 const GAP_ROWS = (scope) => [`${scope} .verify-gaps`, '.plan-check-row', '.plan-check-mark', '.plan-check-text'];
 const AGENT_ROWS = (scope) => [`${scope} .run-agents`, '.plan-check-row', '.plan-check-mark', '.plan-check-text'];
 const FOLD_ROWS = ['.chat-rc .req-change-rule', '.plan-check-row', '.plan-check-mark', '.plan-check-text'];
@@ -420,12 +432,13 @@ for (const theme of THEMES) {
     const s = await ev(STATUS);
     check(s && s.word === 'Working' && s.detail === '4 of 5 runs done', `gap found, ${theme}: word and detail (${JSON.stringify(s)})`);
     const logs = await ev(LOGS);
-    check(logs.includes('Verifier: 3 of 4 hold in the main flow · 1 gap between runs · run 5 added: a small run for the gap'), `gap found, ${theme}: the gap receipt (${JSON.stringify(logs)})`);
+    check(logs.includes('Verifier: 3 of 4 hold · 1 gap · run 5 added for it'), `gap found, ${theme}: the gap receipt (${JSON.stringify(logs)})`);
     const c = await ev(COUNTS('.chat-rc'));
     check(c && c.gapLists === 1, `gap found, ${theme}: one gap list (${JSON.stringify(c)})`);
     const words = await ev("[...document.querySelectorAll('.chat-rc-members .run-member .run-member-state')].map((n) => n.textContent)");
     check(words.length === 5, `gap found, ${theme}: the gap run is a run row (${JSON.stringify(words)})`);
     await reveal('.chat-rc .verify-gaps'); judge('verifier gap list', theme, await ev(MEASURE(...GAP_ROWS('.chat-rc'))), { oneLine: false });
+    await judgeVerifyLine('gap found', theme);
     await reveal('.chat-rc-members'); judge('gap found run rows', theme, await ev(MEASURE(...RUN_ROWS)));
     await shot(`app-verifier-gap-found-${theme}`);
   }
@@ -448,6 +461,7 @@ for (const theme of THEMES) {
     check(s && s.word === 'Ready to ship' && s.detail === 'ship from the feature page', `no gap, ${theme}: Ready to ship (${JSON.stringify(s)})`);
     const logs = await ev(LOGS);
     check(logs.includes('Verified: the 4 requirements owned by runs hold in the main flow'), `no gap, ${theme}: the clean receipt (${JSON.stringify(logs)})`);
+    await reveal('.chat-rc .chat-rc-log-verify'); await judgeVerifyLine('no gap', theme);
     await shot(`app-verifier-no-gap-${theme}`);
   }
   await prototypeShot('ship', null, 'ship', theme);

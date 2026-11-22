@@ -2609,6 +2609,15 @@ test('C5 one card: a gap run asking during the gaps state keeps the model\'s Nee
   assert.equal(f.$('.chat-rc-status .run-status-word').textContent, 'Needs you');
 });
 
+test('C5 one card: a paused, failed or stopped gap run during the gaps state keeps the model\'s word', () => {
+  for (const [state, word] of [['paused', 'Paused'], ['failed', 'Failed'], ['stopped', 'Stopped']]) {
+    const run = RUN_STATE_ROWS.find((r) => r.state === state).run;
+    // The last gap run: dev's groupModel reads a stop followed by a waiting run as Waiting.
+    const f = paintVf('gaps', {}, undefined, [DONE_RUN, DONE_RUN, DONE_RUN, DONE_RUN, run]);
+    assert.equal(f.$('.chat-rc-status .run-status-word').textContent, word, state);
+  }
+});
+
 test('C5 one card: a gap run\'s own question leaves the gap list up; only the Verifier\'s stop takes it down', () => {
   const pq = { id: 'gap-ask', kind: 'clarify', questions: [{ id: 'q1', text: 'Which email service?' }] };
   const stub = { paintQuestion: (ref, host) => { const d = host.ownerDocument.createElement('div'); d.className = 'qpanel'; host.replaceChildren(d); return { id: pq.id, kind: 'clarify' }; },

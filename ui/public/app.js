@@ -307,7 +307,7 @@ import { runCostBreakdown, floorText, auxLabelForSubagent } from '../../src/shar
 import { costBreakdownEl, costSummaryText, awayTotalText } from './cost-breakdown.mjs';
 import { describeRun, describeNewRun, describeAwayRow } from '../../src/shared/away-mode/describe.mjs';
 import { createSchedulesView } from './schedules-view.mjs';
-import { createRunPrFields, mountWorkspacePrSetting, paintRunPrAuto } from './pr-auto-view.mjs';
+import { createRunPrFields, mountWorkspacePrSetting, paintRunPrAuto, knownPrExempt } from './pr-auto-view.mjs';
 import { createRequirementsView } from './requirements-view.mjs';
 import { mountDesignView, pushDesignFrame, pushDesignAskFrame, repaintDesignChat, designHello, designNavCount, paintDesignNav } from './design/view.mjs';
 import { createDesignChat } from './design/chat.mjs';
@@ -27096,7 +27096,9 @@ function paintHdGlance(screen, record, data) {
   paintGroupLine(glance.querySelector('.rd-kv .rd-group-line'), record.id || '', record.title || '', home);
   paintRunPlace(screen, home);
   paintRunLabels(glance.querySelector('.rd-kv [data-fact="labels"] > .rd-kv-v'), { pipelineId: data.state.id, labels: data.state.labels, onSaved: (l) => { data.state.labels = l; } });
-  void paintRunPrAuto(glance.querySelector('.rd-kv [data-fact="pr-auto"]'), data.state.id, st.status, () => !!histDetailState && histDetailState.data === data);
+  const hdExempt = knownPrExempt(data.state.id);
+  void paintRunPrAuto(glance.querySelector('.rd-kv [data-fact="pr-auto"]'), data.state.id, st.status, () => !!histDetailState && histDetailState.data === data)
+    .then(() => { if (!hdExempt && knownPrExempt(data.state.id) && histDetailState && histDetailState.data === data) paintHdHead(screen, hdCurrentRecord(record), data); });   // C5: the route reads it
   syncFacts(glance.querySelector('.rd-kv'));
 
   // Time · Cost · Changes, then the Cost tags row, as on the Running page in every state.
@@ -38371,6 +38373,7 @@ function headFactsOf(screen, rec, { m, mode, gitChrome, folder, canTry, tryIt = 
   }
   const source = (rec && rec.sourceBranch) || liveSource || '';
   const group = routeGroupOf(groupHomeOf((rec && rec.id) || pipelineId), { sourceBranch: source, histOf });
+  const prExempt = knownPrExempt((rec && rec.id) || pipelineId);
   return {
     m, mode, gitChrome, folder, canTry, tryIt, kept, level: currentLevel(),
     workspace: ws ? { members: histWsMembers(rec).map((x) => ({
@@ -38386,8 +38389,9 @@ function headFactsOf(screen, rec, { m, mode, gitChrome, folder, canTry, tryIt = 
     group,
     groupPending: !group && routeGroupsPending(),   // D2: never guess the landing branch before the groups answer
     pr: own, prInput: glancePrInput(rec), prStatus, watch: (rec && rec.watch) || null,
+    prExempt,   // C5: a Verifier's route says why it opens no PR
     mock: !!(rec && rec.mock),
-    canCreatePr: !!rec && histPrEligible(rec) && !(own && open) && !recHasNoRemote(rec),
+    canCreatePr: !!rec && prExempt !== 'verify' && histPrEligible(rec) && !(own && open) && !recHasNoRemote(rec),
     noRemote: !!rec && recHasNoRemote(rec),
     push: !!rec && !!rec.sameAsSource && rec.target !== 'workspace' && rec.mergeBack?.merged === true && !!rec.sourceBranch,
     notMergedBack: !!rec && !!rec.sameAsSource && rec.mergeBack?.merged === false,
@@ -39390,7 +39394,9 @@ function paintRdHeader(screen, r) {
   // Run tags (#718): read-only chips after the person chip, replaced on every paint.
   for (const c of screen.querySelectorAll('.rd-page-meta .tag-chip')) c.remove();   // s2: the chips moved to the Cost tags row
   paintRunLabels(screen.querySelector('.rd-glance .rd-kv [data-fact="labels"] > .rd-kv-v'), { pipelineId: r.pipelineId || '', labels: r.labels, onSaved: (l) => { r.labels = l; } });
-  void paintRunPrAuto(screen.querySelector('.rd-glance .rd-kv [data-fact="pr-auto"]'), r.pipelineId, r.status, () => screen.isConnected && runs.get(r.runId) === r);
+  const rdExempt = knownPrExempt(r.pipelineId);
+  void paintRunPrAuto(screen.querySelector('.rd-glance .rd-kv [data-fact="pr-auto"]'), r.pipelineId, r.status, () => screen.isConnected && runs.get(r.runId) === r)
+    .then(() => { if (!rdExempt && knownPrExempt(r.pipelineId) && screen.isConnected && runs.get(r.runId) === r) paintRdHead(screen, r); });   // C5: the route reads it
   paintRunKindChip(screen.querySelector('.rd-page-meta'), workModeOf(r));
   syncFacts(screen.querySelector('.rd-glance .rd-kv'));
 

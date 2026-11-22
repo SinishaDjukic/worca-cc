@@ -6,6 +6,7 @@
 import { stepKind, isRequirementsAsk } from './step-card.mjs';
 import { watchStoppedText } from '../chat/pr-watch-words.mjs';
 import { icon } from '../icons.mjs';
+import { buildCheckRows } from './check-row.mjs';
 import { FEATURE_KIND } from '../run-status-card.mjs';
 import { prototypeDetail } from './prototype-body.mjs';
 import { REQUIREMENTS_AGREED } from '../../../src/shared/shape/feature-log.mjs';
@@ -197,6 +198,16 @@ function keepFocus(doc, host, sel, rebuild) {
   if (key) { const again = host.querySelector(`[data-key="${key}"] ${sel}`); if (again && !again.disabled) again.focus(); }
 }
 
+/** C5 (owner direction d86d13181): a Verifier receipt is the shared .srows row (buildCheckRows), its pass mark in the
+ *  mark column on the first text line and its text where the gap rows' text starts (an empty id column). */
+function verifyRow(doc, li, text) {
+  li.classList.add('chat-rc-log-verify', 'srows');
+  const [row] = buildCheckRows(doc, { items: [{ id: '', idCol: true, label: text, pass: true, mark: 'check', ariaLabel: 'done' }] });
+  row.querySelector('.plan-check-label').classList.add('chat-rc-log-text');
+  li.appendChild(row);
+  return li;
+}
+
 /** The step log (D17): a check, the run tag, the named decision; Show unfolds what was answered, in place. */
 export function paintFeatureLog(doc, host, lines) {
   const list = Array.isArray(lines) ? lines : [];
@@ -207,6 +218,7 @@ export function paintFeatureLog(doc, host, lines) {
     host.hidden = !list.length;
     for (const line of list) {
       const li = doc.createElement('li'); li.className = 'chat-rc-log-row'; li.dataset.key = line.key;
+      if (line.kind === 'verify') { host.appendChild(verifyRow(doc, li, line.text)); continue; }
       const ic = doc.createElement('span'); ic.className = 'chat-rc-log-check'; ic.appendChild(icon(doc, 'check', 12));
       li.appendChild(ic);
       if (line.run) { const r = doc.createElement('span'); r.className = 'chat-rc-log-run'; r.textContent = `Run ${line.run}`; li.appendChild(r); }

@@ -154,8 +154,9 @@ export function buildDecisionLog({ clarify = null, origin = [], sliced = false, 
   }
   // Small runs C4 (D17): a requirement change not on the feature card's notice (landed, superseded or `none`), oldest first.
   (Array.isArray(changes) ? changes : []).forEach((e) => { out.push({ key: `change-${e.at}-${e.id}`, run: null, text: reqChangeLogText(e), detail: [] }); });
-  // Small runs C5 (D13): one receipt per Verifier check with a result (`verify` = the feature's outline.verify).
-  verifyLines(verify).forEach((text, i) => { out.push({ key: `verify-${i}`, run: null, text, detail: [] }); });
+  // Small runs C5 (D13): one receipt per Verifier check with a result (`verify` = the feature's outline.verify). `kind`
+  // draws it as a .srows row, in the gap list's mark and text columns (owner direction d86d13181).
+  verifyLines(verify).forEach((text, i) => { out.push({ key: `verify-${i}`, run: null, text, detail: [], kind: 'verify' }); });
   out.unshift(...front.slice(0, 1));
   if (replan && replan.length) {
     out.push({ key: 'replan', run: null, text: replanText(replan), detail: [...replan].sort((a, b) => a - b).map((i) => { const s = sliceOf(i); return s ? `${i} · ${s.title}` : String(i); }) });

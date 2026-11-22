@@ -115,11 +115,11 @@ export function gapsFoundOf(verify) {
 
 function addedText(runs) {
   if (!runs.length) return '';
-  return runs.length === 1 ? ` · run ${runs[0]} added: a small run for the gap`
-    : ` · runs ${joinNames(runs.map(String))} added: a small run for each gap`;
+  return runs.length === 1 ? ` · run ${runs[0]} added for it` : ` · runs ${joinNames(runs.map(String))} added for them`;
 }
 
-/** The receipts, one per check with a result, in the prototype's words. `owned` = the owned count (or the list). */
+/** The receipts, one per check with a result. `owned` = the owned count (or the list). The gaps line says each fact
+ *  once (owner direction d86d13181): "Verifier: 3 of 4 hold · 1 gap · run 5 added for it". */
 export function verifyLines(verify, { owned = null } = {}) {
   const out = [];
   for (const c of checksOf(verify)) {
@@ -130,7 +130,7 @@ export function verifyLines(verify, { owned = null } = {}) {
     const n = Array.isArray(owned) ? owned.length : Number.isInteger(owned) ? owned : held + g;
     if (c.state === 'clean') out.push(`Verified: the ${n} requirements owned by runs hold in the main flow`);
     else if (c.state === 'accepted') out.push(`Verifier: ${plural(g, 'gap')} left open · you chose to ship with it`);
-    else if (c.state === 'gaps') out.push(`Verifier: ${held} of ${n} hold in the main flow · ${plural(g, 'gap')} between runs${addedText(Array.isArray(c.gapRuns) ? c.gapRuns : [])}`);
+    else if (c.state === 'gaps') out.push(`Verifier: ${held} of ${n} hold · ${plural(g, 'gap')}${addedText(Array.isArray(c.gapRuns) ? c.gapRuns : [])}`);
   }
   return out;
 }

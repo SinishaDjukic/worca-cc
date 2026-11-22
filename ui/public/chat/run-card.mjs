@@ -53,6 +53,8 @@ const sliceOfMember = (card, mb) => ((card && card.feature && card.feature.slice
   .find((x) => (mb.pipelineId && x.pipelineId === mb.pipelineId) || (mb.ticketId && x.ticketId === mb.ticketId)) || null;
 
 const LIVE_STATUS = new Set(['starting', 'running', 'pausing']);
+/** C5: the run states that read the Verifier's Working while gap runs build (every other state keeps its own word). */
+const GAPS_BUILDING = new Set(['starting', 'working', 'waiting']);
 /** A question that goes away under these was answered (here or elsewhere). Not `pausing`: ui/server.mjs pauseRun resolves
  *  the open question (reason 'paused') right AFTER the run's `pausing` frame — that question was not answered. */
 const ANSWERING_STATUS = new Set(['starting', 'running']);
@@ -971,8 +973,10 @@ export function createChatRunCard({ doc, win = null, snapshot = null, ctx = {}, 
     const o = { ...m, line: one.detail, barLine: one.detail, lineSaysState: false, progress: null };
     if (m.current) o.current = { ...m.current, progress: null };
     if (one.state === 'S8' && !curRow) o.word = 'Working';
-    // C5: the Verifier's word (Verifying, Needs you, Paused, Stopped, Ready to ship); a gap run that asks keeps Needs you.
-    if (one.word && !(one.verify && one.verify.state === 'gaps' && m.state === 'needs-you')) o.word = one.word;
+    // C5: the Verifier's word (Verifying, Needs you, Paused, Stopped, Ready to ship). While gap runs build, the model's
+    // word stands when a gap run asks, pauses, fails or stops; only a building one (starting, working, waiting) reads Working.
+    const gapsWord = !(one.verify && one.verify.state === 'gaps') || GAPS_BUILDING.has(m.state);
+    if (one.word && gapsWord) o.word = one.word;
     return o;
   }
 

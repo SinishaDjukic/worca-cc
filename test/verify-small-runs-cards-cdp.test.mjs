@@ -45,9 +45,11 @@ test('the run page and the side panel of the Verifier run and of one gap run', (
 test('the Verifier strings, the gap list and the measurements', () => {
   const s = src();
   for (const needle of ["'Verifying'", "'the Verifier walks the main flow · 4 of 4 runs done'", "'Ready to ship'", "'ship from the feature page'",
-    "'Verifier: 3 of 4 hold in the main flow · 1 gap between runs · run 5 added: a small run for the gap'",
+    "'Verifier: 3 of 4 hold · 1 gap · run 5 added for it'",
     "'Verified: the 4 requirements owned by runs hold in the main flow'", "'Add a run for the gap'", "'Needs you'"]) assert.ok(s.includes(needle), needle);
   assert.match(s, /judge\('verifier gap list'/);
+  assert.match(s, /judgeVerifyLine\('gap found', theme\)/, 'the Verifier line measured beside the gap rows (owner direction d86d13181)');
+  assert.match(s, /judgeVerifyLine\('no gap', theme\)/);
   assert.match(s, /Math\.abs\(r\.height - 32\) > 0\.5/, 'the 32px one-line check');
   assert.match(s, /m\.maxDy <= 1/);
   assert.match(s, /m\.spreadX <= 1/);

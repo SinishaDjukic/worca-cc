@@ -6,6 +6,7 @@ import { icon } from './icons.mjs';
 import { copyButton } from './copy-button.mjs';
 import { CREATE_PR_LABEL, VIEW_PRS_LABEL, viewPrLabel } from './ship-words.mjs';
 import { isSafeHref } from './actions-view.mjs';
+import { prExemptText } from '../../src/shared/pr-auto.mjs';
 
 // Watch PR (#619), moved from app.js: the route and the Overview's PR rows read one wording.
 export const HD_PR_WATCH_ACTIVE = new Set(['starting', 'fixing', 'publishing']);
@@ -374,6 +375,8 @@ function prRoute(f) {
   const merged = s === 'MERGED' || (!pr && m.state === 'merged' && !(g && g.buildsOn !== false) && !(!g && f.groupPending));
   const stackedOn = !!pr && !!g && g.shipMode === 'stacked' && g.buildsOn && !!g.prev && !g.prevPrMerged;
   const rows = [branchRow(f)];
+  // C5: the Verifier opens no PR and lands nothing; its route says why instead of promising a pull request.
+  if (!pr && f.prExempt === 'verify') return finish([...rows, row('pr', 'future', txt('Pull request'), txt(prExemptText(f.prExempt)))]);
   if (pr) {
     const one = !!g && g.shipMode === 'one';
     const note = one ? txt(`carries all ${g.total} runs`) : stackedOn ? txt(`stacked on ${g.prev.label}'s pull request`) : [];

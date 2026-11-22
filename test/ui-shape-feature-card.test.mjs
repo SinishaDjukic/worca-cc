@@ -91,6 +91,24 @@ test('paintFeatureLog: a check icon, the run tag, the words; Show unfolds the de
   assert.equal(host.querySelector('[data-key="clarify"] .chat-rc-log-detail').hidden, false, 'still unfolded after a rebuild');
 });
 
+test('C5 (owner direction d86d13181): a Verifier receipt is a shared .srows row: its mark in the mark column, the text beside it in the gap rows\' text column', () => {
+  const dom = trackDom(new JSDOM('<!doctype html><body><ol></ol></body>'));
+  const doc = dom.window.document;
+  const host = doc.querySelector('ol');
+  paintFeatureLog(doc, host, [{ key: '1-2', run: 1, text: 'Plan approved', detail: [] },
+    { key: 'verify-0', run: null, text: 'Verifier: 3 of 4 hold · 1 gap · run 5 added for it', detail: [], kind: 'verify' }]);
+  const li = host.querySelector('li[data-key="verify-0"]');
+  assert.ok(li.classList.contains('chat-rc-log-row') && li.classList.contains('srows'), 'a log row that is a .srows list');
+  const row = li.querySelector(':scope > .plan-check-row');
+  assert.deepEqual([...row.children].map((c) => c.className), ['plan-check-mark', 'plan-check-id', 'plan-check-text'],
+    'mark, the empty id column (the gap rows\' text start), then the text: one row, no wrap point before the text');
+  assert.ok(row.querySelector('.plan-check-mark svg'), 'the pass mark');
+  assert.equal(row.querySelector('.plan-check-id').textContent, '');
+  assert.equal(li.querySelector('.chat-rc-log-text').textContent, 'Verifier: 3 of 4 hold · 1 gap · run 5 added for it');
+  assert.equal(li.querySelector('.chat-rc-log-check'), null, 'no second mark');
+  assert.ok(host.querySelector('li[data-key="1-2"] .chat-rc-log-check'), 'other receipts keep the log row');
+});
+
 // ---- T9: a feature written before this change (rows as today's code writes them; nothing migrates, D19) -----------
 
 const PRE = JSON.parse(readFileSync(new URL('./fixtures/shaper/pre-upgrade-feature.json', import.meta.url), 'utf8'));

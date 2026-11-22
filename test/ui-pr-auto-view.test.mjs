@@ -3,7 +3,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { JSDOM } from 'jsdom';
-import { prFormState, prBodyOf, renderRunPrFact, mountWorkspacePrSetting, createRunPrFields, paintRunPrAuto, prRowText } from '../ui/public/pr-auto-view.mjs';
+import { prFormState, prBodyOf, renderRunPrFact, mountWorkspacePrSetting, createRunPrFields, paintRunPrAuto, prRowText, knownPrExempt } from '../ui/public/pr-auto-view.mjs';
 
 const PROJECT = { pr: { scope: 'project', open: { value: 'draft', source: 'project' }, slices: { value: 'each', source: 'default' } } };
 const WORKSPACE = { pr: { scope: 'workspace', open: { value: 'none', source: 'team' }, slices: null } };
@@ -64,6 +64,17 @@ test('paintRunPrAuto fills the fact row, hides it for a run from before v86, and
   const old = dom('<div class="rd-kv-row"><dd class="rd-kv-v">x</dd></div>').document.querySelector('.rd-kv-row');
   await paintRunPrAuto(old, 'abcd0003', 'done', () => true, { fetchFn: async () => ({ ok: true, json: async () => ({ prAuto: null }) }) });
   assert.equal(old.hidden, true);
+});
+
+test('knownPrExempt: a fetched exempt answer is known for the run whatever its status', async () => {
+  const w = dom('<div class="rd-kv-row" hidden><dd class="rd-kv-v"></dd></div>');
+  const row = w.document.querySelector('.rd-kv-row');
+  assert.equal(knownPrExempt('ver00001'), null);
+  const fetchFn = async () => ({ ok: true, json: async () => ({ prAuto: { exempt: 'verify' } }) });
+  await paintRunPrAuto(row, 'ver00001', 'running', () => true, { fetchFn });
+  assert.equal(knownPrExempt('ver00001'), 'verify');
+  assert.equal(knownPrExempt('ver0000'), null, 'another id never matches by prefix');
+  assert.equal(knownPrExempt('abcd0001'), null, 'an answer without an exemption');
 });
 
 test('paintRunPrAuto: a waiting slice answer is asked again after RECHECK_MS and shows the feature\'s PR once it is set', async () => {
