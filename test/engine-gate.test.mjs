@@ -852,18 +852,27 @@ test('engineStartRefusal: a missing opencode binary is not liftable', POSIX, asy
   assert.match(r.error, /WORCA_OPENCODE_BIN/);
 });
 
-test('an opencode run with no model auto-names worca\'s default OpenCode model: the ask slot first, else the first opencode-capable catalog row, never OpenCode Zen', async () => {
+test('an opencode run with no model auto-names worca\'s default OpenCode model: the ask slot first, else the ONLY opencode-capable catalog row, never OpenCode Zen, never one of several', async () => {
   await withCatalogHome(async () => {
-    // A Zen (opencode/…) row FIRST, so an unwary first-row pick would grab it; and a plain person model second.
+    // A Zen (opencode/…) row FIRST, so an unwary first-row pick would grab it; and one plain person model.
     await addGlobalModel({ id: 'opencode/zen-free', engine: 'opencode' });
     await addGlobalModel({ id: 'anthropic/claude-sonnet-4-5', engine: 'opencode' });
-    await addGlobalModel({ id: 'openai/gpt-5.5-mini', engine: 'opencode' });
     const mk = () => createOrchestrator({ projectDir: '/tmp/gate-proj', guardrailsId: 'permissive', claude: { engine: 'opencode', mock: true } });
-    // No ask slot: the first opencode-capable catalog row, skipping the Zen model.
+    // No ask slot, one model of the person's own: there is nothing to choose between, so it is the run's.
     const viaCatalog = mk();
     assert.equal(await viaCatalog._ensureOpencodeDefaultModel(), 'anthropic/claude-sonnet-4-5', 'never the first-row Zen model');
     assert.equal(viaCatalog.claude.model, 'anthropic/claude-sonnet-4-5');
     assert.equal(await viaCatalog._opencodeOnDefaultModel(), false);
+    // Two of them: catalogue order says nothing about price or fit, so worca does not choose — the run-start check
+    // still refuses the unnamed spawn, and the log says how to name one.
+    await addGlobalModel({ id: 'openai/gpt-5.5-mini', engine: 'opencode' });
+    const several = mk();
+    const logged = [];
+    several._log = (_who, level, text) => logged.push([level, text]);
+    assert.equal(await several._ensureOpencodeDefaultModel(), null);
+    assert.ok(!several.claude.model, 'no model was named');
+    assert.equal(await several._opencodeOnDefaultModel(), true);
+    assert.ok(logged.some(([level, text]) => level === 'warn' && /2 OpenCode models/.test(text) && /anthropic\/claude-sonnet-4-5/.test(text) && /openai\/gpt-5\.5-mini/.test(text)), JSON.stringify(logged));
     // The person's OpenCode ask slot wins over the catalog row, and a second call is a no-op.
     await setAskModels({ opencode: { model: 'openai/gpt-5.5-mini' } });
     const viaAsk = mk();
@@ -871,6 +880,11 @@ test('an opencode run with no model auto-names worca\'s default OpenCode model: 
     assert.equal(await viaAsk._ensureOpencodeDefaultModel(), null, 'already named: nothing left to resolve');
     assert.equal(viaAsk.claude.model, 'openai/gpt-5.5-mini');
     assert.equal(await viaAsk._opencodeOnDefaultModel(), false);
+    // A Zen model in the chat slot is not taken either; with two catalogue models left, nothing is named.
+    await setAskModels({ opencode: { model: 'opencode/zen-free' } });
+    const zenSlot = mk();
+    assert.equal(await zenSlot._ensureOpencodeDefaultModel(), null);
+    assert.ok(!zenSlot.claude.model);
     // An explicitly named model is never overridden.
     const named = mk();
     named.claude.model = 'anthropic/claude-sonnet-4-5';

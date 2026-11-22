@@ -10,7 +10,7 @@ import {
   buildOpencodeArgs, createOpencodeNormalizer, classifyOpencodeError, opencodeSessionOf, OPENCODE_SESSION_PREFIX,
   opencodeRulePlan, opencodeCapabilities, opencodePreflight, runOpencodeProcess, OPENCODE_ASK_LOCKDOWN, opencodeMcpServers,
   parseOpencodeProviders, parseOpencodeAuth, readSubsession, OPENCODE_EFFORTS, OPENCODE_RESUME_NOT_FOUND_RE,
-  opencodeAskSupport,
+  opencodeAskSupport, opencodeVersion, resetOpencodeVersions,
 } from '../src/core/engines/opencode.mjs';
 import { EVENT_TYPES, isNormalized } from '../src/core/engines/events.mjs';
 import { CAPABILITY_KEYS } from '../src/core/engines/capabilities.mjs';
@@ -38,6 +38,44 @@ test('argv on OpenCode 2: a private server, no --pure and no --print-logs, the v
   assert.deepEqual(buildOpencodeArgs({ agent: 'worca-node', model: 'anthropic/claude-sonnet-4-5', effort: 'high', sessionId: 'ses_1', major: 2 }),
     ['run', '--format', 'json', '--auto', '--standalone', '--agent', 'worca-node', '-m', 'anthropic/claude-sonnet-4-5#high', '-s', 'ses_1']);
   assert.deepEqual(buildOpencodeArgs({ model: 'deepseek/deepseek-v4.1', major: 2 }), ['run', '--format', 'json', '--auto', '--standalone', '-m', 'deepseek/deepseek-v4.1']);
+});
+
+test('argv on OpenCode 2: an effort replaces a variant the model id already names; without one the id keeps its own', () => {
+  const m = (o) => { const a = buildOpencodeArgs({ major: 2, ...o }); return a[a.indexOf('-m') + 1]; };
+  assert.equal(m({ model: 'anthropic/x#low', effort: 'high' }), 'anthropic/x#high', 'never anthropic/x#low#high');
+  assert.equal(m({ model: 'anthropic/x#low' }), 'anthropic/x#low');
+});
+
+test('spawn on OpenCode 2 without a model: an effort has nothing to ride on, and the run says so', POSIX, async () => {
+  const fake = fakeOpencode(tmp(), 'ok', { version: '2.3.2', authText: '[]' });
+  const before = process.env.WORCA_OPENCODE_ALLOW_DEFAULT_MODEL;
+  process.env.WORCA_OPENCODE_ALLOW_DEFAULT_MODEL = '1';
+  const events = [];
+  try {
+    await runOpencodeProcess({ cwd: tmp(), bin: fake.bin, prompt: 'x', effort: 'high', onEvent: (e) => events.push(e) });
+  } finally {
+    if (before === undefined) delete process.env.WORCA_OPENCODE_ALLOW_DEFAULT_MODEL; else process.env.WORCA_OPENCODE_ALLOW_DEFAULT_MODEL = before;
+  }
+  assert.ok(!fake.args().includes('-m'));
+  assert.ok(events.some((e) => e.type === 'stderr' && /effort high/.test(e.text) && /model/.test(e.text)), 'the dropped effort is named');
+});
+
+test('version: read again once it is stale, and by every run-start check — an upgrade does not wait for a restart', POSIX, async () => {
+  const dir = tmp();
+  resetOpencodeVersions();
+  const { bin } = fakeOpencode(dir, 'ok', { version: '1.19.4' });
+  assert.equal((await opencodeVersion(bin)).major, 1);
+  fakeOpencode(dir, 'ok', { version: '2.3.2', authText: '[]' });   // the same path, upgraded in place
+  assert.equal((await opencodeVersion(bin)).major, 1, 'a fresh reading is kept');
+  assert.equal((await opencodeVersion(bin, { maxAgeMs: 0 })).major, 2, 'a stale one is read again');
+  // The run-start check asks the binary its version anyway: what it hears is what the next spawn branches on.
+  fakeOpencode(dir, 'ok', { version: '1.19.4' });
+  await opencodePreflight({ bin, defaultModel: false });
+  assert.equal((await opencodeVersion(bin)).major, 1);
+  fakeOpencode(dir, 'ok', { version: '2.3.2', authText: '[]' });
+  assert.deepEqual(await opencodeAskSupport({ bin }), {});
+  assert.equal((await opencodeVersion(bin)).major, 2, 'so does the chat gate');
+  resetOpencodeVersions();
 });
 
 test('chat lockdown gate: 1.19.4+ (1.x) and 2.3.2+ (2.x) pass; older and unknown refuse', async () => {
@@ -433,6 +471,76 @@ test('spawn on OpenCode 2: a private server, the variant on the model, no --pure
   assert.equal(result.costUsd, 0.5, 'the sub-agent\'s export cost joins the result');
   assert.deepEqual(result.usage, { input_tokens: 3 + 10, output_tokens: 3 + 2, cache_read_input_tokens: 0, cache_creation_input_tokens: 0 });
   assert.equal(r.text, 'DONE');
+});
+
+/** A 2.x run whose only tool call is one background `subagent` (`child`: its session, or null when the call names none). */
+const v2SubagentRun = (child, { status = 'completed', error = undefined } = {}) => {
+  const sid = 'ses_v2main0000000000000000002';
+  const line = (o) => ({ timestamp: 1, sessionID: sid, ...o });
+  return [
+    line({ type: 'step_start', part: { id: 'prt_1', sessionID: sid, type: 'step-start' } }),
+    line({ type: 'tool_use', part: { id: 'call_sub', sessionID: sid, type: 'tool', tool: 'subagent',
+      state: { status, ...(error ? { error } : {}), input: { agent: 'worca-investigator', description: 'look around', prompt: 'look' },
+        metadata: { metadata: { ...(child ? { sessionID: child } : {}), status: 'running' }, content: [] } } } }),
+    line({ type: 'step_finish', part: { id: 'prt_2', sessionID: sid, type: 'step-finish', reason: 'tool-calls', cost: 0, tokens: { input: 1, output: 1 } } }),
+    line({ type: 'text', part: { id: 'prt_3', sessionID: sid, type: 'text', text: 'DONE' } }),
+    line({ type: 'step_finish', part: { id: 'prt_4', sessionID: sid, type: 'step-finish', reason: 'stop', cost: 0, tokens: { input: 1, output: 1 } } }),
+  ];
+};
+const v2Run = async (lines, exportDoc) => {
+  const fake = fakeOpencode(tmp(), null, { version: '2.3.2', authText: '[]', lines, exportDoc, exportCommand: 'session-export' });
+  const events = [];
+  await runOpencodeProcess({ cwd: tmp(), bin: fake.bin, prompt: 'x', model: 'anthropic/x', allowedTools: ['Agent'], onEvent: (e) => events.push(e) });
+  return events;
+};
+const subRows = (events) => events.filter((e) => e.type === 'subagent').map((e) => [e.event, e.toolUseId]);
+
+test('sub-session export (OpenCode 2): a failed, cancelled or errored outcome is settled and failed', () => {
+  for (const outcome of ['failed', 'cancelled', 'error']) {
+    const sub = readSubsession(JSON.stringify({ info: { cost: 0, outcome, time: { idle: 2 } }, messages: [] }), {});
+    assert.deepEqual([sub.settled, sub.failed, sub.outcome], [true, true, outcome]);
+  }
+  assert.equal(readSubsession(JSON.stringify({ info: { cost: 0, outcome: 'succeeded', time: { idle: 2 } }, messages: [] }), {}).failed, false);
+  assert.equal(readSubsession(text('export-subsession.json'), {}).failed, false, '1.x reports its outcome in the stream');
+});
+
+test('normalizer (OpenCode 2): a background sub-agent row the stream left open is named in finish(), with the call\'s own status', () => {
+  const n = createOpencodeNormalizer({ backgroundSubagents: true });
+  for (const f of v2SubagentRun(null, { status: 'error', error: 'no such agent' })) n.push(f);
+  assert.deepEqual(n.finish().openSubagents, [{ toolUseId: 'call_sub', isError: true, errorText: 'no such agent' }]);
+  // 1.x closes the row in-stream: none is left open.
+  const one = createOpencodeNormalizer();
+  for (const f of v2SubagentRun('ses_child')) one.push(f);
+  assert.deepEqual(one.finish().openSubagents, []);
+});
+
+test('spawn on OpenCode 2: a sub-agent whose session failed closes its row as an error, not a finish', POSIX, async () => {
+  const events = await v2Run(v2SubagentRun('ses_v2child0000000000000000002'),
+    { info: { cost: 0.25, outcome: 'failed', time: { created: 1, idle: 2 } }, messages: [] });
+  assert.deepEqual(subRows(events), [['spawn', 'call_sub'], ['error', 'call_sub']]);
+  assert.match(events.filter((e) => e.type === 'subagent')[1].errorText, /failed/);
+  assert.equal(events.find((e) => e.type === 'result').costUsd, 0.25, 'a failed sub-agent\'s spend still counts');
+});
+
+test('spawn on OpenCode 2: a sub-agent row still closes when its export cannot be read, or the call named no session', POSIX, async () => {
+  const started = Date.now();
+  const unread = await v2Run(v2SubagentRun('ses_v2child0000000000000000003'), null);
+  assert.deepEqual(subRows(unread), [['spawn', 'call_sub'], ['finish', 'call_sub']], 'closed on the call\'s own status');
+  assert.ok(unread.some((e) => e.type === 'stderr' && /could not read sub-agent session/.test(e.text)));
+  assert.ok(Date.now() - started < 4000, 'an export that is not a session document is not retried');
+  const noSession = await v2Run(v2SubagentRun(null, { status: 'error', error: 'no such agent' }), null);
+  assert.deepEqual(subRows(noSession), [['spawn', 'call_sub'], ['error', 'call_sub']]);
+  assert.equal(noSession.filter((e) => e.type === 'subagent')[1].errorText, 'no such agent');
+});
+
+test('spawn on OpenCode 2: a run that fails closes the sub-agent rows it left open, as errors', POSIX, async () => {
+  const lines = [...v2SubagentRun('ses_v2child0000000000000000004').slice(0, 3),
+    { type: 'error', sessionID: 'ses_v2main0000000000000000002', error: { type: 'provider.rate-limit', message: 'slow down' } }];
+  const fake = fakeOpencode(tmp(), null, { version: '2.3.2', authText: '[]', lines, exportCommand: 'session-export' });
+  const events = [];
+  await assert.rejects(() => runOpencodeProcess({ cwd: tmp(), bin: fake.bin, prompt: 'x', model: 'anthropic/x', allowedTools: ['Agent'], onEvent: (e) => events.push(e) }), /slow down/);
+  assert.deepEqual(subRows(events), [['spawn', 'call_sub'], ['error', 'call_sub']]);
+  assert.deepEqual(fake.exported(), [], 'a failed run reads no export');
 });
 
 test('spawn: the free tier refusing a run without a shell says why', POSIX, async () => {

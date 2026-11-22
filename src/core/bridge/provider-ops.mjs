@@ -573,11 +573,13 @@ function catalogEntryForOpencodeModel(m) {
 /**
  * Import OpenCode models into the catalog (§8.4's Copilot import, for the models your opencode runs). A new id is
  * added as its own sign-in engine's entry (no upstream, no env); an id already in the catalog is skipped — an
- * OpenCode entry has nothing to refresh, and one under another engine's id is refused.
+ * OpenCode entry has nothing to refresh, and one under another engine's id is refused. One the catalogue will not
+ * take is skipped with its reason: the rest are still imported, and what was imported is still reported.
  * @param {string[]} ids  `opencode models` ids (provider/model)
+ * @param {{add?: (entry: object) => Promise<unknown>}} [deps]  the catalogue write (tests)
  * @returns {Promise<{created:string[], updated:string[], skipped:Array<{id:string, why:string}>}>}
  */
-export async function importOpencodeModels(ids) {
+export async function importOpencodeModels(ids, { add = addGlobalModel } = {}) {
   const wanted = new Set((Array.isArray(ids) ? ids : []).map((s) => String(s).trim()).filter(Boolean));
   if (!wanted.size) throw new Error('pick at least one model to import');
   const list = await opencodeModelsForImport();
@@ -592,8 +594,12 @@ export async function importOpencodeModels(ids) {
       if (current.engine !== 'opencode') skipped.push({ id, why: `"${current.id}" already exists and is not an OpenCode model` });
       continue;   // an OpenCode entry already in the catalog: nothing to refresh, so no "updated" either
     }
-    await addGlobalModel(entry);
-    created.push(entry.id);
+    try {
+      await add(entry);
+      created.push(entry.id);
+    } catch (err) {
+      skipped.push({ id, why: String((err && err.message) || err) });
+    }
   }
   return { created, updated: [], skipped };
 }

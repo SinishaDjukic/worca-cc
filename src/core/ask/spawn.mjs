@@ -261,9 +261,9 @@ function buildLockedAskOptions({ chat, thread, turn, mcpConfigPath, scratchDir, 
     askLockdown: true,
     mcpConfigPath,
     envScrub: true,
-    // A chat's opencode server alias is stable per thread (runOpencodeProcess), so a resumed session's learned
-    // `<alias>_<tool>` names stay callable across spawns instead of going stale.
-    ...(thread.id ? { serverAliasSeed: String(thread.id) } : {}),
+    // An engine that names MCP tools by the server's per-spawn alias (`threadServerAlias`: OpenCode) keeps that alias
+    // stable per thread, so a resumed session's learned `<alias>_<tool>` names stay callable across spawns.
+    ...(chat.threadServerAlias && thread.id ? { serverAliasSeed: String(thread.id) } : {}),
     // The MCP child needs them (ssh-remote git fetch; the web search key; the engine's own sign-in, for the Auto
     // classifier it runs on this engine): the adapter hands them on (codex through env_vars, copilot's MCP children inherit its env —
     // all but its BYOK COPILOT_PROVIDER_* names —, Gemini CLI, Qwen Code, Goose and OpenCode by ${VAR} reference).

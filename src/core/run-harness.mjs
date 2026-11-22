@@ -3783,10 +3783,11 @@ export class RunHarness extends EventEmitter {
   /**
    * A run on OpenCode names no model (no run model, step slot or team role): auto-name it — the person's OpenCode
    * chat (ask) model, which folds an unset slot into the OpenCode everyday role (`models.modelRoles.opencode.everyday`),
-   * else the first OpenCode-capable catalog model. Named on `this.claude.model`, every spawn rides it and the run-start
-   * check finds no spawn unnamed, so the run never falls to OpenCode's own default (possibly a free OpenCode Zen model,
-   * DEFAULT_MODEL_RISK) and never needs the opt-in. Only when nothing resolves is model left as it was and the refusal
-   * stays. Never throws. */
+   * else the catalogue's only OpenCode-capable model. Named on `this.claude.model`, every spawn rides it and the
+   * run-start check finds no spawn unnamed, so the run never falls to OpenCode's own default (possibly a free OpenCode
+   * Zen model, DEFAULT_MODEL_RISK) and never needs the opt-in. With several catalogue models and no role, worca does
+   * not choose (their order says nothing about price or fit): the model is left as it was, the refusal stays, and the
+   * log names the choices. Never throws. */
   async _ensureOpencodeDefaultModel() {
     const engine = this.claude.engine;
     if (engine !== 'opencode' || (typeof this.claude.model === 'string' && this.claude.model.trim())) return null;
@@ -3795,15 +3796,20 @@ export class RunHarness extends EventEmitter {
       const chat = withRole(resolveSetting('models.opencode.ask').value, 'opencode', 'askModels');
       if (chat && typeof chat.model === 'string' && chat.model.trim()) model = chat.model;
     } catch { model = null; }
-    if (model && !modelForEngine(model, 'opencode', { projectDir: this.projectDir })) model = null;
+    // Never OpenCode Zen (opencode/…), from the chat slot either: that is exactly the default this gate exists to avoid
+    // sending code to opencode.ai.
+    if (model && (/^opencode\//i.test(model) || !modelForEngine(model, 'opencode', { projectDir: this.projectDir }))) model = null;
     if (!model) {
       try {
         const rows = await listModels(this.projectDir || '');
-        // Never OpenCode Zen (opencode/…): that is exactly the default this gate exists to avoid sending code to
-        // opencode.ai — an auto-picked run model must run on the person's own provider or endpoint.
-        const pick = (Array.isArray(rows) ? rows : []).find((m) => m && typeof m.id === 'string'
+        // An auto-picked run model must run on the person's own provider or endpoint.
+        const own = (Array.isArray(rows) ? rows : []).filter((m) => m && typeof m.id === 'string'
           && Array.isArray(m.harnesses) && m.harnesses.includes('opencode') && !/^opencode\//i.test(m.id));
-        model = pick ? pick.id : null;
+        if (own.length === 1) model = own[0].id;
+        else if (own.length > 1) {
+          this._log('orchestrator', 'warn',
+            `engine opencode: this run names no model and the catalogue has ${own.length} OpenCode models (${own.slice(0, 5).map((m) => m.id).join(', ')}${own.length > 5 ? ', …' : ''}) — pick one for the run, or set the OpenCode everyday role (models.modelRoles.opencode.everyday)`);
+        }
       } catch { model = null; }
     }
     if (model) {

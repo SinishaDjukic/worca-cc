@@ -102,6 +102,17 @@ test('an id already held under another engine is skipped, not clobbered', async 
   await removeGlobalModel('aifarm-msp/DeepSeek-V4-Flash-0731');   // free the id for the route test
 });
 
+test('a model the catalogue refuses is skipped with its reason; the ones before and after it are still imported and reported', async () => {
+  for (const id of ['openrouter/z-ai/glm-5.3-prime', 'opencode/beam-free']) await removeGlobalModel(id);   // imported above
+  const add = async (entry) => { if (entry.id === 'opencode/beam-free') throw new Error('disk full'); return addGlobalModel(entry); };
+  const r = await importOpencodeModels(EXPECTED_IDS, { add });
+  assert.deepEqual(r.created, ['openrouter/z-ai/glm-5.3-prime', 'aifarm-msp/DeepSeek-V4-Flash-0731']);
+  assert.deepEqual(r.skipped, [{ id: 'opencode/beam-free', why: 'disk full' }]);
+  // Back to what the tests below start from.
+  await removeGlobalModel('aifarm-msp/DeepSeek-V4-Flash-0731');
+  await importOpencodeModels(['opencode/beam-free']);
+});
+
 test('import with nothing picked is refused', async () => {
   await assert.rejects(() => importOpencodeModels([]), /pick at least one model/);
   await assert.rejects(() => importOpencodeModels([' ']), /pick at least one model/);
