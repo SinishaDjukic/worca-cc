@@ -224,11 +224,21 @@ function concernFinding(doc, title, detail) {
   return list;
 }
 
+/** Small runs C5 (D12): the Verifier's open gaps as one check list (✕, the id, why). */
+function verifyGapList(doc, gaps) {
+  const el = doc.createElement('div');
+  el.className = 'plan-checks srows verify-gaps';
+  el.append(...buildCheckRows(doc, { items: verifyGapItems(gaps) }));
+  return el;
+}
+const stopGaps = (stop) => (stop.reason === 'check' && Array.isArray(stop.gaps) && stop.gaps.length ? stop.gaps : null);
+
 /** Small runs C3 (D12): the one findings list of a stop, for the run side panel: the open issues of an objection, the
- *  failing check rows, or the requirement concern. It holds no count: the card's question says how many. */
+ *  failing check rows, the Verifier's gaps, or the requirement concern. It holds no count: the card's question says how many. */
 function stopFindings(doc, pq) {
   const stop = pq.stop;
   const issues = Array.isArray(pq.issues) ? pq.issues : [];
+  if (stopGaps(stop)) return verifyGapList(doc, stop.gaps);
   if (pq.kind === 'gate') {
     if (issues.length) return issueList(doc, issues);
     const fold = pq.roleReviews?.rounds?.length ? buildRoleFold(doc, pq.roleReviews, { sectionFallback: 'Diff', node: pq.nodeId }) : null;
@@ -298,10 +308,8 @@ function renderStopCard(panel, pq, deps) {
     for (const el of [texts, rule]) { if (foot) foot.before(el); else q.el.appendChild(el); }
   }
   // Small runs C5 (D12): the Verifier's bound stop lists its open gaps (the card's own gap list is not drawn meanwhile).
-  if (stop.reason === 'check' && Array.isArray(stop.gaps) && stop.gaps.length) {
-    const gaps = doc.createElement('div');
-    gaps.className = 'plan-checks srows verify-gaps';
-    gaps.append(...buildCheckRows(doc, { items: verifyGapItems(stop.gaps) }));
+  if (stopGaps(stop)) {
+    const gaps = verifyGapList(doc, stop.gaps);
     if (foot) foot.before(gaps); else q.el.appendChild(gaps);
   }
   panel.appendChild(q.el);

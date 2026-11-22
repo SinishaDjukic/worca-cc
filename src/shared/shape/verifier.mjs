@@ -23,8 +23,8 @@ const plural = (n, one) => `${n} ${n === 1 ? one : `${one}s`}`;
 const joinNames = (xs) => (xs.length < 2 ? xs.join('') : `${xs.slice(0, -1).join(', ')} and ${xs.at(-1)}`);
 const clip = (t, n) => { const s = oneLineText(t); return s.length > n ? `${s.slice(0, n - 1)}…` : s; };
 const idOf = (x) => (typeof x === 'string' ? x : x && typeof x.id === 'string' ? x.id : '');
-// A fence inside a requirement would close the data block: three backticks become three quotes.
-const fenceSafe = (t) => t.replace(/`{3,}/g, "'''");
+/** A fence inside a requirement would close the data block: three backticks become three quotes. */
+export const fenceSafe = (t) => t.replace(/`{3,}/g, "'''");
 
 const missing = () => Object.assign(new TypeError('The Verifier wrote no result'), { code: 'VERIFY_RESULT_MISSING' });
 

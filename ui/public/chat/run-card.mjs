@@ -603,7 +603,7 @@ export function createChatRunCard({ doc, win = null, snapshot = null, ctx = {}, 
       if (!painted || painted.id !== (q.id || null)) { qErr.hidden = true; sent = null; shownFor = null; planSent = null; }
       const planAsk = askKindOf(pq) === 'plan' && !!pq.plan && !pq.plan.outline;
       painted = { id: q.id || null, runId: stepRef().runId, kind: q.kind || askKindOf(pq), heading: q.heading || '', step: q.step || '',
-        stepCard: !!q.stepCard, stop: !!(q.stop || pq.stop), planAsk, reqAsk: isRequirementsAsk(pq), roleReviews: planAsk ? pq.plan.roleReviews || null : null };
+        stepCard: !!q.stepCard, stop: !!(q.stop || pq.stop), stopNode: (pq.stop && pq.stop.node) || null, planAsk, reqAsk: isRequirementsAsk(pq), roleReviews: planAsk ? pq.plan.roleReviews || null : null };
       qHead.textContent = painted.heading;
       qHead.hidden = !painted.heading || painted.stepCard;   // a step card's own head says it once (shaper-cards D16)
       qBody.hidden = false;
@@ -971,33 +971,28 @@ export function createChatRunCard({ doc, win = null, snapshot = null, ctx = {}, 
     const o = { ...m, line: one.detail, barLine: one.detail, lineSaysState: false, progress: null };
     if (m.current) o.current = { ...m.current, progress: null };
     if (one.state === 'S8' && !curRow) o.word = 'Working';
-    if (one.word) o.word = one.word;   // C5: the Verifier's word (Verifying, Needs you, Paused, Stopped, Ready to ship)
+    // C5: the Verifier's word (Verifying, Needs you, Paused, Stopped, Ready to ship); a gap run that asks keeps Needs you.
+    if (one.word && !(one.verify && one.verify.state === 'gaps' && m.state === 'needs-you')) o.word = one.word;
     return o;
   }
 
-  /** C5: the Verifier's run row (a paused or halted Verifier): dot, "Verifier" and its short state, opening its run. */
+  /** C5: the Verifier's run row (a paused or halted Verifier), one renderMemberRows row: dot, "Verifier" and its short
+   *  state, unnumbered; its title opens the run in the panel. */
   function verifierRow(v, snap) {
-    const halted = v.state === 'halted';
-    const ol = h('ol', 'run-members is-table is-one-line');
-    const li = h('li', 'run-member rc-member');
-    li.dataset.state = halted ? 'stopped' : 'paused';
+    const state = v.state === 'halted' ? 'stopped' : 'paused';
+    const runRef = { ...ref(), pipelineId: v.pipelineId, runId: (snap && snap.runId) || null, title: 'Verifier' };
+    const mb = { position: '', title: 'Verifier', pipelineId: v.pipelineId, href: progressRoute(runRef, snap), model: { state, ...RUN_STATES[state] } };
+    const ol = renderMemberRows(doc, { groupKind: 'feature', members: [mb] }, { oneLine: true, shortState: () => state });
+    const li = ol.querySelector('.run-member');
     li.dataset.key = 'verifier';
-    const dot = h('span', '');
-    paintStatusDot(dot, { state: li.dataset.state, ...RUN_STATES[li.dataset.state] });
-    const open = button('run-member-title');
-    open.textContent = 'Verifier';
-    open.addEventListener('click', () => call(ctx.openRunPanel, { ...ref(), pipelineId: v.pipelineId, runId: (snap && snap.runId) || null, title: 'Verifier' }, {}));
-    const main = h('span', 'run-member-main');
-    main.append(open, h('span', 'run-member-state', halted ? 'stopped' : 'paused'));
-    li.append(dot, h('span', 'run-member-num', ''), main);
-    ol.append(li);
-    return ol;
+    li.querySelector('.run-member-title').addEventListener('click', (e) => { e.preventDefault(); call(ctx.openRunPanel, runRef, {}); });
+    return li;
   }
 
-  /** C5 (D12): while gap runs build, the open gaps as one list; none while a question is up (it lists them itself). */
+  /** C5 (D12): while gap runs build, the open gaps as one list; none while the Verifier's own stop is up (it lists them). */
   function paintVerifyGaps(one) {
     const v = one && one.verify;
-    const gaps = v && v.state === 'gaps' && !painted ? v.gaps : [];
+    const gaps = v && v.state === 'gaps' && !(painted && painted.stopNode === 'n_verify') ? v.gaps : [];
     if (!gaps.length) { if (gapsEl.isConnected) gapsEl.remove(); return; }
     if (!gapsEl.isConnected) logEl.after(gapsEl);
     gapsEl.replaceChildren(...buildCheckRows(doc, { items: verifyGapItems(gaps) }));
@@ -1054,7 +1049,12 @@ export function createChatRunCard({ doc, win = null, snapshot = null, ctx = {}, 
     } else { membersEl.replaceChildren(); membersEl.hidden = true; }
     // C5 (D12): a paused or stopped Verifier is one run row; its click opens the run, where dev's Resume lives.
     const vstate = one && one.verify ? one.verify.state : null;
-    if (vstate === 'paused' || vstate === 'halted') { membersEl.append(verifierRow(one.verify, shaperIn.snapOf(one.verify.pipelineId))); membersEl.hidden = false; }
+    if (vstate === 'paused' || vstate === 'halted') {
+      const vrow = verifierRow(one.verify, shaperIn.snapOf(one.verify.pipelineId));
+      const list = membersEl.querySelector('ol.run-members');
+      if (list) list.append(vrow); else membersEl.append(vrow.parentElement);
+      membersEl.hidden = false;
+    }
     // Run 4 (D20): no id in visible text — the run id is the sub line's tooltip.
     if (isNoProjectRun(s)) where.replaceChildren(kindChip(doc, 'none'));
     else where.textContent = projectLabel(id, s);

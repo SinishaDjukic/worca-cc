@@ -359,6 +359,16 @@ test('C3: readOnly (the side panel) draws 0 buttons, no question and exactly one
   }
 });
 
+test('C5: readOnly (the side panel) draws the Verifier stop\'s gaps as its one findings list', async () => {
+  const { verifyStop } = await import('../src/shared/shape/verifier.mjs');
+  const gaps = [{ id: 'R-po-2', why: 'sign-up never calls the email service' }, { id: 'R-po-3', why: 'the export skips empty charts' }];
+  const pq = { id: 'verify-3', kind: 'gate', nodeId: 'n_verify', issues: [], stop: verifyStop({ gaps, round: 3, fixCycles: 2 }) };
+  const { $$ } = mountStop(pq, { readOnly: true });
+  assert.equal($$('button').length, 0);
+  assert.equal($$('.issues, .plan-checks').length, 1);
+  assert.deepEqual($$('.verify-gaps .plan-check-id').map((e) => e.textContent), ['R-po-2', 'R-po-3']);
+});
+
 test('C3: a gate without stop still draws the two dev buttons; renderRecoveryCard is unchanged', () => {
   const { $$ } = mountStop(GATE);
   assert.deepEqual($$('.qpanel-foot button').map((b) => b.textContent), ['Accept as is', 'Run another cycle']);

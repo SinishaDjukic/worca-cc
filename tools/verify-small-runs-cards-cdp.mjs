@@ -361,7 +361,7 @@ const COUNTS = (rootSel) => `(() => {
     preset: (vis(root.querySelectorAll('.qopt[data-preset]'))[0] || {}).textContent || null,
     answer: vis(root.querySelectorAll('button')).filter((b) => /^Answer/.test(b.textContent.trim())).length,
     resume: vis(root.querySelectorAll('button')).filter((b) => /Resume/.test(b.textContent)).length,
-    gapLists: vis(root.querySelectorAll('.verify-gaps')).length, rcMembers: vis(root.querySelectorAll('.rc-member')).length,
+    gapLists: vis(root.querySelectorAll('.verify-gaps')).length, rcMembers: vis(root.querySelectorAll('.run-member[data-key="verifier"]')).length,
     rawLinks: vis(root.querySelectorAll('a')).filter((a) => /^https?:/.test(a.getAttribute('href') || '')).length,
     overflow: document.documentElement.scrollWidth > document.documentElement.clientWidth };
 })()`;

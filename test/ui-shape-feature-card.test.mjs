@@ -473,7 +473,11 @@ test('C3 one card: open stop and held rows, a dependent waits for its builds-on 
       assert.deepEqual([x.state, x.word, x.detail], ['S8', VERIFY_WORDS[st], '4 of 4 runs done']);
     }
     const h = m(vw('halted'));
-    assert.deepEqual([h.state, h.word, h.detail], ['S8', 'Stopped', 'The Verifier stopped · resume it from its run']);
+    assert.deepEqual([h.state, h.word, h.detail], ['S8', 'Stopped', 'The Verifier stopped · Resume checks again']);
+    // An active feature with a halted Verifier offers the feature's Resume (resumeFeature starts a fresh check); paused does not.
+    assert.equal(m({ ...vw('halted'), status: 'active' }).base.controls.halted, true);
+    assert.equal(m({ ...vw('paused'), status: 'active' }).base.controls.halted, false);
+    assert.equal(m({ ...vw('halted'), status: 'active' }).base.controls.rest, false, 'Re-plan the rest stays the runs\'');
     const gaps = m(vw('gaps', [...DONE4, { index: 5, state: 'planned', pipelineId: null, rounds: [], kind: 'change' }]));
     assert.deepEqual([gaps.state, gaps.word, gaps.detail], ['S8', 'Working', '4 of 5 runs done']);
   });

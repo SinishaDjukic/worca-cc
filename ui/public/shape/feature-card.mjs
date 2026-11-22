@@ -31,7 +31,9 @@ const TARGET_STATUS = Object.freeze({ starting: 'starting', shaping: 'running', 
 function controlsOf(view, cur, m) {
   const active = view.status === 'active';
   return {
-    featureId: view.id, active, halted: active && !!view.halted, rest: active && !!(view.open || view.halted),
+    // C5: a halted Verifier is Resume too (resumeFeature starts a fresh check); Re-plan the rest stays the runs'.
+    featureId: view.id, active, halted: active && (!!view.halted || (!!view.verify && view.verify.state === 'halted')),
+    rest: active && !!(view.open || view.halted),
     approveEach: view.approveEach !== false, planPipelineId: view.originPipelineId || null,
     held: view.held ? { index: view.held.index } : null,
     target: cur ? { index: cur.index, runId: (m && m.runId) || cur.runId || null, pipelineId: cur.pipelineId || null,
@@ -115,8 +117,8 @@ const ONE_DETAIL = Object.freeze({
   SV: ({ k, n }) => `the Verifier walks the main flow · ${k} of ${plural(n, 'run')} done`,
   SR: () => 'ship from the feature page',
 });
-/** C5: a stopped or failed Verifier run's line (its run row opens the run, where dev's Resume lives). */
-const VERIFY_HALTED = 'The Verifier stopped · resume it from its run';
+/** C5: a stopped or failed Verifier run's line: the card's Resume starts a fresh check (resumeFeature). */
+const VERIFY_HALTED = 'The Verifier stopped · Resume checks again';
 
 /** The open ask's question, when this tab holds it (the pointer-only step of a slice has none). */
 const pqOf = (step) => (step && step.snap && step.snap.pendingQuestion) || null;

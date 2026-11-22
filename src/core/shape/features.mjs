@@ -18,7 +18,7 @@ import { stopOptionOf } from '../../shared/shape/run-stops.mjs';
 import { CHANGES_MAX } from '../../shared/shape/req-change.mjs';
 import { PLAN_ASK_KIND } from './run.mjs';
 import { roundsOf } from './rounds.mjs';
-import { verifyView } from './verifier.mjs';
+import { verifyView, startVerifyCheck } from './verifier.mjs';
 import { getWatch, stoppedWatchFact } from '../pr-watch.mjs';
 import { clipTitle } from '../title.mjs';
 import { readRunTags } from '../run-tags-store.mjs';
@@ -827,7 +827,7 @@ export function rechainWaiting(id, index, { by = null, now = Date.now() } = {}) 
   return n;
 }
 
-/** Resume slice k (L9). Paused/interrupted → the caller resumes the pipeline, then calls rechainWaiting.
+/** Resume slice k (L9), or a halted Verifier (C5: a new check ticket). Paused/interrupted → the caller resumes the pipeline, then calls rechainWaiting.
  *  Stopped/error/failed, or missed/canceled behind a done slice (F43) → a new ticket for slice k, re-chained so the
  *  waiting slices follow it.
  *  @returns {null|{error, status}|{action:'resume', pipelineId, index}|{action:'restart', ticketId}|{action:'none'}} */
@@ -837,6 +837,11 @@ export function resumeFeature(id, { live = () => null, by = null, now = Date.now
   const refused = notActive(f);
   if (refused) return refused;
   const view = featureView(id, { live });
+  // Small runs C5: every run done and the Verifier halted (failed or stopped) → a fresh check for the same head.
+  if (!view.halted && view.verify && view.verify.state === 'halted') {
+    const v = startVerifyCheck(id, { by, now });
+    return v ? { action: 'restart', ticketId: v.ticketId } : { action: 'none' };
+  }
   if (!view.halted) return { action: 'none' };
   const h = view.slices[view.halted.index - 1];
   // Shaper small runs (D10): one slice of a feature is going at a time; a refusal changes nothing.

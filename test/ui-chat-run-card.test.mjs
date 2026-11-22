@@ -2559,7 +2559,7 @@ const VF_GAPS = [{ id: 'R-po-2', why: 'sign-up never calls the email service', r
 const VF_PQ = { id: 'verify-3-x', kind: 'gate', nodeId: 'n_verify', issues: [], stop: vfStop({ gaps: VF_GAPS, round: 3, fixCycles: 2 }) };
 function vfCard(state, { gaps = state === 'gaps' ? VF_GAPS : [], ask = null } = {}) {
   const states = state === 'gaps' ? ['done', 'done', 'done', 'planned', 'planned'] : ['done', 'done', 'done'];
-  const v = oneView(states, { status: state === 'gaps' ? 'active' : 'done', total: states.length, log: [ONE_CL, ONE_L('Runs approved')], ask,
+  const v = oneView(states, { status: state === 'gaps' || state === 'halted' ? 'active' : 'done', total: states.length, log: [ONE_CL, ONE_L('Runs approved')], ask,
     ship: { ready: state === 'clean' || state === 'accepted', mode: null },
     verify: { state, round: 3, fixCycles: 2, held: 1, owned: 3, gaps, gapsFound: gaps.length, head: { index: 3, pipelineId: 'beef0003' }, headSha: null, pipelineId: VF_PID, ticketId: 'tv' } });
   const lv = state === 'asking' ? { source: 'live', status: 'running', runId: 'run-v', pipelineId: VF_PID, pendingQuestion: VF_PQ }
@@ -2568,8 +2568,8 @@ function vfCard(state, { gaps = state === 'gaps' ? VF_GAPS : [], ask = null } = 
 }
 ONE_STATES.SV = () => ({ row: featureRow([DONE_RUN, DONE_RUN, DONE_RUN]), n: 3, snap: vfCard('verifying'), detail: 'the Verifier walks the main flow · 3 of 3 runs done' });
 ONE_STATES.SR = () => ({ row: featureRow([DONE_RUN, DONE_RUN, DONE_RUN]), snap: vfCard('clean'), detail: 'ship from the feature page' });
-function paintVf(state, opts = {}, stub = { paintQuestion: () => null, releaseQuestion() {} }) {
-  const row = featureRow(state === 'gaps' ? [DONE_RUN, DONE_RUN, DONE_RUN, WAITING, WAITING] : [DONE_RUN, DONE_RUN, DONE_RUN]);
+function paintVf(state, opts = {}, stub = { paintQuestion: () => null, releaseQuestion() {} }, members = null) {
+  const row = featureRow(members || (state === 'gaps' ? [DONE_RUN, DONE_RUN, DONE_RUN, WAITING, WAITING] : [DONE_RUN, DONE_RUN, DONE_RUN]));
   const f = mk({ controls: { ...stub, memoFor: () => ({}), groupOf: () => row, modelOpts: () => ({ now: NOW }) } });
   f.card.update(vfCard(state, opts));
   return f;
@@ -2603,8 +2603,23 @@ test('C5 one card: without a question, the open gaps paint as one .srows list of
   assert.equal(clean.$$('.verify-gaps').length, 0, 'mounted only while gap runs build');
 });
 
+test('C5 one card: a gap run asking during the gaps state keeps the model\'s Needs you word', () => {
+  const asking = RUN_STATE_ROWS.find((r) => r.state === 'needs-you').run;
+  const f = paintVf('gaps', {}, undefined, [DONE_RUN, DONE_RUN, DONE_RUN, asking, WAITING]);
+  assert.equal(f.$('.chat-rc-status .run-status-word').textContent, 'Needs you');
+});
+
+test('C5 one card: a gap run\'s own question leaves the gap list up; only the Verifier\'s stop takes it down', () => {
+  const pq = { id: 'gap-ask', kind: 'clarify', questions: [{ id: 'q1', text: 'Which email service?' }] };
+  const stub = { paintQuestion: (ref, host) => { const d = host.ownerDocument.createElement('div'); d.className = 'qpanel'; host.replaceChildren(d); return { id: pq.id, kind: 'clarify' }; },
+    releaseQuestion() {} };
+  const f = paintVf('gaps', {}, stub);
+  f.card.update(vfCard('gaps', { ask: { index: 4, runId: 'run-g', pipelineId: 'beef0005', id: pq.id, kind: 'clarify' } }));
+  assert.equal(f.$$('.verify-gaps').filter((l) => shownIn(l) && !l.closest('.qpanel')).length, 1);
+});
+
 test('C5 one card: each Verifier view state reads its word and detail', () => {
-  const detail = { verifying: 'the Verifier walks the main flow · 3 of 3 runs done', paused: '3 of 3 runs done', halted: 'The Verifier stopped · resume it from its run',
+  const detail = { verifying: 'the Verifier walks the main flow · 3 of 3 runs done', paused: '3 of 3 runs done', halted: 'The Verifier stopped · Resume checks again',
     clean: 'ship from the feature page', accepted: 'ship from the feature page' };
   for (const [state, line] of Object.entries(detail)) {
     const f = paintVf(state);
@@ -2613,18 +2628,22 @@ test('C5 one card: each Verifier view state reads its word and detail', () => {
   }
 });
 
-test('C5 one card: a halted or paused Verifier is one .rc-member row that opens its run panel; no Resume on the card', () => {
+test('C5 one card: a halted or paused Verifier is one member row (renderMemberRows\' cells) that opens its run panel; Resume only when halted', () => {
   for (const state of ['halted', 'paused']) {
     const f = paintVf(state);
-    const rows = f.$$('.rc-member');
+    const rows = f.$$('.chat-rc-members .run-member[data-key="verifier"]');
     assert.equal(rows.length, 1, state);
+    const sib = f.$('.chat-rc-members .run-member:not([data-key="verifier"])');
+    assert.deepEqual([...rows[0].children].map((n) => n.className.split(' ')[0]), [...sib.children].map((n) => n.className.split(' ')[0]), 'same cells as its siblings');
+    assert.equal(rows[0].querySelector('.run-member-title').tagName, 'A');
     assert.equal(rows[0].querySelector('.run-member-state').textContent, state === 'halted' ? 'stopped' : 'paused');
     rows[0].querySelector('.run-member-title').click();
     const panel = f.calls.filter((c) => c[0] === 'panel');
     assert.equal(panel.length, 1, state);
     assert.equal(panel[0][1].pipelineId, VF_PID);
-    assert.equal(f.$$('button').filter((b) => shownIn(b) && /Resume/.test(b.textContent)).length, 0, `${state}: no Resume`);
+    // Halted: the feature's Resume starts a fresh check (resumeFeature); paused: dev's Resume lives on its run.
+    assert.equal(f.$$('button').filter((b) => shownIn(b) && /^Resume$/.test(b.textContent)).length, state === 'halted' ? 1 : 0, state);
     assert.equal(f.$$('a').filter((a) => shownIn(a) && /^https?:/.test(a.getAttribute('href') || '')).length, 0, 'no raw browser link');
   }
-  assert.equal(paintVf('verifying').$$('.rc-member').length, 0);
+  assert.equal(paintVf('verifying').$$('.run-member[data-key="verifier"]').length, 0);
 });
