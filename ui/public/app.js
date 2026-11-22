@@ -318,7 +318,7 @@ import {
 import { gitActionFor, GIT_DIALOG, gitDoneMessage } from './project-git.mjs';
 import { baseCheckModel, baseRowNote, newerBaseCheck } from './base-check.mjs';
 import { describeRule } from '../../src/shared/schedule/recurrence.mjs';
-import { statusActions, RUN_SWITCH_OPTIONS, RUN_SWITCH_TIP, kindShort, awayAnswerRows, awayAnswerCounts, checksFirst, awayAnswersSummary, decidedByText, awayAskCaption } from '../../src/shared/away-mode/labels.mjs';
+import { statusActions, RUN_SWITCH_OPTIONS, RUN_SWITCH_TIP, askShort, awayAnswerRows, awayAnswerCounts, checksFirst, awayAnswersSummary, decidedByText, awayAskCaption } from '../../src/shared/away-mode/labels.mjs';
 import { parseWindow } from '../../src/shared/away-mode/activation.mjs';
 import { runCostBreakdown, floorText, auxLabelForSubagent } from '../../src/shared/cost/breakdown.mjs';
 import { costBreakdownEl, costSummaryText, awayTotalText } from './cost-breakdown.mjs';
@@ -29245,9 +29245,24 @@ function hdClarifyCount(data) {
   // A form ask is ONE ask, whatever its field count (spec §9: one ask = one form).
   // X3: the reader's field is `ask`, never `form`.
   const form = (data.clarify && data.clarify.ask) ? 1 : 0;
-  const stepQ = Array.isArray(data.stepQuestions)
-    ? data.stepQuestions.reduce((n, r) => n + ((r && r.questions) || []).length + ((r && r.ask) ? 1 : 0), 0) : 0;
-  return q + form + stepQ;
+  const stepQ = hdStepRounds(data).reduce((n, r) => n + ((r && r.questions) || []).length + ((r && r.ask) ? 1 : 0), 0);
+  return q + form + stepQ + awayAnswerCounts(hdAwayOthers(data)).answers;
+}
+
+/** The step rounds the Q&A tab lists: a graph Clarify node's round is the run's Clarify itself (data.clarify), so it
+ *  is listed once, there. */
+function hdStepRounds(data) {
+  const rounds = data && Array.isArray(data.stepQuestions) ? data.stepQuestions : [];
+  const asked = new Set(((data && data.clarify && data.clarify.questions) || []).map((q) => q && q.id));
+  return rounds.filter((r) => !(r && r.agentKey === 'clarify' && !r.ask && (r.questions || []).length
+    && r.questions.every((q) => q && asked.has(q.id))));
+}
+
+/** Away mode's answers that no question card shows: plan stops, review gates, workflows, retries, limits. A Clarify,
+ *  a mid-step question or a form carries its own "Answered by Away mode" line. */
+function hdAwayOthers(data) {
+  const all = data && Array.isArray(data.awayAnswers) ? data.awayAnswers : [];
+  return all.filter((d) => d && (d.choice == null || !['clarify', 'questions', 'form'].includes(d.kind)));
 }
 
 const HD_TABS = [
@@ -31234,7 +31249,7 @@ function buildHdClarify(sec, record, data) {
   for (const q of questions) addCard(q, byId.get(q.id), data.clarify && data.clarify.night);
   if (questions.length && data.clarify) { const by = answeredByLine(data.clarify.answeredBy, data.clarify.night); if (by) wrap.appendChild(by); }
   if (data.clarify && data.clarify.ask) wrap.appendChild(hdRenderAskForm(record, data.clarify.ask));
-  for (const r of Array.isArray(data.stepQuestions) ? data.stepQuestions : []) {
+  for (const r of hdStepRounds(data)) {
     const roundLabel = `${r && (r.agentKey || r.nodeId) ? (r.agentKey || r.nodeId) : 'agent'}, round ${r && r.round}`
       + (String((r && r.stepKey) || '').split('#')[1] ? ` · cycle ${String(r.stepKey).split('#')[1]}` : '');
     if (r && r.ask) {
@@ -31251,6 +31266,17 @@ function buildHdClarify(sec, record, data) {
     for (const q of r.questions) addCard(q, rById.get(q.id), r.night);
     const by = answeredByLine(r.answeredBy, r.night);
     if (by) wrap.appendChild(by);
+  }
+  // Away mode's other answers (plan stops, review gates, workflows, retries), each with its reason: the run card's
+  // Away note jumps here.
+  const others = hdAwayOthers(data);
+  if (others.length) {
+    const away = Object.assign(document.createElement('section'), { className: 'rd-night-sec hd-cl-away-sec' });
+    const h3 = Object.assign(document.createElement('h3'), { className: 'rd-night-h', textContent: 'Answered for you' });
+    h3.append(Object.assign(document.createElement('span'), { className: 'rd-night-count' }));
+    away.append(h3, Object.assign(document.createElement('div'), { className: 'rd-night-asks' }));
+    wrap.appendChild(away);
+    paintAwayAnswers(away, others, []);
   }
 }
 
@@ -31808,7 +31834,7 @@ function buildRdQa(sec, ctx) {
     const questions = (data && data.clarify && data.clarify.questions) || [];
     const rounds = (data && Array.isArray(data.stepQuestions)) ? data.stepQuestions : [];
     const hasAsk = data && data.clarify && data.clarify.ask;
-    if (!data || (!questions.length && !rounds.length && !hasAsk)) {
+    if (!data || (!questions.length && !rounds.length && !hasAsk && !hdAwayOthers(data).length)) {
       sec.innerHTML = '';
       const empty = document.createElement('div');
       empty.className = 'rd-empty';
@@ -37308,7 +37334,7 @@ function paintAwayAnswers(sec, decisions, steps = []) {
     cap.className = 'rd-slabel';
     const at = d.at ? startedLabel(d.at).slice(0, 5) : '';
     // One review answers the whole ask, so its model and cost are the group's, never a row's.
-    cap.textContent = [kindShort(d.kind), at, ...awayAskCaption(d, {
+    cap.textContent = [askShort(d), at, ...awayAskCaption(d, {
       fmtUsd, modelLabel: (id) => modelById(id)?.label || id, fmtFloor: (v) => floorText(v, fmtUsd),
     })].filter(Boolean).join(' · ');
     const ul = document.createElement('ul');

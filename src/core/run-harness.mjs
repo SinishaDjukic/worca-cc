@@ -6701,13 +6701,13 @@ export class RunHarness extends EventEmitter {
     } catch { return false; }
   }
 
-  /** A person answers what to build, Away handles how: the plan asks planRule declines, and Clarify on a shaped run.
+  /** The plan asks planRule declines: on a Shaper run only a Requirements hold whose check still fails; elsewhere the
+   *  ones it always declined.
    *  Decided at arm time, so such an ask never counts down, never starts the away stretch and cannot hit a limit's pause.
    *  Never under --yes: that run's asks go the way they always did. */
   _nightLeavesToPerson(q) {
     if (this.auto) return false;
-    if (q.kind === PLAN_ASK_KIND) return planRule(q) === null;
-    return Boolean(this.runShape) && (q.kind === 'clarify' || (q.kind === 'form' && q.origin === 'clarify'));
+    return q.kind === PLAN_ASK_KIND && planRule(q, { shaped: Boolean(this.runShape) }) === null;
   }
 
   /** Schedule (or re-schedule) the decision for the open question. `q` = a newly opened ask. */
@@ -6834,6 +6834,7 @@ export class RunHarness extends EventEmitter {
       config,
       analyze: (qs) => this._nightAnalyze(qs, q, analysis),
       gateCyclesUsed: (wireId) => (this.pipeline?.id ? nightGateCycles(this.pipeline.id, wireId) : 0),
+      shaped: Boolean(this.runShape),
       budget: config.spendCapUsd != null ? { spent: this._nightSpentUsd(config), cap: config.spendCapUsd } : null,
       // sleepAbortable RESOLVES early on a pause; pause() has then nulled pendingQuestion, so
       // the check below drops the decision.
