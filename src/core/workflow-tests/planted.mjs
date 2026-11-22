@@ -120,8 +120,8 @@ const headingOnly = (p, original) => {
     || headerRow(l, lines[k + 1], original));
 };
 /** User decision 2026-11-22: the passage that proved the criterion on the good result, when a copy can be checked against it: it is at least
- *  PROOF_MIN characters in its loose form (its parts only), is not only a heading or a label (headingOnly), and is in the good result's written text (a proof quoted
- *  from a project's diff is not, since the diff is never broken). Else null: no check. */
+ *  PROOF_MIN characters in its loose form (its parts only), is not only a heading or a label (headingOnly), and is in the good result's
+ *  written text (a proof quoted from a project's diff is not, since the diff is never broken). Else null: no check. */
 export const usableProof = (proof, original) => (typeof proof === 'string' && !headingOnly(proof, original) && proofChars(proof) >= PROOF_MIN
   && proofFound(proof, original) ? proof : null);
 
@@ -215,8 +215,9 @@ function clipAt(line, { from, to }, size) {
  *  compared loosely (normLoose), so a line the model only tidied (a dash, case, marks) is no change (round 6, review I3). Fix round 7:
  *  - a real line diff (an LCS) pairs each changed line with the original line it replaced (the one sharing the most words in its hunk),
  *    so a copy that also adds or removes a line keeps its breaks (review I4);
- *  - all of them in the copy's order when they fit in `max`; else the lines that changed most first, as many as fit with at least
- *    LINE_MIN characters each, short ones whole and longer ones cut between words around their change;
+ *  - all of them in the copy's order when they fit in `max`; else it picks the lines that changed most, as many as fit with at least
+ *    LINE_MIN characters each, and shows them in the copy's order, short ones whole and longer ones cut between words around their change;
+ *  - a line only moved, or unchanged inside the fallback's one big hunk, is no change (round 7 review M1, M7);
  *  - joined by " … ", with "…" only at an outer end that was cut, so the card never shows an empty "… …" or half a word. */
 export function changedExcerpt(original, copy, max = CARD_EXCERPT_MAX) {
   const linesOf = (t) => String(t ?? '').split('\n').map((l) => l.trim()).filter((l) => normLoose(l));
