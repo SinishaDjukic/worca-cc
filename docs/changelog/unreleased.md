@@ -3,6 +3,26 @@
 Notes on merged features that have no release page yet. `/worca-changelog` folds
 them into the next page and empties this file.
 
+## Protected files stay protected on Windows
+
+**On Windows, `.env` files, `secrets.json` and Worca's own data are now refused by Worca's file tools and by Gemini and Cursor runs.**
+
+Worca's rules for files protected wherever they sit (`.env*`, `secrets.json`, `worca-cc.db*`, the `.worca-cc` store, logs and settings) never matched a Windows path, because a Windows path starts with a drive letter. They now match `C:\…` on any drive, network shares, and long paths such as `\\?\C:\…`. The rules for your home folder (`.ssh`, `.claude`, `AppData` and the rest) match those forms too.
+
+- **Worca's own file tools:** chats on every harness other than Claude Code, and Requirements code looks, Night analysis and the Auto classifier when they run on another harness.
+- **Gemini runs:** the rules Worca hands Gemini match either kind of slash, any drive and long paths. They also match a relative path such as `sub\.env`, and either letter case on Windows and macOS.
+- **Cursor runs:** Cursor compares a rule with the whole path as Windows writes it, so on Windows Worca now writes its rules with backslashes.
+
+Claude Code chats and runs were not affected: Claude Code applies the same rules itself.
+
+Upgrading: a few Cursor and Gemini rules now refuse more than before, on every platform. On Cursor, a rule relative to the project (`./.env`, `/src/secret.txt`, a bare `*.pem`) used to match nothing; it now refuses that name in any folder. A `?` in a Cursor rule now acts as `*`. On Gemini, a rule for a file at any depth also matches a relative path, and on macOS letter case is ignored.
+
+Chips: Windows · .env and secrets.json refused · Worca's file tools · Gemini and Cursor runs
+
+Pull requests (add each number when it opens):
+
+- Apply the protected-file rules to Windows drive paths (#1526)
+
 ## Remotes through an SSH Host alias
 
 **A pull request from a fork cloned through a `~/.ssh/config` alias no longer fails with "Head ref must be a branch".**
