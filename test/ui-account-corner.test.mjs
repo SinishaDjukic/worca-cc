@@ -543,9 +543,11 @@ test('the corner avatar: an image in .acct-ava keeps the ring, the dot and the d
       paintAccountCorner(btn, acct, { budget, avatar, away: true });
       assert.equal(btn.dataset.presence, 'away');
     } },
-    { name: 'avatar: no native title without a block or a usage ring; aria-label names no spend and adds the level name', run: () => {
+    { name: 'avatar: no native title, even with a block (the level hover card is the tooltip); aria-label names no spend and adds the level name', run: () => {
       paintAccountCorner(btn, acct, { budget, avatar });
       assert.equal(btn.hasAttribute('title'), false);
+      paintAccountCorner(btn, acct, { budget: { ...budget, blocked: true }, avatar, usageParts: ['Session · Codex: 86%, resets 14:50'] });
+      assert.equal(btn.hasAttribute('title'), false, 'a block and usage rings stay out of the native title');
       const label = btn.getAttribute('aria-label');
       assert.match(label, /ada\.lovelace@acme\.dev/);
       assert.doesNotMatch(label, /\$/);
