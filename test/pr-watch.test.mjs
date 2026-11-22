@@ -7,6 +7,7 @@ import {
   collectTriggers, countsAsRequest, reserveBatch, setWatch, getWatch, replyBody, buildFixTask, conflictRef, updateWatch,
   attachWatchPipeline, createPrWatcher, createPrWatchRunner, MAX_FIX_RUNS, FIX_WORKFLOW_ID, BASE_WAIT_MS, RERUN_SETTLE_MS, _testing,
   fixTrigger, fixOutcome, fixRoundWords, stoppedWatchFact,
+  COMMENT_SETTLE_MS,
 } from '../src/core/pr-watch.mjs';
 
 useTempHome(after, 'pr-watch-');
@@ -106,19 +107,30 @@ test('a PR-level comment counts only from a listed reviewer, posted after the wa
   const base = { headSha: 'h1', threads: [], reviews: [] };
   const at = '2026-11-21T10:00:00Z';
   const verdict = { databaseId: 51, body: '## AI Review\nplease fix the null check', createdAt: '2026-11-21T10:05:00Z', author: { login: 'review-bot' }, authorAssociation: 'NONE' };
-  const opts = { trustedLogins: ['review-bot'], commentsSince: at };
+  const opts = { trustedLogins: ['review-bot'], commentsSince: at, now: Date.parse('2026-11-21T11:00:00Z') };
   const t = collectTriggers({ ...base, comments: [verdict] }, [], opts);
   assert.equal(t.fire, true);
-  assert.deepEqual(t.handledKeys, ['issue-comment:51'], 'issue comments have their own key space');
+  assert.deepEqual(t.handledKeys, ['issue-comment:51@2026-11-21T10:05:00Z'], 'issue comments have their own key space, one per version');
   assert.deepEqual(t.comments.map((c) => c.databaseId), [51]);
   assert.match(buildFixTask({ pr: { url: URL }, triggers: t }), /## AI Review/);
   assert.match(buildFixTask({ pr: { url: URL }, triggers: t }), /> please fix the null check/);
-  assert.equal(collectTriggers({ ...base, comments: [verdict] }, ['issue-comment:51'], opts).fire, false, 'handled once');
+  assert.equal(collectTriggers({ ...base, comments: [verdict] }, ['issue-comment:51@2026-11-21T10:05:00Z'], opts).fire, false, 'handled once');
   assert.equal(collectTriggers({ ...base, comments: [verdict] }, ['comment:51'], opts).fire, true, 'an inline comment with the same id is another comment');
   assert.equal(collectTriggers({ ...base, comments: [{ ...verdict, body: '/ai-review' }] }, [], opts).fire, false, 'a command comment');
   assert.equal(collectTriggers({ ...base, comments: [{ ...verdict, body: '<!-- worca:pr-watch --> answer' }] }, [], opts).fire, false, 'worca reply marker');
   // Older comments are history: posted before the watch began, or with no time at all.
   assert.equal(collectTriggers({ ...base, comments: [{ ...verdict, createdAt: '2026-11-21T09:00:00Z' }] }, [], opts).fire, false, 'before the watch');
+  // GitHub's whole-second times (and a clock a little apart from ours) stay inside the start's grace.
+  assert.equal(collectTriggers({ ...base, comments: [{ ...verdict, createdAt: '2026-11-21T10:00:00Z' }] }, [], { ...opts, commentsSince: '2026-11-21T10:00:00.700Z' }).fire, true, 'same second');
+  assert.equal(collectTriggers({ ...base, comments: [{ ...verdict, createdAt: '2026-11-21T09:59:57Z' }] }, [], opts).fire, true, 'a few seconds of clock skew');
+  // An edit is a new version: an older comment edited after the watch began counts, under its own key.
+  const edited = { ...verdict, createdAt: '2026-11-21T09:00:00Z', lastEditedAt: '2026-11-21T10:20:00Z', updatedAt: '2026-11-21T10:20:00Z' };
+  assert.deepEqual(collectTriggers({ ...base, comments: [edited] }, ['issue-comment:51@2026-11-21T09:00:00Z'], opts).handledKeys, ['issue-comment:51@2026-11-21T10:20:00Z']);
+  // A comment still changing waits until it has been still for COMMENT_SETTLE_MS; a hidden one never counts.
+  const fresh = { ...verdict, updatedAt: '2026-11-21T10:59:00Z' };
+  assert.equal(collectTriggers({ ...base, comments: [fresh] }, [], opts).fire, false, 'not settled');
+  assert.equal(collectTriggers({ ...base, comments: [fresh] }, [], { ...opts, now: Date.parse('2026-11-21T10:59:00Z') + COMMENT_SETTLE_MS }).fire, true, 'settled');
+  assert.equal(collectTriggers({ ...base, comments: [{ ...verdict, isMinimized: true }] }, [], opts).fire, false, 'minimized');
   assert.equal(collectTriggers({ ...base, comments: [{ ...verdict, createdAt: undefined }] }, [], opts).fire, false, 'no createdAt');
   // The PR author's and collaborators' PR-level comments are discussion, never triggers.
   for (const who of [{ author: { login: 'me' }, authorAssociation: 'OWNER' }, { author: { login: 'pat' }, authorAssociation: 'MEMBER' }]) {
@@ -148,7 +160,7 @@ test('a listed reviewer\'s PR-level comment starts one fix run, quotes it, and i
   const at = (ms) => new Date(since + ms).toISOString();
   const old = { databaseId: 80, body: '## AI Review\nan old verdict', createdAt: at(-60_000), author: { login: 'review-bot' }, authorAssociation: 'NONE' };
   const verdict = { databaseId: 81, body: '## AI Review\nuse a guard', createdAt: at(30_000), author: { login: 'review-bot' }, authorAssociation: 'NONE' };
-  const clock = { t: since + 60_000 };                     // the first read comes a minute after Watch went on
+  const clock = { t: since + 30_000 + COMMENT_SETTLE_MS };   // the first read comes once the verdict has settled
   const { io, deps } = harness({ clock, pr: openPr({ comments: [old, verdict] }) });
   // The watcher reads the list from deps.trustedLogins (the server maps it to the project setting).
   deps.trustedLogins = () => ['review-bot'];
@@ -157,7 +169,7 @@ test('a listed reviewer\'s PR-level comment starts one fix run, quotes it, and i
   let w = getWatch(URL);
   assert.equal(w.retryState.commentsSince, on.retryState.commentsSince, 'the first read keeps the start');
   assert.equal(w.status, 'fixing'); assert.equal(w.fixRuns, 1);
-  assert.deepEqual(w.handled, ['issue-comment:81']);
+  assert.deepEqual(w.handled, [`issue-comment:81@${verdict.createdAt}`]);
   assert.match(io.calls.start[0].body.prompt, /use a guard/);
   assert.doesNotMatch(io.calls.start[0].body.prompt, /an old verdict/);
   await watcher.tick();                                    // still running: waits
@@ -190,6 +202,13 @@ test('a watch from before commentsSince existed is marked at its first read; re-
   w = setWatch({ prUrl: URL, pipelineId: origin, enabled: true });
   assert.notEqual(w.retryState.commentsSince, '2026-11-21T10:00:00.000Z', 'turning Watch back on starts again');
   assert.equal(io.calls.start.length, 0);
+  // Off and on again while a fix run owns the PR: the run's state stays, the comment start moves.
+  updateWatch(URL, { status: 'fixing', retryState: { commentsSince: '2026-11-21T10:00:00.000Z', publish: { attempts: 1 } } });
+  setWatch({ prUrl: URL, pipelineId: origin, enabled: false });
+  w = setWatch({ prUrl: URL, pipelineId: origin, enabled: true });
+  assert.equal(w.status, 'fixing');
+  assert.deepEqual(w.retryState.publish, { attempts: 1 }, 'the run keeps its retry state');
+  assert.notEqual(w.retryState.commentsSince, '2026-11-21T10:00:00.000Z', 'comments from while Watch was off are history');
 });
 
 test('a run started by PR-level comments is named for review comments', () => {

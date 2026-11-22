@@ -47,6 +47,12 @@ export function setWatch({ prUrl, pipelineId, memberKey = '', pushRemote = 'orig
         VALUES(?,?,?,?,?,'watching',NULL,?,?,?)`).run(prUrl, pipelineId, memberKey, pushRemote, enabled ? 1 : 0, fresh, enabledBy, now);
     } else if (!enabled || ACTIVE.has(cur.status)) {
       getDb().prepare('UPDATE pr_watches SET enabled=?, updated_at=? WHERE pr_url=?').run(enabled ? 1 : 0, now, prUrl);
+      // Turned back on while a fix run still owns the PR: the run keeps its state, but comments posted while
+      // Watch was off are history, like on any other turn-on.
+      if (enabled && !cur.enabled) {
+        const state = { ...json(cur.retry_state, {}), commentsSince: now };
+        getDb().prepare('UPDATE pr_watches SET retry_state=? WHERE pr_url=?').run(JSON.stringify(state), prUrl);
+      }
     } else {
       getDb().prepare(`UPDATE pr_watches SET pipeline_id=?,member_key=?,push_remote=?,enabled=1,status='watching',
         reason=NULL,fix_runs=0,active_run_id=NULL,active_pipeline_id=NULL,handled='[]',pending=NULL,
@@ -143,9 +149,20 @@ function isListedLogin(item, trustedLogins) {
 /** A PR-level comment that starts with "/" is a command to another tool ("/ai-review"), not review feedback:
  *  it never starts a fix run on its own. Inline thread comments are still free-form review. */
 const isCommand = (body) => /^\s*\//.test(String(body || ''));
-/** A PR-level comment counts only when it was posted after the watch began (`since`): issue comments are never
- *  resolved, so older ones (already discussed, or from before Watch was turned on) would all fire at once. */
-const postedSince = (c, since) => since == null || Date.parse(c.createdAt) >= Date.parse(since);
+/** A PR-level comment's version: when it was last edited, else when it was posted. An edit is a new version
+ *  (a bot that replaces "processing…" with its findings, or refreshes one summary comment after each push). */
+const commentVersion = (c) => c.lastEditedAt || c.createdAt;
+/** GitHub's times have whole seconds and come from GitHub's clock, `since` from ours: a few seconds of grace
+ *  keep a comment posted right as Watch turned on. */
+const SINCE_GRACE_MS = 5_000;
+/** A version counts only when it is from after the watch began (`since`): issue comments are never resolved,
+ *  so older ones (already discussed, or from before Watch was turned on) would all fire at once. */
+const postedSince = (c, since) => since == null || Date.parse(commentVersion(c)) >= Date.parse(since) - SINCE_GRACE_MS;
+/** A comment is acted on once it has stopped changing for this long, so a placeholder a bot edits soon after
+ *  posting never starts a run of its own. */
+export const COMMENT_SETTLE_MS = 2 * 60_000;
+const commentSettled = (c, nowMs) => nowMs - Date.parse(c.updatedAt || commentVersion(c)) >= COMMENT_SETTLE_MS;
+const commentKey = (c) => `issue-comment:${c.databaseId}@${commentVersion(c)}`;
 
 // A failure is its check's name at the PR head: a CI re-run gets new job ids, never a new key.
 const keyFor = (c) => c.type === 'status' || c.__typename === 'StatusContext'
@@ -170,7 +187,7 @@ const passing = (c) => c.type === 'status' || c.__typename === 'StatusContext'
  *     batch on the conflict path (`conflict.why: 'behind'`), once per check name;
  *   - anything else is the PR's own and is fixed by hand.
  */
-export function collectTriggers(pr, alreadyHandled = [], { conflictOnly = false, baseWaitOver = false, trustedLogins = [], commentsSince = null } = {}) {
+export function collectTriggers(pr, alreadyHandled = [], { conflictOnly = false, baseWaitOver = false, trustedLogins = [], commentsSince = null, now = Date.now() } = {}) {
   const seen = new Set(alreadyHandled);
   const none = { fire: false, checksSettled: false, failures: [], threads: [], comments: [], reviews: [], reviewOnlyComment: false, conflict: null,
     handledKeys: [], skipped: [], waitingOnBase: [], reruns: [] };
@@ -222,14 +239,15 @@ export function collectTriggers(pr, alreadyHandled = [], { conflictOnly = false,
   // PR-level feedback that lands as an issue comment (a reviewer's verdict posted on the PR, not an inline
   // thread). Only the listed reviewer logins count: the PR author's and collaborators' PR comments are
   // discussion, and starting a run on every "LGTM" costs money. Slash commands ("/ai-review") are orders to
-  // another tool, not feedback. Issue comments have their own id space, hence their own key.
-  const comments = (pr.comments || []).filter((c) => !seen.has(`issue-comment:${c.databaseId}`)
+  // another tool, not feedback. Issue comments have their own id space, hence their own key, one per version;
+  // a comment hidden on GitHub (minimized) is left alone, and one still changing waits until it settles.
+  const comments = (pr.comments || []).filter((c) => !c.isMinimized && !seen.has(commentKey(c))
     && !String(c.body || '').includes(WATCH_MARKER) && isListedLogin(c, trustedLogins) && !isCommand(c.body)
-    && postedSince(c, commentsSince));
+    && postedSince(c, commentsSince) && commentSettled(c, now));
   const handledKeys = [
     ...failures.map(keyOf),
     ...threads.flatMap((t) => t.commentIds.map((id) => `comment:${id}`)),
-    ...comments.map((c) => `issue-comment:${c.databaseId}`),
+    ...comments.map(commentKey),
     ...reviews.map((r) => `review:${r.databaseId}`),
   ];
   return { fire: handledKeys.length > 0, checksSettled: settled, failures, threads, comments, reviews,
@@ -423,7 +441,7 @@ export function createPrWatcher(deps = {}) {
   };
   /** The options every watch-loop collectTriggers call shares: the reviewer list (read once per call site)
    *  and when the watch began taking PR-level comments. */
-  const triggerOpts = (w, origin, extra = {}) => ({ trustedLogins: trustedLoginsOf(origin), commentsSince: w.retryState?.commentsSince ?? null, ...extra });
+  const triggerOpts = (w, origin, extra = {}) => ({ trustedLogins: trustedLoginsOf(origin), commentsSince: w.retryState?.commentsSince ?? null, now: now(), ...extra });
   const fixRun = (event) => {
     try { deps.onFixRun?.(event); } catch { /* the chat is told best effort; never ownership */ }
   };

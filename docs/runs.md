@@ -196,8 +196,11 @@ review bot, usually) counts too once its login is listed in the project's Settin
 Reviewers that may trigger a fix**.
 
 On GitHub, a PR-level comment from a listed reviewer also counts, if it was posted after Watch PR was turned on:
-Worca quotes it in the fix run and replies with the result on the PR. PR-level comments from anyone else are
-discussion and never start a run, and neither do slash-commands like `/ai-review`.
+Worca quotes it in the fix run and replies with the result on the PR. Worca waits until the comment has not changed
+for two minutes, so a bot that posts a placeholder and fills in its findings shortly after starts one run, on the
+findings. Editing the comment later (a bot that refreshes one summary comment after each push) counts as new
+feedback. PR-level comments from anyone else are discussion and never start a run, and neither do slash-commands
+like `/ai-review` or comments hidden on GitHub.
 
 After a run, Worca also checks whether the branch still merges into its base. If it does, you get **Update
 branch**. If it conflicts, you get **Resolve in a pipeline** or **Resolve in a terminal**.
