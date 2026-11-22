@@ -2,7 +2,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { gateStop, planStop, concernStop, stopAnswerOk, stopOptionOf, stopDoneText, checkFeedback, settledLine, heldRefusal,
-  reviewerStopWord, runStopWord, STOP_REASONS, STOP_DONE_RE } from '../src/shared/shape/run-stops.mjs';
+  reviewerStopWord, runStopWord, waitsForRunWord, STOP_REASONS, STOP_DONE_RE } from '../src/shared/shape/run-stops.mjs';
 import { gateAnswer } from '../src/core/orchestrator.mjs';
 import { validatePlanAnswer } from '../src/core/shape/run.mjs';
 import { concernFeedbackSection } from '../src/shared/review/plan-concern.mjs';
@@ -129,6 +129,7 @@ test('done text, settled lines, refusal and row words read exactly', () => {
   assert.equal(runStopWord({ slice: { stop: { reason: 'objection', held: false } } }), 'waiting for you');
   assert.equal(runStopWord({ slice: { stop: { reason: 'objection', held: true, after: 9 } } }), 'after run 9');
   assert.equal(runStopWord({ slice: { waitsFor: 8 } }), 'waits for run 8');
+  assert.equal(waitsForRunWord(2), 'waits for run 2');
   assert.equal(runStopWord({ snap: { pendingQuestion: { stop: gate } } }), 'waiting for you');
   assert.equal(runStopWord({ slice: {} }), null);
   assert.match(checkFeedback(FAIL), /Has tests: no test list/);

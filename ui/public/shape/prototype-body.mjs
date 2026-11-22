@@ -15,6 +15,8 @@ import { REMARK_MAX } from '../../../src/shared/shape/prototype.mjs';
 const plural = (n, one) => `${n} ${n === 1 ? one : `${one}s`}`;
 const usd = (n) => `$${(Number(n) || 0).toFixed(2)}`;
 export const REMARK_PLACEHOLDER = 'A remark? e.g. Preview should show dark mode';
+/** The remark field's placeholder at this card's 480px breakpoint, where the long one clips. */
+export const REMARK_PLACEHOLDER_SHORT = 'A remark?';
 export const NO_MATCH = 'That remark matches no requirement. Name the one it changes, for example R-ux-2.';
 export const NO_MATCH_PLAIN = 'That remark matches no requirement. Name the requirement it changes.';
 const ASKS = new Set(['offered', 'built', 'remark', 'failed']);
@@ -153,7 +155,15 @@ export function renderPrototypeBody(panel, pq, deps = {}) {
     const field = h('input', 'input input-sm proto-remark-field');
     field.type = 'text';
     field.maxLength = REMARK_MAX;
-    field.placeholder = REMARK_PLACEHOLDER;
+    // The short placeholder at 480px or less, switched live; the long one where there is no matchMedia (jsdom).
+    const win = doc.defaultView;
+    const narrow = win && typeof win.matchMedia === 'function' ? win.matchMedia('(max-width:480px)') : null;
+    const fit = () => { field.placeholder = narrow && narrow.matches ? REMARK_PLACEHOLDER_SHORT : REMARK_PLACEHOLDER; };
+    fit();
+    if (narrow && typeof narrow.addEventListener === 'function') {
+      narrow.addEventListener('change', fit);
+      mounted.push({ destroy: () => narrow.removeEventListener('change', fit) });
+    }
     field.setAttribute('aria-label', 'A remark on the prototype');
     const go = ownButton(doc, 'btn-sm proto-remark-send', 'Send remark', () => { const t = field.value.trim(); if (t) send({ decision: 'remark', remark: t }); });
     // locked follows the field: setPanelBusy re-enables a control only when it is not locked (an empty remark).

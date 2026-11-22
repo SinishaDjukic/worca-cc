@@ -874,7 +874,7 @@ test('one ship flow: after a chain ship focus is on the repainted View PR contro
 
 // ---- Shaper small runs C1 (R-ux-2): the Prototype step's working moments on the one card ---------------------------
 
-test('C1: the one card draws the building moment from the card\'s saved state (Lead row and the well), follows it to reviewing, and draws nothing once the run ended', async () => {
+test('C1: the one card draws the building moment from the card\'s saved state (the Lead row, no empty well), follows it to reviewing, and draws nothing once the run ended', async () => {
   const ctx = await bootApp({ fetchHandler: () => null });
   ctx.wsBox.ws.dispatch('open', {});
   const RUN = { runId: 'run-pb', pipelineId: 'p-pb', title: 'Email templates', projectDir: '/tmp/p', status: 'running', kind: 'run',
@@ -896,7 +896,7 @@ test('C1: the one card draws the building moment from the card\'s saved state (L
   assert.equal(q().querySelector('.ask-mcard-title').textContent, "Design's agents are building");
   const rows = [...q().querySelectorAll('.proto-rows .plan-check-row')].map((r) => r.textContent);
   assert.match(rows[0], /Lead/);
-  assert.ok(q().querySelector('.proto-well'), 'the preview well');
+  assert.equal(q().querySelector('.proto-well'), null, 'item 7: no empty preview well while the Lead plans');
   assert.equal(q().querySelectorAll('button').length, 0, 'nothing to answer while Design builds');
   card.update(snap(proto('reviewing', { reviewRounds: 1 })));
   await ctx.settle();

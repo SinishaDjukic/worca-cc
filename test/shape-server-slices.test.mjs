@@ -20,6 +20,7 @@ import { createSliceFeature, featureView, recordShapePlan, recordShip, retireFea
 import { getTicket, requestRunNow, cancelTicket } from '../src/core/scheduler.mjs';
 import { nightModeToggle } from '../src/core/settings.mjs';
 import { writeStoreMeta } from '../src/core/artifacts.mjs';
+import { readServerSource, SERVER_MJS } from '../src/core/read-server-source.mjs';
 import { featureCardModel } from '../ui/public/shape/feature-card.mjs';
 import { paintFeatureActions } from '../ui/public/shape/feature-actions.mjs';
 import { withEnv as withEnvVars } from './helpers/with-env.mjs';
@@ -1462,9 +1463,10 @@ test('C3: the run-event hook delivers once as the busy run settles, with no tick
 });
 
 test('C3: ui/server.mjs stays within its size cap', () => {
-  const caps = JSON.parse(readFileSync(new URL('../tools/split-by-feature/size-caps.json', import.meta.url), 'utf8'));
-  const lines = readFileSync(new URL('../ui/server.mjs', import.meta.url), 'utf8').split('\n').length - 1;
-  assert.ok(lines <= caps['ui/server.mjs'], `${lines} > ${caps['ui/server.mjs']}`);
+  const capsFile = new URL('../tools/split-by-feature/size-caps.json', import.meta.url);
+  const caps = JSON.parse(readFileSync(capsFile, 'utf8'));
+  const lines = readServerSource(undefined, { routes: false }).split('\n').length - 1;
+  assert.ok(lines <= caps[SERVER_MJS], `${lines} > ${caps[SERVER_MJS]}`);
 });
 
 // ── Small runs C5: the Verifier through the server's settle path, frames and PR exemption ──────────────────────

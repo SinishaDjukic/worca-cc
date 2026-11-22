@@ -5,7 +5,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { JSDOM } from 'jsdom';
 import { fakeClock } from './helpers/design-clock.mjs';
-import { mountPrototypeBuild, screenRows, pushPrototypeFrame, onPrototypeFrame } from '../ui/public/shape/prototype-build.mjs';
+import { mountPrototypeBuild, screenRows, pushPrototypeFrame, onPrototypeFrame, buildMark } from '../ui/public/shape/prototype-build.mjs';
 import { selectPlanRows, initialStage } from '../ui/public/design/stage-model.mjs';
 import { piecesOf } from '../src/shared/shape/prototype.mjs';
 
@@ -84,6 +84,42 @@ test('reduced motion: every piece shows after the first frame; settled: the well
   assert.equal(s.host.querySelector('.proto-well').getAttribute('aria-label'), 'Prototype preview: 1 screen');
   assert.equal(s.host.querySelector('.proto-col-ids').textContent, 'R-ux-1');
   assert.equal(mount({ settled: true, register: 'plain', screens: [{ section: 'editor', name: 'E', ids: ['R-ux-1'], pieces: [] }] }).host.querySelector('.proto-col-ids'), null);
+});
+
+test('live mount before the plan: rows only, no .proto-well; after design-plan: the well follows the rows', () => {
+  const { host, view } = mount();
+  assert.ok(host.querySelector('.proto-rows'));
+  assert.equal(host.querySelector('.proto-well'), null, 'no empty preview while the Lead plans');
+  view.frame(fr('design-build', { status: 'building' }));
+  view.frame(fr('design-plan', { planRev: 1, sections: SECTIONS }));
+  assert.deepEqual([...host.children].map((c) => c.classList.contains('proto-well') ? 'well' : 'rows'), ['rows', 'well']);
+  view.destroy();
+  assert.equal(host.children.length, 0);
+});
+
+test('Lead planning and an active screen show the live dot; a planned screen keeps the hollow mark; done shows the check', () => {
+  const { host, view } = mount();
+  const marks = () => [...host.querySelectorAll('.proto-rows .plan-check-row')].map((r) => {
+    const m = r.querySelector('.plan-check-mark');
+    return m.classList.contains('is-live') ? 'live' : m.classList.contains('is-wait') ? 'wait' : m.querySelector('svg') ? 'icon' : '?';
+  });
+  assert.deepEqual(marks(), ['live'], 'Lead planning');
+  view.frame(fr('design-build', { status: 'building' }));
+  view.frame(fr('design-plan', { planRev: 1, sections: SECTIONS }));
+  view.frame(fr('design-agent', { agentId: 'a1', role: 'builder', sectionId: 'editor', status: 'writing', job: 'Template editor' }));
+  assert.deepEqual(rowTexts(host).map((t) => t.split(':')[1]), ['building', 'writing', 'waiting']);
+  assert.deepEqual(marks(), ['live', 'live', 'wait']);
+  const d = mount({ settled: false });
+  d.view.frame(fr('design-build', { status: 'done' }));
+  d.view.frame(fr('design-plan', { planRev: 1, sections: SECTIONS.map((x) => ({ ...x, status: 'done' })) }));
+  assert.equal(d.host.querySelector('.proto-rows .plan-check-row .plan-check-mark').classList.contains('is-live'), false);
+  assert.equal(d.host.querySelector('.proto-rows .plan-check-row').classList.contains('ok') || !!d.host.querySelector('.proto-rows .plan-check-mark svg'), true);
+});
+
+test('buildMark: done check, failed x, waiting and stopped hollow, every other word live', () => {
+  const table = { done: 'check', failed: 'x', waiting: 'wait', stopped: 'wait', planning: 'live', building: 'live', integrating: 'live',
+    reviewing: 'live', writing: 'live', thinking: 'live', reading: 'live', starting: 'live', retrying: 'live' };
+  for (const [word, mark] of Object.entries(table)) assert.equal(buildMark(word), mark, word);
 });
 
 test('invariant 7: agent HTML (a script tag, an onerror attribute) never reaches the DOM', () => {

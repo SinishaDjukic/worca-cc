@@ -9,7 +9,9 @@
 //   C1 `#prototype` offered, building, built, remark proposed, confirmed ([data-proto] 0, .5, 1, 2, 3);
 //   C2 `#build` rows and `#run-panel` Agents; C3 `#run-stops` question, answered fold and waiting row;
 //   C4 `#req-change` notice and its "How a change lands" fold;
-// and one reduced-motion capture of Prototype building. Every list (the Verifier's gap `.srows` included) is measured:
+// and one reduced-motion capture of Prototype building. A live phase then follows a REAL paced mock Design build
+// (WORCA_MOCK_DESIGN_MS=400) on the Chat card: the Lead row, a row per screen and pieces assembling, captured mid-build
+// and with reduced motion (chat-prototype-building-mid-light, chat-prototype-building-reduced-motion-light). Every list (the Verifier's gap `.srows` included) is measured:
 // row heights, the 32px one-line check, the mark column's x and y centre spread, maxDy and overflow, into
 // small-runs-cards-measure.json beside the app-… / prototype-… PNGs in SHOTS_DIR.
 // New wording with no prototype screen is paired with `#run-stops` for layout only, never for text.
@@ -90,6 +92,8 @@ const { careRunGraph } = await imp('../src/core/shape/care-run.mjs');
 const { resolveGraph } = await imp('../src/core/workflows.mjs');
 const { loadAgentRegistry } = await imp('../src/core/agent-registry.mjs');
 const { buildGraphManifest } = await imp('../src/shared/graph/manifest.mjs');
+const { createPrototypeDesign, startPrototypeBuild, prototypeBrief } = await imp('../src/core/shape/prototype-design.mjs');
+const { designBuilds } = await imp('../ui/server.mjs');
 srv = server;
 await new Promise((r, rej) => { srv.once('error', (err) => rej(new Error(`cannot listen on VERIFY_PORT ${process.env.VERIFY_PORT}: ${err.message}`))); srv.listen(Number(process.env.VERIFY_PORT || 0), '127.0.0.1', r); });
 const base = `http://127.0.0.1:${srv.address().port}`;
@@ -473,7 +477,7 @@ for (const theme of THEMES) {
     if (await card(PROTO[moment].threadId, `p${moment}`, `the prototype ${moment} card`, theme)) {
       const c = await ev(COUNTS('.chat-rc'));
       check(c && !c.overflow && c.rawLinks === 0, `prototype ${moment}, ${theme}: no overflow, no raw link (${JSON.stringify(c)})`);
-      // A moment whose card shows check rows (built, remark) gets them measured; building shows only its line.
+      // A moment whose card shows check rows (built, remark, building: the Lead row) gets them measured.
       if (await ev("[...document.querySelectorAll('.chat-rc .srows .plan-check-row')].some((r) => r.offsetParent)")) {
         judge(`prototype ${moment} rows`, theme, await ev(MEASURE('.chat-rc .srows:has(.plan-check-row)', '.plan-check-row', '.plan-check-mark', '.plan-check-text')), { oneLine: false });
       }
@@ -523,6 +527,48 @@ for (const theme of THEMES) {
 await cdp('Emulation.setEmulatedMedia', { features: [{ name: 'prefers-reduced-motion', value: 'reduce' }] });
 if (await card(PROTO.building.threadId, 'rm', 'the reduced-motion prototype building card', 'light')) await shot('app-prototype-building-reduced-motion-light');
 await cdp('Emulation.setEmulatedMedia', { features: [] });
+
+// ---- the live phase (item 6): a real paced mock Design build behind a Chat card whose saved Prototype state is
+// `building`. The card subscribes to the build's frames (app.js) and follows them; nothing is seeded on the page.
+const LIVE_SCREENS = [{ id: 'R-ux-1', text: 'The sign-up form asks for an email and a password' },
+  { id: 'R-ux-2', text: 'The welcome page greets the new member by name' }];
+async function liveBuild(tag) {
+  process.env.WORCA_MOCK_DESIGN_MS = '400';   // at 1500 ms the mock Lead plans for ~2.5 min before the first screen row
+  const designId = createPrototypeDesign({ projectKey: key, title: `Sign-up live ${tag}` });
+  const started = await startPrototypeBuild({ designId, brief: prototypeBrief({ title: `Sign-up live ${tag}`, requirements: LIVE_SCREENS }), deps: { designBuilds } });
+  check(!started.refused && started.buildId, `live ${tag}: the paced mock Design build started (${JSON.stringify(started)})`);
+  if (started.refused || !started.buildId) return null;
+  const pid = `c5lv${tag}00001`;
+  const rec = PROTO_REC('building', { designId, buildId: started.buildId, screenIds: LIVE_SCREENS.map((x) => x.id), screens: [] });
+  pipeline(pid, 'running', `Sign-up live ${tag}`, { smallRuns: true, care: careRec, prototype: rec });
+  liveRun(pid, `Sign-up live ${tag}`, { at: 'n_refine', runShape: { perspectives: ['product', 'ux'] } });
+  return thread(`Sign-up live ${tag}`, pid);
+}
+const MID = "(() => { const rows = [...document.querySelectorAll('.chat-rc .proto-rows[aria-busy=\"true\"] .plan-check-row')].filter((r) => r.offsetParent);"
+  + " return rows.length >= 2 && !!document.querySelector('.chat-rc .proto-col .proto-piece'); })()";
+const LIVE_ROWS = "[...document.querySelectorAll('.chat-rc .proto-rows .plan-check-row')].map((r) => r.textContent.trim())";
+{
+  const t = await liveBuild('mid');
+  if (t && await card(t, 'lvm', 'the live building card', 'light')) {
+    if (await waitFor(MID, 'the live build: the Lead row, a row per screen and a piece (light)', 120000)) {
+      await reveal('.chat-rc .proto-rows');
+      const rows = await ev(LIVE_ROWS);
+      check(rows.length >= 3 && /^Lead/.test(rows[0]), `live build: the Lead row, then one row per planned screen (${JSON.stringify(rows)})`);
+      results.live = { rows, live: await ev("document.querySelectorAll('.chat-rc .proto-rows .plan-check-mark.is-live').length"),
+        pieces: await ev("document.querySelectorAll('.chat-rc .proto-col .proto-piece').length") };
+      await shot('chat-prototype-building-mid-light');
+    }
+  }
+  await cdp('Emulation.setEmulatedMedia', { features: [{ name: 'prefers-reduced-motion', value: 'reduce' }] });
+  const r = await liveBuild('rm');
+  if (r && await card(r, 'lvr', 'the live reduced-motion building card', 'light')) {
+    if (await waitFor(MID, 'the live build with reduced motion (light)', 120000)) {
+      await reveal('.chat-rc .proto-rows');
+      await shot('chat-prototype-building-reduced-motion-light');
+    }
+  }
+  await cdp('Emulation.setEmulatedMedia', { features: [] });
+}
 
 check(errors.length === 0, `no page errors${errors.length ? ` — ${errors.slice(0, 3).join(' | ')}` : ''}`);
 results.minutes = Math.round((Date.now() - T0) / 600) / 100;

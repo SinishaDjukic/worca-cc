@@ -36,6 +36,15 @@ export function screenRows(state, { reviewing = false } = {}) {
   ];
 }
 
+/** D5: a row's mark from its word: done the check, failed the x, waiting and stopped the hollow mark, every other word
+ *  (the Lead's planning, building, integrating, reviewing; an active screen's writing, thinking, …) the live dot. */
+export function buildMark(word) {
+  if (word === 'done') return 'check';
+  if (word === 'failed') return 'x';
+  if (word === 'waiting' || word === 'stopped') return 'wait';
+  return 'live';
+}
+
 /** The preview well: one column per screen, its name and ids in the head, its pieces below (each with `--i`). */
 function paintWell(doc, well, screens, piecesBy, { register } = {}) {
   well.setAttribute('aria-label', `Prototype preview: ${plural(screens.length, 'screen')}`);
@@ -80,7 +89,7 @@ export function mountPrototypeBuild(doc, host, { buildId = null, designId = null
     return { destroy: () => well.remove(), rows: () => [] };
   }
   const rowsBox = doc.createElement('div'); rowsBox.className = 'plan-checks proto-rows'; rowsBox.setAttribute('aria-busy', 'true');
-  host.append(rowsBox, well);
+  host.append(rowsBox);   // the well follows the rows once the first screen is planned: no empty preview while the Lead plans
   let state = { ...initialStage({ designId, kind: 'web', reduced: reduced() }), buildId };
   const shown = new Map();   // sectionId -> the text the reveal last gave it
   const timers = clock || { set: (fn, ms) => setTimeout(fn, ms), clear: (t) => clearTimeout(t), get now() { return Date.now(); } };
@@ -88,13 +97,14 @@ export function mountPrototypeBuild(doc, host, { buildId = null, designId = null
   const paint = () => {
     last = screenRows(state, { reviewing });
     rowsBox.replaceChildren(...buildCheckRows(doc, { items: last.map((r) => ({
-      pass: r.word === 'done', mark: r.word === 'done' ? 'check' : 'wait', id: '', idCol: false,
+      pass: r.word === 'done', mark: buildMark(r.word), id: '', idCol: false,
       label: r.name, note: r.word, ariaLabel: r.word,
     })) }));
     const names = new Map(selectPlanRows(state).rows.map((r) => [r.key, r.name]));
     const cols = (state.sectionOrder || []).filter((id) => names.has(id))
       .map((id) => ({ section: id, name: names.get(id), ids: (screens.find((s) => s.section === id) || {}).ids || [] }));
     paintWell(doc, well, cols, (id) => piecesOf(shown.get(id) || ''), { register });
+    if (cols.length && !well.parentNode) rowsBox.after(well);
   };
   const reveal = createReveal({ setTimer: timers.set, clearTimer: timers.clear, now: () => timers.now, reduced,
     onPrefix: ({ sectionId, text }) => { shown.set(sectionId, text); paint(); } });

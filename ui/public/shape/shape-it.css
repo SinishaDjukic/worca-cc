@@ -91,8 +91,8 @@
 .srows{--row-mark:16px;--row-gap:8px;--row-line:20px;--row-id:5.4em;}
 /* Small runs C4: the change fold's id column holds a case name ("Not started"), not an R-id: the same column, wider.
    Its line is always open, so it keeps the turned chevron's room as .shape-reqs does. */
-.req-change-rule.srows{--row-id:6.4em;}
-.req-change-rule.srows > .plan-check-line{box-sizing:border-box;padding-right:8px;}
+.srows.req-change-rule{--row-id:6.4em;}
+.srows.req-change-rule > .plan-check-line{box-sizing:border-box;padding-right:8px;}
 .srows :is(.plan-check-row,.shape-role-fold-head,.outline-run-row){display:flex;flex-wrap:nowrap;align-items:flex-start;gap:var(--row-gap);
   box-sizing:border-box;width:100%;min-height:32px;margin:0;padding:6px 0;line-height:var(--row-line);text-align:left;white-space:normal;}
 .srows .plan-checks{gap:0;padding-left:0;}

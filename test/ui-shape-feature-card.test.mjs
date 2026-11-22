@@ -414,7 +414,7 @@ function c2Card({ marked = true, members, pids, snaps, slices = {} }) {
   const gm = groupModel({ kind: 'feature', title: 'Charts', planning: { status: 'done', endReached: true }, members });
   const row = { kind: 'chain', groupKind: 'feature', groupId: 'feat-1', title: 'Charts', model: gm, count: gm.count.text,
     planning: { title: 'Planning', href: '#running/r0', model: gm.planning },
-    members: gm.members.map((m, i) => ({ position: i + 1, title: `Part ${i + 1}`, href: '#runs', model: m, pipelineId: pids[i] })) };
+    members: gm.members.map((m, i) => ({ position: i + 1, title: `Part ${i + 1}`, href: '#runs', model: m, pipelineId: pids[i], run: members[i] })) };
   const controls = { paintQuestion: () => null, releaseQuestion() {}, groupOf: () => row, memoFor: () => ({}) };
   const ctl = createRunCardController({ controls, runStore, tickMs: 0 });
   const built = ctl.build({ id: 'card_c2', card: { type: PROGRESS_CARD_TYPE, pipelineId: 'p0', runId: 'run-p0', title: 'Charts' } },
@@ -466,6 +466,19 @@ test('C3 one card: open stop and held rows, a dependent waits for its builds-on 
   held.built.dispose(); held.ctl.destroy();
   const css = readFileSync(new URL('../ui/public/shape/shape-it.css', import.meta.url), 'utf8');
   assert.match(css, /\.chat-rc-members \.run-members\.is-one-line \.run-member-title\{[^}]*white-space:nowrap;overflow:hidden;text-overflow:ellipsis;display:block;\}/);
+});
+
+// Item 9: a run that has not started and waits on its chain predecessor (no stop) reads the same short word.
+test('C3: a not-started chain run with no stop reads \'waits for run 2\' on the small-runs card; a plain card keeps dev\'s \'Waiting · starts after run 2\'', () => {
+  const members = [{ status: 'done', endReached: true }, { status: 'running' }, { ticket: { status: 'scheduled', after: { index: 2 } } }];
+  const pids = ['p1', 'p2', null];
+  const snaps = { p2: c2Snap('p2') };
+  const marked = c2Card({ members, pids, snaps });
+  assert.equal(marked.states()[2], 'waits for run 2');
+  marked.built.dispose(); marked.ctl.destroy();
+  const plain = c2Card({ marked: false, members, pids, snaps });
+  assert.equal(plain.states()[2], 'Waiting · starts after run 2');
+  plain.built.dispose(); plain.ctl.destroy();
 });
 
 // ---- Small runs C5 (D12): the Verifier's readings on the one card ----

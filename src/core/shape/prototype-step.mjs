@@ -157,7 +157,7 @@ export async function runPrototypeStep({ rec, position, agreed, designOn, regist
   const builtNow = async (from = p.reviewRounds + 1) => {
     if (offer.review && !p.rebuilt && from <= prototypeReviewRounds() && !await reviewRounds(from)) return;
     await save({ state: 'built' });
-    await audit(`${prototypeBuiltText(p.screens.length, p.costUsd)}.`);
+    await audit(`${prototypeBuiltText(p.screens.length, p.costUsd, p.rebuilt)}.`);
   };
 
   const buildFrom = async (kind, args) => {

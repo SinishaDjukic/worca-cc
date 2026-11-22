@@ -31,6 +31,7 @@ app.post('/api/answer', (req, res) => {
     // question stays OPEN and the client gets the field errors to mark up. Every
     // other failure keeps its 500.
     if (err && err.code === 'STOP_HELD') return res.status(409).json({ error: err.message });
+    if (err && err.code === 'STALE') return res.status(409).json({ error: err.message, code: 'STALE' });   // a stop that changed under the answer
     if (err && err.code === 'INVALID_ANSWER') {
       return res.status(422).json({ error: 'invalid answer', errors: Array.isArray(err.errors) ? err.errors : [] });
     }
@@ -59,6 +60,7 @@ app.post('/api/runs/:id/answer', (req, res) => {
     res.json({ ok: true, ...(out && out.held ? { held: true } : {}) });
   } catch (err) {
     if (err && err.code === 'STOP_HELD') return res.status(409).json({ error: err.message });
+    if (err && err.code === 'STALE') return res.status(409).json({ error: err.message, code: 'STALE' });   // a stop that changed under the answer
     if (err && err.code === 'INVALID_ANSWER') {
       return res.status(422).json({ error: 'invalid answer', errors: Array.isArray(err.errors) ? err.errors : [] });
     }

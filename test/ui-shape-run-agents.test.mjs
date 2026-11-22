@@ -7,6 +7,7 @@ import { mountRunAgents } from '../ui/public/shape/run-agents.mjs';
 import { runShortWord } from '../src/shared/shape/run-agents.mjs';
 import { careRunPlan } from '../src/shared/shape/feature-record.mjs';
 import { snapshotFromState } from '../ui/public/ask-run-card.mjs';
+import { bootApp, helloRun } from './helpers/run-page-boot.mjs';
 
 const doc = new JSDOM('<!doctype html><body></body>').window.document;
 const agent = (id, key) => ({ id, kind: 'agent', key, x: 0, y: 0, label: key, ports: { inputs: [], outputs: [] } });
@@ -67,4 +68,27 @@ test('idempotent: a second paint replaces the list in place; absent without care
   assert.equal(host.querySelector('.run-agents'), null);
   mountRunAgents(host, null);
   assert.equal(host.children.length, 0);
+});
+
+// Item 11: the Agents section is part of the run card's Overview (inside .rd-sheet-nav), not a list under the card.
+test('a live Care run\'s Agents section is inside the card\'s .rd-sheet-nav, not in .hd-ov-below; a dev run shows no Agents host', async () => {
+  const ok = (b) => Promise.resolve(new Response(JSON.stringify(b), { status: 200, headers: { 'Content-Type': 'application/json' } }));
+  const ctx = await bootApp({ fetchHandler: (u) => (u.endsWith('/api/history') ? ok({ pipelines: [], ghAvailable: false }) : ok({})) });
+  const steps = ['n_clarify', 'n_plan', 'n_roles', 'n_refine'].map((id) => row(id)).concat(row('n_tests', 'start'));
+  helloRun(ctx, { runId: 'r-care', pipelineId: 'p2', stepper: manifest(CARE), steps, active: [{ nodeId: 'n_tests', executionId: 'x:n_tests:1' }] });
+  ctx.go('running/r-care');
+  await ctx.settle(6);
+  const d = ctx.window.document;
+  const box = d.querySelector('#run-detail .run-agents');
+  assert.ok(box, 'the Agents section painted');
+  assert.ok(box.closest('.rd-sheet-nav'), 'inside the card');
+  assert.equal(box.closest('.hd-ov-below'), null, 'not under the card');
+  assert.equal(box.closest('.rd-run-agents').hidden, false);
+  const dev = await bootApp({ fetchHandler: (u) => (u.endsWith('/api/history') ? ok({ pipelines: [], ghAvailable: false }) : ok({})) });
+  helloRun(dev, { runId: 'r-dev', pipelineId: 'p3', stepper: manifest(null), steps, active: [] });
+  dev.go('running/r-dev');
+  await dev.settle(6);
+  const host = dev.window.document.querySelector('#run-detail .rd-run-agents');
+  assert.equal(dev.window.document.querySelector('#run-detail .run-agents'), null);
+  assert.ok(!host || host.hidden, 'a dev run shows no Agents host');
 });

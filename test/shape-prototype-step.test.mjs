@@ -191,6 +191,17 @@ test('a matched remark: change rewrites only then and runs 1 change round on the
   assert.ok(bad.calls.audits.some((t) => t.startsWith('Remark not applied: R-ux-1')));
 });
 
+test('a remark rebuild audits \'Prototype rebuilt with your remark · …\', never a second \'built by Design\'s agents\'', async () => {
+  const proposal = { id: 'R-ux-1', text: 'The preview follows dark mode', example: 'dark page, dark preview', was: 'The template editor shows a preview' };
+  const h = rig({ match: proposal, answers: { built: [{ decision: 'remark', remark: 'R-ux-1 should show dark mode' }, { decision: 'confirm' }], remark: [{ decision: 'change' }] } });
+  await runPrototypeStep(h.fx);
+  const built = h.calls.audits.filter((t) => t.startsWith('Prototype built by'));
+  const rebuilt = h.calls.audits.filter((t) => t.startsWith('Prototype rebuilt with your remark · '));
+  assert.equal(built.length, 1, h.calls.audits.join('\n'));
+  assert.equal(rebuilt.length, 1, h.calls.audits.join('\n'));
+  assert.match(rebuilt[0], /^Prototype rebuilt with your remark · 2 screens · \$\d+\.\d{2}\.$/);
+});
+
 const saved = (state, extra = {}) => ({ prototype: { v: 1, state, screenIds: ['R-ux-1', 'R-po-1'], designId: 'd_1', round: 1, screens: [],
   costUsd: 1, findings: [], reviewRounds: 0, remarks: 0, rebuilt: false, at: '2026-11-21T09:00:00.000Z', ...extra } });
 

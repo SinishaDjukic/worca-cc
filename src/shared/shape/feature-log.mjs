@@ -28,9 +28,11 @@ export const outlineKeptNote = (stub, decision, value) => (decision === 'approve
 export const outlineKeptStub = (plan) => (plan?.challenge?.open > 0 ? { open: plan.challenge.open } : {});
 /** Shaper small runs C1: the Prototype step's log lines (the audit line is the same words plus a full stop). */
 export const PROTOTYPE_CONFIRMED = 'Prototype confirmed by you';
-export const prototypeBuiltText = (n, costUsd = 0) => `Prototype built by Design's agents · ${plural(n, 'screen')} · $${(Number(costUsd) || 0).toFixed(2)}`;
+/** `rebuilt`: the build that follows a remark (same count and cost, its own words). */
+export const prototypeBuiltText = (n, costUsd = 0, rebuilt = false) =>
+  `Prototype ${rebuilt ? 'rebuilt with your remark' : "built by Design's agents"} · ${plural(n, 'screen')} · $${(Number(costUsd) || 0).toFixed(2)}`;
 export const remarkUpdatedText = (remark, id) => `Your remark: “${remark}” → ${id} updated`;
-const PROTO_RES = [/^Prototype built by Design's agents · \d+ screens? · \$\d+\.\d{2}$/, /^Your remark: “.*” → R-[a-z]{1,8}-\d+ updated$/s];
+const PROTO_RES = [/^Prototype (?:built by Design's agents|rebuilt with your remark) · \d+ screens? · \$\d+\.\d{2}$/, /^Your remark: “.*” → R-[a-z]{1,8}-\d+ updated$/s];
 /** A Prototype log line (C1), or null. */
 export function parsePrototypeLine(text) {
   const t = String(text || '').replace(/\.$/, '');

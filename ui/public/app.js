@@ -32269,17 +32269,19 @@ function buildRdOverview(sec, ctx) {
   const checklists = document.createElement('div');   // Perspective checklists (spec D7)
   checklists.className = 'rd-checklists';
   checklists.hidden = true;
-  // Small runs C2 (D14): the Care roles of a marked slice run and their step word; empty (no section) for every other run.
+  // Small runs C2 (D14): the Care roles of a marked slice run and their step word, inside the card (item 11); hidden and
+  // empty for every other run.
   const agents = document.createElement('div');
   agents.className = 'rd-run-agents';
+  agents.hidden = true;
   const below = document.createElement('div');
   below.className = 'hd-ov hd-ov-below';
-  wrap.append(banner);
-  below.append(agents, checklists, skills);
+  wrap.append(banner, agents);
+  below.append(checklists, skills);
   adoptRunCard(sec, wrap, below);
   const paintAgents = (run) => {
     const snap = run && run.stepper && run.stepper.careRun ? snapshotFromState(run) : null;
-    mountRunAgents(agents, snap ? { ...snap, pendingQuestion: run.pendingQuestion || null } : null);
+    agents.hidden = !mountRunAgents(agents, snap ? { ...snap, pendingQuestion: run.pendingQuestion || null } : null);
   };
   const paint = (c) => { rdOvStateBanner(banner, c.run); paintAgents(c.run); paintRdChecklists(checklists, c.run); paintRunSkills(skills, c.run.skillMount); };
   paint(ctx);
@@ -33334,7 +33336,7 @@ function chatPaintQuestion(ref, host) {
     if (r._answering) setPanelBusy(r, true);   // an answer already in flight (paintRdQuestions' rule)
   }
   return { id: pq.id || null, kind: askKindOf(pq), heading: askHeading(r, pq),
-    step: pq.nodeId ? nodeLabel(r.stepper, pq.nodeId) : '', stepCard: isStepCard(pq, r, true), stop: !!pq.stop };
+    step: pq.nodeId ? nodeLabel(r.stepper, pq.nodeId) : '', stepCard: isStepCard(pq, r, true), ...(pq.stop ? { stop: true } : {}) };
 }
 /** Shaper small runs C1 (R-ux-2): the Prototype step's working moment (building, reviewing, matching) on the one card,
  *  from the card's saved state while no ask is open: the same renderer as the step's asks, with nothing to answer.

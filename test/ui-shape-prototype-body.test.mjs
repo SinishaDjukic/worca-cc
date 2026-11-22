@@ -4,7 +4,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { JSDOM } from 'jsdom';
-import { renderPrototypeBody, prototypeDetail, NO_MATCH, NO_MATCH_PLAIN } from '../ui/public/shape/prototype-body.mjs';
+import { renderPrototypeBody, prototypeDetail, NO_MATCH, NO_MATCH_PLAIN, REMARK_PLACEHOLDER, REMARK_PLACEHOLDER_SHORT } from '../ui/public/shape/prototype-body.mjs';
 import { prototypeTitle } from '../ui/public/shape/step-card.mjs';
 import { prototypeView } from '../src/shared/shape/prototype.mjs';
 
@@ -81,6 +81,27 @@ test('the live line names the state word and the detail; the plan-err line stays
     costUsd: 1, findings: [], reviewRounds: 2, remarks: 0, rebuilt: false, at: '2026-11-21T10:00:00.000Z' };
   assert.equal(prototypeView(saved).reviewRounds, 2);
   assert.equal(prototypeDetail(prototypeView(saved)), 'Round 2 of 3');
+});
+
+test('the remark placeholder: short at 480px or less, long on a change to wide, long without matchMedia; destroy stops listening', () => {
+  const win = dom.window;
+  const listeners = new Set();
+  const mq = { matches: true, addEventListener: (t, fn) => { if (t === 'change') listeners.add(fn); },
+    removeEventListener: (t, fn) => { if (t === 'change') listeners.delete(fn); } };
+  const queries = [];
+  win.matchMedia = (q) => { queries.push(q); return mq; };
+  try {
+    const s = setup({ moment: 'built', offer: OFFER.build, screens: SCREENS, costUsd: 1, findings: [] });
+    const field = s.$('.proto-remark-field');
+    assert.deepEqual(queries, ['(max-width:480px)']);
+    assert.equal(field.placeholder, 'A remark?');
+    assert.equal(REMARK_PLACEHOLDER_SHORT, 'A remark?');
+    mq.matches = false;
+    for (const fn of listeners) fn({ matches: false });
+    assert.equal(field.placeholder, REMARK_PLACEHOLDER);
+    s.body.destroy();
+    assert.equal(listeners.size, 0, 'destroy removes the listener');
+  } finally { delete win.matchMedia; }
 });
 
 test('the remark field: Send disabled while blank, Enter sends; no match refills, focuses and describes it', async () => {

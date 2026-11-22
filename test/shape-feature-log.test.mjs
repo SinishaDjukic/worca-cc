@@ -179,6 +179,8 @@ test('C1: the 4 Prototype log lines parse and show on the one card only', async 
   assert.equal(PROTOTYPE_CONFIRMED, 'Prototype confirmed by you');
   assert.equal(prototypeBuiltText(2, 2.8), "Prototype built by Design's agents · 2 screens · $2.80");
   assert.equal(prototypeBuiltText(1, 0), "Prototype built by Design's agents · 1 screen · $0.00");
+  assert.equal(prototypeBuiltText(2, 3.2, true), 'Prototype rebuilt with your remark · 2 screens · $3.20');
+  assert.deepEqual(parsePrototypeLine(`${prototypeBuiltText(2, 3.2, true)}.`), { kind: 'prototype', text: prototypeBuiltText(2, 3.2, true) });
   assert.equal(remarkUpdatedText('dark please', 'R-ux-2'), 'Your remark: “dark please” → R-ux-2 updated');
   const lines = ['Prototype skipped · no screen requirements', 'Prototype skipped by you', prototypeBuiltText(2, 2.8),
     remarkUpdatedText('dark please', 'R-ux-2'), PROTOTYPE_CONFIRMED];

@@ -187,6 +187,9 @@ export const heldRefusal = (after) => `this stop is already answered: it goes on
 /** The stopped reviewer's word in the Agents rows. */
 export const reviewerStopWord = (stop) => (stop && stop.reason === 'objection' ? 'objects' : null);
 
+/** A run that builds on (or starts after) run `n`: its short row word. */
+export const waitsForRunWord = (n) => `waits for run ${n}`;
+
 /**
  * A marked run's row word: its answer is held (`after run 9`), it waits for the person (`waiting for you`), or it builds
  * on a stopped run (`waits for run 8`). Null otherwise. `slice` is featureView's slice; `snap` the run's snapshot.
@@ -195,7 +198,7 @@ export function runStopWord({ snap = null, slice = null } = {}) {
   const st = slice && slice.stop;
   if (st && st.held && Number.isInteger(st.after)) return `after run ${st.after}`;
   if ((st && !st.held) || (snap && snap.pendingQuestion && snap.pendingQuestion.stop && !st)) return 'waiting for you';
-  if (slice && Number.isInteger(slice.waitsFor)) return `waits for run ${slice.waitsFor}`;
+  if (slice && Number.isInteger(slice.waitsFor)) return waitsForRunWord(slice.waitsFor);
   // Small runs C4 (D18): a change run that is due takes the next turn.
   if (slice && slice.kind === 'change' && slice.state === 'planned') return 'next · small change run';
   return null;
