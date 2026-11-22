@@ -631,13 +631,23 @@ its own PR when it finishes, before these blocks. Ship is blocked:
 
 - with `ACCEPTANCE_INCOMPLETE` while a confirmed requirement is unmarked; the Ship card reads
   "Waiting for Compliance to confirm R-comp-4";
-- with `NOT_READY` until the Verifier reads "Ready to ship", also when every run is done but a gap run's re-check has
-  not run yet, or while Worca is still committing or cleaning up after any of its runs.
+- with `NOT_READY` until the rule below holds. It is checked again when you press Ship, before anything is pushed.
 
-With the flag on, Ship opens no pull request for a small-runs feature before its Verifier check passed on the head it
-ships. Choosing to ship with the gap counts as passed. Two cases are not covered, as no check starts for them: a round
-asked for after the check, and a feature with no check whose last run finished while the flag was off, or whose cleanup
-Worca was stopped in.
+With the flag on, one rule decides: a small-runs feature is ready to ship only when a Verifier check with a clean result is
+on record for the exact head it would ship, and nothing of the feature is live, finishing, interrupted or pending. The
+exact head is the commit of the latest finished run's branch, and it must be the commit the Verifier read. Choosing to ship
+with the gap counts as clean. What follows from it:
+
+- With no check on record, Ship is not ready. If the last run finished while the flag was off, or Worca was stopped
+  during its cleanup, the card reads "Stopped" ten minutes after the run's last write, and its **Resume** starts the check.
+- A round that ended (done, stopped or failed) is over: the check still starts when the last run or round settles. A
+  round that is interrupted or has not ended holds both the check and Ship, until you resume or archive it.
+- A commit after the check, by a run or a round, needs a new check on the new head: a new series, round 1. It starts when
+  that run or round settles, or, for a commit made while a check was verifying, when that check is done. The other runs'
+  branches ship too, so a commit on one of them also needs a new check. The Verifier reads the head's branch, so it does
+  not see a round on an earlier run's branch until that work is in the head. For a commit made outside Worca the card
+  reads "Stopped" and **Resume** starts the check.
+- The changelog commit Ship itself makes keeps the check, so a Ship that failed part-way can go on.
 
 Each PR body has exactly one `Care: …` line, then one line per requirement marked Not met or Dropped
 (`Not met: R-comp-4 · the reason`).
@@ -673,7 +683,7 @@ stops, the stacked-only Ship and the marks that block it. It loses what the flag
 
 - no Verifier check starts, neither when a run finishes nor from **Resume** (a stopped or failed check offers none), and
   no check's result is recorded. A feature with no check is ready once its runs are done, so its Ship opens with no
-  Verifier check. A check already open, or with a gap, keeps Ship at `NOT_READY`. If the check, or the last run for its
+  Verifier check, and a commit after a clean check is not checked. A check already open, or with a gap, keeps Ship at `NOT_READY`. If the check, or the last run for its
   gap, finished while the flag was off, turning the flag on again starts nothing by itself: ten minutes after that run's
   last write the card reads "Stopped", never while Worca is still committing or cleaning up after a run, and its
   **Resume** starts a fresh check. A check that had stopped or failed offers **Resume** at once;

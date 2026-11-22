@@ -23,7 +23,7 @@ import { stopOptionOf } from '../../shared/shape/run-stops.mjs';
 import { CHANGES_MAX } from '../../shared/shape/req-change.mjs';
 import { PLAN_ASK_KIND } from './run.mjs';
 import { roundsOf } from './rounds.mjs';
-import { verifyView, startVerifyCheck, stillFinishing } from './verifier.mjs';
+import { verifyView, startVerifyCheck, stillFinishing, roundOpen, shipRuleOn } from './verifier.mjs';
 import { getWatch, stoppedWatchFact } from '../pr-watch.mjs';
 import { clipTitle } from '../title.mjs';
 import { readRunTags } from '../run-tags-store.mjs';
@@ -396,18 +396,18 @@ export function featureView(id, { live = () => null, finishing = () => false, on
   // D24: Ship as once every slice is done, on a feature that is still active and not shipped. The suggestion is
   // async (featureShipSuggestion); the GET route merges it.
   const lastPrUrl = slices.length ? (slices[slices.length - 1].pr?.url || null) : null;
-  // Small runs C5 (D11): a feature with a Verifier check ships only once the latest check is clean or accepted.
-  const verify = verifyView(f, live, slices, finishing);
-  // With the flag on, a halted Verifier waits for Resume, so its feature is not done: the card's controls are for an active one.
-  const status = f.status === 'active' && done === slices.length && !(verify && verify.state === 'halted' && shaperSmallRunsOn()) ? 'done' : f.status;
-  const verified = !verify || verify.state === 'clean' || verify.state === 'accepted';
-  // Invariant (flag on): Ship opens no pull request for a small-runs feature before its Verifier check passed on the head
-  // it ships. The check starts in the last settle, so a run or round still finishing holds Ship until then. Not covered: a
-  // round after the check, and a last settle this process never ran with the flag on (no check starts for either).
-  const settling = shaperSmallRunsOn() && smallRunsOfFeature(f.id) && stillFinishing(slices, finishing);
   // A ship whose PRs were all closed unmerged is withdrawn: the feature ships again (the ship route clears the record).
   const shipPrs = slices.map((s) => s.pr).filter((p) => p && p.url);
   const shipped = !!f.ship_mode && !(shipPrs.length && shipPrs.every((p) => p.state === 'CLOSED'));
+  // Small runs C5 (D11): a feature with a Verifier check ships only once the latest check is clean or accepted.
+  const verify = verifyView(f, live, slices, finishing, shipped);
+  // With the flag on, a halted Verifier waits for Resume, so its feature is not done: the card's controls are for an active one.
+  const status = f.status === 'active' && done === slices.length && !(verify && verify.state === 'halted' && shaperSmallRunsOn()) ? 'done' : f.status;
+  // The ship rule (verifier.mjs checkedHead): with the flag on, a marked feature needs a passed check for the head it ships
+  // (a check for another head does not read clean or accepted) and nothing of it finishing, interrupted or pending.
+  const ruled = shipRuleOn(f);
+  const verified = verify ? verify.state === 'clean' || verify.state === 'accepted' : !ruled;
+  const settling = ruled && (stillFinishing(slices, finishing) || roundOpen(slices));
   const release = shipped && f.release_version ? { version: f.release_version, url: f.release_url || null, error: f.release_error || null } : null;
   const ship = { ready: slices.length > 0 && done === slices.length && f.status === 'active' && !shipped && !roundLive && verified && !settling,
     mode: shipped ? f.ship_mode : null, prUrl: shipped ? f.ship_pr_url || null : null, lastPrUrl, suggested: null, linesAdded: null,

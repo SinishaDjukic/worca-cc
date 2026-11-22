@@ -81,7 +81,10 @@ app.post('/api/shape/features/:id/resume', async (req, res) => {
     const by = actorOf(req);
     const out = resumeFeature(req.params.id, { live: liveSliceOf, finishing: isFinishingRun, by });
     if (shapeRefused(res, out)) return;
-    if (out.action === 'none') return res.status(409).json({ error: 'no slice is stopped' });
+    if (out.action === 'none') {
+      const verify = featureView(req.params.id, { live: liveSliceOf, finishing: isFinishingRun }).verify;
+      return res.status(409).json(verify ? { code: 'NOTHING_TO_RESUME', error: 'nothing to resume now: a run is still finishing, or Shaper small runs is off' } : { error: 'no slice is stopped' });
+    }
     let runId = null;
     if (out.action === 'resume') {
       const r = await resumeRun(out.pipelineId, { by, mock: out.mock === true });

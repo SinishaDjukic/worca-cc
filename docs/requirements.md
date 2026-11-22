@@ -437,8 +437,8 @@ A Shaper run started with the `shaperSmallRuns` flag on keeps its agreed require
 Each requirement is owned by one run, which builds it and has it checked, or confirmed by a person in a named role
 (Product, Engineering, Design, DevOps, Security, Compliance or QA). A person marks a confirmed requirement Met, Not met
 or Dropped; Not met and Dropped need a one-line reason. Ship is stacked, one PR per run, and is refused with
-`ACCEPTANCE_INCOMPLETE` until each confirmed requirement is marked. With the flag on, it opens no pull request before the
-feature's Verifier check passed on the head it ships ([Ship](shape-it-first.md#ship)). The feature shows in four places: the Runs list
+`ACCEPTANCE_INCOMPLETE` until each confirmed requirement is marked. With the flag on, it waits for a clean
+Verifier check on record for the exact head it would ship ([Ship](shape-it-first.md#ship)). The feature shows in four places: the Runs list
 group row, the run panel, the Expert run page and the feature page. Its requirements are listed in the run panel, the run
 page and the feature page. With the flag off, a feature that started with it on keeps the marks and their Ship block, but
 those lists go away and no Verifier check starts; see [Off](shape-it-first.md#off). The

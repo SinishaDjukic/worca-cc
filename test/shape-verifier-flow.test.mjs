@@ -15,7 +15,7 @@ import { projectKey } from '../src/core/store.mjs';
 import { MERGE_BACK_WAIT_MS, getTicket } from '../src/core/scheduler.mjs';
 import { createSliceFeature, featureView, liveSliceFrom, resumeFeature } from '../src/core/shape/features.mjs';
 import { startVerifyCheck, recordVerifyResult, verifyAfterSettled, verifyCheckOfPipeline } from '../src/core/shape/verifier.mjs';
-import { recordSettledFigures, featureOfAnyPipeline } from '../src/core/shape/chain.mjs';
+import { recordSettledFigures, recordShipCommit, featureOfAnyPipeline, latestFinishedSlice } from '../src/core/shape/chain.mjs';
 import { featureFigures } from '../src/core/shape/measure.mjs';
 import { verifyStop } from '../src/shared/shape/verifier.mjs';
 import { oneCardModel } from '../ui/public/shape/feature-card.mjs';
@@ -91,12 +91,14 @@ function world({ states = ['done', 'done', 'done', 'done'], position = 'balanced
   const checks = () => (outline().verify || { checks: [] }).checks;
   const view = () => featureView(f.id, { live: liveSliceOf, finishing });
   const slicesCount = () => getDb().prepare('SELECT COUNT(*) AS n FROM shape_feature_slices WHERE feature_id = ?').get(f.id).n;
-  /** The latest check's Verifier run settles with `file` ({result, headSha, decision}) in its run dir. */
+  /** The commit the Verifier reads: the tip of the latest finished run's branch. */
+  const headSha = () => git(root, 'rev-parse', `feat/${latestFinishedSlice(f.id).pipelineId}`);
+  /** The latest check's Verifier run settles with `file` ({result, headSha, decision}) in its run dir; no headSha = the head's. */
   const verifierSettles = (file, status = 'done') => {
     const c = checks().at(-1);
     const pid = getTicket(c.ticketId).pipelineId || fire(c.ticketId, status);
     const dir = mkdtempSync(join(runDirs, 'run-'));
-    if (file) writeFileSync(join(dir, 'verify-result.json'), JSON.stringify(file));
+    if (file) writeFileSync(join(dir, 'verify-result.json'), JSON.stringify({ ...file, headSha: file.headSha ?? headSha() }));
     return { pid, out: settle(pid, status, { pipelineDir: dir }) };
   };
   /** Every gap run (kind change, not fired yet) settles done, in order. */
@@ -104,8 +106,17 @@ function world({ states = ['done', 'done', 'done', 'done'], position = 'balanced
     const rows = getDb().prepare("SELECT idx, ticket_id FROM shape_feature_slices WHERE feature_id = ? AND kind = 'change' AND pipeline_id IS NULL ORDER BY idx").all(f.id);
     return rows.map((r) => { const pid = fire(r.ticket_id, 'done', r.idx); settle(pid); return pid; });
   };
+  /** A round of run `k` with `status`; `commit` lands a commit on that run's branch. */
+  const round = (k, status) => {
+    const pid = pipe(status);
+    getDb().prepare('UPDATE pipelines SET branch = ? WHERE id = ?').run(JSON.stringify({ source: `feat/${pids[k - 1]}`, sameAsSource: true,
+      feature: `feat/${pid}`, mergeBack: { merged: true }, roundOf: { pipelineId: pids[k - 1], round: 2, request: 'fix it' } }), pid);
+    return pid;
+  };
+  const commit = (k, name = 'round') => { git(root, 'checkout', '-q', `feat/${pids[k - 1]}`); writeFileSync(join(root, `${name}-${++seq}.txt`), name);
+    git(root, 'add', '-A'); git(root, 'commit', '-qm', name); git(root, 'checkout', '-q', 'main'); };
   const resume = () => resumeFeature(f.id, { live: liveSliceOf, finishing });
-  return { f, pids, runs, tearingDown, finishing, resume, calls, deps, settle, outline, checks, view, slicesCount, verifierSettles, gapRunsSettle, fire, ticketOf };
+  return { headSha, round, commit, f, pids, runs, tearingDown, finishing, resume, calls, deps, settle, outline, checks, view, slicesCount, verifierSettles, gapRunsSettle, fire, ticketOf };
 }
 
 const result = (gaps) => ({ held: OWNED.filter((id) => !gaps.includes(id)),
@@ -124,11 +135,11 @@ test('two seeded gaps: one check, two gap runs, a re-check, then Ready to ship w
   assert.deepEqual(t.request.shape.verify.owned, OWNED);
   assert.equal(t.title, 'Sign-up · Verifier');
   assert.equal(w.view().ship.ready, false);
-  const { pid: v1 } = w.verifierSettles({ result: result(['R-po-2', 'R-po-3']), headSha: 'abc', decision: null });
+  const { pid: v1 } = w.verifierSettles({ result: result(['R-po-2', 'R-po-3']), headSha: null, decision: null });
   const after1 = w.checks()[0];
   assert.equal(after1.state, 'gaps');
   assert.equal(after1.pipelineId, v1);
-  assert.equal(after1.headSha, 'abc');
+  assert.equal(after1.headSha, git(root, 'rev-parse', `feat/${w.pids[3]}`));
   assert.deepEqual(after1.gapRuns, [5, 6]);
   assert.equal(w.slicesCount(), 6);
   const o = w.outline();
@@ -147,7 +158,7 @@ test('two seeded gaps: one check, two gap runs, a re-check, then Ready to ship w
   assert.equal(c2.round, 2);
   assert.equal(c2.head.index, 6);
   assert.equal(w.calls.offer.length, 0, 'no Ship card while verifying');
-  const { out } = w.verifierSettles({ result: result([]), headSha: 'def', decision: null });
+  const { out } = w.verifierSettles({ result: result([]), headSha: null, decision: null });
   await out;
   const v = w.view();
   assert.equal(v.verify.state, 'clean');
@@ -164,7 +175,7 @@ test('clean feature: 0 gaps, 0 slices appended, gapsAtEnd 0; a clean check offer
   const w = world();
   w.settle(w.pids[3]);
   assert.equal(w.calls.offer.length, 0);
-  const { pid, out } = w.verifierSettles({ result: result([]), headSha: 'abc', decision: null });
+  const { pid, out } = w.verifierSettles({ result: result([]), headSha: null, decision: null });
   assert.ok(out && typeof out.then === 'function');
   await out;
   assert.equal(w.slicesCount(), 4);
@@ -330,7 +341,7 @@ test('a clean Verifier settle offers the Ship card before the one-PR ship (the w
   const c = w.checks()[0];
   const pid = w.fire(c.ticketId, 'done');
   const dir = mkdtempSync(join(runDirs, 'run-'));
-  writeFileSync(join(dir, 'verify-result.json'), JSON.stringify({ result: result([]), headSha: null, decision: null }));
+  writeFileSync(join(dir, 'verify-result.json'), JSON.stringify({ result: result([]), headSha: w.headSha(), decision: null }));
   const order = [];
   const late = { ...w.deps, offerShip: () => new Promise((res) => setTimeout(() => { order.push('ship card'); res('card'); }, 20)) };
   const card = recordSettledFigures({ id: pid, status: 'done', pipelineDir: dir }, late);
@@ -385,7 +396,7 @@ test('a failed or stopped Verifier does not stall the feature: Resume starts a f
     assert.equal(w.checks().length, 1, 'the halted check is replaced, not kept beside the new one');
     assert.notEqual(w.checks()[0].ticketId, null);
     assert.equal(w.view().verify.state, 'verifying');
-    const { pid } = w.verifierSettles({ result: result([]), headSha: 'abc', decision: null });
+    const { pid } = w.verifierSettles({ result: result([]), headSha: null, decision: null });
     assert.equal(w.view().verify.state, 'clean');
     assert.equal(w.view().ship.ready, true);
     assert.equal(w.checks()[0].pipelineId, pid);
@@ -442,7 +453,7 @@ test('a Verifier run that settled with the flag off reads halted once the flag i
   const w = world();
   w.settle(w.pids[3]);
   const old = w.checks()[0];
-  const { pid } = flagOff(() => w.verifierSettles({ result: result([]), headSha: 'abc', decision: null }));
+  const { pid } = flagOff(() => w.verifierSettles({ result: result([]), headSha: null, decision: null }));
   assert.equal(w.checks()[0].result, null, 'the flag was off: nothing recorded');
   aged(pid, 0);
   assert.equal(w.view().verify.state, 'verifying', 'just done: its settle may still come');
@@ -461,14 +472,14 @@ test('a Verifier run that settled with the flag off reads halted once the flag i
   assert.equal(out.action, 'restart');
   assert.deepEqual(w.checks().map((c) => [c.round, c.ticketId, c.state]), [[1, out.ticketId, 'verifying']], 'the lost check is replaced');
   assert.notEqual(out.ticketId, old.ticketId);
-  await w.verifierSettles({ result: result([]), headSha: 'def', decision: null }).out;
+  await w.verifierSettles({ result: result([]), headSha: null, decision: null }).out;
   assert.equal(w.view().ship.ready, true);
 });
 
 test('a gap run that settled with the flag off reads halted once the flag is on again; Resume starts round 2, then Ready to ship', async () => {
   const w = world();
   w.settle(w.pids[3]);
-  w.verifierSettles({ result: result(['R-po-2']), headSha: 'abc', decision: null });
+  w.verifierSettles({ result: result(['R-po-2']), headSha: null, decision: null });
   const [gapPid] = flagOff(() => w.gapRunsSettle());
   assert.equal(w.checks().length, 1, 'the flag was off: no re-check');
   aged(gapPid, 0);
@@ -484,7 +495,7 @@ test('a gap run that settled with the flag off reads halted once the flag is on 
   assert.equal(out.action, 'restart');
   assert.deepEqual(w.checks().map((c) => [c.round, c.state]), [[1, 'gaps'], [2, 'verifying']], 'the series goes on and the gaps stay on record');
   assert.deepEqual(resumeFeature(w.f.id), { action: 'none' }, 'a second Resume starts nothing');
-  await w.verifierSettles({ result: result([]), headSha: 'def', decision: null }).out;
+  await w.verifierSettles({ result: result([]), headSha: null, decision: null }).out;
   assert.equal(w.view().verify.state, 'clean');
   assert.equal(w.view().ship.ready, true);
 });
@@ -492,7 +503,7 @@ test('a gap run that settled with the flag off reads halted once the flag is on 
 test('gaps with the gap run still to build or running never read halted', () => {
   const w = world();
   w.settle(w.pids[3]);
-  const { pid } = w.verifierSettles({ result: result(['R-po-2']), headSha: 'abc', decision: null });
+  const { pid } = w.verifierSettles({ result: result(['R-po-2']), headSha: null, decision: null });
   for (const p of [...w.pids, pid]) aged(p, OLD);
   assert.equal(w.view().verify.state, 'gaps', 'the gap run is still to build');
   const { idx, ticket_id: t } = getDb().prepare("SELECT idx, ticket_id FROM shape_feature_slices WHERE feature_id = ? AND kind = 'change'").get(w.f.id);
@@ -507,7 +518,7 @@ const ticketCount = () => getDb().prepare('SELECT COUNT(*) AS n FROM scheduled_r
 test('a Verifier run still finishing is never halted, however old its row; once it is not, the clock decides', () => {
   const w = world();
   w.settle(w.pids[3]);
-  const { pid } = flagOff(() => w.verifierSettles({ result: result([]), headSha: 'abc', decision: null }));
+  const { pid } = flagOff(() => w.verifierSettles({ result: result([]), headSha: null, decision: null }));
   aged(pid, OLD);
   w.tearingDown.add(pid);
   const tickets = ticketCount();
@@ -528,7 +539,7 @@ test('a Verifier run still finishing is never halted, however old its row; once 
 test('a head still finishing starts no check and offers no Resume; its own settle starts the re-check', () => {
   const w = world();
   w.settle(w.pids[3]);
-  w.verifierSettles({ result: result(['R-po-2']), headSha: 'abc', decision: null });
+  w.verifierSettles({ result: result(['R-po-2']), headSha: null, decision: null });
   const { idx, ticket_id: t } = getDb().prepare("SELECT idx, ticket_id FROM shape_feature_slices WHERE feature_id = ? AND kind = 'change'").get(w.f.id);
   const gap = w.fire(t, 'done', idx);
   aged(gap, OLD);
@@ -554,7 +565,7 @@ test('no check yet: Ship is not ready while a run or a round is still finishing;
   w.settle(w.pids[0]);
   assert.deepEqual(w.checks().map((c) => [c.round, c.state]), [[1, 'verifying']]);
   assert.equal(w.view().ship.ready, false);
-  await w.verifierSettles({ result: result([]), headSha: 'abc', decision: null }).out;
+  await w.verifierSettles({ result: result([]), headSha: null, decision: null }).out;
   assert.equal(w.view().ship.ready, true);
   // A round that is done but still finishing holds the first check and Ship the same way.
   const w2 = world();
@@ -613,7 +624,195 @@ test('flag off: a failed Verifier offers no Resume and starts no run; flag on ag
   assert.equal(controlsHalted(w.view()), true);
   const out = w.resume();
   assert.equal(out.action, 'restart');
-  await w.verifierSettles({ result: result([]), headSha: 'def', decision: null }).out;
+  await w.verifierSettles({ result: result([]), headSha: null, decision: null }).out;
   assert.deepEqual(w.checks().map((c) => [c.ticketId, c.state]), [[out.ticketId, 'clean']]);
   assert.equal(w.view().ship.ready, true);
+});
+
+// ── The ship rule: a clean check on record for the exact head Ship would push, and nothing of the feature still going ────
+const setStatus = (pid, status) => getDb().prepare('UPDATE pipelines SET status = ? WHERE id = ?').run(status, pid);
+const states = (w) => w.checks().map((c) => [c.round, c.state]);
+const CLEAN = { result: result([]), decision: null };
+
+test('a round that ended stopped or failed counts as over: the last run\'s settle starts check 1, and after gaps round 2', async () => {
+  for (const status of ['stopped', 'error']) {
+    const w = world();
+    w.round(1, status);
+    w.settle(w.pids[3]);
+    assert.deepEqual(states(w), [[1, 'verifying']], status);
+    assert.equal(w.view().ship.ready, false);
+    w.verifierSettles({ result: result(['R-po-2']), decision: null });
+    w.round(2, status);
+    w.gapRunsSettle();
+    assert.deepEqual(states(w), [[1, 'gaps'], [2, 'verifying']], status);
+    await w.verifierSettles(CLEAN).out;
+    assert.equal(w.view().ship.ready, true);
+  }
+});
+
+test('a round that ends last, done, stopped or failed, starts the check itself', () => {
+  for (const status of ['done', 'stopped', 'error']) {
+    const w = world();
+    const r = w.round(1, 'running');
+    w.settle(w.pids[3]);
+    assert.deepEqual(states(w), []);
+    setStatus(r, status);
+    assert.equal(w.view().ship.ready, false, 'no check on record is never verified');
+    w.settle(r, status);
+    assert.deepEqual(states(w), [[1, 'verifying']], status);
+    assert.equal(w.view().ship.ready, false);
+  }
+});
+
+test('an interrupted or pending round holds the check and Ship, after a clean check too; archived it holds nothing', async () => {
+  for (const status of ['interrupted', 'created', 'paused', 'running']) {
+    const w = world();
+    const r = w.round(1, status);
+    w.settle(w.pids[3]);
+    assert.deepEqual(states(w), [], status);
+    assert.equal(w.view().ship.ready, false);
+    assert.equal('verify' in w.view(), false, 'nothing to resume while the round can go on');
+    const w2 = world();
+    w2.settle(w2.pids[3]);
+    await w2.verifierSettles(CLEAN).out;
+    const r2 = w2.round(1, status);
+    assert.equal(w2.view().ship.ready, false, `${status} after a clean check`);
+    if (status === 'interrupted') {
+      assert.equal(flagOff(() => w2.view().ship.ready), true, 'flag off: as on dev');
+      getDb().prepare("UPDATE pipelines SET archived_at = '2026-01-02T00:00:00.000Z' WHERE id IN (?, ?)").run(r, r2);
+      assert.equal(w2.view().ship.ready, true);
+      w.settle(w.pids[3]);
+      assert.deepEqual(states(w), [[1, 'verifying']]);
+    }
+  }
+});
+
+test('a round that commits after a clean check: a new series verifies the new head, and Ship waits for it', async () => {
+  const w = world();
+  w.settle(w.pids[3]);
+  await w.verifierSettles(CLEAN).out;
+  assert.equal(w.view().ship.ready, true);
+  const first = w.headSha();
+  const r = w.round(4, 'running');
+  w.commit(4);
+  setStatus(r, 'done');
+  w.tearingDown.add(r);
+  assert.equal(w.view().verify.state, 'verifying', 'its settle starts the new check');
+  assert.equal(w.view().ship.ready, false);
+  assert.deepEqual(w.resume(), { action: 'none' });
+  w.tearingDown.clear();
+  w.settle(r);
+  assert.deepEqual(states(w), [[1, 'clean'], [1, 'verifying']]);
+  assert.equal(w.view().ship.ready, false);
+  // The first Verifier run's settle, replayed, is not the new check's result.
+  const dir = mkdtempSync(join(runDirs, 'run-'));
+  writeFileSync(join(dir, 'verify-result.json'), JSON.stringify({ ...CLEAN, headSha: w.headSha() }));
+  w.settle(w.checks()[0].pipelineId, 'done', { pipelineDir: dir });
+  assert.deepEqual(states(w), [[1, 'clean'], [1, 'verifying']]);
+  await w.verifierSettles(CLEAN).out;
+  assert.deepEqual(w.checks().map((c) => c.headSha), [first, w.headSha()]);
+  assert.equal(w.view().ship.ready, true);
+  // A settle that commits nothing keeps the check.
+  const quiet = w.round(4, 'done');
+  w.settle(quiet);
+  assert.equal(w.checks().length, 2);
+  assert.equal(w.view().ship.ready, true);
+});
+
+test('a round that commits while a check verifies: that check is not for the new head, a new one starts when it settles', async () => {
+  const w = world();
+  w.settle(w.pids[3]);
+  const read = w.headSha();
+  const r = w.round(4, 'done');
+  w.commit(4);
+  w.settle(r);
+  assert.deepEqual(states(w), [[1, 'verifying']], 'one Verifier run at a time');
+  await w.verifierSettles({ ...CLEAN, headSha: read }).out;
+  assert.deepEqual(states(w), [[1, 'clean'], [1, 'verifying']]);
+  assert.equal(w.view().ship.ready, false);
+  assert.equal(w.calls.offer.length, 0, 'no Ship card for a head nobody checked');
+  await w.verifierSettles(CLEAN).out;
+  assert.equal(w.view().ship.ready, true);
+  // Committed before the Verifier run read the branch: its check is for the new head, no second one.
+  const w2 = world();
+  w2.settle(w2.pids[3]);
+  w2.commit(4);
+  await w2.verifierSettles(CLEAN).out;
+  assert.deepEqual(states(w2), [[1, 'clean']]);
+  assert.equal(w2.view().ship.ready, true);
+});
+
+test('a round on an earlier run ships in that run\'s PR: its commit asks for a new check too', async () => {
+  const w = world();
+  w.settle(w.pids[3]);
+  await w.verifierSettles(CLEAN).out;
+  const r = w.round(2, 'done');
+  w.commit(2);
+  assert.equal(w.view().ship.ready, false);
+  w.settle(r);
+  assert.deepEqual(states(w), [[1, 'clean'], [1, 'verifying']]);
+  await w.verifierSettles(CLEAN).out;
+  assert.equal(w.view().ship.ready, true);
+});
+
+test('a commit no settle saw, or a head the check cannot prove, reads halted: Resume starts a new check, nothing loops', async () => {
+  const w = world();
+  w.settle(w.pids[3]);
+  await w.verifierSettles(CLEAN).out;
+  w.commit(4, 'by hand');
+  assert.equal(w.view().verify.state, 'halted');
+  assert.equal(w.view().status, 'active');
+  assert.equal(w.view().ship.ready, false);
+  assert.equal(flagOff(() => w.view().ship.ready), true, 'flag off: as on dev');
+  assert.equal(w.resume().action, 'restart');
+  // The Verifier read another commit and nothing moved meanwhile: no check starts by itself.
+  await w.verifierSettles({ ...CLEAN, headSha: 'f'.repeat(40) }).out;
+  assert.deepEqual(states(w), [[1, 'clean'], [1, 'clean']]);
+  assert.equal(w.view().ship.ready, false);
+  assert.equal(w.resume().action, 'restart');
+  await w.verifierSettles(CLEAN).out;
+  assert.equal(w.view().ship.ready, true);
+  git(root, 'branch', '-D', `feat/${w.pids[3]}`);
+  assert.equal(w.view().ship.ready, false, 'no branch, no head');
+});
+
+test('no check on record with the flag on (the last run settled with it off): not ready, and Resume starts check 1', async () => {
+  const w = world();
+  flagOff(() => w.settle(w.pids[3]));
+  assert.equal(flagOff(() => w.view().ship.ready), true, 'flag off: as on dev');
+  aged(w.pids[3], 0);
+  assert.equal('verify' in w.view(), false, 'just done: its settle may still come');
+  assert.equal(w.view().ship.ready, false);
+  aged(w.pids[3], OLD);
+  assert.equal(w.view().verify.state, 'halted');
+  assert.equal(controlsHalted(w.view()), true, 'the card offers Resume');
+  assert.equal(w.resume().action, 'restart');
+  assert.deepEqual(states(w), [[1, 'verifying']]);
+  await w.verifierSettles(CLEAN).out;
+  assert.equal(w.view().ship.ready, true);
+});
+
+test('every requirement confirmed by a person: the check still runs, and Ship waits for it', async () => {
+  const w = world();
+  getDb().prepare('UPDATE shape_features SET requirement_kinds = ? WHERE id = ?')
+    .run(JSON.stringify(Object.fromEntries(AGREED.map((a) => [a.id, { kind: 'confirmed', role: 'qa' }]))), w.f.id);
+  w.settle(w.pids[3]);
+  assert.equal(w.view().ship.ready, false);
+  await w.verifierSettles({ result: { held: [], gaps: [] }, decision: null }).out;
+  assert.equal(w.view().ship.ready, true);
+});
+
+test("Ship's own changelog commit keeps the check; a changelog commit on anything else does not", async () => {
+  const w = world();
+  w.settle(w.pids[3]);
+  await w.verifierSettles(CLEAN).out;
+  w.commit(4, 'Changelog');
+  assert.equal(w.view().ship.ready, false);
+  const r = { ok: true, sha: w.headSha(), via: 'commit-tree' };
+  assert.equal(recordShipCommit(w.f.id, r), r);
+  assert.equal(w.view().ship.ready, true, 'a ship that failed half way can go on');
+  w.commit(4, 'round');
+  w.commit(4, 'Changelog');
+  recordShipCommit(w.f.id, { ok: true, sha: w.headSha(), via: 'commit-tree' });
+  assert.equal(w.view().ship.ready, false, 'a commit slipped in before it');
 });

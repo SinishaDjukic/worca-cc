@@ -12,6 +12,7 @@ import { sliceOfTicket, sliceGateState, featureBase, featureRootSource, busySlic
 import { recordSettledFigures as recordFigures } from './measure.mjs';
 import { verifyAfterSettled, verifyCheckOfPipeline } from './verifier.mjs';
 export { createHeldStops } from './held-stops.mjs';
+export { recordShipCommit } from './verifier.mjs';
 
 /**
  * afterRunSettled's hook (D17): the Verifier first (small runs C5: a check may start, or a Verifier run's result is

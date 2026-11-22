@@ -356,6 +356,7 @@ on('D1: a marked feature records requirementsMet as owned holds plus confirmed m
   db().prepare('UPDATE shape_features SET outline = ?, requirement_kinds = ? WHERE id = ?')
     .run(JSON.stringify(o), JSON.stringify({ 'R-comp-4': { kind: 'confirmed', role: 'compliance' } }), fid);
   db().prepare('UPDATE pipelines SET shape_stats = ? WHERE id = ?').run(JSON.stringify({ smallRuns: true }), p1);
+  recordShip(fid, { mode: 'stacked' });   // shipped: no Verifier check is waited for
   assert.deepEqual(recordFeatureFigures(fid).figures.requirementsMet, { met: 2, total: 3 });
   setFeatureAcceptance(fid, [{ id: 'R-comp-4', mark: 'met' }]);
   assert.deepEqual(recordFeatureFigures(fid).figures.requirementsMet, { met: 3, total: 3 });

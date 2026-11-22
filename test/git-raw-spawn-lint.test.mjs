@@ -26,6 +26,7 @@ const ALLOWED = {
   'src/core/workspace-map/files.mjs': [1, 'env from guardedGitEnv'],
   'src/core/repo-readiness/facts.mjs': [1, 'gitOut(): env from guardedGitEnv (the agent-readiness facts and fingerprint)'],
   'src/core/shape/features.mjs': [1, 'baseName(): plumbing (git remote, lists names only), env from guardedGitEnvSync'],
+  'src/core/shape/verifier.mjs': [1, 'gitOut(): plumbing (for-each-ref, rev-parse), env from guardedGitEnvSync'],
   'src/core/git-lock.mjs': [1, 'plumbing: rev-parse / for-each-ref'],
   'src/core/in-base.mjs': [1, 'plumbing: merge-base / rev-parse'],
   'src/core/store.mjs': [1, 'plumbing: rev-parse --git-common-dir'],

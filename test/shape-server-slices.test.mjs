@@ -1606,7 +1606,9 @@ test('a Verifier run this server is still finishing: view and card read verifyin
   try {
     assert.equal((await view(f.id)).verify.state, 'verifying');
     assert.equal((await card()).verify.state, 'verifying');
-    assert.equal((await post(`/api/shape/features/${f.id}/resume`, {})).status, 409);
+    const refused = await post(`/api/shape/features/${f.id}/resume`, {});
+    assert.equal(refused.status, 409);
+    assert.deepEqual(await refused.json(), { code: 'NOTHING_TO_RESUME', error: 'nothing to resume now: a run is still finishing, or Shaper small runs is off' });
     e.settled = true;
     assert.deepEqual([(await view(f.id)).verify.state, (await view(f.id)).status, (await card()).verify.state], ['halted', 'active', 'halted']);
   } finally { dropEntry(e); }
@@ -1634,4 +1636,67 @@ shipT('a run or a round this server is still finishing: Ship answers 409 NOT_REA
       assert.deepEqual(seen.filter((a) => a[0] === 'gh' || a[1] === 'push'), []);
     } finally { dropEntry(e); }
   }
+}));
+
+// The ship rule at the moment of shipping: POST /ship asks it again, whatever the page showed.
+shipT('POST /ship of a marked feature, flag on: 409 NOT_READY with no push and no gh call unless a clean check is on record for the exact head', () => withEnvVars(SMALL_ON, async () => {
+  const seen = []; stubShip(seen);
+  const w = shipWorld();
+  const db = getDb();
+  db.prepare('UPDATE pipelines SET shape_stats = ? WHERE id = ?').run(JSON.stringify({ smallRuns: true }), w.pids[0]);
+  const tip = (pid) => git(w.dir, 'rev-parse', `feat/${pid}`);
+  const store = (checks) => {
+    const o = JSON.parse(db.prepare('SELECT outline FROM shape_features WHERE id = ?').get(w.f.id).outline);
+    db.prepare('UPDATE shape_features SET outline = ? WHERE id = ?').run(JSON.stringify({ ...o, verify: { checks } }), w.f.id);
+  };
+  const clean = () => ({ round: 1, ticketId: null, pipelineId: null, head: { index: 3, pipelineId: w.pids[2] }, headSha: tip(w.pids[2]),
+    tips: Object.fromEntries(w.pids.map((p) => [p, tip(p)])), state: 'clean', result: { held: [], gaps: [] }, gapRuns: [], extra: 0, fixCycles: 1, at: '2026-01-01T00:00:00.000Z' });
+  const commit = (pid) => { git(w.dir, 'checkout', '-q', `feat/${pid}`); writeFileSync(join(w.dir, `late-${nextId()}.txt`), 'x'); git(w.dir, 'add', '-A');
+    git(w.dir, 'commit', '-qm', 'late'); git(w.dir, 'checkout', '-q', 'main'); };
+  const refused = async (why) => {
+    const r = await ship(w.f.id, 'stacked');
+    assert.equal(r.status, 409, why);
+    assert.equal((await r.json()).code, 'NOT_READY', why);
+    assert.deepEqual(seen.filter((a) => a[0] === 'gh' || a[1] === 'push'), [], why);
+  };
+  await refused('no check on record');
+  store([clean()]);
+  assert.equal((await view(w.f.id)).ship.ready, true);
+  commit(w.pids[2]);
+  await refused('a commit on the head after the page read ready');
+  store([clean()]);
+  commit(w.pids[0]);
+  await refused("a commit on an earlier run's branch, which ships too");
+  store([{ ...clean(), headSha: null }]);
+  await refused('a check with no head');
+  store([clean()]);
+  const round = nextId();
+  seedPipelineRow({ id: round, projectKey: projectKey(w.dir), status: 'interrupted', branch: { source: w.last, sameAsSource: true, roundOf: { pipelineId: w.pids[2], round: 2, request: 'blue' } } });
+  await refused('an interrupted round');
+  setPipe(round, 'stopped');
+  // The changelog commit is Ship's own: a ship that fails after it goes on without a new check.
+  stubShip(seen, { ready: () => failRun('nope') });
+  assert.equal((await ship(w.f.id, 'stacked')).status, 500);
+  assert.match(git(w.dir, 'show', `${w.last}:CHANGELOG.md`), /### Charts/);
+  stubShip(seen);
+  const r = await ship(w.f.id, 'stacked');
+  assert.equal(r.status, 200, await r.clone().text());
+  assert.ok(seen.some((a) => a[0] === 'git' && a[1] === 'push'));
+}));
+
+// A paused round that is stopped settles in no run of its own: the stop starts the check it was holding.
+test('a stopped paused round lets the first check start', () => withEnvVars(SMALL_ON, async () => {
+  const f = mk(2, 'done');
+  const db = getDb();
+  db.prepare('UPDATE pipelines SET shape_stats = ? WHERE id = ?').run(JSON.stringify({ smallRuns: true }), f.pid);
+  const p2 = pipe('done');
+  db.prepare('UPDATE shape_feature_slices SET pipeline_id = ? WHERE feature_id = ? AND idx = 2').run(p2, f.id);
+  db.prepare("UPDATE scheduled_runs SET status = 'fired', pipeline_id = ? WHERE id = (SELECT ticket_id FROM shape_feature_slices WHERE feature_id = ? AND idx = 2)").run(p2, f.id);
+  const round = nextId();
+  seedPipelineRow({ id: round, projectKey: projectKey(project), status: 'stopped', branch: { source: 'main', sameAsSource: true, roundOf: { pipelineId: p2, round: 2, request: 'blue' } } });
+  const { stopPausedPipeline } = await import('../ui/server.mjs');
+  await stopPausedPipeline(round).catch(() => {});
+  const checks = JSON.parse(db.prepare('SELECT outline FROM shape_features WHERE id = ?').get(f.id).outline).verify?.checks || [];
+  assert.deepEqual(checks.map((c) => [c.round, c.state]), [[1, 'verifying']]);
+  cancelTicket(checks[0].ticketId);
 }));

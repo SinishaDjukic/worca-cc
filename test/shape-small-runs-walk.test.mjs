@@ -31,7 +31,7 @@ const { createDesignBuilds } = await import('../src/core/design/registry.mjs');
 const { snapshotVersion } = await import('../src/core/design/versions.mjs');
 const { getDb } = await import('../src/core/db.mjs');
 const { projectKey } = await import('../src/core/store.mjs');
-const { getTicket, markTicketFired } = await import('../src/core/scheduler.mjs');
+const { getTicket, markTicketFired, previousBranchesOf } = await import('../src/core/scheduler.mjs');
 const { featureView, featureOfPipeline, liveSliceFrom, featureFigures } = await import('../src/core/shape/features.mjs');
 const { careOfFeature, careOfPipeline } = await import('../src/core/shape/small-runs.mjs');
 const { createRequirementChanges } = await import('../src/core/shape/changes.mjs');
@@ -130,7 +130,7 @@ async function verifierRound(ticketId, deps) {
   const t = getTicket(ticketId, { withRequest: true });
   assert.equal(t.request.workflowId, 'wf_shape_verify');
   const orch = createOrchestrator({ projectDir: t.request.projectDir, workflowId: t.request.workflowId, prompt: t.request.prompt,
-    claude: { mock: true }, shape: t.request.shape });
+    claude: { mock: true }, shape: t.request.shape, branch: { source: previousBranchesOf(t.after.id).sourceBranch } });   // as fireTicket does
   const asked = [];
   orch.on('question', (q) => asked.push(q));
   const res = await orch.run();
@@ -275,6 +275,7 @@ test('email for website X: Start to Ship with a stop, a change and a Verifier ga
     await verifierRound(checks()[1].ticketId, deps);
     v = featureView(fid);
     assert.equal(v.verify.state, 'clean');
+    assert.equal(checks()[1].headSha, git(dir, 'rev-parse', branches[5]), 'the real Verifier run read the head Ship pushes');
     assert.equal(v.ship.ready, true);
     assert.equal(oneCardModel({ own: null, card: { feature: v, smallRuns: true } }).word, VERIFY_WORDS.clean);
 
