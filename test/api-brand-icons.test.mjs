@@ -2,7 +2,7 @@
 // file at a time; anything else, a path outside icons/ above all, is the /vendor tail's plain no-store 404.
 import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
-import http from 'node:http';
+import { appServer } from './helpers/app-server.mjs';
 
 import { useTempHome } from './helpers/temp-home.mjs';
 
@@ -15,7 +15,7 @@ let testing;
 before(async () => {
   const mod = await import('../ui/server.mjs');
   testing = mod._testing;
-  srv = http.createServer(mod.app);
+  srv = appServer(mod.app);
   await new Promise((resolve, reject) => {
     srv.once('error', reject);
     srv.listen(0, '127.0.0.1', () => {

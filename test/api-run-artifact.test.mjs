@@ -5,7 +5,7 @@
 // read — run dir first, store root second. Server idiom = test/history-api.test.mjs.
 import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
-import http from 'node:http';
+import { appServer } from './helpers/app-server.mjs';
 import { mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -52,7 +52,7 @@ before(async () => {
   await writeFile(join(ws.dir, 'result.md'), '# ws\n', 'utf8');
   recordArtifact(wsId, 'result', 'result.md');
   const { app } = await import('../ui/server.mjs');
-  srv = http.createServer(app);
+  srv = appServer(app);
   await new Promise((r) => srv.listen(0, '127.0.0.1', r));
   base = `http://127.0.0.1:${srv.address().port}`;
 });

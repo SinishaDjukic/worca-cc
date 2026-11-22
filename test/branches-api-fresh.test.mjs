@@ -3,7 +3,7 @@
 // fetched.
 import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
-import http from 'node:http';
+import { appServer } from './helpers/app-server.mjs';
 import { mkdtemp, rm, writeFile, stat } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -23,7 +23,7 @@ before(async () => {
   const { app } = await import('../ui/server.mjs');
   ({ addProject } = await import('../src/core/projects.mjs'));
   ({ _testing: gitSync } = await import('../src/core/git-sync.mjs'));
-  srv = http.createServer(app);
+  srv = appServer(app);
   await new Promise((r) => srv.listen(0, '127.0.0.1', r));
   base = `http://127.0.0.1:${srv.address().port}`;
 });
