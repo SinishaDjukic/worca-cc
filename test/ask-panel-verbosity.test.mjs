@@ -4,6 +4,8 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
 import { makePanel } from './helpers/ask-panel-harness.mjs';
+import { cssRules } from './helpers/css-rules.mjs';
+import { readStyleCss } from '../src/core/read-style-css.mjs';
 
 const TID = 'ask_00000001';
 const THREAD = { id: TID, title: 'T', createdAt: 't', updatedAt: 't', model: null, effort: null, sessionId: null, context: null, totals: {} };
@@ -163,4 +165,30 @@ test('loading a thread with verbosity caveman shows Style · Caveman', async () 
   assert.equal(label(ctx), 'Style · Caveman');
   assert.equal(btn(ctx).dataset.minLevel, undefined, 'shown at every interface level');
   ctx.panel.destroy();
+});
+
+const STYLE_RULES = cssRules(readStyleCss());
+const topRules = (sel) => STYLE_RULES.filter((r) => r.sel === sel && r.media === '');
+const decl = (r, prop) => {
+  const m = r && r.body.match(new RegExp(`(?:^|;)\\s*${prop}\\s*:\\s*([^;]+)`));
+  return m ? m[1].trim() : null;
+};
+
+test('the Style popover opens above the composer box, on the Style pill\'s side, capped and scrolling like the scope and Sets pickers', () => {
+  const rules = topRules('.ask-pop-verbosity');
+  assert.equal(rules.length, 1, 'exactly one top-level .ask-pop-verbosity rule');
+  const [rule] = rules;
+  assert.equal(decl(rule, 'bottom'), 'calc(var(--ask-box-top) + 6px)', 'it opens upward above the box, not below it');
+  assert.equal(decl(rule, 'left'), 'var(--ask-col-inset)', 'it sits on the Style pill\'s side (the left group)');
+  assert.equal(decl(rule, 'right'), null, 'it sits on the Style pill\'s side (the left group)');
+  assert.equal(decl(rule, 'max-height'), 'min(420px,70%)', 'all six rows stay reachable');
+  assert.equal(decl(rule, 'overflow-y'), 'auto', 'all six rows stay reachable');
+  assert.match(decl(rule, 'width') || '', /^\d+px$/, 'a fixed width: the panel never collapses to its content');
+  for (const sibling of ['.ask-pop-mcp', '.ask-pop-scope']) {
+    const sib = topRules(sibling);
+    assert.equal(sib.length, 1, `exactly one top-level ${sibling} rule`);
+    for (const prop of ['bottom', 'left', 'max-height', 'overflow-y']) {
+      assert.equal(decl(rule, prop), decl(sib[0], prop), `${prop} follows ${sibling}`);
+    }
+  }
 });
