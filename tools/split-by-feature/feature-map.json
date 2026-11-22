@@ -712,6 +712,7 @@
           ".wft",
           "input.wft-",
           ".badge.wft-",
+          "button.badge.wft-",
           ".mk-dialog-body > .wft-"
         ],
         "feature": "workflows",
