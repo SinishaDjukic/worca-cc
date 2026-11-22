@@ -23,7 +23,7 @@ import { stopOptionOf } from '../../shared/shape/run-stops.mjs';
 import { CHANGES_MAX } from '../../shared/shape/req-change.mjs';
 import { PLAN_ASK_KIND } from './run.mjs';
 import { roundsOf } from './rounds.mjs';
-import { verifyView, startVerifyCheck } from './verifier.mjs';
+import { verifyView, startVerifyCheck, stillFinishing } from './verifier.mjs';
 import { getWatch, stoppedWatchFact } from '../pr-watch.mjs';
 import { clipTitle } from '../title.mjs';
 import { readRunTags } from '../run-tags-store.mjs';
@@ -401,11 +401,15 @@ export function featureView(id, { live = () => null, finishing = () => false, on
   // With the flag on, a halted Verifier waits for Resume, so its feature is not done: the card's controls are for an active one.
   const status = f.status === 'active' && done === slices.length && !(verify && verify.state === 'halted' && shaperSmallRunsOn()) ? 'done' : f.status;
   const verified = !verify || verify.state === 'clean' || verify.state === 'accepted';
+  // Invariant (flag on): Ship opens no pull request for a small-runs feature before its Verifier check passed on the head
+  // it ships. The check starts in the last settle, so a run or round still finishing holds Ship until then. Not covered: a
+  // round after the check, and a last settle this process never ran with the flag on (no check starts for either).
+  const settling = shaperSmallRunsOn() && smallRunsOfFeature(f.id) && stillFinishing(slices, finishing);
   // A ship whose PRs were all closed unmerged is withdrawn: the feature ships again (the ship route clears the record).
   const shipPrs = slices.map((s) => s.pr).filter((p) => p && p.url);
   const shipped = !!f.ship_mode && !(shipPrs.length && shipPrs.every((p) => p.state === 'CLOSED'));
   const release = shipped && f.release_version ? { version: f.release_version, url: f.release_url || null, error: f.release_error || null } : null;
-  const ship = { ready: slices.length > 0 && done === slices.length && f.status === 'active' && !shipped && !roundLive && verified,
+  const ship = { ready: slices.length > 0 && done === slices.length && f.status === 'active' && !shipped && !roundLive && verified && !settling,
     mode: shipped ? f.ship_mode : null, prUrl: shipped ? f.ship_pr_url || null : null, lastPrUrl, suggested: null, linesAdded: null,
     linesRemoved: null, files: null, release,
     // s4: what the applied Ship card shows, wherever it renders (chat, group page, Plans).

@@ -56,7 +56,9 @@ const allRunsDone = (view) => view.slices.length > 0
 
 /** A run reads done before its commit and teardown. `finishing(pipelineId)` (the server's isFinishingRun) says this process
  *  is still inside one: whether any run or round of the feature is. */
-const stillFinishing = (slices, finishing) => (slices || []).some((s) => [s, ...(s.rounds || [])].some((r) => r.pipelineId && finishing(r.pipelineId)));
+export function stillFinishing(slices, finishing) {
+  return (slices || []).some((s) => [s, ...(s.rounds || [])].some((r) => r.pipelineId && finishing(r.pipelineId)));
+}
 
 /**
  * D7: start the next check when every run and round is done, no check is verifying and the head moved since the latest

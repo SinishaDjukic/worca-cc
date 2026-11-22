@@ -632,7 +632,12 @@ its own PR when it finishes, before these blocks. Ship is blocked:
 - with `ACCEPTANCE_INCOMPLETE` while a confirmed requirement is unmarked; the Ship card reads
   "Waiting for Compliance to confirm R-comp-4";
 - with `NOT_READY` until the Verifier reads "Ready to ship", also when every run is done but a gap run's re-check has
-  not run yet.
+  not run yet, or while Worca is still committing or cleaning up after any of its runs.
+
+With the flag on, Ship opens no pull request for a small-runs feature before its Verifier check passed on the head it
+ships. Choosing to ship with the gap counts as passed. Two cases are not covered, as no check starts for them: a round
+asked for after the check, and a feature with no check whose last run finished while the flag was off, or whose cleanup
+Worca was stopped in.
 
 Each PR body has exactly one `Care: …` line, then one line per requirement marked Not met or Dropped
 (`Not met: R-comp-4 · the reason`).

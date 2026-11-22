@@ -1616,3 +1616,22 @@ test('a Verifier run this server is still finishing: view and card read verifyin
     assert.equal(db.prepare('SELECT COUNT(*) AS n FROM scheduled_runs').get().n, n, 'flag off: no Verifier run');
   });
 }));
+
+shipT('a run or a round this server is still finishing: Ship answers 409 NOT_READY with no push and no gh call, and no Ship card is posted', () => withEnvVars(SMALL_ON, async () => {
+  const seen = []; stubShip(seen);
+  const w = shipWorld();
+  getDb().prepare('UPDATE pipelines SET shape_stats = ? WHERE id = ?').run(JSON.stringify({ smallRuns: true }), w.pids[0]);
+  const round = nextId();
+  seedPipelineRow({ id: round, projectKey: projectKey(w.dir), status: 'done', branch: { source: w.last, sameAsSource: true, roundOf: { pipelineId: w.pids[2], round: 2, request: 'blue' } } });
+  for (const pid of [w.pids[0], round]) {
+    const e = liveEntry(pid, { status: 'done' });   // done, and the run's promise is still open
+    try {
+      const r = await ship(w.f.id, 'stacked');
+      assert.equal(r.status, 409, pid);
+      assert.equal((await r.json()).code, 'NOT_READY');
+      assert.equal((await view(w.f.id)).ship.ready, false);
+      assert.equal(await testing.offerShipCard(w.pids[2]), null);
+      assert.deepEqual(seen.filter((a) => a[0] === 'gh' || a[1] === 'push'), []);
+    } finally { dropEntry(e); }
+  }
+}));

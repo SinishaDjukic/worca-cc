@@ -543,6 +543,38 @@ test('a head still finishing starts no check and offers no Resume; its own settl
   assert.deepEqual(w.checks().map((c) => [c.round, c.state, c.head.pipelineId]), [[1, 'gaps', w.pids[3]], [2, 'verifying', gap]]);
 });
 
+test('no check yet: Ship is not ready while a run or a round is still finishing; the settle starts check 1 and Ship waits for it', async () => {
+  const w = world();
+  w.tearingDown.add(w.pids[0]);
+  w.settle(w.pids[3]);   // the head settles while run 1 is still finishing
+  assert.equal(w.checks().length, 0);
+  assert.equal(w.view().ship.ready, false);
+  assert.equal(flagOff(() => w.view().ship.ready), true, 'flag off: as on dev');
+  w.tearingDown.clear();
+  w.settle(w.pids[0]);
+  assert.deepEqual(w.checks().map((c) => [c.round, c.state]), [[1, 'verifying']]);
+  assert.equal(w.view().ship.ready, false);
+  await w.verifierSettles({ result: result([]), headSha: 'abc', decision: null }).out;
+  assert.equal(w.view().ship.ready, true);
+  // A round that is done but still finishing holds the first check and Ship the same way.
+  const w2 = world();
+  const round = pipe('done');
+  getDb().prepare('UPDATE pipelines SET branch = ? WHERE id = ?')
+    .run(JSON.stringify({ source: 'main', feature: `feat/${round}`, roundOf: { pipelineId: w2.pids[3], round: 2, request: 'fix it' } }), round);
+  w2.tearingDown.add(round);
+  w2.settle(w2.pids[3]);
+  assert.equal(w2.checks().length, 0);
+  assert.equal(w2.view().ship.ready, false);
+  w2.tearingDown.clear();
+  w2.settle(round);
+  assert.deepEqual(w2.checks().map((c) => [c.round, c.state]), [[1, 'verifying']]);
+  assert.equal(w2.view().ship.ready, false);
+  // An unmarked feature never waits for it: dev's keys and dev's ready.
+  const plain = createSliceFeature({ pipelineId: pipe('done'), projectDir: root, title: 'Plain', outline: { why: 'x', slices: OUTLINE.slices.slice(0, 1) },
+    perspectives: ['product'], workflowId: 'wf_shape' });
+  assert.equal(featureView(plain.id, { finishing: () => true }).ship.ready, true);
+});
+
 test('a failed Verifier run still finishing reads verifying; its settle repaints the card, which then offers Resume', () => {
   const w = world();
   w.settle(w.pids[3]);
