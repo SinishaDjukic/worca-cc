@@ -29,9 +29,13 @@
 //   back when it ends (restoreCursorProjectFiles, G14). With --force, approval is deny-list only.
 // - unverified: the prompt is the last positional argument (no stdin mode is relied on); the agent can read a file
 //   outside its cwd when told to (the long-prompt staging relies on it).
+// - seen on cursor-agent 2026.11.11-b912975 (a real ~/.cursor, no spawn traced): Cursor HAS hooks. ~/.cursor/hooks.json
+//   holds user commands for beforeSubmitPrompt, preToolUse, postToolUse, postToolUseFailure, beforeShellExecution,
+//   beforeMCPExecution, afterAgentResponse and stop. worca neither writes nor reads them (`hookTelemetry` stays false),
+//   and no flag is known that turns the user's hooks off, so they may run on every spawn (and ~/.cursor/skills load).
 // - assumed absent (capability false): a system-prompt flag, an effort flag, a per-spawn tool allowlist, sub-agents,
-//   hooks, a skills folder, a turn or spend cap, and any switch that turns the shell or file tools off — so an Ask
-//   chat (CURSOR_ASK_LOCKDOWN) and a read-only spawn refuse.
+//   a skills folder worca can fill, a turn or spend cap, and any switch that turns the shell or file tools off — so
+//   an Ask chat (CURSOR_ASK_LOCKDOWN) and a read-only spawn refuse.
 import { mkdirSync, mkdtempSync, readFileSync, writeFileSync, rmSync } from 'node:fs';
 import { execCli, cliRefusal } from './exec-cli.mjs';
 import { CURSOR_CLI } from './cli-specs.mjs';
