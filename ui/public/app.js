@@ -2003,7 +2003,11 @@ function handleServerMessage(msg) {
   // Shaper small runs C1: the Prototype step moved; its planning run's card re-reads its saved state.
   if (msg.type === 'shape-prototype') { refreshShaperCardsOf(msg.pipelineId); return; }
   if (msg.type === 'shape-feature') {
+    // Small runs C3 (D13): an open stop of this feature re-reads its slice, so an answer held in any tab draws its
+    // answered line. Read the held state before the cache clears: only a stop whose held state changed repaints.
+    const heldBefore = openStopsHeld(msg.id);
     SLICE_INFO.clear();
+    repaintHeldStops(msg.id, heldBefore);
     refreshShapeFeatures(msg.id);
     void refreshGroupFeatureLock(msg.id);
     refreshShaperCards();
@@ -6825,7 +6829,7 @@ registerAskRenderer('clarify', {
 // Gate and recovery are step cards for every run (shaper-cards D3): their buttons post through stepPost themselves.
 registerAskRenderer('gate', {
   title: () => 'Cycle gate',
-  render: (panel, pq, ctx) => renderGateCard(panel, pq, { ...stepDeps(ctx, pq),
+  render: (panel, pq, ctx) => renderGateCard(panel, pq, { ...stepDeps(ctx, pq), ...stopDeps(ctx, pq, panel),
     wireCopy: gateWireCopy(ctx.run, pq.wireId), tagLevel, submit: (p) => stepPost(ctx.run, p) }),
 });
 registerAskRenderer('recovery', {
@@ -6866,7 +6870,10 @@ registerAskRenderer('prototype', {
 registerAskRenderer('plan', {
   title: (pq) => (pq.plan && pq.plan.outline ? `Slices ready for your approval · v${pq.plan.round || 1}` : `Plan ready for your approval · v${(pq.plan && pq.plan.round) || 1}`),
   count: (pq) => { const c = pq.plan && pq.plan.check; return c && Number.isFinite(c.total) ? `${pq.plan.outline ? 'Outline' : 'Shape'} ${c.passed}/${c.total}` : null; },
-  render: (panel, pq, ctx) => (pq.plan && pq.plan.outline
+  // Small runs C3 (D11): a marked run's stop on a plan ask is drawn by the gate card, as one question.
+  render: (panel, pq, ctx) => (pq.stop
+    ? renderGateCard(panel, pq, { ...stepDeps(ctx, pq), ...stopDeps(ctx, pq, panel), tagLevel, submit: (p) => stepPost(ctx.run, p) })
+    : pq.plan && pq.plan.outline
     ? renderOutlineBody(panel, pq, outlineBodyDeps(ctx))
     : renderPlanBody(panel, pq, planBodyDeps(ctx))),
   setErrors: (panel, errors) => { if (panel && panel.__plan) panel.__plan.setErrors(errors); },
@@ -6882,6 +6889,61 @@ function stepDeps(ctx, pq) {
   const r = ctx.run;
   const who = pq.nodeId ? nodeLabel(r.stepper, pq.nodeId) : '';
   return { doc: ctx.doc || document, run: r, title: stepTitle(pq, who), chip: stepChip(pq, r) };
+}
+
+/** Small runs C3 (D12, D13): a stop's extra deps. A stop is answered on the feature card only: the run side panel and the
+ *  run page (`readOnly`) draw only its findings; an answer held for another run's turn (the feature view's `stop.held`,
+ *  read through the slice info) draws the one answered line. */
+function stopDeps(ctx, pq, panel) {
+  if (!pq || !pq.stop) return {};
+  const r = ctx.run;
+  const readOnly = !!(panel.closest && panel.closest('[data-presentation="panel"], #run-detail'));
+  const repaint = () => { if (panel.isConnected && r.pendingQuestion === pq) renderQpanel(r, panel.parentElement); };
+  const info = r && r.pipelineId ? sliceInfoFor(r.pipelineId, repaint) : null;
+  const held = info && info.stop && info.stop.held ? { value: info.stop.value } : null;
+  const pick = typeof panel.__stopPick === 'string' ? panel.__stopPick : null;   // the person's pick across a repaint
+  return { readOnly, ...(held ? { held } : {}), ...(pick ? { pick } : {}) };
+}
+
+/** A stop's held state as read from its slice info: '' when nothing is held. */
+const heldSigOf = (info) => (info && info.stop && info.stop.held ? `held:${info.stop.value}` : '');
+
+/** The open stops of feature `featureId` (or whose slice is not known yet), each with its held state now. */
+function openStopsHeld(featureId) {
+  const out = [];
+  for (const r of runs.values()) {
+    const pq = r && r.pendingQuestion;
+    if (!pq || !pq.stop || !r.pipelineId) continue;
+    const info = SLICE_INFO.get(r.pipelineId);
+    if (info && info.featureId !== featureId) continue;
+    out.push({ r, pq, sig: heldSigOf(info) });
+  }
+  return out;
+}
+
+/** Re-read each stop's slice and repaint its panels only when the held state changed (fit: a repaint must not drop
+ *  the person's pick or focus). */
+function repaintHeldStops(featureId, before) {
+  for (const { r, pq, sig } of before) {
+    sliceInfoFor(r.pipelineId, (info) => {
+      if (info.featureId !== featureId || heldSigOf(info) === sig || r.pendingQuestion !== pq) return;
+      for (const panel of qpanelsFor(r)) repaintStopPanel(r, panel);
+    });
+  }
+}
+
+/** Rebuild a stop's panel, carrying the person's pick (as the preset) and the focused tile or primary across it. */
+function repaintStopPanel(r, panel) {
+  const sel = panel.querySelector('.qopt.sel');
+  const a = document.activeElement;
+  const had = a && a !== document.body && panel.contains(a)
+    ? (a.matches?.('.qopt') ? { tile: a.dataset.value } : a.matches?.('[data-qpanel-submit]') ? { go: true } : null) : null;
+  panel.__stopPick = sel && !sel.dataset.preset ? sel.dataset.value : null;
+  try { renderQpanel(r, panel.parentElement); } finally { delete panel.__stopPick; }
+  const cur = document.activeElement;
+  if (!had || (cur && cur !== document.body && cur.isConnected)) return;
+  const target = had.tile ? [...panel.querySelectorAll('.qopt')].find((t) => t.dataset.value === had.tile) : panel.querySelector('[data-qpanel-submit]');
+  (target || panel.querySelector('[data-qpanel-submit]'))?.focus();
 }
 
 /** The outline body's deps: the plan body's posting rule (the gate read at post time, S4) and its confirm dialog. */
@@ -33270,7 +33332,7 @@ function chatPaintQuestion(ref, host) {
     if (r._answering) setPanelBusy(r, true);   // an answer already in flight (paintRdQuestions' rule)
   }
   return { id: pq.id || null, kind: askKindOf(pq), heading: askHeading(r, pq),
-    step: pq.nodeId ? nodeLabel(r.stepper, pq.nodeId) : '', stepCard: isStepCard(pq, r, true) };
+    step: pq.nodeId ? nodeLabel(r.stepper, pq.nodeId) : '', stepCard: isStepCard(pq, r, true), stop: !!pq.stop };
 }
 /** Shaper small runs C1 (R-ux-2): the Prototype step's working moment (building, reviewing, matching) on the one card,
  *  from the card's saved state while no ask is open: the same renderer as the step's asks, with nothing to answer.
@@ -37795,7 +37857,8 @@ function paintRdActions(screen, r, m = rdModel(r)) {
     // The full page draws the waiting question right under its header, on every tab: an Answer that only scrolls to it
     // is noise there. The Chat panel keeps it.
     // The Prototype ask is answered on the feature card only: the panel has no Answer for it either.
-    skip: [...MENU_ACTIONS, ...HEAD_ACTIONS, ...(screen.dataset.presentation === 'panel' && !(r.pendingQuestion && r.pendingQuestion.kind === 'prototype') ? [] : ['answer'])],
+    // Small runs C3 (D12): a stop is answered on the feature card only, as the Prototype ask.
+    skip: [...MENU_ACTIONS, ...HEAD_ACTIONS, ...(screen.dataset.presentation === 'panel' && !(r.pendingQuestion && (r.pendingQuestion.kind === 'prototype' || r.pendingQuestion.stop)) ? [] : ['answer'])],
     // The model reads pausing as paused, but chatRunControls.resume does nothing while the run is still live.
     disable: { 'ask-changes': "Ask for changes from the run's chat", ...(st === 'pausing' ? { resume: 'Pausing…' } : {}) },
     labels: { answer: answerLabelOf(screen.querySelector('.rd-questions')) },

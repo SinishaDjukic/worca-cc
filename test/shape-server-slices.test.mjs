@@ -1383,3 +1383,86 @@ test('B4: POST /api/answer and /api/runs/:id/answer answer 422 split-not-approva
     }
   }
 });
+
+// ── Small runs C3 (D9): a stop's answer waits for the run's turn ───────────────────────────────────────────────
+const C3_STOP = { reason: 'objection', run: 2, pick: 'another', head: 'Run 2 · Code review objects', text: 't', node: 'n_review', findingsLine: '',
+  options: [{ value: 'another', payload: { decision: 'another' } }, { value: 'continue', payload: { decision: 'continue' } }] };
+/** A 4-run feature: run 1 done, run 2 live on a stop question, run 3 live (going) unless `three` is false. */
+function stoppedFeature({ three = true } = {}) {
+  getDb().prepare("UPDATE scheduled_runs SET status = 'canceled' WHERE status = 'scheduled'").run();
+  const f = mk(4, 'done');
+  const tix = getDb().prepare('SELECT ticket_id FROM shape_feature_slices WHERE feature_id = ? ORDER BY idx').all(f.id).map((r) => r.ticket_id);
+  const answered = [];
+  const entryOf = (index, extra = {}) => {
+    const pid = pipe('running');
+    getDb().prepare("UPDATE scheduled_runs SET status = 'fired', pipeline_id = ? WHERE id = ?").run(pid, tix[index - 1]);
+    const orch = Object.assign(new EventEmitter(), { runShape: { slice: { feature: f.id, index } }, state: { shaping: { approved: { file: 'p.md' } } },
+      answer: (id, payload, by) => answered.push({ index, id, payload, by }) });
+    const e = { id: `c3-${pid}`, kind: 'run', pipelineId: pid, status: 'running', events: [], pendingQuestion: null, orch, ...extra };
+    runs.set(e.id, e);
+    return e;
+  };
+  const e2 = entryOf(2, { pendingQuestion: { id: 'gate-w9-3', kind: 'gate', stop: C3_STOP } });
+  const e3 = three ? entryOf(3) : null;
+  const cleanup = () => { for (const e of [e2, e3]) if (e) runs.delete(e.id); getDb().prepare("UPDATE scheduled_runs SET status = 'canceled' WHERE status = 'scheduled'").run(); };
+  return { f, tix, e2, e3, answered, cleanup };
+}
+
+test('C3 routes: a held answer replies {ok:true, held:true}; a foreign payload 422 and a second answer 409 change nothing', async () => {
+  const w = stoppedFeature();
+  try {
+    let r = await post('/api/answer', { runId: w.e2.id, id: 'gate-w9-3', payload: { decision: 'stop' } });
+    assert.equal(r.status, 422);
+    assert.match(JSON.stringify(await r.json()), /not one of this stop's options/);
+    assert.equal(w.e2.heldStop ?? null, null);
+    r = await post('/api/answer', { runId: w.e2.id, id: 'gate-w9-3', payload: { decision: 'another' } });
+    assert.deepEqual(await r.json(), { ok: true, held: true });
+    assert.equal(w.e2.pendingQuestion.id, 'gate-w9-3', 'the question stays open');
+    r = await post('/api/answer', { runId: w.e2.id, id: 'gate-w9-3', payload: { decision: 'continue' } });
+    assert.equal(r.status, 409);
+    assert.equal((await r.json()).error, 'this stop is already answered: it goes on after run 3');
+    assert.equal(w.answered.length, 0);
+    assert.equal((await view(w.f.id)).slices[1].state, 'questions');
+  } finally { w.cleanup(); }
+});
+
+test('C3: deliver runs before runDueTickets: the held run goes on and the independent run 4 does not fire on that tick', () => withEnvVars(SMALL_ON, async () => {
+  const w = stoppedFeature();
+  try {
+    await post('/api/answer', { runId: w.e2.id, id: 'gate-w9-3', payload: { decision: 'another' } });
+    runs.delete(w.e3.id);
+    setPipe(w.e3.pipelineId, 'done');
+    await schedulerTick();
+    assert.deepEqual(w.answered.map((a) => [a.index, a.id, a.payload.decision]), [[2, 'gate-w9-3', 'another']]);
+    assert.equal(w.e2.pendingQuestion, null);
+    assert.equal(w.e2.heldStop, null);
+    assert.equal(getTicket(w.tix[3]).status, 'scheduled', 'run 2 is going again: run 4 waits');
+  } finally { w.cleanup(); }
+}));
+
+test('C3: the run-event hook delivers once as the busy run settles, with no tick in between', async () => {
+  const w = stoppedFeature({ three: false });
+  const e3 = { id: 'c3-hook', kind: 'run', status: 'running', events: [], pendingQuestion: null, pipelineId: pipe('running'),
+    orch: Object.assign(new EventEmitter(), { runShape: { slice: { feature: w.f.id, index: 3 } }, state: { shaping: { approved: { file: 'p.md' } } } }) };
+  getDb().prepare("UPDATE scheduled_runs SET status = 'fired', pipeline_id = ? WHERE id = ?").run(e3.pipelineId, w.tix[2]);
+  runs.set(e3.id, e3);
+  testing.wireRun(e3);
+  try {
+    await post('/api/answer', { runId: w.e2.id, id: 'gate-w9-3', payload: { decision: 'continue' } });
+    assert.equal(w.e2.heldStop?.after, 3);
+    setPipe(e3.pipelineId, 'done');
+    e3.status = 'done';
+    e3.orch.emit('state', { status: 'done' });
+    await sleep(30);
+    assert.equal(w.answered.length, 1);
+    e3.orch.emit('exec', { node: 'x' });
+    await sleep(30);
+    assert.equal(w.answered.length, 1, 'delivered once');
+  } finally { runs.delete(e3.id); w.cleanup(); }
+});
+
+test('C3: ui/server.mjs stays within its size cap', () => {
+  const caps = JSON.parse(readFileSync(new URL('../tools/split-by-feature/size-caps.json', import.meta.url), 'utf8'));
+  const lines = readFileSync(new URL('../ui/server.mjs', import.meta.url), 'utf8').split('\n').length - 1;
+  assert.ok(lines <= caps['ui/server.mjs'], `${lines} > ${caps['ui/server.mjs']}`);
+});

@@ -159,3 +159,14 @@ test('C1: the Prototype receipts: the remark that changed a requirement, the con
   assert.equal(stepReceipt(pq({ moment: 'failed' }), { decision: 'skip' }), 'Prototype skipped by you');
   for (const [m, d] of [['offered', 'build'], ['built', 'remark'], ['remark', 'keep'], ['failed', 'build']]) assert.equal(stepReceipt(pq({ moment: m, remark }), { decision: d }), null, `${m} ${d}`);
 });
+
+test('C3: a stop\'s receipt is its answered line (stopDoneText), and the log reads the audit line back the same', async () => {
+  const { gateStop, stopDoneText } = await import('../src/shared/shape/run-stops.mjs');
+  const { buildDecisionLog } = await import('../src/shared/shape/feature-log.mjs');
+  const stop = gateStop({ run: 8, issues: [{ severity: 'major', title: 'x' }], fixCycles: 3 });
+  const pq = { id: 'gate-w9-3', kind: 'gate', issues: [], stop };
+  assert.equal(stepReceipt(pq, { decision: 'another' }), 'Run 8: another cycle · decided by you');
+  assert.equal(stepReceipt(pq, { decision: 'another' }), stopDoneText(stop, { decision: 'another' }));
+  const log = buildDecisionLog({ sliced: true, runs: [{ index: 8, events: [stepReceipt(pq, { decision: 'continue' })] }] });
+  assert.deepEqual(log.map((r) => [r.run, r.text]), [[8, 'accepted as is · decided by you']]);
+});

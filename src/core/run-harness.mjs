@@ -1404,6 +1404,7 @@ export class RunHarness extends EventEmitter {
    *  and form answers are audited where they are written (with " by <name>"). */
   _auditDecision(pq, value, by) {
     if (!this.pipeline || !pq) return;
+    if (pq.stop) return;                 // Small runs C3 (D14): the orchestrator writes the stop's one answered line
     const d = value && typeof value === 'object' && typeof value.decision === 'string' ? value.decision : null;
     let line = null;
     if (pq.kind === 'workflow') line = `Workflow proposal **${d === 'decline' ? 'declined' : d || 'answered'}**`;
@@ -2173,13 +2174,7 @@ export class RunHarness extends EventEmitter {
       // Shaper small runs (D9): a resumed slice takes in the feature's latest finished work first (the reattach above
       // restored injectedPaths). baseTip prefers refs/remotes/origin/<base> over the local branch: a finished run's
       // last push is its final state. Never the resume's outcome.
-      try {
-        const sl = this.runShape && this.runShape.slice;
-        if (this.branchInfo && mergesLatestOnResume({ slice: sl, isWorkspace: this.isWorkspace, smallRuns: shaperSmallRunsOn() })) {
-          const src = latestFinishedSource(sl.feature, { exclude: this.pipeline?.id || null });
-          if (src && src.sourceBranch) await this._mergeFeatureBase(this.members[0], this.branchInfo, sl, { base: src.sourceBranch, onResume: true });
-        }
-      } catch (err) { this._log('worktree', 'warn', `resume: could not take in the latest finished work: ${err?.message || err}`); }
+      await this._takeInLatestFinished({ smallRuns: shaperSmallRunsOn() });
       // A run paused while its graph was still building (the build stops with the run) gets it now:
       // reused when that build had finished, else rebuilt in the background. The replay above did it already.
       if (rp.setupIncomplete !== true) {
@@ -6547,7 +6542,7 @@ export class RunHarness extends EventEmitter {
    * @returns {Promise<any>} the answer payload
    */
   async _ask({ id, kind, questions, issues, recovery, agent, nodeId, wireId, executionId, deliveryNo, holdNo, workflow, plan,
-    concern, care, prototype, askId, form, version, title, surface, data, layout, answerSchema, fileRefs, files, autoValues, validate, origin }) {
+    concern, care, prototype, stop, askId, form, version, title, surface, data, layout, answerSchema, fileRefs, files, autoValues, validate, origin }) {
     this._checkAbort();
     // No interactive prompt may OPEN on a pausing run. pause() rejects only the
     // prompt that is currently open; a queued ask (a parallel sibling's questions
@@ -6583,6 +6578,7 @@ export class RunHarness extends EventEmitter {
       ...(concern ? { concern } : {}),            // #990 s5: the implementer's plan concern (kind stays 'plan')
       ...(care ? { care } : {}),                  // Shaper small runs B2: the Start step's Care ask body
       ...(prototype ? { prototype } : {}),        // Shaper small runs C1 (D15): the Prototype step's moment and view
+      ...(stop ? { stop } : {}),                  // Shaper small runs C3 (D6): a marked run's stop question (kind stays gate/plan)
       // The ask-form envelope (spec §4, ruling X1) rides the EXISTING 'question'
       // frame — no new transport, no new slot. `id` (already emitted above) is the
       // ANSWER token; `askId` is the route-safe file token and they are never
@@ -6642,10 +6638,11 @@ export class RunHarness extends EventEmitter {
         this.pendingQuestion = { id, kind, resolve: resolveP, reject: rejectP, validate: typeof validate === 'function' ? validate : null,
           ...(plan && plan.outline ? { plan: { outline: true, round: plan.round, ...outlineKeptStub(plan) } }
             : plan && (plan.criteria || plan.error) ? { plan: { requirements: true } } : {}),
-          ...(concern ? { concern: true } : {}), ...(care ? { care } : {}), ...(prototype ? { prototype: { moment: prototype.moment } } : {}) };
+          ...(concern ? { concern: true } : {}), ...(care ? { care } : {}), ...(prototype ? { prototype: { moment: prototype.moment } } : {}),
+          ...(stop ? { stop } : {}) };
         // A throw inside a Promise executor REJECTS the ask (and fails the node): night mode
         // must never break a question the user could still answer.
-        const nq = { id, kind, questions, issues, recovery, wireId, executionId, deliveryNo, holdNo, workflow, plan, concern, care, prototype, form, version, answerSchema, autoValues, nodeId, agent, origin };
+        const nq = { id, kind, questions, issues, recovery, wireId, executionId, deliveryNo, holdNo, workflow, plan, concern, care, prototype, stop, form, version, answerSchema, autoValues, nodeId, agent, origin };
         if (kind !== PLAN_ASK_KIND || !this.auto) {
           try { this._nightArm(nq); } catch (err) { this._nightFailed(nq, `Away mode could not get ready for ${kind} ${id}: ${err?.message || err}`); }
         }
@@ -6706,6 +6703,7 @@ export class RunHarness extends EventEmitter {
    *  Never under --yes: that run's asks go the way they always did. */
   _nightLeavesToPerson(q) {
     if (this.auto) return false;
+    if (q.stop) return true;             // Small runs C3 (D16): a stop question waits for the person
     if (q.kind === PLAN_ASK_KIND) return planRule(q) === null;
     return Boolean(this.runShape) && (q.kind === 'clarify' || (q.kind === 'form' && q.origin === 'clarify'));
   }
@@ -9761,6 +9759,19 @@ export class RunHarness extends EventEmitter {
     await dropDiffBaseRefs(dir, this.pipeline.id, key).catch(() => 0);
   }
 
+  /** Shaper small runs: take in the feature's latest finished work (its branch) before this slice run goes on: on resume
+   *  (`smallRuns` = the live flag, dev's D9) and, C3 (D10), after a person answers a stop (`smallRuns` = the run's marker,
+   *  `onAnswer`). Never throws: the run goes on whatever the merge's outcome. */
+  async _takeInLatestFinished({ smallRuns, onAnswer = false } = {}) {
+    try {
+      const sl = this.runShape && this.runShape.slice;
+      if (this.branchInfo && mergesLatestOnResume({ slice: sl, isWorkspace: this.isWorkspace, smallRuns })) {
+        const src = latestFinishedSource(sl.feature, { exclude: this.pipeline?.id || null });
+        if (src && src.sourceBranch) await this._mergeFeatureBase(this.members[0], this.branchInfo, sl, { base: src.sourceBranch, ...(onAnswer ? { onAnswer: true } : { onResume: true }) });
+      }
+    } catch (err) { this._log('worktree', 'warn', `${onAnswer ? 'after an answer' : 'resume'}: could not take in the latest finished work: ${err?.message || err}`); }
+  }
+
   /** Shaper s5 (D14): merge the feature's base into this run's fresh branch when it moved; move the diff base to the
    *  merge commit, so the base's commits never count as this run's changes.
    *  Shaper small runs (D8): `{base, onResume}` merges `base` (the latest finished run's branch) into a resumed run's
@@ -9768,7 +9779,7 @@ export class RunHarness extends EventEmitter {
    *  merged base tip is recorded in `baseRefs`, so _refreshMergeBases keeps the merged commits out of this run's diff
    *  while its own commits stay in. A merge that cannot run is recorded and audited; the run goes on. */
   async _mergeFeatureBase(m, info, sl, opts = null) {
-    if (opts && opts.onResume) return this._mergeLatestOnResume(m, info, opts.base);
+    if (opts && (opts.onResume || opts.onAnswer)) return this._mergeLatestOnResume(m, info, opts.base, { onAnswer: opts.onAnswer === true });
     let base = null;
     try { base = featureBase(sl.feature); } catch { base = null; }
     if (!base || base === info.branch) return;
@@ -9783,7 +9794,7 @@ export class RunHarness extends EventEmitter {
     }
   }
 
-  async _mergeLatestOnResume(m, info, base) {
+  async _mergeLatestOnResume(m, info, base, { onAnswer = false } = {}) {
     if (!base || base === info.branch || !info.worktreeDir) return;
     const key = m.projectKey;
     // Nothing newer to take in (already merged, or no such branch): no WIP commit, no audit line, baseMerged kept.
@@ -9806,7 +9817,8 @@ export class RunHarness extends EventEmitter {
       .catch((err) => ({ merged: false, status: 'error', behind: 0, files: [], error: err?.message }));
     if (NOTHING.has(r.status)) return;
     const status = r.error === 'dirty' ? 'dirty' : r.status;   // mergeBaseInto refused a checkout with uncommitted work
-    const line = baseMovedAudit(base, info.branch, r) || (r.merged ? null : `Resumed · could not take in the latest finished work (${status}).`);
+    const lead = onAnswer ? 'After your answer' : 'Resumed';
+    const line = baseMovedAudit(base, info.branch, r) || (r.merged ? null : `${lead} · could not take in the latest finished work (${status}).`);
     if (line) await appendAudit(this.pipeline.dir, line).catch(() => {});
     const tip = r.merged && r.to ? await commitOf(info.worktreeDir, `${r.to}^2`) : null;
     const baseMerged = { base, behind: r.behind || 0, merged: !!tip, onResume: true, ...(tip ? {} : { status }) };

@@ -3,6 +3,7 @@
 // harness's audit lines, the clarify row, the feature row); the browser names a receipt with the same words.
 import { careRecordLine } from './feature-record.mjs';
 import { SKIP_LINES } from './prototype.mjs';
+import { STOP_DONE_RE } from './run-stops.mjs';
 
 const plural = (n, one) => `${n} ${n === 1 ? one : `${one}s`}`;
 
@@ -115,6 +116,9 @@ export function buildDecisionLog({ clarify = null, origin = [], sliced = false, 
       if (b) { out.push({ key: `${run}-${n}`, run: null, text: baseMovedText(b.base, run, b.files), detail: [] }); return; }
       const proto = oneCard ? parsePrototypeLine(text) : null;
       if (proto) { out.push({ key: `${run || 'p'}-${n}`, run, text: proto.text, detail: [] }); return; }
+      // Small runs C3 (D14): a stop a person answered (run-stops.mjs stopDoneText), its own decision row.
+      // The run shows once, in the row's span; the text drops its own "Run N: " (fit-2-1).
+      if (STOP_DONE_RE.test(String(text || ''))) { out.push({ key: `${run || 'p'}-${n}`, run, text: String(text).replace(/^Run \d+: /, ''), detail: [] }); return; }
       const p = parseDecisionLine(text);
       if (!p) return;
       const d = p.kind === 'requirements' && !oneCard ? { ...p, kind: 'plan' } : p;

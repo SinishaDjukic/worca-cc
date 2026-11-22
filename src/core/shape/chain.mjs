@@ -5,9 +5,21 @@ import { getDb } from '../db.mjs';
 import { previousBranchesOf } from '../scheduler.mjs';
 import { isAncestor } from '../worktree.mjs';
 import { shaperSmallRunsOn } from './small-runs.mjs';
-import { sliceOfTicket, sliceGateState, featureBase, featureRootSource } from './features.mjs';
+import { sliceOfTicket, sliceGateState, featureBase, featureRootSource, busySliceOf } from './features.mjs';
 
 export { recordSettledFigures } from './measure.mjs';
+export { createHeldStops } from './held-stops.mjs';
+
+/**
+ * Small runs C3 (D9): whether stopped run `index` of the feature may go on now. Another slice going holds it (one slice
+ * of a feature at a time); another run whose answer is held does not, so two held answers never wait on each other and
+ * are delivered one at a time. → {due:true} | {due:false, after}
+ */
+export function heldStopTurn(featureId, index, { live = () => null, now = Date.now(), isLive = null } = {}) {
+  const open = (pid) => { const l = live(pid); return l && l.stop && l.stop.held ? { ...l, stop: { ...l.stop, held: false } } : l; };
+  const busy = busySliceOf(featureId, { exclude: index, live: open, now, isLive });
+  return busy ? { due: false, after: busy.index } : { due: true };
+}
 
 /**
  * The feature's latest finished run (D5): among its slices whose pipeline is `done` and not archived, the one whose

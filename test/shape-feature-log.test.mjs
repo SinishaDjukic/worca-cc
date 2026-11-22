@@ -189,3 +189,10 @@ test('C1: the 4 Prototype log lines parse and show on the one card only', async 
     ['Requirements agreed', prototypeBuiltText(2, 2.8), PROTOTYPE_CONFIRMED]);
   assert.deepEqual(buildDecisionLog({ origin }).map((l) => l.text), ['Plan approved'], "not on dev's card");
 });
+
+test('C3 (D14): a stop\'s answered line is read back as a decision row, once, under its run', () => {
+  const log = buildDecisionLog({ origin: [], sliced: true,
+    runs: [{ index: 8, events: ['Loop on wire w9 (n_review) spent after its last round: sent to approval with 1 open issue(s).',
+      'Run 8: another cycle · decided by you', 'Review loop ran out with 2 minor issue(s): accepted · settled by the agents.'] }] });
+  assert.deepEqual(log.map((r) => [r.run, r.text]), [[8, 'another cycle · decided by you']], 'the run shows once, in its span');
+});

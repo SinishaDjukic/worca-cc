@@ -14,6 +14,7 @@ import { requirementsCheck } from '../../shared/review/requirements-coverage.mjs
 import { acceptanceGate, ledgerCheck } from '../../shared/shape/acceptance.mjs';
 import { latestChecklist, checklistMarkdown } from '../../shared/shape/review-checklist.mjs';
 import { buildDecisionLog } from '../../shared/shape/feature-log.mjs';
+import { stopOptionOf } from '../../shared/shape/run-stops.mjs';
 import { PLAN_ASK_KIND } from './run.mjs';
 import { roundsOf } from './rounds.mjs';
 import { getWatch, stoppedWatchFact } from '../pr-watch.mjs';
@@ -259,11 +260,15 @@ function sliceState(row, live, { held = true } = {}) {
 
 /** L8: the runs-map entry as featureView's `live` reads it (ui/server.mjs liveSliceOf). `waiting` is a pending plan
  *  ask, `asking` any other pending ask; `ask` names it for the feature card's open step (s2, D9). */
-export function liveSliceFrom({ runId, status, pendingQuestion = null, approved = false }) {
+export function liveSliceFrom({ runId, status, pendingQuestion = null, approved = false, heldStop = null }) {
   const pq = pendingQuestion || null;
   const plan = !!pq && pq.kind === PLAN_ASK_KIND;
+  // Small runs C3 (D8): a marked run's open stop question, and whether its answer is held for another run's turn.
+  const value = heldStop ? stopOptionOf(pq && pq.stop, heldStop.payload)?.value : null;
+  const stop = pq && pq.stop ? { reason: pq.stop.reason, held: !!heldStop,
+    ...(heldStop && Number.isInteger(heldStop.after) ? { after: heldStop.after } : {}), ...(value ? { value } : {}) } : null;
   return { runId, status: String(status || ''), waiting: plan, asking: !!pq && !plan, approved: !!approved,
-    ask: pq ? { id: pq.id || null, kind: plan && pq.plan && pq.plan.outline ? 'outline' : pq.kind } : null };
+    ask: pq ? { id: pq.id || null, kind: plan && pq.plan && pq.plan.outline ? 'outline' : pq.kind } : null, ...(stop ? { stop } : {}) };
 }
 
 const auditTexts = (pid) => (pid ? getDb().prepare('SELECT text FROM pipeline_events WHERE pipeline_id = ? ORDER BY id').all(String(pid)).map((r) => r.text) : []);
@@ -319,6 +324,7 @@ export function featureView(id, { live = () => null, oneCard = false } = {}) {
       watch: pr && pr.url ? stoppedWatchFact(getWatch(pr.url)) : null,
       ...(f.outline.agreed?.length ? { requirements: sliceRequirements(f, r) } : {}) };
   });
+  if (smallRunsOfFeature(f.id)) stopWords(f, rows, slices, live);
   const roundLive = slices.some((s) => s.rounds.some((x) => LIVE_ROUND.has(x.status)));
   const ideas = getDb().prepare(`SELECT COUNT(*) AS n FROM shape_feature_notes WHERE feature_id = ? AND kind = 'idea'
     AND (run_index IS NULL OR run_index NOT IN (SELECT idx FROM shape_feature_slices WHERE feature_id = ? AND pipeline_id IS NOT NULL))`).get(f.id, f.id).n;
@@ -364,6 +370,21 @@ export function featureView(id, { live = () => null, oneCard = false } = {}) {
     // C1 (D12): a marked feature's Prototype step, read from its origin run; absent without a record.
     ...protoKey(smallRunsOfFeature(f.id) ? prototypeOfPipeline(f.origin_pipeline_id) : null),
   };
+}
+
+/** Small runs C3 (D15): a marked feature's slices gain `stop` (an open or held stop question) and `waitsFor` (a run not
+ *  started yet that builds on a stopped run: that run's number, named from `dependsOn`). */
+function stopWords(f, rows, slices, live) {
+  const bySlice = new Map(rows.map((r, i) => [r.sliceId, slices[i]]));
+  for (const s of slices) {
+    const l = s.pipelineId ? live(s.pipelineId) : null;
+    if (l && l.stop) s.stop = { ...l.stop };
+  }
+  for (const s of slices) {
+    if (s.pipelineId) continue;
+    const dep = (f.outline.slices[s.index - 1]?.dependsOn || []).map((id) => bySlice.get(id)).find((d) => d && d.stop);
+    if (dep) s.waitsFor = dep.index;
+  }
 }
 
 const protoKey = (rec) => { const v = rec ? prototypeView(rec) : null; return v ? { prototype: v } : {}; };
@@ -616,7 +637,7 @@ export function sliceOfPipeline(pipelineId, { live = () => null } = {}) {
   const s = v.slices[at.idx - 1];
   const n = v.slices[at.idx] || null;
   return { featureId: v.id, title: v.title, index: at.idx, total: v.total, sliceTitle: s ? s.title : '',
-    state: s ? s.state : null, next: n ? { index: n.index, title: n.title, state: n.state } : null };
+    state: s ? s.state : null, next: n ? { index: n.index, title: n.title, state: n.state } : null, ...(s && s.stop ? { stop: s.stop } : {}) };
 }
 
 /** D22: the first lines of a slice's PR body: which feature, which slice, and the other slices' PRs. */
@@ -758,6 +779,10 @@ const BUSY = new Set(['starting', 'shaping', 'questions', 'approval', 'running']
 /** A slice row that is going. A ticket fired with no pipeline yet counts only while the scheduler still waits on it
  *  (predecessorState): one that never got a run ("could not start") must not stall the feature's other slices. */
 function rowGoing(r, live, { now = Date.now(), isLive = null } = {}) {
+  // Small runs C3 (D8): a run waiting on an unanswered stop question does not hold the feature's other runs; one whose
+  // answer is held waits for its turn, so it counts as going.
+  const l = r.pipelineId ? live(r.pipelineId) : null;
+  if (l && l.stop && !l.stop.held) return false;
   if (!BUSY.has(sliceState(r, live, { held: false }))) return false;
   if (r.pipelineId || !r.ticketId) return true;
   return predecessorState({ kind: 'ticket', id: r.ticketId }, { now, isLive }).state === 'waiting';

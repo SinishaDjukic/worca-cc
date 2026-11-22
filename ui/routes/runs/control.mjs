@@ -24,12 +24,13 @@ app.post('/api/answer', (req, res) => {
   if (!runId || !runs.has(runId)) return badRequest(res, 'unknown runId');
   if (!id) return badRequest(res, 'question id is required');
   try {
-    answerRun(runId, id, payload, actorOf(req));
-    res.json({ ok: true });
+    const out = answerRun(runId, id, payload, actorOf(req));
+    res.json({ ok: true, ...(out && out.held ? { held: true } : {}) });   // small runs C3: a stop's answer waits its turn
   } catch (err) {
     // Gate 3 (ask forms, spec §5): the answer was validated and refused, so the
     // question stays OPEN and the client gets the field errors to mark up. Every
     // other failure keeps its 500.
+    if (err && err.code === 'STOP_HELD') return res.status(409).json({ error: err.message });
     if (err && err.code === 'INVALID_ANSWER') {
       return res.status(422).json({ error: 'invalid answer', errors: Array.isArray(err.errors) ? err.errors : [] });
     }
@@ -49,14 +50,15 @@ app.post('/api/runs/:id/answer', (req, res) => {
     return res.status(409).json({ error: 'no plan approval with that id is waiting on this run' });
   }
   try {
-    answerRun(runId, id, { decision, ...(feedback !== undefined ? { feedback } : {}),
+    const out = answerRun(runId, id, { decision, ...(feedback !== undefined ? { feedback } : {}),
       ...(perspectives !== undefined ? { perspectives } : {}),
       ...(edits !== undefined ? { edits } : {}),
       ...(approveEach !== undefined ? { approveEach } : {}),
       ...(openObjections !== undefined ? { openObjections } : {}),     // small runs B4: the Split kept its open objections
       ...(source !== undefined ? { source } : {}) }, actorOf(req));
-    res.json({ ok: true });
+    res.json({ ok: true, ...(out && out.held ? { held: true } : {}) });
   } catch (err) {
+    if (err && err.code === 'STOP_HELD') return res.status(409).json({ error: err.message });
     if (err && err.code === 'INVALID_ANSWER') {
       return res.status(422).json({ error: 'invalid answer', errors: Array.isArray(err.errors) ? err.errors : [] });
     }

@@ -1557,3 +1557,34 @@ test('C1: shaperCard returns prototype only for a marked card, with no file path
   mark(bare);
   assert.equal('prototype' in shaperCard(bare, { shaped: () => true }), false, 'marked, no record');
 }));
+
+// ── Small runs C3 (D8, D15): an open stop is not going; a held one is; a marked view names the stop and who waits ──
+const STOP_PQ = { id: 'g1', kind: 'gate', stop: { reason: 'objection', run: 1 } };
+test('C3: rowGoing/busySliceOf: an open stop is not going, a held stop is; dev\'s gate ask and a cost pause are unchanged', () => {
+  const f = mk(2);
+  const live = (extra) => (pid) => (pid === f.pid ? liveSliceFrom({ runId: 'r1', status: 'running', approved: true, ...extra }) : null);
+  assert.equal(busySliceOf(f.id, { live: live({ pendingQuestion: STOP_PQ }) }), null, 'an open stop is not going');
+  assert.deepEqual(busySliceOf(f.id, { live: live({ pendingQuestion: STOP_PQ, heldStop: { id: 'g1', after: 2 } }) }), { index: 1 });
+  assert.deepEqual(busySliceOf(f.id, { live: live({ pendingQuestion: { id: 'g1', kind: 'gate' } }) }), { index: 1 }, 'dev: a gate ask is going');
+  // A live slice paused on a cost limit: the same answer whether or not the feature is marked.
+  const paused = live({ status: 'paused', pendingQuestion: null });
+  const before = busySliceOf(f.id, { live: paused });
+  getDb().prepare('UPDATE pipelines SET shape_stats = ? WHERE id = ?').run(JSON.stringify({ smallRuns: true }), f.pid);
+  assert.deepEqual(busySliceOf(f.id, { live: paused }), before);
+  assert.equal('stop' in liveSliceFrom({ runId: 'r', status: 'running', pendingQuestion: { id: 'c', kind: 'recovery' } }), false);
+});
+
+test('C3: featureView of a marked feature: the stopped run carries stop, a run building on it waitsFor; unmarked adds neither', () => {
+  const p1 = pipe('running');
+  const outline = { why: 'x', slices: [slice(1), slice(2), slice(3, { dependsOn: ['s1'] })] };
+  const f = createSliceFeature({ pipelineId: p1, projectDir: root, title: 'Charts', outline, perspectives: ['product'], workflowId: 'wf_shape' });
+  const live = (held) => (pid) => (pid === p1 ? liveSliceFrom({ runId: 'r1', status: 'running', pendingQuestion: STOP_PQ, heldStop: held }) : null);
+  const plain = featureView(f.id, { live: live(null) });
+  assert.ok(plain.slices.every((s) => !('stop' in s) && !('waitsFor' in s)), 'unmarked: no new keys');
+  getDb().prepare('UPDATE pipelines SET shape_stats = ? WHERE id = ?').run(JSON.stringify({ smallRuns: true }), p1);
+  const v = featureView(f.id, { live: live(null) });
+  assert.deepEqual(v.slices[0].stop, { reason: 'objection', held: false });
+  assert.equal(v.slices[2].waitsFor, 1);
+  assert.equal('waitsFor' in v.slices[1], false, 'an independent run waits for nobody');
+  assert.deepEqual(featureView(f.id, { live: live({ id: 'g1', after: 2 }) }).slices[0].stop, { reason: 'objection', held: true, after: 2 });
+});

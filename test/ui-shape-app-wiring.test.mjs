@@ -956,3 +956,105 @@ test('C1: the run page draws the building moment in its step area from the plann
   await ctx.settle(6);
   assert.ok(host.querySelector('.qpanel .proto-open'), 'the built ask replaces the working moment');
 });
+
+// Small runs C3 (D11, D12): a stop is answered on the feature card; the run side panel shows only its findings.
+const C3_GATE_STOP = { id: 'gate-w9-3', kind: 'gate', wireId: 'w9', nodeId: 'n_review', deliveryNo: 3,
+  issues: [{ severity: 'major', title: 'Token leaks', detail: 'in logs' }],
+  stop: { reason: 'objection', run: 8, pick: 'another', head: 'Run 8 · Security objects', text: 'Security: Token leaks. Still open after 3 fix cycles.',
+    node: 'n_review', findingsLine: '1 finding open', options: [
+      { value: 'another', label: 'Run another cycle', sub: 'One more fix cycle for Security', go: 'Run another cycle', short: 'another cycle', payload: { decision: 'another' } },
+      { value: 'continue', label: 'Accept as is', sub: 'Carries on', go: 'Accept as is', short: 'accepted as is', payload: { decision: 'continue' } }] } };
+const C3_PLAN_STOP = { id: 'plan-n_refine-2', kind: 'plan', nodeId: 'n_refine', plan: { round: 2, file: 'p.md', check: { ok: false, passed: 3, total: 5, items: [{ label: 'Has tests', pass: false }] } },
+  stop: { ...C3_GATE_STOP.stop, reason: 'check', pick: 'revise', head: 'Run 4 · the plan check did not pass', text: 'The plan passes 3 of 5 checks.', options: [
+    { value: 'revise', label: 'Re-plan', sub: 'The Planner fixes it', go: 'Re-plan', short: 're-plan', payload: { decision: 'revise', feedback: 'fix', source: 'check' } },
+    { value: 'approve', label: 'Approve as is', sub: 'Builds it', go: 'Approve as is', short: 'approved as is', payload: { decision: 'approve' } }] } };
+
+test('C3: stop in the panel: no question, no buttons, no bar answer, exactly one findings list', async () => {
+  for (const pq of [C3_GATE_STOP, C3_PLAN_STOP]) {
+    const { screen, bar } = await openPanelRun(pq);
+    assert.equal(screen.dataset.presentation, 'panel');
+    const q = screen.querySelector('.qpanel');
+    assert.equal(visiblePrimaries(q).length, 0, pq.kind);
+    assert.equal(q.querySelectorAll('button, .qopt').length, 0);
+    assert.equal(q.textContent.includes(pq.stop.text), false);
+    assert.equal(barAnswer(bar), null, 'no bar answer');
+    assert.equal(q.querySelectorAll('.issues, .plan-checks').length, 1);
+  }
+});
+
+test('C3 web UI review: the run page draws a stop as the panel does: findings only, no question, no buttons', async () => {
+  for (const pq of [C3_GATE_STOP, C3_PLAN_STOP]) {
+    const { screen, bar } = await openPanelRun(pq, 'running/run-rr');
+    assert.notEqual(screen.dataset.presentation, 'panel');
+    const q = screen.querySelector('.qpanel');
+    assert.equal(q.querySelectorAll('button, .qopt').length, 0, pq.kind);
+    assert.equal(q.textContent.includes(pq.stop.text), false);
+    assert.equal(q.textContent.includes(pq.stop.head), false, 'the run is not repeated');
+    assert.equal(barAnswer(bar), null, 'no bar answer');
+    assert.equal(q.querySelectorAll('.issues, .plan-checks').length, 1);
+  }
+});
+
+test('C3: a plan-kind stop is drawn by the gate card on the feature card: one primary naming the pick', async () => {
+  const ctx = await bootApp({ fetchHandler: recordAnswers('run-rr', []) });
+  ctx.wsBox.ws.dispatch('open', {});
+  ctx.dispatch({ type: 'hello', runs: [reqRun(C3_PLAN_STOP)] });
+  await ctx.settle();
+  const doc = ctx.window.document;
+  const built = chatCardBuilder('progress')(
+    { kind: 'card', id: 'c-stop', state: 'tracked', card: { type: 'progress', pipelineId: 'p-rr', runId: 'run-rr', projectKey: 'p', title: 'Stop' } },
+    { doc, win: ctx.window, fetch: (...a) => ctx.window.fetch(...a), openRunPanel() {}, openArtifact() {}, announce() {} });
+  doc.body.appendChild(built.el);
+  await ctx.settle();
+  const q = built.el.querySelector('.qpanel');
+  assert.equal(q.querySelector('.ask-mcard-title').textContent, 'Run 4 · the plan check did not pass');
+  const prim = visiblePrimaries(q);
+  assert.equal(prim.length, 1);
+  assert.equal(prim[0].textContent, 'Re-plan');
+  assert.equal(q.querySelectorAll('.qopt').length, 2);
+  assert.equal(barAnswer(built.el), null, 'the card foot draws no Answer beside the stop\'s own primary');
+  built.dispose();
+});
+
+test('C3: a shape-feature frame keeps an open stop\'s pick and focus; only a held answer repaints it', async () => {
+  const info = { featureId: 'feat-1', stop: { reason: 'objection', held: false } };
+  let gets = 0;
+  const slice = (url) => (url === '/api/shape/pipelines/p-rr/slice' ? (gets++, res(200, { ...info })) : null);
+  const ctx = await bootApp({ fetchHandler: recordAnswers('run-rr', [], slice) });
+  ctx.wsBox.ws.dispatch('open', {});
+  ctx.dispatch({ type: 'hello', runs: [reqRun(C3_GATE_STOP)] });
+  await ctx.settle();
+  const doc = ctx.window.document;
+  const built = chatCardBuilder('progress')(
+    { kind: 'card', id: 'c-stop', state: 'tracked', card: { type: 'progress', pipelineId: 'p-rr', runId: 'run-rr', projectKey: 'p', title: 'Stop' } },
+    { doc, win: ctx.window, fetch: (...a) => ctx.window.fetch(...a), openRunPanel() {}, openArtifact() {}, announce() {} });
+  doc.body.appendChild(built.el);
+  await ctx.settle(6);
+  const q = () => built.el.querySelector('.qpanel');
+  const tile = (v) => [...q().querySelectorAll('.qopt')].find((t) => t.dataset.value === v);
+  const primary = () => visiblePrimaries(q())[0];
+  click(ctx, tile('continue'));
+  tile('continue').focus();
+  assert.equal(primary().textContent, 'Accept as is');
+  const before = gets;
+  ctx.dispatch({ type: 'shape-feature', id: 'feat-1' });
+  await ctx.settle(6);
+  assert.ok(gets > before, 'the slice was re-read');
+  assert.ok(tile('continue').classList.contains('sel'), 'the person\'s pick stays');
+  assert.equal(primary().textContent, 'Accept as is');
+  assert.equal(doc.activeElement, tile('continue'), 'focus stays on the picked tile');
+  // An unchanged held state never rebuilds; a change of held state repaints with the pick carried.
+  assert.equal(barAnswer(built.el), null, 'open stop: no Answer in the card foot');
+  const kept = tile('continue');
+  ctx.dispatch({ type: 'shape-feature', id: 'other' });
+  await ctx.settle(6);
+  assert.equal(tile('continue'), kept, 'another feature\'s frame leaves the panel alone');
+  info.stop = { reason: 'objection', held: true, value: 'continue', after: 7 };
+  ctx.dispatch({ type: 'shape-feature', id: 'feat-1' });
+  await ctx.settle(6);
+  assert.equal(q().querySelectorAll('.qopt').length, 0, 'the held answer draws its answered line');
+  assert.equal(q().querySelector('.chat-rc-log-run').textContent, 'Run 8');
+  assert.equal(q().querySelector('.chat-rc-log-text').textContent, 'accepted as is · decided by you');
+  assert.equal(q().querySelectorAll('.step-head, .chat-rc-receipt').length, 0, 'one answered row: no head, no box');
+  assert.equal(barAnswer(built.el), null, 'held stop: no Answer in the card foot');
+});

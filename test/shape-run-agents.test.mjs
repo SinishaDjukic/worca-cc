@@ -93,3 +93,17 @@ test('the shared module imports nothing from src/core and nothing from ui', () =
   assert.ok(froms.length > 0);
   for (const f of froms) assert.ok(!/core\/|ui\//.test(f), f);
 });
+
+// Small runs C3 (D12): the reviewer a stop names reads `objects` with the paused mark and no count; the rest keep C2.
+test('C3: runAgentRows words the stopped reviewer objects (mark paused, no count); runShortWord reads waiting for you', () => {
+  const base = liveAt('n_review');
+  const snap = { ...base, pendingQuestion: { id: 'gate-w9-3', kind: 'gate', stop: { reason: 'objection', run: 2, node: 'n_review', head: 'Run 2 · Security objects' } } };
+  const rows = runAgentRows(snap);
+  const obj = rows.filter((r) => r.word === 'objects');
+  assert.deepEqual(obj.map((r) => [r.name, r.mark]), [['Code review · Security', 'paused']]);
+  assert.ok(rows.every((r) => !/\d/.test(r.word)), 'no count in any row word');
+  assert.equal(runShortWord(snap), 'waiting for you');
+  const any = runAgentRows({ ...snap, pendingQuestion: { ...snap.pendingQuestion, stop: { ...snap.pendingQuestion.stop, head: 'Run 2 · Code review objects' } } });
+  assert.ok(any.filter((r) => r.word === 'objects').length >= 2, 'no role named: every code reviewer of the node objects');
+  assert.equal(runAgentRows(base).some((r) => r.word === 'objects'), false);
+});

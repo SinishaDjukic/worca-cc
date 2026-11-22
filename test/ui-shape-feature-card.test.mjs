@@ -386,9 +386,9 @@ const c2Snap = (pid, { careRun = C2_CARE, at = 'n_tests', status = 'running' } =
   source: 'live', runId: `run-${pid}` };
 };
 /** Paints a feature card (marked or not) whose member rows come from `members` (groupModel inputs) and `snaps`. */
-function c2Card({ marked = true, members, pids, snaps }) {
+function c2Card({ marked = true, members, pids, snaps, slices = {} }) {
   const dom = trackDom(new JSDOM('<!doctype html><body></body>'));
-  const v = VIEW(pids.map((pid, i) => SL(i + 1, members[i].status === 'done' ? 'done' : 'running', { pipelineId: pid, runId: `run-${pid}` })),
+  const v = VIEW(pids.map((pid, i) => SL(i + 1, members[i].status === 'done' ? 'done' : 'running', { pipelineId: pid, runId: `run-${pid}`, ...(slices[i + 1] || {}) })),
     { originPipelineId: 'p0' });
   const cardJson = { pipelineId: 'p0', feature: v, log: [], ...(marked ? { smallRuns: true } : {}) };
   const rest = { source: 'rest', terminal: true, status: 'done', pipelineId: 'p0' };
@@ -430,4 +430,22 @@ test('C2 marked card, run without careRun: the row text equals memberStatusText;
   const plain = c2Card({ marked: false, members, pids: ['p1', 'p2'], snaps: { p2: c2Snap('p2') } });
   assert.deepEqual(plain.states(), plain.row.members.map((mb) => memberStatusText(mb.model)));
   plain.built.dispose(); plain.ctl.destroy();
+});
+
+// Small runs C3 (D15): the stopped run reads `waiting for you`, its held answer `after run 3`, a run building on it
+// `waits for run 2`; an independent running run keeps its C2 word. The marked card's rows are one line.
+test('C3 one card: open stop and held rows, a dependent waits for its builds-on run, and the run list is one line', () => {
+  const members = [{ status: 'done', endReached: true }, { status: 'running' }, { status: 'running' }, { status: 'scheduled' }];
+  const pids = ['p1', 'p2', 'p3', 'p4'];
+  const stopSnap = { ...c2Snap('p2', { at: 'n_review' }), pendingQuestion: { id: 'gate-w9-3', kind: 'gate', stop: { reason: 'objection', run: 2, node: 'n_review', head: 'Run 2 · Code review objects' } } };
+  const snaps = { p2: stopSnap, p3: c2Snap('p3') };
+  const open = c2Card({ members, pids, snaps, slices: { 2: { stop: { reason: 'objection', held: false } }, 4: { waitsFor: 2 } } });
+  assert.deepEqual(open.states(), ['done', 'waiting for you', 'writing tests', 'waits for run 2']);
+  assert.ok(open.built.el.querySelector('.run-members.is-one-line'));
+  open.built.dispose(); open.ctl.destroy();
+  const held = c2Card({ members, pids, snaps, slices: { 2: { stop: { reason: 'objection', held: true, after: 3 } }, 4: { waitsFor: 2 } } });
+  assert.deepEqual(held.states().slice(1, 2), ['after run 3']);
+  held.built.dispose(); held.ctl.destroy();
+  const css = readFileSync(new URL('../ui/public/shape/shape-it.css', import.meta.url), 'utf8');
+  assert.match(css, /\.chat-rc-members \.run-members\.is-one-line \.run-member-title\{[^}]*white-space:nowrap;overflow:hidden;text-overflow:ellipsis;display:block;\}/);
 });

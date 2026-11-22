@@ -10,6 +10,7 @@ import { isRequirementsAsk } from './step-card.mjs';
 import { careRecordLine } from '../../../src/shared/shape/feature-record.mjs';
 import { remarkUpdatedText } from '../../../src/shared/shape/feature-log.mjs';
 import { skipLine } from '../../../src/shared/shape/prototype.mjs';
+import { stopDoneText } from '../../../src/shared/shape/run-stops.mjs';
 
 /** The receipt of an agreed Requirements step; the chat run card's fallback says the same. One source: feature-log (B1). */
 export { REQUIREMENTS_AGREED };
@@ -21,6 +22,7 @@ const NAMED_MAX = 200;
 export function stepReceipt(pq, payload, opts = {}) {
   const { shaping = false } = opts;
   if (!pq) return null;
+  if (pq.stop) return stopDoneText(pq.stop, payload);   // Small runs C3 (D14): the stop's one answered line
   const p = payload || {};
   const d = p.decision;
   const kind = askKindOf(pq);

@@ -44,7 +44,10 @@ import { labelChip } from '../label-picker.mjs';
 const isFinishedMember = (mb) => mb.state === 'done' || isFinishedState(mb.model && mb.model.state);
 /** Small runs C2 (D13): a marked card's run row word. A finished run reads `done` when it has a Care plan, or no snapshot
  *  is loaded; a run without `careRun` (null from runShortWord) keeps dev's memberStatusText. */
-const cardShortWord = (mb, snap) => (isFinishedMember(mb) && (!snap || (snap.stepper && snap.stepper.careRun)) ? 'done' : runShortWord(snap));
+const cardShortWord = (mb, snap, slice = null) => (isFinishedMember(mb) && (!snap || (snap.stepper && snap.stepper.careRun)) ? 'done' : runShortWord(snap, slice));
+/** Small runs C3 (D15): a member's slice in the feature view (its `stop` and `waitsFor`), by pipeline or ticket. */
+const sliceOfMember = (card, mb) => ((card && card.feature && card.feature.slices) || [])
+  .find((x) => (mb.pipelineId && x.pipelineId === mb.pipelineId) || (mb.ticketId && x.ticketId === mb.ticketId)) || null;
 
 const LIVE_STATUS = new Set(['starting', 'running', 'pausing']);
 /** A question that goes away under these was answered (here or elsewhere). Not `pausing`: ui/server.mjs pauseRun resolves
@@ -591,7 +594,7 @@ export function createChatRunCard({ doc, win = null, snapshot = null, ctx = {}, 
       if (!painted || painted.id !== (q.id || null)) { qErr.hidden = true; sent = null; shownFor = null; planSent = null; }
       const planAsk = askKindOf(pq) === 'plan' && !!pq.plan && !pq.plan.outline;
       painted = { id: q.id || null, runId: stepRef().runId, kind: q.kind || askKindOf(pq), heading: q.heading || '', step: q.step || '',
-        stepCard: !!q.stepCard, planAsk, reqAsk: isRequirementsAsk(pq), roleReviews: planAsk ? pq.plan.roleReviews || null : null };
+        stepCard: !!q.stepCard, stop: !!(q.stop || pq.stop), planAsk, reqAsk: isRequirementsAsk(pq), roleReviews: planAsk ? pq.plan.roleReviews || null : null };
       qHead.textContent = painted.heading;
       qHead.hidden = !painted.heading || painted.stepCard;   // a step card's own head says it once (shaper-cards D16)
       qBody.hidden = false;
@@ -938,7 +941,8 @@ export function createChatRunCard({ doc, win = null, snapshot = null, ctx = {}, 
     // B1: the one card ships from the feature page (D8), and its open step card's button is its one primary.
     syncActions(footActions, m, {
       own,
-      skip: oneNow || (s && s.sameAsSource && !own.ship) ? ['ship'] : [],
+      // Small runs C3 (R-ux-4): a stop answers only through its own question (open or held), never the foot's Answer.
+      skip: [...(oneNow || (s && s.sameAsSource && !own.ship) ? ['ship'] : []), ...(painted && painted.stop ? ['answer'] : [])],
       plain: answerFieldOpen(qBody) || (oneNow && painted) ? ['answer'] : [],
       disable: { ...(st === 'pausing' ? { resume: 'Pausing…' } : {}), ...(changesWhy ? { 'ask-changes': changesWhy } : {}) },
       onAction: (aid, b) => (aid === 'ask-changes' ? askForChanges() : call(controls.act, target(), aid, b, m, curRow)),
@@ -1005,7 +1009,7 @@ export function createChatRunCard({ doc, win = null, snapshot = null, ctx = {}, 
       // A Requirements fold the person opened stays open across the repaint (the rows are rebuilt each paint).
       const opened = [...membersEl.querySelectorAll('.run-member')].filter((li) => li.querySelector('.plan-check-line[aria-expanded="true"]')).map((li) => li.dataset.key);
       // Small runs C2 (D13): a marked card's run rows say one short word (cardShortWord).
-      const shortState = one ? (mb) => cardShortWord(mb, shaperIn.snapOf(mb.pipelineId)) : null;
+      const shortState = one ? (mb) => cardShortWord(mb, shaperIn.snapOf(mb.pipelineId), sliceOfMember(shaperIn.card, mb)) : null;
       membersEl.replaceChildren(renderMemberRows(doc, curRow, { checks: fm && fm.requirementChecks, oneLine: !!one, ...(shortState ? { shortState } : {}) }));
       for (const li of membersEl.querySelectorAll('.run-member')) if (opened.includes(li.dataset.key)) li.querySelector('.plan-check-line')?.click();
       membersEl.hidden = false;

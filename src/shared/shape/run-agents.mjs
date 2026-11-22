@@ -4,6 +4,7 @@
 // `active[].nodeId`, `decor.status` and `status`.
 import { roleLabelOf } from './perspectives.mjs';
 import { SHAPE_CODE_ROLES, COVERAGE_ROLE } from '../review/requirements-coverage.mjs';
+import { runStopWord, reviewerStopWord } from './run-stops.mjs';
 
 /** The word each agent node of a slice graph shows while it works. */
 const WORD_OF = Object.freeze({
@@ -29,10 +30,14 @@ const isHeld = (snap) => HELD.has(String(snap?.status || '')) || !!snap?.pending
 /**
  * The run's one short word: planning, reviewing plan, writing tests, building, reviewing or done. Between agent nodes
  * (no active one) it keeps the word of the last finished agent node in flow order, planning before any. Null without a
- * Care plan, and for a held run (paused, asking, failed, stopped: dev's status text says those).
- * @returns {'planning'|'reviewing plan'|'writing tests'|'building'|'reviewing'|'done'|null}
+ * Care plan, and for a held run (paused, asking, failed, stopped: dev's status text says those). Small runs C3 (D15): a
+ * run on a stop question, one whose answer waits its turn, or one building on a stopped run says so first (`slice` is
+ * the feature view's slice: run-stops.mjs runStopWord).
+ * @returns {'planning'|'reviewing plan'|'writing tests'|'building'|'reviewing'|'done'|string|null}
  */
-export function runShortWord(snap) {
+export function runShortWord(snap, slice = null) {
+  const stopWord = runStopWord({ snap, slice });
+  if (stopWord) return stopWord;
   if (!careRunOf(snap)) return null;
   if (String(snap.status || '') === 'done') return 'done';
   if (isHeld(snap)) return null;
@@ -68,7 +73,16 @@ export function runAgentRows(snap) {
   const active = activeIds(snap);
   const held = isHeld(snap) && String(snap.status || '') !== 'done';
   const word = runShortWord(snap);
+  // Small runs C3 (D12): the role a stop question names reads `objects` (paused mark, no count): the panel's findings say
+  // the rest. Rows of the stop's node, matched by the name the stop's head gives; none named, every row of that node.
+  const stop = snap.pendingQuestion && snap.pendingQuestion.stop;
+  const objects = reviewerStopWord(stop);
+  const tagOf = (name) => name.split(' · ').pop();
+  const ofNode = objects ? spec.filter((r) => r.key !== 'tests-implementer' && r.nodes.includes(stop.node)) : [];
+  const named = ofNode.filter((r) => String(stop.head || '').includes(tagOf(r.name)));
+  const objecting = new Set((named.length ? named : ofNode).map((r) => r.key));
   return spec.map(({ key, name, nodes }) => {
+    if (objecting.has(key)) return { key, name, word: objects, mark: 'paused' };
     const own = nodes.filter((id) => has.has(id));
     const live = own.some((id) => active.has(id));
     if (held && own.some((id) => active.has(id) || STOPPED_NODE.has(statusOf(snap, id)))) {

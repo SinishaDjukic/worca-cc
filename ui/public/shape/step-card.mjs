@@ -5,6 +5,10 @@ import { askKindOf } from '../ask/registry.mjs';
 import { isShapingRun } from './plan-text.mjs';
 import { buildRoleFold } from './role-rows.mjs';
 import { splitBlockers } from '../../../src/shared/shape/slices.mjs';
+import { stopDoneText } from '../../../src/shared/shape/run-stops.mjs';
+import { buildChatQuestion } from '../chat/question.mjs';
+import { buildCheckRows } from './check-row.mjs';
+import { paintFeatureLog } from './feature-card.mjs';
 
 export const SEND_FAILED = 'Could not send your answer. Try again.';
 const CHIP = { care: 'Start', prototype: 'Prototype', clarify: 'Clarify', plan: 'Plan', outline: 'Runs', gate: 'Gate', recovery: 'Recovery' };
@@ -28,6 +32,8 @@ export function isStepCard(pq, run, gateOn) {
 
 /** D15: `Plan · run k` once the run belongs to a split feature (index is 1-based), else the kind's chip. */
 export function stepChip(pq, run) {
+  // Small runs C3 (D11): a stop's chip names its kind only; the run number is in its head.
+  if (pq && pq.stop) return pq.stop.reason === 'objection' ? CHIP.gate : CHIP.plan;
   if (isRequirementsAsk(pq)) return 'Requirements';
   const k = stepKind(pq);
   const f = run && run.shaping && run.shaping.feature;
@@ -52,6 +58,7 @@ export function splitRefused(outline, care, edits = []) {
 
 /** The visible title; `who` is the step label (nodeLabel), '' when unknown. */
 export function stepTitle(pq, who = '') {
+  if (pq && pq.stop) return pq.stop.head;   // Small runs C3 (D11)
   if (isRequirementsAsk(pq)) return 'Your turn: agree the requirements';
   switch (stepKind(pq)) {
     case 'care': return 'Your turn: how much care?';
@@ -73,7 +80,7 @@ export const answerFieldOpen = (root) => !!root && !!root.querySelector('.qpanel
 /** The small-runs marker, read from the open ask alone, never from the live flag: the orchestrator stamps
  *  `plan.smallRuns` on a marked run's plan, requirements and split asks, and asks Care only on a marked run. Under it
  *  the step draws its own primary, so a host's bar draws its step button plain (as the chat card's `oneNow`). */
-export const smallRunsAsk = (pq) => !!pq && (pq.kind === 'care' || pq.kind === 'prototype' || (!!pq.plan && pq.plan.smallRuns === true));
+export const smallRunsAsk = (pq) => !!pq && (pq.kind === 'care' || pq.kind === 'prototype' || !!pq.stop || (!!pq.plan && pq.plan.smallRuns === true));
 
 /** Run 4 (D4): the control a waiting question takes the focus on — the card's own primary (Approve 2 runs, Approve and
  *  build) when it has an enabled one in a foot that shows, else its open Ask for changes field, else its first control
@@ -190,8 +197,100 @@ function appendRecoveryBody(doc, panel, rec) {
   }
 }
 
-/** Gate (cycle limit). deps: { doc, title, chip, wireCopy, tagLevel(el, level), submit }. */
+/** A requirement stop's one finding: the concern's title and detail (or the Planner's outline change), unranked. */
+function concernFinding(doc, title, detail) {
+  const list = doc.createElement('ul');
+  list.className = 'issues';
+  const li = doc.createElement('li');
+  li.className = 'issue';
+  const head = doc.createElement('div');
+  head.className = 'issue-head';
+  const t = doc.createElement('span');
+  t.className = 'issue-title';
+  t.textContent = title;
+  head.appendChild(t);
+  li.appendChild(head);
+  if (detail) {
+    const d = doc.createElement('div');
+    d.className = 'issue-detail';
+    d.textContent = detail;
+    li.appendChild(d);
+  }
+  list.appendChild(li);
+  return list;
+}
+
+/** Small runs C3 (D12): the one findings list of a stop, for the run side panel: the open issues of an objection, the
+ *  failing check rows, or the requirement concern. It holds no count: the card's question says how many. */
+function stopFindings(doc, pq) {
+  const stop = pq.stop;
+  const issues = Array.isArray(pq.issues) ? pq.issues : [];
+  if (pq.kind === 'gate') {
+    if (issues.length) return issueList(doc, issues);
+    const fold = pq.roleReviews?.rounds?.length ? buildRoleFold(doc, pq.roleReviews, { sectionFallback: 'Diff', node: pq.nodeId }) : null;
+    if (!fold) return null;
+    const box = doc.createElement('div');
+    box.append(fold.line, fold.rows);
+    return box;
+  }
+  const plan = pq.plan || {};
+  if (stop.reason === 'check') {
+    const box = doc.createElement('div');
+    box.className = 'plan-checks';
+    const items = plan.check && Array.isArray(plan.check.items) ? plan.check.items.filter((i) => i && !i.pass) : [];
+    box.append(...buildCheckRows(doc, { items: items.length ? items : [{ label: stop.findingsLine, pass: false }] }));
+    return box;
+  }
+  return pq.concern ? concernFinding(doc, pq.concern.title, pq.concern.detail) : concernFinding(doc, stop.findingsLine, plan.outlineChange || '');
+}
+
+/** Small runs C3 (D11, D13): a marked run's stop. The card asks one question (who wants what and why; two options, each
+ *  saying what it does; Worca's pick recommended and preselected; one primary naming the pick). The side panel
+ *  (`readOnly`) draws only the stop's findings; a held answer (`held` = {value}) draws the one answered line. */
+function renderStopCard(panel, pq, deps) {
+  const { doc } = deps;
+  const stop = pq.stop;
+  if (deps.readOnly) {
+    const list = stopFindings(doc, pq);
+    if (list) panel.appendChild(list);
+    return;
+  }
+  // A held answer is one finished-step row (the feature card's step log row), with no head, chip or box: the row's
+  // own text is the only "Run 8" in the stop's area (owner review d0ab08b1b).
+  const held = deps.held && stop.options.find((o) => o.value === deps.held.value);
+  if (held) {
+    const log = doc.createElement('ol');
+    log.className = 'chat-rc-log';
+    log.setAttribute('aria-label', 'Steps');
+    paintFeatureLog(doc, log, [{ key: `stop-${pq.id}`, run: stop.run, text: stopDoneText(stop, held.payload).replace(/^Run \d+: /, '') }]);
+    panel.appendChild(log);
+    return;
+  }
+  panel.appendChild(stepHead(doc, deps.title, deps.chip));
+  const optionOf = (v) => stop.options.find((o) => o.value === v) || stop.options.find((o) => o.value === stop.pick);
+  const q = buildChatQuestion(doc, {
+    id: `stop-${pq.id}`, heading: stop.head, head: false, numbers: false,
+    questions: [{ id: 'stop', text: stop.text,
+      options: stop.options.map((o) => ({ value: o.value, label: o.label, sub: o.sub, ...(o.value === stop.pick ? { recommended: true } : {}) })) }],
+    preset: new Map([['stop', optionOf(deps.pick).value]]),
+    submitLabel: (picks) => optionOf(picks.get('stop')).go,
+    onSubmit: async (picks) => {
+      const out = await deps.submit(optionOf(picks.get('stop')).payload);
+      if (out !== true) throw new Error(typeof out === 'string' && out ? `Not sent: ${out}` : SEND_FAILED);
+    },
+  });
+  // A pick the person made before a repaint (deps.pick) is theirs, not Worca's preset.
+  if (deps.pick && deps.pick !== stop.pick) for (const t of q.el.querySelectorAll('.qopt[data-preset]')) delete t.dataset.preset;
+  // The focus rule (questionFocusTarget) takes the foot's primary: the one that names Worca's pick.
+  const foot = q.el.querySelector('.qpanel-foot');
+  if (foot) foot.classList.add('plan-actions');
+  panel.appendChild(q.el);
+}
+
+/** Gate (cycle limit). deps: { doc, title, chip, wireCopy, tagLevel(el, level), submit, readOnly?, held?, pick? }. A small runs
+ *  stop (`pq.stop`, a gate or a plan ask) draws as renderStopCard. */
 export function renderGateCard(panel, pq, deps) {
+  if (pq && pq.stop) return renderStopCard(panel, pq, deps);
   const { doc } = deps;
   const issues = Array.isArray(pq.issues) ? pq.issues : [];
   panel.appendChild(stepHead(doc, deps.title, deps.chip));

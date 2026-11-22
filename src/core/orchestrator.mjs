@@ -66,6 +66,7 @@ import { applyChecklist, checklistFindingsMarkdown, mergeReportedChecklists, nor
 import { REFINER_SINK, roleReviewOf, roleChecklistOf, runningRoles, rolesForRound, roleTaskId, roleRecord, findingsMarkdown, refinerVerdict, roleTargetOf, roleRoutingVerdict } from '../shared/graph/role-review-step.mjs';
 import { DISPOSITIONS_MAX_BYTES, applyDispositions, withCounts, normalizeConflicts, dispositionsPathFor, conflictClarifications, withClarifications } from '../shared/review/findings.mjs';
 import { currentPass } from '../shared/shape/role-review.mjs';
+import { gateStop, planStop, concernStop, stopDoneText, stopOptionOf, settledLine, SETTLED_CONCERN_FEEDBACK } from '../shared/shape/run-stops.mjs';
 import { criteriaCheck, criteriaList, criterionIds, coverageOf, criteriaExamples } from '../shared/review/coverage.mjs';
 import { normalizeDecisions, conflictDecisions, validateDecisionPicks, decisionClarifications } from '../shared/review/decisions.mjs';
 import { createScheduler, sliceExecutionId, QUIESCENCE_WARNING } from './graph/scheduler.mjs';
@@ -154,6 +155,9 @@ export class GraphOrchestrator extends RunHarness {
     this._planConcernAnswer = null; // {id, payload}: a plan concern answered just before a pause (#990 s5), carried across a resume
     this._planAwayApproved = null;  // {id}: a plan ask Away mode approved just before a pause, carried across a resume
     this._planConcernSeen = {};     // {[id]: 'raised' | 'decided'}: audited once per concern across resumes (#990 s5)
+    this._smallRunsMarked = null;   // Small runs C3 (D7): fixed before the scheduler starts, carried on the resume point
+    this._stopAnswer = null;        // C3 (D14): {id, payload} of a stop answered just before a pause, replayed once
+    this._stopSettled = new Set();  // C3 (D3): gate ids the agents settled (the gate's audit line names them)
     this._planConcernHeld = null;   // {id, concern}: the parsed concern, carried across a resume (the agent need not rewrite it)
     this._slicingDone = false;   // L2: the Planner's slicing offer is over (no outline, or one decided); carried across a resume
     this._outlineRevise = null;  // the feedback of an outline revise answered before a pause, carried across a resume
@@ -1073,6 +1077,7 @@ export class GraphOrchestrator extends RunHarness {
         plainRun: (o) => (executorTesting.runClaude || runClaude)(o), restore: this._sessionRestore ?? null })
       : null;
 
+    if (this._smallRunsMarked == null) this._smallRunsMarked = this._smallRunsMarkedNow();
     const sched = createScheduler({
       template: this._schedulerTemplate(),
       portsFn: ports,
@@ -1238,6 +1243,8 @@ export class GraphOrchestrator extends RunHarness {
       })),
       planVersion: this._planVersion,
       ...(this._planRevise ? { planRevise: { ...this._planRevise } } : {}),
+      ...(this._smallRunsMarked ? { smallRunsMarked: true } : {}),
+      ...(this._stopAnswer ? { stopAnswer: jsonClone(this._stopAnswer) } : {}),
       ...(this._protoAnswer ? { protoAnswer: jsonClone(this._protoAnswer) } : {}),
       ...(this._planConcernAnswer ? { planConcernAnswer: { ...this._planConcernAnswer } } : {}),
       ...(this._planAwayApproved ? { planAwayApproved: { ...this._planAwayApproved } } : {}),
@@ -1329,6 +1336,7 @@ export class GraphOrchestrator extends RunHarness {
 
   /** Who answered a gate, for its audit line (6.3): Away mode, a named person, the --yes run, or the user. */
   _gateChooser(askId) {
+    if (askId && this._stopSettled.has(askId)) return 'the agents';
     const by = askId ? this.answeredBy(askId) : null;
     if (by === NIGHT_ACTOR) return 'Away mode';
     if (by) return actorLabel(by) || 'the user';
@@ -1439,6 +1447,8 @@ export class GraphOrchestrator extends RunHarness {
    */
   _schedulerAsk(q) {
     if (q.kind === PLAN_ASK_KIND) return this._planAsk(q);
+    // Small runs C3 (D3): a marked run's exhausted review loop is settled by the agents or becomes an objection stop.
+    if (q.kind === 'gate' && this._smallRunsMarked && !this.auto) return this._gateStopAsk(q);
     // A gate takes exactly "another" or "continue" (2.1): anything else leaves the question open
     // (answer() refuses it), so a typo or a wrapper object can never continue past open issues.
     const ask = q.kind === 'gate' ? { ...q, validate: gateAnswer } : q;
@@ -1453,6 +1463,55 @@ export class GraphOrchestrator extends RunHarness {
         return new Promise(() => {});   // never settles: the hold survives (see above)
       },
     );
+  }
+
+  /** Small runs C3 (D7): whether this run belongs to a marked feature. Run 1 reads its own record, runs 2..N the
+   *  feature's origin (never the live flag). Read once, before the scheduler starts. */
+  _smallRunsMarkedNow() {
+    if (!this.runShape) return false;
+    const fid = this.runShape.slice?.feature;
+    try { return fid ? !!smallRunsOfFeature(fid) : this._shapeRec?.smallRuns === true; } catch { return false; }
+  }
+
+  /** The run's number in its feature (run 1 = the origin run). */
+  _stopRun() {
+    return Number.isInteger(this.runShape?.slice?.index) ? this.runShape.slice.index : 1;
+  }
+
+  /** C3 (D3): a marked run's exhausted review loop. Minor issues only: the agents accept it (dev's `continue`) and say
+   *  so; a critical, major or severity-less issue is an objection stop on dev's gate ask. */
+  _gateStopAsk(q) {
+    if (this._stopAnswer?.id === q.id) return Promise.resolve(gateAnswer(this._stopAnswer.payload)?.decision ?? null);
+    this._stopAnswer = null;
+    const stop = gateStop({ run: this._stopRun(), issues: q.issues, roleReviews: currentPass(this.state.roleReviews, { node: q.nodeId }),
+      fixCycles: q.deliveryNo, nodeId: q.nodeId });
+    if (!stop) {
+      this._stopSettled.add(q.id);
+      const line = settledLine('gate', (q.issues || []).length);
+      this._log('orchestrator', 'info', `gate ${q.id}: ${line}`);
+      return (this.pipeline ? appendAudit(this.pipeline.dir, line).catch(() => {}) : Promise.resolve()).then(() => 'continue');
+    }
+    return this._enqueueAsk(() => this._ask({ ...q, stop, validate: gateAnswer })).then(
+      async (payload) => {
+        await this._afterStopAnswer(q.id, stop, payload);
+        return gateAnswer(payload)?.decision ?? null;
+      },
+      (err) => {
+        if (isPause(err) || this.pauseRequested) this._scheduler?.pause();
+        else this._scheduler?.abort();
+        return new Promise(() => {});
+      },
+    );
+  }
+
+  /** C3 (D10, D14): a person answered a stop. Stash it before any await (the pause window), write the one answered
+   *  line, then, unless the run stops (Change), take in the feature's latest finished work before it goes on. */
+  async _afterStopAnswer(id, stop, payload) {
+    if (this.answeredBy(id) === NIGHT_ACTOR) return;
+    this._stopAnswer = { id, payload };
+    if (this.pipeline) await appendAudit(this.pipeline.dir, stopDoneText(stop, payload), { actor: this.answeredBy(id) }).catch(() => {});
+    if (stopOptionOf(stop, payload)?.value === 'change') return;
+    await this._takeInLatestFinished({ smallRuns: this._smallRunsMarked, onAnswer: true });
   }
 
   _planAsk(q) {
@@ -1480,6 +1539,10 @@ export class GraphOrchestrator extends RunHarness {
       return Promise.resolve({ decision: 'approve' });
     }
     this._planAwayApproved = null;
+    // C3 (D14): a stop answered just before a pause is replayed once, with no second answered line.
+    const replay = this._stopAnswer?.id === q.id ? this._stopAnswer.payload : null;
+    if (!replay) this._stopAnswer = null;
+    let stop = null;
     const spec = this._approveSpec(q.nodeId);
     if (spec?.check === 'criteria') return this._criteriaAsk(q, spec);
     let check = null;
@@ -1499,6 +1562,14 @@ export class GraphOrchestrator extends RunHarness {
       // B4 (D1): a marked run's slice 1 follows the slice-k rule once its Split was approved.
       if (sl && (sl.index > 1 || skipsPlanAfterSplit({ smallRuns: this._shapeRec?.smallRuns === true, slice: sl,
         outlineDecided: this.state.shaping?.outline?.decided }))) {
+        // Small runs C3 (D5): a marked run stops only for a requirement or a failing check; chat notes alone are settled.
+        stop = this._smallRunsMarked ? planStop({ run: this._stopRun(), check, concern, outlineChange, node: q.nodeId }) : null;
+        if (this._smallRunsMarked && !stop) {
+          await appendAudit(this.pipeline.dir, 'Plan approval **approve** (the plan passed its checks).').catch(() => {});
+          if (notes.length) await appendAudit(this.pipeline.dir, settledLine('notes')).catch(() => {});
+          return { decision: 'approve' };
+        }
+        if (replay) return replay;
         // D19: plan once, confirm later: the plan stops only when its check fails or the planner says the slice
         // cannot be built as outlined. A missing check (null: it errored) stops too.
         if (check?.ok === true && !outlineChange && !notes.length && !concern) {
@@ -1513,7 +1584,7 @@ export class GraphOrchestrator extends RunHarness {
       }
       const perspectives = this._shapePerspectives();
       return this._enqueueAsk(() => this._ask({
-        id: q.id, kind: PLAN_ASK_KIND, nodeId: q.nodeId, executionId: q.executionId, ...(concern ? { concern } : {}),
+        id: q.id, kind: PLAN_ASK_KIND, nodeId: q.nodeId, executionId: q.executionId, ...(concern ? { concern } : {}), ...(stop ? { stop } : {}),
         // coverage: null = it could not be read, which is not "no coverage configured"; Away waits on it (planRule).
         plan: { ...q.plan, nodeId: q.nodeId, check, perspectives, ...(spec?.coverage ? { coverage } : {}), ...(outlineChange ? { outlineChange } : {}), ...(notes.length ? { notes } : {}),
           ...(conflicts.length ? { openConflicts: conflicts.length } : {}), ...(this._shapeRec?.smallRuns === true ? { smallRuns: true } : {}) },
@@ -1523,6 +1594,7 @@ export class GraphOrchestrator extends RunHarness {
     return asked.then(
       async (payload) => {
         if (payload?.decision === 'approve' && this.answeredBy(q.id) === NIGHT_ACTOR) this._planAwayApproved = { id: q.id };   // before any await: the pause window
+        if (stop && !replay) await this._afterStopAnswer(q.id, stop, payload);
         this._shapingDecision(q, payload);
         if (payload?.decision === 'stop') {
           this._log('orchestrator', 'info', `plan approval ${q.id}: stop`);
@@ -2278,6 +2350,12 @@ export class GraphOrchestrator extends RunHarness {
       await appendAudit(this.pipeline.dir, `${label} raised a plan concern: "${concern.title}".`).catch(() => {});
     }
     const decided = this._planConcernSeen[id] === 'decided';
+    // Small runs C3 (D4): a marked run settles a first plain concern (the Planner re-plans with it); a second one from
+    // this node after an earlier was decided, or a requirement concern, is a stop.
+    const marked = this._smallRunsMarked && !this.auto;
+    const prefix = `plan-concern-${ctx.nodeId}-`;
+    const decidedBefore = Object.entries(this._planConcernSeen).some(([k, v]) => k !== id && k.startsWith(prefix) && v === 'decided');
+    const stop = marked ? concernStop({ run: this._stopRun(), concern, nodeId: ctx.nodeId, decidedBefore }) : null;
     let payload;
     if (this.auto) {
       payload = { decision: 'approve' };
@@ -2286,15 +2364,20 @@ export class GraphOrchestrator extends RunHarness {
     } else if (this._planConcernAnswer?.id === id) {
       payload = this._planConcernAnswer.payload;     // answered just before a pause (D9): replay, never re-ask
       this._log('orchestrator', 'info', `plan concern ${id}: ${payload?.decision} replayed after a pause`);
+    } else if (marked && !stop) {
+      payload = { decision: 'revise', feedback: SETTLED_CONCERN_FEEDBACK };
+      this._planConcernAnswer = { id, payload };     // before any await: a resume replays it without a second line
+      await appendAudit(this.pipeline.dir, settledLine('concern')).catch(() => {});
     } else {
       this._planConcernAnswer = null;               // a different id: the stash is stale
       const perspectives = this._shapePerspectives();
       payload = await this._enqueueAsk(() => this._ask({
-        id, kind: PLAN_ASK_KIND, nodeId: ctx.nodeId, executionId: ctx.executionId, concern,
+        id, kind: PLAN_ASK_KIND, nodeId: ctx.nodeId, executionId: ctx.executionId, concern, ...(stop ? { stop } : {}),
         plan: { nodeId: pc.approvalNodeId, port: 'plan', file: planFile, round, revisable: true, perspectives },
         validate: (raw) => validatePlanAnswer(raw, { revisable: true, perspectives, smallRuns: this._shapeRec?.smallRuns === true }),
       }));
       this._planConcernAnswer = { id, payload };     // before any await: the pause window (graph-ask-kind-traps)
+      if (stop) await this._afterStopAnswer(id, stop, payload);
     }
     this._checkAbort();
     const d = payload?.decision;
@@ -2303,7 +2386,9 @@ export class GraphOrchestrator extends RunHarness {
     this._planConcernSeen[id] = 'decided';
     if (d === 'revise') {
       const path = join(this.pipeline.dir, `plan-concern-feedback-c${ctx.ordinal}.md`);
-      await writeFile(path, renderPlanFeedback(payload.feedback, planFile) + concernFeedbackSection(concern), 'utf8');
+      // A stop's Re-plan already carries the concern's section (run-stops.mjs): it is written once.
+      const section = concernFeedbackSection(concern);
+      await writeFile(path, renderPlanFeedback(payload.feedback, planFile) + (payload.feedback.includes(section.trim()) ? '' : section), 'utf8');
       return { ...result, reviseApproval: { path } };
     }
     ctx.planConcern = null;                          // the re-run cannot raise a second concern (D5)
@@ -4218,6 +4303,9 @@ export class GraphOrchestrator extends RunHarness {
     this._planVersion = Number.isFinite(rp.planVersion) ? rp.planVersion : 0;
     const pr = rp.planRevise;
     this._planRevise = pr && typeof pr.id === 'string' && typeof pr.path === 'string' ? { id: pr.id, path: pr.path } : null;
+    this._smallRunsMarked = rp.smallRunsMarked === true;
+    const sa = rp.stopAnswer;
+    this._stopAnswer = sa && typeof sa.id === 'string' && sa.payload && typeof sa.payload === 'object' ? { id: sa.id, payload: { ...sa.payload } } : null;
     const pa = rp.protoAnswer;
     this._protoAnswer = pa && typeof pa.key === 'string' && pa.payload && typeof pa.payload === 'object' ? { key: pa.key, payload: { ...pa.payload } } : null;
     const pca = rp.planConcernAnswer;

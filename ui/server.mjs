@@ -453,7 +453,7 @@ import { featureView, currentFeatureId, featureOfPipeline, featuresOfTickets, ca
   rechainWaiting, replanRest, setApproveEach, recordShapePlan, listShapePlans, chainFeature,
   sliceOfPipeline, slicePrPreamble, featureShipSuggestion, recordSliceDraft, recordShip, clearShip, featureShipInput,
   liveSliceFrom, shaperCard, featureThread, addFeatureNote, appendFeatureRun, liveRoundOf, acceptanceRefusal, featureHoldsTicket, chatShipCardOffered } from '../src/core/shape/features.mjs';
-import { smallRunsChainGate, sliceFireStart, oneShipCheck, shipHeadRow, shipHeadBase, recordSettledFigures } from '../src/core/shape/chain.mjs';
+import { smallRunsChainGate, sliceFireStart, oneShipCheck, shipHeadRow, shipHeadBase, recordSettledFigures, createHeldStops } from '../src/core/shape/chain.mjs';
 import { roundsOf, roundOrigin, nextRound, setRoundOutcome } from '../src/core/shape/rounds.mjs';
 import { changesCard, applyChanges, applyRoute, landingFacts, landingFactsOfFeature, shapeToolCheck, threadWork, shapeThreadFacts } from '../src/core/shape/changes.mjs';
 import { defaultShapeToolDeps } from '../src/core/ask/shape-tool-deps.mjs';
@@ -843,7 +843,7 @@ async function requestIdentity(req) {
  *   pendingQuestion: any
  * }>}
  */
-const runs = new Map();
+const runs = new Map(); const heldStops = createHeldStops({ runs, liveSliceOf, broadcastFeature, resolvePending, now: Date.now });   // small runs C3 (D9)
 
 // Ids of runs genuinely live in THIS process (non-terminal entries in the runs Map).
 // Passed to reconcileStaleRunning so a same-process run is never relabeled. Both the
@@ -1650,7 +1650,7 @@ function wireRun(entry) {
         const key = `${entry.status}|${pq ? `${pq.kind}:${pq.id || ''}` : ''}|${orch.state?.shaping?.approved ? 1 : 0}`;
         if (key !== entry._featureKey) {
           entry._featureKey = key;
-          broadcastFeaturesOf(() => [featureOfPipeline(entry.pipelineId)?.featureId].filter(Boolean));
+          heldStops.deliver(); broadcastFeaturesOf(() => [featureOfPipeline(entry.pipelineId)?.featureId].filter(Boolean));   // C3: delivered as the busy run settles
         }
       }
       // Shaper s5 (D16): a round reports into its origin's card, which gets none of the round's own frames.
@@ -4212,7 +4212,7 @@ export async function schedulerTick({ now = Date.now() } = {}) {
   if (DRAIN.on) return null;   // B2: due tickets stay due; the next start's catch-up fires them
   _schedulerBusy = true;
   try {
-    const out = await runDueTickets({
+    heldStops.deliver(); const out = await runDueTickets({   // C3: a held stop answer goes on before any new run fires
       now,
       start: fireTicket,
       isLive: liveProbe,
@@ -4838,7 +4838,7 @@ const chatNotifier = createNotifier({
 function answerRun(runId, id, payload, by = 'local') {
   const entry = runs.get(runId);
   if (!entry) throw new Error('unknown runId');
-  entry.orch.answer(id, payload, by || 'local');
+  if (heldStops.answer(entry, id, payload, by || 'local')?.held) return { held: true };   // C3: a stop's answer waits its turn
   resolvePending(entry, { id, reason: 'answered' });
 }
 /** `by` = who asked (identity.mjs actorOf / chatActor); recorded on the entry and the run state.
@@ -4856,7 +4856,7 @@ async function stopRun(runId, by = 'local') {
   entry.orch.stop(entry.lastAction.by);
   entry.status = 'stopped';
   if (entry.pipelineId) cancelScheduledResumes(entry.pipelineId, { by, reason: `the run was stopped${byActor(by || 'local')}` });
-  resolvePending(entry, { reason: 'stopped' });
+  heldStops.clear(entry); resolvePending(entry, { reason: 'stopped' });
   syncKeepAwake();
   return { ok: true };
 }
@@ -5010,7 +5010,7 @@ function liveSliceOf(id) {
   if (!e || !e.orch) return null;
   const status = String(e.status || '');
   if (SETTLED_RUN.has(status) && status !== 'paused') return null;
-  return liveSliceFrom({ runId: e.id, status, pendingQuestion: e.pendingQuestion, approved: e.orch.state?.shaping?.approved });
+  return liveSliceFrom({ runId: e.id, status, pendingQuestion: e.pendingQuestion, approved: e.orch.state?.shaping?.approved, heldStop: e.heldStop || null });
 }
 function broadcastFeature(id) { if (id) broadcast({ type: 'shape-feature', id }); }
 /** F42: the run-event and tick hooks. Gate first (no query while it is off), and never let a throw escape: in wireRun
