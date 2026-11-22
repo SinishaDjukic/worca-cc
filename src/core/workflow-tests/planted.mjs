@@ -114,9 +114,14 @@ const headerRow = (l, next, original) => {
   const lines = String(original ?? '').replace(/\r\n?/g, '\n').split('\n');
   return lines.some((x, k) => x.trim() === l.trim() && BORDER_RE.test(lines[k + 1] || ''));
 };
+/** Round 8 review M4: a line wholly in bold is a label only when short: at most 4 words, or ending with a colon. */
+const boldLabel = (l) => {
+  const m = /^\s*(\*\*|__)([^*_\n]+)\1(:?)\s*$/.exec(l);
+  return !!m && (m[2].trim().split(/\s+/).length <= 4 || m[3] === ':' || m[2].trim().endsWith(':'));
+};
 const headingOnly = (p, original) => {
   const lines = p.trim().replace(/^["'“”]+|["'“”]+$/g, '').split('\n').filter((l) => l.trim());
-  return lines.every((l, k) => /^\s*#{1,6}\s/.test(l) || !/[\p{L}\p{N}]/u.test(l) || /^\s*(\*\*|__)[^*_\n]+\1:?\s*$/.test(l)
+  return lines.every((l, k) => /^\s*#{1,6}\s/.test(l) || !/[\p{L}\p{N}]/u.test(l) || boldLabel(l)
     || headerRow(l, lines[k + 1], original));
 };
 /** User decision 2026-11-22: the passage that proved the criterion on the good result, when a copy can be checked against it: it is at least

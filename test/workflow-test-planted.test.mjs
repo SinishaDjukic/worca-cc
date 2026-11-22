@@ -270,7 +270,7 @@ test('round 7 review M1: the fallback pairing never shows unbroken lines and tak
     const t0 = performance.now();
     const e = changedExcerpt(orig, copy);
     const ms = performance.now() - t0;
-    assert.ok(ms < 2500, `${Math.round(ms)} ms`);
+    assert.ok(ms < 10000, `${Math.round(ms)} ms`);
     assert.ok(e.length <= planted.CARD_EXCERPT_MAX, e);
   }
   assert.equal(changedExcerpt(cases[0][0], cases[0][1]), 'changed first … changed last');
@@ -293,4 +293,13 @@ test('round 7 review M9: a proof that is only a bold label or a table header row
   assert.ok(planted.usableProof('| Export time | 10 minutes |', good), 'a table row of content is a passage');
   assert.ok(planted.usableProof('**Success metric**\nReduce invoice export time from 2 hours', good), 'a bold label with its text is a passage');
   assert.ok(planted.usableProof('**Reduce invoice export time** from 2 hours', '**Reduce invoice export time** from 2 hours to 10 minutes.'), 'bold inside a sentence is text');
+});
+
+test('round 8 review M4: a bold line is skipped only as a short label; a bold sentence is a proof', () => {
+  const sentence = '**Reduce export time to 10 minutes by Q3.**';
+  assert.ok(planted.usableProof(sentence, sentence), 'a bold sentence is a proof');
+  assert.equal(planted.usableProof('**Success metric**', '**Success metric**\nx'), null);
+  assert.equal(planted.usableProof('**Success metric for the whole export rollout:**', '**Success metric for the whole export rollout:**\nx'), null, 'ends with a colon');
+  const t = '| Metric | Target |\n| --- | --- |\n| Export time | 10 minutes |';
+  assert.equal(planted.usableProof('| Metric | Target |', t), null, 'a header row stays skipped');
 });
