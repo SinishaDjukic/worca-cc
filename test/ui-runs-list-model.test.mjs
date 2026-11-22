@@ -1114,6 +1114,7 @@ test('D2 (D4): truncation order in a marked group: the title ellipsizes first, t
   // (0,3,0) beats dev's (0,2,0) `.runs-members .runs-row-sub{flex:0 1000 auto}` and the title's min-width:50%.
   assert.match(body('.srows.runs-members .runs-row-title'), /min-width:0/);
   assert.match(body('.srows.runs-members .runs-row-sub'), /flex:none/);
-  // The right column stays shrinkable (dev's), so a long line plus a PR chip never overflows the row.
-  assert.match(body('.srows.runs-members .runs-row-right'), /flex:0 1 auto;min-width:0/);
+  // The right column (the PR chip) keeps its width: the title's min-width:0 takes the overflow, so the chip's word never
+  // collapses before the title has finished ellipsizing (webui cycle 2: "In review" shrank to 3px of 53px).
+  assert.match(body('.srows.runs-members .runs-row-right'), /flex:none/);
 });

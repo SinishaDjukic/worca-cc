@@ -411,10 +411,10 @@ a.rd-crumb:hover{color:var(--ink);text-decoration:underline;}
   .srows.runs-members > .runs-item:not(:has(> a.runs-row > .runs-stage)) > :is(.runs-pick, .runs-row-tail){height:calc(var(--row-line) + 12px);}
 }
 /* D4's truncation order: the title ellipsizes first (dev's member status gives way first, running-redesign.css), the line's
-   short word keeps its width; the right column stays dev's shrinkable one, so a long line plus a PR chip never overflows. */
+   short word and the right column (the PR chip) keep their width, so the title's min-width:0 takes the whole overflow. */
 .srows.runs-members .runs-row-title{min-width:0;}
 .srows.runs-members .runs-row-sub{flex:none;}
-.srows.runs-members .runs-row-right{flex:0 1 auto;min-width:0;}
+.srows.runs-members .runs-row-right{flex:none;}
 /* D2 (D10): the Owns rows are one line: the id column fits R-arch-10 whole, the requirement text ellipsizes (the row's
    tooltip holds it all). The Agents rows keep 32px: a done row's detail that would wrap under its name is clipped. */
 .srows.run-facts{--row-id:6.4em;}
