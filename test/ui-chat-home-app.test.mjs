@@ -137,7 +137,7 @@ test('a run frame repaints the home within the coalesce window: a live v2 run is
 test('a paused History row with no live run stands in as a Needs-you tile; a click opens that saved run', async () => {
   const ctx = await bootChat({ history: [
     HROW({ id: 'dddd0004', status: 'paused', pauseReason: 'cost_pipeline', title: 'Paused proj' }),
-    HROW({ id: 'eeee0005', status: 'paused', title: 'Paused ws', projectKey: 'workspaces/ws1', projectName: 'WS One', workspaceName: 'WS One', target: 'workspace', runEngine: 'cursor', totalCostUsd: 0 }),
+    HROW({ id: 'eeee0005', status: 'paused', title: 'Paused ws', projectKey: 'workspaces/ws1', projectName: 'WS One', workspaceName: 'WS One', target: 'workspace', runEngine: 'cursor', totalCostUsd: 0, elapsedMs: 45000 }),
   ] });
   helloRun(ctx, { runId: 'zz', pipelineId: 'ffff0000', title: 'Old', status: 'done' });
   await revisit(ctx);
@@ -147,7 +147,8 @@ test('a paused History row with no live run stands in as a Needs-you tile; a cli
   assert.deepEqual(tiles.map((t) => t.dataset.tileKey), ['hist:k1/dddd0004', 'hist:workspaces/ws1/eeee0005']);
   assert.deepEqual(tiles.map((t) => t.querySelector('.chat-run-tile-sub').textContent), ['Proj A', 'WS One']);
   assert.equal(tiles[0].querySelector('.chat-run-tile-pill').textContent, 'Paused · cost limit');
-  assert.deepEqual(tiles.map((t) => t.querySelector('.chat-run-tile-stats').textContent), ['1m 0s · $0.50', '1m 0s'], 'a Cursor run reports no cost: never $0.00');
+  assert.deepEqual(tiles.map((t) => t.querySelector('.chat-run-tile-stats').textContent), ['1m 0s · $0.50', '45s'],
+    'the tile reads elapsed when the row has it, the summed time otherwise; a Cursor run reports no cost: never $0.00');
   const seen = [];
   ctx.window.__np.chat.deps.openRunPanel = (ref, opts) => seen.push([ref, opts]);
   tiles[1].querySelector('.chat-run-tile-open').click();

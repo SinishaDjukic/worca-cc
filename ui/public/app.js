@@ -106,6 +106,7 @@ import { nowRows, glanceCopy, nodeLabel, preflightOpen, dotState } from './run-g
 import { workModeOf, isGitRun, isFolderRun, isNoProjectRun, NO_PROJECT_KEY, projectKind, kindChip, RUN_KIND_CHIP, folderMembersOf } from './run-kind.mjs';
 import { changesCounts, filesWord, renderCountsNode, applyBarModel, paintApplyBar, runChangesUrl, openApplyDialog, discardChanges, CHANGE_SIGN, CHANGE_WORD } from './folder-changes.mjs';
 import { runProgress, progressWidth } from '../../src/shared/run-progress.mjs';
+import { runElapsedMs, runHeadlineMs, showAgentTime } from '../../src/shared/run-elapsed.mjs';
 import { claudeCheckedWhere } from '../../src/shared/claude-sign-in.mjs';
 import { DEFAULT_HOME_PINS, isPinned, pinWorkflow, unpinWorkflow } from '../../src/shared/home-pins.mjs';
 import { outcomeNote } from './run-outcome.mjs';
@@ -2639,6 +2640,8 @@ function makeRun({
     phaseStatus: '',
     costByNode: {},       // { nodeId|uiPhase: usd } for the live stepper
     totalCostUsd: 0,   // pipeline total for the card meta line
+    elapsedMs: null,   // the engine's run clock, folded (from 'state'); null => no figure, the summed step time stands in
+    elapsedSince: null, // epoch ms the run clock has been running since; null while parked
     steps: [],         // raw steps[] from the latest state snapshot (for live timers)
     pendingQuestion,
     logLines: [],
@@ -3226,6 +3229,11 @@ function onState(r, msg) {
     r.stepGraphify = stepGraphifyFromSteps(msg.steps);
   }
   if (typeof msg.totalCostUsd === 'number') r.totalCostUsd = msg.totalCostUsd;
+  // The run clock: folded ms + the anchor it runs from (null while the run is parked).
+  if (typeof msg.elapsedMs === 'number') {
+    r.elapsedMs = msg.elapsedMs;
+    r.elapsedSince = typeof msg.elapsedSince === 'number' ? msg.elapsedSince : null;
+  }
   // What the open preflight is doing (the glance's status line); null once it ends.
   if (msg.setupStage !== undefined) r.setupStage = msg.setupStage;
   // Night mode switches + counters (run-harness _nightSnapshot): the run-view switch paints from them.
@@ -27811,9 +27819,10 @@ function paintHdFacts(screen, record, data) {
   // A Folder run counts its copy's changes (P1), never a git summary.
   const folder = hdWorkMode(record, data) === 'folder';
   const fc = folder ? changesCounts(hdChangesOf(record, data) || { state: 'pending' }) : null;
-  const activeMs = typeof st.totalActiveMs === 'number' ? st.totalActiveMs : liveTotalMs(st.steps, 0);
+  // The run time is the saved elapsed clock (an old run: its summed time); the sum itself is agent time.
+  const activeMs = runHeadlineMs(st) ?? liveTotalMs(st.steps, 0);
   const tags = costTagsFact(st.tags, record && record.projectDir, () => { if (screen.isConnected) paintHdGlance(screen, record, data); }, record && record.target);
-  paintGlanceFacts(glance, { summary: folder ? null : (s || null), changes: fc, diffHref: `#${hdHash({ projectKey: record.projectKey, id: record.id }, 'details', 'diff')}`, activeMs, cost: engineReportsCost(st.runEngine) ? (st.totalCostUsd || 0) : null,
+  paintGlanceFacts(glance, { summary: folder ? null : (s || null), changes: fc, diffHref: `#${hdHash({ projectKey: record.projectKey, id: record.id }, 'details', 'diff')}`, activeMs, agentMs: st.totalActiveMs, cost: engineReportsCost(st.runEngine) ? (st.totalCostUsd || 0) : null,
     costNote: costSummaryText(runCostBreakdown(st.steps, st.totalCostUsd), fmtUsd),
     // D16: a finished run always has the row, so "Add cost tags" stays reachable.
     costTags: tags || { tags: [], missing: [] } });
@@ -27928,7 +27937,7 @@ function paintHdHeaderMeta(screen, record, data) {
   for (const [cls, text, strong] of [
     ['hd-day', day, false],
     ['hd-clock', clock, false],
-    ['hd-dur', typeof st.totalActiveMs === 'number' ? fmtDuration(st.totalActiveMs) : '', true],
+    ['hd-dur', runHeadlineMs(st) != null ? fmtDuration(runHeadlineMs(st)) : '', true],
     ['hd-cost', hdCost.text, true],
   ]) {
     if (!text) continue;
@@ -33331,7 +33340,7 @@ function askRunSnapshot(r) {
     ...(r.shaping ? { shaping: r.shaping } : {}),
     ...(isGitRun(r) ? {} : { workMode: workModeOf(r), changes: null }),
     live: isLive(r), terminal: !!r._finished || isTerminalStatus(r.status),
-    startedAt: r.startedAt || null, elapsedMs: liveTotalMs(r.steps, Date.now()),
+    startedAt: r.startedAt || null, elapsedMs: rdElapsedMs(r),
     costUsd: engineReportsCost(r.runEngine) ? (r.totalCostUsd || 0) : null,   // null: cost unknown (Cursor), never $0.00
     // Chat P3 (U10): activeNodes' model + effort, named through the catalog, plus the execution's cycle.
     progress: decor ? decor.progress : null, active: graph ? activeAgents(decor, r.stepper, { modelLabel: graphModelLabel }) : [],
@@ -37977,13 +37986,21 @@ function rdGlanceRun(r) {
     stepper: r.stepper && r.stepper.graph ? r.stepper : (st.stepper || r.stepper),
     totalCostUsd: r.totalCostUsd || st.totalCostUsd || 0,
     _savedActiveMs: typeof st.totalActiveMs === 'number' ? st.totalActiveMs : null,
+    ...(runElapsedMs(r) == null ? { elapsedMs: st.elapsedMs ?? null, elapsedSince: null } : {}),
   };
 }
 
-// Active time: the live ledger's sum, or the saved total when the ledger is gone.
-function rdActiveMs(r) {
-  const liveMs = liveTotalMs(r.steps, Date.now());
-  return liveMs || (typeof r._savedActiveMs === 'number' ? r._savedActiveMs : 0);
+// Agent time: the summed step time, from the live ledger, or the saved total when the ledger is gone.
+function rdAgentMs(r, now = Date.now()) {
+  return liveTotalMs(r.steps, now) || (typeof r._savedActiveMs === 'number' ? r._savedActiveMs : 0);
+}
+
+// The run time every headline shows: the engine's run clock (1 s per real second, parallel work
+// counted once), ticking only while the run works. A run without the figure reads its summed time.
+function rdElapsedMs(r, now = Date.now()) {
+  const live = (r.status === 'running' || r.status === 'starting') && r.pendingQuestion == null;
+  const ms = runElapsedMs(r, { now, live });
+  return ms != null ? ms : rdAgentMs(r, now);
 }
 
 /** Runs redesign slice 4: the raw run the run page's model reads. A live run object (makeRun) carries no `pr`: once
@@ -38185,7 +38202,7 @@ function paintRdGlance(screen, r) {
   const liveDiff = terminal ? null : rdDiffBadge(live);
   paintGlanceFacts(glance, {
     summary: folder ? null : summary, changes: terminal ? fc : null, diffHref: `#${rdHash(r.runId, 'details', 'diff')}`, liveFiles: liveDiff != null && liveDiff !== '' ? Number(liveDiff) : null,
-    activeMs: rdActiveMs(r), cost: engineReportsCost(r.runEngine) ? (r.totalCostUsd || 0) : null,
+    activeMs: rdElapsedMs(r), agentMs: rdAgentMs(r), cost: engineReportsCost(r.runEngine) ? (r.totalCostUsd || 0) : null,
     costNote: costSummaryText(runCostBreakdown(r.steps, r.totalCostUsd), fmtUsd),
     ticking: (r.status === 'running' || r.status === 'starting') && r.pendingQuestion == null,
     costTags: costTagsFact(r.tags, r.projectDir, () => rdRepaintOpenGlance(r.pipelineId), r.workspaceId ? 'workspace' : 'project'),
@@ -38352,7 +38369,7 @@ const costTagsFact = (tags, projectDir, onLoad, target = 'project') => {
   return (tags || []).length || missing.length ? { tags: tags || [], missing } : null;
 };
 
-function glanceTiles({ summary = null, liveFiles = null, activeMs = null, cost = null, costNote = '', ticking = false, changes = null, diffHref = '' } = {}) {
+function glanceTiles({ summary = null, liveFiles = null, activeMs = null, agentMs = null, cost = null, costNote = '', ticking = false, changes = null, diffHref = '' } = {}) {
   const tiles = document.createElement('div');
   tiles.className = 'rd-stats';
   const tile = (big, small, cls = '') => {
@@ -38366,6 +38383,12 @@ function glanceTiles({ summary = null, liveFiles = null, activeMs = null, cost =
     return t;
   };
   if (activeMs != null) tiles.append(tile(fmtDuration(activeMs) || '0s', 'time', ticking ? 'run-time' : ''));
+  // Agent time: the summed step time, only when parallel work made it larger than the run time.
+  if (activeMs != null && showAgentTime(agentMs, activeMs, fmtDuration)) {
+    const agent = tile(fmtDuration(agentMs), 'agent time', ticking ? 'run-agent-time' : '');
+    agent.title = 'Total time of all agents, parallel work added up';
+    tiles.append(agent);
+  }
   if (cost != null) tiles.append(tile(fmtUsd(cost), costNote || 'cost'));
   if (changes) tiles.append(tile(renderCountsNode(document, changes), 'files changed', 'fc-tile'));
   else if (summary) {
@@ -38421,9 +38444,10 @@ function paintGlanceFacts(glance, opts) {
   }
   syncFacts(screen.querySelector('.rd-kv'));
 }
-// Everything but the time (the first tile): a ticking row need not be rebuilt for it.
+// Everything but the ticking texts (the time, the first tile, and agent time): a ticking row need not
+// be rebuilt for them. Agent time keeps its PRESENCE, so the tile appearing or going still rebuilds.
 function sigRest(tiles) {
-  return tiles ? [...tiles.children].slice(1).map((t) => t.textContent).join('|') : '';
+  return tiles ? [...tiles.children].slice(1).map((t) => (t.querySelector('.run-agent-time') ? 'agent time' : t.textContent)).join('|') : '';
 }
 
 // The finished headline's PR input (glanceCopy): the PR's own state, or what is known.
@@ -39626,7 +39650,7 @@ function paintRdHeader(screen, r) {
     // its tick targets with `querySelectorAll('.run-time')`. Without this class
     // the header elapsed freezes at its paint value and only the Overview stat
     // card ticks.
-    ['rd-dur run-time', fmtDuration(liveTotalMs(r.steps, Date.now())), true],
+    ['rd-dur run-time', fmtDuration(rdElapsedMs(r)), true],
     // Model bridge (model-bridge-design.md §8.6): a run that went through the
     // bridge shows its request count beside the dollars, so a "$0" reads as a
     // unit mismatch (Copilot bills requests), not as free.
@@ -41646,12 +41670,14 @@ function timerTick() {
     const hosts = rdTickHosts(r);
     if (!hosts.length) continue;
     const now = Date.now();
-    const elapsed = fmtDuration(liveTotalMs(r.steps, now));
+    const elapsed = fmtDuration(rdElapsedMs(r, now));
+    const agent = fmtDuration(rdAgentMs(r, now));
     const durs = durByNode(r.steps, now, true);
     for (const host of hosts) {
       // querySelectorAll, not querySelector: the detail screen carries the header
       // elapsed AND the Overview ELAPSED stat card, both tagged `.run-time`.
       for (const timeEl of host.querySelectorAll('.run-time')) timeEl.textContent = elapsed;
+      for (const timeEl of host.querySelectorAll('.run-agent-time')) timeEl.textContent = agent;
       // The glance's step times (its status line and Now rows), each from when it started.
       for (const el of host.querySelectorAll('[data-since]')) {
         const t = new Date(el.dataset.since).getTime();
@@ -43066,7 +43092,7 @@ function chatHomeHistTile(p) {
     pauseReason: p.pauseReason || null, pendingQuestion: null, live: false, terminal: false,
     // Bundle QA 2: what runModel reads to say why a finished run needs you — its PR, a stopped Watch PR, member PRs.
     pr: p.pr && typeof p.pr === 'object' ? p.pr : null, watch: p.watch || null, memberPrs: memberPrsOf(p),
-    elapsedMs: Number(p.totalActiveMs) || 0,
+    elapsedMs: runHeadlineMs(p) || 0,
     costUsd: engineReportsCost(p.runEngine) && Number.isFinite(Number(p.totalCostUsd)) ? Number(p.totalCostUsd) : null,   // null: cost unknown (Cursor), as askRunSnapshot
     progress: null, active: [], stepper: null, decor: null,
   };
