@@ -648,6 +648,37 @@ test('away note: counts every answer of every ask, the checks apart; the run pag
   assert.doesNotMatch(note.textContent, /\$|NaN|undefined/, 'the note names no cost');
 });
 
+test("Q&A tab: Away's Shaper stops are listed under Answered for you; a graph Clarify round is listed once", async () => {
+  const clarifyQ = [{ id: 'size', question: 'Which size?' }];
+  const runData = {
+    clarify: { questions: clarifyQ, answers: [{ id: 'size', question: 'Which size?', choice: 'S' }], answeredBy: 'night-mode',
+      night: { flagged: false, questions: [{ id: 'size', rationale: 'small', flagged: false }] } },
+    // The graph Clarify node's own round: the same questions as the run's Clarify.
+    stepQuestions: [{ stepKey: 'x:n_clarify:1', round: 1, nodeId: 'n_clarify', agentKey: 'clarify', questions: clarifyQ, answers: [{ id: 'size', choice: 'S' }] }],
+    reviews: [],
+    awayAnswers: [
+      { questionId: 'c-1', kind: 'clarify', choice: 'S', strategy: 'weights', flagged: false, rationale: 'r', questions: [{ id: 'size', question: 'Which size?', choice: 'S' }] },
+      { questionId: 'plan-outline-n_plan-1', kind: 'plan', at: '2026-01-01T14:00:00', choice: 'approve', strategy: 'rule', flagged: false, meta: { ask: 'outline' },
+        rationale: "the slice outline's check passed" },
+      { questionId: 'plan-n_refine-1', kind: 'plan', at: '2026-01-01T14:05:00', choice: 'revise', strategy: 'rule', flagged: true, meta: { ask: 'plan' },
+        rationale: "the plan's shape check did not pass; asked the planner for changes" },
+    ],
+  };
+  const ctx = await boot({ runData });
+  const screen = await openDetail(ctx);
+  ctx.window.location.hash = `running/${RUN.runId}/details/qa`;
+  ctx.window.dispatchEvent(new ctx.window.Event('hashchange'));
+  await settle(12);
+  const sec = screen.querySelector('.hd-cl');
+  assert.ok(sec, 'the Q&A tab rendered');
+  assert.equal(sec.querySelectorAll('.hd-cl-card').length, 1, 'the Clarify question once, not again as a step round');
+  const away = sec.querySelector('.hd-cl-away-sec');
+  assert.ok(away, 'Answered for you');
+  assert.equal(away.querySelector('.rd-night-h').textContent, 'Answered for you · 2 answers, 1 to check');
+  const rows = [...away.querySelectorAll('.rd-na-row')].map((li) => [li.querySelector('.rd-na-q')?.textContent, li.querySelector('.rd-na-a').textContent, li.classList.contains('is-check')]);
+  assert.deepEqual(rows.sort(), [['Plan', 'Asked for changes', true], ['Slice outline', 'Approved', false]], 'the Clarify answer stays on its card');
+});
+
 test('"Decided by"/"Effort" offer the catalog grouped by connection and read back; at project level empty is "… (your setting)" and sent as __unset', async () => {
   await checkRows([
     { name: 'form: "Decided by" offers what the title-model picker offers; "Effort" the effort levels; both read back', run: async () => {

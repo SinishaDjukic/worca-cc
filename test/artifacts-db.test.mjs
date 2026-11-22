@@ -459,6 +459,13 @@ test('readPipelineExtras returns clarify + ordered reviews, and empty arrays for
       const ex = readPipelineExtras('ex000002');
       assert.deepEqual(ex, { clarify: { questions: [], answers: [] }, reviews: [], stepQuestions: [] });
     } },
+    { name: "readPipelineExtras carries Away mode's stored answers for the Q&A tab, and only then", run: async () => {
+      seedPipelineRow({ id: 'ex000004', projectKey: 'proj-00000001', status: 'done' });
+      const { writeNightDecision } = await import('../src/core/night/store.mjs');
+      writeNightDecision('ex000004', { questionId: 'plan-n_refine-1', kind: 'plan', choice: 'approve', strategy: 'rule', flagged: true, meta: { ask: 'plan' }, rationale: 'r' });
+      const ex = readPipelineExtras('ex000004');
+      assert.deepEqual(ex.awayAnswers.map((d) => [d.questionId, d.kind, d.choice, d.flagged, d.meta.ask]), [['plan-n_refine-1', 'plan', 'approve', true, 'plan']]);
+    } },
   ]);
 });
 

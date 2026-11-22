@@ -32,7 +32,11 @@ const OUTCOMES = Object.freeze({
   workflow: { accept: 'Accepted' },
   recovery: { retry: 'Retried', pause: 'Stopped retrying' },
   'cost-cap': { continue: 'Continued past the cap' },
-  plan: { approve: 'Approved' },
+  plan: { approve: 'Approved', revise: 'Asked for changes', retry: 'Tried again' },
+});
+// Which Shaper stop a plan answer was (the record's meta.ask, strategies.mjs planRule).
+const PLAN_ASKS = Object.freeze({
+  requirements: 'Requirements', attached: 'Attached requirements', outline: 'Slice outline', plan: 'Plan', concern: 'Concern',
 });
 const LIMITS = Object.freeze({ maxDecisions: 'Paused: answer limit reached', spendCap: 'Paused: spending cap reached' });
 const sentence = (s) => {
@@ -62,6 +66,12 @@ export function awayAnswerRows(d) {
   const rec = d && typeof d === 'object' ? d : {};
   if (rec.choice == null) return [{ q: null, a: LIMITS[rec.guardrail] || 'Paused', why: sentence(rec.rationale), check: false }];
   const qs = Array.isArray(rec.questions) ? rec.questions.filter((x) => x && typeof x === 'object') : [];
+  if (rec.kind === 'plan') {
+    // A Shaper stop: one row naming the stop and what Away did, then a row per decision it took (a Requirements hold).
+    const head = { q: PLAN_ASKS[rec.meta?.ask] || null, a: OUTCOMES.plan[rec.choice] || String(rec.choice), why: sentence(rec.rationale), check: rec.flagged === true };
+    return [head, ...qs.map((x) => ({ q: typeof x.question === 'string' && x.question.trim() ? x.question.trim() : fromId(x.id),
+      a: x.choice == null || x.choice === '' ? 'No answer' : String(x.choice), why: sentence(x.rationale), check: x.flagged === true }))];
+  }
   if (qs.length) {
     // A flagged ask none of whose questions is marked (a form that fell back to its defaults): mark them all.
     const all = rec.flagged === true && !qs.some((x) => x.flagged === true);

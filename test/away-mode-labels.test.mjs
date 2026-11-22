@@ -32,6 +32,23 @@ test('a plan record reads Approved under Plan approval', () => {
   assert.deepEqual(awayAnswerCounts([d]), { answers: 1, checks: 1 });
 });
 
+test('a Shaper stop names itself in Q&A, says what Away did, and lists each decision it took', () => {
+  const req = { kind: 'plan', choice: 'approve', strategy: 'rule', flagged: true, meta: { ask: 'requirements' },
+    rationale: 'agreed to the requirements as written; 1 decision took the recommended option',
+    questions: [{ id: 'd-1', question: 'Which store?', choice: 'SQLite', flagged: true, rationale: 'the recommended option' }] };
+  assert.deepEqual(awayAnswerRows(req), [
+    { q: 'Requirements', a: 'Approved', why: 'Agreed to the requirements as written; 1 decision took the recommended option.', check: true },
+    { q: 'Which store?', a: 'SQLite', why: 'The recommended option.', check: true },
+  ]);
+  assert.deepEqual(awayAnswerCounts([req]), { answers: 2, checks: 2 });
+  const rows = (choice, ask) => awayAnswerRows({ kind: 'plan', choice, flagged: true, meta: { ask }, rationale: 'x' })[0];
+  assert.deepEqual([rows('revise', 'outline').q, rows('revise', 'outline').a], ['Slice outline', 'Asked for changes']);
+  assert.deepEqual([rows('retry', 'requirements').q, rows('retry', 'requirements').a], ['Requirements', 'Tried again']);
+  assert.equal(rows('approve', 'attached').q, 'Attached requirements');
+  assert.equal(rows('approve', 'plan').q, 'Plan');
+  assert.equal(rows('approve', 'concern').q, 'Concern');
+});
+
 test('awayAskCaption: a review names its model and cost, a stopped one its lower bound; no review → how, $0.00; a pause or an old review → nothing', () => {
   const f = (n) => `$${Number(n).toFixed(2)}`;
   const m = (id) => (id === 'claude-opus-5-5' ? 'Opus 5.5' : null);

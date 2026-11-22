@@ -1458,7 +1458,7 @@ export class GraphOrchestrator extends RunHarness {
       const perspectives = this._shapePerspectives();
       return this._enqueueAsk(() => this._ask({
         id: q.id, kind: PLAN_ASK_KIND, nodeId: q.nodeId, executionId: q.executionId, ...(concern ? { concern } : {}),
-        // coverage: null = it could not be read, which is not "no coverage configured"; Away waits on it (planRule).
+        // coverage: null = it could not be read, which is not "no coverage configured"; Away sends it back (planRule).
         plan: { ...q.plan, nodeId: q.nodeId, check, perspectives, ...(spec?.coverage ? { coverage } : {}), ...(outlineChange ? { outlineChange } : {}), ...(notes.length ? { notes } : {}),
           ...(conflicts.length ? { openConflicts: conflicts.length } : {}) },
         validate: (raw) => validatePlanAnswer(raw, { revisable: q.plan?.revisable === true, perspectives, conflicts }),
@@ -1769,7 +1769,7 @@ export class GraphOrchestrator extends RunHarness {
    * Spec §3.8, L1: in slicing mode the Planner either writes its plan (no outline: it chose not to slice) or writes
    * slices.json and stops. Ask a person, then resume the SAME session (as _questionsLoop does): slice 1's plan, the
    * whole task (flat), or a rewritten outline (revise, at most OUTLINE_ROUNDS_MAX rounds). --yes never answers it (F3);
-   * Away mode approves one whose check passed (planRule).
+   * Away mode answers it (planRule).
    */
   async _outlineLoop(nc, ctx, firstResult) {
     let result = firstResult;

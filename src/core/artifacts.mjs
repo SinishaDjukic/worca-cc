@@ -36,6 +36,7 @@ import { attachWatchPipeline, getWatch, watchActive } from './pr-watch.mjs';
 import { insertRunTags, readRunTags, readTagsFor } from './run-tags-store.mjs';
 import { insertRunLabels, readLabelsFor, readRunLabels } from './run-labels-store.mjs';
 import { workInBase } from './in-base.mjs';
+import { readNightDecisions } from './night/store.mjs';
 
 // ── DB row <-> state object mapping (Phase 3) ──────────────────────────────────
 // JSON columns are TEXT; (de)serialize at THIS boundary only. Reads are fail-safe:
@@ -653,7 +654,9 @@ export function readPipelineExtras(pipelineId) {
       ...(Array.isArray(v.checklist) ? { checklist: v.checklist } : {}),
     };
   });
-  return { clarify, reviews, stepQuestions: readStepQuestions(pipelineId) };
+  // Away mode's stored answers, for the Q&A tab (only when it gave any: the shape stays as it was otherwise).
+  const awayAnswers = readNightDecisions(pipelineId);
+  return { clarify, reviews, stepQuestions: readStepQuestions(pipelineId), ...(awayAnswers.length ? { awayAnswers } : {}) };
 }
 
 /**
