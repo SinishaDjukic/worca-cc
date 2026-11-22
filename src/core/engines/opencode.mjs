@@ -71,7 +71,7 @@
 // - `--pure` keeps the user's plugins out (none ran); OPENCODE_DISABLE_PROJECT_CONFIG the checkout's config. The
 //   user's own MCP servers still start (their tools are denied); their instructions files still reach the prompt.
 // - OpenCode Zen's free models (`opencode/…`) refuse a request without the shell, so a chat never runs on them.
-import { createHash } from 'node:crypto';
+import { createHmac, randomBytes } from 'node:crypto';
 import { mkdirSync, readFileSync, writeFileSync, rmSync, existsSync, realpathSync } from 'node:fs';
 import { execCli, cliRefusal } from './exec-cli.mjs';
 import { OPENCODE_CLI } from './cli-specs.mjs';
@@ -401,6 +401,30 @@ function toolCall(part, mcpServers, serverNames = {}) {
 const ALIAS_SUFFIX_RE = /^(?:[0-9a-f]{8}|[0-9a-z]{6})$/;
 const aliasBase = (name) => String(name).replace(/[^A-Za-z0-9]/g, '') || 'mcp';
 
+/** This install's own secret for a chat's server alias (`<worca home>/opencode-alias.key`, the user's eyes only), made
+ *  on first use. Null when it can be neither read nor made: the alias then stays random per spawn. */
+function aliasSecret() {
+  let file;
+  try { file = join(worcaHome(), 'opencode-alias.key'); } catch { return null; }
+  const read = () => { try { const t = readFileSync(file, 'utf8').trim(); return /^[0-9a-f]{64}$/.test(t) ? t : null; } catch { return null; } };
+  const kept = read();
+  if (kept) return kept;
+  try {
+    mkdirSync(worcaHome(), { recursive: true });
+    // `wx`: a second process that got here first wins, and both read its key.
+    writeFileSync(file, randomBytes(32).toString('hex'), { mode: 0o600, flag: 'wx' });
+  } catch { /* it exists by now, or the folder cannot be written: the read below says which */ }
+  return read();
+}
+
+/** A chat's alias suffix for `seed` (the thread id): the same on every spawn of the thread, and not derivable from
+ *  the thread id without this install's secret. Null without a seed or a secret. */
+function threadAliasSuffix(seed) {
+  if (typeof seed !== 'string' || !seed) return null;
+  const secret = aliasSecret();
+  return secret ? createHmac('sha256', secret).update(seed).digest('hex').slice(0, 8) : null;
+}
+
 /** The chat server a stale `<alias>_<tool>` call belongs to, or null. A stale alias is one this spawn does not hold: an
  *  older spawn's of a resumed session. OpenCode never exposes it, so such a call cannot run — and only a call that did
  *  not run (`status: error`) is read as one: a call that ran, or still runs, was made to a server that exists, which is
@@ -432,7 +456,7 @@ const staleAliasOwn = (part, raw, serverNames) => {
  *   `finish`/`error` row is left to the export (runOpencodeProcess' subSpend), not read off the tool call.
  */
 export function createOpencodeNormalizer({ model = null, mcpServers = [], serverNames = {}, backgroundSubagents = false } = {}) {
-  const texts = [];
+  const texts = [];   // {messageId, text}: a reply's parts, in order
   const seen = new Set();
   const subSessions = [];   // {sessionId, toolUseId}: a sub-agent's session and the `task` call that ran it
   const openSubagents = new Map();   // toolUseId -> {isError, errorText}: rows spawned here and not closed in-stream
@@ -460,7 +484,7 @@ export function createOpencodeNormalizer({ model = null, mcpServers = [], server
       case 'text': {
         const t = str(part.text);
         if (!t) break;
-        texts.push(t);
+        texts.push({ messageId: str(part.messageID), text: t });
         out.push({ type: 'text', text: t, parentId: null, from: 'assistant', blocks: [t], ...(str(part.messageID) ? { messageId: part.messageID } : {}) });
         break;
       }
@@ -524,7 +548,10 @@ export function createOpencodeNormalizer({ model = null, mcpServers = [], server
     }
     return out;
   }
-  return { push, finish: () => ({ text: texts.join(''), error, errorName, errorType, statusCode, sessionId, costUsd: priced ? costUsd : null, usage, subSessions: [...subSessions],
+  // Parts of one message join as they are; separate messages (OpenCode 2 answers again when a background child goes
+  // idle) are kept apart by a blank line.
+  const joined = () => texts.map((p, i) => (i && p.messageId && texts[i - 1].messageId && p.messageId !== texts[i - 1].messageId ? '\n\n' : '') + p.text).join('');
+  return { push, finish: () => ({ text: joined(), error, errorName, errorType, statusCode, sessionId, costUsd: priced ? costUsd : null, usage, subSessions: [...subSessions],
     openSubagents: [...openSubagents].map(([toolUseId, o]) => ({ toolUseId, ...o })), steps }) };
 }
 
@@ -532,7 +559,8 @@ export function createOpencodeNormalizer({ model = null, mcpServers = [], server
  * A sub-session from `opencode export <id>` (1.x) or `opencode session export <id>` (2.x) output, or null: its cost and
  * tokens, and its tool calls and results as worca events under `parentId` (the sub-agent call), so the audit sees what
  * the sub-agent did. `settled` is false for a 2.x session that is still running (no `time.idle`, no terminal outcome);
- * `failed` is true for a 2.x session whose `outcome` is failed, cancelled or error (1.x reports that in the stream).
+ * `failed` is true for a 2.x session whose `outcome` is failed, cancelled or error (1.x reports that in the stream),
+ * and `errorText` is the cause the session names, or ''.
  */
 export function readSubsession(text, { parentId = null, mcpServers = [] } = {}) {
   let doc;
@@ -558,7 +586,7 @@ export function readSubsession(text, { parentId = null, mcpServers = [] } = {}) 
       }
     }
   }
-  return { costUsd, usage, events, settled: true, failed: false, outcome: '' };
+  return { costUsd, usage, events, settled: true, failed: false, outcome: '', errorText: '' };
 }
 
 /** A 2.x session `outcome` that is not a success. */
@@ -591,7 +619,10 @@ function readSubsessionV2(doc, { parentId, mcpServers }) {
   const outcome = str(info.outcome);
   const failed = V2_FAILED_OUTCOMES.includes(outcome);
   const settled = Boolean(info.time?.idle) || failed || outcome === 'succeeded';
-  return { costUsd, usage, events, settled, failed, outcome };
+  // 2.3.2 names a failed child's cause on its `idle` message (and on the assistant message that failed).
+  const errorOf = (m) => (m && m.error && typeof m.error === 'object' ? str(m.error.message) : '');
+  const errorText = failed ? (errorOf(info) || errorOf([...doc.messages].reverse().find((m) => errorOf(m))) || '') : '';
+  return { costUsd, usage, events, settled, failed, outcome, errorText };
 }
 
 // ── errors and preflight ─────────────────────────────────────────────────────
@@ -766,12 +797,10 @@ export async function runOpencodeProcess({
   const rand = () => Math.random().toString(36).slice(2, 8);
   // A chat's server alias is STABLE per thread (`serverAliasSeed`: the thread id), not random per spawn. OpenCode names
   // MCP tools `<alias>_<tool>`, and a resumed session keeps calling the aliases it learned; a fresh random alias on
-  // every spawn made those calls stale ("No tool named <oldalias>_<tool>"). The suffix is a hash of the thread id: no
-  // user server takes the name by accident, though someone who knows the thread id and can write the user's OpenCode
-  // config could name it on purpose (that person already controls this OpenCode). Absent a seed (the self-test, a
-  // run), it stays random.
-  const stableSuffix = typeof serverAliasSeed === 'string' && serverAliasSeed
-    ? createHash('sha256').update(serverAliasSeed).digest('hex').slice(0, 8) : null;
+  // every spawn made those calls stale ("No tool named <oldalias>_<tool>"). The suffix is keyed by this install's own
+  // secret (threadAliasSuffix), so knowing the thread id does not give the name: a user server still cannot take it.
+  // Absent a seed (the self-test, a run) or a secret, it stays random.
+  const stableSuffix = ask ? threadAliasSuffix(serverAliasSeed) : null;
   let mcp = null;
   const serverNames = {};   // a chat's per-spawn server name -> the server's own
   if (mcpConfigPath) {
@@ -929,7 +958,7 @@ export async function runOpencodeProcess({
       costUsd += parsed.costUsd; usage = addUsage(usage, parsed.usage);
       if (major < 2) return;
       // 2.x returned from `subagent` at once, so the stream left the sub-agent row open; close it on the export.
-      const errorText = parsed.failed ? `the sub-agent's session ended as ${parsed.outcome}`
+      const errorText = parsed.failed ? `the sub-agent's session ended as ${parsed.outcome}${parsed.errorText ? `: ${parsed.errorText}` : ''}`
         : !parsed.settled ? 'the sub-agent was still running when the run ended' : null;
       safeEmit(onEvent, { type: 'subagent', event: errorText ? 'error' : 'finish', toolUseId,
         ...(errorText ? { errorText } : {}), ...(parsed.costUsd ? { costUsd: parsed.costUsd } : {}) });

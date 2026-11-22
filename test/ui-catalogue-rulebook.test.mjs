@@ -102,7 +102,7 @@ test('Models: shared filter chips, one group card per harness with a row-button 
   const chips = [...list.querySelectorAll('.mv-filters > button')];
   assert.ok(chips.length >= 3 && chips.every((c) => c.classList.contains('filter-chip') && c.dataset.filter));
   assert.equal(chips.filter((c) => c.getAttribute('aria-pressed') === 'true').length, 1);
-  assert.deepEqual([...list.querySelectorAll('.mdl-grp[data-engine]')].map((g) => g.dataset.engine), ['claude', 'opencode']);
+  assert.deepEqual([...list.querySelectorAll('.mdl-grp[data-engine]')].map((g) => g.dataset.engine), ['claude']);
   const t = list.querySelector('.mdl-grp[data-engine="claude"] .mdl-grp-toggle');
   assert.deepEqual([...t.classList], ['row-btn', 'mdl-grp-toggle']);
   assert.equal(t.querySelector('.mdl-grp-title').textContent, 'Claude Code');

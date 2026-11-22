@@ -127,16 +127,6 @@ function harnessGroup(doc, g) {
       if (s.note) body.append(el(doc, 'div', 'mdl-note', s.note));
       for (const r of s.rows) body.append(modelRow(doc, r));
     }
-    if (g.empty) {
-      // An always-shown harness with no models (CAT-6): a note naming it and the Add-model call to action
-      // (models are added GLOBALLY — app.js's mdl-empty-add opens the dialog with its harness picked).
-      const empty = el(doc, 'div', 'mdl-empty');
-      empty.append(el(doc, 'span', 'mdl-empty-text', g.emptyText || `No ${g.name} models yet.`));
-      const add = button(doc, 'btn btn-sm mdl-empty-add', `Add ${g.name} model`);
-      add.dataset.engine = g.engine;
-      empty.append(add);
-      body.append(empty);
-    }
     sect.append(body);
   }
   return sect;

@@ -157,10 +157,6 @@ a.tab.mdl-tab{text-decoration:none;}
 .mdl-row-st{display:flex;align-items:center;justify-content:flex-end;gap:10px;min-width:0;}
 .mdl-row-go{justify-self:end;color:var(--ink-3);}
 .mdl-nomatch{display:flex;align-items:center;gap:12px;padding:16px 20px;background:var(--panel);border:1px solid var(--line);border-radius:var(--r-card);color:var(--ink-2);}
-/* An always-shown harness with no models: a note and the Add-model call to action (catalogue-view.mjs mdl-empty). */
-.mdl-empty{display:flex;align-items:center;flex-wrap:wrap;gap:12px;padding:14px 20px;border-top:1px solid var(--line);font-size:var(--fs-meta);color:var(--ink-2);}
-.mdl-empty-text{min-width:0;}
-.mdl-empty-add{margin-left:auto;flex:none;}
 
 /* The model side panel (PAN-1…PAN-6): over the page's right edge, under the 48px top bar, full height. Its containing
    block is .main-row (shell/top-bar.css); z 30 keeps it under Ask's sheet (40) and the menus it opens (45). */

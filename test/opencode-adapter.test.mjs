@@ -543,6 +543,37 @@ test('spawn on OpenCode 2: a run that fails closes the sub-agent rows it left op
   assert.deepEqual(fake.exported(), [], 'a failed run reads no export');
 });
 
+test('normalizer: text from separate messages is kept apart by a blank line; parts of one message join as they are', () => {
+  const n = createOpencodeNormalizer();
+  const t = (messageID, text) => n.push({ type: 'text', sessionID: 'ses_x', part: { type: 'text', messageID, text } });
+  t('msg_1', 'Looking'); t('msg_1', ' around.'); t('msg_2', 'DONE'); t('msg_3', 'DONE');
+  assert.equal(n.finish().text, 'Looking around.\n\nDONE\n\nDONE', 'OpenCode 2 answers again when a background child goes idle: never "DONEDONE"');
+  const bare = createOpencodeNormalizer();
+  bare.push({ type: 'text', sessionID: 'ses_x', part: { type: 'text', text: 'a' } });
+  bare.push({ type: 'text', sessionID: 'ses_x', part: { type: 'text', text: 'b' } });
+  assert.equal(bare.finish().text, 'ab', 'parts with no message id join as before');
+});
+
+test('sub-session export (OpenCode 2, as 2.3.2 writes it): a failed child names its own error', () => {
+  const doc = { info: { cost: 0, outcome: 'failed', time: { created: 1, busy: 2, idle: 3 } }, messages: [
+    { type: 'user', text: 'say hi' },
+    { type: 'assistant', content: [], finish: 'error', error: { type: 'provider.invalid-request', message: 'stub refuses the sub-agent' } },
+    { type: 'idle', outcome: 'failed', error: { type: 'provider.invalid-request', message: 'stub refuses the sub-agent', status: 400 } },
+  ] };
+  const sub = readSubsession(JSON.stringify(doc), {});
+  assert.deepEqual([sub.settled, sub.failed, sub.outcome, sub.errorText], [true, true, 'failed', 'stub refuses the sub-agent']);
+  assert.equal(readSubsession(JSON.stringify({ info: { outcome: 'cancelled', time: { idle: 3 } }, messages: [] }), {}).errorText, '', 'none given: empty');
+});
+
+test('spawn on OpenCode 2: a failed sub-agent\'s row carries the reason its export names', POSIX, async () => {
+  const events = await v2Run(v2SubagentRun('ses_v2child0000000000000000005'), { info: { cost: 0, outcome: 'failed', time: { idle: 2 } },
+    messages: [{ type: 'idle', outcome: 'failed', error: { type: 'provider.auth', message: 'invalid api key' } }] });
+  const closed = events.filter((e) => e.type === 'subagent')[1];
+  assert.equal(closed.event, 'error');
+  assert.match(closed.errorText, /failed/);
+  assert.match(closed.errorText, /invalid api key/);
+});
+
 test('spawn: the free tier refusing a run without a shell says why', POSIX, async () => {
   const fake = fakeOpencode(tmp(), null, { lines: frames('error-free-tier.jsonl'), exit: 1 });
   await assert.rejects(runOpencodeProcess({ cwd: tmp(), bin: fake.bin, prompt: 'x', model: 'anthropic/x', permissionRules: { deny: ['Bash'] } }),

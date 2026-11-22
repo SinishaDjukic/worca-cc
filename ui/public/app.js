@@ -19959,7 +19959,7 @@ function repaintCatalogue() { renderModelsViewBody(); }
 // The Catalogue's controls a draw makes anew. A repaint nobody asked for (the engines answer, another tab's
 // settings-changed, a window focus) hands the keyboard back to the same control, and the search its caret.
 const CAT_FOCUS_CLASSES = ['mv-search', 'mdl-source', 'filter-chip', 'mdl-show-all', 'mdl-grp-toggle', 'mdl-grp-more', 'mdl-row',
-  'mdl-fix', 'mv-hide-builtin', 'mdl-empty-add', 'mdl-side-close', 'mdl-act', 'mdl-act-more', 'mdl-copy-id', 'mdl-use'];
+  'mdl-fix', 'mv-hide-builtin', 'mdl-side-close', 'mdl-act', 'mdl-act-more', 'mdl-copy-id', 'mdl-use'];
 /** What tells a control from its look-alikes: its group's harness and its own data-* keys (dataset compares only). */
 const catFocusSig = (n) => JSON.stringify([n.closest('.mdl-grp[data-engine]')?.dataset.engine || '', n.dataset.id || '',
   n.dataset.filter || '', n.dataset.engine || '', n.dataset.row || '', n.dataset.act || '']);
@@ -21897,12 +21897,6 @@ function onModelsToolbarClick(t) {
   }
   if (t.classList.contains('mdl-grp-more') && engine) {
     openGroupMenu(t, engine);
-    return true;
-  }
-  if (t.classList.contains('mdl-empty-add') && t.dataset.engine) {
-    // An always-shown harness with no models: its Add-model opens straight at that harness's own list (step 2),
-    // so the real, runnable models are one click away.
-    openAddModelDialog({ step: 2, where: 'signin', engine: t.dataset.engine });
     return true;
   }
   if (t.classList.contains('mdl-fix') && t.dataset.row) {

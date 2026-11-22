@@ -4,7 +4,8 @@
 // provider env kept, agent-CLI providers refused; the turn handles a session the CLI no longer knows.
 import { test, after } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, rmSync, writeFileSync, readFileSync, statSync, readdirSync } from 'node:fs';
+import { createHash } from 'node:crypto';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { useTempHome } from './helpers/temp-home.mjs';
@@ -78,6 +79,17 @@ test('OpenCode chat: a server alias is stable per thread (a resumed session\'s l
   const a2 = await spawn('ask_2867fe2b');
   assert.equal(a2, a1, 'the same thread names its server the same on every spawn (a resume keeps the learned alias)');
   assert.match(a1, /^worca[a-f0-9]{8}$/, 'still a name no user server can take, seeded by the thread id');
+  // The thread id alone does not give the name away: it is keyed by a secret this install made for itself, kept
+  // beside worca's data and readable by the user only.
+  assert.notEqual(a1, `worca${createHash('sha256').update('ask_2867fe2b').digest('hex').slice(0, 8)}`, 'not a plain hash of the thread id');
+  const keyFile = join(process.env.WORCA_HOME, '.worca-cc', 'opencode-alias.key');
+  assert.match(readFileSync(keyFile, 'utf8'), /^[0-9a-f]{64}$/);
+  if (process.platform !== 'win32') assert.equal(statSync(keyFile).mode & 0o777, 0o600);
+  // Another install (its own secret) names the same thread's server differently.
+  const home = process.env.WORCA_HOME;
+  process.env.WORCA_HOME = tmp();
+  try { assert.notEqual(await spawn('ask_2867fe2b'), a1, 'another install, another name'); } finally { process.env.WORCA_HOME = home; }
+  assert.equal(await spawn('ask_2867fe2b'), a1, 'back on this install: the same name again');
   const b = await spawn('ask_00000002');
   assert.notEqual(b, a1, 'a different thread gets a different alias');
   // Without a seed (the pre-thread-seed path) it stays a fresh random alias per spawn.

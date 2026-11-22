@@ -73,7 +73,7 @@ test('3: a group head, a folded group, a row', () => {
   const head = root.querySelector('.mdl-scroll > .mdl-list > .mdl-cols.mdl-cols-head');
   assert.equal(head.getAttribute('aria-hidden'), 'true');
   assert.deepEqual(texts(head.children), ['Model', 'Used by', 'Status', '']);
-  assert.deepEqual([...root.querySelectorAll('.mdl-list > section.mdl-grp')].map((g) => g.dataset.engine), ['claude', 'codex', 'copilot', 'opencode']);
+  assert.deepEqual([...root.querySelectorAll('.mdl-list > section.mdl-grp')].map((g) => g.dataset.engine), ['claude', 'codex', 'copilot']);
 
   const claude = grp(root, 'claude');
   const toggle = claude.querySelector(':scope > .mdl-grp-head > button.row-btn.mdl-grp-toggle');
@@ -177,30 +177,6 @@ test('5: nothing matches', () => {
   assert.equal(root.querySelector('input.mv-search').value, 'zzz');
   assert.equal(root.querySelector('.mdl-grp'), null);
   assert.equal(draw(doc).querySelector('.mdl-nomatch'), null);
-});
-
-test('an always-shown harness with no models draws its Add-model empty state', () => {
-  const doc = docOf();
-  const root = draw(doc, data(), view({ fold: { opencode: false } }));
-  const oc = grp(root, 'opencode');
-  assert.ok(oc, 'OpenCode\'s group is listed even with no models');
-  const toggle = oc.querySelector('.mdl-grp-toggle');
-  assert.equal(toggle.getAttribute('aria-expanded'), 'true');
-  assert.equal(toggle.querySelector('.mdl-grp-title').textContent, 'OpenCode');
-  assert.equal(toggle.querySelector('.badge.blue').textContent, 'Beta');
-  const empty = oc.querySelector('.mdl-empty');
-  assert.ok(empty);
-  assert.match(empty.querySelector('.mdl-empty-text').textContent, /No OpenCode models yet/);
-  const add = empty.querySelector('button.mdl-empty-add');
-  assert.equal(add.type, 'button');
-  assert.equal(add.dataset.engine, 'opencode');
-  assert.equal(add.textContent, 'Add OpenCode model');
-  // Folded by default (like every non-Claude harness) and free of a state word when the engines answer is unknown.
-  assert.equal(toggle.getAttribute('aria-expanded'), 'true', 'an explicitly unfolded group stays open');
-  const foldDefault = draw(doc);
-  assert.equal(grp(foldDefault, 'opencode').querySelector(':scope > .mdl-grp-body'), null, 'folded: no body');
-  assert.equal(grp(foldDefault, 'opencode').querySelector('.mdl-grp-toggle').getAttribute('aria-expanded'), 'false');
-  assert.equal(grp(foldDefault, 'opencode').querySelector('.mdl-st'), null);
 });
 
 test('6: panel actions by source', () => {
