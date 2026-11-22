@@ -4,6 +4,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
 import { makePanel } from './helpers/ask-panel-harness.mjs';
+import { composerPopLeft } from '../ui/public/ask-panel.mjs';
 import { cssRules } from './helpers/css-rules.mjs';
 import { readStyleCss } from '../src/core/read-style-css.mjs';
 
@@ -174,21 +175,103 @@ const decl = (r, prop) => {
   return m ? m[1].trim() : null;
 };
 
-test('the Style popover opens above the composer box, on the Style pill\'s side, capped and scrolling like the scope and Sets pickers', () => {
+test('the Style popover opens above the composer box, capped and scrolling like the scope and Sets pickers', () => {
   const rules = topRules('.ask-pop-verbosity');
   assert.equal(rules.length, 1, 'exactly one top-level .ask-pop-verbosity rule');
   const [rule] = rules;
   assert.equal(decl(rule, 'bottom'), 'calc(var(--ask-box-top) + 6px)', 'it opens upward above the box, not below it');
-  assert.equal(decl(rule, 'left'), 'var(--ask-col-inset)', 'it sits on the Style pill\'s side (the left group)');
-  assert.equal(decl(rule, 'right'), null, 'it sits on the Style pill\'s side (the left group)');
+  assert.notEqual(decl(rule, 'left'), null, 'a left fallback is declared (used until ask-panel.mjs measures the Style pill)');
+  assert.equal(decl(rule, 'right'), null, 'no right: it would fight the measured left');
   assert.equal(decl(rule, 'max-height'), 'min(420px,70%)', 'all six rows stay reachable');
   assert.equal(decl(rule, 'overflow-y'), 'auto', 'all six rows stay reachable');
   assert.match(decl(rule, 'width') || '', /^\d+px$/, 'a fixed width: the panel never collapses to its content');
   for (const sibling of ['.ask-pop-mcp', '.ask-pop-scope']) {
     const sib = topRules(sibling);
     assert.equal(sib.length, 1, `exactly one top-level ${sibling} rule`);
-    for (const prop of ['bottom', 'left', 'max-height', 'overflow-y']) {
+    for (const prop of ['bottom', 'max-height', 'overflow-y']) {
       assert.equal(decl(rule, prop), decl(sib[0], prop), `${prop} follows ${sibling}`);
     }
   }
+});
+
+test('composerPopLeft aligns with the button', () => {
+  assert.equal(composerPopLeft({ btnLeft: 200, panelW: 240, boxW: 800, inset: 16 }), 200);
+});
+
+test('composerPopLeft clamps at the right edge', () => {
+  assert.equal(composerPopLeft({ btnLeft: 700, panelW: 240, boxW: 800, inset: 16 }), 544);
+});
+
+test('composerPopLeft never goes below the inset', () => {
+  assert.equal(composerPopLeft({ btnLeft: 4, panelW: 240, boxW: 800, inset: 16 }), 16);
+  assert.equal(composerPopLeft({ btnLeft: 100, panelW: 240, boxW: 250, inset: 16 }), 16, 'a narrow composer: the inset wins');
+  assert.equal(composerPopLeft({ btnLeft: -5, panelW: 240, boxW: 800, inset: 0 }), 0);
+  assert.equal(composerPopLeft({ btnLeft: -5, panelW: 240, boxW: 800, inset: -12 }), 0, 'a negative inset is treated as 0');
+});
+
+test('composerPopLeft returns null for 0 geometry', () => {
+  assert.equal(composerPopLeft({ btnLeft: 200, panelW: 240, boxW: 0, inset: 16 }), null);
+  assert.equal(composerPopLeft({ btnLeft: 200, panelW: 0, boxW: 800, inset: 16 }), null);
+});
+
+test('composerPopLeft returns null for non-finite input', () => {
+  assert.equal(composerPopLeft({ btnLeft: NaN, panelW: 240, boxW: 800, inset: 16 }), null);
+  assert.equal(composerPopLeft({ btnLeft: undefined, panelW: 240, boxW: 800, inset: 16 }), null);
+});
+
+const rect = ({ left = 0, width = 0 }) => ({ left, right: left + width, width, top: 0, bottom: 0, height: 0, x: left, y: 0 });
+/** Stub the composer, the Style pill and (via the prototype: it is created on click) the popover's rects. */
+function stubRects(ctx, { box, button, pop }) {
+  const proto = ctx.window.HTMLElement.prototype;
+  const orig = proto.getBoundingClientRect;
+  const geo = { box, button, pop };
+  ctx.doc.querySelector('.ask-composer').getBoundingClientRect = () => rect(geo.box);
+  btn(ctx).getBoundingClientRect = () => rect(geo.button);
+  proto.getBoundingClientRect = function getBoundingClientRect() {
+    return this.classList && this.classList.contains('ask-pop-verbosity') ? rect(geo.pop) : orig.call(this);
+  };
+  return { geo, restore: () => { proto.getBoundingClientRect = orig; } };
+}
+const pop = (ctx) => ctx.doc.querySelector('.ask-pop-verbosity');
+const resize = (ctx) => ctx.window.dispatchEvent(new ctx.window.Event('resize'));
+
+test('the Style popover opens under the Style pill', async () => {
+  const { ctx } = await setup({ snap: snapOf() });
+  const { geo, restore } = stubRects(ctx, { box: { left: 100, width: 800 }, button: { left: 400 }, pop: { left: 116, width: 240 } });
+  try {
+    btn(ctx).click();
+    assert.equal(pop(ctx).style.left, '300px', 'aligned with the pill, relative to the composer');
+    assert.equal(pop(ctx).style.bottom, '', 'the CSS keeps the vertical position');
+    assert.equal(pop(ctx).style.right, '');
+    btn(ctx).click();                                  // toggle closed
+    assert.equal(pop(ctx), null);
+    geo.button = { left: 850 };
+    btn(ctx).click();
+    assert.equal(pop(ctx).style.left, '544px', 'clamped inside the composer\'s right edge');
+    btn(ctx).click();
+    assert.equal(pop(ctx), null, 'a second click closes it');
+    assert.doesNotThrow(() => resize(ctx), 'a resize with no popover open is safe');
+  } finally { restore(); ctx.panel.destroy(); }
+});
+
+test('the Style popover re-anchors on resize while open', async () => {
+  const { ctx } = await setup({ snap: snapOf() });
+  const { geo, restore } = stubRects(ctx, { box: { left: 100, width: 800 }, button: { left: 400 }, pop: { left: 116, width: 240 } });
+  try {
+    btn(ctx).click();
+    assert.equal(pop(ctx).style.left, '300px');
+    geo.button = { left: 300 };
+    resize(ctx);
+    assert.equal(pop(ctx).style.left, '200px', 'follows the pill');
+    geo.button = { left: 400 };
+    resize(ctx);
+    assert.equal(pop(ctx).style.left, '300px', 'back to the original geometry: no ratchet');
+  } finally { restore(); ctx.panel.destroy(); }
+});
+
+test('unmeasured geometry keeps the CSS fallback', async () => {
+  const { ctx } = await setup({ snap: snapOf() });
+  btn(ctx).click();
+  assert.equal(pop(ctx).style.left, '', 'jsdom measures nothing: no inline left');
+  ctx.panel.destroy();
 });

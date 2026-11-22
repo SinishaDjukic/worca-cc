@@ -204,6 +204,22 @@ export function chipPickerTop({ top, bottom, panelH, sheetH, gap = 6 }) {
   return Math.max(0, t);
 }
 
+/**
+ * Composer-relative left edge for the Style picker (.ask-pop-verbosity). The scope
+ * and MCP pills sit at the composer's left edge, so their pickers can hug
+ * --ask-col-inset in CSS; the Style pill sits further right in the control row,
+ * so a CSS-anchored menu would open away from it. Align the menu with the pill,
+ * keep it at least `inset` inside both of the composer's edges, and let the left
+ * inset win when the composer is too narrow for both. Zero widths (jsdom,
+ * detached, hidden) or non-finite input return null: keep the CSS fallback, no
+ * fake geometry.
+ */
+export function composerPopLeft({ btnLeft, panelW, boxW, inset }) {
+  if (![btnLeft, panelW, boxW, inset].every(Number.isFinite) || boxW <= 0 || panelW <= 0) return null;
+  const pad = Math.max(0, inset);
+  return Math.max(pad, Math.min(btnLeft, boxW - panelW - pad));
+}
+
 /** Out-of-turn / other-thread frames that can move a History row's dots: a run a
  *  chat follows changed (tracking) or a turn started/ended there (thinking). */
 // worca Chat: a followed run's question notice (ask-message) can turn a dot amber; a new title renames a row.
@@ -2280,6 +2296,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     relayoutCards();
     applyPin();
     if (st.popover && st.popover.trigger === el.ctxBtn) anchorCtxPopover(st.popover.panel, el.ctxBtn);
+    if (st.popover && st.popover.trigger === el.verbosityBtn) anchorVerbosityPopover(st.popover.panel, el.verbosityBtn);
   }
 
   // ---- keyboard + pointer routing ------------------------------------------
@@ -3099,7 +3116,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
   }
   const verbosityName = (v) => (v ? VERBOSITY_LABELS[v] : 'Default');
   function openVerbosityPopover(trigger) {
-    openPopover({ panelClass: 'ask-pop-verbosity', trigger, build: (panel) => {
+    const panel = openPopover({ panelClass: 'ask-pop-verbosity', trigger, build: (panel) => {
       for (const v of [null, ...VERBOSITY_LEVELS]) {
         const it = menuItem('ask-verbosity-item', () => { setVerbosity(v); closePopover(); });
         it.setAttribute('role', 'menuitemradio');
@@ -3109,6 +3126,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
         panel.appendChild(it);
       }
     } });
+    if (panel) anchorVerbosityPopover(panel, trigger);
   }
   /** A parsed /verbosity command: never posted as a message. A pick works while a reply streams (from the next one). */
   function runVerbosityCommand(cmd) {
@@ -3800,6 +3818,19 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     const sr = host.getBoundingClientRect();
     const tr = trigger.getBoundingClientRect();
     if (sr.width > 0) panel.style.right = `${Math.max(0, Math.min(sr.right - tr.right, sr.width - CTX_POP_WIDTH - 6))}px`;
+  }
+
+  /** Left edge under the Style pill (composerPopLeft). The CSS left (--ask-col-inset) is cleared back in first and
+   *  measured as the inset, so a re-run on resize never ratchets; unmeasurable geometry keeps that fallback. */
+  function anchorVerbosityPopover(panel, trigger) {
+    const host = panel.parentElement;
+    if (!host) return;
+    panel.style.left = '';
+    const hr = host.getBoundingClientRect();
+    const pr = panel.getBoundingClientRect();
+    const tr = trigger.getBoundingClientRect();
+    const x = composerPopLeft({ btnLeft: tr.left - hr.left, panelW: pr.width, boxW: hr.width, inset: pr.left - hr.left });
+    if (x !== null) panel.style.left = `${x}px`;
   }
 
   // ---- thread actions -------------------------------------------------------
