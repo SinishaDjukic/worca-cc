@@ -1,0 +1,3 @@
+## Harness notes
+
+- This prompt names Claude Code's tools. In Qwen Code, use `run_shell_command` for Bash, `read_file` for Read, `write_file` for Write, `edit` for Edit, `grep_search` for Grep, and `glob` for Glob.

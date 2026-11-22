@@ -38,6 +38,12 @@ const ROWS = [
   // cannot fix an id); parks as an error, resumable once the model is fixed
   ['node', 'model', true,  1, undefined, PAUSE_ERR],
   ['node', 'model', false, 1, undefined, PAUSE_ERR],
+  // node / refusal: the model declined the request (MODEL_REFUSAL) — never retried
+  // (the same prompt is refused again); parks as an error until the prompt or model changes
+  ['node', 'refusal', true,  1, undefined, PAUSE_ERR],
+  ['node', 'refusal', true,  4, undefined, PAUSE_ERR],
+  ['node', 'refusal', false, 1, undefined, PAUSE_ERR],
+  ['node', 'refusal', false, 4, undefined, PAUSE_ERR],
   // node / network, rate_limit: auto retries MAX times, then pauses; interactive prompts
   ['node', 'network',    true, 1,       undefined, { outcome: 'retry' }],
   ['node', 'network',    true, MAX,     undefined, { outcome: 'retry' }],

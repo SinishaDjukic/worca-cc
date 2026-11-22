@@ -132,7 +132,8 @@ test('POST /api/run: a normal run resolves the overlay over the project layer fo
     const stepper = await untilStepper(entry);
     const cell = (id) => stepper.graph.nodes.find((n) => n.id === id);
     assert.deepEqual([cell('n_plan').model, cell('n_plan').effort], ['claude-haiku-4-5', 'medium']);
-    assert.deepEqual([cell('n_impl').model, cell('n_impl').effort], ['claude-opus-5-5', '']);
+    // effort intents: '' reads as unset, so the implementer's standard intent fills it (medium on Opus 5.5).
+    assert.deepEqual([cell('n_impl').model, cell('n_impl').effort], ['claude-opus-5-5', 'medium']);
     assert.deepEqual(stepper.runOverlay, canonical);
   } finally {
     await post('/api/stop', { runId });

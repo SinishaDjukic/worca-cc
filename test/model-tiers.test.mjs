@@ -87,11 +87,12 @@ test('MODEL_PICK_POLICY names stages by display name only — the Ask rules may 
   for (const key of ['implementer', 'planner', 'refiner', 'reviewer', 'clarify', 'decomposer']) assert.equal(MODEL_PICK_POLICY.includes(key), false, key);
   assert.match(MODEL_PICK_POLICY, /Prefer Anthropic models, then OpenAI, then others/);
   assert.match(MODEL_PICK_POLICY, /at least a 64k context/);
-  assert.match(MODEL_PICK_POLICY, /any other step \(Clarify included\) the strong tier at medium effort/, 'every wf_default run has a Clarify step');
+  assert.match(MODEL_PICK_POLICY, /any other step \(Clarify included\) the strong tier at the standard intent/, 'every wf_default run has a Clarify step');
 });
 
 test('MODEL_PICK_POLICY is conservative: judgement takes the top tier, never premium; the cheapest capable model within a tier; premium only when named', () => {
-  assert.match(MODEL_PICK_POLICY, /^Judgement steps \(Plan, Plan Review, Refine Plan, Review Implementation, Bug Root Cause, Deck Review\) take the top tier \(never the premium tier\) at high effort;/);
+  assert.match(MODEL_PICK_POLICY, /^Judgement steps \(Plan, Plan Review, Refine Plan, Review Implementation, Bug Root Cause, Deck Review\) take the top tier \(never the premium tier\) at the deep intent;/);
+  assert.doesNotMatch(MODEL_PICK_POLICY, /at high effort;|at medium effort;/, 'the steps carry intents, not fixed efforts');
   assert.match(MODEL_PICK_POLICY, /Within a tier take the cheapest capable model\./);
   assert.match(MODEL_PICK_POLICY, /Never pick a premium-tier model unless the user names that model\./);
   assert.equal(TIERS[0].id, 'premium', 'the policy\'s premium tier is the one the facts carry');

@@ -110,3 +110,26 @@ test('a node without a role review has no roles key; Auto ignores the project la
   const pinned = await resolveGraph(projectDir, id, REG(), undefined, { agentPair: { model: 'claude-opus-5-5' } });
   assert.equal(Object.hasOwn(pinned.nodes.n_reviewer, 'roles'), false, 'an agentPair pin skips role picks');
 });
+
+// Effort intents (effort-intents.mjs): a run start (fillIntents) fills only an UNSET effort; a named one always wins.
+test('effort intents: the overlay, the legacy layer and the template name efforts the intent never replaces', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'worca-cc-rgo-ei-'));
+  try {
+    const FILL = { engine: 'claude', fillIntents: true };
+    const over = (pick) => resolveGraph(dir, 'wf_default', REG(), undefined, { ...FILL, overlay: { nodes: { n_plan: pick } } });
+    assert.equal((await over({ model: 'claude-opus-4-8', effort: '' })).nodes.n_plan.effort, 'xhigh', "'' reads as unset: planner is deep");
+    assert.equal((await over({ model: 'claude-opus-4-8', effort: 'medium' })).nodes.n_plan.effort, 'medium');
+    assert.equal((await over({ model: 'claude-opus-4-7', effort: '' })).nodes.n_plan.effort, undefined, 'opus-4-7 has no row');
+    const run = await resolveGraph(dir, 'wf_default', REG(), undefined, { ...FILL, runModel: 'claude-opus-4-8' });
+    assert.equal(run.nodes.n_impl.effort, 'high', 'implementer: standard');
+    assert.equal(run.nodes.n_review.effort, 'xhigh', 'reviewer: deep');
+    await setStep(dir, 'planner', { model: 'claude-opus-4-8', effort: 'max' });
+    assert.equal((await resolveGraph(dir, 'wf_default', REG(), undefined, FILL)).nodes.n_plan.effort, 'max', 'the legacy per-role effort');
+    const { id } = await writeGraphWorkflow({ ...GRAPH, id: 'wf_rgo_ei',
+      nodes: GRAPH.nodes.map((n) => (n.id === 'n_plan' ? { ...n, config: { effort: 'high' } } : n)) });
+    const tpl = await resolveGraph(dir, id, REG(), undefined, { ...FILL, runModel: 'claude-opus-4-8' });
+    assert.equal(tpl.nodes.n_plan.effort, 'high', 'the template effort');
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
