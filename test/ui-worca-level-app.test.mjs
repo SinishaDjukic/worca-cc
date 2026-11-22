@@ -314,18 +314,34 @@ test('account menu: the level card links to #profile/level, is the menu\'s first
   const { doc, window, ctl, poke } = await boot({ view: viewAt(2) });
   const card = await until(() => doc.querySelector('#acct-menu #acct-level-card'));
   assert.ok(card, 'the card is mounted in the account menu');
-  assert.equal(card.querySelector('a.wl-profile-link').dataset.hash, 'profile/level');
+  assert.equal(card.dataset.hash, 'profile/level');
+  assert.equal(card.dataset.nav, 'profile');
   assert.match(card.textContent, /Runner/);
-  assert.match(card.textContent, /Next: Hooked/);
+  assert.match(card.textContent, /To Hooked/);
+  assert.match(card.textContent, /View level/);
   assert.equal(card, doc.getElementById('acct-menu').firstElementChild, 'the first item of the account menu');
   assert.equal(card.nextElementSibling?.id, 'acct-id', '"Signed in as" follows it');
   ctl.view = viewAt(3);
   poke('worca-level-changed');
-  await until(() => /Hooked/.test(doc.querySelector('#acct-level-card .wl-hc-name')?.textContent || ''));
+  await until(() => /Hooked/.test(doc.querySelector('#acct-level-card .wl-card-name')?.textContent || ''));
   assert.equal(doc.querySelectorAll('#acct-level-card').length, 1, 'repainted in place, never duplicated');
-  click(window, doc.querySelector('#acct-level-card .wl-profile-link'));
+});
+
+test('account menu: clicking the compact level card goes straight to #profile/level and closes the menu, opening nothing else', async () => {
+  const { doc, window } = await boot({ view: viewAt(2) });
+  const card = await until(() => doc.querySelector('#acct-menu #acct-level-card'));
+  const menu = doc.getElementById('acct-menu');
+  doc.getElementById('side-acct').click();
+  await settle();
+  assert.equal(menu.hidden, false, 'the menu is open');
+  const OVERLAYS = '.worca-hover-card, .worca-dlg, .viewer-modal:not(.hidden):not([hidden]), [role="dialog"]:not([hidden]):not(.hidden), [role="group"][aria-label="Your worca level"]';
+  const before = doc.querySelectorAll(OVERLAYS).length;
+  click(window, card);
   await settle();
   assert.equal(window.location.hash, '#profile/level');
+  assert.equal(menu.hidden, true, 'the menu closed');
+  assert.equal(doc.querySelectorAll(OVERLAYS).length, before, 'no popover, dialog or card opened');
+  assert.equal(doc.body.querySelector('.wl-hc-head, .wl-try, .wl-profile-link'), null, 'no expanded card content anywhere');
 });
 
 test('refresh: a failed refetch keeps the last view in the corner', async () => {
@@ -508,7 +524,7 @@ test('R-po-6, D-14: a level dialog waits while a prompt modal is open, and the p
   const classes = prompt.className;
   ctl.view = viewAt(3, { celebration: LADDER[2] });
   poke('worca-level-changed');
-  await until(() => /Hooked/.test(doc.querySelector('#acct-level-card .wl-hc-name')?.textContent || ''));
+  await until(() => /Hooked/.test(doc.querySelector('#acct-level-card .wl-card-name')?.textContent || ''));
   await settle();
   assert.equal(doc.querySelector('.worca-dlg'), null, 'the dialog waits');
   assert.equal(prompt.className, classes, 'the prompt is not hidden or changed');
@@ -598,7 +614,7 @@ test('D-13: reaching Runner while on #running/<live id> shows nothing; opening #
   await goTo(window, '#running/r1');
   ctl.view = viewAt(2, { celebration: LADDER[1] });
   poke('worca-level-changed');
-  await until(() => /Runner/.test(doc.querySelector('#acct-level-card .wl-hc-name')?.textContent || ''));
+  await until(() => /Runner/.test(doc.querySelector('#acct-level-card .wl-card-name')?.textContent || ''));
   await settle();
   assert.equal(doc.querySelector('.worca-dlg'), null, 'a live run on screen: nothing');
   await goTo(window, '#history/proj/abc');
@@ -635,7 +651,7 @@ test('D-14: a guide, the open account menu and a second level in one session eac
   doc.body.append(layer);
   ctl.view = viewAt(3, { celebration: LADDER[2] });
   poke('worca-level-changed');
-  await until(() => /Hooked/.test(doc.querySelector('#acct-level-card .wl-hc-name')?.textContent || ''));
+  await until(() => /Hooked/.test(doc.querySelector('#acct-level-card .wl-card-name')?.textContent || ''));
   await settle();
   assert.equal(doc.querySelector('.worca-dlg'), null, 'a guide is lit');
   layer.remove();
