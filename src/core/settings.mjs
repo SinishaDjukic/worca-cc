@@ -70,6 +70,7 @@ import { MODEL_ROLES } from '../shared/model-roles.mjs';
 import { GHE_COM_ACCOUNT_TYPE, normalizeGheHost, copilotBlockHost } from './ghe-host.mjs';
 import { CODEX_PRICES, listPriceFor } from './list-prices.mjs';
 import { engineLabel } from '../shared/engine-switch.mjs';
+import { isVerbosity, VERBOSITY_HINT } from '../shared/chat-verbosity.mjs';
 import { validateNightPatch, NIGHT_TOGGLES } from './night/config.mjs';
 import { normalizeDomainList, normalizeDomainPattern, domainError, DOMAIN_LIST_MAX, RESERVED_KEY_VAR } from './web-allowlist.mjs';
 import { normaliseDimensions } from '../shared/tag-dimensions.mjs';
@@ -1104,8 +1105,9 @@ const CHAT_NOTIFY_EVENTS = ['done', 'error', 'question', 'paused', 'away', 'prWa
  * chat's "Create and run scripts" switch and defaults ON, so only a stored false ever
  * takes save_script / test_script away. `suggestions` is Ask Worca's next-prompt ghost text after
  * each reply (one cheap model call per reply), default ON as well. `summariseCommands` (#911, flag
- * commandSummaries) shows chat commands as one-line rows, default ON too.
- * @returns {{notify: Record<string, boolean>, channels: Record<string, {enabled: boolean}>, scriptTools: boolean, suggestions: boolean, summariseCommands: boolean}}
+ * commandSummaries) shows chat commands as one-line rows, default ON too. `verbosity` (#1230) is the user's own Chat
+ * reply style, or null when unset (the cascade then falls through to the team default, else normal).
+ * @returns {{notify: Record<string, boolean>, channels: Record<string, {enabled: boolean}>, scriptTools: boolean, suggestions: boolean, summariseCommands: boolean, verbosity: string|null}}
  */
 export function chatPrefs() {
   const raw = readSettings().chat;
@@ -1119,15 +1121,15 @@ export function chatPrefs() {
   // `suggestions`: Ask Worca's next-prompt ghost text after each reply — default ON, only a stored false stops it.
   // `summariseCommands` (#911, flag commandSummaries): chat commands as one-line rows — default ON.
   return { notify, channels, scriptTools: chat.scriptTools !== false, suggestions: chat.suggestions !== false,
-    summariseCommands: chat.summariseCommands !== false };
+    summariseCommands: chat.summariseCommands !== false, verbosity: isVerbosity(chat.verbosity) ? chat.verbosity : null };
 }
 
 /**
  * Merge-patch the chat prefs: {notify?: {done?, error?, question?, paused?, away?},
  * channels?: {"<plugin>/<id>"?: {enabled: boolean}}, scriptTools?: boolean, suggestions?: boolean,
- * summariseCommands?: boolean}.
+ * summariseCommands?: boolean, verbosity?: string|null}.
  * Unknown notify keys and a non-boolean scriptTools / suggestions / summariseCommands are rejected (400 at the API layer);
- * channels merge per key.
+ * channels merge per key. `verbosity` (#1230): a level stores it, null or '' deletes it, anything else is refused.
  */
 export async function setChatPrefs(patch = {}) {
   if (!patch || typeof patch !== 'object' || Array.isArray(patch)) throw new Error('chat prefs must be an object');
@@ -1140,6 +1142,9 @@ export async function setChatPrefs(patch = {}) {
   if (hasSuggestions && typeof patch.suggestions !== 'boolean') throw new Error('chat suggestions must be true or false');
   const hasSummaries = Object.prototype.hasOwnProperty.call(patch, 'summariseCommands');
   if (hasSummaries && typeof patch.summariseCommands !== 'boolean') throw new Error('chat summariseCommands must be true or false');
+  const hasVerbosity = Object.prototype.hasOwnProperty.call(patch, 'verbosity');
+  const clearVerbosity = hasVerbosity && (patch.verbosity === null || patch.verbosity === '');
+  if (hasVerbosity && !clearVerbosity && !isVerbosity(patch.verbosity)) throw new Error(`chat.verbosity ${VERBOSITY_HINT}`);
   const settings = readSettings();
   const cur = settings.chat && typeof settings.chat === 'object' ? settings.chat : {};
   settings.chat = {
@@ -1154,7 +1159,9 @@ export async function setChatPrefs(patch = {}) {
     ...(hasScriptTools ? { scriptTools: patch.scriptTools } : {}),
     ...(hasSuggestions ? { suggestions: patch.suggestions } : {}),
     ...(hasSummaries ? { summariseCommands: patch.summariseCommands } : {}),
+    ...(hasVerbosity && !clearVerbosity ? { verbosity: patch.verbosity } : {}),
   };
+  if (clearVerbosity) delete settings.chat.verbosity;
   await persistSettings(settings);
   return chatPrefs();
 }

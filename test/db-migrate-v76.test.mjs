@@ -7,11 +7,11 @@ import { migrate, SCHEMA_VERSION } from '../src/core/db.mjs';
 const cols = (db, t) => db.prepare(`PRAGMA table_info(${t})`).all().map((c) => c.name);
 const version = (db) => db.prepare('PRAGMA user_version').get().user_version;
 
-test('fresh DB: ask_threads.group_id is last and ask_chat_groups exists', () => {
+test('fresh DB: ask_threads.group_id follows pinned_at (v97 verbosity comes after it) and ask_chat_groups exists', () => {
   const db = new DatabaseSync(':memory:');
   migrate(db);
   assert.ok(SCHEMA_VERSION >= 76);
-  assert.equal(cols(db, 'ask_threads').at(-1), 'group_id');
+  assert.deepEqual(cols(db, 'ask_threads').slice(-3), ['pinned_at', 'group_id', 'verbosity']);
   assert.deepEqual(cols(db, 'ask_chat_groups'), ['id', 'name', 'name_source', 'created_by', 'created_at', 'updated_at']);
 });
 

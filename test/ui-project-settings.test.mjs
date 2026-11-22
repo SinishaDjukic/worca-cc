@@ -207,3 +207,22 @@ test('Pull requests card: with no team value pr.open inherits "Worca default"', 
   assert.equal(field(host, 'pr.open').querySelector('.inherit-input').options[0].textContent, "Don't create a PR (default)");
   assert.equal(field(host, 'pr.slices').querySelector('.inherit-input').options[0].textContent, 'A PR per slice, stacked (default)');
 });
+
+test('Chat card shows a Reply style select and saves {\'chat.verbosity\':\'terse\'} (#1230)', async () => {
+  const view = { ...VIEW, layers: { ...VIEW.layers, 'chat.verbosity': { user: 'caveman', team: 'concise', default: 'normal' } } };
+  const { window, host, calls } = harness({ settings: () => ({ status: 200, body: view }) });
+  for (let i = 0; i < 4; i++) await tick();
+  const card = host.querySelector('.pd-settings-card[data-card="ask"]');
+  assert.deepEqual([...card.querySelectorAll('.inherit-field')].map((f) => f.dataset.setting), ['askMaxTurns', 'askMaxBudgetUsd', 'chat.verbosity']);
+  const style = field(host, 'chat.verbosity');
+  assert.equal(style.querySelector('label').textContent, 'Reply style');
+  const select = style.querySelector('.inherit-input');
+  assert.equal(select.options[0].textContent, 'Caveman (your setting)', 'inherits the user value first');
+  assert.deepEqual([...select.options].slice(1).map((o) => o.value).sort(), ['concise', 'detailed', 'normal', 'terse']);
+  assert.match(style.textContent, /Overrides your own Chat reply style for this project; a chat's own pick still wins\./);
+  select.value = 'terse';
+  select.dispatchEvent(new window.Event('change', { bubbles: true }));
+  card.querySelector('.pd-settings-save').click();
+  for (let i = 0; i < 4; i++) await tick();
+  assert.deepEqual(calls.filter((c) => c.method === 'PATCH').at(-1).body, { 'chat.verbosity': 'terse' });
+});

@@ -96,14 +96,14 @@ test('ask-panel-render: user bubble + attachment pills, plain-fallback answer, a
       assert.ok(!/Worked for/.test(heads[0].textContent), 'a clean turn is Done and its numbers');
       assert.equal(heads[0].querySelector('.ask-activity-label').textContent, 'Done');
       assert.equal(heads[0].firstElementChild.className, 'ask-activity-label', 'the word leads');
-      // Done · elapsed · the turn-end context fill · cost: no cumulative token figure, no status dot, no spacer
-      // pushing the meter to the far edge.
-      assert.equal(heads[0].textContent, 'Done · 6.4s · 2.0k ctx · $0.14');
+      // Done · elapsed · the turn-end context fill · this reply's tokens in/out (#1230) · cost: no cumulative token figure,
+      // no status dot, no spacer pushing the meter to the far edge.
+      assert.equal(heads[0].textContent, 'Done · 6.4s · 2.0k ctx · 900 in · 1.1k out · $0.14');
       assert.equal(heads[0].querySelector('.ask-dot, .ask-activity-spacer'), null);
       assert.equal(heads[0].tagName, 'DIV', 'no tool or agent rows: nothing to open, no button');
       assert.equal(heads[0].querySelector('.ask-activity-chev'), null, 'no chevron');
       assert.equal(heads[0].hasAttribute('aria-expanded'), false);
-      assert.equal(heads[1].textContent, 'Stopped after 1m 12s · 2.0k ctx · $0.14', 'a stopped turn keeps only its own word');
+      assert.equal(heads[1].textContent, 'Stopped after 1m 12s · 2.0k ctx · 900 in · 1.1k out · $0.14', 'a stopped turn keeps only its own word');
       assert.match(ctx.doc.querySelectorAll('.ask-notice')[0].textContent, /Stopped: reached the 40-turn limit/);
     } },
   ]);
@@ -185,7 +185,7 @@ test('ask-panel-render: the activity is collapsed by default; its head is a butt
   const chev = head.querySelector('.ask-activity-chev');
   assert.equal(chev.textContent, '›');
   assert.equal(chev.getAttribute('aria-hidden'), 'true');
-  assert.equal(head.textContent, 'Done · 6.4s · 2.0k ctx · $0.14›', 'the inline head, the chevron last');
+  assert.equal(head.textContent, 'Done · 6.4s · 2.0k ctx · 900 in · 1.1k out · $0.14›', 'the inline head, the chevron last');
   assert.equal(body.hidden, true, 'only the head shows');
   assert.equal(body.querySelectorAll('.ask-tool-row').length, 2, 'the body holds the tool rows…');
   assert.ok(body.querySelector('.ask-agents .ask-agent-row'), '…and the sub-agent section');

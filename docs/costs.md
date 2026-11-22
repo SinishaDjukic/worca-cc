@@ -9,6 +9,13 @@ What a run costs, where you see the spend, and the limits that stop a run before
 The run page shows each run's estimated cost as it goes. In Expert mode, the workflow graph also shows the cost of
 each step. These figures are Claude Code's client-side estimates, not your bill.
 
+### Tokens per reply
+
+Each Chat reply shows its tokens next to the context fill and the cost, while it runs and once it ends:
+`12.3k in · 456 out`. **in** is everything the reply sent to the model, cache reads and cache writes included (with
+prompt caching most of it is cache reads, which cost less); **out** is what the model wrote. A shorter
+[reply style](chat.md#reply-style-verbosity) lowers **out**.
+
 ### Statistics
 
 **Statistics** (Advanced) sums up spend over a range: Today, This week, This month, Last month, All time or a

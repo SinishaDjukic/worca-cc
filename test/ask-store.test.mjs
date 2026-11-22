@@ -41,7 +41,7 @@ test('threads: create/get/update/setThreadTitle; listThreads newest-first with r
       const t = createThread({ model: 'claude-opus-5-5', effort: 'high' });
       assert.match(t.id, /^ask_[0-9a-f]{8}$/);
       assert.deepEqual(Object.keys(t).sort(),
-        ['agentMode', 'archivedAt', 'context', 'contexts', 'createdAt', 'createdBy', 'effort', 'engine', 'groupId', 'id', 'mcpOff', 'model', 'pinnedAt', 'sessionId', 'title', 'totals', 'updatedAt']);
+        ['agentMode', 'archivedAt', 'context', 'contexts', 'createdAt', 'createdBy', 'effort', 'engine', 'groupId', 'id', 'mcpOff', 'model', 'pinnedAt', 'sessionId', 'title', 'totals', 'updatedAt', 'verbosity']);
       assert.equal(t.mcpOff, null, 'no MCP picker choices yet (v45)');
       assert.equal(t.agentMode, true, 'agent mode is on by default (v51, #574)');
       assert.equal(t.engine, null, 'no engine until the first turn stores one (v53, #635)');
@@ -659,6 +659,16 @@ test('agentMode (#574): on by default; a patch stores false and true (0/1, never
   assert.equal(getDb().prepare('SELECT agent_mode FROM ask_threads WHERE id = ?').get(t.id).agent_mode, 0);
   assert.equal(updateThread(t.id, { agentMode: true }).agentMode, true);
   assert.equal(updateThread(t.id, { title: 'x' }).agentMode, true, 'other patches leave it alone');
+});
+
+test('verbosity override (#1230): default null, patch terse, patch null clears; an invalid stored value reads as null', () => {
+  const t = createThread();
+  assert.equal(t.verbosity, null);
+  assert.equal(updateThread(t.id, { verbosity: 'terse' }).verbosity, 'terse');
+  assert.equal(updateThread(t.id, { title: 'x' }).verbosity, 'terse', 'other patches leave it alone');
+  assert.equal(updateThread(t.id, { verbosity: null }).verbosity, null);
+  getDb().prepare("UPDATE ask_threads SET verbosity = 'LOUD' WHERE id = ?").run(t.id);
+  assert.equal(getThread(t.id).verbosity, null, 'a hand-edited junk value never reaches a turn');
 });
 
 test('attachment source (v64): a show_files copy keeps its original path server-side; rows carry only hasSource', () => {

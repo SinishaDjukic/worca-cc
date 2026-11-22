@@ -88,6 +88,7 @@ export const SETTINGS_FIELD_LABELS = Object.freeze({
   hideBuiltinModels: 'Hide built-in models',
   hideBuiltinEngines: 'Hide built-in models',
   chat: 'Chat notifications',
+  'chat.verbosity': 'Reply style',
   runEngine: 'Default engine',
   stepModels: 'Step models',
   modelRoles: 'Model roles',

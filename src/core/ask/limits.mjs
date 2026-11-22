@@ -7,6 +7,7 @@ import { cachedPolicyForKey } from '../policy/cache.mjs';
 import { fieldsForRun } from '../policy/effective.mjs';
 import { resolveSetting } from '../settings-cascade.mjs';
 import { TEXT_EXTENSIONS, BINARY_EXTENSIONS } from './attachment-kind.mjs';
+import { isVerbosity } from '../../shared/chat-verbosity.mjs';
 
 export const ASK_LIMITS = Object.freeze({
   turnsPerThread: 1,                       // one running turn per thread (409)
@@ -123,4 +124,20 @@ export function askLimits({ readMaxTurns = readAskMaxTurns, readMaxBudgetUsd = r
     }
   }
   return out;
+}
+
+/**
+ * The reply style of one Ask turn (#1230): chat > project > user > team default > normal. The thread's own override
+ * wins when valid; otherwise the `chat.verbosity` cascade (its team layer exists only with a projectKey). Never throws:
+ * a chat turn must not fail on its style.
+ * @returns {{level:string, source:'chat'|'project'|'user'|'team'|'default'}}
+ */
+export function resolveChatVerbosity({ thread = null, projectKey = null } = {}) {
+  if (isVerbosity(thread?.verbosity)) return { level: thread.verbosity, source: 'chat' };
+  try {
+    const { value, source } = resolveSetting('chat.verbosity', projectKey ? { projectKey } : {});
+    return { level: value, source };
+  } catch {
+    return { level: 'normal', source: 'default' };
+  }
 }

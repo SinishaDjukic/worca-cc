@@ -64,7 +64,7 @@ const OPEN_BACKOFF_MS = 15;
 /** Latest schema version. Bump + append a new migration step when the DDL grows.
  *  Exported so migration tests assert "reached the module's current version"
  *  instead of hardcoding the number — a schema bump then touches no test file. */
-export const SCHEMA_VERSION = 96;
+export const SCHEMA_VERSION = 97;
 
 /** store_meta row holding the install's default guardrail set id (JSON string). */
 export const GUARDRAILS_DEFAULT_META_KEY = 'guardrails:default';
@@ -905,7 +905,8 @@ const INCREMENTAL_COLUMNS = {
                             composer: 'TEXT',        // v54: JSON {sessionId, docToken, graph, selection, dirty, drafts} — the canvas the last message carried
                             archived_at: 'TEXT',     // v75 (#948 s2): when the chat was archived; NULL = not archived
                             pinned_at: 'TEXT',       // v75 (#948 s2): when the chat was pinned; NULL = not pinned
-                            group_id: 'TEXT' },      // v76 (#948 s3): the chat's topic group (ask_chat_groups.id); NULL = ungrouped
+                            group_id: 'TEXT',        // v76 (#948 s3): the chat's topic group (ask_chat_groups.id); NULL = ungrouped
+                            verbosity: 'TEXT' },     // v97 (#1230): the chat's reply-style override; NULL = follow settings
   shape_features:         { ship_mode: 'TEXT',        // v58 (D24): 'stacked' | 'one'; NULL = not shipped
                             ship_pr_url: 'TEXT',      // v58: the one PR (mode 'one'); NULL otherwise
                             shipped_at: 'TEXT',       // v58: when Ship as ran
@@ -2878,6 +2879,7 @@ export function migrate(db) {
     // repairSchemaGaps (a v92+ DB) or by the v92 DDL above (an older DB). First written as v92.
     // v96 Requirements run note: req_starts.note + req_starts.note_overrides — INCREMENTAL_COLUMNS, added by the hoisted
     // repairSchemaGaps (a v95 DB); the base DDL does not carry them.
+    // v97 Chat reply style (#1230): ask_threads.verbosity — INCREMENTAL_COLUMNS, added by the hoisted repairSchemaGaps.
     db.exec(`PRAGMA user_version = ${SCHEMA_VERSION}`);
     db.exec('COMMIT');
   } catch (err) {

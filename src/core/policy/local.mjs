@@ -10,6 +10,7 @@ import {
   modelRolesSetting,
 } from '../settings.mjs';
 import { hasProjectSetting, resolveSetting } from '../settings-cascade.mjs';
+import { isVerbosity } from '../../shared/chat-verbosity.mjs';
 import { readConfigRow, readTeamMetricsPrefs } from '../config.mjs';
 import { projectKey } from '../store.mjs';
 import { readPluginsLock } from '../plugins-lock.mjs';
@@ -41,6 +42,8 @@ export function localSnapshot(projectDir = null) {
   const web = askWeb(projectDir);
   const pipeCap = pipelineCostLimitUsd(projectDir);
   const rate = humanRateUsdPerHour(projectDir);
+  // #1230: the developer's own reply style (project, then user, then normal) — never the team layer.
+  const verbosity = resolveSetting('chat.verbosity', { projectDir });
   const out = {
     'cost.pipelineLimitUsd': { value: pipeCap, set: pipeCap != null },
     'cost.totalLimitUsd': { value: totalCostLimitUsd(), set: totalCostLimitUsd() != null },
@@ -48,6 +51,7 @@ export function localSnapshot(projectDir = null) {
     'cost.humanRateUsd': { value: rate, set: rate != null },
     'ask.maxTurns': { value: askMaxTurns(projectDir), set: has('askMaxTurns') || proj('askMaxTurns') },
     'ask.maxBudgetUsd': { value: askMaxBudgetUsd(projectDir), set: raw.askMaxBudgetUsd !== undefined || proj('askMaxBudgetUsd') },
+    'ask.verbosity': { value: verbosity.layers.project ?? verbosity.layers.user ?? 'normal', set: isVerbosity(raw.chat?.verbosity) || proj('chat.verbosity') },
     'ask.webEnabled': { value: web.enabled, set: typeof raw.askWeb?.enabled === 'boolean' || proj('askWeb') },
     'ask.webAllowedDomains': { value: web.allowedDomains, set: web.allowedDomains.length > 0 },
     'models.hideBuiltins': { value: hideBuiltinModels(), set: has('hideBuiltinModels') || raw.hideBuiltinModelsChosen === true },

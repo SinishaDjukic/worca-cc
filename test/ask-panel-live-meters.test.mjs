@@ -89,3 +89,31 @@ test('ask-panel-live-meters: an out-of-turn frame mid-turn (ask-title arrives ea
   assert.equal(ctx.doc.querySelector('.ask-title').textContent, 'Early Title');
   assert.match(ctx.doc.querySelector('.ask-thinking-meter').textContent, /^6\.4s/, 'the clock kept counting from ask-start');
 });
+
+test('ask-panel-live-meters: an ask-usage frame shows "in · out" in the live thinking meter (#1230)', async () => {
+  const ctx = await openLoaded(snap());
+  const frames = stampFrames([
+    start,
+    { type: 'ask-usage', usage: { input: 3, output: 456, cacheRead: 12000, cacheCreation: 300, ctx: 12303 }, costUsd: null, estimatedCostUsd: null },
+  ], { threadId: TID, messageId: MID });
+  ctx.panel.pushServerFrame(frames[0]); ctx.panel.pushServerFrame(frames[1]); ctx.flush();
+  const usage = ctx.doc.querySelector('.ask-thinking-usage').textContent;
+  assert.match(usage, /12\.3k ctx · 12\.3k in · 456 out/, 'between ctx and cost; input counts cache reads and writes');
+});
+
+test('ask-panel-live-meters: ask-done shows in/out tokens next to ctx and cost on the finished reply, and a reload of a finished reply (snap with usage) shows them (#1230)', async () => {
+  const ctx = await openLoaded(snap());
+  const frames = stampFrames([
+    start,
+    { type: 'ask-done', text: 'ok', blocks: [], usage: { input: 3, output: 456, cacheRead: 12000, cacheCreation: 300, ctx: 12303 }, costUsd: 0.1, durationMs: 5000, model: 'm', status: 'done',
+      threadTotals: { costUsd: 0.1, input: 3, output: 456, cacheRead: 12000, cacheCreation: 300, turns: 1, agents: 0 } },
+  ], { threadId: TID, messageId: MID });
+  ctx.panel.pushServerFrame(frames[0]); ctx.panel.pushServerFrame(frames[1]); ctx.flush();
+  assert.equal(ctx.doc.querySelector('.ask-activity-meter').textContent, '12.3k ctx · 12.3k in · 456 out · $0.10');
+
+  const done = snap({ costUsd: 0.1, turns: 1 });
+  done.messages.push({ id: MID, threadId: TID, seq: 2, role: 'assistant', text: 'ok', blocks: [], status: 'done', reason: null, model: 'm', effort: 'high',
+    usage: { input: 3, output: 456, cacheRead: 12000, cacheCreation: 300, ctx: 12303 }, costUsd: 0.1, durationMs: 5000, createdAt: 't' });
+  const again = await openLoaded(done);
+  assert.equal(again.doc.querySelector('.ask-activity-meter').textContent, '12.3k ctx · 12.3k in · 456 out · $0.10', 'the reload paints the same figure');
+});

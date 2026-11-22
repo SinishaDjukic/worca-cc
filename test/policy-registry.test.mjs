@@ -350,3 +350,16 @@ test('workspaceRuns: pr.slices is dropped with a warning, pr.open is kept', () =
   assert.equal(doc.workspaceRuns['pr.slices'], undefined);
   assert.ok(warnings.includes('workspaceRuns.pr.slices: not allowed for workspace runs — dropped'), warnings.join(' | '));
 });
+
+test('ask.verbosity is an enum default-only field in group ask; validateValue refuses \'loud\' (#1230)', () => {
+  const m = fieldMeta('ask.verbosity');
+  assert.ok(m, 'registered');
+  assert.equal(m.group, 'ask'); assert.equal(m.type, 'enum'); assert.equal(m.label, 'Reply style');
+  assert.deepEqual([...m.values], ['detailed', 'normal', 'concise', 'terse', 'caveman']);
+  assert.deepEqual(m.kinds, ['default']);
+  assert.equal(m.local, 'chat.verbosity');
+  const keys = FIELDS.map((f) => f.key);
+  assert.equal(keys.indexOf('ask.verbosity'), keys.indexOf('ask.maxBudgetUsd') + 1, 'placed after ask.maxBudgetUsd');
+  assert.equal(validateValue(m, 'terse'), null);
+  assert.match(validateValue(m, 'loud'), /must be one of detailed \| normal \| concise \| terse \| caveman/);
+});

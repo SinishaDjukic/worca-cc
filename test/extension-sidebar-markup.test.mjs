@@ -95,10 +95,10 @@ test('the shared icons are ask-panel.mjs ICONS, path for path', () => {
   for (const k of ['plus', 'chevronDown', 'send']) assert.equal(new RegExp(`\\b${k}: '([^']+)'`).exec(ASK_SRC)[1], ICON[k], k);
 });
 
-test('the composer row keeps Ask\'s order and controls, minus voice, Sets and the feature attach button, plus the capture button', async () => {
+test('the composer row keeps Ask\'s order and controls, minus voice, Sets, the reply-style picker (#1230) and the feature attach button, plus the capture button', async () => {
   const h = await loaded();
   const key = (c) => (c.tagName === 'INPUT' ? `input[${c.type}]` : [...c.classList].sort().join(' '));
-  const ref = [...h.doc.querySelector('.ask-composer-row').children].filter((c) => !c.matches('.ask-sets-btn, .ask-voice, .ask-pull-btn')).map(key);
+  const ref = [...h.doc.querySelector('.ask-composer-row').children].filter((c) => !c.matches('.ask-sets-btn, .ask-voice, .ask-pull-btn, .ask-verbosity-btn')).map(key);
   const mine = buildComposer(h.doc, { placeholder: 'x', onInput() {}, onSend() {}, onStop() {} });
   const row = mine.el.querySelector('.ask-composer-row');
   assert.deepEqual([...row.children].filter((c) => !c.matches('[data-wx-capture-btn]')).map(key), ref);

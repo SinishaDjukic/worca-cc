@@ -18,6 +18,7 @@ import { actorOf } from '../../../src/core/identity.mjs';
 import { attachmentDisposition } from '../../../src/core/download-filename.mjs';
 import { isInlineServableMime } from '../../../src/shared/artifact-kinds.mjs';
 import { CHAT_BUSY } from '../../../src/shared/chat-busy.mjs';
+import { isVerbosity, VERBOSITY_HINT } from '../../../src/shared/chat-verbosity.mjs';
 import { spawn } from 'node:child_process';
 import path from 'node:path';
 import { ASK_SCOPE_BUSY, ASK_TEXT_PREVIEW_MAX, REMOTE_MODE, SETTLED_RUN, agentMayBeCaller, askBusyReason, askChatEngine, askCommands, askFollowers, askIdParam, askInFlight, askTrackingCount, askValidateScope, askViewer, askWorktreesEnvelope, badRequest, broadcast, builtins, channelHost, deleteAskThreadFully, emitAskWorktrees, emitChanged, liveRunEntry, requireTerminal, switchThreadScope } from '../../server.mjs';
@@ -222,7 +223,7 @@ app.patch('/api/ask/threads/:id', async (req, res) => {
     const pick = body.model !== undefined || body.effort !== undefined;
     // Title keeps its original contract exactly: a PATCH that names none of the
     // fields still earns the title error, so pre-#397 callers see identical behaviour.
-    if (body.title !== undefined || (body.scope === undefined && body.mcpOff === undefined && body.agentMode === undefined && !pick)) {
+    if (body.title !== undefined || (body.scope === undefined && body.mcpOff === undefined && body.agentMode === undefined && body.verbosity === undefined && !pick)) {
       const raw = body.title;
       if (typeof raw !== 'string' || !raw.trim() || raw.length > 120) {
         return badRequest(res, 'title must be a non-empty string of at most 120 characters');
@@ -238,6 +239,11 @@ app.patch('/api/ask/threads/:id', async (req, res) => {
     if (body.agentMode !== undefined) {
       if (typeof body.agentMode !== 'boolean') return badRequest(res, 'agentMode must be true or false');
       patch.agentMode = body.agentMode;
+    }
+    if (body.verbosity !== undefined) {
+      // #1230: the chat's reply-style override, applied from the next turn; null = follow settings.
+      if (body.verbosity !== null && !isVerbosity(body.verbosity)) return badRequest(res, `verbosity ${VERBOSITY_HINT}, or null`);
+      patch.verbosity = body.verbosity;
     }
     if (pick) {
       // The same check as the message POST. Awaited BEFORE the scope branch, so its

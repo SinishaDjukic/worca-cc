@@ -744,6 +744,34 @@ test('PATCH agentMode (#574): a boolean alone is not the title error; GET return
   await idle();
 });
 
+test('PATCH verbosity (#1230): a verbosity-only PATCH is not the title error; a reload returns it; null clears; \'loud\' is 400 and writes nothing', async () => {
+  await idle();
+  const { thread } = await (await post('/api/ask/threads', { title: 'Styled' })).json();
+  const url = `/api/ask/threads/${thread.id}`;
+  assert.equal((await (await fetch(`${base}${url}`)).json()).thread.verbosity, null, 'no override by default');
+  let r = await patch(url, { verbosity: 'terse' });
+  assert.equal(r.status, 200, 'a { verbosity }-only PATCH is not answered with the title error');
+  assert.equal((await r.json()).thread.verbosity, 'terse');
+  let got = (await (await fetch(`${base}${url}`)).json()).thread;
+  assert.equal(got.verbosity, 'terse', 'a fresh GET (a reload) returns it');
+  assert.equal(got.title, 'Styled');
+  r = await patch(url, { verbosity: 'loud' });
+  assert.equal(r.status, 400);
+  assert.equal((await r.json()).error, 'verbosity must be one of detailed | normal | concise | terse | caveman, or null');
+  r = await patch(url, { verbosity: 'terse', title: '' });
+  assert.equal(r.status, 400);
+  await r.json();
+  assert.equal((await (await fetch(`${base}${url}`)).json()).thread.verbosity, 'terse', 'a refused PATCH writes nothing');
+  r = await patch(url, { verbosity: 'caveman', archived: true });
+  assert.equal(r.status, 400, 'archived and pinned still refuse a mixed body');
+  await r.json();
+  r = await patch(url, { verbosity: null });
+  assert.equal(r.status, 200);
+  await r.json();
+  got = (await (await fetch(`${base}${url}`)).json()).thread;
+  assert.equal(got.verbosity, null, 'null clears the override');
+});
+
 test('#948 s2: archive is blocked while the chat is busy; unarchive and pin never are', async () => {
   const { thread } = await (await post('/api/ask/threads', { title: 'busy-s2' })).json();
   mod._testing.askJobs.set(thread.id, { turn: { stop: () => {} }, status: 'running', graceTimer: null });

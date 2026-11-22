@@ -3,6 +3,20 @@
 Notes on merged features that have no release page yet. `/worca-changelog` folds
 them into the next page and empties this file.
 
+## Chat reply style
+
+**Make Chat's answers as long or as short as you like, from Detailed to Caveman.**
+
+Pick a reply style for Chat: Detailed, Normal (the default, unchanged), Concise, Terse or Caveman. Set it for yourself in Settings › Chat, for a project on its Settings tab, as a team-policy default (`ask.verbosity`), or for one chat with the composer's **Style** button or `/verbosity terse`. The chat's own pick wins, then the project, then yours, then the team's. Every engine gets the same style, and it never shortens a run card's brief, tool arguments, code or the warnings Chat must give. Each reply now also shows its tokens in and out next to the context fill and the cost; **in** includes cache reads and writes.
+
+Chips: five reply styles · /verbosity · chat > project > user > team · tokens in and out per reply
+
+Read it: [Chat](../chat.md#reply-style-verbosity)
+
+Pull requests (add each number when it opens):
+
+- Chat reply style and per-reply tokens (closes #1230)
+
 ## Remotes through an SSH Host alias
 
 **A pull request from a fork cloned through a `~/.ssh/config` alias no longer fails with "Head ref must be a branch".**

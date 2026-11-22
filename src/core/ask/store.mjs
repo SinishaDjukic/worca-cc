@@ -17,6 +17,7 @@ import { claimForAgent } from '../agent-user.mjs';
 import { currentOwner } from '../billing.mjs';
 import { extensionForAttachment } from './attachment-kind.mjs';
 import { mergeContexts } from './contexts.mjs';
+import { isVerbosity } from '../../shared/chat-verbosity.mjs';
 import { isSurfaceMode, SURFACE_MODES } from './thread-modes.mjs';
 
 export const ASK_ID_RE = /^[a-z]+_[0-9a-f]{8}$/;
@@ -89,6 +90,8 @@ function rowToThread(r) {
     pinnedAt: r.pinned_at ?? null,
     // #948 s3 (v76): the chat's topic group; null = ungrouped.
     groupId: r.group_id ?? null,
+    // #1230 (v97): the chat's reply-style override; null = follow settings (an invalid stored value reads as null).
+    verbosity: isVerbosity(r.verbosity) ? r.verbosity : null,
     // Workflows view (v54): a composer chat's mode and the canvas its last message carried. Absent on Ask chats.
     ...(r.mode ? { mode: r.mode } : {}),
     ...(r.composer ? { composer: parse(r.composer, null) } : {}),
@@ -500,10 +503,11 @@ export function countAttachments() {
   return row ? Number(row.n) : 0;
 }
 
-const THREAD_PATCH_COLS = { title: 'title', model: 'model', effort: 'effort', sessionId: 'session_id', context: 'context', mcpOff: 'mcp_off', agentMode: 'agent_mode', engine: 'engine', composer: 'composer' };
+const THREAD_PATCH_COLS = { title: 'title', model: 'model', effort: 'effort', sessionId: 'session_id', context: 'context', mcpOff: 'mcp_off', agentMode: 'agent_mode', engine: 'engine', composer: 'composer', verbosity: 'verbosity' };
 const JSON_PATCH_KEYS = new Set(['context', 'mcpOff', 'composer']);
 
-/** Patch ⊆ {title, model, effort, sessionId, context, mcpOff, agentMode, engine, composer}; unknown keys ignored; always bumps updated_at. */
+/** Patch ⊆ {title, model, effort, sessionId, context, mcpOff, agentMode, engine, composer, verbosity}; unknown keys ignored; always bumps updated_at.
+ *  No validation here (the routes validate `verbosity`; null clears it). */
 export function updateThread(id, patch = {}) {
   const db = getDb();
   const sets = [];
