@@ -24,7 +24,7 @@ import { writeProjectFiles } from '../src/core/engines/project-files.mjs';
 import { fakeCursor } from './helpers/fake-cursor.mjs';
 import { removeInjectedPaths, writeRunManifest, readRunManifest } from '../src/core/run-manifest.mjs';
 import { readGuardrailSet } from '../src/core/guardrail-store.mjs';
-import { guardrailsToPermissionRules } from '../src/core/guardrails.mjs';
+import { guardrailsToPermissionRules, gateRules, DEFAULT_GUARDRAILS, GUARDRAIL_PRESETS } from '../src/core/guardrails.mjs';
 
 useTempHome(after);
 const POSIX = process.platform === 'win32' ? { skip: 'POSIX shell fixtures' } : {};
@@ -103,6 +103,26 @@ test('codex does not hold WebFetch while its shell or web search can still fetch
   const off = withNodes(orch({ engine: 'codex' }), {});
   off.guardrailPermissionRules = { deny: ['Bash', 'WebSearch', 'WebFetch'] };
   assert.deepEqual(off._engineGate().filter((l) => /deny rules/.test(l)), ['engine codex: deny rules enforced on codex: Bash, WebSearch, WebFetch']);
+});
+
+test('the secret-file floor is never weighed by the gate: a custom set keeps its outcome and its audit lines', () => {
+  // codex: a set that only turns the shell and web search off still runs without consent, though its spawn carries the floor.
+  const o = withNodes(orch({ engine: 'codex' }), {});
+  o.guardrailPermissionRules = guardrailsToPermissionRules({ ...DEFAULT_GUARDRAILS, deny: ['Bash', 'WebSearch'] });
+  o.guardrailsId = 'custom';
+  const lines = o._engineGate();
+  assert.deepEqual(lines.filter((l) => /deny rules/.test(l)), ['engine codex: deny rules enforced on codex: Bash, WebSearch']);
+  assert.equal(lines.some((l) => /NOT enforced|only in part/.test(l)), false, lines.join('\n'));
+  // gemini: a WebFetch-only set passes as it did before the floor.
+  const g = withNodes(orch({ engine: 'gemini' }), {});
+  const webFetch = guardrailsToPermissionRules({ ...DEFAULT_GUARDRAILS, deny: ['WebFetch'] });
+  assert.equal(g._engineRefusal({ rules: webFetch, guardrailsId: 'custom', nodes: [] }), null);
+  // codex with Normal: the refusal text is the one computed from the preset without the floor.
+  const n = withNodes(orch({ engine: 'codex' }), {});
+  const normal = guardrailsToPermissionRules(GUARDRAIL_PRESETS.normal);
+  assert.equal(n._engineRefusal({ rules: normal, guardrailsId: 'normal', nodes: [] }),
+    n._engineRefusal({ rules: gateRules(normal), guardrailsId: 'normal', nodes: [] }));
+  assert.ok(n._engineRefusal({ rules: normal, guardrailsId: 'normal', nodes: [] }));
 });
 
 test('--allow-unguarded-engine runs it anyway and says so in the audit', () => {

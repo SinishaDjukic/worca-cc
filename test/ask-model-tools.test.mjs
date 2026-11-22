@@ -599,3 +599,19 @@ test('propose provider copilot on a GHE.com tenant: card rows show both fields; 
   assert.match(r.errors[0], /needs enterpriseHost/);
   assert.match(MODEL_ERRORS.providerSet, /enterpriseHost\?/);
 });
+
+test('Ask model tools show no vault reference, and an Ask proposal carrying one is refused', async () => {
+  const REF = 'worca:vault:v1:AAAAAAAAAAAAAAAAAAAAAA';
+  const masked = maskEntry({ id: 'v', env: { ANTHROPIC_AUTH_TOKEN: REF, ANTHROPIC_BASE_URL: 'https://gw.example.com' }, upstream: { ...LLAMA, apiKey: REF } });
+  assert.equal(masked.env.ANTHROPIC_AUTH_TOKEN, '••••••');
+  assert.equal(masked.upstream.apiKey, '••••••');
+  assert.ok(!JSON.stringify(masked).includes('worca:vault:'));
+  const { validate } = fixture({ globals: [{ id: 'v', label: 'v', efforts: ['low'], upstream: { ...LLAMA, apiKey: REF } }] });
+  let r = await validate({ kind: 'add_model', model: { id: 'oa', upstream: { ...LLAMA, apiKey: REF } } });
+  assert.equal(r.ok, false);
+  assert.match(r.errors[0], /upstream\.apiKey must be a \$\{VAR\} reference/);
+  r = await validate({ kind: 'add_model', model: { id: 'gw', env: { ANTHROPIC_BASE_URL: 'https://gw.example.com', ANTHROPIC_AUTH_TOKEN: REF } } });
+  assert.equal(r.ok, false);
+  r = await validate({ kind: 'edit_model', id: 'v', patch: { label: 'V2' } });
+  assert.ok(!JSON.stringify(r).includes('worca:vault:'), JSON.stringify(r));
+});

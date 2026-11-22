@@ -62,6 +62,13 @@ npm install -g @worca/app@latest
 | Release candidates (`rc` tag) | Fixed in the next release candidate |
 | Older releases | No |
 
+## Secret vault
+
+With the experimental `secretVault` flag on, Worca keeps provider and model keys, MCP and plugin secrets and the
+proxy login in an encrypted vault whose key your OS key store holds. What it protects against (copied files, backups)
+and what it does not (a program running as you), how to go back to config-file storage and the accepted risks are in
+[Secrets and the vault](docs/secrets.md).
+
 ## Scope
 
 In scope: problems in the code of this repository, for example:

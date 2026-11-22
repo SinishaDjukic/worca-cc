@@ -113,3 +113,27 @@ test('a Duplicate that crashed after writing secrets: its orphan secrets never a
   assert.equal((await readMcpStore()).secrets['billing-copy'], undefined);
   assert.deepEqual(disk('secrets').sets, {});
 });
+
+// ── secretVault on: deleteSet releases its entries; duplicateSet copies into fresh entries ─────────────────────────
+const { vaultOn, vaultOf } = await import('./helpers/mcp-store-fixtures.mjs');
+const { isVaultRef } = await import('../src/core/secrets/refs.mjs');
+const { putMember } = await import('../src/core/mcp/store.mjs');
+const { validateMcpDefinition } = await import('../src/core/mcp/definitions.mjs');
+const VDEF = validateMcpDefinition({ type: 'http', url: 'https://mcp.x.dev/mcp', headers: { Authorization: { field: 'token', prefix: 'Bearer ' } },
+  fields: [{ key: 'token', secret: true, required: true }] }, { name: 'sentry', source: 'plugin' }).def;
+const VS = 'plugin:acme-tools/sentry';
+
+test('flag on: deleteSet leaves no vault entry; duplicateSet gives a different reference to the same value', () => vaultOn(async () => {
+  await createSet('Billing');
+  await putMember('billing', VS, { secrets: { token: 'tok-dup-0001' } }, { def: VDEF });
+  const src = disk('secrets').sets.billing[VS].token.value;
+  const copy = await duplicateSet('billing', 'Billing copy');
+  const dup = disk('secrets').sets[copy.id][VS].token.value;
+  assert.ok(isVaultRef(src) && isVaultRef(dup) && src !== dup);
+  const field = `${VS}/token`;
+  assert.equal(await vaultOf().resolve(dup, { store: 'mcp', field }), 'tok-dup-0001');
+  await deleteSet('billing');
+  assert.deepEqual((await vaultOf().list()).map((e) => e.ref), [dup], 'the source entry went with its set; the copy stays');
+  await deleteSet(copy.id);
+  assert.equal((await vaultOf().list()).length, 0);
+}));

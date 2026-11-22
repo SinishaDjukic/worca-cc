@@ -1,7 +1,7 @@
 // src/core/bridge/registry.mjs
 // Which catalog entries are bridged, and with what (model-bridge-design.md
 // §4.2/§6). Import contract: settings.mjs, plugin-models.mjs, the policy
-// cache and the zero-import model-env.mjs leaf only — config.mjs imports the
+// cache, the zero-import model-env.mjs leaf and the pure secrets/refs.mjs only — config.mjs imports the
 // bridge (for resolveModelEnv), so nothing under src/core/bridge/ may import
 // config.mjs.
 
@@ -11,6 +11,7 @@ import { policyCatalogModels } from '../policy/cache.mjs';
 import { isLocalBaseUrl, isOpenRouterBaseUrl, OWN_SIGNIN_ENGINES } from '../model-env.mjs';
 import { brokerEnabled } from '../broker-client.mjs';
 import { routeBridgedUpstream } from '../broker-routing.mjs';
+import { VAULT_MESSAGES, isVaultRef } from '../secrets/refs.mjs';
 
 /** An OpenAI-compatible endpoint on this machine / a private network needs no key. */
 export function keyOptional(provider, baseUrl) {
@@ -29,8 +30,14 @@ function originOf(u) {
  */
 export function providerKeyFor(upstream, cfg) {
   if (upstream && upstream.baseUrl && originOf(upstream.baseUrl) !== originOf(cfg && cfg.baseUrl)) return '';
-  return resolveProviderSecret(cfg && cfg.apiKey);
+  return resolveProviderSecret(cfg && cfg.apiKey, process.env, providerKeyField(upstream));
 }
+
+/** The settings field of the provider key `upstream` takes (an entry with no provider is the OpenAI-compatible one's). */
+const providerKeyField = (upstream) => `providers.${upstream && upstream.provider === 'anthropic' ? 'anthropic' : 'openai'}.apiKey`;
+/** A vault reference that does not resolve here (the key store is locked, or this process holds no key). */
+const lockedRef = (v, field) => isVaultRef(v) && !resolveProviderSecret(v, process.env, field);
+const lockedMessage = (p) => `provider ${p}: ${VAULT_MESSAGES['store-locked']}`;
 
 // ── OpenRouter (providers.openrouter) ─────────────────────────────────────────
 // Catalog entries keep `upstream.provider: 'openai'`; an entry is OpenRouter's when its effective base URL (its own,
@@ -39,8 +46,8 @@ export function providerKeyFor(upstream, cfg) {
 
 const openRouterCfg = () => ({ openrouter: openRouterConfig(), openai: providerConfig('openai') });
 const hasText = (v) => typeof v === 'string' && v.trim() !== '';
-/** A key text that resolves to nothing: a whole-value ${VAR} whose variable is not set. */
-const unsetRef = (v) => hasText(v) && !resolveProviderSecret(v);
+/** A key text that resolves to nothing: a whole-value ${VAR} whose variable is not set (a vault reference is lockedRef's). */
+const unsetRef = (v, field) => hasText(v) && !isVaultRef(v) && !resolveProviderSecret(v, process.env, field);
 const isHttps = (u) => { try { return new URL(String(u || '').trim()).protocol === 'https:'; } catch { return false; } };
 const cfgParts = (cfg) => ({ r: (cfg && cfg.openrouter) || {}, oa: (cfg && cfg.openai) || {} });
 const nonEmptyList = (v) => Array.isArray(v) && v.length > 0;
@@ -61,12 +68,12 @@ export function isOpenRouterEntry(upstream, oa) {
  * @returns {{ value: string, source: 'entry'|'openrouter'|'openai-legacy'|'' }}
  */
 export function openRouterKeyFor(upstream, cfg = openRouterCfg()) {
-  const own = resolveProviderSecret(upstream && upstream.apiKey);
+  const own = resolveProviderSecret(upstream && upstream.apiKey, process.env, 'models.upstream.apiKey');
   if (own) return { value: own, source: 'entry' };
   const { r, oa } = cfgParts(cfg);
   if (!isOpenRouterEntry(upstream, oa)) return { value: '', source: '' };
   if (hasText(r.apiKey)) {
-    return isHttps(effectiveBase(upstream, oa)) ? { value: resolveProviderSecret(r.apiKey), source: 'openrouter' } : { value: '', source: '' };
+    return isHttps(effectiveBase(upstream, oa)) ? { value: resolveProviderSecret(r.apiKey, process.env, 'providers.openrouter.apiKey'), source: 'openrouter' } : { value: '', source: '' };
   }
   const sameOrigin = !upstream.baseUrl || originOf(upstream.baseUrl) === originOf(oa.baseUrl);
   if (isOpenRouterBaseUrl(oa.baseUrl) && hasText(oa.apiKey) && sameOrigin) {
@@ -138,7 +145,8 @@ export function providerReadiness(upstream) {
   }
   if (p === 'copilot') {
     const cfg = providerConfig('copilot');
-    if (!resolveProviderSecret(cfg.githubToken)) {
+    if (!resolveProviderSecret(cfg.githubToken, process.env, 'providers.copilot.githubToken')) {
+      if (isVaultRef(cfg.githubToken)) return { ok: false, reason: 'not_signed_in', message: lockedMessage(p) };
       return { ok: false, reason: 'not_signed_in', message: 'provider copilot: not signed in — run `worca models login copilot` or open Models › Providers' };
     }
     return { ok: true };
@@ -146,8 +154,11 @@ export function providerReadiness(upstream) {
   // openai / anthropic: a per-entry key wins, else the provider's key when it is meant for this host (providerKeyFor).
   const cfg = providerConfig(p);
   if (p === 'openai' && isOpenRouterEntry(upstream, cfg)) return openRouterReadiness(upstream, { openrouter: openRouterConfig(), openai: cfg });
-  const key = resolveProviderSecret(upstream.apiKey) || providerKeyFor(upstream, cfg);
+  const key = resolveProviderSecret(upstream.apiKey, process.env, 'models.upstream.apiKey') || providerKeyFor(upstream, cfg);
   const providerKeyHere = !upstream.baseUrl || originOf(upstream.baseUrl) === originOf(cfg.baseUrl);
+  if (!key && (lockedRef(upstream.apiKey, 'models.upstream.apiKey') || (providerKeyHere && lockedRef(cfg.apiKey, providerKeyField(upstream))))) {
+    return { ok: false, reason: 'no_key', message: lockedMessage(p) };
+  }
   const has = (providerKeyHere && providerSecretSet(p)) || !!upstream.apiKey;
   // No key configured anywhere + a local endpoint = keyless. A configured key
   // whose ${VAR} is unset still blocks: the user meant to send one.
@@ -173,7 +184,9 @@ function openRouterReadiness(upstream, cfg) {
   if (k.value) return { ok: true };
   const deciding = k.source === 'openrouter' ? cfg.openrouter.apiKey : k.source === 'openai-legacy' ? cfg.openai.apiKey : '';
   const no = (message) => ({ ok: false, reason: 'no_key', message });
-  if (unsetRef(upstream.apiKey) || unsetRef(deciding)) return no('provider openai: the API key\'s ${VAR} is not set in worca\'s environment');
+  const decidingField = k.source === 'openrouter' ? 'providers.openrouter.apiKey' : 'providers.openai.apiKey';
+  if (lockedRef(upstream.apiKey, 'models.upstream.apiKey') || lockedRef(deciding, decidingField)) return no(lockedMessage('openai'));
+  if (unsetRef(upstream.apiKey, 'models.upstream.apiKey') || unsetRef(deciding, decidingField)) return no('provider openai: the API key\'s ${VAR} is not set in worca\'s environment');
   if (hasText(cfg.openrouter.apiKey) && !isHttps(effectiveBase(upstream, cfg.openai))) {
     return no('provider openai: the OpenRouter key goes only over https — use https://openrouter.ai/api/v1 as the model\'s base URL');
   }
@@ -211,8 +224,8 @@ export function upstreamSettings(upstream) {
   }
   return {
     ...common,
-    apiKey: p === 'copilot' ? null : (resolveProviderSecret(upstream.apiKey) || providerKeyFor(upstream, cfg) || ''),
-    githubToken: p === 'copilot' ? resolveProviderSecret(cfg.githubToken) : null,
+    apiKey: p === 'copilot' ? null : (resolveProviderSecret(upstream.apiKey, process.env, 'models.upstream.apiKey') || providerKeyFor(upstream, cfg) || ''),
+    githubToken: p === 'copilot' ? resolveProviderSecret(cfg.githubToken, process.env, 'providers.copilot.githubToken') : null,
     accountType: p === 'copilot' ? cfg.accountType : null,
     enterpriseHost: p === 'copilot' ? (cfg.enterpriseHost || null) : null,
     ...(upstream.openrouter ? { openrouter: upstream.openrouter } : {}),

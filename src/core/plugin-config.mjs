@@ -15,12 +15,16 @@
 // Secrets: mode 0600, atomic temp+rename (settings.mjs:89-92 idiom),
 // {"$env":"VAR"} indirection resolved at READ time only — stored verbatim so the
 // value never touches disk. Explicitly NOT in worca-cc.db.
-// All functions are sync (contract; callers are the shim + server routes).
+// With the secretVault flag on, a typed secret is stored as a Worca vault reference (owner `NAME/PROFILE/KEY`),
+// resolved at READ time too; writePluginConfig and deleteProfile are async for that (they seal before, and release
+// the entries they dropped after, their sync read-modify-write). Every other function is sync.
 
-import { readFileSync, statSync } from 'node:fs';
+import { readFileSync, readdirSync, statSync } from 'node:fs';
 import { join } from 'node:path';
-import { pluginDataDir } from './plugins-lock.mjs';
+import { pluginDataDir, pluginsRoot } from './plugins-lock.mjs';
 import { writeJsonAtomic } from './json-atomic.mjs';
+import { isVaultRef, ownerField } from './secrets/refs.mjs';
+import { noteUnresolved, resolveVaultRefSync } from './secrets/settings-resolver.mjs';
 
 /** The bucket every source gets for free; the only one a single-profile source uses. */
 export const DEFAULT_PROFILE = 'default';
@@ -85,6 +89,22 @@ function writeBucket(file, profile, bucket, opts) {
   all[profile] = bucket;
   writeJsonAtomic(file, { $format: ENVELOPE_FORMAT, profiles: all }, opts);
 }
+
+// The store-vault module while the vault is in use (flag on, or a vault file a migration left), else null (nothing but
+// flag.mjs loads). `sealing` is the flag itself: with it off a vault left in use still releases, but new values stay plain.
+async function storeVault() {
+  const { secretVaultEnabled, vaultInUse } = await import('./secrets/flag.mjs');
+  if (!vaultInUse()) return null;
+  const m = await import('./secrets/store-vault.mjs');
+  return { ...m, sealing: secretVaultEnabled() };
+}
+
+/** The vault owner field of a plugin secret: `NAME/PROFILE/KEY` (hashed when longer than the owner limit). */
+const secretField = (name, profile, key) => ownerField([name, profile, key]);
+
+/** The vault references one profile's raw secrets bag holds, with their owner fields, profile and key. */
+const bucketRefs = (name, profile, bag) => Object.entries(bag)
+  .filter(([, v]) => isVaultRef(v)).map(([k, v]) => ({ ref: v, field: secretField(name, profile, k), profile, key: k }));
 
 const isEnvRef = (v) => !!v && typeof v === 'object' && !Array.isArray(v) && typeof v.$env === 'string';
 /** The exact redaction marker redactedConfig emits — must never be persisted. */
@@ -153,18 +173,21 @@ export function createProfile(name, id, label) {
 }
 
 /**
- * Delete a profile and everything stored under it (config, secrets, state, ticket updates).
- * Callers are responsible for the bindings that named it — see
+ * Delete a profile and everything stored under it (config, secrets, state, ticket updates), then (secretVault on)
+ * the vault entries its secrets held. Callers are responsible for the bindings that named it — see
  * source-bindings.mjs#clearBindingsForProfile.
  */
-export function deleteProfile(name, id) {
+export async function deleteProfile(name, id) {
   const pid = profileId(id);
   // Same reservation as createProfile — and a backstop for a roster that
   // enrolled "default" before the reservation existed: deleting it would strip
   // the shared bucket (chat-channel config, model secrets, migrated legacy
   // data) out of all three files.
   if (pid === DEFAULT_PROFILE) throw new Error(`profile id "${DEFAULT_PROFILE}" is reserved — its bucket backs every profile-less read`);
+  const vault = await storeVault();
   const f = files(name);
+  // From here to the last write: one sync section (no await between read and write).
+  const dropped = vault ? bucketRefs(name, pid, readBucket(f.secrets, pid)) : [];
   writeJsonAtomic(f.profiles, { profiles: listProfiles(name).filter((p) => p.id !== pid) });
   for (const [file, opts] of [[f.config, undefined], [f.secrets, { mode: 0o600 }], [f.state, undefined], [f.ticketUpdates, undefined]]) {
     const all = readBuckets(file);
@@ -172,8 +195,106 @@ export function deleteProfile(name, id) {
     delete all[pid];
     writeJsonAtomic(file, { $format: ENVELOPE_FORMAT, profiles: all }, opts);
   }
+  if (dropped.length) {
+    await vault.releaseStoreRefs('plugin', dropped, { stillReferenced: (ref) => heldRef(name, ref), graceMs: vault.LOCKLESS_GRACE_MS,
+      scope: (field) => field.startsWith(`${name}/`) });
+  }
   return { ok: true };
 }
+
+/** Every vault reference a plugin's secrets.json holds (every profile, raw), with its owner field. */
+export function pluginSecretRefs(name) {
+  return Object.entries(readBuckets(files(name).secrets)).flatMap(([pid, bag]) => bucketRefs(name, pid, bag));
+}
+
+/** The secret keys of one profile whose raw stored value is a vault reference (saved, whether or not it reads now). */
+export function storedSecretKeys(name, profile) {
+  const bag = readBucket(files(name).secrets, profileId(profile));
+  return Object.keys(bag).filter((k) => isVaultRef(bag[k]));
+}
+
+/**
+ * The file-stored secrets a plugin's secrets.json holds, every profile: each non-empty string leaf that is not a vault
+ * reference (`{ $env }` and references stay), as `[{ profile, key, field, value }]` with the vault owner field.
+ */
+export function pluginSecretLiterals(name) {
+  return Object.entries(readBuckets(files(name).secrets)).flatMap(([profile, bag]) => Object.entries(bag)
+    .filter(([, v]) => typeof v === 'string' && v && !isVaultRef(v))
+    .map(([key, value]) => ({ profile, key, field: secretField(name, profile, key), value })));
+}
+
+/**
+ * Swap moved literals for their references in ONE synchronous re-read and atomic write of the plugin's secrets.json
+ * (0600, every profile kept): `swaps` = `[{ profile, key, value, ref }]`, each swapped only while its raw value is still
+ * `value`. `beforeWrite()` runs right before the write, only when one matched; nothing matched writes nothing. A file
+ * changed since the read is left as it is (D20): `{ adopted: [] }`, and the next start retries.
+ * @returns {{ adopted: object[] }}
+ */
+export function swapPluginSecretLiterals(name, swaps, { beforeWrite = () => {} } = {}) {
+  const file = files(name).secrets;
+  const raw = rawText(file);
+  const all = readBuckets(file);
+  const adopted = [];
+  for (const sw of swaps) {
+    const bag = Object.hasOwn(all, sw.profile) ? all[sw.profile] : null;
+    if (!bag || !Object.hasOwn(bag, sw.key) || bag[sw.key] !== sw.value) continue;
+    bag[sw.key] = sw.ref;
+    adopted.push(sw);
+  }
+  if (!adopted.length) return { adopted };
+  beforeWrite();
+  return writeUnlessStale(file, all, raw) ? { adopted } : { adopted: [] };
+}
+
+/**
+ * Export's restore (secrets/export.mjs): put literals back where references are, in ONE synchronous re-read and atomic
+ * write of the plugin's secrets.json (0600, every profile kept). `swaps` = `[{ profile, key, ref, value }]`, each
+ * restored only while its raw value is still `ref`. Releases nothing. A file changed since the read is left as it is
+ * (D20): `{ restored: 0 }`.
+ * @returns {{ restored: number }}
+ */
+export function restorePluginSecretRefs(name, swaps) {
+  const file = files(name).secrets;
+  const raw = rawText(file);
+  const all = readBuckets(file);
+  let restored = 0;
+  for (const sw of swaps) {
+    const bag = Object.hasOwn(all, sw.profile) ? all[sw.profile] : null;
+    if (!bag || !Object.hasOwn(bag, sw.key) || bag[sw.key] !== sw.ref) continue;
+    bag[sw.key] = sw.value;
+    restored++;
+  }
+  if (!restored) return { restored: 0 };
+  return { restored: writeUnlessStale(file, all, raw) ? restored : 0 };
+}
+
+const STALE = Symbol('stale plugin secrets');
+const rawText = (file) => { try { return readFileSync(file, 'utf8'); } catch { return null; } };
+
+// The atomic 0600 write of a whole secrets.json, with a rename-time check (D20, the proxy swap's stillOurs): the file is
+// re-read right before the rename, and the write is dropped when its text is no longer `raw` (a writePluginConfig landed
+// since the read). True when written.
+function writeUnlessStale(file, all, raw) {
+  try {
+    writeJsonAtomic(file, { $format: ENVELOPE_FORMAT, profiles: all }, { mode: 0o600, beforeRename: () => { if (rawText(file) !== raw) throw STALE; } });
+  } catch (err) {
+    if (err === STALE) return false;
+    throw err;
+  }
+  return true;
+}
+
+/** The names of the plugins with a folder under the plugins root ([] when there is none). */
+export function installedPluginNames() {
+  try {
+    return readdirSync(pluginsRoot(), { withFileTypes: true }).filter((d) => d.isDirectory()).map((d) => d.name);
+  } catch (err) {
+    if (err?.code === 'ENOENT') return [];
+    throw err;
+  }
+}
+
+const heldRef = (name, ref) => pluginSecretRefs(name).some((r) => r.ref === ref);
 
 // ── config ────────────────────────────────────────────────────────────────────
 
@@ -188,6 +309,13 @@ export function readPluginConfig(name, configSchema = [], profile) {
     let v = raw[field.key];
     if (v === undefined || v === null || v === '') v = field.default ?? null;
     if (isEnvRef(v)) v = process.env[v.$env] ?? null;
+    else if (field.secret && typeof v === 'string' && isVaultRef(v.trim())) {
+      // A vaulted secret resolves here, at the point of use; one that does not resolve reads as unset.
+      const owner = secretField(name, pid, field.key);
+      const r = resolveVaultRefSync(v.trim(), { store: 'plugin', field: owner });
+      if (r.code) noteUnresolved(owner, r.code);
+      v = r.code ? null : r.value;
+    }
     out[field.key] = v;
   }
   return out;
@@ -196,23 +324,47 @@ export function readPluginConfig(name, configSchema = [], profile) {
 /** Route values by schema: secret:true -> secrets.json (0600), else config.json,
  *  both inside `profile`'s bucket. undefined / redaction-marker values keep the
  *  prior stored value; null clears. $env refs are stored verbatim. Both writes
- *  are temp+rename atomic. */
-export function writePluginConfig(name, configSchema = [], values = {}, profile) {
+ *  are temp+rename atomic. With the secretVault flag on, typed secrets are sealed
+ *  into fresh vault entries first, and the entries this profile no longer holds
+ *  are released after the write. @throws {SettingsVaultError} a refused secret */
+export async function writePluginConfig(name, configSchema = [], values = {}, profile) {
   const pid = profileId(profile);
   const f = files(name);
+  const secretKeys = new Set(configSchema.filter((x) => x && x.secret).map((x) => x.key));
+  const input = Object.entries(values && typeof values === 'object' ? values : {});
+  const vault = await storeVault();
+  const sealed = new Map();
+  let recheck = () => {};
+  if (vault?.sealing) {
+    const typed = input.filter(([k, v]) => secretKeys.has(k) && typeof v === 'string' && v);
+    const current = readBucket(f.secrets, pid);
+    const r = await vault.sealStoreSecrets('plugin', typed.map(([k, v]) => ({ field: secretField(name, pid, k), value: v, current: current[k] })),
+      { nothingVaulted: () => pluginSecretRefs(name).length === 0, subject: 'The secret' });
+    typed.forEach(([k], i) => sealed.set(k, r.values[i]));
+    recheck = r.recheck;
+  }
+  // From here to the last write: one sync section (no await between read and write).
+  recheck();
   const config = readBucket(f.config, pid);
   const secrets = readBucket(f.secrets, pid);
-  const secretKeys = new Set(configSchema.filter((x) => x && x.secret).map((x) => x.key));
-  for (const [k, v] of Object.entries(values && typeof values === 'object' ? values : {})) {
+  const before = vault ? bucketRefs(name, pid, secrets) : [];
+  for (const [k, v] of input) {
     if (v === undefined || isSetMarker(v)) continue; // absent / echoed marker -> keep prior
     const bucket = secretKeys.has(k) ? secrets : config;
     const other = secretKeys.has(k) ? config : secrets;
     delete other[k]; // field migrated buckets across schema versions
     if (v === null) delete bucket[k];
-    else bucket[k] = v;
+    else bucket[k] = sealed.has(k) ? sealed.get(k) : v;
   }
   writeBucket(f.config, pid, config);
   writeBucket(f.secrets, pid, secrets, { mode: 0o600 });
+  if (vault) {
+    const dropped = vault.refsDropped(before, bucketRefs(name, pid, secrets));
+    if (dropped.length) {
+      await vault.releaseStoreRefs('plugin', dropped, { stillReferenced: (ref) => heldRef(name, ref), graceMs: vault.LOCKLESS_GRACE_MS,
+      scope: (field) => field.startsWith(`${name}/`) });
+    }
+  }
   return { ok: true };
 }
 

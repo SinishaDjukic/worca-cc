@@ -148,7 +148,7 @@ test('proxy off, then on: settings, login, a recorded test, then the switch need
 });
 
 test('agent callers cannot log in, log out, test or change the settings', async () => {
-  saveProxyLogin({ domain: 'ACME', user: 'jdoe', password: 'S3cret!' });
+  await saveProxyLogin({ domain: 'ACME', user: 'jdoe', password: 'S3cret!' });
   const id = readProxyLogin().id;
   await withAgent(async () => {
     for (const [m, p, b] of ROUTES.slice(1)) {
@@ -182,7 +182,7 @@ test('one test at a time: a second POST test while one runs is 409 TEST_RUNNING'
   const held = await startFakeUpstream({ scheme: 'ntlm', domain: 'ACME', user: 'jdoe', password: 'S3cret!', originPort: origin.port, holdType3: true });
   try {
     await useUpstream(held.port);
-    saveProxyLogin({ domain: 'ACME', user: 'jdoe', password: 'S3cret!' });
+    await saveProxyLogin({ domain: 'ACME', user: 'jdoe', password: 'S3cret!' });
     const first = call('POST', '/api/proxy/test', {});
     await until(() => held.stats.type3 === 1);
     const second = await call('POST', '/api/proxy/test', {});
@@ -202,7 +202,7 @@ test('one test at a time: a second POST test while one runs is 409 TEST_RUNNING'
 });
 
 test('live EGRESS: status, reloadLogin and the UNTESTED gate follow the running proxy', async () => {
-  saveProxyLogin({ domain: 'ACME', user: 'jdoe', password: 'S3cret!' });
+  await saveProxyLogin({ domain: 'ACME', user: 'jdoe', password: 'S3cret!' });
   const id = readProxyLogin().id;
   // No settings upstream: the upstream comes from the pre-swap env, never the local proxy URL.
   await setNetworkProxy(null);
@@ -450,4 +450,44 @@ test('an agent caller cannot run Auto-detect: it fetches a PAC file and starts p
     });
     assert.equal(ran, false);
   } finally { testing.setSystemProxyDetect(null); }
+});
+
+test('secretVault on: an unusable vault answers 503 VAULT_UNREACHABLE and the file keeps its old record', async () => {
+  const { readFileSync, rmSync, mkdirSync } = await import('node:fs');
+  const { writeFakeState, createFakeOsStore } = await import('./helpers/os-store-fake.mjs');
+  const { createVault, vaultFile } = await import('../src/core/secrets/vault.mjs');
+  const { worcaHome } = await import('../src/core/projects.mjs');
+  await saveProxyLogin({ domain: 'ACME', user: 'jdoe', password: 'S3cret!' });
+  const before = readFileSync(loginFile());
+  // A vault exists (written under another key) and this process's OS store is locked: the login cannot be vaulted.
+  await createVault({ home: worcaHome(), store: createFakeOsStore() }).put({ store: 'settings', field: 'providers.openai.apiKey', value: 'x' });
+  const dir = await mkdtemp(join(tmpdir(), 'worca-api-proxy-vault-'));
+  mkdirSync(join(dir, 'fake'), { recursive: true });
+  writeFakeState(join(dir, 'fake', 'state.json'), { state: 'locked' });
+  const keep = { WORCA_FLAGS: process.env.WORCA_FLAGS, WORCA_TEST_OS_STORE: process.env.WORCA_TEST_OS_STORE };
+  Object.assign(process.env, { WORCA_FLAGS: 'secretVault', WORCA_TEST_OS_STORE: join(dir, 'fake', 'state.json') });
+  try {
+    const r = await call('POST', '/api/proxy/login', { domain: 'ACME', user: 'jdoe', password: 'Other!' });
+    assert.equal(r.status, 503, r.text);
+    assert.equal(r.body.code, 'VAULT_UNREACHABLE');
+    assert.match(r.body.error, /^The login was not saved: /);
+    assert.ok(readFileSync(loginFile()).equals(before));
+  } finally {
+    for (const [k, v] of Object.entries(keep)) { if (v === undefined) delete process.env[k]; else process.env[k] = v; }
+    rmSync(vaultFile(worcaHome()), { force: true });
+    await rm(dir, { recursive: true, force: true });
+    await call('POST', '/api/proxy/logout', {});
+  }
+});
+
+test('a logout whose delete throws answers 500 with no path or reference, and the next request is served', async () => {
+  const { mkdirSync, rmSync } = await import('node:fs');
+  mkdirSync(loginFile(), { recursive: true });   // a directory at the login's name: the delete throws
+  try {
+    const r = await call('POST', '/api/proxy/logout', {});
+    assert.equal(r.status, 500, r.text);
+    assert.ok(!r.text.includes(loginFile()) && !r.text.includes(process.env.WORCA_HOME), r.text);
+    assert.ok(!r.text.includes('worca:vault:'));
+    assert.equal((await call('GET', '/api/proxy/status')).status, 200);
+  } finally { rmSync(loginFile(), { recursive: true, force: true }); }
 });

@@ -100,7 +100,7 @@ export async function cmdProxy(argv, {
   }
 
   if (verb === 'logout') {
-    out(clearProxyLogin(at) ? 'Deleted the saved login. A running Worca stops sending it within a few seconds.' : 'No login was saved.');
+    out(await clearProxyLogin(at) ? 'Deleted the saved login. A running Worca stops sending it within a few seconds.' : 'No login was saved.');
     return 0;
   }
 
@@ -123,12 +123,12 @@ export async function cmdProxy(argv, {
         if (!account) account = parseAccount(lines.shift() ?? '');
         password = lines.shift() ?? '';
       }
-      const saved = saveProxyLogin({ ...account, password }, { ...at, env });
+      const saved = await saveProxyLogin({ ...account, password }, { ...at, env });
       out(`Saved the login for ${saved.label} (domain, user and NT hash; the password is not stored). A running Worca uses it within a few seconds. Check it with: worca proxy test`);
       return 0;
     } catch (e) {
       if (e && e.code === 'ABORT_ERR') { err('worca: cancelled; nothing was saved'); return 130; }
-      if (e instanceof ProxyLoginError) { err(`worca: ${e.message}`); return 1; }
+      if (e instanceof ProxyLoginError || e?.name === 'SettingsVaultError') { err(`worca: ${e.message}`); return 1; }
       err(`worca: the login could not be saved (${e && e.code ? e.code : e && e.message ? e.message : 'error'})`);
       return 1;
     } finally {

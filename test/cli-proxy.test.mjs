@@ -178,7 +178,11 @@ test('a TTY login prompts for the user, then reads the password hidden', async (
   assert.equal(input.isRaw, false, 'raw mode restored');
   const saved = JSON.parse(readFileSync(join(r.home, PROXY_LOGIN_FILE), 'utf8'));
   assert.equal(saved.user, 'jdoe');
-  assert.equal(saved.ntHash, ntHash('S3cret!').toString('hex'));
+  // With the secretVault flag on (a WORCA_FLAGS run), the file holds a vault reference instead of the hex hash.
+  const { secretVaultEnabled } = await import('../src/core/secrets/flag.mjs');
+  const { isVaultRef } = await import('../src/core/secrets/refs.mjs');
+  if (secretVaultEnabled()) assert.ok(isVaultRef(saved.ntHash), saved.ntHash);
+  else assert.equal(saved.ntHash, ntHash('S3cret!').toString('hex'));
   assert.ok(!prompted.includes('S3cret!'));
   assertNoSecrets(prompted + r.seen());
 });

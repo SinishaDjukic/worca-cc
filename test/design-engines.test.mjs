@@ -11,6 +11,7 @@ import { useTempHome } from './helpers/temp-home.mjs';
 import { getEngine } from '../src/core/engines/index.mjs';
 import { ENGINE_NAMES } from '../src/shared/engine-switch.mjs';
 import { DESIGN_ENGINES, designEngineFor, designEngineGate, designEngineRow, resolveDesignEngine } from '../src/core/design/engines.mjs';
+import { DEFAULT_GUARDRAILS, guardrailsToPermissionRules } from '../src/core/guardrails.mjs';
 
 useTempHome(after);
 const gate = (o) => designEngineGate({ broker: () => null, bridged: () => null, env: {}, ...o });
@@ -111,4 +112,13 @@ test('a design\'s engine: a stored one as it is, else the resolved one, unstored
   assert.equal(resolveDesignEngine({ explicit: ' codex ' }), 'codex');
   assert.equal(resolveDesignEngine(), 'claude');
   for (const explicit of ['nope', 'mock']) assert.throws(() => resolveDesignEngine({ explicit }), (e) => e.status === 400, explicit);
+});
+
+test('the secret-file floor adds no rules reason: codex and gemini give the same reasons with and without it', () => {
+  const floored = guardrailsToPermissionRules({ ...DEFAULT_GUARDRAILS, deny: ['Bash', 'WebSearch'] });
+  for (const engine of ['codex', 'gemini']) {
+    const a = gate({ engine, rules: floored, modelFor: () => 'm' });
+    const b = gate({ engine, rules: { deny: ['Bash', 'WebSearch'] }, modelFor: () => 'm' });
+    assert.deepEqual(a.reasons, b.reasons, engine);
+  }
 });

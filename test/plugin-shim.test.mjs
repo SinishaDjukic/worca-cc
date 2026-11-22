@@ -94,7 +94,7 @@ const CONNECTOR = [
   '}',
 ].join('\n');
 
-function installFixture() {
+async function installFixture() {
   const cur = pluginCurrentDir(NAME);
   mkdirSync(join(cur, 'connector'), { recursive: true });
   writeFileSync(join(cur, 'worca-cc-plugin.json'), JSON.stringify({
@@ -124,10 +124,10 @@ function installFixture() {
       version: null, enabled: true, installedAt: '2026-07-12T00:00:00.000Z',
     },
   });
-  writePluginConfig(NAME, SCHEMA, { token: 'sekret' });
+  await writePluginConfig(NAME, SCHEMA, { token: 'sekret' });
   writePluginState(NAME, { cursor: 'page-1' });
 }
-installFixture();
+await installFixture();
 
 const rejectsKind = (p, kind, re) => assert.rejects(p, (err) => {
   assert.ok(err instanceof PluginOpError, `expected PluginOpError, got ${err?.name}: ${err?.message}`);
@@ -180,7 +180,7 @@ test('profile invariant is enforced in callSource itself (CLI-safe, not just the
   assert.equal(viaDefault.token, 'sekret');
   // And a named ROSTER profile reaches ITS bucket, not the default one.
   createProfile(NAME, 'work', 'Work');
-  writePluginConfig(NAME, SCHEMA, { token: 'work-tok' }, 'work');
+  await writePluginConfig(NAME, SCHEMA, { token: 'work-tok' }, 'work');
   const viaWork = await callSource({ plugin: NAME, sourceId: 'prof', op: 'echoOp', profile: 'work' });
   assert.equal(viaWork.token, 'work-tok');
 });
@@ -203,7 +203,7 @@ test('profile MEMBERSHIP is enforced too: typo, reserved default, deleted — al
   // A profile deleted between submit and a later call is caught at call time,
   // not read as an empty bucket mid-run.
   createProfile(NAME, 'gone', 'Doomed');
-  deleteProfile(NAME, 'gone');
+  await deleteProfile(NAME, 'gone');
   await rejectsKind(
     callSource({ plugin: NAME, sourceId: 'prof', op: 'echoOp', profile: 'gone' }),
     'plugin', /has no profile "gone"/,

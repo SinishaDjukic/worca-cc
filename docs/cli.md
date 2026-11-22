@@ -90,7 +90,19 @@ worca flags on smartRunNaming   # a Labs feature, off by default
   `worca projects list`.
 - The rest: `ui`, `run --preset`, `resume`, `runs`, `logs`, `stop`, `pause`, `schedule`, `workflow`, `script`,
   `plugin`, `marketplace`, `models`, `config`, `flags`, `metrics`, `policy`, `memory team`, `container`, `broker`,
-  `proxy`, `setup`, `extension`, `readiness`, `doctor` and `version`.
+  `proxy`, `secrets`, `setup`, `extension`, `readiness`, `doctor` and `version`.
+- The secret vault (the `secretVault` flag): `worca secrets status` names the OS key store that would hold the
+  vault key (macOS Keychain, Windows Credential Manager, Secret Service or Windows DPAPI on WSL2), its state
+  (ready, locked or unavailable) and whether the vault can be read. It always exits 0 and never writes.
+  `worca secrets reset [--yes]` moves an unreadable vault aside (`worca-vault.enc.unreadable-…`) so a new one can
+  start; it asks first, keeps the OS key, and refuses a readable or locked vault (exit 1). `worca doctor` adds a
+  `secrets:` line while the vault is in use. `worca secrets status --check` tests the OS store round trip (a throwaway
+  item written, read back and deleted) without moving anything: exit 0 when it passes, 1 when it fails.
+  `worca secrets export [--yes]` writes every vaulted secret back into its config file (0600), deletes the vault and its OS
+  key and turns the flag off; it refuses while the Worca app runs for the home or `WORCA_FLAGS` sets the flag (exit 1),
+  and a cancel exits 2. `worca secrets ack` stops the message about secrets moved into the vault (also Settings ›
+  About › Got it). `export`, `reset`, `ack` and `status --check` refuse to run from an agent. See
+  [Secrets and the vault](secrets.md).
 
 ## Exit codes
 

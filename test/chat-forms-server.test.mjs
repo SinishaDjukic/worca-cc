@@ -40,7 +40,7 @@ before(async () => {
   writePluginsLock({
     [NAME]: { repoUrl: 'https://example.test/f.git', subdir: '', pinnedSha: 'a'.repeat(40), version: null, enabled: true, installedAt: '2026-08-12T00:00:00.000Z' },
   });
-  writePluginConfig(NAME, SCHEMA, { botToken: 'sekret', allowedChatIds: '42', notifyChatIds: '42' });
+  await writePluginConfig(NAME, SCHEMA, { botToken: 'sekret', allowedChatIds: '42', notifyChatIds: '42' });
 
   const server = await import('../ui/server.mjs');
   ({ runs, app } = server);

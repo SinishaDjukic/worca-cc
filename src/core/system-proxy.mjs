@@ -157,13 +157,13 @@ async function detectWindows({ runImpl, target }) {
 }
 
 /** WSL: WSL_DISTRO_NAME (set by every WSL shell), else a Microsoft kernel in /proc/version (a service's env may lack it). */
-async function isWsl(env, readImpl) {
+export async function isWsl(env, readImpl) {
   if (env.WSL_DISTRO_NAME || env.WSL_INTEROP) return true;
   const v = await readImpl('/proc/version', 'utf8').catch(() => '');
   return /microsoft|wsl/i.test(String(v));
 }
 
-const WSL_POWERSHELL = '/mnt/c/Windows/System32/WindowsPowerShell/v1.0/powershell.exe';
+export const WSL_POWERSHELL = '/mnt/c/Windows/System32/WindowsPowerShell/v1.0/powershell.exe';
 const isLoopback = (h) => /^(localhost|127\.[\d.]+|::1)$/i.test(h);
 
 /**

@@ -30,7 +30,7 @@ before(async () => {
   await linkPlugin('jira-source', JIRA);
   createProfile('jira-source', 'acme', 'Acme');
   createProfile('jira-source', 'beta', 'Beta');
-  writePluginConfig('jira-source', SCHEMA, { baseUrl: 'https://acme.atlassian.net', email: 'ann@example.test', token: 'tok-SECRET-1234' }, 'acme');
+  await writePluginConfig('jira-source', SCHEMA, { baseUrl: 'https://acme.atlassian.net', email: 'ann@example.test', token: 'tok-SECRET-1234' }, 'acme');
   fixtureDir = await mkdtemp(join(tmpdir(), 'worca-tu-fixture-'));
   await writeFile(join(fixtureDir, 'worca-cc-plugin.json'), JSON.stringify(FIXTURE, null, 2));
   await mkdir(join(fixtureDir, 'connector'), { recursive: true });
@@ -238,4 +238,21 @@ test("POST /api/sources/call filters listProjects by the call's profile, only wi
   assert.deepEqual(await values('beta'), SIX, 'none picked: all projects');
   process.env.WORCA_FLAGS = '-ticketUpdates';
   try { assert.deepEqual(await values('acme'), SIX, 'flag off: no filter'); } finally { process.env.WORCA_FLAGS = 'ticketUpdates'; }
+});
+
+test('secretVault on: a pasted vault reference on a plugin config save answers 400 with its code, and secrets.json is unchanged', async () => {
+  const { newVaultRef } = await import('../src/core/secrets/refs.mjs');
+  const { pluginDataDir } = await import('../src/core/plugins-lock.mjs');
+  const file = join(pluginDataDir('jira-source'), 'secrets.json');
+  const bytes = readFileSync(file);
+  const flags = process.env.WORCA_FLAGS;
+  process.env.WORCA_FLAGS = `${flags},secretVault`;
+  try {
+    const r = await call('PUT', '/api/plugins/jira-source/config', { sourceId: 'jira', profile: 'acme', values: { token: newVaultRef() } });
+    assert.equal(r.status, 400, r.raw);
+    assert.equal(r.json.code, 'VAULT_REF_REFUSED');
+    assert.match(r.json.error, /^The secret was not saved: /);
+    assert.ok(!r.raw.includes('worca:vault:'));
+    assert.ok(readFileSync(file).equals(bytes));
+  } finally { process.env.WORCA_FLAGS = flags; }
 });

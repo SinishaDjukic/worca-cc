@@ -123,3 +123,15 @@ test('describeModelEnv: sorted, comma-joined, empty for no env', () => {
   assert.equal(describeModelEnv({}), '');
   assert.equal(describeModelEnv(undefined), '');
 });
+
+test('prepareModelEnv resolves a reference through resolveRef and drops it without one', () => {
+  const ref = 'worca:vault:v1:AAAAAAAAAAAAAAAAAAAAAA';
+  const seen = [];
+  const resolveRef = (v, k) => { seen.push([v, k]); return k === 'ANTHROPIC_AUTH_TOKEN' ? 'sk-vaulted' : ''; };
+  const r = prepareModelEnv({ ANTHROPIC_AUTH_TOKEN: ref, OTHER_TOKEN: ref, PLAIN: 'x' }, {}, { resolveRef });
+  assert.deepEqual(r.env, { ANTHROPIC_AUTH_TOKEN: 'sk-vaulted', PLAIN: 'x' });
+  assert.deepEqual(r.dropped, ['OTHER_TOKEN']);
+  assert.deepEqual(seen, [[ref, 'ANTHROPIC_AUTH_TOKEN'], [ref, 'OTHER_TOKEN']]);
+  const none = prepareModelEnv({ ANTHROPIC_AUTH_TOKEN: ref, PLAIN: 'x' }, {});
+  assert.deepEqual(none, { env: { PLAIN: 'x' }, dropped: ['ANTHROPIC_AUTH_TOKEN'] }, 'never passed on as a literal');
+});

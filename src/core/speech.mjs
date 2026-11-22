@@ -3,8 +3,8 @@
 // OpenAI-compatible speech servers — STT POST {baseUrl}/audio/transcriptions
 // (multipart), TTS POST {baseUrl}/audio/speech (JSON) — so keys stay on the
 // server and the browser never meets CORS. fetch is injectable for tests.
-import { speechConfig, resolveProviderSecret } from './settings.mjs';
-import { modelEnvRef, maskModelEnvValue, isUpstreamBaseUrl } from './model-env.mjs';
+import { maskStoredSecret, speechConfig, resolveProviderSecret } from './settings.mjs';
+import { modelEnvRef, isUpstreamBaseUrl } from './model-env.mjs';
 import { encodeWav } from '../shared/speech.mjs';
 
 export const SPEECH_KINDS = Object.freeze(['stt', 'tts']);
@@ -28,8 +28,8 @@ export function speechState() {
       keySet: !!apiKey,
       keySource: !apiKey ? null : ref ? 'env' : 'stored',
       keyRef: ref ? apiKey : null,
-      keyMasked: apiKey && !ref ? maskModelEnvValue(apiKey) : null,
-      keyMissing: !!apiKey && !resolveProviderSecret(apiKey),
+      keyMasked: apiKey && !ref ? maskStoredSecret(apiKey, `providers.speech.${kind}.apiKey`) : null,
+      keyMissing: !!apiKey && !resolveProviderSecret(apiKey, process.env, `providers.speech.${kind}.apiKey`),
     };
   };
   return { stt: side('stt'), tts: side('tts') };
@@ -46,12 +46,13 @@ function endpoint(kind, typed) {
   for (const k of ['model', 'voice']) if (k in c && typeof t[k] === 'string' && t[k].trim()) c[k] = t[k].trim();
   if (kind === 'stt' && typeof t.language === 'string' && t.language.trim()) c.language = t.language.trim().toLowerCase();
   if (kind === 'tts' && t.speed !== undefined && t.speed !== '' && Number.isFinite(Number(t.speed))) c.speed = Number(t.speed);
-  if (typeof t.apiKey === 'string' && t.apiKey.trim() && !t.apiKey.startsWith('••')) c.apiKey = t.apiKey.trim();
+  const typedKey = typeof t.apiKey === 'string' && t.apiKey.trim() && !t.apiKey.startsWith('••');
+  if (typedKey) c.apiKey = t.apiKey.trim();
   // The STORED key only ever goes to the stored server's origin. A Test aimed at a
   // different typed URL without a typed key is sent keyless, so a stored key can never
   // be sent to an arbitrary URL typed on the card (stricter than testProviderConnection).
   else if (c.apiKey && originOf(c.baseUrl) !== storedOrigin) c.apiKey = '';
-  const key = resolveProviderSecret(c.apiKey);
+  const key = resolveProviderSecret(c.apiKey, process.env, typedKey ? null : `providers.speech.${kind}.apiKey`);
   return { ...c, key, unresolved: !!c.apiKey && !key };
 }
 

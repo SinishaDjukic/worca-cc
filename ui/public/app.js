@@ -291,6 +291,7 @@ import {
 import { renderMapTab, emptyMapFilters } from './workspace-map-view.mjs';
 import { openWorkspaceGuide, shouldAutoOpenWorkspaceGuide } from './workspace-guide.mjs';
 import { paintAboutInto, paintVersionStatusInto, paintUpdateMarkerInto } from './about-links.mjs';
+import { loadSecretsRow } from './settings/secrets-row.mjs';
 import { createUpdateUi } from './update-view.mjs';
 import { renderReasonOptions, renderOptIns, previewText, reportBlobParts, REPORT_PREVIEW_DEBOUNCE_MS } from './report-run.mjs';
 import { openScheduleSheet, closeScheduleSheet, browserTimeZone } from './schedule-sheet.mjs';
@@ -16573,6 +16574,7 @@ async function loadSettings() {
     paintScreensaver(data.screensaver);
     levelCtl.confirm(data.uiLevel);
     paintAbout(data.app);
+    void loadSecretsRow(document, (url) => fetch(url).then((r) => (r.ok ? r.json() : Promise.reject(new Error(`HTTP ${r.status}`)))));
     if (el.aboutUpdateCheck) el.aboutUpdateCheck.checked = data.updateCheck !== false;
     void refreshVersionStatus();
     paintBudgetSettings(data);

@@ -15,6 +15,7 @@ import { resolveRunEngine } from '../settings-cascade.mjs';
 import { engineLabel } from '../../shared/engine-switch.mjs';
 import { DesignRefusal } from './build.mjs';
 import { resolveDesignModel } from './spawn-options.mjs';
+import { gateRules } from '../guardrails.mjs';
 
 /**
  * One row per engine. `gate`: `open` builds, `consent` needs a person's `Allow unguarded`, `refused` never builds.
@@ -118,7 +119,7 @@ export function designEngineGate({
   if (caps.allowedTools === false) reasons.push(row.confine === 'sandbox' ? sandboxReason(label) : unguardedReason(label));
   if (caps.cost === false) reasons.push(costReason(label));
   if (!HOOKED.has(engine)) {
-    const loose = looseRules(adapter, rules);
+    const loose = looseRules(adapter, gateRules(rules));   // the secret-file floor is never weighed (guardrails.mjs gateRules)
     if (loose.length) reasons.push(rulesReason(label, loose));
   }
   const notes = project && !row.readsOutsideCwd ? [projectNote(label)] : [];

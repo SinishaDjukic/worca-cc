@@ -84,12 +84,17 @@ function pluginErrorStatus(code) {
   return 500;
 }
 function sendPluginError(res, err) {
+  if (res.headersSent) return;
   const message = err && err.message ? err.message : String(err);
+  // A secret the vault refused (secretVault on): a pasted reference is 400, an unusable vault 503.
+  if (err?.name === 'SettingsVaultError') return res.status(err.code === 'VAULT_REF_REFUSED' ? 400 : 503).json({ error: message, code: err.code });
   if (err && (err.name === 'ReferencedError' || err.code === 'REFERENCED')) {
     return res.status(409).json({ error: message, references: err.references || [] });
   }
   if (err?.code === 'STALE_PREVIEW') return res.status(409).json({ error: message, code: 'STALE_PREVIEW', candidateSha: err.candidateSha ?? null });
   if (err?.code === 'EXISTS') return res.status(409).json({ error: message, code: 'EXISTS', ...(err.existing ? { existing: err.existing } : {}) });
+  // An fs failure (it has a syscall) names a path in its message: answer its code only.
+  if (typeof err?.syscall === 'string') return res.status(500).json({ error: `the plugin data could not be read or saved (${err.code || 'error'})` });
   res.status(pluginErrorStatus(err && err.code)).json({ error: message, ...(err?.code === 'GIT_MISSING' ? { code: 'GIT_MISSING' } : {}) });
 }
 
@@ -389,11 +394,11 @@ app.delete('/api/plugins/:name', async (req, res) => {
 // secrets + state). requirePlugin is unusable here: orphans are by definition
 // NOT in the lock. 409 while installed (purge flows through uninstall), 404
 // when there is nothing to purge.
-app.delete('/api/plugins/:name/data', (req, res) => {
+app.delete('/api/plugins/:name/data', async (req, res) => {
   const name = req.params.name;
   if (!PLUGIN_NAME_RE.test(name)) return res.status(404).json({ error: 'plugin not found' });
   try {
-    const out = purgePluginData(name);
+    const out = await purgePluginData(name);
     emitPluginsChanged('purge');
     res.json(out);
   } catch (err) {
@@ -515,33 +520,33 @@ app.post('/api/plugins/:name/profiles', (req, res) => {
 // profile's buckets for the whole plugin, so a sibling source's binding naming
 // it would dangle just the same. sourceId is still required — it authorizes the
 // call against a source that actually uses profiles.
-app.delete('/api/plugins/:name/profiles/:id', (req, res) => {
-  const name = requirePlugin(req, res);
-  if (!name) return;
-  const manifest = readInstalledManifest(name);
-  if (!manifest) return res.status(409).json({ error: 'plugin manifest unreadable. Run doctor' });
-  const sourceId = typeof req.query.sourceId === 'string' ? req.query.sourceId : '';
-  const sources = manifest.taskSources || [];
-  const source = sources.find((s) => s.id === sourceId) || (sources.length === 1 ? sources[0] : null);
-  if (!source) return badRequest(res, 'sourceId does not match a task source of this plugin');
-  // Mirror the POST guard: a single-profile source only has the implicit
-  // 'default' bucket, and deleting THAT would wipe its entire config/secrets/
-  // state. Same for ids not in the roster — deleteProfile would still drop
-  // whatever buckets happen to share the id (e.g. migrated legacy data under
-  // 'default'), so only roster members are deletable.
-  if (!source.multiProfile) return badRequest(res, `task source "${source.id}" does not support profiles`);
-  if (!isValidProfileId(req.params.id)) return badRequest(res, 'invalid profile id');
-  // Reserved even if a pre-reservation roster enrolled it: deleting "default"
-  // would strip the shared bucket (chat-channel config, model secrets,
-  // migrated legacy data) out of all three files.
-  if (req.params.id === DEFAULT_PROFILE) {
-    return badRequest(res, `profile id "${DEFAULT_PROFILE}" is reserved, so it cannot be deleted`);
-  }
-  if (!listProfiles(name).some((p) => p.id === req.params.id)) {
-    return badRequest(res, `plugin "${name}" has no profile "${req.params.id}"`);
-  }
+app.delete('/api/plugins/:name/profiles/:id', async (req, res) => {
   try {
-    deleteProfile(name, req.params.id);
+    const name = requirePlugin(req, res);
+    if (!name) return;
+    const manifest = readInstalledManifest(name);
+    if (!manifest) return res.status(409).json({ error: 'plugin manifest unreadable. Run doctor' });
+    const sourceId = typeof req.query.sourceId === 'string' ? req.query.sourceId : '';
+    const sources = manifest.taskSources || [];
+    const source = sources.find((s) => s.id === sourceId) || (sources.length === 1 ? sources[0] : null);
+    if (!source) return badRequest(res, 'sourceId does not match a task source of this plugin');
+    // Mirror the POST guard: a single-profile source only has the implicit
+    // 'default' bucket, and deleting THAT would wipe its entire config/secrets/
+    // state. Same for ids not in the roster — deleteProfile would still drop
+    // whatever buckets happen to share the id (e.g. migrated legacy data under
+    // 'default'), so only roster members are deletable.
+    if (!source.multiProfile) return badRequest(res, `task source "${source.id}" does not support profiles`);
+    if (!isValidProfileId(req.params.id)) return badRequest(res, 'invalid profile id');
+    // Reserved even if a pre-reservation roster enrolled it: deleting "default"
+    // would strip the shared bucket (chat-channel config, model secrets,
+    // migrated legacy data) out of all three files.
+    if (req.params.id === DEFAULT_PROFILE) {
+      return badRequest(res, `profile id "${DEFAULT_PROFILE}" is reserved, so it cannot be deleted`);
+    }
+    if (!listProfiles(name).some((p) => p.id === req.params.id)) {
+      return badRequest(res, `plugin "${name}" has no profile "${req.params.id}"`);
+    }
+    await deleteProfile(name, req.params.id);
     const unbound = clearBindingsForProfile(name, req.params.id);
     emitPluginsChanged('config');
     res.json({ ok: true, unbound });
@@ -554,60 +559,60 @@ app.delete('/api/plugins/:name/profiles/:id', (req, res) => {
 // writePluginConfig routes secret:true keys to data/secrets.json (0600,
 // atomic). Request values are NEVER logged and NEVER echoed back (the response
 // is a bare receipt). A channelId save also hot-restarts the channel worker.
-app.put('/api/plugins/:name/config', (req, res) => {
-  const name = requirePlugin(req, res);
-  if (!name) return;
-  const body = req.body || {};
-  if (!body.values || typeof body.values !== 'object' || Array.isArray(body.values)) {
-    return badRequest(res, 'values must be an object');
-  }
-  const manifest = readInstalledManifest(name);
-  if (!manifest) return res.status(409).json({ error: 'plugin manifest unreadable. Run doctor' });
-  // { target: 'modelSecrets', values } writes the plugin-level model secrets
-  // (design §9.7) — same write-only semantics, routed by the synthesized schema.
-  if (body.target === 'modelSecrets') {
-    const schema = modelSecretsSchema(name);
-    if (!schema.length) return badRequest(res, 'plugin declares no modelSecrets');
-    // Broker on: only clearing is allowed; a key saved here would be one agents could reach.
-    if (brokerEnabled() && Object.values(body.values || {}).some((v) => v !== null && v !== '')) {
-      return res.status(409).json({ error: 'the credential broker is on: each person adds this key on the key page' });
-    }
-    try {
-      writePluginConfig(name, schema, body.values);
-      emitPluginsChanged('config');
-      return res.json({ ok: true });
-    } catch (err) {
-      return sendPluginError(res, err);
-    }
-  }
-  let schema;
-  let source = null;
-  let profile = null;
-  if (typeof body.channelId === 'string' && body.channelId) {
-    const channel = (manifest.chatChannels || []).find((c) => c.id === body.channelId);
-    if (!channel) return badRequest(res, 'channelId does not match a chat channel of this plugin');
-    schema = channel.configSchema;
-  } else {
-    const sources = manifest.taskSources || [];
-    const sourceId = typeof body.sourceId === 'string' && body.sourceId
-      ? body.sourceId
-      : (sources.length === 1 ? sources[0].id : '');
-    source = sources.find((s) => s.id === sourceId);
-    if (!source) return badRequest(res, 'sourceId does not match a task source of this plugin');
-    profile = typeof body.profile === 'string' && body.profile ? body.profile : null;
-    if (profile && !isValidProfileId(profile)) return badRequest(res, 'invalid profile id');
-    if (source.multiProfile && !profile) return badRequest(res, 'profile is required for this task source');
-    // Saves go only into EXISTING roster members — mirroring the GET guard,
-    // whose whole point is that a Save must not quietly mint a typo'd (or
-    // just-deleted) id as a real profile with secrets stored under it.
-    // Creation stays solely on POST /profiles.
-    if (source.multiProfile && !listProfiles(name).some((p) => p.id === profile)) {
-      return badRequest(res, `plugin "${name}" has no profile "${profile}". Create it first`);
-    }
-    schema = source.configSchema;
-  }
+app.put('/api/plugins/:name/config', async (req, res) => {
   try {
-    writePluginConfig(name, schema, body.values, profile);
+    const name = requirePlugin(req, res);
+    if (!name) return;
+    const body = req.body || {};
+    if (!body.values || typeof body.values !== 'object' || Array.isArray(body.values)) {
+      return badRequest(res, 'values must be an object');
+    }
+    const manifest = readInstalledManifest(name);
+    if (!manifest) return res.status(409).json({ error: 'plugin manifest unreadable. Run doctor' });
+    // { target: 'modelSecrets', values } writes the plugin-level model secrets
+    // (design §9.7) — same write-only semantics, routed by the synthesized schema.
+    if (body.target === 'modelSecrets') {
+      const schema = modelSecretsSchema(name);
+      if (!schema.length) return badRequest(res, 'plugin declares no modelSecrets');
+      // Broker on: only clearing is allowed; a key saved here would be one agents could reach.
+      if (brokerEnabled() && Object.values(body.values || {}).some((v) => v !== null && v !== '')) {
+        return res.status(409).json({ error: 'the credential broker is on: each person adds this key on the key page' });
+      }
+      try {
+        await writePluginConfig(name, schema, body.values);
+        emitPluginsChanged('config');
+        return res.json({ ok: true });
+      } catch (err) {
+        return sendPluginError(res, err);
+      }
+    }
+    let schema;
+    let source = null;
+    let profile = null;
+    if (typeof body.channelId === 'string' && body.channelId) {
+      const channel = (manifest.chatChannels || []).find((c) => c.id === body.channelId);
+      if (!channel) return badRequest(res, 'channelId does not match a chat channel of this plugin');
+      schema = channel.configSchema;
+    } else {
+      const sources = manifest.taskSources || [];
+      const sourceId = typeof body.sourceId === 'string' && body.sourceId
+        ? body.sourceId
+        : (sources.length === 1 ? sources[0].id : '');
+      source = sources.find((s) => s.id === sourceId);
+      if (!source) return badRequest(res, 'sourceId does not match a task source of this plugin');
+      profile = typeof body.profile === 'string' && body.profile ? body.profile : null;
+      if (profile && !isValidProfileId(profile)) return badRequest(res, 'invalid profile id');
+      if (source.multiProfile && !profile) return badRequest(res, 'profile is required for this task source');
+      // Saves go only into EXISTING roster members — mirroring the GET guard,
+      // whose whole point is that a Save must not quietly mint a typo'd (or
+      // just-deleted) id as a real profile with secrets stored under it.
+      // Creation stays solely on POST /profiles.
+      if (source.multiProfile && !listProfiles(name).some((p) => p.id === profile)) {
+        return badRequest(res, `plugin "${name}" has no profile "${profile}". Create it first`);
+      }
+      schema = source.configSchema;
+    }
+    await writePluginConfig(name, schema, body.values, profile);
     reloadChatWorkers(name);
     emitPluginsChanged('config');
     res.json({ ok: true });

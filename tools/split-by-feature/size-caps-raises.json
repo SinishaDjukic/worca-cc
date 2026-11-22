@@ -38,5 +38,11 @@
   { "file": "ui/server.mjs", "from": 10544, "to": 10573, "commit": "beb686c22",
     "why": "Models P1 Task 2: the /vendor/brand-icons route; measured with grep -c" },
   { "file": "ui/server.mjs", "from": 10573, "to": 10574, "commit": "c2acccaea",
-    "why": "Ticket comments per run event (#1508): the one-line announcePrOpened call after a PR is opened, in createRunPr; the helper itself lives in src/core/sources.mjs; measured with wc -l on this branch merged with dev 2fd95ae5a" }
+    "why": "Ticket comments per run event (#1508): the one-line announcePrOpened call after a PR is opened, in createRunPr; the helper itself lives in src/core/sources.mjs; measured with wc -l on this branch merged with dev 2fd95ae5a" },
+  { "file": "ui/server.mjs", "from": 10574, "to": 10576, "commit": "efd4df6c9",
+    "why": "Secret vault slice 3 (on efd4df6c9): the startSecretsProbe import and its one-line, never-awaited call in the listen callback; the route itself lives in ui/routes/settings/secrets.mjs; measured with wc -l" },
+  { "file": "ui/server.mjs", "from": 10576, "to": 10577, "commit": "81600ca38",
+    "why": "Secret vault slice 5 (on 81600ca38): the flag-on boot settle of the vault prime before startLiveEgress, one statement on its own line (joining it onto the keep-awake line was flagged in review); measured with wc -l" },
+  { "file": "ui/server.mjs", "from": 10577, "to": 10588, "commit": "c3468f083",
+    "why": "Secret vault slice 6 (on c3468f083): the start-time vault settle and migration call (2 lines), the import of the two flag helpers (1 line) and the flag-change handler that primes the key and migrates on the off-to-on edge (8 more lines than the one-line handler before); measured with wc -l on this branch merged with dev a2891abf7" }
 ]

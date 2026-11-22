@@ -274,3 +274,29 @@ test('importMcpServers: a name taken between the review and the write refuses th
   assert.equal(Object.hasOwn(stored, 'race-a'), false, 'the first pick was not written either');
   assert.equal(stored['race-b'].command, 'other-mcp');
 });
+
+test('flag on: the chat card\'s remove leaves no vault entry for the server', async () => {
+  const { writeFakeState, fileFakeOsStore } = await import('./helpers/os-store-fake.mjs');
+  const { createVault } = await import('../src/core/secrets/vault.mjs');
+  const { osItemName } = await import('../src/core/secrets/os-store.mjs');
+  const { isVaultRef } = await import('../src/core/secrets/refs.mjs');
+  const { worcaHome } = await import('../src/core/projects.mjs');
+  const state = join(mkdtempSync(join(tmpdir(), 'worca-ask-mcp-vault-')), 'state.json');
+  writeFakeState(state, { state: 'available' });
+  const keep = { WORCA_FLAGS: process.env.WORCA_FLAGS, WORCA_TEST_OS_STORE: process.env.WORCA_TEST_OS_STORE };
+  Object.assign(process.env, { WORCA_FLAGS: 'secretVault', WORCA_TEST_OS_STORE: state });
+  try {
+    const vault = createVault({ home: worcaHome(), store: fileFakeOsStore(state, { item: osItemName(worcaHome()) }) });
+    const def = await addManualServer('vaulty', GH_RAW);
+    await putMember('general', 'manual:vaulty', { enabled: true, secrets: { GITHUB_TOKEN: TOKEN } }, { def });
+    assert.ok(isVaultRef(disk('secrets').sets.general['manual:vaulty'].GITHUB_TOKEN.value));
+    assert.equal((await vault.list()).filter((e) => e.field.startsWith('manual:vaulty/')).length, 1);
+    const remove = await validateMcpChange({ kind: 'remove', name: 'vaulty' });
+    assert.equal(remove.ok, true);
+    await applyMcpChange(remove.card);
+    assert.equal((await vault.list()).filter((e) => e.field.startsWith('manual:vaulty/')).length, 0);
+  } finally {
+    for (const [k, v] of Object.entries(keep)) { if (v === undefined) delete process.env[k]; else process.env[k] = v; }
+    rmSync(dirname(state), { recursive: true, force: true });
+  }
+});

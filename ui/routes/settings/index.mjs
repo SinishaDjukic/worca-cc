@@ -3,10 +3,11 @@
 import * as m_settings_notifications_and_onboarding from './notifications-and-onboarding.mjs';
 import * as m_settings_memory from './memory.mjs';
 import * as m_settings_settings from './settings.mjs';
+import * as m_settings_secrets from './secrets.mjs';
 import * as m_settings_config from './config.mjs';
 export const SEGMENTS = Object.freeze([
   Object.freeze([m_settings_notifications_and_onboarding]),   // before app.use('/api/automations', requireFlag('gitAutomations'));
-  Object.freeze([m_settings_memory, m_settings_settings, m_settings_config]),   // before app.use('/api/mcp', (req, res, next) => {
+  Object.freeze([m_settings_memory, m_settings_settings, m_settings_secrets, m_settings_config]),   // before app.use('/api/mcp', (req, res, next) => {
   Object.freeze([]),   // before app.use((req, res, next) => {
   Object.freeze([]),   // before app.use('/api/skills', (req, res, next) => {
   Object.freeze([]),   // before the SPA fallback

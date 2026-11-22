@@ -10,8 +10,8 @@ import {
   voiceCandidate, rankVoices,
 } from './elevenlabs.mjs';
 import { SOUND_SERVICE, SOUND_LIMITS, voiceUsd, musicUsd } from '../shared/sound-services.mjs';
-import { soundConfig, resolveProviderSecret } from './settings.mjs';
-import { modelEnvRef, maskModelEnvValue, envFlag } from './model-env.mjs';
+import { maskStoredSecret, soundConfig, resolveProviderSecret } from './settings.mjs';
+import { modelEnvRef, envFlag } from './model-env.mjs';
 import { brokerEnabled } from './broker-client.mjs';
 
 // The reasons a SoundError carries (SPEC §7, word for word).
@@ -59,7 +59,7 @@ const mockOn = (mock, fetch) => mock ?? (fetch ? false : envFlag('WORCA_MOCK', '
 
 /** The key to call with: a typed one (trimmed, as the header sends it), else the stored one resolved; none is a 409 before any call. */
 function keyOf(key) {
-  const k = nonEmpty(key) ? key.trim() : resolveProviderSecret(soundConfig().apiKey);
+  const k = nonEmpty(key) ? key.trim() : resolveProviderSecret(soundConfig().apiKey, process.env, 'providers.sound.apiKey');
   if (!k) throw new SoundError(NOT_SET_UP, 409);
   return k;
 }
@@ -272,14 +272,14 @@ export function soundState() {
   const { apiKey } = soundConfig();
   const ref = modelEnvRef(apiKey);
   const keySet = !!apiKey;
-  const keyMissing = keySet && !resolveProviderSecret(apiKey);
+  const keyMissing = keySet && !resolveProviderSecret(apiKey, process.env, 'providers.sound.apiKey');
   return {
     service: SOUND_SERVICE.id,
     configured: keySet && !keyMissing,
     keySet,
     keySource: !keySet ? null : ref ? 'env' : 'stored',
     keyRef: ref ? apiKey : null,
-    keyMasked: keySet && !ref ? maskModelEnvValue(apiKey) : null,
+    keyMasked: keySet && !ref ? maskStoredSecret(apiKey, 'providers.sound.apiKey') : null,
     keyMissing,
     available: !brokerEnabled(),
   };
@@ -288,7 +288,7 @@ export function soundState() {
 /** Whether a round can make sound: never under the broker; then mock, or a key that resolves. */
 export function soundReady() {
   if (brokerEnabled()) return false;
-  return envFlag('WORCA_MOCK', 'ORCH_MOCK') || !!resolveProviderSecret(soundConfig().apiKey);
+  return envFlag('WORCA_MOCK', 'ORCH_MOCK') || !!resolveProviderSecret(soundConfig().apiKey, process.env, 'providers.sound.apiKey');
 }
 
 /** The row's Test: the voices the typed key (or the stored one) can list. Never throws. */
@@ -306,6 +306,6 @@ export async function testSound(typed = {}, fetch) {
     return { ok: true, voices: list.length };
   } catch (err) {
     if (err instanceof SoundError) return { ok: false, message: err.message };
-    return { ok: false, message: redactKey(redactKey(err?.message ?? String(err), key), resolveProviderSecret(stored)) };
+    return { ok: false, message: redactKey(redactKey(err?.message ?? String(err), key), resolveProviderSecret(stored, process.env, 'providers.sound.apiKey')) };
   }
 }

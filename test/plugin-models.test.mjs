@@ -102,7 +102,7 @@ test('listPluginModels: cross-plugin id collision — alphabetical plugin wins, 
   assert.ok(list.some((m) => m.id === 'zz-own'), 'non-colliding entry of the loser survives');
 });
 
-test('modelSecretsSchema + status; flattenPluginModelEnv resolves/drops secrets', () => {
+test('modelSecretsSchema + status; flattenPluginModelEnv resolves/drops secrets', async () => {
   const schema = modelSecretsSchema('example-models');
   assert.equal(schema.length, 1);
   assert.equal(schema[0].secret, true);
@@ -115,7 +115,7 @@ test('modelSecretsSchema + status; flattenPluginModelEnv resolves/drops secrets'
   assert.equal(flat.env.ANTHROPIC_AUTH_TOKEN, undefined);
   assert.match(flat.droppedSecrets[0], /ANTHROPIC_AUTH_TOKEN \(secret "ds-token"\)/);
 
-  writePluginConfig('example-models', schema, { 'ds-token': 'sk-team-1234' });
+  await writePluginConfig('example-models', schema, { 'ds-token': 'sk-team-1234' });
   assert.deepEqual(pluginModelSecretStatus('example-models'), [{ key: 'ds-token', label: 'DS token', set: true }]);
   flat = flattenPluginModelEnv(stable);
   assert.equal(flat.env.ANTHROPIC_AUTH_TOKEN, 'sk-team-1234');

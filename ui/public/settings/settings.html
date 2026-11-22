@@ -287,6 +287,20 @@
                 <a class="about-val about-link" id="aboutCompare" hidden
                    target="_blank" rel="noopener noreferrer">Changes since this version</a>
               </div>
+              <div class="about-row" id="aboutSecretsRow" hidden>
+                <span class="about-key">Secrets</span>
+                <div class="about-val about-update-body">
+                  <div><span id="aboutSecretsBackend"></span> <span class="about-update" id="aboutSecretsState"></span></div>
+                  <p class="about-note" id="aboutSecretsNote" hidden></p>
+                  <!-- Secrets moved into the vault: the moved keys, until Got it (secretVault flag). -->
+                  <div class="update-callout" id="aboutSecretsNotice" data-tone="info" role="status" hidden>
+                    <p id="aboutSecretsNoticeText"></p>
+                    <ul id="aboutSecretsNoticeKeys"></ul>
+                    <p id="aboutSecretsNoticeLeft" hidden></p>
+                    <button type="button" class="btn btn-sm btn-quiet" id="aboutSecretsNoticeAck">Got it</button>
+                  </div>
+                </div>
+              </div>
               <div class="about-row">
                 <span class="about-key">Release notes</span>
                 <a class="about-val about-link" id="aboutReleaseNotes"

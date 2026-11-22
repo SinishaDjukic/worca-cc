@@ -211,3 +211,30 @@ test('hand edits below the top level never make a locked write throw', async () 
   assert.deepEqual(plain(s.teams['acme/platform'].members[id]), { enabled: true, values: {}, seeded: {}, consent: null });
   assert.deepEqual([plain(s.projects), s.retired, plain(s.secrets)], [{}, ['billing'], {}]);
 });
+
+// ── secretVault on: removal everywhere and the load-time orphan sweep release their vault entries ──────────────────
+const { vaultOn, vaultOf } = await import('./helpers/mcp-store-fixtures.mjs');
+const { isVaultRef } = await import('../src/core/secrets/refs.mjs');
+
+test('flag on: removeServerEverywhere leaves no vault entry for the server', () => vaultOn(async () => {
+  const def = await addManualServer('pg', PG_RAW);
+  put('sets', { sets: { billing: { name: 'Billing', slug: 'billing', members: [] }, shop: { name: 'Shop', slug: 'shop', members: [] } } });
+  await putMember('billing', 'manual:pg', { values: { database: 'postgresql://ro@db/b' }, secrets: { password: 'pw-vault-1' } }, { def });
+  await putMember('shop', 'manual:pg', { values: { database: 'postgresql://ro@db/s' }, secrets: { password: 'pw-vault-2' } }, { def });
+  assert.equal((await vaultOf().list()).length, 2);
+  await removeServerEverywhere('manual:pg');
+  assert.equal((await vaultOf().list()).length, 0);
+}));
+
+test('flag on: a hand-orphaned vaulted record leaves no entry after the next locked write', () => vaultOn(async () => {
+  const def = await addManualServer('pg', PG_RAW);
+  put('sets', { sets: { billing: { name: 'Billing', slug: 'billing', members: [] } } });
+  await putMember('billing', 'manual:pg', { values: { database: 'postgresql://ro@db/b' }, secrets: { password: 'pw-vault-3' } }, { def });
+  const ref = disk('secrets').sets.billing['manual:pg'].password.value;
+  assert.ok(isVaultRef(ref));
+  // The member is removed by hand from sets.json: its secret is now an orphan the next locked load sweeps.
+  put('sets', { sets: { billing: { name: 'Billing', slug: 'billing', members: [] } } });
+  await addManualServer('other', PG_RAW);
+  assert.equal(disk('secrets').sets?.billing, undefined);
+  assert.equal((await vaultOf().list()).length, 0);
+}));

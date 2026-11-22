@@ -43,7 +43,7 @@ import { createFormAsker } from './forms.mjs';
 import { kindLabel } from '../shared/away-mode/labels.mjs';
 import { pauseExitCode, describePauseReason, promptOptions, REASON } from '../core/failure-policy.mjs';
 import { sigtermGraceMs } from '../core/drain.mjs';
-import { effectiveDebugSpawn, migrateCorporateProxyFlag, readinessIgnore } from '../core/settings.mjs';
+import { effectiveDebugSpawn, migrateCorporateProxyFlag, primeSettingsVaultIfEnabled, readinessIgnore, tightenSettingsFileMode } from '../core/settings.mjs';
 import { SCHEDULE_VALUE_FLAGS, wantsSchedule, readScheduleFlags, createFromFlags, waitAndRun, cmdSchedule, resolveAfterId } from './schedule.mjs';
 import { applyTagRules } from '../core/tag-dimensions.mjs';
 import { inheritedTagsAtCreation } from '../core/scheduler.mjs';
@@ -356,6 +356,8 @@ Subcommands:
                               See: worca extension help (docs/browser-extension.md)
   proxy <cmd> [...]           Corporate proxy login: status|login|logout|test.
                               See: worca proxy help (docs/network-proxy.md)
+  secrets <cmd> [...]         The secret vault's OS key store (secretVault flag): status|export|ack|reset.
+                              See: worca secrets help
   setup --from FILE [--yes]   Apply a team setup file; asks only for what it leaves out.
                               See: docs/setup-assistant.md
   broker [serve|secrets|revoke --person <email>]
@@ -1443,6 +1445,20 @@ async function cmdDoctor() {
   } catch (err) {
     process.stderr.write(`worca doctor: terminal shell check failed: ${err?.message || err}\n`);
   }
+  // The secret vault's OS key store: nothing (and no vault or store module) while the vault is not in use (the flag
+  // off and no vault file left). Read-only, and a warning never changes the exit code.
+  try {
+    const { secretVaultEnabled, vaultInUse } = await import('../core/secrets/flag.mjs');
+    if (vaultInUse()) {
+      const { secretsStatus, doctorLine, FLAG_OFF_VAULT_LINE } = await import('../core/secrets/status.mjs');
+      const st = await secretsStatus();
+      const { text, warn } = doctorLine(st);
+      out(warn ? c('yellow', text) : text);
+      if (!secretVaultEnabled() && st.vault !== 'none') out(FLAG_OFF_VAULT_LINE);
+    }
+  } catch {
+    process.stderr.write('worca doctor: secrets check failed\n');
+  }
   try {
     // A TOTAL no-op while the effective mode is `legacy`: those paths hold every live
     // and every paused run, so sweeping them would make the documented §10 rollback
@@ -2368,7 +2384,7 @@ async function cmdPlugin(argv) {
         if (!name) fail(`Usage: worca plugin ${verb} <name>${verb === 'remove' ? ' [--purge]' : ''}`);
         const { readPluginsLock } = await import('../core/plugins-lock.mjs');
         if (verb === 'purge' && !Object.hasOwn(readPluginsLock(), name)) {
-          store.purgePluginData(name);   // a removed plugin's leftover data/ — what the remove note tells users to run
+          await store.purgePluginData(name);   // a removed plugin's leftover data/ — what the remove note tells users to run
           out(`purged ${name}: data/ deleted (config, secrets, state)`);
           return 0;
         }
@@ -3641,7 +3657,7 @@ async function resolveTeamNote(team, { key, project, name, a }) {
 
 // ── main ──────────────────────────────────────────────────────────────────────────
 
-const SUBCOMMANDS = new Set(['add', 'list', 'remove', 'resume', 'run', 'runs', 'logs', 'stop', 'pause', 'doctor', 'plugin', 'marketplace', 'config', 'flags', 'ui', 'workflow', 'metrics', 'script', 'policy', 'schedule', 'models', 'container', 'broker', 'extension', 'proxy', 'memory', 'setup', 'sessions', 'readiness']);
+const SUBCOMMANDS = new Set(['add', 'list', 'remove', 'resume', 'run', 'runs', 'logs', 'stop', 'pause', 'doctor', 'plugin', 'marketplace', 'config', 'flags', 'ui', 'workflow', 'metrics', 'script', 'policy', 'schedule', 'models', 'container', 'broker', 'extension', 'proxy', 'secrets', 'memory', 'setup', 'sessions', 'readiness']);
 
 /** Levenshtein distance, two-row. Only ever called on short argv tokens. */
 function editDistance(a, b) {
@@ -3721,7 +3737,36 @@ function mistypedCommand(tokens) {
     + `The ${first.replace(/s$/, '')} commands are top-level: worca ${verbs.join(' | ')} (to run a prompt, use --prompt "\u2026")`;
 }
 
+/**
+ * The commands that resolve a vaulted provider or model key in this process, so main() primes the settings vault
+ * (secretVault flag on) before them: the bare pipeline run (''), `resume` (it drives the orchestrator in-process),
+ * `models`, and `proxy` and `container` (they read the vaulted proxy login). Every other command goes through the server
+ * or resolves no key, and never waits on the OS key store. With the flag on, these commands also move file-stored
+ * secrets into the vault after the prime (secrets/flag.mjs migrateSecretsIfEnabled); every other command never does.
+ */
+export const CLI_PRIME_COMMANDS = Object.freeze(['', 'resume', 'models', 'proxy', 'container']);
+
 async function main() {
+  tightenSettingsFileMode();   // settings.json holds provider keys: owner-only (0600) on POSIX, never fatal
+  // The settings vault's key, loaded once off the sync path (bounded by the OS store's 10 s limit; never rejects).
+  const primeName = process.argv[2] === 'help' || SUBCOMMANDS.has(process.argv[2]) ? process.argv[2] : '';
+  if (CLI_PRIME_COMMANDS.includes(primeName)) {
+    // Flag on (the prime answered): then the one-time move of file-stored secrets into the vault, on a local install only.
+    if (await primeSettingsVaultIfEnabled()) {
+      const { migrateSecretsIfEnabled } = await import('../core/secrets/flag.mjs');
+      const { detectDeployment } = await import('../core/deployment.mjs');
+      const { isRemoteMode, readRemoteAccessConfig } = await import('../core/remote-access.mjs');
+      await migrateSecretsIfEnabled({ reason: 'cli', deployment: detectDeployment(process.env, { remoteMode: isRemoteMode(readRemoteAccessConfig(process.env)) }) });
+      // D12: the pending message about moved secrets, on stderr only (scripts reading stdout see no change), until acknowledged.
+      const { readNotice } = await import('../core/secrets/notice.mjs');
+      const notice = readNotice();
+      if (notice) {
+        const { noticeLines } = await import('../shared/secrets-notice.mjs');
+        const { secretVaultEnabled } = await import('../core/secrets/flag.mjs');
+        process.stderr.write(noticeLines(notice, { surface: 'cli', settingsReachable: secretVaultEnabled() }).join('\n') + '\n');
+      }
+    }
+  }
   // D6: the old Labs flag becomes networkProxy.enabled, once, before the proxy reads it.
   await migrateCorporateProxyFlag();
   // A hosting platform's outbound network policy (src/core/egress-policy.mjs). `worca ui` leaves
@@ -3782,6 +3827,7 @@ async function main() {
     if (sub === 'container') return cmdContainer(rest, { out, c, fail });
     if (sub === 'extension') return cmdExtension(rest, { out, c, fail });
     if (sub === 'proxy') return cmdProxy(rest, { out, c, fail });
+    if (sub === 'secrets') return (await import('./secrets.mjs')).cmdSecrets(rest, { out, c, fail });
     if (sub === 'setup') return cmdSetup(rest, { out });
     if (sub === 'readiness') return cmdReadiness(rest);
     if (sub === 'broker') {

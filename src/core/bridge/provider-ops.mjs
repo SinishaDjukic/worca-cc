@@ -10,13 +10,13 @@ import {
   providerConfig, allProviders, updateProvider, resolveProviderSecret, providerSecretSet,
   clearCopilotSignIn,
   listGlobalModels, addGlobalModel, updateGlobalModel, updateSpeech, updateImages, updateSound,
-  openRouterConfig, updateOpenRouter,
+  openRouterConfig, updateOpenRouter, maskStoredSecret,
 } from '../settings.mjs';
 import { speechState } from '../speech.mjs';
 import { imagesState } from '../images.mjs';
 import { soundState } from '../sound.mjs';
 import { speechAssetStore } from '../speech-assets.mjs';
-import { modelEnvRef, maskModelEnvValue, UPSTREAM_PROVIDERS, isUpstreamBaseUrl, isOpenRouterBaseUrl, EFFORTS } from '../model-env.mjs';
+import { modelEnvRef, UPSTREAM_PROVIDERS, isUpstreamBaseUrl, isOpenRouterBaseUrl, EFFORTS } from '../model-env.mjs';
 import {
   startDeviceFlow, pollDeviceFlow, githubLogin, copilotToken, invalidateCopilotToken,
   listCopilotModels, copilotUsage, catalogEntryForCopilotModel, copilotApiFor,
@@ -131,7 +131,7 @@ export async function pollCopilotLogin(deviceCode, { fetch: f } = {}) {
 /** Sign out of Copilot: forget the token, drop the cached exchange. */
 export async function copilotLogout() {
   const cfg = providerConfig('copilot');
-  const tok = resolveProviderSecret(cfg.githubToken);
+  const tok = resolveProviderSecret(cfg.githubToken, process.env, 'providers.copilot.githubToken');
   if (tok) invalidateCopilotToken(tok, { enterpriseHost: safeAccountHost(cfg) });
   await clearCopilotSignIn();
 }
@@ -154,7 +154,7 @@ const secretSource = (v) => (!v ? null : modelEnvRef(v) ? 'env' : 'stored');
 export async function providersState({ quota = false, fetch: f, person = resolveBillTo(null) } = {}) {
   const all = allProviders();
   const c = all.copilot;
-  const token = resolveProviderSecret(c.githubToken);
+  const token = resolveProviderSecret(c.githubToken, process.env, 'providers.copilot.githubToken');
   const copilot = {
     connected: !!token,
     login: c.login || null,
@@ -172,12 +172,12 @@ export async function providersState({ quota = false, fetch: f, person = resolve
   const keyed = (name) => {
     const p = all[name];
     return {
-      configured: !!resolveProviderSecret(p.apiKey),
+      configured: !!resolveProviderSecret(p.apiKey, process.env, `providers.${name}.apiKey`),
       keyOptional: keyOptional(name, p.baseUrl),
       keySet: providerSecretSet(name),
       keySource: secretSource(p.apiKey),
       keyRef: modelEnvRef(p.apiKey) ? p.apiKey : null,
-      keyMasked: p.apiKey && !modelEnvRef(p.apiKey) ? maskModelEnvValue(p.apiKey) : null,
+      keyMasked: p.apiKey && !modelEnvRef(p.apiKey) ? maskStoredSecret(p.apiKey, `providers.${name}.apiKey`) : null,
       baseUrl: p.baseUrl,
       maxConcurrent: p.maxConcurrent,
     };
@@ -199,7 +199,7 @@ function openRouterState() {
     keySet: !!k.value,
     keySource: secretSource(text),
     keyRef: modelEnvRef(text) ? text : null,
-    keyMasked: text && !modelEnvRef(text) ? maskModelEnvValue(text) : null,
+    keyMasked: text && !modelEnvRef(text) ? maskStoredSecret(text, k.source === 'openai-legacy' ? 'providers.openai.apiKey' : 'providers.openrouter.apiKey') : null,
     legacyKey: k.source === 'openai-legacy',
     maxConcurrent, order, sort, allowFallbacks,
   };
@@ -255,7 +255,7 @@ export async function patchProvider(name, patch = {}) {
   const out = await updateProvider(name, p);
   // A host change signs out (settings drops the token): evict the exchanged token it held. Memory only —
   // the cache is keyed by host, so it could never be reused on the new one.
-  const oldTok = resolveProviderSecret(was.githubToken);
+  const oldTok = resolveProviderSecret(was.githubToken, process.env, 'providers.copilot.githubToken');
   if (oldTok && !out.githubToken) invalidateCopilotToken(oldTok, { enterpriseHost: safeAccountHost(was) });
   return out;
 }
@@ -343,7 +343,7 @@ export async function copilotModelsForImport({ fetch: f } = {}) {
     });
   } else {
     const c = providerConfig('copilot');
-    const token = resolveProviderSecret(c.githubToken);
+    const token = resolveProviderSecret(c.githubToken, process.env, 'providers.copilot.githubToken');
     if (!token) throw Object.assign(new Error('not signed in to GitHub Copilot'), { code: 'NOT_SIGNED_IN' });
     list = await listCopilotModels(token, { accountType: c.accountType, enterpriseHost: copilotAccountHost(c), fetch: f });
   }
@@ -421,7 +421,7 @@ export async function endpointModelsForImport({ baseUrl, apiKey: entryKey = '', 
   const base = endpointBase(baseUrl || p.baseUrl);
   const ownKey = typeof entryKey === 'string' ? entryKey.trim() : '';
   if (ownKey && brokerEnabled()) refuseWithBroker('store a model key');
-  if (ownKey && modelEnvRef(ownKey) && !resolveProviderSecret(ownKey)) throw new Error(`${ownKey} is not set in worca's environment — export it where worca starts`);
+  if (ownKey && modelEnvRef(ownKey) && !resolveProviderSecret(ownKey, process.env, null)) throw new Error(`${ownKey} is not set in worca's environment — export it where worca starts`);
   let out;
   const route = brokerEnabled() ? routeUpstream({ provider: 'openai', baseUrl: base }, { slots: (await brokerInfo()).slots || [] }) : null;
   if (route && route.error) throw new Error(route.error);
@@ -433,7 +433,7 @@ export async function endpointModelsForImport({ baseUrl, apiKey: entryKey = '', 
   } else {
     // Keyless local endpoints are reached directly, as without the broker. OpenRouter is listed with the key its
     // calls carry (registry.mjs openRouterKeyFor; `p` keeps the setup overlay); that key is never stored on an entry.
-    const key = brokerEnabled() ? '' : ownKey ? resolveProviderSecret(ownKey)
+    const key = brokerEnabled() ? '' : ownKey ? resolveProviderSecret(ownKey, process.env, null)
       : isOpenRouterBaseUrl(base) ? openRouterKeyFor({ provider: 'openai', baseUrl: base }, { openrouter: openRouterConfig(), openai: p }).value
         : providerKeyFor({ baseUrl: base }, p);
     out = await listEndpointModels(base, { apiKey: key, fetch: f });
@@ -643,7 +643,7 @@ export async function testProviderConnection(name, { fetch: f = globalThis.fetch
   }
   if (name === 'copilot') {
     const c = providerConfig('copilot');
-    const token = resolveProviderSecret(c.githubToken);
+    const token = resolveProviderSecret(c.githubToken, process.env, 'providers.copilot.githubToken');
     if (!token) return { ok: false, message: 'not signed in' };
     try { await copilotToken(token, { fetch: f, force: true, enterpriseHost: copilotAccountHost(c) }); return { ok: true }; } catch (err) { return { ok: false, message: err.message || String(err) }; }
   }
@@ -651,7 +651,7 @@ export async function testProviderConnection(name, { fetch: f = globalThis.fetch
     const typed = typeof apiKey === 'string' && !apiKey.startsWith('••') ? apiKey.trim() : null;
     const { base, key, text } = typed === null
       ? openRouterAccount()
-      : { base: OPENROUTER_BASE_URL, key: { value: resolveProviderSecret(typed) }, text: typed };
+      : { base: OPENROUTER_BASE_URL, key: { value: resolveProviderSecret(typed, process.env, null) }, text: typed };
     if (!key.value && modelEnvRef(text)) return { ok: false, message: `the key's ${text} is not set in worca's environment` };
     return testOpenRouterKey(base, key.value, f);
   }
@@ -663,7 +663,7 @@ export async function testProviderConnection(name, { fetch: f = globalThis.fetch
     ...(baseUrl && isUpstreamBaseUrl(baseUrl) ? { baseUrl: baseUrl.trim().replace(/\/+$/, '') } : {}),
     ...(typedKey === null ? {} : { apiKey: typedKey }),
   };
-  const key = resolveProviderSecret(p.apiKey);
+  const key = resolveProviderSecret(p.apiKey, process.env, typedKey === null ? `providers.${name}.apiKey` : null);
   const keyIsSet = typedKey === null ? providerSecretSet(name) : !!typedKey;
   if (!key && (keyIsSet || !keyOptional(name, p.baseUrl))) return { ok: false, message: keyIsSet ? 'the key\'s ${VAR} is not set in worca\'s environment' : `no API key configured for ${p.baseUrl}` };
   const base = (p.baseUrl || '').replace(/\/+$/, '');

@@ -182,7 +182,7 @@ test('importOptions: a change to the connection\'s settings, or to the plugin\'s
   const t = { at: 5_000_000 };
   const dd = clocked(t);
   await importOptions(SCOPE, ACME, dd);
-  writePluginConfig('jira-source', [{ key: 'baseUrl' }], { baseUrl: 'https://other.atlassian.net' }, 'acme');
+  await writePluginConfig('jira-source', [{ key: 'baseUrl' }], { baseUrl: 'https://other.atlassian.net' }, 'acme');
   await importOptions(SCOPE, ACME, dd);
   assert.equal(optionCalls(), 2, 'the profile\'s configuration changed');
   await importOptions(SCOPE, ACME, dd);

@@ -36,31 +36,43 @@ app.get('/api/proxy/detect', async (req, res) => {
   res.set('Cache-Control', 'no-store').json(await detectSystemProxyImpl({ env: upstreamEnv(egressNow()?.sourceEnv ?? process.env) }));
 });
 
-app.post('/api/proxy/login', (req, res) => {
-  if (refuseProxyAgent(req, res)) return;
-  const body = req.body || {};
-  const { auth } = networkProxySettings();
-  const refusal = savedLoginRefusal(auth);
-  // The code keeps its slice-2 name on purpose: it now covers Digest too (tests and the card pin it).
-  if (refusal) return res.status(409).json({ error: refusal, field: 'auth', code: 'BASIC_NO_SAVED_LOGIN' });
-  const account = body.domain ? { domain: body.domain, user: body.user } : parseAccount(body.user);
-  const password = typeof body.password === 'string' ? body.password : '';
-  body.password = undefined;
+// D12: a refused vault save answers 400 (a pasted reference) or 503 (the vault is unusable) with its code; anything
+// else 500 with only an error code, never a path. The whole body is caught: an async rejection must always answer.
+function sendLoginError(res, err, verb) {
+  if (res.headersSent) return;
+  if (err instanceof ProxyLoginError) return res.status(400).json({ error: err.message, field: err.field });
+  if (err?.name === 'SettingsVaultError') return res.status(err.code === 'VAULT_REF_REFUSED' ? 400 : 503).json({ error: err.message, code: err.code });
+  res.status(500).json({ error: `the login could not be ${verb} (${err && typeof err.code === 'string' ? err.code : 'error'})` });
+}
+
+app.post('/api/proxy/login', async (req, res) => {
   try {
-    saveProxyLogin({ ...account, password });
+    if (refuseProxyAgent(req, res)) return;
+    const body = req.body || {};
+    const { auth } = networkProxySettings();
+    const refusal = savedLoginRefusal(auth);
+    // The code keeps its slice-2 name on purpose: it now covers Digest too (tests and the card pin it).
+    if (refusal) return res.status(409).json({ error: refusal, field: 'auth', code: 'BASIC_NO_SAVED_LOGIN' });
+    const account = body.domain ? { domain: body.domain, user: body.user } : parseAccount(body.user);
+    const password = typeof body.password === 'string' ? body.password : '';
+    body.password = undefined;
+    await saveProxyLogin({ ...account, password });
+    egressNow()?.reloadLogin?.();
+    res.json(proxyStatusPayload());
   } catch (err) {
-    if (err instanceof ProxyLoginError) return res.status(400).json({ error: err.message, field: err.field });
-    return res.status(500).json({ error: `the login could not be saved (${err && err.code ? err.code : 'error'})` });
+    sendLoginError(res, err, 'saved');
   }
-  egressNow()?.reloadLogin?.();
-  res.json(proxyStatusPayload());
 });
 
-app.post('/api/proxy/logout', (req, res) => {
-  if (refuseProxyAgent(req, res)) return;
-  clearProxyLogin();
-  egressNow()?.reloadLogin?.();
-  res.json(proxyStatusPayload());
+app.post('/api/proxy/logout', async (req, res) => {
+  try {
+    if (refuseProxyAgent(req, res)) return;
+    await clearProxyLogin();
+    egressNow()?.reloadLogin?.();
+    res.json(proxyStatusPayload());
+  } catch (err) {
+    sendLoginError(res, err, 'deleted');
+  }
 });
 
 // D9: the body's networkProxy is a candidate merged over the saved values; a pass is recorded for the UNTESTED gate.

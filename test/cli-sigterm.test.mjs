@@ -36,8 +36,10 @@ function sleepyClaude({ wedge = false } = {}) {
   scratch.push(dir);
   const started = join(dir, 'started');
   const bin = join(dir, 'claude');
+  // A prompt past the argv limit rides stdin (planClaudeInvocation), so a piped stdin is read too.
   writeFileSync(bin, `#!/bin/sh
-case "$*" in
+p="$*"; { [ -p /dev/stdin ] || [ -S /dev/stdin ]; } && p="$p $(cat)"
+case "$p" in
   *"# Task: Clarify"*) : > "${started}"; ${wedge ? "trap '' TERM; " : ''}exec sleep 15 ;;
 esac
 exit 1

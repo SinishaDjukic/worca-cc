@@ -33,7 +33,7 @@ before(async () => {
   projKey = (await addProject({ name: 'shop', path: projDir })).find((p) => p.name === 'shop').key;
   await linkPlugin('jira-source', fileURLToPath(new URL('../plugins/jira-source', import.meta.url)));
   createProfile('jira-source', 'acme', 'acme.atlassian.net (Cloud)');
-  writePluginConfig('jira-source', [{ key: 'baseUrl', type: 'text' }, { key: 'email', type: 'text' }, { key: 'token', type: 'text', secret: true }],
+  await writePluginConfig('jira-source', [{ key: 'baseUrl', type: 'text' }, { key: 'email', type: 'text' }, { key: 'token', type: 'text', secret: true }],
     { baseUrl: 'https://acme.atlassian.net', email: 'ann@acme.test', token: SECRET }, 'acme');
   _resetExportCaches();
   const app = express();

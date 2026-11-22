@@ -202,7 +202,7 @@ before(async () => {
     '',
   ].join('\n'));
   writePluginsLock({ [NAME]: LOCK });
-  writePluginConfig(NAME, SCHEMA, CFG);
+  await writePluginConfig(NAME, SCHEMA, CFG);
   mod = await import('../ui/server.mjs');
   ({ _testing } = mod);
   ({ channelHost } = _testing);

@@ -23,8 +23,8 @@ const SCHEMA = [
   { key: 'repo', type: 'text', label: 'Repo', secret: false, required: false, default: 'octo/hello', help: null, options: [] },
 ];
 
-test('writePluginConfig routes secret fields to secrets.json with mode 0600', () => {
-  writePluginConfig(NAME, SCHEMA, { token: 'ghp_abc123', repo: 'acme/api' });
+test('writePluginConfig routes secret fields to secrets.json with mode 0600', async () => {
+  await writePluginConfig(NAME, SCHEMA, { token: 'ghp_abc123', repo: 'acme/api' });
   const dir = pluginDataDir(NAME);
   const secrets = JSON.parse(readFileSync(join(dir, 'secrets.json'), 'utf8'));
   const config = JSON.parse(readFileSync(join(dir, 'config.json'), 'utf8'));
@@ -37,14 +37,14 @@ test('writePluginConfig routes secret fields to secrets.json with mode 0600', ()
   assert.deepEqual(readdirSync(dir).filter((f) => f.endsWith('.tmp')), [], 'atomic: no temp litter');
 });
 
-test('readPluginConfig merges both files and applies schema defaults', () => {
+test('readPluginConfig merges both files and applies schema defaults', async () => {
   assert.deepEqual(readPluginConfig(NAME, SCHEMA), { token: 'ghp_abc123', repo: 'acme/api' });
-  writePluginConfig(NAME, SCHEMA, { repo: null }); // null clears -> default surfaces
+  await writePluginConfig(NAME, SCHEMA, { repo: null }); // null clears -> default surfaces
   assert.equal(readPluginConfig(NAME, SCHEMA).repo, 'octo/hello');
 });
 
-test('{"$env":"VAR"} indirection resolves at read time, stored verbatim', () => {
-  writePluginConfig(NAME, SCHEMA, { token: { $env: 'WORCA_TEST_TOK' } });
+test('{"$env":"VAR"} indirection resolves at read time, stored verbatim', async () => {
+  await writePluginConfig(NAME, SCHEMA, { token: { $env: 'WORCA_TEST_TOK' } });
   const onDisk = JSON.parse(readFileSync(join(pluginDataDir(NAME), 'secrets.json'), 'utf8'));
   assert.deepEqual(onDisk.profiles.default.token, { $env: 'WORCA_TEST_TOK' });
   process.env.WORCA_TEST_TOK = 'from-env';
@@ -53,26 +53,26 @@ test('{"$env":"VAR"} indirection resolves at read time, stored verbatim', () => 
   assert.equal(readPluginConfig(NAME, SCHEMA).token, null); // unset env -> null
 });
 
-test('redactedConfig replaces secrets with { set: true } markers; never the value', () => {
-  writePluginConfig(NAME, SCHEMA, { token: 's3cr3t', repo: 'acme/api' });
+test('redactedConfig replaces secrets with { set: true } markers; never the value', async () => {
+  await writePluginConfig(NAME, SCHEMA, { token: 's3cr3t', repo: 'acme/api' });
   assert.deepEqual(redactedConfig(NAME, SCHEMA), { token: { set: true }, repo: 'acme/api' });
-  writePluginConfig(NAME, SCHEMA, { token: null });
+  await writePluginConfig(NAME, SCHEMA, { token: null });
   assert.deepEqual(redactedConfig(NAME, SCHEMA).token, { set: false });
 });
 
-test('echoed { set: true } marker never clobbers the stored secret', () => {
-  writePluginConfig(NAME, SCHEMA, { token: 'keep-me' });
-  writePluginConfig(NAME, SCHEMA, { token: { set: true }, repo: 'other/repo' }); // UI round-trip
+test('echoed { set: true } marker never clobbers the stored secret', async () => {
+  await writePluginConfig(NAME, SCHEMA, { token: 'keep-me' });
+  await writePluginConfig(NAME, SCHEMA, { token: { set: true }, repo: 'other/repo' }); // UI round-trip
   assert.equal(readPluginConfig(NAME, SCHEMA).token, 'keep-me');
   assert.equal(readPluginConfig(NAME, SCHEMA).repo, 'other/repo');
 });
 
 // ── profiles ──────────────────────────────────────────────────────────────────
 
-test('two profiles hold completely independent config, secrets and state', () => {
+test('two profiles hold completely independent config, secrets and state', async () => {
   const P = 'multi-plugin';
-  writePluginConfig(P, SCHEMA, { token: 'tok-work', repo: 'acme/work' }, 'work');
-  writePluginConfig(P, SCHEMA, { token: 'tok-client', repo: 'other/client' }, 'client');
+  await writePluginConfig(P, SCHEMA, { token: 'tok-work', repo: 'acme/work' }, 'work');
+  await writePluginConfig(P, SCHEMA, { token: 'tok-client', repo: 'other/client' }, 'client');
   writePluginState(P, { cursor: 'w1' }, 'work');
   writePluginState(P, { cursor: 'c1' }, 'client');
 
@@ -81,14 +81,14 @@ test('two profiles hold completely independent config, secrets and state', () =>
   assert.equal(readPluginState(P, 'work').cursor, 'w1');
   assert.equal(readPluginState(P, 'client').cursor, 'c1');
   // Writing one profile must not disturb the other's file bucket.
-  writePluginConfig(P, SCHEMA, { repo: 'acme/changed' }, 'work');
+  await writePluginConfig(P, SCHEMA, { repo: 'acme/changed' }, 'work');
   assert.equal(readPluginConfig(P, SCHEMA, 'client').repo, 'other/client');
   // An unnamed read is the default profile — which has nothing here.
   assert.equal(readPluginConfig(P, SCHEMA).repo, 'octo/hello');
   assert.deepEqual(redactedConfig(P, SCHEMA, 'client'), { token: { set: true }, repo: 'other/client' });
 });
 
-test('profile roster: create is idempotent, delete removes the data too', () => {
+test('profile roster: create is idempotent, delete removes the data too', async () => {
   const P = 'roster-plugin';
   assert.deepEqual(listProfiles(P), [], 'no profiles until one is created');
   createProfile(P, 'work', 'Work Jira');
@@ -100,9 +100,9 @@ test('profile roster: create is idempotent, delete removes the data too', () => 
   ]);
   assert.deepEqual(listProfileIds(P), ['work', 'client']);
 
-  writePluginConfig(P, SCHEMA, { token: 'gone-soon', repo: 'x/y' }, 'client');
+  await writePluginConfig(P, SCHEMA, { token: 'gone-soon', repo: 'x/y' }, 'client');
   writePluginState(P, { cursor: 'c' }, 'client');
-  deleteProfile(P, 'client');
+  await deleteProfile(P, 'client');
   assert.deepEqual(listProfileIds(P), ['work']);
   assert.deepEqual(readPluginState(P, 'client'), {}, 'state purged with the profile');
   assert.equal(readPluginConfig(P, SCHEMA, 'client').token, null, 'secret purged with the profile');
@@ -111,19 +111,19 @@ test('profile roster: create is idempotent, delete removes the data too', () => 
   if (process.platform !== 'win32') assert.equal(statSync(join(pluginDataDir(P), 'secrets.json')).mode & 0o777, 0o600, 'delete keeps 0600'); // NTFS has no POSIX mode bits
 });
 
-test('the roster reserves "default": the shared bucket is never creatable or deletable', () => {
+test('the roster reserves "default": the shared bucket is never creatable or deletable', async () => {
   const P = 'reserved-plugin';
   // "default" backs every profile-less read (chat channels, model secrets,
   // migrated legacy config) — enrolled in the roster it would be one Remove
   // click away from wiping them all.
   assert.throws(() => createProfile(P, DEFAULT_PROFILE), /reserved/);
-  assert.throws(() => deleteProfile(P, DEFAULT_PROFILE), /reserved/);
-  writePluginConfig(P, SCHEMA, { token: 'shared' }); // profile-less -> default bucket
+  await assert.rejects(async () => deleteProfile(P, DEFAULT_PROFILE), /reserved/);
+  await writePluginConfig(P, SCHEMA, { token: 'shared' }); // profile-less -> default bucket
   assert.equal(readPluginConfig(P, SCHEMA).token, 'shared', 'the shared bucket is intact');
   assert.deepEqual(listProfiles(P), [], 'nothing was enrolled');
 });
 
-test('a legacy flat file with a field KEYED "profiles" reads as data, not as the envelope', () => {
+test('a legacy flat file with a field KEYED "profiles" reads as data, not as the envelope', async () => {
   // A pre-profiles connector may legally declare a configSchema field named
   // "profiles" and store an object (a {"$env":…} ref) under it. Mistaking that
   // for the { profiles: { <id>: {...} } } envelope would silently drop every
@@ -140,7 +140,7 @@ test('a legacy flat file with a field KEYED "profiles" reads as data, not as the
   process.env.WORCA_TEST_PROFILES = 'a,b';
   assert.deepEqual(readPluginConfig(P, LEGACY_SCHEMA), { baseUrl: 'https://x.test', profiles: 'a,b' });
   // A write migrates to the envelope WITHOUT losing either key.
-  writePluginConfig(P, LEGACY_SCHEMA, { baseUrl: 'https://y.test' });
+  await writePluginConfig(P, LEGACY_SCHEMA, { baseUrl: 'https://y.test' });
   const onDisk = JSON.parse(readFileSync(join(pluginDataDir(P), 'config.json'), 'utf8'));
   assert.deepEqual(onDisk.profiles.default,
     { baseUrl: 'https://y.test', profiles: { $env: 'WORCA_TEST_PROFILES' } });
@@ -230,24 +230,91 @@ test('ticket updates: null until saved; one record per profile and source, in th
   assert.equal(readTicketUpdates(P, 'acme', '__proto__'), null, 'own keys only');
 });
 
-test("ticket updates: deleteProfile drops that profile's records and keeps the others", () => {
+test("ticket updates: deleteProfile drops that profile's records and keeps the others", async () => {
   const P = 'tu-del';
   createProfile(P, 'acme', 'Acme');
   createProfile(P, 'beta', 'Beta');
   writeTicketUpdates(P, 'acme', 'jira', TU_REC);
   writeTicketUpdates(P, 'beta', 'jira', TU_REC);
-  deleteProfile(P, 'acme');
+  await deleteProfile(P, 'acme');
   assert.equal(readTicketUpdates(P, 'acme', 'jira'), null);
   assert.deepEqual(readTicketUpdates(P, 'beta', 'jira'), TU_REC);
   const onDisk = JSON.parse(readFileSync(join(pluginDataDir(P), 'ticket-updates.json'), 'utf8'));
   assert.deepEqual(Object.keys(onDisk.profiles), ['beta']);
 });
 
-test("ticket updates: purge removes the file with the plugin's data", () => {
+test("ticket updates: purge removes the file with the plugin's data", async () => {
   const P = 'tu-orphan';   // not in the lock: purgePluginData's orphan path
   writeTicketUpdates(P, 'acme', 'jira', TU_REC);
   assert.ok(existsSync(join(pluginDataDir(P), 'ticket-updates.json')));
-  purgePluginData(P);
+  await purgePluginData(P);
   assert.equal(existsSync(join(pluginDataDir(P), 'ticket-updates.json')), false);
   assert.equal(readTicketUpdates(P, 'acme', 'jira'), null);
 });
+
+// ── secretVault on: secrets are vault references bound to NAME/PROFILE/KEY, resolved on read ─────────────────────
+const { mkdtempSync: vTmp, rmSync: vRm } = await import('node:fs');
+const { tmpdir: vTmpdir } = await import('node:os');
+const { fakeVault } = await import('./helpers/vault-on.mjs');
+const { isVaultRef, newVaultRef } = await import('../src/core/secrets/refs.mjs');
+const VDIR = vTmp(join(vTmpdir(), 'worca-plugin-vault-'));
+after(() => vRm(VDIR, { recursive: true, force: true }));
+const { vaultOn, vaultOf } = fakeVault(VDIR);
+const VP = 'vault-plugin';
+const secretsText = (name) => readFileSync(join(pluginDataDir(name), 'secrets.json'), 'utf8');
+const bucket = (name, profile = DEFAULT_PROFILE) => JSON.parse(secretsText(name)).profiles[profile];
+const pluginEntries = async (prefix) => (await vaultOf().list()).filter((e) => e.store === 'plugin' && !e.droppedAt && e.field.startsWith(prefix));
+
+test('flag on: a secret is a vault reference, read back by readPluginConfig, masked by redactedConfig, kept by the echo', () => vaultOn(async () => {
+  await writePluginConfig(VP, SCHEMA, { token: 'ghp-vault-0001', repo: 'acme/api' });
+  assert.ok(!secretsText(VP).includes('ghp-vault-0001'));
+  const ref = bucket(VP).token;
+  assert.ok(isVaultRef(ref), ref);
+  assert.deepEqual(readPluginConfig(VP, SCHEMA), { token: 'ghp-vault-0001', repo: 'acme/api' });
+  assert.deepEqual(redactedConfig(VP, SCHEMA).token, { set: true });
+  await writePluginConfig(VP, SCHEMA, { token: { set: true }, repo: 'acme/other' });
+  assert.equal(bucket(VP).token, ref, 'the set-marker keeps the reference');
+  await writePluginConfig(VP, SCHEMA, { token: ` ${ref}\n` });
+  assert.equal(bucket(VP).token, ref, 'a padded echo keeps the trimmed reference');
+  assert.deepEqual((await pluginEntries(`${VP}/`)).map((e) => e.ref), [ref], '… and its entry');
+  await writePluginConfig(VP, SCHEMA, { token: 'ghp-vault-0002' });
+  const next = bucket(VP).token;
+  assert.ok(isVaultRef(next) && next !== ref);
+  assert.deepEqual((await pluginEntries(`${VP}/`)).map((e) => e.ref), [next], 'the replaced entry was released');
+}));
+
+test('flag on: a {$env} secret is stored verbatim with no entry and reads process.env', () => vaultOn(async () => {
+  process.env.WORCA_TEST_VAULT_ENV_TOK = 'from-env-0003';
+  try {
+    await writePluginConfig('env-vault-plugin', SCHEMA, { token: { $env: 'WORCA_TEST_VAULT_ENV_TOK' } });
+    assert.deepEqual(bucket('env-vault-plugin').token, { $env: 'WORCA_TEST_VAULT_ENV_TOK' });
+    assert.equal(readPluginConfig('env-vault-plugin', SCHEMA).token, 'from-env-0003');
+    assert.equal((await pluginEntries('env-vault-plugin/')).length, 0);
+  } finally { delete process.env.WORCA_TEST_VAULT_ENV_TOK; }
+}));
+
+test('flag on: a pasted foreign reference is refused VAULT_REF_REFUSED and secrets.json is unchanged', () => vaultOn(async () => {
+  await writePluginConfig('ref-plugin', SCHEMA, { token: 'tok-ref-0004' });
+  const bytes = secretsText('ref-plugin');
+  await assert.rejects(writePluginConfig('ref-plugin', SCHEMA, { token: ` ${newVaultRef()}` }),
+    (err) => err.name === 'SettingsVaultError' && err.code === 'VAULT_REF_REFUSED');
+  assert.equal(secretsText('ref-plugin'), bytes);
+}));
+
+test('flag on: deleteProfile releases that profile\'s entries and keeps the other profile\'s', () => vaultOn(async () => {
+  const P2 = 'profiles-vault';
+  createProfile(P2, 'work', 'Work');
+  createProfile(P2, 'client', 'Client');
+  await writePluginConfig(P2, SCHEMA, { token: 'tok-work-0005' }, 'work');
+  await writePluginConfig(P2, SCHEMA, { token: 'tok-client-0006' }, 'client');
+  assert.equal((await pluginEntries(`${P2}/`)).length, 2);
+  await deleteProfile(P2, 'client');
+  assert.deepEqual((await pluginEntries(`${P2}/`)).map((e) => e.field), [`${P2}/work/token`]);
+  assert.equal(readPluginConfig(P2, SCHEMA, 'work').token, 'tok-work-0005');
+  // Past the grace, the plugin's next release (the work token replaced) removes the deleted profile's marked entry.
+  const { LOCKLESS_GRACE_MS } = await import('../src/core/secrets/store-vault.mjs');
+  const realNow = Date.now;
+  Date.now = () => realNow() + LOCKLESS_GRACE_MS + 1;
+  try { await writePluginConfig(P2, SCHEMA, { token: 'tok-work-0007' }, 'work'); } finally { Date.now = realNow; }
+  assert.deepEqual((await vaultOf().list()).filter((e) => e.field === `${P2}/client/token`), [], 'marked entries included');
+}));

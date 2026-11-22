@@ -92,3 +92,51 @@ test('resolveRegistry: store + catalog + this host (execPath, the real launcher)
   assert.deepEqual(await resolveRegistry(opts), { servers: {}, env: {}, secretValues: [], grants: [], disallowedTools: [],
     copies: [], skipped: [], skippedTools: [], sets: [], newer: true });
 });
+
+test('flag on: the server env gets the vaulted value and the $env value; an unresolvable reference is missing:KEY, never text', async () => {
+  const { rmSync: rm, readFileSync: read } = await import('node:fs');
+  const { writeFakeState, fileFakeOsStore } = await import('./helpers/os-store-fake.mjs');
+  const { createVault } = await import('../src/core/secrets/vault.mjs');
+  const { osItemName } = await import('../src/core/secrets/os-store.mjs');
+  const { newVaultRef } = await import('../src/core/secrets/refs.mjs');
+  const { worcaHome } = await import('../src/core/projects.mjs');
+  const { clearSettingsVaultReader } = await import('../src/core/secrets/settings-resolver.mjs');
+  rm(mcpDir(), { recursive: true, force: true });
+  const state = join(sandbox, 'fake-state.json');
+  writeFakeState(state, { state: 'available' });
+  const keep = { WORCA_FLAGS: process.env.WORCA_FLAGS, WORCA_TEST_OS_STORE: process.env.WORCA_TEST_OS_STORE, MCP_REG_OTHER: process.env.MCP_REG_OTHER };
+  Object.assign(process.env, { WORCA_FLAGS: 'secretVault', WORCA_TEST_OS_STORE: state, MCP_REG_OTHER: 'from-env-0002' });
+  const warn = console.warn;
+  const lines = [];
+  console.warn = (l) => lines.push(String(l));
+  try {
+    const def = await addManualServer('vaulted', { type: 'stdio', command: 'npx', args: ['-y', 'vaulted-mcp'],
+      env: { API_TOKEN: { field: 'token' }, OTHER: { field: 'other' } },
+      fields: [{ key: 'token', secret: true, required: true }, { key: 'other', secret: true }], description: 'x' });
+    await putMember('general', 'manual:vaulted', { enabled: true, secrets: { token: 'tok-reg-0001', other: { $env: 'MCP_REG_OTHER' } } }, { def });
+    const opts = { surface: 'ask', targets: [], teams: {}, off: { sets: [], members: [] }, toolNameLimit: 128, copyCap: 12, mcpTimeoutMs: 15000 };
+    const ok = await resolveRegistry(opts);
+    assert.deepEqual(Object.keys(ok.servers), ['vaulted']);
+    assert.deepEqual([...ok.secretValues].sort(), ['from-env-0002', 'tok-reg-0001']);
+    assert.ok(Object.values(ok.env).includes('tok-reg-0001'));
+    const secretsFile = join(mcpDir(), 'secrets.json');
+    const raw = JSON.parse(read(secretsFile, 'utf8'));
+    const field = 'manual:vaulted/token';
+    const vault = createVault({ home: worcaHome(), store: fileFakeOsStore(state, { item: osItemName(worcaHome()) }) });
+    const crossRef = await vault.put({ store: 'mcp', field: 'manual:vaulted/other', value: 'not-for-token' });
+    const setToken = (ref) => { raw.sets.general['manual:vaulted'].token.value = ref; writeFileSync(secretsFile, JSON.stringify(raw)); };
+    const cases = [['unknown-ref', () => setToken(newVaultRef())], ['cross-owner', () => setToken(crossRef)], ['locked', () => clearSettingsVaultReader()]];
+    for (const [code, arrange] of cases) {
+      arrange();
+      const r = await resolveRegistry(opts);
+      assert.deepEqual(Object.keys(r.servers), [], code);
+      assert.match(JSON.stringify(r.skipped), /missing:token/, code);
+      assert.ok(!JSON.stringify({ servers: r.servers, env: r.env, secretValues: r.secretValues }).includes('worca:vault:'), code);
+      assert.ok(lines.some((l) => l.includes(`${field} cannot be read (${code})`)), `${code}: ${lines.join(' | ')}`);
+    }
+    for (const l of lines) assert.ok(!l.includes('worca:vault:') && !l.includes('tok-reg-0001') && !l.includes(sandbox), l);
+  } finally {
+    console.warn = warn;
+    for (const [k, v] of Object.entries(keep)) { if (v === undefined) delete process.env[k]; else process.env[k] = v; }
+  }
+});

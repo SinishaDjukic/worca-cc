@@ -16,6 +16,9 @@ import { readWorkspace } from '../workspaces.mjs';
 import { projectKey } from '../store.mjs';
 import { bridgedModelInfo } from '../config.mjs';
 import { isTranslatedApi } from '../model-env.mjs';
+import { isVaultRef, ownerField } from '../secrets/refs.mjs';
+import { noteUnresolved, resolveVaultRefSync } from '../secrets/settings-resolver.mjs';
+import { primeSettingsVaultIfEnabled } from '../settings.mjs';
 
 const WORCA_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..', '..', '..');
 
@@ -67,15 +70,25 @@ export function materializeCopy({ entry, values = {}, secrets = {}, copy, name }
   }
   const val = Object.create(null);
   const secret = Object.create(null);
+  // A vaulted secret resolves here, at the point of use, for its own owner (`SERVERID/FIELDKEY`); one that does not
+  // resolve is left unset (never its reference as text) and logged once per owner and code.
+  const vaulted = (s) => typeof s === 'string' && isVaultRef(s.trim());
+  const unvault = (f, s) => {
+    const field = ownerField([entry.id, f.key]);
+    const r = resolveVaultRefSync(s.trim(), { store: 'mcp', field });
+    if (r.code) { noteUnresolved(field, r.code); return undefined; }
+    return r.value;
+  };
   for (const f of def.fields) {
     const s = stored(f.key)?.value;
     const v = !f.secret ? (Object.hasOwn(values, f.key) && has(values[f.key]) ? values[f.key] : f.default)
-      : typeof s === 'string' ? s : s && typeof s === 'object' ? env[s.$env] : undefined;
+      : vaulted(s) ? unvault(f, s) : typeof s === 'string' ? s : s && typeof s === 'object' ? env[s.$env] : undefined;
     if (has(v)) val[f.key] = v;
     secret[f.key] = f.secret;
   }
-  // §4.3: a `$env` secret whose variable is unset or empty is missing even when its field is optional.
-  const envRef = (f) => { const s = f.secret ? stored(f.key)?.value : null; return !!s && typeof s === 'object'; };
+  // §4.3: a `$env` secret whose variable is unset or empty is missing even when its field is optional, and so is a
+  // vaulted secret that does not resolve.
+  const envRef = (f) => { const s = f.secret ? stored(f.key)?.value : null; return (!!s && typeof s === 'object') || vaulted(s); };
   const missing = def.fields.find((f) => (f.required || envRef(f)) && !Object.hasOwn(val, f.key));
   if (missing) return { reason: `missing:${missing.key}` };
 
@@ -377,6 +390,7 @@ export function hostContext() {
  * Worca resolves nothing (§4.5) and says so with `newer: true`.
  */
 export async function resolveRegistry(opts) {
+  await primeSettingsVaultIfEnabled();
   const snap = await readMcpStore();
   if (snap.newer) {
     return { servers: {}, env: {}, secretValues: [], grants: [], disallowedTools: [], copies: [], skipped: [], skippedTools: [], sets: [], newer: true };

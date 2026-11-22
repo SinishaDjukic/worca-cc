@@ -76,7 +76,7 @@ const WORKER = [
   '}',
 ].join('\n');
 
-function installFixture({ worker = WORKER, config = { token: 'sekret' } } = {}) {
+async function installFixture({ worker = WORKER, config = { token: 'sekret' } } = {}) {
   const cur = pluginCurrentDir(NAME);
   mkdirSync(join(cur, 'channel'), { recursive: true });
   writeFileSync(join(cur, 'worca-cc-plugin.json'), JSON.stringify({
@@ -91,7 +91,7 @@ function installFixture({ worker = WORKER, config = { token: 'sekret' } } = {}) 
   writePluginsLock({
     [NAME]: { repoUrl: 'https://example.test/fixture.git', subdir: '', pinnedSha: 'f'.repeat(40), version: null, enabled: true, installedAt: '2026-08-12T00:00:00.000Z' },
   });
-  if (config) writePluginConfig(NAME, SCHEMA, config);
+  if (config) await writePluginConfig(NAME, SCHEMA, config);
 }
 
 async function waitFor(fn, { timeoutMs = 8000, stepMs = 25, label = 'condition' } = {}) {
@@ -121,21 +121,21 @@ test('the worker child loads no worca module but channel-protocol and env-proxy 
   });
 });
 
-test('discoverChannels: enabled + configured -> spawnable entry; missing config flagged', () => {
-  installFixture();
+test('discoverChannels: enabled + configured -> spawnable entry; missing config flagged', async () => {
+  await installFixture();
   const [entry] = discoverChannels();
   assert.equal(entry.plugin, NAME);
   assert.equal(entry.channelId, 'main');
   assert.equal(entry.platform, 'testchat');
   assert.equal(entry.apiVersion, 2, 'negotiated from >=2 <3');
   assert.deepEqual(entry.missingConfig, []);
-  writePluginConfig(NAME, SCHEMA, { token: null }); // clear the secret
+  await writePluginConfig(NAME, SCHEMA, { token: null }); // clear the secret
   assert.deepEqual(discoverChannels()[0].missingConfig, ['token']);
-  writePluginConfig(NAME, SCHEMA, { token: 'sekret' });
+  await writePluginConfig(NAME, SCHEMA, { token: 'sekret' });
 });
 
 test('full worker lifecycle: hello -> ready -> send RPC -> errors -> state -> inbound -> webhook -> stop', async () => {
-  installFixture();
+  await installFixture();
   const { host, seen } = collectingHost();
   host.start();
   after(() => host.stop());
@@ -219,7 +219,7 @@ test('full worker lifecycle: hello -> ready -> send RPC -> errors -> state -> in
 });
 
 test('crash -> backoff restart; oversize frame -> protocol violation restart', async () => {
-  installFixture();
+  await installFixture();
   const { host, seen } = collectingHost();
   host.start();
   after(() => host.stop());
@@ -242,8 +242,8 @@ test('crash -> backoff restart; oversize frame -> protocol violation restart', a
 });
 
 test('unconfigured channel: not spawned, sendMessage fails closed', async () => {
-  installFixture({ config: null });
-  writePluginConfig(NAME, SCHEMA, { token: null });
+  await installFixture({ config: null });
+  await writePluginConfig(NAME, SCHEMA, { token: null });
   const { host } = collectingHost();
   host.start();
   after(() => host.stop());
@@ -256,11 +256,11 @@ test('unconfigured channel: not spawned, sendMessage fails closed', async () => 
     /unconfigured/,
   );
   await host.stop();
-  writePluginConfig(NAME, SCHEMA, { token: 'sekret' });
+  await writePluginConfig(NAME, SCHEMA, { token: 'sekret' });
 });
 
 test('reloadPlugin restarts workers against fresh config', async () => {
-  installFixture();
+  await installFixture();
   const { host } = collectingHost();
   host.start();
   after(() => host.stop());
@@ -273,15 +273,15 @@ test('reloadPlugin restarts workers against fresh config', async () => {
 });
 
 test('checkChannel: one-shot --check runs the module validateConfig offline', async () => {
-  installFixture();
+  await installFixture();
   const { host } = collectingHost();
   const good = await host.checkChannel(NAME, 'main');
   assert.deepEqual(good, { ok: true, identity: 'fixture-bot' });
-  writePluginConfig(NAME, SCHEMA, { token: 'wrong' });
+  await writePluginConfig(NAME, SCHEMA, { token: 'wrong' });
   const bad = await host.checkChannel(NAME, 'main');
   assert.equal(bad.ok, false);
   assert.equal(bad.errors[0].field, 'token');
-  writePluginConfig(NAME, SCHEMA, { token: 'sekret' });
+  await writePluginConfig(NAME, SCHEMA, { token: 'sekret' });
 });
 
 // Proxy fixture: fetches the URLs its token lists (JSON), in order, and reports
@@ -309,7 +309,7 @@ test('real worker and --check child: with the proxy variables set, fetch() goes 
   const net = await startProxyNet();
   // HTTP_PROXY too: a loopback http fetch would reach the proxy if the child did not bypass it.
   const restore = setProxyEnv({ https_proxy: net.proxyUrl, HTTP_PROXY: net.proxyUrl, NO_PROXY: NO_PROXY_HOST });
-  installFixture({ worker: PROXY_WORKER, config: { token: JSON.stringify(net.targets) } });
+  await installFixture({ worker: PROXY_WORKER, config: { token: JSON.stringify(net.targets) } });
   const { host, seen } = collectingHost();
   try {
     await checkRows([
@@ -330,7 +330,7 @@ test('real worker and --check child: with the proxy variables set, fetch() goes 
     await host.stop();
     restore();
     await net.close();
-    writePluginConfig(NAME, SCHEMA, { token: 'sekret' });
+    await writePluginConfig(NAME, SCHEMA, { token: 'sekret' });
   }
 });
 
@@ -340,7 +340,7 @@ test('a proxy the worker cannot apply is a warn line in the channel log; --check
   try {
     await checkRows([
       { name: 'the persistent worker logs it instead of a bare "fetch failed"', run: async () => {
-        installFixture();
+        await installFixture();
         host.start();
         const line = await waitFor(() => seen.logs.find((l) => /proxy:/.test(l.msg)), { label: 'proxy warning' });
         assert.equal(line.level, 'warn');
@@ -348,7 +348,7 @@ test('a proxy the worker cannot apply is a warn line in the channel log; --check
         await host.stop();
       } },
       { name: '--check writes no warning line: a child that dies before its result still reads as no result', run: async () => {
-        installFixture({ worker: "throw new Error('broken at import');" });
+        await installFixture({ worker: "throw new Error('broken at import');" });
         await assert.rejects(host.checkChannel(NAME, 'main'), (err) => err instanceof PluginOpError && /no result frame/.test(err.message));
       } },
     ]);
@@ -361,7 +361,7 @@ test('a proxy the worker cannot apply is a warn line in the channel log; --check
 test('a proxy URL with credentials never reaches a worker or the --check child: they go direct, and worca says why on stderr', async (t) => {
   const net = await startProxyNet();
   const restore = setProxyEnv({ HTTPS_PROXY: net.proxyUrl.replace('://', '://user:s3cret@'), NO_PROXY: NO_PROXY_HOST });
-  installFixture({ worker: PROXY_WORKER, config: { token: JSON.stringify(net.targets.slice(0, 1)) } });
+  await installFixture({ worker: PROXY_WORKER, config: { token: JSON.stringify(net.targets.slice(0, 1)) } });
   // The CLI's --check host logs nowhere, so the warning goes to the process's stderr, never a logger.
   const stderr = t.mock.method(console, 'error', () => {});
   const assertWarnedOnce = () => {
@@ -395,12 +395,12 @@ test('a proxy URL with credentials never reaches a worker or the --check child: 
     await host.stop();
     restore();
     await net.close();
-    writePluginConfig(NAME, SCHEMA, { token: 'sekret' });
+    await writePluginConfig(NAME, SCHEMA, { token: 'sekret' });
   }
 });
 
 test('WORCA_MOCK=1: no spawn, instant connected, hooks drive both directions', async () => {
-  installFixture();
+  await installFixture();
   process.env.WORCA_MOCK = '1';
   try {
     clearMockSentMessages();
@@ -472,8 +472,8 @@ function makeFakeProc({ backpressure = false, spawnFailed = false } = {}) {
 
 /** Fake-spawn host over the discovery fixture (installFixture() registers
  *  fixture-chat/main). Returns {host, spawned, logs}. */
-function makeFakeHost({ backoffMs = [10, 10, 10, 10], healthyAfterMs, procOpts } = {}) {
-  installFixture();
+async function makeFakeHost({ backoffMs = [10, 10, 10, 10], healthyAfterMs, procOpts } = {}) {
+  await installFixture();
   const spawned = [];
   const logs = [];
   const host = createChannelHost({
@@ -493,7 +493,7 @@ const frameLine = (obj) => JSON.stringify(obj) + '\n';
 test('ready frame: flips a fresh worker to connected, but not one that reported "disconnected"', async () => {
   await checkRows([
     { name: 'ready after a worker "disconnected" status keeps the channel disconnected', run: async () => {
-      const { host, spawned } = makeFakeHost();
+      const { host, spawned } = await makeFakeHost();
       host.start();
       const p = spawned[0];
       p.stdout.write(frameLine({ type: 'status', state: 'disconnected', detail: 'auth failed — check botToken' }));
@@ -506,7 +506,7 @@ test('ready frame: flips a fresh worker to connected, but not one that reported 
       await host.stop();
     } },
     { name: 'ready alone still flips a fresh worker to connected', run: async () => {
-      const { host, spawned } = makeFakeHost();
+      const { host, spawned } = await makeFakeHost();
       host.start();
       spawned[0].stdout.write(frameLine({ type: 'ready', identity: '@bot' }));
       await new Promise((r) => setTimeout(r, 20));
@@ -519,7 +519,7 @@ test('ready frame: flips a fresh worker to connected, but not one that reported 
 
 test('a connect-then-crash worker escalates backoff instead of looping at the floor', async () => {
   // Assert on the logged restart delays — deterministic; timestamp spreads are flaky.
-  const { host, spawned, logs } = makeFakeHost({ backoffMs: [10, 40, 40, 40] });
+  const { host, spawned, logs } = await makeFakeHost({ backoffMs: [10, 40, 40, 40] });
   host.start();
   for (let i = 0; i < 3; i++) {
     const p = spawned[i];
@@ -537,7 +537,7 @@ test('a connect-then-crash worker escalates backoff instead of looping at the fl
 test('a masked ready must not buy HEALTHY_AFTER_MS forgiveness', async () => {
   // status:disconnected → ready (masked) → outlive _healthyAfterMs → crash twice:
   // the second restart must escalate (forgiveness would keep it at the floor).
-  const { host, spawned, logs } = makeFakeHost({ backoffMs: [10, 40, 40, 40], healthyAfterMs: 15 });
+  const { host, spawned, logs } = await makeFakeHost({ backoffMs: [10, 40, 40, 40], healthyAfterMs: 15 });
   host.start();
   for (let i = 0; i < 2; i++) {
     const p = spawned[i];
@@ -554,7 +554,7 @@ test('a masked ready must not buy HEALTHY_AFTER_MS forgiveness', async () => {
 });
 
 test('a spawn "error" event never throws out of the host and schedules recovery', async () => {
-  const { host, spawned } = makeFakeHost({ procOpts: { spawnFailed: true } });
+  const { host, spawned } = await makeFakeHost({ procOpts: { spawnFailed: true } });
   host.start();
   assert.equal(spawned.length, 1);
   spawned[0].emit('error', Object.assign(new Error('spawn EMFILE'), { code: 'EMFILE' }));
@@ -569,7 +569,7 @@ test('a spawn "error" event never throws out of the host and schedules recovery'
 });
 
 test('a timed-out RPC frame is dequeued — a later drain cannot deliver it', async () => {
-  const { host, spawned } = makeFakeHost({ procOpts: { backpressure: true } });
+  const { host, spawned } = await makeFakeHost({ procOpts: { backpressure: true } });
   host.start();
   const p = spawned[0];
   p.stdout.write(frameLine({ type: 'ready', identity: '@bot' }));
@@ -597,8 +597,8 @@ test('a timed-out RPC frame is dequeued — a later drain cannot deliver it', as
 // Two channels on the SAME plugin: writePluginsLock OVERWRITES, so a second
 // plugin would evict the first. Both channels share SCHEMA, so installFixture's
 // single config write leaves neither row `unconfigured`.
-function installFixtureTwoChannels() {
-  installFixture();
+async function installFixtureTwoChannels() {
+  await installFixture();
   const cur = pluginCurrentDir(NAME);
   writeFileSync(join(cur, 'worca-cc-plugin.json'), JSON.stringify({
     name: NAME,
@@ -613,7 +613,7 @@ function installFixtureTwoChannels() {
 test('start(): a {plugin, channelId} filter spawns only that channel; no filter starts every channel', async () => {
   await checkRows([
     { name: 'start({plugin, channelId}) spawns only the requested channel', run: async () => {
-      installFixtureTwoChannels();
+      await installFixtureTwoChannels();
       process.env.WORCA_MOCK = '1';
       try {
         assert.equal(discoverChannels().length, 2, 'fixture must offer two channels');
@@ -628,7 +628,7 @@ test('start(): a {plugin, channelId} filter spawns only that channel; no filter 
       }
     } },
     { name: 'start() with no filter still starts every channel', run: async () => {
-      installFixtureTwoChannels();
+      await installFixtureTwoChannels();
       process.env.WORCA_MOCK = '1';
       try {
         const host = createChannelHost({ logger: () => {} });
@@ -645,7 +645,7 @@ test('start(): a {plugin, channelId} filter spawns only that channel; no filter 
 // G12: on a container with a plugin user, chat workers and the --check child run as that user
 // (sudo -u worca-plugin, its own HOME, own process group), never as worca.
 test('workers and --check spawn as the container plugin user when there is one', async () => {
-  installFixture();
+  await installFixture();
   const calls = [];
   const saved = { ...process.env };
   Object.assign(process.env, { WORCA_PLUGIN_USER: 'worca-plugin', WORCA_PLUGIN_HOME: '/data/plugin-home', WORCA_AGENT_GID: '1001' });
@@ -695,7 +695,7 @@ const INTERACTIVE_WORKER = [
 ].join('\n');
 
 test('interactive channel: options + controls reach the worker, detail comes back, interactions round-trip', async () => {
-  installFixture({ worker: INTERACTIVE_WORKER });
+  await installFixture({ worker: INTERACTIVE_WORKER });
   const cur = pluginCurrentDir(NAME);
   const manifest = JSON.parse(readFileSync(join(cur, 'worca-cc-plugin.json'), 'utf8'));
   manifest.chatChannels[0].capabilities = { inbound: true, outbound: true, interactive: true };
@@ -719,7 +719,7 @@ test('interactive channel: options + controls reach the worker, detail comes bac
 });
 
 test('non-interactive channel: options refused, executable controls dropped, links become text, interactions ignored', async () => {
-  installFixture({ worker: INTERACTIVE_WORKER });
+  await installFixture({ worker: INTERACTIVE_WORKER });
   const seenI = [];
   const host = createChannelHost({ logger: () => {}, onInteraction: (ev) => seenI.push(ev) });
   host.start();
@@ -746,7 +746,7 @@ test('react: reaches an interactive worker; refusals keep permanent / retryAfter
     writeFileSync(join(cur, 'worca-cc-plugin.json'), JSON.stringify(manifest));
   };
   const target = { plugin: NAME, channelId: 'main', chatId: 'T1', messageId: 'M7', emoji: '⏳', on: true };
-  installFixture({ worker: INTERACTIVE_WORKER });
+  await installFixture({ worker: INTERACTIVE_WORKER });
   interactive();
   const logs = [];
   let host = createChannelHost({ logger: (level, msg) => logs.push(msg) });
@@ -759,7 +759,7 @@ test('react: reaches an interactive worker; refusals keep permanent / retryAfter
   await assert.rejects(host.react({ ...target, messageId: 'BUSY' }), (e) => e.kind === 'rate-limit' && e.retryAfterMs === 700 && e.permanent !== true);
   await host.stop();
 
-  installFixture();            // the plain fixture worker has no react()
+  await installFixture();            // the plain fixture worker has no react()
   interactive();
   host = createChannelHost({ logger: () => {} });
   host.start();
@@ -767,7 +767,7 @@ test('react: reaches an interactive worker; refusals keep permanent / retryAfter
   await assert.rejects(host.react(target), (e) => e.permanent === true && /cannot add reactions/.test(e.message));
   await host.stop();
 
-  installFixture();            // not interactive
+  await installFixture();            // not interactive
   host = createChannelHost({ logger: () => {} });
   host.start();
   await waitFor(() => host.status()[0]?.state === 'connected', { label: 'worker connected' });
@@ -783,7 +783,7 @@ test('typing: reaches an interactive worker; a refusal keeps permanent; a worker
     writeFileSync(join(cur, 'worca-cc-plugin.json'), JSON.stringify(manifest));
   };
   const target = { plugin: NAME, channelId: 'main', chatId: 'T1', on: true };
-  installFixture({ worker: INTERACTIVE_WORKER });
+  await installFixture({ worker: INTERACTIVE_WORKER });
   interactive();
   const logs = [];
   let host = createChannelHost({ logger: (level, msg) => logs.push(msg) });
@@ -796,7 +796,7 @@ test('typing: reaches an interactive worker; a refusal keeps permanent; a worker
   await assert.rejects(host.typing({ ...target, chatId: 'GONE' }), (e) => e instanceof PluginOpError && e.permanent === true && /not found/.test(e.message));
   await host.stop();
 
-  installFixture();            // the plain fixture worker has no typing()
+  await installFixture();            // the plain fixture worker has no typing()
   interactive();
   host = createChannelHost({ logger: () => {} });
   host.start();
@@ -804,7 +804,7 @@ test('typing: reaches an interactive worker; a refusal keeps permanent; a worker
   await assert.rejects(host.typing(target), (e) => e.permanent === true && /cannot show typing/.test(e.message));
   await host.stop();
 
-  installFixture();            // not interactive
+  await installFixture();            // not interactive
   host = createChannelHost({ logger: () => {} });
   host.start();
   await waitFor(() => host.status()[0]?.state === 'connected', { label: 'worker connected' });
@@ -840,7 +840,7 @@ test('chat context: replyTo/history/attachments cross the child; a refused or ov
     if (hosts) manifest.chatChannels[0].attachmentHosts = hosts;
     writeFileSync(join(cur, 'worca-cc-plugin.json'), JSON.stringify(manifest));
   };
-  installFixture({ worker: CONTEXT_WORKER });
+  await installFixture({ worker: CONTEXT_WORKER });
   interactive(['cdn.example.com']);
   const inbound = [];
   const logs = [];
@@ -872,7 +872,7 @@ test('chat context: replyTo/history/attachments cross the child; a refused or ov
   await assert.rejects(host.history({ plugin: NAME, channelId: 'main', chatId: 'JUNK', before: 'm1', limit: 5 }), (e) => e.kind === 'protocol');
   await host.stop();
 
-  installFixture({ worker: INTERACTIVE_WORKER });   // interactive, but its worker has no history()
+  await installFixture({ worker: INTERACTIVE_WORKER });   // interactive, but its worker has no history()
   interactive(null);
   host = createChannelHost({ logger: () => {} });
   host.start();
@@ -882,7 +882,7 @@ test('chat context: replyTo/history/attachments cross the child; a refused or ov
     (e) => e.permanent === true && /cannot read channel history/.test(e.message));
   await host.stop();
 
-  installFixture();                                  // not interactive
+  await installFixture();                                  // not interactive
   host = createChannelHost({ logger: () => {} });
   host.start();
   await waitFor(() => host.status()[0]?.state === 'connected', { label: 'worker connected' });
@@ -892,7 +892,7 @@ test('chat context: replyTo/history/attachments cross the child; a refused or ov
 });
 
 test('worker file fetch (fake spawn): chunks assembled in order; the host cuts a worker off at maxBytes; out-of-order, short, refused or silent answers fail', async () => {
-  const { host, spawned } = makeFakeHost();
+  const { host, spawned } = await makeFakeHost();
   host.start();
   const p = spawned[0];
   p.stdout.write(frameLine({ type: 'ready', identity: '@bot' }));
@@ -984,7 +984,7 @@ const FILE_WORKER = [
 ].join('\n');
 
 test('worker file fetch (real child): 1.3 MB crosses as 3 chunks; the child refuses over maxBytes; errors are redacted; no fetchFile = permanent', async () => {
-  installFixture({ worker: FILE_WORKER });
+  await installFixture({ worker: FILE_WORKER });
   let host = createChannelHost({ logger: () => {} });
   const ask = (ref, maxBytes = 2 * 1024 * 1024) => host.fetchFile({ plugin: NAME, channelId: 'main', ref, maxBytes, timeoutMs: 5000 });
   try {   // a red row must not leave a real child running: the file would never exit
@@ -999,7 +999,7 @@ test('worker file fetch (real child): 1.3 MB crosses as 3 chunks; the child refu
     assert.deepEqual(await ask('S'.repeat(24)), { buf: Buffer.from('# hi'), contentType: null });
   } finally { await host.stop(); }
 
-  installFixture();                                  // the plain fixture worker has no fetchFile()
+  await installFixture();                                  // the plain fixture worker has no fetchFile()
   host = createChannelHost({ logger: () => {} });
   try {
     host.start();

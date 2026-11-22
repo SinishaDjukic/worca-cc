@@ -18,17 +18,17 @@ const OK = { ok: true, missing: [], noProfiles: [] };
 
 test('pluginSetupState: required fields still empty per task source, profile and chat channel; model secrets unless the broker holds them; keys only', async () => {
   await checkRows([
-    { name: 'a required task-source secret is missing until saved; the saved value never shows', run: () => {
+    { name: 'a required task-source secret is missing until saved; the saved value never shows', run: async () => {
       const m = man({ taskSources: [SRC({ configSchema: [{ key: 'token', secret: true, required: true }, { key: 'base' }] })] });
       assert.deepEqual(pluginSetupState('ts-plugin', m, { broker: false }), { ok: false, missing: [{ kind: 'taskSource', id: 'src', keys: ['token'] }], noProfiles: [] });
-      writePluginConfig('ts-plugin', m.taskSources[0].configSchema, { token: 'sekret-123' });
+      await writePluginConfig('ts-plugin', m.taskSources[0].configSchema, { token: 'sekret-123' });
       const s = pluginSetupState('ts-plugin', m, { broker: false });
       assert.deepEqual(s, OK);
       assert.ok(!JSON.stringify(s).includes('sekret-123'));
     } },
-    { name: 'an {"$env"} value counts only while that variable is set', run: () => {
+    { name: 'an {"$env"} value counts only while that variable is set', run: async () => {
       const m = man({ taskSources: [SRC({ configSchema: [{ key: 'token', secret: true, required: true }] })] });
-      writePluginConfig('env-plugin', m.taskSources[0].configSchema, { token: { $env: 'P1_SETUP_STATE_TOKEN' } });
+      await writePluginConfig('env-plugin', m.taskSources[0].configSchema, { token: { $env: 'P1_SETUP_STATE_TOKEN' } });
       delete process.env.P1_SETUP_STATE_TOKEN;
       assert.equal(pluginSetupState('env-plugin', m, { broker: false }).ok, false);
       process.env.P1_SETUP_STATE_TOKEN = 'x';
@@ -38,12 +38,12 @@ test('pluginSetupState: required fields still empty per task source, profile and
         assert.equal(pluginSetupState('env-plugin', m, { broker: false }).ok, false, 'a variable set to "" is still empty (the chat host\'s rule)');
       } finally { delete process.env.P1_SETUP_STATE_TOKEN; }
     } },
-    { name: 'multiProfile: no profile yet is noProfiles; a profile missing a required key is listed with that profile', run: () => {
+    { name: 'multiProfile: no profile yet is noProfiles; a profile missing a required key is listed with that profile', run: async () => {
       const m = man({ taskSources: [SRC({ multiProfile: true, configSchema: [{ key: 'pat', secret: true, required: true }] })] });
       assert.deepEqual(pluginSetupState('mp-plugin', m, { broker: false }), { ok: false, missing: [], noProfiles: ['src'] });
       createProfile('mp-plugin', 'work', 'Work');
       assert.deepEqual(pluginSetupState('mp-plugin', m, { broker: false }).missing, [{ kind: 'taskSource', id: 'src', profile: 'work', keys: ['pat'] }]);
-      writePluginConfig('mp-plugin', m.taskSources[0].configSchema, { pat: 'x' }, 'work');
+      await writePluginConfig('mp-plugin', m.taskSources[0].configSchema, { pat: 'x' }, 'work');
       assert.deepEqual(pluginSetupState('mp-plugin', m, { broker: false }), OK);
     } },
     { name: 'a chat channel lists its empty required keys; a select default counts as set', run: () => {
@@ -103,4 +103,22 @@ test('pluginSetupState: required fields still empty per task source, profile and
       assert.equal(rows.find((p) => p.name === 'row-no-settings').hasSettings, false);
     } },
   ]);
+});
+
+test('flag on: a vaulted required secret the vault cannot read right now is not listed as missing', async () => {
+  const { mkdtempSync, rmSync } = await import('node:fs');
+  const { tmpdir } = await import('node:os');
+  const { fakeVault } = await import('./helpers/vault-on.mjs');
+  const { readPluginConfig } = await import('../src/core/plugin-config.mjs');
+  const { clearSettingsVaultReader } = await import('../src/core/secrets/settings-resolver.mjs');
+  const dir = mkdtempSync(join(tmpdir(), 'worca-setup-vault-'));
+  try {
+    await fakeVault(dir).vaultOn(async () => {
+      const m = man({ taskSources: [SRC({ configSchema: [{ key: 'token', secret: true, required: true }] })] });
+      await writePluginConfig('locked-plugin', m.taskSources[0].configSchema, { token: 'tok-locked-0001' });
+      clearSettingsVaultReader();   // the vault key is gone from this process (a locked store): the reference reads as unset
+      assert.equal(readPluginConfig('locked-plugin', m.taskSources[0].configSchema).token, null);
+      assert.deepEqual(pluginSetupState('locked-plugin', m, { broker: false }), OK);
+    });
+  } finally { rmSync(dir, { recursive: true, force: true }); }
 });

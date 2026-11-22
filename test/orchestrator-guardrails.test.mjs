@@ -99,8 +99,9 @@ test(`[${engine.id}] the SELECTED set is the run policy: guardrailsId resolves i
     // Audit: the resolved policy + the SELECTION rode run.json into the pipeline
     // dir (copyRunManifestTo at teardown) — id, not a content snapshot.
     const manifest = JSON.parse(await readFile(join(orch.getState().pipelineDir, 'run.json'), 'utf8'));
+    // denyCount counts the spawn's rules: the set's 2 plus the secret-file floor (4 Read/Edit, 80 keychain, secrets-command, WORCA_HOST_PID and env -i denies).
     assert.deepEqual(manifest.guardrails,
-      { envScrub: true, denyCount: 2, protectedCount: 1, guardrailsId: set.id });
+      { envScrub: true, denyCount: 86, protectedCount: 1, guardrailsId: set.id });
   } finally {
     if (prevMode === undefined) delete process.env.WORCA_RUN_ROOT;
     else process.env.WORCA_RUN_ROOT = prevMode;

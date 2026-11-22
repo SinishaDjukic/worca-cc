@@ -734,7 +734,7 @@ export async function uninstallPlugin(name, { purge = false } = {}) {
   }
   const dataDir = pluginDataDir(name);
   const dataKept = !purge && existsSync(dataDir);
-  if (!dataKept) rmSync(pluginDir(name), { recursive: true, force: true });
+  if (!dataKept) await removeDataWithSecrets(name, () => rmSync(pluginDir(name), { recursive: true, force: true }));
   return {
     ok: true, dataKept,
     note: dataKept ? `config/secrets/state kept at ${dataDir} — "worca plugin purge ${name}" removes them` : null,
@@ -756,9 +756,9 @@ export function listOrphanPluginData() {
     .sort((a, b) => a.name.localeCompare(b.name));
 }
 
-/** Purge an ORPHAN's leftovers (spec §6.3 tail). Installed plugins purge via
- *  uninstallPlugin({purge:true}) — refusing here keeps one purge path each. */
-export function purgePluginData(name) {
+/** Purge an ORPHAN's leftovers (spec §6.3 tail), with the vault entries its secrets held. Installed plugins purge
+ *  via uninstallPlugin({purge:true}) — refusing here keeps one purge path each. */
+export async function purgePluginData(name) {
   if (Object.hasOwn(readPluginsLock(), name)) {   // own keys: "constructor" is a name, not an installed plugin
     throw Object.assign(
       new Error(`plugin "${name}" is still installed — uninstall with purge instead`),
@@ -770,8 +770,19 @@ export function purgePluginData(name) {
   if (!DIR_NAME_RE.test(String(name ?? ''))) throw new Error(`plugin "${name}": nothing to purge`);
   const dir = pluginDir(name); // cannot throw: guarded above
   if (!existsSync(dir)) throw new Error(`plugin "${name}": nothing to purge`);
-  rmSync(dir, { recursive: true, force: true });
+  await removeDataWithSecrets(name, () => rmSync(dir, { recursive: true, force: true }));
   return { ok: true, name };
+}
+
+// Remove a plugin's data (`rm`), then (the vault in use) release every vault entry its secrets.json held: file first,
+// vault second. A failed release never fails the removal (store-vault.mjs logs it; the entry stays an orphan).
+async function removeDataWithSecrets(name, rm) {
+  const { vaultInUse } = await import('./secrets/flag.mjs');
+  const refs = vaultInUse() ? (await import('./plugin-config.mjs')).pluginSecretRefs(name) : [];
+  rm();
+  if (!refs.length) return;
+  const { releaseStoreRefs } = await import('./secrets/store-vault.mjs');
+  await releaseStoreRefs('plugin', refs, { stillReferenced: () => false });
 }
 
 /** Enable/disable (spec §6.5): lockfile flag only; no file removal. */

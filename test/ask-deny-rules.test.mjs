@@ -1,7 +1,7 @@
 // test/ask-deny-rules.test.mjs — one deny list, one matcher (cascading-settings-design.md D13, §8 test 15).
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { ASK_DENY_RULES, askDenyGlobs, askPathDenied, globMatcher } from '../src/core/ask/deny-rules.mjs';
+import { ASK_DENY_RULES, RUN_READ_DENY_RULES, REQUIREMENTS_READ_DENY_RULES, askDenyGlobs, askPathDenied, globMatcher } from '../src/core/ask/deny-rules.mjs';
 import { ASK_DENY_RULES as SPAWN_RULES, buildAskSpawnOptions } from '../src/core/ask/spawn.mjs';
 
 const HOME = '/Users/zed';
@@ -11,6 +11,8 @@ const CASES = [
   ['Read(//**/worca-cc.db*)', `${W}/worca-cc.db-wal`],
   ['Read(//**/worca.db*)', `${W}/worca.db`],
   ['Read(//**/secrets.json)', '/repo/plugins/p/data/secrets.json'],
+  ['Read(//**/proxy-login.json*)', '/srv/worca/proxy-login.json'],
+  ['Read(//**/worca-vault*)', '/srv/worca/worca-vault.enc'],
   ['Read(//**/.env*)', '/repo/sub/.env.local'],
   ['Read(//**/.worca-cc/settings.json)', `${W}/settings.json`],
   ['Read(//**/.worca-cc/store/**)', `${W}/store/k/run/log.txt`],
@@ -80,4 +82,12 @@ test('globMatcher: a glob the model writes never backtracks — *a*a*… against
   assert.equal(globMatcher(`/b/${'*a'.repeat(40)}z`).test(name), false);
   assert.equal(globMatcher(`/**/${'**a'.repeat(40)}`).test(name), true);
   assert.ok(Date.now() - t0 < 500, `took ${Date.now() - t0} ms`);
+});
+
+test('Worca\'s secret files are denied under ~/.worca-cc and a custom home, by all three lists', () => {
+  const paths = [`${W}/proxy-login.json`, '/srv/worca/proxy-login.json', '/srv/worca/worca-vault.enc',
+    '/srv/worca/worca-vault.enc.1a2b3c4d.tmp', '/srv/worca/worca-vault.enc.unreadable-20261121T101500Z', '/srv/worca/worca-vault.key'];
+  for (const rules of [ASK_DENY_RULES, RUN_READ_DENY_RULES, REQUIREMENTS_READ_DENY_RULES]) {
+    for (const p of paths) assert.ok(askPathDenied(p, { rules, home: HOME }), p);
+  }
 });
