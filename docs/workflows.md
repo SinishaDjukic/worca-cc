@@ -252,8 +252,9 @@ Some criteria are not a good fit for Check the checker, since only the written t
   compared without case and marks; its rounds do not finish.
 
 An exact check fits these better: **Has these sections**, **The command passes**, or the checks of which files may change
-(**Changes only files under …**, **Changes at most N files**). When Worca sees that a criterion could be an exact check, it
-offers **Switch to an exact check**; any example can also **Add an exact check**.
+(**Changes only files under …**, **Changes at most N files**). For these, add the exact check yourself with **Add an exact
+check**. Worca offers **Switch to an exact check** only for criteria about quotes, numbers, personal data, links or a stated
+figure.
 
 Worca's own free mistakes (numbers removed, a made-up quote added, a part removed) are used only when the checking is a mock,
 which costs nothing; a "met" on one that cannot know the criterion is not counted as missed unless you said Worca was wrong. A

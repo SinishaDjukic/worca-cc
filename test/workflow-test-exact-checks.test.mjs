@@ -374,3 +374,9 @@ test('round 7 review M6: a year-first path is not a rate; rates and number lists
   assert.deepEqual(numbersIn('Pricing: $12/user/month, 12/user/month, €19/seat/mo, a 30/60/90-day plan.').map((x) => x.n), ['12', '12', '19', '30', '60', '90']);
   assert.deepEqual(numbersIn('Notes in 2026/11/drafts for 140 tickets.').map((x) => x.n), ['140']);
 });
+
+test('round 7 review M2: a known gap (docs/workflows.md): a speaker with a role in brackets is not checked in forms (a) and (b)', () => {
+  for (const s of [`Dana (finance lead) said: ${Q}`, `Dana Ortiz (finance lead) said: ${Q}`, '"Exports take forever, honestly," Dana (finance lead) said.'])
+    assert.deepEqual(quotesIn(s), [], s);
+  assert.deepEqual(said(`${Q} — Dana (finance lead)`), ['Exports take forever, honestly'], 'form (c) accepts it');
+});
