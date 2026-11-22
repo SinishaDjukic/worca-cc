@@ -9,6 +9,7 @@ import { stopDoneText } from '../../../src/shared/shape/run-stops.mjs';
 import { buildChatQuestion } from '../chat/question.mjs';
 import { buildCheckRows } from './check-row.mjs';
 import { paintFeatureLog } from './feature-card.mjs';
+import { renderChangeRule } from './req-change.mjs';
 
 export const SEND_FAILED = 'Could not send your answer. Try again.';
 const CHIP = { care: 'Start', prototype: 'Prototype', clarify: 'Clarify', plan: 'Plan', outline: 'Runs', gate: 'Gate', recovery: 'Recovery' };
@@ -284,6 +285,15 @@ function renderStopCard(panel, pq, deps) {
   // The focus rule (questionFocusTarget) takes the foot's primary: the one that names Worca's pick.
   const foot = q.el.querySelector('.qpanel-foot');
   if (foot) foot.classList.add('plan-actions');
+  // Small runs C4 (D16): a proposed requirement change shows every new text in full (what Change it applies), then how
+  // it lands, below the options.
+  if (stop.reason === 'requirement' && Array.isArray(stop.change)) {
+    const texts = doc.createElement('div');
+    texts.className = 'plan-checks srows req-change-texts';
+    texts.append(...buildCheckRows(doc, { items: stop.change.map((c) => ({ id: c.id, idCol: true, label: `“${c.to}”`, pass: true, mark: 'none', ariaLabel: 'new text' })) }));
+    const rule = renderChangeRule(doc, stop.landsAs || 'none');
+    for (const el of [texts, rule]) { if (foot) foot.before(el); else q.el.appendChild(el); }
+  }
   panel.appendChild(q.el);
 }
 

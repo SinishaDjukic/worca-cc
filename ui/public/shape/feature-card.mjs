@@ -162,7 +162,8 @@ export function oneCardModel({ own = null, card = null, snapOf = () => null } = 
     q: pq && Array.isArray(pq.questions) ? pq.questions.length : 0,
     asking: !!question && (asks(rp) || (!!view && !!view.ask && view.ask.index == null)),
   });
-  return { state, step, detail, question, receipts: base.log, runs: !!view, kindWord: FEATURE_KIND, base };
+  // Small runs C4 (D17): the requirement change the Build step's notice shows, while its landing run is not done.
+  return { state, step, detail, question, receipts: base.log, runs: !!view, kindWord: FEATURE_KIND, base, change: (view && view.change) || null };
 }
 
 const sigOf = (host, list) => { const sig = JSON.stringify(list); if (host.dataset.sig === sig) return false; host.dataset.sig = sig; return true; };

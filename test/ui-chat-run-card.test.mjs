@@ -2409,6 +2409,29 @@ test('B1 one card: S1–S9 show the kind "Feature", one state line with the tabl
   } finally { for (const pq of Object.values(ONE_PQ)) forgetAnswer('run-uuid-1', pq.id); }
 });
 
+// Small runs C4 (D17): the Build step shows a requirement change's notice; told, not asked.
+const C4_CHANGE = { id: 'R-po-3', from: 'old', to: 'reset emails retry once', at: '2026-11-22T15:03:00Z', by: 'ann', source: { kind: 'chat' }, case: 'running', run: 2 };
+test('C4 one card: a running change on the Build step is one notice: one .cap line, the fold, no question, no primary, no Answer button', () => {
+  const c = ONE_STATES.S8();
+  c.snap.shaper.card.feature.change = C4_CHANGE;
+  const f = mk({ controls: { paintQuestion: () => null, releaseQuestion() {}, memoFor: () => ({}), groupOf: () => c.row, modelOpts: () => ({ now: NOW }) } });
+  f.card.update(c.snap);
+  const box = f.$('.chat-rc-req-change');
+  assert.equal(box.hidden, false);
+  assert.equal(box.querySelector('.ask-mcard-title').textContent, 'R-po-3 changed · run 2 was running');
+  assert.equal(f.$$('.cap').length, 1);
+  assert.match(box.querySelector('.cap').textContent, /It stopped, re-plans from the new text and continues\. You are told, not asked\.$/);
+  assert.equal(box.querySelectorAll('.plan-check-row').length, 3);
+  assert.equal(box.querySelectorAll('button:not(.plan-fold)').length, 0, 'the notice has no button but its fold line');
+  assert.equal(f.$$('.chat-rc-q .qpanel[data-qid]').filter((p) => shownIn(p)).length, 0, 'no question');
+  assert.equal(f.$$('.btn-primary').filter((b) => shownIn(b)).length, 0, 'no primary');
+  assert.equal(f.$$('button').filter((b) => shownIn(b) && /^Answer/.test(b.textContent)).length, 0, 'no Answer button');
+  assert.equal(f.$$('.chat-rc-log-text').filter((t) => /R-po-3 changed/.test(t.textContent)).length, 0, 'not a log row too');
+  c.snap.shaper.card.feature.change = null;
+  f.card.update({ ...c.snap });
+  assert.equal(box.hidden, true, 'gone once it landed');
+});
+
 test('B1 one card: in S8, the frame before groupOf knows the feature\'s row reads Working', () => {
   const { $ } = paintOne('S8', { noRow: true });
   assert.equal($('.chat-rc-status .run-status-word').textContent, 'Working');

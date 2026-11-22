@@ -6,19 +6,22 @@
 import { stopAnswerOk, heldRefusal } from '../../shared/shape/run-stops.mjs';
 import { featureOfPipeline } from './features.mjs';
 import { heldStopTurn } from './chain.mjs';
+import { requirementChangedFeedback } from '../../shared/shape/req-change.mjs';
 
 /**
  * deps: { runs: Map of runs-map entries, liveSliceOf(id), broadcastFeature(featureId), resolvePending(entry, {id, reason}),
- * now(): ms }. → { answer, deliver, clear }
+ * applyChange?(entry, stop, by) → {changeRun} (small runs C4: throws a refusal), now(): ms }. → { answer, deliver, clear }
  */
-export function createHeldStops({ runs, liveSliceOf, broadcastFeature, resolvePending, now = Date.now }) {
-  /** The entry's feature and run number: its slice when it carries one, else its pipeline's feature row. */
-  const featureOf = (entry) => {
-    const sl = entry && entry.orch && entry.orch.runShape && entry.orch.runShape.slice;
-    if (sl && sl.feature && Number.isInteger(sl.index)) return { featureId: sl.feature, index: sl.index };
-    const at = entry && entry.pipelineId ? featureOfPipeline(entry.pipelineId) : null;
-    return at ? { featureId: at.featureId, index: at.idx } : null;
-  };
+/** A runs-map entry's feature and run number: its slice when it carries one, else its pipeline's feature row. */
+export function entryFeatureOf(entry) {
+  const sl = entry && entry.orch && entry.orch.runShape && entry.orch.runShape.slice;
+  if (sl && sl.feature && Number.isInteger(sl.index)) return { featureId: sl.feature, index: sl.index };
+  const at = entry && entry.pipelineId ? featureOfPipeline(entry.pipelineId) : null;
+  return at ? { featureId: at.featureId, index: at.idx } : null;
+}
+
+export function createHeldStops({ runs, liveSliceOf, broadcastFeature, resolvePending, applyChange = null, now = Date.now }) {
+  const featureOf = entryFeatureOf;
   const turnOf = (at) => (at ? heldStopTurn(at.featureId, at.index, { live: liveSliceOf, now: now() }) : { due: true });
   const repaint = (at) => { if (at) broadcastFeature(at.featureId); };
 
@@ -33,6 +36,12 @@ export function createHeldStops({ runs, liveSliceOf, broadcastFeature, resolvePe
         errors: [{ field: 'decision', path: 'decision', code: 'invalid', message: "not one of this stop's options" }] });
     }
     if (entry.heldStop) throw Object.assign(new Error(heldRefusal(entry.heldStop.after)), { code: 'STOP_HELD', status: 409 });
+    // Small runs C4 (D11): Change it with a proposal changes the requirement now, before the turn is read; a refusal
+    // throws and the question stays open. Only the run's re-plan waits for its turn.
+    if (applyChange && pq.stop.change && payload && payload.source === 'requirement') {
+      const r = applyChange(entry, pq.stop, by);
+      if (r && Number.isInteger(r.changeRun)) payload = { ...payload, feedback: requirementChangedFeedback(pq.stop.change, { changeRun: r.changeRun }) };
+    }
     const at = featureOf(entry);
     const turn = turnOf(at);
     if (!turn.due) {

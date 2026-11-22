@@ -7,6 +7,7 @@
 import { roleSummaries } from './role-review.mjs';
 import { concernFeedbackSection } from '../review/plan-concern.mjs';
 import { BLOCKING, normalizeSeverity } from '../graph/verdict.mjs';
+import { requirementChangedFeedback, oneLineText } from './req-change.mjs';
 
 export const STOP_REASONS = Object.freeze(['check', 'objection', 'requirement']);
 
@@ -64,10 +65,23 @@ export function gateStop({ run, issues = [], roleReviews = null, fixCycles = 0, 
   };
 }
 
-const keepChange = () => [
+/** Keep it / Change it. Small runs C4 (D10): with a proposed change, Change it re-plans from the new text (the change
+ *  path applies it first; the stop card shows every new text in full); without one it stops the run (C3). */
+const keepChange = (change = null) => [
   opt('keep', 'Keep it', 'The run goes on with the requirement as agreed', 'keep', { decision: 'approve' }),
-  opt('change', 'Change it', 'The run stops here so the requirement can change', 'change', { decision: 'stop' }),
+  change
+    ? opt('change', 'Change it', `Re-plans from the new ${change.length === 1 ? 'text' : `texts (${change.length})`} below`, 'change',
+      { decision: 'revise', feedback: requirementChangedFeedback(change), source: 'requirement' })
+    : opt('change', 'Change it', 'The run stops here so the requirement can change', 'change', { decision: 'stop' }),
 ];
+
+/** D10: the concern's proposals that can be applied (each names the text it changes), as `{id, from, to}`; null for none. */
+function changeOf(concern) {
+  const list = (concern && Array.isArray(concern.proposals) ? concern.proposals : [])
+    .filter((p) => p && typeof p.id === 'string' && typeof p.from === 'string' && oneLineText(p.text))
+    .map((p) => ({ id: p.id, from: p.from, to: oneLineText(p.text) }));
+  return list.length ? list : null;
+}
 
 function requirementStop({ run, concern = null, outlineChange = null, node = null }) {
   const ids = concern && Array.isArray(concern.requirements) ? concern.requirements : [];
@@ -75,8 +89,9 @@ function requirementStop({ run, concern = null, outlineChange = null, node = nul
   const text = concern
     ? `A reviewer wants ${ids.length ? ids.join(', ') : 'an agreed requirement'} changed: ${concern.title}.`
     : `The Planner says this run cannot be built as outlined: ${String(outlineChange || '').trim()}`;
+  const change = changeOf(concern);
   return { reason: 'requirement', run, node, pick: 'keep', head, text, findingsLine: concern ? concern.title : 'The outline no longer fits',
-    options: keepChange() };
+    ...(change ? { change, landsAs: concern.proposals.find((p) => p.landsAs)?.landsAs || 'none' } : {}), options: keepChange(change) };
 }
 
 /** What the Planner is asked to fix after a failing (or missing) shape check. */
@@ -179,5 +194,7 @@ export function runStopWord({ snap = null, slice = null } = {}) {
   if (st && st.held && Number.isInteger(st.after)) return `after run ${st.after}`;
   if ((st && !st.held) || (snap && snap.pendingQuestion && snap.pendingQuestion.stop && !st)) return 'waiting for you';
   if (slice && Number.isInteger(slice.waitsFor)) return `waits for run ${slice.waitsFor}`;
+  // Small runs C4 (D18): a change run that is due takes the next turn.
+  if (slice && slice.kind === 'change' && slice.state === 'planned') return 'next · small change run';
   return null;
 }

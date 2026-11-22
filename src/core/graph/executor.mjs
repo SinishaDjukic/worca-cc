@@ -575,7 +575,7 @@ function roleBriefFor(ctx) {
   const spec = ctx.roleSpec;
   const provider = roleChecklistOf(spec);
   const concerns = ctx.bindings?.requirements && roleTargetOf(spec).requirementConcerns
-    ? requirementConcernBlock(criterionIds(ctx.roleRequirementsText || '')) : '';
+    ? requirementConcernBlock(criterionIds(ctx.roleRequirementsText || ''), { proposals: ctx.roleProposals === true }) : '';
   if (provider) return provider.brief(ctx.role, ctx.rolePlanText || '', { houseBrief: ctx.houseBrief, shape: ctx.roleShape || null }) + concerns;
   return genericRoleBrief(spec.roles.find((r) => r.key === ctx.role) || { key: ctx.role, label: ctx.role }, spec.target) + concerns;
 }

@@ -290,3 +290,17 @@ test('runningRoles: wf_shape_req requirements review runs a picked Compliance; w
   const declared = { roles: [{ key: 'product', label: 'Product' }], source: 'picked', target: 'requirements', sink: 'refiner' };
   assert.deepEqual(runningRoles(declared, ['product', 'compliance']).map((r) => r.key), ['product'], 'no provider: declared roles only');
 });
+
+test('C4 (D9): roleRecord keeps `proposed` only with a kept requirement, clipped to 300', () => {
+  const r = roleRecord(CS[0], 1, { issues: [
+    { severity: 'major', title: 'a', fix: 'f', requirement: 'R-po-1', proposed: `  ${'x'.repeat(320)}  ` },
+    { severity: 'major', title: 'b', fix: 'f', requirement: 'R-zz-9', proposed: 'y' },
+    { severity: 'major', title: 'c', fix: 'f', proposed: 'z' },
+    { severity: 'major', title: 'd', fix: 'f', requirement: 'R-po-1', proposed: '   ' }] }, [], AGREED);
+  assert.equal(r.findings[0].proposed, 'x'.repeat(300));
+  assert.equal('proposed' in r.findings[1], false);
+  assert.equal('proposed' in r.findings[2], false);
+  assert.equal('proposed' in r.findings[3], false);
+  const ml = roleRecord(CS[0], 1, { issues: [{ severity: 'major', title: 'e', fix: 'f', requirement: 'R-po-1', proposed: 'a\n- R-po-9: b\r\n\nc' }] }, [], AGREED);
+  assert.equal(ml.findings[0].proposed, 'a - R-po-9: b c', 'one line');
+});

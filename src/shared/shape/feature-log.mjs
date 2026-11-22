@@ -4,6 +4,7 @@
 import { careRecordLine } from './feature-record.mjs';
 import { SKIP_LINES } from './prototype.mjs';
 import { STOP_DONE_RE } from './run-stops.mjs';
+import { reqChangeLogText } from './req-change.mjs';
 
 const plural = (n, one) => `${n} ${n === 1 ? one : `${one}s`}`;
 
@@ -96,7 +97,7 @@ const byAway = (text, d) => (d.away ? `${text} · by Away mode` : text);
  *   `oneCard` (Shaper small runs B1, D7): the one card's words, "Requirements agreed" and "Runs approved"; without it a
  *   requirements line reads as the plan approval it was before B1, and the split keeps splitText.
  */
-export function buildDecisionLog({ clarify = null, origin = [], sliced = false, runs = [], slices = [], replan = null, rounds = [], oneCard = false } = {}) {
+export function buildDecisionLog({ clarify = null, origin = [], sliced = false, runs = [], slices = [], replan = null, rounds = [], oneCard = false, changes = [] } = {}) {
   const out = [];
   const front = [];
   const qs = clarify && Array.isArray(clarify.questions) ? clarify.questions : [];
@@ -150,6 +151,8 @@ export function buildDecisionLog({ clarify = null, origin = [], sliced = false, 
     out.push({ key: `round-${run}-1`, run, text: roundText(1, s ? s.title : ''), detail: [] });
     for (const r of list) out.push({ key: `round-${run}-${r.round}`, run, text: roundText(r.round, r.request, r.status, r.outcome), detail: [] });
   }
+  // Small runs C4 (D17): a requirement change not on the feature card's notice (landed, superseded or `none`), oldest first.
+  (Array.isArray(changes) ? changes : []).forEach((e) => { out.push({ key: `change-${e.at}-${e.id}`, run: null, text: reqChangeLogText(e), detail: [] }); });
   out.unshift(...front.slice(0, 1));
   if (replan && replan.length) {
     out.push({ key: 'replan', run: null, text: replanText(replan), detail: [...replan].sort((a, b) => a - b).map((i) => { const s = sliceOf(i); return s ? `${i} · ${s.title}` : String(i); }) });

@@ -13,7 +13,7 @@ import { withEnv as withEnvVars } from './helpers/with-env.mjs';
 import { getDb } from '../src/core/db.mjs';
 import { projectKey } from '../src/core/store.mjs';
 import { getTicket, runDueTickets, requestRunNow } from '../src/core/scheduler.mjs';
-import { createSliceFeature, featureView, resumeFeature, featureHoldsTicket, liveSliceFrom } from '../src/core/shape/features.mjs';
+import { createSliceFeature, featureView, resumeFeature, featureHoldsTicket, liveSliceFrom, sliceGateState, appendFeatureRun } from '../src/core/shape/features.mjs';
 import { careOfRow, requirementKindsOf } from '../src/shared/shape/feature-record.mjs';
 import { featureFigures } from '../src/core/shape/measure.mjs';
 import { latestFinishedSlice, latestFinishedSource, sliceChainGate, sliceSourceOf, headMissingSlice, smallRunsChainGate,
@@ -467,4 +467,19 @@ test('C3: stop open on run 1: independent run 2 fires, a run building on s1 stay
   const out = await tickLive(live);
   assert.deepEqual(out.fired, [t[1]]);
   assert.equal(getTicket(t[2]).status, 'scheduled');
+});
+
+test('C4 (D7): a due change run takes the next turn before an earlier due run; it waits while another run is going', () => {
+  const { id, t } = feature(3);
+  const c = appendFeatureRun(id, { title: 'Change: R-po-1', goal: 'g', kind: 'change', requirements: ['R-po-1'] });
+  assert.equal(c.index, 4);
+  const g = (tid) => sliceGateState(getTicket(tid))?.state;
+  assert.equal(g(c.ticketId), 'ok', 'the change run goes first');
+  assert.equal(g(t[3]), 'waiting', 'run 3 waits for it');
+  fire(c.ticketId, pipe('running'));
+  assert.equal(g(t[3]), 'waiting', 'run 3 waits while the change run is going');
+  const { id: id2, t: t2 } = feature(3);
+  const c2 = appendFeatureRun(id2, { title: 'Change: R-po-1', goal: 'g', kind: 'change', requirements: ['R-po-1'] });
+  fire(t2[3], pipe('running'));
+  assert.equal(g(c2.ticketId), 'waiting', 'a change run waits while another run is going');
 });

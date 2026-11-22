@@ -113,3 +113,28 @@ test('requirementConcernFeedbackSection quotes the concern for the planner', () 
   assert.match(s, /^> R-po-1 \(QA\): fa$/m);
   assert.match(s, /^> ## R-sec-2 \(UX\): fb$/m);
 });
+
+test('C4 (D9): requirementConcernOf adds proposals from the first finding per id that proposes', () => {
+  const c = requirementConcernOf([rnd(1, [qa([
+    { id: 'qa-1-1', severity: 'major', title: 'too strict', fix: 'loosen', requirement: 'R-po-1', proposed: 'members and guests' },
+    { id: 'qa-1-2', severity: 'major', title: 'again', fix: 'x', requirement: 'R-po-1', proposed: 'other' },
+    { id: 'qa-1-3', severity: 'major', title: 'b', fix: 'y', requirement: 'R-po-2' }])])]);
+  assert.deepEqual(c.proposals, [{ id: 'R-po-1', text: 'members and guests' }]);
+  const none = requirementConcernOf([rnd(1, [qa([{ id: 'qa-1-1', severity: 'major', title: 't', fix: 'f', requirement: 'R-po-1' }])])]);
+  assert.equal('proposals' in none, false);
+});
+
+test('C4 (D9): requirementConcernBlock(ids) is byte-equal without the option; {proposals:true} asks for "proposed"', () => {
+  const plain = requirementConcernBlock(['R-po-1']);
+  assert.equal(plain, requirementConcernBlock(['R-po-1'], {}));
+  assert.equal(plain, '## Requirement concerns\n\nThese requirements are agreed with the person: R-po-1. Do not ask the plan to change, narrow or drop '
+    + 'one of them. If you think an agreed requirement itself is wrong or cannot be met, raise that finding with a '
+    + '`"requirement": "R-po-1"` field naming the id it concerns. Such a finding goes to the person as a question at '
+    + 'the plan approval and does not send the plan back. Use the field only for the requirement itself, never for how '
+    + 'the plan covers it.\n\n');
+  assert.doesNotMatch(plain, /"proposed"/);
+  const withP = requirementConcernBlock(['R-po-1'], { proposals: true });
+  assert.ok(withP.startsWith(plain.trimEnd()));
+  assert.match(withP, /"proposed"/);
+  assert.match(withP, /300 characters/);
+});

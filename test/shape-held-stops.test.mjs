@@ -11,7 +11,7 @@ import { getDb } from '../src/core/db.mjs';
 import { projectKey } from '../src/core/store.mjs';
 import { createSliceFeature, liveSliceFrom, busySliceOf } from '../src/core/shape/features.mjs';
 import { createHeldStops } from '../src/core/shape/chain.mjs';
-import { gateStop, heldRefusal } from '../src/shared/shape/run-stops.mjs';
+import { gateStop, heldRefusal, planStop } from '../src/shared/shape/run-stops.mjs';
 
 useTempHome(after, 'worca-held-stops-');
 const root = mkdtempSync(join(tmpdir(), 'worca-held-stops-proj-'));
@@ -29,7 +29,7 @@ const slice = (n) => ({ id: `s${n}`, title: `Slice ${n}`, goal: '', inScope: [],
 const STOP = gateStop({ run: 2, issues: [{ severity: 'major', title: 'x' }], fixCycles: 3 });
 
 /** A 3-run feature: run 1 done, run 2 live on a stop question, run 3 live and building unless `three` is false. */
-function setup({ three = true } = {}) {
+function setup({ three = true, applyChange = undefined } = {}) {
   const f = createSliceFeature({ pipelineId: pipe('done'), projectDir: root, title: 'T', outline: { why: '', slices: [1, 2, 3].map(slice) },
     perspectives: ['product'], workflowId: 'wf_shape' });
   const tix = getDb().prepare('SELECT ticket_id FROM shape_feature_slices WHERE feature_id = ? ORDER BY idx').all(f.id).map((r) => r.ticket_id);
@@ -56,7 +56,7 @@ function setup({ three = true } = {}) {
     if (!e.pendingQuestion || e.pendingQuestion.id !== id) return false;
     e.pendingQuestion = null; resolved.push({ id, reason }); return true;
   };
-  const held = createHeldStops({ runs, liveSliceOf, broadcastFeature: (id) => repaints.push(id), resolvePending, now: Date.now });
+  const held = createHeldStops({ runs, liveSliceOf, broadcastFeature: (id) => repaints.push(id), resolvePending, now: Date.now, ...(applyChange ? { applyChange } : {}) });
   const finish = (e) => { e.status = 'done'; setPipe(e.pipelineId, 'done'); };
   return { f, e2, e3, held, answers, resolved, repaints, finish, liveSliceOf };
 }
@@ -142,4 +142,41 @@ test('a held answer the run refuses at delivery is dropped and the feature repai
   try { held.deliver(); } finally { console.error = err; }
   assert.equal(e2.heldStop, null);
   assert.deepEqual(repaints.slice(before), [f.id]);
+});
+
+// Small runs C4 (D11): Change it with a proposal changes the requirement first, then the re-plan takes its turn.
+const REQ_STOP = planStop({ run: 2, concern: { title: 'too strict', kind: 'requirement', requirements: ['R-po-1'],
+  proposals: [{ id: 'R-po-1', from: 'members only', text: 'members and guests' }] } });
+const CHANGE = REQ_STOP.options.find((o) => o.value === 'change').payload;
+const KEEP = REQ_STOP.options.find((o) => o.value === 'keep').payload;
+
+test('C4: Change it calls applyChange once, before the turn is read; the re-plan is then held for run 3', () => {
+  const calls = [];
+  const { e2, held, answers } = setup({ applyChange: (e, stop, by) => { calls.push([e.id, stop.change, by, !!e.heldStop]); return { changeRun: null }; } });
+  e2.pendingQuestion = { id: 'plan-n_refine-2', kind: 'plan', stop: REQ_STOP };
+  assert.deepEqual(held.answer(e2, 'plan-n_refine-2', { ...CHANGE }, 'ann'), { held: true });
+  assert.deepEqual(calls, [['r2', REQ_STOP.change, 'ann', false]]);
+  assert.deepEqual(answers, []);
+  assert.deepEqual(e2.heldStop.payload, CHANGE);
+});
+
+test('C4: a non-owner asker is told which run builds the change', () => {
+  const { e2, held, answers } = setup({ three: false, applyChange: () => ({ changeRun: 9 }) });
+  e2.pendingQuestion = { id: 'plan-n_refine-2', kind: 'plan', stop: REQ_STOP };
+  assert.equal(held.answer(e2, 'plan-n_refine-2', { ...CHANGE }, 'ann'), undefined);
+  assert.equal(answers.length, 1);
+  assert.match(answers[0].payload.feedback, /Run 9 builds this change/);
+  assert.equal(answers[0].payload.source, 'requirement');
+});
+
+test('C4: a refused change rethrows code and status, holds nothing and answers nothing; Keep never calls it', () => {
+  let n = 0;
+  const { e2, held, answers } = setup({ applyChange: () => { n += 1; throw Object.assign(new Error('R-po-1 changed since: read it again'), { code: 'STALE', status: 409 }); } });
+  e2.pendingQuestion = { id: 'plan-n_refine-2', kind: 'plan', stop: REQ_STOP };
+  assert.throws(() => held.answer(e2, 'plan-n_refine-2', { ...CHANGE }, 'ann'), (e) => e.code === 'STALE' && e.status === 409);
+  assert.equal(e2.heldStop, null);
+  assert.deepEqual(answers, []);
+  assert.equal(e2.pendingQuestion.id, 'plan-n_refine-2');
+  held.answer(e2, 'plan-n_refine-2', { ...KEEP }, 'ann');
+  assert.equal(n, 1, 'Keep it never applies a change');
 });

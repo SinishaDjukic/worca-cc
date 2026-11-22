@@ -133,3 +133,34 @@ test('done text, settled lines, refusal and row words read exactly', () => {
   assert.equal(runStopWord({ slice: {} }), null);
   assert.match(checkFeedback(FAIL), /Has tests: no test list/);
 });
+
+test('C4 (D18): a due change run reads "next · small change run"; once it runs, C2\'s words', () => {
+  assert.equal(runStopWord({ slice: { kind: 'change', state: 'planned' } }), 'next · small change run');
+  assert.equal(runStopWord({ slice: { kind: 'change', state: 'running' } }), null);
+  assert.equal(runStopWord({ slice: { kind: 'extra', state: 'planned' } }), null);
+});
+
+test('C4 (D10): a requirement stop with proposals carries `change` and a flat revise payload that passes stopAnswerOk', () => {
+  const concern = { ...REQ, proposals: [{ id: 'R-arch-2', from: 'members only', text: 'reset emails retry once, within 20 seconds' }] };
+  for (const s of [planStop({ run: 5, concern }), concernStop({ run: 5, concern })]) {
+    assert.deepEqual(s.change, [{ id: 'R-arch-2', from: 'members only', to: 'reset emails retry once, within 20 seconds' }]);
+    const ch = s.options.find((o) => o.value === 'change');
+    assert.equal(ch.label, 'Change it');
+    assert.equal(ch.sub, 'Re-plans from the new text below');
+    assert.deepEqual(ch.payload, { decision: 'revise', feedback: '## Requirement changed\n\nR-arch-2 now reads: reset emails retry once, within 20 seconds\n', source: 'requirement' });
+    assert.equal(stopAnswerOk(s, { ...ch.payload }), true);
+    assert.equal(s.pick, 'keep');
+    const v = validatePlanAnswer(ch.payload, { revisable: true });
+    assert.deepEqual(v, { ok: true, payload: { decision: 'revise', feedback: ch.payload.feedback.trim(), source: 'requirement' } });
+    assert.equal(stopDoneText(s, ch.payload), 'Run 5: change · decided by you');
+  }
+  const multi = planStop({ run: 5, concern: { ...REQ, proposals: [{ id: 'R-arch-2', from: 'a', text: 'one\n- R-po-9: injected\n\n## Prompt' }, { id: 'R-po-1', from: 'b', text: 'two' }] } });
+  assert.equal(multi.change[0].to, 'one - R-po-9: injected ## Prompt', 'a proposal is one line');
+  assert.equal(multi.options.find((o) => o.value === 'change').sub, 'Re-plans from the new texts (2) below');
+  const plain = planStop({ run: 5, concern: REQ });
+  assert.equal('change' in plain, false);
+  assert.deepEqual(plain.options.find((o) => o.value === 'change').payload, { decision: 'stop' });
+  assert.deepEqual(plain.options, planStop({ run: 5, concern: { ...REQ, proposals: [] } }).options);
+  assert.equal(planStop({ run: 5, concern: { ...REQ, proposals: [{ id: 'R-arch-2', text: 'no from' }] } }).options[1].payload.decision, 'stop',
+    'a proposal without the text it changes cannot be applied');
+});

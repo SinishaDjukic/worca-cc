@@ -196,3 +196,15 @@ test('C3 (D14): a stop\'s answered line is read back as a decision row, once, un
       'Run 8: another cycle · decided by you', 'Review loop ran out with 2 minor issue(s): accepted · settled by the agents.'] }] });
   assert.deepEqual(log.map((r) => [r.run, r.text]), [[8, 'another cycle · decided by you']], 'the run shows once, in its span');
 });
+
+test('C4 (D17): buildDecisionLog({changes}) lists one row per change it is given, after the runs', () => {
+  const changes = [
+    { id: 'R-po-3', from: 'a', to: 'b', at: '2026-11-22T15:00:00Z', source: { kind: 'chat' }, case: 'finished', run: 2, added: 9 },
+    { id: 'R-po-4', from: 'a', to: 'b', at: '2026-11-22T15:01:00Z', source: { kind: 'chat' }, case: 'none', run: null },
+  ];
+  const log = buildDecisionLog({ origin: [], sliced: true, runs: [{ index: 8, events: ['Run 8: another cycle · decided by you'] }], changes });
+  assert.deepEqual(log.map((r) => [r.run, r.text]), [[8, 'another cycle · decided by you'],
+    [null, 'R-po-3 changed · run 9 added: a small change run'], [null, 'R-po-4 changed']]);
+  assert.equal(new Set(log.map((r) => r.key)).size, log.length);
+  assert.deepEqual(buildDecisionLog({ origin: [] }), buildDecisionLog({ origin: [], changes: [] }));
+});

@@ -30,6 +30,7 @@ import { paintStatusDot } from '../status-dot.mjs';
 import { runShortWord } from '../../../src/shared/shape/run-agents.mjs';
 import { levelAtLeast } from '../ui-level.mjs';
 import { featureCardModel, oneCardModel, paintFeatureLog } from '../shape/feature-card.mjs';
+import { paintReqChange } from '../shape/req-change.mjs';
 import { namedAnswer, forgetAnswer, REQUIREMENTS_AGREED } from '../shape/step-receipt.mjs';
 import { isRequirementsAsk, answerFieldOpen } from '../shape/step-card.mjs';
 import { renderChecklistGroups } from '../shape/checklist-view.mjs';
@@ -310,6 +311,10 @@ export function createChatRunCard({ doc, win = null, snapshot = null, ctx = {}, 
   const logEl = h('ol', 'chat-rc-log');
   logEl.hidden = true;
   logEl.setAttribute('aria-label', 'Steps');
+  // ---- Small runs C4: a requirement change's notice on the Build step (req-change.mjs); told, not asked. Mounted
+  // before the log only once a change shows, so every other card keeps dev's markup.
+  const changeEl = h('div', 'chat-rc-req-change');
+  changeEl.hidden = true;
   // ---- Shaper s5: the ideas saved for the next checkpoint (D11) and a watch that gave up on the run's PR (D23)
   const notesEl = h('div', 'chat-rc-notes');
   notesEl.hidden = true;
@@ -1039,6 +1044,8 @@ export function createChatRunCard({ doc, win = null, snapshot = null, ctx = {}, 
       }
       shapedEl.hidden = false;
     } else shapedEl.hidden = true;
+    if (one && one.step === 'build' && one.change && !changeEl.isConnected) logEl.before(changeEl);
+    if (changeEl.isConnected) paintReqChange(doc, changeEl, one || {});
     paintFeatureLog(doc, logEl, fm ? fm.log : rm.log);
     notesEl.textContent = (fm && fm.notesLine) || '';
     notesEl.hidden = !(fm && fm.notesLine);

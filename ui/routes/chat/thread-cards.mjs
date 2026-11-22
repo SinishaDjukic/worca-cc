@@ -30,7 +30,7 @@ import { actorOf } from '../../../src/core/identity.mjs';
 import { displayPath, listProjects, normalizeProjectPath } from '../../../src/core/projects.mjs';
 import { PROXY_AGENT_TEXT } from '../../../src/core/proxy-host.mjs';
 import { addAskWebHost } from '../../../src/core/settings.mjs';
-import { applyChanges, applyRoute } from '../../../src/core/shape/changes.mjs';
+import { applyChanges, applyRoute, applyRequirementCard } from '../../../src/core/shape/changes.mjs';
 import { addFeatureNote, appendFeatureRun, currentFeatureId } from '../../../src/core/shape/features.mjs';
 import { nextRound } from '../../../src/core/shape/rounds.mjs';
 import { shipCardVerb } from '../../../src/core/shape/ship.mjs';
@@ -40,7 +40,7 @@ import { readWorkflow, writeGraphWorkflow } from '../../../src/core/workflows.mj
 import { RESCAN_CHOICES, memoGitProbe, readWorkspace, removeWorkspaceMember } from '../../../src/core/workspaces.mjs';
 import { formatInstant } from '../../../src/shared/schedule/recurrence.mjs';
 import { changesCardVerb, routeCardVerb } from '../../../src/shared/shape/route.mjs';
-import { AGENTS_DIR, ASK_DEFERRED_REPLIES_MAX, afterMembersChanged, afterProjectRegistered, agentMayBeCaller, askChatActions, askDeferred, askDeferredReplies, askEventPick, askIdParam, askInFlight, askViewer, askWebAccessFor, badRequest, broadcast, broadcastFeature, emitChanged, failedEventTurn, flipCard, followCloneCard, fsAllowedRoots, fsLimitedHere, pinUiLevel, postAskSystemNotice, proxyHost, prunedNote, refuseAgentCaller, removeRecommendation, runs, scheduleVerb, schedulerTick, shipFeatureNow, soundCards, startAskTurn, startCloneJob, startMetricsEventTurn, startRunAs, startScopeEventTurn, workspaceMembersBusy } from '../../server.mjs';
+import { AGENTS_DIR, ASK_DEFERRED_REPLIES_MAX, afterMembersChanged, afterProjectRegistered, agentMayBeCaller, askChatActions, askDeferred, askDeferredReplies, askEventPick, askIdParam, askInFlight, askViewer, askWebAccessFor, badRequest, broadcast, broadcastFeature, emitChanged, failedEventTurn, flipCard, followCloneCard, fsAllowedRoots, fsLimitedHere, pinUiLevel, postAskSystemNotice, proxyHost, prunedNote, refuseAgentCaller, removeRecommendation, reqChanges, runs, scheduleVerb, schedulerTick, shipFeatureNow, soundCards, startAskTurn, startCloneJob, startMetricsEventTurn, startRunAs, startScopeEventTurn, workspaceMembersBusy } from '../../server.mjs';
 
 /** The cards route's handler, set by register(): the chat bridge applies a chat channel's card actions through it
  *  in-process (ui/server.mjs invokeAskCard, with req._chatOrigin set). */
@@ -366,6 +366,23 @@ async function askCardHandler(req, res) {
       } finally { askCardBusy.delete(cardId); }
       if (!block) return res.status(409).json({ error: 'card vanished' });
       return res.json({ block });
+    }
+    if (found.block.card && found.block.card.type === 'req-change') {
+      // Small runs C4 (D13): Change it applies the card's one change through the one change path; Not now declines.
+      const c = found.block.card;
+      const v = changesCardVerb(body);
+      if (!v.ok) return badRequest(res, v.error);
+      if (found.block.state !== 'proposed') return res.status(409).json({ error: `card is ${found.block.state}` });
+      if (askCardBusy.has(cardId)) return res.status(409).json({ error: 'card is being applied' });
+      if (v.verb === 'not-now') { const block = flipCard(id, cardId, { state: 'declined' }); return block ? res.json({ block }) : res.status(409).json({ error: 'card vanished' }); }
+      askCardBusy.add(cardId);
+      let r;
+      try { r = applyRequirementCard(c, { apply: reqChanges.apply, by: actorOf(req) }); }
+      catch (err) { r = { ok: false, status: 500, error: err && err.message ? err.message : String(err) }; }
+      finally { askCardBusy.delete(cardId); }
+      if (!r.ok) return res.status(r.status || 500).json({ error: r.error, ...(r.code ? { code: r.code } : {}) });
+      const block = flipCard(id, cardId, { state: 'applied', card: { result: r.result } });
+      return block ? res.json({ block }) : res.status(409).json({ error: 'card vanished' });
     }
     if (found.block.card && (found.block.card.type === 'changes' || found.block.card.type === 'route')) {
       // Shaper s5 (D5, D6): the card type decides the verbs; anything else is refused before any state check.

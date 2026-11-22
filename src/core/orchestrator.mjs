@@ -40,7 +40,8 @@ import { registryPortsFn } from './graph/registry-ports.mjs';
 import { checkPlan } from './shape/check.mjs';
 import { clarifyCounts, shapeScoreOf } from './shape/stats.mjs';
 import { PLAN_ASK_KIND, validatePlanAnswer, validateOutlineAnswer, renderPlanFeedback, SHAPING_FEEDBACK_PREVIEW } from './shape/run.mjs';
-import { createSliceFeature, retireFeaturesOf, earlierSliceChanges, featureClarify, featureNotes } from './shape/features.mjs';
+import { createSliceFeature, retireFeaturesOf, earlierSliceChanges, featureClarify, featureNotes, featureView } from './shape/features.mjs';
+import { changeCaseOf } from '../shared/shape/req-change.mjs';
 import { fileSha, planOutputOf } from './shape/outline-file.mjs';
 import { splitRules, smallRunsOfFeature, careOfFeature, prototypeOfFeature, originPipelineOfFeature } from './shape/small-runs.mjs';
 import { runPrototypeStep, validatePrototypeAnswer, PROTOTYPE_ASK_KIND } from './shape/prototype-step.mjs';
@@ -1550,7 +1551,7 @@ export class GraphOrchestrator extends RunHarness {
     const conflicts = currentPass(this.state.roleReviews)?.rounds.at(-1)?.conflicts || [];
     // Shaper requirements s3 (D4): findings naming an agreed requirement ride this ask as one concern, never a loop.
     // Derived from the saved role reviews, so a resume re-raises the same concern.
-    const concern = requirementConcernOf(currentPass(this.state.roleReviews)?.rounds);
+    const concern = this._changeFrom(requirementConcernOf(currentPass(this.state.roleReviews)?.rounds));
     const asked = (async () => {
       check = await this._planCheck(q.plan?.file);
       const coverage = spec?.coverage ? await this._planCoverage(q, spec.coverage) : null;
@@ -1604,6 +1605,8 @@ export class GraphOrchestrator extends RunHarness {
         }
         if (payload?.decision === 'revise') {
           if (Array.isArray(payload.perspectives)) this._setShapePerspectives(payload.perspectives);
+          // Small runs C4 (D11): Change it with a proposal; the server wrote the new text before the answer came in.
+          if (payload.source === 'requirement' && stop?.change) this._takeRequirementChange(stop.change);
           const path = join(this.pipeline.dir, `plan-feedback-${q.plan.round}.md`);
           // Stash BEFORE the write (F19): a pause-time resume point built while the write is pending must carry it.
           // Persisted with the resume point; replayed only if a pause re-raises this same ask.
@@ -1654,6 +1657,37 @@ export class GraphOrchestrator extends RunHarness {
       const list = criteriaList(this._sliceCriteria(await readFile(path, 'utf8')));
       return coverageOf(list.map((c) => c.id), await readFile(q.plan.file, 'utf8'), { texts: Object.fromEntries(list.map((c) => [c.id, c.text])) });
     } catch { return null; }
+  }
+
+  /** Small runs C4 (D9): a requirement concern's proposals carry the agreed text they change (`from`, read from the
+   *  run's own outline), so the change path can compare it; a proposal for an id the outline lacks is dropped. */
+  _changeFrom(concern) {
+    if (!concern || !Array.isArray(concern.proposals)) return concern;
+    const sl = this.runShape?.slice;
+    const agreed = sl?.outline?.agreed || [];
+    // The fold's mark: where the run that owns the requirement is (this run: it re-plans, `waiting`).
+    let slices = [];
+    try { slices = (sl?.feature && featureView(sl.feature)?.slices) || []; } catch { slices = []; }
+    const landsAs = (id) => {
+      const owner = slices.find((s) => (s.requirements?.ids || []).includes(id));
+      return !owner ? 'none' : owner.index === sl.index ? 'waiting' : changeCaseOf(owner.state);
+    };
+    const proposals = concern.proposals.map((p) => ({ ...p, from: agreed.find((a) => a.id === p.id)?.text, landsAs: landsAs(p.id) }))
+      .filter((p) => typeof p.from === 'string');
+    const rest = { ...concern };
+    delete rest.proposals;
+    return proposals.length ? { ...rest, proposals } : rest;
+  }
+
+  /** Small runs C4 (D11): after Change it, this run plans from the changed text: its slice outline's agreed texts are
+   *  replaced and the cached slice scope is read again. */
+  _takeRequirementChange(change) {
+    const sl = this.runShape?.slice;
+    if (!sl?.outline || !Array.isArray(change)) return;
+    const to = new Map(change.map((c) => [c.id, c.to]));
+    const agreed = (sl.outline.agreed || []).map((a) => (to.has(a.id) ? { ...a, text: to.get(a.id) } : a));
+    this.runShape = { ...this.runShape, slice: { ...sl, outline: { ...sl.outline, agreed } } };
+    this._sliceScopeCache = null;
   }
 
   /** Shaper: a sliced feature's run checks only its own slice's agreed criteria. The planning run (slice 1) is bound
@@ -2384,6 +2418,7 @@ export class GraphOrchestrator extends RunHarness {
     if (d === 'withdrawn' || !d) return result;
     if (d === 'stop') { this.stop(this.answeredBy(id)); this._checkAbort(); return result; }
     this._planConcernSeen[id] = 'decided';
+    if (d === 'revise' && payload.source === 'requirement' && stop?.change) this._takeRequirementChange(stop.change);
     if (d === 'revise') {
       const path = join(this.pipeline.dir, `plan-concern-feedback-c${ctx.ordinal}.md`);
       // A stop's Re-plan already carries the concern's section (run-stops.mjs): it is written once.
@@ -2676,6 +2711,8 @@ export class GraphOrchestrator extends RunHarness {
       ctx.roleRequirementsText = req?.path ? await readFile(req.path, 'utf8').catch(() => '') : '';
       if (this.runShape) ctx.roleRequirementsText = this._sliceCriteria(ctx.roleRequirementsText);
       ctx.roleShape = this.runShape || null;
+      // Small runs C4 (D9): a marked slice run's reviewers may propose a requirement's new text.
+      if (this._smallRunsMarked === true && this.runShape?.slice) ctx.roleProposals = true;
       if (roleChecklistOf(ctx.roleSpec)?.wantsHouseBrief(ctx.role)) ctx.houseBrief = await this._fitHouseBrief();
     }
     await this._humanCursorInit(ctx);

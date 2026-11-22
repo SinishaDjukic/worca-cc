@@ -293,3 +293,32 @@ test('non-decision pauses as on dev: marked and unmarked give the same status, r
     assert.deepEqual(out[0], out[1], name);
   }
 });
+
+// Small runs C4 (D11): Change it with a proposal re-plans from the new text; the run is not stopped.
+test('C4: a Change answer with a proposal re-plans with "R-x now reads:", the slice outline carries the new text, the run is not stopped', async () => {
+  const { readdirSync, readFileSync } = await import('node:fs');
+  let injected = false;
+  const proposalReviews = { rounds: [{ round: 1, pass: 1, target: 'plan', roles: [{ key: 'qa', label: 'QA', findings: [{ id: 'qa-1-1', severity: 'major',
+    title: 'the store is too slow', fix: 'use the DB', status: 'open', requirement: 'R-arch-1', proposed: 'Charts live in the DB' }] }] }] };
+  const stops = [];
+  const s = sliceRun(marked, {
+    setup: (o) => {
+      passing(o);
+      const real = o._planAsk.bind(o);
+      o._planAsk = (q) => { if (!injected) { injected = true; o.state.roleReviews = proposalReviews; } return real(q); };
+    },
+    on: { plan: (q, orch) => {
+      stops.push(q.stop || null);
+      const change = q.stop && q.stop.change ? q.stop.options.find((o) => o.value === 'change').payload : null;
+      orch.answer(q.id, change && stops.length === 1 ? change : q.stop ? q.stop.options.find((o) => o.value === 'keep').payload : { decision: 'approve' });
+    } },
+  });
+  const res = await s.done;
+  assert.notEqual(res.status, 'stopped');
+  assert.deepEqual(stops[0].change, [{ id: 'R-arch-1', from: 'Charts live in the store', to: 'Charts live in the DB' }]);
+  assert.equal(s.orch.runShape.slice.outline.agreed.find((a) => a.id === 'R-arch-1').text, 'Charts live in the DB');
+  const dir = s.orch.pipeline.dir;
+  const fb = readdirSync(dir).filter((n) => /^plan-feedback-\d+\.md$/.test(n)).map((n) => readFileSync(join(dir, n), 'utf8'));
+  assert.ok(fb.some((t) => t.includes('R-arch-1 now reads: Charts live in the DB')), fb.join('\n---\n'));
+  assert.ok(auditOf(s.pid()).includes('Run 2: change · decided by you'));
+});
