@@ -13,7 +13,7 @@ import * as store from '../src/core/workflow-tests/store.mjs';
 import * as cs from '../src/core/workflow-tests/criteria-store.mjs';
 import { padded, deterministicPlants, FILLER, PLANT_RESULT_MAX, COPY_TIMEOUT_MS } from '../src/core/workflow-tests/planted.mjs';
 import { judgeCriterion as realJudge } from '../src/core/workflow-tests/judge.mjs';
-import { createChecker, NO_SOURCE_TEXT } from '../src/core/workflow-tests/checker.mjs';
+import { createChecker, NO_SOURCE_TEXT, TOO_LONG_TEXT } from '../src/core/workflow-tests/checker.mjs';
 import { ROUND_NOT_FINISHED_TEXT, NOT_CHECKED } from '../src/shared/workflow-tests/criteria-text.mjs';
 import { trustReportModel } from '../src/shared/workflow-tests/criteria-report.mjs';
 
@@ -41,7 +41,8 @@ const COPIES = [['number removed', GOOD.replace('by 60% ', '')], ['metric made v
 
 /** An example with a passed try whose result is GOOD (or `text`), and a checker whose calls are fakes. `copies`: the copy calls' replies,
  *  as [how, text] pairs or as a function (system, i) → reply text. */
-function setup({ judgeMet = (subject) => /60%/.test(subject), copies = COPIES, text = GOOD, extra = {}, use = 'draft', finishedAt = null } = {}) {
+function setup({ judgeMet = (subject) => /60%/.test(subject), copies = COPIES, text = GOOD, extra = {}, use = 'draft', finishedAt = null,
+  proofOf = (subject) => subject.split('\n').find((l) => /60%|500/.test(l)) || subject.split('\n').find((l) => l.length > 8) } = {}) {
   const ex = store.createExample('wf', { name: 'Bulk export', request: 'Write the brief.', criteria: [{ text: 'Names a success metric with a number' }],
     judge: { model: 'claude-haiku-4-5' } });
   const run = store.createTestRun({ workflowId: 'wf', kind: 'once', b: 'draft', bFp: 'f', exampleIds: [ex.id], tries: 1 });
@@ -59,7 +60,7 @@ function setup({ judgeMet = (subject) => /60%/.test(subject), copies = COPIES, t
       return { text: r, costUsd: 0.01, costKind: 'billed' };
     },
     judgeCriterion: async ({ subject, book }) => { calls += 1; book(0.01, 'billed'); const met = judgeMet(subject);
-      return { met, reason: met ? 'Has a number.' : 'No number.', proof: subject.split('\n').find((l) => l.length > 8), proofFound: true, error: null, costUsd: 0.01, ms: 1 }; },
+      return { met, reason: met ? 'Has a number.' : 'No number.', proof: proofOf(subject), proofFound: true, error: null, costUsd: 0.01, ms: 1 }; },
     mock: () => false, inline: true, budgetStatus: () => ({ blocked: false }), ...extra,
   });
   return { ex: store.readExample('wf', ex.id), checker, calls: () => calls, plants };
@@ -106,7 +107,11 @@ test('each copy call: the whole good result, the ways already used, a long timeo
 test('every paid call of a round books a checker row: each copy call and each check, an unknown cost as a $0 row', async () => {
   // The real judgeCriterion with a fake helperCall, so the checker's own booking wiring (not a fake's) is what is tested.
   let helper = 0;
-  const helperCall = async () => { helper += 1; return { text: JSON.stringify({ verdict: 'met', reason: 'r', proof: 'Large accounts.' }), costUsd: 0.02, costKind: 'billed' }; };
+  const helperCall = async ({ prompt }) => {   // met with the metric line as proof, else not met
+    helper += 1;
+    const met = prompt.includes('by 60% within');
+    return { text: JSON.stringify({ verdict: met ? 'met' : 'not met', reason: 'r', proof: met ? 'Cut export tickets by 60% within one quarter' : 'Large accounts.' }), costUsd: 0.02, costKind: 'billed' };
+  };
   const s = setup({ extra: { judgeCriterion: (a) => realJudge(a, { helperCall, userSignIn: () => false, mock: () => false, budget: () => ({ blocked: false }), scratch: () => tmpdir() }) } });
   const round = await startOf(s);
   assert.equal(round.status, 'ready');
@@ -144,18 +149,18 @@ test('a copy that fails a check is not used: the round ends in the failed state,
       const round = await startOf(s);
       const r = cs.readRound(round.id);
       assert.deepEqual([r.status, r.detail], ['failed', ROUND_NOT_FINISHED_TEXT], why);
-      assert.equal(s.calls(), 1, `${why}: no further copy call, no check`);
-      assert.equal(ledger(round.id).length, 1, `${why}: the call made is booked`);
+      assert.equal(s.calls(), 2, `${why}: the real card's check, then no further copy call and no check`);
+      assert.equal(ledger(round.id).length, 2, `${why}: the calls made are booked`);
       assert.equal(prepare('SELECT COUNT(*) AS n FROM wf_test_judgements WHERE round_id = ?').get(round.id).n, 0);
     }
     // Fewer than three good copies: two good ones, then one the same as the first.
     const two = setup({ copies: (system, i) => copyReply(system, ...COPIES[i === 2 ? 0 : i]) });
     const r2 = await startOf(two);
-    assert.deepEqual([cs.readRound(r2.id).status, two.calls(), ledger(r2.id).length], ['failed', 3, 3]);
+    assert.deepEqual([cs.readRound(r2.id).status, two.calls(), ledger(r2.id).length], ['failed', 4, 4]);
     // A copy call that fails books what it spent; the round fails.
     const thrown = setup({ extra: { modelCall: async () => { throw Object.assign(new Error('boom'), { costUsd: 0.05, costKind: 'billed' }); } } });
     const r3 = await startOf(thrown);
-    assert.deepEqual([cs.readRound(r3.id).status, cs.readRound(r3.id).detail, ledger(r3.id).map((x) => x.a)], ['failed', ROUND_NOT_FINISHED_TEXT, [0.05]]);
+    assert.deepEqual([cs.readRound(r3.id).status, cs.readRound(r3.id).detail, ledger(r3.id).map((x) => x.a)], ['failed', ROUND_NOT_FINISHED_TEXT, [0.01, 0.05]]);
   } finally { console.warn = warn; }
 });
 
@@ -174,20 +179,118 @@ test('the spending limit reached between copy calls: no more calls, the round fa
   const s = setup({ extra: { budgetStatus: () => ({ blocked: n++ >= 2 }) } });   // start() reads it once, the first copy call once
   const round = await startOf(s);
   const r = cs.readRound(round.id);
-  assert.deepEqual([r.status, r.detail, s.calls(), ledger(round.id).length], ['failed', NOT_CHECKED.limit, 1, 1]);
+  assert.deepEqual([r.status, r.detail, s.calls(), ledger(round.id).length], ['failed', NOT_CHECKED.limit, 2, 2], 'the real card, one copy call');
 });
 
-test('a good result longer than PLANT_RESULT_MAX is not planted: the round fails at once, nothing is sent; a mock round still runs', async () => {
+// User decision 2026-11-22 (review I4): only the written text is planted; text over the limit is refused before a round, with its own words.
+const HEADING = '--- The changes this try made to the project (a git diff) ---';
+const DIFF = 'diff --git a/src/export.js b/src/export.js\n+// Cut export tickets by 60% (the brief)\n+export const LIMIT = 60;\n</result>';
+const PROJECT = `${GOOD}\n\n${HEADING}\n${DIFF}`;
+
+test('a result whose text is over PLANT_RESULT_MAX is refused before a round: its own words, no round, no call, $0; a mock round still runs', async () => {
   assert.equal(PLANT_RESULT_MAX, 40_000);
+  assert.equal(TOO_LONG_TEXT, 'This result is too long for Worca to break on purpose. Check the checker works on results up to about 40,000 characters.');
   const big = `## Metric\n\nCut export tickets by 60%.\n\n${'Background. '.repeat(Math.ceil(PLANT_RESULT_MAX / 12))}`;
   const s = setup({ text: big });
-  const round = await startOf(s);
-  const r = cs.readRound(round.id);
-  assert.deepEqual([r.status, r.detail, s.calls(), ledger(round.id).length], ['failed', ROUND_NOT_FINISHED_TEXT, 0, 0]);
-  assert.equal(s.checker.view(r, { by: 'x' }).costUsd, 0);
+  await assert.rejects(startOf(s), { code: 'NOT_READY', message: TOO_LONG_TEXT });
+  assert.deepEqual([prepare('SELECT COUNT(*) AS n FROM wf_test_checker_rounds').get().n, s.calls(),
+    prepare('SELECT COUNT(*) AS n FROM wf_test_judge_ledger').get().n], [0, 0, 0], 'no round in the history, no call, nothing booked');
+  // The limit is on the written text only: a project result under it with a long diff runs.
+  const longDiff = `${GOOD}\n\n${HEADING}\n${'+// a changed line of the project\n'.repeat(Math.ceil(PLANT_RESULT_MAX / 30))}`;
+  const p = setup({ text: longDiff });
+  assert.ok(longDiff.length > PLANT_RESULT_MAX);
+  assert.equal(cs.readRound((await startOf(p)).id).status, 'ready');
   const m = setup({ text: big, extra: { mock: () => true, judgeCriterion: (a) => realJudge(a, { mock: () => true }) } });
-  const mr = await startOf(m);
-  assert.equal(cs.readRound(mr.id).status, 'ready');
+  assert.equal(cs.readRound((await startOf(m)).id).status, 'ready');
+});
+
+test('a project result: the copy calls get only its written text; each copy is the broken text plus the unchanged diff, judged whole', async () => {
+  const subjects = [];
+  const s = setup({ text: PROJECT, judgeMet: (subject) => /Cut export tickets by 60%/.test(subject.split(HEADING)[0]),
+    extra: { judgeCriterion: async ({ subject, book }) => { subjects.push(subject); book(0.01, 'billed'); const met = /Cut export tickets by 60%/.test(subject.split(HEADING)[0]);
+      return { met, reason: 'r', proof: met ? 'Cut export tickets by 60% within one quarter' : 'Large accounts.', proofFound: true, error: null, costUsd: 0.01, ms: 1 }; } } });
+  const round = await startOf(s);
+  assert.equal(cs.readRound(round.id).status, 'ready');
+  for (const p of s.plants) {
+    assert.ok(p.prompt.includes(GOOD), 'the written text, whole');
+    assert.ok(!p.prompt.includes(HEADING) && !p.prompt.includes('diff --git'), 'never the diff');
+  }
+  const v = s.checker.view(cs.readRound(round.id), { by: 'x' });
+  assert.deepEqual(v.cards.map((c) => c.met), [true, false, false, false]);
+  const planted = prepare("SELECT subject FROM wf_test_judgements WHERE round_id = ? AND purpose = 'planted' ORDER BY card").all(round.id).map((r) => r.subject);
+  assert.deepEqual(planted, COPIES.map(([, text]) => `${text}\n\n${HEADING}\n${DIFF}`), 'the broken text and the diff as it was');
+  assert.ok(v.cards.slice(1).every((c) => !c.excerpt.includes('diff') && !c.excerpt.includes('LIMIT')), 'the card shows only the broken text');
+  assert.equal(subjects.filter((x) => x.endsWith(DIFF)).length, 16, 'every check reads the whole result, its diff included');
+});
+
+test('a liked "changes" result: its written text is planted, its diff (with a closing tag inside) is never sent to a copy call', async () => {
+  const { ex } = setup();
+  cs.putLiked(ex.id, { kind: 'changes', name: 'c', data: Buffer.from(PROJECT) });
+  let seen = '';
+  const checker = createChecker({ mock: () => false, inline: true, budgetStatus: () => ({ blocked: false }),
+    modelCall: async ({ prompt }) => { seen = prompt; return { text: '{}', costUsd: 0 }; },
+    judgeCriterion: async () => ({ met: true, reason: 'r', proof: 'p', proofFound: true, error: null, costUsd: 0, ms: 1 }) });
+  const warn = console.warn; console.warn = () => {};
+  try { await checker.start({ workflowId: 'wf', exampleId: ex.id, criterionId: ex.criteria[0].id }); } finally { console.warn = warn; }
+  assert.ok(seen.includes(GOOD) && !seen.includes(HEADING) && !seen.includes('diff --git'));
+  assert.equal(seen.match(/<\/result-[0-9a-f]{8}>/g).length, 1, 'only the call own closing tag closes the fence');
+});
+
+// User decision 2026-11-22: a copy that still holds the passage proving the criterion is weak: that copy's call is made once more.
+const WEAK = GOOD.replace('## Risks', '## Dangers');   // the metric line kept: still met
+const ways = (p) => /<ways-[0-9a-f]+>\n([\s\S]*?)\n<\/ways-[0-9a-f]+>/.exec(p.prompt)[1];
+
+test('a weak copy, then a good one: the call is made once more, both are booked, and the round is ready', async () => {
+  const warn = console.warn; console.warn = () => {};
+  try {
+    const s = setup({ copies: (system, i) => (i === 0 ? copyReply(system, 'heading renamed', WEAK) : copyReply(system, ...COPIES[i - 1])) });
+    const round = await startOf(s);
+    assert.equal(cs.readRound(round.id).status, 'ready');
+    assert.equal(s.plants.length, 4, 'three copies and one asked again');
+    assert.deepEqual(s.plants.map(ways), ['none', 'none', 'number removed', 'number removed\nmetric made vague'], 'the call asked again is the same call');
+    const v = s.checker.view(cs.readRound(round.id), { by: 'x' });
+    assert.deepEqual(v.cards.map((c) => c.planted), [null, 'number removed', 'metric made vague', 'measure removed']);
+    assert.equal(ledger(round.id).length, 4 + 16);
+    assert.equal(Math.round(v.againUsd * 100) / 100, 0.2, 'checking again counts the call asked again too');
+  } finally { console.warn = warn; }
+});
+
+test('weak twice: the round ends in the failed state, every call stays booked, no card is written', async () => {
+  const warn = console.warn; console.warn = () => {};
+  try {
+    const s = setup({ copies: (system, i) => (i < 2 ? copyReply(system, `heading renamed ${i}`, i ? GOOD.replace('## Risks', '## Perils') : WEAK) : copyReply(system, ...COPIES[i - 2])) });
+    const round = await startOf(s);
+    const r = cs.readRound(round.id);
+    assert.deepEqual([r.status, r.detail], ['failed', ROUND_NOT_FINISHED_TEXT]);
+    assert.deepEqual([s.calls(), s.plants.length, ledger(round.id).length], [3, 2, 3], 'the real card, the copy and the copy asked again');
+    assert.equal(prepare('SELECT COUNT(*) AS n FROM wf_test_judgements WHERE round_id = ?').get(round.id).n, 0);
+  } finally { console.warn = warn; }
+});
+
+test('no proof to check against (the good result not met, or a proof under 12 characters): a copy is not checked for it', async () => {
+  const copies = (system, i) => (i === 0 ? copyReply(system, 'heading renamed', WEAK) : copyReply(system, ...COPIES[i]));
+  const notMet = setup({ copies, judgeMet: () => false });
+  assert.equal(cs.readRound((await startOf(notMet)).id).status, 'ready');
+  assert.equal(notMet.plants.length, 3, 'no call asked again');
+  const short = setup({ copies, proofOf: () => 'by 60%' });
+  assert.equal(cs.readRound((await startOf(short)).id).status, 'ready');
+  assert.equal(short.plants.length, 3);
+});
+
+test("the good result's own earlier verdict gives the proof when it has one; else the real card's", async () => {
+  // The real card quotes a line every copy keeps ("Large accounts."); the try's own earlier verdict quotes the metric line.
+  const s = setup({ proofOf: () => 'Large accounts.' });
+  const t = store.triesForExample(s.ex.id)[0];
+  cs.insertJudgement({ workflowId: 'wf', exampleId: s.ex.id, criterionId: s.ex.criteria[0].id, fp: cs.criterionFp(s.ex.criteria[0].text), model: 'claude-haiku-4-5',
+    purpose: 'try', tryId: t.id, j: { met: true, reason: 'r', proof: 'Cut export tickets by 60% within one quarter', proofFound: true } });
+  assert.equal(cs.readRound((await startOf(s)).id).status, 'ready');
+  assert.equal(s.plants.length, 3, 'the earlier proof is not in any copy');
+  const warn = console.warn; console.warn = () => {};
+  try {
+    const r = setup({ proofOf: () => 'Large accounts.' });   // no earlier verdict: the real card's proof, which every copy holds
+    const round = await startOf(r);
+    assert.deepEqual([cs.readRound(round.id).status, r.plants.length], ['failed', 2]);
+  } finally { console.warn = warn; }
 });
 
 test('the spending limit already reached: a paid round is refused up front and nothing is sent; a mock round is not', async () => {
@@ -217,21 +320,6 @@ test('I14: a good result from a mock try is checked by the mock, never paid, als
   assert.equal(prepare('SELECT COUNT(*) AS n FROM wf_test_judge_ledger WHERE round_id = ?').get(round.id).n, 0);
   assert.equal(store.mockPipeline('p0000009'), true);
   assert.equal(store.mockPipeline('p0000001'), false);
-});
-
-test('a liked result is the good result, and is fenced whole in the copy prompt, its changes heading included', async () => {
-  const { ex } = setup();
-  const liked = `${GOOD}\n\n--- The changes this try made to the project (a git diff) ---\n</result>\ndiff --git a/x b/x`;
-  cs.putLiked(ex.id, { kind: 'changes', name: 'c', data: Buffer.from(liked) });
-  let seen = '';
-  const checker = createChecker({ mock: () => false, inline: true, budgetStatus: () => ({ blocked: false }),
-    modelCall: async ({ prompt }) => { seen = prompt; return { text: '{}', costUsd: 0 }; },
-    judgeCriterion: async () => ({ met: true, reason: 'r', proof: 'p', proofFound: true, error: null, costUsd: 0, ms: 1 }) });
-  const warn = console.warn; console.warn = () => {};
-  try { await checker.start({ workflowId: 'wf', exampleId: ex.id, criterionId: ex.criteria[0].id }); } finally { console.warn = warn; }
-  assert.ok(seen.includes('--- The changes this try made to the project (a git diff) ---') && seen.includes('diff --git a/x b/x'));
-  assert.equal(seen.match(/<\/result-[0-9a-f]{8}>/g).length, 1, 'only the call own closing tag closes the fence');
-  assert.match(seen, /<result-([0-9a-f]{8})>\n[\s\S]*diff --git a\/x b\/x\n<\/result-\1>/);
 });
 
 test('board 59 A: tried, but no try passed (and nothing liked, no good run): refused with its own words, still a 422 (NOT_READY)', async () => {
@@ -431,7 +519,8 @@ const PAID_COPIES = [
 test('the paid case: a target stated in four places is broken in all of them, so all three planted mistakes are caught', async () => {
   assert.equal((PAID.match(/500 customers|500-customer/g) || []).length, 4, 'the fixture states its target in four places');
   for (const [how, text] of PAID_COPIES) assert.ok(!TARGET.test(text), `${how}: no place left`);
-  const s = setup({ text: PAID, copies: PAID_COPIES, judgeMet: (subject) => TARGET.test(subject) });
+  const s = setup({ text: PAID, copies: PAID_COPIES, judgeMet: (subject) => TARGET.test(subject),
+    proofOf: (subject) => subject.split('\n').find((l) => TARGET.test(l)) || 'Target is absent or wrong' });   // the line that proves it
   const round = await startOf(s);
   const v = s.checker.view(cs.readRound(round.id), { by: 'x' });
   assert.deepEqual(v.cards.map((c) => [c.planted, c.met]), [[null, true], ['number removed', false], ['target made into activity', false], ['only a vague hope', false]]);

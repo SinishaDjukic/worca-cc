@@ -7,20 +7,21 @@ import { judgeCriterion as realJudge, modelCall as realModelCall, firstLine } fr
 import { subjectOfTry } from './criteria-runner.mjs';
 import { mainResult } from './result.mjs';
 import { exampleSourcesText } from './sources-text.mjs';
-import { padded, deterministicPlants, copySystemPrompt, copyPrompt, parseCopyReply, copyProblem, changedExcerpt, PLANT_COPIES, PLANT_RESULT_MAX,
-  COPY_TIMEOUT_MS } from './planted.mjs';
+import { padded, deterministicPlants, copySystemPrompt, copyPrompt, parseCopyReply, copyProblem, changedExcerpt, splitChanges, usableProof, PLANT_COPIES,
+  PLANT_RESULT_MAX, COPY_TIMEOUT_MS, CARD_EXCERPT_MAX } from './planted.mjs';
 import { SUBJECT_MAX, fenceTag } from './judge-prompt.mjs';
 import { rewordCriterion } from './suggest.mjs';
 import * as store from './store.mjs';
 import * as cs from './criteria-store.mjs';
-import { NOT_CHECKED, NO_SOURCE_TEXT, NO_PASSED_TRY_TEXT, LIMIT_TEXT, ROUND_NOT_FINISHED_TEXT } from '../../shared/workflow-tests/criteria-text.mjs';
+import { NOT_CHECKED, NO_SOURCE_TEXT, NO_PASSED_TRY_TEXT, LIMIT_TEXT, ROUND_NOT_FINISHED_TEXT, TOO_LONG_TEXT } from '../../shared/workflow-tests/criteria-text.mjs';
 import { useLabel } from '../../shared/workflow-tests/compare.mjs';
 import { liveVersionNo, latestVersion } from '../workflow-revisions.mjs';
 import { findPipelineRowById } from '../artifacts.mjs';
 
-/** P4-M3's empty state, board 59 A's (tried, no try passed) and the limit refusal: shared words, so the page can tell the 422s apart. */
-export { NO_SOURCE_TEXT, NO_PASSED_TRY_TEXT, LIMIT_TEXT };
-const EXCERPT_MAX = 400;
+/** P4-M3's empty state, board 59 A's (tried, no try passed), the limit refusal and (user decision 2026-11-22) a result too long to break:
+ *  shared words, so the page can tell the 422s apart. */
+export { NO_SOURCE_TEXT, NO_PASSED_TRY_TEXT, LIMIT_TEXT, TOO_LONG_TEXT };
+const EXCERPT_MAX = CARD_EXCERPT_MAX;
 const clip = (s) => { const t = String(s ?? '').trim(); return t.length > EXCERPT_MAX ? `${t.slice(0, EXCERPT_MAX - 1)}…` : t; };
 
 /** D97: the result you liked, else the newest passed try of the example (a real one before a mock one), else the run it came from when
@@ -50,53 +51,84 @@ export function createChecker(deps = {}) {
     subjectOf: (t) => subjectOfTry(t), contextOf: (ex) => exampleSourcesText(ex), inline: false, ...deps };
   const making = new Set();   // `${exampleId}|${criterionId}` of the rounds being made now
 
+  /** One copy call: the spending limit read before it, its cost booked. `{ copy, why }` (copyProblem's reason, 'failed' for a call that
+   *  threw), or `{ fail }` at the limit. */
+  async function copyCall(round, criterion, text, plants, proof, book) {
+    const b = d.budgetStatus();
+    if (b && b.blocked) return { fail: NOT_CHECKED.limit };
+    const tag = fenceTag();
+    let r = null;
+    try {
+      r = await d.modelCall({ model: round.model, system: copySystemPrompt(tag),
+        prompt: copyPrompt({ criterion: criterion.text, result: text, ways: plants.map((p) => p.how), tag }) }, { timeoutMs: COPY_TIMEOUT_MS });
+    } catch (e) { if (Number(e && e.costUsd) > 0 || (e && e.costKind === 'unknown')) book(Number(e.costUsd) || 0, e.costKind || 'billed'); }
+    // Outside the try (final review M1): a booking that fails after a paid call surfaces and fails the round, never goes unnoticed.
+    if (r && (r.costUsd > 0 || r.costKind === 'unknown')) book(r.costUsd, r.costKind);   // P4-Q17: an unknown cost books a $0 row
+    const copy = r ? parseCopyReply(r.text, tag) : null;
+    return { copy, why: r ? copyProblem(text, copy, plants, { proof }) : 'failed' };
+  }
+
   /** User decision 2026-11-21: the three broken copies, one model call each, every call booked (purpose 'checker') and the spending limit
-   *  read before it. Returns the plants, or the words the round fails with: a copy that fails a check (copyProblem) ends the round, since
-   *  fewer than three good copies cannot make one; no free plants stand in for it. */
-  async function plantCopies(round, criterion, good, book) {
-    if (good.text.length > PLANT_RESULT_MAX) return { fail: ROUND_NOT_FINISHED_TEXT };   // nothing is sent
-    const plants = [];
+   *  read before it. User decision 2026-11-22: only the written text is sent and broken (`split.text`); each plant is the broken text plus
+   *  the unchanged changes (`split.changes`). A weak copy (it still holds `proof`) is asked for once more; weak again, or any other
+   *  problem (copyProblem), ends the round, since fewer than three good copies cannot make one; no free plants stand in for it. */
+  async function plantCopies(round, criterion, split, book, proof) {
+    if (split.text.length > PLANT_RESULT_MAX) return { fail: ROUND_NOT_FINISHED_TEXT };   // start() refuses it first (TOO_LONG_TEXT)
+    const plants = [];   // { how, text }: the copies of the written text
     for (let i = 0; i < PLANT_COPIES; i += 1) {
-      const b = d.budgetStatus();
-      if (b && b.blocked) return { fail: NOT_CHECKED.limit };
-      const tag = fenceTag();
-      let r = null;
-      try {
-        r = await d.modelCall({ model: round.model, system: copySystemPrompt(tag),
-          prompt: copyPrompt({ criterion: criterion.text, result: good.text, ways: plants.map((p) => p.how), tag }) }, { timeoutMs: COPY_TIMEOUT_MS });
-      } catch (e) { if (Number(e && e.costUsd) > 0 || (e && e.costKind === 'unknown')) book(Number(e.costUsd) || 0, e.costKind || 'billed'); }
-      // Outside the try (final review M1): a booking that fails after a paid call surfaces and fails the round, never goes unnoticed.
-      if (r && (r.costUsd > 0 || r.costKind === 'unknown')) book(r.costUsd, r.costKind);   // P4-Q17: an unknown cost books a $0 row
-      const copy = r ? parseCopyReply(r.text, tag) : null;
-      const why = r ? copyProblem(good.text, copy, plants) : 'failed';
-      if (why) {
-        console.warn(`[workflow-tests] check-the-checker round ${round.id}: broken copy ${i + 1} not used (${why})`);
+      let got = await copyCall(round, criterion, split.text, plants, proof, book);
+      if (got.why === 'weak') {
+        console.warn(`[workflow-tests] check-the-checker round ${round.id}: broken copy ${i + 1} still holds the proof, asked once more`);
+        got = await copyCall(round, criterion, split.text, plants, proof, book);
+      }
+      if (got.fail) return got;
+      if (got.why) {
+        console.warn(`[workflow-tests] check-the-checker round ${round.id}: broken copy ${i + 1} not used (${got.why})`);
         return { fail: ROUND_NOT_FINISHED_TEXT };
       }
-      plants.push({ how: copy.how, text: copy.text, excerpt: changedExcerpt(good.text, copy.text) });
+      plants.push({ how: got.copy.how, text: got.copy.text });
     }
-    return { plants };
+    return { plants: plants.map((p) => ({ how: p.how, text: p.text + split.changes, excerpt: changedExcerpt(split.text, p.text, EXCERPT_MAX) })) };
+  }
+
+  /** User decision 2026-11-22: the passage that proves the criterion on the good result, to tell a weak copy: the good result's own earlier
+   *  verdict of this criterion (a try's, met with its proof found; this round's model first), else this round's real card; null when none
+   *  is met with a proof of PROOF_MIN characters in the written text (usableProof): then no copy is checked for it. */
+  function proofOfGood(round, good, realJ, text) {
+    const earlier = good.kind === 'try' && good.tryId != null
+      ? cs.tryJudgements([good.tryId]).filter((j) => j.fp === round.fp && j.met === true && j.proofFound)
+        .sort((a, b) => Number(b.model === round.model) - Number(a.model === round.model))
+      : [];
+    for (const j of [...earlier, realJ]) {
+      const p = j && j.met === true ? usableProof(j.proof, text) : null;
+      if (p) return p;
+    }
+    return null;
   }
 
   async function make(round, ex, criterion, good) {
     // Every paid call of the round books through this one function, with purpose 'checker': the copy calls and each check.
     const book = (usd, costKind) => d.book({ workflowId: round.workflowId, exampleId: ex.id, roundId: round.id, purpose: 'checker', model: round.model, amountUsd: usd, costKind });
     const mock = d.mock() || good.mock === true;   // D91, I14: a mock try's text is only ever checked by the mock
+    const context = d.contextOf(ex);
+    const judge = (subject) => d.judgeCriterion({ criterion: criterion.text, subject, context, model: round.model, mock, book });
+    const split = splitChanges(good.text);   // user decision 2026-11-22: the written text is broken, the diff kept
+    // User decision 2026-11-22: the real card is checked first, so its proof can tell a weak copy. Its row is written with the others.
+    const realJ = await judge(good.text);
+    if (realJ.met === null) { cs.updateRound(round.id, { status: 'failed', detail: NOT_CHECKED[realJ.error] || NOT_CHECKED.failed }); return; }
     // A mock round pays nothing: Worca's own plants. A real round: the checking model's whole copies, never the free plants.
-    const made = mock ? { plants: deterministicPlants(good.text).slice(0, PLANT_COPIES) } : await plantCopies(round, criterion, good, book);
+    const made = mock
+      ? { plants: deterministicPlants(split.text).slice(0, PLANT_COPIES).map((p) => ({ ...p, text: p.text + split.changes })) }
+      : await plantCopies(round, criterion, split, book, proofOfGood(round, good, realJ, split.text));
     if (made.fail) { cs.updateRound(round.id, { status: 'failed', detail: made.fail }); return; }
     const real = { how: null, excerpt: clip(good.text.split(/\n{2,}/).find((p) => p.trim() && !/^#/.test(p.trim())) || good.text), text: good.text };
     const cards = [real, ...made.plants];
-    const context = d.contextOf(ex);
-    const ask = async (subject, purpose, card, variant) => {
-      const j = await d.judgeCriterion({ criterion: criterion.text, subject, context, model: round.model, mock, book });
-      return cs.insertJudgement({ workflowId: round.workflowId, exampleId: ex.id, criterionId: criterion.id, fp: round.fp, model: round.model, purpose,
-        roundId: round.id, card, variant, subject: purpose === 'real' || purpose === 'planted' ? subject.slice(0, SUBJECT_MAX) : null, j });
-    };
-    const mainJs = [];
-    for (const [i, c] of cards.entries()) {
-      mainJs.push(await ask(c.text, i === 0 ? 'real' : 'planted', i, { how: c.how, excerpt: clip(c.excerpt), ...(c.blind ? { blind: true } : {}) }));
-    }
+    const save = (subject, purpose, card, variant, j) => cs.insertJudgement({ workflowId: round.workflowId, exampleId: ex.id, criterionId: criterion.id,
+      fp: round.fp, model: round.model, purpose, roundId: round.id, card, variant, subject: purpose === 'real' || purpose === 'planted' ? subject.slice(0, SUBJECT_MAX) : null, j });
+    const ask = async (subject, purpose, card, variant) => save(subject, purpose, card, variant, await judge(subject));
+    const variantOf = (c) => ({ how: c.how, excerpt: clip(c.excerpt), ...(c.blind ? { blind: true } : {}) });
+    const mainJs = [save(real.text, 'real', 0, variantOf(real), realJ)];
+    for (const [i, c] of cards.entries()) if (i > 0) mainJs.push(await ask(c.text, 'planted', i, variantOf(c)));
     // A card with no verdict (limit, failed, no proof, unreadable) is not a verdict the person can answer: the round fails now,
     // before the repeats and filler are asked (no further paid calls); the calls already made stay booked.
     const bad = mainJs.find((j) => j.met === null);
@@ -115,8 +147,10 @@ export function createChecker(deps = {}) {
     if (making.has(key)) throw store.testError('Worca is already checking this criterion.', 'BUSY');
     const good = await goodResultOf(ex, d);
     if (!good) throw store.testError(triedOnce(ex) ? NO_PASSED_TRY_TEXT : NO_SOURCE_TEXT, 'NOT_READY');
-    // The total spending limit, refused up front (a mock round pays nothing, so it is never refused).
     if (!(d.mock() || good.mock === true)) {
+      // User decision 2026-11-22 (review I4): a written text over the planting limit is refused before a round: no failed round in the
+      // history, no call, $0; a mock round plants for free and still runs. Then the total spending limit, refused up front.
+      if (splitChanges(good.text).text.length > PLANT_RESULT_MAX) throw store.testError(TOO_LONG_TEXT, 'NOT_READY');
       const b = d.budgetStatus();
       if (b && b.blocked) throw store.testError(LIMIT_TEXT, 'NOT_READY');
     }
