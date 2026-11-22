@@ -587,12 +587,8 @@
       {
         "section": "^Team policy",
         "selectors": [
-          ".mcp-sets",
-          ".mcp-setlist",
-          ".mcp-setrow",
-          ".mcp-dot",
           ".mcp-usedby",
-          "[data-view=\"connectors\"] .topbar"
+          ".cx-"
         ],
         "feature": "mcp-servers",
         "name": "server-sets"
@@ -627,17 +623,13 @@
       {
         "section": "^Team policy",
         "selectors": [
-          ".mcp-member",
           "[data-view=\"connectors\"] .mono",
-          ".mcp-fld",
           ".mcp-secret",
           ".mcp-state",
-          ".mcp-server-row",
           ".mcp-def-row",
           ".mcp-def-fill",
           ".mcp-res-",
           ".mcp-resolution",
-          "#plugin-modal .card:has(.mcp-imp)",
           ".mcp-imp"
         ],
         "feature": "mcp-servers",
