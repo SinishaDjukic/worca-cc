@@ -412,6 +412,18 @@ const withRequirementsInput = (nodes) => nodes.map((n) => {
   return { ...n, config };
 });
 
+/** The inverse, for one node of a running slice graph: a re-plan that ended unsliced checks no agreed list, so its node
+ *  reads as the plain Shaper graph's. Any other node is returned as is. Pure. */
+export function withoutRequirementsInput(node) {
+  const { extraInputs = [], ...config } = node?.config || {};
+  const rest = extraInputs.filter((e) => e.id !== REQUIREMENTS_INPUT.id);
+  if (rest.length === extraInputs.length) return node;
+  if (rest.length) config.extraInputs = rest;
+  if (config.roleReview?.checklist === SHAPE_REQ_CODE_REVIEW.checklist) config.roleReview = SHAPE_CODE_ROLES_CONFIG.roleReview;
+  if (config.approve?.coverage) { const { coverage, ...approve } = config.approve; config.approve = approve; }
+  return { ...node, config };
+}
+
 /** A Shaper graph with the requirements stage in place of Clarify. Pure: every other node and wire keeps its id. */
 export function requirementsVariant(graph, id) {
   return deepFreeze({

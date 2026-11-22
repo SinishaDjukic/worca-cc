@@ -381,3 +381,60 @@ test('D3: syncRequirementsTab inserts a role=tab button after Runs and a role=ta
   assert.equal(root.querySelector('.rd-tab[data-tab="requirements"]'), null);
   assert.equal(n, 3, 'nothing mounted while off');
 });
+
+// ── small runs: an open stop on the feature page, the one-line rows, Create N PRs and the visible reason ──
+const visibleBar = (root) => [...root.querySelectorAll('.gpage-actions [data-model-action]')].filter((b) => !b.hidden);
+test('item 6: a stop in the question slot leaves the bar without an answer, so one primary stays; any other ask keeps it', () => {
+  const doc = trackDom(new JSDOM('<!doctype html><body></body>')).window.document;
+  const mount = (stop) => (slot) => {
+    slot.hidden = false;
+    if (stop) slot.dataset.stop = ''; else delete slot.dataset.stop;
+    slot.innerHTML = '<div class="qpanel"><button class="btn btn-primary" data-qpanel-submit>Re-plan</button></div>';
+  };
+  const root = buildGroupPage(doc);
+  paintGroupPage(root, { row: row(), project: 'p', tab: 'runs' }, { ...NOOP, mountQuestion: mount(true), answerLabel: () => 'Re-plan' });
+  assert.deepEqual(visibleBar(root).map((b) => b.dataset.modelAction), []);
+  assert.deepEqual([...root.querySelectorAll('.btn-primary')].filter((b) => !b.closest('[hidden]')).map((b) => b.textContent), ['Re-plan']);
+  paintGroupPage(root, { row: row(), project: 'p', tab: 'runs' }, { ...NOOP, mountQuestion: mount(false), answerLabel: () => 'Agree and plan' });
+  assert.deepEqual(visibleBar(root).map((b) => b.textContent), ['Agree and plan']);
+});
+
+test('item 7: shortState draws one-line rows with its words; without it the rows are dev\'s', () => {
+  const doc = trackDom(new JSDOM('<!doctype html><body></body>')).window.document;
+  const root = buildGroupPage(doc);
+  const words = { 1: 'done', 2: 'waiting for you', 3: null };
+  paintGroupPage(root, { row: row(), project: 'p', tab: 'runs', shortState: (mb) => words[mb.position] }, NOOP);
+  const list = root.querySelector('.gpage-runs .run-members');
+  assert.ok(list.classList.contains('is-one-line'));
+  assert.deepEqual([...list.querySelectorAll('.run-member-state')].map((x) => x.textContent).slice(1), ['done', 'waiting for you', 'Waiting · starts after run 2']);
+  assert.equal(list.querySelector('.run-member-line'), null);
+  paintGroupPage(root, { row: row(), project: 'p', tab: 'runs' }, NOOP);
+  const dev = root.querySelector('.gpage-runs .run-members');
+  assert.equal(dev.className, 'run-members is-table');
+  assert.equal(dev.querySelectorAll('.run-member-line').length, 4);
+});
+
+test('item 8 (D11): while Ship is blocked the status line ends with the reason; a held row says it itself; unblocked as before', () => {
+  const doc = trackDom(new JSDOM('<!doctype html><body></body>')).window.document;
+  const reason = 'Waiting for Compliance to confirm R-comp-4';
+  const text = (view, hold = null) => {
+    const root = buildGroupPage(doc);
+    const heads = [];
+    const model = groupModel({ kind: 'feature', title: 'T', members: [done, done], hold }, { now: NOW });
+    paintGroupPage(root, { row: { ...row(), planning: null, model, members: model.members.map((m, i) => ({ position: i + 1, title: `S${i + 1}`, href: '#x', model: m })) },
+      project: 'p', tab: 'runs', ...view }, { ...NOOP, paintHead: (a, s, head) => heads.push(head) });
+    return [root.querySelector('.gpage-card .run-status').textContent, heads.at(-1).cta];
+  };
+  const [blocked, cta] = text({ ship: { n: 2, blocked: true, reason } });
+  assert.equal(blocked.split(reason).length - 1, 1, blocked);
+  assert.match(blocked, /^Ready to ship/);
+  assert.deepEqual(cta, { state: 'create', label: 'Create 2 PRs', disabled: true, quiet: true, title: reason });
+  const [open, cta2] = text({ ship: { n: 2, blocked: false, reason: '' } });
+  assert.equal(open, text({})[0]);
+  assert.deepEqual(cta2, { state: 'create', label: 'Create 2 PRs' });
+  const [held] = text({ ship: { n: 2, blocked: true, reason: 'R-ops-1 is owned by no run' } }, 'R-ops-1 is owned by no run');
+  assert.equal(held.split('R-ops-1 is owned by no run').length - 1, 1, held);
+  // The Overview tab's ready Ship card says the reason: the status line does not repeat it.
+  const [onOverview] = text({ ship: { n: 2, blocked: true, reason }, overview: true, tab: 'overview' });
+  assert.equal(onOverview.includes(reason), false, onOverview);
+});

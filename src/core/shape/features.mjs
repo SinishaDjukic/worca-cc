@@ -15,13 +15,14 @@ import { prototypeView } from '../../shared/shape/prototype.mjs';
 import { planVersionOf, startsFromOf, ownsOf } from '../../shared/shape/run-facts.mjs';
 import { requirementsCheck } from '../../shared/review/requirements-coverage.mjs';
 import { acceptanceGate, ledgerCheck } from '../../shared/shape/acceptance.mjs';
-import { shipLedger, careOutcome, unmetLines } from '../../shared/shape/ship-ledger.mjs';
+import { shipLedger, unownedReason, careOutcome, unmetLines } from '../../shared/shape/ship-ledger.mjs';
 import { rerunsOf } from '../../shared/shape/req-status.mjs';
 import { latestChecklist, checklistMarkdown } from '../../shared/shape/review-checklist.mjs';
 import { buildDecisionLog } from '../../shared/shape/feature-log.mjs';
 import { stopOptionOf } from '../../shared/shape/run-stops.mjs';
 import { CHANGES_MAX } from '../../shared/shape/req-change.mjs';
 import { PLAN_ASK_KIND } from './run.mjs';
+import { SHAPE_SLICE_REQ_WORKFLOW_ID, SHAPE_UX_SLICE_REQ_WORKFLOW_ID } from '../graph/builtin-workflows.mjs';
 import { roundsOf } from './rounds.mjs';
 import { refuseWhileShipping } from './ship-lock.mjs';
 import { verifyView, startVerifyCheck, stillFinishing, roundOpen, shipRuleOn } from './verifier.mjs';
@@ -218,12 +219,15 @@ function shipAcceptance(f, slices) {
 }
 
 /** The ship gate's refusal body (D8) while an agreed requirement is unmarked, else null. Feature D1 (D7): a marked
- *  feature's gate reads `ship.smallRuns`: only the requirements a person confirms must be marked. */
+ *  feature's gate reads `ship.smallRuns`: only the requirements a person confirms must be marked, and (fail closed)
+ *  every other one must have a run; one that has neither names no role. */
 export function acceptanceRefusal(view) {
   const sr = view?.ship?.smallRuns;
   if (sr) {
     if (!sr.blocked) return null;
-    return { error: sr.reason, code: 'ACCEPTANCE_INCOMPLETE', missing: [...sr.waiting], role: sr.confirmed.find((c) => c.state === 'waiting')?.role || null };
+    const unowned = sr.unowned || [];
+    return { error: sr.reason, code: 'ACCEPTANCE_INCOMPLETE', missing: [...sr.waiting, ...unowned],
+      role: unowned.length ? null : sr.confirmed.find((c) => c.state === 'waiting')?.role || null };
   }
   const ledger = view?.ship?.acceptance;
   if (!ledger || ledger.ready) return null;
@@ -268,6 +272,13 @@ function baseName(projectDir, root) {
 /** The ship ledger of feature row `f` (ship-ledger.mjs), with `verify` the Verifier's view or null. */
 const ledgerOf = (f, verify, status = {}) => shipLedger({ agreed: f.outline.agreed || [], kinds: requirementKindsOf(j(f.requirement_kinds, null), f.outline),
   acceptance: f.outline.acceptance, verify, ...status });
+
+/** Fail closed, for the Runs list: why a feature is not ready to ship although its runs are done (an agreed requirement
+ *  has no run and no person), from its row alone; null when none. The caller checks the flag and the marker. */
+export function shipHold(featureId) {
+  const f = featureRow(featureId);
+  return f ? unownedReason(requirementKindsOf(j(f.requirement_kinds, null), f.outline).filter((k) => k.kind === 'owned' && k.run === null).map((k) => k.id)) : null;
+}
 
 /** A feature's recorded figures (shape_feature_figures, one row), or null. Readable with the flag off; measure.mjs
  *  re-exports it. */
@@ -410,7 +421,10 @@ export function featureView(id, { live = () => null, finishing = () => false, on
   const verified = verify ? verify.state === 'clean' || verify.state === 'accepted' : !ruled;
   const settling = ruled && (stillFinishing(slices, finishing) || roundOpen(slices));
   const release = shipped && f.release_version ? { version: f.release_version, url: f.release_url || null, error: f.release_error || null } : null;
-  const ship = { ready: slices.length > 0 && done === slices.length && f.status === 'active' && !shipped && !roundLive && verified && !settling,
+  const sr = smallRunsOfFeature(f.id) ? smallRunsShip(f, slices, verify) : null;
+  const ship = { ready: slices.length > 0 && done === slices.length && f.status === 'active' && !shipped && !roundLive && verified && !settling
+      // Fail closed: an agreed requirement with no run and no person (a missing mark blocks through the ledger instead).
+      && !(sr && sr.unowned),
     mode: shipped ? f.ship_mode : null, prUrl: shipped ? f.ship_pr_url || null : null, lastPrUrl, suggested: null, linesAdded: null,
     linesRemoved: null, files: null, release,
     // s4: what the applied Ship card shows, wherever it renders (chat, group page, Plans).
@@ -418,7 +432,7 @@ export function featureView(id, { live = () => null, finishing = () => false, on
       closed: f.ship_mode === 'one' ? (f.ship_closed ?? slices.filter((s) => s.pr && s.pr.state === 'CLOSED').length) : 0, release } : null,
     ...(f.outline.agreed?.length ? { acceptance: shipAcceptance(f, slices) } : {}),
     // Feature D1 (D10): a marked feature's Ship model, last; an unmarked feature keeps dev's keys.
-    ...(smallRunsOfFeature(f.id) ? { smallRuns: smallRunsShip(f, slices, verify) } : {}) };
+    ...(sr ? { smallRuns: sr } : {}) };
   // The Re-plan the rest run (replanning/replanned): its ticket id is the run id it fires as (ui/server.mjs:2188).
   const rt = f.replan_ticket_id ? getTicket(f.replan_ticket_id) : null;
   const replan = rt ? { ticketId: rt.id, pipelineId: rt.pipelineId || null, runId: rt.pipelineId ? (live(rt.pipelineId)?.runId || null) : null } : null;
@@ -466,6 +480,17 @@ function stopWords(f, rows, slices, live) {
     const dep = (f.outline.slices[s.index - 1]?.dependsOn || []).map((id) => bySlice.get(id)).find((d) => d && d.stop);
     if (dep) s.waitsFor = dep.index;
   }
+}
+
+/** Small runs: what each slice's one short word reads (run-agents.mjs cardShortWord), from the rows alone (no full view):
+ *  index → {kind, state, stop?, waitsFor?}, the words featureView's slices carry. */
+export function sliceWords(featureId, { live = () => null } = {}) {
+  const f = featureRow(featureId);
+  if (!f) return new Map();
+  const rows = sliceRows(f.id);
+  const slices = rows.map((r) => ({ index: r.index, pipelineId: r.pipelineId, kind: r.kind, state: sliceState(r, live) }));
+  stopWords(f, rows, slices, live);
+  return new Map(slices.map(({ index, pipelineId, ...s }) => [index, s]));
 }
 
 /** D17: `change` is the newest entry whose landing run (the change run, else the owner) is not done; `changes` every
@@ -1098,8 +1123,25 @@ export function sliceGateState(ticket, { now = Date.now(), isLive = null, live =
   } catch { return null; }
 }
 
+/** Small runs: what a re-plan of the feature carries, from the stored row: every agreed requirement no finished run owns
+ *  (`agreed`, in agreed order), the ones a person confirms among them (`confirmed`, role keys) and the finished runs'
+ *  indexes (`done`). An id a finished run owns is never carried. Empty lists for an unknown feature. */
+export function carriedRequirements(featureId) {
+  const f = featureId ? featureRow(featureId) : null;
+  if (!f) return { agreed: [], confirmed: [], done: [] };
+  const done = sliceRows(f.id).filter((r) => sliceState(r, () => null) === 'done').map((r) => r.index);
+  const kinds = requirementKindsOf(j(f.requirement_kinds, null), f.outline).filter((k) => k.kind === 'confirmed' || !done.includes(k.run));
+  const ids = new Set(kinds.map((k) => k.id));
+  return {
+    agreed: (f.outline.agreed || []).filter((a) => ids.has(a.id)).map(({ id, text, example }) => ({ id, text: text || '', ...(example ? { example } : {}) })),
+    confirmed: kinds.filter((k) => k.kind === 'confirmed').map(({ id, role }) => ({ id, role })), done,
+  };
+}
+
 /** Re-plan the rest (L9): cancel what waits, then one new shaped run (slicing on) from the last done slice.
- *  Throws SHIPPING while the Ship lock holds. */
+ *  A marked feature with the flag on hands its carried requirements to that run as its agreed list (the slice-requirements
+ *  workflow: the brief is the requirements input). That run starts from the run that finished last, which holds every
+ *  finished run's work (the source a slice starts from too), not from the highest index. Throws SHIPPING while the Ship lock holds. */
 export function replanRest(id, { live = () => null, by = null, now = Date.now() } = {}) {
   const f = featureRow(id);
   if (!f) return null;
@@ -1108,7 +1150,10 @@ export function replanRest(id, { live = () => null, by = null, now = Date.now() 
   const view = featureView(id, { live });
   const busy = busySliceOf(id, { live });
   if (busy) return { status: 409, error: `Slice ${busy.index} is still going: stop it first, then re-plan the rest` };
-  const lastDone = [...view.slices].reverse().find((s) => s.state === 'done');
+  const found = shaperSmallRunsOn() && smallRunsOfFeature(id) ? carriedRequirements(id) : null;
+  const carried = found && found.agreed.length ? found : null;
+  const latest = carried ? finishedSlices(id).at(-1)?.index : null;
+  const lastDone = view.slices.find((s) => s.index === latest) || [...view.slices].reverse().find((s) => s.state === 'done');
   // previousBranchesOf → {sourceBranch} | {pending:true} | null (scheduler.mjs:504): the done slice's work branch.
   const prev = lastDone ? previousBranchesOf(lastDone.pipelineId) : null;
   if (prev?.pending) return { status: 409, error: 'the last finished slice is still merging its work back: try again in a moment' };
@@ -1116,8 +1161,9 @@ export function replanRest(id, { live = () => null, by = null, now = Date.now() 
   const branch = lastDone ? prev.sourceBranch : f.source_branch || null;
   const { top, internal } = requestOptions(f.base, by);
   const request = {
-    projectDir: f.project_dir, prompt: replanBrief({ featureTitle: f.title, outline: f.outline, doneCount: view.done }),
-    title: `${f.title} · re-plan`, workflowId: f.workflow_id, ...top, ...(branch ? { sourceBranch: branch } : {}),
+    projectDir: f.project_dir, prompt: replanBrief({ featureTitle: f.title, outline: f.outline, doneCount: view.done, carried }),
+    title: `${f.title} · re-plan`,
+    workflowId: !carried ? f.workflow_id : f.perspectives.includes('ux') ? SHAPE_UX_SLICE_REQ_WORKFLOW_ID : SHAPE_SLICE_REQ_WORKFLOW_ID, ...top, ...(branch ? { sourceBranch: branch } : {}),
     ...originCarry(f),
     shape: { perspectives: f.perspectives, slices: 'auto', replaces: id },
     internal,

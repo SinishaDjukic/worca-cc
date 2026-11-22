@@ -30,7 +30,7 @@ import { fmtUsd } from './graph/run-decor.mjs';
 import { engineLabel } from '../../src/shared/engine-switch.mjs';
 import { runModel, groupModel, finishedNeedsYou, WATCH_WHY } from '../../src/shared/run-model.mjs';
 import { kindChip } from './run-kind.mjs';
-import { cardShortWord } from '../../src/shared/shape/run-agents.mjs';
+import { memberShortWord } from '../../src/shared/shape/run-agents.mjs';
 
 const pad2 = (n) => String(n).padStart(2, '0');
 const DAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
@@ -481,7 +481,7 @@ export function listLine(row, { section = '', time = '' } = {}) {
       case 'waiting': return and('Waiting', p, ((m.current && m.current.line) || '').replace(/^Waiting(?: · )?/, ''));
       case 'failed': return and(p ? `Failed at ${p.toLowerCase()}` : 'Failed', time);
       case 'stopped': return and(p ? `Stopped at ${p.toLowerCase()}` : 'Stopped', time);
-      case 'ready': return and('Ready to ship', time);
+      case 'ready': return and(m.hold || 'Ready to ship', time);
       case 'in-review': return m.pr ? time : and(m.line, time);
       default: return m.pr ? time : and('Merged', time);
     }
@@ -536,7 +536,7 @@ export function groupRow(g, { now = Date.now() } = {}) {
   const raw = (g.members || []).map((mb) => ({ ...(mb.run || {}), memo: mb.memo || null }));
   const planningRaw = g.planning ? { ...(g.planning.run || {}), memo: g.planning.memo || null } : null;
   const model = groupModel({ kind: g.groupKind === 'feature' ? 'feature' : 'chain', title: g.title, members: raw,
-    planning: planningRaw, pr: g.pr || null, memo: g.memo || null }, { now });
+    planning: planningRaw, pr: g.pr || null, memo: g.memo || null, hold: g.hold || null }, { now });
   const members = (g.members || []).map((mb, i) => ({ ...mb, key: `member:${g.id}/${mb.pipelineId || mb.ticketId || i}`, model: model.members[i],
     needs: needsYou({ kind: mb.kind || 'hist', status: mb.run && mb.run.status, ask: !!(mb.run && mb.run.pendingQuestion != null),
       prNeeds: prNeedsOf(mb.run) }) }));
@@ -1019,7 +1019,7 @@ function renderItem(doc, r, { section = '', level = 'top', checked, selecting, s
   if (staged) line = DOT_SAYS.has(r.model.state) ? '' : dropLead(line, r.model.progress.label);
   // D2 (owner direction): a small-runs member says the Chat card's short word (done, building, waits for run 2); a run
   // the card has no word for (null: no Care plan, held) keeps dev's line.
-  const short = smallRuns && level === 'member' ? cardShortWord({ model: r.model, run: r.run }, r.snap || null) : null;
+  const short = smallRuns && level === 'member' ? memberShortWord(r) : null;
   if (short) line = short;
   // D6: a stack's sub-line is its newest round's (the stack line below the row); the row keeps its own line only while
   // it needs a person for its own reason, and the round line comes second.

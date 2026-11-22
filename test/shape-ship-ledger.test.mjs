@@ -2,7 +2,7 @@
 // marked feature's Ship reads (src/shared/shape/ship-ledger.mjs). Pure.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { shipLedger, careOutcome, unmetLines, confirmMarkOf, REASON_FIRST, SMALL_RUNS_SHIP } from '../src/shared/shape/ship-ledger.mjs';
+import { shipLedger, unownedReason, careOutcome, unmetLines, confirmMarkOf, REASON_FIRST, SMALL_RUNS_SHIP } from '../src/shared/shape/ship-ledger.mjs';
 import { careChoiceText, careRecordLine } from '../src/shared/shape/feature-record.mjs';
 import { requirementStatus } from '../src/shared/shape/req-status.mjs';
 
@@ -69,9 +69,9 @@ test('shipLedger: with runs every owned and confirmed entry has shown', () => {
     const { shown, ...bare } = e;
     assert.deepEqual(shown, requirementStatus(bare, { runs, reruns }), e.id);
   }
-  assert.deepEqual(l.owned.map((o) => o.shown.text), ['run 1 · changed · run 3 builds it', 'run 2 · being built', 'a run · to do']);
+  assert.deepEqual(l.owned.map((o) => o.shown.text), ['run 1 · changed · run 3 builds it', 'run 2 · being built', 'owned by no run · confirmed by no person']);
   assert.equal(l.confirmed[0].shown.text, 'confirmed by a person · Compliance');
-  assert.deepEqual(l.met, { met: 3, total: 4 }, 'the counts do not move');
+  assert.deepEqual(l.met, { met: 2, total: 4 }, 'an owner-less requirement is not met');
 });
 
 test('shipLedger: without runs the ledger deep-equals the D1 output', () => {
@@ -79,9 +79,33 @@ test('shipLedger: without runs the ledger deep-equals the D1 output', () => {
   const bare = shipLedger({ agreed: AGREED, kinds: KINDS, acceptance, verify: null });
   assert.deepEqual(shipLedger({ agreed: AGREED, kinds: KINDS, acceptance, verify: null, runs: null, reruns: [] }), bare);
   assert.ok([...bare.owned, ...bare.confirmed].every((e) => !('shown' in e)));
-  const withRuns = shipLedger({ agreed: AGREED, kinds: KINDS, acceptance, verify: null, runs: [] });
+  assert.ok(!('unowned' in bare));
+});
+
+test('shipLedger: every id owned: shown is the only key runs add', () => {
+  const kinds = KINDS.map((k) => (k.id === 'R-sec-1' ? { ...k, run: 2 } : k));
+  const acceptance = [{ id: 'R-comp-4', mark: 'not-met', reason: 'no copy', at: '2026-11-22T16:55:00.000Z' }];
+  const bare = shipLedger({ agreed: AGREED, kinds, acceptance, verify: null });
+  const withRuns = shipLedger({ agreed: AGREED, kinds, acceptance, verify: null, runs: [] });
   const strip = (l) => ({ ...l, owned: l.owned.map(({ shown, ...e }) => e), confirmed: l.confirmed.map(({ shown, ...e }) => e) });
   assert.deepEqual(strip(withRuns), bare, 'shown is the only key runs add');
+});
+
+// Fail closed: an agreed requirement owned by no run and confirmed by no person blocks Ship, whatever is marked.
+test('shipLedger: with runs, an owner-less id blocks and the reason names it, over a waiting mark and an accepted gap', () => {
+  const reason = 'R-sec-1 is owned by no run and confirmed by no person';
+  const waits = shipLedger({ agreed: AGREED, kinds: KINDS, acceptance: [], runs: [] });
+  assert.deepEqual([waits.blocked, waits.reason, waits.unowned, waits.waiting], [true, reason, ['R-sec-1'], ['R-comp-4']]);
+  assert.deepEqual(waits.owned.map((o) => o.status), ['holds', 'holds', 'unowned']);
+  assert.equal(waits.confirmed[0].state, 'waiting');
+  const marked = shipLedger({ agreed: AGREED, kinds: KINDS, acceptance: [{ id: 'R-comp-4', mark: 'met' }], runs: [] });
+  assert.deepEqual([marked.blocked, marked.reason, marked.met], [true, reason, { met: 3, total: 4 }]);
+  const gap = shipLedger({ agreed: AGREED, kinds: KINDS, acceptance: [], runs: [], verify: { state: 'accepted', gaps: [{ id: 'R-sec-1' }] } });
+  assert.equal(gap.owned[2].status, 'unowned');
+  const two = shipLedger({ agreed: AGREED, kinds: [{ id: 'R-po-1', kind: 'owned', run: null }, ...KINDS.slice(1)], acceptance: [], runs: [] });
+  assert.deepEqual([two.unowned, two.reason], [['R-po-1', 'R-sec-1'], 'R-po-1 and 1 more are owned by no run and confirmed by no person']);
+  assert.equal(unownedReason([]), null);
+  assert.equal(unownedReason(['R-ops-1']), 'R-ops-1 is owned by no run and confirmed by no person');
 });
 
 test('unmetLines: one line each, Not met and Dropped; confirmMarkOf reads not_met', () => {

@@ -3,6 +3,8 @@
 import { releaseVersionHint } from '../../../src/core/draft-release.mjs';
 import { actorOf } from '../../../src/core/identity.mjs';
 import { cancelRest, currentFeatureId, featureShipSuggestion, featureThread, featureView, listShapePlans, rechainWaiting, replanRest, resumeFeature, setApproveEach, setFeatureAcceptance, shaperCard, sliceOfPipeline, storedAgentFacts } from '../../../src/core/shape/features.mjs';
+import { shaperSmallRunsOn } from '../../../src/core/shape/small-runs.mjs';
+import { verifyCheckOfPipeline } from '../../../src/core/shape/verifier.mjs';
 import { normalizeAcceptance } from '../../../src/shared/shape/acceptance.mjs';
 import { CONFIRM_REASON_MAX, MARK_WORDS, confirmMarkOf, reasonLine } from '../../../src/shared/shape/ship-ledger.mjs';
 import { recordFeatureFigures } from '../../../src/core/shape/measure.mjs';
@@ -50,7 +52,13 @@ app.get('/api/shape/features/:id', async (req, res) => {
 app.get('/api/shape/pipelines/:pid/slice', async (req, res) => {
   try {
     const out = sliceOfPipeline(req.params.pid, { live: liveSliceOf });
-    if (!out) return res.status(404).json({ error: 'not a slice' });
+    if (!out) {
+      // A Verifier's run is no slice: with the flag on it answers its feature alone, for its stop's link (no slice fields).
+      const check = shaperSmallRunsOn() ? verifyCheckOfPipeline(req.params.pid) : null;
+      if (!check) return res.status(404).json({ error: 'not a slice' });
+      const featureId = currentFeatureId(check.featureId);
+      return res.json({ verifier: true, featureId, threadId: featureThread(featureId)?.threadId || null });
+    }
     const stored = 'owns' in out ? { stored: await storedAgentFacts(req.params.pid) } : {};
     res.json({ ...out, threadId: featureThread(out.featureId)?.threadId || null, ...stored });   // s2 D14: the thread that started the feature
   } catch (err) { if (!res.headersSent) shapeRouteError(res, err); }

@@ -55,12 +55,14 @@ export function checkMark(doc, kind, cls = '') {
  *  (small runs B3) draws the id in its own `.plan-check-id` column, read in place of the sr-only id, and wraps the label
  *  and its detail in one `.plan-check-text`, so the detail sits beside the label only when both fit on the line (an empty
  *  id keeps the column, so a list's texts share one x). `textWrap` (small runs C2) wraps them the same way with no id
- *  column. */
+ *  column. `data` fills the row's dataset (a null value is left out); `noteLead` ({text, href}) starts the note with a
+ *  link. */
 export function buildCheckRows(doc, check) {
   const h = (tag, cls, text) => { const e = doc.createElement(tag); e.className = cls; if (text != null) e.textContent = text; return e; };
   return (check && Array.isArray(check.items) ? check.items : []).map((it) => {
     const met = it.pass && !it.state;
     const row = h('div', `plan-check-row${met ? ' ok' : ''}`);
+    for (const [k, v] of Object.entries(it.data || {})) if (v != null) row.dataset[k] = v;
     const mark = checkMark(doc, it.mark || (it.state === 'dropped' ? 'none' : met ? 'check' : 'x'));
     mark.setAttribute('aria-label', it.ariaLabel || (it.pass ? 'met' : 'unmet'));
     row.appendChild(mark);
@@ -70,7 +72,14 @@ export function buildCheckRows(doc, check) {
     if (idCol) row.appendChild(h('span', 'plan-check-id', it.id));
     const text = idCol || it.textWrap ? row.appendChild(h('span', 'plan-check-text')) : row;
     text.appendChild(h('span', 'plan-check-label', it.label));
-    if (noted) text.appendChild(h('span', 'plan-check-detail', it.note));
+    if (noted) {
+      const note = text.appendChild(h('span', 'plan-check-detail', it.note));
+      if (it.noteLead) {
+        const a = h('a', 'rd-fact-link', it.noteLead.text);
+        a.setAttribute('href', it.noteLead.href);
+        note.replaceChildren(a, ` · ${it.note}`);
+      }
+    }
     else if (!it.pass && it.detail) text.appendChild(h('span', 'plan-check-detail', it.detail));
     // An optional `action` (a button the caller built, e.g. the Split's "Ask the role to confirm") ends the row.
     if (it.action) row.appendChild(it.action);

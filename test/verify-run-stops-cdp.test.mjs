@@ -49,3 +49,24 @@ test('both themes at 375px, the 30-minute cap, a free port and a sandboxed HOME'
   assert.match(s, /'--remote-debugging-port=0'/);
   assert.match(s, /process\.env\.HOME = home/);
 });
+
+test('the pages: 1280 in both themes and 375 in light; the run page, the feature page, one word per run and a finished feature', () => {
+  const s = src();
+  assert.match(s, /const PAGE_CELLS = \[\[1280, 'light'\], \[1280, 'dark'\], \[375, 'light'\]\];/);
+  assert.match(s, /`#chat\/\$\{thread\.id\}`, '\.issues', 'run-thread'/, 'the run page of a feature a thread started');
+  assert.match(s, /`#feature\/\$\{fx\.id\}`, '\.plan-checks', 'run-no-thread'/, 'and of one it did not');
+  assert.match(s, /s\.links\.length === 1 && s\.links\[0\] === href/);
+  assert.match(s, /s\.controls === 0 && s\.findings === 1/);
+  assert.match(s, /JSON\.stringify\(p\.heads\) === JSON\.stringify\(\[PQ2\.stop\.head\]\)/, 'one visible head');
+  assert.match(s, /JSON\.stringify\(p\.primaries\) === '\["Re-plan"\]'/, 'one primary');
+  assert.match(s, /Plan ready for your approval/);
+  assert.match(s, /p\.bar\.length === 0/);
+  assert.match(s, /\/\^Re-plan\/\.test\(x\)/, 'no Re-plan in the ⋯');
+  assert.match(s, /JSON\.stringify\(onPage\) === JSON\.stringify\(onCard\) && JSON\.stringify\(onPage\) === JSON\.stringify\(onList\)/);
+  assert.match(s, /m\.rows\.length === 10 && off\.length === 0/, 'ten one-line 32px rows');
+  assert.match(s, /c\.text === 'Create 2 PRs' && c\.disabled/);
+  assert.match(s, /the reason is on the page/);
+  assert.match(s, /state: 'clean', head: \{ index: 2, pipelineId: 'ad000002' \}/, 'the finished feature has passed its Verifier check');
+  assert.match(s, /t === '2 · 1 met · 1 dropped'/);
+  assert.match(s, /s\.line === 'none' && s\.bg === 'rgba\(0, 0, 0, 0\)'/, 'Show is a quiet button');
+});

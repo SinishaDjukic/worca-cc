@@ -3,7 +3,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
-import { runShortWord, runAgentRows, agentDetail } from '../src/shared/shape/run-agents.mjs';
+import { runShortWord, runAgentRows, agentDetail, cardShortWord, memberShortWord } from '../src/shared/shape/run-agents.mjs';
 import { careRunPlan } from '../src/shared/shape/feature-record.mjs';
 import { snapshotFromState } from '../ui/public/ask-run-card.mjs';
 
@@ -125,4 +125,19 @@ test('D2 agentDetail: plan vN (· after the plan review from v2), T of T tests p
     assert.equal(agentDetail(done(key), null), null);
     assert.equal(agentDetail(done(key), undefined), null);
   }
+});
+
+test('memberShortWord is cardShortWord of a member with the snapshot and slice it carries', () => {
+  const stop = { status: 'running', pendingQuestion: { stop: { reason: 'check' } } };
+  for (const mb of [
+    { model: { state: 'needs-you' }, run: {}, snap: stop },
+    { model: { state: 'working' }, run: {}, snap: { status: 'running', stepper: { careRun: {} }, active: [{ nodeId: 'n_impl' }] } },
+    { model: { state: 'working' }, run: {}, snap: stop, slice: { stop: { held: true, after: 9 } } },
+    { model: { state: 'waiting' }, run: { ticket: {} }, slice: { waitsFor: 8 } },
+    { model: { state: 'ready' }, run: {} }, { model: { state: 'needs-you' }, run: {} }]) {
+    assert.equal(memberShortWord(mb), cardShortWord(mb, mb.snap || null, mb.slice || null));
+  }
+  assert.deepEqual([memberShortWord({ model: { state: 'needs-you' }, run: {}, snap: stop }), memberShortWord({ model: { state: 'working' }, run: {}, slice: { stop: { held: true, after: 9 } } }),
+    memberShortWord({ model: { state: 'waiting' }, run: {}, slice: { waitsFor: 8 } }), memberShortWord({ model: { state: 'ready' }, run: {} })],
+  ['waiting for you', 'after run 9', 'waits for run 8', 'done']);
 });

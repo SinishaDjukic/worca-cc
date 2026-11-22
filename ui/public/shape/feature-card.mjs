@@ -119,13 +119,17 @@ const ONE_DETAIL = Object.freeze({
   SV: ({ k, n }) => `the Verifier walks the main flow · ${k} of ${plural(n, 'run')} done`,
   SR: ({ view }) => shipDetail(view),
 });
+/** Fail closed: the ship ledger holds an agreed requirement with no run and no person (ship-ledger.mjs). */
+const unownedOf = (sr) => !!(sr && Array.isArray(sr.unowned) && sr.unowned.length);
 /** Feature D1 (D16): the ship step's detail: `waiting for Compliance` while a confirmed requirement waits (role labels
- *  joined by "and"), the Ship card mounted or not (the owner's call: the state detail says who it waits for);
+ *  joined by "and"), the Ship card mounted or not (the owner's call: the state detail says who it waits for); the ledger's
+ *  reason while a requirement has no run and no person;
  *  `N PRs open` once shipped, else `Ready to ship`. */
 function shipDetail(view) {
   const ship = (view && view.ship) || {};
   const sr = ship.smallRuns || null;
   if (ship.mode) return plural(sr ? sr.order.filter((o) => o.pr).length : (view.slices || []).filter((s) => s.pr && s.pr.url).length, 'PR') + ' open';
+  if (unownedOf(sr)) return sr.reason;
   if (sr && sr.blocked) {
     const labels = [...new Set(sr.confirmed.filter((c) => c.state === 'waiting').map((c) => c.roleLabel))];
     return `waiting for ${labels.join(' and ')}`;
@@ -134,6 +138,18 @@ function shipDetail(view) {
 }
 /** C5: a stopped or failed Verifier run's line: the card's Resume starts a fresh check (resumeFeature). */
 const VERIFY_HALTED = 'The Verifier stopped · Resume checks again';
+const VERIFY_WAIT = Object.freeze({ verifying: 'The Verifier is checking the feature', gaps: 'The Verifier found a gap', asking: 'The Verifier waits for your answer',
+  paused: 'The Verifier is paused', halted: VERIFY_HALTED, clean: 'Worca is finishing a run', accepted: 'Worca is finishing a run' });
+/** Why a small-runs feature whose runs are done cannot ship yet (featureView's `ship.ready` is false), for the feature
+ *  page's head; '' when it is ready (a missing mark blocks through the ledger instead). */
+export function shipWaitText(view) {
+  const ship = (view && view.ship) || {};
+  if (!view || ship.ready) return '';
+  if (unownedOf(ship.smallRuns)) return ship.smallRuns.reason;
+  if (ship.mode) return 'Already shipped';
+  if (view.status === 'replanning') return 'The rest is being re-planned';
+  return VERIFY_WAIT[view.verify && view.verify.state] || 'The Verifier has not checked the feature yet';
+}
 
 /** The open ask's question, when this tab holds it (the pointer-only step of a slice has none). */
 const pqOf = (step) => (step && step.snap && step.snap.pendingQuestion) || null;
@@ -197,7 +213,9 @@ export function oneCardModel({ own = null, card = null, snapOf = () => null } = 
   // C5 (D12): the Verifier's word, and the halted line in place of S8's; only with a check (no key otherwise).
   const vs = view && view.verify ? view.verify.state : null;
   const verify = state === 'SV' || state === 'SR' || (state === 'S8' && vs && !['clean', 'accepted', 'verifying'].includes(vs)) ? view.verify : null;
-  const vx = verify ? { verify, word: VERIFY_WORDS[verify.state] || null } : {};
+  // Fail closed: the Verifier's own "Ready to ship" gives way while a requirement has no run and no person.
+  const heldShip = state === 'SR' && unownedOf(view.ship && view.ship.smallRuns);
+  const vx = verify ? { verify, word: heldShip ? ICON_WORD.scheduled : VERIFY_WORDS[verify.state] || null } : {};
   const line = verify && verify.state === 'halted' && state === 'S8' ? VERIFY_HALTED : detail;
   // Small runs C4 (D17): the requirement change the Build step's notice shows, while its landing run is not done.
   return { state, step, detail: line, question, receipts: base.log, runs: !!view, kindWord: FEATURE_KIND, base, change: (view && view.change) || null, ...vx };

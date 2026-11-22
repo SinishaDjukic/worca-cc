@@ -57,6 +57,11 @@ test('gap-accepted reads `gap accepted` even with a later rerun for the id; run 
     { owner: 'a run', role: null, word: 'to do', text: 'a run · to do', mark: 'wait' });
 });
 
+test('an owner-less entry (status unowned) reads owned by no run, whatever the runs and reruns say', () => {
+  const r = requirementStatus(owned('R-po-9', null, 'unowned'), { runs: [{ index: 6, state: 'done' }], reruns: [{ id: 'R-po-9', run: 6, why: 'gap', at: 'x' }] });
+  assert.deepEqual(r, { owner: 'no run', role: null, word: 'confirmed by no person', text: 'owned by no run · confirmed by no person', mark: 'x' });
+});
+
 test('confirmed entries built by `shipLedger` read `confirmed by a person · Compliance` / confirmed by / Marked Not met by you · reason / Marked Dropped by you · reason / needs-reason', () => {
   const agreed = ['R-comp-1', 'R-comp-2', 'R-comp-3', 'R-comp-4', 'R-comp-5'].map((id) => ({ id, text: `${id} text` }));
   const kinds = agreed.map((a) => ({ id: a.id, kind: 'confirmed', role: 'compliance' }));

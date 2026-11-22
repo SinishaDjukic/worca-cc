@@ -75,6 +75,8 @@ export function requirementStatus(entry, { runs = [], reruns = [] } = {}) {
     if (e.mark === 'met') { const word = `confirmed by ${role}`; return { owner, role, word, text: word, mark: 'check' }; }
     return { owner, role, word: marked, text: e.reason ? `${marked} · ${e.reason}` : marked, mark: e.mark === 'dropped' ? 'none' : 'x' };
   }
+  // Fail closed (ship-ledger.mjs): no run owns it and no person confirms it.
+  if (e.status === 'unowned') return { owner: 'no run', role: null, word: 'confirmed by no person', text: 'owned by no run · confirmed by no person', mark: 'x' };
   const byIndex = new Map(list(runs).filter((r) => r && Number.isInteger(r.index)).map((r) => [r.index, r]));
   const stateOf = (n) => { const r = byIndex.get(n); return r ? runWord(r.state, r.stop || null) : runWord(undefined); };
   const owner = Number.isInteger(e.run) ? `run ${e.run}` : 'a run';

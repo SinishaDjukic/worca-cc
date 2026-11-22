@@ -466,6 +466,11 @@ test('C3 one card: open stop and held rows, a dependent waits for its builds-on 
   held.built.dispose(); held.ctl.destroy();
   const css = readFileSync(new URL('../ui/public/shape/shape-it.css', import.meta.url), 'utf8');
   assert.match(css, /\.chat-rc-members \.run-members\.is-one-line \.run-member-title\{[^}]*white-space:nowrap;overflow:hidden;text-overflow:ellipsis;display:block;\}/);
+  // Item 9: the underlined look is the plain Show link's; the Decisions tab's .btn keeps its quiet button.
+  assert.match(css, /\n\.chat-rc-log-show\{margin-left:auto;\}/);
+  assert.match(css, /\.chat-rc-log-show:not\(\.btn\)\{background:none;[^}]*text-decoration:underline;\}/);
+  assert.match(css, /\.chat-rc-log-show:not\(\.btn\):focus-visible\{/);
+  assert.doesNotMatch(css, /\.chat-rc-log-show(?:\{[^}]*(?:background|border|text-decoration)|:focus-visible)/);
 });
 
 // Item 9: a run that has not started and waits on its chain predecessor (no stop) reads the same short word.
@@ -535,6 +540,17 @@ test('C3: a not-started chain run with no stop reads \'waits for run 2\' on the 
       confirmed: [wait('R-comp-4', 'compliance', 'Compliance'), wait('R-sec-1', 'security', 'Security')] }) } });
     assert.equal(notReady.detail, 'waiting for Compliance and Security');
     assert.equal(m(w(sr({}))).detail, 'Ready to ship');
+    // Fail closed: an owner-less requirement: no "Ready to ship" anywhere, and no "waiting for" without a name.
+    const reason = 'R-ops-1 is owned by no run and confirmed by no person';
+    const none = { ...w(sr({ blocked: true, reason, unowned: ['R-ops-1'] })), ship: { ready: false, mode: null, smallRuns: sr({ blocked: true, reason, unowned: ['R-ops-1'] }) } };
+    const s9none = { ...none }; delete s9none.verify;
+    for (const view of [none, s9none]) {
+      const x = m(view);
+      assert.equal(x.detail, reason);
+      assert.doesNotMatch(`${x.word} ${x.detail}`, /Ready to ship|waiting for\s*$/);
+    }
+    assert.deepEqual([m(none).state, m(none).word], ['SR', 'Waiting']);
+    assert.equal('word' in m(s9none), false);
     const pr = (n) => ({ index: n, pr: { number: n, url: `u${n}` }, onto: null });
     const done = m(w(sr({ order: [pr(1), pr(2), pr(3), pr(4)] }), 'stacked'));
     assert.deepEqual([done.step, done.detail], ['ship', '4 PRs open']);

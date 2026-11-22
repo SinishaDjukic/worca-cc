@@ -622,6 +622,13 @@ one of three marks: Met, Not met or Dropped. Not met and Dropped need a one-line
 Met counts as met. The mark is stored with the role the server records, never one the client sends. The role says
 who should confirm; Worca does not check that the person marking holds it. It records who marked and when.
 
+The approved split is what decides: a requirement it confirms is stored with its role, after the person's edits on the
+Split card. **Re-plan the rest** (with the flag on) carries every agreed requirement no finished run owns into the new
+feature's split, as its agreed list. One a person confirms keeps its role, unless the person changes it on the Split
+card. Its mark is not carried: the role marks it again, and Ship waits for it. A requirement a finished run owns stays
+with that run, also while a gap or change run of it is still waiting (Re-plan cancels that run). A re-plan that ends
+with Don't slice carries nothing into a feature: it is planned and reviewed without the list, as before.
+
 ### Ship
 
 Ship is stacked only: Ship with `one` is refused with `STACKED_ONLY`. It opens one PR per run, run 1 (the planning run)
@@ -631,6 +638,9 @@ its own PR when it finishes, before these blocks. Ship is blocked:
 
 - with `ACCEPTANCE_INCOMPLETE` while a confirmed requirement is unmarked; the Ship card reads
   "Waiting for Compliance to confirm R-comp-4";
+- with `ACCEPTANCE_INCOMPLETE` while an agreed requirement is owned by no run and confirmed by no person (with the flag
+  on). The reason names it ("R-ops-1 is owned by no run and confirmed by no person"), no mark opens Ship, and the feature
+  reads "Waiting" instead of "Ready to ship" everywhere. Re-plan the rest is the way out;
 - with `NOT_READY` until the rule below holds. It is checked again when you press Ship, before anything is pushed.
 
 With the flag on, one rule decides: a small-runs feature is ready to ship only when a Verifier check with a clean result is
@@ -669,9 +679,14 @@ fix cycles it stops adding runs by itself and asks you: **Add a run for the gap*
 - **The Runs list group row**: one group per feature, the planning run as run 1, the state word, the runs done of N and
   the cost, once.
 - **The run panel and the Expert run page**: what the run owns, what it starts from, and one Agents place. With the flag
-  off, the Agents tab and Overview stay as today.
+  off, the Agents tab and Overview stay as today. A stopped run's page names the stop and links where it is answered
+  (the feature's card in Chat, or the feature page for a feature no chat started); it has no answer controls.
 - **The feature page**: Runs, Requirements (each with its owner run or confirming role, and its status) and Decisions
-  with the Care line.
+  with the Care line. Its run rows are one line with the same short words as the card and the Runs list ("waiting for
+  you", "waits for run 8", "done"). Its head button reads "Create N PRs" and follows the Ship card: until the
+  feature is ready to ship (the Verifier still checks, or waits for your answer) and while the ledger blocks it, it is
+  off and the status line says why. An open stop shows its own head and primary, and the page offers no Re-plan beside
+  it; the Verifier's stop is asked here too.
 
 ### Off
 
@@ -693,8 +708,10 @@ stops, the stacked-only Ship and the marks that block it. It loses what the flag
   last write the card reads "Stopped", never while Worca is still committing or cleaning up after a run, and its
   **Resume** starts a fresh check. A check that had stopped or failed offers **Resume** at once;
 - no figures are recorded, so there is no new Care outcome;
-- the Runs list group row, what a run owns and starts from, and the feature page's Requirements tab and Care line go
-  back to the classic ones.
+- a requirement owned by no run and confirmed by no person does not block Ship, and a re-plan pressed with the flag off
+  carries no requirements;
+- the Runs list group row, what a run owns and starts from, a stopped run's head and link, and the feature page's
+  Requirements tab, Care line, one-line rows and head button go back to the classic ones.
 
 **Every feature, flag off.** A run started with the flag off gets no marker, except one that re-plans a marked feature.
 Existing features continue by the linear chain (each run after the one before it), no figures are recorded, figures

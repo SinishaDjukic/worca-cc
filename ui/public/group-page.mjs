@@ -142,7 +142,9 @@ export function groupPrList(row) {
 /**
  * Paint (idempotent). `view`: { row (groupRow output), project, tab, overview:boolean, logs:boolean, labels: [] (the
  * members' labels), unmarked?: number (a feature's unmarked requirements: its Create PR is locked), stackedOnly?: boolean (a small-runs
- * feature: the ship line never offers One), requirements?: boolean (D3: a marked feature with the flag on) }.
+ * feature: the ship line never offers One), requirements?: boolean (D3: a marked feature with the flag on), shortState?:
+ * (member) → string|null (small runs: one-line member rows with the card's short words), ship?: {n, blocked, reason}|null
+ * (small runs: the ledger the head's Create N PRs follows) }.
  * `deps`: { onAction(id, btn), onTab(tab), onMore(anchor), mountQuestion(slot, member|null), answerLabel?(), mountOverview(host),
  * mountDecisions(host, row), mountRequirements?(host, row) → Node|null (D3, while `view.requirements`), logsHref(member),
  * labelChip(doc, label), paintHead?(acts, slot, head) } — paintHead paints
@@ -160,7 +162,11 @@ export function paintGroupPage(root, view, deps) {
   title.title = row.title;   // D13: the heading is one line cut with "…"; the full title is the tooltip
   root.querySelector('.gpage-head .kind-chip').textContent = groupKindWord(row);   // run 3 (D7): the group's kind
   paintCrumbs(root.querySelector('.gpage-bar .rd-crumbs'), [{ label: 'Runs', href: '#runs' }, { label: row.title }]);
-  const pm = pageModel(m);
+  const shown = pageModel(m);
+  // Small runs: a disabled Create N PRs says why on the page, not only in its tooltip. A held group's line already does,
+  // and so does the Overview tab's Ship card.
+  const why = view.ship && view.ship.blocked && m.state === 'ready' && !m.hold && !(view.overview && view.tab === 'overview') ? view.ship.reason : '';
+  const pm = why ? { ...shown, line: `${shown.line} · ${why}` } : shown;
   paintRunStatus(root.querySelector('.gpage-card .run-status'), pm, { hold: true });   // run 3 (D10); slice 3: keep the last bar
   // Run 3 (D15): the facts block — Project, Runs, Total cost, Labels (the read-only union of the members' labels).
   const kv = root.querySelector('.gpage-card > .rd-kv');
@@ -184,13 +190,16 @@ export function paintGroupPage(root, view, deps) {
   const stop = root.querySelector('.gpage-stop');
   stop.title = current ? `Stop ${current.isPlanning ? 'Planning' : `Run ${current.position}`}` : 'Stop';
   // Run 4 (D2): the question is mounted first, so the bar's Answer can name the card's own primary.
-  deps.mountQuestion(root.querySelector('.gpage-question'), current);
+  const question = root.querySelector('.gpage-question');
+  deps.mountQuestion(question, current);
+  // Small runs: an open stop's own primary is the page's one primary, as on the run page and the Chat card.
+  const stopOpen = 'stop' in question.dataset && !question.hidden;
   syncActions(root.querySelector('.gpage-actions'), headerActions(m), { own: { stop }, pool: [stop], onAction: deps.onAction,
     disable: { 'ask-changes': "Ask for changes from the run's chat" }, labels: { answer: deps.answerLabel ? deps.answerLabel() : '' },
-    plain: answerFieldOpen(root.querySelector('.gpage-question')) ? ['answer'] : [] });
+    plain: answerFieldOpen(question) ? ['answer'] : [], ...(stopOpen ? { skip: ['answer'] } : {}) });
   if (deps.paintHead) {
     deps.paintHead(root.querySelector('.gpage-card .rd-head-acts'), root.querySelector('.gpage-card .rd-pr-slot'),
-      groupHead({ state: m.state, prs: groupPrList(row), unmarked: view.unmarked || 0 }));
+      groupHead({ state: m.state, prs: groupPrList(row), unmarked: view.unmarked || 0, ship: view.ship || null }));
   }
   // Small runs D3 (D7): the Requirements tab exists only while `view.requirements` (a marked feature, flag on).
   syncRequirementsTab(root, !!view.requirements);
@@ -203,7 +212,7 @@ export function paintGroupPage(root, view, deps) {
   }
   for (const p of root.querySelectorAll('.gpage-panel')) p.hidden = p.dataset.tab !== tab;
   // Slice 3: a frame that changes nothing in the table keeps its nodes (a focused row, the scroll anchor).
-  keepUnchanged(root.querySelector('.gpage-runs'), [renderMemberRows(doc, row)]);
+  keepUnchanged(root.querySelector('.gpage-runs'), [view.shortState ? renderMemberRows(doc, row, { oneLine: true, shortState: view.shortState }) : renderMemberRows(doc, row)]);
   const line = groupShipLine(row, { stackedOnly: !!view.stackedOnly });
   const ship = root.querySelector('.gpage-ship');
   ship.textContent = line;

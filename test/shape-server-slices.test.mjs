@@ -1223,6 +1223,31 @@ test("small runs: schedulerTick starts slice 4 from slice 2's branch while slice
   assert.equal(run.branch.source, `feat/${w.pids[1]}`);
 }));
 
+test('small runs: a re-plan that carries requirements fires on the slice-requirements workflow', () => withEnvVars(SMALL_ON, async () => {
+  const w = shipWorld({ slices: 3, prs: false });
+  const db = getDb();
+  db.prepare('UPDATE pipelines SET shape_stats = ? WHERE id = ?').run(JSON.stringify({ smallRuns: true }), w.pids[0]);
+  const outline = JSON.parse(db.prepare('SELECT outline FROM shape_features WHERE id = ?').get(w.f.id).outline);
+  outline.agreed = [1, 2, 3].map((n) => ({ id: `R-po-${n}`, text: `Text ${n}` }));
+  outline.slices.forEach((s, i) => { s.requirements = [`R-po-${i + 1}`]; });
+  db.prepare('UPDATE shape_features SET outline = ? WHERE id = ?').run(JSON.stringify(outline), w.f.id);
+  unrun(w.f.id, 3);
+  const r = await post(`/api/shape/features/${w.f.id}/replan`, {});
+  const { runId } = await r.json();
+  assert.equal(r.status, 200);
+  const stored = getTicket(runId, { withRequest: true }).request;
+  assert.equal(stored.workflowId, 'wf_shape_slice_req');
+  assert.match(stored.prompt, /^- \*\*R-po-3\*\* Text 3$/m);
+  assert.doesNotMatch(stored.prompt, /^- \*\*R-po-[12]\*\*/m);
+  quietBut(runId);
+  await tickUntil(() => getTicket(runId).status !== 'scheduled');
+  assert.equal(getTicket(runId).status, 'fired', getTicket(runId).failReason || '');
+  const orch = runs.get(runId).orch;
+  assert.deepEqual([orch.workflowId, orch.runShape.replaces, orch.runShape.slices], ['wf_shape_slice_req', w.f.id, 'auto']);
+  const run = await firedRun(runId);
+  assert.equal(run.branch.source, `feat/${w.pids[1]}`);
+}));
+
 test('small runs, stop 3 of 5: runs 4 and 5 finish, Resume on the feature restarts run 3 from run 5\'s branch', () => withEnvVars(SMALL_ON, async () => {
   const w = shipWorld({ slices: 5, prs: false });
   setPipe(w.pids[2], 'stopped');
@@ -1822,4 +1847,28 @@ test('a stopped paused round lets the first check start', () => withEnvVars(SMAL
   const checks = JSON.parse(db.prepare('SELECT outline FROM shape_features WHERE id = ?').get(f.id).outline).verify?.checks || [];
   assert.deepEqual(checks.map((c) => [c.round, c.state]), [[1, 'verifying']]);
   cancelTicket(checks[0].ticketId);
+}));
+
+// Item 5: the Verifier's run page finds its feature through the slice route (flag on); it carries no slice fields.
+test('GET /api/shape/pipelines/:pid/slice: a Verifier\'s run answers its feature with the flag on, 404 with it off', () => withEnvVars(SMALL_ON, async () => {
+  const f = mk(2, 'done');
+  const db = getDb();
+  db.prepare('UPDATE pipelines SET shape_stats = ? WHERE id = ?').run(JSON.stringify({ smallRuns: true }), f.pid);
+  const p2 = pipe('done');
+  db.prepare('UPDATE shape_feature_slices SET pipeline_id = ? WHERE feature_id = ? AND idx = 2').run(p2, f.id);
+  db.prepare("UPDATE scheduled_runs SET status = 'fired', pipeline_id = ? WHERE id = (SELECT ticket_id FROM shape_feature_slices WHERE feature_id = ? AND idx = 2)").run(p2, f.id);
+  const { startVerifyCheck } = await import('../src/core/shape/verifier.mjs');
+  const check = startVerifyCheck(f.id);
+  assert.ok(check);
+  const pv = pipe('running');
+  db.prepare("UPDATE scheduled_runs SET status = 'fired', pipeline_id = ? WHERE id = ?").run(pv, check.ticketId);
+  const r = await get(`/api/shape/pipelines/${pv}/slice`);
+  assert.equal(r.status, 200);
+  assert.deepEqual(await r.json(), { verifier: true, featureId: f.id, threadId: null });
+  const thread = createThread({ title: 'charts' });
+  askLinkRun(thread.id, { runId: 'run-verify-x', pipelineId: f.pid, cardId: 'card_verify_x' });
+  assert.equal((await (await get(`/api/shape/pipelines/${pv}/slice`)).json()).threadId, thread.id);
+  assert.equal((await (await get(`/api/shape/pipelines/${p2}/slice`)).json()).index, 2, 'a slice is unchanged');
+  assert.equal((await get('/api/shape/pipelines/p-plain-zz/slice')).status, 404);
+  await withEnvVars(SMALL_OFF, async () => { assert.equal((await get(`/api/shape/pipelines/${pv}/slice`)).status, 404); });
 }));

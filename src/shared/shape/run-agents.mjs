@@ -68,6 +68,10 @@ export function cardShortWord(mb, snap, slice = null) {
     : runShortWord(snap, slice) || chainWaitWord(mb);
 }
 
+/** The short word of a run group's member, from the snapshot and the slice it carries (app.js runsGroupItem): the Runs
+ *  list's member rows and the feature page read it, so a run says the same on every surface. */
+export const memberShortWord = (mb) => cardShortWord(mb, mb.snap || null, mb.slice || null);
+
 /**
  * The Agents rows of a marked run, in order: Planner; one plan reviewer per Care plan reviewer; the Test writer (or,
  * without one, "Tests · the Implementer", which follows the Implementer); the Implementer; the four code reviewers.

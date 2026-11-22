@@ -366,6 +366,33 @@ test('owner direction: Requirements are grouped per role with the role fold, cou
   assert.equal(dropped.querySelector('[data-role="compliance"]').getAttribute('aria-expanded'), 'true', 'Dropped is open');
 });
 
+test('a decided requirement (Not met, Dropped) is not open in its role\'s summary, and the role never looks all met', () => {
+  const two = (entries) => {
+    const f = d3Feature();
+    const sr = shipLedger({ agreed: [...D3_AGREED, { id: 'R-comp-2', text: 'Kept in the EU' }], kinds: [...D3_KINDS, { id: 'R-comp-2', kind: 'confirmed', role: 'compliance' }],
+      acceptance: entries, runs: D3_RUNS(), reruns: D3_RERUNS });
+    f.requirementKinds = [...D3_KINDS, { id: 'R-comp-2', kind: 'confirmed', role: 'compliance' }];
+    f.ship.smallRuns = { ...f.ship.smallRuns, ...sr };
+    return f;
+  };
+  const roleOf = (f, key = 'compliance') => {
+    const head = reqs(f).querySelector(`[data-role="${key}"].shape-role-fold-head`);
+    return [head.querySelector('.plan-fold-text').textContent, head.getAttribute('aria-expanded'), head.querySelector('.sr-only').textContent];
+  };
+  const met = { id: 'R-comp-1', mark: 'met' };
+  assert.deepEqual(roleOf(two([met, { id: 'R-comp-2', mark: 'dropped', reason: 'later' }])), ['2 · 1 met · 1 dropped', 'true', ', not all met']);
+  assert.deepEqual(roleOf(two([met, { id: 'R-comp-2', mark: 'not-met', reason: 'no' }])), ['2 · 1 met · 1 not met', 'true', ', not all met']);
+  assert.deepEqual(roleOf(two([{ id: 'R-comp-1', mark: 'not-met', reason: 'no' }, { id: 'R-comp-2', mark: 'dropped', reason: 'x' }])),
+    ['2 · 0 met · 1 not met · 1 dropped', 'true', ', not all met']);
+  // A mark without its reason is undecided, and so is an accepted gap: both stay open.
+  assert.deepEqual(roleOf(two([met, { id: 'R-comp-2', mark: 'dropped' }]))[0], '2 · 1 met · 1 open');
+  assert.deepEqual(roleOf(two([met, { ...met, id: 'R-comp-2' }])), ['2 · 2 met', 'false', roleOf(two([met, { ...met, id: 'R-comp-2' }]))[2]]);
+  const gap = d3Feature();
+  const e = gap.ship.smallRuns.owned[0];
+  e.status = 'gap-accepted'; e.shown = { ...e.shown, word: 'gap accepted', text: 'run 2 · gap accepted', mark: 'x' };
+  assert.equal(roleOf(gap, 'product')[0], '4 · 0 met · 4 open');
+});
+
 test('an owned row\'s run N is a link to runHref(N), and plain text when runHref returns null', () => {
   const rows = rowsOf(reqs());
   const a = rows[0].querySelector('.plan-check-detail a.rd-fact-link');
@@ -434,9 +461,23 @@ test('Decisions, with and without a key care log line: one [data-fact=care] row 
       assert.ok(items.every((li) => li.querySelector('.plan-check-mark').getAttribute('aria-label') === 'decided'));
       const show = items[1].querySelector('.chat-rc-log-show');
       assert.equal(show.textContent, 'Show');
+      assert.equal(show.className, 'btn btn-sm btn-quiet chat-rc-log-show', 'a quiet button; the last class is the focus hook');
       assert.equal(items[1].querySelector('.chat-rc-log-detail').hidden, true);
     }
   }
+});
+
+test('Decisions: a repaint keeps the focus on the line\'s Show', () => {
+  const log = (text) => [{ key: 'outline', run: null, text, detail: ['Run 2 · Export'] }];
+  const host = doc.createElement('div');
+  doc.body.replaceChildren(host);
+  paintFeatureDecisions(doc, host, d3Feature({ log: log('Split into 4 runs') }));
+  const was = host.querySelector('.chat-rc-log-show');
+  was.focus();
+  paintFeatureDecisions(doc, host, d3Feature({ log: log('Split into 5 runs') }));
+  const now = host.querySelector('.chat-rc-log-show');
+  assert.notEqual(now, was);
+  assert.equal(doc.activeElement, now);
 });
 
 test('Ship card, run page and feature page show the same word for R-po-2', async () => {

@@ -7,6 +7,12 @@
 // open): 12 PNGs, plus the prototype's `#run-stops` beside each theme, and a JSON log. It measures every card run row
 // (one 32px line, a long title ellipsised), each mark's centre against its text, 1 primary on the card, 0 card buttons
 // and 1 findings list in the panel, no horizontal overflow.
+// Then, at 1280px in both themes and at 375px in light (PAGE_CELLS): the run page of a stopped run (the stop's head, one
+// link to where it is answered, no control; a feature a Chat thread started and one it did not), the feature page with a
+// stop (one visible head, one primary, no Re-plan in the bar or the ⋯), one word per run on the Runs list, the feature
+// page and the Chat card (one-line 32px rows), and a finished feature (Create N PRs blocked with its reason, then open
+// after the mark; the Decisions Show as a quiet button; "1 dropped" in a role's summary). SECTION=stops or SECTION=pages
+// runs one half.
 // NOT part of `npm test`: it needs Chrome. A hard 30-minute cap inside: past it the script exits non-zero.
 // Run: H=$(mktemp -d); env -u FORCE_COLOR HOME=$H VERIFY_PORT=4939 SHOTS_DIR=… node --disable-warning=ExperimentalWarning tools/verify-run-stops-cdp.mjs
 import { spawn, execFileSync } from 'node:child_process';
@@ -74,7 +80,7 @@ const { careRunPlan } = await imp('../src/shared/shape/feature-record.mjs');
 const { runRolesOf } = await imp('../src/shared/shape/requirements.mjs');
 const { careRunGraph } = await imp('../src/core/shape/care-run.mjs');
 const { normalizeOutline } = await imp('../src/shared/shape/slices.mjs');
-const { gateStop } = await imp('../src/shared/shape/run-stops.mjs');
+const { gateStop, planStop } = await imp('../src/shared/shape/run-stops.mjs');
 srv = server;
 await new Promise((r, rej) => { srv.once('error', (err) => rej(new Error(`cannot listen on VERIFY_PORT ${process.env.VERIFY_PORT}: ${err.message}`))); srv.listen(Number(process.env.VERIFY_PORT || 0), '127.0.0.1', r); });
 const base = `http://127.0.0.1:${srv.address().port}`;
@@ -279,10 +285,49 @@ const COUNTS = (rootSel) => `(() => {
     overflow: document.documentElement.scrollWidth > document.documentElement.clientWidth };
 })()`;
 
+// ---- two more features for the page checks, neither started by a Chat thread: "Exports" (run 1 done, run 2 on a
+// failed plan check, run 3 waiting) and "Alerts" (both runs done, two requirements a person confirms, one already dropped).
+function feature2({ title, id, texts, confirmed = {}, acceptance = [] }) {
+  pipeline(id, 'done', title, { smallRuns: true });
+  const ids = texts.map((_, i) => `R-po-${i + 1}`);
+  const agreed = [...ids.map((x, i) => ({ id: x, text: texts[i] })), ...Object.keys(confirmed).map((x) => ({ id: x, text: `${x} is signed off` }))];
+  const ol = normalizeOutline({ why: 'proof', leftOut: [], confirmed: Object.entries(confirmed).map(([x, role]) => ({ id: x, role })),
+    slices: ids.map((x, i) => ({ id: `s${i + 1}`, title: texts[i], goal: 'g', inScope: [], outOfScope: [], acceptance: ['ok'], dependsOn: i ? [`s${i}`] : [], estimate: 'medium', requirements: [x] })) },
+  { agreed, smallRuns: true }).outline;
+  if (acceptance.length) ol.acceptance = acceptance;
+  getDb().prepare('INSERT INTO pipeline_events (pipeline_id, ts, text) VALUES (?, ?, ?)').run(id, now, 'Slice outline **approve** (round 1)');
+  return createSliceFeature({ pipelineId: id, projectDir: proj, title, outline: ol, perspectives: ['product', 'compliance'], workflowId: 'wf_shape', smallRuns: true, care,
+    requirementKinds: Object.fromEntries(Object.entries(confirmed).map(([x, role]) => [x, { kind: 'confirmed', role }])) });
+}
+const fireOf = (feat, idx, pid, status, title) => {
+  pipeline(pid, status, `Run ${idx} · ${title}`);
+  const t = getDb().prepare('SELECT ticket_id FROM shape_feature_slices WHERE feature_id = ? AND idx = ?').get(feat.id, idx).ticket_id;
+  getDb().prepare("UPDATE scheduled_runs SET status = 'fired', pipeline_id = ? WHERE id = ?").run(pid, t);
+  getDb().prepare('UPDATE shape_feature_slices SET pipeline_id = ? WHERE feature_id = ? AND idx = ?').run(pid, feat.id, idx);
+};
+const EXPORTS = ['Export a project as a CSV file', 'Export a project as a PDF report', 'Export a project on a schedule'];   // run 3 waits: the ⋯ has a rest to cancel
+const fx = feature2({ title: 'Exports', id: 'ac000001', texts: EXPORTS });
+fireOf(fx, 2, 'ac000002', 'running', EXPORTS[1]);
+const CHECK = { ok: false, passed: 3, total: 8, items: [{ id: 'tests', label: 'Names its tests', pass: false, detail: 'no test is named' }] };
+const PQ2 = { id: 'plan-n_refine-1', kind: 'plan', nodeId: 'n_refine', executionId: 'x:n_refine:1', plan: { nodeId: 'n_refine', port: 'plan', file: 'plan.md', round: 1, revisable: true, check: CHECK },
+  stop: planStop({ run: 2, check: CHECK, node: 'n_refine' }) };
+const RUN2_ID = liveRun(2, 'ac000002', 'n_refine', PQ2);
+{ const e = runs.get(RUN2_ID); e.orch.runShape = { slice: { feature: fx.id, index: 2 } }; e.title = e.orch.state.title = `Run 2 · ${EXPORTS[1]}`; e.orch.state.shaping = {}; }
+const ALERTS = ['Send an alert when a run fails', 'Send one alert a day at most'];
+const fa = feature2({ title: 'Alerts', id: 'ad000001', texts: ALERTS, confirmed: { 'R-comp-1': 'compliance', 'R-comp-2': 'compliance' },
+  acceptance: [{ id: 'R-comp-2', mark: 'dropped', reason: 'Not needed this year', role: 'compliance', by: 'proof', at: now }] });
+fireOf(fa, 2, 'ad000002', 'done', ALERTS[1]);
+// The Verifier's clean check of the head it ships: with the flag on, a finished feature is ready to ship only then.
+execFileSync('git', ['branch', 'feat/ad000002'], { cwd: proj });
+{ const o = JSON.parse(getDb().prepare('SELECT outline FROM shape_features WHERE id = ?').get(fa.id).outline);
+  o.verify = { checks: [{ round: 1, state: 'clean', head: { index: 2, pipelineId: 'ad000002' }, headSha: execFileSync('git', ['rev-parse', 'feat/ad000002'], { cwd: proj, encoding: 'utf8' }).trim(), result: { held: [], gaps: [] } }] };
+  getDb().prepare('UPDATE shape_features SET outline = ? WHERE id = ?').run(JSON.stringify(o), fa.id); }
+
 await cdp('Page.enable'); await cdp('Runtime.enable');
 await cdp('Emulation.setDeviceMetricsOverride', { width: WIDTH, height: 900, deviceScaleFactor: 1, mobile: false });
 const PROTO = pathToFileURL(PROTOTYPE).href;
-for (const theme of THEMES) {
+const SECTION = process.env.SECTION || 'all';
+for (const theme of SECTION === 'pages' ? [] : THEMES) {
   runs.get(RUN_ID).heldStop = null;
   // 1. The feature card in Chat: the stop's question (one primary naming the pick) and the run rows.
   await open(`${base}/?t=${theme}#chat/${thread.id}`);
@@ -350,6 +395,125 @@ for (const theme of THEMES) {
   await shot(`app-side-panel-held-${theme}`);
   await open(`${PROTO}#run-stops`); await setTheme(theme); await sleep(300);
   await shot(`prototype-run-stops-${theme}`);
+}
+// ---- the pages: the run page and the feature page of a stopped run, one word per run, and a finished feature.
+const PAGE_CELLS = [[1280, 'light'], [1280, 'dark'], [375, 'light']];
+const visText = (sel) => `[...document.querySelectorAll(${JSON.stringify(sel)})].filter((n) => n.offsetParent && !n.closest('[hidden], .hidden')).map((n) => n.textContent.trim())`;
+const noOverflow = () => ev('document.documentElement.scrollWidth <= document.documentElement.clientWidth');
+const STOP_PAGE = `(() => { const q = document.querySelector('#run-detail .qpanel'); if (!q) return null;
+  const vis = (els) => [...els].filter((b) => b.offsetParent && !b.closest('[hidden], .hidden'));
+  return { heads: vis(q.querySelectorAll('.ask-mcard-title, .qpanel-head b')).map((n) => n.textContent), line: vis(q.querySelectorAll('.stop-home')).map((n) => n.textContent),
+    links: vis(q.querySelectorAll('a.rd-fact-link')).map((a) => a.getAttribute('href')), controls: vis(q.querySelectorAll('button, .qopt, input, textarea')).length,
+    findings: vis(q.querySelectorAll('.issues, .plan-checks')).length,
+    clipped: [...q.querySelectorAll('*')].filter((n) => n.offsetParent && n.getBoundingClientRect().right > q.getBoundingClientRect().right + 1).length }; })()`;
+const FEATURE_PAGE = `(() => { const gp = document.querySelector('#group-detail .gpage'); if (!gp) return null;
+  const vis = (els) => [...els].filter((b) => b.offsetParent && !b.closest('[hidden], .hidden'));
+  const q = gp.querySelector('.gpage-question');
+  return { heads: vis(q.querySelectorAll('.ask-mcard-title, .qpanel-head')).map((n) => n.textContent.trim()), primaries: vis(gp.querySelectorAll('.btn-primary')).map((b) => b.textContent.trim()),
+    bar: vis(gp.querySelectorAll('.gpage-actions button')).map((b) => b.textContent.trim()), banner: /Plan ready for your approval/.test(vis([gp]).map((n) => n.innerText).join('')) }; })()`;
+const resetMark = () => { const row = getDb().prepare('SELECT outline FROM shape_features WHERE id = ?').get(fa.id); const o = JSON.parse(row.outline);
+  o.acceptance = (o.acceptance || []).filter((e) => e.id !== 'R-comp-1'); getDb().prepare('UPDATE shape_features SET outline = ? WHERE id = ?').run(JSON.stringify(o), fa.id); };
+runs.get(RUN_ID).heldStop = null;
+let turn = 0;
+for (const [width, theme] of SECTION === 'stops' ? [] : PAGE_CELLS) {
+  const at = `${width}px, ${theme}`;
+  const name = (n) => `page-${n}-${width}-${theme}`;
+  await cdp('Emulation.setDeviceMetricsOverride', { width, height: 900, deviceScaleFactor: 1, mobile: false });
+  const go = async (hash) => { turn += 1; await open(`${base}/?pg=${turn}${hash}`); await skipWelcome(); await setTheme(theme); };
+
+  // 1. The run page of a stopped run: the head, one line with one link, no control; with a thread and without.
+  for (const [runId, stop, href, findings, n] of [[RUN_ID, STOP, `#chat/${thread.id}`, '.issues', 'run-thread'], [RUN2_ID, PQ2.stop, `#feature/${fx.id}`, '.plan-checks', 'run-no-thread']]) {
+    await go(`#running/${runId}`);
+    if (await waitFor(`!!document.querySelector('#run-detail .qpanel .stop-home a') && !!document.querySelector('#run-detail .qpanel ${findings}')`, `the stopped run's page (${n}, ${at})`)) {
+      await reveal('#run-detail .qpanel');
+      const s = await ev(STOP_PAGE);
+      check(JSON.stringify(s.heads) === JSON.stringify([stop.head]), `run page ${n}, ${at}: the stop's head is its one head (${JSON.stringify(s.heads)})`);
+      check(s.links.length === 1 && s.links[0] === href && s.line.length === 1, `run page ${n}, ${at}: one line with one link to ${href} (${JSON.stringify(s)})`);
+      check(s.controls === 0 && s.findings === 1, `run page ${n}, ${at}: no control, one findings list`);
+      check(s.clipped === 0, `run page ${n}, ${at}: nothing runs past the card (${s.clipped})`);
+      check(await noOverflow(), `run page ${n}, ${at}: no horizontal overflow`);
+      await shot(name(n));
+    }
+  }
+
+  // 2. The feature page with a stop: one visible head, one primary, no banner, no Re-plan beside it.
+  await go(`#feature/${fx.id}`);
+  if (await waitFor("!!document.querySelector('#group-detail .gpage-question[data-stop] .qopt')", `the stop on the feature page (${at})`)) {
+    const p = await ev(FEATURE_PAGE);
+    check(JSON.stringify(p.heads) === JSON.stringify([PQ2.stop.head]), `feature page stop, ${at}: one visible head, the stop's (${JSON.stringify(p.heads)})`);
+    check(JSON.stringify(p.primaries) === '["Re-plan"]', `feature page stop, ${at}: one primary (${JSON.stringify(p.primaries)})`);
+    check(!p.banner, `feature page stop, ${at}: no Plan ready for your approval`);
+    check(p.bar.length === 0, `feature page stop, ${at}: the bar offers no Re-plan (${JSON.stringify(p.bar)})`);
+    check(await noOverflow(), `feature page stop, ${at}: no horizontal overflow`);
+    await shot(name('feature-stop'));
+    await ev("document.querySelector('#group-detail .gpage-more').click();0");
+    const MENU = "[...document.querySelectorAll('[role^=menuitem]')].filter((n) => n.getClientRects().length).map((n) => n.textContent.trim())";   // a fixed popover has no offsetParent
+    if (await waitFor(`${MENU}.includes('Cancel the rest')`, `the page's ⋯ (${at})`)) {
+      const items = await ev(MENU);
+      check(items.includes('Cancel the rest') && !items.some((x) => /^Re-plan/.test(x)), `feature page stop, ${at}: no Re-plan in the ⋯ (${JSON.stringify(items)})`);
+    }
+  }
+
+  // 3. One word per run on the Runs list, the feature page's Runs tab and the Chat card; one-line rows.
+  await go(`#feature/${f.id}`);
+  let onPage = [];
+  if (await waitFor("document.querySelectorAll('#group-detail .gpage-runs .run-member-state').length === 10 && [...document.querySelectorAll('#group-detail .gpage-runs .run-member-state')].some((n) => n.textContent === 'waiting for you')", `the feature page's run words (${at})`)) {
+    onPage = await ev(visText('#group-detail .gpage-runs .run-member-state'));
+    await reveal('#group-detail .gpage-runs');
+    const m = await ev(MEASURE('#group-detail .gpage-runs', '.run-member', '.status-dot', '.run-member-title'));
+    const off = m.rows.filter((r) => r.textLines > 1 || Math.abs(r.height - 32) > 0.5);
+    check(m.rows.length === 10 && off.length === 0, `feature page rows, ${at}: ten one-line 32px rows (off: ${JSON.stringify(off.map((r) => [r.text, r.height, r.textLines]))})`);
+    check(m.maxDy <= 1 && m.spreadX <= 1 && !m.overflow, `feature page rows, ${at}: marks aligned, no overflow (${m.maxDy.toFixed(2)}, ${m.spreadX.toFixed(2)}, ${m.overflow})`);
+    await shot(name('feature-rows'));
+  }
+  await go(`#chat/${thread.id}`);
+  let onCard = [];
+  if (await waitFor("document.querySelectorAll('.chat-rc-members .run-member-state').length === 10", `the card's run words (${at})`)) onCard = await ev(visText('.chat-rc-members .run-member-state'));
+  await go('#runs');
+  let onList = [];
+  const LIST = `.runs-item[data-row-key="chain:${f.id}"]`;
+  if (await waitFor(`!!document.querySelector('${LIST}')`, `the feature's group row (${at})`)) {
+    if (!(await ev(`!!document.querySelector('${LIST} > .runs-members .runs-item')`))) await ev(`document.querySelector('${LIST} .runs-toggle, ${LIST} [aria-expanded]')?.click();0`);
+    if (await waitFor(`document.querySelectorAll('${LIST} > .runs-members > .runs-item[data-level="member"]').length === 10`, `the group's member rows (${at})`)) {
+      onList = await ev(`[...document.querySelectorAll('${LIST} > .runs-members > .runs-item[data-level="member"] > a.runs-row > .runs-row-sub')].map((n) => n.textContent.trim())`);
+      await shot(name('runs-list'));
+    }
+  }
+  check(onPage.length === 10 && JSON.stringify(onPage) === JSON.stringify(onCard) && JSON.stringify(onPage) === JSON.stringify(onList),
+    `one word per run, ${at}: the Runs list, the feature page and the card agree (${JSON.stringify([onPage, onCard, onList])})`);
+  for (const w of ['done', 'waiting for you', 'waits for run 8']) check(onPage.includes(w), `one word per run, ${at}: ${w}`);
+
+  // 4. A finished feature: Create N PRs, blocked with its reason on the page, then open after the mark.
+  resetMark();
+  await go(`#feature/${fa.id}`);
+  const CTA = '#group-detail .gpage-card .rd-pr-slot [data-rd-cta]';
+  const ctaOf = () => ev(`(() => { const b = document.querySelector(${JSON.stringify(CTA)}); return b && { text: b.textContent.trim(), disabled: !!b.disabled, primary: b.classList.contains('btn-primary') }; })()`);
+  const REASON = 'Waiting for Compliance to confirm R-comp-1';
+  if (await waitFor(`!!document.querySelector(${JSON.stringify(CTA)}) && document.querySelector(${JSON.stringify(CTA)}).disabled`, `the blocked Create 2 PRs (${at})`)) {
+    const c = await ctaOf();
+    check(c.text === 'Create 2 PRs' && c.disabled && !c.primary, `finished feature, ${at}: Create 2 PRs, disabled (${JSON.stringify(c)})`);
+    check((await ev(visText('#group-detail .gpage-card .run-status'))).join(' ').includes(REASON), `finished feature, ${at}: the reason is on the page`);
+    check(await noOverflow(), `finished feature, ${at}: no horizontal overflow`);
+    await shot(name('ship-blocked'));
+    const r = await post(`/api/shape/features/${fa.id}/confirm`, { id: 'R-comp-1', mark: 'met' });
+    check(r.ok, `finished feature, ${at}: the mark is saved (${r.status})`);
+    if (await waitFor(`document.querySelector(${JSON.stringify(CTA)}) && !document.querySelector(${JSON.stringify(CTA)}).disabled`, `Create 2 PRs after the mark (${at})`)) {
+      const d = await ctaOf();
+      check(d.text === 'Create 2 PRs' && d.primary, `finished feature, ${at}: enabled and primary after the mark (${JSON.stringify(d)})`);
+    }
+  }
+  await go(`#feature/${fa.id}/requirements`);
+  if (await waitFor("!!document.querySelector('.gpage-requirements [data-role=compliance]')", `the Requirements tab (${at})`)) {
+    const t = await ev("document.querySelector('.gpage-requirements .shape-role-fold-head[data-role=compliance] .plan-fold-text').textContent");
+    check(t === '2 · 1 met · 1 dropped', `Requirements, ${at}: the dropped one is decided, not open (${t})`);
+    await shot(name('requirements'));
+  }
+  await go(`#feature/${fa.id}/decisions`);
+  if (await waitFor("!!document.querySelector('.gpage-decisions .chat-rc-log-show')", `the Decisions tab's Show (${at})`)) {
+    const s = await ev("(() => { const b = document.querySelector('.gpage-decisions .chat-rc-log-show'); const c = getComputedStyle(b); return { line: c.textDecorationLine, bg: c.backgroundColor, cls: b.className }; })()");
+    check(s.line === 'none' && s.bg === 'rgba(0, 0, 0, 0)' && /\bbtn-quiet\b/.test(s.cls), `Decisions, ${at}: Show is a quiet button, no underline, transparent (${JSON.stringify(s)})`);
+    await shot(name('decisions'));
+  }
 }
 check(errors.length === 0, `no page errors${errors.length ? ` — ${errors.slice(0, 3).join(' | ')}` : ''}`);
 results.minutes = Math.round((Date.now() - T0) / 600) / 100;

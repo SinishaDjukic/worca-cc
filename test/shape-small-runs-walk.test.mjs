@@ -166,6 +166,11 @@ test('email for website X: Start to Ship with a stop, a change and a Verifier ga
     const row = db.prepare('SELECT outline, source_branch FROM shape_features WHERE id = ?').get(fid);
     const outline = JSON.parse(row.outline);
     assert.equal(outline.slices.length, 3);
+    // What the Split itself stored, before the example's ids replace it: the id the mock's outline has a person confirm.
+    const splitLast = outline.agreed.at(-1).id;
+    assert.deepEqual(JSON.parse(db.prepare('SELECT requirement_kinds FROM shape_features WHERE id = ?').get(fid).requirement_kinds)[splitLast],
+      { kind: 'confirmed', role: 'security' });
+    assert.deepEqual(featureView(fid).requirementKinds.at(-1), { id: splitLast, kind: 'confirmed', role: 'security' });
     outline.agreed = AGREED;
     outline.slices.forEach((s, i) => { s.requirements = RUN_OWNS[i]; });
     db.prepare('UPDATE shape_features SET title = ?, outline = ?, requirement_kinds = ? WHERE id = ?')

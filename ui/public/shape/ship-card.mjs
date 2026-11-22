@@ -421,7 +421,7 @@ function smallRunsShip(doc, h, m, handlers) {
       ownedEl.append(fold.line, fold.rows);
     }
     careEl.replaceChildren(careRow());
-    stats.textContent = sr.blocked ? 'Your turn: mark what only a person can' : 'Ready to ship';
+    stats.textContent = sr.unowned && sr.unowned.length ? 'Waiting' : sr.blocked ? 'Your turn: mark what only a person can' : 'Ready to ship';
     if (sr.blocked && sr.reason) {
       const why = h('div', 'ask-shipcard-why'); why.id = whyId;
       // R-comp-4 never breaks at its hyphens on a narrow screen: each requirement id is one unbreakable span.

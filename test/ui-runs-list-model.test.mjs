@@ -6,7 +6,7 @@ import assert from 'node:assert/strict';
 import { JSDOM } from 'jsdom';
 import {
   rowTime, whenLabel, liveRowState, histRowState, schedRowState, countNeedsYou, needsYouItems,
-  buildRunsModel, isRowSelected, isMemberOpen, renderRunsList, paintStageBlocks, dateBucket, DATE_BUCKETS, DAY_BUCKETS, dayBucket, isFolded, setFolded, listLine, groupRow, groupCostUsd, costTitle, memberCostUsd, memberLine,
+  buildRunsModel, isRowSelected, isMemberOpen, renderRunsList, paintStageBlocks, dateBucket, DATE_BUCKETS, DAY_BUCKETS, dayBucket, isFolded, setFolded, listLine, groupRow, rowShow, groupCostUsd, costTitle, memberCostUsd, memberLine,
 } from '../ui/public/runs-list.mjs';
 import { RUN_STATES } from '../src/shared/run-model.mjs';
 import * as RL from '../ui/public/runs-list.mjs';
@@ -1117,4 +1117,34 @@ test('D2 (D4): truncation order in a marked group: the title ellipsizes first, t
   // The right column (the PR chip) keeps its width: the title's min-width:0 takes the overflow, so the chip's word never
   // collapses before the title has finished ellipsizing (webui cycle 2: "In review" shrank to 3px of 53px).
   assert.match(body('.srows.runs-members .runs-row-right'), /flex:none/);
+});
+
+// ── fail closed: a small-runs feature with an owner-less requirement (hold) is done but not ready to ship ──
+test('a held small-runs feature row says the reason, never "Ready to ship", and is not in the Ready filter', () => {
+  const hold = 'R-ops-1 is owned by no run and confirmed by no person';
+  const done = smallFeature({ members: TEN.slice(0, 2).map((id, i) => ({ position: i + 1, title: `Slice ${i + 1}`, pipelineId: id, kind: 'hist', run: { status: 'done' } })) });
+  const shows = (g, show) => rowShow(groupRow(g, { now: NOW }), show);
+  const row = (g) => smallHost(g).querySelector('.runs-item[data-row-key="chain:feat_small"] > a.runs-row');
+  assert.match(row(done).textContent, /Ready to ship/);
+  assert.equal(shows(done, 'ready'), true);
+  const a = row({ ...done, hold });
+  assert.ok(a.textContent.includes(hold), a.textContent);
+  assert.doesNotMatch(a.textContent, /Ready to ship/);
+  assert.equal(shows({ ...done, hold }, 'ready'), false);
+  assert.equal(shows({ ...done, hold }, 'finished'), true, 'still listed as finished');
+});
+
+test('item 7: a small-runs member reads the card\'s word from its slice: waiting for you, after run 9, waits for run 8; no slice: dev\'s line', () => {
+  const subs = (host) => [...host.querySelectorAll('.runs-members > .runs-item[data-level="member"] > a.runs-row > .runs-row-sub')].map((s) => s.textContent);
+  const ask = { kind: 'plan', plan: {}, stop: { reason: 'check' } };
+  const mb = (over) => ({ position: 2, title: 'Slice 2', pipelineId: 'sr2', kind: 'hist', run: { status: 'running', pendingQuestion: ask }, ...over });
+  const first = { position: 1, title: 'Slice 1', pipelineId: 'sr1', kind: 'hist', run: { status: 'done' } };
+  const word = (over) => subs(smallHost(smallFeature({ members: [first, mb(over)] }), true)).at(-1);
+  assert.equal(word({ snap: { status: 'running', pendingQuestion: ask } }), 'waiting for you', 'a stop on a run without a Care plan');
+  assert.equal(word({ slice: { stop: { reason: 'check', held: false } } }), 'waiting for you');
+  assert.equal(word({ slice: { stop: { reason: 'check', held: true, after: 9 } } }), 'after run 9');
+  const waits = { pipelineId: null, ticketId: 't1', kind: 'sched', run: { ticket: { status: 'scheduled', after: { index: 4 } } } };
+  assert.equal(word({ ...waits, slice: { waitsFor: 8 } }), 'waits for run 8');
+  assert.equal(word({ ...waits }), 'waits for run 4', 'no slice: the chain predecessor');
+  assert.match(word({}), /^Needs you/, 'no slice and no snapshot: dev\'s line');
 });

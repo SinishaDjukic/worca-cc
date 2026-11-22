@@ -258,13 +258,26 @@ function stopFindings(doc, pq) {
   return pq.concern ? concernFinding(doc, pq.concern.title, pq.concern.detail) : concernFinding(doc, stop.findingsLine, plan.outlineChange || '');
 }
 
+/** The run page of a stopped run: the one line that says where the stop is answered. */
+function stopHomeLine(doc, home) {
+  const line = doc.createElement('p');
+  line.className = 'stop-home';
+  const a = doc.createElement('a');
+  a.className = 'rd-fact-link';
+  a.setAttribute('href', home.href);
+  a.textContent = home.text;
+  line.append('This run waits for your answer on ', a);
+  return line;
+}
+
 /** Small runs C3 (D11, D13): a marked run's stop. The card asks one question (who wants what and why; two options, each
  *  saying what it does; Worca's pick recommended and preselected; one primary naming the pick). The side panel
- *  (`readOnly`) draws only the stop's findings; a held answer (`held` = {value}) draws the one answered line. */
+ *  (`readOnly`) draws only the stop's findings, the run page (`runPage` too) the stop's head and the line to where it is
+ *  answered (`home`, once known) before them; a held answer (`held` = {value}) draws the one answered line. */
 function renderStopCard(panel, pq, deps) {
   const { doc } = deps;
   const stop = pq.stop;
-  if (deps.readOnly) {
+  if (deps.readOnly && !deps.runPage) {
     const list = stopFindings(doc, pq);
     if (list) panel.appendChild(list);
     return;
@@ -278,9 +291,17 @@ function renderStopCard(panel, pq, deps) {
     log.setAttribute('aria-label', 'Steps');
     paintFeatureLog(doc, log, [{ key: `stop-${pq.id}`, run: stop.run, text: stopDoneText(stop, held.payload).replace(/^Run \d+: /, '') }]);
     panel.appendChild(log);
+  } else {
+    const head = panel.appendChild(stepHead(doc, deps.title, deps.chip));
+    if (deps.runPage) head.dataset.stop = '';                // shape-it.css: one column from the first paint
+  }
+  if (deps.readOnly) {
+    if (!held && deps.home) panel.appendChild(stopHomeLine(doc, deps.home));
+    const list = stopFindings(doc, pq);
+    if (list) panel.appendChild(list);
     return;
   }
-  panel.appendChild(stepHead(doc, deps.title, deps.chip));
+  if (held) return;
   const optionOf = (v) => stop.options.find((o) => o.value === v) || stop.options.find((o) => o.value === stop.pick);
   const q = buildChatQuestion(doc, {
     id: `stop-${pq.id}`, heading: stop.head, head: false, numbers: false,
@@ -315,7 +336,7 @@ function renderStopCard(panel, pq, deps) {
   panel.appendChild(q.el);
 }
 
-/** Gate (cycle limit). deps: { doc, title, chip, wireCopy, tagLevel(el, level), submit, readOnly?, held?, pick? }. A small runs
+/** Gate (cycle limit). deps: { doc, title, chip, wireCopy, tagLevel(el, level), submit, readOnly?, runPage?, home?, held?, pick? }. A small runs
  *  stop (`pq.stop`, a gate or a plan ask) draws as renderStopCard. */
 export function renderGateCard(panel, pq, deps) {
   if (pq && pq.stop) return renderStopCard(panel, pq, deps);

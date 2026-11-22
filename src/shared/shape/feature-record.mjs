@@ -74,6 +74,13 @@ export function normalizeRequirementKinds(raw, agreedIds) {
   return { ok: true, kinds: Object.fromEntries(ids.map((id) => [id, named[id] || { kind: 'owned' }])) };
 }
 
+/** The kinds an approved outline's `confirmed` list asks for, as normalizeRequirementKinds takes them (it maps the role
+ *  labels to keys and refuses a bad one); `{}` for any other shape. Never throws. */
+export function confirmedKindsOf(outline) {
+  const list = Array.isArray(outline?.confirmed) ? outline.confirmed : [];
+  return Object.fromEntries(list.filter((c) => isObject(c) && typeof c.id === 'string' && c.id).map((c) => [c.id, { kind: 'confirmed', role: c.role }]));
+}
+
 /** A `shape_features` row's Care values; an unknown or missing value reads as the default. Never throws. */
 export function careOfRow(row) {
   const r = isObject(row) ? row : {};

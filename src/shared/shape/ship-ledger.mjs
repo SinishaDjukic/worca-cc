@@ -7,6 +7,12 @@ import { MARK_WORDS, requirementStatus } from './req-status.mjs';
 
 export { MARK_WORDS };
 
+/** Fail closed: why a marked feature cannot ship while agreed requirements have no run and no person; null for none. */
+export const unownedReason = (ids) => {
+  const xs = list(ids);
+  return xs.length ? `${xs[0]}${xs.length > 1 ? ` and ${xs.length - 1} more are` : ' is'} owned by no run and confirmed by no person` : null;
+};
+
 /** Why a marked feature never ships as one PR (chain.mjs oneShipCheck, the PR auto-finisher). */
 export const SMALL_RUNS_SHIP = 'small runs ship a PR per run';
 
@@ -39,12 +45,15 @@ export const reasonLine = (v) => (typeof v === 'string' ? v.replace(/\s+/g, ' ')
  * Small runs D3 (D2): with `runs` (an array, [{index, state, stop}] from the view's slices) and `reruns`
  * (req-status.mjs rerunsOf), every owned and confirmed entry gains `shown`, its status (requirementStatus), computed
  * here once. Without `runs` the output is D1's, key for key.
- * → {confirmed, owned, waiting, blocked, reason, met: {met, total}, unmet: [{id, text, mark, reason}]}
+ * Fail closed, only with `runs`: an owned entry of no run has status `unowned`; `unowned` (its ids, only when there are
+ * any) blocks Ship, its reason first.
+ * → {confirmed, owned, waiting, blocked, reason, met: {met, total}, unmet: [{id, text, mark, reason}], unowned?: [id]}
  */
 export function shipLedger({ agreed = [], kinds = [], acceptance = [], verify = null, runs = null, reruns = [] } = {}) {
   const texts = new Map(list(agreed).map((a) => [a.id, a.text || '']));
   const marks = new Map(list(acceptance).filter((e) => e && confirmMarkOf(e.mark)).map((e) => [String(e.id), e]));
   const gaps = verify && verify.state === 'accepted' ? new Set(list(verify.gaps).map((g) => g.id)) : new Set();
+  const judged = Array.isArray(runs);
   const confirmed = []; const owned = [];
   for (const k of list(kinds)) {
     const text = texts.get(k.id) || '';
@@ -56,21 +65,24 @@ export function shipLedger({ agreed = [], kinds = [], acceptance = [], verify = 
       confirmed.push({ id: k.id, text, role: k.role, roleLabel: roleLabel(k.role), state, mark, reason: why || null,
         at: m && typeof m.at === 'string' ? m.at : null });
     } else {
-      owned.push({ id: k.id, text, run: Number.isInteger(k.run) ? k.run : null, status: gaps.has(k.id) ? 'gap-accepted' : 'holds' });
+      const run = Number.isInteger(k.run) ? k.run : null;
+      owned.push({ id: k.id, text, run, status: judged && run === null ? 'unowned' : gaps.has(k.id) ? 'gap-accepted' : 'holds' });
     }
   }
   const open = confirmed.filter((c) => c.state === 'waiting');
   const waiting = open.map((c) => c.id);
   const needs = confirmed.filter((c) => c.state === 'needs-reason');
   const labels = [...new Set(open.map((c) => c.roleLabel))];
-  const reason = open.length
+  const unowned = owned.filter((o) => o.status === 'unowned').map((o) => o.id);
+  const reason = unowned.length ? unownedReason(unowned) : open.length
     ? labels.length > 1 ? `Waiting for ${andList(labels)} to confirm ${plural(open.length, 'requirement')}`
       : `Waiting for ${labels[0]} to confirm ${waiting[0]}${waiting.length > 1 ? ` and ${waiting.length - 1} more` : ''}`
     : needs.length ? REASON_FIRST : null;
   const met = owned.filter((o) => o.status === 'holds').length + confirmed.filter((c) => c.state === 'confirmed' && c.mark === 'met').length;
   const unmet = confirmed.filter((c) => c.state === 'confirmed' && c.mark !== 'met').map((c) => ({ id: c.id, text: c.text, mark: c.mark, reason: c.reason }));
-  if (Array.isArray(runs)) for (const e of [...owned, ...confirmed]) e.shown = requirementStatus(e, { runs, reruns });
-  return { confirmed, owned, waiting, blocked: open.length + needs.length > 0, reason, met: { met, total: owned.length + confirmed.length }, unmet };
+  if (judged) for (const e of [...owned, ...confirmed]) e.shown = requirementStatus(e, { runs, reruns });
+  return { confirmed, owned, waiting, blocked: open.length + needs.length + unowned.length > 0, reason, met: { met, total: owned.length + confirmed.length }, unmet,
+    ...(unowned.length ? { unowned } : {}) };
 }
 
 /** One line per Not met or Dropped requirement, for the done Ship card and each PR description:

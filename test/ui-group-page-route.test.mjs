@@ -498,3 +498,244 @@ test('D3: a requirements deep link shows Loading group… until the feature reso
   assert.equal(pageOf(ctx).querySelector('.rd-tab[aria-selected="true"]').dataset.tab, 'requirements');
   assert.equal(ctx.window.location.hash, '#feature/feat_1/requirements');
 });
+
+// ── fail closed: an agreed requirement with no run and no person ──
+test('fail closed: the feature page of an owner-less feature disables Create PR, says why and nowhere reads "Ready to ship"', async () => {
+  const reason = 'R-po-2 is owned by no run and confirmed by no person';
+  const sr = { ...D3_SR('met'), confirmed: [], waiting: [], blocked: true, reason, unowned: ['R-po-2'], order: [{ index: 1 }, { index: 2 }] };
+  sr.owned = [sr.owned[0], { id: 'R-po-2', text: 'People export it', run: null, status: 'unowned',
+    shown: { owner: 'no run', role: null, word: 'confirmed by no person', text: 'owned by no run · confirmed by no person', mark: 'x' } }];
+  const groups = { groups: [{ ...D3_GROUPS().groups[0], smallRuns: true, hold: reason }, GROUPS.groups[1]] };
+  const { ctx } = await d3Boot({ groups, feature: () => json({ ...D3_FEATURE('met'), ship: { ...FEATURE.ship, ready: false, smallRuns: sr } }) });
+  ctx.go('feature/feat_1');
+  await ctx.settle(10);
+  const gp = pageOf(ctx).querySelector('.gpage');
+  const cta = gp.querySelector('.gpage-card .rd-pr-slot [data-rd-cta]');
+  assert.ok(cta);
+  assert.equal(cta.disabled, true);
+  assert.equal(cta.classList.contains('btn-primary'), false);
+  const visible = () => [...gp.querySelectorAll('.gpage-head, .gpage-card')].map((x) => x.textContent).join(' ');
+  assert.equal(visible().split(reason).length - 1, 1, 'the reason, once');
+  assert.doesNotMatch(visible(), /Ready to ship/);
+  ctx.go('feature/feat_1/requirements');
+  await ctx.settle(10);
+  assert.equal(gp.querySelector('.shape-feature-reqs-cap').textContent, '2 requirements · 1 owned by a run · 0 confirmed by a person · 1 owned by no run');
+  assert.equal(reqNote(ctx, 'R-po-2'), 'owned by no run · confirmed by no person');
+  // The member rows of a finished feature keep their own words (Step 7); the list row is held too.
+  const row = ctx.window.document.querySelector('.runs-item[data-row-key="chain:feat_1"] > a.runs-row');
+  if (row) assert.doesNotMatch(row.textContent, /Ready to ship/);
+});
+
+// ── item 5 (D10): the Verifier's stop is answerable on the feature page ──
+const V_STOP = { id: 'verify-3', kind: 'gate', nodeId: 'n_verify', issues: [], stop: { reason: 'check', run: null, node: 'n_verify', pick: 'another', head: 'Verifier · 1 gap left',
+  text: 'One requirement does not hold.', findingsLine: '1 gap open', gaps: [{ id: 'R-po-2', why: 'no email' }], options: [
+    { value: 'another', label: 'Fix again', sub: 'One more round', go: 'Fix again', short: 'fix again', payload: { decision: 'another' } },
+    { value: 'continue', label: 'Accept as is', sub: 'Ships with it', go: 'Accept as is', short: 'accepted', payload: { decision: 'continue' } }] } };
+const verifierRun = { runId: 'rv', pipelineId: 'pv', title: 'Run tags · Verifier', projectDir: '/tmp/p', status: 'running', kind: 'run', startedAt: '2026-01-01T00:00:00Z', pendingQuestion: V_STOP };
+test('D10: with no current run, the Verifier\'s open stop is asked and answered on the feature page; flag off: as today', async () => {
+  for (const flag of [true, false]) {
+    const posts = [];
+    const extra = (url, o) => {
+      if (url === '/api/shape/pipelines/pv/slice') return json({ verifier: true, featureId: 'feat_1', threadId: null });
+      if (url.startsWith('/api/answer')) { posts.push(JSON.parse(o.body)); return json({ ok: true }); }
+      return null;
+    };
+    const { ctx } = await d3Boot({ flag, extra, feature: () => json(D3_FEATURE('met')) });
+    ctx.dispatch({ type: 'hello', runs: [verifierRun] });
+    ctx.go('feature/feat_1');
+    await ctx.settle(12);
+    const slot = pageOf(ctx).querySelector('.gpage-question');
+    if (!flag) { assert.equal(slot.hidden, true); continue; }
+    assert.equal(slot.hidden, false, 'the question shows');
+    assert.ok(slot.textContent.includes('Verifier · 1 gap left'));
+    slot.querySelector('.btn-primary').dispatchEvent(new ctx.window.MouseEvent('click', { bubbles: true }));
+    await ctx.settle(6);
+    assert.deepEqual(posts.map((x) => [x.runId, x.id, x.payload.decision]), [['rv', 'verify-3', 'another']]);
+  }
+});
+
+// ── item 6: a run's stop on the feature page: one head (the stop's), one primary, no Re-plan beside it ──
+const P_STOP = { id: 'plan-n_refine-2', kind: 'plan', nodeId: 'n_refine', plan: { round: 1, file: 'p.md', check: { ok: false, passed: 3, total: 8, items: [{ label: 'Has tests', pass: false }] } },
+  stop: { reason: 'check', run: 2, node: 'n_refine', pick: 'revise', head: 'Run 2 · the plan check did not pass', text: 'The plan passes 3 of 8 checks.', findingsLine: '5 checks to fix', options: [
+    { value: 'revise', label: 'Re-plan', sub: 'The Planner fixes it', go: 'Re-plan', short: 're-plan', payload: { decision: 'revise', feedback: 'fix', source: 'check' } },
+    { value: 'approve', label: 'Approve as is', sub: 'Builds it', go: 'Approve as is', short: 'approved as is', payload: { decision: 'approve' } }] } };
+const stopRun = (pendingQuestion = P_STOP) => ({ runId: 'r2', pipelineId: 'p2', title: 'Slice 2', projectDir: '/tmp/p', status: 'running', kind: 'run', startedAt: '2026-01-01T00:00:00Z', pendingQuestion });
+const smallGroups = (over = {}) => ({ groups: [{ ...D3_GROUPS().groups[0], smallRuns: true, ...over }, GROUPS.groups[1]] });
+const shownButtons = (root) => [...root.querySelectorAll('button')].filter((b) => !b.hidden && !b.closest('[hidden], .hidden'));
+test('item 6: a stop on the feature page marks its slot; one primary, the bar offers no Re-plan; flag off: dev\'s page', async () => {
+  for (const flag of [true, false]) {
+    const { ctx } = await d3Boot({ flag, groups: flag ? smallGroups() : D3_GROUPS(), feature: () => json({ ...D3_FEATURE('being built'), open: true, halted: { index: 2, state: 'stopped', waiting: [] } }) });
+    ctx.dispatch({ type: 'hello', runs: [stopRun()] });
+    ctx.go('feature/feat_1');
+    await ctx.settle(12);
+    const gp = pageOf(ctx).querySelector('.gpage');
+    const slot = gp.querySelector('.gpage-question');
+    assert.equal(slot.hidden, false);
+    assert.equal('stop' in slot.dataset, flag, `flag ${flag}`);
+    assert.equal(slot.querySelectorAll('.ask-mcard-title').length, 1);
+    const bar = shownButtons(gp.querySelector('.gpage-actions')).map((b) => b.textContent);
+    const primaries = shownButtons(gp).filter((b) => b.classList.contains('btn-primary')).map((b) => b.textContent);
+    if (flag) { assert.deepEqual(bar, []); assert.deepEqual(primaries, ['Re-plan']); }
+    else assert.ok(bar.length >= 1, 'dev\'s bar keeps its answer');
+    gp.querySelector('.gpage-more').dispatchEvent(new ctx.window.MouseEvent('click', { bubbles: true }));
+    await ctx.settle(6);
+    const items = [...ctx.window.document.querySelectorAll('[role^="menuitem"]')].map((x) => x.textContent.trim());
+    assert.equal(items.some((x) => /Re-plan the rest/.test(x)), !flag, items.join(' | '));
+    if (!flag) continue;
+    ctx.dispatch({ type: 'question-resolved', runId: 'r2', id: P_STOP.id });
+    await ctx.settle(6);
+    assert.equal('stop' in slot.dataset, false, 'released');
+  }
+});
+
+test('item 6: .qpanel-head is hidden only under a stop on the feature page', async () => {
+  const { readFileSync } = await import('node:fs');
+  const css = readFileSync(new URL('../ui/public/shape/shape-it.css', import.meta.url), 'utf8');
+  assert.deepEqual(css.match(/^.*\.gpage-question.*$/gm).filter((l) => !l.trim().startsWith('/*')), ['div.gpage-question[data-stop] .qpanel-head{display:none;}']);
+});
+
+test('item 7: the feature page and the Runs list say the card\'s word for a stop; a shape-feature frame refreshes it; a stale server word never outlives the answer', async () => {
+  let slice = { kind: null, state: 'approval', stop: { reason: 'check', held: false } };
+  let gets = 0;
+  const groups = () => ({ groups: [{ ...D3_GROUPS().groups[0], smallRuns: true, members: [{ ...d3Member(1), slice: { kind: null, state: 'done' } }, { ...d3Member(2), status: 'running', slice }] }, GROUPS.groups[1]] });
+  const { ctx } = await d3Boot({ feature: () => json(D3_FEATURE('being built')), extra: (url) => (url.startsWith('/api/run-groups') ? (gets += 1, json(groups())) : null) });
+  ctx.dispatch({ type: 'hello', runs: [stopRun()] });
+  ctx.go('feature/feat_1');
+  await ctx.settle(12);
+  const words = () => [...pageOf(ctx).querySelectorAll('.gpage-runs .run-member-state')].map((x) => x.textContent);
+  assert.deepEqual(words(), ['done', 'waiting for you']);
+  slice = { kind: null, state: 'approval', stop: { reason: 'check', held: true, after: 1 } };
+  const before = gets;
+  ctx.dispatch({ type: 'shape-feature', id: 'feat_1' });
+  await ctx.settle(8);
+  assert.ok(gets > before, 'the groups were read again');
+  assert.deepEqual(words(), ['done', 'after run 1']);
+  // The answer reached the run: this tab's live run asks nothing more, so the server's older word is dropped.
+  ctx.dispatch({ type: 'question-resolved', runId: 'r2', id: P_STOP.id });
+  await ctx.settle(6);
+  assert.notEqual(words()[1], 'after run 1');
+  const n = gets;
+  ctx.dispatch({ type: 'shape-feature', id: 'feat_other' });
+  await ctx.settle(6);
+  assert.equal(gets, n, 'another feature\'s frame reads no groups');
+});
+
+test('item 8: a small-runs feature\'s head reads Create 2 PRs, disabled with the reason in the page\'s text, then enabled and primary after the mark', async () => {
+  const order = [{ index: 1, pipelineId: 'p1', title: 'A', pr: null, onto: null }, { index: 2, pipelineId: 'p2', title: 'B', pr: null, onto: null }];
+  let smallRuns = { ...D3_SR('met'), order };
+  const { ctx } = await d3Boot({ groups: smallGroups(), feature: () => json({ ...D3_FEATURE('met'), ship: { ...FEATURE.ship, smallRuns } }) });
+  ctx.go('feature/feat_1');
+  await ctx.settle(10);
+  const gp = pageOf(ctx).querySelector('.gpage');
+  const cta = () => gp.querySelector('.gpage-card .rd-pr-slot [data-rd-cta]');
+  const reason = 'Waiting for Compliance to confirm R-comp-1';
+  assert.deepEqual([cta().textContent, cta().disabled, cta().title], ['Create 2 PRs', true, reason]);
+  assert.ok(gp.querySelector('.gpage-card .run-status').textContent.includes(reason), 'the reason is visible, not only a tooltip');
+  smallRuns = { ...smallRuns, waiting: [], blocked: false, reason: null, confirmed: smallRuns.confirmed.map((c) => ({ ...c, state: 'confirmed', mark: 'met' })) };
+  ctx.dispatch({ type: 'shape-feature', id: 'feat_1' });
+  await ctx.settle(8);
+  assert.deepEqual([cta().textContent, cta().disabled, cta().classList.contains('btn-primary')], ['Create 2 PRs', false, true]);
+  assert.equal(gp.querySelector('.gpage-card .run-status').textContent.includes(reason), false);
+});
+
+// ── the Verifier's stop and several stops on the feature page ──
+const V_SLICE = (url) => (url === '/api/shape/pipelines/pv/slice' ? json({ verifier: true, featureId: 'feat_1', threadId: null }) : null);
+const READY_SR = () => ({ ...D3_SR('met'), confirmed: [], waiting: [], blocked: false, reason: null, order: [{ index: 1, pipelineId: 'p1', title: 'A', pr: null, onto: null }, { index: 2, pipelineId: 'p2', title: 'B', pr: null, onto: null }] });
+const notReady = (verify, status = 'active') => ({ ...D3_FEATURE('met'), status, ...(verify ? { verify: { state: verify } } : {}), ship: { ...FEATURE.ship, ready: false, smallRuns: READY_SR() } });
+const clickOn = (ctx, n) => n.dispatchEvent(new ctx.window.MouseEvent('click', { bubbles: true }));
+
+test('the Verifier\'s question survives schedules-changed and another feature\'s frame: the pick, the panel and the focus stay', async () => {
+  const { ctx } = await d3Boot({ groups: smallGroups(), feature: () => json(notReady('asking')), extra: V_SLICE });
+  ctx.dispatch({ type: 'hello', runs: [verifierRun] });
+  ctx.go('feature/feat_1');
+  await ctx.settle(12);
+  const slot = pageOf(ctx).querySelector('.gpage-question');
+  const primary = () => slot.querySelector('.btn-primary').textContent;
+  const tile = [...slot.querySelectorAll('.qopt')].find((t) => t.dataset.value === 'continue');
+  clickOn(ctx, tile);
+  await ctx.settle(4);
+  assert.equal(primary(), 'Accept as is');
+  tile.focus();
+  for (const frame of [{ type: 'schedules-changed' }, { type: 'shape-feature', id: 'feat_other' }]) {
+    ctx.dispatch(frame);
+    await ctx.settle(12);
+    assert.equal(slot.hidden, false, frame.type);
+    assert.equal(primary(), 'Accept as is', frame.type);
+    assert.ok(tile.isConnected, `${frame.type}: the same panel`);
+    assert.equal(ctx.window.document.activeElement, tile, frame.type);
+  }
+});
+
+test('a feature that is not ready to ship: one primary, Create N PRs locked with the reason, nowhere "Ready to ship"; ready again unlocks it', async () => {
+  let body = notReady('asking');
+  const { ctx } = await d3Boot({ groups: smallGroups(), feature: () => json(body), extra: V_SLICE });
+  ctx.dispatch({ type: 'hello', runs: [verifierRun] });
+  ctx.go('feature/feat_1');
+  await ctx.settle(12);
+  const gp = pageOf(ctx).querySelector('.gpage');
+  const cta = () => gp.querySelector('.gpage-card .rd-pr-slot [data-rd-cta]');
+  const status = () => gp.querySelector('.gpage-card .run-status').textContent;
+  const primaries = () => shownButtons(gp).filter((b) => b.classList.contains('btn-primary')).map((b) => b.textContent);
+  assert.deepEqual(primaries(), ['Fix again']);
+  assert.deepEqual([cta().textContent, cta().disabled, cta().title], ['Create 2 PRs', true, 'The Verifier waits for your answer']);
+  assert.match(status(), /The Verifier waits for your answer/);
+  assert.doesNotMatch(status(), /Ready to ship/);
+  // Still checking: no question, the same lock with its own reason.
+  body = notReady('verifying');
+  ctx.dispatch({ type: 'question-resolved', runId: 'rv', id: V_STOP.id });
+  ctx.dispatch({ type: 'shape-feature', id: 'feat_1' });
+  await ctx.settle(10);
+  assert.deepEqual([cta().disabled, primaries()], [true, []]);
+  assert.match(status(), /The Verifier is checking the feature/);
+  // `ready` alone moved: the head repaints.
+  body = { ...notReady('clean'), ship: { ...FEATURE.ship, ready: true, smallRuns: READY_SR() } };
+  ctx.dispatch({ type: 'shape-feature', id: 'feat_1' });
+  await ctx.settle(10);
+  assert.deepEqual([cta().disabled, primaries()], [false, ['Create 2 PRs']]);
+  assert.match(status(), /Ready to ship/);
+});
+
+test('the open, unanswered stop is the page\'s question, whichever member is current; the one on screen stays', async () => {
+  const run = (n, pendingQuestion) => ({ runId: `r${n}`, pipelineId: `p${n}`, title: `Slice ${n}`, projectDir: '/tmp/p', status: 'running', kind: 'run', startedAt: '2026-01-01T00:00:00Z', ...(pendingQuestion ? { pendingQuestion } : {}) });
+  const stopOf = (n) => ({ ...P_STOP, id: `plan-${n}`, stop: { ...P_STOP.stop, run: n, head: `Run ${n} · the plan check did not pass` } });
+  const live = (n, held) => ({ ...d3Member(n), status: 'running', slice: { kind: null, state: 'approval', ...(held === undefined ? {} : { stop: { reason: 'check', held, ...(held ? { after: 2 } : {}) } }) } });
+  // Run 1 works again, run 2 stops on its own question.
+  let members = [live(1), live(2, false)];
+  const posts = [];
+  const { ctx } = await d3Boot({ feature: () => json(D3_FEATURE('being built')), extra: (url, o) => {
+    if (url.startsWith('/api/run-groups')) return json({ groups: [{ ...smallGroups().groups[0], members }, GROUPS.groups[1]] });
+    if (url.startsWith('/api/answer')) { posts.push(JSON.parse(o.body)); return json({ ok: true }); }
+    return null;
+  } });
+  ctx.dispatch({ type: 'hello', runs: [run(1), run(2, stopOf(2))] });
+  ctx.go('feature/feat_1');
+  await ctx.settle(12);
+  const slot = pageOf(ctx).querySelector('.gpage-question');
+  assert.equal(slot.hidden, false, 'run 2\'s question is on the page');
+  assert.ok(slot.textContent.includes('Run 2 · the plan check did not pass'));
+  // Run 1 stops too: the question on screen is not swapped under the person.
+  ctx.dispatch({ type: 'question', runId: 'r1', ...stopOf(1) });
+  await ctx.settle(8);
+  assert.ok(slot.textContent.includes('Run 2 · the plan check did not pass'));
+  // Run 2's answer is held: run 1's open stop takes the place.
+  members = [live(1, false), live(2, true)];
+  ctx.dispatch({ type: 'shape-feature', id: 'feat_1' });
+  await ctx.settle(12);
+  assert.ok(slot.textContent.includes('Run 1 · the plan check did not pass'), slot.textContent);
+  clickOn(ctx, slot.querySelector('.btn-primary'));
+  await ctx.settle(6);
+  assert.deepEqual(posts.map((x) => [x.runId, x.id]), [['r1', 'plan-1']]);
+});
+
+test('a member current through its PR does not hide the Verifier\'s question', async () => {
+  const failing = { number: 7, url: 'https://github.com/a/b/pull/7', state: 'OPEN', checks: { state: 'failing', failed: 1, total: 2 } };
+  const groups = smallGroups({ members: [{ ...d3Member(1), pr: failing }, d3Member(2)] });
+  const { ctx } = await d3Boot({ groups, feature: () => json(notReady('asking')), extra: V_SLICE });
+  ctx.dispatch({ type: 'hello', runs: [verifierRun] });
+  ctx.go('feature/feat_1');
+  await ctx.settle(12);
+  const slot = pageOf(ctx).querySelector('.gpage-question');
+  assert.equal(pageOf(ctx).querySelector('.gpage-card .run-status').dataset.state, 'needs-you', 'a member is current through its PR');
+  assert.equal(slot.hidden, false);
+  assert.ok(slot.textContent.includes('Verifier · 1 gap left'));
+});

@@ -339,6 +339,20 @@ export function applyOutlineEdits(outline, edits = []) {
   return { ok: true, outline: { ...outline, slices, ...(leftOut ? { leftOut } : {}), ...(confirmed ? { confirmed } : {}) }, merges, removals };
 }
 
+/** Small runs: the Planner's parsed outline file with each `kept` requirement ({id, role key}) confirmed by its kept role,
+ *  once: it leaves every slice and leftOut, whatever the Planner wrote. Other ids are untouched; a malformed file is
+ *  returned as is. Pure. */
+export function keepConfirmed(raw, kept) {
+  const roles = new Map((Array.isArray(kept) ? kept : []).map((k) => [k.id, roleLabelOf(k.role)]));
+  if (!roles.size || !raw || typeof raw !== 'object' || Array.isArray(raw) || !Array.isArray(raw.slices)) return raw;
+  const isKept = (id) => typeof id === 'string' && roles.has(id.trim());
+  const without = (list) => list.filter((e) => !isKept(e && typeof e === 'object' ? e.id : e));
+  return { ...raw,
+    slices: raw.slices.map((s) => (s && Array.isArray(s.requirements) ? { ...s, requirements: without(s.requirements) } : s)),
+    ...(Array.isArray(raw.leftOut) ? { leftOut: without(raw.leftOut) } : {}),
+    confirmed: [...without(Array.isArray(raw.confirmed) ? raw.confirmed : []), ...[...roles].map(([id, role]) => ({ id, role }))] };
+}
+
 /** The approved outline's left-out ids, each with a reason: an id no slice placed is left out as not placed. Identity
  *  without an agreed list. */
 export function settleLeftOut(outline) {
@@ -492,8 +506,32 @@ export function sliceBrief({ featureTitle, outline, index, testsFirst = false })
     + `This is one slice of an approved outline:\n\n${outlineMarkdown(outline, { current: index })}\n`;
 }
 
-/** Re-plan the rest (L9): the done slices and what is left. */
-export function replanBrief({ featureTitle, outline, doneCount }) {
+/** A list item that names a requirement (coverage.mjs ITEM_RE), so the brief's own list stays the only one. */
+const REQ_ITEM_RE = /^(\s*-\s+)(?:\*\*(R-[a-z]{1,8}-\d+)\*\*|\[[ xX]\]\s+(R-[a-z]{1,8}-\d+))/gm;
+const flat = (t) => String(t ?? '').replace(/\s+/g, ' ').trim();
+const roleLabelOf = (role) => CONFIRM_ROLES.find((r) => r.key === roleKey(role))?.label || String(role);
+
+/** The carried requirements as the run's own list: an id line each, its example under it, and who confirms which. */
+function carriedBlock({ agreed, confirmed = [] }) {
+  const lines = agreed.map((a) => `- **${a.id}** ${flat(a.text)}`.trimEnd() + (a.example ? `\n  Example: ${flat(a.example)}` : '')).join('\n');
+  const kept = confirmed.map((c) => `${c.id} (${roleLabelOf(c.role)})`).join(', ');
+  return `## Agreed requirements\n\n${lines}\n\n`
+    + (kept ? `A person confirms ${kept}: if you slice, keep each one in "confirmed" with that role.\n\n` : '');
+}
+
+/** Re-plan the rest (L9): the done slices and what is left. `carried` (small runs: features.mjs carriedRequirements):
+ *  the requirements no finished run owns become the run's agreed list, and the done slices are `carried.done` (a
+ *  small-runs feature can finish out of order); without it the brief is dev's. */
+export function replanBrief({ featureTitle, outline, doneCount, carried = null }) {
+  if (carried) {
+    const isDone = (i) => carried.done.includes(i + 1);
+    const done = outline.slices.map((s, i) => (isDone(i) ? `${i + 1}. ${flat(s.title)}` : null)).filter(Boolean).join('\n') || '(none)';
+    const rest = { ...outline, slices: outline.slices.filter((_, i) => !isDone(i)) };
+    return `# ${flat(featureTitle)}: re-plan the rest\n\n`
+      + `These slices are done and merged into the base this run starts from:\n${done}\n\n`
+      + carriedBlock(carried)
+      + `Plan what is left, in slices if it is still large. The earlier outline for the rest was:\n\n${outlineMarkdown(rest).replace(REQ_ITEM_RE, '$1$2$3')}\n`;
+  }
   const done = outline.slices.slice(0, doneCount).map((s, i) => `${i + 1}. ${s.title}`).join('\n') || '(none)';
   const rest = { ...outline, slices: outline.slices.slice(doneCount) };
   return `# ${featureTitle}: re-plan the rest\n\n`

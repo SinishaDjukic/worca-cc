@@ -45,7 +45,8 @@ const AGREED = [{ id: 'R-po-1', text: 'People see it' }, { id: 'R-po-2', text: '
   { id: 'R-comp-4', text: 'The data stays in the EU' }];
 const outlineOf = (n) => ({ why: 'because', agreed: AGREED, leftOut: [],
   slices: Array.from({ length: n }, (_, i) => ({ id: `s${i + 1}`, title: `Slice ${i + 1}`, goal: `Goal ${i + 1}`, inScope: [], outOfScope: [],
-    acceptance: [], dependsOn: [], estimate: 'M', requirements: i < 3 ? [AGREED[i].id] : [] })) });
+    acceptance: [], dependsOn: [], estimate: 'M', // The last run owns what is left of the 3 owned ids: an owner-less one blocks Ship with the flag on.
+    requirements: AGREED.slice(0, 3).filter((_, k) => k === i || (i === n - 1 && k > i)).map((a) => a.id) })) });
 const plainOutlineOf = (n) => ({ why: 'because', slices: outlineOf(n).slices.map(({ requirements, ...s }) => s) });
 const { shipWorld } = shipKit({ nextId, outlineOf });
 const { shipWorld: plainWorld, cleanup } = shipKit({ nextId, outlineOf: plainOutlineOf });
@@ -160,6 +161,21 @@ shipT('D1 ship: blocked until Compliance confirms; One refused; then 4 PRs in fi
   assert.deepEqual(v.ship.smallRuns.order.map((o) => [o.index, o.pr && o.pr.number, o.onto]), [[1, 1, null], [3, 2, 1], [4, 3, 2], [2, 4, 3]]);
   assert.equal(v.ship.smallRuns.base, 'main');
 });
+
+shipT('fail closed: an agreed requirement with no run and no person refuses Ship with its reason, before any forge call', async () => {
+  const seen = []; forge(seen);
+  const w = smallWorld();
+  const db = getDb();
+  const outline = JSON.parse(db.prepare('SELECT outline FROM shape_features WHERE id = ?').get(w.f.id).outline);
+  outline.slices[2].requirements = [];
+  db.prepare('UPDATE shape_features SET outline = ? WHERE id = ?').run(JSON.stringify(outline), w.f.id);
+  assert.equal((await confirm(w.f.id, { id: 'R-comp-4' })).status, 200);
+  const r = await ship(w.f.id, 'stacked');
+  assert.equal(r.status, 409);
+  assert.deepEqual(await r.json(), { error: 'R-po-3 is owned by no run and confirmed by no person', code: 'ACCEPTANCE_INCOMPLETE', missing: ['R-po-3'], role: null });
+  assert.deepEqual(seen.filter((a) => a[0] === 'gh' || (a[0] === 'git' && a[1] === 'push')), []);
+  noChangelog(w);
+}, { WORCA_FLAGS: 'shaperSmallRuns' });
 
 shipT('D1 ship: a merged predecessor sends the next run into the root', async () => {
   const seen = []; forge(seen);

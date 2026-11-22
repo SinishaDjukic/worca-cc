@@ -98,8 +98,8 @@ function ledgerEntries(f) {
 
 /**
  * The Requirements tab (owner direction db793abc0): the caption, then one role fold per role (role-rows.mjs
- * buildRequirementRoleFolds, the Requirements step's) in CONFIRM_ROLES order, each with its count and how many are met
- * or open. A role whose requirements are all met starts closed, any other open. Each row: the state mark, the id, the
+ * buildRequirementRoleFolds, the Requirements step's) in CONFIRM_ROLES order, each with its count and how many are met,
+ * not met, dropped or open. A role whose requirements are all met starts closed, any other open. Each row: the state mark, the id, the
  * text on one line, the server's status `shown.text` (`run N` a link to that run's page when `runHref(N)` names one).
  * Null without a small-runs ledger. No listeners on the rows: a repaint (group-page.mjs keepUnchanged) may replace them.
  */
@@ -108,38 +108,33 @@ export function renderFeatureRequirements(doc, f, { runHref = () => null } = {})
   const h = (tag, cls, text) => { const e = doc.createElement(tag); if (cls) e.className = cls; if (text != null) e.textContent = text; return e; };
   const all = ledgerEntries(f);
   const box = h('div', 'plan-body srows shape-feature-reqs');
-  const owned = all.filter((x) => x.owned).length;
+  const byPerson = all.filter((x) => !x.owned).length;
+  const byNone = all.filter((x) => x.owned && x.e.status === 'unowned').length;
   box.appendChild(h('p', 'cap shape-feature-reqs-cap', all.length
-    ? `${plural(all.length, 'requirement')} · ${owned} owned by a run · ${all.length - owned} confirmed by a person` : '0 requirements'));
+    ? `${plural(all.length, 'requirement')} · ${all.length - byPerson - byNone} owned by a run · ${byPerson} confirmed by a person${byNone ? ` · ${byNone} owned by no run` : ''}` : '0 requirements'));
   if (!all.length) return box;
   const roles = [...CONFIRM_ROLES, RELEASE];
   const groups = roles.map((role) => ({ role, rows: all.filter((x) => x.role === role.key) })).filter((g) => g.rows.length).map(({ role, rows }) => {
     const met = rows.filter((x) => x.e.shown.mark === 'check').length;
-    const open = rows.length - met;
+    // Decided, not open: read from the ledger entry (`shown.mark` x also marks a missing reason and an accepted gap).
+    const decided = (mark) => rows.filter((x) => x.e.state === 'confirmed' && x.e.mark === mark).length;
+    const notMet = decided('not-met');
+    const dropped = decided('dropped');
+    const open = rows.length - met - notMet - dropped;
+    const part = (n, word) => (n ? ` · ${n} ${word}` : '');
     return { key: role.key, perspective: role.key === RELEASE.key ? null : perspectiveOfRole(role.key), label: role.label, lead: false,
-      summary: `${rows.length} · ${met} met${open ? ` · ${open} open` : ''}`, state: open ? 'open' : 'clean', mark: 'wait', markWord: 'not all met',
-      findings: [], entries: rows,
-      rows: rows.map(({ e }) => {
+      summary: `${rows.length} · ${met} met${part(notMet, 'not met')}${part(dropped, 'dropped')}${part(open, 'open')}`,
+      state: met === rows.length ? 'clean' : 'open', mark: 'wait', markWord: 'not all met', findings: [],
+      rows: rows.map(({ e, owned }) => {
         const label = reasonLine(e.text);
         const at = clockOf(e.at);
+        const href = owned && Number.isInteger(e.run) ? runHref(e.run) : null;
         return { id: e.id, idCol: true, label, pass: e.shown.mark === 'check', mark: e.shown.mark, ariaLabel: e.shown.word === 'gap accepted' ? 'gap accepted' : MARK_NAMES[e.shown.mark] || 'waiting',
-          note: e.shown.text, tip: `${e.id} · ${label} · ${e.shown.text}${at ? ` · ${at}` : ''}` };
+          tip: `${e.id} · ${label} · ${e.shown.text}${at ? ` · ${at}` : ''}`, data: { key: e.id, owner: e.shown.owner, role: e.shown.role || null },
+          ...(href ? { note: e.shown.word, noteLead: { text: e.shown.owner, href } } : { note: e.shown.text }) };
       }) };
   });
-  const { el, folds } = buildRequirementRoleFolds(doc, groups);
-  folds.forEach((fold, i) => {
-    [...fold.rows.querySelectorAll(':scope > .plan-check-row')].forEach((row, k) => {
-      const { e, owned } = groups[i].entries[k];
-      row.dataset.key = e.id;
-      row.dataset.owner = e.shown.owner;
-      if (e.shown.role) row.dataset.role = e.shown.role;
-      const href = owned && Number.isInteger(e.run) ? runHref(e.run) : null;
-      if (!href) return;
-      const a = h('a', 'rd-fact-link', e.shown.owner);
-      a.setAttribute('href', href);
-      row.querySelector('.plan-check-detail').replaceChildren(a, ` · ${e.shown.word}`);
-    });
-  });
+  const { el } = buildRequirementRoleFolds(doc, groups);
   box.appendChild(el);
   return box;
 }

@@ -346,12 +346,13 @@ import { registerAskRenderer, askRendererFor, askKindOf } from './ask/registry.m
 import { activeAgents, snapshotFromState } from './ask-run-card.mjs';
 import { mountRunAgents } from './shape/run-agents.mjs';
 import { mountRunFacts } from './shape/run-facts.mjs';
-import { runAgentRows, cardShortWord } from '../../src/shared/shape/run-agents.mjs';
+import { runAgentRows, memberShortWord } from '../../src/shared/shape/run-agents.mjs';
 import { registerChatRunCard } from './chat/run-card.mjs';
 import { registerDirectionAddon } from './chat/direction.mjs';
 import { renderPlanBody } from './shape/plan-body.mjs';
 import { renderOutlineBody } from './shape/outline-body.mjs';
 import { renderFeature, featureModelOf, renderFeatureRequirements, paintFeatureDecisions } from './shape/feature-view.mjs';
+import { shipWaitText } from './shape/feature-card.mjs';
 import { renderReleaseRow } from './shape/release-row.mjs';
 import { featureFocusOf, focusFeatureControl, featureMenuItems } from './shape/feature-actions.mjs';
 import { decorateShapingQuestions } from './shape/questions.mjs';
@@ -484,25 +485,60 @@ const SHAPE_FEATURE_HOSTS = new Map();
  *  schedules-changed frames (a slice's next state and PRs change there). */
 const SLICE_INFO = new Map();
 const SLICE_INFO_WAITERS = new Map();      // pipelineId → Set<onLoad>
-function sliceInfoFor(pipelineId, onLoad) {
-  if (!pipelineId) return null;
-  const known = SLICE_INFO.get(pipelineId);
-  if (known) return known;
-  if (typeof onLoad === 'function') {
-    if (!SLICE_INFO_WAITERS.has(pipelineId)) SLICE_INFO_WAITERS.set(pipelineId, new Set());
-    SLICE_INFO_WAITERS.get(pipelineId).add(onLoad);
-  }
-  if (SLICE_INFO.has(pipelineId)) return null;   // pending, or not a slice
+const STOP_HOME_WAITERS = new Map();       // the same, for stopHomeFor
+const STOP_HOMES = new Map();              // pipelineId → the last known home: those frames never take it away
+const SLICE_INFO_PENDING = new Set();      // pipeline ids with a fetch in flight
+const STOP_HOME_RETRIED = new Set();       // pipeline and question ids whose cached miss was asked again
+const isSliceInfo = (info) => !!info && Number.isInteger(info.index);
+function waitForSliceInfo(map, pipelineId, onLoad) {
+  if (typeof onLoad !== 'function') return;
+  if (!map.has(pipelineId)) map.set(pipelineId, new Set());
+  map.get(pipelineId).add(onLoad);
+}
+function loadSliceInfo(pipelineId) {
+  if (SLICE_INFO.has(pipelineId)) return;        // pending, or not a slice
   SLICE_INFO.set(pipelineId, null);
+  SLICE_INFO_PENDING.add(pipelineId);
   fetch(`/api/shape/pipelines/${encodeURIComponent(pipelineId)}/slice`)
     .then((r) => (r && r.ok ? r.json() : null)).catch(() => null)
     .then((info) => {
-      const waiters = [...(SLICE_INFO_WAITERS.get(pipelineId) || [])]; SLICE_INFO_WAITERS.delete(pipelineId);
+      SLICE_INFO_PENDING.delete(pipelineId);
+      const take = (map) => { const fns = [...(map.get(pipelineId) || [])]; map.delete(pipelineId); return fns; };
+      const slices = take(SLICE_INFO_WAITERS);
+      const homes = take(STOP_HOME_WAITERS);
       if (!info || !info.featureId) return;
       SLICE_INFO.set(pipelineId, info);
-      for (const fn of waiters) { try { fn(info); } catch { /* a repaint hint only */ } }
+      const was = STOP_HOMES.get(pipelineId);
+      const home = { featureId: info.featureId, threadId: info.threadId || null };
+      STOP_HOMES.set(pipelineId, home);
+      const moved = !was || was.featureId !== home.featureId || was.threadId !== home.threadId;
+      for (const fn of [...(isSliceInfo(info) ? slices : []), ...(moved ? homes : [])]) { try { fn(info); } catch { /* a repaint hint only */ } }
     });
+}
+/** A slice's info; never a Verifier run's answer (it has no slice fields). */
+function sliceInfoFor(pipelineId, onLoad) {
+  if (!pipelineId) return null;
+  const known = SLICE_INFO.get(pipelineId);
+  if (known) return isSliceInfo(known) ? known : null;
+  waitForSliceInfo(SLICE_INFO_WAITERS, pipelineId, onLoad);
+  loadSliceInfo(pipelineId);
   return null;
+}
+/** Where a run's stop is answered, a slice's or a Verifier run's: `{featureId, threadId}`, or null until it is known. A
+ *  known home stays while the cleared slice info is read again, so the question on the feature page is never torn down.
+ *  A cached miss is asked again once per question `askId` (a Verifier's ticket may not have had its pipeline yet). */
+function stopHomeFor(pipelineId, onLoad, askId = '') {
+  if (!pipelineId) return null;
+  const last = STOP_HOMES.get(pipelineId) || null;
+  if (SLICE_INFO.get(pipelineId)) return last;
+  waitForSliceInfo(STOP_HOME_WAITERS, pipelineId, onLoad);
+  const key = `${pipelineId} ${askId}`;
+  if (SLICE_INFO.has(pipelineId) && !SLICE_INFO_PENDING.has(pipelineId) && !STOP_HOME_RETRIED.has(key)) {
+    STOP_HOME_RETRIED.add(key);
+    SLICE_INFO.delete(pipelineId);
+  }
+  loadSliceInfo(pipelineId);
+  return last;
 }
 /** F33: Chat's own run panel (chatDeps.openRunPanel is openChatRunPanel once Chat is installed): it stays in Chat.
  *  The full ref: a run id alone can be a superseded paused copy, or one a restarted server no longer knows. */
@@ -2013,6 +2049,8 @@ function handleServerMessage(msg) {
     repaintHeldStops(msg.id, heldBefore);
     refreshShapeFeatures(msg.id);
     void refreshGroupFeatureLock(msg.id);
+    // Small runs: a member's short word (a stop opened, held or answered) comes with its group.
+    if (flagOn('shaperSmallRuns') && (state.runGroups || []).some((g) => g.smallRuns && (!msg.id || g.id === msg.id))) void loadRunGroups();
     refreshShaperCards();
     chatHome?.refreshPlans();
     return;
@@ -6895,7 +6933,8 @@ function stepDeps(ctx, pq) {
 }
 
 /** Small runs C3 (D12, D13): a stop's extra deps. A stop is answered on the feature card only: the run side panel and the
- *  run page (`readOnly`) draw only its findings; an answer held for another run's turn (the feature view's `stop.held`,
+ *  run page (`readOnly`) draw only its findings; with the flag on the run page (`runPage`) also names the stop and links
+ *  where it is answered (`home`: the feature's card in Chat when a thread started it, else the feature page); an answer held for another run's turn (the feature view's `stop.held`,
  *  read through the slice info) draws the one answered line. */
 function stopDeps(ctx, pq, panel) {
   if (!pq || !pq.stop) return {};
@@ -6905,7 +6944,11 @@ function stopDeps(ctx, pq, panel) {
   const info = r && r.pipelineId ? sliceInfoFor(r.pipelineId, repaint) : null;
   const held = info && info.stop && info.stop.held ? { value: info.stop.value } : null;
   const pick = typeof panel.__stopPick === 'string' ? panel.__stopPick : null;   // the person's pick across a repaint
-  return { readOnly, ...(held ? { held } : {}), ...(pick ? { pick } : {}) };
+  const runPage = flagOn('shaperSmallRuns') && !!panel.closest?.('#run-detail') && !panel.closest('[data-presentation="panel"]');
+  const at = runPage && r && r.pipelineId ? stopHomeFor(r.pipelineId, repaint, pq.id) : null;
+  const home = !at ? null : at.threadId ? { href: `#chat/${encodeURIComponent(at.threadId)}`, text: "the feature's card in Chat" }
+    : { href: `#feature/${encodeURIComponent(at.featureId)}`, text: 'the feature page' };
+  return { readOnly, ...(runPage ? { runPage: true, home } : {}), ...(held ? { held } : {}), ...(pick ? { pick } : {}) };
 }
 
 /** A stop's held state as read from its slice info: '' when nothing is held. */
@@ -35376,12 +35419,14 @@ const withChainPr = (x, m) => (x && !x.pr && m.prUrl && isTerminalStatus(x.statu
 
 /** A group (a Run-after chain from schedulesView, or a feature / user group from /api/run-groups) as the list's group
  *  item: members carry their raw run from this tab's live map, else memberRun, else their ticket. */
-function runsGroupItem({ id, groupKind, title, members, cost = null, planning = null, smallRuns = false }) {
+function runsGroupItem({ id, groupKind, title, members, cost = null, planning = null, smallRuns = false, hold = null }) {
   // /api/run-groups members carry no projectKey / historyKey (src/core/run-groups.mjs member()), so a finished member's
   // href would fall back to the group page itself: the History row knows the project.
   const histPk = (pid) => (pid ? (((state.historyAll || []).find((p) => p && p.id === pid)) || {}).projectKey || '' : '');
+  const words = smallRuns && flagOn('shaperSmallRuns');
   const items = members.map((m, i) => {
     const r = m.pipelineId ? latestPipelineRun(m.pipelineId) : null;
+    const stopped = !!(r && r.pendingQuestion && r.pendingQuestion.stop);
     const h = histOf(m.pipelineId);
     // An after-ticket has no start time: never pass its AFTER_RUN_AT sentinel (runModel does not read ticket.after).
     // `m.after` (D29): the 1-based position of the member this one runs after (runChains and listRunGroups both send it),
@@ -35404,7 +35449,10 @@ function runsGroupItem({ id, groupKind, title, members, cost = null, planning = 
       memo: memoFor(m.pipelineId || m.ticketId || `${id}:${i}`),
       // D2: a small-runs member's row says the card's short word (runs-list.mjs cardShortWord), read from its live snapshot.
       // Its pending question rides along, as the run page's Agents panel attaches it, so a waiting member reads so.
-      ...(smallRuns && r && r.stepper && r.stepper.careRun ? { snap: { ...snapshotFromState(r), pendingQuestion: r.pendingQuestion || null } } : {}),
+      // A stopped run without a Care plan says so too; a finished one without either has none and reads `done`.
+      ...(smallRuns && r && ((r.stepper && r.stepper.careRun) || (words && stopped)) ? { snap: { ...snapshotFromState(r), pendingQuestion: r.pendingQuestion || null } } : {}),
+      // The server's slice words; its stop is dropped once this tab's live run asks nothing more (a stale answer).
+      ...(words && m.slice ? { slice: r && !stopped && m.slice.stop ? { ...m.slice, stop: undefined } : m.slice } : {}),
       startedAt: (r && r.startedAt) || (h && h.startedAt) || null,       // D12: the group's dispatch time
       // D32: the member's own cost (a chain's total sums these). D5: max(live, History, the group's stored byPipeline):
       // a finished run in the live map at 0 never wins.
@@ -35432,12 +35480,12 @@ function runsGroupItem({ id, groupKind, title, members, cost = null, planning = 
   const liveCost = Object.fromEntries(items.filter((x) => x.kind === 'live' && x.run && typeof x.run.totalCostUsd === 'number')
     .map((x) => [x.pipelineId, x.run.totalCostUsd]));
   return { id, groupKind, title, members: items, planning: planningItem, groupKey: g.key, groupName: g.name, memo: memoFor(`group:${id}:${sig}`),
-    cost, liveCost, costMemo: memoFor(`cost:${id}:${sig}`), ...(smallRuns ? { smallRuns: true } : {}) };   // D2 (D1)
+    cost, liveCost, costMemo: memoFor(`cost:${id}:${sig}`), ...(smallRuns ? { smallRuns: true } : {}), ...(hold ? { hold } : {}) };   // D2 (D1)
 }
 function runsGroupItems() {
   const owned = new Set((state.runGroups || []).flatMap((g) => g.members.flatMap((m) => [m.pipelineId && `p:${m.pipelineId}`, m.ticketId && `t:${m.ticketId}`])).filter(Boolean));
   const own = (state.runGroups || []).map((g) => runsGroupItem({ id: g.id, groupKind: g.kind, title: g.title, members: g.members, cost: g.cost || null, planning: g.planning || null,
-    smallRuns: g.smallRuns === true }));
+    smallRuns: g.smallRuns === true, hold: (flagOn('shaperSmallRuns') && g.hold) || null }));
   // A run group stands for any chain that shares a member with it (a feature's Run-after chain).
   const chains = schedulesView.chains()
     .filter((c) => !c.members.some((m) => owned.has(`p:${m.pipelineId}`) || owned.has(`t:${m.ticketId}`)))
@@ -35555,7 +35603,10 @@ function paintGroupPageNow() {
     }
     return;                                        // not loaded yet: "Loading group…" stays; loadRunGroups repaints
   }
-  const row = groupRow(it, { now: Date.now() });
+  // Small runs: the runs are done but the feature is not ready to ship (the Verifier checks, asks or stopped): say so, as
+  // the Runs list's held row does, never "Ready to ship".
+  const hold = it.hold || (route === 'feature' && GROUP_PAGE.requirements ? shipWaitText(GROUP_PAGE.feature) : '');
+  const row = groupRow(hold ? { ...it, hold } : it, { now: Date.now() });
   if (!host.__gp) {
     host.__gp = buildGroupPage(document);
     // Run 4 (D2): a Shaper card set or changed its primary's label: the bar's Answer follows it.
@@ -35568,7 +35619,7 @@ function paintGroupPageNow() {
   const labels = [...new Set(row.members.flatMap((mb) => (histOf(mb.pipelineId) || {}).labels || []))].sort();
   paintGroupPage(host.__gp, { row, project: row.groupName || '', tab, overview: row.groupKind === 'feature', logs: levelAtLeast('expert'), labels,
     unmarked: route === 'feature' ? GROUP_PAGE.unmarked : 0, stackedOnly: route === 'feature' && GROUP_PAGE.stackedOnly,
-    requirements: route === 'feature' && GROUP_PAGE.requirements }, {
+    requirements: route === 'feature' && GROUP_PAGE.requirements, ...(route === 'feature' && GROUP_PAGE.requirements ? { shortState: memberShortWord, ship: groupShipOf(GROUP_PAGE.feature) } : {}) }, {
     onAction: (aid, b) => groupAction(row, aid, b),
     onMore: (anchor) => openGroupMoreMenu(anchor, row),
     // One ship flow (D11): Create PR / View PR ▾ / View PRs ▾ on the status line, for every group kind.
@@ -35583,7 +35634,7 @@ function paintGroupPageNow() {
     },
     labelChip: (d, l) => labelChip(d, l, {}),
     onTab: (t) => { location.hash = t === 'runs' ? base : `${base}/${t}`; },
-    mountQuestion: (slot, mb) => paintGroupQuestion(slot, mb),
+    mountQuestion: (slot, mb) => paintGroupQuestion(slot, groupAsker(slot, row, mb)),
     answerLabel: () => answerLabelOf(host.__gp.querySelector('.gpage-question')),
     // Mount once per feature: paintGroupPageNow runs on every run frame, and a remount would refetch and rebuild the
     // Shaper view each time.
@@ -35630,7 +35681,7 @@ function unmarkedOf(f) {
   // Feature D1: a small-runs feature's lock is its ledger's waiting ids. Its acceptance also counts the run-owned ids,
   // which a person can never mark (RUN_OWNED).
   const sr = f && f.ship && f.ship.smallRuns;
-  if (sr) return sr.blocked && Array.isArray(sr.waiting) ? sr.waiting.length : 0;
+  if (sr) return sr.blocked && Array.isArray(sr.waiting) ? sr.waiting.length + (sr.unowned || []).length : 0;
   const a = f && f.ship && f.ship.acceptance; return a && !a.ready ? Math.max(0, (a.total || 0) - (a.marked || 0)) : 0;
 }
 /** Feature D1: a small-runs feature ships a PR per run, so its page never offers One. */
@@ -35641,11 +35692,19 @@ function storeGroupFeature(f) {
   GROUP_PAGE.feature = f;
   GROUP_PAGE.requirements = flagOn('shaperSmallRuns') && smallRunsOf(f);
 }
-/** What the Requirements and Decisions tabs paint from: every row's status text, the Care line and the log. */
+/** What the head's Create N PRs reads from a small-runs feature, as the Ship card does: it is locked until the feature is
+ *  ready to ship, then by its ledger. */
+function groupShipOf(f) {
+  const sr = f.ship.smallRuns;
+  const wait = shipWaitText(f);
+  return { n: (sr.order || []).length, blocked: !!wait || !!sr.blocked, reason: wait || sr.reason || '' };
+}
+/** What the Requirements and Decisions tabs and the head paint from: every row's status text, the Care line, the ship
+ *  lock and the log. */
 function groupFeatureSig(f) {
   const sr = f && f.ship && f.ship.smallRuns;
   return JSON.stringify([sr ? [...(sr.owned || []), ...(sr.confirmed || [])].map((e) => [e.id, e.shown ? e.shown.text : '']) : null,
-    sr && sr.care ? sr.care.line : '', (f && f.log) || []]);
+    sr && sr.care ? sr.care.line : '', sr ? [shipWaitText(f), !!sr.blocked, sr.reason || '', (sr.order || []).length] : null, (f && f.log) || []]);
 }
 /** Every feature fetch that may reach GROUP_PAGE takes a rising ticket before it is sent; noteGroupFeatureLock drops an
  *  answer older than the last one applied, so a slow fetch never paints a stale feature over a newer one. */
@@ -35702,10 +35761,35 @@ function scheduleGroupPagePaint() {
   GROUP_PAGE.paintQueued = true;
   queueMicrotask(() => { GROUP_PAGE.paintQueued = false; paintGroupPageNow(); });
 }
+/** Whose question the group page shows. A small-runs feature (flag on): an open stop whose answer is not held, the one on
+ *  screen first (another run's stop never takes a half-picked one away), whichever member is current, since a run can
+ *  stop while another works; else the current member's; else the Verifier's. Any other group: the current member's. */
+function groupAsker(slot, row, mb) {
+  if (!flagOn('shaperSmallRuns') || GROUP_PAGE.route !== 'feature') return mb;
+  const asks = (x) => { const r = x && x.runId ? runs.get(x.runId) : null; return (r && r.pendingQuestion) || null; };
+  if (GROUP_PAGE.requirements) {
+    const open = [...(row.planning ? [row.planning] : []), ...row.members]
+      .filter((x) => { const pq = asks(x); return !!pq && !!pq.stop && !(x.slice && x.slice.stop && x.slice.stop.held); });
+    if (open.length) return open.find((x) => x.runId === slot.__runId) || open[0];
+  }
+  return asks(mb) ? mb : groupVerifierAsk() || mb;
+}
+/** The Verifier's run is no member of its feature's group: with the flag on and no member asking, its open stop is the
+ *  feature page's question (a feature no Chat thread started has no other place to answer it). */
+function groupVerifierAsk() {
+  if (!flagOn('shaperSmallRuns') || GROUP_PAGE.route !== 'feature' || !GROUP_PAGE.featureId) return null;
+  for (const r of runs.values()) {
+    const pq = r && r.pendingQuestion;
+    if (!pq || !pq.stop || pq.stop.node !== 'n_verify' || !r.pipelineId) continue;
+    const home = stopHomeFor(r.pipelineId, scheduleGroupPagePaint, pq.id);
+    if (home && home.featureId === GROUP_PAGE.featureId) return { runId: r.runId };
+  }
+  return null;
+}
 /** D12, Known bug 7: the group page's question, answered through the one question delegate. */
 function paintGroupQuestion(slot, mb) {
   const r = mb && mb.runId ? runs.get(mb.runId) : null;
-  if (!r || !r.pendingQuestion) { chatReleaseQuestion(slot); slot.hidden = true; slot.__runId = ''; return; }
+  if (!r || !r.pendingQuestion) { chatReleaseQuestion(slot); slot.hidden = true; slot.__runId = ''; delete slot.dataset.stop; return; }
   if (!slot.querySelector('.qpanel')) slot.appendChild(Object.assign(document.createElement('div'), { className: 'qpanel hidden' }));
   if (!slot.__offQ) {
     // chatLiveRun follows the pipeline's newest run (as chatPaintQuestion does), so an answer after a resume goes to
@@ -35719,6 +35803,9 @@ function paintGroupQuestion(slot, mb) {
   slot.__runId = r.runId;
   slot.__pipelineId = r.pipelineId || '';
   slot.hidden = false;
+  // Small runs: a stop (held or not) is its own head and primary: no ask banner over it (shape-it.css), no bar answer and
+  // no Re-plan in the page's ⋯.
+  if (r.pendingQuestion.stop && flagOn('shaperSmallRuns')) slot.dataset.stop = ''; else delete slot.dataset.stop;
   chatPaintQuestion({ runId: r.runId, pipelineId: r.pipelineId }, slot);
 }
 /** D6: one handler for a group's actions, from the group page and from a group's chat card (chatRunControls.act). */
@@ -35846,7 +35933,7 @@ const runsRowSig = (r) => [r.key, r.pipelineId, r.href, r.title, r.model.state, 
   r.model.pr ? [r.model.pr.id, r.model.pr.word, r.model.pr.title, r.model.pr.icon, r.model.pr.pending ? 1 : 0] : 0, r.model.progress && r.model.progress.mode === 'stages' ? [r.model.progress.stage, r.model.progress.label] : 0,
   r.activityMs || 0, r.groupName, r.cost ?? null, r.costUsd ?? null, r.needs ? 1 : 0,
   r.kind === 'chain' ? [r.open ? 1 : 0, r.members.map((m) => [m.key, m.model.state, m.model.line, m.title, m.href, m.cost ?? null, m.model.symbol || '', roundsSig(m),
-    r.smallRuns ? cardShortWord({ model: m.model, run: m.run }, m.snap || null) || '' : '',   // D2: the member's short word
+    r.smallRuns ? memberShortWord(m) || '' : '',   // D2: the member's short word
     m.model.pr ? [m.model.pr.id, m.model.pr.word, m.model.pr.title, m.model.pr.icon, m.model.pr.pending ? 1 : 0] : 0])] : 0, (r.labels || []).join('\n')];
 // Where focus goes back to after the list is rebuilt under it. A row can change key in the
 // rebuild: opening a finished run acknowledges it, and the same paint turns live:<runId> into
@@ -36438,6 +36525,7 @@ async function groupFeatureMenuItems(anchor, row) {
       return r && r.ok ? { ok: true } : { ok: false, error: out.error || 'That did not work. Try again.' };
     },
     fail: (text) => notify({ tone: 'err', title: 'That did not work', detail: text }),
+    noReplan: !!document.querySelector('#group-detail .gpage-question[data-stop]:not([hidden])'),
   }, anchor);
 }
 async function openGroupMoreMenu(anchor, row) {
@@ -36473,7 +36561,8 @@ function openAddToGroup(anchor, items, rowKey) {
   const own = items.length === 1 ? groupOfRun(pids[0])?.id : '';
   const groups = (state.runGroups || []).filter((g) => g.id !== own).map((g) => {
     const it = runsGroupItem({ id: g.id, groupKind: g.kind, title: g.title, members: g.members });
-    return { id: g.id, title: g.title, model: groupModel({ kind: g.kind === 'feature' ? 'feature' : 'chain', title: g.title, members: it.members.map((x) => x.run) }) };
+    return { id: g.id, title: g.title, model: groupModel({ kind: g.kind === 'feature' ? 'feature' : 'chain', title: g.title, members: it.members.map((x) => x.run),
+      hold: (flagOn('shaperSmallRuns') && g.hold) || null }) };
   });
   const key = anchor.dataset.rowKey;
   const opener = () => shownEl(key ? el.runsList.querySelector(`.runs-more[data-row-key="${cssEscape(key)}"]`) : null)
