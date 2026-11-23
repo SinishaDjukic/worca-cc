@@ -74,6 +74,10 @@ with **Discard**. Files that changed in the folder since the run started are ski
 A run with **No project** works in its own folder. It opens on **Artifacts** at every level and has no **Diff**,
 **Changes** or **Actions**.
 
+With [Workflow tests](workflow-tests.md) on (Labs), a run of one of your saved workflows uses the version marked in use,
+not the draft, and records which version it used. The tries of a test are not runs you see here: they never appear in
+the Runs list.
+
 ![A finished run, "CSV export for contacts", on its Diff tab: 4 files changed (+36 −0) in a file tree beside the highlighted patch of src/routes/contacts.js, with the run's worca-cc/ branch, its time and cost, and the Create PR and Publish branch buttons](screenshots/run-detail.png)
 
 ## Running, pausing and shipping
