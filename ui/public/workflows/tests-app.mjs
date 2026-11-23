@@ -397,14 +397,16 @@ export function createWorkflowTests(deps) {
   }
   // Final review M6: the opened diffs (up to 5 MB each) are let go on every move; the side by side reads them again.
   // Board 59 C: any page change (leaving Compare, a test starting) ends the line after a stopped check (checkStopped).
-  function wftShow(view, extra = {}) { wftPatchCut.clear(); wft = { ...wft, view, data: null, patches: null, checkStopped: null, ...extra }; wftSyncHash(); void wftRefresh(); }
+  // Pre-merge QA: a page change also ends an example that is still opening (wftOpenSeq), so it never takes the page over later.
+  function wftShow(view, extra = {}) { wftPatchCut.clear(); wftOpenSeq += 1; wft = { ...wft, view, data: null, patches: null, checkStopped: null, openingExample: null, ...extra }; wftSyncHash(); void wftRefresh(); }
   /** F35: the address names the Tests page that shows, so a reload comes back to it. replaceState: no history entry, Back and Forward keep their meaning.
    *  Shown only while the Workflows view is (els.tests stays unhidden when it is left): a late load never rewrites another view's address. */
   function wftSyncHash() {
     const els = wfvEls();
     const shown = currentView() === 'workflows' && !!(els.tests && !els.tests.hidden) && flagOn('workflowTests');
-    const h = testsAddress({ workflowId: wftWorkflowId(), shown, view: wft.view, runId: wft.runId,
-      exampleId: wft.view === 'checker' ? wft.exampleId : wft.example ? wft.example.id : null, roundId: wft.roundId });
+    const opening = wft.view === 'list' && wft.openingExample != null ? wft.openingExample : null;   // B1: the example that opens
+    const h = testsAddress({ workflowId: wftWorkflowId(), shown, view: opening != null ? 'editor' : wft.view, runId: wft.runId,
+      exampleId: opening != null ? opening : wft.view === 'checker' ? wft.exampleId : wft.example ? wft.example.id : null, roundId: wft.roundId });
     if (win.location.hash === h || (!shown && !/^#workflows\/[A-Za-z0-9_-]+\/tests(\/|$)/.test(win.location.hash))) return;
     try { win.history.replaceState(null, '', h); } catch { /* sandboxed */ }
   }
@@ -548,22 +550,34 @@ export function createWorkflowTests(deps) {
     if (!id) return;
     const seq = ++wftOpenSeq;                                         // a later Open wins over this one
     const stale = () => seq !== wftOpenSeq || wftWorkflowId() !== id;
+    // Pre-merge QA (B1): while it opens, the address already names the example, so a reload then comes back to it.
+    if (exampleId != null) {
+      wft = { ...wft, openingExample: exampleId };
+      wftSyncHash();
+      const els = wfvEls();   // the page's own loading state meanwhile, so a click visibly did something
+      if (els.tests && wft.view === 'list') renderTestsPage(els.tests, null, wftListActions(), { doc, loading: true });
+    }
+    const opened = () => { if (seq === wftOpenSeq && wft.openingExample != null) wft = { ...wft, openingExample: null }; };
+    // Pre-merge QA: the reads are independent. One after another they took about 5 s where git is slow (the projects read
+    // asks git about each project), and a click or a reload looked lost. They are read together.
+    const [r, scripts, pj, plan, o, jm, ct] = await Promise.all([
+      exampleId != null ? wftCall('GET', `${wftBase(id)}/examples/${exampleId}`) : null,
+      // null: the Library did not load (no "left the Library" claims)
+      Promise.resolve().then(() => gvApi.scripts()).then((list) => list.filter((s) => s && s.placeable !== false)).catch(() => null),
+      wftCall('GET', '/api/workflow-tests/projects'),                 // 3a: the Project select (board 32); null when not read
+      wftCall('GET', `${wftBase(id)}/plan?b=draft&tries=1`),
+      wftCall('GET', wftBase(id)),                                    // fresh: G19 reads whether a test runs
+      // Part 4 (Task 18): the "Checked with" list, and how far Worca's checking of a saved example's criteria is trusted.
+      wftCall('GET', `${wftBase(id)}/judge-models`),
+      exampleId != null ? wftCall('GET', `${wftBase(id)}/examples/${exampleId}/criteria`) : null,
+    ]);
+    opened();
+    if (stale()) return;
     let example = { ...BLANK_EXAMPLE, basics: { ...BLANK_EXAMPLE.basics } };
     if (exampleId != null) {
-      const r = await wftCall('GET', `${wftBase(id)}/examples/${exampleId}`);
-      if (stale()) return;
-      if (!r.ok) { notify({ tone: 'err', title: 'Could not open the example', detail: r.error }); return; }
+      if (!r.ok) { wftSyncHash(); wftRender(); notify({ tone: 'err', title: 'Could not open the example', detail: r.error }); return; }
       example = r.data.example;
     }
-    let scripts = null;                                               // null: the Library did not load (no "left the Library" claims)
-    try { scripts = (await gvApi.scripts()).filter((s) => s && s.placeable !== false); } catch { scripts = null; }
-    const pj = await wftCall('GET', '/api/workflow-tests/projects');   // 3a: the Project select (board 32); null when not read
-    const plan = await wftCall('GET', `${wftBase(id)}/plan?b=draft&tries=1`);
-    const o = await wftCall('GET', wftBase(id));                      // fresh: G19 reads whether a test runs
-    // Part 4 (Task 18): the "Checked with" list, and how far Worca's checking of a saved example's criteria is trusted.
-    const jm = await wftCall('GET', `${wftBase(id)}/judge-models`);
-    const ct = exampleId != null ? await wftCall('GET', `${wftBase(id)}/examples/${exampleId}/criteria`) : null;
-    if (stale()) return;
     wft = { ...wft, workflowId: id, view: 'editor', example, scripts, ...(o.ok ? { overview: o.data } : {}),
       judgeModels: jm.ok ? jm.data : { models: [], suggested: null }, criteriaTrust: ct && ct.ok ? ct.data.trust : {},
       perTryUsd: plan.ok && plan.data.b ? plan.data.b.perTryUsd : null, projects: pj.ok ? pj.data.projects : null, openLiked: liked };
@@ -662,7 +676,8 @@ export function createWorkflowTests(deps) {
 
   /** The page switch shows the Tests page: its list, its address, then the read. */
   function enterList() {
-    wft.view = 'list';
+    wftOpenSeq += 1;                                                   // pre-merge QA: ends an example still opening (wftShow)
+    wft = { ...wft, view: 'list', openingExample: null };
     wftSyncHash();
     void wftRefresh();
   }

@@ -87,7 +87,8 @@ test('a new criterion: "Confirm 4 results" opens Check the checker; without it (
 test('tests-app.mjs reads the models and the trust when the editor opens, and hands them to the editor with the confirm link (Task 22)', () => {
   const ctl = readFileSync(new URL('../ui/public/workflows/tests-app.mjs', import.meta.url), 'utf8');
   assert.match(ctl, /wftCall\('GET', `\$\{wftBase\(id\)\}\/judge-models`\)/);
-  assert.match(ctl, /exampleId != null \? await wftCall\('GET', `\$\{wftBase\(id\)\}\/examples\/\$\{exampleId\}\/criteria`\) : null/);
+  // Pre-merge QA: read together with the editor's other reads (ui-workflow-test-open-example.test.mjs checks they go out at once).
+  assert.match(ctl, /exampleId != null \? wftCall\('GET', `\$\{wftBase\(id\)\}\/examples\/\$\{exampleId\}\/criteria`\) : null/);
   assert.match(ctl, /judgeModels: wft\.judgeModels, criteriaTrust: wft\.criteriaTrust \|\| \{\},[\s\S]{0,600}?onConfirmCriterion: \(c\) => wftConfirmCriterion\(session\.exampleId, c/);
 });
 
