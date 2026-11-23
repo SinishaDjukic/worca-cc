@@ -284,6 +284,12 @@ test('reportResult: comment always; named transition only when completed and con
       await createTaskSource(makeCtx({ transitionOnComplete: 'Done' }), { fetch }).reportResult('SHOP-12', { ...result, status: 'failed' });
       assert.deepEqual(fetch.calls.map((c) => c.method), ['POST']);
     } },
+    ...['started', 'pr-opened'].map((status) => ({ name: `${status} (a run event, #1456) → comment only, even when configured`, run: async () => {
+      const fetch = fakeFetch(routes());
+      await createTaskSource(makeCtx({ transitionOnComplete: 'Done' }), { fetch }).reportResult('SHOP-12', { ...result, status });
+      assert.deepEqual(fetch.calls.map((c) => c.method), ['POST']);
+      assert.match(fetch.calls[0].url, /\/comment$/);
+    } })),
     { name: 'already in the target status → no transition calls', run: async () => {
       const fetch = fakeFetch(routes('Done'));
       await createTaskSource(makeCtx({ transitionOnComplete: 'Done' }), { fetch }).reportResult('SHOP-12', result);

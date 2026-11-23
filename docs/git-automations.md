@@ -18,7 +18,8 @@ Two events are supported today:
 Editing an issue or a PR never starts a run. Neither do Worca's own comments or Worca's own PRs.
 
 A project's repository is its `origin` remote when that is on github.com or dev.azure.com, else the first remote
-that is. On Azure DevOps see [Azure DevOps](#azure-devops) for what each event means there.
+that is. A remote through a `~/.ssh/config` Host alias (`git@github-work:me/repo.git`) counts as the host the alias
+names, so with a fork cloned that way as `origin` the automations watch the fork, not `upstream`. On Azure DevOps see [Azure DevOps](#azure-devops) for what each event means there.
 
 ## Auto-handle
 

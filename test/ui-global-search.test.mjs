@@ -282,7 +282,7 @@ test('R-po-18/A-5: every name match is listed before an alternative-word-only ma
     ['Runs', 'Smart run naming', 'Sync before run', 'Scheduled runs', 'Budget & cost limits']);
   assert.deepEqual(setRows('mode').settings.map((x) => x.title), ['Interface mode', 'Away mode', 'Engine & models', 'Appearance'],
     'Appearance has "mode" only in "dark mode"');
-  assert.deepEqual(setRows('chat').settings.map((x) => x.title), ['Chat', 'Chat notifications', 'Engine & models', 'Limits & access'],
+  assert.deepEqual(setRows('chat').settings.map((x) => x.title), ['Chat', 'Chat notifications', 'Engine & models', 'Links in answers', 'Limits & access'],
     'the Chat tab before the card that also starts with "chat", then the cards found through the tab name');
 });
 

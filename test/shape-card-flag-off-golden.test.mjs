@@ -1,11 +1,11 @@
 // test/shape-card-flag-off-golden.test.mjs — Shaper small runs B1 (D12): the Chat run card of a shaped run without the
-// small-runs marker (no `smallRuns` key on its card) renders exactly as dev's did at checkpoint 25eac83bb, with the UI
+// small-runs marker (no `smallRuns` key on its card) renders exactly as dev's does at the checkpoint (dev b61f7049f, taken when dev was merged in; first taken at 25eac83bb), with the UI
 // flag `shaperSmallRuns` off and on. The fixture holds each case's normalized outerHTML (only `data-sig` values are
 // stripped). The helpers below are COPIED from test/ui-chat-run-card.test.mjs (not imported), so this file runs on
 // its own inside the checkpoint archive.
 //
 // The fixture was generated ONCE, from a `git archive` of the checkpoint, never from this tree:
-//   D=$(mktemp -d "$TMPDIR/golden.XXXXXX"); git archive 25eac83bb | tar -x -C "$D"
+//   D=$(mktemp -d "$TMPDIR/golden.XXXXXX"); git archive <checkpoint> | tar -x -C "$D"
 //   ln -s "$PWD/node_modules" "$D/node_modules"; cp test/shape-card-flag-off-golden.test.mjs "$D/test/"
 //   (cd "$D" && UPDATE_SHAPER_CARD_GOLDEN=1 node --test test/shape-card-flag-off-golden.test.mjs)
 //   cp "$D/test/fixtures/shaper/card-flag-off-golden.json" test/fixtures/shaper/

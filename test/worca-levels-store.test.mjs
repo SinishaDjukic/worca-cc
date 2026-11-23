@@ -228,3 +228,37 @@ test('the store file is worca-levels.json and a stale file from the old name is 
   assert.equal(readFileSync(stale, 'utf8'), text);
   assert.equal(readdirSync(dir).some((n) => n.includes('.corrupt-')), false);
 });
+
+test('parseData keeps a top-level install object (default {}) next to people; version stays 1', async () => {
+  mkdirSync(dir, { recursive: true });
+  writeFileSync(file, JSON.stringify({ version: 1, people: { ann: rec({ level: 1 }) }, install: { hint: 'x' } }));
+  await store.updatePerson('bob', () => rec({ level: 1 }));
+  let onDisk = JSON.parse(readFileSync(file, 'utf8'));
+  assert.deepEqual(onDisk.install, { hint: 'x' });
+  assert.equal(onDisk.version, 1);
+  writeFileSync(file, JSON.stringify({ version: 1, people: {}, install: 'junk' }));
+  await store.updatePerson('bob', () => rec({ level: 1 }));
+  onDisk = JSON.parse(readFileSync(file, 'utf8'));
+  assert.deepEqual(onDisk.install, {});
+});
+
+test('normaliseRecord: null for a non-object, every field coerced otherwise', async () => {
+  const { normaliseRecord } = await import('../src/core/worca-levels/migrate.mjs');
+  for (const bad of [null, undefined, 'x', 7, [], true]) assert.equal(normaliseRecord(bad), null);
+  const iso = '2026-01-01T00:00:00.000Z';
+  const got = normaliseRecord({
+    level: 9, celebrated: 12, welcome: { kind: 'weird', seenAt: 'nope' },
+    doneAt: { a: iso, b: 5, c: 'junk' }, tz: 4, live: 'bad', createdAt: iso,
+  });
+  assert.equal(got.level, 5);
+  assert.equal(got.celebrated, 5);
+  assert.deepEqual(got.welcome, { kind: 'new', seenAt: null });
+  assert.deepEqual(got.doneAt, { a: iso });
+  assert.equal(got.tz, null);
+  assert.deepEqual(got.live, { addons: [], addonPeak: 0, spaces: false, statsViewedAt: null, teamMetricsOpenedAt: null });
+  assert.equal(normaliseRecord({ level: 2, celebrated: 4 }).celebrated, 2, 'celebrated never exceeds level');
+  assert.equal(normaliseRecord({ level: 'x' }).level, 0, 'an unusable level is the not-yet-created marker');
+  assert.deepEqual(normaliseRecord({ level: 2, createdAt: iso }).welcome, { kind: 'new', seenAt: iso },
+    'a missing welcome is treated as seen so it never re-opens');
+  assert.deepEqual(normaliseRecord({ level: 2, welcome: { kind: 'existing', seenAt: iso } }).welcome, { kind: 'existing', seenAt: iso });
+});

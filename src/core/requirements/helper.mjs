@@ -5,7 +5,7 @@
 import { runClaude, mockEnabled } from '../claude-runner.mjs';
 import { budgetStatus } from '../cost-budget.mjs';
 import { safeParseJson } from '../protocol.mjs';
-import { RequirementsError, SECTIONS, LIST_SECTIONS, LIMITS, MAX_QUESTIONS, clip, normalizeSection } from './spec.mjs';
+import { RequirementsError, SECTIONS, LIST_SECTIONS, LIMITS, MAX_QUESTIONS, clip, clipItem, normalizeSection } from './spec.mjs';
 import { asData, roundPromptParts, threadText, specBlocks, RoundError, pendingRound, removedCriteria } from './round.mjs';
 import { diffList } from './ready.mjs';
 import {
@@ -159,7 +159,7 @@ function proposalOf(p, { spec, taken }) {
   }
   if (target === 'criterion') {
     if (change === 'add') {
-      const text = clip(p.value);
+      const text = clipItem(p.value);
       if (!text || taken.has(text.toLowerCase())) return null;
       taken.add(text.toLowerCase());
       return { target, change, id: null, value: text, before: null, reason };
@@ -168,7 +168,7 @@ function proposalOf(p, { spec, taken }) {
     if (!cur) return null;
     if (change === 'remove') return { target, change, id: cur.id, value: null, before: cur.text, reason };
     if (change !== 'reword') return null;
-    const text = clip(p.value);
+    const text = clipItem(p.value);
     if (!text || text === cur.text) return null;
     return { target, change, id: cur.id, value: text, before: cur.text, reason };
   }
@@ -185,7 +185,7 @@ function proposalOf(p, { spec, taken }) {
  *  criterion whose text matches an existing one or one the product owner removed (`removed`, case-insensitive) is dropped. */
 function normalizeProposals(list, spec, removed) {
   const s = spec || {};
-  const taken = new Set([...(s.criteria || []).map((c) => c.text), ...(removed || []).map((t) => clip(t))].map((t) => String(t).toLowerCase()));
+  const taken = new Set([...(s.criteria || []).map((c) => c.text), ...(removed || []).map((t) => clipItem(t))].map((t) => String(t).toLowerCase()));
   const out = [];
   for (const p of Array.isArray(list) ? list : []) {
     if (out.length >= HELPER_LIMITS.proposals) break;

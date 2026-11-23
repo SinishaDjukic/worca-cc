@@ -53,7 +53,7 @@ async function startRun(window) {
   await tick();
 }
 
-test('starting a run opens its own page with the hash synced, and New run in the top bar then reopens the New view (not a dead click)', async () => {
+test('starting a run opens its own page with the hash synced, and New run on the Runs page then reopens the New view (not a dead click)', async () => {
   const window = await boot();
   const doc = window.document;
   await startRun(window);
@@ -66,8 +66,8 @@ test('starting a run opens its own page with the hash synced, and New run in the
     { name: 'after starting a run, clicking "New run" reopens the New view (not a dead click)', run: async () => {
       assert.equal(hidden(doc, 'runs'), false, 'precondition: on Runs');
 
-      // The reported gesture: click "New run" in the top bar.
-      doc.getElementById('topnav-new')
+      // The reported gesture: click "New run" (the Runs page head, where this test is).
+      doc.getElementById('runs-new')
          .dispatchEvent(new window.Event('click', { bubbles: true, cancelable: true }));
       await tick();
 

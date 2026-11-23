@@ -7,7 +7,7 @@ import { execFileSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
-  buildGeminiArgs, createGeminiNormalizer, classifyGeminiError, GEMINI_SESSION_PREFIX, geminiRulePlan, geminiPolicyToml,
+  buildGeminiArgs, createGeminiNormalizer, classifyGeminiError, GEMINI_SESSION_PREFIX, geminiRulePlan, geminiPolicyToml, geminiPathPattern,
   geminiCapabilities, geminiPreflight, runGeminiProcess, GEMINI_ASK_LOCKDOWN, GEMINI_RESUME_NOT_FOUND_RE, GEMINI_POLICY_ERROR_RE,
 } from '../src/core/engines/gemini.mjs';
 import { familySessionOf, NO_MCP_SERVER } from '../src/core/engines/gemini-family.mjs';
@@ -140,6 +140,36 @@ test('rule plan: shell, web and MCP tool rules held; command and path rules part
   const etc = new RegExp(p.rules[4].argsPattern);
   assert.ok(etc.test('{"content":"x","file_path":"/etc/hosts"}'));
   assert.ok(!etc.test('{"file_path":"/w/etc/hosts"}'));
+});
+
+test('path rules match Windows paths: any drive, either separator, the home in either form', () => {
+  const p = geminiRulePlan({ deny: ['Read(//**/.env*)', 'Read(~/.ssh/**)', 'Edit(//etc/**)', 'Read(./secret.txt)'] }, { home: String.raw`C:\Users\zed` });
+  const [env, ssh, etc, rel] = p.rules.map((r) => new RegExp(r.argsPattern));
+  const arg = (v) => JSON.stringify({ file_path: v });
+  for (const v of [String.raw`C:\repo\sub\.env.local`, 'd:/work/.env', String.raw`\\server\share\.env`, '/w/.env']) assert.ok(env.test(arg(v)), v);
+  assert.ok(!env.test(arg(String.raw`C:\repo\environment.md`)));
+  assert.ok(env.test(arg('/w/.env\\x')), 'a POSIX name holding a backslash stays denied');
+  for (const v of [String.raw`C:\Users\zed\.ssh\id_ed25519`, 'c:/Users/zed/.ssh/config', '~/.ssh/id']) assert.ok(ssh.test(arg(v)), v);
+  assert.ok(!ssh.test(arg(String.raw`C:\Users\zedd\.ssh\id`)));
+  assert.ok(etc.test(arg(String.raw`C:\etc\hosts`)) && !etc.test(arg(String.raw`C:\w\etc\hosts`)));
+  assert.ok(rel.test(arg(String.raw`C:\checkout\secret.txt`)) && rel.test(arg('secret.txt')));
+});
+
+test('path rules: long Windows paths, either letter case on Windows and macOS, and relative values of a //**/ rule', () => {
+  const plan = (caseInsensitive) => ['Read(//**/.env*)', 'Read(~/.ssh/**)', 'Edit(//etc/**)']
+    .map((r) => new RegExp(geminiPathPattern(/\((.+)\)/.exec(r)[1], String.raw`C:\Users\zed`, { caseInsensitive })));
+  const arg = (v) => JSON.stringify({ file_path: v });
+  const [env, ssh, etc] = plan(true);
+  assert.ok(ssh.test(arg(String.raw`\\?\C:\Users\zed\.ssh\id`)) && etc.test(arg(String.raw`\\.\C:\etc\hosts`)), 'a long path');
+  assert.ok(ssh.test(arg(String.raw`C:\USERS\Zed\.SSH\id`)) && env.test(arg(String.raw`C:\repo\.ENV`)), 'either case');
+  for (const v of ['.env', String.raw`sub\.env`, 'sub/.env.local']) assert.ok(env.test(arg(v)), `a relative ${v}`);
+  assert.ok(!env.test(arg('environment.md')) && !env.test(arg('sub/x.env')));
+  const unc = new RegExp(geminiPathPattern('~/.ssh/**', String.raw`\\server\home\zed`, { caseInsensitive: true }));
+  for (const v of [String.raw`\\server\home\zed\.ssh\id`, String.raw`\\?\UNC\server\home\zed\.ssh\id`, '//server/home/zed/.ssh/id'])
+    assert.ok(unc.test(arg(v)), `a home on a share: ${v}`);
+  assert.ok(!unc.test(arg(String.raw`\\other\home\zed\.ssh\id`)) && !unc.test(arg(String.raw`\\server\home\zedd\.ssh\id`)));
+  const [envCs] = plan(false);
+  assert.ok(!envCs.test(arg('/repo/.ENV')), 'case kept where the file system keeps it (Linux)');
 });
 
 test('policy TOML: one [[rule]] per rule, deny at the top of the admin tier, every string quoted', () => {

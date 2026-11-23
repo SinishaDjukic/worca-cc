@@ -3,7 +3,8 @@ import assert from 'node:assert/strict';
 import { mkdtempSync, mkdirSync, writeFileSync, symlinkSync, realpathSync, existsSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { showFiles, parseShownPath, credentialReason, showFileKindFor, imageSize, kindOf, revealTargetOf, REVEAL_GONE } from '../src/core/ask/show-files.mjs';
+import { showFiles, parseShownPath, credentialReason, showFileKindFor, shownKindOf, SHOW_FILE_KINDS, imageSize, kindOf, revealTargetOf, REVEAL_GONE } from '../src/core/ask/show-files.mjs';
+import { mimeForPath } from '../src/shared/artifact-kinds.mjs';
 import { ASK_LIMITS } from '../src/core/ask/limits.mjs';
 
 const PNG = Buffer.concat([Buffer.from('89504e470d0a1a0a0000000d49484452', 'hex'), Buffer.from([0, 0, 2, 128, 0, 0, 1, 224]), Buffer.alloc(16)]);
@@ -244,6 +245,25 @@ test('credentialReason / showFileKindFor / imageSize / kindOf', () => {
   assert.equal(kindOf(Buffer.from('<html><body>x</body></html>'), 'p.html', L).entry.kind, 'html');
   assert.equal(kindOf(Buffer.from('<svg xmlns="http://www.w3.org/2000/svg"/>'), 'a.svg', L).entry.kind, 'svg');
   assert.match(kindOf(Buffer.from(`<svg xmlns="http://www.w3.org/2000/svg">${' '.repeat(L.textBytes)}</svg>`), 'a.svg', L).error, /SVG files over 1 MiB/);
+  const office = Buffer.alloc(50 * 1024 * 1024 + 1);
+  office.write('PK\u0003\u0004');
+  assert.match(kindOf(office, 'big.docx', L).error ?? '', /over 50 MiB are not shown/, 'Office has its own 50 MiB cap below the outer limit');
+});
+
+test('shownKindOf: a stored copy\'s card kind', () => {
+  // Every kind, stored the way show_files stores it: a text store carries the entry's label as its mime, a binary or
+  // image store the sniffed mime (an Office copy: its extension's mime).
+  for (const entry of SHOW_FILE_KINDS) {
+    const name = `file${entry.exts ? entry.exts[0] : ''}`;
+    const mime = entry.store === 'text' ? entry.label : entry.kind === 'office' ? mimeForPath(name) : entry.mimes[0];
+    assert.equal(shownKindOf({ kind: entry.store, mime, name }), entry.kind, `${entry.kind} (${entry.store}, ${mime}, ${name})`);
+  }
+  assert.equal(shownKindOf({ kind: 'text', mime: 'Markdown', name: 'plan.md' }), 'markdown', 'an older or odd mime: by extension');
+  assert.equal(shownKindOf({ kind: 'text', mime: null, name: 'x' }), 'text');
+  assert.equal(shownKindOf({ kind: 'binary', mime: 'application/zip', name: 'a.zip' }), null);
+  for (const junk of [undefined, null, 'pdf', 42, {}, { kind: 'other', mime: 'application/pdf', name: 'a.pdf' }, { kind: 'binary', mime: 42, name: 7 }]) {
+    assert.equal(shownKindOf(junk), null, JSON.stringify(junk));
+  }
 });
 
 test('imageSize: gif, jpeg (APP0 before SOF0, progressive SOF2), webp VP8X / VP8 / VP8L; truncated headers give null', () => {
@@ -274,4 +294,28 @@ test('imageSize: gif, jpeg (APP0 before SOF0, progressive SOF2), webp VP8X / VP8
   assert.deepEqual(imageSize(VP8L2, 'image/webp'), { width: 300, height: 16383 });
   assert.equal(imageSize(GIF.subarray(0, 8), 'image/gif'), null);
   assert.equal(imageSize(VP8X.subarray(0, 20), 'image/webp'), null);
+});
+
+test('kindOf: an Office document is admitted by its name AND zip magic; a plain .zip and a .docx of text are not Office', () => {
+  const zip = Buffer.concat([Buffer.from([0x50, 0x4b, 0x03, 0x04]), Buffer.alloc(40, 1)]);
+  const k = kindOf(zip, 'report.docx', L);
+  assert.equal(k.entry.kind, 'office');
+  assert.ok(k.mime.endsWith('wordprocessingml.document'));
+  assert.equal(kindOf(zip, 'deck.odp', L).mime, 'application/vnd.oasis.opendocument.presentation');
+  assert.match(kindOf(zip, 'archive.zip', L).error, /cannot be shown/, 'a plain zip is still refused');
+  assert.equal(kindOf(Buffer.from('just text'), 'notes.docx', L).entry.kind, 'text', 'text named .docx stays text');
+});
+
+test('show_files: an Office document in the out folder becomes an office item, stored as a binary that keeps its extension', async () => {
+  const { extensionForAttachment } = await import('../src/shared/artifact-kinds.mjs');
+  const f = fixture();
+  const body = Buffer.concat([Buffer.from([0x50, 0x4b, 0x03, 0x04]), Buffer.alloc(40, 1)]);
+  writeFileSync(join(f.out, 'Q3 report.docx'), body);
+  const r = await showFiles({ files: [{ path: '$WORCA_ASK_OUT/Q3 report.docx' }], rowFor: f.rowFor }, f.deps);
+  assert.equal(r.ok, true);
+  assert.equal(r.items[0].kind, 'office');
+  assert.equal(r.items[0].name, 'Q3 report.docx');
+  assert.equal(f.stored[0].kind, 'binary');
+  assert.ok(f.stored[0].mime.endsWith('wordprocessingml.document'));
+  assert.equal(extensionForAttachment(f.stored[0].kind, f.stored[0].mime), '.docx', 'the on-disk copy keeps .docx');
 });

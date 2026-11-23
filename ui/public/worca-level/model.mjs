@@ -34,14 +34,9 @@ export async function fetchWorcaLevel() {
   return readView(await globalThis.fetch(`/api/worca-level?tz=${encodeURIComponent(browserTimeZone())}`));
 }
 
-/** Acknowledge 'welcome', or 'celebration' of the level `index` that was shown (never "whatever is current"). */
+/** Acknowledge 'celebration' of the level `index` that was shown (never "whatever is current"). */
 export async function ackWorcaLevel(what, index) {
   return readView(await postJson('/api/worca-level/ack', index === undefined ? { what } : { what, index }));
-}
-
-/** Tell the server a page was opened: 'stats-viewed' or 'team-metrics-viewed'. */
-export async function postWorcaLevelEvent(type) {
-  return readView(await postJson('/api/worca-level/events', { type }));
 }
 
 /** An action link is an in-app hash route; anything else the server sends is not rendered as a link. */
@@ -60,6 +55,16 @@ function progressText(progress) {
   return `${progress.done} of ${progress.total} ${tail}`;
 }
 
+/** Undone required items, then the undone choices of pick items; a solo user never gets a team-only item (A-16). */
+function suggestions(next, onTeam) {
+  return next
+    .filter((a) => !a.done && (onTeam || !a.onlyFor))
+    .flatMap((a) => (a.kind === 'pick' && Array.isArray(a.choices) ? a.choices.filter((c) => !c.done) : [a]))
+    .filter((a) => isHashHref(a.href))
+    .slice(0, MAX_SUGGESTIONS)
+    .map(({ label, hint, href }) => ({ label, hint, href }));
+}
+
 export function tooltipModel(view) {
   const top = view.top === true;
   const next = Array.isArray(view.next) ? view.next : [];
@@ -73,19 +78,53 @@ export function tooltipModel(view) {
     progressLine: text,
     segments: top || !view.progress ? null : { done: view.progress.done, total: view.progress.total },
     tryNextHeading: view.level.index === 1 ? 'Your first steps' : 'Try next',
-    tryNext: top
-      ? []
-      : next
-          .filter((a) => !a.done && isHashHref(a.href))
-          .slice(0, MAX_SUGGESTIONS)
-          .map(({ label, hint, href }) => ({ label, hint, href })),
+    tryNext: top ? [] : suggestions(next, view.onTeam === true),
     topLine: top ? TOP_LINE : null,
   };
 }
 
-export function pickDialog(view, { firstRunWelcomeOpen = false, setupOpen = false } = {}) {
-  if (firstRunWelcomeOpen || setupOpen) return null;
-  if (view.welcome) return `welcome-${view.welcome.kind}`;
-  if (view.celebration) return 'celebration';
+/** sessionStorage key: a celebration or summary was already shown in this browser session. */
+export const SESSION_SHOWN_KEY = 'worca-level:shown-in-session';
+
+const RUNNER_INDEX = 2;
+// The statuses that mean "this run is over" (app.js isTerminalStatus, kept in step: the model is pure).
+const TERMINAL = new Set(['done', 'error', 'stopped', 'aborted', 'failed', 'complete', 'completed', 'interrupted']);
+const isTerminal = (status) => TERMINAL.has(String(status || '').toLowerCase());
+
+/** `#history/<p>/<id>` or `#running/<id>[/details…]` as segments; anything else is null. */
+function runRoute(hash) {
+  const segs = String(hash == null ? '' : hash).replace(/^#/, '').split('/');
+  if (segs[0] === 'history') return segs[1] && segs[2] ? { saved: true } : null;
+  if (segs[0] === 'running') return segs[1] ? { saved: false, runId: segs[1] } : null;
   return null;
+}
+
+/** A run-result route is on screen: a saved run, or a live-route run that has ended. */
+export function isRunResultRoute(hash, statusOf) {
+  const r = runRoute(hash);
+  if (!r) return false;
+  return r.saved || (statusOf(r.runId) !== undefined && isTerminal(statusOf(r.runId)));
+}
+
+/** The route shows a run that is still going (a known, non-terminal status). */
+export function isLiveRunRoute(hash, statusOf) {
+  const r = runRoute(hash);
+  if (!r || r.saved) return false;
+  const status = statusOf(r.runId);
+  return !!status && !isTerminal(status);
+}
+
+/**
+ * Which dialog may open now (D-14): null while anything else holds the person's attention, while one
+ * was already shown this session, or (Runner only) before a run-result route was on screen (D-13).
+ * A summary outranks a celebration.
+ */
+export function pickDialog(view, env = {}) {
+  const blocked = env.setupOpen || env.welcomeOpen || env.dialogOpen || env.guideOpen
+    || env.menuOpen || env.liveRunOpen || env.shownThisSession;
+  if (blocked) return null;
+  if (view.summary) return 'summary';
+  if (!view.celebration) return null;
+  if (view.celebration.index === RUNNER_INDEX && !env.resultSeen) return null;
+  return 'celebration';
 }

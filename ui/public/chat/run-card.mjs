@@ -81,7 +81,9 @@ export function progressIdent(block) {
     return { cardId: block.id, pipelineId: card.pipelineId || null, runId: card.runId || null, projectKey: card.projectKey || null,
       workspaceId: card.workspaceId || null, title: card.title || '', label: card.label || '',
       // A PR fix run's card (ui/server.mjs askPrFixRun): what started it and, later, its outcome.
-      ...(card.fix && typeof card.fix === 'object' ? { fix: card.fix } : {}) };
+      ...(card.fix && typeof card.fix === 'object' ? { fix: card.fix } : {}),
+      // A feature run's card (ui/server.mjs): the requirements feature it belongs to ({seq, id, title}).
+      ...(card.feature && typeof card.feature === 'object' ? { feature: card.feature } : {}) };
   }
   const none = card.target === 'none';   // P3: a No project proposal — the reserved key and its name until the first frame
   return { cardId: block.id, pipelineId: null, runId: block.runId || null, projectKey: none ? NO_PROJECT_KEY : (card.projectKey || null), workspaceId: card.workspaceId || null,
@@ -225,7 +227,10 @@ export function createChatRunCard({ doc, win = null, snapshot = null, ctx = {}, 
   const where = h('span', 'chat-rc-where');
   const autoEl = h('span', 'chat-rc-auto');
   autoEl.hidden = true;
-  sub.append(where, autoEl);
+  // A feature run: the requirements feature it belongs to, as a link to its page (R-po-15). Title via textContent only.
+  const featureEl = h('a', 'chat-rc-feature-link');
+  featureEl.hidden = true;
+  sub.append(featureEl, where, autoEl);
   // ---- a PR fix run (PR watch): what started it · the PR · the watcher's outcome
   const fixEl = h('div', 'chat-rc-fix');
   fixEl.hidden = true;
@@ -974,6 +979,9 @@ export function createChatRunCard({ doc, win = null, snapshot = null, ctx = {}, 
     const sig = labels.join('\n');
     if (sig !== labelsSig) { labelsSig = sig; labelsEl.replaceChildren(...labels.map((l) => labelChip(doc, l))); }
     title.textContent = curRow ? curRow.title : (s && s.title) || id.title || 'Run';
+    const feat = id.feature && Number.isInteger(Number(id.feature.seq)) && id.feature.title ? id.feature : null;
+    featureEl.hidden = !feat;
+    if (feat) { featureEl.textContent = String(feat.title); featureEl.setAttribute('href', `#requirements/feature/${Number(feat.seq)}`); }
     const kindWord = one ? one.kindWord : kindOf(curRow, s);
     kind.textContent = kindWord;
     kind.hidden = !kindWord;

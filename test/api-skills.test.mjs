@@ -6,7 +6,7 @@
 // build on each other's library (release-notes, graphify): run the whole file, not one test by --test-name-pattern.
 import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
-import http from 'node:http';
+import { appServer } from './helpers/app-server.mjs';
 import { spawnSync } from 'node:child_process';
 import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, existsSync, rmSync, symlinkSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -50,7 +50,7 @@ const catalogRow = async (id) => (await call('GET', '/api/skills')).body.skills.
 
 before(async () => {
   const { app } = await import('../ui/server.mjs');
-  srv = http.createServer(app);
+  srv = appServer(app);
   await new Promise((r) => srv.listen(0, '127.0.0.1', r));
   base = `http://127.0.0.1:${srv.address().port}`;
 });

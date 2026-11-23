@@ -1,46 +1,50 @@
-// ui/public/worca-level/dialogs.mjs — the three worca level dialogs: welcome-new (first open),
-// welcome-existing (first open with past activity) and celebration (a new highest level). Each is a
+// ui/public/worca-level/dialogs.mjs — the worca level dialogs: celebration (a new highest level) and summary (the levels
+// credited at the first v2 evaluation, each once with its date). There is no
+// levels welcome: a fresh install meets the setup assistant and the first-run welcome only. It is a
 // read-only .viewer-modal built from the caller's WorcaLevelView. Closing calls onClose() once;
 // the caller (app-wiring) owns acknowledging the server. Which dialog opens, and when, is
 // model.mjs pickDialog's call. This module never fetches and never touches <html data-level>.
 import { guardModal } from '../modal-guard.mjs';
 import { layoutDialog } from '../dialog-layout.mjs';
-import { isHashHref, setAvatarSrc } from './model.mjs';
-import { renderSegments } from './segments.mjs';
-import { WORCA_LEVELS, WORCA_LEVEL_COUNT, WORCA_THRESHOLDS } from '../../../src/shared/worca-levels.mjs';
+import { setAvatarSrc } from './model.mjs';
+import { WORCA_LEVELS, WORCA_LEVEL_COUNT } from '../../../src/shared/worca-levels.mjs';
 
 const BACKDROP_GRACE_MS = 450;
-const MAX_LINKS = 2;
-const COUNCIL_INDEX = WORCA_LEVEL_COUNT;
-const DIALOG_KINDS = Object.freeze(['welcome-new', 'welcome-existing', 'celebration']);
+const DIALOG_KINDS = Object.freeze(['celebration', 'summary']);
 
 const ladderEntry = (index) => WORCA_LEVELS[index - 1] || null;
 
-function welcomeNewParagraph() {
-  const names = WORCA_LEVELS.map((l) => l.name);
-  const list = `${names.slice(0, -1).join(', ')} and ${names[names.length - 1]}`;
-  return (
-    `There are five levels of orchestration know-how: ${list}. Worca moves you up as you learn to ` +
-    'orchestrate more, and your character gets a new hat and tool with each level. Hover your avatar ' +
-    "in the corner any time to see what's next."
-  );
+/** The line under a celebration: what comes next (from the served celebration), or nothing at the top. */
+function celebrationNext(celebration) {
+  if (!celebration.nextName || !Number.isFinite(celebration.nextTotal)) return null;
+  const what = celebration.nextUnit === 'days' ? 'active days' : 'actions';
+  return `Next: ${celebration.nextName} · ${celebration.nextTotal} ${what}`;
 }
 
-const openActions = (view) =>
-  (Array.isArray(view.next) ? view.next : []).filter((a) => !a.done && isHashHref(a.href)).slice(0, MAX_LINKS);
+/** "2 Mar 2026" in the person's locale; a level credited without a known date shows none. */
+function formatReached(iso) {
+  const at = iso ? new Date(iso) : null;
+  if (!at || Number.isNaN(at.getTime())) return '';
+  return at.toLocaleDateString(undefined, { day: 'numeric', month: 'short', year: 'numeric' });
+}
 
-/** The line under a celebration: what comes next, or nothing at the top. */
-function celebrationNext(view, entry) {
-  const next = view.top === true ? null : ladderEntry(entry.index + 1);
-  if (!next) return null;
-  if (next.index === COUNCIL_INDEX) return `Next: ${next.name} · ${WORCA_THRESHOLDS.councilDays} days in a row`;
-  return `Next: ${next.name} · ${next.actions.length} actions`;
+/** The earned levels of a summary, each index once, lowest first. */
+function earnedLevels(summary) {
+  const seen = new Map();
+  for (const l of summary?.levels ?? []) if (ladderEntry(l.index) && !seen.has(l.index)) seen.set(l.index, l);
+  return [...seen.values()].sort((a, b) => a.index - b.index);
+}
+
+/** The art of a summary: the highest earned level's tint and avatar. */
+function shownOfSummary(view, earned) {
+  const top = earned[earned.length - 1] || { index: 1 };
+  const entry = ladderEntry(top.index) || ladderEntry(1);
+  return { index: entry.index, key: entry.key, hue: entry.hue, avatar: top.avatar || entry.avatar };
 }
 
 /**
- * Build, show and guard one worca level dialog. `kind` is 'welcome-new' | 'welcome-existing' |
- * 'celebration'; `view` is the served WorcaLevelView. Closing (button, Escape, a backdrop click
- * after a short grace) removes the modal and calls onClose() once. Returns the modal element.
+ * Build, show and guard the worca level dialog. `kind` is 'celebration' or 'summary'; `view` is the served
+ * WorcaLevelView. Closing (button, Escape, a backdrop click after a short grace) removes the modal and calls onClose() once. Returns the modal element.
  */
 export function renderWorcaDialog(kind, view, { onClose = () => {}, doc = globalThis.document } = {}) {
   if (!DIALOG_KINDS.includes(kind)) throw new Error(`Unknown worca level dialog: ${kind}`);
@@ -50,73 +54,49 @@ export function renderWorcaDialog(kind, view, { onClose = () => {}, doc = global
     if (text != null) n.textContent = text;
     return n;
   };
-  const link = (action) => {
-    const a = el('a', 'worca-dlg-link', action.label);
-    a.setAttribute('href', action.href);
-    return a;
-  };
-  const linkList = (actions) => {
-    const list = el('div', 'worca-dlg-links');
-    list.append(...actions.map(link));
-    return list;
-  };
-  const em = (name) => el('em', 'worca-dlg-em', name);
-
-  const index = view.level.index;
-  const entry = ladderEntry(index) || ladderEntry(1);
-  const levelName = view.level.name;
-  const ack = el('button', 'btn btn-primary worca-dlg-close', 'Got it');
+  const earned = kind === 'summary' ? earnedLevels(view.summary) : [];
+  // A celebration is about the level just reached, which can differ from the current one; a summary shows the highest earned.
+  const shown = kind === 'summary' ? shownOfSummary(view, earned) : view.celebration;
+  const entry = ladderEntry(shown.index) || ladderEntry(1);
+  const ack = el('button', 'btn btn-primary worca-dlg-close', 'Carry on');
   ack.type = 'button';
   const actions = el('div', 'confirm-actions worca-dlg-actions');
   const head = [];
   const body = [];
 
   const avatar = el('img', 'worca-dlg-avatar');
-  setAvatarSrc(avatar, view.level.avatar);
-  avatar.alt = `${levelName} avatar`;
+  setAvatarSrc(avatar, shown.avatar);
+  avatar.alt = `${entry.name} avatar`;
   avatar.width = 96;
   avatar.height = 96;
 
-  const title = el('h2', 'worca-dlg-title');
+  const title = el('h2', 'worca-dlg-title', `You're ${entry.phrase}`);
   title.id = `worca-dlg-title-${kind}`;
 
-  if (kind === 'welcome-new') {
-    const upNext = ladderEntry(index + 1);
-    title.append('You start out ', em(levelName));
-    head.push(avatar, el('p', 'worca-dlg-level', 'Welcome to Worca'), title);
-    body.push(el('p', 'worca-dlg-lead', welcomeNewParagraph()));
-    if (upNext) {
-      body.push(el('p', 'worca-dlg-next', `Your first steps toward ${upNext.name}`));
-      body.push(linkList(openActions(view)));
+  const art = el('div', 'worca-dlg-art');
+  art.dataset.worcaLevel = shown.key;
+  art.style.setProperty('--wl-hue', String(shown.hue));
+  art.append(avatar);
+  const kicker = kind === 'summary' ? 'Your work so far' : `New level · ${shown.index} of ${WORCA_LEVEL_COUNT}`;
+  head.push(art, el('p', 'worca-dlg-level', kicker), title);
+  if (kind === 'summary') {
+    const list = el('ul', 'worca-dlg-levels');
+    for (const l of earned) {
+      const row = el('li', 'worca-dlg-level-row');
+      row.append(el('span', 'worca-dlg-level-name', l.name || ladderEntry(l.index).name));
+      const date = formatReached(l.reachedAt);
+      if (date) row.append(el('span', 'worca-dlg-level-date', date));
+      list.append(row);
     }
-    actions.append(ack);
-  } else if (kind === 'welcome-existing') {
-    title.append('Your work so far makes you ', em(entry.phrase));
-    head.push(avatar, el('p', 'worca-dlg-level', 'New in Worca: levels'), title);
-    body.push(el('p', 'worca-dlg-lead', `You already ${entry.recap}. That's level ${index} of ${WORCA_LEVEL_COUNT}.`));
-    body.push(renderSegments(doc, { done: index, total: WORCA_LEVEL_COUNT }, { size: 'lg' }));
-    const nextEntry = view.top === true ? null : ladderEntry(index + 1);
-    if (nextEntry) {
-      const progress = view.progress || { done: 0, total: nextEntry.actions.length };
-      body.push(el('p', 'worca-dlg-next', `Next up: ${nextEntry.name} · ${progress.done} of ${progress.total} done`));
-      body.push(linkList(openActions(view)));
-    }
-    body.push(el('p', 'worca-dlg-note', 'Only you can see your level.'));
-    actions.append(ack);
+    body.push(list, el('p', 'worca-dlg-lead', 'Only you can see your level.'));
   } else {
-    const art = el('div', 'worca-dlg-art');
-    art.style.setProperty('--wl-hue', String(entry.hue));
-    art.append(avatar);
-    title.textContent = `You're ${entry.phrase}`;
-    head.push(art, el('p', 'worca-dlg-level', `New level · ${index} of ${WORCA_LEVEL_COUNT}`), title);
     body.push(el('p', 'worca-dlg-lead', `You've ${entry.recap}. Your avatar now wears the ${entry.hat}.`));
-    const nextLine = celebrationNext(view, entry);
+    const nextLine = celebrationNext(shown);
     if (nextLine) body.push(el('p', 'worca-dlg-next', nextLine));
-    const see = el('a', 'btn worca-dlg-see', 'See your level');
-    see.setAttribute('href', '#profile/level');
-    ack.textContent = 'Carry on';
-    actions.append(see, ack);
   }
+  const see = el('a', 'btn worca-dlg-see', 'See your level');
+  see.setAttribute('href', '#profile/level');
+  actions.append(see, ack);
 
   const card = el('div', 'card worca-dlg-card');
   card.append(...head, ...body, actions);

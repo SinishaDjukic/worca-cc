@@ -6,10 +6,12 @@ import { readFileSync } from 'node:fs';
 import {
   fetchWorcaLevel,
   ackWorcaLevel,
-  postWorcaLevelEvent,
   tooltipModel,
   pickDialog,
+  isRunResultRoute,
+  isLiveRunRoute,
 } from '../ui/public/worca-level/model.mjs';
+import * as modelModule from '../ui/public/worca-level/model.mjs';
 import { renderSegments } from '../ui/public/worca-level/segments.mjs';
 import { browserTimeZone } from '../ui/public/schedule-sheet.mjs';
 
@@ -67,7 +69,7 @@ test('ackWorcaLevel POSTs { what } as JSON and returns the new view', async () =
   assert.deepEqual(JSON.parse(calls[0].init.body), { what: 'celebration', tz: browserTimeZone() });
 });
 
-test('ackWorcaLevel sends the level index of a celebration and omits it for the welcome', async () => {
+test('ackWorcaLevel sends the level index of a celebration and omits it when there is none', async () => {
   const calls = stubFetch(200, view({ celebration: null }));
   await ackWorcaLevel('celebration', 3);
   await ackWorcaLevel('welcome');
@@ -76,8 +78,8 @@ test('ackWorcaLevel sends the level index of a celebration and omits it for the 
 });
 
 test('ackWorcaLevel surfaces the server error on a non-OK response', async () => {
-  stubFetch(400, { error: 'what must be welcome or celebration' });
-  await assert.rejects(ackWorcaLevel('nope'), /welcome or celebration/);
+  stubFetch(400, { error: 'what must be one of: celebration' });
+  await assert.rejects(ackWorcaLevel('nope'), /must be one of/);
 });
 
 test('tooltipModel names the level, progress and the first two not-done actions in order', () => {
@@ -152,26 +154,77 @@ test('tooltipModel does not mutate the view', () => {
   assert.equal(JSON.stringify(v), before);
 });
 
-test('pickDialog: welcome kinds first, then celebration, else null', () => {
-  const none = { firstRunWelcomeOpen: false, setupOpen: false };
-  const celebration = { index: 2, key: 'swimmer', name: 'Swimmer', avatar: 'a.svg' };
-  assert.equal(pickDialog(view({ welcome: { kind: 'new' } }), none), 'welcome-new');
-  assert.equal(pickDialog(view({ welcome: { kind: 'existing' } }), none), 'welcome-existing');
-  assert.equal(pickDialog(view({ celebration }), none), 'celebration');
-  assert.equal(pickDialog(view({ welcome: { kind: 'new' }, celebration }), none), 'welcome-new');
-  assert.equal(pickDialog(view(), none), null);
+const CLEAR = { setupOpen: false, welcomeOpen: false, dialogOpen: false, guideOpen: false, menuOpen: false, liveRunOpen: false, shownThisSession: false, resultSeen: false };
+const celebrating = (index = 3) => view({ celebration: { index, key: 'k', name: 'N', avatar: 'a.svg' } });
+
+test('pickDialog: a celebration, else null; a view carrying a welcome still opens nothing', () => {
+  const celebration = { index: 3, key: 'hooked', name: 'Hooked', avatar: 'a.svg' };
+  assert.equal(pickDialog(view({ celebration }), CLEAR), 'celebration');
+  assert.equal(pickDialog(view({ welcome: { kind: 'new' } }), CLEAR), null);
+  assert.equal(pickDialog(view({ welcome: { kind: 'existing' }, celebration }), CLEAR), 'celebration');
+  assert.equal(pickDialog(view(), CLEAR), null);
 });
 
-test('pickDialog is null while the first-run welcome or setup is open, for both kinds', () => {
-  const celebration = { index: 2, key: 'swimmer', name: 'Swimmer', avatar: 'a.svg' };
-  for (const open of [{ firstRunWelcomeOpen: true, setupOpen: false }, { firstRunWelcomeOpen: false, setupOpen: true }]) {
-    assert.equal(pickDialog(view({ welcome: { kind: 'new' } }), open), null);
-    assert.equal(pickDialog(view({ celebration }), open), null);
+test('pickDialog gate truth table (R-po-13): every blocker alone silences a celebration', () => {
+  for (const blocker of ['setupOpen', 'welcomeOpen', 'dialogOpen', 'guideOpen', 'menuOpen', 'liveRunOpen', 'shownThisSession']) {
+    assert.equal(pickDialog(celebrating(), { ...CLEAR, [blocker]: true }), null, blocker);
+    assert.equal(pickDialog(celebrating(), { ...CLEAR, resultSeen: true, [blocker]: true }), null, `${blocker} with a result seen`);
+  }
+  assert.equal(pickDialog(celebrating(), CLEAR), 'celebration', 'nothing in the way');
+  assert.equal(pickDialog(celebrating(), { ...CLEAR, resultSeen: true }), 'celebration', 'a seen result does not block other levels');
+});
+
+test('pickDialog: a summary wins over a celebration and obeys the same gate', () => {
+  const both = view({ summary: { kind: 'x' }, celebration: { index: 3 } });
+  assert.equal(pickDialog(both, CLEAR), 'summary');
+  assert.equal(pickDialog(view({ summary: { kind: 'x' } }), CLEAR), 'summary');
+  for (const blocker of ['setupOpen', 'welcomeOpen', 'dialogOpen', 'guideOpen', 'menuOpen', 'liveRunOpen', 'shownThisSession']) {
+    assert.equal(pickDialog(both, { ...CLEAR, [blocker]: true }), null, blocker);
   }
 });
 
+test('pickDialog: Runner waits for a result route (R-po-7)', () => {
+  const runner = celebrating(2);
+  assert.equal(pickDialog(runner, CLEAR), null);
+  assert.equal(pickDialog(runner, { ...CLEAR, resultSeen: true }), 'celebration');
+  assert.equal(pickDialog(runner, { ...CLEAR, resultSeen: true, liveRunOpen: true }), null);
+});
+
+test('pickDialog: a second level in one session waits', () => {
+  assert.equal(pickDialog(celebrating(3), { ...CLEAR, shownThisSession: true }), null);
+  assert.equal(pickDialog(celebrating(1), { ...CLEAR, shownThisSession: true }), null);
+});
+
 test('pickDialog tolerates a missing options bag', () => {
-  assert.equal(pickDialog(view({ welcome: { kind: 'existing' } })), 'welcome-existing');
+  assert.equal(pickDialog(view({ celebration: { index: 3 } })), 'celebration');
+  assert.equal(pickDialog(view({ celebration: { index: 2 } })), null);
+});
+
+test('isRunResultRoute / isLiveRunRoute: result routes are saved runs or terminal live ones', () => {
+  const statuses = { live: 'running', paused: 'paused', done: 'done', err: 'error', stop: 'stopped' };
+  const statusOf = (id) => statuses[id];
+  for (const hash of ['#history/proj/abc', 'history/proj/abc', '#history/proj/abc/details/diff']) {
+    assert.equal(isRunResultRoute(hash, statusOf), true, hash);
+    assert.equal(isLiveRunRoute(hash, statusOf), false, hash);
+  }
+  for (const hash of ['#running/done', '#running/err', '#running/stop', '#running/done/details', '#running/done/details/cost']) {
+    assert.equal(isRunResultRoute(hash, statusOf), true, hash);
+    assert.equal(isLiveRunRoute(hash, statusOf), false, hash);
+  }
+  for (const hash of ['#running/live', '#running/paused', '#running/live/details/log']) {
+    assert.equal(isRunResultRoute(hash, statusOf), false, hash);
+    assert.equal(isLiveRunRoute(hash, statusOf), true, hash);
+  }
+  for (const hash of ['', '#', '#runs', '#history', '#history/proj', '#chat/abc', '#running', '#running/unknown']) {
+    assert.equal(isRunResultRoute(hash, statusOf), false, hash || '(empty)');
+    assert.equal(isLiveRunRoute(hash, statusOf), false, hash || '(empty)');
+  }
+  assert.equal(isRunResultRoute(undefined, statusOf), false);
+  assert.equal(isLiveRunRoute(null, statusOf), false);
+});
+
+test('the client no longer posts page-view events (D-19)', () => {
+  assert.equal(typeof modelModule.postWorcaLevelEvent, 'undefined');
 });
 
 test('tooltipModel never suggests an action whose href is not an in-app hash route', () => {
@@ -183,20 +236,23 @@ test('tooltipModel never suggests an action whose href is not an in-app hash rou
   assert.deepEqual(m.tryNext.map((a) => a.href), ['#runs']);
 });
 
-test('postWorcaLevelEvent POSTs { type, tz } to the events endpoint', async () => {
-  const v = view();
-  const calls = stubFetch(200, v);
-  assert.deepEqual(await postWorcaLevelEvent('stats-viewed'), v);
-  assert.equal(calls[0].url, '/api/worca-level/events');
-  assert.equal(calls[0].init.method, 'POST');
-  assert.deepEqual(JSON.parse(calls[0].init.body), { type: 'stats-viewed', tz: browserTimeZone() });
-  await postWorcaLevelEvent('team-metrics-viewed');
-  assert.equal(JSON.parse(calls[1].init.body).type, 'team-metrics-viewed');
+const teamItem = { id: 'teamSetUp', label: 'Team set up', hint: 'h', href: '#team-policy', kind: 'single', onlyFor: 'team', done: false };
+const pickItem = (choices) => ({ id: 'hookedPick', label: 'Pick any 2', hint: 'h', href: null, kind: 'pick', need: 2, done: false, choices });
+const choice = (id, done = false) => ({ id, label: `Label ${id}`, hint: `Hint ${id}`, href: `#${id}`, kind: 'single', done });
+
+test('solo tryNext never links to #team-* (A-16)', () => {
+  const next = [teamItem, choice('runs'), pickItem([choice('schedules'), choice('marketplace')])];
+  const solo = tooltipModel(view({ next, onTeam: false }));
+  assert.deepEqual(solo.tryNext.map((a) => a.href), ['#runs', '#schedules']);
+  assert.equal(solo.tryNext.some((a) => a.href.startsWith('#team-')), false);
+  const team = tooltipModel(view({ next, onTeam: true }));
+  assert.equal(team.tryNext[0].href, '#team-policy');
 });
 
-test('postWorcaLevelEvent surfaces the server error on a non-OK response', async () => {
-  stubFetch(400, { error: 'unknown event' });
-  await assert.rejects(postWorcaLevelEvent('nope'), /unknown event/);
+test('tooltipModel lists the undone choices of a pick item, skipping done ones, at most two', () => {
+  const m = tooltipModel(view({ next: [pickItem([choice('a', true), choice('b'), choice('c'), choice('d')])] }));
+  assert.deepEqual(m.tryNext.map((a) => a.href), ['#b', '#c']);
+  assert.deepEqual(Object.keys(m.tryNext[0]).sort(), ['hint', 'href', 'label']);
 });
 
 test('the model imports browserTimeZone and WORCA_LEVEL_COUNT instead of re-implementing them', () => {

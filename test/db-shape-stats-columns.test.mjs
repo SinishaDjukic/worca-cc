@@ -35,3 +35,20 @@ test('pipelines has review_stats on a fresh DB and on a current DB missing it; t
   assert.ok(cols(db).includes('review_stats'));
   assert.equal(db.prepare('PRAGMA user_version').get().user_version, SCHEMA_VERSION);
 });
+
+// The run clock (elapsed time as a clock): pipelines.elapsed_ms + elapsed_since, healed the same way, no version bump.
+test('pipelines has elapsed_ms and elapsed_since on a fresh DB and on a current DB missing them; the stamp stays SCHEMA_VERSION', () => {
+  const fresh = new DatabaseSync(':memory:');
+  migrate(fresh);
+  assert.ok(cols(fresh).includes('elapsed_ms') && cols(fresh).includes('elapsed_since'));
+
+  const db = new DatabaseSync(':memory:');
+  migrate(db);
+  db.exec('ALTER TABLE pipelines DROP COLUMN elapsed_ms; ALTER TABLE pipelines DROP COLUMN elapsed_since');
+  migrate(db);
+  assert.ok(cols(db).includes('elapsed_ms') && cols(db).includes('elapsed_since'));
+  assert.equal(db.prepare('PRAGMA user_version').get().user_version, SCHEMA_VERSION);
+  const info = db.prepare('PRAGMA table_info(pipelines)').all().find((c) => c.name === 'elapsed_ms');
+  assert.equal(info.notnull, 1, 'elapsed_ms is NOT NULL');
+  assert.equal(String(info.dflt_value), '0', 'elapsed_ms defaults to 0 (no figure)');
+});

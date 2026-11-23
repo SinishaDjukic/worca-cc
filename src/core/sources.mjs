@@ -13,7 +13,7 @@ import { readPluginsLock, pluginCurrentDir } from './plugins-lock.mjs';
 import { listProfiles, DEFAULT_PROFILE } from './plugin-config.mjs';
 import { normalizeManifest } from './plugin-manifest.mjs';
 import { getDb } from './db.mjs';
-import { runDirForRow, readStoreMeta, readPromptFile } from './artifacts.mjs';
+import { runDirForRow, readStoreMeta, readPromptFile, appendAuditById } from './artifacts.mjs';
 import { RESULTS_FILE } from './results.mjs';
 import { anyPrHost, findPrForBranch } from './git-info.mjs';
 import { moveFor } from './ticket-updates.mjs';
@@ -185,17 +185,42 @@ export async function resolveTaskInput(source, { projectDir } = {}) {
 
 // ── result write-back (spec §7.5) ──────────────────────────────────────────────
 
-/** Map a pipeline row status onto the connector reportResult vocabulary (§7.1). */
-function statusToResult(status) {
+// Run events (#1456). Internal vocabulary, never sent as is: 'started' | 'paused' | 'failed' | 'completed' | 'pr-opened'.
+
+/** The terminal or pause event a pipeline row's status stands for. */
+function eventForStatus(status) {
   if (status === 'done') return 'completed';
   if (status === 'error' || status === 'stopped') return 'failed';
-  return 'needs-human'; // paused | interrupted | anything non-terminal (manual retry path)
+  return 'paused'; // paused | interrupted | anything non-terminal (manual retry path)
 }
 
-/** Markdown summary assembled from the persisted results view (results.mjs#assembleResults shape). */
-function buildResultSummary(row, bundle) {
-  const lines = [`### Worca CC run \`${row.id}\` — ${row.status}`];
+/** The connector reportResult vocabulary (§7.1) for an event: the plugin-facing contract. */
+function wireStatus(event) {
+  if (event === 'paused') return 'needs-human';
+  return event; // started | failed | completed | pr-opened
+}
+
+/** Markdown summary for one run event; the terminal ones read the persisted results view (results.mjs#assembleResults shape). */
+function buildResultSummary(row, bundle, event) {
+  const header = event === 'started' ? 'started'
+    : event === 'completed' ? 'completed'
+      : event === 'pr-opened' ? 'PR opened'
+        : row.status;
+  const lines = [`### Worca CC run \`${row.id}\` — ${header}`];
   if (row.title) lines.push('', `**${row.title}**`);
+  if (event === 'started') {
+    lines.push('', 'Worca CC started working on this ticket.');
+    return lines.join('\n');
+  }
+  if (event === 'pr-opened') {
+    const member = pluginTextLine(bundle?.memberName);
+    lines.push('', `Pull request opened: ${bundle?.prUrl || ''}${bundle?.draft ? ' (draft)' : ''}${member ? ` in \`${member}\`` : ''}`);
+    if (bundle?.branch) lines.push(`- Branch: \`${bundle.branch}\``);
+    return lines.join('\n');
+  }
+  if (event === 'completed') {
+    lines.push('', bundle?.prUrl ? `**Completed — PR opened:** ${bundle.prUrl}` : '**Completed — no PR opened yet.**');
+  }
   const s = bundle?.results?.summary; // { filesNew, filesChanged, filesDeleted, linesAdded, linesRemoved, blockingIssues, nitpicks }
   if (s) {
     lines.push('', `- Diffstat: ${s.filesChanged ?? 0} changed, ${s.filesNew ?? 0} new, ${s.filesDeleted ?? 0} deleted, +${s.linesAdded ?? 0} / -${s.linesRemoved ?? 0}`);
@@ -235,10 +260,14 @@ export function pluginTextLine(v) {
  * The run's history line for a reported result (D11). The plugin's note is quoted, so the line reads as Worca's words
  * followed by the tracker's words as data: Result reported back to the task source: “Moved to Resolved.”
  * @param {{note?: string}|null|undefined} outcome  reportResultForPipeline's answer
+ * @param {string} [event]  'started' | 'pr-opened' name their own event; anything else is the run's result
  */
-export function reportedAuditLine(outcome) {
+export function reportedAuditLine(outcome, event = undefined) {
+  const lead = event === 'started' ? 'Run start reported to the task source'
+    : event === 'pr-opened' ? 'Pull request reported to the task source'
+      : 'Result reported back to the task source';
   const note = pluginTextLine(outcome?.note);
-  return note ? `Result reported back to the task source: “${note}”` : 'Result reported back to the task source.';
+  return note ? `${lead}: “${note}”` : `${lead}.`;
 }
 
 /** Tracker-comment links: the PR when the bundle knows one. */
@@ -254,10 +283,11 @@ function buildResultLinks(bundle) {
  * error } for the caller to log/surface. Silent skip ({ ok:true, skipped:true })
  * for prompt/markdown rows and refs that cannot be parsed.
  * @param {object} pipelineRow  raw pipelines row (source_type/source_ref/status/title)
- * @param {{results:object|null, branch:string|null, prUrl:string|null}} resultsBundle
+ * @param {{results:object|null, branch:string|null, prUrl:string|null, draft?:boolean, memberName?:string|null}} resultsBundle
+ * @param {{event?: 'started'|'paused'|'failed'|'completed'|'pr-opened'}} [opts]  defaults to the event the row's status stands for
  * @returns {Promise<{ok:true, skipped?:true, note?:string, moved?:{from:string,to:string}} | {ok:false, error:string}>}
  */
-export async function reportResultForPipeline(pipelineRow, resultsBundle) {
+export async function reportResultForPipeline(pipelineRow, resultsBundle, { event } = {}) {
   try {
     if ((pipelineRow?.source_type || 'prompt') !== 'plugin') return { ok: true, skipped: true };
     let ref = null;
@@ -301,9 +331,13 @@ export async function reportResultForPipeline(pipelineRow, resultsBundle) {
     // Ticket updates (D7): the move by the rule of the ticket's project (pinned at fetch, D6), else All projects; undefined with
     // the flag off or nothing saved for the row's profile and source (the plugin's old setting applies, D4). Decided before the
     // probe, so a failed probe cannot let the old setting run over a saved rule (S1).
-    const status = statusToResult(pipelineRow.status);
-    const ruled = moveFor({ plugin: ref.plugin, sourceId: ref.sourceId, profile: callRef.profile || DEFAULT_PROFILE,
-      project: typeof ref.project === 'string' ? ref.project : '', status });
+    const ev = event || eventForStatus(pipelineRow.status);
+    const status = wireStatus(ev);
+    // A start or a PR comment never moves the ticket (#1456): an explicit "do not move", whatever the flag or the rules say,
+    // so a Ticket-updates connector's old setting cannot run on it either.
+    const ruled = ev === 'started' || ev === 'pr-opened' ? { none: true }
+      : moveFor({ plugin: ref.plugin, sourceId: ref.sourceId, profile: callRef.profile || DEFAULT_PROFILE,
+        project: typeof ref.project === 'string' ? ref.project : '', status });
 
     let writeBack = true;
     let caps = null;
@@ -331,7 +365,7 @@ export async function reportResultForPipeline(pipelineRow, resultsBundle) {
       args: {
         id: ref.taskId,
         status,
-        summary: buildResultSummary(pipelineRow, resultsBundle),
+        summary: buildResultSummary(pipelineRow, resultsBundle, ev),
         links: buildResultLinks(resultsBundle),
         inputs,
         ...(move ? { move } : {}),
@@ -350,6 +384,46 @@ export async function reportResultForPipeline(pipelineRow, resultsBundle) {
 }
 
 /**
+ * The pipeline row a report is about: `{ row }`, or `{ out }` when the answer is already known (an unknown id, a row that
+ * did not come from a plugin — skipped BEFORE any bundle work, so feature-off runs never touch git/gh/results).
+ * @param {string} pipelineId
+ * @returns {{row: object} | {out: {ok: boolean, skipped?: true, error?: string}}}
+ */
+function loadRunForReport(pipelineId) {
+  const row = getDb().prepare('SELECT * FROM pipelines WHERE id = ?').get(pipelineId);
+  if (!row) return { out: { ok: false, error: `unknown pipeline "${pipelineId}"` } };
+  if ((row.source_type || 'prompt') !== 'plugin') return { out: { ok: true, skipped: true } };
+  return { row };
+}
+
+/** The row's feature branch, or null. */
+function featureBranchOf(row) {
+  try { return row.branch ? (JSON.parse(row.branch)?.feature ?? null) : null; } catch { return null; }
+}
+
+/** The bundle a terminal or pause report carries: results.json, the feature branch and its PR (best-effort). */
+async function terminalBundle(row) {
+  const dir = await runDirForRow(row);
+  let results = null;
+  try { results = JSON.parse(await readFile(join(dir, RESULTS_FILE), 'utf8')); } catch { results = null; }
+  const branch = featureBranchOf(row);
+  // PR link, best-effort (same anyPrHost-gated pattern as artifacts.mjs#rowToHistoryEntry).
+  let prUrl = null;
+  if (branch) {
+    try {
+      const meta = readStoreMeta(row.project_key);
+      if (meta?.path && (await anyPrHost())) {
+        // The persisted pr_url (SELECT * above) resolves a cross-repo PR by URL; the
+        // branch search stays the fallback for rows that never recorded one.
+        const persisted = row.pr_url || null;
+        prUrl = (await findPrForBranch({ projectDir: meta.path, head: branch, prUrl: persisted }))?.url || null;
+      }
+    } catch { prUrl = null; }
+  }
+  return { results, branch, prUrl };
+}
+
+/**
  * Load everything write-back needs for one pipeline and report it. Used by the
  * orchestrator's terminal hook AND (Task 15) the results-view "Report result"
  * retry endpoint. Skips BEFORE any bundle work for prompt/markdown rows, so
@@ -358,30 +432,53 @@ export async function reportResultForPipeline(pipelineRow, resultsBundle) {
  */
 export async function retryWriteback(pipelineId) {
   try {
-    const row = getDb().prepare('SELECT * FROM pipelines WHERE id = ?').get(pipelineId);
-    if (!row) return { ok: false, error: `unknown pipeline "${pipelineId}"` };
-    if ((row.source_type || 'prompt') !== 'plugin') return { ok: true, skipped: true };
-
-    const dir = await runDirForRow(row);
-    let results = null;
-    try { results = JSON.parse(await readFile(join(dir, RESULTS_FILE), 'utf8')); } catch { results = null; }
-    let branch = null;
-    try { branch = row.branch ? (JSON.parse(row.branch)?.feature ?? null) : null; } catch { branch = null; }
-    // PR link, best-effort (same anyPrHost-gated pattern as artifacts.mjs#rowToHistoryEntry).
-    let prUrl = null;
-    if (branch) {
-      try {
-        const meta = readStoreMeta(row.project_key);
-        if (meta?.path && (await anyPrHost())) {
-          // The persisted pr_url (SELECT * above) resolves a cross-repo PR by URL; the
-          // branch search stays the fallback for rows that never recorded one.
-          const persisted = row.pr_url || null;
-          prUrl = (await findPrForBranch({ projectDir: meta.path, head: branch, prUrl: persisted }))?.url || null;
-        }
-      } catch { prUrl = null; }
-    }
-    return await reportResultForPipeline(row, { results, branch, prUrl });
+    const loaded = loadRunForReport(pipelineId);
+    if (loaded.out) return loaded.out;
+    const { row } = loaded;
+    return await reportResultForPipeline(row, await terminalBundle(row), { event: eventForStatus(row.status) });
   } catch (err) {
     return { ok: false, error: err?.message || String(err) };
   }
+}
+
+/**
+ * Report one run event (#1456) to the run's plugin task source: 'started' (no files, git or gh work), 'pr-opened' (the
+ * caller knows the PR: `extra.prUrl`, `extra.draft`, `extra.memberName`), or a terminal/pause event (retryWriteback's
+ * bundle). Same answers as reportResultForPipeline; NEVER throws.
+ * @param {string} pipelineId
+ * @param {'started'|'paused'|'failed'|'completed'|'pr-opened'} event
+ * @param {{prUrl?: string, draft?: boolean, memberName?: string|null}} [extra]
+ */
+export async function reportRunEvent(pipelineId, event, extra = {}) {
+  try {
+    const loaded = loadRunForReport(pipelineId);
+    if (loaded.out) return loaded.out;
+    const { row } = loaded;
+    let bundle;
+    if (event === 'started') bundle = { results: null, branch: null, prUrl: null };
+    else if (event === 'pr-opened') {
+      bundle = { results: null, branch: featureBranchOf(row), prUrl: extra?.prUrl || null, draft: !!extra?.draft,
+        memberName: extra?.memberName || null };
+    } else bundle = await terminalBundle(row);
+    return await reportResultForPipeline(row, bundle, { event });
+  } catch (err) {
+    return { ok: false, error: err?.message || String(err) };
+  }
+}
+
+/**
+ * Post a run's "PR opened" ticket comment (#1456) and record how it went on the run's timeline. Fire-and-forget: the PR
+ * response never waits for the tracker, and nothing here can reject. Prompt runs and opted-out runs skip silently.
+ * Called for a PR the run's PR call opened, never for one it linked: a linked PR is not announced again.
+ * @param {string} id  the pipeline id
+ * @param {{prUrl: string, draft: boolean, memberName: string|null}} extra
+ */
+export function announcePrOpened(id, extra) {
+  reportRunEvent(id, 'pr-opened', extra).then((outcome) => {
+    if (outcome?.ok === false) {
+      appendAuditById(id, `Pull request could not be reported to the task source: ${pluginTextLine(outcome.error)}.`);
+    } else if (outcome?.ok && !outcome.skipped) {
+      appendAuditById(id, reportedAuditLine(outcome, 'pr-opened'));
+    }
+  }).catch(() => {});
 }

@@ -177,6 +177,15 @@ async function openPage(url) {
 const A = await openPage(`${base}/#chat`);
 const navShown = () => A.evalJs(`(() => { const b = document.querySelector('.nav button[data-nav="requirements"]'); return !!b && getComputedStyle(b).display !== 'none'; })()`);
 const until = async (fn, ms = 8000) => { const t0 = Date.now(); while (Date.now() - t0 < ms) { if (await fn()) return true; await sleep(100); } return false; };
+/** Start a feature as the person does: the Start button (`sel`) opens the run setup overlay (Auto too, since #1505: the
+ *  note step), then its Start run, with no note. False when the overlay or its enabled Start run never shows. */
+const startViaSetup = async (sel) => {
+  await A.evalJs(`document.querySelector(${JSON.stringify(sel)}).click()`);
+  const go = `document.querySelector('.req-runsetup [data-ui="runsetup-go"]')`;
+  if (!await until(() => A.evalJs(`!!${go} && !${go}.disabled`), 10000)) return false;
+  await A.evalJs(`${go}.click()`);
+  return true;
+};
 const booted = await until(async () => A.evalJs('!!window.__np && !!window.__np.flags'), 15000);
 check('the app booted (window.__np.flags exists)', booted);
 if (!booted) await shutdown(1);
@@ -260,7 +269,7 @@ if (!ONLY_A6 && !ONLY_A61 && !ONLY_9C) {   // --only=a6 / --only=a61 / --only=9c
       return !!c && document.querySelector('#requirements-host .req-head .badge')?.textContent === 'Ready'
         && !c.querySelector('[data-ui="start-go"]').disabled; })()`)));
   const seqNo = await A.evalJs(`location.hash.split('/').pop()`);
-  await A.evalJs(`document.querySelector('#requirements-host .req-build [data-ui="start-go"]').click()`);
+  check('Start in Worca opens the run setup overlay; its Start run starts the run', await startViaSetup('#requirements-host .req-build [data-ui="start-go"]'));
   check('Start in Worca (Auto): the page goes to #running/<id>, and the API has that starts[0].runId',
     await until(() => A.evalJs(`(async () => { if (!location.hash.startsWith('#running/')) return false;
       const f = (await (await fetch('/api/requirements/${seqNo}')).json()).feature;
@@ -438,7 +447,7 @@ if (!ONLY_A6 && !ONLY_A61 && !ONLY_9C) {   // --only=a6 / --only=a61 / --only=9c
   check('a chip flips the file\'s switch (aria-pressed and the API agree)',
     await until(() => A.evalJs(`(async () => document.querySelector('[data-ui="fpick-${firstId}"]')?.getAttribute('aria-pressed') === 'true'
       && (await (await fetch('/api/requirements/${filesSeq}')).json()).feature.attachments.find((a) => a.id === '${firstId}').sendWithRun === true)()`)));
-  await A.evalJs(`document.querySelector('#requirements-host .req-build [data-ui="start-go"]').click()`);
+  check('Start with a file switched on opens the run setup overlay; its Start run starts the run', await startViaSetup('#requirements-host .req-build [data-ui="start-go"]'));
   const filesRunId = await (async () => { let id = null; await until(async () => { id = (await featureApi(filesSeq)).starts?.[0]?.runId || null; return !!id; }, 15000); return id; })();
   // The start stages the files in the OS temp dir (orchestrator-extras-<runId>); the run's pipeline copies them into its own
   // extras folder, and the staged folder is removed then.
@@ -1110,7 +1119,7 @@ if (!ONLY_A61 && !ONLY_9C) {
   await shot('a6-board29-report-back');
   const reportAA = await contrastBoth(['#requirements-host .req-report']);
   check('A6 board 29 (6): the Report back row is AA in light and dark', reportAA.light.length === 0 && reportAA.dark.length === 0, JSON.stringify(reportAA));
-  await A.evalJs(`document.querySelector('#requirements-host [data-ui="start-go"]').click()`);
+  check('Start with Report back opens the run setup overlay; its Start run starts the run', await startViaSetup('#requirements-host [data-ui="start-go"]'));
   let started = null;
   check("A6 D15: Start with Report back: the run's pipeline row names the ticket (source_type plugin, its connection, writeBack yes)",
     await until(async () => {

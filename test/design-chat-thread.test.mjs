@@ -1,8 +1,8 @@
 // test/design-chat-thread.test.mjs
-// Design P5 Task 2: a design owns one titled chat thread (mode 'design'). POST /api/design makes it with no title
-// call, POST /api/ask/threads {mode:'design', designId} recreates it once Settings › Delete all chat history removed
-// it, DELETE /api/design/:id removes it, and a design's total is its builds plus its chat. One in-process server on
-// the mock engine (test/helpers/design-chat-boot.mjs).
+// Design P5 Task 2: a design points at one titled chat (designs.thread_id), a plain thread with no mode. POST
+// /api/design makes it with no title call, POST /api/ask/threads {mode:'design', designId} recreates it (a plain
+// titled thread) once Settings › Delete all chat history removed it, DELETE /api/design/:id keeps it, and a design's
+// total is its builds plus its chat. One in-process server on the mock engine (test/helpers/design-chat-boot.mjs).
 import { test, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { bootDesignChat } from './helpers/design-chat-boot.mjs';
@@ -12,11 +12,11 @@ const { call, mod } = await bootDesignChat(after);
 const { designIdForThread } = await import('../src/core/design/chat-thread.mjs');
 const { getDesign } = await import('../src/core/design/store.mjs');
 const { getDb } = await import('../src/core/db.mjs');
-test('POST /api/design makes a titled design thread', async () => {
+test('POST /api/design makes a titled plain chat its design points at', async () => {
   const r = await call('POST', '/api/design', { kind: 'web', title: 'ShipRadar' });
   assert.equal(r.status, 201);
   const t = (await call('GET', `/api/ask/threads/${r.body.threadId}`)).body.thread;
-  assert.deepEqual([t.mode, t.title, t.context.pinned], ['design', 'ShipRadar', false]);
+  assert.deepEqual([t.mode ?? null, t.title, t.context.pinned, t.designId], [null, 'ShipRadar', false, r.body.design.id]);
   assert.equal(designIdForThread(t.id), r.body.design.id);
 });
 test('a design with no title still gets a titled thread (no title call can fire)', async () => {
@@ -33,13 +33,16 @@ test('POST /api/ask/threads mode design: only for a design whose chat is gone', 
   assert.equal((await call('GET', `/api/design/${d.design.id}`)).status, 200, 'the design survives');
   const made = await call('POST', '/api/ask/threads', { mode: 'design', designId: d.design.id });
   assert.equal(made.status, 201);
-  assert.deepEqual([made.body.thread.mode, made.body.thread.title], ['design', 'A']);
+  assert.deepEqual([made.body.thread.mode ?? null, made.body.thread.title], [null, 'A'], 'a plain titled chat');
   assert.equal(getDesign(d.design.id).threadId, made.body.thread.id);
 });
-test('DELETE /api/design/:id removes its thread', async () => {
+test('DELETE /api/design/:id keeps its chat, a plain chat with no design', async () => {
   const d = (await call('POST', '/api/design', { kind: 'web', title: 'B' })).body;
-  await call('DELETE', `/api/design/${d.design.id}`);
-  assert.equal((await call('GET', `/api/ask/threads/${d.threadId}`)).status, 404);
+  assert.equal((await call('DELETE', `/api/design/${d.design.id}`)).status, 200);
+  const r = await call('GET', `/api/ask/threads/${d.threadId}`);
+  assert.equal(r.status, 200, 'the chat stays');
+  assert.deepEqual([r.body.thread.title, r.body.thread.designId], ['B', undefined]);
+  assert.equal(designIdForThread(d.threadId), null);
 });
 test('a design total is builds plus chat', async () => {
   const d = (await call('POST', '/api/design', { kind: 'web', title: 'C' })).body;
@@ -56,7 +59,7 @@ const deleteChat = async (threadId) => assert.equal((await call('DELETE', `/api/
 
 test('a design in a project gets its thread scoped to that project', () => {
   const t = createDesignThread({ design: { title: 'P', projectKey: 'shop-00000001' }, by: 'local' });
-  assert.deepEqual([t.mode, t.title, t.context], ['design', 'P', { pinned: true, projectKey: 'shop-00000001' }]);
+  assert.deepEqual([t.mode ?? null, t.title, t.context], [null, 'P', { pinned: true, projectKey: 'shop-00000001' }]);
 });
 test('a design whose chat is gone counts no chat spend', async () => {
   const d = (await call('POST', '/api/design', { kind: 'web', title: 'E' })).body;

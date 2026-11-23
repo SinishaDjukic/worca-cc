@@ -1,7 +1,7 @@
 // test/projects-create-api.test.mjs — New by name, the folder probe and Use git over HTTP; the default projects root.
 import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
-import http from 'node:http';
+import { appServer } from './helpers/app-server.mjs';
 import { mkdtemp, mkdir, rm, readdir, writeFile } from 'node:fs/promises';
 import { existsSync, mkdirSync, realpathSync } from 'node:fs';
 import { spawnSync } from 'node:child_process';
@@ -39,7 +39,7 @@ before(async () => {
   _resetForTests();
   const mod = await import('../ui/server.mjs');
   runs = mod.runs;
-  srv = http.createServer(mod.app);
+  srv = appServer(mod.app);
   await new Promise((r) => srv.listen(0, '127.0.0.1', r));
   base = `http://127.0.0.1:${srv.address().port}`;
 });

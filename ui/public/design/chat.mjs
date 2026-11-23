@@ -1,9 +1,11 @@
-// ui/public/design/chat.mjs — the Design chat (C-10, L5.11), in two halves. The thin client, with no DOM: the design's
-// own Ask thread (ask_threads.mode = 'design') over the Ask panel's ask-model.mjs reducer, the send path with the
+// ui/public/design/chat.mjs — the Design chat (C-10, L5.11), in two halves. The thin client, with no DOM: the chat the
+// design is attached to (designs.thread_id, a plain Ask thread) over the Ask panel's ask-model.mjs reducer, the send path with the
 // design payload, the stop and card routes, the frames app.js fans out to it, the mid-build question state from C-5
 // frames, and the receipt row's fixed copy. Modelled on workflows/chat-client.mjs. The dock (`createDesignChat`): the
 // small chat in P4's `.dz-chat-slot`, with the Ask column's classes (the mockup's chat column), real ask cards, round
-// receipts, pins and Build fast. Modelled on workflows/chat-dock.mjs. Nothing runs when this file loads.
+// receipts, pins and Build fast. Modelled on workflows/chat-dock.mjs. `inline` (a chat with a design on the Chat page):
+// the Chat page draws the messages and the design's cards (paintCard), the dock only the plan, the build's questions and
+// its feed above the chat's composer. Nothing runs when this file loads.
 import { createThreadModel } from '../ask-model.mjs';
 import { chatEngineOf, engineOfEntry } from '../ask-engine.mjs';
 import { fmtElapsed } from './stage-model.mjs';
@@ -33,7 +35,7 @@ const trimPins = (pins) => (Array.isArray(pins) ? pins : [])
 
 /**
  * The design's chat thread. The thread comes from the design row (no storage, no New chat): a thread that is gone
- * (404) or is not a design thread is dropped, and the next send asks the server for the design's thread again.
+ * (404) or no longer has this design is dropped, and the next send asks the server for the design's thread again.
  * @param {{designId: string, threadId?: string|null, fetch: Function, sendWs?: Function, onChange?: Function}} o
  */
 export function createDesignChatClient({ designId, threadId: initial = null, fetch: fetchFn, sendWs = () => {}, onChange = () => {} } = {}) {
@@ -63,7 +65,7 @@ export function createDesignChatClient({ designId, threadId: initial = null, fet
     if (!res.ok) { if (res.status === 404) drop(); return false; }
     const snap = await readJson(res);
     if (my !== gen) return false;
-    if (!snap.thread || snap.thread.mode !== 'design') { drop(); return false; }
+    if (!snap.thread || snap.thread.designId !== designId) { drop(); return false; }
     model = createThreadModel({ threadId: id });
     model.load(snap);
     awaiting = null;                             // the snapshot's inFlight speaks for any turn in progress
@@ -128,14 +130,15 @@ export function createDesignChatClient({ designId, threadId: initial = null, fet
     },
     /** Every message says the design, an empty pin list included. `attachments`: the dock's pending files
      *  ({name, dataBase64, bytes, attKind, mime}); only name and base64 go up. */
-    async send(text, { pins = [], attachments = [] } = {}) {
+    async send(text, { pins = [], attachments = [], pick: chosen = null } = {}) {
       if (sending) return { ok: false, error: 'A message is already on its way.' };
       sending = true;
       onChange('sending');
       try {
         const refused = await ensureThread();
         if (refused) return { ok: false, error: refused };
-        const pick = await defaultPick();   // after the load: a thread keeps its own engine
+        // The chat composer's model pick when it sends one (a design chat in Chat), else the thread's engine default.
+        const pick = chosen && typeof chosen.model === 'string' && typeof chosen.effort === 'string' ? chosen : await defaultPick();
         if (!pick) return { ok: false, error: 'No model is available for the chat.' };
         const tid = threadId;
         const m = model;
@@ -375,7 +378,8 @@ const PIN_PATH = 'M12 17v5M9 10.8a2 2 0 0 1-1.1 1.8l-1.8.9A2 2 0 0 0 5 15.2V16a1
  *   repaint: Function, destroy: Function}}
  */
 export function createDesignChat({ doc, host, design, fetch: fetchFn, sendWs = () => {}, renderMarkdown = null, confirm: confirmFn = null,
-  setPick = () => {}, onRestored = () => {}, planList = null, unpin = () => {}, initial = null, onBusy = () => {}, pictures = null }) {
+  setPick = () => {}, onRestored = () => {}, planList = null, unpin = () => {}, initial = null, onBusy = () => {}, pictures = null,
+  external = false, inline = false, onCards = () => {}, onComposerChange = () => {}, restore = () => {} }) {
   const win = doc.defaultView || globalThis;
   const row0 = design && typeof design === 'object' ? design : {};
   const designId = typeof row0.id === 'string' ? row0.id : '';
@@ -406,6 +410,8 @@ export function createDesignChat({ doc, host, design, fetch: fetchFn, sendWs = (
   let wasLive = false;
   let liveId = null;
   let liveAnswerEl = null;
+  const roundHosts = new Map();   // inline: round card id -> {host, round}, the chat's round cards (placeRoot)
+  let sentOut = [];             // inline: the pins the chat's last message carried (composer.payload)
   const sentPins = new Map();   // user message id -> the chip words it was sent with (no server field: this tab only)
   const cardEls = new Map();    // card id -> {sig, el}: a frame never swaps a tile under the pointer
   const replyEls = new Map();   // finished reply id -> {sig, el}: a repaint keeps its node, its markdown, a selection in it
@@ -426,7 +432,7 @@ export function createDesignChat({ doc, host, design, fetch: fetchFn, sendWs = (
   const client = createDesignChatClient({ designId, threadId: row0.threadId, fetch: fetchFn, sendWs, onChange: (kind) => schedule(kind) });
   const orbs = createDotOrbs({ doc, win });
 
-  const root = h('div', 'dsc-root');
+  const root = h('div', inline ? 'dsc-root dsc-inline' : 'dsc-root');
   const scroller = h('div', 'dsc-scroll ask-transcript');
   const thread = h('div', 'dsc-thread ask-transcript-col');
   thread.setAttribute('role', 'log');
@@ -480,7 +486,7 @@ export function createDesignChat({ doc, host, design, fetch: fetchFn, sendWs = (
   } });
   const loadSound = () => sound.load().then((c) => { if (c) settings.reposition(); });
   // The models and Build fast sit in one popup behind a gear, so the row keeps to Attach, Point, the gear and Send.
-  const settings = createComposerSettings({ doc, win, mode: 'up', onOpen: () => { void loadPics(); void loadSound(); } });
+  const settings = createComposerSettings({ doc, win, mode: (external || inline) ? 'up-end' : 'up', onOpen: () => { void loadPics(); void loadSound(); } });
   row.append(attachBtn, fileInput, pointBtn, settings.el, h('span', 'dz-spacer'), stopBtn, sendBtn);
   // The lead's and the builders' models, remembered on the design (PATCH): a change applies from the next round.
   const pills = createModelPills({ doc, win, fetch: fetchFn, mode: 'beside', parent: settings.panel, url: () => (designId ? `/api/design/${enc(designId)}/models` : null),
@@ -501,7 +507,10 @@ export function createDesignChat({ doc, host, design, fetch: fetchFn, sendWs = (
   const box = h('div', 'ask-composer-box');
   box.append(pinRow, fileRow, input, row);
   const composer = h('div', 'ask-composer dsc-composer');
-  composer.append(liveEl, noteEl, box);
+  // `external` (a design chat on the Chat page): the chat's own composer sends; the dock keeps its live line and note
+  // above it and lends it the pin chips, Point and the gear (`composer` below).
+  if (external || inline) composer.append(liveEl, noteEl);
+  else composer.append(liveEl, noteEl, box);
   const dropEl = h('div', 'dsc-drop');
   dropEl.setAttribute('aria-hidden', 'true');
   dropEl.hidden = true;
@@ -696,20 +705,29 @@ export function createDesignChat({ doc, host, design, fetch: fetchFn, sendWs = (
   async function send() {
     const text = input.value.trim();
     if (destroyed || !text || pending || client.busy()) return;
+    await adding;                                       // a file still being read rides this message
+    const files = pendingFiles.slice();
+    const r = await sendNow(text, files);
+    if (r && r.ok) {
+      if (input.value.trim() === text) input.value = '';
+      dropFiles(files);
+    }
+  }
+  /** One message with the pins on screen: the dock's own Send, and the chat composer's (`composer.send`). Pins clear
+   *  only once the message is in: a refused send keeps them for the retry, and says why in the note. */
+  async function sendNow(text, files, pick = null) {
+    if (destroyed || pending || client.busy()) return { ok: false, error: 'A message is already on its way.' };
     pending = true;
     stick = true;                                       // the person's own message comes into view
     setNote('');
     schedule();
-    await adding;                                       // a file still being read rides this message
-    const files = pendingFiles.slice();
+    onComposerChange();
     const out = pins.slice();
-    const r = await client.send(text, { pins: out, attachments: files });
+    const r = await client.send(text, { pins: out, attachments: files, pick });
     pending = false;
-    if (destroyed) return;
-    // Pins and files clear only once the message is in: a refused send keeps them for the retry.
+    onComposerChange();
+    if (destroyed) return r;
     if (r && r.ok) {
-      if (input.value.trim() === text) input.value = '';
-      dropFiles(files);
       if (out.length) {
         // P4 keeps a pin's box until unpin or the next round, and a reply may start no round.
         pins = pins.filter((p) => !out.includes(p));
@@ -723,6 +741,7 @@ export function createDesignChat({ doc, host, design, fetch: fetchFn, sendWs = (
       setNote((r && r.error) || 'Not sent.');
     }
     schedule();
+    return r;
   }
   input.addEventListener('input', autosize);
   input.addEventListener('keydown', (ev) => {
@@ -810,23 +829,24 @@ export function createDesignChat({ doc, host, design, fetch: fetchFn, sendWs = (
   // dragenter/dragleave fire on every child crossed: a depth counter decides when the files really left.
   let dragDepth = 0;
   const endDrag = () => { dragDepth = 0; dropEl.hidden = true; };
-  root.addEventListener('dragenter', (ev) => {
+  // The chat composer's page takes a drop itself (ask-panel buildDropTarget): an external dock leaves it alone.
+  if (!external) root.addEventListener('dragenter', (ev) => {
     if (!carriesFiles(ev.dataTransfer)) return;
     ev.preventDefault();
     dragDepth += 1;
     dropEl.hidden = false;
   });
-  root.addEventListener('dragover', (ev) => {
+  if (!external) root.addEventListener('dragover', (ev) => {
     if (!carriesFiles(ev.dataTransfer)) return;
     ev.preventDefault();
     try { ev.dataTransfer.dropEffect = 'copy'; } catch { /* read-only in some engines */ }
   });
-  root.addEventListener('dragleave', (ev) => {
+  if (!external) root.addEventListener('dragleave', (ev) => {
     if (!carriesFiles(ev.dataTransfer)) return;
     dragDepth = Math.max(0, dragDepth - 1);
     if (!dragDepth) dropEl.hidden = true;
   });
-  root.addEventListener('drop', (ev) => {
+  if (!external) root.addEventListener('drop', (ev) => {
     if (!carriesFiles(ev.dataTransfer)) return;
     ev.preventDefault();
     endDrag();
@@ -1005,6 +1025,40 @@ export function createDesignChat({ doc, host, design, fetch: fetchFn, sendWs = (
   // buildLive in the signature: a `building` frame must not reuse a row whose Back is still enabled. A reply holding the
   // row reads the same signature.
   const roundSig = (b) => JSON.stringify([b.state, b.card, buildLive, restoring.has(b.id), restoreErr.get(b.id) || '']);
+  /** Inline: a design card of the Chat page's transcript (`host` is the card's own element there), drawn and kept as the
+   *  dock keeps its own: a round's receipt with its Back and, once the round ended, its pictures. */
+  function paintCard(host, b) {
+    if (destroyed || !host || !b || typeof b.id !== 'string' || !b.card || typeof b.card !== 'object') return;
+    const t = b.card.type;
+    const r = b.card.round;
+    const tiles = t === 'design-round' && pictures && Number.isSafeInteger(r) && settled(r) ? pictures.shown(r, { live: false }) : [];
+    const sig = t === 'design-round' ? JSON.stringify([roundSig(b), tiles.length ? pictures.sig(r) : ''])
+      : t === 'design-sound' ? `${b.state}|${b.card.step}` : JSON.stringify([b.state, b.card]);
+    const make = () => {
+      if (t === 'design-questions') return clarifyCard(b);
+      if (t === 'design-sound') return soundCard(b);
+      const row = roundRow(b);
+      if (!tiles.length) return row;
+      const box = h('div', 'dsc-round-box');
+      box.append(row, createPictureStrip({ doc, designId, pictures: tiles, onOpen: openViewer }));
+      return box;
+    };
+    const el = cached(cardEls, b.id, sig, make, new Set());
+    if (host.firstChild !== el) host.replaceChildren(el);
+    if (t === 'design-round') roundHosts.set(b.id, { host, round: Number.isSafeInteger(r) ? r : 0 });
+    placeRoot();
+  }
+  /** Inline: the plan, the build's questions and its feed belong to the newest round, so they sit under that round's
+   *  card in the chat (later messages follow them); with no round card on screen yet, in the dock's own slot. */
+  function placeRoot() {
+    if (!inline || destroyed) return;
+    let best = null;
+    // A card's host is built before the chat puts it in place: not on screen yet still counts. The chat drops a card
+    // it took away (dropCard), which leaves this list.
+    for (const e of roundHosts.values()) if (!best || e.round >= best.round) best = e;
+    const target = best ? best.host : host;
+    if (root.parentNode !== target || target.lastChild !== root) target.append(root);
+  }
 
   // ── render ─────────────────────────────────────────────────────────────────────────────────────────────────
   function toolLine(b) {
@@ -1224,11 +1278,14 @@ export function createDesignChat({ doc, host, design, fetch: fetchFn, sendWs = (
   /** The composer's live line and its orb: the chat's own turn first (`Reading the design…`), else the running build in
    *  one sentence (`3 agents are working on Hero, Pricing and Footer · 2 of 12 done…`), else nothing. Tells the stage
    *  whether the chat is at work, so an empty stage can say so. */
-  function paintActivity(live, liveRow, waiting) {
+  function paintActivity(liveTurn, liveRow, waitingTurn) {
+    // Inline: the chat shows its own turn (its thinking line); this line says only what the build does.
+    const live = inline ? null : liveTurn;
+    const waiting = inline ? false : waitingTurn;
     const phase = !live && !waiting ? narration.view().phase : '';
     paintLive(live ? live.label : phase || null, Boolean(live) || waiting || Boolean(phase));
     orbs.set(orb, live ? turnPhase(live, liveRow ? blocksOf(liveRow) : []) : waiting ? 'think' : phase ? 'tool' : 'rest');
-    const busy = Boolean(live) || waiting;
+    const busy = Boolean(liveTurn) || waitingTurn;
     if (busy !== busyTold) { busyTold = busy; try { onBusy(busy); } catch { /* the stage's line is cosmetic */ } }
   }
   function paintChrome(live) {
@@ -1293,7 +1350,8 @@ export function createDesignChat({ doc, host, design, fetch: fetchFn, sendWs = (
     const seenReplies = new Set();
     const kids = [];
     let planPlaced = !planEl;
-    for (const msg of msgs) {
+    // Inline: the Chat page draws every message and card; here only the plan, the build's questions and its feed.
+    for (const msg of inline ? [] : msgs) {
       if (!msg || typeof msg !== 'object') continue;
       if (msg.role === 'system' && blocksOf(msg).some((b) => b.kind === 'divider')) continue;
       if (msg.role === 'user') {
@@ -1308,7 +1366,7 @@ export function createDesignChat({ doc, host, design, fetch: fetchFn, sendWs = (
     for (const q of questions.list()) {
       kids.push(cached(askEls, q.askId, JSON.stringify([q.state, q.buildId, q.heading, q.questions]), () => buildQuestion(q), seenAsks));
     }
-    prune(cardEls, seenCards);
+    if (!inline) prune(cardEls, seenCards);
     prune(askEls, seenAsks);
     prune(replyEls, seenReplies);
     const feed = buildFeed();
@@ -1321,6 +1379,7 @@ export function createDesignChat({ doc, host, design, fetch: fetchFn, sendWs = (
     else if (focused) input.focus({ preventScroll: true });
     followEnd();
     announce(msgs, finishedId);
+    if (inline) { try { onCards(); } catch { /* the Chat page's own trouble */ } }   // a Back's state, a build going live
   }
   /** kind 'frame' (an Ask frame) may take render()'s text-only path; anything else repaints the thread. */
   function schedule(kind = 'structure') {
@@ -1351,10 +1410,16 @@ export function createDesignChat({ doc, host, design, fetch: fetchFn, sendWs = (
     limits = got;
     paintFast();
   })();
-  client.open().then(() => {
+  client.open().then(async () => {
     if (destroyed || !initial || typeof initial.text !== 'string' || !initial.text.trim()) return;
-    input.value = initial.text;
     const files = Array.isArray(initial.files) ? initial.files : [];
+    if (external || inline) {
+      // A refusal gives the words back to the chat composer, with the note saying why.
+      const r = await sendNow(initial.text, files.filter((f) => f && typeof f.name === 'string' && typeof f.dataBase64 === 'string'));
+      if (!(r && r.ok) && !destroyed) restore(initial.text);
+      return;
+    }
+    input.value = initial.text;
     pendingFiles = [...pendingFiles, ...files.filter((f) => f && typeof f.name === 'string' && typeof f.dataBase64 === 'string')];
     renderFiles();
     autosize();
@@ -1362,6 +1427,38 @@ export function createDesignChat({ doc, host, design, fetch: fetchFn, sendWs = (
   }).catch(() => {});
   return {
     client,
+    /** `external`: what the chat composer shows and calls (ask-panel setComposerExt): the pin chips in its lead row,
+     *  Point and the gear in its row, and the send with this dock's pins. */
+    composer: inline ? {
+      lead: pinRow,
+      nodes: [pointBtn],
+      endNodes: [settings.el],
+      // The chat's own send carries the design and the pins on screen; they clear once the message is in.
+      payload: () => { sentOut = pins.slice(); return { design: { designId, pins: trimPins(sentOut) } }; },
+      sent: () => {
+        const out = sentOut;
+        sentOut = [];
+        if (destroyed || !out.length) return;
+        pins = pins.filter((p) => !out.includes(p));
+        for (const p of out) unpin(p.id, p.path);
+        paintPins();
+      },
+    } : external ? {
+      lead: pinRow,
+      nodes: [pointBtn],
+      endNodes: [settings.el],
+      send: ({ text, files = [], pick = null }) => sendNow(text, files, pick),
+      busy: () => pending || client.busy(),
+    } : null,
+    paintCard,
+    /** The Chat page dropped a design card: its element goes (a sound card's sample stops). */
+    dropCard(id) {
+      if (roundHosts.delete(id)) Promise.resolve().then(placeRoot);   // a rebuilt card paints its new host first
+      const hit = cardEls.get(id);
+      if (!hit) return;
+      if (hit.el && typeof hit.el.__dispose === 'function') hit.el.__dispose();
+      cardEls.delete(id);
+    },
     pushAskFrame(f) { if (!destroyed) client.pushFrame(f); },
     /** C-5 frames of this design: questions, the open build and a new round. Text-only `design-delta` frames change
      *  nothing here; the rest repaint only when they changed what the thread shows (M5). */

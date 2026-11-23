@@ -145,7 +145,7 @@ test('grep: the turn ending stops a running search', async () => {
 });
 
 test('glob: paths relative to the folder; denied paths never listed; an absolute pattern refused', () => {
-  const names = reader.glob({ pattern: '**/*' }).paths.map((p) => p.slice(wt.length + 1)).sort();
+  const names = reader.glob({ pattern: '**/*' }).paths.map((p) => p.slice(wt.length + 1).replaceAll('\\', '/')).sort();
   assert.deepEqual(names, ['bin.dat', 'src/a.mjs', 'src/b.txt']);
   assert.throws(() => reader.glob({ pattern: '/etc/*' }), /relative to path/);
 });

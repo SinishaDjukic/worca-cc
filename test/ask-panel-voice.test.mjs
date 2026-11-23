@@ -1,12 +1,12 @@
 // test/ask-panel-voice.test.mjs
 // The composer's mic (docs/speech.md): click = dictation, long-press / caret menu
-// = hands-free, state chip + aria-pressed, transcript → composer (+ auto-send),
+// = hands-free, state in the input's placeholder + live region + aria-pressed, transcript → composer (+ auto-send),
 // deferred send after a barge-in stop, frames forwarded to the controller, and
 // voice off on close / New chat / thread switch / destroy. No mic without the dep.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { checkRows } from './helpers/rows.mjs';
-import { makePanel, openChat } from './helpers/ask-panel-harness.mjs';
+import { makePanel, openChat, key } from './helpers/ask-panel-harness.mjs';
 import { stampFrames } from './helpers/ask-frames.mjs';
 
 function fakeVoiceFactory() {
@@ -38,7 +38,7 @@ test('voice entry points: mic click dictates (again = off); the caret menu offer
       await new Promise((r) => setTimeout(r, 0));
       assert.deepEqual(f.calls[0], ['start', 'dictate']);
       assert.equal(doc.querySelector('[data-ask-mic]').getAttribute('aria-pressed'), 'true');
-      assert.equal(doc.querySelector('.ask-voice-status').textContent, 'Listening…');
+      assert.equal(doc.querySelector('.ask-input').placeholder, 'Listening…');
       doc.querySelector('.ask-input').value = 'draft';
       f.hooks.onTranscript('hello there', { autoSend: false });
       assert.equal(doc.querySelector('.ask-input').value, 'draft hello there');
@@ -52,7 +52,34 @@ test('voice entry points: mic click dictates (again = off); the caret menu offer
       await new Promise((r) => setTimeout(r, 0));
       doc.querySelector('[data-ask-mic]').click();
       assert.deepEqual(f.calls.at(-1), ['stop']);
-      assert.equal(doc.querySelector('.ask-voice-status').hidden, true);
+      assert.equal(doc.querySelector('.ask-input').placeholder, 'Ask about any run, agent, or project…');
+    } },
+    { name: 'no status element; the mic says what a click does; every state reaches the live region', run: async () => {
+      const f = fakeVoiceFactory();
+      const { doc, panel } = makePanel({ deps: { createVoice: f.create } });
+      panel.open();
+      const mic = doc.querySelector('[data-ask-mic]');
+      const live = doc.querySelector('.sr-only[aria-live="polite"]');
+      assert.equal(doc.querySelector('.ask-voice-status'), null);
+      assert.deepEqual([mic.dataset.tip, mic.getAttribute('aria-label'), mic.hasAttribute('title')], ['Dictate once · hold for hands-free', 'Voice input', false]);
+      assert.deepEqual([doc.querySelector('[data-ask-voice-caret]').dataset.tip, mic.nextElementSibling.matches('[data-ask-voice-caret]')], ['Voice options', true]);
+      mic.click();
+      await new Promise((r) => setTimeout(r, 0));
+      f.hooks.onState('transcribing', { mode: 'dictate' });
+      assert.deepEqual([doc.querySelector('.ask-input').placeholder, mic.dataset.tip, live.textContent], ['Transcribing…', 'Stop listening', 'Transcribing…']);
+      f.hooks.onState('loading', { mode: 'dictate', detail: 'Downloading speech model… 4 MB' });
+      live.textContent = '';
+      f.hooks.onState('loading', { mode: 'dictate', detail: 'Downloading speech model… 5 MB' });
+      assert.deepEqual([doc.querySelector('.ask-input').placeholder, live.textContent], ['Downloading speech model… 5 MB', ''], 'progress is shown, announced once');
+      f.hooks.onState('off', {});
+      assert.equal(mic.dataset.tip, 'Dictate once · hold for hands-free');
+      live.textContent = '';
+      f.hooks.onState('listening', { mode: 'dictate' });
+      assert.equal(live.textContent, 'Listening…', 'a new start is announced again: off counts as a state');
+      f.hooks.onState('off', {});
+      live.textContent = '';
+      f.hooks.onState('listening', { mode: 'dictate' });
+      assert.equal(live.textContent, 'Listening…', 'listening → off → listening announces twice: off is recorded too');
     } },
     { name: 'caret menu starts hands-free; auto-send posts the message', run: async () => {
       const f = fakeVoiceFactory();
@@ -94,6 +121,40 @@ test('voice entry points: mic click dictates (again = off); the caret menu offer
       doc.querySelector('.ask-voice-item[data-mode="talk"]').click();
       await tick();
       assert.deepEqual(f.calls[0], ['start', 'talk']);
+    } },
+  ]);
+});
+
+test('a voice error puts the placeholder back at rest, shows the detail under the input; a remembered hands-free mode gets no hold hint', async () => {
+  await checkRows([
+    { name: 'an error: the placeholder is the resting text, the detail shows in the composer message, the live region says Voice error', run: async () => {
+      const f = fakeVoiceFactory();
+      const { doc, panel } = makePanel({ deps: { createVoice: f.create } });
+      panel.open();
+      const input = doc.querySelector('.ask-input');
+      const rest = input.placeholder;
+      doc.querySelector('[data-ask-mic]').click();
+      await new Promise((r) => setTimeout(r, 0));
+      assert.equal(input.placeholder, 'Listening…');
+      f.hooks.onState('error', { mode: null, detail: 'Microphone permission was denied' });
+      const msg = doc.querySelector('.ask-composer-msg');
+      assert.deepEqual([input.placeholder, msg.hidden, msg.textContent], [rest, false, 'Microphone permission was denied']);
+      assert.equal(doc.querySelector('.sr-only[aria-live="polite"]').textContent, 'Voice error');
+      assert.equal(doc.querySelector('[data-ask-mic]').getAttribute('aria-pressed'), 'false');
+    } },
+    { name: 'the remembered mode is hands-free: the mic tip names it with no "hold for hands-free", at rest and after a stop', run: async () => {
+      const f = fakeVoiceFactory();
+      const { storage } = makePanel();
+      storage.setItem('worca-cc.ask.voiceMode', 'handsfree');
+      const { doc, panel } = makePanel({ storage, deps: { createVoice: f.create } });
+      panel.open();
+      const mic = doc.querySelector('[data-ask-mic]');
+      assert.equal(mic.dataset.tip, 'Hands-free conversation');
+      mic.click();
+      await new Promise((r) => setTimeout(r, 0));
+      assert.deepEqual([f.calls[0], mic.dataset.tip], [['start', 'handsfree'], 'Stop listening']);
+      mic.click();
+      assert.equal(mic.dataset.tip, 'Hands-free conversation');
     } },
   ]);
 });
@@ -142,6 +203,29 @@ async function startHandsFree(ctx) {
 }
 
 const posts = (ctx, re) => ctx.fetchCalls.filter((c) => re.test(c.url) && c.opts.method === 'POST');
+
+test('voice over a suggestion: the state owns the placeholder, Tab takes nothing; voice off brings the suggestion back', async () => {
+  const f = fakeVoiceFactory();
+  const ctx = await openWith({ body: snapBody() }, { deps: { createVoice: f.create } });
+  // A finished turn, then its suggestion (test/ask-panel-stream.test.mjs finishedTurn() + suggest()).
+  for (const fr of stampFrames([
+    { type: 'ask-start', userMessageId: 'askm_u0000001', model: 'm', effort: 'high', startedAt: 't' },
+    { type: 'ask-done', text: 'Here is the diff summary.', blocks: [], usage: null, costUsd: 0, durationMs: 1, model: 'm', status: 'done' },
+  ], { threadId: TID, messageId: MID })) ctx.panel.pushServerFrame(fr);
+  ctx.flush();
+  ctx.panel.pushServerFrame({ type: 'ask-suggestion', threadId: TID, messageId: MID, text: 'Open a PR' });
+  ctx.flush();
+  const input = ctx.doc.querySelector('.ask-input');
+  assert.equal(input.placeholder, 'Open a PR', 'the suggestion shows before voice starts');
+  ctx.doc.querySelector('[data-ask-mic]').click();
+  await new Promise((r) => setTimeout(r, 0));
+  assert.equal(input.placeholder, 'Listening…');
+  assert.deepEqual([input.classList.contains('is-suggesting'), input.hasAttribute('aria-describedby')], [false, false]);
+  key(ctx.window, input, 'Tab');
+  assert.equal(input.value, '', 'Tab does not accept a suggestion the person cannot see');
+  f.hooks.onState('off', {});
+  assert.equal(input.placeholder, 'Open a PR');
+});
 
 test('barge-in stops the live turn; the transcript is sent once the turn ends', async () => {
   const f = fakeVoiceFactory();

@@ -33,6 +33,10 @@ test('snapshotFromState: a REST row becomes a frozen snapshot with decor, progre
   assert.equal(s.projectKey, 'proj-00000001');
   assert.equal(s.terminal, false);
   assert.equal(s.elapsedMs, 65_000);
+  // The card reads the run's elapsed clock when the saved state carries one, the summed time otherwise.
+  assert.equal(snapshotFromState(STATE({ elapsedMs: 40_000 }), { now: 0 }).elapsedMs, 40_000);
+  assert.equal(snapshotFromState(STATE({ elapsedMs: null }), { now: 0 }).elapsedMs, 65_000);
+  assert.equal(snapshotFromState(STATE({ elapsedMs: null, totalActiveMs: undefined }), { now: 0 }).elapsedMs, 0);
   assert.equal(s.costUsd, 0.42);
   assert.deepEqual(s.progress, { done: 1, total: 2 });
   assert.deepEqual(s.active.map((a) => a.nodeId), ['n_impl']);

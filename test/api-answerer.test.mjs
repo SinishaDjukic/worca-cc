@@ -4,7 +4,7 @@
 // SANDBOX: HOME/USERPROFILE point at a temp dir, as in test/api-chat-home-pins.test.mjs.
 import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
-import http from 'node:http';
+import { appServer } from './helpers/app-server.mjs';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { readFileSync, existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -24,7 +24,7 @@ before(async () => {
   process.env.WORCA_TEST_ALLOW_HOME_FALLBACK = '1';
   _resetForTests();
   const { app } = await import('../ui/server.mjs');
-  srv = http.createServer(app);
+  srv = appServer(app);
   await new Promise((r) => srv.listen(0, '127.0.0.1', r));
   base = `http://127.0.0.1:${srv.address().port}`;
 });

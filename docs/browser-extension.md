@@ -12,7 +12,7 @@ and the same builds are attached as zips to each GitHub release. See [Install](#
 - **Sidebar chat.** The same Chat conversation as the Chat page: pick a chat from the list (or
   start one with the **+** New chat button), ask, and watch the answer stream in. A card in an answer
   shows its title and **Open in Worca**, which opens the thread in the full UI, where you act on it.
-- **Composer.** The composer is Chat's own:
+- **Composer.** The composer works like Chat's, with words on its buttons:
   - **+** attaches files (you can also paste or drag them in), and the camera button captures an
     area of the page (see [Area capture](#area-capture)).
   - The scope pill sets the chat scope. **No project** (the default) lets Worca answer without a project; when your message is clearly about one of
