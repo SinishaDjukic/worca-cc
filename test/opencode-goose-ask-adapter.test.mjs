@@ -135,6 +135,10 @@ test('OpenCode chat: a call still made to an OLDER alias of a resumed session is
   assert.equal(exact.push({ type: 'tool_use', sessionID: 'ses_x', part: { tool: 'worca_release', callID: 'c1', state: { status: 'completed', input: {} } } }).find((e) => e.type === 'tool').calls[0].name, 'worca_release');
 });
 
+/** An env whose opencode config is only `<dir>/.config/opencode`: a runner's XDG_CONFIG_HOME or OPENCODE_CONFIG
+ *  (GitHub's Ubuntu image sets XDG_CONFIG_HOME) would point the reader elsewhere. */
+const homeOnly = (dir) => ({ ...process.env, HOME: dir, XDG_CONFIG_HOME: '', OPENCODE_CONFIG: '' });
+
 test('OpenCode chat sign-in env: OpenCode 1.x names its provider blocks `provider` — read as well as 2.x `providers`', () => {
   const dir = tmp();
   const cfgDir = join(dir, '.config', 'opencode');
@@ -142,14 +146,14 @@ test('OpenCode chat sign-in env: OpenCode 1.x names its provider blocks `provide
   writeFileSync(join(cfgDir, 'opencode.json'), JSON.stringify({
     provider: { farm: { npm: '@ai-sdk/openai-compatible', options: { baseURL: 'https://f/v1', apiKey: '{env:FARM_V1_KEY}' } } },
   }));
-  assert.deepEqual(opencodeProviderSignInEnv('farm/deepseek', { ...process.env, HOME: dir }), ['FARM_V1_KEY']);
+  assert.deepEqual(opencodeProviderSignInEnv('farm/deepseek', homeOnly(dir)), ['FARM_V1_KEY']);
   // Both keys in one file: each provider's block is read from wherever it is declared.
   writeFileSync(join(cfgDir, 'opencode.json'), JSON.stringify({
     provider: { one: { options: { apiKey: '{env:ONE_KEY}' } } },
     providers: { two: { settings: { apiKey: '{env:TWO_KEY}' } } },
   }));
-  assert.deepEqual(opencodeProviderSignInEnv('one/m', { ...process.env, HOME: dir }), ['ONE_KEY']);
-  assert.deepEqual(opencodeProviderSignInEnv('two/m', { ...process.env, HOME: dir }), ['TWO_KEY']);
+  assert.deepEqual(opencodeProviderSignInEnv('one/m', homeOnly(dir)), ['ONE_KEY']);
+  assert.deepEqual(opencodeProviderSignInEnv('two/m', homeOnly(dir)), ['TWO_KEY']);
 });
 
 test('OpenCode chat sign-in env: the model\'s provider {env:…} key rides the scrub by exact name — and only its own', () => {
@@ -169,11 +173,11 @@ test('OpenCode chat sign-in env: the model\'s provider {env:…} key rides the s
       "other": { "settings": { "apiKey": "{env:OTHER_PROVIDER_KEY}" } }
     },
   }`);
-  const atHome = { ...process.env, HOME: dir };
+  const atHome = homeOnly(dir);
   assert.deepEqual(opencodeProviderSignInEnv('farm/deepseek', atHome), ['FARM_EXTRA', 'FARM_KEY'], 'every {env:…} of the provider block, sorted');
   assert.deepEqual(opencodeProviderSignInEnv('other/m', atHome), ['OTHER_PROVIDER_KEY'], 'a provider reads only its own block');
   assert.deepEqual(opencodeProviderSignInEnv('missing/m', atHome), [], 'an unknown provider: prefixes only');
-  assert.deepEqual(opencodeProviderSignInEnv('farm/m', { ...process.env, HOME: join(dir, 'nope') }), [], 'no config: no names');
+  assert.deepEqual(opencodeProviderSignInEnv('farm/m', homeOnly(join(dir, 'nope'))), [], 'no config: no names');
   const allow = chatSignInEnv(opencodeChat, 'farm/deepseek', { ...atHome, FARM_KEY: 'sk-farm', FARM_EXTRA: 'x', OTHER_PROVIDER_KEY: 'sk-other' });
   assert.ok(allow.includes('FARM_KEY'), 'the provider key survives the chat allowlist');
   assert.ok(allow.includes('FARM_EXTRA'));
