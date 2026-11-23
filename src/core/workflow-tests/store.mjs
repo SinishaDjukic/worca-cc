@@ -5,12 +5,12 @@ import { createHash, randomBytes } from 'node:crypto';
 import { getDb, prepare, tx } from '../db.mjs';
 import { canon } from '../../shared/graph/diff-graphs.mjs';
 import { normaliseCriteria, normaliseJudge } from '../../shared/workflow-tests/criteria.mjs';
-import { normaliseCheck, normaliseBasics, DEFAULT_BASICS, PROJECT_KINDS } from '../../shared/workflow-tests/checks.mjs';
+import { normaliseCheck, normaliseBasics, DEFAULT_BASICS, PROJECT_KINDS, EXAMPLE_FILE_MAX_BYTES } from '../../shared/workflow-tests/checks.mjs';
 
 export const OTHERWISE = Object.freeze(['pick', 'fail']);
 export const TRY_COUNTS = Object.freeze([1, 3, 5]);
 export const MAX_TRIES = 10;
-export const FILE_MAX_BYTES = 5 * 1024 * 1024;
+export const FILE_MAX_BYTES = EXAMPLE_FILE_MAX_BYTES;
 export const FILES_MAX = 8;
 export const PIN_MAX_CHANGES = 5 * 1024 * 1024;
 export const SETUP_MAX = 4000;   // actions/model.mjs MAX_CMD: a project's own setup always fits

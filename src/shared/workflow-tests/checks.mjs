@@ -43,6 +43,8 @@ export const COMMAND_MET_WHEN = Object.freeze(['passes', 'breaks-nothing']);
 const CMD_MAX = 500;
 const PATHS_MAX = 20;
 export const MAX_FILES_LIMIT = 10_000;
+/** An example's file at most (the store's rule; the editor says it before uploading, pre-merge QA B6). */
+export const EXAMPLE_FILE_MAX_BYTES = 5 * 1024 * 1024;
 const VALUE_PATH_MAX = 100;
 /** A comma-separated text or an array, as trimmed non-empty strings. */
 const listOf = (v) => (Array.isArray(v) ? v : typeof v === 'string' ? v.split(',') : []).map((x) => String(x ?? '').trim()).filter(Boolean);

@@ -240,7 +240,15 @@ export function createWorkflowVersions(deps) {
   /** initWorkflows, once the shell and the composer exist: the page switch, Save version, and the version line. */
   function mount() {
     const e = wfvEls();
-    e.pages?.addEventListener('click', (ev) => { const b = ev.target.closest('button[data-page]'); if (b) wfvShowPage(b.dataset.page); });
+    // Pre-merge QA (B5): leaving an example with changes not saved (Canvas, Versions, or Tests back to the list) asks first.
+    // Without such changes the page switches at once, as before.
+    e.pages?.addEventListener('click', (ev) => {
+      const b = ev.target.closest('button[data-page]');
+      if (!b) return;
+      const t = tests();
+      if (t.editorChanged && t.editorChanged()) { void t.guardLeave().then((go) => { if (go) wfvShowPage(b.dataset.page); }); return; }
+      wfvShowPage(b.dataset.page);
+    });
     e.saveVersion?.addEventListener('click', () => void wfvSaveVersion());
     // Every new document on the canvas (a Library row's Open, an address, New canvas, a chat build) repaints the
     // version line, so it never shows the previous workflow's version.

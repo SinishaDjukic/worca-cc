@@ -324,7 +324,7 @@ function basicRow(doc, id, text, on, extra = null, after = null) {
  *   it (U-T9, F17). Part 4 (Task 22): onConfirmCriterion(criterion) opens Check the checker; with changes not saved yet, the
  *   editor saves first through actions.saveQuiet(value) → {ok, example} (the Save path and its question, but staying here)
  *   Board 59 A: openLiked opens a saved example with its "A result you liked" dialog (Check the checker's "Pick a result you liked").
- * @returns {{value: () => object}}
+ * @returns {{value: () => object, changed: () => boolean}} changed: the form differs from the example as last saved or opened
  */
 export function renderExampleEditor(root, ex, actions, { doc, win, scripts = [], perTryUsd = null, draftLabel = 'your draft', testRunning = false,
   runningExampleIds = [], confirm = null, projects = null, needsProject = false, workflowName = '', projectView = null, dateText = (s) => s,
@@ -510,7 +510,10 @@ export function renderExampleEditor(root, ex, actions, { doc, win, scripts = [],
     if (problem) { error.textContent = problem; return; }
     const how = await askFirst(true);
     if (how === 'cancel') return;
-    const r = await busyWhile(() => stopFirst(how, () => actions.addFiles(list, value())));
+    const firstSave = draft.id == null;
+    const v = value();
+    const r = await busyWhile(() => stopFirst(how, () => actions.addFiles(list, v)));
+    if (firstSave && r && r.example && r.example.id != null) savedSig = JSON.stringify(v);   // G17 saved the example first (B5)
     showFiles(r);   // also after a partly done upload: the files that went up
     failed(r, 'The file was not added.');
   });
@@ -889,5 +892,6 @@ export function renderExampleEditor(root, ex, actions, { doc, win, scripts = [],
   }
   baseline = fingerprintSig();
   savedSig = JSON.stringify(value());
-  return { value };
+  // Pre-merge QA (B5): whether the form holds changes not saved yet, so leaving the editor can ask before it drops them.
+  return { value, changed: () => JSON.stringify(value()) !== savedSig };
 }

@@ -20,6 +20,7 @@ import { renderChecker, renderTrustReport } from './criteria-pages.mjs';
 import { SAVE_FIRST_TEXT, CHANGES_NOT_READ_TITLE, NO_DIFF_TEXT, PATCH_CUT_TEXT } from '../../../src/shared/workflow-tests/project-text.mjs';
 import { useLabel as wftUseLabel } from '../../../src/shared/workflow-tests/compare.mjs';
 import { NO_SOURCE_TEXT, NO_PASSED_TRY_TEXT, TOO_LONG_TEXT } from '../../../src/shared/workflow-tests/criteria-text.mjs';
+import { EXAMPLE_FILE_MAX_BYTES } from '../../../src/shared/workflow-tests/checks.mjs';
 
 const WFT_EMPTY = Object.freeze({ view: 'list', workflowId: null, overview: null, error: null, example: null, runId: null,
   exampleId: null, tryIndex: 0, data: null, scripts: [], perTryUsd: null, editorToken: 0, roundId: null });
@@ -524,6 +525,16 @@ export function createWorkflowTests(deps) {
   const wftPatchCut = new Set();
   let wftOpenSeq = 0;
   const wftEditorLive = (s) => wft.view === 'editor' && wft.editorToken === s.token && wftWorkflowId() === s.workflowId;
+  let wftEditorHandle = null;   // the shown editor's { value, changed } (renderExampleEditor)
+  const wftEditorChanged = () => wft.view === 'editor' && !!wftEditorHandle && !wfvEls().tests?.hidden && wftEditorHandle.changed();
+  /** Pre-merge QA (B5): leaving an example with changes not saved asks first, as the canvas does. → true: go ahead. */
+  async function wftLeaveEditor() {
+    if (!wftEditorChanged()) return true;
+    return !!(await confirmModal({ title: 'Discard your changes to this example?', confirmLabel: 'Discard', danger: true,
+      message: 'You changed this example and did not save it. Leaving now drops those changes.' }));
+  }
+  // Closing or reloading the tab with such changes: the browser's own "Leave site?" question.
+  win.addEventListener?.('beforeunload', (e) => { if (wftEditorChanged()) { e.preventDefault(); e.returnValue = ''; } });
   function wftRenderEditor(root) {
     const session = { workflowId: wftWorkflowId(), exampleId: wft.example && wft.example.id ? wft.example.id : null, token: ++wftEditorSeq };
     wft.editorToken = session.token;
@@ -531,7 +542,7 @@ export function createWorkflowTests(deps) {
     const row = o && wft.example && wft.example.id ? o.examples.find((e) => e.id === wft.example.id) : null;
     const openLiked = !!wft.openLiked;   // board 59 A: once, on the first paint of the editor
     wft.openLiked = false;
-    renderExampleEditor(root, wft.example, wftEditorActions(session), { doc, win, scripts: wft.scripts, perTryUsd: wft.perTryUsd, openLiked,
+    wftEditorHandle = renderExampleEditor(root, wft.example, wftEditorActions(session), { doc, win, scripts: wft.scripts, perTryUsd: wft.perTryUsd, openLiked,
       draftLabel: o ? wftUseLabel('draft', o.ctx) : 'your draft', testRunning: !!(o && o.running), runningExampleIds: o && o.running ? o.running.exampleIds || [] : [], confirm: confirmModal,   // G19; F17
       // 3a (boards 32, 39): the projects to pick, whether the workflow needs one, and the overview's drift of this example's pin
       projects: wft.projects || null, needsProject: !!(o && o.needsProject), workflowName: o ? o.name : '',
@@ -597,7 +608,7 @@ export function createWorkflowTests(deps) {
     const base = wftBase(session.workflowId);
     const keep = (example) => { if (wftEditorLive(session)) wft.example = example; };
     return {
-      back: () => { if (wftEditorLive(session)) wftShow('list', { overview: null }); },
+      back: async () => { if (wftEditorLive(session) && await wftLeaveEditor() && wftEditorLive(session)) wftShow('list', { overview: null }); },
       // 3a: the start point dialog's branches (P2) and "Start from the latest" (D63, board 32)
       branches: (key) => wftCall('GET', `/api/workflow-tests/projects/${encodeURIComponent(key)}/branches`),
       startLatest: async () => {
@@ -623,6 +634,10 @@ export function createWorkflowTests(deps) {
       },
       // → the example as the store has it after the last file that went up, also with the error of the one that did not.
       addFiles: async (files, value) => {
+        // Pre-merge QA (B6): a file over the store's 5 MB never reached its rule (the request body limit answered first,
+        // "Request body too large."). It is said here, in the store's words, before anything is saved or sent.
+        const big = files.find((f) => Number(f.size) > EXAMPLE_FILE_MAX_BYTES);
+        if (big) return { ok: false, error: `The file ${big.name} is larger than 5 MB.` };   // "The file": a sentence starts with a capital, a file name keeps its own
         let example = null;
         if (!session.exampleId) {                                     // G17: an example never saved is saved first
           const s = await wftSaveExample(session, value);
@@ -694,5 +709,5 @@ export function createWorkflowTests(deps) {
       else if (m[5]) wftShow('trust');
     }
   }
-  return { refresh: wftRefresh, syncHash: wftSyncHash, enterList, changed: wftChanged, runMenuItems: wftRunMenuItems, route };
+  return { refresh: wftRefresh, syncHash: wftSyncHash, enterList, changed: wftChanged, runMenuItems: wftRunMenuItems, route, guardLeave: wftLeaveEditor, editorChanged: wftEditorChanged };
 }
