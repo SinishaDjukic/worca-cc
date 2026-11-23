@@ -107,10 +107,10 @@ test('examples, a past run as an example, a test of v1 against the draft, reuse,
   assert.deepEqual([busy.status, busy.body.error], [409, 'A test of this workflow is running. Wait for it, or stop it first.'], 'one test at a time (D37)');
   assert.equal((await call('POST', `${WF}/examples/${ex.id}/try-once`, {})).status, 409, 'Try it once now waits too');
   const p = await finished(started.body.run.id);
-  assert.deepEqual([p.run.status, p.run.connectors, p.quick.status, p.done, p.total, p.title], ['done', 'pretend', 'passed', 2, 2, 'Your v2 draft compared with v1']);
+  assert.deepEqual([p.run.status, p.run.connectors, p.quick.status, p.done, p.total, p.title], ['done', 'pretend', 'passed', 2, 2, 'Your draft (same as v1) compared with v1']);   // pre-merge QA (U3): the draft is v1, unchanged
   assert.ok(p.rows.every((r) => r.summary === 'Done · 1 of 1 passed' || r.summary === 'Done · 0 of 1 passed'));
   const c = (await call('GET', `${WF}/runs/${started.body.run.id}/compare`)).body;
-  assert.equal(c.title, 'Your v2 draft compared with v1');
+  assert.equal(c.title, 'Your draft (same as v1) compared with v1');
   assert.deepEqual([c.model.tiles.a.passed.total, c.model.tiles.b.passed.total, c.changes, c.fair], [1, 1, [], []]);
   const s = (await call('GET', `${WF}/runs/${started.body.run.id}/examples/${ex.id}`)).body;
   assert.equal(s.tries.length, 1);
@@ -152,7 +152,7 @@ test('examples, a past run as an example, a test of v1 against the draft, reuse,
   const s1 = (await call('GET', `${WF}/runs/${once.body.run.id}/examples/${ex.id}`)).body;
   assert.deepEqual([s1.labels.a, s1.tries.length, s1.tries[0].a, s1.compareTitle], [null, 1, null, 'Tried once: Bulk invoice export']);
   o = (await call('GET', WF)).body;
-  assert.equal(o.latest.title, 'Latest test: your v2 draft compared with v1');
+  assert.equal(o.latest.title, 'Latest test: your draft (same as v1) compared with v1');
   assert.equal(o.running, null);
 });
 

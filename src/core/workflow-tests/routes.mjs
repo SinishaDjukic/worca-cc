@@ -174,6 +174,7 @@ export function registerWorkflowTestRoutes(app, { broadcast = () => {}, deps = {
       quickCheck: b.quickCheck === true, capUsd: usdOf(b.capUsd), connectors: b.connectors === undefined ? 'pretend' : b.connectors, by: by(req) }) });
   });
   route('GET', `${W}/runs/:run`, async (req, res) => {
+    await service.warmTestLabel(wid(req), num(req.params.run, 'test'));   // U3: the title's "Your draft (same as v3)"
     const p = service.progressOf(wid(req), num(req.params.run, 'test'), { costOf: runner.costOf, phaseOf: runner.phaseOf,
       beforeNowOf: runner.beforeNowOf, stoppingOf: runner.stoppingOf });
     if (p.project) p.project.disk = await service.progressDisk(wid(req), p.run, { diskOf: runner.diskOf });

@@ -275,13 +275,22 @@ export function labelCtx(workflowId) {
   return { liveVersionNo: liveVersionNo(workflowId), latestVersionNo: latest ? latest.versionNo : null };
 }
 
-/** Pre-merge QA (U3): a test's labels. A draft side that was the same as a saved version when it was tested is "Your draft
- *  (same as v3)" (useLabel, ctx.draftSameAs), not "v4 draft": its fingerprint then (run.bFp) is matched with the versions'. */
-async function runLabelCtx(workflowId, run, fingerprintOf) {
-  const ctx = labelCtx(workflowId);
-  if (run.b !== 'draft' || !run.bFp) return ctx;
-  const sameAs = await draftSameAs(workflowId, fingerprintOf, run.bFp);
-  return Number.isInteger(sameAs) ? { ...ctx, draftSameAs: sameAs } : ctx;
+// Pre-merge QA (U3): a test whose draft side was the same as a saved version when it was tested is "Your draft (same as
+// v3)" (useLabel, ctx.draftSameAs), not "v4 draft", on every page that names it. Its draft's fingerprint then (run.bFp) is
+// matched with the versions' once per test, by the async reads (warmTestLabel), and every title reads it (testCtx).
+const sameAsOfTest = new Map();
+const sameAsKey = (workflowId, runId) => `${workflowId}#${runId}`;
+/** `run`: the test, or its id. Never throws. */
+export async function warmTestLabel(workflowId, run, fingerprintOf = (id, use) => useFingerprint(id, use)) {
+  try {
+    const r = typeof run === 'object' ? run : store.readTestRun(Number(run));
+    if (!r || r.b !== 'draft' || !r.bFp || sameAsOfTest.has(sameAsKey(workflowId, r.id))) return;
+    sameAsOfTest.set(sameAsKey(workflowId, r.id), await draftSameAs(workflowId, fingerprintOf, r.bFp));
+  } catch { /* the label stays "v4 draft" */ }
+}
+function testCtx(workflowId, run, ctx = labelCtx(workflowId)) {
+  const n = run ? sameAsOfTest.get(sameAsKey(workflowId, run.id)) : null;
+  return Number.isInteger(n) ? { ...ctx, draftSameAs: n } : ctx;
 }
 
 export function runOf(workflowId, runId) {
@@ -553,16 +562,17 @@ export async function testsOverview(workflowId, { registry = loadAgentRegistry()
   const runs = store.listTestRuns(workflowId, { limit: 20 });
   const running = runs.find((r) => r.status === 'running') || null;
   const last = runs.find((r) => r.kind === 'compare' && r.status !== 'running') || null;
+  for (const r of [running, last]) if (r) await warmTestLabel(workflowId, r, fingerprintOf);   // U3
   const own = running ? store.triesOfRun(running.id).filter((t) => t.runId === running.id) : [];
   return {
     workflowId, name: row.name, needsProject, ctx,
     draftSameAs: sameAs,   // U-T7 (D7): an identical draft has no column of its own
     columns: uses.filter((use) => !(use === 'draft' && sameAs !== null && uses.length > 1)).map((use) => ({ use, label: useLabel(use, ctx, 'column') })),
     examples,
-    running: running ? { runId: running.id, title: testTitle(running, ctx, { mode: 'testing', exampleName: firstExampleName(running) }),
+    running: running ? { runId: running.id, title: testTitle(running, testCtx(workflowId, running, ctx), { mode: 'testing', exampleName: firstExampleName(running) }),
       done: own.filter((t) => FIN.has(t.status)).length, total: own.length,
       exampleIds: running.exampleIds } : null,   // U-T9 (F17): the editor asks before a save that would stop it
-    latest: last ? lastOf(last, ctx) : null,
+    latest: last ? lastOf(last, testCtx(workflowId, last, ctx)) : null,
     pastRuns: await recentRuns(workflowId, { projects }),
   };
 }
@@ -764,7 +774,7 @@ export function minutesLeftOf(own, ms, { now = Date.now(), atOnce = TRIES_AT_ONC
  *  runner's stopping read, the answer's `stopping`. */
 export function progressOf(workflowId, runId, { costOf = null, phaseOf = null, beforeNowOf = null, stoppingOf = null } = {}) {
   const run = runOf(workflowId, runId);
-  const ctx = labelCtx(workflowId);
+  const ctx = testCtx(workflowId, run);   // U3: the route warms it (warmTestLabel)
   // Review (b): the same combined status as Compare (checks and deciding criteria), so "X of N passed" never disagrees with it.
   const tries = withCriteriaFor(workflowId, store.triesOfRun(run.id), { runId: run.id });
   const own = tries.filter((t) => t.runId === run.id);
@@ -872,7 +882,8 @@ async function changesBetween(workflowId, a, b, registry, modelLabel) {
 /** Board 5: the model, Part 1's "what you changed" texts (graph changes only, D16), and the fair-comparison notes. */
 export async function compareOf(workflowId, runId, { registry = loadAgentRegistry(), fingerprintOf = (id, use) => useFingerprint(id, use), modelLabel = null } = {}) {
   const run = runOf(workflowId, runId);
-  const ctx = await runLabelCtx(workflowId, run, fingerprintOf);
+  await warmTestLabel(workflowId, run, fingerprintOf);
+  const ctx = testCtx(workflowId, run);
   const input = modelInput(run, ctx);
   const changes = run.a != null ? await changesBetween(workflowId, run.a, run.b, registry, await modelLabeler({ modelLabel })) : [];
   const fair = [];
@@ -900,7 +911,8 @@ export async function sideBySide(workflowId, runId, exampleId, { forgeFor = null
   const run = runOf(workflowId, runId);
   const ex = store.readExample(workflowId, exampleId);
   if (!ex || !run.exampleIds.includes(ex.id)) throw err(`no example ${exampleId} in this test`, 'NOT_FOUND');
-  const ctx = await runLabelCtx(workflowId, run, fingerprintOf);
+  await warmTestLabel(workflowId, run, fingerprintOf);
+  const ctx = testCtx(workflowId, run);
   const tries = withCriteriaFor(workflowId, store.triesOfRun(run.id), { withAnswers: true, by, runId: run.id }).filter((t) => t.exampleId === ex.id && FIN.has(t.status));
   const list = (side) => tries.filter((t) => t.side === side).sort((x, y) => x.tryNo - y.tryNo || x.id - y.id);
   const A = run.a != null ? list('a') : [];
@@ -977,5 +989,5 @@ export function finishedText(workflowId, runId) {
   if (!run) return '';
   let name = workflowId;
   try { name = workflowRowOf(workflowId).name; } catch { /* deleted meanwhile: its id */ }
-  return `${name}: ${testTitle(run, labelCtx(workflowId), { exampleName: firstExampleName(run) })}`;
+  return `${name}: ${testTitle(run, testCtx(workflowId, run), { exampleName: firstExampleName(run) })}`;
 }
