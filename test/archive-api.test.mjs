@@ -8,7 +8,7 @@
 // on WORCA_HOME), so redirecting HOME would buy nothing.
 import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
-import http from 'node:http';
+import { appServer } from './helpers/app-server.mjs';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -28,7 +28,7 @@ before(async () => {
   // Any real directory works as a seed target: only its projectKey is used, and
   // the route never consults the projects registry.
   seededProjectDir = await mkdtemp(join(tmpdir(), 'worca-cc-archive-proj-'));
-  srv = http.createServer(app);
+  srv = appServer(app);
   await new Promise((r) => srv.listen(0, '127.0.0.1', r));
   base = `http://127.0.0.1:${srv.address().port}`;
 });

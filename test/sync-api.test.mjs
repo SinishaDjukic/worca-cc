@@ -3,7 +3,7 @@
 // import so "sync on by default" is the built-in default, never the developer's settings.json.
 import { test, before, after, beforeEach } from 'node:test';
 import assert from 'node:assert/strict';
-import http from 'node:http';
+import { appServer } from './helpers/app-server.mjs';
 import { mkdtemp, rm, writeFile, stat } from 'node:fs/promises';
 import { writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -28,7 +28,7 @@ before(async () => {
   ({ _testing: gitSync } = await import('../src/core/git-sync.mjs'));
   ({ projectKey } = await import('../src/core/store.mjs'));
   ({ writeSyncPrefs } = await import('../src/core/config.mjs'));
-  srv = http.createServer(app);
+  srv = appServer(app);
   await new Promise((r) => srv.listen(0, '127.0.0.1', r));
   base = `http://127.0.0.1:${srv.address().port}`;
 });

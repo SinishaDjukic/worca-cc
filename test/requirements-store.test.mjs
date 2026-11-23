@@ -31,7 +31,8 @@ test('normalizeSection: goal and lists, trimmed, deduplicated, capped', () => {
   assert.deepEqual(normalizeSection('actors', ' Customer \n\nSupport agent\ncustomer'), ['Customer', 'Support agent']);
   assert.deepEqual(normalizeSection('flow', ['a', '', 7, 'b']), ['a', '7', 'b']);
   assert.equal(normalizeSection('rules', Array.from({ length: 50 }, (_, i) => `r${i}`)).length, LIMITS.items);
-  assert.equal(normalizeSection('rules', ['x'.repeat(900)])[0].length, LIMITS.item);
+  assert.equal(normalizeSection('rules', ['x'.repeat(LIMITS.item + 400)])[0].length, LIMITS.item);   // one long word: cut with "…"
+  assert.ok(normalizeSection('rules', ['x'.repeat(LIMITS.item + 400)])[0].endsWith('…'));
   assert.throws(() => normalizeSection('nope', []), (e) => e instanceof RequirementsError && e.code === 'BAD_REQUEST');
 });
 
@@ -114,7 +115,7 @@ test('starts: versions per feature, newest first, run id lookup, shape', () => {
   const s1 = createStart({ featureSeq: a.seq, version: 1, runId: 'run-a1', spec, title: 'A', ready: true }, { by: 'po' });
   assert.deepEqual({ ...s1, id: 0, startedAt: '' }, {
     id: 0, featureSeq: a.seq, version: 1, runId: 'run-a1', pipelineId: null, spec, title: 'A', ready: true, failing: [],
-    reason: null, workflowId: null, sourceBranch: null, startedBy: 'po', startedAt: '', files: [],
+    reason: null, workflowId: null, sourceBranch: null, startedBy: 'po', startedAt: '', files: [], note: null, noteOverrides: false,
   });
   assert.ok(s1.startedAt);
   const s2 = createStart({ featureSeq: a.seq, version: 2, runId: 'run-a2', spec, title: 'A', ready: false,

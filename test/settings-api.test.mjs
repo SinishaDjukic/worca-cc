@@ -6,7 +6,7 @@
 // test/settings-projects-root.test.mjs).
 import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
-import http from 'node:http';
+import { appServer } from './helpers/app-server.mjs';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { readFileSync, writeFileSync, existsSync, mkdirSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -29,7 +29,7 @@ before(async () => {
   _resetForTests();
   const { app, _testing: t } = await import('../ui/server.mjs');
   testing = t;
-  srv = http.createServer(app);
+  srv = appServer(app);
   await new Promise((r) => srv.listen(0, '127.0.0.1', r));
   base = `http://127.0.0.1:${srv.address().port}`;
 });
@@ -185,6 +185,23 @@ test('keepAwake: GET defaults to true, POST false round-trips, a non-boolean ans
   ]);
 });
 
+test('chatLinksInPanel (issue 1064): default true, false is stored, true deletes the key, a non-boolean is a 400 naming it', async () => {
+  const { readSettings } = await import('../src/core/settings.mjs');
+  assert.equal((await (await fetch(`${base}/api/settings`)).json()).chatLinksInPanel, true);
+  try {
+    assert.equal((await (await postJson({ chatLinksInPanel: false })).json()).chatLinksInPanel, false);
+    assert.equal(readSettings().chatLinksInPanel, false);
+  } finally {
+    assert.equal((await (await postJson({ chatLinksInPanel: true })).json()).chatLinksInPanel, true);
+  }
+  assert.equal(Object.hasOwn(readSettings(), 'chatLinksInPanel'), false);
+  const r = await postJson({ chatLinksInPanel: 'yes' });
+  assert.equal(r.status, 400);
+  const j = await r.json();
+  assert.equal(j.field, 'chatLinksInPanel');
+  assert.match(j.error, /Open chat links in the panel/);
+});
+
 test('GET /api/app/version: unknown with no fetch under tests; a fake fetcher drives outdated + links; setting off = no fetch', async () => {
   const get = async () => (await fetch(`${base}/api/app/version`)).json();
   const pkgVersion = JSON.parse(readFileSync(fileURLToPath(new URL('../package.json', import.meta.url)), 'utf8')).version;
@@ -293,7 +310,7 @@ test('every SETTINGS_POST_KEYS key is exempt from the legacy "no known key clear
     // key, each with a value its setter accepts as "no change / default".
     const probes = {
       projectsRoot: '', chat: {}, pipelineCostLimitUsd: '', totalCostLimitUsd: '', costLimitResetPeriod: '', humanRateUsdPerHour: '',
-      askMaxTurns: '', askMaxBudgetUsd: '', askWeb: null, smartNaming: null, debugSpawnEnabled: false, keepAwake: true, resumeAfterUsageLimit: false, autoGeneratePrDescription: false, updateCheck: true,
+      askMaxTurns: '', askMaxBudgetUsd: '', askWeb: null, smartNaming: null, debugSpawnEnabled: false, keepAwake: true, chatLinksInPanel: false, resumeAfterUsageLimit: false, autoGeneratePrDescription: false, updateCheck: true,
       titleModel: '', hideBuiltinModels: false, hideBuiltinEngines: {}, theme: '', uiLevel: '',
       screensaver: {},                                       // Settings › Appearance: {} is a no-op
       autoWorkflowModel: '',

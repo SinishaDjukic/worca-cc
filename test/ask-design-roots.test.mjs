@@ -1,4 +1,4 @@
-// test/ask-design-roots.test.mjs — a locked-down Design chat reads the design (Design P8 Task 3, L8.10, P5 Contract
+// test/ask-design-roots.test.mjs — a locked-down chat with a design reads the design (Design P8 Task 3, L8.10, P5 Contract
 // issue 10). Its file tools are worca's read_file / grep / glob, which reach only their roots: the design's work/ folder
 // and its project go first (so grep and glob default to work/), shape-checked like the skill root, carried to the MCP
 // child as WORCA_ASK_DESIGN_ROOTS (or to the relay), and the "outside" message stops counting roots.
@@ -13,7 +13,7 @@ import { createThread, appendMessage } from '../src/core/ask/store.mjs';
 import { worcaHome } from '../src/core/projects.mjs';
 import { askFileRoots, defaultFileDeps, createAskFileReader } from '../src/core/ask/file-deps.mjs';
 import { buildMcpConfig } from '../src/core/ask/spawn.mjs';
-import { buildDesignSystemPrompt } from '../src/core/ask/prompt.mjs';
+import { buildSystemPrompt, DESIGN_CHAT_RULES, DESIGN_LOCKED_FILES } from '../src/core/ask/prompt.mjs';
 
 useTempHome(after);
 // settings.json lives under $HOME/.worca-cc (the Ask slot, the Ask caps): HOME is a scratch dir too.
@@ -242,10 +242,12 @@ test('the wiring: a Codex turn keeps designRoots and hands them to its MCP confi
   assert.equal('WORCA_ASK_DESIGN_ROOTS' in relayed[0], false, 'the relay\'s child holds no roots');
 });
 
-test('the design prompt: a locked-down chat is told its file tools open the paths get_design returns', () => {
-  const clause = /\(and web tools when they are on\)\. Open the design's files with read_file, grep and glob at the absolute paths get_design returns: paths\.work, and paths\.project when the design has a project\./;
-  const codex = buildDesignSystemPrompt({ engine: 'codex' });
-  assert.match(codex, /plus the worca file tools read_file, grep and glob/);
-  assert.match(codex, clause);
-  assert.doesNotMatch(buildDesignSystemPrompt({ engine: 'claude' }), /get_design returns/);
+test('the design prompt: a locked-down chat with a design keeps its own prompt (worca file tools) and gets the design rules last', () => {
+  const catalog = { agents: [], workflows: [] };
+  const codex = buildSystemPrompt(catalog, { engine: 'codex', designChat: true });
+  assert.match(codex, /the worca file tools read_file, grep and glob/, 'its file tools are worca\'s, as in any locked-down chat');
+  assert.ok(codex.endsWith(`\n\n${DESIGN_CHAT_RULES}\n${DESIGN_LOCKED_FILES}`), 'the design rules come last, with where its file tools reach the design');
+  assert.match(DESIGN_LOCKED_FILES, /read_file, grep and glob at the absolute paths get_design returns: paths\.work/);
+  assert.ok(buildSystemPrompt(catalog, { engine: 'claude', designChat: true }).endsWith(`\n\n${DESIGN_CHAT_RULES}`), 'Claude keeps Read, Grep and Glob');
+  assert.doesNotMatch(buildSystemPrompt(catalog, { engine: 'codex' }), /## The design in this chat/, 'a chat with no design has no design rules');
 });

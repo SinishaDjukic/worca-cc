@@ -4,9 +4,13 @@ import { loadAgentRegistry } from '../../../src/core/agent-registry.mjs';
 import { applyActionsChange } from '../../../src/core/ask/actions-deps.mjs';
 import { applyAwayChange } from '../../../src/core/ask/away-deps.mjs';
 import { composerCardPatch, isComposerCard } from '../../../src/core/ask/composer-payload.mjs';
-import { designAnswersEventPrompt, validateDesignAnswers } from '../../../src/core/ask/design-payload.mjs';
+import { designAnswersEventPrompt, validateDesignAnswers, validateDesignRequest } from '../../../src/core/ask/design-payload.mjs';
 import { applyMcpChange } from '../../../src/core/ask/mcp-deps.mjs';
 import { scrub } from '../../../src/core/ask/mcp-proposal.mjs';
+import { designIdForThread } from '../../../src/core/design/chat-thread.mjs';
+import { DESIGN_KINDS } from '../../../src/core/design/ids.mjs';
+import { titleFromBrief } from '../../../src/shared/design-names.mjs';
+import { TabToolError } from '../../../src/core/tab-tools.mjs';
 import { applyMetricsChange } from '../../../src/core/ask/metrics-deps.mjs';
 import { applyModelChange } from '../../../src/core/ask/model-deps.mjs';
 import { chatEngine as askChatEngineOf } from '../../../src/core/ask/models.mjs';
@@ -29,6 +33,7 @@ import { FS_OUTSIDE_ALLOWED, checkInside, outsideAllowedMessage } from '../../..
 import { actorOf } from '../../../src/core/identity.mjs';
 import { displayPath, listProjects, normalizeProjectPath } from '../../../src/core/projects.mjs';
 import { PROXY_AGENT_TEXT } from '../../../src/core/proxy-host.mjs';
+import { isInContainer } from '../../../src/core/remote-access.mjs';
 import { addAskWebHost } from '../../../src/core/settings.mjs';
 import { applyChanges, applyRoute } from '../../../src/core/shape/changes.mjs';
 import { addFeatureNote, appendFeatureRun, currentFeatureId } from '../../../src/core/shape/features.mjs';
@@ -40,12 +45,20 @@ import { readWorkflow, writeGraphWorkflow } from '../../../src/core/workflows.mj
 import { RESCAN_CHOICES, memoGitProbe, readWorkspace, removeWorkspaceMember } from '../../../src/core/workspaces.mjs';
 import { formatInstant } from '../../../src/shared/schedule/recurrence.mjs';
 import { changesCardVerb, routeCardVerb } from '../../../src/shared/shape/route.mjs';
-import { AGENTS_DIR, ASK_DEFERRED_REPLIES_MAX, afterMembersChanged, afterProjectRegistered, agentMayBeCaller, askChatActions, askDeferred, askDeferredReplies, askEventPick, askIdParam, askInFlight, askViewer, askWebAccessFor, badRequest, broadcast, broadcastFeature, emitChanged, failedEventTurn, flipCard, followCloneCard, fsAllowedRoots, fsLimitedHere, pinUiLevel, postAskSystemNotice, proxyHost, prunedNote, refuseAgentCaller, removeRecommendation, runs, scheduleVerb, schedulerTick, shipFeatureNow, soundCards, startAskTurn, startCloneJob, startMetricsEventTurn, startRunAs, startScopeEventTurn, workspaceMembersBusy } from '../../server.mjs';
+import { AGENTS_DIR, ASK_DEFERRED_REPLIES_MAX, afterMembersChanged, afterProjectRegistered, agentMayBeCaller, askChatActions, askDeferred, askDeferredReplies, askEventPick, askIdParam, askInFlight, askTabBridges, askTabsEnabled, askViewer, askWebAccessFor, badRequest, broadcast, broadcastFeature, chatLinkRoots, chatLinks, designApi, designChatActions, emitChanged, failedEventTurn, flipCard, followCloneCard, fsAllowedRoots, fsLimitedHere, pinUiLevel, postAskSystemNotice, proxyHost, prunedNote, refuseAgentCaller, removeRecommendation, runs, scheduleVerb, schedulerTick, shipFeatureNow, soundCards, startAskTurn, startCloneJob, startMetricsEventTurn, startRunAs, startScopeEventTurn, tabFailure, tabTools, terminalCallerOk, toolPanelOn, workspaceMembersBusy } from '../../server.mjs';
+import { FILE_PATH_MAX, FILE_REFS_MAX } from '../../../src/shared/file-refs.mjs';
 
 /** The cards route's handler, set by register(): the chat bridge applies a chat channel's card actions through it
  *  in-process (ui/server.mjs invokeAskCard, with req._chatOrigin set). */
 let cardRoute = null;
 export const askCardRoute = (req, res) => cardRoute(req, res);
+
+/** start_design rides the tab bridge of a plain chat with no design yet (one design per chat) and the design flag on;
+ *  never a Workflows chat's. The prompt (askSystemPromptFor) and the bridge (askTabBridge) both ask this. */
+export function askDesignHandoff(threadId) {
+  if (!flagEnabled('design')) return false;
+  try { const t = askGetThread(threadId); return !!t && !t.mode && !designIdForThread(threadId); } catch { return false; }
+}
 
 export function register(app) {
 
@@ -72,6 +85,71 @@ async function applyScheduleCard(card, { by = null } = {}) {
   else detail = card.action === 'cancel' ? 'canceled' : 'deleted';
   return { ok: true, detail, ...(b.runId ? { runId: b.runId } : {}), ...(b.pipelineId ? { pipelineId: b.pipelineId } : {}) };
 }
+/**
+ * start_design (a plain chat's hand-off, over the tab bridge): a new design through the Design button's own create path,
+ * so the engine gate binds it and only the person can allow an unguarded engine (from the Design button), attached to
+ * THIS chat; then its first build on the brief (designChatActions, as start_design_build would), whose receipt is a row
+ * of this chat. The design is the chat's owner's. The name comes from the brief (titleFromBrief), never from the model.
+ * → {ok, designId, title, kind, started, notice?}; a refusal throws a TabToolError the model reads.
+ */
+async function askStartDesign(threadId, input) {
+  const no = (msg, code = 'REFUSED') => new TabToolError(`start_design: ${msg}`, code);
+  if (!flagEnabled('design')) throw no('Design is off on this worca', 'OFF');
+  const thread = askGetThread(threadId);
+  if (!thread) throw no('this chat is gone', 'NOT_FOUND');
+  if (thread.mode) throw no('only a plain chat starts a design');
+  if (designIdForThread(threadId)) throw no('this chat has a design already: change it with change_design, or the user presses Design in the sidebar for another');
+  const brief = validateDesignRequest({ kind: 'design-start', brief: input.brief });
+  if (!brief.ok) throw no(brief.error, 'BAD_INPUT');
+  const kind = typeof input.kind === 'string' ? input.kind : '';
+  if (!DESIGN_KINDS.includes(kind)) throw no(`kind is one of ${DESIGN_KINDS.join(', ')}`, 'BAD_INPUT');
+  const projectKey = typeof input.projectKey === 'string' && input.projectKey.trim() ? input.projectKey.trim() : null;
+  const title = titleFromBrief(brief.value.brief) || 'Untitled design';
+  let r;
+  try { r = await designApi.create({ kind, title, ...(projectKey ? { projectKey } : {}) }, thread.createdBy ?? null, { threadId }); }
+  catch (e) { throw no(String(e?.message || e)); }
+  if (!r.ok) throw no(`${r.gate.error} Only the user can allow that: they start this design from the Design button in the sidebar.`, 'GATE');
+  // The design's frame opens its Design tab beside this chat (the panel follows `design-attached`).
+  broadcast({ type: 'design-attached', threadId, designId: r.design.id });
+  // The receipt (or a video's sound card) is a row of its own: this reply is still streaming, the tool call inside it.
+  const a = await designChatActions.apply({ kind: 'design-start', brief: brief.value.brief }, { threadId, by: thread.createdBy || 'local' });
+  if (a.ok) a.posted(false);
+  return { ok: true, designId: r.design.id, title: r.design.title, kind, started: a.ok, ...(a.ok ? {} : { notice: a.notice }) };
+}
+const TAB_OPS = Object.freeze({ open: (id, i, turn) => tabTools.open(id, i, { turn }), screenshot: (id, i) => tabTools.screenshot(id, i), read: (id, i) => tabTools.read(id, i),
+  startDesign: (id, i) => askStartDesign(id, i) });   // a plain chat's hand-off to a design in the same chat (askStartDesign above)
+app.post('/api/ask/tabs', async (req, res) => {
+  if (!isInContainer(req)) return res.status(403).json({ error: 'tabs: loopback callers only' });   // the /api/ask/relay gate
+  const token = String(req.headers['x-worca-ask-tabs'] || '');
+  const threadId = askTabBridges.get(token);
+  if (!threadId) return res.status(403).json({ error: 'tabs: unknown or finished turn' });
+  if (!askTabsEnabled()) return res.status(403).json({ error: 'tabs: not available while agent isolation is on' });
+  const op = req.body && req.body.op;
+  const input = req.body && req.body.input && typeof req.body.input === 'object' && !Array.isArray(req.body.input) ? req.body.input : {};
+  if (typeof op !== 'string' || !Object.hasOwn(TAB_OPS, op)) return badRequest(res, 'tabs: unknown op');
+  if (op !== 'startDesign' && !toolPanelOn()) return res.status(403).json({ error: `tabs: ${op} needs the Tool panel feature (Settings › Labs)` });
+  try { res.json({ result: await TAB_OPS[op](threadId, input, token) }); } catch (e) { tabFailure(res, e); }
+});
+// Chat file links (issue 1064 §2): which candidate paths of an answer exist in the chat's root. Same guard as the Files
+// tab (terminalCallerOk: exact origin, never a possible agent). Refused paths answer {ok:false} like missing ones.
+app.post('/api/ask/files/resolve', async (req, res) => {
+  if (!terminalCallerOk(req, res)) return;
+  const b = req.body && typeof req.body === 'object' ? req.body : {};
+  const id = askIdParam(res, b.threadId, 'thread'); if (!id) return;
+  const paths = Array.isArray(b.paths) ? b.paths : null;
+  if (!paths || !paths.length || paths.length > FILE_REFS_MAX || paths.some((p) => typeof p !== 'string' || !p || p.length > FILE_PATH_MAX)) {
+    return res.status(400).json({ error: `paths: 1 to ${FILE_REFS_MAX} strings of at most ${FILE_PATH_MAX} characters`, code: 'BAD_INPUT' });
+  }
+  try {
+    const r = await chatLinkRoots(id, req);
+    if (r.gone) return res.status(404).json({ error: 'This chat is gone or archived.', code: 'SCOPE_GONE' });
+    if (r.error) return res.json({ root: null, paths: Object.fromEntries(paths.map((p) => [p, { ok: false }])) });
+    res.json({ root: r.root, paths: await chatLinks.resolve(r.roots, [...new Set(paths)]) });
+  } catch (e) {
+    console.error(`[worca-ui] files resolve: ${e?.message || e}`);
+    res.status(500).json({ error: 'resolve failed' });
+  }
+});
 
 // Card ids with a Save in flight: the mint + the row write await, so the
 // `state === 'proposed'` check alone would let two Saves both pass and write two rows.

@@ -1055,6 +1055,8 @@ test('D15, board 29 (6): Report back to SHOP-123 on the Ready to build card, on 
   stranger.remove();
   q('start-go', m.host).click();
   await settle();
+  document.querySelector('[data-ui="runsetup-go"]').click();   // every start goes through the overlay's note step
+  await settle();
   assert.equal(m.calls.find((c) => c.url === `${F}/start`).body.reportBack, false);
   m = await openFeature(feature({ export: XV({ link: LINK }) }));
   assert.equal(text(document.getElementById(q('report-card', m.host).getAttribute('aria-describedby'))),
@@ -1076,6 +1078,8 @@ test('D15: the start-before-Ready dialog and the runs card carry the same switch
   area.dispatchEvent(new window.Event('input'));
   [...dlg().querySelectorAll('.btn-primary')].at(-1).click();
   await settle();
+  document.querySelector('[data-ui="runsetup-go"]').click();   // every start goes through the overlay's note step
+  await settle();
   assert.equal(calls.find((c) => c.url === `${F}/start`).body.reportBack, true);
   const started = await openFeature(feature({ state: 'started', export: XV({ link: LINK }), changedSinceStart: [{ kind: 'goal', field: 'text', before: 'a', after: 'b' }],
     starts: [{ version: 1, runId: 'r1', run: { status: 'running', phase: 'build', costUsd: 0.1, href: '#running/r1' }, failing: [], files: [] }] }));
@@ -1085,6 +1089,8 @@ test('D15: the start-before-Ready dialog and the runs card carry the same switch
 test('D15: without a ticket the start sends no reportBack', async () => {
   const { host, calls } = await openFeature(feature(), { [`POST ${F}/start`]: () => ({ runId: 'r1', version: 1, feature: feature(), turns: [] }) });
   q('start-go', host).click();
+  await settle();
+  document.querySelector('[data-ui="runsetup-go"]').click();   // every start goes through the overlay's note step
   await settle();
   assert.equal('reportBack' in calls.find((c) => c.url === `${F}/start`).body, false);
 });

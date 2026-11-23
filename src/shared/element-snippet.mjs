@@ -1,7 +1,8 @@
-// extension/src/element-snippet.mjs — what the area capture tells the agent about the page's DOM: the element under the
+// src/shared/element-snippet.mjs — what the area capture tells the agent about the page's DOM: the element under the
 // selected rectangle, a CSS selector for it and a short outerHTML snippet. Runs in the content script; pure DOM (no
 // window globals beyond `doc`), so jsdom tests it (test/extension-element-snippet.test.mjs). ALL of it is page data:
-// it travels only inside page-capture.md (untrusted, D4).
+// it travels only inside page-capture.md (untrusted, D4). Shared by the extension and the preview proxy's Pick element
+// (issue 1064: snippetSource() below runs the same code inside a proxied page).
 export const SNIPPET_MAX = 2000;
 export const SELECTOR_MAX = 300;
 export const ATTR_VALUE_MAX = 200;
@@ -88,4 +89,21 @@ export function htmlSnippet(el, max = SNIPPET_MAX) {
   walk(el, true);
   const html = out.replace(/\s+\n/g, '\n');
   return html.length > max ? `${html.slice(0, max)}…` : html;
+}
+
+/** The source of cssEscape, cssSelector and htmlSnippet with everything they read, as one script body. The preview
+ *  proxy's Pick element shim (src/core/preview-proxy.mjs PICK_SHIM) runs exactly this code inside the previewed page,
+ *  so a pick names its element the way the extension's area capture does (one selector and snippet algorithm). Every
+ *  non-ASCII character comes out as \uXXXX text: the proxy sends pages as latin1, so a raw `…` would reach the page
+ *  as `&`. */
+export function snippetSource() {
+  return [
+    `var SNIPPET_MAX=${SNIPPET_MAX},SELECTOR_MAX=${SELECTOR_MAX},ATTR_VALUE_MAX=${ATTR_VALUE_MAX},DROP=${JSON.stringify(DROP)};`,
+    `var VOID=new Set(${JSON.stringify([...VOID])});`,
+    `var escText=${escText.toString()};`,
+    `var escAttr=${escAttr.toString()};`,
+    cssEscape.toString(),
+    cssSelector.toString(),
+    htmlSnippet.toString(),
+  ].join('\n').replace(/[^\x00-\x7f]/g, (c) => `\\u${c.charCodeAt(0).toString(16).padStart(4, '0')}`);
 }

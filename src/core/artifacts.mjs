@@ -36,6 +36,7 @@ import { attachWatchPipeline, getWatch, watchActive } from './pr-watch.mjs';
 import { insertRunTags, readRunTags, readTagsFor } from './run-tags-store.mjs';
 import { insertRunLabels, readLabelsFor, readRunLabels } from './run-labels-store.mjs';
 import { workInBase } from './in-base.mjs';
+import { readNightDecisions } from './night/store.mjs';
 
 // ── DB row <-> state object mapping (Phase 3) ──────────────────────────────────
 // JSON columns are TEXT; (de)serialize at THIS boundary only. Reads are fail-safe:
@@ -653,7 +654,9 @@ export function readPipelineExtras(pipelineId) {
       ...(Array.isArray(v.checklist) ? { checklist: v.checklist } : {}),
     };
   });
-  return { clarify, reviews, stepQuestions: readStepQuestions(pipelineId) };
+  // Away mode's stored answers, for the Q&A tab (only when it gave any: the shape stays as it was otherwise).
+  const awayAnswers = readNightDecisions(pipelineId);
+  return { clarify, reviews, stepQuestions: readStepQuestions(pipelineId), ...(awayAnswers.length ? { awayAnswers } : {}) };
 }
 
 /**
@@ -1475,15 +1478,19 @@ export async function writeState(pipelineDir, stateObj, { prWatchRunId = null, r
       INSERT INTO pipelines (id, project_key, workspace_key, target, title, base_name,
         date_prefix, status, phase, cycle, started_at, updated_at, total_cost_usd,
         total_active_ms, prompt, branch, workspace_meta, stepper, tools, resume_point,
-        source_type, source_ref, guardrails_id, outcome, human_hours, started_by, shape_stats, run_size, run_setup, review_stats, pr_auto)
+        source_type, source_ref, guardrails_id, outcome, human_hours, started_by, shape_stats, run_size, run_setup, review_stats, pr_auto,
+        elapsed_ms, elapsed_since)
       VALUES (@id,@project_key,@workspace_key,@target,@title,@base_name,@date_prefix,
         @status,@phase,@cycle,@started_at,@updated_at,@total_cost_usd,@total_active_ms,
         @prompt,@branch,@workspace_meta,@stepper,@tools,@resume_point,
-        @source_type,@source_ref,@guardrails_id,@outcome,@human_hours,@started_by,@shape_stats,@run_size,@run_setup,@review_stats,@pr_auto)
+        @source_type,@source_ref,@guardrails_id,@outcome,@human_hours,@started_by,@shape_stats,@run_size,@run_setup,@review_stats,@pr_auto,
+        COALESCE(@elapsed_ms, 0),@elapsed_since)
       ON CONFLICT(id) DO UPDATE SET
         status=excluded.status, phase=excluded.phase, cycle=excluded.cycle,
         updated_at=excluded.updated_at, total_cost_usd=excluded.total_cost_usd,
         total_active_ms=excluded.total_active_ms, human_hours=excluded.human_hours,
+        elapsed_ms=COALESCE(@elapsed_ms, elapsed_ms),
+        elapsed_since=CASE WHEN @elapsed_ms IS NULL THEN elapsed_since ELSE excluded.elapsed_since END,
         branch=excluded.branch,
         workspace_meta=excluded.workspace_meta, stepper=excluded.stepper,
         tools=excluded.tools,
@@ -2046,6 +2053,10 @@ function toPipelineRow(o) {
     updated_at: o.updatedAt ?? null,
     total_cost_usd: Number.isFinite(o.totalCostUsd) ? o.totalCostUsd : 0,
     total_active_ms: Number.isFinite(o.totalActiveMs) ? o.totalActiveMs : 0,
+    // The run clock. A writer without the figure (a partial writer, a seed) binds NULL and writeState
+    // then keeps BOTH stored columns; a writer that has it writes both, and a null anchor clears it.
+    elapsed_ms: Number.isFinite(o.elapsedMs) ? Math.round(o.elapsedMs) : null,
+    elapsed_since: Number.isFinite(o.elapsedMs) && Number.isFinite(o.elapsedSince) ? o.elapsedSince : null,
     human_hours: Number.isFinite(o.humanHours) ? o.humanHours : 0,
     prompt: o.prompt ?? null,
     branch: s(o.branch),
@@ -2108,6 +2119,22 @@ export function totalsFor(row) {
     ? row.total_active_ms
     : (agg.ca ? (agg.sa || 0) : null);
   return { cost, active };
+}
+
+/**
+ * A row's elapsed run time (the run clock), or null when the row carries no figure (a run saved
+ * before the clock existed: elapsed_ms 0 and no anchor), so readers fall back to the summed time.
+ * A row whose clock still runs (its process is alive, or died mid-work) is credited up to its last
+ * heartbeat, else its last write. A function of the row only: it never reads the current time, so
+ * a dead row's figure does not grow.
+ * @param {object} row a pipelines DB row (elapsed_ms, elapsed_since, heartbeat_at, updated_at)
+ * @returns {number|null}
+ */
+export function rowElapsedMs(row) {
+  const ms = Number(row.elapsed_ms) || 0;
+  if (row.elapsed_since == null) return ms > 0 ? ms : null;
+  const seen = Date.parse(row.heartbeat_at || row.updated_at);
+  return ms + (Number.isFinite(seen) ? Math.max(0, seen - row.elapsed_since) : 0);
 }
 
 /** [[projectKey, branchRecord]] of a pipelines row: every workspace member's, else the single run's own.
@@ -2542,6 +2569,7 @@ async function rowToHistoryEntry(row, repoDir = null, opts = {}) {
     files: resultsFilesCount(results),
     totalCostUsd: cost,
     totalActiveMs: active,
+    elapsedMs: rowElapsedMs(row),
     mtime: row.updated_at ? (Date.parse(row.updated_at) || 0) : 0,
   };
   // A round of another run (Runs list fold, plan D1): the key only when the marker is valid.
@@ -2636,6 +2664,7 @@ async function listPipelinesNow(projectDir, opts, workspaceKey) {
   const dirById = await runDirIndex(pipelinesDir);
   const rows = getDb().prepare(`
     SELECT id, project_key, workspace_key, target, title, status, started_at, updated_at, total_cost_usd, total_active_ms,
+           elapsed_ms, elapsed_since, heartbeat_at,
            branch, workspace_meta, guardrails_id, run_setup, started_by, pr_url,
            json_extract(CASE WHEN json_valid(resume_point) THEN resume_point END, '$.pauseReason') AS pause_reason,
            json_extract(CASE WHEN json_valid(resume_point) THEN resume_point END, '$.pauseDetail') AS pause_detail,
@@ -2684,7 +2713,8 @@ export function listAllPipelines(opts = {}, cfg = {}) {
 async function listAllPipelinesNow(opts, { batchSize = 16 } = {}) {
   const rows = getDb().prepare(`
     SELECT id, project_key, workspace_key, target, title, status, started_at, updated_at,
-           total_cost_usd, total_active_ms, branch, workspace_meta, guardrails_id, run_setup, started_by, pr_url, archived_at,
+           total_cost_usd, total_active_ms, elapsed_ms, elapsed_since, heartbeat_at,
+           branch, workspace_meta, guardrails_id, run_setup, started_by, pr_url, archived_at,
            json_extract(CASE WHEN json_valid(resume_point) THEN resume_point END, '$.pauseReason') AS pause_reason,
            json_extract(CASE WHEN json_valid(resume_point) THEN resume_point END, '$.pauseDetail') AS pause_detail,
            json_extract(CASE WHEN json_valid(resume_point) THEN resume_point END, '$.limitEngine') AS limit_engine,
@@ -2943,6 +2973,7 @@ function rowToState(row) {
     updatedAt: row.updated_at ?? null,
     totalCostUsd: row.total_cost_usd ?? 0,
     totalActiveMs: row.total_active_ms ?? 0,
+    elapsedMs: rowElapsedMs(row),   // null = no figure (an old run); no anchor on the wire: a saved state never ticks
     humanHours: Number(row.human_hours || 0),
     prompt: row.prompt ?? null,
     baseName: row.base_name ?? null,

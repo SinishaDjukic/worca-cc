@@ -132,7 +132,7 @@ export default function createTaskSource(ctx) {
 | `validateConfig` | `()` | `{ok:true, identity?}` \| `{ok:false, errors:[{field,message}]}` — gates the whole pane |
 | `listTasks` | `({inputs, search, cursor})` | `{tasks:[{id,title,url,state,labels,updatedAt}], cursor?}` |
 | `getTask` | `(id)` — **positional** | `{...summary, body /* markdown */, meta}` |
-| `reportResult` | `(id, {status, summary, links, inputs, move?})` — **positional** | anything; with `move` (Ticket updates): `{moved: {from, to} \| null, note}` |
+| `reportResult` | `(id, {status, summary, links, inputs, move?})` — **positional**; `status` ∈ `started` \| `needs-human` \| `failed` \| `completed` \| `pr-opened` (more may be added). Apply a legacy close or transition only on `completed`; treat any other or unknown status as comment-only | anything; with `move` (Ticket updates): `{moved: {from, to} \| null, note}` |
 | `capabilities` | `({inputs})` — optional | `{writeBack, incrementalSync, export?, import?, ticketUpdates?}`; missing → `writeBack: true`; `export: true` turns on the export ops below, `import: true` the import ops, `ticketUpdates: true` the Ticket updates ops |
 | `exportOptions` | `({project?, issueType?})` — optional, export | `{projects:[{value,label}], issueTypes?, priorities?, criteriaFields?, doneStatus, tooOld?}` — `issueTypes` with a project, the last two with both |
 | `createTicket` | `({ticket})` — optional, export | `{key, url, fingerprint}` \| `{refused:{field, message}}` |

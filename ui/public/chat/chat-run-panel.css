@@ -27,7 +27,7 @@
    names it) rather than Open full page and Close dropping onto a second row. */
 .crp .rd-bar-end > .rd-night-wrap{flex:0 1 auto;min-width:72px;}
 .crp .rd-bar .rd-night{flex:1 1 auto;width:100%;min-width:0;}
-.crp :is(.rd-to-run,.hd-to-run,.term-opener){display:none;}
+.crp .term-opener{display:none;}
 .crp :is(.rd > .rd-error,.hd > .hd-error){flex:none;margin:8px 16px 0;}
 .crp :is(.rd-details,.hd-details){flex:1 1 auto;min-height:0;overflow-x:hidden;overflow-y:auto;}
 .crp :is(.rd-header,.hd-header){margin:12px 16px 0;padding:16px 18px 14px;}
@@ -61,9 +61,10 @@
 .crp-bar-btns{display:inline-flex;align-items:center;gap:2px;}
 .crp :is(.crp-full,.crp-close){display:inline-grid;place-items:center;width:32px;height:32px;padding:0;border-radius:var(--r-sm);}
 .crp :is(.crp-full,.crp-close):focus-visible{outline:2px solid var(--ink);outline-offset:2px;}
-/* The panel leaves the conversation as little as ~385px (901-1100px windows, or 1500px with the history column open):
-   the composer row drops the same parts P1 drops on a phone, so Send stays in the box and the scope keeps its label. */
-.chat-page[data-panel="open"] .chat-convo{container:chat-convo / inline-size;}
+/* A side panel (the run panel, the tool panel with the chats list open) leaves the conversation as little as ~385px:
+   the composer row drops the same parts P1 drops on a phone, so Send stays in the box and the scope keeps its label.
+   The column is the container whatever narrows it. */
+.chat-page .chat-convo{container:chat-convo / inline-size;}
 @container chat-convo (max-width:520px){
   .chat-page .ask-meter-cost,.chat-page .ask-voice-caret,.chat-page .ask-model-btn-effort{display:none;}
 }

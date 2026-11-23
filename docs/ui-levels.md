@@ -135,6 +135,7 @@ be skipped by forgetting it.
 | Element | Level |
 |---|---|
 | New pipeline, Getting started, Runs, Projects | S |
+| New run: the Runs page head (#runs-new; the top bar no longer has it) | S — the way to the New run page at every level and width; the guide's New run hop rings it after the Runs row |
 | Build: the group label, Workflows (the full-screen editor; agents and scripts live in its Library) | S |
 | Build: Requirements (behind the requirements flag) | S |
 | Runs counts: the amber Needs-you number (no symbol), else the live count as a grey number | S — each hidden at zero |
@@ -200,12 +201,13 @@ The **Auto** workflow option is available for both targets — a project and a w
 | Runs list: Delete (the action bar and the row ⋯ menu); Add to group… and Remove from group (the row ⋯ menu); their keys ⌫, G and ⇧G | A |
 | Run page: "Add to group…" on the Group row of a run in no group, the same as in the list's row menu | A |
 | Resume menu: Resume at HH:MM (when the limit resets) | A |
-| Run page glance: the run's name as the page title, the status line (state, then the step), time · cost (with its Away mode share) · changes; the Cost tags row under them, the Live view switch and its fogged graph of the running step(s), parallel steps (Now), one row per tab, a waiting question below its own heading, the result actions | S |
+| Run page (one level): the header (the run's name, Run after, Pause/Resume, Stop and ⋯ ending the title row), a waiting question above the tabs on every tab, then the tabs; the run card is the Overview tab's body: the status line (state, then the step), the Cost tags row, the result actions; on a wide pane its right column holds time · cost (with its Away mode share) · changes, the verdict and, while the run goes, its fogged workflow framed on the running step(s) (a click opens the Workflow tab); parallel steps (Now) | S |
+| Task tab (second): the prompt in full as markdown and the Run setup card, which shows each choice at the level the New run form shows it: workflow, Away mode, mock run (S); engine (kept visible when it is not Claude), guardrails, human in the loop, source branch, MCP servers off, code graph, each agent's model and effort (A); each agent's sub-agents and questions, each loop's round budget (E) | S |
 | Run progress: the bar under the status line (Plan · Build · Review · Ready, blue / amber / green), its text ("Build · task 2 of 4") in place of "Step: …", the chain's overall bar ("Run 2 of 3"), the Runs list's group bar and group row with its ⌄ | S |
 | Run progress hover breakdown: stages with their agents and states, review pass count | A |
 | Workflow graph with status colours, gate pip, End result; Workflow, Overview and Q&A tabs | S |
 | Run header cost and its breakdown (agents, Away mode, Auto workflow, run title; stopped reviews and stopped agent turns apart); the Overview cost card's Away mode share | S |
-| "Answered for you": one group per ask (kind · time · model · cost of its review, or "review stopped" and its lower bound), the answers, Check; the heading's answer count and what the Away mode reviews cost | S |
+| The run card's Away mode note ("Away mode: 5 answers while you were away — 2 to check") and its See the answers, which opens the Q&A tab; each answered question there says who answered it, and its Answered for you list holds Away mode's other answers (gates, workflows, retries, Shaper stops) with their reasons | S |
 | Diff tab (live worktree while running, the final patch after) | S |
 | Folder run (a Folder project): Changes tab, the Folder chip, the "<n> files · on a copy" bar with Discard and Apply to folder, the Apply to folder dialog | S |
 | Run without a project (No project): the Artifacts tab, opened first; the No project chip | S |
@@ -213,7 +215,7 @@ The **Auto** workflow option is available for both targets — a project and a w
 | Step log drawer under the Workflow graph (a card or execution-row click; Open in Logs, resize, close), Summaries / Raw switch (flag `commandSummaries`) | A — follows the Logs tab |
 | Branch chip, progress n/m · step on the card, model · effort pill, graph zoom cluster | A |
 | Auto proposal Revise; Artifacts tab | A |
-| Actions tab, Overview actions strip, Create PR 'Try it first' button and strip | A |
+| Actions tab, Create PR 'Try it first' button and strip | A |
 | Running-action pill in the header, sidebar Running actions rows (one tile on the rail) | all — shown only while a service runs |
 | Log filters (source, level, node, cycle) | E |
 | Graph node totals, fan and execution strips, Away mode chips and bands, loop badges | E |
@@ -225,17 +227,16 @@ The **Auto** workflow option is available for both targets — a project and a w
 |---|---|
 | List, project filter, Refresh; Overview (verdict, findings, duration, cost, task); Clarify tab; Resume | S |
 | Header cost and its breakdown (agents, Away mode, Auto workflow, run title; stopped reviews and stopped agent turns apart); the glance and Overview cost's Away mode share | S |
-| "Answered for you", as on the run page | S |
+| The Away mode note and the Q&A tab, as on the run page | S |
 | Save as preset (a run with a stored setup) | S |
 | Run page bar: Back (every layout) and ⋯ (Away mode while live, Save as preset, Terminal, Report this run, Archive / Restore) | S |
 | History: usage-limit notice | S |
-| "Files changed" list on the Overview | S |
 | Folder run: Changes tab, the Folder chip, the Apply bar and dialog, Discard; the Git / Folder chip on a project's group in the Runs list | S |
 | Run without a project: the Artifacts tab, opened first; the No project group and its chip in the Runs list | S |
 | Overview: Perspective checklists, as on the run page (shaped runs) | S |
 | Run page head on a project with no remote: Link remote, How to merge | S |
 | Diff pill, inline comments; Create PR / View PR; "Push <source>" (a run on its source branch, instead of a PR); branch line; Artifacts tab | A |
-| Actions tab, Overview actions strip, Create PR 'Try it first' button and strip | A |
+| Actions tab, Create PR 'Try it first' button and strip | A |
 | Create PR dialog: Draft switch, "Will close owner/repo#N" line | A — ungated inside the modal (no `data-min-level`), so they show wherever the modal opens |
 | Running-action pill in the header, sidebar Running actions rows (one tile on the rail) | all — shown only while a service runs |
 | Mergeability pill; Logs tab; Agents tab; team-metrics status; MEMORY CHANGES; worktree row | E |
@@ -338,6 +339,7 @@ inside the view.
 | Labs tab (feature flags) | S — flags are independent of levels (docs/feature-flags.md) |
 | General: root folders; Runs tab: Scheduled runs defaults, Workspaces (scan models), chat notifications; Chat tab (limits, tools, web access, chat history) | A |
 | Runs tab: Actions (keep policy, port range, editor/terminal, cap) | A |
+| Runs tab › Actions: Preview ports (All local ports / Actions range only; locked to the range on a hosted Worca) | A — with its card |
 | Runs tab: Wait for the network | A |
 | Runs tab: Machine load (runs at once, test workers per run, archive finished runs after) | A |
 | Guardrails tab (list, details); Memory tab (files) | A |
@@ -415,6 +417,8 @@ missing (`data-needs-git`), at every level.
 | Team-policy notes on New pipeline; the team caps readout under Budget & cost limits | all — a team cap applies in every mode, so the reason it applies is never hidden |
 | The Installed tab's Team policy card and the setup checklist (the Marketplace page) | A — with the page that holds them |
 | Ask: chat, history, attachments, run card (its progress bar and stage text), proposal title / project / workflow / brief / Start | S |
+| Tool panel beside the chat and run pages: the icon strip, Overview, Terminal, Browser, Files and Design tabs, Pick element | S — never level-gated; the chat's tab tools ride the `toolPanel` flag |
+| Chat tab: Links in answers (Open chat links in the panel) | S — behind the `toolPanel` flag |
 | Pinpoint (#669): select text in a chat answer, a Markdown artifact or the Diff tab for Copy · Explain · Alternatives · Disagree · Note / Comment · Quote / Send to chat; the composer's quote chip; an artifact's pending-changes tray (sent back to the run as one direction while it still takes directions); the diff's open-comments tray (Propose fix run) | all — follows the surface it is on |
 | Ask: the run card's Pause / Resume / Stop, its answer receipt, its result (verdict, changes, top changed files) and the composer's "→ run" direction chip | S — the run card's controls, as on the Running card |
 | Ask: the run card's question (clarify, form, cycle gate, recovery, Auto proposal) | all (rule 1) — its own controls keep the run page's levels (Auto proposal Revise A, tunables E) |

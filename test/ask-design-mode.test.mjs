@@ -1,49 +1,59 @@
-// test/ask-design-mode.test.mjs
+// test/ask-design-mode.test.mjs — a chat with a design is a plain chat (docs/design.md "In the chat"): its design points
+// at it (designs.thread_id), and no thread carries a 'design' mode any more.
 import { test, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { useTempHome } from './helpers/temp-home.mjs';
 
 useTempHome(after);
 const store = await import('../src/core/ask/store.mjs');
+const { getDb } = await import('../src/core/db.mjs');
+const { createDesign, updateDesign } = await import('../src/core/design/store.mjs');
 const { isSurfaceMode, turnHelperFlags } = await import('../src/core/ask/thread-modes.mjs');
 
-test('a design thread keeps its mode and title; an unknown mode is a plain chat', () => {
-  const t = store.createThread({ mode: 'design', title: 'ShipRadar' });
-  assert.deepEqual([t.mode, t.title], ['design', 'ShipRadar']);
+const withDesign = (title) => {
+  const t = store.createThread({ title });
+  const d = createDesign({ kind: 'web', title }, { by: null });
+  updateDesign(d.id, { threadId: t.id });
+  return { thread: t, design: d };
+};
+
+test('a thread made with the old design mode is a plain chat; an unknown mode is a plain chat', () => {
+  assert.equal('mode' in store.createThread({ mode: 'design', title: 'ShipRadar' }), false);
   assert.equal('mode' in store.createThread({ mode: 'bogus' }), false);
+  assert.equal(isSurfaceMode('design'), false);
+  assert.equal(isSurfaceMode('composer') && !isSurfaceMode(null), true);
 });
 
-test('listWhere is "not in": design and composer threads are in no Chat list, page, count or search', () => {
+test('the Chat lists: a chat with a design is a plain chat everywhere (the extension too) and names its design; a composer chat is in none', () => {
   const plain = store.createThread({ title: 'needle plain' });
   const comp = store.createThread({ mode: 'composer', title: 'needle comp' });
-  const des = store.createThread({ mode: 'design', title: 'needle design' });
+  const { thread: des, design } = withDesign('needle design');
   const ids = (rows) => rows.map((t) => t.id);
-  assert.ok(ids(store.listThreads({})).includes(plain.id));
-  for (const other of [comp.id, des.id]) {
-    assert.equal(ids(store.listThreads({})).includes(other), false);
-    assert.equal(ids(store.listThreads({ query: 'needle' })).includes(other), false);
-    assert.equal(ids(store.listThreadsPage({ show: 'all', limit: 50 }).threads).includes(other), false);
+  for (const listed of [plain.id, des.id]) {
+    assert.ok(ids(store.listThreads({})).includes(listed));
+    assert.ok(ids(store.listThreads({ mode: 'plain' })).includes(listed), 'the browser extension');
+    assert.ok(ids(store.listThreads({ query: 'needle' })).includes(listed));
+    assert.ok(ids(store.listThreadsPage({ show: 'all', limit: 50 }).threads).includes(listed));
   }
-  assert.ok(ids(store.listThreads({ mode: 'design' })).includes(des.id));
-  assert.equal(ids(store.listThreads({ mode: 'design' })).includes(comp.id), false);
+  for (const list of [store.listThreads({}), store.listThreads({ mode: 'plain' }), store.listThreadsPage({ show: 'all', limit: 50 }).threads]) {
+    assert.equal(ids(list).includes(comp.id), false);
+  }
+  assert.equal(store.listThreads({}).find((t) => t.id === des.id).designId, design.id, 'the row names its design (the Design mark)');
+  assert.equal('designId' in store.listThreads({}).find((t) => t.id === plain.id), false);
   assert.ok(ids(store.listThreads({ mode: 'composer' })).includes(comp.id));
   assert.equal(store.countThreads({}), store.listThreads({ limit: 200 }).length);
-  assert.ok(store.listThreadIds().includes(des.id), 'Delete all still reaches it');
 });
 
-test('turnHelperFlags: a design turn never titles and never suggests; others unchanged', () => {
+test('turnHelperFlags: only an event turn or a later message skips the title; only an event turn skips the suggestion', () => {
   const on = { synthetic: false, userSeq: 1, titleWasAuto: true };
-  assert.deepEqual(turnHelperFlags({ ...on, mode: 'design' }), { firstTurn: false, suggest: false });
-  assert.deepEqual(turnHelperFlags({ ...on, mode: null }), { firstTurn: true, suggest: true });
-  assert.deepEqual(turnHelperFlags({ ...on, mode: 'composer' }), { firstTurn: true, suggest: true });
-  assert.deepEqual(turnHelperFlags({ ...on, mode: null, synthetic: true }), { firstTurn: false, suggest: false });
-  assert.deepEqual(turnHelperFlags({ ...on, mode: null, userSeq: 2 }), { firstTurn: false, suggest: true }, 'only the first message titles');
-  assert.deepEqual(turnHelperFlags({ ...on, mode: null, titleWasAuto: false }), { firstTurn: false, suggest: true }, 'a title the person set stays');
-  assert.equal(isSurfaceMode('design') && isSurfaceMode('composer') && !isSurfaceMode(null), true);
+  assert.deepEqual(turnHelperFlags(on), { firstTurn: true, suggest: true });
+  assert.deepEqual(turnHelperFlags({ ...on, synthetic: true }), { firstTurn: false, suggest: false });
+  assert.deepEqual(turnHelperFlags({ ...on, userSeq: 2 }), { firstTurn: false, suggest: true }, 'only the first message titles');
+  assert.deepEqual(turnHelperFlags({ ...on, titleWasAuto: false }), { firstTurn: false, suggest: true }, 'a title the person or the design gave stays');
 });
 
-test('the boot sweep of empty threads keeps a design thread (its design points at it)', () => {   // last: it sweeps the file's threads
-  const des = store.createThread({ mode: 'design', title: 'idle' });
+test('the boot sweep of empty threads keeps a chat with a design (its design points at it)', () => {   // last: it sweeps the file's threads
+  const { thread: des } = withDesign('idle');
   const plain = store.createThread({ title: 'idle plain' });
   store.sweepEmptyThreads({ olderThanMs: 0, now: Date.now() + 1000 });
   assert.ok(store.getThread(des.id));

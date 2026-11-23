@@ -53,6 +53,7 @@ import { createSchedulesView } from '../ui/public/schedules-view.mjs';
 const bootApp = (o = {}) => bootGitApp({ trackDom, ...o });
 const appSrc = readFileSync(fileURLToPath(new URL('../ui/public/app.js', import.meta.url)), 'utf8');
 const askSrc = readFileSync(fileURLToPath(new URL('../ui/public/ask-panel.mjs', import.meta.url)), 'utf8');
+const ctxViewSrc = readFileSync(fileURLToPath(new URL('../ui/public/ask-context-view.mjs', import.meta.url)), 'utf8');
 const tick = () => new Promise((r) => setTimeout(r, 0));
 const pastCoalesce = () => new Promise((r) => setTimeout(r, 400));   // refreshSyncChips is coalesced (SYNC_CHIPS_MS = 300)
 
@@ -158,13 +159,18 @@ test('hide set: JS-built surfaces and requests', async () => {
         /import \{[^}]*\bGIT_MISSING_TEXT\b[^}]*\} from '\.\/git-gate\.mjs';/,
         /if \(!gitOn\(\)\) for \(const k of \['sourceBranch', 'sourceBranchByKey', 'featureBranch', 'featureBranchSuggested', 'featureBranchFallback', 'sameAsSource', 'sourceFromPrevious', 'syncBeforeStart', 'syncOnDiverged'\]\) delete body\[k\];/,
         /gitOn: \(\) => gitOn\(\),/,
-        /const row = rdSheetRow\(\{ label: cell\.tab\.label, value, tab: key, icon: icon \? icon\.cloneNode\(true\) : null \}\);\n\s+if \(cell\.tab\.needsGit\) row\.dataset\.needsGit = '';/,
-        /open\.textContent = 'Open the diff';\n\s+open\.dataset\.needsGit = '';/, /row\.className = 'hd-ov-wt';\n\s+row\.dataset\.needsGit = '';/]) assert.match(appSrc, re);
+        /row\.className = 'hd-ov-wt';\n\s+row\.dataset\.needsGit = '';/]) assert.match(appSrc, re);
+      // One level: the card's tab-opening rows and the Overview "Files changed" box (each git-gated) are gone.
+      assert.doesNotMatch(appSrc, /rdSheetRow\(\{ label: cell\.tab\.label/);
+      assert.doesNotMatch(appSrc, /'Open the diff'/);
       for (const v of ['tab', 'want']) {   // setHdMode / setRdMode (tab) and the two wantTab hand-offs (want): deep links …/details/diff|actions
         const n = (appSrc.match(new RegExp(`levelAtLeast\\(tabs\\.cells\\.get\\(${v}\\)\\.tab\\.level \\|\\| 'simple'\\) && \\(gitOn\\(\\) \\|\\| !tabs\\.cells\\.get\\(${v}\\)\\.tab\\.needsGit\\)\\) tabs\\.activate\\(${v}\\);`, 'g')) || []).length;
         assert.equal(n, 2, `${v} activations gated: ${n}`);
       }
-      for (const re of [/if \(!st\.worktrees\.length \|\| !gitOn\(doc\)\) return null;/, /const off = noBranches\(projSel\.value\);\n\s+for \(const f of \[srcField, featureField, sameField\]\) f\.hidden = off;\n\s+if \(!off\) loadBranchesInto\(srcSel, projSel\.value, want\)\.then\(updateTargetSub\); else updateTargetSub\(\);/, /=== 'folder' \|\| !gitOn\(doc\);/]) assert.match(askSrc, re);
+      // The worktrees section's git gate: the panel computes it (showWorktrees), the one Context renderer obeys it (issue 1064 D4).
+      assert.match(askSrc, /showWorktrees: gitOn\(doc\)/);
+      assert.match(ctxViewSrc, /if \(!list\.length \|\| !d\.showWorktrees\) return null;/);
+      for (const re of [/const off = noBranches\(projSel\.value\);\n\s+for \(const f of \[srcField, featureField, sameField\]\) f\.hidden = off;\n\s+if \(!off\) loadBranchesInto\(srcSel, projSel\.value, want\)\.then\(updateTargetSub\); else updateTargetSub\(\);/, /=== 'folder' \|\| !gitOn\(doc\);/]) assert.match(askSrc, re);
       for (const key of ['diff', 'actions']) {
         const n = (appSrc.match(new RegExp(`key: '${key}'[^\\n]*needsGit: true`, 'g')) || []).length;
         assert.ok(n >= (key === 'diff' ? 2 : 4), `${key} tabs tagged: ${n}`);

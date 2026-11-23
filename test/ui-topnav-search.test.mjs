@@ -461,7 +461,7 @@ test('the look: a 34px field with a 1px border and no ring at rest (A2), the ope
   assert.equal(ruleBody('.tsearch-dot.tone-need'), 'background:var(--amber);');
   assert.equal(ruleBody('.tsearch-dot.tone-run'), 'background:var(--blue);');
   assert.equal(ruleBody('.tsearch-dot.tone-fail'), 'background:var(--red);');
-  const top = css.indexOf('.topnav-new svg{');
+  const top = css.indexOf('.side-toggle[aria-expanded=\"false\"] .side-toggle-fill{display:inline;}');
   assert.ok(top > 0 && css.indexOf('\n.tsearch{') > top && css.indexOf('\n.tsearch{') < css.indexOf('\n.topbar{'), 'the block sits after the top bar rules');
 });
 
@@ -484,7 +484,7 @@ test('stacking: open, the whole search sits over the terminal pane, under the ph
 });
 
 test('phones: the pill folds into a 32px search button; open, the input is a full-width row over the bar and the listbox spans the screen less 16px', () => {
-  const start = css.indexOf('  .topnav-new-label{display:none;}');
+  const start = css.indexOf('  .topnav{grid-template-columns:minmax(0,1fr) auto auto;gap:8px;}');
   assert.ok(start > 0, 'inside the "Responsive nav tiers" phone block');
   const block = css.slice(start, css.indexOf('\n}\n', start));
   assert.match(block, /\n {2}\.tsearch-field\{display:none;\}/);

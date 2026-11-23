@@ -7,7 +7,7 @@ import {
 } from '../src/core/requirements/helper.mjs';
 import { roundPromptParts, threadText, specBlocks, RoundError } from '../src/core/requirements/round.mjs';
 import { diffList } from '../src/core/requirements/ready.mjs';
-import { emptySpec } from '../src/core/requirements/spec.mjs';
+import { emptySpec, LIMITS } from '../src/core/requirements/spec.mjs';
 
 const SPEC = { ...emptySpec(), goal: { text: 'Customers cancel before it ships', measure: '' }, rules: ['Refund to the card'],
   criteria: [{ id: 'R-po-3', text: 'The confirm dialog is clear' }],
@@ -146,7 +146,7 @@ test('D5: the reply is an object with 1–3,000 characters of text; otherwise it
   assert.deepEqual(normalizeHelperReply({ text: 'Only text', drafts: 'x', proposals: { a: 1 } }, { spec: SPEC }), { text: 'Only text', drafts: [], proposals: [] });
 });
 
-test('D6: drafts for the pending round only: an option of that question exactly, or a text of at most 500; one per question, at most 3', () => {
+test('D6: drafts for the pending round only: an option of that question exactly, or a text of at most LIMITS.item; one per question, at most 3', () => {
   const d = reply({ drafts: [
     { question: 'nope', option: 'Customers', why: 'w' },                       // an unknown question
     { question: 'who', option: 'Everyone', why: 'w' },                         // an option not listed
@@ -154,10 +154,10 @@ test('D6: drafts for the pending round only: an option of that question exactly,
     { question: 'who', option: null, text: null, why: 'w' },                   // neither
     { question: 'who', option: 'Support', text: null, why: ` ${'w'.repeat(400)}` },
     { question: 'who', option: 'Customers', why: 'a second draft for the same question' },
-    { question: 'when', option: null, text: `  ${'t'.repeat(600)}`, why: '' },
+    { question: 'when', option: null, text: `  ${'t'.repeat(LIMITS.item + 100)}`, why: '' },
   ] }).drafts;
   assert.deepEqual(d.map((x) => [x.question, x.n, x.option ?? null, x.text ? x.text.length : null, x.why.length]),
-    [['who', 1, 'Support', null, 300], ['when', 2, null, 500, 0]]);
+    [['who', 1, 'Support', null, 300], ['when', 2, null, LIMITS.item, 0]]);
   assert.deepEqual(normalizeHelperReply({ text: 't', drafts: [{ question: 'who', option: 'Support', why: '' }] }, { spec: SPEC, pending: null }).drafts, [],
     'no pending round: no drafts');
   const many = { turnId: 1, questions: ['a', 'b', 'c', 'd'].map((id) => ({ id, question: id, options: ['x', 'y'], recommended: 'x' })) };

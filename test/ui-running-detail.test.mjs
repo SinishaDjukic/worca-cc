@@ -142,6 +142,8 @@ async function bootRunning({ budget = okBudget(), rows = [HISTORY_ROW] } = {}) {
       if (box.groups && url.includes('/api/run-groups')) return ok({ groups: box.groups });
       // D16: the slice endpoint, only when a test sets box.slice (else the boot's benign default: not a slice).
       if (box.slice && /\/api\/shape\/pipelines\/[^/]+\/slice$/.test(url)) return ok(box.slice);
+      // The run's saved state (rdLoadData), only when a test sets box.runData.
+      if (box.runData && url.startsWith('/api/runs/p1?')) return ok(box.runData);
       return null;
     },
   });
@@ -538,16 +540,17 @@ test('a NEW question replaces the panel even though one was already painted', as
 
 // --- T7: tabs ---------------------------------------------------------------
 
-test('Details has eight tabs, results first; the route picks the open one', async () => {
+test('Details has nine tabs, results first; the route picks the open one', async () => {
   const ctx = await bootRunning();
   await openRun(ctx);
   const { window } = ctx;
   const tabs = [...window.document.querySelectorAll('#run-detail .rd-tab')];
-  assert.deepEqual(tabs.map((b) => b.dataset.sec), ['overview', 'diff', 'artifacts', 'actions', 'workflow', 'qa', 'logs', 'agents']);
+  assert.deepEqual(tabs.map((b) => b.dataset.sec), ['overview', 'task', 'diff', 'artifacts', 'actions', 'workflow', 'qa', 'logs', 'agents']);
   assert.match(tabs[0].textContent, /Overview/);
-  assert.match(tabs[3].textContent, /Actions/);
-  assert.match(tabs[6].textContent, /Logs/);
-  assert.match(tabs[5].textContent, /Q&A/);
+  assert.match(tabs[1].textContent, /Task/);
+  assert.match(tabs[4].textContent, /Actions/);
+  assert.match(tabs[7].textContent, /Logs/);
+  assert.match(tabs[6].textContent, /Q&A/);
   // openRun lands on #running/r1/details/logs.
   assert.equal(window.document.querySelector('#run-detail .rd').dataset.mode, 'details');
   assert.ok(tabOf(window, 'logs').classList.contains('active'), 'the routed tab is open');
@@ -555,7 +558,7 @@ test('Details has eight tabs, results first; the route picks the open one', asyn
   assert.equal(secOf(window, 'logs').hidden, false);
   assert.equal(secOf(window, 'workflow').hidden, true);
   assert.equal(secOf(window, 'overview').hidden, true);
-  // No Clarify tab: a waiting question renders on the glance; Q&A is the record.
+  // No Clarify tab: a waiting question renders above the tabs; Q&A is the record.
   assert.equal(window.document.querySelector('#run-detail .rd-tab[data-sec="clarify"]'), null);
   // The Agents pill carries the live sub-agent count.
   assert.equal(tabOf(window, 'agents').querySelector('.rd-tab-badge').textContent, '2');
@@ -677,9 +680,9 @@ test('a state frame for the open run repaints the ACTIVE section only', async ()
   });
   await settle(window);
 
-  // Active section updated in place.
-  const cards = [...ov.querySelectorAll('.hd-ov-grid .hd-ov-card')];
-  assert.equal(cards[1].querySelector('.hd-ov-value').textContent, '$9.75');
+  // Active section updated in place: the Overview is the run card, its Cost tile the second fact.
+  const tiles = [...ov.querySelectorAll('.rd-glance .rd-facts .rd-stats > div')];
+  assert.equal(tiles[1].querySelector('b').textContent, '$9.75');
   // Hidden section: not repainted, but re-armed so activation rebuilds it.
   assert.equal(agents.dataset.loaded, undefined, 'the hidden section was re-armed');
   // The badge tracks the live count even while its tab is hidden.
@@ -760,7 +763,7 @@ test('the existing 1 s interval ticks the open detail', async () => {
 
   click(window, tabOf(window, 'overview'));
   await settle(window);
-  const value = () => secOf(window, 'overview').querySelector('.hd-ov-card-elapsed .hd-ov-value').textContent;
+  const value = () => secOf(window, 'overview').querySelector('.rd-glance .rd-facts .rd-stats b.run-time').textContent;
   const before = value();
   const realNow = Date.now;
   const t0 = realNow();
@@ -770,7 +773,7 @@ test('the existing 1 s interval ticks the open detail', async () => {
   } finally {
     Date.now = realNow;
   }
-  assert.notEqual(value(), before, 'the ELAPSED stat card ticks without a full repaint');
+  assert.notEqual(value(), before, 'the card\'s time tile ticks without a full repaint');
 });
 
 // --- T9: terminal state -----------------------------------------------------
@@ -805,7 +808,7 @@ test('a run that finishes while its page is open keeps the page, goes terminal, 
       assert.ok(window.document.querySelector('#run-detail .rd-header'), 'the screen is still mounted');
 
       const header = window.document.querySelector('#run-detail .rd-header');
-      const bar = window.document.querySelector('#run-detail .rd-bar');
+      const bar = window.document.querySelector('#run-detail .rd-header .rd-row1 > .rd-bar-end');   // the bar's controls end the title row
       assert.equal(bar.querySelector('.rd-pause').hidden, true);
       assert.equal(bar.querySelector('.rd-stop').hidden, true);
       const pill = header.querySelector('.rd-status');   // the bar names the run; Details' header carries the status
@@ -1046,44 +1049,36 @@ async function openGlance(ctx, hash = 'running/r1', over = {}) {
   return ctx.window.document.querySelector('#run-detail .rd');
 }
 
-test('Details is a route: a tab row and a Now row open it; Escape and ‹ Run come back', async () => {
+test('Details is a route: the run route opens Overview with the card; a Now row opens its tab; Escape steps back to the list in the slide only', async () => {
   const ctx = await bootRunning();
   const { window } = ctx;
   const rd = await openGlance(ctx);
-  click(window, rd.querySelector('.rd-result [data-rd-tab="workflow"]'));
-  window.dispatchEvent(new window.Event('hashchange'));
-  await settle(window, 4);
-  assert.equal(window.location.hash, '#running/r1/details/workflow');
+  // One level: #running/<id> is Details on its Overview tab, the run card that tab's body.
+  assert.equal(window.location.hash, '#running/r1');
   assert.equal(rd.dataset.mode, 'details');
   assert.equal(rd.querySelector('.rd-details').hidden, false);
-  assert.equal(rd.querySelector('.rd-glance').hidden, true);
-  assert.equal(rd.querySelector('.rd-to-run').hidden, false);
-  assert.equal(rd.querySelector('.rd-back').hidden, true);
-  assert.ok(tabOf(window, 'workflow').classList.contains('active'), 'the row\'s tab is open');
-  assert.ok(secOf(window, 'workflow').querySelector('.rd-graph .run-flow'), 'the graph lives in Workflow');
-  assert.equal(rd.querySelector('.rd-mini'), null, 'no bottom bar: the shared bar carries the way back');
+  assert.ok(tabOf(window, 'overview').classList.contains('active'), 'the glance route opens Overview');
+  assert.ok(secOf(window, 'overview').querySelector('.rd-glance .rd-sheet'), 'the run card is the Overview body');
+  assert.equal(rd.querySelector('.rd-to-run'), null, 'no ‹ Run: there is no glance to go back to');
+  assert.equal(rd.querySelector('.rd-back').hidden, false);
+  assert.equal(rd.querySelector('.rd-result [data-rd-tab]'), null, 'the card lists no tab-opening rows');
 
-  // Escape: Details -> glance (same run); on the glance it keeps the pane side by side (D16).
-  window.document.dispatchEvent(new window.KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
-  window.dispatchEvent(new window.Event('hashchange'));
-  await settle(window, 4);
-  assert.equal(window.location.hash, '#running/r1');
-  assert.equal(rd.dataset.mode, 'glance');
-
-  // A Now row deep-links to its tab; "‹ Run" returns.
+  // A Now row deep-links to its tab.
   click(window, rd.querySelector('.rd-nowlist [data-rd-tab="workflow"]'));
   window.dispatchEvent(new window.Event('hashchange'));
   await settle(window, 4);
   assert.equal(window.location.hash, '#running/r1/details/workflow');
-  click(window, rd.querySelector('.rd-to-run'));
-  window.dispatchEvent(new window.Event('hashchange'));
-  await settle(window, 4);
-  assert.equal(rd.dataset.mode, 'glance');
+  assert.equal(rd.dataset.mode, 'details');
+  assert.ok(tabOf(window, 'workflow').classList.contains('active'), 'the row\'s tab is open');
+  assert.ok(secOf(window, 'workflow').querySelector('.rd-graph .run-flow'), 'the graph lives in Workflow');
+  assert.equal(rd.querySelector('.rd-mini'), null, 'no bottom bar: the shared bar carries the way back');
+
+  // Escape: side by side the list is already there, so the pane stays (D16).
   window.document.dispatchEvent(new window.KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
   window.dispatchEvent(new window.Event('hashchange'));
   await settle(window, 4);
-  assert.equal(window.location.hash, '#running/r1', 'side by side, Escape on the glance keeps the pane (the list is already visible)');
-  // Narrow (slide) layout: Escape on the glance goes back to the list.
+  assert.equal(window.location.hash, '#running/r1/details/workflow', 'side by side, Escape keeps the pane and its tab');
+  // Narrow (slide) layout: Escape goes back to the list.
   window.document.getElementById('runs-shell').dataset.layout = 'slide';
   window.document.dispatchEvent(new window.KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
   window.dispatchEvent(new window.Event('hashchange'));
@@ -1135,8 +1130,7 @@ test('a finished run: its headline, the facts, what to check, Create pull reques
   const result = rd.querySelector('.rd-result');
   assert.equal(result.hidden, false);
   assert.equal(result.querySelector('.issues'), null, 'the things to check live in Overview only');
-  assert.equal(result.querySelector('[data-rd-tab="diff"] .rd-srow-v').textContent, '2 files');
-  assert.equal(result.querySelector('[data-rd-tab="diff"] .rd-srow-v').classList.contains('mono'), false, 'run 3 (D14): sans values');
+  assert.equal(result.querySelector('[data-rd-tab]'), null, 'one level: no tab rows on the card (the files tile and the Diff tab have the files)');
   const pr = rd.querySelector('.rd-head-acts .rd-pr-slot .rd-create-pr');
   assert.ok(pr, 'an eligible run offers Create pull request');
   assert.equal(pr.textContent, 'Create PR');
@@ -1154,8 +1148,8 @@ test('a finished run: its headline, the facts, what to check, Create pull reques
   assert.equal(route.querySelectorAll('.rd-route-row')[1].querySelector('.rd-route-second').textContent, 'Not opened yet · Create PR from the button above');
   assert.equal(rd.querySelector('.rd-actions [data-model-action="ship"]'), null, 'no second Create PR in the bar');
   assert.equal(result.querySelector('.rd-follow-up'), null, 'no follow-up CTA on the card');
-  const after = rd.querySelector('.rd-bar .rd-after');
-  assert.equal(after.hidden, false, 'a finished run keeps Run after in the bar');
+  const after = rd.querySelector('.rd-header .rd-row1 > .rd-bar-end .rd-after');
+  assert.equal(after.hidden, false, 'a finished run keeps Run after in the bar\'s controls (the header\'s title row)');
   assert.equal(after.title, 'Start a follow-up run');
   assert.equal(after.getAttribute('aria-label'), 'Start a follow-up run');
   click(window, pr);
@@ -1531,78 +1525,23 @@ test('Details › Diff reads the live worktree while the run goes', async () => 
   assert.equal(ctx.calls.filter((c) => c.url.endsWith('/live-diff')).length, 1);
 });
 
-// --- Live view: the fogged focus graph beside the glance card ---------------
+// --- Live view is gone: the graph lives only in the Workflow tab -------------
 
-const LIVE_KEY = 'worca-cc.run.liveView';
-const liveParts = (rd) => ({
-  glance: rd.querySelector('.rd-glance'),
-  sw: rd.querySelector('.rd-live-switch'),
-  row: rd.querySelector('.rd-live-row'),
-  panel: rd.querySelector('.rd-live'),
-  world: () => rd.querySelector('.rd-live .run-flow .gv-world'),
-});
-
-test('Live view: switching off animates out then drops the graph (transitionend or timeout), and switching back on mid-exit keeps the same graph', async (t) => {
-  await checkRows([
-    { name: 'Live view: switching off animates out first, then drops the graph (transitionend or a timeout)', run: async () => {
-      const ctx = await bootRunning();
-      const { window } = ctx;
-      window.localStorage.setItem(LIVE_KEY, '0');
-      const rd = await openGlance(ctx);
-      const p = liveParts(rd);
-      click(window, p.sw);
-      await settle(window);
-
-      click(window, p.sw);
-      await settle(window);
-      assert.equal(p.sw.getAttribute('aria-checked'), 'false');
-      assert.equal(window.localStorage.getItem(LIVE_KEY), '0');
-      assert.equal(p.panel.classList.contains('is-in'), false, 'the exit transition starts');
-      assert.equal(p.panel.hidden, false, 'still on screen while it animates out');
-      assert.ok(p.world(), 'the graph lives until the exit ends');
-      p.panel.dispatchEvent(new window.Event('transitionend'));
-      assert.equal(p.panel.hidden, true);
-      assert.equal(p.world(), null, 'the mount is destroyed');
-      assert.equal(p.glance.dataset.live, undefined, 'the card goes back to the middle');
-
-      // No transitionend (a background tab, a cancelled transition): the timeout finishes it.
-      click(window, p.sw);
-      await settle(window);
-      const timers = useAppTimers(t);
-      try {
-        click(window, p.sw);
-        await timers.advance(700);   // > LIVE_EXIT_MS (500)
-        assert.equal(p.panel.hidden, true);
-        assert.equal(p.world(), null);
-      } finally {
-        t.mock.timers.reset();
-      }
-    } },
-    { name: 'Live view: switching back on mid-exit keeps the same graph', run: async () => {
-      const ctx = await bootRunning();
-      const { window } = ctx;
-      window.localStorage.setItem(LIVE_KEY, '0');
-      const rd = await openGlance(ctx);
-      const p = liveParts(rd);
-      click(window, p.sw);
-      await settle(window);
-      const world = p.world();
-      const timers = useAppTimers(t);
-      try {
-        click(window, p.sw);
-        click(window, p.sw);
-        await timers.settle();
-        assert.ok(p.panel.classList.contains('is-in'));
-        p.panel.dispatchEvent(new window.Event('transitionend'));   // the reversed exit's end
-        assert.equal(p.panel.hidden, false, 'an exit that was reversed never hides the panel');
-        assert.equal(p.world(), world, 'no rebuild');
-        await timers.advance(700);   // > LIVE_EXIT_MS (500)
-        assert.equal(p.world(), world, 'nor does the old timeout');
-      } finally {
-        t.mock.timers.reset();
-      }
-    } },
-  ]);
+test('live graph: a running graph run shows its workflow in the card\'s right column (no switch); a click opens Workflow', async () => {
+  const ctx = await bootRunning();
+  const { window } = ctx;
+  const rd = await openGlance(ctx);
+  assert.equal(rd.querySelector('.rd-live-switch'), null, 'no Live view switch');
+  assert.equal(rd.querySelector('.rd-glance').dataset.live, undefined);
+  const live = rd.querySelector('.rd-sheet-nav > .rd-live');
+  assert.ok(live, 'the graph sits in the card\'s summary column');
+  assert.equal(live.hidden, false, 'shown while the run goes');
+  assert.ok(live.querySelector('.run-flow'), 'its graph host');
+  assert.equal(live.getAttribute('role'), 'button');
+  live.click();
+  await settle(window, 4);
+  assert.match(window.location.hash, /\/details\/workflow$/, 'a click opens the Workflow tab');
+  assert.ok(secOf(window, 'workflow').querySelector('.rd-graph .run-flow'), 'the full graph lives in Workflow');
 });
 
 // #555: a run-page action that fails is said where the user is — a toast — not only in the run log.
@@ -1689,11 +1628,10 @@ test('a refused pause raises an error toast; a refused Away-mode change puts the
 test('Escape typed in the terminal pane belongs to the shell: the run screen stays (#573)', async () => {
   const ctx = await bootRunning();
   const { window } = ctx;
-  const rd = await openGlance(ctx);
-  click(window, rd.querySelector('.rd-result [data-rd-tab="workflow"]'));
-  window.dispatchEvent(new window.Event('hashchange'));
-  await settle(window, 4);
+  const rd = await openGlance(ctx, 'running/r1/details/workflow');
   assert.equal(window.location.hash, '#running/r1/details/workflow');
+  // The slide layout, where the page's own Escape would step back to the list.
+  window.document.getElementById('runs-shell').dataset.layout = 'slide';
   const pane = window.document.querySelector('body > .term-pane');
   assert.ok(pane, 'the terminal pane is mounted');
   const input = window.document.createElement('textarea');            // xterm's hidden input is a textarea
@@ -1705,17 +1643,33 @@ test('Escape typed in the terminal pane belongs to the shell: the run screen sta
   assert.equal(rd.dataset.mode, 'details');
 });
 
-test("Overview (live): worca's own AI calls are not counted as the run's sub-agents", async () => {
+test("Task (live): worca's own AI calls are not counted as the run's sub-agents; Overview has no task card", async () => {
   const ctx = await bootRunning();
   await openRun(ctx, { subAgents: [...SUBS(),
     { id: 'run-title-0a0b0c0d', label: 'Run title', subagentType: 'run-title', nodeId: 'preflight', stepKey: 'x:preflight:1', status: 'finished', costUsd: 0.0021 },
     { id: 'night-decider-ab12cd34', label: 'Away mode review (questions)', subagentType: 'night-decider', nodeId: 'implement', status: 'finished', costUsd: 0.05 },
   ] });
   const { window } = ctx;
+  click(window, tabOf(window, 'task'));
+  await settle(window);
+  assert.deepEqual([...secOf(window, 'task').querySelectorAll('.run-task .hd-ov-tag')].map((c) => c.textContent),
+    ['proj', 'main', '2 sub-agents'], 'the run title and the Away mode review are worca\'s, not the agents\'');
   click(window, tabOf(window, 'overview'));
   await settle(window);
-  assert.deepEqual([...secOf(window, 'overview').querySelectorAll('.hd-ov-tag')].map((c) => c.textContent),
-    ['proj', 'main', '2 sub-agents'], 'the run title and the Away mode review are worca\'s, not the agents\'');
+  assert.equal(secOf(window, 'overview').querySelector('.run-task, .hd-ov-task, .hd-ov-tag'), null,
+    'the task card and its chips live in the Task tab only');
+});
+
+test('Task (live): a run that sent no prompt yet (parked on a question) reads it from its saved state', async () => {
+  const ctx = await bootRunning();
+  ctx.box.runData = { state: { prompt: 'Sign **webhook** payloads.', branch: { source: 'dev' } } };
+  await openRun(ctx, { prompt: undefined, branch: { feature: 'worca-cc/dark-p1' } });
+  const { window } = ctx;
+  click(window, tabOf(window, 'task'));
+  await settle(window, 6);
+  const sec = secOf(window, 'task');
+  assert.match(sec.querySelector('.run-task-body').textContent, /Sign \*{0,2}webhook\*{0,2} payloads\./, 'the saved prompt');
+  assert.deepEqual([...sec.querySelectorAll('.run-task .hd-ov-tag')].map((c) => c.textContent).slice(0, 2), ['proj', 'dev']);
 });
 
 test('Agents (live): a sub-agent type named like an Object member keeps its own type pill', async () => {
@@ -1969,15 +1923,18 @@ async function checkoutGlance(level, { actions = null, arms = null } = {}) {
   return { ctx, doc: ctx.window.document, discard };
 }
 
-test('run page: a checkout on History\'s row is the Actions row, never a box; a row without it offers the try', async () => {
+test('run page: a checkout on History\'s row is the Local copy row, never a box; a row without it offers the try in the head', async () => {
   const { doc, discard } = await checkoutGlance('advanced');
-  const value = () => doc.querySelector('#run-detail .rd-result .rd-srow[data-rd-tab="actions"] .rd-srow-v')?.textContent || '';
+  const row = () => doc.querySelector('#run-detail .rd-result .rd-srow-checkout');
   assert.equal(doc.querySelector('#run-detail .retained-banner'), null);
   assert.equal(doc.querySelector('#run-detail .rd-head-acts [data-head="try"]'), null, 'a local copy is open: no Try it');
-  assert.match(value(), /^Local copy open · since \d{1,2}:\d{2}$/);
+  assert.equal(doc.querySelector('#run-detail .rd-result [data-rd-tab]'), null, 'one level: no Actions tab row on the card');
+  assert.match(row().textContent, /^Local copy open · since \d{1,2}:\d{2}/);
+  assert.deepEqual([...row().querySelectorAll('button')].map((b) => b.textContent), ['Discard']);
   assert.doesNotMatch(doc.querySelector('#run-detail .rd-glance').textContent, /worktree/i);
   await discard();
-  assert.equal(value(), 'Try it on this machine', 'a checkout discarded elsewhere updates the row here (rdRepaintOpenGlance repaints the banners)');
+  assert.equal(row(), null, 'a checkout discarded elsewhere clears the row here (rdRepaintOpenGlance repaints the banners)');
+  assert.ok(doc.querySelector('#run-detail .rd-head-acts [data-head="try"]'), 'and the head offers Try it again');
 });
 
 test('run page, Simple: a checkout gets a plain row with Discard, gone once the checkout clears', async () => {
@@ -2355,4 +2312,139 @@ test('the run page shows Resuming… at the Resume click, and a refusal that ask
       } finally { hold.restore(); }
     } },
   ]);
+});
+
+// --- The run time is the engine's elapsed clock; the summed step time is "agent time" ----------
+// A state frame carries `elapsedMs` (folded) + `elapsedSince` (the anchor). The header and the
+// Overview time tile read it and tick 1 s per second, however many steps run at once.
+
+const AGENT_TIP = 'Total time of all agents, parallel work added up';
+const rdHeadTime = (window) => window.document.querySelector('#run-detail .rd-header .rd-dur.run-time, #run-detail .rd-header .rd-dur');
+const rdTiles = (window) => [...secOf(window, 'overview').querySelectorAll('.rd-glance .rd-facts .rd-stats > div')];
+const rdTile = (window, label) => rdTiles(window).find((t) => t.querySelector('span').textContent === label) || null;
+const tileTime = (window) => rdTile(window, 'time').querySelector('b').textContent;
+const running = (n, t0, activeMs = 5000) => Array.from({ length: n }, (_, i) => (
+  { key: `implement#${i + 1}`, nodeId: 'implement', cycle: i + 1, status: 'start', activeMs, runningSince: t0, costUsd: 0.1 }));
+
+/** Open the run's Overview with a pinned clock; `at(ms)` moves it and runs the 1 s tick. */
+async function openClocked(state) {
+  const ctx = await bootRunning();
+  const realNow = Date.now;
+  const t0 = realNow();
+  Date.now = () => t0;
+  const restore = () => { Date.now = realNow; };
+  try {
+    await openRun(ctx, state(t0));
+    click(ctx.window, tabOf(ctx.window, 'overview'));
+    await settle(ctx.window);
+  } catch (err) { restore(); throw err; }
+  const at = (ms, tick = true) => { Date.now = () => t0 + ms; if (tick) ctx.window.__np.timerTick(); };
+  return { ctx, window: ctx.window, t0, at, restore };
+}
+
+test('two steps in parallel: the run time advances 1 s per second', async () => {
+  const c = await openClocked((t0) => ({ elapsedMs: 10_000, elapsedSince: t0, steps: running(2, t0) }));
+  try {
+    const { window } = c;
+    assert.equal(rdHeadTime(window).textContent, '10s');
+    assert.equal(tileTime(window), '10s', 'header and time tile show the same text');
+    c.at(1000);
+    assert.equal(rdHeadTime(window).textContent, '11s', 'two running steps: 1 s, not 2 s');
+    assert.equal(tileTime(window), '11s');
+    c.at(2000);
+    assert.equal(rdHeadTime(window).textContent, '12s');
+    assert.equal(tileTime(window), '12s');
+    // A third step joins: still one second per second.
+    frame(c.ctx, { type: 'state', runId: 'r1', id: 'p1', status: 'running', elapsedMs: 10_000, elapsedSince: c.t0, steps: running(3, c.t0) });
+    await settle(window);
+    assert.equal(rdHeadTime(window).textContent, '12s');
+    assert.equal(tileTime(window), '12s');
+    c.at(3000);
+    assert.equal(rdHeadTime(window).textContent, '13s');
+    assert.equal(tileTime(window), '13s');
+  } finally { c.restore(); }
+});
+
+test('the run time stands still while a question waits', async () => {
+  const c = await openClocked((t0) => ({ elapsedMs: 10_000, elapsedSince: t0, steps: running(1, t0) }));
+  try {
+    const { window } = c;
+    // The question frame can reach the browser before the parked state frame: no stale tick.
+    c.at(4000, false);
+    frame(c.ctx, { type: 'question', runId: 'r1', ...clarify() });
+    await settle(window);
+    c.at(9000);
+    assert.equal(rdHeadTime(window).textContent, '10s', 'the anchor is ignored while a person must answer');
+    assert.equal(tileTime(window), '10s');
+    // The engine's parked frame: folded at the moment the question opened.
+    frame(c.ctx, { type: 'state', runId: 'r1', id: 'p1', status: 'running', elapsedMs: 14_000, elapsedSince: null,
+      steps: running(1, null) });
+    await settle(window);
+    c.at(60_000);
+    assert.equal(rdHeadTime(window).textContent, '14s');
+    assert.equal(tileTime(window), '14s');
+  } finally { c.restore(); }
+});
+
+test('agent time tile appears when parallel work exceeds the run time and ticks; its title is the tooltip text; absent for a sequential run', async () => {
+  const c = await openClocked((t0) => ({ elapsedMs: 10_000, elapsedSince: t0, steps: running(2, t0, 20_000) }));
+  try {
+    const { window } = c;
+    const agent = rdTile(window, 'agent time');
+    assert.ok(agent, 'agent time (40s) is larger than the run time (10s)');
+    assert.equal(agent.title, AGENT_TIP);
+    assert.equal(agent.querySelector('b').textContent, '40s');
+    assert.ok(agent.querySelector('b').classList.contains('run-agent-time'), 'the tick target');
+    assert.equal(rdTiles(window)[0], rdTile(window, 'time'), 'the time tile stays first');
+    assert.equal(rdTiles(window)[1], agent, 'agent time sits right after the time tile');
+    assert.equal(window.document.querySelectorAll('#run-detail .rd-stats b.run-agent-time').length, 1, 'shown once');
+    c.at(1000);
+    assert.equal(tileTime(window), '11s');
+    assert.equal(rdTile(window, 'agent time').querySelector('b').textContent, '42s', 'two steps: 2 s per second of agent time');
+    // A frame in the same second does not rebuild the ticking row.
+    const row = window.document.querySelector('#run-detail .rd-facts .rd-stats');
+    frame(c.ctx, { type: 'state', runId: 'r1', id: 'p1', status: 'running', elapsedMs: 10_000, elapsedSince: c.t0, steps: running(2, c.t0, 20_000) });
+    await settle(window);
+    assert.equal(window.document.querySelector('#run-detail .rd-facts .rd-stats'), row, 'the row is kept while only the ticking texts moved');
+    // The parallel work ends below the run time: the tile goes.
+    frame(c.ctx, { type: 'state', runId: 'r1', id: 'p1', status: 'running', elapsedMs: 200_000, elapsedSince: c.t0, steps: running(1, c.t0, 20_000) });
+    await settle(window);
+    assert.equal(rdTile(window, 'agent time'), null, 'the tile disappearing rebuilds the row');
+  } finally { c.restore(); }
+
+  const seq = await openClocked((t0) => ({ elapsedMs: 200_000, elapsedSince: t0 }));   // STEPS(): 95 s of step time
+  try {
+    assert.equal(rdTile(seq.window, 'agent time'), null, 'a sequential run: elapsed is at least the step time');
+    assert.equal(tileTime(seq.window), '3m 20s');
+  } finally { seq.restore(); }
+});
+
+test('the finished run shows the engine\'s elapsed figure, same as the last live value', async () => {
+  const c = await openClocked((t0) => ({ elapsedMs: 10_000, elapsedSince: t0, steps: running(2, t0, 20_000) }));
+  try {
+    const { window } = c;
+    c.at(2000);
+    assert.equal(rdHeadTime(window).textContent, '12s', 'the last live value');
+    const done = running(2, null, 22_000).map((s) => ({ ...s, status: 'done' }));
+    frame(c.ctx, { type: 'state', runId: 'r1', id: 'p1', status: 'done', elapsedMs: 12_000, elapsedSince: null, steps: done });
+    await settle(window, 6);
+    c.at(90_000);
+    assert.equal(rdHeadTime(window).textContent, '12s', 'no jump at the end, and no tick after it');
+    assert.equal(tileTime(window), '12s');
+    assert.equal(rdTile(window, 'agent time').querySelector('b').textContent, '44s', 'the summed time stays, as agent time');
+    assert.equal(rdTile(window, 'agent time').querySelector('b').classList.contains('run-agent-time'), false, 'a finished tile does not tick');
+  } finally { c.restore(); }
+});
+
+test('a live run whose state carries no elapsed figure still shows the summed time (fallback)', async () => {
+  const c = await openClocked((t0) => ({ steps: running(2, t0) }));
+  try {
+    const { window } = c;
+    assert.equal(rdHeadTime(window).textContent, '10s');
+    assert.equal(tileTime(window), '10s');
+    assert.equal(rdTile(window, 'agent time'), null);
+    c.at(1000);
+    assert.equal(rdHeadTime(window).textContent, '12s', 'as before: the sum of the running steps');
+    assert.equal(tileTime(window), '12s');
+  } finally { c.restore(); }
 });

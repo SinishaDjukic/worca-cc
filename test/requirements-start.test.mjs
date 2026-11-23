@@ -443,6 +443,21 @@ test('startView: a throwing or async runSummary; an existing pipeline id is not 
   assert.equal(listStarts(f.seq)[0].pipelineId, 'deadbeef');
 });
 
+test('createStart: the note is trimmed and noteOverrides stored; an old-style row reads null / false', () => {
+  const f = readyFeature();
+  const a = createStart({ featureSeq: f.seq, version: 1, runId: 'r-note-1', spec: f.spec, title: 't', ready: true,
+    note: '  hi  ', noteOverrides: true });
+  assert.equal(a.note, 'hi');
+  assert.equal(a.noteOverrides, true);
+  const b = createStart({ featureSeq: f.seq, version: 2, runId: 'r-note-2', spec: f.spec, title: 't', ready: true, note: '   ' });
+  assert.equal(b.note, null);
+  assert.equal(b.noteOverrides, false);
+  const c = createStart({ featureSeq: f.seq, version: 3, runId: 'r-note-3', spec: f.spec, title: 't', ready: true });
+  assert.equal(c.note, null);
+  assert.equal(c.noteOverrides, false);
+  assert.equal(listStarts(f.seq).find((s) => s.runId === 'r-note-1').note, 'hi');
+});
+
 test('list: state, ready, latestRun; lookCostUsd and spend', async () => {
   reset();
   const f = readyFeature({ title: 'Listed' });
@@ -739,4 +754,108 @@ test('A6 D13: Start is refused while the feature is being exported', async () =>
     const r = await call('POST', `/api/requirements/${f.seq}/start`, {});
     assert.deepEqual([r.status, r.json.error, calls.length], [409, 'Worca is exporting this feature. Try again in a moment.', 0]);
   } finally { unmarkExporting(f.seq); }
+});
+
+// ---- Per-run note, run-in-progress guard, freshness (plan §3.2, §3.5) ----
+const noteDeps = (over = {}) => ({
+  startRun: async (b, o) => { calls.push({ body: b, opts: o }); return { status: 200, body: { runId: o.runId } }; },
+  target: { ok: true, name: 'shop', path: projDir, label: 'Project shop exists' },
+  newRunId: () => `run-note-${++n}`, ...over,
+});
+
+test('note: a bad note, noteOverrides or confirmRunning is BAD_REQUEST and nothing starts', async () => {
+  reset();
+  const f = readyFeature({ title: 'Bad note' });
+  const bad = [
+    [{ note: 'x'.repeat(2001) }, 'the note must be at most 2000 characters'],
+    [{ note: 42 }, 'the note must be at most 2000 characters'],
+    [{ note: 'ok', noteOverrides: 'yes' }, /noteOverrides/],
+    [{ confirmRunning: 'yes' }, /confirmRunning/],
+  ];
+  for (const [input, msg] of bad) {
+    await assert.rejects(() => startFeature(f.seq, input, {}, noteDeps()),
+      (e) => e.code === 'BAD_REQUEST' && (typeof msg === 'string' ? e.message === msg : msg.test(e.message)));
+  }
+  assert.equal(calls.length, 0);
+  assert.equal(listStarts(f.seq).length, 0);
+});
+
+test('note: stored trimmed on the row, appended to the prompt; the snapshot spec never holds it; noteOverrides false without a note', async () => {
+  reset();
+  const f = readyFeature({ title: 'With note' });
+  const before2 = structuredClone(getFeature(f.seq).spec);
+  await startFeature(f.seq, { note: '  Use the new API  ', noteOverrides: true }, {}, noteDeps());
+  const s = latestStart(f.seq);
+  assert.deepEqual([s.note, s.noteOverrides], ['Use the new API', true]);
+  assert.deepEqual(s.spec, before2);
+  assert.deepEqual(getFeature(f.seq).spec, before2);
+  assert.equal(JSON.stringify(s.spec).includes('new API'), false);
+  assert.match(calls[0].body.promptMarkdown, /## Extra instructions for this run\n\nUse the new API\n\nWhere these instructions conflict/);
+  const g = readyFeature({ title: 'No note' });
+  await startFeature(g.seq, { note: '   ', noteOverrides: true }, {}, noteDeps());
+  assert.deepEqual([latestStart(g.seq).note, latestStart(g.seq).noteOverrides], [null, false]);
+  assert.equal(calls[1].body.promptMarkdown.includes('Extra instructions'), false);
+});
+
+test('guard: a live run refuses a second start (409 RUN_IN_PROGRESS, no failing) unless confirmRunning', async () => {
+  reset();
+  const f = readyFeature({ title: 'Live' });
+  await startFeature(f.seq, {}, {}, noteDeps());
+  const live = noteDeps({ runSummary: () => ({ status: 'running' }) });
+  await assert.rejects(() => startFeature(f.seq, {}, {}, live), (e) => e.code === 'CONFLICT'
+    && e.message === 'This feature already has a run in progress.'
+    && e.data.code === 'RUN_IN_PROGRESS' && e.data.runId === latestStart(f.seq).runId && !('failing' in e.data));
+  assert.equal(calls.length, 1);
+  assert.equal(listStarts(f.seq).length, 1);
+  await startFeature(f.seq, { confirmRunning: true }, {}, live);
+  assert.equal(calls.length, 2);
+  assert.equal(listStarts(f.seq).length, 2);
+});
+
+test('guard: paused, finished, a throwing and a null summary are not in progress', async () => {
+  reset();
+  const f = readyFeature({ title: 'Not live' });
+  for (const summary of [() => ({ status: 'paused' }), () => ({ status: 'stopped' }), () => { throw new Error('boom'); }, () => null, async () => ({ status: 'done' })]) {
+    await startFeature(f.seq, {}, {}, noteDeps({ runSummary: summary }));
+  }
+  assert.equal(listStarts(f.seq).length, 5);
+});
+
+test('guard: the route\'s status set is the drain "live" set (created, starting, running, pausing)', async () => {
+  reset();
+  const f = readyFeature({ title: 'All live' });
+  await startFeature(f.seq, {}, {}, noteDeps());
+  for (const status of ['created', 'starting', 'running', 'pausing']) {
+    await assert.rejects(() => startFeature(f.seq, {}, {}, noteDeps({ runSummary: () => ({ status }) })), (e) => e.data && e.data.code === 'RUN_IN_PROGRESS', status);
+  }
+});
+
+test('freshness: a spec edited during the async guard is what the run and the row hold', async () => {
+  reset();
+  const f = readyFeature({ title: 'Edited meanwhile' });
+  await startFeature(f.seq, {}, {}, noteDeps());
+  const edited = { ...readySpec(), goal: { text: 'Edited during the guard', measure: 'm' } };
+  const slow = noteDeps({ runSummary: async () => { updateFeature(f.seq, { spec: edited }); return { status: 'paused' }; } });
+  await startFeature(f.seq, {}, {}, slow);
+  assert.match(calls.at(-1).body.promptMarkdown, /Edited during the guard/);
+  assert.equal(latestStart(f.seq).spec.goal.text, 'Edited during the guard');
+});
+
+test('freshness: a feature archived during the guard is refused and nothing is created', async () => {
+  reset();
+  const f = readyFeature({ title: 'Archived meanwhile' });
+  await startFeature(f.seq, {}, {}, noteDeps());
+  const archiving = noteDeps({ runSummary: async () => { updateFeature(f.seq, { status: 'archived' }); return { status: 'paused' }; } });
+  await assert.rejects(() => startFeature(f.seq, {}, {}, archiving), (e) => e.code === 'CONFLICT' && /archived/.test(e.message));
+  assert.equal(calls.length, 1);
+  assert.equal(listStarts(f.seq).length, 1);
+});
+
+test('startView exposes note and noteOverrides', async () => {
+  const f = readyFeature({ title: 'View note' });
+  const a = createStart({ featureSeq: f.seq, version: 1, runId: 'r-vn-1', spec: f.spec, title: 't', ready: true, note: 'hi', noteOverrides: true });
+  const b = createStart({ featureSeq: f.seq, version: 2, runId: 'r-vn-2', spec: f.spec, title: 't', ready: true });
+  const va = await startView(a);
+  const vb = await startView(b);
+  assert.deepEqual([va.note, va.noteOverrides, vb.note, vb.noteOverrides], ['hi', true, null, false]);
 });

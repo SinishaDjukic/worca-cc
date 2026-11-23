@@ -181,6 +181,13 @@
                   <input type="radio" name="source" value="markdown" hidden />
                 </div>
 
+                <!-- Attach Requirements features: right after the Task source switch, but outside the advanced-only field so basic level sees it. -->
+                <!-- No data-flag on the wrapper or the strip: with Requirements off, attached cards must stay visible to say "Requirements unavailable". -->
+                <div class="field field-compact" id="pull-field" hidden>
+                  <button type="button" class="btn fp-pull-btn" id="pull-from-requirements" data-flag="requirements" hidden>Pull from Requirements</button>
+                  <div class="ask-chips" id="attach-cards" hidden></div>
+                </div>
+
                 <div class="field">
                   <div id="prompt-pane" class="source-pane">
                     <textarea id="prompt" name="prompt" class="textarea" rows="6" style="margin-top:11px" placeholder="Describe the software task to build&hellip;"></textarea>

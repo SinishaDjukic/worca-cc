@@ -11,6 +11,13 @@ const doc = new JSDOM('<!doctype html><body></body>').window.document;
 const tick = () => new Promise((r) => setTimeout(r, 0));
 const settle = async () => { for (let i = 0; i < 6; i++) await tick(); };
 const click = (el) => el.dispatchEvent(new doc.defaultView.Event('click', { bubbles: true }));
+/** A row's ⋯ (Remove and Delete live there): open it, then pick the item by its label. */
+const pickMore = (scope, label) => {
+  click(scope.querySelector('.cx-more'));
+  const item = [...doc.querySelectorAll('[role="menuitem"]')].find((b) => b.textContent.trim() === label);
+  assert.ok(item, `the ⋯ menu offers ${label}`);
+  click(item);
+};
 const change = (el) => el.dispatchEvent(new doc.defaultView.Event('change', { bubbles: true }));
 
 const SETS = [
@@ -84,7 +91,7 @@ test('MCP view feedback: write failures and successes toast (a field toggle says
       change(sw);
       await settle();
       assert.deepEqual(toasts, [], 'a toggle says nothing');
-      click(host.querySelector('[data-remove="manual:pg"]'));
+      pickMore(host.querySelector('.cx-row[data-server="manual:pg"]'), 'Remove from set');
       await settle();
       assert.deepEqual(toasts, [{ tone: 'ok', title: 'Server removed', detail: '' }]);
     } },
@@ -100,7 +107,7 @@ test('MCP view feedback: write failures and successes toast (a field toggle says
       await named('rename', 'Billing 2');
       await named('duplicate', 'Billing copy');
       await ctl.show('sets/billing');
-      click(host.querySelector('[data-act="delete"]'));
+      pickMore(host.querySelector('.cx-set-head'), 'Delete set');
       await settle();
       assert.deepEqual(toasts.map((t) => t.title), ['Server removed', 'Set renamed', 'Set duplicated', 'Set deleted']);
       assert.ok(toasts.every((t) => t.tone === 'ok'));

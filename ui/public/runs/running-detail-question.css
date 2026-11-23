@@ -6,7 +6,7 @@
 /* Night mode (Step 14): the run-view switch and the decisions list; flagged rows need review. */
 .rd-night-wrap{display:inline-flex;align-items:center;gap:6px;font-size:12px;color:var(--ink-2)}
 .rd-night-wrap[hidden]{display:none}
-.rd-bar .rd-night{width:auto;height:36px;box-sizing:border-box;padding:0 14px;font-size:12px;}   /* the bar's control size, not a form field's */
+.rd-bar-end .rd-night{width:auto;height:36px;box-sizing:border-box;padding:0 14px;font-size:12px;}   /* the bar's control size, not a form field's */
 .rd-night-pill{font-size:var(--fs-caption);padding:1px 8px;border-radius:var(--r-xs);border:1px solid var(--line);color:var(--ink-2);white-space:nowrap}
 .rd-night-pill:empty{display:none}
 .rd-night-pill[data-state="now"]{border-color:var(--amber);background:var(--amber-wash)}

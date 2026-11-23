@@ -1,0 +1,35 @@
+/* ---------- simplified Office preview (olp-, artifacts/office-lite.mjs) ----------
+   Shown when the server has no LibreOffice: a banner with its own Download, then a value table, a slide list, plain
+   text or a docx page layout. `contain:paint` keeps a document's position:fixed element inside the stage. */
+.olp{contain:paint;overflow:auto;display:flex;flex-direction:column;gap:12px;min-height:0;padding:12px;}
+.olp-banner{display:flex;align-items:center;flex-wrap:wrap;gap:8px 12px;padding:8px 12px;border:1px solid var(--amber-line);border-radius:var(--r-sm);background:var(--amber-bg);color:var(--amber-ink);}
+.olp-note{flex:1 1 220px;margin:0;font-size:var(--fs-meta);}
+.olp-dl{flex:0 0 auto;}
+.olp-dl-error{flex:0 0 100%;margin:0;font-size:var(--fs-meta);color:var(--red-ink);}
+.olp-dl-error[hidden]{display:none;}
+
+.olp-tabs{flex:0 0 auto;}          /* the shared underline tabs (.tabs/.tab) */
+.olp-sheet{overflow:auto;max-width:100%;}
+.olp-table{border-collapse:collapse;font:var(--fs-meta) var(--mono);color:var(--ink);}
+.olp-table th,.olp-table td{border:1px solid var(--line);padding:3px 8px;text-align:left;vertical-align:top;white-space:pre-wrap;max-width:420px;}
+.olp-table thead th,.olp-table tbody th{position:sticky;background:var(--surface);color:var(--ink-2);font-weight:500;}
+.olp-table thead th{top:0;z-index:1;}
+.olp-table tbody th{left:0;text-align:right;}
+.olp-table thead th.olp-corner{left:0;z-index:2;}
+.olp-cut{margin:8px 0 0;font-size:var(--fs-meta);color:var(--ink-2);}
+
+.olp-thumb{margin:0;}
+.olp-thumb img{display:block;max-width:min(480px,100%);height:auto;border:1px solid var(--line);border-radius:var(--r-sm);}
+.olp-slides{margin:0;padding:0;list-style:none;display:flex;flex-direction:column;gap:10px;}
+.olp-slide{padding:10px 12px;border:1px solid var(--line);border-radius:var(--r-sm);background:var(--panel);}
+.olp-slide-title{margin:0 0 6px;font-size:var(--fs-body);font-weight:600;color:var(--ink);}
+.olp-slide p{margin:4px 0 0;white-space:pre-wrap;color:var(--ink);}
+
+.olp-text{white-space:pre-wrap;color:var(--ink);line-height:1.5;}
+.olp-text :is(h1,h2,h3,h4,h5,h6){margin:16px 0 6px;line-height:1.3;}
+.olp-text p{margin:0 0 8px;}
+.olp-text ul{margin:0 0 8px;padding-left:22px;}
+
+.olp-docx{overflow:auto;}
+.apv-card:has(.olp){width:min(1320px,100%);}
+.tool-file-stage .olp{min-height:60vh;}

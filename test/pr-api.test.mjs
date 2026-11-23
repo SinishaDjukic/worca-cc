@@ -7,7 +7,7 @@
 // carries are content-derived/minted (A15(3)) — use the RETURNED key/id (module vars).
 import { test, before, after, beforeEach } from 'node:test';
 import assert from 'node:assert/strict';
-import http from 'node:http';
+import { appServer } from './helpers/app-server.mjs';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -29,6 +29,7 @@ import { writeFileSync } from 'node:fs';
 import { getWatch } from '../src/core/pr-watch.mjs';
 import { checkRows } from './helpers/rows.mjs';
 import { withEnv } from './helpers/with-env.mjs';
+import { setMockSourceResponses } from '../src/core/plugin-shim.mjs';
 
 const NO_ADO = { WORCA_ADO_TOKEN: undefined, WORCA_ADO_READ_TOKEN: undefined, WORCA_ADO_WRITE_TOKEN: undefined, AZURE_DEVOPS_EXT_PAT: undefined };
 const WITH_ADO = { ...NO_ADO, WORCA_ADO_TOKEN: 'pat' };
@@ -49,7 +50,7 @@ before(async () => {
     branch: { source: 'main', feature: 'worca-cc/my-feature-pp', branchKept: true, commit: 'abc' } });
   betaId = seeded.id; betaKey = seeded.key;
   writeStoreMeta(betaKey, 'project', { key: betaKey, name: 'Beta', path: betaRepo });
-  srv = http.createServer(app);
+  srv = appServer(app);
   await new Promise((r) => srv.listen(0, '127.0.0.1', r));
   base = `http://127.0.0.1:${srv.address().port}`;
 });
@@ -1551,4 +1552,87 @@ test('POST /api/pr with no remote at all: a 409 that says so, and nothing is pus
   assert.equal(r.status, 409, JSON.stringify(body));
   assert.match(body.error, /no git remote/);
   assert.equal(seen.some((a) => a[1] === 'push'), false);
+});
+
+// ── a ticket comment when a PR opens (#1456) ───────────────────────────────────
+// The comment is fire-and-forget after the response, so each test keeps WORCA_MOCK (the plugin shim's canned answers) on
+// across the POST AND the poll that waits for it.
+async function until(fn, ms = 10000) {
+  const t0 = Date.now();
+  for (;;) {
+    const v = await fn();
+    if (v) return v;
+    if (Date.now() - t0 > ms) throw new Error('condition never became true');
+    await new Promise((r) => setTimeout(r, 25));
+  }
+}
+const auditOf = (id) => getDb().prepare('SELECT text FROM pipeline_events WHERE pipeline_id = ? ORDER BY id').all(id).map((r) => r.text);
+const withMockSource = (responses, fn) => withEnv({ WORCA_MOCK: '1' }, async () => {
+  setMockSourceResponses(responses);
+  try { return await fn(); } finally { setMockSourceResponses(null); }
+});
+
+test('POST /api/pr on a plugin run reports pr-opened with the PR url and audits it', async () => {
+  const id = await seedIssueRun({ feature: 'worca-cc/announce-run' });
+  const calls = [];
+  stubForkRepo([]);
+  await withMockSource({ reportResult: (args) => { calls.push(args); return { ok: true }; } }, async () => {
+    const r = await post({ projectKey: betaKey, id, draft: true, ...FORK });
+    assert.equal(r.status, 200, await r.clone().text());
+    await until(() => auditOf(id).includes('Pull request reported to the task source.'));
+  });
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0].status, 'pr-opened');
+  assert.equal(calls[0].id, 'up/repo#42');
+  assert.ok(calls[0].summary.includes('Pull request opened: https://github.com/up/repo/pull/7 (draft)'), calls[0].summary);
+  assert.ok(calls[0].summary.includes('- Branch: `worca-cc/announce-run`'));
+  assert.deepEqual(calls[0].links, [{ title: 'Pull request', url: 'https://github.com/up/repo/pull/7' }]);
+  assert.deepEqual(calls[0].move, { none: true }, 'a PR comment never moves the ticket');
+});
+
+test('POST /api/pr linking an existing PR posts no pr-opened comment', async () => {
+  const id = await seedIssueRun({ feature: 'worca-cc/announce-existing' });
+  const calls = [];
+  gitInfo.setRunner((cmd, args) => {
+    if (cmd === 'git' && args[0] === 'remote') return Promise.resolve({ ok: true, stdout: REMOTES_V, stderr: '', code: 0 });
+    if (cmd === 'gh' && args[0] === 'pr' && args[1] === 'create')
+      return Promise.resolve({ ok: false, stdout: '', stderr: 'a pull request already exists:\nhttps://github.com/up/repo/pull/3', code: 1 });
+    if (cmd === 'gh' && args[0] === 'pr' && args[1] === 'view') return Promise.resolve({ ok: true, stdout: 'https://github.com/up/repo/pull/3\n', stderr: '', code: 0 });
+    return Promise.resolve({ ok: true, stdout: 'gh 2.x', stderr: '', code: 0 });
+  });
+  await withMockSource({ reportResult: (args) => { calls.push(args); return { ok: true }; } }, async () => {
+    const j = await (await post({ projectKey: betaKey, id, ...FORK })).json();
+    assert.equal(j.existed, true);
+    await until(() => prAudit(id).includes('PR linked: https://github.com/up/repo/pull/3'));
+    await new Promise((r) => setTimeout(r, 300));   // one more poll window for a comment that must not come
+  });
+  assert.equal(calls.length, 0, 'a linked PR is not announced');
+  assert.ok(!auditOf(id).some((t) => /^Pull request (reported|could not)/.test(t)));
+});
+
+test('POST /api/pr: a failing pr-opened comment still answers 200 and audits the failure', async () => {
+  const id = await seedIssueRun({ feature: 'worca-cc/announce-fail' });
+  stubForkRepo([]);
+  await withMockSource({ reportResult: () => { throw new Error('tracker <down>'); } }, async () => {
+    const r = await post({ projectKey: betaKey, id, ...FORK });
+    assert.equal(r.status, 200, await r.clone().text());
+    assert.equal((await r.json()).url, 'https://github.com/up/repo/pull/7');
+    const line = await until(() => auditOf(id).find((t) => t.startsWith('Pull request could not be reported')));
+    assert.equal(line, 'Pull request could not be reported to the task source: tracker ‹down›.');
+  });
+});
+
+test('POST /api/pr on a prompt-source run calls no reportResult', async () => {
+  const { id, dir } = await createPipeline(betaRepo, { prompt: 'p', title: 'Plain feature' });
+  await writeState(dir, { projectKey: betaKey, id, title: 'Plain feature', status: 'done',
+    branch: { source: 'main', feature: 'worca-cc/announce-plain', branchKept: true } });
+  const calls = [];
+  stubForkRepo([]);
+  await withMockSource({ reportResult: (args) => { calls.push(args); return { ok: true }; } }, async () => {
+    assert.equal((await post({ projectKey: betaKey, id, ...FORK })).status, 200);
+    await until(() => prAudit(id).length === 1);
+    await new Promise((r) => setTimeout(r, 300));
+  });
+  assert.equal(calls.length, 0);
+  assert.ok(!auditOf(id).some((t) => /^Pull request (reported|could not)/.test(t)));
 });
