@@ -113,6 +113,36 @@ test('happy path: frames ordered, session stored immediately, row + totals persi
   assert.deepEqual(done.threadTotals, totals);
 });
 
+test('hands-free <spoken> block: the stored row and ask-done carry the clean text; ask-spoken streams before the first ask-delta', async () => {
+  const s = seed();
+  const raw = '<spoken>Two runs failed.</spoken>\n\nTwo runs **failed** today.';
+  const delta = (text) => push(opts0.onEvent, { type: 'stream_event', event: { type: 'content_block_delta', index: 0, delta: { type: 'text_delta', text } }, parent_tool_use_id: null });
+  let opts0 = null;
+  const { turn, frames } = makeTurn(s, {}, {
+    runClaudeImpl: async (opts) => {
+      opts0 = opts;
+      opts.onEvent({ type: 'session', sessionId: 'sess-1' });
+      push(opts.onEvent, { type: 'stream_event', event: { type: 'message_start', message: { id: 'msg_1', role: 'assistant', content: [], usage: { input_tokens: 1, output_tokens: 1 } } }, parent_tool_use_id: null });
+      delta('<spoken>Two runs ');
+      delta('failed.</spoken>\n\nTwo runs **failed** today.');
+      say(opts.onEvent, 'msg_1', raw);
+      push(opts.onEvent, RESULT());
+      return { text: raw, exitCode: 0 };
+    },
+  });
+  const out = await turn.run();
+  assert.equal(out.status, 'done');
+  const row = getMessage(s.asst.id);
+  assert.equal(row.text, 'Two runs **failed** today.');
+  assert.equal(frames.at(-1).type, 'ask-done');
+  assert.equal(frames.at(-1).text, row.text);
+  const types = frames.map((f) => f.type);
+  assert.ok(types.includes('ask-spoken'), types.join(','));
+  assert.ok(types.indexOf('ask-spoken') < types.indexOf('ask-delta'), types.join(','));
+  assert.equal(frames.filter((f) => f.type === 'ask-spoken').map((f) => f.text).join(''), 'Two runs failed.');
+  assert.equal(frames.filter((f) => f.type === 'ask-delta').map((f) => f.text).join(''), row.text);
+});
+
 test('session: the init frame\'s session event does not store the id a second time', async () => {
   const s = seed();
   const writes = [];

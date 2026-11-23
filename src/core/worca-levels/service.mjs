@@ -8,16 +8,26 @@
 //   emitChanged(type)     the payload-free poke noteLiveEvent sends
 //   gatherFacts, now      tests replace them
 import { resolveIdentity, isSharedIdentity } from '../identity.mjs';
-import { WORCA_LEVELS, WORCA_LEVEL_COUNT, WORCA_THRESHOLDS } from '../../shared/worca-levels.mjs';
+import { WORCA_LEVEL_COUNT } from '../../shared/worca-levels.mjs';
 import { isValidTimeZone } from '../../shared/schedule/recurrence.mjs';
 import { evaluate } from './evaluate.mjs';
+import { toView } from './view.mjs';
 import { gatherFacts as defaultGatherFacts, requirementCount, countStartedRuns, scheduleFacts } from './facts.mjs';
-import { readPerson, updatePerson, recordLive } from './store.mjs';
+import { readPerson as readRawPerson, updatePerson, recordLive } from './store.mjs';
+import { normaliseRecord, migrateRecord } from './migrate.mjs';
+import { CONDITIONS } from './conditions.mjs';
 
 export const LOCAL_PERSON_KEY = '_local';
 export const LIVE_CHANGED_EVENT = 'worca-level-changed';
-export const ACK_TARGETS = Object.freeze(['welcome', 'celebration']);
+export const ACK_TARGETS = Object.freeze(['celebration', 'summary', 'nudge', 'mode-suggestion']);
+/** A stale tab may still ack the removed levels welcome (D-19): it is answered with the view and records nothing. */
+const ACK_NO_OP = 'welcome';
+export const SUGGESTION_MODES = Object.freeze(['advanced', 'expert']);
+export const SUGGESTION_ANSWERS = Object.freeze(['accepted', 'dismissed']);
 export const VIEWED_TYPES = Object.freeze(['stats-viewed', 'team-metrics-viewed']);
+
+/** The person's stored record repaired to the v1 shape, or null when absent or not an object. */
+const readPerson = (key) => normaliseRecord(readRawPerson(key));
 
 export class WorcaLevelRequestError extends Error {
   constructor(message) {
@@ -40,74 +50,18 @@ function hasOwnRows(person) {
   return requirementCount(who) > 0 || countStartedRuns(who) > 0 || scheduleFacts(who).schedules > 0;
 }
 
-const TEAM_POLICY_HREF = '#team-policy';
-const TEAM_POLICY_OPEN_LABEL = 'Open Team policy';
+/** A record the service has written under the v2 rules; anything else is created or migrated at its next view. */
+const isV2 = (rec) => rec?.rules === 2;
 
-// D-6: with the requirements flag off #requirements bounces to chat, so the two Swimmer actions that
-// point at it name a task and open the new-task page instead.
-const NO_REQUIREMENTS_COPY = Object.freeze({
-  firstRequirement: Object.freeze({ label: 'Write your first task', hint: 'New task. Describe what you want built.', href: '#new' }),
-  firstFeatureDone: Object.freeze({ label: 'Get your first task done', hint: 'New task. Start a task and let it finish.', href: '#new' }),
-});
-
-function adaptNext(next, facts) {
-  if (!next) return next;
-  return next.map((a) => {
-    let adapted = a;
-    if (facts.requirementsFlag !== true && NO_REQUIREMENTS_COPY[a.id]) adapted = { ...adapted, ...NO_REQUIREMENTS_COPY[a.id] };
-    // D-8: Team metrics is reached through Team policy until a policy is installed.
-    if (a.id === 'teamMetrics' && facts.policyInstalled !== true) {
-      adapted = { ...adapted, href: TEAM_POLICY_HREF, openLabel: TEAM_POLICY_OPEN_LABEL };
-    }
-    return adapted;
-  });
-}
-
-const levelView = ({ index, key, name, tint, hue, tagline, description, hat, phrase, recap, avatar }) =>
-  ({ index, key, name, tint, hue, tagline, description, hat, phrase, recap, avatar });
-
-function ladderState(index, level) {
-  if (index < level) return 'reached';
-  if (index === level) return 'current';
-  return index === level + 1 ? 'next' : 'later';
-}
-
-function celebrationView(current, ev) {
-  const { index, key, name, tint, hue, hat, phrase, recap, avatar } = current;
-  return {
-    index, key, name, tint, hue, hat, phrase, recap, avatar,
-    nextName: ev.nextLevel?.name ?? null,
-    nextTotal: ev.progress?.total ?? null,
-    nextUnit: ev.progress?.unit ?? null,
-  };
-}
-
-function toView(record, ev, facts) {
-  const current = WORCA_LEVELS[ev.level - 1];
-  const celebrating = !!record.welcome.seenAt && ev.level > record.celebrated;
-  return {
-    count: WORCA_LEVEL_COUNT,
-    level: levelView(current),
-    progress: ev.progress,
-    next: adaptNext(ev.next, facts),
-    nextLevel: ev.nextLevel,
-    top: ev.top,
-    ladder: WORCA_LEVELS.map(({ index, key, name, tint, hue, description, avatar }) =>
-      ({ index, key, name, tint, hue, description, avatar, state: ladderState(index, ev.level) })),
-    welcome: record.welcome.seenAt ? null : { kind: record.welcome.kind },
-    celebration: celebrating ? celebrationView(current, ev) : null,
-  };
-}
-
-/** D-13: the fact sources that cannot change the answer this time are not read. */
+/** D-13: the fact sources that cannot change the answer this time are not read. The first v2 evaluation reads them all (D-10). */
 function skipSet(stored) {
-  const done = stored?.doneAt ?? {};
   const skip = new Set();
-  if (done.parallelFeatures) skip.add('parallel');
-  if (done.councilStreak) skip.add('council');
-  if (!(stored?.level === 3 && !done.teamMetrics)) skip.add('teamMetrics');
+  if (isV2(stored) && stored.doneAt?.parallelFeatures) skip.add('parallel');
   return skip;
 }
+
+/** The mode suggestions a level already holds are never offered (D-16). */
+const heldSuggestions = (level) => ({ advanced: level >= 3 ? 'skipped' : null, expert: level >= 4 ? 'skipped' : null });
 
 /** D-6: a valid request zone wins and is stored; otherwise the stored zone, else the server's. An invalid zone never fails. */
 function resolveTz(requested, stored) {
@@ -128,26 +82,39 @@ export function createWorcaLevelService({
   if (typeof isFreshInstall !== 'function') throw new TypeError('worca-level service: isFreshInstall is required');
   if (typeof emitChanged !== 'function') throw new TypeError('worca-level service: emitChanged is required');
 
-  const pastActivity = ({ person, shared }) => (shared ? hasSharedActivity(person) : !isFreshInstall());
-  // D-11: 'existing' only with past activity AND a backfilled level above Curious; otherwise 'new'.
-  const welcomeKind = (who, level) => (level > 1 && pastActivity(who) ? 'existing' : 'new');
+  /** A source that cannot be read counts as no past activity: the first GET must not fail for want of a summary. */
+  const pastActivity = ({ person, shared }) => {
+    try {
+      return shared ? hasSharedActivity(person) : !isFreshInstall();
+    } catch (err) {
+      console.warn(`worca level: could not read past activity: ${err.message}`);
+      return false;
+    }
+  };
 
-  /** The record after this evaluation: created when absent (or only live-touched), else latched. Pure. */
-  function advance(rec, ev, kind, freshTz) {
+  /**
+   * The record after this evaluation. A v2 record is latched. Anything else (absent, live-only, v1) is the person's
+   * first v2 evaluation: it is migrated, evaluated with full facts, credited as held (`celebrated = level`) and
+   * given one summary when the credit is new and there is past activity (D-10, R-po-12). Pure.
+   */
+  function advance(rec, facts, freshTz, hasHistory) {
     const stamp = now();
-    if (rec && rec.level >= 1) {
-      const next = { ...rec, level: ev.level, doneAt: ev.doneAt, tz: freshTz ?? rec.tz ?? null };
+    if (isV2(rec)) {
+      const ev = evaluate(facts, rec, stamp);
+      const next = { ...rec, level: ev.level, doneAt: ev.doneAt, reachedAt: ev.reachedAt, tz: freshTz ?? rec.tz ?? null };
       return sameRecord(next, rec) ? rec : { ...next, updatedAt: stamp };
     }
-    // Creation: the evaluated level is where this person starts, so nothing earlier is celebrated.
+    const { record: base, from } = migrateRecord(rec, { now: stamp });
+    const ev = evaluate(facts, base, stamp);
     return {
+      ...base,
       level: ev.level,
       celebrated: ev.level,
-      welcome: { kind, seenAt: null },
       doneAt: ev.doneAt,
-      tz: freshTz ?? rec?.tz ?? null,
-      live: rec ? rec.live : { addons: [], addonPeak: 0, spaces: false, statsViewedAt: null, teamMetricsOpenedAt: null },
-      createdAt: rec ? rec.createdAt : stamp,
+      reachedAt: ev.reachedAt,
+      summary: hasHistory && ev.level > from && ev.level >= 1 ? { from, to: ev.level, shownAt: null } : null,
+      modeSuggestion: heldSuggestions(ev.level),
+      tz: freshTz ?? base.tz ?? null,
       updatedAt: stamp,
     };
   }
@@ -158,35 +125,48 @@ export function createWorcaLevelService({
     const stored = readPerson(who.person);
     const tz = resolveTz(requestedTz, stored);
     const facts = await gatherFacts({ person: who.person, shared: who.shared, live: stored?.live, tz: tz.zone, skip: skipSet(stored) });
-    const ev = evaluate(facts, stored, now());
-    // Past activity is asked at creation only; welcome.kind never changes afterwards (I-4).
-    const kind = !stored || stored.level < 1 ? welcomeKind(who, ev.level) : 'new';
-    let record = advance(stored, ev, kind, tz.fresh);
-    if (record !== stored) {
-      record = await updatePerson(who.person, (current) => {
-        const fresh = evaluate(facts, current, now());
-        return advance(current, fresh, kind, tz.fresh);
-      });
-      return toView(record, evaluate(facts, record, now()), facts);
+    // Re-read after the facts: an ack that landed meanwhile must show in this view (and in the unchanged case, which writes nothing).
+    const current = readPerson(who.person);
+    // Past activity is asked at the first v2 evaluation only; the summary is never offered again.
+    const hasHistory = isV2(current) ? false : pastActivity(who);
+    let record = advance(current, facts, tz.fresh, hasHistory);
+    if (record !== current) {
+      record = await updatePerson(who.person, (raw) => advance(normaliseRecord(raw), facts, tz.fresh, hasHistory));
     }
-    return toView(record, ev, facts);
+    return toView(record, evaluate(facts, record, now()), facts);
   }
 
   async function getState(req, { tz } = {}) {
     return sync(req, tz);
   }
 
-  async function ack(req, { what, index, tz } = {}) {
-    if (!ACK_TARGETS.includes(what)) throw new WorcaLevelRequestError(`what must be one of: ${ACK_TARGETS.join(', ')}`);
+  async function ack(req, { what, index, id, mode, answer, tz } = {}) {
+    if (what !== ACK_NO_OP && !ACK_TARGETS.includes(what)) throw new WorcaLevelRequestError(`what must be one of: ${ACK_TARGETS.join(', ')}`);
+    if (what === ACK_NO_OP) return sync(req, tz);
     if (what === 'celebration' && !(Number.isInteger(index) && index >= 1 && index <= WORCA_LEVEL_COUNT)) {
       throw new WorcaLevelRequestError(`index must be the level number that was shown (1 to ${WORCA_LEVEL_COUNT})`);
     }
+    if (what === 'nudge' && !(typeof id === 'string' && Object.hasOwn(CONDITIONS, id))) {
+      throw new WorcaLevelRequestError('id must be the id of the ladder item that was shown');
+    }
+    if (what === 'mode-suggestion' && !(SUGGESTION_MODES.includes(mode) && SUGGESTION_ANSWERS.includes(answer))) {
+      throw new WorcaLevelRequestError(`mode must be one of: ${SUGGESTION_MODES.join(', ')} and answer one of: ${SUGGESTION_ANSWERS.join(', ')}`);
+    }
     await sync(req, tz);                                   // the record exists before it is acknowledged
     const { person } = personOf(req);
-    await updatePerson(person, (rec) => {
-      if (what === 'welcome') {
-        return rec.welcome.seenAt ? rec : { ...rec, welcome: { ...rec.welcome, seenAt: now() }, updatedAt: now() };
+    await updatePerson(person, (raw) => {
+      const rec = normaliseRecord(raw) ?? raw;
+      if (what === 'summary') {
+        return rec.summary && rec.summary.shownAt === null ? { ...rec, summary: { ...rec.summary, shownAt: now() }, updatedAt: now() } : rec;
       }
+      if (what === 'nudge') {                                // latched even when the toast was missed (I-11)
+        return rec.nudged?.[id] ? rec : { ...rec, nudged: { ...rec.nudged, [id]: now() }, updatedAt: now() };
+      }
+      if (what === 'mode-suggestion') {                      // the first answer stands: a suggestion is never re-offered
+        const held = rec.modeSuggestion ?? {};
+        return held[mode] ? rec : { ...rec, modeSuggestion: { ...held, [mode]: answer }, updatedAt: now() };
+      }
+      if (what !== 'celebration') return rec;
       // Only the level that was shown is acknowledged; a level reached since then stays to be celebrated.
       const seen = Math.max(rec.celebrated, Math.min(index, rec.level));
       return seen === rec.celebrated ? rec : { ...rec, celebrated: seen, updatedAt: now() };
@@ -194,24 +174,9 @@ export function createWorcaLevelService({
     return sync(req, tz);
   }
 
-  /** True when opening Team metrics counts: a policy is installed and 10 of the person's runs are in it (R-po-33, R-po-38). */
-  async function teamMetricsReady(who, stored, tz) {
-    const skip = new Set(['parallel', 'council']);        // never skip the count source here (D-13)
-    const facts = await gatherFacts({ person: who.person, shared: who.shared, live: stored?.live, tz: tz.zone, skip });
-    return facts.policyInstalled === true && facts.teamMetricsRuns >= WORCA_THRESHOLDS.teamMetricsRuns;
-  }
-
-  async function recordViewed(req, { type, tz } = {}) {
+  /** Page-view events no longer feed any level (D-19): a stale tab's post is accepted and records nothing. */
+  async function recordViewed(_req, { type } = {}) {
     if (!VIEWED_TYPES.includes(type)) throw new WorcaLevelRequestError(`type must be one of: ${VIEWED_TYPES.join(', ')}`);
-    const who = personOf(req);
-    if (type === 'stats-viewed') {
-      await recordLive(who.person, { statsViewedAt: now() });   // nothing else is recorded (R-po-34)
-    } else {
-      const stored = readPerson(who.person);
-      if (!(await teamMetricsReady(who, stored, resolveTz(tz, stored)))) return;
-      await recordLive(who.person, { teamMetricsOpenedAt: now() });
-    }
-    emitChanged(LIVE_CHANGED_EVENT);
   }
 
   async function noteLiveEvent(person, patch) {

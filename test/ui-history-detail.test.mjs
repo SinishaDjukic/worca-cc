@@ -1254,3 +1254,32 @@ test('slice 2: an archived saved run\'s ⋯ ends with Restore and has no Archive
   assert.equal(labels.at(-1), 'Restore');
   assert.equal(labels.includes('Archive'), false);
 });
+
+// ---------------------------------------------------------------------------
+// Rerun of …: the facts row of a run that was copied from another
+// ---------------------------------------------------------------------------
+
+test('Rerun of …: a link to the direct source while it exists, plain text once it is gone, no row for a plain run', async () => {
+  const rerunRow = (rerunOf) => async () => {
+    const ctx = await bootDetail({ detail: { ...DETAIL, state: { ...DETAIL.state, ...(rerunOf ? { rerunOf } : {}) } } });
+    await openDetail(ctx, '');
+    return ctx.window.document.querySelector('#hist-detail .hd-glance .rd-kv [data-fact="rerun"]');
+  };
+  const live = await rerunRow({ id: 'src00001', key: KEY, title: 'Earlier <i>run</i>', exists: true })();
+  assert.equal(live.hidden, false);
+  const a = live.querySelector('a');
+  assert.equal(a.getAttribute('href'), `#history/${KEY}/src00001`, 'R-po-10: the direct source');
+  assert.equal(a.textContent, 'Rerun of Earlier <i>run</i>', 'I7: text, never markup');
+  assert.equal(live.querySelector('i'), null);
+  const wsLive = await rerunRow({ id: 'src00002', key: 'workspaces/wks-abc', title: '', exists: true })();
+  assert.equal(wsLive.querySelector('a').getAttribute('href'), '#history/workspaces/wks-abc/src00002');
+  assert.equal(wsLive.querySelector('a').textContent, 'Rerun of src00002');
+
+  const gone = await rerunRow({ id: 'src00001', key: null, title: null, exists: false })();
+  assert.equal(gone.hidden, false);
+  assert.equal(gone.querySelector('a'), null, 'no link to a deleted run');
+  assert.equal(gone.querySelector('.rd-kv-v').textContent, 'Copied from a run that no longer exists');
+
+  const plain = await rerunRow(null)();
+  assert.equal(plain.hidden, true, 'R-po-12: a source never shows its reruns');
+});

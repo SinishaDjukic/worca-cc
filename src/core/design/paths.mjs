@@ -116,17 +116,41 @@ export function madeDir(id) { return join(designWorkDir(id), 'assets', 'made'); 
 export function crewFile(id) { return join(designWorkDir(id), '.crew.json'); }
 
 /**
- * Renames `<dir>/<name>` aside in `dir`, which needs only `dir`'s write bit: to `.<name>-<8 hex>` (`.aside-<8 hex>`
- * for a name too long to extend), a dot name no copy, snapshot or assembly takes. One already gone passes.
+ * Renames `<dir>/<name>` aside in `dir`: to `.<name>-<8 hex>` (`.aside-<8 hex>` for a name too long to extend), a dot
+ * name no copy, snapshot or assembly takes. One already gone passes. Linux needs only `dir`'s write bit; macOS also
+ * needs a folder's own (the rename rewrites its `..`), so a folder of worca's own an agent locked (0555) gets its
+ * owner write bit back first (unlockOwnFolder) and the rename is tried once more.
  * @param {string} dir a folder held or checked already (inFolder)
  * @param {string} name
  */
 export function setAside(dir, name) {
   checkPart(name);
+  const from = join(dir, name);
+  const to = join(dir, `.${Buffer.byteLength(name) > 200 ? 'aside' : name}-${randomBytes(4).toString('hex')}`);
   try {
-    renameSync(join(dir, name), join(dir, `.${Buffer.byteLength(name) > 200 ? 'aside' : name}-${randomBytes(4).toString('hex')}`));
+    renameSync(from, to);
   } catch (err) {
-    if (err.code !== 'ENOENT') throw err;
+    if (err.code === 'ENOENT') return;
+    if (err.code !== 'EACCES' || process.platform !== 'darwin' || !unlockOwnFolder(from)) throw err;
+    renameSync(from, to);
+  }
+}
+
+/** Adds the owner write bit to `p` when it is a folder worca's user owns that lacks it, through a descriptor opened
+ *  without following a link (a link swapped in meanwhile fails the open). Whether it did: a folder that has the bit
+ *  already was not what refused the rename (its parent was), and is left as it is. */
+function unlockOwnFolder(p) {
+  let fd = null;
+  try {
+    fd = openSync(p, fsc.O_RDONLY | fsc.O_DIRECTORY | fsc.O_NOFOLLOW);
+    const st = fstatSync(fd);
+    if (!st.isDirectory() || st.uid !== process.getuid?.() || (st.mode & 0o200)) return false;
+    fchmodSync(fd, (st.mode & 0o7777) | 0o200);
+    return true;
+  } catch {
+    return false;
+  } finally {
+    if (fd !== null) closeSync(fd);
   }
 }
 

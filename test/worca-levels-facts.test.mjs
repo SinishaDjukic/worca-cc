@@ -3,8 +3,6 @@
 // from the DB, the plugin lock, the requirements flag and the person's live record.
 import { test, after, beforeEach } from 'node:test';
 import assert from 'node:assert/strict';
-import { rmSync } from 'node:fs';
-import { dirname } from 'node:path';
 import { useTempHome } from './helpers/temp-home.mjs';
 
 const home = useTempHome(after);
@@ -17,21 +15,20 @@ after(() => {
   if (REAL_FLAGS === undefined) delete process.env.WORCA_FLAGS; else process.env.WORCA_FLAGS = REAL_FLAGS;
 });
 
-const { gatherFacts } = await import('../src/core/worca-levels/facts.mjs');
+const { gatherFacts, scheduleFacts, requirementCount, countStartedRuns } = await import('../src/core/worca-levels/facts.mjs');
 const { getDb } = await import('../src/core/db.mjs');
 const { writePluginsLock } = await import('../src/core/plugins-lock.mjs');
-const { writeRunLedger, ledgerFile } = await import('../src/core/metrics/ledger.mjs');
 
-const FACT_KEYS = ['gettingStartedDone', 'gettingStarted', 'policyInstalled', 'requirements', 'requirementsFlag', 'startedRuns',
-  'doneRuns', 'addonsInstalled', 'addonsAtOnce', 'spaces', 'schedules', 'repeatingSchedules', 'statsViewedAt', 'parallelDoneAt',
-  'teamMetricsRuns', 'teamMetricsOpenedAt', 'council'];
-const NO_LIVE = { addons: [], addonPeak: 0, spaces: false, statsViewedAt: null, teamMetricsOpenedAt: null };
+const FACT_KEYS = ['setupFinished', 'providerSignedIn', 'runnerSteps', 'teamMetricsOn', 'teamPolicyOn', 'realRuns', 'runsOnDays',
+  'activeDays', 'prsOpened', 'prsMerged', 'prMergedUnknown', 'daysUnknown', 'scheduledRunDone', 'workspaceRunDone', 'projects',
+  'repeatingScheduleRunsMax', 'addonsInstalled', 'addonsAtOnce', 'parallelDoneAt'];
+const NO_LIVE = { addons: [], addonPeak: 0, spaces: false };
 const ago = (days, extraMs = 0) => new Date(Date.now() - days * 86400000 + extraMs).toISOString();
 const MIN = 60000;
 const TZ = 'UTC';
 
 // Getting started is derived from the host (PATH, probes); the tests inject a fixed answer.
-const onboarding = async () => ({ done: 9, total: 9, steps: { teamPolicy: true } });
+const onboarding = async () => ({ setupFinished: true, providerSignedIn: true, runnerSteps: { done: 6, of: 6 }, teamMetricsOn: false, teamPolicyOn: true });
 const gather = (input, sources = {}) => gatherFacts({ live: NO_LIVE, tz: TZ, ...input }, { onboarding, ...sources });
 
 let seq = 0;
@@ -39,10 +36,11 @@ let seq = 0;
 // artifacts.mjs (the production writers), whose import graph is far heavier than the facts under test.
 async function run(startedBy, status = 'done', extra = {}) {
   const id = extra.id ?? `worca${String(++seq).padStart(4, '0')}`;
-  getDb().prepare(`INSERT INTO pipelines (id, project_key, target, status, phase, cycle, started_at, updated_at, started_by, schedule_id, scheduled_for, deleted_at)
-    VALUES (?, 'proj-00000001', 'project', ?, 'done', 0, ?, ?, ?, ?, ?, ?)`)
-    .run(id, status, 'startedAt' in extra ? extra.startedAt : ago(1), 'updatedAt' in extra ? extra.updatedAt : ago(1), startedBy,
-      extra.scheduleId ?? null, extra.scheduledFor ?? null, extra.deletedAt ?? null);
+  getDb().prepare(`INSERT INTO pipelines (id, project_key, target, status, phase, cycle, started_at, updated_at, started_by, schedule_id, scheduled_for, deleted_at, total_cost_usd, run_setup, credit_key, pr_url, pr_state, workspace_meta)
+    VALUES (?, ?, ?, ?, 'done', 0, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+    .run(id, extra.projectKey ?? 'proj-00000001', extra.target ?? 'project', status, 'startedAt' in extra ? extra.startedAt : ago(1), 'updatedAt' in extra ? extra.updatedAt : ago(1), startedBy,
+      extra.scheduleId ?? null, extra.scheduledFor ?? null, extra.deletedAt ?? null,
+      extra.cost ?? 0, extra.runSetup ?? null, extra.creditKey ?? null, extra.prUrl ?? null, extra.prState ?? null, extra.workspaceMeta ?? null);
   return id;
 }
 function schedule(createdBy) {
@@ -59,152 +57,111 @@ function requirement(createdBy) {
   getDb().prepare(`INSERT INTO req_features (scope_type, scope_key, title, description, status, spec_json, created_by, created_at, updated_at)
     VALUES ('project','k','t','d','draft','{}',?,?,?)`).run(createdBy, ago(1), ago(1));
 }
-function workspace() {
-  getDb().prepare('INSERT INTO workspaces (id, name, created_at, updated_at) VALUES (?,?,?,?)')
-    .run(`wks-x-${++seq}`, `ws${seq}`, ago(1), ago(1));
-}
 // Two runs of `status` that overlap in time: [t0, t0+30m] and [t0+10m, t0+40m].
 async function overlapping(who, status = 'done', t0 = Date.now() - 5 * 86400000) {
   const at = (min) => new Date(t0 + min * MIN).toISOString();
-  const a = await run(who, status, { startedAt: at(0), updatedAt: at(30) });
-  const b = await run(who, status, { startedAt: at(10), updatedAt: at(40) });
+  const a = await run(who, status, { cost: 1, startedAt: at(0), updatedAt: at(30) });
+  const b = await run(who, status, { cost: 1, startedAt: at(10), updatedAt: at(40) });
   return { a, b };
 }
 
 beforeEach(() => {
   const db = getDb();
-  for (const t of ['pipelines', 'scheduled_runs', 'schedules', 'req_features', 'workspaces']) db.exec(`DELETE FROM ${t}`);
-  rmSync(dirname(ledgerFile('x')), { recursive: true, force: true });
+  for (const t of ['pipelines', 'scheduled_runs', 'schedules', 'req_features']) db.exec(`DELETE FROM ${t}`);
   writePluginsLock({});
   delete process.env.WORCA_FLAGS;
 });
 
-test('shape: every fact is present with the neutral value (empty install)', async () => {
+
+test('shape: every fact v2 key is present with the neutral value for the levels still to come', async () => {
   const facts = await gather({ person: '_local', shared: false });
   assert.deepEqual(Object.keys(facts).sort(), [...FACT_KEYS].sort());
-  assert.deepEqual(facts.gettingStarted, { done: 9, total: 9 });
-  assert.equal(facts.gettingStartedDone, true);
-  assert.equal(facts.policyInstalled, true);
-  assert.equal(facts.requirementsFlag, false);
-  assert.equal(facts.startedRuns, 0);
+  assert.deepEqual([facts.setupFinished, facts.providerSignedIn], [true, true]);
+  assert.deepEqual(facts.runnerSteps, { done: 6, of: 6 });
+  assert.deepEqual([facts.teamMetricsOn, facts.teamPolicyOn], [false, true]);
+  assert.equal(facts.realRuns, 0);
+  assert.deepEqual(facts.runsOnDays, { metAt: null, runs: 0, days: 0 });
+  assert.deepEqual(facts.activeDays, { inWindow: 0, metAt: null });
   assert.equal(facts.parallelDoneAt, null);
-  assert.equal(facts.statsViewedAt, null);
-  assert.equal(facts.teamMetricsOpenedAt, null);
-  assert.equal(facts.teamMetricsRuns, 0);
-  assert.deepEqual(facts.council, { current: 0, metAt: null });
-  assert.deepEqual([facts.schedules, facts.repeatingSchedules], [false, false]);
 });
 
-test('Getting started is credited from install state, shared or not, and is incomplete when steps are missing', async () => {
-  const part = async () => ({ done: 4, total: 9, steps: {} });
-  for (const shared of [false, true]) {
-    const f = await gather({ person: 'ada@x.io', shared }, { onboarding: part });
-    assert.equal(f.gettingStartedDone, false);
-    assert.deepEqual(f.gettingStarted, { done: 4, total: 9 });
-    assert.equal(f.policyInstalled, false);
-    const g = await gather({ person: 'ada@x.io', shared });
-    assert.equal(g.gettingStartedDone, true);
-  }
+test('the onboarding source supplies setup, provider, steps 1-6 and the team steps', async () => {
+  const part = async () => ({ setupFinished: false, providerSignedIn: true, runnerSteps: { done: 9, of: 9 }, teamMetricsOn: true, teamPolicyOn: false });
+  const f = await gather({ person: 'ada@x.io', shared: true }, { onboarding: part });
+  assert.deepEqual([f.setupFinished, f.providerSignedIn, f.teamMetricsOn, f.teamPolicyOn], [false, true, true, false]);
+  assert.deepEqual(f.runnerSteps, { done: 6, of: 6 }, 'never more than 6 steps');
 });
 
-test('policyInstalled comes from the onboarding teamPolicy step', async () => {
-  const off = async () => ({ done: 9, total: 9, steps: { teamPolicy: false } });
-  assert.equal((await gather({ person: '_local', shared: false }, { onboarding: off })).policyInstalled, false);
-  assert.equal((await gather({ person: '_local', shared: false })).policyInstalled, true);
+test('real-run counts exclude demo/$0 and include deleted runs', async () => {
+  await run('ada@x.io', 'done', { cost: 0.5 });
+  await run('ada@x.io', 'done', { cost: 0.5, deletedAt: ago(0) });
+  await run('ada@x.io', 'done', { cost: 0 });
+  await run('ada@x.io', 'done', { cost: 0.5, runSetup: JSON.stringify({ mock: true }) });
+  await run('ada@x.io', 'error', { cost: 0.5 });
+  assert.equal((await gather({ person: 'ada@x.io', shared: true })).realRuns, 2);
+  assert.equal((await gather({ person: '_local', shared: false })).realRuns, 2);
 });
 
-test('single install counts every run, including NULL started_by; only done runs count as done', async () => {
-  await run(null, 'done');
-  await run('someone@x.io', 'done');
-  await run(null, 'error');
-  const f = await gather({ person: '_local', shared: false });
-  assert.equal(f.startedRuns, 3);
-  assert.equal(f.doneRuns, 2);
+test('shared install: a deleted run still counts for its owner (credit_key) and for no one else', async () => {
+  await run(null, 'done', { cost: 1, deletedAt: ago(0), creditKey: 'Ada@X.io' });
+  await run('bob@x.io', 'done', { cost: 1 });
+  assert.equal((await gather({ person: 'ada@x.io', shared: true })).realRuns, 1);
+  assert.equal((await gather({ person: 'bob@x.io', shared: true })).realRuns, 1);
+  assert.equal((await gather({ person: 'zed@x.io', shared: true })).realRuns, 0);
 });
 
-test('countDoneRuns excludes deleted rows', async () => {
-  await run('ada@x.io', 'done');
-  await run('ada@x.io', 'done', { deletedAt: ago(0) });
-  assert.equal((await gather({ person: 'ada@x.io', shared: true })).doneRuns, 1);
-  assert.equal((await gather({ person: '_local', shared: false })).doneRuns, 1);
+test('single install counts every real run, including NULL started_by and NULL credit_key', async () => {
+  await run(null, 'done', { cost: 1 });
+  await run('someone@x.io', 'done', { cost: 1 });
+  assert.equal((await gather({ person: '_local', shared: false })).realRuns, 2);
+  assert.equal((await gather({ person: 'ada@x.io', shared: true })).realRuns, 0, 'NULL started_by counts on a single install only');
 });
 
-test('shared install counts only the person (case-insensitive) and never NULL started_by', async () => {
-  await run('Ada@X.io', 'done');
-  await run('ada@x.io', 'error');
-  await run('bob@x.io', 'done');
-  await run(null, 'done');
-  const ada = await gather({ person: 'ada@x.io', shared: true });
-  assert.equal(ada.startedRuns, 2);
-  assert.equal(ada.doneRuns, 1);
-  const nobody = await gather({ person: 'zed@x.io', shared: true });
-  assert.equal(nobody.startedRuns, 0);
+test('countStartedRuns (past activity) counts deleted runs on COALESCE(started_by, credit_key)', () => {
+  const who = { person: 'ada@x.io', shared: true };
+  assert.equal(countStartedRuns(who), 0);
+  getDb().prepare(`INSERT INTO pipelines (id, project_key, target, status, phase, cycle, started_at, updated_at, started_by, credit_key, deleted_at)
+    VALUES ('worcaDel1', 'proj-00000001', 'project', 'done', 'done', 0, ?, ?, NULL, 'ada@x.io', ?)`).run(ago(1), ago(1), ago(0));
+  assert.equal(countStartedRuns(who), 1);
+  assert.equal(countStartedRuns({ person: 'bob@x.io', shared: true }), 0);
+  requirement('ada@x.io'); requirement('bob@x.io');
+  assert.equal(requirementCount(who), 1);
 });
 
-test('D-6: with the requirements flag off, a first started run is visible through startedRuns', async () => {
-  await run('ada@x.io', 'running');
-  const f = await gather({ person: 'ada@x.io', shared: true });
-  assert.equal(f.requirementsFlag, false);
-  assert.equal(f.requirements, 0);
-  assert.ok(f.startedRuns >= 1);
-  process.env.WORCA_FLAGS = 'requirements';
-  assert.equal((await gather({ person: 'ada@x.io', shared: true })).requirementsFlag, true);
-});
-
-test('requirements are filtered by person only when shared', async () => {
-  requirement('ada@x.io'); requirement('bob@x.io'); requirement(null);
-  assert.equal((await gather({ person: 'ada@x.io', shared: true })).requirements, 1);
-  assert.equal((await gather({ person: '_local', shared: false })).requirements, 3);
-});
-
-test('repeatingSchedules: from a schedules row, and from pipelines.schedule_id after the schedule is deleted', async () => {
-  assert.equal((await gather({ person: 'ada@x.io', shared: true })).repeatingSchedules, false);
+test('scheduleFacts: from a schedules row, and from pipelines.schedule_id after the schedule is deleted', async () => {
+  const ada = { person: 'ada@x.io', shared: true };
+  assert.equal(scheduleFacts(ada).repeatingSchedules, false);
   const id = schedule('ada@x.io');
-  const withRow = await gather({ person: 'ada@x.io', shared: true });
-  assert.deepEqual([withRow.schedules, withRow.repeatingSchedules], [true, true]);
+  assert.deepEqual(scheduleFacts(ada), { schedules: true, repeatingSchedules: true });
   getDb().exec('DELETE FROM schedules');
-  assert.equal((await gather({ person: 'ada@x.io', shared: true })).repeatingSchedules, false);
+  assert.equal(scheduleFacts(ada).repeatingSchedules, false);
   await run('ada@x.io', 'done', { scheduleId: id });
-  const kept = await gather({ person: 'ada@x.io', shared: true });
-  assert.equal(kept.repeatingSchedules, true);
+  assert.equal(scheduleFacts(ada).repeatingSchedules, true);
 });
 
-test('a one-off scheduled_runs row (or a timed run) counts for schedules only, not repeatingSchedules', async () => {
+test('scheduleFacts: a one-off row (or a timed run) counts for schedules only; filtered by person only when shared', async () => {
   oneOff('ada@x.io');
-  const f = await gather({ person: 'ada@x.io', shared: true });
-  assert.deepEqual([f.schedules, f.repeatingSchedules], [true, false]);
+  assert.deepEqual(scheduleFacts({ person: 'ada@x.io', shared: true }), { schedules: true, repeatingSchedules: false });
+  assert.deepEqual(scheduleFacts({ person: 'zed@x.io', shared: true }), { schedules: false, repeatingSchedules: false });
   getDb().exec('DELETE FROM scheduled_runs');
   await run('bob@x.io', 'done', { scheduledFor: ago(1) });
-  const t = await gather({ person: 'bob@x.io', shared: true });
-  assert.deepEqual([t.schedules, t.repeatingSchedules], [true, false]);
+  assert.deepEqual(scheduleFacts({ person: 'bob@x.io', shared: true }), { schedules: true, repeatingSchedules: false });
+  assert.deepEqual(scheduleFacts({ person: '_local', shared: false }), { schedules: true, repeatingSchedules: false });
 });
 
-test('schedule facts are filtered by person only when shared', async () => {
-  schedule('bob@x.io'); oneOff('bob@x.io'); await run('bob@x.io', 'done', { scheduleId: 'sch_b' });
-  const ada = await gather({ person: 'ada@x.io', shared: true });
-  assert.deepEqual([ada.schedules, ada.repeatingSchedules], [false, false]);
-  const single = await gather({ person: '_local', shared: false });
-  assert.deepEqual([single.schedules, single.repeatingSchedules], [true, true]);
-});
-
-test('single install backfills add-ons and spaces from the lock and workspaces table', async () => {
+test('single install backfills add-ons from the lock', async () => {
   writePluginsLock({ alpha: { enabled: true }, beta: { enabled: false }, gamma: {} });
-  workspace(); workspace();
-  const f = await gather({ person: '_local', shared: false, live: { ...NO_LIVE, addons: ['ignored'], spaces: true } });
+  const f = await gather({ person: '_local', shared: false, live: { ...NO_LIVE, addons: ['ignored'] } });
   assert.equal(f.addonsInstalled, 3);
   assert.equal(f.addonsAtOnce, 3);
-  assert.equal(f.spaces, 2);
 });
 
 test('shared install counts only the add-ons the person recorded that are still in the lock', async () => {
   writePluginsLock({ alpha: { enabled: true }, beta: { enabled: false }, other: { enabled: true } });
-  workspace();
-  const live = { ...NO_LIVE, addons: ['alpha', 'beta', 'removed'], spaces: true };
-  const f = await gather({ person: 'ada@x.io', shared: true, live });
+  const f = await gather({ person: 'ada@x.io', shared: true, live: { ...NO_LIVE, addons: ['alpha', 'beta', 'removed'] } });
   assert.equal(f.addonsInstalled, 2);
-  assert.equal(f.spaces, 1);
   const none = await gather({ person: 'bob@x.io', shared: true });
-  assert.deepEqual([none.addonsInstalled, none.addonsAtOnce, none.spaces], [0, 0, 0]);
+  assert.deepEqual([none.addonsInstalled, none.addonsAtOnce], [0, 0]);
 });
 
 test('addonsAtOnce is the larger of the live peak and the add-ons installed now', async () => {
@@ -212,22 +169,7 @@ test('addonsAtOnce is the larger of the live peak and the add-ons installed now'
   const f = await gather({ person: '_local', shared: false, live: { ...NO_LIVE, addonPeak: 4 } });
   assert.deepEqual([f.addonsInstalled, f.addonsAtOnce], [1, 4]);
   writePluginsLock({ a: {}, b: {}, c: {} });
-  const g = await gather({ person: '_local', shared: false, live: { ...NO_LIVE, addonPeak: 2 } });
-  assert.equal(g.addonsAtOnce, 3);
-});
-
-test('a space recorded through the store (a boolean) counts as one space on a shared install', async () => {
-  const store = await import('../src/core/worca-levels/store.mjs');
-  await store.recordLive('ada@x.io', { space: true });
-  const f = await gather({ person: 'ada@x.io', shared: true, live: store.readPerson('ada@x.io').live });
-  assert.ok(f.spaces >= 1);
-});
-
-test('statsViewedAt and teamMetricsOpenedAt are read from the live record', async () => {
-  const live = { ...NO_LIVE, statsViewedAt: '2026-11-01T10:00:00.000Z', teamMetricsOpenedAt: '2026-11-02T10:00:00.000Z' };
-  const f = await gather({ person: '_local', shared: false, live });
-  assert.equal(f.statsViewedAt, live.statsViewedAt);
-  assert.equal(f.teamMetricsOpenedAt, live.teamMetricsOpenedAt);
+  assert.equal((await gather({ person: '_local', shared: false, live: { ...NO_LIVE, addonPeak: 2 } })).addonsAtOnce, 3);
 });
 
 test('parallelDoneAt is the later updated_at of the earliest overlapping done pair', async () => {
@@ -237,7 +179,7 @@ test('parallelDoneAt is the later updated_at of the earliest overlapping done pa
   assert.equal(f.parallelDoneAt, getDb().prepare('SELECT updated_at AS u FROM pipelines WHERE id = ?').get(b).u);
 });
 
-test('parallelDoneAt is null when the pair is not both done, or only back-to-back, or has NULL started_at, or is deleted', async () => {
+test('parallelDoneAt is null when the pair is not both done, or only back-to-back, or has NULL started_at', async () => {
   for (const status of ['error', 'stopped', 'running']) {
     getDb().exec('DELETE FROM pipelines');
     await overlapping('ada@x.io', status);
@@ -246,113 +188,101 @@ test('parallelDoneAt is null when the pair is not both done, or only back-to-bac
   getDb().exec('DELETE FROM pipelines');
   const t0 = Date.now() - 5 * 86400000;
   const at = (min) => new Date(t0 + min * MIN).toISOString();
-  await run('ada@x.io', 'done', { startedAt: at(0), updatedAt: at(30) });
-  await run('ada@x.io', 'done', { startedAt: at(30), updatedAt: at(60) });
+  await run('ada@x.io', 'done', { cost: 1, startedAt: at(0), updatedAt: at(30) });
+  await run('ada@x.io', 'done', { cost: 1, startedAt: at(30), updatedAt: at(60) });
   assert.equal((await gather({ person: 'ada@x.io', shared: true })).parallelDoneAt, null);
   getDb().exec('DELETE FROM pipelines');
-  await run('ada@x.io', 'done', { startedAt: at(0), updatedAt: at(30) });
-  await run('ada@x.io', 'done', { startedAt: null, updatedAt: at(40) });
+  await run('ada@x.io', 'done', { cost: 1, startedAt: at(0), updatedAt: at(30) });
+  await run('ada@x.io', 'done', { cost: 1, startedAt: null, updatedAt: at(40) });
   assert.equal((await gather({ person: 'ada@x.io', shared: true })).parallelDoneAt, null);
-  getDb().exec('DELETE FROM pipelines');
-  await run('ada@x.io', 'done', { startedAt: at(0), updatedAt: at(30) });
-  await run('ada@x.io', 'done', { startedAt: at(10), updatedAt: at(40), deletedAt: ago(0) });
-  assert.equal((await gather({ person: 'ada@x.io', shared: true })).parallelDoneAt, null);
+});
+
+test('parallelDoneAt still counts a pair when one of its runs was deleted (D-4)', async () => {
+  const t0 = Date.now() - 5 * 86400000;
+  const at = (min) => new Date(t0 + min * MIN).toISOString();
+  await run('ada@x.io', 'done', { cost: 1, startedAt: at(0), updatedAt: at(30) });
+  await run('ada@x.io', 'done', { cost: 1, startedAt: at(10), updatedAt: at(40), deletedAt: ago(0) });
+  assert.equal((await gather({ person: 'ada@x.io', shared: true })).parallelDoneAt, at(40));
 });
 
 test('parallelDoneAt: other people\'s runs never count for the person on a shared install', async () => {
   const t0 = Date.now() - 5 * 86400000;
   const at = (min) => new Date(t0 + min * MIN).toISOString();
-  await run('ada@x.io', 'done', { startedAt: at(0), updatedAt: at(30) });
-  await run('bob@x.io', 'done', { startedAt: at(10), updatedAt: at(40) });
+  await run('ada@x.io', 'done', { cost: 1, startedAt: at(0), updatedAt: at(30) });
+  await run('bob@x.io', 'done', { cost: 1, startedAt: at(10), updatedAt: at(40) });
   assert.equal((await gather({ person: 'ada@x.io', shared: true })).parallelDoneAt, null);
   assert.equal((await gather({ person: 'bob@x.io', shared: true })).parallelDoneAt, null);
   assert.ok((await gather({ person: '_local', shared: false })).parallelDoneAt);
 });
 
-function ledgered(id, state = 'recorded') { writeRunLedger(id, { state }); }
-
-test('teamMetricsRuns counts only recorded ledgers of the person\'s done, non-deleted runs', async () => {
-  const a = await run('ada@x.io', 'done');
-  const b = await run('ada@x.io', 'done');
-  const c = await run('ada@x.io', 'done');
-  const err = await run('ada@x.io', 'error');
-  const del = await run('ada@x.io', 'done', { deletedAt: ago(0) });
-  const bob = await run('bob@x.io', 'done');
-  ledgered(a); ledgered(b, 'skipped'); ledgered(c, 'pending'); ledgered(err); ledgered(del); ledgered(bob);
-  assert.equal((await gather({ person: 'ada@x.io', shared: true })).teamMetricsRuns, 1);
-  assert.equal((await gather({ person: 'bob@x.io', shared: true })).teamMetricsRuns, 1);
-  assert.equal((await gather({ person: '_local', shared: false })).teamMetricsRuns, 2);
+test('workspace run, scheduled run, distinct projects incl. workspace members, merged-PR unknown', async () => {
+  const me = { person: 'ada@x.io', shared: true };
+  await run('ada@x.io', 'done', { cost: 1, projectKey: 'proj-a' });
+  await run('ada@x.io', 'done', { cost: 1, projectKey: 'proj-a', prUrl: 'https://x/pr/1', prState: 'MERGED' });
+  const f1 = await gather(me);
+  assert.deepEqual([f1.workspaceRunDone, f1.scheduledRunDone, f1.projects, f1.prsOpened, f1.prsMerged, f1.prMergedUnknown], [false, false, 1, 1, 1, false]);
+  await run('ada@x.io', 'done', { cost: 1, projectKey: 'proj-a', target: 'workspace', workspaceMeta: JSON.stringify({ projectKeys: ['proj-a', 'proj-b', 'proj-c'] }), prUrl: 'https://x/pr/2' });
+  await run('ada@x.io', 'done', { cost: 1, projectKey: 'no-project-00000000' });
+  await run('ada@x.io', 'done', { cost: 1, projectKey: 'proj-z', scheduledFor: ago(1), deletedAt: ago(0), workspaceMeta: '{not json' });
+  await run('ada@x.io', 'done', { cost: 0, projectKey: 'proj-free', prUrl: 'https://x/pr/3', prState: 'MERGED' });
+  const f = await gather(me);
+  assert.equal(f.workspaceRunDone, true);
+  assert.equal(f.scheduledRunDone, true, 'a run with scheduled_for counts');
+  assert.equal(f.projects, 4, 'a, b, c from the workspace members, plus z; the no-project key and the $0 run do not count');
+  assert.deepEqual([f.prsOpened, f.prsMerged, f.prMergedUnknown], [2, 1, true], 'the $0 run is not a real run');
+  assert.equal((await gather({ person: 'bob@x.io', shared: true })).projects, 0);
 });
 
-test('teamMetricsRuns caps at 10 and stops reading ledgers at the 10th hit, newest first', async () => {
-  const ids = [];
-  for (let i = 0; i < 14; i++) ids.push(await run('ada@x.io', 'done', { updatedAt: ago(1, i * MIN) }));
-  for (const id of ids) ledgered(id);
+test('repeatingScheduleRunsMax is the highest real-run count of one schedule; a schedule run sets scheduledRunDone', async () => {
+  for (let i = 0; i < 3; i++) await run('ada@x.io', 'done', { cost: 1, scheduleId: 'sch_a' });
+  await run('ada@x.io', 'done', { cost: 1, scheduleId: 'sch_b' });
+  await run('ada@x.io', 'done', { cost: 0, scheduleId: 'sch_b' });
   const f = await gather({ person: 'ada@x.io', shared: true });
-  assert.equal(f.teamMetricsRuns, 10);
-  // newest first: the 4 oldest runs are never examined, so removing their ledgers changes nothing
-  for (const id of ids.slice(0, 4)) rmSync(ledgerFile(id), { force: true });
-  assert.equal((await gather({ person: 'ada@x.io', shared: true })).teamMetricsRuns, 10);
-  rmSync(ledgerFile(ids[13]), { force: true });
-  assert.equal((await gather({ person: 'ada@x.io', shared: true })).teamMetricsRuns, 9);
+  assert.deepEqual([f.repeatingScheduleRunsMax, f.scheduledRunDone], [3, true]);
 });
 
-test('council counts done finishes only; error, stopped, running and deleted runs are ignored', async () => {
-  const now = Date.now();
-  const mk = async (days, status, extra = {}) => {
-    for (const n of [1, 2]) await run('ada@x.io', status, { startedAt: ago(days + 1), updatedAt: new Date(now - days * 86400000 + n * MIN).toISOString(), ...extra });
-  };
-  await mk(1, 'done'); await mk(2, 'error'); await mk(3, 'stopped'); await mk(4, 'running'); await mk(5, 'done', { deletedAt: ago(0) });
-  const f = await gatherFacts({ person: 'ada@x.io', shared: true, live: NO_LIVE, tz: TZ, now }, { onboarding });
-  assert.equal(f.council.current, 1);
-  assert.equal(f.council.metAt, null);
+test('runsOnDays and activeDays come from the real runs, one active day per schedule', async () => {
+  for (let i = 0; i < 12; i++) await run('ada@x.io', 'done', { cost: 1, updatedAt: ago(10 - (i % 4), i * MIN), scheduleId: i < 6 ? 'sch_a' : null });
+  const f = await gather({ person: 'ada@x.io', shared: true });
+  assert.equal(f.runsOnDays.runs, 12);
+  assert.equal(f.runsOnDays.days, 4);
+  assert.ok(f.runsOnDays.metAt, 'ten runs on three days');
+  assert.equal(f.activeDays.inWindow, 4);
+  assert.equal(f.activeDays.metAt, null);
 });
 
-test('council is per person on a shared install, and counts everyone on a single install', async () => {
-  const now = Date.now();
-  const two = async (who, days) => { for (const n of [1, 2]) await run(who, 'done', { updatedAt: new Date(now - days * 86400000 + n * MIN).toISOString() }); };
-  await two('ada@x.io', 1); await two('bob@x.io', 1);
-  const ada = await gatherFacts({ person: 'ada@x.io', shared: true, live: NO_LIVE, tz: TZ, now }, { onboarding });
-  assert.equal(ada.council.current, 1);
-  const bob1 = await run('bob@x.io', 'done', { updatedAt: new Date(now - 2 * 86400000).toISOString() });
-  assert.ok(bob1);
-  const zed = await gatherFacts({ person: 'zed@x.io', shared: true, live: NO_LIVE, tz: TZ, now }, { onboarding });
-  assert.equal(zed.council.current, 0);
+test('ten runs of one schedule give one day, so they alone never meet the 3-day rule (D-9)', async () => {
+  for (let i = 0; i < 10; i++) await run('ada@x.io', 'done', { cost: 1, updatedAt: ago(10 - i), scheduleId: 'sch_daily' });
+  const f = await gather({ person: 'ada@x.io', shared: true });
+  assert.equal(f.runsOnDays.runs, 10);
+  assert.equal(f.runsOnDays.days, 1);
+  assert.equal(f.runsOnDays.metAt, null);
+});
+
+test('a failing realRunRows source leaves the row facts neutral', async () => {
+  const f = await gather({ person: 'ada@x.io', shared: true }, { realRunRows: () => { throw new Error('boom'); } });
+  assert.deepEqual([f.projects, f.prsOpened, f.scheduledRunDone, f.workspaceRunDone, f.repeatingScheduleRunsMax], [0, 0, false, false, 0]);
+  assert.deepEqual(f.runsOnDays, { metAt: null, runs: 0, days: 0 });
 });
 
 test('skip short-circuits a source: its override is not called and its fact is neutral', async () => {
   await overlapping('ada@x.io');
   const called = [];
   const spy = (name, value) => () => { called.push(name); return value; };
-  const f = await gather({ person: 'ada@x.io', shared: true, skip: new Set(['onboarding', 'parallel', 'teamMetrics', 'council', 'countStartedRuns']) }, {
-    onboarding: spy('onboarding', { done: 9, total: 9, steps: { teamPolicy: true } }),
+  const f = await gather({ person: 'ada@x.io', shared: true, skip: new Set(['onboarding', 'parallel']) }, {
+    onboarding: spy('onboarding', { setupFinished: true, providerSignedIn: true, runnerSteps: { done: 6, of: 6 } }),
     parallelIntervals: spy('parallel', []),
-    teamMetricsRuns: spy('teamMetrics', 10),
-    councilFinishes: spy('council', []),
-    countStartedRuns: spy('countStartedRuns', 7),
-    countDoneRuns: spy('countDoneRuns', 3),
+    realRuns: spy('realRuns', 3),
   });
-  assert.deepEqual(called, ['countDoneRuns']);
-  assert.equal(f.gettingStartedDone, false);
-  assert.deepEqual(f.gettingStarted, { done: 0, total: 0 });
-  assert.equal(f.policyInstalled, false);
+  assert.deepEqual(called, ['realRuns']);
+  assert.deepEqual([f.setupFinished, f.providerSignedIn, f.teamPolicyOn], [false, false, false]);
+  assert.deepEqual(f.runnerSteps, { done: 0, of: 6 });
   assert.equal(f.parallelDoneAt, null);
-  assert.equal(f.teamMetricsRuns, 0);
-  assert.deepEqual(f.council, { current: 0, metAt: null });
-  assert.equal(f.startedRuns, 0);
-  assert.equal(f.doneRuns, 3);
-});
-
-test('a skipped real source does not read the ledger', async () => {
-  const id = await run('ada@x.io', 'done');
-  ledgered(id);
-  const f = await gather({ person: 'ada@x.io', shared: true, skip: new Set(['teamMetrics']) });
-  assert.equal(f.teamMetricsRuns, 0);
-  assert.equal((await gather({ person: 'ada@x.io', shared: true })).teamMetricsRuns, 1);
+  assert.equal(f.realRuns, 3);
 });
 
 test('a source that throws yields its neutral value, is logged with context, and gatherFacts does not throw (I-12)', async () => {
-  await run('ada@x.io', 'done');
+  await run('ada@x.io', 'done', { cost: 1 });
   const boom = () => { throw new Error('db gone'); };
   const logged = [];
   const origWarn = console.warn;
@@ -361,23 +291,17 @@ test('a source that throws yields its neutral value, is logged with context, and
   try {
     f = await gather({ person: 'ada@x.io', shared: true }, {
       onboarding: async () => { throw new Error('probe failed'); },
-      countStartedRuns: boom, addonFacts: boom, spaceCount: boom, scheduleFacts: boom,
-      parallelIntervals: boom, teamMetricsRuns: boom, councilFinishes: boom,
+      realRuns: boom, addonFacts: boom, parallelIntervals: boom,
     });
   } finally { console.warn = origWarn; }
-  assert.equal(f.startedRuns, 0);
-  assert.equal(f.gettingStartedDone, false);
-  assert.equal(f.policyInstalled, false);
-  assert.deepEqual(f.gettingStarted, { done: 0, total: 0 });
-  assert.deepEqual([f.addonsInstalled, f.addonsAtOnce, f.spaces], [0, 0, 0]);
-  assert.deepEqual([f.schedules, f.repeatingSchedules], [false, false]);
-  assert.deepEqual([f.parallelDoneAt, f.teamMetricsRuns], [null, 0]);
-  assert.deepEqual(f.council, { current: 0, metAt: null });
-  assert.equal(f.doneRuns, 1); // an unaffected source still answers
-  assert.ok(logged.some((l) => l.includes('countStartedRuns') && l.includes('db gone')), logged.join('\n'));
+  assert.equal(f.realRuns, 0);
+  assert.deepEqual([f.setupFinished, f.providerSignedIn, f.teamMetricsOn], [false, false, false]);
+  assert.deepEqual(f.runnerSteps, { done: 0, of: 6 });
+  assert.deepEqual([f.addonsInstalled, f.addonsAtOnce, f.parallelDoneAt], [0, 0, null]);
+  assert.ok(logged.some((l) => l.includes('realRuns') && l.includes('db gone')), logged.join('\n'));
 });
 
 test('a malformed live record falls back to an empty default', async () => {
   const f = await gather({ person: '_local', shared: true, live: null });
-  assert.deepEqual([f.addonsInstalled, f.spaces, f.statsViewedAt, f.teamMetricsOpenedAt], [0, 0, null, null]);
+  assert.deepEqual([f.addonsInstalled, f.addonsAtOnce], [0, 0]);
 });

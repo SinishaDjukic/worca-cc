@@ -129,9 +129,9 @@ test('createDesignLive counts planning, building and integrating only', () => {
   live.hello([]);
   assert.equal(live.count(), 0);
 });
-test('parts: design.css sits before the last-in-file card nesting; design has no dirs entry', () => {
+test('parts: design.css, then the compact composer bar, then the last-in-file card nesting; design has no dirs entry', () => {
   const parts = JSON.parse(readFileSync(new URL('../ui/public/parts.json', import.meta.url), 'utf8'));
-  assert.equal(parts.css.indexOf('design/design.css'), parts.css.indexOf('chat/card-nesting.css') - 1);
+  assert.deepEqual(parts.css.slice(-3), ['design/design.css', 'chat/composer-bar.css', 'chat/card-nesting.css']);
   assert.equal(parts.css.at(-1), 'chat/card-nesting.css');
   assert.equal(parts.html[parts.html.indexOf('chat/chat.html') + 1], 'design/design.html');
   assert.equal(parts.dirs.includes('design'), false);
@@ -203,7 +203,7 @@ test('in the real app: a Library tile opens the design\'s chat, a chat like any:
   // One composer: the chat's own, with the design's Point and gear in its row and no input of the dock's.
   assert.equal(page.querySelector('[data-chat-design] .dsc-input'), null, 'the dock draws no composer of its own');
   const row = page.querySelector('.chat-dock .ask-composer .ask-composer-row');
-  assert.ok(row && row.querySelector('[data-ask-composer-ext] .dsc-point') && row.querySelector('[data-ask-composer-ext] .dz-set'), 'Point and the gear sit in the chat composer');
+  assert.ok(row && row.querySelector('[data-ask-composer-ext] .dsc-point') && row.querySelector('[data-ask-composer-ext-end] .dz-set'), 'Point stays left; the gear sits after the model');
   assert.equal(row.querySelector('[data-ask-scope-btn]').disabled, false, 'the chat keeps its own scope pill');
   assert.ok(doc.querySelector('.tool-panel:not([hidden]) .tool-body[data-kind="design"] .dz-stage'), 'the Design tab shows the stage');
   assert.ok([...doc.querySelectorAll('.tool-icon[data-tool-kind="design"]')].some((b) => !b.hidden), 'its icon shows');

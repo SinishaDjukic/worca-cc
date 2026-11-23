@@ -40,6 +40,7 @@ import { addGlobalModel, updateProvider } from '../src/core/settings.mjs';
 import { stopBridge } from '../src/core/bridge/server.mjs';
 import { addonMode, appendAddon, resolveAddon } from '../src/core/model-addons.mjs';
 import { planClaudeInvocation } from '../src/core/engines/claude.mjs';
+import { agentHome } from '../src/core/engines/spawn.mjs';
 
 const POSIX = process.platform === 'win32'
   ? { skip: 'the fake claude is a node script with a shebang (no .exe stand-in on Windows)' } : {};
@@ -176,6 +177,7 @@ function scrubber(extra = []) {
     ...extra,
     [process.execPath, '<NODE>'],
     [worcaHome(), '<WORCA_HOME>'],
+    [agentHome(), '<AGENT_HOME>'],   // the throwaway WORCA_HOME every agent gets (a per-process temp folder)
     [pipelineDir, '<PIPELINE_DIR>'],
     [projectDir, '<PROJECT_DIR>'],
     [projectKey(projectDir), '<STORE_KEY>'],

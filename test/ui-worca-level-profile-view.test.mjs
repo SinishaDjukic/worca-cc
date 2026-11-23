@@ -6,6 +6,7 @@ import { readFileSync } from 'node:fs';
 import { JSDOM } from 'jsdom';
 import { renderProfileLevel } from '../ui/public/worca-level/profile-view.mjs';
 import { pageTitle } from '../ui/public/topnav.mjs';
+import { createWorcaLevelWiring } from '../ui/public/worca-level/app-wiring.mjs';
 
 const NAMES = ['Curious', 'Runner', 'Hooked', 'WorcaHolic', "Worca's Council"];
 const KEYS = ['curious', 'runner', 'hooked', 'worcaholic', 'council'];
@@ -126,13 +127,13 @@ test('the Team metrics Open href and label pass through from the view (R-po-35)'
   assert.equal(open.textContent, 'Open Team policy');
 });
 
-test('counts read "x of 10 runs in Team metrics" / "x of 30 days" only while not done', () => {
-  const tm = (done) => action('teamMetrics', done, { count: 4, of: 10 });
-  const cs = (done) => action('councilStreak', done, { count: 12, of: 30 });
-  assert.match(mount(view(4, { next: [tm(false)] })).querySelector('li.wl-item').textContent, /4 of 10 runs in Team metrics/);
-  assert.match(mount(view(4, { next: [cs(false)] })).querySelector('li.wl-item').textContent, /12 of 30 days/);
-  assert.doesNotMatch(mount(view(4, { next: [tm(true)] })).querySelector('li.wl-item').textContent, /runs in Team metrics/);
-  assert.doesNotMatch(mount(view(4, { next: [cs(true)] })).querySelector('li.wl-item').textContent, /of 30 days/);
+test('counts read "x of n" with the item unit, only while not done', () => {
+  const runs = (done) => action('realRuns', done, { count: 1, of: 3, unit: ['real run', 'real runs'] });
+  const days = (done) => action('councilDays', done, { count: 12, of: 20, unit: ['active day', 'active days'] });
+  assert.match(mount(view(4, { next: [runs(false)] })).querySelector('li.wl-item').textContent, /1 of 3 real runs/);
+  assert.match(mount(view(4, { next: [days(false)] })).querySelector('li.wl-item').textContent, /12 of 20 active days/);
+  assert.doesNotMatch(mount(view(4, { next: [runs(true)] })).querySelector('li.wl-item').textContent, /1 of 3/);
+  assert.doesNotMatch(mount(view(4, { next: [days(true)] })).querySelector('li.wl-item').textContent, /of 20/);
   assert.doesNotMatch(mount(view(4, { next: [action('x', false)] })).querySelector('li.wl-item').textContent, / of \d+ /);
 });
 
@@ -181,4 +182,91 @@ test('profile.html keeps the feature-map marker, the host, and has no form contr
   assert.equal(host.querySelectorAll('section.wl-hero').length, 1);
   assert.equal(window.document.querySelectorAll('[data-view="profile"]').length, 1);
   assert.equal(pageTitle('profile'), 'Profile');
+});
+
+const withLadder = (v, fn) => ({ ...v, ladder: v.ladder.map((l) => ({ ...l, ...fn(l) })) });
+
+test('every level card says reached with its date, or not reached', () => {
+  const v = withLadder(view(3), (l) => ({
+    reachedAt: l.index <= 3 ? `2020-0${l.index}-04T12:00:00.000Z` : null,
+    items: [],
+  }));
+  const cards = levels(mount(v));
+  const lines = cards.map((c) => c.querySelectorAll('.wl-level-desc')[1].textContent);
+  assert.deepEqual(lines, ['Reached · Jan 4, 2020', 'Reached · Feb 4, 2020', 'Reached · Mar 4, 2020', 'Not reached yet', 'Not reached yet']);
+});
+
+test('a reached level with no usable date reads Reached; a missing field reads by state', () => {
+  const v = withLadder(view(2), (l) => (l.index === 1 ? { reachedAt: 'junk', items: [] } : { items: [] }));
+  const lines = levels(mount(v)).map((c) => c.querySelectorAll('.wl-level-desc')[1].textContent);
+  assert.deepEqual(lines, ['Reached', 'Reached', 'Not reached yet', 'Not reached yet', 'Not reached yet']);
+});
+
+test('every item shows its counter', () => {
+  const items = [
+    action('realRuns', false, { count: 1, of: 3, unit: ['real run', 'real runs'] }),
+    action('councilDays', false, { count: 12, of: 20, unit: ['active day', 'active days'] }),
+    action('plain', false),
+    action('finished', true),
+  ];
+  const v = withLadder(view(3), (l) => (l.index === 4 ? { items, reachedAt: null } : { items: [], reachedAt: null }));
+  const card = levels(mount(v))[3];
+  const rows = [...card.querySelectorAll('ul.wl-list > li')];
+  assert.equal(rows.length, 4);
+  assert.match(rows[0].textContent, /Label realRuns.*1 of 3 real runs/);
+  assert.match(rows[1].textContent, /12 of 20 active days/);
+  assert.match(rows[2].textContent, /Label plain/);
+  assert.equal(rows[2].dataset.done, 'false');
+  assert.match(rows[3].textContent, /Done · Mar 4, 2020/);
+  assert.equal(rows[3].dataset.done, 'true');
+});
+
+test('the Profile repaints on load() while it is open, and stops once the page has moved on', async () => {
+  const { window } = new JSDOM('<!doctype html><body><div id="host"></div><div id="menu"></div></body>', { url: 'http://localhost/' });
+  const doc = window.document;
+  const host = doc.getElementById('host');
+  let served = view(2);
+  const realFetch = globalThis.fetch;
+  globalThis.fetch = async () => ({ ok: true, status: 200, json: async () => served });
+  try {
+    let open = true;
+    const wiring = createWorcaLevelWiring({
+      menu: doc.getElementById('menu'), repaint: () => {}, isSettled: () => false, setupOpen: () => false, doc,
+    });
+    await wiring.showProfile(host, () => open);
+    assert.equal(host.querySelector('h1').textContent, 'Runner');
+    served = view(3);
+    await wiring.boot();                       // load() while the Profile is open
+    assert.equal(host.querySelector('h1').textContent, 'Hooked');
+    open = false;
+    served = view(4);
+    await wiring.boot();
+    assert.equal(host.querySelector('h1').textContent, 'Hooked', 'a closed Profile is left alone');
+    assert.equal(wiring.state.profile, null);
+  } finally {
+    globalThis.fetch = realFetch;
+  }
+});
+
+test('a person with no level yet gets a no-level hero, the next-level list and a ladder with nothing reached (M5)', () => {
+  const { window } = new JSDOM('<!doctype html><body><div id="host"></div></body>', { url: 'http://localhost/' });
+  const host = window.document.getElementById('host');
+  const none = view(1, {
+    level: null,
+    setup: { finished: true, providerSignedIn: false, missing: ['provider'] },
+    progress: { done: 1, total: 2, unit: 'items' },
+    nextLevel: { index: 1, key: 'curious', name: 'Curious' },
+    ladder: NAMES.map((name, i) => ({ index: i + 1, key: KEYS[i], name, state: i === 0 ? 'next' : 'later', reachedAt: null })),
+  });
+  renderProfileLevel(host, none, { initials: 'AL' });
+  const hero = host.querySelector('section.wl-hero');
+  assert.equal(hero.querySelector('img'), null, 'no avatar image');
+  assert.equal(hero.querySelector('.wl-menu-ava').textContent, 'AL');
+  assert.match(hero.textContent, /Sign in to a model provider to earn your first level\./);
+  assert.match(host.textContent, /To reach Curious/);
+  assert.equal(levels(host).length, 5);
+  assert.deepEqual(levels(host).map((l) => l.dataset.state), ['next', 'later', 'later', 'later', 'later']);
+  assert.ok(levels(host).every((l) => /Not reached yet/.test(l.textContent)));
+  renderProfileLevel(host, { ...none, setup: { finished: false, providerSignedIn: false, missing: ['setup', 'provider'] } });
+  assert.match(host.querySelector('section.wl-hero').textContent, /Finish setup to earn your first level\./);
 });

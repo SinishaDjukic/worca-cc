@@ -22,7 +22,7 @@ const SETUP_HREF = '#models/providers/images';
 let seq = 0;
 
 /**
- * @param {{doc: Document, win?: Window, mode?: 'up'|'down', onOpen?: () => void}} o  `mode`: where the popup opens from
+ * @param {{doc: Document, win?: Window, mode?: 'up'|'up-end'|'down', onOpen?: () => void}} o  `mode`: where the popup opens from
  *   the button; `onOpen`: called once per open, after the popup is placed.
  * @returns {{el: HTMLElement, btn: HTMLButtonElement, panel: HTMLElement, fill: (...rows: Node[]) => void,
  *   divider: () => HTMLElement, close: () => void, reposition: () => void, destroy: () => void}}

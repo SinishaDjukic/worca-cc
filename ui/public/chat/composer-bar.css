@@ -1,0 +1,59 @@
+/* ===== Chat: composer bar, compact ===== */
+/* The web app's composer row (ask-panel.mjs buildComposer marks it data-bar="compact"). The browser extension's row and
+   Design's own rows carry no mark, so nothing here reaches them. Tokens only. A tip has no box at rest: a laid-out tip
+   at opacity 0 would add to the hero's scrollable width. */
+.chat-page .ask-composer-row[data-bar="compact"]{gap:2px;}
+.ask-composer-row[data-bar="compact"] > :is(.ask-send,.ask-stop){margin-left:6px;}
+.ask-composer-row[data-bar="compact"] [data-tip]{position:relative;}
+.ask-composer-row[data-bar="compact"] [data-tip]::after{content:attr(data-tip);display:none;position:absolute;z-index:9;bottom:calc(100% + 8px);left:50%;transform:translateX(-50%);padding:5px 8px;border-radius:var(--r-sm);background:var(--ink);color:var(--on-ink);font:500 11px/1.3 var(--sans);white-space:nowrap;pointer-events:none;max-width:min(320px, calc(100vw - 32px));overflow:hidden;text-overflow:ellipsis;}
+.ask-composer-row[data-bar="compact"] [data-tip]:is(:hover,:focus-visible)::after{display:block;animation:ask-bar-tip .12s .3s both;}
+@keyframes ask-bar-tip{from{opacity:0;}}
+.ask-composer-row[data-bar="compact"] > :is([data-ask-attach-btn],[data-ask-scope-btn])::after{left:0;transform:none;}
+.ask-composer-row[data-bar="compact"] > .ask-voice > :is(.ask-voice-mic,.ask-voice-caret)::after{left:auto;right:0;transform:none;}
+.ask-composer-row[data-bar="compact"] > :is(.ask-send,.ask-stop)::after{left:auto;right:0;transform:none;}
+.ask-composer-row[data-bar="compact"]:has([aria-expanded="true"]) [data-tip]::after{display:none;}
+.ask-composer:has(> .ask-pop) .ask-composer-row[data-bar="compact"] [data-tip]::after{display:none;}
+@media (prefers-reduced-motion:reduce){
+  .ask-composer-row[data-bar="compact"] [data-tip]:is(:hover,:focus-visible)::after{animation-duration:0s;}
+}
+.ask-composer-row[data-bar="compact"] > :is(.ask-scope-btn,.ask-pull-btn){min-width:28px;padding:0 8px;gap:6px;}
+.ask-composer-row[data-bar="compact"] > :is(.ask-scope-btn,.ask-pull-btn).is-bare{width:28px;padding:0;}
+.ask-composer-row[data-bar="compact"] > [data-ask-scope-btn].is-bare > .ask-scope-label{display:none;}
+.ask-composer-row[data-bar="compact"] > [data-ask-scope-btn].is-compact{width:28px;padding:0;}
+.ask-composer-row[data-bar="compact"] > .ask-sets-btn{flex:none;}
+.ask-bar-n{font:500 12px/1 var(--sans);color:var(--ink);}
+.ask-bar-n[hidden]{display:none;}
+.ask-scope-dot{display:none;position:absolute;top:6px;right:6px;width:6px;height:6px;border-radius:50%;background:var(--ink);box-shadow:0 0 0 2px var(--panel);}
+.ask-composer-row[data-bar="compact"] > .ask-scope-btn.is-pinned.is-compact > .ask-scope-dot{display:block;}
+.chat-page[data-host="dock"] .ask-composer-row[data-bar="compact"] > [data-ask-scope-btn]{width:28px;padding:0;}
+.chat-page[data-host="dock"] .ask-composer-row[data-bar="compact"] > [data-ask-scope-btn] > .ask-scope-label{display:none;}
+.chat-page[data-host="dock"] .ask-composer-row[data-bar="compact"] > [data-ask-scope-btn].is-pinned > .ask-scope-dot{display:block;}
+.ask-composer-row[data-bar="compact"] > .ask-model-btn{padding:0 8px;margin-left:2px;}
+.ask-composer-row[data-bar="compact"] > .ask-model-btn > .mdl-mark.sm{width:16px;height:16px;}
+.ask-composer-row[data-bar="compact"] .ask-meter-cost{display:none;}
+.chat-page[data-host="page"] .ask-composer-row[data-bar="compact"] > .ask-meter{display:none;}
+.chat-page[data-host="dock"] .ask-composer-row[data-bar="compact"] > .ask-meter{display:flex;}
+.ask-composer-row[data-bar="compact"] > .ask-voice{gap:0;margin-left:6px;}
+.ask-composer-row[data-bar="compact"] > .ask-voice > .ask-voice-mic{border-radius:var(--r-sm) 0 0 var(--r-sm);}
+.ask-composer-row[data-bar="compact"] > .ask-voice > .ask-voice-caret{width:20px;border-color:var(--line-2);border-width:1px 1px 1px 0;border-radius:0 var(--r-sm) var(--r-sm) 0;background:var(--panel);color:var(--ink-2);}
+.ask-composer-row[data-bar="compact"] > .ask-voice > .ask-voice-caret:hover:not(:disabled){background-color:var(--btn-hover);color:var(--ink);}
+.ask-composer-row[data-bar="compact"] > .ask-voice > .ask-voice-mic.is-on + .ask-voice-caret{border-color:var(--ink);}
+/* The lent Design gear's popup sits inside the row: the narrow-conversation and phone rules (chat-run-panel.css,
+   chat-shell.css) that hide every .chat-page model-button engine and effort would cut its Lead and Builders words. */
+.ask-composer-row[data-bar="compact"] .dz-set-pop .dz-model-btn > :is(.ask-model-btn-engine,.ask-model-btn-effort):not([hidden]){display:inline;}
+/* Fit (ask-panel.mjs fitBar): chat-shell.css and chat-run-panel.css hide the arrow, the effort and the engine by width
+   alone; the compact row measures itself (tips off) and gives up parts one tier at a time. Only the row's own children
+   (">"): the Design gear's popup holds .ask-model-btn pickers. This block stays last. */
+.ask-composer-row[data-bar="compact"][data-measure] [data-tip]::after{display:none;}
+.chat-page .ask-composer-row[data-bar="compact"] > .ask-voice > .ask-voice-caret:not([hidden]){display:inline-flex;}
+.chat-page .ask-composer-row[data-bar="compact"] > .ask-model-btn > .ask-model-btn-effort:not([hidden]){display:inline;}
+.chat-page .ask-composer-row[data-bar="compact"] > .ask-model-btn > .ask-model-btn-engine:not([hidden]){display:inline;}
+.chat-page .ask-composer-row[data-bar="compact"][data-fit] > .ask-voice > .ask-voice-caret{display:none;}
+.chat-page .ask-composer-row[data-bar="compact"][data-fit] > .ask-voice > .ask-voice-mic{border-radius:var(--r-sm);}
+.chat-page .ask-composer-row[data-bar="compact"][data-fit] > :is(.ask-voice,.ask-send,.ask-stop){margin-left:2px;}
+.chat-page .ask-composer-row[data-bar="compact"]:is([data-fit="2"],[data-fit="3"],[data-fit="4"],[data-fit="5"],[data-fit="6"]) > .ask-model-btn > .ask-model-btn-effort{display:none;}
+.chat-page .ask-composer-row[data-bar="compact"]:is([data-fit="3"],[data-fit="4"],[data-fit="5"],[data-fit="6"]) > .ask-meter{display:none;}
+.chat-page .ask-composer-row[data-bar="compact"]:is([data-fit="4"],[data-fit="5"],[data-fit="6"]) > .ask-model-btn > :is(.mdl-mark,.ask-model-btn-engine){display:none;}
+.chat-page .ask-composer-row[data-bar="compact"]:is([data-fit="5"],[data-fit="6"]) > .ask-model-btn{flex:0 1 auto;min-width:0;}
+.chat-page .ask-composer-row[data-bar="compact"]:is([data-fit="5"],[data-fit="6"]) > .ask-model-btn > .ask-model-btn-label{min-width:0;overflow:hidden;text-overflow:ellipsis;}
+.chat-page .ask-composer-row[data-bar="compact"][data-fit="6"] > .ask-sets-btn{flex:0 1 auto;}

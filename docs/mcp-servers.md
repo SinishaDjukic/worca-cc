@@ -144,8 +144,8 @@ taken too it is skipped). In a pipeline, a deny rule on `mcp__linear__…` reach
   workspace brings its members) and **every project the chat has a worktree on** — and the Team set of
   each one's policy (a workspace's own policy, not its members'). The chat's model
   can open a worktree on any registered project without asking, and that project's servers and skills join
-  from the next message; the chat says so. The composer's **Sets · N** button is a per-chat picker
-  (sets, then their servers and skills) whose choices apply from the next message.
+  from the next message; the chat says so. The composer's Sets button (a layers icon with the count; its
+  tooltip reads **Sets for this chat**) is a per-chat picker (sets, then their servers and skills) whose choices apply from the next message.
 - Problems at start (`failed`, `needs-auth`, disabled by your Claude Code settings, blocked by
   managed policy) become run warnings or a muted line in the chat.
 

@@ -215,6 +215,9 @@ export async function runClaude(o = {}) {
     spawnKind,
     runId,
     threadId,
+    // A chat's opencode server alias is stable per thread (opencode.mjs): the thread id seeds it. Only opencode reads
+    // it; every other engine ignores an unknown extra. Never a spawn flag.
+    serverAliasSeed,
     bin = DEFAULT_BIN,
   } = o;
 
@@ -315,5 +318,6 @@ export async function runClaude(o = {}) {
     spawnKind,
     runId,
     threadId,
+    serverAliasSeed,
   });
 }

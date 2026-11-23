@@ -149,9 +149,8 @@ be skipped by forgetting it.
 | Schedules | A — kept visible at every level while anything is scheduled, missed, repeating or unread; its grey count and amber unread pill each hide at zero |
 | Team metrics, Team policy | E |
 | The level avatar art in the corner (the round art on the account corner and the spend ring's avatar) | all — a level is shown to everyone, whatever the mode |
-| The level tooltip (hover or focus on the corner avatar: the level, its items, a link to Profile) | all |
-| The account-menu level card (the first item of the account menu) | all |
-| Profile (the level section) | all — it has no sidebar entry; it opens from the menu card, the tooltip and the Getting started level line |
+| The account-menu level card (the first item of the account menu, a compact card: the level's avatar and name with "View level", then "To <Next>" with the count and a small segment bar; a click or Enter goes straight to the Profile level page (`#profile/level`) and closes the menu, with no popover or dialog in between; the menu opens on a click or Enter, and nothing opens on hover or focus) | all |
+| Profile (the level section) | all — it has no sidebar entry; it opens from "View level" on the account-menu level card and the Getting started level line |
 
 Levels are not Interface modes: no level element carries `data-min-level`; Try next / Open links to higher-mode pages open them with the banner.
 
@@ -229,7 +228,8 @@ The **Auto** workflow option is available for both targets — a project and a w
 | Header cost and its breakdown (agents, Away mode, Auto workflow, run title; stopped reviews and stopped agent turns apart); the glance and Overview cost's Away mode share | S |
 | The Away mode note and the Q&A tab, as on the run page | S |
 | Save as preset (a run with a stored setup) | S |
-| Run page bar: Back (every layout) and ⋯ (Away mode while live, Save as preset, Terminal, Report this run, Archive / Restore) | S |
+| Run page bar: Back (every layout) and ⋯ (Away mode while live, Save as preset, Rerun, Terminal, Report this run, Archive / Restore) | S |
+| Rerun: New run filled in from an ended run; the Rerun of … row on the new run's page | S |
 | History: usage-limit notice | S |
 | Folder run: Changes tab, the Folder chip, the Apply bar and dialog, Discard; the Git / Folder chip on a project's group in the Runs list | S |
 | Run without a project: the Artifacts tab, opened first; the No project group and its chip in the Runs list | S |
@@ -373,7 +373,7 @@ sub-path kept; `#providers/…` and `#settings/providers` land on Models › Pro
 | The list: the filter tabs (All open, Needs you, Ready, Started, Archived; the counts leave archived out), New feature, the feature rows grouped by project or workspace (id, title, the state line, the state badge or the latest run's pill, cost), "Spent on requirements this month" | S — product owners are its users |
 | The list's group header: "Product brief: none yet · Create", "Product brief: being made…", "Product brief · <age> old" | S |
 | New feature: Title, Describe it, For, the code-look hint or the green "Worca knows <name> from its product brief" line, "Worca interviews with <model> at <effort> effort" and the cost words, Cancel, Start the interview | S — the interview model is shown here, changed only on Models (E) |
-| A feature's header: id, title, state, the target, round and cost chips, "Saved as specs/…"; Export ▾ (Save to specs/, Copy Markdown, Download .md); ⋯ (Your notes for Worca, Look closer / Look again, Archive / Restore) | S |
+| A feature's header: id, title, state, the target and round chips, the cost and model buttons, "Saved as specs/…"; Export ▾ (Save to specs/, Copy Markdown, Download .md); ⋯ (Your notes for Worca, Look closer / Look again, Archive / Restore) | S |
 | Export to a tracker: Export ▾'s Export to Jira… and Export setup…, the setup dialog, the preview (fields, labels, the description, Export anyway), Export again and the comment preview, the failure states, the header's ticket chip, "Created SHOP-123", the History card, Report back on Ready to build, the start dialog and the runs card; on a phone (900 px and narrower) the dialogs as full-screen sheets | S — product owners are its users |
 | Connect a tracker… (the menu item and its dialog) | S |
 | Connect a tracker's Open the Marketplace page | A — the Marketplace page is Advanced |

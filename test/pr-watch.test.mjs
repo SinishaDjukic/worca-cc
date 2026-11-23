@@ -617,6 +617,7 @@ test('a merge conflict goes alone, once per PR head and base pair', () => {
   assert.equal(collectTriggers({ ...pr, mergeable: 'MERGEABLE' }, [], { conflictOnly: true }).fire, false);
   const task = buildFixTask({ pr, triggers: { ...t, conflict: { ...t.conflict, remote: 'upstream' } } });
   assert.match(task, /git merge --no-ff upstream\/main/);
+  assert.match(task, /every file this branch changes against `upstream\/main` \(`git diff --name-only upstream\/main\.\.\.HEAD`; .*\), not the full suite, and commit the merge/);
   assert.equal(conflictRef({ ...t.conflict, remote: 'upstream' }), 'upstream/main');
   assert.match(task, /Never rebase, reset, fetch or force-push/);
 });
@@ -860,8 +861,8 @@ test('behind its base, and the base head passes the failing check: merge the bas
   const pr = openPr({ headSha: 'h', base: 'main', baseSha: 'B1', behindBy: 2, contexts: [named('unit'), named('lint')],
     basePassing: ['unit'], baseSettled: true, threads: [thread('T1', 5)] });
   let t = collectTriggers(pr, []);
-  assert.deepEqual([t.fire, t.conflict, t.handledKeys, t.threads, t.failures],
-    [true, { base: 'main', baseSha: 'B1', why: 'behind', checks: ['unit'] }, ['behind:unit'], [], []]);
+  assert.deepEqual([t.fire, t.conflict, t.handledKeys, t.threads, t.failures.map((f) => f.name)],
+    [true, { base: 'main', baseSha: 'B1', why: 'behind', checks: ['unit'] }, ['behind:unit'], [], ['unit']]);
   // Merged once for that check already: it is fixed by hand with the rest.
   t = collectTriggers(pr, ['behind:unit']);
   assert.deepEqual([t.conflict, t.handledKeys], [null, ['check:unit@h', 'check:lint@h', 'comment:5']]);
@@ -870,11 +871,23 @@ test('behind its base, and the base head passes the failing check: merge the bas
   assert.equal(collectTriggers({ ...pr, basePassing: [], baseFailing: ['unit'] }, []).conflict, null);
   // A re-run comes first.
   assert.equal(collectTriggers({ ...pr, contexts: [named('unit', { runId: 3 })] }, []).conflict, null);
-  // The brief: merge, nothing else.
-  const task = buildFixTask({ pr: { url: URL }, triggers: { ...collectTriggers(pr, []).conflict && { conflict: { ...collectTriggers(pr, []).conflict, remote: 'origin' } } } });
+  // The brief: merge, nothing else; the failed checks' logs name the tests to run.
+  const trig = collectTriggers(pr, []);
+  const task = buildFixTask({ pr: { url: URL }, triggers: { ...trig, failures: [{ ...trig.failures[0], databaseId: 7 }], conflict: { ...trig.conflict, remote: 'origin' } },
+    logs: [{ databaseId: 7, text: 'not ok 3 - test/foo.test.mjs' }] });
   assert.match(task, /behind its base branch `main`, whose latest commit passes checks that fail here: unit\./);
   assert.match(task, /git merge --no-ff origin\/main/);
+  assert.match(task, /run the tests that failed in those checks \(their logs are below\)\nand the tests that cover every file this branch changes against `origin\/main` .*not the full suite, and commit the merge/);
   assert.match(task, /Change nothing else in this run\./);
+  assert.match(task, /untrusted code feedback[\s\S]*Failed check: unit\n> not ok 3 - test\/foo\.test\.mjs/);
+  // A link only, or nothing: the check is named, no log is promised, no empty quote.
+  const linked = buildFixTask({ pr: { url: URL }, triggers: { failures: [{ name: 'unit', detailsUrl: 'https://ci/7' }, { context: 'ext' }], conflict: { ...trig.conflict, remote: 'origin' } } });
+  assert.doesNotMatch(linked, /logs are below|>\s*$/m);
+  assert.match(linked, /Failed check: unit\n> https:\/\/ci\/7\n\nFailed check: ext$/);
+  // The related-tests command is told its base: on its own it compares with HEAD.
+  assert.match(task, /a related-tests command of the project only with `origin\/main` given as its base/);
+  // No log to quote: no promise of one.
+  assert.doesNotMatch(buildFixTask({ pr: { url: URL }, triggers: { conflict: { ...trig.conflict, remote: 'origin' } } }), /logs are below|Failed check/);
 });
 
 test('the fix brief names the checks also failing on the base branch, to leave alone', () => {

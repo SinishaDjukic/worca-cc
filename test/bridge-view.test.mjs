@@ -10,7 +10,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { JSDOM } from 'jsdom';
 import {
-  collectProviderRow, renderCopilotSignIn, renderImportSheet, collectImportSheet,
+  collectProviderRow, renderCopilotSignIn, renderImportSheet, renderOpencodeSheet, collectImportSheet,
   renderConnectionSection, applyConnectionMode, setModelUpstream, collectConnection, connectionWhere, setConnectionWhere,
   renderCopilotRow, renderOpenRouterRow, renderEndpointRow, renderSpeechRow, renderImagesRow, renderSoundRow,
   collectImagesRow, applyImagesPreset, syncCopilotHostField,
@@ -303,6 +303,28 @@ test('import sheet: rows, disabled policy rows, status column and collect', () =
   for (const c of sheet.querySelectorAll('.mvi-cb')) c.checked = true;
   assert.deepEqual(collectImportSheet(sheet), ['gpt-5', 'claude-sonnet-4.5'], 'a disabled row is never collected, even ticked');
   const empty = renderImportSheet([], { doc });
+  assert.ok(empty.querySelector('.hist-empty'));
+  assert.equal(empty.querySelector('.mvi-go').disabled, true);
+});
+
+test('opencode import sheet: id + provider columns, inCatalog status, collect', () => {
+  const models = [
+    { id: 'openrouter/z-ai/glm-5.3-prime', provider: 'openrouter', name: 'glm-5.3-prime', inCatalog: false },
+    { id: 'opencode/beam-free', provider: 'opencode', name: 'beam-free', inCatalog: true },
+  ];
+  const sheet = renderOpencodeSheet(models, { doc });
+  assert.equal(sheet.dataset.source, 'opencode', 'app.js routes the import POST on it');
+  assert.match(sheet.querySelector('.mv-editor-title').textContent, /OpenCode/);
+  const rows = [...sheet.querySelectorAll('tbody tr')];
+  assert.equal(rows.length, 2);
+  assert.equal(rows[0].querySelector('td:nth-of-type(3)').textContent, 'openrouter');
+  assert.equal(rows[0].querySelector('.mvi-status').textContent, '—');
+  assert.equal(rows[1].querySelector('.mvi-status').textContent, 'In catalogue');
+  assert.ok(rows[0].querySelector('.mvi-id').textContent.includes('openrouter/z-ai/glm-5.3-prime'), 'the id rides beside the name');
+  assert.deepEqual(collectImportSheet(sheet), []);
+  rows[0].querySelector('.mvi-cb').checked = true;
+  assert.deepEqual(collectImportSheet(sheet), ['openrouter/z-ai/glm-5.3-prime']);
+  const empty = renderOpencodeSheet([], { doc });
   assert.ok(empty.querySelector('.hist-empty'));
   assert.equal(empty.querySelector('.mvi-go').disabled, true);
 });

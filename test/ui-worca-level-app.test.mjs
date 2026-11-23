@@ -13,7 +13,7 @@ import { useDomRelease } from './helpers/jsdom-release.mjs';
 import { readIndexHtml } from '../src/core/read-index-html.mjs';
 import { WORCA_LEVELS } from '../src/shared/worca-levels.mjs';
 import { applyLevel } from '../ui/public/ui-level.mjs';
-import { WORCA_REFRESH_EVENTS } from '../ui/public/worca-level/app-wiring.mjs';
+import { WORCA_REFRESH_EVENTS, WORCA_RETRY_MS } from '../ui/public/worca-level/app-wiring.mjs';
 
 const trackDom = useDomRelease(afterEach);
 
@@ -65,13 +65,17 @@ async function boot({ view = viewAt(1), onb = onboarding(), initialHash = '', fa
     addEventListener(type, fn) { (this.listeners[type] ||= []).push(fn); }
   };
   const calls = [];
-  const ctl = { view, onb, levelGets: 0, eventPosts: [], acks: [], failView };
+  const ctl = { view, onb, levelGets: 0, eventPosts: [], acks: [], ackBodies: [], failView, settingsFail: false };
   const json = (body) => Promise.resolve({ ok: true, status: 200, json: async () => body });
   window.fetch = (u, init = {}) => {
     const url = String(u);
     calls.push({ url, method: init.method || 'GET', body: init.body });
     if (url.includes('/api/worca-level/events')) { ctl.eventPosts.push(JSON.parse(init.body)); return Promise.resolve({ ok: true, status: 204, json: async () => ({}) }); }
-    if (url.includes('/api/worca-level/ack')) { ctl.acks.push(JSON.parse(init.body).what); return json(ctl.view); }
+    if (url.includes('/api/worca-level/ack')) { const body = JSON.parse(init.body); ctl.acks.push(body.what); ctl.ackBodies.push(body); return json(ctl.view); }
+    if (url.includes('/api/settings') && init.method === 'POST') {
+      const body = JSON.parse(init.body);
+      return ctl.settingsFail ? Promise.resolve({ ok: false, status: 500, json: async () => ({ error: 'disk full' }) }) : json({ uiLevel: body.uiLevel });
+    }
     if (url.includes('/api/worca-level')) {
       ctl.levelGets += 1;
       if (ctl.failView) return Promise.resolve({ ok: false, status: 500, json: async () => ({ error: 'boom' }) });
@@ -96,7 +100,8 @@ async function boot({ view = viewAt(1), onb = onboarding(), initialHash = '', fa
   const poke = (type) => {
     for (const s of sockets) for (const fn of s.listeners.message || []) fn({ data: JSON.stringify({ type }) });
   };
-  return { window, doc: window.document, ctl, calls, poke, levelPosts };
+  const recv = (obj) => { for (const s of sockets) for (const fn of s.listeners.message || []) fn({ data: JSON.stringify(obj) }); };
+  return { window, doc: window.document, ctl, calls, poke, recv, levelPosts };
 }
 
 const corner = (doc) => doc.getElementById('side-acct');
@@ -112,32 +117,110 @@ test('boot: the corner shows the level avatar as an <img> after the view loads',
   assert.ok(ctl.levelGets >= 1);
 });
 
+/** Hold back every 5 s timer (the level retry) so a test can fire it by hand; other timers run as usual. */
+function captureRetryTimers() {
+  const real = globalThis.setTimeout;
+  const held = [];
+  globalThis.setTimeout = (fn, ms, ...rest) => {
+    if (ms === WORCA_RETRY_MS) { held.push(fn); return 0; }
+    return real(fn, ms, ...rest);
+  };
+  return { held, restore: () => { globalThis.setTimeout = real; } };
+}
+
 test('a failed level fetch leaves the initials in the corner and throws nothing', async () => {
   const { doc, ctl } = await boot({ failView: true });
   assert.ok(ctl.levelGets >= 1, 'it tried');
   assert.equal(cornerImg(doc), null, 'no view: no image');
   assert.ok(corner(doc).querySelector('.acct-ava'));
-  assert.equal(doc.querySelector('#acct-level'), null, 'no view: no menu row');
+  assert.equal(doc.querySelector('#acct-level-card'), null, 'no view: no menu row');
   assert.ok(corner(doc).querySelector('.acct-ava').textContent.trim().length > 0, 'the initials stay');
 });
 
-test('dialogs: welcome comes before celebration; closing each acknowledges it once', async () => {
-  const { doc, window, ctl } = await boot({ view: viewAt(1, { welcome: { kind: 'new' }, celebration: LADDER[1] }) });
+test('a failed GET hides the badge and the menu level element; account options still route', async () => {
+  const timers = captureRetryTimers();
+  try {
+    const { doc, window, ctl } = await boot({ failView: true });
+    assert.ok(ctl.levelGets >= 1, 'it tried');
+    assert.equal(cornerImg(doc), null, 'no badge image');
+    assert.equal(corner(doc).querySelector('.acct-dot[data-no-level]'), null, 'no no-level dot');
+    assert.equal(doc.querySelector('#acct-level-card'), null, 'no level element in the menu');
+    click(window, doc.getElementById('acct-settings'));
+    await settle();
+    assert.equal(window.location.hash, '#settings', 'an account option still routes');
+  } finally { timers.restore(); }
+});
+
+test('a failed GET schedules exactly one retry after WORCA_RETRY_MS, which paints the level on success', async () => {
+  assert.equal(WORCA_RETRY_MS, 5000);
+  const timers = captureRetryTimers();
+  try {
+    const { doc, ctl } = await boot({ view: viewAt(2), failView: true });
+    assert.equal(timers.held.length, 1, 'one retry is waiting');
+    const before = ctl.levelGets;
+    ctl.failView = false;
+    timers.held[0]();
+    await until(() => cornerImg(doc));
+    assert.equal(ctl.levelGets, before + 1);
+    assert.equal(cornerImg(doc).getAttribute('alt'), 'Runner');
+    assert.equal(timers.held.length, 1, 'a success schedules no further retry');
+  } finally { timers.restore(); }
+});
+
+const NO_LEVEL_VIEW = (missing = ['setup', 'provider']) => ({
+  count: 5, level: null, setup: { finished: !missing.includes('setup'), providerSignedIn: !missing.includes('provider'), missing },
+  progress: { done: 0, total: 2, unit: 'items' }, next: [], nextLevel: LADDER[0], top: false,
+  ladder: LADDER.map((l) => ({ ...l, state: l.index === 1 ? 'next' : 'later', reachedAt: null, items: [] })),
+  celebration: null, summary: null, nudge: null, modeSuggestion: null,
+});
+
+test('a view that fails the shape check counts as a failure and retries once, then waits for a poke', async () => {
+  const timers = captureRetryTimers();
+  try {
+    const { doc, ctl, poke } = await boot({ view: { level: 'nonsense' } });
+    assert.equal(cornerImg(doc), null);
+    assert.equal(timers.held.length, 1, 'the malformed view schedules the retry');
+    timers.held[0]();
+    await settle();
+    assert.equal(timers.held.length, 1, 'a second failure schedules nothing more');
+    const before = ctl.levelGets;
+    ctl.view = viewAt(2);
+    poke('hello');
+    await until(() => cornerImg(doc));
+    assert.equal(ctl.levelGets, before + 1, 'a reconnect hello refetches');
+  } finally { timers.restore(); }
+});
+
+test('a hello after a failure refetches and paints the level', async () => {
+  const timers = captureRetryTimers();
+  try {
+    const { doc, ctl, poke } = await boot({ view: viewAt(2), failView: true });
+    assert.equal(cornerImg(doc), null);
+    const before = ctl.levelGets;
+    ctl.failView = false;
+    poke('hello');
+    const img = await until(() => cornerImg(doc));
+    assert.ok(img, 'the level is painted');
+    assert.equal(ctl.levelGets, before + 1);
+  } finally { timers.restore(); }
+});
+
+test('WORCA_REFRESH_EVENTS contains hello so a reconnect refetches', () => {
+  assert.ok(WORCA_REFRESH_EVENTS.has('hello'));
+});
+
+test('dialogs: a view that still carries a welcome opens nothing; the celebration alone opens and is acknowledged once', async () => {
+  const { doc, window, ctl } = await boot({ view: viewAt(1, { welcome: { kind: 'new' }, celebration: LADDER[2] }) });
   const dlg = await until(() => doc.querySelector('.worca-dlg'));
-  assert.equal(dlg.dataset.dialog, 'welcome-new', 'welcome comes before celebration');
+  assert.equal(dlg.dataset.dialog, 'celebration', 'there is no levels welcome');
   click(window, dlg.querySelector('.worca-dlg-close'));
   await settle();
-  assert.deepEqual(ctl.acks, ['welcome']);
-  const next = await until(() => doc.querySelector('.worca-dlg'));
-  assert.equal(next.dataset.dialog, 'celebration', 'then the celebration, never both at once');
-  click(window, next.querySelector('.worca-dlg-close'));
-  await settle();
-  assert.deepEqual(ctl.acks, ['welcome', 'celebration']);
+  assert.deepEqual(ctl.acks, ['celebration']);
   assert.equal(doc.querySelector('.worca-dlg'), null);
 });
 
 test('dialogs: a celebration opens when the view carries one and there is no welcome', async () => {
-  const { doc, window, ctl } = await boot({ view: viewAt(2, { celebration: LADDER[1] }) });
+  const { doc, window, ctl } = await boot({ view: viewAt(3, { celebration: LADDER[2] }) });
   const dlg = await until(() => doc.querySelector('.worca-dlg'));
   assert.equal(dlg.dataset.dialog, 'celebration');
   click(window, dlg.querySelector('.worca-dlg-close'));
@@ -146,9 +229,9 @@ test('dialogs: a celebration opens when the view carries one and there is no wel
   assert.equal(doc.querySelector('.worca-dlg'), null, 'a closed dialog does not reopen from the same view');
 });
 
-test('dialogs: nothing opens while the first-run welcome is up; it opens once that is dismissed', async () => {
+test('dialogs: nothing opens while the first-run welcome is up; the celebration opens once that is dismissed', async () => {
   const { doc, window, ctl } = await boot({
-    view: viewAt(1, { welcome: { kind: 'new' } }),
+    view: viewAt(1, { welcome: { kind: 'new' }, celebration: LADDER[0] }),
     onb: onboarding({ welcomeSeen: false }),
   });
   assert.equal(doc.getElementById('welcome-modal').classList.contains('hidden'), false, 'precondition: the first-run welcome is up');
@@ -156,13 +239,13 @@ test('dialogs: nothing opens while the first-run welcome is up; it opens once th
   click(window, doc.querySelector('#welcome-modal .ob-skip'));
   const dlg = await until(() => doc.querySelector('.worca-dlg'));
   assert.ok(dlg, 'and follows the welcome');
-  assert.equal(dlg.dataset.dialog, 'welcome-new');
+  assert.equal(dlg.dataset.dialog, 'celebration');
   assert.deepEqual(ctl.acks, []);
 });
 
-test('dialogs: nothing opens while the setup assistant is up; it opens once that closes', async () => {
+test('dialogs: nothing opens while the setup assistant is up; the celebration opens once that closes', async () => {
   const { doc, window } = await boot({
-    view: viewAt(1, { welcome: { kind: 'existing' } }),
+    view: viewAt(1, { celebration: LADDER[0] }),
     onb: onboarding({ welcomeSeen: false, fresh: true }),
   });
   assert.ok(doc.getElementById('setup-modal'), 'precondition: the assistant is up');
@@ -173,7 +256,7 @@ test('dialogs: nothing opens while the setup assistant is up; it opens once that
   assert.equal(doc.querySelector('.worca-dlg'), null);
   click(window, await until(() => doc.querySelector('#welcome-modal:not(.hidden) .ob-skip')));
   const dlg = await until(() => doc.querySelector('.worca-dlg'));
-  assert.equal(dlg.dataset.dialog, 'welcome-existing');
+  assert.equal(dlg.dataset.dialog, 'celebration');
 });
 
 test('refresh: pokes coalesce into one refetch and the corner repaints with the new level', async () => {
@@ -227,22 +310,38 @@ test('refresh: answers that arrive out of order never paint the older level', as
   assert.equal(cornerImg(doc).getAttribute('src'), '/assets/worca-levels/hooked.svg');
 });
 
-test('account menu: the level card opens #profile/level, is the menu\'s first item and follows the level', async () => {
+test('account menu: the level card links to #profile/level, is the menu\'s first item and follows the level', async () => {
   const { doc, window, ctl, poke } = await boot({ view: viewAt(2) });
   const card = await until(() => doc.querySelector('#acct-menu #acct-level-card'));
   assert.ok(card, 'the card is mounted in the account menu');
   assert.equal(card.dataset.hash, 'profile/level');
+  assert.equal(card.dataset.nav, 'profile');
   assert.match(card.textContent, /Runner/);
   assert.match(card.textContent, /To Hooked/);
+  assert.match(card.textContent, /View level/);
   assert.equal(card, doc.getElementById('acct-menu').firstElementChild, 'the first item of the account menu');
   assert.equal(card.nextElementSibling?.id, 'acct-id', '"Signed in as" follows it');
   ctl.view = viewAt(3);
   poke('worca-level-changed');
   await until(() => /Hooked/.test(doc.querySelector('#acct-level-card .wl-card-name')?.textContent || ''));
   assert.equal(doc.querySelectorAll('#acct-level-card').length, 1, 'repainted in place, never duplicated');
-  click(window, doc.querySelector('#acct-level-card'));
+});
+
+test('account menu: clicking the compact level card goes straight to #profile/level and closes the menu, opening nothing else', async () => {
+  const { doc, window } = await boot({ view: viewAt(2) });
+  const card = await until(() => doc.querySelector('#acct-menu #acct-level-card'));
+  const menu = doc.getElementById('acct-menu');
+  doc.getElementById('side-acct').click();
+  await settle();
+  assert.equal(menu.hidden, false, 'the menu is open');
+  const OVERLAYS = '.worca-hover-card, .worca-dlg, .viewer-modal:not(.hidden):not([hidden]), [role="dialog"]:not([hidden]):not(.hidden), [role="group"][aria-label="Your worca level"]';
+  const before = doc.querySelectorAll(OVERLAYS).length;
+  click(window, card);
   await settle();
   assert.equal(window.location.hash, '#profile/level');
+  assert.equal(menu.hidden, true, 'the menu closed');
+  assert.equal(doc.querySelectorAll(OVERLAYS).length, before, 'no popover, dialog or card opened');
+  assert.equal(doc.body.querySelector('.wl-hc-head, .wl-try, .wl-profile-link'), null, 'no expanded card content anywhere');
 });
 
 test('refresh: a failed refetch keeps the last view in the corner', async () => {
@@ -269,32 +368,16 @@ test('I-6: a level-up leaves <html data-level> alone and never writes the interf
   assert.deepEqual(writes, [], 'no settings or flag write');
 });
 
-test('stats: showView(stats) posts stats-viewed once per navigation', async () => {
+test('stats: opening it posts nothing to the level events endpoint and does not refetch (D-19)', async () => {
   const { window, ctl, levelPosts } = await boot({ view: viewAt(1) });
+  const before = ctl.levelGets;
   const go = async (hash) => { window.location.hash = hash; window.dispatchEvent(new window.Event('hashchange')); await settle(); };
   await go('#stats');
-  assert.deepEqual(levelPosts(), ['stats-viewed']);
-  await go('#stats');
-  assert.equal(ctl.eventPosts.length, 1, 'staying on the page posts nothing more');
   await go('#chat');
   await go('#stats');
-  assert.equal(ctl.eventPosts.length, 2, 'a new navigation posts again');
-});
-
-test('stats: a failed event post is logged and never thrown into the view', async () => {
-  const { window, ctl } = await boot({ view: viewAt(1) });
-  const warns = [];
-  const orig = globalThis.console.warn;
-  globalThis.console.warn = (...a) => warns.push(a.join(' '));
-  const realFetch = globalThis.fetch;
-  globalThis.fetch = (u, init) => (String(u).includes('/api/worca-level/events') ? Promise.reject(new Error('offline')) : realFetch(u, init));
-  window.location.hash = '#stats';
-  window.dispatchEvent(new window.Event('hashchange'));
-  await settle();
-  globalThis.console.warn = orig;
-  assert.equal(window.document.querySelector('.view[data-view="stats"]').classList.contains('hidden'), false, 'the view still opens');
-  assert.ok(warns.some((w) => /offline/.test(w)), 'the error is logged');
-  assert.deepEqual(ctl.eventPosts, []);
+  await wait(400);
+  assert.deepEqual(levelPosts(), []);
+  assert.equal(ctl.levelGets, before);
 });
 
 test('getting started: the shelf carries the level line, looking ahead at Curious and saying where you stand after', async () => {
@@ -313,38 +396,111 @@ test('getting started: the shelf carries the level line, looking ahead at Curiou
   assert.match(doc.querySelector('#getting-started-host .gs-level-line').textContent, /You are Hooked, level 3 of 5/);
 });
 
-test('hover card: hovering the corner shows the level card from the loaded view', async () => {
+test('no element with role=group "Your worca level" is ever created', async () => {
   const { doc, window } = await boot({ view: viewAt(2) });
   await until(() => cornerImg(doc));
-  corner(doc).dispatchEvent(new window.Event('mouseenter'));
-  const card = await until(() => doc.querySelector('.worca-hover-card'), 2000);
-  assert.ok(card, 'the card opens');
-  assert.equal(card.querySelector('.wl-hc-name').textContent, 'Runner');
+  const groups = () => doc.querySelectorAll('[role="group"][aria-label="Your worca level"], .worca-hover-card');
+  const mo = new window.MutationObserver(() => {});
+  mo.observe(doc.body, { childList: true, subtree: true });
+  for (const type of ['mouseenter', 'mouseover', 'focus']) corner(doc).dispatchEvent(new window.Event(type, { bubbles: true }));
+  await wait(600);
+  assert.equal(groups().length, 0, 'hovering or focusing the corner creates nothing');
+  click(window, corner(doc));
+  await settle();
+  assert.equal(groups().length, 0, 'opening the menu creates no such group either');
+  mo.disconnect();
+});
+
+test('a level-0 view shows initials with the dot, the no-level menu card, and polls nothing (R-po-1, R-po-25, R-po-27)', async () => {
+  const timers = captureRetryTimers();
+  try {
+    const { doc, window, ctl } = await boot({ view: NO_LEVEL_VIEW(['provider']) });
+    await settle();
+    assert.equal(cornerImg(doc), null, 'no avatar image');
+    assert.ok(corner(doc).querySelector('.acct-ava').textContent.trim().length > 0, 'the initials show');
+    assert.ok(corner(doc).querySelector('.acct-dot[data-no-level]'), 'the no-level dot');
+    assert.equal(doc.querySelectorAll('[aria-label="Your worca level"], .worca-hover-card').length, 0);
+    const card = doc.querySelector('#acct-menu #acct-level-card');
+    assert.ok(card, 'the menu carries the no-level card');
+    assert.match(card.textContent, /Sign in to a model provider/);
+    click(window, card.querySelector('.wl-menu-act'));
+    await settle();
+    assert.equal(timers.held.length, 0, 'a level-0 view is a good view: no retry is armed');
+    const gets = ctl.levelGets;
+    await wait(300);
+    assert.equal(ctl.levelGets, gets, 'and nothing polls');
+  } finally { timers.restore(); }
+});
+
+test('the corner dot goes away once a level is held, and a null view never shows it (I-7)', async () => {
+  const { doc, ctl, poke } = await boot({ view: NO_LEVEL_VIEW() });
+  await until(() => corner(doc).querySelector('.acct-dot[data-no-level]'));
+  ctl.view = viewAt(1);
+  poke('onboarding-changed');
+  await until(() => cornerImg(doc));
+  assert.equal(corner(doc).querySelector('.acct-dot[data-no-level]'), null, 'a level is held: no dot');
+  const failed = await boot({ failView: true });
+  assert.equal(corner(failed.doc).querySelector('.acct-dot[data-no-level]'), null, 'no view: no dot');
+});
+
+test('the Getting started pill repaints from the level view once it arrives and after each real run (M4)', async () => {
+  const withRuns = (n) => viewAt(1, { runner: { realRuns: n, of: 3, stepsDone: 4, stepsOf: 6 } });
+  const { doc, ctl, poke } = await boot({ view: withRuns(0), onb: onboarding({ setupFinished: true }) });
+  const text = () => doc.querySelector('.gs-pill')?.textContent || '';
+  await until(() => /Runner · \d of 7/.test(text()));
+  assert.match(text(), /Runner · 1 of 7/, 'the level view reached the pill, not the old "Getting started 1/9"');
+  ctl.view = withRuns(3);
+  poke('pipelines-changed');
+  await until(() => /Runner · 2 of 7/.test(text()));
+  assert.match(text(), /Runner · 2 of 7/, 'the third real run moves it');
+});
+
+const suggestion = (doc) => doc.querySelector('#mode-suggest-banner');
+/** Boot with the interface mode at Simple, so the suggestion has somewhere to go, and repaint once. */
+async function bootSimple(opts) {
+  const b = await boot(opts);
+  b.doc.documentElement.dataset.level = 'simple';
+  b.poke('onboarding-changed');
+  return b;
+}
+const tryButton = (doc) => [...doc.querySelectorAll('#mode-suggest-banner button')].find((b) => /^Try /.test(b.textContent));
+
+test('accepting the mode suggestion acks "accepted" only after the mode saved; a refused save acks nothing (R-po-15, I-10)', async () => {
+  const failing = await bootSimple({ view: viewAt(3, { modeSuggestion: 'advanced' }) });
+  failing.ctl.settingsFail = true;
+  await until(() => tryButton(failing.doc));
+  click(failing.window, tryButton(failing.doc));
+  await settle(12);
+  assert.deepEqual(failing.ctl.ackBodies.filter((b) => b.what === 'mode-suggestion'), [], 'the mode was not changed, so nothing is recorded');
+  const ok = await bootSimple({ view: viewAt(3, { modeSuggestion: 'advanced' }) });
+  await until(() => tryButton(ok.doc));
+  click(ok.window, tryButton(ok.doc));
+  await until(() => ok.ctl.ackBodies.some((b) => b.what === 'mode-suggestion'));
+  assert.deepEqual(ok.ctl.ackBodies.find((b) => b.what === 'mode-suggestion'), { what: 'mode-suggestion', mode: 'advanced', answer: 'accepted' });
+});
+
+test('a dismissed mode banner stays dismissed on the next repaint of the same session (m1)', async () => {
+  const { doc, window, ctl } = await bootSimple({ view: viewAt(3, { modeSuggestion: 'advanced' }) });
+  const dismiss = await until(() => doc.querySelector('#mode-suggest-banner .btn-icon'));
+  ctl.view = viewAt(3, { modeSuggestion: null });   // what the server answers once the dismissal is stored
+  click(window, dismiss);
+  await until(() => ctl.ackBodies.some((b) => b.what === 'mode-suggestion'));
+  await settle(12);
+  ctl.view = viewAt(3, { modeSuggestion: 'advanced' });   // a stale read, as if no change event had come
+  window.dispatchEvent(new window.Event('worca:level'));
+  await settle(8);
+  assert.equal(suggestion(doc), null, 'it does not come back');
 });
 
 const goTo = async (window, hash) => { window.location.hash = hash; window.dispatchEvent(new window.Event('hashchange')); await settle(); };
 
-test('team-metrics: opening it posts team-metrics-viewed, then re-fetches the level (R-po-33)', async () => {
-  const { window, ctl, calls, levelPosts } = await boot({ view: viewAt(3) });
+test('team-metrics: opening it posts nothing and does not refetch the level (D-19)', async () => {
+  const { window, ctl, levelPosts } = await boot({ view: viewAt(3) });
   const before = ctl.levelGets;
   await goTo(window, '#team-metrics');
-  await until(() => ctl.levelGets === before + 1);
-  assert.deepEqual(levelPosts(), ['team-metrics-viewed']);
-  assert.equal(ctl.levelGets, before + 1, 'one refetch');
-  const post = calls.findIndex((c) => c.url.includes('/api/worca-level/events'));
-  const refetch = calls.findIndex((c, i) => i > post && /\/api\/worca-level\?/.test(c.url));
-  assert.ok(post >= 0 && refetch > post, 'the refetch comes after the post');
   await goTo(window, '#team-metrics/timeline');
   await wait(400);
-  assert.equal(levelPosts().length, 1, 'a tab hop on the same page posts nothing more');
-});
-
-test('stats: opening it posts only stats-viewed and does not refetch the level', async () => {
-  const { window, ctl, levelPosts } = await boot({ view: viewAt(1) });
-  const before = ctl.levelGets;
-  await goTo(window, '#stats');
-  await wait(400);
-  assert.deepEqual(levelPosts(), ['stats-viewed']);
+  assert.deepEqual(levelPosts(), []);
   assert.equal(ctl.levelGets, before);
 });
 
@@ -445,4 +601,74 @@ test('R-po-14: the Try next link to Schedules opens the page in Simple, with the
   assert.equal(window.location.hash, '#schedules');
   assert.equal(doc.querySelector('.view[data-view="schedules"]').classList.contains('hidden'), false);
   assert.equal(doc.getElementById('level-banner').hidden, false);
+});
+
+// ---- the celebration gate (D-13, D-14) ----
+
+const liveRun = (runId, status = 'running') => ({ runId, title: runId, projectDir: '/tmp/p', status, kind: 'run', startedAt: '10:00:00', pendingQuestion: null });
+
+test('D-13: reaching Runner while on #running/<live id> shows nothing; opening #history/<p>/<id> shows the celebration once', async () => {
+  const { doc, window, ctl, poke, recv } = await boot({ view: viewAt(1) });
+  await until(() => cornerImg(doc));
+  recv({ type: 'hello', runs: [liveRun('r1')] });
+  await goTo(window, '#running/r1');
+  ctl.view = viewAt(2, { celebration: LADDER[1] });
+  poke('worca-level-changed');
+  await until(() => /Runner/.test(doc.querySelector('#acct-level-card .wl-card-name')?.textContent || ''));
+  await settle();
+  assert.equal(doc.querySelector('.worca-dlg'), null, 'a live run on screen: nothing');
+  await goTo(window, '#history/proj/abc');
+  const dlg = await until(() => doc.querySelector('.worca-dlg'));
+  assert.equal(dlg?.dataset.dialog, 'celebration');
+  click(window, dlg.querySelector('.worca-dlg-close'));
+  await settle();
+  assert.deepEqual(ctl.acks, ['celebration']);
+  poke('worca-level-changed');
+  await wait(400);
+  assert.equal(doc.querySelector('.worca-dlg'), null, 'shown once');
+});
+
+test('D-13: Runner also shows once the run on screen has ended', async () => {
+  const { doc, ctl, poke, recv, window } = await boot({ view: viewAt(1) });
+  await until(() => cornerImg(doc));
+  recv({ type: 'hello', runs: [liveRun('r1')] });
+  await goTo(window, '#running/r1');
+  ctl.view = viewAt(2, { celebration: LADDER[1] });
+  poke('worca-level-changed');
+  await wait(400);
+  assert.equal(doc.querySelector('.worca-dlg'), null);
+  recv({ type: 'hello', runs: [liveRun('r1', 'done')] });
+  poke('worca-level-changed');
+  assert.ok(await until(() => doc.querySelector('.worca-dlg')), 'the finished run is a result route');
+});
+
+test('D-14: a guide, the open account menu and a second level in one session each hold the dialog back', async () => {
+  const { doc, window, ctl, poke } = await boot({ view: viewAt(2) });
+  await until(() => cornerImg(doc));
+  const layer = doc.createElement('div');
+  layer.className = 'guide-layer spotlight';
+  layer.innerHTML = '<div class="guide-scrim"></div>';
+  doc.body.append(layer);
+  ctl.view = viewAt(3, { celebration: LADDER[2] });
+  poke('worca-level-changed');
+  await until(() => /Hooked/.test(doc.querySelector('#acct-level-card .wl-card-name')?.textContent || ''));
+  await settle();
+  assert.equal(doc.querySelector('.worca-dlg'), null, 'a guide is lit');
+  layer.remove();
+  const menu = doc.getElementById('acct-menu');
+  menu.hidden = false;
+  poke('worca-level-changed');
+  await wait(400);
+  assert.equal(doc.querySelector('.worca-dlg'), null, 'the menu is open');
+  menu.hidden = true;
+  poke('worca-level-changed');
+  const dlg = await until(() => doc.querySelector('.worca-dlg'));
+  assert.ok(dlg, 'free to show');
+  click(window, dlg.querySelector('.worca-dlg-close'));
+  await settle();
+  assert.equal(window.sessionStorage.getItem('worca-level:shown-in-session'), '1');
+  ctl.view = viewAt(4, { celebration: LADDER[3] });
+  poke('worca-level-changed');
+  await wait(400);
+  assert.equal(doc.querySelector('.worca-dlg'), null, 'the second level waits for the next session');
 });

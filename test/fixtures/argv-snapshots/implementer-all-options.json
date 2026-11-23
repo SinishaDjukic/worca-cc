@@ -40,6 +40,7 @@
     "CLAUDE_CODE_MAX_TOOL_USE_CONCURRENCY": "8",
     "CLAUDE_CODE_TMPDIR": "/abs/run/.scratch",
     "TMPDIR": "/abs/run/.scratch",
+    "WORCA_HOME": "<AGENT_HOME>",
     "WORCA_HOST_PID": "<PID>",
     "WORCA_TEST_CONCURRENCY": "<N>"
   }

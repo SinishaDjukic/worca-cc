@@ -212,15 +212,15 @@ export function otherHarnessPrivacy(modelLabel, harnessName) {
   return `Worca sends each file to ${modelLabel} on ${harnessName} to read it. Text is checked for keys and passwords first. ${harnessName} gets files as text: PDFs and images are skipped.`;
 }
 
-// ── 9c boards 3, 4, 9: the feature's model chip, its dialog, the switch confirm, the brief's box and Refresh dialog ──
+// ── 9c boards 3, 4, 9: the feature's model button, its dialog, the switch confirm, the brief's box and Refresh dialog ──
 
-/** The chip after the cost chip (board 3): a button that names the model and harness and opens the dialog. */
-export function modelChip(doc, f, onOpen = () => {}) {
-  const b = node(doc, 'button', 'chip req-model-chip');
+/** The button after the cost button (board 3): a button that names the model and harness and opens the dialog. */
+export function modelButton(doc, f, onOpen = () => {}) {
+  const b = node(doc, 'button', 'btn btn-sm req-model-btn');
   b.type = 'button';
   b.setAttribute('aria-haspopup', 'dialog');
-  b.setAttribute('data-ui', 'model-chip');
-  b.append(f.modelLabel);
+  b.setAttribute('data-ui', 'model-btn');
+  b.append(node(doc, 'span', 'req-model-btn-label', f.modelLabel));   // its own box, so a long label ends in … on a narrow page
   const svg = doc.createElementNS(SVG_NS, 'svg');
   for (const [k, v] of Object.entries({ width: 12, height: 12, viewBox: '0 0 24 24', fill: 'none', stroke: 'currentColor', 'stroke-width': 2,
     'stroke-linecap': 'round', 'stroke-linejoin': 'round', 'aria-hidden': 'true' })) svg.setAttribute(k, String(v));
@@ -394,7 +394,7 @@ export function costWord(kind, amount, nothing = false) {
 
 /** The cost of several steps (a feature, its code looks) in the same words: "cost unknown" when no money is booked and some step's
  *  cost is unknown, "≈$0.04" when any part is estimated, else the money ("$0.00" only when nothing was booked at all). Money beside
- *  unknown steps is said as it is, as the page chip does. */
+ *  unknown steps is said as it is, as the page button does. */
 export function totalCostWord(amount, { unknownSteps = 0, anyEstimated = false } = {}) {
   if (!(Number(amount) > 0) && Number(unknownSteps) > 0) return 'cost unknown';
   return `${anyEstimated && Number(amount) > 0 ? '≈' : ''}${usd(amount)}`;

@@ -62,6 +62,7 @@ import { homedir, availableParallelism } from 'node:os';
 import { randomBytes } from 'node:crypto';
 import {
   EFFORTS, CODEX_EFFORTS, effortsForEngine, MODEL_ENGINES, RUN_ENGINES, ASK_ENGINES, HELPER_ENGINES, OWN_SIGNIN_ENGINES, aModelOf, ownSignInNote, modelIdProblem, SUBAGENT_MODELS, isReservedModelEnvKey, assertModelCost, envFlag,
+  OPENCODE_ZEN_RE,
   assertModelUpstream, upstreamEnvConflict, modelEnvRef, codexUpstreamProblem,
   UPSTREAM_PROVIDERS, COPILOT_ACCOUNT_TYPES, DEFAULT_PROVIDER_CONCURRENCY, MAX_PROVIDER_CONCURRENCY,
   isUpstreamBaseUrl, REASONING_EFFORT_LEVELS, OPENROUTER_SORTS,
@@ -2300,10 +2301,13 @@ function sanitizeGlobalModel(raw) {
       for (const k of Object.keys(env)) if (upstreamEnvConflict({ [k]: env[k] })) delete env[k];
     }
   }
+  // OpenCode Zen's free models (`opencode/…`) take no reasoning variant — OpenCode 2.3.1+ refuses a `#variant`
+  // outright — so a Zen entry advertises no efforts (pickers offer none, and a pick's effort never spawns).
+  const zen = engine === 'opencode' && OPENCODE_ZEN_RE.test(id);
   return {
     id,
     label,
-    efforts: effortsForEngine(engine).length ? (efforts.length ? efforts : [...effortsForEngine(engine)]) : [],
+    efforts: zen ? [] : (effortsForEngine(engine).length ? (efforts.length ? efforts : [...effortsForEngine(engine)]) : []),
     ...(engine !== 'claude' ? { engine } : {}),
     ...(Object.keys(env).length ? { env } : {}),
     ...(cost ? { cost } : {}),
@@ -2817,8 +2821,8 @@ export async function updateProvider(name, patch = {}, { dryRun = false, expectC
 // the catalog or /api/models. Keys are literal or a whole-value ${VAR}, resolved at
 // use time by resolveProviderSecret like every provider key.
 const SPEECH_DEFAULTS = Object.freeze({
-  // pause: seconds of silence that end an utterance (the voice detector's wait), any engine.
-  stt: Object.freeze({ engine: 'browser', baseUrl: 'http://127.0.0.1:8080/v1', model: 'whisper-1', language: 'auto', pause: 1.2 }),
+  // pause: pause after a finished sentence; unfinished sentences wait 2.5× (browser STT).
+  stt: Object.freeze({ engine: 'browser', baseUrl: 'http://127.0.0.1:8080/v1', model: 'whisper-1', language: 'auto', pause: 0.7 }),
   tts: Object.freeze({ engine: 'browser', baseUrl: '', model: 'tts-1', voice: 'af_heart', speed: 1 }),
 });
 const SPEECH_FIELDS = Object.freeze({
@@ -3249,13 +3253,15 @@ export async function writeStoredFlags(map) {
 }
 
 // ── Getting started (onboarding) ─────────────────────────────────────────────
-// Three machine-wide flags, nothing more: which steps are DONE is derived from
+// Five machine-wide flags, nothing more: which steps are DONE is derived from
 // product state by src/core/onboarding.mjs and never stored. `hidden` is the
 // checklist's Hide (Settings › General › Getting started shows it again);
 // `welcomeSeen` is the one-time welcome dialog; `workspaceGuideSeen` is the
 // "How workspaces work" walkthrough (FEAT-7) — set on every open, cleared when
-// the last workspace is deleted. All absent = all false.
-const ONBOARDING_FLAGS = Object.freeze(['hidden', 'welcomeSeen', 'workspaceGuideSeen']);
+// the last workspace is deleted. `setupFinished` records that the Setup Assistant was completed
+// (install-wide, like the setup); `setupChecked` is the boot marker that credits an install that
+// predates it exactly once (onboarding.mjs#ensureSetupMarker). All absent = all false.
+const ONBOARDING_FLAGS = Object.freeze(['hidden', 'welcomeSeen', 'workspaceGuideSeen', 'setupFinished', 'setupChecked']);
 
 export function onboardingPrefs() {
   const o = readSettings().onboarding;

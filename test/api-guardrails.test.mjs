@@ -12,6 +12,7 @@ import { join } from 'node:path';
 
 import { useTempHome } from './helpers/temp-home.mjs';
 import { checkRows } from './helpers/rows.mjs';
+import { stopAndSettle } from './helpers/stop-and-settle.mjs';
 
 // Outer isolation that outlives the per-suite before/after (async orchestrator
 // writes after /api/run must land in temp, not ~) — the api-workflows pattern.
@@ -34,6 +35,9 @@ before(async () => {
 });
 
 after(async () => {
+  // The /api/run tests leave mock runs whose teardown still writes into homeDir after `done`.
+  const { runs } = await import('../ui/server.mjs');
+  await stopAndSettle(runs);
   if (srv) await new Promise((r) => srv.close(r));
   if (prevHome === undefined) delete process.env.WORCA_HOME; else process.env.WORCA_HOME = prevHome;
   delete process.env.WORCA_MOCK;

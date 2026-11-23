@@ -621,6 +621,30 @@ test('archive keeps a run branch that another live same-branch run committed ont
   }
 });
 
+test('purgePipeline stores credit_key from started_by (lowercased) and still nulls started_by; an existing credit_key is kept', async () => {
+  const prev = process.env.WORCA_HOME;
+  try {
+    const a = await freshStore(await freshRepo(), { id: 'cccc0001', base: 'credit-a', datePrefix: '01-01-26', status: 'done', title: 'A' });
+    getDb().prepare("UPDATE pipelines SET started_by = 'Ana@X.io' WHERE id = ?").run('cccc0001');
+    await purgePipeline({ key: a.key, id: 'cccc0001' });
+    const row = getDb().prepare('SELECT started_by, credit_key, deleted_at FROM pipelines WHERE id = ?').get('cccc0001');
+    assert.equal(row.started_by, null);
+    assert.equal(row.credit_key, 'ana@x.io');
+    assert.ok(row.deleted_at);
+
+    const b = await freshStore(await freshRepo(), { id: 'cccc0002', base: 'credit-b', datePrefix: '01-01-26', status: 'done', title: 'B' });
+    getDb().prepare("UPDATE pipelines SET started_by = 'bob@x.io', credit_key = 'kept@x.io' WHERE id = ?").run('cccc0002');
+    await purgePipeline({ key: b.key, id: 'cccc0002' });
+    assert.equal(getDb().prepare('SELECT credit_key FROM pipelines WHERE id = ?').get('cccc0002').credit_key, 'kept@x.io');
+
+    const c = await freshStore(await freshRepo(), { id: 'cccc0003', base: 'credit-c', datePrefix: '01-01-26', status: 'done', title: 'C' });
+    await purgePipeline({ key: c.key, id: 'cccc0003' });
+    assert.equal(getDb().prepare('SELECT credit_key FROM pipelines WHERE id = ?').get('cccc0003').credit_key, null, 'no owner: no credit');
+  } finally {
+    if (prev === undefined) delete process.env.WORCA_HOME; else process.env.WORCA_HOME = prev;
+  }
+});
+
 test('purgePipeline: files and local branch go, the row stays anonymised with its cost; feeds skip it; restore refuses it', async () => {
   const id = 'dddd0001';
   const prev = process.env.WORCA_HOME;

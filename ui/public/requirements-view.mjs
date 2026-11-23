@@ -17,7 +17,7 @@ import { openRunSetupOverlay, RUN_IN_PROGRESS_TEXT } from './run-setup-overlay.m
 import { STATE, READY_CHECKS, RUN_LIVE, liveStart, readyText } from './feature-pull/labels.mjs';
 import { START_AGAIN_TEXT } from './feature-pull/run-flow.mjs';
 import { engineLabel } from '../../src/shared/engine-switch.mjs';
-import { whoInterviews, recommendationNote, defaultLine, fallbackLine, harnessLine, otherHarnessPrivacy, modelChip, modelDialog, switchConfirm, choiceBox,
+import { whoInterviews, recommendationNote, defaultLine, fallbackLine, harnessLine, otherHarnessPrivacy, modelButton, modelDialog, switchConfirm, choiceBox,
   briefRefreshDialog, stepMeta, stepNotices, costDialog, costWord, totalCostWord } from './requirements-model.mjs';
 import {
   ATTACH_BINARY, ATTACH_TEXT_EXT, extOf, checkAttachment, bytesToBase64, carriesFiles, pastedFiles, createPasteNamer, REQ_ATTACH, reqLimits,
@@ -3622,7 +3622,7 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
           busy = false;
           closeDialog(false);
           await paint();
-          const chip = host.querySelector('[data-ui="model-chip"]');   // the header was rebuilt: the new chip takes the focus
+          const chip = host.querySelector('[data-ui="model-btn"]');   // the header was rebuilt: the new button takes the focus
           if (chip) chip.focus();
         } catch (err) {
           busy = false; saveBtn.disabled = false;
@@ -3635,7 +3635,7 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
   }
 
   /** The header chip: "Cost unknown so far" when every step's cost is unknown, else the money (≈ when any part is estimated). */
-  const costChipText = (f) => (!(Number(f.costUsd) > 0) && Number(f.unknownSteps) > 0 ? 'Cost unknown so far' : `${f.anyEstimated ? '≈' : ''}${usd(f.costUsd)} so far`);
+  const costButtonText = (f) => (!(Number(f.costUsd) > 0) && Number(f.unknownSteps) > 0 ? 'Cost unknown so far' : `${f.anyEstimated ? '≈' : ''}${usd(f.costUsd)} so far`);
   /** Board 6: the cost list, from GET /:seq/costs; the focus goes into the dialog and back to the chip. */
   async function openCostDialog(f, trigger) {
     closeDialog(false);
@@ -3675,9 +3675,9 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
         h('div', { class: 'req-chips' },
           h('span', { class: 'chip', text: targetLabel(f) }),
           h('span', { class: 'chip', text: done ? `Interview done · ${plural(rounds, 'round')}` : `Round ${Math.min(rounds || 1, MAX_ROUNDS)} of ${MAX_ROUNDS}` }),
-          h('button', { type: 'button', class: 'chip req-cost-chip', 'data-ui': 'cost-chip', 'aria-haspopup': 'dialog',
-            onclick: (e) => { void openCostDialog(f, e.currentTarget); } }, costChipText(f)),
-          f.modelLabel ? modelChip(document, f, (btn) => { void openModelDialog(f, btn); }) : null,   // 9c board 3: after the cost chip
+          h('button', { type: 'button', class: 'btn btn-sm req-cost-btn', 'data-ui': 'cost-btn', 'aria-haspopup': 'dialog',
+            onclick: (e) => { void openCostDialog(f, e.currentTarget); } }, costButtonText(f)),
+          f.modelLabel ? modelButton(document, f, (btn) => { void openModelDialog(f, btn); }) : null,   // 9c board 3: after the cost button
           (f.attachments || []).length ? h('span', { class: 'chip', text: plural(f.attachments.length, 'file') }) : null,   // A8 (board 16)
           f.savedPath ? h('span', { class: 'chip', text: `Saved as ${f.savedPath}` }) : null,
           exportChip(f)),   // A6 board 28: the ticket, after the header chips
