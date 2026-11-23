@@ -197,9 +197,9 @@
 .wft-short b{font-weight:600;}
 .wft-tiles{display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:14px;}
 .wft-tile{padding:16px 18px;min-width:0;}
-.wft-tile-label{display:flex;align-items:center;gap:8px;color:var(--ink-2);font-size:var(--fs-meta);font-weight:600;}
+.wft-tile-label{display:flex;flex-wrap:wrap;align-items:center;gap:4px 8px;color:var(--ink-2);font-size:var(--fs-meta);font-weight:600;}   /* pre-merge QA (P7): the badge drops under a long label, never squeezing it to a word per line */
 .wft-tile-delta{margin-left:auto;background:var(--field);color:var(--ink-2);font-size:var(--fs-caption);font-weight:600;padding:2px 8px;border-radius:var(--r-xs);white-space:nowrap;}
-.wft-tile-value{font-family:var(--mono);font-size:var(--fs-stat);font-weight:600;color:var(--ink);margin-top:8px;line-height:1.2;}
+.wft-tile-value{font-family:var(--mono);font-size:var(--fs-stat);font-weight:600;color:var(--ink);margin-top:8px;line-height:1.2;text-wrap:balance;}
 .wft-tile-sub,.wft-tile-note{display:block;color:var(--ink-2);font-size:var(--fs-caption);margin-top:6px;}
 .wft-tile-note{margin-top:4px;}
 .wft-cmp-cols{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,340px),1fr));gap:18px;align-items:start;}
