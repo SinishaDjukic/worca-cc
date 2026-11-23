@@ -169,6 +169,13 @@ test('boards 13 and P4-M4: the planted line says "Both missed on" when two misse
   assert.equal(TRUST_TESTS.people[1], 'From your Agree and Disagree answers and "Check the checker".');
 });
 
+test("the planted test's words are true of a real round: the criterion is broken everywhere; Worca's own simple mistakes only in mock mode", () => {
+  const words = TRUST_TESTS.planted[1];
+  assert.match(words, /no longer true anywhere in it/);
+  assert.match(words, /In mock mode Worca makes simple mistakes itself/);
+  assert.doesNotMatch(words, /adds a made-up quote/, 'a real round never adds a made-up quote of its own');
+});
+
 test("the trusted tile counts as board 1's card does: an exact check made from a criterion counts as reliable; a criterion with no model is left out", () => {
   const crit = (state) => ({ exampleId: 1, exampleName: 'A', criterionId: `k_${state}`, text: state, trust: state ? { state, n: 0, agree: 0 } : null });
   const m = trustReportModel({ criteria: [crit('reliable'), crit('unreliable'), crit('confirm'), crit(null)], exactChecks: 2 });

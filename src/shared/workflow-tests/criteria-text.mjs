@@ -94,7 +94,9 @@ export const unreliableWhyText = (labels) => (labels.length ? `Differs only in "
 
 /** Board 13: each test's title, what it does, and its result line. */
 export const TRUST_TESTS = Object.freeze({
-  planted: ['Planted mistakes', 'Worca breaks good results on purpose, for example removes a number or adds a made-up quote, and checks that it notices.'],
+  // A real round has the checking model break the criterion everywhere it is met (checker.mjs plantCopies); only a mock round uses
+  // Worca's own simple plants (planted.mjs deterministicPlants).
+  planted: ['Planted mistakes', 'Worca has a good result broken on purpose, so the criterion is no longer true anywhere in it, and checks that it notices. In mock mode Worca makes simple mistakes itself, such as removing a number.'],
   again: ['Asked again', 'The same result is checked 3 times. The verdict should not change.'],
   order: ['Order swapped', 'When Worca picks the better of two results, it sees them in both orders. The winner must not depend on which one comes first.'],
   longer: ['Longer is not better', 'Filler text is added to a result. A longer result must not get a better verdict.'],
