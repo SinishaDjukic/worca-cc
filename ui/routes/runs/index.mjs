@@ -11,8 +11,9 @@ import * as m_runs_publish from './publish.mjs';
 import * as m_runs_drain_and_budget from './drain-and-budget.mjs';
 import * as m_runs_naming from './naming.mjs';
 import * as m_runs_report from './report.mjs';
+import * as m_runs_rerun from './rerun.mjs';
 export const SEGMENTS = Object.freeze([
-  Object.freeze([m_runs_control, m_runs_run_groups, m_runs_runs, m_runs_artifacts, m_runs_labels_and_tags, m_runs_folder_apply]),   // before app.use('/api/automations', requireFlag('gitAutomations'));
+  Object.freeze([m_runs_control, m_runs_run_groups, m_runs_runs, m_runs_artifacts, m_runs_labels_and_tags, m_runs_folder_apply, m_runs_rerun]),   // before app.use('/api/automations', requireFlag('gitAutomations'));
   Object.freeze([m_runs_checkout_and_actions, m_runs_publish, m_runs_drain_and_budget, m_runs_naming]),   // before app.use('/api/mcp', (req, res, next) => {
   Object.freeze([]),   // before app.use((req, res, next) => {
   Object.freeze([]),   // before app.use('/api/skills', (req, res, next) => {

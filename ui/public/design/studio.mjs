@@ -263,7 +263,7 @@ export function createDesignStartPage({ doc, win, host, fetch: fetchFn, navigate
   let gate = null;
   // The gear: the models on the engine a design made now would build on (the project's or the Default engine), Build
   // fast (on for a new design) and Pictures.
-  const settings = createComposerSettings({ doc, win, mode: 'up', onOpen: () => { void pics.load().then((c) => { if (c) settings.reposition(); }); } });
+  const settings = createComposerSettings({ doc, win, mode: 'up-end', onOpen: () => { void pics.load().then((c) => { if (c) settings.reposition(); }); } });
   const pills = createModelPills({ doc, win, fetch: fetchFn, mode: 'beside', parent: settings.panel,
     url: () => startModelsUrl(projectKey) });
   const sw = makeSwitch(doc, { label: 'Build fast', checked: DESIGN_FAST_DEFAULT, rowClass: 'dz-fast', inputClass: 'dz-fast-input' });
@@ -279,7 +279,7 @@ export function createDesignStartPage({ doc, win, host, fetch: fetchFn, navigate
     composerSlot: slot,
     placeholder: 'A landing page, a report, a deck, a pitch, a film',
     sets: false,
-    nodes: [settings.el],
+    endNodes: [settings.el],
     onScope: (key) => {
       if ((key || null) === projectKey) return;
       projectKey = key || null;

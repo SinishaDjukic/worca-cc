@@ -3,7 +3,8 @@
 import { test, before, after, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
 import { appServer } from './helpers/app-server.mjs';
-import { mkdtemp, rm } from 'node:fs/promises';
+import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { app, runs, _testing } from '../ui/server.mjs';
@@ -172,4 +173,19 @@ test('API: an interrupted workspace run whose workspace is gone lists as not res
   assert.match(res.body.error, /workspace for this pipeline .* not onboarded on this machine/);
   const ar = await post('/api/runs/bulk', { action: 'archive', targets: [{ pipelineId: id }] });
   assert.deepEqual([ar.body.done.map((d) => d.id), ar.body.skipped], [[id], []]);
+});
+
+test('API: bulk Archive waits for a run still in its teardown, then reclaims its run dir', async () => {
+  // The run's row and its done frame read stopped while the harness's finally still writes run.json into its dir.
+  const { id, dir } = await seedPipeline(PROJECT, { status: 'stopped', title: 'Finishing run' });
+  const entry = { id: 'r-finishing', pipelineId: id, projectDir: PROJECT, status: 'stopped', title: 'Finishing run', settled: false };
+  let wrote = false;
+  entry.launch = new Promise((r) => setTimeout(r, 300))
+    .then(async () => { await mkdir(dir, { recursive: true }); await writeFile(join(dir, 'run.json'), '{}'); wrote = true; })
+    .finally(() => { entry.settled = true; });
+  runs.set(entry.id, entry);
+  const r = await post('/api/runs/bulk', { action: 'archive', targets: [{ pipelineId: id }] });
+  assert.deepEqual([r.body.done.map((d) => d.id), r.body.skipped], [[id], []]);
+  assert.ok(wrote, 'the archive ran only after the teardown wrote its last file');
+  assert.equal(existsSync(dir), false, 'the run dir is gone, not re-created by the teardown');
 });

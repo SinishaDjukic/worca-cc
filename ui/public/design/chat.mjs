@@ -486,7 +486,7 @@ export function createDesignChat({ doc, host, design, fetch: fetchFn, sendWs = (
   } });
   const loadSound = () => sound.load().then((c) => { if (c) settings.reposition(); });
   // The models and Build fast sit in one popup behind a gear, so the row keeps to Attach, Point, the gear and Send.
-  const settings = createComposerSettings({ doc, win, mode: 'up', onOpen: () => { void loadPics(); void loadSound(); } });
+  const settings = createComposerSettings({ doc, win, mode: (external || inline) ? 'up-end' : 'up', onOpen: () => { void loadPics(); void loadSound(); } });
   row.append(attachBtn, fileInput, pointBtn, settings.el, h('span', 'dz-spacer'), stopBtn, sendBtn);
   // The lead's and the builders' models, remembered on the design (PATCH): a change applies from the next round.
   const pills = createModelPills({ doc, win, fetch: fetchFn, mode: 'beside', parent: settings.panel, url: () => (designId ? `/api/design/${enc(designId)}/models` : null),
@@ -1431,7 +1431,8 @@ export function createDesignChat({ doc, host, design, fetch: fetchFn, sendWs = (
      *  Point and the gear in its row, and the send with this dock's pins. */
     composer: inline ? {
       lead: pinRow,
-      nodes: [pointBtn, settings.el],
+      nodes: [pointBtn],
+      endNodes: [settings.el],
       // The chat's own send carries the design and the pins on screen; they clear once the message is in.
       payload: () => { sentOut = pins.slice(); return { design: { designId, pins: trimPins(sentOut) } }; },
       sent: () => {
@@ -1444,7 +1445,8 @@ export function createDesignChat({ doc, host, design, fetch: fetchFn, sendWs = (
       },
     } : external ? {
       lead: pinRow,
-      nodes: [pointBtn, settings.el],
+      nodes: [pointBtn],
+      endNodes: [settings.el],
       send: ({ text, files = [], pick = null }) => sendNow(text, files, pick),
       busy: () => pending || client.busy(),
     } : null,

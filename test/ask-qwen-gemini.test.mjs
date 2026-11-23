@@ -65,6 +65,8 @@ for (const E of ENGINES_UNDER_TEST) {
       sandbox: 'read-only', askLockdown: true, mcpConfigPath: '/h/.worca-cc/tmp/ask/mcp-askm_00000001.json',
       envScrub: true, envAllowlist: ['SSH_AUTH_SOCK', 'BRAVE_KEY'], resumeSessionId: E.session,
       spawnEnv: { ASK_COMMAND_TOKEN: 'tok-1' },
+      // Only an engine that names tools by the server's alias keeps that alias per thread (OpenCode).
+      ...(E.engine === 'opencode' ? { serverAliasSeed: 'ask_00000001' } : {}),
     });
   });
 

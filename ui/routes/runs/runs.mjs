@@ -20,7 +20,31 @@ import { SESSION_ID_RE } from '../../../src/shared/graph/constants.mjs';
 import { BULK_ACTIONS } from '../../../src/shared/run-bulk.mjs';
 import { runModel } from '../../../src/shared/run-model.mjs';
 import { pipeline } from 'node:stream';
-import { SETTLED_RUN, badRequest, broadcast, broadcastFeature, emitChanged, isFinishingRun, liveRunEntry, resolveProjectDir, resolveRunScope, runs, stopMemberServices, stopPausedPipeline, stopRun, terminals } from '../../server.mjs';
+import { SETTLED_RUN, STOPS_IN_FLIGHT, badRequest, broadcast, broadcastFeature, emitChanged, isFinishingRun, liveRunEntry, resolveProjectDir, resolveRunScope, runs, stopMemberServices, stopPausedPipeline, stopRun, terminals } from '../../server.mjs';
+
+/**
+ * Wait, at most `ms`, for the work still finishing a run: its launch promise (orch.run()/resume(), whose .finally
+ * sets `settled`) and a paused run's stop in flight. True once none is left. Archive and delete call it before they
+ * remove the run dir: the harness persists the terminal status and emits done BEFORE its finally, which still copies
+ * run.json into that dir and flushes live-log.ndjson there, so an rm walking the dir meanwhile failed with ENOTEMPTY
+ * (or the teardown re-created the dir after the archive). False too, at once, when the run goes live again meanwhile
+ * (a resume): the caller's own live check then answers. `ms` 0 only checks.
+ */
+const LIVE_STATUSES = ['running', 'starting', 'created', 'pausing'];
+const liveInProcess = (id) => [...runs.values()].some((r) => (r.pipelineId === id || r.id === id) && LIVE_STATUSES.includes(String(r.status || '').toLowerCase()));
+async function untilRunSettled(id, ms = 60000) {
+  const deadline = Date.now() + ms;
+  for (;;) {
+    if (liveInProcess(id)) return false;
+    const pending = [STOPS_IN_FLIGHT.get(id), ...[...runs.values()].filter((r) => r.pipelineId === id && !r.settled).map((r) => r.launch)].filter(Boolean);
+    if (!pending.length) return true;
+    const left = deadline - Date.now();
+    if (left <= 0) return false;
+    let timer;
+    await Promise.race([Promise.allSettled(pending), new Promise((r) => { timer = setTimeout(r, left); })]);
+    clearTimeout(timer);
+  }
+}
 
 export function register(app) {
 
@@ -179,7 +203,12 @@ app.post('/api/runs/bulk', async (req, res) => {
     // archive / restore / purge return null for an unknown run (→ skipped) and a flag for a no-op
     // ({alreadyArchived}, {alreadyActive}, {alreadyDeleted}), which writes no audit line.
     const removedRunIds = [];
+    const waitUntil = Date.now() + 60000;   // one bound for the whole request, not one per target
     const audited = (fn) => async (t) => {
+      // Archive and delete remove the run dir: a run still in its teardown writes into it (untilRunSettled).
+      if (action !== 'restore' && t.pipelineId && !(await untilRunSettled(t.pipelineId, Math.max(0, waitUntil - Date.now())))) {
+        throw new Error(liveInProcess(t.pipelineId) ? 'it is running' : 'it is still finishing. Try again in a moment');
+      }
       const r = await fn(rowScope(t));
       if (!r) throw new Error('run not found');
       if (action !== 'restore') removedRunIds.push(...dropParkedEntries(t.pipelineId));
@@ -237,10 +266,12 @@ app.delete('/api/runs/:id', async (req, res) => {
   }
 
   // Never tear down a pipeline that is still live in this server process.
-  const liveActive = [...runs.values()].some((r) =>
-    (r.pipelineId === id || r.id === id) &&
-    ['running', 'starting', 'created', 'pausing'].includes(String(r.status || '').toLowerCase()));
-  if (liveActive) return res.status(409).json({ error: 'cannot delete a running pipeline' });
+  if (liveInProcess(id)) return res.status(409).json({ error: 'cannot delete a running pipeline' });
+  // A stopped or done run is still in its teardown for a moment (it copies run.json into the run dir and
+  // flushes its log there): archive after it, or the rm of the run dir fails with ENOTEMPTY.
+  if (!(await untilRunSettled(id))) {
+    return res.status(409).json({ error: liveInProcess(id) ? 'cannot delete a running pipeline' : 'the run is still finishing; try again in a moment' });
+  }
 
   try {
     const archBy = actorOf(req);
@@ -305,9 +336,7 @@ app.post('/api/runs/:id/restore', async (req, res) => {
 
   // Mirror of the DELETE route's guard: never restore while the pipeline is live
   // in this process (defensive — an archived run cannot be live).
-  const liveActive = [...runs.values()].some((r) =>
-    (r.pipelineId === id || r.id === id) &&
-    ['running', 'starting', 'created', 'pausing'].includes(String(r.status || '').toLowerCase()));
+  const liveActive = liveInProcess(id);
   if (liveActive) return res.status(409).json({ error: 'cannot restore a running pipeline' });
 
   try {
@@ -338,9 +367,7 @@ app.post('/api/runs/:id/discard-worktree', async (req, res) => {
   const id = req.params.id;
   const scope = resolveRunScope(req, res);
   if (!scope) return;
-  const liveActive = [...runs.values()].some((r) =>
-    (r.pipelineId === id || r.id === id) &&
-    ['running', 'starting', 'created', 'pausing'].includes(String(r.status || '').toLowerCase()));
+  const liveActive = liveInProcess(id);
   if (liveActive) return res.status(409).json({ error: 'cannot discard a running pipeline worktree' });
 
   try {
@@ -372,9 +399,7 @@ app.post('/api/runs/:id/apply-retained', async (req, res) => {
   const id = req.params.id;
   const scope = resolveRunScope(req, res);
   if (!scope) return;
-  const liveActive = [...runs.values()].some((r) =>
-    (r.pipelineId === id || r.id === id) &&
-    ['running', 'starting', 'created', 'pausing'].includes(String(r.status || '').toLowerCase()));
+  const liveActive = liveInProcess(id);
   if (liveActive || isFinishingRun(id)) {
     return res.status(409).json({ error: 'cannot apply the work of a running pipeline', code: 'RUNNING' });
   }

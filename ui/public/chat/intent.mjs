@@ -5,16 +5,14 @@
 // intent is set (P1 hides the empty row). The intent lasts until the message it rode lands in the chat (a failed send
 // keeps it for the retry) and is dropped when the home is left without a send, or when the chat a send created is left
 // (New chat, or by address while its message is still on the way). Backspace in an empty composer removes
-// it. While the home shows, the composer is empty and no intent is set, the placeholder rotates through examples of
-// real worca capabilities every 3.5 s. The add-on only gives back a placeholder it put there itself, so it never wipes
-// another add-on's (P3's direction chip). transformSend runs for every Ask send (P1 folds it once no beforeSend took
+// it. With no intent set the composer keeps its resting placeholder, which never changes on its own. The add-on only
+// gives back a placeholder it put there itself, so it never wipes another add-on's (P3's direction chip). transformSend runs for every Ask send (P1 folds it once no beforeSend took
 // the send), which is where the home arms its hero → dock glide (onSend).
 import { registerComposerAddon } from './extensions.mjs';
 import { homeIcon } from './home-icons.mjs';
 import { INTENT_LEADS } from '../../../src/shared/intent-leads.mjs';
 
 export const INTENT_ADDON_ID = 'intent';
-export const EXAMPLE_MS = 3500;
 
 /** Each intent: chip label + icon, the placeholder while it is set, the sentence the sent text starts with, and —
  *  where the composer could not be sent empty otherwise — the text a quick action leaves in it (`prefill`). A tile's
@@ -36,15 +34,6 @@ export const INTENTS = Object.freeze({
   remember: Object.freeze({ label: 'Remember something', icon: 'remember', placeholder: 'What should worca remember?', lead: INTENT_LEADS.remember }),
   tasks: Object.freeze({ label: 'Find tasks', icon: 'tasks', placeholder: 'Which tracker, and what to look for?', lead: INTENT_LEADS.tasks }),
 });
-
-/** The rotating home placeholders: each is something worca really does (a run, a workflow, a schedule of the
- *  built-in Memory defragment workflow, a question about runs). */
-export const EXAMPLES = Object.freeze([
-  'Fix the flaky upload test…',
-  'Build a workflow that plans, implements and runs the tests…',
-  'Run Memory defragment every night…',
-  'Which runs are waiting for me?',
-]);
 
 const known = (id) => typeof id === 'string' && Object.prototype.hasOwnProperty.call(INTENTS, id);
 const messageCount = (thread) => (thread && Array.isArray(thread.messages) ? thread.messages.length : 0);
@@ -78,10 +67,10 @@ export function splitIntentLead(text) {
 }
 
 /**
- * @param {{ win?: { setInterval, clearInterval }, onSend?: () => void, examples?: string[], intervalMs?: number }} o
+ * @param {{ onSend?: () => void }} o
  * @returns {{ addon: { id: string, mount(leadEl, ctx) }, set(id, { focus, workflow }?): boolean, clear({ focus }?): void, leave(): void, current(): string|null, workflow(): { id, name }|null }}
  */
-export function createIntentAddon({ win = globalThis, onSend = null, examples = EXAMPLES, intervalMs = EXAMPLE_MS } = {}) {
+export function createIntentAddon({ onSend = null } = {}) {
   let current = null;
   let workflow = null;       // { id, name }: the pinned workflow a run intent was armed with, null = none
   const key = () => (current == null ? null : `${current}|${workflow ? workflow.id : ''}`);
@@ -131,8 +120,7 @@ export function createIntentAddon({ win = globalThis, onSend = null, examples = 
     const page = (typeof leadEl.closest === 'function' && leadEl.closest('[data-chat-page]')) || doc.querySelector('[data-chat-page]');
     const onHome = () => !page || page.dataset.view === 'home';
     let shown = null;      // the intent (and pinned workflow) this chip paints
-    let example = -1;      // the example on screen, -1 = none
-    let mine = null;       // the placeholder this add-on put on screen (an intent's or an example), null = none
+    let mine = null;       // the placeholder this add-on put on screen (an intent's), null = none
 
     function own(text) {
       mine = text;
@@ -145,15 +133,9 @@ export function createIntentAddon({ win = globalThis, onSend = null, examples = 
       mine = null;
       if (ours) call('setPlaceholder', null);
     }
-    function dropExample() {
-      if (example < 0) return;
-      example = -1;
-      release();
-    }
     function paint(focus) {
       if (key() !== shown) {
         shown = key();
-        example = -1;
         if (current) {
           const it = INTENTS[current];
           const name = workflow ? workflow.name : it.label;
@@ -199,23 +181,14 @@ export function createIntentAddon({ win = globalThis, onSend = null, examples = 
       if (m && (call('threadId') || null) !== m[1]) clear();
     };
     if (view && typeof view.addEventListener === 'function') view.addEventListener('hashchange', onHash);
-    function tick() {
-      // visibilityState, not `hidden`: jsdom reports hidden=true for every document it does not pretend to render.
-      const idle = current == null && onHome() && !!input && input.value === '' && doc.visibilityState !== 'hidden';
-      if (!idle) { dropExample(); return; }
-      example = (example + 1) % examples.length;
-      own(examples[example]);
-    }
-    const timer = examples.length && typeof win.setInterval === 'function' ? win.setInterval(tick, intervalMs) : null;
 
     const handle = {
       paint,
       /** Every Chat render (P1 flush): the intent is spent once its message landed; it is dropped when the home was
-       *  left without a send; a home example never survives into the dock. */
+       *  left without a send. */
       update(thread) {
         if (pending) { if (messageCount(thread) > pending.count) clear(); }
         else if (current != null && !onHome()) clear();
-        if (!onHome()) dropExample();
       },
       /** Never takes the send (CONTRACT §2: only `true` / `'keep'` would). */
       beforeSend() { return false; },
@@ -230,7 +203,6 @@ export function createIntentAddon({ win = globalThis, onSend = null, examples = 
         return intentText(current, text, workflow);
       },
       destroy() {
-        if (timer != null && typeof win.clearInterval === 'function') win.clearInterval(timer);
         if (input) input.removeEventListener('keydown', onKey);
         if (page) page.removeEventListener('click', onNewChat, true);
         if (view && typeof view.removeEventListener === 'function') view.removeEventListener('hashchange', onHash);

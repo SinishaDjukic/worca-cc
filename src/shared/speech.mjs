@@ -130,6 +130,63 @@ export function createSpeechChunker({ maxChars = 280 } = {}) {
   return { push };
 }
 
+// Read aloud in hands-free when a reply has no spoken version and its opening cannot be read (docs/speech.md).
+export const SPOKEN_FALLBACK_LINE = 'The full answer is on screen.';
+const LIST_LINE_RE = /^\s*([-*+]|\d+[.)])\s/;
+const TABLE_LINE_RE = /^\s*\|/;
+const INDENTED_CODE_RE = /^( {4}|\t)/;
+// A first line this short could still become a list item, a fence or a table: wait for more.
+const MAYBE_OPENING_RE = /^\s{0,3}(\d+[.)]?|[-*+]|`{1,2}|~{1,2})?$/;
+
+/**
+ * Hands-free reply with no spoken version: read at most maxSentences prose sentences (maxChars in all),
+ * or `line` instead when the first one is too long or the reply opens with a list, code or a table.
+ * push(rawSoFar, flush?) takes the same accumulated markdown as createSpeechChunker and returns the
+ * pieces to read; once the budget is spent (or the line was given) it returns [] for the rest of the
+ * turn. One instance per turn.
+ */
+export function createSpokenFallback({ maxSentences = 2, maxChars = 240, line = SPOKEN_FALLBACK_LINE } = {}) {
+  const chunker = createSpeechChunker();
+  let opening = null;              // null = not decided yet, 'prose', or 'line'
+  let done = false;
+  let count = 0;
+  let total = 0;
+
+  /** Decide from the first non-blank line once it can no longer change meaning. */
+  function decide(raw, flush) {
+    const lines = String(raw ?? '').split('\n');
+    const i = lines.findIndex((l) => l.trim());
+    if (i < 0) return null;
+    const first = lines[i];
+    const complete = flush || i < lines.length - 1;
+    if (LIST_LINE_RE.test(first) || FENCE_RE.test(first) || TABLE_LINE_RE.test(first) || INDENTED_CODE_RE.test(first)) return 'line';
+    if (!complete && MAYBE_OPENING_RE.test(first)) return null;
+    return 'prose';
+  }
+
+  function push(text, flush = false) {
+    if (done) return [];
+    if (!opening) opening = decide(text, flush);
+    if (!opening) return [];
+    if (opening === 'line') { done = true; return [line]; }
+    const out = [];
+    for (const piece of chunker.push(text, flush)) {
+      if (count >= maxSentences || total + piece.length > maxChars) {
+        done = true;
+        if (!count) out.push(line);
+        break;
+      }
+      out.push(piece);
+      count += 1;
+      total += piece.length;
+    }
+    if (count >= maxSentences) done = true;
+    return out;
+  }
+
+  return { push };
+}
+
 /** Whole-document convenience (tests, and any non-streaming use). */
 export function speakableText(md) {
   return createSpeechChunker().push(String(md ?? ''), true).join(' ');
@@ -156,4 +213,90 @@ export function encodeWav(samples, sampleRate = 16000) {
 /** whisper.cpp / Whisper non-speech markers ("[BLANK_AUDIO]", "(silence)", "[ Music ]") → ''. */
 export function cleanTranscript(t) {
   return String(t ?? '').replace(/\[[^\]]*\]|\((?:silence|music|noise|inaudible)[^)]*\)/gi, ' ').replace(/\s+/g, ' ').trim();
+}
+
+// ── turn-taking (docs/speech.md "Using it") ──
+// The pause setting is the wait after a finished sentence; unfinished words wait longer.
+export const DEFAULT_PAUSE_S = 0.7;
+export const UNFINISHED_PAUSE_FACTOR = 2.5;
+export const FIXED_PAUSE_FLOOR_S = 1.2;
+const PAUSE_MIN_S = 0.3;
+const PAUSE_MAX_S = 5;
+// After an unfinished ending ("Do you know how...") a conversation waits this long for more words before
+// sending, on every speech-to-text path. Fixed: not scaled by the pause setting (docs/speech.md).
+export const UNFINISHED_HOLD_MS = 5000;
+
+/**
+ * Settings › Speech › Pause before sending (seconds) → the three silences, in ms:
+ * finishedMs after a finished sentence, unfinishedMs after unfinished words (2.5×, at most 5 s),
+ * fixedMs for the single-shot paths (Dictate, "Your server": the setting, at least 1.2 s), and
+ * heldMs, the silence after an unfinished final transcript before it is sent anyway (UNFINISHED_HOLD_MS).
+ * Missing, 0 or not a number = the default; anything else is clamped to 0.3–5 s.
+ */
+export function pauseProfile(pauseS) {
+  const n = Number(pauseS);
+  const s = !Number.isFinite(n) || n === 0 ? DEFAULT_PAUSE_S : Math.min(PAUSE_MAX_S, Math.max(PAUSE_MIN_S, n));
+  const finishedMs = Math.round(1000 * s);
+  const unfinishedMs = Math.max(finishedMs, Math.round(1000 * Math.min(PAUSE_MAX_S, UNFINISHED_PAUSE_FACTOR * s)));
+  const fixedMs = Math.round(1000 * Math.max(s, FIXED_PAUSE_FLOOR_S));
+  return { finishedMs, unfinishedMs, fixedMs, heldMs: Math.max(finishedMs, UNFINISHED_HOLD_MS) };
+}
+
+// Words a sentence does not end on (English only; other languages rely on punctuation).
+const TRAILING_WORDS = new Set([
+  'and', 'or', 'but', 'so', 'because', 'cause', 'um', 'uh', 'er', 'erm', 'hmm', 'like', 'then', 'if', 'when', 'while',
+  'with', 'of', 'to', 'for', 'from', 'the', 'a', 'an', 'my', 'your', 'our', 'their', 'this', 'that', 'which', 'who',
+  'is', 'are', 'was', 'were', 'also', 'plus', 'about', 'in', 'on', 'at', 'into', 'than',
+]);
+// A question that has not got to its point yet: these words (or pairs) at the end mean more is coming,
+// whatever punctuation Whisper put after them ("Do you know how?" is a cut-off). English only.
+const OPEN_WORDS = new Set(['how', 'what', 'why', 'where', 'whether', 'when', 'which', 'who']);
+const OPEN_PAIRS = new Set([
+  'do you', 'does it', 'did you', 'can you', 'could you', 'would you', 'will you', 'are you', 'is it', 'is there',
+]);
+// Backchannel sounds, and what Whisper writes for noise: never a message of their own.
+const FILLER_WORDS = new Set([
+  'mm', 'mmm', 'mhm', 'mm-hm', 'mm-hmm', 'uh-huh', 'uh', 'huh', 'um', 'hm', 'hmm', 'ah', 'oh', 'er', 'erm', 'yeah', 'yes',
+  'ok', 'okay', 'right', 'sure', 'thanks', 'thank', 'you', 'bye',
+]);
+
+/** Lowercased words with the punctuation at their edges stripped (inner hyphens and apostrophes kept). */
+function wordsOf(text) {
+  return String(text ?? '').toLowerCase().split(/\s+/)
+    .map((w) => w.replace(/^[^\p{L}\p{N}]+|[^\p{L}\p{N}]+$/gu, ''))
+    .filter(Boolean);
+}
+
+/** True when the text is empty or only filler sounds ("Mm-hm.", "Thank you."). */
+export function fillerOnly(text) {
+  const words = wordsOf(text);
+  return words.every((w) => FILLER_WORDS.has(w));
+}
+
+/**
+ * Does the transcript sound unfinished? No end punctuation, a trailing comma / dash / ellipsis,
+ * a last word a sentence does not end on ("…and." counts: Whisper often adds the period), or an
+ * open question word or pair at the end ("how", "do you"), whatever the punctuation.
+ * A short standalone question ("What?", "Do you?": two words at most, ending in "?") is finished.
+ * Empty or filler-only text is unfinished.
+ */
+export function sentenceUnfinished(text) {
+  const t = String(text ?? '').trim();
+  if (!t || fillerOnly(t)) return true;
+  if (/(\.\.\.|[,;:\-–…])["')\]]*$/.test(t)) return true;
+  if (!/[.?!。？！]["')\]]*$/.test(t)) return true;
+  const words = wordsOf(t);
+  if (words.length <= 2 && /[?？]["')\]]*$/.test(t)) return false;
+  const last = words[words.length - 1];
+  return TRAILING_WORDS.has(last) || OPEN_WORDS.has(last) || OPEN_PAIRS.has(words.slice(-2).join(' '));
+}
+
+/** One message from two transcripts: "Show me the runs." + "and the failed ones." → "Show me the runs and the failed ones." */
+export function joinTranscripts(a, b) {
+  let x = String(a ?? '').trim();
+  const y = String(b ?? '').trim();
+  if (!x) return y;
+  if (!y) return x;
+  if (/[^.]\.$/.test(x) && /^\p{Ll}/u.test(y)) x = x.slice(0, -1);
+  return `${x} ${y}`;
 }

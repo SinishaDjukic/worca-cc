@@ -56,12 +56,12 @@ export function presetHiddenItems(setup) {
 }
 
 /** The broken card: one row per item with the server's exact message; Reset only where the item allows it. */
-export function renderBrokenCard(doc, broken, { onReset, canEditScope = true } = {}) {
+export function renderBrokenCard(doc, broken, { onReset, canEditScope = true, title = 'This preset needs attention', scopeHint = '' } = {}) {
   const card = doc.createElement('div');
   card.className = 'card card-warn preset-broken';
   card.hidden = !broken.length;
   const h = doc.createElement('strong');
-  h.textContent = 'This preset needs attention';
+  h.textContent = title;
   card.append(h);
   for (const b of broken) {
     const row = doc.createElement('div');
@@ -78,7 +78,7 @@ export function renderBrokenCard(doc, broken, { onReset, canEditScope = true } =
     } else {
       const hint = doc.createElement('span');
       hint.className = 'muted';
-      hint.textContent = canEditScope ? BROKEN_SCOPE_HINT : BROKEN_SCOPE_HINT_SIMPLE;
+      hint.textContent = scopeHint || (canEditScope ? BROKEN_SCOPE_HINT : BROKEN_SCOPE_HINT_SIMPLE);
       row.append(hint);
     }
     card.append(row);

@@ -250,7 +250,7 @@ test('the chat composer: a chat\'s design lends it its pins, Point, gear and pay
   const s = rig({ start: true, setComposer: (e) => { ext = e; return { refresh() {}, restore() {} }; } });
   assert.equal(s.q('.dz-input'), null, 'no composer of its own');
   assert.equal(ext.composerSlot, s.q('.dz-start-composer'), 'the chat composer goes under the heading');
-  assert.deepEqual([ext.sets, ext.nodes.map((n) => n.className)], [false, ['dz-set']], 'the gear joins the row; Sets do not');
+  assert.deepEqual([ext.sets, ext.nodes, ext.endNodes.map((n) => n.className)], [false, undefined, ['dz-set']], 'the gear joins the row; Sets do not');
   // The kind: the Design page's row of buttons under the composer (not a pill in it).
   assert.equal(ext.pills, undefined, 'no Kind pill in the composer');
   const btn = (k) => s.q(`.dz-kinds .dz-kind-btn[data-kind="${k}"]`);

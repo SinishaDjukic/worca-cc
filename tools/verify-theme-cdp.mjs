@@ -872,7 +872,7 @@ const typingKeepsPointer = (what, sel) => async () => {
 const scopeLabelCheck = async (what) => {
   const s = await ev(`(() => { const l = document.querySelector('[data-view="chat"] .ask-scope-btn:not(.ask-sets-btn) .ask-scope-label'); const cs = l && getComputedStyle(l);
     const row = document.querySelector('[data-view="chat"] .ask-composer-row');
-    return l && { hidden: cs.display === 'none', cut: l.scrollWidth > l.clientWidth + 1, w: l.clientWidth, title: l.closest('button').title, rowScroll: row ? row.scrollWidth <= row.clientWidth : true }; })()`);
+    return l && { hidden: cs.display === 'none', cut: l.scrollWidth > l.clientWidth + 1, w: l.clientWidth, title: l.closest('button').getAttribute('aria-label'), rowScroll: row ? row.scrollWidth <= row.clientWidth : true }; })()`);
   designChecks.push({ what: `scope label: ${what} shows the whole label or the icon only, never a stub`, ok: !!s && (s.hidden || !s.cut || s.w >= 56) && /^Chat scope: /.test(s.title) && s.rowScroll, got: s });
 };
 const showHdMenuParts = () => ev(`(() => { for (const s of ['.hd-archive', '.hd-report']) { const e = document.querySelector('#hist-detail ' + s); if (e) e.hidden = false; } return 1; })()`);

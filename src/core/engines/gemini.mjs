@@ -125,27 +125,51 @@ export const GEMINI_SYSTEM_POLICY_DIRS = Object.freeze({
 // ── permission rules ─────────────────────────────────────────────────────────
 
 const reEscape = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+// One folder separator inside a JSON string: `/`, or a Windows `\`, which JSON writes as two backslashes.
+const SEP = String.raw`(?:/|\\\\)`;
+// A Windows extended-length or device prefix (`\\?\`, `\\.\`) before a drive, as JSON writes it: each `\` doubled.
+const LONG = String.raw`(?:(?:\\\\){2}[?.]\\\\)?`;
+// A letter of either case where the file system usually ignores case (macOS, Windows), as Worca's own matcher does
+// (deny-rules.mjs globMatcher): denies more, never less. Anything else escaped.
+const lit = (c, ci) => (ci && c.toLowerCase() !== c.toUpperCase() && c.length === 1 && c.toUpperCase().length === 1
+  ? `[${c.toUpperCase()}${c.toLowerCase()}]` : reEscape(c));
 /** A Claude path glob as a regex over one JSON string's contents: a double star and a slash match any folders, a double
- *  star anything, a star or a question mark only within one folder. */
-function globRegex(glob) {
+ *  star anything, a star or a question mark only within one folder. A slash also matches a Windows backslash; a star
+ *  or a question mark may cross one there (it denies more, never less than before). */
+function globRegex(glob, ci) {
   let out = '';
   for (let i = 0; i < glob.length; i++) {
     const c = glob[i];
-    if (c === '*' && glob[i + 1] === '*') { if (glob[i + 2] === '/') { out += '(?:[^"]*/)?'; i += 2; } else { out += '[^"]*'; i += 1; } }
+    if (c === '*' && glob[i + 1] === '*') { if (glob[i + 2] === '/') { out += `(?:[^"]*${SEP})?`; i += 2; } else { out += '[^"]*'; i += 1; } }
     else if (c === '*') out += '[^/"]*';
     else if (c === '?') out += '[^/"]';
-    else out += reEscape(c);
+    else if (c === '/') out += SEP;
+    else out += lit(c, ci);
   }
   return out;
 }
-/** A Claude path rule body as an argsPattern: a JSON string value naming that path. `//abs` is absolute, `~/…` the
- *  home; `/rel`, `./rel` and bare patterns are relative to the project root (the run checkout), so any value that is
- *  the path or ends in `/<path>` matches (the agent passes relative and absolute paths alike). */
-export function geminiPathPattern(body, home = homedir()) {
-  if (body.startsWith('//')) return `"${globRegex(body.slice(1))}"`;
-  if (body.startsWith('~/')) return `"(?:~|${reEscape(home)})${globRegex(body.slice(1))}"`;
+/** The home as a regex over a JSON string's contents: either separator, a drive letter of either case, and the rest
+ *  folded as globRegex folds. A home on a network share (`\\server\share\zed`) also matches its long form
+ *  (`\\?\UNC\server\share\zed`), which names the same folder. */
+function homeRegex(home, ci) {
+  const part = (p) => [...p].map((c) => lit(c, ci)).join('');
+  const segs = (p) => p.split(/[\\/]/).map(part).join(SEP);
+  if (/^[\\/]{2}(?![?.][\\/])/.test(home)) return `(?:${SEP}${SEP}|${SEP}${SEP}[?.]${SEP}[Uu][Nn][Cc]${SEP})${segs(home.slice(2))}`;
+  const m = /^([A-Za-z]):(?=[\\/]|$)/.exec(home);
+  return (m ? lit(m[1], true) + ':' : '') + segs(m ? home.slice(2) : home);
+}
+/** A Claude path rule body as an argsPattern: a JSON string value naming that path. A body of `//`, `**`, a slash and
+ *  x is x at any depth, so any value that is x or ends in `/x` (relative or absolute); `//abs` is absolute (on Windows under any drive, as `C:\abs`,
+ *  `C:/abs` or `\\?\C:\abs`), `~/…` the home; `/rel`, `./rel` and bare patterns are relative to the project root (the
+ *  run checkout), so any value that is the path or ends in `/<path>` matches (the agent passes relative and absolute
+ *  paths alike). Letters match either case on macOS and Windows. */
+export function geminiPathPattern(body, home = homedir(), { caseInsensitive = process.platform === 'darwin' || process.platform === 'win32' } = {}) {
+  const ci = caseInsensitive;
+  if (body.startsWith('//**/')) return `"(?:[^"]*${SEP})?${globRegex(body.slice(5), ci)}"`;
+  if (body.startsWith('//')) return `"${LONG}(?:[A-Za-z]:)?${globRegex(body.slice(1), ci)}"`;
+  if (body.startsWith('~/')) return `"(?:~|${LONG}${homeRegex(home, ci)})${globRegex(body.slice(1), ci)}"`;
   const rel = body.startsWith('./') ? body.slice(2) : body.startsWith('/') ? body.slice(1) : body;
-  return `"(?:[^"]*/)?${globRegex(rel)}"`;
+  return `"(?:[^"]*${SEP})?${globRegex(rel, ci)}"`;
 }
 
 const READ_TOOLS = Object.freeze(['read_file', 'read_many_files']);

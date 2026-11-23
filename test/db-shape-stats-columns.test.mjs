@@ -52,3 +52,17 @@ test('pipelines has elapsed_ms and elapsed_since on a fresh DB and on a current 
   assert.equal(info.notnull, 1, 'elapsed_ms is NOT NULL');
   assert.equal(String(info.dflt_value), '0', 'elapsed_ms defaults to 0 (no figure)');
 });
+
+// Rerun: pipelines.rerun_of + extras_names are healed the same way, with no version bump.
+test('pipelines has rerun_of and extras_names on a fresh DB and on a current DB missing them; the stamp stays SCHEMA_VERSION', () => {
+  const fresh = new DatabaseSync(':memory:');
+  migrate(fresh);
+  assert.ok(cols(fresh).includes('rerun_of') && cols(fresh).includes('extras_names'));
+
+  const db = new DatabaseSync(':memory:');
+  migrate(db);
+  db.exec('ALTER TABLE pipelines DROP COLUMN rerun_of; ALTER TABLE pipelines DROP COLUMN extras_names');
+  migrate(db);
+  assert.ok(cols(db).includes('rerun_of') && cols(db).includes('extras_names'));
+  assert.equal(db.prepare('PRAGMA user_version').get().user_version, SCHEMA_VERSION);
+});

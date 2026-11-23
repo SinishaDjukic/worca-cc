@@ -69,7 +69,7 @@ const isVendor = (key) => Object.hasOwn(VENDOR_MARKS, key);
 
 /** The suffix an import adds to a label: the connection's name (" (Copilot)", " (OpenRouter)", " (OpenAI-compatible)"),
  *  never the vendor's; a server's own name (" (Ollama)") is not one. catalogue-model.mjs displayName drops it too. */
-export const CONNECTION_SUFFIX_RE = / \((?:Copilot|OpenRouter|OpenAI-compatible)\)$/;
+export const CONNECTION_SUFFIX_RE = / \((?:Copilot|OpenRouter|OpenAI-compatible|OpenCode)\)$/;
 
 // A model imported from an endpoint has a label ending in its server's name (src/core/bridge/providers/endpoint.mjs
 // SERVERS). It is not the vendor, and "Ollama" and "llama.cpp" hold Meta's family word: the guess drops it.

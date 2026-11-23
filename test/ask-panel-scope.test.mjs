@@ -191,9 +191,9 @@ test('P4 scope pill and menu (canvas ScopeMenu): every level, the dashed circle,
   const btn = ctx.doc.querySelector('[data-ask-scope-btn]');
   assert.equal(btn.dataset.minLevel, undefined, 'the pill shows at every interface level');
   assert.equal(ctx.doc.querySelector('[data-ask-mcp-btn]').dataset.minLevel, 'advanced', 'Sets · N stays Advanced');
-  assert.deepEqual(['aria-haspopup', 'aria-expanded', 'aria-label', 'title'].map((a) => btn.getAttribute(a)), ['menu', 'false', 'Chat scope: No project', 'Chat scope: No project']);
+  assert.deepEqual([...['aria-haspopup', 'aria-expanded', 'aria-label'].map((a) => btn.getAttribute(a)), btn.dataset.tip, btn.hasAttribute('title')], ['menu', 'false', 'Chat scope: No project', 'Chat scope: No project', false]);
   assert.equal(label(btn), 'No project');
-  assert.ok(btn.querySelector(':scope > svg circle[stroke-dasharray="3 3"]'), 'No project: the dashed circle');
+  assert.ok(btn.querySelector(':scope > svg path[stroke-dasharray="2.6 3.2"]'), 'No project: the dashed folder');
   btn.click();
   await ticks(ctx);
   assert.equal(btn.getAttribute('aria-expanded'), 'true');
@@ -493,7 +493,7 @@ test('run 1: a scope label that would be cut under 56px hides; the icon stays an
   ctx.panel.open();
   const btn = ctx.doc.querySelector('[data-ask-scope-btn]');
   const label = btn.querySelector('.ask-scope-label');
-  assert.equal(btn.title, 'Chat scope: No project');
+  assert.equal(btn.dataset.tip, 'Chat scope: No project');
   const ro = ctx.resizeObservers.find((o) => o.targets.includes(btn.closest('.ask-composer-row')));
   assert.ok(ro, 'the composer row is observed');
   Object.defineProperty(label, 'scrollWidth', { configurable: true, get: () => 70 });
