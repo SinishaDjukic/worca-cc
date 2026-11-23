@@ -138,6 +138,18 @@ export const FLAGS = Object.freeze([
     docs: 'docs/design.md',
   }),
   entry({
+    key: 'toolPanel',
+    title: 'Tool panel',
+    description: 'Chats reach the tool panel: they can open, screenshot and read its tabs, and links and file paths in answers open in the panel. Off: a chat has no tab tools and its prompt is unchanged; the panel itself stays.',
+    stage: 'experimental',
+    default: false,
+    owner: 'Bulibas',
+    since: '1.19.0',
+    added: '2026-11-19',
+    reviewBy: '2027-02-16',
+    docs: 'docs/terminal.md',
+  }),
+  entry({
     key: 'shaperSmallRuns',
     title: 'Shaper small runs',
     description: "Groundwork for Shaper's small runs (a Care position per feature, at most 3 requirements per run, runs that start from the latest finished work). While it is being built, turning it on changes nothing you can see.",

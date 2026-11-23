@@ -10,6 +10,15 @@ that only explains something (the Workflows canvas, its chat), or whose
 state is already right, carries a **Next** button instead. Every start is a fresh
 walk from the first hop, so a replayed guide explains every stop again.
 
+## How the page is laid out
+
+When setup is not finished, a **Finish setup** tile comes first; it opens the setup assistant and is not one of the nine
+steps. Below Runner the checklist has two sections: **Toward Runner** (steps 1 to 6 and a "Real runs · n of 3" counter) and
+**Later** (steps 7 to 9, each tagged "Helps Hooked"). The team steps (8 and 9) are listed before Runner only in Expert mode;
+from Runner on they are listed in every mode for a person on a team and hidden for a solo one. At Runner and above the page
+folds to one line plus the undone Later steps that are visible. The sidebar pill reads "Finish setup" until setup is done,
+then "Runner · n of 7" until Runner, then "Getting started" with its count.
+
 ## The nine steps
 
 | # | Tile | Done when (derived) | Guide (each row is a hop; the first that applies is lit) |

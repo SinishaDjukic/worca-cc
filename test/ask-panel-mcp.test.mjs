@@ -265,10 +265,10 @@ test('a slower, older preview never overwrites a newer one', async () => {
   await settle(ctx);
   ctx.panel.close(); ctx.panel.open();
   await settle(ctx);
-  assert.equal(btn(ctx).textContent.trim(), 'Sets · 7');
+  assert.equal(btn(ctx).textContent.trim(), '7');
   release();
   await settle(ctx);
-  assert.equal(btn(ctx).textContent.trim(), 'Sets · 7', 'the stale response was dropped');
+  assert.equal(btn(ctx).textContent.trim(), '7', 'the stale response was dropped');
   ctx.panel.destroy();
 });
 
@@ -376,12 +376,12 @@ test('a failed preview says so in the open picker and keeps the chip so it can b
       await settle(ctx);
       assert.match(pop(ctx).textContent, /Reopen to retry/);
       assert.equal(btn(ctx).hidden, false, 'the chip the message tells the user to reopen is still there');
-      assert.equal(btn(ctx).textContent.trim(), 'Sets · ?');
+      assert.equal(btn(ctx).textContent.trim(), '?');
       state.preview = PREVIEW;
       btn(ctx).click(); btn(ctx).click();                                        // close, reopen: a fresh preview
       await settle(ctx);
       assert.equal(pop(ctx).querySelectorAll('.ask-mcp-row').length, 4);
-      assert.equal(btn(ctx).textContent.trim(), 'Sets · 7');
+      assert.equal(btn(ctx).textContent.trim(), '7');
       ctx.panel.destroy();
     } },
   ]);

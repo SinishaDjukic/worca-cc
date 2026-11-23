@@ -1,5 +1,11 @@
 [
   {
+    "version": "1.19.0",
+    "since": "1.18.0",
+    "date": "2026-11-20",
+    "artifact": "https://claude.ai/artifact/7cR5BeF3CSsSfZsqvhuypJ"
+  },
+  {
     "version": "1.18.0",
     "since": "1.17.0",
     "date": "2026-11-05",

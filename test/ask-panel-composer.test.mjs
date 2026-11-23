@@ -607,6 +607,7 @@ test('ask-panel-composer: Send shows next to Stop only while the input has text 
   input.dispatchEvent(new ctx.window.Event('input', { bubbles: true }));
   assert.equal(send.hidden, false);
   assert.equal(send.getAttribute('aria-label'), 'Add to queue');
+  assert.equal(send.dataset.tip, 'Add to queue');
   assert.equal(ctx.doc.querySelector('[data-ask-stop]').hidden, false);
 });
 

@@ -14,6 +14,7 @@ const TILE = { width: 7, height: 7, rx: 1 };
 // The children of each icon, in order: [tag, attributes]. One 24×24 stroke set in the sidebar's style.
 const ICONS = Object.freeze({
   none: [['circle', { cx: 12, cy: 12, r: 9, 'stroke-dasharray': '3 3' }]],
+  unset: [['path', { d: FOLDER, 'stroke-dasharray': '2.6 3.2' }]],
   project: [['path', { d: FOLDER }]],
   workspace: [
     ['rect', { x: 3, y: 3, ...TILE }],
@@ -44,7 +45,7 @@ export function scopeKind(scope) {
   return 'none';
 }
 
-/** A decorative stroke icon for `kind` ('none' | 'project' | 'workspace' | 'add'; anything else draws 'none'). */
+/** A decorative stroke icon for `kind` ('none' | 'unset' | 'project' | 'workspace' | 'add'; anything else draws 'none'). */
 export function scopeIcon(doc, kind, size = 14) {
   const svg = doc.createElementNS(SVG_NS, 'svg');
   const attrs = {

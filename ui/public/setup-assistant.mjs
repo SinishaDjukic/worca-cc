@@ -15,6 +15,7 @@ import { ROLE_LABELS, MODEL_ROLES, ROLE_HARNESSES } from '../../src/shared/model
 import { CHAT_ENGINE_NAMES, engineLabel } from '../../src/shared/engine-switch.mjs';
 import { UPSTREAM_TIMEOUTS } from '../../src/shared/proxy-timeouts.mjs';
 import { claudeCheckedWhere } from '../../src/shared/claude-sign-in.mjs';
+import { WORCA_LEVEL_COUNT } from '../../src/shared/worca-levels.mjs';
 
 export const SETUP_STEPS = Object.freeze([
   { id: 'check', label: 'Check this machine' },
@@ -305,6 +306,9 @@ const CHECK_BADGE = Object.freeze({ ok: ['green', 'OK'], warn: ['amber', 'Check'
 const STATE_BADGE = Object.freeze({ ok: ['green', 'Done'], failed: ['red', 'Failed'], skipped: ['grey', 'Skipped'], refused: ['amber', 'Refused'] });
 const COPILOT_PLANS = Object.freeze([['individual', 'Individual'], ['business', 'Business'], ['enterprise', 'Enterprise']]);
 const TIMEOUTS = Object.freeze([['connectMs', 'Connect timeout (s)'], ['authMs', 'Login timeout (s)'], ['idleMs', 'Idle timeout (s)']]);
+const LEVEL_HINT = 'Finish to earn your first level.';
+const NO_PROVIDER_LINE = 'Sign in to a model provider to earn your first level.';
+const SHOWN_KEY = 'worca-level:shown-in-session';
 const LOST = 'Worca lost track of this setup. Check the rows, then go back to review.';
 const FOCUSABLE = 'a[href], button:not([disabled]), input:not([disabled]):not([type="hidden"]), select:not([disabled]), textarea:not([disabled]), [tabindex]';
 
@@ -328,12 +332,17 @@ function paintApplyRows(doc, list, results, done) {
 /**
  * Open the assistant. entry 'first' | 'rerun' | 'fix' | 'team'; `step` opens on that step (a fix-it link); `team` is the
  * policy home a 'team' entry reviews (the account-menu notice).
- * onClose(how, { applied }): how is 'later' (Set up later / Cancel / Close / Discard) or 'done' (Continue after Apply, or Finish);
- * `applied` is true when the dialog saved something (an Apply, or the network apply on Next).
+ * onClose(how, { applied, next, readyShown }): how is 'later' (Set up later / Cancel / Close / Discard) or 'done' (the ready screen's button);
+ * `applied` is true when the dialog saved something (an Apply, or the network apply on Next); `next` is a hash to go to
+ * (the earned ready screen's "Start your first run"); `readyShown` is true once a ready screen has painted; `finishing` is true while its facts are still being asked (Setup is finished, the screen is not up yet).
+ * deps.levelIndex(): the held level (0 none, null view not loaded). deps.finishSetup(): the ready screen's facts, or null.
  * Returns { onFrame(msg), goTo(step), close() }; goTo is a no-op on Apply and switches Copilot on for 'access'.
  */
 export function openSetupAssistant({ doc = globalThis.document, fetchJson = defaultFetchJson, entry = 'first', step = 'check', team: teamHome = null, onClose = () => {}, now = () => Date.now(),
+  deps = {},
   timers = { setTimeout: (f, ms) => doc.defaultView.setTimeout(f, ms), clearTimeout: (t) => doc.defaultView.clearTimeout(t) } } = {}) {
+  const levelIndex = typeof deps.levelIndex === 'function' ? deps.levelIndex : () => null;
+  const finishSetup = typeof deps.finishSetup === 'function' ? deps.finishSetup : async () => null;
   const el = (tag, cls, text) => { const n = doc.createElement(tag); if (cls) n.className = cls; if (text != null) n.textContent = text; return n; };
   const btn = (text, cls, on) => { const b = el('button', cls, text); b.type = 'button'; b.addEventListener('click', on); return b; };
   // A rejected fetch becomes an answer, so no await can leave the dialog loading or busy (A18).
@@ -349,13 +358,17 @@ export function openSetupAssistant({ doc = globalThis.document, fetchJson = defa
     cpChecking: false, cpChecked: '', provSeq: 0,
     // Model access › Claude › Check again: claudeChecking while /api/setup/detect?recheck=1 is in flight,
     // claudeChecked the line every answer leaves (signed in, still not signed in, or why it failed).
-    claudeChecking: false, claudeChecked: '' };
+    claudeChecking: false, claudeChecked: '',
+    // The ready screen: readyWait while finishSetup is asked, ready its answer (null = a plain screen), readyShown once painted,
+    // applied what teardown reports as saved.
+    readyWait: false, ready: null, readyShown: false, applied: false, viaApply: false };
 
   const stepOf = el('span', 'sa-step-of'); const title = el('h2', null); title.id = 'setup-title'; const sub = el('p', 'sa-sub');
+  const levelHint = el('p', 'hint sa-level-hint', LEVEL_HINT); levelHint.hidden = true;
   // One segment per step, above "Step N of 7". Decorative: the step line says the same to a screen reader.
   const progress = el('div', 'sa-progress'); progress.setAttribute('aria-hidden', 'true');
   for (const s of SETUP_STEPS) { const seg = el('span', 'sa-progress-seg'); seg.dataset.step = s.id; seg.title = s.label; progress.append(seg); }
-  const head = el('div', 'card-head'); head.append(progress, stepOf, title, sub);
+  const head = el('div', 'card-head'); head.append(progress, levelHint, stepOf, title, sub);
   const body = el('div', 'sa-step'); const status = el('small', 'hint sa-status'); status.setAttribute('role', 'status');
   const actions = el('div', 'confirm-actions');
   const card = el('div', 'card setup-card'); card.append(head, body, status, actions);
@@ -395,13 +408,13 @@ export function openSetupAssistant({ doc = globalThis.document, fetchJson = defa
   const opener = doc.activeElement; let closed = false;
   // The key page is another tab: the Copilot sign-in made there is read again when this window regains focus.
   const win = doc.defaultView; const onFocus = () => { void refreshProviders(); };
-  function teardown(how, { applied = false } = {}) {
+  function teardown(how, { applied = false, next } = {}) {
     if (closed) return; closed = true;
     timers.clearTimeout(S.pollT); timers.clearTimeout(S.cpT); timers.clearTimeout(S.passT);
     win?.removeEventListener('focus', onFocus);
     guard.release(); modal.remove();
     if (opener?.isConnected) opener.focus?.();
-    onClose(how, { applied });
+    onClose(how, { applied, next, readyShown: S.readyShown, ...(S.readyWait ? { finishing: true } : {}) });
   }
   // Apply (and a login Retry after it) is past the point of discarding: its writes are done (architect-1-2).
   const isDirty = () => S.step !== 'apply' && !S.retryLogin && !!S.answers && !!S.opened && JSON.stringify(S.answers) !== S.opened;
@@ -433,6 +446,8 @@ export function openSetupAssistant({ doc = globalThis.document, fetchJson = defa
     const pick = (v) => (typeof v === 'string' ? v : v[entry === 'first' ? 'first' : 'other']);
     title.textContent = S.step === 'apply' ? (S.done ? (S.done.ok ? 'Worca is ready' : 'Setup stopped') : 'Setting up Worca…') : TITLES[S.step];
     sub.textContent = pick(SUBTITLES[S.step]);
+    const held = levelIndex();
+    levelHint.hidden = S.step === 'apply' || !(held === 0 || (held === null && entry === 'first'));
   }
 
   // ── small builders ──
@@ -894,26 +909,69 @@ export function openSetupAssistant({ doc = globalThis.document, fetchJson = defa
   }
 
   function paintApply() {
-    const list = rows('sa-apply');
-    paintApplyRows(doc, list, S.results, !!S.done);
-    body.append(list);
+    if (S.results.size || !S.readyShown) {
+      const list = rows('sa-apply');
+      paintApplyRows(doc, list, S.results, !!S.done);
+      body.append(list);
+    }
+    if (S.readyShown) paintReady();
+  }
+
+  const earnedReady = () => S.ready?.earned === true && !!S.ready.level;
+  /** The last screen: the level just earned, or the one thing still missing, or nothing for someone who holds a level. */
+  function paintReady() {
+    const r = S.ready; if (!r) return;
+    if (earnedReady()) {
+      const block = el('div', 'sa-ready'); const avatar = el('img', 'sa-ready-avatar'); avatar.alt = ''; avatar.width = 56; avatar.height = 56;
+      if (typeof r.level.avatar === 'string' && r.level.avatar) avatar.setAttribute('src', r.level.avatar);
+      if (Number.isFinite(r.level.hue)) avatar.style.setProperty('--wl-hue', String(r.level.hue));
+      const text = el('div', 'sa-ready-text');
+      text.append(el('div', 'sa-ready-level', `${r.level.name} · Level ${r.level.index} of ${WORCA_LEVEL_COUNT}`));
+      const needs = Array.isArray(r.nextNeeds) ? r.nextNeeds.filter((n) => typeof n === 'string' && n) : [];
+      if (r.nextName && needs.length) text.append(el('div', 'hint sa-ready-next', `${r.nextName} needs: ${needs.join(' and ')}`));
+      block.append(avatar, text); body.append(block);
+    } else if (r.earned !== true && Array.isArray(r.missing) && r.missing.includes('provider')) {
+      body.append(el('p', 'sa-ready-missing', NO_PROVIDER_LINE));
+    }
+  }
+  /** Painting the earned screen is what acknowledges the Curious celebration: every way out leaves none queued. */
+  function ackCurious() {
+    try { doc.defaultView.sessionStorage.setItem(SHOWN_KEY, '1'); } catch { /* storage blocked: the acknowledgement below still holds */ }
+    let tz; try { tz = Intl.DateTimeFormat().resolvedOptions().timeZone; } catch { tz = undefined; }
+    void call('/api/worca-level/ack', { method: 'POST', body: { what: 'celebration', index: 1, tz } });
+  }
+  /** Setup is done (an Apply finished OK, or Finish with nothing to apply): ask for the level, then paint the ready screen. */
+  async function showReady(applied, viaApply) {
+    S.applied = applied; S.viaApply = viaApply; S.readyWait = true; paint();
+    let r = null;
+    try { r = await finishSetup(); } catch { r = null; }      // a failed read is a plain ready screen, never a stuck dialog
+    if (closed) return;
+    S.readyWait = false; S.ready = r && typeof r === 'object' ? r : null; S.readyShown = true;
+    if (earnedReady()) ackCurious();
+    paint();
   }
 
   function paintFoot() {
     actions.replaceChildren();
     const first = idx() === 0;
     if (S.step === 'apply') {
-      if (S.done?.ok) {
-        const share = btn('Share as team setup', 'btn btn-quiet sa-share', () => { void shareDraft(); });
-        share.disabled = S.sharing;                              // one draft at a time (ux-1-5)
-        actions.append(share);
-        actions.append(btn('Continue', 'btn btn-primary sa-continue', () => teardown('done', { applied: true })));
+      if (S.done?.ok && S.readyShown) {
+        const earned = earnedReady();
+        if (S.viaApply && !(earned && entry === 'first')) {     // a Finish with nothing to apply has no new setup to share
+          const share = btn('Share as team setup', 'btn btn-quiet sa-share', () => { void shareDraft(); });
+          share.disabled = S.sharing;                              // one draft at a time (ux-1-5)
+          actions.append(share);
+        }
+        actions.append(btn(earned ? 'Start your first run' : 'Continue', 'btn btn-primary sa-continue',
+          () => teardown('done', { applied: S.applied, next: earned ? '#new' : undefined })));
+      } else if (S.done?.ok) {
+        // finishSetup is being asked: no button until the screen knows what it says
       } else if (S.done) {
         actions.append(btn('Close', 'btn sa-close', () => teardown('later')));
         actions.append(S.done.retry ? btn('Retry', 'btn btn-primary sa-retry', () => retry(S.done.retry))
           : btn('Back to review', 'btn btn-primary sa-back-review', () => goTo('review')));
       }
-      status.className = `hint sa-status${S.error ? ' err' : ''}`; status.textContent = S.error || S.note || (S.done ? '' : 'Working…');
+      status.className = `hint sa-status${S.error ? ' err' : ''}`; status.textContent = S.error || S.note || (S.done && !S.readyWait ? '' : 'Working…');
       return;
     }
     if (S.applying || S.netJob) { status.className = 'hint sa-status'; status.textContent = 'Working…'; return; }
@@ -943,10 +1001,16 @@ export function openSetupAssistant({ doc = globalThis.document, fetchJson = defa
     const nav = el('span', 'sa-nav');
     if (!first) nav.append(btn('Back', 'btn sa-back', () => goTo(stepBefore())));
     const label = S.step === 'check' ? 'Start' : S.step === 'review' ? (gate.finish ? 'Finish' : 'Apply') : 'Next';
-    const onNext = () => (S.step === 'network' ? nextFromNetwork() : S.step !== 'review' ? goTo(stepAfter()) : gate.finish ? teardown('done', { applied: !!S.netSaved }) : startApply(null));
+    const onNext = () => (S.step === 'network' ? nextFromNetwork() : S.step !== 'review' ? goTo(stepAfter()) : gate.finish ? finishNothing() : startApply(null));
     const next = btn(label, 'btn btn-primary sa-next', onNext);
     next.disabled = !gate.ok || S.testing; nav.append(next); actions.append(nav);
     status.className = `hint sa-status${S.error ? ' err' : ''}`; status.textContent = S.error || gate.reason;
+  }
+
+  /** Finish with nothing to apply: the same ready screen, on the last step with no rows. */
+  function finishNothing() {
+    S.done = { ok: true, retry: null }; S.step = 'apply'; S.error = ''; S.errField = null;
+    void showReady(!!S.netSaved, false);
   }
 
   // D17: the saved settings as a team setup draft, downloaded. The server builds it (network and access never read).
@@ -1274,7 +1338,7 @@ export function openSetupAssistant({ doc = globalThis.document, fetchJson = defa
     S.done = { ok: done.ok === true, retry: done.retry || null }; delete card.dataset.fbState;
     timers.clearTimeout(S.pollT);
     if (S.netJob) { void finishNetwork(S.done); return; }
-    paint();
+    if (S.done.ok) void showReady(true, true); else paint();
   }
   function schedulePoll(ms = 2000) {
     timers.clearTimeout(S.pollT);

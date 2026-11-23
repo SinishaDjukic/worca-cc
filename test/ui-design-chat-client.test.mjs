@@ -11,7 +11,7 @@ const PIN = { id: 'hero', path: 'main > h1', tag: 'h1', text: 'Ship', html: '<h1
 const MODELS = { default: { model: 'm', effort: 'e' }, models: [] };
 
 /** A fake fetch by route table, recording `{url, body}` for each POST, and the client over it. `mode: null` serves a
- *  thread that is not a design thread; `get404` answers 404 for the design's own thread only; `recreate409` answers the
+ *  chat without this design; `get404` answers 404 for the design's own thread only; `recreate409` answers the
  *  thread create with 409 naming that thread; `engine` locks the served thread; `catalog` replaces the models answer;
  *  `createError` refuses the create (404) and `messageError` the message (409) with those words; `wrap` wraps the fake
  *  (a GET gate). */
@@ -20,7 +20,7 @@ function rig({ threadId = null, get404 = false, makes = 'ask_00000002', recreate
   const changes = [];
   const ws = [];
   const reply = (status, body) => ({ ok: status >= 200 && status < 300, status, json: async () => body });
-  const thread = (id, m = mode) => ({ id, mode: m, title: 'Landing page', designId: DID, ...(engine ? { engine } : {}) });
+  const thread = (id, m = mode) => ({ id, title: 'Landing page', ...(m === 'design' ? { designId: DID } : {}), ...(engine ? { engine } : {}) });
   const fake = async (url, opts = {}) => {
     const method = opts.method || 'GET';
     if (method === 'POST') posts.push({ url, body: opts.body ? JSON.parse(opts.body) : null });
@@ -69,7 +69,7 @@ test('a 409 on recreate means another tab made it: load that thread', async () =
   await client.send('Hello', {});
   assert.equal(posts.at(-1).url, '/api/ask/threads/ask_00000003/messages');
 });
-test('a thread that is not a design thread is treated as gone', async () => {
+test('a chat that no longer has this design is treated as gone', async () => {
   const { client } = rig({ threadId: 'ask_00000001', mode: null });
   assert.equal(await client.open(), false);
   assert.equal(client.model(), null);
@@ -269,7 +269,7 @@ test('a 409 on recreate loads the other tab\'s thread before sending; a load tha
   await client.open();
   assert.deepEqual(await client.send('Hello', {}), { ok: true });
   assert.equal(client.threadId(), 'ask_00000003');
-  assert.equal(client.model().thread().mode, 'design');
+  assert.equal(client.model().thread().designId, DID);
   let release = null;
   const gate = new Promise((r) => { release = r; });
   const slow = rig({ threadId: 'ask_00000001', wrap: (f) => async (url, opts) => { if (/\/api\/ask\/threads\/ask_00000001$/.test(url)) await gate; return f(url, opts); } });

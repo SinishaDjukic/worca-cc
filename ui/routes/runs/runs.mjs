@@ -20,7 +20,7 @@ import { SESSION_ID_RE } from '../../../src/shared/graph/constants.mjs';
 import { BULK_ACTIONS } from '../../../src/shared/run-bulk.mjs';
 import { runModel } from '../../../src/shared/run-model.mjs';
 import { pipeline } from 'node:stream';
-import { SETTLED_RUN, badRequest, broadcast, broadcastFeature, emitChanged, isFinishingRun, liveRunEntry, resolveProjectDir, resolveRunScope, runs, stopMemberServices, stopPausedPipeline, stopRun } from '../../server.mjs';
+import { SETTLED_RUN, badRequest, broadcast, broadcastFeature, emitChanged, isFinishingRun, liveRunEntry, resolveProjectDir, resolveRunScope, runs, stopMemberServices, stopPausedPipeline, stopRun, terminals } from '../../server.mjs';
 
 export function register(app) {
 
@@ -184,6 +184,9 @@ app.post('/api/runs/bulk', async (req, res) => {
       if (!r) throw new Error('run not found');
       if (action !== 'restore') removedRunIds.push(...dropParkedEntries(t.pipelineId));
       if (!r.alreadyArchived && !r.alreadyActive && !r.alreadyDeleted) appendAuditById(t.pipelineId, `${AUDIT[action]}${byActor(by)}.`, { actor: by });
+      if ((action === 'archive' || action === 'delete') && !r.alreadyArchived && !r.alreadyDeleted) {
+        await terminals.closeWhere((s) => s.runId === t.pipelineId, 'system', action === 'delete' ? 'run deleted' : 'run archived').catch(() => {});
+      }
       return r;
     };
     const out = await runBulk({ action, targets, groups }, {
@@ -241,6 +244,7 @@ app.delete('/api/runs/:id', async (req, res) => {
 
   try {
     const archBy = actorOf(req);
+    let closedFirst = false;   // a pending Folder run's terminals were closed before its copy went
     // P1: under the run lock, so an Archive never removes a copy an Apply holding the same lock is reading.
     const report = await withRunLock(id, async () => {
       // A pending Folder run's terminal opens in its copy (S9); Archive removes the copy, as Discard does: close it first —
@@ -251,7 +255,7 @@ app.delete('/api/runs/:id', async (req, res) => {
       const fr = findPipelineRowById(id);
       if (fr && !fr.archived_at && (workModeOfRow(fr) === 'folder' || !!folderFacts(fr).changes)
         && !(await archiveKeepsWork(fr))
-        && !['running', 'starting', 'created', 'pausing'].includes(String(fr.status || '').toLowerCase())) await stopMemberServices(id);
+        && !['running', 'starting', 'created', 'pausing'].includes(String(fr.status || '').toLowerCase())) { await stopMemberServices(id); closedFirst = true; }
       return archivePipeline({
         workspaceKey: workspaceId || null,
         key: workspaceId ? null : (projectKey || null),
@@ -263,6 +267,8 @@ app.delete('/api/runs/:id', async (req, res) => {
     const removedRunIds = dropParkedEntries(id);
     if (report.archived) {
       appendAuditById(report.id, `Run archived${byActor(archBy)}.`, { actor: archBy });
+      // Issue 1064: its tool panel shells go with it (their folder is gone; the panel's tabs follow the shells).
+      if (!closedFirst) await terminals.closeWhere((s) => s.runId === report.id, 'system', 'run archived').catch(() => {});
     }
     broadcast({ type: 'pipelines-changed', action: 'deleted', removedRunIds });
     res.json({ ok: true, ...report });

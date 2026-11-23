@@ -8,6 +8,7 @@ import { linkPlugin } from '../src/core/plugin-store.mjs';
 import { createProfile, writePluginConfig } from '../src/core/plugin-config.mjs';
 import { callSource, setMockSourceResponses, PluginOpError } from '../src/core/plugin-shim.mjs';
 import { createFeature, saveExportLink, listFeatures } from '../src/core/requirements/store.mjs';
+import { LIMITS } from '../src/core/requirements/spec.mjs';
 import { saveSetup, _resetExportCaches } from '../src/core/requirements/export.mjs';
 import { IMPORT_TIMEOUT_MS, importView, importOptions, searchTickets, previewImport, prepareImport } from '../src/core/requirements/import.mjs';
 
@@ -140,17 +141,17 @@ test('final review M3: the search cursor is capped both ways: one longer than th
   assert.equal(seen.filter((c) => c.op === 'searchTickets').at(-1).args.cursor, 'c'.repeat(500), 'and one of 500 goes back whole');
 });
 
-test('final review M4: at Start a criterion is redacted before it is clipped, so a secret cut at 500 characters is still hidden', async () => {
+test('final review M4: at Start a criterion is redacted before it is clipped, so a secret cut at the item limit is still hidden', async () => {
   reset();
   const secret = `sk-ant-${'Q'.repeat(40)}`;
-  const straddle = `${'a'.repeat(485)} ${secret}`;   // clipped first, only 7 of its characters would stay: too few to look like a key
+  const straddle = `${'a'.repeat(LIMITS.item - 15)} ${secret}`;   // clipped first, only 14 of its characters would stay: too few to look like a key
   const plan = await prepareImport(SCOPE, { ...ACME, key: 'SHOP-124', criteria: [straddle, `Keep ${secret} out`] }, {}, d);
   assert.equal(plan.criteria.length, 2);
   for (const c of plan.criteria) {
-    assert.ok(c.text.length <= 500, 'still clipped');
-    assert.equal(/Q/.test(c.text), false, `no part of the secret: ${c.text.slice(480)}`);
+    assert.ok(c.text.length <= LIMITS.item, 'still clipped');
+    assert.equal(/Q/.test(c.text), false, `no part of the secret: ${c.text.slice(LIMITS.item - 20)}`);
   }
-  assert.ok(plan.criteria[0].text.startsWith('a'.repeat(485)));
+  assert.ok(plan.criteria[0].text.startsWith('a'.repeat(LIMITS.item - 15)));
 });
 
 // ---- the connection's project list is kept for 10 minutes (importOptions pages through every project of the tracker) ----

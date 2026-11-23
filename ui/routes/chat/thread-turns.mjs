@@ -14,11 +14,14 @@ import { autoScopeKeys, matchScopeFromLinks, messageLinkTargets } from '../../..
 import { isSurfaceMode } from '../../../src/core/ask/thread-modes.mjs';
 import { appendMessage as askAppendMessage, getThread as askGetThread, listAttachments as askListAttachments, listMessages as askListMessages, listRunLinks as askListRunLinks, newAskId, setArchived as askSetArchived, switchThreadEngine as askSwitchThreadEngine, updateThread as askUpdateThread } from '../../../src/core/ask/store.mjs';
 import { validateAttachmentUploads } from '../../../src/core/attachment-upload.mjs';
+import { resolveAttachments, unavailableRefusal } from '../../../src/core/requirements/attach.mjs';
+import { STATUS as REQUIREMENTS_STATUS } from '../../../src/core/requirements/routes.mjs';
+import { RequirementsError } from '../../../src/core/requirements/spec.mjs';
 import { brokerEngineRefusal } from '../../../src/core/broker-client.mjs';
 import { claudeChatSignedOut } from '../../../src/core/claude-auth.mjs';
 import { mockEnabled } from '../../../src/core/claude-runner.mjs';
 import { budgetStatus } from '../../../src/core/cost-budget.mjs';
-import { designBuildModels, designIdForThread, designScope } from '../../../src/core/design/chat-thread.mjs';
+import { designBuildModels, designIdForThread } from '../../../src/core/design/chat-thread.mjs';
 import { getDesign } from '../../../src/core/design/store.mjs';
 import { DIRECTION_MAX_CHARS } from '../../../src/core/directions.mjs';
 import { chatDescriptor, chatEngineGate } from '../../../src/core/engines/chat.mjs';
@@ -42,6 +45,31 @@ export function closeOpenDesignQuestions(threadId) {
       if (b && b.kind === 'card' && b.state === 'asking' && b.card && (b.card.type === 'design-questions' || b.card.type === 'design-sound')) flipCard(threadId, b.id, { state: 'closed' });
     }
   }
+}
+
+/** A chat message's attached requirements (FEAT-21): `body.requirements` is `[{seq}]` and nothing else of it is read. Resolved
+ *  now from each feature's current spec when it is Ready, else its newest started version, against the chat's scope; a message starts no run, so no live-run check.
+ *  `{ features: [] }` when the field is absent or empty (the send is unchanged); `{ refusal: { status, body } }` otherwise
+ *  when it must not go on. A refusal body has the run start's shape. */
+export async function resolveChatRequirements(body, scope) {
+  if (body.requirements === undefined || body.requirements === null) return { features: [] };
+  if (!Array.isArray(body.requirements)) return { refusal: { status: 400, body: { error: 'requirements must be a list of { seq }' } } };
+  if (!body.requirements.length) return { features: [] };
+  if (!flagEnabled('requirements')) return { refusal: { status: 403, body: { error: 'Requirements disabled', code: 'REQUIREMENTS_DISABLED' } } };
+  const target = scope && scope.projectKey ? { type: 'project', key: scope.projectKey }
+    : scope && scope.workspaceId ? { type: 'workspace', key: String(scope.workspaceId).trim().replace(/^workspaces\//, '') } : null;
+  if (!target) return { refusal: { status: 400, body: { error: 'Requirements attach to a chat with a project or workspace, not to a chat without a project.', code: 'REQUIREMENTS_SCOPE' } } };
+  let items;
+  try {
+    ({ items } = await resolveAttachments(body.requirements.map((r) => (r && typeof r === 'object' ? r.seq : undefined)),
+      { scope: target, withMarkdown: true }));
+  } catch (err) {
+    if (!(err instanceof RequirementsError)) throw err;
+    return { refusal: { status: REQUIREMENTS_STATUS[err.code] || 500, body: { ...(err.data || {}), error: err.message } } };
+  }
+  const unavailable = unavailableRefusal(items);
+  if (unavailable) return unavailable;
+  return { features: items.map((i) => ({ seq: i.seq, id: i.id, title: i.title, version: i.version, criteriaCount: i.criteriaCount, ready: i.ready, markdown: i.markdown })) };
 }
 
 export function register(app) {
@@ -149,7 +177,7 @@ app.post('/api/ask/threads/:id/engine', async (req, res) => {
     const thread = askGetThread(id);
     if (!thread) return res.status(404).json({ error: 'thread not found' });
     if (req.worcaExtension) return res.status(403).json({ error: 'switch a chat\'s engine in the Worca app', code: 'extension-route' });
-    if (isSurfaceMode(thread.mode)) return badRequest(res, thread.mode === 'design' ? 'a Design chat keeps its engine' : 'a Workflows chat keeps its engine');
+    if (isSurfaceMode(thread.mode)) return badRequest(res, 'a Workflows chat keeps its engine');
     const body = req.body || {};
     if (typeof body.engine !== 'string' || !ASK_ENGINES.includes(body.engine)) return badRequest(res, 'engine must be a chat engine');
     if (body.dryRun !== undefined && typeof body.dryRun !== 'boolean') return badRequest(res, 'dryRun must be true or false');
@@ -212,10 +240,8 @@ app.post('/api/ask/threads/:id/messages', async (req, res) => {
     const thread = askGetThread(id);
     if (!thread) return res.status(404).json({ error: 'thread not found' });
     if (req.worcaExtension && isSurfaceMode(thread.mode)) return res.status(403).json({ error: 'the browser extension uses Ask threads only', code: 'extension-route' });
-    // Design P5: a design chat runs only while Design is on, and only for the design that owns it.
-    const designId = thread.mode === 'design' ? designIdForThread(id) : null;
-    if (thread.mode === 'design' && !flagEnabled('design')) return res.status(404).json({ error: 'not found' });
-    if (thread.mode === 'design' && !designId) return res.status(409).json({ error: 'this chat has no design', code: 'no-design' });
+    // Design P5: a chat with a design (designs.thread_id) is a plain chat that also works on its design while Design is on.
+    const designId = flagEnabled('design') ? designIdForThread(id) : null;
     const early = askTurnRefusal(id);
     if (early) return res.status(early.status).json(early.body);
     const body = req.body || {};
@@ -251,10 +277,11 @@ app.post('/api/ask/threads/:id/messages', async (req, res) => {
       if (!pc.ok) return badRequest(res, pc.error);
       composerState = pc.value;
     }
-    // Design P5: a design chat sends its design id and the stage's pins with EVERY message, stored on the thread's
-    // composer before the turn, so the [design chat] block and the hand-off read the pins the person sees now.
+    // Design P5: a chat with a design sends its design id and the stage's pins with its messages, stored on the thread's
+    // composer before the turn, so the [design chat] block and the hand-off read the pins the person sees now. A message
+    // without them (the Chat page before the design's studio is up, an API caller) keeps the stored ones.
     let designState = null;
-    if (thread.mode === 'design') {
+    if (designId && body.design !== undefined) {
       const pd = validateDesignPayload(body.design, { designId });
       if (!pd.ok) return badRequest(res, pd.error);
       designState = pd.value;
@@ -262,9 +289,7 @@ app.post('/api/ask/threads/:id/messages', async (req, res) => {
     // P4 (CONTRACT §4): the chat scope this message runs in. A context carrying `pinned` is authoritative — the scope
     // pill sent it (false = No project: no page target rides along). A context without it (a pre-#397 tab, an API
     // caller) keeps the thread's stored scope, else the projectKey / workspaceId it names; a projectDir never does.
-    // Design P5 (L5.4): a design chat's scope is the design row's project, else No project; the client's never counts.
-    let scope = thread.mode === 'design' ? designScope(designId)
-      : cv.context.pinned === undefined ? (chatScopeOf(thread.context) || chatScopeOf(cv.context)) : chatScopeOf(cv.context);
+    let scope = cv.context.pinned === undefined ? (chatScopeOf(thread.context) || chatScopeOf(cv.context)) : chatScopeOf(cv.context);
 
     // §7.3 — validate EVERY attachment before ANY write (all-or-nothing), through the validation the Requirements page
     // shares (src/core/attachment-upload.mjs): Ask's caps, its engine refusals and its messages. The engine is read per
@@ -291,6 +316,10 @@ app.post('/api/ask/threads/:id/messages', async (req, res) => {
           : { name: f.name, kind: f.kind, mime: f.mime, data: f.data, bytes: f.bytes });
       }
     }
+
+    // FEAT-21: attached requirements are resolved before any write, against the scope this message runs in.
+    const attached = await resolveChatRequirements(body, scope);
+    if (attached.refusal) return res.status(attached.refusal.status).json(attached.refusal.body);
 
     // A No-project chat and a message with issue / pull request links: one matching project switches the chat (below,
     // through the same switch as any scope change), 2–3 give this turn's context block a hint. After every refusal
@@ -322,9 +351,10 @@ app.post('/api/ask/threads/:id/messages', async (req, res) => {
     const late = askTurnRefusal(id);
     if (late) return res.status(late.status).json(late.body);
     if (composerState) askUpdateThread(id, { composer: composerState });
-    if (designState) { closeOpenDesignQuestions(id); askUpdateThread(id, { composer: designState }); }
+    if (designId) closeOpenDesignQuestions(id);
+    if (designState) askUpdateThread(id, { composer: designState });
     if (thread.archivedAt) askSetArchived(id, false);   // #948 s2: a message brings an archived chat back
-    const r = await startAskTurn({ threadId: id, thread, ctx, model: mv.model, effort: mv.effort, text, files, signedIn: askSignedIn(req), reader: askViewer(req), mcpOff: mo.value, agentMode: body.agentMode, client: req.worcaExtension ? 'browser-extension' : null, scopeNote });
+    const r = await startAskTurn({ threadId: id, thread, ctx, model: mv.model, effort: mv.effort, text, files, signedIn: askSignedIn(req), reader: askViewer(req), mcpOff: mo.value, agentMode: body.agentMode, client: req.worcaExtension ? 'browser-extension' : null, scopeNote }, { features: attached.features });
     if (!r.ok) return res.status(r.status).json({ error: r.error, ...(r.code ? { code: r.code } : {}), ...(r.budget ? { budget: r.budget } : {}) });
     // `attachments` carries the store-minted ids so the sender's own echo can key
     // image thumbnails and the thread budget off them (the ask-message broadcast

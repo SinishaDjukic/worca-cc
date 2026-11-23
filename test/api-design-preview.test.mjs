@@ -6,6 +6,7 @@
 import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import http from 'node:http';
+import { appServer } from './helpers/app-server.mjs';
 import { writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { readServerSource } from '../src/core/read-server-source.mjs';
@@ -32,7 +33,7 @@ before(async () => {
   writeFileSync(join(designWorkDir(id), 'assets', 'logo.png'), 'PNG-logo');
   writeFileSync(join(designWorkDir(id), 'sections', 'hero', 'index.html'), '<section data-section="hero"><h1>Ship</h1><img src="assets/logo.png" alt=""></section>');
   const { app } = await import('../ui/server.mjs');
-  srv = http.createServer(app);
+  srv = appServer(app);
   await new Promise((r) => srv.listen(0, '127.0.0.1', r));
   port = srv.address().port;
 });

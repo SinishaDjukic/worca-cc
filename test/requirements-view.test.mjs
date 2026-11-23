@@ -711,7 +711,7 @@ test('header: back link, FEAT code, title, state badge or run pill, chips', asyn
   back.click();
   assert.deepEqual(routed, ['']);
   const head = () => host.querySelector('.req-head');
-  const chips = () => [...head().querySelectorAll('.chip')].map((c) => c.textContent);
+  const chips = () => [...head().querySelectorAll('.req-chips > *')].map((c) => c.textContent);   // the chips and the cost button, in row order
   assert.equal(head().querySelector('code').textContent, 'FEAT-4');
   assert.equal(head().querySelector('h2').textContent, 'Cancel order');
   assert.equal(head().querySelector('.badge').textContent, 'Your turn');
@@ -1171,7 +1171,7 @@ test('Start with a workflow: a refusal stays in the overlay, nothing opens, and 
   host.remove();
 });
 
-test('Start with a workflow: the workflow list failing means Auto — the card says so, no overlay, the start has no overlay', async () => {
+test('Start with a workflow: the workflow list failing means Auto — the card says so, the Auto overlay opens, the start has no overlay field', async () => {
   const calls = fakeApi({ ...BASE, 'GET /api/projects': BUILD['GET /api/projects'], 'GET /api/requirements/4': () => ({
     feature: readyFeature({ starts: [{ version: 1, runId: 'r0', ready: true, failing: [], reason: null, workflowId: 'wf_x', sourceBranch: null, run: null }] }), turns: [] }),
   'POST /api/requirements/4/start': startedReply() });
@@ -1182,7 +1182,9 @@ test('Start with a workflow: the workflow list failing means Auto — the card s
   assert.match(host.querySelector('.req-build').textContent, /Could not load workflows; only Auto is offered\./);
   host.querySelector('[data-ui="start-go"]').click();
   await tick(); await tick(); await tick();
-  assert.equal(setupDlg(), null);
+  assert.ok(setupDlg().querySelector('[data-ui="runsetup-note"]'), 'the Auto overlay: the note and Start');
+  setupGo().click();
+  await tick(); await tick(); await tick();
   assert.deepEqual(calls.find((c) => c.method === 'POST').body, { workflowId: 'wf_auto' });
   assert.deepEqual(opened, ['r9']);
 });
@@ -1245,7 +1247,7 @@ test('Start before it\'s Ready with a workflow: the reason first (Continue, save
   host.remove();
 });
 
-test('Start before it\'s Ready: Auto goes from the reason to the start (no overlay); the saved reason survives a cancel and a failed start, and prefills the next dialog', async () => {
+test('Start before it\'s Ready: Auto goes from the reason to the Auto overlay; the saved reason survives a cancel and a failed start, and prefills the next dialog', async () => {
   let fail = true;
   const calls = fakeApi({ ...BASE, 'GET /api/requirements/4': () => ({ feature: earlyFeature(), turns: [] }),
     'PUT /api/requirements/4/early-start-reason': { earlyStartReason: 'Sprint today' },
@@ -1256,18 +1258,21 @@ test('Start before it\'s Ready: Auto goes from the reason to the start (no overl
   const open = async () => { host.querySelector('[data-ui="start-anyway"]').click(); await tick(); await tick(); };
   await open();
   assert.equal(reasonDlg().querySelector('textarea').value, '');
-  assert.equal(reasonDlg().querySelector('.btn-primary').textContent, 'Start with 1 open', 'Auto keeps its labels');
+  assert.equal(reasonDlg().querySelector('.btn-primary').textContent, 'Continue', 'Auto goes on to the note step');
   await typeReason('Sprint today');
   reasonDlg().querySelector('.btn-primary').click();
+  for (let i = 0; i < 6; i++) await tick();
+  setupGo().click();
   for (let i = 0; i < 4; i++) await tick();
-  assert.equal(reasonDlg().querySelector('.req-dlg-msg').textContent, 'The budget for this month is used up.', 'a failed start stays in the dialog');
+  assert.equal(setupDlg().querySelector('.form-msg.err').textContent, 'The budget for this month is used up.', 'a failed start stays in the overlay');
   assert.deepEqual(opened, []);
-  btn(reasonDlg(), 'Keep deciding').click();
+  setupDlg().querySelector('[data-ui="runsetup-cancel"]').click();
   await open();
   assert.equal(reasonDlg().querySelector('textarea').value, 'Sprint today', 'the reason was kept');
-  assert.equal(setupDlg(), null, 'Auto has no overlay');
   fail = false;
   reasonDlg().querySelector('.btn-primary').click();
+  for (let i = 0; i < 6; i++) await tick();
+  setupGo().click();
   for (let i = 0; i < 4; i++) await tick();
   assert.deepEqual(calls.filter((c) => c.method === 'POST').at(-1).body, { reason: 'Sprint today', workflowId: 'wf_auto' });
   assert.deepEqual(opened, ['r9']);
@@ -1364,9 +1369,11 @@ test('Start before it\'s Ready (Auto): a live frame during the reason\'s save, t
   };
   reasonDlg().querySelector('.btn-primary').click();
   for (let i = 0; i < 8; i++) await tick();
-  assert.ok(calls.some((c) => c.method === 'POST'), 'the start was tried');
-  assert.equal(reasonDlg().querySelector('.req-dlg-msg').textContent, 'The budget for this month is used up.');
-  btn(reasonDlg(), 'Keep deciding').click();
+  setupGo().click();
+  for (let i = 0; i < 8; i++) await tick();
+  assert.ok(calls.some((c) => c.method === 'POST' && c.url === '/api/requirements/4/start'), 'the start was tried');
+  assert.equal(setupDlg().querySelector('.form-msg.err').textContent, 'The budget for this month is used up.');
+  setupDlg().querySelector('[data-ui="runsetup-cancel"]').click();
   assert.equal(host.querySelector('[data-ui="start-anyway"]').disabled, false, 'Start before it\'s Ready is enabled again');
   host.remove();
 });
@@ -1392,19 +1399,23 @@ test('Start with a workflow: a list that fails while the press waits does not st
   host.remove();
 });
 
-test('Start: the defaults send only the workflow; an error other than NOT_READY is said, with no dialog', async () => {
+test('Start: the defaults send only the workflow; an error other than NOT_READY is said in the Auto overlay, with no reason dialog', async () => {
   const calls = fakeApi({ ...BASE, 'GET /api/requirements/4': () => ({ feature: readyFeature(), turns: [] }),
     'POST /api/requirements/4/start': { __status: 409, body: { error: 'The budget for this month is used up.' } } });
-  const { host, msgEl, view } = make();
+  const { host, view } = make();
+  document.body.append(host);
   await view.show('feature/4');
   host.querySelector('[data-ui="start-go"]').click();
-  await tick(); await tick();
+  for (let i = 0; i < 6; i++) await tick();
+  setupGo().click();
+  for (let i = 0; i < 4; i++) await tick();
   assert.deepEqual(calls.find((c) => c.method === 'POST').body, { workflowId: 'wf_auto' });
-  assert.equal(msgEl.textContent, 'The budget for this month is used up.');
+  assert.equal(setupDlg().querySelector('.form-msg.err').textContent, 'The budget for this month is used up.', 'said in the Auto overlay');
+  setupDlg().querySelector('[data-ui="runsetup-cancel"]').click();
   assert.equal(document.querySelector('[role="dialog"]'), null);
   assert.equal(host.querySelector('[data-ui="start-go"]').disabled, false, 'usable again');
+  host.remove();
 });
-
 test('NOT_READY opens the dialog: the failing checks, a required reason, sent with the start; Escape closes, focus returns', async () => {
   const f = readyFeature();
   let calls = null;
@@ -1417,9 +1428,14 @@ test('NOT_READY opens the dialog: the failing checks, a required reason, sent wi
   document.body.append(host);
   await view.show('feature/4');
   const go = () => host.querySelector('[data-ui="start-go"]');
+  const begin = async () => {   // Start → the Auto overlay → its Start; the server answers NOT_READY
+    go().click();
+    for (let i = 0; i < 6; i++) await tick();
+    setupGo().click();
+    for (let i = 0; i < 4; i++) await tick();
+  };
   go().focus();
-  go().click();
-  await tick(); await tick();
+  await begin();
   const dlg = () => document.querySelector('[role="dialog"]');
   assert.ok(dlg(), 'the dialog opens');
   assert.equal(dlg().getAttribute('aria-modal'), 'true');
@@ -1460,13 +1476,11 @@ test('NOT_READY opens the dialog: the failing checks, a required reason, sent wi
   assert.ok(!host.hasAttribute('inert'), 'the page is live again');
   assert.equal(document.activeElement, go());
   // again, with Keep deciding
-  go().click();
-  await tick(); await tick();
+  await begin();
   btn(dlg(), 'Keep deciding').click();
   assert.equal(dlg(), null);
   // again, now with a reason: sent with the start
-  go().click();
-  await tick(); await tick();
+  await begin();
   area().value = '  Sprint today ';
   area().dispatchEvent(new window.Event('input'));
   primary().click();
@@ -1498,8 +1512,11 @@ test("Start before it's Ready…: the dialog names every failing check with its 
   dlg().querySelector('textarea').value = 'Demo';
   dlg().querySelector('textarea').dispatchEvent(new window.Event('input'));
   dlg().querySelector('.btn-primary').click();
-  await tick(); await tick();
-  assert.equal(dlg().querySelector('.form-msg').textContent, 'Worca is still working on this feature.', 'an error stays in the dialog');
+  for (let i = 0; i < 6; i++) await tick();
+  assert.equal(calls.filter((c) => c.method === 'POST').length, 0, 'Continue goes to the note step: still nothing posted');
+  setupGo().click();
+  for (let i = 0; i < 4; i++) await tick();
+  assert.equal(dlg().querySelector('.form-msg').textContent, 'Worca is still working on this feature.', 'an error stays in the overlay');
   dlg().dispatchEvent(new window.KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
   assert.equal(document.activeElement, host.querySelector('[data-ui="start-anyway"]'));
   host.remove();
@@ -1555,10 +1572,13 @@ test('Started: the runs card (newest first), the total, Start again with the nex
   assert.equal(again().disabled, false);
   again().click();
   for (let i = 0; i < 8; i++) await tick();
+  assert.equal(setupDlg(), null, 'the latest run is live: it asks first');
+  document.querySelector('[data-ui="run-confirm-go"]').click();
+  for (let i = 0; i < 8; i++) await tick();
   assert.equal(setupDlg().querySelector('[data-ui="runsetup-workflow"]').textContent, 'Careful', 'the last start\'s workflow, set up first');
   setupGo().click();
   await tick(); await tick(); await tick();
-  assert.deepEqual(calls.find((c) => c.method === 'POST').body, { workflowId: 'wf_x', overlay: { wires: { w5: { maxCycles: 4 } } } });
+  assert.deepEqual(calls.find((c) => c.method === 'POST').body, { workflowId: 'wf_x', overlay: { wires: { w5: { maxCycles: 4 } } }, confirmRunning: true });
   assert.deepEqual(opened, ['r3']);
   f = twoStarts({ changedSinceStart: [] });
   await view.changed(4);

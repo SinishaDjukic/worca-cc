@@ -103,6 +103,8 @@ test('a throw AFTER the engine finished (post-processing) pauses on the FINAL sn
   assert.ok(producerCalls > 0, 'the graph ran to completion before the failure');
   const saved = readPipelineForResume(orch1.state.id);
   assert.equal(saved.row.status, 'paused');
+  assert.ok(saved.row.elapsed_ms > 0, 'the paused row stores the run clock');
+  assert.equal(saved.row.elapsed_since, null, 'parked: no running anchor');
   assert.ok(saved.resumePoint.snapshot, 'the FINAL scheduler snapshot is the point (D14)');
   assert.ok(saved.resumePoint.snapshot.ended, 'End was reached in that snapshot');
   assert.ok(!saved.resumePoint.snapshot.execs.some((e) => e.status === 'start' || e.status === 'paused' || e.status === 'error'),
@@ -112,6 +114,7 @@ test('a throw AFTER the engine finished (post-processing) pauses on the FINAL sn
   const r2 = await orch2.resume();
   assert.equal(r2.status, 'done', JSON.stringify(r2));
   assert.equal(producerCalls, before, 'no agent re-ran: the graph was already complete');
+  assert.ok(orch2.getState().elapsedMs >= saved.row.elapsed_ms, 'the run clock continues from the paused value');
   assert.equal(orch2.getState().endReached, true, 'the restored `ended` re-sets endReached (no quiescence warning)');
   assert.equal(readPipelineForResume(orch1.state.id).row.status, 'done');
 });

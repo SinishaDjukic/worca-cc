@@ -128,7 +128,7 @@ test('removePluginSkills: every skill:plugin:<name>/ membership and Team state �
 });
 
 // ---- the real lifecycle: install → update preview → apply → uninstall (Task 6) -------------------
-import http from 'node:http';
+import { appServer } from './helpers/app-server.mjs';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { fileURLToPath } from 'node:url';
@@ -255,7 +255,7 @@ test('a damaged registry file refuses an update that removes skills, before anyt
 test('GET /api/plugins names the sets holding each plugin\'s skills; uninstall removes every one of them', async () => {
   seedStore();
   const { app } = await import('../ui/server.mjs');
-  const srv = http.createServer(app);
+  const srv = appServer(app);
   await new Promise((r) => srv.listen(0, '127.0.0.1', r));
   try {
     const rows = (await (await fetch(`http://127.0.0.1:${srv.address().port}/api/plugins`)).json()).plugins;

@@ -3,6 +3,70 @@
 Notes on merged features that have no release page yet. `/worca-changelog` folds
 them into the next page and empties this file.
 
+## Chat composer bar, compact
+
+**A compact bottom bar.**
+
+Icons for project, Requirements and Sets; the harness mark on the model button; the Design gear beside the model; one voice control.
+
+Chips: Chat · Design · Voice
+
+Read it: [Chat](../chat.md)
+
+Pull requests (add each number when it opens):
+
+- Chat: the compact composer bar (#1546)
+
+## Protected files stay protected on Windows
+
+**On Windows, `.env` files, `secrets.json` and Worca's own data are now refused by Worca's file tools and by Gemini and Cursor runs.**
+
+Worca's rules for files protected wherever they sit (`.env*`, `secrets.json`, `worca-cc.db*`, the `.worca-cc` store, logs and settings) never matched a Windows path, because a Windows path starts with a drive letter. They now match `C:\…` on any drive, network shares, and long paths such as `\\?\C:\…`. The rules for your home folder (`.ssh`, `.claude`, `AppData` and the rest) match those forms too.
+
+- **Worca's own file tools:** chats on every harness other than Claude Code, and Requirements code looks, Night analysis and the Auto classifier when they run on another harness.
+- **Gemini runs:** the rules Worca hands Gemini match either kind of slash, any drive and long paths. They also match a relative path such as `sub\.env`, and either letter case on Windows and macOS.
+- **Cursor runs:** Cursor compares a rule with the whole path as Windows writes it, so on Windows Worca now writes its rules with backslashes.
+
+Claude Code chats and runs were not affected: Claude Code applies the same rules itself.
+
+Upgrading: a few Cursor and Gemini rules now refuse more than before, on every platform. On Cursor, a rule relative to the project (`./.env`, `/src/secret.txt`, a bare `*.pem`) used to match nothing; it now refuses that name in any folder. A `?` in a Cursor rule now acts as `*`. On Gemini, a rule for a file at any depth also matches a relative path, and on macOS letter case is ignored.
+
+Chips: Windows · .env and secrets.json refused · Worca's file tools · Gemini and Cursor runs
+
+Pull requests (add each number when it opens):
+
+- Apply the protected-file rules to Windows drive paths (#1526)
+
+## Remotes through an SSH Host alias
+
+**A pull request from a fork cloned through a `~/.ssh/config` alias no longer fails with "Head ref must be a branch".**
+
+A remote such as `git@github-work:me/repo.git`, where `github-work` is a Host alias for github.com, now counts as github.com: Worca asks `ssh -G` for the alias's real host (it reads your ssh config and connects nowhere). Ship-it then opens the pull request from your fork to `upstream` as it does for a plain github.com remote, and an Azure DevOps alias gets its organization and project. git keeps using the URL as written. If ssh is missing or slow the remote keeps its alias host, and Worca asks again next time.
+
+Upgrading: with a fork cloned through an alias as `origin`, Automations now watch the fork instead of `upstream`, as they already did for a fork cloned without an alias.
+
+Chips: ~/.ssh/config Host aliases · ssh -G · fork pull requests · Azure DevOps aliases
+
+Read it: [Git automations](../git-automations.md)
+
+Pull requests (add each number when it opens):
+
+- Resolve ~/.ssh/config Host aliases in remote URLs (#1476)
+
+## Long spec items are kept whole
+
+**A long step, rule or criterion no longer ends mid-word in the spec, the download or the run.**
+
+A spec item (the goal, a main-flow step, a rule, a criterion, an assumption) holds up to 10000 characters instead of 500, and the interviewer is told the limit, so it splits a long item rather than writing past it. Worca used to cut every item at 500 characters when it saved the spec, so Copy, Download, Save to specs/ and the run's task all carried the cut text. If the model still writes past the limit, the item ends at a whole word with "…". Text you type yourself is never cut: past 10000 characters Worca says so and keeps your edit open. Items cut before this fix stay cut; edit them to restore the end.
+
+Chips: 10000 characters per item · the interviewer knows the limit · never mid-word · your text refused, not cut
+
+Read it: [Requirements](../requirements.md)
+
+Pull requests (add each number when it opens):
+
+- Requirements: keep long spec items whole (#1510)
+
 ## Copilot on your GHE.com tenant
 
 **Use GitHub Copilot with a GitHub Enterprise Cloud data-residency tenant.**
@@ -16,6 +80,20 @@ Read it: [Models › Providers](../models.md#providers)
 Pull requests (add each number when it opens):
 
 - GitHub Copilot on a GHE.com (data residency) tenant
+
+## Attach Ready features without starting them
+
+**A Ready feature can go into a chat or a run as it is, without Start in Worca.**
+
+**Pull from Requirements** in Chat and New run, and the `#` popover, now offer every feature that is Ready, not only the ones started before. A feature that is Ready when you click Send or Run carries its current spec, read again at that moment, under "FEAT-n (current spec)", and the run does not pause for agreement. A feature that is no longer Ready but was started carries its latest started version, as before. A feature that is neither shows **Not Ready yet** and cannot be attached; attaching still writes no start.
+
+Chips: Ready is enough · current spec at Send or Run · Not Ready yet · no start written
+
+Read it: [Requirements](../requirements.md#pull-from-requirements)
+
+Pull requests (add each number when it opens):
+
+- Requirements: attach Ready features without starting them
 
 ## Choose who interviews, per feature
 
@@ -92,6 +170,42 @@ Read it: [Built-in workflows take their models from the Models page](../models.m
 Pull requests (add each number when it opens):
 
 - Built-in workflow models live on the Models page
+
+## The assistant works with your tool panel tabs
+
+**Chat can open, look at and read the Browser tabs beside it.**
+
+In a chat with a project, the assistant can open a tab for you (`open_tab`: a local preview, an allowlisted site, a Terminal, Files or Changes tab), marked as opened by the assistant. It can screenshot a Browser tab into its reply (`screenshot_tab`) and read the page's text and console errors (`read_tab`), from a fresh headless load on the Worca server. It reaches only this chat's tabs and its project's, and other sites follow the chat's web allowlist. **Pick element** in the Browser tab's toolbar puts a screenshot of the element you click, and its selector, into the chat composer.
+
+## The tool panel opens on an Overview
+
+**A run, chat or project shows what it holds before you pick a tab.**
+
+The tool panel's first icon is the Overview: for a chat, its project and model, its context window (also from the composer's meter), the runs it started with their pull requests, the files it showed and saved, and the commands and Actions still running, each with Stop. A run shows its status, branch, checkout, pull request and artifacts; a project its recent runs. The **+** page still opens a new tool.
+
+Pull requests (add each number when it opens):
+
+- Tool panel Overview
+
+## Chat file cards open in a tab
+
+**With "Open chat links in the panel" on, a file the chat showed opens in a Files tab.**
+
+A click on a file card's name opens its stored copy in a Files tab of the chat, and its small icon becomes **Quick look** (the pop-up). Images keep the pop-up and get **Open in panel**. A file that is already open comes forward instead of opening twice. With the setting off, every card opens the pop-up as before.
+
+## Chat links open in the tool panel
+
+**File paths and web links in the chat's answers open in tabs beside the chat.**
+
+A file path the chat names (`src/app.js:120`, or a bare `app.js` when only one file has that name) becomes a link once worca confirms it exists in the chat's folder or followed run, and opens a Files tab at that line; an archived run's files open from its branch. Web links open in a Browser tab of the chat, unless the site refuses being framed: then they open a new browser tab inside the click, and a server-side check spots sites that refuse. The assistant can open files too (`open_tab` with a path and line, 3 per turn), and an open file or address is brought forward instead of opened twice. A `show_files` card gains **Open in panel**. Settings › Chat › Links in answers turns it off.
+
+Chips: file links · web links · open_tab files · framing check · Open in panel · Settings › Chat
+
+Read it: [Terminal › Links from the chat](../terminal.md#links-from-the-chat)
+
+Pull requests (add each number when it opens):
+
+- Chat links in the tool panel (issue 1064)
 
 ## Requirements (experimental)
 
@@ -363,3 +477,17 @@ On Windows with Node 24, a plugin call that made one web request (such as Jira's
 Pull requests (add each number when it opens):
 
 - Plugins: keep a plugin's answer when its process crashes on exit (#1051)
+
+## Attach Requirements features in Chat and New run
+
+**Bring a feature you specified into a message or a run, without opening Requirements.**
+
+**Pull from Requirements** in Chat and New run now attaches features instead of starting a run. Pick them from a list with checkboxes, or type `#` in the box and search by title or `FEAT-7`. Each shows as a card with its title, ID and criteria count, up to 10. Nothing is sent or started until you click Send or Run, and the task text is optional. Only the feature's spec text goes in, from its latest started version, as context: no files, and no run linked to the feature. Features are limited to the project or workspace you picked, a feature never started cannot be attached, and an archived or deleted one blocks Send and Run until you remove it. Changing the project asks before it removes anything. If an attached feature was not Ready when it last started, the run pauses before any work and asks you to agree, in every workflow and in Away mode too. A sent message shows each feature as a card that opens the text it carried. If a feature already has a run going, New run asks you to confirm.
+
+Chips: attach with # or a picker · up to 10 · context only · latest started version · agree before work if not Ready · project scope asks first
+
+Read it: [Requirements](../requirements.md#pull-from-requirements)
+
+Pull requests (add each number when it opens):
+
+- Requirements: attach features in Chat and New run

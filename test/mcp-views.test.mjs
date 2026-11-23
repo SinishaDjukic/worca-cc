@@ -191,6 +191,23 @@ test('catalog view: source labels, In sets incl. Team sets, last tool count, bad
   assert.equal(row('plugin:acme-tools/sentry').def, undefined);
 });
 
+test('catalog view: needsSetup follows the set list\'s problem dot', () => {
+  const c = ctx();
+  const sets = buildSetsView(c).sets;
+  const v = buildCatalogView(c);
+  for (const e of v.servers) {
+    const expected = e.inSets.some((x) => sets.find((s) => s.id === x.id).members
+      .some((m) => m.serverId === e.id && (m.problem || m.test === 'failed')));
+    assert.equal(e.needsSetup, expected, e.id);
+  }
+  assert.ok(v.servers.every((e) => typeof e.needsSetup === 'boolean'));
+  const bad = ctx();
+  bad.snapshot.tests['billing|plugin:acme-tools/sentry'] = { at: daysAgo(0), ok: false, tools: [], error: 'boom', fingerprint: 'x' };
+  const row = (id) => buildCatalogView(bad).servers.find((s) => s.id === id);
+  assert.equal(row('plugin:acme-tools/sentry').needsSetup, true, 'a failing test in a set it is in');
+  assert.equal(row('manual:playwright').needsSetup, false);
+});
+
 test('project assignment: chips, Team chip, the zero-set flag and the Add set choices', () => {
   const c = ctx();
   const billing = buildProjectAssignment(c, 'billing-1a2b3c4d', { home: 'acme/platform' });

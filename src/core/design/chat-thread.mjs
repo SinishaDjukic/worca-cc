@@ -1,12 +1,15 @@
 // src/core/design/chat-thread.mjs
-// A design's own chat (P5): one ask thread of mode 'design' per design, titled from the design so no title call
-// ever fires (L30), with its scope taken from the design row (L5.4). Also the chat's share of a design's total
+// A design's chat (P5): a plain ask thread its design points at (designs.thread_id), one design per chat. The Design
+// button's start makes it titled from the design, with its scope taken from the design row (L5.4); a chat that asked
+// for a design (start_design) is that chat itself. Also the chat's share of a design's total
 // (builds plus chat), the design's scope for a turn, and the models a build of this design would spawn.
 
 import { getDb } from '../db.mjs';
 import { createThread, getThread, updateThread } from '../ask/store.mjs';
 import { resolveDesignModel } from './spawn-options.mjs';
 import { getDesign } from './store.mjs';
+import { existsSync } from 'node:fs';
+import { designWorkDir } from './paths.mjs';
 
 /**
  * Makes the design's thread: titled with the design's title (P1 gives an untitled design `Untitled design`), and
@@ -15,15 +18,25 @@ import { getDesign } from './store.mjs';
  * @returns {object} the thread as the store reads it
  */
 export function createDesignThread({ design, by = null }) {
-  const thread = createThread({ title: String(design.title).slice(0, 120), createdBy: by, mode: 'design' });
+  const thread = createThread({ title: String(design.title).slice(0, 120), createdBy: by });
   const context = design.projectKey ? { pinned: true, projectKey: design.projectKey } : { pinned: false };
   return updateThread(thread.id, { context });
 }
 
-/** The design that owns `threadId`, else null. */
+/** The design attached to chat `threadId`, else null. */
 export function designIdForThread(threadId) {
   if (typeof threadId !== 'string' || !threadId) return null;
   return getDb().prepare('SELECT id FROM designs WHERE thread_id = ?').get(threadId)?.id ?? null;
+}
+
+/** The folder a chat's tools (Terminal, Files, Browser) work in when the chat has no project: its design's own
+ *  work folder (sections, tokens, shell), or null for no design or one not built yet. The tool panel's chatToolFolder
+ *  shape. */
+export function designToolFolder(threadId) {
+  const id = designIdForThread(threadId);
+  const d = id ? getDesign(id) : null;
+  const dir = d ? designWorkDir(id) : '';
+  return dir && existsSync(dir) ? { dir, label: `Design · ${d.title || 'Untitled'}`, projectKey: null, worktree: false, design: true } : null;
 }
 
 /** What the design's chat has spent so far: 0 for no thread or a thread that is gone. */

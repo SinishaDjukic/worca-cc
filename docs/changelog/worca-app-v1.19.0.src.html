@@ -1,0 +1,633 @@
+<title>Worca — What's new in 1.19.0</title>
+<style>
+  :root{
+    --bg:#ECEAE4; --card:#FFFFFF; --card-2:#F6F4EF;
+    --ink:#14151A; --ink-2:#56534C; --ink-3:#8B8780; --line:#E2DFD7;
+    --ocean:#4B5ED2; --ocean-deep:#3A49AC; --wash:#DDE3F7; --wash-2:#EBEEFA;
+    --coral:#EEA47D; --coral-soft:#F8E3D5; --lime:#DEEFC4; --lime-2:#EDF6DC;
+    --dark:#131419; --dark-2:#1C1D25; --on-dark:#F4F3EE; --on-dark-2:#9EA0AC;
+    --ok:#38854F; --warn:#DFA23F; --bad:#C9524A; --info:#5B94C8;
+    --r-lg:28px; --r-md:18px; --r-sm:12px;
+    --sans:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,"Helvetica Neue",Arial,sans-serif;
+    --mono:ui-monospace,"SF Mono",SFMono-Regular,Menlo,Consolas,monospace;
+    --shadow:0 18px 50px -22px rgba(20,21,26,.28);
+  }
+  *{box-sizing:border-box}
+  html{scroll-behavior:smooth}
+  body{margin:0;background:var(--bg);color:var(--ink);font-family:var(--sans);
+    font-size:16px;line-height:1.5;-webkit-font-smoothing:antialiased}
+  img{max-width:100%;display:block}
+  .wrap{max-width:1280px;margin:0 auto;padding:18px 22px 90px}
+
+  /* ---------- shared bits ---------- */
+  .kicker{display:inline-flex;align-items:center;gap:8px;background:var(--card);
+    border:1px solid var(--line);border-radius:999px;padding:7px 15px;
+    font-size:11.5px;font-weight:600;letter-spacing:.14em;text-transform:uppercase;color:var(--ink-2)}
+  .kicker .dot{width:8px;height:8px;border-radius:50%;background:var(--ocean)}
+  h1,h2{margin:0;letter-spacing:-.035em;line-height:1.02;text-wrap:balance;font-weight:800}
+  h1{font-size:clamp(44px,7vw,92px)}
+  h2{font-size:clamp(34px,4.6vw,58px)}
+  .sub b{color:var(--ink);font-weight:700}
+  .sub{color:var(--ink-2);font-size:clamp(16px,1.6vw,19px);max-width:52ch;margin:0}
+  .chips{display:flex;flex-wrap:wrap;gap:10px}
+  .chip{background:var(--card);border:1px solid var(--line);border-radius:999px;
+    padding:8px 16px;font-size:13.5px;font-weight:600;color:var(--ink-2);white-space:nowrap}
+  .chip b{color:var(--ink);font-family:var(--mono);font-weight:700}
+  .chip.acc{background:var(--ink);border-color:var(--ink);color:#fff}
+  .mono{font-family:var(--mono);font-variant-numeric:tabular-nums}
+
+  .sec{border-radius:var(--r-lg);background:var(--card);margin-top:26px;
+    padding:clamp(28px,4.4vw,64px);position:relative;overflow:hidden}
+  .sec-head{display:flex;flex-direction:column;align-items:flex-start;gap:18px;max-width:900px;position:relative;z-index:2}
+  .grid2{display:grid;grid-template-columns:5fr 6fr;gap:clamp(22px,3vw,44px);align-items:center;margin-top:38px}
+  .grid2.flip{grid-template-columns:6fr 5fr}
+  @media (max-width:920px){.grid2,.grid2.flip{grid-template-columns:1fr}}
+
+  /* screenshot frame */
+  .shot{border-radius:var(--r-md);overflow:hidden;background:var(--card);
+    border:1px solid var(--line);box-shadow:var(--shadow)}
+  .shot .bar{height:32px;background:var(--card-2);border-bottom:1px solid var(--line);
+    display:flex;align-items:center;gap:6px;padding:0 14px}
+  .shot .bar i{width:10px;height:10px;border-radius:50%;background:#DDD9CF;display:block}
+  .shot .bar i:first-child{background:#E8B4AC}.shot .bar i:nth-child(2){background:#EAD3A2}.shot .bar i:nth-child(3){background:#BCD8B4}
+  .shot .crop{overflow:hidden;position:relative}
+  .shot img{height:auto}
+  .shot-cap{margin:12px 4px 0;font-size:13px;color:var(--ink-3);font-weight:600}
+
+  /* reveals */
+  .rv{opacity:0;transform:translateY(26px);transition:opacity .7s ease,transform .7s cubic-bezier(.2,.7,.2,1)}
+  .rv.in{opacity:1;transform:none}
+  .rv.d1{transition-delay:.08s}.rv.d2{transition-delay:.16s}.rv.d3{transition-delay:.24s}
+
+  /* ---------- topbar ---------- */
+  .top{display:flex;justify-content:space-between;align-items:center;padding:10px 6px 4px}
+  .brand{display:flex;align-items:center;gap:10px;font-weight:800;letter-spacing:.02em;font-size:18px}
+  .top .chip{background:transparent}
+
+  /* ---------- hero ---------- */
+  .hero{background:linear-gradient(135deg,var(--wash) 0%,var(--wash-2) 60%,#F2EFFA 100%)}
+  .hero-grid{display:grid;grid-template-columns:6fr 5fr;gap:clamp(24px,3vw,48px);align-items:center;position:relative}  /* no z-index: a stacking context here would put the ribbon over the text */
+  @media (max-width:920px){.hero-grid{grid-template-columns:1fr}}
+  .hero .shot{transform:rotate(1.6deg)}
+  .hero .sec-head{position:relative;z-index:4}
+  .ribbon{position:absolute;inset:0;z-index:1;pointer-events:none}   /* behind the text (4) and the shot (2) */
+  @media (max-width:920px){.ribbon{display:none}}
+  .ribbon text{font-family:var(--mono);font-size:15px;font-weight:700;letter-spacing:.30em;fill:#fff}
+  .float-chip{position:absolute;z-index:3;background:var(--card);border-radius:14px;box-shadow:var(--shadow);
+    border:1px solid var(--line);padding:10px 16px;font-size:13px;font-weight:700}
+  .float-chip small{display:block;font-weight:600;color:var(--ink-3);font-size:10.5px;letter-spacing:.1em;text-transform:uppercase}
+
+  /* ---------- demo cards ---------- */
+  .demo{border-radius:var(--r-md);background:var(--card-2);border:1px solid var(--line);padding:26px;position:relative}
+  .demo .dlabel{font-size:10.5px;font-weight:700;letter-spacing:.16em;text-transform:uppercase;color:var(--ink-3);margin-bottom:18px}
+  .env-note{margin:14px 2px 0;font-size:12.5px;color:var(--ink-3);font-weight:600}
+  .badge{font-size:10px;font-weight:800;letter-spacing:.08em;text-transform:uppercase;border-radius:6px;padding:3px 7px;white-space:nowrap}
+  .badge.violet{background:#E7E4F8;color:#4A3E9E}
+  .badge.grey{background:var(--card-2);color:var(--ink-3);border:1px solid var(--line)}
+  .pill{font-size:10.5px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;border-radius:999px;padding:4px 10px}
+  .pill.run{background:#E4F0E7;color:var(--ok)}
+  .pill.flag{background:#FBEEDC;color:#9A6A17}
+  .ghost-btn{border:1.5px solid var(--ink);border-radius:999px;background:var(--card);
+    padding:7px 14px;font-size:12px;font-weight:700;white-space:nowrap;transition:.3s;display:inline-block}
+  .ghost-btn.pulse{transform:scale(1.06);box-shadow:0 0 0 6px rgba(75,94,210,.18)}
+
+  /* recipe: precedence — layers resolve into one winner */
+  .cat-demo{display:flex;flex-direction:column;gap:10px}
+  .cat-row{border-radius:var(--r-sm);border:1px solid var(--line);background:var(--card);padding:13px 16px;
+    display:flex;align-items:center;gap:12px;transition:.35s ease}
+  .cat-row .t{font-weight:700;font-size:13.5px;flex:1}
+  .cat-row .src{font-family:var(--mono);font-size:11.5px;color:var(--ink-2)}
+  .cat-row.dim{opacity:.45}
+  .cat-row.win{border-color:var(--ink);box-shadow:var(--shadow)}
+
+  /* recipe: mask / reveal — a secret shown only on demand */
+  .env-demo .erow{background:var(--card);border:1px solid var(--line);border-radius:var(--r-sm);padding:14px 16px;
+    display:flex;align-items:center;gap:14px}
+  .env-demo .ekey{font-family:var(--mono);font-size:12.5px;color:var(--ink-2);flex:0 0 auto}
+  .env-demo .eval{font-family:var(--mono);font-size:13px;font-weight:700;position:relative;flex:1;height:20px;overflow:hidden}
+  .env-demo .eval span{position:absolute;inset:0;transition:opacity .4s}
+  .env-demo .eval .raw{opacity:0}
+  .env-demo.reveal .eval .raw{opacity:1}
+  .env-demo.reveal .eval .msk{opacity:0}
+
+  /* recipe: meter + flag — a run crossing a threshold */
+  .meter-run{background:var(--card);border:1px solid var(--line);border-radius:var(--r-sm);padding:16px 18px}
+  .meter-top{display:flex;justify-content:space-between;align-items:center;margin-bottom:12px}
+  .meter-top .t{font-weight:700;font-size:14px}
+  .meter{height:12px;border-radius:999px;background:var(--line);position:relative}
+  .meter .fill{height:100%;border-radius:999px;width:0%;background:var(--info);transition:width 1.4s ease}
+  .meter-amt{display:flex;justify-content:space-between;margin-top:10px;font-family:var(--mono);font-size:12.5px;color:var(--ink-2)}
+  .cost-banner{margin-top:14px;border-radius:var(--r-sm);background:#FBF3E4;border:1px solid #EDD9AE;
+    padding:13px 16px;display:flex;justify-content:space-between;align-items:center;gap:10px;
+    opacity:.22;transform:translateY(-4px);transition:.45s ease}
+  .cost-banner.show{opacity:1;transform:none}
+  .cost-banner .msg{font-size:13px;font-weight:600;color:#7A5A1A}
+  .cap-steps{list-style:none;margin:22px 0 0;padding:0;display:flex;flex-direction:column;gap:9px}
+  .cap-steps li{display:flex;gap:11px;align-items:center;font-size:13.5px;font-weight:600;color:var(--ink-3);transition:.35s}
+  .cap-steps .n{width:23px;height:23px;border-radius:50%;background:var(--card);border:1px solid var(--line);flex:none;
+    display:grid;place-items:center;font-family:var(--mono);font-size:11px;font-weight:700;transition:.35s}
+  .cap-steps li.on{color:var(--ink)}
+  .cap-steps li.on .n{background:var(--ink);color:#fff;border-color:var(--ink)}
+
+  /* recipe: grouped picker — grouping + a collision suffix */
+  .dd-demo .grp{margin-bottom:12px}
+  .dd-demo .glabel{font-size:10.5px;font-weight:700;letter-spacing:.14em;text-transform:uppercase;color:var(--ink-3);margin:0 0 7px 4px}
+  .dd-opt{border:1px solid var(--line);border-radius:10px;background:var(--card);padding:10px 14px;
+    font-size:13.5px;font-weight:600;margin-bottom:6px;display:flex;align-items:center;gap:8px}
+  .dd-opt .sfx{font-family:var(--mono);font-size:11.5px;color:var(--ink-3);opacity:0;transition:opacity .5s}
+  .dd-demo.collide .dd-opt .sfx{opacity:1}
+  .dd-opt.sel{border-color:var(--ink);box-shadow:var(--shadow)}
+
+  /* recipe: review rows — red-flagged changes + a green guarantee */
+  .con-demo .crow{background:var(--card);border:1px solid var(--line);border-radius:var(--r-sm);padding:13px 16px;margin-bottom:10px;
+    font-size:13px;font-weight:600;display:flex;flex-wrap:wrap;align-items:center;gap:8px}
+  .red-chip{background:#FCE9E4;color:#A03A31;border-radius:6px;padding:3px 8px;font-size:11px;font-weight:700;font-family:var(--mono)}
+  .con-note{border-radius:var(--r-sm);background:var(--lime-2);border:1px solid #CFE3A8;padding:12px 16px;
+    display:flex;align-items:center;justify-content:space-between;font-size:12.5px;font-weight:600;color:#41611F}
+
+  /* recipe: policy flip — a heuristic changing a default */
+  .pol-demo .prow{background:var(--card);border:1px solid var(--line);border-radius:var(--r-sm);padding:13px 16px;margin-bottom:10px;
+    display:flex;align-items:center;gap:12px}
+  .pol-demo .pkey{font-family:var(--mono);font-size:12px;color:var(--ink-2);flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis}
+  .pol-demo .pmode{font-size:12px;font-weight:700;border:1px solid var(--line);border-radius:8px;padding:6px 12px;background:var(--card-2);
+    position:relative;min-width:150px;text-align:center;height:31px;overflow:hidden}
+  .pol-demo .pmode span{position:absolute;inset:0;display:grid;place-items:center;transition:opacity .4s}
+  .pol-demo .pmode .b{opacity:0;color:#A03A31}
+  .pol-demo .prow.flip .pmode .a{opacity:0}
+  .pol-demo .prow.flip .pmode .b{opacity:1}
+  .pol-demo .warn-note{font-size:11.5px;color:var(--bad);font-weight:700;opacity:0;transition:opacity .4s}
+  .pol-demo .prow.flip ~ .warn-note{opacity:1}
+
+  /* ---------- receipts section ---------- */
+  .polish{background:linear-gradient(160deg,#F7EFE7,#FBF6EF)}
+  .p-ribbon{position:absolute;inset:0;pointer-events:none;z-index:1}
+  .p-ribbon text{font-family:var(--mono);font-size:14px;font-weight:700;letter-spacing:.28em;fill:#fff}
+  .bubs{position:relative;z-index:2;display:grid;grid-template-columns:repeat(3,1fr);gap:18px;margin-top:40px}
+  @media (max-width:920px){.bubs{grid-template-columns:1fr 1fr}}
+  @media (max-width:560px){.bubs{grid-template-columns:1fr}}
+  .bub{background:var(--card);border-radius:20px;border:1px solid var(--line);padding:18px;display:flex;gap:16px;align-items:center}
+  .bub .im{width:86px;height:86px;border-radius:50%;overflow:hidden;flex:none;border:1px solid var(--line);position:relative;
+    display:grid;place-items:center;background:var(--card-2)}
+  .bub .im img{width:300%;max-width:none;position:absolute}
+  .bub .im .big{font-family:var(--mono);font-weight:800;font-size:19px;letter-spacing:-.02em}
+  .bub .tx b{display:block;font-size:14.5px;letter-spacing:-.01em}
+  .bub .tx span{font-size:12.5px;color:var(--ink-2)}
+
+  .foot{display:flex;justify-content:space-between;align-items:center;padding:34px 8px 0;color:var(--ink-3);font-size:13px}
+
+  /* dot rail */
+  .rail{position:fixed;right:16px;top:50%;transform:translateY(-50%);display:flex;flex-direction:column;gap:9px;z-index:50}
+  .rail a{width:8px;height:8px;border-radius:50%;background:var(--ink-3);opacity:.35;transition:.25s}
+  .rail a.on{opacity:1;background:var(--ocean);transform:scale(1.35)}
+  @media (max-width:1360px){.rail{display:none}}
+
+  a{color:inherit}
+  :focus-visible{outline:2.5px solid var(--ocean);outline-offset:2px;border-radius:4px}
+
+  @media (prefers-reduced-motion:reduce){
+    *,*::before,*::after{animation:none!important;transition:none!important}
+    html{scroll-behavior:auto}
+    .rv{opacity:1;transform:none}
+    .cost-banner{opacity:1;transform:none}
+    .env-demo .eval .raw{position:static}
+  }
+</style>
+
+<style>
+  /* recipe: agents build sections, one cursor each */
+  .bld-demo{display:flex;flex-direction:column;gap:9px}
+  .bld-row{display:flex;align-items:center;gap:12px;background:var(--card);border:1px solid var(--line);border-radius:var(--r-sm);padding:12px 16px}
+  .bld-row .t{font-weight:700;font-size:13.5px;width:92px;flex:none}
+  .bld-row .bar2{flex:1;height:8px;border-radius:999px;background:var(--line);overflow:hidden}
+  .bld-row .bar2 i{display:block;height:100%;width:0;background:var(--ocean);border-radius:999px;transition:width 1.6s ease}
+  .bld-row .ag{font-family:var(--mono);font-size:11px;color:var(--ink-3);width:64px;text-align:right;flex:none;transition:color .3s}
+  .bld-demo.go .bld-row .bar2 i{width:100%}
+  .bld-demo.go .bld-row .ag{color:var(--ok)}
+  .bld-demo.go .bld-row:nth-child(2) .bar2 i{transition-delay:.35s}
+  .bld-demo.go .bld-row:nth-child(3) .bar2 i{transition-delay:.7s}
+  .bld-demo.go .bld-row:nth-child(4) .bar2 i{transition-delay:.2s}
+  .bld-demo.go .bld-row:nth-child(5) .bar2 i{transition-delay:.55s}
+  .bld-lead{font-size:12.5px;font-weight:700;color:var(--ink-2);margin:0 2px 4px}
+  /* recipe: rotating pick */
+  .kind-demo .dd-opt{transition:.35s ease}
+  .kind-demo .dd-opt .ex{margin-left:auto;font-family:var(--mono);font-size:11.5px;color:var(--ink-3);font-weight:500}
+  /* recipe: tabs switch, the question stays */
+  .tab-demo .q{border-radius:var(--r-sm);background:#FBF3E4;border:1px solid #EDD9AE;padding:12px 16px;font-size:13px;font-weight:700;color:#7A5A1A;display:flex;justify-content:space-between;gap:10px;align-items:center}
+  .tab-demo .tabs{display:flex;gap:6px;margin:14px 0 12px;flex-wrap:wrap}
+  .tab-demo .tb{font-size:12.5px;font-weight:700;color:var(--ink-3);padding:6px 11px;border-radius:8px;border:1px solid transparent;transition:.3s}
+  .tab-demo .tb.on{color:var(--ink);background:var(--card);border-color:var(--line);box-shadow:var(--shadow)}
+  .tab-demo .pane{background:var(--card);border:1px solid var(--line);border-radius:var(--r-sm);padding:14px 16px;font-size:13px;color:var(--ink-2);min-height:52px}
+  /* key/value card */
+  .kv-demo .kv{display:flex;justify-content:space-between;gap:12px;padding:10px 2px;border-bottom:1px solid var(--line);font-size:13px}
+  .kv-demo .kv:last-of-type{border-bottom:0}
+  .kv-demo .kv span:first-child{color:var(--ink-3);font-weight:600}
+  .kv-demo .kv span:last-child{font-weight:700;text-align:right}
+  .kv-demo .card{background:var(--card);border:1px solid var(--line);border-radius:var(--r-sm);padding:6px 16px}
+  /* chat thread */
+  .chat-demo .msg{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:11px 14px;font-size:13px;margin-bottom:10px;max-width:92%}
+  .chat-demo .msg.me{margin-left:auto;background:var(--ink);color:#fff;border-color:var(--ink)}
+  .chat-demo .who{display:block;font-size:10.5px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:var(--ink-3);margin-bottom:3px}
+  .chat-demo .msg.me .who{color:#B9BAC4}
+  .chat-demo .prop{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:13px 14px;opacity:.25;transform:translateY(6px);transition:.45s ease}
+  .chat-demo.show .prop{opacity:1;transform:none}
+  .chat-demo .prop b{display:block;font-size:13.5px;margin-bottom:9px}
+  .chat-demo .btns{display:flex;gap:7px;flex-wrap:wrap}
+  .chat-demo .btns span{font-size:11.5px;font-weight:700;border:1px solid var(--line);border-radius:8px;padding:5px 10px;background:var(--card-2)}
+  .chat-demo .btns span.go{background:var(--ink);color:#fff;border-color:var(--ink)}
+  /* plan usage meters */
+  .use-demo .urow{margin-bottom:14px}
+  .use-demo .utop{display:flex;justify-content:space-between;font-size:13px;font-weight:700;margin-bottom:7px}
+  .use-demo .utop span:last-child{font-family:var(--mono);font-size:12px;color:var(--ink-2)}
+  .use-demo .meter .fill{background:var(--ok);transition:width 1.4s ease,background .4s}
+  .use-demo .meter .fill.amber{background:var(--warn)}
+  .use-demo .meter .fill.red{background:var(--bad)}
+  @media (prefers-reduced-motion:reduce){ .chat-demo .prop{opacity:1;transform:none} }
+</style>
+
+<div class="wrap">
+
+  <!-- top -->
+  <div class="top">
+    <div class="brand">
+      <img src="ui/public/assets/worca-logo.svg" alt="Worca" style="height:34px;width:auto;mix-blend-mode:multiply">
+    </div>
+    <span class="chip mono">changelog · v1.18.0 → v1.19.0</span>
+  </div>
+
+  <!-- ================= HERO ================= -->
+  <section class="sec hero" id="s0">
+    <svg class="ribbon" viewBox="0 0 1280 640" preserveAspectRatio="xMidYMid slice" aria-hidden="true">
+      <path id="rb" d="M -120 652 C 260 650, 560 640, 740 560 S 1060 170, 1400 120" fill="none" stroke="#4B5ED2" stroke-width="42" stroke-linecap="round" opacity=".92"></path>
+      <text><textPath id="rbt" href="#rb" startOffset="-12%">DESIGN · RUN PAGE · AUTO PR · REQUIREMENTS · CHAT APPS · READINESS · LEVELS · DESIGN · RUN PAGE · AUTO PR · REQUIREMENTS · CHAT APPS · READINESS · LEVELS · </textPath></text>
+    </svg>
+    <div class="hero-grid">
+      <div class="sec-head rv in">
+        <span class="kicker"><span class="dot"></span>What's new · v1.19.0</span>
+        <h1>Agents design.<br>Runs ship.</h1>
+        <p class="sub">Worca 1.19 adds Design. Describe a page, a deck or a video, and agents build it while you watch. Runs open their own pull requests. Shaper agrees what to build before it plans. And your team can chat with Worca from Slack, Discord, Telegram or Teams.</p>
+        <div class="chips">
+          <span class="chip acc">Design</span><span class="chip">One-level run page</span><span class="chip">PRs open themselves</span><span class="chip">Requirements first</span><span class="chip">Chat apps</span><span class="chip">Agent readiness</span><span class="chip">Levels</span>
+        </div>
+      </div>
+      <div class="rv d1 in" style="position:relative;z-index:2">
+        <div class="shot"><div class="bar"><i></i><i></i><i></i></div><div class="crop" style="max-height:250px"><img src="docs/changelog/shots/1.19.0/s0.jpg" alt="Design page — the start composer with Web page, Presentation, Pitch deck, Video and Document" style="width:150%;max-width:none;margin:2% 0 0 -36%"></div></div>
+        <div class="float-chip" style="right:-8px;top:-16px"><small>New</small><span>Design</span></div>
+        <div class="float-chip" style="right:24px;bottom:-18px"><small>New</small><span>Auto PR</span></div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ================= S1 · Design ================= -->
+  <section class="sec" id="s1">
+    <div class="sec-head rv">
+      <span class="kicker"><span class="dot"></span>Design</span>
+      <h2>Design pages, decks and videos with agents.</h2>
+      <p class="sub"><b>Need a landing page or a pitch deck, not code?</b><br>Now open Design and describe it. A lead agent plans the sections. Then one agent builds each section, and you watch them work side by side.</p>
+      <div class="chips">
+        <span class="chip"><b>5</b> kinds to make</span><span class="chip">one agent per section</span><span class="chip">every cursor is a real agent</span><span class="chip">works on every engine</span>
+      </div>
+    </div>
+    <div class="grid2">
+      <div class="demo rv">
+        <div class="dlabel">A web page, built in parallel</div>
+        <p class="bld-lead">Lead agent · plan: 5 sections</p>
+        <div class="bld-demo" id="bldDemo">
+          <div class="bld-row"><span class="t">Hero</span><span class="bar2"><i></i></span><span class="ag">agent 1</span></div>
+          <div class="bld-row"><span class="t">Features</span><span class="bar2"><i></i></span><span class="ag">agent 2</span></div>
+          <div class="bld-row"><span class="t">Pricing</span><span class="bar2"><i></i></span><span class="ag">agent 3</span></div>
+          <div class="bld-row"><span class="t">Quotes</span><span class="bar2"><i></i></span><span class="ag">agent 4</span></div>
+          <div class="bld-row"><span class="t">Sign-up</span><span class="bar2"><i></i></span><span class="ag">agent 5</span></div>
+        </div>
+        <p class="env-note">Each agent shows its own cost. Ask for a change, and only that section is rebuilt.</p>
+      </div>
+      <div class="demo rv d1 dd-demo kind-demo" id="kindDemo">
+        <div class="dlabel">What you can make</div>
+        <div class="dd-opt sel">Web page <span class="ex">a launch page</span></div>
+        <div class="dd-opt">Presentation <span class="ex">a team update</span></div>
+        <div class="dd-opt">Pitch deck <span class="ex">a seed round</span></div>
+        <div class="dd-opt">Video <span class="ex">a product film</span></div>
+        <div class="dd-opt">Document <span class="ex">a report</span></div>
+        <p class="env-note">Design is in beta and on by default. Turn it off in Settings › Labs.</p>
+      </div>
+    </div>
+  </section>
+
+  <!-- ================= S2 · Run page ================= -->
+  <section class="sec" id="s2">
+    <div class="sec-head rv">
+      <span class="kicker"><span class="dot"></span>Runs</span>
+      <h2>One run page, no Details screen.</h2>
+      <p class="sub"><b>Ever clicked through to Details to see how a run was set up?</b><br>Now a run is one page: a header, then tabs. The run card is the Overview tab. A new Task tab shows the prompt and everything the run started with.</p>
+      <div class="chips">
+        <span class="chip">a waiting question shows on every tab</span><span class="chip">new Task tab</span><span class="chip">the run setup in one card</span><span class="chip">quieter checkout notices</span>
+      </div>
+    </div>
+    <div class="grid2 flip">
+      <div class="demo rv tab-demo" id="tabDemo">
+        <div class="dlabel">Switch tabs, the question stays</div>
+        <div class="q"><span>Needs you · Cursor or page numbers?</span><span class="ghost-btn">Answer</span></div>
+        <div class="tabs">
+          <span class="tb on">Overview</span><span class="tb">Task</span><span class="tb">Diff</span><span class="tb">Workflow</span><span class="tb">Q&amp;A</span>
+        </div>
+        <div class="pane" id="tabPane">Where the work is · the run's branch · its pull request</div>
+      </div>
+      <div class="demo rv d1 kv-demo">
+        <div class="dlabel">The Task tab's run setup</div>
+        <div class="card">
+          <div class="kv"><span>Workflow</span><span>Default</span></div>
+          <div class="kv"><span>Engine</span><span>Claude Code</span></div>
+          <div class="kv"><span>Guardrails</span><span>Standard</span></div>
+          <div class="kv"><span>Models</span><span>one per role</span></div>
+          <div class="kv"><span>Effort</span><span>high</span></div>
+          <div class="kv"><span>Review rounds</span><span>up to 3</span></div>
+        </div>
+        <p class="env-note">Everything the run started with, in one place.</p>
+      </div>
+    </div>
+  </section>
+
+  <!-- ================= S3 · Auto PR ================= -->
+  <section class="sec" id="s3">
+    <div class="sec-head rv">
+      <span class="kicker"><span class="dot" style="background:var(--ok)"></span>Pull requests</span>
+      <h2>Runs open their own pull requests.</h2>
+      <p class="sub"><b>Did the run finish, and you still had to open the PR?</b><br>Now set "Create a PR when a run finishes" to Draft or Ready. When a run ends with committed work, Worca opens the PR for you, with a commit message that says what changed.</p>
+      <div class="chips">
+        <span class="chip">draft or ready</span><span class="chip">one PR per slice, or one per feature</span><span class="chip">real commit messages</span><span class="chip"><b>8</b> fix rounds, <b>1</b> row</span>
+      </div>
+    </div>
+    <div class="grid2">
+      <div class="demo rv">
+        <div class="dlabel">From finished run to open PR</div>
+        <div class="meter-run">
+          <div class="meter-top"><span class="t">CSV export for contacts</span><span class="pill run" id="prPill">Running</span></div>
+          <div class="meter"><div class="fill" id="prFill" style="width:8%"></div></div>
+          <div class="meter-amt"><span id="prStep">step: implement</span><span>Create a PR: draft</span></div>
+        </div>
+        <div class="cost-banner" id="prBanner" style="background:var(--lime-2);border-color:#CFE3A8">
+          <span class="msg" style="color:#41611F">Draft PR opened · 4 files · +36 lines</span>
+        </div>
+        <ol class="cap-steps" id="prSteps">
+          <li><span class="n">1</span>The run ends with committed work</li>
+          <li><span class="n">2</span>Worca pushes its branch</li>
+          <li><span class="n">3</span>The PR opens as a draft</li>
+        </ol>
+      </div>
+      <div class="demo rv d1 con-demo">
+        <div class="dlabel">Commit messages, before and after</div>
+        <div class="crow"><span class="mono">Pipeline 3f2a91c</span><span class="red-chip">BEFORE — says nothing</span></div>
+        <div class="crow" style="flex-direction:column;align-items:flex-start;gap:4px"><span>Add CSV export for the filtered contact list</span><span class="mono" style="font-size:11.5px;color:var(--ink-3)">4 files changed · +36 · links back to the run</span></div>
+        <div class="con-note"><span>A summary, the file stats and a link to the run</span><span class="mono">now · ✓</span></div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ================= S4 · Requirements first ================= -->
+  <section class="sec" id="s4">
+    <div class="sec-head rv">
+      <span class="kicker"><span class="dot"></span>Shaper</span>
+      <h2>Agree what to build before planning.</h2>
+      <p class="sub"><b>Ever approved a plan that solved the wrong problem?</b><br>Now Shaper agrees the requirements with you first. It takes three cards, and usually three clicks: pick who leads, agree the requirements, then approve a plan that covers them all.</p>
+      <div class="chips">
+        <span class="chip"><b>3</b> cards, <b>3</b> clicks</span><span class="chip">the plan shows what it covers</span><span class="chip">Away mode approves the how, you decide the what</span>
+      </div>
+    </div>
+    <div class="grid2 flip">
+      <div class="demo rv">
+        <div class="dlabel">Three cards, in order</div>
+        <ol class="cap-steps" id="reqSteps" style="margin-top:0">
+          <li><span class="n">1</span>You lead as Engineering, with QA and Security</li>
+          <li><span class="n">2</span>7 requirements agreed · 1 decision for you</li>
+          <li><span class="n">3</span>Plan · Requirements 7/7 · approve</li>
+        </ol>
+        <p class="env-note">Small tasks skip it and run as before.</p>
+      </div>
+      <div class="demo rv d1 pol-demo" id="reqDemo">
+        <div class="dlabel">The plan is checked against them</div>
+        <div class="prow"><span class="pkey">Export honours the search filters</span><span class="pmode"><span class="a">Covered ✓</span></span></div>
+        <div class="prow"><span class="pkey">Large exports stream, never time out</span><span class="pmode"><span class="a">Covered ✓</span></span></div>
+        <div class="prow" id="reqFlip"><span class="pkey">Owners see only their own contacts</span><span class="pmode"><span class="a">Covered ✓</span><span class="b">Not covered ✕</span></span></div>
+        <p class="warn-note">A gap is marked before you approve, not found in review.</p>
+      </div>
+    </div>
+  </section>
+
+  <!-- ================= S5 · Chat apps ================= -->
+  <section class="sec" id="s5">
+    <div class="sec-head rv">
+      <span class="kicker"><span class="dot" style="background:var(--bad)"></span>Chat</span>
+      <h2>Chat with Worca in Slack, Discord, Telegram, Teams.</h2>
+      <p class="sub"><b>Your team already talks in Slack. Why switch windows to ask Worca?</b><br>Now mention the Worca bot in an allowed channel. The thread becomes a real Worca chat, with the same history and cost, and a proposed run gets its own Start run button.</p>
+      <div class="chips">
+        <span class="chip"><b>4</b> chat apps</span><span class="chip">threads show in your chat list</span><span class="chip">import MCP servers from <b>6</b> tools</span><span class="chip">attach any file type</span>
+      </div>
+    </div>
+    <div class="grid2">
+      <div class="demo rv chat-demo" id="chatDemo">
+        <div class="dlabel">A thread in your team's channel</div>
+        <div class="msg me"><span class="who">Maya</span>@worca the contacts search is slow on big lists</div>
+        <div class="msg"><span class="who">Worca</span>It filters the whole table on every request. A cursor keeps each page fast.</div>
+        <div class="prop"><b>Paginate the search endpoint · nimbus-crm</b><div class="btns"><span class="go" id="chatGo">Start run</span><span>Not now</span><span>Request changes</span></div></div>
+        <p class="env-note">Turn on Freeform chat in the chat app's plugin settings.</p>
+      </div>
+      <div class="demo rv d1 dd-demo" id="mcpDemo">
+        <div class="dlabel">MCP servers, found in your other tools</div>
+        <div class="grp">
+          <p class="glabel">Found in Cursor</p>
+          <div class="dd-opt sel">github <span class="sfx">token masked</span></div>
+          <div class="dd-opt">postgres <span class="sfx">password masked</span></div>
+        </div>
+        <div class="grp">
+          <p class="glabel">Found in Claude Desktop</p>
+          <div class="dd-opt">linear <span class="sfx">key masked</span></div>
+        </div>
+        <p class="env-note">Ask Chat to import them. You pick which ones, and secrets stay masked.</p>
+      </div>
+    </div>
+  </section>
+
+  <!-- ================= S6 · Agent readiness ================= -->
+  <section class="sec" id="s6">
+    <div class="sec-head rv">
+      <span class="kicker"><span class="dot" style="background:var(--info)"></span>Projects</span>
+      <h2>See which projects are agent-ready.</h2>
+      <p class="sub"><b>Does an agent waste a run hunting for the test command?</b><br>Now every project shows whether it is ready for agents. Worca checks only for the engines you use, and the report says what is missing and how to fix it.</p>
+      <div class="chips">
+        <span class="chip">says how to fix each gap</span><span class="chip">set your model roles once, every engine follows</span><span class="chip">Copilot on GHE.com</span>
+      </div>
+    </div>
+    <div class="grid2 flip">
+      <div class="rv">
+        <div class="shot"><div class="bar"><i></i><i></i><i></i></div><div class="crop" style="max-height:330px"><img src="docs/changelog/shots/1.19.0/s6.jpg" alt="Projects list — each project with an Agent-ready chip and its count of gaps" style="width:220%;max-width:none;margin:-24% 0 0 -37%"></div></div>
+        <p class="shot-cap">Projects: every row carries its readiness chip.</p>
+      </div>
+      <div class="demo rv d1 con-demo">
+        <div class="dlabel">What the report flags</div>
+        <div class="crow"><span>Agent instructions</span><span class="red-chip">MISSING — add AGENTS.md</span></div>
+        <div class="crow"><span>Lint command</span><span class="red-chip">NOT FOUND — name it</span></div>
+        <div class="con-note"><span>Lockfile committed · no secret files tracked</span><span class="mono">✓</span></div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ================= S7 · Levels ================= -->
+  <section class="sec" id="s7">
+    <div class="sec-head rv">
+      <span class="kicker"><span class="dot"></span>Profile</span>
+      <h2>Earn levels as you orchestrate more.</h2>
+      <p class="sub"><b>Not sure what to try next in Worca?</b><br>Now you start out Curious and earn five levels as you use more of it. Your avatar gets a new hat and tool at each one. Its card shows the next steps.</p>
+      <div class="chips">
+        <span class="chip"><b>5</b> levels to earn</span><span class="chip">your plan's usage, per provider</span><span class="chip">Settings in a sidebar</span><span class="chip">an optional screensaver</span>
+      </div>
+    </div>
+    <div class="grid2">
+      <div class="demo rv use-demo" id="useDemo">
+        <div class="dlabel">Plan usage, from the provider's own numbers</div>
+        <div class="urow"><div class="utop"><span>Claude Code</span><span id="u1t">0%</span></div><div class="meter"><div class="fill" id="u1" style="width:0%"></div></div></div>
+        <div class="urow"><div class="utop"><span>Codex</span><span id="u2t">0%</span></div><div class="meter"><div class="fill" id="u2" style="width:0%"></div></div></div>
+        <div class="urow"><div class="utop"><span>Gemini CLI</span><span id="u3t">0%</span></div><div class="meter"><div class="fill" id="u3" style="width:0%"></div></div></div>
+        <p class="env-note">For subscription plans. Amber at 80%, red at the limit.</p>
+      </div>
+      <div class="rv d1">
+        <div class="shot"><div class="bar"><i></i><i></i><i></i></div><div class="crop" style="max-height:380px"><img src="docs/changelog/shots/1.19.0/s7.jpg" alt="Welcome to Worca — You start out Curious, with the five levels and the first steps toward Runner" style="width:190%;max-width:none;margin:-30% 0 0 -45%"></div></div>
+        <p class="shot-cap">Your first level, and the steps toward the next.</p>
+      </div>
+    </div>
+  </section>
+
+  <!-- ================= RECEIPTS ================= -->
+  <section class="sec polish" id="s8">
+    <svg class="p-ribbon" viewBox="0 0 1280 760" preserveAspectRatio="xMidYMid slice" aria-hidden="true">
+      <path id="pb" d="M -60 78 C 260 8, 520 140, 760 92 S 1160 6, 1360 96" fill="none" stroke="#EEA47D" stroke-width="34" stroke-linecap="round" opacity=".9"></path>
+      <text><textPath id="pbt" href="#pb" startOffset="-10%">TESTS · NUMBERS · PROOF · TESTS · NUMBERS · PROOF · TESTS · NUMBERS · PROOF · TESTS · NUMBERS · PROOF · </textPath></text>
+    </svg>
+    <div class="sec-head rv" style="margin-top:110px">
+      <span class="kicker"><span class="dot" style="background:var(--coral)"></span>And the receipts</span>
+      <h2>Shipped, tested, verified live.</h2>
+    </div>
+    <div class="bubs">
+      <div class="bub rv"><span class="im"><span class="big">24,805</span></span><div class="tx"><b>Tests green</b><span>0 failed · 335 new test files · +114k test lines</span></div></div>
+      <div class="bub rv d1"><span class="im"><span class="big">114</span></span><div class="tx"><b>PRs merged</b><span>since v1.18.0 · 16 days · 120 commits on dev</span></div></div>
+      <div class="bub rv d2"><span class="im"><span class="big">+213k</span></span><div class="tx"><b>Lines landed</b><span>1,696 files · −19.8k lines removed</span></div></div>
+      <div class="bub rv"><span class="im"><img src="docs/changelog/shots/1.19.0/r1.jpg" style="width:600%;left:-94%;top:-44%" alt="Settings sidebar — General, Runs, Labels and cost tags, Labs"></span><div class="tx"><b>Settings, in a sidebar</b><span>tabs on the left · icons · card links</span></div></div>
+      <div class="bub rv d1"><span class="im"><img src="docs/changelog/shots/1.19.0/r2.jpg" style="width:700%;left:-13%;top:-195%" alt="Profile menu — the Curious level card, 2 of 3 steps to Runner"></span><div class="tx"><b>Five levels</b><span>Curious · Runner · Hooked · WorcaHolic · Worca's Council</span></div></div>
+      <div class="bub rv d2"><span class="im"><span class="big">2</span></span><div class="tx"><b>Release candidates</b><span>rc.1 · rc.2 · 4 CI shards green on each</span></div></div>
+    </div>
+  </section>
+
+  <div class="foot">
+    <span>WORCA · changelog · <span class="mono">v1.18.0 → v1.19.0</span></span>
+    <span class="mono">Nov 5 – Nov 20, 2026</span>
+  </div>
+</div>
+
+<nav class="rail" id="rail" aria-label="Sections">
+  <a href="#s0" aria-label="What's new" class="on"></a><a href="#s1" aria-label="Design"></a><a href="#s2" aria-label="Run page"></a><a href="#s3" aria-label="Pull requests"></a><a href="#s4" aria-label="Requirements first"></a><a href="#s5" aria-label="Chat apps"></a><a href="#s6" aria-label="Agent readiness"></a><a href="#s7" aria-label="Levels"></a><a href="#s8" aria-label="Receipts"></a>
+</nav>
+
+<script>
+(function () {
+  var reduced = matchMedia('(prefers-reduced-motion: reduce)').matches;
+  var $ = function (id) { return document.getElementById(id); };
+
+  // scroll reveals
+  var io = new IntersectionObserver(function (es) {
+    es.forEach(function (e) { if (e.isIntersecting) { e.target.classList.add('in'); io.unobserve(e.target); } });
+  }, { threshold: 0.18 });
+  document.querySelectorAll('.rv').forEach(function (el) { io.observe(el); });
+
+  // dot rail follows the section in the middle of the viewport
+  var secs = [].slice.call(document.querySelectorAll('.sec'));
+  var dots = [].slice.call(document.querySelectorAll('.rail a'));
+  var so = new IntersectionObserver(function (es) {
+    es.forEach(function (e) {
+      if (e.isIntersecting) {
+        var i = secs.indexOf(e.target);
+        dots.forEach(function (d, j) { d.classList.toggle('on', j === i); });
+      }
+    });
+  }, { rootMargin: '-45% 0px -45% 0px' });
+  secs.forEach(function (s) { so.observe(s); });
+
+  // ribbons drift with scroll position
+  var rbt = $('rbt'), pbt = $('pbt');
+  if (!reduced) addEventListener('scroll', function () {
+    var p = scrollY / Math.max(1, document.body.scrollHeight - innerHeight);
+    if (rbt) rbt.setAttribute('startOffset', (-12 + p * 30) + '%');
+    if (pbt) pbt.setAttribute('startOffset', (-10 + p * 26) + '%');
+  }, { passive: true });
+
+  var USE = [[62, 'u1'], [84, 'u2'], [31, 'u3']];
+  function useFill(on) {
+    USE.forEach(function (u) {
+      var v = on ? u[0] : 0, f = $(u[1]);
+      f.style.width = v + '%'; $(u[1] + 't').textContent = v + '%';
+      f.className = 'fill' + (v >= 100 ? ' red' : v >= 80 ? ' amber' : '');
+    });
+  }
+
+  // Reduced motion: every demo in its final state, no timers.
+  if (reduced) {
+    $('bldDemo').classList.add('go');
+    $('prBanner').classList.add('show'); $('prFill').style.width = '100%'; $('prPill').textContent = 'Done';
+    [].forEach.call(document.querySelectorAll('#prSteps li, #reqSteps li'), function (li) { li.classList.add('on'); });
+    $('reqFlip').classList.add('flip');
+    $('chatDemo').classList.add('show');
+    $('mcpDemo').classList.add('collide');
+    useFill(true);
+    return;
+  }
+
+  // Design: sections fill in parallel, then reset
+  var bld = $('bldDemo');
+  setTimeout(function () { bld.classList.add('go'); }, 400);
+  setInterval(function () { bld.classList.toggle('go'); }, 3000);
+
+  // Design: the kind picker rotates
+  var kinds = [].slice.call(document.querySelectorAll('#kindDemo .dd-opt')), k = 0;
+  setInterval(function () { kinds[k].classList.remove('sel'); k = (k + 1) % kinds.length; kinds[k].classList.add('sel'); }, 1600);
+
+  // Run page: tabs switch, the question stays
+  var tabs = [].slice.call(document.querySelectorAll('#tabDemo .tb')), pane = $('tabPane'), t = 0;
+  var PANES = ["Where the work is · the run's branch · its pull request",
+    'The full prompt, then the run setup card',
+    '4 files changed · +36 −0',
+    'The live workflow, framed on the running step',
+    '4 questions answered · 1 waiting'];
+  setInterval(function () {
+    tabs[t].classList.remove('on'); t = (t + 1) % tabs.length; tabs[t].classList.add('on'); pane.textContent = PANES[t];
+  }, 1700);
+
+  // Auto PR: run → done → PR opened → reset
+  var pill = $('prPill'), fill = $('prFill'), step = $('prStep'), banner = $('prBanner');
+  var prSteps = [].slice.call(document.querySelectorAll('#prSteps li'));
+  var ph = 0; setInterval(function () {
+    ph = (ph + 1) % 5;
+    prSteps.forEach(function (li, i) { li.classList.toggle('on', ph >= 2 && i <= ph - 2); });
+    if (ph === 0) { pill.textContent = 'Running'; pill.className = 'pill run'; fill.style.width = '8%'; step.textContent = 'step: implement'; banner.classList.remove('show'); }
+    if (ph === 1) { fill.style.width = '100%'; step.textContent = 'step: review'; }
+    if (ph === 2) { pill.textContent = 'Done'; step.textContent = 'committed'; }
+    if (ph === 4) { banner.classList.add('show'); }
+  }, 1500);
+
+  // Requirements: the three cards light up in order
+  var req = [].slice.call(document.querySelectorAll('#reqSteps li')), r = 0;
+  setInterval(function () { r = (r + 1) % 4; req.forEach(function (li, i) { li.classList.toggle('on', i < r); }); }, 1400);
+
+  // Requirements: one row flips to not covered
+  var rf = $('reqFlip');
+  setInterval(function () { rf.classList.toggle('flip'); }, 2400);
+
+  // Chat apps: the proposal arrives, Start run pulses
+  var chat = $('chatDemo'), go = $('chatGo');
+  setInterval(function () { var on = chat.classList.toggle('show'); go.style.transform = on ? 'scale(1.06)' : ''; }, 2400);
+
+  // MCP import: masked secrets appear
+  var mcp = $('mcpDemo');
+  setInterval(function () { mcp.classList.toggle('collide'); }, 2800);
+
+  // Plan usage: meters fill, one crosses 80%
+  var uOn = false; setTimeout(function () { useFill(uOn = true); }, 500);
+  setInterval(function () { useFill(uOn = !uOn); }, 3200);
+})();
+</script>

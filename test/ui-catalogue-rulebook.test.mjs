@@ -85,12 +85,13 @@ test('Providers: a tab of the Models page, seven divided rows, shared buttons', 
   assert.ok(tab.querySelector('.mv-or-browse').classList.contains('btn'), 'OpenRouter\'s Import models… is a shared button');
 });
 
-test('Connectors: one page intro, no mcp-chip, no typed plus, the plus icon on every Add', () => {
+test('Connectors: no page intro, no mcp-chip, no typed plus, the plus icon on every Add', () => {
   const view = read('ui/public/mcp-view.mjs');
   const src = view + read('ui/public/mcp-definition-form.mjs');
   assert.doesNotMatch(src, /mcp-chip|['"`]\+ ?[Aa]dd/);
   assert.match(src, /addBtn\(doc, 'Add server', \{ act: 'add-member' \}\)/);
-  assert.match(view, /h\(doc, 'div', 'sub page-intro', 'MCP servers and skills/);
+  assert.doesNotMatch(view + read('ui/public/mcp-servers/connectors-shell.mjs'), /page-intro/);
+  assert.match(read('ui/public/mcp-servers/connectors-shell.mjs'), /'tabs mk-tabs'/);
   assert.match(CSS, /\.mcp-usedby > \.chip\{display:inline-flex;align-items:center;gap:6px;\}/);
   assert.match(CSS, /\.mcp-usedby > \.chip:has\(> \.btn\)\{padding-block:0;\}/, 'the 28px × sets a removable chip\'s height');
   assert.deepEqual(rules('.mcp-x'), []);

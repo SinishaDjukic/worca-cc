@@ -110,13 +110,14 @@ export function workflowRule({ proposal, budget }) {
 }
 
 /**
- * A plan ask: a person answers what to build, Away handles how. An allowlist over the ask's fields (they all share
+ * A plan ask on a run that is not a Shaper run, unchanged: a person answers what to build, Away handles how. An allowlist over the ask's fields (they all share
  * kind 'plan'): whatever it does not recognise as clean waits. The order is the decision.
  * @returns {{payload:object, flagged:boolean, reason:string, ask:'plan'|'outline'|'concern'}|null} null = waits for a person
  */
-export function planRule(q) {
+function classicPlanRule(q) {
   const p = q?.plan;
   if (!p || p.error || p.criteria) return null;     // the Requirements hold, or an ask that needs a retry
+  if (p.attached) return null;                      // attached requirements: only a person can agree to them
   if (p.outline) {
     if (p.check?.ok !== true) return null;
     // The check accepts a left-out id that has a reason, and nothing later catches it: a person must hear about it.
@@ -135,6 +136,95 @@ export function planRule(q) {
   return { payload: approve, flagged: Boolean(q.concern) || open > 0,
     reason: open ? `${reason}; ${open} reviewer conflict${open === 1 ? '' : 's'} left undecided` : reason,
     ask: q.concern ? 'concern' : 'plan' };
+}
+
+/** The failing rows of a check ({items:[{label, pass, detail}]}) as revise feedback lines. */
+function failingLines(check) {
+  const items = Array.isArray(check?.items) ? check.items.filter((i) => i && i.pass === false) : [];
+  return items.map((i) => `- ${[i.label || i.id || 'a row', i.detail].filter(Boolean).join(': ')}`);
+}
+
+const reviseOn = (lines, head) => `${head}\n\n${lines.length ? lines.join('\n') : '- the check could not be read'}`;
+const noteText = (n) => (typeof n === 'string' ? n : String(n?.text ?? JSON.stringify(n)));
+/** Away sends a stop back once, on its first round: a check that still fails after that is not fixed by asking again
+ *  (a plan stays revisable for as long as its workflow has a revise wire), and every round is a paid planner run. */
+const mayRevise = (p) => p.revisable === true && !(Number(p.round) > 1);
+
+/**
+ * A plan ask on a Shaper run (every Shaper stop shares kind 'plan'). Away answers each one the way a person may, and flags every
+ * answer that decides what to build *please check*. A passing check is approved; a failing one goes back once with
+ * the check's own findings, then is approved as written. The order is the decision.
+ * @returns {{payload:object, flagged:boolean, reason:string, ask:string, questions?:object[]}|null}
+ *   null = waits for a person: only a Requirements hold whose check still fails (approve is refused there)
+ */
+export function planRule(q, { shaped = false } = {}) {
+  if (!shaped) return classicPlanRule(q);
+  const p = q?.plan;
+  if (!p) return null;
+  if (p.attached) {
+    const pending = (Array.isArray(p.attached.features) ? p.attached.features : []).filter((f) => !f.agreed);
+    return { payload: { decision: 'approve', agreedSeqs: pending.map((f) => f.seq) }, flagged: true, ask: 'attached',
+      reason: `agreed to the attached requirements as written${pending.length ? `: ${pending.map((f) => f.id || `#${f.seq}`).join(', ')}` : ''}` };
+  }
+  if (p.outline) {
+    if (p.error) {
+      // Setting up the later slices failed: approve again with the same edits and switch (the card's Try again).
+      return { payload: { decision: 'approve', ...(Array.isArray(p.edits) && p.edits.length ? { edits: p.edits } : {}), approveEach: p.approveEach === true },
+        flagged: true, ask: 'outline', reason: `the later slices could not be set up (${String(p.error).slice(0, 200)}); tried again` };
+    }
+    const passed = p.check?.ok === true;
+    if (!passed && mayRevise(p)) {
+      return { payload: { decision: 'revise', feedback: reviseOn(failingLines(p.check), "The slice outline's check did not pass. Fix these:") },
+        flagged: true, ask: 'outline', reason: "the slice outline's check did not pass; asked the planner for changes" };
+    }
+    // The check accepts a left-out id that has a reason, and nothing later catches it: a person must hear about it.
+    const left = (p.outline.leftOut || []).map((e) => e.id);
+    return { payload: { decision: 'approve', approveEach: p.approveEach === true }, flagged: !passed || left.length > 0, ask: 'outline',
+      reason: (passed ? "the slice outline's check passed" : "the slice outline's check still did not pass; approved as written")
+        + (left.length ? `; left out of every slice: ${left.join(', ')}` : '') };
+  }
+  if (p.error) {
+    return { payload: { decision: 'retry' }, flagged: true, ask: 'requirements', reason: 'the requirements could not be read; tried again' };
+  }
+  if (p.criteria) {
+    if (p.criteria.ok === false) {
+      if (!mayRevise(p)) return null;
+      return { payload: { decision: 'revise', source: 'check', feedback: reviseOn(failingLines(p.criteria), 'The requirements check did not pass. Fix these:') },
+        flagged: true, ask: 'requirements', reason: 'the requirements check did not pass; asked for changes' };
+    }
+    // Every decision takes its recommended option (the validator fills a missing pick): one Q&A row each.
+    const decisions = Array.isArray(p.decisions) ? p.decisions : [];
+    const questions = decisions.map((d) => ({
+      id: d.id, question: d.text, choice: (d.options || []).find((o) => o.value === d.recommended)?.label || d.recommended,
+      strategy: 'rule', confidence: null, flagged: true, rationale: 'the recommended option' }));
+    return { payload: { decision: 'approve' }, flagged: true, ask: 'requirements', ...(questions.length ? { questions } : {}),
+      reason: `agreed to the requirements as written${decisions.length ? `; ${decisions.length} decision${decisions.length === 1 ? '' : 's'} took the recommended option` : ''}` };
+  }
+  const approve = { decision: 'approve' };
+  if (q.concern && q.concern.kind !== 'requirement') {
+    return { payload: approve, flagged: true, reason: `the implementer raised a concern on the plan: ${q.concern.title}; the plan is built as written`, ask: 'concern' };
+  }
+  const revisable = mayRevise(p);
+  // Notes from the chat already reach the planner (the slice scope): the stop is for a person to see them.
+  const notes = Array.isArray(p.notes) ? p.notes : [];
+  const checkFails = p.check?.ok !== true;
+  const coverageFails = Object.hasOwn(p, 'coverage') && p.coverage?.ok !== true;
+  if ((checkFails || coverageFails) && revisable && !p.outlineChange) {
+    const lines = [...(checkFails ? failingLines(p.check) : []), ...(coverageFails ? failingLines(p.coverage) : [])];
+    const which = checkFails && coverageFails ? 'shape check and coverage' : checkFails ? 'shape check' : 'coverage';
+    return { payload: { decision: 'revise', source: 'check', feedback: reviseOn(lines, "The plan's checks did not pass. Fix these:") },
+      flagged: true, ask: 'plan', reason: `the plan's ${which} did not pass; asked the planner for changes` };
+  }
+  const open = p.openConflicts > 0 ? p.openConflicts : 0;
+  const why = [];
+  if (q.concern) why.push(`a reviewer raised a concern on an agreed requirement: ${q.concern.title}; the requirement stays as agreed`);
+  if (p.outlineChange) why.push('the planner says this slice cannot be built as outlined; the plan is built as written');
+  if (notes.length) why.push(`the chat added notes to this run (${notes.slice(0, 3).map(noteText).join('; ').slice(0, 300)}); the planner had them`);
+  if (checkFails || coverageFails) why.push("the plan's checks still did not pass; built as written");
+  if (!why.length) why.push("the plan's shape check passed");
+  if (open) why.push(`${open} reviewer conflict${open === 1 ? '' : 's'} left undecided`);
+  return { payload: approve, ask: q.concern ? 'concern' : 'plan', reason: why.join('; '),
+    flagged: Boolean(q.concern) || open > 0 || Boolean(p.outlineChange) || notes.length > 0 || checkFails || coverageFails };
 }
 
 export function recoveryRule({ attempts, max }) {

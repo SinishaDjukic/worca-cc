@@ -97,6 +97,16 @@ test('chromeArgs: a caller can drop file access and add its own flags (the Desig
   assert.ok(held.includes('--host-resolver-rules=MAP * ~NOTFOUND'));
 });
 
+test('a CDP call on a closed browser fails at once with "closed", never waits for ever', { skip: noChrome }, async () => {
+  const { launch } = await import('../assets/promo-kit/tools/cdp.mjs');
+  const b = await launch({ chrome: CHROME });
+  assert.equal(await b.evaluate('1 + 1'), 2);
+  await b.close();
+  const late = (p) => Promise.race([p, new Promise((_, rej) => setTimeout(() => rej(new Error('no answer in 5 s')), 5000))]);
+  await assert.rejects(late(b.evaluate('1')), /CDP socket closed/);
+  await assert.rejects(late(b.page('Page.getFrameTree')), /CDP socket closed/);
+});
+
 test('kit.js F.SFX and tools/sfx.mjs list the same sound names', () => {
   const kit = readFileSync(fileURLToPath(new URL('../assets/promo-kit/film/kit.js', import.meta.url)), 'utf8');
   const m = /F\.SFX = \[([\s\S]*?)\];/.exec(kit);

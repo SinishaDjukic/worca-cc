@@ -5,10 +5,10 @@
 // viewer per document: opening another replaces it. Esc, the backdrop and Close dismiss it and focus goes back to
 // what opened it. While it is open, Esc and ←/→ are its own: a WINDOW capture listener runs before the run pages'
 // document capture handlers (which send a detail screen back to its list on Escape) and stops the event there.
-import {
-  relOf, baseName, displayPath, formatBytes, previewKindFor, RAW_PREVIEW_KINDS, TEXT_PREVIEW_MAX_BYTES,
-} from './common.mjs';
-import { renderPreview, PINNABLE_PREVIEW_KINDS } from './preview.mjs';
+import { relOf, baseName, displayPath, formatBytes } from './common.mjs';
+import { loadPreview, headOf, errorText, NO_PREVIEW } from './stage.mjs';
+
+export { errorText } from './stage.mjs';
 import { copyButton, copyFromButton } from '../copy-button.mjs';
 
 const GLYPH = {
@@ -23,8 +23,6 @@ const GLYPH = {
 const FOCUSABLE = 'button, a[href], select, input, textarea, iframe, embed, audio[controls], video[controls], [tabindex]:not([tabindex="-1"])';
 /** What close() may hand the focus to when the opener is gone. */
 const PAGE_STOPS = 'button, a[href], input, select, textarea, [tabindex]:not([tabindex="-1"])';
-/** Text that holds a NUL in its first 8 KB is bytes, not text (git's own test): it gets the info view, not a page of junk. */
-const NUL = String.fromCharCode(0);
 /** Dialogs that can stack over the popup (the confirm, the Stop warning, a native <dialog>): they own the keys and the focus. */
 const STACKED = '#confirm-modal:not(.hidden), #stop-modal:not(.hidden), dialog[open]';
 const OPEN = new WeakMap();                     // document -> the viewer open in it
@@ -60,52 +58,11 @@ export function routeKeyOf(win) {
 }
 let seq = 0;
 
-async function safeJson(res) {
-  try { return await res.json(); } catch { return {}; }
-}
-
-/** The words a failed load shows — worca's (the Strings table), never the server's or the runtime's own message:
- *  a 500 body carries `err.message`, which can hold an absolute path. */
-export function errorText(err) {
-  if (!err) return '';
-  if (err.status === 404) return 'File not found';
-  if (err.status === 413) return 'Too large to preview';
-  if (err.status === 415) return 'No preview for this file type';
-  return err.status ? `Could not load (HTTP ${err.status})` : 'Could not load';
-}
-
-/** HEAD a URL → {ok, status, size}: `size` is its Content-Length when the answer is a success that carries one, else
- *  null; status 0 = the request itself failed. */
-async function headOf(fetchFn, url) {
-  try {
-    const r = await fetchFn(url, { method: 'HEAD' });
-    const v = r && r.ok && r.headers && typeof r.headers.get === 'function' ? r.headers.get('content-length') : null;
-    const n = v == null || v === '' ? NaN : Number(v);
-    return { ok: Boolean(r && r.ok), status: (r && r.status) || 0, size: Number.isFinite(n) && n >= 0 ? n : null };
-  } catch {
-    return { ok: false, status: 0, size: null };
-  }
-}
-
 /** HEAD a URL before framing or saving it (no body on the happy path: a 25 MB pdf is not pulled twice).
  *  → null when the bytes are servable, else {status} (0 = the request itself failed). */
 export async function probeUrl(fetchFn, url) {
   const r = await headOf(fetchFn, url);
   return r.ok ? null : { status: r.status };
-}
-
-/** UTF-16 text with a byte-order mark, read as bytes from the download form → its text; null when the bytes carry no
- *  UTF-16 mark (they are not text) or cannot be read. */
-async function utf16Text(fetchFn, url) {
-  try {
-    const r = await fetchFn(url);
-    if (!r || !r.ok || typeof r.arrayBuffer !== 'function') return null;
-    const b = new Uint8Array(await r.arrayBuffer());
-    const enc = b[0] === 0xff && b[1] === 0xfe ? 'utf-16le' : b[0] === 0xfe && b[1] === 0xff ? 'utf-16be' : '';
-    return enc ? new TextDecoder(enc).decode(b.subarray(2)) : null;
-  } catch {
-    return null;
-  }
 }
 
 /** Save one file: probe the download URL (a 404 must never be saved AS the file), then click a detached same-origin
@@ -326,59 +283,22 @@ export function openArtifactViewer({ doc, win = doc.defaultView, fetch: fetchFn,
     body.replaceChildren(stage);
     const live = () => my === token && !closed;
     const rel = relOf(a);
-    const shown = displayPath(rel);             // what an alt text, a frame title or a player's label may say
-    const kind = a.previewKind
-      ? (a.previewKind === 'none' || PINNABLE_PREVIEW_KINDS.has(a.previewKind) ? a.previewKind : 'none')
-      : previewKindFor(a.kind, rel);
     try {
-      if (kind === 'none') { info(stage, a, 'No preview for this file type'); return; }
-      if (RAW_PREVIEW_KINDS.has(kind)) {
-        const url = urls.raw(rel);
-        const probe = await headOf(fetchFn, url);
-        if (!live()) return;
-        // The HEAD that clears the bytes also sizes a live row (an image, a deck, a clip) for the header.
-        if (probe.size != null && sizeOf(a) == null) { sizes.set(rel, probe.size); metaLine(a); }
-        const err = probe.ok ? null : { status: probe.status };
-        if (err && (err.status === 413 || err.status === 415)) { info(stage, a, errorText(err)); return; }
-        if (err) { fail(stage, errorText(err)); return; }
-        await renderPreview({ kind: a.kind || null, relPath: shown, url, previewKind: a.previewKind || null }, stage, deps);
-        // A player the browser cannot feed (an HEVC .mp4, a damaged file) says so instead of sitting there dead.
-        const media = stage.querySelector('audio, video');
-        if (media) {
-          const dead = () => { if (live()) info(stage, a, 'No preview for this file type'); };
-          media.addEventListener('error', dead, { once: true });
-          if (media.error) dead();
-        }
-        return;
+      const out = await loadPreview({ artifact: a, stage, urls, fetch: fetchFn, deps, live,
+        size: sizeOf(a), onSize: (n) => { sizes.set(rel, n); metaLine(a); } });
+      if (out.state === 'stale' || !live()) return;
+      if (out.state === 'info') { info(stage, a, out.reason); return; }
+      if (out.state === 'error') { fail(stage, out.message); return; }
+      // A player the browser cannot feed (an HEVC .mp4, a damaged file) says so instead of sitting there dead.
+      if (out.media) {
+        const dead = () => { if (live()) info(stage, a, NO_PREVIEW); };
+        out.media.addEventListener('error', dead, { once: true });
+        if (out.media.error) dead();
       }
-      // A live row carries no size: the download form (any type, no ceiling) answers a HEAD with it, before the text
-      // route pulls the whole file.
-      if (sizeOf(a) == null) {
-        const n = (await headOf(fetchFn, urls.download(rel))).size;
-        if (!live()) return;
-        if (n != null) { sizes.set(rel, n); metaLine(a); }
-      }
-      if (Number(sizeOf(a)) > TEXT_PREVIEW_MAX_BYTES) { info(stage, a, 'Too large to preview'); return; }
-      const res = await fetchFn(urls.text(rel));
-      const data = await safeJson(res);
-      if (!live()) return;
-      if (res.status === 413 || res.status === 415) { info(stage, a, errorText({ status: res.status })); return; }
-      if (!res.ok) { fail(stage, errorText({ status: res.status })); return; }
-      const text = typeof data.text === 'string' ? data.text : '';
-      // No kind table names every byte format (.bmp, .xls, .pkl, a bare `core`): decoded bytes are not a preview —
-      // unless they are UTF-16 text (Windows PowerShell's `>` writes it), which the text route can only read as UTF-8:
-      // its byte-order mark decodes to two U+FFFD there, and the bytes themselves say which UTF-16 it is.
-      if (text.slice(0, 8192).includes(NUL)) {
-        const wide = text.charCodeAt(0) === 0xfffd && text.charCodeAt(1) === 0xfffd ? await utf16Text(fetchFn, urls.download(rel)) : null;
-        if (!live()) return;
-        if (wide == null) { info(stage, a, 'No preview for this file type'); return; }
-        await renderPreview({ kind: a.kind || null, relPath: shown, text: wide, previewKind: a.previewKind || null }, stage, deps);
-        if (live()) { copyText = wide; copyBtn.hidden = false; }
-        return;
-      }
-      await renderPreview({ kind: a.kind || null, relPath: shown, text, previewKind: a.previewKind || null }, stage, deps);
-      if (live()) { copyText = text; copyHtml = renderedHtml(stage); copyBtn.hidden = false; }
-      if (live() && typeof decorate === 'function') {
+      // Copy: the shown file's text (UTF-16 decoded, too), and a rendered markdown page as HTML beside it.
+      const copy = typeof out.text === 'string' ? out.text : typeof out.copyText === 'string' ? out.copyText : null;
+      if (copy != null) { copyText = copy; copyHtml = typeof out.text === 'string' ? renderedHtml(stage) : null; copyBtn.hidden = false; }
+      if (typeof out.text === 'string' && typeof decorate === 'function') {
         try { undecorate = decorate({ artifact: a, stage, body, root }) || null; } catch { undecorate = null; }
       }
     } catch {

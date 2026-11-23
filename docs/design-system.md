@@ -205,6 +205,11 @@ Chat command card's state (`.ask-cmd-pill`) and the Team policy tab count (`.tp-
 active tab the count turns neutral (`--line-2` fill, ink text). A chat command in summary mode (flag `commandSummaries`) shows the runs status dot and no state chip; a lone command is a line like that head (its summary · time ›, no card, no dot) that opens to its detail; consecutive commands share one card under a quiet disclosure head (`--ink-2`, `--hover`, › turning down), folded until the person opens it (a failure shows only as the red `N failed`; a running group puts Stop beside the head), with the rows split by one `--line`; an opened command uses `--field` boxes (command, folder chip, output panel); the full card keeps `.ask-cmd-pill`. The missing-key slot is the one outlined chip: a 1px dashed
 `--amber` outline on a transparent fill. A removable chip's × is a 14px quiet button inside the chip. A source, "Official"
 or a policy origin is `.badge.slate`; "not installed" and "built-in" are grey.
+Agent readiness (`ui/public/readiness-chip.mjs`) uses the same chip: the project row and page header chip (`.badge.pl-rd`:
+"Agent-ready" green, "Partly ready" amber, "Not agent-ready" red) and the popover's level labels (`.badge.rd-lbl`, grey for
+"Not used"). Amber and red take the `-ink-strong` text shade, and a not-ready chip ends in a solid count of open problems
+(`.rd-n`). A failing check leads with `.issue-sev` (Must fix red, Should fix amber, Advice blue), never a dot: a dot is a
+state. The passed and ignored boxes are `.disclosure` with the `check` and `none` icons.
 ### Status dot and symbols
 A dot is the state: peach working (pulses), grey paused or waiting, green ready, violet merged. Needs you is an amber
 "?" only when Worca asks; a PR problem is a plain amber dot with the reason in the PR chip; failed is a red "!".
@@ -315,6 +320,13 @@ share one centre. The dock is opaque from its top edge down after a 32px fade ba
 sits in that band, right above the dock, and the transcript's bottom clearance includes it, so nothing reads under
 the composer. A row rises in (`data-ask-enter`) only the first time the page shows it, in any chat; the card inside it
 never rises on its own. No part of a chat card is a pill; inner corners stay at or under the card's 8px.
+### Composer bar
+The chat composer's row is compact (`.ask-composer-row[data-bar="compact"]`): project, Requirements and Sets are
+icon buttons, and each icon button names itself in a styled tooltip. The words sit in the button's `data-tip` (the
+button keeps its `aria-label` and has no `title`, so the browser's own tooltip never doubles it); the tip is drawn
+above the button on hover or keyboard focus after .3s, and never while a menu of the row is open. Only the
+composer row draws it (the rule is scoped to that row). A tip is `display:none` at rest, never a box laid out at
+opacity 0.
 ### Table
 `.table-wrap` > `.table`: 12px / 600 `--ink-2` headers, 13px cells, 8px 12px 8px 0 cell padding, one `--line` under
 each row, no outer box. Under 560px it stacks one block per row using each cell's `data-label`; it never scrolls sideways.
@@ -505,7 +517,7 @@ above them, never a boxed tab, and never a colour of a tab's own.
 - Search is the top bar's "Search or ask" only. A list filter is chosen there ("Runs labelled hotfix", `label:hotfix`),
   not from a filter button in the list's header. The Marketplace's Browse search is one exception
   (Marketplace exceptions); the Models Catalogue's own "Search models" field, with its All, In use and Needs setup
-  filter chips (Just imported after an import) and its Source select, is the other.
+  filter chips (Just imported after an import) and its Source select, is the other, and Connectors' Servers and Skills toolbars use the Catalogue's grammar (search, filter chips, Source select), a third.
 - Phones: one 16px gutter; nothing scrolls sideways at 290px.
 - Runs list order: Needs you (most urgent first), Running, Waiting, Recent. Each section is newest dispatch first (a
   run's start, a waiting ticket's creation); a section with no rows is not drawn.

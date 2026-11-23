@@ -2,7 +2,7 @@
 // `watch` flag on POST /api/pr, and the server's watcher wiring (origin, branch-busy check).
 import { test, before, after, beforeEach } from 'node:test';
 import assert from 'node:assert/strict';
-import http from 'node:http';
+import { appServer } from './helpers/app-server.mjs';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -52,7 +52,7 @@ before(async () => {
     stepper: { version: 2, template: { id: 'wf_default' } } }, members));
   persistMemberPrState(wsId, 'api-00000001', { url: 'https://github.com/o/api/pull/1', number: 1, state: 'OPEN' });
   persistMemberPrState(wsId, 'web-00000002', { url: 'https://github.com/o/web/pull/2', number: 2, state: 'MERGED' });
-  srv = http.createServer(app);
+  srv = appServer(app);
   await new Promise((r) => srv.listen(0, '127.0.0.1', r));
   base = `http://127.0.0.1:${srv.address().port}`;
 });
