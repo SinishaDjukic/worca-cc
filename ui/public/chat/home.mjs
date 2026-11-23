@@ -106,7 +106,8 @@ export function createChatHome({ doc, host, heroSlot = null, deps, runsWaitMs = 
   };
 
   // ---- the hero, around P1's slot -------------------------------------------------------------------------
-  const hero = createHeroTitle({ doc, win, clock });   // "What should worca <verb>?", the verb turning on a visit
+  // "What should worca <verb>?", the verb turning on a visit; it waits while the slot's composer is focused or holds text
+  const hero = createHeroTitle({ doc, win, clock, composer: () => (heroSlot ? heroSlot.querySelector('.ask-input') : null) });
   const title = hero.el;
   host.insertBefore(title, heroSlot && heroSlot.parentNode === host ? heroSlot : host.firstChild);
 

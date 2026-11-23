@@ -3,7 +3,8 @@
 // tiles updated in place and destroyed on leave, routing (following chat, else the run on Q&A / Workflow), lists,
 // promos, switches, and findFollowingThread.
 import { test, afterEach } from 'node:test';
-import { VERB_HOLD_MS, HERO_VERBS } from '../ui/public/chat/home-verbs.mjs';
+import { readFileSync } from 'node:fs';
+import { HOLD_MS, FADE_MS, HERO_VERBS } from '../ui/public/chat/home-verbs.mjs';
 import assert from 'node:assert/strict';
 import { JSDOM } from 'jsdom';
 import { useDomRelease } from './helpers/jsdom-release.mjs';
@@ -55,6 +56,9 @@ function setup({ view = 'home', runs = RUNS(), threads = [], workflows = null, f
   const { window } = dom;
   if (reducedMotion) window.matchMedia = (q) => ({ matches: /prefers-reduced-motion: reduce/.test(q), addEventListener() {}, removeEventListener() {} });
   const doc = window.document;
+  // a shown tab (jsdom reports hidden without pretendToBeVisual, and the hero's verb waits while the tab is hidden)
+  let hidden = false;
+  Object.defineProperty(doc, 'hidden', { configurable: true, get: () => hidden });
   const calls = [];
   let runsNow = runs;
   let release = null;
@@ -77,7 +81,7 @@ function setup({ view = 'home', runs = RUNS(), threads = [], workflows = null, f
   const host = doc.querySelector('[data-chat-home]');
   const home = createChatHome({ doc, host, heroSlot: doc.querySelector('[data-chat-hero-slot]'), deps });
   return {
-    window, doc, host, home, calls,
+    window, doc, host, home, calls, setHidden: (v) => { hidden = v; },
     page: doc.querySelector('[data-chat-page]'), section: doc.querySelector('section[data-view="chat"]'),
     setRuns: (r) => { runsNow = r; }, releaseThreads: () => { if (release) release(); },
   };
@@ -482,7 +486,7 @@ test('timers: the visit\'s tick, coalesce and boot wait run on the injected cloc
     runs: () => RUNS(), threads: async () => [], workflows: async () => ({ list: [], portsFn: null }),
     flags: async () => ({ scripts: true, tasks: false }), threadForRun: async () => null, openThread() {}, openRunPanel() {},
     setIntent() {}, prefill() {}, navigate() {}, level: () => 'expert' } });
-  assert.deepEqual(made, [['timeout', VERB_HOLD_MS], ['timeout', RUNS_WAIT_MS], ['interval', RUNS_TICK_MS]], 'the visit started on the injected clock (the hero\'s verb too)');
+  assert.deepEqual(made, [['timeout', HOLD_MS], ['timeout', RUNS_WAIT_MS], ['interval', RUNS_TICK_MS]], 'the visit started on the injected clock (the hero\'s verb too)');
   home.update();
   assert.deepEqual(made.at(-1), ['timeout', RUNS_COALESCE_MS]);
   s.page.dataset.view = 'thread';
@@ -637,31 +641,156 @@ test('update({ workflows }) hands the new list to the row', async () => {
   assert.ok(s.host.querySelector('.chat-home-act[data-pin="wf_pay"]'));
 });
 
-test('the hero: one steady sentence for screen readers; the verb is typed and deleted behind a cursor through create, design, research, fix, analyse, test, in a slot that never changes width; "do" with reduced motion', async () => {
-  const s = setup();
-  await settle(s.window);
+// The hero's verb on an injected clock: `due` holds the live timers (a cleared one leaves it), `composer` the slot's field.
+function heroHome(s, { reduced = false } = {}) {
   s.home.destroy();
-  const due = [];
-  const timers = { setInterval: () => 0, clearInterval() {}, setTimeout: (fn) => { due.push(fn); return due.length; }, clearTimeout() {} };
+  if (reduced) s.window.matchMedia = (q) => ({ matches: /prefers-reduced-motion: reduce/.test(q), addEventListener() {}, removeEventListener() {} });
+  const due = new Map();
+  let ids = 0;
+  const timers = {
+    setInterval: () => 0, clearInterval() {},
+    setTimeout: (fn, ms) => { ids += 1; due.set(ids, { fn, ms }); return ids; },
+    clearTimeout: (id) => { due.delete(id); },
+  };
   const home = createChatHome({ doc: s.doc, host: s.host, heroSlot: s.doc.querySelector('[data-chat-hero-slot]'), timers, deps: {
     runs: () => RUNS(), threads: async () => [], workflows: async () => ({ list: [], portsFn: null }),
     flags: async () => ({ scripts: true, tasks: false }), threadForRun: async () => null, openThread() {}, openRunPanel() {},
     setIntent() {}, prefill() {}, navigate() {}, level: () => 'expert' } });
   const h1 = s.host.querySelector('h1.chat-home-title');
-  const typed = () => h1.querySelector('.chat-home-verb-typed').textContent;
-  assert.equal(h1.getAttribute('aria-label'), 'What should worca do?');
-  assert.equal(h1.querySelector('.chat-home-verb').getAttribute('aria-hidden'), 'true');
-  assert.equal(h1.querySelector('.chat-home-verb-size').textContent, 'research?', 'the slot is sized by the widest verb: the sentence never moves');
-  assert.equal(h1.querySelector('.chat-home-cursor').hidden, false);
-  const states = [typed()];
-  for (let n = 0; n < 200 && states.filter((t) => t === HERO_VERBS[0]).length < 2; n += 1) { due.shift()(); if (typed() !== states.at(-1)) states.push(typed()); }
-  const whole = states.filter((t) => HERO_VERBS.includes(t));
-  assert.deepEqual([...new Set(whole)], [...HERO_VERBS], 'each verb in turn, then round again');
-  assert.ok(states.includes('cr') && states.includes('desig') && states.includes(''), 'typed a letter at a time, and deleted back to nothing');
-  home.destroy();
-  const r = setup({ reducedMotion: true });
-  await settle(r.window);
-  assert.equal(r.host.querySelector('.chat-home-verb-typed').textContent, 'do', 'reduced motion: the plain sentence');
-  assert.equal(r.host.querySelector('.chat-home-cursor:not(.chat-home-verb-size *)').hidden, true, 'and no cursor');
-  r.home.destroy();
+  const heroTimers = () => [...due.entries()].filter(([, t]) => t.ms === HOLD_MS || t.ms === FADE_MS + HOLD_MS);
+  const fire = () => { const all = heroTimers(); assert.equal(all.length, 1, 'one hero timer at a time'); due.delete(all[0][0]); all[0][1].fn(); };
+  const layers = () => [...h1.querySelectorAll('.chat-home-verb-layer')];
+  const verbOf = (el) => el.textContent.replace(/\?$/, '');
+  const shown = () => { const on = layers().filter((l) => l.classList.contains('is-on')); assert.equal(on.length, 1, 'exactly one layer shows'); return on[0]; };
+  const composer = s.doc.querySelector('[data-chat-hero-slot] .ask-input');
+  return {
+    home, h1, due, heroTimers, fire, layers, verbOf, shown, composer,
+    setHidden: (v) => { s.setHidden(v); s.doc.dispatchEvent(new s.window.Event('visibilitychange')); },
+    setHiddenQuietly: (v) => { s.setHidden(v); },
+    type: (text) => { composer.value = text; composer.dispatchEvent(new s.window.Event('input', { bubbles: true })); },
+  };
+}
+
+test('the hero: one steady sentence for screen readers; the verb crossfades through create, design, research, fix, analyse, test and round again, in a slot that never changes width; no cursor', async () => {
+  const s = setup();
+  await settle(s.window);
+  const x = heroHome(s);
+  assert.equal(x.h1.getAttribute('aria-label'), 'What should worca do?');
+  assert.equal(x.h1.querySelector('.chat-home-verb').getAttribute('aria-hidden'), 'true');
+  assert.equal(x.h1.querySelector('.chat-home-verb-size').textContent, 'research?', 'the slot is sized by the widest verb: the sentence never moves');
+  assert.equal(x.h1.querySelector('.chat-home-cursor'), null, 'no cursor');
+  assert.equal(x.h1.querySelector('.chat-home-verb-typed'), null, 'nothing typed');
+  assert.equal(x.layers().length, 2, 'two stacked layers');
+  assert.equal(x.verbOf(x.shown()), HERO_VERBS[0], 'the first verb is shown whole on a visit');
+  assert.equal(x.shown().querySelector('.chat-home-q').textContent, '?', 'the sentence\'s own mark, in the title\'s ink');
+  assert.deepEqual(x.heroTimers().map(([, t]) => t.ms), [HOLD_MS], 'the first verb holds the full time');
+  const seen = [x.verbOf(x.shown())];
+  let before = x.shown();
+  for (let n = 0; n < HERO_VERBS.length; n += 1) {
+    x.fire();
+    const on = x.shown();
+    assert.notEqual(on, before, 'the other layer fades in');
+    assert.equal(x.verbOf(before), seen.at(-1), 'while the leaving layer still holds the old verb (it fades out)');
+    assert.deepEqual(x.heroTimers().map(([, t]) => t.ms), [FADE_MS + HOLD_MS], 'the fade, then the full hold');
+    seen.push(x.verbOf(on));
+    before = on;
+  }
+  assert.deepEqual(seen, [...HERO_VERBS, HERO_VERBS[0]], 'each verb in turn, then round again');
+  x.home.destroy();
+});
+
+test('the hero waits while the tab is hidden or the composer is focused or holds text, then resumes with a full hold; one timer at a time', async () => {
+  const s = setup();
+  await settle(s.window);
+  const x = heroHome(s);
+  x.fire();
+  assert.equal(x.verbOf(x.shown()), 'design');
+  x.setHidden(true);
+  assert.equal(x.heroTimers().length, 0, 'hidden: no timer');
+  x.setHidden(false);
+  assert.deepEqual(x.heroTimers().map(([, t]) => t.ms), [HOLD_MS], 'visible again: a full hold');
+  x.setHidden(false);
+  s.doc.dispatchEvent(new s.window.Event('visibilitychange'));
+  assert.equal(x.heroTimers().length, 1, 'a repeated wake adds no second timer');
+  x.composer.focus();
+  assert.equal(x.heroTimers().length, 0, 'the composer focused: no timer');
+  x.type('fix the');
+  assert.equal(x.heroTimers().length, 0, 'typing: still waiting');
+  x.composer.blur();
+  assert.equal(x.heroTimers().length, 0, 'blurred but holding text: still waiting');
+  x.type('');
+  assert.deepEqual(x.heroTimers().map(([, t]) => t.ms), [HOLD_MS], 'emptied: a full hold');
+  x.composer.focus();
+  x.composer.blur();
+  assert.deepEqual(x.heroTimers().map(([, t]) => t.ms), [HOLD_MS], 'blurred empty: a full hold');
+  assert.equal(x.verbOf(x.shown()), 'design', 'no change while it waited');
+  x.setHiddenQuietly(true);
+  x.fire();
+  assert.equal(x.verbOf(x.shown()), 'design', 'busy when the hold ends: no change');
+  assert.equal(x.heroTimers().length, 0, 'and it waits for the wake');
+  x.setHidden(false);
+  x.fire();
+  assert.equal(x.verbOf(x.shown()), 'research', 'then goes on from where it was');
+  x.home.destroy();
+});
+
+test('the hero stops on a leave (timer cleared, listeners removed) and starts again whole on a visit', async () => {
+  const s = setup();
+  await settle(s.window);
+  const x = heroHome(s);
+  await settle(s.window);
+  x.fire();
+  s.page.dataset.view = 'thread';
+  await settle(s.window);
+  assert.equal(x.heroTimers().length, 0, 'leaving clears the timer');
+  x.setHidden(true);
+  x.setHidden(false);
+  x.composer.focus();
+  x.composer.blur();
+  x.type('');
+  assert.equal(x.heroTimers().length, 0, 'and no listener wakes it');
+  s.page.dataset.view = 'home';
+  await settle(s.window);
+  assert.equal(x.verbOf(x.shown()), HERO_VERBS[0], 'a visit starts from the first verb, shown whole');
+  assert.deepEqual(x.heroTimers().map(([, t]) => t.ms), [HOLD_MS]);
+  x.fire();
+  assert.equal(x.verbOf(x.shown()), HERO_VERBS[1], 'and goes round from there');
+  x.home.destroy();
+  assert.equal(x.heroTimers().length, 0, 'destroy leaves nothing running');
+});
+
+test('the hero with reduced motion: a static "do", no timer, no cursor, and no wake starts one', async () => {
+  const s = setup();
+  await settle(s.window);
+  const x = heroHome(s, { reduced: true });
+  assert.equal(x.verbOf(x.shown()), 'do', 'reduced motion: the plain sentence');
+  assert.equal(x.h1.querySelector('.chat-home-cursor'), null, 'and no cursor');
+  assert.equal(x.heroTimers().length, 0, 'no timer');
+  x.setHidden(true);
+  x.setHidden(false);
+  x.composer.focus();
+  x.composer.blur();
+  assert.equal(x.heroTimers().length, 0, 'no wake starts one');
+  x.home.destroy();
+  const t = setup();
+  await settle(t.window);
+  const y = heroHome(t);
+  y.fire();
+  t.window.matchMedia = (q) => ({ matches: /prefers-reduced-motion: reduce/.test(q), addEventListener() {}, removeEventListener() {} });
+  y.fire();
+  assert.equal(y.verbOf(y.shown()), 'do', 'reduced motion switched on mid-loop: "do" at the next change');
+  assert.equal(y.heroTimers().length, 0, 'and nothing more is timed');
+  y.home.destroy();
+});
+
+test('the hero CSS: two layers crossfade (opacity and a 2px blur, --verb-fade = FADE_MS, ease-in-out); no cursor or blink; reduced motion drops the transition', () => {
+  const css = readFileSync(new URL('../ui/public/chat/chat-home.css', import.meta.url), 'utf8').replace(/\/\*[\s\S]*?\*\//g, '');
+  const body = (sel) => { const m = css.match(new RegExp('(?:^|[\\s}])' + sel.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '\\{([^}]*)\\}')); return m ? m[1] : null; };
+  assert.doesNotMatch(css, /chat-home-cursor|chat-home-blink|chat-home-verb-typed/);
+  assert.equal(body('.chat-home-verb'), `--verb-fade:${FADE_MS}ms;display:inline-grid;text-align:left;color:var(--ink-2);`);
+  assert.equal(body('.chat-home-verb > span'), 'grid-area:1/1;white-space:nowrap;');
+  assert.equal(body('.chat-home-verb-layer'), 'opacity:0;filter:blur(2px);transition:opacity var(--verb-fade) ease-in-out,filter var(--verb-fade) ease-in-out;');
+  assert.equal(body('.chat-home-verb-layer.is-on'), 'opacity:1;filter:none;');
+  assert.equal(body('.chat-home-q'), 'color:var(--ink);');
+  assert.match(css, /@media \(prefers-reduced-motion:reduce\)\{\.chat-home-verb-layer\{transition:none;filter:none;\}\}/);
 });
