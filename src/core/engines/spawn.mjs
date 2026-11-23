@@ -6,7 +6,8 @@
 import { spawn, spawnSync } from 'node:child_process';
 import { resolveCliCommand, explainUnspawnableCli, GENERIC_CLI } from '../cli-resolve.mjs';
 import { createInterface } from 'node:readline';
-import { realpathSync } from 'node:fs';
+import { realpathSync, rmSync, mkdtempSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import { join, resolve, dirname, basename } from 'node:path';
 import { strongestClass } from '../recoverable-error.mjs';
 import { stripHostCredentials } from '../host-credentials.mjs';
@@ -97,6 +98,20 @@ export function cleanRunEnv(env) {
   return Object.keys(out).length ? out : null;
 }
 
+let agentHomeDir = null;
+/** The WORCA_HOME every agent gets: one throwaway folder per server process, made with mkdtemp (owner-only, a name
+ *  no other local user can claim first in a shared /tmp) and removed when the server exits. Deleting the variable
+ *  instead would send a `worca` command the agent runs to the default ~/.worca-cc. */
+export function agentHome() {
+  if (!agentHomeDir) {
+    // An unwritable temp folder must not stop every spawn: fall back to the per-pid name, left for the agent to make.
+    try { agentHomeDir = mkdtempSync(join(tmpdir(), 'worca-cc-agent-home-')); } catch { agentHomeDir = join(tmpdir(), `worca-cc-agent-home-${process.pid}`); }
+    const dir = agentHomeDir;
+    process.once('exit', () => { try { rmSync(dir, { recursive: true, force: true }); } catch { /* best effort */ } });
+  }
+  return agentHomeDir;
+}
+
 /**
  * The final child env, in the order the claude runner always applied it: the
  * scrubbed env (undefined when scrub is off -> process.env), the run-level env
@@ -104,7 +119,9 @@ export function cleanRunEnv(env) {
  * the adapter's overlay (the model env) merged LAST so it
  * survives scrub and wins collisions (D71b, `signInOverModel`: the carried sign-in goes over the overlay instead, where a
  * normal run puts the user settings' env), WORCA_HOST_PID after that, no GitHub
- * or Azure DevOps credential in any tier (host-credentials.mjs), never the credential broker's own secret, and no
+ * or Azure DevOps credential in any tier (host-credentials.mjs), never the credential broker's own secret, the
+ * host's WORCA_HOME replaced by a throwaway one (agentHome; a raw run env that sets it on purpose wins — an MCP
+ * server's own env, e.g. an Ask chat's worca server on codex — while cleanRunEnv and a model overlay never carry it), and no
  * proxy URL that carries a login (env-proxy.mjs withoutProxyLogin: the corporate proxy is off then, so the child
  * goes direct rather than get the password), and WORCA_TEST_CONCURRENCY (testWorkerCap) unless set. With
  * no run env and no overlay the env is otherwise identical to the scrub result.
@@ -112,18 +129,22 @@ export function cleanRunEnv(env) {
  */
 export function composeSpawnEnv({ envScrub, envAllowlist, prefixes, runEnv, overlay, hostPid, tryGuard = null, signInEnv = null, signInOverModel = false } = {}) {
   const scrubbedEnv = buildSpawnEnv(envScrub, envAllowlist, prefixes);
-  let env = scrubbedEnv;
-  if (runEnv) env = { ...(env ?? process.env), ...runEnv };
+  // Never the host's store: a test or `worca` command the agent runs would otherwise write into the live database
+  // (a run's own `node --test` file restored this home in teardown and left runs in it). Replaced before the run env
+  // and the overlay, so a value set on purpose survives: the MCP server env an adapter hands over as a raw run env
+  // (codexMcpOverrides: an Ask chat's worca server keeps the chat's home).
+  let env = { ...(scrubbedEnv ?? process.env), WORCA_HOME: agentHome() };
+  if (runEnv) env = { ...env, ...runEnv };
   // Workflow tests 3b (D71): a Pretend try's carried sign-in (string values of sign-in keys only, readUserSignIn): over the
   // ambient and run env. Task 5 (I3, D71b): over the model env too (`signInOverModel`), where a normal every-source run puts
   // the user settings' env, so the person's own gateway credentials never go to a model profile's endpoint; under it only
-  // for Worca's in-process bridge (claude.mjs carryOverModelEnv). Absent: byte-identical.
+  // for Worca's in-process bridge (claude.mjs carryOverModelEnv).
   const carried = signInEnv && Object.keys(signInEnv).length ? signInEnv : null;
-  if (carried && !signInOverModel) env = { ...(env ?? process.env), ...carried };
-  if (overlay) env = { ...(env ?? process.env), ...overlay };
-  if (carried && signInOverModel) env = { ...(env ?? process.env), ...carried };
-  if (hostPid != null) env = { ...(env ?? process.env), WORCA_HOST_PID: String(hostPid) };
-  env = stripHostCredentials(env ?? process.env);
+  if (carried && !signInOverModel) env = { ...env, ...carried };
+  if (overlay) env = { ...env, ...overlay };
+  if (carried && signInOverModel) env = { ...env, ...carried };
+  if (hostPid != null) env = { ...env, WORCA_HOST_PID: String(hostPid) };
+  env = stripHostCredentials(env);
   delete env.WORCA_BROKER_SECRET;
   delete env.WORCA_BROKER_SECRET_FILE;
   // Workflow tests 3a (D56): a try's outward guard (PATH stand-ins, git that cannot sign in). Absent: byte-identical.

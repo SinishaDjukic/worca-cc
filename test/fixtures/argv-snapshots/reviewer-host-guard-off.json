@@ -23,6 +23,7 @@
   "envAdded": {
     "CLAUDE_CODE_FORK_SUBAGENT": "0",
     "CLAUDE_CODE_MAX_TOOL_USE_CONCURRENCY": "8",
+    "WORCA_HOME": "<AGENT_HOME>",
     "WORCA_TEST_CONCURRENCY": "<N>"
   }
 }
