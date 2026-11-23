@@ -51,3 +51,37 @@ test('DELETE /api/runs/:id archives: 200 {archived:true}, row survives, history 
   const hist = await (await fetch(`${base}/api/history`)).json();
   assert.ok(!JSON.stringify(hist).includes(id), 'history omits archived');
 });
+
+// The race behind dev CI's intermittent ENOTEMPTY (api-attribution-audit "PR created and run archived"): a run's
+// entry reads `stopped` / `done` BEFORE the harness's teardown finishes, and that teardown still writes into the run
+// folder (the run.json ledger copy, the last live-log flush). An Archive that lands in that window raced the writer:
+// `rm -r` failed with ENOTEMPTY, or the writer recreated files in a folder already reported gone. While the entry has
+// not settled (isFinishingRun), the single and the bulk Archive / Delete refuse; once it settles they go through.
+test('Archive and Delete refuse a run whose teardown is still writing into its folder, then take it once it settles', async () => {
+  const { existsSync } = await import('node:fs');
+  const { writeFile } = await import('node:fs/promises');
+  const { id, dir } = await seedPipeline(seededProjectDir, { status: 'stopped' });
+  const entry = { id: 'r-finishing', pipelineId: id, status: 'stopped', title: 'Finishing run', settled: false, orch: { stop() {} } };
+  runs.set(entry.id, entry);
+  try {
+    const res = await del(id);
+    assert.equal(res.status, 409, 'refused while the teardown runs');
+    assert.match((await res.json()).error, /finishing/);
+    assert.ok(existsSync(dir), 'the run folder is untouched');
+    assert.equal(getDb().prepare('SELECT archived_at FROM pipelines WHERE id = ?').get(id).archived_at, null);
+    const post = (action) => fetch(`${base}/api/runs/bulk`, { method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ action, targets: [{ pipelineId: id }] }) }).then((r) => r.json());
+    for (const action of ['archive', 'delete']) {
+      const b = await post(action);
+      assert.deepEqual(b.done, [], `bulk ${action} takes nothing while the teardown runs`);
+      assert.ok(existsSync(dir), `bulk ${action} leaves the run folder`);
+    }
+    // The teardown's late write lands, then the launch promise settles (the .finally at each launch site).
+    await writeFile(join(dir, 'run.json'), '{}\n');
+    entry.settled = true;
+    const ok = await del(id);
+    assert.equal(ok.status, 200, JSON.stringify(await ok.clone().json()));
+    assert.equal((await ok.json()).archived, true);
+    assert.ok(!existsSync(dir), 'the whole run folder is gone');
+  } finally { runs.delete(entry.id); }
+});

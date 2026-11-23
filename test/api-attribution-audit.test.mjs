@@ -147,6 +147,9 @@ test('PR created and run archived are audited with who did it', async () => {
   assert.equal(prLine.actor, 'grace@example.com');
 
   await until(async () => ['stopped', 'done', 'error'].includes(String((await readPipeline(dir, pid))?.state?.status)), 30000, 'the persisted terminal status');
+  // The status settles before the harness's teardown ends, and teardown still writes into the run folder: Archive
+  // refuses (409) until the launch promise settles, so wait for that, as a person would see the run finish.
+  await until(() => runs.get(start.body.runId)?.settled, 30000, 'the teardown');
   const del = await req('DELETE', `/api/runs/${pid}?projectDir=${encodeURIComponent(dir)}`, null, 'linus@example.com');
   assert.equal(del.status, 200, JSON.stringify(del.body));
   assert.equal(eventWith(pid, /^Run archived/).text, 'Run archived by linus@example.com.');
