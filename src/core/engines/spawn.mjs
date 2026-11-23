@@ -6,7 +6,7 @@
 import { spawn, spawnSync } from 'node:child_process';
 import { resolveCliCommand, explainUnspawnableCli, GENERIC_CLI } from '../cli-resolve.mjs';
 import { createInterface } from 'node:readline';
-import { realpathSync, rmSync } from 'node:fs';
+import { realpathSync, rmSync, mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve, dirname, basename } from 'node:path';
 import { strongestClass } from '../recoverable-error.mjs';
@@ -98,12 +98,13 @@ export function cleanRunEnv(env) {
 }
 
 let agentHomeDir = null;
-/** The WORCA_HOME every agent gets: one throwaway folder per server process under tmpdir, never created here (a
- *  `worca` command the agent runs makes it) and removed when the server exits. Deleting the variable instead would
- *  send such a command to the default ~/.worca-cc. */
+/** The WORCA_HOME every agent gets: one throwaway folder per server process, made with mkdtemp (owner-only, a name
+ *  no other local user can claim first in a shared /tmp) and removed when the server exits. Deleting the variable
+ *  instead would send a `worca` command the agent runs to the default ~/.worca-cc. */
 export function agentHome() {
   if (!agentHomeDir) {
-    agentHomeDir = join(tmpdir(), `worca-cc-agent-home-${process.pid}`);
+    // An unwritable temp folder must not stop every spawn: fall back to the per-pid name, left for the agent to make.
+    try { agentHomeDir = mkdtempSync(join(tmpdir(), 'worca-cc-agent-home-')); } catch { agentHomeDir = join(tmpdir(), `worca-cc-agent-home-${process.pid}`); }
     const dir = agentHomeDir;
     process.once('exit', () => { try { rmSync(dir, { recursive: true, force: true }); } catch { /* best effort */ } });
   }
@@ -116,7 +117,8 @@ export function agentHome() {
  * (cleanRunEnv) over it, the adapter's overlay (the model env) merged LAST so it
  * survives scrub and wins collisions, WORCA_HOST_PID after that, no GitHub
  * or Azure DevOps credential in any tier (host-credentials.mjs), never the credential broker's own secret, the
- * host's WORCA_HOME replaced by a throwaway one (agentHome; a run env or overlay that sets it on purpose wins), and no
+ * host's WORCA_HOME replaced by a throwaway one (agentHome; a raw run env that sets it on purpose wins — an MCP
+ * server's own env, e.g. an Ask chat's worca server on codex — while cleanRunEnv and a model overlay never carry it), and no
  * proxy URL that carries a login (env-proxy.mjs withoutProxyLogin: the corporate proxy is off then, so the child
  * goes direct rather than get the password), and WORCA_TEST_CONCURRENCY (testWorkerCap) unless set. With
  * no run env and no overlay the env is otherwise identical to the scrub result.
@@ -126,7 +128,8 @@ export function composeSpawnEnv({ envScrub, envAllowlist, prefixes, runEnv, over
   const scrubbedEnv = buildSpawnEnv(envScrub, envAllowlist, prefixes);
   // Never the host's store: a test or `worca` command the agent runs would otherwise write into the live database
   // (a run's own `node --test` file restored this home in teardown and left runs in it). Replaced before the run env
-  // and the overlay, so a value set on purpose (an Ask chat's codex MCP server) survives.
+  // and the overlay, so a value set on purpose survives: the MCP server env an adapter hands over as a raw run env
+  // (codexMcpOverrides: an Ask chat's worca server keeps the chat's home).
   let env = { ...(scrubbedEnv ?? process.env), WORCA_HOME: agentHome() };
   if (runEnv) env = { ...env, ...runEnv };
   if (overlay) env = { ...env, ...overlay };

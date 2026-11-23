@@ -20,7 +20,7 @@ let quarantine = null;
  *  so it never grows across runs. */
 function quarantineHome() {
   if (!quarantine) {
-    quarantine = join(tmpdir(), `worca-cc-test-quarantine-${process.pid}`);
+    quarantine = mkdtempSync(join(tmpdir(), 'worca-cc-test-quarantine-'));
     const dir = quarantine;
     process.once('exit', () => { try { rmSync(dir, { recursive: true, force: true }); } catch { /* best effort */ } });
   }
