@@ -43200,7 +43200,7 @@ const chatHomeTimers = {
   setTimeout: (fn, ms) => { const t = setTimeout(fn, ms); if (t && typeof t.unref === 'function') t.unref(); return t; },
   clearTimeout: (t) => clearTimeout(t),
 };
-const chatIntent = installIntentAddon({ win: chatHomeTimers, onSend: () => { chatHome?.armFlip(); } });
+const chatIntent = installIntentAddon({ onSend: () => { chatHome?.armFlip(); } });
 
 // ── Chat home (worca Chat P6) ──────────────────────────────────────────────────────────────────────────────
 // The hero, quick actions, Needs you / Running / Recent chats / Workflows and the promos, inside the Chat page's
