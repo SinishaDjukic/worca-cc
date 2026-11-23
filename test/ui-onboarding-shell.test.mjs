@@ -37,10 +37,10 @@ const click = (window, node) => node.dispatchEvent(new window.Event('click', { b
 const STEPS = ['claude', 'project', 'run', 'ask', 'realRun', 'workflows', 'workspace', 'teamMetrics', 'teamPolicy'];
 const status = (done = [], flags = {}) => ({
   steps: Object.fromEntries(STEPS.map((id) => [id, done.includes(id)])),
-  done: done.length, total: 9, claude: { bin: 'claude', hint: null }, hidden: false, welcomeSeen: false, ...flags,
+  done: done.length, total: 9, claude: { bin: 'claude', hint: null }, hidden: false, welcomeSeen: false, setupFinished: true, ...flags,
 });
 
-async function boot({ onboarding = status(['claude']), projects = [], level = null, settingsError = null, width = null, holdOnboarding = null } = {}) {
+async function boot({ onboarding = status(['claude']), projects = [], level = null, settingsError = null, width = null, holdOnboarding = null, levelView = null } = {}) {
   // `level`: the server-rendered interface mode (docs/ui-levels.md); null = no attribute (gates nothing).
   const shellHtml = level ? html.replace('<html lang="en" data-theme="system">', `<html lang="en" data-theme="system" data-level="${level}">`) : html;
   const dom = trackDom(new JSDOM(shellHtml, { url: 'http://localhost:4317/', pretendToBeVisual: true }));
@@ -51,6 +51,7 @@ async function boot({ onboarding = status(['claude']), projects = [], level = nu
   }
   window.WebSocket = class { constructor() { this.readyState = 1; } send() {} close() {} addEventListener() {} };
   const posts = [];
+  const levelCalls = [];
   let current = onboarding;
   // ob.hold: a promise a later GET waits on; ob.fail: the next GETs answer 500 with this error;
   // ob.down: the next GETs reject (the server is not answering at all).
@@ -76,6 +77,11 @@ async function boot({ onboarding = status(['claude']), projects = [], level = nu
     }
     // settingsError: the error POST /api/settings answers with (a mode switch the server refuses).
     if (settingsError && url.includes('/api/settings') && init.method === 'POST') return Promise.resolve({ ok: false, status: 500, json: async () => ({ error: settingsError }) });
+    // levelView: a getter for the served WorcaLevelView; every worca-level call (read, ack, events) is logged in `levelCalls`.
+    if (levelView && url.includes('/api/worca-level')) {
+      levelCalls.push({ url, method: init.method || 'GET', body: init.body ? JSON.parse(init.body) : null });
+      return url.includes('/events') ? Promise.resolve({ ok: true, status: 204, json: async () => ({}) }) : json(levelView());
+    }
     if (url.includes('/api/projects')) return json({ projects });
     // The setup assistant's load (a fresh boot opens it): minimal answers, so it paints its Check step.
     if (url.includes('/api/setup/detect')) return json({ checks: [{ id: 'claude', label: 'Claude Code', state: 'ok', line: 'Signed in.' }] });
@@ -90,7 +96,7 @@ async function boot({ onboarding = status(['claude']), projects = [], level = nu
   window.localStorage.clear();
   await import(pathToFileURL(appPath).href + `?b=${Date.now()}_${Math.random()}`);
   await settle();
-  return { window, doc: window.document, posts, ob, setStatus: (s) => { current = s; } };
+  return { window, doc: window.document, posts, ob, levelCalls, setStatus: (s) => { current = s; } };
 }
 
 // ---- app.js wiring ----
@@ -458,10 +464,12 @@ test('a step above the interface mode asks to switch first (Not now leaves all a
       assert.equal(doc.querySelector('.guide-layer'), null, 'and starts no tour');
     } },
     { name: 'confirming switches the mode and starts the tour at its first real hop', run: async () => {
-      const { doc, window } = await boot({ level: 'simple', onboarding: status(['claude', 'project'], { welcomeSeen: true }), projects: [{ name: 'p', path: '/tmp/p', key: 'p-00000001', exists: true }] });
+      // Team steps are listed before Runner only in Expert mode (D-18): a Runner on a team sees them in Simple mode, in the folded list.
+      const runner = { top: false, level: { index: 2, name: 'Runner' }, nextLevel: null, ladder: [], runner: { realRuns: 3, of: 3, stepsDone: 6, stepsOf: 6 } };
+      const { doc, window } = await boot({ level: 'simple', levelView: () => runner, onboarding: status(['claude', 'project', 'teamPolicy'], { welcomeSeen: true }), projects: [{ name: 'p', path: '/tmp/p', key: 'p-00000001', exists: true }] });
       click(window, doc.querySelector('.gs-pill'));
       await settle();
-      click(window, doc.querySelector('.gs-tile[data-step="teamMetrics"]'));
+      click(window, doc.querySelector('.gs-later-item[data-step="teamMetrics"]'));
       await settle();
       assert.equal(doc.getElementById('confirm-title').textContent, 'Switch to Expert?');
       click(window, doc.getElementById('confirm-ok'));
@@ -562,4 +570,49 @@ test('first start: a fresh install opens the setup assistant before the welcome;
       assert.equal(doc.getElementById('welcome-modal').classList.contains('hidden'), false);
     } },
   ]);
+});
+
+test('fresh install: open -> setup done (earned) -> Start your first run -> at most 2 modal dialogs were ever opened before the first run, and no levels welcome exists (R-po-3)', async () => {
+  // The level the server serves: Curious from the first read (the wiring keeps only a view that holds a level), with its
+  // celebration only once setup is finished (earned on the ready screen).
+  let finished = false;
+  const curious = { index: 1, key: 'curious', name: 'Curious', hue: 235, avatar: '/img/curious.png', tagline: 't', description: 'd', hat: 'h', phrase: 'p', recap: 'r' };
+  const levelView = () => ({
+    count: 5, level: curious, setup: { finished, providerSignedIn: true, missing: finished ? [] : ['setup'] },
+    progress: null, next: [], nextLevel: { index: 2, key: 'runner', name: 'Runner' }, top: false, ladder: [{ index: 2, items: [{ label: '3 real runs', done: false }] }],
+    runner: { realRuns: 0, of: 3, stepsDone: 0, stepsOf: 6 },
+    welcome: { kind: 'new' },                                   // a server that still carries one: nothing may open for it
+    celebration: finished ? { ...curious, nextName: 'Runner' } : null, summary: null, nudge: null, modeSuggestion: null,
+  });
+  const { doc, window, levelCalls } = await boot({ onboarding: status(['claude'], { fresh: true }), levelView });
+  const opened = new Set();
+  const OPEN = '.viewer-modal:not(.hidden), dialog[open]';
+  const watch = () => { for (const n of doc.querySelectorAll(OPEN)) opened.add(n); };
+  const observer = new window.MutationObserver(watch);
+  observer.observe(doc.documentElement, { childList: true, subtree: true, attributes: true, attributeFilter: ['class', 'open', 'hidden'] });
+  watch();
+  try {
+    assert.ok(doc.getElementById('setup-modal'), 'the assistant is up');
+    // Walk the assistant to its Finish: every step's Next, then Finish with nothing to apply.
+    for (let i = 0; i < 12 && !doc.querySelector('#setup-modal .sa-continue'); i++) {
+      const next = await until(() => doc.querySelector('#setup-modal .sa-next:not([disabled])'), 1500);
+      if (!next) break;
+      finished = finished || next.textContent === 'Finish';
+      click(window, next);
+      await settle();
+    }
+    const go = await until(() => doc.querySelector('#setup-modal .sa-continue'));
+    assert.ok(go, 'the ready screen is up');
+    assert.equal(go.textContent, 'Start your first run');
+    click(window, go);
+    await settle(12);
+    watch();
+    assert.equal(doc.getElementById('setup-modal'), null, 'the assistant closed');
+    assert.equal(window.location.hash, '#new', 'and it went to the first run');
+    assert.ok(opened.size <= 2, `${opened.size} modal dialogs were opened: ${[...opened].map((n) => n.id || n.className).join(', ')}`);
+    // The ready screen was the welcome: #welcome-modal never opens after it (D-11, R-po-3), not even on the #new route.
+    assert.ok(doc.getElementById('welcome-modal')?.classList.contains('hidden') ?? true, 'the first-run welcome stays closed');
+    assert.equal(doc.querySelector('[data-dialog^="welcome"]'), null, 'no levels welcome dialog');
+    assert.deepEqual(levelCalls.filter((c) => c.url.includes('/events')), [], 'no page-view event is posted');
+  } finally { observer.disconnect(); }
 });

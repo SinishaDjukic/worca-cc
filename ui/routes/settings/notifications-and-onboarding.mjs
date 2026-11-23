@@ -73,7 +73,7 @@ app.get('/api/away-mode', (req, res) => {
 // ---------------------------------------------------------------------------
 // Getting started (docs/getting-started.md). GET is the derived checklist —
 // eight ticks computed from the store + PATH, never stored — plus the stored flags.
-// POST writes ONLY the stored prefs ({hidden?, welcomeSeen?, workspaceGuideSeen?,
+// POST writes ONLY the stored prefs ({hidden?, welcomeSeen?, workspaceGuideSeen?, setupFinished?: true,
 // guidesSeen?, guidesReset?}; invalid or unknown keys 400, nothing written) and answers with the same
 // full payload, so one round trip repaints. A seen-only body (guidesSeen / workspaceGuideSeen) does not
 // pin the interface mode: opening a guide is not a first action.
@@ -83,9 +83,12 @@ app.get('/api/onboarding', async (req, res) => {
   try { res.json({ ...(await onboardingStatus({ recheck: isTruthy(req.query.recheck) })), fresh: isFreshInstall() }); }
   catch (err) { res.status(500).json({ error: err && err.message ? err.message : String(err) }); }
 });
+const SETUP_FLAG_ERROR = { error: 'setupFinished can only be set to true', code: 'ONBOARDING_BAD_FLAG' };
 app.post('/api/onboarding', async (req, res) => {
+  const body = req.body || {};
+  // setupChecked is the boot marker's alone; setupFinished only ever turns on. Refused before any write.
+  if ('setupChecked' in body || ('setupFinished' in body && body.setupFinished !== true)) return res.status(400).json(SETUP_FLAG_ERROR);
   try {
-    const body = req.body || {};
     assertOnboardingPrefsInput(body);          // a refused body writes nothing, not even the pin
     if (!isSeenOnlyPatch(body)) await pinUiLevel();   // before welcomeSeen flips and ends "fresh install"
     await setOnboardingPrefs(body);

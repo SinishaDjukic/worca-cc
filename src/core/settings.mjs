@@ -3254,11 +3254,14 @@ export async function writeStoredFlags(map) {
 // state by src/core/onboarding.mjs and never stored. `hidden` is the checklist's
 // Hide (Settings › General › Getting started shows it again); `welcomeSeen` is the
 // one-time welcome dialog; `workspaceGuideSeen` is the legacy "How workspaces work"
-// flag, cleared when the last workspace is deleted. `guidesSeen` maps a how-it-works
-// area id (src/shared/how-it-works/areas.mjs) to true once that area's guide has been
-// opened; `guidesReset` is a write-only command that clears the map and
-// workspaceGuideSeen. All absent = all false and an empty map.
-const ONBOARDING_FLAGS = Object.freeze(['hidden', 'welcomeSeen', 'workspaceGuideSeen']);
+// flag, cleared when the last workspace is deleted. `setupFinished` records that the
+// Setup Assistant was completed (install-wide, like the setup); `setupChecked` is the
+// boot marker that credits an install that predates it exactly once
+// (onboarding.mjs#ensureSetupMarker). `guidesSeen` maps a how-it-works area id
+// (src/shared/how-it-works/areas.mjs) to true once that area's guide has been opened;
+// `guidesReset` is a write-only command that clears the map and workspaceGuideSeen.
+// All absent = all false and an empty map.
+const ONBOARDING_FLAGS = Object.freeze(['hidden', 'welcomeSeen', 'workspaceGuideSeen', 'setupFinished', 'setupChecked']);
 const ONBOARDING_KEYS = Object.freeze([...ONBOARDING_FLAGS, 'guidesSeen', 'guidesReset']);
 const SEEN_ONLY_KEYS = Object.freeze(['guidesSeen', 'workspaceGuideSeen']);
 

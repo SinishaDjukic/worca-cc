@@ -40,7 +40,7 @@ import { keepFocus } from './chat/keep-focus.mjs';
 import { flagOn, onFlagChange } from './flags.mjs';
 import { createAttachStore } from './requirements-attach/store.mjs';
 import { mountChatAttach, jsonFetcher } from './requirements-attach/entries.mjs';
-import { renderAttachedCards } from './requirements-attach/cards.mjs';
+import { renderAttachedCards, pullLabel } from './requirements-attach/cards.mjs';
 import { attachHashSearch } from './requirements-attach/hash-search.mjs';
 import { guardScopeChange } from './requirements-attach/scope-guard.mjs';
 import { revalidate } from './requirements-attach/revalidate.mjs';
@@ -71,6 +71,7 @@ import {
   fmtWindow, ctxTrigger, ctxLevel, ctxPercent, fmtCtx, ctxTitle, fmtShare, ctxBreakdown, fmtUsd,
 } from './ask-meter.mjs';
 import { renderContextDetails, ctxRing, paintCtxRing, validContexts, fmtElapsed } from './ask-context-view.mjs';
+import { HARNESS_MARKS, markTile } from './models/brand-marks.mjs';
 export {
   fmtTokens, CTX_COMPACT_BUFFER, CTX_WARN, CTX_HIGH, CTX_COST_HINT,
   fmtWindow, ctxTrigger, ctxLevel, ctxPercent, fmtCtx, ctxTitle, fmtShare, ctxBreakdown, fmtUsd,
@@ -101,6 +102,8 @@ const ICONS = {
   search: ['M5 11a6 6 0 1 0 12 0a6 6 0 1 0-12 0', 'M20 20l-4.5-4.5'],    // the Workflows Library's search glyph
   expand: ['M14 4h6v6', 'M10 20H4v-6', 'M20 4l-6.5 6.5', 'M4 20l6.5-6.5'],      // Open in Chat (the side column's head)
   sideHide: ['M5 4h14a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2z', 'M15 4v16', 'M8 10l2 2-2 2'],   // Hide chat
+  requirements: ['M8 4h8l3 3v13H5V4h3', 'M9 11h6M9 15h4', 'M9 4v2h6V4'],      // Pull from Requirements (the sidebar's Requirements glyph)
+  layers: ['M12 3l9 4.5-9 4.5-9-4.5z', 'M3 12l9 4.5 9-4.5', 'M3 16.5l9 4.5 9-4.5'],   // Sets for this chat
 };
 // One icon per voice mode; the mic button and the ▾ menu both draw from this.
 const VOICE_MODE_ICONS = { dictate: ICONS.mic, talk: ICONS.voiceTalk, handsfree: ICONS.voiceHandsFree };
@@ -201,6 +204,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     designThread: null,       // the design chat whose dock the design slot shows (syncDesign), else null
     designStart: false,       // the design slot shows a new design's start (startDesign)
     ext: null,                // the composer's extension (setComposerExt): a design chat's or a new design's own controls
+    lentTips: [],             // [{btn, title}]: the ext's buttons whose title became a tip while lent (setComposerExt gives it back)
     model: null,              // createThreadModel for the active thread (Task 4+)
     picker: homePick.picker,
     // D11 provenance, tracked per slot: only a MODEL the user actually picked
@@ -216,6 +220,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     // that a stored pick yields to. Cleared whenever the picker is re-seeded from the browser or a thread.
     pickerExplicit: false,
     catalog: null,
+    markFailed: new Set(),    // engines whose harness mark file failed to load: the model button names them in text (L1)
     // #397: the thread's project/workspace scope. pinned:false = No project: no page target rides along (CONTRACT §4).
     // label caches the display name once resolved.
     scope: { pinned: false, projectKey: null, workspaceId: null, label: null },
@@ -274,6 +279,8 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     voice: null,              // the voice controller (ask-voice.mjs), made on first mic use — docs/speech.md
     voiceLongPress: null,     // the mic's long-press timer
     voiceSwallowClick: false, // the click that ends a long-press must not also start dictation
+    voiceNote: '',            // the voice state the input's placeholder shows ('' = voice off or failed): see updateSuggestion
+    voiceSaid: 'off',         // the last voice state painted: each state is announced once, when it changes
     lastAnswerRender: 0,
     rowEls: null,
     seenRows: new Set(),      // #959: message ids this page has shown, in ANY chat (ids are unique): only a row never shown rises — see renderTranscript
@@ -421,6 +428,12 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     b.appendChild(icon && icon.nodeType ? icon : svgIcon(icon));
     b.addEventListener('click', onClick);
     return b;
+  }
+  /** The compact composer row's styled tooltip (composer-bar.css draws `data-tip`): it replaces the native `title`,
+   *  and never touches the accessible name. */
+  function setTip(btn, text) {
+    btn.dataset.tip = text;
+    btn.removeAttribute('title');
   }
   /** The History toggle's glyph: a page with a folded corner and lines of text (the saved chats). */
   function historyIcon() {
@@ -726,10 +739,16 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     const q = queueOf(st.threadId);
     const full = busy && !!q && q.items.length >= QUEUE_MAX;
     // While a reply streams, Send stands beside Stop as soon as there is something to queue.
+    const sendWas = el.send.hidden;
+    const stopWas = el.stop.hidden;
     el.send.hidden = streaming && !el.input.value.trim();
     el.stop.hidden = !streaming;
+    // The row refits only when Send or Stop shows or hides: this runs on every keystroke.
+    if ((el.send.hidden !== sendWas || el.stop.hidden !== stopWas) && el.fitBar) el.fitBar();
     el.send.disabled = full;
-    el.send.setAttribute('aria-label', !busy ? 'Send' : (full ? 'Queue full' : 'Add to queue'));
+    const label = !busy ? 'Send' : (full ? 'Queue full' : 'Add to queue');
+    el.send.setAttribute('aria-label', label);
+    setTip(el.send, label);
     updateSuggestion();
   }
 
@@ -815,11 +834,6 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
 
   function buildVoiceControls() {
     const wrap = make('span', 'ask-voice');
-    el.voiceStatus = make('span', 'ask-voice-status');
-    el.voiceStatus.hidden = true;
-    el.voiceStatus.setAttribute('role', 'status');
-    wrap.appendChild(el.voiceStatus);
-
     el.mic = make('button', 'btn btn-icon ask-voice-mic');
     el.mic.type = 'button';
     el.mic.setAttribute('data-ask-mic', '');
@@ -844,14 +858,14 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
       if (v.active()) { stopVoice(); return; }
       startVoice(lastVoiceMode());
     });
-    paintMicMode(lastVoiceMode());
+    paintMicMode(lastVoiceMode(), false);
     wrap.appendChild(el.mic);
 
     const caret = make('button', 'btn btn-quiet btn-icon ask-voice-caret');
     caret.type = 'button';
     caret.setAttribute('data-ask-voice-caret', '');
     caret.setAttribute('aria-label', 'Voice options');
-    caret.title = 'Voice options';
+    setTip(caret, 'Voice options');
     caret.appendChild(svgIcon(ICONS.chevronDown, 11, 2));
     caret.addEventListener('click', () => openVoicePopover(caret));
     wrap.appendChild(caret);
@@ -902,33 +916,41 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     try { const m = storage.getItem(VOICE_MODE_KEY); if (m && VOICE_MODE_NAMES[m]) return m; } catch { /* default */ }
     return 'dictate';
   }
-  function paintMicMode(shown) {
+  /** The mic shows the mode's icon. Its tip says what a click does (the remembered mode, plus the hold hint unless
+   *  that mode is hands-free already), or `Stop listening` while voice is on. `on` is the PAINTED state (paintVoice),
+   *  never the controller's own flag. */
+  function paintMicMode(shown, on) {
     if (!el.mic) return;
     el.mic.replaceChildren(svgIcon(VOICE_MODE_ICONS[shown] || ICONS.mic, 16, 1.9));
-    el.mic.title = `${VOICE_MODE_NAMES[lastVoiceMode()]} (click) · hands-free conversation (hold) · other modes (the arrow menu)`;
+    const next = lastVoiceMode();
+    setTip(el.mic, on ? 'Stop listening' : `${VOICE_MODE_NAMES[next]}${next === 'handsfree' ? '' : ' · hold for hands-free'}`);
   }
   function startVoice(mode) {
     if (st.destroyed) return;
     try { storage.setItem(VOICE_MODE_KEY, mode); } catch { /* sticky is a nicety */ }
-    paintMicMode(mode);
+    paintMicMode(mode, !!st.voiceNote);
     voice().start(mode);
   }
   function toggleHandsFree() { const v = voice(); if (v.active() && v.mode() === 'handsfree') stopVoice(); else startVoice('handsfree'); }
   function stopVoice() { if (st.voice && st.voice.active()) st.voice.stop(); }
 
+  /** The voice state shows as the input's placeholder (updateSuggestion) and is announced once per change (L5): the
+   *  loading progress details repeat `loading`, and `off` counts as a state, so a new start is announced again. */
   function paintVoice(state, { mode, detail } = {}) {
     if (!el.mic) return;
     const on = state !== 'off' && state !== 'error';
-    paintMicMode(on && mode ? mode : lastVoiceMode());
+    st.voiceNote = !on ? '' : state === 'loading' ? detail || VOICE_LABELS.loading : VOICE_LABELS[state] || '';
+    paintMicMode(on && mode ? mode : lastVoiceMode(), on);
     el.mic.setAttribute('aria-pressed', on ? 'true' : 'false');
     el.mic.classList.toggle('is-on', on);
     el.mic.classList.toggle('is-handsfree', on && (mode === 'handsfree' || mode === 'talk'));
     el.mic.classList.toggle('is-error', state === 'error');
-    el.voiceStatus.hidden = state === 'off';
-    el.voiceStatus.dataset.state = state;
-    el.voiceStatus.textContent = (state === 'loading' && detail) || VOICE_LABELS[state] || '';
+    updateSuggestion();
     if (state === 'error') setComposerMsg(detail || 'voice stopped');
-    if (state === 'listening' || state === 'speaking' || state === 'error') announce(VOICE_LABELS[state]);
+    const prev = st.voiceSaid;
+    st.voiceSaid = state;
+    const said = st.voiceNote || VOICE_LABELS[state];
+    if (state !== prev && state !== 'off' && said) announce(said);
     if (state === 'listening' && !voiceUsedBefore()) { try { storage.setItem(VOICE_USED_KEY, '1'); } catch { /* preload is a nicety */ } }
   }
 
@@ -1164,23 +1186,35 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
    * - `pills` [{key, label(), title?(), caption, items() → [{text, checked, pick()}]}]: pills after the scope pill, each
    *   opening a menu of choices in the composer's popover;
    * - `nodes`: its own buttons, after the pills; `lead`: an element for the lead row (above the input);
+   * - `endNodes`: its own buttons after the model button, before the voice control and Send (Design's gear);
+   *   a lent button's `title` (the node, or a direct child button of it) shows as the row's tip while it is lent;
    * - `scope: 'fixed'` shows the chat's project without its menu; `sets: false` hides Sets; `placeholder`;
    * - `onScope(projectKey)` hears a scope pick; `composerSlot` holds the composer while a new design shows (syncView).
    * → `{refresh, restore(text)}`: the view repaints its pills, or gives a refused first message back to the input.
    */
   function setComposerExt(ext) {
+    for (const { btn, title } of st.lentTips.splice(0)) {
+      btn.title = title;
+      delete btn.dataset.tip;
+    }
     if (st.ext) {
       const was = st.ext;
       st.ext = null;
-      if (st.popover && el.extSlot.contains(st.popover.trigger)) closePopover({ focusTrigger: false });
+      if (st.popover && (el.extSlot.contains(st.popover.trigger) || el.extEndSlot.contains(st.popover.trigger))) closePopover({ focusTrigger: false });
       el.extSlot.replaceChildren();
       el.extSlot.hidden = true;
+      el.extEndSlot.replaceChildren();
+      el.extEndSlot.hidden = true;
       if (was.lead && was.lead.parentNode === el.lead) was.lead.remove();
       if (was.placeholder) { st.basePlaceholder = INPUT_PLACEHOLDER; updateSuggestion(); }
       delete el.composerRow.dataset.extSets;
       el.scopeBtn.disabled = false;
     }
-    if (!ext || (typeof ext.send !== 'function' && typeof ext.payload !== 'function') || st.destroyed) { syncView(); return null; }
+    if (!ext || (typeof ext.send !== 'function' && typeof ext.payload !== 'function') || st.destroyed) {
+      syncView();
+      if (el.fitBar) el.fitBar();                    // a lent gear or pill left the row
+      return null;
+    }
     st.ext = ext;
     const pills = (Array.isArray(ext.pills) ? ext.pills : []).map((p) => {
       const b = make('button', 'btn btn-sm btn-quiet ask-scope-btn ask-ext-pill');
@@ -1192,14 +1226,27 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
       b.addEventListener('click', () => openExtPill(p, b));
       return b;
     });
-    el.extSlot.replaceChildren(...pills, ...(Array.isArray(ext.nodes) ? ext.nodes : []));
+    const nodes = Array.isArray(ext.nodes) ? ext.nodes : [];
+    const endNodes = Array.isArray(ext.endNodes) ? ext.endNodes : [];
+    el.extSlot.replaceChildren(...pills, ...nodes);
     el.extSlot.hidden = !el.extSlot.childElementCount;
+    el.extEndSlot.replaceChildren(...endNodes);
+    el.extEndSlot.hidden = !el.extEndSlot.childElementCount;
+    for (const node of [...nodes, ...endNodes]) {
+      for (const btn of [node, ...node.children]) {
+        const title = btn.tagName === 'BUTTON' ? btn.getAttribute('title') : null;
+        if (!title) continue;
+        st.lentTips.push({ btn, title });
+        setTip(btn, title);
+      }
+    }
     if (ext.lead) el.lead.appendChild(ext.lead);
     if (ext.placeholder) { st.basePlaceholder = ext.placeholder; updateSuggestion(); }
     if (ext.sets === false) el.composerRow.dataset.extSets = 'off';
     if (ext.scope === 'fixed') el.scopeBtn.disabled = true;
     paintExt();
     syncView();
+    if (el.fitBar) el.fitBar();
     return {
       refresh: () => { if (st.ext === ext) paintExt(); },
       restore: (text) => {
@@ -1222,7 +1269,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
       b.title = title;
       b.setAttribute('aria-label', title);
     }
-    if (ext.scope === 'fixed') el.scopeBtn.title = `${el.scopeBtn.title.replace(/ · .*$/, '')} · set when the design started`;
+    if (ext.scope === 'fixed') setTip(el.scopeBtn, `${el.scopeBtn.dataset.tip.replace(/ · .*$/, '')} · set when the design started`);
     updateSendStop();
   }
   function openExtPill(p, trigger) {
@@ -1628,10 +1675,28 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     setScope({ ...st.scope, pinned: true }, { focus: false });
   }
 
+  /** The Requirements button of the compact bar: its icon, plus the count once features are attached. `mountChatAttach`
+   *  calls it on mount and on every store commit, so it builds its children once and only repaints after that. */
+  function paintPull(button, n) {
+    let count = button.querySelector(':scope > .ask-bar-n');
+    if (!count) {
+      count = make('span', 'ask-bar-n');
+      button.replaceChildren(svgIcon(ICONS.requirements, 16, 1.9), count);
+    }
+    count.textContent = n ? String(n) : '';
+    count.hidden = !n;
+    button.classList.toggle('is-bare', n === 0);
+    const name = n ? `${pullLabel(n)} from Requirements` : 'Pull from Requirements';
+    button.setAttribute('aria-label', name);
+    setTip(button, name);
+    if (el.fitBar) el.fitBar();
+  }
+
   function mountAttach(row) {
     el.attachBtn = make('button', 'btn btn-sm btn-quiet ask-pull-btn');
     el.attachBtn.type = 'button';
     el.attachBtn.setAttribute('data-ask-pull-btn', '');
+    el.attachBtn.setAttribute('aria-haspopup', 'dialog');
     row.appendChild(el.attachBtn);
     let count = attachStore.get().items.length;
     st.attachOffs.push(
@@ -1647,7 +1712,11 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
       mountChatAttach({
         button: el.attachBtn, store: attachStore, getScope: () => st.scope, doc, flagOn: requirementsOn, fetchJson: attachFetch,
         setScope: (next) => guardedScope(() => { applyPickedScope(next); if (!next.label) resolveScopeLabel(); }, next),
+        paint: paintPull,
       }),
+      // After mountChatAttach's own flag listener (listeners run in insertion order): its syncFlag() shows or hides the
+      // button first, so the refit measures the new row.
+      onFlagChange('requirements', () => { if (el.fitBar) el.fitBar(); }),
     );
     paintAttached();
   }
@@ -1848,11 +1917,12 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     if (!el.input || !el.suggestHint) return;
     const s = st.model && st.model.suggestion ? st.model.suggestion() : null;
     const q = queueOf(st.threadId);
-    const show = !!s && !el.input.value && st.basePlaceholder === INPUT_PLACEHOLDER
+    // Voice on owns the placeholder (st.voiceNote): no suggestion shows under it, so Tab cannot take one unseen.
+    const show = !!s && !st.voiceNote && !el.input.value && st.basePlaceholder === INPUT_PLACEHOLDER
       && st.suggestDismissed !== s.messageId && !turnBusy() && !st.sending
       && !(q && q.items.length) && st.hist.idx < 0;
     st.suggestion = show ? s : null;
-    el.input.placeholder = show ? s.text : st.basePlaceholder;
+    el.input.placeholder = st.voiceNote || (show ? s.text : st.basePlaceholder);
     el.input.classList.toggle('is-suggesting', show);
     el.suggestHint.textContent = show ? `Suggestion: ${s.text}. Press Tab to use it.` : '';
     if (show) el.input.setAttribute('aria-describedby', el.suggestHint.id);
@@ -1934,6 +2004,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     box.appendChild(el.composerMsg);
 
     const row = make('div', 'ask-composer-row');
+    row.dataset.bar = 'compact';   // chat/composer-bar.css keys every rule of the compact row on this mark
 
     el.fileInput = doc.createElement('input');
     el.fileInput.type = 'file';
@@ -1943,6 +2014,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     row.appendChild(el.fileInput);
     const attach = iconButton('btn btn-quiet btn-icon', 'Attach files', ICONS.plus, () => el.fileInput.click());
     attach.setAttribute('data-ask-attach-btn', '');
+    setTip(attach, 'Attach files');
     row.appendChild(attach);
 
     // #397: the scope selector — which project/workspace this chat is about,
@@ -1950,19 +2022,21 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     // (attach → scope → spacer → meter …): the pill keeps its width (style.css
     // .ask-scope-btn flex:none), the spacer absorbs the slack. Its popover
     // (.ask-pop-scope) opens above the composer box, flush with its left edge.
-    const scopeBtn = make('button', 'btn btn-sm btn-quiet ask-scope-btn');
+    // The compact bar draws it as an icon button: the dashed folder alone while no project is picked (`is-bare`), the
+    // folder and the name once one is; the dot marks a picked project whose name is hidden. No arrow.
+    const scopeBtn = make('button', 'btn btn-sm btn-quiet ask-scope-btn is-bare');
     scopeBtn.type = 'button';
     scopeBtn.setAttribute('data-ask-scope-btn', '');
-    scopeBtn.title = `Chat scope: ${NO_PROJECT_LABEL}`;
+    setTip(scopeBtn, `Chat scope: ${NO_PROJECT_LABEL}`);
     scopeBtn.setAttribute('aria-haspopup', 'menu');
     scopeBtn.setAttribute('aria-expanded', 'false');
     scopeBtn.setAttribute('aria-label', `Chat scope: ${NO_PROJECT_LABEL}`);   // updateScopeButton() runs on the first scope change
-    el.scopeIco = scopeIcon(doc, 'none', 13);
-    el.scopeIcoKind = 'none';
+    el.scopeIco = scopeIcon(doc, 'unset', 16);
+    el.scopeIcoKind = 'unset';
     el.scopeLabel = make('span', 'ask-scope-label', NO_PROJECT_LABEL);
-    scopeBtn.appendChild(el.scopeIco);
-    scopeBtn.appendChild(el.scopeLabel);
-    scopeBtn.appendChild(svgIcon(ICONS.chevronDown, 11, 2));
+    const scopeDot = make('span', 'ask-scope-dot');
+    scopeDot.setAttribute('aria-hidden', 'true');
+    scopeBtn.append(el.scopeIco, el.scopeLabel, scopeDot);
     scopeBtn.addEventListener('click', () => openScopePopover(scopeBtn));
     el.scopeBtn = scopeBtn;
     row.appendChild(scopeBtn);
@@ -1975,20 +2049,34 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
       if (l.scrollWidth > l.clientWidth + 1 && l.clientWidth < 56) scopeBtn.classList.add('is-compact');
     };
     el.fitScope = fitScope;
+    // The row fits by measuring itself, not by the window's width (L3): while it really overflows it gives up its least
+    // needed parts one tier at a time (data-fit 1-6, composer-bar.css). With every tier cleared the project name goes
+    // first (fitScope). Tips never count: data-measure hides every one while the row is measured (R6).
+    const fitBar = () => {
+      delete row.dataset.fit;
+      row.dataset.measure = '';
+      fitScope();
+      for (let tier = 1; tier <= 6 && row.scrollWidth > row.clientWidth; tier += 1) row.dataset.fit = String(tier);
+      delete row.dataset.measure;
+    };
+    el.fitBar = fitBar;
     const RO = doc.defaultView && doc.defaultView.ResizeObserver;
-    if (typeof RO === 'function') { el.scopeRo = new RO(() => fitScope()); el.scopeRo.observe(row); }
+    if (typeof RO === 'function') { el.scopeRo = new RO(() => fitBar()); el.scopeRo.observe(row); }
+    // The web font swaps in (font-display:swap) and widens the labels without resizing the row. jsdom has no doc.fonts.
+    doc.fonts && doc.fonts.ready.then(() => { if (el.fitBar) el.fitBar(); });
 
-    // MCP registry §9.4 + skills registry §6.8: the per-chat Sets picker — `Sets · N` (N = copies and skills that start
-    // next turn), hidden while no set in play has a member or a skill. Styled as the scope pill; opens like the model
-    // button's Effort sub-picker.
+    // MCP registry §9.4 + skills registry §6.8: the per-chat Sets picker — the layers icon and N (N = copies and skills
+    // that start next turn), hidden while no set in play has a member or a skill. Styled as the scope pill; opens like
+    // the model button's Effort sub-picker.
     const mcpBtn = make('button', 'btn btn-sm btn-quiet ask-scope-btn ask-mcp-btn ask-sets-btn');
     mcpBtn.type = 'button';
     mcpBtn.setAttribute('data-ask-mcp-btn', '');
-    mcpBtn.title = 'Sets for this chat';
+    setTip(mcpBtn, 'Sets for this chat');
+    mcpBtn.setAttribute('aria-label', 'Sets for this chat');
     mcpBtn.hidden = true;
     mcpBtn.dataset.minLevel = 'advanced';
-    el.mcpBtnLabel = make('span', 'ask-scope-label', 'Sets · 0');
-    mcpBtn.appendChild(el.mcpBtnLabel);
+    el.mcpBtnLabel = make('span', 'ask-scope-label ask-bar-n', '0');
+    mcpBtn.append(svgIcon(ICONS.layers, 16, 1.9), el.mcpBtnLabel);
     mcpBtn.addEventListener('click', () => openMcpPopover(mcpBtn));
     el.mcpBtn = mcpBtn;
     row.appendChild(mcpBtn);
@@ -2034,11 +2122,17 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     modelBtn.appendChild(svgIcon(ICONS.chevronDown, 12, 2));
     modelBtn.addEventListener('click', () => openModelPopover(modelBtn));
     row.appendChild(modelBtn);
+    // The extension's end (setComposerExt `endNodes`): a view's own buttons after the model, before the voice and Send.
+    el.extEndSlot = make('span', 'ask-composer-ext ask-composer-ext-end');
+    el.extEndSlot.setAttribute('data-ask-composer-ext-end', '');
+    el.extEndSlot.hidden = true;
+    row.appendChild(el.extEndSlot);
 
     el.send = make('button', 'btn btn-primary btn-icon ask-send');
     el.send.type = 'button';
     el.send.setAttribute('data-ask-send', '');
     el.send.setAttribute('aria-label', 'Send');
+    setTip(el.send, 'Send');   // updateSendStop() rewrites both while a reply runs; it does not run on a fresh open
     el.send.appendChild(svgIcon(ICONS.send, 15, 2.2));
     el.send.addEventListener('click', () => sendMessage());   // the click event must never reach sendMessage(queued)
     if (createVoice) row.appendChild(buildVoiceControls());
@@ -2048,6 +2142,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     el.stop.type = 'button';
     el.stop.setAttribute('data-ask-stop', '');
     el.stop.setAttribute('aria-label', 'Stop');
+    setTip(el.stop, 'Stop');
     el.stop.hidden = true;
     const stopRect = doc.createElementNS('http://www.w3.org/2000/svg', 'svg');
     stopRect.setAttribute('width', '10');
@@ -2129,6 +2224,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     // Ask worca beside the page: a route that brings the side column back (focus:false) leaves the focus on the page.
     if (showing) {
       fitInput();
+      if (el.fitBar) el.fitBar();                    // redundant in a browser (the show resizes the row), harmless
       if (focus) focusComposer();
       // Open History in Chat below 1100px: the History overlay is up, so the composer refused the focus; the overlay takes
       // it, as toggleHistory does — never <body>, and never under a dialog (the composer refused for that one too).
@@ -2799,17 +2895,39 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     // A model that takes no reasoning effort shows none (the bridge leaves it out).
     el.modelBtnEffort.textContent = entry && entry.noEffort ? '' : st.picker.effort;
     el.modelBtnEffort.hidden = !!(entry && entry.noEffort);
-    // #943: the button names the engine the next message runs on, in text whenever the catalog offers more than one
-    // engine (the extension's button says the same).
+    // #943: the button names the engine the next message runs on. Its harness mark leads the button and stands for the
+    // engine word (R2, L1); an engine with no mark, or whose mark file failed to load, keeps today's word, shown
+    // whenever the catalog offers more than one engine (the extension's button says the same).
     const eng = pickerEngine();
-    const engName = pickerEngineName(st.catalog ? st.catalog.models : [], eng);
+    const btn = el.modelBtnLabel.parentNode;
+    const hasMark = Object.hasOwn(HARNESS_MARKS, eng) && !st.markFailed.has(eng);
+    if (el.modelBtnMark && (!hasMark || el.modelBtnMarkEngine !== eng)) { el.modelBtnMark.remove(); el.modelBtnMark = null; }
+    if (hasMark && !el.modelBtnMark && btn) {
+      const mark = markTile(doc, { kind: 'harness', key: eng, size: 'sm' });
+      mark.querySelector('img').addEventListener('error', () => {   // never a broken image box
+        st.markFailed.add(eng);
+        mark.remove();
+        if (el.modelBtnMark === mark) el.modelBtnMark = null;
+        updatePickerButton();
+      });
+      btn.prepend(mark);
+      el.modelBtnMark = mark;
+      el.modelBtnMarkEngine = eng;
+    }
+    const engName = hasMark ? '' : pickerEngineName(st.catalog ? st.catalog.models : [], eng);
     el.modelBtnEngine.textContent = engName;
     el.modelBtnEngine.hidden = !engName;
-    const btn = el.modelBtnLabel.parentNode;
-    // The tooltip names the connection too: the same model can come from the Copilot CLI or from GitHub Copilot
-    // through the bridge (and from a GHE.com tenant).
+    // One accessible name, which is also the tip. It names the connection too: the same model can come from the
+    // Copilot CLI or from GitHub Copilot through the bridge (and from a GHE.com tenant).
+    const effort = entry && entry.noEffort ? '' : ` · ${st.picker.effort}`;
     const via = entry && connectionOf(entry).kind === 'provider' ? ` · ${connectionLabel(entry)}` : '';
-    if (btn) { btn.dataset.engine = eng; btn.title = `${pickerEngineLabel(eng)} · ${entry ? entry.label : st.picker.model}${via}`; }
+    if (btn) {
+      btn.dataset.engine = eng;
+      const name = `${pickerEngineLabel(eng)} · ${el.modelBtnLabel.textContent}${effort}${via}`;
+      btn.setAttribute('aria-label', name);
+      setTip(btn, name);
+    }
+    if (el.fitBar) el.fitBar();
   }
 
   function coerceEffort(entry, effort) {
@@ -3250,7 +3368,12 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     // A failed preview leaves the chip as it was (the open picker says so): the user can reopen it to retry.
     // Every chat starts the sets' MCP servers its engine can attach, and their skills.
     if (p) el.mcpBtn.hidden = !p.sets.some((x) => x.members > 0 || (x.skills || 0) > 0);
-    el.mcpBtnLabel.textContent = p ? `Sets · ${p.started + ((p.skills && p.skills.started) || 0)}` : 'Sets · ?';
+    const n = p ? p.started + ((p.skills && p.skills.started) || 0) : 0;
+    el.mcpBtnLabel.textContent = p ? String(n) : '?';
+    const name = p ? `Sets for this chat: ${n} start next turn` : 'Sets for this chat';
+    el.mcpBtn.setAttribute('aria-label', name);
+    setTip(el.mcpBtn, name);
+    if (el.fitBar) el.fitBar();
     if (st.mcp.render) st.mcp.render();
   }
 
@@ -3489,16 +3612,18 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
       : NO_PROJECT_LABEL;
     el.scopeLabel.textContent = label;
     el.scopeBtn.setAttribute('aria-label', `Chat scope: ${label}`);
-    el.scopeBtn.title = `Chat scope: ${label}`;
+    setTip(el.scopeBtn, `Chat scope: ${label}`);
     const kind = scopeKind(st.scope);
-    if (kind !== el.scopeIcoKind) {
-      const ico = scopeIcon(doc, kind, 13);
+    const drawn = kind === 'none' ? 'unset' : kind;   // the bar's no-project icon is the dashed folder
+    if (drawn !== el.scopeIcoKind) {
+      const ico = scopeIcon(doc, drawn, 16);
       el.scopeIco.replaceWith(ico);
       el.scopeIco = ico;
-      el.scopeIcoKind = kind;
+      el.scopeIcoKind = drawn;
     }
     el.scopeBtn.classList.toggle('is-pinned', st.scope.pinned);
-    if (el.fitScope) el.fitScope();
+    el.scopeBtn.classList.toggle('is-bare', !st.scope.pinned);
+    if (el.fitBar) el.fitBar();
     onToolScope();
     if (st.ext && typeof st.ext.onScope === 'function') { try { st.ext.onScope(scopeProjectKey()); } catch { /* the view's own trouble */ } }
   }
@@ -8212,7 +8337,11 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
   doc.addEventListener('keydown', onChatKeys);       // #948 s2: the Chat page keys
   doc.addEventListener('pointerdown', onDocPointerdown, true);
   // A mode change (ui-level.mjs applyLevel) re-decides every activity toggle: a mode that hides the rows opens nothing.
-  const onLevelChange = () => { if (st.rowEls) for (const entry of st.rowEls.values()) if (entry.relevel) entry.relevel(); };
+  // It also shows or hides composer row controls (data-min-level), so the row refits.
+  const onLevelChange = () => {
+    if (st.rowEls) for (const entry of st.rowEls.values()) if (entry.relevel) entry.relevel();
+    if (el.fitBar) el.fitBar();
+  };
   doc.addEventListener('worca:level', onLevelChange);
   win.addEventListener('resize', onWinResize);
   // MCP registry §9.4: in Auto the page is the scope, so a route change re-previews the picker.

@@ -1,8 +1,13 @@
-// test/worca-levels-timeline.test.mjs — the pure time helpers behind the parallel-features and
-// council-streak facts: strict overlap detection and per-timezone daily streaks.
-import { test } from 'node:test';
+// test/worca-levels-timeline.test.mjs — the pure time helpers behind the parallel-features, runs-on-days
+// and active-days facts: strict overlap detection and per-timezone day counting.
+import { test, after } from 'node:test';
 import assert from 'node:assert/strict';
-import { firstParallelPair, dayKey, councilStreak } from '../src/core/worca-levels/timeline.mjs';
+import { firstParallelPair, dayKey, activeDayKeys, firstRunsOnDays, activeDaysWindow } from '../src/core/worca-levels/timeline.mjs';
+import { useTempHome } from './helpers/temp-home.mjs';
+
+useTempHome(after);
+const { getDb } = await import('../src/core/db.mjs');
+const { realRunRows } = await import('../src/core/worca-levels/facts.mjs');
 
 const iv = (id, start, end) => ({ id, start, end });
 
@@ -48,87 +53,105 @@ test('dayKey: the same instant lands on different days in Pacific/Auckland and U
   assert.equal(dayKey(t, 'Pacific/Auckland'), '2026-03-11');
 });
 
-// `n` consecutive days from `start` (UTC midnight based), each with two finishes at 09:00 and 10:00 UTC.
-function busyDays(start, n, perDay = 2) {
-  const out = [];
-  for (let i = 0; i < n; i++) {
-    const d = new Date(Date.parse(`${start}T00:00:00Z`) + i * 86400000).toISOString().slice(0, 10);
-    for (let j = 0; j < perDay; j++) out.push(`${d}T${String(9 + j).padStart(2, '0')}:00:00Z`);
+// A real-run row as realRunRows returns it; only the fields the helpers read.
+const row = (id, finishedAt, extra = {}) => ({ id, finishedAt, scheduleId: null, ...extra });
+const dayAt = (start, i, hour = 10) => new Date(Date.parse(`${start}T00:00:00Z`) + i * 86400000 + hour * 3600000).toISOString();
+
+test('activeDayKeys: a day is active with one real run, stamped at its first finish', () => {
+  const m = activeDayKeys([row('b', '2026-01-01T15:00:00Z'), row('a', '2026-01-01T09:00:00Z'), row('c', '2026-01-02T08:00:00Z')], 'UTC');
+  assert.deepEqual([...m], [['2026-01-01', Date.parse('2026-01-01T09:00:00Z')], ['2026-01-02', Date.parse('2026-01-02T08:00:00Z')]]);
+});
+
+test('activeDayKeys: a daily schedule contributes one day', () => {
+  const rows = [0, 1, 2, 3, 4].map((i) => row(`s${i}`, dayAt('2026-01-01', i), { scheduleId: 'sch_1' }));
+  const m = activeDayKeys(rows, 'UTC');
+  assert.deepEqual([...m.keys()], ['2026-01-01']);
+  const withManual = activeDayKeys([...rows, row('m', dayAt('2026-01-03', 0))], 'UTC');
+  assert.deepEqual([...withManual.keys()], ['2026-01-01', '2026-01-03'], 'a hand-started run on a later day still counts');
+});
+
+test('activeDayKeys: buckets by the local day and mutates nothing', () => {
+  const rows = [row('a', '2026-01-05T23:30:00Z')];
+  const copy = structuredClone(rows);
+  assert.deepEqual([...activeDayKeys(rows, 'Europe/Berlin').keys()], ['2026-01-06']);
+  assert.deepEqual(rows, copy);
+});
+
+test('firstRunsOnDays stamps the 10th run on the 3rd day', () => {
+  const rows = [];
+  for (let i = 0; i < 9; i++) rows.push(row(`r${i}`, `2026-01-0${1 + (i % 2)}T${String(8 + i).padStart(2, '0')}:00:00Z`));
+  assert.deepEqual(firstRunsOnDays(rows, 'UTC', { runs: 10, days: 3 }), { metAt: null, runs: 9, days: 2 }, '9 runs over 2 days');
+  rows.push(row('r9', '2026-01-03T09:00:00Z'));
+  const r = firstRunsOnDays(rows, 'UTC', { runs: 10, days: 3 });
+  assert.deepEqual(r, { metAt: '2026-01-03T09:00:00.000Z', runs: 10, days: 3 });
+});
+
+test('firstRunsOnDays: both thresholds must hold; the later one stamps it', () => {
+  const rows = [];
+  for (let i = 0; i < 10; i++) rows.push(row(`r${i}`, `2026-01-01T${String(8 + i).padStart(2, '0')}:00:00Z`));
+  rows.push(row('d2', '2026-01-02T08:00:00Z'), row('d3', '2026-01-03T08:00:00Z'));
+  assert.equal(firstRunsOnDays(rows, 'UTC').metAt, '2026-01-03T08:00:00.000Z');
+});
+
+test('firstRunsOnDays: the runs of one schedule add one day in total (D-9)', () => {
+  const rows = [];
+  for (let i = 0; i < 10; i++) rows.push({ ...row(`s${i}`, `2026-01-${String(1 + i).padStart(2, '0')}T08:00:00Z`), scheduleId: 'sch_a' });
+  assert.deepEqual(firstRunsOnDays(rows, 'UTC'), { metAt: null, runs: 10, days: 1 });
+  rows.push(row('m1', '2026-01-11T08:00:00Z'), row('m2', '2026-01-12T08:00:00Z'));
+  assert.deepEqual(firstRunsOnDays(rows, 'UTC'), { metAt: '2026-01-12T08:00:00.000Z', runs: 12, days: 3 });
+});
+
+test('activeDaysWindow: 20 active days spread over 30 with gaps meets Council; 19 does not; weekends don\'t reset', () => {
+  // Skip every Saturday and Sunday from 2026-01-01 (a Thursday) until 20 days are collected: spans 28 days.
+  const days = [];
+  for (let i = 0; days.length < 20; i++) {
+    const t = new Date(Date.parse('2026-01-01T00:00:00Z') + i * 86400000);
+    if (t.getUTCDay() !== 0 && t.getUTCDay() !== 6) days.push(i);
   }
-  return out;
+  const rows = (list) => list.map((i) => row(`r${i}`, dayAt('2026-01-01', i)));
+  const now = Date.parse('2026-03-01T12:00:00Z');
+  const met = activeDaysWindow(activeDayKeys(rows(days), 'UTC'), 'UTC', now);
+  assert.equal(met.metAt, dayAt('2026-01-01', days[19]).replace(':00:00Z', ':00:00.000Z'));
+  const short = activeDaysWindow(activeDayKeys(rows(days.slice(0, 19)), 'UTC'), 'UTC', now);
+  assert.equal(short.metAt, null);
+});
+
+test('activeDaysWindow: 20 days not inside one 30-day window do not meet it', () => {
+  const days = [...Array(10).keys(), ...[...Array(10).keys()].map((i) => i + 40)];
+  const rows = days.map((i) => row(`r${i}`, dayAt('2026-01-01', i)));
+  assert.equal(activeDaysWindow(activeDayKeys(rows, 'UTC'), 'UTC', Date.parse('2026-04-01T00:00:00Z')).metAt, null);
+});
+
+test('activeDaysWindow: inWindow counts the active days in [today-29, today] and the clock is the argument', () => {
+  const rows = [0, 1, 5, 29, 30].map((i) => row(`r${i}`, dayAt('2026-01-01', i)));
+  const m = activeDayKeys(rows, 'UTC');
+  const today = Date.parse('2026-01-30T12:00:00Z');
+  assert.equal(activeDaysWindow(m, 'UTC', today).inWindow, 4, 'days 0..29 are in; day 30 is tomorrow');
+  assert.equal(activeDaysWindow(m, 'UTC', Date.parse('2026-01-31T12:00:00Z')).inWindow, 4, 'day 0 fell out, day 30 came in');
+  assert.deepEqual(activeDaysWindow(new Map(), 'UTC', today), { inWindow: 0, metAt: null });
+});
+
+// A done pipelines row with an explicit finish instant and a LATER updated_at (a rename after the finish).
+function doneRun(id, finishedAt, updatedAt) {
+  getDb().prepare(`INSERT INTO pipelines (id, project_key, target, status, phase, cycle, started_at, updated_at, finished_at, started_by, total_cost_usd)
+    VALUES (?, 'proj-00000001', 'project', 'done', 'done', 0, ?, ?, ?, '_local', 1)`)
+    .run(id, '2026-05-10T18:00:00Z', updatedAt, finishedAt);
 }
 
-test('councilStreak: 30 consecutive busy days meet it at the 2nd finish of day 30', () => {
-  const r = councilStreak(busyDays('2026-01-01', 30), 'UTC', '2026-02-15T12:00:00Z');
-  assert.equal(r.metAt, '2026-01-30T10:00:00.000Z');
+test('a run finished 23:30 in Europe/Belgrade (21:30Z) is that local day, not the next/previous UTC day', () => {
+  const db = getDb();
+  db.exec('DELETE FROM pipelines');
+  // Both finish on Belgrade May 10 (CEST, UTC+2): 21:30Z is 23:30 local. Their updated_at moved on to May 11 UTC.
+  doneRun('worca0001', '2026-05-10T21:30:00Z', '2026-05-11T09:00:00Z');
+  doneRun('worca0002', '2026-05-10T10:00:00Z', '2026-05-11T09:05:00Z');
+  const rows = realRunRows({ person: '_local', shared: false });
+  assert.deepEqual(rows.map((r) => r.finishedAt).sort(), ['2026-05-10T10:00:00Z', '2026-05-10T21:30:00Z'], 'the finish instant');
+  assert.deepEqual([...activeDayKeys(rows, 'Europe/Belgrade').keys()], ['2026-05-10']);
 });
 
-test('councilStreak: a day with one finish resets the run', () => {
-  const t = [...busyDays('2026-01-01', 14), ...busyDays('2026-01-15', 1, 1), ...busyDays('2026-01-16', 30)];
-  const r = councilStreak(t, 'UTC', '2026-03-01T12:00:00Z');
-  assert.equal(r.metAt, '2026-02-14T10:00:00.000Z');
-});
-
-test('councilStreak: a Saturday with one finish resets (weekends are ordinary days)', () => {
-  // 2026-01-03 is a Saturday.
-  assert.equal(new Date('2026-01-03T00:00:00Z').getUTCDay(), 6);
-  const t = [...busyDays('2026-01-01', 2), ...busyDays('2026-01-03', 1, 1), ...busyDays('2026-01-04', 29)];
-  assert.equal(councilStreak(t, 'UTC', '2026-03-01T12:00:00Z').metAt, null);
-});
-
-test('councilStreak: fewer than 30 days never meets it', () => {
-  assert.deepEqual(councilStreak(busyDays('2026-01-01', 29), 'UTC', '2026-03-01T12:00:00Z'), { current: 0, metAt: null });
-});
-
-test('councilStreak: today with one finish does not reset the streak ending yesterday', () => {
-  const t = [...busyDays('2026-01-01', 5), ...busyDays('2026-01-06', 1, 1)];
-  assert.equal(councilStreak(t, 'UTC', '2026-01-06T20:00:00Z').current, 5);
-});
-
-test('councilStreak: current counts yesterday’s run plus today when today qualifies', () => {
-  const t = busyDays('2026-01-01', 6);
-  assert.equal(councilStreak(t, 'UTC', '2026-01-06T20:00:00Z').current, 6);
-});
-
-test('councilStreak: a missing yesterday resets current to 0', () => {
-  const t = busyDays('2026-01-01', 5);
-  assert.equal(councilStreak(t, 'UTC', '2026-01-07T08:00:00Z').current, 0);
-});
-
-test('councilStreak: a finish at 23:30 local is bucketed on the local day, not the UTC day', () => {
-  // 23:30Z on Jan 5 is 00:30 on Jan 6 in Berlin but still Jan 5 in UTC.
-  const t = ['2026-01-05T08:00:00Z', '2026-01-05T23:30:00Z'];
-  assert.equal(councilStreak(t, 'Europe/Berlin', '2026-01-06T12:00:00Z').current, 0, 'one finish per Berlin day');
-  assert.equal(councilStreak(t, 'UTC', '2026-01-06T12:00:00Z').current, 1, 'both finishes on UTC Jan 5');
-});
-
-function localDaysAcrossDst(startDay, n, hours) {
-  // Two finishes per calendar day at the given UTC hours; the hours are chosen to stay on one local date.
-  const out = [];
-  for (let i = 0; i < n; i++) {
-    const d = new Date(Date.parse(`${startDay}T00:00:00Z`) + i * 86400000).toISOString().slice(0, 10);
-    for (const h of hours) out.push(`${d}T${h}:00:00Z`);
-  }
-  return out;
-}
-
-test('councilStreak: Europe/Berlin keeps day counts right across both DST changes', () => {
-  // Noon-ish UTC finishes stay on the same Berlin date in winter and summer time.
-  const spring = localDaysAcrossDst('2026-03-20', 30, ['10', '11']);
-  assert.equal(councilStreak(spring, 'Europe/Berlin', '2026-04-30T12:00:00Z').metAt, '2026-04-18T11:00:00.000Z');
-  const autumn = localDaysAcrossDst('2026-10-15', 30, ['10', '11']);
-  assert.equal(councilStreak(autumn, 'Europe/Berlin', '2026-12-01T12:00:00Z').metAt, '2026-11-13T11:00:00.000Z');
-});
-
-test('councilStreak: America/New_York keeps day counts right across both DST changes', () => {
-  const spring = localDaysAcrossDst('2026-03-01', 30, ['15', '16']);
-  assert.equal(councilStreak(spring, 'America/New_York', '2026-04-30T12:00:00Z').metAt, '2026-03-30T16:00:00.000Z');
-  const autumn = localDaysAcrossDst('2026-10-20', 30, ['15', '16']);
-  assert.equal(councilStreak(autumn, 'America/New_York', '2026-12-30T12:00:00Z').metAt, '2026-11-18T16:00:00.000Z');
-});
-
-test('councilStreak: current counts days across a DST change in the zone', () => {
-  // Berlin DST starts 2026-03-29; three busy days around it, today is the 30th.
-  const t = localDaysAcrossDst('2026-03-27', 3, ['10', '11']);
-  assert.equal(councilStreak(t, 'Europe/Berlin', '2026-03-30T08:00:00Z').current, 3);
+test('realRunRows falls back to updated_at for a run with no finished_at', () => {
+  const db = getDb();
+  db.exec('DELETE FROM pipelines');
+  doneRun('worca0003', null, '2026-05-10T21:30:00Z');
+  assert.deepEqual(realRunRows({ person: '_local', shared: false }).map((r) => r.finishedAt), ['2026-05-10T21:30:00Z']);
 });

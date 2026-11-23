@@ -1479,12 +1479,13 @@ export async function writeState(pipelineDir, stateObj, { prWatchRunId = null, r
         date_prefix, status, phase, cycle, started_at, updated_at, total_cost_usd,
         total_active_ms, prompt, branch, workspace_meta, stepper, tools, resume_point,
         source_type, source_ref, guardrails_id, outcome, human_hours, started_by, shape_stats, run_size, run_setup, review_stats, pr_auto,
-        elapsed_ms, elapsed_since)
+        elapsed_ms, elapsed_since, finished_at)
       VALUES (@id,@project_key,@workspace_key,@target,@title,@base_name,@date_prefix,
         @status,@phase,@cycle,@started_at,@updated_at,@total_cost_usd,@total_active_ms,
         @prompt,@branch,@workspace_meta,@stepper,@tools,@resume_point,
         @source_type,@source_ref,@guardrails_id,@outcome,@human_hours,@started_by,@shape_stats,@run_size,@run_setup,@review_stats,@pr_auto,
-        COALESCE(@elapsed_ms, 0),@elapsed_since)
+        COALESCE(@elapsed_ms, 0),@elapsed_since,
+        CASE WHEN @status = 'done' THEN @updated_at END)
       ON CONFLICT(id) DO UPDATE SET
         status=excluded.status, phase=excluded.phase, cycle=excluded.cycle,
         updated_at=excluded.updated_at, total_cost_usd=excluded.total_cost_usd,
@@ -1496,6 +1497,7 @@ export async function writeState(pipelineDir, stateObj, { prWatchRunId = null, r
         tools=excluded.tools,
         resume_point=excluded.resume_point,
         outcome=excluded.outcome,
+        finished_at=CASE WHEN excluded.status='done' THEN COALESCE(pipelines.finished_at, excluded.updated_at) ELSE pipelines.finished_at END,
         shape_stats=COALESCE(excluded.shape_stats, shape_stats),
         review_stats=COALESCE(excluded.review_stats, review_stats),
         run_size=COALESCE(excluded.run_size, run_size),

@@ -7685,12 +7685,13 @@ export class RunHarness extends EventEmitter {
    * Repository-local hooks and config commands never run (git-guard.mjs, security G2), except the
    * project's hooks for `hooks: true` (the end-of-run commit), with every host credential stripped.
    */
-  async _git(args, { cwd, ignoreAbort = false, timeoutMs = HARNESS_GIT_TIMEOUT_MS, hooks = false } = {}) {
+  async _git(args, { cwd, ignoreAbort = false, timeoutMs = HARNESS_GIT_TIMEOUT_MS, hooks = false, env: extraEnv = null } = {}) {
     if (!gitAvailable()) return gitMissingResult();
     let env;
     try {
       env = await guardedGitEnv(cwd || this.projectDir, hooks ? { hooks, env: stripHostCredentials(process.env) } : {});
     } catch (err) { return { ok: false, code: -1, stdout: '', stderr: err.message }; }
+    if (extraEnv) env = { ...env, ...extraEnv };   // e.g. GIT_INDEX_FILE for a throwaway index (slice-worktree.mjs)
     return new Promise((resolveP) => {
       let child;
       try {

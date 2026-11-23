@@ -93,18 +93,36 @@ function shellWord(rule) {
   const body = m[1].trim().replace(/(?::\*| \*)$/, '').trim();
   return /^[A-Za-z0-9._/-]+$/.test(body) ? body : null;
 }
-/** A Claude path rule body as Cursor's glob. Claude: `//abs` is absolute, `/rel` is relative to the project root
- *  (the run checkout is Cursor's cwd), `~/…`, `./…` and bare patterns as written. */
-const cursorPath = (body) => (body.startsWith('//') ? body.slice(1) : body.startsWith('/') ? `.${body}` : body);
+// A Claude path rule body as Cursor's glob, or null when Cursor cannot be told it. Claude: `//abs` is absolute, `~/…`
+// the home, `/rel` relative to the project root and `./rel` or a bare pattern relative to the cwd (both the run
+// checkout, Cursor's cwd).
+// Cursor (2026.11.11) matches a deny glob as an anchored regex, `*` any characters, against the path.resolve()d
+// absolute path, separators untouched. So a relative glob as written (`./rel`, `rel`) never matches anything: it is
+// written `**/rel`, any path ending in `/rel` (inside the checkout, and the same name deeper or elsewhere too: it
+// denies more, never less). A `../` body would need the checkout's parent and stays unenforced. On Windows the
+// resolved path is `C:\…`, which no `/` glob ever matches, so there every glob is written with backslashes:
+// `//**/x` as `**\x` (x at any depth, any drive or UNC share), another `//abs` as `*:\abs` (any drive), `~/x` as
+// `~\x` (Cursor expands `~` before a backslash too), a relative `x` as `**\x`. Cursor's `?` is a literal question
+// mark, never Claude's one character, so a `?` is written `*`: it denies more, never less.
+const cursorPath = (body, win) => {
+  const sep = (s) => { const g = s.replaceAll('?', '*'); return win ? g.replaceAll('/', '\\') : g; };
+  if (body.startsWith('//**/')) return sep(win ? body.slice(2) : body.slice(1));
+  if (body.startsWith('//')) return win ? `*:${sep(body.slice(1))}` : sep(body.slice(1));
+  if (body.startsWith('~/')) return sep(body);
+  const rel = body.startsWith('./') ? body.slice(2) : body.startsWith('/') ? body.slice(1) : body;
+  if (!rel || rel === '..' || rel.startsWith('../')) return null;
+  return sep(rel.startsWith('**/') ? rel : `**/${rel}`);
+};
 
 /**
  * What Cursor can be told of a run's DENY rules (allow / ask are never lifted). Every rule it is told is `partial`
  * (CURSOR_RULE_TERMS): the gate refuses those unless --allow-unguarded-engine, and the spawn still writes them.
  * @returns {{deny:string[], partial:string[], unenforced:string[]}}
  */
-export function cursorRulePlan(permissionRules) {
+export function cursorRulePlan(permissionRules, { platform = process.platform } = {}) {
+  const win = platform === 'win32';
   const out = { deny: [], partial: [], unenforced: [] };
-  const add = (token, rule) => { if (!out.deny.includes(token)) out.deny.push(token); out.partial.push(rule); };
+  const add = (token, rule) => { if (!out.deny.includes(token)) out.deny.push(token); if (!out.partial.includes(rule)) out.partial.push(rule); };
   for (const raw of Array.isArray(permissionRules?.deny) ? permissionRules.deny : []) {
     const rule = String(raw).trim();
     if (!rule) continue;
@@ -112,7 +130,8 @@ export function cursorRulePlan(permissionRules) {
     const word = shellWord(rule);
     if (word) { add(`Shell(${word})`, rule); continue; }
     const path = /^(Read|Edit|Write)\((.+)\)$/.exec(rule);
-    if (path && path[2].trim()) { add(`${path[1] === 'Read' ? 'Read' : 'Write'}(${cursorPath(path[2].trim())})`, rule); continue; }
+    const glob = path && path[2].trim() ? cursorPath(path[2].trim(), win) : null;
+    if (glob) { add(`${path[1] === 'Read' ? 'Read' : 'Write'}(${glob})`, rule); continue; }
     out.unenforced.push(rule);
   }
   return out;

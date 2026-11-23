@@ -422,3 +422,17 @@ test('review-quality hides the DB error behind a fixed 500', async () => {
   assert.ok(getDb().prepare('PRAGMA table_info(pipelines)').all().some((c) => c.name === 'review_stats'));
   assert.equal((await fetch(`${base}/api/stats/review-quality`)).status, 200);
 });
+
+test('totals.realRuns follows the shared rule: done, not demo, with a run or step cost', async () => {
+  const realRuns = () => getStats({ range: 'all', now: NOW }).totals.realRuns;
+  const before = realRuns();
+  assert.equal(typeof before, 'number');
+  const seed = async (state) => { const { id } = await seedPipeline('/tmp/p', state); setStarted(id, iso(2026, 8, 4)); return id; };
+  await seed({ status: 'done', totalCostUsd: 0.5 });                                                          // real
+  await seed({ status: 'done', totalCostUsd: 0, steps: [{ key: 'plan', status: 'done', costUsd: 0.1 }] });    // real (step cost)
+  await seed({ status: 'done', totalCostUsd: 0 });                                                            // $0
+  await seed({ status: 'error', totalCostUsd: 2 });                                                           // not finished
+  const demo = await seed({ status: 'done', totalCostUsd: 4 });                                               // demo
+  getDb().prepare('UPDATE pipelines SET run_setup = ? WHERE id = ?').run(JSON.stringify({ mock: true }), demo);
+  assert.equal(realRuns(), before + 2);
+});

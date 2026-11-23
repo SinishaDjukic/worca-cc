@@ -54,5 +54,7 @@
   { "file": "ui/server.mjs", "from": 10573, "to": 10574, "commit": "c2acccaea",
     "why": "Ticket comments per run event (#1508): the one-line announcePrOpened call after a PR is opened, in createRunPr; the helper itself lives in src/core/sources.mjs; measured with wc -l on this branch merged with dev 2fd95ae5a" },
   { "file": "ui/server.mjs", "from": 10881, "to": 10882, "commit": "c2acccaea",
-    "why": "dev's announcePrOpened call (#1508, the raise above it) on top of the tool panel branch (10881 lines before the merge); measured with wc -l on the merge" }
+    "why": "dev's announcePrOpened call (#1508, the raise above it) on top of the tool panel branch (10881 lines before the merge); measured with wc -l on the merge" },
+  { "file": "ui/server.mjs", "from": 10882, "to": 10887, "commit": "61250a823",
+    "why": "Worca levels v2 (b0fd40227, first raised 10573 to 10578) on top of dev: the run-finished frame carries the real flag (isRealRun import and the done-frame field) and the setup marker is ensured once at boot (ensureSetupMarker import and call), all central wiring outside the route regions; measured with wc -l on this branch merged with dev ed608e85c" }
 ]
