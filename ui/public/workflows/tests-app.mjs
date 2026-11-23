@@ -125,6 +125,7 @@ export function createWorkflowTests(deps) {
       back: () => wftShow('list', { overview: null }),
       testAgain: () => wftTestVersion({ a: run.a, b: run.b, exampleIds: run.exampleIds }),
       open: (exampleId) => wftShow('detail', { runId: run.id, exampleId, tryIndex: 0, picked: {} }),
+      editExample: (exampleId) => void wftOpenExample(exampleId),   // U8: "Look at the example or its checks."
       tryMore: async (exampleId) => {   // G15 + U-T6 (F12, D6): reusing the tries made and the connectors choice, after a confirm with the estimate
         const ask = await askMoreTries({ run, labels: wft.data.labels, exampleId, confirm: confirmModal,
           exampleName: (wft.data.model.examples.find((x) => x.id === exampleId) || {}).name || 'this example',

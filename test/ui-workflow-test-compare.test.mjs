@@ -93,8 +93,21 @@ test('U-T5: a row that fails on both versions says so and has no "Might be luck"
   const row = root.querySelector('.wft-crow2:not(.is-head)');
   assert.equal(row.querySelector('.badge').textContent, 'Same');
   assert.equal(row.querySelector('.wft-why').textContent, `Fails on both versions: "${SECTIONS}" is missed most (9 of 10 tries). Look at the example or its checks.`);
-  assert.equal(root.querySelectorAll('.wft-why button').length, 0);
+  assert.deepEqual([...root.querySelectorAll('.wft-why button')].map((b) => b.textContent), ['Look at the example or its checks.'],
+    'no Try 3 more: only the link to the example (U8)');
   assert.ok(!/luck/i.test(root.textContent));
+});
+
+test('U8: with editExample on the page, "Look at the example or its checks." is a link that opens the example', () => {
+  const m = sameModel('PFFFF', 'FFFFF', { cost: 1, ms: 20000 }, { cost: 1, ms: 20000 });
+  const opened = [];
+  const { root } = boot(renderCompare, compare({ examples: 1, model: m }), {}, { editExample: (id) => opened.push(id) });
+  const why = root.querySelector('.wft-crow2:not(.is-head) .wft-why');
+  assert.equal(why.textContent, `Fails on both versions: "${SECTIONS}" is missed most (9 of 10 tries). Look at the example or its checks.`, 'the same words');
+  const link = why.querySelector('button.wft-linkbtn');
+  assert.equal(link.textContent, 'Look at the example or its checks.');
+  link.click();
+  assert.equal(opened.length, 1);
 });
 
 test('U-T2: tries made again after a problem in Worca are one more line of the fair comparison', () => {

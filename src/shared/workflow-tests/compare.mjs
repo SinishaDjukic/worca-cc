@@ -13,6 +13,9 @@ const cap1 = (s) => (s ? s.charAt(0).toUpperCase() + s.slice(1) : s);
 const low1 = (s) => (s ? s.charAt(0).toLowerCase() + s.slice(1) : s);
 
 /** How a version is named on the Tests pages. ctx = { liveVersionNo, latestVersionNo }. */
+/** The end of Compare's "Fails on both versions" line; the page makes it a link to the example (pre-merge QA, U8). */
+export const LOOK_AT_EXAMPLE = 'Look at the example or its checks.';
+
 export function useLabel(use, ctx = {}, form = 'short') {
   if (use === 'draft') {
     // Pre-merge QA (U3): a draft the same as a saved version is not a new version: "Your draft (same as v3)", the Test a
@@ -164,8 +167,8 @@ export function compareModel({ examples = [], a = null, b, tries = [] }) {
       result = failsBoth || Math.abs(d) < 1e-9 ? 'same' : d > 0 ? 'better' : 'worse';
       if (failsBoth) {
         const m = missedMost([...aT, ...bT]);
-        why = m ? `Fails on both versions: "${m.label}" is missed most (${m.k} of ${aT.length + bT.length} ${triesWord(aT.length + bT.length)}). Look at the example or its checks.`
-          : 'Fails on both versions. Look at the example or its checks.';
+        why = m ? `Fails on both versions: "${m.label}" is missed most (${m.k} of ${aT.length + bT.length} ${triesWord(aT.length + bT.length)}). ${LOOK_AT_EXAMPLE}`
+          : `Fails on both versions. ${LOOK_AT_EXAMPLE}`;
       } else if (result !== 'same') {
         luck = Math.abs(d) * Math.min(ra.total, rb.total) <= LUCK_MAX_DIFF + 1e-9;   // the smaller side decides: one try can't prove it
         const loser = result === 'worse' ? { label: b.label, list: bT, other: aT } : { label: a.label, list: aT, other: bT };

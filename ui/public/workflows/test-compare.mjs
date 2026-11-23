@@ -7,7 +7,7 @@ import { el, btn, startInto, checkWords, mockNote, pathInto, trackTestDialog } f
 import { icon } from '../icons.mjs';
 import { createDialog } from '../marketplace/layers.mjs';
 import { fmtUsd, fmtUsdFine } from '../../../src/shared/workflow-tests/checks.mjs';
-import { estimateOf, aboutUsd, agoText, countsText, fmtDuration, pctDelta, durationDelta, countDelta, fmtTimes } from '../../../src/shared/workflow-tests/compare.mjs';
+import { estimateOf, aboutUsd, agoText, countsText, fmtDuration, pctDelta, durationDelta, countDelta, fmtTimes, LOOK_AT_EXAMPLE } from '../../../src/shared/workflow-tests/compare.mjs';
 import { serverName } from '../../../src/shared/workflow-tests/connector-name.mjs';
 import { splitPatchSections, parseFileSection } from '../diff-view.mjs';
 import { criteriaGroup, pairBlock } from './criteria-rows.mjs';
@@ -309,6 +309,11 @@ export function renderCompare(root, c, actions, { doc, now = Date.now(), mock = 
       row.append(why);
     } else if (onlyWhy) {
       row.append(el(doc, 'span', 'wft-why', onlyWhy));   // P4-M5: a difference only in unreliable criteria
+    } else if (r.why && actions.editExample && r.why.endsWith(LOOK_AT_EXAMPLE)) {
+      // Pre-merge QA (U8): "Look at the example or its checks." opens the example.
+      const why = el(doc, 'span', 'wft-why', r.why.slice(0, -LOOK_AT_EXAMPLE.length));
+      why.append(btn(doc, LOOK_AT_EXAMPLE, () => actions.editExample(r.id), 'wft-linkbtn'));
+      row.append(why);
     } else if (r.why) {
       row.append(el(doc, 'span', 'wft-why', r.why));
     }
