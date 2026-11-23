@@ -81,3 +81,34 @@ test('globMatcher: a glob the model writes never backtracks — *a*a*… against
   assert.equal(globMatcher(`/**/${'**a'.repeat(40)}`).test(name), true);
   assert.ok(Date.now() - t0 < 500, `took ${Date.now() - t0} ms`);
 });
+
+// Windows: a drive path (C:\…) has no POSIX root, so the `//**/…` rules once matched nothing there and the Copilot /
+// Codex files server read .env and secrets.json under its roots. The same samples, written as Windows paths under a
+// Windows home, must be denied by the same rule, on every platform (the matcher is plain string work).
+const WIN_HOME = String.raw`C:\Users\zed`;
+const win = (p) => (p.startsWith(HOME) ? WIN_HOME + p.slice(HOME.length) : `C:${p}`).replaceAll('/', '\\');
+
+test('Windows drive paths: each rule denies its sample written as a C: path, under a Windows home', () => {
+  for (const [rule, path] of CASES) {
+    if (rule === 'Read(//proc/**)') continue; // a POSIX root folder, not a folder on every drive
+    assert.equal(askPathDenied(win(path), { home: WIN_HOME }), rule, win(path));
+  }
+  assert.equal(askPathDenied('c:/repo/sub/.env', { home: WIN_HOME }), 'Read(//**/.env*)', 'a lower-case drive letter');
+  assert.equal(askPathDenied(String.raw`D:\work\plugins\p\data\secrets.json`, { home: WIN_HOME }), 'Read(//**/secrets.json)', 'another drive');
+  assert.equal(askPathDenied(String.raw`\\server\share\repo\.env`, { home: WIN_HOME }), 'Read(//**/.env*)', 'a UNC path');
+});
+
+test('Windows drive paths: look-alike names and a drive folder named proc stay readable', () => {
+  for (const p of [String.raw`C:\repo\environment.md`, String.raw`C:\repo\docs\secrets.json.md`, String.raw`C:\proc\notes.md`, win(`${HOME}/.sshd_config_notes`)]) {
+    assert.equal(askPathDenied(p, { home: WIN_HOME }), null, p);
+  }
+});
+
+test('Windows: the ~/ globs sit under the rooted home; extended-length and device paths name the same files', () => {
+  const ssh = askDenyGlobs({ home: 'C:\\Users\\zed\\' }).find((g) => g.rule === 'Read(~/.ssh/**)');
+  assert.equal(ssh.glob, '/C:/Users/zed/.ssh/**');
+  assert.equal(askPathDenied(String.raw`\\?\C:\Users\zed\.ssh\id_ed25519`, { home: WIN_HOME }), 'Read(~/.ssh/**)');
+  assert.equal(askPathDenied(String.raw`\\.\C:\Users\zed\.aws\credentials`, { home: WIN_HOME }), 'Read(~/.aws/**)');
+  assert.equal(askPathDenied(String.raw`\\?\UNC\server\share\repo\.env`, { home: WIN_HOME }), 'Read(//**/.env*)');
+  assert.equal(askPathDenied(String.raw`\\?\C:\repo\notes.md`, { home: WIN_HOME }), null);
+});

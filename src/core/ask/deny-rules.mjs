@@ -65,10 +65,19 @@ export const REQUIREMENTS_READ_DENY_RULES = Object.freeze([
 
 const READ_RULE = /^Read\((.+)\)$/;
 export const toPosix = (p) => String(p).replace(/\\/g, '/');
+// A Windows drive path (`C:/x`) has no POSIX root, so a `//**/…` rule (glob `/**/…`) never matched one: `.env` and
+// secrets.json under a Windows root were readable. Rooting the drive as `/C:/x`, in the path and in the home the `~/`
+// rules sit under, lets the same globs deny on every platform. A UNC path (`//server/…`) is rooted already. An
+// extended-length or device path (`\\?\C:\x`, `\\.\C:\x`, `\\?\UNC\server\x`) names the same file, so it loses that prefix
+// first: else the `~/` rules, built from a plain home, would never match it.
+const rooted = (p) => {
+  const s = toPosix(p).replace(/^\/\/[?.]\/UNC\//i, '//').replace(/^\/\/[?.]\/(?=[A-Za-z]:\/)/, '');
+  return /^[A-Za-z]:\//.test(s) ? `/${s}` : s;
+};
 
 /** The path globs of the Read(...) rules, absolute: `//x` is `/x`, `~/x` is under `home`. Tool-only rules carry no path. */
 export function askDenyGlobs({ rules = ASK_DENY_RULES, home = homedir() } = {}) {
-  const base = toPosix(home).replace(/\/+$/, '');
+  const base = rooted(home).replace(/\/+$/, '');
   const out = [];
   for (const rule of rules) {
     const m = READ_RULE.exec(rule);
@@ -163,7 +172,7 @@ function compiled(rules, home) {
 
 /** The rule that denies `absPath`, or null — the matcher every Codex file tool uses. */
 export function askPathDenied(absPath, { rules = ASK_DENY_RULES, home = homedir() } = {}) {
-  const p = toPosix(absPath);
+  const p = rooted(absPath);
   for (const { rule, re } of compiled(rules, home)) if (re.test(p)) return rule;
   return null;
 }

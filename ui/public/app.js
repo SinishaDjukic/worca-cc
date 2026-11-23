@@ -106,6 +106,7 @@ import { nowRows, glanceCopy, nodeLabel, preflightOpen, dotState } from './run-g
 import { workModeOf, isGitRun, isFolderRun, isNoProjectRun, NO_PROJECT_KEY, projectKind, kindChip, RUN_KIND_CHIP, folderMembersOf } from './run-kind.mjs';
 import { changesCounts, filesWord, renderCountsNode, applyBarModel, paintApplyBar, runChangesUrl, openApplyDialog, discardChanges, CHANGE_SIGN, CHANGE_WORD } from './folder-changes.mjs';
 import { runProgress, progressWidth } from '../../src/shared/run-progress.mjs';
+import { runElapsedMs, runHeadlineMs, showAgentTime } from '../../src/shared/run-elapsed.mjs';
 import { claudeCheckedWhere } from '../../src/shared/claude-sign-in.mjs';
 import { DEFAULT_HOME_PINS, isPinned, pinWorkflow, unpinWorkflow } from '../../src/shared/home-pins.mjs';
 import { outcomeNote } from './run-outcome.mjs';
@@ -178,7 +179,7 @@ import { layoutDialog, watchDialogEdges } from './dialog-layout.mjs';
 import { setEngineLocks, engineLock, applyEngineLocks } from './engine-locks.mjs';
 import { guardModal, dialogOpen, DISCARD_MESSAGE } from './modal-guard.mjs';
 import { createVoiceController } from './ask-voice.mjs';
-import { renderGettingStarted, renderGettingStartedPill, bindWelcome, doneCount, allStepsDone, GETTING_STARTED_STEPS } from './getting-started.mjs';
+import { renderGettingStarted, renderGettingStartedPill, bindWelcome, doneCount, allStepsDone, gsPillText, GETTING_STARTED_STEPS } from './getting-started.mjs';
 import { createGuideSpot } from './guide-spot.mjs';
 import {
   splitPatchSections, parseFileSection, patchIndex, sectionKey, MAX_FILE_SECTION_CODE_UNITS,
@@ -317,7 +318,7 @@ import {
 import { gitActionFor, GIT_DIALOG, gitDoneMessage } from './project-git.mjs';
 import { baseCheckModel, baseRowNote, newerBaseCheck } from './base-check.mjs';
 import { describeRule } from '../../src/shared/schedule/recurrence.mjs';
-import { statusActions, RUN_SWITCH_OPTIONS, RUN_SWITCH_TIP, kindShort, awayAnswerRows, awayAnswerCounts, checksFirst, awayAnswersSummary, decidedByText, awayAskCaption } from '../../src/shared/away-mode/labels.mjs';
+import { statusActions, RUN_SWITCH_OPTIONS, RUN_SWITCH_TIP, askShort, awayAnswerRows, awayAnswerCounts, checksFirst, awayAnswersSummary, decidedByText, awayAskCaption } from '../../src/shared/away-mode/labels.mjs';
 import { parseWindow } from '../../src/shared/away-mode/activation.mjs';
 import { runCostBreakdown, floorText, auxLabelForSubagent } from '../../src/shared/cost/breakdown.mjs';
 import { costBreakdownEl, costSummaryText, awayTotalText } from './cost-breakdown.mjs';
@@ -394,6 +395,9 @@ import { labelStates, applyLabelChange, normaliseLabel } from '../../src/shared/
 import { renderLabelsSection, runCount } from './labels-settings.mjs';
 import { makeSwitch } from './switch.mjs';
 import { createWorcaLevelWiring } from './worca-level/app-wiring.mjs';
+import { ownFinishedRun } from './worca-level/notices.mjs';
+import { fetchWorcaLevel } from './worca-level/model.mjs';
+import { paintModeSuggestion, ackModeSuggestion } from './worca-level/mode-suggestion.mjs';
 
 // With site data blocked, Chrome throws SecurityError on merely reading `localStorage`. Every bare `localStorage` in
 // this module resolves here: the browser's storage, else an in-memory stand-in, so the page boots and forgets on reload.
@@ -1793,7 +1797,7 @@ const acctMenu = document.getElementById('acct-menu');
 // focusChecked: false — a keyboard open lands on the first item (the level card, else the spend card), not on the
 // checked theme icon.
 // The team setup notice repaints each time the menu opens (paintTeamNotice is a hoisted function declaration below).
-const acctFly = createFlyout({ trigger: acctBtn, menu: acctMenu, mode: 'up', focusChecked: false, onOpen: () => { void paintTeamNotice(); } });
+const acctFly = createFlyout({ trigger: acctBtn, menu: acctMenu, mode: 'up', focusChecked: false, onOpen: () => { void paintTeamNotice(); }, onClose: () => worca.maybeDialog() });
 paintAppearanceIcon(document.querySelector('#acct-menu .theme-sect > .mi-ic'));
 // Interface mode's side menu hangs off the menu (side-flyout closes it with the menu, and Escape
 // closes it first); ui-level.mjs fills it, and a pick there is a choose like a dialog card.
@@ -1847,12 +1851,32 @@ function paintUsage() {
   usageFly.reposition();
 }
 // The worca level (worca-level/app-wiring.mjs): the last served view feeds the corner avatar, the shelf and the menu row.
-const worca = createWorcaLevelWiring({ trigger: acctBtn, menu: acctMenu, repaint: () => { paintAccount(); paintShelf(); }, isSettled: () => gs.settled, setupOpen: () => !!setupDialog });
+// The menu's level card opens with the menu (a click or Enter); nothing opens on hover or focus. A person with no level yet
+// gets the initials and a way into setup: 'rerun' at the access step for the sign-in ('fix' would pre-tick Copilot).
+const worca = createWorcaLevelWiring({
+  // repaint: the corner, then the shelf, the pill and the settings row (paintOnboarding), then the mode banner
+  menu: acctMenu, repaint: () => { paintAccount(); if (gs.status) paintOnboarding(); paintModeBanner(); }, isSettled: () => gs.settled, setupOpen: () => !!setupDialog,
+  hashNow: () => location.hash, runStatus: (runId) => runs.get(runId)?.status,   // the route gate: a result route is on screen, a live run is not
+  initials: () => acctState.account.initials || '',
+  onFinishSetup: () => { acctFly.close(); openSetup({ entry: 'first' }); },
+  onSignIn: () => { acctFly.close(); openSetup({ entry: 'rerun', step: 'access' }); },
+});
+/** The interface-mode suggestion: the mode changes only on the accept click (levelCtl.choose), never on its own. */
+function paintModeBanner() {
+  const answer = (mode, what) => ackModeSuggestion(mode, what).then((view) => worca.adoptView(view)).catch((e) => console.warn(`worca level: could not acknowledge the mode suggestion: ${e.message}`));
+  paintModeSuggestion(document, worca.state.view, {
+    currentMode: currentLevel(),
+    onAccept: (mode) => { void levelCtl.choose(mode).then((saved) => (saved ? answer(mode, 'accepted') : undefined)); },   // a refused save records nothing (R-po-15, I-10)
+    onDismiss: (mode) => { void answer(mode, 'dismissed'); },
+  });
+}
 function paintAccount() {
-  const level = worca.state.view && worca.state.view.level;
+  const view = worca.state.view;
+  const level = view && view.level;
   paintAccountCorner(acctBtn, acctState.account, {
     budget: budgetState.budget, away: acctState.away?.state === 'away',
     avatar: level ? { src: level.avatar, alt: level.name } : null,
+    noLevel: !!view && view.level === null,   // no level yet: initials and a dot; an unknown view (null) shows no dot (I-7)
     usageParts: ringParts(currentUsageModel()),
   });
 }
@@ -1895,6 +1919,7 @@ function handleServerMessage(msg) {
   if (!msg || !msg.type) return;
 
   if (msg.type === 'hello') {
+    worca.onServerMessage('hello');   // a reconnect refetches the level (also after a failed load)
     conn.back();
     onHello(msg);
     refreshRunningActions();
@@ -2639,6 +2664,8 @@ function makeRun({
     phaseStatus: '',
     costByNode: {},       // { nodeId|uiPhase: usd } for the live stepper
     totalCostUsd: 0,   // pipeline total for the card meta line
+    elapsedMs: null,   // the engine's run clock, folded (from 'state'); null => no figure, the summed step time stands in
+    elapsedSince: null, // epoch ms the run clock has been running since; null while parked
     steps: [],         // raw steps[] from the latest state snapshot (for live timers)
     pendingQuestion,
     logLines: [],
@@ -3226,6 +3253,11 @@ function onState(r, msg) {
     r.stepGraphify = stepGraphifyFromSteps(msg.steps);
   }
   if (typeof msg.totalCostUsd === 'number') r.totalCostUsd = msg.totalCostUsd;
+  // The run clock: folded ms + the anchor it runs from (null while the run is parked).
+  if (typeof msg.elapsedMs === 'number') {
+    r.elapsedMs = msg.elapsedMs;
+    r.elapsedSince = typeof msg.elapsedSince === 'number' ? msg.elapsedSince : null;
+  }
   // What the open preflight is doing (the glance's status line); null once it ends.
   if (msg.setupStage !== undefined) r.setupStage = msg.setupStage;
   // Night mode switches + counters (run-harness _nightSnapshot): the run-view switch paints from them.
@@ -7111,10 +7143,12 @@ function clearQpanel(r) {
 // fields (logLines/el) while keeping the model in the map so a duplicate
 // hello/event won't recreate it fresh.
 // ---------------------------------------------------------------------------
-function finishRun(r, status) {
+function finishRun(r, status, frame) {
   if (r._finished) return;
   r._finished = true;
   r._finishedAs = status;   // onDone re-arms a run that finished as paused (it is stopped later)
+  const finishedRun = ownFinishedRun(r, status, frame, viewer);   // the run-finished message (worca-level/notices.mjs)
+  if (finishedRun) worca.queueRunFinished(finishedRun);
   scheduleOnboardingRefresh();
   r._decorSeq = (r._decorSeq || 0) + 1;   // isLive(r) reads _finished/status/pendingQuestion
   applyServerStatus(r, status);
@@ -7180,7 +7214,7 @@ function onDone(r, msg) {
     r._finished = false;
     alerts.onResolved(alertRun(r));   // the pause no longer waits on anyone
   }
-  finishRun(r, msg.status || 'done');
+  finishRun(r, msg.status || 'done', msg);
   // After finishRun: the alert's body is the run's list-row status line (§5a.5), which reads the paused status.
   if (msg.status === 'paused') alerts.onPaused(alertRun(r), r.pauseReason);
   // Nothing else picks up the FINAL spend delta: a non-cost `done` broadcasts no
@@ -13596,16 +13630,17 @@ function buildReadinessMenu(key, report) {
   if (m.notJudged.length) body.append(el('div', 'rp-notjudged', `Not judged: ${m.notJudged.join(', ')}.`));
 
   body.append(sec('Repository', 'Applies to every tool'));
+  // The shared severity chip (.issue-sev), its tone from the row's .sev-* class.
   const GROUP = { blocker: 'Must fix', warn: 'Should fix', info: 'Advice' };
+  const SEV = { blocker: 'sev-critical', warn: 'sev-minor', info: 'sev-suggestion' };
   for (const sev of ['blocker', 'warn', 'info']) {
     for (const c of m.failing[sev]) {
-      const row = el('div', 'rp-chk');
-      const dot = el('span', `rp-sevdot ${sev}`);
-      dot.setAttribute('aria-label', GROUP[sev]);
+      const row = el('div', `rp-chk ${SEV[sev]}`);
+      const chip = el('span', 'issue-sev', GROUP[sev]);
       const ign = el('button', 'btn btn-sm btn-quiet rp-ign', 'Ignore');
       ign.type = 'button';
       ign.addEventListener('click', async () => { if (await setReadinessIgnore(key, c.id, true)) await refreshReadiness(key, { refresh: true }); });
-      row.append(dot, el('span', 'rp-chk-t', c.title), ign);
+      row.append(chip, el('span', 'rp-chk-t', c.title), ign);
       if (c.detail) row.append(el('span', 'rp-chk-d', c.detail));
       row.append(el('span', 'rp-chk-f', c.fix));
       body.append(row);
@@ -13613,20 +13648,20 @@ function buildReadinessMenu(key, report) {
   }
 
   const box = (lead, text) => {
-    const d = el('details', 'rp-more');
+    const d = el('details', 'rp-more disclosure');
     const s = el('summary');
-    s.append(el('span', lead), el('span', '', text), el('span', 'rp-chev'));
+    s.append(icon(document, lead, 14, `ic rp-lead is-${lead}`), el('span', '', text));
     d.append(s);
     return d;
   };
-  const passedBox = box('rp-tick', `${m.passed.length} checks pass`);
+  const passedBox = box('check', `${m.passed.length} checks pass`);
   const list = el('ul');
   for (const it of m.passed) { const li = el('li'); li.append(el('b', '', it.title), el('span', '', it.detail)); list.append(li); }
   passedBox.append(list);
   body.append(passedBox);
 
   if (m.ignored.length) {
-    const ignBox = box('rp-gdot', `${m.ignored.length} ignored for this project`);
+    const ignBox = box('none', `${m.ignored.length} ignored for this project`);
     const ul = el('ul');
     for (const it of m.ignored) {
       const li = el('li');
@@ -27811,9 +27846,10 @@ function paintHdFacts(screen, record, data) {
   // A Folder run counts its copy's changes (P1), never a git summary.
   const folder = hdWorkMode(record, data) === 'folder';
   const fc = folder ? changesCounts(hdChangesOf(record, data) || { state: 'pending' }) : null;
-  const activeMs = typeof st.totalActiveMs === 'number' ? st.totalActiveMs : liveTotalMs(st.steps, 0);
+  // The run time is the saved elapsed clock (an old run: its summed time); the sum itself is agent time.
+  const activeMs = runHeadlineMs(st) ?? liveTotalMs(st.steps, 0);
   const tags = costTagsFact(st.tags, record && record.projectDir, () => { if (screen.isConnected) paintHdGlance(screen, record, data); }, record && record.target);
-  paintGlanceFacts(glance, { summary: folder ? null : (s || null), changes: fc, diffHref: `#${hdHash({ projectKey: record.projectKey, id: record.id }, 'details', 'diff')}`, activeMs, cost: engineReportsCost(st.runEngine) ? (st.totalCostUsd || 0) : null,
+  paintGlanceFacts(glance, { summary: folder ? null : (s || null), changes: fc, diffHref: `#${hdHash({ projectKey: record.projectKey, id: record.id }, 'details', 'diff')}`, activeMs, agentMs: st.totalActiveMs, cost: engineReportsCost(st.runEngine) ? (st.totalCostUsd || 0) : null,
     costNote: costSummaryText(runCostBreakdown(st.steps, st.totalCostUsd), fmtUsd),
     // D16: a finished run always has the row, so "Add cost tags" stays reachable.
     costTags: tags || { tags: [], missing: [] } });
@@ -27928,7 +27964,7 @@ function paintHdHeaderMeta(screen, record, data) {
   for (const [cls, text, strong] of [
     ['hd-day', day, false],
     ['hd-clock', clock, false],
-    ['hd-dur', typeof st.totalActiveMs === 'number' ? fmtDuration(st.totalActiveMs) : '', true],
+    ['hd-dur', runHeadlineMs(st) != null ? fmtDuration(runHeadlineMs(st)) : '', true],
     ['hd-cost', hdCost.text, true],
   ]) {
     if (!text) continue;
@@ -29235,9 +29271,24 @@ function hdClarifyCount(data) {
   // A form ask is ONE ask, whatever its field count (spec §9: one ask = one form).
   // X3: the reader's field is `ask`, never `form`.
   const form = (data.clarify && data.clarify.ask) ? 1 : 0;
-  const stepQ = Array.isArray(data.stepQuestions)
-    ? data.stepQuestions.reduce((n, r) => n + ((r && r.questions) || []).length + ((r && r.ask) ? 1 : 0), 0) : 0;
-  return q + form + stepQ;
+  const stepQ = hdStepRounds(data).reduce((n, r) => n + ((r && r.questions) || []).length + ((r && r.ask) ? 1 : 0), 0);
+  return q + form + stepQ + awayAnswerCounts(hdAwayOthers(data)).answers;
+}
+
+/** The step rounds the Q&A tab lists: a graph Clarify node's round is the run's Clarify itself (data.clarify), so it
+ *  is listed once, there. */
+function hdStepRounds(data) {
+  const rounds = data && Array.isArray(data.stepQuestions) ? data.stepQuestions : [];
+  const asked = new Set(((data && data.clarify && data.clarify.questions) || []).map((q) => q && q.id));
+  return rounds.filter((r) => !(r && r.agentKey === 'clarify' && !r.ask && (r.questions || []).length
+    && r.questions.every((q) => q && asked.has(q.id))));
+}
+
+/** Away mode's answers that no question card shows: plan stops, review gates, workflows, retries, limits. A Clarify,
+ *  a mid-step question or a form carries its own "Answered by Away mode" line. */
+function hdAwayOthers(data) {
+  const all = data && Array.isArray(data.awayAnswers) ? data.awayAnswers : [];
+  return all.filter((d) => d && (d.choice == null || !['clarify', 'questions', 'form'].includes(d.kind)));
 }
 
 const HD_TABS = [
@@ -31224,7 +31275,7 @@ function buildHdClarify(sec, record, data) {
   for (const q of questions) addCard(q, byId.get(q.id), data.clarify && data.clarify.night);
   if (questions.length && data.clarify) { const by = answeredByLine(data.clarify.answeredBy, data.clarify.night); if (by) wrap.appendChild(by); }
   if (data.clarify && data.clarify.ask) wrap.appendChild(hdRenderAskForm(record, data.clarify.ask));
-  for (const r of Array.isArray(data.stepQuestions) ? data.stepQuestions : []) {
+  for (const r of hdStepRounds(data)) {
     const roundLabel = `${r && (r.agentKey || r.nodeId) ? (r.agentKey || r.nodeId) : 'agent'}, round ${r && r.round}`
       + (String((r && r.stepKey) || '').split('#')[1] ? ` · cycle ${String(r.stepKey).split('#')[1]}` : '');
     if (r && r.ask) {
@@ -31241,6 +31292,17 @@ function buildHdClarify(sec, record, data) {
     for (const q of r.questions) addCard(q, rById.get(q.id), r.night);
     const by = answeredByLine(r.answeredBy, r.night);
     if (by) wrap.appendChild(by);
+  }
+  // Away mode's other answers (plan stops, review gates, workflows, retries), each with its reason: the run card's
+  // Away note jumps here.
+  const others = hdAwayOthers(data);
+  if (others.length) {
+    const away = Object.assign(document.createElement('section'), { className: 'rd-night-sec hd-cl-away-sec' });
+    const h3 = Object.assign(document.createElement('h3'), { className: 'rd-night-h', textContent: 'Answered for you' });
+    h3.append(Object.assign(document.createElement('span'), { className: 'rd-night-count' }));
+    away.append(h3, Object.assign(document.createElement('div'), { className: 'rd-night-asks' }));
+    wrap.appendChild(away);
+    paintAwayAnswers(away, others, []);
   }
 }
 
@@ -31798,7 +31860,7 @@ function buildRdQa(sec, ctx) {
     const questions = (data && data.clarify && data.clarify.questions) || [];
     const rounds = (data && Array.isArray(data.stepQuestions)) ? data.stepQuestions : [];
     const hasAsk = data && data.clarify && data.clarify.ask;
-    if (!data || (!questions.length && !rounds.length && !hasAsk)) {
+    if (!data || (!questions.length && !rounds.length && !hasAsk && !hdAwayOthers(data).length)) {
       sec.innerHTML = '';
       const empty = document.createElement('div');
       empty.className = 'rd-empty';
@@ -33331,7 +33393,7 @@ function askRunSnapshot(r) {
     ...(r.shaping ? { shaping: r.shaping } : {}),
     ...(isGitRun(r) ? {} : { workMode: workModeOf(r), changes: null }),
     live: isLive(r), terminal: !!r._finished || isTerminalStatus(r.status),
-    startedAt: r.startedAt || null, elapsedMs: liveTotalMs(r.steps, Date.now()),
+    startedAt: r.startedAt || null, elapsedMs: rdElapsedMs(r),
     costUsd: engineReportsCost(r.runEngine) ? (r.totalCostUsd || 0) : null,   // null: cost unknown (Cursor), never $0.00
     // Chat P3 (U10): activeNodes' model + effort, named through the catalog, plus the execution's cycle.
     progress: decor ? decor.progress : null, active: graph ? activeAgents(decor, r.stepper, { modelLabel: graphModelLabel }) : [],
@@ -37298,7 +37360,7 @@ function paintAwayAnswers(sec, decisions, steps = []) {
     cap.className = 'rd-slabel';
     const at = d.at ? startedLabel(d.at).slice(0, 5) : '';
     // One review answers the whole ask, so its model and cost are the group's, never a row's.
-    cap.textContent = [kindShort(d.kind), at, ...awayAskCaption(d, {
+    cap.textContent = [askShort(d), at, ...awayAskCaption(d, {
       fmtUsd, modelLabel: (id) => modelById(id)?.label || id, fmtFloor: (v) => floorText(v, fmtUsd),
     })].filter(Boolean).join(' · ');
     const ul = document.createElement('ul');
@@ -37977,13 +38039,21 @@ function rdGlanceRun(r) {
     stepper: r.stepper && r.stepper.graph ? r.stepper : (st.stepper || r.stepper),
     totalCostUsd: r.totalCostUsd || st.totalCostUsd || 0,
     _savedActiveMs: typeof st.totalActiveMs === 'number' ? st.totalActiveMs : null,
+    ...(runElapsedMs(r) == null ? { elapsedMs: st.elapsedMs ?? null, elapsedSince: null } : {}),
   };
 }
 
-// Active time: the live ledger's sum, or the saved total when the ledger is gone.
-function rdActiveMs(r) {
-  const liveMs = liveTotalMs(r.steps, Date.now());
-  return liveMs || (typeof r._savedActiveMs === 'number' ? r._savedActiveMs : 0);
+// Agent time: the summed step time, from the live ledger, or the saved total when the ledger is gone.
+function rdAgentMs(r, now = Date.now()) {
+  return liveTotalMs(r.steps, now) || (typeof r._savedActiveMs === 'number' ? r._savedActiveMs : 0);
+}
+
+// The run time every headline shows: the engine's run clock (1 s per real second, parallel work
+// counted once), ticking only while the run works. A run without the figure reads its summed time.
+function rdElapsedMs(r, now = Date.now()) {
+  const live = (r.status === 'running' || r.status === 'starting') && r.pendingQuestion == null;
+  const ms = runElapsedMs(r, { now, live });
+  return ms != null ? ms : rdAgentMs(r, now);
 }
 
 /** Runs redesign slice 4: the raw run the run page's model reads. A live run object (makeRun) carries no `pr`: once
@@ -38185,7 +38255,7 @@ function paintRdGlance(screen, r) {
   const liveDiff = terminal ? null : rdDiffBadge(live);
   paintGlanceFacts(glance, {
     summary: folder ? null : summary, changes: terminal ? fc : null, diffHref: `#${rdHash(r.runId, 'details', 'diff')}`, liveFiles: liveDiff != null && liveDiff !== '' ? Number(liveDiff) : null,
-    activeMs: rdActiveMs(r), cost: engineReportsCost(r.runEngine) ? (r.totalCostUsd || 0) : null,
+    activeMs: rdElapsedMs(r), agentMs: rdAgentMs(r), cost: engineReportsCost(r.runEngine) ? (r.totalCostUsd || 0) : null,
     costNote: costSummaryText(runCostBreakdown(r.steps, r.totalCostUsd), fmtUsd),
     ticking: (r.status === 'running' || r.status === 'starting') && r.pendingQuestion == null,
     costTags: costTagsFact(r.tags, r.projectDir, () => rdRepaintOpenGlance(r.pipelineId), r.workspaceId ? 'workspace' : 'project'),
@@ -38352,7 +38422,7 @@ const costTagsFact = (tags, projectDir, onLoad, target = 'project') => {
   return (tags || []).length || missing.length ? { tags: tags || [], missing } : null;
 };
 
-function glanceTiles({ summary = null, liveFiles = null, activeMs = null, cost = null, costNote = '', ticking = false, changes = null, diffHref = '' } = {}) {
+function glanceTiles({ summary = null, liveFiles = null, activeMs = null, agentMs = null, cost = null, costNote = '', ticking = false, changes = null, diffHref = '' } = {}) {
   const tiles = document.createElement('div');
   tiles.className = 'rd-stats';
   const tile = (big, small, cls = '') => {
@@ -38366,6 +38436,12 @@ function glanceTiles({ summary = null, liveFiles = null, activeMs = null, cost =
     return t;
   };
   if (activeMs != null) tiles.append(tile(fmtDuration(activeMs) || '0s', 'time', ticking ? 'run-time' : ''));
+  // Agent time: the summed step time, only when parallel work made it larger than the run time.
+  if (activeMs != null && showAgentTime(agentMs, activeMs, fmtDuration)) {
+    const agent = tile(fmtDuration(agentMs), 'agent time', ticking ? 'run-agent-time' : '');
+    agent.title = 'Total time of all agents, parallel work added up';
+    tiles.append(agent);
+  }
   if (cost != null) tiles.append(tile(fmtUsd(cost), costNote || 'cost'));
   if (changes) tiles.append(tile(renderCountsNode(document, changes), 'files changed', 'fc-tile'));
   else if (summary) {
@@ -38421,9 +38497,10 @@ function paintGlanceFacts(glance, opts) {
   }
   syncFacts(screen.querySelector('.rd-kv'));
 }
-// Everything but the time (the first tile): a ticking row need not be rebuilt for it.
+// Everything but the ticking texts (the time, the first tile, and agent time): a ticking row need not
+// be rebuilt for them. Agent time keeps its PRESENCE, so the tile appearing or going still rebuilds.
 function sigRest(tiles) {
-  return tiles ? [...tiles.children].slice(1).map((t) => t.textContent).join('|') : '';
+  return tiles ? [...tiles.children].slice(1).map((t) => (t.querySelector('.run-agent-time') ? 'agent time' : t.textContent)).join('|') : '';
 }
 
 // The finished headline's PR input (glanceCopy): the PR's own state, or what is known.
@@ -39626,7 +39703,7 @@ function paintRdHeader(screen, r) {
     // its tick targets with `querySelectorAll('.run-time')`. Without this class
     // the header elapsed freezes at its paint value and only the Overview stat
     // card ticks.
-    ['rd-dur run-time', fmtDuration(liveTotalMs(r.steps, Date.now())), true],
+    ['rd-dur run-time', fmtDuration(rdElapsedMs(r)), true],
     // Model bridge (model-bridge-design.md §8.6): a run that went through the
     // bridge shows its request count beside the dollars, so a "$0" reads as a
     // unit mismatch (Copilot bills requests), not as free.
@@ -39930,17 +40007,43 @@ const gs = { status: null, settled: false, guide: null, spot: null, seq: 0, navi
 let gsPillHost = null;
 let gsWelcomeUnbind = null;
 let setupDialog = null;
+/** The ready screen's facts, in three calls: Setup is finished, the Claude sign-in is read fresh, then the level view.
+ *  Null when the first or the last call fails; the screen is then a plain one. */
+async function finishSetup() {
+  if (!(await setOnboardingPrefs({ setupFinished: true }))) return null;
+  await loadOnboarding({ recheck: true });
+  let view;
+  try { view = await fetchWorcaLevel(); } catch (e) { console.warn(`setup: could not read your level: ${e.message}`); return null; }
+  if (!view || typeof view !== 'object') return null;
+  const held = view.level?.index ?? 0;
+  const lv = view.celebration?.index === 1 ? view.celebration : null;
+  const next = (Array.isArray(view.ladder) ? view.ladder : []).find((l) => l.index === (lv ? 2 : held + 1));
+  return {
+    earned: !!lv, held,
+    level: lv ? { index: lv.index, name: lv.name, avatar: lv.avatar, hue: lv.hue } : null,
+    missing: Array.isArray(view.setup?.missing) ? view.setup.missing : [],
+    nextName: lv ? (view.nextLevel?.name ?? null) : null,
+    nextNeeds: lv && next ? next.items.filter((i) => !i.done).map((i) => i.label) : [],
+  };
+}
 /** The setup assistant (D18). A second open while one is up moves it to `step` instead. */
 function openSetup({ entry = 'rerun', step = 'check', team = null, teamHash = null } = {}) {
   if (setupDialog) { setupDialog.goTo(step); return; }
   setMobileNavOpen(false);
-  setupDialog = openSetupAssistant({ doc: document, entry, step, team, onClose: (how, { applied = false } = {}) => {
+  const deps = { finishSetup, levelIndex: () => (worca.state.view ? (worca.state.view.level?.index ?? 0) : null) };
+  setupDialog = openSetupAssistant({ doc: document, entry, step, team, deps, onClose: (how, { applied = false, next, readyShown = false, finishing = false } = {}) => {
     setupDialog = null;
+    if (next) location.hash = next;
     queueMicrotask(worca.maybeDialog);   // after the branch below has shown (or not shown) the first-run welcome
     // A7: a first start always continues to the welcome; a finished re-run that applied something ends on the
     // doors, and a Finish with nothing applied goes back to the page; a fix-it run (entry 'fix') returns to
     // the page it came from (product-1-2).
-    if (entry === 'first') showWelcome();
+    // A first start that reached the ready screen (or is finishing) never gets the welcome on top of it, now or on a later
+    // visit to #new: the welcome is marked seen (D-11, R-po-3).
+    if (entry === 'first') {
+      if (readyShown || finishing) { gs.welcomeShown = true; void setOnboardingPrefs({ welcomeSeen: true }); }
+      else showWelcome();
+    }
     else if (entry === 'rerun' && how === 'done' && applied) showWelcome({ force: true });
     // T15: Apply then Continue, or Finish when nothing differs. Set up later / Escape keep the notice.
     else if (entry === 'team' && how === 'done' && team && teamHash) { markTeamSeen(team, teamHash); void paintTeamNotice(); }
@@ -40008,7 +40111,7 @@ function paintOnboarding() {
   paintShelf();
   const pill = gsEnsurePillHost();
   if (pill) {
-    renderGettingStartedPill(pill, gs.status, () => showView('getting-started'));
+    renderGettingStartedPill(pill, gs.status, () => showView('getting-started'), worca.state.view);
     pill.querySelector('.gs-pill')?.classList.toggle('active', currentShownView === 'getting-started');
   }
   paintGsSettings();
@@ -40024,7 +40127,7 @@ function paintShelf({ entering = false } = {}) {
   if (entering) host.replaceChildren();
   const appearing = entering || !host.firstElementChild;
   renderGettingStarted(host, { ...gs.status, hidden: false }, {
-    onStep: startGuide,
+    onStep: (id) => (id === 'setup' ? openSetup({ entry: 'first' }) : startGuide(id)),
     onHide: () => setOnboardingPrefs({ hidden: !gs.status.hidden }),
     hideLabel: gs.status.hidden ? 'Show in sidebar' : 'Hide from sidebar',
     animate: appearing,
@@ -40053,9 +40156,8 @@ function paintGsSettings() {
   if (!btn || !gs.status) return;
   const { done, total } = { done: doneCount(gs.status), total: GETTING_STARTED_STEPS.length };
   btn.textContent = gs.status.hidden ? 'Show again' : 'Open checklist';
-  setGsSettingsMsg(gs.status.hidden
-    ? `Hidden from the sidebar · ${done} of ${total} done`
-    : `In the sidebar · ${done} of ${total} done`);
+  const pillText = gsPillText(gs.status, worca.state.view);
+  setGsSettingsMsg(`${gs.status.hidden ? 'Hidden from the sidebar' : 'In the sidebar'} · ${done} of ${total} done${pillText ? ` · ${pillText}` : ''}`);
 }
 // Settings › General › Setup assistant: Run setup (AC-4.4).
 document.getElementById('setupRunAgain')?.addEventListener('click', () => openSetup({ entry: 'rerun' }));
@@ -40590,6 +40692,7 @@ function endGuide() {
   gs.guide = null;
   clearInterval(gs.poll); gs.poll = 0;
   for (const t of GS_WATCH_EVENTS) document.removeEventListener(t, gsOnPageChange, true);
+  queueMicrotask(worca.maybeDialog);   // a guide that ended frees a waiting level dialog (unless a new guide already lit)
 }
 // A guide's next hop is a pure function of the page and of what this run has passed, so
 // ANY interaction the user makes (typing the prompt, flipping Mock, a nav click) can move
@@ -40816,6 +40919,7 @@ const levelListeners = [];
 function onLevelChange(fn) { levelListeners.push(fn); }
 document.addEventListener('worca:level', () => {
   paintLevelBanner();
+  paintModeBanner();             // a suggestion at or below the new mode is no longer due
   paintSideEdges();              // rows came or went
   for (const fn of levelListeners) { try { fn(currentLevel()); } catch (e) { console.warn('[worca] level repaint failed', e); } }
 });
@@ -41179,6 +41283,7 @@ function showView(name, param = '') {
       });
     }
   }
+  worca.onRouteChange();   // a level dialog waiting for a result route (Runner) or a settled route
   if (prevView !== name) worca.onViewShown(name);   // once per navigation, not per repaint: Statistics, Team metrics and Team policy feed the level
   if (name === 'profile') worca.showProfile(document.getElementById('profile-level-host'), () => currentShownView === 'profile');   // #profile/level
   if (name === 'new') {
@@ -41646,12 +41751,14 @@ function timerTick() {
     const hosts = rdTickHosts(r);
     if (!hosts.length) continue;
     const now = Date.now();
-    const elapsed = fmtDuration(liveTotalMs(r.steps, now));
+    const elapsed = fmtDuration(rdElapsedMs(r, now));
+    const agent = fmtDuration(rdAgentMs(r, now));
     const durs = durByNode(r.steps, now, true);
     for (const host of hosts) {
       // querySelectorAll, not querySelector: the detail screen carries the header
       // elapsed AND the Overview ELAPSED stat card, both tagged `.run-time`.
       for (const timeEl of host.querySelectorAll('.run-time')) timeEl.textContent = elapsed;
+      for (const timeEl of host.querySelectorAll('.run-agent-time')) timeEl.textContent = agent;
       // The glance's step times (its status line and Now rows), each from when it started.
       for (const el of host.querySelectorAll('[data-since]')) {
         const t = new Date(el.dataset.since).getTime();
@@ -43066,7 +43173,7 @@ function chatHomeHistTile(p) {
     pauseReason: p.pauseReason || null, pendingQuestion: null, live: false, terminal: false,
     // Bundle QA 2: what runModel reads to say why a finished run needs you — its PR, a stopped Watch PR, member PRs.
     pr: p.pr && typeof p.pr === 'object' ? p.pr : null, watch: p.watch || null, memberPrs: memberPrsOf(p),
-    elapsedMs: Number(p.totalActiveMs) || 0,
+    elapsedMs: runHeadlineMs(p) || 0,
     costUsd: engineReportsCost(p.runEngine) && Number.isFinite(Number(p.totalCostUsd)) ? Number(p.totalCostUsd) : null,   // null: cost unknown (Cursor), as askRunSnapshot
     progress: null, active: [], stepper: null, decor: null,
   };

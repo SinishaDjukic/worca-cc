@@ -3675,7 +3675,7 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
         h('div', { class: 'req-chips' },
           h('span', { class: 'chip', text: targetLabel(f) }),
           h('span', { class: 'chip', text: done ? `Interview done · ${plural(rounds, 'round')}` : `Round ${Math.min(rounds || 1, MAX_ROUNDS)} of ${MAX_ROUNDS}` }),
-          h('button', { type: 'button', class: 'chip req-cost-chip', 'data-ui': 'cost-chip', 'aria-haspopup': 'dialog',
+          h('button', { type: 'button', class: 'btn btn-sm req-cost-chip', 'data-ui': 'cost-chip', 'aria-haspopup': 'dialog',
             onclick: (e) => { void openCostDialog(f, e.currentTarget); } }, costChipText(f)),
           f.modelLabel ? modelChip(document, f, (btn) => { void openModelDialog(f, btn); }) : null,   // 9c board 3: after the cost chip
           (f.attachments || []).length ? h('span', { class: 'chip', text: plural(f.attachments.length, 'file') }) : null,   // A8 (board 16)

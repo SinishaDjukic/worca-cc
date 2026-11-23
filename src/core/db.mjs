@@ -64,7 +64,7 @@ const OPEN_BACKOFF_MS = 15;
 /** Latest schema version. Bump + append a new migration step when the DDL grows.
  *  Exported so migration tests assert "reached the module's current version"
  *  instead of hardcoding the number — a schema bump then touches no test file. */
-export const SCHEMA_VERSION = 99;
+export const SCHEMA_VERSION = 100;
 
 /** store_meta row holding the install's default guardrail set id (JSON string). */
 export const GUARDRAILS_DEFAULT_META_KEY = 'guardrails:default';
@@ -271,6 +271,8 @@ CREATE TABLE pipelines (
   updated_at      TEXT,
   total_cost_usd  REAL NOT NULL DEFAULT 0,
   total_active_ms INTEGER NOT NULL DEFAULT 0,
+  elapsed_ms      INTEGER NOT NULL DEFAULT 0,  -- the run clock, folded ms; 0 with a NULL elapsed_since = no figure (an old run)
+  elapsed_since   INTEGER,                     -- epoch ms the run clock has been running since; NULL = parked or no figure
   prompt          TEXT,
   branch          TEXT,  -- JSON: { source, feature, worktreeDir, reusedExisting, ... }
   workspace_meta  TEXT,  -- JSON: { workspaceId, workspaceName, projectKeys, projects[], checkpointRefs, branches, workspaceDescription }
@@ -865,6 +867,9 @@ const INCREMENTAL_COLUMNS = {
                             shape_stats: 'TEXT',  // JSON: the shaped run's measurements; NULL = not a shaped run
                             run_size: 'TEXT',     // small|medium|large from the run's changed lines/files; NULL = unknown
                             review_stats: 'TEXT', // #990 s6, no version of its own: JSON RunSummary of src/shared/review/quality.mjs; NULL = no role reviews
+                            // The run clock, no version of their own; reconcileSchema adds them
+                            elapsed_ms: 'INTEGER NOT NULL DEFAULT 0',   // folded elapsed ms; 0 with a NULL elapsed_since = no figure (an old run)
+                            elapsed_since: 'INTEGER',                   // epoch ms the clock has been running since; NULL = parked or no figure
                             run_setup: 'TEXT',  // v62 (#712): the run's normalized setup (src/shared/run-presets.mjs keys, full picks); NULL = before v62, a CLI start or a scan
                             deleted_at: 'TEXT',   // v65: Delete (runs redesign §3.2) keeps an anonymised row for Statistics
                             pr_verdict: 'TEXT',   // v65: the PR chip's CI verdict (JSON), runs redesign §2.1a
@@ -873,7 +878,9 @@ const INCREMENTAL_COLUMNS = {
                             release_at: 'TEXT',       // v66: when the draft release was claimed (set once; never cleared)
                             release_url: 'TEXT',      // v66: the draft release's URL
                             release_error: 'TEXT',    // v66: why creating it failed (not retried)
-                            pr_auto: 'TEXT' },        // v87: the run's PR-when-done decision and its outcome (JSON, src/core/pr-auto.mjs); NULL = before v87 or a CLI start
+                            pr_auto: 'TEXT',          // v87: the run's PR-when-done decision and its outcome (JSON, src/core/pr-auto.mjs); NULL = before v87 or a CLI start
+                            finished_at: 'TEXT',      // v100: when the run first reached done (set once, a rename never moves it); NULL = not done yet or before v100, readers use COALESCE(finished_at, updated_at)
+                            credit_key: 'TEXT' },     // v100: the run's level-credit key, written once credit is booked; NULL = none
   pipeline_steps:         { session_id: 'TEXT', skills: 'TEXT', graphify_count: 'INTEGER',
                             execution_id: 'TEXT', exec_kind: 'TEXT', agent_key: 'TEXT', ended_at: 'TEXT',
                             exec_trigger: 'TEXT', exec_result: 'TEXT', exec_meta: 'TEXT',
@@ -2905,6 +2912,8 @@ export function migrate(db) {
     // v99: chats with a design are plain chats — a design chat from before (mode 'design') keeps its design (designs.thread_id).
     // A DB stamped v98 by an earlier build of #1064 already ran the reset; running it again changes nothing.
     if (current < 99) db.exec("UPDATE ask_threads SET mode = NULL WHERE mode = 'design'");
+    // v100 Levels: pipelines.finished_at and pipelines.credit_key — INCREMENTAL_COLUMNS, added by the hoisted repairSchemaGaps
+    // (comment-only rung, applySchemaV30's shape). First written as v96, then v97.
     db.exec(`PRAGMA user_version = ${SCHEMA_VERSION}`);
     db.exec('COMMIT');
   } catch (err) {

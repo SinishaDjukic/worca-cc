@@ -711,7 +711,7 @@ test('header: back link, FEAT code, title, state badge or run pill, chips', asyn
   back.click();
   assert.deepEqual(routed, ['']);
   const head = () => host.querySelector('.req-head');
-  const chips = () => [...head().querySelectorAll('.chip')].map((c) => c.textContent);
+  const chips = () => [...head().querySelectorAll('.req-chips > *')].map((c) => c.textContent);   // the chips and the cost button, in row order
   assert.equal(head().querySelector('code').textContent, 'FEAT-4');
   assert.equal(head().querySelector('h2').textContent, 'Cancel order');
   assert.equal(head().querySelector('.badge').textContent, 'Your turn');

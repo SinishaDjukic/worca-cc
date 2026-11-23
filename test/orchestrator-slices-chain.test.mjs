@@ -140,7 +140,7 @@ test('chain: slice 1 approved and done, slice 2 planned just in time on slice 1\
   assert.notEqual(pid2, pid1);
 });
 
-test('chat notes with Away active wait', async () => {
+test('chat notes with Away active: Away approves the plan, flagged, naming the notes', async () => {
   const dir = gitDir('slices-notes-away');
   const one = startRun({ projectDir: dir, prompt: 'Plan this in slices: demo', shape: { perspectives: ['product'] } });
   assert.equal((await one.done).status, 'done');
@@ -155,11 +155,13 @@ test('chat notes with Away active wait', async () => {
   two.orch._planCheck = async () => ({ ok: true, passed: 8, total: 8, items: [] });
   two.orch.setNightOverride('on');
   await waitFor(() => two.asks.some((q) => q.kind === 'plan'));
-  await new Promise((r) => setTimeout(r, 300));
   const q = two.asks.find((x) => x.kind === 'plan');
   assert.deepEqual(q.plan.notes, [{ kind: 'plan', text: 'use a log scale' }]);
-  assert.equal(two.orch.pendingQuestion?.id, q.id, 'still open');
-  assert.equal(two.orch.state.night.openedAt, null);
+  await waitFor(() => two.orch.answeredBy(q.id) === 'night-mode');
+  const rec = two.orch.nightDecision(q.id);
+  assert.equal(rec.choice, 'approve');
+  assert.equal(rec.flagged, true);
+  assert.match(rec.rationale, /use a log scale/);
   const audit = getDb().prepare('SELECT text FROM pipeline_events WHERE pipeline_id = ?').all(two.orch.getState().id).map((r) => r.text);
   assert.ok(audit.includes('Plan approval held: the chat added notes to this run.'), JSON.stringify(audit));
   two.orch.stop();
