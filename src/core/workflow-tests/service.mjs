@@ -733,6 +733,22 @@ function shownCost(workflowId, run, usd) {
   return top;
 }
 
+/** A running test's time left in whole minutes (at least 1), or null ("not known yet"). `ms` = a usual try's time.
+ *  Pre-merge QA (B9): the time the running tries have already taken counts, so the estimate goes down while they run; and
+ *  once a running try is well past the usual time (by a minute, or half the usual time when that is longer), Worca no
+ *  longer knows (null), where it used to say "about 1 min" until the end. */
+export function minutesLeftOf(own, ms, { now = Date.now(), atOnce = TRIES_AT_ONCE } = {}) {
+  if (ms === null || !(ms > 0)) return null;
+  const running = own.filter((t) => t.status === 'running');
+  const waiting = own.filter((t) => t.status === 'waiting').length;
+  if (!running.length && !waiting) return null;
+  const ran = running.map((t) => { const s = Date.parse(t.startedAt || ''); return Number.isFinite(s) ? Math.max(0, now - s) : 0; });
+  if (ran.some((x) => x > ms + Math.max(60000, ms / 2))) return null;
+  const nowLeft = running.length ? Math.max(0, ms - Math.min(...ran)) : 0;   // the round that runs, until its newest try ends
+  const left = nowLeft + Math.ceil(waiting / atOnce) * ms;
+  return Math.max(1, Math.ceil(left / 60000));
+}
+
 /** Board 20 (G8: two rows per example when both versions need tries). `costOf` = the runner's live cost. 3a (board 35):
  *  `phaseOf` = what a running project try is doing now (the runner's); `project.disk` is filled by progressDisk. 3b (D75):
  *  `beforeNowOf` = what the before phase is doing now (the runner's), the answer's `before`. U-T8: `stoppingOf` = the
@@ -793,7 +809,7 @@ export function progressOf(workflowId, runId, { costOf = null, phaseOf = null, b
     run, title: testTitle(run, ctx, { mode: run.status === 'running' ? 'testing' : 'compare', exampleName: firstExampleName(run) }), rows,
     done: own.filter((t) => FIN.has(t.status)).length, total: own.length,
     costUsd: shownCost(workflowId, run, costOf ? costOf(run.id) : store.spentOfRun(run.id)), estimateUsd, capUsd: run.capUsd,
-    minutesLeft: ms !== null && remaining ? Math.max(1, Math.ceil((Math.ceil(remaining / TRIES_AT_ONCE) * ms) / 60000)) : null,
+    minutesLeft: remaining ? minutesLeftOf(own, ms) : null,
     takenMs: takenMs(run, own),
     quick: run.quick,
     before,

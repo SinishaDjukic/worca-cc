@@ -12,7 +12,7 @@ import * as store from '../src/core/workflow-tests/store.mjs';
 import { worcaTryText } from '../src/shared/workflow-tests/project-text.mjs';
 import { createTestRunner, MAX_PARALLEL, PAUSE_REFUSED_TEXT, PAUSE_REFUSED_OTHER, pauseVerdict, worcaProblemOf } from '../src/core/workflow-tests/runner.mjs';
 import { checkTry } from '../src/core/workflow-tests/result.mjs';
-import { progressOf, compareOf, perTryMs } from '../src/core/workflow-tests/service.mjs';
+import { progressOf, compareOf, perTryMs, minutesLeftOf } from '../src/core/workflow-tests/service.mjs';
 import { compareModel } from '../src/shared/workflow-tests/compare.mjs';
 import { WORKTREE_STAGE } from '../src/core/setup-stages.mjs';
 import { TRY_SETUP_STAGE } from '../src/core/workflow-tests/shell-step.mjs';
@@ -985,3 +985,25 @@ test('U-T8 (F21): in mock mode the time left comes from the mock tries\' own tim
   assert.equal(progressOf(WF, second.id).minutesLeft, 1, '"about 1 min" from the mock tries\' times');
   await runner.stop(second.id);
 });
+
+test('pre-merge QA (B9): the time left goes down while tries run, and says "not known yet" once one is well past the usual time', () => {
+  const MIN = 60000;
+  const now = Date.parse('2026-11-23T12:00:00Z');
+  const at = (minAgo) => new Date(now - minAgo * MIN).toISOString();
+  const run = (minAgo) => ({ status: 'running', startedAt: at(minAgo) });
+  const wait = { status: 'waiting', startedAt: null };
+  const usual = 4 * MIN;
+  const left = (own) => minutesLeftOf(own, usual, { now, atOnce: 3 });
+  assert.equal(left([run(0)]), 4, 'just started: the usual time');
+  assert.equal(left([run(2.5)]), 2, 'two and a half minutes in: about 2 left (it used to stay at 4)');
+  assert.equal(left([run(3.9)]), 1, 'at least 1');
+  assert.equal(left([run(5.5)]), 1, 'a little over: still about 1');
+  assert.equal(left([run(6.5)]), null, 'well over (usual + half of it): not known yet, never "about 1 min" until the end');
+  assert.equal(left([run(1), run(1), run(1), wait, wait]), 3 + 4, 'the round that runs, then one more round of up to 3');
+  assert.equal(left([wait, wait, wait, wait]), 8, 'nothing runs yet: two rounds');
+  assert.equal(left([{ status: 'passed' }]), null, 'nothing left to run');
+  assert.equal(minutesLeftOf([run(0)], null, { now }), null, 'no usual time yet: not known yet');
+  assert.equal(minutesLeftOf([run(0.5)], 200, { now }), 1, 'a mock try (a usual time of 0.2 s) 30 s in: about 1 min, no flicker');
+  assert.equal(minutesLeftOf([run(1.5)], 200, { now }), null, 'a mock try 90 s in: well over, not known yet');
+});
+
