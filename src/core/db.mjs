@@ -870,7 +870,7 @@ const INCREMENTAL_COLUMNS = {
                             // The run clock, no version of their own; reconcileSchema adds them
                             elapsed_ms: 'INTEGER NOT NULL DEFAULT 0',   // folded elapsed ms; 0 with a NULL elapsed_since = no figure (an old run)
                             elapsed_since: 'INTEGER',                   // epoch ms the clock has been running since; NULL = parked or no figure
-                            run_setup: 'TEXT',  // v62 (#712): the run's normalized setup (src/shared/run-presets.mjs keys, full picks); NULL = before v62, a CLI start or a scan
+                            run_setup: 'TEXT',  // v62 (#712): the run's normalized setup (src/shared/run-presets.mjs keys, full picks); NULL = before v62, a CLI start, a scan, or a No-project run started before Rerun
                             deleted_at: 'TEXT',   // v65: Delete (runs redesign §3.2) keeps an anonymised row for Statistics
                             pr_verdict: 'TEXT',   // v65: the PR chip's CI verdict (JSON), runs redesign §2.1a
                             release_version: 'TEXT',  // v66 (Shaper s4): the Ship it dialog's draft release tag; NULL = none
@@ -880,7 +880,9 @@ const INCREMENTAL_COLUMNS = {
                             release_error: 'TEXT',    // v66: why creating it failed (not retried)
                             pr_auto: 'TEXT',          // v87: the run's PR-when-done decision and its outcome (JSON, src/core/pr-auto.mjs); NULL = before v87 or a CLI start
                             finished_at: 'TEXT',      // v100: when the run first reached done (set once, a rename never moves it); NULL = not done yet or before v100, readers use COALESCE(finished_at, updated_at)
-                            credit_key: 'TEXT' },     // v100: the run's level-credit key, written once credit is booked; NULL = none
+                            credit_key: 'TEXT',       // v100: the run's level-credit key, written once credit is booked; NULL = none
+                            rerun_of: 'TEXT',         // Rerun, no version of its own: the id of the run this one was copied from (set at insert, never changed); NULL = not a rerun
+                            extras_names: 'TEXT' },   // Rerun: JSON array of the basenames of the files attached at the start (archive wipes the artifacts rows); NULL = before this column (an archived run's attachments are then unknown); '[]' = none attached
   pipeline_steps:         { session_id: 'TEXT', skills: 'TEXT', graphify_count: 'INTEGER',
                             execution_id: 'TEXT', exec_kind: 'TEXT', agent_key: 'TEXT', ended_at: 'TEXT',
                             exec_trigger: 'TEXT', exec_result: 'TEXT', exec_meta: 'TEXT',

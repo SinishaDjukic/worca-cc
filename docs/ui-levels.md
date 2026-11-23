@@ -228,7 +228,8 @@ The **Auto** workflow option is available for both targets — a project and a w
 | Header cost and its breakdown (agents, Away mode, Auto workflow, run title; stopped reviews and stopped agent turns apart); the glance and Overview cost's Away mode share | S |
 | The Away mode note and the Q&A tab, as on the run page | S |
 | Save as preset (a run with a stored setup) | S |
-| Run page bar: Back (every layout) and ⋯ (Away mode while live, Save as preset, Terminal, Report this run, Archive / Restore) | S |
+| Run page bar: Back (every layout) and ⋯ (Away mode while live, Save as preset, Rerun, Terminal, Report this run, Archive / Restore) | S |
+| Rerun: New run filled in from an ended run; the Rerun of … row on the new run's page | S |
 | History: usage-limit notice | S |
 | Folder run: Changes tab, the Folder chip, the Apply bar and dialog, Discard; the Git / Folder chip on a project's group in the Runs list | S |
 | Run without a project: the Artifacts tab, opened first; the No project group and its chip in the Runs list | S |

@@ -42,7 +42,7 @@ import {
   enrichPipelinesPr, reconcileStaleRunning, foreignActiveWorkspaceRuns, readPipelineForResume, persistPrState, readPrState,
   readRunLogText, readRunArtifactText, countPipelines, runRootSweepLookups, legacySweepLookups, slugify, newPipelineId,
   listArtifacts, listRunArtifacts, lookupPipelineRow, findPipelineRowById, readPipelineStateById, resolveIndexedArtifact, resolveIndexedArtifactForRow,
-  folderApplyRetainFor,
+  folderApplyRetainFor, bareWorkspaceKey,
   resolveIndexedArtifactFileForRow, openArtifactUnder, readPromptFile, runDirForRow, recordArtifact, appendAudit,
   persistMemberPrState, readMemberPrStates, readPipelineExtras,
   checkoutRecordsFor, retainedWorkFor, runEngineOfRow, folderFacts, readRunResultsForRow,
@@ -3224,7 +3224,8 @@ const startRunHandler = async (req, res) => {
         ...(nightMode ? { nightMode: true } : {}),
         tags,
         ...(shape ? { shape } : {}),
-        ...(attachedRequirements.length ? { attachedRequirements } : {}),
+        ...(attachedRequirements.length ? { attachedRequirements } : {}), ...(typeof body.rerunOf === 'string' ? { rerunOf: body.rerunOf } : {}),
+        ...(scanTarget || memoryScope ? {} : { runSetup: await runSetupOf({ ...body, workflowId, guardrailsId }, {}) }),   // as the other arms: Rerun copies it
       });
       entry = {
         id: runId, orch, projectDir, projectKey: NO_PROJECT_KEY, workMode: 'none', kind: 'run', pipelineId,
@@ -3376,7 +3377,7 @@ const startRunHandler = async (req, res) => {
         labels,
         ...(shape ? { shape } : {}),
         ...(attachedRequirements.length ? { attachedRequirements } : {}),
-        ...(runSetup ? { runSetup } : {}),
+        ...(runSetup ? { runSetup } : {}), ...(typeof body.rerunOf === 'string' ? { rerunOf: body.rerunOf } : {}),
       });
 
       entry = {
@@ -3554,7 +3555,7 @@ const startRunHandler = async (req, res) => {
         labels,
         ...(shape ? { shape } : {}),
         ...(attachedRequirements.length ? { attachedRequirements } : {}),
-        ...(runSetup ? { runSetup } : {}),
+        ...(runSetup ? { runSetup } : {}), ...(typeof body.rerunOf === 'string' ? { rerunOf: body.rerunOf } : {}),
       });
 
       entry = {
@@ -3884,7 +3885,7 @@ async function validateResumeTarget(pipelineId) {
 async function storedRequestOf(body, stageId, projectDir, startedBy = null, preset = null) {
   const request = { ...body };
   // presetId: the link lives in the ticket's preset_id column (v63), never in the replayed body.
-  for (const k of ['scheduledFor', 'repeat', 'after', 'afterPolicy', 'sourceFromPrevious', 'ifMissed', 'graceMin', 'extras', 'internal', 'presetId']) delete request[k];
+  for (const k of ['scheduledFor', 'repeat', 'after', 'afterPolicy', 'sourceFromPrevious', 'ifMissed', 'graceMin', 'extras', 'internal', 'presetId', ...(body.repeat ? ['rerunOf'] : [])]) delete request[k];   // a one-off fire keeps rerunOf; a repeat's fires are not reruns
   // Text the user authored is part of the request: a prompt FILE is frozen now, so a
   // file deleted or half-edited overnight cannot fail an unattended run.
   if (request.source && request.source.type === 'markdown' && request.source.promptFile && !request.source.promptText) {
@@ -6246,14 +6247,6 @@ actions.on('status', (snap) => {
   recordActionFrame(snap.instanceId, { type: 'action-status', snapshot: snap });
   emitChanged('actions-changed', snap.status);
 });
-
-/**
- * The bare `wks-…` id of a workspace row, else null. Live rows store it bare. Rows from the legacy fs→DB
- * migration can hold the composite `workspaces/<dir>` and even `target = 'project'`
- * (migrate-fs-to-db.mjs:360-374), which is why artifacts.mjs reads `target === 'workspace' || !!workspace_key`.
- */
-const bareWorkspaceKey = (row) =>
-  (row.target === 'workspace' || row.workspace_key) && row.workspace_key ? String(row.workspace_key).replace(/^workspaces\//, '') : null;
 
 function runRowForScope(req, res) {
   const scope = resolveRunScope(req, res);          // query params; answers 400/404 itself
@@ -8684,13 +8677,11 @@ async function snapshotFor(setup, basis) {
   return completeSnapshot({ ...setup, overlay: parsed.overlay || undefined }, resolved);
 }
 
-/**
- * The run's setup for pipelines.run_setup (v62): the normalized body's preset keys as full picks for the run's own
- * target — the value Save setup as preset stores. Never blocks a start: any failure (or > 32 KB) keeps nothing.
- */
+/** The run's setup for pipelines.run_setup (v62): the normalized body's preset keys as full picks for the run's own target
+ *  (none: a No-project run's global setup, no branch keys) — what Save setup as preset stores. Never blocks a start: a failure or > 32 KB keeps nothing. */
 async function runSetupOf(normalized, basis) {
   try {
-    const setup = setupFromBody(normalized, { scope: basis.workspaceId ? 'workspace' : 'project' });
+    const setup = setupFromBody(normalized, { scope: basis.workspaceId ? 'workspace' : basis.projectDir ? 'project' : 'global' });
     const json = JSON.stringify(await snapshotFor(setup, basis));
     return Buffer.byteLength(json) <= PRESET_LIMITS.setupBytes ? json : null;
   } catch (err) {

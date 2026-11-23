@@ -28,7 +28,7 @@ import {
   createPipeline, updatePipelineTitle, appendAudit, writeState, artifactPaths, slugify, today,
   recordArtifact, writeClarify, readPipelineExtras, claimPipelineOwnership, touchHeartbeat,
   clearPipelineOwnership, HEARTBEAT_INTERVAL_MS, upsertSubAgent, newestPlanPath, pipelineRowStamp,
-  claimPausedForStop, claimForResume, findPipelineRowById, readPipelineForResume,
+  claimPausedForStop, claimForResume, findPipelineRowById, readPipelineForResume, resolveRerunOf,
 } from './artifacts.mjs';
 import { diffNameStatus, diffNumstat, diffPatch, untrackedFiles, untrackedPatch } from './git-info.mjs';
 import { clearStaleGitLocks, staleGitLockNote } from './git-lock.mjs';
@@ -1664,6 +1664,7 @@ export class RunHarness extends EventEmitter {
         labels: this.opts.labels || [],
         runSetup: typeof this.opts.runSetup === 'string' ? this.opts.runSetup : null,
         prAuto: this.opts.prAuto ?? null,
+        rerunOf: typeof this.opts.rerunOf === 'string' ? this.opts.rerunOf : null,
         ...(this.workMode === 'none' ? { id: this.opts.pipelineId } : {}),
         ...(this.isWorkspace ? {} : { projectKey: this.members[0].projectKey, ...(this.workMode !== 'git' ? { workMode: this.workMode } : {}) }),
         ...(this.isWorkspace ? {
@@ -1695,6 +1696,9 @@ export class RunHarness extends EventEmitter {
       this.state.guardrailsId = this.guardrailsId;
       // Who started it (identity.mjs): creation-immutable too, mirrored for the same reason.
       this.state.startedBy = this.opts.startedBy || null;
+      // Rerun: the source as rowToState shows it, so a live rerun's page links back without reading the saved run.
+      // toPipelineRow keeps no such key: rerun_of was written by createPipeline above.
+      if (typeof this.opts.rerunOf === 'string') this.state.rerunOf = resolveRerunOf(this.opts.rerunOf);
       // Workspace: mirror the §5.2 superset onto the live state and FREEZE the
       // description now (read from the pipeline's frozen state.json snapshot, never
       // re-read from workspaces.json), so later registry edits never alter this run.
@@ -2069,6 +2073,8 @@ export class RunHarness extends EventEmitter {
       // Session groups (Task 47): the session summaries the row holds (outcome.sessionHosts) stay the run's; a resumed
       // SessionHost then folds its trace on top, and a kill-switch resume keeps the history it does not extend.
       if (saved.state?.sessionHosts && typeof saved.state.sessionHosts === 'object') this.state.sessionHosts = saved.state.sessionHosts;
+      // Rerun: the link run() mirrors at start, so a resumed rerun's live page still links back.
+      if (row.rerun_of) this.state.rerunOf = resolveRerunOf(row.rerun_of);
       this.baseName = row.base_name;
       this.planDatePrefix = row.date_prefix;
       this.pipeline = { id: row.id, dir: rp.pipelineDir, promptText: row.prompt || '' };

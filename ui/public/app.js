@@ -17,6 +17,7 @@ const sessionGuard = installSessionGuard();
 // ---------------------------------------------------------------------------
 // App state
 // ---------------------------------------------------------------------------
+let newFormVisit = 0;   // bumped each time New run is left: a prefill from an earlier visit must not hold a rerun
 const state = {
   ws: null,
   wsReady: false,
@@ -40,6 +41,7 @@ const state = {
   runDefaults: null,
   engineTouched: false,
   presets: [],    // GET /api/presets (run presets, #712)
+  rerun: null,    // Rerun: { runId, label, setup, broken[], modified, applying } while the form holds an earlier run's setup (no preset id, no chip)
   preset: null,   // the applied preset: { id, name, scope, setup, modified, applying, broken[] } — preset mode
   presetWorkflowNames: null,   // { id: name } from GET /api/workflows for preset summaries (run-presets-names.mjs); null = unknown
   guardrailSets: [], // GET /api/guardrails cache for the picker + hint
@@ -119,6 +121,7 @@ import { buildGroupPage, paintGroupPage, runReceipts, groupPrList } from './grou
 import { paintGroupShip, resetGroupShip } from './ship-group-dialog.mjs';
 import { setShipDialogOpener, shipReason } from './shape/ship-card.mjs';
 import { pageModel, runCrumbs, paintCrumbs, syncFacts } from './run-page-head.mjs';
+import { rerunGate, rerunPrefill, rerunNotes, rerunLinkModel } from './run-rerun.mjs';
 import { headModel, routeModel, routeGroupOf, renderHeadButtons, renderRoute, prMenuItems, canResolvePr, showsFixConflicts, HD_PR_WATCH_ACTIVE,
   hdPrWatchLabel, WATCH_HELP, pushLabel, pushTip, tryServiceOf } from './run-head.mjs';
 import { delegateQuestion } from './question-delegate.mjs';
@@ -799,6 +802,7 @@ const el = {
   presetSummary: $('#preset-summary'),
   presetUpdate: $('#preset-update'),
   presetBroken: $('#preset-broken'),
+  rerunNotes: $('#rerun-notes'),
   sameAsSourceHint: $('#sameAsSourceHint'),
   sourceRadios: $$('input[name="source"]'),
   promptPane: $('#prompt-pane'),
@@ -3218,6 +3222,7 @@ function onState(r, msg) {
   // hello snapshot, i.e. after a page reload — and /api/resume keys on it.
   // Guard: id-less pre-createPipeline snapshots must not clobber a captured id.
   if (typeof msg.id === 'string' && msg.id) r.pipelineId = msg.id;
+  if (msg.rerunOf && typeof msg.rerunOf === 'object') r._rerunOf = msg.rerunOf;   // Rerun: the harness mirrors the source onto its state
   dropSupersededPaused(r);
   if (msg && msg.branch && typeof msg.branch === 'object') {
     // Keep the WHOLE branch record, not just .feature: the detail header's
@@ -4622,7 +4627,7 @@ async function loadGuardrailsInto(selectId) {
   // Fall back to the install default if the wanted id is gone (deleted set) —
   // and SAY so via the form's message line: a vanished selection must never
   // silently revert while the user believes it is still selected.
-  if (state.preset && !list.some((g) => g.id === want)) {
+  if (activeSetup() && !list.some((g) => g.id === want)) {
     // Preset mode (#712): no silent fallback to Permissive — the gone set stays selected, and the broken card names it.
     state.guardrailsId = want;
     const o = option(want, '');
@@ -4704,7 +4709,8 @@ async function renderWorkflowConfig(workflowId) {
     return;
   }
   // Preset mode (#712): the preset's picks merge over the project's config per node and per wire.
-  const cfg = state.preset ? configWithPreset(state.config, workflowId, state.preset.setup) : state.config;
+  const held = activeSetup();
+  const cfg = held ? configWithPreset(state.config, workflowId, held.setup) : state.config;
   const runConfig = (cfg.workflows && cfg.workflows[workflowId]) || { nodes: {}, feedbacks: {} };
   // wf_default stores its overrides per ROLE (the legacy `steps` blob the CLI and
   // every older install write); saved workflows store them per node id.
@@ -4724,7 +4730,7 @@ async function renderWorkflowConfig(workflowId) {
   if (el.wfFeedbackConfig) el.wfFeedbackConfig.dataset.graph = wf.version === 2 ? '1' : '';
   setAgentsHeader(rows, wf.name || workflowId);
   setAgentRowsEnabled(agentsEditable());
-  if (state.preset && el.wfFeedbackConfig && el.wfFeedbackConfig.dataset.graph !== '1') {
+  if (activeSetup() && el.wfFeedbackConfig && el.wfFeedbackConfig.dataset.graph !== '1') {
     for (const i of el.wfFeedbackConfig.querySelectorAll('input[data-fb-id]')) {
       i.disabled = true;
       i.title = 'Loop budgets of this workflow cannot be held in a preset';
@@ -4773,7 +4779,7 @@ function setAgentsHeader(rows, workflowName) {
   }
   // Preset mode (#712): the rows show the preset's picks for this run; Reset and Save as workflow defaults would
   // write the project's or the workflow's config, so neither is offered.
-  const anyModified = editable && !state.preset && !!rows && rows.some((r) => r.modified);
+  const anyModified = editable && !activeSetup() && !!rows && rows.some((r) => r.modified);
   if (el.agentsReset) el.agentsReset.hidden = !anyModified;
   if (el.agentsPromote) {
     // A graph BUILT-IN is frozen and never persisted, so it has no row to carry defaults
@@ -4799,7 +4805,7 @@ function paintHiddenSettings() {
   if (!levelAtLeast('advanced')) {
     const gr = (state.guardrailSets || []).find((g) => g.id === state.guardrailsId);
     if (state.guardrailsId && state.guardrailsId !== state.guardrailsDefault) items.push(`${(gr && gr.name) || state.guardrailsId} guardrails`);
-    if (state.preset) items.push(...presetHiddenItems(state.preset.setup));   // the preset's picks, counted once (#712)
+    if (activeSetup()) items.push(...presetHiddenItems(activeSetup().setup));   // the preset's (or the rerun's) picks, counted once (#712)
     else {
       const n = Object.values(agentRowsById || {}).filter((r) => r && r.modified).length;
       if (n) items.push(n === 1 ? '1 agent override' : `${n} agent overrides`);
@@ -5382,10 +5388,11 @@ function liveRowValues(row, body) {
 // controls currently show.
 // Preset mode (#712): a change edits the applied preset's setup for THIS run; the project config is untouched.
 function holdInPreset(edit) {
-  if (!state.preset) return false;
-  edit(state.preset.setup);
-  if (!state.preset.applying) {
-    state.preset.modified = true;
+  const held = activeSetup();
+  if (!held) return false;
+  edit(held.setup);
+  if (!held.applying) {
+    held.modified = true;
     paintPresetChip();
     schedulePresetCheck();
   }
@@ -5442,7 +5449,7 @@ async function saveNode(workflowId, nodeId, model, effort, fanOut, askQuestions,
 // Persist one feedback loop's cycle count (CONV-2): PATCH /api/config
 // { projectDir, workflowId, feedbacks:{ [fbId]:{maxCycles} } }.
 async function saveFeedback(workflowId, fbId, maxCycles) {
-  if (state.preset) return;   // a v1 workflow's loop budgets cannot be held in a preset (its inputs are disabled)
+  if (activeSetup()) return;   // a v1 workflow's loop budgets cannot be held in a preset (its inputs are disabled)
   const projectDir = selectedProjectPath();
   if (!projectDir) return;
   try {
@@ -9438,7 +9445,7 @@ if (el.workspaceSelect) {
     // listener does not re-run renderWorkflowConfig, so repaint the switch here.
     state.wsHumanInLoop = true;
     if (state.runTarget === 'workspace' && state.workflowId === AUTO_WORKFLOW_ID && el.humanInLoop) el.humanInLoop.checked = presetHumanInLoop() ?? true;
-    if (state.preset && !state.preset.applying) schedulePresetCheck();   // the check answers for this target
+    if (checkedHold() && !checkedHold().applying) schedulePresetCheck();   // the check answers for this target
     renderWorkspaceMembers();
     renderWorkspaceSourceBranches();
     schedulePolicyLine();                   // team policy notes for the new target (design board 8)
@@ -16099,7 +16106,15 @@ el.form.addEventListener('submit', async (e) => {
     body.presetId = state.preset.id;
     if (s.overlay && state.workflowId !== AUTO_WORKFLOW_ID) body.overlay = structuredClone(s.overlay);
     if (typeof s.humanInLoop === 'boolean') body.humanInLoop = s.humanInLoop;
+  } else if (state.rerun) {
+    // Rerun: the same run-only lane, with no presetId. The overlay names the earlier run's nodes, so it rides only
+    // while the form still runs that workflow (a changed workflow drops it, as a preset's does).
+    const s = state.rerun.setup;
+    if (s.overlay && state.workflowId !== AUTO_WORKFLOW_ID && (!s.workflowId || s.workflowId === state.workflowId)) body.overlay = structuredClone(s.overlay);
+    if (typeof s.humanInLoop === 'boolean') body.humanInLoop = s.humanInLoop;
   }
+  const rerunHeld = state.rerun;   // the form this Start came from: a reply may land after another Rerun opened
+  if (rerunHeld && rerunHeld.runId) body.rerunOf = rerunHeld.runId;
 
   // #555: withButton owns #start-btn from here, and reads undefined as success, so every exit
   // returns an explicit { ok }. A failed or cancelled start never shows "Started".
@@ -16214,7 +16229,12 @@ el.form.addEventListener('submit', async (e) => {
       if (!res.ok || !data.runId) {
         startSubmitInFlight = false;
         // The alert title already says "Run not started" / "Not scheduled".
-        return notStarted(data.error || `The server answered ${res.status}.`);
+        if (data.error === 'rerun-source-not-found' && rerunHeld && state.rerun === rerunHeld) {
+          // The earlier run is gone: keep everything the form holds, drop only the link, so the next Start is a plain new run.
+          rerunHeld.runId = null;
+          return notStarted('The run this was copied from is gone. Press Start again to start it as a new run.');
+        }
+        return notStarted(((data.error === 'rerun-source-not-found' || data.error === 'run-not-ended') && data.message) || data.error || `The server answered ${res.status}.`);
       }
       // 202: nothing is running — the request is a ticket now. Show it where it lives.
       if (data.status === 'scheduled') {
@@ -16225,6 +16245,7 @@ el.form.addEventListener('submit', async (e) => {
         resetSyncChoice();
         showEngineRefusal(null);
         clearTask(submittedTask);
+        clearRerun();
         if (attachedItems.length) newRunAttachStore.clear();   // the server accepted the run: the features it took are spent
         applyPresetSwitches();   // clearTask unchecks Run on the source branch (#688); a preset keeps its own
         // Keep the warn tone when the server attached a budget warning. The Schedules page already
@@ -16244,6 +16265,7 @@ el.form.addEventListener('submit', async (e) => {
       resetSyncChoice();
       showEngineRefusal(null);
       clearTask(submittedTask);
+      clearRerun();
       if (attachedItems.length) newRunAttachStore.clear();   // the server accepted the run: the features it took are spent
       applyPresetSwitches();
       // D6: the user is on the run's page now, so the result is a toast, not a #form-msg line.
@@ -27244,6 +27266,8 @@ function paintHdGlance(screen, record, data) {
   paintRunPlace(screen, home);
   paintRunLabels(glance.querySelector('.rd-kv [data-fact="labels"] > .rd-kv-v'), { pipelineId: data.state.id, labels: data.state.labels, onSaved: (l) => { data.state.labels = l; } });
   void paintRunPrAuto(glance.querySelector('.rd-kv [data-fact="pr-auto"]'), data.state.id, st.status, () => !!histDetailState && histDetailState.data === data);
+  paintRerunOf(glance.querySelector('.rd-kv [data-fact="rerun"]'), st.rerunOf);
+  paintRerunCarrier(screen.querySelector('.hd-rerun'), { id: st.id, title: record.title || st.title, status: record.status || st.status, live: runLiveHere(st.id) });
   syncFacts(glance.querySelector('.rd-kv'));
 
   // Time · Cost · Changes, then the Cost tags row, as on the Running page in every state.
@@ -27295,6 +27319,33 @@ async function paintHdSavePreset(screen, data) {
   const run = data && data.state;
   return paintRunSavePreset(screen && screen.querySelector('.hd-save-preset'), run,
     () => !!histDetailState && histDetailState.data === data);
+}
+
+/** ⋯ › Rerun's hidden carrier (the menu item copies its gate): offered with a saved record, enabled once the run has
+ *  ended and is not live. `hint` is the visible reason on the item; `title` its tooltip. */
+function paintRerunCarrier(btn, run) {
+  if (!btn) return;
+  const g = rerunGate({ status: String(run.status || '').toLowerCase(), live: !!run.live, hasRecord: !!run.id });
+  btn.hidden = !g.offered;
+  btn.disabled = g.disabled;
+  btn.title = g.reason;
+  btn.dataset.hint = g.hint;
+  btn.onclick = g.offered && !g.disabled ? () => void rerunRun(run.id, run.title || '') : null;
+}
+/** A run of this pipeline is live in this page: the Rerun gate refuses it even when its saved status reads ended. */
+const runLiveHere = (pipelineId) => [...runs.values()].some((x) => x.pipelineId === pipelineId && !RD_TERMINAL.includes(x.status));
+
+/** The "Rerun of …" fact row: a link to the run this one was copied from, plain text once that run is gone. Text only. */
+function paintRerunOf(row, rerunOf) {
+  const dd = row && row.querySelector('.rd-kv-v');
+  if (!dd) return;
+  const m = rerunLinkModel(rerunOf);
+  const sig = m ? `${m.href || ''}|${m.text}` : '';
+  if (dd.dataset.sig === sig) return;
+  dd.dataset.sig = sig;
+  if (!m) { dd.replaceChildren(); return; }
+  if (!m.href) { dd.textContent = m.text; return; }
+  dd.replaceChildren(Object.assign(document.createElement('a'), { href: m.href, textContent: m.text }));
 }
 
 async function saveRunPresetDialog(run, btn) {
@@ -28487,6 +28538,8 @@ function runMoreItems(screen, { away = [], extra = [] } = {}) {
   const items = [...away];
   const preset = offered('.hd-save-preset, .rd-save-preset');
   if (preset) items.push({ label: 'Save as preset', title: preset.title, onSelect: () => preset.click() });
+  const rerun = offered('.hd-rerun, .rd-rerun');
+  if (rerun) items.push({ label: 'Rerun', disabled: rerun.disabled, title: rerun.title, ...(rerun.dataset.hint ? { hint: rerun.dataset.hint } : {}), onSelect: () => rerun.click() });
   items.push(...extra);
   // The Chat panel hides the terminal opener on purpose (.crp .term-opener): no Terminal item there either.
   if (screen.dataset.presentation !== 'panel') items.push({ label: 'Terminal', hint: 'Ctrl+`', onSelect: () => toolPanel?.toggleKind('terminal') });
@@ -38139,6 +38192,7 @@ function paintRdMenuCarriers(screen, r) {
   const preset = screen.querySelector('.rd-save-preset');
   if (preset) void paintRunSavePreset(preset, r.pipelineId ? { ...(rec || {}), id: r.pipelineId } : null,
     () => screen.isConnected && runs.get(r.runId) === r);
+  paintRerunCarrier(screen.querySelector('.rd-rerun'), { id: r.pipelineId, title: r.title, status: r.status, live: !finished });
 }
 // What the live Archive's DELETE is addressed by: the History row, else the run itself. A finished run's row turns
 // terminal and the page hands off to the saved run (rdSavedRow) about as soon as History lists it, so waiting for the
@@ -38225,6 +38279,8 @@ function paintRdGlance(screen, r) {
   if (!glance) return;
   const terminal = RD_TERMINAL.includes(r.status);
   if (terminal) void rdLoadData(r);
+  paintRerunOf(glance.querySelector('.rd-kv [data-fact="rerun"]'), (r._rdData && r._rdData.data && r._rdData.data.state && r._rdData.data.state.rerunOf) || r._rerunOf);
+  syncFacts(glance.querySelector('.rd-kv'));
   // The headline reads the PR from History's rows, which reload on `pipelines-changed`
   // only while History is the open view: a run that just ended here has no row yet.
   // Ask for them once (the reload also starts the PR lookup; rdRepaintOpenGlance
@@ -41144,7 +41200,8 @@ function showView(name, param = '') {
     param = settingsParamFor(tab, sub);
   }
   const prevView = currentShownView;
-  if (prevView === 'new' && name !== 'new') setFormMsg('');
+  if (prevView === 'new' && name !== 'new') { setFormMsg(''); clearRerun(); newFormVisit++; }
+  if (name !== 'new') newPipelinePrefill = null;   // a prefill (a Rerun, an Ask handoff) is for the New run it opened, not a later visit
   // The schedule sheet and the Start menu are body-level overlays of the view that opened them.
   if (prevView !== name) { closeScheduleSheet(); closeStartMenu(); }
   currentShownView = name;
@@ -42173,6 +42230,7 @@ async function openWorkflowFromAsk(workflowId, { reveal = false } = {}) {
 async function applyAskPrefill() {
   const p = newPipelinePrefill;
   if (!p) return;
+  const visit = newFormVisit;   // a rerun hold belongs to this visit of the form only
   newPipelinePrefill = null;
   setRunTarget(p.target === 'workspace' ? 'workspace' : p.target === 'none' ? 'none' : 'project');
   // The card's engine pick (none: the defaults the project change loads decide). Touched, so they keep off it.
@@ -42200,9 +42258,11 @@ async function applyAskPrefill() {
   } else if (p.target === 'none') {
     // AWAITED for the same reason as below: setRunTarget('none') started an un-awaited onProjectChanged() whose loadConfig('') tail would reset the workflow picker.
     await onProjectChanged();
-  } else if (p.projectDir) {
-    const idx = state.projects.findIndex((x) => x && x.path === p.projectDir);
+  } else if (p.projectDir || p.rerun) {
+    // A rerun whose project is gone has no projectDir: the target is left empty (index 0), never the last project.
+    const idx = p.projectDir ? state.projects.findIndex((x) => x && x.path === p.projectDir) : -1;
     if (idx >= 0) el.projectSelect.selectedIndex = idx + 1; // +1 past the placeholder
+    else if (p.rerun) el.projectSelect.selectedIndex = 0;
     // AWAITED: onProjectChanged → loadConfig → loadWorkflowsInto/loadGuardrailsInto — un-awaited, that tail lands after our own awaits and resets both pickers.
     await onProjectChanged();
   }
@@ -42255,6 +42315,7 @@ async function applyAskPrefill() {
     }
   }
   if (p.sameAsSource && el.sameAsSource) { el.sameAsSource.checked = true; paintSameAsSource(); }
+  if (p.rerun) await applyRerun(p.rerun, visit);
 }
 
 // ---- Run presets (#712, docs/run-presets.md) --------------------------------
@@ -42262,14 +42323,27 @@ async function applyAskPrefill() {
 // loop budgets, human-in-the-loop and the workflow edit state.preset.setup (holdInPreset) instead of the
 // project config, and the submit handler sends the overlay + humanInLoop + presetId lane.
 
-/** The one-line reason Start is disabled by a broken preset reference, or ''. */
-function presetBlockReason() {
-  return state.preset && state.preset.broken.length ? state.preset.broken[0].message : '';
+/** The setup the form holds for this run: the applied preset's, else the rerun's (a rerun has no id and shows no chip).
+ *  A rerun with no recorded setup holds none: the form keeps the target's own defaults. */
+function activeSetup() {
+  return state.preset || (state.rerun && !state.rerun.unrecorded ? state.rerun : null);
 }
 
-/** The applied preset's Human in the loop, or null when no preset sets it. */
+/** What the target check judges and Start waits on: the active setup, or a rerun whose setup was not recorded (its target still counts). */
+function checkedHold() {
+  return state.preset || state.rerun;
+}
+
+/** The one-line reason Start is disabled by a broken preset (or rerun) reference, or ''. */
+function presetBlockReason() {
+  const held = checkedHold();
+  return held && held.broken.length ? held.broken[0].message : '';
+}
+
+/** The held setup's Human in the loop, or null when none sets it. */
 function presetHumanInLoop() {
-  return state.preset && typeof state.preset.setup.humanInLoop === 'boolean' ? state.preset.setup.humanInLoop : null;
+  const held = activeSetup();
+  return held && typeof held.setup.humanInLoop === 'boolean' ? held.setup.humanInLoop : null;
 }
 
 /**
@@ -42277,12 +42351,18 @@ function presetHumanInLoop() {
  * the pickers, put the preset's workflow, engine and guardrails back, then check the preset for this target.
  */
 async function reapplyPresetAfter(cfgLoad) {
-  const p = state.preset;
+  const p = activeSetup();
+  if (!p && state.rerun) {   // no recorded setup: nothing to put back, only the target is checked again
+    const r = state.rerun;
+    await cfgLoad;
+    if (state.rerun === r && !state.preset) await runPresetCheck();
+    return;
+  }
   if (!p || p.applying) return;
   p.applying = true;
   try {
     await cfgLoad;
-    if (state.preset !== p) return;
+    if (activeSetup() !== p) return;
     state.engineTouched = true;   // the target change reset it; the late project defaults must not swap the engine
     setRunEngine(p.setup.engine || 'claude');
     await loadWorkflowsInto(p.setup.workflowId || 'wf_default');
@@ -42291,7 +42371,7 @@ async function reapplyPresetAfter(cfgLoad) {
   } finally {
     p.applying = false;
   }
-  if (state.preset !== p) return;
+  if (activeSetup() !== p) return;
   paintPresetChip();
   await runPresetCheck();
   paintHiddenSettings();
@@ -42372,7 +42452,7 @@ function presetMenuItems() {
 
 // A broken item the form has replaced since the check (#712 8.6): its reference is no longer what this run uses.
 function presetItemReplaced(item) {
-  const s = state.preset.setup;
+  const s = activeSetup().setup;
   if (item.item === 'guardrails') return state.guardrailsId !== item.ref && state.guardrailSets.some((g) => g.id === state.guardrailsId);
   if (item.item === 'model') {
     const m = s.overlay?.nodes?.[item.ref]?.model;
@@ -42387,28 +42467,31 @@ function presetItemReplaced(item) {
 
 function paintPresetBroken() {
   if (!el.presetBroken) return;
-  if (!state.preset) { el.presetBroken.replaceChildren(); return; }
-  el.presetBroken.replaceChildren(renderBrokenCard(document, state.preset.broken, {
-    onReset: (b) => void resetPresetItem(b), canEditScope: levelAtLeast('advanced') }));
+  const held = checkedHold();
+  if (!held) { el.presetBroken.replaceChildren(); return; }
+  el.presetBroken.replaceChildren(renderBrokenCard(document, held.broken, {
+    onReset: (b) => void resetPresetItem(b), canEditScope: levelAtLeast('advanced'),
+    ...(state.preset ? {} : { title: 'Something in the earlier run no longer works', scopeHint: 'Pick another project to continue.' }) }));
 }
 
 /** "Reset to project default": drop the pick, repaint the form from what is left, and check again. */
 async function resetPresetItem(item) {
-  if (!state.preset) return;
-  const next = resetItem(state.preset.setup, item, {
+  const held = activeSetup();
+  if (!held) return;
+  const next = resetItem(held.setup, item, {
     projectWorkflowId: state.config.activeWorkflowId || 'wf_default',
     defaultEngine: state.runDefaults?.engine?.value || 'claude',
   });
-  state.preset.setup = next;
-  state.preset.modified = true;
-  state.preset.applying = true;
+  held.setup = next;
+  held.modified = true;
+  held.applying = true;
   try {
     if (item.item === 'guardrails') await loadGuardrailsInto('permissive');
     else if (item.item === 'engine') setRunEngine(next.engine);
     else if (item.item === 'workflow') await loadWorkflowsInto(next.workflowId);
     else await renderWorkflowConfig(state.workflowId);
   } finally {
-    if (state.preset) state.preset.applying = false;
+    held.applying = false;
   }
   paintPresetChip();
   await runPresetCheck();
@@ -42417,14 +42500,20 @@ async function resetPresetItem(item) {
 
 /** Post the pick-time check for the form's target; a modified preset keeps only the items it has not replaced. */
 async function runPresetCheck() {
-  const p = state.preset;
+  const p = checkedHold();
   if (!p) return;
   if (p.modified) { p.broken = p.broken.filter((b) => !presetItemReplaced(b)); paintPresetBroken(); applyBudgetToNewView(); }
-  const target = state.runTarget === 'workspace' ? { workspaceId: (el.workspaceSelect && el.workspaceSelect.value) || '' } : { projectDir: selectedProjectPath() };
-  const r = await mcpApi('POST', `/api/presets/${encodeURIComponent(p.id)}/check`, target);
-  if (state.preset !== p) return;   // another pick (or No preset) since
+  const isRerun = p === state.rerun;
+  if (isRerun && !p.runId) return;   // the earlier run is gone (a refused start): nothing left to check it against
+  const target = state.runTarget === 'workspace' ? { workspaceId: (el.workspaceSelect && el.workspaceSelect.value) || '' }
+    : isRerun && state.runTarget === 'none' ? { noProject: true } : { projectDir: selectedProjectPath() };
+  // A rerun that holds none of the earlier run's picks (none recorded, or a preset replaced them): only the target is judged.
+  if (isRerun && p.unrecorded) target.targetOnly = true;
+  // A rerun checks its own setup against the form's target (the earlier run's id, not a preset's).
+  const r = await mcpApi('POST', isRerun ? `/api/pipelines/${encodeURIComponent(p.runId)}/rerun/check` : `/api/presets/${encodeURIComponent(p.id)}/check`, target);
+  if (checkedHold() !== p) return;   // another pick (or No preset) since
   if (!r.ok || !Array.isArray(r.data?.broken)) {
-    setFormMsg(`Could not check the preset: ${(r.data && r.data.error) || `HTTP ${r.status}`}`, 'err');
+    setFormMsg(`Could not check the ${p === state.rerun ? 'earlier run' : 'preset'}: ${(r.data && r.data.error) || `HTTP ${r.status}`}`, 'err');
     return;
   }
   // The server checks the STORED preset; the form's replacements count too (the start check reads the body).
@@ -42441,8 +42530,9 @@ function schedulePresetCheck() {
 
 /** A form change the preset stores but no holder owns (guardrails, engine): the preset is modified. */
 function notePresetChange() {
-  if (!state.preset || state.preset.applying) return;
-  state.preset.modified = true;
+  const held = activeSetup();
+  if (!held || held.applying) return;
+  held.modified = true;
   paintPresetChip();
   schedulePresetCheck();
 }
@@ -42461,10 +42551,48 @@ function applyRunTagsFromPreset(tags) {
   paintRunTagDimsWarn();
 }
 
+/**
+ * The part of a setup that is the form's own fields: engine, workflow, guardrails, Sets opt-outs, mock, Away mark, sync,
+ * source branches, tags and PR choice, then the Agents rows. The target must already be applied. It makes no check: the
+ * caller (a preset pick, or a rerun) owns that.
+ */
+async function applySetupToForm(s) {
+  // onProjectChanged reset engineTouched and started loadRunDefaults un-awaited; touching it here
+  // stops that late answer from swapping in the project's default engine.
+  state.engineTouched = true;
+  setRunEngine(s.engine || 'claude');
+  await loadWorkflowsInto(s.workflowId || 'wf_default');
+  await loadGuardrailsInto(s.guardrailsId || 'permissive');   // keeps a missing set in preset mode
+  state.mcpOptOut = [...(s.mcpOptOut || [])];
+  renderMcpRuns();
+  el.mock.checked = !!s.mock;
+  if (el.nightMode) el.nightMode.checked = !!s.nightMode;
+  state.sync.autoSync = typeof s.syncBeforeStart === 'boolean' ? s.syncBeforeStart : null;
+  if (state.runTarget === 'workspace') {
+    // the per-member selects are rebuilt asynchronously on the change above (as applyAskPrefill waits for them)
+    const byKey = s.sourceBranchByKey || {};
+    for (const sel of el.wsSourceBranches ? el.wsSourceBranches.querySelectorAll('select.ws-src-select') : []) {
+      const want = byKey[sel.dataset.projectKey];
+      if (!want) continue;
+      for (let i = 0; i < 20 && sel.options.length <= 1; i++) await new Promise((r) => setTimeout(r, 25));
+      setSelectValueAdding(sel, want);
+    }
+  } else if (s.sourceBranch && el.sourceBranch) {
+    await refreshBranches(selectedProjectPath());
+    setSelectValueAdding(el.sourceBranch, s.sourceBranch);
+  }
+  if (Array.isArray(s.tags)) applyRunTagsFromPreset(s.tags);
+  runPrFields().apply(s.pr);
+  applyPresetSwitches();
+  await renderWorkflowConfig(state.workflowId);
+}
+
 async function applyPreset(id) {
   const p = state.presets.find((x) => x.id === id);
   if (!p) { leavePresetMode(); return; }
   state.preset = { id: p.id, name: p.name, scope: p.scope, setup: structuredClone(p.setup), modified: false, applying: true, broken: [] };
+  // A preset picked on a rerun form replaces the earlier run's picks; the link (runId) stays, and "No preset" must not bring them back.
+  if (state.rerun) Object.assign(state.rerun, { setup: {}, unrecorded: true, broken: [], modified: false });
   if (el.presetSelect) el.presetSelect.value = p.id;
   paintPresetChip();
   const s = state.preset.setup;
@@ -42484,34 +42612,7 @@ async function applyPreset(id) {
       if (idx >= 0) el.projectSelect.selectedIndex = idx + 1;   // +1: past the placeholder option
       await onProjectChanged();
     }
-    // onProjectChanged reset engineTouched and started loadRunDefaults un-awaited; touching it here
-    // stops that late answer from swapping in the project's default engine.
-    state.engineTouched = true;
-    setRunEngine(s.engine || 'claude');
-    await loadWorkflowsInto(s.workflowId || 'wf_default');
-    await loadGuardrailsInto(s.guardrailsId || 'permissive');   // keeps a missing set in preset mode
-    state.mcpOptOut = [...(s.mcpOptOut || [])];
-    renderMcpRuns();
-    el.mock.checked = !!s.mock;
-    if (el.nightMode) el.nightMode.checked = !!s.nightMode;
-    state.sync.autoSync = typeof s.syncBeforeStart === 'boolean' ? s.syncBeforeStart : null;
-    if (state.runTarget === 'workspace') {
-      // the per-member selects are rebuilt asynchronously on the change above (as applyAskPrefill waits for them)
-      const byKey = s.sourceBranchByKey || {};
-      for (const sel of el.wsSourceBranches ? el.wsSourceBranches.querySelectorAll('select.ws-src-select') : []) {
-        const want = byKey[sel.dataset.projectKey];
-        if (!want) continue;
-        for (let i = 0; i < 20 && sel.options.length <= 1; i++) await new Promise((r) => setTimeout(r, 25));
-        setSelectValueAdding(sel, want);
-      }
-    } else if (s.sourceBranch && el.sourceBranch) {
-      await refreshBranches(selectedProjectPath());
-      setSelectValueAdding(el.sourceBranch, s.sourceBranch);
-    }
-    if (Array.isArray(s.tags)) applyRunTagsFromPreset(s.tags);
-    runPrFields().apply(s.pr);
-    applyPresetSwitches();
-    await renderWorkflowConfig(state.workflowId);
+    await applySetupToForm(s);
   } finally {
     if (state.preset && state.preset.id === p.id) state.preset.applying = false;
   }
@@ -42525,6 +42626,80 @@ async function usePresetOnNewRun(id) {
   location.hash = '#new';
   await applyPreset(id);
   el.prompt.focus();
+}
+
+// ---- Rerun (docs/runs.md) --------------------------------------------------
+// ⋯ › Rerun on an ended run opens the New run form filled from it; nothing is created until the form is started.
+// The form holds the earlier run's setup in state.rerun (activeSetup), which reads like a preset's but has no id, no
+// chip and nothing to update: submit sends `rerunOf` and the same run-only lane.
+
+/** One attached file of the earlier run as a Blob, or null when it could not be fetched. */
+async function fetchRerunFile(pipelineId, name) {
+  try {
+    const res = await fetch(`/api/runs/${encodeURIComponent(pipelineId)}/artifact-raw/extras/${encodeURIComponent(name)}?download=1`);
+    return res.ok ? await res.blob() : null;
+  } catch { return null; }
+}
+
+let rerunSeq = 0;
+async function rerunRun(pipelineId, label = '') {
+  const tok = ++rerunSeq;   // a later Rerun click supersedes this one
+  const hash = location.hash;
+  const r = await mcpApi('GET', `/api/pipelines/${encodeURIComponent(pipelineId)}/rerun`);
+  if (tok !== rerunSeq) return;
+  if (!r.ok || !r.data || typeof r.data.prompt !== 'string') {
+    notify({ tone: 'err', title: "Couldn't load the earlier run", detail: (r.data && (r.data.message || r.data.error)) || '', key: 'rerun-load' });
+    return;
+  }
+  // Fetched together; the size budget is then spent in the run's own order, as the files were attached.
+  const wanted = (r.data.extras || []).filter((e) => e.available);
+  const blobs = await Promise.all(wanted.map((e) => fetchRerunFile(pipelineId, e.name)));
+  const files = [];
+  let room = EXTRAS_MAX_BYTES;
+  for (const [i, e] of wanted.entries()) {
+    const blob = blobs[i];
+    if (!blob || blob.size > room) { files.push({ name: e.name }); continue; }
+    room -= blob.size;
+    files.push({ name: e.name, dataBase64: await fileToBase64(blob) });
+  }
+  if (tok !== rerunSeq || location.hash !== hash) return;   // superseded, or the person went elsewhere meanwhile
+  if (state.preset) leavePresetMode();   // a preset applied earlier must not leak its presetId into this run
+  openNewPipeline(rerunPrefill({ ...r.data, runId: pipelineId, label }, files));
+}
+
+function paintRerunNotes(lines) {
+  if (!el.rerunNotes) return;
+  el.rerunNotes.replaceChildren(...lines.map((l) => Object.assign(document.createElement('div'), { textContent: l })));
+  el.rerunNotes.hidden = !lines.length;
+}
+
+/** The tail of applyAskPrefill for a rerun: hold the earlier run's setup, put it on the form, show what needs attention. */
+async function applyRerun(r, visit) {
+  // Left while the prefill loaded (showView's clearRerun ran before there was a hold): this visit holds no rerun.
+  if (visit !== newFormVisit || currentShownView !== 'new') return;
+  const held = { runId: r.runId, label: r.label, setup: structuredClone(r.setup || {}), unrecorded: !r.setup, broken: [...r.broken], modified: false, applying: true };
+  state.rerun = held;
+  try {
+    if (r.setup) await applySetupToForm(held.setup);
+  } finally {
+    held.applying = false;
+  }
+  if (state.rerun !== held) return;   // the form was left meanwhile
+  paintPresetBroken();
+  paintRerunNotes(rerunNotes({ missing: r.missing, extrasLost: r.extrasLost, setupMissing: !r.setup, restored: r.restored, lost: r.lost }));
+  applyBudgetToNewView();
+  paintHiddenSettings();
+}
+
+/** The form is no longer a rerun (left, or started): a plain New run sends no rerunOf and holds no rerun picks. */
+function clearRerun() {
+  if (!state.rerun) return;
+  state.rerun = null;
+  paintPresetBroken();
+  paintRerunNotes([]);
+  applyBudgetToNewView();
+  void renderWorkflowConfig(state.workflowId);
+  paintHiddenSettings();
 }
 
 /** "Run on the source branch" follows the applied preset, again after each start (clearTask unchecks it, #688). */
@@ -42562,7 +42737,7 @@ async function loadPresets() {
 function presetSetupFromForm(draft, scopeKind) {
   return {
     ...setupFromBody(draft, { scope: scopeKind }),
-    ...(state.preset ? { overlay: state.preset.setup.overlay, humanInLoop: state.preset.setup.humanInLoop } : {}),
+    ...(activeSetup() ? { overlay: activeSetup().setup.overlay, humanInLoop: activeSetup().setup.humanInLoop } : {}),
   };
 }
 const presetBasis = (draft) => (draft.workspaceId ? { workspaceId: draft.workspaceId } : { projectDir: draft.projectDir });

@@ -63,6 +63,19 @@ test('writeState keeps run_setup from the INSERT; a later write (a resume) never
   assert.deepEqual(readRunSetup('rsetup01').setup, { workflowId: 'wf_default' });
 });
 
+test('writeState stores rerun_of and extras_names at the INSERT; a later write never changes or clears them', async () => {
+  const { writeState } = await import('../src/core/artifacts.mjs');
+  const st = { id: 'rerun001', projectKey: 'api-12345678', status: 'running', phase: 'plan' };
+  await writeState('/tmp/x-rerun001', st, { rerunOf: 'src00001', extrasNames: ['a.md', 'b.md'] });
+  const cols = () => getDb().prepare('SELECT rerun_of, extras_names FROM pipelines WHERE id = ?').get('rerun001');
+  assert.deepEqual({ ...cols() }, { rerun_of: 'src00001', extras_names: '["a.md","b.md"]' });
+  await writeState('/tmp/x-rerun001', { ...st, status: 'done' });
+  await writeState('/tmp/x-rerun001', { ...st, status: 'done' }, { rerunOf: 'other', extrasNames: [] });
+  assert.deepEqual({ ...cols() }, { rerun_of: 'src00001', extras_names: '["a.md","b.md"]' });
+  await writeState('/tmp/x-rerun002', { ...st, id: 'rerun002' });
+  assert.deepEqual({ ...getDb().prepare('SELECT rerun_of, extras_names FROM pipelines WHERE id = ?').get('rerun002') }, { rerun_of: null, extras_names: null });
+});
+
 test('a preset saved from a run equals the preset saved from the same picks in New run', () => {
   const stored = runSetupOfBody({ ...TASK, ...FULL });
   for (const k of Object.keys(TASK)) assert.equal(k in stored, false, `${k} is never stored`);
