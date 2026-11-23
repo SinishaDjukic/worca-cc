@@ -3,7 +3,7 @@
 // ephemeral port (harness = test/api-plugins.test.mjs), a real local git repo, offline.
 import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
-import http from 'node:http';
+import { appServer } from './helpers/app-server.mjs';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { mkdtempSync, rmSync, readFileSync, writeFileSync, symlinkSync } from 'node:fs';
@@ -36,7 +36,7 @@ before(async () => {
   await git('commit', '-qm', 'c1');
   sha = (await git('rev-parse', 'HEAD')).stdout.trim();
   const { app } = await import('../ui/server.mjs');
-  srv = http.createServer(app);
+  srv = appServer(app);
   await new Promise((r) => srv.listen(0, '127.0.0.1', r));
   base = `http://127.0.0.1:${srv.address().port}`;
 });

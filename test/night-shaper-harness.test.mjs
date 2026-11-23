@@ -77,21 +77,21 @@ test('a clean outline is approved by Away', async () => {
   assert.deepEqual(orch.nightDecision('plan-outline-n_plan-1').meta, { ask: 'outline' });
 });
 
-test('Clarify on a Shaper run is never armed', async () => {
+test('Clarify on a Shaper run is answered by Away, each question on record', async () => {
   const { orch, clock } = await away();
-  askWith(orch, { id: 'c1', kind: 'clarify', questions: Q });
-  await clock.tick(60 * 60_000);
-  assert.equal(orch.pendingQuestion?.id, 'c1');
-  assert.equal(clock.pending(), 0);
-  assert.equal(orch.state.night?.openedAt ?? null, null);
+  const p = askWith(orch, { id: 'c1', kind: 'clarify', questions: Q });
+  await clock.tick(0);
+  assert.deepEqual(await p, { answers: [{ id: 'a', choice: 'x' }] });
+  assert.equal(orch.answeredBy('c1'), 'night-mode');
+  assert.deepEqual(orch.nightDecision('c1').questions.map((x) => [x.id, x.choice]), [['a', 'x']]);
 });
 
-test('a clarify form on a Shaper run is never armed', async () => {
+test('a clarify form on a Shaper run is answered by Away', async () => {
   const { orch, clock } = await away();
-  askWith(orch, { id: 'f1', kind: 'form', origin: 'clarify', form: 'clarify', version: 1, answerSchema: { properties: {} }, autoValues: {} });
-  await clock.tick(60 * 60_000);
-  assert.equal(orch.pendingQuestion?.id, 'f1');
-  assert.equal(clock.pending(), 0);
+  const p = askWith(orch, { id: 'f1', kind: 'form', origin: 'clarify', form: 'clarify', version: 1, answerSchema: { properties: {} }, autoValues: { k: 'v' } });
+  await clock.tick(0);
+  assert.deepEqual(await p, { form: 'clarify', version: 1, values: { k: 'v' } });
+  assert.equal(orch.answeredBy('f1'), 'night-mode');
 });
 
 test('Clarify on a normal run is still answered', async () => {
@@ -99,6 +99,23 @@ test('Clarify on a normal run is still answered', async () => {
   const p = askWith(orch, { id: 'c2', kind: 'clarify', questions: Q });
   await clock.tick(0);
   assert.deepEqual(await p, { answers: [{ id: 'a', choice: 'x' }] });
+});
+
+test('a normal run keeps its rule: a failed-check plan and an attached-requirements agreement wait, unarmed', async () => {
+  const { orch, clock } = await away({ shape: null });
+  askWith(orch, { id: 'p9', kind: 'plan', plan: { file: 'plan.md', check: FAIL, revisable: true } });
+  await clock.tick(60 * 60_000);
+  assert.equal(orch.pendingQuestion?.id, 'p9');
+  assert.equal(clock.pending(), 0);
+  const { orch: o2, clock: c2 } = await away({ shape: null });
+  askWith(o2, { id: 'plan-attached-agreement', kind: 'plan', plan: { attached: { features: [{ seq: 1, id: 'f1' }] }, revisable: false } });
+  await c2.tick(60 * 60_000);
+  assert.equal(o2.pendingQuestion?.id, 'plan-attached-agreement');
+  assert.equal(c2.pending(), 0);
+  const { orch: o3, clock: c3 } = await away({ shape: null });
+  const clean = askWith(o3, cleanPlan('p10'));
+  await c3.tick(0);
+  assert.deepEqual(await clean, { decision: 'approve' }, 'a clean plan is approved there, as before');
 });
 
 test("agents' questions, gates and failed steps on a Shaper run still go to Away", async () => {
@@ -116,20 +133,39 @@ test("agents' questions, gates and failed steps on a Shaper run still go to Away
   }
 });
 
-test('a Requirements hold is never armed', async () => {
+test('a Requirements hold is agreed by Away: flagged, each decision on record with its recommended option', async () => {
   const { orch, clock } = await away();
-  askWith(orch, { id: 'plan-n_reqrefine-1', kind: 'plan', plan: { criteria: { ok: true, passed: 8, total: 8 }, decisions: [] } });
-  await clock.tick(60 * 60_000);
-  assert.equal(orch.pendingQuestion?.id, 'plan-n_reqrefine-1');
-  assert.equal(clock.pending(), 0);
-  assert.equal(orch.state.night?.openedAt ?? null, null);
+  const decisions = [{ id: 'd-1', text: 'Which store?', recommended: 'sqlite', options: [{ value: 'sqlite', label: 'SQLite' }, { value: 'pg', label: 'Postgres' }] }];
+  const p = askWith(orch, { id: 'plan-n_reqrefine-1', kind: 'plan', plan: { criteria: { ok: true, passed: 8, total: 8 }, decisions } });
+  await clock.tick(0);
+  assert.deepEqual(await p, { decision: 'approve' });
+  const rec = orch.nightDecision('plan-n_reqrefine-1');
+  assert.equal(rec.flagged, true);
+  assert.deepEqual(rec.meta, { ask: 'requirements' });
+  assert.deepEqual(rec.questions.map((x) => [x.id, x.question, x.choice]), [['d-1', 'Which store?', 'SQLite']]);
 });
 
-test('a failed-check plan is never armed, and publishes no countdown', async () => {
+test('a failed-check plan goes back with the check while it can be revised, and is approved, flagged, once it cannot', async () => {
   const { orch, clock } = await away();
-  askWith(orch, { id: 'p3', kind: 'plan', plan: { file: 'plan.md', check: FAIL } });
+  const failing = { ...FAIL, items: [{ id: 'tests', label: 'Test list', pass: false, detail: 'no tests named' }] };
+  const p = askWith(orch, { id: 'p3', kind: 'plan', plan: { file: 'plan.md', check: failing, revisable: true } });
+  await clock.tick(0);
+  const got = await p;
+  assert.equal(got.decision, 'revise');
+  assert.equal(got.source, 'check');
+  assert.match(got.feedback, /- Test list: no tests named/);
+  assert.equal(orch.nightDecision('p3').choice, 'revise');
+  const last = askWith(orch, { id: 'p4', kind: 'plan', plan: { file: 'plan.md', check: FAIL, revisable: false } });
+  await clock.tick(0);
+  assert.deepEqual(await last, { decision: 'approve' });
+  assert.equal(orch.nightDecision('p4').flagged, true);
+});
+
+test('a failing Requirements hold that cannot be revised is never armed, and publishes no countdown', async () => {
+  const { orch, clock } = await away();
+  askWith(orch, { id: 'r9', kind: 'plan', plan: { criteria: { ok: false, passed: 3, total: 8, items: [] }, decisions: [] } });
   await clock.tick(60 * 60_000);
-  assert.equal(orch.pendingQuestion?.id, 'p3');
+  assert.equal(orch.pendingQuestion?.id, 'r9');
   assert.equal(clock.pending(), 0);
   assert.equal(orch.state.night?.openedAt ?? null, null);
 });
@@ -166,11 +202,11 @@ test('maxDecisions pauses the run on a plan ask', async () => {
   assert.equal(orch.pauseReason, 'night_guardrail');
 });
 
-test('at the answer limit, a failed-check plan stays open and the run does not pause', async () => {
+test('at the answer limit, a Requirements hold Away cannot answer stays open and the run does not pause', async () => {
   const { orch, clock } = await away({}, { night: { enabled: true, maxDecisions: 1, graceMinutes: 1, window: null } });
   orch._nightCount = () => 1;
   orch.state.status = 'running';
-  askWith(orch, { id: 'p5', kind: 'plan', plan: { file: 'plan.md', check: FAIL } });
+  askWith(orch, { id: 'p5', kind: 'plan', plan: { criteria: { ok: false, passed: 3, total: 8, items: [] }, decisions: [] } });
   await clock.tick(60 * 60_000);
   assert.equal(orch.pendingQuestion?.id, 'p5');
   assert.equal(orch.pauseReason ?? null, null);

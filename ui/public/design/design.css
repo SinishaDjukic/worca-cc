@@ -23,7 +23,7 @@ body.view-design .main{display:flex;flex-direction:column;overflow:hidden;paddin
 .dz-plan-name{flex:1;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
 .dz-who{display:flex;gap:3px;}
 .dz-who-dot{display:block;width:8px;height:8px;border-radius:50%;color-scheme:dark;}
-.dz-plan-n{min-width:14px;text-align:right;color:var(--ink-2);font-size:var(--fs-meta);font-weight:400;font-variant-numeric:tabular-nums;}
+.dz-plan-n{min-width:14px;text-align:right;white-space:nowrap;color:var(--ink-2);font-size:var(--fs-meta);font-weight:400;font-variant-numeric:tabular-nums;}
 
 .dz-retry-row{display:flex;align-items:center;gap:8px;min-height:32px;padding:0 8px;color:var(--ink);}
 .dz-retry-row span{flex:1;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
@@ -361,13 +361,13 @@ input.dsc-sound-key:focus-visible,input.dsc-sound-music:focus-visible{outline:2p
 .dz-hero .ask-composer{padding:0;--ask-col-max:100%;--ask-col-inset:0px;}
 .dz-hero .ask-composer-box{padding:12px 12px 10px;border-color:var(--line-2);}
 .dz-hero .dz-input{min-height:64px;font-size:15px;line-height:1.55;}
-.dz-kinds{display:flex;justify-content:center;gap:8px;margin-top:14px;}
-.dz-kind-btn{display:inline-flex;align-items:center;gap:7px;height:28px;padding:0 10px;border:0;border-radius:var(--r-xs);background:var(--field);color:var(--ink);font:500 var(--fs-meta)/1 var(--sans);cursor:pointer;white-space:nowrap;}
-.dz-kind-btn:hover{background:var(--hover);}
-.dz-kind-btn svg{width:14px;height:14px;flex:none;color:var(--ink-2);}
-.dz-kind-btn.is-on{background:var(--ink);color:var(--on-ink);}
-.dz-kind-btn.is-on svg{color:var(--on-ink);}
-.dz-kind-btn:focus-visible{outline:2px solid var(--ink);outline-offset:2px;}
+/* Equal columns across the composer's width: every kind button is the same size, whatever its word; a narrow page
+   wraps them into rows of equal ones. */
+.dz-kinds{display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:8px;width:100%;margin-top:20px;}
+/* The kind buttons are .btn .btn-lg, the Chat home's quick actions' size; the pressed one is .btn-primary. */
+.dz-kind-btn{min-width:0;padding:0 12px;}
+.dz-kind-btn svg{width:20px;height:20px;color:var(--ink-2);}
+.dz-kind-btn.btn-primary svg{color:var(--on-ink);}
 .dz-start-files{display:flex;flex-wrap:wrap;gap:6px;padding:2px 4px 4px;}
 .dz-start-files[hidden]{display:none;}
 .dz-start-file{display:inline-flex;align-items:center;gap:4px;max-width:240px;height:24px;padding:0 3px 0 8px;border-radius:var(--r-xs);background:var(--field);color:var(--ink);font:500 var(--fs-meta)/1 var(--sans);}
@@ -378,7 +378,6 @@ input.dsc-sound-key:focus-visible,input.dsc-sound-music:focus-visible{outline:2p
 .dz-start-err{margin:8px 0 0;padding:0 4px;color:var(--red-ink);font-size:var(--fs-meta);}
 .dz-start-menu{position:fixed;min-width:200px;max-width:320px;z-index:6;}
 .dz-start-menu .menu-item > span:first-child{min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
-.dz-kinds{flex-wrap:wrap;}
 .dz-lib-body{width:100%;max-width:1240px;margin-top:44px;display:flex;flex-direction:column;gap:14px;}
 .dz-lib-body[hidden]{display:none;}
 .dz-lib-h{margin:0;font-size:var(--fs-section);font-weight:600;letter-spacing:-.01em;line-height:var(--lh-title);}
@@ -402,6 +401,50 @@ input.dsc-sound-key:focus-visible,input.dsc-sound-music:focus-visible{outline:2p
 .frame-box,.dz-cursor,.dz-box,.dz-line i,.dz-dots button::after,.dsx-bar i{transition:none;}
 .dz-guide-v,.dz-guide-h,.dz-trail{animation:none;}
 }
+/* A new design's start on the Chat page (docs/design.md, "In the chat"): it fills the conversation column in place of
+   the home and the transcript; a design's stage fills the tool panel's Design tab. */
+.chat-page[data-view="design"] .chat-convo > :is(.chat-home,.ask-transcript,.ask-side-empty){display:none;}
+/* A new design's start holds the chat's own composer (ask-panel setComposerExt), so the dock below stays empty there. */
+.chat-page[data-view="design"] .chat-dock:not(:has(.ask-composer)){display:none;}
+/* The chat's composer box is frosted glass, and a backdrop filter makes it the containing block of its fixed popups: the
+   design gear's panel and its model menus would land offset by the box. A composer holding the gear drops the blur. */
+.chat-page .ask-composer-box:has(.dz-set){-webkit-backdrop-filter:none;backdrop-filter:none;}
+.ask-composer-row[data-ext-sets="off"] .ask-sets-btn{display:none;}
+.ask-composer-ext{display:inline-flex;align-items:center;gap:2px;min-width:0;}
+.ask-composer-ext[hidden]{display:none;}
+.chat-design{flex:1 1 auto;min-height:0;display:flex;flex-direction:column;}
+.chat-design[hidden]{display:none;}
+/* A chat with a design: its plan, its build's questions and its feed follow the chat's last message, in the
+   transcript's own column (ask-panel placeDesignSlot), and scroll with it. */
+.chat-design[data-inline]{flex:none;width:100%;max-width:var(--ask-col-max);margin:16px auto 0;}
+.chat-design[data-inline] .dz-chat{max-width:none;}
+/* Once the newest round's card is in the chat, the plan and the build sit under it (design/chat.mjs placeRoot): the
+   slot at the transcript's end is empty then. */
+.chat-design[data-inline]:not(:has(.dsc-root)){display:none;}
+.dsc-card-host > .dsc-root{margin-top:12px;}
+.dsc-inline .dsc-scroll.ask-transcript{flex:none;overflow:visible;padding:0;container-type:normal;scrollbar-gutter:auto;}
+.dsc-inline .dsc-thread:not(:empty){padding:0;}
+.dsc-inline .dsc-composer.ask-composer{padding:0;}
+/* A design card in the chat's transcript (design/chat-cards.mjs): the dock's card looks, outside the dock. */
+.dsc-card-host{display:block;min-width:0;}
+.dsc-card-host .dsc-round{color:var(--ink-2);font-size:var(--fs-meta);}
+.dsc-round-box{display:flex;flex-direction:column;gap:8px;}
+.dsc-card-host .chat-q .chat-rc-q-head{font-size:var(--fs-section);margin-bottom:10px;}
+.dsc-card-host .chat-rc-q .qblock{padding:14px;}
+.dsc-card-host .chat-rc-q .qtext{font-size:var(--fs-body);}
+.dsc-card-host .qpanel-foot .btn{flex:none;}
+.dsc-card-host .chat-q.chat-rc-q .qpanel[data-kind="form"] .qpanel-foot{border-color:var(--line);}
+.dz-chat.dz-chat-in-chat{flex:1 1 auto;width:100%;max-width:var(--chat-text-max);margin:0 auto;border-right:0;}
+.chat-head-design{display:inline-flex;align-items:center;gap:2px;min-width:0;flex:none;}
+.chat-head-design[hidden]{display:none;}
+.chat-head-kind{margin-left:8px;color:var(--ink-2);font-size:var(--fs-meta);white-space:nowrap;}
+.chat-page[data-host="dock"] .chat-head-design{display:none;}
+.tool-body[data-kind="design"] > .dz-stage{flex:1;min-height:0;}
+.dz-start-composer .ask-composer{padding:0;--ask-col-inset:0px;}
+.dz-start-composer .ask-composer-box{border-radius:var(--r-lg);}
+/* As on the chat home (chat-shell.css): the composer's menus open below it, never clipped by the page above. */
+.dz-start-composer .ask-composer > .ask-pop{bottom:auto;top:calc(100% + 6px);max-height:min(420px,calc(90vh - 230px));}
+.dz-start-foot{display:flex;justify-content:center;margin-top:12px;}
 @media (max-width:760px){
 .dz-studio{flex-direction:column;}
 .dz-chat{flex:0 0 45%;width:100%;border-right:0;border-top:1px solid var(--line);order:2;}

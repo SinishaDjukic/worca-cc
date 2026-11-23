@@ -1,4 +1,4 @@
-// test/db-migrate-v97.test.mjs — Shaper small runs A4: shape_feature_figures, one row per finished feature (its Care
+// test/db-migrate-v102.test.mjs — Shaper small runs A4: shape_feature_figures, one row per finished feature (its Care
 // position and its figures). A new table and its care index, IF NOT EXISTS; no existing table changes.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -13,15 +13,15 @@ const rows = (db, t, order) => db.prepare(`SELECT * FROM ${t} ORDER BY ${order}`
 
 test('a fresh DB has shape_feature_figures with its 5 columns and the care index', () => {
   const db = new DatabaseSync(':memory:'); migrate(db);
-  assert.ok(SCHEMA_VERSION >= 97);
+  assert.ok(SCHEMA_VERSION >= 102);
   assert.equal(version(db), SCHEMA_VERSION);
   assert.deepEqual(cols(db, 'shape_feature_figures'), COLS);
   assert.ok(indexes(db, 'shape_feature_figures').includes('idx_shape_feature_figures_care'));
 });
 
-test('a v96 DB migrates: every shape_features row is unchanged, the new table exists and is empty', () => {
+test('a v101 DB migrates: every shape_features row is unchanged, the new table exists and is empty', () => {
   const db = new DatabaseSync(':memory:'); migrate(db);
-  db.exec('DROP TABLE shape_feature_figures; PRAGMA user_version = 96');
+  db.exec('DROP TABLE shape_feature_figures; PRAGMA user_version = 101');
   const feature = db.prepare(`INSERT INTO shape_features (id, title, project_dir, origin_pipeline_id, source_branch, outline, request_base,
     perspectives, workflow_id, approve_each, status, proposed, merges, removals, created_by, created_at, updated_at, care, care_chosen_by)
     VALUES (?, ?, '/p', ?, 'main', '{"why":"x","slices":[]}', '{}', '["product"]', 'wf_shape', 0, ?, 3, 1, 0, 'ann',

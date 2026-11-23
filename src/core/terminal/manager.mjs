@@ -77,7 +77,7 @@ export class TerminalManager extends EventEmitter {
   }
 
   async open({ cwd, scope, label = null, runId = null, member = null, projectKey = null, branch = null, workspace = false,
-    runLive = false, by = 'local', cols = 100, rows = 30, actionSnaps = [], baseEnv = process.env, agent = false }) {
+    runLive = false, by = 'local', cols = 100, rows = 30, actionSnaps = [], baseEnv = process.env, agent = false, chatId = null }) {
     if (this.live().length >= MAX_SESSIONS) throw codeError('TOO_MANY_SESSIONS', `At most ${MAX_SESSIONS} terminals can be open at once. Close one first.`);
     let ino;
     try { const st = statSync(cwd); if (!st.isDirectory()) throw new Error('not a folder'); ino = st.ino; }
@@ -105,7 +105,7 @@ export class TerminalManager extends EventEmitter {
     const mode = proc.mode;
     const at = this.now();
     const s = {
-      snap: { id, scope, label, runId, member, projectKey, branch, cwd, shell: shell.file, shellKind: shell.kind, mode, integration: false,
+      snap: { id, scope, label, runId, member, projectKey, branch, cwd, ...(chatId ? { chatId } : {}), shell: shell.file, shellKind: shell.kind, mode, integration: false,
         status: 'running', exitCode: null, pid: proc.pid ?? null, createdBy: by, createdAt: iso(at), endedAt: null, closedBy: null,
         runLive: !!runLive, folder: 'ok', commands: 0, ...size },   // cols/rows: the PTY's size, so a replay is drawn at the width it was written for
       proc, parser: new MarkerParser({ nonce }), chunks: [], chunkChars: 0, seq: 0, pendingOut: '', flushTimer: null,

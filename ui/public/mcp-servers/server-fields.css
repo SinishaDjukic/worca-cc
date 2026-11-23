@@ -1,24 +1,20 @@
-.mcp-member{padding:14px 16px;margin-top:10px;}
-.mcp-member .pl-enable{margin-left:0;}
 [data-view="connectors"] .mono,.mcp-def .mono,.mcp-fields .mono{font-family:var(--mono);}
-.mcp-fld{display:grid;grid-template-columns:150px minmax(0,1fr);align-items:center;gap:12px;margin-top:8px;}
 .mcp-secret{display:flex;align-items:center;gap:8px;flex-wrap:wrap;}
 .mcp-state{margin-top:10px;}
 .mcp-state.ok{color:var(--green-ink);}
 .mcp-state.warn{color:var(--amber-ink);}
-.mcp-server-row{padding:14px 18px;}
 .mcp-def-row{display:grid;grid-template-columns:1fr 1fr auto auto auto;gap:8px;align-items:center;margin-bottom:6px;}
 .mcp-def-fill{display:flex;gap:10px;align-items:center;font-size:12px;}
 .mcp-res-row{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr) minmax(0,1.4fr);gap:12px;padding:8px 0;border-top:1px solid var(--line);}
 .mcp-res-skip{color:var(--amber-ink);}
 .mcp-resolution,.mcp-proj-sets{margin-bottom:14px;}
-/* Import from other tools (mcp-server-import.mjs): #plugin-modal sits outside [data-view="connectors"], so .mono again. */
-#plugin-modal .card:has(.mcp-imp){max-width:880px;width:min(94vw,880px);}
+/* Import from other tools (mcp-server-import.mjs): the dialog sits outside [data-view="connectors"], so .mono again. */
 .mcp-imp .mono{font-family:var(--mono);}
-.mcp-imp-project-field,.mcp-imp-name-field{display:flex;align-items:center;gap:8px;margin:8px 0;}
+.mcp-imp-project-field,.mcp-imp-name-field,.mcp-imp-set-field{display:flex;align-items:center;gap:8px;margin:8px 0;}
 .mcp-imp-files{margin:8px 0;padding-left:18px;font-size:12px;}
 .mcp-imp-files .err{color:var(--red-ink);}
 .mcp-imp-row{padding:10px 0;border-top:1px solid var(--line);}
+.mcp-imp-row[aria-disabled="true"] .mk-meta{margin:2px 0 0;}
 .mcp-imp-head{display:flex;align-items:center;gap:8px;flex-wrap:wrap;}
 .mcp-imp-target{display:block;margin-top:6px;font-size:12px;overflow-wrap:anywhere;}
 .mcp-imp-values{display:grid;grid-template-columns:max-content minmax(0,1fr);gap:2px 12px;margin:6px 0 0;font-size:12px;}
@@ -27,4 +23,3 @@
 .mcp-imp-warn{color:var(--amber-ink);padding-left:18px;}
 .mcp-imp-effects{padding-left:18px;}
 .mcp-imp-changes td{overflow-wrap:anywhere;}
-@media (max-width:760px){.mcp-sets{grid-template-columns:1fr;}}

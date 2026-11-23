@@ -108,7 +108,7 @@ body.view-chat .toasts{bottom:calc(136px + env(safe-area-inset-bottom,0px));}
    ellipsizes), the buttons keep their size, the model label stays on one line. Phones also drop the least needed parts. */
 .chat-page .ask-composer-row > .ask-scope-btn{flex:0 1 auto;min-width:0;}
 .chat-page .ask-scope-btn > svg{flex:none;}
-.chat-page .ask-composer-row > :is(.btn,.ask-meter,.ask-model-btn,.ask-voice):not(.ask-scope-btn){flex:none;}
+.chat-page .ask-composer-row > :is(.btn,.ask-meter,.ask-model-btn,.ask-voice,.ask-composer-ext):not(.ask-scope-btn){flex:none;}
 .chat-page .ask-model-btn{white-space:nowrap;}
 @media (max-width:480px){
   .chat-page .ask-meter-cost,.chat-page .ask-voice-caret,.chat-page .ask-model-btn-effort{display:none;}
@@ -138,6 +138,11 @@ body.view-chat .toasts{bottom:calc(136px + env(safe-area-inset-bottom,0px));}
 .chat-page.is-resizing .runs-resize::before{content:"";position:absolute;top:0;bottom:0;left:2px;width:2px;background:var(--line-2);}
 .btn.chat-head-meter{display:block;text-align:left;line-height:26px;margin-left:auto;min-width:0;flex:0 1 auto;overflow:hidden;text-overflow:ellipsis;font-family:var(--mono);font-size:11px;color:var(--ink-3);white-space:nowrap;}
 .chat-page[data-chats="on"] .chat-new-plus{flex:none;}
+/* New chat sits on top of the chats list; the head's own shows only while the list is folded, and never on a new chat
+   or a new design (they are what it would make). */
+.chat-page:is([data-history="open"],[data-fresh="yes"]) .chat-head > .chat-new-plus{display:none;}
+.chat-page[data-fresh="yes"] .runs-head > .chat-list-new{display:none;}   /* the list's too, on a new chat or design */
+.runs-head > .chat-list-new{flex:none;}
 .chat-page[data-chats="on"] [data-ask-meter]{display:none;}
 @media (max-width:1099px){.chat-page[data-chats="on"] .chat-history{position:absolute;width:min(340px,86vw);}.chat-page[data-chats="on"] .runs-resize{display:none;}}
 /* Ask worca beside the page: in the side column the Chats column is a dropdown under its head (after the rules above,

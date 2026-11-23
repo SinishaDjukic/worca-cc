@@ -137,7 +137,7 @@ test('real child: handshake, seeded rows readable, thread-scoped attachment, pro
     { jsonrpc: '2.0', id: 10, method: 'tools/call', params: { name: 'list_memory', arguments: {} } },
   ];
   // argv wins over env: env points at a bogus base, argv at the real one
-  const r = await runChild(['--home', home, '--thread', thread.id], calls, { env: { WORCA_HOME: '/nonexistent/base', WORCA_ASK_THREAD_ID: other.id, WORCA_ASK_WEB: '', WORCA_ASK_COMMANDS: '', ASK_COMMAND_TOKEN: '' } });   // a shell's WORCA_ASK_WEB / command bridge must not grow the pin
+  const r = await runChild(['--home', home, '--thread', thread.id], calls, { env: { WORCA_HOME: '/nonexistent/base', WORCA_ASK_THREAD_ID: other.id, WORCA_ASK_WEB: '', WORCA_ASK_COMMANDS: '', ASK_COMMAND_TOKEN: '', WORCA_ASK_TABS: '', ASK_TABS_TOKEN: '' } });   // a shell's WORCA_ASK_WEB / command or tab bridge must not grow the pin
   assert.equal(r.code, 0, `exit 0 (stderr: ${r.err})`);
   const msgs = r.out.split('\n').filter(Boolean).map((l) => JSON.parse(l));
   assert.deepEqual(msgs.map((m) => m.id), [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10]);

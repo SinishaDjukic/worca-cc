@@ -63,7 +63,7 @@ export function midTruncate(name, max = 44) {
  * first, a plan/review/result the extension says nothing about by its kind), widened with `code` (a text file hljs
  * knows), `csv` (.csv/.tsv) and `none` (opaque documents, archives, fonts — no preview). An extension that names a
  * table, a language or a byte format wins over the kind: a `result` that is `data.csv` is a table, not a diff.
- * @returns {'markdown'|'json'|'diff'|'text'|'code'|'csv'|'image'|'pdf'|'html'|'c4'|'audio'|'video'|'none'}
+ * @returns {'markdown'|'json'|'diff'|'text'|'code'|'csv'|'image'|'pdf'|'html'|'c4'|'audio'|'video'|'office'|'none'}
  */
 export function previewKindFor(kind, relPath = '') {
   const rel = String(relPath);
@@ -74,6 +74,7 @@ export function previewKindFor(kind, relPath = '') {
   }
   const v = viewerKindFor(kind ?? null, rel);
   if (v === 'binary') return 'none';
+  if (v === 'office') return 'office';
   if (v !== 'text') return v;
   return langForPath(rel) ? 'code' : 'text';
 }

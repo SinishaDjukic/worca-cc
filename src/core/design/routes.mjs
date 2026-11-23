@@ -232,7 +232,7 @@ function recordOut(s) {
  *   versions?: { list: (id: string) => Promise<object[]>|object[],
  *     restore: (id: string, n: number) => Promise<{ version: number, restoredFrom: number }|void> },
  *   postSystemNotice?: (threadId: string, text: string) => unknown,
- *   dropGrants?: (id: string) => unknown, deleteThread?: (threadId: string) => Promise<unknown>,
+ *   dropGrants?: (id: string) => unknown, renameThread?: (threadId: string, title: string, from: string) => void,
  *   brokerStartRefusal?: (req: object, modelIds: string[]) => Promise<string|null>,
  *   thumbs?: { ensure: (design: object) => void },
  *   soundCards?: { available: (design: object) => boolean,
@@ -282,6 +282,49 @@ export function registerDesignRoutes(app, { broadcast, deps } = {}) {
     if (refusal) throw new DesignRefusal(409, refusal, 'credential-missing');
   };
 
+  /**
+   * A new design and its chat, for `by`: the Library's start and a chat's start_design (the tool bridge) both come here,
+   * so the engine gate binds both. → `{ok: true, design, threadId}`, or `{ok: false, gate}` (the 409 body: the gate's
+   * error, code, overridable, engine, label, reasons and notes). A bad body throws a DesignRefusal (400).
+   * `threadId` is the chat that asked (start_design): the design attaches to it, as its origin too, instead of a new
+   * chat. Never read from a request body.
+   */
+  async function create(body, by, { threadId: askingThread = null } = {}) {
+    if (body.engine !== undefined && typeof body.engine !== 'string') throw new DesignRefusal(400, 'engine must be text');
+    if (body.allowUnguarded !== undefined && typeof body.allowUnguarded !== 'boolean') {
+      throw new DesignRefusal(400, 'allowUnguarded must be true or false');
+    }
+    const named = typeof body.engine === 'string' && body.engine.trim() !== '';
+    // Consent binds to the engine the person was shown (L8.25), never to whatever the settings resolve to now.
+    if (body.allowUnguarded === true && !named) throw new DesignRefusal(400, 'allowUnguarded needs the engine it allows');
+    await checkProject(body.projectKey);
+    // The engine is resolved and gated before the design exists (L8.3): a refusal makes nothing.
+    const projectKey = typeof body.projectKey === 'string' ? body.projectKey.trim() || null : null;
+    const engine = resolveDesignEngine({ explicit: named ? body.engine : null, projectKey });
+    const projectDir = await projectDirFor(projectKey);
+    // The design's own lead and builder picks, checked against the engine it will build on.
+    const models = ownPicks(await checkModels(body.models, engine));
+    const check = designEngineGate({
+      engine, allowed: body.allowUnguarded === true, project: !!projectDir, design: { models },
+      rules: { deny: await designDenyRules({ projectDir }) }, models: designBuildModels({ engine, models }),
+    });
+    if (!check.ok) {
+      const { error, code, overridable, reasons, notes } = check;
+      return { ok: false, gate: { error, code, overridable, engine, label: engineLabel(engine), reasons, notes } };
+    }
+    const design = createDesign(
+      { kind: body.kind, title: body.title, fast: body.fast, pictures: body.pictures, projectKey: body.projectKey, engine, models, originThreadId: askingThread },
+      { by },
+    );
+    // The Design button's design gets its titled chat from the start (P5): no title call fires on its first message.
+    const thread = askingThread ? { id: askingThread } : createDesignThread({ design, by });
+    const linked = updateDesign(design.id, { threadId: thread.id });
+    // P8 (L8.13): its maker's agent gets it once it is whole; a refused claim (500) keeps the design, and every later
+    // start and Continue claims it again and refuses the same way.
+    designBuilds.claim(design.id, { owner: by });
+    return { ok: true, design: linked, threadId: thread.id };
+  }
+
   const handlers = {
     [`GET ${P}`]: async (req, res) => {
       const designs = listDesigns({ visibleTo: viewerOf(req) });
@@ -300,42 +343,10 @@ export function registerDesignRoutes(app, { broadcast, deps } = {}) {
     },
 
     [`POST ${P}`]: async (req, res) => {
-      const body = req.body || {};
-      if (body.engine !== undefined && typeof body.engine !== 'string') throw new DesignRefusal(400, 'engine must be text');
-      if (body.allowUnguarded !== undefined && typeof body.allowUnguarded !== 'boolean') {
-        throw new DesignRefusal(400, 'allowUnguarded must be true or false');
-      }
-      const named = typeof body.engine === 'string' && body.engine.trim() !== '';
-      // Consent binds to the engine the person was shown (L8.25), never to whatever the settings resolve to now.
-      if (body.allowUnguarded === true && !named) throw new DesignRefusal(400, 'allowUnguarded needs the engine it allows');
-      await checkProject(body.projectKey);
-      // The engine is resolved and gated before the design exists (L8.3): a refusal makes nothing.
-      const projectKey = typeof body.projectKey === 'string' ? body.projectKey.trim() || null : null;
-      const engine = resolveDesignEngine({ explicit: named ? body.engine : null, projectKey });
-      const projectDir = await projectDirFor(projectKey);
-      // The design's own lead and builder picks, checked against the engine it will build on.
-      const models = ownPicks(await checkModels(body.models, engine));
-      const gate = designEngineGate({
-        engine, allowed: body.allowUnguarded === true, project: !!projectDir, design: { models },
-        rules: { deny: await designDenyRules({ projectDir }) }, models: designBuildModels({ engine, models }),
-      });
-      if (!gate.ok) {
-        // Answered here: errorReply keeps only {error, code}, and the Library's dialog needs the rest.
-        const { error, code, overridable, reasons, notes } = gate;
-        res.status(409).json({ error, code, overridable, engine, label: engineLabel(engine), reasons, notes });
-        return;
-      }
-      const design = createDesign(
-        { kind: body.kind, title: body.title, fast: body.fast, pictures: body.pictures, projectKey: body.projectKey, engine, models },
-        { by: actorOf(req) },
-      );
-      // The design owns its titled thread from the start (P5): no title call can fire on its first message.
-      const thread = createDesignThread({ design, by: actorOf(req) });
-      const linked = updateDesign(design.id, { threadId: thread.id });
-      // P8 (L8.13): its maker's agent gets it once it is whole; a refused claim (500) keeps the design, and every later
-      // start and Continue claims it again and refuses the same way.
-      designBuilds.claim(design.id, { owner: actorOf(req) });
-      res.status(201).json({ design: linked, threadId: thread.id });
+      const r = await create(req.body || {}, actorOf(req));
+      // Answered here: errorReply keeps only {error, code}, and the Library's dialog needs the rest.
+      if (!r.ok) { res.status(409).json(r.gate); return; }
+      res.status(201).json({ design: r.design, threadId: r.threadId });
     },
 
     // P8 (M6): the Build fast caps the Library's and the chat's labels read; numbers only, the same for every viewer.
@@ -445,6 +456,8 @@ export function registerDesignRoutes(app, { broadcast, deps } = {}) {
         patch.models = Object.keys(merged).length ? merged : null;
       }
       const row = updateDesign(design.id, patch);
+      // A chat named after its design (the Design button's) follows a rename; a chat with a title of its own keeps it.
+      if (typeof patch.title === 'string' && patch.title && design.threadId) d.renameThread?.(design.threadId, row.title, design.title);
       // M7: the next spawn's cap follows; nothing running is killed, and nothing else reaches the build.
       if ('fast' in patch) designBuilds.get(row.currentBuild)?.setFast(patch.fast);
       res.json(row);
@@ -461,7 +474,7 @@ export function registerDesignRoutes(app, { broadcast, deps } = {}) {
       await films.forget(design.id);
       deleteDesign(design.id);
       await d.dropGrants?.(design.id);
-      if (design.threadId) await d.deleteThread?.(design.threadId);
+      // The chat stays (docs/design.md "Deleting"): it is a plain chat, and its design cards say the design is gone.
       res.json({ ok: true });
     },
 
@@ -566,4 +579,5 @@ export function registerDesignRoutes(app, { broadcast, deps } = {}) {
     return designBuilds.starting?.(id) ? ROUND_STARTING : null;
   };
   registerDesignExportRoutes(app, { flagGate: gate, designFor, listProjects, held, films });
+  return { create };
 }

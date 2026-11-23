@@ -4,7 +4,7 @@ import { enrichPipelinesPr, listAllPipelines, lookupPipelineRow, readPipelineByK
 import { unresolvedCounts } from '../../../src/core/diff-comments.mjs';
 import { hasGh, prHostsAvailable } from '../../../src/core/git-info.mjs';
 import { DIFF_PATCH_FILE } from '../../../src/core/results.mjs';
-import { askFilesStoreDir, broadcast, commentIdParam, commentsCreate, commentsDelete, commentsFail, commentsList, commentsPatch, commentsReply, liveRunIds, sendArtifactRaw, serveAskFile } from '../../server.mjs';
+import { askFilesStoreDir, broadcast, commentIdParam, commentsCreate, commentsDelete, commentsFail, commentsList, commentsPatch, commentsReply, liveRunIds, rawOpts, sendArtifactRaw, serveAskFile } from '../../server.mjs';
 
 export function register(app) {
 
@@ -201,7 +201,7 @@ app.get('/api/history/:key/:id/artifact-raw/*splat', async (req, res) => {
   try {
     const row = lookupPipelineRow(req.params.key, req.params.id);
     if (!row) return res.status(404).json({ error: 'artifact not found' });
-    await sendArtifactRaw(res, row, req.params.splat.join('/'), { download: req.query.download === '1' });
+    await sendArtifactRaw(res, row, req.params.splat.join('/'), rawOpts(req));
   } catch (err) { res.status(500).json({ error: err && err.message ? err.message : String(err) }); }
 });
 }

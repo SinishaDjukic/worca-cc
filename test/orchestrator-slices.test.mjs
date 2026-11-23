@@ -437,15 +437,14 @@ for (const [name, opts, line] of [
   ['a null check', { check: null }, 'the shape check did not pass'],
   ['outline-change.md', { change: true }, 'the planner says this slice cannot be built as outlined'],
 ]) {
-  test(`D19: ${name} with Away active waits for a person`, async () => {
+  test(`D19: ${name} with Away active is answered by Away, flagged`, async () => {
     const h = d19({ ...opts, away: true, onPlan: LEAVE });
-    await waitFor(() => h.plans.length === 1);
-    await settled();
-    assert.equal(h.orch.pendingQuestion?.id, h.plans[0].id, 'still open');
-    assert.equal(h.orch.state.night.openedAt, null, 'no countdown');
+    assert.equal((await h.done).status, 'done', 'nobody answered: Away did');
     assert.ok(audit(h.orch).some((x) => x.includes(`Plan approval held: ${line}`)));
-    h.orch.answer(h.plans[0].id, { decision: 'approve' });
-    assert.equal((await h.done).status, 'done');
+    assert.equal(h.orch.answeredBy(h.plans[0].id), 'night-mode');
+    const rec = readNightDecisions(h.orch.getState().id).find((d) => d.questionId === h.plans[0].id);
+    assert.equal(rec.flagged, true, 'one to check');
+    assert.deepEqual(rec.meta, { ask: 'plan' });
   });
 }
 

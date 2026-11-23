@@ -57,7 +57,7 @@ const D1 = 'a'.repeat(64); const D2 = 'b'.repeat(64);
 const ok = (data) => ({ ok: true, status: 200, data });
 
 /** `over`: per-key answers (a function gets the body); `shows`/`afterClose`: the app.js shell's optional hooks. */
-function harness({ over = {}, shows = true, afterClose = false } = {}) {
+function harness({ over = {}, shows = true, afterClose = false, sets = null, initialSet } = {}) {
   const calls = []; const done = []; const changed = [];
   const modal = { opened: null, hook: null, open(title, body, actions) { this.opened = { title, body, actions }; this.hook = null; },
     close() { this.opened = null; },
@@ -73,7 +73,7 @@ function harness({ over = {}, shows = true, afterClose = false } = {}) {
       : ok({ ok: true, digest: D1, review: REVIEW });
     return ok({});
   };
-  openMcpImport({ api, modal, doc, onDone: (x) => { done.push(x); }, onChanged: () => { changed.push(1); } });
+  openMcpImport({ api, modal, doc, sets, initialSet, onDone: (x) => { done.push(x); }, onChanged: () => { changed.push(1); } });
   return { modal, calls, done, changed, posts: () => calls.filter(([m, p]) => m === 'POST' && p === '/api/mcp/import').map(([, , b]) => b) };
 }
 const body = (m) => m.opened.body;
@@ -134,6 +134,42 @@ test('list rendering: files with their status, every row\'s source, name, transp
   assert.equal(b.querySelector('.mcp-imp-empty'), null);
 });
 
+test('"Into set" picker lists the sets, defaults to General, and its value comes back with the finished import', async () => {
+  const sets = [{ id: 'general', name: 'General' }, { id: 'billing', name: 'Billing' }];
+  const m = harness({ sets });
+  await settle();
+  const sel = body(m.modal).querySelector('select.mcp-imp-set');
+  assert.deepEqual([...sel.options].map((o) => [o.value, o.textContent]), [['general', 'General'], ['billing', 'Billing']]);
+  assert.equal(sel.value, 'general');
+  assert.equal(document_label(sel), 'Into set');
+  sel.value = 'billing';
+  change(sel);
+  tickBox(rowOf(m.modal, 'cursor:user:files'));
+  await act(m.modal, 'Review');
+  await settle();
+  await act(m.modal, 'Import');
+  await settle();
+  assert.equal(m.done[0].set, 'billing');
+  const plain = harness({});
+  await settle();
+  assert.equal(body(plain.modal).querySelector('.mcp-imp-set'), null, 'no picker without sets');
+  const start = harness({ sets, initialSet: 'billing' });
+  await settle();
+  assert.equal(body(start.modal).querySelector('select.mcp-imp-set').value, 'billing');
+});
+function document_label(sel) { return sel.parentNode.querySelector(`#${sel.getAttribute('aria-labelledby')}`).textContent; }
+
+test('a candidate already in worca is a greyed row "Already in worca" with no pick box', async () => {
+  const m = harness();
+  await settle();
+  const r = rowOf(m.modal, 'cursor:user:github');
+  assert.equal(r.getAttribute('aria-disabled'), 'true');
+  assert.ok(r.classList.contains('cx-greyed'));
+  assert.equal(r.querySelector('.mcp-imp-pick'), null);
+  assert.equal(r.querySelector('input'), null);
+  assert.equal(r.querySelector('.mk-meta').textContent, 'Already in worca');
+});
+
 test('moreServers, the empty state and the home note', async () => {
   const more = harness({ over: { 'GET /api/mcp/discover': ok({ ...DISC, moreServers: 7 }) } });
   await settle();
@@ -151,7 +187,7 @@ test('pickable rule: in-worca and problem rows are disabled; a taken name and a 
   const m = harness();
   await settle();
   const dis = (id) => rowOf(m.modal, id).querySelector('.mcp-imp-pick').disabled;
-  assert.deepEqual(ROWS.map((r) => dis(r.id)), [false, false, false, true, true, false]);
+  assert.deepEqual(ROWS.map((r) => (rowOf(m.modal, r.id).querySelector('.mcp-imp-pick') ? dis(r.id) : null)), [false, false, false, null, true, false]);
   const docs = rowOf(m.modal, 'cursor:user:docs');
   const name = docs.querySelector('input.mcp-imp-name');
   assert.deepEqual([name.value, name.disabled, name.maxLength], ['docs', true, 20]);
@@ -273,7 +309,7 @@ test('Import: the body adds apply and the digest; a double click sends one POST;
   await settle();
   assert.deepEqual(m.posts().slice(1), [{ projectKey: null, servers: [{ id: 'cursor:user:files', as: 'files' }], apply: true, digest: D1 }]);
   assert.equal(m.modal.opened, null);
-  assert.deepEqual(m.done, [{ detail: 'Added files.', names: ['files'] }]);
+  assert.deepEqual(m.done, [{ detail: 'Added files.', names: ['files'], set: null }]);
 });
 
 test('Import: a 409 IMPORT_CHANGED offers Review again, which re-previews and the next Import sends the NEW digest', async () => {

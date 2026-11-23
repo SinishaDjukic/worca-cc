@@ -88,7 +88,7 @@ test('style.css "Chat P4: run panel": width, 900px sheet, pinned tabs, scrolling
   assert.match(sec, /\.crp \.rd-bar-end\{[^}]*flex-wrap:nowrap;/, 'the bar never wraps, paused (Resume split) included');
   assert.match(sec, /\.crp \.rd-bar-end > \.rd-night-wrap\{flex:0 1 auto;min-width:72px;\}/, 'the Away select gives way first');
   assert.match(sec, /\.crp \.rd-bar \.rd-night\{[^}]*min-width:0;/);
-  assert.match(sec, /\.chat-page\[data-panel="open"\] \.chat-convo\{container:chat-convo \/ inline-size;\}/, 'the squeezed conversation is a container');
+  assert.match(sec, /\.chat-page \.chat-convo\{container:chat-convo \/ inline-size;\}/, 'the conversation is a container whatever squeezes it (the run panel, the tool panel with the chats list)');
   assert.match(sec, /@container chat-convo \(max-width:520px\)\{\s*\.chat-page \.ask-meter-cost,\.chat-page \.ask-voice-caret,\.chat-page \.ask-model-btn-effort\{display:none;\}/, 'its composer drops what a phone drops');
   assert.match(sec, /@container chat-convo \(max-width:420px\)\{[^}]*\}\s*\.chat-page \.ask-composer-row > \.ask-meter\{display:none;\}/);
   assert.match(sec, /@container crp \(max-width:560px\)\{[^@]*\.crp :is\(\.rd-tab,\.hd-tab\) > svg\{display:none;\}/, 'two tab rows, not three, in a narrow panel');

@@ -12,7 +12,7 @@ import { tmpdir } from 'node:os';
 import { join, isAbsolute } from 'node:path';
 import { githubEnv } from './github-credentials.mjs';
 import { gitEnvFor, githubOnlyEnv, hostLookupNeeded, stripHostCredentials } from './host-credentials.mjs';
-import { parseRemoteUrl, parseGithubPrUrl, remoteRepoSlug, forgeOf, forgeOfPrUrl, FORGE_LABEL } from './forge.mjs';
+import { parseRemoteUrl, parseGithubPrUrl, remoteRepoSlug, sshUrlHost, forgeOf, forgeOfPrUrl, FORGE_LABEL } from './forge.mjs';
 import { redactSecrets } from './redact.mjs';
 import * as azurePr from './pr/azure.mjs';
 import { readAzureCredentials } from './azure-credentials.mjs';
@@ -885,17 +885,51 @@ export async function listRemotes(projectDir) {
     if (kind === 'fetch') e.fetchUrl = url; else e.pushUrl = url;
     byName.set(name, e);
   }
-  const remotes = [...byName.values()].map((e) => {
+  const remotes = await Promise.all([...byName.values()].map(async (e) => {
     // A push URL that is not a URL (`git remote set-url --push upstream DISABLED`) still names the fetch URL's repo.
-    const parsed = parseRemoteUrl(e.pushUrl) || parseRemoteUrl(e.fetchUrl);
+    const url = parseRemoteUrl(e.pushUrl) ? e.pushUrl : e.fetchUrl;
+    const parsed = await resolveSshAlias(url, parseRemoteUrl(url));
     return {
       ...e,
       host: parsed?.host ?? null, owner: parsed?.owner ?? null, repo: parsed?.repo ?? null,
       slug: remoteRepoSlug(parsed),
       forge: forgeOf(parsed), org: parsed?.org ?? null, project: parsed?.project ?? null,
     };
-  });
+  }));
   return { ok: true, remotes };
+}
+
+// ~/.ssh/config Host aliases (`git@github-work:me/repo.git` → HostName github.com): alias → Promise<real host | null>.
+// Only ssh's answers stay (null = not an alias); a failed or timed-out lookup is dropped, so the next call asks again.
+const sshAliasCache = new Map();
+const SSH_ALIAS_TIMEOUT_MS = 3_000;
+// A plain host name. Anything else (a leading `-` would be an ssh option) is never passed to ssh, nor accepted from it.
+const HOST_NAME_RE = /^[A-Za-z0-9_][A-Za-z0-9._-]*$/;
+
+/**
+ * `parsed` as the real host names it when `url` is an ssh URL whose host is no known forge: `ssh -G` prints the
+ * configuration ssh would use (reading ~/.ssh/config, no connection), and its `hostname` line is the real host. The
+ * URL is re-parsed with that host, so an Azure DevOps alias gets its org/project. Only identity changes: git keeps
+ * using the URL as written. ssh missing, failing or slow → `parsed` as is (and asked again next time). Never throws.
+ */
+async function resolveSshAlias(url, parsed) {
+  if (!parsed || forgeOf(parsed)) return parsed;
+  const ssh = sshUrlHost(url);
+  if (!ssh || !HOST_NAME_RE.test(ssh.host)) return parsed;
+  const key = ssh.host.toLowerCase();
+  if (!sshAliasCache.has(key)) {
+    const lookup = _run('ssh', ['-G', '--', ssh.host], { timeout: SSH_ALIAS_TIMEOUT_MS }).then((r) => {
+      if (!r.ok) throw new Error('ssh -G failed');
+      const real = (/^hostname\s+(\S+)\s*$/im.exec(r.stdout || '') || [])[1];
+      return real && HOST_NAME_RE.test(real) && real.toLowerCase() !== key ? real : null;
+    }).catch(() => {
+      if (sshAliasCache.get(key) === lookup) sshAliasCache.delete(key);
+      return null;
+    });
+    sshAliasCache.set(key, lookup);
+  }
+  const real = await sshAliasCache.get(key);
+  return (real && parseRemoteUrl(ssh.withHost(real))) || parsed;
 }
 
 /**
@@ -1507,6 +1541,6 @@ export async function ghApi({ role = 'read', repo = null, method = 'GET', path, 
 
 export const _testing = {
   defaultRun,
-  setRunner(fn) { _runner = typeof fn === 'function' ? fn : defaultRun; _ghCache = null; },
-  reset() { _runner = defaultRun; _ghCache = null; relationCache.clear(); shortstatCache.clear(); aheadCache.clear(); },
+  setRunner(fn) { _runner = typeof fn === 'function' ? fn : defaultRun; _ghCache = null; sshAliasCache.clear(); },
+  reset() { _runner = defaultRun; _ghCache = null; sshAliasCache.clear(); relationCache.clear(); shortstatCache.clear(); aheadCache.clear(); },
 };

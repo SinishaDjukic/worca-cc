@@ -6,6 +6,7 @@
 // Chat section shows with chat-page[data-view="home"] and ends when either changes; leaving destroys every tile and
 // its graph mount. Data comes from deps (app.js); findFollowingThread is the one fetch of its own.
 import { createQuickActions } from './home-actions.mjs';
+import { createHeroTitle } from './home-verbs.mjs';
 import {
   createHomeTabs, buildChatsList, buildPlansList, buildWorkflowsGrid, defaultTab, emptyState, runWorkflowText,
   HOME_TABS, HOME_TAB_EMPTY, HOME_TAB_KEY, RECENT_CHATS_MAX, WORKFLOWS_MAX,
@@ -105,7 +106,8 @@ export function createChatHome({ doc, host, heroSlot = null, deps, runsWaitMs = 
   };
 
   // ---- the hero, around P1's slot -------------------------------------------------------------------------
-  const title = h('h1', 'chat-home-title', 'What should worca do?');
+  const hero = createHeroTitle({ doc, win, clock });   // "What should worca <verb>?", the verb turning on a visit
+  const title = hero.el;
   host.insertBefore(title, heroSlot && heroSlot.parentNode === host ? heroSlot : host.firstChild);
 
   const actions = createQuickActions({ doc, deps, getRuns: pickRuns });
@@ -408,6 +410,7 @@ export function createChatHome({ doc, host, heroSlot = null, deps, runsWaitMs = 
   }
   function visit() {
     st.visiting = true;
+    hero.start();
     const token = ++st.visit;
     st.threads = null;
     st.workflows = null;
@@ -437,6 +440,7 @@ export function createChatHome({ doc, host, heroSlot = null, deps, runsWaitMs = 
   }
   function leave() {
     st.visiting = false;
+    hero.stop();
     st.visit += 1;
     if (st.tick != null) { clock.clearInterval(st.tick); st.tick = null; }
     if (st.pending != null) { clock.clearTimeout(st.pending); st.pending = null; }

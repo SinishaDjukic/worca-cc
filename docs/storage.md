@@ -34,6 +34,13 @@ project's working tree, so nothing is ever committed to your repo.
                                         an import made keeps the ticket's issue type and priority) and
                                         req_attachments.fetch_json (the tracker file a row comes from: the
                                         connection, the ticket key and the attachment id; NULL for an upload).
+                                        The tool panel's tab mirror (v97): tool_tabs (one row per chat or
+                                        project tab the page mirrors, and the tabs the assistant opened with
+                                        open_tab, undelivered until a page takes them in; never run tabs);
+                                        tool_tabs.target holds a Files tab's file or folder and line (JSON).
+                                        v98: designs.origin_thread_id (the chat that asked for the design).
+                                        v99: a design chat from before (ask_threads.mode 'design') becomes a
+                                        plain chat; its design still points at it (designs.thread_id)
   backup-<ts>/                          legacy JSON archived on first upgrade (see below)
   store/no-project-00000000/            runs without a project: one store, the History group "No project";
                                         a run's work/ moves into its pipeline folder as work/ when it ends
@@ -203,12 +210,12 @@ The Runs list's groups (runs redesign §3.3) are the one new named state of the 
 - `run_group_members` holds one row per ad-hoc member: `pipeline_id` is the primary key, so a run is in one group at a
   time. Its `group_id` names either a `run_groups.id` or a Shaper feature (`shape_features.id`); it has no foreign key,
   `src/core/run-groups.mjs` checks it. A feature's own slices are not rows here: they come from `shape_feature_slices`.
-  A feature's row in `shape_features` also holds its Care position and the kind of each agreed requirement (schema v96):
+  A feature's row in `shape_features` also holds its Care position and the kind of each agreed requirement (schema v101):
   `care` (default `balanced`), `care_chosen_by` (default `default`), `care_worca_pick` (NULL = no pick) and
   `requirement_kinds` (JSON keyed by requirement id; NULL = every requirement is owned by its run).
   Removing the last member of a user group deletes the group. Shipping a user group as one PR writes a branch named
   after the group (`worca-cc/` + slug + group id) and records the PR on every member's `pr_url`; no new column.
-- `shape_feature_figures` (schema v97) holds one row per finished feature (flag `shaperSmallRuns`), keyed by `feature_id`, with
+- `shape_feature_figures` (schema v102) holds one row per finished feature (flag `shaperSmallRuns`), keyed by `feature_id`, with
   no foreign key: its `care` position plus the figures JSON. It is rewritten each time the feature finishes again. Statistics
   and the team metrics record never read it, and it is never sent anywhere.
 - `run_groups.name_source` (v79) is `'suggested'` or `'user'`, as `ask_chat_groups.name_source`: whether Smart naming

@@ -46,10 +46,18 @@ export const ICONS = Object.freeze({
   search: '<circle cx="11" cy="11" r="7"></circle><path d="M20 20l-3.5-3.5"></path>',
   key: '<circle cx="8" cy="15" r="4"></circle><path d="M11 12l9-9M17 6l3 3"></path>',
   external: '<path d="M14 4h6v6M20 4l-9 9"></path><path d="M18 14v5a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V7a1 1 0 0 1 1-1h5"></path>',
+  pick: '<path d="M5 3.5 18.5 10l-6 1.6-2.4 6.1z"></path><path d="M12.6 11.7 18 17.1"></path>',
   git: '<circle cx="6" cy="6" r="2.2"></circle><circle cx="6" cy="18" r="2.2"></circle><circle cx="18" cy="8" r="2.2"></circle><path d="M6 8.2v7.6M18 10.2c0 4-6 3-10.5 6.3"></path>',
   // The remote a run pushes to (the route's remote row): a cloud with an up arrow.
   remote: '<path d="M7 18.5a4.5 4.5 0 0 1-.7-8.95A6 6 0 0 1 17.8 8.6 4.5 4.5 0 0 1 17 18.5"></path><path d="M12 19.5v-7M9 15l3-3 3 3"></path>',
   folder: '<path d="M3 7.5A1.5 1.5 0 0 1 4.5 6h4l2 2.2H19.5A1.5 1.5 0 0 1 21 9.7v8.3A1.5 1.5 0 0 1 19.5 19.5h-15A1.5 1.5 0 0 1 3 18z"></path>',
+  // The tool panel (issue 1064): a file (Files rows), a globe (slice 2's Browser slot), maximize and restore.
+  file: '<path d="M6 3.5h8l4 4v13H6z"></path><path d="M14 3.5v4h4"></path>',
+  // Design (the sidebar row and the tool panel's Design tab): a frame's corners and a pointer.
+  design: '<path d="M9 3.5H6A2.5 2.5 0 0 0 3.5 6v3M15 3.5h3A2.5 2.5 0 0 1 20.5 6v3M3.5 15v3A2.5 2.5 0 0 0 6 20.5h3"></path><path d="M12 12l2.7 8.2 1.7-3.6 3.6-1.7z"></path>',
+  globe: '<circle cx="12" cy="12" r="9"></circle><path d="M3 12h18M12 3c2.5 2.6 3.8 5.6 3.8 9s-1.3 6.4-3.8 9c-2.5-2.6-3.8-5.6-3.8-9S9.5 5.6 12 3z"></path>',
+  maximize: '<path d="M14 4h6v6M10 20H4v-6M20 4l-7 7M4 20l7-7"></path>',
+  restore: '<path d="M4 14h6v6M20 10h-6V4M10 14l-7 7M14 10l7-7"></path>',
   eye: '<path d="M2.5 12s3.5-6.5 9.5-6.5S21.5 12 21.5 12s-3.5 6.5-9.5 6.5S2.5 12 2.5 12z"></path><circle cx="12" cy="12" r="2.8"></circle>',
   link: '<path d="M10 14a4 4 0 0 0 5.7 0l3-3a4 4 0 0 0-5.7-5.7l-1 1"></path><path d="M14 10a4 4 0 0 0-5.7 0l-3 3a4 4 0 0 0 5.7 5.7l1-1"></path>',
   shield: '<path d="M12 3l8 3v6c0 4.5-3.4 7.6-8 9-4.6-1.4-8-4.5-8-9V6l8-3z"></path><path d="M9 12l2 2 4-4"></path>',
@@ -67,6 +75,7 @@ export const ICONS = Object.freeze({
   agent: '<rect x="4" y="8" width="16" height="12" rx="3"></rect><path d="M12 4v4M9 13h.01M15 13h.01"></path>',
   skill: '<path d="M12 3l1.8 5.2L19 10l-5.2 1.8L12 17l-1.8-5.2L5 10l5.2-1.8z"></path>',
   layers: '<path d="M12 3l9 4.5-9 4.5-9-4.5z"></path><path d="M3 12l9 4.5 9-4.5"></path><path d="M3 16.5l9 4.5 9-4.5"></path>',
+  summary: '<rect x="4" y="4" width="16" height="16" rx="2"></rect><path d="M8 9.5h8M8 13h8M8 16.5h5"></path>',
   none: '<rect x="5" y="5" width="14" height="14" rx="3" stroke-dasharray="3 3"></rect>',
   // The Design stage (ui/public/design/): the hide-cursors toggle, the viewport switch, and an agent's Stop.
   cursor: '<path d="M5 3.5l5.2 16.5 2.7-6.7 6.6-2.7z"></path>',

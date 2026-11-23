@@ -49,7 +49,7 @@ function toDesign(r) {
   if (!r) return null;
   return {
     id: r.id, title: r.title, kind: r.kind, fast: !!r.fast, projectKey: r.project_key ?? null,
-    threadId: r.thread_id ?? null, engine: r.engine ?? null, status: r.status, currentBuild: r.current_build ?? null,
+    threadId: r.thread_id ?? null, originThreadId: r.origin_thread_id ?? null, engine: r.engine ?? null, status: r.status, currentBuild: r.current_build ?? null,
     version: Number(r.version), createdBy: r.created_by ?? null, createdAt: r.created_at, updatedAt: r.updated_at,
     costUsd: roundUsd(Number(r.spend) || 0), models: readModels(r.models_json),
     pictures: r.pictures == null ? DESIGN_PICTURES_DEFAULT : !!r.pictures, sound: readSound(r.sound_json),
@@ -197,7 +197,7 @@ function freshDesignId() {
   throw new DesignError('IO', 'could not pick a free design id');
 }
 
-export function createDesign({ kind, title, fast, pictures, projectKey, threadId, engine, models } = {}, { by = null } = {}) {
+export function createDesign({ kind, title, fast, pictures, projectKey, threadId, originThreadId, engine, models } = {}, { by = null } = {}) {
   const k = cleanKind(kind);
   const m = cleanModels(models);
   const t = cleanTitle(title);
@@ -205,6 +205,7 @@ export function createDesign({ kind, title, fast, pictures, projectKey, threadId
   const pi = cleanPictures(pictures);
   const pk = cleanRef(projectKey, 'projectKey');
   const th = cleanRef(threadId, 'threadId');
+  const oth = cleanRef(originThreadId, 'originThreadId');
   const en = cleanRef(engine, 'engine');
   getDb();
   const id = freshDesignId();
@@ -212,8 +213,9 @@ export function createDesign({ kind, title, fast, pictures, projectKey, threadId
   try {
     ensureDesignFolders(id);
     prepare(`INSERT INTO designs (id, title, kind, fast, project_key, thread_id, engine, status, current_build, version,
-        created_by, created_at, updated_at, models_json, pictures) VALUES (?, ?, ?, ?, ?, ?, ?, 'empty', NULL, 0, ?, ?, ?, ?, ?)`)
-      .run(id, t, k, f ? 1 : 0, pk, th, en, by ?? null, ts, ts, m, pi ? 1 : 0);
+        created_by, created_at, updated_at, models_json, pictures, origin_thread_id)
+        VALUES (?, ?, ?, ?, ?, ?, ?, 'empty', NULL, 0, ?, ?, ?, ?, ?, ?)`)
+      .run(id, t, k, f ? 1 : 0, pk, th, en, by ?? null, ts, ts, m, pi ? 1 : 0, oth);
   } catch (err) {
     try { rmSync(designDir(id), RM_OPTS); } catch { /* the original error is the one worth reporting */ }
     throw err;
@@ -237,6 +239,12 @@ export function listDesigns({ visibleTo = null } = {}) {
   const where = visibleTo ? ' WHERE (d.created_by IS NULL OR d.created_by = ?)' : '';
   const args = visibleTo ? [visibleTo] : [];
   return prepare(`${SELECT_DESIGNS}${where} ORDER BY d.updated_at DESC, d.id`).all(...args).map(toDesign);
+}
+
+/** The designs a plain chat asked for (`origin_thread_id`), newest first; not the design chat's own (`thread_id`). */
+export function listDesignsByOrigin(threadId) {
+  if (typeof threadId !== 'string' || !threadId) return [];
+  return prepare(`${SELECT_DESIGNS} WHERE d.origin_thread_id = ? ORDER BY d.updated_at DESC, d.id`).all(threadId).map(toDesign);
 }
 
 /** Patchable fields; anything else in a patch is ignored. None holds a spending limit (M13). */

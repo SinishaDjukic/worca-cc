@@ -1,6 +1,6 @@
 // src/core/worca-levels/store.mjs
 // Persisted per-person worca-level state: <settings root>/.worca-cc/worca-levels.json, beside
-// away-people.json. Shape { version: 1, people: { [key]: PersonRecord } }.
+// away-people.json. Shape { version: 1, people: { [key]: PersonRecord }, install: {} } (install is reserved).
 //
 // updatePerson() is the ONLY writer. Updates run through an in-process promise queue, so two
 // parallel calls for one key never lose a write; each call re-reads the file, hands `fn` the
@@ -41,7 +41,7 @@ function assertKey(key) {
 }
 
 function emptyData() {
-  return { version: STORE_VERSION, people: Object.create(null) };
+  return { version: STORE_VERSION, people: Object.create(null), install: {} };
 }
 
 function quarantine(file, reason) {
@@ -59,7 +59,7 @@ function parseData(text) {
   if (!isObj(data) || !isObj(data.people)) throw new Error('unexpected shape');
   const people = Object.create(null);
   for (const [k, v] of Object.entries(data.people)) if (!FORBIDDEN_KEYS.has(k) && isObj(v)) people[k] = v;
-  return { version: STORE_VERSION, people };
+  return { version: STORE_VERSION, people, install: isObj(data.install) ? data.install : {} };
 }
 
 /**

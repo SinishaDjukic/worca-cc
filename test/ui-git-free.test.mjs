@@ -324,7 +324,7 @@ test('Skills › Check for updates: a 409 GIT_MISSING opens Update <name> with t
     doc.body.replaceChildren(host);
     const ctl = createMcpView({ host, api, navigate: () => {}, confirm: async () => true, modal, doc, notify: (n) => said.push(n) });
     await ctl.show('skills');
-    host.querySelector(`.sk-row[data-skill="${id}"] [data-skill-update]`).dispatchEvent(new doc.defaultView.Event('click', { bubbles: true }));
+    host.querySelector(`.cx-row[data-skill="${id}"] [data-skill-update]`).dispatchEvent(new doc.defaultView.Event('click', { bubbles: true }));
     await settle();
     if (want) assert.deepEqual([modal.opened.title, modal.opened.body.textContent, modal.opened.body.className, modal.opened.actions.map(([l]) => l)], want);
     else assert.deepEqual([modal.opened, said.length], [null, 1]);

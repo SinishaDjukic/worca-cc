@@ -41,6 +41,7 @@ import { defaultWorkspaceDeps } from './workspace-deps.mjs';
 import { defaultActionsDeps } from './actions-deps.mjs';
 import { defaultMcpServerDeps } from './mcp-deps.mjs';
 import { defaultProxyDeps } from './proxy-deps.mjs';
+import { defaultTabDeps } from './tab-deps.mjs';
 import { defaultWebDeps } from './web-deps.mjs';
 import { defaultFileDeps } from './file-deps.mjs';
 import { defaultCommandDeps } from './command-deps.mjs';
@@ -110,6 +111,8 @@ export function createAskToolServer({ threadId, reader = null, signal, write, lo
       ...defaultFileDeps({ threadId, env, signal }),
       // Agent mode (#574): present only when this turn's env names the command bridge (command-deps.mjs).
       ...defaultCommandDeps({ env }),
+      // The tool panel's tab tools (issue 1064 slice 3): present only when this turn's env names the tab bridge.
+      ...defaultTabDeps({ env }),
       // The composer family (composer-deps.mjs): all of it on a composer thread (Workflows view, D10); an Ask thread gets
       // the drafts and build_workflow without the canvas.
       ...defaultComposerDeps({ threadId }),

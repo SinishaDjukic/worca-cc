@@ -16,7 +16,7 @@
 // HOME is sandboxed — the fallback cannot reach the real ~/.worca-cc.
 import { test, before, beforeEach, after } from 'node:test';
 import assert from 'node:assert/strict';
-import http from 'node:http';
+import { appServer } from './helpers/app-server.mjs';
 import { mkdtemp, rm, mkdir, writeFile, readFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { isAbsolute, join } from 'node:path';
@@ -89,7 +89,7 @@ before(async () => {
   process.env.WORCA_TEST_ALLOW_HOME_FALLBACK = '1';
   _resetForTests();
   const { app } = await import('../ui/server.mjs');
-  srv = http.createServer(app);
+  srv = appServer(app);
   await new Promise((r) => srv.listen(0, '127.0.0.1', r));
   apiBase = `http://127.0.0.1:${srv.address().port}`;
 });
@@ -325,7 +325,7 @@ test('GET /api/settings returns {root, projectsRoot, projectsRootDefault, defaul
     const j = await getApi();
     // `app` = static identity for the Settings ▸ About card (version, repo URL,
     // release-tag URL — read from package.json). GET-only: POST still echoes settingsState() + chat.
-    assert.deepEqual(Object.keys(j).sort(), ['actions', 'actionsDetected', 'actionsGate', 'agentGenModel', 'agentGenModelEffective', 'app', 'askEngine', 'askMaxBudgetUsd', 'askMaxTurns', 'askModels', 'askWeb', 'autoGeneratePrDescription', 'autoWorkflowModel', 'autoWorkflowModelEffective', 'chat', 'commandSummaryModel', 'commandSummaryModelEffective', 'costLimitResetPeriod',
+    assert.deepEqual(Object.keys(j).sort(), ['actions', 'actionsDetected', 'actionsGate', 'agentGenModel', 'agentGenModelEffective', 'app', 'askEngine', 'askMaxBudgetUsd', 'askMaxTurns', 'askModels', 'askWeb', 'autoGeneratePrDescription', 'autoWorkflowModel', 'autoWorkflowModelEffective', 'chat', 'chatLinksInPanel', 'commandSummaryModel', 'commandSummaryModelEffective', 'costLimitResetPeriod',
       'debugSpawnEffective', 'debugSpawnEnabled', 'default', 'designModels', 'enforceTags', 'factoryModels', 'flags', 'git', 'hideBuiltinEngines', 'hideBuiltinModels', 'humanRateUsdPerHour', 'keepAwake', 'memoryDefrag', 'memoryDefragDefault', 'modelRoles', 'namingModel', 'namingModelEffective', 'networkWait', 'nightMode', 'nightModeEffective', 'nightModeToggle', 'pipelineCostLimitUsd', 'prDescriptionModel', 'prDescriptionModelEffective', 'projectsRoot', 'projectsRootDefault', 'resumeAfterUsageLimit', 'root', 'runEngine', 'runLimits',
       'schedule', 'screensaver', 'secondOpinionModel', 'smartNaming', 'stepModels', 'sync', 'tagDimensions', 'testWorkersAuto', 'theme', 'titleModel', 'titleModelEffective', 'totalCostLimitUsd', 'uiLevel', 'updateCheck', 'utilityModels', 'workspaceScan', 'workspaceScanDefault', 'workspaceScanFromRole']);
     assert.deepEqual(Object.keys(j.actionsDetected).sort(), ['editor', 'terminal'], 'what blank Editor / Terminal fall back to');

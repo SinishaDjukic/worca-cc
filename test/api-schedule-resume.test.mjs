@@ -2,7 +2,7 @@
 // POST /api/schedules/resume + firing of resume tickets through schedulerTick.
 import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
-import http from 'node:http';
+import { appServer } from './helpers/app-server.mjs';
 import { mkdtemp } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -40,7 +40,7 @@ before(async () => {
   ({ runs, schedulerTick } = mod);          // api-schedules :69 shape
   ({ getDb } = await import('../src/core/db.mjs'));
   const { addProject } = await import('../src/core/projects.mjs');
-  srv = http.createServer(mod.app);
+  srv = appServer(mod.app);
   await new Promise((r) => srv.listen(0, '127.0.0.1', r));
   base = `http://127.0.0.1:${srv.address().port}`;
   dir = gitDir('sched-resume');

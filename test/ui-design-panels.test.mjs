@@ -129,7 +129,9 @@ test('Plan list: hidden with nothing planned; header `28 sections`; band rows wi
   assert.deepEqual([list.el.querySelector('.dz-plan-head b').textContent, list.el.querySelector('.dz-plan-head .dz-meta').textContent], ['Plan', '28 sections']);
   const rows = [...list.el.querySelectorAll('.dz-plan-row')];
   assert.deepEqual(rows.map((r) => [r.querySelector('.dz-plan-name').textContent, r.querySelector('.dz-plan-n').textContent, r.querySelectorAll('.dz-who-dot').length]), [
-    ['Nav', '', 0], ['Hero', '5', 2], ['Pricing', '3', 1], ['Quotes', '', 0], ['FAQ', '', 0], ['Footer', '', 0]]);
+    ['Nav', '', 0], ['Hero', '5 sections', 2], ['Pricing', '3 sections', 1], ['Quotes', '', 0], ['FAQ', '', 0], ['Footer', '', 0]]);
+  list.paint({ ...PLAN, one: 'slide', rows: [{ key: 'a', name: 'Opening', n: 1, state: 'planned', who: [] }, { key: 'b', name: 'Close', n: 2, state: 'planned', who: [] }] });
+  assert.deepEqual([...list.el.querySelectorAll('.dz-plan-n')].map((n) => n.textContent), ['1 slide', '2 slides'], 'the stage\'s noun, one or many');
   assert.deepEqual(rows.map((r) => r.className.replace('dz-plan-row', '').trim()), ['is-done', 'is-active', 'is-active is-waiting', 'is-failed', 'is-stopped', '']);
   assert.equal(rows[1].querySelector('.dz-who-dot').style.background, 'var(--teal-ink)');
 });

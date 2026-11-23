@@ -92,6 +92,12 @@ test('placeFlyout: side / up / beside / down, each clamped to the viewport; un-h
       placeFlyout($('menu'), $('trig'), { mode: 'up', win: window });
       assert.equal($('menu').style.top, '8px');
     } },
+    { name: 'up-end: above the trigger, right edges aligned', run: () => {
+      const { window, $ } = setup(); viewport(window, 1000, 800);
+      box($('menu'), { width: 264, height: 120 }); box($('trig'), { left: 300, top: 500, width: 32, height: 32 });
+      placeFlyout($('menu'), $('trig'), { mode: 'up-end', win: window });
+      assert.deepEqual([$('menu').style.left, $('menu').style.top], ['68px', '374px']);   // 332 - 264, 500 - 120 - 6
+    } },
     { name: 'beside: right of the parent menu + 4, 5px above the item; flips left when there is no room', run: () => {
       const { window, $ } = setup();
       viewport(window, 1280, 800);

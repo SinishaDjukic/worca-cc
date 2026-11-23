@@ -429,15 +429,15 @@ const withConcern = async (fn) => {
   try { return await fn(); } finally { delete process.env.WORCA_MOCK_ROLE_REVIEW; }
 };
 
-test('Away on: the run holds at Requirements, nothing answered', async () => {
+test('Away on: Away agrees to the Requirements, flagged and on record', async () => {
   const h = start({}, () => {});
   h.orch.setNightOverride('on');
-  for (const end = Date.now() + 60000; !h.asks.some(isReqAsk) && Date.now() < end;) await new Promise((r) => setTimeout(r, 10));
-  await new Promise((r) => setTimeout(r, 300));
-  assert.equal(h.orch.pendingQuestion?.id, 'plan-n_reqrefine-1');
-  assert.equal(h.orch.state.night.openedAt, null, 'no countdown');
-  assert.equal(h.orch.state.night.decisions, 0);
-  assert.equal(h.orch.answeredBy('plan-n_reqrefine-1') === 'night-mode', false);
+  for (const end = Date.now() + 60000; h.orch.answeredBy('plan-n_reqrefine-1') !== 'night-mode' && Date.now() < end;) await new Promise((r) => setTimeout(r, 10));
+  assert.equal(h.orch.answeredBy('plan-n_reqrefine-1'), 'night-mode');
+  const rec = h.orch.nightDecision('plan-n_reqrefine-1');
+  assert.equal(rec.choice, 'approve');
+  assert.equal(rec.flagged, true);
+  assert.deepEqual(rec.meta, { ask: 'requirements' });
   h.orch.stop();
   await h.done;
 });

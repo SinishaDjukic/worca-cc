@@ -5,7 +5,7 @@
 // The success path (draft reaching createPr, the PR, the push) is covered by marketplace-publish-flow.
 import { test, before, after, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
-import http from 'node:http';
+import { appServer } from './helpers/app-server.mjs';
 import { useTempHome } from './helpers/temp-home.mjs';
 import { writeMarketplaces } from '../src/core/marketplaces.mjs';
 import { _testing } from '../src/core/marketplace-publish.mjs';
@@ -16,7 +16,7 @@ before(async () => {
   process.env.WORCA_MOCK = '1';
   delete process.env.WORCA_CLONE_ALLOW;                    // D17 is read per request: keep the ambient one out
   const { app } = await import('../ui/server.mjs');
-  srv = http.createServer(app);
+  srv = appServer(app);
   await new Promise((r) => srv.listen(0, '127.0.0.1', r));
   base = `http://127.0.0.1:${srv.address().port}`;
   writeMarketplaces({ seededBuiltin: true, marketplaces: {

@@ -4,7 +4,7 @@
 // workspace policy home, and the run / resume gates' refusals.
 import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
-import http from 'node:http';
+import { appServer } from './helpers/app-server.mjs';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -31,7 +31,7 @@ const patch = (p, body) => fetch(`${base}${p}`, { method: 'PATCH', headers: JSON
 useGitSandbox(before, after);   // FIRST: the server resolves settings under HOME
 before(async () => {
   mod = await import('../ui/server.mjs');
-  srv = http.createServer(mod.app);
+  srv = appServer(mod.app);
   await new Promise((r) => srv.listen(0, '127.0.0.1', r));
   base = `http://127.0.0.1:${srv.address().port}`;
 });
