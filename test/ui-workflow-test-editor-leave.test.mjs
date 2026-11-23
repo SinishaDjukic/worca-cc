@@ -159,3 +159,14 @@ test('B7: saving an example deleted meanwhile says so, and the changes stay on s
   assert.equal(h.root.querySelector('#wft-ex-name').value, 'Bulk invoice export, Q4');
 });
 
+test('U1: "Add an exact check" opens on an exact check (Every quote is in the files), not on "Length in words"', async () => {
+  const { h } = await openEditor();
+  button(h, 'Add an exact check').click();
+  await settle();
+  const kind = h.w.document.getElementById('wft-ck-kind');
+  assert.equal(kind.value, 'quotes');
+  button(h, 'Add an automatic check').click();
+  await settle();
+  assert.equal(h.w.document.getElementById('wft-ck-kind').value, 'words', 'the other button keeps its own start');
+});
+

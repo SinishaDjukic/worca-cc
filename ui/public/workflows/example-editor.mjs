@@ -100,7 +100,7 @@ export function openAnswerDialog({ doc, win, pair = null, onSave, onRemove = nul
 /** G1: Add an automatic check — the kind, its fields, and the label it will have. `scripts` null: the Library did not load.
  *  `project`: the example works on a project (board 33): the kinds go in two groups, the command check joins, and a text
  *  check can read a file in the project. */
-export function openCheckDialog({ doc, win, check = null, scripts = [], project = false, suggest = null, onSave, onRemove = null }) {
+export function openCheckDialog({ doc, win, check = null, scripts = [], project = false, suggest = null, startKind = null, onSave, onRemove = null }) {
   const listed = scripts;
   scripts = Array.isArray(scripts) ? scripts : [];
   const kind = el(doc, 'select');
@@ -121,7 +121,8 @@ export function openCheckDialog({ doc, win, check = null, scripts = [], project 
     for (const k of resultKinds) kind.append(opt(k));
     if (check && PROJECT_KINDS.includes(check.kind)) kind.append(opt(check.kind));   // an edited project check keeps its kind
   }
-  kind.value = check ? check.kind : suggest ? suggest.alt.kind : 'words';
+  // Pre-merge QA (U1): "Add an exact check" opens on an exact check (startKind), not on "Length in words".
+  kind.value = check ? check.kind : suggest ? suggest.alt.kind : startKind || 'words';
   const fields = el(doc, 'div', 'wft-ck-fields');
   const preview = el(doc, 'p', 'hint wft-ck-preview');
   preview.setAttribute('aria-live', 'polite');
@@ -823,7 +824,7 @@ export function renderExampleEditor(root, ex, actions, { doc, win, scripts = [],
     onConfirm: onConfirmCriterion ? confirmSaved : null,
     onSwitch: (c, alt) => openCheckDialog({ doc, win, scripts: listed, project: !!pick.key, suggest: { criterion: c, alt },
       onSave: (nc) => { addCheck(nc); crit.remove(c); } }),
-    onAddExact: () => openCheckDialog({ doc, win, scripts: listed, project: !!pick.key, onSave: addCheck }) });
+    onAddExact: () => openCheckDialog({ doc, win, scripts: listed, project: !!pick.key, startKind: PART4_KINDS[0], onSave: addCheck }) });
   c3.append(crit.el);
   // Task 24 (boards 2, 32; P4-M2): a result you liked. Its own route keeps it at once (never through Save), so only this row repaints;
   // an example not saved yet waits for its first save. `likedTries` = the example's finished tries to pick from ([{ id, label }]).
