@@ -41,15 +41,16 @@ function harness() {
 async function openEditor({ answer = true } = {}) {
   const h = harness();
   const asked = [];
+  const pages = [];
   const { createWorkflowTests } = await import('../ui/public/workflows/tests-app.mjs');
   const ctl = createWorkflowTests({ doc: h.w.document, win: h.win, fetch: h.fetch, safeJson: (r) => r.json(), composer: () => ({ template: () => ({ id: 'wf_a' }) }),
-    api: {}, versions: () => ({ showPage: () => ctl.enterList() }), currentView: () => 'workflows',
+    api: {}, versions: () => ({ showPage: (p) => { pages.push(p); if (p === 'tests') ctl.enterList(); else h.root.hidden = true; } }), currentView: () => 'workflows',
     confirmModal: async (o) => { asked.push(o.title); return answer; }, openNewPipeline: () => {}, hdMarkdown: {}, mock: () => false, runPageShows: () => false });
   await settle();
   ctl.route('wf_a', 'tests/1', true);
   await settle();
   assert.ok(h.root.querySelector('#wft-ex-name'), 'the editor shows');
-  return { h, ctl, asked };
+  return { h, ctl, asked, pages };
 }
 const type = (h, sel, text) => { const i = h.root.querySelector(sel); i.value = text; i.dispatchEvent(new h.w.Event('input', { bubbles: true })); };
 const button = (h, label) => [...h.root.querySelectorAll('button')].find((b) => b.textContent.trim() === label);
@@ -126,3 +127,25 @@ test('closeTestDialogs closes every tracked dialog once, and one already closed 
   assert.equal(closed, 1);
   assert.ok(d);
 });
+
+test('B2: Back to the bare workflow while the Tests page shows: the canvas comes (asking first about changes); a Tests address is left to the router', async () => {
+  const back = (h, hash) => { h.w.history.replaceState(null, '', hash); for (const f of h.listeners.hashchange || []) f(); };
+  const plain = await openEditor();
+  back(plain.h, '#workflows');
+  await settle();
+  assert.equal(plain.pages.at(-1), 'canvas', 'no changes: the canvas, the page the address names');
+
+  const kept = await openEditor({ answer: false });
+  type(kept.h, '#wft-ex-name', 'Bulk invoice export, Q4');
+  back(kept.h, '#workflows/wf_a');
+  await settle();
+  assert.deepEqual(kept.asked, ['Discard your changes to this example?']);
+  assert.notEqual(kept.pages.at(-1), 'canvas', 'kept editing: the page stays');
+  assert.equal(kept.h.w.location.hash, '#workflows/wf_a/tests/1', 'and the address names it again');
+
+  const routed = await openEditor();
+  back(routed.h, '#workflows/wf_a/tests/run/2');
+  await settle();
+  assert.notEqual(routed.pages.at(-1), 'canvas', "a Tests address is routeWorkflows' to open");
+});
+

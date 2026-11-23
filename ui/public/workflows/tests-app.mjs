@@ -537,7 +537,15 @@ export function createWorkflowTests(deps) {
   win.addEventListener?.('beforeunload', (e) => { if (wftEditorChanged()) { e.preventDefault(); e.returnValue = ''; } });
   // B3: the Tests page writes its own address with replaceState (no event), so a hashchange is the person going
   // elsewhere (Back, Forward, a typed address): no Tests dialog stays open over the page that comes.
-  win.addEventListener?.('hashchange', () => closeTestDialogs());
+  // B2: Back (or a typed address) to the bare workflow, #workflows or #workflows/<this id>, while the Tests page shows:
+  // the page follows the address to the canvas, after the editor's question; kept editing, the address names the page again.
+  win.addEventListener?.('hashchange', () => {
+    closeTestDialogs();
+    const id = wftWorkflowId();
+    if (!id || currentView() !== 'workflows' || wfvEls().tests?.hidden !== false) return;
+    if (!new RegExp(`^#workflows(/${id})?/?$`).test(win.location.hash)) return;   // a Tests address, or elsewhere: routed there
+    void wftLeaveEditor().then((go) => { if (go) wfvShowPage('canvas'); else wftSyncHash(); });
+  });
   function wftRenderEditor(root) {
     const session = { workflowId: wftWorkflowId(), exampleId: wft.example && wft.example.id ? wft.example.id : null, token: ++wftEditorSeq };
     wft.editorToken = session.token;
