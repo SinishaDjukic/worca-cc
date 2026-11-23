@@ -434,6 +434,18 @@ export function openTestVersionDialog({ doc, win, options = [], a = null, b = 'd
   const projectChosen = () => chosen().some((e) => e.projectName);
 
   const capField = field(doc, 'Stop if the cost goes over', cap, { id: cap.id, hint: 'Tests count in your spending limit. You can close this page: Worca tells you when the results are ready.' });
+  // Pre-merge QA (B8): a limit that is not an amount says so under the box as it is typed, not only after Start below
+  // the fold; a Start refused for it puts the focus on the box.
+  const capErr = el(doc, 'p', 'hint err wft-cap-err');
+  capErr.id = 'wft-tv-cap-err';
+  capErr.setAttribute('aria-live', 'polite');
+  capField.append(capErr);
+  const CAP_ERROR = 'Give the cost limit in dollars, such as $15.';
+  const markCap = (bad) => {
+    capErr.textContent = bad ? CAP_ERROR : '';
+    if (bad) { cap.setAttribute('aria-invalid', 'true'); cap.setAttribute('aria-describedby', capErr.id); } else { cap.removeAttribute('aria-invalid'); cap.removeAttribute('aria-describedby'); }
+  };
+  cap.addEventListener('input', () => markCap(cap.value.trim() !== '' && !(parseUsd(cap.value) > 0)));
   const dlg = testDialog({
     doc, win, title: 'Test a version', confirmLabel: 'Start',
     body: [vs, reuse, row2, conn, quickRow, safe, lock, est, refuse, capField, note],
@@ -441,7 +453,7 @@ export function openTestVersionDialog({ doc, win, options = [], a = null, b = 'd
       // testDialog gives the button back after a refusal: a pick made meanwhile may have nothing to start.
       if (!estimate || !estimate.total || noVersion() || selA.value === selB.value || sameDraft()) return { ok: false, error: note.textContent || 'Wait for the estimate, then start.' };
       const capUsd = parseUsd(cap.value);   // I2: "15,50" is $15.50, not $1,550
-      if (!(capUsd > 0)) return { ok: false, error: 'Give the cost limit in dollars, such as $15.' };
+      if (!(capUsd > 0)) { markCap(true); cap.focus(); return { ok: false, error: CAP_ERROR }; }
       posting = true;
       try {
         return await onStart({ a: useOfValue(selA.value), b: useOfValue(selB.value), exampleIds: chosen().map((e) => e.id), tries,

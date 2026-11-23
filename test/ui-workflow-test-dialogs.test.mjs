@@ -375,9 +375,13 @@ test('C16 with no saved version; two equal versions; one example starts at its o
   assert.equal(one.doc.querySelector('.wft-tv-tries .seg button.on').textContent, '5');
   const cap = one.doc.querySelector('#wft-tv-cap');
   cap.value = 'lots'; cap.dispatchEvent(new one.doc.defaultView.Event('input'));
+  // Pre-merge QA (B8): said under the box as it is typed, before any Start
+  assert.deepEqual([one.doc.querySelector('#wft-tv-cap-err').textContent, cap.getAttribute('aria-invalid'), cap.getAttribute('aria-describedby')],
+    ['Give the cost limit in dollars, such as $15.', 'true', 'wft-tv-cap-err']);
   click(one.doc.querySelector('.wft-dlg-ok'));
   await tick();
   assert.equal(one.doc.querySelector('.wft-dlg-error').textContent, 'Give the cost limit in dollars, such as $15.');
+  assert.equal(one.doc.activeElement, cap, 'a refused Start puts the focus on the box, so the reason is in view');
   assert.equal(one.started.length, 0);
   for (const bad of ['-2', '2e3', '1,000']) {
     cap.value = bad; cap.dispatchEvent(new one.doc.defaultView.Event('input'));
@@ -386,6 +390,7 @@ test('C16 with no saved version; two equal versions; one example starts at its o
     assert.equal(one.started.length, 0, `${bad} is refused`);
   }
   cap.value = '15,50'; cap.dispatchEvent(new one.doc.defaultView.Event('input'));
+  assert.deepEqual([one.doc.querySelector('#wft-tv-cap-err').textContent, cap.hasAttribute('aria-invalid')], ['', false], 'an amount clears it');
   click(one.doc.querySelector('.wft-dlg-ok'));
   await tick();
   assert.equal(one.started.length, 1);
