@@ -2005,8 +2005,14 @@ test('Versions page: focusable, takes the focus and clears the canvas selection,
   await tick();
   assert.equal(doc.querySelectorAll('#wfv-canvas .gv-world .node').length, nodes);
   assert.equal(page.querySelectorAll('.wfv-vt-row').length, 2, 'the page is painted once the overview arrives');
+  const canvas = doc.getElementById('wfv-canvas');
+  assert.equal(canvas.hasAttribute('inert'), true, 'pre-merge QA (B4): Tab never walks the hidden canvas');
+  clickEl(w, doc.querySelector('#wfv-pages [data-page="tests"]'));
+  await tick(4);
+  assert.equal(canvas.hasAttribute('inert'), true, 'nor under the Tests page');
   clickEl(w, doc.querySelector('#wfv-pages [data-page="canvas"]'));
   assert.equal(page.hidden, true);
+  assert.equal(canvas.hasAttribute('inert'), false, 'back on Canvas it works again');
 });
 
 test('Save version on a saved, clean canvas: "Save version 3" lists what changed since the latest version (v2)', async () => {

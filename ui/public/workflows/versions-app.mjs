@@ -109,6 +109,8 @@ export function createWorkflowVersions(deps) {
     }
     if (els.versions) els.versions.hidden = page !== 'versions';
     if (els.tests) els.tests.hidden = page !== 'tests';
+    // Pre-merge QA (B4): under the Versions or Tests page the canvas is inert, so Tab never walks its hidden nodes.
+    doc.getElementById('wfv-canvas')?.toggleAttribute('inert', page === 'versions' || page === 'tests');
     if (page === 'tests') {
       composer()?.select(null);
       els.tests?.focus();
