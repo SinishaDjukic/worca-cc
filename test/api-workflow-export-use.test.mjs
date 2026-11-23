@@ -1,6 +1,6 @@
 // test/api-workflow-export-use.test.mjs — D17 over HTTP: GET /api/workflows/:id/json?use= and POST .../export
-// { use } export the draft (missing or 'draft') or a saved version (a positive integer). No flag gate: the flag is
-// off here and the version is saved through the core, as an explicit version number needs no flag.
+// { use } export the draft (missing or 'draft') or a saved version (a positive integer), with the flag on. Pre-merge
+// check: with the flag off, `use` is ignored and the draft is exported, exactly as on dev (the last test).
 import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import http from 'node:http';
@@ -31,7 +31,7 @@ before(async () => {
   prevHome = process.env.WORCA_HOME;
   process.env.WORCA_HOME = homeDir;
   process.env.WORCA_MOCK = '1';
-  delete process.env.WORCA_FLAGS;
+  process.env.WORCA_FLAGS = 'workflowTests';
   const { app } = await import('../ui/server.mjs');
   srv = http.createServer(app);
   await new Promise((r) => srv.listen(0, '127.0.0.1', r));
@@ -44,7 +44,7 @@ before(async () => {
 after(async () => {
   if (srv) await new Promise((r) => srv.close(r));
   if (prevHome === undefined) delete process.env.WORCA_HOME; else process.env.WORCA_HOME = prevHome;
-  delete process.env.WORCA_MOCK;
+  delete process.env.WORCA_MOCK; delete process.env.WORCA_FLAGS;
   await rm(homeDir, { recursive: true, force: true, maxRetries: 20, retryDelay: 100 });
   await Promise.all(dirs.map((d) => rm(d, { recursive: true, force: true })));
 });
@@ -116,4 +116,22 @@ test('POST …/export: 400 for a bad use on every destination, before anything e
   await checkRows(rows);
   const r = await post(`/api/workflows/${ID}/export`, { destination: 'project', projectDir: dir, dryRun: true, use: 9 });
   assert.equal(r.status, 404);
+});
+
+test('flag off: use is ignored on both routes and the draft is exported, as on dev', async () => {
+  delete process.env.WORCA_FLAGS;
+  try {
+    await checkRows(['1', 'live', 'abc', '9', ''].map((u) => ({ name: `?use=${u}`, run: async () => {
+      const r = await fetch(`${base}/api/workflows/${ID}/json?use=${encodeURIComponent(u)}`);
+      assert.equal(r.status, 200);
+      assert.equal((await r.json()).name, 'Export API draft');
+    } })));
+    const pluginDir = join(await tmp(), 'off-plugin');
+    for (const use of [1, 'live', 9]) {
+      const r = await post(`/api/workflows/${ID}/export`, { destination: 'plugin', pluginDir, use });
+      assert.equal(r.status, 200, `use=${JSON.stringify(use)}: ${JSON.stringify(await r.clone().json())}`);
+      const written = JSON.parse(await readFile(join(pluginDir, 'workflows', 'api_use.json'), 'utf8'));
+      assert.equal(written.name, 'Export API draft');
+    }
+  } finally { process.env.WORCA_FLAGS = 'workflowTests'; }
 });

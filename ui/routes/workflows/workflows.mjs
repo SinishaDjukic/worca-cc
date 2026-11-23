@@ -161,10 +161,11 @@ app.post('/api/workflows/import-json', async (req, res) => {
 
 // D17 (plans/workflow-tests-plan.md): what an export exports. Missing = 'draft' (today's behaviour). The query form
 // is parsed here (the digits of a positive integer become a number); the rule itself is the core's isExportUse, so
-// 'live' and anything else is a caller error. No flag gate: an explicit version number needs none (runnableOf).
+// 'live' and anything else is a caller error. Pre-merge check: with the flag off, `use` is ignored and the draft is
+// exported, exactly as on dev (no Worca screen sends it then: the Version field needs the flag).
 const EXPORT_USE_ERROR = "use must be 'draft' or a version number (1, 2, …)";
 function exportUseOf(raw, { query = false } = {}) {
-  if (raw === undefined) return { use: 'draft' };
+  if (raw === undefined || !flagEnabled('workflowTests')) return { use: 'draft' };
   const use = query && typeof raw === 'string' && /^[1-9]\d*$/.test(raw) ? Number(raw) : raw;
   return isExportUse(use) ? { use } : { error: EXPORT_USE_ERROR };
 }
