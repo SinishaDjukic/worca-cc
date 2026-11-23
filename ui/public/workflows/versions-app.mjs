@@ -9,6 +9,9 @@ import { openSaveVersionDialog, openUseVersionDialog, statusText } from './versi
 import { renderVersionsPage } from './versions-view.mjs';
 
 /** Plugin rows and the built-ins never have versions (D5); a format-1 row is not a graph (isVersionableRow). */
+/** Pre-merge QA (U13): a restore replaces the draft at once; Every save keeps the draft it replaced (D3). */
+export const RESTORE_UNDO = 'The draft it replaced is kept under Every save: restore it from there to undo.';
+
 export function workflowCanHaveVersions(w) {
   return !!w && Number(w.version) === 2 && !isReservedWorkflowId(w.id) && !String(w.origin || '').startsWith('plugin:');
 }
@@ -209,13 +212,13 @@ export function createWorkflowVersions(deps) {
         if (!r.ok) { notify({ tone: 'err', title: 'Not restored', detail: wfvRestoreRefusal(r) }); return; }
         if (composer().template().id !== id) {
           // Another workflow opened meanwhile: the canvas keeps it, and the toast says which workflow's draft changed.
-          notify({ tone: 'ok', title: `Restored ${label} into the draft of "${(o && o.name) || id}"` });
+          notify({ tone: 'ok', title: `Restored ${label} into the draft of "${(o && o.name) || id}"`, detail: RESTORE_UNDO });
           return;
         }
         composer().loadTemplate(r.workflow);
         wfvVersionsOverview = r.overview || wfvVersionsOverview;
         wfvRenderVersionsPage();
-        notify({ tone: 'ok', title: `Restored ${label} into your draft` });
+        notify({ tone: 'ok', title: `Restored ${label} into your draft`, detail: RESTORE_UNDO });
       },
       openCanvas: () => wfvShowPage('canvas'),
     }, { doc, error: id && !o && err ? err.error : null, loading: Boolean(id && !o && !err) });

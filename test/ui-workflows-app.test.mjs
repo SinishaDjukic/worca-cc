@@ -2182,6 +2182,7 @@ test('Versions page: Restore into draft on an edited canvas asks once, then load
   assert.equal(gv.isDirty(), false);
   assert.equal(doc.getElementById('wfv-versions').hidden, false, 'the Versions page stays open');
   assert.equal(lastToast(doc).title, 'Restored v1 into your draft');
+  assert.equal(lastToast(doc).detail, 'The draft it replaced is kept under Every save: restore it from there to undo.', 'U13: it says how to undo');
 });
 
 test('Versions page when the versions cannot be read: it says why (the server\'s reason, or no answer)', async () => {
