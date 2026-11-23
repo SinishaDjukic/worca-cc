@@ -161,7 +161,8 @@ test('M6: the Tests page lets go of the opened diffs when it leaves the side by 
 });
 
 test('M10: the docs name a push or web call with a token read from a file or git\'s settings among the limits', () => {
-  for (const f of ['../docs/feature-flags.md', '../docs/changelog/unreleased.md']) {
-    assert.ok(read(f).includes("or a push or web call with a token the agent reads from a file or from git's settings"), f);
+  // The feature's own page holds the limits now (the flags row links it); lines are wrapped, so spaces are compared loosely.
+  for (const f of ['../docs/workflow-tests.md', '../docs/changelog/unreleased.md']) {
+    assert.ok(read(f).replace(/\s+/g, ' ').includes("or a push or web call with a token the agent reads from a file or from git's settings"), f);
   }
 });

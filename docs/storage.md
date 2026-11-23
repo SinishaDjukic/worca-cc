@@ -41,6 +41,13 @@ project's working tree, so nothing is ever committed to your repo.
                                         v98: designs.origin_thread_id (the chat that asked for the design).
                                         v99: a design chat from before (ask_threads.mode 'design') becomes a
                                         plain chat; its design still points at it (designs.thread_id)
+                                        Workflow tests (Labs, see "Workflow history and versions (v101)" below):
+                                        v101: workflow_revisions and workflows.live_version_no (versions, history).
+                                        v102: wf_test_examples, wf_test_example_files, wf_test_runs, wf_test_tries,
+                                        wf_test_run_tries and pipelines.is_test (examples, tests, tries).
+                                        v103: wf_test_example_projects and the project columns of wf_test_tries.
+                                        v104: your criteria: wf_test_examples.criteria and .judge, wf_test_judgements,
+                                        wf_test_judge_answers, wf_test_checker_rounds, wf_test_liked, wf_test_judge_ledger
   backup-<ts>/                          legacy JSON archived on first upgrade (see below)
   store/no-project-00000000/            runs without a project: one store, the History group "No project";
                                         a run's work/ moves into its pipeline folder as work/ when it ends
@@ -186,6 +193,12 @@ project's working tree, so nothing is ever committed to your repo.
                                          removed by purge
   agents/                               installed agent registry checkouts
   workflows/                            saved workflow templates
+  workflow-tests/                       Workflow tests (Labs, docs/workflow-tests.md):
+    repos/<projectKey>/                  Worca's own copy of a project that test tries start from (never your folder)
+    before/                              "The command passes" on a start point before the change (cache/, kept 7 days)
+    bin/  no-auth/  no-hooks/            the gh, glab and az stand-ins, their empty sign-in folders, an empty hooks folder
+    seen-connectors.json                 the claude.ai connector names Worca saw when a run started
+    unbound-calls.ndjson                 calls the outward guard stopped when it did not know the try's log
   projects/                             New and Clone from URL projects (the default projects root). Removing a
                                         Folder project (no git) whose folder sits directly in here deletes that
                                         folder too, after a confirm that names it; Git projects, projects added
@@ -323,13 +336,13 @@ Behind the flag `workflowTests`, like v102. FK-free like the v102 tables.
   - Claude Code also gets a `PreToolUse` hook on its Bash and PowerShell tools and the `TRY_DENY` deny rules for both. The
     hook answers with a structured deny when the probed Claude Code is 2.1.304 or later, else with exit 2;
   - it is not a network block yet: a program's own web calls are not stopped, nor, with an engine other than Claude Code, a
-    publish that signs in with a token kept in a file such as `~/.npmrc` (the 3a plan's D56 lists every limit).
+    publish that signs in with a token kept in a file such as `~/.npmrc` ([Workflow tests](workflow-tests.md#tests-on-a-project) lists the limits).
 - `<worcaHome>/workflow-tests/bin`: the `gh`, `glab` and `az` stand-ins a try finds first on its PATH (sh and `.cmd`). They
   write the call down and answer "Not sent: this is a test.".
   `<worcaHome>/workflow-tests/no-auth/{gh,glab,az}`: empty config folders, so those CLIs have no sign-in in a try.
   `<worcaHome>/workflow-tests/no-hooks`: the empty `core.hooksPath` of Worca's own git in a try's copy.
 
-**Part 3b (no schema change: the schema stays at v103).**
+**Checks on a project (no schema change: the schema stays at v103).**
 
 - `<worcaHome>/workflow-tests/before/`: "The command passes" run once on an example's start point, before the workflow
   changed anything.
@@ -367,7 +380,7 @@ Behind the flag `workflowTests`, like v102. FK-free. The DDL of every workflow-t
   of a criterion is trusted.
 - `wf_test_checker_rounds`: one Check the checker round: the criterion, the model, the good result it started from, its status.
 - `wf_test_liked`: an example's result you liked (a text, or a project example's changes), at most 2 MB.
-- `wf_test_judge_ledger`: every paid Part 4 call (checking criteria, pairs, Check the checker, suggestions, clearer words).
+- `wf_test_judge_ledger`: every paid call for your criteria (checking criteria, pairs, Check the checker, suggestions, clearer words).
   It counts toward the spending limit and toward the test's own cost limit; Statistics does not show it. Deleting an example
   never deletes these rows.
 

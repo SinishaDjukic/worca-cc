@@ -91,7 +91,7 @@ Export can export the version in use or your draft: the Export dialog's Version 
 
 Chips: Save version · Versions · Use for new runs · Restore · experimental: turn it on in Settings › Labs
 
-Read it: [Where Worca keeps its state](../storage.md)
+Read it: [Workflow tests › Versions](../workflow-tests.md#versions)
 
 Pull requests (add each number when it opens):
 
@@ -112,13 +112,13 @@ Workflow tests (Labs, flag `workflowTests`) add a Tests page to a workflow.
 
 Chips: Tests · Test a version · Compare · experimental: turn it on in Settings › Labs
 
-Read it: [Where Worca keeps its state](../storage.md)
+Read it: [Workflow tests](../workflow-tests.md)
 
 Pull requests (add each number when it opens):
 
-- Workflow tests (#<PR>)
+- Workflow tests (#979)
 
-## Workflow tests on a project (Labs, Part 3a)
+## Workflow tests on a project (Labs)
 
 **Test workflows that change a project's code, without touching your folder.**
 
@@ -132,13 +132,13 @@ Pull requests (add each number when it opens):
 
 Chips: Tests · Where it starts · The command passes · experimental: turn it on in Settings › Labs
 
-Read it: [Where Worca keeps its state](../storage.md)
+Read it: [Workflow tests › Tests on a project](../workflow-tests.md#tests-on-a-project)
 
 Pull requests (add each number when it opens):
 
-- Workflow tests on a project (#<PR>)
+- Workflow tests on a project (#979)
 
-## Workflow tests: plugins off, file checks, before and after (Labs, Part 3b)
+## Workflow tests: plugins off, file checks, before and after (Labs)
 
 **Tests of a workflow are no longer shaped by your own Claude Code setup, and they say what a change did to the project's tests.**
 
@@ -161,45 +161,19 @@ Pull requests (add each number when it opens):
 - Smaller changes: a Library script check counts only when the script gives a verdict; saving a draft that is the same as a
   version does not make a new version; Try N more asks first; a note on what an example needs to say; "Save and stop the
   test?" and "Run it once" say what they do; in mock mode the page says so.
-- Not covered yet:
-  - Hooks and env values an agent writes into the project's settings during a try apply in its later steps. Such env values
-    can undo parts of Worca's guard for those steps.
-  - While a try runs, an agent can read the settings file Worca hands Claude Code for it (your sign-in helpers, deny rules
-    and sandbox), as it can read your own Claude Code settings in a normal run.
-  - The project's own sign-in and telemetry helpers (`apiKeyHelper`, `awsAuthRefresh`, `awsCredentialExport`,
-    `otelHeadersHelper`) and its other settings, env included, stay on in Pretend, as in a normal run. Telemetry they turn
-    on is not stopped by Worca's guard.
-  - A model profile that sets `CLAUDE_CONFIG_DIR` changes which Claude Code settings Worca reads your sign-in and guards
-    from, as it does for Claude Code itself.
-  - One of your own deny rules can block a tool the workflow needs, a Pretend stand-in included, and the try then fails, as
-    a normal run would. The try's log says how many of your deny rules it follows.
-  - Worca turns off `autoAllowBashIfSandboxed` in a try that does not load your settings. This is checked in the settings
-    Worca hands Claude Code, not yet in a run on Linux or macOS.
-  - git still sends a login kept in `~/.netrc` (`_netrc` on Windows) when a try pushes in a way Worca does not stop, such as
-    from a script. No setting Worca can give git turns this off, so do not keep forge logins there while you test.
-  - A try cut short by a crash, a kill or a restart of Worca can show its connector calls without hiding the secrets in
-    them.
-  - Steps on other engines keep their own plugins and settings.
-  - Pretend tries made before this part can still be reused.
-  - Test names are read only from TAP, node:test spec, pytest (`-rA` or `-v`), Jest verbose and Vitest verbose output, and
-    failures only from their defaults; any other output is compared by whether the command passed.
-  - A flaky test can show as broken.
-  - A review loop set to carry on with `onExhausted: 'clean'` is not noticed as out of rounds.
-  - Your sign-in setting (for example `ANTHROPIC_BASE_URL`) from your Claude Code settings beats a model profile's own
-    routing, and the sign-in values reach the commands an agent runs, as in a normal run.
-  - A project's `CLAUDE.md` can still import files outside the project, as in a normal run.
-  - A file Worca stages for a try stays in the temp folder until the next start if Worca is killed.
-  - Worca reads project settings the way Claude Code 2.1.318 does; a later Claude Code may read them differently.
+- Not covered yet: it is not a network block, so do not keep forge logins in `~/.netrc` (`_netrc` on Windows) while you
+  test; a flaky test can show as broken; test names are read only from TAP, node:test, pytest, Jest and Vitest output.
+  The full list is on the page.
 
 Chips: Tests · Pretend · The command passes · experimental: turn it on in Settings › Labs
 
-Read it: [Where Worca keeps its state](../storage.md)
+Read it: [Workflow tests › Tests on a project](../workflow-tests.md#tests-on-a-project)
 
 Pull requests (add each number when it opens):
 
-- Workflow tests: plugins off, file checks, before and after (#<PR>)
+- Workflow tests: plugins off, file checks, before and after (#979)
 
-## Your criteria, checked by Worca (Labs, Part 4)
+## Your criteria, checked by Worca (Labs)
 
 **Say in your own words what a good result needs, and Worca checks it on every try.**
 
@@ -212,11 +186,11 @@ a criterion Worca judges unreliably is shown but never decides better or worse. 
 
 Chips: Your criteria · Check the checker · By criterion · experimental: turn it on in Settings › Labs
 
-Read it: [Workflows › Tests](../workflows.md#tests-labs) · [Costs](../costs.md#hard-limits)
+Read it: [Workflow tests › Your criteria](../workflow-tests.md#your-criteria) · [Costs](../costs.md#hard-limits)
 
 Pull requests (add each number when it opens):
 
-- Workflow tests: your criteria (#<PR>)
+- Workflow tests: your criteria (#979)
 
 ## Choose who interviews, per feature
 

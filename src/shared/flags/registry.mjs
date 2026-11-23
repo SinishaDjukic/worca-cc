@@ -85,7 +85,7 @@ export const FLAGS = Object.freeze([
     since: '1.15.0',
     added: '2026-10-25',
     reviewBy: '2027-01-22',
-    docs: 'docs/feature-flags.md',
+    docs: 'docs/workflow-tests.md',
   }),
   entry({
     key: 'runTelemetry',

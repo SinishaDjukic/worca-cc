@@ -261,7 +261,7 @@ test('fix round 6 (M4): a path that starts with a year, and an id that starts wi
   assert.deepEqual(numbersIn('Pricing: $12/user/month, a 30/60/90-day plan, USD5000.').map((x) => x.n), ['12', '30', '60', '90', '5000'], 'round 5 I6 holds');
 });
 
-// User decision 2026-11-22: a fixed, short, documented quote rule (docs/workflows.md). The cases are round 6's review (r6rev\q.mjs, q2.mjs).
+// User decision 2026-11-22: a fixed, short, documented quote rule (docs/workflow-tests.md). The cases are round 6's review (r6rev\q.mjs, q2.mjs).
 const Q = '"Exports take forever, honestly."';
 const said = (s) => quotesIn(s).map((q) => q.replace(/[,.]$/, ''));
 
@@ -326,7 +326,7 @@ test('quote rule 2026-11-22: a screen word as the speaker names nobody (The butt
     '"No invoices for this month yet" — Invoices page, empty']) assert.deepEqual(quotesIn(s), [], s);
 });
 
-test('quote rule 2026-11-22: the known gaps (docs/workflows.md): a short quote introduced any other way is not checked', () => {
+test('quote rule 2026-11-22: the known gaps (docs/workflow-tests.md): a short quote introduced any other way is not checked', () => {
   for (const s of [`Dana: ${Q}`, `**Dana:** ${Q}`, `A customer: ${Q}`, `${Q} (Dana, finance lead)`, `According to Dana, ${Q}`, `Users say: ${Q}`,
     `Dana noted: ${Q}`, `${Q} said Dana.`, `Dana said ${Q}`, `${Q} - Dana`, `${Q}\n— the finance lead`, `${Q}\n\n— Dana`]) assert.deepEqual(quotesIn(s), [], s);
 });
@@ -375,7 +375,7 @@ test('round 7 review M6: a year-first path is not a rate; rates and number lists
   assert.deepEqual(numbersIn('Notes in 2026/11/drafts for 140 tickets.').map((x) => x.n), ['140']);
 });
 
-test('round 7 review M2: a known gap (docs/workflows.md): a speaker with a role in brackets is not checked in forms (a) and (b)', () => {
+test('round 7 review M2: a known gap (docs/workflow-tests.md): a speaker with a role in brackets is not checked in forms (a) and (b)', () => {
   for (const s of [`Dana (finance lead) said: ${Q}`, `Dana Ortiz (finance lead) said: ${Q}`, '"Exports take forever, honestly," Dana (finance lead) said.'])
     assert.deepEqual(quotesIn(s), [], s);
   assert.deepEqual(said(`${Q} — Dana (finance lead)`), ['Exports take forever, honestly'], 'form (c) accepts it');
