@@ -15,6 +15,9 @@ const low1 = (s) => (s ? s.charAt(0).toLowerCase() + s.slice(1) : s);
 /** How a version is named on the Tests pages. ctx = { liveVersionNo, latestVersionNo }. */
 export function useLabel(use, ctx = {}, form = 'short') {
   if (use === 'draft') {
+    // Pre-merge QA (U3): a draft the same as a saved version is not a new version: "Your draft (same as v3)", the Test a
+    // version dialog's words, never "v4 draft" (ctx.draftSameAs, set where it is known: Compare and Side by side).
+    if (Number.isInteger(ctx.draftSameAs)) return `Your draft (same as v${ctx.draftSameAs})`;
     const short = Number.isInteger(ctx.latestVersionNo) ? `v${ctx.latestVersionNo + 1} draft` : 'Your draft';
     if (form === 'short' || short === 'Your draft') return short;
     return form === 'select' ? `${short} · your changes` : `${short} · yours`;
@@ -27,7 +30,7 @@ export function useLabel(use, ctx = {}, form = 'short') {
 /** The tested version inside a sentence: "your v5 draft", "your draft", "v4". */
 const bWords = (use, ctx) => {
   const s = useLabel(use, ctx);
-  return use === 'draft' ? (s === 'Your draft' ? 'your draft' : `your ${s}`) : s;
+  return use === 'draft' ? (s.startsWith('Your draft') ? `y${s.slice(1)}` : `your ${s}`) : s;
 };
 
 /** "Your v5 draft compared with v4", "v5 compared with v4" (running, done and stopped alike, U-T8 F20); one try:

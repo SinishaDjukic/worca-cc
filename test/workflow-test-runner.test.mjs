@@ -329,6 +329,25 @@ test('compare "What you changed" shows the catalog name of a model, not its id (
   assert.deepEqual(c.changes, ['Planner: AI model Opus 4.7 → Sonnet 5.5']);
 });
 
+test('pre-merge QA (U3): Compare calls a draft that was the same as v2 when tested "Your draft (same as v2)", a new one "v3 draft"', async () => {
+  const { writeGraphWorkflow } = await import('../src/core/workflows.mjs');
+  const { createVersion } = await import('../src/core/workflow-versions.mjs');
+  const deps = { registry: {}, scripts: {} };
+  const tpl = (name) => ({ id: 'wf_same', name, domain: 'product',
+    nodes: [{ id: 'n_task', kind: 'task', x: 0, y: 0, config: {} }, { id: 'n_end', kind: 'end', x: 300, y: 0, config: {} }],
+    wires: [{ id: 'w1', from: { node: 'n_task', port: 'task' }, to: { node: 'n_end', port: 'result' } }] });
+  await writeGraphWorkflow(tpl('Same one'));
+  await createVersion('wf_same', { deps });
+  await writeGraphWorkflow(tpl('Same two'));
+  await createVersion('wf_same', { deps });
+  const fingerprintOf = async (_wf, use) => (use === 'draft' ? 'fp-now' : `fp-v${use}`);
+  const same = store.createTestRun({ workflowId: 'wf_same', a: 1, b: 'draft', aFp: 'fp-v1', bFp: 'fp-v2', exampleIds: [], tries: 1 });
+  const c = await compareOf('wf_same', same.id, { registry: {}, fingerprintOf });
+  assert.deepEqual([c.title, c.labels.b], ['Your draft (same as v2) compared with v1', 'Your draft (same as v2)']);
+  const fresh = store.createTestRun({ workflowId: 'wf_same', a: 1, b: 'draft', aFp: 'fp-v1', bFp: 'fp-new', exampleIds: [], tries: 1 });
+  assert.equal((await compareOf('wf_same', fresh.id, { registry: {}, fingerprintOf })).title, 'Your v3 draft compared with v1');
+});
+
 // ── Review points (Tasks 3/4): pauses, detaching, an idempotent fail, restarts, errors, never --yes ──────────────
 
 test('a try paused by a drain or a cost/usage limit is stopped, not judged; the test stops; finish the rest re-makes it', async () => {
@@ -1003,6 +1022,7 @@ test('pre-merge QA (B9): the time left goes down while tries run, and says "not 
   assert.equal(left([wait, wait, wait, wait]), 8, 'nothing runs yet: two rounds');
   assert.equal(left([{ status: 'passed' }]), null, 'nothing left to run');
   assert.equal(minutesLeftOf([run(0)], null, { now }), null, 'no usual time yet: not known yet');
+  assert.equal(minutesLeftOf([run(0)], 0, { now }), 1, 'mock tries that ended in the millisecond they started: a usual time of 0 is still a time');
   assert.equal(minutesLeftOf([run(0.5)], 200, { now }), 1, 'a mock try (a usual time of 0.2 s) 30 s in: about 1 min, no flicker');
   assert.equal(minutesLeftOf([run(1.5)], 200, { now }), null, 'a mock try 90 s in: well over, not known yet');
 });

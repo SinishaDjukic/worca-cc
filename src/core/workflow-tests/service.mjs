@@ -275,6 +275,15 @@ export function labelCtx(workflowId) {
   return { liveVersionNo: liveVersionNo(workflowId), latestVersionNo: latest ? latest.versionNo : null };
 }
 
+/** Pre-merge QA (U3): a test's labels. A draft side that was the same as a saved version when it was tested is "Your draft
+ *  (same as v3)" (useLabel, ctx.draftSameAs), not "v4 draft": its fingerprint then (run.bFp) is matched with the versions'. */
+async function runLabelCtx(workflowId, run, fingerprintOf) {
+  const ctx = labelCtx(workflowId);
+  if (run.b !== 'draft' || !run.bFp) return ctx;
+  const sameAs = await draftSameAs(workflowId, fingerprintOf, run.bFp);
+  return Number.isInteger(sameAs) ? { ...ctx, draftSameAs: sameAs } : ctx;
+}
+
 export function runOf(workflowId, runId) {
   const run = store.readTestRun(runId);
   if (!run || run.workflowId !== workflowId) throw err(`no test ${runId}`, 'NOT_FOUND');
@@ -738,7 +747,7 @@ function shownCost(workflowId, run, usd) {
  *  once a running try is well past the usual time (by a minute, or half the usual time when that is longer), Worca no
  *  longer knows (null), where it used to say "about 1 min" until the end. */
 export function minutesLeftOf(own, ms, { now = Date.now(), atOnce = TRIES_AT_ONCE } = {}) {
-  if (ms === null || !(ms > 0)) return null;
+  if (ms === null || !(ms >= 0)) return null;   // 0 is a time: mock tries can end in the millisecond they start
   const running = own.filter((t) => t.status === 'running');
   const waiting = own.filter((t) => t.status === 'waiting').length;
   if (!running.length && !waiting) return null;
@@ -863,7 +872,7 @@ async function changesBetween(workflowId, a, b, registry, modelLabel) {
 /** Board 5: the model, Part 1's "what you changed" texts (graph changes only, D16), and the fair-comparison notes. */
 export async function compareOf(workflowId, runId, { registry = loadAgentRegistry(), fingerprintOf = (id, use) => useFingerprint(id, use), modelLabel = null } = {}) {
   const run = runOf(workflowId, runId);
-  const ctx = labelCtx(workflowId);
+  const ctx = await runLabelCtx(workflowId, run, fingerprintOf);
   const input = modelInput(run, ctx);
   const changes = run.a != null ? await changesBetween(workflowId, run.a, run.b, registry, await modelLabeler({ modelLabel })) : [];
   const fair = [];
@@ -887,11 +896,11 @@ export async function compareOf(workflowId, runId, { registry = loadAgentRegistr
  *  first PREVIEW_MAX characters; tryResult reads all. 3a (boards 36, 37): a project try's changes and setup, and what the
  *  guard stopped in both modes. `forgeFor(remoteNames)` → forgeOf (forgeNamer): only the remotes the guarded pushes
  *  named are looked up. */
-export async function sideBySide(workflowId, runId, exampleId, { forgeFor = null, by = null } = {}) {
+export async function sideBySide(workflowId, runId, exampleId, { forgeFor = null, by = null, fingerprintOf = (id, use) => useFingerprint(id, use) } = {}) {
   const run = runOf(workflowId, runId);
   const ex = store.readExample(workflowId, exampleId);
   if (!ex || !run.exampleIds.includes(ex.id)) throw err(`no example ${exampleId} in this test`, 'NOT_FOUND');
-  const ctx = labelCtx(workflowId);
+  const ctx = await runLabelCtx(workflowId, run, fingerprintOf);
   const tries = withCriteriaFor(workflowId, store.triesOfRun(run.id), { withAnswers: true, by, runId: run.id }).filter((t) => t.exampleId === ex.id && FIN.has(t.status));
   const list = (side) => tries.filter((t) => t.side === side).sort((x, y) => x.tryNo - y.tryNo || x.id - y.id);
   const A = run.a != null ? list('a') : [];

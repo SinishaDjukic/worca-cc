@@ -336,3 +336,12 @@ test('M2: the reviewer\'s two cases, and "fails on both" counted apart with its 
   // With none failing on both, the sentence still says "gives the same results … on every example" when none fail on both.
   assert.deepEqual(cmp2([[1, 'E1', sd('PPP'), sd('PPP')]]).inShort, ['v5 draft gives the same results as v4 on every example.']);
 });
+
+test('pre-merge QA (U3): a draft the same as a saved version is "Your draft (same as v3)" in every form, never "v4 draft"', () => {
+  const ctx = { liveVersionNo: 2, latestVersionNo: 3, draftSameAs: 3 };
+  for (const form of ['short', 'select', 'long']) assert.equal(useLabel('draft', ctx, form), 'Your draft (same as v3)');
+  assert.equal(testTitle({ kind: 'compare', a: 2, b: 'draft' }, ctx), 'Your draft (same as v3) compared with v2');
+  assert.equal(testTitle({ kind: 'compare', a: 2, b: 'draft' }, { liveVersionNo: 2, latestVersionNo: 3 }), 'Your v4 draft compared with v2', 'a new draft keeps its number');
+  assert.equal(useLabel(3, ctx), 'v3', 'the versions are as before');
+});
+
