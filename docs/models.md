@@ -1387,8 +1387,8 @@ move the chat there:
 - Each reply records its engine, model and effort. The chat's cost is the sum over all of them. The context meter
   starts over at the switch, since the new session has no context yet.
 - Event turns (a card you answered, a finished command) run on the engine the chat is on when they start.
-- When more than one engine is set up, the model button names the engine the chat runs on, in Chat and in the browser
-  extension.
+- In Chat the model button leads with the engine's harness mark (its tooltip names the engine); in the browser
+  extension it names the engine in words when more than one is set up.
 - Your browser remembers the last model and effort you used on each engine; another engine's list shows that model
   first, tagged *last used*. The Workflows chat and the browser extension do not switch: the extension shows the chat's engine and lists
   its models only.

@@ -41,12 +41,14 @@ project's working tree, so nothing is ever committed to your repo.
                                         v98: designs.origin_thread_id (the chat that asked for the design).
                                         v99: a design chat from before (ask_threads.mode 'design') becomes a
                                         plain chat; its design still points at it (designs.thread_id)
-                                        Workflow tests (Labs, see "Workflow history and versions (v101)" below):
-                                        v101: workflow_revisions and workflows.live_version_no (versions, history).
-                                        v102: wf_test_examples, wf_test_example_files, wf_test_runs, wf_test_tries,
+                                        v101: ask_messages.superseded_by (a voice merge: the user message that
+                                        replaced the row; hidden in the chat, never deleted; NULL = shown).
+                                        Workflow tests (Labs, see "Workflow history and versions (v102)" below):
+                                        v102: workflow_revisions and workflows.live_version_no (versions, history).
+                                        v103: wf_test_examples, wf_test_example_files, wf_test_runs, wf_test_tries,
                                         wf_test_run_tries and pipelines.is_test (examples, tests, tries).
-                                        v103: wf_test_example_projects and the project columns of wf_test_tries.
-                                        v104: your criteria: wf_test_examples.criteria and .judge, wf_test_judgements,
+                                        v104: wf_test_example_projects and the project columns of wf_test_tries.
+                                        v105: your criteria: wf_test_examples.criteria and .judge, wf_test_judgements,
                                         wf_test_judge_answers, wf_test_checker_rounds, wf_test_liked, wf_test_judge_ledger
   backup-<ts>/                          legacy JSON archived on first upgrade (see below)
   store/no-project-00000000/            runs without a project: one store, the History group "No project";
@@ -215,7 +217,7 @@ Everything that used to be a per-run `.json`/`.md` control file —
 plan/review **markdown**, `prompt.md`, and `extras/` remain on disk (their
 existence is indexed in the database).
 
-### Workflow history and versions (v101)
+### Workflow history and versions (v102)
 
 Behind the experimental flag `workflowTests`; the data is kept either way.
 
@@ -242,7 +244,7 @@ Behind the experimental flag `workflowTests`; the data is kept either way.
   Never a path, a display name, a colour, an icon or the order.
 - A loop's limit is part of the graph: the stored wire keeps it in `config.maxCycles` (with `config.onExhausted`).
 
-### Workflow tests (v102)
+### Workflow tests (v103)
 
 Behind the experimental flag `workflowTests`; the data is kept either way. No foreign keys, like `workflow_revisions`:
 a deleted workflow keeps its examples, and they come back with a workflow saved again under the same id.
@@ -284,9 +286,9 @@ a deleted workflow keeps its examples, and they come back with a workflow saved 
 - `workflow-tests/seen-connectors.json` (worcaHome): the claude.ai connector names Worca saw when a run started, so
   Test a version can name the ones a pretend try switches off.
 
-### Workflow tests on a project (v103)
+### Workflow tests on a project (v104)
 
-Behind the flag `workflowTests`, like v102. FK-free like the v102 tables.
+Behind the flag `workflowTests`, like v103. FK-free like the v103 tables.
 
 - `wf_test_example_projects`: one row per example that works on a project:
   - the project's key and its name when the start was pinned (`project_name`: shown when the project is no longer
@@ -342,7 +344,7 @@ Behind the flag `workflowTests`, like v102. FK-free like the v102 tables.
   `<worcaHome>/workflow-tests/no-auth/{gh,glab,az}`: empty config folders, so those CLIs have no sign-in in a try.
   `<worcaHome>/workflow-tests/no-hooks`: the empty `core.hooksPath` of Worca's own git in a try's copy.
 
-**Checks on a project (no schema change: the schema stays at v103).**
+**Checks on a project (no schema change: the schema stays at v104).**
 
 - `<worcaHome>/workflow-tests/before/`: "The command passes" run once on an example's start point, before the workflow
   changed anything.
@@ -363,9 +365,9 @@ Behind the flag `workflowTests`, like v102. FK-free like the v102 tables.
   try in the per-user temp folder; Worca removes it when the try ends, and at the next start it removes any a crash left
   that is older than a day.
 
-### Your criteria (v104)
+### Your criteria (v105)
 
-Behind the flag `workflowTests`, like v102. FK-free. The DDL of every workflow-tests table lives in
+Behind the flag `workflowTests`, like v103. FK-free. The DDL of every workflow-tests table lives in
 `src/core/workflow-tests/schema.mjs`.
 
 - `wf_test_examples` gains `criteria` (JSON: up to 12 `{ id, text }` sentences a good result makes true) and `judge` (JSON

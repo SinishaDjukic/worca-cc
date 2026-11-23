@@ -6,8 +6,9 @@
 //
 // Frame classes (spec §6.6 / the P2→P3 contract): job frames carry
 // {threadId, messageId, seq} and are deduped by the per-job monotonic seq;
-// out-of-turn frames (ask-message / ask-title / ask-run-status / ask-worktrees / ask-suggestion)
-// upsert by their own key. A seq gap is REPORTED ({gap:true}), never healed here — the panel
+// out-of-turn frames (ask-message / ask-title / ask-run-status / ask-worktrees / ask-suggestion /
+// ask-superseded) upsert by their own key. Rows a voice merge replaced carry `supersededBy` and are
+// left out of messages(), so every consumer hides them in one place (docs/speech.md). A seq gap is REPORTED ({gap:true}), never healed here — the panel
 // re-fetches the thread over REST and resubscribes (spec §10.8).
 
 const TERMINAL = new Set(['done', 'stopped', 'error']);
@@ -63,6 +64,8 @@ export function createThreadModel({ threadId }) {
       if (typeof message.seq !== 'number' && typeof rows[i].seq === 'number') {
         message = { ...message, seq: rows[i].seq };
       }
+      // A replaced row stays hidden for good, even if an older echo of it arrives without the flag.
+      if (rows[i].supersededBy && !message.supersededBy) message = { ...message, supersededBy: rows[i].supersededBy };
       rows[i] = message;
     } else {
       // Sorted insert orders KNOWN seqs only. Seq-less rows are live-created
@@ -74,6 +77,17 @@ export function createThreadModel({ threadId }) {
       else rows.splice(at, 0, message);
     }
     dirty.structure = true;
+  }
+
+  /** Hide rows a merged message replaced (idempotent; unknown ids are ignored). */
+  function markSuperseded(ids, by) {
+    for (const id of Array.isArray(ids) ? ids : []) {
+      const i = rows.findIndex((r) => r && r.id === id);
+      if (i < 0 || rows[i].supersededBy) continue;
+      rows[i] = { ...rows[i], supersededBy: by };
+      dirty.messages.add(id);
+      dirty.structure = true;
+    }
   }
 
   // The thread's attachment ledger (attachments() → the run card's @-popover)
@@ -142,7 +156,7 @@ export function createThreadModel({ threadId }) {
         // applied instead of dropped as stale (review of PR #376 — the answer
         // rendered blank and Send never flipped to Stop). Text restarts from '';
         // the replay re-delivers every delta, and blocks upsert by id.
-        live.lastSeq = frame.seq; live.text = ''; live.adopted = false;
+        live.lastSeq = frame.seq; live.text = ''; live.spoken = ''; live.adopted = false;
         live.userMessageId = frame.userMessageId ?? live.userMessageId;
         live.startedAt = frame.startedAt ?? live.startedAt;
         live.label = 'Thinking';
@@ -154,7 +168,7 @@ export function createThreadModel({ threadId }) {
       }
     } else if (frame.type === 'ask-start') {
       ensureStreamingRow(frame.messageId, frame);
-      live = { messageId: frame.messageId, userMessageId: frame.userMessageId ?? null, label: 'Thinking', startedAt: frame.startedAt ?? null, lastSeq: frame.seq, text: '', usage: null, costUsd: null, estimatedCostUsd: null };
+      live = { messageId: frame.messageId, userMessageId: frame.userMessageId ?? null, label: 'Thinking', startedAt: frame.startedAt ?? null, lastSeq: frame.seq, text: '', spoken: '', usage: null, costUsd: null, estimatedCostUsd: null };
       inFlight = { messageId: frame.messageId };
       dirty.label = true;
       clearSuggestion();
@@ -162,7 +176,7 @@ export function createThreadModel({ threadId }) {
       // Adoption: the ring buffer may have evicted the prefix — accept the first
       // frame at whatever seq it carries; ask-done.text heals the missing text.
       ensureStreamingRow(frame.messageId);
-      live = { messageId: frame.messageId, userMessageId: null, label: null, startedAt: null, lastSeq: frame.seq, text: '', usage: null, costUsd: null, estimatedCostUsd: null, adopted: true };
+      live = { messageId: frame.messageId, userMessageId: null, label: null, startedAt: null, lastSeq: frame.seq, text: '', spoken: '', usage: null, costUsd: null, estimatedCostUsd: null, adopted: true };
     } else {
       return { dropped: 'no-live' };
     }
@@ -180,6 +194,10 @@ export function createThreadModel({ threadId }) {
       case 'ask-delta':
         live.text += String(frame.text ?? '');
         dirty.answer.add(frame.messageId);
+        break;
+      case 'ask-spoken':
+        // Hands-free voice: the short version read aloud. Never shown, so nothing is marked dirty.
+        live.spoken += String(frame.text ?? '');
         break;
       case 'ask-block':
       case 'ask-card':
@@ -269,6 +287,11 @@ export function createThreadModel({ threadId }) {
         dirty.suggestion = true;
         return { ok: true };
       }
+      case 'ask-superseded':
+        // A voice merge replaced these rows (POST /messages with supersedes): they are hidden, never deleted.
+        if (!Array.isArray(frame.messageIds) || typeof frame.by !== 'string') return { dropped: 'no-live' };
+        markSuperseded(frame.messageIds, frame.by);
+        return { ok: true };
       case 'ask-engine':
         // #943: the chat moved to another engine (POST /api/ask/threads/:id/engine): its pair and engine follow, and
         // its provider session is gone. The divider row arrives as its own ask-message.
@@ -315,7 +338,8 @@ export function createThreadModel({ threadId }) {
       dirty = newDirty();
       return d;
     },
-    messages() { return rows; },
+    messages() { return rows.some((r) => r && r.supersededBy) ? rows.filter((r) => !(r && r.supersededBy)) : rows; },
+    markSuperseded,
     thread() { return thread; },
     totals() {
       const base = thread.totals && typeof thread.totals === 'object' ? thread.totals : {};

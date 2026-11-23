@@ -153,6 +153,7 @@
     "network-proxy/proxy-settings.css",
     "settings/away-screensaver.css",
     "design/design.css",
+    "chat/composer-bar.css",
     "chat/card-nesting.css"
   ],
   "html": [

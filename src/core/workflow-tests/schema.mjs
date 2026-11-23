@@ -1,7 +1,7 @@
-// src/core/workflow-tests/schema.mjs — the workflow-tests DDL (v101–v104), moved out of db.mjs (plans/workflow-tests-part4-plan.md
+// src/core/workflow-tests/schema.mjs — the workflow-tests DDL (v102–v105), moved out of db.mjs (plans/workflow-tests-part4-plan.md
 // P4-Q13: db.mjs is over its size cap). Pure strings, no imports: db.mjs imports this module, never the other way round.
 
-// v101 (plans/workflow-tests-plan.md, #721 workflow part): every save keeps the state it replaced (version_no NULL,
+// v102 (plans/workflow-tests-plan.md, #721 workflow part): every save keeps the state it replaced (version_no NULL,
 // the last 50 per workflow) and Save version keeps a numbered state (never pruned). Append-only and FK-free like
 // ask_cost_ledger, so history outlives a deleted workflows row. `graph` = {nodes, wires, canvas?, codeGraph?}.
 export const WORKFLOW_REVISIONS_DDL = `
@@ -22,7 +22,7 @@ CREATE TABLE IF NOT EXISTS workflow_revisions (
 CREATE INDEX IF NOT EXISTS idx_workflow_revisions_wf ON workflow_revisions (workflow_id, id);
 CREATE UNIQUE INDEX IF NOT EXISTS idx_workflow_revisions_version ON workflow_revisions (workflow_id, version_no) WHERE version_no IS NOT NULL;`;
 
-// v102 (plans/workflow-tests-part2-plan.md D31): workflow tests. Examples (+ their files as BLOBs), test runs, tries and
+// v103 (plans/workflow-tests-part2-plan.md D31): workflow tests. Examples (+ their files as BLOBs), test runs, tries and
 // the tries a run shows (its own and the ones it reused). FK-free like workflow_revisions: a deleted workflow keeps its
 // examples, and they come back with a workflow saved again under the same id.
 export const WORKFLOW_TESTS_DDL = `
@@ -102,7 +102,7 @@ CREATE TABLE IF NOT EXISTS wf_test_run_tries (
   PRIMARY KEY (run_id, try_id)
 );`;
 
-// v103 (plans/workflow-tests-part3a-plan.md D41, D53): an example's project and pinned start point. FK-free like the v78
+// v104 (plans/workflow-tests-part3a-plan.md D41, D53): an example's project and pinned start point. FK-free like the v78
 // tables. `changes` = the person's uncommitted changes at save time, as a binary patch (NULL = none); `start_commit` = the
 // commit tries start from (start_sha itself, or Worca's commit of start_sha + changes in its copy of the project).
 // `project_name` = the project's name when the start was pinned: shown when the project is no longer registered, never the
@@ -122,7 +122,7 @@ CREATE TABLE IF NOT EXISTS wf_test_example_projects (
   project_name   TEXT
 );`;
 
-// v104 (plans/workflow-tests-part4-plan.md D86–D106): your criteria, checked by Worca. FK-free like v102: store.deleteExample
+// v105 (plans/workflow-tests-part4-plan.md D86–D106): your criteria, checked by Worca. FK-free like v103: store.deleteExample
 // deletes an example's judgements, answers, rounds and liked result; the ledger stays (spend never goes back).
 // wf_test_judgements: one row per model answer (a try's criterion, a Check the checker card and its repeats, a pair).
 //   purpose 'try' | 'real' | 'planted' | 'again' | 'padded' | 'pair'; met 1 | 0 | NULL (not counted); winner (pairs) a | b | tie | unsure.
@@ -208,23 +208,23 @@ CREATE INDEX IF NOT EXISTS idx_wf_test_judge_ledger_run ON wf_test_judge_ledger 
 
 /** Every workflow-tests table and the DDL that makes it (db.mjs INCREMENTAL_TABLES: reconcile-safe on any stamp). */
 export const WORKFLOW_TEST_TABLES = Object.freeze({
-  workflow_revisions: WORKFLOW_REVISIONS_DDL,      // v101 (Part 1, #721)
-  wf_test_examples: WORKFLOW_TESTS_DDL,            // v102 (Part 2)
+  workflow_revisions: WORKFLOW_REVISIONS_DDL,      // v102 (Part 1, #721)
+  wf_test_examples: WORKFLOW_TESTS_DDL,            // v103 (Part 2)
   wf_test_example_files: WORKFLOW_TESTS_DDL,
   wf_test_runs: WORKFLOW_TESTS_DDL,
   wf_test_tries: WORKFLOW_TESTS_DDL,
   wf_test_run_tries: WORKFLOW_TESTS_DDL,
-  wf_test_example_projects: WORKFLOW_TEST_PROJECTS_DDL,   // v103 (3a)
-  wf_test_judgements: WORKFLOW_TEST_CRITERIA_DDL,  // v104 (Part 4)
+  wf_test_example_projects: WORKFLOW_TEST_PROJECTS_DDL,   // v104 (3a)
+  wf_test_judgements: WORKFLOW_TEST_CRITERIA_DDL,  // v105 (Part 4)
   wf_test_judge_answers: WORKFLOW_TEST_CRITERIA_DDL,
   wf_test_checker_rounds: WORKFLOW_TEST_CRITERIA_DDL,
   wf_test_liked: WORKFLOW_TEST_CRITERIA_DDL,
   wf_test_judge_ledger: WORKFLOW_TEST_CRITERIA_DDL,
 });
 
-/** v104: the example's criteria (JSON list, D86) and checking model (JSON { model }, D87), for db.mjs INCREMENTAL_COLUMNS. Fix round 3
+/** v105: the example's criteria (JSON list, D86) and checking model (JSON { model }, D87), for db.mjs INCREMENTAL_COLUMNS. Fix round 3
  *  (final review M7): wf_test_judgements.test_run_id, the test that wrote a row (NULL = no test: Check the checker, an older row);
- *  no rung of its own: v104 is not released, so the v104 rung's repair adds it to a new table and reconcileSchema to a DB already at 104. */
+ *  no rung of its own: v105 is not released, so the v105 rung's repair adds it to a new table and reconcileSchema to a DB already at 105. */
 export const WORKFLOW_TEST_CRITERIA_COLUMNS = Object.freeze({
   wf_test_examples: Object.freeze({ criteria: "TEXT NOT NULL DEFAULT '[]'", judge: 'TEXT' }),
   wf_test_judgements: Object.freeze({ test_run_id: 'INTEGER' }),

@@ -12,8 +12,8 @@ afterEach(() => { for (const c of opened.splice(0)) { try { c.panel.destroy(); }
 const THREAD = { id: 'ask_0000000a', title: 'A tea shop', designId: 'd_00000000000a', context: { pinned: false }, engine: 'claude' };
 const snapshot = { thread: THREAD, messages: [], attachments: [], runLinks: [], inFlight: null };
 
-/** A panel whose designChat lends `ext` (made per mount from the slot it gets) to the composer. */
-function rig(makeExt) {
+/** A panel whose designChat lends `ext` (made per mount from the slot it gets) to the composer; `deps`: more panel deps. */
+function rig(makeExt, deps = {}) {
   const sent = [];
   const handles = [];
   const designChat = {
@@ -26,7 +26,7 @@ function rig(makeExt) {
     mount(slot, { setComposer }) { handles.push(setComposer(makeExt({ doc: slot.ownerDocument, sent }))); },
     unmount() {},
   };
-  const ctx = makePanel({ deps: { designChat }, fetchHandler: (url, opts) => (url === '/api/ask/threads/ask_0000000a/messages' && opts.method === 'POST'
+  const ctx = makePanel({ deps: { designChat, ...deps }, fetchHandler: (url, opts) => (url === '/api/ask/threads/ask_0000000a/messages' && opts.method === 'POST'
     ? { ok: true, status: 202, json: async () => ({ userMessageId: 'msg_1', assistantMessageId: 'msg_2' }) }
     : { ok: true, status: 200, json: async () => (url.startsWith('/api/ask/threads/ask_0000000a') ? snapshot : {}) }) });
   opened.push(ctx);
@@ -106,4 +106,23 @@ test('a chat with a design is a chat: its transcript stays, its pins ride the ch
   await ctx.tick();
   ctx.flush();
   assert.deepEqual([doc.querySelector('[data-chat-composer-lead] > .pins'), doc.querySelector('[data-ask-composer-ext]').hidden], [null, true], 'a plain chat gets its composer back');
+});
+
+test('the end slot: the gear sits after the model; lent titles become tips and come back when the composer is cleared', async () => {
+  let gear, gearBtn, point;
+  const ctx = rig(({ doc }) => {
+    gear = Object.assign(doc.createElement('span'), { className: 'dz-set' });
+    gearBtn = Object.assign(doc.createElement('button'), { title: 'Models and Build fast' }); gear.append(gearBtn);
+    point = Object.assign(doc.createElement('button'), { className: 'dsc-point', title: 'Point at the page' });
+    return { payload: () => ({}), nodes: [point], endNodes: [gear] };
+  }, { createVoice: () => ({ active: () => false, preload() {}, destroy() {} }) });   // a voice control in the row, as in the app
+  await openChat(ctx, THREAD.id);
+  const row = ctx.doc.querySelector('.ask-composer-row');
+  const end = row.querySelector('[data-ask-composer-ext-end]');
+  assert.deepEqual([end.hidden, end.contains(gear), row.querySelector('[data-ask-composer-ext]').contains(point)], [false, true, true]);
+  assert.equal(end.previousElementSibling, row.querySelector('[data-ask-model-btn]'));
+  assert.ok(end.nextElementSibling.matches('.ask-voice, [data-ask-send]'));
+  assert.deepEqual([gearBtn.dataset.tip, gearBtn.hasAttribute('title'), point.dataset.tip], ['Models and Build fast', false, 'Point at the page']);
+  ctx.panel.open({ threadId: null }); await ctx.tick(); ctx.flush();
+  assert.deepEqual([end.hidden, end.childElementCount, gearBtn.title, point.title, 'tip' in point.dataset], [true, 0, 'Models and Build fast', 'Point at the page', false]);
 });

@@ -166,7 +166,7 @@ stop, so do not keep forge logins there while you test. Also:
   and failures only from their defaults.
 - Pretend tries made before plugins were switched off can still be reused.
 
-[Where Worca keeps its state](storage.md#workflow-tests-on-a-project-v103) has the full detail.
+[Where Worca keeps its state](storage.md#workflow-tests-on-a-project-v104) has the full detail.
 
 ## Your criteria
 
@@ -398,5 +398,5 @@ request after 100,000.
 ## Where it is kept
 
 The versions, examples, tries and answers are rows in Worca's database; Worca's copies of your projects live under
-`<worcaHome>/workflow-tests/`. See [Where Worca keeps its state](storage.md#workflow-history-and-versions-v101); examples and tries are in
-[Workflow tests (v102)](storage.md#workflow-tests-v102) and answers in [Your criteria (v104)](storage.md#your-criteria-v104).
+`<worcaHome>/workflow-tests/`. See [Where Worca keeps its state](storage.md#workflow-history-and-versions-v102); examples and tries are in
+[Workflow tests (v103)](storage.md#workflow-tests-v103) and answers in [Your criteria (v105)](storage.md#your-criteria-v105).

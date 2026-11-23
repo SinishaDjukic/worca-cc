@@ -422,12 +422,74 @@ test('another engine\'s section leads with the model last used there, tagged', a
   assert.deepEqual(names(ctx), ['Opus 5.5'], 'the model the lead displaced is under Claude\'s More models, never lost');
 });
 
-test('the model button names the chat\'s engine in text when the catalog has more than one engine, and none with one', async () => {
+test('the model button leads with the harness mark; the mark stands for the engine word, with one engine or several (L1)', async () => {
   const ctx = await openCodexChat({ fetchHandler: handler(CODEX_CHAT) });
-  const eng = ctx.doc.querySelector('.ask-model-btn-engine');
-  assert.deepEqual([eng.hidden, eng.textContent], [false, 'OpenAI Codex']);
+  const btn = ctx.doc.querySelector('[data-ask-model-btn]');
+  assert.match(btn.querySelector('.mdl-mark.sm img').getAttribute('src'), /\/vendor\/brand-icons\/codex-color\.svg$/);
+  assert.equal(btn.firstElementChild.className, 'mdl-mark sm');
+  assert.equal(btn.querySelector('.ask-model-btn-engine').hidden, true, 'the mark stands for the engine word');
+  assert.match(btn.getAttribute('aria-label'), /^OpenAI Codex · .+/);
+  assert.deepEqual([btn.dataset.tip, btn.hasAttribute('title')], [btn.getAttribute('aria-label'), false]);
   const one = await openCodexChat({ fetchHandler: handler({ ...CODEX_CHAT, catalog: { ...CATALOG, models: [CATALOG.models[1]] } }) });
-  assert.deepEqual([one.doc.querySelector('.ask-model-btn-engine').hidden, one.doc.querySelector('.ask-model-btn-engine').textContent], [true, '']);
+  const oneBtn = one.doc.querySelector('[data-ask-model-btn]');
+  assert.ok(oneBtn.querySelector('.mdl-mark.sm img'), 'one engine offered: the mark still shows (L1)');
+  assert.deepEqual([oneBtn.querySelector('.ask-model-btn-engine').hidden, oneBtn.querySelector('.ask-model-btn-engine').textContent], [true, '']);
+});
+
+test('an engine with no brand mark: the button names it in text, and its accessible name and tip name it too', async () => {
+  const cat = { ...CATALOG, models: [...CATALOG.models, { id: 'acme-1', label: 'Acme 1', efforts: ['high'], custom: false, engine: 'acme' }] };
+  const ctx = makePanel({ fetchHandler: handler({ catalog: cat }) });
+  await openPanel(ctx); await openSelector(ctx); pickItem(ctx, 'Acme 1');
+  const btn = modelBtn(ctx);
+  assert.equal(btn.querySelector('.mdl-mark'), null, 'no mark, and never a broken image box');
+  const eng = btn.querySelector('.ask-model-btn-engine');
+  assert.deepEqual([eng.hidden, eng.textContent], [false, 'acme']);
+  assert.deepEqual([btn.getAttribute('aria-label'), btn.dataset.tip, btn.hasAttribute('title')], ['acme · Acme 1 · high', 'acme · Acme 1 · high', false]);
+});
+
+test('a mark file that fails to load leaves the button: the engine word comes back by today\'s rule', async () => {
+  const ctx = await openCodexChat({ fetchHandler: handler(CODEX_CHAT) });
+  const btn = modelBtn(ctx);
+  const name = btn.getAttribute('aria-label');
+  btn.querySelector('.mdl-mark img').dispatchEvent(new ctx.window.Event('error'));
+  assert.equal(btn.querySelector('.mdl-mark'), null, 'no broken image box');
+  const eng = btn.querySelector('.ask-model-btn-engine');
+  assert.deepEqual([eng.hidden, eng.textContent], [false, 'OpenAI Codex']);
+  assert.equal(btn.getAttribute('aria-label'), name, 'the accessible name still names the engine');
+});
+
+test('picking another engine\'s model swaps the harness mark: never the old engine\'s brand, never two marks', async () => {
+  const ctx = makePanel({ fetchHandler: freshHandler() });
+  await openPanel(ctx);
+  const src = () => [...modelBtn(ctx).querySelectorAll('.mdl-mark')].map((m) => m.querySelector('img').getAttribute('src'));
+  assert.equal(src().length, 1);
+  assert.match(src()[0], /\/claudecode-color\.svg$/);
+  const kept = modelBtn(ctx).querySelector('.mdl-mark');
+  await openSelector(ctx); pickEffort(ctx, 'max');
+  assert.equal(modelBtn(ctx).querySelector('.mdl-mark'), kept, 'a repaint on the same engine keeps the mark node (no new image load)');
+  await openSelector(ctx); pickItem(ctx, 'GPT-5.5');
+  assert.equal(src().length, 1, 'exactly one mark');
+  assert.match(src()[0], /\/codex-color\.svg$/, 'the Codex mark, not the Claude Code one kept from before');
+  await openSelector(ctx); pickItem(ctx, 'Opus 5.5');
+  assert.equal(src().length, 1);
+  assert.match(src()[0], /\/claudecode-color\.svg$/);
+});
+
+test('the model button\'s accessible name: no effort for a model that takes none; a bridged model names its connection', async () => {
+  const cat = { ...CATALOG, models: [...CATALOG.models,
+    { id: 'claude-haiku-x', label: 'Haiku X', efforts: [], noEffort: true, custom: false },
+    { id: 'copilot-gpt-5', label: 'GPT-5 (Copilot)', efforts: ['high'], custom: 'global', bridged: 'copilot', upstreamModel: 'gpt-5', upstreamApi: 'openai-chat' },
+    { id: 'flaggy-1', label: 'Flaggy', efforts: ['high'], custom: 'global', costUnreliable: true }] };
+  const ctx = makePanel({ fetchHandler: handler({ catalog: cat }) });
+  await openPanel(ctx);
+  await openSelector(ctx); pickItem(ctx, 'Haiku X');
+  const btn = modelBtn(ctx);
+  assert.deepEqual([btn.getAttribute('aria-label'), btn.dataset.tip], ['Claude Code · Haiku X', 'Claude Code · Haiku X']);
+  await openSelector(ctx); pickItem(ctx, 'GPT-5 (Copilot)');
+  assert.match(btn.getAttribute('aria-label'), / · GPT-5 \(Copilot\) · high · GitHub Copilot$/);
+  assert.equal(btn.dataset.tip, btn.getAttribute('aria-label'));
+  await openSelector(ctx); pickItem(ctx, 'Flaggy');
+  assert.equal(btn.getAttribute('aria-label'), 'Claude Code · Flaggy ⚠ · high', 'the name keeps the label\'s ⚠ marker, as the button\'s text did');
 });
 
 test('a resync that finds the chat on another engine (switched in a tab that was offline) moves the picker too', async () => {
