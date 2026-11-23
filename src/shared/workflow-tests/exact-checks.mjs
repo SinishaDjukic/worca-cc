@@ -11,14 +11,30 @@ export function normLoose(s) {
   return String(s ?? '').normalize('NFKC').replace(/[‘’‚‛`´]/g, "'").replace(/[“”„‟«»]/g, '"').replace(/[‐‑‒–—―]/g, '-')
     .replace(/[*_#>]/g, '').replace(/\s+/g, ' ').trim().toLowerCase();
 }
-/** D89: whether the proof is in the text (normLoose on both; each part between "…" at least 3 characters and the parts in order; 8 characters at least). */
-export function proofFound(proof, text) {
-  // A fragment quoted as "…passage…" is ordinary: one ellipsis at each end is trimmed before the parts are counted.
-  const p = normLoose(proof).replace(/^["']+|["']+$/g, '').trim().replace(/^(?:\.\.\.)\s*|\s*(?:\.\.\.)$/g, '').replace(/^["']+|["']+$/g, '').trim();
-  if (p.length < 8) return false;
-  const hay = normLoose(text);
-  const parts = p.split(/\s*(?:\.\.\.|…)\s*/).map((x) => x.replace(/^["']+|["']+$/g, '').trim());
-  if (parts.some((x) => x.length < 3)) return false;
+/** A text's unified-diff hunks read three more ways: the new file (context and added lines), the old file (context and
+ *  removed lines) and the diff as it reads, each line without its +, - or space mark; everything outside a hunk is kept as it
+ *  is. [] when the text holds no hunk. Pre-merge paid check: a checking model quotes code as it reads in the file, so a quote
+ *  of two added lines was never found in the diff, and every verdict on a project's code was "Not checked". */
+export function diffSides(text) {
+  const s = String(text ?? '');
+  if (!/^@@ /m.test(s)) return [];
+  const nu = []; const old = []; const both = [];
+  let hunk = false;
+  for (const l of s.split(/\r?\n/)) {
+    if (l.startsWith('@@ ')) hunk = true;
+    else if (l.startsWith('diff --git ')) hunk = false;
+    if (!hunk || l.startsWith('@@ ')) { nu.push(l); old.push(l); both.push(l); continue; }
+    if (l.startsWith('\\')) continue;   // "\ No newline at end of file" is in neither file
+    const line = l.slice(1);
+    if (l.startsWith('+')) nu.push(line);
+    else if (l.startsWith('-')) old.push(line);
+    else { nu.push(line); old.push(line); }
+    both.push(line);
+  }
+  return [nu.join('\n'), old.join('\n'), both.join('\n')];
+}
+
+const partsIn = (hay, parts) => {
   let from = 0;
   for (const x of parts) {
     const i = hay.indexOf(x, from);
@@ -26,6 +42,17 @@ export function proofFound(proof, text) {
     from = i + x.length;
   }
   return true;
+};
+
+/** D89: whether the proof is in the text (normLoose on both; each part between "…" at least 3 characters and the parts in order; 8 characters at least).
+ *  A text with a diff is also searched as its two files (diffSides). */
+export function proofFound(proof, text) {
+  // A fragment quoted as "…passage…" is ordinary: one ellipsis at each end is trimmed before the parts are counted.
+  const p = normLoose(proof).replace(/^["']+|["']+$/g, '').trim().replace(/^(?:\.\.\.)\s*|\s*(?:\.\.\.)$/g, '').replace(/^["']+|["']+$/g, '').trim();
+  if (p.length < 8) return false;
+  const parts = p.split(/\s*(?:\.\.\.|…)\s*/).map((x) => x.replace(/^["']+|["']+$/g, '').trim());
+  if (parts.some((x) => x.length < 3)) return false;
+  return [text, ...diffSides(text)].some((t) => partsIn(normLoose(t), parts));
 }
 
 const straight = (s) => String(s ?? '').normalize('NFKC').replace(/\r\n?/g, '\n').replace(/[“”„‟«»]/g, '"');

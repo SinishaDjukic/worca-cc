@@ -180,9 +180,13 @@ example, 3 to 300 characters each. On every try, Worca answers yes or no for eac
   suggests one the workflow does not use to write, so it does not mark its own work. After each model, the list says who
   pays for its checks, as far as Worca can tell ([Costs](costs.md#hard-limits)). Changing the model starts the trust
   tests for these criteria again.
+- What Worca reads is the result: what the workflow's last step hands to its end, and for an example with a project
+  also the changes the try made (its diff). Write criteria about these. When a coding workflow's last step writes no
+  text, its result is only the changes, so a criterion such as "the summary names the cause" cannot be met.
 - Side by side shows **Your criteria · checked by Worca**: **Why Worca says yes** (or no), and **Proof from the
-  result** (or **Proof from the changes**), a quote Worca must find there. A verdict without proof is asked once more,
-  then not counted. Answer **Agree** or **Disagree** (**Undo** takes it back).
+  result** (or **Proof from the changes**), a quote Worca must find there. Code quoted from the changes is found as it
+  reads in the file, without the diff's + and − marks. A verdict without proof is asked once more, then not counted.
+  Answer **Agree** or **Disagree** (**Undo** takes it back).
 - After you change the criteria, Worca can check the stored tries again without running the workflow: **Check them on
   these tries** on Compare. Until then they show "Not checked yet". **Stop checking** stops it.
 - The checks cost money. They count in the spending limit, and those made for a test also in its own cost limit.

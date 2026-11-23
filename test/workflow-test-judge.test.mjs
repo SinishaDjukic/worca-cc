@@ -6,7 +6,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { _resetForTests } from '../src/core/db.mjs';
 import { judgeCriterion, modelCall } from '../src/core/workflow-tests/judge.mjs';
-import { JUDGE_SYSTEM_PROMPT, judgeSystemPrompt, fenceTag, parseJudgeReply, proofFound, mockJudgement, clipText, judgePrompt, fenced } from '../src/core/workflow-tests/judge-prompt.mjs';
+import { JUDGE_SYSTEM_PROMPT, judgeSystemPrompt, fenceTag, parseJudgeReply, proofFound, mockJudgement, clipText, judgePrompt, fenced, CHANGES_HEADING } from '../src/core/workflow-tests/judge-prompt.mjs';
 
 let home;
 before(async () => { home = await mkdtemp(join(tmpdir(), 'worca-cc-wftjudge-')); _resetForTests(); process.env.WORCA_HOME = home; });
@@ -44,6 +44,27 @@ test('proofFound: parts of at least 3 characters, in order; CRLF still works', (
   assert.equal(proofFound('"…support tickets by 60%"', RESULT), true);
   assert.equal(proofFound('Cut export-related support tickets by 60% ...', RESULT), true);
   assert.equal(proofFound('… zz …', 'zz'), false, 'still 8 characters at least after the trim');
+});
+
+test('proofFound in a project diff: code quoted as it reads in the file, without the diff\'s +, - and space marks', () => {
+  // Pre-merge paid check: Haiku quoted the added test as code, every try, and every verdict was "Not checked".
+  const subject = ['No written result.', '', CHANGES_HEADING,
+    'diff --git a/src/total.mjs b/src/total.mjs', '--- a/src/total.mjs', '+++ b/src/total.mjs', '@@ -3,4 +3,4 @@',
+    ' export function lineTotal(qty, unitNet, vatRate) {', '   const gross = qty * unitNet * (1 + vatRate);',
+    '-  return Math.floor(gross * 100) / 100;', '+  return Math.round(gross * 100) / 100;', ' }',
+    'diff --git a/test/total.test.mjs b/test/total.test.mjs', '--- a/test/total.test.mjs', '+++ b/test/total.test.mjs',
+    '@@ -9,3 +9,7 @@', ' test(\'an empty invoice is zero\', () => {', '   assert.equal(invoiceTotal([]), 0);', ' });', '+',
+    '+test(\'a line rounds to the nearest cent, not down\', () => {', '+  assert.equal(lineTotal(2, 10.05, 0.19), 23.92);', '+});',
+    '\\ No newline at end of file'].join('\n');
+  const added = "test('a line rounds to the nearest cent, not down', () => {\n  assert.equal(lineTotal(2, 10.05, 0.19), 23.92);\n});";
+  assert.equal(proofFound(added, subject), true, 'added lines, quoted as code');
+  assert.equal(proofFound('const gross = qty * unitNet * (1 + vatRate);\n  return Math.round(gross * 100) / 100;', subject), true, 'the new file: context then an added line');
+  assert.equal(proofFound('const gross = qty * unitNet * (1 + vatRate);\n  return Math.floor(gross * 100) / 100;', subject), true, 'the old file: context then a removed line');
+  assert.equal(proofFound('return Math.floor(gross * 100) / 100;\n  return Math.round(gross * 100) / 100;', subject), true, 'as the diff reads, both lines');
+  assert.equal(proofFound('+  return Math.round(gross * 100) / 100;', subject), true, 'a quote with the mark still works');
+  assert.equal(proofFound("assert.equal(lineTotal(2, 10.05, 0.19), 23.91);", subject), false, 'a made-up line is still not found');
+  assert.equal(proofFound('return Math.round(gross * 100) / 100;\n  return Math.floor(gross * 100) / 100;', subject), false,
+    'the new line then the removed one is in no view: not the diff, the new file or the old file');
 });
 
 test('fenced makes every closing tag of this call harmless, not only its own block\'s', () => {
