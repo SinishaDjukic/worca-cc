@@ -181,7 +181,8 @@ costs nothing; it shows in Activity as skipped. A maintainer starts it by adding
 
 Watch PR (the run's own watcher on a created PR) trusts the same authors for its inline review triggers, plus
 the logins in the project's **Pull requests › Reviewers that may trigger a fix** setting; PR-level comments count
-only from those listed logins (see [Runs › Watch PR](runs.md#watch-pr-and-conflicts)).
+only from those listed logins, and only when they begin with the **PR comment starts with** text (see
+[Runs › Watch PR](runs.md#watch-pr-and-conflicts)).
 
 On such a PR the label covers the code the maintainer looked at: once a review rule has reviewed it, a later push
 from the same author is skipped ("pushed after the trigger label") until a maintainer adds the label again (remove

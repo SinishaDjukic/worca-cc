@@ -195,12 +195,18 @@ or a review that requests changes from the PR author or a collaborator. A review
 review bot, usually) counts too once its login is listed in the project's Settings under **Pull requests ›
 Reviewers that may trigger a fix**.
 
-On GitHub, a PR-level comment from a listed reviewer also counts, if it was posted after Watch PR was turned on:
-Worca quotes it in the fix run and replies with the result on the PR. Worca waits until the comment has not changed
-for two minutes, so a bot that posts a placeholder and fills in its findings shortly after starts one run, on the
-findings. Editing the comment later (a bot that refreshes one summary comment after each push) counts as new
-feedback. PR-level comments from anyone else are discussion and never start a run, and neither do slash-commands
-like `/ai-review` or comments hidden on GitHub.
+On GitHub, a PR-level comment from a listed reviewer can count too. Set **Pull requests › PR comment starts with**
+to the text your review bot opens its verdict with (`## AI Review`, say). A listed reviewer's PR-level comment that
+begins with that text, posted after Watch PR was turned on, starts a fix run: Worca quotes it in the run and
+replies with the result on the PR. Review bots also post notices ("review skipped", "rate limit exceeded") and
+placeholders on the PR; those don't begin with the text and start nothing. A placeholder later edited into a
+verdict that does counts then. Worca waits until the comment has not changed for two minutes, so a verdict still
+being written starts one run, on the finished text. Editing the comment later (a bot that refreshes one summary
+comment after each push) counts as new feedback. With the setting empty, PR-level comments never start a run.
+Comments from anyone not listed, and comments hidden on GitHub, never do.
+
+The reviewer list takes GitHub login names; on Bitbucket, list the account UUID (`{…}`). Azure DevOps already
+counts every reviewer.
 
 After a run, Worca also checks whether the branch still merges into its base. If it does, you get **Update
 branch**. If it conflicts, you get **Resolve in a pipeline** or **Resolve in a terminal**.

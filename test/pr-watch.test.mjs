@@ -103,11 +103,11 @@ test('review requests fire even while checks are pending and trust is enforced',
   assert.equal(countsAsRequest({ body: 'x', author: { login: 'review-bot' }, authorAssociation: 'NONE' }, 'me', ['review-bot']), true);
 });
 
-test('a PR-level comment counts only from a listed reviewer, posted after the watch began', () => {
+test('a PR-level comment counts only from a listed reviewer, opening with the marker, posted after the watch began', () => {
   const base = { headSha: 'h1', threads: [], reviews: [] };
   const at = '2026-11-21T10:00:00Z';
   const verdict = { databaseId: 51, body: '## AI Review\nplease fix the null check', createdAt: '2026-11-21T10:05:00Z', author: { login: 'review-bot' }, authorAssociation: 'NONE' };
-  const opts = { trustedLogins: ['review-bot'], commentsSince: at, now: Date.parse('2026-11-21T11:00:00Z') };
+  const opts = { trustedLogins: ['review-bot'], commentPrefix: '## AI Review', commentsSince: at, now: Date.parse('2026-11-21T11:00:00Z') };
   const t = collectTriggers({ ...base, comments: [verdict] }, [], opts);
   assert.equal(t.fire, true);
   assert.deepEqual(t.handledKeys, ['issue-comment:51@2026-11-21T10:05:00Z'], 'issue comments have their own key space, one per version');
@@ -116,7 +116,15 @@ test('a PR-level comment counts only from a listed reviewer, posted after the wa
   assert.match(buildFixTask({ pr: { url: URL }, triggers: t }), /> please fix the null check/);
   assert.equal(collectTriggers({ ...base, comments: [verdict] }, ['issue-comment:51@2026-11-21T10:05:00Z'], opts).fire, false, 'handled once');
   assert.equal(collectTriggers({ ...base, comments: [verdict] }, ['comment:51'], opts).fire, true, 'an inline comment with the same id is another comment');
+  // Only comments that open with the project's marker count: a bot's notices and placeholders are not feedback.
   assert.equal(collectTriggers({ ...base, comments: [{ ...verdict, body: '/ai-review' }] }, [], opts).fire, false, 'a command comment');
+  assert.equal(collectTriggers({ ...base, comments: [{ ...verdict, body: 'Review skipped: too many files' }] }, [], opts).fire, false, 'a notice');
+  assert.equal(collectTriggers({ ...base, comments: [{ ...verdict, body: 'see ## AI Review below' }] }, [], opts).fire, false, 'marker not at the start');
+  assert.equal(collectTriggers({ ...base, comments: [{ ...verdict, body: '\n  ## AI Review\nfix' }] }, [], opts).fire, true, 'leading blank space');
+  assert.equal(collectTriggers({ ...base, comments: [verdict] }, [], { ...opts, commentPrefix: '  ## AI Review  ' }).fire, true, 'a padded marker');
+  for (const commentPrefix of ['', '   ', undefined]) {
+    assert.equal(collectTriggers({ ...base, comments: [verdict] }, [], { ...opts, commentPrefix }).fire, false, `no marker set: ${JSON.stringify(commentPrefix)}`);
+  }
   assert.equal(collectTriggers({ ...base, comments: [{ ...verdict, body: '<!-- worca:pr-watch --> answer' }] }, [], opts).fire, false, 'worca reply marker');
   // Older comments are history: posted before the watch began, or with no time at all.
   assert.equal(collectTriggers({ ...base, comments: [{ ...verdict, createdAt: '2026-11-21T09:00:00Z' }] }, [], opts).fire, false, 'before the watch');
@@ -162,8 +170,9 @@ test('a listed reviewer\'s PR-level comment starts one fix run, quotes it, and i
   const verdict = { databaseId: 81, body: '## AI Review\nuse a guard', createdAt: at(30_000), author: { login: 'review-bot' }, authorAssociation: 'NONE' };
   const clock = { t: since + 30_000 + COMMENT_SETTLE_MS };   // the first read comes once the verdict has settled
   const { io, deps } = harness({ clock, pr: openPr({ comments: [old, verdict] }) });
-  // The watcher reads the list from deps.trustedLogins (the server maps it to the project setting).
+  // The watcher reads the list and the marker from deps (the server maps them to the project settings).
   deps.trustedLogins = () => ['review-bot'];
+  deps.commentPrefix = () => '## AI Review';
   const watcher = createPrWatcher(deps);
   await watcher.tick();
   let w = getWatch(URL);
@@ -191,9 +200,10 @@ test('a watch from before commentsSince existed is marked at its first read; re-
   setWatch({ prUrl: URL, pipelineId: origin, enabled: true });
   updateWatch(URL, { retryState: {} });                    // as a watch saved before the upgrade
   const clock = { t: Date.parse('2026-11-21T10:00:00Z') };
-  const old = { databaseId: 90, body: 'an old verdict', createdAt: '2026-11-20T10:00:00Z', author: { login: 'review-bot' }, authorAssociation: 'NONE' };
+  const old = { databaseId: 90, body: '## AI Review\nan old verdict', createdAt: '2026-11-20T10:00:00Z', author: { login: 'review-bot' }, authorAssociation: 'NONE' };
   const { io, deps } = harness({ clock, pr: openPr({ comments: [old] }) });
   deps.trustedLogins = () => ['review-bot'];
+  deps.commentPrefix = () => '## AI Review';
   const watcher = createPrWatcher(deps);
   await watcher.tick();
   let w = getWatch(URL);

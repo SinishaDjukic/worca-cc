@@ -6308,6 +6308,11 @@ const prWatcherDeps = {
     try { const v = resolveSetting('watch.trustedReviewers', { projectKey: origin?.projectKey }).value; return Array.isArray(v) ? v : []; }
     catch { return []; }
   },
+  // Watch.reviewCommentPrefix: the text a listed reviewer's PR-level comment opens with to count; '' = none count.
+  commentPrefix: (origin) => {
+    try { const v = resolveSetting('watch.reviewCommentPrefix', { projectKey: origin?.projectKey }).value; return typeof v === 'string' ? v : ''; }
+    catch { return ''; }
+  },
   host: { snapshot: prWatchSnapshot, jobLog: prWatchJobLog, rerun: prWatchRerun, reply: prWatchReply, comment: prWatchComment },
   git: {
     fetch: ({ projectDir, remote }) => fetchRemote(projectDir, { remote, maxAgeMs: 0 }),

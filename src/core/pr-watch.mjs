@@ -146,9 +146,11 @@ function isListedLogin(item, trustedLogins) {
   return trustedLogins.some((x) => typeof x === 'string' && normLogin(x) === want);
 }
 
-/** A PR-level comment that starts with "/" is a command to another tool ("/ai-review"), not review feedback:
- *  it never starts a fix run on its own. Inline thread comments are still free-form review. */
-const isCommand = (body) => /^\s*\//.test(String(body || ''));
+/** A PR-level comment counts only when it opens with the project's marker text (watch.reviewCommentPrefix,
+ *  "## AI Review" say): review bots also post notices ("review skipped", "rate limit") and placeholders on the
+ *  PR, and those are not feedback. No marker set: PR-level comments never start a run. */
+const hasPrefix = (body, prefix) => typeof prefix === 'string' && prefix.trim() !== ''
+  && String(body || '').trimStart().startsWith(prefix.trim());
 /** A PR-level comment's version: when it was last edited, else when it was posted. An edit is a new version
  *  (a bot that replaces "processing…" with its findings, or refreshes one summary comment after each push). */
 const commentVersion = (c) => c.lastEditedAt || c.createdAt;
@@ -187,7 +189,7 @@ const passing = (c) => c.type === 'status' || c.__typename === 'StatusContext'
  *     batch on the conflict path (`conflict.why: 'behind'`), once per check name;
  *   - anything else is the PR's own and is fixed by hand.
  */
-export function collectTriggers(pr, alreadyHandled = [], { conflictOnly = false, baseWaitOver = false, trustedLogins = [], commentsSince = null, now = Date.now() } = {}) {
+export function collectTriggers(pr, alreadyHandled = [], { conflictOnly = false, baseWaitOver = false, trustedLogins = [], commentPrefix = '', commentsSince = null, now = Date.now() } = {}) {
   const seen = new Set(alreadyHandled);
   const none = { fire: false, checksSettled: false, failures: [], threads: [], comments: [], reviews: [], reviewOnlyComment: false, conflict: null,
     handledKeys: [], skipped: [], waitingOnBase: [], reruns: [] };
@@ -237,12 +239,12 @@ export function collectTriggers(pr, alreadyHandled = [], { conflictOnly = false,
   const reviews = (pr.reviews || []).filter((r) => String(r.state).toUpperCase() === 'CHANGES_REQUESTED'
     && !seen.has(`review:${r.databaseId}`) && trusted(r));
   // PR-level feedback that lands as an issue comment (a reviewer's verdict posted on the PR, not an inline
-  // thread). Only the listed reviewer logins count: the PR author's and collaborators' PR comments are
-  // discussion, and starting a run on every "LGTM" costs money. Slash commands ("/ai-review") are orders to
-  // another tool, not feedback. Issue comments have their own id space, hence their own key, one per version;
+  // thread). Only the listed reviewer logins count, and only comments that open with the project's marker
+  // text: the PR author's and collaborators' PR comments are discussion, a bot's notices are not feedback,
+  // and starting a run on every "LGTM" costs money. Issue comments have their own id space, hence their own key, one per version;
   // a comment hidden on GitHub (minimized) is left alone, and one still changing waits until it settles.
   const comments = (pr.comments || []).filter((c) => !c.isMinimized && !seen.has(commentKey(c))
-    && !String(c.body || '').includes(WATCH_MARKER) && isListedLogin(c, trustedLogins) && !isCommand(c.body)
+    && !String(c.body || '').includes(WATCH_MARKER) && isListedLogin(c, trustedLogins) && hasPrefix(c.body, commentPrefix)
     && postedSince(c, commentsSince) && commentSettled(c, now));
   const handledKeys = [
     ...failures.map(keyOf),
@@ -439,9 +441,14 @@ export function createPrWatcher(deps = {}) {
     try { const list = deps.trustedLogins?.(origin); return Array.isArray(list) ? list.filter((x) => typeof x === 'string') : []; }
     catch { return []; }
   };
-  /** The options every watch-loop collectTriggers call shares: the reviewer list (read once per call site)
-   *  and when the watch began taking PR-level comments. */
-  const triggerOpts = (w, origin, extra = {}) => ({ trustedLogins: trustedLoginsOf(origin), commentsSince: w.retryState?.commentsSince ?? null, now: now(), ...extra });
+  /** The text a PR-level comment must open with to count (deps.commentPrefix), or '' (none count). */
+  const commentPrefixOf = (origin) => {
+    try { const v = deps.commentPrefix?.(origin); return typeof v === 'string' ? v : ''; }
+    catch { return ''; }
+  };
+  /** The options every watch-loop collectTriggers call shares: the reviewer list and comment marker (read
+   *  once per call site) and when the watch began taking PR-level comments. */
+  const triggerOpts = (w, origin, extra = {}) => ({ trustedLogins: trustedLoginsOf(origin), commentPrefix: commentPrefixOf(origin), commentsSince: w.retryState?.commentsSince ?? null, now: now(), ...extra });
   const fixRun = (event) => {
     try { deps.onFixRun?.(event); } catch { /* the chat is told best effort; never ownership */ }
   };

@@ -183,7 +183,7 @@ test('Pull requests card: pr.open and pr.slices with Team default / Worca defaul
   const { window, host, calls } = harness({ settings: () => ({ status: 200, body: view }), patch: (body) => ({ status: 200, body: body['pr.open'] === 'ready' ? saved : view }) });
   for (let i = 0; i < 4; i++) await tick();
   const card = host.querySelector('.pd-settings-card[data-card="pr"]');
-  assert.deepEqual([...card.querySelectorAll('.inherit-field')].map((f) => f.dataset.setting), ['pr.open', 'pr.slices', 'watchNewPrs', 'watch.trustedReviewers']);
+  assert.deepEqual([...card.querySelectorAll('.inherit-field')].map((f) => f.dataset.setting), ['pr.open', 'pr.slices', 'watchNewPrs', 'watch.trustedReviewers', 'watch.reviewCommentPrefix']);
   const open = field(host, 'pr.open');
   assert.equal(open.querySelector('label').textContent, 'When a run finishes');
   assert.deepEqual([...open.querySelector('.inherit-input').options].map((o) => [o.value, o.textContent]),
@@ -216,6 +216,20 @@ test('Pull requests card: reviewers that may trigger a fix read as text and save
   host.querySelector('.pd-settings-card[data-card="pr"] .pd-settings-save').click();
   for (let i = 0; i < 4; i++) await tick();
   assert.deepEqual(calls.filter((c) => c.method === 'PATCH').at(-1).body, { 'watch.trustedReviewers': ['review-bot-a', 'review-bot-c'] });
+});
+
+test('Pull requests card: the PR comment marker saves as typed text, trimmed', async () => {
+  const view = { ...VIEW, own: {}, layers: { ...VIEW.layers, 'watch.reviewCommentPrefix': { default: '' } } };
+  const { window, host, calls } = harness({ settings: () => ({ status: 200, body: view }), patch: () => ({ status: 200, body: view }) });
+  for (let i = 0; i < 4; i++) await tick();
+  const f = field(host, 'watch.reviewCommentPrefix');
+  assert.equal(f.querySelector('label').textContent, 'PR comment starts with');
+  const input = f.querySelector('.inherit-input');
+  input.value = ' ## AI Review ';
+  input.dispatchEvent(new window.Event('input', { bubbles: true }));
+  host.querySelector('.pd-settings-card[data-card="pr"] .pd-settings-save').click();
+  for (let i = 0; i < 4; i++) await tick();
+  assert.deepEqual(calls.filter((c) => c.method === 'PATCH').at(-1).body, { 'watch.reviewCommentPrefix': '## AI Review' });
 });
 
 test('Pull requests card: with no team value pr.open inherits "Worca default"', async () => {

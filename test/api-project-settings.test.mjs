@@ -149,6 +149,21 @@ test('pr.open / pr.slices: a PATCH round-trips; a bad value is a 400 naming the 
   assert.deepEqual(clear.body.effective['pr.open'], { value: 'none', source: 'default' });
 });
 
+test('watch.reviewCommentPrefix (the text a PR-level comment opens with): round-trips; a non-string is a 400', async () => {
+  const url = `/api/projects/${key}/settings`;
+  assert.deepEqual((await call('GET', url)).body.effective['watch.reviewCommentPrefix'], { value: '', source: 'default' });
+  const set = await call('PATCH', url, { 'watch.reviewCommentPrefix': '## AI Review' });
+  assert.equal(set.status, 200, JSON.stringify(set.body));
+  assert.deepEqual((await call('GET', url)).body.effective['watch.reviewCommentPrefix'], { value: '## AI Review', source: 'project' });
+  for (const value of [42, ['## AI Review'], 'x'.repeat(201)]) {
+    const bad = await call('PATCH', url, { 'watch.reviewCommentPrefix': value });
+    assert.equal(bad.status, 400, JSON.stringify(value));
+    assert.match(bad.body.error, /^watch\.reviewCommentPrefix must be text of at most 200 characters$/);
+  }
+  const clear = await call('PATCH', url, { 'watch.reviewCommentPrefix': null });
+  assert.deepEqual(clear.body.effective['watch.reviewCommentPrefix'], { value: '', source: 'default' });
+});
+
 test('watch.trustedReviewers (the bot allowlist Watch PR trusts): a list PATCH round-trips; a bad value is a 400', async () => {
   const url = `/api/projects/${key}/settings`;
   assert.deepEqual((await call('GET', url)).body.effective['watch.trustedReviewers'], { value: [], source: 'default' });
