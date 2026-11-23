@@ -83,7 +83,7 @@ pull requests and issues (https links only). Before the reply starts, worca comp
 the `origin` remote in every registered project's local git config. It reads no network and runs no
 git command, and the remote's address never reaches the chat.
 
-- **One project matches:** the chat switches to it. You see "Switched to <name>", the scope pill
+- **One project matches:** the chat switches to it. You see "Switched to <name>", the project button
   follows, and the message runs in that project. Links that match no project are ignored.
 - **Two or three projects match** (one repository cloned twice, or links into different projects):
   nothing switches. The model is told which projects matched and may ask you with a scope card.

@@ -100,7 +100,7 @@ test('the shared icons are ask-panel.mjs ICONS, path for path', () => {
 
 test('the composer row keeps Ask\'s order and controls, minus voice, Sets and the feature attach button, plus the capture button', async () => {
   const h = await loaded();
-  const key = (c) => (c.tagName === 'INPUT' ? `input[${c.type}]` : [...c.classList].sort().join(' '));
+  const key = (c) => (c.tagName === 'INPUT' ? `input[${c.type}]` : [...c.classList].filter((k) => k !== 'is-bare').sort().join(' '));
   const ref = [...h.doc.querySelector('.ask-composer-row').children].filter((c) => !c.matches('.ask-sets-btn, .ask-voice, .ask-composer-ext, .ask-pull-btn')).map(key);   // a view's extension slot (Design's pills) is Ask's only
   const mine = buildComposer(h.doc, { placeholder: 'x', onInput() {}, onSend() {}, onStop() {} });
   const row = mine.el.querySelector('.ask-composer-row');
@@ -113,12 +113,13 @@ test('the composer row keeps Ask\'s order and controls, minus voice, Sets and th
   for (const sel of ['.ask-ctx-ring svg', '.ask-ctx-ring-track', '.ask-ctx-ring-arc', '.ask-stop svg', '.ask-stop rect', '.ask-send svg', '.ask-model-btn svg']) {
     assert.deepEqual(attrs(row.querySelector(sel)), attrs(h.doc.querySelector(`.ask-composer-row ${sel}`)), sel);
   }
-  // Projects, any way P4 (SEAMS S44): Ask's scope pill leads with its scope icon; the extension's pill changes only its words.
-  const noLeadIcon = (s) => (s.k.length && s.k[0].t === 'svg' ? { ...s, k: s.k.slice(1) } : s);
-  for (const sel of ['[data-ask-meter]', '[data-ask-ctx-btn]', '[data-ask-model-btn]', '[data-ask-scope-btn]', '[data-ask-attach-btn]']) {
+  // Projects, any way P4 (SEAMS S44): the app's scope pill is an icon button now (the compact bar); the sidebar keeps its worded pill.
+  for (const sel of ['[data-ask-meter]', '[data-ask-ctx-btn]', '[data-ask-attach-btn]']) {
     const ask = skeleton(h.doc.querySelector(`.ask-composer-row ${sel}`));
-    assert.deepEqual(skeleton(row.querySelector(sel)), sel === '[data-ask-scope-btn]' ? noLeadIcon(ask) : ask, sel);
+    assert.deepEqual(skeleton(row.querySelector(sel)), ask, sel);
   }
+  assert.deepEqual(skeleton(row.querySelector('[data-ask-model-btn]')).k.map((x) => x.c), ['ask-model-btn-engine', 'ask-model-btn-label', 'ask-model-btn-effort', ''], 'the sidebar keeps the engine word');
+  assert.deepEqual(skeleton(row.querySelector('[data-ask-scope-btn]')).k.map((x) => x.t + '.' + x.c), ['SPAN.ask-scope-label', 'svg.'], 'the sidebar keeps its worded project pill');
 });
 
 test('the file chip and the drop overlay have Ask\'s skeleton', async () => {

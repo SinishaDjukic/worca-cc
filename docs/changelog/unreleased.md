@@ -3,6 +3,20 @@
 Notes on merged features that have no release page yet. `/worca-changelog` folds
 them into the next page and empties this file.
 
+## Chat composer bar, compact
+
+**A compact bottom bar.**
+
+Icons for project, Requirements and Sets; the harness mark on the model button; the Design gear beside the model; one voice control.
+
+Chips: Chat · Design · Voice
+
+Read it: [Chat](../chat.md)
+
+Pull requests (add each number when it opens):
+
+- Chat: the compact composer bar (#1546)
+
 ## Protected files stay protected on Windows
 
 **On Windows, `.env` files, `secrets.json` and Worca's own data are now refused by Worca's file tools and by Gemini and Cursor runs.**
