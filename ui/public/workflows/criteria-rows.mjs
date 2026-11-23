@@ -44,9 +44,11 @@ function cell(doc, it, label) {
 }
 
 /** Agree / Disagree, or (after an answer, also one given before a reload: `it.answer`) what was said and Undo (agree: null). */
-function answerArea(doc, it, actions, trustEl, txt) {
+function answerArea(doc, it, actions, trustEl, txt, name = '') {
   const area = el(doc, 'div', 'wft-acts wft-crit-acts');
-  const keyed = (b, k) => { b.dataset.focusKey = `wft-crit-${it.judgementId}-${k}`; return b; };
+  // Pre-merge QA (P12): each button says what it answers ("Agree: Quotes a real customer · v1"), where five pairs were
+  // all named "Agree" / "Disagree"; the visible word comes first, so a spoken command still finds it.
+  const keyed = (b, k) => { b.dataset.focusKey = `wft-crit-${it.judgementId}-${k}`; if (name) b.setAttribute('aria-label', `${b.textContent}: ${name}`); return b; };
   let send;
   const paint = (focus) => {
     area.replaceChildren();
@@ -101,7 +103,7 @@ function whyBlock(doc, it, versionLabel, v, actions, patches) {
   txt.append(words, proof);
   if (trustText) txt.append(trust);
   box.append(txt);
-  if (it.judgementId && actions.answer) box.append(answerArea(doc, it, actions, trust, txt));
+  if (it.judgementId && actions.answer) box.append(answerArea(doc, it, actions, trust, txt, [it.label || it.text, versionLabel].filter(Boolean).join(' · ')));
   return box;
 }
 
@@ -158,7 +160,7 @@ export function pairBlock(doc, pair, labels, { onAnswer = null } = {}) {
   txt.append(h, el(doc, 'p', 'hint', 'Worca read both without knowing which version wrote which. It compared the first try of each version.'), said);
   box.append(txt);
   if (decided && pair.judgementId && onAnswer) {
-    box.append(answerArea(doc, pair, { answer: onAnswer }, el(doc, 'p', 'hint wft-crit-trust'), txt),
+    box.append(answerArea(doc, pair, { answer: onAnswer }, el(doc, 'p', 'hint wft-crit-trust'), txt, h.textContent),
       el(doc, 'p', 'hint wft-pair-note', DISAGREE_NOTE));
   }
   return box;

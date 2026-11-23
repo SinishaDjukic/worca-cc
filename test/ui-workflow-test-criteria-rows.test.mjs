@@ -88,6 +88,10 @@ test('P4-M6: after Disagree the box says so with Undo; Undo takes it back and th
   assert.deepEqual(sent, [[12, false], [12, null]]);
   assert.equal(why.querySelector('.wft-said'), null);
   assert.deepEqual([...why.querySelectorAll('button')].map((b) => [b.textContent, b.disabled]), [['Agree', false], ['Disagree', false]]);
+  // Pre-merge QA (P12): each answer button names what it answers, the visible word first.
+  for (const b of why.querySelectorAll('button')) {
+    assert.match(b.getAttribute('aria-label'), new RegExp(`^${b.textContent}: Names a success metric with a number, and how to measure it · `));
+  }
 });
 
 test('P4-M6: after Agree, "You agreed." with a check; a failed answer gives the buttons back', async () => {
