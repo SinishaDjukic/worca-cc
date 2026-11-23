@@ -155,7 +155,7 @@ import {
   renameChatGroup as askRenameChatGroup, addToChatGroup as askAddToChatGroup, removeFromChatGroup as askRemoveFromChatGroup,
   deleteChatGroup as askDeleteChatGroup, chatGroupThreadIds as askChatGroupThreadIds, firstUserText as askFirstUserText,
   snapshotChatGroups as askSnapshotChatGroups, restoreChatGroups as askRestoreChatGroups,
-  ChatGroupError, switchThreadEngine as askSwitchThreadEngine, askOutRoot,
+  ChatGroupError, switchThreadEngine as askSwitchThreadEngine, askOutRoot, supersedeRefusal as askSupersedeRefusal, appendSupersedingMessage as askAppendSupersedingMessage,
 } from '../src/core/ask/store.mjs';
 import { isSurfaceMode, turnHelperFlags } from '../src/core/ask/thread-modes.mjs';
 import { CHAT_BUSY, chatBusyReason, chatGroupBusyText } from '../src/shared/chat-busy.mjs';
@@ -9436,7 +9436,10 @@ function askSignedIn(req) {
   return who.source === 'local' ? null : who.name;
 }
 
-async function startAskTurn({ threadId: id, thread, ctx, model, effort, text, files = [], synthetic = null, signedIn = null, reader = null, mcpOff = undefined, agentMode = undefined, client = null, onUserRow = null, chatContext = null, scopeNote = null }, { features = [] } = {}) {
+/** The voice-merge pre-check startAskTurn runs (tests swap it to reach the write's own in-tx refusal). */
+let askSupersedePrecheck = askSupersedeRefusal;
+
+async function startAskTurn({ threadId: id, thread, ctx, model, effort, text, files = [], synthetic = null, signedIn = null, reader = null, mcpOff = undefined, agentMode = undefined, handsFree = false, client = null, onUserRow = null, chatContext = null, scopeNote = null, supersedes = null }, { features = [] } = {}) {
   // §6.2.2 ATOMIC re-check + slot reservation. Today every await between the
   // top 409/429 pair and here resolves in microtasks (validateModelEffort ->
   // composeCatalog; askBuildCatalog -> three synchronous better-sqlite3
@@ -9445,8 +9448,9 @@ async function startAskTurn({ threadId: id, thread, ctx, model, effort, text, fi
   // any of those readers ever becomes genuinely async: it is synchronous —
   // check-and-set cannot interleave — and runs BEFORE the first write, so a
   // loser leaves no rows.
-  if (askDeleting.has(id)) return { ok: false, status: 409, error: 'thread is being deleted' };
-  if (askInFlight(id)) return { ok: false, status: 409, error: 'turn in flight' };
+  const supersedeAt = Date.now();   // one instant for the pre-check and the write's re-check: they cannot disagree on age
+  const busy = askDeleting.has(id) ? { error: 'thread is being deleted' } : askInFlight(id) ? { error: 'turn in flight' } : supersedes ? askSupersedePrecheck(id, supersedes, { now: supersedeAt }) : null;   // + a voice merge (docs/speech.md); its write re-checks in the tx
+  if (busy) return { ok: false, status: 409, error: busy.error, ...(busy.code ? { code: busy.code } : {}) };
   // #943: an engine switch can commit while the caller awaited after reading `thread` (a scope change, askEventPick).
   // A turn from that snapshot would run on the engine the chat just left, resume its session and store it again.
   const live = askGetThread(id);
@@ -9479,13 +9483,8 @@ async function startAskTurn({ threadId: id, thread, ctx, model, effort, text, fi
 
   let asstMsg = null;
   let turn;
-  let echoAttachments = [];
+  let echoAttachments = [], superseded = [], userMsg;
   try {
-    // Writes. Store the LAST context + model/effort on the thread (§6.5 tail, D8).
-    // `ctx` (pin-merged) rather than cv.context: the stored row is what restores
-    // the selector on reopen and what the MCP child reads for tool defaulting.
-    // The engine is stored with the model (#635): a chat stays on it even if its model later leaves the catalog.
-    askUpdateThread(id, { context: ctx, model, effort, engine: modelEngine || 'claude', ...(mcpOff !== undefined ? { mcpOff } : {}), ...(agentMode !== undefined ? { agentMode } : {}) });
     // §7.4 — NOTHING is stamped on the row before the 202: the thread stays
     // untitled (the header reads "Ask Worca") until the D13 background title
     // announces itself. titleWasAuto gates that call: a title given at THREAD
@@ -9500,9 +9499,15 @@ async function startAskTurn({ threadId: id, thread, ctx, model, effort, text, fi
     // message or an event turn. whereOf is pure, so the row is still written before the first await.
     const where = synthetic ? null : whereOf(ctx);
     const whereBlocks = where ? [{ kind: 'where', label: where.label, icon: where.icon }] : [];
-    const userMsg = askAppendMessage(id, synthetic
+    ({ message: userMsg, superseded } = askAppendSupersedingMessage(id, synthetic   // supersedes null = a plain append
       ? { role: 'user', text, blocks: [{ kind: 'notice', synthetic: true, ...(synthetic.quiet ? { quiet: true } : {}), text: synthetic.notice }] }
-      : { role: 'user', text, ...(whereBlocks.length ? { blocks: whereBlocks } : {}) });
+      : { role: 'user', text, ...(whereBlocks.length ? { blocks: whereBlocks } : {}) }, supersedes, { now: supersedeAt }));
+    // Writes. Store the LAST context + model/effort on the thread (§6.5 tail, D8), AFTER the user row: a voice merge
+    // the write's re-check refuses then leaves the thread as it was.
+    // `ctx` (pin-merged) rather than cv.context: the stored row is what restores
+    // the selector on reopen and what the MCP child reads for tool defaulting.
+    // The engine is stored with the model (#635): a chat stays on it even if its model later leaves the catalog.
+    askUpdateThread(id, { context: ctx, model, effort, engine: modelEngine || 'claude', ...(mcpOff !== undefined ? { mcpOff } : {}), ...(agentMode !== undefined ? { agentMode } : {}) });
     job.userMessageId = userMsg.id;
     // Freeform chat (M4): the caller records where this row came from BEFORE any listener can see it — the broadcast
     // below wakes the chat bridge's reconciler on another queue, and enqueueChatWork runs an idle queue on the next
@@ -9541,7 +9546,7 @@ async function startAskTurn({ threadId: id, thread, ctx, model, effort, text, fi
         ...featureBlocks,
       ]);
     }
-    broadcast({ type: 'ask-message', threadId: id, message: askGetMessage(userMsg.id) }); // echo for other tabs
+    broadcast({ type: 'ask-message', threadId: id, message: askGetMessage(userMsg.id) }); if (superseded.length) broadcast({ type: 'ask-superseded', threadId: id, messageIds: superseded, by: userMsg.id });   // echo for other tabs, then the rows a voice merge hid (not replay-buffered)
     asstMsg = askAppendMessage(id, { role: 'assistant', text: '', status: 'streaming', model, effort, engine: modelEngine || 'claude' });   // #943: per-reply engine
     job.messageId = asstMsg.id;
 
@@ -9604,8 +9609,9 @@ async function startAskTurn({ threadId: id, thread, ctx, model, effort, text, fi
     // design gets its [design chat] block (the design, its plan, the open build and the pins) the same way.
     const composerBlock = dChat ? await designPromptBlock(askGetThread(id)) : composerMode ? await composerPromptBlock(askGetThread(id)) : '';
     const prompt = askBuildTurnPrompt(composerBlock ? `${header}\n\n${composerBlock}` : header, text, inline,
-      chatBlock ? askRenderChatContextPrompt(chatBlock) : '', askRenderAttachedRequirementsPrompt(featureBlocks));
-    const prior = askListMessages(id).filter((m) => m.seq < userMsg.seq);
+      chatBlock ? askRenderChatContextPrompt(chatBlock) : '', askRenderAttachedRequirementsPrompt(featureBlocks),
+      { spoken: handsFree === true && !synthetic, supersedes: superseded.length > 0 });
+    const prior = askListMessages(id).filter((m) => m.seq < userMsg.seq && !m.supersededBy);   // rows a voice merge hid stay out
     const restoredPrompt = askBuildRestoredPrompt(prior, prompt);
     // #943: no provider session but replies already — the first turn after an engine switch, or after a failed resume
     // cleared the session — starts fresh WITH the transcript (text plus one line per tool call, card, run, attachment;
@@ -9696,7 +9702,7 @@ async function startAskTurn({ threadId: id, thread, ctx, model, effort, text, fi
         });
       } catch { /* thread gone */ }
     }
-    return { ok: false, status: 500, error: err && err.message ? err.message : String(err) };
+    return { ok: false, status: err?.code === 'supersede-refused' ? 409 : 500, error: err && err.message ? err.message : String(err), ...(err?.code === 'supersede-refused' ? { code: err.code } : {}) };   // 409: the supersede re-check in the write's tx refused, nothing written
   }
   const settleJob = (status) => {
     if (askJobs.get(id) !== job) return;
@@ -9718,7 +9724,7 @@ async function startAskTurn({ threadId: id, thread, ctx, model, effort, text, fi
       console.error(`[worca-ui] ask turn crashed: ${err && err.message ? err.message : err}`);
       settleJob('error');
     });
-  return { ok: true, job, userMessageId: job.userMessageId, assistantMessageId: job.messageId, attachments: echoAttachments };
+  return { ok: true, job, userMessageId: job.userMessageId, assistantMessageId: job.messageId, attachments: echoAttachments, superseded };
 }
 /** The text of the system row that marks a switch (and that the handoff transcript then carries). */
 const askEngineSwitchText = (from, to) => `Switched from ${engineLabel(from)} to ${engineLabel(to)}`;
@@ -9734,7 +9740,7 @@ async function askContextTokens(model) {
 /** The turns the first turn after a switch leaves out of its transcript, counted WITH the switch's own row (that turn
  *  sees it). Synchronous, so the commit can recount with no await before its transaction. */
 function askSwitchTranscript(id, { from, to, budget }) {
-  const rows = [...askListMessages(id), { role: 'system', text: askEngineSwitchText(from, to), blocks: [] }];
+  const rows = [...askListMessages(id).filter((m) => !m.supersededBy), { role: 'system', text: askEngineSwitchText(from, to), blocks: [] }];   // rows a voice merge hid are not turns
   const hand = askBuildHandoffPrompt(rows, '', { to, maxChars: budget });
   return { totalTurns: hand.totalTurns, droppedTurns: hand.droppedTurns };
 }
@@ -10842,13 +10848,15 @@ if (isMain) {
 }
 
 export { app, server, runs };
-export { AGENTS_DIR, APP_INFO, APP_REPO_URL, ASK_DEFERRED_REPLIES_MAX, ASK_SCOPE_BUSY, ASK_TEXT_PREVIEW_MAX, BRANCH_SETTLED, BUGS_SLUG, CLONE_JOBS, HOST, MARKETPLACE_ID_RE, MARKET_JOBS, NO_PR_HOST, PKG_VERSION, PLAN_TEXT_MAX, PLUGIN_NAME_RE, PORT, PROJECT_ROOT, PR_TITLE_MAX, REMOTE_MODE, RUNNING_VERSION, ResumeError, SETTLED_RUN, SETUP_AGENT_TEXT, SETUP_JOBS, SKILLS_DIR, SKILL_FOLDER_IMPORTS, SKILL_MD_UNREACHABLE, STORE_ERROR_CODES, actions, actionsEnabledHere, activeActionSnaps, adoWebhookSecret, afterMembersChanged, afterProjectRegistered, agentErrorStatus, agentMayBeCaller, answerRun, applyProjectSettingsPatch, applySettingsPatch, askBusyReason, askChatActions, askChatEngine, askChatEngineGate, askCommandBridges, askCommands, askCommandsEnabled, askContextTokens, askCredentialGate, askDeferred, askDeferredReplies, askDeleting, askEngineSwitchText, askEventPick, askFilesRunDir, askFilesStoreDir, askFollowers, askGroupFor, askGroupThreads, askIdParam, askInFlight, askLiveRun, askProxyBridges, askRefResolver, askRelays, askRunFromPipelineRow, askRunningCount, askSignedIn, askSwitchTranscript, askThreadVisible, askTrackingCount, askTurnEngine, askValidateScope, askViewer, askWebAccessFor, askWorktreesEnvelope, attachAskFollower, autoDetectedBuiltins, automationWorkspaceMembers, automations, awayPersonOf, badRequest, bareWorkspaceKey, bearerMatches, broadcast, broadcastFeature, brokerStartRefusal, builtins, busyActionRunIds, channelHost, chatGroupError, chatNotifier, chatRefusals, checkoutRecOf, commentIdParam, commentsCreate, commentsDelete, commentsFail, commentsList, commentsPatch, commentsReply, createRunPr, crosslinkMemberPrs, currentUpdateEligibility, defaultPrRemotes, deleteAskThreadFully, designBuilds, designChatActions, detectSystemProxyImpl, detectTeamMemorySoon, drainServer, effectiveUiLevel, egressNow, emitAskWorktrees, emitChanged, emitMemoryChanged, emitPluginsChanged, ensureSetup, extensionPairing, factDeps, failedEventTurn, featureShipping, findScheduleItem, findShipCardIn, flipCard, followCloneCard, forkPrRefusal, fsAllowedRoots, fsLimitedHere, gitMissing, isFinishingRun, isFreshInstall, isLiveRun, isPlainObject, isPrStoreKey, isTruthy, kickAutomations, kickPrWatch, labelsOn, lastUpdateResult, liveAutoRescan, liveDefragRun, liveDiffOf, livePr, liveProbe, liveRunEntry, liveRunIds, liveSliceOf, marketJobFailure, mcpRunPreview, mcpTargetOf, memberFor, memoryError, modelTestsInFlight, namingBucket, namingCatalog, namingOn, namingPick, noRawCommand, notifReader, openMemberPr, ownsWorkspaceTarget, parseMcpOptOut, pauseRun, pickPrRemotes, pinUiLevel, postAskSystemNotice, postDirection, prTargetFor, prWatchFrame, prWatcher, presetCheckCtx, presetScopeOf, primaryMemberOf, projectAutomationRepo, projectDirForKey, projectSettingsState, proxyHost, pruneMarketJobs, prunedNote, publicCloneJob, readInstalledManifest, refuseAgentCaller, refuseSignedOutClaude, registeredProjectForDir, rejectRawTerminalFields, removeRecommendation, requireActions, requireFsAllowed, requireTerminal, resolvePrPipeline, resolveProjectDir, resolveRunScope, resumeEngineOpts, resumeRun, resumeTargetDirs, runGroupIds, runSourceIssue, scanModelsFor, scanRequest, scheduleVerb, sendArtifactRaw, sendCheckoutError, sendMetricsError, sendPolicyError, sendPresetError, serveAskFile, serverMockMode, settleShipped, setupJobs, setupProbesOverride, shipChainNow, shipCtxOf, shipFeatureNow, skillRunPreview, snapshotFor, sockets, soundCards, stackStates, stackTokens, startAgentGen, startAskTurn, startCloneJob, startMetricsEventTurn, startOrQueue, startRunAs, startRunHandler, startScopeEventTurn, startScriptBench, stopCheckoutServices, stopMemberServices, stopPausedPipeline, stopRun, switchThreadScope, syncMode, syncProjectAction, syncRoute, teamOriginOk, teamWarn, terminalCallerOk, terminalEnabledHere, terminalError, terminalSameOrigin, terminals, tmProject, uiControl, unsyncableBlock, updateChecker, updatePort, updatePreview, validateResumeTarget, versionLister, versionPayload, webhookSecret, withAfter, workspaceMembersBusy, invokeStartRun, prWatcherDeps, PREVIEW_REFUSED, TOOL_RUN_ENDED, askTabBridges, askTabsEnabled, toolPanelOn, chatLinkRoots, chatLinks, chatToolFolder, closeChatTerminals, frameCheck, liveActionsOf, previewPortMode, previewProxy, previewRefusal, previewTokens, rawOpts, runRowForScope, sendOfficePdf, sendRawFile, setupLate, tabFailure, tabOwnerOf, tabTools, toolTabs, askLinkIsPrFix, followedRunOf, designApi };
+export { AGENTS_DIR, APP_INFO, APP_REPO_URL, ASK_DEFERRED_REPLIES_MAX, ASK_SCOPE_BUSY, ASK_TEXT_PREVIEW_MAX, BRANCH_SETTLED, BUGS_SLUG, CLONE_JOBS, HOST, MARKETPLACE_ID_RE, MARKET_JOBS, NO_PR_HOST, PKG_VERSION, PLAN_TEXT_MAX, PLUGIN_NAME_RE, PORT, PROJECT_ROOT, PR_TITLE_MAX, REMOTE_MODE, RUNNING_VERSION, ResumeError, SETTLED_RUN, SETUP_AGENT_TEXT, SETUP_JOBS, SKILLS_DIR, SKILL_FOLDER_IMPORTS, SKILL_MD_UNREACHABLE, STORE_ERROR_CODES, actions, actionsEnabledHere, activeActionSnaps, adoWebhookSecret, afterMembersChanged, afterProjectRegistered, agentErrorStatus, agentMayBeCaller, answerRun, applyProjectSettingsPatch, applySettingsPatch, askBusyReason, askChatActions, askChatEngine, askChatEngineGate, askCommandBridges, askCommands, askCommandsEnabled, askContextTokens, askCredentialGate, askDeferred, askDeferredReplies, askDeleting, askEngineSwitchText, askEventPick, askFilesRunDir, askFilesStoreDir, askFollowers, askGroupFor, askGroupThreads, askIdParam, askInFlight, askLiveRun, askProxyBridges, askRefResolver, askRelays, askRunFromPipelineRow, askRunningCount, askSignedIn, askSupersedePrecheck, askSwitchTranscript, askThreadVisible, askTrackingCount, askTurnEngine, askValidateScope, askViewer, askWebAccessFor, askWorktreesEnvelope, attachAskFollower, autoDetectedBuiltins, automationWorkspaceMembers, automations, awayPersonOf, badRequest, bareWorkspaceKey, bearerMatches, broadcast, broadcastFeature, brokerStartRefusal, builtins, busyActionRunIds, channelHost, chatGroupError, chatNotifier, chatRefusals, checkoutRecOf, commentIdParam, commentsCreate, commentsDelete, commentsFail, commentsList, commentsPatch, commentsReply, createRunPr, crosslinkMemberPrs, currentUpdateEligibility, defaultPrRemotes, deleteAskThreadFully, designBuilds, designChatActions, detectSystemProxyImpl, detectTeamMemorySoon, drainServer, effectiveUiLevel, egressNow, emitAskWorktrees, emitChanged, emitMemoryChanged, emitPluginsChanged, ensureSetup, extensionPairing, factDeps, failedEventTurn, featureShipping, findScheduleItem, findShipCardIn, flipCard, followCloneCard, forkPrRefusal, fsAllowedRoots, fsLimitedHere, gitMissing, isFinishingRun, isFreshInstall, isLiveRun, isPlainObject, isPrStoreKey, isTruthy, kickAutomations, kickPrWatch, labelsOn, lastUpdateResult, liveAutoRescan, liveDefragRun, liveDiffOf, livePr, liveProbe, liveRunEntry, liveRunIds, liveSliceOf, marketJobFailure, mcpRunPreview, mcpTargetOf, memberFor, memoryError, modelTestsInFlight, namingBucket, namingCatalog, namingOn, namingPick, noRawCommand, notifReader, openMemberPr, ownsWorkspaceTarget, parseMcpOptOut, pauseRun, pickPrRemotes, pinUiLevel, postAskSystemNotice, postDirection, prTargetFor, prWatchFrame, prWatcher, presetCheckCtx, presetScopeOf, primaryMemberOf, projectAutomationRepo, projectDirForKey, projectSettingsState, proxyHost, pruneMarketJobs, prunedNote, publicCloneJob, readInstalledManifest, refuseAgentCaller, refuseSignedOutClaude, registeredProjectForDir, rejectRawTerminalFields, removeRecommendation, requireActions, requireFsAllowed, requireTerminal, resolvePrPipeline, resolveProjectDir, resolveRunScope, resumeEngineOpts, resumeRun, resumeTargetDirs, runGroupIds, runSourceIssue, scanModelsFor, scanRequest, scheduleVerb, sendArtifactRaw, sendCheckoutError, sendMetricsError, sendPolicyError, sendPresetError, serveAskFile, serverMockMode, settleShipped, setupJobs, setupProbesOverride, shipChainNow, shipCtxOf, shipFeatureNow, skillRunPreview, snapshotFor, sockets, soundCards, stackStates, stackTokens, startAgentGen, startAskTurn, startCloneJob, startMetricsEventTurn, startOrQueue, startRunAs, startRunHandler, startScopeEventTurn, startScriptBench, stopCheckoutServices, stopMemberServices, stopPausedPipeline, stopRun, switchThreadScope, syncMode, syncProjectAction, syncRoute, teamOriginOk, teamWarn, terminalCallerOk, terminalEnabledHere, terminalError, terminalSameOrigin, terminals, tmProject, uiControl, unsyncableBlock, updateChecker, updatePort, updatePreview, validateResumeTarget, versionLister, versionPayload, webhookSecret, withAfter, workspaceMembersBusy, invokeStartRun, prWatcherDeps, PREVIEW_REFUSED, TOOL_RUN_ENDED, askTabBridges, askTabsEnabled, toolPanelOn, chatLinkRoots, chatLinks, chatToolFolder, closeChatTerminals, frameCheck, liveActionsOf, previewPortMode, previewProxy, previewRefusal, previewTokens, rawOpts, runRowForScope, sendOfficePdf, sendRawFile, setupLate, tabFailure, tabOwnerOf, tabTools, toolTabs, askLinkIsPrFix, followedRunOf, designApi };
 export const _testing = {
   toolTabs, tabTools, askTabBridge, previewTokens, setPageCapture: (c) => { pageCapture = c || createPageCapture(); },
   chatBridge, invokeAskCard, askBus, chatAgentModeFor, chatTurnIdentity,
   updateChecker,
   // Chat context: tests never reach a CDN (null = the real fetch again).
   setChatFileFetch: (fn) => { chatFileFetch = typeof fn === 'function' ? fn : defaultChatFileFetch; },
+  // Voice merge: swap startAskTurn's pre-check (null = the real one again) to reach the write's in-tx refusal.
+  setSupersedePrecheck: (fn) => { askSupersedePrecheck = typeof fn === 'function' ? fn : askSupersedeRefusal; },
   // The startEgressPolicy() result the /api/proxy routes read, or a startLiveEgress() that also applies saves.
   setEgress: (e) => { EGRESS = e; },
   setLiveEgress: (l) => { EGRESS_LIVE = l; },

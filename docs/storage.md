@@ -41,6 +41,8 @@ project's working tree, so nothing is ever committed to your repo.
                                         v98: designs.origin_thread_id (the chat that asked for the design).
                                         v99: a design chat from before (ask_threads.mode 'design') becomes a
                                         plain chat; its design still points at it (designs.thread_id)
+                                        v101: ask_messages.superseded_by (a voice merge: the user message that
+                                        replaced the row; hidden in the chat, never deleted; NULL = shown).
   backup-<ts>/                          legacy JSON archived on first upgrade (see below)
   store/no-project-00000000/            runs without a project: one store, the History group "No project";
                                         a run's work/ moves into its pipeline folder as work/ when it ends

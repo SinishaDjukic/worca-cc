@@ -16,19 +16,60 @@ Worca never uses the browser's own Web Speech API (Chrome sends that audio to Go
   conversation without typing and without the reply read aloud. No voice model is
   loaded for it.
 - **Hold the mic** (or the ▾ menu → *Hands-free conversation*): worca listens,
-  sends when you stop talking, reads the reply aloud sentence by sentence, then
-  listens again. Talk over the reply to interrupt — playback and the running
+  sends when you stop talking, reads a short spoken version of the reply aloud,
+  then listens again. Talk over the reply to interrupt — playback and the running
   answer stop, and what you said becomes the next question.
+- In hands-free, worca asks the model to begin its answer with a short version
+  written for listening: two or three plain sentences. That is what you hear.
+  The full answer is shown as text, as always. Code, tables, links and cards are
+  never read. If the model gives no spoken version, at most the first two
+  sentences of the reply are read. When those are too long, or the reply starts
+  with a list, code or a table, worca says *"The full answer is on screen."*
+  instead. *Talk, read the replies* and dictation do not ask for it, and read
+  nothing aloud.
 - A slow answer is acknowledged so you know worca heard you: when it starts
   researching (a tool call) before saying anything, or after 4 s with nothing to
   say, it says a short phrase (*"Okay, let me look into that."*, *"Hmm, let me
   think."*, …). If worca writes a line before the tool call ("I'll check the
   runs."), that line is read instead. Quick answers are just read. The
   acknowledgement itself cannot be interrupted.
-- An utterance ends after **1.2 s of silence**. Speak slowly or pause to think?
-  Raise **Pause before sending** (Models › Providers › Speech, 0.3–5 s) so you
-  are not cut off mid-sentence; lower it for snappier turns.
-- While worca is thinking or running tools, speech is ignored.
+- The pause adapts to what you said. A finished sentence is sent after **0.7 s**
+  of silence. With the built-in Whisper, unfinished words ("Show me the runs
+  and…") already wait about **1.75 s** while you speak.
+- An unfinished ending waits about **5 s** before it is sent, on every
+  speech-to-text path (the built-in Whisper and *Your server*). Unfinished means:
+  an ellipsis (`...`, `…`), a dash, a comma, no end punctuation, a trailing word
+  such as *and*, *but*, *so*, *the*, or an open question word at the end: *how*,
+  *what*, *why*, *where*, *whether*, *when*, *which*, *who*, or *do you*, *does
+  it*, *did you*, *can you*, *could you*, *would you*, *will you*, *are you*,
+  *is it*, *is there*. The question words count whatever the punctuation, because
+  Whisper writes "Do you know how?" for a cut-off. A short question on its own
+  ("What?", "How?") is finished. The words are English; other languages rely on
+  punctuation. If you go on talking within the wait, it all becomes one message.
+  The wait is fixed: **Pause before sending** (Models › Providers › Speech, 0.3–5 s) sets
+  only the finished-sentence pause. A finished message that Whisper wrote without
+  punctuation waits too.
+- Keep talking and it is joined: speech while your message is being transcribed,
+  while worca is thinking, or within 10 s of sending is added to that message, as
+  long as the reply has not started speaking. worca stops the reply and sends one
+  message, the earlier words first. That message **replaces** the earlier half
+  message: the half message and its stopped reply are hidden from the chat, also
+  after a reload and in the History search, but kept in storage. The model is told
+  that the new message replaces the previous one and keeps its session.
+- A reply that already started speaking is never merged into. After a tool that
+  changes something, a card or a sub-agent, your new words become a separate
+  message instead (the reply is still stopped), and both turns stay in the chat.
+  The same holds when the earlier half message carried a file or a quote: it is
+  never hidden. worca's server checks this again before it hides anything.
+- A reply waits while you keep talking, but not more than about 7 s after the
+  last words it heard (the 5 s hold plus a 2 s margin). A voice message is tied
+  to its own reply by id, so another turn in the chat (an event, another tab) is
+  never spoken as its answer.
+- A short "mm-hm", a cough or other noise changes nothing.
+- Speech while the acknowledgement plays is still ignored.
+- *Your server* speech-to-text and Dictate wait a fixed pause: the setting, and
+  at least 1.2 s. Dictate never waits the unfinished-ending hold and never
+  sends; *Talk, read the replies* waits it like hands-free.
 - Only prose is read: code blocks, tables, links and cards are skipped.
 - While the input is empty, its placeholder shows the state: *Starting mic…*,
   *Listening…*, *Transcribing…*, *Thinking…* or *Speaking…*; an error shows in red
@@ -127,7 +168,7 @@ Models › Providers › **Speech** — set **Engine** to *Your server*
 | API key | optional — literal or `${VAR}`, stored masked | optional — literal or `${VAR}`, stored masked |
 | Model | default `whisper-1` (whisper.cpp ignores it) | default `tts-1` |
 | Language | `auto`, or an ISO 639 code such as `bg` | — |
-| Pause before sending | seconds of silence that end what you said (any engine), default 1.2 | — |
+| Pause before sending | pause after a finished sentence (any engine), default 0.7; unfinished sentences wait 2.5×, up to 5 s (browser speech-to-text); Dictate and *Your server* wait at least 1.2 s | — |
 | Voice | — | default `af_heart` (Kokoro-FastAPI); OpenAI wants e.g. `alloy` |
 | Speed | — | 0.25–4, default 1 |
 
@@ -163,11 +204,16 @@ own install — no CDN, loaded only when you first use the mic) finds each utter
 
 - Built in: utterance → Whisper in a Web Worker → text. Reply text → sentences →
   Kokoro in the worker → audio. Nothing leaves the browser; worca only serves the
-  files (`/vendor/speech/*`).
+  files (`/vendor/speech/*`). Early transcription at the short pause runs the same
+  in-browser Whisper on the same audio and sends nothing anywhere new.
 - Your server: utterance → WAV → `POST /api/speech/transcribe` → your STT. Reply
   text → sentences → `POST /api/speech/synthesize` → your TTS → audio. Keys never
   reach the browser. With the credential broker on, worca stores no speech keys
   (use keyless local servers).
+
+The short spoken version is asked for only on hands-free turns. Worca takes it out
+of the reply on the server: it is read aloud, never shown and never stored. The
+saved chat holds the normal text reply.
 
 The speech routes sit behind the same loopback and identity checks as every other
 Ask route. An utterance may be up to 25 MB (about 13 minutes of audio).

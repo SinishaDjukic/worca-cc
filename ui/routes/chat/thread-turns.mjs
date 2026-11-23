@@ -33,7 +33,7 @@ import { listProjects } from '../../../src/core/projects.mjs';
 import { changesCard, landingFacts, landingFactsOfFeature } from '../../../src/core/shape/changes.mjs';
 import { isGenericBinary } from '../../../src/shared/artifact-kinds.mjs';
 import { chatAttachRefusal, chatSwitchChanges, engineLabel } from '../../../src/shared/engine-switch.mjs';
-import { askChatEngine, askChatEngineGate, askContextTokens, askCredentialGate, askDeleting, askEngineSwitchText, askIdParam, askInFlight, askRunningCount, askSignedIn, askSwitchTranscript, askTurnEngine, askViewer, badRequest, broadcast, brokerStartRefusal, factDeps, flipCard, liveRunEntry, postDirection, startAskTurn, switchThreadScope } from '../../server.mjs';
+import { askChatEngine, askChatEngineGate, askContextTokens, askCredentialGate, askDeleting, askEngineSwitchText, askIdParam, askInFlight, askRunningCount, askSignedIn, askSupersedePrecheck, askSwitchTranscript, askTurnEngine, askViewer, badRequest, broadcast, brokerStartRefusal, factDeps, flipCard, liveRunEntry, postDirection, startAskTurn, switchThreadScope } from '../../server.mjs';
 
 /** A message typed in a design chat closes the chat's open clarifying cards (L5.9): every `design-questions` card still
  *  `asking` reads `closed` (Not answered), so a late answer gets 409 instead of starting an event turn on stale context.
@@ -267,6 +267,14 @@ app.post('/api/ask/threads/:id/messages', async (req, res) => {
     const mo = body.mcpOff === undefined ? { ok: true, value: undefined } : validateMcpOff(body.mcpOff);
     if (!mo.ok) return badRequest(res, mo.error);
     if (body.agentMode !== undefined && typeof body.agentMode !== 'boolean') return badRequest(res, 'agentMode must be true or false');
+    // Hands-free voice (per turn, never stored): the panel sends it only while hands-free is really speaking.
+    if (body.handsFree !== undefined && typeof body.handsFree !== 'boolean') return badRequest(res, 'handsFree must be true or false');
+    // A voice merge (docs/speech.md): the message replaces the one just sent; startAskTurn checks it may be hidden.
+    if (body.supersedes !== undefined && (typeof body.supersedes !== 'string' || !/^askm_[0-9a-f]{8}$/.test(body.supersedes))) return badRequest(res, 'supersedes must be a message id');
+    // Only the Ask panel's voice merge sends supersedes; a Workflows chat refuses it before the route writes the canvas
+    // or the open clarifying cards (the store's own refusal comes later, inside startAskTurn). A chat with a design is a
+    // plain chat: its supersede meets the read-only pre-check below, before the pins are written.
+    if (body.supersedes !== undefined && isSurfaceMode(thread.mode)) return badRequest(res, 'supersedes is not available in this chat');
     // Workflows view (D11): a composer chat sends the open canvas with EVERY message. It is validated here and
     // stored on the thread before the turn, so the MCP child and the prompt read what the user sees now.
     let composerState = null;
@@ -331,6 +339,11 @@ app.post('/api/ask/threads/:id/messages', async (req, res) => {
     else if (linked.action === 'ask') scopeNote = { kind: 'hint', candidates: linked.candidates };
     const ctx = withChatScope(cv.context, scope);
 
+    // A voice merge never switches the scope: the switch's divider would refuse it anyway (after the write). Refused here;
+    // the panel resends plain on this code, and the plain send switches.
+    if (body.supersedes !== undefined && !sameScope(chatScopeOf(thread.context), scope)) {
+      return res.status(409).json({ error: 'the earlier message cannot be replaced: the chat scope changed', code: 'supersede-refused' });
+    }
     // P4: a send that changes the chat scope (a pick the PATCH refused mid-turn, a second tab, an API caller's first
     // message) switches first, so every tab's pill follows; a chat with messages gets the divider before the user row.
     if (!sameScope(chatScopeOf(thread.context), scope)) {
@@ -350,17 +363,21 @@ app.post('/api/ask/threads/:id/messages', async (req, res) => {
     // refused message never closes a clarifying card or overwrites the pins another tab's turn reads.
     const late = askTurnRefusal(id);
     if (late) return res.status(late.status).json(late.body);
+    // The read-only supersede check before the unarchive (startAskTurn checks again, and the write once more in its tx).
+    const superRefused = body.supersedes !== undefined ? askSupersedePrecheck(id, body.supersedes, { now: Date.now() }) : null;
+    if (superRefused) return res.status(409).json({ error: superRefused.error, code: superRefused.code });
     if (composerState) askUpdateThread(id, { composer: composerState });
     if (designId) closeOpenDesignQuestions(id);
     if (designState) askUpdateThread(id, { composer: designState });
     if (thread.archivedAt) askSetArchived(id, false);   // #948 s2: a message brings an archived chat back
-    const r = await startAskTurn({ threadId: id, thread, ctx, model: mv.model, effort: mv.effort, text, files, signedIn: askSignedIn(req), reader: askViewer(req), mcpOff: mo.value, agentMode: body.agentMode, client: req.worcaExtension ? 'browser-extension' : null, scopeNote }, { features: attached.features });
+    const r = await startAskTurn({ threadId: id, thread, ctx, model: mv.model, effort: mv.effort, text, files, signedIn: askSignedIn(req), reader: askViewer(req), mcpOff: mo.value, agentMode: body.agentMode, handsFree: body.handsFree === true, supersedes: body.supersedes ?? null, client: req.worcaExtension ? 'browser-extension' : null, scopeNote }, { features: attached.features });
     if (!r.ok) return res.status(r.status).json({ error: r.error, ...(r.code ? { code: r.code } : {}), ...(r.budget ? { budget: r.budget } : {}) });
     // `attachments` carries the store-minted ids so the sender's own echo can key
     // image thumbnails and the thread budget off them (the ask-message broadcast
     // may have raced ahead of this response, or been missed on a brand-new thread).
     res.status(202).json({
       userMessageId: r.userMessageId, assistantMessageId: r.assistantMessageId, attachments: r.attachments,
+      superseded: r.superseded ?? [],   // the rows a voice merge hid (the panel hides them at once)
       // the thread's context chips after this turn's merge, so the header repaints without a re-fetch
       contexts: askGetThread(id)?.contexts ?? [],
       // Only after a link switched the chat: the sender's pill follows even when its ask-scope frame was missed, so its
