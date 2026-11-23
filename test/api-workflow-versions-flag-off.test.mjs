@@ -39,11 +39,15 @@ after(async () => {
 });
 
 test('flag off: all six versions routes answer the gate 404 on a real workflow with a version and history', async () => {
-  // A real workflow: saved twice (one automatic snapshot), with version 1 in use — so only the gate can answer 404.
-  assert.equal((await post('/api/workflows', graphBody('Off'))).status, 201);
-  assert.equal((await post('/api/workflows', graphBody('Off 2'))).status, 201);
+  // A real workflow with version 1 in use and one automatic snapshot — so only the gate can answer 404. A save with the
+  // flag off keeps no history (flag-off review); the snapshot comes from a save made while the flag was on.
   const { getDb, tx } = await import('../src/core/db.mjs');
   const { insertVersionTx, setLiveVersionTx, listRevisions } = await import('../src/core/workflow-revisions.mjs');
+  assert.equal((await post('/api/workflows', graphBody('Off'))).status, 201);
+  assert.equal((await post('/api/workflows', graphBody('Off 1'))).status, 201);
+  assert.equal(listRevisions('wf_off_api').length, 0, 'a save with the flag off keeps no history');
+  process.env.WORCA_FLAGS = 'workflowTests';
+  try { assert.equal((await post('/api/workflows', graphBody('Off 2'))).status, 201); } finally { delete process.env.WORCA_FLAGS; }
   const row = getDb().prepare('SELECT * FROM workflows WHERE id = ?').get('wf_off_api');
   tx(() => { setLiveVersionTx('wf_off_api', insertVersionTx(row, { parts: [], fingerprint: 'f' })); });
   const rev = listRevisions('wf_off_api').find((r) => r.versionNo === null).id;
