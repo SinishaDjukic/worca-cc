@@ -9,16 +9,15 @@
 .chat-home{position:relative;}
 .chat-home > *{position:relative;}
 .chat-home-title{margin:0 0 18px;text-align:center;color:var(--ink);font:600 var(--fs-hero)/var(--lh-title) var(--sans);letter-spacing:-.01em;}
-/* The typed verb (home-verbs.mjs): the slot is as wide as the widest verb (a hidden sizer in its one cell), so the
-   sentence never moves; the letters are typed and deleted behind a blinking cursor. Reduced motion: "do", no cursor. */
+/* The changing verb (home-verbs.mjs): the slot is as wide as the widest verb (a hidden sizer in its one cell), so the
+   sentence never moves; the verb and its "?" fade out and the next fades in, slowly (#1556). Reduced motion: "do". */
 .chat-home-verb{display:inline-grid;text-align:left;color:var(--ink-2);}
 .chat-home-verb > span{grid-area:1/1;white-space:nowrap;}
 .chat-home-verb-size{visibility:hidden;}
+.chat-home-verb-line{transition:opacity .5s ease;}
+.chat-home-verb-line.is-out{opacity:0;}
 .chat-home-q{color:var(--ink);}
-.chat-home-cursor{display:inline-block;width:2px;height:.9em;margin:0 1px 0 2px;vertical-align:-.08em;background:currentColor;animation:chat-home-blink 1s steps(1) infinite;}
-.chat-home-cursor[hidden]{display:none;}
-@keyframes chat-home-blink{50%{opacity:0;}}
-@media (prefers-reduced-motion:reduce){.chat-home-cursor{animation:none;}}
+@media (prefers-reduced-motion:reduce){.chat-home-verb-line{transition:none;}}
 .chat-home-body{container:chat-home / inline-size;display:flex;flex-direction:column;gap:24px;width:100%;max-width:1040px;margin:20px auto 32px;box-sizing:border-box;}
 .chat-ic{display:inline-grid;place-items:center;flex:none;line-height:0;}
 .chat-ic svg{width:100%;height:100%;}
