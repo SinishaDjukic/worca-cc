@@ -199,8 +199,6 @@ export { OPENCODE_EFFORTS } from '../model-env.mjs';
 export const OPENCODE_ASK_LOCKDOWN = Object.freeze({
   allow: (servers) => Object.freeze({ '*': 'deny', ...Object.fromEntries(servers.map((s) => [`${s}_*`, 'allow'])) }),
 });
-/** OpenCode Zen's provider: its free models refuse a request without the shell. */
-const ZEN_PROVIDER_RE = OPENCODE_ZEN_RE;
 
 /** The config agents every spawn runs as (its prompt is the system prompt), and the investigator a fan-out node
  *  dispatches through the `task` tool. */
@@ -338,13 +336,17 @@ const envRefNames = (mcp) => [...new Set([...JSON.stringify(mcp).matchAll(/\{env
  *  a `#variant` outright (`Variant unavailable for opencode/big-pickle: low`) where 1.x ignored it, so a Zen model
  *  always spawns without a variant. Beyond the known Zen set, a variant a model does not offer is caught at spawn
  *  (`runOpencodeProcess`) and retried without one, so a phantom variant never hard-fails. */
+/** `provider/model` without the `#variant` OpenCode 2 reads off the id. */
+const bareModel = (model) => String(model).split('#')[0];
 export function buildOpencodeArgs({ agent, model, effort, sessionId, major = 1 } = {}) {
   // A Zen free model accepts no variant; the effort it carries ('' or a pick) would fail the spawn on OpenCode 2.
-  const variant = model && ZEN_PROVIDER_RE.test(model) ? undefined : effort;
+  const zen = Boolean(model) && OPENCODE_ZEN_RE.test(model);
+  const variant = zen ? undefined : effort;
   if (major >= 2) {
     const args = ['run', '--format', 'json', '--auto', '--standalone'];
     if (agent) args.push('--agent', String(agent));
-    if (model) args.push('-m', variant ? `${String(model).split('#')[0]}#${variant}` : String(model));
+    // A Zen id spawns bare even when it names a `#variant` itself.
+    if (model) args.push('-m', variant || zen ? `${bareModel(model)}${variant ? `#${variant}` : ''}` : String(model));
     if (sessionId) args.push('-s', String(sessionId));
     return args;
   }
@@ -753,6 +755,10 @@ export const OPENCODE_RESUME_NOT_FOUND_RE = /Session not found/i;
  *  model like `openrouter/…/ernie-5.5-flash-preview:free` takes only some (its `high` works, its `low`/`medium`
  *  fail), OpenCode Zen's `opencode/*` none at all — so a spawn that hits it retries without the variant. */
 const OPENCODE_VARIANT_UNAVAILABLE_RE = /Variant unavailable/i;
+/** `provider/model#variant` pairs OpenCode refused in this process. A refused turn's prompt stays in its session, so a
+ *  retry on a resumed session sends it twice (checked on 2.3.2): remembering the refusal keeps every later spawn of
+ *  that pair from being refused at all, and only the first refused turn of a resumed session can repeat its prompt. */
+const refusedVariants = new Set();
 /** The error log line (`--print-logs --log-level ERROR`) that names what an `UnknownError` event hides. */
 const LOG_CAUSE_RE = /\bmessage=failed\b.*?\berror="([^"]+)"/;
 /** Log chatter that repeats a failure already reported: streamed, never the error detail. */
@@ -779,7 +785,7 @@ export async function runOpencodeProcess({
   const ask = !!askLockdown;
   if (sandbox === 'read-only' && !ask) throw new Error(`${bin}: OpenCode has no verified read-only mode — a read-only job runs on Claude instead`);
   if (ask && !(typeof model === 'string' && model.trim())) throw new Error(`${bin}: a chat on OpenCode needs a model`);
-  if (ask && ZEN_PROVIDER_RE.test(model)) throw new Error(`${bin}: OpenCode Zen's free models refuse a chat (it has no shell) — pick a model of another provider`);
+  if (ask && OPENCODE_ZEN_RE.test(model)) throw new Error(`${bin}: OpenCode Zen's free models refuse a chat (it has no shell) — pick a model of another provider`);
   if (!(typeof model === 'string' && model.trim()) && !defaultModelAllowed()) throw new Error(`${bin}: refusing to start OpenCode without a model: ${DEFAULT_MODEL_RISK}`);
   // The major decides the argv (--standalone, no --variant/--pure), the normalizer's sub-agent lifecycle and the
   // sub-session export command; a recent reading is reused (opencodeVersion).
@@ -895,12 +901,23 @@ export async function runOpencodeProcess({
   // retry — the model runs at its own default then. A chat's turn calls this once, so the retry needs no turn-level
   // cooperation.
   let variant = effort;
+  // The model id as spawned: the retry also drops a `#variant` the id names itself.
+  let spawnModel = model;
+  const idVariantOf = (m) => (m && String(m).includes('#') ? String(m).split('#')[1] : '');
+  if (major >= 2 && model) {
+    const known = [variant, idVariantOf(spawnModel)].find((v) => v && refusedVariants.has(`${bareModel(model)}#${v}`));
+    if (known) {
+      safeEmit(onEvent, { type: 'stderr', stream: 'err', text: `[worca] opencode: ${bareModel(model)} takes no "${known}" variant — running without it` });
+      variant = null;
+      spawnModel = bareModel(model);
+    }
+  }
   const attempt = async (sessionId) => {
     const normalizer = createOpencodeNormalizer({ model: model || null, mcpServers: Object.keys(mcp || {}), serverNames, backgroundSubagents: major >= 2 });
     const capCtrl = new AbortController();
     let toolCalls = 0; let capped = false; let sawSession = false;
     const spawnSignal = cap ? (signal ? AbortSignal.any([signal, capCtrl.signal]) : capCtrl.signal) : signal;
-    const args = buildOpencodeArgs({ agent: nodeAgent, model, effort: variant, sessionId, major });
+    const args = buildOpencodeArgs({ agent: nodeAgent, model: spawnModel, effort: variant, sessionId, major });
     // A failed attempt reads no export: the rows still open close here, as errors.
     const abandon = () => {
       for (const o of normalizer.finish().openSubagents) safeEmit(onEvent, { type: 'subagent', event: 'error', toolUseId: o.toolUseId, errorText: o.errorText || 'the run ended before this sub-agent reported back' });
@@ -993,9 +1010,12 @@ export async function runOpencodeProcess({
       // <model>: <variant>") where 1.x ignored it; the catalog can advertise variants the model does not take.
       // Retry once without the variant — the model runs at its own default. `variant` is falsy on a second failure,
       // so this can never loop, and a second "Variant unavailable" is a real error.
-      if (variant && major >= 2 && OPENCODE_VARIANT_UNAVAILABLE_RE.test(String(err?.message || ''))) {
-        safeEmit(onEvent, { type: 'stderr', stream: 'err', text: `[worca] opencode: ${model || 'the model'} takes no "${variant}" variant — retrying without it` });
+      const idVariant = idVariantOf(spawnModel);
+      if ((variant || idVariant) && major >= 2 && OPENCODE_VARIANT_UNAVAILABLE_RE.test(String(err?.message || ''))) {
+        if (spawnModel) refusedVariants.add(`${bareModel(spawnModel)}#${variant || idVariant}`);
+        safeEmit(onEvent, { type: 'stderr', stream: 'err', text: `[worca] opencode: ${bareModel(spawnModel) || 'the model'} takes no "${variant || idVariant}" variant — retrying without it` });
         variant = null;
+        if (idVariant) spawnModel = bareModel(spawnModel);
         out = await attempt(session);
       } else if (ask || !session || err?.sawSession || err?.name === 'AbortError' || !OPENCODE_RESUME_NOT_FOUND_RE.test(String(err?.message || ''))) {
         throw err;
@@ -1129,7 +1149,7 @@ export const opencodeChat = makeChatDescriptor({
   // A chat always names its model: OpenCode's default is never in play.
   preflight: (_ctx, impl = opencodePreflight) => impl({ defaultModel: false, envScrub: true, envAllowlist: [] }),
   resumeNotFound: (err) => OPENCODE_RESUME_NOT_FOUND_RE.test(String((err && err.message) || err || '')),
-  modelProblem: (id) => (ZEN_PROVIDER_RE.test(String(id || '')) ? "OpenCode Zen's free models refuse a request without the shell, and a chat has none" : null),
+  modelProblem: (id) => (OPENCODE_ZEN_RE.test(String(id || '')) ? "OpenCode Zen's free models refuse a request without the shell, and a chat has none" : null),
   signIn: (model, env) => ['OPENCODE_', ...providerEnvPrefixes(model), ...opencodeProviderSignInEnv(model, env)],
   listRates: providerListRates,
   threadServerAlias: true,

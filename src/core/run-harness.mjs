@@ -105,7 +105,7 @@ import { readPluginsLock, pluginCurrentDir } from './plugins-lock.mjs'; // §9.4
 import { classifyError, rateLimitHint, brokerHint, freeDailyHint, limitResetAt, untilText } from './recoverable-error.mjs';
 import { CODEX_DEFAULT_MODEL, CODEX_COMMAND_RULE_REACH } from './engines/codex.mjs';
 import { ENGINE_PROJECT_FILES, ALL_PROJECT_FILES, worcaOwnsProjectFile, excludeLine } from './engines/project-files.mjs';
-import { helperEngineFor } from './model-env.mjs';
+import { helperEngineFor, OPENCODE_ZEN_RE } from './model-env.mjs';
 import { hasCodexEndpoint } from './engines/codex-endpoint.mjs';
 import { hostGuardEnabled } from './host-guard.mjs';
 import { isNormalized } from './engines/events.mjs';
@@ -3798,13 +3798,13 @@ export class RunHarness extends EventEmitter {
     } catch { model = null; }
     // Never OpenCode Zen (opencode/…), from the chat slot either: that is exactly the default this gate exists to avoid
     // sending code to opencode.ai.
-    if (model && (/^opencode\//i.test(model) || !modelForEngine(model, 'opencode', { projectDir: this.projectDir }))) model = null;
+    if (model && (OPENCODE_ZEN_RE.test(model) || !modelForEngine(model, 'opencode', { projectDir: this.projectDir }))) model = null;
     if (!model) {
       try {
         const rows = await listModels(this.projectDir || '');
         // An auto-picked run model must run on the person's own provider or endpoint.
         const own = (Array.isArray(rows) ? rows : []).filter((m) => m && typeof m.id === 'string'
-          && Array.isArray(m.harnesses) && m.harnesses.includes('opencode') && !/^opencode\//i.test(m.id));
+          && Array.isArray(m.harnesses) && m.harnesses.includes('opencode') && !OPENCODE_ZEN_RE.test(m.id));
         if (own.length === 1) model = own[0].id;
         else if (own.length > 1) {
           this._log('orchestrator', 'warn',

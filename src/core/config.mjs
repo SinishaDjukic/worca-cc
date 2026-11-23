@@ -871,8 +871,9 @@ export async function assertSlotModels(items, { projectDir = '', pending = [] } 
     if (!hit) throw bad(`unknown model "${value.model}" — add it to the catalog first`);
     if (!runsOn(hit, engine)) throw bad(`"${hit.id}" runs on ${harnessesLabel(hit)} — this slot picks a model ${engineLabel(engine)} can run`);
     // A pending row has no efforts yet; only a catalog row is checked (role efforts never reach here, A7).
-    // A model that offers no effort (an OpenCode Zen `opencode/*`, whose catalog row advertises none, OpenCode 2.3.1+
-    // refusing any variant) accepts the pick with or without one: the effort is inert and dropped at spawn.
+    // A model that offers no effort accepts the pick with or without one: the effort is inert. That covers every
+    // Cursor model (cursor-agent has no effort lever) and an OpenCode Zen `opencode/*`, whose catalog row advertises
+    // none because OpenCode 2.3.1+ refuses any variant on it (buildOpencodeArgs drops it).
     const offered = effortsOn(hit, engine);
     if (value.effort && models.includes(hit) && offered.length && !offered.includes(value.effort)) throw bad(`${hit.id} does not offer effort "${value.effort}" on ${engineLabel(engine)}`);
   }

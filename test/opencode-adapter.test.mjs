@@ -646,6 +646,56 @@ test('a variant a model does not offer is retried without it once (OpenCode 2.3.
   assert.ok(events.some((e) => e.type === 'stderr' && /takes no "medium" variant/.test(e.text)), 'the drop is said out loud');
 });
 
+test('argv: a Zen model id that names its own #variant spawns without it on 2.x', () => {
+  assert.deepEqual(buildOpencodeArgs({ model: 'opencode/big-pickle#low', effort: 'high', major: 2 }),
+    ['run', '--format', 'json', '--auto', '--standalone', '-m', 'opencode/big-pickle']);
+  assert.deepEqual(buildOpencodeArgs({ model: 'opencode/big-pickle#low', major: 2 }),
+    ['run', '--format', 'json', '--auto', '--standalone', '-m', 'opencode/big-pickle']);
+});
+
+/** A 2.3.2 fake behind a wrapper that logs every model spawn and refuses the ones `refuses` matches. */
+function refusingOpencode(refuses) {
+  const dir = tmp();
+  const fake = fakeOpencode(dir, 'ok', { version: '2.3.2' });
+  const spawns = join(dir, 'spawns.txt');
+  const wrapper = join(dir, 'opencode-wrap');
+  writeFileSync(wrapper, `#!/bin/sh\ncase " $* " in *" -m "*) printf '%s\\n' "$*" >> ${JSON.stringify(spawns)};; esac\n` +
+    `case " $* " in ${refuses}) printf 'Error: Variant unavailable for the model\\n' >&2; exit 1;; esac\n` +
+    `exec ${JSON.stringify(fake.bin)} "$@"\n`, { mode: 0o755 });
+  return { bin: wrapper, runs: () => (existsSync(spawns) ? readFileSync(spawns, 'utf8').split('\n').filter(Boolean) : []) };
+}
+
+test('a refused #variant the model id names itself is retried without it', POSIX, async () => {
+  const oc = refusingOpencode('*"#low"*');
+  const r = await runOpencodeProcess({ cwd: tmp(), bin: oc.bin, prompt: 'x', model: 'openrouter/vendor/m#low' });
+  assert.equal(r.text, 'ok');
+  const runs = oc.runs();
+  assert.equal(runs.length, 2);
+  assert.ok(runs[0].includes('openrouter/vendor/m#low'));
+  assert.ok(runs[1].includes('-m openrouter/vendor/m ') || runs[1].endsWith('-m openrouter/vendor/m'), 'the retry names the bare model');
+});
+
+test('a second "Variant unavailable" is an error: one retry, never a loop', POSIX, async () => {
+  const oc = refusingOpencode('*" -m "*');
+  await assert.rejects(runOpencodeProcess({ cwd: tmp(), bin: oc.bin, prompt: 'x', model: 'openrouter/vendor/m', effort: 'medium' }), /Variant unavailable/);
+  assert.equal(oc.runs().length, 2);
+});
+
+test('a refused variant is remembered: the next spawn on that model goes without it, so a resumed chat never resends its prompt', POSIX, async () => {
+  // OpenCode keeps the refused turn's prompt in the session; a retry on that session sends it again. Remembering the
+  // refusal keeps every later turn from being refused (and doubled) in the first place.
+  const oc = refusingOpencode('*"#low"*');
+  const events = [];
+  await runOpencodeProcess({ cwd: tmp(), bin: oc.bin, prompt: 'x', model: 'openrouter/vendor/remembered', effort: 'low' });
+  await runOpencodeProcess({ cwd: tmp(), bin: oc.bin, prompt: 'y', model: 'openrouter/vendor/remembered', effort: 'low', resumeSessionId: 'opencode:ses_abc', onEvent: (e) => events.push(e) });
+  const runs = oc.runs();
+  assert.equal(runs.length, 3, 'refused + retry, then one spawn without the variant');
+  assert.ok(!runs[2].includes('#low'));
+  assert.ok(events.some((e) => e.type === 'stderr' && /takes no "low" variant/.test(e.text)), 'the drop is still said');
+  await runOpencodeProcess({ cwd: tmp(), bin: oc.bin, prompt: 'z', model: 'openrouter/vendor/remembered', effort: 'high' });
+  assert.ok(oc.runs()[3].includes('#high'), 'another variant of that model is still sent');
+});
+
 test('the turn cap: the agent gets maxTurns tool steps plus the text-only one OpenCode forces at its step limit', POSIX, async () => {
   const fake = fakeOpencode(tmp(), 'done');
   await runOpencodeProcess({ cwd: tmp(), bin: fake.bin, prompt: 'x', model: 'anthropic/x', maxTurns: 3 });
