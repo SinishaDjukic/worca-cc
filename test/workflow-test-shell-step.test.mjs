@@ -54,3 +54,13 @@ test('the setup file round-trips', async () => {
     assert.deepEqual(await readTrySetup(dir), { cmd: 'npm ci', ok: false, exitCode: 1, timedOut: false, ms: 5, tail: 'npm error' });
   } finally { rmSync(dir, { recursive: true, force: true, maxRetries: 20, retryDelay: 100 }); }
 });
+
+test('code review (setup output kept on disk): the tail hides the env\'s registry tokens and known token shapes', async () => {
+  const env = { ...tryShellEnv(), NPM_TOKEN: 'npmsecretvalue-1234567890' };
+  const gh = `ghp_${'a'.repeat(36)}`;
+  const r = await runShellStep({ command: node(`console.log('auth ' + process.env.NPM_TOKEN); console.log('${gh}'); console.log('3 passed')`), cwd, env, timeoutMs: 30000 });
+  assert.equal(r.ok, true);
+  assert.doesNotMatch(r.tail, /npmsecretvalue-1234567890/);
+  assert.doesNotMatch(r.tail, new RegExp(gh));
+  assert.match(r.tail, /3 passed/);
+});

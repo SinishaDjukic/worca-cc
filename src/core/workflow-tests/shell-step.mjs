@@ -5,6 +5,8 @@ import { readFile, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { spawnActionProcess, stopProcess, actionBaseEnv } from '../actions/spawn.mjs';
 import { withTryGuardEnv, scratchTryLog } from './try-guard-env.mjs';
+import { createRedactor } from '../redact.mjs';
+import { redactSecrets as redactTokenShapes } from '../../shared/workspace-map/redact.mjs';
 
 export const TAIL_LINES = 40;
 export const TAIL_BYTES = 8 * 1024;
@@ -20,6 +22,14 @@ export const TRY_SETUP_STAGE = 'Running setup';
 export function tryShellEnv({ logFile = null, keepRegistryAuth = false } = {}) {
   return withTryGuardEnv({ ...actionBaseEnv(), WORCA_TEST: '1' },
     { logFile: logFile || scratchTryLog(), ...(keepRegistryAuth ? { keepRegistryAuth: true } : {}) });
+}
+
+const SECRET_ENV_KEY = /TOKEN|SECRET|PASSWORD|PASSWD|API_?KEY|AUTH/i;
+/** Code review (the tail is kept on disk, try-setup.json, and shown): the values of the command's own secret-looking env
+ *  keys (the setup keeps NPM_TOKEN and the like), broker tokens, and well-known token shapes come out as [redacted]. */
+export function redactTail(text, env) {
+  const values = Object.entries(env || {}).filter(([k, v]) => SECRET_ENV_KEY.test(k) && typeof v === 'string').map(([, v]) => v);
+  return redactTokenShapes(createRedactor(values).text(text));
 }
 
 /** `onLine(line)`: every output line as it comes (workflow tests 3b).
@@ -48,7 +58,7 @@ export async function runShellStep({ command, cwd, env, timeoutMs = SETUP_TIMEOU
   });
   clearTimeout(timer);
   if (signal) signal.removeEventListener('abort', onAbort);
-  return { ok: exitCode === 0 && !timedOut && !(signal && signal.aborted), exitCode, timedOut, ms: Date.now() - t0, tail: lines.join('\n') };
+  return { ok: exitCode === 0 && !timedOut && !(signal && signal.aborted), exitCode, timedOut, ms: Date.now() - t0, tail: redactTail(lines.join('\n'), env) };
 }
 
 export async function writeTrySetup(pipelineDir, rec) {
