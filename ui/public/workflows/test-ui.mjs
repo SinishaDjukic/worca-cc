@@ -147,13 +147,23 @@ export function card(doc, title, id, hint = null, cls = '') {
   return c;
 }
 
+// Pre-merge QA (B3): the Tests pages' open dialogs. A dialog left open after its page changed (Back, the results-ready
+// toast) could still start a test for the page that was gone; the Tests page closes them on every page change.
+const testDialogs = new Set();
+/** Keeps `dlg` (a createDialog layer) to close on the next page change. → dlg */
+export function trackTestDialog(dlg) { testDialogs.add(dlg); return dlg; }
+/** Closes every open Tests dialog (closing one that is already closed does nothing). */
+export function closeTestDialogs() {
+  for (const d of [...testDialogs]) { testDialogs.delete(d); try { d.close(); } catch { /* already gone */ } }
+}
+
 /**
  * A dialog on the shared layout: title, body, an error line, [Remove], Cancel and the confirming button.
  * onConfirm() → {ok, error?} (or a promise of it); the dialog closes on ok and shows the error otherwise.
  * onRemove() may return the element to focus once the dialog closes.
  */
 export function testDialog({ doc, win, title, body, confirmLabel, onConfirm, onRemove = null, footStart = null, width = 'md' }) {
-  const dlg = createDialog({ doc, win, width });
+  const dlg = trackTestDialog(createDialog({ doc, win, width }));
   const h = el(doc, 'h2', 'mk-dialog-title', title);
   h.id = 'mk-dialog-title';
   const error = el(doc, 'p', 'hint err wft-dlg-error');

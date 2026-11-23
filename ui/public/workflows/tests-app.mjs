@@ -11,7 +11,7 @@ import { isGitRun, isNoProjectRun } from '../run-kind.mjs';
 import { isReservedWorkflowId } from '../graph/composer.mjs';
 import { toggleMenu } from './menu.mjs';
 import { renderTestsPage, testsAddress, TESTS_ROUTE_RE } from './tests-view.mjs';
-import { sentence as wftSentence } from './test-ui.mjs';
+import { sentence as wftSentence, closeTestDialogs } from './test-ui.mjs';
 import { renderExampleEditor, BLANK_EXAMPLE } from './example-editor.mjs';
 import { openFromRunDialog, openPickRunDialog, canUseAsExample, openTestVersionDialog, defaultPicks } from './test-dialogs.mjs';
 import { renderTestProgress } from './test-progress.mjs';
@@ -399,7 +399,7 @@ export function createWorkflowTests(deps) {
   // Final review M6: the opened diffs (up to 5 MB each) are let go on every move; the side by side reads them again.
   // Board 59 C: any page change (leaving Compare, a test starting) ends the line after a stopped check (checkStopped).
   // Pre-merge QA: a page change also ends an example that is still opening (wftOpenSeq), so it never takes the page over later.
-  function wftShow(view, extra = {}) { wftPatchCut.clear(); wftOpenSeq += 1; wft = { ...wft, view, data: null, patches: null, checkStopped: null, openingExample: null, ...extra }; wftSyncHash(); void wftRefresh(); }
+  function wftShow(view, extra = {}) { closeTestDialogs(); wftPatchCut.clear(); wftOpenSeq += 1; wft = { ...wft, view, data: null, patches: null, checkStopped: null, openingExample: null, ...extra }; wftSyncHash(); void wftRefresh(); }
   /** F35: the address names the Tests page that shows, so a reload comes back to it. replaceState: no history entry, Back and Forward keep their meaning.
    *  Shown only while the Workflows view is (els.tests stays unhidden when it is left): a late load never rewrites another view's address. */
   function wftSyncHash() {
@@ -535,6 +535,9 @@ export function createWorkflowTests(deps) {
   }
   // Closing or reloading the tab with such changes: the browser's own "Leave site?" question.
   win.addEventListener?.('beforeunload', (e) => { if (wftEditorChanged()) { e.preventDefault(); e.returnValue = ''; } });
+  // B3: the Tests page writes its own address with replaceState (no event), so a hashchange is the person going
+  // elsewhere (Back, Forward, a typed address): no Tests dialog stays open over the page that comes.
+  win.addEventListener?.('hashchange', () => closeTestDialogs());
   function wftRenderEditor(root) {
     const session = { workflowId: wftWorkflowId(), exampleId: wft.example && wft.example.id ? wft.example.id : null, token: ++wftEditorSeq };
     wft.editorToken = session.token;
@@ -691,6 +694,7 @@ export function createWorkflowTests(deps) {
 
   /** The page switch shows the Tests page: its list, its address, then the read. */
   function enterList() {
+    closeTestDialogs();                                                // B3: no dialog outlives its page
     wftOpenSeq += 1;                                                   // pre-merge QA: ends an example still opening (wftShow)
     wft = { ...wft, view: 'list', openingExample: null };
     wftSyncHash();

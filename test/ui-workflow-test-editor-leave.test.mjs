@@ -102,3 +102,27 @@ test('B6: a file over 5 MB is refused in the editor with the store\'s words, and
   assert.equal(h.root.querySelector('.wft-error').textContent, 'The file export.csv is larger than 5 MB.', 'the file name keeps its own case');
   assert.deepEqual(h.calls.filter((c) => c.startsWith('POST')), [], 'no upload, no save');
 });
+
+test('B3: a Tests dialog closes when its page changes (another Tests page) or the address changes (Back, Forward)', async () => {
+  for (const leave of ['route', 'hashchange']) {
+    const { h, ctl } = await openEditor();
+    button(h, 'Add an automatic check').click();
+    await settle();
+    assert.ok(h.w.document.getElementById('mk-dialog-host'), `${leave}: the dialog is open`);
+    if (leave === 'route') ctl.route('wf_a', 'tests', true);
+    else for (const f of h.listeners.hashchange || []) f();
+    await settle();
+    assert.equal(h.w.document.getElementById('mk-dialog-host'), null, `${leave}: no dialog over the page that came`);
+  }
+});
+
+test('closeTestDialogs closes every tracked dialog once, and one already closed is no trouble', async () => {
+  const { trackTestDialog, closeTestDialogs } = await import('../ui/public/workflows/test-ui.mjs');
+  let closed = 0;
+  const d = trackTestDialog({ close: () => { closed += 1; } });
+  trackTestDialog({ close: () => { throw new Error('already gone'); } });
+  closeTestDialogs();
+  closeTestDialogs();
+  assert.equal(closed, 1);
+  assert.ok(d);
+});

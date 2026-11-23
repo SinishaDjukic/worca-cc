@@ -3,7 +3,7 @@
 // C10, C19, G2, G3, G9, G15). Pure DOM: app.js reads the server's models (service.compareOf / sideBySide) and owns the
 // actions. A repaint keeps the focus on the same control (data-focus-key), and a button whose action is out stays busy
 // across repaints (BUSY), as the progress page does.
-import { el, btn, startInto, checkWords, mockNote, pathInto } from './test-ui.mjs';
+import { el, btn, startInto, checkWords, mockNote, pathInto, trackTestDialog } from './test-ui.mjs';
 import { icon } from '../icons.mjs';
 import { createDialog } from '../marketplace/layers.mjs';
 import { fmtUsd, fmtUsdFine } from '../../../src/shared/workflow-tests/checks.mjs';
@@ -753,7 +753,7 @@ function beforeBlock(doc, label, b) {
 
 /** "Read the whole result" (C10): the main result in full, in a large dialog. */
 export function openWholeResult({ doc, win, title, name = null, text = null, renderMarkdown = null }) {
-  const dlg = createDialog({ doc, win, width: 'lg', kind: 'viewer' });
+  const dlg = trackTestDialog(createDialog({ doc, win, width: 'lg', kind: 'viewer' }));   // closed on a page change (B3)
   const h = el(doc, 'h2', 'mk-dialog-title', title);
   h.id = 'mk-dialog-title';
   const body = [];
