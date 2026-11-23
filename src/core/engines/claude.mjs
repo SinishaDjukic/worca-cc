@@ -780,7 +780,7 @@ export function runClaudeProcess({ cwd, systemPrompt, prompt, allowedTools, perm
         // A refusal fails the step once its result (and cost) is out; superviseSpawn stops a lingering CLI.
         if (evt?.type === 'result' && refused) {
           refusalRaised = true;
-          return refusalError(evt.result, redactor ? redactor.text : null);
+          return refusalError(evt.result || assistantText, redactor ? redactor.text : null);
         }
         // Claude Code can announce a spent subscription allowance as a
         // synthetic assistant frame while an async Bash/tool process keeps the

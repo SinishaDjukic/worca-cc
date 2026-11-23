@@ -393,13 +393,26 @@ test('isPinnedAddon: v2 records — harness-only, family-only and both; the bad 
   ]) assert.equal(isPinnedAddon(bad), false, why);
 });
 
+test('pinFitsSpawn: a pin with model notes only on a model of the same family', () => {
+  const claudePin = { ...V2, engine: 'claude', harness: null, family: 'opus-5-5' };
+  assert.equal(pinFitsSpawn(claudePin, { engine: 'claude', model: 'claude-opus-5-5[1m]' }), true);
+  assert.equal(pinFitsSpawn(claudePin, { engine: 'claude', model: 'claude-opus-5-6' }), true, 'an inherited family still fits');
+  assert.equal(pinFitsSpawn(claudePin, { engine: 'claude', model: 'claude-sonnet-5-5' }), false, 'the model was changed');
+  assert.equal(pinFitsSpawn(claudePin, { engine: 'claude' }), false, 'the model was cleared to the CLI default');
+  assert.equal(pinFitsSpawn(V2, { engine: 'codex', model: 'gpt-5.3-codex' }), false);
+  const harnessOnly = { ...V2, family: null, files: ['harness/codex.md'] };
+  assert.equal(pinFitsSpawn(harnessOnly, { engine: 'codex', model: 'gpt-5.3-codex' }), true, 'harness notes follow the engine only');
+  const v1 = { v: 1, family: 'opus-5-5', mode: 'unattended', files: ['opus-5-5.md'], text: 'T', sha256: sha('T') };
+  assert.equal(pinFitsSpawn(v1, { engine: 'claude', model: 'claude-sonnet-5-5' }), false);
+});
+
 test('pinFitsSpawn: a v2 pin only on its own engine; a v1 pin only under the legacy rule', () => {
   assert.equal(pinFitsSpawn(V2, { engine: 'codex', model: 'gpt-6.1-sol' }), true);
   assert.equal(pinFitsSpawn(V2, { engine: 'claude', model: 'claude-opus-5-5' }), false);
   assert.equal(pinFitsSpawn(V2, {}), false, 'no engine is claude');
   const claudePin = { ...V2, engine: 'claude', harness: null, family: 'opus-5-5' };
-  assert.equal(pinFitsSpawn(claudePin, {}), true, 'a v2 claude pin on no engine');
-  assert.equal(pinFitsSpawn(claudePin, { engine: 'claude' }), true);
+  assert.equal(pinFitsSpawn(claudePin, { model: 'claude-opus-5-5' }), true, 'a v2 claude pin on no engine');
+  assert.equal(pinFitsSpawn(claudePin, { engine: 'claude', model: 'claude-opus-5-5' }), true);
   const v1 = { v: 1, family: 'opus-5-5', mode: 'unattended', files: ['opus-5-5.md'], text: 'T', sha256: sha('T') };
   assert.equal(pinFitsSpawn(v1, { engine: 'claude', model: 'claude-opus-5-5' }), true);
   assert.equal(pinFitsSpawn(v1, { model: 'claude-opus-5-5' }), true);

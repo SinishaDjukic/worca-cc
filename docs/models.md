@@ -1031,8 +1031,9 @@ for the model family. The texts are starting points taken from the sources below
   `.unattended.md` text of either layer (keep going, don't ask). Every other step is *unattended*.
 - **Resume.** The add-on is chosen once, when a step's session starts, and saved on the step with its engine. A resumed
   step (after a pause, a restart, answered questions or a plan concern) sends exactly that text again, even if the
-  files changed since, but only on the same engine. A step resumed on another engine starts a fresh session there, and
-  that session gets no add-on (a known gap). A step saved before the harness layer resumes as before: its add-on only
+  files changed since, but only on the same engine, and model notes only when the model still resolves to the same
+  family. A step resumed on another engine starts a fresh session there, and that session gets no add-on (a known
+  gap); a step whose model was changed to another family before the resume gets no add-on either. A step saved before the harness layer resumes as before: its add-on only
   on Claude Code, or Copilot on a `claude-*` model. A step started before add-ons resumes with none. A session that
   starts fresh (a fix cycle, or a resume that fell back to a new session) chooses again. The run's
   `executions.ndjson` records the engine, harness, family, mode, files and sha256 of the add-on each spawn carried.
@@ -1082,7 +1083,8 @@ taken from Anthropic's per-model prompting guides, to be measured.
   offered `low` there (#422). On Copilot, whose Claude models list low/medium/high, `light` runs at `low` and
   Opus 4.8's `deep` at `high`.
 - **Engines.** Claude Code (`--effort`), and GitHub Copilot CLI when its model is a `claude-*` model
-  (`--reasoning-effort`). Codex, Cursor, OpenCode, Gemini CLI, Qwen Code and Goose are not covered.
+  (`--reasoning-effort`), except Copilot's `-fast` variants (`copilot/claude-opus-4.8-fast`), which get no intent
+  effort although they do get model add-ons. Codex, Cursor, OpenCode, Gemini CLI, Qwen Code and Goose are not covered.
 - **Precedence.** An effort that anything names always wins: the template, the project's step picks, a role, a team
   default, the run's own picks, or a helper job's model and effort (Memory defragment, Workspace scan). The intent fills
   only an effort left empty. It is filled when a run starts, recorded on the run, and a resume runs the same effort. A

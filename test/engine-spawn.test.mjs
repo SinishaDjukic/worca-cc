@@ -314,6 +314,13 @@ test('Claude main assistant refusal with no result frame rejects MODEL_REFUSAL a
   assert.match(err.message, / — No\.$/);
 });
 
+test('Claude refusal result with empty text keeps the decline text from the assistant frame', POSIX, async () => {
+  const emptyRefusalResult = { type: 'result', subtype: 'success', is_error: false, stop_reason: 'refusal', result: '', total_cost_usd: 0.01 };
+  const err = await runRefusal(catThen(framesFile([mainRefusalAssistant, emptyRefusalResult]), 'exec sleep 30')).then(() => null, (e) => e);
+  assert.equal(err?.code, 'MODEL_REFUSAL');
+  assert.match(err.message, / — No\.$/);
+});
+
 test('Claude main message_delta refusal with no result frame rejects MODEL_REFUSAL at exit 0', POSIX, async () => {
   const delta = { type: 'stream_event', parent_tool_use_id: null, event: { type: 'message_delta', delta: { stop_reason: 'refusal' } } };
   const err = await runRefusal(catThen(framesFile([delta]), 'exit 0')).then(() => null, (e) => e);

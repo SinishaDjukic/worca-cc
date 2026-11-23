@@ -257,11 +257,14 @@ export function isPinnedAddon(x) {
 /**
  * Whether a resume may send this pin: a valid record, and a v2 pin only on the engine it was chosen for (a step resumed
  * on another engine starts a fresh session there); a v1 pin only under the legacy rule (claude, or copilot on a
- * claude-* wire model), so a run paused before the harness layer resumes exactly as before.
+ * claude-* wire model), so a run paused before the harness layer resumes exactly as before. A pin with model notes
+ * also needs the spawn's model to resolve to the same family: a step whose model was changed before the resume
+ * (claude-opus-5-5 → claude-sonnet-5-5) never carries the old model's notes.
  * @param {unknown} pin
  * @param {{ engine?: string|null, model?: string|null }} [spawn]
  */
 export function pinFitsSpawn(pin, { engine, model } = {}) {
   if (!isPinnedAddon(pin)) return false;
+  if (pin.family !== null && addonFamilyOf(model).family !== pin.family) return false;
   return pin.v === 1 ? legacyEngineOk({ engine, model }) : pin.engine === normEngine(engine);
 }
