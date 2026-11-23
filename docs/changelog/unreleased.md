@@ -107,7 +107,7 @@ Workflow tests (Labs, flag `workflowTests`) add a Tests page to a workflow.
 - Test a version: Worca tries every example 3 times on it and on the version you compare with, reuses earlier results when nothing changed, and stops at the cost limit you set.
 - Compare shows the tries passed, the cost and time per try, what got better or worse per example, and each example side by side.
 - Connectors: by default a test's tries use stand-ins for your connectors, so nothing is posted or sent, and one example's page shows what would have been sent. Choose Real to use your real connectors.
-- A test of a workflow runs one at a time; while it runs, Test a version and Try it once now wait.
+- A test of a workflow runs one at a time; while it runs, Test a version and Try your draft once now wait.
 - Their runs stay out of the Runs list, Statistics and team metrics, but count in the spending limit.
 
 Chips: Tests · Test a version · Compare · experimental: turn it on in Settings › Labs
