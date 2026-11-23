@@ -14,6 +14,7 @@ import {
   CHECK_INTERVAL_MS, FAILED_RETRY_MS, MIN_RECHECK_MS,
   parseVersionList, fetchNpmVersions, NPM_PACKUMENT_URL, canAutoRestart, annotateVersions,
   createVersionLister, findListedVersion, canonicalVersion, versionChannel,
+  CHANGELOG_FEED_URL, parseChangelogFeed, fetchChangelogFeed, changesBetween, CHANGELOG_RETRY_MS,
 } from '../src/core/update-check.mjs';
 
 test('parseVersion accepts SemVer 2.0 (optional v, prerelease, build) and refuses garbage', () => {
@@ -318,4 +319,101 @@ test('createVersionLister: caches 12 h, shares one request, keeps the last list 
   assert.equal((await lister.get()).distTags.latest, '1.14.0', 'stale list kept on failure');
   assert.equal(n, 2);
   await lister.get({ force: true }); assert.equal(n, 3);
+});
+
+// --- "What changes for you" (the update confirm): the docs site's release feed ---------------
+const rel = (version) => ({ version, date: '2026-11-05', sub: 's', url: `${CHANGELOG_URL}${version}/`, sections: [{ kicker: 'Chat', title: 't' }] });
+const FEED = ['1.18.0', '1.17.0', '1.16.0', '1.15.0', '1.2.0', '1.2.0-rc.3'].map(rel);
+const versionsOf = (c) => c.releases.map((r) => r.version);
+
+test('changesBetween: every release after the running version, up to and including the target', () => {
+  const c = changesBetween(FEED, '1.15.0', '1.17.0');
+  assert.deepEqual({ state: c.state, from: c.from, to: c.to, rollback: c.rollback, targetListed: c.targetListed }, { state: 'ok', from: '1.15.0', to: '1.17.0', rollback: false, targetListed: true });
+  assert.deepEqual(versionsOf(c), ['1.17.0', '1.16.0']);
+});
+
+test('changesBetween: an older or the same version is a rollback with nothing to list', () => {
+  for (const to of ['1.15.0', '1.17.0']) {
+    const c = changesBetween(FEED, '1.17.0', to);
+    assert.deepEqual({ state: c.state, rollback: c.rollback, releases: c.releases, targetListed: c.targetListed }, { state: 'none', rollback: true, releases: [], targetListed: false });
+  }
+});
+
+test('changesBetween: no feed is unavailable, and still says whether it is a rollback', () => {
+  assert.deepEqual(changesBetween(null, '1.15.0', '1.17.0'), { state: 'unavailable', from: '1.15.0', to: '1.17.0', rollback: false, prerelease: false, targetListed: false, releases: [] });
+  assert.equal(changesBetween(null, '1.17.0', '1.15.0').rollback, true);
+  assert.equal(changesBetween(null, '1.17.0', '1.15.0').state, 'none');
+});
+
+test('changesBetween: release candidates: from an rc its stable release is listed; an rc page shows only as the target', () => {
+  assert.deepEqual(versionsOf(changesBetween(FEED, '1.18.0-rc.2', '1.18.0')), ['1.18.0']);
+  assert.equal(changesBetween(FEED, '1.18.0', '1.19.0-rc.1').state, 'none', 'no page for that rc');
+  assert.deepEqual(versionsOf(changesBetween(FEED, '1.1.0', '1.15.0')), ['1.15.0', '1.2.0'], 'the rc page is skipped on the way past');
+  assert.deepEqual(versionsOf(changesBetween(FEED, '1.1.0', '1.2.0-rc.3')), ['1.2.0-rc.3']);
+});
+
+test('changesBetween: a garbage version is unavailable, never a throw', () => {
+  assert.equal(changesBetween(FEED, 'nope', '1.17.0').state, 'unavailable');
+  assert.equal(changesBetween(FEED, '1.15.0', '').state, 'unavailable');
+});
+
+test('parseChangelogFeed: a malformed document throws', () => {
+  for (const doc of [null, '<html>', {}, { releases: {} }]) assert.throws(() => parseChangelogFeed(doc), /malformed/);
+});
+
+test('parseChangelogFeed: hostile fields are capped, the url is pinned to the changelog, junk records dropped', () => {
+  const got = parseChangelogFeed({ releases: [
+    { version: '1.2.3', date: 'x', url: 'https://evil.example/', sub: 'a'.repeat(999),
+      sections: [{ kicker: 5, title: '<img onerror=x>' }, { title: '' }, null, { kicker: 'k'.repeat(99), title: 't'.repeat(999) }] },
+    { version: 'nope' }, null, 'x',
+    { version: 'v1.2.4', date: '2026-11-05', url: `${CHANGELOG_URL}1.2.4/`, sections: 'x' },
+  ] });
+  assert.deepEqual(got.map((r) => r.version), ['1.2.4', '1.2.3'], 'canonical versions, newest first');
+  const r = got[1];
+  assert.equal(r.url, `${CHANGELOG_URL}1.2.3/`);
+  assert.equal(r.date, '');
+  assert.equal(r.sub.length, 400);
+  assert.deepEqual(r.sections[0], { kicker: '', title: '<img onerror=x>' });
+  assert.equal(r.sections.length, 2);
+  assert.equal(r.sections[1].kicker.length, 40);
+  assert.equal(r.sections[1].title.length, 200);
+  assert.deepEqual(got[0], { version: '1.2.4', date: '2026-11-05', sub: '', url: `${CHANGELOG_URL}1.2.4/`, sections: [] });
+  assert.equal(parseChangelogFeed({ releases: Array.from({ length: 300 }, (_, i) => ({ version: `1.0.${i}` })) }).length, 200);
+});
+
+test('fetchChangelogFeed reads the feed with a timeout and throws on bad answers', async () => {
+  assert.equal(CHANGELOG_FEED_URL, 'https://docs.worca.dev/changelog/index.json');
+  const seen = [];
+  const ok = await fetchChangelogFeed({ fetchImpl: async (url, init) => { seen.push({ url, init }); return { ok: true, json: async () => ({ releases: [rel('1.2.3')] }) }; } });
+  assert.deepEqual(ok.map((r) => r.version), ['1.2.3']);
+  assert.equal(seen[0].url, CHANGELOG_FEED_URL);
+  assert.ok(seen[0].init.signal instanceof AbortSignal);
+  await assert.rejects(fetchChangelogFeed({ fetchImpl: async () => ({ ok: false, status: 503 }) }), /answered 503/);
+  await assert.rejects(fetchChangelogFeed({ fetchImpl: async () => ({ ok: true, json: async () => { throw new Error('html'); } }) }), /malformed/);
+});
+
+test('changesBetween: a target the feed does not list yet is flagged, with or without older releases in range', () => {
+  const some = changesBetween(FEED, '1.16.0', '1.19.0');
+  assert.deepEqual({ state: some.state, targetListed: some.targetListed, versions: versionsOf(some) }, { state: 'ok', targetListed: false, versions: ['1.18.0', '1.17.0'] });
+  const none = changesBetween(FEED, '1.18.0', '1.19.0');
+  assert.deepEqual({ state: none.state, targetListed: none.targetListed }, { state: 'none', targetListed: false });
+});
+
+test('changesBetween: says whether the target is a release candidate (those rarely get a page)', () => {
+  assert.equal(changesBetween(FEED, '1.18.0', '1.19.0-rc.2').prerelease, true);
+  assert.equal(changesBetween(FEED, '1.18.0', '1.19.0').prerelease, false);
+  assert.equal(changesBetween(null, '1.18.0', '1.19.0-rc.2').prerelease, true);
+});
+
+test('the changelog feed retries 5 minutes after a failure, not an hour', async () => {
+  assert.equal(CHANGELOG_RETRY_MS, 5 * 60_000);
+  let t = 1000; let fail = true; let n = 0;
+  const feed = createVersionLister({ now: () => t, failedRetryMs: CHANGELOG_RETRY_MS, fetchList: async () => { n += 1; if (fail) throw new Error('offline'); return [rel('1.18.0')]; } });
+  assert.equal(await feed.get(), null);
+  fail = false; t += CHANGELOG_RETRY_MS - 1;
+  assert.equal(await feed.get(), null, 'still inside the retry window');
+  assert.equal(n, 1);
+  t += 1;
+  assert.deepEqual((await feed.get()).map((r) => r.version), ['1.18.0']);
+  assert.equal(n, 2);
 });

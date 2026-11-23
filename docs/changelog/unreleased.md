@@ -67,6 +67,20 @@ Pull requests (add each number when it opens):
 
 - Requirements: keep long spec items whole (#1510)
 
+## Know what an update changes before you install it
+
+**The update dialog lists what changes for you, before you restart.**
+
+Worca is developed at a fast pace, and an update can move screens, labels and where things sit. The update dialog in Settings › About now says so, and lists every stable release between the version you run and the one you picked, newest first, with one line per change and a link to each release's page. Where Worca cannot update itself, the same list sits under the terminal command. If the list cannot be loaded, or update checks are off, the dialog says so and points to the release notes; you can still update.
+
+Chips: fast-pace note · what changes for you · every release in between · link per release · same list with the terminal command
+
+Read it: [Getting started](../getting-started.md)
+
+Pull requests (add each number when it opens):
+
+- Update dialog: fast-pace note and what changes for you
+
 ## Copilot on your GHE.com tenant
 
 **Use GitHub Copilot with a GitHub Enterprise Cloud data-residency tenant.**

@@ -241,3 +241,65 @@ export function createVersionLister({ fetchList, now = Date.now, intervalMs = CH
   }
   return { get, peek: () => cache?.list ?? null, clear() { cache = null; failedAt = 0; } };
 }
+
+// --- "What changes for you" (the update confirm) ------------------------------------------------
+// The docs site publishes one record per release (docs-site/changelog.mjs changelogFeed): version,
+// date, the page's summary line and one kicker + headline per feature section. The update confirm
+// lists the records between the running version and the one being installed. Everything in the
+// feed is text from another host: capped here, and only ever shown as text.
+export const CHANGELOG_FEED_URL = `${CHANGELOG_URL}index.json`;
+// The feed is a nice-to-have beside an update: after a failure (or a target it does not list) it is
+// read again after 5 minutes, not the hour the npm checks wait.
+export const CHANGELOG_RETRY_MS = 5 * 60_000;
+const FEED_MAX_RELEASES = 200;
+const FEED_MAX_SECTIONS = 30;
+const capped = (v, max) => (typeof v === 'string' ? v.slice(0, max) : '');
+
+/** The feed's releases, newest first: canonical versions, capped text, links pinned to the changelog. */
+export function parseChangelogFeed(doc) {
+  if (!doc || typeof doc !== 'object' || !Array.isArray(doc.releases)) throw new Error('changelog feed is malformed');
+  const rows = [];
+  for (const r of doc.releases) {
+    const p = r && typeof r === 'object' ? parseVersion(r.version) : null;
+    if (!p) continue;
+    const version = formatVersion(p);
+    const sections = (Array.isArray(r.sections) ? r.sections : [])
+      .filter((s) => s && typeof s === 'object' && typeof s.title === 'string' && s.title)
+      .slice(0, FEED_MAX_SECTIONS)
+      .map((s) => ({ kicker: capped(s.kicker, 40), title: capped(s.title, 200) }));
+    rows.push({ p, version,
+      date: typeof r.date === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(r.date) ? r.date : '',
+      sub: capped(r.sub, 400),
+      url: typeof r.url === 'string' && r.url.length <= 200 && r.url.startsWith(CHANGELOG_URL) ? r.url : `${CHANGELOG_URL}${version}/`,
+      sections });
+  }
+  rows.sort((a, b) => compareVersions(b.p, a.p));
+  return rows.slice(0, FEED_MAX_RELEASES).map(({ p, ...r }) => r);
+}
+
+export async function fetchChangelogFeed({ fetchImpl = globalThis.fetch, timeoutMs = FETCH_TIMEOUT_MS, url = CHANGELOG_FEED_URL } = {}) {
+  const res = await fetchImpl(url, { headers: { accept: 'application/json' }, signal: AbortSignal.timeout(timeoutMs) });
+  if (!res.ok) throw new Error(`changelog feed answered ${res.status}`);
+  return parseChangelogFeed(await res.json().catch(() => null));
+}
+
+/**
+ * What an update from `current` to `target` brings: the feed's releases after `current`, up to and
+ * including `target`, newest first. A release candidate's page counts only when it is the target.
+ * state: 'ok' (something to list) | 'none' (a rollback, or no page in range) | 'unavailable' (no feed).
+ * targetListed says whether the target's own page is among them.
+ */
+export function changesBetween(releases, current, target) {
+  const c = parseVersion(current); const t = parseVersion(target);
+  const out = { state: 'unavailable', from: c ? formatVersion(c) : null, to: t ? formatVersion(t) : null, rollback: false, prerelease: !!t?.pre.length, targetListed: false, releases: [] };
+  if (!c || !t) return out;
+  if (compareVersions(t, c) <= 0) return { ...out, state: 'none', rollback: true };
+  if (!Array.isArray(releases)) return out;
+  const list = releases.filter((r) => {
+    const p = parseVersion(r.version);
+    if (!p || compareVersions(p, c) <= 0 || compareVersions(p, t) > 0) return false;
+    return !p.pre.length || compareVersions(p, t) === 0;
+  });
+  // targetListed false = the docs site has no page for the target (yet): the list is not the whole story.
+  return { ...out, state: list.length ? 'ok' : 'none', targetListed: list.some((r) => r.version === out.to), releases: list };
+}

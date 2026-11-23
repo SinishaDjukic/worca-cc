@@ -36,6 +36,8 @@
 .about-update[data-state="quiet"]{background:var(--field);color:var(--ink-2);}
 .update-modal .card{width:min(520px,100%);}
 .update-versions{display:flex;flex-direction:column;gap:2px;max-height:320px;overflow:auto;margin:8px 0;}
+/* What changes for you: one height while it loads and after, so the confirm buttons never move. */
+#updateConfirmChanges .update-versions{height:200px;}
 .update-ver{display:grid;grid-template-columns:20px 1fr auto;gap:10px;align-items:center;padding:8px 10px;border-radius:var(--r-sm);cursor:pointer;}
 .update-ver:hover{background:var(--field);}
 .update-ver.sel{background:var(--field);}

@@ -59,6 +59,7 @@ test('lists: comma-separated, trimmed, lower-cased; blanks, duplicates, ports an
   assert.deepEqual(a.allow, []);
   for (const h of DEFAULT_ALLOW.filter((x) => !x.startsWith('.'))) assert.equal(decide(h, a).ok, false, h);
   assert.deepEqual(parseAllow(''), [...DEFAULT_ALLOW], 'the overlay keeps its default');
+  assert.ok(DEFAULT_ALLOW.includes('docs.worca.dev'), 'the update dialog reads the release feed from the docs site');
 });
 
 test('matching: a leading dot is subdomains only under a mode; the overlay still matches the apex', () => {

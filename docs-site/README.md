@@ -16,6 +16,7 @@ already live in `docs/`; the changelog half is `changelog.mjs`:
 | --- | --- |
 | `/` | `src/index.html` |
 | `/changelog/` | the release list: `src/changelog.html`, one row per `docs/changelog/entries.json` record, summary and headlines read from each page |
+| `/changelog/index.json` | the same list as data: per release its version, date, summary line, page address and one kicker + headline per feature section. The app's update dialog reads it to list what changes between two versions (`changelogFeed` in `changelog.mjs`); keep the field names |
 | `/changelog/<version>/` | `docs/changelog/worca-app-v<version>.src.html` in a document shell, with a releases bar and its `shots/<version>/` images as files |
 | `/changelog/latest/` | a 302 to the newest release (`_redirects`) |
 | `/why-worca/` | `docs/why-worca/why-worca.standalone.html` |

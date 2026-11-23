@@ -279,7 +279,7 @@ docker compose -f compose.yml -f compose.egress.yml up -d
 
 Worca moves to an internal network with no route out; a proxy from the same
 image relays only to allowed hosts (`WORCA_EGRESS_ALLOW` in `.env`, default:
-`api.anthropic.com,github.com,.github.com,.githubusercontent.com,registry.npmjs.org`).
+`api.anthropic.com,github.com,.github.com,.githubusercontent.com,registry.npmjs.org,docs.worca.dev`).
 Tools that honour `HTTPS_PROXY` reach allowed hosts; a raw socket from
 `node -e` or `python -c` reaches nothing. Combine with the **Strict** guardrail
 set for an untrusted task. Known needs: add your package registry; Playwright's

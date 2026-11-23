@@ -68,7 +68,7 @@ const uNotSupervised = { ...uEligible, canUpdate: false, reason: 'not-supervised
 const uFailed = { ...uEligible, lastResult: { state: 'failed', from: PAINTED_VERSION, to: '10.0.0', reason: 'npm could not write to /usr/local/lib/node_modules (EACCES)', output: 'npm error code EACCES', resumed: 2 } };
 const uSource = { ...uEligible, canUpdate: false, reason: 'source', message: 'Run from a git checkout: update with git pull, then worca ui restart.' };
 
-async function boot({ settings = okSettings, version = () => null, update, versions } = {}) {
+async function boot({ settings = okSettings, version = () => null, update, versions, preview, changes } = {}) {
   const calls = [];
   const json = (b, status = 200) => Promise.resolve({ ok: status < 300, status, json: async () => b });
   const dom = trackDom(new JSDOM(readIndexHtml(), { url: 'http://localhost:4317/' }));
@@ -80,7 +80,11 @@ async function boot({ settings = okSettings, version = () => null, update, versi
     if (u.includes('/api/app/update') || u.includes('/api/health')) calls.push({ url: u, method: init.method || 'GET', body: init.body });
     if (u.includes('/api/health')) return json({ name: '@worca/app', startedAt: 'boot-a' });
     if (u.includes('/api/app/update/versions')) return json(versions ?? { current: PAINTED_VERSION, distTags: { latest: '10.0.0', rc: null }, versions: [] });
-    if (u.includes('/api/app/update/preview')) return json({ target: '10.0.0', autoRestart: true, autoResume: true, startCommand: 'worca ui', runs: [], scheduled: [] });
+    if (u.includes('/api/app/update/changes')) {
+      const c = typeof changes === 'function' ? changes(u) : changes;
+      return c === undefined ? json({ error: 'off' }, 503) : Promise.resolve(c).then((b) => json(b));
+    }
+    if (u.includes('/api/app/update/preview')) return json({ target: '10.0.0', autoRestart: true, autoResume: true, startCommand: 'worca ui', runs: [], scheduled: [], ...(preview || {}) });
     if (u.includes('/api/app/update/dismiss')) return json({ ok: true });
     if (u.includes('/api/app/update') && init.method === 'POST') return json({ ok: true, target: '10.0.0', autoRestart: true, startCommand: 'worca ui' }, 202);
     if (u.includes('/api/app/update')) return update === null ? json({ error: 'off' }, 503) : json(update ?? uEligible);
@@ -457,4 +461,155 @@ test('Update to → confirm pane with "No runs are active."; Update & restart PO
   assert.equal($('#update-modal').classList.contains('hidden'), true);
   assert.equal($('#update-overlay').classList.contains('hidden'), false);
   assert.equal($('#updateOverlayTitle').textContent, 'Updating Worca to 10.0.0');
+});
+
+// "What changes for you" (the update confirm): the fast-pace note and the releases between the
+// running version and the target, from the preview's `changes`.
+const NOTE = 'Worca is developed at a fast pace. Screens, labels and where things sit can change between versions.';
+const chRel = (version, titles) => ({ version, date: '2026-11-05', sub: '', url: `https://docs.worca.dev/changelog/${version}/`, sections: titles.map((title) => ({ kicker: 'Chat', title })) });
+const chOk = { changes: { state: 'ok', from: PAINTED_VERSION, to: '10.0.0', rollback: false, targetListed: true, releases: [chRel('10.0.0', ['Runs start faster.', '<img src=x onerror=alert(1)>']), chRel('9.9.10', ['One more.'])] } };
+
+async function openConfirm(opts) {
+  const b = await boot({ version: vOutdated, update: uEligible, ...opts });
+  await b.openSettings(); await b.tick(); await b.tick();
+  b.$('#aboutUpdateGo').click();
+  await b.tick(); await b.tick();
+  return b;
+}
+
+test('confirm pane: the note, the heading and every release between the two versions, newest first', async () => {
+  const { $, window } = await openConfirm({ changes: chOk.changes });
+  const box = $('#updateConfirmChanges');
+  assert.equal(box.hidden, false);
+  assert.equal(box.querySelector('[data-part="note"]').textContent, NOTE);
+  assert.equal(box.querySelector('[data-part="head"]').textContent, `What changes for you · ${PAINTED_VERSION} → 10.0.0`);
+  const rels = [...box.querySelectorAll('[data-part="release"]')];
+  assert.deepEqual(rels.map((r) => r.querySelector('[data-part="version"]').textContent), ['10.0.0', '9.9.10']);
+  const link = rels[0].querySelector('a[data-part="version"]');
+  assert.equal(link.getAttribute('href'), 'https://docs.worca.dev/changelog/10.0.0/');
+  assert.equal(link.getAttribute('target'), '_blank');
+  assert.equal(link.getAttribute('rel'), 'noopener noreferrer');
+  assert.deepEqual([...rels[0].querySelectorAll('[data-part="line"]')].map((li) => li.textContent), ['Chat · Runs start faster.', 'Chat · <img src=x onerror=alert(1)>']);
+  assert.equal(box.querySelector('img'), null, 'feed text stays text');
+  // Built only from components Worca already uses: the dialog's info callout, the version picker's
+  // scroll box with divided rows, the picker's date line and the About card's link.
+  const note = box.querySelector('[data-part="note"]');
+  assert.ok(note.matches('p.update-callout[data-tone="info"]'));
+  assert.ok(box.querySelector('[data-part="list"]').matches('.update-versions.drows'));
+  assert.ok(rels.every((r) => r.matches('.drow.drow-stack')));
+  assert.ok(link.matches('a.about-link'));
+  assert.ok(rels[0].querySelector('[data-part="date"]').matches('.update-vd'));
+  assert.ok(box.querySelector('[data-part="head"]').matches('p.hint'));
+  for (const a of $('#update-modal').querySelectorAll('a.update-notes-link')) assert.ok(a.matches('.about-link'), 'the dialog\'s Release notes links use the About card\'s link');
+  assert.equal(box.querySelector('[data-part="off"]'), null);
+  // In the pane above the runs callout, and the list is a scroll region reachable by keyboard.
+  assert.ok(box.compareDocumentPosition($('#updateConfirmRuns')) & window.Node.DOCUMENT_POSITION_FOLLOWING);
+  assert.equal(box.querySelector('[data-part="list"]').getAttribute('tabindex'), '0');
+});
+
+test('confirm pane: a long release shows 8 lines, then "and N more"', async () => {
+  const many = Array.from({ length: 11 }, (_, i) => `Change ${i + 1}`);
+  const { $ } = await openConfirm({ changes: { ...chOk.changes, releases: [chRel('10.0.0', many)] } });
+  const lis = [...$('#updateConfirmChanges').querySelectorAll('[data-part="release"] [data-part="line"]')];
+  assert.equal(lis.length, 9);
+  assert.equal(lis[8].textContent, 'and 3 more');
+});
+
+test('confirm pane: the feed could not be read → the could-not-load text inside the list box; the update button still enables', async () => {
+  for (const changes of [{ state: 'unavailable', rollback: false, releases: [] }, undefined]) {
+    const { $ } = await openConfirm({ changes });
+    const box = $('#updateConfirmChanges');
+    assert.equal(box.hidden, false);
+    assert.equal(box.querySelector('[data-part="note"]').textContent, NOTE);
+    const off = box.querySelector('[data-part="list"] [data-part="off"]');
+    assert.equal(off.textContent, 'The list of changes could not be loaded. Read the release notes before you update.');
+    assert.ok(off.matches('p.hint'));
+    assert.equal(box.querySelectorAll('[data-part="release"]').length, 0);
+    assert.equal(box.querySelector('[data-part="head"]').textContent, 'What changes for you');
+    assert.equal($('#updateConfirmGo').disabled, false);
+  }
+});
+
+test('confirm pane: update checks off → says the list is not loaded here, not that it failed', async () => {
+  const { $ } = await openConfirm({ changes: { state: 'off', from: PAINTED_VERSION, to: '10.0.0', rollback: false, releases: [] } });
+  assert.equal($('#updateConfirmChanges [data-part="off"]').textContent, 'Worca does not check for updates here, so the list of changes is not loaded. Read the release notes before you update.');
+});
+
+test('confirm pane: a rollback shows neither the note nor a list', async () => {
+  const { $ } = await openConfirm({ changes: { state: 'none', rollback: true, releases: [] } });
+  assert.equal($('#updateConfirmChanges').hidden, true);
+});
+
+test('confirm pane: the target is not in the feed yet → the note, what is listed, and a line saying so', async () => {
+  const { $ } = await openConfirm({ changes: { state: 'none', from: PAINTED_VERSION, to: '10.0.0', rollback: false, targetListed: false, releases: [] } });
+  const box = $('#updateConfirmChanges');
+  assert.equal(box.hidden, false);
+  assert.equal(box.querySelector('[data-part="note"]').textContent, NOTE);
+  assert.equal(box.querySelectorAll('[data-part="release"]').length, 0);
+  assert.equal(box.querySelector('[data-part="list"] [data-part="off"]').textContent, '10.0.0 is not in this list. Read the release notes before you update.');
+});
+
+test('confirm pane: the update button enables while the list of changes is still loading', async () => {
+  let land;
+  const { $, tick } = await openConfirm({ changes: () => new Promise((r) => { land = r; }) });
+  assert.equal($('#updateConfirmGo').disabled, false, 'the button never waits for the feed');
+  assert.equal($('#updateConfirmRuns').textContent, 'No runs are active.');
+  // Already laid out at its final size: the note, the heading and the list box, with a loading line in
+  // the box, so the buttons do not move when the answer lands (the box has a fixed height in the pane).
+  const box = $('#updateConfirmChanges');
+  assert.equal(box.hidden, false);
+  assert.equal(box.querySelector('[data-part="note"]').textContent, NOTE);
+  assert.equal(box.querySelector('[data-part="head"]').textContent, 'What changes for you');
+  assert.equal(box.querySelector('[data-part="list"] [data-part="off"]').textContent, 'Loading the list of changes…');
+  land(chOk.changes);
+  await tick(); await tick();
+  assert.equal(box.hidden, false);
+  assert.equal(box.querySelectorAll('[data-part="release"]').length, 2);
+  assert.equal(box.querySelector('[data-part="off"]'), null);
+});
+
+test('confirm pane: opened again for another version → the first answer, landing late, is dropped', async () => {
+  const waiting = [];
+  const { $, tick } = await openConfirm({ changes: (u) => new Promise((r) => { waiting.push({ u, r }); }) });
+  $('#updateConfirmBack').click();
+  $('#aboutUpdateGo').dataset.version = '10.1.0';
+  $('#aboutUpdateGo').click();
+  await tick(); await tick();
+  assert.equal(waiting.length, 2);
+  waiting[1].r({ ...chOk.changes, to: '10.1.0', releases: [chRel('10.1.0', ['Second pick.'])] });
+  await tick(); await tick();
+  waiting[0].r(chOk.changes);
+  await tick(); await tick();
+  assert.deepEqual([...$('#updateConfirmChanges').querySelectorAll('[data-part="version"]')].map((n) => n.textContent), ['10.1.0']);
+});
+
+test('cannot update itself: the same note and list sit under the terminal command', async () => {
+  const { $, openSettings, tick, calls, window } = await boot({ version: vOutdated, update: uNotSupervised, changes: chOk.changes });
+  await openSettings(); await tick(); await tick(); await tick();
+  assert.equal($('#aboutUpdateCmdRow').hidden, false);
+  const box = $('#aboutUpdateChanges');
+  assert.equal(box.hidden, false);
+  assert.equal(box.querySelector('[data-part="note"]').textContent, NOTE);
+  assert.deepEqual([...box.querySelectorAll('[data-part="version"]')].map((n) => n.textContent), ['10.0.0', '9.9.10']);
+  const asked = calls.filter((c) => c.url.includes('/api/app/update/changes'));
+  assert.equal(asked.length, 1, 'one read per version, not one per repaint');
+  // A repaint (the tab regains focus) keeps the painted list: its scroll position and focus survive.
+  const first = box.querySelector('[data-part="release"]');
+  window.dispatchEvent(new window.Event('focus')); await tick(); await tick();
+  assert.equal($('#aboutUpdateChanges').querySelector('[data-part="release"]'), first);
+  assert.match(asked[0].url, /version=10\.0\.0$/);
+});
+
+test('can update itself: nothing extra on the About card (the confirm pane shows it)', async () => {
+  const { $, openSettings, tick, calls } = await boot({ version: vOutdated, update: uEligible, changes: chOk.changes });
+  await openSettings(); await tick(); await tick(); await tick();
+  assert.equal($('#aboutUpdateChanges').hidden, true);
+  assert.equal(calls.filter((c) => c.url.includes('/api/app/update/changes')).length, 0);
+});
+
+test('the changes box adds no styles of its own: about-update.css has no rule for it', () => {
+  const css = readFileSync(fileURLToPath(new URL('../ui/public/settings/about-update.css', import.meta.url)), 'utf8');
+  assert.doesNotMatch(css, /\.update-changes|\.update-rel/);
+  // One sizing rule: in the confirm pane the list box keeps one height while it loads and after.
+  assert.match(css, /#updateConfirmChanges \.update-versions\{height:\d+px;\}/);
 });
