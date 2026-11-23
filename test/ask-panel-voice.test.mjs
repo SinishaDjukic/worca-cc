@@ -793,13 +793,13 @@ function realVoiceRig() {
   return rig;
 }
 
-test('PV6: in the real panel, a hands-free utterance is sent with handsFree, its own turn is spoken, and the chip listens again', async () => {
+test('PV6: in the real panel, a hands-free utterance is sent with handsFree, its own turn is spoken, and the input says Listening again', async () => {
   const rig = realVoiceRig();
   const ctx = await openWith(mergeRef(), { deps: { createVoice: rig.create } });
   await startHandsFree(ctx);
   await ticks(ctx, 6);
-  const chip = ctx.doc.querySelector('.ask-voice-status');
-  assert.equal(chip.textContent, 'Listening…');
+  const input = ctx.doc.querySelector('.ask-input');
+  assert.equal(input.placeholder, 'Listening…');
   rig.vad.onSpeechEnd(new Float32Array(1600));
   await ticks(ctx, 6);
   const b = bodies(ctx);
@@ -822,5 +822,5 @@ test('PV6: in the real panel, a hands-free utterance is sent with handsFree, its
   assert.deepEqual(rig.played, ['Two runs failed.']);
   rig.current.end();
   await ticks(ctx, 6);
-  assert.equal(chip.textContent, 'Listening…');
+  assert.equal(input.placeholder, 'Listening…');
 });

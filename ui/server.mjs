@@ -42,7 +42,7 @@ import {
   enrichPipelinesPr, reconcileStaleRunning, foreignActiveWorkspaceRuns, readPipelineForResume, persistPrState, readPrState,
   readRunLogText, readRunArtifactText, countPipelines, isTestPipeline, runRootSweepLookups, legacySweepLookups, slugify, newPipelineId,
   listArtifacts, listRunArtifacts, lookupPipelineRow, findPipelineRowById, readPipelineStateById, resolveIndexedArtifact, resolveIndexedArtifactForRow,
-  folderApplyRetainFor,
+  folderApplyRetainFor, bareWorkspaceKey,
   resolveIndexedArtifactFileForRow, openArtifactUnder, readPromptFile, runDirForRow, recordArtifact, appendAudit,
   persistMemberPrState, readMemberPrStates, readPipelineExtras,
   checkoutRecordsFor, retainedWorkFor, runEngineOfRow, folderFacts, readRunResultsForRow,
@@ -905,12 +905,12 @@ const FINISHED_RUN_CAP = 20;   // finished (done / stopped / error) pipeline ent
 /** A run ended: its buffered `state` frames go (each is a full deep copy; replayEntry sends a fresh snapshot after
  *  the replay), and beyond FINISHED_RUN_CAP the oldest finished pipeline entries leave the runs Map, as a restart
  *  would: History, the run page and every route read a finished run from its saved row. Paused and interrupted
- *  entries are never evicted (they resume from here). */
+ *  entries are never evicted (they resume from here), nor is one whose teardown still runs (archive waits on it). */
 function settleRunEntry(entry) {
   entry.events = entry.events.filter((ev) => ev.type !== 'state');
   entry.endedAt = Date.now();
   const finished = [...runs.values()].filter((r) => r.orch && (r.kind == null || r.kind === 'run' || r.kind === 'workspace-run')
-    && ['done', 'stopped', 'error'].includes(r.status)).sort((a, b) => (a.endedAt || 0) - (b.endedAt || 0));
+    && ['done', 'stopped', 'error'].includes(r.status) && r.settled).sort((a, b) => (a.endedAt || 0) - (b.endedAt || 0));
   for (const r of finished.slice(0, Math.max(0, finished.length - FINISHED_RUN_CAP))) runs.delete(r.id);
 }
 
@@ -3170,7 +3170,8 @@ const startRunHandler = async (req, res) => {
         tags,
         ...(shape ? { shape } : {}),
         ...tryRunOptions(workflowTest),   // a test try: the version under test, hidden, no memory, a fixed title
-        ...(attachedRequirements.length ? { attachedRequirements } : {}),
+        ...(attachedRequirements.length ? { attachedRequirements } : {}), ...(typeof body.rerunOf === 'string' ? { rerunOf: body.rerunOf } : {}),
+        ...(scanTarget || memoryScope ? {} : { runSetup: await runSetupOf({ ...body, workflowId, guardrailsId }, {}) }),   // as the other arms: Rerun copies it
       });
       entry = {
         id: runId, orch, projectDir, projectKey: NO_PROJECT_KEY, workMode: 'none', kind: 'run', pipelineId,
@@ -3322,7 +3323,7 @@ const startRunHandler = async (req, res) => {
         labels,
         ...(shape ? { shape } : {}),
         ...(attachedRequirements.length ? { attachedRequirements } : {}),
-        ...(runSetup ? { runSetup } : {}),
+        ...(runSetup ? { runSetup } : {}), ...(typeof body.rerunOf === 'string' ? { rerunOf: body.rerunOf } : {}),
       });
 
       entry = {
@@ -3502,7 +3503,7 @@ const startRunHandler = async (req, res) => {
         labels,
         ...(shape ? { shape } : {}),
         ...(attachedRequirements.length ? { attachedRequirements } : {}),
-        ...(runSetup ? { runSetup } : {}),
+        ...(runSetup ? { runSetup } : {}), ...(typeof body.rerunOf === 'string' ? { rerunOf: body.rerunOf } : {}),
         ...tryRunOptions(workflowTest, { project: true }),   // 3a: a project try also keeps its checkout and runs its setup
       });
 
@@ -3835,7 +3836,7 @@ async function validateResumeTarget(pipelineId) {
 async function storedRequestOf(body, stageId, projectDir, startedBy = null, preset = null) {
   const request = { ...body };
   // presetId: the link lives in the ticket's preset_id column (v63), never in the replayed body.
-  for (const k of ['scheduledFor', 'repeat', 'after', 'afterPolicy', 'sourceFromPrevious', 'ifMissed', 'graceMin', 'extras', 'internal', 'presetId']) delete request[k];
+  for (const k of ['scheduledFor', 'repeat', 'after', 'afterPolicy', 'sourceFromPrevious', 'ifMissed', 'graceMin', 'extras', 'internal', 'presetId', ...(body.repeat ? ['rerunOf'] : [])]) delete request[k];   // a one-off fire keeps rerunOf; a repeat's fires are not reruns
   // Text the user authored is part of the request: a prompt FILE is frozen now, so a
   // file deleted or half-edited overnight cannot fail an unattended run.
   if (request.source && request.source.type === 'markdown' && request.source.promptFile && !request.source.promptText) {
@@ -6199,14 +6200,6 @@ actions.on('status', (snap) => {
   recordActionFrame(snap.instanceId, { type: 'action-status', snapshot: snap });
   emitChanged('actions-changed', snap.status);
 });
-
-/**
- * The bare `wks-…` id of a workspace row, else null. Live rows store it bare. Rows from the legacy fs→DB
- * migration can hold the composite `workspaces/<dir>` and even `target = 'project'`
- * (migrate-fs-to-db.mjs:360-374), which is why artifacts.mjs reads `target === 'workspace' || !!workspace_key`.
- */
-const bareWorkspaceKey = (row) =>
-  (row.target === 'workspace' || row.workspace_key) && row.workspace_key ? String(row.workspace_key).replace(/^workspaces\//, '') : null;
 
 function runRowForScope(req, res) {
   const scope = resolveRunScope(req, res);          // query params; answers 400/404 itself
@@ -8639,13 +8632,11 @@ async function snapshotFor(setup, basis) {
   return completeSnapshot({ ...setup, overlay: parsed.overlay || undefined }, resolved);
 }
 
-/**
- * The run's setup for pipelines.run_setup (v62): the normalized body's preset keys as full picks for the run's own
- * target — the value Save setup as preset stores. Never blocks a start: any failure (or > 32 KB) keeps nothing.
- */
+/** The run's setup for pipelines.run_setup (v62): the normalized body's preset keys as full picks for the run's own target
+ *  (none: a No-project run's global setup, no branch keys) — what Save setup as preset stores. Never blocks a start: a failure or > 32 KB keeps nothing. */
 async function runSetupOf(normalized, basis) {
   try {
-    const setup = setupFromBody(normalized, { scope: basis.workspaceId ? 'workspace' : 'project' });
+    const setup = setupFromBody(normalized, { scope: basis.workspaceId ? 'workspace' : basis.projectDir ? 'project' : 'global' });
     const json = JSON.stringify(await snapshotFor(setup, basis));
     return Buffer.byteLength(json) <= PRESET_LIMITS.setupBytes ? json : null;
   } catch (err) {
@@ -10805,7 +10796,7 @@ if (isMain) {
 }
 
 export { app, server, runs };
-export { AGENTS_DIR, APP_INFO, APP_REPO_URL, ASK_DEFERRED_REPLIES_MAX, ASK_SCOPE_BUSY, ASK_TEXT_PREVIEW_MAX, BRANCH_SETTLED, BUGS_SLUG, CLONE_JOBS, HOST, MARKETPLACE_ID_RE, MARKET_JOBS, NO_PR_HOST, PKG_VERSION, PLAN_TEXT_MAX, PLUGIN_NAME_RE, PORT, PROJECT_ROOT, PR_TITLE_MAX, REMOTE_MODE, RUNNING_VERSION, ResumeError, SETTLED_RUN, SETUP_AGENT_TEXT, SETUP_JOBS, SKILLS_DIR, SKILL_FOLDER_IMPORTS, SKILL_MD_UNREACHABLE, STORE_ERROR_CODES, actions, actionsEnabledHere, activeActionSnaps, adoWebhookSecret, afterMembersChanged, afterProjectRegistered, agentErrorStatus, agentMayBeCaller, answerRun, applyProjectSettingsPatch, applySettingsPatch, askBusyReason, askChatActions, askChatEngine, askChatEngineGate, askCommandBridges, askCommands, askCommandsEnabled, askContextTokens, askCredentialGate, askDeferred, askDeferredReplies, askDeleting, askEngineSwitchText, askEventPick, askFilesRunDir, askFilesStoreDir, askFollowers, askGroupFor, askGroupThreads, askIdParam, askInFlight, askLiveRun, askProxyBridges, askRefResolver, askRelays, askRunFromPipelineRow, askRunningCount, askSignedIn, askSupersedePrecheck, askSwitchTranscript, askThreadVisible, askTrackingCount, askTurnEngine, askValidateScope, askViewer, askWebAccessFor, askWorktreesEnvelope, attachAskFollower, autoDetectedBuiltins, automationWorkspaceMembers, automations, awayPersonOf, badRequest, bareWorkspaceKey, bearerMatches, broadcast, broadcastFeature, brokerStartRefusal, builtins, busyActionRunIds, channelHost, chatGroupError, chatNotifier, chatRefusals, checkoutRecOf, commentIdParam, commentsCreate, commentsDelete, commentsFail, commentsList, commentsPatch, commentsReply, createRunPr, crosslinkMemberPrs, currentUpdateEligibility, defaultPrRemotes, deleteAskThreadFully, designBuilds, designChatActions, detectSystemProxyImpl, detectTeamMemorySoon, drainServer, effectiveUiLevel, egressNow, emitAskWorktrees, emitChanged, emitMemoryChanged, emitPluginsChanged, ensureSetup, extensionPairing, factDeps, failedEventTurn, featureShipping, findScheduleItem, findShipCardIn, flipCard, followCloneCard, forkPrRefusal, fsAllowedRoots, fsLimitedHere, gitMissing, isFinishingRun, isFreshInstall, isLiveRun, isPlainObject, isPrStoreKey, isTruthy, kickAutomations, kickPrWatch, labelsOn, lastUpdateResult, liveAutoRescan, liveDefragRun, liveDiffOf, livePr, liveProbe, liveRunEntry, liveRunIds, liveSliceOf, marketJobFailure, mcpRunPreview, mcpTargetOf, memberFor, memoryError, modelTestsInFlight, namingBucket, namingCatalog, namingOn, namingPick, noRawCommand, notifReader, openMemberPr, ownsWorkspaceTarget, parseMcpOptOut, pauseRun, pickPrRemotes, pinUiLevel, postAskSystemNotice, postDirection, prTargetFor, prWatchFrame, prWatcher, presetCheckCtx, presetScopeOf, primaryMemberOf, projectAutomationRepo, projectDirForKey, projectSettingsState, proxyHost, pruneMarketJobs, prunedNote, publicCloneJob, readInstalledManifest, refuseAgentCaller, refuseSignedOutClaude, registeredProjectForDir, rejectRawTerminalFields, removeRecommendation, requireActions, requireFsAllowed, requireTerminal, resolvePrPipeline, resolveProjectDir, resolveRunScope, resumeEngineOpts, resumeRun, resumeTargetDirs, runGroupIds, runSourceIssue, scanModelsFor, scanRequest, scheduleVerb, sendArtifactRaw, sendCheckoutError, sendMetricsError, sendPolicyError, sendPresetError, serveAskFile, serverMockMode, settleShipped, setupJobs, setupProbesOverride, shipChainNow, shipCtxOf, shipFeatureNow, skillRunPreview, snapshotFor, sockets, soundCards, stackStates, stackTokens, startAgentGen, startAskTurn, startCloneJob, startMetricsEventTurn, startOrQueue, startRunAs, startRunHandler, startScopeEventTurn, startScriptBench, stopCheckoutServices, stopMemberServices, stopPausedPipeline, stopRun, switchThreadScope, syncMode, syncProjectAction, syncRoute, teamOriginOk, teamWarn, terminalCallerOk, terminalEnabledHere, terminalError, terminalSameOrigin, terminals, tmProject, uiControl, unsyncableBlock, updateChecker, updatePort, updatePreview, validateResumeTarget, versionLister, versionPayload, webhookSecret, withAfter, workspaceMembersBusy, invokeStartRun, prWatcherDeps, PREVIEW_REFUSED, TOOL_RUN_ENDED, askTabBridges, askTabsEnabled, toolPanelOn, chatLinkRoots, chatLinks, chatToolFolder, closeChatTerminals, frameCheck, liveActionsOf, previewPortMode, previewProxy, previewRefusal, previewTokens, rawOpts, runRowForScope, sendOfficePdf, sendRawFile, setupLate, tabFailure, tabOwnerOf, tabTools, toolTabs, askLinkIsPrFix, followedRunOf, designApi, resolvePending, runSyncOpts, syncPrecheck };
+export { AGENTS_DIR, APP_INFO, APP_REPO_URL, ASK_DEFERRED_REPLIES_MAX, ASK_SCOPE_BUSY, ASK_TEXT_PREVIEW_MAX, BRANCH_SETTLED, BUGS_SLUG, CLONE_JOBS, HOST, MARKETPLACE_ID_RE, MARKET_JOBS, NO_PR_HOST, PKG_VERSION, PLAN_TEXT_MAX, PLUGIN_NAME_RE, PORT, PROJECT_ROOT, PR_TITLE_MAX, REMOTE_MODE, RUNNING_VERSION, ResumeError, SETTLED_RUN, SETUP_AGENT_TEXT, SETUP_JOBS, SKILLS_DIR, SKILL_FOLDER_IMPORTS, SKILL_MD_UNREACHABLE, STOPS_IN_FLIGHT, STORE_ERROR_CODES, actions, actionsEnabledHere, activeActionSnaps, adoWebhookSecret, afterMembersChanged, afterProjectRegistered, agentErrorStatus, agentMayBeCaller, answerRun, applyProjectSettingsPatch, applySettingsPatch, askBusyReason, askChatActions, askChatEngine, askChatEngineGate, askCommandBridges, askCommands, askCommandsEnabled, askContextTokens, askCredentialGate, askDeferred, askDeferredReplies, askDeleting, askEngineSwitchText, askEventPick, askFilesRunDir, askFilesStoreDir, askFollowers, askGroupFor, askGroupThreads, askIdParam, askInFlight, askLiveRun, askProxyBridges, askRefResolver, askRelays, askRunFromPipelineRow, askRunningCount, askSignedIn, askSupersedePrecheck, askSwitchTranscript, askThreadVisible, askTrackingCount, askTurnEngine, askValidateScope, askViewer, askWebAccessFor, askWorktreesEnvelope, attachAskFollower, autoDetectedBuiltins, automationWorkspaceMembers, automations, awayPersonOf, badRequest, bareWorkspaceKey, bearerMatches, broadcast, broadcastFeature, brokerStartRefusal, builtins, busyActionRunIds, channelHost, chatGroupError, chatNotifier, chatRefusals, checkoutRecOf, commentIdParam, commentsCreate, commentsDelete, commentsFail, commentsList, commentsPatch, commentsReply, createRunPr, crosslinkMemberPrs, currentUpdateEligibility, defaultPrRemotes, deleteAskThreadFully, designBuilds, designChatActions, detectSystemProxyImpl, detectTeamMemorySoon, drainServer, effectiveUiLevel, egressNow, emitAskWorktrees, emitChanged, emitMemoryChanged, emitPluginsChanged, ensureSetup, extensionPairing, factDeps, failedEventTurn, featureShipping, findScheduleItem, findShipCardIn, flipCard, followCloneCard, forkPrRefusal, fsAllowedRoots, fsLimitedHere, gitMissing, isFinishingRun, isFreshInstall, isLiveRun, isPlainObject, isPrStoreKey, isTruthy, kickAutomations, kickPrWatch, labelsOn, lastUpdateResult, liveAutoRescan, liveDefragRun, liveDiffOf, livePr, liveProbe, liveRunEntry, liveRunIds, liveSliceOf, marketJobFailure, mcpRunPreview, mcpTargetOf, memberFor, memoryError, modelTestsInFlight, namingBucket, namingCatalog, namingOn, namingPick, noRawCommand, notifReader, openMemberPr, ownsWorkspaceTarget, parseMcpOptOut, pauseRun, pickPrRemotes, pinUiLevel, postAskSystemNotice, postDirection, prTargetFor, prWatchFrame, prWatcher, presetCheckCtx, presetScopeOf, primaryMemberOf, projectAutomationRepo, projectDirForKey, projectSettingsState, proxyHost, pruneMarketJobs, prunedNote, publicCloneJob, readInstalledManifest, refuseAgentCaller, refuseSignedOutClaude, registeredProjectForDir, rejectRawTerminalFields, removeRecommendation, requireActions, requireFsAllowed, requireTerminal, resolvePrPipeline, resolveProjectDir, resolveRunScope, resumeEngineOpts, resumeRun, resumeTargetDirs, runGroupIds, runSourceIssue, scanModelsFor, scanRequest, scheduleVerb, sendArtifactRaw, sendCheckoutError, sendMetricsError, sendPolicyError, sendPresetError, serveAskFile, serverMockMode, settleShipped, setupJobs, setupProbesOverride, shipChainNow, shipCtxOf, shipFeatureNow, skillRunPreview, snapshotFor, sockets, soundCards, stackStates, stackTokens, startAgentGen, startAskTurn, startCloneJob, startMetricsEventTurn, startOrQueue, startRunAs, startRunHandler, startScopeEventTurn, startScriptBench, stopCheckoutServices, stopMemberServices, stopPausedPipeline, stopRun, switchThreadScope, syncMode, syncProjectAction, syncRoute, teamOriginOk, teamWarn, terminalCallerOk, terminalEnabledHere, terminalError, terminalSameOrigin, terminals, tmProject, uiControl, unsyncableBlock, updateChecker, updatePort, updatePreview, validateResumeTarget, versionLister, versionPayload, webhookSecret, withAfter, workspaceMembersBusy, invokeStartRun, prWatcherDeps, PREVIEW_REFUSED, TOOL_RUN_ENDED, askTabBridges, askTabsEnabled, toolPanelOn, chatLinkRoots, chatLinks, chatToolFolder, closeChatTerminals, frameCheck, liveActionsOf, previewPortMode, previewProxy, previewRefusal, previewTokens, rawOpts, runRowForScope, sendOfficePdf, sendRawFile, setupLate, tabFailure, tabOwnerOf, tabTools, toolTabs, askLinkIsPrFix, followedRunOf, designApi, resolvePending, runSyncOpts, syncPrecheck };
 export const _testing = {
   toolTabs, tabTools, askTabBridge, previewTokens, setPageCapture: (c) => { pageCapture = c || createPageCapture(); },
   chatBridge, invokeAskCard, askBus, chatAgentModeFor, chatTurnIdentity, settleStaleParkedEntries,

@@ -228,7 +228,8 @@ The **Auto** workflow option is available for both targets — a project and a w
 | Header cost and its breakdown (agents, Away mode, Auto workflow, run title; stopped reviews and stopped agent turns apart); the glance and Overview cost's Away mode share | S |
 | The Away mode note and the Q&A tab, as on the run page | S |
 | Save as preset (a run with a stored setup) | S |
-| Run page bar: Back (every layout) and ⋯ (Away mode while live, Save as preset, Terminal, Report this run, Archive / Restore) | S |
+| Run page bar: Back (every layout) and ⋯ (Away mode while live, Save as preset, Rerun, Terminal, Report this run, Archive / Restore) | S |
+| Rerun: New run filled in from an ended run; the Rerun of … row on the new run's page | S |
 | History: usage-limit notice | S |
 | Folder run: Changes tab, the Folder chip, the Apply bar and dialog, Discard; the Git / Folder chip on a project's group in the Runs list | S |
 | Run without a project: the Artifacts tab, opened first; the No project group and its chip in the Runs list | S |
@@ -377,7 +378,7 @@ sub-path kept; `#providers/…` and `#settings/providers` land on Models › Pro
 | The list: the filter tabs (All open, Needs you, Ready, Started, Archived; the counts leave archived out), New feature, the feature rows grouped by project or workspace (id, title, the state line, the state badge or the latest run's pill, cost), "Spent on requirements this month" | S — product owners are its users |
 | The list's group header: "Product brief: none yet · Create", "Product brief: being made…", "Product brief · <age> old" | S |
 | New feature: Title, Describe it, For, the code-look hint or the green "Worca knows <name> from its product brief" line, "Worca interviews with <model> at <effort> effort" and the cost words, Cancel, Start the interview | S — the interview model is shown here, changed only on Models (E) |
-| A feature's header: id, title, state, the target, round and cost chips, "Saved as specs/…"; Export ▾ (Save to specs/, Copy Markdown, Download .md); ⋯ (Your notes for Worca, Look closer / Look again, Archive / Restore) | S |
+| A feature's header: id, title, state, the target and round chips, the cost and model buttons, "Saved as specs/…"; Export ▾ (Save to specs/, Copy Markdown, Download .md); ⋯ (Your notes for Worca, Look closer / Look again, Archive / Restore) | S |
 | Export to a tracker: Export ▾'s Export to Jira… and Export setup…, the setup dialog, the preview (fields, labels, the description, Export anyway), Export again and the comment preview, the failure states, the header's ticket chip, "Created SHOP-123", the History card, Report back on Ready to build, the start dialog and the runs card; on a phone (900 px and narrower) the dialogs as full-screen sheets | S — product owners are its users |
 | Connect a tracker… (the menu item and its dialog) | S |
 | Connect a tracker's Open the Marketplace page | A — the Marketplace page is Advanced |

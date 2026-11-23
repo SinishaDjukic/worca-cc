@@ -44,8 +44,11 @@ export const CODEX_CLI = Object.freeze({
 export const OPENCODE_CLI = Object.freeze({
   id: 'opencode', label: 'OpenCode', envVar: 'WORCA_OPENCODE_BIN',
   candidates: Object.freeze([
+    // 1.x (npm opencode-ai) and 2.x (npm @opencode/cli, whose platform packages own the native .exe).
     seg('node_modules/opencode-ai/node_modules/opencode-windows-{arch}/bin/opencode.exe'),
     seg('node_modules/opencode-windows-{arch}/bin/opencode.exe'),
+    seg('node_modules/@opencode/cli/node_modules/@opencode/cli-windows-{arch}/bin/opencode.exe'),
+    seg('node_modules/@opencode/cli-windows-{arch}/bin/opencode.exe'),
   ]),
   allowNode: true,
 });

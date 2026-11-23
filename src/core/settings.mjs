@@ -62,6 +62,7 @@ import { homedir, availableParallelism } from 'node:os';
 import { randomBytes } from 'node:crypto';
 import {
   EFFORTS, CODEX_EFFORTS, effortsForEngine, MODEL_ENGINES, RUN_ENGINES, ASK_ENGINES, HELPER_ENGINES, OWN_SIGNIN_ENGINES, aModelOf, ownSignInNote, modelIdProblem, SUBAGENT_MODELS, isReservedModelEnvKey, assertModelCost, envFlag,
+  OPENCODE_ZEN_RE,
   assertModelUpstream, upstreamEnvConflict, modelEnvRef, codexUpstreamProblem,
   UPSTREAM_PROVIDERS, COPILOT_ACCOUNT_TYPES, DEFAULT_PROVIDER_CONCURRENCY, MAX_PROVIDER_CONCURRENCY,
   isUpstreamBaseUrl, REASONING_EFFORT_LEVELS, OPENROUTER_SORTS,
@@ -2300,10 +2301,13 @@ function sanitizeGlobalModel(raw) {
       for (const k of Object.keys(env)) if (upstreamEnvConflict({ [k]: env[k] })) delete env[k];
     }
   }
+  // OpenCode Zen's free models (`opencode/…`) take no reasoning variant — OpenCode 2.3.1+ refuses a `#variant`
+  // outright — so a Zen entry advertises no efforts (pickers offer none, and a pick's effort never spawns).
+  const zen = engine === 'opencode' && OPENCODE_ZEN_RE.test(id);
   return {
     id,
     label,
-    efforts: effortsForEngine(engine).length ? (efforts.length ? efforts : [...effortsForEngine(engine)]) : [],
+    efforts: zen ? [] : (effortsForEngine(engine).length ? (efforts.length ? efforts : [...effortsForEngine(engine)]) : []),
     ...(engine !== 'claude' ? { engine } : {}),
     ...(Object.keys(env).length ? { env } : {}),
     ...(cost ? { cost } : {}),

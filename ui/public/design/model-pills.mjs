@@ -63,10 +63,12 @@ export function effortsFor(model, opts) {
   return m ? m.efforts : opts.efforts;
 }
 
-/** `effort` when `model` takes it, else `high`, else its first (ask-panel.mjs coerceEffort). */
+/** `effort` when `model` takes it, else `high`, else its first; nothing when the model takes no effort (ask-panel.mjs
+ *  coerceEffort): an OpenCode Zen `opencode/*` offers none and its pick must not carry one. */
 export function coerceEffort(model, effort, opts) {
   const list = effortsFor(model, opts);
-  if (!list.length || list.includes(effort)) return effort;
+  if (!list.length) return '';
+  if (list.includes(effort)) return effort;
   return list.includes('high') ? 'high' : list[0];
 }
 

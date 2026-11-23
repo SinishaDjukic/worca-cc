@@ -1210,6 +1210,7 @@ export async function readPromptFile(projectDir, promptFile) {
  * @param {string} [opts.guardrailsId] the run's selected guardrail set id (per-run)
  * @param {string|null} [opts.runSetup] JSON of the run's setup (pipelines.run_setup, v62); never on the state object
  * @param {object|null} [opts.prAuto] the run's PR-when-done decision (pipelines.pr_auto, v86); same rule as runSetup
+ * @param {string|null} [opts.rerunOf] the id of the run this one was copied from (pipelines.rerun_of); same rule as runSetup
  * @param {string[]} [opts.extras]    paths to extra files copied into dir/extras
  * @param {string} [opts.title]       human title (defaults to derived text)
  * @param {string} [opts.workspaceKey]   opt-in: route to the workspace store
@@ -1223,7 +1224,7 @@ export async function createPipeline(projectDir, opts = {}) {
   const {
     prompt, promptFile, extras = [], title, isTest = false,
     promptText: precomputedPromptText = null, sourceType = null, sourceMeta = null,
-    guardrailsId = null, startedBy = null, prWatchRunId = null, tags = [], labels = [], runSetup = null, prAuto = null,
+    guardrailsId = null, startedBy = null, prWatchRunId = null, tags = [], labels = [], runSetup = null, prAuto = null, rerunOf = null,
     workspaceKey = null, workspaceId = null, workspaceName = null,
     workspaceDescription = '', projects = null,
   } = opts;
@@ -1375,7 +1376,7 @@ export async function createPipeline(projectDir, opts = {}) {
   // no more state.json on disk. writeState also seeds the dir->id cache
   // (rememberDir) so appendAudit resolves this run without any call-site change
   // (A4). recordArtifact runs AFTER the row exists (FK -> pipelines).
-  await writeState(dir, state, { prWatchRunId, runSetup, prAuto, isTest });
+  await writeState(dir, state, { prWatchRunId, runSetup, prAuto, isTest, rerunOf, extrasNames: [...new Set(copiedExtras.map((rel) => basename(rel)))] });   // two sources with one name share one file
   // Run tags (#718): written once, after the row exists (FK) and after writeState's tx has
   // committed (tx cannot nest). writeState updates never touch them.
   insertRunTags(id, tags);
@@ -1483,7 +1484,7 @@ function rememberDir(dir, id) { if (dir && id) _dirIdCache.set(resolve(dir), id)
  * @param {object} stateObj
  * @returns {Promise<object>}
  */
-export async function writeState(pipelineDir, stateObj, { prWatchRunId = null, runSetup = null, prAuto = null, isTest = false } = {}) {
+export async function writeState(pipelineDir, stateObj, { prWatchRunId = null, runSetup = null, prAuto = null, isTest = false, rerunOf = null, extrasNames = null } = {}) {
   const obj = { ...stateObj, updatedAt: new Date().toISOString() };
   const id = obj.id;
   if (!id) return obj; // pre-id state (constructor default): nothing to persist yet
@@ -1493,12 +1494,12 @@ export async function writeState(pipelineDir, stateObj, { prWatchRunId = null, r
       INSERT INTO pipelines (id, project_key, workspace_key, target, title, base_name,
         date_prefix, status, phase, cycle, started_at, updated_at, total_cost_usd,
         total_active_ms, prompt, branch, workspace_meta, stepper, tools, resume_point,
-        source_type, source_ref, guardrails_id, outcome, human_hours, started_by, shape_stats, run_size, run_setup, review_stats, pr_auto, is_test,
+        source_type, source_ref, guardrails_id, outcome, human_hours, started_by, shape_stats, run_size, run_setup, review_stats, pr_auto, rerun_of, extras_names, is_test,
         elapsed_ms, elapsed_since, finished_at)
       VALUES (@id,@project_key,@workspace_key,@target,@title,@base_name,@date_prefix,
         @status,@phase,@cycle,@started_at,@updated_at,@total_cost_usd,@total_active_ms,
         @prompt,@branch,@workspace_meta,@stepper,@tools,@resume_point,
-        @source_type,@source_ref,@guardrails_id,@outcome,@human_hours,@started_by,@shape_stats,@run_size,@run_setup,@review_stats,@pr_auto,@is_test,
+        @source_type,@source_ref,@guardrails_id,@outcome,@human_hours,@started_by,@shape_stats,@run_size,@run_setup,@review_stats,@pr_auto,@rerun_of,@extras_names,@is_test,
         COALESCE(@elapsed_ms, 0),@elapsed_since,
         CASE WHEN @status = 'done' THEN @updated_at END)
       ON CONFLICT(id) DO UPDATE SET
@@ -1518,8 +1519,9 @@ export async function writeState(pipelineDir, stateObj, { prWatchRunId = null, r
         run_size=COALESCE(excluded.run_size, run_size),
         base_name=COALESCE(excluded.base_name, base_name),
         date_prefix=COALESCE(excluded.date_prefix, date_prefix)
-    `).run({ ...toPipelineRow(obj), run_setup: typeof runSetup === 'string' ? runSetup : null,
-      pr_auto: prAuto ? JSON.stringify(prAuto) : null, is_test: isTest ? 1 : null });
+    `).run({ ...toPipelineRow(obj), run_setup: typeof runSetup === 'string' ? runSetup : null, pr_auto: prAuto ? JSON.stringify(prAuto) : null,
+      rerun_of: typeof rerunOf === 'string' ? rerunOf : null,
+      extras_names: Array.isArray(extrasNames) ? JSON.stringify(extrasNames) : null, is_test: isTest ? 1 : null });
 
     // A Watch PR fix run (#619): ownership lands in the same transaction that creates the row.
     if (prWatchRunId) attachWatchPipeline(prWatchRunId, id, obj.updatedAt);
@@ -2970,6 +2972,27 @@ function stepRowToStep(r) {
 }
 
 /**
+ * The bare `wks-…` id of a workspace row, else null. Live rows store it bare. Rows from the legacy fs→DB migration can
+ * hold the composite `workspaces/<dir>` and even `target = 'project'` (migrate-fs-to-db.mjs:360-374), so any row with a
+ * workspace_key counts.
+ */
+export const bareWorkspaceKey = (row) => (row.workspace_key ? String(row.workspace_key).replace(/^workspaces\//, '') : null);
+
+/**
+ * Rerun: the run a rerun was copied from, as the run page links it. `exists` is false for a deleted run (its row is
+ * anonymised, so no title or key is given) and for an id with no row; an archived source still exists and opens.
+ * @param {string|null} id  pipelines.rerun_of
+ * @returns {{id:string, key:string|null, title:string|null, exists:boolean}|null}
+ */
+export function resolveRerunOf(id) {
+  if (typeof id !== 'string' || !id) return null;
+  const row = findPipelineRowById(id);
+  if (!row || row.deleted_at) return { id, key: null, title: null, exists: false };
+  const ws = bareWorkspaceKey(row);
+  return { id: row.id, key: ws ? `workspaces/${ws}` : row.project_key, title: row.title ?? null, exists: true };
+}
+
+/**
  * Reconstruct the full state object (the old state.json shape the UI consumed)
  * from a pipelines row + its pipeline_steps rows. Inverse of toPipelineRow + the
  * step INSERT. projectDir is recovered from the project's store_meta row (the old
@@ -3034,6 +3057,7 @@ function rowToState(row) {
   state.runEngine = runEngineOfRow(row);
   // Shaper D28: only a shaped run carries shapeStats (run_size is write-only: Statistics reads the column)
   if (row.shape_stats) state.shapeStats = j(row.shape_stats, null);
+  if (row.rerun_of) state.rerunOf = resolveRerunOf(row.rerun_of);   // one lookup, only for a rerun; a source never lists its reruns
   const outcome = j(row.outcome, null);
   if (outcome) {
     state.engine = 2;

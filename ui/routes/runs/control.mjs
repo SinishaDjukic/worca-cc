@@ -10,10 +10,11 @@ import { StopPausedError } from '../../../src/core/stop-paused.mjs';
 import { engineRefusalFor } from '../../../src/shared/engine-switch.mjs';
 import fsp from 'node:fs/promises';
 import path from 'node:path';
+import { rerunOfGuard } from './rerun.mjs';
 import { PLAN_TEXT_MAX, ResumeError, SETTLED_RUN, answerRun, badRequest, liveRunEntry, pauseRun, postDirection, resumeRun, runs, startRunHandler, stopPausedPipeline, stopRun } from '../../server.mjs';
 
 export function register(app) {
-app.post('/api/run', startRunHandler);
+app.post('/api/run', rerunOfGuard, startRunHandler);
 
 // ---------------------------------------------------------------------------
 // POST /api/answer  -> resolve a pending question for a run
