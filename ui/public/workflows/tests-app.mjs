@@ -28,6 +28,7 @@ const WFT_EMPTY = Object.freeze({ view: 'list', workflowId: null, overview: null
 const WFT_CHECKER_FRESH = Object.freeze({ checkerEmpty: null, checkerCrit: null, checkerName: null, reworded: null, answering: null, rewording: null,
   checkerFrom: null });   // final review M12: the trust report or Compare that opened it ({ view, runId }), else null (the example)
 const wftBase = (id) => `/api/workflows/${encodeURIComponent(id)}/tests`;
+export const DELETED_MEANWHILE = 'This example was deleted, perhaps in another tab, so your changes were not saved. Copy what you need, then go back to Tests.';
 const wftDate = (iso) => { const d = new Date(iso); return Number.isNaN(d.getTime()) ? '' : d.toLocaleDateString(undefined, { day: 'numeric', month: 'short' }); };
 
 /**
@@ -610,6 +611,8 @@ export function createWorkflowTests(deps) {
   async function wftSaveExample(session, value) {
     const base = wftBase(session.workflowId);
     const r = session.exampleId ? await wftCall('PUT', `${base}/examples/${session.exampleId}`, value) : await wftCall('POST', `${base}/examples`, value);
+    // Pre-merge QA (B7): an example deleted meanwhile (in another tab) said only "No example 1.".
+    if (!r.ok && r.status === 404 && session.exampleId) return { ...r, error: DELETED_MEANWHILE };
     if (!r.ok) return r;
     session.exampleId = r.data.example.id;
     if (wftEditorLive(session)) wft.example = r.data.example;

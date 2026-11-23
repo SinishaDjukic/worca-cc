@@ -149,3 +149,13 @@ test('B2: Back to the bare workflow while the Tests page shows: the canvas comes
   assert.notEqual(routed.pages.at(-1), 'canvas', "a Tests address is routeWorkflows' to open");
 });
 
+test('B7: saving an example deleted meanwhile says so, and the changes stay on screen', async () => {
+  const { h } = await openEditor();
+  const { DELETED_MEANWHILE } = await import('../ui/public/workflows/tests-app.mjs');
+  type(h, '#wft-ex-name', 'Bulk invoice export, Q4');
+  button(h, 'Save example').click();   // PUT …/examples/1 answers 404 in this harness, as for a deleted example
+  await settle();
+  assert.equal(h.root.querySelector('.wft-error').textContent, DELETED_MEANWHILE);
+  assert.equal(h.root.querySelector('#wft-ex-name').value, 'Bulk invoice export, Q4');
+});
+
