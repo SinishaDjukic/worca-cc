@@ -8,6 +8,8 @@ import { writeGraphWorkflow, setWorkflowNodeDefaults, deleteWorkflow } from '../
 import { listRevisions, readRevision, AUTO_KEEP, snapshotRowTx, insertVersionTx } from '../src/core/workflow-revisions.mjs';
 import { getDb, tx, _resetForTests } from '../src/core/db.mjs';
 
+process.env.WORCA_FLAGS = 'workflowTests';   // history is kept only while workflow tests are on (flag-off review)
+
 const homes = [];
 beforeEach(async () => {
   const dir = await mkdtemp(join(tmpdir(), 'worca-cc-wfrev-'));
@@ -15,7 +17,7 @@ beforeEach(async () => {
   _resetForTests();
   process.env.WORCA_HOME = dir;
 });
-after(async () => { _resetForTests(); delete process.env.WORCA_HOME; await Promise.all(homes.map((d) => rm(d, { recursive: true, force: true }))); });
+after(async () => { _resetForTests(); delete process.env.WORCA_HOME; delete process.env.WORCA_FLAGS; await Promise.all(homes.map((d) => rm(d, { recursive: true, force: true }))); });
 
 const tpl = (over = {}) => ({
   id: 'wf_brief', name: 'Brief writer', domain: 'general',
@@ -71,4 +73,14 @@ test(`only the last ${AUTO_KEEP} automatic snapshots are kept; named versions ar
   const revs = listRevisions('wf_brief');
   assert.equal(revs.filter((r) => r.versionNo === null).length, AUTO_KEEP);
   assert.equal(revs.filter((r) => r.versionNo === 1).length, 1);
+});
+
+test('flag-off review: with workflow tests off, saves, defaults and a delete keep no history', async () => {
+  delete process.env.WORCA_FLAGS;
+  try {
+    await writeGraphWorkflow(tpl());
+    await writeGraphWorkflow(tpl({ name: 'Product brief writer' }));
+    await deleteWorkflow('wf_brief');
+    assert.equal(listRevisions('wf_brief').length, 0);
+  } finally { process.env.WORCA_FLAGS = 'workflowTests'; }
 });

@@ -28,7 +28,7 @@ import { superviseSpawn, composeSpawnEnv, cleanRunEnv, safeEmit } from './spawn.
 import { CAPABILITY_KEYS } from './capabilities.mjs';
 import { openTryLog } from './try-log-redaction.mjs';
 import { pretendTryCarry, carryRedactValues, carryLines, carryStageOpts, carryEnv } from '../workflow-tests/try-carry.mjs';
-import { tryPayloadParts, addTryHooks, carriesFileSettings, settingsFilePlan, settingsCanary, STAGING_PREFIX } from '../workflow-tests/try-spawn.mjs';
+import { tryPayloadParts, addTryHooks, carriesFileSettings, settingsFilePlan, settingsCanary, stagingPrefixFor } from '../workflow-tests/try-spawn.mjs';
 
 export const DEFAULT_BIN = process.env.WORCA_CLAUDE_BIN || process.env.ORCH_CLAUDE_BIN || 'claude';
 
@@ -542,7 +542,7 @@ export function planClaudeInvocation(opts, { bin = DEFAULT_BIN, dir = null, limi
  *  spawn, and it keeps the spawn sequence in runClaudeProcess linear. */
 export function stageClaudeInvocation(opts, { bin = DEFAULT_BIN, limit = ARGV_INLINE_LIMIT } = {}) {
   let dir = null;
-  const makeDir = () => (dir ??= mkdtempSync(join(tmpdir(), STAGING_PREFIX)));
+  const makeDir = () => (dir ??= mkdtempSync(join(tmpdir(), stagingPrefixFor(opts))));
   // A8: a guarded read logs every decision of its guard to a file in this private dir: the server's path, never a
   // caller's, read back when the spawn ends (runClaudeProcess) and removed with the dir.
   const o = opts.readGuard != null ? { ...opts, readGuardLog: join(makeDir(), 'read-guard.jsonl') } : opts;

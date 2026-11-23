@@ -7,7 +7,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { buildSettingsPayload, buildClaudeArgs, planClaudeInvocation, runClaudeProcess, carryOverModelEnv, _testing } from '../src/core/engines/claude.mjs';
 import { signInCarry, secretValuesOf, carryLine, carryRedactValues, CARRY_WARNING_PREFIX, CARRY_NOTE_PREFIX } from '../src/core/workflow-tests/try-carry.mjs';
-import { sweepStaleStagingDirs, STAGING_PREFIX } from '../src/core/workflow-tests/try-spawn.mjs';
+import { sweepStaleStagingDirs, STAGING_PREFIX, TRY_STAGING_PREFIX } from '../src/core/workflow-tests/try-spawn.mjs';
 import { createRedactor } from '../src/core/redact.mjs';
 import { openTryLog, pendingTryLogRedactor, redactTryLog, redactTryLogRetrying, _testing as tryLogTesting } from '../src/core/engines/try-log-redaction.mjs';
 import { RunHarness } from '../src/core/run-harness.mjs';
@@ -396,20 +396,21 @@ test('M2: a synchronous throw after staging removes the staging folder and the e
   assert.deepEqual(left, []);
 });
 
-test('M2: the boot sweep removes staging folders older than a day, never a newer one, a file or a link', () => {
+test("M2: the boot sweep removes try staging folders older than a day, never a newer one, a file, a link or a run's", () => {
   const d = tmp();
-  const old = join(d, `${STAGING_PREFIX}old`);
-  const fresh = join(d, `${STAGING_PREFIX}fresh`);
-  const busy = join(d, `${STAGING_PREFIX}busy`);
-  for (const p of [old, fresh, busy]) mkdirSync(p);
+  const old = join(d, `${TRY_STAGING_PREFIX}old`);
+  const fresh = join(d, `${TRY_STAGING_PREFIX}fresh`);
+  const busy = join(d, `${TRY_STAGING_PREFIX}busy`);
+  const run = join(d, `${STAGING_PREFIX}run`);   // flag-off review: an ordinary spawn's folder is never the sweep's
+  for (const p of [old, fresh, busy, run]) mkdirSync(p);
   writeFileSync(join(old, 'settings.json'), '{}');
   writeFileSync(join(busy, 'read-guard.jsonl'), '');
-  writeFileSync(join(d, `${STAGING_PREFIX}file`), 'x');
+  writeFileSync(join(d, `${TRY_STAGING_PREFIX}file`), 'x');
   const day = 24 * 60 * 60 * 1000;
   const t = (Date.now() - 2 * day) / 1000;
-  for (const p of [old, join(old, 'settings.json'), busy]) utimesSync(p, t, t);
-  assert.deepEqual(sweepStaleStagingDirs({ dir: d }), [`${STAGING_PREFIX}old`]);
-  assert.deepEqual([existsSync(old), existsSync(fresh), existsSync(busy)], [false, true, true], 'a folder whose file is new is still in use');
+  for (const p of [old, join(old, 'settings.json'), busy, run]) utimesSync(p, t, t);
+  assert.deepEqual(sweepStaleStagingDirs({ dir: d }), [`${TRY_STAGING_PREFIX}old`]);
+  assert.deepEqual([existsSync(old), existsSync(fresh), existsSync(busy), existsSync(run)], [false, true, true, true], 'a folder whose file is new is still in use');
   assert.deepEqual(sweepStaleStagingDirs({ dir: join(d, 'missing') }), [], 'never throws');
 });
 

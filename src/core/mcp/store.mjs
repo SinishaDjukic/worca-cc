@@ -50,6 +50,7 @@ const secretOk = (r) => ((typeof r.value === 'string' && r.value !== '') || (isM
 // A stored tool is its name (a Test written before workflow tests Part 2) or { name, description?, inputSchema?, annotations? }.
 const toolOk = (x) => typeof x === 'string' || (isMap(x) && typeof x.name === 'string');
 const testOk = (t) => (t.tools === undefined || (Array.isArray(t.tools) && t.tools.every(toolOk)))
+  && (t.toolDefs === undefined || (Array.isArray(t.toolDefs) && t.toolDefs.every((x) => isMap(x) && typeof x.name === 'string')))
   && text(t.at) && text(t.fingerprint) && (t.error === null || text(t.error));
 
 // A missing file reads as empty. A lock-free read never throws: a file that cannot be read or does not
@@ -462,11 +463,11 @@ export async function deleteMember(setId, serverId) {
 
 /** Store one Test result (§4.5): Test connects outside the lock; this re-reads and writes only its entry.
  *  @returns {Promise<boolean>} false when the membership is gone (nothing written) */
-export async function recordTest(setId, serverId, { at, ok, tools, error, fingerprint }) {
+export async function recordTest(setId, serverId, { at, ok, tools, toolDefs, error, fingerprint }) {
   return withMcpLock(async (tx) => {
     const s = tx.snapshot;
     if (!live(s, setId, serverId)) return false;
-    s.tests[`${setId}|${serverId}`] = { at, ok, tools, error, fingerprint };
+    s.tests[`${setId}|${serverId}`] = { at, ok, tools, error, fingerprint, ...(toolDefs ? { toolDefs } : {}) };
     await tx.write('tests');
     return true;
   });

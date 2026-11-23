@@ -7,7 +7,7 @@ import assert from 'node:assert/strict';
 import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { basename, dirname, join } from 'node:path';
-import { tryPayloadParts, addTryHooks, carriesFileSettings, settingsFilePlan, settingsCanary, STAGING_PREFIX } from '../src/core/workflow-tests/try-spawn.mjs';
+import { tryPayloadParts, addTryHooks, carriesFileSettings, settingsFilePlan, settingsCanary, STAGING_PREFIX, TRY_STAGING_PREFIX, stagingPrefixFor } from '../src/core/workflow-tests/try-spawn.mjs';
 import { pretendTryCarry, carryStageOpts, carryEnv, CARRY_WARNING_PREFIX } from '../src/core/workflow-tests/try-carry.mjs';
 import { TRY_DENY, tryGuardHookEntry, SETTINGS_CANARY_PREFIX, SETTINGS_IGNORED_FILE, SETTINGS_IGNORED_TEXT } from '../src/core/workflow-tests/try-guard-env.mjs';
 
@@ -157,4 +157,11 @@ test('settingsCanary.judgeThen: the verdict first, then the wrapped function\'s 
   assert.deepEqual(order, ['said', 'done 3']);
   const none = settingsCanary({ pluginsOff: false, tryGuard: null, onEvent: () => {} });
   assert.deepEqual(none.judgeThen((x) => x + 1)(1), 2);
+});
+
+test('flag-off review: a try spawn stages under its own prefix, an ordinary spawn under the old one', () => {
+  assert.equal(TRY_STAGING_PREFIX, 'worca-claude-try-');
+  assert.equal(stagingPrefixFor({}), STAGING_PREFIX);
+  assert.equal(stagingPrefixFor({ settingSources: ['project'], strictMcpConfig: true }), STAGING_PREFIX);
+  for (const o of [{ tryGuard: { logFile: '/l' } }, { pluginsOff: true }, { signInSettings: { apiKeyHelper: 'x' } }]) assert.equal(stagingPrefixFor(o), TRY_STAGING_PREFIX, JSON.stringify(o));
 });

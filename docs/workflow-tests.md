@@ -32,7 +32,8 @@ Your changes stay in a draft until you choose **Save version**. Every run rememb
   going keep their version. The dialog lists what differs from the version in use.
 - **Restore into draft** puts a version back on the canvas. New runs keep the version in use until you use another.
 - **Every save** lists the workflow as it was just before each save, restore, delete or change of step defaults.
-  Worca keeps the last 50, so any change can be undone with **Restore**. Numbered versions are never removed.
+  Worca keeps the last 50, so any change can be undone with **Restore**. Numbered versions are never removed. This
+  history is kept only while workflow tests are on: saves made with the flag off are not listed.
 - A version keeps the workflow's steps and settings. Agents and scripts always run today's text from the Library, in
   every version.
 - **Versions…** in a Library row's ⋯ menu opens the page. Built-in and plugin workflows have no versions.
@@ -111,7 +112,9 @@ asked, and **Would have sent**.
 - **Pretend** (the default): your connectors are replaced by stand-ins. Nothing is posted or sent, and **Would have
   sent** shows what each try would have sent. Anything the workflow reads from them comes back empty. A connector is
   switched off when Worca cannot pretend for it (claude.ai connectors, servers in your own Claude Code settings or a
-  project file, or one never tested in Connectors); the dialog names each.
+  project file, or one never tested in Connectors); the dialog names each. A stand-in offers the tools with their
+  descriptions when the connector was last tested with workflow tests on; after a Test made with them off it offers the
+  tool names only, so test the connector again for a closer stand-in.
 - Pretend also switches off your personal Claude Code plugins, skills, agents and hooks, and the project's own hooks
   and plugins. The project's instructions stay on. Your sign-in, your deny rules and your sandbox are carried over.
 - **Real**: tries use your real connectors. If the workflow posts or sends something, it does it in every try.

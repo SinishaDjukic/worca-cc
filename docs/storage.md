@@ -281,10 +281,11 @@ a deleted workflow keeps its examples, and they come back with a workflow saved 
   - `connectors/<nn>-<server>.json`: the tools each stand-in offers, from the connector's last passing Test;
   - `connector-calls.ndjson`: one line per call a stand-in answered (`{ ts, server, tool, arguments, readOnly }`), what
     the try would have sent.
-- `mcp/tests.json` (MCP registry): a Test now keeps each tool as `{ name, description?, inputSchema?, annotations? }`;
-  results written before keep their names and still load.
-- `workflow-tests/seen-connectors.json` (worcaHome): the claude.ai connector names Worca saw when a run started, so
-  Test a version can name the ones a pretend try switches off.
+- `mcp/tests.json` (MCP registry): `tools` stays the list of tool names. A Test made while workflow tests are on also
+  keeps `toolDefs`, each tool as `{ name, description?, inputSchema?, annotations? }`, for the stand-ins. A result
+  from an earlier build of this feature, with records in `tools`, still loads.
+- `workflow-tests/seen-connectors.json` (worcaHome): the claude.ai connector names Worca saw when a run started while
+  workflow tests were on, so Test a version can name the ones a pretend try switches off.
 
 ### Workflow tests on a project (v104)
 

@@ -67,13 +67,20 @@ export function settingsFilePlan({ opts, dir, files, payload, inlineLength, buil
  *  left over from a spawn Worca no longer runs (Worca was killed before its cleanup); the newest of the folder's and its
  *  files' times counts, so a long spawn whose guard still writes its log keeps its folder. */
 export const STAGING_PREFIX = 'worca-claude-';
+/** Flag-off review: a try's spawn stages under its own prefix, so the boot sweep removes only try folders (they can hold a
+ *  carried sign-in) and never an ordinary spawn's, however old. */
+export const TRY_STAGING_PREFIX = `${STAGING_PREFIX}try-`;
+/** The staging prefix for a spawn's options: a try's (the try guard, plugins off, or a carried sign-in or guard) or the
+ *  ordinary one. */
+export const stagingPrefixFor = (opts) => (opts && (opts.tryGuard || opts.pluginsOff === true || carriesFileSettings(opts))
+  ? TRY_STAGING_PREFIX : STAGING_PREFIX);
 export const STAGING_MAX_AGE_MS = 24 * 60 * 60 * 1000;
 /** M2: remove the staging folders older than `maxAgeMs` in `dir` (never a link, never anything else). Never throws.
  *  @returns {string[]} the folder names removed */
 export function sweepStaleStagingDirs({ dir = tmpdir(), maxAgeMs = STAGING_MAX_AGE_MS, now = Date.now() } = {}) {
   const removed = [];
   let names = [];
-  try { names = readdirSync(dir).filter((n) => n.startsWith(STAGING_PREFIX)); } catch { return removed; }
+  try { names = readdirSync(dir).filter((n) => n.startsWith(TRY_STAGING_PREFIX)); } catch { return removed; }
   for (const name of names) {
     const p = join(dir, name);
     try {

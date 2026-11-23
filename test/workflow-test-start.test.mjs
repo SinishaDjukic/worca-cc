@@ -73,7 +73,7 @@ test('holdTryOrch: hands the orchestrator to the runner; a throw reaches the cal
 test('the boot seams never throw and report what they did', async () => {
   const tmp = mkdtempSync(join(tmpdir(), 'worca-cc-wftstart-tmp-'));
   try {
-    const old = join(tmp, 'worca-claude-old');   // STAGING_PREFIX, older than a day
+    const old = join(tmp, 'worca-claude-try-old');   // TRY_STAGING_PREFIX, older than a day
     mkdirSync(old);
     const t = new Date(Date.now() - 3 * 24 * 60 * 60 * 1000);
     utimesSync(old, t, t);

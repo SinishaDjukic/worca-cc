@@ -19,6 +19,8 @@ export function rowChanges(prev, { name, domain, graph }) {
 /** Inside the caller's transaction, before it rewrites workflow `id`: snapshot the row as it is now when there is one and
  *  `changes(row)` says the write alters it. `opts`: {source, by, now} as for snapshotRowTx. */
 export function snapshotBeforeWrite(id, changes, opts) {
+  // Flag-off review: with workflow tests off a save writes what it wrote before this feature, and no history.
+  if (!flagEnabled('workflowTests')) return;
   const prev = prepare('SELECT * FROM workflows WHERE id = ?').get(id);
   if (prev && changes(prev)) snapshotRowTx(prev, opts);
 }

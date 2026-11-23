@@ -143,9 +143,16 @@ test('what a try would have sent: plain words, where to, the first 80 characters
 });
 
 test('claude.ai names seen at a run\'s start-up are remembered; ~/.claude.json servers are read', async () => {
+  const flags = process.env.WORCA_FLAGS;
+  delete process.env.WORCA_FLAGS;
+  noteSeenServers([{ name: 'claude.ai Gmail' }]);
+  assert.deepEqual(seenClaudeAiServers(), [], 'flag-off review: nothing is written with workflow tests off');
+  process.env.WORCA_FLAGS = 'workflowTests';
+  try {
   noteSeenServers([{ name: 'claude.ai Gmail', status: 'connected' }, { name: 'pg_billing', status: 'connected' }]);
   noteSeenServers([{ name: 'claude.ai Gmail' }]);
   assert.deepEqual(seenClaudeAiServers(), ['claude.ai Gmail']);
+  } finally { if (flags === undefined) delete process.env.WORCA_FLAGS; else process.env.WORCA_FLAGS = flags; }
   const home = await tmp();
   await writeFile(join(home, '.claude.json'), JSON.stringify({ mcpServers: { zeta: {}, alpha: {} } }));
   assert.deepEqual(userScopeServerNames(home), ['alpha', 'zeta']);
@@ -197,7 +204,8 @@ async function fixture() {
   // pg passed a Test (its tools are recorded); sentry never did.
   const m = materializeForTest(await viewContext(), set.id, 'manual:pg');
   await recordTest(set.id, 'manual:pg', { at: new Date().toISOString(), ok: true, error: null, fingerprint: m.fingerprint,
-    tools: [{ name: 'query', description: 'Run a read-only query', inputSchema: { type: 'object' }, annotations: { readOnlyHint: true } }] });
+    tools: ['query'],   // flag-off review: names where dev reads them, the details beside them
+    toolDefs: [{ name: 'query', description: 'Run a read-only query', inputSchema: { type: 'object' }, annotations: { readOnlyHint: true } }] });
   return { dir, set };
 }
 const runners = (seen) => {

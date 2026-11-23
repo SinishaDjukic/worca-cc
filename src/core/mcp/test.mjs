@@ -4,7 +4,8 @@
 // through the MCP SDK with a 2-minute bound (timeouts.mjs), kill the whole process tree, and store the result. The
 // connect runs outside the store lock; recordTest re-reads under it and writes only this entry.
 import { spawn, spawnSync } from 'node:child_process';
-import { McpStoreError, recordTest } from './store.mjs';
+import { McpStoreError, recordTest, toolNameOf } from './store.mjs';
+import { flagEnabled } from '../flags.mjs';
 import { keepListEnv } from './keep-list.mjs';
 import { copyName } from './identity.mjs';
 import { materializeCopy, skipReasonText } from './registry.mjs';
@@ -202,8 +203,12 @@ async function runTest(setId, serverId, probeImpl) {
   const at = new Date().toISOString();
   let result;
   try {
-    const tools = await probeImpl(expand(m.entry, m.env), { agent, redact: redactor.text, timeoutMs: mcpStartupMs('test') });
-    result = { at, ok: true, tools, error: null, fingerprint: m.fingerprint };
+    const listed = await probeImpl(expand(m.entry, m.env), { agent, redact: redactor.text, timeoutMs: mcpStartupMs('test') });
+    // Flag-off review: `tools` stays the list of names every Worca reads; the details the workflow-test stand-ins offer
+    // (D35) go beside it, and only while workflow tests are on.
+    const defs = (Array.isArray(listed) ? listed : []).map((t) => (typeof t === 'string' ? { name: t } : t));
+    result = { at, ok: true, tools: defs.map(toolNameOf), error: null, fingerprint: m.fingerprint,
+      ...(flagEnabled('workflowTests') ? { toolDefs: defs } : {}) };
   } catch (err) {
     result = { at, ok: false, tools: [], error: err.rejected ? 'token rejected' : redactor.text(err.message), fingerprint: m.fingerprint };
   }

@@ -146,3 +146,11 @@ test('M5: the Pretend try fields reach the host unchanged (plugins off, sources,
   const h = hostSpawnOpts({ cwd: '/w', ...PRETEND }, { definitions: DEFS, dispatchText: 'D' });
   for (const [k, v] of Object.entries(PRETEND)) assert.deepEqual(h[k], v, k);
 });
+
+test("flag-off review: an ordinary host keeps its own settings; only a Pretend try's host takes the member's lean ones", () => {
+  const LEAN = { settingSources: ['project'], strictMcpConfig: true, extraSettings: { autoMemoryEnabled: false } };
+  const h = hostSpawnOpts({ cwd: '/w', ...LEAN }, { definitions: DEFS, dispatchText: 'D' });
+  for (const k of Object.keys(LEAN)) assert.equal(h[k], undefined, k);
+  const g = hostSpawnOpts({ cwd: '/w', ...LEAN, tryGuard: { logFile: '/l' } }, { definitions: DEFS, dispatchText: 'D' });
+  for (const [k, v] of Object.entries(LEAN)) assert.deepEqual(g[k], v, k);
+});

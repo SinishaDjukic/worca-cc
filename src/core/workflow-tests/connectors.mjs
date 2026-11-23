@@ -11,6 +11,7 @@ import { readMcpStore } from '../mcp/store.mjs';
 import { MOCK_CONNECTOR_PATH } from '../mcp/mock-connector.mjs';
 import { findPipelineRowById, runDirForRow } from '../artifacts.mjs';
 import { worcaHome } from '../projects.mjs';
+import { flagEnabled } from '../flags.mjs';
 import { resolveRunEngine } from '../settings-cascade.mjs';
 import { engineLabel } from '../../shared/engine-switch.mjs';
 import { CLAUDE_AI_RE, plainName, serverName } from '../../shared/workflow-tests/connector-name.mjs';
@@ -48,7 +49,10 @@ export function standInDef(name, toolsFile, logFile) {
 /** The tools a registry copy's stand-in offers: its current, passing Test's list; null when it gets no stand-in. */
 function standInTools(copy, tests) {
   const test = copy && !copy.untested ? tests[`${copy.setId}|${copy.serverId}`] : null;
-  return test && test.ok === true && Array.isArray(test.tools) && test.tools.length ? test.tools : null;
+  if (!test || test.ok !== true) return null;
+  // The details a Test kept with workflow tests on (toolDefs), else its names (a Test made while they were off, or older).
+  const tools = Array.isArray(test.toolDefs) && test.toolDefs.length ? test.toolDefs : test.tools;
+  return Array.isArray(tools) && tools.length ? tools : null;
 }
 
 /** The registry copies that get a stand-in on a pretend try (the rule pretendServers applies), in their order. */
@@ -186,6 +190,7 @@ export function userScopeServerNames(home = homedir()) {
 
 /** N2: remember the claude.ai connector names a run's start-up listed (the CLI's init `mcp_servers`). Never throws. */
 export function noteSeenServers(list) {
+  if (!flagEnabled('workflowTests')) return;   // flag-off review: nothing written while workflow tests are off
   try {
     const names = (Array.isArray(list) ? list : []).map((s) => (s && typeof s.name === 'string' ? s.name : '')).filter((x) => CLAUDE_AI_RE.test(x));
     if (!names.length) return;
