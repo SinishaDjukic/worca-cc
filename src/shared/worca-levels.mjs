@@ -135,7 +135,7 @@ export const WORCA_LEVELS = Object.freeze([
       }),
       item({
         id: 'prOpened',
-        label: `${T.prsOpened} pull request opened`,
+        label: `${T.prsOpened} PR created`,
         hint: 'Let a run create a PR on your project.',
         href: '#new',
         openLabel: 'Open New pipeline',
